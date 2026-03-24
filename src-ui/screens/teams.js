@@ -27,7 +27,7 @@ function renderSetupModal(state) {
     </div>
   `;
 
-  const selectionItems = setup.newOrganizations
+  const selectionItems = setup.orgsAfter
     .map(
       (organization) => `
         <label class="org-choice">

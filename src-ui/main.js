@@ -35,7 +35,7 @@ const state = {
     step: "guide",
     error: "",
     orgsBefore: [],
-    newOrganizations: [],
+    orgsAfter: [],
     selectedOrganizations: new Set(),
   },
 };
@@ -80,7 +80,7 @@ function resetTeamSetup() {
     step: "guide",
     error: "",
     orgsBefore: [],
-    newOrganizations: [],
+    orgsAfter: [],
     selectedOrganizations: new Set(),
   };
 }
@@ -129,19 +129,19 @@ async function finishTeamSetup() {
       accessToken: state.auth.session.accessToken,
     });
     const orgsBefore = new Set(state.teamSetup.orgsBefore.map((organization) => organization.login));
-    const newOrganizations = organizationsAfter.filter(
+    const orgsAfter = organizationsAfter.filter(
       (organization) => !orgsBefore.has(organization.login),
     );
 
-    if (newOrganizations.length === 0) {
+    if (orgsAfter.length === 0) {
       state.teamSetup.error =
         "Error: no new organizations found on your GitHub account.";
       render();
       return;
     }
 
-    if (newOrganizations.length === 1) {
-      await markOrganizationsAsGnosis([newOrganizations[0].login]);
+    if (orgsAfter.length === 1) {
+      await markOrganizationsAsGnosis([orgsAfter[0].login]);
       resetTeamSetup();
       await loadUserTeams();
       return;
@@ -149,7 +149,7 @@ async function finishTeamSetup() {
 
     state.teamSetup.step = "select";
     state.teamSetup.error = "";
-    state.teamSetup.newOrganizations = newOrganizations;
+    state.teamSetup.orgsAfter = orgsAfter;
     state.teamSetup.selectedOrganizations = new Set();
     render();
   } catch (error) {
