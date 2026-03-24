@@ -12,13 +12,14 @@ use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use rand::{distributions::Alphanumeric, Rng};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use tauri::{Emitter, Manager, State};
+use tauri::{window::Color, Emitter, Manager, State};
 use url::Url;
 
 const GITHUB_CALLBACK_EVENT: &str = "github-oauth-callback";
 const GITHUB_CALLBACK_ADDRESS: &str = "127.0.0.1:45873";
 const GITHUB_CALLBACK_PATH: &str = "/github/callback";
 const GNOSIS_TMS_ORG_DESCRIPTION: &str = "[Gnosis TMS Translation Team]";
+const MAIN_WINDOW_BACKGROUND: Color = Color(247, 236, 213, 255);
 
 struct AuthState {
   pending: Mutex<Option<PendingOauth>>,
@@ -633,6 +634,11 @@ pub fn run() {
       mark_gnosis_tms_organization
     ])
     .setup(|app| {
+      #[cfg(target_os = "macos")]
+      if let Some(window) = app.get_webview_window("main") {
+        let _ = window.set_background_color(Some(MAIN_WINDOW_BACKGROUND));
+      }
+
       let app_handle = app.handle().clone();
       std::thread::spawn(move || spawn_callback_server(app_handle));
       Ok(())
