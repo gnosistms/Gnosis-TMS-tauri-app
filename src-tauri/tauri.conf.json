@@ -4,9 +4,10 @@
   "version": "0.1.0",
   "identifier": "com.gnosis.tms",
   "build": {
-    "beforeDevCommand": "python3 -m http.server 1431 --bind 127.0.0.1 -d src-ui",
+    "beforeBuildCommand": "npm run build",
+    "beforeDevCommand": "npm run dev -- --host 127.0.0.1 --port 1431",
     "devUrl": "http://127.0.0.1:1431",
-    "frontendDist": "../src-ui"
+    "frontendDist": "../dist"
   },
   "app": {
     "withGlobalTauri": true,
