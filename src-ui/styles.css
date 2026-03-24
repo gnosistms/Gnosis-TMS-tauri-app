@@ -786,6 +786,57 @@ a {
   color: var(--muted);
 }
 
+.debug-panel {
+  display: grid;
+  gap: 14px;
+  padding: 18px 20px;
+  border-radius: 18px;
+  border: 1px dashed rgba(164, 112, 41, 0.28);
+  background: rgba(255, 247, 236, 0.94);
+}
+
+.debug-panel__title,
+.debug-panel__label,
+.debug-panel__empty {
+  margin: 0;
+}
+
+.debug-panel__title {
+  font-size: 0.95rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.debug-panel__section {
+  display: grid;
+  gap: 8px;
+}
+
+.debug-panel__label {
+  font-weight: 700;
+}
+
+.debug-panel__list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding-left: 1.25rem;
+}
+
+.debug-panel__list li {
+  display: grid;
+  gap: 4px;
+}
+
+.debug-panel code {
+  font-family: "SFMono-Regular", "SF Mono", Consolas, monospace;
+  font-size: 0.9rem;
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 @media (max-width: 1180px) {
   .page-header {
     grid-template-columns: 1fr;

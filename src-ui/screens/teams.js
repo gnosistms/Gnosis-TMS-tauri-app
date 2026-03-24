@@ -1,5 +1,27 @@
 import { escapeHtml, navButton, pageShell, primaryButton, secondaryButton, textAction } from "../lib/ui.js";
 
+function renderOrganizationList(items) {
+  if (!items.length) {
+    return '<p class="debug-panel__empty">None</p>';
+  }
+
+  return `
+    <ul class="debug-panel__list">
+      ${items
+        .map(
+          (organization) => `
+            <li>
+              <strong>${escapeHtml(organization.name || organization.login)}</strong>
+              <span>@${escapeHtml(organization.login)}</span>
+              <code>${escapeHtml(organization.description || "(no description)")}</code>
+            </li>
+          `,
+        )
+        .join("")}
+    </ul>
+  `;
+}
+
 function renderSetupModal(state) {
   const setup = state.teamSetup;
   if (!setup?.isOpen) {
@@ -57,6 +79,26 @@ function renderSetupModal(state) {
     ? `<p class="modal__error">${escapeHtml(setup.error)}</p>`
     : "";
 
+  const debugPanel = state.debugOrgDiscovery
+    ? `
+      <section class="debug-panel">
+        <h3 class="debug-panel__title">Organization Debug</h3>
+        <div class="debug-panel__section">
+          <p class="debug-panel__label">Before</p>
+          ${renderOrganizationList(setup.orgsBefore)}
+        </div>
+        <div class="debug-panel__section">
+          <p class="debug-panel__label">After</p>
+          ${renderOrganizationList(setup.allOrgsAfter)}
+        </div>
+        <div class="debug-panel__section">
+          <p class="debug-panel__label">Diff</p>
+          ${renderOrganizationList(setup.orgsAfter)}
+        </div>
+      </section>
+    `
+    : "";
+
   const isSelectionStep = setup.step === "select";
   const actionButton = isGuideStep
     ? primaryButton("Open GitHub Organization Setup", "begin-team-org-setup")
@@ -85,6 +127,7 @@ function renderSetupModal(state) {
           <h2 class="modal__title">${heading}</h2>
           <p class="modal__supporting">${supporting}</p>
           <div class="modal__form">${body}</div>
+          ${debugPanel}
           ${errorMarkup}
           <div class="modal__actions">
             ${secondaryButton("Cancel", "cancel-team-setup")}
@@ -136,6 +179,9 @@ export function renderTeamsScreen(state) {
       secondaryButton("Reconnect GitHub", "reconnect-github"),
       primaryButton("+ New Team", "open-new-team"),
     ].join(""),
-    body: `<section class="stack">${cards || emptyState}</section>${renderSetupModal(state)}`,
+    body: `<section class="stack">${cards || emptyState}</section>${renderSetupModal({
+      ...state,
+      debugOrgDiscovery: window.__GNOSIS_DEBUG__?.DEBUG_ORG_DISCOVERY === true,
+    })}`,
   });
 }

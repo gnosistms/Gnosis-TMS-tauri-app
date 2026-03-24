@@ -12,6 +12,7 @@ const listen = tauri.event?.listen?.bind(tauri.event);
 const GITHUB_FREE_ORG_SETUP_URL =
   "https://github.com/account/organizations/new?plan=free&ref_cta=Create%2520a%2520free%2520organization&ref_loc=cards&ref_page=%2Forganizations%2Fplan";
 const GNOSIS_TMS_ORG_DESCRIPTION = "[Gnosis TMS Translation Team]";
+const DEBUG_ORG_DISCOVERY = true;
 
 const state = {
   screen: "start",
@@ -36,6 +37,7 @@ const state = {
     error: "",
     orgsBefore: [],
     orgsAfter: [],
+    allOrgsAfter: [],
     selectedOrganizations: new Set(),
   },
 };
@@ -81,6 +83,7 @@ function resetTeamSetup() {
     error: "",
     orgsBefore: [],
     orgsAfter: [],
+    allOrgsAfter: [],
     selectedOrganizations: new Set(),
   };
 }
@@ -92,6 +95,7 @@ function openTeamSetup() {
     error: "",
     orgsBefore: [],
     orgsAfter: [],
+    allOrgsAfter: [],
     selectedOrganizations: new Set(),
   };
   render();
@@ -108,6 +112,7 @@ async function beginTeamOrgSetup() {
     state.teamSetup.orgsBefore = await invoke("list_user_organizations", {
       accessToken: state.auth.session.accessToken,
     });
+    state.teamSetup.allOrgsAfter = [];
   } catch (error) {
     state.teamSetup.error = error?.message ?? String(error);
     render();
@@ -131,6 +136,7 @@ async function finishTeamSetup() {
     const organizationsAfter = await invoke("list_user_organizations", {
       accessToken: state.auth.session.accessToken,
     });
+    state.teamSetup.allOrgsAfter = organizationsAfter;
     const orgsBefore = new Set(state.teamSetup.orgsBefore.map((organization) => organization.login));
     const orgsAfter = organizationsAfter.filter(
       (organization) => !orgsBefore.has(organization.login),
@@ -425,4 +431,7 @@ document.addEventListener("change", (event) => {
 });
 
 void registerGithubAuthListener();
+window.__GNOSIS_DEBUG__ = {
+  DEBUG_ORG_DISCOVERY,
+};
 render();
