@@ -9,8 +9,6 @@ function renderSetupModal(state) {
   const isGuideStep = setup.step === "guide";
   const guide = `
     <div class="setup-guide">
-      <p>Gnosis TMS will open GitHub in your default browser so you can create the organization there.</p>
-      <p>When GitHub opens:</p>
       <ol class="setup-guide__list">
         <li>Set <strong>Organization name</strong> to the name of the translation team.</li>
         <li>Set <strong>Contact email</strong> to your email.</li>
