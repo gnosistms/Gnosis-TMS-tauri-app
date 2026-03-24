@@ -90,7 +90,7 @@ function resetTeamSetup() {
   };
 }
 
-function openTeamSetup() {
+async function openTeamSetup() {
   state.teamSetup = {
     isOpen: true,
     step: "guide",
@@ -102,9 +102,7 @@ function openTeamSetup() {
     selectedOrganizations: new Set(),
   };
   render();
-}
 
-async function beginTeamOrgSetup() {
   if (!state.auth.session?.accessToken) {
     state.teamSetup.error = "Sign in with GitHub before creating a team.";
     render();
@@ -118,6 +116,29 @@ async function beginTeamOrgSetup() {
     state.teamSetup.diagnostics = await invoke("inspect_github_organization_access", {
       accessToken: state.auth.session.accessToken,
     });
+    render();
+  } catch (error) {
+    state.teamSetup.error = error?.message ?? String(error);
+    render();
+  }
+}
+
+async function beginTeamOrgSetup() {
+  if (!state.auth.session?.accessToken) {
+    state.teamSetup.error = "Sign in with GitHub before creating a team.";
+    render();
+    return;
+  }
+
+  try {
+    if (!state.teamSetup.orgsBefore.length && !state.teamSetup.diagnostics) {
+      state.teamSetup.orgsBefore = await invoke("list_user_organizations", {
+        accessToken: state.auth.session.accessToken,
+      });
+      state.teamSetup.diagnostics = await invoke("inspect_github_organization_access", {
+        accessToken: state.auth.session.accessToken,
+      });
+    }
     state.teamSetup.allOrgsAfter = [];
   } catch (error) {
     state.teamSetup.error = error?.message ?? String(error);
@@ -343,7 +364,7 @@ document.addEventListener("click", (event) => {
   }
 
   if (action === "open-new-team") {
-    openTeamSetup();
+    void openTeamSetup();
     return;
   }
 
