@@ -126,6 +126,15 @@ struct GithubOrganizationMembershipOrg {
   login: String,
 }
 
+#[derive(Serialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct GithubOrgDiagnostics {
+  oauth_scopes: Vec<String>,
+  accepted_oauth_scopes: Vec<String>,
+  user_org_logins: Vec<String>,
+  membership_org_logins: Vec<String>,
+}
+
 #[tauri::command]
 fn ping() -> &'static str {
   "pong"
@@ -260,6 +269,53 @@ fn list_user_organizations(access_token: String) -> Result<Vec<GithubOrganizatio
 }
 
 #[tauri::command]
+fn inspect_github_organization_access(access_token: String) -> Result<GithubOrgDiagnostics, String> {
+  let client = github_client()?;
+  let user_orgs_response = client
+    .get("https://api.github.com/user/orgs")
+    .bearer_auth(&access_token)
+    .header("Accept", "application/vnd.github+json")
+    .query(&[("per_page", "100")])
+    .send()
+    .map_err(|error| format!("Could not inspect your GitHub organizations: {error}"))?
+    .error_for_status()
+    .map_err(|error| format!("GitHub rejected the organization inspection request: {error}"))?;
+
+  let oauth_scopes = parse_scope_header(user_orgs_response.headers().get("x-oauth-scopes"));
+  let accepted_oauth_scopes =
+    parse_scope_header(user_orgs_response.headers().get("x-accepted-oauth-scopes"));
+  let user_org_logins = user_orgs_response
+    .json::<Vec<GithubOrganization>>()
+    .map_err(|error| format!("Could not parse your GitHub organizations: {error}"))?
+    .into_iter()
+    .map(|organization| organization.login)
+    .collect();
+
+  let membership_org_logins = client
+    .get("https://api.github.com/user/memberships/orgs")
+    .bearer_auth(&access_token)
+    .header("Accept", "application/vnd.github+json")
+    .query(&[("state", "active"), ("per_page", "100")])
+    .send()
+    .map_err(|error| format!("Could not inspect your GitHub organization memberships: {error}"))?
+    .error_for_status()
+    .map_err(|error| format!("GitHub rejected the organization membership inspection request: {error}"))?
+    .json::<Vec<GithubOrganizationMembership>>()
+    .map_err(|error| format!("Could not parse your GitHub organization memberships: {error}"))?
+    .into_iter()
+    .filter(|membership| membership.state == "active")
+    .map(|membership| membership.organization.login)
+    .collect();
+
+  Ok(GithubOrgDiagnostics {
+    oauth_scopes,
+    accepted_oauth_scopes,
+    user_org_logins,
+    membership_org_logins,
+  })
+}
+
+#[tauri::command]
 fn mark_gnosis_tms_organization(
   access_token: String,
   org_login: String,
@@ -374,6 +430,20 @@ fn get_organization_details(
     .map_err(|error| format!("GitHub rejected the organization lookup for @{org_login}: {error}"))?
     .json::<GithubOrganization>()
     .map_err(|error| format!("Could not parse the details for GitHub organization @{org_login}: {error}"))
+}
+
+fn parse_scope_header(header_value: Option<&reqwest::header::HeaderValue>) -> Vec<String> {
+  header_value
+    .and_then(|value| value.to_str().ok())
+    .map(|value| {
+      value
+        .split(',')
+        .map(|scope| scope.trim())
+        .filter(|scope| !scope.is_empty())
+        .map(ToString::to_string)
+        .collect()
+    })
+    .unwrap_or_default()
 }
 
 fn github_redirect_uri() -> String {
@@ -671,7 +741,8 @@ pub fn run() {
       begin_github_oauth,
       create_team_setup_draft,
       list_user_organizations,
-      mark_gnosis_tms_organization
+      mark_gnosis_tms_organization,
+      inspect_github_organization_access
     ])
     .setup(|app| {
       #[cfg(target_os = "macos")]

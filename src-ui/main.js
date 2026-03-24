@@ -38,6 +38,7 @@ const state = {
     orgsBefore: [],
     orgsAfter: [],
     allOrgsAfter: [],
+    diagnostics: null,
     selectedOrganizations: new Set(),
   },
 };
@@ -84,6 +85,7 @@ function resetTeamSetup() {
     orgsBefore: [],
     orgsAfter: [],
     allOrgsAfter: [],
+    diagnostics: null,
     selectedOrganizations: new Set(),
   };
 }
@@ -96,6 +98,7 @@ function openTeamSetup() {
     orgsBefore: [],
     orgsAfter: [],
     allOrgsAfter: [],
+    diagnostics: null,
     selectedOrganizations: new Set(),
   };
   render();
@@ -110,6 +113,9 @@ async function beginTeamOrgSetup() {
 
   try {
     state.teamSetup.orgsBefore = await invoke("list_user_organizations", {
+      accessToken: state.auth.session.accessToken,
+    });
+    state.teamSetup.diagnostics = await invoke("inspect_github_organization_access", {
       accessToken: state.auth.session.accessToken,
     });
     state.teamSetup.allOrgsAfter = [];
@@ -134,6 +140,9 @@ async function finishTeamSetup() {
 
   try {
     const organizationsAfter = await invoke("list_user_organizations", {
+      accessToken: state.auth.session.accessToken,
+    });
+    state.teamSetup.diagnostics = await invoke("inspect_github_organization_access", {
       accessToken: state.auth.session.accessToken,
     });
     state.teamSetup.allOrgsAfter = organizationsAfter;
