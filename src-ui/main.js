@@ -38,12 +38,13 @@ const state = {
   },
   teamSetup: {
     isOpen: false,
-    step: "guide",
+    step: "details",
     error: "",
     form: {
       name: "",
       slug: "",
       contactEmail: "",
+      confirmedSlug: "",
     },
   },
 };
@@ -109,16 +110,26 @@ function scheduleRender() {
   });
 }
 
+function slugifyTeamName(value) {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
 function resetTeamSetup() {
   state.teamSetup = {
     isOpen: false,
-    step: "guide",
+    step: "details",
     error: "",
     form: {
       name: "",
       slug: "",
       contactEmail: "",
+      confirmedSlug: "",
     },
+    slugEdited: false,
   };
 }
 
@@ -126,13 +137,15 @@ function openTeamSetup() {
   const creatorLogin = state.auth.session?.login ?? "owner";
   state.teamSetup = {
     isOpen: true,
-    step: "guide",
+    step: "details",
     error: "",
     form: {
       name: "",
       slug: "",
       contactEmail: "",
+      confirmedSlug: "",
     },
+    slugEdited: false,
     ownerLogin: creatorLogin,
   };
   render();
@@ -181,7 +194,12 @@ async function persistTeamSetupDraft() {
 }
 
 async function beginTeamOrgSetup() {
+  if (!validateTeamSetupDetails()) {
+    return;
+  }
+
   state.teamSetup.step = "confirm";
+  state.teamSetup.form.confirmedSlug = state.teamSetup.form.slug;
   state.teamSetup.error = "";
   render();
   openExternalUrl(GITHUB_FREE_ORG_SETUP_URL);
@@ -193,6 +211,19 @@ async function finishTeamSetup() {
   }
 
   try {
+    const { slug: setupSlug, confirmedSlug } = state.teamSetup.form;
+    if (!confirmedSlug.trim()) {
+      state.teamSetup.error = "Confirm the GitHub organization slug you created before finishing setup.";
+      render();
+      return;
+    }
+
+    if (confirmedSlug.trim() !== setupSlug.trim()) {
+      state.teamSetup.error = "The confirmed organization slug must match the slug from step 1.";
+      render();
+      return;
+    }
+
     await persistTeamSetupDraft();
     const { name, slug, contactEmail } = state.teamSetup.form;
     const ownerLogin = state.auth.session?.login ?? "owner";
@@ -392,6 +423,14 @@ document.addEventListener("input", (event) => {
   const value = event.target.value;
   state.teamSetup.form[field] = value;
   state.teamSetup.error = "";
+
+  if (field === "name" && !state.teamSetup.slugEdited) {
+    state.teamSetup.form.slug = slugifyTeamName(value);
+  }
+
+  if (field === "slug") {
+    state.teamSetup.slugEdited = true;
+  }
 
   scheduleRender();
 });
