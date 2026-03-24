@@ -1,4 +1,5 @@
 use std::{
+  collections::HashSet,
   env,
   fs,
   io::{Read, Write},
@@ -114,6 +115,17 @@ struct GithubOrganization {
   html_url: Option<String>,
 }
 
+#[derive(Deserialize)]
+struct GithubOrganizationMembership {
+  state: String,
+  organization: GithubOrganizationMembershipOrg,
+}
+
+#[derive(Deserialize)]
+struct GithubOrganizationMembershipOrg {
+  login: String,
+}
+
 #[tauri::command]
 fn ping() -> &'static str {
   "pong"
@@ -206,6 +218,7 @@ fn list_user_organizations(access_token: String) -> Result<Vec<GithubOrganizatio
     .get("https://api.github.com/user/orgs")
     .bearer_auth(&access_token)
     .header("Accept", "application/vnd.github+json")
+    .query(&[("per_page", "100")])
     .send()
     .map_err(|error| format!("Could not list your GitHub organizations: {error}"))?
     .error_for_status()
@@ -213,9 +226,36 @@ fn list_user_organizations(access_token: String) -> Result<Vec<GithubOrganizatio
     .json::<Vec<GithubOrganization>>()
     .map_err(|error| format!("Could not parse your GitHub organizations: {error}"))?;
 
-  organizations
+  let memberships = client
+    .get("https://api.github.com/user/memberships/orgs")
+    .bearer_auth(&access_token)
+    .header("Accept", "application/vnd.github+json")
+    .query(&[("state", "active"), ("per_page", "100")])
+    .send()
+    .map_err(|error| format!("Could not list your GitHub organization memberships: {error}"))?
+    .error_for_status()
+    .map_err(|error| format!("GitHub rejected the organization membership request: {error}"))?
+    .json::<Vec<GithubOrganizationMembership>>()
+    .map_err(|error| format!("Could not parse your GitHub organization memberships: {error}"))?;
+
+  let mut seen = HashSet::new();
+  let mut org_logins = Vec::new();
+
+  for organization in organizations {
+    if seen.insert(organization.login.clone()) {
+      org_logins.push(organization.login);
+    }
+  }
+
+  for membership in memberships {
+    if membership.state == "active" && seen.insert(membership.organization.login.clone()) {
+      org_logins.push(membership.organization.login);
+    }
+  }
+
+  org_logins
     .into_iter()
-    .map(|organization| get_organization_details(&client, &access_token, &organization.login))
+    .map(|organization_login| get_organization_details(&client, &access_token, &organization_login))
     .collect()
 }
 
