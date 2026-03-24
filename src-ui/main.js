@@ -13,6 +13,35 @@ const GITHUB_FREE_ORG_SETUP_URL =
   "https://github.com/account/organizations/new?plan=free&ref_cta=Create%2520a%2520free%2520organization&ref_loc=cards&ref_page=%2Forganizations%2Fplan";
 const GNOSIS_TMS_ORG_DESCRIPTION = "[Gnosis TMS Translation Team]";
 const DEBUG_ORG_DISCOVERY = true;
+const GITHUB_APP_TEAMS_STORAGE_KEY = "gnosis-tms-github-app-teams";
+
+function loadStoredGithubAppTeams() {
+  try {
+    const storedValue = window.localStorage?.getItem(GITHUB_APP_TEAMS_STORAGE_KEY);
+    if (!storedValue) {
+      return [];
+    }
+
+    const teams = JSON.parse(storedValue);
+    return Array.isArray(teams) ? teams : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveStoredGithubAppTeams(teams) {
+  try {
+    window.localStorage?.setItem(GITHUB_APP_TEAMS_STORAGE_KEY, JSON.stringify(teams));
+  } catch {}
+}
+
+function mergeTeams(primaryTeams, secondaryTeams = []) {
+  const mergedTeams = new Map();
+  [...secondaryTeams, ...primaryTeams].forEach((team) => {
+    mergedTeams.set(team.id, team);
+  });
+  return [...mergedTeams.values()];
+}
 
 const state = {
   screen: "start",
@@ -21,7 +50,7 @@ const state = {
   selectedProjectId: "p2",
   selectedGlossaryId: "g1",
   selectedChapterId: "c2",
-  teams: [],
+  teams: loadStoredGithubAppTeams(),
   auth: {
     status: "idle",
     message: "",
@@ -35,6 +64,8 @@ const state = {
     isOpen: false,
     step: "guide",
     error: "",
+    githubAppInstallationId: null,
+    githubAppInstallation: null,
     orgsBefore: [],
     orgsAfter: [],
     allOrgsAfter: [],
@@ -82,6 +113,8 @@ function resetTeamSetup() {
     isOpen: false,
     step: "guide",
     error: "",
+    githubAppInstallationId: null,
+    githubAppInstallation: null,
     orgsBefore: [],
     orgsAfter: [],
     allOrgsAfter: [],
@@ -95,6 +128,8 @@ async function openTeamSetup() {
     isOpen: true,
     step: "guide",
     error: "",
+    githubAppInstallationId: null,
+    githubAppInstallation: null,
     orgsBefore: [],
     orgsAfter: [],
     allOrgsAfter: [],
@@ -124,72 +159,51 @@ async function openTeamSetup() {
 }
 
 async function beginTeamOrgSetup() {
-  if (!state.auth.session?.accessToken) {
-    state.teamSetup.error = "Sign in with GitHub before creating a team.";
-    render();
-    return;
-  }
-
-  try {
-    if (!state.teamSetup.orgsBefore.length && !state.teamSetup.diagnostics) {
-      state.teamSetup.orgsBefore = await invoke("list_user_organizations", {
-        accessToken: state.auth.session.accessToken,
-      });
-      state.teamSetup.diagnostics = await invoke("inspect_github_organization_access", {
-        accessToken: state.auth.session.accessToken,
-      });
-    }
-    state.teamSetup.allOrgsAfter = [];
-  } catch (error) {
-    state.teamSetup.error = error?.message ?? String(error);
-    render();
-    return;
-  }
-
   state.teamSetup.step = "confirm";
   state.teamSetup.error = "";
   render();
   openExternalUrl(GITHUB_FREE_ORG_SETUP_URL);
 }
 
+async function beginGithubAppInstall() {
+  try {
+    const { installUrl } = await invoke("begin_github_app_install");
+    state.teamSetup.step = "waitingForAppInstall";
+    state.teamSetup.error = "";
+    render();
+    openExternalUrl(installUrl);
+  } catch (error) {
+    state.teamSetup.error = error?.message ?? String(error);
+    render();
+  }
+}
+
 async function finishTeamSetup() {
-  if (!state.auth.session?.accessToken) {
-    state.teamSetup.error = "Sign in with GitHub before finishing organization setup.";
+  if (!state.teamSetup.githubAppInstallationId) {
+    state.teamSetup.error = "Install the Gnosis TMS GitHub App before finishing setup.";
     render();
     return;
   }
 
   try {
-    const organizationsAfter = await invoke("list_user_organizations", {
-      accessToken: state.auth.session.accessToken,
+    const installation = await invoke("inspect_github_app_installation", {
+      installationId: state.teamSetup.githubAppInstallationId,
     });
-    state.teamSetup.diagnostics = await invoke("inspect_github_organization_access", {
-      accessToken: state.auth.session.accessToken,
-    });
-    state.teamSetup.allOrgsAfter = organizationsAfter;
-    const orgsBefore = new Set(state.teamSetup.orgsBefore.map((organization) => organization.login));
-    const orgsAfter = organizationsAfter.filter(
-      (organization) => !orgsBefore.has(organization.login),
-    );
-
-    if (orgsAfter.length === 0) {
-      state.teamSetup.error =
-        "Error: no new organizations found on your GitHub account. If you recently updated Gnosis TMS, log out and sign back in with GitHub, then try again. Also make sure you created the organization under the same GitHub account you used to sign in here.";
-      render();
-      return;
-    }
-
-    if (orgsAfter.length === 1) {
-      await markOrganizationsAsGnosis([orgsAfter[0].login]);
-      resetTeamSetup();
-      await loadUserTeams();
-      return;
-    }
-
-    state.teamSetup.step = "select";
-    state.teamSetup.error = "";
-    state.teamSetup.orgsAfter = orgsAfter;
-    state.teamSetup.selectedOrganizations = new Set();
+    state.teamSetup.githubAppInstallation = installation;
+    const githubAppTeams = loadStoredGithubAppTeams();
+    const nextTeam = {
+      id: `github-app-installation-${installation.installationId}`,
+      name: installation.accountLogin,
+      githubOrg: installation.accountLogin,
+      ownerLogin: state.auth.session?.login ?? installation.accountLogin,
+      statusLabel: "GitHub App Connected",
+      installationId: installation.installationId,
+    };
+    const nextTeams = mergeTeams([nextTeam], githubAppTeams);
+    saveStoredGithubAppTeams(nextTeams);
+    state.teams = mergeTeams(state.teams, nextTeams);
+    state.selectedTeamId = nextTeam.id;
+    resetTeamSetup();
     render();
   } catch (error) {
     state.teamSetup.error = error?.message ?? String(error);
@@ -226,8 +240,9 @@ async function continueSelectedOrganizations() {
 }
 
 async function loadUserTeams() {
+  const githubAppTeams = loadStoredGithubAppTeams();
   if (!state.auth.session?.accessToken) {
-    state.teams = [];
+    state.teams = githubAppTeams;
     state.orgDiscovery = { status: "idle", error: "" };
     render();
     return;
@@ -240,7 +255,7 @@ async function loadUserTeams() {
     const organizations = await invoke("list_user_organizations", {
       accessToken: state.auth.session.accessToken,
     });
-    state.teams = organizations
+    const oauthTeams = organizations
       .filter(
         (organization) =>
           organization.description === GNOSIS_TMS_ORG_DESCRIPTION,
@@ -252,11 +267,12 @@ async function loadUserTeams() {
         ownerLogin: state.auth.session.login,
         statusLabel: "Connected",
       }));
+    state.teams = mergeTeams(oauthTeams, githubAppTeams);
     state.selectedTeamId = state.teams[0]?.id ?? null;
     state.orgDiscovery = { status: "ready", error: "" };
     render();
   } catch (error) {
-    state.teams = [];
+    state.teams = githubAppTeams;
     state.orgDiscovery = {
       status: "error",
       error: error?.message ?? String(error),
@@ -299,6 +315,27 @@ async function registerGithubAuthListener() {
 
   await listen("github-oauth-callback", (event) => {
     applyGithubAuthResult(event.payload);
+  });
+}
+
+async function registerGithubAppInstallListener() {
+  if (!listen) {
+    return;
+  }
+
+  await listen("github-app-install-callback", (event) => {
+    const payload = event.payload;
+    if (payload?.status === "success" && payload.installationId) {
+      state.teamSetup.githubAppInstallationId = payload.installationId;
+      state.teamSetup.step = "finishInstall";
+      state.teamSetup.error = "";
+      render();
+      return;
+    }
+
+    state.teamSetup.error =
+      payload?.message ?? "GitHub App installation did not complete.";
+    render();
   });
 }
 
@@ -384,6 +421,11 @@ document.addEventListener("click", (event) => {
     return;
   }
 
+  if (action === "begin-github-app-install") {
+    void beginGithubAppInstall();
+    return;
+  }
+
   if (action === "begin-team-org-setup") {
     void beginTeamOrgSetup();
     return;
@@ -461,6 +503,7 @@ document.addEventListener("change", (event) => {
 });
 
 void registerGithubAuthListener();
+void registerGithubAppInstallListener();
 window.__GNOSIS_DEBUG__ = {
   DEBUG_ORG_DISCOVERY,
 };

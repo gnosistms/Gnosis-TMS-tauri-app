@@ -54,10 +54,24 @@ function renderSetupModal(state) {
     </div>
   `;
 
-  const confirm = `
+  const installApp = `
     <div class="setup-summary">
       <p>Finish creating the GitHub organization in your browser, then return here.</p>
-      <p>When you click the button below, Gnosis TMS will check your GitHub account for new organizations and finish setting up the right one.</p>
+      <p>The next step installs the Gnosis TMS GitHub App on that organization so the app can manage it directly.</p>
+    </div>
+  `;
+
+  const waitingForAppInstall = `
+    <div class="setup-summary">
+      <p>GitHub should now be showing the Gnosis TMS GitHub App installation page.</p>
+      <p>Install the app on the organization you just created. GitHub will send you back here automatically when the installation completes.</p>
+    </div>
+  `;
+
+  const finishInstall = `
+    <div class="setup-summary">
+      <p>GitHub App installation received.</p>
+      <p>Click the button below to finish connecting that organization inside Gnosis TMS.</p>
     </div>
   `;
 
@@ -127,22 +141,53 @@ function renderSetupModal(state) {
     `
     : "";
 
+  const isInstallStep = setup.step === "confirm";
+  const isWaitingForInstallStep = setup.step === "waitingForAppInstall";
+  const isFinishInstallStep = setup.step === "finishInstall";
   const isSelectionStep = setup.step === "select";
   const actionButton = isGuideStep
     ? primaryButton("Open GitHub Organization Setup", "begin-team-org-setup")
+    : isInstallStep
+      ? primaryButton("Install Gnosis TMS GitHub App", "begin-github-app-install")
+      : isWaitingForInstallStep
+        ? secondaryButton("Waiting for GitHub...", "noop")
+        : isFinishInstallStep
+          ? primaryButton("Finish setting up your organization", "finish-team-setup")
     : isSelectionStep
       ? primaryButton("Continue", "continue-selected-organizations")
       : primaryButton("Finish setting up your organization", "finish-team-setup");
 
-  const body = isGuideStep ? guide : isSelectionStep ? select : confirm;
+  const body = isGuideStep
+    ? guide
+    : isInstallStep
+      ? installApp
+      : isWaitingForInstallStep
+        ? waitingForAppInstall
+        : isFinishInstallStep
+          ? finishInstall
+          : isSelectionStep
+            ? select
+            : finishInstall;
   const heading = isGuideStep
     ? "Create A New Team"
+    : isInstallStep
+      ? "Install The GitHub App"
+      : isWaitingForInstallStep
+        ? "Waiting For Installation"
+        : isFinishInstallStep
+          ? "Return To Gnosis TMS"
     : isSelectionStep
       ? "Select Organizations"
       : "Return To Gnosis TMS";
-  const eyebrow = isGuideStep ? "STEP 1 OF 2" : "STEP 2 OF 2";
+  const eyebrow = isGuideStep ? "STEP 1 OF 3" : isSelectionStep ? "STEP 3 OF 3" : "STEP 2 OF 3";
   const supporting = isGuideStep
     ? 'To create a new team, you need to set up an "Organization" on GitHub. Click below to go to the setup page. Then follow these instructions:'
+    : isInstallStep
+      ? "Now install the Gnosis TMS GitHub App on the organization you just created."
+      : isWaitingForInstallStep
+        ? "Complete the installation in GitHub. We will use the installation callback to identify the organization."
+        : isFinishInstallStep
+          ? "GitHub organization creation and GitHub App installation both happen in the browser. Once installation is complete, finish setup here."
     : isSelectionStep
       ? "Gnosis TMS found multiple new organizations on your GitHub account and needs your help identifying the right ones."
       : "GitHub organization creation happens in the browser. Once you have finished there, return here and continue.";

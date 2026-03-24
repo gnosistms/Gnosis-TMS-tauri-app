@@ -7,9 +7,11 @@ use std::{
   path::PathBuf,
   process::Command,
   sync::Mutex,
+  time::{SystemTime, UNIX_EPOCH},
 };
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
 use rand::{distributions::Alphanumeric, Rng};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -17,18 +19,25 @@ use tauri::{window::Color, Emitter, Manager, State};
 use url::Url;
 
 const GITHUB_CALLBACK_EVENT: &str = "github-oauth-callback";
+const GITHUB_APP_CALLBACK_EVENT: &str = "github-app-install-callback";
 const GITHUB_CALLBACK_ADDRESS: &str = "127.0.0.1:45873";
 const GITHUB_CALLBACK_PATH: &str = "/github/callback";
+const GITHUB_APP_SETUP_PATH: &str = "/github/app/setup";
 const GNOSIS_TMS_ORG_DESCRIPTION: &str = "[Gnosis TMS Translation Team]";
 const MAIN_WINDOW_BACKGROUND: Color = Color(247, 236, 213, 255);
 
 struct AuthState {
-  pending: Mutex<Option<PendingOauth>>,
+  pending_oauth: Mutex<Option<PendingOauth>>,
+  pending_github_app_install: Mutex<Option<PendingGithubAppInstall>>,
 }
 
 struct PendingOauth {
   csrf_state: String,
   pkce_verifier: String,
+}
+
+struct PendingGithubAppInstall {
+  csrf_state: String,
 }
 
 #[derive(Serialize)]
@@ -52,6 +61,14 @@ struct AuthEventPayload {
   status: &'static str,
   message: String,
   session: Option<GithubSession>,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct GithubAppInstallEventPayload {
+  status: &'static str,
+  message: String,
+  installation_id: Option<i64>,
 }
 
 #[derive(Serialize)]
@@ -135,6 +152,47 @@ struct GithubOrgDiagnostics {
   membership_org_logins: Vec<String>,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BeginGithubAppInstallResponse {
+  install_url: String,
+  setup_url: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct GithubAppInstallationInfo {
+  installation_id: i64,
+  account_login: String,
+  account_type: String,
+  account_avatar_url: Option<String>,
+  account_html_url: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GithubAppInstallationResponse {
+  id: i64,
+  account: GithubAppInstallationAccount,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GithubAppInstallationAccount {
+  login: String,
+  #[serde(rename = "type")]
+  account_type: String,
+  avatar_url: Option<String>,
+  html_url: Option<String>,
+}
+
+#[derive(Serialize)]
+struct GithubAppJwtClaims {
+  iat: usize,
+  exp: usize,
+  iss: String,
+}
+
 #[tauri::command]
 fn ping() -> &'static str {
   "pong"
@@ -162,7 +220,7 @@ fn begin_github_oauth(state: State<'_, AuthState>) -> Result<BeginOauthResponse,
   .map_err(|error| error.to_string())?;
 
   let mut pending = state
-    .pending
+    .pending_oauth
     .lock()
     .map_err(|_| "Could not prepare GitHub sign-in.".to_string())?;
   *pending = Some(PendingOauth {
@@ -172,6 +230,28 @@ fn begin_github_oauth(state: State<'_, AuthState>) -> Result<BeginOauthResponse,
 
   Ok(BeginOauthResponse {
     auth_url: auth_url.into(),
+  })
+}
+
+#[tauri::command]
+fn begin_github_app_install(
+  state: State<'_, AuthState>,
+) -> Result<BeginGithubAppInstallResponse, String> {
+  let app_slug = github_app_slug()?;
+  let csrf_state = random_token(32);
+  let install_url = format!(
+    "https://github.com/apps/{app_slug}/installations/new?state={csrf_state}"
+  );
+
+  let mut pending = state
+    .pending_github_app_install
+    .lock()
+    .map_err(|_| "Could not prepare the GitHub App installation flow.".to_string())?;
+  *pending = Some(PendingGithubAppInstall { csrf_state });
+
+  Ok(BeginGithubAppInstallResponse {
+    install_url,
+    setup_url: github_app_setup_url(),
   })
 }
 
@@ -316,6 +396,34 @@ fn inspect_github_organization_access(access_token: String) -> Result<GithubOrgD
 }
 
 #[tauri::command]
+fn inspect_github_app_installation(
+  installation_id: i64,
+) -> Result<GithubAppInstallationInfo, String> {
+  let app_jwt = github_app_jwt()?;
+  let client = github_client()?;
+  let installation = client
+    .get(format!(
+      "https://api.github.com/app/installations/{installation_id}"
+    ))
+    .header("Accept", "application/vnd.github+json")
+    .bearer_auth(app_jwt)
+    .send()
+    .map_err(|error| format!("Could not inspect the GitHub App installation: {error}"))?
+    .error_for_status()
+    .map_err(|error| format!("GitHub rejected the GitHub App installation request: {error}"))?
+    .json::<GithubAppInstallationResponse>()
+    .map_err(|error| format!("Could not parse the GitHub App installation: {error}"))?;
+
+  Ok(GithubAppInstallationInfo {
+    installation_id: installation.id,
+    account_login: installation.account.login,
+    account_type: installation.account.account_type,
+    account_avatar_url: installation.account.avatar_url,
+    account_html_url: installation.account.html_url,
+  })
+}
+
+#[tauri::command]
 fn mark_gnosis_tms_organization(
   access_token: String,
   org_login: String,
@@ -359,6 +467,35 @@ fn github_client_secret() -> Result<String, String> {
     .filter(|value| !value.trim().is_empty())
     .ok_or_else(|| {
       "Missing GitHub OAuth client secret. Set GITHUB_CLIENT_SECRET before starting Gnosis TMS."
+        .to_string()
+    })
+}
+
+fn github_app_id() -> Result<String, String> {
+  env::var("GITHUB_APP_ID")
+    .ok()
+    .filter(|value| !value.trim().is_empty())
+    .ok_or_else(|| {
+      "Missing GitHub App ID. Set GITHUB_APP_ID before starting Gnosis TMS.".to_string()
+    })
+}
+
+fn github_app_slug() -> Result<String, String> {
+  env::var("GITHUB_APP_SLUG")
+    .ok()
+    .filter(|value| !value.trim().is_empty())
+    .ok_or_else(|| {
+      "Missing GitHub App slug. Set GITHUB_APP_SLUG before starting Gnosis TMS.".to_string()
+    })
+}
+
+fn github_app_private_key() -> Result<String, String> {
+  env::var("GITHUB_APP_PRIVATE_KEY")
+    .ok()
+    .filter(|value| !value.trim().is_empty())
+    .map(|value| value.replace("\\n", "\n"))
+    .ok_or_else(|| {
+      "Missing GitHub App private key. Set GITHUB_APP_PRIVATE_KEY before starting Gnosis TMS."
         .to_string()
     })
 }
@@ -450,6 +587,33 @@ fn github_redirect_uri() -> String {
   format!("http://{GITHUB_CALLBACK_ADDRESS}{GITHUB_CALLBACK_PATH}")
 }
 
+fn github_app_setup_url() -> String {
+  format!("http://{GITHUB_CALLBACK_ADDRESS}{GITHUB_APP_SETUP_PATH}")
+}
+
+fn github_app_jwt() -> Result<String, String> {
+  let app_id = github_app_id()?;
+  let private_key = github_app_private_key()?;
+  let now = SystemTime::now()
+    .duration_since(UNIX_EPOCH)
+    .map_err(|error| format!("Could not determine the current time: {error}"))?
+    .as_secs() as usize;
+  let claims = GithubAppJwtClaims {
+    iat: now.saturating_sub(60),
+    exp: now + 540,
+    iss: app_id,
+  };
+  let mut header = Header::new(Algorithm::RS256);
+  header.typ = Some("JWT".into());
+  encode(
+    &header,
+    &claims,
+    &EncodingKey::from_rsa_pem(private_key.as_bytes())
+      .map_err(|error| format!("Could not read the GitHub App private key: {error}"))?,
+  )
+  .map_err(|error| format!("Could not create the GitHub App JWT: {error}"))
+}
+
 fn random_token(length: usize) -> String {
   rand::thread_rng()
     .sample_iter(&Alphanumeric)
@@ -465,6 +629,13 @@ fn pkce_challenge(verifier: &str) -> String {
 
 fn emit_auth_event(app: &tauri::AppHandle, payload: AuthEventPayload) {
   let _ = app.emit(GITHUB_CALLBACK_EVENT, payload);
+}
+
+fn emit_github_app_install_event(
+  app: &tauri::AppHandle,
+  payload: GithubAppInstallEventPayload,
+) {
+  let _ = app.emit(GITHUB_APP_CALLBACK_EVENT, payload);
 }
 
 fn focus_main_window(app: &tauri::AppHandle) {
@@ -521,6 +692,11 @@ fn handle_callback_request(
     }
   };
 
+  if url.path() == GITHUB_APP_SETUP_PATH {
+    handle_github_app_setup_request(app, auth_state, stream, &url);
+    return;
+  }
+
   if url.path() != GITHUB_CALLBACK_PATH {
     write_html_response(
       stream,
@@ -540,7 +716,7 @@ fn handle_callback_request(
     .find(|(key, _)| key == "state")
     .map(|(_, value)| value.into_owned());
 
-  let pending = match auth_state.pending.lock() {
+  let pending = match auth_state.pending_oauth.lock() {
     Ok(mut pending) => pending.take(),
     Err(_) => None,
   };
@@ -640,6 +816,102 @@ fn handle_callback_request(
   }
 }
 
+fn handle_github_app_setup_request(
+  app: &tauri::AppHandle,
+  auth_state: &AuthState,
+  stream: TcpStream,
+  url: &Url,
+) {
+  let installation_id = url
+    .query_pairs()
+    .find(|(key, _)| key == "installation_id")
+    .and_then(|(_, value)| value.parse::<i64>().ok());
+  let returned_state = url
+    .query_pairs()
+    .find(|(key, _)| key == "state")
+    .map(|(_, value)| value.into_owned());
+
+  let pending = match auth_state.pending_github_app_install.lock() {
+    Ok(mut pending) => pending.take(),
+    Err(_) => None,
+  };
+
+  let Some(pending) = pending else {
+    emit_github_app_install_event(
+      app,
+      GithubAppInstallEventPayload {
+        status: "error",
+        message: "This GitHub App installation request is no longer active. Please try again."
+          .into(),
+        installation_id: None,
+      },
+    );
+    write_html_response(
+      stream,
+      "HTTP/1.1 400 Bad Request",
+      "Installation expired",
+      "This GitHub App installation request is no longer active. Please return to Gnosis TMS and try again.",
+    );
+    focus_main_window(app);
+    return;
+  };
+
+  if returned_state.as_deref() != Some(pending.csrf_state.as_str()) {
+    emit_github_app_install_event(
+      app,
+      GithubAppInstallEventPayload {
+        status: "error",
+        message: "GitHub App installation was rejected because the callback state did not match."
+          .into(),
+        installation_id: None,
+      },
+    );
+    write_html_response(
+      stream,
+      "HTTP/1.1 400 Bad Request",
+      "Installation failed",
+      "The GitHub App installation callback state did not match. Please return to Gnosis TMS and try again.",
+    );
+    focus_main_window(app);
+    return;
+  }
+
+  let Some(installation_id) = installation_id else {
+    emit_github_app_install_event(
+      app,
+      GithubAppInstallEventPayload {
+        status: "error",
+        message: "GitHub did not return an installation ID for the GitHub App.".into(),
+        installation_id: None,
+      },
+    );
+    write_html_response(
+      stream,
+      "HTTP/1.1 400 Bad Request",
+      "Installation failed",
+      "GitHub did not return an installation ID. Please return to Gnosis TMS and try again.",
+    );
+    focus_main_window(app);
+    return;
+  };
+
+  emit_github_app_install_event(
+    app,
+    GithubAppInstallEventPayload {
+      status: "success",
+      message: "GitHub App installation received. Return to Gnosis TMS to finish setup.".into(),
+      installation_id: Some(installation_id),
+    },
+  );
+  write_html_response(
+    stream,
+    "HTTP/1.1 200 OK",
+    "GitHub App installation complete",
+    "You can return to Gnosis TMS now. Finish setup in the app to connect this organization.",
+  );
+  focus_main_window(app);
+}
+
 fn exchange_github_code(code: &str, pkce_verifier: &str) -> Result<GithubSession, String> {
   let client_id = github_client_id()?;
   let client_secret = github_client_secret()?;
@@ -733,13 +1005,16 @@ fn spawn_callback_server(app: tauri::AppHandle) {
 pub fn run() {
   tauri::Builder::default()
     .manage(AuthState {
-      pending: Mutex::new(None),
+      pending_oauth: Mutex::new(None),
+      pending_github_app_install: Mutex::new(None),
     })
     .plugin(tauri_plugin_opener::init())
     .invoke_handler(tauri::generate_handler![
       ping,
       begin_github_oauth,
       create_team_setup_draft,
+      begin_github_app_install,
+      inspect_github_app_installation,
       list_user_organizations,
       mark_gnosis_tms_organization,
       inspect_github_organization_access
