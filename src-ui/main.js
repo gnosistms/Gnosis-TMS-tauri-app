@@ -36,15 +36,13 @@ const state = {
   },
   teamSetup: {
     isOpen: false,
-    step: "details",
+    step: "guide",
     error: "",
     form: {
       name: "",
       slug: "",
       contactEmail: "",
-      confirmedSlug: "",
     },
-    slugEdited: false,
   },
 };
 
@@ -109,26 +107,16 @@ function scheduleRender() {
   });
 }
 
-function slugifyTeamName(value) {
-  return value
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-}
-
 function resetTeamSetup() {
   state.teamSetup = {
     isOpen: false,
-    step: "details",
+    step: "guide",
     error: "",
     form: {
       name: "",
       slug: "",
       contactEmail: "",
-      confirmedSlug: "",
     },
-    slugEdited: false,
   };
 }
 
@@ -136,15 +124,13 @@ function openTeamSetup() {
   const creatorLogin = state.auth.session?.login ?? "owner";
   state.teamSetup = {
     isOpen: true,
-    step: "details",
+    step: "guide",
     error: "",
     form: {
       name: "",
       slug: "",
       contactEmail: "",
-      confirmedSlug: "",
     },
-    slugEdited: false,
     ownerLogin: creatorLogin,
   };
   render();
@@ -193,53 +179,40 @@ async function persistTeamSetupDraft() {
 }
 
 async function beginTeamOrgSetup() {
+  state.teamSetup.step = "confirm";
+  state.teamSetup.error = "";
+  render();
+  openExternalUrl("https://github.com/organizations/new");
+}
+
+async function finishTeamSetup() {
   if (!validateTeamSetupDetails()) {
     return;
   }
 
   try {
     await persistTeamSetupDraft();
-    state.teamSetup.step = "confirm";
-    state.teamSetup.form.confirmedSlug = state.teamSetup.form.slug;
-    state.teamSetup.error = "";
+    const { name, slug, contactEmail } = state.teamSetup.form;
+    const ownerLogin = state.auth.session?.login ?? "owner";
+    const nextTeam = {
+      id: `team-${Date.now()}`,
+      name: name.trim(),
+      githubOrg: slug.trim(),
+      ownerLogin,
+      memberCount: 1,
+      repoCount: 1,
+      statusLabel: "Draft Saved",
+      contactEmail: contactEmail.trim(),
+    };
+
+    state.teams = [nextTeam, ...state.teams];
+    state.selectedTeamId = nextTeam.id;
+    resetTeamSetup();
     render();
-    openExternalUrl("https://github.com/organizations/new");
   } catch (error) {
     state.teamSetup.error = error?.message ?? String(error);
     render();
   }
-}
-
-function finishTeamSetup() {
-  const { name, slug, contactEmail, confirmedSlug } = state.teamSetup.form;
-  if (!confirmedSlug.trim()) {
-    state.teamSetup.error = "Confirm the GitHub organization slug you created before finishing setup.";
-    render();
-    return;
-  }
-
-  if (confirmedSlug.trim() !== slug.trim()) {
-    state.teamSetup.error = "The confirmed organization slug must match the slug from step 1.";
-    render();
-    return;
-  }
-
-  const ownerLogin = state.auth.session?.login ?? "owner";
-  const nextTeam = {
-    id: `team-${Date.now()}`,
-    name: name.trim(),
-    githubOrg: slug.trim(),
-    ownerLogin,
-    memberCount: 1,
-    repoCount: 1,
-    statusLabel: "Draft Saved",
-    contactEmail: contactEmail.trim(),
-  };
-
-  state.teams = [nextTeam, ...state.teams];
-  state.selectedTeamId = nextTeam.id;
-  resetTeamSetup();
-  render();
 }
 
 function setAuthState(nextAuth) {
@@ -353,7 +326,7 @@ document.addEventListener("click", (event) => {
   }
 
   if (action === "finish-team-setup") {
-    finishTeamSetup();
+    void finishTeamSetup();
     return;
   }
 
@@ -417,14 +390,6 @@ document.addEventListener("input", (event) => {
   const value = event.target.value;
   state.teamSetup.form[field] = value;
   state.teamSetup.error = "";
-
-  if (field === "name" && !state.teamSetup.slugEdited) {
-    state.teamSetup.form.slug = slugifyTeamName(value);
-  }
-
-  if (field === "slug") {
-    state.teamSetup.slugEdited = true;
-  }
 
   scheduleRender();
 });

@@ -6,36 +6,35 @@ function renderSetupModal(state) {
     return "";
   }
 
-  const creator = state.auth.session?.login ?? "current-user";
-  const isDraftStep = setup.step === "details";
-  const details = `
+  const isGuideStep = setup.step === "guide";
+  const guide = `
+    <div class="setup-guide">
+      <p>Gnosis TMS will open GitHub in your default browser so you can create the organization there.</p>
+      <p>When you get to GitHub:</p>
+      <ol class="setup-guide__list">
+        <li>Choose <strong>Free</strong>.</li>
+        <li>Set the organization to <strong>A business or institution</strong>.</li>
+        <li>Create the organization with the name and slug you want your team to use.</li>
+        <li>Return to Gnosis TMS after GitHub finishes creating the organization.</li>
+      </ol>
+    </div>
+  `;
+
+  const confirm = `
     <label class="field">
       <span class="field__label">Team Name</span>
-      <input class="field__input" type="text" value="${escapeHtml(setup.form.name)}" data-team-field="name" placeholder="Enter team name" />
+      <input class="field__input" type="text" value="${escapeHtml(setup.form.name)}" data-team-field="name" placeholder="Name this team in Gnosis TMS" />
     </label>
     <label class="field">
       <span class="field__label">GitHub Organization Slug</span>
-      <input class="field__input" type="text" value="${escapeHtml(setup.form.slug)}" data-team-field="slug" placeholder="This will be generated automatically." />
+      <input class="field__input" type="text" value="${escapeHtml(setup.form.slug)}" data-team-field="slug" placeholder="the-org-you-created-on-github" />
     </label>
     <label class="field">
       <span class="field__label">Contact Email</span>
       <input class="field__input" type="text" inputmode="email" autocomplete="email" value="${escapeHtml(setup.form.contactEmail)}" data-team-field="contactEmail" placeholder="teamadminaddress@example.com" />
     </label>
-  `;
-
-  const verify = `
-    <div class="setup-summary">
-      <p><strong>Team:</strong> ${escapeHtml(setup.form.name)}</p>
-      <p><strong>GitHub org:</strong> ${escapeHtml(setup.form.slug)}</p>
-      <p><strong>Owner:</strong> @${escapeHtml(creator)}</p>
-      <p><strong>Contact email:</strong> ${escapeHtml(setup.form.contactEmail)}</p>
-    </div>
-    <label class="field">
-      <span class="field__label">GitHub Organization Slug To Confirm</span>
-      <input class="field__input" type="text" value="${escapeHtml(setup.form.confirmedSlug)}" data-team-field="confirmedSlug" placeholder="${escapeHtml(setup.form.slug)}" />
-    </label>
     <p class="modal__supporting">
-      After creating the organization in GitHub, come back here and confirm the slug so Gnosis TMS can finish setup and prepare the team metadata flow.
+      Enter the organization details you created in GitHub. Gnosis TMS will save them into this repo and create a local git commit for the setup draft.
     </p>
   `;
 
@@ -43,16 +42,16 @@ function renderSetupModal(state) {
     ? `<p class="modal__error">${escapeHtml(setup.error)}</p>`
     : "";
 
-  const actionButton = isDraftStep
+  const actionButton = isGuideStep
     ? primaryButton("Open GitHub Organization Setup", "begin-team-org-setup")
-    : primaryButton("Finish Team Setup", "finish-team-setup");
+    : primaryButton("Save Team Setup", "finish-team-setup");
 
-  const body = isDraftStep ? details : verify;
-  const heading = isDraftStep ? "Create A New Team" : "Finish GitHub Organization Setup";
-  const eyebrow = isDraftStep ? "STEP 1 OF 2" : "STEP 2 OF 2";
-  const supporting = isDraftStep
-    ? "A Gnosis TMS team is backed by its own GitHub organization. We will open GitHub in your browser, then you will return here to finalize the team."
-    : "GitHub organization creation happens in the browser. Once you have created it, finish setup here so the app can treat it as a Gnosis TMS team.";
+  const body = isGuideStep ? guide : confirm;
+  const heading = isGuideStep ? "Create A New Team" : "Finish Team Setup";
+  const eyebrow = isGuideStep ? "STEP 1 OF 2" : "STEP 2 OF 2";
+  const supporting = isGuideStep
+    ? "Gnosis TMS teams are backed by GitHub organizations. The app will guide you to GitHub first, then save the finished team setup after you come back."
+    : "Now that the GitHub organization exists, enter the details here so Gnosis TMS can track the team locally and in git.";
 
   return `
     <div class="modal-backdrop">
