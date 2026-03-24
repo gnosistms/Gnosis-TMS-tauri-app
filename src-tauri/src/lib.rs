@@ -3,6 +3,7 @@ mod callbacks;
 mod constants;
 mod drafts;
 mod github;
+mod insecure_github_app_config;
 mod state;
 mod window;
 

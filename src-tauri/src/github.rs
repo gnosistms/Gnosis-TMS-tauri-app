@@ -10,6 +10,9 @@ use tauri::State;
 
 use crate::{
   constants::{GITHUB_APP_SETUP_PATH, GITHUB_CALLBACK_ADDRESS, GNOSIS_TMS_ORG_DESCRIPTION},
+  insecure_github_app_config::{
+    INSECURE_GITHUB_APP_ID, INSECURE_GITHUB_APP_PRIVATE_KEY, INSECURE_GITHUB_APP_SLUG,
+  },
   state::{AuthState, PendingGithubAppInstall},
 };
 
@@ -323,32 +326,28 @@ pub(crate) fn github_app_jwt() -> Result<String, String> {
 }
 
 fn github_app_id() -> Result<String, String> {
-  env::var("GITHUB_APP_ID")
-    .ok()
-    .filter(|value| !value.trim().is_empty())
-    .ok_or_else(|| {
-      "Missing GitHub App ID. Set GITHUB_APP_ID before starting Gnosis TMS.".to_string()
-    })
+  env_or_insecure_fallback(
+    "GITHUB_APP_ID",
+    INSECURE_GITHUB_APP_ID,
+    "Missing GitHub App ID. Set GITHUB_APP_ID or add a temporary value in src-tauri/src/insecure_github_app_config.rs before starting Gnosis TMS.",
+  )
 }
 
 fn github_app_slug() -> Result<String, String> {
-  env::var("GITHUB_APP_SLUG")
-    .ok()
-    .filter(|value| !value.trim().is_empty())
-    .ok_or_else(|| {
-      "Missing GitHub App slug. Set GITHUB_APP_SLUG before starting Gnosis TMS.".to_string()
-    })
+  env_or_insecure_fallback(
+    "GITHUB_APP_SLUG",
+    INSECURE_GITHUB_APP_SLUG,
+    "Missing GitHub App slug. Set GITHUB_APP_SLUG or add a temporary value in src-tauri/src/insecure_github_app_config.rs before starting Gnosis TMS.",
+  )
 }
 
 fn github_app_private_key() -> Result<String, String> {
-  env::var("GITHUB_APP_PRIVATE_KEY")
-    .ok()
-    .filter(|value| !value.trim().is_empty())
-    .map(|value| value.replace("\\n", "\n"))
-    .ok_or_else(|| {
-      "Missing GitHub App private key. Set GITHUB_APP_PRIVATE_KEY before starting Gnosis TMS."
-        .to_string()
-    })
+  env_or_insecure_fallback(
+    "GITHUB_APP_PRIVATE_KEY",
+    INSECURE_GITHUB_APP_PRIVATE_KEY,
+    "Missing GitHub App private key. Set GITHUB_APP_PRIVATE_KEY or add a temporary value in src-tauri/src/insecure_github_app_config.rs before starting Gnosis TMS.",
+  )
+  .map(|value| value.replace("\\n", "\n"))
 }
 
 fn parse_scope_header(header_value: Option<&reqwest::header::HeaderValue>) -> Vec<String> {
@@ -373,4 +372,23 @@ fn random_token(length: usize) -> String {
     .take(length)
     .map(char::from)
     .collect()
+}
+
+fn env_or_insecure_fallback(
+  env_name: &str,
+  insecure_fallback: &str,
+  missing_message: &str,
+) -> Result<String, String> {
+  env::var(env_name)
+    .ok()
+    .filter(|value| !value.trim().is_empty())
+    .or_else(|| {
+      let trimmed = insecure_fallback.trim();
+      if trimmed.is_empty() {
+        None
+      } else {
+        Some(trimmed.to_string())
+      }
+    })
+    .ok_or_else(|| missing_message.to_string())
 }
