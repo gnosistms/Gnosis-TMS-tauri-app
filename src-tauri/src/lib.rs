@@ -12,7 +12,7 @@ use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use rand::{distributions::Alphanumeric, Rng};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use tauri::{Emitter, Manager, State};
+use tauri::{Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder};
 use url::Url;
 
 const GITHUB_CALLBACK_EVENT: &str = "github-oauth-callback";
@@ -102,6 +102,14 @@ struct TeamSetupDraftFile {
   status: &'static str,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GithubOrgAutofillInput {
+  name: String,
+  slug: String,
+  contact_email: String,
+}
+
 #[tauri::command]
 fn ping() -> &'static str {
   "pong"
@@ -187,6 +195,27 @@ fn create_team_setup_draft(input: TeamSetupDraftInput) -> Result<TeamSetupDraftR
   })
 }
 
+#[tauri::command]
+fn open_github_org_setup_window(
+  app: tauri::AppHandle,
+  input: GithubOrgAutofillInput,
+) -> Result<(), String> {
+  let label = format!("github-org-setup-{}", random_token(8).to_lowercase());
+  let url = Url::parse("https://github.com/organizations/new")
+    .map_err(|error| format!("Could not prepare the GitHub setup URL: {error}"))?;
+  let script = github_org_setup_script(&input)
+    .map_err(|error| format!("Could not prepare the GitHub autofill script: {error}"))?;
+
+  WebviewWindowBuilder::new(&app, label, WebviewUrl::External(url))
+    .title("GitHub Organization Setup")
+    .inner_size(1260.0, 920.0)
+    .initialization_script(script)
+    .build()
+    .map_err(|error| format!("Could not open the GitHub setup window: {error}"))?;
+
+  Ok(())
+}
+
 fn github_client_id() -> Result<String, String> {
   env::var("GITHUB_CLIENT_ID")
     .ok()
@@ -250,6 +279,124 @@ fn git_output(repo_root: &PathBuf, args: &[&str]) -> Result<String, String> {
   }
 
   Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+fn github_org_setup_script(input: &GithubOrgAutofillInput) -> Result<String, serde_json::Error> {
+  let payload = serde_json::json!({
+    "name": input.name,
+    "slug": input.slug,
+    "contactEmail": input.contact_email,
+  });
+  let payload_json = serde_json::to_string(&payload)?;
+
+  Ok(format!(
+    r#"
+(() => {{
+  const draft = {payload_json};
+
+  const normalizedOrgName = (draft.slug || draft.name || "").trim();
+  const normalizedEmail = (draft.contactEmail || "").trim();
+
+  function setInputValue(input, value) {{
+    if (!input || input.value === value) {{
+      return;
+    }}
+
+    const descriptor = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value");
+    descriptor?.set?.call(input, value);
+    input.dispatchEvent(new Event("input", {{ bubbles: true }}));
+    input.dispatchEvent(new Event("change", {{ bubbles: true }}));
+  }}
+
+  function findInputByLabel(labelText) {{
+    const labels = Array.from(document.querySelectorAll("label"));
+    for (const label of labels) {{
+      const text = (label.textContent || "").replace(/\s+/g, " ").trim();
+      if (!text.startsWith(labelText)) {{
+        continue;
+      }}
+
+      const nested = label.querySelector("input, textarea");
+      if (nested) {{
+        return nested;
+      }}
+
+      const forId = label.getAttribute("for");
+      if (forId) {{
+        const target = document.getElementById(forId);
+        if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) {{
+          return target;
+        }}
+      }}
+    }}
+    return null;
+  }}
+
+  function clickByText(selector, text) {{
+    const nodes = Array.from(document.querySelectorAll(selector));
+    const target = nodes.find((node) => ((node.textContent || "").replace(/\s+/g, " ").trim() === text));
+    if (target instanceof HTMLElement) {{
+      target.click();
+      return true;
+    }}
+    return false;
+  }}
+
+  function chooseBusinessOrg() {{
+    const labels = Array.from(document.querySelectorAll("label"));
+    for (const label of labels) {{
+      const text = (label.textContent || "").replace(/\s+/g, " ").trim();
+      if (!text.startsWith("A business or institution")) {{
+        continue;
+      }}
+      const radio = label.querySelector('input[type="radio"]');
+      if (radio instanceof HTMLInputElement && !radio.checked) {{
+        radio.click();
+      }}
+      return true;
+    }}
+    return false;
+  }}
+
+  function runAutofill() {{
+    if (window.location.hostname !== "github.com") {{
+      return;
+    }}
+
+    const pageText = (document.body?.innerText || "").replace(/\s+/g, " ");
+
+    if (pageText.includes("Pick a plan for your organization")) {{
+      clickByText("button, a", "Create a free organization");
+      return;
+    }}
+
+    if (pageText.includes("Set up your organization")) {{
+      const orgNameInput = findInputByLabel("Organization name");
+      const emailInput = findInputByLabel("Contact email");
+
+      if (orgNameInput) {{
+        setInputValue(orgNameInput, normalizedOrgName);
+      }}
+
+      if (emailInput) {{
+        setInputValue(emailInput, normalizedEmail);
+      }}
+
+      chooseBusinessOrg();
+    }}
+  }}
+
+  new MutationObserver(() => runAutofill()).observe(document.documentElement, {{
+    childList: true,
+    subtree: true
+  }});
+
+  window.addEventListener("load", runAutofill);
+  setInterval(runAutofill, 1200);
+  runAutofill();
+}})();
+"#
+  ))
 }
 
 fn github_redirect_uri() -> String {
@@ -545,7 +692,8 @@ pub fn run() {
     .invoke_handler(tauri::generate_handler![
       ping,
       begin_github_oauth,
-      create_team_setup_draft
+      create_team_setup_draft,
+      open_github_org_setup_window
     ])
     .setup(|app| {
       let app_handle = app.handle().clone();
