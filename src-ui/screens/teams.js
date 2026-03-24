@@ -19,7 +19,7 @@ function renderSetupModal(state) {
     </label>
     <label class="field">
       <span class="field__label">Contact Email</span>
-      <input class="field__input" type="email" value="${escapeHtml(setup.form.contactEmail)}" data-team-field="contactEmail" placeholder="teamadminaddress@example.com" />
+      <input class="field__input" type="text" inputmode="email" autocomplete="email" value="${escapeHtml(setup.form.contactEmail)}" data-team-field="contactEmail" placeholder="teamadminaddress@example.com" />
     </label>
   `;
 
