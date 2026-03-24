@@ -41,7 +41,7 @@ function renderSetupModal(state) {
   const heading = isGuideStep ? "Create A New Team" : "Return To Gnosis TMS";
   const eyebrow = isGuideStep ? "STEP 1 OF 2" : "STEP 2 OF 2";
   const supporting = isGuideStep
-    ? "A Gnosis TMS team is backed by its own GitHub organization."
+    ? 'To create a new team, you need to set up an "Organization" on GitHub. Click below to go to the setup page. Then follow these instructions:'
     : "GitHub organization creation happens in the browser. Once you have finished there, return here and continue.";
 
   return `
