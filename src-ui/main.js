@@ -10,7 +10,7 @@ import { renderGlossariesScreen } from "./screens/glossaries.js";
 import { renderGlossaryEditorScreen } from "./screens/glossary-editor.js";
 import { renderProjectsScreen } from "./screens/projects.js";
 import { renderStartScreen } from "./screens/start.js";
-import { renderTeamsScreen } from "./screens/teams.js";
+import { renderTeamsScreen } from "./screens/teams/index.js";
 import { renderTranslateScreen } from "./screens/translate.js";
 
 const screenRenderers = {
