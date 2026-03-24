@@ -1,0 +1,27 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Gnosis TMS",
+  "version": "0.1.0",
+  "identifier": "com.gnosis.tms",
+  "build": {
+    "beforeDevCommand": "python3 -m http.server 1431 --bind 127.0.0.1 -d src-ui",
+    "devUrl": "http://127.0.0.1:1431",
+    "frontendDist": "../src-ui"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "label": "main",
+        "title": "Gnosis TMS",
+        "width": 1400,
+        "height": 820,
+        "resizable": true,
+        "titleBarStyle": "Transparent"
+      }
+    ]
+  },
+  "bundle": {
+    "active": false
+  }
+}
