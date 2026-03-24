@@ -18,6 +18,7 @@ use url::Url;
 const GITHUB_CALLBACK_EVENT: &str = "github-oauth-callback";
 const GITHUB_CALLBACK_ADDRESS: &str = "127.0.0.1:45873";
 const GITHUB_CALLBACK_PATH: &str = "/github/callback";
+const GNOSIS_TMS_ORG_DESCRIPTION: &str = "[Gnosis TMS Translation Team]";
 
 struct AuthState {
   pending: Mutex<Option<PendingOauth>>,
@@ -102,6 +103,16 @@ struct TeamSetupDraftFile {
   status: &'static str,
 }
 
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct GithubOrganization {
+  login: String,
+  name: Option<String>,
+  description: Option<String>,
+  avatar_url: Option<String>,
+  html_url: Option<String>,
+}
+
 #[tauri::command]
 fn ping() -> &'static str {
   "pong"
@@ -120,7 +131,7 @@ fn begin_github_oauth(state: State<'_, AuthState>) -> Result<BeginOauthResponse,
     &[
       ("client_id", client_id.as_str()),
       ("redirect_uri", redirect_uri.as_str()),
-      ("scope", "read:user user:email"),
+      ("scope", "read:user user:email read:org admin:org"),
       ("state", csrf_state.as_str()),
       ("code_challenge", code_challenge.as_str()),
       ("code_challenge_method", "S256"),
@@ -187,6 +198,54 @@ fn create_team_setup_draft(input: TeamSetupDraftInput) -> Result<TeamSetupDraftR
   })
 }
 
+#[tauri::command]
+fn list_user_organizations(access_token: String) -> Result<Vec<GithubOrganization>, String> {
+  let client = github_client()?;
+  let organizations = client
+    .get("https://api.github.com/user/orgs")
+    .bearer_auth(&access_token)
+    .header("Accept", "application/vnd.github+json")
+    .send()
+    .map_err(|error| format!("Could not list your GitHub organizations: {error}"))?
+    .error_for_status()
+    .map_err(|error| format!("GitHub rejected the organization list request: {error}"))?
+    .json::<Vec<GithubOrganization>>()
+    .map_err(|error| format!("Could not parse your GitHub organizations: {error}"))?;
+
+  organizations
+    .into_iter()
+    .map(|organization| get_organization_details(&client, &access_token, &organization.login))
+    .collect()
+}
+
+#[tauri::command]
+fn mark_gnosis_tms_organization(
+  access_token: String,
+  org_login: String,
+  description: String,
+) -> Result<GithubOrganization, String> {
+  let client = github_client()?;
+  let normalized_description = if description.trim().is_empty() {
+    GNOSIS_TMS_ORG_DESCRIPTION.to_string()
+  } else {
+    description
+  };
+
+  client
+    .patch(format!("https://api.github.com/orgs/{org_login}"))
+    .bearer_auth(&access_token)
+    .header("Accept", "application/vnd.github+json")
+    .json(&serde_json::json!({
+      "description": normalized_description,
+    }))
+    .send()
+    .map_err(|error| format!("Could not update the GitHub organization description: {error}"))?
+    .error_for_status()
+    .map_err(|error| format!("GitHub rejected the organization update: {error}"))?;
+
+  get_organization_details(&client, &access_token, &org_login)
+}
+
 fn github_client_id() -> Result<String, String> {
   env::var("GITHUB_CLIENT_ID")
     .ok()
@@ -205,6 +264,13 @@ fn github_client_secret() -> Result<String, String> {
       "Missing GitHub OAuth client secret. Set GITHUB_CLIENT_SECRET before starting Gnosis TMS."
         .to_string()
     })
+}
+
+fn github_client() -> Result<reqwest::blocking::Client, String> {
+  reqwest::blocking::Client::builder()
+    .user_agent("GnosisTMS")
+    .build()
+    .map_err(|error| error.to_string())
 }
 
 fn repository_root() -> Result<PathBuf, String> {
@@ -250,6 +316,23 @@ fn git_output(repo_root: &PathBuf, args: &[&str]) -> Result<String, String> {
   }
 
   Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+fn get_organization_details(
+  client: &reqwest::blocking::Client,
+  access_token: &str,
+  org_login: &str,
+) -> Result<GithubOrganization, String> {
+  client
+    .get(format!("https://api.github.com/orgs/{org_login}"))
+    .bearer_auth(access_token)
+    .header("Accept", "application/vnd.github+json")
+    .send()
+    .map_err(|error| format!("Could not load details for GitHub organization @{org_login}: {error}"))?
+    .error_for_status()
+    .map_err(|error| format!("GitHub rejected the organization lookup for @{org_login}: {error}"))?
+    .json::<GithubOrganization>()
+    .map_err(|error| format!("Could not parse the details for GitHub organization @{org_login}: {error}"))
 }
 
 fn github_redirect_uri() -> String {
@@ -545,7 +628,9 @@ pub fn run() {
     .invoke_handler(tauri::generate_handler![
       ping,
       begin_github_oauth,
-      create_team_setup_draft
+      create_team_setup_draft,
+      list_user_organizations,
+      mark_gnosis_tms_organization
     ])
     .setup(|app| {
       let app_handle = app.handle().clone();

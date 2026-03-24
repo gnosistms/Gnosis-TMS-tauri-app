@@ -198,6 +198,10 @@ a {
   width: min(860px, 100%);
 }
 
+.card--empty {
+  width: min(980px, 100%);
+}
+
 .card--hero .card__body {
   display: grid;
   gap: 18px;
@@ -755,6 +759,31 @@ a {
   padding-left: 1.3rem;
   display: grid;
   gap: 8px;
+}
+
+.org-choice-list {
+  display: grid;
+  gap: 12px;
+}
+
+.org-choice {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 16px 18px;
+  border-radius: 18px;
+  border: 1px solid rgba(164, 112, 41, 0.14);
+  background: rgba(255, 251, 246, 0.92);
+}
+
+.org-choice input {
+  margin-top: 4px;
+}
+
+.org-choice__meta {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
 }
 
 @media (max-width: 1180px) {

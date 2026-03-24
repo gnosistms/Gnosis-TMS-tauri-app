@@ -4,7 +4,6 @@ import { renderProjectsScreen } from "./screens/projects.js";
 import { renderStartScreen } from "./screens/start.js";
 import { renderTeamsScreen } from "./screens/teams.js";
 import { renderTranslateScreen } from "./screens/translate.js";
-import { teams as seedTeams } from "./lib/data.js";
 
 const app = document.querySelector("#app");
 const tauri = window.__TAURI__ ?? {};
@@ -12,32 +11,32 @@ const invoke = tauri.core?.invoke?.bind(tauri.core);
 const listen = tauri.event?.listen?.bind(tauri.event);
 const GITHUB_FREE_ORG_SETUP_URL =
   "https://github.com/account/organizations/new?plan=free&ref_cta=Create%2520a%2520free%2520organization&ref_loc=cards&ref_page=%2Forganizations%2Fplan";
+const GNOSIS_TMS_ORG_DESCRIPTION = "[Gnosis TMS Translation Team]";
 
 const state = {
   screen: "start",
   expandedProjects: new Set(["p2"]),
-  selectedTeamId: "team-1",
+  selectedTeamId: null,
   selectedProjectId: "p2",
   selectedGlossaryId: "g1",
   selectedChapterId: "c2",
-  teams: seedTeams.map((team) => ({
-    id: team.id,
-    name: team.name,
-    githubOrg: team.githubOrg ?? team.name.toLowerCase().replaceAll(/\s+/g, "-"),
-    ownerLogin: team.ownerLogin ?? "hans",
-    memberCount: team.memberCount ?? 1,
-    repoCount: team.repoCount ?? 0,
-    statusLabel: team.statusLabel ?? "Connected",
-  })),
+  teams: [],
   auth: {
     status: "idle",
     message: "",
     session: null,
   },
+  orgDiscovery: {
+    status: "idle",
+    error: "",
+  },
   teamSetup: {
     isOpen: false,
     step: "guide",
     error: "",
+    orgsBefore: [],
+    newOrganizations: [],
+    selectedOrganizations: new Set(),
   },
 };
 
@@ -80,6 +79,9 @@ function resetTeamSetup() {
     isOpen: false,
     step: "guide",
     error: "",
+    orgsBefore: [],
+    newOrganizations: [],
+    selectedOrganizations: new Set(),
   };
 }
 
@@ -93,6 +95,22 @@ function openTeamSetup() {
 }
 
 async function beginTeamOrgSetup() {
+  if (!state.auth.session?.accessToken) {
+    state.teamSetup.error = "Sign in with GitHub before creating a team.";
+    render();
+    return;
+  }
+
+  try {
+    state.teamSetup.orgsBefore = await invoke("list_user_organizations", {
+      accessToken: state.auth.session.accessToken,
+    });
+  } catch (error) {
+    state.teamSetup.error = error?.message ?? String(error);
+    render();
+    return;
+  }
+
   state.teamSetup.step = "confirm";
   state.teamSetup.error = "";
   render();
@@ -100,8 +118,112 @@ async function beginTeamOrgSetup() {
 }
 
 async function finishTeamSetup() {
-  resetTeamSetup();
+  if (!state.auth.session?.accessToken) {
+    state.teamSetup.error = "Sign in with GitHub before finishing organization setup.";
+    render();
+    return;
+  }
+
+  try {
+    const organizationsAfter = await invoke("list_user_organizations", {
+      accessToken: state.auth.session.accessToken,
+    });
+    const orgsBefore = new Set(state.teamSetup.orgsBefore.map((organization) => organization.login));
+    const newOrganizations = organizationsAfter.filter(
+      (organization) => !orgsBefore.has(organization.login),
+    );
+
+    if (newOrganizations.length === 0) {
+      state.teamSetup.error =
+        "Error: no new organizations found on your GitHub account.";
+      render();
+      return;
+    }
+
+    if (newOrganizations.length === 1) {
+      await markOrganizationsAsGnosis([newOrganizations[0].login]);
+      resetTeamSetup();
+      await loadUserTeams();
+      return;
+    }
+
+    state.teamSetup.step = "select";
+    state.teamSetup.error = "";
+    state.teamSetup.newOrganizations = newOrganizations;
+    state.teamSetup.selectedOrganizations = new Set();
+    render();
+  } catch (error) {
+    state.teamSetup.error = error?.message ?? String(error);
+    render();
+  }
+}
+
+async function markOrganizationsAsGnosis(organizationLogins) {
+  for (const organizationLogin of organizationLogins) {
+    await invoke("mark_gnosis_tms_organization", {
+      accessToken: state.auth.session.accessToken,
+      orgLogin: organizationLogin,
+      description: GNOSIS_TMS_ORG_DESCRIPTION,
+    });
+  }
+}
+
+async function continueSelectedOrganizations() {
+  const selectedOrganizations = [...state.teamSetup.selectedOrganizations];
+  if (selectedOrganizations.length === 0) {
+    state.teamSetup.error = "Select at least one organization to continue.";
+    render();
+    return;
+  }
+
+  try {
+    await markOrganizationsAsGnosis(selectedOrganizations);
+    resetTeamSetup();
+    await loadUserTeams();
+  } catch (error) {
+    state.teamSetup.error = error?.message ?? String(error);
+    render();
+  }
+}
+
+async function loadUserTeams() {
+  if (!state.auth.session?.accessToken) {
+    state.teams = [];
+    state.orgDiscovery = { status: "idle", error: "" };
+    render();
+    return;
+  }
+
+  state.orgDiscovery = { status: "loading", error: "" };
   render();
+
+  try {
+    const organizations = await invoke("list_user_organizations", {
+      accessToken: state.auth.session.accessToken,
+    });
+    state.teams = organizations
+      .filter(
+        (organization) =>
+          organization.description === GNOSIS_TMS_ORG_DESCRIPTION,
+      )
+      .map((organization) => ({
+        id: organization.login,
+        name: organization.name || organization.login,
+        githubOrg: organization.login,
+        ownerLogin: state.auth.session.login,
+        statusLabel: "Connected",
+      }));
+    state.selectedTeamId = state.teams[0]?.id ?? null;
+    state.orgDiscovery = { status: "ready", error: "" };
+    render();
+  } catch (error) {
+    state.teams = [];
+    state.orgDiscovery = {
+      status: "error",
+      error: error?.message ?? String(error),
+    };
+    render();
+  }
 }
 
 function setAuthState(nextAuth) {
@@ -120,7 +242,7 @@ function applyGithubAuthResult(payload) {
       session: payload.session ?? null,
     };
     state.screen = "teams";
-    render();
+    void loadUserTeams();
     return;
   }
 
@@ -182,6 +304,9 @@ document.addEventListener("click", (event) => {
         message: "",
         session: null,
       };
+      state.teams = [];
+      state.orgDiscovery = { status: "idle", error: "" };
+      resetTeamSetup();
     }
     state.screen = navTarget;
     render();
@@ -216,6 +341,11 @@ document.addEventListener("click", (event) => {
 
   if (action === "finish-team-setup") {
     void finishTeamSetup();
+    return;
+  }
+
+  if (action === "continue-selected-organizations") {
+    void continueSelectedOrganizations();
     return;
   }
 
@@ -259,6 +389,24 @@ document.addEventListener("click", (event) => {
     state.selectedChapterId = action.split(":")[1];
     state.screen = "translate";
     render();
+  }
+});
+
+document.addEventListener("change", (event) => {
+  const checkbox = event.target.closest("[data-org-selection]");
+  if (!(checkbox instanceof HTMLInputElement)) {
+    return;
+  }
+
+  const organizationLogin = checkbox.dataset.orgSelection;
+  if (!organizationLogin) {
+    return;
+  }
+
+  if (checkbox.checked) {
+    state.teamSetup.selectedOrganizations.add(organizationLogin);
+  } else {
+    state.teamSetup.selectedOrganizations.delete(organizationLogin);
   }
 });
 

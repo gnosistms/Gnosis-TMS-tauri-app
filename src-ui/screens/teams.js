@@ -23,24 +23,59 @@ function renderSetupModal(state) {
   const confirm = `
     <div class="setup-summary">
       <p>Finish creating the GitHub organization in your browser, then return here.</p>
-      <p>Gnosis TMS will pull the organization details from GitHub in a later step instead of asking you to re-enter them locally.</p>
+      <p>When you click the button below, Gnosis TMS will check your GitHub account for new organizations and finish setting up the right one.</p>
     </div>
+  `;
+
+  const selectionItems = setup.newOrganizations
+    .map(
+      (organization) => `
+        <label class="org-choice">
+          <input
+            type="checkbox"
+            data-org-selection="${escapeHtml(organization.login)}"
+            ${setup.selectedOrganizations.has(organization.login) ? "checked" : ""}
+          />
+          <span>
+            <strong>${escapeHtml(organization.name || organization.login)}</strong>
+            <span class="org-choice__meta">@${escapeHtml(organization.login)}</span>
+          </span>
+        </label>
+      `,
+    )
+    .join("");
+
+  const select = `
+    <div class="setup-summary">
+      <p>More than one new organization was found on your GitHub account.</p>
+      <p>Select the organization or organizations that should be treated as Gnosis TMS translation teams, then continue.</p>
+    </div>
+    <div class="org-choice-list">${selectionItems}</div>
   `;
 
   const errorMarkup = setup.error
     ? `<p class="modal__error">${escapeHtml(setup.error)}</p>`
     : "";
 
+  const isSelectionStep = setup.step === "select";
   const actionButton = isGuideStep
     ? primaryButton("Open GitHub Organization Setup", "begin-team-org-setup")
-    : primaryButton("Done", "finish-team-setup");
+    : isSelectionStep
+      ? primaryButton("Continue", "continue-selected-organizations")
+      : primaryButton("Finish setting up your organization", "finish-team-setup");
 
-  const body = isGuideStep ? guide : confirm;
-  const heading = isGuideStep ? "Create A New Team" : "Return To Gnosis TMS";
+  const body = isGuideStep ? guide : isSelectionStep ? select : confirm;
+  const heading = isGuideStep
+    ? "Create A New Team"
+    : isSelectionStep
+      ? "Select Organizations"
+      : "Return To Gnosis TMS";
   const eyebrow = isGuideStep ? "STEP 1 OF 2" : "STEP 2 OF 2";
   const supporting = isGuideStep
     ? 'To create a new team, you need to set up an "Organization" on GitHub. Click below to go to the setup page. Then follow these instructions:'
-    : "GitHub organization creation happens in the browser. Once you have finished there, return here and continue.";
+    : isSelectionStep
+      ? "Gnosis TMS found multiple new organizations on your GitHub account and needs your help identifying the right ones."
+      : "GitHub organization creation happens in the browser. Once you have finished there, return here and continue.";
 
   return `
     <div class="modal-backdrop">
@@ -62,6 +97,16 @@ function renderSetupModal(state) {
 }
 
 export function renderTeamsScreen(state) {
+  const emptyState = `
+    <article class="card card--hero card--empty">
+      <div class="card__body">
+        <p class="card__eyebrow">NO TEAMS FOUND</p>
+        <h2 class="card__title card__title--small">No teams found.</h2>
+        <p class="card__subtitle">Click "+ New Team" to create a team.</p>
+      </div>
+    </article>
+  `;
+
   const cards = state.teams
     .map(
       (team) => `
@@ -69,7 +114,7 @@ export function renderTeamsScreen(state) {
           <div class="card__body list-row">
             <div class="list-row__content">
               <h2 class="list-row__title">${escapeHtml(team.name)}</h2>
-              <p class="list-row__meta">@${escapeHtml(team.githubOrg)} · owner @${escapeHtml(team.ownerLogin)} · ${team.memberCount} member${team.memberCount === 1 ? "" : "s"} · ${team.repoCount} repo${team.repoCount === 1 ? "" : "s"}</p>
+              <p class="list-row__meta">@${escapeHtml(team.githubOrg)} · owner @${escapeHtml(team.ownerLogin)}</p>
             </div>
             <div class="list-row__actions">
               <span class="pill">${escapeHtml(team.statusLabel)}</span>
@@ -87,6 +132,6 @@ export function renderTeamsScreen(state) {
     title: "Translation Teams",
     navButtons: [navButton("Logout", "start")],
     tools: primaryButton("+ New Team", "open-new-team"),
-    body: `<section class="stack">${cards}</section>${renderSetupModal(state)}`,
+    body: `<section class="stack">${cards || emptyState}</section>${renderSetupModal(state)}`,
   });
 }
