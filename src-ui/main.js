@@ -192,20 +192,6 @@ async function persistTeamSetupDraft() {
   state.teamSetup.draft = draft;
 }
 
-async function openGithubOrgSetupWindow() {
-  if (!invoke) {
-    throw new Error("Opening the GitHub setup window requires the desktop app runtime.");
-  }
-
-  await invoke("open_github_org_setup_window", {
-    input: {
-      name: state.teamSetup.form.name.trim(),
-      slug: state.teamSetup.form.slug.trim(),
-      contactEmail: state.teamSetup.form.contactEmail.trim(),
-    },
-  });
-}
-
 async function beginTeamOrgSetup() {
   if (!validateTeamSetupDetails()) {
     return;
@@ -217,7 +203,7 @@ async function beginTeamOrgSetup() {
     state.teamSetup.form.confirmedSlug = state.teamSetup.form.slug;
     state.teamSetup.error = "";
     render();
-    await openGithubOrgSetupWindow();
+    openExternalUrl("https://github.com/organizations/new");
   } catch (error) {
     state.teamSetup.error = error?.message ?? String(error);
     render();
