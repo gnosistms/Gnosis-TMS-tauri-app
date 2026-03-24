@@ -16,9 +16,6 @@ export function renderTeamsScreen(state) {
       secondaryButton("Reconnect GitHub", "reconnect-github"),
       primaryButton("+ New Team", "open-new-team"),
     ].join(""),
-    body: `<section class="stack">${renderTeamsList(state.teams)}</section>${renderSetupModal({
-      ...state,
-      debugOrgDiscovery: window.__GNOSIS_DEBUG__?.DEBUG_ORG_DISCOVERY === true,
-    })}`,
+    body: `<section class="stack">${renderTeamsList(state.teams)}</section>${renderSetupModal(state)}`,
   });
 }

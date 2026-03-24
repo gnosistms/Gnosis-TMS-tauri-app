@@ -1,5 +1,4 @@
 import { escapeHtml, primaryButton, secondaryButton } from "../../lib/ui.js";
-import { renderOrganizationDebugPanel } from "./debug-panel.js";
 
 function renderGuideStep() {
   return `
@@ -43,40 +42,11 @@ function renderFinishSummary() {
   `;
 }
 
-function renderSelectionStep(setup) {
-  const selectionItems = setup.orgsAfter
-    .map(
-      (organization) => `
-        <label class="org-choice">
-          <input
-            type="checkbox"
-            data-org-selection="${escapeHtml(organization.login)}"
-            ${setup.selectedOrganizations.has(organization.login) ? "checked" : ""}
-          />
-          <span>
-            <strong>${escapeHtml(organization.name || organization.login)}</strong>
-            <span class="org-choice__meta">@${escapeHtml(organization.login)}</span>
-          </span>
-        </label>
-      `,
-    )
-    .join("");
-
-  return `
-    <div class="setup-summary">
-      <p>More than one new organization was found on your GitHub account.</p>
-      <p>Select the organization or organizations that should be treated as Gnosis TMS translation teams, then continue.</p>
-    </div>
-    <div class="org-choice-list">${selectionItems}</div>
-  `;
-}
-
 function getStepConfig(setup) {
   const isGuideStep = setup.step === "guide";
   const isInstallStep = setup.step === "confirm";
   const isWaitingForInstallStep = setup.step === "waitingForAppInstall";
   const isFinishInstallStep = setup.step === "finishInstall";
-  const isSelectionStep = setup.step === "select";
 
   if (isGuideStep) {
     return {
@@ -110,19 +80,8 @@ function getStepConfig(setup) {
     };
   }
 
-  if (isSelectionStep) {
-    return {
-      eyebrow: "STEP 3 OF 3",
-      heading: "Select Organizations",
-      supporting:
-        "Gnosis TMS found multiple new organizations on your GitHub account and needs your help identifying the right ones.",
-      body: renderSelectionStep(setup),
-      actionButton: primaryButton("Continue", "continue-selected-organizations"),
-    };
-  }
-
   return {
-    eyebrow: "STEP 2 OF 3",
+    eyebrow: "STEP 3 OF 3",
     heading: "Return To Gnosis TMS",
     supporting:
       "GitHub organization creation and GitHub App installation both happen in the browser. Once installation is complete, finish setup here.",
@@ -141,9 +100,6 @@ export function renderSetupModal(state) {
   const errorMarkup = setup.error
     ? `<p class="modal__error">${escapeHtml(setup.error)}</p>`
     : "";
-  const debugPanel = state.debugOrgDiscovery
-    ? renderOrganizationDebugPanel(setup)
-    : "";
 
   return `
     <div class="modal-backdrop">
@@ -153,7 +109,6 @@ export function renderSetupModal(state) {
           <h2 class="modal__title">${heading}</h2>
           <p class="modal__supporting">${supporting}</p>
           <div class="modal__form">${body}</div>
-          ${debugPanel}
           ${errorMarkup}
           <div class="modal__actions">
             ${secondaryButton("Cancel", "cancel-team-setup")}

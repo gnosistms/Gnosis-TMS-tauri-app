@@ -1,8 +1,4 @@
-import {
-  DEBUG_ORG_DISCOVERY,
-  GITHUB_FREE_ORG_SETUP_URL,
-  GNOSIS_TMS_ORG_DESCRIPTION,
-} from "./constants.js";
+import { GITHUB_FREE_ORG_SETUP_URL, GNOSIS_TMS_ORG_DESCRIPTION } from "./constants.js";
 import { invoke, openExternalUrl } from "./runtime.js";
 import { resetTeamSetup, state } from "./state.js";
 import { loadStoredGithubAppTeams, mergeTeams, saveStoredGithubAppTeams } from "./team-storage.js";
@@ -17,20 +13,6 @@ export async function openTeamSetup(render) {
 
   if (!state.auth.session?.accessToken) {
     state.teamSetup.error = "Sign in with GitHub before creating a team.";
-    render();
-    return;
-  }
-
-  try {
-    state.teamSetup.orgsBefore = await invoke("list_user_organizations", {
-      accessToken: state.auth.session.accessToken,
-    });
-    state.teamSetup.diagnostics = await invoke("inspect_github_organization_access", {
-      accessToken: state.auth.session.accessToken,
-    });
-    render();
-  } catch (error) {
-    state.teamSetup.error = error?.message ?? String(error);
     render();
   }
 }
@@ -88,24 +70,6 @@ export async function finishTeamSetup(render, loadUserTeams) {
   }
 }
 
-export async function continueSelectedOrganizations(render, loadUserTeams) {
-  const selectedOrganizations = [...state.teamSetup.selectedOrganizations];
-  if (selectedOrganizations.length === 0) {
-    state.teamSetup.error = "Select at least one organization to continue.";
-    render();
-    return;
-  }
-
-  try {
-    await markOrganizationsAsGnosis(selectedOrganizations);
-    resetTeamSetup();
-    await loadUserTeams();
-  } catch (error) {
-    state.teamSetup.error = error?.message ?? String(error);
-    render();
-  }
-}
-
 export async function loadUserTeams(render) {
   const githubAppTeams = loadStoredGithubAppTeams();
   if (!state.auth.session?.accessToken) {
@@ -148,19 +112,6 @@ export async function loadUserTeams(render) {
   }
 }
 
-export function updateSelectedOrganizations(input) {
-  const organizationLogin = input.dataset.orgSelection;
-  if (!organizationLogin) {
-    return;
-  }
-
-  if (input.checked) {
-    state.teamSetup.selectedOrganizations.add(organizationLogin);
-  } else {
-    state.teamSetup.selectedOrganizations.delete(organizationLogin);
-  }
-}
-
 export function setGithubAppInstallation(payload, render) {
   if (payload?.status === "success" && payload.installationId) {
     state.teamSetup.githubAppInstallationId = payload.installationId;
@@ -175,32 +126,11 @@ export function setGithubAppInstallation(payload, render) {
   render();
 }
 
-export function exposeDebugFlag() {
-  window.__GNOSIS_DEBUG__ = {
-    DEBUG_ORG_DISCOVERY,
-  };
-}
-
 function resetOpenState() {
   return {
     step: "guide",
     error: "",
     githubAppInstallationId: null,
     githubAppInstallation: null,
-    orgsBefore: [],
-    orgsAfter: [],
-    allOrgsAfter: [],
-    diagnostics: null,
-    selectedOrganizations: new Set(),
   };
-}
-
-async function markOrganizationsAsGnosis(organizationLogins) {
-  for (const organizationLogin of organizationLogins) {
-    await invoke("mark_gnosis_tms_organization", {
-      accessToken: state.auth.session.accessToken,
-      orgLogin: organizationLogin,
-      description: GNOSIS_TMS_ORG_DESCRIPTION,
-    });
-  }
 }

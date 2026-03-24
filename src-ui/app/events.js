@@ -4,11 +4,9 @@ import { startGithubLogin } from "./auth-flow.js";
 import {
   beginGithubAppInstall,
   beginTeamOrgSetup,
-  continueSelectedOrganizations,
   finishTeamSetup,
   loadUserTeams,
   openTeamSetup,
-  updateSelectedOrganizations,
 } from "./team-flow.js";
 
 export function registerAppEvents(render) {
@@ -69,11 +67,6 @@ export function registerAppEvents(render) {
       return;
     }
 
-    if (action === "continue-selected-organizations") {
-      void continueSelectedOrganizations(render, loadUserTeams);
-      return;
-    }
-
     if (action === "open-github-signup") {
       openExternalUrl("https://github.com/signup");
       return;
@@ -117,12 +110,4 @@ export function registerAppEvents(render) {
     }
   });
 
-  document.addEventListener("change", (event) => {
-    const checkbox = event.target.closest("[data-org-selection]");
-    if (!(checkbox instanceof HTMLInputElement)) {
-      return;
-    }
-
-    updateSelectedOrganizations(checkbox);
-  });
 }

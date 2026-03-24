@@ -27,11 +27,6 @@ export function createTeamSetupState() {
     error: "",
     githubAppInstallationId: null,
     githubAppInstallation: null,
-    orgsBefore: [],
-    orgsAfter: [],
-    allOrgsAfter: [],
-    diagnostics: null,
-    selectedOrganizations: new Set(),
   };
 }
 

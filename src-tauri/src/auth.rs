@@ -10,6 +10,7 @@ use url::Url;
 use crate::{
   constants::{GITHUB_CALLBACK_ADDRESS, GITHUB_CALLBACK_EVENT, GITHUB_CALLBACK_PATH},
   github::github_client,
+  insecure_github_app_config::{INSECURE_GITHUB_CLIENT_ID, INSECURE_GITHUB_CLIENT_SECRET},
   state::{AuthState, PendingOauth},
 };
 
@@ -97,23 +98,19 @@ pub(crate) fn begin_github_oauth(
 }
 
 pub(crate) fn github_client_id() -> Result<String, String> {
-  env::var("GITHUB_CLIENT_ID")
-    .ok()
-    .filter(|value| !value.trim().is_empty())
-    .ok_or_else(|| {
-      "Missing GitHub OAuth client ID. Set GITHUB_CLIENT_ID before starting Gnosis TMS."
-        .to_string()
-    })
+  env_or_insecure_fallback(
+    "GITHUB_CLIENT_ID",
+    INSECURE_GITHUB_CLIENT_ID,
+    "Missing GitHub OAuth client ID. Set GITHUB_CLIENT_ID or add a temporary value in src-tauri/src/insecure_github_app_config.rs before starting Gnosis TMS.",
+  )
 }
 
 fn github_client_secret() -> Result<String, String> {
-  env::var("GITHUB_CLIENT_SECRET")
-    .ok()
-    .filter(|value| !value.trim().is_empty())
-    .ok_or_else(|| {
-      "Missing GitHub OAuth client secret. Set GITHUB_CLIENT_SECRET before starting Gnosis TMS."
-        .to_string()
-    })
+  env_or_insecure_fallback(
+    "GITHUB_CLIENT_SECRET",
+    INSECURE_GITHUB_CLIENT_SECRET,
+    "Missing GitHub OAuth client secret. Set GITHUB_CLIENT_SECRET or add a temporary value in src-tauri/src/insecure_github_app_config.rs before starting Gnosis TMS.",
+  )
 }
 
 pub(crate) fn github_redirect_uri() -> String {
@@ -189,4 +186,23 @@ fn random_token(length: usize) -> String {
 fn pkce_challenge(verifier: &str) -> String {
   let digest = Sha256::digest(verifier.as_bytes());
   URL_SAFE_NO_PAD.encode(digest)
+}
+
+fn env_or_insecure_fallback(
+  env_name: &str,
+  insecure_fallback: &str,
+  missing_message: &str,
+) -> Result<String, String> {
+  env::var(env_name)
+    .ok()
+    .filter(|value| !value.trim().is_empty())
+    .or_else(|| {
+      let trimmed = insecure_fallback.trim();
+      if trimmed.is_empty() {
+        None
+      } else {
+        Some(trimmed.to_string())
+      }
+    })
+    .ok_or_else(|| missing_message.to_string())
 }

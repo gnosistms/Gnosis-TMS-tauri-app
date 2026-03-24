@@ -16,9 +16,7 @@ use crate::{
   constants::MAIN_WINDOW_BACKGROUND,
   drafts::create_team_setup_draft,
   github::{
-    begin_github_app_install, inspect_github_app_installation,
-    inspect_github_organization_access, list_user_organizations,
-    mark_gnosis_tms_organization,
+    begin_github_app_install, inspect_github_app_installation, list_user_organizations,
   },
   state::AuthState,
 };
@@ -42,9 +40,7 @@ pub fn run() {
       create_team_setup_draft,
       begin_github_app_install,
       inspect_github_app_installation,
-      list_user_organizations,
-      mark_gnosis_tms_organization,
-      inspect_github_organization_access
+      list_user_organizations
     ])
     .setup(|app| {
       #[cfg(target_os = "macos")]
