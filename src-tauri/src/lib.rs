@@ -153,7 +153,7 @@ fn begin_github_oauth(state: State<'_, AuthState>) -> Result<BeginOauthResponse,
     &[
       ("client_id", client_id.as_str()),
       ("redirect_uri", redirect_uri.as_str()),
-      ("scope", "read:user user:email read:org admin:org"),
+      ("scope", "user user:email repo read:org write:org admin:org"),
       ("state", csrf_state.as_str()),
       ("code_challenge", code_challenge.as_str()),
       ("code_challenge_method", "S256"),
