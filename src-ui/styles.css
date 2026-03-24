@@ -666,6 +666,18 @@ a {
   line-height: 1.6;
 }
 
+.modal__supporting-intro {
+  display: block;
+  margin-bottom: 10px;
+}
+
+.modal__supporting-list {
+  margin: 0;
+  padding-left: 1.25rem;
+  display: grid;
+  gap: 6px;
+}
+
 .modal__form {
   display: grid;
   gap: 16px;

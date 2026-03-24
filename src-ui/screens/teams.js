@@ -51,7 +51,17 @@ function renderSetupModal(state) {
   const heading = isDraftStep ? "Create A New Team" : "Finish GitHub Organization Setup";
   const eyebrow = isDraftStep ? "STEP 1 OF 2" : "STEP 2 OF 2";
   const supporting = isDraftStep
-    ? "A Gnosis TMS team is backed by its own GitHub organization. We will open GitHub in your browser, then you will return here to finalize the team."
+    ? `
+      <span class="modal__supporting-intro">A Gnosis TMS team is backed by its own GitHub organization. When GitHub opens, enter:</span>
+      <ol class="modal__supporting-list">
+        <li>Organization name: <strong>${escapeHtml(setup.form.name || "your translation team name")}</strong></li>
+        <li>Contact email: <strong>${escapeHtml(setup.form.contactEmail || "your email")}</strong></li>
+        <li>This organization belongs to: <strong>My personal account</strong></li>
+        <li>Complete the verification</li>
+        <li>Do not choose any add-on</li>
+        <li>Accept the terms of service</li>
+      </ol>
+    `
     : "GitHub organization creation happens in the browser. Once you have created it, finish setup here so the app can treat it as a Gnosis TMS team.";
 
   return `
