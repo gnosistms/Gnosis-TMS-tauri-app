@@ -90,6 +90,9 @@ function openTeamSetup() {
     isOpen: true,
     step: "guide",
     error: "",
+    orgsBefore: [],
+    orgsAfter: [],
+    selectedOrganizations: new Set(),
   };
   render();
 }
