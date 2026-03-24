@@ -108,6 +108,54 @@ export async function loadTeamProjects(render, teamId = state.selectedTeamId) {
   }
 }
 
+export async function createProjectForSelectedTeam(render) {
+  const selectedTeam = state.teams.find((team) => team.id === state.selectedTeamId);
+
+  if (!selectedTeam?.installationId) {
+    state.projectDiscovery = {
+      status: "error",
+      error: "New projects currently require a GitHub App-connected team.",
+    };
+    render();
+    return;
+  }
+
+  const rawProjectName = window.prompt("Enter a project name");
+  if (rawProjectName == null) {
+    return;
+  }
+
+  const repoName = slugifyRepositoryName(rawProjectName);
+  if (!repoName) {
+    state.projectDiscovery = {
+      status: "error",
+      error: "Project names must contain at least one letter or number.",
+    };
+    render();
+    return;
+  }
+
+  state.projectDiscovery = { status: "loading", error: "" };
+  render();
+
+  try {
+    await invoke("create_gnosis_project_repo", {
+      input: {
+        installationId: selectedTeam.installationId,
+        orgLogin: selectedTeam.githubOrg,
+        repoName,
+      },
+    });
+    await loadTeamProjects(render, selectedTeam.id);
+  } catch (error) {
+    state.projectDiscovery = {
+      status: "error",
+      error: error?.message ?? String(error),
+    };
+    render();
+  }
+}
+
 export async function loadUserTeams(render) {
   const githubAppTeams = loadStoredGithubAppTeams();
   if (!state.auth.session?.accessToken) {
@@ -171,4 +219,13 @@ function resetOpenState() {
     githubAppInstallationId: null,
     githubAppInstallation: null,
   };
+}
+
+function slugifyRepositoryName(value) {
+  return String(value)
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 100);
 }

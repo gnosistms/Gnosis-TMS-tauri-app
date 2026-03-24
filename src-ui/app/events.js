@@ -4,6 +4,7 @@ import { startGithubLogin } from "./auth-flow.js";
 import {
   beginGithubAppInstall,
   beginTeamOrgSetup,
+  createProjectForSelectedTeam,
   finishTeamSetup,
   loadTeamProjects,
   loadUserTeams,
@@ -37,6 +38,11 @@ export function registerAppEvents(render) {
 
     if (action === "open-new-team") {
       void openTeamSetup(render);
+      return;
+    }
+
+    if (action === "open-new-project") {
+      void createProjectForSelectedTeam(render);
       return;
     }
 

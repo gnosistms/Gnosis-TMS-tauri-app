@@ -110,7 +110,7 @@ export function renderProjectsScreen(state) {
       navButton("Teams", "teams"),
       navButton("Glossaries", "glossaries"),
     ],
-    tools: `${createSearchField("Search")} ${primaryButton("+ New Project", "noop")}`,
+    tools: `${createSearchField("Search")} ${primaryButton("+ New Project", "open-new-project")}`,
     body,
   });
 }

@@ -120,6 +120,14 @@ pub(crate) struct GithubProjectRepo {
   pub(crate) description: Option<String>,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct CreateGithubProjectRepoInput {
+  installation_id: i64,
+  org_login: String,
+  repo_name: String,
+}
+
 #[tauri::command]
 pub(crate) fn begin_github_app_install(
   state: State<'_, AuthState>,
@@ -328,6 +336,90 @@ pub(crate) fn list_gnosis_projects_for_installation(
   }
 
   Ok(projects)
+}
+
+#[tauri::command]
+pub(crate) fn create_gnosis_project_repo(
+  input: CreateGithubProjectRepoInput,
+) -> Result<GithubProjectRepo, String> {
+  let installation_token = github_installation_access_token(input.installation_id)?;
+  let client = github_client()?;
+
+  client
+    .patch(format!(
+      "https://api.github.com/orgs/{}/properties/schema",
+      input.org_login
+    ))
+    .header("Accept", "application/vnd.github+json")
+    .header("X-GitHub-Api-Version", "2022-11-28")
+    .bearer_auth(&installation_token)
+    .json(&serde_json::json!({
+      "properties": [
+        {
+          "property_name": GNOSIS_TMS_REPO_TYPE_PROPERTY_NAME,
+          "value_type": "single_select",
+          "description": "Identifies the role of repositories created by Gnosis TMS.",
+          "allowed_values": [
+            GNOSIS_TMS_REPO_TYPE_PROJECT,
+            GNOSIS_TMS_REPO_TYPE_GLOSSARY
+          ],
+          "values_editable_by": "org_actors",
+          "required": false
+        }
+      ]
+    }))
+    .send()
+    .map_err(|error| format!("Could not prepare the Gnosis TMS repository property schema: {error}"))?
+    .error_for_status()
+    .map_err(|error| format!("GitHub rejected the repository property schema update: {error}"))?;
+
+  let repository = client
+    .post(format!("https://api.github.com/orgs/{}/repos", input.org_login))
+    .header("Accept", "application/vnd.github+json")
+    .header("X-GitHub-Api-Version", "2022-11-28")
+    .bearer_auth(&installation_token)
+    .json(&serde_json::json!({
+      "name": input.repo_name,
+      "private": true
+    }))
+    .send()
+    .map_err(|error| format!("Could not create the GitHub repository: {error}"))?
+    .error_for_status()
+    .map_err(|error| format!("GitHub rejected the repository creation request: {error}"))?
+    .json::<GithubRepository>()
+    .map_err(|error| format!("Could not parse the new GitHub repository: {error}"))?;
+
+  client
+    .patch(format!(
+      "https://api.github.com/repos/{}/{}/properties/values",
+      input.org_login, repository.name
+    ))
+    .header("Accept", "application/vnd.github+json")
+    .header("X-GitHub-Api-Version", "2022-11-28")
+    .bearer_auth(&installation_token)
+    .json(&serde_json::json!({
+      "properties": [
+        {
+          "property_name": GNOSIS_TMS_REPO_TYPE_PROPERTY_NAME,
+          "value": GNOSIS_TMS_REPO_TYPE_PROJECT
+        }
+      ]
+    }))
+    .send()
+    .map_err(|error| format!("Could not mark the repository as a Gnosis TMS project: {error}"))?
+    .error_for_status()
+    .map_err(|error| {
+      format!("GitHub rejected the Gnosis TMS project property update: {error}")
+    })?;
+
+  Ok(GithubProjectRepo {
+    id: repository.id,
+    name: repository.name,
+    full_name: repository.full_name,
+    html_url: repository.html_url,
+    private: repository.private,
+    description: repository.description,
+  })
 }
 
 pub(crate) fn github_client() -> Result<reqwest::blocking::Client, String> {
