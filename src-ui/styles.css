@@ -4,11 +4,13 @@
   --bg-top: #f5e7cc;
   --bg-bottom: #f2dfbf;
   --hero-glow: rgba(242, 192, 88, 0.72);
-  --panel: rgba(255, 249, 241, 0.92);
-  --panel-border: rgba(157, 96, 14, 0.18);
+  --card-bg: rgba(255, 249, 241, 0.92);
+  --card-border: rgba(157, 96, 14, 0.18);
+  --card-radius: 28px;
+  --card-padding: 32px;
   --text: #3a220d;
   --muted: #9d6a2d;
-  --shadow: 0 14px 18px rgba(126, 70, 10, 0.11);
+  --card-shadow: 0 14px 18px rgba(126, 70, 10, 0.11);
 }
 
 * {
@@ -39,16 +41,26 @@ body {
 }
 
 .card {
+  display: flex;
+  flex-direction: column;
   width: min(760px, 100%);
-  padding: 32px;
-  border: 1px solid var(--panel-border);
-  border-radius: 28px;
-  background: var(--panel);
-  box-shadow: var(--shadow);
+  border: 1px solid var(--card-border);
+  border-radius: var(--card-radius);
+  background: var(--card-bg);
+  box-shadow: var(--card-shadow);
 }
 
-.eyebrow {
-  margin: 0 0 12px;
+.card__body {
+  padding: var(--card-padding);
+}
+
+.card--hero .card__body {
+  display: grid;
+  gap: 16px;
+}
+
+.card__eyebrow {
+  margin: 0;
   color: var(--muted);
   font-size: 0.82rem;
   font-weight: 700;
@@ -56,14 +68,14 @@ body {
   text-transform: uppercase;
 }
 
-h1 {
+.card__title {
   margin: 0;
   font-size: clamp(2.4rem, 5vw, 4rem);
   line-height: 0.95;
 }
 
-.subtitle {
-  margin: 16px 0 0;
+.card__subtitle {
+  margin: 0;
   color: var(--muted);
   font-size: 1rem;
   line-height: 1.6;
