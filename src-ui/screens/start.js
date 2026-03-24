@@ -8,8 +8,8 @@ export function renderStartScreen() {
           <p class="card__eyebrow">INVERENCIAL PEACE!</p>
           <h1 class="card__title">Gnosis TMS</h1>
           <p class="card__subtitle">
-            Sign in with your GitHub account to use Gnosis TMS. If you don't have
-            an account, you will be directed to create a free one.
+            Sign in with your GitHub account to use Gnosis TMS. You will be
+            directed to create a new account if you don't have one yet.
           </p>
           <div class="hero-actions">
             ${primaryButton("Log in with GitHub", "login-with-github")}
