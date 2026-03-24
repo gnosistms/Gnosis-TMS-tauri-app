@@ -174,15 +174,40 @@ function validateTeamSetupDetails() {
   return true;
 }
 
-function beginTeamOrgSetup() {
+async function persistTeamSetupDraft() {
+  if (!invoke) {
+    throw new Error("Saving a team setup draft requires the desktop app runtime.");
+  }
+
+  const ownerLogin = state.auth.session?.login ?? "owner";
+  const draft = await invoke("create_team_setup_draft", {
+    input: {
+      name: state.teamSetup.form.name.trim(),
+      slug: state.teamSetup.form.slug.trim(),
+      contactEmail: state.teamSetup.form.contactEmail.trim(),
+      ownerLogin,
+    },
+  });
+
+  state.teamSetup.draft = draft;
+}
+
+async function beginTeamOrgSetup() {
   if (!validateTeamSetupDetails()) {
     return;
   }
 
-  state.teamSetup.step = "confirm";
-  state.teamSetup.form.confirmedSlug = state.teamSetup.form.slug;
-  render();
-  openExternalUrl("https://github.com/organizations/new");
+  try {
+    await persistTeamSetupDraft();
+    state.teamSetup.step = "confirm";
+    state.teamSetup.form.confirmedSlug = state.teamSetup.form.slug;
+    state.teamSetup.error = "";
+    render();
+    openExternalUrl("https://github.com/organizations/new");
+  } catch (error) {
+    state.teamSetup.error = error?.message ?? String(error);
+    render();
+  }
 }
 
 function finishTeamSetup() {
@@ -207,7 +232,7 @@ function finishTeamSetup() {
     ownerLogin,
     memberCount: 1,
     repoCount: 1,
-    statusLabel: "Setup In Progress",
+    statusLabel: "Draft Saved",
     contactEmail: contactEmail.trim(),
   };
 
@@ -323,7 +348,7 @@ document.addEventListener("click", (event) => {
   }
 
   if (action === "begin-team-org-setup") {
-    beginTeamOrgSetup();
+    void beginTeamOrgSetup();
     return;
   }
 
