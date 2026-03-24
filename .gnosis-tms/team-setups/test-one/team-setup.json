@@ -1,0 +1,9 @@
+{
+  "format": "gnosis-tms-team-setup",
+  "formatVersion": 1,
+  "teamName": "test one",
+  "githubOrgSlug": "test-one",
+  "contactEmail": "gnosistms@gmail.com",
+  "ownerLogin": "gnosistms",
+  "status": "draft"
+}
