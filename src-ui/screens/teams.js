@@ -11,15 +11,15 @@ function renderSetupModal(state) {
   const details = `
     <label class="field">
       <span class="field__label">Team Name</span>
-      <input class="field__input" type="text" value="${escapeHtml(setup.form.name)}" data-team-field="name" placeholder="Sacred Translation Circle" />
+      <input class="field__input" type="text" value="${escapeHtml(setup.form.name)}" data-team-field="name" placeholder="Enter team name" />
     </label>
     <label class="field">
       <span class="field__label">GitHub Organization Slug</span>
-      <input class="field__input" type="text" value="${escapeHtml(setup.form.slug)}" data-team-field="slug" placeholder="sacred-translation-circle" />
+      <input class="field__input" type="text" value="${escapeHtml(setup.form.slug)}" data-team-field="slug" placeholder="This will be generated automatically." />
     </label>
     <label class="field">
       <span class="field__label">Contact Email</span>
-      <input class="field__input" type="email" value="${escapeHtml(setup.form.contactEmail)}" data-team-field="contactEmail" placeholder="team@example.com" />
+      <input class="field__input" type="email" value="${escapeHtml(setup.form.contactEmail)}" data-team-field="contactEmail" placeholder="teamadminaddress@example.com" />
     </label>
   `;
 

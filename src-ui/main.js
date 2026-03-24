@@ -10,6 +10,7 @@ const app = document.querySelector("#app");
 const tauri = window.__TAURI__ ?? {};
 const invoke = tauri.core?.invoke?.bind(tauri.core);
 const listen = tauri.event?.listen?.bind(tauri.event);
+let pendingFocusRestore = null;
 
 const state = {
   screen: "start",
@@ -78,6 +79,21 @@ function render() {
   const renderScreen = screenRenderers[state.screen] ?? screenRenderers.start;
   app.innerHTML = renderScreen();
   document.title = titles[state.screen] ?? "Gnosis TMS";
+
+  if (pendingFocusRestore) {
+    const { field, selectionStart, selectionEnd } = pendingFocusRestore;
+    pendingFocusRestore = null;
+    const input = document.querySelector(`[data-team-field="${field}"]`);
+    if (input instanceof HTMLInputElement) {
+      input.focus();
+      if (
+        typeof selectionStart === "number" &&
+        typeof selectionEnd === "number"
+      ) {
+        input.setSelectionRange(selectionStart, selectionEnd);
+      }
+    }
+  }
 }
 
 function slugifyTeamName(value) {
@@ -350,6 +366,14 @@ document.addEventListener("input", (event) => {
   const field = event.target.closest("[data-team-field]")?.dataset.teamField;
   if (!field || !state.teamSetup.isOpen) {
     return;
+  }
+
+  if (event.target instanceof HTMLInputElement) {
+    pendingFocusRestore = {
+      field,
+      selectionStart: event.target.selectionStart,
+      selectionEnd: event.target.selectionEnd,
+    };
   }
 
   const value = event.target.value;
