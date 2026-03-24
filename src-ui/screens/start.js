@@ -8,18 +8,11 @@ export function renderStartScreen() {
           <p class="card__eyebrow">INVERENCIAL PEACE!</p>
           <h1 class="card__title">Gnosis TMS</h1>
           <p class="card__subtitle">
-            Sign in with your GitHub account to access your teams, shared projects,
-            and glossary workflows.
-          </p>
-          <p class="card__supporting">
-            Creating a GitHub account is free. We use GitHub to manage storage for
-            shared files and collaboration history.
+            Sign in with your GitHub account to use Gnosis TMS. If you don't have
+            an account, you will be directed to create a free one.
           </p>
           <div class="hero-actions">
             ${primaryButton("Log in with GitHub", "login-with-github")}
-            <button class="hero-link hero-link--button" data-action="open-github-signup">
-              Create a free GitHub account
-            </button>
           </div>
         </div>
       </article>
