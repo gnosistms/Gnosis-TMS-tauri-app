@@ -11,6 +11,7 @@ const tauri = window.__TAURI__ ?? {};
 const invoke = tauri.core?.invoke?.bind(tauri.core);
 const listen = tauri.event?.listen?.bind(tauri.event);
 let pendingFocusRestore = null;
+let renderQueued = false;
 
 const state = {
   screen: "start",
@@ -94,6 +95,18 @@ function render() {
       }
     }
   }
+}
+
+function scheduleRender() {
+  if (renderQueued) {
+    return;
+  }
+
+  renderQueued = true;
+  queueMicrotask(() => {
+    renderQueued = false;
+    render();
+  });
 }
 
 function slugifyTeamName(value) {
@@ -388,7 +401,7 @@ document.addEventListener("input", (event) => {
     state.teamSetup.slugEdited = true;
   }
 
-  render();
+  scheduleRender();
 });
 
 void registerGithubAuthListener();
