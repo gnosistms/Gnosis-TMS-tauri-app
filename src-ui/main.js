@@ -10,8 +10,6 @@ const app = document.querySelector("#app");
 const tauri = window.__TAURI__ ?? {};
 const invoke = tauri.core?.invoke?.bind(tauri.core);
 const listen = tauri.event?.listen?.bind(tauri.event);
-let pendingFocusRestore = null;
-let renderQueued = false;
 const GITHUB_FREE_ORG_SETUP_URL =
   "https://github.com/account/organizations/new?plan=free&ref_cta=Create%2520a%2520free%2520organization&ref_loc=cards&ref_page=%2Forganizations%2Fplan";
 
@@ -38,14 +36,8 @@ const state = {
   },
   teamSetup: {
     isOpen: false,
-    step: "details",
+    step: "guide",
     error: "",
-    form: {
-      name: "",
-      slug: "",
-      contactEmail: "",
-      confirmedSlug: "",
-    },
   },
 };
 
@@ -81,171 +73,35 @@ function render() {
   const renderScreen = screenRenderers[state.screen] ?? screenRenderers.start;
   app.innerHTML = renderScreen();
   document.title = titles[state.screen] ?? "Gnosis TMS";
-
-  if (pendingFocusRestore) {
-    const { field, selectionStart, selectionEnd } = pendingFocusRestore;
-    pendingFocusRestore = null;
-    const input = document.querySelector(`[data-team-field="${field}"]`);
-    if (input instanceof HTMLInputElement) {
-      input.focus();
-      if (
-        typeof selectionStart === "number" &&
-        typeof selectionEnd === "number"
-      ) {
-        input.setSelectionRange(selectionStart, selectionEnd);
-      }
-    }
-  }
-}
-
-function scheduleRender() {
-  if (renderQueued) {
-    return;
-  }
-
-  renderQueued = true;
-  queueMicrotask(() => {
-    renderQueued = false;
-    render();
-  });
-}
-
-function slugifyTeamName(value) {
-  return value
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
 }
 
 function resetTeamSetup() {
   state.teamSetup = {
     isOpen: false,
-    step: "details",
+    step: "guide",
     error: "",
-    form: {
-      name: "",
-      slug: "",
-      contactEmail: "",
-      confirmedSlug: "",
-    },
-    slugEdited: false,
   };
 }
 
 function openTeamSetup() {
-  const creatorLogin = state.auth.session?.login ?? "owner";
   state.teamSetup = {
     isOpen: true,
-    step: "details",
+    step: "guide",
     error: "",
-    form: {
-      name: "",
-      slug: "",
-      contactEmail: "",
-      confirmedSlug: "",
-    },
-    slugEdited: false,
-    ownerLogin: creatorLogin,
   };
   render();
 }
 
-function validateTeamSetupDetails() {
-  const { name, slug, contactEmail } = state.teamSetup.form;
-  if (!name.trim()) {
-    state.teamSetup.error = "Enter a team name before continuing.";
-    render();
-    return false;
-  }
-
-  if (!slug.trim()) {
-    state.teamSetup.error = "Enter the GitHub organization slug you want to use.";
-    render();
-    return false;
-  }
-
-  if (!contactEmail.trim()) {
-    state.teamSetup.error = "Enter a contact email for the GitHub organization.";
-    render();
-    return false;
-  }
-
-  state.teamSetup.error = "";
-  return true;
-}
-
-async function persistTeamSetupDraft() {
-  if (!invoke) {
-    throw new Error("Saving a team setup draft requires the desktop app runtime.");
-  }
-
-  const ownerLogin = state.auth.session?.login ?? "owner";
-  const draft = await invoke("create_team_setup_draft", {
-    input: {
-      name: state.teamSetup.form.name.trim(),
-      slug: state.teamSetup.form.slug.trim(),
-      contactEmail: state.teamSetup.form.contactEmail.trim(),
-      ownerLogin,
-    },
-  });
-
-  state.teamSetup.draft = draft;
-}
-
 async function beginTeamOrgSetup() {
-  if (!validateTeamSetupDetails()) {
-    return;
-  }
-
   state.teamSetup.step = "confirm";
-  state.teamSetup.form.confirmedSlug = state.teamSetup.form.slug;
   state.teamSetup.error = "";
   render();
   openExternalUrl(GITHUB_FREE_ORG_SETUP_URL);
 }
 
 async function finishTeamSetup() {
-  if (!validateTeamSetupDetails()) {
-    return;
-  }
-
-  try {
-    const { slug: setupSlug, confirmedSlug } = state.teamSetup.form;
-    if (!confirmedSlug.trim()) {
-      state.teamSetup.error = "Confirm the GitHub organization slug you created before finishing setup.";
-      render();
-      return;
-    }
-
-    if (confirmedSlug.trim() !== setupSlug.trim()) {
-      state.teamSetup.error = "The confirmed organization slug must match the slug from step 1.";
-      render();
-      return;
-    }
-
-    await persistTeamSetupDraft();
-    const { name, slug, contactEmail } = state.teamSetup.form;
-    const ownerLogin = state.auth.session?.login ?? "owner";
-    const nextTeam = {
-      id: `team-${Date.now()}`,
-      name: name.trim(),
-      githubOrg: slug.trim(),
-      ownerLogin,
-      memberCount: 1,
-      repoCount: 1,
-      statusLabel: "Draft Saved",
-      contactEmail: contactEmail.trim(),
-    };
-
-    state.teams = [nextTeam, ...state.teams];
-    state.selectedTeamId = nextTeam.id;
-    resetTeamSetup();
-    render();
-  } catch (error) {
-    state.teamSetup.error = error?.message ?? String(error);
-    render();
-  }
+  resetTeamSetup();
+  render();
 }
 
 function setAuthState(nextAuth) {
@@ -404,35 +260,6 @@ document.addEventListener("click", (event) => {
     state.screen = "translate";
     render();
   }
-});
-
-document.addEventListener("input", (event) => {
-  const field = event.target.closest("[data-team-field]")?.dataset.teamField;
-  if (!field || !state.teamSetup.isOpen) {
-    return;
-  }
-
-  if (event.target instanceof HTMLInputElement) {
-    pendingFocusRestore = {
-      field,
-      selectionStart: event.target.selectionStart,
-      selectionEnd: event.target.selectionEnd,
-    };
-  }
-
-  const value = event.target.value;
-  state.teamSetup.form[field] = value;
-  state.teamSetup.error = "";
-
-  if (field === "name" && !state.teamSetup.slugEdited) {
-    state.teamSetup.form.slug = slugifyTeamName(value);
-  }
-
-  if (field === "slug") {
-    state.teamSetup.slugEdited = true;
-  }
-
-  scheduleRender();
 });
 
 void registerGithubAuthListener();
