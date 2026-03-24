@@ -1,0 +1,42 @@
+@media (max-width: 1180px) {
+  .page-header {
+    grid-template-columns: 1fr;
+    justify-items: start;
+  }
+
+  .page-header__title-wrap {
+    justify-content: flex-start;
+  }
+
+  .page-header__tools {
+    justify-content: flex-start;
+  }
+
+  .translate-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 900px) {
+  .screen--page {
+    padding: 18px 18px 36px;
+  }
+
+  .card--hero .card__body,
+  .card__body {
+    padding: 24px;
+  }
+
+  .glossary-list,
+  .term-grid,
+  .chapter-table__row,
+  .translation-row__grid {
+    grid-template-columns: 1fr;
+  }
+
+  .expandable-card__header,
+  .list-row {
+    grid-template-columns: 1fr;
+    justify-items: start;
+  }
+}

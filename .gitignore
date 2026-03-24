@@ -1,5 +1,10 @@
+# Dependencies
 node_modules
+
+# Build output
 dist
 src-tauri/target
 src-tauri/gen
+
+# macOS metadata
 .DS_Store
