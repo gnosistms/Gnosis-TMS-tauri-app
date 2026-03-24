@@ -138,7 +138,7 @@ async function finishTeamSetup() {
 
     if (orgsAfter.length === 0) {
       state.teamSetup.error =
-        "Error: no new organizations found on your GitHub account.";
+        "Error: no new organizations found on your GitHub account. If you recently updated Gnosis TMS, log out and sign back in with GitHub, then try again. Also make sure you created the organization under the same GitHub account you used to sign in here.";
       render();
       return;
     }
