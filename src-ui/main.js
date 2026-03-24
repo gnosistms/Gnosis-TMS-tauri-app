@@ -12,6 +12,8 @@ const invoke = tauri.core?.invoke?.bind(tauri.core);
 const listen = tauri.event?.listen?.bind(tauri.event);
 let pendingFocusRestore = null;
 let renderQueued = false;
+const GITHUB_FREE_ORG_SETUP_URL =
+  "https://github.com/account/organizations/new?plan=free&ref_cta=Create%2520a%2520free%2520organization&ref_loc=cards&ref_page=%2Forganizations%2Fplan";
 
 const state = {
   screen: "start",
@@ -182,7 +184,7 @@ async function beginTeamOrgSetup() {
   state.teamSetup.step = "confirm";
   state.teamSetup.error = "";
   render();
-  openExternalUrl("https://github.com/organizations/new");
+  openExternalUrl(GITHUB_FREE_ORG_SETUP_URL);
 }
 
 async function finishTeamSetup() {
