@@ -1,0 +1,9 @@
+{
+  "format": "gnosis-tms-team-setup",
+  "formatVersion": 1,
+  "teamName": "dcsaf",
+  "githubOrgSlug": "dcsaf",
+  "contactEmail": "dfs",
+  "ownerLogin": "gnosistms",
+  "status": "draft"
+}
