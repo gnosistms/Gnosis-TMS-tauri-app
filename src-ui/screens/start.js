@@ -1,6 +1,13 @@
 import { primaryButton } from "../lib/ui.js";
 
-export function renderStartScreen() {
+export function renderStartScreen(state) {
+  const auth = state.auth ?? {};
+  const isBusy = auth.status === "launching" || auth.status === "waiting";
+  const buttonLabel = isBusy ? "Waiting for GitHub..." : "Log in with GitHub";
+  const statusMarkup = auth.message
+    ? `<p class="card__supporting auth-status auth-status--${auth.status ?? "idle"}">${auth.message}</p>`
+    : "";
+
   return `
     <main class="screen screen--start">
       <article class="card card--hero">
@@ -12,8 +19,9 @@ export function renderStartScreen() {
             directed to create a new account if you don't have one yet.
           </p>
           <div class="hero-actions">
-            ${primaryButton("Log in with GitHub", "login-with-github")}
+            ${primaryButton(buttonLabel, "login-with-github")}
           </div>
+          ${statusMarkup}
         </div>
       </article>
     </main>

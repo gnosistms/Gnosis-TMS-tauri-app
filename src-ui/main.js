@@ -6,6 +6,9 @@ import { renderTeamsScreen } from "./screens/teams.js";
 import { renderTranslateScreen } from "./screens/translate.js";
 
 const app = document.querySelector("#app");
+const tauri = window.__TAURI__ ?? {};
+const invoke = tauri.core?.invoke?.bind(tauri.core);
+const listen = tauri.event?.listen?.bind(tauri.event);
 
 const state = {
   screen: "start",
@@ -14,6 +17,11 @@ const state = {
   selectedProjectId: "p2",
   selectedGlossaryId: "g1",
   selectedChapterId: "c2",
+  auth: {
+    status: "idle",
+    message: "",
+    session: null,
+  },
 };
 
 const screenRenderers = {
@@ -50,9 +58,85 @@ function render() {
   document.title = titles[state.screen] ?? "Gnosis TMS";
 }
 
+function setAuthState(nextAuth) {
+  state.auth = {
+    ...state.auth,
+    ...nextAuth,
+  };
+  render();
+}
+
+function applyGithubAuthResult(payload) {
+  if (payload?.status === "success") {
+    state.auth = {
+      status: "success",
+      message: payload.message ?? "Signed in with GitHub.",
+      session: payload.session ?? null,
+    };
+    state.screen = "teams";
+    render();
+    return;
+  }
+
+  setAuthState({
+    status: "error",
+    message: payload?.message ?? "GitHub sign-in did not complete.",
+    session: null,
+  });
+}
+
+async function registerGithubAuthListener() {
+  if (!listen) {
+    return;
+  }
+
+  await listen("github-oauth-callback", (event) => {
+    applyGithubAuthResult(event.payload);
+  });
+}
+
+async function startGithubLogin() {
+  if (!invoke) {
+    setAuthState({
+      status: "error",
+      message: "GitHub sign-in requires the desktop app runtime.",
+    });
+    return;
+  }
+
+  setAuthState({
+    status: "launching",
+    message: "Opening GitHub in your browser...",
+    session: null,
+  });
+
+  try {
+    const { authUrl } = await invoke("begin_github_oauth");
+    openExternalUrl(authUrl);
+    setAuthState({
+      status: "waiting",
+      message: "Finish signing in with GitHub in your browser. We will bring you back here automatically.",
+    });
+  } catch (error) {
+    const message = error?.message ?? String(error);
+    setAuthState({
+      status: "error",
+      message,
+      session: null,
+    });
+  }
+}
+
 document.addEventListener("click", (event) => {
   const navTarget = event.target.closest("[data-nav-target]")?.dataset.navTarget;
   if (navTarget) {
+    if (navTarget === "start") {
+      state.auth = {
+        status: "idle",
+        message: "",
+        session: null,
+      };
+    }
     state.screen = navTarget;
     render();
     return;
@@ -64,8 +148,7 @@ document.addEventListener("click", (event) => {
   }
 
   if (action === "login-with-github") {
-    state.screen = "teams";
-    render();
+    void startGithubLogin();
     return;
   }
 
@@ -112,4 +195,5 @@ document.addEventListener("click", (event) => {
   }
 });
 
+void registerGithubAuthListener();
 render();

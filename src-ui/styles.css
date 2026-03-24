@@ -234,6 +234,24 @@ a {
   margin-top: 6px;
 }
 
+.auth-status {
+  padding: 14px 18px;
+  border-radius: 18px;
+  border: 1px solid rgba(164, 112, 41, 0.16);
+  background: rgba(255, 251, 246, 0.72);
+}
+
+.auth-status--launching,
+.auth-status--waiting {
+  color: #8a5b17;
+  background: rgba(255, 244, 224, 0.85);
+}
+
+.auth-status--error {
+  color: #a54024;
+  background: rgba(255, 234, 230, 0.92);
+}
+
 .hero-link {
   border: 0;
   background: transparent;
