@@ -5,6 +5,7 @@ import {
   beginGithubAppInstall,
   beginTeamOrgSetup,
   finishTeamSetup,
+  loadTeamProjects,
   loadUserTeams,
   openTeamSetup,
 } from "./team-flow.js";
@@ -18,6 +19,9 @@ export function registerAppEvents(render) {
       }
       state.screen = navTarget;
       render();
+      if (navTarget === "projects" && state.selectedTeamId) {
+        void loadTeamProjects(render, state.selectedTeamId);
+      }
       return;
     }
 
@@ -76,6 +80,7 @@ export function registerAppEvents(render) {
       state.selectedTeamId = action.split(":")[1];
       state.screen = "projects";
       render();
+      void loadTeamProjects(render, state.selectedTeamId);
       return;
     }
 

@@ -48,6 +48,10 @@ export async function finishTeamSetup(render, loadUserTeams) {
     const installation = await invoke("inspect_github_app_installation", {
       installationId: state.teamSetup.githubAppInstallationId,
     });
+    await invoke("ensure_gnosis_repo_properties_schema", {
+      installationId: installation.installationId,
+      orgLogin: installation.accountLogin,
+    });
     state.teamSetup.githubAppInstallation = installation;
     const githubAppTeams = loadStoredGithubAppTeams();
     const nextTeam = {
@@ -66,6 +70,40 @@ export async function finishTeamSetup(render, loadUserTeams) {
     render();
   } catch (error) {
     state.teamSetup.error = error?.message ?? String(error);
+    render();
+  }
+}
+
+export async function loadTeamProjects(render, teamId = state.selectedTeamId) {
+  const selectedTeam = state.teams.find((team) => team.id === teamId);
+
+  if (!selectedTeam?.installationId) {
+    state.projects = [];
+    state.projectDiscovery = { status: "ready", error: "" };
+    render();
+    return;
+  }
+
+  state.projectDiscovery = { status: "loading", error: "" };
+  render();
+
+  try {
+    const projects = await invoke("list_gnosis_projects_for_installation", {
+      installationId: selectedTeam.installationId,
+    });
+    state.projects = projects.map((project) => ({
+      ...project,
+      id: `repo-${project.id}`,
+      chapters: [],
+    }));
+    state.projectDiscovery = { status: "ready", error: "" };
+    render();
+  } catch (error) {
+    state.projects = [];
+    state.projectDiscovery = {
+      status: "error",
+      error: error?.message ?? String(error),
+    };
     render();
   }
 }

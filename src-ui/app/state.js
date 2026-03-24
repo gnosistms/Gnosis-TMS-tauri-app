@@ -8,12 +8,17 @@ export const state = {
   selectedGlossaryId: "g1",
   selectedChapterId: "c2",
   teams: loadStoredGithubAppTeams(),
+  projects: [],
   auth: {
     status: "idle",
     message: "",
     session: null,
   },
   orgDiscovery: {
+    status: "idle",
+    error: "",
+  },
+  projectDiscovery: {
     status: "idle",
     error: "",
   },
@@ -41,6 +46,8 @@ export function resetSessionState() {
     session: null,
   };
   state.teams = [];
+  state.projects = [];
   state.orgDiscovery = { status: "idle", error: "" };
+  state.projectDiscovery = { status: "idle", error: "" };
   resetTeamSetup();
 }

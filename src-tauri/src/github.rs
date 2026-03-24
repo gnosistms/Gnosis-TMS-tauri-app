@@ -9,7 +9,11 @@ use serde::{Deserialize, Serialize};
 use tauri::State;
 
 use crate::{
-  constants::{GITHUB_APP_SETUP_PATH, GITHUB_CALLBACK_ADDRESS, GNOSIS_TMS_ORG_DESCRIPTION},
+  constants::{
+    GITHUB_APP_SETUP_PATH, GITHUB_CALLBACK_ADDRESS, GNOSIS_TMS_REPO_TYPE_GLOSSARY,
+    GNOSIS_TMS_REPO_TYPE_PROJECT,
+    GNOSIS_TMS_REPO_TYPE_PROPERTY_NAME,
+  },
   insecure_github_app_config::{
     INSECURE_GITHUB_APP_ID, INSECURE_GITHUB_APP_PRIVATE_KEY, INSECURE_GITHUB_APP_SLUG,
   },
@@ -76,6 +80,44 @@ struct GithubAppJwtClaims {
   iat: usize,
   exp: usize,
   iss: String,
+}
+
+#[derive(Deserialize)]
+struct GithubInstallationTokenResponse {
+  token: String,
+}
+
+#[derive(Deserialize)]
+struct GithubInstallationRepositoriesResponse {
+  repositories: Vec<GithubRepository>,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct GithubRepository {
+  id: i64,
+  name: String,
+  full_name: String,
+  html_url: Option<String>,
+  private: bool,
+  description: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct GithubRepositoryPropertyValue {
+  property_name: String,
+  value: Option<serde_json::Value>,
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct GithubProjectRepo {
+  pub(crate) id: i64,
+  pub(crate) name: String,
+  pub(crate) full_name: String,
+  pub(crate) html_url: Option<String>,
+  pub(crate) private: bool,
+  pub(crate) description: Option<String>,
 }
 
 #[tauri::command]
@@ -180,6 +222,114 @@ pub(crate) fn inspect_github_app_installation(
   })
 }
 
+#[tauri::command]
+pub(crate) fn ensure_gnosis_repo_properties_schema(
+  installation_id: i64,
+  org_login: String,
+) -> Result<(), String> {
+  let installation_token = github_installation_access_token(installation_id)?;
+  let client = github_client()?;
+
+  client
+    .patch(format!("https://api.github.com/orgs/{org_login}/properties/schema"))
+    .header("Accept", "application/vnd.github+json")
+    .header("X-GitHub-Api-Version", "2022-11-28")
+    .bearer_auth(&installation_token)
+    .json(&serde_json::json!({
+      "properties": [
+        {
+          "property_name": GNOSIS_TMS_REPO_TYPE_PROPERTY_NAME,
+          "value_type": "single_select",
+          "description": "Identifies the role of repositories created by Gnosis TMS.",
+          "allowed_values": [
+            GNOSIS_TMS_REPO_TYPE_PROJECT,
+            GNOSIS_TMS_REPO_TYPE_GLOSSARY
+          ],
+          "values_editable_by": "org_actors",
+          "required": false
+        }
+      ]
+    }))
+    .send()
+    .map_err(|error| format!("Could not create the Gnosis TMS repository property schema: {error}"))?
+    .error_for_status()
+    .map_err(|error| format!("GitHub rejected the repository property schema update: {error}"))?;
+
+  Ok(())
+}
+
+#[tauri::command]
+pub(crate) fn list_gnosis_projects_for_installation(
+  installation_id: i64,
+) -> Result<Vec<GithubProjectRepo>, String> {
+  let installation_token = github_installation_access_token(installation_id)?;
+  let client = github_client()?;
+  let repositories = client
+    .get("https://api.github.com/installation/repositories")
+    .header("Accept", "application/vnd.github+json")
+    .header("X-GitHub-Api-Version", "2022-11-28")
+    .bearer_auth(&installation_token)
+    .query(&[("per_page", "100")])
+    .send()
+    .map_err(|error| format!("Could not list repositories for the GitHub App installation: {error}"))?
+    .error_for_status()
+    .map_err(|error| format!("GitHub rejected the installation repository request: {error}"))?
+    .json::<GithubInstallationRepositoriesResponse>()
+    .map_err(|error| format!("Could not parse the installation repositories: {error}"))?;
+
+  let mut projects = Vec::new();
+
+  for repository in repositories.repositories {
+    let properties = client
+      .get(format!(
+        "https://api.github.com/repos/{}/properties/values",
+        repository.full_name
+      ))
+      .header("Accept", "application/vnd.github+json")
+      .header("X-GitHub-Api-Version", "2022-11-28")
+      .bearer_auth(&installation_token)
+      .send()
+      .map_err(|error| {
+        format!(
+          "Could not load repository properties for {}: {error}",
+          repository.full_name
+        )
+      })?
+      .error_for_status()
+      .map_err(|error| {
+        format!(
+          "GitHub rejected the repository property lookup for {}: {error}",
+          repository.full_name
+        )
+      })?
+      .json::<Vec<GithubRepositoryPropertyValue>>()
+      .map_err(|error| {
+        format!(
+          "Could not parse repository properties for {}: {error}",
+          repository.full_name
+        )
+      })?;
+
+    let is_project = properties.iter().any(|property| {
+      property.property_name == GNOSIS_TMS_REPO_TYPE_PROPERTY_NAME
+        && property_value_matches(property.value.as_ref(), GNOSIS_TMS_REPO_TYPE_PROJECT)
+    });
+
+    if is_project {
+      projects.push(GithubProjectRepo {
+        id: repository.id,
+        name: repository.name,
+        full_name: repository.full_name,
+        html_url: repository.html_url,
+        private: repository.private,
+        description: repository.description,
+      });
+    }
+  }
+
+  Ok(projects)
+}
+
 pub(crate) fn github_client() -> Result<reqwest::blocking::Client, String> {
   reqwest::blocking::Client::builder()
     .user_agent("GnosisTMS")
@@ -237,6 +387,26 @@ pub(crate) fn github_app_jwt() -> Result<String, String> {
   .map_err(|error| format!("Could not create the GitHub App JWT: {error}"))
 }
 
+fn github_installation_access_token(installation_id: i64) -> Result<String, String> {
+  let app_jwt = github_app_jwt()?;
+  let client = github_client()?;
+  let response = client
+    .post(format!(
+      "https://api.github.com/app/installations/{installation_id}/access_tokens"
+    ))
+    .header("Accept", "application/vnd.github+json")
+    .header("X-GitHub-Api-Version", "2022-11-28")
+    .bearer_auth(app_jwt)
+    .send()
+    .map_err(|error| format!("Could not create a GitHub App installation token: {error}"))?
+    .error_for_status()
+    .map_err(|error| format!("GitHub rejected the installation token request: {error}"))?
+    .json::<GithubInstallationTokenResponse>()
+    .map_err(|error| format!("Could not parse the installation token response: {error}"))?;
+
+  Ok(response.token)
+}
+
 fn github_app_id() -> Result<String, String> {
   env_or_insecure_fallback(
     "GITHUB_APP_ID",
@@ -289,4 +459,12 @@ fn env_or_insecure_fallback(
       }
     })
     .ok_or_else(|| missing_message.to_string())
+}
+
+fn property_value_matches(value: Option<&serde_json::Value>, expected: &str) -> bool {
+  match value {
+    Some(serde_json::Value::String(string_value)) => string_value == expected,
+    Some(serde_json::Value::Array(values)) => values.iter().any(|item| item.as_str() == Some(expected)),
+    _ => false,
+  }
 }

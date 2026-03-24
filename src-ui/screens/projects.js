@@ -1,4 +1,3 @@
-import { projects, teams } from "../lib/data.js";
 import {
   createSearchField,
   escapeHtml,
@@ -64,18 +63,54 @@ function renderProjectCard(project, expanded) {
 }
 
 export function renderProjectsScreen(state) {
-  const selectedTeam = teams.find((team) => team.id === state.selectedTeamId) ?? teams[0];
+  const selectedTeam = state.teams.find((team) => team.id === state.selectedTeamId) ?? state.teams[0];
+  const discovery = state.projectDiscovery ?? { status: "idle", error: "" };
+  const emptyState = `
+    <article class="card card--hero card--empty">
+      <div class="card__body">
+        <p class="card__eyebrow">NO PROJECTS FOUND</p>
+        <h2 class="card__title card__title--small">This team doesn't have any projects yet.</h2>
+        <p class="card__subtitle">Click + New Project to create one.</p>
+      </div>
+    </article>
+  `;
+  const loadingState = `
+    <article class="card card--hero card--empty">
+      <div class="card__body">
+        <p class="card__eyebrow">LOADING PROJECTS</p>
+        <h2 class="card__title card__title--small">Loading projects...</h2>
+      </div>
+    </article>
+  `;
+  const errorState = `
+    <article class="card card--hero card--empty">
+      <div class="card__body">
+        <p class="card__eyebrow">PROJECT LOAD FAILED</p>
+        <h2 class="card__title card__title--small">Could not load this team's projects.</h2>
+        <p class="card__subtitle">${escapeHtml(discovery.error || "Unknown error.")}</p>
+      </div>
+    </article>
+  `;
+
+  const body =
+    discovery.status === "loading"
+      ? loadingState
+      : discovery.status === "error"
+        ? errorState
+        : state.projects.length === 0
+          ? emptyState
+          : `<section class="stack">${state.projects
+              .map((project) => renderProjectCard(project, state.expandedProjects.has(project.id)))
+              .join("")}</section>`;
 
   return pageShell({
-    title: `${selectedTeam.name} - Projects`,
+    title: `${selectedTeam?.name ?? "Team"} - Projects`,
     navButtons: [
       navButton("Logout", "start"),
       navButton("Teams", "teams"),
       navButton("Glossaries", "glossaries"),
     ],
     tools: `${createSearchField("Search")} ${primaryButton("+ New Project", "noop")}`,
-    body: `<section class="stack">${projects
-      .map((project) => renderProjectCard(project, state.expandedProjects.has(project.id)))
-      .join("")}</section>`,
+    body,
   });
 }

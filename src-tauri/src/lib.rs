@@ -16,7 +16,9 @@ use crate::{
   constants::MAIN_WINDOW_BACKGROUND,
   drafts::create_team_setup_draft,
   github::{
-    begin_github_app_install, inspect_github_app_installation, list_user_organizations,
+    begin_github_app_install, ensure_gnosis_repo_properties_schema,
+    inspect_github_app_installation, list_gnosis_projects_for_installation,
+    list_user_organizations,
   },
   state::AuthState,
 };
@@ -40,6 +42,8 @@ pub fn run() {
       create_team_setup_draft,
       begin_github_app_install,
       inspect_github_app_installation,
+      ensure_gnosis_repo_properties_schema,
+      list_gnosis_projects_for_installation,
       list_user_organizations
     ])
     .setup(|app| {
