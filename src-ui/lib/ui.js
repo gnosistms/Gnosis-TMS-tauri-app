@@ -19,6 +19,12 @@ export function primaryButton(label, action) {
   )}">${escapeHtml(label)}</button>`;
 }
 
+export function secondaryButton(label, action) {
+  return `<button class="button button--secondary" data-action="${escapeHtml(
+    action,
+  )}">${escapeHtml(label)}</button>`;
+}
+
 export function textAction(label, action) {
   return `<button class="text-action" data-action="${escapeHtml(
     action,
