@@ -131,7 +131,11 @@ export function renderTeamsScreen(state) {
   return pageShell({
     title: "Translation Teams",
     navButtons: [navButton("Logout", "start")],
-    tools: primaryButton("+ New Team", "open-new-team"),
+    tools: [
+      secondaryButton("Refresh Organizations", "refresh-organizations"),
+      secondaryButton("Reconnect GitHub", "reconnect-github"),
+      primaryButton("+ New Team", "open-new-team"),
+    ].join(""),
     body: `<section class="stack">${cards || emptyState}</section>${renderSetupModal(state)}`,
   });
 }

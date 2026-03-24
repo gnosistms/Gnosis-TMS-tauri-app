@@ -278,7 +278,7 @@ async function startGithubLogin() {
   setAuthState({
     status: "launching",
     message: "Opening GitHub in your browser...",
-    session: null,
+    session: state.auth.session,
   });
 
   try {
@@ -287,6 +287,7 @@ async function startGithubLogin() {
     setAuthState({
       status: "waiting",
       message: "Finish signing in with GitHub in your browser. We will bring you back here automatically.",
+      session: state.auth.session,
     });
   } catch (error) {
     const message = error?.message ?? String(error);
@@ -328,6 +329,16 @@ document.addEventListener("click", (event) => {
 
   if (action === "open-new-team") {
     openTeamSetup();
+    return;
+  }
+
+  if (action === "refresh-organizations") {
+    void loadUserTeams();
+    return;
+  }
+
+  if (action === "reconnect-github") {
+    void startGithubLogin();
     return;
   }
 
