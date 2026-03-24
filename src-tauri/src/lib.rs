@@ -51,6 +51,7 @@ struct AuthEventPayload {
 #[derive(Serialize)]
 struct TokenExchangeRequest<'a> {
   client_id: &'a str,
+  client_secret: &'a str,
   code: &'a str,
   redirect_uri: &'a str,
   code_verifier: &'a str,
@@ -111,12 +112,21 @@ fn begin_github_oauth(state: State<'_, AuthState>) -> Result<BeginOauthResponse,
 }
 
 fn github_client_id() -> Result<String, String> {
-  option_env!("GITHUB_CLIENT_ID")
-    .map(str::to_string)
-    .or_else(|| env::var("GITHUB_CLIENT_ID").ok())
+  env::var("GITHUB_CLIENT_ID")
+    .ok()
     .filter(|value| !value.trim().is_empty())
     .ok_or_else(|| {
       "Missing GitHub OAuth client ID. Set GITHUB_CLIENT_ID before starting Gnosis TMS."
+        .to_string()
+    })
+}
+
+fn github_client_secret() -> Result<String, String> {
+  env::var("GITHUB_CLIENT_SECRET")
+    .ok()
+    .filter(|value| !value.trim().is_empty())
+    .ok_or_else(|| {
+      "Missing GitHub OAuth client secret. Set GITHUB_CLIENT_SECRET before starting Gnosis TMS."
         .to_string()
     })
 }
@@ -317,6 +327,7 @@ fn handle_callback_request(
 
 fn exchange_github_code(code: &str, pkce_verifier: &str) -> Result<GithubSession, String> {
   let client_id = github_client_id()?;
+  let client_secret = github_client_secret()?;
   let client = reqwest::blocking::Client::builder()
     .user_agent("GnosisTMS")
     .build()
@@ -327,6 +338,7 @@ fn exchange_github_code(code: &str, pkce_verifier: &str) -> Result<GithubSession
     .header("Accept", "application/json")
     .json(&TokenExchangeRequest {
       client_id: client_id.as_str(),
+      client_secret: client_secret.as_str(),
       code,
       redirect_uri: github_redirect_uri().as_str(),
       code_verifier: pkce_verifier,
