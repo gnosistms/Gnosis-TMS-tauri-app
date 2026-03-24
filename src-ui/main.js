@@ -34,6 +34,16 @@ const titles = {
   translate: "Translate - Gnosis TMS",
 };
 
+function openExternalUrl(url) {
+  const opener = window.__TAURI__?.opener;
+  if (opener?.openUrl) {
+    opener.openUrl(url);
+    return;
+  }
+
+  window.open(url, "_blank", "noopener,noreferrer");
+}
+
 function render() {
   const renderScreen = screenRenderers[state.screen] ?? screenRenderers.start;
   app.innerHTML = renderScreen();
@@ -56,6 +66,11 @@ document.addEventListener("click", (event) => {
   if (action === "login-with-github") {
     state.screen = "teams";
     render();
+    return;
+  }
+
+  if (action === "open-github-signup") {
+    openExternalUrl("https://github.com/signup");
     return;
   }
 

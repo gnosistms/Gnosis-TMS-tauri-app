@@ -235,8 +235,16 @@ a {
 }
 
 .hero-link {
+  border: 0;
+  background: transparent;
+  padding: 0;
   color: var(--link);
   font-weight: 600;
+  text-decoration: none;
+}
+
+.hero-link--button:hover {
+  color: var(--accent-strong);
 }
 
 .page-body {

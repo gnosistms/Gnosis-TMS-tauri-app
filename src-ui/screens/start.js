@@ -17,14 +17,9 @@ export function renderStartScreen() {
           </p>
           <div class="hero-actions">
             ${primaryButton("Log in with GitHub", "login-with-github")}
-            <a
-              class="hero-link"
-              href="https://github.com/signup"
-              target="_blank"
-              rel="noreferrer"
-            >
+            <button class="hero-link hero-link--button" data-action="open-github-signup">
               Create a free GitHub account
-            </a>
+            </button>
           </div>
         </div>
       </article>
