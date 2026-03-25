@@ -1,4 +1,5 @@
 const TEAM_RECORDS_STORAGE_KEY = "gnosis-tms-team-records";
+const LEGACY_GITHUB_APP_TEAMS_STORAGE_KEY = "gnosis-tms-github-app-teams";
 
 function normalizeTeamRecord(team) {
   if (!team || typeof team !== "object") {
@@ -52,7 +53,33 @@ function teamIdentityKey(team) {
 
 export function loadStoredTeamRecords() {
   try {
-    const storedValue = window.localStorage?.getItem(TEAM_RECORDS_STORAGE_KEY);
+    const localStorage = window.localStorage;
+    const storedValue = localStorage?.getItem(TEAM_RECORDS_STORAGE_KEY);
+    if (!storedValue) {
+      const legacyTeams = loadLegacyGithubAppTeams(localStorage);
+      if (legacyTeams.length) {
+        saveStoredTeamRecords(legacyTeams);
+        return legacyTeams;
+      }
+      return [];
+    }
+
+    const teams = JSON.parse(storedValue);
+    if (!Array.isArray(teams)) {
+      return [];
+    }
+
+    return teams
+      .map(normalizeTeamRecord)
+      .filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+function loadLegacyGithubAppTeams(localStorage = window.localStorage) {
+  try {
+    const storedValue = localStorage?.getItem(LEGACY_GITHUB_APP_TEAMS_STORAGE_KEY);
     if (!storedValue) {
       return [];
     }
