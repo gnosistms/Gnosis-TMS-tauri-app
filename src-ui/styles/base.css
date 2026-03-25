@@ -102,7 +102,7 @@ a {
 
 .page-header__title {
   margin: 0;
-  font-size: clamp(1.9rem, 3vw, 3.2rem);
+  font-size: clamp(1.6625rem, 2.625vw, 2.8rem);
   line-height: 1;
   letter-spacing: -0.04em;
   white-space: nowrap;
@@ -130,6 +130,7 @@ a {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  flex-shrink: 0;
   min-height: 52px;
   padding: 0 24px;
   white-space: nowrap;
@@ -252,7 +253,7 @@ a {
 }
 
 .card__title--small {
-  font-size: clamp(1.9rem, 3.4vw, 2.9rem);
+  font-size: clamp(1.6625rem, 2.975vw, 2.5375rem);
   line-height: 1;
   letter-spacing: -0.04em;
 }
