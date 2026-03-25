@@ -204,10 +204,16 @@ a {
 }
 
 .screen--page {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  min-height: 100vh;
+  overflow: hidden;
   padding: 22px 32px 40px;
 }
 
 .page-header {
+  flex: 0 0 auto;
   width: min(var(--page-width), 100%);
   margin: 0 auto 24px;
   min-height: var(--header-height);
