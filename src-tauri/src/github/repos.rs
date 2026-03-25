@@ -137,8 +137,11 @@ pub(crate) fn create_gnosis_project_repo(
     .send()
     .map_err(|error| format!("Could not create the GitHub repository: {error}"))?
     .error_for_status()
-    .map_err(|error| format!("GitHub rejected the repository creation request: {error}"))?
-    .json::<GithubRepository>()
+    .map_err(|error| format!("GitHub rejected the repository creation request: {error}"))?;
+  let repository_body = repository
+    .text()
+    .map_err(|error| format!("Could not read the new GitHub repository response: {error}"))?;
+  let repository = parse_repository_response(&repository_body)
     .map_err(|error| format!("Could not parse the new GitHub repository: {error}"))?;
 
   client
@@ -272,4 +275,45 @@ fn project_from_repository(repository: GithubRepository) -> GithubProjectRepo {
     private: repository.private,
     description: repository.description,
   }
+}
+
+fn parse_repository_response(body: &str) -> Result<GithubRepository, String> {
+  let value = serde_json::from_str::<serde_json::Value>(body)
+    .map_err(|error| format!("invalid JSON response body: {error}"))?;
+
+  let id = value
+    .get("id")
+    .and_then(|item| item.as_i64())
+    .ok_or_else(|| "missing repository id".to_string())?;
+  let name = value
+    .get("name")
+    .and_then(|item| item.as_str())
+    .ok_or_else(|| "missing repository name".to_string())?
+    .to_string();
+  let full_name = value
+    .get("full_name")
+    .and_then(|item| item.as_str())
+    .map(|value| value.to_string())
+    .unwrap_or_else(|| name.clone());
+  let html_url = value
+    .get("html_url")
+    .and_then(|item| item.as_str())
+    .map(|value| value.to_string());
+  let private = value
+    .get("private")
+    .and_then(|item| item.as_bool())
+    .unwrap_or(true);
+  let description = value
+    .get("description")
+    .and_then(|item| item.as_str())
+    .map(|value| value.to_string());
+
+  Ok(GithubRepository {
+    id,
+    name,
+    full_name,
+    html_url,
+    private,
+    description,
+  })
 }
