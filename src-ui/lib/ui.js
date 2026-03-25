@@ -36,6 +36,19 @@ export function loadingPrimaryButton({ label, loadingLabel, action, isLoading })
   `;
 }
 
+export function setImmediateLoadingButton(button, loadingLabel) {
+  if (!button) {
+    return;
+  }
+
+  button.disabled = true;
+  button.dataset.action = "noop";
+  button.innerHTML = `
+    <span class="button__spinner" aria-hidden="true"></span>
+    <span>${escapeHtml(loadingLabel)}</span>
+  `;
+}
+
 export function secondaryButton(label, action) {
   return `<button class="button button--secondary" data-action="${escapeHtml(
     action,

@@ -1,5 +1,6 @@
 import { openExternalUrl } from "./runtime.js";
 import { clearStoredAuthSession } from "./auth-storage.js";
+import { setImmediateLoadingButton } from "../lib/ui.js";
 import {
   resetSessionState,
   resetTeamSetup,
@@ -82,11 +83,13 @@ export function registerAppEvents(render) {
     }
 
     if (action === "submit-project-creation") {
+      setImmediateLoadingButton(event.target.closest("button"), "Creating...");
       void submitProjectCreation(render);
       return;
     }
 
     if (action === "confirm-project-deletion") {
+      setImmediateLoadingButton(event.target.closest("button"), "Deleting...");
       void confirmProjectDeletion(render);
       return;
     }
