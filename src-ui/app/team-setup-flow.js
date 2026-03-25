@@ -1,6 +1,6 @@
 import { GITHUB_FREE_ORG_SETUP_URL, GNOSIS_TMS_ORG_DESCRIPTION } from "./constants.js";
 import { loadTeamProjects } from "./project-flow.js";
-import { invoke, openExternalUrl } from "./runtime.js";
+import { invoke, openExternalUrl, waitForNextPaint } from "./runtime.js";
 import { resetTeamRename, resetTeamSetup, state } from "./state.js";
 import {
   loadStoredGithubAppTeams,
@@ -177,6 +177,7 @@ export async function submitTeamRename(render) {
     state.teamRename.status = "loading";
     state.teamRename.error = "";
     render();
+    await waitForNextPaint();
     const organization = await invoke("update_organization_name_for_installation", {
       installationId: team.installationId,
       orgLogin: team.githubOrg,
