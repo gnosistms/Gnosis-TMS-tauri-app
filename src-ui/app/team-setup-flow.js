@@ -1,4 +1,4 @@
-import { GITHUB_FREE_ORG_SETUP_URL, GNOSIS_TMS_ORG_DESCRIPTION } from "./constants.js";
+import { GITHUB_FREE_ORG_SETUP_URL } from "./constants.js";
 import { loadTeamProjects } from "./project-flow.js";
 import { invoke, openExternalUrl, waitForNextPaint } from "./runtime.js";
 import { resetTeamRename, resetTeamSetup, state } from "./state.js";
@@ -118,9 +118,7 @@ export async function loadUserTeams(render) {
     const organizations = await invoke("list_user_organizations", {
       accessToken: state.auth.session.accessToken,
     });
-    const oauthTeams = organizations
-      .filter((organization) => organization.description === GNOSIS_TMS_ORG_DESCRIPTION)
-      .map((organization) => ({
+    const oauthTeams = organizations.map((organization) => ({
         id: organization.login,
         name: organization.name || organization.login,
         githubOrg: organization.login,
