@@ -120,6 +120,14 @@ pub(crate) struct GithubProjectRepo {
   pub(crate) description: Option<String>,
 }
 
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct GithubOrganizationMember {
+  pub(crate) login: String,
+  pub(crate) avatar_url: Option<String>,
+  pub(crate) html_url: Option<String>,
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct CreateGithubProjectRepoInput {
@@ -336,6 +344,28 @@ pub(crate) fn list_gnosis_projects_for_installation(
   }
 
   Ok(projects)
+}
+
+#[tauri::command]
+pub(crate) fn list_organization_members_for_installation(
+  installation_id: i64,
+  org_login: String,
+) -> Result<Vec<GithubOrganizationMember>, String> {
+  let installation_token = github_installation_access_token(installation_id)?;
+  let client = github_client()?;
+
+  client
+    .get(format!("https://api.github.com/orgs/{org_login}/members"))
+    .header("Accept", "application/vnd.github+json")
+    .header("X-GitHub-Api-Version", "2022-11-28")
+    .bearer_auth(&installation_token)
+    .query(&[("per_page", "100")])
+    .send()
+    .map_err(|error| format!("Could not list members for @{org_login}: {error}"))?
+    .error_for_status()
+    .map_err(|error| format!("GitHub rejected the organization members request for @{org_login}: {error}"))?
+    .json::<Vec<GithubOrganizationMember>>()
+    .map_err(|error| format!("Could not parse the members for @{org_login}: {error}"))
 }
 
 #[tauri::command]

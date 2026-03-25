@@ -7,6 +7,7 @@ import {
   createProjectForSelectedTeam,
   finishTeamSetup,
   loadTeamProjects,
+  loadTeamUsers,
   loadUserTeams,
   openTeamSetup,
 } from "./team-flow.js";
@@ -22,6 +23,9 @@ export function registerAppEvents(render) {
       render();
       if (navTarget === "projects" && state.selectedTeamId) {
         void loadTeamProjects(render, state.selectedTeamId);
+      }
+      if (navTarget === "users" && state.selectedTeamId) {
+        void loadTeamUsers(render, state.selectedTeamId);
       }
       return;
     }
@@ -79,6 +83,11 @@ export function registerAppEvents(render) {
 
     if (action === "open-github-signup") {
       openExternalUrl("https://github.com/signup");
+      return;
+    }
+
+    if (action.startsWith("open-external:")) {
+      openExternalUrl(action.replace("open-external:", ""));
       return;
     }
 

@@ -12,11 +12,13 @@ import { renderProjectsScreen } from "./screens/projects.js";
 import { renderStartScreen } from "./screens/start.js";
 import { renderTeamsScreen } from "./screens/teams/index.js";
 import { renderTranslateScreen } from "./screens/translate.js";
+import { renderUsersScreen } from "./screens/users.js";
 
 const screenRenderers = {
   start: () => renderStartScreen(state),
   teams: () => renderTeamsScreen(state),
   projects: () => renderProjectsScreen(state),
+  users: () => renderUsersScreen(state),
   glossaries: () => renderGlossariesScreen(state),
   glossaryEditor: () => renderGlossaryEditorScreen(state),
   translate: () => renderTranslateScreen(state),
@@ -26,6 +28,7 @@ const titles = {
   start: "Gnosis TMS",
   teams: "Translation Teams - Gnosis TMS",
   projects: "Projects - Gnosis TMS",
+  users: "Users - Gnosis TMS",
   glossaries: "Glossaries - Gnosis TMS",
   glossaryEditor: "Glossary Editor - Gnosis TMS",
   translate: "Translate - Gnosis TMS",

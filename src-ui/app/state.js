@@ -9,6 +9,7 @@ export const state = {
   selectedChapterId: "c2",
   teams: loadStoredGithubAppTeams(),
   projects: [],
+  users: [],
   auth: {
     status: "idle",
     message: "",
@@ -19,6 +20,10 @@ export const state = {
     error: "",
   },
   projectDiscovery: {
+    status: "idle",
+    error: "",
+  },
+  userDiscovery: {
     status: "idle",
     error: "",
   },
@@ -47,7 +52,9 @@ export function resetSessionState() {
   };
   state.teams = [];
   state.projects = [];
+  state.users = [];
   state.orgDiscovery = { status: "idle", error: "" };
   state.projectDiscovery = { status: "idle", error: "" };
+  state.userDiscovery = { status: "idle", error: "" };
   resetTeamSetup();
 }

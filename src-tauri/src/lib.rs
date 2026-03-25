@@ -18,7 +18,7 @@ use crate::{
   github::{
     begin_github_app_install, create_gnosis_project_repo, ensure_gnosis_repo_properties_schema,
     inspect_github_app_installation, list_gnosis_projects_for_installation,
-    list_user_organizations,
+    list_organization_members_for_installation, list_user_organizations,
   },
   state::AuthState,
 };
@@ -45,6 +45,7 @@ pub fn run() {
       inspect_github_app_installation,
       ensure_gnosis_repo_properties_schema,
       list_gnosis_projects_for_installation,
+      list_organization_members_for_installation,
       list_user_organizations
     ])
     .setup(|app| {

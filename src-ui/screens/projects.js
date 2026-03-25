@@ -108,6 +108,7 @@ export function renderProjectsScreen(state) {
     navButtons: [
       navButton("Logout", "start"),
       navButton("Teams", "teams"),
+      navButton("Users", "users"),
       navButton("Glossaries", "glossaries"),
     ],
     tools: `${createSearchField("Search")} ${primaryButton("+ New Project", "open-new-project")}`,
