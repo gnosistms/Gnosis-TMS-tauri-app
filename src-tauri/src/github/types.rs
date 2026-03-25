@@ -1,0 +1,124 @@
+use serde::{Deserialize, Serialize};
+
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct GithubOrganization {
+  pub(crate) login: String,
+  pub(crate) name: Option<String>,
+  pub(crate) description: Option<String>,
+  pub(crate) avatar_url: Option<String>,
+  pub(crate) html_url: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct GithubOrganizationMembership {
+  pub(crate) state: String,
+  pub(crate) organization: GithubOrganizationMembershipOrg,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct GithubOrganizationMembershipOrg {
+  pub(crate) login: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct BeginGithubAppInstallResponse {
+  pub(crate) install_url: String,
+  pub(crate) setup_url: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct GithubAppInstallationInfo {
+  pub(crate) installation_id: i64,
+  pub(crate) account_login: String,
+  pub(crate) account_type: String,
+  pub(crate) account_avatar_url: Option<String>,
+  pub(crate) account_html_url: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct GithubAppInstallationResponse {
+  pub(crate) id: i64,
+  pub(crate) account: GithubAppInstallationAccount,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct GithubAppInstallationAccount {
+  pub(crate) login: String,
+  #[serde(rename = "type")]
+  pub(crate) account_type: String,
+  pub(crate) avatar_url: Option<String>,
+  pub(crate) html_url: Option<String>,
+}
+
+#[derive(Serialize)]
+pub(crate) struct GithubAppJwtClaims {
+  pub(crate) iat: usize,
+  pub(crate) exp: usize,
+  pub(crate) iss: String,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct GithubInstallationTokenResponse {
+  pub(crate) token: String,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct GithubInstallationRepositoriesResponse {
+  pub(crate) repositories: Vec<GithubRepository>,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct GithubRepository {
+  pub(crate) id: i64,
+  pub(crate) name: String,
+  pub(crate) full_name: String,
+  pub(crate) html_url: Option<String>,
+  pub(crate) private: bool,
+  pub(crate) description: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct GithubRepositoryPropertyValue {
+  pub(crate) property_name: String,
+  pub(crate) value: Option<serde_json::Value>,
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct GithubProjectRepo {
+  pub(crate) id: i64,
+  pub(crate) name: String,
+  pub(crate) full_name: String,
+  pub(crate) html_url: Option<String>,
+  pub(crate) private: bool,
+  pub(crate) description: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct GithubOrganizationMember {
+  pub(crate) login: String,
+  pub(crate) avatar_url: Option<String>,
+  pub(crate) html_url: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct CreateGithubProjectRepoInput {
+  pub(crate) installation_id: i64,
+  pub(crate) org_login: String,
+  pub(crate) repo_name: String,
+  pub(crate) project_title: String,
+}
+
+#[derive(Serialize)]
+pub(crate) struct GithubCreateRepoFileRequest<'a> {
+  pub(crate) message: &'a str,
+  pub(crate) content: String,
+}

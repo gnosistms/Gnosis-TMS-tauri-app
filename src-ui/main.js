@@ -3,7 +3,7 @@ import {
   registerGithubAuthListener,
 } from "./app/auth-flow.js";
 import { registerAppEvents } from "./app/events.js";
-import { loadUserTeams, setGithubAppInstallation } from "./app/team-flow.js";
+import { loadUserTeams, setGithubAppInstallation } from "./app/team-setup-flow.js";
 import { app } from "./app/runtime.js";
 import { state } from "./app/state.js";
 import { renderGlossariesScreen } from "./screens/glossaries.js";

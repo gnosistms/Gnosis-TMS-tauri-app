@@ -8,16 +8,18 @@ import { startGithubLogin } from "./auth-flow.js";
 import {
   beginGithubAppInstall,
   beginTeamOrgSetup,
-  cancelProjectCreation,
-  createProjectForSelectedTeam,
   finishTeamSetup,
-  loadTeamProjects,
-  loadTeamUsers,
   loadUserTeams,
   openTeamSetup,
+} from "./team-setup-flow.js";
+import {
+  cancelProjectCreation,
+  createProjectForSelectedTeam,
+  loadTeamProjects,
   submitProjectCreation,
   updateProjectCreationName,
-} from "./team-flow.js";
+} from "./project-flow.js";
+import { loadTeamUsers } from "./user-flow.js";
 
 export function registerAppEvents(render) {
   document.addEventListener("input", (event) => {
@@ -101,7 +103,7 @@ export function registerAppEvents(render) {
     }
 
     if (action === "finish-team-setup") {
-      void finishTeamSetup(render, loadUserTeams);
+      void finishTeamSetup(render);
       return;
     }
 
