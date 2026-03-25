@@ -66,6 +66,7 @@ export async function finishTeamSetup(render) {
     saveStoredGithubAppTeams(nextTeams);
     state.teams = mergeTeams(state.teams, nextTeams);
     state.selectedTeamId = nextTeam.id;
+    state.screen = "projects";
     resetTeamSetup();
     render();
   } catch (error) {
@@ -102,13 +103,16 @@ export async function loadUserTeams(render) {
     state.teams = mergeTeams(oauthTeams, githubAppTeams);
     state.selectedTeamId = state.teams[0]?.id ?? null;
     state.orgDiscovery = { status: "ready", error: "" };
+    state.screen = state.teams.length === 1 ? "projects" : "teams";
     render();
   } catch (error) {
     state.teams = githubAppTeams;
+    state.selectedTeamId = state.teams[0]?.id ?? null;
     state.orgDiscovery = {
       status: "error",
       error: error?.message ?? String(error),
     };
+    state.screen = state.teams.length === 1 ? "projects" : "teams";
     render();
   }
 }
