@@ -16,6 +16,9 @@ export function renderProjectDeletionModal(state) {
     action: "confirm-project-deletion",
     isLoading: isDeleting,
   });
+  const cancelButton = secondaryButton("Cancel", "cancel-project-deletion", {
+    disabled: isDeleting,
+  });
 
   return `
     <div class="modal-backdrop">
@@ -28,7 +31,7 @@ export function renderProjectDeletionModal(state) {
           </p>
           ${errorMarkup}
           <div class="modal__actions">
-            ${secondaryButton("Cancel", "cancel-project-deletion")}
+            ${cancelButton}
             ${deleteButton}
           </div>
         </div>

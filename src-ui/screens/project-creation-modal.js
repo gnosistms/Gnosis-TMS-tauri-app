@@ -16,6 +16,9 @@ export function renderProjectCreationModal(state) {
     action: "submit-project-creation",
     isLoading: isSubmitting,
   });
+  const cancelButton = secondaryButton("Cancel", "cancel-project-creation", {
+    disabled: isSubmitting,
+  });
 
   return `
     <div class="modal-backdrop">
@@ -41,7 +44,7 @@ export function renderProjectCreationModal(state) {
           </div>
           ${errorMarkup}
           <div class="modal__actions">
-            ${secondaryButton("Cancel", "cancel-project-creation")}
+            ${cancelButton}
             ${submitButton}
           </div>
         </div>

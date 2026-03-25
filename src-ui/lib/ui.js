@@ -49,10 +49,12 @@ export function setImmediateLoadingButton(button, loadingLabel) {
   `;
 }
 
-export function secondaryButton(label, action) {
+export function secondaryButton(label, action, options = {}) {
+  const disabled = options.disabled ? " disabled" : "";
+  const actionValue = options.disabled ? "noop" : action;
   return `<button class="button button--secondary" data-action="${escapeHtml(
-    action,
-  )}">${escapeHtml(label)}</button>`;
+    actionValue,
+  )}"${disabled}>${escapeHtml(label)}</button>`;
 }
 
 export function textAction(label, action) {
