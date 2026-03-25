@@ -1,6 +1,7 @@
 import {
   registerGithubAppInstallListener,
   registerGithubAuthListener,
+  restoreStoredGithubSession,
 } from "./app/auth-flow.js";
 import { registerAppEvents } from "./app/events.js";
 import { loadUserTeams, setGithubAppInstallation } from "./app/team-setup-flow.js";
@@ -42,4 +43,5 @@ function render() {
 registerAppEvents(render);
 void registerGithubAuthListener(render, loadUserTeams);
 void registerGithubAppInstallListener(render, setGithubAppInstallation);
+restoreStoredGithubSession(render, loadUserTeams);
 render();

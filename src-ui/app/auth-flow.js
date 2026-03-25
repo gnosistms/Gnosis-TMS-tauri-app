@@ -1,4 +1,8 @@
 import { invoke, listen, openExternalUrl } from "./runtime.js";
+import {
+  loadStoredAuthSession,
+  saveStoredAuthSession,
+} from "./auth-storage.js";
 import { state } from "./state.js";
 
 export function setAuthState(nextAuth, render) {
@@ -11,11 +15,13 @@ export function setAuthState(nextAuth, render) {
 
 export function applyGithubAuthResult(payload, render, loadUserTeams) {
   if (payload?.status === "success") {
+    const session = payload.session ?? null;
     state.auth = {
       status: "success",
       message: payload.message ?? "Signed in with GitHub.",
-      session: payload.session ?? null,
+      session,
     };
+    saveStoredAuthSession(session);
     state.screen = "teams";
     void loadUserTeams(render);
     return;
@@ -29,6 +35,21 @@ export function applyGithubAuthResult(payload, render, loadUserTeams) {
     },
     render,
   );
+}
+
+export function restoreStoredGithubSession(render, loadUserTeams) {
+  const session = loadStoredAuthSession();
+  if (!session) {
+    return;
+  }
+
+  state.auth = {
+    status: "success",
+    message: "Signed in with GitHub.",
+    session,
+  };
+  state.screen = "teams";
+  void loadUserTeams(render);
 }
 
 export async function registerGithubAuthListener(render, loadUserTeams) {

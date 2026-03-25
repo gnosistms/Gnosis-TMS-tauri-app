@@ -1,4 +1,5 @@
 import { openExternalUrl } from "./runtime.js";
+import { clearStoredAuthSession } from "./auth-storage.js";
 import {
   resetSessionState,
   resetTeamSetup,
@@ -34,6 +35,7 @@ export function registerAppEvents(render) {
     const navTarget = event.target.closest("[data-nav-target]")?.dataset.navTarget;
     if (navTarget) {
       if (navTarget === "start") {
+        clearStoredAuthSession();
         resetSessionState();
       }
       state.screen = navTarget;
