@@ -138,6 +138,7 @@ a {
   color: var(--text);
   font-weight: 600;
   box-shadow: 0 8px 18px rgba(134, 91, 35, 0.08);
+  gap: 10px;
 }
 
 .button--primary {
@@ -149,6 +150,29 @@ a {
 
 .button--secondary {
   background: rgba(255, 250, 244, 0.88);
+}
+
+.button:disabled {
+  cursor: default;
+}
+
+.button__spinner {
+  width: 16px;
+  height: 16px;
+  border-radius: 999px;
+  border: 2px solid rgba(255, 248, 237, 0.42);
+  border-top-color: var(--accent-text);
+  animation: button-spin 0.7s linear infinite;
+}
+
+@keyframes button-spin {
+  from {
+    transform: rotate(0deg);
+  }
+
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .search-field {
@@ -268,4 +292,3 @@ a {
 .hero-link--button:hover {
   color: var(--accent-strong);
 }
-

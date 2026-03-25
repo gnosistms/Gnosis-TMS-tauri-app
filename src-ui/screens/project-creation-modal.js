@@ -1,4 +1,4 @@
-import { escapeHtml, primaryButton, secondaryButton } from "../lib/ui.js";
+import { escapeHtml, secondaryButton } from "../lib/ui.js";
 
 export function renderProjectCreationModal(state) {
   const creation = state.projectCreation;
@@ -10,6 +10,18 @@ export function renderProjectCreationModal(state) {
   const errorMarkup = creation.error
     ? `<p class="modal__error">${escapeHtml(creation.error)}</p>`
     : "";
+  const submitButton = isSubmitting
+    ? `
+      <button class="button button--primary" data-action="noop" disabled>
+        <span class="button__spinner" aria-hidden="true"></span>
+        <span>Creating...</span>
+      </button>
+    `
+    : `
+      <button class="button button--primary" data-action="submit-project-creation">
+        <span>Create Project</span>
+      </button>
+    `;
 
   return `
     <div class="modal-backdrop">
@@ -36,10 +48,7 @@ export function renderProjectCreationModal(state) {
           ${errorMarkup}
           <div class="modal__actions">
             ${secondaryButton("Cancel", "cancel-project-creation")}
-            ${primaryButton(
-              isSubmitting ? "Creating..." : "Create Project",
-              isSubmitting ? "noop" : "submit-project-creation",
-            )}
+            ${submitButton}
           </div>
         </div>
       </section>
