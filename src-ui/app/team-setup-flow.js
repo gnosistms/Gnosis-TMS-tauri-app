@@ -3,10 +3,9 @@ import { loadTeamProjects } from "./project-flow.js";
 import { invoke, openExternalUrl, waitForNextPaint } from "./runtime.js";
 import { resetTeamRename, resetTeamSetup, state } from "./state.js";
 import {
-  loadStoredGithubAppTeams,
-  mergeTeams,
-  saveStoredGithubAppTeams,
+  loadStoredTeamRecords,
   updateStoredGithubAppTeam,
+  upsertStoredTeamRecords,
 } from "./team-storage.js";
 
 export async function openTeamSetup(render) {
@@ -59,23 +58,24 @@ export async function finishTeamSetup(render) {
       orgLogin: installation.accountLogin,
     });
     state.teamSetup.githubAppInstallation = installation;
-    const githubAppTeams = loadStoredGithubAppTeams();
     const nextTeam = {
       id: `github-app-installation-${installation.installationId}`,
       name: installation.accountLogin,
       githubOrg: installation.accountLogin,
       ownerLogin: state.auth.session?.login ?? installation.accountLogin,
-      statusLabel: "GitHub App Connected",
       installationId: installation.installationId,
+      syncState: "active",
+      statusLabel: "",
+      lastSeenAt: new Date().toISOString(),
     };
-    const nextTeams = mergeTeams([nextTeam], githubAppTeams);
-    saveStoredGithubAppTeams(nextTeams);
-    state.teams = mergeTeams(state.teams, nextTeams);
-    state.selectedTeamId = nextTeam.id;
+    const nextTeams = upsertStoredTeamRecords([nextTeam]);
+    state.teams = nextTeams;
+    state.selectedTeamId =
+      nextTeams.find((team) => team.githubOrg === nextTeam.githubOrg)?.id ?? nextTeam.id;
     state.screen = "projects";
     resetTeamSetup();
     render();
-    await loadTeamProjects(render, nextTeam.id);
+    await loadTeamProjects(render, state.selectedTeamId);
   } catch (error) {
     state.teamSetup.error = error?.message ?? String(error);
     render();
@@ -83,9 +83,9 @@ export async function finishTeamSetup(render) {
 }
 
 export async function loadUserTeams(render) {
-  const githubAppTeams = loadStoredGithubAppTeams();
+  const storedTeams = loadStoredTeamRecords();
   if (!state.auth.session?.accessToken) {
-    state.teams = githubAppTeams;
+    state.teams = storedTeams;
     state.orgDiscovery = { status: "idle", error: "" };
     render();
     return;
@@ -105,9 +105,71 @@ export async function loadUserTeams(render) {
         name: organization.name || organization.login,
         githubOrg: organization.login,
         ownerLogin: state.auth.session.login,
-        statusLabel: "Connected",
+        orgCreatedAt: organization.createdAt ?? null,
+        syncState: "active",
+        statusLabel: "",
+        lastSeenAt: new Date().toISOString(),
       }));
-    state.teams = mergeTeams(oauthTeams, githubAppTeams);
+
+    const teamsByOrg = new Map(oauthTeams.map((team) => [team.githubOrg, team]));
+    const reconciledTeams = await Promise.all(
+      storedTeams.map(async (storedTeam) => {
+        const matchedOrg = teamsByOrg.get(storedTeam.githubOrg);
+        const nextTeam = {
+          ...storedTeam,
+          name: matchedOrg?.name || storedTeam.name || storedTeam.githubOrg,
+          ownerLogin:
+            matchedOrg?.ownerLogin || storedTeam.ownerLogin || state.auth.session.login,
+          orgCreatedAt: matchedOrg?.orgCreatedAt ?? storedTeam.orgCreatedAt ?? null,
+          lastSeenAt: matchedOrg ? new Date().toISOString() : storedTeam.lastSeenAt ?? null,
+        };
+
+        if (!storedTeam.installationId) {
+          return matchedOrg
+            ? {
+                ...nextTeam,
+                syncState: "active",
+                statusLabel: "",
+              }
+            : {
+                ...nextTeam,
+                syncState: "unavailable",
+                statusLabel: "Preserved locally",
+              };
+        }
+
+        try {
+          await invoke("inspect_github_app_installation", {
+            installationId: storedTeam.installationId,
+          });
+          return {
+            ...nextTeam,
+            syncState: "active",
+            statusLabel: "",
+          };
+        } catch {
+          return matchedOrg
+            ? {
+                ...nextTeam,
+                syncState: "disconnected",
+                statusLabel: "GitHub App disconnected",
+              }
+            : {
+                ...nextTeam,
+                syncState: "unavailable",
+                statusLabel: "Preserved locally",
+              };
+        }
+      }),
+    );
+
+    oauthTeams.forEach((oauthTeam) => {
+      if (!reconciledTeams.some((team) => team.githubOrg === oauthTeam.githubOrg)) {
+        reconciledTeams.push(oauthTeam);
+      }
+    });
+
+    state.teams = upsertStoredTeamRecords(reconciledTeams);
     state.selectedTeamId = state.teams[0]?.id ?? null;
     state.orgDiscovery = { status: "ready", error: "" };
     state.screen = state.teams.length === 1 ? "projects" : "teams";
@@ -116,7 +178,7 @@ export async function loadUserTeams(render) {
       await loadTeamProjects(render, state.selectedTeamId);
     }
   } catch (error) {
-    state.teams = githubAppTeams;
+    state.teams = storedTeams;
     state.selectedTeamId = state.teams[0]?.id ?? null;
     state.orgDiscovery = {
       status: "error",

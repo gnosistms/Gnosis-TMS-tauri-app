@@ -1,4 +1,4 @@
-import { loadStoredGithubAppTeams } from "./team-storage.js";
+import { loadStoredTeamRecords } from "./team-storage.js";
 
 export const state = {
   screen: "start",
@@ -7,7 +7,7 @@ export const state = {
   selectedProjectId: "p2",
   selectedGlossaryId: "g1",
   selectedChapterId: "c2",
-  teams: loadStoredGithubAppTeams(),
+  teams: loadStoredTeamRecords(),
   projects: [],
   deletedProjects: [],
   users: [],

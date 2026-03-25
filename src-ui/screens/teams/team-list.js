@@ -20,7 +20,9 @@ export function renderTeamsList(teams) {
           <div class="card__body list-row">
             <div class="list-row__content">
               <h2 class="list-row__title">${escapeHtml(team.name)}</h2>
-              <p class="list-row__meta">@${escapeHtml(team.githubOrg)} · owner @${escapeHtml(team.ownerLogin)}</p>
+              <p class="list-row__meta">@${escapeHtml(team.githubOrg)} · owner @${escapeHtml(team.ownerLogin)}${
+                team.statusLabel ? ` · ${escapeHtml(team.statusLabel)}` : ""
+              }</p>
             </div>
             <div class="list-row__actions">
               ${textAction("Open", `open-team:${team.id}`)}

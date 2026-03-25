@@ -6,6 +6,7 @@ pub(crate) struct GithubOrganization {
   pub(crate) login: String,
   pub(crate) name: Option<String>,
   pub(crate) description: Option<String>,
+  pub(crate) created_at: Option<String>,
   pub(crate) avatar_url: Option<String>,
   pub(crate) html_url: Option<String>,
 }
