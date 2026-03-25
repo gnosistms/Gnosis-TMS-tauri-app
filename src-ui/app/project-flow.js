@@ -56,12 +56,11 @@ export async function createProjectForSelectedTeam(render) {
   render();
 }
 
-export function updateProjectCreationName(render, projectName) {
+export function updateProjectCreationName(projectName) {
   state.projectCreation.projectName = projectName;
   if (state.projectCreation.error) {
     state.projectCreation.error = "";
   }
-  render();
 }
 
 export function cancelProjectCreation(render) {

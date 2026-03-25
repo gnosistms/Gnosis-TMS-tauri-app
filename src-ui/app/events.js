@@ -25,7 +25,7 @@ export function registerAppEvents(render) {
   document.addEventListener("input", (event) => {
     const projectNameInput = event.target.closest("[data-project-name-input]");
     if (projectNameInput) {
-      updateProjectCreationName(render, projectNameInput.value);
+      updateProjectCreationName(projectNameInput.value);
     }
   });
 
