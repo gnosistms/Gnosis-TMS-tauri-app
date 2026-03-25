@@ -1,6 +1,6 @@
 import { GITHUB_FREE_ORG_SETUP_URL, GNOSIS_TMS_ORG_DESCRIPTION } from "./constants.js";
 import { invoke, openExternalUrl } from "./runtime.js";
-import { resetTeamSetup, state } from "./state.js";
+import { resetProjectCreation, resetTeamSetup, state } from "./state.js";
 import { loadStoredGithubAppTeams, mergeTeams, saveStoredGithubAppTeams } from "./team-storage.js";
 
 export async function openTeamSetup(render) {
@@ -151,38 +151,63 @@ export async function createProjectForSelectedTeam(render) {
     return;
   }
 
-  const rawProjectName = window.prompt("Enter a project name");
-  if (rawProjectName == null) {
-    return;
-  }
+  state.projectCreation = {
+    isOpen: true,
+    projectName: "",
+    status: "idle",
+    error: "",
+  };
+  render();
+}
 
-  const repoName = slugifyRepositoryName(rawProjectName);
-  if (!repoName) {
-    state.projectDiscovery = {
-      status: "error",
-      error: "Project names must contain at least one letter or number.",
-    };
+export function updateProjectCreationName(render, projectName) {
+  state.projectCreation.projectName = projectName;
+  if (state.projectCreation.error) {
+    state.projectCreation.error = "";
+  }
+  render();
+}
+
+export function cancelProjectCreation(render) {
+  resetProjectCreation();
+  render();
+}
+
+export async function submitProjectCreation(render) {
+  const selectedTeam = state.teams.find((team) => team.id === state.selectedTeamId);
+  if (!selectedTeam?.installationId) {
+    state.projectCreation.error = "New projects currently require a GitHub App-connected team.";
     render();
     return;
   }
 
-  state.projectDiscovery = { status: "loading", error: "" };
-  render();
+  const projectTitle = state.projectCreation.projectName.trim();
+  const repoName = slugifyRepositoryName(projectTitle);
+
+  if (!repoName) {
+    state.projectCreation.error =
+      "Project names must contain at least one letter or number.";
+    render();
+    return;
+  }
 
   try {
+    state.projectCreation.status = "loading";
+    state.projectCreation.error = "";
+    render();
     await invoke("create_gnosis_project_repo", {
       input: {
         installationId: selectedTeam.installationId,
         orgLogin: selectedTeam.githubOrg,
         repoName,
+        projectTitle,
       },
     });
+    resetProjectCreation();
     await loadTeamProjects(render, selectedTeam.id);
   } catch (error) {
-    state.projectDiscovery = {
-      status: "error",
-      error: error?.message ?? String(error),
-    };
+    state.projectCreation.status = "idle";
+    state.projectCreation.error = error?.message ?? String(error);
     render();
   }
 }

@@ -4,9 +4,11 @@ use std::{
   time::{SystemTime, UNIX_EPOCH},
 };
 
+use base64::{engine::general_purpose::STANDARD, Engine as _};
 use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
 use serde::{Deserialize, Serialize};
 use tauri::State;
+use uuid::Uuid;
 
 use crate::{
   constants::{
@@ -134,6 +136,13 @@ pub(crate) struct CreateGithubProjectRepoInput {
   installation_id: i64,
   org_login: String,
   repo_name: String,
+  project_title: String,
+}
+
+#[derive(Serialize)]
+struct GithubCreateRepoFileRequest<'a> {
+  message: &'a str,
+  content: String,
 }
 
 #[tauri::command]
@@ -442,6 +451,32 @@ pub(crate) fn create_gnosis_project_repo(
       format!("GitHub rejected the Gnosis TMS project property update: {error}")
     })?;
 
+  let project_id = Uuid::now_v7();
+  let project_json = serde_json::to_string_pretty(&serde_json::json!({
+    "project_id": project_id,
+    "title": input.project_title,
+    "chapter_order": []
+  }))
+  .map_err(|error| format!("Could not serialize the initial project.json: {error}"))?;
+
+  create_repository_file(
+    &client,
+    &installation_token,
+    &repository.full_name,
+    "project.json",
+    "Initialize project metadata",
+    &project_json,
+  )?;
+
+  create_repository_file(
+    &client,
+    &installation_token,
+    &repository.full_name,
+    ".gitattributes",
+    "Initialize Git attributes",
+    "*.json text eol=lf\nassets/** binary\n",
+  )?;
+
   Ok(GithubProjectRepo {
     id: repository.id,
     name: repository.name,
@@ -450,6 +485,33 @@ pub(crate) fn create_gnosis_project_repo(
     private: repository.private,
     description: repository.description,
   })
+}
+
+fn create_repository_file(
+  client: &reqwest::blocking::Client,
+  installation_token: &str,
+  full_name: &str,
+  path: &str,
+  message: &str,
+  contents: &str,
+) -> Result<(), String> {
+  client
+    .put(format!(
+      "https://api.github.com/repos/{full_name}/contents/{path}"
+    ))
+    .header("Accept", "application/vnd.github+json")
+    .header("X-GitHub-Api-Version", "2022-11-28")
+    .bearer_auth(installation_token)
+    .json(&GithubCreateRepoFileRequest {
+      message,
+      content: STANDARD.encode(contents),
+    })
+    .send()
+    .map_err(|error| format!("Could not create {path} in {full_name}: {error}"))?
+    .error_for_status()
+    .map_err(|error| format!("GitHub rejected the initial file write for {path} in {full_name}: {error}"))?;
+
+  Ok(())
 }
 
 pub(crate) fn github_client() -> Result<reqwest::blocking::Client, String> {

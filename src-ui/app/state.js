@@ -28,6 +28,7 @@ export const state = {
     error: "",
   },
   teamSetup: createTeamSetupState(),
+  projectCreation: createProjectCreationState(),
 };
 
 export function createTeamSetupState() {
@@ -40,8 +41,21 @@ export function createTeamSetupState() {
   };
 }
 
+export function createProjectCreationState() {
+  return {
+    isOpen: false,
+    projectName: "",
+    status: "idle",
+    error: "",
+  };
+}
+
 export function resetTeamSetup() {
   state.teamSetup = createTeamSetupState();
+}
+
+export function resetProjectCreation() {
+  state.projectCreation = createProjectCreationState();
 }
 
 export function resetSessionState() {
@@ -57,4 +71,5 @@ export function resetSessionState() {
   state.projectDiscovery = { status: "idle", error: "" };
   state.userDiscovery = { status: "idle", error: "" };
   resetTeamSetup();
+  resetProjectCreation();
 }

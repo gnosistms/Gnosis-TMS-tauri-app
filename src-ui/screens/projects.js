@@ -6,6 +6,7 @@ import {
   primaryButton,
   textAction,
 } from "../lib/ui.js";
+import { renderProjectCreationModal } from "./project-creation-modal.js";
 
 function renderProjectCard(project, expanded) {
   const chapterCount = `${project.chapters.length} chapter${
@@ -103,7 +104,8 @@ export function renderProjectsScreen(state) {
               .map((project) => renderProjectCard(project, state.expandedProjects.has(project.id)))
               .join("")}</section>`;
 
-  return pageShell({
+  return (
+    pageShell({
     title: `${selectedTeam?.name ?? "Team"} - Projects`,
     navButtons: [
       navButton("Logout", "start"),
@@ -113,5 +115,6 @@ export function renderProjectsScreen(state) {
     ],
     tools: `${createSearchField("Search")} ${primaryButton("+ New Project", "open-new-project")}`,
     body,
-  });
+    }) + renderProjectCreationModal(state)
+  );
 }

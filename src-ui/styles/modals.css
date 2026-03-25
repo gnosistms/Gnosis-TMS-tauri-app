@@ -14,6 +14,10 @@
   overflow: auto;
 }
 
+.modal-card--compact {
+  width: min(620px, 100%);
+}
+
 .modal-card__body {
   display: grid;
   gap: 18px;
@@ -198,4 +202,3 @@
   white-space: pre-wrap;
   word-break: break-word;
 }
-

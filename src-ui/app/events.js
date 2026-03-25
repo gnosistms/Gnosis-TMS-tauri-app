@@ -1,18 +1,32 @@
 import { openExternalUrl } from "./runtime.js";
-import { resetSessionState, resetTeamSetup, state } from "./state.js";
+import {
+  resetSessionState,
+  resetTeamSetup,
+  state,
+} from "./state.js";
 import { startGithubLogin } from "./auth-flow.js";
 import {
   beginGithubAppInstall,
   beginTeamOrgSetup,
+  cancelProjectCreation,
   createProjectForSelectedTeam,
   finishTeamSetup,
   loadTeamProjects,
   loadTeamUsers,
   loadUserTeams,
   openTeamSetup,
+  submitProjectCreation,
+  updateProjectCreationName,
 } from "./team-flow.js";
 
 export function registerAppEvents(render) {
+  document.addEventListener("input", (event) => {
+    const projectNameInput = event.target.closest("[data-project-name-input]");
+    if (projectNameInput) {
+      updateProjectCreationName(render, projectNameInput.value);
+    }
+  });
+
   document.addEventListener("click", (event) => {
     const navTarget = event.target.closest("[data-nav-target]")?.dataset.navTarget;
     if (navTarget) {
@@ -47,6 +61,16 @@ export function registerAppEvents(render) {
 
     if (action === "open-new-project") {
       void createProjectForSelectedTeam(render);
+      return;
+    }
+
+    if (action === "cancel-project-creation") {
+      cancelProjectCreation(render);
+      return;
+    }
+
+    if (action === "submit-project-creation") {
+      void submitProjectCreation(render);
       return;
     }
 
