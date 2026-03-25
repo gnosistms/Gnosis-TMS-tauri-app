@@ -111,6 +111,7 @@
   --surface-shadow: 0 18px 40px rgba(131, 82, 22, 0.14);
   --text: #3f2610;
   --muted: #a36e34;
+  --placeholder-text: rgba(163, 110, 52, 0.42);
   --accent: #f39c18;
   --accent-strong: #ec8609;
   --accent-text: #fff8ed;
@@ -341,7 +342,7 @@ a {
 }
 
 .search-field input::placeholder {
-  color: rgba(163, 110, 52, 0.7);
+  color: var(--placeholder-text);
 }
 
 .search-field__icon {

@@ -93,6 +93,10 @@
   box-shadow: 0 0 0 4px rgba(243, 156, 24, 0.12);
 }
 
+.field__input::placeholder {
+  color: var(--placeholder-text);
+}
+
 .setup-summary {
   display: grid;
   gap: 10px;

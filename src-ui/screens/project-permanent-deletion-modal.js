@@ -11,14 +11,16 @@ export function renderProjectPermanentDeletionModal(state) {
   const errorMarkup = deletion.error
     ? `<p class="modal__error">${escapeHtml(deletion.error)}</p>`
     : "";
-  const deleteButton = matchesName
+  const deleteButton = isDeleting
     ? loadingPrimaryButton({
         label: "Delete",
         loadingLabel: "Deleting...",
         action: "confirm-project-permanent-deletion",
-        isLoading: isDeleting,
+        isLoading: true,
       })
-    : `<button class="button button--primary" data-action="noop" disabled>Delete</button>`;
+    : `<button class="button button--primary" data-action="confirm-project-permanent-deletion" data-project-permanent-delete-button ${
+        matchesName ? "" : "disabled"
+      }>Delete</button>`;
   const cancelButton = secondaryButton("Cancel", "cancel-project-permanent-deletion", {
     disabled: isDeleting,
   });
@@ -30,9 +32,9 @@ export function renderProjectPermanentDeletionModal(state) {
           <p class="card__eyebrow">PERMANENT DELETE</p>
           <h2 class="modal__title">Permanently Delete Project?</h2>
           <p class="modal__supporting">
-            To permanently delete this project, type ${escapeHtml(
+            To permanently delete this project, type <strong>${escapeHtml(
               deletion.projectName,
-            )} in the text box below. Then click Delete. This action can not be undone.
+            )}</strong> in the text box below. Then click Delete. This action can not be undone.
           </p>
           <div class="modal__form">
             <label class="field">

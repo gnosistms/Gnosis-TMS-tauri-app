@@ -41,7 +41,11 @@ export function registerAppEvents(render) {
     const permanentDeleteInput = event.target.closest("[data-project-permanent-delete-input]");
     if (permanentDeleteInput) {
       updateProjectPermanentDeletionConfirmation(permanentDeleteInput.value);
-      render();
+      const deleteButton = document.querySelector("[data-project-permanent-delete-button]");
+      if (deleteButton) {
+        deleteButton.disabled =
+          permanentDeleteInput.value !== state.projectPermanentDeletion.projectName;
+      }
     }
   });
 
