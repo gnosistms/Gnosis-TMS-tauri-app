@@ -15,6 +15,12 @@ use super::{
   },
 };
 
+#[derive(Clone, serde::Deserialize)]
+struct GithubApiErrorResponse {
+  message: Option<String>,
+  errors: Option<Vec<serde_json::Value>>,
+}
+
 #[tauri::command]
 pub(crate) fn ensure_gnosis_repo_properties_schema(
   installation_id: i64,
@@ -131,7 +137,7 @@ pub(crate) fn create_gnosis_project_repo(
 
   ensure_schema_with_client(&client, &installation_token, &input.org_login)?;
 
-  let repository = client
+  let repository_response = client
     .post(format!("https://api.github.com/orgs/{}/repos", input.org_login))
     .header("Accept", "application/vnd.github+json")
     .header("X-GitHub-Api-Version", "2022-11-28")
@@ -141,12 +147,19 @@ pub(crate) fn create_gnosis_project_repo(
       "private": true
     }))
     .send()
-    .map_err(|error| format!("Could not create the GitHub repository: {error}"))?
-    .error_for_status()
-    .map_err(|error| format!("GitHub rejected the repository creation request: {error}"))?;
-  let repository_body = repository
+    .map_err(|error| format!("Could not create the GitHub repository: {error}"))?;
+  let repository_status = repository_response.status();
+  let repository_body = repository_response
     .text()
     .map_err(|error| format!("Could not read the new GitHub repository response: {error}"))?;
+
+  if !repository_status.is_success() {
+    return Err(format_github_repository_creation_error(
+      repository_status,
+      &repository_body,
+    ));
+  }
+
   let repository = parse_repository_response(&repository_body)
     .map_err(|error| format!("Could not parse the new GitHub repository: {error}"))?;
 
@@ -332,4 +345,39 @@ fn parse_repository_response(body: &str) -> Result<GithubRepository, String> {
     private,
     description,
   })
+}
+
+fn format_github_repository_creation_error(
+  status: reqwest::StatusCode,
+  body: &str,
+) -> String {
+  let parsed = serde_json::from_str::<GithubApiErrorResponse>(body).ok();
+  let message = parsed
+    .as_ref()
+    .and_then(|payload| payload.message.as_deref())
+    .unwrap_or("GitHub rejected the repository creation request.")
+    .to_string();
+
+  let details = parsed
+    .clone()
+    .and_then(|payload| payload.errors)
+    .filter(|errors| !errors.is_empty())
+    .map(|errors| {
+      errors
+        .into_iter()
+        .map(|error| match error {
+          serde_json::Value::String(string) => string,
+          other => other.to_string(),
+        })
+        .collect::<Vec<_>>()
+        .join("; ")
+    });
+
+  match details {
+    Some(details) => format!("{message} ({details})"),
+    None if status == reqwest::StatusCode::UNPROCESSABLE_ENTITY => {
+      format!("{message} The repository name may already exist in this organization or may be invalid.")
+    }
+    None => format!("{message} (HTTP {status})"),
+  }
 }
