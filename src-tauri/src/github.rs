@@ -18,4 +18,5 @@ pub(crate) use repos::{
   create_gnosis_project_repo, ensure_gnosis_repo_properties_schema,
     list_gnosis_projects_for_installation,
   mark_gnosis_project_repo_deleted, permanently_delete_gnosis_project_repo,
+  rename_gnosis_project_repo,
 };

@@ -9,11 +9,12 @@ import {
 import { renderProjectCreationModal } from "./project-creation-modal.js";
 import { renderProjectDeletionModal } from "./project-deletion-modal.js";
 import { renderProjectPermanentDeletionModal } from "./project-permanent-deletion-modal.js";
+import { renderProjectRenameModal } from "./project-rename-modal.js";
 
 function renderProjectCard(project, expanded, options = {}) {
   const deleteAction = options.deleteAction ?? `delete-project:${project.id}`;
   const actions = options.actions ?? [
-    textAction("Rename", "noop"),
+    textAction("Rename", `rename-project:${project.id}`),
     textAction("Import", "noop"),
     textAction("Delete", deleteAction),
   ];
@@ -168,6 +169,7 @@ export function renderProjectsScreen(state) {
     body,
     }) +
     renderProjectCreationModal(state) +
+    renderProjectRenameModal(state) +
     renderProjectDeletionModal(state) +
     renderProjectPermanentDeletionModal(state)
   );

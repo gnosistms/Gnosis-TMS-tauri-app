@@ -12,7 +12,7 @@ use super::{
   types::{
     CreateGithubProjectRepoInput, DeleteGithubProjectRepoInput, GithubCreateRepoFileRequest,
     GithubProjectRepo, GithubRepository, GithubRepositoryContentResponse,
-    GithubRepositoryPropertyValue,
+    GithubRepositoryPropertyValue, RenameGithubProjectRepoInput,
   },
 };
 
@@ -304,6 +304,44 @@ pub(crate) async fn mark_gnosis_project_repo_deleted(
 }
 
 #[tauri::command]
+pub(crate) async fn rename_gnosis_project_repo(
+  input: RenameGithubProjectRepoInput,
+) -> Result<(), String> {
+  tauri::async_runtime::spawn_blocking(move || {
+    let installation_token = github_installation_access_token(input.installation_id)?;
+    let client = github_client()?;
+    let (mut project_json, sha) =
+      load_project_json_with_sha(&client, &installation_token, &input.full_name)?;
+
+    let Some(project_object) = project_json.as_object_mut() else {
+      return Err(format!("project.json in {} is not an object", input.full_name));
+    };
+
+    project_object.insert(
+      "title".to_string(),
+      serde_json::Value::String(input.project_title),
+    );
+
+    let serialized = serde_json::to_string_pretty(&project_json)
+      .map_err(|error| format!("Could not serialize project.json for {}: {error}", input.full_name))?;
+
+    update_repository_file(
+      &client,
+      &installation_token,
+      &input.full_name,
+      "project.json",
+      "Rename project",
+      &serialized,
+      &sha,
+    )?;
+
+    Ok(())
+  })
+  .await
+  .map_err(|error| format!("Could not run the project rename task: {error}"))?
+}
+
+#[tauri::command]
 pub(crate) async fn permanently_delete_gnosis_project_repo(
   input: DeleteGithubProjectRepoInput,
 ) -> Result<(), String> {
@@ -398,11 +436,41 @@ fn create_repository_file(
     .json(&GithubCreateRepoFileRequest {
       message,
       content: STANDARD.encode(contents),
+      sha: None,
     })
     .send()
     .map_err(|error| format!("Could not create {path} in {full_name}: {error}"))?
     .error_for_status()
     .map_err(|error| format!("GitHub rejected the initial file write for {path} in {full_name}: {error}"))?;
+
+  Ok(())
+}
+
+fn update_repository_file(
+  client: &reqwest::blocking::Client,
+  installation_token: &str,
+  full_name: &str,
+  path: &str,
+  message: &str,
+  contents: &str,
+  sha: &str,
+) -> Result<(), String> {
+  client
+    .put(format!(
+      "https://api.github.com/repos/{full_name}/contents/{path}"
+    ))
+    .header("Accept", "application/vnd.github+json")
+    .header("X-GitHub-Api-Version", "2022-11-28")
+    .bearer_auth(installation_token)
+    .json(&GithubCreateRepoFileRequest {
+      message,
+      content: STANDARD.encode(contents),
+      sha: Some(sha),
+    })
+    .send()
+    .map_err(|error| format!("Could not update {path} in {full_name}: {error}"))?
+    .error_for_status()
+    .map_err(|error| format!("GitHub rejected the file update for {path} in {full_name}: {error}"))?;
 
   Ok(())
 }
@@ -443,6 +511,21 @@ fn load_project_title(
   installation_token: &str,
   full_name: &str,
 ) -> Result<String, String> {
+  let (value, _) = load_project_json_with_sha(client, installation_token, full_name)?;
+
+  value
+    .get("title")
+    .and_then(|item| item.as_str())
+    .map(|title| title.to_string())
+    .filter(|title| !title.trim().is_empty())
+    .ok_or_else(|| format!("project.json in {full_name} is missing a valid title"))
+}
+
+fn load_project_json_with_sha(
+  client: &reqwest::blocking::Client,
+  installation_token: &str,
+  full_name: &str,
+) -> Result<(serde_json::Value, String), String> {
   let response = client
     .get(format!(
       "https://api.github.com/repos/{full_name}/contents/project.json"
@@ -474,12 +557,7 @@ fn load_project_title(
   let value = serde_json::from_str::<serde_json::Value>(&text)
     .map_err(|error| format!("Could not parse project.json for {full_name}: {error}"))?;
 
-  value
-    .get("title")
-    .and_then(|item| item.as_str())
-    .map(|title| title.to_string())
-    .filter(|title| !title.trim().is_empty())
-    .ok_or_else(|| format!("project.json in {full_name} is missing a valid title"))
+  Ok((value, content.sha))
 }
 
 fn parse_repository_response(body: &str) -> Result<GithubRepository, String> {

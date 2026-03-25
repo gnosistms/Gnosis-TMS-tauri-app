@@ -3,6 +3,7 @@ import {
   resetProjectCreation,
   resetProjectDeletion,
   resetProjectPermanentDeletion,
+  resetProjectRename,
   state,
 } from "./state.js";
 
@@ -77,6 +78,39 @@ export function cancelProjectCreation(render) {
   render();
 }
 
+export function openProjectRename(render, projectId) {
+  const project = state.projects.find((item) => item.id === projectId);
+  if (!project) {
+    state.projectDiscovery = {
+      status: "error",
+      error: "Could not find the selected project.",
+    };
+    render();
+    return;
+  }
+
+  state.projectRename = {
+    isOpen: true,
+    projectId,
+    projectName: project.title ?? project.name,
+    status: "idle",
+    error: "",
+  };
+  render();
+}
+
+export function updateProjectRenameName(projectName) {
+  state.projectRename.projectName = projectName;
+  if (state.projectRename.error) {
+    state.projectRename.error = "";
+  }
+}
+
+export function cancelProjectRename(render) {
+  resetProjectRename();
+  render();
+}
+
 export async function submitProjectCreation(render) {
   const selectedTeam = state.teams.find((team) => team.id === state.selectedTeamId);
   if (!selectedTeam?.installationId) {
@@ -113,6 +147,52 @@ export async function submitProjectCreation(render) {
   } catch (error) {
     state.projectCreation.status = "idle";
     state.projectCreation.error = error?.message ?? String(error);
+    render();
+  }
+}
+
+export async function submitProjectRename(render) {
+  const selectedTeam = state.teams.find((team) => team.id === state.selectedTeamId);
+  const project = state.projects.find((item) => item.id === state.projectRename.projectId);
+
+  if (!selectedTeam?.installationId || !project) {
+    state.projectRename.error = "Could not find the selected project.";
+    render();
+    return;
+  }
+
+  const nextTitle = state.projectRename.projectName.trim();
+  if (!nextTitle) {
+    state.projectRename.error = "Enter a project name.";
+    render();
+    return;
+  }
+
+  try {
+    state.projectRename.status = "loading";
+    state.projectRename.error = "";
+    render();
+    await waitForNextPaint();
+    await invoke("rename_gnosis_project_repo", {
+      input: {
+        installationId: selectedTeam.installationId,
+        fullName: project.fullName,
+        projectTitle: nextTitle,
+      },
+    });
+    state.projects = state.projects.map((item) =>
+      item.id === project.id
+        ? {
+            ...item,
+            title: nextTitle,
+          }
+        : item,
+    );
+    resetProjectRename();
+    render();
+  } catch (error) {
+    state.projectRename.status = "idle";
+    state.projectRename.error = error?.message ?? String(error);
     render();
   }
 }

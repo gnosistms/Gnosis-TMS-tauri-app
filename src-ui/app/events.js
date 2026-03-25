@@ -22,16 +22,20 @@ import {
   cancelProjectCreation,
   cancelProjectDeletion,
   cancelProjectPermanentDeletion,
+  cancelProjectRename,
   confirmProjectDeletion,
   confirmProjectPermanentDeletion,
   createProjectForSelectedTeam,
   deleteProject,
   loadTeamProjects,
+  openProjectRename,
   permanentlyDeleteProject,
   submitProjectCreation,
+  submitProjectRename,
   toggleDeletedProjects,
   updateProjectCreationName,
   updateProjectPermanentDeletionConfirmation,
+  updateProjectRenameName,
 } from "./project-flow.js";
 import { loadTeamUsers } from "./user-flow.js";
 
@@ -55,6 +59,11 @@ export function registerAppEvents(render) {
     const teamRenameInput = event.target.closest("[data-team-rename-input]");
     if (teamRenameInput) {
       updateTeamRenameName(teamRenameInput.value);
+    }
+
+    const projectRenameInput = event.target.closest("[data-project-rename-input]");
+    if (projectRenameInput) {
+      updateProjectRenameName(projectRenameInput.value);
     }
   });
 
@@ -111,6 +120,11 @@ export function registerAppEvents(render) {
       return;
     }
 
+    if (action === "cancel-project-rename") {
+      cancelProjectRename(render);
+      return;
+    }
+
     if (action === "submit-project-creation") {
       setImmediateLoadingButton(event.target.closest("button"), "Creating...");
       await waitForNextPaint();
@@ -129,6 +143,13 @@ export function registerAppEvents(render) {
       setImmediateLoadingButton(event.target.closest("button"), "Deleting...");
       await waitForNextPaint();
       void confirmProjectPermanentDeletion(render);
+      return;
+    }
+
+    if (action === "submit-project-rename") {
+      setImmediateLoadingButton(event.target.closest("button"), "Saving...");
+      await waitForNextPaint();
+      void submitProjectRename(render);
       return;
     }
 
@@ -206,6 +227,11 @@ export function registerAppEvents(render) {
 
     if (action.startsWith("delete-project:")) {
       void deleteProject(render, action.split(":")[1]);
+      return;
+    }
+
+    if (action.startsWith("rename-project:")) {
+      void openProjectRename(render, action.split(":")[1]);
       return;
     }
 

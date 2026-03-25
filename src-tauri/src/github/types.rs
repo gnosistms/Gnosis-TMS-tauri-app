@@ -116,6 +116,14 @@ pub(crate) struct CreateGithubProjectRepoInput {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub(crate) struct RenameGithubProjectRepoInput {
+  pub(crate) installation_id: i64,
+  pub(crate) full_name: String,
+  pub(crate) project_title: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct DeleteGithubProjectRepoInput {
   pub(crate) installation_id: i64,
   pub(crate) org_login: String,
@@ -126,10 +134,13 @@ pub(crate) struct DeleteGithubProjectRepoInput {
 pub(crate) struct GithubCreateRepoFileRequest<'a> {
   pub(crate) message: &'a str,
   pub(crate) content: String,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub(crate) sha: Option<&'a str>,
 }
 
 #[derive(Deserialize)]
 pub(crate) struct GithubRepositoryContentResponse {
+  pub(crate) sha: String,
   pub(crate) content: String,
   pub(crate) encoding: String,
 }

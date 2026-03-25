@@ -31,6 +31,7 @@ export const state = {
   teamSetup: createTeamSetupState(),
   teamRename: createTeamRenameState(),
   projectCreation: createProjectCreationState(),
+  projectRename: createProjectRenameState(),
   projectDeletion: createProjectDeletionState(),
   projectPermanentDeletion: createProjectPermanentDeletionState(),
   showDeletedProjects: false,
@@ -59,6 +60,16 @@ export function createTeamRenameState() {
 export function createProjectCreationState() {
   return {
     isOpen: false,
+    projectName: "",
+    status: "idle",
+    error: "",
+  };
+}
+
+export function createProjectRenameState() {
+  return {
+    isOpen: false,
+    projectId: null,
     projectName: "",
     status: "idle",
     error: "",
@@ -98,6 +109,10 @@ export function resetProjectCreation() {
   state.projectCreation = createProjectCreationState();
 }
 
+export function resetProjectRename() {
+  state.projectRename = createProjectRenameState();
+}
+
 export function resetProjectDeletion() {
   state.projectDeletion = createProjectDeletionState();
 }
@@ -122,6 +137,7 @@ export function resetSessionState() {
   resetTeamSetup();
   resetTeamRename();
   resetProjectCreation();
+  resetProjectRename();
   resetProjectDeletion();
   resetProjectPermanentDeletion();
   state.showDeletedProjects = false;

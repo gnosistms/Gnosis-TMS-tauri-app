@@ -24,7 +24,7 @@ use crate::{
     inspect_github_app_installation, list_gnosis_projects_for_installation,
     list_organization_members_for_installation, list_user_organizations,
     mark_gnosis_project_repo_deleted, permanently_delete_gnosis_project_repo,
-    update_organization_name_for_installation,
+    rename_gnosis_project_repo, update_organization_name_for_installation,
   },
   state::AuthState,
 };
@@ -51,6 +51,7 @@ pub fn run() {
       create_team_setup_draft,
       begin_github_app_install,
       create_gnosis_project_repo,
+      rename_gnosis_project_repo,
       mark_gnosis_project_repo_deleted,
       permanently_delete_gnosis_project_repo,
       inspect_github_app_installation,
