@@ -25,7 +25,7 @@ export function renderTeamsList(teams) {
             <div class="list-row__actions">
               <span class="pill">${escapeHtml(team.statusLabel)}</span>
               ${textAction("Open", `open-team:${team.id}`)}
-              ${textAction("Rename", "noop")}
+              ${textAction("Rename", `rename-team:${team.id}`)}
               ${textAction("Delete", "noop")}
             </div>
           </div>

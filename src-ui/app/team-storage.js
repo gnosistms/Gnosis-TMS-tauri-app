@@ -20,6 +20,13 @@ export function saveStoredGithubAppTeams(teams) {
   } catch {}
 }
 
+export function updateStoredGithubAppTeam(teamId, updates) {
+  const nextTeams = loadStoredGithubAppTeams().map((team) =>
+    team.id === teamId ? { ...team, ...updates } : team,
+  );
+  saveStoredGithubAppTeams(nextTeams);
+}
+
 export function mergeTeams(primaryTeams, secondaryTeams = []) {
   const mergedTeams = new Map();
   [...secondaryTeams, ...primaryTeams].forEach((team) => {

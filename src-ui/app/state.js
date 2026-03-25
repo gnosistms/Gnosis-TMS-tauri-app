@@ -29,6 +29,7 @@ export const state = {
     error: "",
   },
   teamSetup: createTeamSetupState(),
+  teamRename: createTeamRenameState(),
   projectCreation: createProjectCreationState(),
   projectDeletion: createProjectDeletionState(),
   projectPermanentDeletion: createProjectPermanentDeletionState(),
@@ -42,6 +43,16 @@ export function createTeamSetupState() {
     error: "",
     githubAppInstallationId: null,
     githubAppInstallation: null,
+  };
+}
+
+export function createTeamRenameState() {
+  return {
+    isOpen: false,
+    teamId: null,
+    teamName: "",
+    status: "idle",
+    error: "",
   };
 }
 
@@ -79,6 +90,10 @@ export function resetTeamSetup() {
   state.teamSetup = createTeamSetupState();
 }
 
+export function resetTeamRename() {
+  state.teamRename = createTeamRenameState();
+}
+
 export function resetProjectCreation() {
   state.projectCreation = createProjectCreationState();
 }
@@ -105,6 +120,7 @@ export function resetSessionState() {
   state.projectDiscovery = { status: "idle", error: "" };
   state.userDiscovery = { status: "idle", error: "" };
   resetTeamSetup();
+  resetTeamRename();
   resetProjectCreation();
   resetProjectDeletion();
   resetProjectPermanentDeletion();

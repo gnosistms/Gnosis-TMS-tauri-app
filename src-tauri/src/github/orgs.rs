@@ -106,6 +106,31 @@ pub(crate) fn list_organization_members_for_installation(
     .map_err(|error| format!("Could not parse the members for @{org_login}: {error}"))
 }
 
+#[tauri::command]
+pub(crate) fn update_organization_name_for_installation(
+  installation_id: i64,
+  org_login: String,
+  name: String,
+) -> Result<GithubOrganization, String> {
+  let installation_token = github_installation_access_token(installation_id)?;
+  let client = github_client()?;
+
+  client
+    .patch(format!("https://api.github.com/orgs/{org_login}"))
+    .header("Accept", "application/vnd.github+json")
+    .header("X-GitHub-Api-Version", "2022-11-28")
+    .bearer_auth(&installation_token)
+    .json(&serde_json::json!({
+      "name": name
+    }))
+    .send()
+    .map_err(|error| format!("Could not rename @{org_login}: {error}"))?
+    .error_for_status()
+    .map_err(|error| format!("GitHub rejected the organization rename for @{org_login}: {error}"))?
+    .json::<GithubOrganization>()
+    .map_err(|error| format!("Could not parse the updated organization for @{org_login}: {error}"))
+}
+
 pub(crate) fn get_organization_details(
   client: &reqwest::blocking::Client,
   access_token: &str,

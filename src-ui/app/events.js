@@ -10,9 +10,13 @@ import { startGithubLogin } from "./auth-flow.js";
 import {
   beginGithubAppInstall,
   beginTeamOrgSetup,
+  cancelTeamRename,
   finishTeamSetup,
   loadUserTeams,
   openTeamSetup,
+  openTeamRename,
+  submitTeamRename,
+  updateTeamRenameName,
 } from "./team-setup-flow.js";
 import {
   cancelProjectCreation,
@@ -46,6 +50,11 @@ export function registerAppEvents(render) {
         deleteButton.disabled =
           permanentDeleteInput.value !== state.projectPermanentDeletion.projectName;
       }
+    }
+
+    const teamRenameInput = event.target.closest("[data-team-rename-input]");
+    if (teamRenameInput) {
+      updateTeamRenameName(teamRenameInput.value);
     }
   });
 
@@ -134,6 +143,18 @@ export function registerAppEvents(render) {
       return;
     }
 
+    if (action === "cancel-team-rename") {
+      cancelTeamRename(render);
+      return;
+    }
+
+    if (action === "submit-team-rename") {
+      setImmediateLoadingButton(event.target.closest("button"), "Saving...");
+      await waitForNextPaint();
+      void submitTeamRename(render);
+      return;
+    }
+
     if (action === "begin-github-app-install") {
       void beginGithubAppInstall(render);
       return;
@@ -164,6 +185,11 @@ export function registerAppEvents(render) {
       state.screen = "projects";
       render();
       void loadTeamProjects(render, state.selectedTeamId);
+      return;
+    }
+
+    if (action.startsWith("rename-team:")) {
+      void openTeamRename(render, action.split(":")[1]);
       return;
     }
 

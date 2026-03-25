@@ -1,8 +1,13 @@
 import { GITHUB_FREE_ORG_SETUP_URL, GNOSIS_TMS_ORG_DESCRIPTION } from "./constants.js";
 import { loadTeamProjects } from "./project-flow.js";
 import { invoke, openExternalUrl } from "./runtime.js";
-import { resetTeamSetup, state } from "./state.js";
-import { loadStoredGithubAppTeams, mergeTeams, saveStoredGithubAppTeams } from "./team-storage.js";
+import { resetTeamRename, resetTeamSetup, state } from "./state.js";
+import {
+  loadStoredGithubAppTeams,
+  mergeTeams,
+  saveStoredGithubAppTeams,
+  updateStoredGithubAppTeam,
+} from "./team-storage.js";
 
 export async function openTeamSetup(render) {
   state.teamSetup = {
@@ -122,6 +127,78 @@ export async function loadUserTeams(render) {
     if (state.screen === "projects" && state.selectedTeamId) {
       await loadTeamProjects(render, state.selectedTeamId);
     }
+  }
+}
+
+export function openTeamRename(render, teamId) {
+  const team = state.teams.find((item) => item.id === teamId);
+  if (!team) {
+    return;
+  }
+
+  state.teamRename = {
+    isOpen: true,
+    teamId,
+    teamName: team.name || team.githubOrg,
+    status: "idle",
+    error: "",
+  };
+  render();
+}
+
+export function updateTeamRenameName(teamName) {
+  state.teamRename.teamName = teamName;
+  if (state.teamRename.error) {
+    state.teamRename.error = "";
+  }
+}
+
+export function cancelTeamRename(render) {
+  resetTeamRename();
+  render();
+}
+
+export async function submitTeamRename(render) {
+  const team = state.teams.find((item) => item.id === state.teamRename.teamId);
+  if (!team?.installationId) {
+    state.teamRename.error = "Team renaming currently requires a GitHub App-connected team.";
+    render();
+    return;
+  }
+
+  const nextName = state.teamRename.teamName.trim();
+  if (!nextName) {
+    state.teamRename.error = "Enter a team name.";
+    render();
+    return;
+  }
+
+  try {
+    state.teamRename.status = "loading";
+    state.teamRename.error = "";
+    render();
+    const organization = await invoke("update_organization_name_for_installation", {
+      installationId: team.installationId,
+      orgLogin: team.githubOrg,
+      name: nextName,
+    });
+
+    const resolvedName = organization.name || organization.login;
+    state.teams = state.teams.map((item) =>
+      item.id === team.id
+        ? {
+            ...item,
+            name: resolvedName,
+          }
+        : item,
+    );
+    updateStoredGithubAppTeam(team.id, { name: resolvedName });
+    resetTeamRename();
+    render();
+  } catch (error) {
+    state.teamRename.status = "idle";
+    state.teamRename.error = error?.message ?? String(error);
+    render();
   }
 }
 

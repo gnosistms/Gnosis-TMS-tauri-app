@@ -12,6 +12,7 @@ pub(crate) use app_auth::{
 };
 pub(crate) use orgs::{
   inspect_github_app_installation, list_organization_members_for_installation, list_user_organizations,
+  update_organization_name_for_installation,
 };
 pub(crate) use repos::{
   create_gnosis_project_repo, ensure_gnosis_repo_properties_schema,

@@ -24,6 +24,7 @@ use crate::{
     inspect_github_app_installation, list_gnosis_projects_for_installation,
     list_organization_members_for_installation, list_user_organizations,
     mark_gnosis_project_repo_deleted, permanently_delete_gnosis_project_repo,
+    update_organization_name_for_installation,
   },
   state::AuthState,
 };
@@ -56,7 +57,8 @@ pub fn run() {
       ensure_gnosis_repo_properties_schema,
       list_gnosis_projects_for_installation,
       list_organization_members_for_installation,
-      list_user_organizations
+      list_user_organizations,
+      update_organization_name_for_installation
     ])
     .setup(|app| {
       #[cfg(target_os = "macos")]

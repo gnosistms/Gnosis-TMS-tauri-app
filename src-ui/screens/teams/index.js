@@ -3,6 +3,7 @@ import {
   pageShell,
   primaryButton,
 } from "../../lib/ui.js";
+import { renderTeamRenameModal } from "./rename-modal.js";
 import { renderSetupModal } from "./setup-modal.js";
 import { renderTeamsList } from "./team-list.js";
 
@@ -11,6 +12,6 @@ export function renderTeamsScreen(state) {
     title: "Translation Teams",
     navButtons: [navButton("Logout", "start")],
     tools: [primaryButton("+ New Team", "open-new-team")].join(""),
-    body: `<section class="stack">${renderTeamsList(state.teams)}</section>${renderSetupModal(state)}`,
-  });
+    body: `<section class="stack">${renderTeamsList(state.teams)}</section>`,
+  }) + renderSetupModal(state) + renderTeamRenameModal(state);
 }
