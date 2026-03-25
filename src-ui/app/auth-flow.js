@@ -21,7 +21,7 @@ export function applyGithubAuthResult(payload, render, loadUserTeams) {
       message: payload.message ?? "Signed in with GitHub.",
       session,
     };
-    saveStoredAuthSession(session);
+    void saveStoredAuthSession(session);
     state.screen = "teams";
     void loadUserTeams(render);
     return;
@@ -37,8 +37,8 @@ export function applyGithubAuthResult(payload, render, loadUserTeams) {
   );
 }
 
-export function restoreStoredGithubSession(render, loadUserTeams) {
-  const session = loadStoredAuthSession();
+export async function restoreStoredGithubSession(render, loadUserTeams) {
+  const session = await loadStoredAuthSession();
   if (!session) {
     return;
   }

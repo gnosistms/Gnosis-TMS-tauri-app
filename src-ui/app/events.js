@@ -35,7 +35,7 @@ export function registerAppEvents(render) {
     const navTarget = event.target.closest("[data-nav-target]")?.dataset.navTarget;
     if (navTarget) {
       if (navTarget === "start") {
-        clearStoredAuthSession();
+        void clearStoredAuthSession();
         resetSessionState();
       }
       state.screen = navTarget;

@@ -20,7 +20,7 @@ pub(crate) struct BeginOauthResponse {
   auth_url: String,
 }
 
-#[derive(Serialize, Clone)]
+#[derive(Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct GithubSession {
   pub(crate) access_token: String,

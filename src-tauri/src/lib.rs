@@ -1,4 +1,5 @@
 mod auth;
+mod auth_storage;
 mod callbacks;
 mod constants;
 mod drafts;
@@ -12,6 +13,9 @@ use std::sync::Mutex;
 
 use crate::{
   auth::begin_github_oauth,
+  auth_storage::{
+    clear_github_auth_session, load_github_auth_session, save_github_auth_session,
+  },
   callbacks::spawn_callback_server,
   constants::MAIN_WINDOW_BACKGROUND,
   drafts::create_team_setup_draft,
@@ -40,6 +44,9 @@ pub fn run() {
     .invoke_handler(tauri::generate_handler![
       ping,
       begin_github_oauth,
+      load_github_auth_session,
+      save_github_auth_session,
+      clear_github_auth_session,
       create_team_setup_draft,
       begin_github_app_install,
       create_gnosis_project_repo,

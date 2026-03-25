@@ -1,45 +1,52 @@
-const GITHUB_AUTH_STORAGE_KEY = "gnosisTms.githubAuthSession";
+import { invoke } from "./runtime.js";
 
-export function loadStoredAuthSession() {
+export async function loadStoredAuthSession() {
+  if (!invoke) {
+    return null;
+  }
+
   try {
-    const storedValue = window.localStorage?.getItem(GITHUB_AUTH_STORAGE_KEY);
-    if (!storedValue) {
-      return null;
-    }
-
-    const parsed = JSON.parse(storedValue);
-    if (!parsed?.accessToken || !parsed?.login) {
+    const session = await invoke("load_github_auth_session");
+    if (!session?.accessToken || !session?.login) {
       return null;
     }
 
     return {
-      accessToken: parsed.accessToken,
-      login: parsed.login,
-      name: parsed.name ?? null,
-      avatarUrl: parsed.avatarUrl ?? null,
+      accessToken: session.accessToken,
+      login: session.login,
+      name: session.name ?? null,
+      avatarUrl: session.avatarUrl ?? null,
     };
   } catch {
     return null;
   }
 }
 
-export function saveStoredAuthSession(session) {
+export async function saveStoredAuthSession(session) {
+  if (!invoke) {
+    return;
+  }
+
   try {
     if (!session?.accessToken || !session?.login) {
-      clearStoredAuthSession();
+      await clearStoredAuthSession();
       return;
     }
 
-    window.localStorage?.setItem(GITHUB_AUTH_STORAGE_KEY, JSON.stringify(session));
+    await invoke("save_github_auth_session", { session });
   } catch {
-    // Ignore local storage failures and continue in memory.
+    // Ignore native storage failures and continue in memory.
   }
 }
 
-export function clearStoredAuthSession() {
+export async function clearStoredAuthSession() {
+  if (!invoke) {
+    return;
+  }
+
   try {
-    window.localStorage?.removeItem(GITHUB_AUTH_STORAGE_KEY);
+    await invoke("clear_github_auth_session");
   } catch {
-    // Ignore local storage failures and continue in memory.
+    // Ignore native storage failures and continue in memory.
   }
 }
