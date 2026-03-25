@@ -222,10 +222,12 @@ a {
 
 .card--hero {
   width: min(860px, 100%);
+  margin-inline: auto;
 }
 
 .card--empty {
   width: min(980px, 100%);
+  margin-inline: auto;
 }
 
 .card--hero .card__body {
