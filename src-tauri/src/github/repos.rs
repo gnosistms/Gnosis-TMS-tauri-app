@@ -46,7 +46,13 @@ pub(crate) fn ensure_gnosis_repo_properties_schema(
     .send()
     .map_err(|error| format!("Could not create the Gnosis TMS repository property schema: {error}"))?
     .error_for_status()
-    .map_err(|error| format!("GitHub rejected the repository property schema update: {error}"))?;
+    .map_err(|error| {
+      if error.status() == Some(reqwest::StatusCode::FORBIDDEN) {
+        "GitHub rejected the repository property schema update. The Gnosis TMS GitHub App needs the organization permission `Custom properties: Admin`.".to_string()
+      } else {
+        format!("GitHub rejected the repository property schema update: {error}")
+      }
+    })?;
 
   Ok(())
 }
@@ -164,7 +170,11 @@ pub(crate) fn create_gnosis_project_repo(
     .map_err(|error| format!("Could not mark the repository as a Gnosis TMS project: {error}"))?
     .error_for_status()
     .map_err(|error| {
-      format!("GitHub rejected the Gnosis TMS project property update: {error}")
+      if error.status() == Some(reqwest::StatusCode::FORBIDDEN) {
+        "GitHub rejected the Gnosis TMS project property update. The Gnosis TMS GitHub App needs the repository permission `Custom properties: Read and write`, and the installation may need to be updated after you save that permission.".to_string()
+      } else {
+        format!("GitHub rejected the Gnosis TMS project property update: {error}")
+      }
     })?;
 
   let project_id = Uuid::now_v7();
@@ -224,7 +234,13 @@ fn ensure_schema_with_client(
     .send()
     .map_err(|error| format!("Could not prepare the Gnosis TMS repository property schema: {error}"))?
     .error_for_status()
-    .map_err(|error| format!("GitHub rejected the repository property schema update: {error}"))?;
+    .map_err(|error| {
+      if error.status() == Some(reqwest::StatusCode::FORBIDDEN) {
+        "GitHub rejected the repository property schema update. The Gnosis TMS GitHub App needs the organization permission `Custom properties: Admin`.".to_string()
+      } else {
+        format!("GitHub rejected the repository property schema update: {error}")
+      }
+    })?;
 
   Ok(())
 }
