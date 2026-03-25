@@ -67,11 +67,6 @@ pub(crate) struct GithubInstallationTokenResponse {
   pub(crate) token: String,
 }
 
-#[derive(Deserialize)]
-pub(crate) struct GithubInstallationRepositoriesResponse {
-  pub(crate) repositories: Vec<GithubRepository>,
-}
-
 #[derive(Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct GithubRepository {

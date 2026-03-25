@@ -9,9 +9,8 @@ use crate::constants::{
 use super::{
   app_auth::{github_client, github_installation_access_token},
   types::{
-    CreateGithubProjectRepoInput, GithubCreateRepoFileRequest,
-    GithubInstallationRepositoriesResponse, GithubProjectRepo, GithubRepository,
-    GithubRepositoryPropertyValue,
+    CreateGithubProjectRepoInput, GithubCreateRepoFileRequest, GithubProjectRepo,
+    GithubRepository, GithubRepositoryPropertyValue,
   },
 };
 
@@ -69,7 +68,7 @@ pub(crate) fn list_gnosis_projects_for_installation(
 ) -> Result<Vec<GithubProjectRepo>, String> {
   let installation_token = github_installation_access_token(installation_id)?;
   let client = github_client()?;
-  let repositories = client
+  let repositories_response = client
     .get("https://api.github.com/installation/repositories")
     .header("Accept", "application/vnd.github+json")
     .header("X-GitHub-Api-Version", "2022-11-28")
@@ -78,13 +77,16 @@ pub(crate) fn list_gnosis_projects_for_installation(
     .send()
     .map_err(|error| format!("Could not list repositories for the GitHub App installation: {error}"))?
     .error_for_status()
-    .map_err(|error| format!("GitHub rejected the installation repository request: {error}"))?
-    .json::<GithubInstallationRepositoriesResponse>()
+    .map_err(|error| format!("GitHub rejected the installation repository request: {error}"))?;
+  let repositories_body = repositories_response
+    .text()
+    .map_err(|error| format!("Could not read the installation repositories response: {error}"))?;
+  let repositories = parse_installation_repositories_response(&repositories_body)
     .map_err(|error| format!("Could not parse the installation repositories: {error}"))?;
 
   let mut projects = Vec::new();
 
-  for repository in repositories.repositories {
+  for repository in repositories {
     let properties = client
       .get(format!(
         "https://api.github.com/repos/{}/properties/values",
@@ -310,6 +312,60 @@ fn parse_repository_response(body: &str) -> Result<GithubRepository, String> {
   let value = serde_json::from_str::<serde_json::Value>(body)
     .map_err(|error| format!("invalid JSON response body: {error}"))?;
 
+  let id = value
+    .get("id")
+    .and_then(|item| item.as_i64())
+    .ok_or_else(|| "missing repository id".to_string())?;
+  let name = value
+    .get("name")
+    .and_then(|item| item.as_str())
+    .ok_or_else(|| "missing repository name".to_string())?
+    .to_string();
+  let full_name = value
+    .get("full_name")
+    .and_then(|item| item.as_str())
+    .map(|value| value.to_string())
+    .unwrap_or_else(|| name.clone());
+  let html_url = value
+    .get("html_url")
+    .and_then(|item| item.as_str())
+    .map(|value| value.to_string());
+  let private = value
+    .get("private")
+    .and_then(|item| item.as_bool())
+    .unwrap_or(true);
+  let description = value
+    .get("description")
+    .and_then(|item| item.as_str())
+    .map(|value| value.to_string());
+
+  Ok(GithubRepository {
+    id,
+    name,
+    full_name,
+    html_url,
+    private,
+    description,
+  })
+}
+
+fn parse_installation_repositories_response(body: &str) -> Result<Vec<GithubRepository>, String> {
+  let value = serde_json::from_str::<serde_json::Value>(body)
+    .map_err(|error| format!("invalid JSON response body: {error}"))?;
+
+  let repositories = value
+    .get("repositories")
+    .and_then(|item| item.as_array())
+    .ok_or_else(|| "missing repositories array".to_string())?;
+
+  repositories
+    .iter()
+    .cloned()
+    .map(|repository| parse_repository_value(&repository))
+    .collect()
+}
+
+fn parse_repository_value(value: &serde_json::Value) -> Result<GithubRepository, String> {
   let id = value
     .get("id")
     .and_then(|item| item.as_i64())
