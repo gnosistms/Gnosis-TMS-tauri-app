@@ -27,7 +27,6 @@ export async function loadTeamProjects(render, teamId = state.selectedTeamId) {
     });
     const mappedProjects = projects.map((project) => ({
       ...project,
-      id: `repo-${project.id}`,
       chapters: [],
     }));
     state.projects = mappedProjects.filter((project) => project.status !== "deleted");

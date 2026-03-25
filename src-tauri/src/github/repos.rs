@@ -491,11 +491,12 @@ fn project_from_repository(
   repository: GithubRepository,
   status: &str,
 ) -> Result<GithubProjectRepo, String> {
-  let title = load_project_title(client, installation_token, &repository.full_name)
-    .unwrap_or_else(|_| repository.name.clone());
+  let (project_id, title) = load_project_identity(client, installation_token, &repository.full_name)
+    .unwrap_or_else(|_| (repository.id.to_string(), repository.name.clone()));
 
   Ok(GithubProjectRepo {
-    id: repository.id,
+    id: project_id,
+    repo_id: repository.id,
     name: repository.name,
     title,
     status: status.to_string(),
@@ -506,19 +507,27 @@ fn project_from_repository(
   })
 }
 
-fn load_project_title(
+fn load_project_identity(
   client: &reqwest::blocking::Client,
   installation_token: &str,
   full_name: &str,
-) -> Result<String, String> {
+) -> Result<(String, String), String> {
   let (value, _) = load_project_json_with_sha(client, installation_token, full_name)?;
+  let project_id = value
+    .get("project_id")
+    .and_then(|item| item.as_str())
+    .map(|project_id| project_id.to_string())
+    .filter(|project_id| !project_id.trim().is_empty())
+    .ok_or_else(|| format!("project.json in {full_name} is missing a valid project_id"))?;
 
-  value
+  let title = value
     .get("title")
     .and_then(|item| item.as_str())
     .map(|title| title.to_string())
     .filter(|title| !title.trim().is_empty())
-    .ok_or_else(|| format!("project.json in {full_name} is missing a valid title"))
+    .ok_or_else(|| format!("project.json in {full_name} is missing a valid title"))?;
+
+  Ok((project_id, title))
 }
 
 fn load_project_json_with_sha(

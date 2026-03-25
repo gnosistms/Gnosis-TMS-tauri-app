@@ -87,7 +87,8 @@ pub(crate) struct GithubRepositoryPropertyValue {
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct GithubProjectRepo {
-  pub(crate) id: i64,
+  pub(crate) id: String,
+  pub(crate) repo_id: i64,
   pub(crate) name: String,
   pub(crate) title: String,
   pub(crate) status: String,
