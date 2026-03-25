@@ -1,6 +1,54 @@
+@font-face {
+  font-family: "IBM Plex Sans SC";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("../../node_modules/@ibm/plex-sans-sc/fonts/complete/woff2/hinted/IBMPlexSansSC-Regular.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "IBM Plex Sans SC";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("../../node_modules/@ibm/plex-sans-sc/fonts/complete/woff2/hinted/IBMPlexSansSC-SemiBold.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "IBM Plex Sans SC";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("../../node_modules/@ibm/plex-sans-sc/fonts/complete/woff2/hinted/IBMPlexSansSC-Bold.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "IBM Plex Sans TC";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("../../node_modules/@ibm/plex-sans-tc/fonts/complete/woff2/hinted/IBMPlexSansTC-Regular.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "IBM Plex Sans TC";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("../../node_modules/@ibm/plex-sans-tc/fonts/complete/woff2/hinted/IBMPlexSansTC-SemiBold.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "IBM Plex Sans TC";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("../../node_modules/@ibm/plex-sans-tc/fonts/complete/woff2/hinted/IBMPlexSansTC-Bold.woff2") format("woff2");
+}
+
 :root {
   color-scheme: light;
-  font-family: "IBM Plex Sans", "IBM Plex Sans JP", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  font-family: "IBM Plex Sans", "IBM Plex Sans JP", "IBM Plex Sans SC", "IBM Plex Sans TC", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
   --bg-top: #f7ecd5;
   --bg-bottom: #f3e2bf;
   --hero-glow: rgba(241, 191, 83, 0.76);
