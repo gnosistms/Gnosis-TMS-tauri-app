@@ -112,6 +112,14 @@ pub(crate) struct CreateGithubProjectRepoInput {
   pub(crate) project_title: String,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct DeleteGithubProjectRepoInput {
+  pub(crate) installation_id: i64,
+  pub(crate) org_login: String,
+  pub(crate) repo_name: String,
+}
+
 #[derive(Serialize)]
 pub(crate) struct GithubCreateRepoFileRequest<'a> {
   pub(crate) message: &'a str,

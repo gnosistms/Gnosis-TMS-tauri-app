@@ -15,6 +15,7 @@ import {
 import {
   cancelProjectCreation,
   createProjectForSelectedTeam,
+  deleteProject,
   loadTeamProjects,
   submitProjectCreation,
   updateProjectCreationName,
@@ -123,6 +124,11 @@ export function registerAppEvents(render) {
         state.expandedProjects.add(projectId);
       }
       render();
+      return;
+    }
+
+    if (action.startsWith("delete-project:")) {
+      void deleteProject(render, action.split(":")[1]);
       return;
     }
 

@@ -107,6 +107,46 @@ export async function submitProjectCreation(render) {
   }
 }
 
+export async function deleteProject(render, projectId) {
+  const selectedTeam = state.teams.find((team) => team.id === state.selectedTeamId);
+  const project = state.projects.find((item) => item.id === projectId);
+
+  if (!selectedTeam?.installationId || !project) {
+    state.projectDiscovery = {
+      status: "error",
+      error: "Could not find the selected project.",
+    };
+    render();
+    return;
+  }
+
+  const confirmed = window.confirm(
+    `Remove "${project.name}" from the Projects page? The repository will stay on GitHub and can be restored later.`,
+  );
+  if (!confirmed) {
+    return;
+  }
+
+  try {
+    state.projectDiscovery = { status: "loading", error: "" };
+    render();
+    await invoke("mark_gnosis_project_repo_deleted", {
+      input: {
+        installationId: selectedTeam.installationId,
+        orgLogin: selectedTeam.githubOrg,
+        repoName: project.name,
+      },
+    });
+    await loadTeamProjects(render, selectedTeam.id);
+  } catch (error) {
+    state.projectDiscovery = {
+      status: "error",
+      error: error?.message ?? String(error),
+    };
+    render();
+  }
+}
+
 function slugifyRepositoryName(value) {
   return String(value)
     .trim()

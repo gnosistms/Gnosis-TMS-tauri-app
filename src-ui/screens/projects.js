@@ -55,7 +55,7 @@ function renderProjectCard(project, expanded) {
         <div class="expandable-card__actions">
           ${textAction("Rename", "noop")}
           ${textAction("Import", "noop")}
-          ${textAction("Delete", "noop")}
+          ${textAction("Delete", `delete-project:${project.id}`)}
         </div>
       </div>
       ${chapterRows}

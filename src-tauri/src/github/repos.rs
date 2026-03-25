@@ -2,15 +2,16 @@ use base64::{engine::general_purpose::STANDARD, Engine as _};
 use uuid::Uuid;
 
 use crate::constants::{
-  GNOSIS_TMS_REPO_TYPE_GLOSSARY, GNOSIS_TMS_REPO_TYPE_PROJECT,
+  GNOSIS_TMS_REPO_STATUS_ACTIVE, GNOSIS_TMS_REPO_STATUS_DELETED,
+  GNOSIS_TMS_REPO_STATUS_PROPERTY_NAME, GNOSIS_TMS_REPO_TYPE_GLOSSARY, GNOSIS_TMS_REPO_TYPE_PROJECT,
   GNOSIS_TMS_REPO_TYPE_PROPERTY_NAME,
 };
 
 use super::{
   app_auth::{github_client, github_installation_access_token},
   types::{
-    CreateGithubProjectRepoInput, GithubCreateRepoFileRequest, GithubProjectRepo,
-    GithubRepository, GithubRepositoryPropertyValue,
+    CreateGithubProjectRepoInput, DeleteGithubProjectRepoInput, GithubCreateRepoFileRequest,
+    GithubProjectRepo, GithubRepository, GithubRepositoryPropertyValue,
   },
 };
 
@@ -42,6 +43,17 @@ pub(crate) fn ensure_gnosis_repo_properties_schema(
           "allowed_values": [
             GNOSIS_TMS_REPO_TYPE_PROJECT,
             GNOSIS_TMS_REPO_TYPE_GLOSSARY
+          ],
+          "values_editable_by": "org_actors",
+          "required": false
+        },
+        {
+          "property_name": GNOSIS_TMS_REPO_STATUS_PROPERTY_NAME,
+          "value_type": "single_select",
+          "description": "Tracks whether a Gnosis TMS repository is active or soft deleted.",
+          "allowed_values": [
+            GNOSIS_TMS_REPO_STATUS_ACTIVE,
+            GNOSIS_TMS_REPO_STATUS_DELETED
           ],
           "values_editable_by": "org_actors",
           "required": false
@@ -121,8 +133,12 @@ pub(crate) fn list_gnosis_projects_for_installation(
       property.property_name == GNOSIS_TMS_REPO_TYPE_PROPERTY_NAME
         && property_value_matches(property.value.as_ref(), GNOSIS_TMS_REPO_TYPE_PROJECT)
     });
+    let is_deleted = properties.iter().any(|property| {
+      property.property_name == GNOSIS_TMS_REPO_STATUS_PROPERTY_NAME
+        && property_value_matches(property.value.as_ref(), GNOSIS_TMS_REPO_STATUS_DELETED)
+    });
 
-    if is_project {
+    if is_project && !is_deleted {
       projects.push(project_from_repository(repository));
     }
   }
@@ -178,6 +194,10 @@ pub(crate) fn create_gnosis_project_repo(
         {
           "property_name": GNOSIS_TMS_REPO_TYPE_PROPERTY_NAME,
           "value": GNOSIS_TMS_REPO_TYPE_PROJECT
+        },
+        {
+          "property_name": GNOSIS_TMS_REPO_STATUS_PROPERTY_NAME,
+          "value": GNOSIS_TMS_REPO_STATUS_ACTIVE
         }
       ]
     }))
@@ -221,6 +241,37 @@ pub(crate) fn create_gnosis_project_repo(
   Ok(project_from_repository(repository))
 }
 
+#[tauri::command]
+pub(crate) fn mark_gnosis_project_repo_deleted(
+  input: DeleteGithubProjectRepoInput,
+) -> Result<(), String> {
+  let installation_token = github_installation_access_token(input.installation_id)?;
+  let client = github_client()?;
+
+  client
+    .patch(format!(
+      "https://api.github.com/repos/{}/{}/properties/values",
+      input.org_login, input.repo_name
+    ))
+    .header("Accept", "application/vnd.github+json")
+    .header("X-GitHub-Api-Version", "2022-11-28")
+    .bearer_auth(&installation_token)
+    .json(&serde_json::json!({
+      "properties": [
+        {
+          "property_name": GNOSIS_TMS_REPO_STATUS_PROPERTY_NAME,
+          "value": GNOSIS_TMS_REPO_STATUS_DELETED
+        }
+      ]
+    }))
+    .send()
+    .map_err(|error| format!("Could not mark the project repository as deleted: {error}"))?
+    .error_for_status()
+    .map_err(|error| format!("GitHub rejected the project deletion marker update: {error}"))?;
+
+  Ok(())
+}
+
 fn ensure_schema_with_client(
   client: &reqwest::blocking::Client,
   installation_token: &str,
@@ -240,6 +291,17 @@ fn ensure_schema_with_client(
           "allowed_values": [
             GNOSIS_TMS_REPO_TYPE_PROJECT,
             GNOSIS_TMS_REPO_TYPE_GLOSSARY
+          ],
+          "values_editable_by": "org_actors",
+          "required": false
+        },
+        {
+          "property_name": GNOSIS_TMS_REPO_STATUS_PROPERTY_NAME,
+          "value_type": "single_select",
+          "description": "Tracks whether a Gnosis TMS repository is active or soft deleted.",
+          "allowed_values": [
+            GNOSIS_TMS_REPO_STATUS_ACTIVE,
+            GNOSIS_TMS_REPO_STATUS_DELETED
           ],
           "values_editable_by": "org_actors",
           "required": false
