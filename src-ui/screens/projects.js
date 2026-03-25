@@ -8,8 +8,15 @@ import {
 } from "../lib/ui.js";
 import { renderProjectCreationModal } from "./project-creation-modal.js";
 import { renderProjectDeletionModal } from "./project-deletion-modal.js";
+import { renderProjectPermanentDeletionModal } from "./project-permanent-deletion-modal.js";
 
-function renderProjectCard(project, expanded) {
+function renderProjectCard(project, expanded, options = {}) {
+  const deleteAction = options.deleteAction ?? `delete-project:${project.id}`;
+  const actions = options.actions ?? [
+    textAction("Rename", "noop"),
+    textAction("Import", "noop"),
+    textAction("Delete", deleteAction),
+  ];
   const chapterCount = `${project.chapters.length} chapter${
     project.chapters.length === 1 ? "" : "s"
   }`;
@@ -54,13 +61,57 @@ function renderProjectCard(project, expanded) {
           <span class="expandable-card__meta">${escapeHtml(chapterCount)}</span>
         </div>
         <div class="expandable-card__actions">
-          ${textAction("Rename", "noop")}
-          ${textAction("Import", "noop")}
-          ${textAction("Delete", `delete-project:${project.id}`)}
+          ${actions.join("")}
         </div>
       </div>
       ${chapterRows}
     </article>
+  `;
+}
+
+function renderDeletedProjectsToggle(state) {
+  const isOpen = state.showDeletedProjects;
+  return `
+    <button class="section-separator" data-action="toggle-deleted-projects">
+      <span class="section-separator__line" aria-hidden="true"></span>
+      <span class="section-separator__label">
+        ${escapeHtml(isOpen ? "Hide deleted projects" : "Show deleted projects")}
+        <span class="section-separator__chevron ${isOpen ? "is-open" : ""}" aria-hidden="true"></span>
+      </span>
+      <span class="section-separator__line" aria-hidden="true"></span>
+    </button>
+  `;
+}
+
+function renderDeletedProjectsSection(state) {
+  const toggle = renderDeletedProjectsToggle(state);
+  if (!state.showDeletedProjects) {
+    return toggle;
+  }
+
+  const deletedBody =
+    state.deletedProjects.length === 0
+      ? `
+        <article class="card card--hero card--empty">
+          <div class="card__body">
+            <p class="card__eyebrow">NO DELETED PROJECTS</p>
+            <h2 class="card__title card__title--small">There are no deleted projects to show.</h2>
+          </div>
+        </article>
+      `
+      : `<section class="stack">${state.deletedProjects
+          .map((project) =>
+            renderProjectCard(project, state.expandedProjects.has(project.id), {
+              actions: [textAction("Delete", `delete-deleted-project:${project.id}`)],
+            }),
+          )
+          .join("")}</section>`;
+
+  return `
+    ${toggle}
+    <section class="stack stack--deleted-projects">
+      ${deletedBody}
+    </section>
   `;
 }
 
@@ -94,7 +145,7 @@ export function renderProjectsScreen(state) {
     </article>
   `;
 
-  const body =
+  const projectsBody =
     discovery.status === "loading"
       ? loadingState
       : discovery.status === "error"
@@ -104,6 +155,13 @@ export function renderProjectsScreen(state) {
           : `<section class="stack">${state.projects
               .map((project) => renderProjectCard(project, state.expandedProjects.has(project.id)))
               .join("")}</section>`;
+
+  const body = `
+    <section class="stack">
+      ${projectsBody}
+      ${renderDeletedProjectsSection(state)}
+    </section>
+  `;
 
   return (
     pageShell({
@@ -116,6 +174,9 @@ export function renderProjectsScreen(state) {
     ],
     tools: `${createSearchField("Search")} ${primaryButton("+ New Project", "open-new-project")}`,
     body,
-    }) + renderProjectCreationModal(state) + renderProjectDeletionModal(state)
+    }) +
+    renderProjectCreationModal(state) +
+    renderProjectDeletionModal(state) +
+    renderProjectPermanentDeletionModal(state)
   );
 }

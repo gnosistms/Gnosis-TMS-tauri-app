@@ -17,12 +17,17 @@ import {
 import {
   cancelProjectCreation,
   cancelProjectDeletion,
+  cancelProjectPermanentDeletion,
   confirmProjectDeletion,
+  confirmProjectPermanentDeletion,
   createProjectForSelectedTeam,
   deleteProject,
   loadTeamProjects,
+  permanentlyDeleteProject,
   submitProjectCreation,
+  toggleDeletedProjects,
   updateProjectCreationName,
+  updateProjectPermanentDeletionConfirmation,
 } from "./project-flow.js";
 import { loadTeamUsers } from "./user-flow.js";
 
@@ -31,6 +36,12 @@ export function registerAppEvents(render) {
     const projectNameInput = event.target.closest("[data-project-name-input]");
     if (projectNameInput) {
       updateProjectCreationName(projectNameInput.value);
+    }
+
+    const permanentDeleteInput = event.target.closest("[data-project-permanent-delete-input]");
+    if (permanentDeleteInput) {
+      updateProjectPermanentDeletionConfirmation(permanentDeleteInput.value);
+      render();
     }
   });
 
@@ -82,6 +93,11 @@ export function registerAppEvents(render) {
       return;
     }
 
+    if (action === "cancel-project-permanent-deletion") {
+      cancelProjectPermanentDeletion(render);
+      return;
+    }
+
     if (action === "submit-project-creation") {
       setImmediateLoadingButton(event.target.closest("button"), "Creating...");
       await waitForNextPaint();
@@ -93,6 +109,18 @@ export function registerAppEvents(render) {
       setImmediateLoadingButton(event.target.closest("button"), "Deleting...");
       await waitForNextPaint();
       void confirmProjectDeletion(render);
+      return;
+    }
+
+    if (action === "confirm-project-permanent-deletion") {
+      setImmediateLoadingButton(event.target.closest("button"), "Deleting...");
+      await waitForNextPaint();
+      void confirmProjectPermanentDeletion(render);
+      return;
+    }
+
+    if (action === "toggle-deleted-projects") {
+      toggleDeletedProjects(render);
       return;
     }
 
@@ -148,6 +176,11 @@ export function registerAppEvents(render) {
 
     if (action.startsWith("delete-project:")) {
       void deleteProject(render, action.split(":")[1]);
+      return;
+    }
+
+    if (action.startsWith("delete-deleted-project:")) {
+      void permanentlyDeleteProject(render, action.split(":")[1]);
       return;
     }
 

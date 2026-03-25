@@ -144,11 +144,16 @@ pub(crate) async fn list_gnosis_projects_for_installation(
           && property_value_matches(property.value.as_ref(), GNOSIS_TMS_REPO_STATUS_DELETED)
       });
 
-      if is_project && !is_deleted {
+      if is_project {
         projects.push(project_from_repository(
           &client,
           &installation_token,
           repository,
+          if is_deleted {
+            GNOSIS_TMS_REPO_STATUS_DELETED
+          } else {
+            GNOSIS_TMS_REPO_STATUS_ACTIVE
+          },
         )?);
       }
     }
@@ -256,6 +261,7 @@ pub(crate) async fn create_gnosis_project_repo(
       &client,
       &installation_token,
       repository,
+      GNOSIS_TMS_REPO_STATUS_ACTIVE,
     )?)
   })
   .await
@@ -295,6 +301,33 @@ pub(crate) async fn mark_gnosis_project_repo_deleted(
   })
   .await
   .map_err(|error| format!("Could not run the project deletion task: {error}"))?
+}
+
+#[tauri::command]
+pub(crate) async fn permanently_delete_gnosis_project_repo(
+  input: DeleteGithubProjectRepoInput,
+) -> Result<(), String> {
+  tauri::async_runtime::spawn_blocking(move || {
+    let installation_token = github_installation_access_token(input.installation_id)?;
+    let client = github_client()?;
+
+    client
+      .delete(format!(
+        "https://api.github.com/repos/{}/{}",
+        input.org_login, input.repo_name
+      ))
+      .header("Accept", "application/vnd.github+json")
+      .header("X-GitHub-Api-Version", "2022-11-28")
+      .bearer_auth(&installation_token)
+      .send()
+      .map_err(|error| format!("Could not permanently delete the project repository: {error}"))?
+      .error_for_status()
+      .map_err(|error| format!("GitHub rejected the permanent project deletion request: {error}"))?;
+
+    Ok(())
+  })
+  .await
+  .map_err(|error| format!("Could not run the permanent project deletion task: {error}"))?
 }
 
 fn ensure_schema_with_client(
@@ -388,6 +421,7 @@ fn project_from_repository(
   client: &reqwest::blocking::Client,
   installation_token: &str,
   repository: GithubRepository,
+  status: &str,
 ) -> Result<GithubProjectRepo, String> {
   let title = load_project_title(client, installation_token, &repository.full_name)
     .unwrap_or_else(|_| repository.name.clone());
@@ -396,6 +430,7 @@ fn project_from_repository(
     id: repository.id,
     name: repository.name,
     title,
+    status: status.to_string(),
     full_name: repository.full_name,
     html_url: repository.html_url,
     private: repository.private,

@@ -90,6 +90,7 @@ pub(crate) struct GithubProjectRepo {
   pub(crate) id: i64,
   pub(crate) name: String,
   pub(crate) title: String,
+  pub(crate) status: String,
   pub(crate) full_name: String,
   pub(crate) html_url: Option<String>,
   pub(crate) private: bool,

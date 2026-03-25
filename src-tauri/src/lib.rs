@@ -23,7 +23,7 @@ use crate::{
     begin_github_app_install, create_gnosis_project_repo, ensure_gnosis_repo_properties_schema,
     inspect_github_app_installation, list_gnosis_projects_for_installation,
     list_organization_members_for_installation, list_user_organizations,
-    mark_gnosis_project_repo_deleted,
+    mark_gnosis_project_repo_deleted, permanently_delete_gnosis_project_repo,
   },
   state::AuthState,
 };
@@ -51,6 +51,7 @@ pub fn run() {
       begin_github_app_install,
       create_gnosis_project_repo,
       mark_gnosis_project_repo_deleted,
+      permanently_delete_gnosis_project_repo,
       inspect_github_app_installation,
       ensure_gnosis_repo_properties_schema,
       list_gnosis_projects_for_installation,

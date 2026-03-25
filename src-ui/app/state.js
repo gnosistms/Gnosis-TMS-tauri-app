@@ -9,6 +9,7 @@ export const state = {
   selectedChapterId: "c2",
   teams: loadStoredGithubAppTeams(),
   projects: [],
+  deletedProjects: [],
   users: [],
   auth: {
     status: "idle",
@@ -30,6 +31,8 @@ export const state = {
   teamSetup: createTeamSetupState(),
   projectCreation: createProjectCreationState(),
   projectDeletion: createProjectDeletionState(),
+  projectPermanentDeletion: createProjectPermanentDeletionState(),
+  showDeletedProjects: false,
 };
 
 export function createTeamSetupState() {
@@ -61,6 +64,17 @@ export function createProjectDeletionState() {
   };
 }
 
+export function createProjectPermanentDeletionState() {
+  return {
+    isOpen: false,
+    projectId: null,
+    projectName: "",
+    confirmationText: "",
+    status: "idle",
+    error: "",
+  };
+}
+
 export function resetTeamSetup() {
   state.teamSetup = createTeamSetupState();
 }
@@ -73,6 +87,10 @@ export function resetProjectDeletion() {
   state.projectDeletion = createProjectDeletionState();
 }
 
+export function resetProjectPermanentDeletion() {
+  state.projectPermanentDeletion = createProjectPermanentDeletionState();
+}
+
 export function resetSessionState() {
   state.auth = {
     status: "idle",
@@ -81,6 +99,7 @@ export function resetSessionState() {
   };
   state.teams = [];
   state.projects = [];
+  state.deletedProjects = [];
   state.users = [];
   state.orgDiscovery = { status: "idle", error: "" };
   state.projectDiscovery = { status: "idle", error: "" };
@@ -88,4 +107,6 @@ export function resetSessionState() {
   resetTeamSetup();
   resetProjectCreation();
   resetProjectDeletion();
+  resetProjectPermanentDeletion();
+  state.showDeletedProjects = false;
 }

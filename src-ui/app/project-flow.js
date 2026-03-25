@@ -1,11 +1,17 @@
 import { invoke, waitForNextPaint } from "./runtime.js";
-import { resetProjectCreation, resetProjectDeletion, state } from "./state.js";
+import {
+  resetProjectCreation,
+  resetProjectDeletion,
+  resetProjectPermanentDeletion,
+  state,
+} from "./state.js";
 
 export async function loadTeamProjects(render, teamId = state.selectedTeamId) {
   const selectedTeam = state.teams.find((team) => team.id === teamId);
 
   if (!selectedTeam?.installationId) {
     state.projects = [];
+    state.deletedProjects = [];
     state.projectDiscovery = { status: "ready", error: "" };
     render();
     return;
@@ -18,15 +24,18 @@ export async function loadTeamProjects(render, teamId = state.selectedTeamId) {
     const projects = await invoke("list_gnosis_projects_for_installation", {
       installationId: selectedTeam.installationId,
     });
-    state.projects = projects.map((project) => ({
+    const mappedProjects = projects.map((project) => ({
       ...project,
       id: `repo-${project.id}`,
       chapters: [],
     }));
+    state.projects = mappedProjects.filter((project) => project.status !== "deleted");
+    state.deletedProjects = mappedProjects.filter((project) => project.status === "deleted");
     state.projectDiscovery = { status: "ready", error: "" };
     render();
   } catch (error) {
     state.projects = [];
+    state.deletedProjects = [];
     state.projectDiscovery = {
       status: "error",
       error: error?.message ?? String(error),
@@ -134,6 +143,45 @@ export function cancelProjectDeletion(render) {
   render();
 }
 
+export function toggleDeletedProjects(render) {
+  state.showDeletedProjects = !state.showDeletedProjects;
+  render();
+}
+
+export function permanentlyDeleteProject(render, projectId) {
+  const project = state.deletedProjects.find((item) => item.id === projectId);
+  if (!project) {
+    state.projectDiscovery = {
+      status: "error",
+      error: "Could not find the selected deleted project.",
+    };
+    render();
+    return;
+  }
+
+  state.projectPermanentDeletion = {
+    isOpen: true,
+    projectId,
+    projectName: project.title ?? project.name,
+    confirmationText: "",
+    status: "idle",
+    error: "",
+  };
+  render();
+}
+
+export function updateProjectPermanentDeletionConfirmation(value) {
+  state.projectPermanentDeletion.confirmationText = value;
+  if (state.projectPermanentDeletion.error) {
+    state.projectPermanentDeletion.error = "";
+  }
+}
+
+export function cancelProjectPermanentDeletion(render) {
+  resetProjectPermanentDeletion();
+  render();
+}
+
 export async function confirmProjectDeletion(render) {
   const selectedTeam = state.teams.find((team) => team.id === state.selectedTeamId);
   const project = state.projects.find((item) => item.id === state.projectDeletion.projectId);
@@ -162,6 +210,46 @@ export async function confirmProjectDeletion(render) {
   } catch (error) {
     state.projectDeletion.status = "idle";
     state.projectDeletion.error = error?.message ?? String(error);
+    render();
+  }
+}
+
+export async function confirmProjectPermanentDeletion(render) {
+  const selectedTeam = state.teams.find((team) => team.id === state.selectedTeamId);
+  const project = state.deletedProjects.find(
+    (item) => item.id === state.projectPermanentDeletion.projectId,
+  );
+
+  if (!selectedTeam?.installationId || !project) {
+    state.projectPermanentDeletion.status = "idle";
+    state.projectPermanentDeletion.error = "Could not find the selected deleted project.";
+    render();
+    return;
+  }
+
+  if (state.projectPermanentDeletion.confirmationText !== state.projectPermanentDeletion.projectName) {
+    state.projectPermanentDeletion.error = "Project name confirmation does not match.";
+    render();
+    return;
+  }
+
+  try {
+    state.projectPermanentDeletion.status = "loading";
+    state.projectPermanentDeletion.error = "";
+    render();
+    await waitForNextPaint();
+    await invoke("permanently_delete_gnosis_project_repo", {
+      input: {
+        installationId: selectedTeam.installationId,
+        orgLogin: selectedTeam.githubOrg,
+        repoName: project.name,
+      },
+    });
+    resetProjectPermanentDeletion();
+    await loadTeamProjects(render, selectedTeam.id);
+  } catch (error) {
+    state.projectPermanentDeletion.status = "idle";
+    state.projectPermanentDeletion.error = error?.message ?? String(error);
     render();
   }
 }
