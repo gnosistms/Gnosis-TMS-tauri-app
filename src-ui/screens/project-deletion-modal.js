@@ -1,4 +1,4 @@
-import { escapeHtml, secondaryButton } from "../lib/ui.js";
+import { escapeHtml, loadingPrimaryButton, secondaryButton } from "../lib/ui.js";
 
 export function renderProjectDeletionModal(state) {
   const deletion = state.projectDeletion;
@@ -10,18 +10,12 @@ export function renderProjectDeletionModal(state) {
   const errorMarkup = deletion.error
     ? `<p class="modal__error">${escapeHtml(deletion.error)}</p>`
     : "";
-  const deleteButton = isDeleting
-    ? `
-      <button class="button button--primary" data-action="noop" disabled>
-        <span class="button__spinner" aria-hidden="true"></span>
-        <span>Deleting...</span>
-      </button>
-    `
-    : `
-      <button class="button button--primary" data-action="confirm-project-deletion">
-        <span>Delete</span>
-      </button>
-    `;
+  const deleteButton = loadingPrimaryButton({
+    label: "Delete",
+    loadingLabel: "Deleting...",
+    action: "confirm-project-deletion",
+    isLoading: isDeleting,
+  });
 
   return `
     <div class="modal-backdrop">

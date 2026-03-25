@@ -19,6 +19,23 @@ export function primaryButton(label, action) {
   )}">${escapeHtml(label)}</button>`;
 }
 
+export function loadingPrimaryButton({ label, loadingLabel, action, isLoading }) {
+  if (isLoading) {
+    return `
+      <button class="button button--primary" data-action="noop" disabled>
+        <span class="button__spinner" aria-hidden="true"></span>
+        <span>${escapeHtml(loadingLabel)}</span>
+      </button>
+    `;
+  }
+
+  return `
+    <button class="button button--primary" data-action="${escapeHtml(action)}">
+      <span>${escapeHtml(label)}</span>
+    </button>
+  `;
+}
+
 export function secondaryButton(label, action) {
   return `<button class="button button--secondary" data-action="${escapeHtml(
     action,

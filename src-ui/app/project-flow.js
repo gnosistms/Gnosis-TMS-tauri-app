@@ -1,4 +1,4 @@
-import { invoke } from "./runtime.js";
+import { invoke, waitForNextPaint } from "./runtime.js";
 import { resetProjectCreation, resetProjectDeletion, state } from "./state.js";
 
 export async function loadTeamProjects(render, teamId = state.selectedTeamId) {
@@ -90,6 +90,7 @@ export async function submitProjectCreation(render) {
     state.projectCreation.status = "loading";
     state.projectCreation.error = "";
     render();
+    await waitForNextPaint();
     await invoke("create_gnosis_project_repo", {
       input: {
         installationId: selectedTeam.installationId,
@@ -148,6 +149,7 @@ export async function confirmProjectDeletion(render) {
     state.projectDeletion.status = "loading";
     state.projectDeletion.error = "";
     render();
+    await waitForNextPaint();
     await invoke("mark_gnosis_project_repo_deleted", {
       input: {
         installationId: selectedTeam.installationId,

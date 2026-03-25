@@ -14,3 +14,9 @@ export function openExternalUrl(url) {
 
   window.open(url, "_blank", "noopener,noreferrer");
 }
+
+export function waitForNextPaint() {
+  return new Promise((resolve) => {
+    window.requestAnimationFrame(() => resolve());
+  });
+}
