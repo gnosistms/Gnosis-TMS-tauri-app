@@ -1,4 +1,5 @@
 import { GITHUB_FREE_ORG_SETUP_URL, GNOSIS_TMS_ORG_DESCRIPTION } from "./constants.js";
+import { loadTeamProjects } from "./project-flow.js";
 import { invoke, openExternalUrl } from "./runtime.js";
 import { resetTeamSetup, state } from "./state.js";
 import { loadStoredGithubAppTeams, mergeTeams, saveStoredGithubAppTeams } from "./team-storage.js";
@@ -69,6 +70,7 @@ export async function finishTeamSetup(render) {
     state.screen = "projects";
     resetTeamSetup();
     render();
+    await loadTeamProjects(render, nextTeam.id);
   } catch (error) {
     state.teamSetup.error = error?.message ?? String(error);
     render();
@@ -105,6 +107,9 @@ export async function loadUserTeams(render) {
     state.orgDiscovery = { status: "ready", error: "" };
     state.screen = state.teams.length === 1 ? "projects" : "teams";
     render();
+    if (state.screen === "projects" && state.selectedTeamId) {
+      await loadTeamProjects(render, state.selectedTeamId);
+    }
   } catch (error) {
     state.teams = githubAppTeams;
     state.selectedTeamId = state.teams[0]?.id ?? null;
@@ -114,6 +119,9 @@ export async function loadUserTeams(render) {
     };
     state.screen = state.teams.length === 1 ? "projects" : "teams";
     render();
+    if (state.screen === "projects" && state.selectedTeamId) {
+      await loadTeamProjects(render, state.selectedTeamId);
+    }
   }
 }
 
