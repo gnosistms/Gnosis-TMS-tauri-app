@@ -89,6 +89,7 @@ pub(crate) struct GithubRepositoryPropertyValue {
 pub(crate) struct GithubProjectRepo {
   pub(crate) id: i64,
   pub(crate) name: String,
+  pub(crate) title: String,
   pub(crate) full_name: String,
   pub(crate) html_url: Option<String>,
   pub(crate) private: bool,
@@ -124,4 +125,10 @@ pub(crate) struct DeleteGithubProjectRepoInput {
 pub(crate) struct GithubCreateRepoFileRequest<'a> {
   pub(crate) message: &'a str,
   pub(crate) content: String,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct GithubRepositoryContentResponse {
+  pub(crate) content: String,
+  pub(crate) encoding: String,
 }

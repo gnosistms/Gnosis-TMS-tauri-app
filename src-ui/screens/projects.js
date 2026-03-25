@@ -50,7 +50,7 @@ function renderProjectCard(project, expanded) {
           <span class="chevron ${expanded ? "is-open" : ""}"></span>
         </button>
         <div class="expandable-card__title-wrap">
-          <h2 class="expandable-card__title">${escapeHtml(project.name)}</h2>
+          <h2 class="expandable-card__title">${escapeHtml(project.title ?? project.name)}</h2>
           <span class="expandable-card__meta">${escapeHtml(chapterCount)}</span>
         </div>
         <div class="expandable-card__actions">

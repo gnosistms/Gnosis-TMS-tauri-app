@@ -122,7 +122,7 @@ export async function deleteProject(render, projectId) {
   state.projectDeletion = {
     isOpen: true,
     projectId,
-    projectName: project.name,
+    projectName: project.title ?? project.name,
     status: "idle",
     error: "",
   };

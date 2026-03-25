@@ -11,7 +11,8 @@ use super::{
   app_auth::{github_client, github_installation_access_token},
   types::{
     CreateGithubProjectRepoInput, DeleteGithubProjectRepoInput, GithubCreateRepoFileRequest,
-    GithubProjectRepo, GithubRepository, GithubRepositoryPropertyValue,
+    GithubProjectRepo, GithubRepository, GithubRepositoryContentResponse,
+    GithubRepositoryPropertyValue,
   },
 };
 
@@ -144,7 +145,11 @@ pub(crate) async fn list_gnosis_projects_for_installation(
       });
 
       if is_project && !is_deleted {
-        projects.push(project_from_repository(repository));
+        projects.push(project_from_repository(
+          &client,
+          &installation_token,
+          repository,
+        )?);
       }
     }
 
@@ -247,7 +252,11 @@ pub(crate) async fn create_gnosis_project_repo(
       "*.json text eol=lf\nassets/** binary\n",
     )?;
 
-    Ok(project_from_repository(repository))
+    Ok(project_from_repository(
+      &client,
+      &installation_token,
+      repository,
+    )?)
   })
   .await
   .map_err(|error| format!("Could not run the project creation task: {error}"))?
@@ -375,15 +384,67 @@ fn property_value_matches(value: Option<&serde_json::Value>, expected: &str) -> 
   }
 }
 
-fn project_from_repository(repository: GithubRepository) -> GithubProjectRepo {
-  GithubProjectRepo {
+fn project_from_repository(
+  client: &reqwest::blocking::Client,
+  installation_token: &str,
+  repository: GithubRepository,
+) -> Result<GithubProjectRepo, String> {
+  let title = load_project_title(client, installation_token, &repository.full_name)
+    .unwrap_or_else(|_| repository.name.clone());
+
+  Ok(GithubProjectRepo {
     id: repository.id,
     name: repository.name,
+    title,
     full_name: repository.full_name,
     html_url: repository.html_url,
     private: repository.private,
     description: repository.description,
+  })
+}
+
+fn load_project_title(
+  client: &reqwest::blocking::Client,
+  installation_token: &str,
+  full_name: &str,
+) -> Result<String, String> {
+  let response = client
+    .get(format!(
+      "https://api.github.com/repos/{full_name}/contents/project.json"
+    ))
+    .header("Accept", "application/vnd.github+json")
+    .header("X-GitHub-Api-Version", "2022-11-28")
+    .bearer_auth(installation_token)
+    .send()
+    .map_err(|error| format!("Could not load project.json from {full_name}: {error}"))?
+    .error_for_status()
+    .map_err(|error| format!("GitHub rejected the project.json lookup for {full_name}: {error}"))?;
+
+  let content = response
+    .json::<GithubRepositoryContentResponse>()
+    .map_err(|error| format!("Could not parse project.json metadata for {full_name}: {error}"))?;
+
+  if content.encoding != "base64" {
+    return Err(format!(
+      "Unexpected project.json encoding for {full_name}: {}",
+      content.encoding
+    ));
   }
+
+  let decoded = STANDARD
+    .decode(content.content.replace('\n', ""))
+    .map_err(|error| format!("Could not decode project.json for {full_name}: {error}"))?;
+  let text = String::from_utf8(decoded)
+    .map_err(|error| format!("Could not read project.json as UTF-8 for {full_name}: {error}"))?;
+  let value = serde_json::from_str::<serde_json::Value>(&text)
+    .map_err(|error| format!("Could not parse project.json for {full_name}: {error}"))?;
+
+  value
+    .get("title")
+    .and_then(|item| item.as_str())
+    .map(|title| title.to_string())
+    .filter(|title| !title.trim().is_empty())
+    .ok_or_else(|| format!("project.json in {full_name} is missing a valid title"))
 }
 
 fn parse_repository_response(body: &str) -> Result<GithubRepository, String> {
