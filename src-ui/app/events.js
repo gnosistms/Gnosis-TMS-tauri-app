@@ -76,16 +76,6 @@ export function registerAppEvents(render) {
       return;
     }
 
-    if (action === "refresh-organizations") {
-      void loadUserTeams(render);
-      return;
-    }
-
-    if (action === "reconnect-github") {
-      void startGithubLogin(render);
-      return;
-    }
-
     if (action === "cancel-team-setup") {
       resetTeamSetup();
       render();
