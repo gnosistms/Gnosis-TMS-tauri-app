@@ -27,7 +27,7 @@
   margin: 0;
   font-size: clamp(2rem, 3vw, 2.8rem);
   line-height: 1;
-  letter-spacing: -0.04em;
+  letter-spacing: var(--heading-letter-spacing);
 }
 
 .modal__supporting {

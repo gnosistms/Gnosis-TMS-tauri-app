@@ -119,6 +119,7 @@
   --radius-control: 18px;
   --header-height: 104px;
   --page-width: 1480px;
+  --heading-letter-spacing: -0.025em;
 }
 
 * {
@@ -238,6 +239,7 @@ a {
   margin: 0;
   font-size: clamp(1.6625rem, 2.625vw, 2.8rem);
   line-height: 1;
+  letter-spacing: var(--heading-letter-spacing);
   white-space: nowrap;
 }
 
@@ -382,13 +384,13 @@ a {
   margin: 0;
   font-size: clamp(2.6rem, 5.2vw, 4.8rem);
   line-height: 0.94;
-  letter-spacing: -0.05em;
+  letter-spacing: var(--heading-letter-spacing);
 }
 
 .card__title--small {
   font-size: clamp(1.6625rem, 2.975vw, 2.5375rem);
   line-height: 1;
-  letter-spacing: -0.04em;
+  letter-spacing: var(--heading-letter-spacing);
 }
 
 .card__subtitle,
