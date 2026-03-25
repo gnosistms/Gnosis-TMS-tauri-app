@@ -147,7 +147,6 @@ export async function confirmProjectDeletion(render) {
   try {
     state.projectDeletion.status = "loading";
     state.projectDeletion.error = "";
-    state.projectDiscovery = { status: "loading", error: "" };
     render();
     await invoke("mark_gnosis_project_repo_deleted", {
       input: {
@@ -161,7 +160,6 @@ export async function confirmProjectDeletion(render) {
   } catch (error) {
     state.projectDeletion.status = "idle";
     state.projectDeletion.error = error?.message ?? String(error);
-    state.projectDiscovery = { status: "ready", error: "" };
     render();
   }
 }
