@@ -1,6 +1,6 @@
 :root {
   color-scheme: light;
-  font-family: "Avenir Next", Avenir, "Segoe UI", sans-serif;
+  font-family: "IBM Plex Sans", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
   --bg-top: #f7ecd5;
   --bg-bottom: #f3e2bf;
   --hero-glow: rgba(241, 191, 83, 0.76);
