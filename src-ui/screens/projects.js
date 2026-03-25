@@ -84,33 +84,25 @@ function renderDeletedProjectsToggle(state) {
 }
 
 function renderDeletedProjectsSection(state) {
+  if (state.deletedProjects.length === 0) {
+    return "";
+  }
+
   const toggle = renderDeletedProjectsToggle(state);
   if (!state.showDeletedProjects) {
     return toggle;
   }
 
-  const deletedBody =
-    state.deletedProjects.length === 0
-      ? `
-        <article class="card card--hero card--empty">
-          <div class="card__body">
-            <p class="card__eyebrow">NO DELETED PROJECTS</p>
-            <h2 class="card__title card__title--small">There are no deleted projects to show.</h2>
-          </div>
-        </article>
-      `
-      : `<section class="stack">${state.deletedProjects
-          .map((project) =>
-            renderProjectCard(project, state.expandedProjects.has(project.id), {
-              actions: [textAction("Delete", `delete-deleted-project:${project.id}`)],
-            }),
-          )
-          .join("")}</section>`;
-
   return `
     ${toggle}
     <section class="stack stack--deleted-projects">
-      ${deletedBody}
+      <section class="stack">${state.deletedProjects
+        .map((project) =>
+          renderProjectCard(project, state.expandedProjects.has(project.id), {
+            actions: [textAction("Delete", `delete-deleted-project:${project.id}`)],
+          }),
+        )
+        .join("")}</section>
     </section>
   `;
 }
