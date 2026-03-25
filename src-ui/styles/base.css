@@ -96,7 +96,12 @@
 
 :root {
   color-scheme: light;
-  font-family: "IBM Plex Sans", "IBM Plex Sans JP", "IBM Plex Sans SC", "IBM Plex Sans TC", "IBM Plex Sans Arabic", "IBM Plex Sans KR", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  --font-sans: "IBM Plex Sans", "IBM Plex Sans SC", "IBM Plex Sans TC", "IBM Plex Sans JP", "IBM Plex Sans KR", "IBM Plex Sans Arabic", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  --font-ja: "IBM Plex Sans JP", "IBM Plex Sans", "IBM Plex Sans SC", "IBM Plex Sans TC", "IBM Plex Sans KR", "IBM Plex Sans Arabic", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  --font-zh-hans: "IBM Plex Sans SC", "IBM Plex Sans", "IBM Plex Sans TC", "IBM Plex Sans JP", "IBM Plex Sans KR", "IBM Plex Sans Arabic", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  --font-zh-hant: "IBM Plex Sans TC", "IBM Plex Sans", "IBM Plex Sans SC", "IBM Plex Sans JP", "IBM Plex Sans KR", "IBM Plex Sans Arabic", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  --font-fa: "IBM Plex Sans Arabic", "IBM Plex Sans", "IBM Plex Sans SC", "IBM Plex Sans TC", "IBM Plex Sans JP", "IBM Plex Sans KR", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  --font-ko: "IBM Plex Sans KR", "IBM Plex Sans", "IBM Plex Sans SC", "IBM Plex Sans TC", "IBM Plex Sans JP", "IBM Plex Sans Arabic", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
   --bg-top: #f7ecd5;
   --bg-bottom: #f3e2bf;
   --hero-glow: rgba(241, 191, 83, 0.76);
@@ -124,6 +129,7 @@ html,
 body {
   margin: 0;
   min-height: 100%;
+  font-family: var(--font-sans);
 }
 
 body {
@@ -133,6 +139,38 @@ body {
     radial-gradient(circle at top left, var(--hero-glow), transparent 118%),
     linear-gradient(180deg, var(--bg-top) 0%, var(--bg-bottom) 1120px);
   background-repeat: no-repeat;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+:lang(ja) {
+  font-family: var(--font-ja);
+}
+
+:lang(zh-Hans),
+:lang(zh-CN),
+:lang(zh-SG) {
+  font-family: var(--font-zh-hans);
+}
+
+:lang(zh-Hant),
+:lang(zh-TW),
+:lang(zh-HK),
+:lang(zh-MO) {
+  font-family: var(--font-zh-hant);
+}
+
+:lang(fa) {
+  font-family: var(--font-fa);
+}
+
+:lang(ko) {
+  font-family: var(--font-ko);
 }
 
 button,
