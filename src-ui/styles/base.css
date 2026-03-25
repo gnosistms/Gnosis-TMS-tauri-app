@@ -238,7 +238,6 @@ a {
   margin: 0;
   font-size: clamp(1.6625rem, 2.625vw, 2.8rem);
   line-height: 1;
-  letter-spacing: -0.04em;
   white-space: nowrap;
 }
 
