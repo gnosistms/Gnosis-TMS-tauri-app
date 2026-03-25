@@ -23,7 +23,6 @@ export function renderTeamsList(teams) {
               <p class="list-row__meta">@${escapeHtml(team.githubOrg)} · owner @${escapeHtml(team.ownerLogin)}</p>
             </div>
             <div class="list-row__actions">
-              <span class="pill">${escapeHtml(team.statusLabel)}</span>
               ${textAction("Open", `open-team:${team.id}`)}
               ${textAction("Rename", `rename-team:${team.id}`)}
               ${textAction("Delete", "noop")}
