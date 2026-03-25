@@ -8,3 +8,6 @@ src-tauri/gen
 
 # macOS metadata
 .DS_Store
+
+# Local secret backups
+Backup Github App Secrets/
