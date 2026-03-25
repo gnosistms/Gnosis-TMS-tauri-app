@@ -1,5 +1,5 @@
 import { invoke } from "./runtime.js";
-import { resetProjectCreation, state } from "./state.js";
+import { resetProjectCreation, resetProjectDeletion, state } from "./state.js";
 
 export async function loadTeamProjects(render, teamId = state.selectedTeamId) {
   const selectedTeam = state.teams.find((team) => team.id === teamId);
@@ -108,10 +108,8 @@ export async function submitProjectCreation(render) {
 }
 
 export async function deleteProject(render, projectId) {
-  const selectedTeam = state.teams.find((team) => team.id === state.selectedTeamId);
   const project = state.projects.find((item) => item.id === projectId);
-
-  if (!selectedTeam?.installationId || !project) {
+  if (!project) {
     state.projectDiscovery = {
       status: "error",
       error: "Could not find the selected project.",
@@ -120,14 +118,35 @@ export async function deleteProject(render, projectId) {
     return;
   }
 
-  const confirmed = window.confirm(
-    `Remove "${project.name}" from the Projects page? The repository will stay on GitHub and can be restored later.`,
-  );
-  if (!confirmed) {
+  state.projectDeletion = {
+    isOpen: true,
+    projectId,
+    projectName: project.name,
+    status: "idle",
+    error: "",
+  };
+  render();
+}
+
+export function cancelProjectDeletion(render) {
+  resetProjectDeletion();
+  render();
+}
+
+export async function confirmProjectDeletion(render) {
+  const selectedTeam = state.teams.find((team) => team.id === state.selectedTeamId);
+  const project = state.projects.find((item) => item.id === state.projectDeletion.projectId);
+
+  if (!selectedTeam?.installationId || !project) {
+    state.projectDeletion.status = "idle";
+    state.projectDeletion.error = "Could not find the selected project.";
+    render();
     return;
   }
 
   try {
+    state.projectDeletion.status = "loading";
+    state.projectDeletion.error = "";
     state.projectDiscovery = { status: "loading", error: "" };
     render();
     await invoke("mark_gnosis_project_repo_deleted", {
@@ -137,12 +156,12 @@ export async function deleteProject(render, projectId) {
         repoName: project.name,
       },
     });
+    resetProjectDeletion();
     await loadTeamProjects(render, selectedTeam.id);
   } catch (error) {
-    state.projectDiscovery = {
-      status: "error",
-      error: error?.message ?? String(error),
-    };
+    state.projectDeletion.status = "idle";
+    state.projectDeletion.error = error?.message ?? String(error);
+    state.projectDiscovery = { status: "ready", error: "" };
     render();
   }
 }

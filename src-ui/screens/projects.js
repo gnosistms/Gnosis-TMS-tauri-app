@@ -7,6 +7,7 @@ import {
   textAction,
 } from "../lib/ui.js";
 import { renderProjectCreationModal } from "./project-creation-modal.js";
+import { renderProjectDeletionModal } from "./project-deletion-modal.js";
 
 function renderProjectCard(project, expanded) {
   const chapterCount = `${project.chapters.length} chapter${
@@ -115,6 +116,6 @@ export function renderProjectsScreen(state) {
     ],
     tools: `${createSearchField("Search")} ${primaryButton("+ New Project", "open-new-project")}`,
     body,
-    }) + renderProjectCreationModal(state)
+    }) + renderProjectCreationModal(state) + renderProjectDeletionModal(state)
   );
 }

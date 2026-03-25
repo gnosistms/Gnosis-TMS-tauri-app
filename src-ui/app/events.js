@@ -15,6 +15,8 @@ import {
 } from "./team-setup-flow.js";
 import {
   cancelProjectCreation,
+  cancelProjectDeletion,
+  confirmProjectDeletion,
   createProjectForSelectedTeam,
   deleteProject,
   loadTeamProjects,
@@ -74,8 +76,18 @@ export function registerAppEvents(render) {
       return;
     }
 
+    if (action === "cancel-project-deletion") {
+      cancelProjectDeletion(render);
+      return;
+    }
+
     if (action === "submit-project-creation") {
       void submitProjectCreation(render);
+      return;
+    }
+
+    if (action === "confirm-project-deletion") {
+      void confirmProjectDeletion(render);
       return;
     }
 
