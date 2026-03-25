@@ -63,10 +63,31 @@ export function textAction(label, action) {
   )}">${escapeHtml(label)}</button>`;
 }
 
-export function pageShell({ title, navButtons = [], tools = "", body = "" }) {
+export function sectionSeparator({ label, action, isOpen = false }) {
+  return `
+    <button class="section-separator" data-action="${escapeHtml(action)}">
+      <span class="section-separator__line" aria-hidden="true"></span>
+      <span class="section-separator__label">
+        ${escapeHtml(label)}
+        <span class="section-separator__chevron ${isOpen ? "is-open" : ""}" aria-hidden="true"></span>
+      </span>
+      <span class="section-separator__line" aria-hidden="true"></span>
+    </button>
+  `;
+}
+
+export function pageShell({ title, navButtons = [], tools = "", body = "", syncing = false }) {
+  const syncIndicator = `
+    <div class="page-header__status" aria-live="polite">
+      <span class="sync-indicator">
+        <span class="sync-indicator__spinner" aria-hidden="true"></span>
+      </span>
+    </div>
+  `;
   return `
     <div class="screen screen--page">
       <header class="page-header">
+        ${syncing ? syncIndicator : '<div class="page-header__status"></div>'}
         <div class="page-header__nav">${navButtons.join("")}</div>
         <div class="page-header__title-wrap">
           <h1 class="page-header__title">${escapeHtml(title)}</h1>

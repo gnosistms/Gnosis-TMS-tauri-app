@@ -158,6 +158,12 @@ export function registerAppEvents(render) {
       return;
     }
 
+    if (action === "toggle-deleted-teams") {
+      state.showDeletedTeams = !state.showDeletedTeams;
+      render();
+      return;
+    }
+
     if (action === "cancel-team-setup") {
       resetTeamSetup();
       render();

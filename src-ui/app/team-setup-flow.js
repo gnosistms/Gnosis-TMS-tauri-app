@@ -3,7 +3,8 @@ import { loadTeamProjects } from "./project-flow.js";
 import { invoke, openExternalUrl, waitForNextPaint } from "./runtime.js";
 import { resetTeamRename, resetTeamSetup, state } from "./state.js";
 import {
-  loadStoredTeamRecords,
+  replaceStoredTeamRecords,
+  splitStoredTeamRecords,
   updateStoredGithubAppTeam,
   upsertStoredTeamRecords,
 } from "./team-storage.js";
@@ -64,15 +65,18 @@ export async function finishTeamSetup(render) {
       githubOrg: installation.accountLogin,
       ownerLogin: state.auth.session?.login ?? installation.accountLogin,
       installationId: installation.installationId,
+      isDeleted: false,
+      deletedAt: null,
       syncState: "active",
       statusLabel: "",
       lastSeenAt: new Date().toISOString(),
     };
-    const nextTeams = upsertStoredTeamRecords([nextTeam]);
-    state.teams = nextTeams;
+    const nextTeamRecords = upsertStoredTeamRecords([nextTeam]);
+    applyStoredTeamRecords(nextTeamRecords);
     state.selectedTeamId =
-      nextTeams.find((team) => team.githubOrg === nextTeam.githubOrg)?.id ?? nextTeam.id;
+      state.teams.find((team) => team.githubOrg === nextTeam.githubOrg)?.id ?? nextTeam.id;
     state.screen = "projects";
+    state.showDeletedTeams = false;
     resetTeamSetup();
     render();
     await loadTeamProjects(render, state.selectedTeamId);
@@ -83,15 +87,31 @@ export async function finishTeamSetup(render) {
 }
 
 export async function loadUserTeams(render) {
-  const storedTeams = loadStoredTeamRecords();
+  const storedTeamRecords = splitStoredTeamRecords();
+  const storedActiveTeams = storedTeamRecords.activeTeams;
+  const storedDeletedTeams = storedTeamRecords.deletedTeams;
+
   if (!state.auth.session?.accessToken) {
-    state.teams = storedTeams;
+    state.teams = storedActiveTeams;
+    state.deletedTeams = storedDeletedTeams;
+    state.selectedTeamId = resolveNextSelectedTeamId(state.selectedTeamId, storedActiveTeams);
     state.orgDiscovery = { status: "idle", error: "" };
+    state.sync.teams = "idle";
+    if (state.teams.length === 0 && state.deletedTeams.length > 0) {
+      state.showDeletedTeams = true;
+    }
     render();
     return;
   }
 
+  state.teams = storedActiveTeams;
+  state.deletedTeams = storedDeletedTeams;
+  state.selectedTeamId = resolveNextSelectedTeamId(state.selectedTeamId, storedActiveTeams);
+  state.sync.teams = "syncing";
   state.orgDiscovery = { status: "loading", error: "" };
+  if (state.teams.length === 0 && state.deletedTeams.length > 0) {
+    state.showDeletedTeams = true;
+  }
   render();
 
   try {
@@ -105,16 +125,20 @@ export async function loadUserTeams(render) {
         name: organization.name || organization.login,
         githubOrg: organization.login,
         ownerLogin: state.auth.session.login,
+        installationId: null,
         orgCreatedAt: organization.createdAt ?? null,
+        isDeleted: false,
+        deletedAt: null,
         syncState: "active",
         statusLabel: "",
         lastSeenAt: new Date().toISOString(),
       }));
 
-    const teamsByOrg = new Map(oauthTeams.map((team) => [team.githubOrg, team]));
+    const existingTeamRecords = [...storedActiveTeams, ...storedDeletedTeams];
+    const teamsByOrg = new Map(oauthTeams.map((team) => [team.githubOrg.toLowerCase(), team]));
     const reconciledTeams = await Promise.all(
-      storedTeams.map(async (storedTeam) => {
-        const matchedOrg = teamsByOrg.get(storedTeam.githubOrg);
+      existingTeamRecords.map(async (storedTeam) => {
+        const matchedOrg = teamsByOrg.get(storedTeam.githubOrg.toLowerCase());
         const nextTeam = {
           ...storedTeam,
           name: matchedOrg?.name || storedTeam.name || storedTeam.githubOrg,
@@ -124,18 +148,24 @@ export async function loadUserTeams(render) {
           lastSeenAt: matchedOrg ? new Date().toISOString() : storedTeam.lastSeenAt ?? null,
         };
 
+        if (!matchedOrg) {
+          return {
+            ...nextTeam,
+            isDeleted: true,
+            deletedAt: storedTeam.deletedAt ?? new Date().toISOString(),
+            syncState: "deleted",
+            statusLabel: "Preserved locally",
+          };
+        }
+
         if (!storedTeam.installationId) {
-          return matchedOrg
-            ? {
-                ...nextTeam,
-                syncState: "active",
-                statusLabel: "",
-              }
-            : {
-                ...nextTeam,
-                syncState: "unavailable",
-                statusLabel: "Preserved locally",
-              };
+          return {
+            ...nextTeam,
+            isDeleted: false,
+            deletedAt: null,
+            syncState: "active",
+            statusLabel: "",
+          };
         }
 
         try {
@@ -144,21 +174,19 @@ export async function loadUserTeams(render) {
           });
           return {
             ...nextTeam,
+            isDeleted: false,
+            deletedAt: null,
             syncState: "active",
             statusLabel: "",
           };
         } catch {
-          return matchedOrg
-            ? {
-                ...nextTeam,
-                syncState: "disconnected",
-                statusLabel: "GitHub App disconnected",
-              }
-            : {
-                ...nextTeam,
-                syncState: "unavailable",
-                statusLabel: "Preserved locally",
-              };
+          return {
+            ...nextTeam,
+            isDeleted: false,
+            deletedAt: null,
+            syncState: "disconnected",
+            statusLabel: "GitHub App disconnected",
+          };
         }
       }),
     );
@@ -169,26 +197,36 @@ export async function loadUserTeams(render) {
       }
     });
 
-    state.teams = upsertStoredTeamRecords(reconciledTeams);
-    state.selectedTeamId = state.teams[0]?.id ?? null;
+    const nextStoredTeams = replaceStoredTeamRecords(reconciledTeams);
+    applyStoredTeamRecords(nextStoredTeams);
+    state.selectedTeamId = resolveNextSelectedTeamId(state.selectedTeamId, state.teams);
     state.orgDiscovery = { status: "ready", error: "" };
-    state.screen = state.teams.length === 1 ? "projects" : "teams";
+    state.sync.teams = "idle";
+    const shouldAutoOpenSingleTeam = storedActiveTeams.length === 0 && state.teams.length === 1;
+    if (state.teams.length === 0 && state.deletedTeams.length > 0) {
+      state.showDeletedTeams = true;
+    }
+    if (shouldAutoOpenSingleTeam) {
+      state.selectedTeamId = state.teams[0].id;
+      state.screen = "projects";
+    }
     render();
-    if (state.screen === "projects" && state.selectedTeamId) {
+    if (shouldAutoOpenSingleTeam && state.selectedTeamId) {
       await loadTeamProjects(render, state.selectedTeamId);
     }
   } catch (error) {
-    state.teams = storedTeams;
-    state.selectedTeamId = state.teams[0]?.id ?? null;
+    state.teams = storedActiveTeams;
+    state.deletedTeams = storedDeletedTeams;
+    state.selectedTeamId = resolveNextSelectedTeamId(state.selectedTeamId, storedActiveTeams);
     state.orgDiscovery = {
       status: "error",
       error: error?.message ?? String(error),
     };
-    state.screen = state.teams.length === 1 ? "projects" : "teams";
-    render();
-    if (state.screen === "projects" && state.selectedTeamId) {
-      await loadTeamProjects(render, state.selectedTeamId);
+    state.sync.teams = "idle";
+    if (state.teams.length === 0 && state.deletedTeams.length > 0) {
+      state.showDeletedTeams = true;
     }
+    render();
   }
 }
 
@@ -286,4 +324,21 @@ function resetOpenState() {
     githubAppInstallationId: null,
     githubAppInstallation: null,
   };
+}
+
+function applyStoredTeamRecords(teamRecords) {
+  const { activeTeams, deletedTeams } = splitStoredTeamRecords(teamRecords);
+  state.teams = activeTeams;
+  state.deletedTeams = deletedTeams;
+  if (deletedTeams.length === 0) {
+    state.showDeletedTeams = false;
+  }
+}
+
+function resolveNextSelectedTeamId(currentTeamId, teams) {
+  if (currentTeamId && teams.some((team) => team.id === currentTeamId)) {
+    return currentTeamId;
+  }
+
+  return teams[0]?.id ?? null;
 }

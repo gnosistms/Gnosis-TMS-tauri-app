@@ -12,6 +12,11 @@ export function renderTeamsScreen(state) {
     title: "Translation Teams",
     navButtons: [navButton("Logout", "start")],
     tools: [primaryButton("+ New Team", "open-new-team")].join(""),
-    body: `<section class="stack">${renderTeamsList(state.teams)}</section>`,
+    body: `<section class="stack">${renderTeamsList(
+      state.teams,
+      state.deletedTeams,
+      state.showDeletedTeams,
+    )}</section>`,
+    syncing: state.sync?.teams === "syncing",
   }) + renderSetupModal(state) + renderTeamRenameModal(state);
 }

@@ -1,5 +1,4 @@
 const TEAM_RECORDS_STORAGE_KEY = "gnosis-tms-team-records";
-const LEGACY_GITHUB_APP_TEAMS_STORAGE_KEY = "gnosis-tms-github-app-teams";
 
 function normalizeTeamRecord(team) {
   if (!team || typeof team !== "object") {
@@ -34,6 +33,11 @@ function normalizeTeamRecord(team) {
       typeof team.orgCreatedAt === "string" && team.orgCreatedAt.trim()
         ? team.orgCreatedAt
         : null,
+    isDeleted: team.isDeleted === true,
+    deletedAt:
+      typeof team.deletedAt === "string" && team.deletedAt.trim()
+        ? team.deletedAt
+        : null,
     syncState:
       typeof team.syncState === "string" && team.syncState.trim()
         ? team.syncState
@@ -53,14 +57,8 @@ function teamIdentityKey(team) {
 
 export function loadStoredTeamRecords() {
   try {
-    const localStorage = window.localStorage;
-    const storedValue = localStorage?.getItem(TEAM_RECORDS_STORAGE_KEY);
+    const storedValue = window.localStorage?.getItem(TEAM_RECORDS_STORAGE_KEY);
     if (!storedValue) {
-      const legacyTeams = loadLegacyGithubAppTeams(localStorage);
-      if (legacyTeams.length) {
-        saveStoredTeamRecords(legacyTeams);
-        return legacyTeams;
-      }
       return [];
     }
 
@@ -77,24 +75,11 @@ export function loadStoredTeamRecords() {
   }
 }
 
-function loadLegacyGithubAppTeams(localStorage = window.localStorage) {
-  try {
-    const storedValue = localStorage?.getItem(LEGACY_GITHUB_APP_TEAMS_STORAGE_KEY);
-    if (!storedValue) {
-      return [];
-    }
-
-    const teams = JSON.parse(storedValue);
-    if (!Array.isArray(teams)) {
-      return [];
-    }
-
-    return teams
-      .map(normalizeTeamRecord)
-      .filter(Boolean);
-  } catch {
-    return [];
-  }
+export function splitStoredTeamRecords(teams = loadStoredTeamRecords()) {
+  return {
+    activeTeams: teams.filter((team) => !team.isDeleted),
+    deletedTeams: teams.filter((team) => team.isDeleted),
+  };
 }
 
 export function saveStoredTeamRecords(teams) {
@@ -133,6 +118,14 @@ export function upsertStoredTeamRecords(teams) {
   const nextTeams = [...merged.values()];
   saveStoredTeamRecords(nextTeams);
   return nextTeams;
+}
+
+export function replaceStoredTeamRecords(teams) {
+  const normalizedTeams = teams
+    .map(normalizeTeamRecord)
+    .filter(Boolean);
+  saveStoredTeamRecords(normalizedTeams);
+  return normalizedTeams;
 }
 
 export function updateStoredTeamRecord(teamId, updates) {

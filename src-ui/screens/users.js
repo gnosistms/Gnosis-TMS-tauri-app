@@ -66,5 +66,6 @@ export function renderUsersScreen(state) {
     ],
     tools: `${primaryButton("+ Invite User", "noop")}`,
     body,
+    syncing: state.sync?.teams === "syncing",
   });
 }

@@ -4,6 +4,7 @@ import {
   navButton,
   pageShell,
   primaryButton,
+  sectionSeparator,
   textAction,
 } from "../lib/ui.js";
 import { renderProjectCreationModal } from "./project-creation-modal.js";
@@ -72,16 +73,11 @@ function renderProjectCard(project, expanded, options = {}) {
 
 function renderDeletedProjectsToggle(state) {
   const isOpen = state.showDeletedProjects;
-  return `
-    <button class="section-separator" data-action="toggle-deleted-projects">
-      <span class="section-separator__line" aria-hidden="true"></span>
-      <span class="section-separator__label">
-        ${escapeHtml(isOpen ? "Hide deleted projects" : "Show deleted projects")}
-        <span class="section-separator__chevron ${isOpen ? "is-open" : ""}" aria-hidden="true"></span>
-      </span>
-      <span class="section-separator__line" aria-hidden="true"></span>
-    </button>
-  `;
+  return sectionSeparator({
+    label: isOpen ? "Hide deleted projects" : "Show deleted projects",
+    action: "toggle-deleted-projects",
+    isOpen,
+  });
 }
 
 function renderDeletedProjectsSection(state) {
@@ -167,6 +163,7 @@ export function renderProjectsScreen(state) {
     ],
     tools: `${createSearchField("Search")} ${primaryButton("+ New Project", "open-new-project")}`,
     body,
+    syncing: state.sync?.teams === "syncing",
     }) +
     renderProjectCreationModal(state) +
     renderProjectRenameModal(state) +

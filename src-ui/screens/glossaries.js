@@ -1,7 +1,7 @@
 import { glossaries } from "../lib/data.js";
 import { navButton, pageShell, primaryButton, textAction } from "../lib/ui.js";
 
-export function renderGlossariesScreen() {
+export function renderGlossariesScreen(state) {
   return pageShell({
     title: "Glossaries",
     navButtons: [
@@ -10,6 +10,7 @@ export function renderGlossariesScreen() {
       navButton("Projects", "projects"),
     ],
     tools: `${textAction("Upload", "noop")} ${primaryButton("+ New Glossary", "noop")}`,
+    syncing: state.sync?.teams === "syncing",
     body: `
       <section class="table-card">
         <div class="table-card__header glossary-list glossary-list--head">

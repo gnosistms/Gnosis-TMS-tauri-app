@@ -1,4 +1,6 @@
-import { loadStoredTeamRecords } from "./team-storage.js";
+import { splitStoredTeamRecords } from "./team-storage.js";
+
+const initialStoredTeams = splitStoredTeamRecords();
 
 export const state = {
   screen: "start",
@@ -7,7 +9,8 @@ export const state = {
   selectedProjectId: "p2",
   selectedGlossaryId: "g1",
   selectedChapterId: "c2",
-  teams: loadStoredTeamRecords(),
+  teams: initialStoredTeams.activeTeams,
+  deletedTeams: initialStoredTeams.deletedTeams,
   projects: [],
   deletedProjects: [],
   users: [],
@@ -28,6 +31,9 @@ export const state = {
     status: "idle",
     error: "",
   },
+  sync: {
+    teams: "idle",
+  },
   teamSetup: createTeamSetupState(),
   teamRename: createTeamRenameState(),
   projectCreation: createProjectCreationState(),
@@ -35,6 +41,7 @@ export const state = {
   projectDeletion: createProjectDeletionState(),
   projectPermanentDeletion: createProjectPermanentDeletionState(),
   showDeletedProjects: false,
+  showDeletedTeams: false,
 };
 
 export function createTeamSetupState() {
@@ -128,12 +135,14 @@ export function resetSessionState() {
     session: null,
   };
   state.teams = [];
+  state.deletedTeams = [];
   state.projects = [];
   state.deletedProjects = [];
   state.users = [];
   state.orgDiscovery = { status: "idle", error: "" };
   state.projectDiscovery = { status: "idle", error: "" };
   state.userDiscovery = { status: "idle", error: "" };
+  state.sync = { teams: "idle" };
   resetTeamSetup();
   resetTeamRename();
   resetProjectCreation();
@@ -141,4 +150,5 @@ export function resetSessionState() {
   resetProjectDeletion();
   resetProjectPermanentDeletion();
   state.showDeletedProjects = false;
+  state.showDeletedTeams = false;
 }
