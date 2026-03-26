@@ -19,6 +19,7 @@ export function renderGlossaryEditorScreen(state) {
       navButton("Glossaries", "glossaries"),
     ],
     tools: `${createSearchField("Search")} ${primaryButton("+ New Term", "noop")}`,
+    pageSync: state.pageSync,
     body: `
       <section class="table-card">
         <div class="term-grid term-grid--head">

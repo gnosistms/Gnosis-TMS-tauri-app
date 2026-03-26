@@ -10,7 +10,7 @@ export function renderGlossariesScreen(state) {
       navButton("Projects", "projects"),
     ],
     tools: `${textAction("Upload", "noop")} ${primaryButton("+ New Glossary", "noop")}`,
-    syncing: state.sync?.teams === "syncing",
+    pageSync: state.pageSync,
     body: `
       <section class="table-card">
         <div class="table-card__header glossary-list glossary-list--head">

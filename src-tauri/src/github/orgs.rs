@@ -1,8 +1,13 @@
+use crate::broker::{
+  broker_delete_no_content_with_session, broker_get_json_with_session,
+  broker_patch_json_with_session,
+};
+
 use super::{
-  app_auth::{github_app_jwt, github_client, github_installation_access_token},
+  app_auth::github_client,
   types::{
-    GithubAppInstallationInfo, GithubAppInstallationResponse, GithubOrganization,
-    GithubOrganizationMember, GithubOrganizationMembership,
+    GithubAppInstallationInfo, GithubOrganization, GithubOrganizationMember,
+    GithubOrganizationMembership,
   },
 };
 
@@ -11,7 +16,6 @@ pub(crate) fn list_user_organizations(
   access_token: String,
 ) -> Result<Vec<GithubOrganization>, String> {
   let client = github_client()?;
-  let app_jwt = github_app_jwt()?;
   let organizations = client
     .get("https://api.github.com/user/orgs")
     .bearer_auth(&access_token)
@@ -51,71 +55,39 @@ pub(crate) fn list_user_organizations(
     }
   }
 
-  let mut filtered_organizations = Vec::new();
-
-  for organization_login in org_logins {
-    if !org_has_gnosis_tms_installation(&client, &app_jwt, &organization_login)? {
-      continue;
-    }
-
-    filtered_organizations.push(get_organization_details(
-      &client,
-      &access_token,
-      &organization_login,
-    )?);
-  }
-
-  Ok(filtered_organizations)
+  org_logins
+    .into_iter()
+    .map(|organization_login| get_organization_details(&client, &access_token, &organization_login))
+    .collect()
 }
 
 #[tauri::command]
 pub(crate) fn inspect_github_app_installation(
   installation_id: i64,
+  session_token: String,
 ) -> Result<GithubAppInstallationInfo, String> {
-  let app_jwt = github_app_jwt()?;
   let client = github_client()?;
-  let installation = client
-    .get(format!(
-      "https://api.github.com/app/installations/{installation_id}"
-    ))
-    .header("Accept", "application/vnd.github+json")
-    .bearer_auth(app_jwt)
-    .send()
-    .map_err(|error| format!("Could not inspect the GitHub App installation: {error}"))?
-    .error_for_status()
-    .map_err(|error| format!("GitHub rejected the GitHub App installation request: {error}"))?
-    .json::<GithubAppInstallationResponse>()
-    .map_err(|error| format!("Could not parse the GitHub App installation: {error}"))?;
-
-  Ok(GithubAppInstallationInfo {
-    installation_id: installation.id,
-    account_login: installation.account.login,
-    account_type: installation.account.account_type,
-    account_avatar_url: installation.account.avatar_url,
-    account_html_url: installation.account.html_url,
-  })
+  broker_get_json_with_session(
+    &client,
+    &format!("/api/github-app/installations/{installation_id}"),
+    &session_token,
+  )
 }
 
 #[tauri::command]
 pub(crate) fn list_organization_members_for_installation(
   installation_id: i64,
   org_login: String,
+  session_token: String,
 ) -> Result<Vec<GithubOrganizationMember>, String> {
-  let installation_token = github_installation_access_token(installation_id)?;
   let client = github_client()?;
-
-  client
-    .get(format!("https://api.github.com/orgs/{org_login}/members"))
-    .header("Accept", "application/vnd.github+json")
-    .header("X-GitHub-Api-Version", "2022-11-28")
-    .bearer_auth(&installation_token)
-    .query(&[("per_page", "100")])
-    .send()
-    .map_err(|error| format!("Could not list members for @{org_login}: {error}"))?
-    .error_for_status()
-    .map_err(|error| format!("GitHub rejected the organization members request for @{org_login}: {error}"))?
-    .json::<Vec<GithubOrganizationMember>>()
-    .map_err(|error| format!("Could not parse the members for @{org_login}: {error}"))
+  broker_get_json_with_session(
+    &client,
+    &format!(
+      "/api/github-app/installations/{installation_id}/members?org_login={org_login}"
+    ),
+    &session_token,
+  )
 }
 
 #[tauri::command]
@@ -123,24 +95,49 @@ pub(crate) fn update_organization_name_for_installation(
   installation_id: i64,
   org_login: String,
   name: String,
+  session_token: String,
 ) -> Result<GithubOrganization, String> {
-  let installation_token = github_installation_access_token(installation_id)?;
   let client = github_client()?;
-
-  client
-    .patch(format!("https://api.github.com/orgs/{org_login}"))
-    .header("Accept", "application/vnd.github+json")
-    .header("X-GitHub-Api-Version", "2022-11-28")
-    .bearer_auth(&installation_token)
-    .json(&serde_json::json!({
+  broker_patch_json_with_session(
+    &client,
+    &format!("/api/github-app/installations/{installation_id}/orgs/{org_login}"),
+    &serde_json::json!({
       "name": name
-    }))
-    .send()
-    .map_err(|error| format!("Could not rename @{org_login}: {error}"))?
-    .error_for_status()
-    .map_err(|error| format!("GitHub rejected the organization rename for @{org_login}: {error}"))?
-    .json::<GithubOrganization>()
-    .map_err(|error| format!("Could not parse the updated organization for @{org_login}: {error}"))
+    }),
+    &session_token,
+  )
+}
+
+#[tauri::command]
+pub(crate) fn delete_organization_for_installation(
+  installation_id: i64,
+  org_login: String,
+  session_token: String,
+) -> Result<(), String> {
+  let client = github_client()?;
+  broker_delete_no_content_with_session(
+    &client,
+    &format!("/api/github-app/installations/{installation_id}/orgs/{org_login}"),
+    &serde_json::json!({}),
+    &session_token,
+  )
+}
+
+#[tauri::command]
+pub(crate) fn leave_organization_for_installation(
+  installation_id: i64,
+  org_login: String,
+  session_token: String,
+) -> Result<(), String> {
+  let client = github_client()?;
+  broker_delete_no_content_with_session(
+    &client,
+    &format!(
+      "/api/github-app/installations/{installation_id}/orgs/{org_login}/membership"
+    ),
+    &serde_json::json!({}),
+    &session_token,
+  )
 }
 
 pub(crate) fn get_organization_details(
@@ -164,31 +161,4 @@ pub(crate) fn get_organization_details(
     .map_err(|error| {
       format!("Could not parse the details for GitHub organization @{org_login}: {error}")
     })
-}
-
-fn org_has_gnosis_tms_installation(
-  client: &reqwest::blocking::Client,
-  app_jwt: &str,
-  org_login: &str,
-) -> Result<bool, String> {
-  let response = client
-    .get(format!("https://api.github.com/orgs/{org_login}/installation"))
-    .header("Accept", "application/vnd.github+json")
-    .header("X-GitHub-Api-Version", "2022-11-28")
-    .bearer_auth(app_jwt)
-    .send()
-    .map_err(|error| {
-      format!(
-        "Could not check whether the Gnosis TMS GitHub App is installed on @{org_login}: {error}"
-      )
-    })?;
-
-  match response.status().as_u16() {
-    200 => Ok(true),
-    404 => Ok(false),
-    _ => Err(format!(
-      "GitHub rejected the Gnosis TMS installation check for @{org_login}: HTTP {}",
-      response.status()
-    )),
-  }
 }

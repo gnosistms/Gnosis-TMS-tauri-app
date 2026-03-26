@@ -1,18 +1,35 @@
 import { escapeHtml, sectionSeparator, textAction } from "../../lib/ui.js";
 
+function renderAccessLabel(team) {
+  if (team.canDelete) {
+    return "owner access";
+  }
+
+  if (team.canLeave) {
+    return "translator access";
+  }
+
+  return team.statusLabel || "restricted access";
+}
+
 function renderTeamCard(team, options = {}) {
+  const isDeleted = options.isDeleted === true;
   const actions = options.actions ?? [
     textAction("Open", `open-team:${team.id}`),
     textAction("Rename", `rename-team:${team.id}`),
-    textAction("Delete", "noop"),
+    textAction(team.canDelete ? "Delete" : "Leave", `delete-team:${team.id}`),
   ];
 
   return `
-    <article class="card card--list-row">
+    <article class="card card--list-row ${isDeleted ? "card--deleted" : ""}">
       <div class="card__body list-row">
         <div class="list-row__content">
-          <h2 class="list-row__title">${escapeHtml(team.name)}</h2>
-          <p class="list-row__meta">@${escapeHtml(team.githubOrg)} · owner @${escapeHtml(team.ownerLogin)}${
+          <h2 class="list-row__title">
+            <button class="list-row__title-button" data-action="open-team:${team.id}">
+              ${escapeHtml(team.name)}
+            </button>
+          </h2>
+          <p class="list-row__meta">@${escapeHtml(team.githubOrg)} · ${escapeHtml(renderAccessLabel(team))}${
             team.statusLabel ? ` · ${escapeHtml(team.statusLabel)}` : ""
           }</p>
         </div>
@@ -43,7 +60,16 @@ function renderDeletedTeamsSection(deletedTeams, isOpen) {
     ${toggle}
     <section class="stack stack--deleted-projects">
       <section class="stack">${deletedTeams
-        .map((team) => renderTeamCard(team, { actions: [] }))
+        .map((team) =>
+          renderTeamCard(team, {
+            isDeleted: true,
+            actions: [
+              textAction("Open", `open-team:${team.id}`),
+              textAction("Restore", `restore-team:${team.id}`),
+              textAction("Delete", `delete-deleted-team:${team.id}`),
+            ],
+          }),
+        )
         .join("")}</section>
     </section>
   `;

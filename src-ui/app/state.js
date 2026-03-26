@@ -19,6 +19,7 @@ export const state = {
     message: "",
     session: null,
   },
+  githubAppTest: createGithubAppTestState(),
   orgDiscovery: {
     status: "idle",
     error: "",
@@ -34,8 +35,11 @@ export const state = {
   sync: {
     teams: "idle",
   },
+  pageSync: createPageSyncState(),
   teamSetup: createTeamSetupState(),
   teamRename: createTeamRenameState(),
+  teamPermanentDeletion: createTeamPermanentDeletionState(),
+  teamLeave: createTeamLeaveState(),
   projectCreation: createProjectCreationState(),
   projectRename: createProjectRenameState(),
   projectDeletion: createProjectDeletionState(),
@@ -54,6 +58,18 @@ export function createTeamSetupState() {
   };
 }
 
+export function createGithubAppTestState() {
+  return {
+    configStatus: "idle",
+    status: "idle",
+    message: "",
+    config: null,
+    installationId: null,
+    installation: null,
+    repositories: [],
+  };
+}
+
 export function createTeamRenameState() {
   return {
     isOpen: false,
@@ -68,6 +84,27 @@ export function createProjectCreationState() {
   return {
     isOpen: false,
     projectName: "",
+    status: "idle",
+    error: "",
+  };
+}
+
+export function createTeamPermanentDeletionState() {
+  return {
+    isOpen: false,
+    teamId: null,
+    teamName: "",
+    confirmationText: "",
+    status: "idle",
+    error: "",
+  };
+}
+
+export function createTeamLeaveState() {
+  return {
+    isOpen: false,
+    teamId: null,
+    teamName: "",
     status: "idle",
     error: "",
   };
@@ -116,6 +153,14 @@ export function resetProjectCreation() {
   state.projectCreation = createProjectCreationState();
 }
 
+export function resetTeamPermanentDeletion() {
+  state.teamPermanentDeletion = createTeamPermanentDeletionState();
+}
+
+export function resetTeamLeave() {
+  state.teamLeave = createTeamLeaveState();
+}
+
 export function resetProjectRename() {
   state.projectRename = createProjectRenameState();
 }
@@ -134,6 +179,7 @@ export function resetSessionState() {
     message: "",
     session: null,
   };
+  state.githubAppTest = createGithubAppTestState();
   state.teams = [];
   state.deletedTeams = [];
   state.projects = [];
@@ -143,12 +189,21 @@ export function resetSessionState() {
   state.projectDiscovery = { status: "idle", error: "" };
   state.userDiscovery = { status: "idle", error: "" };
   state.sync = { teams: "idle" };
+  state.pageSync = createPageSyncState();
   resetTeamSetup();
   resetTeamRename();
+  resetTeamPermanentDeletion();
+  resetTeamLeave();
   resetProjectCreation();
   resetProjectRename();
   resetProjectDeletion();
   resetProjectPermanentDeletion();
   state.showDeletedProjects = false;
   state.showDeletedTeams = false;
+}
+
+function createPageSyncState() {
+  return {
+    status: "idle",
+  };
 }

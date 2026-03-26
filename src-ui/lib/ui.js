@@ -76,21 +76,42 @@ export function sectionSeparator({ label, action, isOpen = false }) {
   `;
 }
 
-export function pageShell({ title, navButtons = [], tools = "", body = "", syncing = false }) {
-  const syncIndicator = `
-    <div class="page-header__status" aria-live="polite">
-      <span class="sync-indicator">
-        <span class="sync-indicator__spinner" aria-hidden="true"></span>
-      </span>
+function renderPageSubtitle(pageSync = { status: "idle" }) {
+  if (pageSync.status === "syncing") {
+    return `
+      <div class="page-header__subtitle" aria-live="polite">
+        <span>Synchronizing with server</span>
+        <span class="sync-indicator sync-indicator--inline">
+          <span class="sync-indicator__spinner" aria-hidden="true"></span>
+        </span>
+      </div>
+    `;
+  }
+
+  if (pageSync.status === "upToDate") {
+    return `
+      <div class="page-header__subtitle" aria-live="polite">
+        <span>Up to date</span>
+      </div>
+    `;
+  }
+
+  return `
+    <div class="page-header__subtitle" aria-live="polite">
+      <button class="page-header__subtitle-link" data-action="check-for-updates">Check for updates</button>
     </div>
   `;
+}
+
+export function pageShell({ title, navButtons = [], tools = "", body = "", pageSync = { status: "idle" } }) {
   return `
     <div class="screen screen--page">
       <header class="page-header">
-        ${syncing ? syncIndicator : '<div class="page-header__status"></div>'}
+        <div class="page-header__status"></div>
         <div class="page-header__nav">${navButtons.join("")}</div>
         <div class="page-header__title-wrap">
           <h1 class="page-header__title">${escapeHtml(title)}</h1>
+          ${renderPageSubtitle(pageSync)}
         </div>
         <div class="page-header__tools">${tools}</div>
       </header>

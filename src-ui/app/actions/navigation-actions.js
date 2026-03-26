@@ -1,0 +1,40 @@
+import { state } from "../state.js";
+import { loadTeamProjects } from "../project-flow.js";
+import { actionSuffix } from "../action-helpers.js";
+
+export function createNavigationActions(render) {
+  return async function handleNavigationAction(action) {
+    const openTeamId = actionSuffix(action, "open-team:");
+    if (openTeamId !== null) {
+      state.selectedTeamId = openTeamId;
+      state.screen = "projects";
+      render();
+      void loadTeamProjects(render, state.selectedTeamId);
+      return true;
+    }
+
+    const openGlossaryId = actionSuffix(action, "open-glossary:");
+    if (openGlossaryId !== null) {
+      state.selectedGlossaryId = openGlossaryId;
+      state.screen = "glossaryEditor";
+      render();
+      return true;
+    }
+
+    if (action === "open-glossaries") {
+      state.screen = "glossaries";
+      render();
+      return true;
+    }
+
+    const chapterId = actionSuffix(action, "open-translate:");
+    if (chapterId !== null) {
+      state.selectedChapterId = chapterId;
+      state.screen = "translate";
+      render();
+      return true;
+    }
+
+    return false;
+  };
+}

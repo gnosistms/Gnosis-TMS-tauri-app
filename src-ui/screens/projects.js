@@ -8,17 +8,20 @@ import {
   textAction,
 } from "../lib/ui.js";
 import { renderProjectCreationModal } from "./project-creation-modal.js";
-import { renderProjectDeletionModal } from "./project-deletion-modal.js";
 import { renderProjectPermanentDeletionModal } from "./project-permanent-deletion-modal.js";
 import { renderProjectRenameModal } from "./project-rename-modal.js";
 
 function renderProjectCard(project, expanded, options = {}) {
+  const canManageProjects = options.canManageProjects !== false;
+  const isDeleted = options.isDeleted === true;
   const deleteAction = options.deleteAction ?? `delete-project:${project.id}`;
-  const actions = options.actions ?? [
-    textAction("Rename", `rename-project:${project.id}`),
-    textAction("Import", "noop"),
-    textAction("Delete", deleteAction),
-  ];
+  const actions =
+    options.actions ??
+    [
+      textAction("Rename", `rename-project:${project.id}`),
+      textAction("Import", "noop"),
+      canManageProjects ? textAction("Delete", deleteAction) : "",
+    ].filter(Boolean);
   const chapterCount = `${project.chapters.length} chapter${
     project.chapters.length === 1 ? "" : "s"
   }`;
@@ -53,7 +56,9 @@ function renderProjectCard(project, expanded, options = {}) {
     : "";
 
   return `
-    <article class="card card--expandable ${expanded ? "is-expanded" : ""}">
+    <article class="card card--expandable ${expanded ? "is-expanded" : ""} ${
+      isDeleted ? "card--deleted" : ""
+    }">
       <div class="expandable-card__header">
         <button class="chevron-button" data-action="toggle-project:${project.id}">
           <span class="chevron ${expanded ? "is-open" : ""}"></span>
@@ -85,6 +90,9 @@ function renderDeletedProjectsSection(state) {
     return "";
   }
 
+  const selectedTeam = state.teams.find((team) => team.id === state.selectedTeamId) ?? state.teams[0];
+  const canManageProjects = selectedTeam?.canManageProjects === true;
+
   const toggle = renderDeletedProjectsToggle(state);
   if (!state.showDeletedProjects) {
     return toggle;
@@ -96,7 +104,14 @@ function renderDeletedProjectsSection(state) {
       <section class="stack">${state.deletedProjects
         .map((project) =>
           renderProjectCard(project, state.expandedProjects.has(project.id), {
-            actions: [textAction("Delete", `delete-deleted-project:${project.id}`)],
+            canManageProjects,
+            isDeleted: true,
+            actions: canManageProjects
+              ? [
+                  textAction("Restore", `restore-project:${project.id}`),
+                  textAction("Delete", `delete-deleted-project:${project.id}`),
+                ]
+              : [],
           }),
         )
         .join("")}</section>
@@ -106,6 +121,7 @@ function renderDeletedProjectsSection(state) {
 
 export function renderProjectsScreen(state) {
   const selectedTeam = state.teams.find((team) => team.id === state.selectedTeamId) ?? state.teams[0];
+  const canManageProjects = selectedTeam?.canManageProjects === true;
   const discovery = state.projectDiscovery ?? { status: "idle", error: "" };
   const emptyState = `
     <article class="card card--hero card--empty">
@@ -142,7 +158,11 @@ export function renderProjectsScreen(state) {
         : state.projects.length === 0
           ? emptyState
           : `<section class="stack">${state.projects
-              .map((project) => renderProjectCard(project, state.expandedProjects.has(project.id)))
+              .map((project) =>
+                renderProjectCard(project, state.expandedProjects.has(project.id), {
+                  canManageProjects,
+                }),
+              )
               .join("")}</section>`;
 
   const body = `
@@ -162,12 +182,11 @@ export function renderProjectsScreen(state) {
       navButton("Glossaries", "glossaries"),
     ],
     tools: `${createSearchField("Search")} ${primaryButton("+ New Project", "open-new-project")}`,
+    pageSync: state.pageSync,
     body,
-    syncing: state.sync?.teams === "syncing",
     }) +
     renderProjectCreationModal(state) +
     renderProjectRenameModal(state) +
-    renderProjectDeletionModal(state) +
     renderProjectPermanentDeletionModal(state)
   );
 }

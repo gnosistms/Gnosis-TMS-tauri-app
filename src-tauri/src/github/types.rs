@@ -29,7 +29,7 @@ pub(crate) struct BeginGithubAppInstallResponse {
   pub(crate) setup_url: String,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct GithubAppInstallationInfo {
   pub(crate) installation_id: i64,
@@ -37,6 +37,11 @@ pub(crate) struct GithubAppInstallationInfo {
   pub(crate) account_type: String,
   pub(crate) account_avatar_url: Option<String>,
   pub(crate) account_html_url: Option<String>,
+  pub(crate) membership_state: Option<String>,
+  pub(crate) membership_role: Option<String>,
+  pub(crate) can_delete: Option<bool>,
+  pub(crate) can_manage_projects: Option<bool>,
+  pub(crate) can_leave: Option<bool>,
 }
 
 #[derive(Deserialize)]
@@ -85,7 +90,7 @@ pub(crate) struct GithubRepositoryPropertyValue {
   pub(crate) value: Option<serde_json::Value>,
 }
 
-#[derive(Serialize, Clone)]
+#[derive(Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct GithubProjectRepo {
   pub(crate) id: String,
@@ -107,7 +112,7 @@ pub(crate) struct GithubOrganizationMember {
   pub(crate) html_url: Option<String>,
 }
 
-#[derive(Deserialize)]
+#[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct CreateGithubProjectRepoInput {
   pub(crate) installation_id: i64,
@@ -116,7 +121,7 @@ pub(crate) struct CreateGithubProjectRepoInput {
   pub(crate) project_title: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct RenameGithubProjectRepoInput {
   pub(crate) installation_id: i64,
@@ -124,7 +129,7 @@ pub(crate) struct RenameGithubProjectRepoInput {
   pub(crate) project_title: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct DeleteGithubProjectRepoInput {
   pub(crate) installation_id: i64,

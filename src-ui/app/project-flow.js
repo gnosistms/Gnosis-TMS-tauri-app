@@ -1,4 +1,6 @@
 import { invoke, waitForNextPaint } from "./runtime.js";
+import { handleBrokerAuthExpired, requireBrokerSession } from "./auth-flow.js";
+import { beginPageSync, completePageSync, failPageSync } from "./page-sync.js";
 import {
   resetProjectCreation,
   resetProjectDeletion,
@@ -19,11 +21,13 @@ export async function loadTeamProjects(render, teamId = state.selectedTeamId) {
   }
 
   state.projectDiscovery = { status: "loading", error: "" };
+  beginPageSync();
   render();
 
   try {
     const projects = await invoke("list_gnosis_projects_for_installation", {
       installationId: selectedTeam.installationId,
+      sessionToken: requireBrokerSession(),
     });
     const mappedProjects = projects.map((project) => ({
       ...project,
@@ -32,14 +36,20 @@ export async function loadTeamProjects(render, teamId = state.selectedTeamId) {
     state.projects = mappedProjects.filter((project) => project.status !== "deleted");
     state.deletedProjects = mappedProjects.filter((project) => project.status === "deleted");
     state.projectDiscovery = { status: "ready", error: "" };
+    completePageSync(render);
     render();
   } catch (error) {
+    if (await handleBrokerAuthExpired(render, error)) {
+      failPageSync();
+      return;
+    }
     state.projects = [];
     state.deletedProjects = [];
     state.projectDiscovery = {
       status: "error",
       error: error?.message ?? String(error),
     };
+    failPageSync();
     render();
   }
 }
@@ -140,10 +150,14 @@ export async function submitProjectCreation(render) {
         repoName,
         projectTitle,
       },
+      sessionToken: requireBrokerSession(),
     });
     resetProjectCreation();
     await loadTeamProjects(render, selectedTeam.id);
   } catch (error) {
+    if (await handleBrokerAuthExpired(render, error)) {
+      return;
+    }
     state.projectCreation.status = "idle";
     state.projectCreation.error = error?.message ?? String(error);
     render();
@@ -178,6 +192,7 @@ export async function submitProjectRename(render) {
         fullName: project.fullName,
         projectTitle: nextTitle,
       },
+      sessionToken: requireBrokerSession(),
     });
     state.projects = state.projects.map((item) =>
       item.id === project.id
@@ -190,6 +205,9 @@ export async function submitProjectRename(render) {
     resetProjectRename();
     render();
   } catch (error) {
+    if (await handleBrokerAuthExpired(render, error)) {
+      return;
+    }
     state.projectRename.status = "idle";
     state.projectRename.error = error?.message ?? String(error);
     render();
@@ -198,6 +216,8 @@ export async function submitProjectRename(render) {
 
 export async function deleteProject(render, projectId) {
   const project = state.projects.find((item) => item.id === projectId);
+  const selectedTeam = state.teams.find((team) => team.id === state.selectedTeamId);
+
   if (!project) {
     state.projectDiscovery = {
       status: "error",
@@ -207,14 +227,45 @@ export async function deleteProject(render, projectId) {
     return;
   }
 
-  state.projectDeletion = {
-    isOpen: true,
-    projectId,
-    projectName: project.title ?? project.name,
-    status: "idle",
-    error: "",
-  };
-  render();
+  if (!selectedTeam?.installationId || !project) {
+    state.projectDiscovery = {
+      status: "error",
+      error: "Could not find the selected project.",
+    };
+    render();
+    return;
+  }
+
+  if (selectedTeam.canManageProjects !== true) {
+    state.projectDiscovery = {
+      status: "error",
+      error: "You do not have permission to delete projects in this team.",
+    };
+    render();
+    return;
+  }
+
+  try {
+    await waitForNextPaint();
+    await invoke("mark_gnosis_project_repo_deleted", {
+      input: {
+        installationId: selectedTeam.installationId,
+        orgLogin: selectedTeam.githubOrg,
+        repoName: project.name,
+      },
+      sessionToken: requireBrokerSession(),
+    });
+    await loadTeamProjects(render, selectedTeam.id);
+  } catch (error) {
+    if (await handleBrokerAuthExpired(render, error)) {
+      return;
+    }
+    state.projectDiscovery = {
+      status: "error",
+      error: error?.message ?? String(error),
+    };
+    render();
+  }
 }
 
 export function cancelProjectDeletion(render) {
@@ -227,12 +278,76 @@ export function toggleDeletedProjects(render) {
   render();
 }
 
-export function permanentlyDeleteProject(render, projectId) {
+export async function restoreProject(render, projectId) {
   const project = state.deletedProjects.find((item) => item.id === projectId);
+  const selectedTeam = state.teams.find((team) => team.id === state.selectedTeamId);
+
   if (!project) {
     state.projectDiscovery = {
       status: "error",
       error: "Could not find the selected deleted project.",
+    };
+    render();
+    return;
+  }
+
+  if (!selectedTeam?.installationId) {
+    state.projectDiscovery = {
+      status: "error",
+      error: "Could not restore the selected project.",
+    };
+    render();
+    return;
+  }
+
+  if (selectedTeam.canManageProjects !== true) {
+    state.projectDiscovery = {
+      status: "error",
+      error: "You do not have permission to restore projects in this team.",
+    };
+    render();
+    return;
+  }
+
+  try {
+    await waitForNextPaint();
+    await invoke("restore_gnosis_project_repo", {
+      input: {
+        installationId: selectedTeam.installationId,
+        orgLogin: selectedTeam.githubOrg,
+        repoName: project.name,
+      },
+      sessionToken: requireBrokerSession(),
+    });
+    await loadTeamProjects(render, selectedTeam.id);
+  } catch (error) {
+    if (await handleBrokerAuthExpired(render, error)) {
+      return;
+    }
+    state.projectDiscovery = {
+      status: "error",
+      error: error?.message ?? String(error),
+    };
+    render();
+  }
+}
+
+export function permanentlyDeleteProject(render, projectId) {
+  const project = state.deletedProjects.find((item) => item.id === projectId);
+  const selectedTeam = state.teams.find((team) => team.id === state.selectedTeamId);
+  if (!project) {
+    state.projectDiscovery = {
+      status: "error",
+      error: "Could not find the selected deleted project.",
+    };
+    render();
+    return;
+  }
+
+  if (selectedTeam?.canManageProjects !== true) {
+    state.projectDiscovery = {
+      status: "error",
+      error: "You do not have permission to delete projects in this team.",
     };
     render();
     return;
@@ -261,38 +376,6 @@ export function cancelProjectPermanentDeletion(render) {
   render();
 }
 
-export async function confirmProjectDeletion(render) {
-  const selectedTeam = state.teams.find((team) => team.id === state.selectedTeamId);
-  const project = state.projects.find((item) => item.id === state.projectDeletion.projectId);
-
-  if (!selectedTeam?.installationId || !project) {
-    state.projectDeletion.status = "idle";
-    state.projectDeletion.error = "Could not find the selected project.";
-    render();
-    return;
-  }
-
-  try {
-    state.projectDeletion.status = "loading";
-    state.projectDeletion.error = "";
-    render();
-    await waitForNextPaint();
-    await invoke("mark_gnosis_project_repo_deleted", {
-      input: {
-        installationId: selectedTeam.installationId,
-        orgLogin: selectedTeam.githubOrg,
-        repoName: project.name,
-      },
-    });
-    resetProjectDeletion();
-    await loadTeamProjects(render, selectedTeam.id);
-  } catch (error) {
-    state.projectDeletion.status = "idle";
-    state.projectDeletion.error = error?.message ?? String(error);
-    render();
-  }
-}
-
 export async function confirmProjectPermanentDeletion(render) {
   const selectedTeam = state.teams.find((team) => team.id === state.selectedTeamId);
   const project = state.deletedProjects.find(
@@ -302,6 +385,13 @@ export async function confirmProjectPermanentDeletion(render) {
   if (!selectedTeam?.installationId || !project) {
     state.projectPermanentDeletion.status = "idle";
     state.projectPermanentDeletion.error = "Could not find the selected deleted project.";
+    render();
+    return;
+  }
+
+  if (selectedTeam.canManageProjects !== true) {
+    state.projectPermanentDeletion.status = "idle";
+    state.projectPermanentDeletion.error = "You do not have permission to delete projects in this team.";
     render();
     return;
   }
@@ -323,10 +413,14 @@ export async function confirmProjectPermanentDeletion(render) {
         orgLogin: selectedTeam.githubOrg,
         repoName: project.name,
       },
+      sessionToken: requireBrokerSession(),
     });
     resetProjectPermanentDeletion();
     await loadTeamProjects(render, selectedTeam.id);
   } catch (error) {
+    if (await handleBrokerAuthExpired(render, error)) {
+      return;
+    }
     state.projectPermanentDeletion.status = "idle";
     state.projectPermanentDeletion.error = error?.message ?? String(error);
     render();

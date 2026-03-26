@@ -13,6 +13,11 @@ function normalizeTeamRecord(team) {
     return null;
   }
 
+  const membershipRole =
+    typeof team.membershipRole === "string" && team.membershipRole.trim()
+      ? team.membershipRole.trim()
+      : "member";
+
   return {
     id:
       typeof team.id === "string" && team.id.trim()
@@ -27,6 +32,11 @@ function normalizeTeamRecord(team) {
       typeof team.ownerLogin === "string" && team.ownerLogin.trim()
         ? team.ownerLogin.trim()
         : githubOrg,
+    membershipRole,
+    canDelete: team.canDelete === true,
+    canManageProjects:
+      team.canManageProjects === true || (membershipRole === "admin" && team.canLeave !== false),
+    canLeave: team.canLeave !== false,
     installationId:
       Number.isFinite(team.installationId) ? team.installationId : null,
     orgCreatedAt:
@@ -132,6 +142,12 @@ export function updateStoredTeamRecord(teamId, updates) {
   const nextTeams = loadStoredTeamRecords().map((team) =>
     team.id === teamId ? normalizeTeamRecord({ ...team, ...updates }) : team,
   );
+  saveStoredTeamRecords(nextTeams);
+  return nextTeams;
+}
+
+export function removeStoredTeamRecord(teamId) {
+  const nextTeams = loadStoredTeamRecords().filter((team) => team.id !== teamId);
   saveStoredTeamRecords(nextTeams);
   return nextTeams;
 }

@@ -1,11 +1,14 @@
 import { invoke, listen, openExternalUrl } from "./runtime.js";
 import {
+  clearStoredAuthSession,
   loadStoredAuthSession,
   saveStoredAuthSession,
 } from "./auth-storage.js";
-import { state } from "./state.js";
+import { resetSessionState, state } from "./state.js";
 
-export function setAuthState(nextAuth, render) {
+const AUTH_REQUIRED_PREFIX = "AUTH_REQUIRED:";
+
+function setAuthState(nextAuth, render) {
   state.auth = {
     ...state.auth,
     ...nextAuth,
@@ -13,16 +16,53 @@ export function setAuthState(nextAuth, render) {
   render();
 }
 
-export function applyGithubAuthResult(payload, render, loadUserTeams) {
-  if (payload?.status === "success") {
-    const session = payload.session ?? null;
+export function requireBrokerSession() {
+  const sessionToken = state.auth.session?.sessionToken;
+  if (!sessionToken) {
+    throw new Error("Sign in with GitHub to connect to the broker first.");
+  }
+
+  return sessionToken;
+}
+
+export function isBrokerAuthExpiredError(error) {
+  const message = error?.message ?? String(error ?? "");
+  return (
+    message.startsWith(AUTH_REQUIRED_PREFIX) ||
+    message === "Unauthorized" ||
+    message.includes("Your GitHub session expired")
+  );
+}
+
+export async function handleBrokerAuthExpired(render, error) {
+  if (!isBrokerAuthExpiredError(error)) {
+    return false;
+  }
+
+  await clearStoredAuthSession();
+  resetSessionState();
+  state.auth = {
+    status: "expired",
+    message:
+      "Your GitHub session expired. Please log in with GitHub again to continue.",
+    session: null,
+  };
+  state.screen = "start";
+  render();
+  return true;
+}
+
+export function applyBrokerAuthResult(payload, render, loadUserTeams) {
+  if (payload?.status === "success" && payload?.session?.sessionToken) {
+    const session = payload.session;
     state.auth = {
       status: "success",
-      message: payload.message ?? "Signed in with GitHub.",
+      message: payload.message ?? `Signed in as @${session.login}.`,
       session,
     };
     void saveStoredAuthSession(session);
     state.screen = "teams";
+    render();
     void loadUserTeams(render);
     return;
   }
@@ -37,28 +77,63 @@ export function applyGithubAuthResult(payload, render, loadUserTeams) {
   );
 }
 
-export async function restoreStoredGithubSession(render, loadUserTeams) {
+export async function restoreStoredBrokerSession(render, loadUserTeams) {
   const session = await loadStoredAuthSession();
   if (!session) {
+    state.screen = "start";
+    render();
     return;
   }
 
-  state.auth = {
-    status: "success",
-    message: "Signed in with GitHub.",
-    session,
-  };
-  state.screen = "teams";
-  void loadUserTeams(render);
+  if (!invoke) {
+    state.auth = {
+      status: "success",
+      message: `Signed in as @${session.login}.`,
+      session,
+    };
+    state.screen = "teams";
+    render();
+    return;
+  }
+
+  try {
+    const profile = await invoke("inspect_broker_auth_session", {
+      sessionToken: session.sessionToken,
+    });
+    const verifiedSession = {
+      sessionToken: session.sessionToken,
+      login: profile.login,
+      name: profile.name ?? null,
+      avatarUrl: profile.avatarUrl ?? null,
+    };
+    state.auth = {
+      status: "success",
+      message: `Signed in as @${verifiedSession.login}.`,
+      session: verifiedSession,
+    };
+    void saveStoredAuthSession(verifiedSession);
+    state.screen = "teams";
+    render();
+    void loadUserTeams(render);
+  } catch {
+    await clearStoredAuthSession();
+    state.auth = {
+      status: "idle",
+      message: "",
+      session: null,
+    };
+    state.screen = "start";
+    render();
+  }
 }
 
-export async function registerGithubAuthListener(render, loadUserTeams) {
+export async function registerBrokerAuthListener(render, loadUserTeams) {
   if (!listen) {
     return;
   }
 
-  await listen("github-oauth-callback", (event) => {
-    applyGithubAuthResult(event.payload, render, loadUserTeams);
+  await listen("broker-auth-callback", (event) => {
+    applyBrokerAuthResult(event.payload, render, loadUserTeams);
   });
 }
 
@@ -87,14 +162,14 @@ export async function startGithubLogin(render) {
   setAuthState(
     {
       status: "launching",
-      message: "Opening GitHub in your browser...",
+      message: "Opening GitHub sign-in in your browser...",
       session: state.auth.session,
     },
     render,
   );
 
   try {
-    const { authUrl } = await invoke("begin_github_oauth");
+    const { authUrl } = await invoke("begin_broker_auth");
     openExternalUrl(authUrl);
     setAuthState(
       {
@@ -106,11 +181,10 @@ export async function startGithubLogin(render) {
       render,
     );
   } catch (error) {
-    const message = error?.message ?? String(error);
     setAuthState(
       {
         status: "error",
-        message,
+        message: error?.message ?? String(error),
         session: null,
       },
       render,

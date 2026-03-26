@@ -20,6 +20,7 @@ export function renderTranslateScreen(state) {
       navButton("Projects", "projects"),
       navButton("Glossaries", "glossaries"),
     ],
+    pageSync: state.pageSync,
     body: `
       <section class="translate-toolbar card">
         <div class="card__body translate-toolbar__body">

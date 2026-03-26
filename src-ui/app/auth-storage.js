@@ -6,13 +6,13 @@ export async function loadStoredAuthSession() {
   }
 
   try {
-    const session = await invoke("load_github_auth_session");
-    if (!session?.accessToken || !session?.login) {
+    const session = await invoke("load_broker_auth_session");
+    if (!session?.sessionToken || !session?.login) {
       return null;
     }
 
     return {
-      accessToken: session.accessToken,
+      sessionToken: session.sessionToken,
       login: session.login,
       name: session.name ?? null,
       avatarUrl: session.avatarUrl ?? null,
@@ -28,12 +28,12 @@ export async function saveStoredAuthSession(session) {
   }
 
   try {
-    if (!session?.accessToken || !session?.login) {
+    if (!session?.sessionToken || !session?.login) {
       await clearStoredAuthSession();
       return;
     }
 
-    await invoke("save_github_auth_session", { session });
+    await invoke("save_broker_auth_session", { session });
   } catch {
     // Ignore native storage failures and continue in memory.
   }
@@ -45,7 +45,7 @@ export async function clearStoredAuthSession() {
   }
 
   try {
-    await invoke("clear_github_auth_session");
+    await invoke("clear_broker_auth_session");
   } catch {
     // Ignore native storage failures and continue in memory.
   }

@@ -1,107 +1,28 @@
-@font-face {
-  font-family: "IBM Plex Sans SC";
-  font-style: normal;
-  font-weight: 400;
-  font-display: swap;
-  src: url("../../node_modules/@ibm/plex-sans-sc/fonts/complete/woff2/hinted/IBMPlexSansSC-Regular.woff2") format("woff2");
-}
-
-@font-face {
-  font-family: "IBM Plex Sans SC";
-  font-style: normal;
-  font-weight: 600;
-  font-display: swap;
-  src: url("../../node_modules/@ibm/plex-sans-sc/fonts/complete/woff2/hinted/IBMPlexSansSC-SemiBold.woff2") format("woff2");
-}
-
-@font-face {
-  font-family: "IBM Plex Sans SC";
-  font-style: normal;
-  font-weight: 700;
-  font-display: swap;
-  src: url("../../node_modules/@ibm/plex-sans-sc/fonts/complete/woff2/hinted/IBMPlexSansSC-Bold.woff2") format("woff2");
-}
-
-@font-face {
-  font-family: "IBM Plex Sans TC";
-  font-style: normal;
-  font-weight: 400;
-  font-display: swap;
-  src: url("../../node_modules/@ibm/plex-sans-tc/fonts/complete/woff2/hinted/IBMPlexSansTC-Regular.woff2") format("woff2");
-}
-
-@font-face {
-  font-family: "IBM Plex Sans TC";
-  font-style: normal;
-  font-weight: 600;
-  font-display: swap;
-  src: url("../../node_modules/@ibm/plex-sans-tc/fonts/complete/woff2/hinted/IBMPlexSansTC-SemiBold.woff2") format("woff2");
-}
-
-@font-face {
-  font-family: "IBM Plex Sans TC";
-  font-style: normal;
-  font-weight: 700;
-  font-display: swap;
-  src: url("../../node_modules/@ibm/plex-sans-tc/fonts/complete/woff2/hinted/IBMPlexSansTC-Bold.woff2") format("woff2");
-}
-
-@font-face {
-  font-family: "IBM Plex Sans Arabic";
-  font-style: normal;
-  font-weight: 400;
-  font-display: swap;
-  src: url("../../node_modules/@ibm/plex-sans-arabic/fonts/complete/woff2/IBMPlexSansArabic-Regular.woff2") format("woff2");
-}
-
-@font-face {
-  font-family: "IBM Plex Sans Arabic";
-  font-style: normal;
-  font-weight: 600;
-  font-display: swap;
-  src: url("../../node_modules/@ibm/plex-sans-arabic/fonts/complete/woff2/IBMPlexSansArabic-SemiBold.woff2") format("woff2");
-}
-
-@font-face {
-  font-family: "IBM Plex Sans Arabic";
-  font-style: normal;
-  font-weight: 700;
-  font-display: swap;
-  src: url("../../node_modules/@ibm/plex-sans-arabic/fonts/complete/woff2/IBMPlexSansArabic-Bold.woff2") format("woff2");
-}
-
-@font-face {
-  font-family: "IBM Plex Sans KR";
-  font-style: normal;
-  font-weight: 400;
-  font-display: swap;
-  src: url("../../node_modules/@ibm/plex-sans-kr/fonts/complete/woff2/hinted/IBMPlexSansKR-Regular.woff2") format("woff2");
-}
-
-@font-face {
-  font-family: "IBM Plex Sans KR";
-  font-style: normal;
-  font-weight: 600;
-  font-display: swap;
-  src: url("../../node_modules/@ibm/plex-sans-kr/fonts/complete/woff2/hinted/IBMPlexSansKR-SemiBold.woff2") format("woff2");
-}
-
-@font-face {
-  font-family: "IBM Plex Sans KR";
-  font-style: normal;
-  font-weight: 700;
-  font-display: swap;
-  src: url("../../node_modules/@ibm/plex-sans-kr/fonts/complete/woff2/hinted/IBMPlexSansKR-Bold.woff2") format("woff2");
-}
+@import "@fontsource/inter/400.css";
+@import "@fontsource/inter/600.css";
+@import "@fontsource/inter/700.css";
+@import "@fontsource/noto-sans/400.css";
+@import "@fontsource/noto-sans/600.css";
+@import "@fontsource/noto-sans/700.css";
+@import "@fontsource/noto-sans-jp/400.css";
+@import "@fontsource/noto-sans-jp/700.css";
+@import "@fontsource/noto-sans-sc/400.css";
+@import "@fontsource/noto-sans-sc/700.css";
+@import "@fontsource/noto-sans-tc/400.css";
+@import "@fontsource/noto-sans-tc/700.css";
+@import "@fontsource/noto-sans-arabic/400.css";
+@import "@fontsource/noto-sans-arabic/700.css";
+@import "@fontsource/noto-sans-kr/400.css";
+@import "@fontsource/noto-sans-kr/700.css";
 
 :root {
   color-scheme: light;
-  --font-sans: "IBM Plex Sans", "IBM Plex Sans SC", "IBM Plex Sans TC", "IBM Plex Sans JP", "IBM Plex Sans KR", "IBM Plex Sans Arabic", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
-  --font-ja: "IBM Plex Sans JP", "IBM Plex Sans", "IBM Plex Sans SC", "IBM Plex Sans TC", "IBM Plex Sans KR", "IBM Plex Sans Arabic", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
-  --font-zh-hans: "IBM Plex Sans SC", "IBM Plex Sans", "IBM Plex Sans TC", "IBM Plex Sans JP", "IBM Plex Sans KR", "IBM Plex Sans Arabic", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
-  --font-zh-hant: "IBM Plex Sans TC", "IBM Plex Sans", "IBM Plex Sans SC", "IBM Plex Sans JP", "IBM Plex Sans KR", "IBM Plex Sans Arabic", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
-  --font-fa: "IBM Plex Sans Arabic", "IBM Plex Sans", "IBM Plex Sans SC", "IBM Plex Sans TC", "IBM Plex Sans JP", "IBM Plex Sans KR", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
-  --font-ko: "IBM Plex Sans KR", "IBM Plex Sans", "IBM Plex Sans SC", "IBM Plex Sans TC", "IBM Plex Sans JP", "IBM Plex Sans Arabic", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  --font-sans: "Inter", "Noto Sans", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  --font-ja: "Noto Sans JP", "Noto Sans", "Inter", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  --font-zh-hans: "Noto Sans SC", "Noto Sans", "Inter", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  --font-zh-hant: "Noto Sans TC", "Noto Sans", "Inter", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  --font-fa: "Noto Sans Arabic", "Noto Sans", "Inter", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  --font-ko: "Noto Sans KR", "Noto Sans", "Inter", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
   --bg-top: #f7ecd5;
   --bg-bottom: #f3e2bf;
   --hero-glow: rgba(241, 191, 83, 0.76);
@@ -116,11 +37,12 @@
   --accent-strong: #ec8609;
   --accent-text: #fff8ed;
   --link: #c97a12;
+  --link-hover: #d7963f;
   --radius-card: 26px;
   --radius-control: 18px;
   --header-height: 104px;
   --page-width: 1480px;
-  --heading-letter-spacing: -0.025em;
+  --heading-letter-spacing: -0.015em;
 }
 
 * {
@@ -247,6 +169,9 @@ a {
 
 .page-header__title-wrap {
   display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
   justify-content: center;
 }
 
@@ -258,6 +183,32 @@ a {
   white-space: nowrap;
 }
 
+.page-header__subtitle {
+  min-height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  color: rgba(124, 103, 78, 0.82);
+  font-size: 0.98rem;
+  font-weight: 600;
+}
+
+.page-header__subtitle-link {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: var(--link);
+  font-size: 0.98rem;
+  font-weight: 700;
+  text-decoration: underline;
+  text-underline-offset: 0.16em;
+}
+
+.page-header__subtitle-link:hover {
+  color: var(--link-hover);
+}
+
 .sync-indicator {
   width: 20px;
   height: 20px;
@@ -265,6 +216,11 @@ a {
   align-items: center;
   justify-content: center;
   color: rgba(164, 112, 41, 0.72);
+}
+
+.sync-indicator--inline {
+  width: 18px;
+  height: 18px;
 }
 
 .sync-indicator__spinner {
@@ -291,7 +247,7 @@ a {
 .header-nav__button:hover,
 .text-action:hover,
 .text-link:hover {
-  color: var(--accent-strong);
+  color: var(--link-hover);
 }
 
 .button {
@@ -411,6 +367,10 @@ a {
   margin-inline: auto;
 }
 
+.screen--page .card--empty {
+  width: 100%;
+}
+
 .card--hero .card__body {
   display: grid;
   gap: 18px;
@@ -461,7 +421,8 @@ a {
 }
 
 .auth-status--launching,
-.auth-status--waiting {
+.auth-status--waiting,
+.auth-status--expired {
   color: #8a5b17;
   background: rgba(255, 244, 224, 0.85);
 }
@@ -481,5 +442,5 @@ a {
 }
 
 .hero-link--button:hover {
-  color: var(--accent-strong);
+  color: var(--link-hover);
 }

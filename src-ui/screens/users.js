@@ -65,7 +65,7 @@ export function renderUsersScreen(state) {
       navButton("Glossaries", "glossaries"),
     ],
     tools: `${primaryButton("+ Invite User", "noop")}`,
+    pageSync: state.pageSync,
     body,
-    syncing: state.sync?.teams === "syncing",
   });
 }

@@ -1,0 +1,108 @@
+import { openExternalUrl } from "../runtime.js";
+import { state, resetTeamSetup } from "../state.js";
+import {
+  cancelTeamLeave,
+  cancelTeamPermanentDeletion,
+  cancelTeamRename,
+  confirmTeamLeave,
+  confirmTeamPermanentDeletion,
+  deleteTeam,
+  openTeamPermanentDeletion,
+  openTeamRename,
+  restoreTeam,
+  submitTeamRename,
+} from "../team-flow/actions.js";
+import {
+  beginGithubAppInstall,
+  beginTeamOrgSetup,
+  finishTeamSetup,
+  openTeamSetup,
+} from "../team-flow/setup.js";
+import { actionSuffix, runWithImmediateLoading } from "../action-helpers.js";
+
+export function createTeamActions(render) {
+  const exactActions = {
+    "open-new-team": () => openTeamSetup(render),
+    "toggle-deleted-teams": () => {
+      state.showDeletedTeams = !state.showDeletedTeams;
+      render();
+    },
+    "cancel-team-setup": () => {
+      resetTeamSetup();
+      render();
+    },
+    "cancel-team-rename": () => cancelTeamRename(render),
+    "cancel-team-permanent-deletion": () => cancelTeamPermanentDeletion(render),
+    "cancel-team-leave": () => cancelTeamLeave(render),
+    "begin-github-app-install": () => beginGithubAppInstall(render),
+    "begin-team-org-setup": () => beginTeamOrgSetup(render),
+    "finish-team-setup": () => finishTeamSetup(render),
+    "open-github-signup": () => openExternalUrl("https://github.com/signup"),
+  };
+
+  const prefixHandlers = [
+    {
+      prefix: "rename-team:",
+      handler: (teamId) => openTeamRename(render, teamId),
+    },
+    {
+      prefix: "delete-team:",
+      handler: (teamId) => deleteTeam(render, teamId),
+    },
+    {
+      prefix: "restore-team:",
+      handler: (teamId) => restoreTeam(render, teamId),
+    },
+    {
+      prefix: "delete-deleted-team:",
+      handler: (teamId) => openTeamPermanentDeletion(render, teamId),
+    },
+  ];
+
+  return async function handleTeamAction(action, event) {
+    if (exactActions[action]) {
+      if (action === "submit-team-rename") {
+        await runWithImmediateLoading(event, "Saving...", () => submitTeamRename(render));
+        return true;
+      }
+      if (action === "confirm-team-permanent-deletion") {
+        await runWithImmediateLoading(event, "Deleting...", () =>
+          confirmTeamPermanentDeletion(render),
+        );
+        return true;
+      }
+      if (action === "confirm-team-leave") {
+        await runWithImmediateLoading(event, "Leaving...", () => confirmTeamLeave(render));
+        return true;
+      }
+
+      exactActions[action]();
+      return true;
+    }
+
+    if (action === "submit-team-rename") {
+      await runWithImmediateLoading(event, "Saving...", () => submitTeamRename(render));
+      return true;
+    }
+    if (action === "confirm-team-permanent-deletion") {
+      await runWithImmediateLoading(event, "Deleting...", () =>
+        confirmTeamPermanentDeletion(render),
+      );
+      return true;
+    }
+    if (action === "confirm-team-leave") {
+      await runWithImmediateLoading(event, "Leaving...", () => confirmTeamLeave(render));
+      return true;
+    }
+
+    for (const { prefix, handler } of prefixHandlers) {
+      const value = actionSuffix(action, prefix);
+      if (value !== null) {
+        handler(value);
+        return true;
+      }
+    }
+
+    return false;
+  };
+}

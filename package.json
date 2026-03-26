@@ -15,12 +15,13 @@
     "vite": "^5.4.19"
   },
   "dependencies": {
-    "@fontsource/ibm-plex-sans": "^5.2.8",
-    "@fontsource/ibm-plex-sans-jp": "^5.2.8",
-    "@ibm/plex-sans-arabic": "^1.1.0",
-    "@ibm/plex-sans-kr": "^1.1.0",
-    "@ibm/plex-sans-sc": "^1.1.0",
-    "@ibm/plex-sans-tc": "^1.1.1",
+    "@fontsource/inter": "^5.2.8",
+    "@fontsource/noto-sans": "^5.2.10",
+    "@fontsource/noto-sans-arabic": "^5.2.10",
+    "@fontsource/noto-sans-jp": "^5.2.9",
+    "@fontsource/noto-sans-kr": "^5.2.9",
+    "@fontsource/noto-sans-sc": "^5.2.9",
+    "@fontsource/noto-sans-tc": "^5.2.9",
     "@tauri-apps/plugin-opener": "^2.5.3"
   }
 }

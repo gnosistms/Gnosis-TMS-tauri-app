@@ -30,7 +30,9 @@
   .glossary-list,
   .term-grid,
   .chapter-table__row,
-  .translation-row__grid {
+  .translation-row__grid,
+  .github-app-test-grid__row,
+  .github-app-test-table {
     grid-template-columns: 1fr;
   }
 

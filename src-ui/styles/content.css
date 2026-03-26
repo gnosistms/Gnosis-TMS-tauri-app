@@ -32,6 +32,26 @@
   letter-spacing: normal;
 }
 
+.list-row__title-button {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: inherit;
+  font: inherit;
+  line-height: inherit;
+  letter-spacing: inherit;
+  text-align: left;
+}
+
+.list-row__title-button:hover {
+  color: var(--link-hover);
+}
+
+.card--deleted .list-row__title,
+.card--deleted .expandable-card__title {
+  opacity: 0.5;
+}
+
 .list-row__meta {
   margin: 12px 0 0;
   color: var(--muted);
@@ -218,4 +238,72 @@
 .glossary-list--row:last-child,
 .term-grid--row:last-child {
   border-bottom: 0;
+}
+
+.github-app-test-hero {
+  width: min(980px, 100%);
+}
+
+.github-app-test-card {
+  display: grid;
+  gap: 20px;
+}
+
+.github-app-test-grid {
+  display: grid;
+  gap: 14px;
+}
+
+.github-app-test-grid__row {
+  display: grid;
+  grid-template-columns: minmax(180px, 0.42fr) minmax(0, 1fr);
+  gap: 18px;
+  padding: 16px 18px;
+  border: 1px solid rgba(164, 112, 41, 0.12);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.34);
+}
+
+.github-app-test-grid__row dt,
+.github-app-test-grid__row dd {
+  margin: 0;
+}
+
+.github-app-test-grid__row dt {
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.github-app-test-grid__row dd {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.github-app-test-table {
+  display: grid;
+  grid-template-columns: minmax(320px, 1.2fr) minmax(120px, 0.3fr) minmax(140px, 0.35fr);
+  align-items: center;
+  gap: 20px;
+  padding: 0 24px;
+}
+
+.github-app-test-table--head {
+  min-height: 78px;
+  font-size: 1rem;
+  font-weight: 700;
+  border-bottom: 1px solid rgba(164, 112, 41, 0.12);
+  background: rgba(255, 255, 255, 0.32);
+}
+
+.github-app-test-table--row {
+  min-height: 94px;
+  border-bottom: 1px solid rgba(164, 112, 41, 0.12);
+}
+
+.github-app-test-table--row:last-child {
+  border-bottom: 0;
+}
+
+.github-app-test-table__meta {
+  margin-top: 8px;
 }
