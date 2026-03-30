@@ -1,4 +1,4 @@
-import { handleBrokerAuthExpired, requireBrokerSession } from "../auth-flow.js";
+import { requireBrokerSession } from "../auth-flow.js";
 import { invoke, waitForNextPaint } from "../runtime.js";
 import {
   resetTeamLeave,
@@ -8,10 +8,37 @@ import {
 } from "../state.js";
 import {
   removeStoredTeamRecord,
+  replaceStoredTeamRecords,
+  saveStoredTeamRecords,
+  saveStoredTeamPendingMutations,
   updateStoredGithubAppTeam,
-  updateStoredTeamRecord,
 } from "../team-storage.js";
-import { applyStoredTeamRecords, resolveNextSelectedTeamId } from "./shared.js";
+import {
+  addDeletedMarkerToDescription,
+  applyTeamPendingMutation,
+  applyTeamSnapshotToState,
+  applyStoredTeamRecords,
+  removeDeletedMarkerFromDescription,
+  resolveNextSelectedTeamId,
+} from "./shared.js";
+import {
+  removePendingMutation,
+  upsertPendingMutation,
+} from "../optimistic-collection.js";
+import { clearScopedSyncBadge, showScopedSyncBadge } from "../status-feedback.js";
+import { classifySyncError } from "../sync-error.js";
+import { handleSyncFailure } from "../sync-recovery.js";
+import { loadUserTeams } from "./sync.js";
+
+const inflightTeamMutationIds = new Set();
+
+function setTeamUiDebug(render, text) {
+  showScopedSyncBadge("teams", text, render);
+}
+
+function clearTeamUiDebug(render) {
+  clearScopedSyncBadge("teams", render);
+}
 
 export function openTeamRename(render, teamId) {
   const team = state.teams.find((item) => item.id === teamId);
@@ -60,23 +87,27 @@ export async function submitTeamRename(render) {
     state.teamRename.status = "loading";
     state.teamRename.error = "";
     render();
-    await waitForNextPaint();
-    const organization = await invoke("update_organization_name_for_installation", {
-      installationId: team.installationId,
-      orgLogin: team.githubOrg,
+    const mutation = {
+      id: crypto.randomUUID(),
+      type: "rename",
+      teamId: team.id,
       name: nextName,
-      sessionToken: requireBrokerSession(),
-    });
-
-    const resolvedName = organization.name || organization.login;
-    state.teams = state.teams.map((item) =>
-      item.id === team.id ? { ...item, name: resolvedName } : item,
+      previousName: team.name || team.githubOrg,
+    };
+    state.teamSyncVersion += 1;
+    const snapshot = applyTeamPendingMutation(
+      { items: state.teams, deletedItems: state.deletedTeams },
+      mutation,
     );
-    updateStoredGithubAppTeam(team.id, { name: resolvedName });
+    applyTeamSnapshotToState(snapshot);
+    state.pendingTeamMutations = upsertPendingMutation(state.pendingTeamMutations, mutation);
+    saveStoredTeamRecords([...state.teams, ...state.deletedTeams]);
+    saveStoredTeamPendingMutations(state.pendingTeamMutations);
     resetTeamRename();
     render();
+    void processPendingTeamMutations(render);
   } catch (error) {
-    if (await handleBrokerAuthExpired(render, error)) {
+    if (await handleSyncFailure(classifySyncError(error), { render })) {
       return;
     }
     state.teamRename.status = "idle";
@@ -86,8 +117,10 @@ export async function submitTeamRename(render) {
 }
 
 export function deleteTeam(render, teamId) {
+  setTeamUiDebug(render, "Delete clicked");
   const team = state.teams.find((item) => item.id === teamId);
   if (!team) {
+    setTeamUiDebug(render, "Delete aborted: missing team");
     return;
   }
 
@@ -96,37 +129,65 @@ export function deleteTeam(render, teamId) {
     return;
   }
 
-  const nextStoredTeams = updateStoredTeamRecord(teamId, {
-    isDeleted: true,
+  const previousSelectedTeamId = state.selectedTeamId;
+  state.teamSyncVersion += 1;
+  const mutation = {
+    id: crypto.randomUUID(),
+    type: "softDelete",
+    teamId: team.id,
     deletedAt: new Date().toISOString(),
-    syncState: "deleted",
-    statusLabel: "Removed from active teams",
-  });
-
-  applyStoredTeamRecords(nextStoredTeams);
+  };
+  const snapshot = applyTeamPendingMutation(
+    { items: state.teams, deletedItems: state.deletedTeams },
+    mutation,
+  );
+  applyTeamSnapshotToState(snapshot);
+  state.pendingTeamMutations = upsertPendingMutation(state.pendingTeamMutations, mutation);
   state.selectedTeamId = resolveNextSelectedTeamId(state.selectedTeamId, state.teams);
-  if (state.teams.length === 0 && state.deletedTeams.length > 0) {
-    state.showDeletedTeams = true;
-  }
   render();
+  setTeamUiDebug(render, "Optimistic delete applied");
+
+  void waitForNextPaint().then(() => {
+    setTeamUiDebug(render, "First paint reached");
+    saveStoredTeamRecords([...state.teams, ...state.deletedTeams]);
+    saveStoredTeamPendingMutations(state.pendingTeamMutations);
+    setTeamUiDebug(render, "Background sync started");
+    void processPendingTeamMutations(render, previousSelectedTeamId);
+  });
 }
 
 export function restoreTeam(render, teamId) {
+  setTeamUiDebug(render, "Restore clicked");
   const team = state.deletedTeams.find((item) => item.id === teamId);
   if (!team) {
+    setTeamUiDebug(render, "Restore aborted: missing team");
     return;
   }
 
-  const nextStoredTeams = updateStoredTeamRecord(teamId, {
-    isDeleted: false,
-    deletedAt: null,
-    syncState: "active",
-    statusLabel: "",
-  });
-
-  applyStoredTeamRecords(nextStoredTeams);
+  state.teamSyncVersion += 1;
+  const mutation = {
+    id: crypto.randomUUID(),
+    type: "restore",
+    teamId: team.id,
+    deletedAt: team.deletedAt ?? new Date().toISOString(),
+  };
+  const snapshot = applyTeamPendingMutation(
+    { items: state.teams, deletedItems: state.deletedTeams },
+    mutation,
+  );
+  applyTeamSnapshotToState(snapshot);
+  state.pendingTeamMutations = upsertPendingMutation(state.pendingTeamMutations, mutation);
   state.selectedTeamId = resolveNextSelectedTeamId(state.selectedTeamId, state.teams);
   render();
+  setTeamUiDebug(render, "Optimistic restore applied");
+
+  void waitForNextPaint().then(() => {
+    setTeamUiDebug(render, "First paint reached");
+    saveStoredTeamRecords([...state.teams, ...state.deletedTeams]);
+    saveStoredTeamPendingMutations(state.pendingTeamMutations);
+    setTeamUiDebug(render, "Background sync started");
+    void processPendingTeamMutations(render, state.selectedTeamId);
+  });
 }
 
 export function openTeamPermanentDeletion(render, teamId) {
@@ -193,7 +254,7 @@ export async function confirmTeamPermanentDeletion(render) {
     resetTeamPermanentDeletion();
     render();
   } catch (error) {
-    if (await handleBrokerAuthExpired(render, error)) {
+    if (await handleSyncFailure(classifySyncError(error), { render })) {
       return;
     }
     state.teamPermanentDeletion.status = "idle";
@@ -248,11 +309,146 @@ export async function confirmTeamLeave(render) {
     resetTeamLeave();
     render();
   } catch (error) {
-    if (await handleBrokerAuthExpired(render, error)) {
+    if (await handleSyncFailure(classifySyncError(error), { render })) {
       return;
     }
     state.teamLeave.status = "idle";
     state.teamLeave.error = error?.message ?? String(error);
     render();
+  }
+}
+
+async function persistTeamDeletedState({
+  team,
+  isDeleted,
+}) {
+  const nextDescription = isDeleted
+    ? addDeletedMarkerToDescription(team.description)
+    : removeDeletedMarkerFromDescription(team.description);
+  const organization = await invoke("update_organization_description_for_installation", {
+    installationId: team.installationId,
+    orgLogin: team.githubOrg,
+    description: nextDescription,
+    sessionToken: requireBrokerSession(),
+  });
+  return updateStoredGithubAppTeam(team.id, {
+    description: organization.description ?? nextDescription,
+    isDeleted,
+    deletedAt: isDeleted ? new Date().toISOString() : null,
+    syncState: isDeleted ? "deleted" : "active",
+    statusLabel: isDeleted ? "Removed from active teams" : "",
+  });
+}
+
+async function commitTeamMutation(mutation) {
+  const team =
+    state.teams.find((item) => item.id === mutation.teamId) ??
+    state.deletedTeams.find((item) => item.id === mutation.teamId);
+
+  if (!team?.installationId) {
+    return;
+  }
+
+  if (mutation.type === "rename") {
+    const organization = await invoke("update_organization_name_for_installation", {
+      installationId: team.installationId,
+      orgLogin: team.githubOrg,
+      name: mutation.name,
+      sessionToken: requireBrokerSession(),
+    });
+    updateStoredGithubAppTeam(team.id, {
+      name: organization.name || organization.login || mutation.name,
+    });
+    return;
+  }
+
+  if (mutation.type === "softDelete") {
+    await persistTeamDeletedState({
+      team,
+      isDeleted: true,
+    });
+    return;
+  }
+
+  if (mutation.type === "restore") {
+    await persistTeamDeletedState({
+      team,
+      isDeleted: false,
+    });
+  }
+}
+
+function rollbackVisibleTeamMutation(mutation) {
+  const inverseMutation =
+    mutation.type === "rename"
+      ? {
+          id: `${mutation.id}-rollback`,
+          type: "rename",
+          teamId: mutation.teamId,
+          name: mutation.previousName,
+        }
+      : mutation.type === "softDelete"
+        ? {
+            id: `${mutation.id}-rollback`,
+            type: "restore",
+            teamId: mutation.teamId,
+          }
+        : mutation.type === "restore"
+          ? {
+              id: `${mutation.id}-rollback`,
+              type: "softDelete",
+              teamId: mutation.teamId,
+              deletedAt: mutation.deletedAt ?? new Date().toISOString(),
+            }
+          : null;
+
+  if (!inverseMutation) {
+    return;
+  }
+
+  const snapshot = applyTeamPendingMutation(
+    { items: state.teams, deletedItems: state.deletedTeams },
+    inverseMutation,
+  );
+  applyTeamSnapshotToState(snapshot);
+  state.selectedTeamId = resolveNextSelectedTeamId(state.selectedTeamId, state.teams);
+}
+
+export async function processPendingTeamMutations(render) {
+  const pendingMutations = [...state.pendingTeamMutations];
+
+  for (const mutation of pendingMutations) {
+    if (inflightTeamMutationIds.has(mutation.id)) {
+      continue;
+    }
+
+    inflightTeamMutationIds.add(mutation.id);
+    try {
+      await waitForNextPaint();
+      await commitTeamMutation(mutation);
+      state.pendingTeamMutations = removePendingMutation(state.pendingTeamMutations, mutation.id);
+      saveStoredTeamPendingMutations(state.pendingTeamMutations);
+      saveStoredTeamRecords([...state.teams, ...state.deletedTeams]);
+      setTeamUiDebug(render, `Background sync finished (${mutation.type})`);
+      window.setTimeout(() => clearTeamUiDebug(render), 1200);
+    } catch (error) {
+      inflightTeamMutationIds.delete(mutation.id);
+      clearTeamUiDebug(render);
+      state.pendingTeamMutations = removePendingMutation(state.pendingTeamMutations, mutation.id);
+      saveStoredTeamPendingMutations(state.pendingTeamMutations);
+      rollbackVisibleTeamMutation(mutation);
+      saveStoredTeamRecords([...state.teams, ...state.deletedTeams]);
+      if (await handleSyncFailure(classifySyncError(error), { render })) {
+        return;
+      }
+      setTeamUiDebug(render, `Background sync failed (${mutation.type})`);
+      state.orgDiscovery = {
+        status: "error",
+        error: error?.message ?? String(error),
+      };
+      await loadUserTeams(render);
+      return;
+    }
+    inflightTeamMutationIds.delete(mutation.id);
   }
 }

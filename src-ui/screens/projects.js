@@ -10,17 +10,22 @@ import {
 import { renderProjectCreationModal } from "./project-creation-modal.js";
 import { renderProjectPermanentDeletionModal } from "./project-permanent-deletion-modal.js";
 import { renderProjectRenameModal } from "./project-rename-modal.js";
+import {
+  getNoticeBadgeText,
+  getScopedSyncBadgeText,
+} from "../app/status-feedback.js";
 
 function renderProjectCard(project, expanded, options = {}) {
   const canManageProjects = options.canManageProjects !== false;
   const isDeleted = options.isDeleted === true;
+  const offlineMode = options.offlineMode === true;
   const deleteAction = options.deleteAction ?? `delete-project:${project.id}`;
   const actions =
     options.actions ??
     [
-      textAction("Rename", `rename-project:${project.id}`),
-      textAction("Import", "noop"),
-      canManageProjects ? textAction("Delete", deleteAction) : "",
+      textAction("Add files", "noop", { disabled: offlineMode }),
+      textAction("Rename", `rename-project:${project.id}`, { disabled: offlineMode }),
+      canManageProjects ? textAction("Delete", deleteAction, { disabled: offlineMode }) : "",
     ].filter(Boolean);
   const chapterCount = `${project.chapters.length} chapter${
     project.chapters.length === 1 ? "" : "s"
@@ -92,6 +97,7 @@ function renderDeletedProjectsSection(state) {
 
   const selectedTeam = state.teams.find((team) => team.id === state.selectedTeamId) ?? state.teams[0];
   const canManageProjects = selectedTeam?.canManageProjects === true;
+  const offlineMode = state.offline?.isEnabled === true;
 
   const toggle = renderDeletedProjectsToggle(state);
   if (!state.showDeletedProjects) {
@@ -106,10 +112,11 @@ function renderDeletedProjectsSection(state) {
           renderProjectCard(project, state.expandedProjects.has(project.id), {
             canManageProjects,
             isDeleted: true,
+            offlineMode,
             actions: canManageProjects
               ? [
-                  textAction("Restore", `restore-project:${project.id}`),
-                  textAction("Delete", `delete-deleted-project:${project.id}`),
+                  textAction("Restore", `restore-project:${project.id}`, { disabled: offlineMode }),
+                  textAction("Delete", `delete-deleted-project:${project.id}`, { disabled: offlineMode }),
                 ]
               : [],
           }),
@@ -122,6 +129,7 @@ function renderDeletedProjectsSection(state) {
 export function renderProjectsScreen(state) {
   const selectedTeam = state.teams.find((team) => team.id === state.selectedTeamId) ?? state.teams[0];
   const canManageProjects = selectedTeam?.canManageProjects === true;
+  const offlineMode = state.offline?.isEnabled === true;
   const discovery = state.projectDiscovery ?? { status: "idle", error: "" };
   const emptyState = `
     <article class="card card--hero card--empty">
@@ -161,6 +169,7 @@ export function renderProjectsScreen(state) {
               .map((project) =>
                 renderProjectCard(project, state.expandedProjects.has(project.id), {
                   canManageProjects,
+                  offlineMode,
                 }),
               )
               .join("")}</section>`;
@@ -181,8 +190,12 @@ export function renderProjectsScreen(state) {
       navButton("Users", "users"),
       navButton("Glossaries", "glossaries"),
     ],
-    tools: `${createSearchField("Search")} ${primaryButton("+ New Project", "open-new-project")}`,
+    tools: `${createSearchField("Search")} ${primaryButton("+ New Project", "open-new-project", { disabled: offlineMode })}`,
     pageSync: state.pageSync,
+    syncBadgeText: getScopedSyncBadgeText("projects"),
+    noticeText: getNoticeBadgeText(),
+    offlineMode,
+    offlineReconnectState: state.offline?.reconnecting === true,
     body,
     }) +
     renderProjectCreationModal(state) +

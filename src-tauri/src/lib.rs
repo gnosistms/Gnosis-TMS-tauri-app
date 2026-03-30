@@ -12,6 +12,7 @@ mod window;
 
 use tauri::Manager;
 use std::sync::Mutex;
+use std::time::Duration;
 
 use crate::{
   broker_auth::{begin_broker_auth, inspect_broker_auth_session},
@@ -26,9 +27,9 @@ use crate::{
     ensure_gnosis_repo_properties_schema, inspect_github_app_installation,
     leave_organization_for_installation, list_gnosis_projects_for_installation,
     list_organization_members_for_installation, list_user_organizations,
-    mark_gnosis_project_repo_deleted, permanently_delete_gnosis_project_repo,
-    restore_gnosis_project_repo,
+    mark_gnosis_project_repo_deleted, permanently_delete_gnosis_project_repo, restore_gnosis_project_repo,
     rename_gnosis_project_repo, update_organization_name_for_installation,
+    update_organization_description_for_installation,
   },
   github_app_test::{
     begin_github_app_test_install, get_github_app_test_config,
@@ -42,6 +43,24 @@ fn ping() -> &'static str {
   "pong"
 }
 
+#[tauri::command]
+fn check_internet_connection() -> bool {
+  let client = match reqwest::blocking::Client::builder()
+    .timeout(Duration::from_secs(3))
+    .build()
+  {
+    Ok(client) => client,
+    Err(_) => return false,
+  };
+
+  client
+    .get("https://github.com")
+    .header("User-Agent", "gnosis-tms")
+    .send()
+    .map(|response| response.status().is_success() || response.status().is_redirection())
+    .unwrap_or(false)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
   tauri::Builder::default()
@@ -52,6 +71,7 @@ pub fn run() {
     .plugin(tauri_plugin_opener::init())
     .invoke_handler(tauri::generate_handler![
       ping,
+      check_internet_connection,
       begin_broker_auth,
       inspect_broker_auth_session,
       load_broker_auth_session,
@@ -74,6 +94,7 @@ pub fn run() {
       list_organization_members_for_installation,
       list_user_organizations,
       update_organization_name_for_installation,
+      update_organization_description_for_installation,
       delete_organization_for_installation,
       leave_organization_for_installation
     ])

@@ -6,6 +6,7 @@ import {
   pageShell,
   textAction,
 } from "../lib/ui.js";
+import { getNoticeBadgeText } from "../app/status-feedback.js";
 
 export function renderTranslateScreen(state) {
   const chapter =
@@ -21,6 +22,9 @@ export function renderTranslateScreen(state) {
       navButton("Glossaries", "glossaries"),
     ],
     pageSync: state.pageSync,
+    noticeText: getNoticeBadgeText(),
+    offlineMode: state.offline?.isEnabled === true,
+    offlineReconnectState: state.offline?.reconnecting === true,
     body: `
       <section class="translate-toolbar card">
         <div class="card__body translate-toolbar__body">

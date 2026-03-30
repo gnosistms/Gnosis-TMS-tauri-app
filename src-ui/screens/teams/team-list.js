@@ -9,15 +9,17 @@ function renderAccessLabel(team) {
     return "translator access";
   }
 
-  return team.statusLabel || "restricted access";
+  return "restricted access";
 }
 
 function renderTeamCard(team, options = {}) {
   const isDeleted = options.isDeleted === true;
+  const offlineMode = options.offlineMode === true;
   const actions = options.actions ?? [
     textAction("Open", `open-team:${team.id}`),
-    textAction("Rename", `rename-team:${team.id}`),
-    textAction(team.canDelete ? "Delete" : "Leave", `delete-team:${team.id}`),
+    textAction("Users", `open-team-users:${team.id}`, { disabled: offlineMode }),
+    textAction("Rename", `rename-team:${team.id}`, { disabled: offlineMode }),
+    textAction(team.canDelete ? "Delete" : "Leave", `delete-team:${team.id}`, { disabled: offlineMode }),
   ];
 
   return `
@@ -29,9 +31,7 @@ function renderTeamCard(team, options = {}) {
               ${escapeHtml(team.name)}
             </button>
           </h2>
-          <p class="list-row__meta">@${escapeHtml(team.githubOrg)} · ${escapeHtml(renderAccessLabel(team))}${
-            team.statusLabel ? ` · ${escapeHtml(team.statusLabel)}` : ""
-          }</p>
+          <p class="list-row__meta">@${escapeHtml(team.githubOrg)} · ${escapeHtml(renderAccessLabel(team))}</p>
         </div>
         <div class="list-row__actions">
           ${actions.join("")}
@@ -41,7 +41,7 @@ function renderTeamCard(team, options = {}) {
   `;
 }
 
-function renderDeletedTeamsSection(deletedTeams, isOpen) {
+function renderDeletedTeamsSection(deletedTeams, isOpen, offlineMode = false) {
   if (!deletedTeams.length) {
     return "";
   }
@@ -65,9 +65,15 @@ function renderDeletedTeamsSection(deletedTeams, isOpen) {
             isDeleted: true,
             actions: [
               textAction("Open", `open-team:${team.id}`),
-              textAction("Restore", `restore-team:${team.id}`),
-              textAction("Delete", `delete-deleted-team:${team.id}`),
+              textAction("Users", `open-team-users:${team.id}`, { disabled: offlineMode }),
+              ...(team.canDelete
+                ? [
+                    textAction("Restore", `restore-team:${team.id}`, { disabled: offlineMode }),
+                    textAction("Delete", `delete-deleted-team:${team.id}`, { disabled: offlineMode }),
+                  ]
+                : []),
             ],
+            offlineMode,
           }),
         )
         .join("")}</section>
@@ -75,7 +81,7 @@ function renderDeletedTeamsSection(deletedTeams, isOpen) {
   `;
 }
 
-export function renderTeamsList(activeTeams, deletedTeams = [], showDeletedTeams = false) {
+export function renderTeamsList(activeTeams, deletedTeams = [], showDeletedTeams = false, offlineMode = false) {
   const activeSection = !activeTeams.length
     ? `
       <article class="card card--hero card--empty">
@@ -86,10 +92,10 @@ export function renderTeamsList(activeTeams, deletedTeams = [], showDeletedTeams
         </div>
       </article>
     `
-    : activeTeams.map((team) => renderTeamCard(team)).join("");
+    : activeTeams.map((team) => renderTeamCard(team, { offlineMode })).join("");
 
   return `
     <section class="stack">${activeSection}</section>
-    ${renderDeletedTeamsSection(deletedTeams, showDeletedTeams)}
+    ${renderDeletedTeamsSection(deletedTeams, showDeletedTeams, offlineMode)}
   `;
 }

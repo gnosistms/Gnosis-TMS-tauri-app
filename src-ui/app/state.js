@@ -1,4 +1,4 @@
-import { splitStoredTeamRecords } from "./team-storage.js";
+import { splitStoredTeamRecords, loadStoredTeamPendingMutations } from "./team-storage.js";
 
 const initialStoredTeams = splitStoredTeamRecords();
 
@@ -19,6 +19,9 @@ export const state = {
     message: "",
     session: null,
   },
+  offline: createOfflineState(),
+  connectionFailure: createConnectionFailureState(),
+  statusBadges: createStatusBadgesState(),
   githubAppTest: createGithubAppTestState(),
   orgDiscovery: {
     status: "idle",
@@ -32,9 +35,10 @@ export const state = {
     status: "idle",
     error: "",
   },
-  sync: {
-    teams: "idle",
-  },
+  teamSyncVersion: 0,
+  projectSyncVersion: 0,
+  pendingTeamMutations: loadStoredTeamPendingMutations(),
+  pendingProjectMutations: [],
   pageSync: createPageSyncState(),
   teamSetup: createTeamSetupState(),
   teamRename: createTeamRenameState(),
@@ -42,11 +46,42 @@ export const state = {
   teamLeave: createTeamLeaveState(),
   projectCreation: createProjectCreationState(),
   projectRename: createProjectRenameState(),
-  projectDeletion: createProjectDeletionState(),
   projectPermanentDeletion: createProjectPermanentDeletionState(),
   showDeletedProjects: false,
   showDeletedTeams: false,
 };
+
+export function createOfflineState() {
+  return {
+    checked: false,
+    hasConnection: true,
+    hasLocalData: false,
+    isEnabled: false,
+    reconnecting: false,
+  };
+}
+
+export function createStatusBadgesState() {
+  return {
+    left: {
+      visible: false,
+      text: "",
+    },
+    right: {
+      visible: false,
+      text: "",
+      scope: null,
+    },
+  };
+}
+
+export function createConnectionFailureState() {
+  return {
+    isOpen: false,
+    message: "",
+    canGoOffline: false,
+  };
+}
 
 export function createTeamSetupState() {
   return {
@@ -120,16 +155,6 @@ export function createProjectRenameState() {
   };
 }
 
-export function createProjectDeletionState() {
-  return {
-    isOpen: false,
-    projectId: null,
-    projectName: "",
-    status: "idle",
-    error: "",
-  };
-}
-
 export function createProjectPermanentDeletionState() {
   return {
     isOpen: false,
@@ -165,15 +190,16 @@ export function resetProjectRename() {
   state.projectRename = createProjectRenameState();
 }
 
-export function resetProjectDeletion() {
-  state.projectDeletion = createProjectDeletionState();
-}
-
 export function resetProjectPermanentDeletion() {
   state.projectPermanentDeletion = createProjectPermanentDeletionState();
 }
 
 export function resetSessionState() {
+  const offlineState = {
+    ...state.offline,
+    isEnabled: false,
+    reconnecting: false,
+  };
   state.auth = {
     status: "idle",
     message: "",
@@ -188,15 +214,20 @@ export function resetSessionState() {
   state.orgDiscovery = { status: "idle", error: "" };
   state.projectDiscovery = { status: "idle", error: "" };
   state.userDiscovery = { status: "idle", error: "" };
-  state.sync = { teams: "idle" };
+  state.teamSyncVersion = 0;
+  state.projectSyncVersion = 0;
+  state.pendingTeamMutations = [];
+  state.pendingProjectMutations = [];
   state.pageSync = createPageSyncState();
+  state.offline = offlineState;
+  state.connectionFailure = createConnectionFailureState();
+  state.statusBadges = createStatusBadgesState();
   resetTeamSetup();
   resetTeamRename();
   resetTeamPermanentDeletion();
   resetTeamLeave();
   resetProjectCreation();
   resetProjectRename();
-  resetProjectDeletion();
   resetProjectPermanentDeletion();
   state.showDeletedProjects = false;
   state.showDeletedTeams = false;

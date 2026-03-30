@@ -1,5 +1,5 @@
 import { openExternalUrl } from "../runtime.js";
-import { state, resetTeamSetup } from "../state.js";
+import { state } from "../state.js";
 import {
   cancelTeamLeave,
   cancelTeamPermanentDeletion,
@@ -15,6 +15,7 @@ import {
 import {
   beginGithubAppInstall,
   beginTeamOrgSetup,
+  cancelTeamSetup,
   finishTeamSetup,
   openTeamSetup,
 } from "../team-flow/setup.js";
@@ -27,10 +28,7 @@ export function createTeamActions(render) {
       state.showDeletedTeams = !state.showDeletedTeams;
       render();
     },
-    "cancel-team-setup": () => {
-      resetTeamSetup();
-      render();
-    },
+    "cancel-team-setup": () => cancelTeamSetup(render),
     "cancel-team-rename": () => cancelTeamRename(render),
     "cancel-team-permanent-deletion": () => cancelTeamPermanentDeletion(render),
     "cancel-team-leave": () => cancelTeamLeave(render),
@@ -98,7 +96,7 @@ export function createTeamActions(render) {
     for (const { prefix, handler } of prefixHandlers) {
       const value = actionSuffix(action, prefix);
       if (value !== null) {
-        handler(value);
+        await handler(value);
         return true;
       }
     }

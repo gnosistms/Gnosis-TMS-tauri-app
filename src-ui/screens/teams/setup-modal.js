@@ -10,6 +10,7 @@ function renderGuideStep() {
         <li>Complete the verification.</li>
         <li>Do not choose any add-on.</li>
         <li>Accept the terms of service.</li>
+        <li>Click <strong>Next</strong>.</li>
       </ol>
     </div>
   `;

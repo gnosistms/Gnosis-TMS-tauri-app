@@ -1,6 +1,7 @@
 import { clearStoredAuthSession } from "./auth-storage.js";
 import { resetPageSync, beginPageSync, completePageSync, failPageSync } from "./page-sync.js";
-import { resetSessionState, state } from "./state.js";
+import { state, resetSessionState } from "./state.js";
+import { waitForNextPaint } from "./runtime.js";
 import { loadGithubAppTestConfig } from "./github-app-test-flow.js";
 import { loadTeamProjects } from "./project-flow.js";
 import { loadUserTeams } from "./team-setup-flow.js";
@@ -18,19 +19,24 @@ export function handleNavigation(navTarget, render) {
   render();
 
   if (navTarget === "projects" && state.selectedTeamId) {
-    void loadTeamProjects(render, state.selectedTeamId);
+    void waitForNextPaint().then(() => loadTeamProjects(render, state.selectedTeamId));
   }
   if (navTarget === "teams") {
-    void loadUserTeams(render);
+    void waitForNextPaint().then(() => loadUserTeams(render));
   }
   if (navTarget === "users" && state.selectedTeamId) {
-    void loadTeamUsers(render, state.selectedTeamId);
+    void waitForNextPaint().then(() => loadTeamUsers(render, state.selectedTeamId));
   }
 }
 
 export async function refreshCurrentScreen(render) {
+  if (state.offline.isEnabled) {
+    return;
+  }
+
   beginPageSync();
   render();
+  await waitForNextPaint();
 
   try {
     if (state.screen === "teams") {

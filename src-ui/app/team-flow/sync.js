@@ -1,18 +1,25 @@
 import {
-  handleBrokerAuthExpired,
-  isBrokerAuthExpiredError,
   requireBrokerSession,
 } from "../auth-flow.js";
 import { beginPageSync, completePageSync, failPageSync } from "../page-sync.js";
-import { loadTeamProjects } from "../project-flow.js";
 import { invoke } from "../runtime.js";
 import { state } from "../state.js";
-import { replaceStoredTeamRecords, splitStoredTeamRecords } from "../team-storage.js";
 import {
-  applyStoredTeamRecords,
+  replaceStoredTeamRecords,
+  saveStoredTeamRecords,
+  splitStoredTeamRecords,
+} from "../team-storage.js";
+import { applyPendingMutations } from "../optimistic-collection.js";
+import { loadStoredTeamPendingMutations } from "../team-storage.js";
+import {
+  applyTeamPendingMutation,
+  applyTeamSnapshotToState,
   reconcileStoredTeam,
   resolveNextSelectedTeamId,
 } from "./shared.js";
+import { processPendingTeamMutations } from "./actions.js";
+import { classifySyncError } from "../sync-error.js";
+import { handleSyncFailure } from "../sync-recovery.js";
 
 function disconnectedTeam(storedTeam) {
   return {
@@ -35,29 +42,41 @@ function missingInstallationTeam(storedTeam) {
 }
 
 export async function loadUserTeams(render) {
+  const syncVersionAtStart = state.teamSyncVersion;
   const storedTeamRecords = splitStoredTeamRecords();
   const storedActiveTeams = storedTeamRecords.activeTeams;
   const storedDeletedTeams = storedTeamRecords.deletedTeams;
+  state.pendingTeamMutations = loadStoredTeamPendingMutations();
+  const storedSnapshot = {
+    items: storedActiveTeams,
+    deletedItems: storedDeletedTeams,
+  };
+  const optimisticSnapshot = applyPendingMutations(
+    storedSnapshot,
+    state.pendingTeamMutations,
+    applyTeamPendingMutation,
+  );
 
   if (!state.auth.session?.sessionToken) {
-    state.teams = storedActiveTeams;
-    state.deletedTeams = storedDeletedTeams;
-    state.selectedTeamId = resolveNextSelectedTeamId(state.selectedTeamId, storedActiveTeams);
+    applyTeamSnapshotToState(optimisticSnapshot);
+    state.selectedTeamId = resolveNextSelectedTeamId(state.selectedTeamId, optimisticSnapshot.items);
     state.orgDiscovery = { status: "idle", error: "" };
-    state.sync.teams = "idle";
     render();
     return;
   }
 
-  state.teams = storedActiveTeams;
-  state.deletedTeams = storedDeletedTeams;
-  state.selectedTeamId = resolveNextSelectedTeamId(state.selectedTeamId, storedActiveTeams);
-  state.sync.teams = "syncing";
+  if (state.offline.isEnabled) {
+    applyTeamSnapshotToState(optimisticSnapshot);
+    state.selectedTeamId = resolveNextSelectedTeamId(state.selectedTeamId, optimisticSnapshot.items);
+    state.orgDiscovery = { status: "ready", error: "" };
+    render();
+    return;
+  }
+
+  applyTeamSnapshotToState(optimisticSnapshot);
+  state.selectedTeamId = resolveNextSelectedTeamId(state.selectedTeamId, optimisticSnapshot.items);
   beginPageSync();
   state.orgDiscovery = { status: "loading", error: "" };
-  if (state.teams.length === 0 && state.deletedTeams.length > 0) {
-    state.showDeletedTeams = true;
-  }
   render();
 
   try {
@@ -75,54 +94,57 @@ export async function loadUserTeams(render) {
           });
           return reconcileStoredTeam(storedTeam, installation);
         } catch (error) {
-          if (isBrokerAuthExpiredError(error)) {
+          const classification = classifySyncError(error);
+          if (classification.type === "auth_invalid" || classification.type === "connection_unavailable") {
             throw error;
+          }
+          if (classification.type === "resource_access_lost") {
+            return null;
           }
           return disconnectedTeam(storedTeam);
         }
       }),
     );
 
-    const nextStoredTeams = replaceStoredTeamRecords(reconciledTeams);
-    applyStoredTeamRecords(nextStoredTeams);
+    if (syncVersionAtStart !== state.teamSyncVersion) {
+      completePageSync(render);
+      render();
+      return;
+    }
+
+    const nextStoredTeams = replaceStoredTeamRecords(reconciledTeams.filter(Boolean));
+    const nextSnapshot = applyPendingMutations(
+      splitStoredTeamRecords(nextStoredTeams),
+      state.pendingTeamMutations,
+      applyTeamPendingMutation,
+    );
+    applyTeamSnapshotToState(nextSnapshot);
+    saveStoredTeamRecords([...state.teams, ...state.deletedTeams]);
     state.selectedTeamId = resolveNextSelectedTeamId(state.selectedTeamId, state.teams);
     state.orgDiscovery = { status: "ready", error: "" };
-    state.sync.teams = "idle";
     completePageSync(render);
 
-    const shouldAutoOpenSingleTeam =
-      storedActiveTeams.length === 0 && state.teams.length === 1;
-
-    if (state.teams.length === 0 && state.deletedTeams.length > 0) {
-      state.showDeletedTeams = true;
-    }
-    if (shouldAutoOpenSingleTeam) {
-      state.selectedTeamId = state.teams[0].id;
-      state.screen = "projects";
-    }
-
     render();
-
-    if (shouldAutoOpenSingleTeam && state.selectedTeamId) {
-      await loadTeamProjects(render, state.selectedTeamId);
+    if (state.pendingTeamMutations.length > 0) {
+      void processPendingTeamMutations(render);
     }
   } catch (error) {
-    if (await handleBrokerAuthExpired(render, error)) {
+    if (await handleSyncFailure(classifySyncError(error), { render })) {
       failPageSync();
       return;
     }
-    state.teams = storedActiveTeams;
-    state.deletedTeams = storedDeletedTeams;
-    state.selectedTeamId = resolveNextSelectedTeamId(state.selectedTeamId, storedActiveTeams);
+    if (syncVersionAtStart !== state.teamSyncVersion) {
+      failPageSync();
+      render();
+      return;
+    }
+    applyTeamSnapshotToState(optimisticSnapshot);
+    state.selectedTeamId = resolveNextSelectedTeamId(state.selectedTeamId, optimisticSnapshot.items);
     state.orgDiscovery = {
       status: "error",
       error: error?.message ?? String(error),
     };
-    state.sync.teams = "idle";
     failPageSync();
-    if (state.teams.length === 0 && state.deletedTeams.length > 0) {
-      state.showDeletedTeams = true;
-    }
     render();
   }
 }

@@ -7,6 +7,7 @@ import {
   primaryButton,
   textAction,
 } from "../lib/ui.js";
+import { getNoticeBadgeText } from "../app/status-feedback.js";
 
 export function renderGlossaryEditorScreen(state) {
   const glossary = glossaries.find((item) => item.id === state.selectedGlossaryId) ?? glossaries[0];
@@ -20,6 +21,9 @@ export function renderGlossaryEditorScreen(state) {
     ],
     tools: `${createSearchField("Search")} ${primaryButton("+ New Term", "noop")}`,
     pageSync: state.pageSync,
+    noticeText: getNoticeBadgeText(),
+    offlineMode: state.offline?.isEnabled === true,
+    offlineReconnectState: state.offline?.reconnecting === true,
     body: `
       <section class="table-card">
         <div class="term-grid term-grid--head">

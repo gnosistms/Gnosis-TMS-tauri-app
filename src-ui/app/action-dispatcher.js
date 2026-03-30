@@ -2,6 +2,8 @@ import { openExternalUrl } from "./runtime.js";
 import { createAuthActions } from "./actions/auth-actions.js";
 import { createGithubAppTestActions } from "./actions/github-app-test-actions.js";
 import { createNavigationActions } from "./actions/navigation-actions.js";
+import { isOfflineBlockedAction } from "./offline-policy.js";
+import { showOfflineUnsupportedMessage } from "./offline-ui.js";
 import { createProjectActions } from "./actions/project-actions.js";
 import { createTeamActions } from "./actions/team-actions.js";
 import { actionSuffix } from "./action-helpers.js";
@@ -19,6 +21,11 @@ export function createActionDispatcher(render) {
   ];
 
   return async function dispatchAction(action, event) {
+    if (isOfflineBlockedAction(action)) {
+      showOfflineUnsupportedMessage(render);
+      return true;
+    }
+
     for (const actionMap of exactActionMaps) {
       const handler = actionMap[action];
       if (handler) {

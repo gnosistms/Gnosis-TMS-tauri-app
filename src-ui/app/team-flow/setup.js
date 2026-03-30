@@ -106,3 +106,8 @@ export function setGithubAppInstallation(payload, render) {
     payload?.message ?? "GitHub App installation did not complete.";
   render();
 }
+
+export function cancelTeamSetup(render) {
+  resetTeamSetup();
+  render();
+}

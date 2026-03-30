@@ -1,4 +1,5 @@
 const TEAM_RECORDS_STORAGE_KEY = "gnosis-tms-team-records";
+const TEAM_PENDING_MUTATIONS_STORAGE_KEY = "gnosis-tms-team-pending-mutations";
 
 function normalizeTeamRecord(team) {
   if (!team || typeof team !== "object") {
@@ -32,6 +33,8 @@ function normalizeTeamRecord(team) {
       typeof team.ownerLogin === "string" && team.ownerLogin.trim()
         ? team.ownerLogin.trim()
         : githubOrg,
+    description:
+      typeof team.description === "string" ? team.description : null,
     membershipRole,
     canDelete: team.canDelete === true,
     canManageProjects:
@@ -103,9 +106,10 @@ export function saveStoredTeamRecords(teams) {
         const existing = merged.get(key);
         merged.set(key, existing ? { ...existing, ...team } : team);
       });
+    const serialized = JSON.stringify([...merged.values()]);
     window.localStorage?.setItem(
       TEAM_RECORDS_STORAGE_KEY,
-      JSON.stringify([...merged.values()]),
+      serialized,
     );
   } catch {}
 }
@@ -175,4 +179,28 @@ export function mergeTeams(primaryTeams, secondaryTeams = []) {
       mergedTeams.set(key, existing ? { ...existing, ...team } : team);
     });
   return [...mergedTeams.values()];
+}
+
+export function loadStoredTeamPendingMutations() {
+  try {
+    const storedValue = window.localStorage?.getItem(TEAM_PENDING_MUTATIONS_STORAGE_KEY);
+    if (!storedValue) {
+      return [];
+    }
+
+    const mutations = JSON.parse(storedValue);
+    return Array.isArray(mutations) ? mutations : [];
+  } catch {
+    return [];
+  }
+}
+
+export function saveStoredTeamPendingMutations(mutations) {
+  try {
+    const serialized = JSON.stringify(Array.isArray(mutations) ? mutations : []);
+    window.localStorage?.setItem(
+      TEAM_PENDING_MUTATIONS_STORAGE_KEY,
+      serialized,
+    );
+  } catch {}
 }

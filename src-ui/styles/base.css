@@ -135,24 +135,33 @@ a {
   padding: 22px 32px 40px;
 }
 
+.offline-banner {
+  width: min(var(--page-width), 100%);
+  margin: 0 auto 14px;
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 8px 14px 8px 18px;
+  border-radius: 16px;
+  background: rgba(255, 242, 204, 0.92);
+  border: 1px solid rgba(201, 122, 18, 0.18);
+  color: var(--text);
+  font-size: 0.98rem;
+  font-weight: 700;
+}
+
 .page-header {
   flex: 0 0 auto;
   width: min(var(--page-width), 100%);
   margin: 0 auto 24px;
   min-height: var(--header-height);
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
   align-items: center;
   gap: 20px;
   border-bottom: 1px solid rgba(164, 112, 41, 0.12);
-}
-
-.page-header__status {
-  width: 28px;
-  min-height: 28px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
 }
 
 .page-header__nav,
@@ -201,35 +210,28 @@ a {
   color: var(--link);
   font-size: 0.98rem;
   font-weight: 700;
-  text-decoration: underline;
-  text-underline-offset: 0.16em;
+  text-decoration: none;
 }
 
 .page-header__subtitle-link:hover {
   color: var(--link-hover);
 }
 
-.sync-indicator {
-  width: 20px;
-  height: 20px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  color: rgba(164, 112, 41, 0.72);
+.button.is-disabled,
+.header-nav__button.is-disabled,
+.text-action.is-disabled,
+.text-link.is-disabled,
+.page-header__subtitle-link.is-disabled {
+  opacity: 0.46;
+  cursor: not-allowed;
 }
 
-.sync-indicator--inline {
-  width: 18px;
-  height: 18px;
-}
-
-.sync-indicator__spinner {
-  width: 16px;
-  height: 16px;
-  border-radius: 999px;
-  border: 2px solid rgba(164, 112, 41, 0.2);
-  border-top-color: rgba(164, 112, 41, 0.9);
-  animation: button-spin 0.7s linear infinite;
+.button.is-disabled:hover,
+.header-nav__button.is-disabled:hover,
+.text-action.is-disabled:hover,
+.text-link.is-disabled:hover,
+.page-header__subtitle-link.is-disabled:hover {
+  color: inherit;
 }
 
 .header-nav__button,
@@ -265,6 +267,12 @@ a {
   font-weight: 600;
   box-shadow: 0 8px 18px rgba(134, 91, 35, 0.08);
   gap: 10px;
+}
+
+.button--compact {
+  min-height: 38px;
+  padding: 0 16px;
+  font-size: 0.95rem;
 }
 
 .button--primary {

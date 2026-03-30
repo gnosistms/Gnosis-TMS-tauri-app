@@ -7,16 +7,24 @@ export function escapeHtml(value) {
     .replaceAll("'", "&#39;");
 }
 
-export function navButton(label, target, isGhost = false) {
-  return `<button class="header-nav__button${
-    isGhost ? " header-nav__button--ghost" : ""
-  }" data-nav-target="${escapeHtml(target)}">${escapeHtml(label)}</button>`;
+function disabledActionAttributes(options = {}) {
+  if (!options.disabled) {
+    return "";
+  }
+
+  return ' aria-disabled="true" data-offline-blocked="true"';
 }
 
-export function primaryButton(label, action) {
-  return `<button class="button button--primary" data-action="${escapeHtml(
+export function navButton(label, target, isGhost = false, options = {}) {
+  return `<button class="header-nav__button${
+    isGhost ? " header-nav__button--ghost" : ""
+  }${options.disabled ? " is-disabled" : ""}" data-nav-target="${escapeHtml(target)}"${disabledActionAttributes(options)}>${escapeHtml(label)}</button>`;
+}
+
+export function primaryButton(label, action, options = {}) {
+  return `<button class="button button--primary${options.disabled ? " is-disabled" : ""}" data-action="${escapeHtml(
     action,
-  )}">${escapeHtml(label)}</button>`;
+  )}"${disabledActionAttributes(options)}>${escapeHtml(label)}</button>`;
 }
 
 export function loadingPrimaryButton({ label, loadingLabel, action, isLoading }) {
@@ -50,17 +58,15 @@ export function setImmediateLoadingButton(button, loadingLabel) {
 }
 
 export function secondaryButton(label, action, options = {}) {
-  const disabled = options.disabled ? " disabled" : "";
-  const actionValue = options.disabled ? "noop" : action;
-  return `<button class="button button--secondary" data-action="${escapeHtml(
-    actionValue,
-  )}"${disabled}>${escapeHtml(label)}</button>`;
+  return `<button class="button button--secondary${options.disabled ? " is-disabled" : ""}" data-action="${escapeHtml(
+    action,
+  )}"${disabledActionAttributes(options)}>${escapeHtml(label)}</button>`;
 }
 
-export function textAction(label, action) {
-  return `<button class="text-action" data-action="${escapeHtml(
+export function textAction(label, action, options = {}) {
+  return `<button class="text-action${options.disabled ? " is-disabled" : ""}" data-action="${escapeHtml(
     action,
-  )}">${escapeHtml(label)}</button>`;
+  )}"${disabledActionAttributes(options)}>${escapeHtml(label)}</button>`;
 }
 
 export function sectionSeparator({ label, action, isOpen = false }) {
@@ -76,46 +82,88 @@ export function sectionSeparator({ label, action, isOpen = false }) {
   `;
 }
 
-function renderPageSubtitle(pageSync = { status: "idle" }) {
-  if (pageSync.status === "syncing") {
-    return `
-      <div class="page-header__subtitle" aria-live="polite">
-        <span>Synchronizing with server</span>
-        <span class="sync-indicator sync-indicator--inline">
-          <span class="sync-indicator__spinner" aria-hidden="true"></span>
-        </span>
-      </div>
-    `;
-  }
-
-  if (pageSync.status === "upToDate") {
-    return `
-      <div class="page-header__subtitle" aria-live="polite">
-        <span>Up to date</span>
-      </div>
-    `;
-  }
-
+function renderPageSubtitle(pageSync = { status: "idle" }, offlineMode = false) {
   return `
     <div class="page-header__subtitle" aria-live="polite">
-      <button class="page-header__subtitle-link" data-action="check-for-updates">Check for updates</button>
+      <button class="page-header__subtitle-link${offlineMode ? " is-disabled" : ""}" data-action="check-for-updates"${disabledActionAttributes({ disabled: offlineMode })}>Update</button>
     </div>
   `;
 }
 
-export function pageShell({ title, navButtons = [], tools = "", body = "", pageSync = { status: "idle" } }) {
+function renderStatusBadge(text) {
+  if (!text) {
+    return "";
+  }
+
+  return `
+    <div class="team-ui-debug" aria-live="polite">
+      <div class="team-ui-debug__content">
+        <span class="team-ui-debug__dot" aria-hidden="true"></span>
+        <span>${escapeHtml(text)}</span>
+      </div>
+    </div>
+  `;
+}
+
+function renderFloatingSyncBadge(pageSync = { status: "idle" }, syncBadgeText = "") {
+  const text =
+    syncBadgeText ||
+    (pageSync.status === "syncing"
+      ? "Updating..."
+      : pageSync.status === "upToDate"
+        ? "Up to date"
+        : "");
+
+  return renderStatusBadge(text);
+}
+
+function renderFloatingBadge({ pageSync, syncBadgeText, noticeText }) {
+  if (noticeText) {
+    return renderStatusBadge(noticeText);
+  }
+
+  return renderFloatingSyncBadge(pageSync, syncBadgeText);
+}
+
+export function pageShell({
+  title,
+  navButtons = [],
+  tools = "",
+  body = "",
+  pageSync = { status: "idle" },
+  syncBadgeText = "",
+  noticeText = "",
+  offlineMode = false,
+  offlineReconnectState = false,
+}) {
   return `
     <div class="screen screen--page">
+      ${
+        offlineMode
+          ? `
+            <div class="offline-banner" aria-live="polite">
+              <span>Offline mode</span>
+              <button class="button button--secondary button--compact${offlineReconnectState ? " is-disabled" : ""}" data-action="reconnect-online"${offlineReconnectState ? ' aria-disabled="true"' : ""}>
+                ${
+                  offlineReconnectState
+                    ? '<span class="button__spinner" aria-hidden="true"></span><span>Reconnect</span>'
+                    : "<span>Reconnect</span>"
+                }
+              </button>
+            </div>
+          `
+          : ""
+      }
       <header class="page-header">
-        <div class="page-header__status"></div>
         <div class="page-header__nav">${navButtons.join("")}</div>
         <div class="page-header__title-wrap">
           <h1 class="page-header__title">${escapeHtml(title)}</h1>
-          ${renderPageSubtitle(pageSync)}
+          ${renderPageSubtitle(pageSync, offlineMode)}
         </div>
         <div class="page-header__tools">${tools}</div>
       </header>
       <main class="page-body">${body}</main>
+      ${renderFloatingBadge({ pageSync, syncBadgeText, noticeText })}
     </div>
   `;
 }

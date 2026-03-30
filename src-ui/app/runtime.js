@@ -17,6 +17,8 @@ export function openExternalUrl(url) {
 
 export function waitForNextPaint() {
   return new Promise((resolve) => {
-    window.requestAnimationFrame(() => resolve());
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => resolve());
+    });
   });
 }

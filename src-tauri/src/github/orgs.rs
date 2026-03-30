@@ -91,53 +91,87 @@ pub(crate) fn list_organization_members_for_installation(
 }
 
 #[tauri::command]
-pub(crate) fn update_organization_name_for_installation(
+pub(crate) async fn update_organization_name_for_installation(
   installation_id: i64,
   org_login: String,
   name: String,
   session_token: String,
 ) -> Result<GithubOrganization, String> {
-  let client = github_client()?;
-  broker_patch_json_with_session(
-    &client,
-    &format!("/api/github-app/installations/{installation_id}/orgs/{org_login}"),
-    &serde_json::json!({
-      "name": name
-    }),
-    &session_token,
-  )
+  tauri::async_runtime::spawn_blocking(move || {
+    let client = github_client()?;
+    broker_patch_json_with_session(
+      &client,
+      &format!("/api/github-app/installations/{installation_id}/orgs/{org_login}"),
+      &serde_json::json!({
+        "name": name
+      }),
+      &session_token,
+    )
+  })
+  .await
+  .map_err(|error| format!("Could not run the organization rename task: {error}"))?
 }
 
 #[tauri::command]
-pub(crate) fn delete_organization_for_installation(
+pub(crate) async fn update_organization_description_for_installation(
+  installation_id: i64,
+  org_login: String,
+  description: Option<String>,
+  session_token: String,
+) -> Result<GithubOrganization, String> {
+  tauri::async_runtime::spawn_blocking(move || {
+    let client = github_client()?;
+    broker_patch_json_with_session(
+      &client,
+      &format!("/api/github-app/installations/{installation_id}/orgs/{org_login}"),
+      &serde_json::json!({
+        "description": description
+      }),
+      &session_token,
+    )
+  })
+  .await
+  .map_err(|error| format!("Could not run the organization description update task: {error}"))?
+}
+
+#[tauri::command]
+pub(crate) async fn delete_organization_for_installation(
   installation_id: i64,
   org_login: String,
   session_token: String,
 ) -> Result<(), String> {
-  let client = github_client()?;
-  broker_delete_no_content_with_session(
-    &client,
-    &format!("/api/github-app/installations/{installation_id}/orgs/{org_login}"),
-    &serde_json::json!({}),
-    &session_token,
-  )
+  tauri::async_runtime::spawn_blocking(move || {
+    let client = github_client()?;
+    broker_delete_no_content_with_session(
+      &client,
+      &format!("/api/github-app/installations/{installation_id}/orgs/{org_login}"),
+      &serde_json::json!({}),
+      &session_token,
+    )
+  })
+  .await
+  .map_err(|error| format!("Could not run the organization deletion task: {error}"))?
 }
 
 #[tauri::command]
-pub(crate) fn leave_organization_for_installation(
+pub(crate) async fn leave_organization_for_installation(
   installation_id: i64,
   org_login: String,
   session_token: String,
 ) -> Result<(), String> {
-  let client = github_client()?;
-  broker_delete_no_content_with_session(
-    &client,
-    &format!(
-      "/api/github-app/installations/{installation_id}/orgs/{org_login}/membership"
-    ),
-    &serde_json::json!({}),
-    &session_token,
-  )
+  tauri::async_runtime::spawn_blocking(move || {
+    let client = github_client()?;
+    broker_delete_no_content_with_session(
+      &client,
+      &format!(
+        "/api/github-app/installations/{installation_id}/orgs/{org_login}/membership"
+      ),
+      &serde_json::json!({}),
+      &session_token,
+    )
+  })
+  .await
+  .map_err(|error| format!("Could not run the organization leave task: {error}"))?
 }
 
 pub(crate) fn get_organization_details(

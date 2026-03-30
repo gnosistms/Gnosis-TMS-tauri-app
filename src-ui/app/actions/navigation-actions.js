@@ -1,5 +1,6 @@
 import { state } from "../state.js";
 import { loadTeamProjects } from "../project-flow.js";
+import { loadTeamUsers } from "../user-flow.js";
 import { actionSuffix } from "../action-helpers.js";
 
 export function createNavigationActions(render) {
@@ -10,6 +11,15 @@ export function createNavigationActions(render) {
       state.screen = "projects";
       render();
       void loadTeamProjects(render, state.selectedTeamId);
+      return true;
+    }
+
+    const openTeamUsersId = actionSuffix(action, "open-team-users:");
+    if (openTeamUsersId !== null) {
+      state.selectedTeamId = openTeamUsersId;
+      state.screen = "users";
+      render();
+      void loadTeamUsers(render, state.selectedTeamId);
       return true;
     }
 

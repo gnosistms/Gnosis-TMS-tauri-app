@@ -1,12 +1,12 @@
 use std::env;
 
-use reqwest::blocking::{Client, RequestBuilder, Response};
+use reqwest::blocking::{Client, Response};
 use reqwest::StatusCode;
 use serde::de::DeserializeOwned;
 use url::Url;
 
 use crate::insecure_github_app_config::{
-  INSECURE_GITHUB_APP_BROKER_BASE_URL, INSECURE_GITHUB_APP_BROKER_TOKEN,
+  INSECURE_GITHUB_APP_BROKER_BASE_URL,
 };
 
 pub(crate) fn broker_base_url() -> Result<Url, String> {
@@ -35,15 +35,6 @@ pub(crate) fn broker_path_url(path: &str) -> Result<Url, String> {
   Ok(url)
 }
 
-pub(crate) fn broker_get_json<T: DeserializeOwned>(client: &Client, path: &str) -> Result<T, String> {
-  let response = with_optional_broker_token(client.get(broker_path_url(path)?))
-    .header("Accept", "application/json")
-    .send()
-    .map_err(|error| format!("Could not reach the GitHub App broker: {error}"))?;
-
-  parse_json_response(response)
-}
-
 pub(crate) fn broker_get_json_with_session<T: DeserializeOwned>(
   client: &Client,
   path: &str,
@@ -53,20 +44,6 @@ pub(crate) fn broker_get_json_with_session<T: DeserializeOwned>(
     .get(broker_path_url(path)?)
     .header("Accept", "application/json")
     .bearer_auth(session_token)
-    .send()
-    .map_err(|error| format!("Could not reach the GitHub App broker: {error}"))?;
-
-  parse_json_response(response)
-}
-
-pub(crate) fn broker_post_json<T: DeserializeOwned>(
-  client: &Client,
-  path: &str,
-  body: &serde_json::Value,
-) -> Result<T, String> {
-  let response = with_optional_broker_token(client.post(broker_path_url(path)?))
-    .header("Accept", "application/json")
-    .json(body)
     .send()
     .map_err(|error| format!("Could not reach the GitHub App broker: {error}"))?;
 
@@ -83,20 +60,6 @@ pub(crate) fn broker_post_json_with_session<T: DeserializeOwned>(
     .post(broker_path_url(path)?)
     .header("Accept", "application/json")
     .bearer_auth(session_token)
-    .json(body)
-    .send()
-    .map_err(|error| format!("Could not reach the GitHub App broker: {error}"))?;
-
-  parse_json_response(response)
-}
-
-pub(crate) fn broker_patch_json<T: DeserializeOwned>(
-  client: &Client,
-  path: &str,
-  body: &serde_json::Value,
-) -> Result<T, String> {
-  let response = with_optional_broker_token(client.patch(broker_path_url(path)?))
-    .header("Accept", "application/json")
     .json(body)
     .send()
     .map_err(|error| format!("Could not reach the GitHub App broker: {error}"))?;
@@ -121,24 +84,6 @@ pub(crate) fn broker_patch_json_with_session<T: DeserializeOwned>(
   parse_json_response(response)
 }
 
-pub(crate) fn broker_patch_no_content(
-  client: &Client,
-  path: &str,
-  body: Option<&serde_json::Value>,
-) -> Result<(), String> {
-  let mut request = with_optional_broker_token(client.patch(broker_path_url(path)?))
-    .header("Accept", "application/json");
-  if let Some(value) = body {
-    request = request.json(value);
-  }
-
-  let response = request
-    .send()
-    .map_err(|error| format!("Could not reach the GitHub App broker: {error}"))?;
-
-  parse_empty_response(response)
-}
-
 pub(crate) fn broker_patch_no_content_with_session(
   client: &Client,
   path: &str,
@@ -160,20 +105,6 @@ pub(crate) fn broker_patch_no_content_with_session(
   parse_empty_response(response)
 }
 
-pub(crate) fn broker_delete_no_content(
-  client: &Client,
-  path: &str,
-  body: &serde_json::Value,
-) -> Result<(), String> {
-  let response = with_optional_broker_token(client.delete(broker_path_url(path)?))
-    .header("Accept", "application/json")
-    .json(body)
-    .send()
-    .map_err(|error| format!("Could not reach the GitHub App broker: {error}"))?;
-
-  parse_empty_response(response)
-}
-
 pub(crate) fn broker_delete_no_content_with_session(
   client: &Client,
   path: &str,
@@ -189,27 +120,6 @@ pub(crate) fn broker_delete_no_content_with_session(
     .map_err(|error| format!("Could not reach the GitHub App broker: {error}"))?;
 
   parse_empty_response(response)
-}
-
-fn with_optional_broker_token(request: RequestBuilder) -> RequestBuilder {
-  match broker_token() {
-    Some(token) => request.bearer_auth(token),
-    None => request,
-  }
-}
-
-fn broker_token() -> Option<String> {
-  env::var("GITHUB_APP_BROKER_TOKEN")
-    .ok()
-    .filter(|value| !value.trim().is_empty())
-    .or_else(|| {
-      let trimmed = INSECURE_GITHUB_APP_BROKER_TOKEN.trim();
-      if trimmed.is_empty() {
-        None
-      } else {
-        Some(trimmed.to_string())
-      }
-    })
 }
 
 fn env_or_insecure_fallback(

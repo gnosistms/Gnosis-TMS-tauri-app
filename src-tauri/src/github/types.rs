@@ -34,43 +34,16 @@ pub(crate) struct BeginGithubAppInstallResponse {
 pub(crate) struct GithubAppInstallationInfo {
   pub(crate) installation_id: i64,
   pub(crate) account_login: String,
+  pub(crate) account_name: Option<String>,
   pub(crate) account_type: String,
   pub(crate) account_avatar_url: Option<String>,
   pub(crate) account_html_url: Option<String>,
+  pub(crate) description: Option<String>,
   pub(crate) membership_state: Option<String>,
   pub(crate) membership_role: Option<String>,
   pub(crate) can_delete: Option<bool>,
   pub(crate) can_manage_projects: Option<bool>,
   pub(crate) can_leave: Option<bool>,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct GithubAppInstallationResponse {
-  pub(crate) id: i64,
-  pub(crate) account: GithubAppInstallationAccount,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct GithubAppInstallationAccount {
-  pub(crate) login: String,
-  #[serde(rename = "type")]
-  pub(crate) account_type: String,
-  pub(crate) avatar_url: Option<String>,
-  pub(crate) html_url: Option<String>,
-}
-
-#[derive(Serialize)]
-pub(crate) struct GithubAppJwtClaims {
-  pub(crate) iat: usize,
-  pub(crate) exp: usize,
-  pub(crate) iss: String,
-}
-
-#[derive(Deserialize)]
-pub(crate) struct GithubInstallationTokenResponse {
-  pub(crate) token: String,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -82,12 +55,6 @@ pub(crate) struct GithubRepository {
   pub(crate) html_url: Option<String>,
   pub(crate) private: bool,
   pub(crate) description: Option<String>,
-}
-
-#[derive(Deserialize)]
-pub(crate) struct GithubRepositoryPropertyValue {
-  pub(crate) property_name: String,
-  pub(crate) value: Option<serde_json::Value>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -135,19 +102,4 @@ pub(crate) struct DeleteGithubProjectRepoInput {
   pub(crate) installation_id: i64,
   pub(crate) org_login: String,
   pub(crate) repo_name: String,
-}
-
-#[derive(Serialize)]
-pub(crate) struct GithubCreateRepoFileRequest<'a> {
-  pub(crate) message: &'a str,
-  pub(crate) content: String,
-  #[serde(skip_serializing_if = "Option::is_none")]
-  pub(crate) sha: Option<&'a str>,
-}
-
-#[derive(Deserialize)]
-pub(crate) struct GithubRepositoryContentResponse {
-  pub(crate) sha: String,
-  pub(crate) content: String,
-  pub(crate) encoding: String,
 }

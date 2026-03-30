@@ -1,4 +1,5 @@
 import { escapeHtml, navButton, pageShell, primaryButton, textAction } from "../lib/ui.js";
+import { getNoticeBadgeText } from "../app/status-feedback.js";
 
 function renderUserCard(user) {
   return `
@@ -66,6 +67,9 @@ export function renderUsersScreen(state) {
     ],
     tools: `${primaryButton("+ Invite User", "noop")}`,
     pageSync: state.pageSync,
+    noticeText: getNoticeBadgeText(),
+    offlineMode: state.offline?.isEnabled === true,
+    offlineReconnectState: state.offline?.reconnecting === true,
     body,
   });
 }

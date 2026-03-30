@@ -16,6 +16,7 @@ export {
 
 export {
   openTeamSetup,
+  cancelTeamSetup,
   beginTeamOrgSetup,
   beginGithubAppInstall,
   finishTeamSetup,

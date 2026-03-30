@@ -1,26 +1,172 @@
 import { invoke, waitForNextPaint } from "./runtime.js";
-import { handleBrokerAuthExpired, requireBrokerSession } from "./auth-flow.js";
+import { requireBrokerSession } from "./auth-flow.js";
 import { beginPageSync, completePageSync, failPageSync } from "./page-sync.js";
 import {
+  loadStoredProjectPendingMutations,
+  loadStoredProjectsForTeam,
+  saveStoredProjectPendingMutations,
+  saveStoredProjectsForTeam,
+} from "./project-cache.js";
+import {
+  applyPendingMutations,
+  removeItem,
+  removePendingMutation,
+  replaceItem,
+  upsertPendingMutation,
+} from "./optimistic-collection.js";
+import {
   resetProjectCreation,
-  resetProjectDeletion,
   resetProjectPermanentDeletion,
   resetProjectRename,
   state,
 } from "./state.js";
+import { clearScopedSyncBadge, showScopedSyncBadge } from "./status-feedback.js";
+import { classifySyncError } from "./sync-error.js";
+import { handleSyncFailure } from "./sync-recovery.js";
+
+function setProjectUiDebug(render, text) {
+  showScopedSyncBadge("projects", text, render);
+}
+
+function clearProjectUiDebug(render) {
+  clearScopedSyncBadge("projects", render);
+}
+
+function applyProjectSnapshotToState(snapshot) {
+  state.projects = snapshot.items;
+  state.deletedProjects = snapshot.deletedItems;
+  if (snapshot.deletedItems.length === 0) {
+    state.showDeletedProjects = false;
+  }
+}
+
+function normalizeProjectSnapshot(snapshot, pendingMutations = []) {
+  const latestMutationByProjectId = new Map();
+  for (const mutation of pendingMutations) {
+    latestMutationByProjectId.set(mutation.projectId, mutation.type);
+  }
+
+  const activeById = new Map(snapshot.items.map((item) => [item.id, item]));
+  const deletedById = new Map(snapshot.deletedItems.map((item) => [item.id, item]));
+
+  for (const [projectId, deletedItem] of deletedById.entries()) {
+    if (!activeById.has(projectId)) {
+      continue;
+    }
+
+    const latestMutation = latestMutationByProjectId.get(projectId);
+    if (latestMutation === "restore" || latestMutation === "rename") {
+      deletedById.delete(projectId);
+      continue;
+    }
+
+    if (latestMutation === "softDelete") {
+      activeById.delete(projectId);
+      continue;
+    }
+
+    activeById.delete(projectId);
+  }
+
+  return {
+    items: [...activeById.values()],
+    deletedItems: [...deletedById.values()],
+  };
+}
+
+function applyProjectPendingMutation(snapshot, mutation) {
+  const normalizedSnapshot = normalizeProjectSnapshot(snapshot);
+  const findProject = () =>
+    normalizedSnapshot.items.find((item) => item.id === mutation.projectId) ??
+    normalizedSnapshot.deletedItems.find((item) => item.id === mutation.projectId);
+  const currentProject = findProject();
+
+  if (!currentProject) {
+    return normalizedSnapshot;
+  }
+
+  if (mutation.type === "softDelete") {
+    const deletedProject = {
+      ...currentProject,
+      status: "deleted",
+    };
+    return normalizeProjectSnapshot({
+      items: removeItem(normalizedSnapshot.items, mutation.projectId),
+      deletedItems: [deletedProject, ...removeItem(normalizedSnapshot.deletedItems, mutation.projectId)],
+    });
+  }
+
+  if (mutation.type === "restore") {
+    const restoredProject = {
+      ...currentProject,
+      status: "active",
+    };
+    return normalizeProjectSnapshot({
+      items: replaceItem(removeItem(normalizedSnapshot.items, mutation.projectId), restoredProject),
+      deletedItems: removeItem(normalizedSnapshot.deletedItems, mutation.projectId),
+    });
+  }
+
+  if (mutation.type === "rename") {
+    const renamedProject = {
+      ...currentProject,
+      title: mutation.title,
+    };
+    const isDeleted = normalizedSnapshot.deletedItems.some((item) => item.id === mutation.projectId);
+    return normalizeProjectSnapshot(
+      isDeleted
+        ? {
+            items: normalizedSnapshot.items,
+            deletedItems: replaceItem(normalizedSnapshot.deletedItems, renamedProject),
+          }
+        : {
+            items: replaceItem(normalizedSnapshot.items, renamedProject),
+            deletedItems: normalizedSnapshot.deletedItems,
+          },
+    );
+  }
+
+  return normalizedSnapshot;
+}
+
+const inflightProjectMutationIds = new Set();
 
 export async function loadTeamProjects(render, teamId = state.selectedTeamId) {
   const selectedTeam = state.teams.find((team) => team.id === teamId);
+  const syncVersionAtStart = state.projectSyncVersion;
 
   if (!selectedTeam?.installationId) {
-    state.projects = [];
-    state.deletedProjects = [];
+    applyProjectSnapshotToState({ items: [], deletedItems: [] });
     state.projectDiscovery = { status: "ready", error: "" };
     render();
     return;
   }
 
-  state.projectDiscovery = { status: "loading", error: "" };
+  const cachedProjects = loadStoredProjectsForTeam(selectedTeam);
+  state.pendingProjectMutations = loadStoredProjectPendingMutations(selectedTeam);
+  const optimisticSnapshot = applyPendingMutations(
+    {
+      items: cachedProjects.projects,
+      deletedItems: cachedProjects.deletedProjects,
+      },
+    state.pendingProjectMutations,
+    applyProjectPendingMutation,
+  );
+
+  if (state.offline.isEnabled) {
+    applyProjectSnapshotToState(optimisticSnapshot);
+    state.projectDiscovery = { status: "ready", error: "" };
+    render();
+    return;
+  }
+
+  if (cachedProjects.exists) {
+    applyProjectSnapshotToState(optimisticSnapshot);
+    state.projectDiscovery = { status: "ready", error: "" };
+  } else {
+    applyProjectSnapshotToState({ items: [], deletedItems: [] });
+    state.projectDiscovery = { status: "loading", error: "" };
+  }
   beginPageSync();
   render();
 
@@ -29,26 +175,61 @@ export async function loadTeamProjects(render, teamId = state.selectedTeamId) {
       installationId: selectedTeam.installationId,
       sessionToken: requireBrokerSession(),
     });
+    if (syncVersionAtStart !== state.projectSyncVersion) {
+      completePageSync(render);
+      render();
+      return;
+    }
     const mappedProjects = projects.map((project) => ({
       ...project,
       chapters: [],
     }));
-    state.projects = mappedProjects.filter((project) => project.status !== "deleted");
-    state.deletedProjects = mappedProjects.filter((project) => project.status === "deleted");
+    const nextSnapshot = applyPendingMutations(
+      {
+        items: mappedProjects.filter((project) => project.status !== "deleted"),
+        deletedItems: mappedProjects.filter((project) => project.status === "deleted"),
+      },
+      state.pendingProjectMutations,
+      applyProjectPendingMutation,
+    );
+    applyProjectSnapshotToState(nextSnapshot);
+    saveStoredProjectsForTeam(selectedTeam, {
+      projects: mappedProjects.filter((project) => project.status !== "deleted"),
+      deletedProjects: mappedProjects.filter((project) => project.status === "deleted"),
+    });
     state.projectDiscovery = { status: "ready", error: "" };
     completePageSync(render);
     render();
+    if (state.pendingProjectMutations.length > 0) {
+      void processPendingProjectMutations(render, selectedTeam);
+    }
   } catch (error) {
-    if (await handleBrokerAuthExpired(render, error)) {
+    if (
+      await handleSyncFailure(classifySyncError(error), {
+        render,
+        teamId: selectedTeam?.id ?? null,
+        currentResource: true,
+      })
+    ) {
       failPageSync();
       return;
     }
-    state.projects = [];
-    state.deletedProjects = [];
-    state.projectDiscovery = {
-      status: "error",
-      error: error?.message ?? String(error),
-    };
+
+    if (syncVersionAtStart !== state.projectSyncVersion) {
+      failPageSync();
+      render();
+      return;
+    }
+
+    if (!cachedProjects.exists) {
+      applyProjectSnapshotToState({ items: [], deletedItems: [] });
+      state.projectDiscovery = {
+        status: "error",
+        error: error?.message ?? String(error),
+      };
+    } else {
+      state.projectDiscovery = { status: "ready", error: "" };
+    }
     failPageSync();
     render();
   }
@@ -155,7 +336,7 @@ export async function submitProjectCreation(render) {
     resetProjectCreation();
     await loadTeamProjects(render, selectedTeam.id);
   } catch (error) {
-    if (await handleBrokerAuthExpired(render, error)) {
+    if (await handleSyncFailure(classifySyncError(error), { render })) {
       return;
     }
     state.projectCreation.status = "idle";
@@ -185,27 +366,30 @@ export async function submitProjectRename(render) {
     state.projectRename.status = "loading";
     state.projectRename.error = "";
     render();
-    await waitForNextPaint();
-    await invoke("rename_gnosis_project_repo", {
-      input: {
-        installationId: selectedTeam.installationId,
-        fullName: project.fullName,
-        projectTitle: nextTitle,
-      },
-      sessionToken: requireBrokerSession(),
-    });
-    state.projects = state.projects.map((item) =>
-      item.id === project.id
-        ? {
-            ...item,
-            title: nextTitle,
-          }
-        : item,
+    const mutation = {
+      id: crypto.randomUUID(),
+      type: "rename",
+      projectId: project.id,
+      title: nextTitle,
+      previousTitle: project.title ?? project.name,
+    };
+    state.projectSyncVersion += 1;
+    const snapshot = applyProjectPendingMutation(
+      { items: state.projects, deletedItems: state.deletedProjects },
+      mutation,
     );
+    applyProjectSnapshotToState(snapshot);
+    state.pendingProjectMutations = upsertPendingMutation(state.pendingProjectMutations, mutation);
+    saveStoredProjectsForTeam(selectedTeam, {
+      projects: state.projects,
+      deletedProjects: state.deletedProjects,
+    });
+    saveStoredProjectPendingMutations(selectedTeam, state.pendingProjectMutations);
     resetProjectRename();
     render();
+    void processPendingProjectMutations(render, selectedTeam);
   } catch (error) {
-    if (await handleBrokerAuthExpired(render, error)) {
+    if (await handleSyncFailure(classifySyncError(error), { render })) {
       return;
     }
     state.projectRename.status = "idle";
@@ -245,32 +429,35 @@ export async function deleteProject(render, projectId) {
     return;
   }
 
-  try {
-    await waitForNextPaint();
-    await invoke("mark_gnosis_project_repo_deleted", {
-      input: {
-        installationId: selectedTeam.installationId,
-        orgLogin: selectedTeam.githubOrg,
-        repoName: project.name,
-      },
-      sessionToken: requireBrokerSession(),
-    });
-    await loadTeamProjects(render, selectedTeam.id);
-  } catch (error) {
-    if (await handleBrokerAuthExpired(render, error)) {
-      return;
-    }
-    state.projectDiscovery = {
-      status: "error",
-      error: error?.message ?? String(error),
-    };
-    render();
+  state.projectSyncVersion += 1;
+  setProjectUiDebug(render, "Delete clicked");
+  const mutation = {
+    id: crypto.randomUUID(),
+    type: "softDelete",
+    projectId: project.id,
+  };
+  const snapshot = applyProjectPendingMutation(
+    { items: state.projects, deletedItems: state.deletedProjects },
+    mutation,
+  );
+  applyProjectSnapshotToState(snapshot);
+  state.pendingProjectMutations = upsertPendingMutation(state.pendingProjectMutations, mutation);
+  if (state.projects.length === 0 && state.deletedProjects.length > 0) {
+    state.showDeletedProjects = true;
   }
-}
-
-export function cancelProjectDeletion(render) {
-  resetProjectDeletion();
+  saveStoredProjectsForTeam(selectedTeam, {
+    projects: state.projects,
+    deletedProjects: state.deletedProjects,
+  });
+  saveStoredProjectPendingMutations(selectedTeam, state.pendingProjectMutations);
   render();
+
+  setProjectUiDebug(render, "Optimistic delete applied");
+  void waitForNextPaint().then(() => {
+    setProjectUiDebug(render, "First paint reached");
+    setProjectUiDebug(render, "Background sync started");
+    void processPendingProjectMutations(render, selectedTeam);
+  });
 }
 
 export function toggleDeletedProjects(render) {
@@ -309,8 +496,68 @@ export async function restoreProject(render, projectId) {
     return;
   }
 
-  try {
-    await waitForNextPaint();
+  state.projectSyncVersion += 1;
+  setProjectUiDebug(render, "Restore clicked");
+  const mutation = {
+    id: crypto.randomUUID(),
+    type: "restore",
+    projectId: project.id,
+  };
+  const snapshot = applyProjectPendingMutation(
+    { items: state.projects, deletedItems: state.deletedProjects },
+    mutation,
+  );
+  applyProjectSnapshotToState(snapshot);
+  state.pendingProjectMutations = upsertPendingMutation(state.pendingProjectMutations, mutation);
+  saveStoredProjectsForTeam(selectedTeam, {
+    projects: state.projects,
+    deletedProjects: state.deletedProjects,
+  });
+  saveStoredProjectPendingMutations(selectedTeam, state.pendingProjectMutations);
+  render();
+
+  setProjectUiDebug(render, "Optimistic restore applied");
+  void waitForNextPaint().then(() => {
+    setProjectUiDebug(render, "First paint reached");
+    setProjectUiDebug(render, "Background sync started");
+    void processPendingProjectMutations(render, selectedTeam);
+  });
+}
+
+async function commitProjectMutation(selectedTeam, mutation) {
+  const project =
+    state.projects.find((item) => item.id === mutation.projectId) ??
+    state.deletedProjects.find((item) => item.id === mutation.projectId);
+
+  if (!selectedTeam?.installationId || !project) {
+    return;
+  }
+
+  if (mutation.type === "rename") {
+    await invoke("rename_gnosis_project_repo", {
+      input: {
+        installationId: selectedTeam.installationId,
+        fullName: project.fullName,
+        projectTitle: mutation.title,
+      },
+      sessionToken: requireBrokerSession(),
+    });
+    return;
+  }
+
+  if (mutation.type === "softDelete") {
+    await invoke("mark_gnosis_project_repo_deleted", {
+      input: {
+        installationId: selectedTeam.installationId,
+        orgLogin: selectedTeam.githubOrg,
+        repoName: project.name,
+      },
+      sessionToken: requireBrokerSession(),
+    });
+    return;
+  }
+
+  if (mutation.type === "restore") {
     await invoke("restore_gnosis_project_repo", {
       input: {
         installationId: selectedTeam.installationId,
@@ -319,16 +566,87 @@ export async function restoreProject(render, projectId) {
       },
       sessionToken: requireBrokerSession(),
     });
-    await loadTeamProjects(render, selectedTeam.id);
-  } catch (error) {
-    if (await handleBrokerAuthExpired(render, error)) {
+  }
+}
+
+function rollbackVisibleProjectMutation(mutation) {
+  const inverseMutation =
+    mutation.type === "rename"
+      ? {
+          id: `${mutation.id}-rollback`,
+          type: "rename",
+          projectId: mutation.projectId,
+          title: mutation.previousTitle,
+        }
+      : mutation.type === "softDelete"
+        ? {
+            id: `${mutation.id}-rollback`,
+            type: "restore",
+            projectId: mutation.projectId,
+          }
+        : mutation.type === "restore"
+          ? {
+              id: `${mutation.id}-rollback`,
+              type: "softDelete",
+              projectId: mutation.projectId,
+            }
+          : null;
+
+  if (!inverseMutation) {
+    return;
+  }
+
+  const snapshot = applyProjectPendingMutation(
+    { items: state.projects, deletedItems: state.deletedProjects },
+    inverseMutation,
+  );
+  applyProjectSnapshotToState(snapshot);
+}
+
+async function processPendingProjectMutations(render, selectedTeam) {
+  const pendingMutations = [...state.pendingProjectMutations];
+
+  for (const mutation of pendingMutations) {
+    if (inflightProjectMutationIds.has(mutation.id)) {
+      continue;
+    }
+
+    inflightProjectMutationIds.add(mutation.id);
+    try {
+      await waitForNextPaint();
+      await commitProjectMutation(selectedTeam, mutation);
+      state.pendingProjectMutations = removePendingMutation(
+        state.pendingProjectMutations,
+        mutation.id,
+      );
+      saveStoredProjectPendingMutations(selectedTeam, state.pendingProjectMutations);
+      saveStoredProjectsForTeam(selectedTeam, {
+        projects: state.projects,
+        deletedProjects: state.deletedProjects,
+      });
+      setProjectUiDebug(render, `Background sync finished (${mutation.type})`);
+      window.setTimeout(() => clearProjectUiDebug(render), 1200);
+    } catch (error) {
+      inflightProjectMutationIds.delete(mutation.id);
+      clearProjectUiDebug(render);
+      state.pendingProjectMutations = removePendingMutation(
+        state.pendingProjectMutations,
+        mutation.id,
+      );
+      saveStoredProjectPendingMutations(selectedTeam, state.pendingProjectMutations);
+      rollbackVisibleProjectMutation(mutation);
+      saveStoredProjectsForTeam(selectedTeam, {
+        projects: state.projects,
+        deletedProjects: state.deletedProjects,
+      });
+      if (await handleSyncFailure(classifySyncError(error), { render })) {
+        return;
+      }
+      setProjectUiDebug(render, `Background sync failed (${mutation.type})`);
+      await loadTeamProjects(render, selectedTeam?.id);
       return;
     }
-    state.projectDiscovery = {
-      status: "error",
-      error: error?.message ?? String(error),
-    };
-    render();
+    inflightProjectMutationIds.delete(mutation.id);
   }
 }
 
@@ -418,7 +736,7 @@ export async function confirmProjectPermanentDeletion(render) {
     resetProjectPermanentDeletion();
     await loadTeamProjects(render, selectedTeam.id);
   } catch (error) {
-    if (await handleBrokerAuthExpired(render, error)) {
+    if (await handleSyncFailure(classifySyncError(error), { render })) {
       return;
     }
     state.projectPermanentDeletion.status = "idle";

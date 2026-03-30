@@ -1,7 +1,6 @@
 import { state } from "../state.js";
 import {
   cancelProjectCreation,
-  cancelProjectDeletion,
   cancelProjectPermanentDeletion,
   cancelProjectRename,
   confirmProjectPermanentDeletion,
@@ -20,7 +19,6 @@ export function createProjectActions(render) {
   const exactActions = {
     "open-new-project": () => createProjectForSelectedTeam(render),
     "cancel-project-creation": () => cancelProjectCreation(render),
-    "cancel-project-deletion": () => cancelProjectDeletion(render),
     "cancel-project-permanent-deletion": () => cancelProjectPermanentDeletion(render),
     "cancel-project-rename": () => cancelProjectRename(render),
     "toggle-deleted-projects": () => toggleDeletedProjects(render),
@@ -66,10 +64,6 @@ export function createProjectActions(render) {
 
     if (action === "submit-project-creation") {
       await runWithImmediateLoading(event, "Creating...", () => submitProjectCreation(render));
-      return true;
-    }
-    if (action === "confirm-project-deletion") {
-      await runWithImmediateLoading(event, "Deleting...", () => confirmProjectDeletion(render));
       return true;
     }
     if (action === "confirm-project-permanent-deletion") {

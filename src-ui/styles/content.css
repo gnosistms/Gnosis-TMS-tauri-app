@@ -24,10 +24,16 @@
   min-height: 94px;
 }
 
-.list-row__title,
-.expandable-card__title {
+.list-row__title {
   margin: 0;
   font-size: 2rem;
+  line-height: 1;
+  letter-spacing: normal;
+}
+
+.expandable-card__title {
+  margin: 0;
+  font-size: 1.7rem;
   line-height: 1;
   letter-spacing: normal;
 }
@@ -49,6 +55,10 @@
 
 .card--deleted .list-row__title,
 .card--deleted .expandable-card__title {
+  opacity: 0.5;
+}
+
+.card--deleted .chevron-button {
   opacity: 0.5;
 }
 
@@ -75,12 +85,12 @@
 }
 
 .expandable-card__header {
-  min-height: 96px;
+  min-height: 62px;
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   gap: 22px;
-  padding: 0 26px 0 18px;
+  padding: 0 22px 0 14px;
 }
 
 .expandable-card__body {
@@ -115,8 +125,8 @@
 
 .expandable-card__title-wrap {
   display: flex;
-  align-items: baseline;
-  gap: 14px;
+  align-items: center;
+  gap: 12px;
   min-width: 0;
 }
 
@@ -306,4 +316,50 @@
 
 .github-app-test-table__meta {
   margin-top: 8px;
+}
+
+.team-ui-debug {
+  position: fixed;
+  right: 28px;
+  bottom: 28px;
+  z-index: 50;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  min-height: 42px;
+  padding: 10px 16px;
+  border: 1px solid rgba(164, 112, 41, 0.2);
+  border-radius: 999px;
+  background: rgba(255, 251, 246, 0.96);
+  box-shadow: 0 14px 34px rgba(119, 83, 31, 0.14);
+  color: var(--link);
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.team-ui-debug__content {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.team-ui-debug__actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 14px;
+  padding-left: 20px;
+}
+
+.team-ui-debug__action {
+  font-size: 0.92rem;
+  font-weight: 700;
+}
+
+.team-ui-debug__dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  background: var(--accent);
+  box-shadow: 0 0 0 5px rgba(233, 151, 31, 0.14);
 }

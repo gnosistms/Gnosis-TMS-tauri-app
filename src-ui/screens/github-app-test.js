@@ -1,4 +1,5 @@
 import { escapeHtml, pageShell, primaryButton, secondaryButton } from "../lib/ui.js";
+import { getNoticeBadgeText } from "../app/status-feedback.js";
 
 function renderStatus(state) {
   if (!state.message) {
@@ -155,10 +156,14 @@ function renderConfigCard(testState) {
 export function renderGithubAppTestScreen(state) {
   const testState = state.githubAppTest;
   const installDisabled = testState.configStatus !== "ready";
+  const offlineMode = state.offline?.isEnabled === true;
 
   return pageShell({
     title: "GitHub App Auth Test",
     pageSync: state.pageSync,
+    noticeText: getNoticeBadgeText(),
+    offlineMode,
+    offlineReconnectState: state.offline?.reconnecting === true,
     body: `
       <section class="stack">
         <article class="card card--hero github-app-test-hero">
@@ -169,8 +174,8 @@ export function renderGithubAppTestScreen(state) {
               This test harness proves the desktop app can start the GitHub App installation in the browser, receive the installation callback locally, and query GitHub through your DigitalOcean service instead of embedding the app private key in Tauri.
             </p>
             <div class="hero-actions">
-              ${primaryButton("Install GitHub App", installDisabled ? "noop" : "start-github-app-test-install")}
-              ${secondaryButton("Reload config", "reload-github-app-test-config")}
+              ${primaryButton("Install GitHub App", installDisabled ? "noop" : "start-github-app-test-install", { disabled: offlineMode || installDisabled })}
+              ${secondaryButton("Reload config", "reload-github-app-test-config", { disabled: offlineMode })}
             </div>
             ${renderStatus(testState)}
           </div>

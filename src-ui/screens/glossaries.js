@@ -1,5 +1,6 @@
 import { glossaries } from "../lib/data.js";
 import { navButton, pageShell, primaryButton, textAction } from "../lib/ui.js";
+import { getNoticeBadgeText } from "../app/status-feedback.js";
 
 export function renderGlossariesScreen(state) {
   return pageShell({
@@ -11,6 +12,9 @@ export function renderGlossariesScreen(state) {
     ],
     tools: `${textAction("Upload", "noop")} ${primaryButton("+ New Glossary", "noop")}`,
     pageSync: state.pageSync,
+    noticeText: getNoticeBadgeText(),
+    offlineMode: state.offline?.isEnabled === true,
+    offlineReconnectState: state.offline?.reconnecting === true,
     body: `
       <section class="table-card">
         <div class="table-card__header glossary-list glossary-list--head">

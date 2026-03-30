@@ -4,9 +4,9 @@ import {
   loadStoredAuthSession,
   saveStoredAuthSession,
 } from "./auth-storage.js";
-import { resetSessionState, state } from "./state.js";
-
-const AUTH_REQUIRED_PREFIX = "AUTH_REQUIRED:";
+import { state } from "./state.js";
+import { classifySyncError } from "./sync-error.js";
+import { handleSyncFailure } from "./sync-recovery.js";
 
 function setAuthState(nextAuth, render) {
   state.auth = {
@@ -26,30 +26,11 @@ export function requireBrokerSession() {
 }
 
 export function isBrokerAuthExpiredError(error) {
-  const message = error?.message ?? String(error ?? "");
-  return (
-    message.startsWith(AUTH_REQUIRED_PREFIX) ||
-    message === "Unauthorized" ||
-    message.includes("Your GitHub session expired")
-  );
+  return classifySyncError(error).type === "auth_invalid";
 }
 
 export async function handleBrokerAuthExpired(render, error) {
-  if (!isBrokerAuthExpiredError(error)) {
-    return false;
-  }
-
-  await clearStoredAuthSession();
-  resetSessionState();
-  state.auth = {
-    status: "expired",
-    message:
-      "Your GitHub session expired. Please log in with GitHub again to continue.",
-    session: null,
-  };
-  state.screen = "start";
-  render();
-  return true;
+  return handleSyncFailure(classifySyncError(error), { render });
 }
 
 export function applyBrokerAuthResult(payload, render, loadUserTeams) {
