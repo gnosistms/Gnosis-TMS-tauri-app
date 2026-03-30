@@ -55,6 +55,8 @@ function getStepConfig(setup) {
       heading: "Create A New Team",
       supporting:
         'To create a new team, you need to set up an "Organization" on GitHub. Click below to go to the setup page. Then follow these instructions:',
+      afterBodySupporting:
+        'After you click <strong>Next</strong> on GitHub, come back here for step 2.',
       body: renderGuideStep(),
       actionButton: primaryButton("Open GitHub Organization Setup", "begin-team-org-setup"),
     };
@@ -65,6 +67,7 @@ function getStepConfig(setup) {
       eyebrow: "STEP 2 OF 3",
       heading: "Install The GitHub App",
       supporting: "Now install the Gnosis TMS GitHub App on the organization you just created.",
+      afterBodySupporting: "",
       body: renderInstallSummary(),
       actionButton: primaryButton("Install Gnosis TMS GitHub App", "begin-github-app-install"),
     };
@@ -76,6 +79,7 @@ function getStepConfig(setup) {
       heading: "Waiting For Installation",
       supporting:
         "Complete the installation in GitHub. We will use the installation callback to identify the organization.",
+      afterBodySupporting: "",
       body: renderWaitingSummary(),
       actionButton: secondaryButton("Waiting for GitHub...", "noop"),
     };
@@ -86,6 +90,7 @@ function getStepConfig(setup) {
     heading: "Return To Gnosis TMS",
     supporting:
       "GitHub organization creation and GitHub App installation both happen in the browser. Once installation is complete, finish setup here.",
+    afterBodySupporting: "",
     body: renderFinishSummary(),
     actionButton: primaryButton("Finish setting up your organization", "finish-team-setup"),
   };
@@ -97,9 +102,12 @@ export function renderSetupModal(state) {
     return "";
   }
 
-  const { eyebrow, heading, supporting, body, actionButton } = getStepConfig(setup);
+  const { eyebrow, heading, supporting, afterBodySupporting, body, actionButton } = getStepConfig(setup);
   const errorMarkup = setup.error
     ? `<p class="modal__error">${escapeHtml(setup.error)}</p>`
+    : "";
+  const afterBodyMarkup = afterBodySupporting
+    ? `<p class="modal__supporting">${afterBodySupporting}</p>`
     : "";
 
   return `
@@ -110,6 +118,7 @@ export function renderSetupModal(state) {
           <h2 class="modal__title">${heading}</h2>
           <p class="modal__supporting">${supporting}</p>
           <div class="modal__form">${body}</div>
+          ${afterBodyMarkup}
           ${errorMarkup}
           <div class="modal__actions">
             ${secondaryButton("Cancel", "cancel-team-setup")}
