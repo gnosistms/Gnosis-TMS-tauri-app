@@ -4,6 +4,7 @@
   width: 100%;
   margin: 0;
   overflow: auto;
+  overscroll-behavior: none;
   padding: 0 0 44px;
 }
 
