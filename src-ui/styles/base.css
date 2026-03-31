@@ -192,7 +192,7 @@ a {
   align-items: start;
   gap: 24px;
   position: relative;
-  padding: 18px 22px 20px;
+  padding: 18px 30px 20px;
   border-bottom: 1px solid rgba(164, 112, 41, 0.12);
   background: var(--panel-surface);
   box-shadow:
