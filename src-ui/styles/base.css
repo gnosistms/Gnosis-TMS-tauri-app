@@ -196,12 +196,10 @@ a {
   position: relative;
   padding: 18px 30px 20px;
   border-bottom: 1px solid rgba(164, 112, 41, 0.12);
-  background: var(--panel-surface);
+  background: #fcf5e6;
   box-shadow:
     0 12px 26px rgba(131, 82, 22, 0.06),
     inset 0 1px 0 rgba(255, 255, 255, 0.46);
-  backdrop-filter: blur(16px) saturate(120%);
-  -webkit-backdrop-filter: blur(16px) saturate(120%);
 }
 
 .page-header::after {
