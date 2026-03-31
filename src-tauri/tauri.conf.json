@@ -18,6 +18,7 @@
         "width": 1400,
         "height": 820,
         "resizable": true,
+        "backgroundColor": "#F3D58A",
         "titleBarStyle": "Transparent"
       }
     ]
