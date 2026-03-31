@@ -182,7 +182,7 @@ a {
 .page-header {
   flex: 0 0 auto;
   width: 100%;
-  margin: 0 0 24px;
+  margin: 0;
   min-height: var(--header-height);
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
