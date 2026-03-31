@@ -188,7 +188,34 @@ a {
   grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
   align-items: center;
   gap: 20px;
-  border-bottom: 1px solid rgba(164, 112, 41, 0.12);
+  position: relative;
+  padding: 18px 22px 20px;
+  border: 1px solid rgba(164, 112, 41, 0.12);
+  border-radius: 28px;
+  background:
+    linear-gradient(180deg, rgba(255, 250, 244, 0.68) 0%, rgba(255, 246, 232, 0.54) 100%),
+    rgba(255, 251, 246, 0.36);
+  box-shadow:
+    0 18px 34px rgba(131, 82, 22, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.46);
+  backdrop-filter: blur(16px) saturate(120%);
+  -webkit-backdrop-filter: blur(16px) saturate(120%);
+}
+
+.page-header::after {
+  content: "";
+  position: absolute;
+  left: 22px;
+  right: 22px;
+  bottom: 0;
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    rgba(164, 112, 41, 0.02) 0%,
+    rgba(164, 112, 41, 0.16) 18%,
+    rgba(164, 112, 41, 0.16) 82%,
+    rgba(164, 112, 41, 0.02) 100%
+  );
 }
 
 .page-header__nav,
