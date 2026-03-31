@@ -199,7 +199,7 @@ a {
   background:
     radial-gradient(circle at top left, rgba(251, 242, 226, 0.96) 0%, rgba(251, 242, 226, 0) 46%),
     radial-gradient(circle at top right, rgba(251, 242, 226, 0.92) 0%, rgba(251, 242, 226, 0) 44%),
-    radial-gradient(circle at bottom left, rgba(251, 240, 214, 0.54) 0%, rgba(251, 240, 214, 0) 50%),
+    radial-gradient(circle at bottom left, rgba(250, 237, 201, 0.54) 0%, rgba(250, 237, 201, 0) 50%),
     radial-gradient(circle at bottom right, rgba(251, 242, 226, 0.72) 0%, rgba(251, 242, 226, 0) 48%),
     #fbf2e2;
   box-shadow: 0 12px 26px rgba(131, 82, 22, 0.06);
