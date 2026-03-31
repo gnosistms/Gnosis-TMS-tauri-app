@@ -20,7 +20,7 @@
         "visible": true,
         "backgroundThrottling": "disabled",
         "resizable": true,
-        "backgroundColor": "#FAF0DD",
+        "backgroundColor": "#FBF0DF",
         "titleBarStyle": "Transparent"
       }
     ]
