@@ -14,7 +14,6 @@ export default defineConfig({
     rollupOptions: {
       input: {
         main: resolve(__dirname, "src-ui/index.html"),
-        splashscreen: resolve(__dirname, "src-ui/splashscreen.html"),
       },
     },
   },

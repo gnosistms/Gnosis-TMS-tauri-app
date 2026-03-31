@@ -17,22 +17,9 @@
         "title": "Gnosis TMS",
         "width": 1400,
         "height": 820,
-        "visible": false,
+        "visible": true,
         "backgroundThrottling": "disabled",
         "resizable": true,
-        "backgroundColor": "#F3D58A",
-        "titleBarStyle": "Transparent"
-      },
-      {
-        "label": "splashscreen",
-        "title": "Gnosis TMS",
-        "url": "splashscreen.html",
-        "width": 540,
-        "height": 300,
-        "center": true,
-        "resizable": false,
-        "maximizable": false,
-        "minimizable": false,
         "backgroundColor": "#F3D58A",
         "titleBarStyle": "Transparent"
       }
