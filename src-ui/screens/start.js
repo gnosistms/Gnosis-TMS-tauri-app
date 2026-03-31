@@ -49,9 +49,8 @@ export function renderStartScreen(state) {
             <p class="card__eyebrow">PAZ INVERENCIAL!</p>
             <h1 class="card__title">Gnosis TMS</h1>
             <p class="card__subtitle">
-              Sign in with GitHub to authenticate to the Gnosis TMS broker. The
-              broker will then use the installed GitHub App to manage your
-              organization data safely.
+              Sign in with your GitHub account. If you don't have one yet, you
+              will be invited to create one before signing in.
             </p>
             <div class="hero-actions">
               ${primaryButton(buttonLabel, "login-with-github")}
