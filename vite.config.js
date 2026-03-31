@@ -1,4 +1,5 @@
 import { defineConfig } from "vite";
+import { resolve } from "node:path";
 
 export default defineConfig({
   root: "src-ui",
@@ -10,5 +11,11 @@ export default defineConfig({
   build: {
     outDir: "../dist",
     emptyOutDir: true,
+    rollupOptions: {
+      input: {
+        main: resolve(__dirname, "src-ui/index.html"),
+        splashscreen: resolve(__dirname, "src-ui/splashscreen.html"),
+      },
+    },
   },
 });

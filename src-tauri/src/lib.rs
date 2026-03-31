@@ -61,6 +61,19 @@ fn check_internet_connection() -> bool {
     .unwrap_or(false)
 }
 
+#[tauri::command]
+fn app_ready(app: tauri::AppHandle) {
+  if let Some(splashscreen) = app.get_webview_window("splashscreen") {
+    let _ = splashscreen.close();
+  }
+
+  if let Some(window) = app.get_webview_window("main") {
+    let _ = window.show();
+    let _ = window.unminimize();
+    let _ = window.set_focus();
+  }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
   tauri::Builder::default()
@@ -71,6 +84,7 @@ pub fn run() {
     .plugin(tauri_plugin_opener::init())
     .invoke_handler(tauri::generate_handler![
       ping,
+      app_ready,
       check_internet_connection,
       begin_broker_auth,
       inspect_broker_auth_session,
@@ -100,8 +114,10 @@ pub fn run() {
     ])
     .setup(|app| {
       #[cfg(target_os = "macos")]
-      if let Some(window) = app.get_webview_window("main") {
-        let _ = window.set_background_color(Some(MAIN_WINDOW_BACKGROUND));
+      for label in ["main", "splashscreen"] {
+        if let Some(window) = app.get_webview_window(label) {
+          let _ = window.set_background_color(Some(MAIN_WINDOW_BACKGROUND));
+        }
       }
 
       let app_handle = app.handle().clone();

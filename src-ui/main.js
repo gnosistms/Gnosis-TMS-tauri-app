@@ -10,7 +10,7 @@ import {
 } from "./app/github-app-test-flow.js";
 import { loadUserTeams, setGithubAppInstallation } from "./app/team-setup-flow.js";
 import { initializeConnectivity } from "./app/offline-connectivity.js";
-import { app } from "./app/runtime.js";
+import { app, invoke, waitForNextPaint } from "./app/runtime.js";
 import { state } from "./app/state.js";
 import { renderGithubAppTestScreen } from "./screens/github-app-test.js";
 import { renderConnectionFailureModal } from "./screens/connection-failure-modal.js";
@@ -103,6 +103,28 @@ function render() {
   document.title = titles[state.screen] ?? "Gnosis TMS";
 }
 
+let hasSignaledAppReady = false;
+
+async function notifyAppReady() {
+  if (hasSignaledAppReady) {
+    return;
+  }
+
+  if (!invoke) {
+    window.setTimeout(() => void notifyAppReady(), 50);
+    return;
+  }
+
+  await waitForNextPaint();
+
+  try {
+    await invoke("app_ready");
+    hasSignaledAppReady = true;
+  } catch (_error) {
+    window.setTimeout(() => void notifyAppReady(), 50);
+  }
+}
+
 window.__gnosisDebug = {
   showStartAuthMessage(message, status = "expired") {
     state.screen = "start";
@@ -124,4 +146,5 @@ void registerGithubAppInstallListener(render, setGithubAppInstallation);
 void registerGithubAppTestListener(render);
 void loadGithubAppTestConfig(render);
 render();
+void notifyAppReady();
 void initializeConnectivity(render, () => restoreStoredBrokerSession(render, loadUserTeams));
