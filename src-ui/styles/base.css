@@ -403,7 +403,7 @@ a {
 
 .search-field {
   min-width: 340px;
-  height: 52px;
+  height: 42px;
   display: inline-flex;
   align-items: center;
   gap: 12px;
