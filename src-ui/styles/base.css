@@ -407,7 +407,6 @@ a {
 .start-message-card--expired {
   background: rgba(255, 244, 224, 0.85);
   border-color: rgba(226, 190, 118, 0.52);
-  border-width: 2px;
 }
 
 .start-message-card--error {
