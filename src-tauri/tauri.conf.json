@@ -17,7 +17,6 @@
         "title": "Gnosis TMS",
         "width": 1400,
         "height": 820,
-        "visible": false,
         "resizable": true,
         "backgroundColor": "#F3D58A",
         "titleBarStyle": "Transparent"
