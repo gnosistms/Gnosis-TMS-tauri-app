@@ -20,7 +20,7 @@
 
 @media (max-width: 900px) {
   .screen--page {
-    padding: 18px 14px 0;
+    padding: 0;
   }
 
   .page-body {

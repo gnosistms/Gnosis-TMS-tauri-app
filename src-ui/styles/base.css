@@ -159,12 +159,12 @@ a {
   height: 100vh;
   min-height: 100vh;
   overflow: hidden;
-  padding: 22px 20px 0;
+  padding: 0;
 }
 
 .offline-banner {
   width: min(var(--page-width), 100%);
-  margin: 0 auto 14px;
+  margin: 18px auto 14px;
   min-height: 42px;
   display: flex;
   align-items: center;
