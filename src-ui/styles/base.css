@@ -62,8 +62,9 @@
   --accent-text: #fff8ed;
   --link: #c97a12;
   --link-hover: #d7963f;
-  --radius-card: 26px;
-  --radius-control: 18px;
+  --radius-ui: 18px;
+  --radius-card: var(--radius-ui);
+  --radius-control: var(--radius-ui);
   --header-height: 104px;
   --page-width: 1480px;
   --heading-letter-spacing: -0.015em;
@@ -174,7 +175,7 @@ a {
   justify-content: space-between;
   gap: 16px;
   padding: 8px 14px 8px 18px;
-  border-radius: 16px;
+  border-radius: var(--radius-ui);
   background: rgba(255, 242, 204, 0.92);
   border: 1px solid rgba(201, 122, 18, 0.18);
   color: var(--text);
