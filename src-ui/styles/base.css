@@ -52,7 +52,7 @@
   --surface-border: rgba(164, 112, 41, 0.16);
   --surface-shadow: 0 18px 40px rgba(131, 82, 22, 0.14);
   --panel-surface:
-    linear-gradient(180deg, rgba(255, 250, 244, 0.68) 0%, rgba(255, 246, 232, 0.54) 100%),
+    linear-gradient(180deg, rgba(255, 250, 244, 0.68) 0%, rgba(255, 246, 232, 0.33) 100%),
     rgba(255, 251, 246, 0.36);
   --text: #3f2610;
   --muted: #a36e34;
@@ -199,7 +199,7 @@ a {
   background: linear-gradient(
     180deg,
     rgba(251, 242, 226, 1) 0%,
-    rgba(251, 242, 226, 0.85) 100%
+    rgba(251, 242, 226, 0.53) 100%
   );
   box-shadow: 0 12px 26px rgba(131, 82, 22, 0.06);
 }
