@@ -246,7 +246,7 @@ a {
 }
 
 .page-header__left-tools .search-field {
-  min-width: min(480px, 100%);
+  min-width: min(336px, 100%);
 }
 
 .page-header__tools {
