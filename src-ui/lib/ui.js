@@ -129,6 +129,7 @@ export function pageShell({
   title,
   navButtons = [],
   tools = "",
+  leftTools = "",
   body = "",
   pageSync = { status: "idle" },
   syncBadgeText = "",
@@ -155,7 +156,10 @@ export function pageShell({
           : ""
       }
       <header class="page-header">
-        <div class="page-header__nav">${navButtons.join("")}</div>
+        <div class="page-header__left">
+          <div class="page-header__nav">${navButtons.join("")}</div>
+          ${leftTools ? `<div class="page-header__left-tools">${leftTools}</div>` : ""}
+        </div>
         <div class="page-header__title-wrap">
           <h1 class="page-header__title">${escapeHtml(title)}</h1>
           ${renderPageSubtitle(pageSync, offlineMode)}
