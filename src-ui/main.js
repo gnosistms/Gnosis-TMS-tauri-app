@@ -10,7 +10,7 @@ import {
 } from "./app/github-app-test-flow.js";
 import { loadUserTeams, setGithubAppInstallation } from "./app/team-setup-flow.js";
 import { initializeConnectivity } from "./app/offline-connectivity.js";
-import { app, invoke, waitForNextPaint } from "./app/runtime.js";
+import { app, invoke } from "./app/runtime.js";
 import { state } from "./app/state.js";
 import { renderGithubAppTestScreen } from "./screens/github-app-test.js";
 import { renderConnectionFailureModal } from "./screens/connection-failure-modal.js";
@@ -115,7 +115,7 @@ async function notifyAppReady() {
     return;
   }
 
-  await waitForNextPaint();
+  await new Promise((resolve) => window.setTimeout(resolve, 0));
 
   try {
     await invoke("app_ready");
