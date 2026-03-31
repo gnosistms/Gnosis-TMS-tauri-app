@@ -204,22 +204,6 @@ a {
   box-shadow: 0 12px 26px rgba(131, 82, 22, 0.06);
 }
 
-.page-header::after {
-  content: "";
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  height: 1px;
-  background: linear-gradient(
-    90deg,
-    rgba(164, 112, 41, 0.02) 0%,
-    rgba(164, 112, 41, 0.16) 18%,
-    rgba(164, 112, 41, 0.16) 82%,
-    rgba(164, 112, 41, 0.02) 100%
-  );
-}
-
 .page-header__left {
   min-width: 0;
   display: grid;
