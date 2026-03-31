@@ -115,7 +115,7 @@ async function notifyAppReady() {
     return;
   }
 
-  await new Promise((resolve) => window.setTimeout(resolve, 0));
+  await new Promise((resolve) => window.setTimeout(resolve, 250));
 
   try {
     await invoke("app_ready");
