@@ -29,9 +29,7 @@ export function renderStartScreen(state) {
   const isBusy = auth.status === "launching" || auth.status === "waiting";
   const buttonLabel = isBusy
     ? "Waiting for GitHub..."
-    : auth.status === "expired"
-      ? "Log in with GitHub again"
-      : "Log in with GitHub";
+    : "Log in with GitHub";
   const statusMarkup = auth.message
     ? `
       <article class="card start-message-card start-message-card--${auth.status ?? "idle"}">
