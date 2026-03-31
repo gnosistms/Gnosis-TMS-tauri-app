@@ -19,7 +19,11 @@
 
 @media (max-width: 900px) {
   .screen--page {
-    padding: 18px 18px 36px;
+    padding: 18px 14px 36px;
+  }
+
+  .page-body {
+    padding: 18px 22px 28px;
   }
 
   .card--hero .card__body,
