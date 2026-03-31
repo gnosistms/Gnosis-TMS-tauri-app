@@ -147,6 +147,12 @@ a {
   padding: 36px;
 }
 
+.start-stack {
+  width: min(860px, 100%);
+  display: grid;
+  gap: 18px;
+}
+
 .screen--page {
   display: flex;
   flex-direction: column;
@@ -387,8 +393,17 @@ a {
 }
 
 .card--hero {
-  width: min(860px, 100%);
+  width: 100%;
   margin-inline: auto;
+}
+
+.start-message-card {
+  width: 100%;
+  margin-inline: auto;
+}
+
+.start-message-card .card__body {
+  padding: 20px 24px;
 }
 
 .card--empty {
@@ -443,10 +458,10 @@ a {
 }
 
 .auth-status {
-  padding: 14px 18px;
-  border-radius: 18px;
-  border: 1px solid rgba(164, 112, 41, 0.16);
-  background: rgba(255, 251, 246, 0.72);
+  padding: 0;
+  border-radius: 0;
+  border: 0;
+  background: transparent;
 }
 
 .auth-status--launching,

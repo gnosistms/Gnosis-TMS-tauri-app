@@ -11,14 +11,16 @@ export function renderStartScreen(state) {
 
     return `
       <main class="screen screen--start">
-        <article class="card card--hero">
-          <div class="card__body">
-            <p class="card__eyebrow">GNOSIS TMS</p>
-            <h1 class="card__title">No internet connection</h1>
-            <p class="card__subtitle">${offlineMessage}</p>
-            ${offlineAction}
-          </div>
-        </article>
+        <div class="start-stack">
+          <article class="card card--hero">
+            <div class="card__body">
+              <p class="card__eyebrow">GNOSIS TMS</p>
+              <h1 class="card__title">No internet connection</h1>
+              <p class="card__subtitle">${offlineMessage}</p>
+              ${offlineAction}
+            </div>
+          </article>
+        </div>
       </main>
     `;
   }
@@ -31,26 +33,34 @@ export function renderStartScreen(state) {
       ? "Log in with GitHub again"
       : "Log in with GitHub";
   const statusMarkup = auth.message
-    ? `<p class="card__supporting auth-status auth-status--${auth.status ?? "idle"}">${auth.message}</p>`
+    ? `
+      <article class="card start-message-card">
+        <div class="card__body">
+          <p class="card__supporting auth-status auth-status--${auth.status ?? "idle"}">${auth.message}</p>
+        </div>
+      </article>
+    `
     : "";
 
   return `
     <main class="screen screen--start">
-      <article class="card card--hero">
-        <div class="card__body">
-          <p class="card__eyebrow">INVERENCIAL PEACE!</p>
-          <h1 class="card__title">Gnosis TMS</h1>
-          <p class="card__subtitle">
-            Sign in with GitHub to authenticate to the Gnosis TMS broker. The
-            broker will then use the installed GitHub App to manage your
-            organization data safely.
-          </p>
-          <div class="hero-actions">
-            ${primaryButton(buttonLabel, "login-with-github")}
+      <div class="start-stack">
+        ${statusMarkup}
+        <article class="card card--hero">
+          <div class="card__body">
+            <p class="card__eyebrow">INVERENCIAL PEACE!</p>
+            <h1 class="card__title">Gnosis TMS</h1>
+            <p class="card__subtitle">
+              Sign in with GitHub to authenticate to the Gnosis TMS broker. The
+              broker will then use the installed GitHub App to manage your
+              organization data safely.
+            </p>
+            <div class="hero-actions">
+              ${primaryButton(buttonLabel, "login-with-github")}
+            </div>
           </div>
-          ${statusMarkup}
-        </div>
-      </article>
+        </article>
+      </div>
     </main>
   `;
 }
