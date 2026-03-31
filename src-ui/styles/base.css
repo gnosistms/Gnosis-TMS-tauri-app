@@ -181,8 +181,8 @@ a {
 
 .page-header {
   flex: 0 0 auto;
-  width: min(var(--page-width), 100%);
-  margin: 0 auto 24px;
+  width: 100%;
+  margin: 0 0 24px;
   min-height: var(--header-height);
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
@@ -190,13 +190,12 @@ a {
   gap: 20px;
   position: relative;
   padding: 18px 22px 20px;
-  border: 1px solid rgba(164, 112, 41, 0.12);
-  border-radius: 28px;
+  border-bottom: 1px solid rgba(164, 112, 41, 0.12);
   background:
     linear-gradient(180deg, rgba(255, 250, 244, 0.68) 0%, rgba(255, 246, 232, 0.54) 100%),
     rgba(255, 251, 246, 0.36);
   box-shadow:
-    0 18px 34px rgba(131, 82, 22, 0.08),
+    0 12px 26px rgba(131, 82, 22, 0.06),
     inset 0 1px 0 rgba(255, 255, 255, 0.46);
   backdrop-filter: blur(16px) saturate(120%);
   -webkit-backdrop-filter: blur(16px) saturate(120%);
@@ -205,8 +204,8 @@ a {
 .page-header::after {
   content: "";
   position: absolute;
-  left: 22px;
-  right: 22px;
+  left: 0;
+  right: 0;
   bottom: 0;
   height: 1px;
   background: linear-gradient(
