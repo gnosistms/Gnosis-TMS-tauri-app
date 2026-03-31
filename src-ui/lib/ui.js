@@ -82,14 +82,6 @@ export function sectionSeparator({ label, action, isOpen = false }) {
   `;
 }
 
-function renderPageSubtitle(pageSync = { status: "idle" }, offlineMode = false) {
-  return `
-    <div class="page-header__subtitle" aria-live="polite">
-      <button class="page-header__subtitle-link${offlineMode ? " is-disabled" : ""}" data-action="check-for-updates"${disabledActionAttributes({ disabled: offlineMode })}>Update</button>
-    </div>
-  `;
-}
-
 function renderStatusBadge(text) {
   if (!text) {
     return "";
@@ -162,7 +154,6 @@ export function pageShell({
         </div>
         <div class="page-header__title-wrap">
           <h1 class="page-header__title">${escapeHtml(title)}</h1>
-          ${renderPageSubtitle(pageSync, offlineMode)}
         </div>
         <div class="page-header__tools">${tools}</div>
       </header>

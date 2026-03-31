@@ -196,12 +196,11 @@ a {
   position: relative;
   padding: 18px 30px 20px;
   border-bottom: 1px solid rgba(164, 112, 41, 0.12);
-  background:
-    radial-gradient(circle at top left, rgba(251, 242, 226, 1) 0%, rgba(251, 242, 226, 0) 46%),
-    radial-gradient(circle at top right, rgba(251, 242, 226, 1) 0%, rgba(251, 242, 226, 0) 44%),
-    radial-gradient(circle at bottom left, rgba(250, 237, 201, 1) 0%, rgba(250, 237, 201, 0) 50%),
-    radial-gradient(circle at bottom right, rgba(0, 0, 0, 1) 0%, rgba(0, 0, 0, 0) 48%),
-    #fbf2e2;
+  background: linear-gradient(
+    180deg,
+    rgba(251, 242, 226, 1) 0%,
+    rgba(251, 242, 226, 0.85) 100%
+  );
   box-shadow: 0 12px 26px rgba(131, 82, 22, 0.06);
 }
 
@@ -273,29 +272,10 @@ a {
   white-space: nowrap;
 }
 
-.page-header__subtitle {
-  min-height: 24px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 10px;
-  color: rgba(124, 103, 78, 0.82);
-  font-size: 0.98rem;
-  font-weight: 600;
-}
-
-.page-header__subtitle-link {
-  border: 0;
-  background: transparent;
-  padding: 0;
-  text-decoration: none;
-}
-
 .button.is-disabled,
 .header-nav__button.is-disabled,
 .text-action.is-disabled,
-.text-link.is-disabled,
-.page-header__subtitle-link.is-disabled {
+.text-link.is-disabled {
   opacity: 0.46;
   cursor: not-allowed;
 }
@@ -303,15 +283,13 @@ a {
 .button.is-disabled:hover,
 .header-nav__button.is-disabled:hover,
 .text-action.is-disabled:hover,
-.text-link.is-disabled:hover,
-.page-header__subtitle-link.is-disabled:hover {
+.text-link.is-disabled:hover {
   color: inherit;
 }
 
 .header-nav__button,
 .text-action,
-.text-link,
-.page-header__subtitle-link {
+.text-link {
   border: 0;
   background: transparent;
   padding: 0;
@@ -323,8 +301,7 @@ a {
 
 .header-nav__button:hover,
 .text-action:hover,
-.text-link:hover,
-.page-header__subtitle-link:hover {
+.text-link:hover {
   color: var(--link-hover);
 }
 
