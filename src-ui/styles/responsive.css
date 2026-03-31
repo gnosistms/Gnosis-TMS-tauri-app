@@ -9,6 +9,10 @@
     width: 100%;
   }
 
+  .page-header__nav {
+    padding-left: 0;
+  }
+
   .page-header__title-wrap {
     justify-content: flex-start;
   }

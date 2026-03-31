@@ -65,6 +65,7 @@
   --radius-ui: 18px;
   --radius-card: var(--radius-ui);
   --radius-control: var(--radius-ui);
+  --header-text-inset: 32px;
   --header-height: 104px;
   --page-width: 1480px;
   --heading-letter-spacing: -0.015em;
@@ -232,6 +233,10 @@ a {
   align-items: center;
   gap: 14px;
   min-width: 0;
+}
+
+.page-header__nav {
+  padding-left: var(--header-text-inset);
 }
 
 .page-header__left-tools {
