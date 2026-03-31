@@ -287,14 +287,7 @@ a {
   border: 0;
   background: transparent;
   padding: 0;
-  color: var(--link);
-  font-size: 0.98rem;
-  font-weight: 700;
   text-decoration: none;
-}
-
-.page-header__subtitle-link:hover {
-  color: var(--link-hover);
 }
 
 .button.is-disabled,
@@ -316,7 +309,8 @@ a {
 
 .header-nav__button,
 .text-action,
-.text-link {
+.text-link,
+.page-header__subtitle-link {
   border: 0;
   background: transparent;
   padding: 0;
@@ -328,7 +322,8 @@ a {
 
 .header-nav__button:hover,
 .text-action:hover,
-.text-link:hover {
+.text-link:hover,
+.page-header__subtitle-link:hover {
   color: var(--link-hover);
 }
 
