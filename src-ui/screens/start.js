@@ -34,7 +34,7 @@ export function renderStartScreen(state) {
       : "Log in with GitHub";
   const statusMarkup = auth.message
     ? `
-      <article class="card start-message-card">
+      <article class="card start-message-card start-message-card--${auth.status ?? "idle"}">
         <div class="card__body">
           <p class="card__supporting auth-status auth-status--${auth.status ?? "idle"}">${auth.message}</p>
         </div>

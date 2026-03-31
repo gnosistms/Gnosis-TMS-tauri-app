@@ -402,6 +402,18 @@ a {
   margin-inline: auto;
 }
 
+.start-message-card--launching,
+.start-message-card--waiting,
+.start-message-card--expired {
+  background: rgba(255, 244, 224, 0.85);
+  border-color: rgba(226, 190, 118, 0.52);
+}
+
+.start-message-card--error {
+  background: rgba(255, 234, 230, 0.92);
+  border-color: rgba(208, 135, 110, 0.48);
+}
+
 .start-message-card .card__body {
   padding: 20px 24px;
 }
@@ -468,12 +480,10 @@ a {
 .auth-status--waiting,
 .auth-status--expired {
   color: #8a5b17;
-  background: rgba(255, 244, 224, 0.85);
 }
 
 .auth-status--error {
   color: #a54024;
-  background: rgba(255, 234, 230, 0.92);
 }
 
 .hero-link {
