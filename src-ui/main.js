@@ -102,6 +102,22 @@ function render() {
   restoreFocusedInputState(focusSnapshot);
   document.title = titles[state.screen] ?? "Gnosis TMS";
 }
+
+window.__gnosisDebug = {
+  showStartAuthMessage(message, status = "expired") {
+    state.screen = "start";
+    state.auth.status = status;
+    state.auth.message = message;
+    render();
+  },
+  clearStartAuthMessage() {
+    state.screen = "start";
+    state.auth.status = "idle";
+    state.auth.message = "";
+    render();
+  },
+};
+
 registerAppEvents(render);
 void registerBrokerAuthListener(render, loadUserTeams);
 void registerGithubAppInstallListener(render, setGithubAppInstallation);

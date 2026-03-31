@@ -48,7 +48,7 @@ export function renderStartScreen(state) {
         ${statusMarkup}
         <article class="card card--hero">
           <div class="card__body">
-            <p class="card__eyebrow">INVERENCIAL PEACE!</p>
+            <p class="card__eyebrow">PAZ INVERENCIAL!</p>
             <h1 class="card__title">Gnosis TMS</h1>
             <p class="card__subtitle">
               Sign in with GitHub to authenticate to the Gnosis TMS broker. The
