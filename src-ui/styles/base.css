@@ -282,7 +282,9 @@ a {
 .header-nav__button.is-disabled:hover,
 .text-action.is-disabled:hover,
 .text-link.is-disabled:hover {
-  color: var(--link-disabled-hover);
+  color: inherit;
+  transform: none;
+  box-shadow: none;
 }
 
 .header-nav__button,
@@ -350,12 +352,10 @@ a {
 .button:disabled {
   cursor: default;
   opacity: 0.58;
-  box-shadow: none;
 }
 
 .button--primary:disabled {
   background: rgba(215, 176, 120, 0.65);
-  color: rgba(255, 248, 237, 0.9);
 }
 
 .button--secondary:disabled {

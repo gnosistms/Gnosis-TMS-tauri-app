@@ -70,8 +70,8 @@ function normalizeTeamRecord(team) {
       typeof team.description === "string" ? team.description : null,
     membershipRole,
     canDelete: team.canDelete === true,
-    canManageProjects:
-      team.canManageProjects === true || (membershipRole === "admin" && team.canLeave !== false),
+    canManageMembers: team.canManageMembers === true || team.canDelete === true,
+    canManageProjects: team.canManageProjects === true || team.canDelete === true,
     canLeave: team.canLeave !== false,
     installationId:
       Number.isFinite(team.installationId) ? team.installationId : null,

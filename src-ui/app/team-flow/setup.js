@@ -59,6 +59,11 @@ export async function finishTeamSetup(render) {
       installationId: state.teamSetup.githubAppInstallationId,
       sessionToken: requireBrokerSession(),
     });
+    await invoke("setup_organization_for_installation", {
+      installationId: installation.installationId,
+      orgLogin: installation.accountLogin,
+      sessionToken: requireBrokerSession(),
+    });
     await invoke("ensure_gnosis_repo_properties_schema", {
       installationId: installation.installationId,
       orgLogin: installation.accountLogin,

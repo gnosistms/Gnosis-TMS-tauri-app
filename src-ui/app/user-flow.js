@@ -7,14 +7,6 @@ import { handleSyncFailure } from "./sync-recovery.js";
 let inviteUserSearchTimeout = null;
 let inviteUserSearchVersion = 0;
 
-function deriveUserRole(memberLogin, selectedTeam) {
-  if (memberLogin === state.auth.session?.login && selectedTeam?.canDelete) {
-    return "Owner";
-  }
-
-  return "Translator";
-}
-
 function normalizeOrganizationMember(member, selectedTeam) {
   const username = typeof member?.login === "string" && member.login.trim() ? member.login.trim() : "";
   if (!username) {
@@ -32,9 +24,17 @@ function normalizeOrganizationMember(member, selectedTeam) {
     id: username,
     name,
     username,
-    role: deriveUserRole(username, selectedTeam),
+    role:
+      typeof member?.role === "string" && member.role.trim()
+        ? member.role.trim().toLowerCase() === "owner"
+          ? "Owner"
+          : member.role.trim().toLowerCase() === "admin"
+            ? "Admin"
+            : "Translator"
+        : "Translator",
     avatarUrl: member?.avatarUrl ?? null,
     htmlUrl: member?.htmlUrl ?? null,
+    isCurrentUser,
   };
 }
 
@@ -80,6 +80,10 @@ export function primeUsersForTeam(teamId = state.selectedTeamId) {
 }
 
 export function openInviteUser(render) {
+  const selectedTeam = state.teams.find((team) => team.id === state.selectedTeamId);
+  if (selectedTeam?.canManageMembers !== true) {
+    return;
+  }
   resetInviteUser();
   state.inviteUser.isOpen = true;
   render();
@@ -208,6 +212,12 @@ export async function submitInviteUser(render) {
     return;
   }
 
+  if (selectedTeam.canManageMembers !== true) {
+    state.inviteUser.error = "Only the team owner can invite members.";
+    render();
+    return;
+  }
+
   const invitee = state.inviteUser.query.trim();
   if (!invitee) {
     state.inviteUser.error = "Enter a GitHub username.";
@@ -252,6 +262,64 @@ export async function submitInviteUser(render) {
     state.inviteUser.error = error?.message ?? String(error);
     render();
   }
+}
+
+async function updateOrganizationAdminMembership(render, username, shouldBeAdmin) {
+  const selectedTeam = state.teams.find((team) => team.id === state.selectedTeamId);
+  if (!selectedTeam?.installationId) {
+    return;
+  }
+
+  if (selectedTeam.canManageMembers !== true) {
+    state.userDiscovery = {
+      status: "error",
+      error: "Only the team owner can change admin access.",
+    };
+    render();
+    return;
+  }
+
+  try {
+    beginPageSync();
+    state.userDiscovery = { status: "loading", error: "" };
+    render();
+
+    if (shouldBeAdmin) {
+      await invoke("add_organization_admin_for_installation", {
+        installationId: selectedTeam.installationId,
+        orgLogin: selectedTeam.githubOrg,
+        username,
+        sessionToken: requireBrokerSession(),
+      });
+    } else {
+      await invoke("revoke_organization_admin_for_installation", {
+        installationId: selectedTeam.installationId,
+        orgLogin: selectedTeam.githubOrg,
+        username,
+        sessionToken: requireBrokerSession(),
+      });
+    }
+
+    await loadTeamUsers(render, selectedTeam.id);
+  } catch (error) {
+    if (await handleSyncFailure(classifySyncError(error), { render })) {
+      return;
+    }
+    state.userDiscovery = {
+      status: "error",
+      error: error?.message ?? String(error),
+    };
+    failPageSync();
+    render();
+  }
+}
+
+export async function makeOrganizationAdmin(render, username) {
+  await updateOrganizationAdminMembership(render, username, true);
+}
+
+export async function revokeOrganizationAdmin(render, username) {
+  await updateOrganizationAdminMembership(render, username, false);
 }
 
 export async function loadTeamUsers(render, teamId = state.selectedTeamId) {

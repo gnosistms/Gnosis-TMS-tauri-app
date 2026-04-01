@@ -247,6 +247,15 @@ export async function createProjectForSelectedTeam(render) {
     return;
   }
 
+  if (selectedTeam.canManageProjects !== true) {
+    state.projectDiscovery = {
+      status: "error",
+      error: "You do not have permission to create projects in this team.",
+    };
+    render();
+    return;
+  }
+
   state.projectCreation = {
     isOpen: true,
     projectName: "",
@@ -270,10 +279,20 @@ export function cancelProjectCreation(render) {
 
 export function openProjectRename(render, projectId) {
   const project = state.projects.find((item) => item.id === projectId);
+  const selectedTeam = state.teams.find((team) => team.id === state.selectedTeamId);
   if (!project) {
     state.projectDiscovery = {
       status: "error",
       error: "Could not find the selected project.",
+    };
+    render();
+    return;
+  }
+
+  if (selectedTeam?.canManageProjects !== true) {
+    state.projectDiscovery = {
+      status: "error",
+      error: "You do not have permission to rename projects in this team.",
     };
     render();
     return;
@@ -305,6 +324,12 @@ export async function submitProjectCreation(render) {
   const selectedTeam = state.teams.find((team) => team.id === state.selectedTeamId);
   if (!selectedTeam?.installationId) {
     state.projectCreation.error = "New projects currently require a GitHub App-connected team.";
+    render();
+    return;
+  }
+
+  if (selectedTeam.canManageProjects !== true) {
+    state.projectCreation.error = "You do not have permission to create projects in this team.";
     render();
     return;
   }
@@ -351,6 +376,12 @@ export async function submitProjectRename(render) {
 
   if (!selectedTeam?.installationId || !project) {
     state.projectRename.error = "Could not find the selected project.";
+    render();
+    return;
+  }
+
+  if (selectedTeam.canManageProjects !== true) {
+    state.projectRename.error = "You do not have permission to rename projects in this team.";
     render();
     return;
   }
@@ -487,7 +518,7 @@ export async function restoreProject(render, projectId) {
     return;
   }
 
-  if (selectedTeam.canManageProjects !== true) {
+  if (selectedTeam.canDelete !== true) {
     state.projectDiscovery = {
       status: "error",
       error: "You do not have permission to restore projects in this team.",
@@ -662,7 +693,7 @@ export function permanentlyDeleteProject(render, projectId) {
     return;
   }
 
-  if (selectedTeam?.canManageProjects !== true) {
+  if (selectedTeam?.canDelete !== true) {
     state.projectDiscovery = {
       status: "error",
       error: "You do not have permission to delete projects in this team.",

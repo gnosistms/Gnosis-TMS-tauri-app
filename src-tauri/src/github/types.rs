@@ -31,6 +31,7 @@ pub(crate) struct GithubAppInstallationInfo {
   pub(crate) membership_state: Option<String>,
   pub(crate) membership_role: Option<String>,
   pub(crate) can_delete: Option<bool>,
+  pub(crate) can_manage_members: Option<bool>,
   pub(crate) can_manage_projects: Option<bool>,
   pub(crate) can_leave: Option<bool>,
 }
@@ -66,6 +67,7 @@ pub(crate) struct GithubOrganizationMember {
   pub(crate) login: String,
   pub(crate) avatar_url: Option<String>,
   pub(crate) html_url: Option<String>,
+  pub(crate) role: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]

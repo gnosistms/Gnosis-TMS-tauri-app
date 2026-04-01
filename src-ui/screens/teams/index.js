@@ -15,8 +15,15 @@ import {
 
 export function renderTeamsScreen(state) {
   const offlineMode = state.offline?.isEnabled === true;
+  const session = state.auth?.session ?? null;
+  const subtitle =
+    (typeof session?.name === "string" && session.name.trim())
+    || (typeof session?.login === "string" && session.login.trim())
+    || "";
+
   return pageShell({
     title: "Translation Teams",
+    subtitle,
     navButtons: [navButton("Logout", "start")],
     tools: [primaryButton("+ New Team", "open-new-team", { disabled: offlineMode })].join(""),
     pageSync: state.pageSync,

@@ -1,17 +1,34 @@
 import { escapeHtml, navButton, pageShell, primaryButton, textAction } from "../lib/ui.js";
 import { getNoticeBadgeText } from "../app/status-feedback.js";
 import { renderInviteUserModal } from "./invite-user-modal.js";
+import { renderTeamLeaveModal } from "./teams/leave-modal.js";
 
-function renderUserCard(user) {
+function renderUserCard(user, options = {}) {
+  const canManageMembers = options.canManageMembers === true;
+  const canLeaveTeam = options.canLeaveTeam === true;
+  const selectedTeamId = options.selectedTeamId ?? "";
+  const displayName = user.isCurrentUser ? `${user.name} (me)` : user.name;
+  const actions = user.isCurrentUser
+    ? (canLeaveTeam && selectedTeamId
+        ? textAction("Leave", `open-current-team-leave:${selectedTeamId}`)
+        : "")
+    : (canManageMembers
+        ? user.role === "Translator"
+          ? textAction("Make Admin", `make-admin:${user.username}`)
+          : user.role === "Admin"
+            ? textAction("Revoke Admin", `revoke-admin:${user.username}`)
+            : ""
+        : "");
+
   return `
     <article class="card card--list-row">
       <div class="card__body list-row">
         <div class="list-row__content">
-          <h2 class="list-row__title">${escapeHtml(user.name)}</h2>
+          <h2 class="list-row__title">${escapeHtml(displayName)}</h2>
           <p class="list-row__meta">@${escapeHtml(user.username)} · ${escapeHtml(user.role)}</p>
         </div>
         <div class="list-row__actions">
-          ${textAction("Remove", "noop", { disabled: user.role === "Owner" })}
+          ${actions}
         </div>
       </div>
     </article>
@@ -21,7 +38,9 @@ function renderUserCard(user) {
 export function renderUsersScreen(state) {
   const selectedTeam = state.teams.find((team) => team.id === state.selectedTeamId) ?? state.teams[0];
   const discovery = state.userDiscovery ?? { status: "idle", error: "" };
-  const canInviteUsers = selectedTeam?.canDelete === true && !state.offline?.isEnabled;
+  const canInviteUsers = selectedTeam?.canManageMembers === true && !state.offline?.isEnabled;
+  const canManageMembers = selectedTeam?.canManageMembers === true && !state.offline?.isEnabled;
+  const canLeaveTeam = selectedTeam?.canLeave === true && selectedTeam?.canDelete !== true && !state.offline?.isEnabled;
 
   const emptyState = `
     <article class="card card--hero card--empty">
@@ -56,7 +75,11 @@ export function renderUsersScreen(state) {
           ? discovery.status === "loading"
             ? loadingState
             : emptyState
-          : `<section class="stack">${state.users.map((user) => renderUserCard(user)).join("")}</section>`;
+          : `<section class="stack">${state.users.map((user) => renderUserCard(user, {
+              canManageMembers,
+              canLeaveTeam,
+              selectedTeamId: selectedTeam?.id ?? "",
+            })).join("")}</section>`;
 
   return (
     pageShell({
@@ -74,6 +97,6 @@ export function renderUsersScreen(state) {
       offlineMode: state.offline?.isEnabled === true,
       offlineReconnectState: state.offline?.reconnecting === true,
       body,
-    }) + renderInviteUserModal(state)
+    }) + renderInviteUserModal(state) + renderTeamLeaveModal(state)
   );
 }

@@ -24,7 +24,9 @@ function renderProjectCard(project, expanded, options = {}) {
     options.actions ??
     [
       textAction("Add files", "noop", { disabled: offlineMode }),
-      textAction("Rename", `rename-project:${project.id}`, { disabled: offlineMode }),
+      canManageProjects
+        ? textAction("Rename", `rename-project:${project.id}`, { disabled: offlineMode })
+        : "",
       canManageProjects ? textAction("Delete", deleteAction, { disabled: offlineMode }) : "",
     ].filter(Boolean);
   const chapterCount = `${project.chapters.length} chapter${
@@ -96,7 +98,7 @@ function renderDeletedProjectsSection(state) {
   }
 
   const selectedTeam = state.teams.find((team) => team.id === state.selectedTeamId) ?? state.teams[0];
-  const canManageProjects = selectedTeam?.canManageProjects === true;
+  const canManageDeletedProjects = selectedTeam?.canDelete === true;
   const offlineMode = state.offline?.isEnabled === true;
 
   const toggle = renderDeletedProjectsToggle(state);
@@ -110,10 +112,10 @@ function renderDeletedProjectsSection(state) {
       <section class="stack">${state.deletedProjects
         .map((project) =>
           renderProjectCard(project, state.expandedProjects.has(project.id), {
-            canManageProjects,
+            canManageProjects: canManageDeletedProjects,
             isDeleted: true,
             offlineMode,
-            actions: canManageProjects
+            actions: canManageDeletedProjects
               ? [
                   textAction("Restore", `restore-project:${project.id}`, { disabled: offlineMode }),
                   textAction("Delete", `delete-deleted-project:${project.id}`, { disabled: offlineMode }),
@@ -192,7 +194,10 @@ export function renderProjectsScreen(state) {
       navButton("Glossaries", "glossaries"),
     ],
     leftTools: createSearchField("Search"),
-    tools: primaryButton("+ New Project", "open-new-project", { disabled: offlineMode }),
+    tools:
+      canManageProjects
+        ? primaryButton("+ New Project", "open-new-project", { disabled: offlineMode })
+        : "",
     pageSync: state.pageSync,
     syncBadgeText: getScopedSyncBadgeText("projects"),
     noticeText: getNoticeBadgeText(),

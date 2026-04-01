@@ -1,9 +1,13 @@
 import { actionSuffix, runWithImmediateLoading } from "./action-helpers.js";
+import { openTeamLeave } from "./team-flow/actions.js";
+import { state } from "./state.js";
 import {
   acknowledgeInviteUserSuccess,
   cancelInviteUser,
   editInviteUserSelection,
+  makeOrganizationAdmin,
   openInviteUser,
+  revokeOrganizationAdmin,
   selectInviteUserSuggestion,
   submitInviteUser,
 } from "./user-flow.js";
@@ -35,9 +39,34 @@ export function createUserActions(render) {
       return true;
     }
 
+    const leaveTeamId = actionSuffix(action, "open-current-team-leave:");
+    if (leaveTeamId !== null) {
+      const selectedTeamId = state.selectedTeamId ?? "";
+      if (leaveTeamId === selectedTeamId) {
+        openTeamLeave(render, leaveTeamId);
+        return true;
+      }
+    }
+
     const selectedSuggestionId = actionSuffix(action, "select-invite-user-suggestion:");
     if (selectedSuggestionId !== null) {
       selectInviteUserSuggestion(render, selectedSuggestionId);
+      return true;
+    }
+
+    const makeAdminUsername = actionSuffix(action, "make-admin:");
+    if (makeAdminUsername !== null) {
+      await runWithImmediateLoading(event, "Saving...", () =>
+        makeOrganizationAdmin(render, makeAdminUsername),
+      );
+      return true;
+    }
+
+    const revokeAdminUsername = actionSuffix(action, "revoke-admin:");
+    if (revokeAdminUsername !== null) {
+      await runWithImmediateLoading(event, "Saving...", () =>
+        revokeOrganizationAdmin(render, revokeAdminUsername),
+      );
       return true;
     }
 
