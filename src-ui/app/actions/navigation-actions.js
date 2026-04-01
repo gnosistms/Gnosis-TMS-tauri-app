@@ -25,6 +25,14 @@ export function createNavigationActions(render) {
       return true;
     }
 
+    const openTeamGlossariesId = actionSuffix(action, "open-team-glossaries:");
+    if (openTeamGlossariesId !== null) {
+      state.selectedTeamId = openTeamGlossariesId;
+      state.screen = "glossaries";
+      render();
+      return true;
+    }
+
     const openGlossaryId = actionSuffix(action, "open-glossary:");
     if (openGlossaryId !== null) {
       state.selectedGlossaryId = openGlossaryId;
