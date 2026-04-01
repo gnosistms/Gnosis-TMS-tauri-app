@@ -18,7 +18,7 @@ function renderTeamCard(team, options = {}) {
   const actions = options.actions ?? [
     textAction("Open", `open-team:${team.id}`),
     textAction("Members", `open-team-users:${team.id}`, { disabled: offlineMode }),
-    textAction("Rename", `rename-team:${team.id}`, { disabled: offlineMode }),
+    ...(team.canDelete ? [textAction("Rename", `rename-team:${team.id}`, { disabled: offlineMode })] : []),
     textAction(team.canDelete ? "Delete" : "Leave", `delete-team:${team.id}`, { disabled: offlineMode }),
   ];
 
@@ -86,7 +86,7 @@ export function renderTeamsList(activeTeams, deletedTeams = [], showDeletedTeams
     ? `
       <article class="card card--hero card--empty">
         <div class="card__body">
-          <p class="card__eyebrow">NO TEAMS FOUND</p>
+          <p class="card__eyebrow">TEAMS LIST</p>
           <h2 class="card__title card__title--small">No teams found.</h2>
           <p class="card__subtitle">Click "+ New Team" to create a team.</p>
         </div>

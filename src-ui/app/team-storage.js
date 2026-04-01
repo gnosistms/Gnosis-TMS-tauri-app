@@ -1,5 +1,38 @@
 const TEAM_RECORDS_STORAGE_KEY = "gnosis-tms-team-records";
 const TEAM_PENDING_MUTATIONS_STORAGE_KEY = "gnosis-tms-team-pending-mutations";
+const ACTIVE_STORAGE_LOGIN_KEY = "gnosis-tms-active-storage-login";
+
+function normalizeStorageLogin(login) {
+  return typeof login === "string" && login.trim() ? login.trim().toLowerCase() : null;
+}
+
+function scopedStorageKey(baseKey, login = getActiveStorageLogin()) {
+  const normalizedLogin = normalizeStorageLogin(login);
+  return normalizedLogin ? `${baseKey}:${normalizedLogin}` : null;
+}
+
+export function getActiveStorageLogin() {
+  try {
+    return normalizeStorageLogin(window.localStorage?.getItem(ACTIVE_STORAGE_LOGIN_KEY));
+  } catch {
+    return null;
+  }
+}
+
+export function setActiveStorageLogin(login) {
+  const normalizedLogin = normalizeStorageLogin(login);
+  try {
+    if (!normalizedLogin) {
+      window.localStorage?.removeItem(ACTIVE_STORAGE_LOGIN_KEY);
+      return;
+    }
+    window.localStorage?.setItem(ACTIVE_STORAGE_LOGIN_KEY, normalizedLogin);
+  } catch {}
+}
+
+export function clearActiveStorageLogin() {
+  setActiveStorageLogin(null);
+}
 
 function normalizeTeamRecord(team) {
   if (!team || typeof team !== "object") {
@@ -68,9 +101,10 @@ function teamIdentityKey(team) {
   return team.githubOrg.toLowerCase();
 }
 
-export function loadStoredTeamRecords() {
+export function loadStoredTeamRecords(login = getActiveStorageLogin()) {
   try {
-    const storedValue = window.localStorage?.getItem(TEAM_RECORDS_STORAGE_KEY);
+    const scopedKey = scopedStorageKey(TEAM_RECORDS_STORAGE_KEY, login);
+    const storedValue = scopedKey ? window.localStorage?.getItem(scopedKey) : null;
     if (!storedValue) {
       return [];
     }
@@ -95,8 +129,12 @@ export function splitStoredTeamRecords(teams = loadStoredTeamRecords()) {
   };
 }
 
-export function saveStoredTeamRecords(teams) {
+export function saveStoredTeamRecords(teams, login = getActiveStorageLogin()) {
   try {
+    const scopedKey = scopedStorageKey(TEAM_RECORDS_STORAGE_KEY, login);
+    if (!scopedKey) {
+      return;
+    }
     const merged = new Map();
     teams
       .map(normalizeTeamRecord)
@@ -107,15 +145,12 @@ export function saveStoredTeamRecords(teams) {
         merged.set(key, existing ? { ...existing, ...team } : team);
       });
     const serialized = JSON.stringify([...merged.values()]);
-    window.localStorage?.setItem(
-      TEAM_RECORDS_STORAGE_KEY,
-      serialized,
-    );
+    window.localStorage?.setItem(scopedKey, serialized);
   } catch {}
 }
 
-export function upsertStoredTeamRecords(teams) {
-  const existingTeams = loadStoredTeamRecords();
+export function upsertStoredTeamRecords(teams, login = getActiveStorageLogin()) {
+  const existingTeams = loadStoredTeamRecords(login);
   const merged = new Map(
     existingTeams.map((team) => [teamIdentityKey(team), team]),
   );
@@ -130,29 +165,29 @@ export function upsertStoredTeamRecords(teams) {
     });
 
   const nextTeams = [...merged.values()];
-  saveStoredTeamRecords(nextTeams);
+  saveStoredTeamRecords(nextTeams, login);
   return nextTeams;
 }
 
-export function replaceStoredTeamRecords(teams) {
+export function replaceStoredTeamRecords(teams, login = getActiveStorageLogin()) {
   const normalizedTeams = teams
     .map(normalizeTeamRecord)
     .filter(Boolean);
-  saveStoredTeamRecords(normalizedTeams);
+  saveStoredTeamRecords(normalizedTeams, login);
   return normalizedTeams;
 }
 
-export function updateStoredTeamRecord(teamId, updates) {
-  const nextTeams = loadStoredTeamRecords().map((team) =>
+export function updateStoredTeamRecord(teamId, updates, login = getActiveStorageLogin()) {
+  const nextTeams = loadStoredTeamRecords(login).map((team) =>
     team.id === teamId ? normalizeTeamRecord({ ...team, ...updates }) : team,
   );
-  saveStoredTeamRecords(nextTeams);
+  saveStoredTeamRecords(nextTeams, login);
   return nextTeams;
 }
 
-export function removeStoredTeamRecord(teamId) {
-  const nextTeams = loadStoredTeamRecords().filter((team) => team.id !== teamId);
-  saveStoredTeamRecords(nextTeams);
+export function removeStoredTeamRecord(teamId, login = getActiveStorageLogin()) {
+  const nextTeams = loadStoredTeamRecords(login).filter((team) => team.id !== teamId);
+  saveStoredTeamRecords(nextTeams, login);
   return nextTeams;
 }
 
@@ -181,9 +216,10 @@ export function mergeTeams(primaryTeams, secondaryTeams = []) {
   return [...mergedTeams.values()];
 }
 
-export function loadStoredTeamPendingMutations() {
+export function loadStoredTeamPendingMutations(login = getActiveStorageLogin()) {
   try {
-    const storedValue = window.localStorage?.getItem(TEAM_PENDING_MUTATIONS_STORAGE_KEY);
+    const scopedKey = scopedStorageKey(TEAM_PENDING_MUTATIONS_STORAGE_KEY, login);
+    const storedValue = scopedKey ? window.localStorage?.getItem(scopedKey) : null;
     if (!storedValue) {
       return [];
     }
@@ -195,12 +231,13 @@ export function loadStoredTeamPendingMutations() {
   }
 }
 
-export function saveStoredTeamPendingMutations(mutations) {
+export function saveStoredTeamPendingMutations(mutations, login = getActiveStorageLogin()) {
   try {
+    const scopedKey = scopedStorageKey(TEAM_PENDING_MUTATIONS_STORAGE_KEY, login);
+    if (!scopedKey) {
+      return;
+    }
     const serialized = JSON.stringify(Array.isArray(mutations) ? mutations : []);
-    window.localStorage?.setItem(
-      TEAM_PENDING_MUTATIONS_STORAGE_KEY,
-      serialized,
-    );
+    window.localStorage?.setItem(scopedKey, serialized);
   } catch {}
 }

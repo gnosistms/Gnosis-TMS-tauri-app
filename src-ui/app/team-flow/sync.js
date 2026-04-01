@@ -14,32 +14,13 @@ import { loadStoredTeamPendingMutations } from "../team-storage.js";
 import {
   applyTeamPendingMutation,
   applyTeamSnapshotToState,
+  buildTeamRecordFromInstallation,
   reconcileStoredTeam,
   resolveNextSelectedTeamId,
 } from "./shared.js";
 import { processPendingTeamMutations } from "./actions.js";
 import { classifySyncError } from "../sync-error.js";
 import { handleSyncFailure } from "../sync-recovery.js";
-
-function disconnectedTeam(storedTeam) {
-  return {
-    ...storedTeam,
-    isDeleted: false,
-    deletedAt: null,
-    syncState: "disconnected",
-    statusLabel: "GitHub App disconnected",
-  };
-}
-
-function missingInstallationTeam(storedTeam) {
-  return {
-    ...storedTeam,
-    isDeleted: true,
-    deletedAt: storedTeam.deletedAt ?? new Date().toISOString(),
-    syncState: "deleted",
-    statusLabel: "Missing GitHub App installation",
-  };
-}
 
 export async function loadUserTeams(render) {
   const syncVersionAtStart = state.teamSyncVersion;
@@ -81,30 +62,23 @@ export async function loadUserTeams(render) {
 
   try {
     const existingTeamRecords = [...storedActiveTeams, ...storedDeletedTeams];
-    const reconciledTeams = await Promise.all(
-      existingTeamRecords.map(async (storedTeam) => {
-        if (!storedTeam.installationId) {
-          return missingInstallationTeam(storedTeam);
-        }
-
-        try {
-          const installation = await invoke("inspect_github_app_installation", {
-            installationId: storedTeam.installationId,
-            sessionToken: requireBrokerSession(),
-          });
-          return reconcileStoredTeam(storedTeam, installation);
-        } catch (error) {
-          const classification = classifySyncError(error);
-          if (classification.type === "auth_invalid" || classification.type === "connection_unavailable") {
-            throw error;
-          }
-          if (classification.type === "resource_access_lost") {
-            return null;
-          }
-          return disconnectedTeam(storedTeam);
-        }
-      }),
+    const installations = await invoke("list_accessible_github_app_installations", {
+      sessionToken: requireBrokerSession(),
+    });
+    const installationList = Array.isArray(installations) ? installations : [];
+    const storedTeamsByInstallationId = new Map(
+      existingTeamRecords
+        .filter((team) => Number.isFinite(team.installationId))
+        .map((team) => [team.installationId, team]),
     );
+    const reconciledTeams = [
+      ...installationList.map((installation) => {
+        const storedTeam = storedTeamsByInstallationId.get(installation.installationId);
+        return storedTeam
+          ? reconcileStoredTeam(storedTeam, installation)
+          : buildTeamRecordFromInstallation(installation);
+      }),
+    ];
 
     if (syncVersionAtStart !== state.teamSyncVersion) {
       completePageSync(render);
@@ -113,8 +87,12 @@ export async function loadUserTeams(render) {
     }
 
     const nextStoredTeams = replaceStoredTeamRecords(reconciledTeams.filter(Boolean));
+    const nextStoredSnapshot = splitStoredTeamRecords(nextStoredTeams);
     const nextSnapshot = applyPendingMutations(
-      splitStoredTeamRecords(nextStoredTeams),
+      {
+        items: nextStoredSnapshot.activeTeams,
+        deletedItems: nextStoredSnapshot.deletedTeams,
+      },
       state.pendingTeamMutations,
       applyTeamPendingMutation,
     );

@@ -1,4 +1,8 @@
-import { splitStoredTeamRecords, loadStoredTeamPendingMutations } from "./team-storage.js";
+import {
+  clearActiveStorageLogin,
+  splitStoredTeamRecords,
+  loadStoredTeamPendingMutations,
+} from "./team-storage.js";
 
 const initialStoredTeams = splitStoredTeamRecords();
 
@@ -128,6 +132,7 @@ export function createProjectCreationState() {
 export function createInviteUserState() {
   return {
     isOpen: false,
+    step: "form",
     query: "",
     selectedUserId: null,
     selectedSuggestion: null,
@@ -213,6 +218,7 @@ export function resetProjectPermanentDeletion() {
 }
 
 export function resetSessionState() {
+  clearActiveStorageLogin();
   const offlineState = {
     ...state.offline,
     isEnabled: false,

@@ -4,8 +4,6 @@ import { beginPageSync, completePageSync, failPageSync } from "./page-sync.js";
 import { resetInviteUser, state } from "./state.js";
 import { classifySyncError } from "./sync-error.js";
 import { handleSyncFailure } from "./sync-recovery.js";
-import { showScopedSyncBadge } from "./status-feedback.js";
-
 let inviteUserSearchTimeout = null;
 let inviteUserSearchVersion = 0;
 
@@ -197,6 +195,11 @@ export function editInviteUserSelection(render) {
   render();
 }
 
+export function acknowledgeInviteUserSuccess(render) {
+  resetInviteUser();
+  render();
+}
+
 export async function submitInviteUser(render) {
   const selectedTeam = state.teams.find((team) => team.id === state.selectedTeamId);
   if (!selectedTeam?.installationId) {
@@ -238,12 +241,8 @@ export async function submitInviteUser(render) {
       sessionToken: requireBrokerSession(),
     });
 
-    showScopedSyncBadge(
-      "users",
-      `Invitation sent to @${invitee}`,
-      render,
-    );
-    resetInviteUser();
+    state.inviteUser.status = "idle";
+    state.inviteUser.step = "success";
     render();
   } catch (error) {
     if (await handleSyncFailure(classifySyncError(error), { render })) {

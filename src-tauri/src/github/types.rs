@@ -11,17 +11,6 @@ pub(crate) struct GithubOrganization {
   pub(crate) html_url: Option<String>,
 }
 
-#[derive(Deserialize)]
-pub(crate) struct GithubOrganizationMembership {
-  pub(crate) state: String,
-  pub(crate) organization: GithubOrganizationMembershipOrg,
-}
-
-#[derive(Deserialize)]
-pub(crate) struct GithubOrganizationMembershipOrg {
-  pub(crate) login: String,
-}
-
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct BeginGithubAppInstallResponse {
@@ -29,7 +18,7 @@ pub(crate) struct BeginGithubAppInstallResponse {
   pub(crate) setup_url: String,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct GithubAppInstallationInfo {
   pub(crate) installation_id: i64,

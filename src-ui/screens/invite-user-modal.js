@@ -33,6 +33,30 @@ export function renderInviteUserModal(state) {
     return "";
   }
 
+  if (invite.step === "success") {
+    return `
+      <div class="modal-backdrop">
+        <section class="card modal-card modal-card--compact">
+          <div class="card__body modal-card__body">
+            <p class="card__eyebrow">INVITATION SENT</p>
+            <h2 class="modal__title">Check for invitation email</h2>
+            <p class="modal__supporting">
+              We sent an email to the GitHub user you selected, asking them to join the GitHub organization where your team data is stored. Ask them to check their email and accept the invitation.
+            </p>
+            <div class="modal__actions">
+              ${loadingPrimaryButton({
+                label: "Ok",
+                loadingLabel: "Ok",
+                action: "acknowledge-invite-user-success",
+                isLoading: false,
+              })}
+            </div>
+          </div>
+        </section>
+      </div>
+    `;
+  }
+
   const isSubmitting = invite.status === "loading";
   const trimmedQuery = invite.query.trim();
   const hasNonUsernameInput = trimmedQuery.includes("@") || /\s/.test(trimmedQuery);

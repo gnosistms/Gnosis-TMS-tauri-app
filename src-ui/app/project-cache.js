@@ -1,5 +1,13 @@
+import {
+  getActiveStorageLogin,
+} from "./team-storage.js";
+
 const PROJECT_CACHE_STORAGE_KEY = "gnosis-tms-project-cache";
 const PROJECT_PENDING_MUTATIONS_STORAGE_KEY = "gnosis-tms-project-pending-mutations";
+
+function scopedStorageKey(baseKey, login = getActiveStorageLogin()) {
+  return login ? `${baseKey}:${login}` : null;
+}
 
 function normalizeProject(project) {
   if (!project || typeof project !== "object") {
@@ -32,9 +40,10 @@ function normalizeProject(project) {
   };
 }
 
-function loadProjectCacheMap() {
+function loadProjectCacheMap(login = getActiveStorageLogin()) {
   try {
-    const storedValue = window.localStorage?.getItem(PROJECT_CACHE_STORAGE_KEY);
+    const scopedKey = scopedStorageKey(PROJECT_CACHE_STORAGE_KEY, login);
+    const storedValue = scopedKey ? window.localStorage?.getItem(scopedKey) : null;
     if (!storedValue) {
       return {};
     }
@@ -46,9 +55,13 @@ function loadProjectCacheMap() {
   }
 }
 
-function saveProjectCacheMap(cacheMap) {
+function saveProjectCacheMap(cacheMap, login = getActiveStorageLogin()) {
   try {
-    window.localStorage?.setItem(PROJECT_CACHE_STORAGE_KEY, JSON.stringify(cacheMap));
+    const scopedKey = scopedStorageKey(PROJECT_CACHE_STORAGE_KEY, login);
+    if (!scopedKey) {
+      return;
+    }
+    window.localStorage?.setItem(scopedKey, JSON.stringify(cacheMap));
   } catch {}
 }
 
@@ -113,7 +126,8 @@ export function loadStoredProjectPendingMutations(team) {
   }
 
   try {
-    const storedValue = window.localStorage?.getItem(PROJECT_PENDING_MUTATIONS_STORAGE_KEY);
+    const scopedKey = scopedStorageKey(PROJECT_PENDING_MUTATIONS_STORAGE_KEY);
+    const storedValue = scopedKey ? window.localStorage?.getItem(scopedKey) : null;
     if (!storedValue) {
       return [];
     }
@@ -136,10 +150,14 @@ export function saveStoredProjectPendingMutations(team, mutations) {
   }
 
   try {
-    const storedValue = window.localStorage?.getItem(PROJECT_PENDING_MUTATIONS_STORAGE_KEY);
+    const scopedKey = scopedStorageKey(PROJECT_PENDING_MUTATIONS_STORAGE_KEY);
+    if (!scopedKey) {
+      return;
+    }
+    const storedValue = window.localStorage?.getItem(scopedKey);
     const parsed = storedValue ? JSON.parse(storedValue) : {};
     const nextMap = parsed && typeof parsed === "object" ? parsed : {};
     nextMap[cacheKey] = Array.isArray(mutations) ? mutations : [];
-    window.localStorage?.setItem(PROJECT_PENDING_MUTATIONS_STORAGE_KEY, JSON.stringify(nextMap));
+    window.localStorage?.setItem(scopedKey, JSON.stringify(nextMap));
   } catch {}
 }

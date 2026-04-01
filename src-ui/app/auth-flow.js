@@ -4,6 +4,12 @@ import {
   loadStoredAuthSession,
   saveStoredAuthSession,
 } from "./auth-storage.js";
+import {
+  clearActiveStorageLogin,
+  loadStoredTeamPendingMutations,
+  setActiveStorageLogin,
+  splitStoredTeamRecords,
+} from "./team-storage.js";
 import { state } from "./state.js";
 import { classifySyncError } from "./sync-error.js";
 import { handleSyncFailure } from "./sync-recovery.js";
@@ -14,6 +20,18 @@ function setAuthState(nextAuth, render) {
     ...nextAuth,
   };
   render();
+}
+
+function hydrateStoredDataForActiveUser() {
+  const storedTeams = splitStoredTeamRecords();
+  state.teams = storedTeams.activeTeams;
+  state.deletedTeams = storedTeams.deletedTeams;
+  state.pendingTeamMutations = loadStoredTeamPendingMutations();
+  state.projects = [];
+  state.deletedProjects = [];
+  state.pendingProjectMutations = [];
+  state.users = [];
+  state.selectedTeamId = storedTeams.activeTeams[0]?.id ?? null;
 }
 
 export function requireBrokerSession() {
@@ -36,6 +54,8 @@ export async function handleBrokerAuthExpired(render, error) {
 export function applyBrokerAuthResult(payload, render, loadUserTeams) {
   if (payload?.status === "success" && payload?.session?.sessionToken) {
     const session = payload.session;
+    setActiveStorageLogin(session.login);
+    hydrateStoredDataForActiveUser();
     state.auth = {
       status: "success",
       message: payload.message ?? `Signed in as @${session.login}.`,
@@ -87,6 +107,8 @@ export async function restoreStoredBrokerSession(render, loadUserTeams) {
       name: profile.name ?? null,
       avatarUrl: profile.avatarUrl ?? null,
     };
+    setActiveStorageLogin(verifiedSession.login);
+    hydrateStoredDataForActiveUser();
     state.auth = {
       status: "success",
       message: `Signed in as @${verifiedSession.login}.`,
@@ -98,6 +120,7 @@ export async function restoreStoredBrokerSession(render, loadUserTeams) {
     void loadUserTeams(render);
   } catch {
     await clearStoredAuthSession();
+    clearActiveStorageLogin();
     state.auth = {
       status: "idle",
       message: "",
