@@ -62,6 +62,8 @@
   --accent-text: #fff8ed;
   --link: #c97a12;
   --link-hover: #d7963f;
+  --link-disabled: #d7b182;
+  --link-disabled-hover: #e0be94;
   --radius-ui: 18px;
   --radius-card: var(--radius-ui);
   --radius-control: var(--radius-ui);
@@ -264,11 +266,15 @@ a {
   line-height: 1.1;
 }
 
-.button.is-disabled,
+.button.is-disabled {
+  opacity: 0.46;
+  cursor: not-allowed;
+}
+
 .header-nav__button.is-disabled,
 .text-action.is-disabled,
 .text-link.is-disabled {
-  opacity: 0.46;
+  color: var(--link-disabled);
   cursor: not-allowed;
 }
 
@@ -276,7 +282,7 @@ a {
 .header-nav__button.is-disabled:hover,
 .text-action.is-disabled:hover,
 .text-link.is-disabled:hover {
-  color: inherit;
+  color: var(--link-disabled-hover);
 }
 
 .header-nav__button,
