@@ -318,6 +318,10 @@ a {
   font-weight: 600;
   box-shadow: 0 8px 18px rgba(134, 91, 35, 0.08);
   gap: 10px;
+  transition:
+    transform 140ms ease,
+    box-shadow 140ms ease,
+    background 140ms ease;
 }
 
 .button--compact {
@@ -331,6 +335,12 @@ a {
   background: linear-gradient(180deg, var(--accent) 0%, var(--accent-strong) 100%);
   color: var(--accent-text);
   box-shadow: 0 14px 24px rgba(214, 128, 12, 0.24);
+}
+
+.button--primary:hover:not(:disabled):not(.is-disabled) {
+  transform: translateY(-1px);
+  background: linear-gradient(180deg, #f6a621 0%, #ee9118 100%);
+  box-shadow: 0 18px 28px rgba(214, 128, 12, 0.3);
 }
 
 .button--secondary {
