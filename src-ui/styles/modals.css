@@ -78,6 +78,7 @@
 .field {
   display: grid;
   gap: 8px;
+  width: 100%;
 }
 
 .field__label {
@@ -86,6 +87,7 @@
 }
 
 .field__input {
+  width: 100%;
   min-height: 54px;
   border: 1px solid rgba(164, 112, 41, 0.18);
   border-radius: var(--radius-ui);
@@ -106,6 +108,7 @@
 
 .invite-user__field-wrap {
   position: relative;
+  width: 100%;
 }
 
 .user-suggestions {

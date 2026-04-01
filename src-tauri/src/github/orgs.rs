@@ -91,18 +91,22 @@ pub(crate) fn list_organization_members_for_installation(
 }
 
 #[tauri::command]
-pub(crate) fn search_github_users_for_installation(
+pub(crate) async fn search_github_users_for_installation(
   installation_id: i64,
   query: String,
   session_token: String,
 ) -> Result<Vec<GithubUserSearchResult>, String> {
-  let client = github_client()?;
-  let encoded_query: String = url::form_urlencoded::byte_serialize(query.as_bytes()).collect();
-  broker_get_json_with_session(
-    &client,
-    &format!("/api/github-app/installations/{installation_id}/user-search?q={encoded_query}"),
-    &session_token,
-  )
+  tauri::async_runtime::spawn_blocking(move || {
+    let client = github_client()?;
+    let encoded_query: String = url::form_urlencoded::byte_serialize(query.as_bytes()).collect();
+    broker_get_json_with_session(
+      &client,
+      &format!("/api/github-app/installations/{installation_id}/user-search?q={encoded_query}"),
+      &session_token,
+    )
+  })
+  .await
+  .map_err(|error| format!("Could not run the GitHub user search task: {error}"))?
 }
 
 #[tauri::command]

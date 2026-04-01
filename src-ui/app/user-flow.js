@@ -167,7 +167,7 @@ export function updateInviteUserQuery(render, query) {
   inviteUserSearchTimeout = window.setTimeout(() => {
     inviteUserSearchTimeout = null;
     void searchInviteUserSuggestions(render, nextQuery, searchVersion);
-  }, 100);
+  }, 200);
 }
 
 export function selectInviteUserSuggestion(render, suggestionId) {
