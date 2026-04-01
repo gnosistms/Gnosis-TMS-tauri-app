@@ -98,7 +98,7 @@ function renderDeletedProjectsSection(state) {
   }
 
   const selectedTeam = state.teams.find((team) => team.id === state.selectedTeamId) ?? state.teams[0];
-  const canManageDeletedProjects = selectedTeam?.canDelete === true;
+  const canManageDeletedProjects = selectedTeam?.canManageProjects === true;
   const offlineMode = state.offline?.isEnabled === true;
 
   const toggle = renderDeletedProjectsToggle(state);

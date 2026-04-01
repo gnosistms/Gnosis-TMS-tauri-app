@@ -1,5 +1,6 @@
 import { invoke } from "./runtime.js";
 import { requireBrokerSession } from "./auth-flow.js";
+import { loadStoredMembersForTeam, saveStoredMembersForTeam } from "./member-cache.js";
 import { beginPageSync, completePageSync, failPageSync } from "./page-sync.js";
 import { resetInviteUser, state } from "./state.js";
 import { classifySyncError } from "./sync-error.js";
@@ -71,6 +72,13 @@ export function primeUsersForTeam(teamId = state.selectedTeamId) {
 
   if (!selectedTeam?.installationId) {
     state.users = [];
+    state.userDiscovery = { status: "ready", error: "" };
+    return;
+  }
+
+  const cachedMembers = loadStoredMembersForTeam(selectedTeam);
+  if (cachedMembers.exists) {
+    state.users = cachedMembers.members;
     state.userDiscovery = { status: "ready", error: "" };
     return;
   }
@@ -342,7 +350,13 @@ export async function loadTeamUsers(render, teamId = state.selectedTeamId) {
     return;
   }
 
-  state.userDiscovery = { status: "loading", error: "" };
+  const cachedMembers = loadStoredMembersForTeam(selectedTeam);
+  if (cachedMembers.exists) {
+    state.users = cachedMembers.members;
+    state.userDiscovery = { status: "ready", error: "" };
+  } else {
+    state.userDiscovery = { status: "loading", error: "" };
+  }
   beginPageSync();
   render();
 
@@ -353,6 +367,7 @@ export async function loadTeamUsers(render, teamId = state.selectedTeamId) {
       sessionToken: requireBrokerSession(),
     });
     state.users = users.map((user) => normalizeOrganizationMember(user, selectedTeam)).filter(Boolean);
+    saveStoredMembersForTeam(selectedTeam, state.users);
     state.userDiscovery = { status: "ready", error: "" };
     completePageSync(render);
     render();
@@ -360,6 +375,7 @@ export async function loadTeamUsers(render, teamId = state.selectedTeamId) {
     const errorMessage = error?.message ?? String(error);
     if (errorMessage.includes("/members") && errorMessage.includes("404")) {
       state.users = buildFallbackUsers(selectedTeam);
+      saveStoredMembersForTeam(selectedTeam, state.users);
       state.userDiscovery = { status: "ready", error: "" };
       completePageSync(render);
       render();
@@ -376,11 +392,15 @@ export async function loadTeamUsers(render, teamId = state.selectedTeamId) {
       failPageSync();
       return;
     }
-    state.users = [];
-    state.userDiscovery = {
-      status: "error",
-      error: errorMessage,
-    };
+    if (!cachedMembers.exists) {
+      state.users = [];
+      state.userDiscovery = {
+        status: "error",
+        error: errorMessage,
+      };
+    } else {
+      state.userDiscovery = { status: "ready", error: "" };
+    }
     failPageSync();
     render();
   }

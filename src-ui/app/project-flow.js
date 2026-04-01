@@ -518,7 +518,7 @@ export async function restoreProject(render, projectId) {
     return;
   }
 
-  if (selectedTeam.canDelete !== true) {
+  if (selectedTeam.canManageProjects !== true) {
     state.projectDiscovery = {
       status: "error",
       error: "You do not have permission to restore projects in this team.",

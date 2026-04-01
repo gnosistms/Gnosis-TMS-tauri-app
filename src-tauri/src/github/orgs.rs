@@ -13,11 +13,15 @@ use super::{
 };
 
 #[tauri::command]
-pub(crate) fn list_accessible_github_app_installations(
+pub(crate) async fn list_accessible_github_app_installations(
   session_token: String,
 ) -> Result<Vec<GithubAppInstallationInfo>, String> {
-  let client = github_client()?;
-  broker_get_json_with_session(&client, "/api/github-app/installations", &session_token)
+  tauri::async_runtime::spawn_blocking(move || {
+    let client = github_client()?;
+    broker_get_json_with_session(&client, "/api/github-app/installations", &session_token)
+  })
+  .await
+  .map_err(|error| format!("Could not run the installation listing task: {error}"))?
 }
 
 #[tauri::command]
