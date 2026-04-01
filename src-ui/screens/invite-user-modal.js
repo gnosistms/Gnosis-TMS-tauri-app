@@ -53,7 +53,7 @@ export function renderInviteUserModal(state) {
 
   return `
     <div class="modal-backdrop">
-      <section class="card modal-card modal-card--compact">
+      <section class="card modal-card modal-card--compact modal-card--allow-overflow">
         <div class="card__body modal-card__body">
           <p class="card__eyebrow">INVITE USER</p>
           <h2 class="modal__title">Invite A User</h2>

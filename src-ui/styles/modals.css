@@ -21,6 +21,10 @@
   width: min(620px, 100%);
 }
 
+.modal-card--allow-overflow {
+  overflow: visible;
+}
+
 .modal-card__body {
   display: grid;
   gap: 18px;

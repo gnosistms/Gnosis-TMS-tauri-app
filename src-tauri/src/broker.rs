@@ -25,13 +25,17 @@ pub(crate) fn broker_base_url() -> Result<Url, String> {
 
 pub(crate) fn broker_path_url(path: &str) -> Result<Url, String> {
   let mut url = broker_base_url()?;
+  let (path_only, query) = path.split_once('?').map_or((path, None), |(next_path, next_query)| {
+    (next_path, Some(next_query))
+  });
   let base_path = url.path().trim_end_matches('/');
   let next_path = if base_path.is_empty() || base_path == "/" {
-    path.to_string()
+    path_only.to_string()
   } else {
-    format!("{base_path}/{}", path.trim_start_matches('/'))
+    format!("{base_path}/{}", path_only.trim_start_matches('/'))
   };
   url.set_path(&next_path);
+  url.set_query(query);
   Ok(url)
 }
 
