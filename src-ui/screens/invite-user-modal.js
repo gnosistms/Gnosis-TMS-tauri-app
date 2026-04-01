@@ -34,7 +34,7 @@ export function renderInviteUserModal(state) {
   }
 
   const isSubmitting = invite.status === "loading";
-  const canSearch = invite.query.trim().length >= 2 && !invite.query.includes("@");
+  const canSearch = invite.query.trim().length >= 4 && !invite.query.includes("@");
   const showSuggestions = canSearch && invite.suggestions.length > 0;
   const showNoResults =
     canSearch && invite.suggestionsStatus === "ready" && invite.suggestions.length === 0;

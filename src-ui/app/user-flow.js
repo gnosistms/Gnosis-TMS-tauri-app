@@ -155,7 +155,7 @@ export function updateInviteUserQuery(render, query) {
   }
 
   const nextQuery = query.trim();
-  if (nextQuery.length < 2 || nextQuery.includes("@")) {
+  if (nextQuery.length < 4 || nextQuery.includes("@")) {
     clearInviteUserSuggestions();
     render();
     return;
@@ -167,7 +167,7 @@ export function updateInviteUserQuery(render, query) {
   inviteUserSearchTimeout = window.setTimeout(() => {
     inviteUserSearchTimeout = null;
     void searchInviteUserSuggestions(render, nextQuery, searchVersion);
-  }, 350);
+  }, 100);
 }
 
 export function selectInviteUserSuggestion(render, suggestionId) {
