@@ -10,7 +10,7 @@ function renderUserCard(user) {
           <p class="list-row__meta">@${escapeHtml(user.username)} · ${escapeHtml(user.role)}</p>
         </div>
         <div class="list-row__actions">
-          ${textAction("Remove", "noop")}
+          ${textAction("Remove", "noop", { disabled: user.role === "Owner" })}
         </div>
       </div>
     </article>
