@@ -6,11 +6,10 @@ function renderUserCard(user) {
     <article class="card card--list-row">
       <div class="card__body list-row">
         <div class="list-row__content">
-          <h2 class="list-row__title">${escapeHtml(user.login)}</h2>
-          <p class="list-row__meta">GitHub organization member</p>
+          <h2 class="list-row__title">${escapeHtml(user.name)}</h2>
+          <p class="list-row__meta">@${escapeHtml(user.username)} · ${escapeHtml(user.role)}</p>
         </div>
         <div class="list-row__actions">
-          ${textAction("Open", user.htmlUrl ? `open-external:${user.htmlUrl}` : "noop")}
           ${textAction("Remove", "noop")}
         </div>
       </div>
