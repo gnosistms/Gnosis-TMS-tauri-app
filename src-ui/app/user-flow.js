@@ -55,6 +55,28 @@ function buildFallbackUsers(selectedTeam) {
   return currentUser ? [currentUser] : [];
 }
 
+export function primeUsersForTeam(teamId = state.selectedTeamId) {
+  const selectedTeam = state.teams.find((team) => team.id === teamId);
+
+  if (state.offline.isEnabled) {
+    state.users = [];
+    state.userDiscovery = {
+      status: "error",
+      error: "Users are unavailable in offline mode.",
+    };
+    return;
+  }
+
+  if (!selectedTeam?.installationId) {
+    state.users = [];
+    state.userDiscovery = { status: "ready", error: "" };
+    return;
+  }
+
+  state.users = buildFallbackUsers(selectedTeam);
+  state.userDiscovery = { status: "loading", error: "" };
+}
+
 export async function loadTeamUsers(render, teamId = state.selectedTeamId) {
   const selectedTeam = state.teams.find((team) => team.id === teamId);
 

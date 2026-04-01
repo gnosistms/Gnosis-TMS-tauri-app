@@ -1,7 +1,8 @@
 import { state } from "../state.js";
 import { loadTeamProjects } from "../project-flow.js";
-import { loadTeamUsers } from "../user-flow.js";
+import { loadTeamUsers, primeUsersForTeam } from "../user-flow.js";
 import { actionSuffix } from "../action-helpers.js";
+import { waitForNextPaint } from "../runtime.js";
 
 export function createNavigationActions(render) {
   return async function handleNavigationAction(action) {
@@ -18,8 +19,9 @@ export function createNavigationActions(render) {
     if (openTeamUsersId !== null) {
       state.selectedTeamId = openTeamUsersId;
       state.screen = "users";
+      primeUsersForTeam(state.selectedTeamId);
       render();
-      void loadTeamUsers(render, state.selectedTeamId);
+      void waitForNextPaint().then(() => loadTeamUsers(render, state.selectedTeamId));
       return true;
     }
 

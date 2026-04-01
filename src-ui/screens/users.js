@@ -48,12 +48,12 @@ export function renderUsersScreen(state) {
   `;
 
   const body =
-    discovery.status === "loading"
-      ? loadingState
-      : discovery.status === "error"
+    discovery.status === "error"
         ? errorState
         : state.users.length === 0
-          ? emptyState
+          ? discovery.status === "loading"
+            ? loadingState
+            : emptyState
           : `<section class="stack">${state.users.map((user) => renderUserCard(user)).join("")}</section>`;
 
   return pageShell({

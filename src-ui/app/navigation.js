@@ -5,7 +5,7 @@ import { waitForNextPaint } from "./runtime.js";
 import { loadGithubAppTestConfig } from "./github-app-test-flow.js";
 import { loadTeamProjects } from "./project-flow.js";
 import { loadUserTeams } from "./team-setup-flow.js";
-import { loadTeamUsers } from "./user-flow.js";
+import { loadTeamUsers, primeUsersForTeam } from "./user-flow.js";
 
 export function handleNavigation(navTarget, render) {
   if (navTarget === "start") {
@@ -25,6 +25,8 @@ export function handleNavigation(navTarget, render) {
     void waitForNextPaint().then(() => loadUserTeams(render));
   }
   if (navTarget === "users" && state.selectedTeamId) {
+    primeUsersForTeam(state.selectedTeamId);
+    render();
     void waitForNextPaint().then(() => loadTeamUsers(render, state.selectedTeamId));
   }
 }
