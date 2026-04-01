@@ -338,9 +338,9 @@ a {
 }
 
 .button--primary:hover:not(:disabled):not(.is-disabled) {
-  transform: translateY(-1px);
-  background: linear-gradient(180deg, #f6a621 0%, #ee9118 100%);
-  box-shadow: 0 18px 28px rgba(214, 128, 12, 0.3);
+  transform: translateY(-0.5px);
+  background: linear-gradient(180deg, #f5a11d 0%, #ed8c13 100%);
+  box-shadow: 0 16px 26px rgba(214, 128, 12, 0.27);
 }
 
 .button--secondary {
