@@ -119,6 +119,7 @@ function renderFloatingBadge({ pageSync, syncBadgeText, noticeText }) {
 
 export function pageShell({
   title,
+  subtitle = "",
   navButtons = [],
   tools = "",
   leftTools = "",
@@ -154,6 +155,7 @@ export function pageShell({
         </div>
         <div class="page-header__title-wrap">
           <h1 class="page-header__title">${escapeHtml(title)}</h1>
+          ${subtitle ? `<p class="page-header__subtitle">${escapeHtml(subtitle)}</p>` : ""}
         </div>
         <div class="page-header__tools">${tools}</div>
       </header>

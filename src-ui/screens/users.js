@@ -58,6 +58,7 @@ export function renderUsersScreen(state) {
 
   return pageShell({
     title: "Users",
+    subtitle: selectedTeam?.name ?? "Team",
     navButtons: [
       navButton("Logout", "start"),
       navButton("Teams", "teams"),

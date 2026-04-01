@@ -256,6 +256,14 @@ a {
   white-space: nowrap;
 }
 
+.page-header__subtitle {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.98rem;
+  font-weight: 600;
+  line-height: 1.1;
+}
+
 .button.is-disabled,
 .header-nav__button.is-disabled,
 .text-action.is-disabled,

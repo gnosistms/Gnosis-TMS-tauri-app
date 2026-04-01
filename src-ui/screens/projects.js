@@ -183,7 +183,8 @@ export function renderProjectsScreen(state) {
 
   return (
     pageShell({
-    title: `${selectedTeam?.name ?? "Team"} - Projects`,
+    title: "Projects",
+    subtitle: selectedTeam?.name ?? "Team",
     navButtons: [
       navButton("Logout", "start"),
       navButton("Teams", "teams"),
