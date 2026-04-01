@@ -3,8 +3,11 @@ import { navButton, pageShell, primaryButton, textAction } from "../lib/ui.js";
 import { getNoticeBadgeText } from "../app/status-feedback.js";
 
 export function renderGlossariesScreen(state) {
+  const selectedTeam = state.teams.find((team) => team.id === state.selectedTeamId) ?? state.teams[0];
+
   return pageShell({
     title: "Glossaries",
+    subtitle: selectedTeam?.name ?? "Team",
     navButtons: [
       navButton("Logout", "start"),
       navButton("Teams", "teams"),
