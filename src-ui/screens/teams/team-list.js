@@ -16,7 +16,7 @@ function renderTeamCard(team, options = {}) {
   const isDeleted = options.isDeleted === true;
   const offlineMode = options.offlineMode === true;
   const actions = options.actions ?? [
-    textAction("Open", `open-team:${team.id}`),
+    textAction("Projects", `open-team:${team.id}`),
     textAction("Members", `open-team-users:${team.id}`, { disabled: offlineMode }),
     ...(team.canDelete ? [textAction("Rename", `rename-team:${team.id}`, { disabled: offlineMode })] : []),
     textAction(team.canDelete ? "Delete" : "Leave", `delete-team:${team.id}`, { disabled: offlineMode }),
@@ -64,7 +64,7 @@ function renderDeletedTeamsSection(deletedTeams, isOpen, offlineMode = false) {
           renderTeamCard(team, {
             isDeleted: true,
             actions: [
-              textAction("Open", `open-team:${team.id}`),
+              textAction("Projects", `open-team:${team.id}`),
               textAction("Members", `open-team-users:${team.id}`, { disabled: offlineMode }),
               ...(team.membershipRole === "admin" && team.canDelete === true
                 ? [
