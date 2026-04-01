@@ -8,6 +8,7 @@ import {
   updateTeamPermanentDeletionConfirmation,
   updateTeamRenameName,
 } from "./team-setup-flow.js";
+import { updateInviteUserQuery } from "./user-flow.js";
 
 function handleProjectCreationInput(event) {
   const input = event.target.closest("[data-project-name-input]");
@@ -69,17 +70,28 @@ function handleProjectRenameInput(event) {
   return true;
 }
 
+function handleInviteUserInput(event, render) {
+  const input = event.target.closest("[data-invite-user-input]");
+  if (!input) {
+    return false;
+  }
+
+  updateInviteUserQuery(render, input.value);
+  return true;
+}
+
 const inputHandlers = [
   handleProjectCreationInput,
   handleProjectPermanentDeleteInput,
   handleTeamRenameInput,
   handleTeamPermanentDeleteInput,
   handleProjectRenameInput,
+  handleInviteUserInput,
 ];
 
-export function handleInputEvent(event) {
+export function handleInputEvent(event, render) {
   for (const handler of inputHandlers) {
-    if (handler(event)) {
+    if (handler(event, render)) {
       break;
     }
   }

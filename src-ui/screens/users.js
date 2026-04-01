@@ -1,5 +1,6 @@
 import { escapeHtml, navButton, pageShell, primaryButton, textAction } from "../lib/ui.js";
 import { getNoticeBadgeText } from "../app/status-feedback.js";
+import { renderInviteUserModal } from "./invite-user-modal.js";
 
 function renderUserCard(user) {
   return `
@@ -20,6 +21,7 @@ function renderUserCard(user) {
 export function renderUsersScreen(state) {
   const selectedTeam = state.teams.find((team) => team.id === state.selectedTeamId) ?? state.teams[0];
   const discovery = state.userDiscovery ?? { status: "idle", error: "" };
+  const canInviteUsers = selectedTeam?.canDelete === true && !state.offline?.isEnabled;
 
   const emptyState = `
     <article class="card card--hero card--empty">
@@ -56,20 +58,22 @@ export function renderUsersScreen(state) {
             : emptyState
           : `<section class="stack">${state.users.map((user) => renderUserCard(user)).join("")}</section>`;
 
-  return pageShell({
-    title: "Users",
-    subtitle: selectedTeam?.name ?? "Team",
-    navButtons: [
-      navButton("Logout", "start"),
-      navButton("Teams", "teams"),
-      navButton("Projects", "projects"),
-      navButton("Glossaries", "glossaries"),
-    ],
-    tools: `${primaryButton("+ Invite User", "noop")}`,
-    pageSync: state.pageSync,
-    noticeText: getNoticeBadgeText(),
-    offlineMode: state.offline?.isEnabled === true,
-    offlineReconnectState: state.offline?.reconnecting === true,
-    body,
-  });
+  return (
+    pageShell({
+      title: "Users",
+      subtitle: selectedTeam?.name ?? "Team",
+      navButtons: [
+        navButton("Logout", "start"),
+        navButton("Teams", "teams"),
+        navButton("Projects", "projects"),
+        navButton("Glossaries", "glossaries"),
+      ],
+      tools: `${primaryButton("+ Invite User", "open-invite-user", { disabled: !canInviteUsers })}`,
+      pageSync: state.pageSync,
+      noticeText: getNoticeBadgeText(),
+      offlineMode: state.offline?.isEnabled === true,
+      offlineReconnectState: state.offline?.reconnecting === true,
+      body,
+    }) + renderInviteUserModal(state)
+  );
 }

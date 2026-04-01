@@ -54,6 +54,7 @@ function captureFocusedInputState() {
     "[data-team-rename-input]",
     "[data-project-rename-input]",
     "[data-project-name-input]",
+    "[data-invite-user-input]",
     "[data-team-permanent-delete-input]",
     "[data-project-permanent-delete-input]",
   ];

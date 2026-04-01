@@ -12,9 +12,10 @@ pub(crate) use app_auth::{
 };
 pub(crate) use orgs::{
   delete_organization_for_installation, inspect_github_app_installation,
+  invite_user_to_organization_for_installation,
   leave_organization_for_installation, list_organization_members_for_installation,
-  list_user_organizations, update_organization_description_for_installation,
-  update_organization_name_for_installation,
+  list_user_organizations, search_github_users_for_installation,
+  update_organization_description_for_installation, update_organization_name_for_installation,
 };
 pub(crate) use repos::{
   create_gnosis_project_repo, ensure_gnosis_repo_properties_schema,

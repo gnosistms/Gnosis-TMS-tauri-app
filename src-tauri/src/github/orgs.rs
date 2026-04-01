@@ -1,13 +1,13 @@
 use crate::broker::{
   broker_delete_no_content_with_session, broker_get_json_with_session,
-  broker_patch_json_with_session,
+  broker_patch_json_with_session, broker_post_json_with_session,
 };
 
 use super::{
   app_auth::github_client,
   types::{
-    GithubAppInstallationInfo, GithubOrganization, GithubOrganizationMember,
-    GithubOrganizationMembership,
+    GithubAppInstallationInfo, GithubOrganization, GithubOrganizationInvitation,
+    GithubOrganizationMember, GithubOrganizationMembership, GithubUserSearchResult,
   },
 };
 
@@ -86,6 +86,43 @@ pub(crate) fn list_organization_members_for_installation(
     &format!(
       "/api/github-app/installations/{installation_id}/members?org_login={org_login}"
     ),
+    &session_token,
+  )
+}
+
+#[tauri::command]
+pub(crate) fn search_github_users_for_installation(
+  installation_id: i64,
+  query: String,
+  session_token: String,
+) -> Result<Vec<GithubUserSearchResult>, String> {
+  let client = github_client()?;
+  let encoded_query: String = url::form_urlencoded::byte_serialize(query.as_bytes()).collect();
+  broker_get_json_with_session(
+    &client,
+    &format!("/api/github-app/installations/{installation_id}/user-search?q={encoded_query}"),
+    &session_token,
+  )
+}
+
+#[tauri::command]
+pub(crate) fn invite_user_to_organization_for_installation(
+  installation_id: i64,
+  org_login: String,
+  invitee_id: Option<i64>,
+  invitee_login: Option<String>,
+  invitee_email: Option<String>,
+  session_token: String,
+) -> Result<GithubOrganizationInvitation, String> {
+  let client = github_client()?;
+  broker_post_json_with_session(
+    &client,
+    &format!("/api/github-app/installations/{installation_id}/orgs/{org_login}/invitations"),
+    &serde_json::json!({
+      "inviteeId": invitee_id,
+      "inviteeLogin": invitee_login,
+      "inviteeEmail": invitee_email,
+    }),
     &session_token,
   )
 }

@@ -79,6 +79,24 @@ pub(crate) struct GithubOrganizationMember {
   pub(crate) html_url: Option<String>,
 }
 
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct GithubUserSearchResult {
+  pub(crate) id: i64,
+  pub(crate) login: String,
+  pub(crate) name: Option<String>,
+  pub(crate) avatar_url: Option<String>,
+  pub(crate) html_url: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct GithubOrganizationInvitation {
+  pub(crate) id: i64,
+  pub(crate) login: Option<String>,
+  pub(crate) email: Option<String>,
+}
+
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct CreateGithubProjectRepoInput {

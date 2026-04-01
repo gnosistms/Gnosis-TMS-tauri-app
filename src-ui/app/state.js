@@ -45,6 +45,7 @@ export const state = {
   teamPermanentDeletion: createTeamPermanentDeletionState(),
   teamLeave: createTeamLeaveState(),
   projectCreation: createProjectCreationState(),
+  inviteUser: createInviteUserState(),
   projectRename: createProjectRenameState(),
   projectPermanentDeletion: createProjectPermanentDeletionState(),
   showDeletedProjects: false,
@@ -124,6 +125,18 @@ export function createProjectCreationState() {
   };
 }
 
+export function createInviteUserState() {
+  return {
+    isOpen: false,
+    query: "",
+    selectedUserId: null,
+    suggestions: [],
+    suggestionsStatus: "idle",
+    status: "idle",
+    error: "",
+  };
+}
+
 export function createTeamPermanentDeletionState() {
   return {
     isOpen: false,
@@ -153,6 +166,10 @@ export function createProjectRenameState() {
     status: "idle",
     error: "",
   };
+}
+
+export function resetInviteUser() {
+  state.inviteUser = createInviteUserState();
 }
 
 export function createProjectPermanentDeletionState() {
@@ -227,6 +244,7 @@ export function resetSessionState() {
   resetTeamPermanentDeletion();
   resetTeamLeave();
   resetProjectCreation();
+  resetInviteUser();
   resetProjectRename();
   resetProjectPermanentDeletion();
   state.showDeletedProjects = false;

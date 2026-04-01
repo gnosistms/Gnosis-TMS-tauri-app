@@ -6,6 +6,7 @@ import { isOfflineBlockedAction } from "./offline-policy.js";
 import { showOfflineUnsupportedMessage } from "./offline-ui.js";
 import { createProjectActions } from "./actions/project-actions.js";
 import { createTeamActions } from "./actions/team-actions.js";
+import { createUserActions } from "./user-actions.js";
 import { actionSuffix } from "./action-helpers.js";
 
 export function createActionDispatcher(render) {
@@ -17,6 +18,7 @@ export function createActionDispatcher(render) {
   const domainHandlers = [
     createTeamActions(render),
     createProjectActions(render),
+    createUserActions(render),
     createNavigationActions(render),
   ];
 

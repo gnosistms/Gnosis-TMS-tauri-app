@@ -5,7 +5,7 @@ import { createActionDispatcher } from "./action-dispatcher.js";
 export function registerAppEvents(render) {
   const dispatchAction = createActionDispatcher(render);
 
-  document.addEventListener("input", handleInputEvent);
+  document.addEventListener("input", (event) => handleInputEvent(event, render));
 
   document.addEventListener("click", async (event) => {
     const navTarget = event.target.closest("[data-nav-target]")?.dataset.navTarget;
