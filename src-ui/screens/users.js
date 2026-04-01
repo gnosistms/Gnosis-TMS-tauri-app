@@ -26,24 +26,24 @@ export function renderUsersScreen(state) {
   const emptyState = `
     <article class="card card--hero card--empty">
       <div class="card__body">
-        <p class="card__eyebrow">NO USERS FOUND</p>
-        <h2 class="card__title card__title--small">This team doesn't have any users yet.</h2>
+        <p class="card__eyebrow">NO MEMBERS FOUND</p>
+        <h2 class="card__title card__title--small">This team doesn't have any members yet.</h2>
       </div>
     </article>
   `;
   const loadingState = `
     <article class="card card--hero card--empty">
       <div class="card__body">
-        <p class="card__eyebrow">LOADING USERS</p>
-        <h2 class="card__title card__title--small">Loading users...</h2>
+        <p class="card__eyebrow">LOADING MEMBERS</p>
+        <h2 class="card__title card__title--small">Loading members...</h2>
       </div>
     </article>
   `;
   const errorState = `
     <article class="card card--hero card--empty">
       <div class="card__body">
-        <p class="card__eyebrow">USER LOAD FAILED</p>
-        <h2 class="card__title card__title--small">Could not load this team's users.</h2>
+        <p class="card__eyebrow">MEMBER LOAD FAILED</p>
+        <h2 class="card__title card__title--small">Could not load this team's members.</h2>
         <p class="card__subtitle">${escapeHtml(discovery.error || "Unknown error.")}</p>
       </div>
     </article>
@@ -60,7 +60,7 @@ export function renderUsersScreen(state) {
 
   return (
     pageShell({
-      title: "Users",
+      title: "Members",
       subtitle: selectedTeam?.name ?? "Team",
       navButtons: [
         navButton("Logout", "start"),
@@ -68,7 +68,7 @@ export function renderUsersScreen(state) {
         navButton("Projects", "projects"),
         navButton("Glossaries", "glossaries"),
       ],
-      tools: `${primaryButton("+ Invite User", "open-invite-user", { disabled: !canInviteUsers })}`,
+      tools: `${primaryButton("+ Invite People", "open-invite-user", { disabled: !canInviteUsers })}`,
       pageSync: state.pageSync,
       noticeText: getNoticeBadgeText(),
       offlineMode: state.offline?.isEnabled === true,

@@ -34,14 +34,18 @@ export function renderInviteUserModal(state) {
   }
 
   const isSubmitting = invite.status === "loading";
-  const canSearch = invite.query.trim().length >= 4 && !invite.query.includes("@");
+  const trimmedQuery = invite.query.trim();
+  const hasNonUsernameInput = trimmedQuery.includes("@") || /\s/.test(trimmedQuery);
+  const selectedSuggestion = invite.selectedSuggestion;
+  const canSearch = trimmedQuery.length >= 4 && !hasNonUsernameInput && !selectedSuggestion;
   const showSuggestions = canSearch && invite.suggestions.length > 0;
   const showNoResults =
     canSearch && invite.suggestionsStatus === "ready" && invite.suggestions.length === 0;
   const showSearching = canSearch && invite.suggestionsStatus === "loading";
+  const showUsernameOnlyUnavailable = hasNonUsernameInput;
 
   const submitButton = loadingPrimaryButton({
-    label: "Invite User",
+    label: "Invite",
     loadingLabel: "Inviting...",
     action: "submit-invite-user",
     isLoading: isSubmitting,
@@ -50,29 +54,64 @@ export function renderInviteUserModal(state) {
     disabled: isSubmitting,
   });
   const errorMarkup = invite.error ? `<p class="modal__error">${escapeHtml(invite.error)}</p>` : "";
+  const avatar = selectedSuggestion?.avatarUrl
+    ? `<img class="user-suggestion__avatar" src="${escapeHtml(selectedSuggestion.avatarUrl)}" alt="" />`
+    : selectedSuggestion
+      ? `<span class="user-suggestion__avatar user-suggestion__avatar--placeholder" aria-hidden="true">${escapeHtml(
+          selectedSuggestion.login.slice(0, 1).toUpperCase(),
+        )}</span>`
+      : "";
+  const selectedNameLine =
+    selectedSuggestion?.name && selectedSuggestion.name !== selectedSuggestion.login
+      ? `<span class="user-suggestion__name">${escapeHtml(selectedSuggestion.name)}</span>`
+      : "";
 
   return `
     <div class="modal-backdrop">
       <section class="card modal-card modal-card--compact modal-card--allow-overflow">
         <div class="card__body modal-card__body">
-          <p class="card__eyebrow">INVITE USER</p>
-          <h2 class="modal__title">Invite A User</h2>
+          <p class="card__eyebrow">INVITE MEMBER</p>
+          <h2 class="modal__title">Invite A Member</h2>
           <p class="modal__supporting">
-            Enter a GitHub username or email address. As you type a username or full name, Gnosis TMS will suggest matching GitHub users.
+            Type in the box below to search for GitHub users.
           </p>
           <div class="modal__form">
             <label class="field">
-              <span class="field__label">GitHub Username Or Email</span>
+              <span class="field__label">GitHub Username</span>
               <div class="invite-user__field-wrap">
-                <input
-                  class="field__input"
-                  type="text"
-                  placeholder="Enter GitHub username or email"
-                  value="${escapeHtml(invite.query)}"
-                  data-invite-user-input
-                  autocomplete="off"
-                  ${isSubmitting ? "disabled" : ""}
-                />
+                ${
+                  selectedSuggestion
+                    ? `
+                      <div class="invite-user__selected">
+                        <span class="invite-user__selected-main">
+                          ${avatar}
+                          <span class="user-suggestion__content">
+                            <span class="user-suggestion__login">@${escapeHtml(selectedSuggestion.login)}</span>
+                            ${selectedNameLine}
+                          </span>
+                        </span>
+                        <button
+                          class="invite-user__selected-change"
+                          type="button"
+                          data-action="edit-selected-invite-user"
+                          ${isSubmitting ? "disabled" : ""}
+                        >
+                          Change
+                        </button>
+                      </div>
+                    `
+                    : `
+                      <input
+                        class="field__input"
+                        type="text"
+                        placeholder="Enter GitHub username"
+                        value="${escapeHtml(invite.query)}"
+                        data-invite-user-input
+                        autocomplete="off"
+                        ${isSubmitting ? "disabled" : ""}
+                      />
+                    `
+                }
                 ${
                   showSuggestions
                     ? `<div class="user-suggestions">${invite.suggestions
@@ -85,6 +124,8 @@ export function renderInviteUserModal(state) {
                         .join("")}</div>`
                     : showSearching
                       ? '<div class="user-suggestions user-suggestions--status">Searching GitHub users...</div>'
+                      : showUsernameOnlyUnavailable
+                        ? '<div class="user-suggestions user-suggestions--status">Search by GitHub username only.</div>'
                       : showNoResults
                         ? '<div class="user-suggestions user-suggestions--status">No matching GitHub users found.</div>'
                         : ""

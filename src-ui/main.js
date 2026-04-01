@@ -38,7 +38,7 @@ const titles = {
   start: "Gnosis TMS",
   teams: "Translation Teams - Gnosis TMS",
   projects: "Projects - Gnosis TMS",
-  users: "Users - Gnosis TMS",
+  users: "Members - Gnosis TMS",
   glossaries: "Glossaries - Gnosis TMS",
   glossaryEditor: "Glossary Editor - Gnosis TMS",
   translate: "Translate - Gnosis TMS",

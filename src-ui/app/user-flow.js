@@ -66,7 +66,7 @@ export function primeUsersForTeam(teamId = state.selectedTeamId) {
     state.users = [];
     state.userDiscovery = {
       status: "error",
-      error: "Users are unavailable in offline mode.",
+      error: "Members are unavailable in offline mode.",
     };
     return;
   }
@@ -148,6 +148,7 @@ export function updateInviteUserQuery(render, query) {
   state.inviteUser.query = query;
   state.inviteUser.error = "";
   state.inviteUser.selectedUserId = null;
+  state.inviteUser.selectedSuggestion = null;
 
   if (inviteUserSearchTimeout) {
     clearTimeout(inviteUserSearchTimeout);
@@ -155,7 +156,7 @@ export function updateInviteUserQuery(render, query) {
   }
 
   const nextQuery = query.trim();
-  if (nextQuery.length < 4 || nextQuery.includes("@")) {
+  if (nextQuery.length < 4 || nextQuery.includes("@") || /\s/.test(nextQuery)) {
     clearInviteUserSuggestions();
     render();
     return;
@@ -179,7 +180,19 @@ export function selectInviteUserSuggestion(render, suggestionId) {
   }
 
   state.inviteUser.selectedUserId = String(suggestion.id);
+  state.inviteUser.selectedSuggestion = suggestion;
   state.inviteUser.query = suggestion.login;
+  state.inviteUser.suggestions = [];
+  state.inviteUser.suggestionsStatus = "idle";
+  state.inviteUser.error = "";
+  render();
+}
+
+export function editInviteUserSelection(render) {
+  state.inviteUser.selectedUserId = null;
+  state.inviteUser.selectedSuggestion = null;
+  state.inviteUser.suggestions = [];
+  state.inviteUser.suggestionsStatus = "idle";
   state.inviteUser.error = "";
   render();
 }
@@ -187,14 +200,20 @@ export function selectInviteUserSuggestion(render, suggestionId) {
 export async function submitInviteUser(render) {
   const selectedTeam = state.teams.find((team) => team.id === state.selectedTeamId);
   if (!selectedTeam?.installationId) {
-    state.inviteUser.error = "Inviting users requires a GitHub App-connected team.";
+    state.inviteUser.error = "Inviting members requires a GitHub App-connected team.";
     render();
     return;
   }
 
   const invitee = state.inviteUser.query.trim();
   if (!invitee) {
-    state.inviteUser.error = "Enter a GitHub username or email.";
+    state.inviteUser.error = "Enter a GitHub username.";
+    render();
+    return;
+  }
+
+  if (invitee.includes("@") || /\s/.test(invitee)) {
+    state.inviteUser.error = "Invitations must use a GitHub username.";
     render();
     return;
   }
@@ -204,22 +223,24 @@ export async function submitInviteUser(render) {
   render();
 
   try {
-    const selectedSuggestion = state.inviteUser.suggestions.find(
-      (item) => String(item.id) === state.inviteUser.selectedUserId,
-    );
+    const selectedSuggestion =
+      state.inviteUser.selectedSuggestion
+      ?? state.inviteUser.suggestions.find(
+        (item) => String(item.id) === state.inviteUser.selectedUserId,
+      );
 
     await invoke("invite_user_to_organization_for_installation", {
       installationId: selectedTeam.installationId,
       orgLogin: selectedTeam.githubOrg,
       inviteeId: selectedSuggestion?.id ?? null,
-      inviteeLogin: selectedSuggestion ? selectedSuggestion.login : invitee.includes("@") ? null : invitee,
-      inviteeEmail: invitee.includes("@") ? invitee : null,
+      inviteeLogin: selectedSuggestion ? selectedSuggestion.login : invitee,
+      inviteeEmail: null,
       sessionToken: requireBrokerSession(),
     });
 
     showScopedSyncBadge(
       "users",
-      `Invitation sent to ${invitee.includes("@") ? invitee : `@${invitee}`}`,
+      `Invitation sent to @${invitee}`,
       render,
     );
     resetInviteUser();
@@ -241,7 +262,7 @@ export async function loadTeamUsers(render, teamId = state.selectedTeamId) {
     state.users = [];
     state.userDiscovery = {
       status: "error",
-      error: "Users are unavailable in offline mode.",
+      error: "Members are unavailable in offline mode.",
     };
     render();
     return;

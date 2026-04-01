@@ -11,7 +11,7 @@ export function renderGlossariesScreen(state) {
     navButtons: [
       navButton("Logout", "start"),
       navButton("Teams", "teams"),
-      navButton("Users", "users"),
+      navButton("Members", "users"),
       navButton("Projects", "projects"),
     ],
     tools: `${textAction("Upload", "noop")} ${primaryButton("+ New Glossary", "noop")}`,

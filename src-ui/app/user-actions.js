@@ -1,6 +1,7 @@
 import { actionSuffix, runWithImmediateLoading } from "./action-helpers.js";
 import {
   cancelInviteUser,
+  editInviteUserSelection,
   openInviteUser,
   selectInviteUserSuggestion,
   submitInviteUser,
@@ -15,6 +16,11 @@ export function createUserActions(render) {
 
     if (action === "cancel-invite-user") {
       cancelInviteUser(render);
+      return true;
+    }
+
+    if (action === "edit-selected-invite-user") {
+      editInviteUserSelection(render);
       return true;
     }
 

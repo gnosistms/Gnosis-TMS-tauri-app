@@ -188,7 +188,7 @@ export function renderProjectsScreen(state) {
     navButtons: [
       navButton("Logout", "start"),
       navButton("Teams", "teams"),
-      navButton("Users", "users"),
+      navButton("Members", "users"),
       navButton("Glossaries", "glossaries"),
     ],
     leftTools: createSearchField("Search"),

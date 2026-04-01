@@ -130,6 +130,7 @@ export function createInviteUserState() {
     isOpen: false,
     query: "",
     selectedUserId: null,
+    selectedSuggestion: null,
     suggestions: [],
     suggestionsStatus: "idle",
     status: "idle",
