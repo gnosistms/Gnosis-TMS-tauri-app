@@ -33,6 +33,10 @@ Local secure key path on this machine:
 
 The original generated `/private/tmp/gnosis-tms-updater.key` copy should be removed after moving it to the local secure path and storing it in GitHub Actions secrets / your password manager.
 
+Long-term handling policy and incident response are documented in:
+
+- `/Users/hans/Desktop/GnosisTMS/UPDATER_KEY_MANAGEMENT.md`
+
 ## Publishing a release
 
 1. Update the app version in:
