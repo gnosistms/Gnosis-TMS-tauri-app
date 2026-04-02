@@ -18,8 +18,6 @@ function renderTeamCard(team, options = {}) {
   const missingPermissions = Array.isArray(team.missingAppPermissions)
     ? team.missingAppPermissions.join(", ")
     : "";
-  const permissionActionLabel = team.canDelete ? "Update GitHub Permissions" : "Request GitHub Permissions";
-  const permissionActionUrl = team.canDelete ? team.appApprovalUrl : team.appRequestUrl;
   const approvalWarning =
     team.needsAppApproval === true
       ? `
@@ -30,9 +28,13 @@ function renderTeamCard(team, options = {}) {
               : "GitHub App update required for this team.",
           )}</p>
           ${
-            permissionActionUrl
-              ? errorButton(permissionActionLabel, `open-external:${permissionActionUrl}`)
-              : ""
+            team.canDelete
+              ? team.appApprovalUrl
+                ? errorButton("Update GitHub Permissions", `open-external:${team.appApprovalUrl}`)
+                : ""
+              : `<p class="list-row__warning-help message-box__text">${escapeHtml(
+                  "Contact the owner of this team. Ask them to run Gnosis TMS and update GitHub permissions for this team on the Teams page.",
+                )}</p>`
           }
         </div>
       `
@@ -45,7 +47,7 @@ function renderTeamCard(team, options = {}) {
     textAction(
       team.canDelete ? "Delete" : "Leave",
       `${team.canDelete ? "delete-team" : "leave-team"}:${team.id}`,
-      { disabled: offlineMode || (team.needsAppApproval === true && !team.canDelete) },
+      { disabled: offlineMode },
     ),
   ];
 
