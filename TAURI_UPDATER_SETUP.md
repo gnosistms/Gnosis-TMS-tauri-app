@@ -2,6 +2,12 @@
 
 This app is configured to publish signed release updates through GitHub Releases.
 
+## Supported release platforms
+
+- macOS Apple Silicon (`aarch64-apple-darwin`)
+- macOS Intel (`x86_64-apple-darwin`)
+- Windows (`windows-x86_64`)
+
 ## Release feed
 
 The packaged release app checks:
@@ -35,20 +41,21 @@ The original generated `/private/tmp/gnosis-tms-updater.key` copy should be remo
    - `src-tauri/tauri.conf.json`
 2. Commit the version bump.
 3. Create and push a tag like `v0.1.1`.
-4. GitHub Actions runs `.github/workflows/release-tauri.yml`.
-5. The workflow builds signed updater artifacts and uploads them to GitHub Releases.
+4. GitHub Actions runs [.github/workflows/release-tauri.yml](/Users/hans/Desktop/GnosisTMS/.github/workflows/release-tauri.yml).
+5. The workflow builds signed updater artifacts for macOS and Windows and uploads them to GitHub Releases.
+6. The Tauri GitHub Action generates the merged `latest.json` used by the updater across supported platforms.
 
 ## GitHub workflow
 
 The release workflow:
 
 - installs dependencies
-- builds the Tauri app
-- uploads:
-  - `.dmg`
-  - `.app.tar.gz`
-  - `.app.tar.gz.sig`
-  - `latest.json`
+- builds and publishes release artifacts through `tauri-apps/tauri-action`
+- targets:
+  - macOS Apple Silicon
+  - macOS Intel
+  - Windows
+- generates a single merged `latest.json` for the updater feed
 
 ## Notes
 
