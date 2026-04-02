@@ -7,6 +7,7 @@ import {
   confirmTeamLeave,
   confirmTeamPermanentDeletion,
   deleteTeam,
+  openTeamLeave,
   openTeamPermanentDeletion,
   openTeamRename,
   restoreTeam,
@@ -46,6 +47,10 @@ export function createTeamActions(render) {
     {
       prefix: "delete-team:",
       handler: (teamId) => deleteTeam(render, teamId),
+    },
+    {
+      prefix: "leave-team:",
+      handler: (teamId) => openTeamLeave(render, teamId),
     },
     {
       prefix: "restore-team:",

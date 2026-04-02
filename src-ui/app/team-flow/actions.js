@@ -264,6 +264,7 @@ export async function confirmTeamPermanentDeletion(render) {
 }
 
 export function openTeamLeave(render, teamId) {
+  setTeamUiDebug(render, "Leave clicked");
   const team = state.teams.find((item) => item.id === teamId);
   if (!team) {
     return;

@@ -10,8 +10,9 @@ import {
 } from "./app/github-app-test-flow.js";
 import { loadUserTeams, setGithubAppInstallation } from "./app/team-setup-flow.js";
 import { initializeConnectivity } from "./app/offline-connectivity.js";
+import { initializePersistentStorage } from "./app/persistent-store.js";
 import { app } from "./app/runtime.js";
-import { state } from "./app/state.js";
+import { hydratePersistentAppState, state } from "./app/state.js";
 import { renderGithubAppTestScreen } from "./screens/github-app-test.js";
 import { renderConnectionFailureModal } from "./screens/connection-failure-modal.js";
 import { renderGlossariesScreen } from "./screens/glossaries.js";
@@ -119,10 +120,17 @@ window.__gnosisDebug = {
   },
 };
 
-registerAppEvents(render);
-void registerBrokerAuthListener(render, loadUserTeams);
-void registerGithubAppInstallListener(render, setGithubAppInstallation);
-void registerGithubAppTestListener(render);
-void loadGithubAppTestConfig(render);
-render();
-void initializeConnectivity(render, () => restoreStoredBrokerSession(render, loadUserTeams));
+async function bootstrap() {
+  await initializePersistentStorage();
+  hydratePersistentAppState();
+
+  registerAppEvents(render);
+  void registerBrokerAuthListener(render, loadUserTeams);
+  void registerGithubAppInstallListener(render, setGithubAppInstallation);
+  void registerGithubAppTestListener(render);
+  void loadGithubAppTestConfig(render);
+  render();
+  void initializeConnectivity(render, () => restoreStoredBrokerSession(render, loadUserTeams));
+}
+
+void bootstrap();

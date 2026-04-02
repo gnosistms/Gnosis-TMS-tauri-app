@@ -1,3 +1,9 @@
+import {
+  readPersistentValue,
+  removePersistentValue,
+  writePersistentValue,
+} from "./persistent-store.js";
+
 const TEAM_RECORDS_STORAGE_KEY = "gnosis-tms-team-records";
 const TEAM_PENDING_MUTATIONS_STORAGE_KEY = "gnosis-tms-team-pending-mutations";
 const ACTIVE_STORAGE_LOGIN_KEY = "gnosis-tms-active-storage-login";
@@ -13,7 +19,7 @@ function scopedStorageKey(baseKey, login = getActiveStorageLogin()) {
 
 export function getActiveStorageLogin() {
   try {
-    return normalizeStorageLogin(window.localStorage?.getItem(ACTIVE_STORAGE_LOGIN_KEY));
+    return normalizeStorageLogin(readPersistentValue(ACTIVE_STORAGE_LOGIN_KEY, null));
   } catch {
     return null;
   }
@@ -23,10 +29,10 @@ export function setActiveStorageLogin(login) {
   const normalizedLogin = normalizeStorageLogin(login);
   try {
     if (!normalizedLogin) {
-      window.localStorage?.removeItem(ACTIVE_STORAGE_LOGIN_KEY);
+      removePersistentValue(ACTIVE_STORAGE_LOGIN_KEY);
       return;
     }
-    window.localStorage?.setItem(ACTIVE_STORAGE_LOGIN_KEY, normalizedLogin);
+    writePersistentValue(ACTIVE_STORAGE_LOGIN_KEY, normalizedLogin);
   } catch {}
 }
 
@@ -104,12 +110,12 @@ function teamIdentityKey(team) {
 export function loadStoredTeamRecords(login = getActiveStorageLogin()) {
   try {
     const scopedKey = scopedStorageKey(TEAM_RECORDS_STORAGE_KEY, login);
-    const storedValue = scopedKey ? window.localStorage?.getItem(scopedKey) : null;
+    const storedValue = scopedKey ? readPersistentValue(scopedKey, null) : null;
     if (!storedValue) {
       return [];
     }
 
-    const teams = JSON.parse(storedValue);
+    const teams = storedValue;
     if (!Array.isArray(teams)) {
       return [];
     }
@@ -144,8 +150,7 @@ export function saveStoredTeamRecords(teams, login = getActiveStorageLogin()) {
         const existing = merged.get(key);
         merged.set(key, existing ? { ...existing, ...team } : team);
       });
-    const serialized = JSON.stringify([...merged.values()]);
-    window.localStorage?.setItem(scopedKey, serialized);
+    writePersistentValue(scopedKey, [...merged.values()]);
   } catch {}
 }
 
@@ -219,12 +224,12 @@ export function mergeTeams(primaryTeams, secondaryTeams = []) {
 export function loadStoredTeamPendingMutations(login = getActiveStorageLogin()) {
   try {
     const scopedKey = scopedStorageKey(TEAM_PENDING_MUTATIONS_STORAGE_KEY, login);
-    const storedValue = scopedKey ? window.localStorage?.getItem(scopedKey) : null;
+    const storedValue = scopedKey ? readPersistentValue(scopedKey, null) : null;
     if (!storedValue) {
       return [];
     }
 
-    const mutations = JSON.parse(storedValue);
+    const mutations = storedValue;
     return Array.isArray(mutations) ? mutations : [];
   } catch {
     return [];
@@ -237,7 +242,6 @@ export function saveStoredTeamPendingMutations(mutations, login = getActiveStora
     if (!scopedKey) {
       return;
     }
-    const serialized = JSON.stringify(Array.isArray(mutations) ? mutations : []);
-    window.localStorage?.setItem(scopedKey, serialized);
+    writePersistentValue(scopedKey, Array.isArray(mutations) ? mutations : []);
   } catch {}
 }

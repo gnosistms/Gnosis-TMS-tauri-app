@@ -8,6 +8,7 @@ mod github;
 mod github_app_test;
 mod insecure_github_app_config;
 mod state;
+mod store;
 mod window;
 
 use tauri::Manager;
@@ -73,6 +74,7 @@ pub fn run() {
       pending_github_app_install: Mutex::new(None),
       pending_broker_auth: Mutex::new(None),
     })
+    .plugin(store::init())
     .plugin(tauri_plugin_opener::init())
     .invoke_handler(tauri::generate_handler![
       ping,

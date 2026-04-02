@@ -1,4 +1,8 @@
 import { getActiveStorageLogin } from "./team-storage.js";
+import {
+  readPersistentValue,
+  writePersistentValue,
+} from "./persistent-store.js";
 
 const MEMBER_CACHE_STORAGE_KEY = "gnosis-tms-member-cache";
 
@@ -71,12 +75,12 @@ function normalizeMember(member) {
 function loadMemberCacheMap(login = getActiveStorageLogin()) {
   try {
     const scopedKey = scopedStorageKey(MEMBER_CACHE_STORAGE_KEY, login);
-    const storedValue = scopedKey ? window.localStorage?.getItem(scopedKey) : null;
+    const storedValue = scopedKey ? readPersistentValue(scopedKey, null) : null;
     if (!storedValue) {
       return {};
     }
 
-    const parsed = JSON.parse(storedValue);
+    const parsed = storedValue;
     return parsed && typeof parsed === "object" ? parsed : {};
   } catch {
     return {};
@@ -90,7 +94,7 @@ function saveMemberCacheMap(cacheMap, login = getActiveStorageLogin()) {
       return;
     }
 
-    window.localStorage?.setItem(scopedKey, JSON.stringify(cacheMap));
+    writePersistentValue(scopedKey, cacheMap);
   } catch {}
 }
 

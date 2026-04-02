@@ -4,8 +4,6 @@ import {
   loadStoredTeamPendingMutations,
 } from "./team-storage.js";
 
-const initialStoredTeams = splitStoredTeamRecords();
-
 export const state = {
   screen: "start",
   expandedProjects: new Set(["p2"]),
@@ -13,8 +11,8 @@ export const state = {
   selectedProjectId: "p2",
   selectedGlossaryId: "g1",
   selectedChapterId: "c2",
-  teams: initialStoredTeams.activeTeams,
-  deletedTeams: initialStoredTeams.deletedTeams,
+  teams: [],
+  deletedTeams: [],
   projects: [],
   deletedProjects: [],
   users: [],
@@ -41,7 +39,7 @@ export const state = {
   },
   teamSyncVersion: 0,
   projectSyncVersion: 0,
-  pendingTeamMutations: loadStoredTeamPendingMutations(),
+  pendingTeamMutations: [],
   pendingProjectMutations: [],
   pageSync: createPageSyncState(),
   teamSetup: createTeamSetupState(),
@@ -55,6 +53,14 @@ export const state = {
   showDeletedProjects: false,
   showDeletedTeams: false,
 };
+
+export function hydratePersistentAppState() {
+  const storedTeams = splitStoredTeamRecords();
+  state.teams = storedTeams.activeTeams;
+  state.deletedTeams = storedTeams.deletedTeams;
+  state.pendingTeamMutations = loadStoredTeamPendingMutations();
+  state.selectedTeamId = state.selectedTeamId ?? storedTeams.activeTeams[0]?.id ?? null;
+}
 
 export function createOfflineState() {
   return {

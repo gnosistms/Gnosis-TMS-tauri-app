@@ -20,7 +20,11 @@ function renderTeamCard(team, options = {}) {
     textAction("Glossaries", `open-team-glossaries:${team.id}`),
     textAction("Members", `open-team-users:${team.id}`, { disabled: offlineMode }),
     ...(team.canDelete ? [textAction("Rename", `rename-team:${team.id}`, { disabled: offlineMode })] : []),
-    textAction(team.canDelete ? "Delete" : "Leave", `delete-team:${team.id}`, { disabled: offlineMode }),
+    textAction(
+      team.canDelete ? "Delete" : "Leave",
+      `${team.canDelete ? "delete-team" : "leave-team"}:${team.id}`,
+      { disabled: offlineMode },
+    ),
   ];
 
   return `

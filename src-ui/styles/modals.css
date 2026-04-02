@@ -73,6 +73,28 @@
   border-radius: var(--radius-ui);
   background: rgba(255, 234, 230, 0.92);
   color: #a54024;
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  white-space: nowrap;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(165, 64, 36, 0.38) rgba(255, 234, 230, 0.4);
+}
+
+.modal__error::-webkit-scrollbar {
+  height: 10px;
+}
+
+.modal__error::-webkit-scrollbar-track {
+  background: rgba(255, 234, 230, 0.4);
+  border-radius: 999px;
+}
+
+.modal__error::-webkit-scrollbar-thumb {
+  background: rgba(165, 64, 36, 0.38);
+  border-radius: 999px;
+  border: 2px solid rgba(255, 234, 230, 0.4);
 }
 
 .field {

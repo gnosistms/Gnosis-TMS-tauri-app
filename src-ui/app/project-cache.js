@@ -1,6 +1,10 @@
 import {
   getActiveStorageLogin,
 } from "./team-storage.js";
+import {
+  readPersistentValue,
+  writePersistentValue,
+} from "./persistent-store.js";
 
 const PROJECT_CACHE_STORAGE_KEY = "gnosis-tms-project-cache";
 const PROJECT_PENDING_MUTATIONS_STORAGE_KEY = "gnosis-tms-project-pending-mutations";
@@ -43,12 +47,12 @@ function normalizeProject(project) {
 function loadProjectCacheMap(login = getActiveStorageLogin()) {
   try {
     const scopedKey = scopedStorageKey(PROJECT_CACHE_STORAGE_KEY, login);
-    const storedValue = scopedKey ? window.localStorage?.getItem(scopedKey) : null;
+    const storedValue = scopedKey ? readPersistentValue(scopedKey, null) : null;
     if (!storedValue) {
       return {};
     }
 
-    const parsed = JSON.parse(storedValue);
+    const parsed = storedValue;
     return parsed && typeof parsed === "object" ? parsed : {};
   } catch {
     return {};
@@ -61,7 +65,7 @@ function saveProjectCacheMap(cacheMap, login = getActiveStorageLogin()) {
     if (!scopedKey) {
       return;
     }
-    window.localStorage?.setItem(scopedKey, JSON.stringify(cacheMap));
+    writePersistentValue(scopedKey, cacheMap);
   } catch {}
 }
 
@@ -127,12 +131,12 @@ export function loadStoredProjectPendingMutations(team) {
 
   try {
     const scopedKey = scopedStorageKey(PROJECT_PENDING_MUTATIONS_STORAGE_KEY);
-    const storedValue = scopedKey ? window.localStorage?.getItem(scopedKey) : null;
+    const storedValue = scopedKey ? readPersistentValue(scopedKey, null) : null;
     if (!storedValue) {
       return [];
     }
 
-    const parsed = JSON.parse(storedValue);
+    const parsed = storedValue;
     if (!parsed || typeof parsed !== "object") {
       return [];
     }
@@ -154,10 +158,10 @@ export function saveStoredProjectPendingMutations(team, mutations) {
     if (!scopedKey) {
       return;
     }
-    const storedValue = window.localStorage?.getItem(scopedKey);
-    const parsed = storedValue ? JSON.parse(storedValue) : {};
+    const storedValue = readPersistentValue(scopedKey, {});
+    const parsed = storedValue ?? {};
     const nextMap = parsed && typeof parsed === "object" ? parsed : {};
     nextMap[cacheKey] = Array.isArray(mutations) ? mutations : [];
-    window.localStorage?.setItem(scopedKey, JSON.stringify(nextMap));
+    writePersistentValue(scopedKey, nextMap);
   } catch {}
 }

@@ -24,3 +24,4 @@ sha2 = "0.10"
 url = "2"
 jsonwebtoken = "9"
 uuid = { version = "1", features = ["v7", "serde"] }
+tauri-plugin-store = "2"
