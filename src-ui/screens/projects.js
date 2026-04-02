@@ -7,6 +7,7 @@ import {
   sectionSeparator,
   textAction,
 } from "../lib/ui.js";
+import { formatErrorForDisplay } from "../app/error-display.js";
 import { renderProjectCreationModal } from "./project-creation-modal.js";
 import { renderProjectPermanentDeletionModal } from "./project-permanent-deletion-modal.js";
 import { renderProjectRenameModal } from "./project-rename-modal.js";
@@ -155,7 +156,7 @@ export function renderProjectsScreen(state) {
       <div class="card__body">
         <p class="card__eyebrow">PROJECT LOAD FAILED</p>
         <h2 class="card__title card__title--small">Could not load this team's projects.</h2>
-        <p class="card__subtitle">${escapeHtml(discovery.error || "Unknown error.")}</p>
+        <p class="card__subtitle">${escapeHtml(formatErrorForDisplay(discovery.error || "Unknown error."))}</p>
       </div>
     </article>
   `;

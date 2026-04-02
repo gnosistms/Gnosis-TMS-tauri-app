@@ -1,4 +1,5 @@
 import { escapeHtml, navButton, pageShell, primaryButton, textAction } from "../lib/ui.js";
+import { formatErrorForDisplay } from "../app/error-display.js";
 import { getNoticeBadgeText } from "../app/status-feedback.js";
 import { renderInviteUserModal } from "./invite-user-modal.js";
 import { renderTeamLeaveModal } from "./teams/leave-modal.js";
@@ -66,7 +67,7 @@ export function renderUsersScreen(state) {
       <div class="card__body">
         <p class="card__eyebrow">MEMBER LOAD FAILED</p>
         <h2 class="card__title card__title--small">Could not load this team's members.</h2>
-        <p class="card__subtitle">${escapeHtml(discovery.error || "Unknown error.")}</p>
+        <p class="card__subtitle">${escapeHtml(formatErrorForDisplay(discovery.error || "Unknown error."))}</p>
       </div>
     </article>
   `;

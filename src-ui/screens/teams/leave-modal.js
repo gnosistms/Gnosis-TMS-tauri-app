@@ -1,4 +1,5 @@
 import { escapeHtml, loadingPrimaryButton, secondaryButton } from "../../lib/ui.js";
+import { formatErrorForDisplay } from "../../app/error-display.js";
 
 export function renderTeamLeaveModal(state) {
   const leave = state.teamLeave;
@@ -8,7 +9,7 @@ export function renderTeamLeaveModal(state) {
 
   const isLeaving = leave.status === "loading";
   const errorMarkup = leave.error
-    ? `<p class="modal__error">${escapeHtml(leave.error)}</p>`
+    ? `<p class="modal__error">${escapeHtml(formatErrorForDisplay(leave.error))}</p>`
     : "";
   const leaveButton = loadingPrimaryButton({
     label: "Leave",

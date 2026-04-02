@@ -1,4 +1,5 @@
 import { escapeHtml, primaryButton, secondaryButton } from "../../lib/ui.js";
+import { formatErrorForDisplay } from "../../app/error-display.js";
 
 function renderGuideStep() {
   return `
@@ -104,7 +105,7 @@ export function renderSetupModal(state) {
 
   const { eyebrow, heading, supporting, afterBodySupporting, body, actionButton } = getStepConfig(setup);
   const errorMarkup = setup.error
-    ? `<p class="modal__error">${escapeHtml(setup.error)}</p>`
+    ? `<p class="modal__error">${escapeHtml(formatErrorForDisplay(setup.error))}</p>`
     : "";
   const afterBodyMarkup = afterBodySupporting
     ? `<p class="modal__supporting">${afterBodySupporting}</p>`

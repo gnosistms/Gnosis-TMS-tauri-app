@@ -1,4 +1,5 @@
 import { escapeHtml, loadingPrimaryButton, secondaryButton } from "../lib/ui.js";
+import { formatErrorForDisplay } from "../app/error-display.js";
 
 function renderSuggestionItem(suggestion, isSelected) {
   const avatar = suggestion.avatarUrl
@@ -77,7 +78,9 @@ export function renderInviteUserModal(state) {
   const cancelButton = secondaryButton("Cancel", "cancel-invite-user", {
     disabled: isSubmitting,
   });
-  const errorMarkup = invite.error ? `<p class="modal__error">${escapeHtml(invite.error)}</p>` : "";
+  const errorMarkup = invite.error
+    ? `<p class="modal__error">${escapeHtml(formatErrorForDisplay(invite.error))}</p>`
+    : "";
   const avatar = selectedSuggestion?.avatarUrl
     ? `<img class="user-suggestion__avatar" src="${escapeHtml(selectedSuggestion.avatarUrl)}" alt="" />`
     : selectedSuggestion

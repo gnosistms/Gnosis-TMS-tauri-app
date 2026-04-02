@@ -1,4 +1,5 @@
 import { escapeHtml, loadingPrimaryButton, secondaryButton } from "../lib/ui.js";
+import { formatErrorForDisplay } from "../app/error-display.js";
 
 export function renderProjectCreationModal(state) {
   const creation = state.projectCreation;
@@ -8,7 +9,7 @@ export function renderProjectCreationModal(state) {
 
   const isSubmitting = creation.status === "loading";
   const errorMarkup = creation.error
-    ? `<p class="modal__error">${escapeHtml(creation.error)}</p>`
+    ? `<p class="modal__error">${escapeHtml(formatErrorForDisplay(creation.error))}</p>`
     : "";
   const submitButton = loadingPrimaryButton({
     label: "Create Project",

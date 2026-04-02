@@ -1,4 +1,5 @@
 import { escapeHtml, loadingPrimaryButton, secondaryButton } from "../lib/ui.js";
+import { formatErrorForDisplay } from "../app/error-display.js";
 
 export function renderProjectRenameModal(state) {
   const rename = state.projectRename;
@@ -8,7 +9,7 @@ export function renderProjectRenameModal(state) {
 
   const isSubmitting = rename.status === "loading";
   const errorMarkup = rename.error
-    ? `<p class="modal__error">${escapeHtml(rename.error)}</p>`
+    ? `<p class="modal__error">${escapeHtml(formatErrorForDisplay(rename.error))}</p>`
     : "";
   const submitButton = loadingPrimaryButton({
     label: "Rename Project",

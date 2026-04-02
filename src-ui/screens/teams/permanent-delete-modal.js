@@ -1,4 +1,5 @@
 import { escapeHtml, loadingPrimaryButton, secondaryButton } from "../../lib/ui.js";
+import { formatErrorForDisplay } from "../../app/error-display.js";
 
 export function renderTeamPermanentDeletionModal(state) {
   const deletion = state.teamPermanentDeletion;
@@ -9,7 +10,7 @@ export function renderTeamPermanentDeletionModal(state) {
   const isDeleting = deletion.status === "loading";
   const matchesName = deletion.confirmationText === deletion.teamName;
   const errorMarkup = deletion.error
-    ? `<p class="modal__error">${escapeHtml(deletion.error)}</p>`
+    ? `<p class="modal__error">${escapeHtml(formatErrorForDisplay(deletion.error))}</p>`
     : "";
   const deleteButton = isDeleting
     ? loadingPrimaryButton({
