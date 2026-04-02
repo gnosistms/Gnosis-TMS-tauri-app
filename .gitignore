@@ -12,3 +12,9 @@ src-tauri/gen
 # Local secret backups
 Backup Github App Secrets/
 .gnosis-tms/secrets/
+
+# Apple signing artifacts
+developerID_application.cer
+CertificateSigningRequest.certSigningRequest
+Certificates.p12
+signingCerts/
