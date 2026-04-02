@@ -32,10 +32,49 @@ function clearProjectUiDebug(render) {
   clearScopedSyncBadge("projects", render);
 }
 
+function getProjectSortName(project) {
+  if (typeof project?.title === "string" && project.title.trim()) {
+    return project.title.trim();
+  }
+
+  if (typeof project?.name === "string" && project.name.trim()) {
+    return project.name.trim();
+  }
+
+  return "";
+}
+
+function compareProjectsByName(left, right) {
+  const nameComparison = getProjectSortName(left).localeCompare(getProjectSortName(right), undefined, {
+    sensitivity: "base",
+    numeric: true,
+  });
+  if (nameComparison !== 0) {
+    return nameComparison;
+  }
+
+  return String(left?.id ?? "").localeCompare(String(right?.id ?? ""), undefined, {
+    sensitivity: "base",
+    numeric: true,
+  });
+}
+
+function sortProjectsByName(projects = []) {
+  return [...projects].sort(compareProjectsByName);
+}
+
+function sortProjectSnapshot(snapshot) {
+  return {
+    items: sortProjectsByName(snapshot.items),
+    deletedItems: sortProjectsByName(snapshot.deletedItems),
+  };
+}
+
 function applyProjectSnapshotToState(snapshot) {
-  state.projects = snapshot.items;
-  state.deletedProjects = snapshot.deletedItems;
-  if (snapshot.deletedItems.length === 0) {
+  const sortedSnapshot = sortProjectSnapshot(snapshot);
+  state.projects = sortedSnapshot.items;
+  state.deletedProjects = sortedSnapshot.deletedItems;
+  if (sortedSnapshot.deletedItems.length === 0) {
     state.showDeletedProjects = false;
   }
 }
@@ -68,10 +107,10 @@ function normalizeProjectSnapshot(snapshot, pendingMutations = []) {
     activeById.delete(projectId);
   }
 
-  return {
+  return sortProjectSnapshot({
     items: [...activeById.values()],
     deletedItems: [...deletedById.values()],
-  };
+  });
 }
 
 function applyProjectPendingMutation(snapshot, mutation) {
