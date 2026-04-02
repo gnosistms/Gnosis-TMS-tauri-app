@@ -100,6 +100,7 @@ function renderDeletedProjectsSection(state) {
 
   const selectedTeam = state.teams.find((team) => team.id === state.selectedTeamId) ?? state.teams[0];
   const canManageDeletedProjects = selectedTeam?.canManageProjects === true;
+  const canPermanentlyDeleteProjects = selectedTeam?.canDelete === true;
   const offlineMode = state.offline?.isEnabled === true;
 
   const toggle = renderDeletedProjectsToggle(state);
@@ -119,7 +120,9 @@ function renderDeletedProjectsSection(state) {
             actions: canManageDeletedProjects
               ? [
                   textAction("Restore", `restore-project:${project.id}`, { disabled: offlineMode }),
-                  textAction("Delete", `delete-deleted-project:${project.id}`, { disabled: offlineMode }),
+                  ...(canPermanentlyDeleteProjects
+                    ? [textAction("Delete", `delete-deleted-project:${project.id}`, { disabled: offlineMode })]
+                    : []),
                 ]
               : [],
           }),

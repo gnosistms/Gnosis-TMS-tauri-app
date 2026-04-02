@@ -12,7 +12,8 @@ mod store;
 mod updater;
 mod window;
 
-use tauri::Manager;
+use tauri::{Emitter, Manager};
+use tauri::menu::{Menu, MenuItemBuilder, PredefinedMenuItem, Submenu, SubmenuBuilder};
 use std::sync::Mutex;
 use std::time::Duration;
 
@@ -69,6 +70,110 @@ fn check_internet_connection() -> bool {
     .unwrap_or(false)
 }
 
+const SYNC_WITH_SERVER_MENU_ID: &str = "sync-with-server";
+const SYNC_WITH_SERVER_EVENT: &str = "sync-with-server";
+
+fn build_app_menu<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result<Menu<R>> {
+  let sync_shortcut = if cfg!(target_os = "macos") {
+    "Cmd+S"
+  } else {
+    "Ctrl+R"
+  };
+  let sync_item = MenuItemBuilder::with_id(SYNC_WITH_SERVER_MENU_ID, "Sync with Server")
+    .accelerator(sync_shortcut)
+    .build(app)?;
+
+  let file_menu = SubmenuBuilder::new(app, "File")
+    .item(&sync_item)
+    .separator()
+    .item(&PredefinedMenuItem::close_window(app, None)?)
+    .build()?;
+
+  #[cfg(not(target_os = "macos"))]
+  let file_menu = Submenu::with_items(
+    app,
+    "File",
+    true,
+    &[
+      &sync_item,
+      &PredefinedMenuItem::separator(app)?,
+      &PredefinedMenuItem::close_window(app, None)?,
+      &PredefinedMenuItem::quit(app, None)?,
+    ],
+  )?;
+
+  let edit_menu = Submenu::with_items(
+    app,
+    "Edit",
+    true,
+    &[
+      &PredefinedMenuItem::undo(app, None)?,
+      &PredefinedMenuItem::redo(app, None)?,
+      &PredefinedMenuItem::separator(app)?,
+      &PredefinedMenuItem::cut(app, None)?,
+      &PredefinedMenuItem::copy(app, None)?,
+      &PredefinedMenuItem::paste(app, None)?,
+      &PredefinedMenuItem::select_all(app, None)?,
+    ],
+  )?;
+
+  let window_menu = Submenu::with_items(
+    app,
+    "Window",
+    true,
+    &[
+      &PredefinedMenuItem::minimize(app, None)?,
+      &PredefinedMenuItem::maximize(app, None)?,
+      #[cfg(target_os = "macos")]
+      &PredefinedMenuItem::separator(app)?,
+      &PredefinedMenuItem::close_window(app, None)?,
+    ],
+  )?;
+
+  #[cfg(target_os = "macos")]
+  {
+    let pkg_info = app.package_info();
+    let about_metadata = tauri::menu::AboutMetadata {
+      name: Some(pkg_info.name.clone()),
+      version: Some(pkg_info.version.to_string()),
+      ..Default::default()
+    };
+
+    let app_menu = Submenu::with_items(
+      app,
+      pkg_info.name.clone(),
+      true,
+      &[
+        &PredefinedMenuItem::about(app, None, Some(about_metadata))?,
+        &PredefinedMenuItem::separator(app)?,
+        &PredefinedMenuItem::services(app, None)?,
+        &PredefinedMenuItem::separator(app)?,
+        &PredefinedMenuItem::hide(app, None)?,
+        &PredefinedMenuItem::hide_others(app, None)?,
+        &PredefinedMenuItem::separator(app)?,
+        &PredefinedMenuItem::quit(app, None)?,
+      ],
+    )?;
+
+    let view_menu = Submenu::with_items(
+      app,
+      "View",
+      true,
+      &[&PredefinedMenuItem::fullscreen(app, None)?],
+    )?;
+
+    let help_menu = Submenu::with_items(app, "Help", true, &[])?;
+
+    return Menu::with_items(app, &[&app_menu, &file_menu, &edit_menu, &view_menu, &window_menu, &help_menu]);
+  }
+
+  #[cfg(not(target_os = "macos"))]
+  {
+    let help_menu = Submenu::with_items(app, "Help", true, &[])?;
+    return Menu::with_items(app, &[&file_menu, &edit_menu, &window_menu, &help_menu]);
+  }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
   tauri::Builder::default()
@@ -84,6 +189,13 @@ pub fn run() {
         .pubkey(include_str!("../updater-public-key.txt").trim())
         .build(),
     )
+    .on_menu_event(|app, event| {
+      if event.id().0 == SYNC_WITH_SERVER_MENU_ID {
+        if let Some(window) = app.get_webview_window("main") {
+          let _ = window.emit(SYNC_WITH_SERVER_EVENT, ());
+        }
+      }
+    })
     .invoke_handler(tauri::generate_handler![
       ping,
       check_internet_connection,
@@ -121,6 +233,9 @@ pub fn run() {
       leave_organization_for_installation
     ])
     .setup(|app| {
+      let menu = build_app_menu(&app.handle())?;
+      let _ = app.set_menu(menu)?;
+
       #[cfg(target_os = "macos")]
       for label in ["main"] {
         if let Some(window) = app.get_webview_window(label) {

@@ -65,6 +65,33 @@ function buildFallbackUsers() {
   return currentUser ? [currentUser] : [];
 }
 
+function snapshotUsers(users = []) {
+  return users.map((user) => ({ ...user }));
+}
+
+function updateLocalAdminRole(users = [], username, shouldBeAdmin, options = {}) {
+  const nextRole = shouldBeAdmin ? "Admin" : "Translator";
+  const roleSyncPending = options.roleSyncPending === true;
+  let didUpdate = false;
+  const nextUsers = users.map((user) => {
+    if (user?.username !== username) {
+      return user;
+    }
+
+    didUpdate = true;
+    return {
+      ...user,
+      role: nextRole,
+      roleSyncPending,
+    };
+  });
+
+  return {
+    didUpdate,
+    users: nextUsers,
+  };
+}
+
 function initializeUsersFromCachedState(selectedTeam) {
   if (state.offline.isEnabled) {
     setUsersUnavailable("Members are unavailable in offline mode.");
@@ -117,9 +144,18 @@ async function updateOrganizationAdminMembership(render, username, shouldBeAdmin
     return;
   }
 
+  const previousUsers = snapshotUsers(state.users);
+
   try {
+    const optimisticUsers = updateLocalAdminRole(previousUsers, username, shouldBeAdmin, {
+      roleSyncPending: true,
+    });
     beginPageSync();
-    state.userDiscovery = { status: "loading", error: "" };
+    if (optimisticUsers.didUpdate) {
+      state.users = optimisticUsers.users;
+      saveStoredMembersForTeam(selectedTeam, state.users);
+    }
+    state.userDiscovery = { status: "ready", error: "" };
     render();
 
     if (shouldBeAdmin) {
@@ -140,6 +176,10 @@ async function updateOrganizationAdminMembership(render, username, shouldBeAdmin
 
     await loadTeamUsers(render, selectedTeam.id);
   } catch (error) {
+    if (previousUsers.length > 0) {
+      state.users = previousUsers;
+      saveStoredMembersForTeam(selectedTeam, state.users);
+    }
     if (await handleSyncFailure(classifySyncError(error), { render })) {
       return;
     }
