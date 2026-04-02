@@ -12,9 +12,11 @@ This file is the current handoff for restarting work in a fresh thread.
 - Branch: `main`
 - HEAD changes have advanced well beyond the old updater setup commit; if resuming, use `git log --oneline -n 12` instead of relying on the stale SHA that was previously recorded here.
 - Working tree: clean
+- Local branch may temporarily be ahead of `origin/main` when packaging tweaks are prepared but not yet pushed.
 
 Recent app commits:
 
+- `052f4e5` `Add custom macOS DMG background and window layout`
 - `6995bad` `Add mac signing and notarization workflow setup`
 - `916193e` `Prepare v0.1.3 release`
 - `000efb3` `Update release actions to Node 24 versions`
@@ -127,6 +129,31 @@ App Store Connect notarization identifiers:
 
 - `Issuer ID`: `69a6de80-191b-47e3-e053-5b8c7c11a4d1`
 - `Key ID`: `K97CK8B339`
+
+## DMG branding state
+
+Mounted DMG branding work now uses stock Tauri macOS DMG support rather than a custom workflow script.
+
+Implemented:
+
+- branded install background image at `/Users/hans/Desktop/GnosisTMS/src-tauri/dmg/background.png`
+- DMG layout config in `/Users/hans/Desktop/GnosisTMS/src-tauri/tauri.conf.json`
+- mounted volume icon uses the existing app icon from `/Users/hans/Desktop/GnosisTMS/src-tauri/icons/icon.icns`
+
+Important details:
+
+- Tauri's DMG bundler already passes a volume icon into `bundle_dmg.sh` and writes `.VolumeIcon.icns` inside the mounted image
+- a direct local debug DMG bundle succeeded with the new background and volume icon flow
+- a full local `npm run tauri -- build --bundles dmg --debug` run also succeeded after the DMG config change
+- the downloaded `.dmg` file icon itself is still not the reliable target; the supported branding target is the mounted volume icon
+
+If continuing this work later:
+
+1. Inspect `/Users/hans/Desktop/GnosisTMS/src-tauri/tauri.conf.json`
+2. Inspect `/Users/hans/Desktop/GnosisTMS/src-tauri/dmg/background.png`
+3. Re-run a local DMG build if needed:
+   - `npm run tauri -- build --bundles dmg --debug`
+4. If a future release needs this branding, cut a new release tag after pushing the commit containing the DMG config/background asset
 
 ## Local secret storage
 
