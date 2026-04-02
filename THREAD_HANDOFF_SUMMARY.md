@@ -124,3 +124,10 @@ Start here:
 
 Broker cleanup and permission-flow changes were already completed and pushed in the broker repo.
 If broker work comes up again, inspect the broker repo separately rather than assuming app repo changes are involved.
+
+## Secret tracking docs
+
+Current secret-handling docs:
+
+- `/Users/hans/Desktop/GnosisTMS/UPDATER_KEY_MANAGEMENT.md`
+- `/Users/hans/Desktop/GnosisTMS/SECRET_INVENTORY.md`
