@@ -18,3 +18,4 @@ developerID_application.cer
 CertificateSigningRequest.certSigningRequest
 Certificates.p12
 signingCerts/
+src-tauri/icons/*.icon/
