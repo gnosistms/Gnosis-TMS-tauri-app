@@ -10,14 +10,16 @@ This file is the current handoff for restarting work in a fresh thread.
 ## Current app repo state
 
 - Branch: `main`
-- HEAD: `a8079a20ea3a0916ebdb83a3f9fed069abf181d3`
+- HEAD changes have advanced well beyond the old updater setup commit; if resuming, use `git log --oneline -n 12` instead of relying on the stale SHA that was previously recorded here.
 - Working tree: clean
 
 Recent app commits:
 
-- `a8079a2` `Support macOS and Windows releases`
-- `26d59cc` `Prepare v0.1.1 release`
-- `91525af` `Add updates feature`
+- `6995bad` `Add mac signing and notarization workflow setup`
+- `916193e` `Prepare v0.1.3 release`
+- `000efb3` `Update release actions to Node 24 versions`
+- `bcf3409` `Prepare v0.1.2 release`
+- `a6a83c0` `Add updater plugin config and secret progress notes`
 
 ## Tauri updater / release setup
 
@@ -56,14 +58,24 @@ Linux is intentionally not in scope right now.
 
 ## Version / tag state
 
-Release version was bumped to `0.1.1` in:
+Release versions progressed like this:
+
+- `v0.1.1`: failed because the tag pointed to a commit before `plugins.updater` was present in `tauri.conf.json`
+- `v0.1.2`: succeeded for macOS and Windows release publishing
+- `v0.1.3`: current release intended to test Apple signing/notarization workflow
+
+Current app version has been bumped to `0.1.3` in:
 
 - `/Users/hans/Desktop/GnosisTMS/package.json`
 - `/Users/hans/Desktop/GnosisTMS/src-tauri/Cargo.toml`
 - `/Users/hans/Desktop/GnosisTMS/src-tauri/Cargo.lock`
 - `/Users/hans/Desktop/GnosisTMS/src-tauri/tauri.conf.json`
 
-The `v0.1.1` tag has already been pushed.
+Pushed tags:
+
+- `v0.1.1`
+- `v0.1.2`
+- `v0.1.3`
 
 ## GitHub auth / secrets state
 
@@ -82,6 +94,39 @@ GitHub Actions secrets that were set on the repo:
 
 - `TAURI_SIGNING_PRIVATE_KEY`
 - `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`
+- `APPLE_CERTIFICATE`
+- `APPLE_CERTIFICATE_PASSWORD`
+- `APPLE_API_ISSUER`
+- `APPLE_API_KEY`
+- `APPLE_API_KEY_CONTENT`
+
+## Apple signing / notarization state
+
+The mac release pipeline was extended to sign and notarize macOS builds.
+
+Workflow file:
+
+- `/Users/hans/Desktop/GnosisTMS/.github/workflows/release-tauri.yml`
+
+Local Apple signing artifacts created during setup:
+
+- `/Users/hans/Desktop/GnosisTMS/Certificates.p12`
+- `/Users/hans/Desktop/GnosisTMS/developerID_application.cer`
+- `/Users/hans/Desktop/GnosisTMS/CertificateSigningRequest.certSigningRequest`
+- `/Users/hans/Desktop/GnosisTMS/signingCerts/AuthKey_K97CK8B339.p8`
+
+These are gitignored via:
+
+- `/Users/hans/Desktop/GnosisTMS/.gitignore`
+
+Installed mac signing identity on this Mac:
+
+- `Developer ID Application: Ngo Minh Ngoc (DMM8533PS6)`
+
+App Store Connect notarization identifiers:
+
+- `Issuer ID`: `69a6de80-191b-47e3-e053-5b8c7c11a4d1`
+- `Key ID`: `K97CK8B339`
 
 ## Local secret storage
 
@@ -97,13 +142,22 @@ Notes:
 - the original `/private/tmp/gnosis-tms-updater.key` copy was deleted
 - this handoff intentionally does not store the actual password or private key contents
 
-## Current GitHub Actions run
+## Current GitHub Actions runs
 
-The release workflow triggered by `v0.1.1` is currently:
+Important recent release runs:
 
-- status: `in_progress`
-- run id: `23889877708`
-- url: `https://github.com/gnosistms/Gnosis-TMS-tauri-app/actions/runs/23889877708`
+- `v0.1.1`
+  - run id: `23889877708`
+  - result: failed / obsolete
+  - reason: missing `plugins.updater` config in the tagged commit
+- `v0.1.2`
+  - run id: `23893693762`
+  - result: succeeded
+  - note: mac artifacts were published, but this was before Apple signing/notarization workflow setup
+- `v0.1.3`
+  - run id: `23904153754`
+  - result: current run to inspect for signed/notarized mac artifacts
+  - url: `https://github.com/gnosistms/Gnosis-TMS-tauri-app/actions/runs/23904153754`
 
 ## If continuing in a fresh thread
 
@@ -111,13 +165,15 @@ Start here:
 
 1. Read this file.
 2. Check the current release run status:
-   - `gh run view 23889877708`
+   - `gh run view 23904153754`
 3. If needed, inspect the release workflow:
    - `/Users/hans/Desktop/GnosisTMS/.github/workflows/release-tauri.yml`
-4. If the run failed, inspect logs and patch the workflow or bundle config.
+4. If the run failed, inspect logs and patch the workflow or signing/notarization setup.
 5. If the run succeeded, verify:
    - GitHub Release assets exist
    - `latest.json` is present on the release
+   - mac downloaded app no longer shows the “damaged / move to trash” Gatekeeper warning
+   - Windows release still publishes successfully
    - a packaged older build detects the update
 
 ## Broker note
@@ -138,6 +194,8 @@ Current secret progress:
 - step 2 complete: GitHub App private key regenerated, stored in Apple Passwords, deployed, and old keys removed after verification
 - step 3 complete: `GITHUB_APP_CLIENT_SECRET` stored in Apple Passwords, deployed, and old client secret removed after verification
 - step 4 complete: `BROKER_STATE_SECRET` regenerated, stored in Apple Passwords, and deployed
+- Apple mac signing certificate exported as `.p12` and stored in GitHub Actions
+- Apple notarization API key stored in GitHub Actions
 
 Primary recovery source for non-recoverable secrets:
 
@@ -158,3 +216,16 @@ GitHub cannot reliably re-show later:
 - `GITHUB_APP_PRIVATE_KEY`
 - `GITHUB_APP_CLIENT_SECRET`
 - `BROKER_STATE_SECRET`
+- `TAURI_SIGNING_PRIVATE_KEY`
+- `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`
+- `APPLE_CERTIFICATE`
+- `APPLE_CERTIFICATE_PASSWORD`
+- `APPLE_API_KEY_CONTENT`
+
+Primary local files to keep out of git:
+
+- `/Users/hans/Desktop/GnosisTMS/.gnosis-tms/secrets/tauri-updater.key`
+- `/Users/hans/Desktop/GnosisTMS/Certificates.p12`
+- `/Users/hans/Desktop/GnosisTMS/developerID_application.cer`
+- `/Users/hans/Desktop/GnosisTMS/CertificateSigningRequest.certSigningRequest`
+- `/Users/hans/Desktop/GnosisTMS/signingCerts/AuthKey_K97CK8B339.p8`

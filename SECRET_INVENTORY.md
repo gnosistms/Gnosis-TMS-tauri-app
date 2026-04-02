@@ -15,6 +15,12 @@ Current Apple Passwords entries:
 - `Gnosis TMS GitHub App Client Secret`
 - `Gnosis TMS Broker State Secret`
 
+Apple developer signing / notarization files currently exist locally in:
+
+- `/Users/hans/Desktop/GnosisTMS/signingCerts/`
+
+Those files are gitignored and should be treated as sensitive local setup artifacts.
+
 ## Status summary
 
 Current status as of 2026-04-02:
@@ -23,6 +29,7 @@ Current status as of 2026-04-02:
 2. GitHub App private key has been regenerated, stored in Apple Passwords, deployed to DigitalOcean, and old GitHub App private keys were deleted after verification.
 3. GitHub App client secret has been regenerated, stored in Apple Passwords, deployed to DigitalOcean, and old GitHub client secret was deleted after verification.
 4. Broker state secret has been regenerated, stored in Apple Passwords, and deployed to DigitalOcean.
+5. Apple mac signing and notarization CI secrets have been configured in GitHub Actions.
 
 ## App repo secrets
 
@@ -50,6 +57,63 @@ Status:
 - stored in Apple Passwords
 - GitHub Actions secrets configured
 - local file should be deleted after secure backup is confirmed
+
+GitHub Actions secrets:
+
+- `TAURI_SIGNING_PRIVATE_KEY`
+- `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`
+
+### 1b. Apple mac signing certificate
+
+Purpose:
+
+- signs macOS release artifacts with a `Developer ID Application` certificate
+
+GitHub Actions secrets:
+
+- `APPLE_CERTIFICATE`
+- `APPLE_CERTIFICATE_PASSWORD`
+
+Local setup files:
+
+- `/Users/hans/Desktop/GnosisTMS/Certificates.p12`
+- `/Users/hans/Desktop/GnosisTMS/developerID_application.cer`
+- `/Users/hans/Desktop/GnosisTMS/CertificateSigningRequest.certSigningRequest`
+
+Status:
+
+- complete
+- `Developer ID Application` certificate installed on this Mac
+- exported as `.p12`
+- GitHub Actions secrets configured
+
+### 1c. Apple notarization API credentials
+
+Purpose:
+
+- notarizes macOS release artifacts in CI so browser-downloaded apps open normally on macOS
+
+GitHub Actions secrets:
+
+- `APPLE_API_ISSUER`
+- `APPLE_API_KEY`
+- `APPLE_API_KEY_CONTENT`
+
+Local setup file:
+
+- `/Users/hans/Desktop/GnosisTMS/signingCerts/AuthKey_K97CK8B339.p8`
+
+Identifiers:
+
+- `Issuer ID`: `69a6de80-191b-47e3-e053-5b8c7c11a4d1`
+- `Key ID`: `K97CK8B339`
+
+Status:
+
+- complete
+- App Store Connect API key generated
+- local `.p8` saved
+- GitHub Actions secrets configured
 
 ## Broker secrets
 
@@ -187,11 +251,17 @@ These cannot be reliably recovered later just by looking in GitHub:
 - `GITHUB_APP_PRIVATE_KEY`
 - `GITHUB_APP_CLIENT_SECRET`
 - `BROKER_STATE_SECRET`
+- `TAURI_SIGNING_PRIVATE_KEY`
+- `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`
+- `APPLE_CERTIFICATE`
+- `APPLE_CERTIFICATE_PASSWORD`
+- `APPLE_API_KEY_CONTENT`
 
 Meaning:
 
 - if they are lost from deployment config, recover them from Apple Passwords
 - if they are not in Apple Passwords, they must be rotated/regenerated
+- Apple signing artifacts may also require re-export/regeneration from the Apple developer account if local files are lost and GitHub Actions secrets need to be rebuilt
 
 ## Do not store as permanent vault secrets
 

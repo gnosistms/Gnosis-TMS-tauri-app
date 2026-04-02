@@ -190,3 +190,21 @@ That would need explicit product and security design work. It is not solved by t
    - `/Users/hans/Desktop/GnosisTMS/.gnosis-tms/secrets/tauri-updater.key`
 3. Move GitHub release secrets into a protected GitHub Environment later.
 4. Keep this document updated if the key location or workflow changes.
+
+## Related Apple signing notes
+
+macOS distribution now also depends on Apple signing and notarization credentials in GitHub Actions.
+
+Those are separate from the Tauri updater key and include:
+
+- `APPLE_CERTIFICATE`
+- `APPLE_CERTIFICATE_PASSWORD`
+- `APPLE_API_ISSUER`
+- `APPLE_API_KEY`
+- `APPLE_API_KEY_CONTENT`
+
+If mac signing or notarization breaks in the future, inspect:
+
+- `/Users/hans/Desktop/GnosisTMS/.github/workflows/release-tauri.yml`
+- `/Users/hans/Desktop/GnosisTMS/THREAD_HANDOFF_SUMMARY.md`
+- `/Users/hans/Desktop/GnosisTMS/SECRET_INVENTORY.md`
