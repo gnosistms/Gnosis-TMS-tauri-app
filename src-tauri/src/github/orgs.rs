@@ -38,19 +38,23 @@ pub(crate) fn inspect_github_app_installation(
 }
 
 #[tauri::command]
-pub(crate) fn list_organization_members_for_installation(
+pub(crate) async fn list_organization_members_for_installation(
   installation_id: i64,
   org_login: String,
   session_token: String,
 ) -> Result<Vec<GithubOrganizationMember>, String> {
-  let client = github_client()?;
-  broker_get_json_with_session(
-    &client,
-    &format!(
-      "/api/github-app/installations/{installation_id}/members?org_login={org_login}"
-    ),
-    &session_token,
-  )
+  tauri::async_runtime::spawn_blocking(move || {
+    let client = github_client()?;
+    broker_get_json_with_session(
+      &client,
+      &format!(
+        "/api/github-app/installations/{installation_id}/members?org_login={org_login}"
+      ),
+      &session_token,
+    )
+  })
+  .await
+  .map_err(|error| format!("Could not run the organization members task: {error}"))?
 }
 
 #[tauri::command]
