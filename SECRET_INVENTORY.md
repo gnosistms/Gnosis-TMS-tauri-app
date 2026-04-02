@@ -4,6 +4,17 @@ This file tracks the durable secret inventory for Gnosis TMS and the GitHub App 
 
 It intentionally does not contain actual secret values.
 
+## Primary recovery source
+
+If these secrets are lost from DigitalOcean or GitHub Actions, the primary recovery source is Apple Passwords.
+
+Current Apple Passwords entries:
+
+- `Gnosis TMS Tauri Updater Key`
+- `Gnosis TMS GitHub App Private Key`
+- `Gnosis TMS GitHub App Client Secret`
+- `Gnosis TMS Broker State Secret`
+
 ## Status summary
 
 Current status as of 2026-04-02:
@@ -11,7 +22,7 @@ Current status as of 2026-04-02:
 1. Tauri updater key has already been stored in Apple Passwords.
 2. GitHub App private key has been regenerated, stored in Apple Passwords, deployed to DigitalOcean, and old GitHub App private keys were deleted after verification.
 3. GitHub App client secret has been regenerated, stored in Apple Passwords, deployed to DigitalOcean, and old GitHub client secret was deleted after verification.
-4. Broker state secret is the current next step.
+4. Broker state secret has been regenerated, stored in Apple Passwords, and deployed to DigitalOcean.
 
 ## App repo secrets
 
@@ -122,7 +133,10 @@ How to store it:
 
 Status:
 
-- next step
+- complete
+- regenerated as a new random secret
+- stored in Apple Passwords
+- deployed to DigitalOcean
 
 ## Reference-only broker config
 
@@ -159,6 +173,25 @@ If the private key is not recoverable:
 5. Redeploy the broker if required.
 
 This is acceptable and does not have the same reinstall risk as rotating the Tauri updater key.
+
+### Which values can be re-found in GitHub
+
+These can be re-found in GitHub App settings:
+
+- `GITHUB_APP_ID`
+- `GITHUB_APP_SLUG`
+- `GITHUB_APP_CLIENT_ID`
+
+These cannot be reliably recovered later just by looking in GitHub:
+
+- `GITHUB_APP_PRIVATE_KEY`
+- `GITHUB_APP_CLIENT_SECRET`
+- `BROKER_STATE_SECRET`
+
+Meaning:
+
+- if they are lost from deployment config, recover them from Apple Passwords
+- if they are not in Apple Passwords, they must be rotated/regenerated
 
 ## Do not store as permanent vault secrets
 

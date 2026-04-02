@@ -137,4 +137,24 @@ Current secret progress:
 - step 1 complete: Tauri updater key stored in Apple Passwords
 - step 2 complete: GitHub App private key regenerated, stored in Apple Passwords, deployed, and old keys removed after verification
 - step 3 complete: `GITHUB_APP_CLIENT_SECRET` stored in Apple Passwords, deployed, and old client secret removed after verification
-- current next step: store `BROKER_STATE_SECRET` in Apple Passwords
+- step 4 complete: `BROKER_STATE_SECRET` regenerated, stored in Apple Passwords, and deployed
+
+Primary recovery source for non-recoverable secrets:
+
+- Apple Passwords entries:
+  - `Gnosis TMS Tauri Updater Key`
+  - `Gnosis TMS GitHub App Private Key`
+  - `Gnosis TMS GitHub App Client Secret`
+  - `Gnosis TMS Broker State Secret`
+
+GitHub can re-show/reference:
+
+- `GITHUB_APP_ID`
+- `GITHUB_APP_SLUG`
+- `GITHUB_APP_CLIENT_ID`
+
+GitHub cannot reliably re-show later:
+
+- `GITHUB_APP_PRIVATE_KEY`
+- `GITHUB_APP_CLIENT_SECRET`
+- `BROKER_STATE_SECRET`
