@@ -5,12 +5,11 @@ import {
   acknowledgeInviteUserSuccess,
   cancelInviteUser,
   editInviteUserSelection,
-  makeOrganizationAdmin,
   openInviteUser,
-  revokeOrganizationAdmin,
   selectInviteUserSuggestion,
   submitInviteUser,
-} from "./user-flow.js";
+} from "./invite-user-flow.js";
+import { makeOrganizationAdmin, revokeOrganizationAdmin } from "./team-members-flow.js";
 
 export function createUserActions(render) {
   return async function handleUserAction(action, event) {

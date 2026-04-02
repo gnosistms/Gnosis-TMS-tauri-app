@@ -8,7 +8,7 @@ import {
   updateTeamPermanentDeletionConfirmation,
   updateTeamRenameName,
 } from "./team-setup-flow.js";
-import { updateInviteUserQuery } from "./user-flow.js";
+import { updateInviteUserQuery } from "./invite-user-flow.js";
 
 function handleProjectCreationInput(event) {
   const input = event.target.closest("[data-project-name-input]");

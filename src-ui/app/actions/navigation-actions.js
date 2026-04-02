@@ -1,6 +1,6 @@
 import { state } from "../state.js";
 import { loadTeamProjects } from "../project-flow.js";
-import { loadTeamUsers, primeUsersForTeam } from "../user-flow.js";
+import { loadTeamUsers, primeUsersForTeam } from "../team-members-flow.js";
 import { actionSuffix } from "../action-helpers.js";
 import { waitForNextPaint } from "../runtime.js";
 

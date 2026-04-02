@@ -6,13 +6,11 @@ import {
 } from "./auth-storage.js";
 import {
   clearActiveStorageLogin,
-  loadStoredTeamPendingMutations,
   setActiveStorageLogin,
-  splitStoredTeamRecords,
 } from "./team-storage.js";
-import { state } from "./state.js";
-import { classifySyncError } from "./sync-error.js";
+import { hydrateStoredTeamState, state } from "./state.js";
 import { handleSyncFailure } from "./sync-recovery.js";
+import { classifySyncError } from "./sync-error.js";
 
 function setAuthState(nextAuth, render) {
   state.auth = {
@@ -22,18 +20,6 @@ function setAuthState(nextAuth, render) {
   render();
 }
 
-function hydrateStoredDataForActiveUser() {
-  const storedTeams = splitStoredTeamRecords();
-  state.teams = storedTeams.activeTeams;
-  state.deletedTeams = storedTeams.deletedTeams;
-  state.pendingTeamMutations = loadStoredTeamPendingMutations();
-  state.projects = [];
-  state.deletedProjects = [];
-  state.pendingProjectMutations = [];
-  state.users = [];
-  state.selectedTeamId = storedTeams.activeTeams[0]?.id ?? null;
-}
-
 export function requireBrokerSession() {
   const sessionToken = state.auth.session?.sessionToken;
   if (!sessionToken) {
@@ -41,10 +27,6 @@ export function requireBrokerSession() {
   }
 
   return sessionToken;
-}
-
-export function isBrokerAuthExpiredError(error) {
-  return classifySyncError(error).type === "auth_invalid";
 }
 
 export async function handleBrokerAuthExpired(render, error) {
@@ -129,6 +111,14 @@ export async function restoreStoredBrokerSession(render, loadUserTeams) {
     state.screen = "start";
     render();
   }
+}
+
+function hydrateStoredDataForActiveUser() {
+  hydrateStoredTeamState();
+  state.projects = [];
+  state.deletedProjects = [];
+  state.pendingProjectMutations = [];
+  state.users = [];
 }
 
 export async function registerBrokerAuthListener(render, loadUserTeams) {

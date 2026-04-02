@@ -55,6 +55,10 @@ export const state = {
 };
 
 export function hydratePersistentAppState() {
+  hydrateStoredTeamState();
+}
+
+export function hydrateStoredTeamState() {
   const storedTeams = splitStoredTeamRecords();
   state.teams = storedTeams.activeTeams;
   state.deletedTeams = storedTeams.deletedTeams;
@@ -117,22 +121,16 @@ export function createGithubAppTestState() {
 }
 
 export function createTeamRenameState() {
-  return {
-    isOpen: false,
+  return createEntityModalState({
     teamId: null,
     teamName: "",
-    status: "idle",
-    error: "",
-  };
+  });
 }
 
 export function createProjectCreationState() {
-  return {
-    isOpen: false,
+  return createEntityModalState({
     projectName: "",
-    status: "idle",
-    error: "",
-  };
+  });
 }
 
 export function createInviteUserState() {
@@ -150,34 +148,25 @@ export function createInviteUserState() {
 }
 
 export function createTeamPermanentDeletionState() {
-  return {
-    isOpen: false,
+  return createEntityModalState({
     teamId: null,
     teamName: "",
     confirmationText: "",
-    status: "idle",
-    error: "",
-  };
+  });
 }
 
 export function createTeamLeaveState() {
-  return {
-    isOpen: false,
+  return createEntityModalState({
     teamId: null,
     teamName: "",
-    status: "idle",
-    error: "",
-  };
+  });
 }
 
 export function createProjectRenameState() {
-  return {
-    isOpen: false,
+  return createEntityModalState({
     projectId: null,
     projectName: "",
-    status: "idle",
-    error: "",
-  };
+  });
 }
 
 export function resetInviteUser() {
@@ -185,14 +174,11 @@ export function resetInviteUser() {
 }
 
 export function createProjectPermanentDeletionState() {
-  return {
-    isOpen: false,
+  return createEntityModalState({
     projectId: null,
     projectName: "",
     confirmationText: "",
-    status: "idle",
-    error: "",
-  };
+  });
 }
 
 export function resetTeamSetup() {
@@ -267,5 +253,14 @@ export function resetSessionState() {
 function createPageSyncState() {
   return {
     status: "idle",
+  };
+}
+
+function createEntityModalState(fields = {}) {
+  return {
+    isOpen: false,
+    status: "idle",
+    error: "",
+    ...fields,
   };
 }
