@@ -16,6 +16,8 @@ This file is the current handoff for restarting work in a fresh thread.
 
 Recent app commits:
 
+- `ab5d081` `Fix Cargo lock for v0.1.5 release`
+- `6bcfb82` `Add custom DMG file icons to macOS release workflow`
 - `052f4e5` `Add custom macOS DMG background and window layout`
 - `6995bad` `Add mac signing and notarization workflow setup`
 - `916193e` `Prepare v0.1.3 release`
@@ -64,9 +66,11 @@ Release versions progressed like this:
 
 - `v0.1.1`: failed because the tag pointed to a commit before `plugins.updater` was present in `tauri.conf.json`
 - `v0.1.2`: succeeded for macOS and Windows release publishing
-- `v0.1.3`: current release intended to test Apple signing/notarization workflow
+- `v0.1.3`: succeeded with Apple signing/notarization workflow
+- `v0.1.4`: succeeded
+- `v0.1.5`: current release intended to test custom `.dmg` file icon patching in GitHub Actions
 
-Current app version has been bumped to `0.1.3` in:
+Current app version has been bumped to `0.1.5` in:
 
 - `/Users/hans/Desktop/GnosisTMS/package.json`
 - `/Users/hans/Desktop/GnosisTMS/src-tauri/Cargo.toml`
@@ -78,6 +82,8 @@ Pushed tags:
 - `v0.1.1`
 - `v0.1.2`
 - `v0.1.3`
+- `v0.1.4`
+- `v0.1.5`
 
 ## GitHub auth / secrets state
 
@@ -132,7 +138,11 @@ App Store Connect notarization identifiers:
 
 ## DMG branding state
 
-Mounted DMG branding work now uses stock Tauri macOS DMG support rather than a custom workflow script.
+DMG branding now has two separate layers and this distinction matters:
+
+### 1. Mounted volume / installer window
+
+This uses stock Tauri macOS DMG support.
 
 Implemented:
 
@@ -142,18 +152,59 @@ Implemented:
 
 Important details:
 
-- Tauri's DMG bundler already passes a volume icon into `bundle_dmg.sh` and writes `.VolumeIcon.icns` inside the mounted image
-- a direct local debug DMG bundle succeeded with the new background and volume icon flow
+- Tauri's DMG bundler passes a volume icon into `bundle_dmg.sh` and writes `.VolumeIcon.icns` inside the mounted image
+- a direct local debug DMG bundle succeeded with the background and mounted volume icon flow
 - a full local `npm run tauri -- build --bundles dmg --debug` run also succeeded after the DMG config change
-- the downloaded `.dmg` file icon itself is still not the reliable target; the supported branding target is the mounted volume icon
 
-If continuing this work later:
+### 2. Downloaded `.dmg` file icon in Finder
 
-1. Inspect `/Users/hans/Desktop/GnosisTMS/src-tauri/tauri.conf.json`
-2. Inspect `/Users/hans/Desktop/GnosisTMS/src-tauri/dmg/background.png`
-3. Re-run a local DMG build if needed:
-   - `npm run tauri -- build --bundles dmg --debug`
-4. If a future release needs this branding, cut a new release tag after pushing the commit containing the DMG config/background asset
+This is **not** the same thing as the mounted volume icon.
+
+The working method was verified locally and should not be forgotten:
+
+- use a flattened PNG exported from Apple Icon Composer, currently:
+  - `/Users/hans/Desktop/GnosisTMS/src-tauri/icons/mac icon-iOS-Default-1024x1024@1x.png`
+- run `sips -i` on that PNG
+- run `DeRez -only icns` on the PNG to extract icon resources
+- run `Rez -append` to write those icon resources into the final `.dmg` file
+- run `SetFile -a C` on the final `.dmg`
+
+Working helper script:
+
+- `/Users/hans/Desktop/GnosisTMS/src-tauri/dmg/apply-dmg-file-icon.sh`
+
+The crucial lesson:
+
+- `.VolumeIcon.icns` only controls the mounted volume icon
+- it does **not** solve the Finder icon of the downloaded `.dmg` file itself
+- the downloaded file icon required the separate `sips` + `DeRez` + `Rez` + `SetFile -a C` path
+
+Release workflow state:
+
+- `.github/workflows/release-tauri.yml` now patches the built mac DMGs with the custom file icon
+- after patching, the workflow re-signs the DMG, re-notarizes it, staples it, and re-uploads it to the GitHub release with `gh release upload --clobber`
+
+Local proof that the method works:
+
+- a throwaway test file at `/private/tmp/gnosis-dmg-icon-test-2.dmg` showed the custom icon in Finder
+- `GetFileInfo` showed the DMG with the custom-icon flag:
+  - `attributes: avbstClinmedz`
+
+Git hygiene:
+
+- the raw Icon Composer package folder should not be committed
+- `.gitignore` now ignores:
+  - `src-tauri/icons/*.icon/`
+
+If continuing DMG icon work later:
+
+1. Inspect `/Users/hans/Desktop/GnosisTMS/src-tauri/dmg/apply-dmg-file-icon.sh`
+2. Inspect `/Users/hans/Desktop/GnosisTMS/src-tauri/icons/mac icon-iOS-Default-1024x1024@1x.png`
+3. Inspect `/Users/hans/Desktop/GnosisTMS/.github/workflows/release-tauri.yml`
+4. If needed, rerun a local proof test against a copied DMG:
+   - `bash src-tauri/dmg/apply-dmg-file-icon.sh /tmp/test.dmg 'src-tauri/icons/mac icon-iOS-Default-1024x1024@1x.png'`
+   - `xcrun GetFileInfo /tmp/test.dmg`
+5. Then cut a new release tag and verify the downloaded GitHub Release DMG in Finder
 
 ## Local secret storage
 
@@ -183,8 +234,15 @@ Important recent release runs:
   - note: mac artifacts were published, but this was before Apple signing/notarization workflow setup
 - `v0.1.3`
   - run id: `23904153754`
-  - result: current run to inspect for signed/notarized mac artifacts
+  - result: succeeded
   - url: `https://github.com/gnosistms/Gnosis-TMS-tauri-app/actions/runs/23904153754`
+- `v0.1.4`
+  - run id: `23907852874`
+  - result: succeeded
+- `v0.1.5`
+  - run id: `23923310661`
+  - result: current run to inspect for custom downloaded `.dmg` file icon behavior
+  - url: `https://github.com/gnosistms/Gnosis-TMS-tauri-app/actions/runs/23923310661`
 
 ## If continuing in a fresh thread
 
@@ -192,7 +250,7 @@ Start here:
 
 1. Read this file.
 2. Check the current release run status:
-   - `gh run view 23904153754`
+   - `gh run view 23923310661`
 3. If needed, inspect the release workflow:
    - `/Users/hans/Desktop/GnosisTMS/.github/workflows/release-tauri.yml`
 4. If the run failed, inspect logs and patch the workflow or signing/notarization setup.
@@ -200,6 +258,7 @@ Start here:
    - GitHub Release assets exist
    - `latest.json` is present on the release
    - mac downloaded app no longer shows the “damaged / move to trash” Gatekeeper warning
+   - downloaded `.dmg` file itself now shows the custom Finder icon
    - Windows release still publishes successfully
    - a packaged older build detects the update
 

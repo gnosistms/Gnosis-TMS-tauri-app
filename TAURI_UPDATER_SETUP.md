@@ -61,6 +61,65 @@ The release workflow:
   - Windows
 - generates a single merged `latest.json` for the updater feed
 
+## macOS DMG file icon notes
+
+There are two different macOS icon problems:
+
+1. the mounted DMG volume icon / installer window
+2. the Finder icon of the downloaded `.dmg` file itself
+
+Do not confuse them.
+
+### Mounted volume / installer window
+
+This is handled through stock Tauri DMG config:
+
+- `src-tauri/dmg/background.png`
+- `src-tauri/tauri.conf.json`
+- mounted volume icon via `icons/icon.icns`
+
+### Downloaded `.dmg` file icon
+
+This required a separate workflow patch and a separate icon asset.
+
+Current icon asset:
+
+- `/Users/hans/Desktop/GnosisTMS/src-tauri/icons/mac icon-iOS-Default-1024x1024@1x.png`
+
+Current helper script:
+
+- `/Users/hans/Desktop/GnosisTMS/src-tauri/dmg/apply-dmg-file-icon.sh`
+
+The working method is:
+
+1. `sips -i` the flattened PNG
+2. `DeRez -only icns` the PNG into a temporary resource file
+3. `Rez -append` that icon resource into the final `.dmg`
+4. `SetFile -a C` on the final `.dmg`
+
+This was verified locally against a copied DMG before wiring it into GitHub Actions.
+
+The important lesson:
+
+- `.VolumeIcon.icns` only affects the mounted volume
+- it does not give the downloaded `.dmg` file its own custom Finder icon
+
+### Release workflow order
+
+For mac release jobs, the workflow now does this:
+
+1. build/publish the release via `tauri-action`
+2. patch each built mac `.dmg` with the custom file icon
+3. re-sign the modified `.dmg`
+4. re-notarize it
+5. staple it
+6. replace the GitHub Release asset with `gh release upload --clobber`
+
+If this ever breaks, inspect:
+
+- `/Users/hans/Desktop/GnosisTMS/.github/workflows/release-tauri.yml`
+- `/Users/hans/Desktop/GnosisTMS/src-tauri/dmg/apply-dmg-file-icon.sh`
+
 ## Notes
 
 - The updater is release-only. Debug/dev builds return “no update”.
