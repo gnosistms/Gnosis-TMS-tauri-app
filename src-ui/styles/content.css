@@ -74,19 +74,22 @@
   font-size: 0.98rem;
 }
 
-.list-row__warning {
-  margin: 0;
-  color: #a54024;
-  font-size: 0.95rem;
-  font-weight: 600;
-}
-
-.list-row__warning-row {
+.list-row__warning-box {
   margin-top: 10px;
   display: flex;
   align-items: center;
   gap: 16px;
   flex-wrap: wrap;
+  padding: 14px 16px;
+  border-radius: var(--radius-ui);
+  background: rgba(255, 234, 230, 0.92);
+}
+
+.list-row__warning {
+  margin: 0;
+  color: #a54024;
+  font-size: 0.95rem;
+  font-weight: 600;
 }
 
 .list-row__actions,

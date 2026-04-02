@@ -1,4 +1,4 @@
-import { escapeHtml, sectionSeparator, textAction } from "../../lib/ui.js";
+import { escapeHtml, primaryButton, sectionSeparator, textAction } from "../../lib/ui.js";
 
 function renderAccessLabel(team) {
   if (team.canDelete) {
@@ -23,7 +23,7 @@ function renderTeamCard(team, options = {}) {
   const approvalWarning =
     team.needsAppApproval === true
       ? `
-        <div class="list-row__warning-row">
+        <div class="list-row__warning-box">
           <p class="list-row__warning">${escapeHtml(
             missingPermissions
               ? `GitHub App update required. Missing: ${missingPermissions}`
@@ -31,7 +31,7 @@ function renderTeamCard(team, options = {}) {
           )}</p>
           ${
             permissionActionUrl
-              ? textAction(permissionActionLabel, `open-external:${permissionActionUrl}`)
+              ? primaryButton(permissionActionLabel, `open-external:${permissionActionUrl}`)
               : ""
           }
         </div>
