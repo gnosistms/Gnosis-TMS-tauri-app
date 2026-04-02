@@ -1,209 +1,126 @@
 # Thread Handoff Summary
 
-This file is a compact handoff for continuing the current work in a fresh thread.
+This file is the current handoff for restarting work in a fresh thread.
 
-## Repos
+## Repo
 
 - App repo: `/Users/hans/Desktop/GnosisTMS`
 - Broker repo: `/Users/hans/Desktop/gnosis-tms-github-app-broker`
 
-## Current local runtime state
+## Current app repo state
 
-- Clean local app restart was just performed.
-- Active local dev session:
-  - Vite: `http://127.0.0.1:1431/`
-  - Tauri app: `target/debug/gnosis-tms`
-- Tauri dev process is running in exec session `35535`.
+- Branch: `main`
+- HEAD: `a8079a20ea3a0916ebdb83a3f9fed069abf181d3`
+- Working tree: clean
 
-## Immediate open issue
+Recent app commits:
 
-The user reported that the Teams page still shows:
+- `a8079a2` `Support macOS and Windows releases`
+- `26d59cc` `Prepare v0.1.1 release`
+- `91525af` `Add updates feature`
 
-- `GitHub App update required. Missing: custom_properties:write`
+## Tauri updater / release setup
 
-even though:
+The app now has Tauri updater plumbing wired for packaged release builds.
 
-1. The broker deploy `d45e22d` is live on DigitalOcean.
-2. The GitHub installation page appears to already show the required permissions.
-3. The local app has now been restarted cleanly to rule out stale local UI state.
+Important files:
 
-### Most likely next diagnostic step
+- `/Users/hans/Desktop/GnosisTMS/src-tauri/src/updater.rs`
+- `/Users/hans/Desktop/GnosisTMS/src-tauri/src/lib.rs`
+- `/Users/hans/Desktop/GnosisTMS/src-tauri/Cargo.toml`
+- `/Users/hans/Desktop/GnosisTMS/src-tauri/tauri.conf.json`
+- `/Users/hans/Desktop/GnosisTMS/src-ui/app/updater-flow.js`
+- `/Users/hans/Desktop/GnosisTMS/src-ui/screens/teams/index.js`
+- `/Users/hans/Desktop/GnosisTMS/.github/workflows/release-tauri.yml`
+- `/Users/hans/Desktop/GnosisTMS/TAURI_UPDATER_SETUP.md`
 
-If the warning still appears after restart, inspect the live broker response for:
+Updater feed URL used by release builds:
 
-- `/api/github-app/installations`
+- `https://github.com/gnosistms/Gnosis-TMS-tauri-app/releases/latest/download/latest.json`
 
-and confirm what it is actually returning for:
+Behavior:
 
-- `needsAppApproval`
-- `missingAppPermissions`
+- packaged release builds check for updates
+- local dev does not self-update
+- updater UI currently surfaces from the Teams screen
 
-for the affected orgs.
+## Supported release platforms
 
-The issue is likely one of:
+Current release workflow targets:
 
-- live broker still returning stale/incorrect permission info
-- installation permission payload from GitHub not matching our required-permission comparison the way we expect
-- app-side caching still being repopulated from a bad broker payload
+- macOS Apple Silicon (`aarch64-apple-darwin`)
+- macOS Intel (`x86_64-apple-darwin`)
+- Windows (`windows-x86_64`)
 
-## Important recent decisions
+Linux is intentionally not in scope right now.
 
-### GitHub permission warning UX
+## Version / tag state
 
-- Warning/check is intentionally shown only on the **Teams page**.
-- Do **not** show this warning on the Members page.
-- Do **not** substitute `Update App` inside Members-page controls.
-- Owner behavior:
-  - show `Update GitHub Permissions` button
-  - open GitHub installation/settings page
-- Non-owner behavior:
-  - do **not** send them into GitHub install/request flow
-  - instead show this instruction text in the warning box:
-    - `Contact the owner of this team. Ask them to run Gnosis TMS and update GitHub permissions for this team on the Teams page.`
+Release version was bumped to `0.1.1` in:
 
-### GitHub error handling design
+- `/Users/hans/Desktop/GnosisTMS/package.json`
+- `/Users/hans/Desktop/GnosisTMS/src-tauri/Cargo.toml`
+- `/Users/hans/Desktop/GnosisTMS/src-tauri/Cargo.lock`
+- `/Users/hans/Desktop/GnosisTMS/src-tauri/tauri.conf.json`
 
-The user explicitly rejected broker-side shortening of GitHub errors.
+The `v0.1.1` tag has already been pushed.
 
-- Full raw GitHub error should continue to flow through broker/app state for debugging.
-- Only the **displayed UI text** should be shortened.
+## GitHub auth / secrets state
 
-Current app-side formatter:
+`gh` CLI is installed on this machine and authenticated as:
 
-- File: `/Users/hans/Desktop/GnosisTMS/src-ui/app/error-display.js`
-- Behavior:
-  - if GitHub error payload has nested `errors[].message`, show **all** nested messages
-  - otherwise fall back to top-level `message`
-  - append `Status: <code>`
+- `gnosistms`
 
-Example desired display:
+Verified scopes:
 
-- `GitHub API Invitee is already a part of this organization. Status: 422`
+- `repo`
+- `workflow`
+- `read:org`
+- `gist`
 
-Broker-side shortening was reverted locally and should remain reverted.
+GitHub Actions secrets that were set on the repo:
 
-## Broker state
+- `TAURI_SIGNING_PRIVATE_KEY`
+- `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`
 
-### Latest broker deploy already live
+## Local secret storage
 
-- Commit: `d45e22d`
-- Message: `Fix custom properties permission detection`
+Do not commit actual secret material.
 
-Purpose:
+Current local updater private key path:
 
-- changed required permission check from:
-  - `custom_properties:admin`
-- to:
-  - `custom_properties:write`
+- `/Users/hans/Desktop/GnosisTMS/.gnosis-tms/secrets/tauri-updater.key`
 
-### Broker local state
+Notes:
 
-Broker file:
+- `.gnosis-tms/secrets/` is gitignored in `/Users/hans/Desktop/GnosisTMS/.gitignore`
+- the original `/private/tmp/gnosis-tms-updater.key` copy was deleted
+- this handoff intentionally does not store the actual password or private key contents
 
-- `/Users/hans/Desktop/gnosis-tms-github-app-broker/src/github-app.js`
+## Current GitHub Actions run
 
-was reverted locally to preserve full raw GitHub errors:
+The release workflow triggered by `v0.1.1` is currently:
 
-- current desired implementation:
-  - `parseGithubError(status, body) { return \`GitHub API ${status}: ${body}\`; }`
+- status: `in_progress`
+- run id: `23889877708`
+- url: `https://github.com/gnosistms/Gnosis-TMS-tauri-app/actions/runs/23889877708`
 
-This revert was **not committed/pushed**.
+## If continuing in a fresh thread
 
-If continuing broker work, first inspect git status in broker repo.
-
-## App changes already made
-
-### Teams page warning box
-
-- warning box spans full card width
-- appears beneath title/meta/actions
-- uses shared message-box styling
-- owner button uses error-button variant
-- non-owner sees instructional text instead of request button
-
-Relevant files:
-
-- `/Users/hans/Desktop/GnosisTMS/src-ui/screens/teams/team-list.js`
-- `/Users/hans/Desktop/GnosisTMS/src-ui/styles/content.css`
-- `/Users/hans/Desktop/GnosisTMS/src-ui/styles/modals.css`
-- `/Users/hans/Desktop/GnosisTMS/src-ui/styles/base.css`
-- `/Users/hans/Desktop/GnosisTMS/src-ui/lib/ui.js`
-
-### Buttons
-
-Added shared error-button variant:
-
-- `.button--error`
-- helper: `errorButton(...)`
-
-Loading primary buttons:
-
-- spinner was restored
-- loading state now has its own readable muted-orange style instead of washed-out disabled fade
-
-### Teams page leave behavior
-
-- `Leave` is no longer disabled just because `needsAppApproval` is true
-- it is disabled only in offline mode
-
-File:
-
-- `/Users/hans/Desktop/GnosisTMS/src-ui/screens/teams/team-list.js`
-
-### Members page performance fix
-
-The invite modal delay was traced to blocking member-load I/O.
-
-Fix made:
-
-- `list_organization_members_for_installation` in:
-  - `/Users/hans/Desktop/GnosisTMS/src-tauri/src/github/orgs.rs`
-- was converted to async + `spawn_blocking`
-
-`cargo check` passed after this change.
-
-## App error-display wiring
-
-User-facing error formatting is now wired into:
-
-- `/Users/hans/Desktop/GnosisTMS/src-ui/screens/invite-user-modal.js`
-- `/Users/hans/Desktop/GnosisTMS/src-ui/screens/project-creation-modal.js`
-- `/Users/hans/Desktop/GnosisTMS/src-ui/screens/project-rename-modal.js`
-- `/Users/hans/Desktop/GnosisTMS/src-ui/screens/project-permanent-deletion-modal.js`
-- `/Users/hans/Desktop/GnosisTMS/src-ui/screens/teams/leave-modal.js`
-- `/Users/hans/Desktop/GnosisTMS/src-ui/screens/teams/permanent-delete-modal.js`
-- `/Users/hans/Desktop/GnosisTMS/src-ui/screens/teams/rename-modal.js`
-- `/Users/hans/Desktop/GnosisTMS/src-ui/screens/teams/setup-modal.js`
-- `/Users/hans/Desktop/GnosisTMS/src-ui/screens/projects.js`
-- `/Users/hans/Desktop/GnosisTMS/src-ui/screens/users.js`
-
-## Recent user preference / style notes
-
-- User prefers direct, concise communication.
-- User does not want unnecessary cheerleading.
-- User asked to stop work on invite-search performance ideas that were suggested earlier.
-
-## Likely useful next commands in a fresh thread
-
-In app repo:
-
-- `npm run build`
-- `cargo check` in `src-tauri`
-
-In broker repo:
-
-- `git status --short`
-- inspect `/api/github-app/installations` live response path
-- verify local broker `src/github-app.js` state before committing anything
-
-## If the warning still appears after restart
-
-Priority order:
-
-1. Inspect what the live broker is actually returning for the affected teams.
-2. Compare that payload against the GitHub installation page screenshots.
-3. Decide whether the bug is:
-   - broker comparison logic
-   - stale live deploy behavior
-   - app persistence using bad broker data
-
+Start here:
+
+1. Read this file.
+2. Check the current release run status:
+   - `gh run view 23889877708`
+3. If needed, inspect the release workflow:
+   - `/Users/hans/Desktop/GnosisTMS/.github/workflows/release-tauri.yml`
+4. If the run failed, inspect logs and patch the workflow or bundle config.
+5. If the run succeeded, verify:
+   - GitHub Release assets exist
+   - `latest.json` is present on the release
+   - a packaged older build detects the update
+
+## Broker note
+
+Broker cleanup and permission-flow changes were already completed and pushed in the broker repo.
+If broker work comes up again, inspect the broker repo separately rather than assuming app repo changes are involved.
