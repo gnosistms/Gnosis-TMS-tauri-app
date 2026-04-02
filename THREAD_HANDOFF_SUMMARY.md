@@ -131,3 +131,10 @@ Current secret-handling docs:
 
 - `/Users/hans/Desktop/GnosisTMS/UPDATER_KEY_MANAGEMENT.md`
 - `/Users/hans/Desktop/GnosisTMS/SECRET_INVENTORY.md`
+
+Current secret progress:
+
+- step 1 complete: Tauri updater key stored in Apple Passwords
+- step 2 complete: GitHub App private key regenerated, stored in Apple Passwords, deployed, and old keys removed after verification
+- step 3 complete: `GITHUB_APP_CLIENT_SECRET` stored in Apple Passwords, deployed, and old client secret removed after verification
+- current next step: store `BROKER_STATE_SECRET` in Apple Passwords

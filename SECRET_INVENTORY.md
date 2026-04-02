@@ -9,7 +9,9 @@ It intentionally does not contain actual secret values.
 Current status as of 2026-04-02:
 
 1. Tauri updater key has already been stored in Apple Passwords.
-2. GitHub App private key is being worked on now.
+2. GitHub App private key has been regenerated, stored in Apple Passwords, deployed to DigitalOcean, and old GitHub App private keys were deleted after verification.
+3. GitHub App client secret has been regenerated, stored in Apple Passwords, deployed to DigitalOcean, and old GitHub client secret was deleted after verification.
+4. Broker state secret is the current next step.
 
 ## App repo secrets
 
@@ -69,7 +71,11 @@ How to store it:
 
 Status:
 
-- in progress
+- complete
+- regenerated from GitHub because the previous plaintext key was not recoverable from DigitalOcean
+- stored in Apple Passwords
+- deployed to DigitalOcean
+- broker verified healthy before deleting the older GitHub App private keys
 
 ### 3. GitHub App client secret
 
@@ -91,7 +97,10 @@ How to store it:
 
 Status:
 
-- pending
+- complete
+- stored in Apple Passwords
+- deployed to DigitalOcean
+- old GitHub client secret removed after verification
 
 ### 4. Broker state secret
 
@@ -113,7 +122,7 @@ How to store it:
 
 Status:
 
-- pending
+- next step
 
 ## Reference-only broker config
 
