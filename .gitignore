@@ -11,3 +11,4 @@ src-tauri/gen
 
 # Local secret backups
 Backup Github App Secrets/
+.gnosis-tms/secrets/

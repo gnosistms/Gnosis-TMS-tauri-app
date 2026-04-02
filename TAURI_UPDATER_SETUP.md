@@ -21,11 +21,11 @@ The matching private key must never be committed. Store it in GitHub Actions sec
 - `TAURI_SIGNING_PRIVATE_KEY`
 - `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`
 
-Current generated private key path on this machine:
+Local secure key path on this machine:
 
-- `/private/tmp/gnosis-tms-updater.key`
+- `.gnosis-tms/secrets/tauri-updater.key`
 
-Move it to your secure password manager / secrets storage before deleting the `/tmp` copy.
+The original generated `/private/tmp/gnosis-tms-updater.key` copy should be removed after moving it to the local secure path and storing it in GitHub Actions secrets / your password manager.
 
 ## Publishing a release
 
