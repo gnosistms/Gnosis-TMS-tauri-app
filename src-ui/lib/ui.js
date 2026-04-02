@@ -27,6 +27,12 @@ export function primaryButton(label, action, options = {}) {
   )}"${disabledActionAttributes(options)}>${escapeHtml(label)}</button>`;
 }
 
+export function errorButton(label, action, options = {}) {
+  return `<button class="button button--error${options.disabled ? " is-disabled" : ""}" data-action="${escapeHtml(
+    action,
+  )}"${disabledActionAttributes(options)}>${escapeHtml(label)}</button>`;
+}
+
 export function loadingPrimaryButton({ label, loadingLabel, action, isLoading }) {
   if (isLoading) {
     return `

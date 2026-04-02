@@ -24,12 +24,14 @@ function renderUserCard(user, options = {}) {
   return `
     <article class="card card--list-row">
       <div class="card__body list-row">
-        <div class="list-row__content">
-          <h2 class="list-row__title">${escapeHtml(displayName)}</h2>
-          <p class="list-row__meta">@${escapeHtml(user.username)} · ${escapeHtml(user.role)}</p>
-        </div>
-        <div class="list-row__actions">
-          ${actions}
+        <div class="list-row__main">
+          <div class="list-row__content">
+            <h2 class="list-row__title">${escapeHtml(displayName)}</h2>
+            <p class="list-row__meta">@${escapeHtml(user.username)} · ${escapeHtml(user.role)}</p>
+          </div>
+          <div class="list-row__actions">
+            ${actions}
+          </div>
         </div>
       </div>
     </article>

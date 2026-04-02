@@ -67,34 +67,91 @@
   flex-wrap: wrap;
 }
 
-.modal__error {
+.modal__error,
+.message-box {
   margin: 0;
   padding: 14px 16px;
   border-radius: var(--radius-ui);
-  background: rgba(255, 234, 230, 0.92);
-  color: #a54024;
   display: block;
   max-width: 100%;
+  border: 1px solid transparent;
+}
+
+.modal__error,
+.message-box--error {
+  background: var(--message-error-bg);
+  border-color: var(--message-error-border);
+  color: var(--message-error-text);
+}
+
+.message-box--warning {
+  background: var(--message-warning-bg);
+  border-color: var(--message-warning-border);
+  color: var(--message-warning-text);
+}
+
+.modal__error,
+.message-box--scroll {
   overflow-x: auto;
   overflow-y: hidden;
   white-space: nowrap;
+}
+
+.modal__error,
+.message-box {
   scrollbar-width: thin;
+}
+
+.modal__error,
+.message-box__text {
+  font-size: 0.95rem;
+  font-weight: 400;
+  line-height: 1.45;
+}
+
+.message-box__text {
+  margin: 0;
+}
+
+.modal__error {
   scrollbar-color: rgba(165, 64, 36, 0.38) rgba(255, 234, 230, 0.4);
 }
 
-.modal__error::-webkit-scrollbar {
+.message-box--error.message-box--scroll {
+  scrollbar-color: rgba(165, 64, 36, 0.38) rgba(255, 234, 230, 0.4);
+}
+
+.message-box--warning.message-box--scroll {
+  scrollbar-color: rgba(201, 122, 18, 0.42) rgba(255, 242, 204, 0.45);
+}
+
+.modal__error::-webkit-scrollbar,
+.message-box--scroll::-webkit-scrollbar {
   height: 10px;
 }
 
-.modal__error::-webkit-scrollbar-track {
+.modal__error::-webkit-scrollbar-track,
+.message-box--error.message-box--scroll::-webkit-scrollbar-track {
   background: rgba(255, 234, 230, 0.4);
   border-radius: 999px;
 }
 
-.modal__error::-webkit-scrollbar-thumb {
+.message-box--warning.message-box--scroll::-webkit-scrollbar-track {
+  background: rgba(255, 242, 204, 0.45);
+  border-radius: 999px;
+}
+
+.modal__error::-webkit-scrollbar-thumb,
+.message-box--error.message-box--scroll::-webkit-scrollbar-thumb {
   background: rgba(165, 64, 36, 0.38);
   border-radius: 999px;
   border: 2px solid rgba(255, 234, 230, 0.4);
+}
+
+.message-box--warning.message-box--scroll::-webkit-scrollbar-thumb {
+  background: rgba(201, 122, 18, 0.42);
+  border-radius: 999px;
+  border: 2px solid rgba(255, 242, 204, 0.45);
 }
 
 .field {

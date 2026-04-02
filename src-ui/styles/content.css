@@ -23,11 +23,16 @@
 }
 
 .list-row {
+  display: grid;
+  gap: 20px;
+  min-height: 94px;
+}
+
+.list-row__main {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 20px;
-  min-height: 94px;
 }
 
 .list-row__title {
@@ -74,22 +79,19 @@
   font-size: 0.98rem;
 }
 
-.list-row__warning-box {
-  margin-top: 10px;
+.list-row__warning-box,
+.list-row__warning-box.message-box {
+  width: 100%;
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 16px;
-  flex-wrap: wrap;
-  padding: 14px 16px;
-  border-radius: var(--radius-ui);
-  background: rgba(255, 234, 230, 0.92);
+  flex-wrap: nowrap;
 }
 
 .list-row__warning {
-  margin: 0;
-  color: #a54024;
-  font-size: 0.95rem;
-  font-weight: 600;
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 .list-row__actions,

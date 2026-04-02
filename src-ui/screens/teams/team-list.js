@@ -1,4 +1,4 @@
-import { escapeHtml, primaryButton, sectionSeparator, textAction } from "../../lib/ui.js";
+import { errorButton, escapeHtml, sectionSeparator, textAction } from "../../lib/ui.js";
 
 function renderAccessLabel(team) {
   if (team.canDelete) {
@@ -23,15 +23,15 @@ function renderTeamCard(team, options = {}) {
   const approvalWarning =
     team.needsAppApproval === true
       ? `
-        <div class="list-row__warning-box">
-          <p class="list-row__warning">${escapeHtml(
+        <div class="message-box message-box--error list-row__warning-box">
+          <p class="list-row__warning message-box__text">${escapeHtml(
             missingPermissions
               ? `GitHub App update required. Missing: ${missingPermissions}`
               : "GitHub App update required for this team.",
           )}</p>
           ${
             permissionActionUrl
-              ? primaryButton(permissionActionLabel, `open-external:${permissionActionUrl}`)
+              ? errorButton(permissionActionLabel, `open-external:${permissionActionUrl}`)
               : ""
           }
         </div>
@@ -52,18 +52,20 @@ function renderTeamCard(team, options = {}) {
   return `
     <article class="card card--list-row ${isDeleted ? "card--deleted" : ""}">
       <div class="card__body list-row">
-        <div class="list-row__content">
-          <h2 class="list-row__title">
-            <button class="list-row__title-button" data-action="open-team:${team.id}">
-              ${escapeHtml(team.name)}
-            </button>
-          </h2>
-          <p class="list-row__meta">@${escapeHtml(team.githubOrg)} · ${escapeHtml(renderAccessLabel(team))}</p>
-          ${approvalWarning}
+        <div class="list-row__main">
+          <div class="list-row__content">
+            <h2 class="list-row__title">
+              <button class="list-row__title-button" data-action="open-team:${team.id}">
+                ${escapeHtml(team.name)}
+              </button>
+            </h2>
+            <p class="list-row__meta">@${escapeHtml(team.githubOrg)} · ${escapeHtml(renderAccessLabel(team))}</p>
+          </div>
+          <div class="list-row__actions">
+            ${actions.join("")}
+          </div>
         </div>
-        <div class="list-row__actions">
-          ${actions.join("")}
-        </div>
+        ${approvalWarning}
       </div>
     </article>
   `;

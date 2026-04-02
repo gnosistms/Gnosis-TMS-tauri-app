@@ -64,6 +64,15 @@
   --link-hover: #d7963f;
   --link-disabled: #d7b182;
   --link-disabled-hover: #e0be94;
+  --message-error-bg: rgba(255, 234, 230, 0.92);
+  --message-error-border: rgba(165, 64, 36, 0.28);
+  --message-error-text: #a54024;
+  --message-warning-bg: rgba(255, 242, 204, 0.92);
+  --message-warning-border: rgba(201, 122, 18, 0.26);
+  --message-warning-text: #8b5a17;
+  --danger: #d6563c;
+  --danger-strong: #bf3f26;
+  --danger-text: #fff7f2;
   --radius-ui: 18px;
   --radius-card: var(--radius-ui);
   --radius-control: var(--radius-ui);
@@ -179,9 +188,9 @@ a {
   gap: 16px;
   padding: 8px 14px 8px 18px;
   border-radius: var(--radius-ui);
-  background: rgba(255, 242, 204, 0.92);
-  border: 1px solid rgba(201, 122, 18, 0.18);
-  color: var(--text);
+  background: var(--message-warning-bg);
+  border: 1px solid var(--message-warning-border);
+  color: var(--message-warning-text);
   font-size: 0.98rem;
   font-weight: 700;
 }
@@ -345,6 +354,19 @@ a {
   box-shadow: 0 16px 26px rgba(214, 128, 12, 0.27);
 }
 
+.button--error {
+  border-color: transparent;
+  background: linear-gradient(180deg, var(--danger) 0%, var(--danger-strong) 100%);
+  color: var(--danger-text);
+  box-shadow: 0 14px 24px rgba(191, 63, 38, 0.24);
+}
+
+.button--error:hover:not(:disabled):not(.is-disabled) {
+  transform: translateY(-0.5px);
+  background: linear-gradient(180deg, #dc6045 0%, #c94a2f 100%);
+  box-shadow: 0 16px 26px rgba(191, 63, 38, 0.27);
+}
+
 .button--secondary {
   background: rgba(255, 250, 244, 0.88);
 }
@@ -356,6 +378,10 @@ a {
 
 .button--primary:disabled {
   background: rgba(215, 176, 120, 0.65);
+}
+
+.button--error:disabled {
+  background: rgba(212, 137, 121, 0.68);
 }
 
 .button--secondary:disabled {
