@@ -19,11 +19,14 @@ function renderTeamCard(team, options = {}) {
     textAction("Projects", `open-team:${team.id}`),
     textAction("Glossaries", `open-team-glossaries:${team.id}`),
     textAction("Members", `open-team-users:${team.id}`, { disabled: offlineMode }),
+    ...(team.needsAppApproval && team.appApprovalUrl
+      ? [textAction("Update App", `open-external:${team.appApprovalUrl}`)]
+      : []),
     ...(team.canDelete ? [textAction("Rename", `rename-team:${team.id}`, { disabled: offlineMode })] : []),
     textAction(
       team.canDelete ? "Delete" : "Leave",
       `${team.canDelete ? "delete-team" : "leave-team"}:${team.id}`,
-      { disabled: offlineMode },
+      { disabled: offlineMode || (team.needsAppApproval === true && !team.canDelete) },
     ),
   ];
 

@@ -71,6 +71,11 @@ export function buildTeamRecordFromInstallation(installation) {
     canManageMembers: installation.canManageMembers === true,
     canManageProjects: installation.canManageProjects === true,
     canLeave: installation.canLeave !== false,
+    needsAppApproval: installation.needsAppApproval === true,
+    appApprovalUrl: installation.appApprovalUrl ?? null,
+    missingAppPermissions: Array.isArray(installation.missingAppPermissions)
+      ? installation.missingAppPermissions
+      : [],
     isDeleted: deleted,
     deletedAt: deleted ? new Date().toISOString() : null,
     syncState: deleted ? "deleted" : "active",
@@ -94,6 +99,13 @@ export function reconcileStoredTeam(storedTeam, installation) {
     canManageMembers: installation.canManageMembers === true,
     canManageProjects: installation.canManageProjects === true,
     canLeave: installation.canLeave !== false,
+    needsAppApproval: installation.needsAppApproval === true,
+    appApprovalUrl: installation.appApprovalUrl ?? storedTeam.appApprovalUrl ?? null,
+    missingAppPermissions: Array.isArray(installation.missingAppPermissions)
+      ? installation.missingAppPermissions
+      : Array.isArray(storedTeam.missingAppPermissions)
+        ? storedTeam.missingAppPermissions
+        : [],
     lastSeenAt: new Date().toISOString(),
     isDeleted: deleted,
     deletedAt: deleted ? storedTeam.deletedAt ?? new Date().toISOString() : null,
