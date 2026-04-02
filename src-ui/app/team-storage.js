@@ -84,6 +84,10 @@ function normalizeTeamRecord(team) {
       typeof team.appApprovalUrl === "string" && team.appApprovalUrl.trim()
         ? team.appApprovalUrl.trim()
         : null,
+    appRequestUrl:
+      typeof team.appRequestUrl === "string" && team.appRequestUrl.trim()
+        ? team.appRequestUrl.trim()
+        : null,
     missingAppPermissions: Array.isArray(team.missingAppPermissions)
       ? team.missingAppPermissions
           .map((permission) => (typeof permission === "string" ? permission.trim() : ""))

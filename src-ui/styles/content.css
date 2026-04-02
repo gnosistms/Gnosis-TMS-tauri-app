@@ -74,6 +74,21 @@
   font-size: 0.98rem;
 }
 
+.list-row__warning {
+  margin: 0;
+  color: #a54024;
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.list-row__warning-row {
+  margin-top: 10px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
 .list-row__actions,
 .expandable-card__actions,
 .chapter-table__actions,

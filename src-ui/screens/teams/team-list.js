@@ -15,13 +15,32 @@ function renderAccessLabel(team) {
 function renderTeamCard(team, options = {}) {
   const isDeleted = options.isDeleted === true;
   const offlineMode = options.offlineMode === true;
+  const missingPermissions = Array.isArray(team.missingAppPermissions)
+    ? team.missingAppPermissions.join(", ")
+    : "";
+  const permissionActionLabel = team.canDelete ? "Update GitHub Permissions" : "Request GitHub Permissions";
+  const permissionActionUrl = team.canDelete ? team.appApprovalUrl : team.appRequestUrl;
+  const approvalWarning =
+    team.needsAppApproval === true
+      ? `
+        <div class="list-row__warning-row">
+          <p class="list-row__warning">${escapeHtml(
+            missingPermissions
+              ? `GitHub App update required. Missing: ${missingPermissions}`
+              : "GitHub App update required for this team.",
+          )}</p>
+          ${
+            permissionActionUrl
+              ? textAction(permissionActionLabel, `open-external:${permissionActionUrl}`)
+              : ""
+          }
+        </div>
+      `
+      : "";
   const actions = options.actions ?? [
     textAction("Projects", `open-team:${team.id}`),
     textAction("Glossaries", `open-team-glossaries:${team.id}`),
     textAction("Members", `open-team-users:${team.id}`, { disabled: offlineMode }),
-    ...(team.needsAppApproval && team.appApprovalUrl
-      ? [textAction("Update App", `open-external:${team.appApprovalUrl}`)]
-      : []),
     ...(team.canDelete ? [textAction("Rename", `rename-team:${team.id}`, { disabled: offlineMode })] : []),
     textAction(
       team.canDelete ? "Delete" : "Leave",
@@ -40,6 +59,7 @@ function renderTeamCard(team, options = {}) {
             </button>
           </h2>
           <p class="list-row__meta">@${escapeHtml(team.githubOrg)} · ${escapeHtml(renderAccessLabel(team))}</p>
+          ${approvalWarning}
         </div>
         <div class="list-row__actions">
           ${actions.join("")}

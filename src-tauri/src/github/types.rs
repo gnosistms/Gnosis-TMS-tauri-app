@@ -36,6 +36,7 @@ pub(crate) struct GithubAppInstallationInfo {
   pub(crate) can_leave: Option<bool>,
   pub(crate) needs_app_approval: Option<bool>,
   pub(crate) app_approval_url: Option<String>,
+  pub(crate) app_request_url: Option<String>,
   pub(crate) missing_app_permissions: Option<Vec<String>>,
 }
 

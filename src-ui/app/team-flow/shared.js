@@ -73,6 +73,7 @@ export function buildTeamRecordFromInstallation(installation) {
     canLeave: installation.canLeave !== false,
     needsAppApproval: installation.needsAppApproval === true,
     appApprovalUrl: installation.appApprovalUrl ?? null,
+    appRequestUrl: installation.appRequestUrl ?? null,
     missingAppPermissions: Array.isArray(installation.missingAppPermissions)
       ? installation.missingAppPermissions
       : [],
@@ -101,6 +102,7 @@ export function reconcileStoredTeam(storedTeam, installation) {
     canLeave: installation.canLeave !== false,
     needsAppApproval: installation.needsAppApproval === true,
     appApprovalUrl: installation.appApprovalUrl ?? storedTeam.appApprovalUrl ?? null,
+    appRequestUrl: installation.appRequestUrl ?? storedTeam.appRequestUrl ?? null,
     missingAppPermissions: Array.isArray(installation.missingAppPermissions)
       ? installation.missingAppPermissions
       : Array.isArray(storedTeam.missingAppPermissions)

@@ -6,16 +6,12 @@ import { renderTeamLeaveModal } from "./teams/leave-modal.js";
 function renderUserCard(user, options = {}) {
   const canManageMembers = options.canManageMembers === true;
   const canLeaveTeam = options.canLeaveTeam === true;
-  const needsAppApproval = options.needsAppApproval === true;
-  const appApprovalUrl = options.appApprovalUrl ?? "";
   const selectedTeamId = options.selectedTeamId ?? "";
   const displayName = user.isCurrentUser ? `${user.name} (me)` : user.name;
   const actions = user.isCurrentUser
-    ? (needsAppApproval && appApprovalUrl
-        ? textAction("Update App", `open-external:${appApprovalUrl}`)
-        : canLeaveTeam && selectedTeamId
-          ? textAction("Leave", `open-current-team-leave:${selectedTeamId}`)
-          : "")
+    ? (canLeaveTeam && selectedTeamId
+        ? textAction("Leave", `open-current-team-leave:${selectedTeamId}`)
+        : "")
     : (canManageMembers
         ? user.role === "Translator"
           ? textAction("Make Admin", `make-admin:${user.username}`)
@@ -46,32 +42,6 @@ export function renderUsersScreen(state) {
   const canInviteUsers = selectedTeam?.canManageMembers === true && !state.offline?.isEnabled;
   const canManageMembers = selectedTeam?.canManageMembers === true && !state.offline?.isEnabled;
   const canLeaveTeam = selectedTeam?.canLeave === true && selectedTeam?.canDelete !== true && !state.offline?.isEnabled;
-  const needsAppApproval = selectedTeam?.needsAppApproval === true;
-  const appApprovalUrl = selectedTeam?.appApprovalUrl ?? "";
-  const missingAppPermissions = Array.isArray(selectedTeam?.missingAppPermissions)
-    ? selectedTeam.missingAppPermissions
-    : [];
-  const missingPermissionsText = missingAppPermissions.join(", ");
-  const approvalState = needsAppApproval && appApprovalUrl
-    ? `
-      <article class="card card--hero card--empty">
-        <div class="card__body">
-          <p class="card__eyebrow">GITHUB APP UPDATE REQUIRED</p>
-          <h2 class="card__title card__title--small">This team needs updated GitHub App permissions.</h2>
-          <p class="card__subtitle">${
-            escapeHtml(
-              missingPermissionsText
-                ? `Missing: ${missingPermissionsText}`
-                : "Ask the team owner to approve the updated app permissions in GitHub.",
-            )
-          }</p>
-          <div class="card__actions">
-            ${textAction("Update App", `open-external:${appApprovalUrl}`)}
-          </div>
-        </div>
-      </article>
-    `
-    : "";
 
   const emptyState = `
     <article class="card card--hero card--empty">
@@ -106,11 +76,9 @@ export function renderUsersScreen(state) {
           ? discovery.status === "loading"
             ? loadingState
             : emptyState
-          : `<section class="stack">${approvalState}${state.users.map((user) => renderUserCard(user, {
+          : `<section class="stack">${state.users.map((user) => renderUserCard(user, {
               canManageMembers,
               canLeaveTeam,
-              needsAppApproval,
-              appApprovalUrl,
               selectedTeamId: selectedTeam?.id ?? "",
             })).join("")}</section>`;
 
