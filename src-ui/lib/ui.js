@@ -36,7 +36,7 @@ export function errorButton(label, action, options = {}) {
 export function loadingPrimaryButton({ label, loadingLabel, action, isLoading }) {
   if (isLoading) {
     return `
-      <button class="button button--primary" data-action="noop" disabled>
+      <button class="button button--primary button--loading" data-action="noop" disabled>
         <span class="button__spinner" aria-hidden="true"></span>
         <span>${escapeHtml(loadingLabel)}</span>
       </button>
@@ -57,6 +57,7 @@ export function setImmediateLoadingButton(button, loadingLabel) {
 
   button.disabled = true;
   button.dataset.action = "noop";
+  button.classList.add("button--loading");
   button.innerHTML = `
     <span class="button__spinner" aria-hidden="true"></span>
     <span>${escapeHtml(loadingLabel)}</span>
