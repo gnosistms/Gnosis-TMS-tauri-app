@@ -13,6 +13,7 @@ import { initializeConnectivity } from "./app/offline-connectivity.js";
 import { initializePersistentStorage } from "./app/persistent-store.js";
 import { app } from "./app/runtime.js";
 import { hydratePersistentAppState, state } from "./app/state.js";
+import { checkForAppUpdate } from "./app/updater-flow.js";
 import { renderGithubAppTestScreen } from "./screens/github-app-test.js";
 import { renderConnectionFailureModal } from "./screens/connection-failure-modal.js";
 import { renderGlossariesScreen } from "./screens/glossaries.js";
@@ -129,6 +130,7 @@ async function bootstrap() {
   void registerGithubAppInstallListener(render, setGithubAppInstallation);
   void registerGithubAppTestListener(render);
   void loadGithubAppTestConfig(render);
+  void checkForAppUpdate(render, { silent: true });
   render();
   void initializeConnectivity(render, () => restoreStoredBrokerSession(render, loadUserTeams));
 }

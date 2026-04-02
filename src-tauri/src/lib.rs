@@ -9,6 +9,7 @@ mod github_app_test;
 mod insecure_github_app_config;
 mod state;
 mod store;
+mod updater;
 mod window;
 
 use tauri::Manager;
@@ -42,6 +43,7 @@ use crate::{
     inspect_github_app_test_installation, list_github_app_test_repositories,
   },
   state::AuthState,
+  updater::{check_for_app_update, install_app_update, PendingUpdate},
 };
 
 #[tauri::command]
@@ -74,11 +76,19 @@ pub fn run() {
       pending_github_app_install: Mutex::new(None),
       pending_broker_auth: Mutex::new(None),
     })
+    .manage(PendingUpdate(Mutex::new(None)))
     .plugin(store::init())
     .plugin(tauri_plugin_opener::init())
+    .plugin(
+      tauri_plugin_updater::Builder::new()
+        .pubkey(include_str!("../updater-public-key.txt").trim())
+        .build(),
+    )
     .invoke_handler(tauri::generate_handler![
       ping,
       check_internet_connection,
+      check_for_app_update,
+      install_app_update,
       begin_broker_auth,
       inspect_broker_auth_session,
       load_broker_auth_session,

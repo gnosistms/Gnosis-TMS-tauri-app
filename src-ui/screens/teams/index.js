@@ -2,6 +2,7 @@ import {
   navButton,
   pageShell,
   primaryButton,
+  secondaryButton,
 } from "../../lib/ui.js";
 import { renderTeamLeaveModal } from "./leave-modal.js";
 import { renderTeamRenameModal } from "./rename-modal.js";
@@ -16,6 +17,14 @@ import {
 export function renderTeamsScreen(state) {
   const offlineMode = state.offline?.isEnabled === true;
   const session = state.auth?.session ?? null;
+  const updateAction =
+    state.appUpdate?.available === true
+      ? secondaryButton(
+          state.appUpdate.status === "installing" ? "Installing..." : "Install Update",
+          "install-app-update",
+          { disabled: state.appUpdate.status === "installing" || state.appUpdate.status === "restarting" },
+        )
+      : "";
   const subtitle =
     (typeof session?.name === "string" && session.name.trim())
     || (typeof session?.login === "string" && session.login.trim())
@@ -25,7 +34,9 @@ export function renderTeamsScreen(state) {
     title: "Translation Teams",
     subtitle,
     navButtons: [navButton("Logout", "start")],
-    tools: [primaryButton("+ New Team", "open-new-team", { disabled: offlineMode })].join(""),
+    tools: [updateAction, primaryButton("+ New Team", "open-new-team", { disabled: offlineMode })]
+      .filter(Boolean)
+      .join(""),
     pageSync: state.pageSync,
     syncBadgeText: getScopedSyncBadgeText("teams"),
     noticeText: getNoticeBadgeText(),

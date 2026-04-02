@@ -1,6 +1,7 @@
 import { openExternalUrl } from "./runtime.js";
 import { createAuthActions } from "./actions/auth-actions.js";
 import { createGithubAppTestActions } from "./actions/github-app-test-actions.js";
+import { createUpdaterActions } from "./actions/updater-actions.js";
 import { createNavigationActions } from "./actions/navigation-actions.js";
 import { isOfflineBlockedAction } from "./offline-policy.js";
 import { showOfflineUnsupportedMessage } from "./offline-ui.js";
@@ -13,6 +14,7 @@ export function createActionDispatcher(render) {
   const exactActionMaps = [
     createAuthActions(render),
     createGithubAppTestActions(render),
+    createUpdaterActions(render),
   ];
 
   const domainHandlers = [

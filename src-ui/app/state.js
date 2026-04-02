@@ -21,6 +21,7 @@ export const state = {
     message: "",
     session: null,
   },
+  appUpdate: createAppUpdateState(),
   offline: createOfflineState(),
   connectionFailure: createConnectionFailureState(),
   statusBadges: createStatusBadgesState(),
@@ -73,6 +74,17 @@ export function createOfflineState() {
     hasLocalData: false,
     isEnabled: false,
     reconnecting: false,
+  };
+}
+
+export function createAppUpdateState() {
+  return {
+    status: "idle",
+    error: "",
+    available: false,
+    version: null,
+    currentVersion: null,
+    body: null,
   };
 }
 
@@ -221,6 +233,7 @@ export function resetSessionState() {
     message: "",
     session: null,
   };
+  state.appUpdate = createAppUpdateState();
   state.githubAppTest = createGithubAppTestState();
   state.teams = [];
   state.deletedTeams = [];
