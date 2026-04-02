@@ -1,7 +1,8 @@
-import { invoke } from "./runtime.js";
+import { invoke, waitForNextPaint } from "./runtime.js";
 import { requireBrokerSession } from "./auth-flow.js";
 import { loadStoredMembersForTeam, saveStoredMembersForTeam } from "./member-cache.js";
 import { beginPageSync, completePageSync, failPageSync } from "./page-sync.js";
+import { showNoticeBadge } from "./status-feedback.js";
 import { state } from "./state.js";
 import { classifySyncError } from "./sync-error.js";
 import { handleSyncFailure } from "./sync-recovery.js";
@@ -69,9 +70,8 @@ function snapshotUsers(users = []) {
   return users.map((user) => ({ ...user }));
 }
 
-function updateLocalAdminRole(users = [], username, shouldBeAdmin, options = {}) {
+function updateLocalAdminRole(users = [], username, shouldBeAdmin) {
   const nextRole = shouldBeAdmin ? "Admin" : "Translator";
-  const roleSyncPending = options.roleSyncPending === true;
   let didUpdate = false;
   const nextUsers = users.map((user) => {
     if (user?.username !== username) {
@@ -82,7 +82,6 @@ function updateLocalAdminRole(users = [], username, shouldBeAdmin, options = {})
     return {
       ...user,
       role: nextRole,
-      roleSyncPending,
     };
   });
 
@@ -91,6 +90,8 @@ function updateLocalAdminRole(users = [], username, shouldBeAdmin, options = {})
     users: nextUsers,
   };
 }
+
+const inflightAdminMembershipUsernames = new Set();
 
 function initializeUsersFromCachedState(selectedTeam) {
   if (state.offline.isEnabled) {
@@ -135,6 +136,10 @@ async function updateOrganizationAdminMembership(render, username, shouldBeAdmin
     return;
   }
 
+  if (inflightAdminMembershipUsernames.has(username)) {
+    return;
+  }
+
   if (selectedTeam.canManageMembers !== true) {
     state.userDiscovery = {
       status: "error",
@@ -145,11 +150,10 @@ async function updateOrganizationAdminMembership(render, username, shouldBeAdmin
   }
 
   const previousUsers = snapshotUsers(state.users);
+  inflightAdminMembershipUsernames.add(username);
 
   try {
-    const optimisticUsers = updateLocalAdminRole(previousUsers, username, shouldBeAdmin, {
-      roleSyncPending: true,
-    });
+    const optimisticUsers = updateLocalAdminRole(previousUsers, username, shouldBeAdmin);
     beginPageSync();
     if (optimisticUsers.didUpdate) {
       state.users = optimisticUsers.users;
@@ -157,6 +161,7 @@ async function updateOrganizationAdminMembership(render, username, shouldBeAdmin
     }
     state.userDiscovery = { status: "ready", error: "" };
     render();
+    await waitForNextPaint();
 
     if (shouldBeAdmin) {
       await invoke("add_organization_admin_for_installation", {
@@ -176,19 +181,39 @@ async function updateOrganizationAdminMembership(render, username, shouldBeAdmin
 
     await loadTeamUsers(render, selectedTeam.id);
   } catch (error) {
-    if (previousUsers.length > 0) {
-      state.users = previousUsers;
-      saveStoredMembersForTeam(selectedTeam, state.users);
-    }
+    state.users = previousUsers;
+    saveStoredMembersForTeam(selectedTeam, state.users);
     if (await handleSyncFailure(classifySyncError(error), { render })) {
       return;
     }
-    state.userDiscovery = {
-      status: "error",
-      error: error?.message ?? String(error),
-    };
-    failPageSync();
-    render();
+    try {
+      await loadTeamUsers(render, selectedTeam.id);
+      showNoticeBadge(
+        shouldBeAdmin
+          ? `Could not make @${username} an admin.`
+          : `Could not revoke admin access for @${username}.`,
+        render,
+        2600,
+      );
+    } catch (reloadError) {
+      if (
+        await handleSyncFailure(classifySyncError(reloadError), {
+          render,
+          teamId: selectedTeam?.id ?? null,
+          currentResource: true,
+        })
+      ) {
+        return;
+      }
+      state.userDiscovery = {
+        status: "error",
+        error: reloadError?.message ?? String(reloadError),
+      };
+      failPageSync();
+      render();
+    }
+  } finally {
+    inflightAdminMembershipUsernames.delete(username);
   }
 }
 

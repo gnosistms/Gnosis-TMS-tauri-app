@@ -72,6 +72,8 @@ fn check_internet_connection() -> bool {
 
 const SYNC_WITH_SERVER_MENU_ID: &str = "sync-with-server";
 const SYNC_WITH_SERVER_EVENT: &str = "sync-with-server";
+const CHECK_FOR_UPDATES_MENU_ID: &str = "check-for-updates";
+const CHECK_FOR_UPDATES_EVENT: &str = "check-for-updates";
 
 fn build_app_menu<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result<Menu<R>> {
   let sync_shortcut = if cfg!(target_os = "macos") {
@@ -82,6 +84,8 @@ fn build_app_menu<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result
   let sync_item = MenuItemBuilder::with_id(SYNC_WITH_SERVER_MENU_ID, "Sync with Server")
     .accelerator(sync_shortcut)
     .build(app)?;
+  let check_for_updates_item =
+    MenuItemBuilder::with_id(CHECK_FOR_UPDATES_MENU_ID, "Check for Updates...").build(app)?;
 
   let file_menu = SubmenuBuilder::new(app, "File")
     .item(&sync_item)
@@ -146,6 +150,8 @@ fn build_app_menu<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result
       &[
         &PredefinedMenuItem::about(app, None, Some(about_metadata))?,
         &PredefinedMenuItem::separator(app)?,
+        &check_for_updates_item,
+        &PredefinedMenuItem::separator(app)?,
         &PredefinedMenuItem::services(app, None)?,
         &PredefinedMenuItem::separator(app)?,
         &PredefinedMenuItem::hide(app, None)?,
@@ -169,7 +175,7 @@ fn build_app_menu<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result
 
   #[cfg(not(target_os = "macos"))]
   {
-    let help_menu = Submenu::with_items(app, "Help", true, &[])?;
+    let help_menu = Submenu::with_items(app, "Help", true, &[&check_for_updates_item])?;
     return Menu::with_items(app, &[&file_menu, &edit_menu, &window_menu, &help_menu]);
   }
 }
@@ -193,6 +199,10 @@ pub fn run() {
       if event.id().0 == SYNC_WITH_SERVER_MENU_ID {
         if let Some(window) = app.get_webview_window("main") {
           let _ = window.emit(SYNC_WITH_SERVER_EVENT, ());
+        }
+      } else if event.id().0 == CHECK_FOR_UPDATES_MENU_ID {
+        if let Some(window) = app.get_webview_window("main") {
+          let _ = window.emit(CHECK_FOR_UPDATES_EVENT, ());
         }
       }
     })

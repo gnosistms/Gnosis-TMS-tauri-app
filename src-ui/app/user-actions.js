@@ -55,17 +55,13 @@ export function createUserActions(render) {
 
     const makeAdminUsername = actionSuffix(action, "make-admin:");
     if (makeAdminUsername !== null) {
-      await runWithImmediateLoading(event, "Saving...", () =>
-        makeOrganizationAdmin(render, makeAdminUsername),
-      );
+      void makeOrganizationAdmin(render, makeAdminUsername);
       return true;
     }
 
     const revokeAdminUsername = actionSuffix(action, "revoke-admin:");
     if (revokeAdminUsername !== null) {
-      await runWithImmediateLoading(event, "Saving...", () =>
-        revokeOrganizationAdmin(render, revokeAdminUsername),
-      );
+      void revokeOrganizationAdmin(render, revokeAdminUsername);
       return true;
     }
 

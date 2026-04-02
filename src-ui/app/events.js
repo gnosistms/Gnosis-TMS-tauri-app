@@ -1,9 +1,11 @@
 import { handleInputEvent } from "./input-handlers.js";
 import { handleNavigation, refreshCurrentScreen } from "./navigation.js";
 import { createActionDispatcher } from "./action-dispatcher.js";
+import { checkForAppUpdate } from "./updater-flow.js";
 import { listen } from "./runtime.js";
 
 const SYNC_WITH_SERVER_EVENT = "sync-with-server";
+const CHECK_FOR_UPDATES_EVENT = "check-for-updates";
 
 function shouldTriggerSyncShortcut(event) {
   if (event.defaultPrevented || event.repeat) {
@@ -65,6 +67,10 @@ export function registerAppEvents(render) {
   if (listen) {
     void listen(SYNC_WITH_SERVER_EVENT, () => {
       void refreshCurrentScreen(render);
+    });
+
+    void listen(CHECK_FOR_UPDATES_EVENT, () => {
+      void checkForAppUpdate(render, { silent: false });
     });
   }
 }

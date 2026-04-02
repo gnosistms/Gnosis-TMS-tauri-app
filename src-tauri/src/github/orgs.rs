@@ -114,21 +114,25 @@ pub(crate) fn setup_organization_for_installation(
 }
 
 #[tauri::command]
-pub(crate) fn add_organization_admin_for_installation(
+pub(crate) async fn add_organization_admin_for_installation(
   installation_id: i64,
   org_login: String,
   username: String,
   session_token: String,
 ) -> Result<(), String> {
-  let client = github_client()?;
-  broker_patch_no_content_with_session(
-    &client,
-    &format!(
-      "/api/github-app/installations/{installation_id}/orgs/{org_login}/admins/{username}"
-    ),
-    None,
-    &session_token,
-  )
+  tauri::async_runtime::spawn_blocking(move || {
+    let client = github_client()?;
+    broker_patch_no_content_with_session(
+      &client,
+      &format!(
+        "/api/github-app/installations/{installation_id}/orgs/{org_login}/admins/{username}"
+      ),
+      None,
+      &session_token,
+    )
+  })
+  .await
+  .map_err(|error| format!("Could not run the organization admin grant task: {error}"))?
 }
 
 #[tauri::command]

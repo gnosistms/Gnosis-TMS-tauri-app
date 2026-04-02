@@ -10,6 +10,10 @@ function updateMessage(version) {
   return version ? `Update ${version} available` : "Update available";
 }
 
+function upToDateMessage(currentVersion) {
+  return currentVersion ? `Gnosis TMS ${currentVersion} is up to date` : "Gnosis TMS is up to date";
+}
+
 export async function checkForAppUpdate(render, options = {}) {
   if (!updatesSupported()) {
     return;
@@ -36,6 +40,8 @@ export async function checkForAppUpdate(render, options = {}) {
 
     if (update.available === true) {
       showNoticeBadge(updateMessage(update.version), render, null);
+    } else if (!silent) {
+      showNoticeBadge(upToDateMessage(update.currentVersion), render, 2200);
     }
   } catch (error) {
     state.appUpdate.status = "error";
