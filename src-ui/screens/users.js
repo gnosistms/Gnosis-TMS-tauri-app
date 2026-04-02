@@ -9,15 +9,16 @@ function renderUserCard(user, options = {}) {
   const canLeaveTeam = options.canLeaveTeam === true;
   const selectedTeamId = options.selectedTeamId ?? "";
   const displayName = user.isCurrentUser ? `${user.name} (me)` : user.name;
+  const roleSyncPending = user.roleSyncPending === true;
   const actions = user.isCurrentUser
     ? (canLeaveTeam && selectedTeamId
         ? textAction("Leave", `open-current-team-leave:${selectedTeamId}`)
         : "")
     : (canManageMembers
         ? user.role === "Translator"
-          ? textAction("Make Admin", `make-admin:${user.username}`)
+          ? textAction("Make Admin", `make-admin:${user.username}`, { disabled: roleSyncPending })
           : user.role === "Admin"
-            ? textAction("Revoke Admin", `revoke-admin:${user.username}`)
+            ? textAction("Revoke Admin", `revoke-admin:${user.username}`, { disabled: roleSyncPending })
             : ""
         : "")
     ;

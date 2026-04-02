@@ -63,7 +63,6 @@
   --link: #c97a12;
   --link-hover: #d7963f;
   --link-disabled: #d7b182;
-  --link-disabled-hover: #e0be94;
   --message-error-bg: rgba(255, 234, 230, 0.92);
   --message-error-border: rgba(165, 64, 36, 0.28);
   --message-error-text: #a54024;
@@ -280,17 +279,16 @@ a {
   cursor: not-allowed;
 }
 
-.header-nav__button.is-disabled,
-.text-action.is-disabled,
-.text-link.is-disabled {
+:is(.header-nav__button, .text-action, .text-link).is-disabled,
+:is(.header-nav__button, .text-action, .text-link).is-disabled:hover {
   color: var(--link-disabled);
+  opacity: 0.46;
   cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
 }
 
-.button.is-disabled:hover,
-.header-nav__button.is-disabled:hover,
-.text-action.is-disabled:hover,
-.text-link.is-disabled:hover {
+.button.is-disabled:hover {
   color: inherit;
   transform: none;
   box-shadow: none;

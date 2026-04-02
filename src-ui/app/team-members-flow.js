@@ -82,6 +82,7 @@ function updateLocalAdminRole(users = [], username, shouldBeAdmin) {
     return {
       ...user,
       role: nextRole,
+      roleSyncPending: true,
     };
   });
 
