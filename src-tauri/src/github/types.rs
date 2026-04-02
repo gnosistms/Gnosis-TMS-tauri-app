@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 #[derive(Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -34,10 +35,9 @@ pub(crate) struct GithubAppInstallationInfo {
   pub(crate) can_manage_members: Option<bool>,
   pub(crate) can_manage_projects: Option<bool>,
   pub(crate) can_leave: Option<bool>,
-  pub(crate) needs_app_approval: Option<bool>,
+  pub(crate) permissions: Option<BTreeMap<String, String>>,
   pub(crate) app_approval_url: Option<String>,
   pub(crate) app_request_url: Option<String>,
-  pub(crate) missing_app_permissions: Option<Vec<String>>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]

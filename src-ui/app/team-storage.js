@@ -3,6 +3,7 @@ import {
   removePersistentValue,
   writePersistentValue,
 } from "./persistent-store.js";
+import { deriveInstallationApprovalState, normalizeInstallationPermissions } from "./github-app-permissions.js";
 
 const TEAM_RECORDS_STORAGE_KEY = "gnosis-tms-team-records";
 const TEAM_PENDING_MUTATIONS_STORAGE_KEY = "gnosis-tms-team-pending-mutations";
@@ -57,6 +58,8 @@ function normalizeTeamRecord(team) {
     typeof team.membershipRole === "string" && team.membershipRole.trim()
       ? team.membershipRole.trim()
       : "member";
+  const grantedAppPermissions = normalizeInstallationPermissions(team.grantedAppPermissions);
+  const approvalState = deriveInstallationApprovalState(grantedAppPermissions);
 
   return {
     id:
@@ -79,7 +82,7 @@ function normalizeTeamRecord(team) {
     canManageMembers: team.canManageMembers === true || team.canDelete === true,
     canManageProjects: team.canManageProjects === true || team.canDelete === true,
     canLeave: team.canLeave !== false,
-    needsAppApproval: team.needsAppApproval === true,
+    needsAppApproval: approvalState.needsAppApproval,
     appApprovalUrl:
       typeof team.appApprovalUrl === "string" && team.appApprovalUrl.trim()
         ? team.appApprovalUrl.trim()
@@ -88,11 +91,8 @@ function normalizeTeamRecord(team) {
       typeof team.appRequestUrl === "string" && team.appRequestUrl.trim()
         ? team.appRequestUrl.trim()
         : null,
-    missingAppPermissions: Array.isArray(team.missingAppPermissions)
-      ? team.missingAppPermissions
-          .map((permission) => (typeof permission === "string" ? permission.trim() : ""))
-          .filter(Boolean)
-      : [],
+    grantedAppPermissions,
+    missingAppPermissions: approvalState.missingAppPermissions,
     installationId:
       Number.isFinite(team.installationId) ? team.installationId : null,
     orgCreatedAt:

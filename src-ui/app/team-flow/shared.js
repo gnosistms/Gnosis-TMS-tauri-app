@@ -1,6 +1,7 @@
 import { splitStoredTeamRecords } from "../team-storage.js";
 import { state } from "../state.js";
 import { removeItem, replaceItem } from "../optimistic-collection.js";
+import { deriveInstallationApprovalState, normalizeInstallationPermissions } from "../github-app-permissions.js";
 
 export const DELETED_TEAM_MARKER = "[DELETED]";
 
@@ -59,6 +60,7 @@ export function resolveNextSelectedTeamId(currentTeamId, teams) {
 export function buildTeamRecordFromInstallation(installation) {
   const deleted = isTeamSoftDeleted(installation.description);
   const resolvedName = installation.accountName || installation.accountLogin;
+  const approvalState = deriveInstallationApprovalState(installation.permissions);
   return {
     id: `github-app-installation-${installation.installationId}`,
     name: resolvedName,
@@ -71,12 +73,11 @@ export function buildTeamRecordFromInstallation(installation) {
     canManageMembers: installation.canManageMembers === true,
     canManageProjects: installation.canManageProjects === true,
     canLeave: installation.canLeave !== false,
-    needsAppApproval: installation.needsAppApproval === true,
+    needsAppApproval: approvalState.needsAppApproval,
     appApprovalUrl: installation.appApprovalUrl ?? null,
     appRequestUrl: installation.appRequestUrl ?? null,
-    missingAppPermissions: Array.isArray(installation.missingAppPermissions)
-      ? installation.missingAppPermissions
-      : [],
+    grantedAppPermissions: approvalState.grantedAppPermissions,
+    missingAppPermissions: approvalState.missingAppPermissions,
     isDeleted: deleted,
     deletedAt: deleted ? new Date().toISOString() : null,
     syncState: deleted ? "deleted" : "active",
@@ -89,6 +90,10 @@ export function reconcileStoredTeam(storedTeam, installation) {
   const deleted = isTeamSoftDeleted(installation.description);
   const resolvedName =
     installation.accountName || installation.accountLogin || storedTeam.name || storedTeam.githubOrg;
+  const nextGrantedPermissions = normalizeInstallationPermissions(
+    installation.permissions ?? storedTeam.grantedAppPermissions,
+  );
+  const approvalState = deriveInstallationApprovalState(nextGrantedPermissions);
   return {
     ...storedTeam,
     name: resolvedName,
@@ -100,14 +105,11 @@ export function reconcileStoredTeam(storedTeam, installation) {
     canManageMembers: installation.canManageMembers === true,
     canManageProjects: installation.canManageProjects === true,
     canLeave: installation.canLeave !== false,
-    needsAppApproval: installation.needsAppApproval === true,
+    needsAppApproval: approvalState.needsAppApproval,
     appApprovalUrl: installation.appApprovalUrl ?? storedTeam.appApprovalUrl ?? null,
     appRequestUrl: installation.appRequestUrl ?? storedTeam.appRequestUrl ?? null,
-    missingAppPermissions: Array.isArray(installation.missingAppPermissions)
-      ? installation.missingAppPermissions
-      : Array.isArray(storedTeam.missingAppPermissions)
-        ? storedTeam.missingAppPermissions
-        : [],
+    grantedAppPermissions: approvalState.grantedAppPermissions,
+    missingAppPermissions: approvalState.missingAppPermissions,
     lastSeenAt: new Date().toISOString(),
     isDeleted: deleted,
     deletedAt: deleted ? storedTeam.deletedAt ?? new Date().toISOString() : null,
