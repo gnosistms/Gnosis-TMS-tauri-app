@@ -11,11 +11,19 @@ This file is the current handoff for restarting work in a fresh thread.
 
 - Branch: `main`
 - HEAD changes have advanced well beyond the old updater setup commit; if resuming, use `git log --oneline -n 12` instead of relying on the stale SHA that was previously recorded here.
-- Working tree: clean
-- Local branch may temporarily be ahead of `origin/main` when packaging tweaks are prepared but not yet pushed.
+- Working tree should be clean after the latest packaging/notes commit.
+- `main` may be ahead of the latest pushed release tag; not every committed packaging tweak is necessarily released yet.
 
 Recent app commits:
 
+- most recent local commit should include:
+  - the `icons:sync` automation
+  - the `660x400` + stripped-`pHYs` DMG background fix
+  - updated handoff/setup notes
+- `7883324` `Prepare v0.1.8 release with rounded mac volume icon`
+- `75f26af` `Track DMG background Affinity source`
+- `a3a4e23` `Prepare v0.1.7 release`
+- `b6723d5` `Prepare v0.1.6 release with zipped mac downloads`
 - `ab5d081` `Fix Cargo lock for v0.1.5 release`
 - `6bcfb82` `Add custom DMG file icons to macOS release workflow`
 - `052f4e5` `Add custom macOS DMG background and window layout`
@@ -70,13 +78,17 @@ Release versions progressed like this:
 - `v0.1.4`: succeeded
 - `v0.1.5`: succeeded, but the raw downloaded mac `.dmg` still lost its Finder icon
 - `v0.1.6`: next release switches mac GitHub download assets to zipped DMGs so the extracted `.dmg` keeps its custom Finder icon
+- `v0.1.7`: succeeded with the new DMG background and tracked Affinity source, but the mounted volume icon was still square because `icon.icns` had not yet been regenerated before tagging
+- `v0.1.8`: succeeded with the rounded mounted volume icon fix; this is the first tagged release that should have the rounded mounted disk image icon
 
-Current app version has been bumped to `0.1.6` in:
+Current app version has been bumped to `0.1.8` in:
 
 - `/Users/hans/Desktop/GnosisTMS/package.json`
 - `/Users/hans/Desktop/GnosisTMS/src-tauri/Cargo.toml`
 - `/Users/hans/Desktop/GnosisTMS/src-tauri/Cargo.lock`
 - `/Users/hans/Desktop/GnosisTMS/src-tauri/tauri.conf.json`
+
+Current `main` / release-prep version is now `0.1.8`.
 
 Pushed tags:
 
@@ -86,6 +98,8 @@ Pushed tags:
 - `v0.1.4`
 - `v0.1.5`
 - `v0.1.6`
+- `v0.1.7`
+- `v0.1.8`
 
 ## GitHub auth / secrets state
 
@@ -149,14 +163,65 @@ This uses stock Tauri macOS DMG support.
 Implemented:
 
 - branded install background image at `/Users/hans/Desktop/GnosisTMS/src-tauri/dmg/background.png`
+- editable Affinity source at `/Users/hans/Desktop/GnosisTMS/src-tauri/dmg/background.af`
 - DMG layout config in `/Users/hans/Desktop/GnosisTMS/src-tauri/tauri.conf.json`
 - mounted volume icon uses the existing app icon from `/Users/hans/Desktop/GnosisTMS/src-tauri/icons/icon.icns`
+- single-source rounded icon artwork at:
+  - `/Users/hans/Desktop/GnosisTMS/src-tauri/icons/mac icon-iOS-Default-1024x1024@1x.png`
+- local/CI sync script for generated icon assets:
+  - `/Users/hans/Desktop/GnosisTMS/src-tauri/icons/sync-generated-icons.sh`
 
 Important details:
 
 - Tauri's DMG bundler passes a volume icon into `bundle_dmg.sh` and writes `.VolumeIcon.icns` inside the mounted image
 - a direct local debug DMG bundle succeeded with the background and mounted volume icon flow
 - a full local `npm run tauri -- build --bundles dmg --debug` run also succeeded after the DMG config change
+- the rounded mounted volume icon comes from regenerating `/Users/hans/Desktop/GnosisTMS/src-tauri/icons/icon.icns` from:
+  - `/Users/hans/Desktop/GnosisTMS/src-tauri/icons/mac icon-iOS-Default-1024x1024@1x.png`
+- the app icon / mounted DMG volume icon / Windows-generated icons can now be regenerated together from that same source by running:
+  - `npm run icons:sync`
+- the GitHub Actions release workflow now runs:
+  - `npm run icons:sync`
+  before building, so future mac releases should not miss an `icon.icns` refresh the way `v0.1.7` did
+- `v0.1.7` was tagged before that `icon.icns` refresh, which is why the mounted disk image icon was still square there
+- `v0.1.8` includes the rounded mounted volume icon fix
+
+### DMG background sizing / Retina lesson
+
+This should not be relearned:
+
+- Finder does **not** treat the DMG background like an `@2x` Retina asset
+- when `background.png` was increased to `1320x800` while the DMG window stayed `660x400`, Finder rendered it oversized instead of scaling it down
+- there is no discovered Finder setting to "scale background to window"
+
+The currently tested local fix is:
+
+- keep `/Users/hans/Desktop/GnosisTMS/src-tauri/dmg/background.png` at exactly `660x400`
+- strip the PNG `pHYs` chunk before bundling
+
+What was tested locally:
+
+- `background.png` was resized back to `660x400`
+- `pngcrush -rem alla` was used to remove `pHYs` and other PNG metadata from a newly written output file
+- the resulting chunk list was reduced to:
+  - `IHDR`
+  - `eXIf`
+  - `IDAT`
+  - `IEND`
+- a fresh local debug DMG was built and mounted
+- the mounted DMG contained the exact same cleaned `background.png` byte-for-byte at:
+  - `/Volumes/Gnosis TMS/.background/background.png`
+
+Important current state:
+
+- this `background.png` cleanup was tested locally in a fresh debug DMG build
+- it is newer than `v0.1.8`
+- if continuing in a fresh thread, inspect:
+  - `/Users/hans/Desktop/GnosisTMS/src-tauri/dmg/background.png`
+  - `/Users/hans/Desktop/GnosisTMS/src-tauri/icons/sync-generated-icons.sh`
+  - `/Users/hans/Desktop/GnosisTMS/.github/workflows/release-tauri.yml`
+  - `git log --oneline -n 5`
+  - then decide whether to cut the next release tag
 
 ### 2. Downloaded `.dmg` file icon in Finder
 
@@ -164,7 +229,7 @@ This is **not** the same thing as the mounted volume icon.
 
 The working method was verified locally and should not be forgotten:
 
-- use a flattened PNG exported from Apple Icon Composer, currently:
+- use the same flattened PNG exported from Apple Icon Composer that now serves as the icon source of truth:
   - `/Users/hans/Desktop/GnosisTMS/src-tauri/icons/mac icon-iOS-Default-1024x1024@1x.png`
 - run `sips -i` on that PNG
 - run `DeRez -only icns` on the PNG to extract icon resources
@@ -180,6 +245,7 @@ The crucial lesson:
 - `.VolumeIcon.icns` only controls the mounted volume icon
 - it does **not** solve the Finder icon of the downloaded `.dmg` file itself
 - the downloaded file icon required the separate `sips` + `DeRez` + `Rez` + `SetFile -a C` path
+- but it now uses the same single source PNG as the generated app icons
 
 Release workflow state:
 
@@ -253,6 +319,21 @@ Important recent release runs:
   - result: succeeded, but the raw downloaded mac `.dmg` still lost its Finder icon
   - url: `https://github.com/gnosistms/Gnosis-TMS-tauri-app/actions/runs/23923310661`
   - lesson: publish a zipped DMG for mac downloads instead of the raw `.dmg`
+- `v0.1.6`
+  - run id: `23931811773`
+  - result: succeeded
+  - url: `https://github.com/gnosistms/Gnosis-TMS-tauri-app/actions/runs/23931811773`
+  - note: this is the first release where GitHub-hosted mac downloads are zipped DMGs so the extracted `.dmg` keeps its custom Finder icon
+- `v0.1.7`
+  - run id: `23934715648`
+  - result: succeeded
+  - url: `https://github.com/gnosistms/Gnosis-TMS-tauri-app/actions/runs/23934715648`
+  - note: includes updated DMG background assets, but mounted volume icon still square
+- `v0.1.8`
+  - run id: `23936264104`
+  - result: succeeded
+  - url: `https://github.com/gnosistms/Gnosis-TMS-tauri-app/actions/runs/23936264104`
+  - note: includes the rounded mounted volume icon fix; does **not** include the later local-only `background.png` resize/`pHYs` cleanup
 
 ## If continuing in a fresh thread
 

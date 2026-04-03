@@ -78,6 +78,32 @@ This is handled through stock Tauri DMG config:
 - `src-tauri/tauri.conf.json`
 - mounted volume icon via `icons/icon.icns`
 
+Current source of truth for the rounded mac icon artwork:
+
+- `/Users/hans/Desktop/GnosisTMS/src-tauri/icons/mac icon-iOS-Default-1024x1024@1x.png`
+
+Sync command:
+
+- `npm run icons:sync`
+
+Sync script:
+
+- `/Users/hans/Desktop/GnosisTMS/src-tauri/icons/sync-generated-icons.sh`
+
+What it does:
+
+- regenerates `icon.icns`
+- regenerates `icon.ico`
+- regenerates the standard Tauri PNG icon set
+- regenerates the `android/` and `ios/` generated icon folders
+
+Why this matters:
+
+- mounted DMG volume icon uses `icon.icns`
+- the installed mac app icon currently also comes from `icon.icns`
+- Windows and other generated app icons come from the same synced output
+- the release workflow now runs `npm run icons:sync` before building, so future releases do not depend on manually refreshing `icon.icns`
+
 ### Downloaded `.dmg` file icon
 
 This required a separate workflow patch and a separate icon asset.
@@ -103,6 +129,7 @@ The important lesson:
 
 - `.VolumeIcon.icns` only affects the mounted volume
 - it does not give the downloaded `.dmg` file its own custom Finder icon
+- the downloaded `.dmg` file icon now uses the same rounded PNG source asset as the generated app icons
 
 ### Release workflow order
 
