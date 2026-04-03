@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Download Gnosis TMS</title>
+    <meta
+      name="description"
+      content="Download the latest Gnosis TMS installer for macOS or Windows."
+    />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="page">
+      <section class="hero">
+        <p class="eyebrow">Downloads</p>
+        <h1>Get Gnosis TMS</h1>
+        <p class="lede">
+          Download the latest Gnosis TMS installer for macOS or Windows. This page
+          fetches the newest release from GitHub and recommends the right build.
+        </p>
+        <div class="hero__meta">
+          <span class="pill" id="detected-platform">Detecting your device...</span>
+          <a
+            class="pill pill--ghost"
+            href="https://github.com/gnosistms/Gnosis-TMS-tauri-app/releases"
+            target="_blank"
+            rel="noreferrer"
+          >
+            All GitHub releases
+          </a>
+        </div>
+      </section>
+
+      <section class="panel panel--primary">
+        <div class="panel__header">
+          <div>
+            <p class="panel__label">Recommended</p>
+            <h2 id="primary-title">Preparing your download</h2>
+          </div>
+          <span class="version-badge" id="release-version">Loading latest release...</span>
+        </div>
+        <p class="panel__copy" id="primary-copy">
+          Fetching the latest release assets from GitHub Releases.
+        </p>
+        <div class="panel__actions" id="primary-actions">
+          <a class="button button--disabled" aria-disabled="true">Loading…</a>
+        </div>
+      </section>
+
+      <section class="grid">
+        <article class="panel">
+          <p class="panel__label">Manual Downloads</p>
+          <h2>Choose a specific installer</h2>
+          <div class="download-list" id="manual-downloads">
+            <div class="download-item download-item--loading">
+              <span>Loading installers…</span>
+            </div>
+          </div>
+        </article>
+
+        <article class="panel">
+          <p class="panel__label">Notes</p>
+          <h2>Before you install</h2>
+          <ul class="notes">
+            <li>Mac downloads are delivered as ZIP files. Unzip first, then open the DMG.</li>
+            <li>Windows users can install with the MSI package. The EXE setup file is also available below.</li>
+            <li>The app checks for updates on launch and can install them from inside the app.</li>
+          </ul>
+        </article>
+      </section>
+    </main>
+
+    <script src="./app.js" defer></script>
+  </body>
+</html>

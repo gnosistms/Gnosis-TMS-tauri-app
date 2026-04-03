@@ -259,6 +259,38 @@ The crucial lesson:
 - the downloaded file icon required the separate `sips` + `DeRez` + `Rez` + `SetFile -a C` path
 - but it now uses the same single source PNG as the generated app icons
 
+## Downloads site
+
+Static GitHub Pages downloads site has been added under:
+
+- `/Users/hans/Desktop/GnosisTMS/docs/index.html`
+- `/Users/hans/Desktop/GnosisTMS/docs/styles.css`
+- `/Users/hans/Desktop/GnosisTMS/docs/app.js`
+- `/Users/hans/Desktop/GnosisTMS/docs/CNAME`
+
+Setup doc:
+
+- `/Users/hans/Desktop/GnosisTMS/DOWNLOADS_PAGE_SETUP.md`
+
+Purpose:
+
+- host `downloads.gnosis-tms.com` on GitHub Pages
+- fetch the latest GitHub release dynamically
+- recommend the right installer for Windows or macOS
+- still show manual download links
+
+Current asset matching rules in the static page:
+
+- Mac Apple Silicon ZIP: `/_aarch64\.zip$/`
+- Mac Intel ZIP: `/_x64\.zip$/`
+- Windows MSI: `/_x64_en-US\.msi$/`
+- Windows EXE setup: `/_x64-setup\.exe$/`
+
+Reason the page uses ZIPs for Mac:
+
+- direct GitHub-downloaded `.dmg` files lose the custom Finder file icon metadata
+- zipped DMGs preserve that icon after the user unzips on macOS
+
 Release workflow state:
 
 - `.github/workflows/release-tauri.yml` now patches the built mac DMGs with the custom file icon
