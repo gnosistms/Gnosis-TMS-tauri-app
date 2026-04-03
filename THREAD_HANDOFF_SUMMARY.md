@@ -82,15 +82,16 @@ Release versions progressed like this:
 - `v0.1.8`: succeeded with the rounded mounted volume icon fix; this is the first tagged release that should have the rounded mounted disk image icon
 - `v0.1.9`: succeeded with the `660x400` background cleanup, but the final sharpness fix moved beyond PNG and into a TIFF-backed DMG background workflow that is newer than this tag
 - `v0.1.10`: next release should publish the TIFF-backed DMG background workflow that rendered correctly in local Finder testing
+- `v0.1.11`: next release republishes the TIFF-backed workflow with refreshed DMG background artwork exported from Affinity
 
-Current app version has been bumped to `0.1.10` in:
+Current app version has been bumped to `0.1.11` in:
 
 - `/Users/hans/Desktop/GnosisTMS/package.json`
 - `/Users/hans/Desktop/GnosisTMS/src-tauri/Cargo.toml`
 - `/Users/hans/Desktop/GnosisTMS/src-tauri/Cargo.lock`
 - `/Users/hans/Desktop/GnosisTMS/src-tauri/tauri.conf.json`
 
-Current `main` / release-prep version is now `0.1.10`, including the TIFF DMG background workflow that rendered correctly locally.
+Current `main` / release-prep version is now `0.1.11`, including the refreshed TIFF DMG background artwork.
 
 Pushed tags:
 
@@ -104,6 +105,7 @@ Pushed tags:
 - `v0.1.8`
 - `v0.1.9`
 - `v0.1.10`
+- `v0.1.11`
 
 ## GitHub auth / secrets state
 
