@@ -74,9 +74,15 @@ Do not confuse them.
 
 This is handled through stock Tauri DMG config:
 
-- `src-tauri/dmg/background.png`
+- `src-tauri/dmg/background.tiff`
 - `src-tauri/tauri.conf.json`
 - mounted volume icon via `icons/icon.icns`
+
+Current DMG background source files:
+
+- `/Users/hans/Desktop/GnosisTMS/src-tauri/dmg/background.png` (`660x400`, 1x)
+- `/Users/hans/Desktop/GnosisTMS/src-tauri/dmg/background@2x.png` (`1320x800`, 2x)
+- `/Users/hans/Desktop/GnosisTMS/src-tauri/dmg/background.tiff` (multi-representation TIFF used by Finder)
 
 Current source of truth for the rounded mac icon artwork:
 
@@ -103,6 +109,35 @@ Why this matters:
 - the installed mac app icon currently also comes from `icon.icns`
 - Windows and other generated app icons come from the same synced output
 - the release workflow now runs `npm run icons:sync` before building, so future releases do not depend on manually refreshing `icon.icns`
+
+### DMG background sharpness / Retina fix
+
+The plain PNG background path was not good enough for Finder on Retina displays.
+
+What failed:
+
+- a `1320x800` PNG used directly as the DMG background rendered oversized
+- a `660x400` PNG matched the window size but still looked soft in Finder
+
+What worked:
+
+- keep two exported background PNGs:
+  - `background.png` at `660x400`
+  - `background@2x.png` at `1320x800`
+- build a Retina-style TIFF using:
+
+```bash
+tiffutil -cathidpicheck src-tauri/dmg/background.png src-tauri/dmg/background@2x.png -out src-tauri/dmg/background.tiff
+```
+
+- point `src-tauri/tauri.conf.json` at:
+  - `dmg/background.tiff`
+
+This was tested locally with:
+
+- `npm run tauri -- build --bundles dmg --debug`
+
+and the mounted DMG window rendered correctly in Finder.
 
 ### Downloaded `.dmg` file icon
 

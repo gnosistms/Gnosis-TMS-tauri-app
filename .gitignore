@@ -18,4 +18,5 @@ developerID_application.cer
 CertificateSigningRequest.certSigningRequest
 Certificates.p12
 signingCerts/
+src-tauri/dmg/*.af~lock~
 src-tauri/icons/*.icon/

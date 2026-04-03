@@ -80,15 +80,17 @@ Release versions progressed like this:
 - `v0.1.6`: next release switches mac GitHub download assets to zipped DMGs so the extracted `.dmg` keeps its custom Finder icon
 - `v0.1.7`: succeeded with the new DMG background and tracked Affinity source, but the mounted volume icon was still square because `icon.icns` had not yet been regenerated before tagging
 - `v0.1.8`: succeeded with the rounded mounted volume icon fix; this is the first tagged release that should have the rounded mounted disk image icon
+- `v0.1.9`: succeeded with the `660x400` background cleanup, but the final sharpness fix moved beyond PNG and into a TIFF-backed DMG background workflow that is newer than this tag
+- `v0.1.10`: next release should publish the TIFF-backed DMG background workflow that rendered correctly in local Finder testing
 
-Current app version has been bumped to `0.1.8` in:
+Current app version has been bumped to `0.1.10` in:
 
 - `/Users/hans/Desktop/GnosisTMS/package.json`
 - `/Users/hans/Desktop/GnosisTMS/src-tauri/Cargo.toml`
 - `/Users/hans/Desktop/GnosisTMS/src-tauri/Cargo.lock`
 - `/Users/hans/Desktop/GnosisTMS/src-tauri/tauri.conf.json`
 
-Current `main` / release-prep version is now `0.1.8`.
+Current `main` / release-prep version is now `0.1.10`, including the TIFF DMG background workflow that rendered correctly locally.
 
 Pushed tags:
 
@@ -100,6 +102,8 @@ Pushed tags:
 - `v0.1.6`
 - `v0.1.7`
 - `v0.1.8`
+- `v0.1.9`
+- `v0.1.10`
 
 ## GitHub auth / secrets state
 
@@ -162,8 +166,14 @@ This uses stock Tauri macOS DMG support.
 
 Implemented:
 
-- branded install background image at `/Users/hans/Desktop/GnosisTMS/src-tauri/dmg/background.png`
+- branded install background image now delivered to Finder as:
+  - `/Users/hans/Desktop/GnosisTMS/src-tauri/dmg/background.tiff`
 - editable Affinity source at `/Users/hans/Desktop/GnosisTMS/src-tauri/dmg/background.af`
+- exported PNG sources:
+  - `/Users/hans/Desktop/GnosisTMS/src-tauri/dmg/background.png`
+  - `/Users/hans/Desktop/GnosisTMS/src-tauri/dmg/background@2x.png`
+- generated Retina TIFF used by Finder:
+  - `/Users/hans/Desktop/GnosisTMS/src-tauri/dmg/background.tiff`
 - DMG layout config in `/Users/hans/Desktop/GnosisTMS/src-tauri/tauri.conf.json`
 - mounted volume icon uses the existing app icon from `/Users/hans/Desktop/GnosisTMS/src-tauri/icons/icon.icns`
 - single-source rounded icon artwork at:
@@ -194,34 +204,34 @@ This should not be relearned:
 - when `background.png` was increased to `1320x800` while the DMG window stayed `660x400`, Finder rendered it oversized instead of scaling it down
 - there is no discovered Finder setting to "scale background to window"
 
-The currently tested local fix is:
+The final local solution that rendered correctly was:
 
-- keep `/Users/hans/Desktop/GnosisTMS/src-tauri/dmg/background.png` at exactly `660x400`
-- strip the PNG `pHYs` chunk before bundling
+- keep two exported background PNGs:
+  - `/Users/hans/Desktop/GnosisTMS/src-tauri/dmg/background.png` at `660x400`
+  - `/Users/hans/Desktop/GnosisTMS/src-tauri/dmg/background@2x.png` at `1320x800`
+- build a multi-representation TIFF:
 
-What was tested locally:
+```bash
+tiffutil -cathidpicheck src-tauri/dmg/background.png src-tauri/dmg/background@2x.png -out src-tauri/dmg/background.tiff
+```
 
-- `background.png` was resized back to `660x400`
-- `pngcrush -rem alla` was used to remove `pHYs` and other PNG metadata from a newly written output file
-- the resulting chunk list was reduced to:
-  - `IHDR`
-  - `eXIf`
-  - `IDAT`
-  - `IEND`
-- a fresh local debug DMG was built and mounted
-- the mounted DMG contained the exact same cleaned `background.png` byte-for-byte at:
-  - `/Volumes/Gnosis TMS/.background/background.png`
+- point `/Users/hans/Desktop/GnosisTMS/src-tauri/tauri.conf.json` to:
+  - `dmg/background.tiff`
 
-Important current state:
+What was verified locally:
 
-- this `background.png` cleanup was tested locally in a fresh debug DMG build
-- it is newer than `v0.1.8`
-- if continuing in a fresh thread, inspect:
-  - `/Users/hans/Desktop/GnosisTMS/src-tauri/dmg/background.png`
-  - `/Users/hans/Desktop/GnosisTMS/src-tauri/icons/sync-generated-icons.sh`
-  - `/Users/hans/Desktop/GnosisTMS/.github/workflows/release-tauri.yml`
-  - `git log --oneline -n 5`
-  - then decide whether to cut the next release tag
+- the TIFF contained both `660x400` and `1320x800` image representations
+- `npm run tauri -- build --bundles dmg --debug` succeeded with the TIFF path
+- the mounted Finder DMG window looked correct using the TIFF background
+- the TIFF path is now what should ship in `v0.1.10`
+
+If continuing in a fresh thread, inspect:
+
+- `/Users/hans/Desktop/GnosisTMS/src-tauri/dmg/background.png`
+- `/Users/hans/Desktop/GnosisTMS/src-tauri/dmg/background@2x.png`
+- `/Users/hans/Desktop/GnosisTMS/src-tauri/dmg/background.tiff`
+- `/Users/hans/Desktop/GnosisTMS/src-tauri/tauri.conf.json`
+- then decide whether to cut the next release tag
 
 ### 2. Downloaded `.dmg` file icon in Finder
 
@@ -334,6 +344,11 @@ Important recent release runs:
   - result: succeeded
   - url: `https://github.com/gnosistms/Gnosis-TMS-tauri-app/actions/runs/23936264104`
   - note: includes the rounded mounted volume icon fix; does **not** include the later local-only `background.png` resize/`pHYs` cleanup
+- `v0.1.9`
+  - run id: `23937601172`
+  - result: succeeded
+  - url: `https://github.com/gnosistms/Gnosis-TMS-tauri-app/actions/runs/23937601172`
+  - note: includes the corrected `660x400` PNG background, but the newer local TIFF DMG background test came after this release
 
 ## If continuing in a fresh thread
 
