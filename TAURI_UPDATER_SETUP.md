@@ -113,7 +113,15 @@ For mac release jobs, the workflow now does this:
 3. re-sign the modified `.dmg`
 4. re-notarize it
 5. staple it
-6. replace the GitHub Release asset with `gh release upload --clobber`
+6. wrap the patched `.dmg` in a mac-created `.zip` with `ditto -c -k --sequesterRsrc`
+7. delete the raw mac `.dmg` asset from the GitHub Release
+8. upload the `.zip` instead with `gh release upload --clobber`
+
+Why the zip is required:
+
+- the raw `.dmg` loses its custom Finder icon when downloaded directly from GitHub Releases
+- the mac-created `.zip` preserves the DMG's Finder metadata when the user extracts it with macOS tools
+- command-line `unzip` does **not** preserve the icon; Archive Utility / Finder extraction does
 
 If this ever breaks, inspect:
 

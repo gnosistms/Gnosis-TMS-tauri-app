@@ -68,9 +68,10 @@ Release versions progressed like this:
 - `v0.1.2`: succeeded for macOS and Windows release publishing
 - `v0.1.3`: succeeded with Apple signing/notarization workflow
 - `v0.1.4`: succeeded
-- `v0.1.5`: current release intended to test custom `.dmg` file icon patching in GitHub Actions
+- `v0.1.5`: succeeded, but the raw downloaded mac `.dmg` still lost its Finder icon
+- `v0.1.6`: next release switches mac GitHub download assets to zipped DMGs so the extracted `.dmg` keeps its custom Finder icon
 
-Current app version has been bumped to `0.1.5` in:
+Current app version has been bumped to `0.1.6` in:
 
 - `/Users/hans/Desktop/GnosisTMS/package.json`
 - `/Users/hans/Desktop/GnosisTMS/src-tauri/Cargo.toml`
@@ -84,6 +85,7 @@ Pushed tags:
 - `v0.1.3`
 - `v0.1.4`
 - `v0.1.5`
+- `v0.1.6`
 
 ## GitHub auth / secrets state
 
@@ -182,13 +184,20 @@ The crucial lesson:
 Release workflow state:
 
 - `.github/workflows/release-tauri.yml` now patches the built mac DMGs with the custom file icon
-- after patching, the workflow re-signs the DMG, re-notarizes it, staples it, and re-uploads it to the GitHub release with `gh release upload --clobber`
+- after patching, the workflow re-signs the DMG, re-notarizes it, staples it, wraps it in a mac-created `.zip`, deletes the raw mac `.dmg` asset from the GitHub release, and uploads the `.zip` with `gh release upload --clobber`
 
 Local proof that the method works:
 
 - a throwaway test file at `/private/tmp/gnosis-dmg-icon-test-2.dmg` showed the custom icon in Finder
 - `GetFileInfo` showed the DMG with the custom-icon flag:
   - `attributes: avbstClinmedz`
+
+Transport lesson that should not be relearned:
+
+- a raw downloaded `.dmg` from GitHub Releases lost the custom Finder icon metadata
+- a mac-created `.zip` containing the patched DMG preserved the icon when extracted with macOS tools
+- command-line `unzip` did **not** preserve the icon
+- Archive Utility / Finder / `ditto -x -k` preserved it
 
 Git hygiene:
 
@@ -241,8 +250,9 @@ Important recent release runs:
   - result: succeeded
 - `v0.1.5`
   - run id: `23923310661`
-  - result: current run to inspect for custom downloaded `.dmg` file icon behavior
+  - result: succeeded, but the raw downloaded mac `.dmg` still lost its Finder icon
   - url: `https://github.com/gnosistms/Gnosis-TMS-tauri-app/actions/runs/23923310661`
+  - lesson: publish a zipped DMG for mac downloads instead of the raw `.dmg`
 
 ## If continuing in a fresh thread
 

@@ -89,7 +89,7 @@ jobs:
           prerelease: false
           args: ${{ matrix.args }}
 
-      - name: Apply custom DMG file icon and replace release asset
+      - name: Package mac DMGs with preserved file icon and replace release assets
         if: matrix.platform == 'macos-latest'
         shell: bash
         env:
@@ -107,5 +107,9 @@ jobs:
             codesign --force --sign "$APPLE_SIGNING_IDENTITY" --keychain "$RUNNER_TEMP/app-signing.keychain-db" --timestamp "$dmg_path"
             xcrun notarytool submit "$dmg_path" --wait --issuer "$APPLE_API_ISSUER" --key-id "$APPLE_API_KEY" --key "$APPLE_API_KEY_PATH"
             xcrun stapler staple "$dmg_path"
-            gh release upload "$GITHUB_REF_NAME" "$dmg_path" --clobber
+            zip_path="${dmg_path%.dmg}.zip"
+            rm -f "$zip_path"
+            ditto -c -k --sequesterRsrc "$dmg_path" "$zip_path"
+            gh release delete-asset "$GITHUB_REF_NAME" "$(basename "$dmg_path")" --yes || true
+            gh release upload "$GITHUB_REF_NAME" "$zip_path" --clobber
           done < <(find src-tauri/target -path '*bundle/dmg/*.dmg' -type f | sort)
