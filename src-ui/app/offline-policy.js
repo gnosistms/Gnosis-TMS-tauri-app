@@ -3,6 +3,7 @@ import { state } from "./state.js";
 const OFFLINE_BLOCKED_EXACT_ACTIONS = new Set([
   "login-with-github",
   "check-for-updates",
+  "refresh-page",
   "open-new-team",
   "begin-team-org-setup",
   "begin-github-app-install",

@@ -17,6 +17,10 @@
     justify-content: flex-start;
   }
 
+  .page-header__title-row {
+    justify-content: flex-start;
+  }
+
   .page-header__tools {
     justify-content: flex-start;
   }

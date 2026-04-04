@@ -8,6 +8,7 @@ export function createAuthActions(render) {
   return {
     "login-with-github": () => startGithubLogin(render),
     "check-for-updates": () => refreshCurrentScreen(render),
+    "refresh-page": () => refreshCurrentScreen(render),
     "work-offline": () => enableOfflineMode(render),
     "dismiss-connection-failure": () => closeConnectionFailureModal(render),
     "go-offline-from-connection-failure": () => {

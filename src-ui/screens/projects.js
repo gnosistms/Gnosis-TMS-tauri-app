@@ -6,6 +6,7 @@ import {
   primaryButton,
   sectionSeparator,
   textAction,
+  titleRefreshButton,
 } from "../lib/ui.js";
 import { formatErrorForDisplay } from "../app/error-display.js";
 import { renderProjectCreationModal } from "./project-creation-modal.js";
@@ -191,6 +192,10 @@ export function renderProjectsScreen(state) {
     pageShell({
     title: "Projects",
     subtitle: selectedTeam?.name ?? "Team",
+    titleAction: titleRefreshButton("refresh-page", {
+      spinning: state.pageSync?.status === "syncing",
+      disabled: offlineMode || state.pageSync?.status === "syncing",
+    }),
     navButtons: [
       navButton("Logout", "start"),
       navButton("Teams", "teams"),

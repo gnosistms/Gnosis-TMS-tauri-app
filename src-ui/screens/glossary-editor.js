@@ -6,6 +6,7 @@ import {
   pageShell,
   primaryButton,
   textAction,
+  titleRefreshButton,
 } from "../lib/ui.js";
 import { getNoticeBadgeText } from "../app/status-feedback.js";
 
@@ -14,6 +15,10 @@ export function renderGlossaryEditorScreen(state) {
 
   return pageShell({
     title: glossary.name,
+    titleAction: titleRefreshButton("refresh-page", {
+      spinning: state.pageSync?.status === "syncing",
+      disabled: state.offline?.isEnabled === true || state.pageSync?.status === "syncing",
+    }),
     navButtons: [
       navButton("Logout", "start"),
       navButton("Teams", "teams"),

@@ -258,12 +258,107 @@ a {
   justify-self: center;
 }
 
+.page-header__title-row {
+  display: inline-flex;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 7px;
+  color: var(--text);
+}
+
 .page-header__title {
   margin: 0;
   font-size: clamp(1.6625rem, 2.625vw, 2.8rem);
   line-height: 1;
   letter-spacing: var(--heading-letter-spacing);
   white-space: nowrap;
+}
+
+.title-icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  align-self: flex-end;
+  position: relative;
+  top: 3.25px;
+  width: 38px;
+  height: 39px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  transition:
+    background 140ms ease;
+}
+
+.title-icon-button:hover {
+  transform: none;
+}
+
+.title-icon-button.is-disabled,
+.title-icon-button.is-disabled:hover {
+  opacity: 0.4;
+  cursor: not-allowed;
+  background: transparent;
+  transform: none;
+}
+
+.title-icon-button.is-spinning,
+.title-icon-button.is-spinning:hover {
+  transform: none;
+}
+
+.title-icon-button.is-spinning.is-disabled,
+.title-icon-button.is-spinning.is-disabled:hover {
+  opacity: 1;
+  cursor: default;
+}
+
+.title-icon-button__icon {
+  --title-icon-height: 23.7px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: currentColor;
+  user-select: none;
+  pointer-events: none;
+}
+
+.title-icon-button__icon svg {
+  display: block;
+  height: var(--title-icon-height);
+  width: auto;
+}
+
+.title-icon-button__icon svg,
+.title-icon-button__icon svg * {
+  fill: currentColor;
+}
+
+.title-icon-button__icon svg .refresh-spin-target {
+  transform-box: view-box;
+  transform-origin: 20.399861px 24.9103705px;
+  transition: transform 140ms ease;
+}
+
+.title-icon-button:hover .title-icon-button__icon:not(.is-spinning) svg .refresh-spin-target {
+  transform: rotate(12deg);
+}
+
+.title-icon-button__icon.is-spinning svg .refresh-spin-target {
+  animation: title-icon-spin 0.9s linear infinite;
+}
+
+@keyframes title-icon-spin {
+  from {
+    transform: rotate(0deg);
+  }
+
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .page-header__subtitle {

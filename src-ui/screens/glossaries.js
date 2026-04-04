@@ -1,5 +1,5 @@
 import { glossaries } from "../lib/data.js";
-import { navButton, pageShell, primaryButton, textAction } from "../lib/ui.js";
+import { navButton, pageShell, primaryButton, textAction, titleRefreshButton } from "../lib/ui.js";
 import { getNoticeBadgeText } from "../app/status-feedback.js";
 
 export function renderGlossariesScreen(state) {
@@ -8,6 +8,10 @@ export function renderGlossariesScreen(state) {
   return pageShell({
     title: "Glossaries",
     subtitle: selectedTeam?.name ?? "Team",
+    titleAction: titleRefreshButton("refresh-page", {
+      spinning: state.pageSync?.status === "syncing",
+      disabled: state.offline?.isEnabled === true || state.pageSync?.status === "syncing",
+    }),
     navButtons: [
       navButton("Logout", "start"),
       navButton("Teams", "teams"),

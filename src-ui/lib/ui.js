@@ -1,3 +1,5 @@
+import refreshIconSvg from "../assets/icons/refresh.svg?raw";
+
 export function escapeHtml(value) {
   return String(value)
     .replaceAll("&", "&amp;")
@@ -76,6 +78,23 @@ export function textAction(label, action, options = {}) {
   )}"${disabledActionAttributes(options)}>${escapeHtml(label)}</button>`;
 }
 
+export function titleRefreshButton(action, options = {}) {
+  return `
+    <button
+      class="title-icon-button${options.disabled ? " is-disabled" : ""}${options.spinning ? " is-spinning" : ""}"
+      data-action="${escapeHtml(action)}"
+      aria-label="Refresh page"
+      title="Refresh page"
+      ${options.disabled ? 'aria-disabled="true" data-offline-blocked="true"' : ""}
+    >
+      <span
+        class="title-icon-button__icon${options.spinning ? " is-spinning" : ""}"
+        aria-hidden="true"
+      >${refreshIconSvg}</span>
+    </button>
+  `;
+}
+
 export function sectionSeparator({ label, action, isOpen = false }) {
   return `
     <button class="section-separator" data-action="${escapeHtml(action)}">
@@ -127,6 +146,7 @@ function renderFloatingBadge({ pageSync, syncBadgeText, noticeText }) {
 export function pageShell({
   title,
   subtitle = "",
+  titleAction = "",
   navButtons = [],
   tools = "",
   leftTools = "",
@@ -161,7 +181,10 @@ export function pageShell({
           ${leftTools ? `<div class="page-header__left-tools">${leftTools}</div>` : ""}
         </div>
         <div class="page-header__title-wrap">
-          <h1 class="page-header__title">${escapeHtml(title)}</h1>
+          <div class="page-header__title-row">
+            <h1 class="page-header__title">${escapeHtml(title)}</h1>
+            ${titleAction}
+          </div>
           ${subtitle ? `<p class="page-header__subtitle">${escapeHtml(subtitle)}</p>` : ""}
         </div>
         <div class="page-header__tools">${tools}</div>

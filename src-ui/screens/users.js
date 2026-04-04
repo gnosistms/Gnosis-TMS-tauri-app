@@ -1,4 +1,4 @@
-import { escapeHtml, navButton, pageShell, primaryButton, textAction } from "../lib/ui.js";
+import { escapeHtml, navButton, pageShell, primaryButton, textAction, titleRefreshButton } from "../lib/ui.js";
 import { formatErrorForDisplay } from "../app/error-display.js";
 import { getNoticeBadgeText } from "../app/status-feedback.js";
 import { renderInviteUserModal } from "./invite-user-modal.js";
@@ -90,6 +90,10 @@ export function renderUsersScreen(state) {
     pageShell({
       title: "Members",
       subtitle: selectedTeam?.name ?? "Team",
+      titleAction: titleRefreshButton("refresh-page", {
+        spinning: state.pageSync?.status === "syncing",
+        disabled: state.offline?.isEnabled === true || state.pageSync?.status === "syncing",
+      }),
       navButtons: [
         navButton("Logout", "start"),
         navButton("Teams", "teams"),
