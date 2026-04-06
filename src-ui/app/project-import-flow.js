@@ -6,12 +6,12 @@ import {
   showNoticeBadge,
   showScopedSyncBadge,
 } from "./status-feedback.js";
+import { reconcileProjectRepoSyncStates } from "./project-repo-sync-flow.js";
 
-function openSpreadsheetPicker() {
+function openFilePicker() {
   return new Promise((resolve) => {
     const input = document.createElement("input");
     input.type = "file";
-    input.accept = ".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
     input.style.display = "none";
 
     const cleanup = () => {
@@ -40,13 +40,41 @@ function openSpreadsheetPicker() {
   });
 }
 
-export async function importXlsxWorkbook(render) {
+function detectImportFileType(fileName) {
+  const normalized = String(fileName || "").trim().toLowerCase();
+  if (normalized.endsWith(".xlsx")) {
+    return "xlsx";
+  }
+  return null;
+}
+
+export async function addFilesToProject(render, projectId) {
   if (state.projectImport.status === "importing") {
     return;
   }
 
-  const selectedFile = await openSpreadsheetPicker();
+  const selectedTeam = state.teams.find((team) => team.id === state.selectedTeamId);
+  const targetProject =
+    state.projects.find((project) => project.id === projectId) ??
+    state.deletedProjects.find((project) => project.id === projectId);
+  if (!Number.isFinite(selectedTeam?.installationId) || !targetProject) {
+    showNoticeBadge("Could not determine which project to add the file to.", render);
+    return;
+  }
+
+  const selectedFile = await openFilePicker();
   if (!selectedFile) {
+    return;
+  }
+
+  const fileType = detectImportFileType(selectedFile.name);
+  if (!fileType) {
+    state.projectImport = {
+      status: "error",
+      error: `Unsupported file type for ${selectedFile.name}. XLSX is the only supported import format right now.`,
+      result: state.projectImport.result,
+    };
+    render();
     return;
   }
 
@@ -56,27 +84,35 @@ export async function importXlsxWorkbook(render) {
     result: state.projectImport.result,
   };
   beginPageSync();
-  showScopedSyncBadge("projects", "Importing workbook...", render);
+  showScopedSyncBadge("projects", "Adding file...", render);
   render();
   await waitForNextPaint();
 
   try {
     const bytes = Array.from(new Uint8Array(await selectedFile.arrayBuffer()));
-    const result = await invoke("import_xlsx_to_gtms", {
-      input: {
-        fileName: selectedFile.name,
-        bytes,
-      },
-    });
+    let result;
+    if (fileType === "xlsx") {
+      result = await invoke("import_xlsx_to_gtms", {
+        input: {
+          installationId: selectedTeam.installationId,
+          repoName: targetProject.name,
+          fileName: selectedFile.name,
+          bytes,
+        },
+      });
+    }
 
     state.projectImport = {
       status: "ready",
       error: "",
       result,
     };
-    clearScopedSyncBadge("projects", render);
+    await reconcileProjectRepoSyncStates(render, selectedTeam, [targetProject]);
     await completePageSync(render);
-    showNoticeBadge(`Imported ${result.unitCount} rows from ${result.sourceFileName}`, render);
+    showNoticeBadge(
+      `Imported ${result.unitCount} rows from ${result.sourceFileName} into ${result.projectTitle}`,
+      render,
+    );
   } catch (error) {
     state.projectImport = {
       status: "error",

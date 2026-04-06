@@ -13,12 +13,11 @@ import {
   submitProjectRename,
   toggleDeletedProjects,
 } from "../project-flow.js";
-import { importXlsxWorkbook } from "../project-import-flow.js";
+import { addFilesToProject } from "../project-import-flow.js";
 import { actionSuffix, runWithImmediateLoading } from "../action-helpers.js";
 
 export function createProjectActions(render) {
   const exactActions = {
-    "import-xlsx": () => importXlsxWorkbook(render),
     "open-new-project": () => createProjectForSelectedTeam(render),
     "cancel-project-creation": () => cancelProjectCreation(render),
     "cancel-project-permanent-deletion": () => cancelProjectPermanentDeletion(render),
@@ -42,6 +41,11 @@ export function createProjectActions(render) {
       prefix: "delete-project:",
       handler: async (projectId, event) =>
         runWithImmediateLoading(event, "Deleting...", () => deleteProject(render, projectId)),
+    },
+    {
+      prefix: "add-project-files:",
+      handler: async (projectId, event) =>
+        runWithImmediateLoading(event, "Adding...", () => addFilesToProject(render, projectId)),
     },
     {
       prefix: "rename-project:",

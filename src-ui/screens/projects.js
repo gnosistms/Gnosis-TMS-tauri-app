@@ -4,7 +4,6 @@ import {
   navButton,
   pageShell,
   primaryButton,
-  secondaryButton,
   sectionSeparator,
   textAction,
   titleRefreshButton,
@@ -23,10 +22,13 @@ function renderProjectCard(project, expanded, options = {}) {
   const isDeleted = options.isDeleted === true;
   const offlineMode = options.offlineMode === true;
   const deleteAction = options.deleteAction ?? `delete-project:${project.id}`;
+  const addFilesDisabled = options.addFilesDisabled === true;
   const actions =
     options.actions ??
     [
-      textAction("Add files", "noop", { disabled: offlineMode }),
+      textAction("Add files", `add-project-files:${project.id}`, {
+        disabled: offlineMode || addFilesDisabled,
+      }),
       canManageProjects
         ? textAction("Rename", `rename-project:${project.id}`, { disabled: offlineMode })
         : "",
@@ -143,8 +145,8 @@ function renderProjectImportSummary(importState) {
     return `
       <article class="card card--hero card--empty">
         <div class="card__body">
-          <p class="card__eyebrow">LOCAL XLSX IMPORT FAILED</p>
-          <h2 class="card__title card__title--small">The workbook could not be imported.</h2>
+          <p class="card__eyebrow">FILE IMPORT FAILED</p>
+          <h2 class="card__title card__title--small">The selected file could not be added.</h2>
           <p class="card__subtitle">${escapeHtml(importState.error || "Unknown import error.")}</p>
         </div>
       </article>
@@ -159,12 +161,13 @@ function renderProjectImportSummary(importState) {
   return `
     <article class="card card--hero card--empty">
       <div class="card__body">
-        <p class="card__eyebrow">LOCAL XLSX IMPORT</p>
+        <p class="card__eyebrow">FILE IMPORT</p>
         <h2 class="card__title card__title--small">${escapeHtml(result.projectTitle)}</h2>
-        <p class="card__subtitle">Worksheet: ${escapeHtml(result.chapterTitle)}</p>
+        <p class="card__subtitle">File: ${escapeHtml(result.fileTitle)}</p>
+        <p class="card__subtitle">Worksheet: ${escapeHtml(result.worksheetName)}</p>
         <p class="card__subtitle">Rows: ${escapeHtml(String(result.unitCount))}</p>
         <p class="card__subtitle">Languages: ${escapeHtml(result.languageCodes.join(", "))}</p>
-        <p class="card__subtitle">Saved to: ${escapeHtml(result.projectPath)}</p>
+        <p class="card__subtitle">Saved to: ${escapeHtml(result.repoPath)}</p>
       </div>
     </article>
   `;
@@ -174,6 +177,7 @@ export function renderProjectsScreen(state) {
   const selectedTeam = state.teams.find((team) => team.id === state.selectedTeamId) ?? state.teams[0];
   const canManageProjects = selectedTeam?.canManageProjects === true;
   const offlineMode = state.offline?.isEnabled === true;
+  const importInProgress = state.projectImport?.status === "importing";
   const discovery = state.projectDiscovery ?? { status: "idle", error: "" };
   const emptyState = `
     <article class="card card--hero card--empty">
@@ -214,6 +218,7 @@ export function renderProjectsScreen(state) {
                 renderProjectCard(project, state.expandedProjects.has(project.id), {
                   canManageProjects,
                   offlineMode,
+                  addFilesDisabled: importInProgress,
                 }),
               )
               .join("")}</section>`;
@@ -242,9 +247,6 @@ export function renderProjectsScreen(state) {
     ],
     leftTools: createSearchField("Search"),
     tools: [
-      secondaryButton("Import XLSX", "import-xlsx", {
-        disabled: state.projectImport?.status === "importing",
-      }),
       canManageProjects
         ? primaryButton("+ New Project", "open-new-project", { disabled: offlineMode })
         : "",

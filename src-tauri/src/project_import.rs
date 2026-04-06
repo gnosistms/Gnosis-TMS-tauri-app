@@ -3,6 +3,7 @@ use std::{
   fs,
   io::Cursor,
   path::{Path, PathBuf},
+  process::Command,
 };
 
 use calamine::{open_workbook_auto_from_rs, Data, Reader};
@@ -18,6 +19,8 @@ const GTMS_GITATTRIBUTES: &str = "*.json text eol=lf\nassets/** binary\n";
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ImportXlsxInput {
+  installation_id: i64,
+  repo_name: String,
   file_name: String,
   bytes: Vec<u8>,
 }
@@ -25,10 +28,11 @@ pub(crate) struct ImportXlsxInput {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ImportXlsxResponse {
-  project_path: String,
+  repo_path: String,
   chapter_path: String,
   project_title: String,
-  chapter_title: String,
+  file_title: String,
+  worksheet_name: String,
   unit_count: usize,
   language_codes: Vec<String>,
   source_file_name: String,
@@ -36,8 +40,10 @@ pub(crate) struct ImportXlsxResponse {
 
 #[derive(Clone)]
 struct ParsedWorkbook {
-  project_title: String,
-  chapter_title: String,
+  installation_id: i64,
+  repo_name: String,
+  file_title: String,
+  worksheet_name: String,
   source_file_name: String,
   header_blob: Vec<String>,
   languages: Vec<ImportedLanguage>,
@@ -71,18 +77,26 @@ enum ColumnBinding {
   Ignored,
 }
 
-#[derive(Serialize)]
+#[derive(Deserialize, Serialize)]
 struct ProjectFile {
   project_id: String,
   title: String,
+  #[serde(default = "active_lifecycle_state")]
   lifecycle: LifecycleState,
   chapter_order: Vec<String>,
+  #[serde(default)]
   deleted_chapter_order: Vec<String>,
 }
 
-#[derive(Serialize)]
+#[derive(Deserialize, Serialize)]
 struct LifecycleState {
-  state: &'static str,
+  state: String,
+}
+
+fn active_lifecycle_state() -> LifecycleState {
+  LifecycleState {
+    state: "active".to_string(),
+  }
 }
 
 #[derive(Serialize)]
@@ -221,14 +235,32 @@ fn import_xlsx_to_gtms_sync(
   input: ImportXlsxInput,
 ) -> Result<ImportXlsxResponse, String> {
   let parsed = parse_xlsx_workbook(input)?;
-  let project_id = Uuid::now_v7();
   let chapter_id = Uuid::now_v7();
-  let project_slug = slugify(&parsed.project_title);
-  let chapter_slug = format!("01-{}", slugify(&parsed.chapter_title));
-  let project_dir_name = format!("{project_slug}-{project_id}");
-  let base_dir = local_projects_root(app)?;
-  let project_path = base_dir.join(project_dir_name);
-  let chapter_path = project_path.join("chapters").join(&chapter_slug);
+  let repo_root = local_project_repo_root(app, parsed.installation_id)?;
+  let repo_path = repo_root.join(&parsed.repo_name);
+  if !repo_path.exists() {
+    return Err(
+      "The local project repo is not available yet. Refresh the Projects page first so the repo can be cloned."
+        .to_string(),
+    );
+  }
+
+  if git_output(&repo_path, &["rev-parse", "--git-dir"]).is_err() {
+    return Err("The local project repo is missing or invalid.".to_string());
+  }
+
+  if !git_output(&repo_path, &["status", "--porcelain"])?.trim().is_empty() {
+    return Err(
+      "The local project repo has uncommitted changes. Sync it before adding files."
+        .to_string(),
+    );
+  }
+
+  let project_json_path = repo_path.join("project.json");
+  let mut project_file = read_project_file(&project_json_path)?;
+  let project_title = project_file.title.clone();
+  let chapter_slug = unique_chapter_slug(&repo_path.join("chapters"), &slugify(&parsed.file_title));
+  let chapter_path = repo_path.join("chapters").join(&chapter_slug);
   let rows_path = chapter_path.join("rows");
   let assets_path = chapter_path.join("assets");
 
@@ -237,16 +269,7 @@ fn import_xlsx_to_gtms_sync(
   fs::create_dir_all(&assets_path)
     .map_err(|error| format!("Could not create the imported assets folder: {error}"))?;
 
-  write_text_file(&project_path.join(".gitattributes"), GTMS_GITATTRIBUTES)?;
-
-  let project_file = ProjectFile {
-    project_id: project_id.to_string(),
-    title: parsed.project_title.clone(),
-    lifecycle: LifecycleState { state: "active" },
-    chapter_order: vec![chapter_id.to_string()],
-    deleted_chapter_order: vec![],
-  };
-  write_json_pretty(&project_path.join("project.json"), &project_file)?;
+  ensure_gitattributes(&repo_path.join(".gitattributes"))?;
 
   let chapter_file = build_chapter_file(&parsed, &chapter_id, &chapter_slug);
   write_json_pretty(&chapter_path.join("chapter.json"), &chapter_file)?;
@@ -254,11 +277,20 @@ fn import_xlsx_to_gtms_sync(
   let row_order = build_row_order_and_files(&parsed, &rows_path)?;
   write_json_pretty(&chapter_path.join("rowOrder.json"), &row_order)?;
 
+  project_file.chapter_order.push(chapter_id.to_string());
+  write_json_pretty(&project_json_path, &project_file)?;
+  git_output(&repo_path, &["add", ".gitattributes", "project.json", "chapters"])?;
+  git_output(
+    &repo_path,
+    &["commit", "-m", &format!("Import {}", parsed.source_file_name)],
+  )?;
+
   Ok(ImportXlsxResponse {
-    project_path: project_path.display().to_string(),
+    repo_path: repo_path.display().to_string(),
     chapter_path: chapter_path.display().to_string(),
-    project_title: parsed.project_title,
-    chapter_title: parsed.chapter_title,
+    project_title,
+    file_title: parsed.file_title,
+    worksheet_name: parsed.worksheet_name,
     unit_count: row_order.len(),
     language_codes: parsed.languages.iter().map(|language| language.code.clone()).collect(),
     source_file_name: parsed.source_file_name,
@@ -363,8 +395,10 @@ fn parse_xlsx_workbook(input: ImportXlsxInput) -> Result<ParsedWorkbook, String>
   }
 
   Ok(ParsedWorkbook {
-    project_title: humanize_file_stem(&input.file_name),
-    chapter_title: sheet_name,
+    installation_id: input.installation_id,
+    repo_name: input.repo_name,
+    file_title: humanize_file_stem(&input.file_name),
+    worksheet_name: sheet_name,
     source_file_name: input.file_name,
     header_blob,
     languages,
@@ -387,7 +421,7 @@ fn build_chapter_file(
   let mut serialization_hints = BTreeMap::new();
   serialization_hints.insert(
     "worksheet".to_string(),
-    Value::String(parsed.chapter_title.clone()),
+    Value::String(parsed.worksheet_name.clone()),
   );
 
   ChapterFile {
@@ -395,7 +429,7 @@ fn build_chapter_file(
     format_version: GTMS_FORMAT_VERSION,
     app_version: env!("CARGO_PKG_VERSION").to_string(),
     chapter_id: chapter_id.to_string(),
-    title: parsed.chapter_title.clone(),
+    title: parsed.file_title.clone(),
     slug: chapter_slug.to_string(),
     source_files: vec![SourceFile {
       file_id: "source-001".to_string(),
@@ -464,7 +498,7 @@ fn build_row_file(
   };
 
   let mut container_path = BTreeMap::new();
-  container_path.insert("sheet".to_string(), Value::String(parsed.chapter_title.clone()));
+  container_path.insert("sheet".to_string(), Value::String(parsed.worksheet_name.clone()));
   container_path.insert(
     "row".to_string(),
     Value::Number((imported_row.source_row_number as u64).into()),
@@ -495,7 +529,7 @@ fn build_row_file(
   format_metadata.insert(
     "xlsx".to_string(),
     json!({
-      "source_sheet": parsed.chapter_title,
+      "source_sheet": parsed.worksheet_name,
       "source_row_number": imported_row.source_row_number,
     }),
   );
@@ -519,7 +553,7 @@ fn build_row_file(
     },
     origin: RowOrigin {
       source_format: "xlsx",
-      source_sheet: parsed.chapter_title.clone(),
+      source_sheet: parsed.worksheet_name.clone(),
       source_row_number: imported_row.source_row_number,
     },
     format_state: FormatState {
@@ -673,15 +707,76 @@ fn row_is_empty(
     && fields.values().all(|value| value.is_empty())
 }
 
-fn local_projects_root(app: &AppHandle) -> Result<PathBuf, String> {
+fn local_project_repo_root(app: &AppHandle, installation_id: i64) -> Result<PathBuf, String> {
   let app_data_dir = app
     .path()
     .app_data_dir()
     .map_err(|error| format!("Could not resolve the app data directory: {error}"))?;
-  let root = app_data_dir.join("local-projects");
+  let root = app_data_dir
+    .join("project-repos")
+    .join(format!("installation-{installation_id}"));
   fs::create_dir_all(&root)
-    .map_err(|error| format!("Could not create the local projects folder: {error}"))?;
+    .map_err(|error| format!("Could not create the local project repo folder: {error}"))?;
   Ok(root)
+}
+
+fn read_project_file(project_json_path: &Path) -> Result<ProjectFile, String> {
+  let text = fs::read_to_string(project_json_path)
+    .map_err(|error| format!("Could not read project.json: {error}"))?;
+  serde_json::from_str(&text)
+    .map_err(|error| format!("Could not parse project.json: {error}"))
+}
+
+fn ensure_gitattributes(path: &Path) -> Result<(), String> {
+  if path.exists() {
+    return Ok(());
+  }
+
+  write_text_file(path, GTMS_GITATTRIBUTES)
+}
+
+fn unique_chapter_slug(chapters_root: &Path, base_slug: &str) -> String {
+  let slug = if base_slug.trim().is_empty() {
+    "untitled".to_string()
+  } else {
+    base_slug.trim().to_string()
+  };
+
+  if !chapters_root.join(&slug).exists() {
+    return slug;
+  }
+
+  let mut index = 2usize;
+  loop {
+    let candidate = format!("{slug}-{index}");
+    if !chapters_root.join(&candidate).exists() {
+      return candidate;
+    }
+    index += 1;
+  }
+}
+
+fn git_output(repo_path: &Path, args: &[&str]) -> Result<String, String> {
+  let output = Command::new("git")
+    .args(args)
+    .current_dir(repo_path)
+    .output()
+    .map_err(|error| format!("Could not run git {}: {error}", args.join(" ")))?;
+
+  if !output.status.success() {
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let detail = if !stderr.is_empty() {
+      stderr
+    } else if !stdout.is_empty() {
+      stdout
+    } else {
+      format!("exit status {}", output.status)
+    };
+    return Err(format!("git {} failed: {detail}", args.join(" ")));
+  }
+
+  Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
 fn cell_to_trimmed_string(cell: &Data) -> String {
