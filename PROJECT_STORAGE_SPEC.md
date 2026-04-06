@@ -153,6 +153,9 @@ Example:
 {
   "project_id": "ce916278-7ec8-4758-a2aa-061d5f4958a5",
   "title": "Sample Project",
+  "lifecycle": {
+    "state": "active"
+  },
   "chapter_order": [
     "4c77fbcb-e381-434c-b69f-8f7a26365cd0",
     "b59e8f6d-8940-4425-b976-2ef3d66df457"
@@ -170,6 +173,7 @@ Required fields:
 
 - `project_id`
 - `title`
+- `lifecycle`
 - `chapter_order`
 
 Optional fields:
@@ -181,12 +185,15 @@ Rules:
 
 1. `project.json` must not contain chapter content.
 2. `project.json` must not duplicate row-level data.
-3. `chapter_order` must contain chapter ids only.
-4. `deleted_chapter_order` must contain chapter ids only.
-5. Every chapter id in `chapter_order` must correspond to one chapter folder in `chapters/`.
-6. Every chapter id in `deleted_chapter_order` must correspond to one chapter folder in `chapters/`.
-7. A chapter id must appear in exactly one of `chapter_order` or `deleted_chapter_order`.
-8. Renaming a chapter title or slug must not require changing the chapter id in either order list.
+3. `lifecycle.state` should be one of:
+   - `active`
+   - `deleted`
+4. `chapter_order` must contain chapter ids only.
+5. `deleted_chapter_order` must contain chapter ids only.
+6. Every chapter id in `chapter_order` must correspond to one chapter folder in `chapters/`.
+7. Every chapter id in `deleted_chapter_order` must correspond to one chapter folder in `chapters/`.
+8. A chapter id must appear in exactly one of `chapter_order` or `deleted_chapter_order`.
+9. Renaming a chapter title or slug must not require changing the chapter id in either order list.
 
 ## Chapter-Level Files
 

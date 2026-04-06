@@ -75,7 +75,14 @@ enum ColumnBinding {
 struct ProjectFile {
   project_id: String,
   title: String,
+  lifecycle: LifecycleState,
   chapter_order: Vec<String>,
+  deleted_chapter_order: Vec<String>,
+}
+
+#[derive(Serialize)]
+struct LifecycleState {
+  state: &'static str,
 }
 
 #[derive(Serialize)]
@@ -235,7 +242,9 @@ fn import_xlsx_to_gtms_sync(
   let project_file = ProjectFile {
     project_id: project_id.to_string(),
     title: parsed.project_title.clone(),
+    lifecycle: LifecycleState { state: "active" },
     chapter_order: vec![chapter_id.to_string()],
+    deleted_chapter_order: vec![],
   };
   write_json_pretty(&project_path.join("project.json"), &project_file)?;
 
