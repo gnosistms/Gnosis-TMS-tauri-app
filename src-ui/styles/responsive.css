@@ -72,4 +72,8 @@
     grid-template-columns: 1fr;
     justify-items: start;
   }
+
+  .expandable-card__summary-button {
+    grid-column: 1 / -1;
+  }
 }

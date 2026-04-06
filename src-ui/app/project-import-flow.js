@@ -1,5 +1,6 @@
 import { invoke, waitForNextPaint } from "./runtime.js";
 import { completePageSync, failPageSync, beginPageSync } from "./page-sync.js";
+import { saveStoredProjectsForTeam } from "./project-cache.js";
 import { state } from "./state.js";
 import {
   clearScopedSyncBadge,
@@ -48,6 +49,40 @@ function detectImportFileType(fileName) {
   return null;
 }
 
+function buildImportedFileEntry(result) {
+  return {
+    id: result.chapterId,
+    name: result.fileTitle,
+  };
+}
+
+function applyImportedFileToProject(team, projectId, result) {
+  const importedFile = buildImportedFileEntry(result);
+  const mergeImportedFile = (project) => {
+    if (!project || project.id !== projectId) {
+      return project;
+    }
+
+    const existingFiles = Array.isArray(project.chapters) ? project.chapters : [];
+    const nextFiles = existingFiles.some((chapter) => chapter.id === importedFile.id)
+      ? existingFiles.map((chapter) => (chapter.id === importedFile.id ? importedFile : chapter))
+      : [...existingFiles, importedFile];
+
+    return {
+      ...project,
+      chapters: nextFiles,
+    };
+  };
+
+  state.projects = state.projects.map(mergeImportedFile);
+  state.deletedProjects = state.deletedProjects.map(mergeImportedFile);
+  state.expandedProjects.add(projectId);
+  saveStoredProjectsForTeam(team, {
+    projects: state.projects,
+    deletedProjects: state.deletedProjects,
+  });
+}
+
 export async function addFilesToProject(render, projectId) {
   if (state.projectImport.status === "importing") {
     return;
@@ -69,11 +104,13 @@ export async function addFilesToProject(render, projectId) {
 
   const fileType = detectImportFileType(selectedFile.name);
   if (!fileType) {
+    const errorMessage = `Unsupported file type for ${selectedFile.name}. XLSX is the only supported import format right now.`;
     state.projectImport = {
       status: "error",
-      error: `Unsupported file type for ${selectedFile.name}. XLSX is the only supported import format right now.`,
+      error: errorMessage,
       result: state.projectImport.result,
     };
+    showNoticeBadge(errorMessage, render);
     render();
     return;
   }
@@ -107,6 +144,9 @@ export async function addFilesToProject(render, projectId) {
       error: "",
       result,
     };
+    applyImportedFileToProject(selectedTeam, projectId, result);
+    render();
+    await waitForNextPaint();
     await reconcileProjectRepoSyncStates(render, selectedTeam, [targetProject]);
     await completePageSync(render);
     showNoticeBadge(
@@ -121,6 +161,7 @@ export async function addFilesToProject(render, projectId) {
     };
     clearScopedSyncBadge("projects", render);
     failPageSync();
+    showNoticeBadge(state.projectImport.error || "The file could not be imported.", render);
     render();
   }
 }

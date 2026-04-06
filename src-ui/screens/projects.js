@@ -17,12 +17,30 @@ import {
   getScopedSyncBadgeText,
 } from "../app/status-feedback.js";
 
+function compareFilesByName(left, right) {
+  const leftName = typeof left?.name === "string" ? left.name.trim() : "";
+  const rightName = typeof right?.name === "string" ? right.name.trim() : "";
+  const nameComparison = leftName.localeCompare(rightName, undefined, {
+    sensitivity: "base",
+    numeric: true,
+  });
+  if (nameComparison !== 0) {
+    return nameComparison;
+  }
+
+  return String(left?.id ?? "").localeCompare(String(right?.id ?? ""), undefined, {
+    sensitivity: "base",
+    numeric: true,
+  });
+}
+
 function renderProjectCard(project, expanded, options = {}) {
   const canManageProjects = options.canManageProjects !== false;
   const isDeleted = options.isDeleted === true;
   const offlineMode = options.offlineMode === true;
   const deleteAction = options.deleteAction ?? `delete-project:${project.id}`;
   const addFilesDisabled = options.addFilesDisabled === true;
+  const files = [...project.chapters].sort(compareFilesByName);
   const actions =
     options.actions ??
     [
@@ -34,27 +52,23 @@ function renderProjectCard(project, expanded, options = {}) {
         : "",
       canManageProjects ? textAction("Delete", deleteAction, { disabled: offlineMode }) : "",
     ].filter(Boolean);
-  const chapterCount = `${project.chapters.length} chapter${
-    project.chapters.length === 1 ? "" : "s"
+  const fileCount = `${files.length} file${
+    files.length === 1 ? "" : "s"
   }`;
 
-  const chapterRows = expanded
+  const fileRows = expanded
     ? `
       <div class="expandable-card__body">
         <div class="chapter-table">
-          ${project.chapters
+          ${files
             .map(
               (chapter) => `
-                <div class="chapter-table__row">
-                  <div class="chapter-table__name">${escapeHtml(chapter.name)}</div>
-                  <div class="chapter-table__glossary">
-                    <button class="glossary-pill" data-action="open-glossaries">${escapeHtml(
-                      chapter.glossary,
-                    )} <span>⌄</span></button>
-                  </div>
+                <div class="chapter-table__row chapter-table__row--file">
+                  <button class="chapter-table__name-button" data-action="open-translate:${chapter.id}">
+                    ${escapeHtml(chapter.name)}
+                  </button>
                   <div class="chapter-table__actions">
                     ${textAction("Open", `open-translate:${chapter.id}`)}
-                    ${textAction("Download", "noop")}
                     ${textAction("Rename", "noop")}
                     ${textAction("Delete", "noop")}
                   </div>
@@ -72,18 +86,22 @@ function renderProjectCard(project, expanded, options = {}) {
       isDeleted ? "card--deleted" : ""
     }">
       <div class="expandable-card__header">
-        <button class="chevron-button" data-action="toggle-project:${project.id}">
+        <button
+          class="expandable-card__summary-button"
+          data-action="toggle-project:${project.id}"
+          aria-expanded="${expanded ? "true" : "false"}"
+        >
           <span class="chevron ${expanded ? "is-open" : ""}"></span>
+          <span class="expandable-card__title-wrap">
+            <span class="expandable-card__title">${escapeHtml(project.title ?? project.name)}</span>
+            <span class="expandable-card__meta">${escapeHtml(fileCount)}</span>
+          </span>
         </button>
-        <div class="expandable-card__title-wrap">
-          <h2 class="expandable-card__title">${escapeHtml(project.title ?? project.name)}</h2>
-          <span class="expandable-card__meta">${escapeHtml(chapterCount)}</span>
-        </div>
         <div class="expandable-card__actions">
           ${actions.join("")}
         </div>
       </div>
-      ${chapterRows}
+      ${fileRows}
     </article>
   `;
 }
@@ -133,43 +151,6 @@ function renderDeletedProjectsSection(state) {
         )
         .join("")}</section>
     </section>
-  `;
-}
-
-function renderProjectImportSummary(importState) {
-  if (!importState?.result && importState?.status !== "error") {
-    return "";
-  }
-
-  if (importState.status === "error") {
-    return `
-      <article class="card card--hero card--empty">
-        <div class="card__body">
-          <p class="card__eyebrow">FILE IMPORT FAILED</p>
-          <h2 class="card__title card__title--small">The selected file could not be added.</h2>
-          <p class="card__subtitle">${escapeHtml(importState.error || "Unknown import error.")}</p>
-        </div>
-      </article>
-    `;
-  }
-
-  const result = importState.result;
-  if (!result) {
-    return "";
-  }
-
-  return `
-    <article class="card card--hero card--empty">
-      <div class="card__body">
-        <p class="card__eyebrow">FILE IMPORT</p>
-        <h2 class="card__title card__title--small">${escapeHtml(result.projectTitle)}</h2>
-        <p class="card__subtitle">File: ${escapeHtml(result.fileTitle)}</p>
-        <p class="card__subtitle">Worksheet: ${escapeHtml(result.worksheetName)}</p>
-        <p class="card__subtitle">Rows: ${escapeHtml(String(result.unitCount))}</p>
-        <p class="card__subtitle">Languages: ${escapeHtml(result.languageCodes.join(", "))}</p>
-        <p class="card__subtitle">Saved to: ${escapeHtml(result.repoPath)}</p>
-      </div>
-    </article>
   `;
 }
 
@@ -225,7 +206,6 @@ export function renderProjectsScreen(state) {
 
   const body = `
     <section class="stack">
-      ${renderProjectImportSummary(state.projectImport)}
       ${projectsBody}
       ${renderDeletedProjectsSection(state)}
     </section>

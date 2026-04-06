@@ -47,6 +47,7 @@
   font-size: 1.7rem;
   line-height: 1;
   letter-spacing: normal;
+  font-weight: 700;
 }
 
 .list-row__title-button {
@@ -58,10 +59,11 @@
   line-height: inherit;
   letter-spacing: inherit;
   text-align: left;
+  transition: opacity 160ms ease;
 }
 
 .list-row__title-button:hover {
-  color: var(--link-hover);
+  opacity: 0.7;
 }
 
 .card--deleted .list-row__title,
@@ -69,7 +71,7 @@
   opacity: 0.5;
 }
 
-.card--deleted .chevron-button {
+.card--deleted .expandable-card__summary-button {
   opacity: 0.5;
 }
 
@@ -126,30 +128,46 @@
   padding: 0 22px 0 14px;
 }
 
+.expandable-card__summary-button {
+  grid-column: 1 / 3;
+  width: 100%;
+  min-width: 0;
+  min-height: 62px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 22px;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: inherit;
+  text-align: left;
+  transition: opacity 160ms ease;
+}
+
+.expandable-card__summary-button:hover {
+  opacity: 0.7;
+}
+
 .expandable-card__body {
   border-top: 1px solid rgba(164, 112, 41, 0.16);
   padding: 24px 26px 28px;
 }
 
-.chevron-button {
-  width: 34px;
-  height: 34px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border: 0;
-  background: transparent;
-  padding: 0;
-}
-
 .chevron {
   width: 13px;
   height: 13px;
+  margin: 0 auto;
   border-right: 3px solid var(--text);
   border-bottom: 3px solid var(--text);
   transform: rotate(-45deg);
   transform-origin: center;
   transition: transform 160ms ease;
+}
+
+.expandable-card__summary-button .chevron {
+  justify-self: center;
+  align-self: center;
 }
 
 .chevron.is-open {
@@ -219,9 +237,29 @@
   gap: 18px;
 }
 
+.chapter-table__row--file {
+  grid-template-columns: minmax(280px, 1fr) auto;
+}
+
 .chapter-table__name {
   font-size: 1.12rem;
   font-weight: 600;
+}
+
+.chapter-table__name-button {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: inherit;
+  text-align: left;
+  font: inherit;
+  font-size: 1.12rem;
+  font-weight: 600;
+  transition: opacity 160ms ease;
+}
+
+.chapter-table__name-button:hover {
+  opacity: 0.7;
 }
 
 .glossary-pill,

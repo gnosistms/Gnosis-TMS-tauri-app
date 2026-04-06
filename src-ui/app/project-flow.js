@@ -214,6 +214,11 @@ export async function loadTeamProjects(render, teamId = state.selectedTeamId) {
   render();
 
   try {
+    const existingProjectsById = new Map(
+      [...state.projects, ...state.deletedProjects, ...optimisticSnapshot.items, ...optimisticSnapshot.deletedItems]
+        .filter(Boolean)
+        .map((project) => [project.id, project]),
+    );
     const projects = await invoke("list_gnosis_projects_for_installation", {
       installationId: selectedTeam.installationId,
       sessionToken: requireBrokerSession(),
@@ -225,7 +230,9 @@ export async function loadTeamProjects(render, teamId = state.selectedTeamId) {
     }
     const mappedProjects = projects.map((project) => ({
       ...project,
-      chapters: [],
+      chapters: Array.isArray(existingProjectsById.get(project.id)?.chapters)
+        ? existingProjectsById.get(project.id).chapters
+        : [],
     }));
     const nextSnapshot = applyPendingMutations(
       {

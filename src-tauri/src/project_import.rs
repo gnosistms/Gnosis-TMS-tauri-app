@@ -28,6 +28,7 @@ pub(crate) struct ImportXlsxInput {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ImportXlsxResponse {
+  chapter_id: String,
   repo_path: String,
   chapter_path: String,
   project_title: String,
@@ -286,6 +287,7 @@ fn import_xlsx_to_gtms_sync(
   )?;
 
   Ok(ImportXlsxResponse {
+    chapter_id: chapter_id.to_string(),
     repo_path: repo_path.display().to_string(),
     chapter_path: chapter_path.display().to_string(),
     project_title,
