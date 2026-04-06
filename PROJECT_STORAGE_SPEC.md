@@ -26,6 +26,8 @@ The goals of the working format are:
 6. Binary assets should be stored separately from row JSON when possible.
 7. Git commit history is the source of truth for file creation/modification history and authorship.
 8. The core row schema must stay format-agnostic, with sparse `format_metadata` for format-specific data.
+9. File-level and package-level metadata must be preserved separately from unit-level metadata.
+10. The canonical schema must support non-string pass-through values when a source format mixes text and non-text resources.
 
 ## Repository Layout
 
@@ -198,9 +200,20 @@ Example:
       "format": "xlsx",
       "path_hint": "Chapter01.xlsx",
       "filename_template": "Chapter01.%LANG_ISO%.xlsx",
-      "metadata": {}
+      "file_metadata": {
+        "source_locale": "es",
+        "target_locales": [
+          "en",
+          "vi"
+        ],
+        "header_blob": null,
+        "root_language": null,
+        "wrapper_name": null,
+        "serialization_hints": {}
+      }
     }
   ],
+  "package_assets": [],
   "languages": [
     {
       "code": "es",
@@ -237,6 +250,7 @@ Required fields:
 Optional fields:
 
 - `source_files`
+- `package_assets`
 - `settings`
 
 Field notes:
@@ -252,6 +266,8 @@ Rules:
 3. `chapter.json` should change only when chapter metadata changes.
 4. Reordering rows must not rewrite `chapter.json`.
 5. Editing row text must not rewrite `chapter.json`.
+6. `source_files[]` should preserve file-level metadata needed for faithful export.
+7. `package_assets[]` should preserve bundle/package context for formats such as XCLOC, DOCX, PPTX, and IDML.
 
 ### `rowOrder.json`
 
@@ -280,6 +296,9 @@ Rules:
 
 Each row lives in its own JSON file under `rows/`.
 
+Although the repository layout calls these `rows`, each file actually stores one generic translation unit.
+That unit may come from a spreadsheet row, a subtitle cue, a software localization key, or a rich-text document fragment.
+
 The filename is the row UUIDv7:
 
 ```text
@@ -293,6 +312,17 @@ Example:
   "row_id": "1b2f4f8a-7c4d-4b64-a6a0-5d51c470d0b1",
   "unit_type": "string",
   "external_id": "welcome_message",
+  "guidance": {
+    "description": "Shown on the home screen welcome banner.",
+    "context": "HomeScreen",
+    "comments": [
+      {
+        "kind": "developer",
+        "text": "Keep this short."
+      }
+    ],
+    "source_references": []
+  },
   "status": {
     "review_state": "unreviewed",
     "reviewed_at": null,
@@ -322,9 +352,10 @@ Example:
     "custom_attributes": {}
   },
   "placeholders": [],
-  "variants": null,
+  "variants": [],
   "fields": {
     "es": {
+      "value_kind": "text",
       "plain_text": "Texto de ejemplo.",
       "rich_text": {
         "blocks": [
@@ -341,9 +372,11 @@ Example:
       },
       "html_preview": "<p>Texto de ejemplo.</p>",
       "notes_html": "",
-      "attachments": []
+      "attachments": [],
+      "passthrough_value": null
     },
     "en": {
+      "value_kind": "text",
       "plain_text": "Example text.",
       "rich_text": {
         "blocks": [
@@ -360,9 +393,11 @@ Example:
       },
       "html_preview": "<p>Example text.</p>",
       "notes_html": "",
-      "attachments": []
+      "attachments": [],
+      "passthrough_value": null
     },
     "vi": {
+      "value_kind": "text",
       "plain_text": "Van ban vi du.",
       "rich_text": {
         "blocks": [
@@ -379,7 +414,8 @@ Example:
       },
       "html_preview": "<p>Van ban vi du.</p>",
       "notes_html": "",
-      "attachments": []
+      "attachments": [],
+      "passthrough_value": null
     }
   },
   "format_metadata": {
@@ -402,6 +438,7 @@ Required fields:
 Optional fields:
 
 - `external_id`
+- `guidance`
 - `origin`
 - `format_state`
 - `timing`
@@ -436,6 +473,38 @@ Suggested `flags` values:
 - `format_checked`
 - `needs_attention`
 - `has_question`
+
+### `guidance`
+
+Optional first-class translator guidance and source commentary.
+
+Example:
+
+```json
+{
+  "description": "Shown on the home screen welcome banner.",
+  "context": "HomeScreen",
+  "comments": [
+    {
+      "kind": "developer",
+      "text": "Keep this short."
+    }
+  ],
+  "source_references": [
+    "src/home.tsx:48"
+  ]
+}
+```
+
+Use this instead of hiding important cross-format guidance inside `format_metadata`.
+
+It must be able to represent:
+
+- descriptions
+- semantic context
+- translator/developer comments
+- note threads or note-like entries
+- source references such as Gettext `#:`
 
 ### `unit_type`
 
@@ -481,6 +550,7 @@ It must be flexible enough to represent:
 - slide / shape / paragraph / run path
 - subtitle cue order
 - XLIFF / Qt / Gettext context groupings
+- package-relative asset paths
 
 ### `origin`
 
@@ -575,23 +645,33 @@ This must support:
 
 ### `variants`
 
-Optional object for pluralization and other variant dimensions.
+Optional list of variant branches for pluralization and other dimension-based variants.
 
 Example:
 
 ```json
-{
-  "kind": "plural",
-  "axis_values": {
-    "one": "1 file",
-    "other": "%d files"
-  },
-  "additional_axes": {
-    "device": null,
-    "platform": null,
-    "gender": null
+[
+  {
+    "dimensions": {
+      "plural": "one",
+      "device": null,
+      "platform": null,
+      "gender": null,
+      "width": null
+    },
+    "field_overrides": {
+      "en": {
+        "value_kind": "text",
+        "plain_text": "1 file",
+        "rich_text": null,
+        "html_preview": null,
+        "notes_html": "",
+        "attachments": [],
+        "passthrough_value": null
+      }
+    }
   }
-}
+]
 ```
 
 This must support:
@@ -610,20 +690,24 @@ Each key should match a language defined in `chapter.json.languages`.
 
 Each language field object should support:
 
+- `value_kind`
 - `plain_text`
 - `rich_text`
 - `html_preview`
 - `notes_html`
 - `attachments`
+- `passthrough_value`
 
 Recommended v1 simplification:
 
 - each row contains an entry for every language in the chapter
+- `value_kind` always exists and defaults to `text`
 - `plain_text` always exists, even if empty
 - `rich_text` may be null for formats that are truly plain text
 - `html_preview` is optional derived data, not the sole canonical representation
 - `notes_html` always exists, even if empty
 - `attachments` always exists, even if empty
+- `passthrough_value` exists for non-text or mixed-type source formats
 
 ### `format_metadata`
 
@@ -657,6 +741,9 @@ Example:
 ```
 
 This is where source-format-specific metadata belongs when it does not justify a first-class core field.
+
+`format_metadata` should be sparse and format-keyed.
+Do not use it as a dumping ground for metadata that is common across many formats.
 
 ## Rich Text Model
 
@@ -721,6 +808,54 @@ Example:
   }
 ]
 ```
+
+## File-Level And Package-Level Metadata
+
+Some formats need metadata that belongs to a source file or package, not to a single unit.
+
+Examples:
+
+- Gettext header blobs
+- XLIFF source/target locale and original-resource metadata
+- XCStrings file version and source language
+- YAML root language
+- JavaScript/PHP wrapper variable names
+- XCLOC bundle manifests and contextual assets
+
+Therefore `chapter.json.source_files[]` should support:
+
+- `file_id`
+- `format`
+- `path_hint`
+- `filename_template`
+- `file_metadata`
+
+And `chapter.json.package_assets[]` should support:
+
+- `asset_id`
+- `type`
+- `path`
+- `scope`
+- `metadata`
+
+## Non-String Pass-Through Values
+
+Some supported formats can carry values that are not simple strings.
+
+Examples:
+
+- `.plist`
+- `.resx`
+- package manifests
+
+The canonical model should therefore support:
+
+- `value_kind`
+  Suggested values:
+  `text | number | boolean | date | binary | object | array | null`
+- `passthrough_value`
+
+If a value is not translatable text, the importer may preserve it as pass-through data rather than forcing it into `plain_text`.
 
 ## Change History Strategy
 
@@ -802,7 +937,9 @@ When importing any supported source format:
 5. preserve placeholders, variants, comments, and context
 6. preserve source-format-only data in `format_metadata`
 7. store text as `plain_text` plus `rich_text` when formatting exists
-8. save imported content into the canonical folder structure
+8. preserve file-level metadata in `source_files[]`
+9. preserve package/bundle assets in `package_assets[]` when relevant
+10. save imported content into the canonical folder structure
 
 ### XLSX -> GTMS
 
@@ -811,6 +948,7 @@ When importing `.xlsx`:
 1. detect languages from the header row
 2. create one row object per worksheet row
 3. store original sheet/row metadata in `origin` and `structure`
+4. preserve description/comment columns as `guidance`
 
 ### DOCX / HTML / IDML / PPTX -> GTMS
 
@@ -819,7 +957,8 @@ When importing rich-text document formats:
 1. preserve paragraph/block order in `structure.order_index`
 2. preserve formatting as `rich_text`
 3. derive `plain_text` for search and fallback export
-4. store non-core format quirks in `format_metadata`
+4. preserve style/layout anchors in `structure` and `format_metadata`
+5. preserve package/media references at file or chapter level when needed
 
 ### SRT -> GTMS
 
@@ -839,6 +978,7 @@ When importing software strings:
 3. preserve nested path or context in `structure`
 4. preserve placeholders and variants
 5. preserve comments, tags, state, and custom attributes
+6. preserve file-level wrapper/header metadata in `source_files[]`
 
 ## Export Rules
 
@@ -866,6 +1006,8 @@ Exports are derived outputs, not the canonical save path.
 - reconstruct file placement from `structure`
 - reconstruct plurals and variants from `variants`
 - reconstruct placeholders and source-format attributes from `placeholders`, `format_state`, and `format_metadata`
+- reconstruct comments/context from `guidance`
+- reconstruct file/package metadata from `source_files[]` and `package_assets[]`
 
 ## Save vs Export Terminology
 
@@ -907,7 +1049,11 @@ For the first real implementation:
 - display order: `rowOrder.json`
 - rich text: structured blocks/runs with optional derived `html_preview`
 - attachments: structured field metadata
+- first-class translator guidance: `guidance`
 - row review state: built in
+- file-level metadata: preserved from day 1
+- package/bundle assets: supported in chapter metadata from day 1
+- pass-through non-text values: supported from day 1
 - placeholders / variants / context / state: supported in the row schema from day 1
 - `format_metadata`: sparse format-specific bag from day 1
 - import from `.xlsx`
