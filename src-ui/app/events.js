@@ -34,6 +34,7 @@ export function registerAppEvents(render) {
   const dispatchAction = createActionDispatcher(render);
 
   document.addEventListener("input", (event) => handleInputEvent(event, render));
+  document.addEventListener("change", (event) => handleInputEvent(event, render));
   document.addEventListener("keydown", (event) => {
     if (!shouldTriggerSyncShortcut(event)) {
       return;

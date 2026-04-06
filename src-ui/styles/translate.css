@@ -53,6 +53,15 @@
   padding: 0 14px;
 }
 
+.page-header--editor .segmented-control {
+  padding: 3px;
+}
+
+.page-header--editor .segmented-control__button {
+  min-height: 30px;
+  padding: 0 16px;
+}
+
 .page-header--editor .search-field {
   height: 36px;
   min-width: 300px;

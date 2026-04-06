@@ -16,6 +16,7 @@ import {
   getNoticeBadgeText,
   getScopedSyncBadgeText,
 } from "../app/status-feedback.js";
+import { resolveChapterSourceWordCount } from "../app/translate-flow.js";
 
 function compareFilesByName(left, right) {
   const leftName = typeof left?.name === "string" ? left.name.trim() : "";
@@ -62,18 +63,31 @@ function renderProjectCard(project, expanded, options = {}) {
         <div class="chapter-table">
           ${files
             .map(
-              (chapter) => `
+              (chapter) => {
+                const sourceWordCount = resolveChapterSourceWordCount(chapter);
+                const sourceWordText =
+                  sourceWordCount > 0 ? `${sourceWordCount} source words` : "";
+
+                return `
                 <div class="chapter-table__row chapter-table__row--file">
-                  <button class="chapter-table__name-button" data-action="open-translate:${chapter.id}">
-                    ${escapeHtml(chapter.name)}
-                  </button>
+                  <div class="chapter-table__title-wrap">
+                    <button class="chapter-table__name-button" data-action="open-translate:${chapter.id}">
+                      ${escapeHtml(chapter.name)}
+                    </button>
+                    ${
+                      sourceWordText
+                        ? `<span class="chapter-table__meta">${escapeHtml(sourceWordText)}</span>`
+                        : ""
+                    }
+                  </div>
                   <div class="chapter-table__actions">
                     ${textAction("Open", `open-translate:${chapter.id}`)}
                     ${textAction("Rename", "noop")}
                     ${textAction("Delete", "noop")}
                   </div>
                 </div>
-              `,
+              `;
+              },
             )
             .join("")}
         </div>

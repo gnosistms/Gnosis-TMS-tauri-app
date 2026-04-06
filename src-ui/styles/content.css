@@ -254,6 +254,13 @@
   grid-template-columns: minmax(280px, 1fr) auto;
 }
 
+.chapter-table__title-wrap {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
 .chapter-table__name {
   font-size: 1.12rem;
   font-weight: 600;
@@ -279,6 +286,12 @@
   opacity: 0.65;
 }
 
+.chapter-table__meta {
+  color: var(--muted);
+  font-size: 0.98rem;
+  white-space: nowrap;
+}
+
 .glossary-pill,
 .select-pill,
 .pill {
@@ -293,6 +306,53 @@
   background: rgba(255, 251, 246, 0.92);
   color: var(--link);
   font-weight: 600;
+}
+
+.select-pill--control {
+  position: relative;
+  justify-content: flex-start;
+}
+
+.select-pill--control select {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-weight: inherit;
+  line-height: 1;
+  padding: 0;
+  min-width: 0;
+  outline: none;
+  cursor: pointer;
+}
+
+.segmented-control {
+  display: inline-flex;
+  align-items: stretch;
+  padding: 4px;
+  border: 1px solid rgba(164, 112, 41, 0.18);
+  border-radius: calc(var(--radius-ui) + 2px);
+  background: rgba(255, 251, 246, 0.92);
+}
+
+.segmented-control__button {
+  min-height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 18px;
+  border: 0;
+  border-radius: calc(var(--radius-ui) - 2px);
+  background: transparent;
+  color: var(--link);
+  font: inherit;
+  font-weight: 700;
+}
+
+.segmented-control__button.is-active {
+  background: linear-gradient(180deg, var(--accent) 0%, var(--accent-strong) 100%);
+  color: var(--accent-text);
 }
 
 .pill--active {

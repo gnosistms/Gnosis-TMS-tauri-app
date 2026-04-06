@@ -50,9 +50,27 @@ function detectImportFileType(fileName) {
 }
 
 function buildImportedFileEntry(result) {
+  const selectedSourceLanguageCode = result.selectedSourceLanguageCode ?? result.languages?.[0]?.code ?? null;
+  const selectedTargetLanguageCode =
+    result.selectedTargetLanguageCode
+    ?? result.languages?.find((language) => language.code !== selectedSourceLanguageCode)?.code
+    ?? selectedSourceLanguageCode;
+  const sourceWordCount =
+    selectedSourceLanguageCode && result.sourceWordCounts
+      ? Number(result.sourceWordCounts[selectedSourceLanguageCode] ?? 0)
+      : 0;
+
   return {
     id: result.chapterId,
     name: result.fileTitle,
+    languages: Array.isArray(result.languages) ? result.languages : [],
+    sourceWordCounts:
+      result.sourceWordCounts && typeof result.sourceWordCounts === "object"
+        ? result.sourceWordCounts
+        : {},
+    selectedSourceLanguageCode,
+    selectedTargetLanguageCode,
+    sourceWordCount,
   };
 }
 

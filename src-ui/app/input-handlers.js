@@ -9,6 +9,7 @@ import {
   updateTeamRenameName,
 } from "./team-setup-flow.js";
 import { updateInviteUserQuery } from "./invite-user-flow.js";
+import { updateEditorSourceLanguage, updateEditorTargetLanguage } from "./translate-flow.js";
 
 function handleProjectCreationInput(event) {
   const input = event.target.closest("[data-project-name-input]");
@@ -80,6 +81,26 @@ function handleInviteUserInput(event, render) {
   return true;
 }
 
+function handleEditorSourceLanguageInput(event, render) {
+  const input = event.target.closest("[data-editor-source-language-select]");
+  if (!input) {
+    return false;
+  }
+
+  updateEditorSourceLanguage(render, input.value);
+  return true;
+}
+
+function handleEditorTargetLanguageInput(event, render) {
+  const input = event.target.closest("[data-editor-target-language-select]");
+  if (!input) {
+    return false;
+  }
+
+  updateEditorTargetLanguage(render, input.value);
+  return true;
+}
+
 const inputHandlers = [
   handleProjectCreationInput,
   handleProjectPermanentDeleteInput,
@@ -87,6 +108,8 @@ const inputHandlers = [
   handleTeamPermanentDeleteInput,
   handleProjectRenameInput,
   handleInviteUserInput,
+  handleEditorSourceLanguageInput,
+  handleEditorTargetLanguageInput,
 ];
 
 export function handleInputEvent(event, render) {

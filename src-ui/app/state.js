@@ -36,6 +36,7 @@ export const state = {
   },
   projectImport: createProjectImportState(),
   projectRepoSyncByProjectId: {},
+  editorChapter: createEditorChapterState(),
   userDiscovery: {
     status: "idle",
     error: "",
@@ -155,6 +156,24 @@ export function createProjectImportState() {
   };
 }
 
+export function createEditorChapterState() {
+  return {
+    status: "idle",
+    error: "",
+    projectId: null,
+    chapterId: null,
+    fileTitle: "",
+    languages: [],
+    sourceWordCounts: {},
+    selectedSourceLanguageCode: null,
+    selectedTargetLanguageCode: null,
+    persistedSourceLanguageCode: null,
+    persistedTargetLanguageCode: null,
+    selectionPersistStatus: "idle",
+    rows: [],
+  };
+}
+
 export function createInviteUserState() {
   return {
     isOpen: false,
@@ -254,6 +273,7 @@ export function resetSessionState() {
   state.projectDiscovery = { status: "idle", error: "" };
   state.projectImport = createProjectImportState();
   state.projectRepoSyncByProjectId = {};
+  state.editorChapter = createEditorChapterState();
   state.userDiscovery = { status: "idle", error: "" };
   state.teamSyncVersion = 0;
   state.projectSyncVersion = 0;

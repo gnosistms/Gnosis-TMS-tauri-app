@@ -7,6 +7,7 @@ use std::{
 };
 
 use calamine::{open_workbook_auto_from_rs, Data, Reader};
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tauri::{AppHandle, Manager};
@@ -35,8 +36,62 @@ pub(crate) struct ImportXlsxResponse {
   file_title: String,
   worksheet_name: String,
   unit_count: usize,
+  languages: Vec<ChapterLanguage>,
+  source_word_counts: BTreeMap<String, usize>,
+  selected_source_language_code: Option<String>,
+  selected_target_language_code: Option<String>,
   language_codes: Vec<String>,
   source_file_name: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct UpdateChapterLanguageSelectionInput {
+  installation_id: i64,
+  repo_name: String,
+  chapter_id: String,
+  source_language_code: String,
+  target_language_code: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct UpdateChapterLanguageSelectionResponse {
+  chapter_id: String,
+  source_language_code: String,
+  target_language_code: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct LoadChapterEditorInput {
+  installation_id: i64,
+  repo_name: String,
+  chapter_id: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct LoadChapterEditorResponse {
+  chapter_id: String,
+  file_title: String,
+  languages: Vec<ChapterLanguage>,
+  source_word_counts: BTreeMap<String, usize>,
+  selected_source_language_code: Option<String>,
+  selected_target_language_code: Option<String>,
+  rows: Vec<EditorRow>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct EditorRow {
+  row_id: String,
+  external_id: Option<String>,
+  description: Option<String>,
+  context: Option<String>,
+  source_row_number: usize,
+  review_state: String,
+  fields: BTreeMap<String, String>,
 }
 
 #[derive(Clone)]
@@ -100,7 +155,7 @@ fn active_lifecycle_state() -> LifecycleState {
   }
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 struct ChapterFile {
   format: &'static str,
   format_version: u32,
@@ -112,10 +167,11 @@ struct ChapterFile {
   source_files: Vec<SourceFile>,
   package_assets: Vec<Value>,
   languages: Vec<ChapterLanguage>,
+  #[serde(default)]
   settings: ChapterSettings,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 struct SourceFile {
   file_id: String,
   format: &'static str,
@@ -124,7 +180,7 @@ struct SourceFile {
   file_metadata: SourceFileMetadata,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 struct SourceFileMetadata {
   source_locale: Option<String>,
   target_locales: Vec<String>,
@@ -134,15 +190,20 @@ struct SourceFileMetadata {
   serialization_hints: BTreeMap<String, Value>,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Serialize, Deserialize)]
 struct ChapterLanguage {
   code: String,
   name: String,
   role: String,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Default, Serialize, Deserialize)]
 struct ChapterSettings {
+  #[serde(default)]
+  default_source_language: Option<String>,
+  #[serde(default)]
+  default_target_language: Option<String>,
+  #[serde(default)]
   default_preview_language: Option<String>,
 }
 
@@ -221,6 +282,68 @@ struct FieldValue {
   passthrough_value: Option<Value>,
 }
 
+#[derive(Deserialize)]
+struct StoredChapterFile {
+  chapter_id: String,
+  title: String,
+  #[serde(default)]
+  source_files: Vec<StoredSourceFile>,
+  #[serde(default)]
+  languages: Vec<ChapterLanguage>,
+  #[serde(default)]
+  settings: Option<StoredChapterSettings>,
+}
+
+#[derive(Deserialize)]
+struct StoredSourceFile {
+  file_metadata: StoredSourceFileMetadata,
+}
+
+#[derive(Deserialize, Default)]
+struct StoredSourceFileMetadata {
+  source_locale: Option<String>,
+}
+
+#[derive(Deserialize, Default)]
+struct StoredChapterSettings {
+  default_source_language: Option<String>,
+  default_target_language: Option<String>,
+  default_preview_language: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct StoredRowFile {
+  row_id: String,
+  #[serde(default)]
+  external_id: Option<String>,
+  #[serde(default)]
+  guidance: Option<StoredGuidance>,
+  status: StoredRowStatus,
+  origin: StoredRowOrigin,
+  fields: BTreeMap<String, StoredFieldValue>,
+}
+
+#[derive(Deserialize, Default)]
+struct StoredGuidance {
+  description: Option<String>,
+  context: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct StoredRowStatus {
+  review_state: String,
+}
+
+#[derive(Deserialize)]
+struct StoredRowOrigin {
+  source_row_number: usize,
+}
+
+#[derive(Deserialize)]
+struct StoredFieldValue {
+  plain_text: String,
+}
+
 #[tauri::command]
 pub(crate) async fn import_xlsx_to_gtms(
   app: AppHandle,
@@ -229,6 +352,28 @@ pub(crate) async fn import_xlsx_to_gtms(
   tauri::async_runtime::spawn_blocking(move || import_xlsx_to_gtms_sync(&app, input))
     .await
     .map_err(|error| format!("The XLSX import worker failed: {error}"))?
+}
+
+#[tauri::command]
+pub(crate) async fn load_gtms_chapter_editor_data(
+  app: AppHandle,
+  input: LoadChapterEditorInput,
+) -> Result<LoadChapterEditorResponse, String> {
+  tauri::async_runtime::spawn_blocking(move || load_gtms_chapter_editor_data_sync(&app, input))
+    .await
+    .map_err(|error| format!("The chapter load worker failed: {error}"))?
+}
+
+#[tauri::command]
+pub(crate) async fn update_gtms_chapter_language_selection(
+  app: AppHandle,
+  input: UpdateChapterLanguageSelectionInput,
+) -> Result<UpdateChapterLanguageSelectionResponse, String> {
+  tauri::async_runtime::spawn_blocking(move || {
+    update_gtms_chapter_language_selection_sync(&app, input)
+  })
+  .await
+  .map_err(|error| format!("The chapter settings worker failed: {error}"))?
 }
 
 fn import_xlsx_to_gtms_sync(
@@ -286,6 +431,10 @@ fn import_xlsx_to_gtms_sync(
     &["commit", "-m", &format!("Import {}", parsed.source_file_name)],
   )?;
 
+  let source_word_counts = build_source_word_counts_from_import(&parsed);
+  let selected_source_language_code = parsed.languages.first().map(|language| language.code.clone());
+  let selected_target_language_code = chapter_file.settings.default_preview_language.clone();
+
   Ok(ImportXlsxResponse {
     chapter_id: chapter_id.to_string(),
     repo_path: repo_path.display().to_string(),
@@ -294,8 +443,61 @@ fn import_xlsx_to_gtms_sync(
     file_title: parsed.file_title,
     worksheet_name: parsed.worksheet_name,
     unit_count: row_order.len(),
+    languages: chapter_file.languages.clone(),
+    source_word_counts,
+    selected_source_language_code,
+    selected_target_language_code,
     language_codes: parsed.languages.iter().map(|language| language.code.clone()).collect(),
     source_file_name: parsed.source_file_name,
+  })
+}
+
+fn load_gtms_chapter_editor_data_sync(
+  app: &AppHandle,
+  input: LoadChapterEditorInput,
+) -> Result<LoadChapterEditorResponse, String> {
+  let repo_root = local_project_repo_root(app, input.installation_id)?;
+  let repo_path = repo_root.join(&input.repo_name);
+  if !repo_path.exists() {
+    return Err("The local project repo is not available yet.".to_string());
+  }
+
+  if git_output(&repo_path, &["rev-parse", "--git-dir"]).is_err() {
+    return Err("The local project repo is missing or invalid.".to_string());
+  }
+
+  let chapter_path = find_chapter_path_by_id(&repo_path.join("chapters"), &input.chapter_id)?;
+  let chapter_file: StoredChapterFile = read_json_file(&chapter_path.join("chapter.json"), "chapter.json")?;
+  let row_order: Vec<String> = read_json_file(&chapter_path.join("rowOrder.json"), "rowOrder.json")?;
+  let rows = load_editor_rows(&chapter_path.join("rows"), &row_order)?;
+  let source_word_counts = build_source_word_counts_from_stored_rows(&rows, &chapter_file.languages);
+  let selected_source_language_code = preferred_source_language_code(&chapter_file);
+  let selected_target_language_code =
+    preferred_target_language_code(&chapter_file, selected_source_language_code.as_deref());
+
+  Ok(LoadChapterEditorResponse {
+    chapter_id: chapter_file.chapter_id,
+    file_title: chapter_file.title,
+    languages: chapter_file.languages,
+    source_word_counts,
+    selected_source_language_code,
+    selected_target_language_code,
+    rows: rows
+      .into_iter()
+      .map(|row| EditorRow {
+        row_id: row.row_id,
+        external_id: row.external_id,
+        description: row.guidance.as_ref().and_then(|guidance| guidance.description.clone()),
+        context: row.guidance.as_ref().and_then(|guidance| guidance.context.clone()),
+        source_row_number: row.origin.source_row_number,
+        review_state: row.status.review_state,
+        fields: row
+          .fields
+          .into_iter()
+          .map(|(code, value)| (code, value.plain_text))
+          .collect(),
+      })
+      .collect(),
   })
 }
 
@@ -458,6 +660,8 @@ fn build_chapter_file(
       })
       .collect(),
     settings: ChapterSettings {
+      default_source_language: parsed.languages.first().map(|language| language.code.clone()),
+      default_target_language: parsed.languages.last().map(|language| language.code.clone()),
       default_preview_language: parsed.languages.last().map(|language| language.code.clone()),
     },
   }
@@ -709,6 +913,31 @@ fn row_is_empty(
     && fields.values().all(|value| value.is_empty())
 }
 
+fn find_chapter_path_by_id(chapters_root: &Path, chapter_id: &str) -> Result<PathBuf, String> {
+  let entries = fs::read_dir(chapters_root)
+    .map_err(|error| format!("Could not read chapters folder '{}': {error}", chapters_root.display()))?;
+
+  for entry in entries {
+    let entry = entry.map_err(|error| format!("Could not read a chapter folder entry: {error}"))?;
+    let path = entry.path();
+    if !path.is_dir() {
+      continue;
+    }
+
+    let chapter_json_path = path.join("chapter.json");
+    if !chapter_json_path.exists() {
+      continue;
+    }
+
+    let chapter_file: StoredChapterFile = read_json_file(&chapter_json_path, "chapter.json")?;
+    if chapter_file.chapter_id == chapter_id {
+      return Ok(path);
+    }
+  }
+
+  Err(format!("Could not find chapter '{chapter_id}' in the local project repo."))
+}
+
 fn local_project_repo_root(app: &AppHandle, installation_id: i64) -> Result<PathBuf, String> {
   let app_data_dir = app
     .path()
@@ -722,11 +951,15 @@ fn local_project_repo_root(app: &AppHandle, installation_id: i64) -> Result<Path
   Ok(root)
 }
 
-fn read_project_file(project_json_path: &Path) -> Result<ProjectFile, String> {
-  let text = fs::read_to_string(project_json_path)
-    .map_err(|error| format!("Could not read project.json: {error}"))?;
+fn read_json_file<T: DeserializeOwned>(path: &Path, label: &str) -> Result<T, String> {
+  let text = fs::read_to_string(path)
+    .map_err(|error| format!("Could not read {} '{}': {error}", label, path.display()))?;
   serde_json::from_str(&text)
-    .map_err(|error| format!("Could not parse project.json: {error}"))
+    .map_err(|error| format!("Could not parse {} '{}': {error}", label, path.display()))
+}
+
+fn read_project_file(project_json_path: &Path) -> Result<ProjectFile, String> {
+  read_json_file(project_json_path, "project.json")
 }
 
 fn ensure_gitattributes(path: &Path) -> Result<(), String> {
@@ -735,6 +968,120 @@ fn ensure_gitattributes(path: &Path) -> Result<(), String> {
   }
 
   write_text_file(path, GTMS_GITATTRIBUTES)
+}
+
+fn load_editor_rows(rows_path: &Path, row_order: &[String]) -> Result<Vec<StoredRowFile>, String> {
+  row_order
+    .iter()
+    .map(|row_id| read_json_file(&rows_path.join(format!("{row_id}.json")), "row file"))
+    .collect()
+}
+
+fn update_gtms_chapter_language_selection_sync(
+  app: &AppHandle,
+  input: UpdateChapterLanguageSelectionInput,
+) -> Result<UpdateChapterLanguageSelectionResponse, String> {
+  let repo_root = local_project_repo_root(app, input.installation_id)?;
+  let repo_path = repo_root.join(&input.repo_name);
+  if !repo_path.exists() {
+    return Err("The local project repo is not available yet.".to_string());
+  }
+
+  if git_output(&repo_path, &["rev-parse", "--git-dir"]).is_err() {
+    return Err("The local project repo is missing or invalid.".to_string());
+  }
+
+  let chapter_path = find_chapter_path_by_id(&repo_path.join("chapters"), &input.chapter_id)?;
+  let chapter_json_path = chapter_path.join("chapter.json");
+  let mut chapter_value: Value = read_json_file(&chapter_json_path, "chapter.json")?;
+  let chapter_title = chapter_value
+    .get("title")
+    .and_then(Value::as_str)
+    .unwrap_or("file")
+    .to_string();
+  let known_language_codes = chapter_value
+    .get("languages")
+    .and_then(Value::as_array)
+    .into_iter()
+    .flatten()
+    .filter_map(|language| language.get("code").and_then(Value::as_str))
+    .collect::<Vec<_>>();
+  if !known_language_codes.contains(&input.source_language_code.as_str()) {
+    return Err(format!(
+      "The source language '{}' is not available in this file.",
+      input.source_language_code
+    ));
+  }
+  if !known_language_codes.contains(&input.target_language_code.as_str()) {
+    return Err(format!(
+      "The target language '{}' is not available in this file.",
+      input.target_language_code
+    ));
+  }
+
+  let chapter_object = chapter_value
+    .as_object_mut()
+    .ok_or_else(|| "The chapter.json file is not a JSON object.".to_string())?;
+  let settings_value = chapter_object
+    .entry("settings".to_string())
+    .or_insert_with(|| json!({}));
+  let settings_object = settings_value
+    .as_object_mut()
+    .ok_or_else(|| "The chapter settings are not a JSON object.".to_string())?;
+
+  let source_changed =
+    settings_object
+      .get("default_source_language")
+      .and_then(Value::as_str)
+      != Some(input.source_language_code.as_str());
+  let target_changed =
+    settings_object
+      .get("default_target_language")
+      .and_then(Value::as_str)
+      != Some(input.target_language_code.as_str())
+    || settings_object
+      .get("default_preview_language")
+      .and_then(Value::as_str)
+      != Some(input.target_language_code.as_str());
+
+  if source_changed || target_changed {
+    settings_object.insert(
+      "default_source_language".to_string(),
+      Value::String(input.source_language_code.clone()),
+    );
+    settings_object.insert(
+      "default_target_language".to_string(),
+      Value::String(input.target_language_code.clone()),
+    );
+    settings_object.insert(
+      "default_preview_language".to_string(),
+      Value::String(input.target_language_code.clone()),
+    );
+    write_json_pretty(&chapter_json_path, &chapter_value)?;
+
+    let relative_chapter_json = chapter_json_path
+      .strip_prefix(&repo_path)
+      .map_err(|error| format!("Could not resolve the chapter path for git: {error}"))?
+      .to_string_lossy()
+      .to_string();
+    git_output(&repo_path, &["add", &relative_chapter_json])?;
+    git_output(
+      &repo_path,
+      &[
+        "commit",
+        "-m",
+        &format!("Update language selection for {}", chapter_title),
+        "--",
+        &relative_chapter_json,
+      ],
+    )?;
+  }
+
+  Ok(UpdateChapterLanguageSelectionResponse {
+    chapter_id: input.chapter_id,
+    source_language_code: input.source_language_code,
+    target_language_code: input.target_language_code,
+  })
 }
 
 fn unique_chapter_slug(chapters_root: &Path, base_slug: &str) -> String {
@@ -848,6 +1195,102 @@ fn html_preview(plain_text: &str) -> Option<String> {
   }
 
   Some(format!("<p>{}</p>", escape_html(plain_text)))
+}
+
+fn build_source_word_counts_from_import(parsed: &ParsedWorkbook) -> BTreeMap<String, usize> {
+  let mut counts = parsed
+    .languages
+    .iter()
+    .map(|language| (language.code.clone(), 0usize))
+    .collect::<BTreeMap<_, _>>();
+
+  for row in &parsed.rows {
+    for language in &parsed.languages {
+      let value = row.fields.get(&language.code).map(String::as_str).unwrap_or("");
+      *counts.entry(language.code.clone()).or_default() += count_words(value);
+    }
+  }
+
+  counts
+}
+
+fn build_source_word_counts_from_stored_rows(
+  rows: &[StoredRowFile],
+  languages: &[ChapterLanguage],
+) -> BTreeMap<String, usize> {
+  let mut counts = languages
+    .iter()
+    .map(|language| (language.code.clone(), 0usize))
+    .collect::<BTreeMap<_, _>>();
+
+  for row in rows {
+    for language in languages {
+      let value = row
+        .fields
+        .get(&language.code)
+        .map(|field| field.plain_text.as_str())
+        .unwrap_or("");
+      *counts.entry(language.code.clone()).or_default() += count_words(value);
+    }
+  }
+
+  counts
+}
+
+fn preferred_source_language_code(chapter_file: &StoredChapterFile) -> Option<String> {
+  chapter_file
+    .settings
+    .as_ref()
+    .and_then(|settings| settings.default_source_language.clone())
+    .or_else(|| {
+      chapter_file
+        .languages
+        .first()
+        .map(|language| language.code.clone())
+    })
+    .or_else(|| {
+      chapter_file
+        .source_files
+        .iter()
+        .find_map(|source_file| source_file.file_metadata.source_locale.clone())
+    })
+}
+
+fn preferred_target_language_code(
+  chapter_file: &StoredChapterFile,
+  selected_source_language_code: Option<&str>,
+) -> Option<String> {
+  chapter_file
+    .settings
+    .as_ref()
+    .and_then(|settings| {
+      settings
+        .default_target_language
+        .clone()
+        .or_else(|| settings.default_preview_language.clone())
+    })
+    .or_else(|| {
+      chapter_file
+        .languages
+        .iter()
+        .find(|language| language.role == "target")
+        .map(|language| language.code.clone())
+    })
+    .or_else(|| {
+      chapter_file
+        .languages
+        .iter()
+        .find(|language| Some(language.code.as_str()) != selected_source_language_code)
+        .map(|language| language.code.clone())
+    })
+    .or_else(|| chapter_file.languages.first().map(|language| language.code.clone()))
+}
+
+fn count_words(value: &str) -> usize {
+  value
+    .split_whitespace()
+    .filter(|segment| !segment.is_empty())
+    .count()
 }
 
 fn escape_html(value: &str) -> String {

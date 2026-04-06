@@ -6,8 +6,13 @@ import { loadGithubAppTestConfig } from "./github-app-test-flow.js";
 import { loadTeamProjects } from "./project-flow.js";
 import { loadUserTeams } from "./team-setup-flow.js";
 import { loadTeamUsers, primeUsersForTeam } from "./team-members-flow.js";
+import { loadSelectedChapterEditorData, persistEditorChapterSelections } from "./translate-flow.js";
 
 export function handleNavigation(navTarget, render) {
+  if (state.screen === "translate" && navTarget !== "translate") {
+    void persistEditorChapterSelections(render);
+  }
+
   if (navTarget === "start") {
     void clearStoredAuthSession();
     resetSessionState();
@@ -58,6 +63,13 @@ export async function refreshCurrentScreen(render) {
 
     if (state.screen === "githubAppTest") {
       await loadGithubAppTestConfig(render);
+      completePageSync(render);
+      render();
+      return;
+    }
+
+    if (state.screen === "translate") {
+      await loadSelectedChapterEditorData(render);
       completePageSync(render);
       render();
       return;

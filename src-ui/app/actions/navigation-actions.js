@@ -3,6 +3,7 @@ import { loadTeamProjects } from "../project-flow.js";
 import { loadTeamUsers, primeUsersForTeam } from "../team-members-flow.js";
 import { actionSuffix } from "../action-helpers.js";
 import { waitForNextPaint } from "../runtime.js";
+import { openTranslateChapter } from "../translate-flow.js";
 
 export function createNavigationActions(render) {
   return async function handleNavigationAction(action) {
@@ -49,9 +50,7 @@ export function createNavigationActions(render) {
 
     const chapterId = actionSuffix(action, "open-translate:");
     if (chapterId !== null) {
-      state.selectedChapterId = chapterId;
-      state.screen = "translate";
-      render();
+      await openTranslateChapter(render, chapterId);
       return true;
     }
 
