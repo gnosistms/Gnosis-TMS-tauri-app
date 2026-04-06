@@ -270,9 +270,9 @@ a {
 
 .page-header--editor {
   min-height: auto;
-  padding-top: 6px;
+  padding-top: 2px;
   padding-bottom: 8px;
-  gap: 10px;
+  gap: 3px;
 }
 
 .page-header--editor .page-header__left,
@@ -282,7 +282,7 @@ a {
 }
 
 .page-header--editor .page-header__left {
-  min-height: 36px;
+  min-height: 30px;
   display: flex;
   align-items: center;
   gap: 0;
@@ -291,11 +291,11 @@ a {
 .page-header--editor .page-header__nav,
 .page-header--editor .page-header__tools,
 .page-header--editor .page-header__title-row {
-  min-height: 36px;
+  min-height: 30px;
 }
 
 .page-header--editor .page-header__title-wrap {
-  min-height: 36px;
+  min-height: 30px;
   gap: 0;
 }
 
@@ -310,8 +310,8 @@ a {
 .page-header--editor .title-icon-button {
   align-self: center;
   top: 0;
-  width: 38px;
-  height: 36px;
+  width: 34px;
+  height: 32px;
   overflow: visible;
 }
 
@@ -326,7 +326,7 @@ a {
 .page-header--editor .page-header__detail {
   margin-top: 0;
   border-top: 0;
-  padding: 8px 18px 0;
+  padding: 4px 18px 0;
 }
 
 .page-header__title-row {

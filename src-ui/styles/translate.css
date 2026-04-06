@@ -83,18 +83,23 @@
   scrollbar-gutter: stable;
 }
 
+.page-body--editor .card,
+.page-body--editor .table-card {
+  box-shadow: 0 9px 20px rgba(131, 82, 22, 0.07);
+}
+
 .translate-main-scroll {
   padding: 0;
 }
 
 .translate-sidebar-scroll {
-  padding: 18px 12px 18px 8px;
+  padding: 18px 16px 18px 8px;
 }
 
 .translate-main {
   display: grid;
   gap: 24px;
-  padding: 18px 8px 44px 12px;
+  padding: 18px 8px 44px 16px;
 }
 
 .translate-sidebar {
