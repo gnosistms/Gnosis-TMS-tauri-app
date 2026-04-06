@@ -69,6 +69,7 @@ export function renderTranslateScreen(state) {
     title: displayTitle,
     titleTooltip: chapter.name,
     headerClass: "page-header--editor",
+    bodyClass: "page-body--editor",
     titleAction: titleRefreshButton("refresh-page", {
       spinning: state.pageSync?.status === "syncing",
       disabled: state.offline?.isEnabled === true || state.pageSync?.status === "syncing",
@@ -86,69 +87,73 @@ export function renderTranslateScreen(state) {
     offlineReconnectState: state.offline?.reconnecting === true,
     body: `
       <section class="translate-layout">
-        <div class="translate-main">
-          ${translationRows
-            .map(
-              (row) => `
-                <article class="card card--translation">
-                  <div class="card__body">
-                    <div class="translation-row__meta">
-                      ${textAction("Insert", "noop")}
-                      ${textAction("Delete", "noop")}
-                    </div>
-                    <div class="translation-row__grid">
-                      <div class="translation-cell">
-                        <div class="translation-cell__title">${escapeHtml(row.sourceTitle)}</div>
-                        <p>${escapeHtml(row.sourceBody)}</p>
-                        <textarea>${
-                          row.targetEditable ? escapeHtml(row.notes) : ""
-                        }</textarea>
-                        <div class="translation-cell__actions">
-                          <button class="button button--secondary">Cancel</button>
-                          <button class="button button--primary">Save</button>
-                          <button class="button button--primary">Save & Review</button>
+        <div class="translate-main-scroll">
+          <div class="translate-main">
+            ${translationRows
+              .map(
+                (row) => `
+                  <article class="card card--translation">
+                    <div class="card__body">
+                      <div class="translation-row__meta">
+                        ${textAction("Insert", "noop")}
+                        ${textAction("Delete", "noop")}
+                      </div>
+                      <div class="translation-row__grid">
+                        <div class="translation-cell">
+                          <div class="translation-cell__title">${escapeHtml(row.sourceTitle)}</div>
+                          <p>${escapeHtml(row.sourceBody)}</p>
+                          <textarea>${
+                            row.targetEditable ? escapeHtml(row.notes) : ""
+                          }</textarea>
+                          <div class="translation-cell__actions">
+                            <button class="button button--secondary">Cancel</button>
+                            <button class="button button--primary">Save</button>
+                            <button class="button button--primary">Save & Review</button>
+                          </div>
+                        </div>
+                        <div class="translation-cell">
+                          <div class="translation-cell__title">${escapeHtml(row.targetTitle)}</div>
+                          <p>${escapeHtml(row.targetBody)}</p>
+                          <div class="translation-cell__note">${escapeHtml(row.notes)}</div>
                         </div>
                       </div>
-                      <div class="translation-cell">
-                        <div class="translation-cell__title">${escapeHtml(row.targetTitle)}</div>
-                        <p>${escapeHtml(row.targetBody)}</p>
-                        <div class="translation-cell__note">${escapeHtml(row.notes)}</div>
+                      <div class="translation-row__footer">
+                        <span class="status-badge status-badge--${
+                          row.status === "Reviewed" ? "good" : "warning"
+                        }">${escapeHtml(row.status)}</span>
+                        <button class="button button--secondary">Comments</button>
                       </div>
                     </div>
-                    <div class="translation-row__footer">
-                      <span class="status-badge status-badge--${
-                        row.status === "Reviewed" ? "good" : "warning"
-                      }">${escapeHtml(row.status)}</span>
-                      <button class="button button--secondary">Comments</button>
-                    </div>
-                  </div>
-                </article>
-              `,
-            )
-            .join("")}
-        </div>
-        <aside class="card card--history">
-          <div class="card__body">
-            <div class="history-tabs">
-              <button class="history-tabs__item history-tabs__item--active">History</button>
-              <button class="history-tabs__item">Comments</button>
-              <button class="history-tabs__item">Duplicates</button>
-            </div>
-            <div class="history-stack">
-              ${[1, 2, 3]
-                .map(
-                  () => `
-                    <article class="history-item">
-                      <h3>Chuong 1 - Tinh yeu</h3>
-                      <p>Uploaded 27/01/2026</p>
-                      <button class="button button--secondary">Restore</button>
-                    </article>
-                  `,
-                )
-                .join("")}
-            </div>
+                  </article>
+                `,
+              )
+              .join("")}
           </div>
-        </aside>
+        </div>
+        <div class="translate-sidebar-scroll">
+          <aside class="translate-sidebar card card--history">
+            <div class="card__body">
+              <div class="history-tabs">
+                <button class="history-tabs__item history-tabs__item--active">History</button>
+                <button class="history-tabs__item">Comments</button>
+                <button class="history-tabs__item">Duplicates</button>
+              </div>
+              <div class="history-stack">
+                ${[1, 2, 3]
+                  .map(
+                    () => `
+                      <article class="history-item">
+                        <h3>Chuong 1 - Tinh yeu</h3>
+                        <p>Uploaded 27/01/2026</p>
+                        <button class="button button--secondary">Restore</button>
+                      </article>
+                    `,
+                  )
+                  .join("")}
+              </div>
+            </div>
+          </aside>
+        </div>
       </section>
     `,
   });

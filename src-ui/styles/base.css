@@ -78,6 +78,7 @@
   --header-text-inset: 32px;
   --header-height: 104px;
   --page-width: 1480px;
+  --page-title-size: 36.75px;
   --heading-letter-spacing: -0.015em;
 }
 
@@ -269,9 +270,9 @@ a {
 
 .page-header--editor {
   min-height: auto;
-  padding-top: 10px;
-  padding-bottom: 12px;
-  gap: 16px;
+  padding-top: 6px;
+  padding-bottom: 8px;
+  gap: 10px;
 }
 
 .page-header--editor .page-header__left,
@@ -281,7 +282,7 @@ a {
 }
 
 .page-header--editor .page-header__left {
-  min-height: 44px;
+  min-height: 36px;
   display: flex;
   align-items: center;
   gap: 0;
@@ -290,21 +291,32 @@ a {
 .page-header--editor .page-header__nav,
 .page-header--editor .page-header__tools,
 .page-header--editor .page-header__title-row {
-  min-height: 44px;
-}
-
-.page-header--editor .page-header__nav {
-  position: relative;
-  top: 2px;
+  min-height: 36px;
 }
 
 .page-header--editor .page-header__title-wrap {
-  min-height: 44px;
+  min-height: 36px;
   gap: 0;
 }
 
+.page-header--editor .page-header__title-row {
+  align-items: center;
+}
+
 .page-header--editor .page-header__title {
-  font-size: clamp(1.6625rem, 2.625vw, 2.8rem);
+  font-size: var(--page-title-size);
+}
+
+.page-header--editor .title-icon-button {
+  align-self: center;
+  top: 0;
+  width: 38px;
+  height: 36px;
+  overflow: visible;
+}
+
+.page-header--editor .title-icon-button__icon svg {
+  transform: translateY(1px);
 }
 
 .page-header--editor .header-nav__button {
@@ -313,7 +325,8 @@ a {
 
 .page-header--editor .page-header__detail {
   margin-top: 0;
-  padding-top: 12px;
+  border-top: 0;
+  padding: 8px 18px 0;
 }
 
 .page-header__title-row {
@@ -326,7 +339,7 @@ a {
 
 .page-header__title {
   margin: 0;
-  font-size: clamp(1.6625rem, 2.625vw, 2.8rem);
+  font-size: var(--page-title-size);
   line-height: 1;
   letter-spacing: var(--heading-letter-spacing);
   white-space: nowrap;

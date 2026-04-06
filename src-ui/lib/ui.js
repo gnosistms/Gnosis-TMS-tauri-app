@@ -149,6 +149,7 @@ export function pageShell({
   subtitle = "",
   titleAction = "",
   headerClass = "",
+  bodyClass = "",
   navButtons = [],
   tools = "",
   leftTools = "",
@@ -193,7 +194,7 @@ export function pageShell({
         <div class="page-header__tools">${tools}</div>
         ${headerBody ? `<div class="page-header__detail">${headerBody}</div>` : ""}
       </header>
-      <main class="page-body">${body}</main>
+      <main class="page-body${bodyClass ? ` ${escapeHtml(bodyClass)}` : ""}">${body}</main>
       ${renderFloatingBadge({ pageSync, syncBadgeText, noticeText })}
     </div>
   `;

@@ -46,8 +46,17 @@
     width: 100%;
   }
 
-  .translate-layout {
-    grid-template-columns: 1fr;
+  .page-body--editor {
+    display: block;
+    overflow: hidden;
+    padding: 0;
+  }
+
+  .page-body--editor > * {
+    width: 100%;
+    height: 100%;
+    margin-top: 0;
+    min-height: 0;
   }
 }
 
@@ -73,7 +82,6 @@
   .glossary-list,
   .term-grid,
   .chapter-table__row,
-  .translation-row__grid,
   .github-app-test-grid__row,
   .github-app-test-table {
     grid-template-columns: 1fr;
