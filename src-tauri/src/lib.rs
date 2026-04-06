@@ -8,6 +8,7 @@ mod github;
 mod github_app_test;
 mod insecure_github_app_config;
 mod project_import;
+mod project_repo_sync;
 mod state;
 mod store;
 mod updater;
@@ -45,7 +46,8 @@ use crate::{
     inspect_github_app_test_installation, list_github_app_test_repositories,
   },
   project_import::import_xlsx_to_gtms,
-  state::AuthState,
+  project_repo_sync::{list_project_repo_sync_states, reconcile_project_repo_sync_states},
+  state::{AuthState, ProjectRepoSyncStore},
   updater::{check_for_app_update, install_app_update, PendingUpdate},
 };
 
@@ -189,6 +191,7 @@ pub fn run() {
       pending_github_app_install: Mutex::new(None),
       pending_broker_auth: Mutex::new(None),
     })
+    .manage(ProjectRepoSyncStore::default())
     .manage(PendingUpdate(Mutex::new(None)))
     .plugin(store::init())
     .plugin(tauri_plugin_opener::init())
@@ -232,6 +235,8 @@ pub fn run() {
       inspect_github_app_test_installation,
       ensure_gnosis_repo_properties_schema,
       list_gnosis_projects_for_installation,
+      reconcile_project_repo_sync_states,
+      list_project_repo_sync_states,
       import_xlsx_to_gtms,
       list_github_app_test_repositories,
       list_organization_members_for_installation,

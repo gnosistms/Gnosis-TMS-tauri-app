@@ -35,6 +35,7 @@ export const state = {
     error: "",
   },
   projectImport: createProjectImportState(),
+  projectRepoSyncByProjectId: {},
   userDiscovery: {
     status: "idle",
     error: "",
@@ -252,6 +253,7 @@ export function resetSessionState() {
   state.orgDiscovery = { status: "idle", error: "" };
   state.projectDiscovery = { status: "idle", error: "" };
   state.projectImport = createProjectImportState();
+  state.projectRepoSyncByProjectId = {};
   state.userDiscovery = { status: "idle", error: "" };
   state.teamSyncVersion = 0;
   state.projectSyncVersion = 0;

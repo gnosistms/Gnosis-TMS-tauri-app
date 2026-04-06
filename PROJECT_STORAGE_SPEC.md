@@ -190,6 +190,21 @@ Rules:
 
 ## Chapter-Level Files
 
+## File/Chapter Mapping
+
+In the current GTMS model, one imported file normally maps to one chapter.
+
+That means:
+
+- a user-visible "file" row in the app is backed by one chapter folder in the canonical storage format
+- file soft-delete is implemented as chapter soft-delete
+- file restore is implemented as chapter restore
+- file permanent delete is implemented as physical chapter deletion
+
+This mapping is intentionally simple for v1 so spreadsheet-style imports and future file-based imports can share one lifecycle model.
+
+If a future source format needs one uploaded file to map to multiple chapters, that should introduce a higher-level document object rather than changing the meaning of chapter ids retroactively.
+
 ### `chapter.json`
 
 Contains all chapter-level metadata, including format/version information and chapter-specific settings.
@@ -980,6 +995,26 @@ Restore means:
 4. insert the chapter id into `project.json.chapter_order`
 
 Restore must not rewrite row files.
+
+## Team-Scoped Permission Note
+
+Permissions are managed at the team level, not per project and not per file.
+
+That means:
+
+- if a user can perform an action on files, that ability comes from their role in the parent team
+- every project in a team inherits the same file-action permissions
+- every file/chapter in every project in that team inherits the same file-action permissions
+
+For the current file/chapter lifecycle rules, the intended UI behavior is:
+
+- all team members can import files
+- all team members can rename files
+- all team members can soft-delete files
+- all team members can restore soft-deleted files
+- only team owners can permanently delete files
+
+These permission rules are application behavior and should not be encoded inside `project.json`, `chapter.json`, or row files.
 
 ## Import Rules
 

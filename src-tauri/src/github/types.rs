@@ -63,6 +63,8 @@ pub(crate) struct GithubProjectRepo {
   pub(crate) html_url: Option<String>,
   pub(crate) private: bool,
   pub(crate) description: Option<String>,
+  pub(crate) default_branch_name: Option<String>,
+  pub(crate) default_branch_head_oid: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]

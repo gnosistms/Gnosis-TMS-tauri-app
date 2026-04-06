@@ -20,6 +20,7 @@ import {
   resetProjectRename,
   state,
 } from "./state.js";
+import { reconcileProjectRepoSyncStates } from "./project-repo-sync-flow.js";
 import { clearScopedSyncBadge, showScopedSyncBadge } from "./status-feedback.js";
 import { classifySyncError } from "./sync-error.js";
 import { handleSyncFailure } from "./sync-recovery.js";
@@ -175,6 +176,7 @@ export async function loadTeamProjects(render, teamId = state.selectedTeamId) {
   const syncVersionAtStart = state.projectSyncVersion;
 
   if (!selectedTeam?.installationId) {
+    state.projectRepoSyncByProjectId = {};
     applyProjectSnapshotToState({ items: [], deletedItems: [] });
     state.projectDiscovery = { status: "ready", error: "" };
     render();
@@ -193,6 +195,7 @@ export async function loadTeamProjects(render, teamId = state.selectedTeamId) {
   );
 
   if (state.offline.isEnabled) {
+    state.projectRepoSyncByProjectId = {};
     applyProjectSnapshotToState(optimisticSnapshot);
     state.projectDiscovery = { status: "ready", error: "" };
     render();
@@ -239,6 +242,7 @@ export async function loadTeamProjects(render, teamId = state.selectedTeamId) {
     state.projectDiscovery = { status: "ready", error: "" };
     completePageSync(render);
     render();
+    void reconcileProjectRepoSyncStates(render, selectedTeam, mappedProjects);
     if (state.pendingProjectMutations.length > 0) {
       void processPendingProjectMutations(render, selectedTeam);
     }
