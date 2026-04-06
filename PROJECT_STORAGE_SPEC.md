@@ -109,7 +109,10 @@ Recommended chapter metadata:
 {
   "chapter_id": "4c77fbcb-e381-434c-b69f-8f7a26365cd0",
   "title": "Introduction",
-  "slug": "01-introduction"
+  "slug": "01-introduction",
+  "lifecycle": {
+    "state": "active"
+  }
 }
 ```
 
@@ -154,6 +157,9 @@ Example:
     "4c77fbcb-e381-434c-b69f-8f7a26365cd0",
     "b59e8f6d-8940-4425-b976-2ef3d66df457"
   ],
+  "deleted_chapter_order": [
+    "f41f4cb0-c9d6-4a41-bc58-2f325b17dd45"
+  ],
   "settings": {
     "default_export_format": "docx"
   }
@@ -168,6 +174,7 @@ Required fields:
 
 Optional fields:
 
+- `deleted_chapter_order`
 - `settings`
 
 Rules:
@@ -175,8 +182,11 @@ Rules:
 1. `project.json` must not contain chapter content.
 2. `project.json` must not duplicate row-level data.
 3. `chapter_order` must contain chapter ids only.
-4. Every chapter id in `chapter_order` must correspond to one chapter folder in `chapters/`.
-5. Renaming a chapter title or slug must not require changing the chapter id in `chapter_order`.
+4. `deleted_chapter_order` must contain chapter ids only.
+5. Every chapter id in `chapter_order` must correspond to one chapter folder in `chapters/`.
+6. Every chapter id in `deleted_chapter_order` must correspond to one chapter folder in `chapters/`.
+7. A chapter id must appear in exactly one of `chapter_order` or `deleted_chapter_order`.
+8. Renaming a chapter title or slug must not require changing the chapter id in either order list.
 
 ## Chapter-Level Files
 
@@ -194,6 +204,9 @@ Example:
   "chapter_id": "4c77fbcb-e381-434c-b69f-8f7a26365cd0",
   "title": "Introduction",
   "slug": "01-introduction",
+  "lifecycle": {
+    "state": "active"
+  },
   "source_files": [
     {
       "file_id": "source-001",
@@ -245,6 +258,7 @@ Required fields:
 - `chapter_id`
 - `title`
 - `slug`
+- `lifecycle`
 - `languages`
 
 Optional fields:
@@ -258,6 +272,10 @@ Field notes:
 - `format` must be `"gtms"`
 - `format_version` starts at `1`
 - `appVersion` is the Gnosis TMS version that last wrote the file
+- `lifecycle.state` should be one of:
+  - `active`
+  - `deleted`
+  - reserved for future states such as `archived`
 
 Rules:
 
@@ -268,6 +286,8 @@ Rules:
 5. Editing row text must not rewrite `chapter.json`.
 6. `source_files[]` should preserve file-level metadata needed for faithful export.
 7. `package_assets[]` should preserve bundle/package context for formats such as XCLOC, DOCX, PPTX, and IDML.
+8. `lifecycle.state` must agree with the chapter id's membership in `project.json.chapter_order` or `project.json.deleted_chapter_order`.
+9. Soft-delete and restore operations must not rewrite row files.
 
 ### `rowOrder.json`
 
@@ -923,6 +943,43 @@ Reorder means:
 1. rewrite `rowOrder.json`
 2. do not rename row files
 3. do not change row ids
+
+## Chapter/File Lifecycle Semantics
+
+In the current storage model, one imported file normally maps to one chapter.
+Therefore soft-delete for an uploaded file is modeled as soft-delete for the corresponding chapter.
+
+Soft-delete must preserve the chapter folder and its row files.
+It is a reversible lifecycle change, not physical deletion.
+
+### Soft-Delete Chapter/File
+
+Soft-delete means:
+
+1. keep the chapter folder in `chapters/`
+2. keep `chapter.json`, `rowOrder.json`, and all row files unchanged except for lifecycle metadata
+3. set `chapter.json.lifecycle.state` to `deleted`
+4. remove the chapter id from `project.json.chapter_order`
+5. append or insert the chapter id into `project.json.deleted_chapter_order`
+6. exclude the deleted chapter from normal active views and default exports
+
+Soft-delete must not:
+
+- rename the chapter folder
+- move the chapter to a trash folder
+- rewrite unaffected row files
+- add tombstone flags to every row
+
+### Restore Chapter/File
+
+Restore means:
+
+1. keep the chapter folder in place
+2. set `chapter.json.lifecycle.state` back to `active`
+3. remove the chapter id from `project.json.deleted_chapter_order`
+4. insert the chapter id into `project.json.chapter_order`
+
+Restore must not rewrite row files.
 
 ## Import Rules
 

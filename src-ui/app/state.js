@@ -34,6 +34,7 @@ export const state = {
     status: "idle",
     error: "",
   },
+  projectImport: createProjectImportState(),
   userDiscovery: {
     status: "idle",
     error: "",
@@ -145,6 +146,14 @@ export function createProjectCreationState() {
   });
 }
 
+export function createProjectImportState() {
+  return {
+    status: "idle",
+    error: "",
+    result: null,
+  };
+}
+
 export function createInviteUserState() {
   return {
     isOpen: false,
@@ -242,6 +251,7 @@ export function resetSessionState() {
   state.users = [];
   state.orgDiscovery = { status: "idle", error: "" };
   state.projectDiscovery = { status: "idle", error: "" };
+  state.projectImport = createProjectImportState();
   state.userDiscovery = { status: "idle", error: "" };
   state.teamSyncVersion = 0;
   state.projectSyncVersion = 0;

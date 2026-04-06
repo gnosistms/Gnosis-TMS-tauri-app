@@ -4,6 +4,7 @@ import {
   navButton,
   pageShell,
   primaryButton,
+  secondaryButton,
   sectionSeparator,
   textAction,
   titleRefreshButton,
@@ -133,6 +134,42 @@ function renderDeletedProjectsSection(state) {
   `;
 }
 
+function renderProjectImportSummary(importState) {
+  if (!importState?.result && importState?.status !== "error") {
+    return "";
+  }
+
+  if (importState.status === "error") {
+    return `
+      <article class="card card--hero card--empty">
+        <div class="card__body">
+          <p class="card__eyebrow">LOCAL XLSX IMPORT FAILED</p>
+          <h2 class="card__title card__title--small">The workbook could not be imported.</h2>
+          <p class="card__subtitle">${escapeHtml(importState.error || "Unknown import error.")}</p>
+        </div>
+      </article>
+    `;
+  }
+
+  const result = importState.result;
+  if (!result) {
+    return "";
+  }
+
+  return `
+    <article class="card card--hero card--empty">
+      <div class="card__body">
+        <p class="card__eyebrow">LOCAL XLSX IMPORT</p>
+        <h2 class="card__title card__title--small">${escapeHtml(result.projectTitle)}</h2>
+        <p class="card__subtitle">Worksheet: ${escapeHtml(result.chapterTitle)}</p>
+        <p class="card__subtitle">Rows: ${escapeHtml(String(result.unitCount))}</p>
+        <p class="card__subtitle">Languages: ${escapeHtml(result.languageCodes.join(", "))}</p>
+        <p class="card__subtitle">Saved to: ${escapeHtml(result.projectPath)}</p>
+      </div>
+    </article>
+  `;
+}
+
 export function renderProjectsScreen(state) {
   const selectedTeam = state.teams.find((team) => team.id === state.selectedTeamId) ?? state.teams[0];
   const canManageProjects = selectedTeam?.canManageProjects === true;
@@ -183,6 +220,7 @@ export function renderProjectsScreen(state) {
 
   const body = `
     <section class="stack">
+      ${renderProjectImportSummary(state.projectImport)}
       ${projectsBody}
       ${renderDeletedProjectsSection(state)}
     </section>
@@ -203,10 +241,16 @@ export function renderProjectsScreen(state) {
       navButton("Glossaries", "glossaries"),
     ],
     leftTools: createSearchField("Search"),
-    tools:
+    tools: [
+      secondaryButton("Import XLSX", "import-xlsx", {
+        disabled: state.projectImport?.status === "importing",
+      }),
       canManageProjects
         ? primaryButton("+ New Project", "open-new-project", { disabled: offlineMode })
         : "",
+    ]
+      .filter(Boolean)
+      .join(""),
     pageSync: state.pageSync,
     syncBadgeText: getScopedSyncBadgeText("projects"),
     noticeText: getNoticeBadgeText(),
