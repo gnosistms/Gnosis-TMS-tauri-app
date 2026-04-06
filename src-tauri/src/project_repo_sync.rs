@@ -6,9 +6,14 @@ use std::{
   sync::{Arc, Mutex},
 };
 
+use base64::{engine::general_purpose::STANDARD, Engine as _};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
 
+use crate::{
+  broker::broker_get_json_with_session,
+  github::github_client,
+};
 use crate::state::ProjectRepoSyncStore;
 
 const PROJECT_REPO_SYNC_STATUS_NOT_CLONED: &str = "notCloned";
@@ -24,6 +29,7 @@ const PROJECT_REPO_SYNC_STATUS_SYNC_ERROR: &str = "syncError";
 pub(crate) struct ProjectRepoSyncDescriptor {
   pub(crate) project_id: String,
   pub(crate) repo_name: String,
+  pub(crate) full_name: String,
   pub(crate) default_branch_name: Option<String>,
   pub(crate) default_branch_head_oid: Option<String>,
 }
@@ -47,15 +53,22 @@ pub(crate) struct ProjectRepoSyncSnapshot {
   pub(crate) message: Option<String>,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GitTransportTokenResponse {
+  token: String,
+}
+
 #[tauri::command]
 pub(crate) async fn reconcile_project_repo_sync_states(
   app: AppHandle,
   sync_store: tauri::State<'_, ProjectRepoSyncStore>,
   input: ProjectRepoSyncInput,
+  session_token: String,
 ) -> Result<Vec<ProjectRepoSyncSnapshot>, String> {
   let store = sync_store.entries.clone();
   tauri::async_runtime::spawn_blocking(move || {
-    reconcile_project_repo_sync_states_sync(&app, store, input)
+    reconcile_project_repo_sync_states_sync(&app, store, input, &session_token)
   })
   .await
   .map_err(|error| format!("The project repo reconciliation task failed: {error}"))?
@@ -77,8 +90,27 @@ fn reconcile_project_repo_sync_states_sync(
   app: &AppHandle,
   store: Arc<Mutex<BTreeMap<String, ProjectRepoSyncSnapshot>>>,
   input: ProjectRepoSyncInput,
+  session_token: &str,
 ) -> Result<Vec<ProjectRepoSyncSnapshot>, String> {
   let repo_root = local_project_repo_root(app, input.installation_id)?;
+  let mut repos_needing_transport = false;
+
+  for project in &input.projects {
+    let repo_path = repo_root.join(&project.repo_name);
+    let snapshot = inspect_project_repo_state(project, &repo_path);
+    if snapshot.status == PROJECT_REPO_SYNC_STATUS_NOT_CLONED
+      || snapshot.status == PROJECT_REPO_SYNC_STATUS_OUT_OF_SYNC
+    {
+      repos_needing_transport = true;
+      break;
+    }
+  }
+
+  let git_transport_token = if repos_needing_transport {
+    Some(load_git_transport_token(input.installation_id, session_token)?)
+  } else {
+    None
+  };
   let mut snapshots = Vec::with_capacity(input.projects.len());
 
   for project in input.projects {
@@ -98,10 +130,17 @@ fn reconcile_project_repo_sync_states_sync(
     let repo_path = repo_root.join(&project.repo_name);
     let inspected_snapshot = inspect_project_repo_state(&project, &repo_path);
 
-    if inspected_snapshot.status == PROJECT_REPO_SYNC_STATUS_OUT_OF_SYNC {
+    if inspected_snapshot.status == PROJECT_REPO_SYNC_STATUS_NOT_CLONED
+      || inspected_snapshot.status == PROJECT_REPO_SYNC_STATUS_OUT_OF_SYNC
+    {
+      let next_message = if inspected_snapshot.status == PROJECT_REPO_SYNC_STATUS_NOT_CLONED {
+        "Cloning repository...".to_string()
+      } else {
+        "Syncing repository...".to_string()
+      };
       let syncing_snapshot = ProjectRepoSyncSnapshot {
         status: PROJECT_REPO_SYNC_STATUS_SYNCING.to_string(),
-        message: Some("Syncing repository...".to_string()),
+        message: Some(next_message),
         ..inspected_snapshot
       };
       save_sync_snapshot(&store, &key, syncing_snapshot.clone());
@@ -111,6 +150,7 @@ fn reconcile_project_repo_sync_states_sync(
         project.clone(),
         repo_path,
         syncing_snapshot.remote_head_oid.clone(),
+        git_transport_token.clone().unwrap_or_default(),
       );
       snapshots.push(syncing_snapshot);
       continue;
@@ -153,18 +193,24 @@ fn spawn_project_repo_sync_job(
   project: ProjectRepoSyncDescriptor,
   repo_path: PathBuf,
   remote_head_oid: Option<String>,
+  git_transport_token: String,
 ) {
   tauri::async_runtime::spawn_blocking(move || {
     let sync_result =
-      sync_project_repo(&project, &repo_path, remote_head_oid.as_deref().unwrap_or_default());
+      sync_project_repo(
+        &project,
+        &repo_path,
+        remote_head_oid.as_deref().unwrap_or_default(),
+        &git_transport_token,
+      );
 
     let next_snapshot = match sync_result {
       Ok(local_head_oid) => ProjectRepoSyncSnapshot {
         project_id: project.project_id.clone(),
         repo_name: project.repo_name.clone(),
         repo_path: repo_path.display().to_string(),
-        local_head_oid: Some(local_head_oid.clone()),
-        remote_head_oid: Some(local_head_oid),
+        local_head_oid: local_head_oid.clone(),
+        remote_head_oid: local_head_oid,
         status: PROJECT_REPO_SYNC_STATUS_UP_TO_DATE.to_string(),
         message: None,
       },
@@ -197,11 +243,11 @@ fn inspect_project_repo_state(
     return default_snapshot();
   }
 
-  if git_output(repo_path, &["rev-parse", "--git-dir"]).is_err() {
+  if git_output(repo_path, &["rev-parse", "--git-dir"], None).is_err() {
     return default_snapshot();
   }
 
-  let local_head_oid = match git_output(repo_path, &["rev-parse", "HEAD"]) {
+  let local_head_oid = match git_output(repo_path, &["rev-parse", "HEAD"], None) {
     Ok(value) => Some(value),
     Err(error) => {
       return ProjectRepoSyncSnapshot {
@@ -212,7 +258,7 @@ fn inspect_project_repo_state(
     }
   };
 
-  let dirty = match git_output(repo_path, &["status", "--porcelain"]) {
+  let dirty = match git_output(repo_path, &["status", "--porcelain"], None) {
     Ok(value) => !value.trim().is_empty(),
     Err(error) => {
       return ProjectRepoSyncSnapshot {
@@ -261,7 +307,12 @@ fn sync_project_repo(
   project: &ProjectRepoSyncDescriptor,
   repo_path: &Path,
   remote_head_oid: &str,
-) -> Result<String, String> {
+  git_transport_token: &str,
+) -> Result<Option<String>, String> {
+  if !repo_path.exists() {
+    return clone_project_repo(project, repo_path, remote_head_oid, git_transport_token);
+  }
+
   let branch_name = project
     .default_branch_name
     .as_deref()
@@ -272,9 +323,15 @@ fn sync_project_repo(
     return Err("Missing remote default branch head for repo sync.".to_string());
   }
 
-  git_output(repo_path, &["pull", "--rebase", "origin", branch_name])?;
-  git_output(repo_path, &["push", "origin", branch_name])?;
-  git_output(repo_path, &["rev-parse", "HEAD"])
+  let basic_auth_header = git_basic_auth_header(git_transport_token);
+
+  git_output(
+    repo_path,
+    &["pull", "--rebase", "origin", branch_name],
+    Some(&basic_auth_header),
+  )?;
+  git_output(repo_path, &["push", "origin", branch_name], Some(&basic_auth_header))?;
+  Ok(Some(git_output(repo_path, &["rev-parse", "HEAD"], None)?))
 }
 
 fn local_project_repo_root(app: &AppHandle, installation_id: i64) -> Result<PathBuf, String> {
@@ -290,8 +347,48 @@ fn local_project_repo_root(app: &AppHandle, installation_id: i64) -> Result<Path
   Ok(root)
 }
 
-fn git_output(repo_path: &Path, args: &[&str]) -> Result<String, String> {
-  let output = Command::new("git")
+fn clone_project_repo(
+  project: &ProjectRepoSyncDescriptor,
+  repo_path: &Path,
+  remote_head_oid: &str,
+  git_transport_token: &str,
+) -> Result<Option<String>, String> {
+  let repo_parent = repo_path
+    .parent()
+    .ok_or_else(|| "Could not resolve the local repo folder.".to_string())?;
+  fs::create_dir_all(repo_parent)
+    .map_err(|error| format!("Could not create the local repo folder: {error}"))?;
+
+  let repo_url = format!("https://github.com/{}.git", project.full_name);
+  let basic_auth_header = git_basic_auth_header(git_transport_token);
+  let mut clone_args = vec!["clone"];
+  if let Some(branch_name) = project
+    .default_branch_name
+    .as_deref()
+    .filter(|value| !value.trim().is_empty())
+  {
+    clone_args.extend(["--branch", branch_name, "--single-branch"]);
+  }
+  clone_args.push(repo_url.as_str());
+  let repo_path_string = repo_path.display().to_string();
+  clone_args.push(repo_path_string.as_str());
+
+  git_output(repo_parent, &clone_args, Some(&basic_auth_header))?;
+
+  if remote_head_oid.trim().is_empty() {
+    return Ok(None);
+  }
+
+  Ok(Some(git_output(repo_path, &["rev-parse", "HEAD"], None)?))
+}
+
+fn git_output(repo_path: &Path, args: &[&str], extra_header: Option<&str>) -> Result<String, String> {
+  let mut command = Command::new("git");
+  if let Some(header) = extra_header {
+    command.args(["-c", &format!("http.extraHeader={header}")]);
+  }
+
+  let output = command
     .args(args)
     .current_dir(repo_path)
     .output()
@@ -311,6 +408,21 @@ fn git_output(repo_path: &Path, args: &[&str]) -> Result<String, String> {
   }
 
   Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+fn load_git_transport_token(installation_id: i64, session_token: &str) -> Result<String, String> {
+  let client = github_client()?;
+  let response: GitTransportTokenResponse = broker_get_json_with_session(
+    &client,
+    &format!("/api/github-app/installations/{installation_id}/git-transport-token"),
+    session_token,
+  )?;
+  Ok(response.token)
+}
+
+fn git_basic_auth_header(token: &str) -> String {
+  let payload = STANDARD.encode(format!("x-access-token:{token}"));
+  format!("Authorization: Basic {payload}")
 }
 
 fn sync_store_key(installation_id: i64, repo_name: &str) -> String {

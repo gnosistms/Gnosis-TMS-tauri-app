@@ -209,6 +209,7 @@ export async function loadTeamProjects(render, teamId = state.selectedTeamId) {
     applyProjectSnapshotToState({ items: [], deletedItems: [] });
     state.projectDiscovery = { status: "loading", error: "" };
   }
+  setProjectUiDebug(render, "Refreshing projects...");
   beginPageSync();
   render();
 
@@ -218,7 +219,7 @@ export async function loadTeamProjects(render, teamId = state.selectedTeamId) {
       sessionToken: requireBrokerSession(),
     });
     if (syncVersionAtStart !== state.projectSyncVersion) {
-      completePageSync(render);
+      await completePageSync(render);
       render();
       return;
     }
@@ -240,9 +241,10 @@ export async function loadTeamProjects(render, teamId = state.selectedTeamId) {
       deletedProjects: mappedProjects.filter((project) => project.status === "deleted"),
     });
     state.projectDiscovery = { status: "ready", error: "" };
-    completePageSync(render);
+    await reconcileProjectRepoSyncStates(render, selectedTeam, mappedProjects);
+    clearProjectUiDebug(render);
+    await completePageSync(render);
     render();
-    void reconcileProjectRepoSyncStates(render, selectedTeam, mappedProjects);
     if (state.pendingProjectMutations.length > 0) {
       void processPendingProjectMutations(render, selectedTeam);
     }
@@ -273,6 +275,7 @@ export async function loadTeamProjects(render, teamId = state.selectedTeamId) {
     } else {
       state.projectDiscovery = { status: "ready", error: "" };
     }
+    clearProjectUiDebug(render);
     failPageSync();
     render();
   }

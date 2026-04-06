@@ -1,16 +1,16 @@
 import { invoke } from "./runtime.js";
 import { state } from "./state.js";
+import {
+  clearScopedSyncBadge,
+  showNoticeBadge,
+  showScopedSyncBadge,
+} from "./status-feedback.js";
+import { requireBrokerSession } from "./auth-flow.js";
 
 const PROJECT_REPO_SYNC_POLL_DELAY_MS = 1400;
 
-let pollTimerId = null;
-let pollGeneration = 0;
-
-function clearProjectRepoSyncPoll() {
-  if (pollTimerId !== null) {
-    window.clearTimeout(pollTimerId);
-    pollTimerId = null;
-  }
+function delay(ms) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
 function buildProjectRepoSyncInput(team, projects) {
@@ -19,6 +19,7 @@ function buildProjectRepoSyncInput(team, projects) {
     projects: projects.map((project) => ({
       projectId: project.id,
       repoName: project.name,
+      fullName: project.fullName,
       defaultBranchName: project.defaultBranchName ?? null,
       defaultBranchHeadOid: project.defaultBranchHeadOid ?? null,
     })),
@@ -31,42 +32,83 @@ function applyProjectRepoSyncSnapshots(snapshots) {
   );
 }
 
+function summarizeSnapshots(snapshots = []) {
+  const summary = {
+    syncing: 0,
+    cloning: 0,
+    issues: 0,
+    dirty: 0,
+    notCloned: 0,
+    syncErrors: 0,
+  };
+
+  for (const snapshot of snapshots) {
+    if (snapshot?.status === "syncing") {
+      summary.syncing += 1;
+      if (String(snapshot?.message || "").toLowerCase().includes("cloning")) {
+        summary.cloning += 1;
+      }
+      continue;
+    }
+
+    if (snapshot?.status === "dirtyLocal") {
+      summary.issues += 1;
+      summary.dirty += 1;
+      continue;
+    }
+
+    if (snapshot?.status === "notCloned") {
+      summary.issues += 1;
+      summary.notCloned += 1;
+      continue;
+    }
+
+    if (snapshot?.status === "syncError" || snapshot?.status === "missingRemoteHead") {
+      summary.issues += 1;
+      summary.syncErrors += 1;
+    }
+  }
+
+  return summary;
+}
+
+function syncingBadgeText(snapshots) {
+  const summary = summarizeSnapshots(snapshots);
+  const syncingOnly = Math.max(0, summary.syncing - summary.cloning);
+
+  if (summary.cloning > 0 && syncingOnly > 0) {
+    return `Cloning ${summary.cloning} repos and syncing ${syncingOnly} repos...`;
+  }
+
+  if (summary.cloning > 0) {
+    return `Cloning ${summary.cloning} repo${summary.cloning === 1 ? "" : "s"}...`;
+  }
+
+  if (summary.syncing > 0) {
+    return `Syncing ${summary.syncing} repo${summary.syncing === 1 ? "" : "s"}...`;
+  }
+
+  return "Checking local repos...";
+}
+
+function issueNoticeText(snapshots) {
+  const summary = summarizeSnapshots(snapshots);
+  if (summary.issues === 0) {
+    return "";
+  }
+
+  if (summary.dirty > 0 && summary.syncErrors === 0 && summary.notCloned === 0) {
+    return `${summary.dirty} repo${summary.dirty === 1 ? " has" : "s have"} local changes and could not be auto-synced`;
+  }
+
+  return `${summary.issues} project repo${summary.issues === 1 ? " needs" : "s need"} attention`;
+}
+
 function hasSyncingRepos(snapshots) {
   return (snapshots || []).some((snapshot) => snapshot?.status === "syncing");
 }
 
-async function pollProjectRepoSyncStates(render, teamId, input, generation) {
-  if (generation !== pollGeneration || state.selectedTeamId !== teamId) {
-    return;
-  }
-
-  try {
-    const snapshots = await invoke("list_project_repo_sync_states", { input });
-    if (generation !== pollGeneration || state.selectedTeamId !== teamId) {
-      return;
-    }
-
-    applyProjectRepoSyncSnapshots(snapshots);
-    render();
-
-    if (!hasSyncingRepos(snapshots)) {
-      pollTimerId = null;
-      return;
-    }
-
-    pollTimerId = window.setTimeout(() => {
-      void pollProjectRepoSyncStates(render, teamId, input, generation);
-    }, PROJECT_REPO_SYNC_POLL_DELAY_MS);
-  } catch {
-    pollTimerId = null;
-  }
-}
-
 export async function reconcileProjectRepoSyncStates(render, team, projects) {
-  clearProjectRepoSyncPoll();
-  pollGeneration += 1;
-  const generation = pollGeneration;
-
   if (
     state.offline?.isEnabled === true ||
     !Number.isFinite(team?.installationId) ||
@@ -74,26 +116,39 @@ export async function reconcileProjectRepoSyncStates(render, team, projects) {
     projects.length === 0
   ) {
     state.projectRepoSyncByProjectId = {};
+    clearScopedSyncBadge("projects", render);
     render();
     return;
   }
 
-  try {
-    const input = buildProjectRepoSyncInput(team, projects);
-    const snapshots = await invoke("reconcile_project_repo_sync_states", { input });
-    if (generation !== pollGeneration || state.selectedTeamId !== team?.id) {
+  const input = buildProjectRepoSyncInput(team, projects);
+  showScopedSyncBadge("projects", "Checking local repos...", render);
+
+  const initialSnapshots = await invoke("reconcile_project_repo_sync_states", {
+    input,
+    sessionToken: requireBrokerSession(),
+  });
+  applyProjectRepoSyncSnapshots(initialSnapshots);
+  showScopedSyncBadge("projects", syncingBadgeText(initialSnapshots), render);
+  render();
+
+  let snapshots = initialSnapshots;
+  while (hasSyncingRepos(snapshots)) {
+    await delay(PROJECT_REPO_SYNC_POLL_DELAY_MS);
+    if (state.selectedTeamId !== team.id) {
       return;
     }
-
+    snapshots = await invoke("list_project_repo_sync_states", { input });
     applyProjectRepoSyncSnapshots(snapshots);
+    showScopedSyncBadge("projects", syncingBadgeText(snapshots), render);
     render();
+  }
 
-    if (!hasSyncingRepos(snapshots)) {
-      return;
-    }
-
-    pollTimerId = window.setTimeout(() => {
-      void pollProjectRepoSyncStates(render, team.id, input, generation);
-    }, PROJECT_REPO_SYNC_POLL_DELAY_MS);
-  } catch {}
+  clearScopedSyncBadge("projects", render);
+  const issueText = issueNoticeText(snapshots);
+  if (issueText) {
+    showNoticeBadge(issueText, render, 2400);
+  } else {
+    render();
+  }
 }
