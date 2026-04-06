@@ -9,13 +9,66 @@ import {
 } from "../lib/ui.js";
 import { getNoticeBadgeText } from "../app/status-feedback.js";
 
-export function renderTranslateScreen(state) {
-  const chapter =
+function findSelectedChapter(state) {
+  const liveProjects = [...(state.projects ?? []), ...(state.deletedProjects ?? [])];
+  const liveChapter =
+    liveProjects.flatMap((project) => project.chapters ?? []).find((item) => item.id === state.selectedChapterId) ??
+    null;
+  if (liveChapter) {
+    return liveChapter;
+  }
+
+  return (
     projects.flatMap((project) => project.chapters).find((item) => item.id === state.selectedChapterId) ??
-    projects[1].chapters[0];
+    projects[1].chapters[0]
+  );
+}
+
+function middleTruncateTitle(value, maxLength = 34) {
+  const text = String(value ?? "");
+  if (text.length <= maxLength) {
+    return text;
+  }
+
+  const ellipsis = "...";
+  const remaining = maxLength - ellipsis.length;
+  const startLength = Math.ceil(remaining / 2);
+  const endLength = Math.floor(remaining / 2);
+  return `${text.slice(0, startLength)}${ellipsis}${text.slice(text.length - endLength)}`;
+}
+
+export function renderTranslateScreen(state) {
+  const chapter = findSelectedChapter(state);
+  const displayTitle = middleTruncateTitle(chapter.name);
+  const headerBody = `
+    <div class="translate-toolbar__body translate-toolbar__body--header">
+      <div class="toolbar-row">
+        <button class="pill pill--active">Translate</button>
+        <button class="pill">Preview</button>
+        <button class="select-pill">Source: Spanish <span>⌄</span></button>
+        <button class="select-pill">Target: Vietnamese <span>⌄</span></button>
+        <button class="select-pill">Font Size: 14 <span>⌄</span></button>
+        <button class="select-pill">Visible languages: 3 <span>⌄</span></button>
+        <button class="select-pill">Filter: Show all <span>⌄</span></button>
+      </div>
+      <div class="toolbar-row toolbar-row--between">
+        <div class="toolbar-search">
+          ${createSearchField("Search")}
+          <label class="replace-toggle"><input type="checkbox" /> Replace</label>
+        </div>
+        <div class="toolbar-meta">
+          <span>936 source words</span>
+          ${textAction("Unreview All", "noop")}
+          ${textAction("Download", "noop")}
+        </div>
+      </div>
+    </div>
+  `;
 
   return pageShell({
-    title: chapter.name,
+    title: displayTitle,
+    titleTooltip: chapter.name,
+    headerClass: "page-header--editor",
     titleAction: titleRefreshButton("refresh-page", {
       spinning: state.pageSync?.status === "syncing",
       disabled: state.offline?.isEnabled === true || state.pageSync?.status === "syncing",
@@ -26,35 +79,12 @@ export function renderTranslateScreen(state) {
       navButton("Projects", "projects"),
       navButton("Glossaries", "glossaries"),
     ],
+    headerBody,
     pageSync: state.pageSync,
     noticeText: getNoticeBadgeText(),
     offlineMode: state.offline?.isEnabled === true,
     offlineReconnectState: state.offline?.reconnecting === true,
     body: `
-      <section class="translate-toolbar card">
-        <div class="card__body translate-toolbar__body">
-          <div class="toolbar-row">
-            <button class="pill pill--active">Translate</button>
-            <button class="pill">Preview</button>
-            <button class="select-pill">Source: Spanish <span>⌄</span></button>
-            <button class="select-pill">Target: Vietnamese <span>⌄</span></button>
-            <button class="select-pill">Font Size: 14 <span>⌄</span></button>
-            <button class="select-pill">Visible languages: 3 <span>⌄</span></button>
-            <button class="select-pill">Filter: Show all <span>⌄</span></button>
-          </div>
-          <div class="toolbar-row toolbar-row--between">
-            <div class="toolbar-search">
-              ${createSearchField("Search")}
-              <label class="replace-toggle"><input type="checkbox" /> Replace</label>
-            </div>
-            <div class="toolbar-meta">
-              <span>936 source words</span>
-              ${textAction("Unreview All", "noop")}
-              ${textAction("Download", "noop")}
-            </div>
-          </div>
-        </div>
-      </section>
       <section class="translate-layout">
         <div class="translate-main">
           ${translationRows

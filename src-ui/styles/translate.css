@@ -1,10 +1,11 @@
-.translate-toolbar {
-  margin-bottom: 24px;
-}
-
 .translate-toolbar__body {
   display: grid;
   gap: 18px;
+}
+
+.translate-toolbar__body--header {
+  width: 100%;
+  gap: 12px;
 }
 
 .toolbar-row {
@@ -18,10 +19,15 @@
   justify-content: space-between;
 }
 
+.translate-toolbar__body--header .toolbar-row {
+  min-height: 52px;
+}
+
 .toolbar-search {
   display: flex;
   align-items: center;
   gap: 14px;
+  flex-wrap: wrap;
 }
 
 .toolbar-meta {
@@ -29,6 +35,8 @@
   align-items: center;
   gap: 18px;
   color: var(--muted);
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .replace-toggle {

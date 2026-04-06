@@ -63,7 +63,7 @@
 }
 
 .list-row__title-button:hover {
-  opacity: 0.7;
+  opacity: 0.65;
 }
 
 .card--deleted .list-row__title,
@@ -146,7 +146,7 @@
 }
 
 .expandable-card__summary-button:hover {
-  opacity: 0.7;
+  opacity: 0.65;
 }
 
 .expandable-card__body {
@@ -226,11 +226,11 @@
 
 .chapter-table {
   display: grid;
-  gap: 14px;
+  gap: 12px;
 }
 
 .chapter-table__row {
-  min-height: 64px;
+  min-height: 28px;
   display: grid;
   grid-template-columns: minmax(280px, 1fr) auto auto;
   align-items: center;
@@ -259,7 +259,11 @@
 }
 
 .chapter-table__name-button:hover {
-  opacity: 0.7;
+  opacity: 0.65;
+}
+
+.chapter-table__row:hover .chapter-table__name-button {
+  opacity: 0.65;
 }
 
 .glossary-pill,

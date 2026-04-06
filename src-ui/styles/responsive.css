@@ -25,6 +25,18 @@
     justify-content: flex-start;
   }
 
+  .page-header__detail {
+    width: 100%;
+    justify-self: stretch;
+    padding-left: 0;
+    padding-right: 0;
+  }
+
+  .page-header--editor {
+    padding-top: 12px;
+    padding-bottom: 14px;
+  }
+
   .page-header__left-tools {
     width: 100%;
   }

@@ -258,6 +258,64 @@ a {
   justify-self: center;
 }
 
+.page-header__detail {
+  grid-column: 1 / -1;
+  width: min(var(--page-width), 100%);
+  justify-self: center;
+  margin-top: 6px;
+  padding: 18px 22px 0;
+  border-top: 1px solid rgba(164, 112, 41, 0.12);
+}
+
+.page-header--editor {
+  min-height: auto;
+  padding-top: 10px;
+  padding-bottom: 12px;
+  gap: 16px;
+}
+
+.page-header--editor .page-header__left,
+.page-header--editor .page-header__tools,
+.page-header--editor .page-header__title-wrap {
+  align-self: center;
+}
+
+.page-header--editor .page-header__left {
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  gap: 0;
+}
+
+.page-header--editor .page-header__nav,
+.page-header--editor .page-header__tools,
+.page-header--editor .page-header__title-row {
+  min-height: 44px;
+}
+
+.page-header--editor .page-header__nav {
+  position: relative;
+  top: 2px;
+}
+
+.page-header--editor .page-header__title-wrap {
+  min-height: 44px;
+  gap: 0;
+}
+
+.page-header--editor .page-header__title {
+  font-size: clamp(1.6625rem, 2.625vw, 2.8rem);
+}
+
+.page-header--editor .header-nav__button {
+  line-height: 1;
+}
+
+.page-header--editor .page-header__detail {
+  margin-top: 0;
+  padding-top: 12px;
+}
+
 .page-header__title-row {
   display: inline-flex;
   align-items: flex-end;

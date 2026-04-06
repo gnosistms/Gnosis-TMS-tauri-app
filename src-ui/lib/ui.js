@@ -145,11 +145,14 @@ function renderFloatingBadge({ pageSync, syncBadgeText, noticeText }) {
 
 export function pageShell({
   title,
+  titleTooltip = "",
   subtitle = "",
   titleAction = "",
+  headerClass = "",
   navButtons = [],
   tools = "",
   leftTools = "",
+  headerBody = "",
   body = "",
   pageSync = { status: "idle" },
   syncBadgeText = "",
@@ -175,19 +178,20 @@ export function pageShell({
           `
           : ""
       }
-      <header class="page-header">
+      <header class="page-header${headerClass ? ` ${escapeHtml(headerClass)}` : ""}">
         <div class="page-header__left">
           <div class="page-header__nav">${navButtons.join("")}</div>
           ${leftTools ? `<div class="page-header__left-tools">${leftTools}</div>` : ""}
         </div>
         <div class="page-header__title-wrap">
           <div class="page-header__title-row">
-            <h1 class="page-header__title">${escapeHtml(title)}</h1>
+            <h1 class="page-header__title" title="${escapeHtml(titleTooltip || title)}">${escapeHtml(title)}</h1>
             ${titleAction}
           </div>
           ${subtitle ? `<p class="page-header__subtitle">${escapeHtml(subtitle)}</p>` : ""}
         </div>
         <div class="page-header__tools">${tools}</div>
+        ${headerBody ? `<div class="page-header__detail">${headerBody}</div>` : ""}
       </header>
       <main class="page-body">${body}</main>
       ${renderFloatingBadge({ pageSync, syncBadgeText, noticeText })}
