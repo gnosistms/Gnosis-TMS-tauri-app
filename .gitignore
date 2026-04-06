@@ -19,4 +19,5 @@ CertificateSigningRequest.certSigningRequest
 Certificates.p12
 signingCerts/
 src-tauri/dmg/*.af~lock~
+src-ui/assets/icons/*.af~lock~
 src-tauri/icons/*.icon/

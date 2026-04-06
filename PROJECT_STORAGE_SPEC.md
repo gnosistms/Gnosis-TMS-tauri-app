@@ -22,9 +22,10 @@ The goals of the working format are:
 2. Row identity is stable and never depends on display order.
 3. The format should be easy to diff in Git.
 4. The format should be easy to validate and migrate.
-5. Rich text is stored as sanitized HTML fragments.
+5. Rich text must preserve editable structure, not just flattened markup.
 6. Binary assets should be stored separately from row JSON when possible.
 7. Git commit history is the source of truth for file creation/modification history and authorship.
+8. The core row schema must stay format-agnostic, with sparse `format_metadata` for format-specific data.
 
 ## Repository Layout
 
@@ -191,10 +192,15 @@ Example:
   "chapter_id": "4c77fbcb-e381-434c-b69f-8f7a26365cd0",
   "title": "Introduction",
   "slug": "01-introduction",
-  "source_import": {
-    "format": "xlsx",
-    "path_hint": "Chapter01.xlsx"
-  },
+  "source_files": [
+    {
+      "file_id": "source-001",
+      "format": "xlsx",
+      "path_hint": "Chapter01.xlsx",
+      "filename_template": "Chapter01.%LANG_ISO%.xlsx",
+      "metadata": {}
+    }
+  ],
   "languages": [
     {
       "code": "es",
@@ -230,7 +236,7 @@ Required fields:
 
 Optional fields:
 
-- `source_import`
+- `source_files`
 - `settings`
 
 Field notes:
@@ -285,35 +291,101 @@ Example:
 ```json
 {
   "row_id": "1b2f4f8a-7c4d-4b64-a6a0-5d51c470d0b1",
+  "unit_type": "string",
+  "external_id": "welcome_message",
   "status": {
     "review_state": "unreviewed",
     "reviewed_at": null,
     "reviewed_by": null,
     "flags": []
   },
+  "structure": {
+    "source_file": "Chapter01.%LANG_ISO%.xlsx",
+    "container_path": {
+      "sheet": "Sheet1",
+      "row": 12,
+      "column_group": "main"
+    },
+    "order_index": 12,
+    "group_context": null
+  },
   "origin": {
     "source_format": "xlsx",
     "source_sheet": "Sheet1",
     "source_row_number": 12
   },
+  "format_state": {
+    "translatable": true,
+    "character_limit": null,
+    "tags": [],
+    "source_state": null,
+    "custom_attributes": {}
+  },
+  "placeholders": [],
+  "variants": null,
   "fields": {
     "es": {
-      "html": "<p>Texto de ejemplo.</p>",
+      "plain_text": "Texto de ejemplo.",
+      "rich_text": {
+        "blocks": [
+          {
+            "type": "paragraph",
+            "runs": [
+              {
+                "text": "Texto de ejemplo.",
+                "marks": []
+              }
+            ]
+          }
+        ]
+      },
+      "html_preview": "<p>Texto de ejemplo.</p>",
       "notes_html": "",
-      "image": null,
-      "imagecaption_html": ""
+      "attachments": []
     },
     "en": {
-      "html": "<p>Example text.</p>",
+      "plain_text": "Example text.",
+      "rich_text": {
+        "blocks": [
+          {
+            "type": "paragraph",
+            "runs": [
+              {
+                "text": "Example text.",
+                "marks": []
+              }
+            ]
+          }
+        ]
+      },
+      "html_preview": "<p>Example text.</p>",
       "notes_html": "",
-      "image": null,
-      "imagecaption_html": ""
+      "attachments": []
     },
     "vi": {
-      "html": "<p>Van ban vi du.</p>",
+      "plain_text": "Van ban vi du.",
+      "rich_text": {
+        "blocks": [
+          {
+            "type": "paragraph",
+            "runs": [
+              {
+                "text": "Van ban vi du.",
+                "marks": []
+              }
+            ]
+          }
+        ]
+      },
+      "html_preview": "<p>Van ban vi du.</p>",
       "notes_html": "",
-      "image": null,
-      "imagecaption_html": ""
+      "attachments": []
+    }
+  },
+  "format_metadata": {
+    "xlsx": {
+      "source_sheet": "Sheet1",
+      "source_row_number": 12
     }
   }
 }
@@ -322,13 +394,20 @@ Example:
 Required fields:
 
 - `row_id`
+- `unit_type`
 - `status`
+- `structure`
 - `fields`
 
 Optional fields:
 
+- `external_id`
 - `origin`
+- `format_state`
 - `timing`
+- `placeholders`
+- `variants`
+- `format_metadata`
 
 ### `status`
 
@@ -358,6 +437,51 @@ Suggested `flags` values:
 - `needs_attention`
 - `has_question`
 
+### `unit_type`
+
+Required value describing the logical kind of translation unit.
+
+Suggested values:
+
+- `string`
+- `plural`
+- `array_item`
+- `subtitle_cue`
+- `document_block`
+- `table_cell`
+- `rich_text_fragment`
+
+### `structure`
+
+Required object describing where the unit belongs in the source material.
+
+Example:
+
+```json
+{
+  "source_file": "main.%LANG_ISO%.json",
+  "container_path": {
+    "json_path": [
+      "home",
+      "welcome"
+    ]
+  },
+  "order_index": 4,
+  "group_context": "HomeScreen"
+}
+```
+
+This is the core location metadata used to reconstruct source files.
+
+It must be flexible enough to represent:
+
+- filename binding
+- nested key path
+- worksheet / row / column
+- slide / shape / paragraph / run path
+- subtitle cue order
+- XLIFF / Qt / Gettext context groupings
+
 ### `origin`
 
 Optional object describing where the row came from originally.
@@ -374,6 +498,35 @@ Example:
 
 This is import traceability metadata, not row identity.
 
+### `format_state`
+
+Optional normalized workflow/status metadata imported from source formats.
+
+Example:
+
+```json
+{
+  "translatable": true,
+  "character_limit": 42,
+  "tags": [
+    "ios",
+    "onboarding"
+  ],
+  "source_state": "translated",
+  "custom_attributes": {
+    "datatype": "html"
+  }
+}
+```
+
+Use this for cross-format flags such as:
+
+- XLIFF target state
+- Gettext fuzzy / reviewed state
+- XCStrings extraction or review state
+- Android `formatted="false"`
+- arbitrary exporter/importer attributes that should round-trip
+
 ### `timing`
 
 Optional object for time-based media alignment metadata.
@@ -382,10 +535,72 @@ Recommended shape:
 
 ```json
 {
+  "cue_index": 18,
   "start_ms": 72500,
-  "end_ms": 75200
+  "end_ms": 75200,
+  "position": {
+    "x1": null,
+    "x2": null,
+    "y1": null,
+    "y2": null
+  }
 }
 ```
+
+### `placeholders`
+
+Optional ordered list describing placeholders embedded in the text.
+
+Example:
+
+```json
+[
+  {
+    "name": "username",
+    "syntax": "%s",
+    "kind": "printf",
+    "ordinal": 0,
+    "example": "Alice",
+    "description": null
+  }
+]
+```
+
+This must support:
+
+- printf-style placeholders
+- ICU/select placeholders
+- ARB placeholder metadata
+- raw/literal placeholders for software strings
+
+### `variants`
+
+Optional object for pluralization and other variant dimensions.
+
+Example:
+
+```json
+{
+  "kind": "plural",
+  "axis_values": {
+    "one": "1 file",
+    "other": "%d files"
+  },
+  "additional_axes": {
+    "device": null,
+    "platform": null,
+    "gender": null
+  }
+}
+```
+
+This must support:
+
+- plural forms
+- device variants
+- platform variants
+- gender / select branches
+- width or presentation variants
 
 ### `fields`
 
@@ -395,67 +610,116 @@ Each key should match a language defined in `chapter.json.languages`.
 
 Each language field object should support:
 
-- `html`
+- `plain_text`
+- `rich_text`
+- `html_preview`
 - `notes_html`
-- `image`
-- `imagecaption_html`
+- `attachments`
 
 Recommended v1 simplification:
 
 - each row contains an entry for every language in the chapter
+- `plain_text` always exists, even if empty
+- `rich_text` may be null for formats that are truly plain text
+- `html_preview` is optional derived data, not the sole canonical representation
 - `notes_html` always exists, even if empty
-- `image` always exists, even if null
-- `imagecaption_html` always exists, even if empty
+- `attachments` always exists, even if empty
 
-## Rich Text Model
+### `format_metadata`
 
-Each language field stores rich text in `html`.
-
-Allowed HTML should be a controlled subset only.
-
-Recommended allowed tags:
-
-- `p`
-- `h1`
-- `h2`
-- `h3`
-- `strong`
-- `em`
-- `mark`
-- `blockquote`
-- `ul`
-- `ol`
-- `li`
-- `a`
-- `br`
-
-Allowed attributes:
-
-- for `a`: `href`
-
-Disallowed:
-
-- arbitrary inline styles
-- scripts
-- event handlers
-- embedded iframes
-
-## Image Model
-
-Images should not be embedded directly inside the HTML fragment.
-
-Instead, store them structurally in the field.
+Optional sparse object keyed by source format family.
 
 Example:
 
 ```json
 {
-  "image": {
-    "type": "remote",
-    "url": "https://example.com/image.jpg"
-  },
-  "imagecaption_html": "<p>Example caption.</p>"
+  "xliff": {
+    "notes": [
+      {
+        "value": "User welcome",
+        "from": "description",
+        "priority": "1"
+      }
+    ],
+    "context_groups": [
+      {
+        "purpose": "location",
+        "contexts": [
+          {
+            "context_type": "sourcefile",
+            "value": "app/app.component.ts"
+          }
+        ]
+      }
+    ]
+  }
 }
+```
+
+This is where source-format-specific metadata belongs when it does not justify a first-class core field.
+
+## Rich Text Model
+
+Rich text must be stored as editable structured content, not only as flattened HTML.
+
+Recommended model:
+
+- `rich_text.blocks[]`
+- each block has a `type`
+- each block contains `runs[]`
+- each run contains `text` plus `marks[]`
+
+Suggested block types:
+
+- `paragraph`
+- `heading`
+- `blockquote`
+- `list_item`
+- `table_cell`
+
+Suggested run marks:
+
+- `strong`
+- `em`
+- `underline`
+- `link`
+- `code`
+- `highlight`
+- `line_break`
+
+`html_preview` may be stored as a convenience for preview/export, but it should be derived from `rich_text` where possible.
+
+This design is required so formats such as DOCX, HTML, IDML, PPTX, and subtitle markup can preserve translator-visible formatting boundaries.
+
+## Attachment Model
+
+Binary or media-related material should not be embedded directly inside text strings.
+
+Instead, store attachments structurally in the field.
+
+Example:
+
+```json
+[
+  {
+    "type": "image",
+    "storage": "remote",
+    "url": "https://example.com/image.jpg",
+    "caption_rich_text": {
+      "blocks": [
+        {
+          "type": "paragraph",
+          "runs": [
+            {
+              "text": "Example caption.",
+              "marks": []
+            }
+          ]
+        }
+      ]
+    }
+  }
+]
 ```
 
 ## Change History Strategy
@@ -527,15 +791,54 @@ Reorder means:
 
 ## Import Rules
 
+### Any Supported Format -> GTMS
+
+When importing any supported source format:
+
+1. assign each imported unit a new stable UUIDv7
+2. preserve the native identifier in `external_id` when one exists
+3. preserve location data in `structure`
+4. preserve workflow/status/flags in `format_state`
+5. preserve placeholders, variants, comments, and context
+6. preserve source-format-only data in `format_metadata`
+7. store text as `plain_text` plus `rich_text` when formatting exists
+8. save imported content into the canonical folder structure
+
 ### XLSX -> GTMS
 
 When importing `.xlsx`:
 
 1. detect languages from the header row
 2. create one row object per worksheet row
-3. assign each imported row a new stable UUIDv7
-4. store original sheet/row metadata in `origin`
-5. save imported document into the canonical folder structure
+3. store original sheet/row metadata in `origin` and `structure`
+
+### DOCX / HTML / IDML / PPTX -> GTMS
+
+When importing rich-text document formats:
+
+1. preserve paragraph/block order in `structure.order_index`
+2. preserve formatting as `rich_text`
+3. derive `plain_text` for search and fallback export
+4. store non-core format quirks in `format_metadata`
+
+### SRT -> GTMS
+
+When importing subtitle formats:
+
+1. create one row per subtitle cue
+2. preserve cue order in `timing.cue_index`
+3. preserve start/end times in `timing`
+4. preserve cue positioning in `timing.position` when present
+
+### Software Localization Formats -> GTMS
+
+When importing software strings:
+
+1. preserve key names in `external_id`
+2. preserve file binding in `structure.source_file`
+3. preserve nested path or context in `structure`
+4. preserve placeholders and variants
+5. preserve comments, tags, state, and custom attributes
 
 ## Export Rules
 
@@ -545,17 +848,24 @@ Exports are derived outputs, not the canonical save path.
 
 - flatten fields into worksheet columns
 - use current language ordering
-- convert notes/image/image caption into the chosen Excel-compatible representation
+- convert notes and attachments into the chosen Excel-compatible representation
 
 ### GTMS -> DOCX
 
-- map supported HTML subset into Word paragraph/run formatting
-- render the field image and image caption
+- map `rich_text` blocks/runs into Word paragraph/run formatting
+- render attachments and captions where supported
 
 ### GTMS -> TXT
 
 - strip or simplify formatting
 - decide whether each language exports as its own section, columns, or per-row blocks
+
+### GTMS -> Software Localization Formats
+
+- reconstruct key identity from `external_id`
+- reconstruct file placement from `structure`
+- reconstruct plurals and variants from `variants`
+- reconstruct placeholders and source-format attributes from `placeholders`, `format_state`, and `format_metadata`
 
 ## Save vs Export Terminology
 
@@ -595,8 +905,10 @@ For the first real implementation:
 - row identity: UUIDv7
 - one row per file
 - display order: `rowOrder.json`
-- rich text: sanitized HTML subset
-- image: structured field metadata
+- rich text: structured blocks/runs with optional derived `html_preview`
+- attachments: structured field metadata
 - row review state: built in
+- placeholders / variants / context / state: supported in the row schema from day 1
+- `format_metadata`: sparse format-specific bag from day 1
 - import from `.xlsx`
-- export later to `.xlsx`, `.docx`, `.txt`
+- export later to `.xlsx`, `.docx`, `.txt`, subtitle, and software localization formats
