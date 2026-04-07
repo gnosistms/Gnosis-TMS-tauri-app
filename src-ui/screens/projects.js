@@ -75,7 +75,7 @@ function renderProjectCard(project, expanded, options = {}) {
                   sourceWordCount > 0 ? `${sourceWordCount} source words` : "";
 
                 return `
-                <div class="chapter-table__row chapter-table__row--file">
+                <div class="chapter-table__row chapter-table__row--file chapter-table__row--interactive" data-action="open-translate:${chapter.id}">
                   <div class="chapter-table__title-wrap">
                     <button class="chapter-table__name-button" data-action="open-translate:${chapter.id}">
                       ${escapeHtml(chapter.name)}
@@ -278,6 +278,7 @@ export function renderProjectsScreen(state) {
     subtitle: selectedTeam?.name ?? "Team",
     titleAction: titleRefreshButton("refresh-page", {
       spinning: isProjectsSyncing,
+      spinStartedAt: state.projectsPageSync?.startedAt,
       disabled: offlineMode || isProjectsSyncing,
     }),
     navButtons: [

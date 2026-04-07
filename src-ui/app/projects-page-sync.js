@@ -12,7 +12,7 @@ export function beginProjectsPageSync() {
   activeSyncCount += 1;
   if (activeSyncCount === 1) {
     syncingStartedAt = performance.now();
-    state.projectsPageSync = { status: "syncing" };
+    state.projectsPageSync = { status: "syncing", startedAt: syncingStartedAt };
   }
 }
 
@@ -33,7 +33,7 @@ export async function completeProjectsPageSync(render) {
     await new Promise((resolve) => window.setTimeout(resolve, remaining));
   }
 
-  state.projectsPageSync = { status: "upToDate" };
+  state.projectsPageSync = { status: "upToDate", startedAt: null };
   syncingStartedAt = 0;
   resetTimer = window.setTimeout(() => {
     state.projectsPageSync = createProjectsPageSyncState();

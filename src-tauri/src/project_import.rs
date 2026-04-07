@@ -78,6 +78,16 @@ pub(crate) struct UpdateChapterLanguageSelectionInput {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub(crate) struct UpdateEditorRowFieldsInput {
+  installation_id: i64,
+  repo_name: String,
+  chapter_id: String,
+  row_id: String,
+  fields: BTreeMap<String, String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct RenameChapterInput {
   installation_id: i64,
   repo_name: String,
@@ -113,6 +123,13 @@ pub(crate) struct UpdateChapterLanguageSelectionResponse {
   chapter_id: String,
   source_language_code: String,
   target_language_code: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct UpdateEditorRowFieldsResponse {
+  row_id: String,
+  source_word_counts: BTreeMap<String, usize>,
 }
 
 #[derive(Deserialize)]
@@ -452,6 +469,16 @@ pub(crate) async fn update_gtms_chapter_language_selection(
   })
   .await
   .map_err(|error| format!("The chapter settings worker failed: {error}"))?
+}
+
+#[tauri::command]
+pub(crate) async fn update_gtms_editor_row_fields(
+  app: AppHandle,
+  input: UpdateEditorRowFieldsInput,
+) -> Result<UpdateEditorRowFieldsResponse, String> {
+  tauri::async_runtime::spawn_blocking(move || update_gtms_editor_row_fields_sync(&app, input))
+    .await
+    .map_err(|error| format!("The row update worker failed: {error}"))?
 }
 
 #[tauri::command]
@@ -1314,6 +1341,86 @@ fn update_gtms_chapter_language_selection_sync(
     chapter_id: input.chapter_id,
     source_language_code: input.source_language_code,
     target_language_code: input.target_language_code,
+  })
+}
+
+fn update_gtms_editor_row_fields_sync(
+  app: &AppHandle,
+  input: UpdateEditorRowFieldsInput,
+) -> Result<UpdateEditorRowFieldsResponse, String> {
+  let repo_root = local_project_repo_root(app, input.installation_id)?;
+  let repo_path = repo_root.join(&input.repo_name);
+  if !repo_path.exists() {
+    return Err("The local project repo is not available yet.".to_string());
+  }
+
+  if git_output(&repo_path, &["rev-parse", "--git-dir"]).is_err() {
+    return Err("The local project repo is missing or invalid.".to_string());
+  }
+
+  let chapter_path = find_chapter_path_by_id(&repo_path.join("chapters"), &input.chapter_id)?;
+  let chapter_json_path = chapter_path.join("chapter.json");
+  let chapter_file: StoredChapterFile = read_json_file(&chapter_json_path, "chapter.json")?;
+  let row_json_path = chapter_path.join("rows").join(format!("{}.json", input.row_id));
+  let original_row_text = fs::read_to_string(&row_json_path)
+    .map_err(|error| format!("Could not read row file '{}': {error}", row_json_path.display()))?;
+  let mut row_value: Value = serde_json::from_str(&original_row_text)
+    .map_err(|error| format!("Could not parse row file '{}': {error}", row_json_path.display()))?;
+  let row_object = row_value
+    .as_object_mut()
+    .ok_or_else(|| "The row file is not a JSON object.".to_string())?;
+  let fields_value = row_object
+    .entry("fields".to_string())
+    .or_insert_with(|| json!({}));
+  let fields_object = fields_value
+    .as_object_mut()
+    .ok_or_else(|| "The row fields are not a JSON object.".to_string())?;
+
+  for (code, plain_text) in input.fields {
+    let field_value = fields_object.entry(code).or_insert_with(|| json!({}));
+    let field_object = field_value
+      .as_object_mut()
+      .ok_or_else(|| "A row field is not a JSON object.".to_string())?;
+    field_object.insert("value_kind".to_string(), Value::String("text".to_string()));
+    field_object.insert("plain_text".to_string(), Value::String(plain_text.clone()));
+    field_object.insert(
+      "html_preview".to_string(),
+      html_preview(&plain_text).map(Value::String).unwrap_or(Value::Null),
+    );
+  }
+
+  let updated_row_json = serde_json::to_string_pretty(&row_value)
+    .map_err(|error| format!("Could not serialize row file '{}': {error}", row_json_path.display()))?;
+  let updated_row_text = format!("{updated_row_json}\n");
+  if updated_row_text != original_row_text {
+    write_text_file(&row_json_path, &updated_row_text)?;
+
+    let relative_row_json = row_json_path
+      .strip_prefix(&repo_path)
+      .map_err(|error| format!("Could not resolve the row path for git: {error}"))?
+      .to_string_lossy()
+      .to_string();
+    git_output(&repo_path, &["add", &relative_row_json])?;
+    git_output(
+      &repo_path,
+      &[
+        "commit",
+        "-m",
+        &format!("Update row {}", input.row_id),
+        "--",
+        &relative_row_json,
+      ],
+    )?;
+  }
+
+  let row_order: Vec<String> = read_json_file(&chapter_path.join("rowOrder.json"), "rowOrder.json")?;
+  let rows = load_editor_rows(&chapter_path.join("rows"), &row_order)?;
+  let languages = sanitize_chapter_languages(&chapter_file.languages);
+  let source_word_counts = build_source_word_counts_from_stored_rows(&rows, &languages);
+
+  Ok(UpdateEditorRowFieldsResponse {
+    row_id: input.row_id,
+    source_word_counts,
   })
 }
 

@@ -79,6 +79,14 @@ export function textAction(label, action, options = {}) {
 }
 
 export function titleRefreshButton(action, options = {}) {
+  const spinDelayMs =
+    options.spinning && Number.isFinite(options.spinStartedAt)
+      ? Math.max(0, Math.floor(performance.now() - options.spinStartedAt))
+      : 0;
+  const spinStyle =
+    options.spinning && spinDelayMs > 0
+      ? ` style="--title-icon-spin-delay: -${spinDelayMs}ms;"`
+      : "";
   return `
     <button
       class="title-icon-button${options.disabled ? " is-disabled" : ""}${options.spinning ? " is-spinning" : ""}"
@@ -90,6 +98,7 @@ export function titleRefreshButton(action, options = {}) {
       <span
         class="title-icon-button__icon${options.spinning ? " is-spinning" : ""}"
         aria-hidden="true"
+        ${spinStyle}
       >${refreshIconSvg}</span>
     </button>
   `;

@@ -102,7 +102,7 @@ function renderModeSegmentedControl() {
   `;
 }
 
-function buildLiveTranslationRows(editorChapter) {
+function buildLiveTranslationRows(editorChapter, languages) {
   if (!Array.isArray(editorChapter?.rows) || editorChapter.rows.length === 0) {
     return [];
   }
@@ -116,20 +116,38 @@ function buildLiveTranslationRows(editorChapter) {
     return {
       id: row.rowId,
       title: label,
+      saveStatus: row.saveStatus || "idle",
+      saveError: row.saveError || "",
+      sections: languages.map((language) => ({
+        code: language.code,
+        name: language.name,
+        text: row.fields?.[language.code] ?? "",
+      })),
     };
   });
 }
 
-function buildFallbackRows() {
+function buildFallbackRows(languages) {
   return translationRows.map((row, index) => ({
     id: row.id,
     title: row.sourceTitle || row.targetTitle || `Row ${index + 1}`,
+    saveStatus: "idle",
+    saveError: "",
+    sections: languages.map((language, languageIndex) => ({
+      code: language.code,
+      name: language.name,
+      text:
+        languageIndex === 0
+          ? row.sourceBody || ""
+          : languageIndex === 1
+            ? row.targetBody || ""
+            : "",
+    })),
   }));
 }
 
-function renderTranslationContentRows(rows, languages) {
-  const languageCount = Array.isArray(languages) ? languages.length : 0;
-
+function renderTranslationContentRows(rows) {
+  
   return rows
     .map(
       (row, index) => `
@@ -137,17 +155,31 @@ function renderTranslationContentRows(rows, languages) {
           <div class="card__body">
             <div class="translation-row__header">
               <div class="translation-row__title">${escapeHtml(row.title || `Row ${index + 1}`)}</div>
-              <div class="translation-row__meta">${escapeHtml(
-                `${languageCount} language${languageCount === 1 ? "" : "s"}`,
-              )}</div>
+              <div class="translation-row__meta ${
+                row.saveStatus === "error" ? "translation-row__meta--error" : ""
+              }">${
+                row.saveStatus === "saving"
+                  ? "Saving..."
+                  : row.saveStatus === "dirty"
+                    ? "Unsaved"
+                    : row.saveStatus === "error"
+                      ? escapeHtml(row.saveError || "Save failed")
+                      : "Saved"
+              }</div>
             </div>
             <div class="translation-row__stack">
-              ${languages
+              ${row.sections
                 .map(
                   (language) => `
                     <section class="translation-language-panel">
                       <div class="translation-language-panel__label">${escapeHtml(language.name)}</div>
-                      <div class="translation-language-panel__surface"></div>
+                      <textarea
+                        class="translation-language-panel__field"
+                        data-editor-row-field
+                        data-row-id="${escapeHtml(row.id)}"
+                        data-language-code="${escapeHtml(language.code)}"
+                        spellcheck="false"
+                      >${escapeHtml(language.text)}</textarea>
                     </section>
                   `,
                 )
@@ -166,8 +198,8 @@ export function renderTranslateScreen(state) {
     state.editorChapter?.chapterId === state.selectedChapterId ? state.editorChapter : null;
   const languages = chapterLanguageOptions(chapter, editorChapter);
   const { sourceCode, targetCode } = resolveSelectedLanguageCodes(languages, chapter, editorChapter);
-  const liveRows = buildLiveTranslationRows(editorChapter);
-  const contentRows = liveRows.length > 0 ? liveRows : buildFallbackRows();
+  const liveRows = buildLiveTranslationRows(editorChapter, languages);
+  const contentRows = liveRows.length > 0 ? liveRows : buildFallbackRows(languages);
   const displayTitle = middleTruncateTitle(chapter.name);
   const headerBody = `
     <div class="translate-toolbar__body translate-toolbar__body--header">
@@ -197,6 +229,7 @@ export function renderTranslateScreen(state) {
     bodyClass: "page-body--editor",
     titleAction: titleRefreshButton("refresh-page", {
       spinning: state.pageSync?.status === "syncing",
+      spinStartedAt: state.pageSync?.startedAt,
       disabled: state.offline?.isEnabled === true || state.pageSync?.status === "syncing",
     }),
     navButtons: [
@@ -230,7 +263,7 @@ export function renderTranslateScreen(state) {
                       </div>
                     </article>
                   `
-                  : renderTranslationContentRows(contentRows, languages)
+                  : renderTranslationContentRows(contentRows)
             }
           </div>
         </div>

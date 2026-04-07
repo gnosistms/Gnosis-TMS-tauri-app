@@ -44,6 +44,38 @@ function normalizeLanguageSelections(languages, sourceCode, targetCode) {
   };
 }
 
+function cloneRowFields(fields) {
+  return Object.fromEntries(
+    Object.entries(fields && typeof fields === "object" ? fields : {}).map(([code, value]) => [
+      code,
+      typeof value === "string" ? value : String(value ?? ""),
+    ]),
+  );
+}
+
+function rowFieldsEqual(left, right) {
+  const leftEntries = Object.entries(left && typeof left === "object" ? left : {});
+  const rightEntries = Object.entries(right && typeof right === "object" ? right : {});
+  if (leftEntries.length !== rightEntries.length) {
+    return false;
+  }
+
+  return leftEntries.every(([code, value]) => (right?.[code] ?? "") === value);
+}
+
+function normalizeEditorRows(rows) {
+  return (Array.isArray(rows) ? rows : []).map((row) => {
+    const fields = cloneRowFields(row?.fields);
+    return {
+      ...row,
+      fields,
+      persistedFields: cloneRowFields(fields),
+      saveStatus: "idle",
+      saveError: "",
+    };
+  });
+}
+
 export function resolveChapterSourceWordCount(chapter) {
   if (!chapter || typeof chapter !== "object") {
     return 0;
@@ -103,6 +135,33 @@ function applyChapterMetadataToState(chapterId, updates) {
   persistProjectsForSelectedTeam();
 }
 
+function updateEditorChapterRow(rowId, updater) {
+  if (!state.editorChapter?.chapterId || !Array.isArray(state.editorChapter.rows)) {
+    return null;
+  }
+
+  let updatedRow = null;
+  const nextRows = state.editorChapter.rows.map((row) => {
+    if (!row || row.rowId !== rowId) {
+      return row;
+    }
+
+    updatedRow = updater(row);
+    return updatedRow;
+  });
+
+  if (!updatedRow) {
+    return null;
+  }
+
+  state.editorChapter = {
+    ...state.editorChapter,
+    rows: nextRows,
+  };
+
+  return updatedRow;
+}
+
 function applyEditorPayloadToState(payload, projectId, existingChapter = {}) {
   const { selectedSourceLanguageCode, selectedTargetLanguageCode } = normalizeLanguageSelections(
     payload.languages,
@@ -126,7 +185,7 @@ function applyEditorPayloadToState(payload, projectId, existingChapter = {}) {
     persistedSourceLanguageCode: selectedSourceLanguageCode,
     persistedTargetLanguageCode: selectedTargetLanguageCode,
     selectionPersistStatus: "idle",
-    rows: Array.isArray(payload.rows) ? payload.rows : [],
+    rows: normalizeEditorRows(payload.rows),
   };
 
   applyChapterMetadataToState(payload.chapterId, {
@@ -365,4 +424,125 @@ export function updateEditorTargetLanguage(render, nextCode) {
   setEditorSelections(selections);
   render();
   void persistEditorChapterSelections(render);
+}
+
+export function updateEditorRowFieldValue(rowId, languageCode, nextValue) {
+  if (!rowId || !languageCode) {
+    return;
+  }
+
+  updateEditorChapterRow(rowId, (row) => {
+    const fields = {
+      ...cloneRowFields(row.fields),
+      [languageCode]: nextValue,
+    };
+    const nextSaveStatus =
+      row.saveStatus === "saving"
+        ? "dirty"
+        : rowFieldsEqual(fields, row.persistedFields)
+          ? "idle"
+          : "dirty";
+
+    return {
+      ...row,
+      fields,
+      saveStatus: nextSaveStatus,
+      saveError: "",
+    };
+  });
+}
+
+export async function persistEditorRowOnBlur(render, rowId) {
+  if (!rowId || !state.editorChapter?.chapterId) {
+    return;
+  }
+
+  const editorChapter = state.editorChapter;
+  const row = editorChapter.rows.find((item) => item?.rowId === rowId);
+  if (!row) {
+    return;
+  }
+
+  if (row.saveStatus === "saving") {
+    updateEditorChapterRow(rowId, (currentRow) => ({
+      ...currentRow,
+      saveStatus: "dirty",
+    }));
+    return;
+  }
+
+  if (rowFieldsEqual(row.fields, row.persistedFields)) {
+    if (row.saveStatus !== "idle" || row.saveError) {
+      updateEditorChapterRow(rowId, (currentRow) => ({
+        ...currentRow,
+        saveStatus: "idle",
+        saveError: "",
+      }));
+      render?.();
+    }
+    return;
+  }
+
+  const team = selectedTeam();
+  const context = findChapterContextById(editorChapter.chapterId);
+  if (!Number.isFinite(team?.installationId) || !context?.project?.name) {
+    return;
+  }
+
+  const fieldsToPersist = cloneRowFields(row.fields);
+  updateEditorChapterRow(rowId, (currentRow) => ({
+    ...currentRow,
+    saveStatus: "saving",
+    saveError: "",
+  }));
+  render?.();
+
+  try {
+    const payload = await invoke("update_gtms_editor_row_fields", {
+      input: {
+        installationId: team.installationId,
+        repoName: context.project.name,
+        chapterId: editorChapter.chapterId,
+        rowId,
+        fields: fieldsToPersist,
+      },
+    });
+
+    if (state.editorChapter?.chapterId === editorChapter.chapterId) {
+      const updatedRow = updateEditorChapterRow(rowId, (currentRow) => {
+        const rowChangedDuringSave = !rowFieldsEqual(currentRow.fields, fieldsToPersist);
+        return {
+          ...currentRow,
+          persistedFields: cloneRowFields(fieldsToPersist),
+          saveStatus: rowChangedDuringSave ? "dirty" : "idle",
+          saveError: "",
+        };
+      });
+
+      state.editorChapter = {
+        ...state.editorChapter,
+        sourceWordCounts:
+          payload?.sourceWordCounts && typeof payload.sourceWordCounts === "object"
+            ? payload.sourceWordCounts
+            : state.editorChapter.sourceWordCounts,
+      };
+      applyEditorSelectionsToProjectState(state.editorChapter);
+      render?.();
+
+      if (updatedRow?.saveStatus === "dirty") {
+        void persistEditorRowOnBlur(render, rowId);
+      }
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (state.editorChapter?.chapterId === editorChapter.chapterId) {
+      updateEditorChapterRow(rowId, (currentRow) => ({
+        ...currentRow,
+        saveStatus: "error",
+        saveError: message,
+      }));
+      render?.();
+    }
+    showNoticeBadge(message || "The row could not be saved.", render);
+  }
 }

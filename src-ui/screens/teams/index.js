@@ -36,6 +36,7 @@ export function renderTeamsScreen(state) {
     subtitle,
     titleAction: titleRefreshButton("refresh-page", {
       spinning: state.pageSync?.status === "syncing",
+      spinStartedAt: state.pageSync?.startedAt,
       disabled: offlineMode || state.pageSync?.status === "syncing",
     }),
     navButtons: [navButton("Logout", "start")],

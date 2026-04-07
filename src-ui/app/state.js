@@ -99,6 +99,7 @@ export function createAppUpdateState() {
 export function createProjectsPageSyncState() {
   return {
     status: "idle",
+    startedAt: null,
   };
 }
 
@@ -339,6 +340,7 @@ export function resetSessionState() {
 function createPageSyncState() {
   return {
     status: "idle",
+    startedAt: null,
   };
 }
 

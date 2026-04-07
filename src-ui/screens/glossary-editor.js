@@ -17,6 +17,7 @@ export function renderGlossaryEditorScreen(state) {
     title: glossary.name,
     titleAction: titleRefreshButton("refresh-page", {
       spinning: state.pageSync?.status === "syncing",
+      spinStartedAt: state.pageSync?.startedAt,
       disabled: state.offline?.isEnabled === true || state.pageSync?.status === "syncing",
     }),
     navButtons: [

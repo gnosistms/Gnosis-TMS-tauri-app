@@ -11,7 +11,12 @@ import {
   updateTeamRenameName,
 } from "./team-setup-flow.js";
 import { updateInviteUserQuery } from "./invite-user-flow.js";
-import { updateEditorSourceLanguage, updateEditorTargetLanguage } from "./translate-flow.js";
+import {
+  persistEditorRowOnBlur,
+  updateEditorRowFieldValue,
+  updateEditorSourceLanguage,
+  updateEditorTargetLanguage,
+} from "./translate-flow.js";
 
 function handleProjectCreationInput(event) {
   const input = event.target.closest("[data-project-name-input]");
@@ -128,6 +133,38 @@ function handleEditorTargetLanguageInput(event, render) {
   return true;
 }
 
+function handleEditorRowFieldInput(event) {
+  if (event.type !== "input") {
+    return false;
+  }
+
+  const input = event.target.closest("[data-editor-row-field]");
+  if (!input) {
+    return false;
+  }
+
+  updateEditorRowFieldValue(
+    input.dataset.rowId,
+    input.dataset.languageCode,
+    input.value,
+  );
+  return true;
+}
+
+function handleEditorRowFieldChange(event, render) {
+  if (event.type !== "change") {
+    return false;
+  }
+
+  const input = event.target.closest("[data-editor-row-field]");
+  if (!input) {
+    return false;
+  }
+
+  void persistEditorRowOnBlur(render, input.dataset.rowId);
+  return true;
+}
+
 const inputHandlers = [
   handleProjectCreationInput,
   handleProjectPermanentDeleteInput,
@@ -139,6 +176,8 @@ const inputHandlers = [
   handleInviteUserInput,
   handleEditorSourceLanguageInput,
   handleEditorTargetLanguageInput,
+  handleEditorRowFieldInput,
+  handleEditorRowFieldChange,
 ];
 
 export function handleInputEvent(event, render) {

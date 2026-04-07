@@ -262,6 +262,10 @@
   grid-template-columns: minmax(280px, 1fr) auto;
 }
 
+.chapter-table__row--interactive {
+  cursor: pointer;
+}
+
 .chapter-table__title-wrap {
   display: flex;
   align-items: center;
@@ -326,8 +330,8 @@
   justify-content: flex-start;
   overflow: visible;
   cursor: pointer;
-  gap: 10px;
-  padding-right: 42px;
+  gap: 12px;
+  padding-right: 34px;
 }
 
 .select-pill--control select {
@@ -362,11 +366,12 @@
 .select-pill__chevron {
   position: absolute;
   top: 50%;
-  right: 16px;
+  right: 12px;
   transform: translateY(-50%);
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  min-width: 12px;
   pointer-events: none;
 }
 

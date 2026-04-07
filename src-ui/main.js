@@ -11,7 +11,7 @@ import {
 import { loadUserTeams, setGithubAppInstallation } from "./app/team-setup-flow.js";
 import { initializeConnectivity } from "./app/offline-connectivity.js";
 import { initializePersistentStorage } from "./app/persistent-store.js";
-import { app } from "./app/runtime.js";
+import { app, initializeWindowPresentation } from "./app/runtime.js";
 import { hydratePersistentAppState, state } from "./app/state.js";
 import { checkForAppUpdate } from "./app/updater-flow.js";
 import { renderGithubAppTestScreen } from "./screens/github-app-test.js";
@@ -156,6 +156,7 @@ window.__gnosisDebug = {
 async function bootstrap() {
   await initializePersistentStorage();
   hydratePersistentAppState();
+  await initializeWindowPresentation();
 
   registerAppEvents(render);
   void registerBrokerAuthListener(render, loadUserTeams);

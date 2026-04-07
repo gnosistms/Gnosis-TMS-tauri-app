@@ -270,9 +270,13 @@ a {
 
 .page-header--editor {
   min-height: auto;
-  padding-top: 2px;
+  padding-top: 0;
   padding-bottom: 8px;
   gap: 3px;
+}
+
+.app-window--mac-fullscreen .page-header--editor {
+  padding-top: 4px;
 }
 
 .page-header--editor .page-header__left,
@@ -316,7 +320,7 @@ a {
 }
 
 .page-header--editor .title-icon-button__icon svg {
-  transform: translateY(1px);
+  transform: translateY(3px);
 }
 
 .page-header--editor .header-nav__button {
@@ -420,6 +424,7 @@ a {
 
 .title-icon-button__icon.is-spinning svg .refresh-spin-target {
   animation: title-icon-spin 0.9s linear infinite;
+  animation-delay: var(--title-icon-spin-delay, 0ms);
 }
 
 @keyframes title-icon-spin {

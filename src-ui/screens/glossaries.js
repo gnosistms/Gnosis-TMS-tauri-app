@@ -10,6 +10,7 @@ export function renderGlossariesScreen(state) {
     subtitle: selectedTeam?.name ?? "Team",
     titleAction: titleRefreshButton("refresh-page", {
       spinning: state.pageSync?.status === "syncing",
+      spinStartedAt: state.pageSync?.startedAt,
       disabled: state.offline?.isEnabled === true || state.pageSync?.status === "syncing",
     }),
     navButtons: [

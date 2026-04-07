@@ -7,13 +7,13 @@ let resetTimer = null;
 let syncingStartedAt = 0;
 
 export function createPageSyncState() {
-  return { status: "idle" };
+  return { status: "idle", startedAt: null };
 }
 
 export function beginPageSync() {
   clearResetTimer();
   syncingStartedAt = performance.now();
-  state.pageSync = { status: "syncing" };
+  state.pageSync = { status: "syncing", startedAt: syncingStartedAt };
 }
 
 export async function completePageSync(render) {
@@ -23,7 +23,7 @@ export async function completePageSync(render) {
   if (remaining > 0) {
     await new Promise((resolve) => window.setTimeout(resolve, remaining));
   }
-  state.pageSync = { status: "upToDate" };
+  state.pageSync = { status: "upToDate", startedAt: null };
   syncingStartedAt = 0;
   resetTimer = window.setTimeout(() => {
     state.pageSync = createPageSyncState();

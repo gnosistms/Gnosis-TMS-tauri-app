@@ -53,6 +53,11 @@
   padding: 0 14px;
 }
 
+.page-header--editor .select-pill--control {
+  padding-left: 14px;
+  padding-right: 34px;
+}
+
 .page-header--editor .segmented-control {
   padding: 3px;
 }
@@ -80,7 +85,7 @@
   align-items: stretch;
   min-height: 0;
   height: 100%;
-  min-width: 1180px;
+  min-width: 1003px;
 }
 
 .translate-main-scroll,
@@ -139,6 +144,10 @@
   font-weight: 600;
 }
 
+.translation-row__meta--error {
+  color: #b24a32;
+}
+
 .translation-row__stack {
   display: grid;
   gap: 12px;
@@ -155,11 +164,29 @@
   font-weight: 700;
 }
 
-.translation-language-panel__surface {
+.translation-language-panel__field {
+  width: 100%;
   min-height: 116px;
   border: 1px solid rgba(164, 112, 41, 0.18);
   border-radius: var(--radius-ui);
   background: rgba(255, 255, 255, 0.42);
+  color: var(--text);
+  resize: vertical;
+  padding: 14px 16px;
+  font: inherit;
+  font-size: 1rem;
+  line-height: 1.5;
+  outline: none;
+  transition:
+    border-color 140ms ease,
+    box-shadow 140ms ease,
+    background 140ms ease;
+}
+
+.translation-language-panel__field:focus {
+  border-color: color-mix(in srgb, var(--accent) 52%, var(--panel-border) 48%);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-soft) 16%, transparent 84%);
+  background: rgba(255, 255, 255, 0.68);
 }
 
 .card--history .card__body {

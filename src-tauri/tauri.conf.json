@@ -16,7 +16,7 @@
         "label": "main",
         "title": "Gnosis TMS",
         "width": 1400,
-        "minWidth": 1180,
+        "minWidth": 1003,
         "height": 820,
         "visible": true,
         "backgroundThrottling": "disabled",

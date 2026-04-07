@@ -48,7 +48,7 @@ use crate::{
   project_import::{
     import_xlsx_to_gtms, list_local_gtms_project_files, load_gtms_chapter_editor_data, permanently_delete_gtms_chapter,
     rename_gtms_chapter, restore_gtms_chapter, soft_delete_gtms_chapter,
-    update_gtms_chapter_language_selection,
+    update_gtms_chapter_language_selection, update_gtms_editor_row_fields,
   },
   project_repo_sync::{list_project_repo_sync_states, reconcile_project_repo_sync_states},
   state::{AuthState, ProjectRepoSyncStore},
@@ -250,6 +250,7 @@ pub fn run() {
       restore_gtms_chapter,
       permanently_delete_gtms_chapter,
       update_gtms_chapter_language_selection,
+      update_gtms_editor_row_fields,
       list_github_app_test_repositories,
       list_organization_members_for_installation,
       search_github_users_for_installation,

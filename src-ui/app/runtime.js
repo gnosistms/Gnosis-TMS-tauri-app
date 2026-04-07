@@ -45,6 +45,28 @@ export function waitForNextPaint() {
   });
 }
 
+export async function initializeWindowPresentation() {
+  if (!isMacPlatform()) {
+    document.documentElement.classList.remove("app-window--mac-fullscreen");
+    return;
+  }
+
+  const syncPresentation = async () => {
+    const isFullscreen = await readIsFullscreen();
+    document.documentElement.classList.toggle("app-window--mac-fullscreen", isFullscreen);
+  };
+
+  await syncPresentation();
+  window.addEventListener("resize", () => {
+    void syncPresentation();
+  });
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) {
+      void syncPresentation();
+    }
+  });
+}
+
 function shouldAttemptBrokerSessionRefresh(command, payload, error) {
   if (!rawInvoke) {
     return false;
@@ -133,5 +155,30 @@ async function refreshBrokerSession(sessionToken) {
     return await pendingBrokerSessionRefresh;
   } finally {
     pendingBrokerSessionRefresh = null;
+  }
+}
+
+function isMacPlatform() {
+  const platform =
+    navigator.userAgentData?.platform
+    ?? navigator.platform
+    ?? "";
+  return /mac/i.test(platform);
+}
+
+async function readIsFullscreen() {
+  if (!rawInvoke) {
+    return false;
+  }
+
+  const label = window.__TAURI_INTERNALS__?.metadata?.currentWindow?.label;
+  if (typeof label !== "string" || !label.trim()) {
+    return false;
+  }
+
+  try {
+    return (await rawInvoke("plugin:window|is_fullscreen", { label })) === true;
+  } catch {
+    return false;
   }
 }
