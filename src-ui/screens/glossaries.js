@@ -1,9 +1,77 @@
-import { glossaries } from "../lib/data.js";
-import { navButton, pageShell, primaryButton, textAction, titleRefreshButton } from "../lib/ui.js";
+import { escapeHtml, navButton, pageShell, primaryButton, textAction, titleRefreshButton } from "../lib/ui.js";
 import { getNoticeBadgeText } from "../app/status-feedback.js";
 
 export function renderGlossariesScreen(state) {
   const selectedTeam = state.teams.find((team) => team.id === state.selectedTeamId) ?? state.teams[0];
+  const searchQuery = String(state.glossariesSearchQuery ?? "").trim().toLowerCase();
+  const visibleGlossaries = state.glossaries.filter((glossary) => {
+    if (glossary.lifecycleState !== "active") {
+      return false;
+    }
+
+    if (!searchQuery) {
+      return true;
+    }
+
+    return [
+      glossary.title,
+      glossary.sourceLanguage?.name,
+      glossary.targetLanguage?.name,
+    ].some((value) => String(value ?? "").toLowerCase().includes(searchQuery));
+  });
+  const searchField = `
+    <label class="search-field">
+      <span class="search-field__icon">⌕</span>
+      <input
+        type="text"
+        placeholder="Search"
+        value="${escapeHtml(state.glossariesSearchQuery ?? "")}"
+        data-glossaries-search-input
+      />
+    </label>
+  `;
+  const emptyState = searchQuery
+    ? "No glossaries match this search."
+    : "No glossaries are available locally yet.";
+  const bodyMarkup = visibleGlossaries.length
+    ? `
+      <section class="table-card">
+        <div class="table-card__header glossary-list glossary-list--head">
+          <div>Name</div>
+          <div>Source Language</div>
+          <div>Target Language</div>
+          <div></div>
+        </div>
+        ${visibleGlossaries
+          .map(
+            (glossary) => `
+              <div class="glossary-list glossary-list--row">
+                <div class="glossary-list__name">
+                  <button class="text-link" data-action="open-glossary:${glossary.id}">${escapeHtml(glossary.title)}</button>
+                </div>
+                <div>${escapeHtml(glossary.sourceLanguage?.name ?? "Unknown")}</div>
+                <div>${escapeHtml(glossary.targetLanguage?.name ?? "Unknown")}</div>
+                <div class="glossary-list__actions">
+                  ${textAction("Rename", `rename-glossary:${glossary.id}`)}
+                  ${textAction("Open", `open-glossary:${glossary.id}`)}
+                  ${textAction("Download", `download-glossary:${glossary.id}`)}
+                  ${textAction("Delete", `delete-glossary:${glossary.id}`)}
+                </div>
+              </div>
+            `,
+          )
+          .join("")}
+      </section>
+    `
+    : `
+      <section class="card">
+        <div class="card__body">
+          <p class="card__eyebrow">GLOSSARIES</p>
+          <h2 class="list-row__title">${escapeHtml(emptyState)}</h2>
+          <p class="list-row__meta">Creating and importing glossary repos is the next step. This page already reads any local glossary repos that match the GTMS glossary format.</p>
+        </div>
+      </section>
+    `;
 
   return pageShell({
     title: "Glossaries",
@@ -19,39 +87,11 @@ export function renderGlossariesScreen(state) {
       navButton("Members", "users"),
       navButton("Projects", "projects"),
     ],
-    tools: `${textAction("Upload", "noop")} ${primaryButton("+ New Glossary", "noop")}`,
+    tools: `${searchField} ${textAction("Upload", "upload-glossary")} ${primaryButton("+ New Glossary", "open-new-glossary")}`,
     pageSync: state.pageSync,
     noticeText: getNoticeBadgeText(),
     offlineMode: state.offline?.isEnabled === true,
     offlineReconnectState: state.offline?.reconnecting === true,
-    body: `
-      <section class="table-card">
-        <div class="table-card__header glossary-list glossary-list--head">
-          <div>Name</div>
-          <div>Source Language</div>
-          <div>Target Language</div>
-          <div></div>
-        </div>
-        ${glossaries
-          .map(
-            (glossary) => `
-              <div class="glossary-list glossary-list--row">
-                <div class="glossary-list__name">
-                  <button class="text-link" data-action="open-glossary:${glossary.id}">${glossary.name}</button>
-                </div>
-                <div>${glossary.sourceLanguage}</div>
-                <div>${glossary.targetLanguage}</div>
-                <div class="glossary-list__actions">
-                  ${textAction("Rename", "noop")}
-                  ${textAction("Open", `open-glossary:${glossary.id}`)}
-                  ${textAction("Download", "noop")}
-                  ${textAction("Delete", "noop")}
-                </div>
-              </div>
-            `,
-          )
-          .join("")}
-      </section>
-    `,
+    body: bodyMarkup,
   });
 }

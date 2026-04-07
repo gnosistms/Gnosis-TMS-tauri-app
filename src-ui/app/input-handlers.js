@@ -12,6 +12,11 @@ import {
 } from "./team-setup-flow.js";
 import { updateInviteUserQuery } from "./invite-user-flow.js";
 import {
+  updateGlossariesSearchQuery,
+  updateGlossaryTermDraftField,
+  updateGlossaryTermSearchQuery,
+} from "./glossary-flow.js";
+import {
   persistEditorRowOnBlur,
   updateEditorRowFieldValue,
   updateEditorSourceLanguage,
@@ -113,6 +118,76 @@ function handleInviteUserInput(event, render) {
   return true;
 }
 
+function handleGlossariesSearchInput(event, render) {
+  const input = event.target.closest("[data-glossaries-search-input]");
+  if (!input) {
+    return false;
+  }
+
+  updateGlossariesSearchQuery(render, input.value);
+  return true;
+}
+
+function handleGlossaryTermSearchInput(event, render) {
+  const input = event.target.closest("[data-glossary-term-search-input]");
+  if (!input) {
+    return false;
+  }
+
+  updateGlossaryTermSearchQuery(render, input.value);
+  return true;
+}
+
+function handleGlossaryTermSourceInput(event) {
+  const input = event.target.closest("[data-glossary-term-source-input]");
+  if (!input) {
+    return false;
+  }
+
+  updateGlossaryTermDraftField("sourceTermsText", input.value);
+  return true;
+}
+
+function handleGlossaryTermTargetInput(event) {
+  const input = event.target.closest("[data-glossary-term-target-input]");
+  if (!input) {
+    return false;
+  }
+
+  updateGlossaryTermDraftField("targetTermsText", input.value);
+  return true;
+}
+
+function handleGlossaryTermNotesInput(event) {
+  const input = event.target.closest("[data-glossary-term-notes-input]");
+  if (!input) {
+    return false;
+  }
+
+  updateGlossaryTermDraftField("notesToTranslators", input.value);
+  return true;
+}
+
+function handleGlossaryTermFootnoteInput(event) {
+  const input = event.target.closest("[data-glossary-term-footnote-input]");
+  if (!input) {
+    return false;
+  }
+
+  updateGlossaryTermDraftField("footnote", input.value);
+  return true;
+}
+
+function handleGlossaryTermUntranslatedInput(event) {
+  const input = event.target.closest("[data-glossary-term-untranslated-input]");
+  if (!input) {
+    return false;
+  }
+
+  updateGlossaryTermDraftField("untranslated", input.checked === true);
+  return true;
+}
+
 function handleEditorSourceLanguageInput(event, render) {
   const input = event.target.closest("[data-editor-source-language-select]");
   if (!input) {
@@ -174,6 +249,13 @@ const inputHandlers = [
   handleChapterRenameInput,
   handleChapterPermanentDeleteInput,
   handleInviteUserInput,
+  handleGlossariesSearchInput,
+  handleGlossaryTermSearchInput,
+  handleGlossaryTermSourceInput,
+  handleGlossaryTermTargetInput,
+  handleGlossaryTermNotesInput,
+  handleGlossaryTermFootnoteInput,
+  handleGlossaryTermUntranslatedInput,
   handleEditorSourceLanguageInput,
   handleEditorTargetLanguageInput,
   handleEditorRowFieldInput,

@@ -1,4 +1,5 @@
 import { state } from "../state.js";
+import { loadTeamGlossaries, openGlossaryEditor } from "../glossary-flow.js";
 import { loadTeamProjects } from "../project-flow.js";
 import { loadTeamUsers, primeUsersForTeam } from "../team-members-flow.js";
 import { actionSuffix } from "../action-helpers.js";
@@ -31,20 +32,20 @@ export function createNavigationActions(render) {
       state.selectedTeamId = openTeamGlossariesId;
       state.screen = "glossaries";
       render();
+      void loadTeamGlossaries(render, state.selectedTeamId);
       return true;
     }
 
     const openGlossaryId = actionSuffix(action, "open-glossary:");
     if (openGlossaryId !== null) {
-      state.selectedGlossaryId = openGlossaryId;
-      state.screen = "glossaryEditor";
-      render();
+      void openGlossaryEditor(render, openGlossaryId);
       return true;
     }
 
     if (action === "open-glossaries") {
       state.screen = "glossaries";
       render();
+      void loadTeamGlossaries(render, state.selectedTeamId);
       return true;
     }
 

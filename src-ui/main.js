@@ -59,6 +59,8 @@ function captureFocusedInputState() {
     "[data-invite-user-input]",
     "[data-team-permanent-delete-input]",
     "[data-project-permanent-delete-input]",
+    "[data-glossaries-search-input]",
+    "[data-glossary-term-search-input]",
   ];
 
   const selector = supportedSelectors.find((candidate) => activeElement.matches(candidate));

@@ -1,6 +1,4 @@
-import { glossaries, glossaryTerms } from "../lib/data.js";
 import {
-  createSearchField,
   escapeHtml,
   navButton,
   pageShell,
@@ -9,49 +7,97 @@ import {
   titleRefreshButton,
 } from "../lib/ui.js";
 import { getNoticeBadgeText } from "../app/status-feedback.js";
+import { renderGlossaryTermEditorModal } from "./glossary-term-editor-modal.js";
 
 export function renderGlossaryEditorScreen(state) {
-  const glossary = glossaries.find((item) => item.id === state.selectedGlossaryId) ?? glossaries[0];
+  const glossary = state.glossaryEditor;
+  const searchQuery = String(glossary.searchQuery ?? "").trim().toLowerCase();
+  const visibleTerms = (Array.isArray(glossary.terms) ? glossary.terms : []).filter((term) => {
+    if (!searchQuery) {
+      return true;
+    }
+
+    return [
+      ...(Array.isArray(term.sourceTerms) ? term.sourceTerms : []),
+      ...(Array.isArray(term.targetTerms) ? term.targetTerms : []),
+      term.notesToTranslators,
+      term.footnote,
+    ].some((value) => String(value ?? "").toLowerCase().includes(searchQuery));
+  });
+  const searchField = `
+    <label class="search-field">
+      <span class="search-field__icon">⌕</span>
+      <input
+        type="text"
+        placeholder="Search"
+        value="${escapeHtml(glossary.searchQuery ?? "")}"
+        data-glossary-term-search-input
+      />
+    </label>
+  `;
+  const bodyMarkup = glossary.status === "error"
+    ? `
+      <section class="card">
+        <div class="card__body">
+          <p class="card__eyebrow">GLOSSARY</p>
+          <p class="message-box message-box--error">${escapeHtml(glossary.error || "The glossary could not be loaded.")}</p>
+        </div>
+      </section>
+    `
+    : visibleTerms.length
+      ? `
+        <section class="table-card">
+          <div class="term-grid term-grid--head">
+            <div>${escapeHtml(glossary.sourceLanguage?.name ?? "Source")}</div>
+            <div>${escapeHtml(glossary.targetLanguage?.name ?? "Target")}</div>
+            <div></div>
+          </div>
+          ${visibleTerms
+            .map(
+              (term) => `
+                <div class="term-grid term-grid--row">
+                  <div>
+                    <button class="text-link" data-action="edit-glossary-term:${term.termId}">${escapeHtml((term.sourceTerms ?? []).join(", "))}</button>
+                  </div>
+                  <div>
+                    <button class="text-link" data-action="edit-glossary-term:${term.termId}">${escapeHtml((term.targetTerms ?? []).join(", "))}</button>
+                  </div>
+                  <div class="term-grid__actions">
+                    ${textAction("Edit", `edit-glossary-term:${term.termId}`)}
+                    ${textAction("Delete", `delete-glossary-term:${term.termId}`)}
+                  </div>
+                </div>
+              `,
+            )
+            .join("")}
+        </section>
+      `
+      : `
+        <section class="card">
+          <div class="card__body">
+            <p class="card__eyebrow">TERMS</p>
+            <h2 class="list-row__title">${escapeHtml(searchQuery ? "No terms match this search." : "This glossary has no terms yet.")}</h2>
+            <p class="list-row__meta">Add the first term to begin using this glossary in the editor.</p>
+          </div>
+        </section>
+      `;
 
   return pageShell({
-    title: glossary.name,
+    title: glossary.title || "Glossary",
     titleAction: titleRefreshButton("refresh-page", {
       spinning: state.pageSync?.status === "syncing",
       spinStartedAt: state.pageSync?.startedAt,
       disabled: state.offline?.isEnabled === true || state.pageSync?.status === "syncing",
     }),
     navButtons: [
-      navButton("Logout", "start"),
-      navButton("Teams", "teams"),
+      navButton("Projects", "projects"),
       navButton("Glossaries", "glossaries"),
     ],
-    tools: `${createSearchField("Search")} ${primaryButton("+ New Term", "noop")}`,
+    tools: `${searchField} ${primaryButton("+ New Term", "open-new-term")}`,
     pageSync: state.pageSync,
     noticeText: getNoticeBadgeText(),
     offlineMode: state.offline?.isEnabled === true,
     offlineReconnectState: state.offline?.reconnecting === true,
-    body: `
-      <section class="table-card">
-        <div class="term-grid term-grid--head">
-          <div>Spanish</div>
-          <div>Vietnamese</div>
-          <div></div>
-        </div>
-        ${glossaryTerms
-          .map(
-            ([source, target]) => `
-              <div class="term-grid term-grid--row">
-                <div>${escapeHtml(source)}</div>
-                <div>${escapeHtml(target)}</div>
-                <div class="term-grid__actions">
-                  ${textAction("Edit", "noop")}
-                  ${textAction("Delete", "noop")}
-                </div>
-              </div>
-            `,
-          )
-          .join("")}
-      </section>
-    `,
+    body: `${bodyMarkup}${renderGlossaryTermEditorModal(state)}`,
   });
 }

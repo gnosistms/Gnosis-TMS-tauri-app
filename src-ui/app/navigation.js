@@ -4,6 +4,7 @@ import { resetProjectsPageSync } from "./projects-page-sync.js";
 import { state, resetSessionState } from "./state.js";
 import { waitForNextPaint } from "./runtime.js";
 import { loadGithubAppTestConfig } from "./github-app-test-flow.js";
+import { loadSelectedGlossaryEditorData, loadTeamGlossaries } from "./glossary-flow.js";
 import { loadTeamProjects } from "./project-flow.js";
 import { loadUserTeams } from "./team-setup-flow.js";
 import { loadTeamUsers, primeUsersForTeam } from "./team-members-flow.js";
@@ -38,6 +39,12 @@ export function handleNavigation(navTarget, render) {
     render();
     void waitForNextPaint().then(() => loadTeamUsers(render, state.selectedTeamId));
   }
+  if (navTarget === "glossaries" && state.selectedTeamId) {
+    void waitForNextPaint().then(() => loadTeamGlossaries(render, state.selectedTeamId));
+  }
+  if (navTarget === "glossaryEditor" && state.selectedGlossaryId) {
+    void waitForNextPaint().then(() => loadSelectedGlossaryEditorData(render));
+  }
 }
 
 export async function refreshCurrentScreen(render) {
@@ -47,6 +54,16 @@ export async function refreshCurrentScreen(render) {
 
   if (state.screen === "projects") {
     await loadTeamProjects(render, state.selectedTeamId);
+    return;
+  }
+
+  if (state.screen === "glossaries") {
+    await loadTeamGlossaries(render, state.selectedTeamId);
+    return;
+  }
+
+  if (state.screen === "glossaryEditor") {
+    await loadSelectedGlossaryEditorData(render);
     return;
   }
 
