@@ -100,16 +100,31 @@ export async function restoreStoredBrokerSession(render, loadUserTeams) {
     state.screen = "teams";
     render();
     void loadUserTeams(render);
-  } catch {
-    await clearStoredAuthSession();
-    clearActiveStorageLogin();
+  } catch (error) {
+    const classification = classifySyncError(error);
+    if (classification.type === "auth_invalid") {
+      await clearStoredAuthSession();
+      clearActiveStorageLogin();
+      state.auth = {
+        status: "idle",
+        message: "",
+        session: null,
+      };
+      state.screen = "start";
+      render();
+      return;
+    }
+
+    setActiveStorageLogin(session.login);
+    hydrateStoredDataForActiveUser();
     state.auth = {
-      status: "idle",
-      message: "",
-      session: null,
+      status: "success",
+      message: `Signed in as @${session.login}.`,
+      session,
     };
-    state.screen = "start";
+    state.screen = "teams";
     render();
+    void loadUserTeams(render);
   }
 }
 
