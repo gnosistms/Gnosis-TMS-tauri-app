@@ -139,8 +139,8 @@ function handleGlossaryTitleInput(event) {
   return true;
 }
 
-function handleGlossarySourceLanguageCodeInput(event) {
-  const input = event.target.closest("[data-glossary-source-language-code-input]");
+function handleGlossarySourceLanguageInput(event) {
+  const input = event.target.closest("[data-glossary-source-language-select]");
   if (!input) {
     return false;
   }
@@ -149,33 +149,13 @@ function handleGlossarySourceLanguageCodeInput(event) {
   return true;
 }
 
-function handleGlossarySourceLanguageNameInput(event) {
-  const input = event.target.closest("[data-glossary-source-language-name-input]");
-  if (!input) {
-    return false;
-  }
-
-  updateGlossaryCreationField("sourceLanguageName", input.value);
-  return true;
-}
-
-function handleGlossaryTargetLanguageCodeInput(event) {
-  const input = event.target.closest("[data-glossary-target-language-code-input]");
+function handleGlossaryTargetLanguageInput(event) {
+  const input = event.target.closest("[data-glossary-target-language-select]");
   if (!input) {
     return false;
   }
 
   updateGlossaryCreationField("targetLanguageCode", input.value);
-  return true;
-}
-
-function handleGlossaryTargetLanguageNameInput(event) {
-  const input = event.target.closest("[data-glossary-target-language-name-input]");
-  if (!input) {
-    return false;
-  }
-
-  updateGlossaryCreationField("targetLanguageName", input.value);
   return true;
 }
 
@@ -302,10 +282,8 @@ const inputHandlers = [
   handleInviteUserInput,
   handleGlossariesSearchInput,
   handleGlossaryTitleInput,
-  handleGlossarySourceLanguageCodeInput,
-  handleGlossarySourceLanguageNameInput,
-  handleGlossaryTargetLanguageCodeInput,
-  handleGlossaryTargetLanguageNameInput,
+  handleGlossarySourceLanguageInput,
+  handleGlossaryTargetLanguageInput,
   handleGlossaryTermSearchInput,
   handleGlossaryTermSourceInput,
   handleGlossaryTermTargetInput,

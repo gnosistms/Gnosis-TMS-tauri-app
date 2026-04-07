@@ -8,11 +8,12 @@ use std::{
 
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Manager};
+use tauri::AppHandle;
 
 use crate::{
   broker::broker_get_json_with_session,
   github::github_client,
+  storage_paths::local_project_repo_root,
 };
 use crate::state::ProjectRepoSyncStore;
 
@@ -334,19 +335,6 @@ fn sync_project_repo(
   }
   git_output(repo_path, &["push", "origin", branch_name], Some(&basic_auth_header))?;
   Ok(Some(git_output(repo_path, &["rev-parse", "HEAD"], None)?))
-}
-
-fn local_project_repo_root(app: &AppHandle, installation_id: i64) -> Result<PathBuf, String> {
-  let app_data_dir = app
-    .path()
-    .app_data_dir()
-    .map_err(|error| format!("Could not resolve the app data folder: {error}"))?;
-  let root = app_data_dir
-    .join("project-repos")
-    .join(format!("installation-{installation_id}"));
-  fs::create_dir_all(&root)
-    .map_err(|error| format!("Could not create the local project repo folder: {error}"))?;
-  Ok(root)
 }
 
 fn clone_project_repo(

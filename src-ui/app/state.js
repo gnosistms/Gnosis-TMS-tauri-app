@@ -211,9 +211,7 @@ export function createGlossaryCreationState() {
   return createEntityModalState({
     title: "",
     sourceLanguageCode: "",
-    sourceLanguageName: "",
     targetLanguageCode: "",
-    targetLanguageName: "",
   });
 }
 

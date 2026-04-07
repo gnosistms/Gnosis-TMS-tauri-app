@@ -38,7 +38,7 @@ export function renderGlossaryEditorScreen(state) {
   const bodyMarkup = glossary.status === "error"
     ? `
       <section class="card">
-        <div class="card__body">
+        <div class="card__body card__body--stacked">
           <p class="card__eyebrow">GLOSSARY</p>
           <p class="message-box message-box--error">${escapeHtml(glossary.error || "The glossary could not be loaded.")}</p>
         </div>
@@ -74,9 +74,9 @@ export function renderGlossaryEditorScreen(state) {
       `
       : `
         <section class="card">
-          <div class="card__body">
+          <div class="card__body card__body--stacked">
             <p class="card__eyebrow">TERMS</p>
-            <h2 class="list-row__title">${escapeHtml(searchQuery ? "No terms match this search." : "This glossary has no terms yet.")}</h2>
+            <h2 class="card__section-title">${escapeHtml(searchQuery ? "No terms match this search." : "This glossary has no terms yet.")}</h2>
             <p class="list-row__meta">Add the first term to begin using this glossary in the editor.</p>
           </div>
         </section>

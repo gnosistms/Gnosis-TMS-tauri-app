@@ -1,11 +1,17 @@
 .modal-backdrop {
   position: fixed;
   inset: 0;
+  z-index: 60;
   display: grid;
   place-items: center;
   padding: 28px;
   background: rgba(63, 38, 16, 0.18);
   backdrop-filter: blur(4px);
+}
+
+.page-body > .modal-backdrop {
+  width: auto;
+  margin: 0;
 }
 
 .modal-card {
@@ -176,13 +182,41 @@
   outline: none;
 }
 
+.field__select {
+  width: 100%;
+  min-height: 54px;
+  border: 1px solid rgba(164, 112, 41, 0.18);
+  border-radius: var(--radius-ui);
+  padding: 0 48px 0 16px;
+  background:
+    linear-gradient(45deg, transparent 50%, rgba(136, 93, 36, 0.9) 50%) calc(100% - 24px) 50% / 8px 8px no-repeat,
+    linear-gradient(135deg, rgba(136, 93, 36, 0.9) 50%, transparent 50%) calc(100% - 18px) 50% / 8px 8px no-repeat,
+    rgba(255, 251, 246, 0.96);
+  color: var(--text);
+  outline: none;
+  font: inherit;
+  appearance: none;
+  -webkit-appearance: none;
+  cursor: pointer;
+}
+
 .field__input:focus {
+  border-color: rgba(236, 134, 9, 0.52);
+  box-shadow: 0 0 0 4px rgba(243, 156, 24, 0.12);
+}
+
+.field__select:focus {
   border-color: rgba(236, 134, 9, 0.52);
   box-shadow: 0 0 0 4px rgba(243, 156, 24, 0.12);
 }
 
 .field__input::placeholder {
   color: var(--placeholder-text);
+}
+
+.field__select:disabled {
+  cursor: not-allowed;
+  opacity: 0.76;
 }
 
 .field__textarea {

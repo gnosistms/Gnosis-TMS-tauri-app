@@ -46,7 +46,7 @@ The main entities that can conflict are:
 - `project.json`
 - chapter folders
 - `chapter.json`
-- `rowOrder.json`
+- row `structure.order_key` values
 - row JSON files
 - glossary repo
 - glossary term records
@@ -678,18 +678,19 @@ Required behavior:
 
 ### Row-order conflicts
 
-#### `rowOrder.json` changed locally and remotely
+#### Row `structure.order_key` values changed locally and remotely
 
 Required behavior:
-- do not auto-pick one whole file if we can preserve both moves
-- first attempt deterministic merge by row ids
-- if impossible, mark row-order conflict and require resolution
+- do not auto-pick one side's row ordering if we can preserve both moves
+- first attempt deterministic merge by row ids and `order_key`
+- if the same row's order changed both sides incompatibly, mark row-order conflict and require resolution
 
-#### Row file set and row order disagree
+#### Row file set and stored order keys disagree
 
 Meaning:
-- row exists but missing from order
-- order references row file that does not exist
+- row exists but `structure.order_key` is missing or invalid
+- multiple rows collide on the same `order_key` and tie-breaking is not sufficient for the operation
+- a local region cannot accept another insertion without rebalancing
 
 Required behavior:
 - mark chapter as structurally inconsistent
@@ -904,12 +905,12 @@ Handling:
 - `appVersion` should never itself cause a user-visible conflict
 - semantic metadata conflicts should be field-level
 
-### `rowOrder.json`
+### Row `structure.order_key`
 
 Handling:
 
-- special merge logic required
-- do not treat as plain text file if we want good UX
+- special merge logic is still required for reorder conflicts
+- do not treat row ordering changes as plain whole-file wins if we want good UX
 
 ### row files
 

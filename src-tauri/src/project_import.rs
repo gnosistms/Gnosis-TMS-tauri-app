@@ -11,8 +11,10 @@ use calamine::{open_workbook_auto_from_rs, Data, Reader};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use tauri::{AppHandle, Manager};
+use tauri::AppHandle;
 use uuid::Uuid;
+
+use crate::storage_paths::local_project_repo_root;
 
 const GTMS_FORMAT: &str = "gtms";
 const GTMS_FORMAT_VERSION: u32 = 1;
@@ -972,30 +974,12 @@ fn order_key_for_position(index: usize, total_rows: usize) -> Result<String, Str
   Ok(format!("{value:032x}"))
 }
 
-fn parse_order_key(value: &str) -> Result<u128, String> {
-  let trimmed = value.trim();
-  if trimmed.len() != 32 {
-    return Err("Order keys must be 32 lowercase hex characters.".to_string());
-  }
-
-  u128::from_str_radix(trimmed, 16)
-    .map_err(|error| format!("Invalid order key '{trimmed}': {error}"))
-}
-
 fn compare_stored_rows(left: &StoredRowFile, right: &StoredRowFile) -> Ordering {
-  let left_key = parse_order_key(&left.structure.order_key);
-  let right_key = parse_order_key(&right.structure.order_key);
-
-  match (left_key, right_key) {
-    (Ok(left_value), Ok(right_value)) => left_value
-      .cmp(&right_value)
-      .then_with(|| left.row_id.cmp(&right.row_id)),
-    _ => left
-      .origin
-      .source_row_number
-      .cmp(&right.origin.source_row_number)
-      .then_with(|| left.row_id.cmp(&right.row_id)),
-  }
+  left
+    .structure
+    .order_key
+    .cmp(&right.structure.order_key)
+    .then_with(|| left.row_id.cmp(&right.row_id))
 }
 
 fn classify_header_row(headers: &[String]) -> Vec<ColumnBinding> {
@@ -1242,19 +1226,6 @@ fn load_project_chapter_summaries(repo_path: &Path) -> Result<Vec<ProjectChapter
   }
 
   Ok(chapters)
-}
-
-fn local_project_repo_root(app: &AppHandle, installation_id: i64) -> Result<PathBuf, String> {
-  let app_data_dir = app
-    .path()
-    .app_data_dir()
-    .map_err(|error| format!("Could not resolve the app data directory: {error}"))?;
-  let root = app_data_dir
-    .join("project-repos")
-    .join(format!("installation-{installation_id}"));
-  fs::create_dir_all(&root)
-    .map_err(|error| format!("Could not create the local project repo folder: {error}"))?;
-  Ok(root)
 }
 
 fn read_json_file<T: DeserializeOwned>(path: &Path, label: &str) -> Result<T, String> {
@@ -1649,6 +1620,14 @@ fn permanently_delete_gtms_chapter_sync(
     .to_string();
 
   git_output(&repo_path, &["rm", "-r", &relative_chapter_path])?;
+  if chapter_path.exists() {
+    fs::remove_dir_all(&chapter_path).map_err(|error| {
+      format!(
+        "Could not remove the deleted file from disk at '{}': {error}",
+        chapter_path.display(),
+      )
+    })?;
+  }
   git_output(
     &repo_path,
     &["commit", "-m", "Delete file permanently", "--", &relative_chapter_path],

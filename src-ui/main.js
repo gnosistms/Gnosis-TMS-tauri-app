@@ -48,7 +48,7 @@ const titles = {
 
 function captureFocusedInputState() {
   const activeElement = document.activeElement;
-  if (!(activeElement instanceof HTMLInputElement)) {
+  if (!(activeElement instanceof HTMLInputElement) && !(activeElement instanceof HTMLSelectElement)) {
     return null;
   }
 
@@ -61,10 +61,8 @@ function captureFocusedInputState() {
     "[data-project-permanent-delete-input]",
     "[data-glossaries-search-input]",
     "[data-glossary-title-input]",
-    "[data-glossary-source-language-code-input]",
-    "[data-glossary-source-language-name-input]",
-    "[data-glossary-target-language-code-input]",
-    "[data-glossary-target-language-name-input]",
+    "[data-glossary-source-language-select]",
+    "[data-glossary-target-language-select]",
     "[data-glossary-term-search-input]",
   ];
 
@@ -75,9 +73,9 @@ function captureFocusedInputState() {
 
   return {
     selector,
-    selectionStart: activeElement.selectionStart,
-    selectionEnd: activeElement.selectionEnd,
-    selectionDirection: activeElement.selectionDirection,
+    selectionStart: activeElement instanceof HTMLInputElement ? activeElement.selectionStart : null,
+    selectionEnd: activeElement instanceof HTMLInputElement ? activeElement.selectionEnd : null,
+    selectionDirection: activeElement instanceof HTMLInputElement ? activeElement.selectionDirection : null,
   };
 }
 
@@ -87,14 +85,18 @@ function restoreFocusedInputState(focusSnapshot) {
   }
 
   const nextInput = document.querySelector(focusSnapshot.selector);
-  if (!(nextInput instanceof HTMLInputElement) || nextInput.disabled) {
+  if (
+    (!(nextInput instanceof HTMLInputElement) && !(nextInput instanceof HTMLSelectElement))
+    || nextInput.disabled
+  ) {
     return;
   }
 
   nextInput.focus({ preventScroll: true });
 
   if (
-    typeof focusSnapshot.selectionStart === "number"
+    nextInput instanceof HTMLInputElement
+    && typeof focusSnapshot.selectionStart === "number"
     && typeof focusSnapshot.selectionEnd === "number"
   ) {
     nextInput.setSelectionRange(

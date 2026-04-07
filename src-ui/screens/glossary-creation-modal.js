@@ -1,5 +1,19 @@
 import { escapeHtml, loadingPrimaryButton, secondaryButton } from "../lib/ui.js";
 import { formatErrorForDisplay } from "../app/error-display.js";
+import { isoLanguageOptions } from "../lib/language-options.js";
+
+function renderLanguageOptions(selectedCode) {
+  return [
+    `<option value="">Select a language</option>`,
+    ...isoLanguageOptions.map(
+      (language) => `
+        <option value="${escapeHtml(language.code)}" ${language.code === selectedCode ? "selected" : ""}>
+          ${escapeHtml(`${language.name} (${language.code})`)}
+        </option>
+      `,
+    ),
+  ].join("");
+}
 
 export function renderGlossaryCreationModal(state) {
   const creation = state.glossaryCreation;
@@ -43,48 +57,24 @@ export function renderGlossaryCreationModal(state) {
               />
             </label>
             <label class="field">
-              <span class="field__label">Source Language Code</span>
-              <input
-                class="field__input"
-                type="text"
-                placeholder="es"
-                value="${escapeHtml(creation.sourceLanguageCode)}"
-                data-glossary-source-language-code-input
+              <span class="field__label">Source Language</span>
+              <select
+                class="field__select"
+                data-glossary-source-language-select
                 ${isSubmitting ? "disabled" : ""}
-              />
+              >
+                ${renderLanguageOptions(creation.sourceLanguageCode)}
+              </select>
             </label>
             <label class="field">
-              <span class="field__label">Source Language Name</span>
-              <input
-                class="field__input"
-                type="text"
-                placeholder="Spanish"
-                value="${escapeHtml(creation.sourceLanguageName)}"
-                data-glossary-source-language-name-input
+              <span class="field__label">Target Language</span>
+              <select
+                class="field__select"
+                data-glossary-target-language-select
                 ${isSubmitting ? "disabled" : ""}
-              />
-            </label>
-            <label class="field">
-              <span class="field__label">Target Language Code</span>
-              <input
-                class="field__input"
-                type="text"
-                placeholder="en"
-                value="${escapeHtml(creation.targetLanguageCode)}"
-                data-glossary-target-language-code-input
-                ${isSubmitting ? "disabled" : ""}
-              />
-            </label>
-            <label class="field">
-              <span class="field__label">Target Language Name</span>
-              <input
-                class="field__input"
-                type="text"
-                placeholder="English"
-                value="${escapeHtml(creation.targetLanguageName)}"
-                data-glossary-target-language-name-input
-                ${isSubmitting ? "disabled" : ""}
-              />
+              >
+                ${renderLanguageOptions(creation.targetLanguageCode)}
+              </select>
             </label>
           </div>
           ${errorMarkup}

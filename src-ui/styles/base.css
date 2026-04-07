@@ -628,6 +628,11 @@ a {
   padding: 32px;
 }
 
+.card__body--stacked {
+  display: grid;
+  gap: 14px;
+}
+
 .card--hero {
   width: 100%;
   margin-inline: auto;
@@ -687,6 +692,13 @@ a {
 .card__title--small {
   font-size: clamp(1.16375rem, 2.0825vw, 1.77625rem);
   line-height: 1;
+  letter-spacing: var(--heading-letter-spacing);
+}
+
+.card__section-title {
+  margin: 0;
+  font-size: clamp(2.2rem, 4vw, 4rem);
+  line-height: 1.06;
   letter-spacing: var(--heading-letter-spacing);
 }
 

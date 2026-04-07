@@ -7,8 +7,10 @@ use std::{
 
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::{json, Value};
-use tauri::{AppHandle, Manager};
+use tauri::AppHandle;
 use uuid::Uuid;
+
+use crate::storage_paths::local_glossary_repo_root;
 
 const GLOSSARY_GITATTRIBUTES: &str = "* text=auto eol=lf\n";
 
@@ -542,19 +544,6 @@ fn glossary_repo_path(app: &AppHandle, installation_id: i64, repo_name: &str) ->
     return Err("The local glossary repo is missing glossary.json.".to_string());
   }
   Ok(repo_path)
-}
-
-fn local_glossary_repo_root(app: &AppHandle, installation_id: i64) -> Result<PathBuf, String> {
-  let app_data_dir = app
-    .path()
-    .app_data_dir()
-    .map_err(|error| format!("Could not resolve the app data directory: {error}"))?;
-  let root = app_data_dir
-    .join("glossary-repos")
-    .join(format!("installation-{installation_id}"));
-  fs::create_dir_all(&root)
-    .map_err(|error| format!("Could not create the local glossary repo folder: {error}"))?;
-  Ok(root)
 }
 
 fn read_glossary_file(repo_path: &Path) -> Result<StoredGlossaryFile, String> {

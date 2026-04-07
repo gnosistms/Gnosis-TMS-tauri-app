@@ -38,9 +38,9 @@ export function renderGlossariesScreen(state) {
     `
     : `
       <section class="card">
-        <div class="card__body">
+        <div class="card__body card__body--stacked">
           <p class="card__eyebrow">GLOSSARIES</p>
-          <h2 class="list-row__title">${escapeHtml(emptyState)}</h2>
+          <h2 class="card__section-title">${escapeHtml(emptyState)}</h2>
           <p class="list-row__meta">Creating and importing glossary repos is the next step. This page already reads any local glossary repos that match the GTMS glossary format.</p>
         </div>
       </section>

@@ -2,6 +2,7 @@ import { invoke, waitForNextPaint } from "./runtime.js";
 import { beginPageSync, completePageSync, failPageSync } from "./page-sync.js";
 import { resetGlossaryCreation, resetGlossaryTermEditor, state } from "./state.js";
 import { showNoticeBadge } from "./status-feedback.js";
+import { findIsoLanguageOption } from "../lib/language-options.js";
 
 function selectedTeam(teamId = state.selectedTeamId) {
   return state.teams.find((team) => team.id === teamId) ?? null;
@@ -235,9 +236,7 @@ export function openGlossaryCreation(render) {
     error: "",
     title: "",
     sourceLanguageCode: "",
-    sourceLanguageName: "",
     targetLanguageCode: "",
-    targetLanguageName: "",
   };
   render();
 }
@@ -369,9 +368,9 @@ export async function submitGlossaryCreation(render) {
 
   const title = String(draft.title ?? "").trim();
   const sourceLanguageCode = String(draft.sourceLanguageCode ?? "").trim().toLowerCase();
-  const sourceLanguageName = String(draft.sourceLanguageName ?? "").trim();
   const targetLanguageCode = String(draft.targetLanguageCode ?? "").trim().toLowerCase();
-  const targetLanguageName = String(draft.targetLanguageName ?? "").trim();
+  const sourceLanguage = findIsoLanguageOption(sourceLanguageCode);
+  const targetLanguage = findIsoLanguageOption(targetLanguageCode);
 
   if (!title) {
     state.glossaryCreation.error = "Enter a glossary name.";
@@ -379,14 +378,14 @@ export async function submitGlossaryCreation(render) {
     return;
   }
 
-  if (!sourceLanguageCode || !sourceLanguageName) {
-    state.glossaryCreation.error = "Enter both the source language code and name.";
+  if (!sourceLanguage) {
+    state.glossaryCreation.error = "Select a source language.";
     render();
     return;
   }
 
-  if (!targetLanguageCode || !targetLanguageName) {
-    state.glossaryCreation.error = "Enter both the target language code and name.";
+  if (!targetLanguage) {
+    state.glossaryCreation.error = "Select a target language.";
     render();
     return;
   }
@@ -401,10 +400,10 @@ export async function submitGlossaryCreation(render) {
       input: {
         installationId: team.installationId,
         title,
-        sourceLanguageCode,
-        sourceLanguageName,
-        targetLanguageCode,
-        targetLanguageName,
+        sourceLanguageCode: sourceLanguage.code,
+        sourceLanguageName: sourceLanguage.name,
+        targetLanguageCode: targetLanguage.code,
+        targetLanguageName: targetLanguage.name,
       },
     });
     resetGlossaryCreation();
