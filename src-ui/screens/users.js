@@ -96,10 +96,10 @@ export function renderUsersScreen(state) {
         disabled: state.offline?.isEnabled === true || state.pageSync?.status === "syncing",
       }),
       navButtons: [
-        navButton("Logout", "start"),
-        navButton("Teams", "teams"),
+        navButton("Teams", "teams", false, { isBack: true }),
         navButton("Projects", "projects"),
         navButton("Glossaries", "glossaries"),
+        navButton("Logout", "start"),
       ],
       tools: `${primaryButton("+ Invite People", "open-invite-user", { disabled: !canInviteUsers })}`,
       pageSync: state.pageSync,

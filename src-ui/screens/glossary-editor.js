@@ -107,8 +107,8 @@ export function renderGlossaryEditorScreen(state) {
         disabled: state.offline?.isEnabled === true || state.pageSync?.status === "syncing",
       }),
       navButtons: [
+        navButton("Glossaries", "glossaries", false, { isBack: true }),
         navButton("Projects", "projects"),
-        navButton("Glossaries", "glossaries"),
       ],
       tools: `${searchField} ${primaryButton("+ New Term", "open-new-term")}`,
       pageSync: state.pageSync,

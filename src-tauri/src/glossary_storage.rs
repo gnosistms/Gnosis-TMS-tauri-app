@@ -1,10 +1,12 @@
 use std::{
-  collections::BTreeSet,
+  collections::{BTreeMap, BTreeSet},
   fs,
   path::{Path, PathBuf},
   process::Command,
+  sync::OnceLock,
 };
 
+use quick_xml::{events::Event, Reader};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::{json, Value};
 use tauri::AppHandle;
@@ -13,6 +15,7 @@ use uuid::Uuid;
 use crate::storage_paths::local_glossary_repo_root;
 
 const GLOSSARY_GITATTRIBUTES: &str = "* text=auto eol=lf\n";
+const ISO_LANGUAGE_OPTIONS_SOURCE: &str = include_str!("../../src-ui/lib/language-options.js");
 
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -79,6 +82,14 @@ pub(crate) struct CreateLocalGlossaryInput {
   source_language_name: String,
   target_language_code: String,
   target_language_name: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ImportTmxGlossaryInput {
+  installation_id: i64,
+  file_name: String,
+  bytes: Vec<u8>,
 }
 
 #[derive(Deserialize)]
@@ -189,6 +200,16 @@ pub(crate) async fn create_local_gtms_glossary(
   tauri::async_runtime::spawn_blocking(move || create_local_gtms_glossary_sync(&app, input))
     .await
     .map_err(|error| format!("The glossary creation worker failed: {error}"))?
+}
+
+#[tauri::command]
+pub(crate) async fn import_tmx_to_local_gtms_glossary(
+  app: AppHandle,
+  input: ImportTmxGlossaryInput,
+) -> Result<LocalGlossarySummary, String> {
+  tauri::async_runtime::spawn_blocking(move || import_tmx_to_local_gtms_glossary_sync(&app, input))
+    .await
+    .map_err(|error| format!("The glossary import worker failed: {error}"))?
 }
 
 #[tauri::command]
@@ -385,6 +406,65 @@ fn create_local_gtms_glossary_sync(
     },
     lifecycle_state: "active".to_string(),
     term_count: 0,
+  })
+}
+
+fn import_tmx_to_local_gtms_glossary_sync(
+  app: &AppHandle,
+  input: ImportTmxGlossaryInput,
+) -> Result<LocalGlossarySummary, String> {
+  let parsed = parse_tmx_glossary(&input.file_name, &input.bytes)?;
+
+  let repo_root = local_glossary_repo_root(app, input.installation_id)?;
+  let repo_name = unique_glossary_repo_name(&repo_root, &slugify_repo_name(&parsed.title));
+  let repo_path = repo_root.join(&repo_name);
+  fs::create_dir(&repo_path)
+    .map_err(|error| format!("Could not create the local glossary repo '{}': {error}", repo_path.display()))?;
+
+  git_output(&repo_path, &["init"])?;
+  let _ = git_output(&repo_path, &["symbolic-ref", "HEAD", "refs/heads/main"]);
+
+  ensure_gitattributes(&repo_path.join(".gitattributes"))?;
+
+  let glossary_file = StoredGlossaryFile {
+    glossary_id: Uuid::now_v7().to_string(),
+    title: parsed.title.clone(),
+    lifecycle: StoredLifecycle {
+      state: "active".to_string(),
+    },
+    languages: StoredGlossaryLanguages {
+      source: StoredGlossaryLanguage {
+        code: parsed.source_language.code.clone(),
+        name: parsed.source_language.name.clone(),
+      },
+      target: StoredGlossaryLanguage {
+        code: parsed.target_language.code.clone(),
+        name: parsed.target_language.name.clone(),
+      },
+    },
+  };
+
+  write_json_pretty(&repo_path.join("glossary.json"), &glossary_file)?;
+
+  for term in &parsed.terms {
+    let term_path = repo_path.join("terms").join(format!("{}.json", term.term_id));
+    write_json_pretty(&term_path, term)?;
+  }
+
+  git_output(&repo_path, &["add", ".gitattributes", "glossary.json", "terms"])?;
+  git_output(
+    &repo_path,
+    &["commit", "-m", &format!("Import glossary from {}", input.file_name), "--", ".gitattributes", "glossary.json", "terms"],
+  )?;
+
+  Ok(LocalGlossarySummary {
+    glossary_id: glossary_file.glossary_id,
+    repo_name,
+    title: glossary_file.title,
+    source_language: parsed.source_language,
+    target_language: parsed.target_language,
+    lifecycle_state: "active".to_string(),
+    term_count: parsed.terms.len(),
   })
 }
 
@@ -632,6 +712,349 @@ fn sanitize_target_term_values(values: &[String]) -> Vec<String> {
   sanitized
 }
 
+struct ParsedTmxGlossary {
+  title: String,
+  source_language: GlossaryLanguageInfo,
+  target_language: GlossaryLanguageInfo,
+  terms: Vec<StoredGlossaryTermFile>,
+}
+
+#[derive(Default)]
+struct ParsedTmxUnit {
+  entries_by_language: BTreeMap<String, Vec<String>>,
+  note: String,
+}
+
+#[derive(Default)]
+struct WorkingTmxUnit {
+  entries_by_language: BTreeMap<String, Vec<String>>,
+  note_fragments: Vec<String>,
+  current_language: Option<String>,
+  current_note: String,
+  current_segment: String,
+  inside_note: bool,
+  inside_segment: bool,
+}
+
+fn parse_tmx_glossary(file_name: &str, bytes: &[u8]) -> Result<ParsedTmxGlossary, String> {
+  if !String::from(file_name).trim().to_lowercase().ends_with(".tmx") {
+    return Err("TMX is the only supported glossary import format right now.".to_string());
+  }
+
+  let mut xml = String::from_utf8(bytes.to_vec())
+    .map_err(|error| format!("The TMX file is not valid UTF-8: {error}"))?;
+  if xml.starts_with('\u{feff}') {
+    xml = xml.trim_start_matches('\u{feff}').to_string();
+  }
+
+  let mut reader = Reader::from_str(&xml);
+  reader.trim_text(false);
+
+  let mut buffer = Vec::new();
+  let mut source_language_code = None::<String>;
+  let mut units = Vec::<ParsedTmxUnit>::new();
+  let mut current_unit = None::<WorkingTmxUnit>;
+
+  loop {
+    match reader
+      .read_event_into(&mut buffer)
+      .map_err(|error| format!("Could not parse the TMX file: {error}"))?
+    {
+      Event::Eof => break,
+      Event::Start(event) => match event.name().as_ref() {
+        b"header" | b"headers" => {
+          if source_language_code.is_none() {
+            source_language_code = read_tmx_language_attr(&reader, &event, b"srclang")?;
+          }
+        }
+        b"tu" => {
+          current_unit = Some(WorkingTmxUnit::default());
+        }
+        b"tuv" => {
+          if let Some(unit) = current_unit.as_mut() {
+            unit.current_language = read_tuv_language(&reader, &event)?;
+          }
+        }
+        b"note" => {
+          if let Some(unit) = current_unit.as_mut() {
+            unit.inside_note = true;
+            unit.current_note.clear();
+          }
+        }
+        b"seg" => {
+          if let Some(unit) = current_unit.as_mut() {
+            unit.inside_segment = true;
+            unit.current_segment.clear();
+          }
+        }
+        _ => {}
+      },
+      Event::Empty(event) => match event.name().as_ref() {
+        b"header" | b"headers" => {
+          if source_language_code.is_none() {
+            source_language_code = read_tmx_language_attr(&reader, &event, b"srclang")?;
+          }
+        }
+        b"note" => {}
+        _ => {}
+      },
+      Event::Text(text) => {
+        if let Some(unit) = current_unit.as_mut() {
+          let value = text
+            .unescape()
+            .map_err(|error| format!("Could not decode TMX text: {error}"))?
+            .into_owned();
+          if unit.inside_note {
+            unit.current_note.push_str(&value);
+          } else if unit.inside_segment {
+            unit.current_segment.push_str(&value);
+          }
+        }
+      }
+      Event::CData(text) => {
+        if let Some(unit) = current_unit.as_mut() {
+          let value = String::from_utf8_lossy(text.as_ref()).into_owned();
+          if unit.inside_note {
+            unit.current_note.push_str(&value);
+          } else if unit.inside_segment {
+            unit.current_segment.push_str(&value);
+          }
+        }
+      }
+      Event::End(event) => match event.name().as_ref() {
+        b"tuv" => {
+          if let Some(unit) = current_unit.as_mut() {
+            unit.current_language = None;
+          }
+        }
+        b"note" => {
+          if let Some(unit) = current_unit.as_mut() {
+            unit.inside_note = false;
+            let note = clean_tmx_text(&unit.current_note);
+            if !note.is_empty() {
+              unit.note_fragments.push(note);
+            }
+            unit.current_note.clear();
+          }
+        }
+        b"seg" => {
+          if let Some(unit) = current_unit.as_mut() {
+            unit.inside_segment = false;
+            let segment = clean_tmx_text(&unit.current_segment);
+            if !segment.is_empty() {
+              if let Some(language) = unit.current_language.clone() {
+                unit.entries_by_language.entry(language).or_default().push(segment);
+              }
+            }
+            unit.current_segment.clear();
+          }
+        }
+        b"tu" => {
+          if let Some(unit) = current_unit.take() {
+            units.push(ParsedTmxUnit {
+              entries_by_language: unit.entries_by_language,
+              note: unit.note_fragments.join("\n\n"),
+            });
+          }
+        }
+        _ => {}
+      },
+      _ => {}
+    }
+
+    buffer.clear();
+  }
+
+  let source_language_code = normalize_tmx_language_code(
+    source_language_code
+      .ok_or_else(|| "The TMX file is missing srclang in the header.".to_string())?
+      .as_str(),
+  );
+  if source_language_code.is_empty() {
+    return Err("The TMX file source language is empty or invalid.".to_string());
+  }
+
+  let mut target_language_codes = BTreeSet::new();
+  for unit in &units {
+    for language_code in unit.entries_by_language.keys() {
+      if language_code != &source_language_code {
+        target_language_codes.insert(language_code.clone());
+      }
+    }
+  }
+
+  let target_language_code = if target_language_codes.len() == 1 {
+    target_language_codes.into_iter().next().unwrap_or_default()
+  } else if target_language_codes.is_empty() {
+    return Err("The TMX file does not contain any target-language segments.".to_string());
+  } else {
+    return Err(format!(
+      "The TMX file contains multiple target languages ({}). Import supports exactly one target language per glossary.",
+      target_language_codes.into_iter().collect::<Vec<_>>().join(", "),
+    ));
+  };
+
+  if target_language_code == source_language_code {
+    return Err("The TMX file source and target languages resolve to the same code.".to_string());
+  }
+
+  let mut terms = Vec::new();
+  for unit in units {
+    let source_values = unit
+      .entries_by_language
+      .get(&source_language_code)
+      .cloned()
+      .unwrap_or_default();
+    let source_terms = sanitize_term_values(&source_values);
+    if source_terms.is_empty() {
+      continue;
+    }
+
+    let target_values = unit
+      .entries_by_language
+      .get(&target_language_code)
+      .cloned()
+      .unwrap_or_default();
+    let target_terms = if target_values.is_empty() {
+      vec![String::new()]
+    } else {
+      sanitize_target_term_values(&target_values)
+    };
+
+    terms.push(StoredGlossaryTermFile {
+      term_id: Uuid::now_v7().to_string(),
+      source_terms,
+      target_terms,
+      notes_to_translators: clean_tmx_text(&unit.note),
+      footnote: String::new(),
+      untranslated: false,
+      lifecycle: StoredLifecycle {
+        state: "active".to_string(),
+      },
+    });
+  }
+
+  if terms.is_empty() {
+    return Err("The TMX file did not contain any importable translation units.".to_string());
+  }
+
+  let title = title_from_import_file_name(file_name);
+  let source_language_name = language_name_for_iso_code(&source_language_code)
+    .unwrap_or_else(|| source_language_code.to_uppercase());
+  let target_language_name = language_name_for_iso_code(&target_language_code)
+    .unwrap_or_else(|| target_language_code.to_uppercase());
+
+  Ok(ParsedTmxGlossary {
+    title,
+    source_language: GlossaryLanguageInfo {
+      code: source_language_code,
+      name: source_language_name,
+    },
+    target_language: GlossaryLanguageInfo {
+      code: target_language_code,
+      name: target_language_name,
+    },
+    terms,
+  })
+}
+
+fn title_from_import_file_name(file_name: &str) -> String {
+  Path::new(file_name)
+    .file_stem()
+    .and_then(|value| value.to_str())
+    .map(str::trim)
+    .filter(|value| !value.is_empty())
+    .unwrap_or("Imported glossary")
+    .to_string()
+}
+
+fn clean_tmx_text(value: &str) -> String {
+  value.trim().to_string()
+}
+
+fn normalize_tmx_language_code(value: &str) -> String {
+  value
+    .trim()
+    .split(['-', '_'])
+    .next()
+    .unwrap_or_default()
+    .trim()
+    .to_lowercase()
+}
+
+fn read_tmx_language_attr(
+  reader: &Reader<&[u8]>,
+  event: &quick_xml::events::BytesStart<'_>,
+  attribute_name: &[u8],
+) -> Result<Option<String>, String> {
+  for attribute in event.attributes().with_checks(false) {
+    let attribute = attribute.map_err(|error| format!("Could not read a TMX attribute: {error}"))?;
+    if attribute.key.as_ref() != attribute_name {
+      continue;
+    }
+
+    let value = attribute
+      .decode_and_unescape_value(reader)
+      .map_err(|error| format!("Could not decode a TMX attribute: {error}"))?
+      .into_owned();
+    return Ok(Some(value));
+  }
+
+  Ok(None)
+}
+
+fn read_tuv_language(
+  reader: &Reader<&[u8]>,
+  event: &quick_xml::events::BytesStart<'_>,
+) -> Result<Option<String>, String> {
+  for attribute in event.attributes().with_checks(false) {
+    let attribute = attribute.map_err(|error| format!("Could not read a TMX attribute: {error}"))?;
+    let key = attribute.key.as_ref();
+    if key != b"xml:lang" && key != b"lang" {
+      continue;
+    }
+
+    let value = attribute
+      .decode_and_unescape_value(reader)
+      .map_err(|error| format!("Could not decode a TMX language value: {error}"))?
+      .into_owned();
+    let normalized = normalize_tmx_language_code(&value);
+    if normalized.is_empty() {
+      return Ok(None);
+    }
+    return Ok(Some(normalized));
+  }
+
+  Ok(None)
+}
+
+fn language_name_for_iso_code(code: &str) -> Option<String> {
+  static ISO_LANGUAGE_NAMES: OnceLock<BTreeMap<String, String>> = OnceLock::new();
+
+  ISO_LANGUAGE_NAMES
+    .get_or_init(|| {
+      let mut names = BTreeMap::new();
+      for line in ISO_LANGUAGE_OPTIONS_SOURCE.lines() {
+        let trimmed = line.trim();
+        if !trimmed.starts_with("[\"") {
+          continue;
+        }
+        let parts = trimmed.split('"').collect::<Vec<_>>();
+        if parts.len() < 4 {
+          continue;
+        }
+        let iso_code = parts[1].trim().to_lowercase();
+        let iso_name = parts[3].trim().to_string();
+        if !iso_code.is_empty() && !iso_name.is_empty() {
+          names.insert(iso_code, iso_name);
+        }
+      }
+      names
+    })
+    .get(&code.trim().to_lowercase())
+    .cloned()
+}
+
 fn slugify_repo_name(value: &str) -> String {
   let slug = value
     .trim()
@@ -728,4 +1151,40 @@ fn write_text_file(path: &Path, contents: &str) -> Result<(), String> {
   }
   fs::write(path, contents)
     .map_err(|error| format!("Could not write '{}': {error}", path.display()))
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  const GNOSIS_ES_VI_TMX: &str = include_str!("../tests/fixtures/gnosis-es-vi.tmx");
+
+  #[test]
+  fn parses_real_gnosis_es_vi_tmx_fixture() {
+    let parsed = parse_tmx_glossary("Gnosis ES-VI.tmx", GNOSIS_ES_VI_TMX.as_bytes())
+      .expect("fixture TMX should parse");
+
+    assert_eq!(parsed.title, "Gnosis ES-VI");
+    assert_eq!(parsed.source_language.code, "es");
+    assert_eq!(parsed.source_language.name, "Spanish");
+    assert_eq!(parsed.target_language.code, "vi");
+    assert_eq!(parsed.target_language.name, "Vietnamese");
+    assert!(parsed.terms.len() > 500);
+
+    let alquimia = parsed
+      .terms
+      .iter()
+      .find(|term| term.source_terms.iter().any(|value| value == "Alquimia"))
+      .expect("Alquimia term should be present");
+    assert!(alquimia.target_terms.iter().any(|value| value == "thuật luyện kim đan"));
+    assert!(alquimia.notes_to_translators.contains("không dịch là \"giả kim\""));
+
+    let antitesis = parsed
+      .terms
+      .iter()
+      .find(|term| term.source_terms.iter().any(|value| value == "antítesis"))
+      .expect("antítesis term should be present");
+    assert!(antitesis.target_terms.iter().any(|value| value == "phản đề"));
+    assert!(antitesis.notes_to_translators.contains("Hãy tham khảo khái niệm"));
+  }
 }

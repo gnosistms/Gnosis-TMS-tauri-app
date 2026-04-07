@@ -1,4 +1,9 @@
-import { escapeHtml, loadingPrimaryButton, secondaryButton } from "../lib/ui.js";
+import {
+  escapeHtml,
+  loadingPrimaryButton,
+  secondaryButton,
+  tooltipAttributes,
+} from "../lib/ui.js";
 import { formatErrorForDisplay } from "../app/error-display.js";
 
 function renderVariantRow(side, value, index, total, isSubmitting) {
@@ -14,7 +19,7 @@ function renderVariantRow(side, value, index, total, isSubmitting) {
           type="button"
           data-glossary-term-variant-handle
           aria-label="${escapeHtml(dragLabel)}"
-          data-tooltip="${escapeHtml(dragLabel)}"
+          ${tooltipAttributes(dragLabel)}
           ${isSubmitting ? "disabled" : ""}
         >
           <span class="term-variant-row__drag-dots" aria-hidden="true">
@@ -35,7 +40,7 @@ function renderVariantRow(side, value, index, total, isSubmitting) {
           type="button"
           data-action="remove-glossary-term-variant:${escapeHtml(side)}:${index}"
           aria-label="Remove variant"
-          data-tooltip="Remove variant"
+          ${tooltipAttributes("Remove variant")}
           ${removeDisabled ? "disabled" : ""}
         ><span class="term-variant-row__remove-icon" aria-hidden="true"></span></button>
       `
@@ -86,7 +91,7 @@ function renderVariantLane(side, languageName, values, isSubmitting) {
           type="button"
           data-action="add-glossary-term-variant:${escapeHtml(side)}"
           aria-label="Add variant"
-          data-tooltip="Add variant"
+          ${tooltipAttributes("Add variant")}
           ${isSubmitting ? "disabled" : ""}
         ><span class="term-lane__add-icon" aria-hidden="true"></span></button>
       </div>
@@ -131,11 +136,11 @@ export function renderGlossaryTermEditorModal(state) {
             <div class="glossary-term-modal__details-grid">
               <label class="field">
                 <span class="field__label">Notes</span>
-                <textarea class="field__textarea" placeholder="Internal guidance for translators" data-glossary-term-notes-input ${isSubmitting ? "disabled" : ""}>${escapeHtml(editor.notesToTranslators)}</textarea>
+                <textarea class="field__textarea" placeholder="Enter instructions for how this term should be translated here." data-glossary-term-notes-input ${isSubmitting ? "disabled" : ""}>${escapeHtml(editor.notesToTranslators)}</textarea>
               </label>
               <label class="field">
                 <span class="field__label">Footnote</span>
-                <textarea class="field__textarea" placeholder="Optional publishable explanatory footnote" data-glossary-term-footnote-input ${isSubmitting ? "disabled" : ""}>${escapeHtml(editor.footnote)}</textarea>
+                <textarea class="field__textarea" placeholder="Enter footnote text here. On the first appearance of this term in a document, the editor will automatically suggest adding this footnote to your translation." data-glossary-term-footnote-input ${isSubmitting ? "disabled" : ""}>${escapeHtml(editor.footnote)}</textarea>
               </label>
             </div>
           </section>

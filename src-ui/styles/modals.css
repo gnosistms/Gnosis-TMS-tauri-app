@@ -535,7 +535,7 @@
 }
 
 .modal-card--glossary-term .field__textarea {
-  min-height: 68px;
+  min-height: 104px;
   border-color: var(--surface-border);
   border-radius: var(--radius-control);
   background: var(--panel-surface);
@@ -567,7 +567,6 @@
 
 .glossary-term-modal__details {
   padding-top: 4px;
-  border-top: 1px solid rgba(164, 112, 41, 0.08);
   background: transparent;
 }
 
@@ -785,83 +784,6 @@
   border-color: rgba(184, 118, 42, 0.18);
   background: rgba(255, 244, 227, 0.84);
   transform: none;
-}
-
-.term-variant-row__drag-handle[data-tooltip]::before,
-.term-variant-row__drag-handle[data-tooltip]::after,
-.term-variant-row__action-button[data-tooltip]::before,
-.term-variant-row__action-button[data-tooltip]::after,
-.term-lane__add-button[data-tooltip]::before,
-.term-lane__add-button[data-tooltip]::after {
-  position: absolute;
-  left: 50%;
-  opacity: 0;
-  pointer-events: none;
-  transition:
-    opacity 140ms ease,
-    transform 140ms ease;
-  z-index: 12;
-}
-
-.term-variant-row__drag-handle[data-tooltip]::before,
-.term-variant-row__action-button[data-tooltip]::before,
-.term-lane__add-button[data-tooltip]::before {
-  content: attr(data-tooltip);
-  bottom: calc(100% + 10px);
-  transform: translate(-50%, 4px);
-  max-width: 220px;
-  padding: 8px 10px;
-  border-radius: 12px;
-  background: rgba(255, 249, 242, 0.98);
-  box-shadow: 0 10px 20px rgba(88, 60, 21, 0.08);
-  color: rgb(116, 92, 58);
-  font-size: 0.76rem;
-  font-weight: 600;
-  line-height: 1.25;
-  text-align: center;
-  white-space: normal;
-  width: max-content;
-}
-
-.term-variant-row__drag-handle[data-tooltip]::after,
-.term-variant-row__action-button[data-tooltip]::after,
-.term-lane__add-button[data-tooltip]::after {
-  content: "";
-  bottom: calc(100% + 4px);
-  transform: translate(-50%, 4px);
-  border-width: 6px 5px 0;
-  border-style: solid;
-  border-color: rgba(255, 249, 242, 0.98) transparent transparent;
-}
-
-.term-variant-row__drag-handle[data-tooltip]:hover:not(:disabled)::before,
-.term-variant-row__drag-handle[data-tooltip]:hover:not(:disabled)::after,
-.term-variant-row__drag-handle[data-tooltip]:focus-visible::before,
-.term-variant-row__drag-handle[data-tooltip]:focus-visible::after,
-.term-variant-row__action-button[data-tooltip]:hover:not(:disabled)::before,
-.term-variant-row__action-button[data-tooltip]:hover:not(:disabled)::after,
-.term-variant-row__action-button[data-tooltip]:focus-visible::before,
-.term-variant-row__action-button[data-tooltip]:focus-visible::after,
-.term-lane__add-button[data-tooltip]:hover:not(:disabled)::before,
-.term-lane__add-button[data-tooltip]:hover:not(:disabled)::after,
-.term-lane__add-button[data-tooltip]:focus-visible::before,
-.term-lane__add-button[data-tooltip]:focus-visible::after {
-  opacity: 1;
-}
-
-.term-variant-row__drag-handle[data-tooltip]:hover:not(:disabled)::before,
-.term-variant-row__drag-handle[data-tooltip]:hover:not(:disabled)::after,
-.term-variant-row__drag-handle[data-tooltip]:focus-visible::before,
-.term-variant-row__drag-handle[data-tooltip]:focus-visible::after,
-.term-variant-row__action-button[data-tooltip]:hover:not(:disabled)::before,
-.term-variant-row__action-button[data-tooltip]:hover:not(:disabled)::after,
-.term-variant-row__action-button[data-tooltip]:focus-visible::before,
-.term-variant-row__action-button[data-tooltip]:focus-visible::after,
-.term-lane__add-button[data-tooltip]:hover:not(:disabled)::before,
-.term-lane__add-button[data-tooltip]:hover:not(:disabled)::after,
-.term-lane__add-button[data-tooltip]:focus-visible::before,
-.term-lane__add-button[data-tooltip]:focus-visible::after {
-  transform: translate(-50%, 0);
 }
 
 .term-variant-row.is-dragging {

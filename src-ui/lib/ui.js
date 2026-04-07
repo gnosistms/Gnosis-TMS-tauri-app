@@ -9,6 +9,15 @@ export function escapeHtml(value) {
     .replaceAll("'", "&#39;");
 }
 
+export function tooltipAttributes(text) {
+  const tooltip = String(text ?? "").trim();
+  if (!tooltip) {
+    return "";
+  }
+
+  return ` data-tooltip="${escapeHtml(tooltip)}"`;
+}
+
 function disabledActionAttributes(options = {}) {
   if (!options.disabled) {
     return "";
@@ -18,9 +27,20 @@ function disabledActionAttributes(options = {}) {
 }
 
 export function navButton(label, target, isGhost = false, options = {}) {
+  const chevron = options.isBack
+    ? `
+      <span class="header-nav__back-chevron" aria-hidden="true">
+        <svg viewBox="0 0 10 18" focusable="false" aria-hidden="true">
+          <path d="M8.5 1.5 2 9l6.5 7.5" />
+        </svg>
+      </span>
+    `
+    : "";
   return `<button class="header-nav__button${
     isGhost ? " header-nav__button--ghost" : ""
-  }${options.disabled ? " is-disabled" : ""}" data-nav-target="${escapeHtml(target)}"${disabledActionAttributes(options)}>${escapeHtml(label)}</button>`;
+  }${
+    options.isBack ? " header-nav__button--back" : ""
+  }${options.disabled ? " is-disabled" : ""}" data-nav-target="${escapeHtml(target)}"${disabledActionAttributes(options)}>${chevron}<span>${escapeHtml(label)}</span></button>`;
 }
 
 export function primaryButton(label, action, options = {}) {
@@ -92,7 +112,7 @@ export function titleRefreshButton(action, options = {}) {
       class="title-icon-button${options.disabled ? " is-disabled" : ""}${options.spinning ? " is-spinning" : ""}"
       data-action="${escapeHtml(action)}"
       aria-label="Refresh page"
-      title="Refresh page"
+      ${tooltipAttributes("Refresh page")}
       ${options.disabled ? 'aria-disabled="true" data-offline-blocked="true"' : ""}
     >
       <span
@@ -195,7 +215,7 @@ export function pageShell({
         </div>
         <div class="page-header__title-wrap">
           <div class="page-header__title-row">
-            <h1 class="page-header__title" title="${escapeHtml(titleTooltip || title)}">${escapeHtml(title)}</h1>
+            <h1 class="page-header__title"${tooltipAttributes(titleTooltip || title)}>${escapeHtml(title)}</h1>
             ${titleAction}
           </div>
           ${subtitle ? `<p class="page-header__subtitle">${escapeHtml(subtitle)}</p>` : ""}

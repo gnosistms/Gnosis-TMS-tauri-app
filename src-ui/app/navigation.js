@@ -73,12 +73,12 @@ export async function refreshCurrentScreen(render) {
   }
 
   if (screen === "glossaries") {
-    await loadTeamGlossaries(render, state.selectedTeamId);
+    await loadTeamGlossaries(render, state.selectedTeamId, { preserveVisibleData: true });
     return;
   }
 
   if (screen === "glossaryEditor") {
-    await loadSelectedGlossaryEditorData(render);
+    await loadSelectedGlossaryEditorData(render, { preserveVisibleData: true });
     return;
   }
 

@@ -233,7 +233,7 @@ export function renderTranslateScreen(state) {
       disabled: state.offline?.isEnabled === true || state.pageSync?.status === "syncing",
     }),
     navButtons: [
-      navButton("Projects", "projects"),
+      navButton("Projects", "projects", false, { isBack: true }),
       navButton("Glossaries", "glossaries"),
     ],
     tools: renderModeSegmentedControl(),

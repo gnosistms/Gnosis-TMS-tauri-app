@@ -3,6 +3,7 @@ import {
   cancelGlossaryCreation,
   cancelGlossaryTermEditor,
   deleteGlossaryTerm,
+  importGlossaryFromTmx,
   moveGlossaryTermVariantToIndex,
   openGlossaryCreation,
   openGlossaryTermEditor,
@@ -44,7 +45,7 @@ export function createGlossaryActions(render) {
     "cancel-glossary-term-editor": () => cancelGlossaryTermEditor(render),
     "cancel-glossary-creation": () => cancelGlossaryCreation(render),
     "open-new-glossary": () => openGlossaryCreation(render),
-    "upload-glossary": () => showGlossaryFeatureNotReady(render, "Glossary upload"),
+    "import-glossary": () => importGlossaryFromTmx(render),
     "open-new-term": () => openGlossaryTermEditor(render),
   };
 

@@ -9,6 +9,47 @@ import {
 import { showNoticeBadge } from "./status-feedback.js";
 import { findIsoLanguageOption } from "../lib/language-options.js";
 
+function openGlossaryImportFilePicker() {
+  return new Promise((resolve) => {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = ".tmx,text/xml,application/xml";
+    input.style.display = "none";
+
+    const cleanup = () => {
+      input.removeEventListener("change", handleChange);
+      input.removeEventListener("cancel", handleCancel);
+      if (input.parentNode) {
+        input.parentNode.removeChild(input);
+      }
+    };
+
+    const handleChange = () => {
+      const file = input.files?.[0] ?? null;
+      cleanup();
+      resolve(file);
+    };
+
+    const handleCancel = () => {
+      cleanup();
+      resolve(null);
+    };
+
+    input.addEventListener("change", handleChange, { once: true });
+    input.addEventListener("cancel", handleCancel, { once: true });
+    document.body.appendChild(input);
+    input.click();
+  });
+}
+
+function detectGlossaryImportFileType(fileName) {
+  const normalized = String(fileName || "").trim().toLowerCase();
+  if (normalized.endsWith(".tmx")) {
+    return "tmx";
+  }
+  return null;
+}
+
 function selectedTeam(teamId = state.selectedTeamId) {
   return state.teams.find((team) => team.id === teamId) ?? null;
 }
@@ -217,7 +258,12 @@ function updateGlossaryTermArray(side, updater) {
   }
 }
 
-export async function loadTeamGlossaries(render, teamId = state.selectedTeamId) {
+export async function loadTeamGlossaries(
+  render,
+  teamId = state.selectedTeamId,
+  options = {},
+) {
+  const preserveVisibleData = options.preserveVisibleData === true;
   const team = selectedTeam(teamId);
   state.selectedTeamId = teamId ?? state.selectedTeamId;
 
@@ -229,7 +275,7 @@ export async function loadTeamGlossaries(render, teamId = state.selectedTeamId) 
     return;
   }
 
-  if (state.glossaries.length === 0) {
+  if (!preserveVisibleData && state.glossaries.length === 0) {
     state.glossaryDiscovery = { status: "loading", error: "" };
   }
 
@@ -256,16 +302,19 @@ export async function loadTeamGlossaries(render, teamId = state.selectedTeamId) 
     render();
   } catch (error) {
     failPageSync();
-    state.glossaryDiscovery = {
-      status: "error",
-      error: error?.message ?? String(error),
-    };
+    if (!preserveVisibleData || state.glossaryDiscovery?.status !== "ready") {
+      state.glossaryDiscovery = {
+        status: "error",
+        error: error?.message ?? String(error),
+      };
+    }
     showNoticeBadge(error?.message ?? String(error), render);
     render();
   }
 }
 
-export async function loadSelectedGlossaryEditorData(render) {
+export async function loadSelectedGlossaryEditorData(render, options = {}) {
+  const preserveVisibleData = options.preserveVisibleData === true;
   const team = selectedTeam();
   const glossary = selectedGlossary();
   if (!Number.isFinite(team?.installationId) || !glossary?.repoName) {
@@ -280,19 +329,33 @@ export async function loadSelectedGlossaryEditorData(render) {
   }
 
   beginPageSync();
-  state.glossaryEditor = {
-    ...state.glossaryEditor,
-    status: "loading",
-    error: "",
-    glossaryId: glossary.id,
-    repoName: glossary.repoName,
-    title: glossary.title,
-    sourceLanguage: glossary.sourceLanguage,
-    targetLanguage: glossary.targetLanguage,
-    lifecycleState: glossary.lifecycleState,
-    termCount: glossary.termCount,
-    terms: [],
-  };
+  if (preserveVisibleData && state.glossaryEditor?.status === "ready") {
+    state.glossaryEditor = {
+      ...state.glossaryEditor,
+      error: "",
+      glossaryId: glossary.id,
+      repoName: glossary.repoName,
+      title: glossary.title,
+      sourceLanguage: glossary.sourceLanguage,
+      targetLanguage: glossary.targetLanguage,
+      lifecycleState: glossary.lifecycleState,
+      termCount: glossary.termCount,
+    };
+  } else {
+    state.glossaryEditor = {
+      ...state.glossaryEditor,
+      status: "loading",
+      error: "",
+      glossaryId: glossary.id,
+      repoName: glossary.repoName,
+      title: glossary.title,
+      sourceLanguage: glossary.sourceLanguage,
+      targetLanguage: glossary.targetLanguage,
+      lifecycleState: glossary.lifecycleState,
+      termCount: glossary.termCount,
+      terms: [],
+    };
+  }
   render();
   await waitForNextPaint();
 
@@ -308,12 +371,14 @@ export async function loadSelectedGlossaryEditorData(render) {
     render();
   } catch (error) {
     failPageSync();
-    state.glossaryEditor = {
-      ...state.glossaryEditor,
-      status: "error",
-      error: error?.message ?? String(error),
-      terms: [],
-    };
+    if (!preserveVisibleData || state.glossaryEditor?.status !== "ready") {
+      state.glossaryEditor = {
+        ...state.glossaryEditor,
+        status: "error",
+        error: error?.message ?? String(error),
+        terms: [],
+      };
+    }
     showNoticeBadge(error?.message ?? String(error), render);
     render();
   }
@@ -608,4 +673,58 @@ export async function deleteGlossaryTerm(render, termId) {
 
 export function showGlossaryFeatureNotReady(render, label = "This glossary action") {
   showNoticeBadge(`${label} is not implemented yet.`, render);
+}
+
+export async function importGlossaryFromTmx(render) {
+  const team = selectedTeam();
+  if (!Number.isFinite(team?.installationId)) {
+    showNoticeBadge("Importing a glossary requires a GitHub App-connected team.", render);
+    return;
+  }
+
+  if (team.canManageProjects !== true) {
+    showNoticeBadge("You do not have permission to import glossaries in this team.", render);
+    return;
+  }
+
+  const selectedFile = await openGlossaryImportFilePicker();
+  if (!selectedFile) {
+    return;
+  }
+
+  const fileType = detectGlossaryImportFileType(selectedFile.name);
+  if (fileType !== "tmx") {
+    showNoticeBadge(
+      `Unsupported file type for ${selectedFile.name}. TMX is the only supported glossary import format right now.`,
+      render,
+    );
+    return;
+  }
+
+  beginPageSync();
+  render();
+  await waitForNextPaint();
+
+  try {
+    const bytes = Array.from(new Uint8Array(await selectedFile.arrayBuffer()));
+    const glossary = await invoke("import_tmx_to_local_gtms_glossary", {
+      input: {
+        installationId: team.installationId,
+        fileName: selectedFile.name,
+        bytes,
+      },
+    });
+
+    state.selectedGlossaryId = glossary.glossaryId;
+    await loadTeamGlossaries(render, team.id);
+    await openGlossaryEditor(render, glossary.glossaryId);
+    showNoticeBadge(
+      `Imported ${glossary.termCount} terms from ${selectedFile.name} into ${glossary.title}.`,
+      render,
+    );
+  } catch (error) {
+    failPageSync();
+    showNoticeBadge(error?.message ?? String(error), render);
+    render();
+  }
 }

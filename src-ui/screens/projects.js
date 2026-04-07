@@ -282,10 +282,10 @@ export function renderProjectsScreen(state) {
       disabled: offlineMode || isProjectsSyncing,
     }),
     navButtons: [
-      navButton("Logout", "start"),
-      navButton("Teams", "teams"),
+      navButton("Teams", "teams", false, { isBack: true }),
       navButton("Members", "users"),
       navButton("Glossaries", "glossaries"),
+      navButton("Logout", "start"),
     ],
     leftTools: createSearchField("Search"),
     tools: [
