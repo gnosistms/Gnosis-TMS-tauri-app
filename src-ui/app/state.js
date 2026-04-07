@@ -12,10 +12,12 @@ export const state = {
   selectedProjectId: "p2",
   selectedGlossaryId: "g1",
   selectedChapterId: "c2",
+  glossariesSearchQuery: "",
   teams: [],
   deletedTeams: [],
   projects: [],
   deletedProjects: [],
+  glossaries: [],
   users: [],
   auth: {
     status: "idle",
@@ -38,6 +40,7 @@ export const state = {
   projectImport: createProjectImportState(),
   projectRepoSyncByProjectId: {},
   editorChapter: createEditorChapterState(),
+  glossaryEditor: createGlossaryEditorState(),
   userDiscovery: {
     status: "idle",
     error: "",
@@ -59,6 +62,7 @@ export const state = {
   projectPermanentDeletion: createProjectPermanentDeletionState(),
   chapterRename: createChapterRenameState(),
   chapterPermanentDeletion: createChapterPermanentDeletionState(),
+  glossaryTermEditor: createGlossaryTermEditorState(),
   showDeletedProjects: false,
   showDeletedTeams: false,
 };
@@ -186,6 +190,22 @@ export function createEditorChapterState() {
   };
 }
 
+export function createGlossaryEditorState() {
+  return {
+    status: "idle",
+    error: "",
+    glossaryId: null,
+    repoName: "",
+    title: "",
+    lifecycleState: "active",
+    sourceLanguage: null,
+    targetLanguage: null,
+    termCount: 0,
+    searchQuery: "",
+    terms: [],
+  };
+}
+
 export function createInviteUserState() {
   return {
     isOpen: false,
@@ -239,6 +259,18 @@ export function createChapterPermanentDeletionState() {
   });
 }
 
+export function createGlossaryTermEditorState() {
+  return createEntityModalState({
+    glossaryId: null,
+    termId: null,
+    sourceTermsText: "",
+    targetTermsText: "",
+    notesToTranslators: "",
+    footnote: "",
+    untranslated: false,
+  });
+}
+
 export function resetInviteUser() {
   state.inviteUser = createInviteUserState();
 }
@@ -287,6 +319,10 @@ export function resetProjectPermanentDeletion() {
   state.projectPermanentDeletion = createProjectPermanentDeletionState();
 }
 
+export function resetGlossaryTermEditor() {
+  state.glossaryTermEditor = createGlossaryTermEditorState();
+}
+
 export function resetSessionState() {
   clearActiveStorageLogin();
   const offlineState = {
@@ -305,12 +341,15 @@ export function resetSessionState() {
   state.deletedTeams = [];
   state.projects = [];
   state.deletedProjects = [];
+  state.glossaries = [];
+  state.glossariesSearchQuery = "";
   state.users = [];
   state.orgDiscovery = { status: "idle", error: "" };
   state.projectDiscovery = { status: "idle", error: "" };
   state.projectImport = createProjectImportState();
   state.projectRepoSyncByProjectId = {};
   state.editorChapter = createEditorChapterState();
+  state.glossaryEditor = createGlossaryEditorState();
   state.userDiscovery = { status: "idle", error: "" };
   state.teamSyncVersion = 0;
   state.projectSyncVersion = 0;
@@ -332,6 +371,7 @@ export function resetSessionState() {
   resetChapterRename();
   resetChapterPermanentDeletion();
   resetProjectPermanentDeletion();
+  resetGlossaryTermEditor();
   state.showDeletedProjects = false;
   state.showDeletedTeams = false;
   state.expandedDeletedFiles = new Set();
