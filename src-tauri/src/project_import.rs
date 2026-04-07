@@ -11,6 +11,7 @@ use self::{
     list_local_gtms_project_files_sync,
     load_gtms_chapter_editor_data_sync,
     restore_gtms_editor_field_from_history_sync,
+    update_gtms_chapter_glossary_links_sync,
     update_gtms_chapter_language_selection_sync,
     update_gtms_editor_row_fields_sync,
     LoadEditorFieldHistoryInput,
@@ -21,6 +22,8 @@ use self::{
     LoadChapterEditorResponse,
     RestoreEditorFieldHistoryInput,
     RestoreEditorFieldHistoryResponse,
+    UpdateChapterGlossaryLinksInput,
+    UpdateChapterGlossaryLinksResponse,
     UpdateChapterLanguageSelectionInput,
     UpdateChapterLanguageSelectionResponse,
     UpdateEditorRowFieldsInput,
@@ -82,6 +85,16 @@ pub(crate) async fn update_gtms_chapter_language_selection(
   })
   .await
   .map_err(|error| format!("The chapter settings worker failed: {error}"))?
+}
+
+#[tauri::command]
+pub(crate) async fn update_gtms_chapter_glossary_links(
+  app: AppHandle,
+  input: UpdateChapterGlossaryLinksInput,
+) -> Result<UpdateChapterGlossaryLinksResponse, String> {
+  tauri::async_runtime::spawn_blocking(move || update_gtms_chapter_glossary_links_sync(&app, input))
+    .await
+    .map_err(|error| format!("The chapter glossary worker failed: {error}"))?
 }
 
 #[tauri::command]

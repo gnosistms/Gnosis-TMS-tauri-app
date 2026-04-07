@@ -300,6 +300,10 @@ export function registerAppEvents(render) {
       return;
     }
 
+    if (event.target.closest("[data-stop-row-action]")) {
+      return;
+    }
+
     const navTarget = event.target.closest("[data-nav-target]")?.dataset.navTarget;
     if (navTarget) {
       handleNavigation(navTarget, render);

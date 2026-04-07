@@ -110,9 +110,12 @@ export function setImmediateLoadingButton(button, loadingLabel) {
 }
 
 export function secondaryButton(label, action, options = {}) {
+  const tooltip = options.tooltip
+    ? tooltipAttributes(options.tooltip, options.tooltipOptions)
+    : "";
   return `<button class="button button--secondary${options.compact ? " button--compact" : ""}${options.disabled ? " is-disabled" : ""}" data-action="${escapeHtml(
     action,
-  )}"${disabledActionAttributes(options)}>${escapeHtml(label)}</button>`;
+  )}"${tooltip}${disabledActionAttributes(options)}>${escapeHtml(label)}</button>`;
 }
 
 export function textAction(label, action, options = {}) {
@@ -128,7 +131,7 @@ export function renderCollapseChevron(isOpen = false, className = "") {
   return `
     <span class="${classes}" aria-hidden="true">
       <svg viewBox="0 0 12 12" focusable="false" aria-hidden="true">
-        <path d="M3.25 2.25 7.75 6l-4.5 3.75" />
+        <path d="M3 2 7 6 3 10" />
       </svg>
     </span>
   `;
@@ -172,7 +175,7 @@ export function sectionSeparator({ label, action, isOpen = false }) {
   return `
     <button class="section-separator" data-action="${escapeHtml(action)}">
       <span class="section-separator__line" aria-hidden="true"></span>
-      <span class="section-separator__label">
+      <span class="section-separator__label collapse-affordance">
         ${escapeHtml(label)}
         ${renderCollapseChevron(isOpen, "section-separator__chevron")}
       </span>

@@ -156,11 +156,30 @@ struct ChapterLanguage {
 #[derive(Clone, Default, Serialize, Deserialize)]
 struct ChapterSettings {
   #[serde(default)]
+  #[serde(skip_serializing_if = "Option::is_none")]
+  linked_glossaries: Option<ChapterLinkedGlossaries>,
+  #[serde(default)]
   default_source_language: Option<String>,
   #[serde(default)]
   default_target_language: Option<String>,
   #[serde(default)]
   default_preview_language: Option<String>,
+}
+
+#[derive(Clone, Default, Serialize, Deserialize)]
+struct ChapterLinkedGlossaries {
+  #[serde(default)]
+  #[serde(skip_serializing_if = "Option::is_none")]
+  glossary_1: Option<ChapterGlossaryLink>,
+  #[serde(default)]
+  #[serde(skip_serializing_if = "Option::is_none")]
+  glossary_2: Option<ChapterGlossaryLink>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+struct ChapterGlossaryLink {
+  glossary_id: String,
+  repo_name: String,
 }
 
 #[derive(Serialize)]
@@ -466,6 +485,7 @@ fn build_chapter_file(
       })
       .collect(),
     settings: ChapterSettings {
+      linked_glossaries: None,
       default_source_language: parsed.languages.first().map(|language| language.code.clone()),
       default_target_language: parsed.languages.last().map(|language| language.code.clone()),
       default_preview_language: parsed.languages.last().map(|language| language.code.clone()),

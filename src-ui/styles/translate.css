@@ -163,14 +163,16 @@
   padding: 0;
   border: 0;
   background: transparent;
-  color: var(--link);
+  color: var(--muted);
   font-size: 1rem;
   font-weight: 700;
   line-height: 1.1;
+  transition: color 140ms ease;
 }
 
-.translation-language-panel__toggle:hover {
-  color: var(--accent-strong);
+.translation-language-panel__toggle:hover,
+.history-group__toggle:not(.history-group__toggle--static):hover .history-group__summary {
+  color: var(--link-hover);
 }
 
 .translation-language-panel__chevron {
@@ -178,7 +180,7 @@
 }
 
 .translation-language-panel__label {
-  color: var(--link);
+  color: inherit;
   font-size: 1rem;
   font-weight: 700;
 }
@@ -325,7 +327,10 @@
   align-items: center;
   gap: 10px;
   min-width: 0;
-  color: rgba(63, 38, 16, 0.92);
+  color: var(--muted);
+  font-size: 1rem;
+  font-weight: 700;
+  transition: color 140ms ease;
 }
 
 .history-group__chevron {
@@ -337,7 +342,7 @@
 }
 
 .history-group__author {
-  font-weight: 700;
+  font-weight: inherit;
   color: inherit;
 }
 

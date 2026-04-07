@@ -1,5 +1,6 @@
 import { state } from "../state.js";
 import {
+  acknowledgeChapterGlossaryConflict,
   cancelChapterPermanentDeletion,
   cancelChapterRename,
   cancelProjectCreation,
@@ -27,6 +28,7 @@ import { actionSuffix, runWithImmediateLoading } from "../action-helpers.js";
 
 export function createProjectActions(render) {
   const exactActions = {
+    "acknowledge-chapter-glossary-conflict": () => acknowledgeChapterGlossaryConflict(render),
     "open-new-project": () => createProjectForSelectedTeam(render),
     "cancel-project-creation": () => cancelProjectCreation(render),
     "cancel-project-permanent-deletion": () => cancelProjectPermanentDeletion(render),

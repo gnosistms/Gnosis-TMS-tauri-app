@@ -61,7 +61,7 @@
   --accent-strong: #ec8609;
   --accent-text: #fff8ed;
   --link: #c97a12;
-  --link-hover: #d7963f;
+  --link-hover: #b57c3e;
   --link-disabled: #d7b182;
   --message-error-bg: rgba(255, 234, 230, 0.92);
   --message-error-border: rgba(165, 64, 36, 0.28);
@@ -524,6 +524,7 @@ a {
   height: 0.72em;
   color: currentColor;
   line-height: 1;
+  transform: translateY(var(--collapse-chevron-shift-y, 0));
   transition: transform 160ms ease, opacity 160ms ease, color 160ms ease;
 }
 
@@ -542,7 +543,16 @@ a {
 }
 
 .collapse-chevron.is-open {
-  transform: rotate(90deg);
+  transform: translateY(var(--collapse-chevron-shift-y, 0)) rotate(90deg);
+}
+
+.collapse-affordance {
+  --collapse-chevron-shift-y: 0.02em;
+  line-height: 1;
+}
+
+.collapse-affordance .collapse-chevron + * {
+  line-height: inherit;
 }
 
 .button {

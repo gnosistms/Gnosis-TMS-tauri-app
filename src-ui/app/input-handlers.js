@@ -2,6 +2,7 @@ import { state } from "./state.js";
 import { syncAutoSizeTextarea, syncEditorRowTextareaHeight } from "./autosize.js";
 import {
   updateChapterPermanentDeletionConfirmation,
+  updateChapterGlossaryLinks,
   updateChapterRenameName,
   updateProjectCreationName,
   updateProjectPermanentDeletionConfirmation,
@@ -278,6 +279,25 @@ function handleEditorRowFieldChange(event, render) {
   return true;
 }
 
+function handleChapterGlossarySelectInput(event, render) {
+  if (event.type !== "change") {
+    return false;
+  }
+
+  const input = event.target.closest("[data-chapter-glossary-select]");
+  if (!input) {
+    return false;
+  }
+
+  void updateChapterGlossaryLinks(
+    render,
+    input.dataset.chapterId,
+    input.dataset.glossarySlot,
+    input.value,
+  );
+  return true;
+}
+
 const inputHandlers = [
   handleProjectCreationInput,
   handleProjectPermanentDeleteInput,
@@ -299,6 +319,7 @@ const inputHandlers = [
   handleEditorFontSizeInput,
   handleEditorRowFieldInput,
   handleEditorRowFieldChange,
+  handleChapterGlossarySelectInput,
 ];
 
 export function handleInputEvent(event, render) {

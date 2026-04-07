@@ -65,6 +65,31 @@ pub(crate) struct UpdateChapterLanguageSelectionResponse {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub(crate) struct UpdateChapterGlossaryLinksInput {
+  installation_id: i64,
+  repo_name: String,
+  chapter_id: String,
+  glossary_1: Option<GlossaryLinkSelectionInput>,
+  glossary_2: Option<GlossaryLinkSelectionInput>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct GlossaryLinkSelectionInput {
+  glossary_id: String,
+  repo_name: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct UpdateChapterGlossaryLinksResponse {
+  chapter_id: String,
+  glossary_1: Option<ProjectChapterGlossaryLink>,
+  glossary_2: Option<ProjectChapterGlossaryLink>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct UpdateEditorRowFieldsInput {
   installation_id: i64,
   repo_name: String,
@@ -170,6 +195,15 @@ pub(super) struct ProjectChapterSummary {
   source_word_counts: BTreeMap<String, usize>,
   selected_source_language_code: Option<String>,
   selected_target_language_code: Option<String>,
+  linked_glossary_1: Option<ProjectChapterGlossaryLink>,
+  linked_glossary_2: Option<ProjectChapterGlossaryLink>,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct ProjectChapterGlossaryLink {
+  glossary_id: String,
+  repo_name: String,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -216,9 +250,22 @@ struct StoredSourceFileMetadata {
 
 #[derive(Deserialize, Default)]
 struct StoredChapterSettings {
+  linked_glossaries: Option<StoredChapterLinkedGlossaries>,
   default_source_language: Option<String>,
   default_target_language: Option<String>,
   default_preview_language: Option<String>,
+}
+
+#[derive(Clone, Deserialize, Default)]
+struct StoredChapterLinkedGlossaries {
+  glossary_1: Option<StoredChapterGlossaryLink>,
+  glossary_2: Option<StoredChapterGlossaryLink>,
+}
+
+#[derive(Clone, Deserialize)]
+struct StoredChapterGlossaryLink {
+  glossary_id: String,
+  repo_name: String,
 }
 
 #[derive(Deserialize)]
@@ -428,6 +475,66 @@ pub(super) fn update_gtms_chapter_language_selection_sync(
     chapter_id: input.chapter_id,
     source_language_code: input.source_language_code,
     target_language_code: input.target_language_code,
+  })
+}
+
+pub(super) fn update_gtms_chapter_glossary_links_sync(
+  app: &AppHandle,
+  input: UpdateChapterGlossaryLinksInput,
+) -> Result<UpdateChapterGlossaryLinksResponse, String> {
+  let repo_path = local_repo_root(app, input.installation_id)?.join(&input.repo_name);
+  ensure_repo_exists(&repo_path, "The local project repo is not available yet.")?;
+  ensure_valid_git_repo(&repo_path, "The local project repo is missing or invalid.")?;
+
+  let chapter_path = find_chapter_path_by_id(&repo_path.join("chapters"), &input.chapter_id)?;
+  let chapter_json_path = chapter_path.join("chapter.json");
+  let mut chapter_value: Value = read_json_file(&chapter_json_path, "chapter.json")?;
+  let chapter_title = chapter_value
+    .get("title")
+    .and_then(Value::as_str)
+    .unwrap_or("file")
+    .to_string();
+
+  let chapter_object = chapter_value
+    .as_object_mut()
+    .ok_or_else(|| "The chapter.json file is not a JSON object.".to_string())?;
+  let settings_value = chapter_object
+    .entry("settings".to_string())
+    .or_insert_with(|| json!({}));
+  let settings_object = settings_value
+    .as_object_mut()
+    .ok_or_else(|| "The chapter settings are not a JSON object.".to_string())?;
+  let linked_glossaries_value = settings_object
+    .entry("linked_glossaries".to_string())
+    .or_insert_with(|| json!({}));
+  let linked_glossaries_object = linked_glossaries_value
+    .as_object_mut()
+    .ok_or_else(|| "The chapter linked glossaries are not a JSON object.".to_string())?;
+
+  let glossary_1_value = glossary_link_value_from_input(input.glossary_1.as_ref());
+  let glossary_2_value = glossary_link_value_from_input(input.glossary_2.as_ref());
+  let glossary_1_changed = linked_glossaries_object.get("glossary_1") != Some(&glossary_1_value);
+  let glossary_2_changed = linked_glossaries_object.get("glossary_2") != Some(&glossary_2_value);
+
+  if glossary_1_changed || glossary_2_changed {
+    linked_glossaries_object.insert("glossary_1".to_string(), glossary_1_value);
+    linked_glossaries_object.insert("glossary_2".to_string(), glossary_2_value);
+    write_json_pretty(&chapter_json_path, &chapter_value)?;
+
+    let relative_chapter_json = repo_relative_path(&repo_path, &chapter_json_path)?;
+    git_output(&repo_path, &["add", &relative_chapter_json])?;
+    git_commit_as_signed_in_user(
+      app,
+      &repo_path,
+      &format!("Update glossary links for {}", chapter_title),
+      &[&relative_chapter_json],
+    )?;
+  }
+
+  Ok(UpdateChapterGlossaryLinksResponse {
+    chapter_id: input.chapter_id,
+    glossary_1: input.glossary_1.map(project_chapter_glossary_link_from_input),
+    glossary_2: input.glossary_2.map(project_chapter_glossary_link_from_input),
   })
 }
 
@@ -711,6 +818,8 @@ fn load_project_chapter_summaries(repo_path: &Path) -> Result<Vec<ProjectChapter
       &languages,
       selected_source_language_code.as_deref(),
     );
+    let linked_glossary_1 = linked_chapter_glossary(&chapter_file, 1);
+    let linked_glossary_2 = linked_chapter_glossary(&chapter_file, 2);
 
     chapters.push(ProjectChapterSummary {
       id: chapter_file.chapter_id,
@@ -724,6 +833,8 @@ fn load_project_chapter_summaries(repo_path: &Path) -> Result<Vec<ProjectChapter
       source_word_counts,
       selected_source_language_code,
       selected_target_language_code,
+      linked_glossary_1,
+      linked_glossary_2,
     });
   }
 
@@ -790,6 +901,25 @@ fn load_historical_row_field_plain_text(
 
 fn short_commit_sha(commit_sha: &str) -> String {
   commit_sha.chars().take(8).collect()
+}
+
+fn glossary_link_value_from_input(input: Option<&GlossaryLinkSelectionInput>) -> Value {
+  match input {
+    Some(selection) => json!({
+      "glossary_id": selection.glossary_id,
+      "repo_name": selection.repo_name,
+    }),
+    None => Value::Null,
+  }
+}
+
+fn project_chapter_glossary_link_from_input(
+  input: GlossaryLinkSelectionInput,
+) -> ProjectChapterGlossaryLink {
+  ProjectChapterGlossaryLink {
+    glossary_id: input.glossary_id,
+    repo_name: input.repo_name,
+  }
 }
 
 fn sanitize_chapter_languages(languages: &[ChapterLanguage]) -> Vec<ChapterLanguage> {
@@ -880,6 +1010,30 @@ fn preferred_source_language_code(
         .iter()
         .find_map(|source_file| source_file.file_metadata.source_locale.clone())
     })
+}
+
+fn linked_chapter_glossary(
+  chapter_file: &StoredChapterFile,
+  slot: usize,
+) -> Option<ProjectChapterGlossaryLink> {
+  let link = match slot {
+    1 => chapter_file
+      .settings
+      .as_ref()
+      .and_then(|settings| settings.linked_glossaries.as_ref())
+      .and_then(|linked| linked.glossary_1.as_ref()),
+    2 => chapter_file
+      .settings
+      .as_ref()
+      .and_then(|settings| settings.linked_glossaries.as_ref())
+      .and_then(|linked| linked.glossary_2.as_ref()),
+    _ => None,
+  }?;
+
+  Some(ProjectChapterGlossaryLink {
+    glossary_id: link.glossary_id.clone(),
+    repo_name: link.repo_name.clone(),
+  })
 }
 
 fn preferred_target_language_code(

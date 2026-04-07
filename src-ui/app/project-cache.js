@@ -67,6 +67,32 @@ function normalizeChapter(chapter) {
     id,
     name,
     status: chapter.status === "deleted" ? "deleted" : "active",
+    linkedGlossary1: normalizeChapterGlossaryLink(chapter.linkedGlossary1),
+    linkedGlossary2: normalizeChapterGlossaryLink(chapter.linkedGlossary2),
+  };
+}
+
+function normalizeChapterGlossaryLink(link) {
+  if (!link || typeof link !== "object") {
+    return null;
+  }
+
+  const glossaryId =
+    typeof link.glossaryId === "string" && link.glossaryId.trim()
+      ? link.glossaryId.trim()
+      : null;
+  const repoName =
+    typeof link.repoName === "string" && link.repoName.trim()
+      ? link.repoName.trim()
+      : null;
+
+  if (!glossaryId || !repoName) {
+    return null;
+  }
+
+  return {
+    glossaryId,
+    repoName,
   };
 }
 

@@ -21,6 +21,11 @@ import {
   upsertPendingMutation,
 } from "./optimistic-collection.js";
 import {
+  normalizeGlossarySummary,
+  sortGlossaries,
+} from "./glossary-shared.js";
+import {
+  resetChapterGlossaryConflict,
   resetChapterPermanentDeletion,
   resetChapterRename,
   resetProjectCreation,
@@ -87,6 +92,32 @@ function normalizeListedChapter(chapter) {
       typeof chapter.selectedTargetLanguageCode === "string" && chapter.selectedTargetLanguageCode.trim()
         ? chapter.selectedTargetLanguageCode
         : null,
+    linkedGlossary1: normalizeChapterGlossaryLink(chapter.linkedGlossary1),
+    linkedGlossary2: normalizeChapterGlossaryLink(chapter.linkedGlossary2),
+  };
+}
+
+function normalizeChapterGlossaryLink(link) {
+  if (!link || typeof link !== "object") {
+    return null;
+  }
+
+  const glossaryId =
+    typeof link.glossaryId === "string" && link.glossaryId.trim()
+      ? link.glossaryId.trim()
+      : null;
+  const repoName =
+    typeof link.repoName === "string" && link.repoName.trim()
+      ? link.repoName.trim()
+      : null;
+
+  if (!glossaryId || !repoName) {
+    return null;
+  }
+
+  return {
+    glossaryId,
+    repoName,
   };
 }
 
@@ -160,6 +191,30 @@ async function loadLocalProjectFileListings(selectedTeam, projects) {
   });
 
   return Array.isArray(listings) ? listings : [];
+}
+
+async function loadAvailableGlossariesForTeam(selectedTeam, teamIdAtStart = selectedTeam?.id) {
+  if (!Number.isFinite(selectedTeam?.installationId)) {
+    if (state.selectedTeamId === teamIdAtStart) {
+      state.glossaries = [];
+    }
+    return [];
+  }
+
+  const glossaries = await invoke("list_local_gtms_glossaries", {
+    input: { installationId: selectedTeam.installationId },
+  });
+  const normalizedGlossaries = sortGlossaries(
+    (Array.isArray(glossaries) ? glossaries : [])
+      .map(normalizeGlossarySummary)
+      .filter(Boolean),
+  );
+
+  if (state.selectedTeamId === teamIdAtStart) {
+    state.glossaries = normalizedGlossaries;
+  }
+
+  return normalizedGlossaries;
 }
 
 export async function refreshProjectFilesFromDisk(render, selectedTeam, projects) {
@@ -239,6 +294,55 @@ function updateChapterInState(chapterId, updater) {
 
   state.projects = state.projects.map(applyToProject);
   state.deletedProjects = state.deletedProjects.map(applyToProject);
+}
+
+function chapterGlossaryLinkFromGlossaryId(glossaryId) {
+  if (typeof glossaryId !== "string" || !glossaryId.trim()) {
+    return null;
+  }
+
+  const glossary = state.glossaries.find(
+    (item) => item?.id === glossaryId && item.lifecycleState !== "deleted",
+  );
+  if (!glossary) {
+    return null;
+  }
+
+  return {
+    glossaryId: glossary.id,
+    repoName: glossary.repoName,
+  };
+}
+
+function chapterGlossaryLinkInput(link) {
+  if (!link) {
+    return null;
+  }
+
+  return {
+    glossaryId: link.glossaryId,
+    repoName: link.repoName,
+  };
+}
+
+function glossarySummaryByLink(link) {
+  if (!link) {
+    return null;
+  }
+
+  return (
+    state.glossaries.find((glossary) => glossary?.id === link.glossaryId)
+    ?? state.glossaries.find((glossary) => glossary?.repoName === link.repoName)
+    ?? null
+  );
+}
+
+function glossaryTargetLanguageKey(glossary) {
+  if (!glossary || typeof glossary !== "object") {
+    return "";
+  }
+
+  return String(glossary.targetLanguage?.code ?? glossary.targetLanguage?.name ?? "").trim().toLowerCase();
 }
 
 function reconcileExpandedDeletedFiles() {
@@ -446,6 +550,14 @@ function applyChapterPendingMutation(snapshot, mutation) {
         };
       }
 
+      if (mutation.type === "setGlossaryLinks") {
+        return {
+          ...chapter,
+          linkedGlossary1: normalizeChapterGlossaryLink(mutation.glossary1),
+          linkedGlossary2: normalizeChapterGlossaryLink(mutation.glossary2),
+        };
+      }
+
       return chapter;
     });
 
@@ -490,8 +602,10 @@ export async function loadTeamProjects(render, teamId = state.selectedTeamId) {
     state.pendingChapterMutations,
     applyChapterPendingMutation,
   );
+  const glossaryLoadPromise = loadAvailableGlossariesForTeam(selectedTeam, teamId).catch(() => state.glossaries);
 
   if (state.offline.isEnabled) {
+    await glossaryLoadPromise;
     state.projectRepoSyncByProjectId = {};
     applyProjectSnapshotToState(optimisticSnapshot);
     state.projectDiscovery = { status: "ready", error: "" };
@@ -511,10 +625,13 @@ export async function loadTeamProjects(render, teamId = state.selectedTeamId) {
   render();
 
   try {
-    const projects = await invoke("list_gnosis_projects_for_installation", {
-      installationId: selectedTeam.installationId,
-      sessionToken: requireBrokerSession(),
-    });
+    const [projects] = await Promise.all([
+      invoke("list_gnosis_projects_for_installation", {
+        installationId: selectedTeam.installationId,
+        sessionToken: requireBrokerSession(),
+      }),
+      glossaryLoadPromise,
+    ]);
     if (syncVersionAtStart !== state.projectSyncVersion) {
       await completeProjectsPageSync(render);
       render();
@@ -980,6 +1097,162 @@ export async function submitChapterRename(render) {
       render();
     }
   });
+}
+
+async function persistChapterGlossaryLinks(render, chapterId, nextGlossary1, nextGlossary2) {
+  const selectedTeam = state.teams.find((team) => team.id === state.selectedTeamId);
+  const context = findChapterContext(chapterId);
+
+  if (
+    !Number.isFinite(selectedTeam?.installationId)
+    || !context?.project?.name
+    || !context?.chapter
+  ) {
+    state.projectDiscovery = {
+      status: "error",
+      error: "Could not find the selected file.",
+    };
+    render();
+    return;
+  }
+
+  const currentGlossary1 = normalizeChapterGlossaryLink(context.chapter.linkedGlossary1);
+  const currentGlossary2 = normalizeChapterGlossaryLink(context.chapter.linkedGlossary2);
+
+  if (
+    JSON.stringify(nextGlossary1) === JSON.stringify(currentGlossary1)
+    && JSON.stringify(nextGlossary2) === JSON.stringify(currentGlossary2)
+  ) {
+    return;
+  }
+
+  const snapshot = cloneProjectCollections();
+  const mutation = {
+    id: crypto.randomUUID(),
+    type: "setGlossaryLinks",
+    projectId: context.project.id,
+    chapterId,
+    glossary1: nextGlossary1,
+    glossary2: nextGlossary2,
+  };
+
+  state.projectSyncVersion += 1;
+  updateChapterInState(chapterId, (chapter) => ({
+    ...chapter,
+    linkedGlossary1: nextGlossary1,
+    linkedGlossary2: nextGlossary2,
+  }));
+  beginProjectsPageSync();
+  persistProjectsForTeam(selectedTeam);
+  state.pendingChapterMutations = upsertPendingMutation(state.pendingChapterMutations, mutation);
+  persistChapterPendingMutationsForTeam(selectedTeam);
+  render();
+
+  void waitForNextPaint().then(async () => {
+    try {
+      const payload = await invoke("update_gtms_chapter_glossary_links", {
+        input: {
+          installationId: selectedTeam.installationId,
+          repoName: context.project.name,
+          chapterId,
+          glossary1: chapterGlossaryLinkInput(nextGlossary1),
+          glossary2: chapterGlossaryLinkInput(nextGlossary2),
+        },
+      });
+
+      state.pendingChapterMutations = removePendingMutation(state.pendingChapterMutations, mutation.id);
+      persistChapterPendingMutationsForTeam(selectedTeam);
+      updateChapterInState(chapterId, (chapter) => ({
+        ...chapter,
+        linkedGlossary1: normalizeChapterGlossaryLink(payload?.glossary1),
+        linkedGlossary2: normalizeChapterGlossaryLink(payload?.glossary2),
+      }));
+      persistProjectsForTeam(selectedTeam);
+      await reconcileProjectRepoSyncStates(render, selectedTeam, [context.project]);
+      await refreshProjectFilesFromDisk(render, selectedTeam, [context.project]);
+      await completeProjectsPageSync(render);
+      render();
+    } catch (error) {
+      state.pendingChapterMutations = removePendingMutation(state.pendingChapterMutations, mutation.id);
+      persistChapterPendingMutationsForTeam(selectedTeam);
+      restoreProjectCollections(snapshot);
+      persistProjectsForTeam(selectedTeam);
+      showNoticeBadge(error?.message ?? String(error), render);
+      failProjectsPageSync();
+      render();
+    }
+  });
+}
+
+export async function updateChapterGlossaryLinks(render, chapterId, slot, glossaryId) {
+  if (slot !== "glossary_1" && slot !== "glossary_2") {
+    return;
+  }
+
+  const context = findChapterContext(chapterId);
+  if (!context?.chapter) {
+    state.projectDiscovery = {
+      status: "error",
+      error: "Could not find the selected file.",
+    };
+    render();
+    return;
+  }
+
+  const nextLink = chapterGlossaryLinkFromGlossaryId(glossaryId);
+  if (glossaryId && !nextLink) {
+    showNoticeBadge("Could not find the selected glossary.", render);
+    return;
+  }
+
+  const currentGlossary1 = normalizeChapterGlossaryLink(context.chapter.linkedGlossary1);
+  const currentGlossary2 = normalizeChapterGlossaryLink(context.chapter.linkedGlossary2);
+  const otherLink = slot === "glossary_1" ? currentGlossary2 : currentGlossary1;
+  const nextSummary = glossarySummaryByLink(nextLink);
+  const otherSummary = glossarySummaryByLink(otherLink);
+  const nextTargetLanguageKey = glossaryTargetLanguageKey(nextSummary);
+  const otherTargetLanguageKey = glossaryTargetLanguageKey(otherSummary);
+
+  if (
+    nextLink
+    && otherLink
+    && nextTargetLanguageKey
+    && otherTargetLanguageKey
+    && nextTargetLanguageKey === otherTargetLanguageKey
+  ) {
+    state.chapterGlossaryConflict = {
+      isOpen: true,
+      status: "idle",
+      error: "",
+      chapterId,
+      glossary1: slot === "glossary_1" ? nextLink : null,
+      glossary2: slot === "glossary_2" ? nextLink : null,
+      message: `Your two glossaries have the same target language. To prevent errors, ${otherSummary?.title ?? "the other glossary"} will be de-selected.`,
+    };
+    render();
+    return;
+  }
+
+  await persistChapterGlossaryLinks(
+    render,
+    chapterId,
+    slot === "glossary_1" ? nextLink : currentGlossary1,
+    slot === "glossary_2" ? nextLink : currentGlossary2,
+  );
+}
+
+export async function acknowledgeChapterGlossaryConflict(render) {
+  const conflict = state.chapterGlossaryConflict;
+  if (!conflict?.isOpen || !conflict.chapterId) {
+    return;
+  }
+
+  const chapterId = conflict.chapterId;
+  const glossary1 = normalizeChapterGlossaryLink(conflict.glossary1);
+  const glossary2 = normalizeChapterGlossaryLink(conflict.glossary2);
+  resetChapterGlossaryConflict();
+  render();
+  await persistChapterGlossaryLinks(render, chapterId, glossary1, glossary2);
 }
 
 export async function deleteProject(render, projectId) {

@@ -352,6 +352,17 @@
   pointer-events: none;
 }
 
+.chapter-glossary-select {
+  min-width: 168px;
+  max-width: 220px;
+}
+
+.chapter-glossary-select .select-pill__value {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .segmented-control {
   display: inline-flex;
   align-items: stretch;

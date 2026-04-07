@@ -8,6 +8,7 @@ import {
   renderCollapseChevron,
   secondaryButton,
   textAction,
+  tooltipAttributes,
 } from "../lib/ui.js";
 import {
   diff_match_patch,
@@ -308,7 +309,12 @@ function renderHistoryEntry(entry, previousEntry, activeLanguage, activeSection,
     : secondaryButton(
       isRestoring ? "Restoring..." : "Restore",
       `restore-editor-history:${entry.commitSha}`,
-      { disabled: !canRestore || history.status === "restoring", compact: true },
+      {
+        disabled: !canRestore || history.status === "restoring",
+        compact: true,
+        tooltip: "Restore this version to the editor",
+        tooltipOptions: { align: "start" },
+      },
     );
 
   return `
@@ -380,12 +386,18 @@ function renderHistorySidebar(editorChapter, rows, languages) {
                     const headingAttributes = isExpandable
                       ? ` class="history-group__toggle" type="button" data-action="toggle-editor-history-group:${escapeHtml(group.key)}" aria-expanded="${isExpanded ? "true" : "false"}"`
                       : ' class="history-group__toggle history-group__toggle--static"';
+                    const summaryTooltip = isExpandable
+                      ? tooltipAttributes(
+                        isExpanded ? "Collapse this group of revisions" : "Expand this group of revisions",
+                        { align: "start" },
+                      )
+                      : "";
                     const revisionLabel = `${group.entries.length} ${group.entries.length === 1 ? "revision" : "revisions"}`;
 
                     return `
                       <section class="history-group">
                         <${headingTag}${headingAttributes}>
-                          <span class="history-group__summary">
+                          <span class="history-group__summary collapse-affordance"${summaryTooltip}>
                             ${renderCollapseChevron(isExpanded, "history-group__chevron")}
                             <span class="history-group__author">${escapeHtml(group.authorName)}</span>
                           </span>
@@ -444,10 +456,11 @@ function renderTranslationContentRows(rows, collapsedLanguageCodes = new Set()) 
                       return `
                         <section class="translation-language-panel${isCollapsed ? " is-collapsed" : ""}">
                           <button
-                            class="translation-language-panel__toggle"
+                            class="translation-language-panel__toggle collapse-affordance"
                             type="button"
                             data-action="toggle-editor-language:${escapeHtml(language.code)}"
                             aria-expanded="${isCollapsed ? "false" : "true"}"
+                            ${tooltipAttributes(isCollapsed ? "Show this language" : "Hide this language")}
                           >
                             ${renderCollapseChevron(!isCollapsed, "translation-language-panel__chevron")}
                             <span class="translation-language-panel__label">${escapeHtml(language.name)}</span>

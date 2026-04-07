@@ -9,9 +9,11 @@ import {
   renderStateCard,
   sectionSeparator,
   textAction,
+  tooltipAttributes,
 } from "../lib/ui.js";
 import { formatErrorForDisplay } from "../app/error-display.js";
 import { renderProjectCreationModal } from "./project-creation-modal.js";
+import { renderChapterGlossaryConflictModal } from "./chapter-glossary-conflict-modal.js";
 import { renderChapterPermanentDeletionModal } from "./chapter-permanent-deletion-modal.js";
 import { renderChapterRenameModal } from "./chapter-rename-modal.js";
 import { renderProjectPermanentDeletionModal } from "./project-permanent-deletion-modal.js";
@@ -39,6 +41,57 @@ function compareFilesByName(left, right) {
   });
 }
 
+function availableGlossaryOptions(glossaries = []) {
+  return (Array.isArray(glossaries) ? glossaries : []).filter(
+    (glossary) => glossary?.lifecycleState !== "deleted",
+  );
+}
+
+function findGlossaryOptionById(glossaries, glossaryId) {
+  if (typeof glossaryId !== "string" || !glossaryId.trim()) {
+    return null;
+  }
+
+  return availableGlossaryOptions(glossaries).find((glossary) => glossary.id === glossaryId) ?? null;
+}
+
+function renderChapterGlossarySelect(chapter, slotNumber, glossaries, options = {}) {
+  const linkedGlossary = slotNumber === 1 ? chapter.linkedGlossary1 : chapter.linkedGlossary2;
+  const selectedGlossary = findGlossaryOptionById(glossaries, linkedGlossary?.glossaryId);
+  const slotKey = `glossary_${slotNumber}`;
+  const tooltipText = `Select glossary ${slotNumber}`;
+  const optionList = availableGlossaryOptions(glossaries);
+
+  return `
+    <label
+      class="select-pill select-pill--control chapter-glossary-select"
+      data-stop-row-action
+      ${tooltipAttributes(tooltipText)}
+    >
+      <span class="select-pill__value">${escapeHtml(selectedGlossary?.title ?? "no glossary")}</span>
+      <span class="select-pill__chevron" aria-hidden="true">⌄</span>
+      <select
+        data-chapter-glossary-select
+        data-chapter-id="${escapeHtml(chapter.id)}"
+        data-glossary-slot="${escapeHtml(slotKey)}"
+        aria-label="${escapeHtml(tooltipText)}"
+        ${options.disabled ? "disabled" : ""}
+      >
+        <option value="" ${selectedGlossary ? "" : "selected"}>no glossary</option>
+        ${optionList
+          .map(
+            (glossary) => `
+              <option value="${escapeHtml(glossary.id)}" ${glossary.id === selectedGlossary?.id ? "selected" : ""}>
+                ${escapeHtml(glossary.title)}
+              </option>
+            `,
+          )
+          .join("")}
+      </select>
+    </label>
+  `;
+}
+
 function renderProjectCard(project, expanded, options = {}) {
   const canManageProjects = options.canManageProjects !== false;
   const canPermanentlyDeleteFiles = options.canPermanentlyDeleteFiles === true;
@@ -46,6 +99,7 @@ function renderProjectCard(project, expanded, options = {}) {
   const offlineMode = options.offlineMode === true;
   const deleteAction = options.deleteAction ?? `delete-project:${project.id}`;
   const addFilesDisabled = options.addFilesDisabled === true;
+  const glossaryOptions = options.glossaries ?? [];
   const allFiles = Array.isArray(project.chapters) ? project.chapters : [];
   const files = allFiles.filter((chapter) => chapter?.status !== "deleted").sort(compareFilesByName);
   const deletedFiles = allFiles.filter((chapter) => chapter?.status === "deleted").sort(compareFilesByName);
@@ -89,6 +143,8 @@ function renderProjectCard(project, expanded, options = {}) {
                     }
                   </div>
                   <div class="chapter-table__actions">
+                    ${renderChapterGlossarySelect(chapter, 1, glossaryOptions, { disabled: offlineMode })}
+                    ${renderChapterGlossarySelect(chapter, 2, glossaryOptions, { disabled: offlineMode })}
                     ${textAction("Open", `open-translate:${chapter.id}`)}
                     ${textAction("Rename", `rename-file:${chapter.id}`)}
                     ${textAction("Delete", `delete-file:${chapter.id}`)}
@@ -145,7 +201,7 @@ function renderProjectCard(project, expanded, options = {}) {
     }">
       <div class="expandable-card__header">
         <button
-          class="expandable-card__summary-button"
+          class="expandable-card__summary-button collapse-affordance"
           data-action="toggle-project:${project.id}"
           aria-expanded="${expanded ? "true" : "false"}"
         >
@@ -252,6 +308,7 @@ export function renderProjectsScreen(state) {
                   offlineMode,
                   addFilesDisabled: importInProgress,
                   showDeletedFiles: state.expandedDeletedFiles.has(project.id),
+                  glossaries: state.glossaries,
                 }),
               )
               .join("")}</section>`;
@@ -284,6 +341,7 @@ export function renderProjectsScreen(state) {
     offlineReconnectState: state.offline?.reconnecting === true,
     body,
     }) +
+    renderChapterGlossaryConflictModal(state) +
     renderProjectCreationModal(state) +
     renderChapterPermanentDeletionModal(state) +
     renderChapterRenameModal(state) +

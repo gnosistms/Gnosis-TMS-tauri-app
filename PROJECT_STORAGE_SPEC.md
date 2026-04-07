@@ -258,7 +258,14 @@ Example:
     }
   ],
   "settings": {
-    "default_preview_language": "vi"
+    "default_preview_language": "vi",
+    "linked_glossaries": {
+      "glossary_1": {
+        "glossary_id": "2ec8d9e8-52e2-4c84-bb56-a7765e0cb5de",
+        "repo_name": "gnosis-es-en"
+      },
+      "glossary_2": null
+    }
   }
 }
 ```
@@ -285,6 +292,8 @@ Field notes:
 - `format` must be `"gtms"`
 - `format_version` starts at `1`
 - `appVersion` is the Gnosis TMS version that last wrote the file
+- `settings.linked_glossaries.glossary_1` and `settings.linked_glossaries.glossary_2` are optional per-chapter glossary links
+- glossary links should store stable glossary identity in `glossary_id` and the local repo locator in `repo_name`
 - `lifecycle.state` should be one of:
   - `active`
   - `deleted`
