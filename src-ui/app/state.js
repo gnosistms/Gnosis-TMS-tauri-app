@@ -37,6 +37,10 @@ export const state = {
     status: "idle",
     error: "",
   },
+  glossaryDiscovery: {
+    status: "idle",
+    error: "",
+  },
   projectImport: createProjectImportState(),
   projectRepoSyncByProjectId: {},
   editorChapter: createEditorChapterState(),
@@ -207,6 +211,13 @@ export function createGlossaryEditorState() {
   };
 }
 
+export function createGlossaryDiscoveryState() {
+  return {
+    status: "idle",
+    error: "",
+  };
+}
+
 export function createGlossaryCreationState() {
   return createEntityModalState({
     title: "",
@@ -359,6 +370,7 @@ export function resetSessionState() {
   state.users = [];
   state.orgDiscovery = { status: "idle", error: "" };
   state.projectDiscovery = { status: "idle", error: "" };
+  state.glossaryDiscovery = createGlossaryDiscoveryState();
   state.projectImport = createProjectImportState();
   state.projectRepoSyncByProjectId = {};
   state.editorChapter = createEditorChapterState();

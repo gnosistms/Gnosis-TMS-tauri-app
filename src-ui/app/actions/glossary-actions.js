@@ -3,7 +3,7 @@ import {
   cancelGlossaryCreation,
   cancelGlossaryTermEditor,
   deleteGlossaryTerm,
-  moveGlossaryTermVariant,
+  moveGlossaryTermVariantToIndex,
   openGlossaryCreation,
   openGlossaryTermEditor,
   removeGlossaryTermVariant,
@@ -14,9 +14,18 @@ import {
 import { actionSuffix, runWithImmediateLoading } from "../action-helpers.js";
 
 function parseVariantAction(action) {
-  const match = /^(add|remove|move-up|move-down)-glossary-term-variant:(source|target)(?::(\d+))?$/.exec(
-    action,
-  );
+  const moveMatch = /^move-glossary-term-variant:(source|target):(\d+):(\d+)$/.exec(action);
+  if (moveMatch) {
+    const [, side, rawFromIndex, rawToIndex] = moveMatch;
+    return {
+      type: "move",
+      side,
+      index: Number.parseInt(rawFromIndex, 10),
+      toIndex: Number.parseInt(rawToIndex, 10),
+    };
+  }
+
+  const match = /^(add|remove)-glossary-term-variant:(source|target)(?::(\d+))?$/.exec(action);
   if (!match) {
     return null;
   }
@@ -26,6 +35,7 @@ function parseVariantAction(action) {
     type,
     side,
     index: rawIndex === undefined ? null : Number.parseInt(rawIndex, 10),
+    toIndex: null,
   };
 }
 
@@ -69,10 +79,12 @@ export function createGlossaryActions(render) {
         addGlossaryTermVariant(variantAction.side);
       } else if (variantAction.type === "remove" && Number.isInteger(variantAction.index)) {
         removeGlossaryTermVariant(variantAction.side, variantAction.index);
-      } else if (variantAction.type === "move-up" && Number.isInteger(variantAction.index)) {
-        moveGlossaryTermVariant(variantAction.side, variantAction.index, -1);
-      } else if (variantAction.type === "move-down" && Number.isInteger(variantAction.index)) {
-        moveGlossaryTermVariant(variantAction.side, variantAction.index, 1);
+      } else if (
+        variantAction.type === "move"
+        && Number.isInteger(variantAction.index)
+        && Number.isInteger(variantAction.toIndex)
+      ) {
+        moveGlossaryTermVariantToIndex(variantAction.side, variantAction.index, variantAction.toIndex);
       }
       render();
       return true;

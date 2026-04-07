@@ -5,7 +5,12 @@ import { lockScreenScrollSnapshot, unlockScreenScrollSnapshot } from "./scroll-s
 import { state, resetSessionState } from "./state.js";
 import { waitForNextPaint } from "./runtime.js";
 import { loadGithubAppTestConfig } from "./github-app-test-flow.js";
-import { loadSelectedGlossaryEditorData, loadTeamGlossaries } from "./glossary-flow.js";
+import {
+  loadSelectedGlossaryEditorData,
+  loadTeamGlossaries,
+  primeGlossariesLoadingState,
+  primeSelectedGlossaryEditorLoadingState,
+} from "./glossary-flow.js";
 import { loadTeamProjects } from "./project-flow.js";
 import { loadUserTeams } from "./team-setup-flow.js";
 import { loadTeamUsers, primeUsersForTeam } from "./team-members-flow.js";
@@ -24,6 +29,13 @@ export function handleNavigation(navTarget, render) {
     if (navTarget !== "projects") {
       resetProjectsPageSync();
     }
+  }
+
+  if (navTarget === "glossaries" && state.selectedTeamId) {
+    primeGlossariesLoadingState(state.selectedTeamId);
+  }
+  if (navTarget === "glossaryEditor" && state.selectedGlossaryId) {
+    primeSelectedGlossaryEditorLoadingState();
   }
 
   state.screen = navTarget;

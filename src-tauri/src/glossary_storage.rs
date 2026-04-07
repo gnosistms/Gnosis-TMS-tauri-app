@@ -44,7 +44,6 @@ struct StoredGlossaryFile {
 }
 
 #[derive(Clone, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
 struct StoredGlossaryTermFile {
   term_id: String,
   source_terms: Vec<String>,

@@ -19,6 +19,17 @@ This handoff is stale for old release-packaging details below, but the latest ap
   - item `0` is the primary wording shown first in the editor
   - the same modal shell is used for both `New Term` and `Edit Term`
   - notes and footnote remain secondary fields below the ranked term lists
+  - the current row UI is a single composite control:
+    - term input on the left
+    - integrated utility rail on the right
+    - drag handle and remove button inside that same shell
+    - a compact `+` add-variant control aligned under the utility rail
+  - source/target variant ordering is currently adjusted by dragging with the handle
+  - native `title` tooltips are present for add / remove / drag controls, but they have been unreliable in the Tauri webview; if tooltip behavior matters, replace them with app-rendered custom tooltips instead of relying on browser-native hover titles
+- glossary list and glossary editor loading states now match the Projects page pattern:
+  - show a loading card first
+  - only show empty-state cards after the fetch completes with zero results
+  - glossary list uses its own `glossaryDiscovery` state for this
 - the Projects `Add Files` action now opens the file picker directly from the click path instead of waiting for an extra render tick first
 - the Translate editor now preserves its scroll position when the page is refreshed
 
@@ -27,6 +38,11 @@ If resuming glossary/editor work in a fresh thread, inspect these files first:
 - `/Users/hans/Desktop/GnosisTMS/src-ui/screens/glossary-term-editor-modal.js`
 - `/Users/hans/Desktop/GnosisTMS/src-ui/app/glossary-flow.js`
 - `/Users/hans/Desktop/GnosisTMS/src-ui/app/actions/glossary-actions.js`
+- `/Users/hans/Desktop/GnosisTMS/src-ui/app/actions/navigation-actions.js`
+- `/Users/hans/Desktop/GnosisTMS/src-ui/app/navigation.js`
+- `/Users/hans/Desktop/GnosisTMS/src-ui/app/state.js`
+- `/Users/hans/Desktop/GnosisTMS/src-ui/screens/glossaries.js`
+- `/Users/hans/Desktop/GnosisTMS/src-ui/screens/glossary-editor.js`
 - `/Users/hans/Desktop/GnosisTMS/src-ui/styles/modals.css`
 - `/Users/hans/Desktop/GnosisTMS/PROJECT_STORAGE_SPEC.md`
 - `/Users/hans/Desktop/GnosisTMS/GLOSSARY_IMPLEMENTATION_PLAN.md`
@@ -46,21 +62,17 @@ If resuming glossary/editor work in a fresh thread, inspect these files first:
 Recent app commits:
 
 - most recent local commit should include:
-  - the `icons:sync` automation
-  - the `660x400` + stripped-`pHYs` DMG background fix
-  - updated handoff/setup notes
-- `7883324` `Prepare v0.1.8 release with rounded mac volume icon`
-- `75f26af` `Track DMG background Affinity source`
-- `a3a4e23` `Prepare v0.1.7 release`
-- `b6723d5` `Prepare v0.1.6 release with zipped mac downloads`
-- `ab5d081` `Fix Cargo lock for v0.1.5 release`
-- `6bcfb82` `Add custom DMG file icons to macOS release workflow`
-- `052f4e5` `Add custom macOS DMG background and window layout`
-- `6995bad` `Add mac signing and notarization workflow setup`
-- `916193e` `Prepare v0.1.3 release`
-- `000efb3` `Update release actions to Node 24 versions`
-- `bcf3409` `Prepare v0.1.2 release`
-- `a6a83c0` `Add updater plugin config and secret progress notes`
+  - glossary term editor visual cleanup
+  - drag-handle based ordered variants
+  - glossary loading cards aligned with Projects page behavior
+- `46a7ce9` `Refine glossary term editor and editor UX`
+- `b8e1adf` `Simplify row ordering and glossary language selection`
+- `cbaed41` row ordering storage migration note / implementation checkpoint
+- `c79a7ba` `got stuck while implementing glossary import function`
+- `b1283ca` `Wire glossary screens to local storage`
+- `9e3b68e` `continue implementing glossary`
+- `a09c8a2` `Begin implementing support for importing and editing glossaries`
+- `275a0ae` `Add row blur save and editor polish`
 
 ## Tauri updater / release setup
 

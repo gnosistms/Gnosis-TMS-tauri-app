@@ -127,12 +127,20 @@ Behavior:
 - the modal editor now supports:
   - ordered source-term variants
   - ordered target-term variants
-  - explicit up/down reordering controls
+  - drag-handle reordering controls
   - `notes_to_translators`
   - `footnote`
-  - `untranslated`
 - row 1 in each source/target list is treated as the primary / highest-likelihood wording
 - the same modal shell is used for both `New Term` and `Edit Term`
+- the variant-row UI should stay compact and utility-driven:
+  - one composite row shell per variant
+  - input on the left
+  - integrated utility rail on the right
+  - remove control in the rail
+  - compact add control aligned below the rail
+- glossary list and glossary editor pages should follow the Projects page loading pattern:
+  - loading card first
+  - empty-state card only after data load completes
 
 Deliverable:
 
@@ -140,7 +148,7 @@ Deliverable:
 
 Current follow-up:
 
-- if the reorder controls feel too noisy, revisit them later with a clearer drag-handle or other explicit ranking affordance
+- if tooltip guidance remains important, replace native `title` hover tooltips with custom in-app tooltips because the Tauri webview has been inconsistent about showing browser-native titles on these controls
 
 ### 6. Import And Export
 

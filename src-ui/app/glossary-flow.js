@@ -1,6 +1,11 @@
 import { invoke, waitForNextPaint } from "./runtime.js";
 import { beginPageSync, completePageSync, failPageSync } from "./page-sync.js";
-import { resetGlossaryCreation, resetGlossaryTermEditor, state } from "./state.js";
+import {
+  createGlossaryEditorState,
+  resetGlossaryCreation,
+  resetGlossaryTermEditor,
+  state,
+} from "./state.js";
 import { showNoticeBadge } from "./status-feedback.js";
 import { findIsoLanguageOption } from "../lib/language-options.js";
 
@@ -126,6 +131,51 @@ function sanitizeEditableTerms(terms) {
     .filter(Boolean);
 }
 
+export function primeGlossariesLoadingState(teamId = state.selectedTeamId) {
+  const team = selectedTeam(teamId);
+  state.selectedTeamId = teamId ?? state.selectedTeamId;
+
+  if (!Number.isFinite(team?.installationId)) {
+    state.glossaries = [];
+    state.selectedGlossaryId = null;
+    state.glossaryDiscovery = { status: "ready", error: "" };
+    return;
+  }
+
+  state.glossaries = [];
+  state.selectedGlossaryId = null;
+  state.glossaryDiscovery = { status: "loading", error: "" };
+}
+
+export function primeSelectedGlossaryEditorLoadingState() {
+  const glossary = selectedGlossary();
+  const preservedSearchQuery = state.glossaryEditor?.searchQuery ?? "";
+
+  if (!glossary?.repoName) {
+    state.glossaryEditor = {
+      ...createGlossaryEditorState(),
+      status: "error",
+      error: "Could not determine which glossary to open.",
+      searchQuery: preservedSearchQuery,
+    };
+    return;
+  }
+
+  state.glossaryEditor = {
+    ...createGlossaryEditorState(),
+    status: "loading",
+    error: "",
+    glossaryId: glossary.id,
+    repoName: glossary.repoName,
+    title: glossary.title,
+    sourceLanguage: glossary.sourceLanguage,
+    targetLanguage: glossary.targetLanguage,
+    lifecycleState: glossary.lifecycleState,
+    termCount: glossary.termCount,
+    searchQuery: preservedSearchQuery,
+  };
+}
+
 function updateGlossaryTermArray(side, updater) {
   if (!state.glossaryTermEditor?.isOpen) {
     return;
@@ -147,8 +197,14 @@ export async function loadTeamGlossaries(render, teamId = state.selectedTeamId) 
 
   if (!Number.isFinite(team?.installationId)) {
     state.glossaries = [];
+    state.selectedGlossaryId = null;
+    state.glossaryDiscovery = { status: "ready", error: "" };
     render();
     return;
+  }
+
+  if (state.glossaries.length === 0) {
+    state.glossaryDiscovery = { status: "loading", error: "" };
   }
 
   beginPageSync();
@@ -169,10 +225,15 @@ export async function loadTeamGlossaries(render, teamId = state.selectedTeamId) 
       state.selectedGlossaryId = state.glossaries[0]?.id ?? null;
     }
 
+    state.glossaryDiscovery = { status: "ready", error: "" };
     await completePageSync(render);
     render();
   } catch (error) {
     failPageSync();
+    state.glossaryDiscovery = {
+      status: "error",
+      error: error?.message ?? String(error),
+    };
     showNoticeBadge(error?.message ?? String(error), render);
     render();
   }
@@ -235,6 +296,7 @@ export async function loadSelectedGlossaryEditorData(render) {
 export async function openGlossaryEditor(render, glossaryId) {
   state.selectedGlossaryId = glossaryId;
   state.screen = "glossaryEditor";
+  primeSelectedGlossaryEditorLoadingState();
   render();
   await loadSelectedGlossaryEditorData(render);
 }
@@ -355,20 +417,30 @@ export function removeGlossaryTermVariant(side, index) {
   });
 }
 
-export function moveGlossaryTermVariant(side, index, offset) {
-  if (!Number.isInteger(index) || index < 0 || !Number.isInteger(offset) || offset === 0) {
+export function moveGlossaryTermVariantToIndex(side, fromIndex, toIndex) {
+  if (
+    !Number.isInteger(fromIndex)
+    || fromIndex < 0
+    || !Number.isInteger(toIndex)
+    || toIndex < 0
+  ) {
     return;
   }
 
   updateGlossaryTermArray(side, (terms) => {
-    const nextIndex = index + offset;
-    if (nextIndex < 0 || nextIndex >= terms.length) {
+    if (fromIndex >= terms.length) {
+      return terms;
+    }
+
+    const boundedIndex = Math.min(toIndex, terms.length);
+    const adjustedIndex = boundedIndex > fromIndex ? boundedIndex - 1 : boundedIndex;
+    if (adjustedIndex === fromIndex) {
       return terms;
     }
 
     const nextTerms = [...terms];
-    const [movedTerm] = nextTerms.splice(index, 1);
-    nextTerms.splice(nextIndex, 0, movedTerm);
+    const [movedTerm] = nextTerms.splice(fromIndex, 1);
+    nextTerms.splice(Math.min(adjustedIndex, nextTerms.length), 0, movedTerm);
     return nextTerms;
   });
 }
