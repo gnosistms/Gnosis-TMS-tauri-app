@@ -1,5 +1,6 @@
 import { escapeHtml, navButton, pageShell, primaryButton, textAction, titleRefreshButton } from "../lib/ui.js";
 import { getNoticeBadgeText } from "../app/status-feedback.js";
+import { renderGlossaryCreationModal } from "./glossary-creation-modal.js";
 
 export function renderGlossariesScreen(state) {
   const selectedTeam = state.teams.find((team) => team.id === state.selectedTeamId) ?? state.teams[0];
@@ -64,6 +65,6 @@ export function renderGlossariesScreen(state) {
     noticeText: getNoticeBadgeText(),
     offlineMode: state.offline?.isEnabled === true,
     offlineReconnectState: state.offline?.reconnecting === true,
-    body: bodyMarkup,
+    body: `${bodyMarkup}${renderGlossaryCreationModal(state)}`,
   });
 }

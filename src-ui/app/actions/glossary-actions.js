@@ -1,8 +1,11 @@
 import {
+  cancelGlossaryCreation,
   cancelGlossaryTermEditor,
   deleteGlossaryTerm,
+  openGlossaryCreation,
   openGlossaryTermEditor,
   showGlossaryFeatureNotReady,
+  submitGlossaryCreation,
   submitGlossaryTermEditor,
 } from "../glossary-flow.js";
 import { actionSuffix, runWithImmediateLoading } from "../action-helpers.js";
@@ -10,7 +13,8 @@ import { actionSuffix, runWithImmediateLoading } from "../action-helpers.js";
 export function createGlossaryActions(render) {
   const exactActions = {
     "cancel-glossary-term-editor": () => cancelGlossaryTermEditor(render),
-    "open-new-glossary": () => showGlossaryFeatureNotReady(render, "New glossary"),
+    "cancel-glossary-creation": () => cancelGlossaryCreation(render),
+    "open-new-glossary": () => openGlossaryCreation(render),
     "upload-glossary": () => showGlossaryFeatureNotReady(render, "Glossary upload"),
     "open-new-term": () => openGlossaryTermEditor(render),
   };
@@ -47,6 +51,10 @@ export function createGlossaryActions(render) {
 
     if (action === "submit-glossary-term-editor") {
       await runWithImmediateLoading(event, "Saving...", () => submitGlossaryTermEditor(render));
+      return true;
+    }
+    if (action === "submit-glossary-creation") {
+      await runWithImmediateLoading(event, "Creating...", () => submitGlossaryCreation(render));
       return true;
     }
 

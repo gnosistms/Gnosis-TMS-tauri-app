@@ -60,6 +60,11 @@ function captureFocusedInputState() {
     "[data-team-permanent-delete-input]",
     "[data-project-permanent-delete-input]",
     "[data-glossaries-search-input]",
+    "[data-glossary-title-input]",
+    "[data-glossary-source-language-code-input]",
+    "[data-glossary-source-language-name-input]",
+    "[data-glossary-target-language-code-input]",
+    "[data-glossary-target-language-name-input]",
     "[data-glossary-term-search-input]",
   ];
 

@@ -41,7 +41,6 @@ project-repo/
   chapters/
     01-introduction/
       chapter.json
-      rowOrder.json
       rows/
         <row_id>.json
       assets/
@@ -138,7 +137,7 @@ Rules:
 
 1. Row filenames are derived directly from `row_id`.
 2. Row filenames never change unless the row is deleted.
-3. Row order is stored only in `rowOrder.json`.
+3. Row order is stored on each row file in `structure.order_key`.
 4. Insert/delete/reorder operations must not rename unaffected row files.
 
 ## Project-Level File
@@ -303,28 +302,20 @@ Rules:
 8. `lifecycle.state` is the source of truth for whether a file/chapter is active or deleted.
 9. Soft-delete and restore operations must not rewrite row files.
 
-### `rowOrder.json`
+### Row Ordering
 
-Contains display order for rows.
+Display order is derived by scanning `rows/*.json`, reading `structure.order_key` from each row file, and sorting rows in memory by:
 
-This file exists so row identity can remain stable even when rows are inserted, deleted, or reordered.
-
-Example:
-
-```json
-[
-  "1b2f4f8a-7c4d-4b64-a6a0-5d51c470d0b1",
-  "7e3df8d4-5775-4a9b-82d5-36cf53d41d10"
-]
-```
+1. `structure.order_key`
+2. `row_id` as a deterministic tie-breaker
 
 Rules:
 
-1. Every id in `rowOrder.json` must correspond to an existing file in `rows/`.
-2. Every row file in `rows/` must appear exactly once in `rowOrder.json`.
-3. The file must contain row ids only, with no wrapper object in v1.
-4. Reordering rows means rewriting only this file.
-5. Editing row text must not rewrite this file.
+1. There must be no committed chapter-wide row order file in v1.
+2. `structure.order_key` is a per-row lexicographic rank key, not a contiguous integer index.
+3. New imported rows should receive sparse keys with large gaps so later inserts can usually be done by rewriting only the new row.
+4. If two rows end up with the same `order_key` after merge, the app should still sort deterministically using `row_id`.
+5. If a local area runs out of key space between neighbors, the app may rebalance a bounded contiguous set of nearby row files.
 
 ## Row Files
 
@@ -370,7 +361,7 @@ Example:
       "row": 12,
       "column_group": "main"
     },
-    "order_index": 12,
+    "order_key": "00000000000000010000000000000000",
     "group_context": null
   },
   "origin": {
@@ -569,7 +560,7 @@ Example:
       "welcome"
     ]
   },
-  "order_index": 4,
+  "order_key": "00000000000000010000000000000000",
   "group_context": "HomeScreen"
 }
 ```
@@ -930,7 +921,7 @@ Important practice:
 That means:
 
 - editing one row should only rewrite that row file
-- reordering rows should only rewrite `rowOrder.json`
+- reordering one row should normally rewrite only the moved row file
 - changing chapter metadata should only rewrite `chapter.json`
 
 ## Insert/Delete/Reorder Semantics
@@ -941,22 +932,22 @@ Insert means:
 
 1. create a new row UUIDv7
 2. create a new `rows/<row_id>.json`
-3. insert the row id into `rowOrder.json`
+3. assign a `structure.order_key` that sorts between the previous and next row
 
 ### Delete Row
 
 Delete means:
 
-1. remove the row id from `rowOrder.json`
-2. delete the row file
+1. delete the row file
 
 ### Reorder Row
 
 Reorder means:
 
-1. rewrite `rowOrder.json`
-2. do not rename row files
-3. do not change row ids
+1. rewrite the moved row's `structure.order_key`
+2. if there is no available space between adjacent keys, rebalance a bounded nearby run of row files
+3. do not rename row files
+4. do not change row ids
 
 ## Chapter/File Lifecycle Semantics
 
@@ -971,7 +962,7 @@ It is a reversible lifecycle change, not physical deletion.
 Soft-delete means:
 
 1. keep the chapter folder in `chapters/`
-2. keep `chapter.json`, `rowOrder.json`, and all row files unchanged except for lifecycle metadata
+2. keep `chapter.json` and all row files unchanged except for lifecycle metadata
 3. set `chapter.json.lifecycle.state` to `deleted`
 4. do not rewrite `project.json`
 5. exclude the deleted chapter from normal active views and default exports
@@ -1043,7 +1034,7 @@ When importing `.xlsx`:
 
 When importing rich-text document formats:
 
-1. preserve paragraph/block order in `structure.order_index`
+1. preserve paragraph/block order in `structure.order_key`
 2. preserve formatting as `rich_text`
 3. derive `plain_text` for search and fallback export
 4. preserve style/layout anchors in `structure` and `format_metadata`
@@ -1267,7 +1258,7 @@ For the first real implementation:
 - history/collaboration: Git
 - row identity: UUIDv7
 - one row per file
-- display order: `rowOrder.json`
+- display order: per-row `structure.order_key`
 - rich text: structured blocks/runs with optional derived `html_preview`
 - attachments: structured field metadata
 - first-class translator guidance: `guidance`

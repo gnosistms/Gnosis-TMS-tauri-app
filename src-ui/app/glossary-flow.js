@@ -1,6 +1,6 @@
 import { invoke, waitForNextPaint } from "./runtime.js";
 import { beginPageSync, completePageSync, failPageSync } from "./page-sync.js";
-import { resetGlossaryTermEditor, state } from "./state.js";
+import { resetGlossaryCreation, resetGlossaryTermEditor, state } from "./state.js";
 import { showNoticeBadge } from "./status-feedback.js";
 
 function selectedTeam(teamId = state.selectedTeamId) {
@@ -123,7 +123,7 @@ export async function loadTeamGlossaries(render, teamId = state.selectedTeamId) 
   const team = selectedTeam(teamId);
   state.selectedTeamId = teamId ?? state.selectedTeamId;
 
-  if (!Number.isFinite(team?.installationId) || state.offline.isEnabled) {
+  if (!Number.isFinite(team?.installationId)) {
     state.glossaries = [];
     render();
     return;
@@ -217,6 +217,47 @@ export async function openGlossaryEditor(render, glossaryId) {
   await loadSelectedGlossaryEditorData(render);
 }
 
+export function openGlossaryCreation(render) {
+  const team = selectedTeam();
+  if (!Number.isFinite(team?.installationId)) {
+    showNoticeBadge("Creating a glossary requires a GitHub App-connected team.", render);
+    return;
+  }
+
+  if (team.canManageProjects !== true) {
+    showNoticeBadge("You do not have permission to create glossaries in this team.", render);
+    return;
+  }
+
+  state.glossaryCreation = {
+    isOpen: true,
+    status: "idle",
+    error: "",
+    title: "",
+    sourceLanguageCode: "",
+    sourceLanguageName: "",
+    targetLanguageCode: "",
+    targetLanguageName: "",
+  };
+  render();
+}
+
+export function cancelGlossaryCreation(render) {
+  resetGlossaryCreation();
+  render();
+}
+
+export function updateGlossaryCreationField(field, value) {
+  if (!state.glossaryCreation?.isOpen) {
+    return;
+  }
+
+  state.glossaryCreation[field] = value;
+  if (state.glossaryCreation.error) {
+    state.glossaryCreation.error = "";
+  }
+}
+
 export function updateGlossariesSearchQuery(render, value) {
   state.glossariesSearchQuery = value;
   render();
@@ -303,6 +344,77 @@ export async function submitGlossaryTermEditor(render) {
   } catch (error) {
     state.glossaryTermEditor.status = "idle";
     state.glossaryTermEditor.error = error?.message ?? String(error);
+    render();
+  }
+}
+
+export async function submitGlossaryCreation(render) {
+  const team = selectedTeam();
+  const draft = state.glossaryCreation;
+  if (!draft?.isOpen) {
+    return;
+  }
+
+  if (!Number.isFinite(team?.installationId)) {
+    state.glossaryCreation.error = "Creating a glossary requires a GitHub App-connected team.";
+    render();
+    return;
+  }
+
+  if (team.canManageProjects !== true) {
+    state.glossaryCreation.error = "You do not have permission to create glossaries in this team.";
+    render();
+    return;
+  }
+
+  const title = String(draft.title ?? "").trim();
+  const sourceLanguageCode = String(draft.sourceLanguageCode ?? "").trim().toLowerCase();
+  const sourceLanguageName = String(draft.sourceLanguageName ?? "").trim();
+  const targetLanguageCode = String(draft.targetLanguageCode ?? "").trim().toLowerCase();
+  const targetLanguageName = String(draft.targetLanguageName ?? "").trim();
+
+  if (!title) {
+    state.glossaryCreation.error = "Enter a glossary name.";
+    render();
+    return;
+  }
+
+  if (!sourceLanguageCode || !sourceLanguageName) {
+    state.glossaryCreation.error = "Enter both the source language code and name.";
+    render();
+    return;
+  }
+
+  if (!targetLanguageCode || !targetLanguageName) {
+    state.glossaryCreation.error = "Enter both the target language code and name.";
+    render();
+    return;
+  }
+
+  state.glossaryCreation.status = "loading";
+  state.glossaryCreation.error = "";
+  render();
+  await waitForNextPaint();
+
+  try {
+    const glossary = await invoke("create_local_gtms_glossary", {
+      input: {
+        installationId: team.installationId,
+        title,
+        sourceLanguageCode,
+        sourceLanguageName,
+        targetLanguageCode,
+        targetLanguageName,
+      },
+    });
+    resetGlossaryCreation();
+    state.selectedGlossaryId = glossary.glossaryId;
+    await loadTeamGlossaries(render, team.id);
+    await openGlossaryEditor(render, glossary.glossaryId);
+    showNoticeBadge(`Created glossary ${glossary.title}.`, render);
+  } catch (error) {
+    state.glossaryCreation.status = "idle";
+    state.glossaryCreation.error = error?.message ?? String(error);
     render();
   }
 }

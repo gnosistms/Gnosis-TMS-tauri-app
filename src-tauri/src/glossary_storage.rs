@@ -71,6 +71,17 @@ pub(crate) struct LoadGlossaryEditorDataInput {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub(crate) struct CreateLocalGlossaryInput {
+  installation_id: i64,
+  title: String,
+  source_language_code: String,
+  source_language_name: String,
+  target_language_code: String,
+  target_language_name: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct UpsertGlossaryTermInput {
   installation_id: i64,
   repo_name: String,
@@ -167,6 +178,16 @@ pub(crate) async fn load_gtms_glossary_editor_data(
   tauri::async_runtime::spawn_blocking(move || load_gtms_glossary_editor_data_sync(&app, input))
     .await
     .map_err(|error| format!("The glossary load worker failed: {error}"))?
+}
+
+#[tauri::command]
+pub(crate) async fn create_local_gtms_glossary(
+  app: AppHandle,
+  input: CreateLocalGlossaryInput,
+) -> Result<LocalGlossarySummary, String> {
+  tauri::async_runtime::spawn_blocking(move || create_local_gtms_glossary_sync(&app, input))
+    .await
+    .map_err(|error| format!("The glossary creation worker failed: {error}"))?
 }
 
 #[tauri::command]
@@ -281,6 +302,88 @@ fn load_gtms_glossary_editor_data_sync(
     lifecycle_state: glossary_file.lifecycle.state,
     term_count: active_terms.len(),
     terms: active_terms,
+  })
+}
+
+fn create_local_gtms_glossary_sync(
+  app: &AppHandle,
+  input: CreateLocalGlossaryInput,
+) -> Result<LocalGlossarySummary, String> {
+  let title = input.title.trim();
+  if title.is_empty() {
+    return Err("Enter a glossary name.".to_string());
+  }
+
+  let source_language_code = input.source_language_code.trim().to_lowercase();
+  if source_language_code.is_empty() {
+    return Err("Enter a source language code.".to_string());
+  }
+
+  let source_language_name = input.source_language_name.trim();
+  if source_language_name.is_empty() {
+    return Err("Enter a source language name.".to_string());
+  }
+
+  let target_language_code = input.target_language_code.trim().to_lowercase();
+  if target_language_code.is_empty() {
+    return Err("Enter a target language code.".to_string());
+  }
+
+  let target_language_name = input.target_language_name.trim();
+  if target_language_name.is_empty() {
+    return Err("Enter a target language name.".to_string());
+  }
+
+  let repo_root = local_glossary_repo_root(app, input.installation_id)?;
+  let repo_name = unique_glossary_repo_name(&repo_root, &slugify_repo_name(title));
+  let repo_path = repo_root.join(&repo_name);
+  fs::create_dir(&repo_path)
+    .map_err(|error| format!("Could not create the local glossary repo '{}': {error}", repo_path.display()))?;
+
+  git_output(&repo_path, &["init"])?;
+  let _ = git_output(&repo_path, &["symbolic-ref", "HEAD", "refs/heads/main"]);
+
+  ensure_gitattributes(&repo_path.join(".gitattributes"))?;
+
+  let glossary_file = StoredGlossaryFile {
+    glossary_id: Uuid::now_v7().to_string(),
+    title: title.to_string(),
+    lifecycle: StoredLifecycle {
+      state: "active".to_string(),
+    },
+    languages: StoredGlossaryLanguages {
+      source: StoredGlossaryLanguage {
+        code: source_language_code.clone(),
+        name: source_language_name.to_string(),
+      },
+      target: StoredGlossaryLanguage {
+        code: target_language_code.clone(),
+        name: target_language_name.to_string(),
+      },
+    },
+  };
+
+  write_json_pretty(&repo_path.join("glossary.json"), &glossary_file)?;
+  git_output(&repo_path, &["add", ".gitattributes", "glossary.json"])?;
+  git_output(
+    &repo_path,
+    &["commit", "-m", "Initialize glossary", "--", ".gitattributes", "glossary.json"],
+  )?;
+
+  Ok(LocalGlossarySummary {
+    glossary_id: glossary_file.glossary_id,
+    repo_name,
+    title: glossary_file.title,
+    source_language: GlossaryLanguageInfo {
+      code: source_language_code,
+      name: source_language_name.to_string(),
+    },
+    target_language: GlossaryLanguageInfo {
+      code: target_language_code,
+      name: target_language_name.to_string(),
+    },
+    lifecycle_state: "active".to_string(),
+    term_count: 0,
   })
 }
 
@@ -517,6 +620,51 @@ fn sanitize_term_values(values: &[String]) -> Vec<String> {
     }
   }
   sanitized
+}
+
+fn slugify_repo_name(value: &str) -> String {
+  let slug = value
+    .trim()
+    .to_lowercase()
+    .chars()
+    .map(|character| {
+      if character.is_ascii_alphanumeric() || matches!(character, '.' | '_' | '-') {
+        character
+      } else {
+        '-'
+      }
+    })
+    .collect::<String>()
+    .split('-')
+    .filter(|segment| !segment.is_empty())
+    .collect::<Vec<_>>()
+    .join("-");
+
+  let slug = if slug.is_empty() {
+    "glossary".to_string()
+  } else {
+    slug
+  };
+
+  slug.chars().take(100).collect()
+}
+
+fn unique_glossary_repo_name(repo_root: &Path, base_name: &str) -> String {
+  if !repo_root.join(base_name).exists() {
+    return base_name.to_string();
+  }
+
+  for suffix in 2.. {
+    let suffix_text = format!("-{suffix}");
+    let max_base_len = 100usize.saturating_sub(suffix_text.len());
+    let trimmed_base = base_name.chars().take(max_base_len).collect::<String>();
+    let candidate = format!("{trimmed_base}{suffix_text}");
+    if !repo_root.join(&candidate).exists() {
+      return candidate;
+    }
+  }
+
+  unreachable!("glossary repo name search should always find a candidate");
 }
 
 fn read_json_file<T: DeserializeOwned>(path: &Path, label: &str) -> Result<T, String> {

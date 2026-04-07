@@ -12,6 +12,7 @@ import {
 } from "./team-setup-flow.js";
 import { updateInviteUserQuery } from "./invite-user-flow.js";
 import {
+  updateGlossaryCreationField,
   updateGlossariesSearchQuery,
   updateGlossaryTermDraftField,
   updateGlossaryTermSearchQuery,
@@ -125,6 +126,56 @@ function handleGlossariesSearchInput(event, render) {
   }
 
   updateGlossariesSearchQuery(render, input.value);
+  return true;
+}
+
+function handleGlossaryTitleInput(event) {
+  const input = event.target.closest("[data-glossary-title-input]");
+  if (!input) {
+    return false;
+  }
+
+  updateGlossaryCreationField("title", input.value);
+  return true;
+}
+
+function handleGlossarySourceLanguageCodeInput(event) {
+  const input = event.target.closest("[data-glossary-source-language-code-input]");
+  if (!input) {
+    return false;
+  }
+
+  updateGlossaryCreationField("sourceLanguageCode", input.value);
+  return true;
+}
+
+function handleGlossarySourceLanguageNameInput(event) {
+  const input = event.target.closest("[data-glossary-source-language-name-input]");
+  if (!input) {
+    return false;
+  }
+
+  updateGlossaryCreationField("sourceLanguageName", input.value);
+  return true;
+}
+
+function handleGlossaryTargetLanguageCodeInput(event) {
+  const input = event.target.closest("[data-glossary-target-language-code-input]");
+  if (!input) {
+    return false;
+  }
+
+  updateGlossaryCreationField("targetLanguageCode", input.value);
+  return true;
+}
+
+function handleGlossaryTargetLanguageNameInput(event) {
+  const input = event.target.closest("[data-glossary-target-language-name-input]");
+  if (!input) {
+    return false;
+  }
+
+  updateGlossaryCreationField("targetLanguageName", input.value);
   return true;
 }
 
@@ -250,6 +301,11 @@ const inputHandlers = [
   handleChapterPermanentDeleteInput,
   handleInviteUserInput,
   handleGlossariesSearchInput,
+  handleGlossaryTitleInput,
+  handleGlossarySourceLanguageCodeInput,
+  handleGlossarySourceLanguageNameInput,
+  handleGlossaryTargetLanguageCodeInput,
+  handleGlossaryTargetLanguageNameInput,
   handleGlossaryTermSearchInput,
   handleGlossaryTermSourceInput,
   handleGlossaryTermTargetInput,

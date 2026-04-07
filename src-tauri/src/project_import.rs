@@ -1,4 +1,5 @@
 use std::{
+  cmp::Ordering,
   collections::BTreeMap,
   fs,
   io::Cursor,
@@ -16,6 +17,7 @@ use uuid::Uuid;
 const GTMS_FORMAT: &str = "gtms";
 const GTMS_FORMAT_VERSION: u32 = 1;
 const GTMS_GITATTRIBUTES: &str = "*.json text eol=lf\nassets/** binary\n";
+const ORDER_KEY_SPACING: u128 = 1u128 << 64;
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -334,7 +336,7 @@ struct RowStatus {
 struct RowStructure {
   source_file: String,
   container_path: BTreeMap<String, Value>,
-  order_index: usize,
+  order_key: String,
   group_context: Option<String>,
 }
 
@@ -403,9 +405,15 @@ struct StoredRowFile {
   external_id: Option<String>,
   #[serde(default)]
   guidance: Option<StoredGuidance>,
+  structure: StoredRowStructure,
   status: StoredRowStatus,
   origin: StoredRowOrigin,
   fields: BTreeMap<String, StoredFieldValue>,
+}
+
+#[derive(Deserialize)]
+struct StoredRowStructure {
+  order_key: String,
 }
 
 #[derive(Deserialize, Default)]
@@ -569,8 +577,7 @@ fn import_xlsx_to_gtms_sync(
   let chapter_file = build_chapter_file(&parsed, &chapter_id, &chapter_slug);
   write_json_pretty(&chapter_path.join("chapter.json"), &chapter_file)?;
 
-  let row_order = build_row_order_and_files(&parsed, &rows_path)?;
-  write_json_pretty(&chapter_path.join("rowOrder.json"), &row_order)?;
+  let unit_count = write_row_files(&parsed, &rows_path)?;
 
   git_output(&repo_path, &["add", ".gitattributes", "chapters"])?;
   git_output(
@@ -589,7 +596,7 @@ fn import_xlsx_to_gtms_sync(
     project_title,
     file_title: parsed.file_title,
     worksheet_name: parsed.worksheet_name,
-    unit_count: row_order.len(),
+    unit_count,
     languages: chapter_file.languages.clone(),
     source_word_counts,
     selected_source_language_code,
@@ -615,8 +622,7 @@ fn load_gtms_chapter_editor_data_sync(
 
   let chapter_path = find_chapter_path_by_id(&repo_path.join("chapters"), &input.chapter_id)?;
   let chapter_file: StoredChapterFile = read_json_file(&chapter_path.join("chapter.json"), "chapter.json")?;
-  let row_order: Vec<String> = read_json_file(&chapter_path.join("rowOrder.json"), "rowOrder.json")?;
-  let rows = load_editor_rows(&chapter_path.join("rows"), &row_order)?;
+  let rows = load_editor_rows(&chapter_path.join("rows"))?;
   let languages = sanitize_chapter_languages(&chapter_file.languages);
   let source_word_counts = build_source_word_counts_from_stored_rows(&rows, &languages);
   let selected_source_language_code = preferred_source_language_code(&chapter_file, &languages);
@@ -842,28 +848,28 @@ fn build_chapter_file(
   }
 }
 
-fn build_row_order_and_files(
+fn write_row_files(
   parsed: &ParsedWorkbook,
   rows_path: &Path,
-) -> Result<Vec<String>, String> {
-  let mut row_order = Vec::with_capacity(parsed.rows.len());
+) -> Result<usize, String> {
+  let total_rows = parsed.rows.len();
 
   for (index, imported_row) in parsed.rows.iter().enumerate() {
     let row_id = Uuid::now_v7().to_string();
-    let row_file = build_row_file(parsed, imported_row, index, &row_id);
+    let row_file = build_row_file(parsed, imported_row, index, total_rows, &row_id)?;
     write_json_pretty(&rows_path.join(format!("{row_id}.json")), &row_file)?;
-    row_order.push(row_id);
   }
 
-  Ok(row_order)
+  Ok(total_rows)
 }
 
 fn build_row_file(
   parsed: &ParsedWorkbook,
   imported_row: &ImportedRow,
   index: usize,
+  total_rows: usize,
   row_id: &str,
-) -> RowFile {
+) -> Result<RowFile, String> {
   let guidance = if imported_row.description.is_some()
     || imported_row.context.is_some()
     || !imported_row.comments.is_empty()
@@ -915,7 +921,7 @@ fn build_row_file(
     }),
   );
 
-  RowFile {
+  Ok(RowFile {
     row_id: row_id.to_string(),
     unit_type: "string",
     external_id: imported_row.external_id.clone(),
@@ -929,7 +935,7 @@ fn build_row_file(
     structure: RowStructure {
       source_file: parsed.source_file_name.clone(),
       container_path,
-      order_index: index + 1,
+      order_key: order_key_for_position(index, total_rows)?,
       group_context: imported_row.context.clone(),
     },
     origin: RowOrigin {
@@ -948,6 +954,47 @@ fn build_row_file(
     variants: Vec::new(),
     fields,
     format_metadata,
+  })
+}
+
+fn order_key_for_position(index: usize, total_rows: usize) -> Result<String, String> {
+  if index >= total_rows {
+    return Err("Could not assign an order key outside the row set.".to_string());
+  }
+
+  let position = u128::try_from(index)
+    .map_err(|error| format!("Could not convert the row position to an order key: {error}"))?
+    + 1;
+  let value = position
+    .checked_mul(ORDER_KEY_SPACING)
+    .ok_or_else(|| "Could not allocate a sparse order key for this row.".to_string())?;
+
+  Ok(format!("{value:032x}"))
+}
+
+fn parse_order_key(value: &str) -> Result<u128, String> {
+  let trimmed = value.trim();
+  if trimmed.len() != 32 {
+    return Err("Order keys must be 32 lowercase hex characters.".to_string());
+  }
+
+  u128::from_str_radix(trimmed, 16)
+    .map_err(|error| format!("Invalid order key '{trimmed}': {error}"))
+}
+
+fn compare_stored_rows(left: &StoredRowFile, right: &StoredRowFile) -> Ordering {
+  let left_key = parse_order_key(&left.structure.order_key);
+  let right_key = parse_order_key(&right.structure.order_key);
+
+  match (left_key, right_key) {
+    (Ok(left_value), Ok(right_value)) => left_value
+      .cmp(&right_value)
+      .then_with(|| left.row_id.cmp(&right.row_id)),
+    _ => left
+      .origin
+      .source_row_number
+      .cmp(&right.origin.source_row_number)
+      .then_with(|| left.row_id.cmp(&right.row_id)),
   }
 }
 
@@ -1172,8 +1219,7 @@ fn load_project_chapter_summaries(repo_path: &Path) -> Result<Vec<ProjectChapter
     }
 
     let chapter_file: StoredChapterFile = read_json_file(&chapter_json_path, "chapter.json")?;
-    let row_order: Vec<String> = read_json_file(&path.join("rowOrder.json"), "rowOrder.json")?;
-    let rows = load_editor_rows(&path.join("rows"), &row_order)?;
+    let rows = load_editor_rows(&path.join("rows"))?;
     let languages = sanitize_chapter_languages(&chapter_file.languages);
     let source_word_counts = build_source_word_counts_from_stored_rows(&rows, &languages);
     let selected_source_language_code = preferred_source_language_code(&chapter_file, &languages);
@@ -1230,11 +1276,26 @@ fn ensure_gitattributes(path: &Path) -> Result<(), String> {
   write_text_file(path, GTMS_GITATTRIBUTES)
 }
 
-fn load_editor_rows(rows_path: &Path, row_order: &[String]) -> Result<Vec<StoredRowFile>, String> {
-  row_order
-    .iter()
-    .map(|row_id| read_json_file(&rows_path.join(format!("{row_id}.json")), "row file"))
-    .collect()
+fn load_editor_rows(rows_path: &Path) -> Result<Vec<StoredRowFile>, String> {
+  if !rows_path.exists() {
+    return Ok(Vec::new());
+  }
+
+  let mut rows = Vec::new();
+  for entry in fs::read_dir(rows_path)
+    .map_err(|error| format!("Could not read rows folder '{}': {error}", rows_path.display()))?
+  {
+    let entry = entry.map_err(|error| format!("Could not read a row file entry: {error}"))?;
+    let path = entry.path();
+    if !path.is_file() || path.extension().and_then(|value| value.to_str()) != Some("json") {
+      continue;
+    }
+
+    rows.push(read_json_file(&path, "row file")?);
+  }
+
+  rows.sort_by(compare_stored_rows);
+  Ok(rows)
 }
 
 fn update_gtms_chapter_language_selection_sync(
@@ -1413,8 +1474,7 @@ fn update_gtms_editor_row_fields_sync(
     )?;
   }
 
-  let row_order: Vec<String> = read_json_file(&chapter_path.join("rowOrder.json"), "rowOrder.json")?;
-  let rows = load_editor_rows(&chapter_path.join("rows"), &row_order)?;
+  let rows = load_editor_rows(&chapter_path.join("rows"))?;
   let languages = sanitize_chapter_languages(&chapter_file.languages);
   let source_word_counts = build_source_word_counts_from_stored_rows(&rows, &languages);
 

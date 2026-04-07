@@ -29,8 +29,8 @@ use crate::{
   constants::MAIN_WINDOW_BACKGROUND,
   drafts::create_team_setup_draft,
   glossary_storage::{
-    delete_gtms_glossary_term, list_local_gtms_glossaries, load_gtms_glossary_editor_data,
-    upsert_gtms_glossary_term,
+    create_local_gtms_glossary, delete_gtms_glossary_term, list_local_gtms_glossaries,
+    load_gtms_glossary_editor_data, upsert_gtms_glossary_term,
   },
   github::{
     add_organization_admin_for_installation,
@@ -257,6 +257,7 @@ pub fn run() {
       update_gtms_chapter_language_selection,
       update_gtms_editor_row_fields,
       list_local_gtms_glossaries,
+      create_local_gtms_glossary,
       load_gtms_glossary_editor_data,
       upsert_gtms_glossary_term,
       delete_gtms_glossary_term,

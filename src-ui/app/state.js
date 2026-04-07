@@ -62,6 +62,7 @@ export const state = {
   projectPermanentDeletion: createProjectPermanentDeletionState(),
   chapterRename: createChapterRenameState(),
   chapterPermanentDeletion: createChapterPermanentDeletionState(),
+  glossaryCreation: createGlossaryCreationState(),
   glossaryTermEditor: createGlossaryTermEditorState(),
   showDeletedProjects: false,
   showDeletedTeams: false,
@@ -206,6 +207,16 @@ export function createGlossaryEditorState() {
   };
 }
 
+export function createGlossaryCreationState() {
+  return createEntityModalState({
+    title: "",
+    sourceLanguageCode: "",
+    sourceLanguageName: "",
+    targetLanguageCode: "",
+    targetLanguageName: "",
+  });
+}
+
 export function createInviteUserState() {
   return {
     isOpen: false,
@@ -323,6 +334,10 @@ export function resetGlossaryTermEditor() {
   state.glossaryTermEditor = createGlossaryTermEditorState();
 }
 
+export function resetGlossaryCreation() {
+  state.glossaryCreation = createGlossaryCreationState();
+}
+
 export function resetSessionState() {
   clearActiveStorageLogin();
   const offlineState = {
@@ -371,6 +386,7 @@ export function resetSessionState() {
   resetChapterRename();
   resetChapterPermanentDeletion();
   resetProjectPermanentDeletion();
+  resetGlossaryCreation();
   resetGlossaryTermEditor();
   state.showDeletedProjects = false;
   state.showDeletedTeams = false;
