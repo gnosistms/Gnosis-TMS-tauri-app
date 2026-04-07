@@ -5,8 +5,8 @@ import {
 } from "./team-storage.js";
 import { loadStoredEditorFontSizePx } from "./editor-preferences.js";
 
-export const DEFAULT_EDITOR_FONT_SIZE_PX = 20;
-export const EDITOR_FONT_SIZE_OPTIONS = [16, 18, 20, 22, 24];
+export const DEFAULT_EDITOR_FONT_SIZE_PX = 22;
+export const EDITOR_FONT_SIZE_OPTIONS = [16, 18, 20, 22, 24, 26, 28];
 
 export function coerceEditorFontSizePx(value) {
   const nextValue = Number.parseInt(String(value ?? ""), 10);

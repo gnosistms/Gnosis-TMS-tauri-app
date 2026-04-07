@@ -5,9 +5,15 @@ import {
   createSearchField,
   escapeHtml,
   pageShell,
+  renderCollapseChevron,
   secondaryButton,
   textAction,
 } from "../lib/ui.js";
+import {
+  diff_match_patch,
+  DIFF_DELETE,
+  DIFF_INSERT,
+} from "../lib/vendor/diff-match-patch.js";
 import { getNoticeBadgeText } from "../app/status-feedback.js";
 import {
   findChapterContextById,
@@ -15,6 +21,8 @@ import {
 } from "../app/translate-flow.js";
 import { EDITOR_FONT_SIZE_OPTIONS, coerceEditorFontSizePx } from "../app/state.js";
 import { renderTargetLanguageManagerModal } from "./target-language-manager-modal.js";
+
+const historyDiffEngine = new diff_match_patch();
 
 function findSelectedChapter(state) {
   const liveChapter = findChapterContextById(state.selectedChapterId)?.chapter ?? null;
@@ -212,168 +220,35 @@ function formatHistoryTimestamp(value) {
   }).format(date);
 }
 
-function prefersCharacterHistoryDiff(languageCode) {
-  const normalizedCode = String(languageCode ?? "").toLowerCase();
-  return normalizedCode === "ja" || normalizedCode.startsWith("zh");
+function buildHistoryDiffSegments(previousText, currentText) {
+  const diffs = historyDiffEngine.diff_main(String(previousText ?? ""), String(currentText ?? ""), false);
+  historyDiffEngine.diff_cleanupSemantic(diffs);
+  historyDiffEngine.diff_cleanupSemanticLossless(diffs);
+
+  return diffs
+    .filter((diff) => Boolean(diff?.[1]))
+    .map((diff) => {
+      const operation = diff?.[0];
+      const text = diff?.[1] ?? "";
+      return ({
+      type:
+        operation === DIFF_INSERT
+          ? "insert"
+          : operation === DIFF_DELETE
+            ? "delete"
+            : "equal",
+      text,
+      });
+    });
 }
 
-function tokenizeHistoryDiffText(value, languageCode) {
-  const text = String(value ?? "");
-  if (!text) {
-    return [];
-  }
-
-  const useCharacterDiff = prefersCharacterHistoryDiff(languageCode);
-  const segmentGranularity = useCharacterDiff ? "grapheme" : "word";
-
-  if (typeof Intl !== "undefined" && typeof Intl.Segmenter === "function") {
-    try {
-      return Array.from(
-        new Intl.Segmenter(languageCode || undefined, { granularity: segmentGranularity }).segment(text),
-        ({ segment }) => segment,
-      );
-    } catch {
-      // Fall through to a simpler tokenizer if the runtime rejects the locale.
-    }
-  }
-
-  if (useCharacterDiff) {
-    return Array.from(text);
-  }
-
-  return text.match(/\s+|[^\s]+/g) ?? Array.from(text);
-}
-
-function appendHistoryDiffSegment(segments, type, text) {
-  if (!text) {
-    return;
-  }
-
-  const lastSegment = segments[segments.length - 1];
-  if (lastSegment?.type === type) {
-    lastSegment.text += text;
-    return;
-  }
-
-  segments.push({ type, text });
-}
-
-function buildFallbackHistoryDiffSegments(previousTokens, currentTokens) {
-  let prefixLength = 0;
-  while (
-    prefixLength < previousTokens.length
-    && prefixLength < currentTokens.length
-    && previousTokens[prefixLength] === currentTokens[prefixLength]
-  ) {
-    prefixLength += 1;
-  }
-
-  let previousSuffixStart = previousTokens.length - 1;
-  let currentSuffixStart = currentTokens.length - 1;
-  while (
-    previousSuffixStart >= prefixLength
-    && currentSuffixStart >= prefixLength
-    && previousTokens[previousSuffixStart] === currentTokens[currentSuffixStart]
-  ) {
-    previousSuffixStart -= 1;
-    currentSuffixStart -= 1;
-  }
-
-  const segments = [];
-  appendHistoryDiffSegment(segments, "equal", previousTokens.slice(0, prefixLength).join(""));
-  appendHistoryDiffSegment(
-    segments,
-    "delete",
-    previousTokens.slice(prefixLength, previousSuffixStart + 1).join(""),
-  );
-  appendHistoryDiffSegment(
-    segments,
-    "insert",
-    currentTokens.slice(prefixLength, currentSuffixStart + 1).join(""),
-  );
-  appendHistoryDiffSegment(
-    segments,
-    "equal",
-    previousTokens.slice(previousSuffixStart + 1).join(""),
-  );
-  return segments;
-}
-
-function buildHistoryDiffSegments(previousText, currentText, languageCode) {
-  const previousTokens = tokenizeHistoryDiffText(previousText, languageCode);
-  const currentTokens = tokenizeHistoryDiffText(currentText, languageCode);
-
-  if (previousTokens.length === 0) {
-    return currentTokens.length === 0 ? [] : [{ type: "insert", text: currentTokens.join("") }];
-  }
-
-  if (currentTokens.length === 0) {
-    return [{ type: "delete", text: previousTokens.join("") }];
-  }
-
-  if (previousTokens.length * currentTokens.length > 640000) {
-    return buildFallbackHistoryDiffSegments(previousTokens, currentTokens);
-  }
-
-  const lcsMatrix = Array.from(
-    { length: previousTokens.length + 1 },
-    () => new Uint32Array(currentTokens.length + 1),
-  );
-
-  for (let previousIndex = previousTokens.length - 1; previousIndex >= 0; previousIndex -= 1) {
-    for (let currentIndex = currentTokens.length - 1; currentIndex >= 0; currentIndex -= 1) {
-      lcsMatrix[previousIndex][currentIndex] =
-        previousTokens[previousIndex] === currentTokens[currentIndex]
-          ? lcsMatrix[previousIndex + 1][currentIndex + 1] + 1
-          : Math.max(
-            lcsMatrix[previousIndex + 1][currentIndex],
-            lcsMatrix[previousIndex][currentIndex + 1],
-          );
-    }
-  }
-
-  const segments = [];
-  let previousIndex = 0;
-  let currentIndex = 0;
-
-  while (previousIndex < previousTokens.length && currentIndex < currentTokens.length) {
-    if (previousTokens[previousIndex] === currentTokens[currentIndex]) {
-      appendHistoryDiffSegment(segments, "equal", previousTokens[previousIndex]);
-      previousIndex += 1;
-      currentIndex += 1;
-      continue;
-    }
-
-    if (lcsMatrix[previousIndex + 1][currentIndex] >= lcsMatrix[previousIndex][currentIndex + 1]) {
-      appendHistoryDiffSegment(segments, "delete", previousTokens[previousIndex]);
-      previousIndex += 1;
-      continue;
-    }
-
-    appendHistoryDiffSegment(segments, "insert", currentTokens[currentIndex]);
-    currentIndex += 1;
-  }
-
-  while (previousIndex < previousTokens.length) {
-    appendHistoryDiffSegment(segments, "delete", previousTokens[previousIndex]);
-    previousIndex += 1;
-  }
-
-  while (currentIndex < currentTokens.length) {
-    appendHistoryDiffSegment(segments, "insert", currentTokens[currentIndex]);
-    currentIndex += 1;
-  }
-
-  return segments;
-}
-
-function renderHistoryContent(entry, previousEntry, languageCode) {
+function renderHistoryContent(entry, previousEntry) {
   const currentText = String(entry?.plainText ?? "");
   if (!previousEntry) {
     return escapeHtml(currentText);
   }
 
-  return buildHistoryDiffSegments(previousEntry.plainText, currentText, languageCode)
+  return buildHistoryDiffSegments(previousEntry.plainText, currentText)
     .map((segment) => {
       if (segment.type === "equal") {
         return escapeHtml(segment.text);
@@ -438,14 +313,12 @@ function renderHistoryEntry(entry, previousEntry, activeLanguage, activeSection,
 
   return `
     <article class="history-item">
-      <p class="history-item__content" lang="${escapeHtml(activeLanguage.code)}">${renderHistoryContent(entry, previousEntry, activeLanguage.code)}</p>
-      <p class="history-item__meta">${escapeHtml(
-        [historyAuthorLabel(entry), formatHistoryTimestamp(entry.committedAt)]
-          .filter(Boolean)
-          .join(" · "),
-      )}</p>
-      <div class="history-item__actions">
-        ${restoreButton}
+      <p class="history-item__content" lang="${escapeHtml(activeLanguage.code)}">${renderHistoryContent(entry, previousEntry)}</p>
+      <div class="history-item__footer">
+        <div class="history-item__actions">
+          ${restoreButton}
+        </div>
+        <p class="history-item__meta">${escapeHtml(formatHistoryTimestamp(entry.committedAt))}</p>
       </div>
     </article>
   `;
@@ -513,11 +386,7 @@ function renderHistorySidebar(editorChapter, rows, languages) {
                       <section class="history-group">
                         <${headingTag}${headingAttributes}>
                           <span class="history-group__summary">
-                            <span class="history-group__chevron${isExpanded ? " is-expanded" : ""}" aria-hidden="true">
-                              <svg viewBox="0 0 12 12" focusable="false" aria-hidden="true">
-                                <path d="M4.25 2.5 7.75 6l-3.5 3.5" />
-                              </svg>
-                            </span>
+                            ${renderCollapseChevron(isExpanded, "history-group__chevron")}
                             <span class="history-group__author">${escapeHtml(group.authorName)}</span>
                           </span>
                           <span class="history-group__meta">${escapeHtml(revisionLabel)}</span>
@@ -580,11 +449,7 @@ function renderTranslationContentRows(rows, collapsedLanguageCodes = new Set()) 
                             data-action="toggle-editor-language:${escapeHtml(language.code)}"
                             aria-expanded="${isCollapsed ? "false" : "true"}"
                           >
-                            <span class="translation-language-panel__chevron${isCollapsed ? " is-collapsed" : ""}" aria-hidden="true">
-                              <svg viewBox="0 0 12 12" focusable="false" aria-hidden="true">
-                                <path d="M2.5 4.25 6 7.75l3.5-3.5" />
-                              </svg>
-                            </span>
+                            ${renderCollapseChevron(!isCollapsed, "translation-language-panel__chevron")}
                             <span class="translation-language-panel__label">${escapeHtml(language.name)}</span>
                           </button>
                           ${

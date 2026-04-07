@@ -31,6 +31,24 @@ function shouldTriggerSyncShortcut(event) {
   return event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey && key === "r";
 }
 
+function shouldBlurActiveEditorField(event) {
+  if (event.defaultPrevented || event.repeat || event.isComposing) {
+    return false;
+  }
+
+  const target = event.target;
+  if (!(target instanceof HTMLTextAreaElement) || !target.matches("[data-editor-row-field]")) {
+    return false;
+  }
+
+  if (target.disabled || target.readOnly) {
+    return false;
+  }
+
+  const key = typeof event.key === "string" ? event.key.toLowerCase() : "";
+  return key === "enter" && event.shiftKey && !event.metaKey && !event.ctrlKey && !event.altKey;
+}
+
 function isGlossaryTermVariantSide(value) {
   return value === "source" || value === "target";
 }
@@ -261,6 +279,12 @@ export function registerAppEvents(render) {
   document.addEventListener("input", (event) => handleInputEvent(event, render));
   document.addEventListener("change", (event) => handleInputEvent(event, render));
   document.addEventListener("keydown", (event) => {
+    if (shouldBlurActiveEditorField(event)) {
+      event.preventDefault();
+      event.target.blur();
+      return;
+    }
+
     if (!shouldTriggerSyncShortcut(event)) {
       return;
     }

@@ -69,40 +69,6 @@ function buildEditorHistoryRequestKey(chapterId, rowId, languageCode) {
   return `${chapterId}:${rowId}:${languageCode}`;
 }
 
-function normalizeHistoryAuthorIdentity(value) {
-  if (typeof value !== "string") {
-    return "";
-  }
-
-  return value
-    .replace(/\s+\([^)]*\)\s*$/u, "")
-    .trim()
-    .replace(/\s+/gu, " ")
-    .toLowerCase();
-}
-
-function defaultExpandedHistoryGroupKeys(entries, session = state.auth.session) {
-  if (!Array.isArray(entries) || entries.length === 0) {
-    return new Set();
-  }
-
-  const topEntry = entries[0];
-  const topAuthorIdentity = normalizeHistoryAuthorIdentity(topEntry?.authorName);
-  if (!topAuthorIdentity) {
-    return new Set();
-  }
-
-  const sessionIdentities = new Set(
-    [session?.login, session?.name]
-      .map((value) => normalizeHistoryAuthorIdentity(value))
-      .filter(Boolean),
-  );
-
-  return sessionIdentities.has(topAuthorIdentity)
-    ? new Set([String(topEntry.commitSha ?? "")].filter(Boolean))
-    : new Set();
-}
-
 function normalizeEditorHistoryState(history) {
   return {
     ...createEditorHistoryState(),
@@ -400,7 +366,7 @@ async function fetchEditorFieldHistory(render, requestKey) {
         languageCode,
         requestKey,
         restoringCommitSha: null,
-        expandedGroupKeys: defaultExpandedHistoryGroupKeys(payload?.entries),
+        expandedGroupKeys: new Set(),
         entries: Array.isArray(payload?.entries) ? payload.entries : [],
       },
     };

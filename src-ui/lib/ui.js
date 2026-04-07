@@ -121,6 +121,19 @@ export function textAction(label, action, options = {}) {
   )}"${disabledActionAttributes(options)}>${escapeHtml(label)}</button>`;
 }
 
+export function renderCollapseChevron(isOpen = false, className = "") {
+  const classes = ["collapse-chevron", isOpen ? "is-open" : "", className]
+    .filter(Boolean)
+    .join(" ");
+  return `
+    <span class="${classes}" aria-hidden="true">
+      <svg viewBox="0 0 12 12" focusable="false" aria-hidden="true">
+        <path d="M3.25 2.25 7.75 6l-4.5 3.75" />
+      </svg>
+    </span>
+  `;
+}
+
 export function titleRefreshButton(action, options = {}) {
   const spinDelayMs =
     options.spinning && Number.isFinite(options.spinStartedAt)
@@ -161,7 +174,7 @@ export function sectionSeparator({ label, action, isOpen = false }) {
       <span class="section-separator__line" aria-hidden="true"></span>
       <span class="section-separator__label">
         ${escapeHtml(label)}
-        <span class="section-separator__chevron ${isOpen ? "is-open" : ""}" aria-hidden="true"></span>
+        ${renderCollapseChevron(isOpen, "section-separator__chevron")}
       </span>
       <span class="section-separator__line" aria-hidden="true"></span>
     </button>

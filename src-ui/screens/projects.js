@@ -5,6 +5,7 @@ import {
   escapeHtml,
   pageShell,
   primaryButton,
+  renderCollapseChevron,
   renderStateCard,
   sectionSeparator,
   textAction,
@@ -148,7 +149,7 @@ function renderProjectCard(project, expanded, options = {}) {
           data-action="toggle-project:${project.id}"
           aria-expanded="${expanded ? "true" : "false"}"
         >
-          <span class="chevron ${expanded ? "is-open" : ""}"></span>
+          ${renderCollapseChevron(expanded, "expandable-card__chevron")}
           <span class="expandable-card__title-wrap">
             <span class="expandable-card__title">${escapeHtml(project.title ?? project.name)}</span>
             <span class="expandable-card__meta">${escapeHtml(fileCount)}</span>

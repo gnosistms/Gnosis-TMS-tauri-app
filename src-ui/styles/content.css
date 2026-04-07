@@ -167,24 +167,10 @@
   padding: 24px 26px 28px;
 }
 
-.chevron {
-  width: 13px;
-  height: 13px;
-  margin: 0 auto;
-  border-right: 3px solid var(--text);
-  border-bottom: 3px solid var(--text);
-  transform: rotate(-45deg);
-  transform-origin: center;
-  transition: transform 160ms ease;
-}
-
-.expandable-card__summary-button .chevron {
+.expandable-card__summary-button .expandable-card__chevron {
   justify-self: center;
   align-self: center;
-}
-
-.chevron.is-open {
-  transform: rotate(45deg);
+  font-size: 1.7rem;
 }
 
 .expandable-card__title-wrap {
@@ -225,16 +211,7 @@
 }
 
 .section-separator__chevron {
-  width: 10px;
-  height: 10px;
-  border-right: 2px solid currentColor;
-  border-bottom: 2px solid currentColor;
-  transform: rotate(-45deg);
-  transition: transform 160ms ease;
-}
-
-.section-separator__chevron.is-open {
-  transform: rotate(45deg);
+  color: inherit;
 }
 
 .chapter-table {
