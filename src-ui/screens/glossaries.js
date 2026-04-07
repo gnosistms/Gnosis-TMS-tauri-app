@@ -3,36 +3,8 @@ import { getNoticeBadgeText } from "../app/status-feedback.js";
 
 export function renderGlossariesScreen(state) {
   const selectedTeam = state.teams.find((team) => team.id === state.selectedTeamId) ?? state.teams[0];
-  const searchQuery = String(state.glossariesSearchQuery ?? "").trim().toLowerCase();
-  const visibleGlossaries = state.glossaries.filter((glossary) => {
-    if (glossary.lifecycleState !== "active") {
-      return false;
-    }
-
-    if (!searchQuery) {
-      return true;
-    }
-
-    return [
-      glossary.title,
-      glossary.sourceLanguage?.name,
-      glossary.targetLanguage?.name,
-    ].some((value) => String(value ?? "").toLowerCase().includes(searchQuery));
-  });
-  const searchField = `
-    <label class="search-field">
-      <span class="search-field__icon">⌕</span>
-      <input
-        type="text"
-        placeholder="Search"
-        value="${escapeHtml(state.glossariesSearchQuery ?? "")}"
-        data-glossaries-search-input
-      />
-    </label>
-  `;
-  const emptyState = searchQuery
-    ? "No glossaries match this search."
-    : "No glossaries are available locally yet.";
+  const visibleGlossaries = state.glossaries.filter((glossary) => glossary.lifecycleState === "active");
+  const emptyState = "No glossaries are available locally yet.";
   const bodyMarkup = visibleGlossaries.length
     ? `
       <section class="table-card">
@@ -87,7 +59,7 @@ export function renderGlossariesScreen(state) {
       navButton("Members", "users"),
       navButton("Projects", "projects"),
     ],
-    tools: `${searchField} ${textAction("Upload", "upload-glossary")} ${primaryButton("+ New Glossary", "open-new-glossary")}`,
+    tools: `${textAction("Upload", "upload-glossary")} ${primaryButton("+ New Glossary", "open-new-glossary")}`,
     pageSync: state.pageSync,
     noticeText: getNoticeBadgeText(),
     offlineMode: state.offline?.isEnabled === true,
