@@ -8,6 +8,7 @@ import { showOfflineUnsupportedMessage } from "./offline-ui.js";
 import { createProjectActions } from "./actions/project-actions.js";
 import { createGlossaryActions } from "./actions/glossary-actions.js";
 import { createTeamActions } from "./actions/team-actions.js";
+import { createTranslateActions } from "./actions/translate-actions.js";
 import { createUserActions } from "./user-actions.js";
 import { actionSuffix } from "./action-helpers.js";
 
@@ -23,6 +24,7 @@ export function createActionDispatcher(render) {
     createProjectActions(render),
     createGlossaryActions(render),
     createUserActions(render),
+    createTranslateActions(render),
     createNavigationActions(render),
   ];
 

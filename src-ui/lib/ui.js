@@ -9,13 +9,20 @@ export function escapeHtml(value) {
     .replaceAll("'", "&#39;");
 }
 
-export function tooltipAttributes(text) {
+export function tooltipAttributes(text, options = {}) {
   const tooltip = String(text ?? "").trim();
   if (!tooltip) {
     return "";
   }
 
-  return ` data-tooltip="${escapeHtml(tooltip)}"`;
+  const align = options.align === "start" || options.align === "end"
+    ? ` data-tooltip-align="${escapeHtml(options.align)}"`
+    : "";
+  const side = options.side === "bottom"
+    ? ` data-tooltip-side="${escapeHtml(options.side)}"`
+    : "";
+
+  return ` data-tooltip="${escapeHtml(tooltip)}"${align}${side}`;
 }
 
 function disabledActionAttributes(options = {}) {
@@ -24,6 +31,22 @@ function disabledActionAttributes(options = {}) {
   }
 
   return ' aria-disabled="true" data-offline-blocked="true"';
+}
+
+function serializeAttributes(attributes = {}) {
+  return Object.entries(attributes)
+    .map(([key, value]) => {
+      if (value === false || value === null || value === undefined) {
+        return "";
+      }
+
+      if (value === true) {
+        return ` ${escapeHtml(key)}`;
+      }
+
+      return ` ${escapeHtml(key)}="${escapeHtml(value)}"`;
+    })
+    .join("");
 }
 
 export function navButton(label, target, isGhost = false, options = {}) {
@@ -112,7 +135,7 @@ export function titleRefreshButton(action, options = {}) {
       class="title-icon-button${options.disabled ? " is-disabled" : ""}${options.spinning ? " is-spinning" : ""}"
       data-action="${escapeHtml(action)}"
       aria-label="Refresh page"
-      ${tooltipAttributes("Refresh page")}
+      ${tooltipAttributes("Refresh page", { side: "bottom" })}
       ${options.disabled ? 'aria-disabled="true" data-offline-blocked="true"' : ""}
     >
       <span
@@ -122,6 +145,14 @@ export function titleRefreshButton(action, options = {}) {
       >${refreshIconSvg}</span>
     </button>
   `;
+}
+
+export function buildPageRefreshAction(appState, syncState = appState?.pageSync, action = "refresh-page") {
+  return titleRefreshButton(action, {
+    spinning: syncState?.status === "syncing",
+    spinStartedAt: syncState?.startedAt,
+    disabled: appState?.offline?.isEnabled === true || syncState?.status === "syncing",
+  });
 }
 
 export function sectionSeparator({ label, action, isOpen = false }) {
@@ -134,6 +165,61 @@ export function sectionSeparator({ label, action, isOpen = false }) {
       </span>
       <span class="section-separator__line" aria-hidden="true"></span>
     </button>
+  `;
+}
+
+const sectionNavConfig = {
+  teams: [{ label: "Logout", target: "start" }],
+  projects: [
+    { label: "Teams", target: "teams", isBack: true },
+    { label: "Members", target: "users" },
+    { label: "Glossaries", target: "glossaries" },
+    { label: "Logout", target: "start" },
+  ],
+  users: [
+    { label: "Teams", target: "teams", isBack: true },
+    { label: "Projects", target: "projects" },
+    { label: "Glossaries", target: "glossaries" },
+    { label: "Logout", target: "start" },
+  ],
+  glossaries: [
+    { label: "Teams", target: "teams", isBack: true },
+    { label: "Members", target: "users" },
+    { label: "Projects", target: "projects" },
+    { label: "Logout", target: "start" },
+  ],
+  glossaryEditor: [
+    { label: "Glossaries", target: "glossaries", isBack: true },
+    { label: "Projects", target: "projects" },
+  ],
+  translate: [
+    { label: "Projects", target: "projects", isBack: true },
+    { label: "Glossaries", target: "glossaries" },
+  ],
+};
+
+export function buildSectionNav(screen) {
+  return (sectionNavConfig[screen] ?? []).map(({ label, target, isBack }) =>
+    navButton(label, target, false, { isBack }),
+  );
+}
+
+export function renderStateCard({ eyebrow = "", title = "", subtitle = "", tone = "" }) {
+  const toneClass =
+    tone === "error"
+      ? " card--state-error"
+      : tone === "warning"
+        ? " card--state-warning"
+        : "";
+
+  return `
+    <article class="card card--hero card--empty${toneClass}">
+      <div class="card__body">
+        ${eyebrow ? `<p class="card__eyebrow">${escapeHtml(eyebrow)}</p>` : ""}
+        ${title ? `<h2 class="card__title card__title--small">${escapeHtml(title)}</h2>` : ""}
+        ${subtitle ? `<p class="card__subtitle">${escapeHtml(subtitle)}</p>` : ""}
+      </div>
+    </article>
   `;
 }
 
@@ -215,7 +301,7 @@ export function pageShell({
         </div>
         <div class="page-header__title-wrap">
           <div class="page-header__title-row">
-            <h1 class="page-header__title"${tooltipAttributes(titleTooltip || title)}>${escapeHtml(title)}</h1>
+            <h1 class="page-header__title">${escapeHtml(title)}</h1>
             ${titleAction}
           </div>
           ${subtitle ? `<p class="page-header__subtitle">${escapeHtml(subtitle)}</p>` : ""}
@@ -229,11 +315,20 @@ export function pageShell({
   `;
 }
 
-export function createSearchField(placeholder = "Search") {
+export function createSearchField(config = "Search") {
+  const options =
+    typeof config === "string"
+      ? { placeholder: config }
+      : (config ?? {});
+  const placeholder = options.placeholder ?? "Search";
+  const value = options.value ?? "";
+  const inputAttributes = serializeAttributes(options.inputAttributes ?? {});
+  const labelAttributes = serializeAttributes(options.labelAttributes ?? {});
+
   return `
-    <label class="search-field">
+    <label class="search-field"${labelAttributes}>
       <span class="search-field__icon">⌕</span>
-      <input type="text" placeholder="${escapeHtml(placeholder)}" />
+      <input type="text" placeholder="${escapeHtml(placeholder)}" value="${escapeHtml(value)}"${inputAttributes} />
     </label>
   `;
 }

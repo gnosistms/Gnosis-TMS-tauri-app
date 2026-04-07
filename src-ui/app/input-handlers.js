@@ -1,4 +1,5 @@
 import { state } from "./state.js";
+import { syncAutoSizeTextarea, syncEditorRowTextareaHeight } from "./autosize.js";
 import {
   updateChapterPermanentDeletionConfirmation,
   updateChapterRenameName,
@@ -14,12 +15,14 @@ import { updateInviteUserQuery } from "./invite-user-flow.js";
 import {
   updateGlossaryTermVariant,
   updateGlossaryCreationField,
-  updateGlossariesSearchQuery,
   updateGlossaryTermDraftField,
   updateGlossaryTermSearchQuery,
 } from "./glossary-flow.js";
 import {
+  MANAGE_TARGET_LANGUAGES_OPTION_VALUE,
+  openTargetLanguageManager,
   persistEditorRowOnBlur,
+  updateEditorFontSize,
   updateEditorRowFieldValue,
   updateEditorSourceLanguage,
   updateEditorTargetLanguage,
@@ -120,16 +123,6 @@ function handleInviteUserInput(event, render) {
   return true;
 }
 
-function handleGlossariesSearchInput(event, render) {
-  const input = event.target.closest("[data-glossaries-search-input]");
-  if (!input) {
-    return false;
-  }
-
-  updateGlossariesSearchQuery(render, input.value);
-  return true;
-}
-
 function handleGlossaryTitleInput(event) {
   const input = event.target.closest("[data-glossary-title-input]");
   if (!input) {
@@ -183,6 +176,7 @@ function handleGlossaryTermVariantInput(event) {
   }
 
   updateGlossaryTermVariant(side, index, input.value);
+  syncAutoSizeTextarea(input, { minHeight: 44, maxHeight: 96 });
   return true;
 }
 
@@ -206,17 +200,6 @@ function handleGlossaryTermFootnoteInput(event) {
   return true;
 }
 
-function handleGlossaryTermUntranslatedInput(event, render) {
-  const input = event.target.closest("[data-glossary-term-untranslated-input]");
-  if (!input) {
-    return false;
-  }
-
-  updateGlossaryTermDraftField("untranslated", input.checked === true);
-  render();
-  return true;
-}
-
 function handleEditorSourceLanguageInput(event, render) {
   const input = event.target.closest("[data-editor-source-language-select]");
   if (!input) {
@@ -228,12 +211,37 @@ function handleEditorSourceLanguageInput(event, render) {
 }
 
 function handleEditorTargetLanguageInput(event, render) {
+  if (event.type !== "change") {
+    return false;
+  }
+
   const input = event.target.closest("[data-editor-target-language-select]");
   if (!input) {
     return false;
   }
 
+  if (input.value === MANAGE_TARGET_LANGUAGES_OPTION_VALUE) {
+    openTargetLanguageManager();
+    render();
+    return true;
+  }
+
   updateEditorTargetLanguage(render, input.value);
+  return true;
+}
+
+function handleEditorFontSizeInput(event, render) {
+  if (event.type !== "change") {
+    return false;
+  }
+
+  const input = event.target.closest("[data-editor-font-size-select]");
+  if (!input) {
+    return false;
+  }
+
+  updateEditorFontSize(input.value);
+  render();
   return true;
 }
 
@@ -252,6 +260,7 @@ function handleEditorRowFieldInput(event) {
     input.dataset.languageCode,
     input.value,
   );
+  syncEditorRowTextareaHeight(input);
   return true;
 }
 
@@ -278,7 +287,6 @@ const inputHandlers = [
   handleChapterRenameInput,
   handleChapterPermanentDeleteInput,
   handleInviteUserInput,
-  handleGlossariesSearchInput,
   handleGlossaryTitleInput,
   handleGlossarySourceLanguageInput,
   handleGlossaryTargetLanguageInput,
@@ -286,9 +294,9 @@ const inputHandlers = [
   handleGlossaryTermVariantInput,
   handleGlossaryTermNotesInput,
   handleGlossaryTermFootnoteInput,
-  handleGlossaryTermUntranslatedInput,
   handleEditorSourceLanguageInput,
   handleEditorTargetLanguageInput,
+  handleEditorFontSizeInput,
   handleEditorRowFieldInput,
   handleEditorRowFieldChange,
 ];

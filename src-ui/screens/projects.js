@@ -1,12 +1,13 @@
 import {
+  buildPageRefreshAction,
+  buildSectionNav,
   createSearchField,
   escapeHtml,
-  navButton,
   pageShell,
   primaryButton,
+  renderStateCard,
   sectionSeparator,
   textAction,
-  titleRefreshButton,
 } from "../lib/ui.js";
 import { formatErrorForDisplay } from "../app/error-display.js";
 import { renderProjectCreationModal } from "./project-creation-modal.js";
@@ -219,32 +220,21 @@ export function renderProjectsScreen(state) {
   const discovery = state.projectDiscovery ?? { status: "idle", error: "" };
   const projectsSyncBadgeText = getScopedSyncBadgeText("projects");
   const isProjectsSyncing = state.projectsPageSync?.status === "syncing";
-  const emptyState = `
-    <article class="card card--hero card--empty">
-      <div class="card__body">
-        <p class="card__eyebrow">NO PROJECTS FOUND</p>
-        <h2 class="card__title card__title--small">This team doesn't have any projects yet.</h2>
-        <p class="card__subtitle">Click + New Project to create one.</p>
-      </div>
-    </article>
-  `;
-  const loadingState = `
-    <article class="card card--hero card--empty">
-      <div class="card__body">
-        <p class="card__eyebrow">LOADING PROJECTS</p>
-        <h2 class="card__title card__title--small">Loading projects...</h2>
-      </div>
-    </article>
-  `;
-  const errorState = `
-    <article class="card card--hero card--empty">
-      <div class="card__body">
-        <p class="card__eyebrow">PROJECT LOAD FAILED</p>
-        <h2 class="card__title card__title--small">Could not load this team's projects.</h2>
-        <p class="card__subtitle">${escapeHtml(formatErrorForDisplay(discovery.error || "Unknown error."))}</p>
-      </div>
-    </article>
-  `;
+  const emptyState = renderStateCard({
+    eyebrow: "NO PROJECTS FOUND",
+    title: "This team doesn't have any projects yet.",
+    subtitle: "Click + New Project to create one.",
+  });
+  const loadingState = renderStateCard({
+    eyebrow: "LOADING PROJECTS",
+    title: "Loading projects...",
+  });
+  const errorState = renderStateCard({
+    eyebrow: "PROJECT LOAD FAILED",
+    title: "Could not load this team's projects.",
+    subtitle: formatErrorForDisplay(discovery.error || "Unknown error."),
+    tone: "error",
+  });
 
   const projectsBody =
     discovery.status === "loading"
@@ -276,17 +266,8 @@ export function renderProjectsScreen(state) {
     pageShell({
     title: "Projects",
     subtitle: selectedTeam?.name ?? "Team",
-    titleAction: titleRefreshButton("refresh-page", {
-      spinning: isProjectsSyncing,
-      spinStartedAt: state.projectsPageSync?.startedAt,
-      disabled: offlineMode || isProjectsSyncing,
-    }),
-    navButtons: [
-      navButton("Teams", "teams", false, { isBack: true }),
-      navButton("Members", "users"),
-      navButton("Glossaries", "glossaries"),
-      navButton("Logout", "start"),
-    ],
+    titleAction: buildPageRefreshAction(state, state.projectsPageSync),
+    navButtons: buildSectionNav("projects"),
     leftTools: createSearchField("Search"),
     tools: [
       canManageProjects

@@ -13,39 +13,7 @@ import {
 } from "./status-feedback.js";
 import { reconcileProjectRepoSyncStates } from "./project-repo-sync-flow.js";
 import { refreshProjectFilesFromDisk } from "./project-flow.js";
-
-function openFilePicker() {
-  return new Promise((resolve) => {
-    const input = document.createElement("input");
-    input.type = "file";
-    input.accept = ".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
-    input.style.display = "none";
-
-    const cleanup = () => {
-      input.removeEventListener("change", handleChange);
-      input.removeEventListener("cancel", handleCancel);
-      if (input.parentNode) {
-        input.parentNode.removeChild(input);
-      }
-    };
-
-    const handleChange = () => {
-      const file = input.files?.[0] ?? null;
-      cleanup();
-      resolve(file);
-    };
-
-    const handleCancel = () => {
-      cleanup();
-      resolve(null);
-    };
-
-    input.addEventListener("change", handleChange, { once: true });
-    input.addEventListener("cancel", handleCancel, { once: true });
-    document.body.appendChild(input);
-    input.click();
-  });
-}
+import { openLocalFilePicker } from "./local-file-picker.js";
 
 function detectImportFileType(fileName) {
   const normalized = String(fileName || "").trim().toLowerCase();
@@ -122,7 +90,9 @@ export async function addFilesToProject(render, projectId) {
     return;
   }
 
-  const selectedFile = await openFilePicker();
+  const selectedFile = await openLocalFilePicker({
+    accept: ".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  });
   if (!selectedFile) {
     return;
   }

@@ -1,0 +1,165 @@
+import { state } from "./state.js";
+
+export function selectedTeam(teamId = state.selectedTeamId) {
+  return state.teams.find((team) => team.id === teamId) ?? null;
+}
+
+export function sortGlossaries(glossaries) {
+  return [...(Array.isArray(glossaries) ? glossaries : [])].sort((left, right) =>
+    String(left?.title ?? "")
+      .toLowerCase()
+      .localeCompare(String(right?.title ?? "").toLowerCase())
+      || String(left?.repoName ?? "").localeCompare(String(right?.repoName ?? "")),
+  );
+}
+
+export function selectedGlossary() {
+  return state.glossaries.find((glossary) => glossary.id === state.selectedGlossaryId) ?? null;
+}
+
+export function selectedGlossaryRepoName() {
+  return state.glossaryEditor?.repoName || selectedGlossary()?.repoName || "";
+}
+
+export function normalizeGlossarySummary(glossary) {
+  if (!glossary || typeof glossary !== "object") {
+    return null;
+  }
+
+  const id =
+    typeof glossary.glossaryId === "string" && glossary.glossaryId.trim()
+      ? glossary.glossaryId.trim()
+      : null;
+  const repoName =
+    typeof glossary.repoName === "string" && glossary.repoName.trim()
+      ? glossary.repoName.trim()
+      : null;
+  const title =
+    typeof glossary.title === "string" && glossary.title.trim()
+      ? glossary.title.trim()
+      : null;
+  if (!id || !repoName || !title) {
+    return null;
+  }
+
+  return {
+    id,
+    repoName,
+    title,
+    sourceLanguage: glossary.sourceLanguage ?? null,
+    targetLanguage: glossary.targetLanguage ?? null,
+    lifecycleState: glossary.lifecycleState === "deleted" ? "deleted" : "active",
+    termCount: Number.isFinite(glossary.termCount) ? glossary.termCount : 0,
+  };
+}
+
+export function normalizeGlossaryTerm(term) {
+  if (!term || typeof term !== "object") {
+    return null;
+  }
+  const termId =
+    typeof term.termId === "string" && term.termId.trim()
+      ? term.termId.trim()
+      : null;
+  if (!termId) {
+    return null;
+  }
+
+  return {
+    termId,
+    sourceTerms: Array.isArray(term.sourceTerms) ? term.sourceTerms : [],
+    targetTerms: Array.isArray(term.targetTerms) ? term.targetTerms : [],
+    notesToTranslators:
+      typeof term.notesToTranslators === "string" ? term.notesToTranslators : "",
+    footnote: typeof term.footnote === "string" ? term.footnote : "",
+    untranslated: term.untranslated === true,
+    lifecycleState: term.lifecycleState === "deleted" ? "deleted" : "active",
+  };
+}
+
+export function applyGlossaryEditorPayload(payload) {
+  const normalizedTerms = (Array.isArray(payload?.terms) ? payload.terms : [])
+    .map(normalizeGlossaryTerm)
+    .filter(Boolean);
+
+  state.glossaryEditor = {
+    status: "ready",
+    error: "",
+    glossaryId: payload.glossaryId,
+    repoName: selectedGlossaryRepoName(),
+    title: payload.title ?? "",
+    lifecycleState: payload.lifecycleState === "deleted" ? "deleted" : "active",
+    sourceLanguage: payload.sourceLanguage ?? null,
+    targetLanguage: payload.targetLanguage ?? null,
+    termCount: Number.isFinite(payload.termCount) ? payload.termCount : normalizedTerms.length,
+    searchQuery: state.glossaryEditor?.searchQuery ?? "",
+    terms: normalizedTerms,
+  };
+
+  state.glossaries = state.glossaries.map((glossary) =>
+    glossary.id === payload.glossaryId
+      ? {
+          ...glossary,
+          title: payload.title ?? glossary.title,
+          sourceLanguage: payload.sourceLanguage ?? glossary.sourceLanguage,
+          targetLanguage: payload.targetLanguage ?? glossary.targetLanguage,
+          lifecycleState: payload.lifecycleState ?? glossary.lifecycleState,
+          termCount: Number.isFinite(payload.termCount) ? payload.termCount : glossary.termCount,
+        }
+      : glossary,
+  );
+}
+
+export function normalizeEditableTerms(terms) {
+  const normalized = (Array.isArray(terms) ? terms : [])
+    .map((term) => (typeof term === "string" ? term : ""));
+
+  return normalized.length > 0 ? normalized : [""];
+}
+
+export function sanitizeEditableTerms(terms) {
+  return (Array.isArray(terms) ? terms : [])
+    .map((term) => String(term ?? "").trim())
+    .filter(Boolean);
+}
+
+export function sanitizeEditableTargetTerms(terms) {
+  const sanitized = [];
+  const seen = new Set();
+  let includedEmptyVariant = false;
+
+  for (const term of Array.isArray(terms) ? terms : []) {
+    const trimmed = String(term ?? "").trim();
+    if (!trimmed) {
+      if (!includedEmptyVariant) {
+        sanitized.push("");
+        includedEmptyVariant = true;
+      }
+      continue;
+    }
+
+    if (seen.has(trimmed)) {
+      continue;
+    }
+
+    seen.add(trimmed);
+    sanitized.push(trimmed);
+  }
+
+  return sanitized;
+}
+
+export function updateGlossaryTermArray(side, updater) {
+  if (!state.glossaryTermEditor?.isOpen) {
+    return;
+  }
+
+  const field = side === "target" ? "targetTerms" : "sourceTerms";
+  const currentTerms = normalizeEditableTerms(state.glossaryTermEditor[field]);
+  const nextTerms = normalizeEditableTerms(updater(currentTerms));
+
+  state.glossaryTermEditor[field] = nextTerms;
+  if (state.glossaryTermEditor.error) {
+    state.glossaryTermEditor.error = "";
+  }
+}

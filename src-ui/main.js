@@ -12,8 +12,10 @@ import { loadUserTeams, setGithubAppInstallation } from "./app/team-setup-flow.j
 import { initializeConnectivity } from "./app/offline-connectivity.js";
 import { initializePersistentStorage } from "./app/persistent-store.js";
 import { app, initializeWindowPresentation } from "./app/runtime.js";
+import { syncEditorRowTextareaHeight, syncEditorRowTextareaHeights, syncGlossaryVariantTextareaHeights } from "./app/autosize.js";
 import { captureRenderScrollSnapshot, restoreRenderScrollSnapshot } from "./app/scroll-state.js";
 import { hydratePersistentAppState, state } from "./app/state.js";
+import { setActiveEditorField } from "./app/translate-flow.js";
 import { checkForAppUpdate } from "./app/updater-flow.js";
 import { renderGithubAppTestScreen } from "./screens/github-app-test.js";
 import { renderConnectionFailureModal } from "./screens/connection-failure-modal.js";
@@ -49,7 +51,11 @@ const titles = {
 
 function captureFocusedInputState() {
   const activeElement = document.activeElement;
-  if (!(activeElement instanceof HTMLInputElement) && !(activeElement instanceof HTMLSelectElement)) {
+  if (
+    !(activeElement instanceof HTMLInputElement)
+    && !(activeElement instanceof HTMLSelectElement)
+    && !(activeElement instanceof HTMLTextAreaElement)
+  ) {
     return null;
   }
 
@@ -60,23 +66,34 @@ function captureFocusedInputState() {
     "[data-invite-user-input]",
     "[data-team-permanent-delete-input]",
     "[data-project-permanent-delete-input]",
-    "[data-glossaries-search-input]",
     "[data-glossary-title-input]",
     "[data-glossary-source-language-select]",
     "[data-glossary-target-language-select]",
     "[data-glossary-term-search-input]",
   ];
 
-  const selector = supportedSelectors.find((candidate) => activeElement.matches(candidate));
+  const selector =
+    activeElement instanceof HTMLTextAreaElement && activeElement.matches("[data-editor-row-field]")
+      ? `[data-editor-row-field][data-row-id="${activeElement.dataset.rowId}"][data-language-code="${activeElement.dataset.languageCode}"]`
+      : supportedSelectors.find((candidate) => activeElement.matches(candidate));
   if (!selector) {
     return null;
   }
 
   return {
     selector,
-    selectionStart: activeElement instanceof HTMLInputElement ? activeElement.selectionStart : null,
-    selectionEnd: activeElement instanceof HTMLInputElement ? activeElement.selectionEnd : null,
-    selectionDirection: activeElement instanceof HTMLInputElement ? activeElement.selectionDirection : null,
+    selectionStart:
+      activeElement instanceof HTMLInputElement || activeElement instanceof HTMLTextAreaElement
+        ? activeElement.selectionStart
+        : null,
+    selectionEnd:
+      activeElement instanceof HTMLInputElement || activeElement instanceof HTMLTextAreaElement
+        ? activeElement.selectionEnd
+        : null,
+    selectionDirection:
+      activeElement instanceof HTMLInputElement || activeElement instanceof HTMLTextAreaElement
+        ? activeElement.selectionDirection
+        : null,
   };
 }
 
@@ -87,7 +104,9 @@ function restoreFocusedInputState(focusSnapshot) {
 
   const nextInput = document.querySelector(focusSnapshot.selector);
   if (
-    (!(nextInput instanceof HTMLInputElement) && !(nextInput instanceof HTMLSelectElement))
+    (!(nextInput instanceof HTMLInputElement)
+      && !(nextInput instanceof HTMLSelectElement)
+      && !(nextInput instanceof HTMLTextAreaElement))
     || nextInput.disabled
   ) {
     return;
@@ -96,7 +115,7 @@ function restoreFocusedInputState(focusSnapshot) {
   nextInput.focus({ preventScroll: true });
 
   if (
-    nextInput instanceof HTMLInputElement
+    (nextInput instanceof HTMLInputElement || nextInput instanceof HTMLTextAreaElement)
     && typeof focusSnapshot.selectionStart === "number"
     && typeof focusSnapshot.selectionEnd === "number"
   ) {
@@ -114,13 +133,34 @@ function render() {
   const scrollSnapshot = captureRenderScrollSnapshot(previousScreen);
   const renderScreen = screenRenderers[state.screen] ?? screenRenderers.start;
   app.innerHTML = renderScreen() + renderConnectionFailureModal(state);
+  syncGlossaryVariantTextareaHeights(app);
   if (app.firstElementChild instanceof HTMLElement) {
     app.firstElementChild.dataset.screen = state.screen;
   }
   restoreRenderScrollSnapshot(previousScreen, state.screen, scrollSnapshot);
   restoreFocusedInputState(focusSnapshot);
+  syncEditorRowTextareaHeights(app);
   document.title = titles[state.screen] ?? "Gnosis TMS";
 }
+
+app.addEventListener("focusin", (event) => {
+  const input = event.target.closest?.("[data-editor-row-field]");
+  if (!(input instanceof HTMLTextAreaElement)) {
+    return;
+  }
+
+  setActiveEditorField(render, input.dataset.rowId, input.dataset.languageCode);
+  syncEditorRowTextareaHeight(input);
+});
+
+app.addEventListener("focusout", (event) => {
+  const input = event.target.closest?.("[data-editor-row-field]");
+  if (!(input instanceof HTMLTextAreaElement)) {
+    return;
+  }
+
+  requestAnimationFrame(() => syncEditorRowTextareaHeight(input));
+});
 
 window.__gnosisDebug = {
   showStartAuthMessage(message, status = "expired") {

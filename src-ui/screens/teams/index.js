@@ -1,9 +1,10 @@
 import {
+  buildPageRefreshAction,
+  buildSectionNav,
   navButton,
   pageShell,
   primaryButton,
   secondaryButton,
-  titleRefreshButton,
 } from "../../lib/ui.js";
 import { renderTeamLeaveModal } from "./leave-modal.js";
 import { renderTeamRenameModal } from "./rename-modal.js";
@@ -34,12 +35,8 @@ export function renderTeamsScreen(state) {
   return pageShell({
     title: "Translation Teams",
     subtitle,
-    titleAction: titleRefreshButton("refresh-page", {
-      spinning: state.pageSync?.status === "syncing",
-      spinStartedAt: state.pageSync?.startedAt,
-      disabled: offlineMode || state.pageSync?.status === "syncing",
-    }),
-    navButtons: [navButton("Logout", "start")],
+    titleAction: buildPageRefreshAction(state),
+    navButtons: buildSectionNav("teams"),
     tools: [updateAction, primaryButton("+ New Team", "open-new-team", { disabled: offlineMode })]
       .filter(Boolean)
       .join(""),

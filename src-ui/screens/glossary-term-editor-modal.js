@@ -11,6 +11,7 @@ function renderVariantRow(side, value, index, total, isSubmitting) {
   const inputLabel = `${side === "source" ? "Source" : "Target"} variant ${index + 1}`;
   const showRemoveButton = total > 1;
   const dragLabel = "Drag to move more likely variants to the top of the list.";
+  const tooltipOptions = side === "target" ? { align: "end" } : {};
   const dragHandleMarkup =
     total > 1
       ? `
@@ -19,7 +20,7 @@ function renderVariantRow(side, value, index, total, isSubmitting) {
           type="button"
           data-glossary-term-variant-handle
           aria-label="${escapeHtml(dragLabel)}"
-          ${tooltipAttributes(dragLabel)}
+          ${tooltipAttributes(dragLabel, tooltipOptions)}
           ${isSubmitting ? "disabled" : ""}
         >
           <span class="term-variant-row__drag-dots" aria-hidden="true">
@@ -40,7 +41,7 @@ function renderVariantRow(side, value, index, total, isSubmitting) {
           type="button"
           data-action="remove-glossary-term-variant:${escapeHtml(side)}:${index}"
           aria-label="Remove variant"
-          ${tooltipAttributes("Remove variant")}
+          ${tooltipAttributes("Remove variant", tooltipOptions)}
           ${removeDisabled ? "disabled" : ""}
         ><span class="term-variant-row__remove-icon" aria-hidden="true"></span></button>
       `
@@ -54,17 +55,16 @@ function renderVariantRow(side, value, index, total, isSubmitting) {
       data-variant-index="${index}"
     >
       <div class="term-variant-row__shell">
-        <input
+        <textarea
           class="field__input term-variant-row__input"
-          type="text"
           aria-label="${escapeHtml(inputLabel)}"
           placeholder="Enter term..."
-          value="${escapeHtml(value)}"
+          rows="1"
           data-glossary-term-variant-input
           data-variant-side="${escapeHtml(side)}"
           data-variant-index="${index}"
           ${isSubmitting ? "disabled" : ""}
-        />
+        >${escapeHtml(value)}</textarea>
         <div class="term-variant-row__actions">
           ${dragHandleMarkup}
           ${removeButtonMarkup}
@@ -75,6 +75,8 @@ function renderVariantRow(side, value, index, total, isSubmitting) {
 }
 
 function renderVariantLane(side, languageName, values, isSubmitting) {
+  const tooltipOptions = side === "target" ? { align: "end" } : {};
+
   return `
     <section class="term-lane">
       <div class="term-lane__header">
@@ -91,7 +93,7 @@ function renderVariantLane(side, languageName, values, isSubmitting) {
           type="button"
           data-action="add-glossary-term-variant:${escapeHtml(side)}"
           aria-label="Add variant"
-          ${tooltipAttributes("Add variant")}
+          ${tooltipAttributes("Add variant", tooltipOptions)}
           ${isSubmitting ? "disabled" : ""}
         ><span class="term-lane__add-icon" aria-hidden="true"></span></button>
       </div>

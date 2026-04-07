@@ -1,0 +1,151 @@
+import { invoke, waitForNextPaint } from "./runtime.js";
+import { beginPageSync, completePageSync, failPageSync } from "./page-sync.js";
+import { createGlossaryEditorState, state } from "./state.js";
+import { showNoticeBadge } from "./status-feedback.js";
+import {
+  applyGlossaryEditorPayload,
+  selectedGlossary,
+  selectedGlossaryRepoName,
+  selectedTeam,
+} from "./glossary-shared.js";
+
+export function primeSelectedGlossaryEditorLoadingState() {
+  const glossary = selectedGlossary();
+  const preservedSearchQuery = state.glossaryEditor?.searchQuery ?? "";
+
+  if (!glossary?.repoName) {
+    state.glossaryEditor = {
+      ...createGlossaryEditorState(),
+      status: "error",
+      error: "Could not determine which glossary to open.",
+      searchQuery: preservedSearchQuery,
+    };
+    return;
+  }
+
+  state.glossaryEditor = {
+    ...createGlossaryEditorState(),
+    status: "loading",
+    error: "",
+    glossaryId: glossary.id,
+    repoName: glossary.repoName,
+    title: glossary.title,
+    sourceLanguage: glossary.sourceLanguage,
+    targetLanguage: glossary.targetLanguage,
+    lifecycleState: glossary.lifecycleState,
+    termCount: glossary.termCount,
+    searchQuery: preservedSearchQuery,
+  };
+}
+
+export async function loadSelectedGlossaryEditorData(render, options = {}) {
+  const preserveVisibleData = options.preserveVisibleData === true;
+  const team = selectedTeam();
+  const glossary = selectedGlossary();
+  if (!Number.isFinite(team?.installationId) || !glossary?.repoName) {
+    state.glossaryEditor = {
+      ...state.glossaryEditor,
+      status: "error",
+      error: "Could not determine which glossary to open.",
+      terms: [],
+    };
+    render();
+    return;
+  }
+
+  beginPageSync();
+  if (preserveVisibleData && state.glossaryEditor?.status === "ready") {
+    state.glossaryEditor = {
+      ...state.glossaryEditor,
+      error: "",
+      glossaryId: glossary.id,
+      repoName: glossary.repoName,
+      title: glossary.title,
+      sourceLanguage: glossary.sourceLanguage,
+      targetLanguage: glossary.targetLanguage,
+      lifecycleState: glossary.lifecycleState,
+      termCount: glossary.termCount,
+    };
+  } else {
+    state.glossaryEditor = {
+      ...state.glossaryEditor,
+      status: "loading",
+      error: "",
+      glossaryId: glossary.id,
+      repoName: glossary.repoName,
+      title: glossary.title,
+      sourceLanguage: glossary.sourceLanguage,
+      targetLanguage: glossary.targetLanguage,
+      lifecycleState: glossary.lifecycleState,
+      termCount: glossary.termCount,
+      terms: [],
+    };
+  }
+  render();
+  await waitForNextPaint();
+
+  try {
+    const payload = await invoke("load_gtms_glossary_editor_data", {
+      input: {
+        installationId: team.installationId,
+        repoName: glossary.repoName,
+      },
+    });
+    applyGlossaryEditorPayload(payload);
+    await completePageSync(render);
+    render();
+  } catch (error) {
+    failPageSync();
+    if (!preserveVisibleData || state.glossaryEditor?.status !== "ready") {
+      state.glossaryEditor = {
+        ...state.glossaryEditor,
+        status: "error",
+        error: error?.message ?? String(error),
+        terms: [],
+      };
+    }
+    showNoticeBadge(error?.message ?? String(error), render);
+    render();
+  }
+}
+
+export async function openGlossaryEditor(render, glossaryId) {
+  state.selectedGlossaryId = glossaryId;
+  state.screen = "glossaryEditor";
+  primeSelectedGlossaryEditorLoadingState();
+  render();
+  await loadSelectedGlossaryEditorData(render);
+}
+
+export function updateGlossaryTermSearchQuery(render, value) {
+  state.glossaryEditor = {
+    ...state.glossaryEditor,
+    searchQuery: value,
+  };
+  render();
+}
+
+export async function deleteGlossaryTerm(render, termId) {
+  const team = selectedTeam();
+  const repoName = selectedGlossaryRepoName();
+  if (!Number.isFinite(team?.installationId) || !repoName || !termId) {
+    return;
+  }
+
+  try {
+    await invoke("delete_gtms_glossary_term", {
+      input: {
+        installationId: team.installationId,
+        repoName,
+        termId,
+      },
+    });
+    await loadSelectedGlossaryEditorData(render);
+  } catch (error) {
+    showNoticeBadge(error?.message ?? String(error), render);
+  }
+}
+
+export function showGlossaryFeatureNotReady(render, label = "This glossary action") {
+  showNoticeBadge(`${label} is not implemented yet.`, render);
+}

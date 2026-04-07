@@ -108,6 +108,10 @@ function createGlossaryTermVariantPreview(row) {
   if (sourceInput instanceof HTMLInputElement && previewInput instanceof HTMLInputElement) {
     previewInput.value = sourceInput.value;
   }
+  if (sourceInput instanceof HTMLTextAreaElement && previewInput instanceof HTMLTextAreaElement) {
+    previewInput.value = sourceInput.value;
+    previewInput.style.height = sourceInput.style.height;
+  }
 
   preview.classList.remove("is-dragging", "is-drop-before", "is-drop-after");
   preview.classList.add("term-variant-row-preview");

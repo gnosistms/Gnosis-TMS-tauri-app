@@ -1,4 +1,12 @@
-import { escapeHtml, navButton, pageShell, primaryButton, textAction, titleRefreshButton } from "../lib/ui.js";
+import {
+  buildPageRefreshAction,
+  buildSectionNav,
+  escapeHtml,
+  pageShell,
+  primaryButton,
+  renderStateCard,
+  textAction,
+} from "../lib/ui.js";
 import { formatErrorForDisplay } from "../app/error-display.js";
 import { getNoticeBadgeText } from "../app/status-feedback.js";
 import { renderGlossaryCreationModal } from "./glossary-creation-modal.js";
@@ -7,32 +15,21 @@ export function renderGlossariesScreen(state) {
   const selectedTeam = state.teams.find((team) => team.id === state.selectedTeamId) ?? state.teams[0];
   const discovery = state.glossaryDiscovery ?? { status: "idle", error: "" };
   const visibleGlossaries = state.glossaries.filter((glossary) => glossary.lifecycleState === "active");
-  const emptyState = `
-    <article class="card card--hero card--empty">
-      <div class="card__body">
-        <p class="card__eyebrow">NO GLOSSARIES FOUND</p>
-        <h2 class="card__title card__title--small">No glossaries are available locally yet.</h2>
-        <p class="card__subtitle">Create or import a glossary to start building term lists for the editor.</p>
-      </div>
-    </article>
-  `;
-  const loadingState = `
-    <article class="card card--hero card--empty">
-      <div class="card__body">
-        <p class="card__eyebrow">LOADING GLOSSARIES</p>
-        <h2 class="card__title card__title--small">Loading glossaries...</h2>
-      </div>
-    </article>
-  `;
-  const errorState = `
-    <article class="card card--hero card--empty">
-      <div class="card__body">
-        <p class="card__eyebrow">GLOSSARY LOAD FAILED</p>
-        <h2 class="card__title card__title--small">Could not load this team's glossaries.</h2>
-        <p class="card__subtitle">${escapeHtml(formatErrorForDisplay(discovery.error || "Unknown error."))}</p>
-      </div>
-    </article>
-  `;
+  const emptyState = renderStateCard({
+    eyebrow: "NO GLOSSARIES FOUND",
+    title: "No glossaries are available locally yet.",
+    subtitle: "Create or import a glossary to start building term lists for the editor.",
+  });
+  const loadingState = renderStateCard({
+    eyebrow: "LOADING GLOSSARIES",
+    title: "Loading glossaries...",
+  });
+  const errorState = renderStateCard({
+    eyebrow: "GLOSSARY LOAD FAILED",
+    title: "Could not load this team's glossaries.",
+    subtitle: formatErrorForDisplay(discovery.error || "Unknown error."),
+    tone: "error",
+  });
   const bodyMarkup = discovery.status === "error"
     ? errorState
     : visibleGlossaries.length
@@ -78,17 +75,8 @@ export function renderGlossariesScreen(state) {
     pageShell({
       title: "Glossaries",
       subtitle: selectedTeam?.name ?? "Team",
-      titleAction: titleRefreshButton("refresh-page", {
-        spinning: state.pageSync?.status === "syncing",
-        spinStartedAt: state.pageSync?.startedAt,
-        disabled: state.offline?.isEnabled === true || state.pageSync?.status === "syncing",
-      }),
-      navButtons: [
-        navButton("Teams", "teams", false, { isBack: true }),
-        navButton("Members", "users"),
-        navButton("Projects", "projects"),
-        navButton("Logout", "start"),
-      ],
+      titleAction: buildPageRefreshAction(state),
+      navButtons: buildSectionNav("glossaries"),
       tools: `${textAction("Import", "import-glossary")} ${primaryButton("+ New Glossary", "open-new-glossary")}`,
       pageSync: state.pageSync,
       noticeText: getNoticeBadgeText(),

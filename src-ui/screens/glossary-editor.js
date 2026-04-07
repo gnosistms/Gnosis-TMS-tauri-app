@@ -1,10 +1,12 @@
 import {
+  buildPageRefreshAction,
+  buildSectionNav,
+  createSearchField,
   escapeHtml,
-  navButton,
   pageShell,
   primaryButton,
+  renderStateCard,
   textAction,
-  titleRefreshButton,
 } from "../lib/ui.js";
 import { formatErrorForDisplay } from "../app/error-display.js";
 import { getNoticeBadgeText } from "../app/status-feedback.js";
@@ -25,36 +27,25 @@ export function renderGlossaryEditorScreen(state) {
       term.footnote,
     ].some((value) => String(value ?? "").toLowerCase().includes(searchQuery));
   });
-  const searchField = `
-    <label class="search-field">
-      <span class="search-field__icon">⌕</span>
-      <input
-        type="text"
-        placeholder="Search"
-        value="${escapeHtml(glossary.searchQuery ?? "")}"
-        data-glossary-term-search-input
-      />
-    </label>
-  `;
+  const searchField = createSearchField({
+    placeholder: "Search",
+    value: glossary.searchQuery ?? "",
+    inputAttributes: {
+      "data-glossary-term-search-input": true,
+    },
+  });
   const bodyMarkup = glossary.status === "error"
-    ? `
-      <article class="card card--hero card--empty">
-        <div class="card__body">
-          <p class="card__eyebrow">GLOSSARY LOAD FAILED</p>
-          <h2 class="card__title card__title--small">Could not load this glossary.</h2>
-          <p class="card__subtitle">${escapeHtml(formatErrorForDisplay(glossary.error || "Unknown error."))}</p>
-        </div>
-      </article>
-    `
+    ? renderStateCard({
+      eyebrow: "GLOSSARY LOAD FAILED",
+      title: "Could not load this glossary.",
+      subtitle: formatErrorForDisplay(glossary.error || "Unknown error."),
+      tone: "error",
+    })
     : glossary.status !== "ready"
-      ? `
-        <article class="card card--hero card--empty">
-          <div class="card__body">
-            <p class="card__eyebrow">LOADING TERMS</p>
-            <h2 class="card__title card__title--small">Loading glossary terms...</h2>
-          </div>
-        </article>
-      `
+      ? renderStateCard({
+        eyebrow: "LOADING TERMS",
+        title: "Loading glossary terms...",
+      })
     : visibleTerms.length
       ? `
         <section class="table-card">
@@ -83,15 +74,11 @@ export function renderGlossaryEditorScreen(state) {
             .join("")}
         </section>
       `
-      : `
-        <article class="card card--hero card--empty">
-          <div class="card__body">
-            <p class="card__eyebrow">TERMS</p>
-            <h2 class="card__title card__title--small">${escapeHtml(searchQuery ? "No terms match this search." : "This glossary has no terms yet.")}</h2>
-            <p class="card__subtitle">Add the first term to begin using this glossary in the editor.</p>
-          </div>
-        </article>
-      `;
+      : renderStateCard({
+        eyebrow: "TERMS",
+        title: searchQuery ? "No terms match this search." : "This glossary has no terms yet.",
+        subtitle: "Add the first term to begin using this glossary in the editor.",
+      });
   const body = `
     <section class="stack">
       ${bodyMarkup}
@@ -101,15 +88,8 @@ export function renderGlossaryEditorScreen(state) {
   return (
     pageShell({
       title: glossary.title || "Glossary",
-      titleAction: titleRefreshButton("refresh-page", {
-        spinning: state.pageSync?.status === "syncing",
-        spinStartedAt: state.pageSync?.startedAt,
-        disabled: state.offline?.isEnabled === true || state.pageSync?.status === "syncing",
-      }),
-      navButtons: [
-        navButton("Glossaries", "glossaries", false, { isBack: true }),
-        navButton("Projects", "projects"),
-      ],
+      titleAction: buildPageRefreshAction(state),
+      navButtons: buildSectionNav("glossaryEditor"),
       tools: `${searchField} ${primaryButton("+ New Term", "open-new-term")}`,
       pageSync: state.pageSync,
       noticeText: getNoticeBadgeText(),

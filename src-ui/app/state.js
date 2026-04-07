@@ -4,6 +4,14 @@ import {
   loadStoredTeamPendingMutations,
 } from "./team-storage.js";
 
+export const DEFAULT_EDITOR_FONT_SIZE_PX = 20;
+export const EDITOR_FONT_SIZE_OPTIONS = [16, 18, 20, 22, 24];
+
+export function coerceEditorFontSizePx(value) {
+  const nextValue = Number.parseInt(String(value ?? ""), 10);
+  return EDITOR_FONT_SIZE_OPTIONS.includes(nextValue) ? nextValue : DEFAULT_EDITOR_FONT_SIZE_PX;
+}
+
 export const state = {
   screen: "start",
   expandedProjects: new Set(["p2"]),
@@ -12,7 +20,6 @@ export const state = {
   selectedProjectId: "p2",
   selectedGlossaryId: "g1",
   selectedChapterId: "c2",
-  glossariesSearchQuery: "",
   teams: [],
   deletedTeams: [],
   projects: [],
@@ -44,6 +51,7 @@ export const state = {
   projectImport: createProjectImportState(),
   projectRepoSyncByProjectId: {},
   editorChapter: createEditorChapterState(),
+  targetLanguageManager: createTargetLanguageManagerState(),
   glossaryEditor: createGlossaryEditorState(),
   userDiscovery: {
     status: "idle",
@@ -191,7 +199,24 @@ export function createEditorChapterState() {
     persistedSourceLanguageCode: null,
     persistedTargetLanguageCode: null,
     selectionPersistStatus: "idle",
+    fontSizePx: DEFAULT_EDITOR_FONT_SIZE_PX,
+    collapsedLanguageCodes: new Set(),
+    activeRowId: null,
+    activeLanguageCode: null,
+    history: createEditorHistoryState(),
     rows: [],
+  };
+}
+
+export function createEditorHistoryState() {
+  return {
+    status: "idle",
+    error: "",
+    rowId: null,
+    languageCode: null,
+    requestKey: null,
+    restoringCommitSha: null,
+    entries: [],
   };
 }
 
@@ -209,6 +234,10 @@ export function createGlossaryEditorState() {
     searchQuery: "",
     terms: [],
   };
+}
+
+export function createTargetLanguageManagerState() {
+  return createEntityModalState();
 }
 
 export function createGlossaryDiscoveryState() {
@@ -295,6 +324,10 @@ export function resetInviteUser() {
   state.inviteUser = createInviteUserState();
 }
 
+export function resetTargetLanguageManager() {
+  state.targetLanguageManager = createTargetLanguageManagerState();
+}
+
 export function createProjectPermanentDeletionState() {
   return createEntityModalState({
     projectId: null,
@@ -366,7 +399,6 @@ export function resetSessionState() {
   state.projects = [];
   state.deletedProjects = [];
   state.glossaries = [];
-  state.glossariesSearchQuery = "";
   state.users = [];
   state.orgDiscovery = { status: "idle", error: "" };
   state.projectDiscovery = { status: "idle", error: "" };
@@ -374,6 +406,7 @@ export function resetSessionState() {
   state.projectImport = createProjectImportState();
   state.projectRepoSyncByProjectId = {};
   state.editorChapter = createEditorChapterState();
+  state.targetLanguageManager = createTargetLanguageManagerState();
   state.glossaryEditor = createGlossaryEditorState();
   state.userDiscovery = { status: "idle", error: "" };
   state.teamSyncVersion = 0;
