@@ -1,6 +1,9 @@
 use std::{env, fs, path::PathBuf, process::Command};
 
 use serde::{Deserialize, Serialize};
+use tauri::AppHandle;
+
+use crate::git_commit::git_commit_as_signed_in_user;
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -32,6 +35,7 @@ struct TeamSetupDraftFile {
 
 #[tauri::command]
 pub(crate) fn create_team_setup_draft(
+  app: AppHandle,
   input: TeamSetupDraftInput,
 ) -> Result<TeamSetupDraftResponse, String> {
   let repo_root = repository_root()?;
@@ -65,9 +69,11 @@ pub(crate) fn create_team_setup_draft(
     .to_string();
 
   git_in_repo(&repo_root, &["add", relative_path.as_str()])?;
-  git_in_repo(
+  git_commit_as_signed_in_user(
+    &app,
     &repo_root,
-    &["commit", "-m", &format!("chore: save team setup draft for {}", input.slug)],
+    &format!("chore: save team setup draft for {}", input.slug),
+    &[],
   )?;
   let commit_sha = git_output(&repo_root, &["rev-parse", "--short", "HEAD"])?;
 

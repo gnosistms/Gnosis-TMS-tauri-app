@@ -2,6 +2,7 @@ import { actionSuffix } from "../action-helpers.js";
 import {
   closeTargetLanguageManager,
   restoreEditorFieldHistory,
+  toggleEditorHistoryGroupExpanded,
   toggleEditorLanguageCollapsed,
 } from "../translate-flow.js";
 
@@ -16,6 +17,13 @@ export function createTranslateActions(render) {
     const historyCommitSha = actionSuffix(action, "restore-editor-history:");
     if (historyCommitSha !== null) {
       await restoreEditorFieldHistory(render, historyCommitSha);
+      return true;
+    }
+
+    const historyGroupKey = actionSuffix(action, "toggle-editor-history-group:");
+    if (historyGroupKey !== null) {
+      toggleEditorHistoryGroupExpanded(historyGroupKey);
+      render();
       return true;
     }
 

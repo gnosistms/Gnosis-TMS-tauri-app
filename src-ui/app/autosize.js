@@ -14,6 +14,27 @@ export function syncAutoSizeTextarea(textarea, options = {}) {
   textarea.classList.toggle("is-single-line", scrollHeight <= minHeight + 2);
 }
 
+function parsePixelValue(value, fallback = 0) {
+  const parsed = Number.parseFloat(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function singleLineTextareaHeight(textarea, fallback = 56) {
+  if (!(textarea instanceof HTMLTextAreaElement) || typeof window === "undefined") {
+    return fallback;
+  }
+
+  const computedStyle = window.getComputedStyle(textarea);
+  const fontSize = parsePixelValue(computedStyle.fontSize, 16);
+  const lineHeight = parsePixelValue(computedStyle.lineHeight, fontSize * 1.5);
+  const paddingTop = parsePixelValue(computedStyle.paddingTop);
+  const paddingBottom = parsePixelValue(computedStyle.paddingBottom);
+  const borderTop = parsePixelValue(computedStyle.borderTopWidth);
+  const borderBottom = parsePixelValue(computedStyle.borderBottomWidth);
+
+  return Math.ceil(lineHeight + paddingTop + paddingBottom + borderTop + borderBottom);
+}
+
 export function syncGlossaryVariantTextareaHeights(root = document) {
   root
     .querySelectorAll("[data-glossary-term-variant-input]")
@@ -25,10 +46,12 @@ export function syncEditorRowTextareaHeight(textarea) {
     return;
   }
 
+  const isActive = textarea.matches(":focus");
+
   syncAutoSizeTextarea(
     textarea,
-    textarea.matches(":focus") || textarea.classList.contains("is-active-selection")
-      ? { minHeight: 116, maxHeight: 320 }
+    isActive
+      ? { minHeight: singleLineTextareaHeight(textarea), maxHeight: 320 }
       : { minHeight: 44, maxHeight: 160 },
   );
 }

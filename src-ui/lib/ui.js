@@ -110,7 +110,7 @@ export function setImmediateLoadingButton(button, loadingLabel) {
 }
 
 export function secondaryButton(label, action, options = {}) {
-  return `<button class="button button--secondary${options.disabled ? " is-disabled" : ""}" data-action="${escapeHtml(
+  return `<button class="button button--secondary${options.compact ? " button--compact" : ""}${options.disabled ? " is-disabled" : ""}" data-action="${escapeHtml(
     action,
   )}"${disabledActionAttributes(options)}>${escapeHtml(label)}</button>`;
 }

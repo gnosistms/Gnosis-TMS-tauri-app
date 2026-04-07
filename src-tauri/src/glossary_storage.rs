@@ -12,7 +12,10 @@ use serde_json::{json, Value};
 use tauri::AppHandle;
 use uuid::Uuid;
 
-use crate::storage_paths::local_glossary_repo_root;
+use crate::{
+  git_commit::git_commit_as_signed_in_user,
+  storage_paths::local_glossary_repo_root,
+};
 
 const GLOSSARY_GITATTRIBUTES: &str = "* text=auto eol=lf\n";
 const ISO_LANGUAGE_OPTIONS_SOURCE: &str = include_str!("../../src-ui/lib/language-options.js");
@@ -387,9 +390,11 @@ fn create_local_gtms_glossary_sync(
 
   write_json_pretty(&repo_path.join("glossary.json"), &glossary_file)?;
   git_output(&repo_path, &["add", ".gitattributes", "glossary.json"])?;
-  git_output(
+  git_commit_as_signed_in_user(
+    app,
     &repo_path,
-    &["commit", "-m", "Initialize glossary", "--", ".gitattributes", "glossary.json"],
+    "Initialize glossary",
+    &[".gitattributes", "glossary.json"],
   )?;
 
   Ok(LocalGlossarySummary {
@@ -452,9 +457,11 @@ fn import_tmx_to_local_gtms_glossary_sync(
   }
 
   git_output(&repo_path, &["add", ".gitattributes", "glossary.json", "terms"])?;
-  git_output(
+  git_commit_as_signed_in_user(
+    app,
     &repo_path,
-    &["commit", "-m", &format!("Import glossary from {}", input.file_name), "--", ".gitattributes", "glossary.json", "terms"],
+    &format!("Import glossary from {}", input.file_name),
+    &[".gitattributes", "glossary.json", "terms"],
   )?;
 
   Ok(LocalGlossarySummary {
@@ -551,9 +558,11 @@ fn upsert_gtms_glossary_term_sync(
   } else {
     format!("Add glossary term {}", term_id)
   };
-  git_output(
+  git_commit_as_signed_in_user(
+    app,
     &repo_path,
-    &["commit", "-m", &commit_message, "--", ".gitattributes", &relative_term_path],
+    &commit_message,
+    &[".gitattributes", &relative_term_path],
   )?;
 
   let term_count = load_glossary_terms(&repo_path.join("terms"))?
@@ -593,9 +602,11 @@ fn delete_gtms_glossary_term_sync(
     .to_string_lossy()
     .to_string();
   git_output(&repo_path, &["rm", &relative_term_path])?;
-  git_output(
+  git_commit_as_signed_in_user(
+    app,
     &repo_path,
-    &["commit", "-m", &format!("Delete glossary term {}", input.term_id), "--", &relative_term_path],
+    &format!("Delete glossary term {}", input.term_id),
+    &[&relative_term_path],
   )?;
 
   let term_count = load_glossary_terms(&repo_path.join("terms"))?

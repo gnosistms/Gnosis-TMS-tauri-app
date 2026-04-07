@@ -3,6 +3,7 @@ import {
   splitStoredTeamRecords,
   loadStoredTeamPendingMutations,
 } from "./team-storage.js";
+import { loadStoredEditorFontSizePx } from "./editor-preferences.js";
 
 export const DEFAULT_EDITOR_FONT_SIZE_PX = 20;
 export const EDITOR_FONT_SIZE_OPTIONS = [16, 18, 20, 22, 24];
@@ -82,6 +83,7 @@ export const state = {
 
 export function hydratePersistentAppState() {
   hydrateStoredTeamState();
+  hydrateStoredEditorPreferences();
 }
 
 export function hydrateStoredTeamState() {
@@ -90,6 +92,13 @@ export function hydrateStoredTeamState() {
   state.deletedTeams = storedTeams.deletedTeams;
   state.pendingTeamMutations = loadStoredTeamPendingMutations();
   state.selectedTeamId = state.selectedTeamId ?? storedTeams.activeTeams[0]?.id ?? null;
+}
+
+export function hydrateStoredEditorPreferences() {
+  state.editorChapter = {
+    ...state.editorChapter,
+    fontSizePx: coerceEditorFontSizePx(loadStoredEditorFontSizePx()),
+  };
 }
 
 export function createOfflineState() {
@@ -216,6 +225,7 @@ export function createEditorHistoryState() {
     languageCode: null,
     requestKey: null,
     restoringCommitSha: null,
+    expandedGroupKeys: new Set(),
     entries: [],
   };
 }

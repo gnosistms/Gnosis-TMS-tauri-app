@@ -1,5 +1,6 @@
 import { saveStoredProjectsForTeam } from "./project-cache.js";
 import { invoke } from "./runtime.js";
+import { saveStoredEditorFontSizePx } from "./editor-preferences.js";
 import {
   coerceEditorFontSizePx,
   createEditorHistoryState,
@@ -68,6 +69,40 @@ function buildEditorHistoryRequestKey(chapterId, rowId, languageCode) {
   return `${chapterId}:${rowId}:${languageCode}`;
 }
 
+function normalizeHistoryAuthorIdentity(value) {
+  if (typeof value !== "string") {
+    return "";
+  }
+
+  return value
+    .replace(/\s+\([^)]*\)\s*$/u, "")
+    .trim()
+    .replace(/\s+/gu, " ")
+    .toLowerCase();
+}
+
+function defaultExpandedHistoryGroupKeys(entries, session = state.auth.session) {
+  if (!Array.isArray(entries) || entries.length === 0) {
+    return new Set();
+  }
+
+  const topEntry = entries[0];
+  const topAuthorIdentity = normalizeHistoryAuthorIdentity(topEntry?.authorName);
+  if (!topAuthorIdentity) {
+    return new Set();
+  }
+
+  const sessionIdentities = new Set(
+    [session?.login, session?.name]
+      .map((value) => normalizeHistoryAuthorIdentity(value))
+      .filter(Boolean),
+  );
+
+  return sessionIdentities.has(topAuthorIdentity)
+    ? new Set([String(topEntry.commitSha ?? "")].filter(Boolean))
+    : new Set();
+}
+
 function normalizeEditorHistoryState(history) {
   return {
     ...createEditorHistoryState(),
@@ -77,6 +112,7 @@ function normalizeEditorHistoryState(history) {
     requestKey: typeof history?.requestKey === "string" ? history.requestKey : null,
     restoringCommitSha:
       typeof history?.restoringCommitSha === "string" ? history.restoringCommitSha : null,
+    expandedGroupKeys: cloneExpandedHistoryGroupKeys(history?.expandedGroupKeys),
     entries: Array.isArray(history?.entries) ? history.entries : [],
   };
 }
@@ -84,6 +120,12 @@ function normalizeEditorHistoryState(history) {
 function cloneCollapsedLanguageCodes(collapsedLanguageCodes) {
   return collapsedLanguageCodes instanceof Set
     ? new Set(collapsedLanguageCodes)
+    : new Set();
+}
+
+function cloneExpandedHistoryGroupKeys(expandedGroupKeys) {
+  return expandedGroupKeys instanceof Set
+    ? new Set(expandedGroupKeys)
     : new Set();
 }
 
@@ -358,6 +400,7 @@ async function fetchEditorFieldHistory(render, requestKey) {
         languageCode,
         requestKey,
         restoringCommitSha: null,
+        expandedGroupKeys: defaultExpandedHistoryGroupKeys(payload?.entries),
         entries: Array.isArray(payload?.entries) ? payload.entries : [],
       },
     };
@@ -383,6 +426,7 @@ async function fetchEditorFieldHistory(render, requestKey) {
         languageCode,
         requestKey,
         restoringCommitSha: null,
+        expandedGroupKeys: new Set(),
       },
     };
     render?.();
@@ -400,24 +444,19 @@ export function loadActiveEditorFieldHistory(render) {
     editorChapter.activeRowId,
     editorChapter.activeLanguageCode,
   );
-  const currentHistory = currentEditorHistoryForSelection(
-    editorChapter,
-    editorChapter.activeRowId,
-    editorChapter.activeLanguageCode,
-  );
   state.editorChapter = {
     ...editorChapter,
     history: {
-      ...currentHistory,
+      ...normalizeEditorHistoryState(editorChapter.history),
       status: "loading",
       error: "",
       rowId: editorChapter.activeRowId,
       languageCode: editorChapter.activeLanguageCode,
       requestKey,
       restoringCommitSha: null,
+      expandedGroupKeys: new Set(),
     },
   };
-  render?.();
   void fetchEditorFieldHistory(render, requestKey);
 }
 
@@ -439,9 +478,30 @@ export function setActiveEditorField(render, rowId, languageCode) {
     ...editorChapter,
     activeRowId: rowId,
     activeLanguageCode: languageCode,
-    history: createEditorHistoryState(),
   };
   loadActiveEditorFieldHistory(render);
+}
+
+export function toggleEditorHistoryGroupExpanded(groupKey) {
+  if (!groupKey || !state.editorChapter?.chapterId) {
+    return;
+  }
+
+  const history = normalizeEditorHistoryState(state.editorChapter.history);
+  const expandedGroupKeys = cloneExpandedHistoryGroupKeys(history.expandedGroupKeys);
+  if (expandedGroupKeys.has(groupKey)) {
+    expandedGroupKeys.delete(groupKey);
+  } else {
+    expandedGroupKeys.add(groupKey);
+  }
+
+  state.editorChapter = {
+    ...state.editorChapter,
+    history: {
+      ...history,
+      expandedGroupKeys,
+    },
+  };
 }
 
 export async function persistEditorChapterSelections(render) {
@@ -678,10 +738,12 @@ export function updateEditorTargetLanguage(render, nextCode) {
 }
 
 export function updateEditorFontSize(nextValue) {
+  const fontSizePx = coerceEditorFontSizePx(nextValue);
   state.editorChapter = {
     ...state.editorChapter,
-    fontSizePx: coerceEditorFontSizePx(nextValue),
+    fontSizePx,
   };
+  saveStoredEditorFontSizePx(fontSizePx);
 }
 
 export async function restoreEditorFieldHistory(render, commitSha) {

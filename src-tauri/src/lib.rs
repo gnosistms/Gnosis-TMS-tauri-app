@@ -4,6 +4,7 @@ mod broker_auth_storage;
 mod callbacks;
 mod constants;
 mod drafts;
+mod git_commit;
 mod glossary_storage;
 mod github;
 mod github_app_test;

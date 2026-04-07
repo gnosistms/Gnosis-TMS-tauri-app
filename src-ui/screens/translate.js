@@ -193,19 +193,6 @@ function orderRowSectionsByCollapsedState(sections, collapsedLanguageCodes = new
   return [...expandedSections, ...collapsedSections];
 }
 
-function summarizeTranslationText(value, maxLength = 54) {
-  const text = String(value ?? "").replace(/\s+/g, " ").trim();
-  if (!text) {
-    return "Empty translation";
-  }
-
-  if (text.length <= maxLength) {
-    return text;
-  }
-
-  return `${text.slice(0, maxLength - 3)}...`;
-}
-
 function formatHistoryTimestamp(value) {
   if (!value) {
     return "";
@@ -225,6 +212,245 @@ function formatHistoryTimestamp(value) {
   }).format(date);
 }
 
+function prefersCharacterHistoryDiff(languageCode) {
+  const normalizedCode = String(languageCode ?? "").toLowerCase();
+  return normalizedCode === "ja" || normalizedCode.startsWith("zh");
+}
+
+function tokenizeHistoryDiffText(value, languageCode) {
+  const text = String(value ?? "");
+  if (!text) {
+    return [];
+  }
+
+  const useCharacterDiff = prefersCharacterHistoryDiff(languageCode);
+  const segmentGranularity = useCharacterDiff ? "grapheme" : "word";
+
+  if (typeof Intl !== "undefined" && typeof Intl.Segmenter === "function") {
+    try {
+      return Array.from(
+        new Intl.Segmenter(languageCode || undefined, { granularity: segmentGranularity }).segment(text),
+        ({ segment }) => segment,
+      );
+    } catch {
+      // Fall through to a simpler tokenizer if the runtime rejects the locale.
+    }
+  }
+
+  if (useCharacterDiff) {
+    return Array.from(text);
+  }
+
+  return text.match(/\s+|[^\s]+/g) ?? Array.from(text);
+}
+
+function appendHistoryDiffSegment(segments, type, text) {
+  if (!text) {
+    return;
+  }
+
+  const lastSegment = segments[segments.length - 1];
+  if (lastSegment?.type === type) {
+    lastSegment.text += text;
+    return;
+  }
+
+  segments.push({ type, text });
+}
+
+function buildFallbackHistoryDiffSegments(previousTokens, currentTokens) {
+  let prefixLength = 0;
+  while (
+    prefixLength < previousTokens.length
+    && prefixLength < currentTokens.length
+    && previousTokens[prefixLength] === currentTokens[prefixLength]
+  ) {
+    prefixLength += 1;
+  }
+
+  let previousSuffixStart = previousTokens.length - 1;
+  let currentSuffixStart = currentTokens.length - 1;
+  while (
+    previousSuffixStart >= prefixLength
+    && currentSuffixStart >= prefixLength
+    && previousTokens[previousSuffixStart] === currentTokens[currentSuffixStart]
+  ) {
+    previousSuffixStart -= 1;
+    currentSuffixStart -= 1;
+  }
+
+  const segments = [];
+  appendHistoryDiffSegment(segments, "equal", previousTokens.slice(0, prefixLength).join(""));
+  appendHistoryDiffSegment(
+    segments,
+    "delete",
+    previousTokens.slice(prefixLength, previousSuffixStart + 1).join(""),
+  );
+  appendHistoryDiffSegment(
+    segments,
+    "insert",
+    currentTokens.slice(prefixLength, currentSuffixStart + 1).join(""),
+  );
+  appendHistoryDiffSegment(
+    segments,
+    "equal",
+    previousTokens.slice(previousSuffixStart + 1).join(""),
+  );
+  return segments;
+}
+
+function buildHistoryDiffSegments(previousText, currentText, languageCode) {
+  const previousTokens = tokenizeHistoryDiffText(previousText, languageCode);
+  const currentTokens = tokenizeHistoryDiffText(currentText, languageCode);
+
+  if (previousTokens.length === 0) {
+    return currentTokens.length === 0 ? [] : [{ type: "insert", text: currentTokens.join("") }];
+  }
+
+  if (currentTokens.length === 0) {
+    return [{ type: "delete", text: previousTokens.join("") }];
+  }
+
+  if (previousTokens.length * currentTokens.length > 640000) {
+    return buildFallbackHistoryDiffSegments(previousTokens, currentTokens);
+  }
+
+  const lcsMatrix = Array.from(
+    { length: previousTokens.length + 1 },
+    () => new Uint32Array(currentTokens.length + 1),
+  );
+
+  for (let previousIndex = previousTokens.length - 1; previousIndex >= 0; previousIndex -= 1) {
+    for (let currentIndex = currentTokens.length - 1; currentIndex >= 0; currentIndex -= 1) {
+      lcsMatrix[previousIndex][currentIndex] =
+        previousTokens[previousIndex] === currentTokens[currentIndex]
+          ? lcsMatrix[previousIndex + 1][currentIndex + 1] + 1
+          : Math.max(
+            lcsMatrix[previousIndex + 1][currentIndex],
+            lcsMatrix[previousIndex][currentIndex + 1],
+          );
+    }
+  }
+
+  const segments = [];
+  let previousIndex = 0;
+  let currentIndex = 0;
+
+  while (previousIndex < previousTokens.length && currentIndex < currentTokens.length) {
+    if (previousTokens[previousIndex] === currentTokens[currentIndex]) {
+      appendHistoryDiffSegment(segments, "equal", previousTokens[previousIndex]);
+      previousIndex += 1;
+      currentIndex += 1;
+      continue;
+    }
+
+    if (lcsMatrix[previousIndex + 1][currentIndex] >= lcsMatrix[previousIndex][currentIndex + 1]) {
+      appendHistoryDiffSegment(segments, "delete", previousTokens[previousIndex]);
+      previousIndex += 1;
+      continue;
+    }
+
+    appendHistoryDiffSegment(segments, "insert", currentTokens[currentIndex]);
+    currentIndex += 1;
+  }
+
+  while (previousIndex < previousTokens.length) {
+    appendHistoryDiffSegment(segments, "delete", previousTokens[previousIndex]);
+    previousIndex += 1;
+  }
+
+  while (currentIndex < currentTokens.length) {
+    appendHistoryDiffSegment(segments, "insert", currentTokens[currentIndex]);
+    currentIndex += 1;
+  }
+
+  return segments;
+}
+
+function renderHistoryContent(entry, previousEntry, languageCode) {
+  const currentText = String(entry?.plainText ?? "");
+  if (!previousEntry) {
+    return escapeHtml(currentText);
+  }
+
+  return buildHistoryDiffSegments(previousEntry.plainText, currentText, languageCode)
+    .map((segment) => {
+      if (segment.type === "equal") {
+        return escapeHtml(segment.text);
+      }
+
+      return `<span class="history-diff__${segment.type}">${escapeHtml(segment.text)}</span>`;
+    })
+    .join("");
+}
+
+function historyAuthorLabel(entry) {
+  return String(entry?.authorName ?? "").trim() || "Unknown author";
+}
+
+function buildHistoryGroups(entries) {
+  const groups = [];
+
+  for (const entry of entries) {
+    const authorName = historyAuthorLabel(entry);
+    const previousGroup = groups[groups.length - 1] ?? null;
+    if (previousGroup?.authorName === authorName) {
+      previousGroup.entries.push(entry);
+      continue;
+    }
+
+    groups.push({
+      key: entry.commitSha,
+      authorName,
+      entries: [entry],
+    });
+  }
+
+  return groups;
+}
+
+function buildVisibleHistoryEntries(groups, expandedGroupKeys) {
+  return groups.flatMap((group) =>
+    expandedGroupKeys.has(group.key) ? group.entries : [group.entries[0]],
+  );
+}
+
+function buildOlderVisibleHistoryEntryMap(entries) {
+  return new Map(
+    entries.map((entry, index) => [
+      entry.commitSha,
+      index < entries.length - 1 ? entries[index + 1] : null,
+    ]),
+  );
+}
+
+function renderHistoryEntry(entry, previousEntry, activeLanguage, activeSection, canRestore, history) {
+  const isCurrentValue = canRestore && activeSection?.text === entry.plainText;
+  const isRestoring =
+    history.status === "restoring" && history.restoringCommitSha === entry.commitSha;
+  const restoreButton = isCurrentValue
+    ? secondaryButton("Current", "noop", { disabled: true, compact: true })
+    : secondaryButton(
+      isRestoring ? "Restoring..." : "Restore",
+      `restore-editor-history:${entry.commitSha}`,
+      { disabled: !canRestore || history.status === "restoring", compact: true },
+    );
+
+  return `
+    <article class="history-item">
+      <p class="history-item__content" lang="${escapeHtml(activeLanguage.code)}">${renderHistoryContent(entry, previousEntry, activeLanguage.code)}</p>
+      <p class="history-item__meta">${escapeHtml(
+        [historyAuthorLabel(entry), formatHistoryTimestamp(entry.committedAt)]
+          .filter(Boolean)
+          .join(" · "),
+      )}</p>
+      <div class="history-item__actions">
+        ${restoreButton}
+      </div>
+    </article>
+  `;
+}
+
 function renderHistorySidebar(editorChapter, rows, languages) {
   const activeRow = rows.find((row) => row.id === editorChapter?.activeRowId) ?? null;
   const activeLanguage =
@@ -240,8 +466,11 @@ function renderHistorySidebar(editorChapter, rows, languages) {
           entries: [],
           restoringCommitSha: null,
         };
+  const expandedGroupKeys = history.expandedGroupKeys instanceof Set ? history.expandedGroupKeys : new Set();
   const canRestore = activeRow?.saveStatus === "idle";
-  const hasUnsavedChanges = activeRow && activeRow.saveStatus !== "idle";
+  const historyGroups = buildHistoryGroups(Array.isArray(history.entries) ? history.entries : []);
+  const visibleHistoryEntries = buildVisibleHistoryEntries(historyGroups, expandedGroupKeys);
+  const olderVisibleEntryByCommitSha = buildOlderVisibleHistoryEntryMap(visibleHistoryEntries);
 
   const historyBody = !activeRow || !activeLanguage
     ? `
@@ -250,70 +479,69 @@ function renderHistorySidebar(editorChapter, rows, languages) {
       </div>
     `
     : `
-      <div class="history-context">
-        <p class="history-context__eyebrow">${escapeHtml(activeLanguage.name)}</p>
-        <h3>${escapeHtml(activeRow.title)}</h3>
-        <p class="history-context__excerpt">${escapeHtml(summarizeTranslationText(activeSection?.text))}</p>
-      </div>
       ${
-        hasUnsavedChanges
-          ? '<p class="history-note">Save the current row before restoring a previous revision.</p>'
-          : ""
-      }
-      ${
-        history.status === "loading"
+        history.status === "error"
           ? `
             <div class="history-empty">
-              <p>Loading history...</p>
+              <p>${escapeHtml(history.error || "Could not load the Git history for this translation.")}</p>
             </div>
           `
-          : history.status === "error"
-            ? `
-              <div class="history-empty">
-                <p>${escapeHtml(history.error || "Could not load the Git history for this translation.")}</p>
+          : !Array.isArray(history.entries) || history.entries.length === 0
+            ? (
+              history.status === "loading"
+                ? ""
+                : `
+                  <div class="history-empty">
+                    <p>No committed history exists for this translation yet.</p>
+                  </div>
+                `
+            )
+            : `
+              <div class="history-stack">
+                ${historyGroups
+                  .map((group) => {
+                    const isExpandable = group.entries.length > 1;
+                    const isExpanded = isExpandable && expandedGroupKeys.has(group.key);
+                    const visibleEntries = isExpanded ? group.entries : [group.entries[0]];
+                    const headingTag = isExpandable ? "button" : "div";
+                    const headingAttributes = isExpandable
+                      ? ` class="history-group__toggle" type="button" data-action="toggle-editor-history-group:${escapeHtml(group.key)}" aria-expanded="${isExpanded ? "true" : "false"}"`
+                      : ' class="history-group__toggle history-group__toggle--static"';
+                    const revisionLabel = `${group.entries.length} ${group.entries.length === 1 ? "revision" : "revisions"}`;
+
+                    return `
+                      <section class="history-group">
+                        <${headingTag}${headingAttributes}>
+                          <span class="history-group__summary">
+                            <span class="history-group__chevron${isExpanded ? " is-expanded" : ""}" aria-hidden="true">
+                              <svg viewBox="0 0 12 12" focusable="false" aria-hidden="true">
+                                <path d="M4.25 2.5 7.75 6l-3.5 3.5" />
+                              </svg>
+                            </span>
+                            <span class="history-group__author">${escapeHtml(group.authorName)}</span>
+                          </span>
+                          <span class="history-group__meta">${escapeHtml(revisionLabel)}</span>
+                        </${headingTag}>
+                        <div class="history-group__entries">
+                          ${visibleEntries
+                            .map((entry) =>
+                              renderHistoryEntry(
+                                entry,
+                                olderVisibleEntryByCommitSha.get(entry.commitSha) ?? null,
+                                activeLanguage,
+                                activeSection,
+                                canRestore,
+                                history,
+                              ),
+                            )
+                            .join("")}
+                        </div>
+                      </section>
+                    `;
+                  })
+                  .join("")}
               </div>
             `
-            : !Array.isArray(history.entries) || history.entries.length === 0
-              ? `
-                <div class="history-empty">
-                  <p>No committed history exists for this translation yet.</p>
-                </div>
-              `
-              : `
-                <div class="history-stack">
-                  ${history.entries
-                    .map((entry) => {
-                      const isCurrentValue = canRestore && activeSection?.text === entry.plainText;
-                      const isRestoring =
-                        history.status === "restoring" && history.restoringCommitSha === entry.commitSha;
-                      const restoreButton = isCurrentValue
-                        ? secondaryButton("Current", "noop", { disabled: true })
-                        : secondaryButton(
-                          isRestoring ? "Restoring..." : "Restore",
-                          `restore-editor-history:${entry.commitSha}`,
-                          { disabled: !canRestore || history.status === "restoring" },
-                        );
-
-                      return `
-                        <article class="history-item">
-                          <h3>${escapeHtml(summarizeTranslationText(entry.plainText))}</h3>
-                          <p class="history-item__meta">${escapeHtml(
-                            [entry.authorName || "Unknown author", formatHistoryTimestamp(entry.committedAt)]
-                              .filter(Boolean)
-                              .join(" · "),
-                          )}</p>
-                          ${
-                            entry.message
-                              ? `<p class="history-item__message">${escapeHtml(entry.message)}</p>`
-                              : ""
-                          }
-                          ${restoreButton}
-                        </article>
-                      `;
-                    })
-                    .join("")}
-                </div>
-              `
       }
     `;
 
@@ -331,7 +559,7 @@ function renderHistorySidebar(editorChapter, rows, languages) {
   `;
 }
 
-function renderTranslationContentRows(rows, collapsedLanguageCodes = new Set(), activeField = {}) {
+function renderTranslationContentRows(rows, collapsedLanguageCodes = new Set()) {
   return rows
     .map(
       (row) => {
@@ -339,22 +567,11 @@ function renderTranslationContentRows(rows, collapsedLanguageCodes = new Set(), 
         return `
           <article class="card card--translation">
             <div class="card__body">
-              ${
-                row.saveStatus === "saving"
-                  ? '<div class="translation-row__header"><div class="translation-row__meta">Saving...</div></div>'
-                  : row.saveStatus === "dirty"
-                    ? '<div class="translation-row__header"><div class="translation-row__meta">Unsaved</div></div>'
-                    : row.saveStatus === "error"
-                      ? `<div class="translation-row__header"><div class="translation-row__meta translation-row__meta--error">${escapeHtml(row.saveError || "Save failed")}</div></div>`
-                      : ""
-              }
               <div class="translation-row__stack">
                 ${orderedSections
                   .map(
                     (language) => {
                       const isCollapsed = collapsedLanguageCodes.has(language.code);
-                      const isActiveSelection =
-                        activeField.rowId === row.id && activeField.languageCode === language.code;
                       return `
                         <section class="translation-language-panel${isCollapsed ? " is-collapsed" : ""}">
                           <button
@@ -375,7 +592,7 @@ function renderTranslationContentRows(rows, collapsedLanguageCodes = new Set(), 
                               ? ""
                               : `
                                 <textarea
-                                  class="translation-language-panel__field${isActiveSelection ? " is-active-selection" : ""}"
+                                  class="translation-language-panel__field"
                                   data-editor-row-field
                                   data-row-id="${escapeHtml(row.id)}"
                                   data-language-code="${escapeHtml(language.code)}"
@@ -415,10 +632,6 @@ export function renderTranslateScreen(state) {
     value: MANAGE_TARGET_LANGUAGES_OPTION_VALUE,
     label: "Add / Remove",
   }];
-  const activeField = {
-    rowId: editorChapter?.activeRowId ?? null,
-    languageCode: editorChapter?.activeLanguageCode ?? null,
-  };
   const displayTitle = middleTruncateTitle(chapter.name);
   const headerBody = `
     <div class="translate-toolbar__body translate-toolbar__body--header">
@@ -474,7 +687,7 @@ export function renderTranslateScreen(state) {
                       </div>
                     </article>
                   `
-                  : renderTranslationContentRows(contentRows, collapsedLanguageCodes, activeField)
+                  : renderTranslationContentRows(contentRows, collapsedLanguageCodes)
             }
           </div>
         </div>

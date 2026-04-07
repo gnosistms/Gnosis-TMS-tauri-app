@@ -11,6 +11,8 @@ use serde_json::{json, Value};
 use tauri::AppHandle;
 use uuid::Uuid;
 
+use crate::git_commit::git_commit_as_signed_in_user;
+
 use super::project_git::{
   ensure_clean_git_repo,
   ensure_gitattributes,
@@ -272,9 +274,11 @@ pub(super) fn import_xlsx_to_gtms_sync(
   let unit_count = write_row_files(&parsed, &rows_path)?;
 
   git_output(&repo_path, &["add", ".gitattributes", "chapters"])?;
-  git_output(
+  git_commit_as_signed_in_user(
+    app,
     &repo_path,
-    &["commit", "-m", &format!("Import {}", parsed.source_file_name)],
+    &format!("Import {}", parsed.source_file_name),
+    &[],
   )?;
 
   let source_word_counts = build_source_word_counts_from_import(&parsed);

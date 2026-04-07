@@ -8,7 +8,7 @@ import {
   clearActiveStorageLogin,
   setActiveStorageLogin,
 } from "./team-storage.js";
-import { hydrateStoredTeamState, state } from "./state.js";
+import { hydrateStoredEditorPreferences, hydrateStoredTeamState, state } from "./state.js";
 import { handleSyncFailure } from "./sync-recovery.js";
 import { classifySyncError } from "./sync-error.js";
 
@@ -130,6 +130,7 @@ export async function restoreStoredBrokerSession(render, loadUserTeams) {
 
 function hydrateStoredDataForActiveUser() {
   hydrateStoredTeamState();
+  hydrateStoredEditorPreferences();
   state.projects = [];
   state.deletedProjects = [];
   state.pendingProjectMutations = [];

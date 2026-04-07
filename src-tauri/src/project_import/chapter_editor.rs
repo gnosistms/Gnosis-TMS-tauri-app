@@ -9,6 +9,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tauri::AppHandle;
 
+use crate::git_commit::git_commit_as_signed_in_user;
+
 use super::project_git::{
   ensure_repo_exists,
   ensure_valid_git_repo,
@@ -414,15 +416,11 @@ pub(super) fn update_gtms_chapter_language_selection_sync(
 
     let relative_chapter_json = repo_relative_path(&repo_path, &chapter_json_path)?;
     git_output(&repo_path, &["add", &relative_chapter_json])?;
-    git_output(
+    git_commit_as_signed_in_user(
+      app,
       &repo_path,
-      &[
-        "commit",
-        "-m",
-        &format!("Update language selection for {}", chapter_title),
-        "--",
-        &relative_chapter_json,
-      ],
+      &format!("Update language selection for {}", chapter_title),
+      &[&relative_chapter_json],
     )?;
   }
 
@@ -480,15 +478,11 @@ pub(super) fn update_gtms_editor_row_fields_sync(
 
     let relative_row_json = repo_relative_path(&repo_path, &row_json_path)?;
     git_output(&repo_path, &["add", &relative_row_json])?;
-    git_output(
+    git_commit_as_signed_in_user(
+      app,
       &repo_path,
-      &[
-        "commit",
-        "-m",
-        &format!("Update row {}", input.row_id),
-        "--",
-        &relative_row_json,
-      ],
+      &format!("Update row {}", input.row_id),
+      &[&relative_row_json],
     )?;
   }
 
@@ -628,18 +622,14 @@ pub(super) fn restore_gtms_editor_field_from_history_sync(
 
     let short_commit = short_commit_sha(&input.commit_sha);
     git_output(&repo_path, &["add", &relative_row_json])?;
-    git_output(
+    git_commit_as_signed_in_user(
+      app,
       &repo_path,
-      &[
-        "commit",
-        "-m",
-        &format!(
-          "Restore row {} {} from {}",
-          input.row_id, input.language_code, short_commit
-        ),
-        "--",
-        &relative_row_json,
-      ],
+      &format!(
+        "Restore row {} {} from {}",
+        input.row_id, input.language_code, short_commit
+      ),
+      &[&relative_row_json],
     )?;
   }
 

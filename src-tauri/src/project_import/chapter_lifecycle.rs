@@ -4,6 +4,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tauri::AppHandle;
 
+use crate::git_commit::git_commit_as_signed_in_user;
+
 use super::project_git::{
   ensure_repo_exists,
   ensure_valid_git_repo,
@@ -84,15 +86,11 @@ pub(super) fn rename_gtms_chapter_sync(
 
   let relative_chapter_json = repo_relative_path(&repo_path, &chapter_json_path)?;
   git_output(&repo_path, &["add", &relative_chapter_json])?;
-  git_output(
+  git_commit_as_signed_in_user(
+    app,
     &repo_path,
-    &[
-      "commit",
-      "-m",
-      &format!("Rename file to {}", next_title),
-      "--",
-      &relative_chapter_json,
-    ],
+    &format!("Rename file to {}", next_title),
+    &[&relative_chapter_json],
   )?;
 
   Ok(RenameChapterResponse {
@@ -146,9 +144,11 @@ pub(super) fn update_gtms_chapter_lifecycle_sync(
   } else {
     "Restore file"
   };
-  git_output(
+  git_commit_as_signed_in_user(
+    app,
     &repo_path,
-    &["commit", "-m", commit_action, "--", &relative_chapter_json],
+    commit_action,
+    &[&relative_chapter_json],
   )?;
 
   Ok(UpdateChapterLifecycleResponse {
@@ -189,9 +189,11 @@ pub(super) fn permanently_delete_gtms_chapter_sync(
       )
     })?;
   }
-  git_output(
+  git_commit_as_signed_in_user(
+    app,
     &repo_path,
-    &["commit", "-m", "Delete file permanently", "--", &relative_chapter_path],
+    "Delete file permanently",
+    &[&relative_chapter_path],
   )?;
 
   Ok(UpdateChapterLifecycleResponse {
