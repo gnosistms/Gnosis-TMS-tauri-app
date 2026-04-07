@@ -68,10 +68,17 @@ function resolveSelectedLanguageCodes(languages, chapter, editorChapter) {
 }
 
 function renderLanguageSelect(label, dataAttribute, selectedCode, languages) {
+  const selectedLanguage =
+    languages.find((language) => language.code === selectedCode)
+    ?? languages[0]
+    ?? { name: "" };
+
   return `
     <label class="select-pill select-pill--control">
-      <span>${escapeHtml(label)}:</span>
-      <select data-${escapeHtml(dataAttribute)}>
+      <span class="select-pill__label">${escapeHtml(label)}:</span>
+      <span class="select-pill__value">${escapeHtml(selectedLanguage.name)}</span>
+      <span class="select-pill__chevron" aria-hidden="true">⌄</span>
+      <select data-${escapeHtml(dataAttribute)} aria-label="${escapeHtml(label)} language">
         ${languages
           .map(
             (language) => `
@@ -82,7 +89,6 @@ function renderLanguageSelect(label, dataAttribute, selectedCode, languages) {
           )
           .join("")}
       </select>
-      <span aria-hidden="true">⌄</span>
     </label>
   `;
 }

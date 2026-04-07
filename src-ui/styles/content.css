@@ -324,20 +324,50 @@
 .select-pill--control {
   position: relative;
   justify-content: flex-start;
+  overflow: visible;
+  cursor: pointer;
+  gap: 10px;
+  padding-right: 42px;
 }
 
 .select-pill--control select {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
   appearance: none;
   border: 0;
   background: transparent;
+  opacity: 0;
   color: inherit;
   font: inherit;
   font-weight: inherit;
-  line-height: 1;
+  line-height: 1.2;
   padding: 0;
-  min-width: 0;
   outline: none;
   cursor: pointer;
+  z-index: 1;
+}
+
+.select-pill__label,
+.select-pill__value,
+.select-pill__chevron {
+  line-height: 1.2;
+}
+
+.select-pill__value {
+  min-width: 0;
+}
+
+.select-pill__chevron {
+  position: absolute;
+  top: 50%;
+  right: 16px;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
 }
 
 .segmented-control {
