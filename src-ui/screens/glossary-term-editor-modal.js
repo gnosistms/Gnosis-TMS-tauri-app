@@ -14,7 +14,7 @@ function renderVariantRow(side, value, index, total, isSubmitting) {
           type="button"
           data-glossary-term-variant-handle
           aria-label="${escapeHtml(dragLabel)}"
-          title="${escapeHtml(dragLabel)}"
+          data-tooltip="${escapeHtml(dragLabel)}"
           ${isSubmitting ? "disabled" : ""}
         >
           <span class="term-variant-row__drag-dots" aria-hidden="true">
@@ -35,7 +35,7 @@ function renderVariantRow(side, value, index, total, isSubmitting) {
           type="button"
           data-action="remove-glossary-term-variant:${escapeHtml(side)}:${index}"
           aria-label="Remove variant"
-          title="Remove variant"
+          data-tooltip="Remove variant"
           ${removeDisabled ? "disabled" : ""}
         ><span class="term-variant-row__remove-icon" aria-hidden="true"></span></button>
       `
@@ -86,7 +86,7 @@ function renderVariantLane(side, languageName, values, isSubmitting) {
           type="button"
           data-action="add-glossary-term-variant:${escapeHtml(side)}"
           aria-label="Add variant"
-          title="Add variant"
+          data-tooltip="Add variant"
           ${isSubmitting ? "disabled" : ""}
         ><span class="term-lane__add-icon" aria-hidden="true"></span></button>
       </div>

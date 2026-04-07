@@ -131,6 +131,32 @@ function sanitizeEditableTerms(terms) {
     .filter(Boolean);
 }
 
+function sanitizeEditableTargetTerms(terms) {
+  const sanitized = [];
+  const seen = new Set();
+  let includedEmptyVariant = false;
+
+  for (const term of Array.isArray(terms) ? terms : []) {
+    const trimmed = String(term ?? "").trim();
+    if (!trimmed) {
+      if (!includedEmptyVariant) {
+        sanitized.push("");
+        includedEmptyVariant = true;
+      }
+      continue;
+    }
+
+    if (seen.has(trimmed)) {
+      continue;
+    }
+
+    seen.add(trimmed);
+    sanitized.push(trimmed);
+  }
+
+  return sanitized;
+}
+
 export function primeGlossariesLoadingState(teamId = state.selectedTeamId) {
   const team = selectedTeam(teamId);
   state.selectedTeamId = teamId ?? state.selectedTeamId;
@@ -460,7 +486,7 @@ export async function submitGlossaryTermEditor(render) {
     return;
   }
 
-  const targetTerms = sanitizeEditableTerms(draft.targetTerms);
+  const targetTerms = sanitizeEditableTargetTerms(draft.targetTerms);
 
   state.glossaryTermEditor.status = "loading";
   state.glossaryTermEditor.error = "";

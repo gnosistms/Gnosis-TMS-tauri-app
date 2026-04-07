@@ -401,7 +401,7 @@ fn upsert_gtms_glossary_term_sync(
     return Err("Enter at least one source term.".to_string());
   }
 
-  let mut sanitized_target_terms = sanitize_term_values(&input.target_terms);
+  let mut sanitized_target_terms = sanitize_target_term_values(&input.target_terms);
   if input.untranslated && sanitized_target_terms.is_empty() {
     sanitized_target_terms = sanitized_source_terms.clone();
   }
@@ -607,6 +607,28 @@ fn sanitize_term_values(values: &[String]) -> Vec<String> {
       sanitized.push(trimmed.to_string());
     }
   }
+  sanitized
+}
+
+fn sanitize_target_term_values(values: &[String]) -> Vec<String> {
+  let mut seen = BTreeSet::new();
+  let mut sanitized = Vec::new();
+  let mut included_empty_variant = false;
+
+  for value in values {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+      if !included_empty_variant {
+        sanitized.push(String::new());
+        included_empty_variant = true;
+      }
+      continue;
+    }
+    if seen.insert(trimmed.to_string()) {
+      sanitized.push(trimmed.to_string());
+    }
+  }
+
   sanitized
 }
 
