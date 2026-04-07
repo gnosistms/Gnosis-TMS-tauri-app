@@ -124,18 +124,23 @@ Behavior:
 - `+ New Term` creates a term
 - clicking a term row opens a modal editor
 - row actions include `Edit` and `Delete`
-
-The modal editor should later support:
-
-- multiple source terms
-- multiple target terms
-- `notes_to_translators`
-- `footnote`
-- `untranslated`
+- the modal editor now supports:
+  - ordered source-term variants
+  - ordered target-term variants
+  - explicit up/down reordering controls
+  - `notes_to_translators`
+  - `footnote`
+  - `untranslated`
+- row 1 in each source/target list is treated as the primary / highest-likelihood wording
+- the same modal shell is used for both `New Term` and `Edit Term`
 
 Deliverable:
 
 - real glossary editor for term-level work
+
+Current follow-up:
+
+- if the reorder controls feel too noisy, revisit them later with a clearer drag-handle or other explicit ranking affordance
 
 ### 6. Import And Export
 

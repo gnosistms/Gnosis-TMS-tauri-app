@@ -113,11 +113,32 @@ function applyGlossaryEditorPayload(payload) {
   );
 }
 
-function parseCommaSeparatedTerms(value) {
-  return String(value ?? "")
-    .split(",")
-    .map((part) => part.trim())
+function normalizeEditableTerms(terms) {
+  const normalized = (Array.isArray(terms) ? terms : [])
+    .map((term) => (typeof term === "string" ? term : ""));
+
+  return normalized.length > 0 ? normalized : [""];
+}
+
+function sanitizeEditableTerms(terms) {
+  return (Array.isArray(terms) ? terms : [])
+    .map((term) => String(term ?? "").trim())
     .filter(Boolean);
+}
+
+function updateGlossaryTermArray(side, updater) {
+  if (!state.glossaryTermEditor?.isOpen) {
+    return;
+  }
+
+  const field = side === "target" ? "targetTerms" : "sourceTerms";
+  const currentTerms = normalizeEditableTerms(state.glossaryTermEditor[field]);
+  const nextTerms = normalizeEditableTerms(updater(currentTerms));
+
+  state.glossaryTermEditor[field] = nextTerms;
+  if (state.glossaryTermEditor.error) {
+    state.glossaryTermEditor.error = "";
+  }
 }
 
 export async function loadTeamGlossaries(render, teamId = state.selectedTeamId) {
@@ -282,8 +303,8 @@ export function openGlossaryTermEditor(render, termId = null) {
     error: "",
     glossaryId: state.glossaryEditor.glossaryId,
     termId: term?.termId ?? null,
-    sourceTermsText: term?.sourceTerms?.join(", ") ?? "",
-    targetTermsText: term?.targetTerms?.join(", ") ?? "",
+    sourceTerms: normalizeEditableTerms(term?.sourceTerms ?? []),
+    targetTerms: normalizeEditableTerms(term?.targetTerms ?? []),
     notesToTranslators: term?.notesToTranslators ?? "",
     footnote: term?.footnote ?? "",
     untranslated: term?.untranslated === true,
@@ -306,6 +327,52 @@ export function updateGlossaryTermDraftField(field, value) {
   }
 }
 
+export function updateGlossaryTermVariant(side, index, value) {
+  if (!Number.isInteger(index) || index < 0) {
+    return;
+  }
+
+  updateGlossaryTermArray(side, (terms) =>
+    terms.map((term, termIndex) => (termIndex === index ? String(value ?? "") : term)),
+  );
+}
+
+export function addGlossaryTermVariant(side) {
+  updateGlossaryTermArray(side, (terms) => [...terms, ""]);
+}
+
+export function removeGlossaryTermVariant(side, index) {
+  if (!Number.isInteger(index) || index < 0) {
+    return;
+  }
+
+  updateGlossaryTermArray(side, (terms) => {
+    if (terms.length <= 1) {
+      return [""];
+    }
+
+    return terms.filter((_, termIndex) => termIndex !== index);
+  });
+}
+
+export function moveGlossaryTermVariant(side, index, offset) {
+  if (!Number.isInteger(index) || index < 0 || !Number.isInteger(offset) || offset === 0) {
+    return;
+  }
+
+  updateGlossaryTermArray(side, (terms) => {
+    const nextIndex = index + offset;
+    if (nextIndex < 0 || nextIndex >= terms.length) {
+      return terms;
+    }
+
+    const nextTerms = [...terms];
+    const [movedTerm] = nextTerms.splice(index, 1);
+    nextTerms.splice(nextIndex, 0, movedTerm);
+    return nextTerms;
+  });
+}
+
 export async function submitGlossaryTermEditor(render) {
   const team = selectedTeam();
   const repoName = selectedGlossaryRepoName();
@@ -314,12 +381,14 @@ export async function submitGlossaryTermEditor(render) {
     return;
   }
 
-  const sourceTerms = parseCommaSeparatedTerms(draft.sourceTermsText);
+  const sourceTerms = sanitizeEditableTerms(draft.sourceTerms);
   if (sourceTerms.length === 0) {
     state.glossaryTermEditor.error = "Enter at least one source term.";
     render();
     return;
   }
+
+  const targetTerms = sanitizeEditableTerms(draft.targetTerms);
 
   state.glossaryTermEditor.status = "loading";
   state.glossaryTermEditor.error = "";
@@ -332,7 +401,7 @@ export async function submitGlossaryTermEditor(render) {
         repoName,
         termId: draft.termId || null,
         sourceTerms,
-        targetTerms: parseCommaSeparatedTerms(draft.targetTermsText),
+        targetTerms,
         notesToTranslators: draft.notesToTranslators,
         footnote: draft.footnote,
         untranslated: draft.untranslated === true,

@@ -1208,12 +1208,13 @@ Rules:
 1. `term_id` should be a UUIDv7.
 2. `source_terms[]` stores one or more accepted source-language spellings.
 3. `target_terms[]` stores one or more accepted target-language spellings.
-4. `notes_to_translators` is internal guidance for translators and editors.
-5. `footnote` stores explanatory text that may later be inserted into a published book as a footnote.
-6. `untranslated = true` means the term should remain untranslated in the target language.
-7. If `untranslated = true`, the app may fall back to `source_terms[]` when building in-memory matchers, but `target_terms[]` should still be preserved when available.
-8. Term add/edit/delete operations should touch only the relevant term file.
-9. There must be no committed glossary-wide term index in v1.
+4. Array order is meaningful for both `source_terms[]` and `target_terms[]`: entries are stored from most likely to least likely, and item `0` is the primary wording shown first in the editor.
+5. `notes_to_translators` is internal guidance for translators and editors.
+6. `footnote` stores explanatory text that may later be inserted into a published book as a footnote.
+7. `untranslated = true` means the term should remain untranslated in the target language.
+8. If `untranslated = true`, the app may fall back to `source_terms[]` when building in-memory matchers, but `target_terms[]` should still be preserved when available.
+9. Term add/edit/delete operations should touch only the relevant term file.
+10. There must be no committed glossary-wide term index in v1.
 
 ### Glossary Sync Rules
 

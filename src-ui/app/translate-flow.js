@@ -323,7 +323,7 @@ export async function persistEditorChapterSelections(render) {
   }
 }
 
-export async function loadSelectedChapterEditorData(render) {
+export async function loadSelectedChapterEditorData(render, options = {}) {
   const team = selectedTeam();
   const context = findChapterContextById();
   if (!context || !Number.isFinite(team?.installationId)) {
@@ -336,25 +336,42 @@ export async function loadSelectedChapterEditorData(render) {
     return;
   }
 
+  const preserveVisibleRows =
+    options.preserveVisibleRows === true
+    && state.screen === "translate"
+    && state.editorChapter?.chapterId === context.chapter.id
+    && Array.isArray(state.editorChapter.rows)
+    && state.editorChapter.rows.length > 0;
+  const nextSelectedSourceLanguageCode = preserveVisibleRows
+    ? state.editorChapter.selectedSourceLanguageCode
+    : context.chapter.selectedSourceLanguageCode ?? null;
+  const nextSelectedTargetLanguageCode = preserveVisibleRows
+    ? state.editorChapter.selectedTargetLanguageCode
+    : context.chapter.selectedTargetLanguageCode ?? null;
+
   state.selectedProjectId = context.project.id;
   state.editorChapter = {
     ...state.editorChapter,
-    status: "loading",
+    status: preserveVisibleRows ? "refreshing" : "loading",
     error: "",
     projectId: context.project.id,
     chapterId: context.chapter.id,
     fileTitle: context.chapter.name ?? "",
-    languages: Array.isArray(context.chapter.languages) ? context.chapter.languages : [],
+    languages: preserveVisibleRows
+      ? state.editorChapter.languages
+      : Array.isArray(context.chapter.languages) ? context.chapter.languages : [],
     sourceWordCounts:
-      context.chapter.sourceWordCounts && typeof context.chapter.sourceWordCounts === "object"
+      preserveVisibleRows
+        ? state.editorChapter.sourceWordCounts
+        : context.chapter.sourceWordCounts && typeof context.chapter.sourceWordCounts === "object"
         ? context.chapter.sourceWordCounts
         : {},
-    selectedSourceLanguageCode: context.chapter.selectedSourceLanguageCode ?? null,
-    selectedTargetLanguageCode: context.chapter.selectedTargetLanguageCode ?? null,
-    persistedSourceLanguageCode: context.chapter.selectedSourceLanguageCode ?? null,
-    persistedTargetLanguageCode: context.chapter.selectedTargetLanguageCode ?? null,
+    selectedSourceLanguageCode: nextSelectedSourceLanguageCode,
+    selectedTargetLanguageCode: nextSelectedTargetLanguageCode,
+    persistedSourceLanguageCode: nextSelectedSourceLanguageCode,
+    persistedTargetLanguageCode: nextSelectedTargetLanguageCode,
     selectionPersistStatus: "idle",
-    rows: [],
+    rows: preserveVisibleRows ? state.editorChapter.rows : [],
   };
   render();
 

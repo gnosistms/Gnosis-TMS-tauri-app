@@ -1,6 +1,7 @@
 import { clearStoredAuthSession } from "./auth-storage.js";
 import { resetPageSync, beginPageSync, completePageSync, failPageSync } from "./page-sync.js";
 import { resetProjectsPageSync } from "./projects-page-sync.js";
+import { lockScreenScrollSnapshot, unlockScreenScrollSnapshot } from "./scroll-state.js";
 import { state, resetSessionState } from "./state.js";
 import { waitForNextPaint } from "./runtime.js";
 import { loadGithubAppTestConfig } from "./github-app-test-flow.js";
@@ -52,19 +53,25 @@ export async function refreshCurrentScreen(render) {
     return;
   }
 
-  if (state.screen === "projects") {
+  const screen = state.screen;
+
+  if (screen === "projects") {
     await loadTeamProjects(render, state.selectedTeamId);
     return;
   }
 
-  if (state.screen === "glossaries") {
+  if (screen === "glossaries") {
     await loadTeamGlossaries(render, state.selectedTeamId);
     return;
   }
 
-  if (state.screen === "glossaryEditor") {
+  if (screen === "glossaryEditor") {
     await loadSelectedGlossaryEditorData(render);
     return;
+  }
+
+  if (screen === "translate") {
+    lockScreenScrollSnapshot(screen);
   }
 
   beginPageSync();
@@ -72,25 +79,25 @@ export async function refreshCurrentScreen(render) {
   await waitForNextPaint();
 
   try {
-    if (state.screen === "teams") {
+    if (screen === "teams") {
       await loadUserTeams(render);
       return;
     }
 
-    if (state.screen === "users") {
+    if (screen === "users") {
       await loadTeamUsers(render, state.selectedTeamId);
       return;
     }
 
-    if (state.screen === "githubAppTest") {
+    if (screen === "githubAppTest") {
       await loadGithubAppTestConfig(render);
       completePageSync(render);
       render();
       return;
     }
 
-    if (state.screen === "translate") {
-      await loadSelectedChapterEditorData(render);
+    if (screen === "translate") {
+      await loadSelectedChapterEditorData(render, { preserveVisibleRows: true });
       completePageSync(render);
       render();
       return;
@@ -101,5 +108,9 @@ export async function refreshCurrentScreen(render) {
   } catch {
     failPageSync();
     render();
+  } finally {
+    if (screen === "translate") {
+      unlockScreenScrollSnapshot(screen);
+    }
   }
 }

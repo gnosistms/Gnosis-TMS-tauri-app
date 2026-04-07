@@ -12,6 +12,7 @@ import { loadUserTeams, setGithubAppInstallation } from "./app/team-setup-flow.j
 import { initializeConnectivity } from "./app/offline-connectivity.js";
 import { initializePersistentStorage } from "./app/persistent-store.js";
 import { app, initializeWindowPresentation } from "./app/runtime.js";
+import { captureRenderScrollSnapshot, restoreRenderScrollSnapshot } from "./app/scroll-state.js";
 import { hydratePersistentAppState, state } from "./app/state.js";
 import { checkForAppUpdate } from "./app/updater-flow.js";
 import { renderGithubAppTestScreen } from "./screens/github-app-test.js";
@@ -107,42 +108,16 @@ function restoreFocusedInputState(focusSnapshot) {
   }
 }
 
-function capturePageScrollState() {
-  const pageBody = app.querySelector(".page-body");
-  if (!(pageBody instanceof HTMLElement)) {
-    return null;
-  }
-
-  return {
-    top: pageBody.scrollTop,
-    left: pageBody.scrollLeft,
-  };
-}
-
-function restorePageScrollState(scrollSnapshot, previousScreen, nextScreen) {
-  if (!scrollSnapshot || previousScreen !== nextScreen) {
-    return;
-  }
-
-  const nextPageBody = app.querySelector(".page-body");
-  if (!(nextPageBody instanceof HTMLElement)) {
-    return;
-  }
-
-  nextPageBody.scrollTop = scrollSnapshot.top;
-  nextPageBody.scrollLeft = scrollSnapshot.left;
-}
-
 function render() {
   const previousScreen = app.firstElementChild?.getAttribute("data-screen") ?? null;
   const focusSnapshot = captureFocusedInputState();
-  const scrollSnapshot = capturePageScrollState();
+  const scrollSnapshot = captureRenderScrollSnapshot(previousScreen);
   const renderScreen = screenRenderers[state.screen] ?? screenRenderers.start;
   app.innerHTML = renderScreen() + renderConnectionFailureModal(state);
   if (app.firstElementChild instanceof HTMLElement) {
     app.firstElementChild.dataset.screen = state.screen;
   }
-  restorePageScrollState(scrollSnapshot, previousScreen, state.screen);
+  restoreRenderScrollSnapshot(previousScreen, state.screen, scrollSnapshot);
   restoreFocusedInputState(focusSnapshot);
   document.title = titles[state.screen] ?? "Gnosis TMS";
 }

@@ -59,8 +59,7 @@ export function createProjectActions(render) {
     },
     {
       prefix: "add-project-files:",
-      handler: async (projectId, event) =>
-        runWithImmediateLoading(event, "Adding...", () => addFilesToProject(render, projectId)),
+      handler: async (projectId) => addFilesToProject(render, projectId),
     },
     {
       prefix: "rename-project:",

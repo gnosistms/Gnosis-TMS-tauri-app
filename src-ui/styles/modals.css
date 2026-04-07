@@ -510,3 +510,220 @@
   white-space: pre-wrap;
   word-break: break-word;
 }
+
+.modal-card--glossary-term {
+  width: min(1180px, 100%);
+  max-height: min(92vh, 1080px);
+}
+
+.glossary-term-modal {
+  gap: 22px;
+}
+
+.glossary-term-modal__lanes {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+}
+
+.term-lane,
+.glossary-term-modal__details {
+  display: grid;
+  gap: 16px;
+  padding: 20px;
+  border-radius: calc(var(--radius-card) - 8px);
+  border: 1px solid rgba(164, 112, 41, 0.14);
+  background: rgba(255, 251, 246, 0.76);
+}
+
+.term-lane__header,
+.glossary-term-modal__details-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.term-lane__copy {
+  display: grid;
+  gap: 8px;
+}
+
+.term-lane__title,
+.glossary-term-modal__details-title {
+  margin: 0;
+  font-size: 1.45rem;
+  line-height: 1;
+  letter-spacing: var(--heading-letter-spacing);
+}
+
+.term-lane__badge {
+  min-height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 12px;
+  border-radius: 999px;
+  background: rgba(209, 138, 34, 0.12);
+  color: var(--link);
+  font-size: 0.82rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.term-lane__supporting,
+.glossary-term-modal__details-supporting {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.96rem;
+  line-height: 1.55;
+}
+
+.glossary-term-modal__details-supporting {
+  max-width: 520px;
+}
+
+.term-lane__rows {
+  display: grid;
+  gap: 12px;
+}
+
+.term-variant-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+}
+
+.term-variant-row__identity {
+  min-width: 92px;
+  display: grid;
+  gap: 7px;
+  justify-items: start;
+}
+
+.term-variant-row__rank {
+  min-width: 40px;
+  min-height: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(164, 112, 41, 0.16);
+  background: rgba(255, 249, 240, 0.95);
+  color: var(--link);
+  font-weight: 800;
+}
+
+.term-variant-row__primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 26px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: rgba(236, 134, 9, 0.12);
+  color: #9a5b10;
+  font-size: 0.76rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.term-variant-row__input {
+  min-width: 0;
+}
+
+.term-variant-row__actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.term-variant-row__action-button,
+.term-lane__add-button {
+  border: 1px solid rgba(164, 112, 41, 0.16);
+  border-radius: 12px;
+  background: rgba(255, 250, 243, 0.96);
+  color: var(--link);
+  font: inherit;
+  font-weight: 700;
+  transition:
+    border-color 160ms ease,
+    background 160ms ease,
+    color 160ms ease,
+    transform 160ms ease;
+}
+
+.term-variant-row__action-button {
+  width: 42px;
+  height: 42px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.term-lane__add-button {
+  min-height: 46px;
+  padding: 0 16px;
+  justify-self: start;
+}
+
+.term-variant-row__action-button:hover:not(:disabled),
+.term-lane__add-button:hover:not(:disabled) {
+  border-color: rgba(236, 134, 9, 0.34);
+  background: rgba(255, 244, 227, 0.98);
+  transform: translateY(-1px);
+}
+
+.term-variant-row__action-button--remove {
+  color: #a25828;
+}
+
+.term-variant-row__action-button:disabled,
+.term-lane__add-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.42;
+  transform: none;
+}
+
+.glossary-term-modal__checkbox {
+  padding: 14px 16px;
+  border-radius: var(--radius-ui);
+  border: 1px dashed rgba(164, 112, 41, 0.22);
+  background: rgba(255, 247, 235, 0.84);
+}
+
+.glossary-term-modal__details-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+@media (max-width: 980px) {
+  .glossary-term-modal__lanes,
+  .glossary-term-modal__details-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 720px) {
+  .term-variant-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .term-variant-row__identity {
+    min-width: 0;
+    grid-auto-flow: column;
+    justify-content: start;
+    align-items: center;
+  }
+
+  .term-variant-row__actions {
+    justify-self: start;
+  }
+}

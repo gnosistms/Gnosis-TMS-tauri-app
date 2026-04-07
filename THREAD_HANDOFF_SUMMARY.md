@@ -2,6 +2,35 @@
 
 This file is the current handoff for restarting work in a fresh thread.
 
+## Current Product Work Snapshot
+
+This handoff is stale for old release-packaging details below, but the latest app work worth preserving for a fresh thread is:
+
+- storage roots are now installation-first under:
+  - `/Users/hans/Library/Application Support/com.gnosis.tms/installations/installation-<id>/projects`
+  - `/Users/hans/Library/Application Support/com.gnosis.tms/installations/installation-<id>/glossaries`
+- the old `project-repos/` and `glossary-repos/` Application Support roots are deprecated leftovers and can be deleted once migration is confirmed
+- glossary creation now uses a bundled language-code list in app source, not an OS/runtime lookup
+- glossary list rows currently order actions as `Open`, `Download`, `Rename`, `Delete`
+- glossary empty-state cards now have improved eyebrow/title spacing with a smaller section-title scale
+- the glossary term modal was redesigned from comma-separated term inputs into ranked source/target variant lists:
+  - source and target variants are stored as ordered arrays
+  - array order is intentional and means highest-likelihood to lowest-likelihood
+  - item `0` is the primary wording shown first in the editor
+  - the same modal shell is used for both `New Term` and `Edit Term`
+  - notes and footnote remain secondary fields below the ranked term lists
+- the Projects `Add Files` action now opens the file picker directly from the click path instead of waiting for an extra render tick first
+- the Translate editor now preserves its scroll position when the page is refreshed
+
+If resuming glossary/editor work in a fresh thread, inspect these files first:
+
+- `/Users/hans/Desktop/GnosisTMS/src-ui/screens/glossary-term-editor-modal.js`
+- `/Users/hans/Desktop/GnosisTMS/src-ui/app/glossary-flow.js`
+- `/Users/hans/Desktop/GnosisTMS/src-ui/app/actions/glossary-actions.js`
+- `/Users/hans/Desktop/GnosisTMS/src-ui/styles/modals.css`
+- `/Users/hans/Desktop/GnosisTMS/PROJECT_STORAGE_SPEC.md`
+- `/Users/hans/Desktop/GnosisTMS/GLOSSARY_IMPLEMENTATION_PLAN.md`
+
 ## Repo
 
 - App repo: `/Users/hans/Desktop/GnosisTMS`

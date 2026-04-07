@@ -697,8 +697,8 @@ a {
 
 .card__section-title {
   margin: 0;
-  font-size: clamp(2.2rem, 4vw, 4rem);
-  line-height: 1.06;
+  font-size: clamp(1.7rem, 3vw, 2.45rem);
+  line-height: 1.02;
   letter-spacing: var(--heading-letter-spacing);
 }
 

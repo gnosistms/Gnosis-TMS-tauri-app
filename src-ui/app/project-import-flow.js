@@ -18,6 +18,7 @@ function openFilePicker() {
   return new Promise((resolve) => {
     const input = document.createElement("input");
     input.type = "file";
+    input.accept = ".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
     input.style.display = "none";
 
     const cleanup = () => {

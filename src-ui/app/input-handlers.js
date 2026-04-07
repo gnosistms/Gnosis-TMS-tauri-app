@@ -12,6 +12,7 @@ import {
 } from "./team-setup-flow.js";
 import { updateInviteUserQuery } from "./invite-user-flow.js";
 import {
+  updateGlossaryTermVariant,
   updateGlossaryCreationField,
   updateGlossariesSearchQuery,
   updateGlossaryTermDraftField,
@@ -169,23 +170,19 @@ function handleGlossaryTermSearchInput(event, render) {
   return true;
 }
 
-function handleGlossaryTermSourceInput(event) {
-  const input = event.target.closest("[data-glossary-term-source-input]");
+function handleGlossaryTermVariantInput(event) {
+  const input = event.target.closest("[data-glossary-term-variant-input]");
   if (!input) {
     return false;
   }
 
-  updateGlossaryTermDraftField("sourceTermsText", input.value);
-  return true;
-}
-
-function handleGlossaryTermTargetInput(event) {
-  const input = event.target.closest("[data-glossary-term-target-input]");
-  if (!input) {
+  const side = input.dataset.variantSide;
+  const index = Number.parseInt(input.dataset.variantIndex ?? "", 10);
+  if ((side !== "source" && side !== "target") || !Number.isInteger(index) || index < 0) {
     return false;
   }
 
-  updateGlossaryTermDraftField("targetTermsText", input.value);
+  updateGlossaryTermVariant(side, index, input.value);
   return true;
 }
 
@@ -209,13 +206,14 @@ function handleGlossaryTermFootnoteInput(event) {
   return true;
 }
 
-function handleGlossaryTermUntranslatedInput(event) {
+function handleGlossaryTermUntranslatedInput(event, render) {
   const input = event.target.closest("[data-glossary-term-untranslated-input]");
   if (!input) {
     return false;
   }
 
   updateGlossaryTermDraftField("untranslated", input.checked === true);
+  render();
   return true;
 }
 
@@ -285,8 +283,7 @@ const inputHandlers = [
   handleGlossarySourceLanguageInput,
   handleGlossaryTargetLanguageInput,
   handleGlossaryTermSearchInput,
-  handleGlossaryTermSourceInput,
-  handleGlossaryTermTargetInput,
+  handleGlossaryTermVariantInput,
   handleGlossaryTermNotesInput,
   handleGlossaryTermFootnoteInput,
   handleGlossaryTermUntranslatedInput,
