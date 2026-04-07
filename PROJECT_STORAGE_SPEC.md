@@ -1103,6 +1103,138 @@ Exports are derived outputs, not the canonical save path.
 - `Save` means save to the canonical folder structure
 - `Export` means write `.xlsx`, `.docx`, `.txt`, or other interchange formats
 
+## Glossary Repository Format
+
+Glossaries should use the same Git-first philosophy as projects:
+
+- one glossary equals one Git repository
+- one term equals one JSON file
+- there is no committed term index file
+- the app loads the whole glossary into memory in order to build search and matcher structures
+
+Recommended layout:
+
+```text
+glossary-repo/
+  glossary.json
+  terms/
+    <term_id>.json
+  .gitattributes
+```
+
+Why this layout is recommended:
+
+- adding one term creates one file
+- editing one term rewrites one file
+- deleting one term rewrites or removes one file
+- no shared term list needs to be merged
+- Git conflicts stay localized to individual terms whenever possible
+
+### `glossary.json`
+
+`glossary.json` stores only glossary-level metadata.
+
+Example:
+
+```json
+{
+  "glossary_id": "2ec8d9e8-52e2-4c84-bb56-a7765e0cb5de",
+  "title": "Gnosis ES-EN",
+  "lifecycle": {
+    "state": "active"
+  },
+  "languages": {
+    "source": {
+      "code": "es",
+      "name": "Spanish"
+    },
+    "target": {
+      "code": "en",
+      "name": "English"
+    }
+  }
+}
+```
+
+Required fields:
+
+- `glossary_id`
+- `title`
+- `lifecycle`
+- `languages.source`
+- `languages.target`
+
+Rules:
+
+1. `glossary.json` must not contain term content.
+2. `glossary.json` must not store a committed list of term ids.
+3. The app should derive glossary membership by scanning `terms/*.json`.
+4. Renaming a glossary must rewrite only `glossary.json`.
+5. Adding, editing, deleting, or restoring one term must not require rewriting `glossary.json`.
+
+### Term Files
+
+Each term lives in its own JSON file under `terms/`.
+
+Recommended pattern:
+
+```text
+terms/<term_id>.json
+```
+
+Example:
+
+```json
+{
+  "term_id": "cfdfd77b-cf1a-4fe7-81d7-f8c7612e33b7",
+  "source_terms": [
+    "Akasha"
+  ],
+  "target_terms": [
+    "Akasha"
+  ],
+  "notes_to_translators": "",
+  "footnote": "",
+  "untranslated": true,
+  "lifecycle": {
+    "state": "active"
+  }
+}
+```
+
+Required fields:
+
+- `term_id`
+- `source_terms`
+- `target_terms`
+- `notes_to_translators`
+- `footnote`
+- `untranslated`
+- `lifecycle`
+
+Rules:
+
+1. `term_id` should be a UUIDv7.
+2. `source_terms[]` stores one or more accepted source-language spellings.
+3. `target_terms[]` stores one or more accepted target-language spellings.
+4. `notes_to_translators` is internal guidance for translators and editors.
+5. `footnote` stores explanatory text that may later be inserted into a published book as a footnote.
+6. `untranslated = true` means the term should remain untranslated in the target language.
+7. If `untranslated = true`, the app may fall back to `source_terms[]` when building in-memory matchers, but `target_terms[]` should still be preserved when available.
+8. Term add/edit/delete operations should touch only the relevant term file.
+9. There must be no committed glossary-wide term index in v1.
+
+### Glossary Sync Rules
+
+1. Creating a new glossary should create a new repo in the org.
+2. Importing a glossary from file should also create a new repo in the org.
+3. The app should clone the glossary repo locally before editing it.
+4. Local glossary edits should:
+   - save the changed file to disk
+   - create a local Git commit
+   - pull and push asynchronously afterward
+5. The app should load glossary terms from disk and build search/matcher structures in memory instead of relying on a committed index.
+
 ## Versioning and Migrations
 
 The format must be versioned from the beginning.
@@ -1147,3 +1279,4 @@ For the first real implementation:
 - `format_metadata`: sparse format-specific bag from day 1
 - import from `.xlsx`
 - export later to `.xlsx`, `.docx`, `.txt`, subtitle, and software localization formats
+- glossary repos should use one-file-per-term with no committed index

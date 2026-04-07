@@ -4,6 +4,7 @@ mod broker_auth_storage;
 mod callbacks;
 mod constants;
 mod drafts;
+mod glossary_storage;
 mod github;
 mod github_app_test;
 mod insecure_github_app_config;
@@ -27,6 +28,10 @@ use crate::{
   callbacks::spawn_callback_server,
   constants::MAIN_WINDOW_BACKGROUND,
   drafts::create_team_setup_draft,
+  glossary_storage::{
+    delete_gtms_glossary_term, list_local_gtms_glossaries, load_gtms_glossary_editor_data,
+    upsert_gtms_glossary_term,
+  },
   github::{
     add_organization_admin_for_installation,
     begin_github_app_install, create_gnosis_project_repo, delete_organization_for_installation,
@@ -251,6 +256,10 @@ pub fn run() {
       permanently_delete_gtms_chapter,
       update_gtms_chapter_language_selection,
       update_gtms_editor_row_fields,
+      list_local_gtms_glossaries,
+      load_gtms_glossary_editor_data,
+      upsert_gtms_glossary_term,
+      delete_gtms_glossary_term,
       list_github_app_test_repositories,
       list_organization_members_for_installation,
       search_github_users_for_installation,
