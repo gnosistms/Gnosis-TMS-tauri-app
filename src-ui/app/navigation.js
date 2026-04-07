@@ -1,5 +1,6 @@
 import { clearStoredAuthSession } from "./auth-storage.js";
 import { resetPageSync, beginPageSync, completePageSync, failPageSync } from "./page-sync.js";
+import { resetProjectsPageSync } from "./projects-page-sync.js";
 import { state, resetSessionState } from "./state.js";
 import { waitForNextPaint } from "./runtime.js";
 import { loadGithubAppTestConfig } from "./github-app-test-flow.js";
@@ -18,6 +19,9 @@ export function handleNavigation(navTarget, render) {
     resetSessionState();
   } else {
     resetPageSync();
+    if (navTarget !== "projects") {
+      resetProjectsPageSync();
+    }
   }
 
   state.screen = navTarget;
@@ -41,6 +45,11 @@ export async function refreshCurrentScreen(render) {
     return;
   }
 
+  if (state.screen === "projects") {
+    await loadTeamProjects(render, state.selectedTeamId);
+    return;
+  }
+
   beginPageSync();
   render();
   await waitForNextPaint();
@@ -48,11 +57,6 @@ export async function refreshCurrentScreen(render) {
   try {
     if (state.screen === "teams") {
       await loadUserTeams(render);
-      return;
-    }
-
-    if (state.screen === "projects") {
-      await loadTeamProjects(render, state.selectedTeamId);
       return;
     }
 

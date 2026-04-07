@@ -242,6 +242,14 @@
   gap: 12px;
 }
 
+.project-files__deleted {
+  margin-top: 18px;
+}
+
+.chapter-table--deleted {
+  margin-top: 10px;
+}
+
 .chapter-table__row {
   min-height: 28px;
   display: grid;
@@ -284,6 +292,11 @@
 
 .chapter-table__row:hover .chapter-table__name-button {
   opacity: 0.65;
+}
+
+.chapter-table__row--deleted .chapter-table__name,
+.chapter-table__row--deleted .chapter-table__meta {
+  opacity: 0.58;
 }
 
 .chapter-table__meta {

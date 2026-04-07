@@ -1,5 +1,7 @@
 import { state } from "./state.js";
 import {
+  updateChapterPermanentDeletionConfirmation,
+  updateChapterRenameName,
   updateProjectCreationName,
   updateProjectPermanentDeletionConfirmation,
   updateProjectRenameName,
@@ -71,6 +73,31 @@ function handleProjectRenameInput(event) {
   return true;
 }
 
+function handleChapterRenameInput(event) {
+  const input = event.target.closest("[data-chapter-rename-input]");
+  if (!input) {
+    return false;
+  }
+
+  updateChapterRenameName(input.value);
+  return true;
+}
+
+function handleChapterPermanentDeleteInput(event) {
+  const input = event.target.closest("[data-chapter-permanent-delete-input]");
+  if (!input) {
+    return false;
+  }
+
+  updateChapterPermanentDeletionConfirmation(input.value);
+  const deleteButton = document.querySelector("[data-chapter-permanent-delete-button]");
+  if (deleteButton) {
+    deleteButton.disabled =
+      input.value !== state.chapterPermanentDeletion.chapterName;
+  }
+  return true;
+}
+
 function handleInviteUserInput(event, render) {
   const input = event.target.closest("[data-invite-user-input]");
   if (!input) {
@@ -107,6 +134,8 @@ const inputHandlers = [
   handleTeamRenameInput,
   handleTeamPermanentDeleteInput,
   handleProjectRenameInput,
+  handleChapterRenameInput,
+  handleChapterPermanentDeleteInput,
   handleInviteUserInput,
   handleEditorSourceLanguageInput,
   handleEditorTargetLanguageInput,

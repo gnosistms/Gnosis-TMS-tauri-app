@@ -1,7 +1,7 @@
 use tauri::State;
 
 use crate::{
-  broker::{broker_base_url, broker_get_json_with_session},
+  broker::{broker_base_url, broker_get_json_with_session, broker_post_json_with_session},
   constants::{BROKER_AUTH_CALLBACK_PATH, GITHUB_CALLBACK_ADDRESS},
   state::{AuthState, PendingBrokerAuth},
 };
@@ -61,6 +61,22 @@ pub(crate) fn inspect_broker_auth_session(
     .build()
     .map_err(|error| error.to_string())?;
   broker_get_json_with_session(&client, "/api/auth/session", &session_token)
+}
+
+#[tauri::command]
+pub(crate) fn refresh_broker_auth_session(
+  session_token: String,
+) -> Result<BrokerSession, String> {
+  let client = reqwest::blocking::Client::builder()
+    .user_agent("GnosisTMS")
+    .build()
+    .map_err(|error| error.to_string())?;
+  broker_post_json_with_session(
+    &client,
+    "/api/auth/refresh",
+    &serde_json::json!({}),
+    &session_token,
+  )
 }
 
 pub(crate) fn broker_auth_callback_url() -> String {

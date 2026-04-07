@@ -325,11 +325,13 @@ fn sync_project_repo(
 
   let basic_auth_header = git_basic_auth_header(git_transport_token);
 
-  git_output(
+  if let Err(error) = git_output(
     repo_path,
     &["pull", "--rebase", "origin", branch_name],
     Some(&basic_auth_header),
-  )?;
+  ) {
+    return Err(abort_rebase_after_failed_pull(repo_path, &basic_auth_header, error));
+  }
   git_output(repo_path, &["push", "origin", branch_name], Some(&basic_auth_header))?;
   Ok(Some(git_output(repo_path, &["rev-parse", "HEAD"], None)?))
 }
@@ -423,6 +425,42 @@ fn load_git_transport_token(installation_id: i64, session_token: &str) -> Result
 fn git_basic_auth_header(token: &str) -> String {
   let payload = STANDARD.encode(format!("x-access-token:{token}"));
   format!("Authorization: Basic {payload}")
+}
+
+fn abort_rebase_after_failed_pull(repo_path: &Path, basic_auth_header: &str, pull_error: String) -> String {
+  if !repo_has_rebase_in_progress(repo_path) {
+    return pull_error;
+  }
+
+  match git_output(repo_path, &["rebase", "--abort"], Some(basic_auth_header)) {
+    Ok(_) => format!("{pull_error} The interrupted rebase was aborted automatically."),
+    Err(abort_error) => format!(
+      "{pull_error} An automatic 'git rebase --abort' also failed: {abort_error}"
+    ),
+  }
+}
+
+fn repo_has_rebase_in_progress(repo_path: &Path) -> bool {
+  let rebase_apply = git_output(repo_path, &["rev-parse", "--git-path", "rebase-apply"], None);
+  let rebase_merge = git_output(repo_path, &["rev-parse", "--git-path", "rebase-merge"], None);
+
+  rebase_apply
+    .ok()
+    .map(|path| resolve_git_path(repo_path, &path).exists())
+    .unwrap_or(false)
+    || rebase_merge
+      .ok()
+      .map(|path| resolve_git_path(repo_path, &path).exists())
+      .unwrap_or(false)
+}
+
+fn resolve_git_path(repo_path: &Path, git_path: &str) -> PathBuf {
+  let path = PathBuf::from(git_path);
+  if path.is_absolute() {
+    path
+  } else {
+    repo_path.join(path)
+  }
 }
 
 fn sync_store_key(installation_id: i64, repo_name: &str) -> String {

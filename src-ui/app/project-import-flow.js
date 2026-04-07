@@ -1,5 +1,9 @@
 import { invoke, waitForNextPaint } from "./runtime.js";
-import { completePageSync, failPageSync, beginPageSync } from "./page-sync.js";
+import {
+  beginProjectsPageSync,
+  completeProjectsPageSync,
+  failProjectsPageSync,
+} from "./projects-page-sync.js";
 import { saveStoredProjectsForTeam } from "./project-cache.js";
 import { state } from "./state.js";
 import {
@@ -8,6 +12,7 @@ import {
   showScopedSyncBadge,
 } from "./status-feedback.js";
 import { reconcileProjectRepoSyncStates } from "./project-repo-sync-flow.js";
+import { refreshProjectFilesFromDisk } from "./project-flow.js";
 
 function openFilePicker() {
   return new Promise((resolve) => {
@@ -63,6 +68,7 @@ function buildImportedFileEntry(result) {
   return {
     id: result.chapterId,
     name: result.fileTitle,
+    status: "active",
     languages: Array.isArray(result.languages) ? result.languages : [],
     sourceWordCounts:
       result.sourceWordCounts && typeof result.sourceWordCounts === "object"
@@ -138,7 +144,7 @@ export async function addFilesToProject(render, projectId) {
     error: "",
     result: state.projectImport.result,
   };
-  beginPageSync();
+  beginProjectsPageSync();
   showScopedSyncBadge("projects", "Adding file...", render);
   render();
   await waitForNextPaint();
@@ -166,7 +172,8 @@ export async function addFilesToProject(render, projectId) {
     render();
     await waitForNextPaint();
     await reconcileProjectRepoSyncStates(render, selectedTeam, [targetProject]);
-    await completePageSync(render);
+    await refreshProjectFilesFromDisk(render, selectedTeam, [targetProject]);
+    await completeProjectsPageSync(render);
     showNoticeBadge(
       `Imported ${result.unitCount} rows from ${result.sourceFileName} into ${result.projectTitle}`,
       render,
@@ -178,7 +185,7 @@ export async function addFilesToProject(render, projectId) {
       result: state.projectImport.result,
     };
     clearScopedSyncBadge("projects", render);
-    failPageSync();
+    failProjectsPageSync();
     showNoticeBadge(state.projectImport.error || "The file could not be imported.", render);
     render();
   }

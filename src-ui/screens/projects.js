@@ -10,6 +10,8 @@ import {
 } from "../lib/ui.js";
 import { formatErrorForDisplay } from "../app/error-display.js";
 import { renderProjectCreationModal } from "./project-creation-modal.js";
+import { renderChapterPermanentDeletionModal } from "./chapter-permanent-deletion-modal.js";
+import { renderChapterRenameModal } from "./chapter-rename-modal.js";
 import { renderProjectPermanentDeletionModal } from "./project-permanent-deletion-modal.js";
 import { renderProjectRenameModal } from "./project-rename-modal.js";
 import {
@@ -37,11 +39,15 @@ function compareFilesByName(left, right) {
 
 function renderProjectCard(project, expanded, options = {}) {
   const canManageProjects = options.canManageProjects !== false;
+  const canPermanentlyDeleteFiles = options.canPermanentlyDeleteFiles === true;
   const isDeleted = options.isDeleted === true;
   const offlineMode = options.offlineMode === true;
   const deleteAction = options.deleteAction ?? `delete-project:${project.id}`;
   const addFilesDisabled = options.addFilesDisabled === true;
-  const files = [...project.chapters].sort(compareFilesByName);
+  const allFiles = Array.isArray(project.chapters) ? project.chapters : [];
+  const files = allFiles.filter((chapter) => chapter?.status !== "deleted").sort(compareFilesByName);
+  const deletedFiles = allFiles.filter((chapter) => chapter?.status === "deleted").sort(compareFilesByName);
+  const showDeletedFiles = options.showDeletedFiles === true;
   const actions =
     options.actions ??
     [
@@ -82,8 +88,8 @@ function renderProjectCard(project, expanded, options = {}) {
                   </div>
                   <div class="chapter-table__actions">
                     ${textAction("Open", `open-translate:${chapter.id}`)}
-                    ${textAction("Rename", "noop")}
-                    ${textAction("Delete", "noop")}
+                    ${textAction("Rename", `rename-file:${chapter.id}`)}
+                    ${textAction("Delete", `delete-file:${chapter.id}`)}
                   </div>
                 </div>
               `;
@@ -91,6 +97,42 @@ function renderProjectCard(project, expanded, options = {}) {
             )
             .join("")}
         </div>
+        ${
+          deletedFiles.length > 0
+            ? `
+              <div class="project-files__deleted">
+                ${sectionSeparator({
+                  label: showDeletedFiles ? "Hide deleted files" : "Show deleted files",
+                  action: `toggle-deleted-files:${project.id}`,
+                  isOpen: showDeletedFiles,
+                })}
+                ${
+                  showDeletedFiles
+                    ? `
+                      <div class="chapter-table chapter-table--deleted">
+                        ${deletedFiles
+                          .map(
+                            (chapter) => `
+                              <div class="chapter-table__row chapter-table__row--file chapter-table__row--deleted">
+                                <div class="chapter-table__title-wrap">
+                                  <span class="chapter-table__name">${escapeHtml(chapter.name)}</span>
+                                </div>
+                                <div class="chapter-table__actions">
+                                  ${textAction("Restore", `restore-file:${chapter.id}`, { disabled: offlineMode })}
+                                  ${canPermanentlyDeleteFiles ? textAction("Delete", `delete-deleted-file:${chapter.id}`, { disabled: offlineMode }) : ""}
+                                </div>
+                              </div>
+                            `,
+                          )
+                          .join("")}
+                      </div>
+                    `
+                    : ""
+                }
+              </div>
+            `
+            : ""
+        }
       </div>
     `
     : "";
@@ -171,9 +213,12 @@ function renderDeletedProjectsSection(state) {
 export function renderProjectsScreen(state) {
   const selectedTeam = state.teams.find((team) => team.id === state.selectedTeamId) ?? state.teams[0];
   const canManageProjects = selectedTeam?.canManageProjects === true;
+  const canPermanentlyDeleteFiles = selectedTeam?.canDelete === true;
   const offlineMode = state.offline?.isEnabled === true;
   const importInProgress = state.projectImport?.status === "importing";
   const discovery = state.projectDiscovery ?? { status: "idle", error: "" };
+  const projectsSyncBadgeText = getScopedSyncBadgeText("projects");
+  const isProjectsSyncing = state.projectsPageSync?.status === "syncing";
   const emptyState = `
     <article class="card card--hero card--empty">
       <div class="card__body">
@@ -212,8 +257,10 @@ export function renderProjectsScreen(state) {
               .map((project) =>
                 renderProjectCard(project, state.expandedProjects.has(project.id), {
                   canManageProjects,
+                  canPermanentlyDeleteFiles,
                   offlineMode,
                   addFilesDisabled: importInProgress,
+                  showDeletedFiles: state.expandedDeletedFiles.has(project.id),
                 }),
               )
               .join("")}</section>`;
@@ -230,8 +277,8 @@ export function renderProjectsScreen(state) {
     title: "Projects",
     subtitle: selectedTeam?.name ?? "Team",
     titleAction: titleRefreshButton("refresh-page", {
-      spinning: state.pageSync?.status === "syncing",
-      disabled: offlineMode || state.pageSync?.status === "syncing",
+      spinning: isProjectsSyncing,
+      disabled: offlineMode || isProjectsSyncing,
     }),
     navButtons: [
       navButton("Logout", "start"),
@@ -247,14 +294,16 @@ export function renderProjectsScreen(state) {
     ]
       .filter(Boolean)
       .join(""),
-    pageSync: state.pageSync,
-    syncBadgeText: getScopedSyncBadgeText("projects"),
+    pageSync: state.projectsPageSync,
+    syncBadgeText: projectsSyncBadgeText,
     noticeText: getNoticeBadgeText(),
     offlineMode,
     offlineReconnectState: state.offline?.reconnecting === true,
     body,
     }) +
     renderProjectCreationModal(state) +
+    renderChapterPermanentDeletionModal(state) +
+    renderChapterRenameModal(state) +
     renderProjectRenameModal(state) +
     renderProjectPermanentDeletionModal(state)
   );

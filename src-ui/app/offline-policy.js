@@ -31,6 +31,7 @@ const OFFLINE_BLOCKED_PREFIXES = [
   "delete-project:",
   "restore-project:",
   "delete-deleted-project:",
+  "delete-deleted-file:",
 ];
 
 export function isOfflineBlockedAction(action) {

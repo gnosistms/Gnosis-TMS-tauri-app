@@ -20,7 +20,7 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 use crate::{
-  broker_auth::{begin_broker_auth, inspect_broker_auth_session},
+  broker_auth::{begin_broker_auth, inspect_broker_auth_session, refresh_broker_auth_session},
   broker_auth_storage::{
     clear_broker_auth_session, load_broker_auth_session, save_broker_auth_session,
   },
@@ -46,7 +46,9 @@ use crate::{
     inspect_github_app_test_installation, list_github_app_test_repositories,
   },
   project_import::{
-    import_xlsx_to_gtms, load_gtms_chapter_editor_data, update_gtms_chapter_language_selection,
+    import_xlsx_to_gtms, list_local_gtms_project_files, load_gtms_chapter_editor_data, permanently_delete_gtms_chapter,
+    rename_gtms_chapter, restore_gtms_chapter, soft_delete_gtms_chapter,
+    update_gtms_chapter_language_selection,
   },
   project_repo_sync::{list_project_repo_sync_states, reconcile_project_repo_sync_states},
   state::{AuthState, ProjectRepoSyncStore},
@@ -220,6 +222,7 @@ pub fn run() {
       install_app_update,
       begin_broker_auth,
       inspect_broker_auth_session,
+      refresh_broker_auth_session,
       load_broker_auth_session,
       save_broker_auth_session,
       clear_broker_auth_session,
@@ -240,7 +243,12 @@ pub fn run() {
       reconcile_project_repo_sync_states,
       list_project_repo_sync_states,
       import_xlsx_to_gtms,
+      list_local_gtms_project_files,
       load_gtms_chapter_editor_data,
+      rename_gtms_chapter,
+      soft_delete_gtms_chapter,
+      restore_gtms_chapter,
+      permanently_delete_gtms_chapter,
       update_gtms_chapter_language_selection,
       list_github_app_test_repositories,
       list_organization_members_for_installation,

@@ -46,12 +46,65 @@ pub(crate) struct ImportXlsxResponse {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub(crate) struct ListLocalProjectFilesInput {
+  installation_id: i64,
+  projects: Vec<LocalProjectFilesDescriptor>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct LocalProjectFilesDescriptor {
+  project_id: String,
+  repo_name: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct LocalProjectFilesResponse {
+  project_id: String,
+  repo_name: String,
+  chapters: Vec<ProjectChapterSummary>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct UpdateChapterLanguageSelectionInput {
   installation_id: i64,
   repo_name: String,
   chapter_id: String,
   source_language_code: String,
   target_language_code: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct RenameChapterInput {
+  installation_id: i64,
+  repo_name: String,
+  chapter_id: String,
+  title: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct RenameChapterResponse {
+  chapter_id: String,
+  title: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct UpdateChapterLifecycleInput {
+  installation_id: i64,
+  repo_name: String,
+  chapter_id: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct UpdateChapterLifecycleResponse {
+  chapter_id: String,
+  lifecycle_state: String,
 }
 
 #[derive(Serialize)]
@@ -80,6 +133,18 @@ pub(crate) struct LoadChapterEditorResponse {
   selected_source_language_code: Option<String>,
   selected_target_language_code: Option<String>,
   rows: Vec<EditorRow>,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ProjectChapterSummary {
+  id: String,
+  name: String,
+  status: String,
+  languages: Vec<ChapterLanguage>,
+  source_word_counts: BTreeMap<String, usize>,
+  selected_source_language_code: Option<String>,
+  selected_target_language_code: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -139,9 +204,8 @@ struct ProjectFile {
   title: String,
   #[serde(default = "active_lifecycle_state")]
   lifecycle: LifecycleState,
-  chapter_order: Vec<String>,
-  #[serde(default)]
-  deleted_chapter_order: Vec<String>,
+  #[serde(flatten, default)]
+  extra: BTreeMap<String, Value>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -164,6 +228,8 @@ struct ChapterFile {
   chapter_id: String,
   title: String,
   slug: String,
+  #[serde(default = "active_lifecycle_state")]
+  lifecycle: LifecycleState,
   source_files: Vec<SourceFile>,
   package_assets: Vec<Value>,
   languages: Vec<ChapterLanguage>,
@@ -286,6 +352,8 @@ struct FieldValue {
 struct StoredChapterFile {
   chapter_id: String,
   title: String,
+  #[serde(default = "active_lifecycle_state")]
+  lifecycle: LifecycleState,
   #[serde(default)]
   source_files: Vec<StoredSourceFile>,
   #[serde(default)]
@@ -365,6 +433,16 @@ pub(crate) async fn load_gtms_chapter_editor_data(
 }
 
 #[tauri::command]
+pub(crate) async fn list_local_gtms_project_files(
+  app: AppHandle,
+  input: ListLocalProjectFilesInput,
+) -> Result<Vec<LocalProjectFilesResponse>, String> {
+  tauri::async_runtime::spawn_blocking(move || list_local_gtms_project_files_sync(&app, input))
+    .await
+    .map_err(|error| format!("The local project file listing worker failed: {error}"))?
+}
+
+#[tauri::command]
 pub(crate) async fn update_gtms_chapter_language_selection(
   app: AppHandle,
   input: UpdateChapterLanguageSelectionInput,
@@ -374,6 +452,50 @@ pub(crate) async fn update_gtms_chapter_language_selection(
   })
   .await
   .map_err(|error| format!("The chapter settings worker failed: {error}"))?
+}
+
+#[tauri::command]
+pub(crate) async fn rename_gtms_chapter(
+  app: AppHandle,
+  input: RenameChapterInput,
+) -> Result<RenameChapterResponse, String> {
+  tauri::async_runtime::spawn_blocking(move || rename_gtms_chapter_sync(&app, input))
+    .await
+    .map_err(|error| format!("The chapter rename worker failed: {error}"))?
+}
+
+#[tauri::command]
+pub(crate) async fn soft_delete_gtms_chapter(
+  app: AppHandle,
+  input: UpdateChapterLifecycleInput,
+) -> Result<UpdateChapterLifecycleResponse, String> {
+  tauri::async_runtime::spawn_blocking(move || {
+    update_gtms_chapter_lifecycle_sync(&app, input, "deleted")
+  })
+  .await
+  .map_err(|error| format!("The chapter delete worker failed: {error}"))?
+}
+
+#[tauri::command]
+pub(crate) async fn restore_gtms_chapter(
+  app: AppHandle,
+  input: UpdateChapterLifecycleInput,
+) -> Result<UpdateChapterLifecycleResponse, String> {
+  tauri::async_runtime::spawn_blocking(move || {
+    update_gtms_chapter_lifecycle_sync(&app, input, "active")
+  })
+  .await
+  .map_err(|error| format!("The chapter restore worker failed: {error}"))?
+}
+
+#[tauri::command]
+pub(crate) async fn permanently_delete_gtms_chapter(
+  app: AppHandle,
+  input: UpdateChapterLifecycleInput,
+) -> Result<UpdateChapterLifecycleResponse, String> {
+  tauri::async_runtime::spawn_blocking(move || permanently_delete_gtms_chapter_sync(&app, input))
+    .await
+    .map_err(|error| format!("The chapter permanent delete worker failed: {error}"))?
 }
 
 fn import_xlsx_to_gtms_sync(
@@ -403,7 +525,7 @@ fn import_xlsx_to_gtms_sync(
   }
 
   let project_json_path = repo_path.join("project.json");
-  let mut project_file = read_project_file(&project_json_path)?;
+  let project_file = read_project_file(&project_json_path)?;
   let project_title = project_file.title.clone();
   let chapter_slug = unique_chapter_slug(&repo_path.join("chapters"), &slugify(&parsed.file_title));
   let chapter_path = repo_path.join("chapters").join(&chapter_slug);
@@ -423,9 +545,7 @@ fn import_xlsx_to_gtms_sync(
   let row_order = build_row_order_and_files(&parsed, &rows_path)?;
   write_json_pretty(&chapter_path.join("rowOrder.json"), &row_order)?;
 
-  project_file.chapter_order.push(chapter_id.to_string());
-  write_json_pretty(&project_json_path, &project_file)?;
-  git_output(&repo_path, &["add", ".gitattributes", "project.json", "chapters"])?;
+  git_output(&repo_path, &["add", ".gitattributes", "chapters"])?;
   git_output(
     &repo_path,
     &["commit", "-m", &format!("Import {}", parsed.source_file_name)],
@@ -470,15 +590,16 @@ fn load_gtms_chapter_editor_data_sync(
   let chapter_file: StoredChapterFile = read_json_file(&chapter_path.join("chapter.json"), "chapter.json")?;
   let row_order: Vec<String> = read_json_file(&chapter_path.join("rowOrder.json"), "rowOrder.json")?;
   let rows = load_editor_rows(&chapter_path.join("rows"), &row_order)?;
-  let source_word_counts = build_source_word_counts_from_stored_rows(&rows, &chapter_file.languages);
-  let selected_source_language_code = preferred_source_language_code(&chapter_file);
+  let languages = sanitize_chapter_languages(&chapter_file.languages);
+  let source_word_counts = build_source_word_counts_from_stored_rows(&rows, &languages);
+  let selected_source_language_code = preferred_source_language_code(&chapter_file, &languages);
   let selected_target_language_code =
-    preferred_target_language_code(&chapter_file, selected_source_language_code.as_deref());
+    preferred_target_language_code(&chapter_file, &languages, selected_source_language_code.as_deref());
 
   Ok(LoadChapterEditorResponse {
     chapter_id: chapter_file.chapter_id,
     file_title: chapter_file.title,
-    languages: chapter_file.languages,
+    languages,
     source_word_counts,
     selected_source_language_code,
     selected_target_language_code,
@@ -499,6 +620,32 @@ fn load_gtms_chapter_editor_data_sync(
       })
       .collect(),
   })
+}
+
+fn list_local_gtms_project_files_sync(
+  app: &AppHandle,
+  input: ListLocalProjectFilesInput,
+) -> Result<Vec<LocalProjectFilesResponse>, String> {
+  let repo_root = local_project_repo_root(app, input.installation_id)?;
+  let mut results = Vec::with_capacity(input.projects.len());
+
+  for project in input.projects {
+    let repo_path = repo_root.join(&project.repo_name);
+    let chapters =
+      if repo_path.exists() && git_output(&repo_path, &["rev-parse", "--git-dir"]).is_ok() {
+        load_project_chapter_summaries(&repo_path)?
+      } else {
+        Vec::new()
+      };
+
+    results.push(LocalProjectFilesResponse {
+      project_id: project.project_id,
+      repo_name: project.repo_name,
+      chapters,
+    });
+  }
+
+  Ok(results)
 }
 
 fn parse_xlsx_workbook(input: ImportXlsxInput) -> Result<ParsedWorkbook, String> {
@@ -635,6 +782,7 @@ fn build_chapter_file(
     chapter_id: chapter_id.to_string(),
     title: parsed.file_title.clone(),
     slug: chapter_slug.to_string(),
+    lifecycle: active_lifecycle_state(),
     source_files: vec![SourceFile {
       file_id: "source-001".to_string(),
       format: "xlsx",
@@ -790,9 +938,11 @@ fn classify_header(header: &str) -> ColumnBinding {
   }
 
   match normalized.as_str() {
+    "row" | "row number" | "row id" => return ColumnBinding::Ignored,
     "key" | "id" | "identifier" | "string key" | "string id" | "resource key" => {
       return ColumnBinding::ExternalId;
     }
+    "source label" | "source title" => return ColumnBinding::Description,
     "description" | "desc" => return ColumnBinding::Description,
     "context" => return ColumnBinding::Context,
     "comment" | "comments" | "note" | "notes" => {
@@ -885,6 +1035,36 @@ fn language_display_name(header: &str, code: &str) -> String {
   }
 }
 
+fn is_reserved_non_language_header(value: &str) -> bool {
+  matches!(
+    normalize_header(value).as_str(),
+    "" | "row" | "row number" | "row id" | "source label" | "source title"
+      | "description" | "desc" | "context" | "comment" | "comments" | "note" | "notes"
+      | "developer comment" | "developer note" | "translator comment" | "translator note"
+      | "key" | "id" | "identifier" | "string key" | "string id" | "resource key"
+  )
+}
+
+fn sanitize_chapter_languages(languages: &[ChapterLanguage]) -> Vec<ChapterLanguage> {
+  let mut seen = BTreeMap::<String, ()>::new();
+  let mut sanitized = Vec::new();
+
+  for language in languages {
+    if is_reserved_non_language_header(&language.code) || is_reserved_non_language_header(&language.name) {
+      continue;
+    }
+
+    if seen.contains_key(&language.code) {
+      continue;
+    }
+
+    seen.insert(language.code.clone(), ());
+    sanitized.push(language.clone());
+  }
+
+  sanitized
+}
+
 fn looks_like_language_code(value: &str) -> bool {
   let bytes = value.as_bytes();
   if bytes.len() == 2 {
@@ -936,6 +1116,59 @@ fn find_chapter_path_by_id(chapters_root: &Path, chapter_id: &str) -> Result<Pat
   }
 
   Err(format!("Could not find chapter '{chapter_id}' in the local project repo."))
+}
+
+fn load_project_chapter_summaries(repo_path: &Path) -> Result<Vec<ProjectChapterSummary>, String> {
+  let chapters_root = repo_path.join("chapters");
+  if !chapters_root.exists() {
+    return Ok(Vec::new());
+  }
+
+  let entries = fs::read_dir(&chapters_root).map_err(|error| {
+    format!(
+      "Could not read chapters folder '{}': {error}",
+      chapters_root.display()
+    )
+  })?;
+
+  let mut chapters = Vec::new();
+  for entry in entries {
+    let entry = entry.map_err(|error| format!("Could not read a chapter folder entry: {error}"))?;
+    let path = entry.path();
+    if !path.is_dir() {
+      continue;
+    }
+
+    let chapter_json_path = path.join("chapter.json");
+    if !chapter_json_path.exists() {
+      continue;
+    }
+
+    let chapter_file: StoredChapterFile = read_json_file(&chapter_json_path, "chapter.json")?;
+    let row_order: Vec<String> = read_json_file(&path.join("rowOrder.json"), "rowOrder.json")?;
+    let rows = load_editor_rows(&path.join("rows"), &row_order)?;
+    let languages = sanitize_chapter_languages(&chapter_file.languages);
+    let source_word_counts = build_source_word_counts_from_stored_rows(&rows, &languages);
+    let selected_source_language_code = preferred_source_language_code(&chapter_file, &languages);
+    let selected_target_language_code =
+      preferred_target_language_code(&chapter_file, &languages, selected_source_language_code.as_deref());
+
+    chapters.push(ProjectChapterSummary {
+      id: chapter_file.chapter_id,
+      name: chapter_file.title,
+      status: if chapter_file.lifecycle.state == "deleted" {
+        "deleted".to_string()
+      } else {
+        "active".to_string()
+      },
+      languages,
+      source_word_counts,
+      selected_source_language_code,
+      selected_target_language_code,
+    });
+  }
+
+  Ok(chapters)
 }
 
 fn local_project_repo_root(app: &AppHandle, installation_id: i64) -> Result<PathBuf, String> {
@@ -1081,6 +1314,182 @@ fn update_gtms_chapter_language_selection_sync(
     chapter_id: input.chapter_id,
     source_language_code: input.source_language_code,
     target_language_code: input.target_language_code,
+  })
+}
+
+fn rename_gtms_chapter_sync(
+  app: &AppHandle,
+  input: RenameChapterInput,
+) -> Result<RenameChapterResponse, String> {
+  let next_title = input.title.trim();
+  if next_title.is_empty() {
+    return Err("Enter a file name.".to_string());
+  }
+
+  let repo_root = local_project_repo_root(app, input.installation_id)?;
+  let repo_path = repo_root.join(&input.repo_name);
+  if !repo_path.exists() {
+    return Err("The local project repo is not available yet.".to_string());
+  }
+
+  if git_output(&repo_path, &["rev-parse", "--git-dir"]).is_err() {
+    return Err("The local project repo is missing or invalid.".to_string());
+  }
+
+  let chapter_path = find_chapter_path_by_id(&repo_path.join("chapters"), &input.chapter_id)?;
+  let chapter_json_path = chapter_path.join("chapter.json");
+  let mut chapter_value: Value = read_json_file(&chapter_json_path, "chapter.json")?;
+  let chapter_object = chapter_value
+    .as_object_mut()
+    .ok_or_else(|| "The chapter.json file is not a JSON object.".to_string())?;
+  let current_title = chapter_object
+    .get("title")
+    .and_then(Value::as_str)
+    .unwrap_or("")
+    .trim()
+    .to_string();
+
+  if current_title == next_title {
+    return Ok(RenameChapterResponse {
+      chapter_id: input.chapter_id,
+      title: next_title.to_string(),
+    });
+  }
+
+  chapter_object.insert("title".to_string(), Value::String(next_title.to_string()));
+  write_json_pretty(&chapter_json_path, &chapter_value)?;
+
+  let relative_chapter_json = chapter_json_path
+    .strip_prefix(&repo_path)
+    .map_err(|error| format!("Could not resolve the chapter path for git: {error}"))?
+    .to_string_lossy()
+    .to_string();
+  git_output(&repo_path, &["add", &relative_chapter_json])?;
+  git_output(
+    &repo_path,
+    &[
+      "commit",
+      "-m",
+      &format!("Rename file to {}", next_title),
+      "--",
+      &relative_chapter_json,
+    ],
+  )?;
+
+  Ok(RenameChapterResponse {
+    chapter_id: input.chapter_id,
+    title: next_title.to_string(),
+  })
+}
+
+fn update_gtms_chapter_lifecycle_sync(
+  app: &AppHandle,
+  input: UpdateChapterLifecycleInput,
+  next_state: &str,
+) -> Result<UpdateChapterLifecycleResponse, String> {
+  let repo_root = local_project_repo_root(app, input.installation_id)?;
+  let repo_path = repo_root.join(&input.repo_name);
+  if !repo_path.exists() {
+    return Err("The local project repo is not available yet.".to_string());
+  }
+
+  if git_output(&repo_path, &["rev-parse", "--git-dir"]).is_err() {
+    return Err("The local project repo is missing or invalid.".to_string());
+  }
+
+  let chapter_path = find_chapter_path_by_id(&repo_path.join("chapters"), &input.chapter_id)?;
+  let chapter_json_path = chapter_path.join("chapter.json");
+
+  let mut chapter_value: Value = read_json_file(&chapter_json_path, "chapter.json")?;
+  let chapter_object = chapter_value
+    .as_object_mut()
+    .ok_or_else(|| "The chapter.json file is not a JSON object.".to_string())?;
+  let lifecycle_value = chapter_object
+    .entry("lifecycle".to_string())
+    .or_insert_with(|| json!({ "state": "active" }));
+  let lifecycle_object = lifecycle_value
+    .as_object_mut()
+    .ok_or_else(|| "The chapter lifecycle is not a JSON object.".to_string())?;
+  let current_state = lifecycle_object
+    .get("state")
+    .and_then(Value::as_str)
+    .unwrap_or("active")
+    .to_string();
+
+  if current_state == next_state {
+    return Ok(UpdateChapterLifecycleResponse {
+      chapter_id: input.chapter_id,
+      lifecycle_state: next_state.to_string(),
+    });
+  }
+
+  lifecycle_object.insert("state".to_string(), Value::String(next_state.to_string()));
+  write_json_pretty(&chapter_json_path, &chapter_value)?;
+
+  let relative_chapter_json = chapter_json_path
+    .strip_prefix(&repo_path)
+    .map_err(|error| format!("Could not resolve the chapter path for git: {error}"))?
+    .to_string_lossy()
+    .to_string();
+  git_output(&repo_path, &["add", &relative_chapter_json])?;
+  let commit_action = if next_state == "deleted" {
+    "Delete file"
+  } else {
+    "Restore file"
+  };
+  git_output(
+    &repo_path,
+    &["commit", "-m", commit_action, "--", &relative_chapter_json],
+  )?;
+
+  Ok(UpdateChapterLifecycleResponse {
+    chapter_id: input.chapter_id,
+    lifecycle_state: next_state.to_string(),
+  })
+}
+
+fn permanently_delete_gtms_chapter_sync(
+  app: &AppHandle,
+  input: UpdateChapterLifecycleInput,
+) -> Result<UpdateChapterLifecycleResponse, String> {
+  let repo_root = local_project_repo_root(app, input.installation_id)?;
+  let repo_path = repo_root.join(&input.repo_name);
+  if !repo_path.exists() {
+    return Err("The local project repo is not available yet.".to_string());
+  }
+
+  if git_output(&repo_path, &["rev-parse", "--git-dir"]).is_err() {
+    return Err("The local project repo is missing or invalid.".to_string());
+  }
+
+  let chapter_path = find_chapter_path_by_id(&repo_path.join("chapters"), &input.chapter_id)?;
+  let chapter_json_path = chapter_path.join("chapter.json");
+  let chapter_value: Value = read_json_file(&chapter_json_path, "chapter.json")?;
+  let chapter_lifecycle_state = chapter_value
+    .get("lifecycle")
+    .and_then(Value::as_object)
+    .and_then(|lifecycle| lifecycle.get("state"))
+    .and_then(Value::as_str)
+    .unwrap_or("active");
+
+  if chapter_lifecycle_state != "deleted" {
+    return Err("Only soft-deleted files can be permanently deleted.".to_string());
+  }
+  let relative_chapter_path = chapter_path
+    .strip_prefix(&repo_path)
+    .map_err(|error| format!("Could not resolve the chapter path for git: {error}"))?
+    .to_string_lossy()
+    .to_string();
+
+  git_output(&repo_path, &["rm", "-r", &relative_chapter_path])?;
+  git_output(
+    &repo_path,
+    &["commit", "-m", "Delete file permanently", "--", &relative_chapter_path],
+  )?;
+
+  Ok(UpdateChapterLifecycleResponse {
+    chapter_id: input.chapter_id,
+    lifecycle_state: "deleted".to_string(),
   })
 }
 
@@ -1237,17 +1646,16 @@ fn build_source_word_counts_from_stored_rows(
   counts
 }
 
-fn preferred_source_language_code(chapter_file: &StoredChapterFile) -> Option<String> {
+fn preferred_source_language_code(
+  chapter_file: &StoredChapterFile,
+  languages: &[ChapterLanguage],
+) -> Option<String> {
   chapter_file
     .settings
     .as_ref()
     .and_then(|settings| settings.default_source_language.clone())
-    .or_else(|| {
-      chapter_file
-        .languages
-        .first()
-        .map(|language| language.code.clone())
-    })
+    .filter(|code| languages.iter().any(|language| language.code == *code))
+    .or_else(|| languages.first().map(|language| language.code.clone()))
     .or_else(|| {
       chapter_file
         .source_files
@@ -1258,6 +1666,7 @@ fn preferred_source_language_code(chapter_file: &StoredChapterFile) -> Option<St
 
 fn preferred_target_language_code(
   chapter_file: &StoredChapterFile,
+  languages: &[ChapterLanguage],
   selected_source_language_code: Option<&str>,
 ) -> Option<String> {
   chapter_file
@@ -1269,21 +1678,20 @@ fn preferred_target_language_code(
         .clone()
         .or_else(|| settings.default_preview_language.clone())
     })
+    .filter(|code| languages.iter().any(|language| language.code == *code))
     .or_else(|| {
-      chapter_file
-        .languages
+      languages
         .iter()
         .find(|language| language.role == "target")
         .map(|language| language.code.clone())
     })
     .or_else(|| {
-      chapter_file
-        .languages
+      languages
         .iter()
         .find(|language| Some(language.code.as_str()) != selected_source_language_code)
         .map(|language| language.code.clone())
     })
-    .or_else(|| chapter_file.languages.first().map(|language| language.code.clone()))
+    .or_else(|| languages.first().map(|language| language.code.clone()))
 }
 
 fn count_words(value: &str) -> usize {

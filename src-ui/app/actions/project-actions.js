@@ -1,16 +1,25 @@
 import { state } from "../state.js";
 import {
+  cancelChapterPermanentDeletion,
+  cancelChapterRename,
   cancelProjectCreation,
   cancelProjectPermanentDeletion,
   cancelProjectRename,
+  confirmChapterPermanentDeletion,
   confirmProjectPermanentDeletion,
   createProjectForSelectedTeam,
+  deleteChapter,
   deleteProject,
+  openChapterPermanentDeletion,
+  openChapterRename,
   openProjectRename,
   permanentlyDeleteProject,
+  restoreChapter,
   restoreProject,
+  submitChapterRename,
   submitProjectCreation,
   submitProjectRename,
+  toggleDeletedFiles,
   toggleDeletedProjects,
 } from "../project-flow.js";
 import { addFilesToProject } from "../project-import-flow.js";
@@ -22,6 +31,8 @@ export function createProjectActions(render) {
     "cancel-project-creation": () => cancelProjectCreation(render),
     "cancel-project-permanent-deletion": () => cancelProjectPermanentDeletion(render),
     "cancel-project-rename": () => cancelProjectRename(render),
+    "cancel-chapter-permanent-deletion": () => cancelChapterPermanentDeletion(render),
+    "cancel-chapter-rename": () => cancelChapterRename(render),
     "toggle-deleted-projects": () => toggleDeletedProjects(render),
   };
 
@@ -38,6 +49,10 @@ export function createProjectActions(render) {
       },
     },
     {
+      prefix: "toggle-deleted-files:",
+      handler: (projectId) => toggleDeletedFiles(render, projectId),
+    },
+    {
       prefix: "delete-project:",
       handler: async (projectId, event) =>
         runWithImmediateLoading(event, "Deleting...", () => deleteProject(render, projectId)),
@@ -50,6 +65,24 @@ export function createProjectActions(render) {
     {
       prefix: "rename-project:",
       handler: (projectId) => openProjectRename(render, projectId),
+    },
+    {
+      prefix: "rename-file:",
+      handler: (chapterId) => openChapterRename(render, chapterId),
+    },
+    {
+      prefix: "delete-file:",
+      handler: async (chapterId, event) =>
+        runWithImmediateLoading(event, "Deleting...", () => deleteChapter(render, chapterId)),
+    },
+    {
+      prefix: "restore-file:",
+      handler: async (chapterId, event) =>
+        runWithImmediateLoading(event, "Restoring...", () => restoreChapter(render, chapterId)),
+    },
+    {
+      prefix: "delete-deleted-file:",
+      handler: (chapterId) => openChapterPermanentDeletion(render, chapterId),
     },
     {
       prefix: "restore-project:",
@@ -78,8 +111,18 @@ export function createProjectActions(render) {
       );
       return true;
     }
+    if (action === "confirm-chapter-permanent-deletion") {
+      await runWithImmediateLoading(event, "Deleting...", () =>
+        confirmChapterPermanentDeletion(render),
+      );
+      return true;
+    }
     if (action === "submit-project-rename") {
       await runWithImmediateLoading(event, "Saving...", () => submitProjectRename(render));
+      return true;
+    }
+    if (action === "submit-chapter-rename") {
+      await runWithImmediateLoading(event, "Saving...", () => submitChapterRename(render));
       return true;
     }
 

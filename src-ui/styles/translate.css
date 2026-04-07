@@ -117,90 +117,49 @@
 
 .card--translation .card__body {
   display: grid;
-  gap: 18px;
+  gap: 16px;
 }
 
-.translation-row__meta {
+.translation-row__header {
   display: flex;
-  gap: 22px;
-}
-
-.translation-row__grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  border: 1px solid rgba(164, 112, 41, 0.18);
-  border-radius: var(--radius-ui);
-  overflow: hidden;
-}
-
-.translation-cell {
-  min-height: 320px;
-  padding: 22px;
-  border-right: 1px solid rgba(164, 112, 41, 0.18);
-  display: grid;
-  align-content: start;
-  gap: 18px;
-}
-
-.translation-cell:last-child {
-  border-right: 0;
-}
-
-.translation-cell__title {
-  color: var(--link);
-  font-size: 1.45rem;
-  font-weight: 700;
-}
-
-.translation-cell p,
-.translation-cell__note {
-  margin: 0;
-  font-size: 1rem;
-  line-height: 1.6;
-}
-
-.translation-cell textarea {
-  min-height: 122px;
-  width: 100%;
-  resize: none;
-  padding: 14px 16px;
-  border: 1px solid rgba(164, 112, 41, 0.18);
-  border-radius: var(--radius-ui);
-  background: rgba(255, 255, 255, 0.82);
-  outline: none;
-}
-
-.translation-cell__actions {
-  display: flex;
-  align-items: center;
-  gap: 12px;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
   flex-wrap: wrap;
 }
 
-.translation-row__footer {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-
-.status-badge {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 40px;
-  padding: 0 16px;
-  border-radius: var(--radius-ui);
+.translation-row__title {
+  color: var(--link);
+  font-size: 1.15rem;
   font-weight: 700;
 }
 
-.status-badge--good {
-  background: #ddf4e3;
-  color: #177748;
+.translation-row__meta {
+  color: var(--muted);
+  font-weight: 600;
 }
 
-.status-badge--warning {
-  background: #fff1dd;
-  color: #b15b00;
+.translation-row__stack {
+  display: grid;
+  gap: 12px;
+}
+
+.translation-language-panel {
+  display: grid;
+  gap: 10px;
+}
+
+.translation-language-panel__label {
+  color: var(--link);
+  font-size: 1rem;
+  font-weight: 700;
+}
+
+.translation-language-panel__surface {
+  min-height: 116px;
+  border: 1px solid rgba(164, 112, 41, 0.18);
+  border-radius: var(--radius-ui);
+  background: rgba(255, 255, 255, 0.42);
 }
 
 .card--history .card__body {

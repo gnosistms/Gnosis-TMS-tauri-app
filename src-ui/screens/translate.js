@@ -96,7 +96,7 @@ function renderModeSegmentedControl() {
   `;
 }
 
-function buildLiveTranslationRows(editorChapter, sourceCode, targetCode) {
+function buildLiveTranslationRows(editorChapter) {
   if (!Array.isArray(editorChapter?.rows) || editorChapter.rows.length === 0) {
     return [];
   }
@@ -107,54 +107,45 @@ function buildLiveTranslationRows(editorChapter, sourceCode, targetCode) {
       || row.description?.trim()
       || row.context?.trim()
       || `Row ${index + 1}`;
-    const sourceBody = row.fields?.[sourceCode] ?? "";
-    const targetBody = row.fields?.[targetCode] ?? "";
-
     return {
       id: row.rowId,
-      sourceTitle: label,
-      targetTitle: label,
-      sourceBody,
-      targetBody,
-      targetEditable: true,
-      notes: targetBody,
-      status: row.reviewState === "reviewed" ? "Reviewed" : "Please Check",
+      title: label,
     };
   });
 }
 
-function renderTranslationContentRows(rows) {
+function buildFallbackRows() {
+  return translationRows.map((row, index) => ({
+    id: row.id,
+    title: row.sourceTitle || row.targetTitle || `Row ${index + 1}`,
+  }));
+}
+
+function renderTranslationContentRows(rows, languages) {
+  const languageCount = Array.isArray(languages) ? languages.length : 0;
+
   return rows
     .map(
-      (row) => `
+      (row, index) => `
         <article class="card card--translation">
           <div class="card__body">
-            <div class="translation-row__meta">
-              ${textAction("Insert", "noop")}
-              ${textAction("Delete", "noop")}
+            <div class="translation-row__header">
+              <div class="translation-row__title">${escapeHtml(row.title || `Row ${index + 1}`)}</div>
+              <div class="translation-row__meta">${escapeHtml(
+                `${languageCount} language${languageCount === 1 ? "" : "s"}`,
+              )}</div>
             </div>
-            <div class="translation-row__grid">
-              <div class="translation-cell">
-                <div class="translation-cell__title">${escapeHtml(row.sourceTitle)}</div>
-                <p>${escapeHtml(row.sourceBody)}</p>
-                <textarea>${row.targetEditable ? escapeHtml(row.notes) : ""}</textarea>
-                <div class="translation-cell__actions">
-                  <button class="button button--secondary">Cancel</button>
-                  <button class="button button--primary">Save</button>
-                  <button class="button button--primary">Save & Review</button>
-                </div>
-              </div>
-              <div class="translation-cell">
-                <div class="translation-cell__title">${escapeHtml(row.targetTitle)}</div>
-                <p>${escapeHtml(row.targetBody)}</p>
-                <div class="translation-cell__note">${escapeHtml(row.notes)}</div>
-              </div>
-            </div>
-            <div class="translation-row__footer">
-              <span class="status-badge status-badge--${
-                row.status === "Reviewed" ? "good" : "warning"
-              }">${escapeHtml(row.status)}</span>
-              <button class="button button--secondary">Comments</button>
+            <div class="translation-row__stack">
+              ${languages
+                .map(
+                  (language) => `
+                    <section class="translation-language-panel">
+                      <div class="translation-language-panel__label">${escapeHtml(language.name)}</div>
+                      <div class="translation-language-panel__surface"></div>
+                    </section>
+                  `,
+                )
+                .join("")}
             </div>
           </div>
         </article>
@@ -169,10 +160,8 @@ export function renderTranslateScreen(state) {
     state.editorChapter?.chapterId === state.selectedChapterId ? state.editorChapter : null;
   const languages = chapterLanguageOptions(chapter, editorChapter);
   const { sourceCode, targetCode } = resolveSelectedLanguageCodes(languages, chapter, editorChapter);
-  const contentRows =
-    buildLiveTranslationRows(editorChapter, sourceCode, targetCode).length > 0
-      ? buildLiveTranslationRows(editorChapter, sourceCode, targetCode)
-      : translationRows;
+  const liveRows = buildLiveTranslationRows(editorChapter);
+  const contentRows = liveRows.length > 0 ? liveRows : buildFallbackRows();
   const displayTitle = middleTruncateTitle(chapter.name);
   const headerBody = `
     <div class="translate-toolbar__body translate-toolbar__body--header">
@@ -235,7 +224,7 @@ export function renderTranslateScreen(state) {
                       </div>
                     </article>
                   `
-                  : renderTranslationContentRows(contentRows)
+                  : renderTranslationContentRows(contentRows, languages)
             }
           </div>
         </div>

@@ -7,6 +7,7 @@ import {
 export const state = {
   screen: "start",
   expandedProjects: new Set(["p2"]),
+  expandedDeletedFiles: new Set(),
   selectedTeamId: null,
   selectedProjectId: "p2",
   selectedGlossaryId: "g1",
@@ -45,7 +46,9 @@ export const state = {
   projectSyncVersion: 0,
   pendingTeamMutations: [],
   pendingProjectMutations: [],
+  pendingChapterMutations: [],
   pageSync: createPageSyncState(),
+  projectsPageSync: createProjectsPageSyncState(),
   teamSetup: createTeamSetupState(),
   teamRename: createTeamRenameState(),
   teamPermanentDeletion: createTeamPermanentDeletionState(),
@@ -54,6 +57,8 @@ export const state = {
   inviteUser: createInviteUserState(),
   projectRename: createProjectRenameState(),
   projectPermanentDeletion: createProjectPermanentDeletionState(),
+  chapterRename: createChapterRenameState(),
+  chapterPermanentDeletion: createChapterPermanentDeletionState(),
   showDeletedProjects: false,
   showDeletedTeams: false,
 };
@@ -88,6 +93,12 @@ export function createAppUpdateState() {
     version: null,
     currentVersion: null,
     body: null,
+  };
+}
+
+export function createProjectsPageSyncState() {
+  return {
+    status: "idle",
   };
 }
 
@@ -210,6 +221,23 @@ export function createProjectRenameState() {
   });
 }
 
+export function createChapterRenameState() {
+  return createEntityModalState({
+    projectId: null,
+    chapterId: null,
+    chapterName: "",
+  });
+}
+
+export function createChapterPermanentDeletionState() {
+  return createEntityModalState({
+    projectId: null,
+    chapterId: null,
+    chapterName: "",
+    confirmationText: "",
+  });
+}
+
 export function resetInviteUser() {
   state.inviteUser = createInviteUserState();
 }
@@ -246,6 +274,14 @@ export function resetProjectRename() {
   state.projectRename = createProjectRenameState();
 }
 
+export function resetChapterRename() {
+  state.chapterRename = createChapterRenameState();
+}
+
+export function resetChapterPermanentDeletion() {
+  state.chapterPermanentDeletion = createChapterPermanentDeletionState();
+}
+
 export function resetProjectPermanentDeletion() {
   state.projectPermanentDeletion = createProjectPermanentDeletionState();
 }
@@ -279,7 +315,9 @@ export function resetSessionState() {
   state.projectSyncVersion = 0;
   state.pendingTeamMutations = [];
   state.pendingProjectMutations = [];
+  state.pendingChapterMutations = [];
   state.pageSync = createPageSyncState();
+  state.projectsPageSync = createProjectsPageSyncState();
   state.offline = offlineState;
   state.connectionFailure = createConnectionFailureState();
   state.statusBadges = createStatusBadgesState();
@@ -290,9 +328,12 @@ export function resetSessionState() {
   resetProjectCreation();
   resetInviteUser();
   resetProjectRename();
+  resetChapterRename();
+  resetChapterPermanentDeletion();
   resetProjectPermanentDeletion();
   state.showDeletedProjects = false;
   state.showDeletedTeams = false;
+  state.expandedDeletedFiles = new Set();
 }
 
 function createPageSyncState() {

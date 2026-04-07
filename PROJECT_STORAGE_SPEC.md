@@ -121,7 +121,7 @@ Rules:
 1. The app should rely on `chapter_id`, not folder name, for identity.
 2. The folder name may be changed by the app if the chapter title changes.
 3. Renaming a chapter folder should be treated as a normal metadata update, not as a new chapter.
-4. `project.json.chapter_order` should store chapter ids, not slugs.
+4. Project-level file membership should not be stored in `project.json`; it should be derived by scanning `chapters/*/chapter.json`.
 
 ### Row File Naming
 
@@ -156,13 +156,6 @@ Example:
   "lifecycle": {
     "state": "active"
   },
-  "chapter_order": [
-    "4c77fbcb-e381-434c-b69f-8f7a26365cd0",
-    "b59e8f6d-8940-4425-b976-2ef3d66df457"
-  ],
-  "deleted_chapter_order": [
-    "f41f4cb0-c9d6-4a41-bc58-2f325b17dd45"
-  ],
   "settings": {
     "default_export_format": "docx"
   }
@@ -174,11 +167,9 @@ Required fields:
 - `project_id`
 - `title`
 - `lifecycle`
-- `chapter_order`
 
 Optional fields:
 
-- `deleted_chapter_order`
 - `settings`
 
 Rules:
@@ -188,12 +179,10 @@ Rules:
 3. `lifecycle.state` should be one of:
    - `active`
    - `deleted`
-4. `chapter_order` must contain chapter ids only.
-5. `deleted_chapter_order` must contain chapter ids only.
-6. Every chapter id in `chapter_order` must correspond to one chapter folder in `chapters/`.
-7. Every chapter id in `deleted_chapter_order` must correspond to one chapter folder in `chapters/`.
-8. A chapter id must appear in exactly one of `chapter_order` or `deleted_chapter_order`.
-9. Renaming a chapter title or slug must not require changing the chapter id in either order list.
+4. `project.json` must contain only project-level metadata.
+5. `project.json` must not store file/chapter membership, deleted-file lists, or file-level lifecycle state.
+6. The app should derive the project’s file list by scanning `chapters/*/chapter.json`.
+7. Renaming, deleting, or restoring one file must not require rewriting `project.json`.
 
 ## Chapter-Level Files
 
@@ -209,6 +198,9 @@ That means:
 - file permanent delete is implemented as physical chapter deletion
 
 This mapping is intentionally simple for v1 so spreadsheet-style imports and future file-based imports can share one lifecycle model.
+
+The file list for a project should be derived by scanning the chapter folders in `chapters/`.
+File active/deleted state should be derived from each chapter’s own `chapter.json.lifecycle.state`.
 
 If a future source format needs one uploaded file to map to multiple chapters, that should introduce a higher-level document object rather than changing the meaning of chapter ids retroactively.
 
@@ -308,7 +300,7 @@ Rules:
 5. Editing row text must not rewrite `chapter.json`.
 6. `source_files[]` should preserve file-level metadata needed for faithful export.
 7. `package_assets[]` should preserve bundle/package context for formats such as XCLOC, DOCX, PPTX, and IDML.
-8. `lifecycle.state` must agree with the chapter id's membership in `project.json.chapter_order` or `project.json.deleted_chapter_order`.
+8. `lifecycle.state` is the source of truth for whether a file/chapter is active or deleted.
 9. Soft-delete and restore operations must not rewrite row files.
 
 ### `rowOrder.json`
@@ -981,9 +973,8 @@ Soft-delete means:
 1. keep the chapter folder in `chapters/`
 2. keep `chapter.json`, `rowOrder.json`, and all row files unchanged except for lifecycle metadata
 3. set `chapter.json.lifecycle.state` to `deleted`
-4. remove the chapter id from `project.json.chapter_order`
-5. append or insert the chapter id into `project.json.deleted_chapter_order`
-6. exclude the deleted chapter from normal active views and default exports
+4. do not rewrite `project.json`
+5. exclude the deleted chapter from normal active views and default exports
 
 Soft-delete must not:
 
@@ -998,8 +989,7 @@ Restore means:
 
 1. keep the chapter folder in place
 2. set `chapter.json.lifecycle.state` back to `active`
-3. remove the chapter id from `project.json.deleted_chapter_order`
-4. insert the chapter id into `project.json.chapter_order`
+3. do not rewrite `project.json`
 
 Restore must not rewrite row files.
 

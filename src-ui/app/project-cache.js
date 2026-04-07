@@ -8,6 +8,7 @@ import {
 
 const PROJECT_CACHE_STORAGE_KEY = "gnosis-tms-project-cache";
 const PROJECT_PENDING_MUTATIONS_STORAGE_KEY = "gnosis-tms-project-pending-mutations";
+const CHAPTER_PENDING_MUTATIONS_STORAGE_KEY = "gnosis-tms-chapter-pending-mutations";
 
 function scopedStorageKey(baseKey, login = getActiveStorageLogin()) {
   return login ? `${baseKey}:${login}` : null;
@@ -40,7 +41,32 @@ function normalizeProject(project) {
         ? project.title.trim()
         : name,
     status: project.status === "deleted" ? "deleted" : "active",
-    chapters: Array.isArray(project.chapters) ? project.chapters : [],
+    chapters: Array.isArray(project.chapters) ? project.chapters.map(normalizeChapter).filter(Boolean) : [],
+  };
+}
+
+function normalizeChapter(chapter) {
+  if (!chapter || typeof chapter !== "object") {
+    return null;
+  }
+
+  const id =
+    typeof chapter.id === "string" && chapter.id.trim()
+      ? chapter.id.trim()
+      : null;
+  const name =
+    typeof chapter.name === "string" && chapter.name.trim()
+      ? chapter.name.trim()
+      : null;
+  if (!id || !name) {
+    return null;
+  }
+
+  return {
+    ...chapter,
+    id,
+    name,
+    status: chapter.status === "deleted" ? "deleted" : "active",
   };
 }
 
@@ -155,6 +181,49 @@ export function saveStoredProjectPendingMutations(team, mutations) {
 
   try {
     const scopedKey = scopedStorageKey(PROJECT_PENDING_MUTATIONS_STORAGE_KEY);
+    if (!scopedKey) {
+      return;
+    }
+    const storedValue = readPersistentValue(scopedKey, {});
+    const parsed = storedValue ?? {};
+    const nextMap = parsed && typeof parsed === "object" ? parsed : {};
+    nextMap[cacheKey] = Array.isArray(mutations) ? mutations : [];
+    writePersistentValue(scopedKey, nextMap);
+  } catch {}
+}
+
+export function loadStoredChapterPendingMutations(team) {
+  const cacheKey = projectCacheKey(team);
+  if (!cacheKey) {
+    return [];
+  }
+
+  try {
+    const scopedKey = scopedStorageKey(CHAPTER_PENDING_MUTATIONS_STORAGE_KEY);
+    const storedValue = scopedKey ? readPersistentValue(scopedKey, null) : null;
+    if (!storedValue) {
+      return [];
+    }
+
+    const parsed = storedValue;
+    if (!parsed || typeof parsed !== "object") {
+      return [];
+    }
+
+    return Array.isArray(parsed[cacheKey]) ? parsed[cacheKey] : [];
+  } catch {
+    return [];
+  }
+}
+
+export function saveStoredChapterPendingMutations(team, mutations) {
+  const cacheKey = projectCacheKey(team);
+  if (!cacheKey) {
+    return;
+  }
+
+  try {
+    const scopedKey = scopedStorageKey(CHAPTER_PENDING_MUTATIONS_STORAGE_KEY);
     if (!scopedKey) {
       return;
     }
