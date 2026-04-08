@@ -229,13 +229,40 @@
 }
 
 .translation-language-panel__field:lang(fa),
-.history-item__content:lang(fa) {
+.translation-language-panel__field:lang(ar),
+.history-item__content:lang(fa),
+.history-item__content:lang(ar) {
   font-family: var(--font-serif-fa);
 }
 
 .translation-language-panel__field:lang(ko),
 .history-item__content:lang(ko) {
   font-family: var(--font-serif-ko);
+}
+
+.translation-language-panel__field:lang(ja),
+.translation-language-panel__field:lang(zh-Hans),
+.translation-language-panel__field:lang(zh-CN),
+.translation-language-panel__field:lang(zh-SG),
+.translation-language-panel__field:lang(zh-Hant),
+.translation-language-panel__field:lang(zh-TW),
+.translation-language-panel__field:lang(zh-HK),
+.translation-language-panel__field:lang(zh-MO),
+.translation-language-panel__field:lang(ko),
+.translation-language-panel__field:lang(fa),
+.translation-language-panel__field:lang(ar),
+.history-item__content:lang(ja),
+.history-item__content:lang(zh-Hans),
+.history-item__content:lang(zh-CN),
+.history-item__content:lang(zh-SG),
+.history-item__content:lang(zh-Hant),
+.history-item__content:lang(zh-TW),
+.history-item__content:lang(zh-HK),
+.history-item__content:lang(zh-MO),
+.history-item__content:lang(ko),
+.history-item__content:lang(fa),
+.history-item__content:lang(ar) {
+  font-weight: var(--editor-non-latin-serif-weight);
 }
 
 .translation-language-panel__field:focus {

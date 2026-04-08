@@ -12,6 +12,7 @@
   --font-serif-zh-hant: "Noto Serif TC Variable", "Songti TC", "PMingLiU", serif;
   --font-serif-fa: "Noto Naskh Arabic Variable", "Noto Sans Arabic Variable", serif;
   --font-serif-ko: "Noto Serif KR Variable", "Batang", "AppleMyungjo", serif;
+  --editor-non-latin-serif-weight: 550;
   --bg-top: #f7ecd5;
   --bg-bottom: #f3e2bf;
   --hero-glow: rgba(241, 191, 83, 0.76);
