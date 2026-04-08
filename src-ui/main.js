@@ -14,7 +14,18 @@ import { initializeConnectivity } from "./app/offline-connectivity.js";
 import { initializePersistentStorage } from "./app/persistent-store.js";
 import { app, initializeWindowPresentation } from "./app/runtime.js";
 import { syncEditorRowTextareaHeight, syncEditorRowTextareaHeights, syncGlossaryVariantTextareaHeights } from "./app/autosize.js";
-import { captureRenderScrollSnapshot, restoreRenderScrollSnapshot } from "./app/scroll-state.js";
+import {
+  captureRenderScrollSnapshot,
+  captureVisibleTranslateLocation,
+  queueTranslateRowAnchor,
+  restoreRenderScrollSnapshot,
+  restoreTranslateRowAnchor,
+} from "./app/scroll-state.js";
+import {
+  clearStoredEditorLocation,
+  loadStoredEditorLocation,
+  saveStoredEditorLocation,
+} from "./app/editor-preferences.js";
 import { hydratePersistentAppState, state } from "./app/state.js";
 import { setActiveEditorField } from "./app/translate-flow.js";
 import { checkForAppUpdate } from "./app/updater-flow.js";
@@ -49,6 +60,117 @@ const titles = {
   glossaryEditor: "Glossary Editor - Gnosis TMS",
   translate: "Translate - Gnosis TMS",
 };
+
+let editorLocationRestoreChapterId = null;
+let pendingEditorLocationRestore = null;
+let editorLocationSaveTimer = null;
+
+function loadedEditorChapterId() {
+  if (
+    state.editorChapter?.status !== "ready"
+    || typeof state.editorChapter?.chapterId !== "string"
+    || !state.editorChapter.chapterId
+    || !Array.isArray(state.editorChapter.rows)
+    || state.editorChapter.rows.length === 0
+  ) {
+    return null;
+  }
+
+  return state.editorChapter.chapterId;
+}
+
+function currentEditorLocationChapterId() {
+  if (state.screen !== "translate") {
+    return null;
+  }
+
+  return loadedEditorChapterId();
+}
+
+function canRestoreEditorLocation() {
+  return state.screen === "translate" && state.editorChapter?.status === "ready";
+}
+
+function persistEditorLocationForChapter(chapterId, { requireRestored = true } = {}) {
+  if (!chapterId) {
+    return;
+  }
+
+  if (requireRestored && editorLocationRestoreChapterId !== chapterId) {
+    return;
+  }
+
+  const location = captureVisibleTranslateLocation();
+  if (!location?.rowId) {
+    return;
+  }
+
+  saveStoredEditorLocation(chapterId, location);
+}
+
+function persistCurrentEditorLocation() {
+  persistEditorLocationForChapter(currentEditorLocationChapterId());
+}
+
+function persistLoadedEditorLocation() {
+  persistEditorLocationForChapter(loadedEditorChapterId());
+}
+
+function scheduleEditorLocationSave() {
+  const scheduledChapterId = currentEditorLocationChapterId();
+  if (!scheduledChapterId || editorLocationRestoreChapterId !== scheduledChapterId) {
+    return;
+  }
+
+  if (editorLocationSaveTimer !== null) {
+    window.clearTimeout(editorLocationSaveTimer);
+  }
+
+  editorLocationSaveTimer = window.setTimeout(() => {
+    editorLocationSaveTimer = null;
+    if (currentEditorLocationChapterId() !== scheduledChapterId) {
+      return;
+    }
+
+    persistCurrentEditorLocation();
+  }, 180);
+}
+
+function updatePendingEditorLocationRestore() {
+  if (!canRestoreEditorLocation()) {
+    pendingEditorLocationRestore = null;
+    if (state.screen !== "translate") {
+      editorLocationRestoreChapterId = null;
+    }
+    return;
+  }
+
+  const chapterId = currentEditorLocationChapterId();
+  if (!chapterId) {
+    pendingEditorLocationRestore = null;
+    if (state.screen !== "translate") {
+      editorLocationRestoreChapterId = null;
+    }
+    return;
+  }
+
+  if (editorLocationRestoreChapterId === chapterId) {
+    pendingEditorLocationRestore = null;
+    return;
+  }
+
+  const savedLocation = loadStoredEditorLocation(chapterId);
+  if (!savedLocation?.rowId) {
+    editorLocationRestoreChapterId = chapterId;
+    pendingEditorLocationRestore = null;
+    return;
+  }
+
+  pendingEditorLocationRestore = {
+    chapterId,
+    ...savedLocation,
+  };
+}
 
 function captureFocusedInputState() {
   const activeElement = document.activeElement;
@@ -131,7 +253,15 @@ function restoreFocusedInputState(focusSnapshot) {
 }
 
 function render() {
+  if (editorLocationSaveTimer !== null) {
+    window.clearTimeout(editorLocationSaveTimer);
+    editorLocationSaveTimer = null;
+  }
+
   const previousScreen = app.firstElementChild?.getAttribute("data-screen") ?? null;
+  if (previousScreen === "translate") {
+    persistLoadedEditorLocation();
+  }
   const focusSnapshot = captureFocusedInputState();
   const scrollSnapshot = captureRenderScrollSnapshot(previousScreen);
   const renderScreen = screenRenderers[state.screen] ?? screenRenderers.start;
@@ -141,7 +271,19 @@ function render() {
     app.firstElementChild.dataset.screen = state.screen;
   }
   restoreRenderScrollSnapshot(previousScreen, state.screen, scrollSnapshot);
+  updatePendingEditorLocationRestore();
+  if (pendingEditorLocationRestore?.chapterId === currentEditorLocationChapterId()) {
+    queueTranslateRowAnchor(pendingEditorLocationRestore);
+  }
   initializeEditorVirtualization(app, state);
+  if (pendingEditorLocationRestore?.chapterId === currentEditorLocationChapterId()) {
+    const restored = restoreTranslateRowAnchor(pendingEditorLocationRestore);
+    if (!restored) {
+      clearStoredEditorLocation(pendingEditorLocationRestore.chapterId);
+    }
+    editorLocationRestoreChapterId = pendingEditorLocationRestore.chapterId;
+    pendingEditorLocationRestore = null;
+  }
   restoreFocusedInputState(focusSnapshot);
   syncEditorRowTextareaHeights(app);
   document.title = titles[state.screen] ?? "Gnosis TMS";
@@ -164,6 +306,19 @@ app.addEventListener("focusout", (event) => {
   }
 
   requestAnimationFrame(() => syncEditorRowTextareaHeight(input));
+});
+
+app.addEventListener("scroll", (event) => {
+  const container = event.target instanceof Element ? event.target.closest(".translate-main-scroll") : null;
+  if (!(container instanceof HTMLElement)) {
+    return;
+  }
+
+  scheduleEditorLocationSave();
+}, true);
+
+window.addEventListener("beforeunload", () => {
+  persistCurrentEditorLocation();
 });
 
 window.__gnosisDebug = {

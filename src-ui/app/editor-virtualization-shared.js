@@ -14,7 +14,7 @@ function clampIndex(index, count) {
 export function estimateEditorRowHeight(
   row,
   collapsedLanguageCodes = new Set(),
-  fontSizePx = 22,
+  fontSizePx = 20,
 ) {
   const sections = Array.isArray(row?.sections) ? row.sections : [];
   const expandedSections = sections.filter((section) => !collapsedLanguageCodes.has(section.code)).length;
@@ -33,7 +33,7 @@ export function buildEditorRowHeights(
   rows,
   rowHeightById = new Map(),
   collapsedLanguageCodes = new Set(),
-  fontSizePx = 22,
+  fontSizePx = 20,
 ) {
   return rows.map((row) => rowHeightById.get(row.id) ?? estimateEditorRowHeight(row, collapsedLanguageCodes, fontSizePx));
 }

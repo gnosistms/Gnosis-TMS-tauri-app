@@ -24,13 +24,14 @@
     linear-gradient(180deg, rgba(255, 250, 244, 0.68) 0%, rgba(255, 246, 232, 0.27) 100%),
     rgba(255, 251, 246, 0.36);
   --text: #4A2D13;
+  --text-hover: #7a6958;
   --muted: #a36e34;
   --placeholder-text: rgba(163, 110, 52, 0.42);
   --accent: #f39c18;
   --accent-strong: #ec8609;
   --accent-text: #fff8ed;
   --link: #c97a12;
-  --link-hover: #b57c3e;
+  --link-hover: #D48D31;
   --link-disabled: #d7b182;
   --message-error-bg: rgba(255, 234, 230, 0.92);
   --message-error-border: rgba(165, 64, 36, 0.28);

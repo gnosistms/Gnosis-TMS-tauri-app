@@ -91,12 +91,12 @@ export function captureTranslateRowAnchor(target = null) {
 export function restoreTranslateRowAnchor(snapshot) {
   if (!snapshot?.rowId) {
     pendingTranslateAnchor = null;
-    return;
+    return false;
   }
 
   const container = document.querySelector(".translate-main-scroll");
   if (!(container instanceof HTMLElement)) {
-    return;
+    return false;
   }
 
   let anchor = null;
@@ -115,7 +115,8 @@ export function restoreTranslateRowAnchor(snapshot) {
   }
 
   if (!(anchor instanceof HTMLElement)) {
-    return;
+    pendingTranslateAnchor = null;
+    return false;
   }
 
   const containerRect = container.getBoundingClientRect();
@@ -123,12 +124,75 @@ export function restoreTranslateRowAnchor(snapshot) {
   const currentOffsetTop = anchorRect.top - containerRect.top;
   container.scrollTop += currentOffsetTop - snapshot.offsetTop;
   pendingTranslateAnchor = null;
+  return true;
 }
 
 export function pendingTranslateAnchorRowId() {
   return typeof pendingTranslateAnchor?.rowId === "string" && pendingTranslateAnchor.rowId
     ? pendingTranslateAnchor.rowId
     : "";
+}
+
+export function queueTranslateRowAnchor(snapshot) {
+  if (!snapshot || typeof snapshot.rowId !== "string" || !snapshot.rowId.trim()) {
+    pendingTranslateAnchor = null;
+    return;
+  }
+
+  pendingTranslateAnchor = {
+    rowId: snapshot.rowId.trim(),
+    languageCode:
+      typeof snapshot.languageCode === "string" && snapshot.languageCode.trim()
+        ? snapshot.languageCode.trim()
+        : null,
+    offsetTop: Number.isFinite(Number(snapshot.offsetTop)) && Number(snapshot.offsetTop) >= 0
+      ? Number(snapshot.offsetTop)
+      : 0,
+    type: "language-toggle",
+  };
+}
+
+export function captureVisibleTranslateLocation() {
+  const container = document.querySelector(".translate-main-scroll");
+  if (!(container instanceof HTMLElement)) {
+    return null;
+  }
+
+  const containerRect = container.getBoundingClientRect();
+  const panels = [...document.querySelectorAll("[data-editor-language-panel]")].filter(
+    (element) => element instanceof HTMLElement,
+  );
+  const visiblePanels = panels
+    .map((element) => ({ element, rect: element.getBoundingClientRect() }))
+    .filter(({ rect }) => rect.bottom > containerRect.top && rect.top < containerRect.bottom)
+    .sort((left, right) => left.rect.top - right.rect.top);
+
+  const panelCandidate = visiblePanels.find(({ rect }) => rect.bottom > containerRect.top) ?? visiblePanels[0] ?? null;
+  if (panelCandidate?.element instanceof HTMLElement) {
+    return {
+      rowId: panelCandidate.element.dataset.rowId ?? "",
+      languageCode: panelCandidate.element.dataset.languageCode ?? null,
+      offsetTop: Math.max(0, panelCandidate.rect.top - containerRect.top),
+    };
+  }
+
+  const rows = [...document.querySelectorAll("[data-editor-row-card]")].filter(
+    (element) => element instanceof HTMLElement,
+  );
+  const visibleRows = rows
+    .map((element) => ({ element, rect: element.getBoundingClientRect() }))
+    .filter(({ rect }) => rect.bottom > containerRect.top && rect.top < containerRect.bottom)
+    .sort((left, right) => left.rect.top - right.rect.top);
+  const rowCandidate = visibleRows.find(({ rect }) => rect.bottom > containerRect.top) ?? visibleRows[0] ?? null;
+  if (rowCandidate?.element instanceof HTMLElement) {
+    return {
+      rowId: rowCandidate.element.dataset.rowId ?? "",
+      languageCode: null,
+      offsetTop: Math.max(0, rowCandidate.rect.top - containerRect.top),
+    };
+  }
+
+  return null;
 }
 
 export function captureRenderScrollSnapshot(screen) {

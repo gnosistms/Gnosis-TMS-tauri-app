@@ -72,14 +72,14 @@
   line-height: inherit;
   letter-spacing: inherit;
   text-align: left;
-  transition: opacity 160ms ease;
+  transition: color 160ms ease;
 }
 
 .list-row__title-button:hover,
 .expandable-card__summary-button:hover,
 .chapter-table__name-button:hover,
 .chapter-table__row:hover .chapter-table__name-button {
-  opacity: 0.75;
+  color: var(--text-hover);
 }
 
 .card--deleted .list-row__title,
@@ -158,7 +158,7 @@
   padding: 0;
   color: inherit;
   text-align: left;
-  transition: opacity 160ms ease;
+  transition: color 160ms ease;
 }
 
 .expandable-card__body {
@@ -263,7 +263,7 @@
   font: inherit;
   font-size: 1.12rem;
   font-weight: 600;
-  transition: opacity 160ms ease;
+  transition: color 160ms ease;
 }
 
 .chapter-table__row--deleted .chapter-table__name,

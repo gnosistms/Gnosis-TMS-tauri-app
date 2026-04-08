@@ -536,7 +536,7 @@ function shouldVirtualizeEditorRows(rows) {
 function renderTranslationContentRows(
   rows,
   collapsedLanguageCodes = new Set(),
-  editorFontSizePx = 22,
+  editorFontSizePx = 20,
 ) {
   if (!shouldVirtualizeEditorRows(rows)) {
     return renderTranslationContentRowsRange(rows, collapsedLanguageCodes);

@@ -669,7 +669,6 @@ export async function openTranslateChapter(render, chapterId) {
   state.selectedProjectId = context.project.id;
   state.selectedChapterId = chapterId;
   state.screen = "translate";
-  render();
   await loadSelectedChapterEditorData(render);
 }
 
