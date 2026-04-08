@@ -108,6 +108,19 @@
   padding: 18px 8px 44px 16px;
 }
 
+.translate-virtual-list {
+  display: block;
+}
+
+.translate-virtual-list__items {
+  display: grid;
+  gap: 24px;
+}
+
+.translate-virtual-list__spacer {
+  height: 0;
+}
+
 .translate-sidebar {
   align-self: start;
 }

@@ -33,6 +33,20 @@ This handoff is stale for old release-packaging details below, but the latest ap
   - to judge the real macOS Dock icon, build and launch the packaged app bundle instead:
     - `/Users/hans/Desktop/GnosisTMS/src-tauri/target/release/bundle/macos/Gnosis TMS.app`
   - the icon workflow now treats `iconComposer.icon` as the design source and uses the exported flattened PNG only as the Tauri handoff artifact
+- the Translate editor now has first-pass row virtualization for long files:
+  - implementation lives in `/Users/hans/Desktop/GnosisTMS/src-ui/app/editor-virtualization.js`
+  - shared range / height math lives in `/Users/hans/Desktop/GnosisTMS/src-ui/app/editor-virtualization-shared.js`
+  - the screen still uses the same overall full-screen render architecture, but long chapters now mount only a visible row window plus spacer blocks
+  - visible row heights are measured and cached after render
+  - the virtualizer pins the active row and also temporarily pins the toggled row during language show/hide so scroll restoration has a stable DOM target
+- editor textareas no longer cap their own height:
+  - the old per-language inner scrollbar behavior was removed
+  - autosize now lets editor textareas grow to fit content vertically
+- language show / hide in the editor now uses panel-level scroll anchoring:
+  - the anchor prefers the clicked language toggle
+  - then falls back to the active textarea
+  - then the row card
+  - if this regresses again, the next escalation path is not generic anchoring tweaks; it is direct old/new height-delta based scroll compensation around the toggled row
 
 - storage roots are now installation-first under:
   - `/Users/hans/Library/Application Support/com.gnosis.tms/installations/installation-<id>/projects`

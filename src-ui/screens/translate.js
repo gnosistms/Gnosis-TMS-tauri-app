@@ -23,6 +23,12 @@ import {
   MANAGE_TARGET_LANGUAGES_OPTION_VALUE,
 } from "../app/translate-flow.js";
 import { EDITOR_FONT_SIZE_OPTIONS, coerceEditorFontSizePx } from "../app/state.js";
+import {
+  buildEditorRowHeights,
+  calculateEditorVirtualWindow,
+  EDITOR_VIRTUALIZATION_INITIAL_VIEWPORT_PX,
+  EDITOR_VIRTUALIZATION_MIN_ROWS,
+} from "../app/editor-virtualization-shared.js";
 import { renderTargetLanguageManagerModal } from "./target-language-manager-modal.js";
 
 const historyDiffEngine = new diff_match_patch();
@@ -454,60 +460,120 @@ function renderHistorySidebar(editorChapter, rows, languages) {
   `;
 }
 
-function renderTranslationContentRows(rows, collapsedLanguageCodes = new Set()) {
+export function renderTranslationContentRow(row, collapsedLanguageCodes = new Set(), rowIndex = null) {
+  const orderedSections = orderRowSectionsByCollapsedState(row.sections, collapsedLanguageCodes);
+  const rowIndexAttribute = Number.isInteger(rowIndex) ? ` data-row-index="${rowIndex}"` : "";
+
+  return `
+    <article class="card card--translation" data-editor-row-card data-row-id="${escapeHtml(row.id)}"${rowIndexAttribute}>
+      <div class="card__body">
+        <div class="translation-row__stack">
+          ${orderedSections
+            .map(
+              (language) => {
+                const isCollapsed = collapsedLanguageCodes.has(language.code);
+                return `
+                  <section
+                    class="translation-language-panel${isCollapsed ? " is-collapsed" : ""}"
+                    data-editor-language-panel
+                    data-row-id="${escapeHtml(row.id)}"
+                    data-language-code="${escapeHtml(language.code)}"
+                  >
+                    <button
+                      class="translation-language-panel__toggle collapse-affordance"
+                      type="button"
+                      data-action="toggle-editor-language:${escapeHtml(language.code)}"
+                      data-editor-language-toggle
+                      data-row-id="${escapeHtml(row.id)}"
+                      data-language-code="${escapeHtml(language.code)}"
+                      aria-expanded="${isCollapsed ? "false" : "true"}"
+                      ${tooltipAttributes(isCollapsed ? "Show this language" : "Hide this language")}
+                    >
+                      ${renderCollapseChevron(!isCollapsed, "translation-language-panel__chevron")}
+                      <span class="translation-language-panel__label">${escapeHtml(language.name)}</span>
+                    </button>
+                    ${
+                      isCollapsed
+                        ? ""
+                        : `
+                          <textarea
+                            class="translation-language-panel__field"
+                            data-editor-row-field
+                            data-row-id="${escapeHtml(row.id)}"
+                            data-language-code="${escapeHtml(language.code)}"
+                            lang="${escapeHtml(language.code)}"
+                            spellcheck="false"
+                          >${escapeHtml(language.text)}</textarea>
+                        `
+                    }
+                  </section>
+                `;
+              },
+            )
+            .join("")}
+        </div>
+      </div>
+    </article>
+  `;
+}
+
+export function renderTranslationContentRowsRange(
+  rows,
+  collapsedLanguageCodes = new Set(),
+  startIndex = 0,
+  endIndex = rows.length,
+) {
   return rows
-    .map(
-      (row) => {
-        const orderedSections = orderRowSectionsByCollapsedState(row.sections, collapsedLanguageCodes);
-        return `
-          <article class="card card--translation">
-            <div class="card__body">
-              <div class="translation-row__stack">
-                ${orderedSections
-                  .map(
-                    (language) => {
-                      const isCollapsed = collapsedLanguageCodes.has(language.code);
-                      return `
-                        <section class="translation-language-panel${isCollapsed ? " is-collapsed" : ""}">
-                          <button
-                            class="translation-language-panel__toggle collapse-affordance"
-                            type="button"
-                            data-action="toggle-editor-language:${escapeHtml(language.code)}"
-                            aria-expanded="${isCollapsed ? "false" : "true"}"
-                            ${tooltipAttributes(isCollapsed ? "Show this language" : "Hide this language")}
-                          >
-                            ${renderCollapseChevron(!isCollapsed, "translation-language-panel__chevron")}
-                            <span class="translation-language-panel__label">${escapeHtml(language.name)}</span>
-                          </button>
-                          ${
-                            isCollapsed
-                              ? ""
-                              : `
-                                <textarea
-                                  class="translation-language-panel__field"
-                                  data-editor-row-field
-                                  data-row-id="${escapeHtml(row.id)}"
-                                  data-language-code="${escapeHtml(language.code)}"
-                                  lang="${escapeHtml(language.code)}"
-                                  spellcheck="false"
-                                >${escapeHtml(language.text)}</textarea>
-                              `
-                          }
-                        </section>
-                      `;
-                    },
-                  )
-                  .join("")}
-              </div>
-            </div>
-          </article>
-        `;
-      },
-    )
+    .slice(startIndex, endIndex)
+    .map((row, offset) => renderTranslationContentRow(row, collapsedLanguageCodes, startIndex + offset))
     .join("");
 }
 
-export function renderTranslateScreen(state) {
+function shouldVirtualizeEditorRows(rows) {
+  return Array.isArray(rows) && rows.length >= EDITOR_VIRTUALIZATION_MIN_ROWS;
+}
+
+function renderTranslationContentRows(
+  rows,
+  collapsedLanguageCodes = new Set(),
+  editorFontSizePx = 22,
+) {
+  if (!shouldVirtualizeEditorRows(rows)) {
+    return renderTranslationContentRowsRange(rows, collapsedLanguageCodes);
+  }
+
+  const initialRowHeights = buildEditorRowHeights(rows, new Map(), collapsedLanguageCodes, editorFontSizePx);
+  const initialWindow = calculateEditorVirtualWindow(
+    initialRowHeights,
+    0,
+    EDITOR_VIRTUALIZATION_INITIAL_VIEWPORT_PX,
+  );
+
+  return `
+    <div class="translate-virtual-list" data-editor-virtual-list>
+      <div
+        class="translate-virtual-list__spacer"
+        data-editor-virtual-spacer="top"
+        style="height: ${initialWindow.topSpacerHeight}px;"
+      ></div>
+      <div class="translate-virtual-list__items" data-editor-virtual-items>
+        ${renderTranslationContentRowsRange(
+          rows,
+          collapsedLanguageCodes,
+          initialWindow.startIndex,
+          initialWindow.endIndex,
+        )}
+      </div>
+      <div
+        class="translate-virtual-list__spacer"
+        data-editor-virtual-spacer="bottom"
+        style="height: ${initialWindow.bottomSpacerHeight}px;"
+      ></div>
+    </div>
+  `;
+}
+
+export function buildTranslateScreenViewModel(state) {
   const chapter = findSelectedChapter(state);
   const editorChapter =
     state.editorChapter?.chapterId === state.selectedChapterId ? state.editorChapter : null;
@@ -525,6 +591,34 @@ export function renderTranslateScreen(state) {
     label: "Add / Remove",
   }];
   const displayTitle = middleTruncateTitle(chapter.name);
+
+  return {
+    chapter,
+    editorChapter,
+    languages,
+    sourceCode,
+    targetCode,
+    contentRows,
+    collapsedLanguageCodes,
+    editorFontSizePx,
+    targetLanguageManageOption,
+    displayTitle,
+  };
+}
+
+export function renderTranslateScreen(state) {
+  const {
+    chapter,
+    editorChapter,
+    languages,
+    sourceCode,
+    targetCode,
+    contentRows,
+    collapsedLanguageCodes,
+    editorFontSizePx,
+    targetLanguageManageOption,
+    displayTitle,
+  } = buildTranslateScreenViewModel(state);
   const headerBody = `
     <div class="translate-toolbar__body translate-toolbar__body--header">
       <div class="toolbar-row">
@@ -579,7 +673,7 @@ export function renderTranslateScreen(state) {
                       </div>
                     </article>
                   `
-                  : renderTranslationContentRows(contentRows, collapsedLanguageCodes)
+                  : renderTranslationContentRows(contentRows, collapsedLanguageCodes, editorFontSizePx)
             }
           </div>
         </div>

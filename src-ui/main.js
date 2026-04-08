@@ -4,6 +4,7 @@ import {
   restoreStoredBrokerSession,
 } from "./app/auth-flow.js";
 import { registerAppEvents } from "./app/events.js";
+import { initializeEditorVirtualization } from "./app/editor-virtualization.js";
 import {
   loadGithubAppTestConfig,
   registerGithubAppTestListener,
@@ -140,6 +141,7 @@ function render() {
     app.firstElementChild.dataset.screen = state.screen;
   }
   restoreRenderScrollSnapshot(previousScreen, state.screen, scrollSnapshot);
+  initializeEditorVirtualization(app, state);
   restoreFocusedInputState(focusSnapshot);
   syncEditorRowTextareaHeights(app);
   document.title = titles[state.screen] ?? "Gnosis TMS";

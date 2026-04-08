@@ -1,4 +1,6 @@
 import { actionSuffix } from "../action-helpers.js";
+import { waitForNextPaint } from "../runtime.js";
+import { captureTranslateRowAnchor, restoreTranslateRowAnchor } from "../scroll-state.js";
 import {
   closeTargetLanguageManager,
   restoreEditorFieldHistory,
@@ -32,8 +34,12 @@ export function createTranslateActions(render) {
       return false;
     }
 
+    const scrollAnchor = captureTranslateRowAnchor(event?.target ?? null);
     toggleEditorLanguageCollapsed(languageCode);
     render();
+    if (scrollAnchor) {
+      void waitForNextPaint().then(() => restoreTranslateRowAnchor(scrollAnchor));
+    }
     return true;
   };
 }
