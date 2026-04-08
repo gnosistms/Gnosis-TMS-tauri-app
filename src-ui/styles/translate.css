@@ -170,14 +170,7 @@
 .history-item__content {
   width: 100%;
   color: var(--text);
-  font-family:
-    "Noto Serif",
-    "Iowan Old Style",
-    "Palatino Linotype",
-    "Book Antiqua",
-    Georgia,
-    "Times New Roman",
-    serif;
+  font-family: var(--font-serif);
   font-size: var(--translation-editor-font-size, 14px);
   line-height: 1.5;
 }
@@ -199,7 +192,7 @@
 
 .translation-language-panel__field:lang(ja),
 .history-item__content:lang(ja) {
-  font-family: "Noto Serif JP", "Hiragino Mincho ProN", "Yu Mincho", "YuMincho", serif;
+  font-family: var(--font-serif-ja);
 }
 
 .translation-language-panel__field:lang(zh-Hans),
@@ -208,7 +201,7 @@
 .history-item__content:lang(zh-Hans),
 .history-item__content:lang(zh-CN),
 .history-item__content:lang(zh-SG) {
-  font-family: "Noto Serif SC", "Songti SC", "STSong", serif;
+  font-family: var(--font-serif-zh-hans);
 }
 
 .translation-language-panel__field:lang(zh-Hant),
@@ -219,7 +212,12 @@
 .history-item__content:lang(zh-TW),
 .history-item__content:lang(zh-HK),
 .history-item__content:lang(zh-MO) {
-  font-family: "Noto Serif TC", "Songti TC", "PMingLiU", serif;
+  font-family: var(--font-serif-zh-hant);
+}
+
+.translation-language-panel__field:lang(fa),
+.history-item__content:lang(fa) {
+  font-family: var(--font-serif-fa);
 }
 
 .translation-language-panel__field:lang(ko),
