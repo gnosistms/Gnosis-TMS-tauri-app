@@ -157,6 +157,18 @@ function buildOlderVisibleEntryByCommitSha(entries) {
   );
 }
 
+export function editorHistoryEntryMatchesSection(entry, section) {
+  if (!entry || !section) {
+    return false;
+  }
+
+  return (
+    String(entry.plainText ?? "") === String(section.text ?? "")
+    && (entry.reviewed === true) === (section.reviewed === true)
+    && (entry.pleaseCheck === true) === (section.pleaseCheck === true)
+  );
+}
+
 export function buildEditorHistoryViewModel(entries, expandedGroupKeys) {
   const compressedEntries = compressHistoryEntries(Array.isArray(entries) ? entries : []);
   const groups = buildHistoryGroups(compressedEntries);

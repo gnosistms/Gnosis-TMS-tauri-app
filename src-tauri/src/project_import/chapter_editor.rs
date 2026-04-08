@@ -343,6 +343,7 @@ struct StoredRowOrigin {
 
 #[derive(Clone, Deserialize)]
 struct StoredFieldValue {
+  #[serde(default)]
   plain_text: String,
   #[serde(default)]
   editor_flags: StoredFieldEditorFlags,
@@ -1161,18 +1162,6 @@ fn set_editor_field_flags(field_object: &mut serde_json::Map<String, Value>, fla
     editor_flags_object.insert("reviewed".to_string(), Value::Bool(flags.reviewed));
     editor_flags_object.insert("please_check".to_string(), Value::Bool(flags.please_check));
   }
-}
-
-fn load_historical_row_field_plain_text(
-  repo_path: &Path,
-  relative_row_json: &str,
-  commit_sha: &str,
-  language_code: &str,
-) -> Result<Option<String>, String> {
-  Ok(
-    load_historical_row_field_value(repo_path, relative_row_json, commit_sha, language_code)?
-      .map(|field| field.plain_text),
-  )
 }
 
 #[derive(Clone, PartialEq, Eq)]

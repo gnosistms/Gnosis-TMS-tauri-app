@@ -391,7 +391,7 @@ async function fetchEditorFieldHistory(render, requestKey) {
         languageCode,
         requestKey,
         restoringCommitSha: null,
-        expandedGroupKeys: new Set(),
+        expandedGroupKeys: cloneExpandedHistoryGroupKeys(state.editorChapter.history?.expandedGroupKeys),
         entries: Array.isArray(payload?.entries) ? payload.entries : [],
       },
     };
@@ -417,7 +417,7 @@ async function fetchEditorFieldHistory(render, requestKey) {
         languageCode,
         requestKey,
         restoringCommitSha: null,
-        expandedGroupKeys: new Set(),
+        expandedGroupKeys: cloneExpandedHistoryGroupKeys(state.editorChapter.history?.expandedGroupKeys),
       },
     };
     render?.();
@@ -430,6 +430,11 @@ export function loadActiveEditorFieldHistory(render) {
     return;
   }
 
+  const currentHistory = currentEditorHistoryForSelection(
+    editorChapter,
+    editorChapter.activeRowId,
+    editorChapter.activeLanguageCode,
+  );
   const requestKey = buildEditorHistoryRequestKey(
     editorChapter.chapterId,
     editorChapter.activeRowId,
@@ -445,7 +450,7 @@ export function loadActiveEditorFieldHistory(render) {
       languageCode: editorChapter.activeLanguageCode,
       requestKey,
       restoringCommitSha: null,
-      expandedGroupKeys: new Set(),
+      expandedGroupKeys: cloneExpandedHistoryGroupKeys(currentHistory.expandedGroupKeys),
     },
   };
   void fetchEditorFieldHistory(render, requestKey);
@@ -743,7 +748,7 @@ export async function restoreEditorFieldHistory(render, commitSha) {
   }
 
   const row = findEditorRowById(editorChapter.activeRowId, editorChapter);
-  if (!row || row.saveStatus !== "idle") {
+  if (!row || row.saveStatus !== "idle" || row.markerSaveState?.status === "saving") {
     showNoticeBadge("Save the current row before restoring history.", render);
     return;
   }
@@ -799,9 +804,23 @@ export async function restoreEditorFieldHistory(render, commitSha) {
           ...cloneRowFields(currentRow.fields),
           [editorChapter.activeLanguageCode]: payload?.plainText ?? "",
         },
+        fieldStates: {
+          ...cloneRowFieldStates(currentRow.fieldStates),
+          [editorChapter.activeLanguageCode]: normalizeFieldState({
+            reviewed: payload?.reviewed,
+            pleaseCheck: payload?.pleaseCheck,
+          }),
+        },
         persistedFields: {
           ...cloneRowFields(currentRow.persistedFields),
           [editorChapter.activeLanguageCode]: payload?.plainText ?? "",
+        },
+        persistedFieldStates: {
+          ...cloneRowFieldStates(currentRow.persistedFieldStates),
+          [editorChapter.activeLanguageCode]: normalizeFieldState({
+            reviewed: payload?.reviewed,
+            pleaseCheck: payload?.pleaseCheck,
+          }),
         },
         saveStatus: "idle",
         saveError: "",

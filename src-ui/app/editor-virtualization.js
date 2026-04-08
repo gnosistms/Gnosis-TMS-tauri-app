@@ -5,7 +5,8 @@ import {
   calculateEditorVirtualWindow,
   EDITOR_VIRTUALIZATION_MIN_ROWS,
 } from "./editor-virtualization-shared.js";
-import { buildTranslateScreenViewModel, renderTranslationContentRowsRange } from "../screens/translate.js";
+import { buildEditorScreenViewModel } from "./editor-screen-model.js";
+import { renderTranslationContentRowsRange } from "./editor-row-render.js";
 
 let activeController = null;
 
@@ -121,7 +122,7 @@ export function initializeEditorVirtualization(root, appState) {
     return;
   }
 
-  const initialModel = buildTranslateScreenViewModel(appState);
+  const initialModel = buildEditorScreenViewModel(appState);
   if (!Array.isArray(initialModel.contentRows) || initialModel.contentRows.length < EDITOR_VIRTUALIZATION_MIN_ROWS) {
     return;
   }
@@ -135,7 +136,7 @@ export function initializeEditorVirtualization(root, appState) {
   let animationFrameId = 0;
 
   const renderWindow = (force = false) => {
-    const model = buildTranslateScreenViewModel(appState);
+    const model = buildEditorScreenViewModel(appState);
     const rowHeights = buildEditorRowHeights(
       model.contentRows,
       rowHeightCache,

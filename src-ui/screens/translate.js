@@ -1,11 +1,9 @@
-import { projects, translationRows } from "../lib/data.js";
 import {
   buildPageRefreshAction,
   buildSectionNav,
   createSearchField,
   escapeHtml,
   pageShell,
-  renderChevronIcon,
   renderSelectPillControl,
   renderCollapseChevron,
   secondaryButton,
@@ -17,80 +15,15 @@ import {
   DIFF_DELETE,
   DIFF_INSERT,
 } from "../lib/vendor/diff-match-patch.js";
+import { buildEditorHistoryViewModel, editorHistoryEntryMatchesSection } from "../app/editor-history.js";
+import { buildEditorScreenViewModel } from "../app/editor-screen-model.js";
+import { renderTranslationContentRows } from "../app/editor-row-render.js";
 import { getNoticeBadgeText } from "../app/status-feedback.js";
-import { buildEditorHistoryViewModel } from "../app/editor-history.js";
-import {
-  findChapterContextById,
-  MANAGE_TARGET_LANGUAGES_OPTION_VALUE,
-} from "../app/translate-flow.js";
-import { EDITOR_FONT_SIZE_OPTIONS, coerceEditorFontSizePx } from "../app/state.js";
-import {
-  buildEditorRowHeights,
-  calculateEditorVirtualWindow,
-  EDITOR_VIRTUALIZATION_INITIAL_VIEWPORT_PX,
-  EDITOR_VIRTUALIZATION_MIN_ROWS,
-} from "../app/editor-virtualization-shared.js";
+import { MANAGE_TARGET_LANGUAGES_OPTION_VALUE } from "../app/translate-flow.js";
+import { EDITOR_FONT_SIZE_OPTIONS } from "../app/state.js";
 import { renderTargetLanguageManagerModal } from "./target-language-manager-modal.js";
 
 const historyDiffEngine = new diff_match_patch();
-
-function renderMarkerIcon(kind) {
-  if (kind === "reviewed") {
-    return `
-      <svg class="translation-marker-button__icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false">
-        <rect x="2.25" y="2.25" width="15.5" height="15.5" rx="4" fill="none" stroke="currentColor" stroke-width="1.8"></rect>
-        <path d="M6.2 10.25 8.8 12.85 13.9 7.7" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"></path>
-      </svg>
-    `;
-  }
-
-  return `
-    <svg class="translation-marker-button__icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false">
-      <rect x="2.25" y="2.25" width="15.5" height="15.5" rx="4" fill="none" stroke="currentColor" stroke-width="1.8"></rect>
-      <path d="M8 7.3a2.15 2.15 0 1 1 3.76 1.4c-.74.78-1.5 1.22-1.5 2.33" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"></path>
-      <circle cx="10" cy="13.9" r="0.95" fill="currentColor"></circle>
-    </svg>
-  `;
-}
-
-function renderLanguageMarkerButton(kind, rowId, language) {
-  const isReviewed = language.reviewed === true;
-  const isPleaseCheck = language.pleaseCheck === true;
-  const isActive = kind === "reviewed" ? isReviewed : isPleaseCheck;
-  const isSaving = language.markerSaveState?.status === "saving";
-  const label =
-    kind === "reviewed"
-      ? (isActive ? "Mark unreviewed" : "Mark reviewed")
-      : (isActive ? 'Unmark "Please check"' : 'Mark "Please check"');
-  const action = kind === "reviewed" ? "toggle-editor-reviewed" : "toggle-editor-please-check";
-
-  return `
-    <button
-      class="translation-marker-button translation-marker-button--${kind}${isActive ? " is-active" : ""}${isSaving ? " is-saving" : ""}"
-      type="button"
-      data-action="${action}"
-      data-row-id="${escapeHtml(rowId)}"
-      data-language-code="${escapeHtml(language.code)}"
-      aria-pressed="${isActive ? "true" : "false"}"
-      ${isSaving ? "disabled" : ""}
-      ${tooltipAttributes(label, { align: "end", side: "bottom" })}
-    >
-      ${renderMarkerIcon(kind)}
-    </button>
-  `;
-}
-
-function findSelectedChapter(state) {
-  const liveChapter = findChapterContextById(state.selectedChapterId)?.chapter ?? null;
-  if (liveChapter) {
-    return liveChapter;
-  }
-
-  return (
-    projects.flatMap((project) => project.chapters).find((item) => item.id === state.selectedChapterId) ??
-    projects[1].chapters[0]
-  );
-}
 
 function middleTruncateTitle(value, maxLength = 34) {
   const text = String(value ?? "");
@@ -103,38 +36,6 @@ function middleTruncateTitle(value, maxLength = 34) {
   const startLength = Math.ceil(remaining / 2);
   const endLength = Math.floor(remaining / 2);
   return `${text.slice(0, startLength)}${ellipsis}${text.slice(text.length - endLength)}`;
-}
-
-function chapterLanguageOptions(chapter, editorChapter) {
-  if (Array.isArray(editorChapter?.languages) && editorChapter.languages.length > 0) {
-    return editorChapter.languages;
-  }
-
-  if (Array.isArray(chapter?.languages) && chapter.languages.length > 0) {
-    return chapter.languages;
-  }
-
-  return [
-    { code: "es", name: "Spanish", role: "source" },
-    { code: "vi", name: "Vietnamese", role: "target" },
-  ];
-}
-
-function resolveSelectedLanguageCodes(languages, chapter, editorChapter) {
-  const sourceCode =
-    editorChapter?.selectedSourceLanguageCode
-    ?? chapter?.selectedSourceLanguageCode
-    ?? languages[0]?.code
-    ?? languages.find((language) => language.role === "source")?.code
-    ?? null;
-  const targetCode =
-    editorChapter?.selectedTargetLanguageCode
-    ?? chapter?.selectedTargetLanguageCode
-    ?? languages.find((language) => language.code !== sourceCode && language.role === "target")?.code
-    ?? languages.find((language) => language.code !== sourceCode)?.code
-    ?? sourceCode;
-
-  return { sourceCode, targetCode };
 }
 
 function renderLanguageSelect(label, dataAttribute, selectedCode, languages, extraOptions = []) {
@@ -210,71 +111,6 @@ function renderModeSegmentedControl() {
   `;
 }
 
-function buildLiveTranslationRows(editorChapter, languages) {
-  if (!Array.isArray(editorChapter?.rows) || editorChapter.rows.length === 0) {
-    return [];
-  }
-
-  return editorChapter.rows.map((row, index) => {
-    const label =
-      row.externalId?.trim()
-      || row.description?.trim()
-      || row.context?.trim()
-      || `Row ${index + 1}`;
-    return {
-      id: row.rowId,
-      title: label,
-      saveStatus: row.saveStatus || "idle",
-      saveError: row.saveError || "",
-      sections: languages.map((language) => ({
-        code: language.code,
-        name: language.name,
-        text: row.fields?.[language.code] ?? "",
-        reviewed: row.fieldStates?.[language.code]?.reviewed === true,
-        pleaseCheck: row.fieldStates?.[language.code]?.pleaseCheck === true,
-        markerSaveState:
-          row.markerSaveState?.languageCode === language.code
-            ? row.markerSaveState
-            : { status: "idle", languageCode: null, kind: null, error: "" },
-      })),
-    };
-  });
-}
-
-function buildFallbackRows(languages) {
-  return translationRows.map((row, index) => ({
-    id: row.id,
-    title: row.sourceTitle || row.targetTitle || `Row ${index + 1}`,
-    saveStatus: "idle",
-    saveError: "",
-    sections: languages.map((language, languageIndex) => ({
-      code: language.code,
-      name: language.name,
-      text:
-        languageIndex === 0
-          ? row.sourceBody || ""
-          : languageIndex === 1
-            ? row.targetBody || ""
-            : "",
-    })),
-  }));
-}
-
-function orderRowSectionsByCollapsedState(sections, collapsedLanguageCodes = new Set()) {
-  const expandedSections = [];
-  const collapsedSections = [];
-
-  for (const section of sections) {
-    if (collapsedLanguageCodes.has(section.code)) {
-      collapsedSections.push(section);
-    } else {
-      expandedSections.push(section);
-    }
-  }
-
-  return [...expandedSections, ...collapsedSections];
-}
-
 function formatHistoryTimestamp(value) {
   if (!value) {
     return "";
@@ -304,15 +140,15 @@ function buildHistoryDiffSegments(previousText, currentText) {
     .map((diff) => {
       const operation = diff?.[0];
       const text = diff?.[1] ?? "";
-      return ({
-      type:
-        operation === DIFF_INSERT
-          ? "insert"
-          : operation === DIFF_DELETE
-            ? "delete"
-            : "equal",
-      text,
-      });
+      return {
+        type:
+          operation === DIFF_INSERT
+            ? "insert"
+            : operation === DIFF_DELETE
+              ? "delete"
+              : "equal",
+        text,
+      };
     });
 }
 
@@ -334,7 +170,7 @@ function renderHistoryContent(entry, previousEntry) {
 }
 
 function renderHistoryEntry(entry, previousEntry, activeLanguage, activeSection, canRestore, history) {
-  const isCurrentValue = canRestore && activeSection?.text === entry.plainText;
+  const isCurrentValue = editorHistoryEntryMatchesSection(entry, activeSection);
   const isRestoring =
     history.status === "restoring" && history.restoringCommitSha === entry.commitSha;
   const restoreButton = isCurrentValue
@@ -384,7 +220,8 @@ function renderHistorySidebar(editorChapter, rows, languages) {
           restoringCommitSha: null,
         };
   const expandedGroupKeys = history.expandedGroupKeys instanceof Set ? history.expandedGroupKeys : new Set();
-  const canRestore = activeRow?.saveStatus === "idle";
+  const canRestore =
+    activeRow?.saveStatus === "idle" && activeSection?.markerSaveState?.status !== "saving";
   const historyView = buildEditorHistoryViewModel(history.entries, expandedGroupKeys);
   const historyGroups = historyView.groups;
   const olderVisibleEntryByCommitSha = historyView.olderVisibleEntryByCommitSha;
@@ -403,16 +240,12 @@ function renderHistorySidebar(editorChapter, rows, languages) {
               <p>${escapeHtml(history.error || "Could not load the Git history for this translation.")}</p>
             </div>
           `
-          : !Array.isArray(history.entries) || history.entries.length === 0
-            ? (
-              history.status === "loading"
-                ? ""
-                : `
-                  <div class="history-empty">
-                    <p>No committed history exists for this translation yet.</p>
-                  </div>
-                `
-            )
+          : history.status !== "loading" && historyGroups.length === 0
+            ? `
+              <div class="history-empty">
+                <p>No committed history exists for this translation yet.</p>
+              </div>
+            `
             : `
               <div class="history-stack">
                 ${historyGroups
@@ -478,158 +311,6 @@ function renderHistorySidebar(editorChapter, rows, languages) {
   `;
 }
 
-export function renderTranslationContentRow(row, collapsedLanguageCodes = new Set(), rowIndex = null) {
-  const orderedSections = orderRowSectionsByCollapsedState(row.sections, collapsedLanguageCodes);
-  const rowIndexAttribute = Number.isInteger(rowIndex) ? ` data-row-index="${rowIndex}"` : "";
-
-  return `
-    <article class="card card--translation" data-editor-row-card data-row-id="${escapeHtml(row.id)}"${rowIndexAttribute}>
-      <div class="card__body">
-        <div class="translation-row__stack">
-          ${orderedSections
-            .map(
-              (language) => {
-                const isCollapsed = collapsedLanguageCodes.has(language.code);
-                return `
-                  <section
-                    class="translation-language-panel${isCollapsed ? " is-collapsed" : ""}"
-                    data-editor-language-panel
-                    data-row-id="${escapeHtml(row.id)}"
-                    data-language-code="${escapeHtml(language.code)}"
-                  >
-                    <div class="translation-language-panel__header">
-                      <button
-                        class="translation-language-panel__toggle collapse-affordance"
-                        type="button"
-                        data-action="toggle-editor-language:${escapeHtml(language.code)}"
-                        data-editor-language-toggle
-                        data-row-id="${escapeHtml(row.id)}"
-                        data-language-code="${escapeHtml(language.code)}"
-                        aria-expanded="${isCollapsed ? "false" : "true"}"
-                        ${tooltipAttributes(isCollapsed ? "Show this language" : "Hide this language")}
-                      >
-                        ${renderCollapseChevron(!isCollapsed, "translation-language-panel__chevron")}
-                        <span class="translation-language-panel__label">${escapeHtml(language.name)}</span>
-                      </button>
-                      <div class="translation-language-panel__actions">
-                        ${renderLanguageMarkerButton("reviewed", row.id, language)}
-                        ${renderLanguageMarkerButton("please-check", row.id, language)}
-                      </div>
-                    </div>
-                    ${
-                      isCollapsed
-                        ? ""
-                        : `
-                          <textarea
-                            class="translation-language-panel__field"
-                            data-editor-row-field
-                            data-row-id="${escapeHtml(row.id)}"
-                            data-language-code="${escapeHtml(language.code)}"
-                            lang="${escapeHtml(language.code)}"
-                            spellcheck="false"
-                          >${escapeHtml(language.text)}</textarea>
-                        `
-                    }
-                  </section>
-                `;
-              },
-            )
-            .join("")}
-        </div>
-      </div>
-    </article>
-  `;
-}
-
-export function renderTranslationContentRowsRange(
-  rows,
-  collapsedLanguageCodes = new Set(),
-  startIndex = 0,
-  endIndex = rows.length,
-) {
-  return rows
-    .slice(startIndex, endIndex)
-    .map((row, offset) => renderTranslationContentRow(row, collapsedLanguageCodes, startIndex + offset))
-    .join("");
-}
-
-function shouldVirtualizeEditorRows(rows) {
-  return Array.isArray(rows) && rows.length >= EDITOR_VIRTUALIZATION_MIN_ROWS;
-}
-
-function renderTranslationContentRows(
-  rows,
-  collapsedLanguageCodes = new Set(),
-  editorFontSizePx = 20,
-) {
-  if (!shouldVirtualizeEditorRows(rows)) {
-    return renderTranslationContentRowsRange(rows, collapsedLanguageCodes);
-  }
-
-  const initialRowHeights = buildEditorRowHeights(rows, new Map(), collapsedLanguageCodes, editorFontSizePx);
-  const initialWindow = calculateEditorVirtualWindow(
-    initialRowHeights,
-    0,
-    EDITOR_VIRTUALIZATION_INITIAL_VIEWPORT_PX,
-  );
-
-  return `
-    <div class="translate-virtual-list" data-editor-virtual-list>
-      <div
-        class="translate-virtual-list__spacer"
-        data-editor-virtual-spacer="top"
-        style="height: ${initialWindow.topSpacerHeight}px;"
-      ></div>
-      <div class="translate-virtual-list__items" data-editor-virtual-items>
-        ${renderTranslationContentRowsRange(
-          rows,
-          collapsedLanguageCodes,
-          initialWindow.startIndex,
-          initialWindow.endIndex,
-        )}
-      </div>
-      <div
-        class="translate-virtual-list__spacer"
-        data-editor-virtual-spacer="bottom"
-        style="height: ${initialWindow.bottomSpacerHeight}px;"
-      ></div>
-    </div>
-  `;
-}
-
-export function buildTranslateScreenViewModel(state) {
-  const chapter = findSelectedChapter(state);
-  const editorChapter =
-    state.editorChapter?.chapterId === state.selectedChapterId ? state.editorChapter : null;
-  const languages = chapterLanguageOptions(chapter, editorChapter);
-  const { sourceCode, targetCode } = resolveSelectedLanguageCodes(languages, chapter, editorChapter);
-  const liveRows = buildLiveTranslationRows(editorChapter, languages);
-  const contentRows = liveRows.length > 0 ? liveRows : buildFallbackRows(languages);
-  const collapsedLanguageCodes =
-    editorChapter?.collapsedLanguageCodes instanceof Set
-      ? editorChapter.collapsedLanguageCodes
-      : new Set();
-  const editorFontSizePx = coerceEditorFontSizePx(editorChapter?.fontSizePx);
-  const targetLanguageManageOption = [{
-    value: MANAGE_TARGET_LANGUAGES_OPTION_VALUE,
-    label: "Add / Remove",
-  }];
-  const displayTitle = middleTruncateTitle(chapter.name);
-
-  return {
-    chapter,
-    editorChapter,
-    languages,
-    sourceCode,
-    targetCode,
-    contentRows,
-    collapsedLanguageCodes,
-    editorFontSizePx,
-    targetLanguageManageOption,
-    displayTitle,
-  };
-}
-
 export function renderTranslateScreen(state) {
   const {
     chapter,
@@ -640,9 +321,13 @@ export function renderTranslateScreen(state) {
     contentRows,
     collapsedLanguageCodes,
     editorFontSizePx,
-    targetLanguageManageOption,
-    displayTitle,
-  } = buildTranslateScreenViewModel(state);
+  } = buildEditorScreenViewModel(state);
+  const targetLanguageManageOption = [{
+    value: MANAGE_TARGET_LANGUAGES_OPTION_VALUE,
+    label: "Add / Remove",
+  }];
+  const titleText = chapter?.name ?? editorChapter?.fileTitle ?? "Translate";
+  const displayTitle = middleTruncateTitle(titleText);
   const headerBody = `
     <div class="translate-toolbar__body translate-toolbar__body--header">
       <div class="toolbar-row">
@@ -663,9 +348,46 @@ export function renderTranslateScreen(state) {
     </div>
   `;
 
+  let translateBody = "";
+  if (editorChapter?.status === "loading") {
+    translateBody = `
+      <article class="card card--translation">
+        <div class="card__body">
+          <p>Loading file...</p>
+        </div>
+      </article>
+    `;
+  } else if (editorChapter?.status === "error") {
+    translateBody = `
+      <article class="card card--translation">
+        <div class="card__body">
+          <p>${escapeHtml(editorChapter.error || "The file could not be loaded.")}</p>
+        </div>
+      </article>
+    `;
+  } else if (!chapter && !editorChapter?.chapterId) {
+    translateBody = `
+      <article class="card card--translation">
+        <div class="card__body">
+          <p>Could not determine which file to open.</p>
+        </div>
+      </article>
+    `;
+  } else if (contentRows.length === 0) {
+    translateBody = `
+      <article class="card card--translation">
+        <div class="card__body">
+          <p>This file does not contain any translatable rows.</p>
+        </div>
+      </article>
+    `;
+  } else {
+    translateBody = renderTranslationContentRows(contentRows, collapsedLanguageCodes, editorFontSizePx);
+  }
+
   return pageShell({
     title: displayTitle,
-    titleTooltip: chapter.name,
+    titleTooltip: titleText,
     headerClass: "page-header--editor",
     bodyClass: "page-body--editor",
     titleAction: buildPageRefreshAction(state),
@@ -680,25 +402,7 @@ export function renderTranslateScreen(state) {
       <section class="translate-layout" style="--translation-editor-font-size: ${escapeHtml(String(editorFontSizePx))}px;">
         <div class="translate-main-scroll">
           <div class="translate-main">
-            ${
-              editorChapter?.status === "loading"
-                ? `
-                  <article class="card card--translation">
-                    <div class="card__body">
-                      <p>Loading file...</p>
-                    </div>
-                  </article>
-                `
-                : editorChapter?.status === "error"
-                  ? `
-                    <article class="card card--translation">
-                      <div class="card__body">
-                        <p>${escapeHtml(editorChapter.error || "The file could not be loaded.")}</p>
-                      </div>
-                    </article>
-                  `
-                  : renderTranslationContentRows(contentRows, collapsedLanguageCodes, editorFontSizePx)
-            }
+            ${translateBody}
           </div>
         </div>
         <div class="translate-sidebar-scroll">
