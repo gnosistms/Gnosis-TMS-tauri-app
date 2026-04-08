@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "icons:sync": "bash src-tauri/icons/sync-generated-icons.sh",
+    "icons:sync": "bash src-tauri/icons/sync-all-icons.sh",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build"

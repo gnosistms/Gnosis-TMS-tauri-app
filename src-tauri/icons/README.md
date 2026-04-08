@@ -10,4 +10,8 @@ Correct workflow for this repo:
 2. Export a flattened `1024x1024` PNG from Icon Composer to `iconComposerExports/iconComposer-iOS-Default-1024x1024@1x.png`.
 3. Run `npm run icons:sync`.
 
-The sync script regenerates `icon.icns`, `icon.ico`, and the desktop PNGs from the flattened export. It also refuses to run if the Icon Composer bundle is newer than the exported PNG, so the generated Tauri assets cannot silently drift behind the real design source.
+The shared sync regenerates the cross-platform icons from the flattened export.
+
+For macOS specifically, the repo also generates `icons/macos/icon.icns` from a padded `1024x1024` source image so the Dock icon uses Apple-style inset instead of the full-bleed export. `tauri.macos.conf.json` points macOS builds at that padded `icns`.
+
+The shared sync script refuses to run if the Icon Composer bundle is newer than the exported PNG, so the generated Tauri assets cannot silently drift behind the real design source.
