@@ -222,7 +222,7 @@
 
 .translation-language-panel__field:lang(ko),
 .history-item__content:lang(ko) {
-  font-family: "Noto Serif KR", "Batang", "AppleMyungjo", serif;
+  font-family: var(--font-serif-ko);
 }
 
 .translation-language-panel__field:focus {

@@ -129,6 +129,25 @@ function renderFontSizeSelect(fontSizePx) {
   });
 }
 
+function renderFilterSelect() {
+  return renderSelectPillControl({
+    className: "select-pill--toolbar",
+    label: "Filter:",
+    value: "Show all",
+    selectAttributes: {
+      "data-editor-filter-select": true,
+      "aria-label": "Editor filter",
+    },
+    options: [
+      {
+        value: "show-all",
+        label: "Show all",
+        selected: true,
+      },
+    ],
+  });
+}
+
 function renderModeSegmentedControl() {
   return `
     <div class="segmented-control" role="tablist" aria-label="Editor mode">
@@ -512,7 +531,7 @@ export function renderTranslateScreen(state) {
         ${renderLanguageSelect("Source", "editor-source-language-select", sourceCode, languages)}
         ${renderLanguageSelect("Target", "editor-target-language-select", targetCode, languages, targetLanguageManageOption)}
         ${renderFontSizeSelect(editorFontSizePx)}
-        <button class="select-pill">Filter: Show all ${renderChevronIcon("down", "select-pill__inline-chevron")}</button>
+        ${renderFilterSelect()}
       </div>
       <div class="toolbar-row toolbar-row--between">
         <div class="toolbar-search">

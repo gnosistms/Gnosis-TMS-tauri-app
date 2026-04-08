@@ -1,54 +1,17 @@
-@import "@fontsource/noto-sans/400.css";
-@import "@fontsource/noto-sans/600.css";
-@import "@fontsource/noto-sans/700.css";
-@import "@fontsource/noto-sans-jp/400.css";
-@import "@fontsource/noto-sans-jp/700.css";
-@import "@fontsource/noto-sans-sc/400.css";
-@import "@fontsource/noto-sans-sc/700.css";
-@import "@fontsource/noto-sans-tc/400.css";
-@import "@fontsource/noto-sans-tc/700.css";
-@import "@fontsource/noto-sans-arabic/400.css";
-@import "@fontsource/noto-sans-arabic/700.css";
-@import "@fontsource/noto-sans-kr/400.css";
-@import "@fontsource/noto-sans-kr/700.css";
-
-@font-face {
-  font-family: "Inter";
-  font-style: normal;
-  font-weight: 400;
-  font-display: swap;
-  src: url("../assets/fonts/inter/Inter-400.ttf") format("truetype");
-}
-
-@font-face {
-  font-family: "Inter";
-  font-style: normal;
-  font-weight: 600;
-  font-display: swap;
-  src: url("../assets/fonts/inter/Inter-600.ttf") format("truetype");
-}
-
-@font-face {
-  font-family: "Inter";
-  font-style: normal;
-  font-weight: 700;
-  font-display: swap;
-  src: url("../assets/fonts/inter/Inter-700.ttf") format("truetype");
-}
-
 :root {
   color-scheme: light;
-  --font-sans: "Inter", "Noto Sans", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
-  --font-ja: "Noto Sans JP", "Noto Sans", "Inter", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
-  --font-zh-hans: "Noto Sans SC", "Noto Sans", "Inter", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
-  --font-zh-hant: "Noto Sans TC", "Noto Sans", "Inter", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
-  --font-fa: "Noto Sans Arabic", "Noto Sans", "Inter", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
-  --font-ko: "Noto Sans KR", "Noto Sans", "Inter", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
-  --font-serif: "Noto Serif", "Iowan Old Style", "Palatino Linotype", "Book Antiqua", Georgia, "Times New Roman", serif;
-  --font-serif-ja: "Noto Serif JP", "Hiragino Mincho ProN", "Yu Mincho", "YuMincho", serif;
-  --font-serif-zh-hans: "Noto Serif SC", "Songti SC", "STSong", serif;
-  --font-serif-zh-hant: "Noto Serif TC", "Songti TC", "PMingLiU", serif;
-  --font-serif-fa: "Noto Naskh Arabic", "Noto Sans Arabic", serif;
+  --font-sans: "Inter Variable", "Noto Sans Variable", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  --font-ja: "Noto Sans JP Variable", "Noto Sans Variable", "Inter Variable", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  --font-zh-hans: "Noto Sans SC Variable", "Noto Sans Variable", "Inter Variable", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  --font-zh-hant: "Noto Sans TC Variable", "Noto Sans Variable", "Inter Variable", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  --font-fa: "Noto Sans Arabic Variable", "Noto Sans Variable", "Inter Variable", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  --font-ko: "Noto Sans KR Variable", "Noto Sans Variable", "Inter Variable", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  --font-serif: "Noto Serif Variable", "Iowan Old Style", "Palatino Linotype", "Book Antiqua", Georgia, "Times New Roman", serif;
+  --font-serif-ja: "Noto Serif JP Variable", "Hiragino Mincho ProN", "Yu Mincho", "YuMincho", serif;
+  --font-serif-zh-hans: "Noto Serif SC Variable", "Songti SC", "STSong", serif;
+  --font-serif-zh-hant: "Noto Serif TC Variable", "Songti TC", "PMingLiU", serif;
+  --font-serif-fa: "Noto Naskh Arabic Variable", "Noto Sans Arabic Variable", serif;
+  --font-serif-ko: "Noto Serif KR Variable", "Batang", "AppleMyungjo", serif;
   --bg-top: #f7ecd5;
   --bg-bottom: #f3e2bf;
   --hero-glow: rgba(241, 191, 83, 0.76);
