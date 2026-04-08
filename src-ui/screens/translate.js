@@ -5,6 +5,8 @@ import {
   createSearchField,
   escapeHtml,
   pageShell,
+  renderChevronIcon,
+  renderSelectPillControl,
   renderCollapseChevron,
   secondaryButton,
   textAction,
@@ -88,50 +90,43 @@ function renderLanguageSelect(label, dataAttribute, selectedCode, languages, ext
     ?? languages[0]
     ?? { name: "" };
 
-  return `
-    <label class="select-pill select-pill--control">
-      <span class="select-pill__label">${escapeHtml(label)}:</span>
-      <span class="select-pill__value">${escapeHtml(selectedLanguage.name)}</span>
-      <span class="select-pill__chevron" aria-hidden="true">⌄</span>
-      <select data-${escapeHtml(dataAttribute)} aria-label="${escapeHtml(label)} language">
-        ${languages
-          .map(
-            (language) => `
-              <option value="${escapeHtml(language.code)}" ${
-                language.code === selectedCode ? "selected" : ""
-              }>${escapeHtml(language.name)}</option>
-            `,
-          )
-          .join("")}
-        ${extraOptions
-          .map(
-            (option) => `
-              <option value="${escapeHtml(option.value)}">${escapeHtml(option.label)}</option>
-            `,
-          )
-          .join("")}
-      </select>
-    </label>
-  `;
+  return renderSelectPillControl({
+    className: "select-pill--toolbar",
+    label: `${label}:`,
+    value: selectedLanguage.name,
+    selectAttributes: {
+      [`data-${dataAttribute}`]: true,
+      "aria-label": `${label} language`,
+    },
+    options: [
+      ...languages.map((language) => ({
+        value: language.code,
+        label: language.name,
+        selected: language.code === selectedCode,
+      })),
+      ...extraOptions.map((option) => ({
+        value: option.value,
+        label: option.label,
+      })),
+    ],
+  });
 }
 
 function renderFontSizeSelect(fontSizePx) {
-  return `
-    <label class="select-pill select-pill--control select-pill--font-size">
-      <span class="select-pill__label">Font Size:</span>
-      <span class="select-pill__value">${escapeHtml(String(fontSizePx))}</span>
-      <span class="select-pill__chevron" aria-hidden="true">⌄</span>
-      <select data-editor-font-size-select aria-label="Editor font size">
-        ${EDITOR_FONT_SIZE_OPTIONS
-          .map(
-            (option) => `
-              <option value="${escapeHtml(String(option))}" ${option === fontSizePx ? "selected" : ""}>${escapeHtml(String(option))}</option>
-            `,
-          )
-          .join("")}
-      </select>
-    </label>
-  `;
+  return renderSelectPillControl({
+    className: "select-pill--toolbar select-pill--font-size",
+    label: "Font Size:",
+    value: String(fontSizePx),
+    selectAttributes: {
+      "data-editor-font-size-select": true,
+      "aria-label": "Editor font size",
+    },
+    options: EDITOR_FONT_SIZE_OPTIONS.map((option) => ({
+      value: String(option),
+      label: String(option),
+      selected: option === fontSizePx,
+    })),
+  });
 }
 
 function renderModeSegmentedControl() {
@@ -517,7 +512,7 @@ export function renderTranslateScreen(state) {
         ${renderLanguageSelect("Source", "editor-source-language-select", sourceCode, languages)}
         ${renderLanguageSelect("Target", "editor-target-language-select", targetCode, languages, targetLanguageManageOption)}
         ${renderFontSizeSelect(editorFontSizePx)}
-        <button class="select-pill">Filter: Show all <span>⌄</span></button>
+        <button class="select-pill">Filter: Show all ${renderChevronIcon("down", "select-pill__inline-chevron")}</button>
       </div>
       <div class="toolbar-row toolbar-row--between">
         <div class="toolbar-search">

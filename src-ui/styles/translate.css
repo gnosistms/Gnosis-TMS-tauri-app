@@ -47,25 +47,6 @@
   font-weight: 600;
 }
 
-.page-header--editor .pill,
-.page-header--editor .select-pill {
-  min-height: 36px;
-  padding: 0 14px;
-}
-
-.page-header--editor .select-pill--control {
-  padding-left: 14px;
-  padding-right: 34px;
-}
-
-.page-header--editor .select-pill--font-size {
-  min-width: 170px;
-}
-
-.page-header--editor .select-pill--font-size .select-pill__value {
-  min-width: 2ch;
-}
-
 .page-header--editor .segmented-control {
   padding: 3px;
 }

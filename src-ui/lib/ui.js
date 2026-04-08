@@ -124,8 +124,11 @@ export function textAction(label, action, options = {}) {
   )}"${disabledActionAttributes(options)}>${escapeHtml(label)}</button>`;
 }
 
-export function renderCollapseChevron(isOpen = false, className = "") {
-  const classes = ["collapse-chevron", isOpen ? "is-open" : "", className]
+export function renderChevronIcon(direction = "right", className = "") {
+  const directionClass = direction === "down"
+    ? "chevron-icon--down"
+    : "";
+  const classes = ["chevron-icon", directionClass, className]
     .filter(Boolean)
     .join(" ");
   return `
@@ -135,6 +138,13 @@ export function renderCollapseChevron(isOpen = false, className = "") {
       </svg>
     </span>
   `;
+}
+
+export function renderCollapseChevron(isOpen = false, className = "") {
+  const classes = ["collapse-chevron", isOpen ? "is-open" : "", className]
+    .filter(Boolean)
+    .join(" ");
+  return renderChevronIcon(isOpen ? "down" : "right", classes);
 }
 
 export function titleRefreshButton(action, options = {}) {
@@ -345,6 +355,47 @@ export function createSearchField(config = "Search") {
     <label class="search-field"${labelAttributes}>
       <span class="search-field__icon">⌕</span>
       <input type="text" placeholder="${escapeHtml(placeholder)}" value="${escapeHtml(value)}"${inputAttributes} />
+    </label>
+  `;
+}
+
+export function renderSelectPillControl({
+  label = "",
+  value = "",
+  className = "",
+  tooltip = "",
+  tooltipOptions = {},
+  disabled = false,
+  wrapperAttributes = {},
+  selectAttributes = {},
+  options = [],
+}) {
+  const classes = ["select-pill", "select-pill--control", className]
+    .filter(Boolean)
+    .join(" ");
+  const wrapperTooltip = tooltip
+    ? tooltipAttributes(tooltip, tooltipOptions)
+    : "";
+  const wrapperProps = serializeAttributes(wrapperAttributes);
+  const attributes = serializeAttributes({
+    ...selectAttributes,
+    disabled,
+  });
+
+  return `
+    <label class="${classes}"${wrapperTooltip}${wrapperProps}>
+      ${label ? `<span class="select-pill__label">${escapeHtml(label)}</span>` : ""}
+      <span class="select-pill__value">${escapeHtml(value)}</span>
+      ${renderChevronIcon("down", "select-pill__chevron")}
+      <select${attributes}>
+        ${options
+          .map(
+            (option) => `
+              <option value="${escapeHtml(option?.value ?? "")}" ${option?.selected ? "selected" : ""}>${escapeHtml(option?.label ?? "")}</option>
+            `,
+          )
+          .join("")}
+      </select>
     </label>
   `;
 }

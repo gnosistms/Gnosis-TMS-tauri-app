@@ -6,10 +6,10 @@ import {
   pageShell,
   primaryButton,
   renderCollapseChevron,
+  renderSelectPillControl,
   renderStateCard,
   sectionSeparator,
   textAction,
-  tooltipAttributes,
 } from "../lib/ui.js";
 import { formatErrorForDisplay } from "../app/error-display.js";
 import { renderProjectCreationModal } from "./project-creation-modal.js";
@@ -62,34 +62,33 @@ function renderChapterGlossarySelect(chapter, slotNumber, glossaries, options = 
   const tooltipText = `Select glossary ${slotNumber}`;
   const optionList = availableGlossaryOptions(glossaries);
 
-  return `
-    <label
-      class="select-pill select-pill--control chapter-glossary-select"
-      data-stop-row-action
-      ${tooltipAttributes(tooltipText)}
-    >
-      <span class="select-pill__value">${escapeHtml(selectedGlossary?.title ?? "no glossary")}</span>
-      <span class="select-pill__chevron" aria-hidden="true">⌄</span>
-      <select
-        data-chapter-glossary-select
-        data-chapter-id="${escapeHtml(chapter.id)}"
-        data-glossary-slot="${escapeHtml(slotKey)}"
-        aria-label="${escapeHtml(tooltipText)}"
-        ${options.disabled ? "disabled" : ""}
-      >
-        <option value="" ${selectedGlossary ? "" : "selected"}>no glossary</option>
-        ${optionList
-          .map(
-            (glossary) => `
-              <option value="${escapeHtml(glossary.id)}" ${glossary.id === selectedGlossary?.id ? "selected" : ""}>
-                ${escapeHtml(glossary.title)}
-              </option>
-            `,
-          )
-          .join("")}
-      </select>
-    </label>
-  `;
+  return renderSelectPillControl({
+    className: "select-pill--toolbar select-pill--chapter-glossary select-pill--truncate-value",
+    value: selectedGlossary?.title ?? "no glossary",
+    tooltip: tooltipText,
+    disabled: options.disabled === true,
+    wrapperAttributes: {
+      "data-stop-row-action": true,
+    },
+    selectAttributes: {
+      "data-chapter-glossary-select": true,
+      "data-chapter-id": chapter.id,
+      "data-glossary-slot": slotKey,
+      "aria-label": tooltipText,
+    },
+    options: [
+      {
+        value: "",
+        label: "no glossary",
+        selected: !selectedGlossary,
+      },
+      ...optionList.map((glossary) => ({
+        value: glossary.id,
+        label: glossary.title,
+        selected: glossary.id === selectedGlossary?.id,
+      })),
+    ],
+  });
 }
 
 function renderProjectCard(project, expanded, options = {}) {

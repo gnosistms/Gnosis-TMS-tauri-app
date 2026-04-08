@@ -75,8 +75,11 @@
   transition: opacity 160ms ease;
 }
 
-.list-row__title-button:hover {
-  opacity: 0.65;
+.list-row__title-button:hover,
+.expandable-card__summary-button:hover,
+.chapter-table__name-button:hover,
+.chapter-table__row:hover .chapter-table__name-button {
+  opacity: 0.75;
 }
 
 .card--deleted .list-row__title,
@@ -156,10 +159,6 @@
   color: inherit;
   text-align: left;
   transition: opacity 160ms ease;
-}
-
-.expandable-card__summary-button:hover {
-  opacity: 0.65;
 }
 
 .expandable-card__body {
@@ -267,14 +266,6 @@
   transition: opacity 160ms ease;
 }
 
-.chapter-table__name-button:hover {
-  opacity: 0.65;
-}
-
-.chapter-table__row:hover .chapter-table__name-button {
-  opacity: 0.65;
-}
-
 .chapter-table__row--deleted .chapter-table__name,
 .chapter-table__row--deleted .chapter-table__meta {
   opacity: 0.58;
@@ -311,6 +302,16 @@
   padding-right: 34px;
 }
 
+.select-pill--toolbar {
+  min-height: 36px;
+  padding: 0 14px;
+}
+
+.select-pill--toolbar.select-pill--control {
+  padding-left: 14px;
+  padding-right: 34px;
+}
+
 .select-pill--control select {
   position: absolute;
   inset: 0;
@@ -331,8 +332,7 @@
 }
 
 .select-pill__label,
-.select-pill__value,
-.select-pill__chevron {
+.select-pill__value {
   line-height: 1.2;
 }
 
@@ -340,24 +340,28 @@
   min-width: 0;
 }
 
+.select-pill--font-size .select-pill__value {
+  min-width: 2ch;
+}
+
 .select-pill__chevron {
   position: absolute;
   top: 50%;
   right: 12px;
-  transform: translateY(-50%);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 12px;
+  --collapse-chevron-shift-y: -50%;
   pointer-events: none;
 }
 
-.chapter-glossary-select {
-  min-width: 168px;
+.select-pill__inline-chevron {
+  --collapse-chevron-shift-y: 0.02em;
+}
+
+.select-pill--chapter-glossary {
+  min-width: 0;
   max-width: 220px;
 }
 
-.chapter-glossary-select .select-pill__value {
+.select-pill--truncate-value .select-pill__value {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

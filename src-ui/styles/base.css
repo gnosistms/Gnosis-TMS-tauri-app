@@ -54,7 +54,7 @@
   --panel-surface:
     linear-gradient(180deg, rgba(255, 250, 244, 0.68) 0%, rgba(255, 246, 232, 0.27) 100%),
     rgba(255, 251, 246, 0.36);
-  --text: #3f2610;
+  --text: #553316;
   --muted: #a36e34;
   --placeholder-text: rgba(163, 110, 52, 0.42);
   --accent: #f39c18;
@@ -515,6 +515,7 @@ a {
   color: var(--link-hover);
 }
 
+.chevron-icon,
 .collapse-chevron {
   display: inline-flex;
   align-items: center;
@@ -528,12 +529,14 @@ a {
   transition: transform 160ms ease, opacity 160ms ease, color 160ms ease;
 }
 
+.chevron-icon svg,
 .collapse-chevron svg {
   display: block;
   width: 100%;
   height: 100%;
 }
 
+.chevron-icon path,
 .collapse-chevron path {
   fill: none;
   stroke: currentColor;
@@ -542,8 +545,9 @@ a {
   stroke-linejoin: round;
 }
 
+.chevron-icon--down,
 .collapse-chevron.is-open {
-  transform: translateY(var(--collapse-chevron-shift-y, 0)) rotate(90deg);
+  transform: translateY(calc(var(--collapse-chevron-shift-y, 0) + 0.06em)) rotate(90deg);
 }
 
 .collapse-affordance {
