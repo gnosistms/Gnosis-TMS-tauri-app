@@ -6,6 +6,34 @@ This file is the current handoff for restarting work in a fresh thread.
 
 This handoff is stale for old release-packaging details below, but the latest app work worth preserving for a fresh thread is:
 
+- the shared editor/projects dropdown system was unified:
+  - source / target / font size / filter on the editor page now use the same shared select-pill renderer
+  - project-page glossary selectors use that same shared dropdown path
+  - down-pointing chevrons for dropdowns and expand/collapse sections now come from one shared chevron renderer and shared CSS
+- shared color tokens currently driving the UI:
+  - `--text` in `/Users/hans/Desktop/GnosisTMS/src-ui/styles/base.css` is currently `#4A2D13`
+  - `--surface-rgb-strong` in `/Users/hans/Desktop/GnosisTMS/src-ui/styles/base.css` is currently `255, 247, 237`
+  - editor/history cards and dropdown pills intentionally share that same `--surface-rgb-strong` RGB token, but with different alpha/layering
+- the active font pipeline was switched fully to local variable `woff2` assets:
+  - active imports now come from `/Users/hans/Desktop/GnosisTMS/src-ui/styles/fonts-variable.css`
+  - active local font assets now live under `/Users/hans/Desktop/GnosisTMS/src-ui/assets/fonts-variable`
+  - the old static font tree at `/Users/hans/Desktop/GnosisTMS/src-ui/assets/fonts` was removed
+  - unused `@fontsource/*` npm dependencies were removed from `package.json`
+  - the app now uses variable Inter for supported UI languages, variable Noto Sans families for unsupported UI languages, and variable serif families for editor text
+  - editor serif mapping now includes:
+    - Latin/Vietnamese/etc: `Noto Serif Variable`
+    - Japanese: `Noto Serif JP Variable`
+    - Simplified Chinese: `Noto Serif SC Variable`
+    - Traditional Chinese: `Noto Serif TC Variable`
+    - Korean: `Noto Serif KR Variable`
+    - Persian: `Noto Naskh Arabic Variable`
+  - editor and history language elements already emit explicit `lang` attributes in HTML; script-specific font routing is not based on browser guessing
+- macOS app icon testing has one important trap:
+  - `tauri dev` was misleading for Dock icon evaluation
+  - to judge the real macOS Dock icon, build and launch the packaged app bundle instead:
+    - `/Users/hans/Desktop/GnosisTMS/src-tauri/target/release/bundle/macos/Gnosis TMS.app`
+  - the icon workflow now treats `iconComposer.icon` as the design source and uses the exported flattened PNG only as the Tauri handoff artifact
+
 - storage roots are now installation-first under:
   - `/Users/hans/Library/Application Support/com.gnosis.tms/installations/installation-<id>/projects`
   - `/Users/hans/Library/Application Support/com.gnosis.tms/installations/installation-<id>/glossaries`

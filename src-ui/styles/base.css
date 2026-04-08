@@ -23,7 +23,7 @@
   --panel-surface:
     linear-gradient(180deg, rgba(255, 250, 244, 0.68) 0%, rgba(255, 246, 232, 0.27) 100%),
     rgba(255, 251, 246, 0.36);
-  --text: #553316;
+  --text: #4A2D13;
   --muted: #a36e34;
   --placeholder-text: rgba(163, 110, 52, 0.42);
   --accent: #f39c18;
