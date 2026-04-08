@@ -14,4 +14,6 @@ The shared sync regenerates the cross-platform icons from the flattened export.
 
 For macOS specifically, the repo also generates `icons/macos/icon.icns` from a padded `1024x1024` source image so the Dock icon uses Apple-style inset instead of the full-bleed export. `tauri.macos.conf.json` points macOS builds at that padded `icns`.
 
+After the macOS sync runs, the padded macOS `icon.icns` and `icon.png` are also copied back onto the root icon files. That keeps `tauri dev` and any default macOS icon lookup paths aligned with the padded Dock icon instead of the full-bleed export.
+
 The shared sync script refuses to run if the Icon Composer bundle is newer than the exported PNG, so the generated Tauri assets cannot silently drift behind the real design source.

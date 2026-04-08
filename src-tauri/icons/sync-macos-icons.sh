@@ -7,6 +7,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 SOURCE_ICON="${1:-$SCRIPT_DIR/iconComposerExports/iconComposer-iOS-Default-1024x1024@1x.png}"
 MACOS_DIR="$SCRIPT_DIR/macos"
 PADDED_PNG="$MACOS_DIR/icon-macos-padded-1024.png"
+PADDED_APP_PNG="$MACOS_DIR/icon.png"
 TARGET_SIZE=1024
 ART_SIZE=832
 
@@ -47,6 +48,7 @@ trap cleanup EXIT
 )
 
 cp "$TMP_DIR/icon.icns" "$MACOS_DIR/icon.icns"
+cp "$TMP_DIR/icon.png" "$PADDED_APP_PNG"
 
 echo "Synced macOS-specific app icon from:"
 echo "  $SOURCE_ICON"

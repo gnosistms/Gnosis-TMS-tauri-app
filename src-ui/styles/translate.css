@@ -89,8 +89,8 @@
 .page-body--editor .card,
 .page-body--editor .table-card {
   background:
-    linear-gradient(180deg, rgba(255, 252, 247, 0.84) 0%, rgba(255, 248, 239, 0.64) 100%),
-    rgba(255, 251, 246, 0.62);
+    linear-gradient(180deg, rgba(var(--surface-rgb-strong), 0.84) 0%, rgba(var(--surface-rgb-strong), 0.60) 100%),
+    rgba(var(--surface-rgb-strong), 0.62);
   box-shadow: 0 9px 20px rgba(131, 82, 22, 0.07);
 }
 

@@ -288,7 +288,7 @@
   padding: 0 16px;
   border: 1px solid rgba(164, 112, 41, 0.18);
   border-radius: var(--radius-ui);
-  background: rgba(255, 251, 246, 0.92);
+  background: rgba(var(--surface-rgb-strong), 0.92);
   color: var(--link);
   font-weight: 600;
 }
