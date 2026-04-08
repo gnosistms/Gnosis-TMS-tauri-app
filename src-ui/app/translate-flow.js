@@ -61,6 +61,22 @@ function cloneRowFields(fields) {
   );
 }
 
+function normalizeFieldState(fieldState) {
+  return {
+    reviewed: fieldState?.reviewed === true,
+    pleaseCheck: fieldState?.pleaseCheck === true,
+  };
+}
+
+function cloneRowFieldStates(fieldStates) {
+  return Object.fromEntries(
+    Object.entries(fieldStates && typeof fieldStates === "object" ? fieldStates : {}).map(([code, value]) => [
+      code,
+      normalizeFieldState(value),
+    ]),
+  );
+}
+
 function buildEditorHistoryRequestKey(chapterId, rowId, languageCode) {
   if (!chapterId || !rowId || !languageCode) {
     return null;
@@ -168,12 +184,21 @@ function rowFieldsEqual(left, right) {
 function normalizeEditorRows(rows) {
   return (Array.isArray(rows) ? rows : []).map((row) => {
     const fields = cloneRowFields(row?.fields);
+    const fieldStates = cloneRowFieldStates(row?.fieldStates);
     return {
       ...row,
       fields,
       persistedFields: cloneRowFields(fields),
+      fieldStates,
+      persistedFieldStates: cloneRowFieldStates(fieldStates),
       saveStatus: "idle",
       saveError: "",
+      markerSaveState: {
+        status: "idle",
+        languageCode: null,
+        kind: null,
+        error: "",
+      },
     };
   });
 }
@@ -858,6 +883,128 @@ export function updateEditorRowFieldValue(rowId, languageCode, nextValue) {
       saveError: "",
     };
   });
+}
+
+export async function toggleEditorRowFieldMarker(render, rowId, languageCode, kind) {
+  if (!rowId || !languageCode || (kind !== "reviewed" && kind !== "please-check")) {
+    return;
+  }
+
+  const editorChapter = state.editorChapter;
+  if (!editorChapter?.chapterId) {
+    return;
+  }
+
+  const row = findEditorRowById(rowId, editorChapter);
+  if (!row) {
+    return;
+  }
+
+  if (row.saveStatus !== "idle") {
+    showNoticeBadge("Save the row text before updating review markers.", render);
+    return;
+  }
+
+  if (row.markerSaveState?.status === "saving") {
+    return;
+  }
+
+  const currentFieldState = normalizeFieldState(row.fieldStates?.[languageCode]);
+  const nextEnabled = kind === "reviewed"
+    ? !currentFieldState.reviewed
+    : !currentFieldState.pleaseCheck;
+  const nextFieldState = {
+    ...currentFieldState,
+    ...(kind === "reviewed"
+      ? { reviewed: nextEnabled }
+      : { pleaseCheck: nextEnabled }),
+  };
+
+  const team = selectedTeam();
+  const context = findChapterContextById(editorChapter.chapterId);
+  if (!Number.isFinite(team?.installationId) || !context?.project?.name) {
+    return;
+  }
+
+  const previousFieldState = currentFieldState;
+  updateEditorChapterRow(rowId, (currentRow) => ({
+    ...currentRow,
+    fieldStates: {
+      ...cloneRowFieldStates(currentRow.fieldStates),
+      [languageCode]: nextFieldState,
+    },
+    markerSaveState: {
+      status: "saving",
+      languageCode,
+      kind,
+      error: "",
+    },
+  }));
+  render?.();
+
+  try {
+    const payload = await invoke("update_gtms_editor_row_field_flag", {
+      input: {
+        installationId: team.installationId,
+        repoName: context.project.name,
+        chapterId: editorChapter.chapterId,
+        rowId,
+        languageCode,
+        flag: kind,
+        enabled: nextEnabled,
+      },
+    });
+
+    if (state.editorChapter?.chapterId === editorChapter.chapterId) {
+      updateEditorChapterRow(rowId, (currentRow) => ({
+        ...currentRow,
+        fieldStates: {
+          ...cloneRowFieldStates(currentRow.fieldStates),
+          [languageCode]: normalizeFieldState({
+            reviewed: payload?.reviewed,
+            pleaseCheck: payload?.pleaseCheck,
+          }),
+        },
+        persistedFieldStates: {
+          ...cloneRowFieldStates(currentRow.persistedFieldStates),
+          [languageCode]: normalizeFieldState({
+            reviewed: payload?.reviewed,
+            pleaseCheck: payload?.pleaseCheck,
+          }),
+        },
+        markerSaveState: {
+          status: "idle",
+          languageCode: null,
+          kind: null,
+          error: "",
+        },
+      }));
+      render?.();
+
+      if (state.editorChapter.activeRowId === rowId && state.editorChapter.activeLanguageCode === languageCode) {
+        loadActiveEditorFieldHistory(render);
+      }
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (state.editorChapter?.chapterId === editorChapter.chapterId) {
+      updateEditorChapterRow(rowId, (currentRow) => ({
+        ...currentRow,
+        fieldStates: {
+          ...cloneRowFieldStates(currentRow.fieldStates),
+          [languageCode]: previousFieldState,
+        },
+        markerSaveState: {
+          status: "idle",
+          languageCode: null,
+          kind: null,
+          error: message,
+        },
+      }));
+      render?.();
+    }
+    showNoticeBadge(message || "The review marker could not be saved.", render);
+  }
 }
 
 export function toggleEditorLanguageCollapsed(languageCode) {

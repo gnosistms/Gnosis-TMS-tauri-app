@@ -4,15 +4,27 @@ import { captureTranslateRowAnchor, restoreTranslateRowAnchor } from "../scroll-
 import {
   closeTargetLanguageManager,
   restoreEditorFieldHistory,
+  toggleEditorRowFieldMarker,
   toggleEditorHistoryGroupExpanded,
   toggleEditorLanguageCollapsed,
 } from "../translate-flow.js";
 
 export function createTranslateActions(render) {
-  return async function handleTranslateAction(action) {
+  return async function handleTranslateAction(action, event) {
     if (action === "close-target-language-manager") {
       closeTargetLanguageManager();
       render();
+      return true;
+    }
+
+    if (action === "toggle-editor-reviewed" || action === "toggle-editor-please-check") {
+      const button = event?.target instanceof Element
+        ? event.target.closest("[data-row-id][data-language-code]")
+        : null;
+      const rowId = button?.dataset.rowId ?? null;
+      const languageCode = button?.dataset.languageCode ?? null;
+      const kind = action === "toggle-editor-reviewed" ? "reviewed" : "please-check";
+      await toggleEditorRowFieldMarker(render, rowId, languageCode, kind);
       return true;
     }
 

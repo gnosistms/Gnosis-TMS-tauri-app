@@ -158,6 +158,28 @@ pub(crate) async fn revoke_organization_admin_for_installation(
 }
 
 #[tauri::command]
+pub(crate) async fn remove_organization_member_for_installation(
+  installation_id: i64,
+  org_login: String,
+  username: String,
+  session_token: String,
+) -> Result<(), String> {
+  tauri::async_runtime::spawn_blocking(move || {
+    let client = github_client()?;
+    broker_delete_no_content_with_session(
+      &client,
+      &format!(
+        "/api/github-app/installations/{installation_id}/orgs/{org_login}/members/{username}"
+      ),
+      &serde_json::json!({}),
+      &session_token,
+    )
+  })
+  .await
+  .map_err(|error| format!("Could not run the organization member removal task: {error}"))?
+}
+
+#[tauri::command]
 pub(crate) async fn update_organization_name_for_installation(
   installation_id: i64,
   org_login: String,

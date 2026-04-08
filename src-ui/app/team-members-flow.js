@@ -3,7 +3,7 @@ import { requireBrokerSession } from "./auth-flow.js";
 import { loadStoredMembersForTeam, saveStoredMembersForTeam } from "./member-cache.js";
 import { beginPageSync, completePageSync, failPageSync } from "./page-sync.js";
 import { showNoticeBadge } from "./status-feedback.js";
-import { state } from "./state.js";
+import { resetTeamMemberRemoval, state } from "./state.js";
 import { classifySyncError } from "./sync-error.js";
 import { handleSyncFailure } from "./sync-recovery.js";
 
@@ -129,6 +129,80 @@ export async function makeOrganizationAdmin(render, username) {
 
 export async function revokeOrganizationAdmin(render, username) {
   await updateOrganizationAdminMembership(render, username, false);
+}
+
+export function openTeamMemberRemoval(render, username) {
+  const selectedTeam = getSelectedTeam();
+  const member = state.users.find((user) => user?.username === username);
+  if (!selectedTeam || !member || member.isCurrentUser || member.role === "Owner") {
+    return;
+  }
+
+  state.teamMemberRemoval = {
+    isOpen: true,
+    status: "idle",
+    error: "",
+    teamId: selectedTeam.id,
+    teamName: selectedTeam.name || selectedTeam.githubOrg,
+    username: member.username,
+    memberName: member.name || member.username,
+  };
+  render();
+}
+
+export function cancelTeamMemberRemoval(render) {
+  resetTeamMemberRemoval();
+  render();
+}
+
+export async function confirmTeamMemberRemoval(render) {
+  const selectedTeam = getSelectedTeam();
+  const removal = state.teamMemberRemoval;
+  const username = String(removal?.username ?? "").trim();
+  if (!selectedTeam?.installationId || !username) {
+    resetTeamMemberRemoval();
+    render();
+    return;
+  }
+
+  if (selectedTeam.canManageMembers !== true) {
+    state.teamMemberRemoval.error = "Only the team owner can remove members.";
+    render();
+    return;
+  }
+
+  const member = state.users.find((user) => user?.username === username);
+  if (!member || member.isCurrentUser || member.role === "Owner") {
+    resetTeamMemberRemoval();
+    render();
+    return;
+  }
+
+  try {
+    state.teamMemberRemoval.status = "loading";
+    state.teamMemberRemoval.error = "";
+    render();
+    await waitForNextPaint();
+    await invoke("remove_organization_member_for_installation", {
+      installationId: selectedTeam.installationId,
+      orgLogin: selectedTeam.githubOrg,
+      username,
+      sessionToken: requireBrokerSession(),
+    });
+
+    state.users = state.users.filter((user) => user?.username !== username);
+    saveStoredMembersForTeam(selectedTeam, state.users);
+    resetTeamMemberRemoval();
+    render();
+    await loadTeamUsers(render, selectedTeam.id);
+  } catch (error) {
+    if (await handleSyncFailure(classifySyncError(error), { render })) {
+      return;
+    }
+    state.teamMemberRemoval.status = "idle";
+    state.teamMemberRemoval.error = error?.message ?? String(error);
+    render();
+  }
 }
 
 async function updateOrganizationAdminMembership(render, username, shouldBeAdmin) {

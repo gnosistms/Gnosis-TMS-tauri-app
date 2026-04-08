@@ -536,6 +536,7 @@
 
 .modal-card--glossary-term .field__textarea {
   min-height: 104px;
+  resize: none;
   border-color: var(--surface-border);
   border-radius: var(--radius-control);
   background: var(--panel-surface);

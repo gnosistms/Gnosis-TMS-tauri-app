@@ -6,7 +6,7 @@
   --font-zh-hant: "Noto Sans TC Variable", "Noto Sans Variable", "Inter Variable", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
   --font-fa: "Noto Sans Arabic Variable", "Noto Sans Variable", "Inter Variable", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
   --font-ko: "Noto Sans KR Variable", "Noto Sans Variable", "Inter Variable", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
-  --font-serif: "Noto Serif Variable", "Iowan Old Style", "Palatino Linotype", "Book Antiqua", Georgia, "Times New Roman", serif;
+  --font-serif: "Noto Serif Variable", "Noto Serif SC Variable", "Noto Serif TC Variable", "Iowan Old Style", "Palatino Linotype", "Book Antiqua", Georgia, "Times New Roman", serif;
   --font-serif-ja: "Noto Serif JP Variable", "Hiragino Mincho ProN", "Yu Mincho", "YuMincho", serif;
   --font-serif-zh-hans: "Noto Serif SC Variable", "Songti SC", "STSong", serif;
   --font-serif-zh-hant: "Noto Serif TC Variable", "Songti TC", "PMingLiU", serif;
@@ -34,6 +34,8 @@
   --link: #c97a12;
   --link-hover: #D48D31;
   --link-disabled: #d7b182;
+  --reviewed-accent-rgb: 55, 122, 73;
+  --please-check-accent-rgb: 190, 61, 31;
   --message-error-bg: rgba(255, 234, 230, 0.92);
   --message-error-border: rgba(165, 64, 36, 0.28);
   --message-error-text: #a54024;

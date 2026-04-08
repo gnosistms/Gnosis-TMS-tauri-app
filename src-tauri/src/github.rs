@@ -16,6 +16,7 @@ pub(crate) use orgs::{
   invite_user_to_organization_for_installation,
   leave_organization_for_installation, list_accessible_github_app_installations,
   list_organization_members_for_installation, search_github_users_for_installation,
+  remove_organization_member_for_installation,
   revoke_organization_admin_for_installation, setup_organization_for_installation,
   update_organization_description_for_installation, update_organization_name_for_installation,
 };

@@ -140,6 +140,13 @@
   gap: 10px;
 }
 
+.translation-language-panel__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
 .translation-language-panel.is-collapsed {
   gap: 0;
 }
@@ -150,7 +157,7 @@
 }
 
 .translation-language-panel__toggle {
-  width: max-content;
+  min-width: 0;
   display: inline-flex;
   align-items: center;
   gap: 8px;
@@ -162,6 +169,14 @@
   font-weight: 700;
   line-height: 1.1;
   transition: color 140ms ease;
+}
+
+.translation-language-panel__actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  flex-shrink: 0;
 }
 
 .translation-language-panel__toggle:hover,
@@ -177,6 +192,42 @@
   color: inherit;
   font-size: 1rem;
   font-weight: 700;
+}
+
+.translation-marker-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  transition: color 140ms ease, opacity 140ms ease;
+}
+
+.translation-marker-button:hover {
+  color: var(--link-hover);
+}
+
+.translation-marker-button:disabled,
+.translation-marker-button.is-saving {
+  opacity: 0.6;
+}
+
+.translation-marker-button--reviewed.is-active {
+  color: rgba(var(--reviewed-accent-rgb), 0.96);
+}
+
+.translation-marker-button--please-check.is-active {
+  color: rgba(var(--please-check-accent-rgb), 0.92);
+}
+
+.translation-marker-button__icon {
+  width: 20px;
+  height: 20px;
+  display: block;
 }
 
 .translation-language-panel__field,
@@ -391,18 +442,31 @@
   word-break: break-word;
 }
 
+.history-item__note {
+  color: var(--muted);
+  font-family: var(--font-sans);
+  font-size: 0.98rem;
+  line-height: 1.35;
+}
+
+.history-item__content .history-diff__insert,
+.history-item__content .history-diff__delete {
+  font-family: inherit;
+  font-weight: inherit;
+}
+
 .history-diff__insert {
-  color: rgba(55, 122, 73, 0.96);
+  color: rgba(var(--reviewed-accent-rgb), 0.96);
   text-decoration: underline;
-  text-decoration-color: rgba(55, 122, 73, 0.72);
+  text-decoration-color: rgba(var(--reviewed-accent-rgb), 0.72);
   text-decoration-thickness: 0.11em;
   text-underline-offset: 0.15em;
 }
 
 .history-diff__delete {
-  color: rgba(156, 74, 53, 0.92);
+  color: rgba(var(--please-check-accent-rgb), 0.92);
   text-decoration: line-through;
-  text-decoration-color: rgba(156, 74, 53, 0.78);
+  text-decoration-color: rgba(var(--please-check-accent-rgb), 0.78);
   text-decoration-thickness: 0.11em;
 }
 

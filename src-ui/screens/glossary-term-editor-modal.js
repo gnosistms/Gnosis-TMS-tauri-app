@@ -142,7 +142,7 @@ export function renderGlossaryTermEditorModal(state) {
               </label>
               <label class="field">
                 <span class="field__label">Footnote</span>
-                <textarea class="field__textarea" placeholder="Enter footnote text here. On the first appearance of this term in a document, the editor will automatically suggest adding this footnote to your translation." data-glossary-term-footnote-input ${isSubmitting ? "disabled" : ""}>${escapeHtml(editor.footnote)}</textarea>
+                <textarea class="field__textarea" placeholder="Enter suggested footnote text here." data-glossary-term-footnote-input ${isSubmitting ? "disabled" : ""}>${escapeHtml(editor.footnote)}</textarea>
               </label>
             </div>
           </section>

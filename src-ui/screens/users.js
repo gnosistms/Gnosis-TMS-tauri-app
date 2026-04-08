@@ -10,6 +10,7 @@ import {
 import { formatErrorForDisplay } from "../app/error-display.js";
 import { getNoticeBadgeText } from "../app/status-feedback.js";
 import { renderInviteUserModal } from "./invite-user-modal.js";
+import { renderTeamMemberRemoveModal } from "./team-member-remove-modal.js";
 import { renderTeamLeaveModal } from "./teams/leave-modal.js";
 
 function renderUserCard(user, options = {}) {
@@ -23,11 +24,18 @@ function renderUserCard(user, options = {}) {
         ? textAction("Leave", `open-current-team-leave:${selectedTeamId}`)
         : "")
     : (canManageMembers
-        ? user.role === "Translator"
-          ? textAction("Make Admin", `make-admin:${user.username}`, { disabled: roleSyncPending })
-          : user.role === "Admin"
-            ? textAction("Revoke Admin", `revoke-admin:${user.username}`, { disabled: roleSyncPending })
-            : ""
+        ? [
+            user.role === "Translator"
+              ? textAction("Make Admin", `make-admin:${user.username}`, { disabled: roleSyncPending })
+              : user.role === "Admin"
+                ? textAction("Revoke Admin", `revoke-admin:${user.username}`, { disabled: roleSyncPending })
+                : "",
+            user.role === "Owner"
+              ? ""
+              : textAction("Remove", `open-team-member-removal:${user.username}`, {
+                  disabled: roleSyncPending,
+                }),
+          ].filter(Boolean).join("")
         : "")
     ;
 
@@ -95,6 +103,6 @@ export function renderUsersScreen(state) {
       offlineMode: state.offline?.isEnabled === true,
       offlineReconnectState: state.offline?.reconnecting === true,
       body,
-    }) + renderInviteUserModal(state) + renderTeamLeaveModal(state)
+    }) + renderInviteUserModal(state) + renderTeamLeaveModal(state) + renderTeamMemberRemoveModal(state)
   );
 }

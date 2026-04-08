@@ -9,7 +9,13 @@ import {
   selectInviteUserSuggestion,
   submitInviteUser,
 } from "./invite-user-flow.js";
-import { makeOrganizationAdmin, revokeOrganizationAdmin } from "./team-members-flow.js";
+import {
+  cancelTeamMemberRemoval,
+  confirmTeamMemberRemoval,
+  makeOrganizationAdmin,
+  openTeamMemberRemoval,
+  revokeOrganizationAdmin,
+} from "./team-members-flow.js";
 
 export function createUserActions(render) {
   return async function handleUserAction(action, event) {
@@ -33,8 +39,18 @@ export function createUserActions(render) {
       return true;
     }
 
+    if (action === "cancel-team-member-removal") {
+      cancelTeamMemberRemoval(render);
+      return true;
+    }
+
     if (action === "submit-invite-user") {
       await runWithImmediateLoading(event, "Inviting...", () => submitInviteUser(render));
+      return true;
+    }
+
+    if (action === "confirm-team-member-removal") {
+      await runWithImmediateLoading(event, "Removing...", () => confirmTeamMemberRemoval(render));
       return true;
     }
 
@@ -62,6 +78,12 @@ export function createUserActions(render) {
     const revokeAdminUsername = actionSuffix(action, "revoke-admin:");
     if (revokeAdminUsername !== null) {
       void revokeOrganizationAdmin(render, revokeAdminUsername);
+      return true;
+    }
+
+    const removalUsername = actionSuffix(action, "open-team-member-removal:");
+    if (removalUsername !== null) {
+      openTeamMemberRemoval(render, removalUsername);
       return true;
     }
 

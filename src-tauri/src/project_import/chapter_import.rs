@@ -11,7 +11,7 @@ use serde_json::{json, Value};
 use tauri::AppHandle;
 use uuid::Uuid;
 
-use crate::git_commit::git_commit_as_signed_in_user;
+use crate::git_commit::{git_commit_as_signed_in_user_with_metadata, GitCommitMetadata};
 
 use super::project_git::{
   ensure_clean_git_repo,
@@ -255,6 +255,13 @@ struct FieldValue {
   notes_html: String,
   attachments: Vec<Value>,
   passthrough_value: Option<Value>,
+  editor_flags: FieldEditorFlags,
+}
+
+#[derive(Serialize, Default)]
+struct FieldEditorFlags {
+  reviewed: bool,
+  please_check: bool,
 }
 
 pub(super) fn import_xlsx_to_gtms_sync(
@@ -293,11 +300,15 @@ pub(super) fn import_xlsx_to_gtms_sync(
   let unit_count = write_row_files(&parsed, &rows_path)?;
 
   git_output(&repo_path, &["add", ".gitattributes", "chapters"])?;
-  git_commit_as_signed_in_user(
+  git_commit_as_signed_in_user_with_metadata(
     app,
     &repo_path,
     &format!("Import {}", parsed.source_file_name),
     &[],
+    GitCommitMetadata {
+      operation: Some("import"),
+      status_note: None,
+    },
   )?;
 
   let source_word_counts = build_source_word_counts_from_import(&parsed);
@@ -550,6 +561,7 @@ fn build_row_file(
         notes_html: String::new(),
         attachments: Vec::new(),
         passthrough_value: None,
+        editor_flags: FieldEditorFlags::default(),
       },
     );
   }

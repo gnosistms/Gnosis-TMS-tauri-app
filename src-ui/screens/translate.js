@@ -18,6 +18,7 @@ import {
   DIFF_INSERT,
 } from "../lib/vendor/diff-match-patch.js";
 import { getNoticeBadgeText } from "../app/status-feedback.js";
+import { buildEditorHistoryViewModel } from "../app/editor-history.js";
 import {
   findChapterContextById,
   MANAGE_TARGET_LANGUAGES_OPTION_VALUE,
@@ -32,6 +33,52 @@ import {
 import { renderTargetLanguageManagerModal } from "./target-language-manager-modal.js";
 
 const historyDiffEngine = new diff_match_patch();
+
+function renderMarkerIcon(kind) {
+  if (kind === "reviewed") {
+    return `
+      <svg class="translation-marker-button__icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false">
+        <rect x="2.25" y="2.25" width="15.5" height="15.5" rx="4" fill="none" stroke="currentColor" stroke-width="1.8"></rect>
+        <path d="M6.2 10.25 8.8 12.85 13.9 7.7" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"></path>
+      </svg>
+    `;
+  }
+
+  return `
+    <svg class="translation-marker-button__icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false">
+      <rect x="2.25" y="2.25" width="15.5" height="15.5" rx="4" fill="none" stroke="currentColor" stroke-width="1.8"></rect>
+      <path d="M8 7.3a2.15 2.15 0 1 1 3.76 1.4c-.74.78-1.5 1.22-1.5 2.33" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"></path>
+      <circle cx="10" cy="13.9" r="0.95" fill="currentColor"></circle>
+    </svg>
+  `;
+}
+
+function renderLanguageMarkerButton(kind, rowId, language) {
+  const isReviewed = language.reviewed === true;
+  const isPleaseCheck = language.pleaseCheck === true;
+  const isActive = kind === "reviewed" ? isReviewed : isPleaseCheck;
+  const isSaving = language.markerSaveState?.status === "saving";
+  const label =
+    kind === "reviewed"
+      ? (isActive ? "Mark unreviewed" : "Mark reviewed")
+      : (isActive ? 'Unmark "Please check"' : 'Mark "Please check"');
+  const action = kind === "reviewed" ? "toggle-editor-reviewed" : "toggle-editor-please-check";
+
+  return `
+    <button
+      class="translation-marker-button translation-marker-button--${kind}${isActive ? " is-active" : ""}${isSaving ? " is-saving" : ""}"
+      type="button"
+      data-action="${action}"
+      data-row-id="${escapeHtml(rowId)}"
+      data-language-code="${escapeHtml(language.code)}"
+      aria-pressed="${isActive ? "true" : "false"}"
+      ${isSaving ? "disabled" : ""}
+      ${tooltipAttributes(label, { align: "end", side: "bottom" })}
+    >
+      ${renderMarkerIcon(kind)}
+    </button>
+  `;
+}
 
 function findSelectedChapter(state) {
   const liveChapter = findChapterContextById(state.selectedChapterId)?.chapter ?? null;
@@ -183,6 +230,12 @@ function buildLiveTranslationRows(editorChapter, languages) {
         code: language.code,
         name: language.name,
         text: row.fields?.[language.code] ?? "",
+        reviewed: row.fieldStates?.[language.code]?.reviewed === true,
+        pleaseCheck: row.fieldStates?.[language.code]?.pleaseCheck === true,
+        markerSaveState:
+          row.markerSaveState?.languageCode === language.code
+            ? row.markerSaveState
+            : { status: "idle", languageCode: null, kind: null, error: "" },
       })),
     };
   });
@@ -280,46 +333,6 @@ function renderHistoryContent(entry, previousEntry) {
     .join("");
 }
 
-function historyAuthorLabel(entry) {
-  return String(entry?.authorName ?? "").trim() || "Unknown author";
-}
-
-function buildHistoryGroups(entries) {
-  const groups = [];
-
-  for (const entry of entries) {
-    const authorName = historyAuthorLabel(entry);
-    const previousGroup = groups[groups.length - 1] ?? null;
-    if (previousGroup?.authorName === authorName) {
-      previousGroup.entries.push(entry);
-      continue;
-    }
-
-    groups.push({
-      key: entry.commitSha,
-      authorName,
-      entries: [entry],
-    });
-  }
-
-  return groups;
-}
-
-function buildVisibleHistoryEntries(groups, expandedGroupKeys) {
-  return groups.flatMap((group) =>
-    expandedGroupKeys.has(group.key) ? group.entries : [group.entries[0]],
-  );
-}
-
-function buildOlderVisibleHistoryEntryMap(entries) {
-  return new Map(
-    entries.map((entry, index) => [
-      entry.commitSha,
-      index < entries.length - 1 ? entries[index + 1] : null,
-    ]),
-  );
-}
-
 function renderHistoryEntry(entry, previousEntry, activeLanguage, activeSection, canRestore, history) {
   const isCurrentValue = canRestore && activeSection?.text === entry.plainText;
   const isRestoring =
@@ -340,6 +353,11 @@ function renderHistoryEntry(entry, previousEntry, activeLanguage, activeSection,
   return `
     <article class="history-item">
       <p class="history-item__content" lang="${escapeHtml(activeLanguage.code)}">${renderHistoryContent(entry, previousEntry)}</p>
+      ${
+        entry?.statusNote
+          ? `<p class="history-item__note">${escapeHtml(entry.statusNote)}</p>`
+          : ""
+      }
       <div class="history-item__footer">
         <div class="history-item__actions">
           ${restoreButton}
@@ -367,9 +385,9 @@ function renderHistorySidebar(editorChapter, rows, languages) {
         };
   const expandedGroupKeys = history.expandedGroupKeys instanceof Set ? history.expandedGroupKeys : new Set();
   const canRestore = activeRow?.saveStatus === "idle";
-  const historyGroups = buildHistoryGroups(Array.isArray(history.entries) ? history.entries : []);
-  const visibleHistoryEntries = buildVisibleHistoryEntries(historyGroups, expandedGroupKeys);
-  const olderVisibleEntryByCommitSha = buildOlderVisibleHistoryEntryMap(visibleHistoryEntries);
+  const historyView = buildEditorHistoryViewModel(history.entries, expandedGroupKeys);
+  const historyGroups = historyView.groups;
+  const olderVisibleEntryByCommitSha = historyView.olderVisibleEntryByCommitSha;
 
   const historyBody = !activeRow || !activeLanguage
     ? `
@@ -479,19 +497,25 @@ export function renderTranslationContentRow(row, collapsedLanguageCodes = new Se
                     data-row-id="${escapeHtml(row.id)}"
                     data-language-code="${escapeHtml(language.code)}"
                   >
-                    <button
-                      class="translation-language-panel__toggle collapse-affordance"
-                      type="button"
-                      data-action="toggle-editor-language:${escapeHtml(language.code)}"
-                      data-editor-language-toggle
-                      data-row-id="${escapeHtml(row.id)}"
-                      data-language-code="${escapeHtml(language.code)}"
-                      aria-expanded="${isCollapsed ? "false" : "true"}"
-                      ${tooltipAttributes(isCollapsed ? "Show this language" : "Hide this language")}
-                    >
-                      ${renderCollapseChevron(!isCollapsed, "translation-language-panel__chevron")}
-                      <span class="translation-language-panel__label">${escapeHtml(language.name)}</span>
-                    </button>
+                    <div class="translation-language-panel__header">
+                      <button
+                        class="translation-language-panel__toggle collapse-affordance"
+                        type="button"
+                        data-action="toggle-editor-language:${escapeHtml(language.code)}"
+                        data-editor-language-toggle
+                        data-row-id="${escapeHtml(row.id)}"
+                        data-language-code="${escapeHtml(language.code)}"
+                        aria-expanded="${isCollapsed ? "false" : "true"}"
+                        ${tooltipAttributes(isCollapsed ? "Show this language" : "Hide this language")}
+                      >
+                        ${renderCollapseChevron(!isCollapsed, "translation-language-panel__chevron")}
+                        <span class="translation-language-panel__label">${escapeHtml(language.name)}</span>
+                      </button>
+                      <div class="translation-language-panel__actions">
+                        ${renderLanguageMarkerButton("reviewed", row.id, language)}
+                        ${renderLanguageMarkerButton("please-check", row.id, language)}
+                      </div>
+                    </div>
                     ${
                       isCollapsed
                         ? ""

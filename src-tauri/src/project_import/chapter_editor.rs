@@ -9,7 +9,11 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tauri::AppHandle;
 
-use crate::git_commit::git_commit_as_signed_in_user;
+use crate::git_commit::{
+  git_commit_as_signed_in_user,
+  git_commit_as_signed_in_user_with_metadata,
+  GitCommitMetadata as CommitMetadata,
+};
 
 use super::project_git::{
   ensure_repo_exists,
@@ -98,11 +102,32 @@ pub(crate) struct UpdateEditorRowFieldsInput {
   fields: BTreeMap<String, String>,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct UpdateEditorRowFieldFlagInput {
+  installation_id: i64,
+  repo_name: String,
+  chapter_id: String,
+  row_id: String,
+  language_code: String,
+  flag: String,
+  enabled: bool,
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct UpdateEditorRowFieldsResponse {
   row_id: String,
   source_word_counts: BTreeMap<String, usize>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct UpdateEditorRowFieldFlagResponse {
+  row_id: String,
+  language_code: String,
+  reviewed: bool,
+  please_check: bool,
 }
 
 #[derive(Deserialize)]
@@ -138,7 +163,11 @@ pub(crate) struct EditorFieldHistoryEntry {
   author_name: String,
   committed_at: String,
   message: String,
+  operation_type: Option<String>,
+  status_note: Option<String>,
   plain_text: String,
+  reviewed: bool,
+  please_check: bool,
 }
 
 #[derive(Deserialize)]
@@ -158,6 +187,8 @@ pub(crate) struct RestoreEditorFieldHistoryResponse {
   row_id: String,
   language_code: String,
   plain_text: String,
+  reviewed: bool,
+  please_check: bool,
   source_word_counts: BTreeMap<String, usize>,
 }
 
@@ -183,6 +214,14 @@ struct EditorRow {
   source_row_number: usize,
   review_state: String,
   fields: BTreeMap<String, String>,
+  field_states: BTreeMap<String, EditorFieldState>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct EditorFieldState {
+  reviewed: bool,
+  please_check: bool,
 }
 
 #[derive(Serialize)]
@@ -302,9 +341,19 @@ struct StoredRowOrigin {
   source_row_number: usize,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 struct StoredFieldValue {
   plain_text: String,
+  #[serde(default)]
+  editor_flags: StoredFieldEditorFlags,
+}
+
+#[derive(Clone, Deserialize, Default)]
+struct StoredFieldEditorFlags {
+  #[serde(default)]
+  reviewed: bool,
+  #[serde(default)]
+  please_check: bool,
 }
 
 struct GitCommitMetadata {
@@ -312,6 +361,8 @@ struct GitCommitMetadata {
   author_name: String,
   committed_at: String,
   message: String,
+  operation_type: Option<String>,
+  status_note: Option<String>,
 }
 
 pub(super) fn load_gtms_chapter_editor_data_sync(
@@ -352,8 +403,21 @@ pub(super) fn load_gtms_chapter_editor_data_sync(
         review_state: row.status.review_state,
         fields: row
           .fields
+          .iter()
+          .map(|(code, value)| (code.clone(), value.plain_text.clone()))
+          .collect(),
+        field_states: row
+          .fields
           .into_iter()
-          .map(|(code, value)| (code, value.plain_text))
+          .map(|(code, value)| {
+            (
+              code,
+              EditorFieldState {
+                reviewed: value.editor_flags.reviewed,
+                please_check: value.editor_flags.please_check,
+              },
+            )
+          })
           .collect(),
       })
       .collect(),
@@ -569,6 +633,7 @@ pub(super) fn update_gtms_editor_row_fields_sync(
     let field_object = field_value
       .as_object_mut()
       .ok_or_else(|| "A row field is not a JSON object.".to_string())?;
+    ensure_editor_field_object_defaults(field_object)?;
     field_object.insert("value_kind".to_string(), Value::String("text".to_string()));
     field_object.insert("plain_text".to_string(), Value::String(plain_text.clone()));
     field_object.insert(
@@ -585,11 +650,15 @@ pub(super) fn update_gtms_editor_row_fields_sync(
 
     let relative_row_json = repo_relative_path(&repo_path, &row_json_path)?;
     git_output(&repo_path, &["add", &relative_row_json])?;
-    git_commit_as_signed_in_user(
+    git_commit_as_signed_in_user_with_metadata(
       app,
       &repo_path,
       &format!("Update row {}", input.row_id),
       &[&relative_row_json],
+      CommitMetadata {
+        operation: Some("editor-update"),
+        status_note: None,
+      },
     )?;
   }
 
@@ -623,10 +692,10 @@ pub(super) fn load_gtms_editor_field_history_sync(
   let relative_row_json = repo_relative_path(&repo_path, &row_json_path)?;
   let commits = load_git_history_for_path(&repo_path, &relative_row_json)?;
   let mut entries = Vec::new();
-  let mut last_recorded_plain_text: Option<String> = None;
+  let mut last_recorded_field_signature: Option<HistoricalFieldSignature> = None;
 
   for commit in commits {
-    let Some(plain_text) = load_historical_row_field_plain_text(
+    let Some(field_value) = load_historical_row_field_value(
       &repo_path,
       &relative_row_json,
       &commit.commit_sha,
@@ -634,18 +703,24 @@ pub(super) fn load_gtms_editor_field_history_sync(
     )? else {
       continue;
     };
+    let plain_text = field_value.plain_text.clone();
+    let field_signature = HistoricalFieldSignature::from_field_value(&field_value);
 
-    if last_recorded_plain_text.as_deref() == Some(plain_text.as_str()) {
+    if last_recorded_field_signature.as_ref() == Some(&field_signature) {
       continue;
     }
 
-    last_recorded_plain_text = Some(plain_text.clone());
+    last_recorded_field_signature = Some(field_signature);
     entries.push(EditorFieldHistoryEntry {
       commit_sha: commit.commit_sha,
       author_name: commit.author_name,
       committed_at: commit.committed_at,
       message: commit.message,
+      operation_type: commit.operation_type,
+      status_note: commit.status_note,
       plain_text,
+      reviewed: field_value.editor_flags.reviewed,
+      please_check: field_value.editor_flags.please_check,
     });
   }
 
@@ -676,7 +751,7 @@ pub(super) fn restore_gtms_editor_field_from_history_sync(
   }
 
   let relative_row_json = repo_relative_path(&repo_path, &row_json_path)?;
-  let historical_plain_text = load_historical_row_field_plain_text(
+  let historical_field_value = load_historical_row_field_value(
     &repo_path,
     &relative_row_json,
     &input.commit_sha,
@@ -688,6 +763,7 @@ pub(super) fn restore_gtms_editor_field_from_history_sync(
       input.language_code
     )
   })?;
+  let historical_plain_text = historical_field_value.plain_text.clone();
 
   let original_row_text = fs::read_to_string(&row_json_path)
     .map_err(|error| format!("Could not read row file '{}': {error}", row_json_path.display()))?;
@@ -709,6 +785,7 @@ pub(super) fn restore_gtms_editor_field_from_history_sync(
     .as_object_mut()
     .ok_or_else(|| "The row field is not a JSON object.".to_string())?;
 
+  ensure_editor_field_object_defaults(field_object)?;
   field_object.insert("value_kind".to_string(), Value::String("text".to_string()));
   field_object.insert(
     "plain_text".to_string(),
@@ -720,6 +797,7 @@ pub(super) fn restore_gtms_editor_field_from_history_sync(
       .map(Value::String)
       .unwrap_or(Value::Null),
   );
+  set_editor_field_flags(field_object, &historical_field_value.editor_flags);
 
   let updated_row_json = serde_json::to_string_pretty(&row_value)
     .map_err(|error| format!("Could not serialize row file '{}': {error}", row_json_path.display()))?;
@@ -729,7 +807,7 @@ pub(super) fn restore_gtms_editor_field_from_history_sync(
 
     let short_commit = short_commit_sha(&input.commit_sha);
     git_output(&repo_path, &["add", &relative_row_json])?;
-    git_commit_as_signed_in_user(
+    git_commit_as_signed_in_user_with_metadata(
       app,
       &repo_path,
       &format!(
@@ -737,6 +815,10 @@ pub(super) fn restore_gtms_editor_field_from_history_sync(
         input.row_id, input.language_code, short_commit
       ),
       &[&relative_row_json],
+      CommitMetadata {
+        operation: Some("restore"),
+        status_note: None,
+      },
     )?;
   }
 
@@ -748,6 +830,8 @@ pub(super) fn restore_gtms_editor_field_from_history_sync(
     row_id: input.row_id,
     language_code: input.language_code,
     plain_text: historical_plain_text,
+    reviewed: historical_field_value.editor_flags.reviewed,
+    please_check: historical_field_value.editor_flags.please_check,
     source_word_counts,
   })
 }
@@ -841,13 +925,101 @@ fn load_project_chapter_summaries(repo_path: &Path) -> Result<Vec<ProjectChapter
   Ok(chapters)
 }
 
+pub(super) fn update_gtms_editor_row_field_flag_sync(
+  app: &AppHandle,
+  input: UpdateEditorRowFieldFlagInput,
+) -> Result<UpdateEditorRowFieldFlagResponse, String> {
+  let repo_path = local_repo_root(app, input.installation_id)?.join(&input.repo_name);
+  ensure_repo_exists(&repo_path, "The local project repo is not available yet.")?;
+  ensure_valid_git_repo(&repo_path, "The local project repo is missing or invalid.")?;
+
+  let chapter_path = find_chapter_path_by_id(&repo_path.join("chapters"), &input.chapter_id)?;
+  let row_json_path = chapter_path.join("rows").join(format!("{}.json", input.row_id));
+  let original_row_text = fs::read_to_string(&row_json_path)
+    .map_err(|error| format!("Could not read row file '{}': {error}", row_json_path.display()))?;
+  let mut row_value: Value = serde_json::from_str(&original_row_text)
+    .map_err(|error| format!("Could not parse row file '{}': {error}", row_json_path.display()))?;
+  let row_object = row_value
+    .as_object_mut()
+    .ok_or_else(|| "The row file is not a JSON object.".to_string())?;
+  let fields_value = row_object
+    .entry("fields".to_string())
+    .or_insert_with(|| json!({}));
+  let fields_object = fields_value
+    .as_object_mut()
+    .ok_or_else(|| "The row fields are not a JSON object.".to_string())?;
+  let field_value = fields_object
+    .entry(input.language_code.clone())
+    .or_insert_with(|| json!({}));
+  let field_object = field_value
+    .as_object_mut()
+    .ok_or_else(|| "The row field is not a JSON object.".to_string())?;
+  ensure_editor_field_object_defaults(field_object)?;
+  let flag_key = match input.flag.trim() {
+    "reviewed" => "reviewed",
+    "please-check" => "please_check",
+    _ => return Err("Unknown row field flag.".to_string()),
+  };
+  let (reviewed, please_check, changed) = {
+    let editor_flags_object = field_object
+      .get_mut("editor_flags")
+      .and_then(Value::as_object_mut)
+      .ok_or_else(|| "The row field editor flags are not a JSON object.".to_string())?;
+    let previous_value = editor_flags_object
+      .get(flag_key)
+      .and_then(Value::as_bool)
+      .unwrap_or(false);
+    let changed = previous_value != input.enabled;
+    if changed {
+      editor_flags_object.insert(flag_key.to_string(), Value::Bool(input.enabled));
+    }
+    let reviewed = editor_flags_object
+      .get("reviewed")
+      .and_then(Value::as_bool)
+      .unwrap_or(false);
+    let please_check = editor_flags_object
+      .get("please_check")
+      .and_then(Value::as_bool)
+      .unwrap_or(false);
+    (reviewed, please_check, changed)
+  };
+
+  if changed {
+    let updated_row_json = serde_json::to_string_pretty(&row_value)
+      .map_err(|error| format!("Could not serialize row file '{}': {error}", row_json_path.display()))?;
+    let updated_row_text = format!("{updated_row_json}\n");
+    write_text_file(&row_json_path, &updated_row_text)?;
+
+    let relative_row_json = repo_relative_path(&repo_path, &row_json_path)?;
+    let status_note = status_note_for_field_flag(flag_key, input.enabled);
+    git_output(&repo_path, &["add", &relative_row_json])?;
+    git_commit_as_signed_in_user_with_metadata(
+      app,
+      &repo_path,
+      &format!("Update row {} {} markers", input.row_id, input.language_code),
+      &[&relative_row_json],
+      CommitMetadata {
+        operation: Some("field-status"),
+        status_note: Some(status_note),
+      },
+    )?;
+  }
+
+  Ok(UpdateEditorRowFieldFlagResponse {
+    row_id: input.row_id,
+    language_code: input.language_code,
+    reviewed,
+    please_check,
+  })
+}
+
 fn load_git_history_for_path(
   repo_path: &Path,
   relative_path: &str,
 ) -> Result<Vec<GitCommitMetadata>, String> {
   let output = git_output(
     repo_path,
-    &["log", "--format=%H%x1f%an%x1f%aI%x1f%s%x1e", "--", relative_path],
+    &["log", "--format=%H%x1f%an%x1f%aI%x1f%B%x1e", "--", relative_path],
   )?;
   if output.is_empty() {
     return Ok(Vec::new());
@@ -865,16 +1037,130 @@ fn load_git_history_for_path(
         .ok_or_else(|| format!("Could not parse git history for '{}'.", relative_path))?;
       let author_name = parts.next().unwrap_or_default().trim();
       let committed_at = parts.next().unwrap_or_default().trim();
-      let message = parts.next().unwrap_or_default().trim();
+      let full_message = parts.next().unwrap_or_default();
+      let (message, operation_type, status_note) = parse_git_commit_message(full_message);
 
       Ok(GitCommitMetadata {
         commit_sha: commit_sha.to_string(),
         author_name: author_name.to_string(),
         committed_at: committed_at.to_string(),
-        message: message.to_string(),
+        message,
+        operation_type,
+        status_note,
       })
     })
     .collect()
+}
+
+fn parse_git_commit_message(message: &str) -> (String, Option<String>, Option<String>) {
+  let trimmed_message = message.trim();
+  if trimmed_message.is_empty() {
+    return (String::new(), None, None);
+  }
+
+  let subject = trimmed_message
+    .lines()
+    .map(str::trim)
+    .find(|line| !line.is_empty())
+    .unwrap_or_default()
+    .to_string();
+  let operation_type = trimmed_message
+    .lines()
+    .find_map(parse_gtms_operation_trailer)
+    .or_else(|| infer_commit_operation_from_subject(&subject));
+  let status_note = trimmed_message.lines().find_map(parse_gtms_status_note_trailer);
+  (subject, operation_type, status_note)
+}
+
+fn parse_gtms_operation_trailer(line: &str) -> Option<String> {
+  let (name, value) = line.split_once(':')?;
+  if !name.trim().eq_ignore_ascii_case("GTMS-Operation") {
+    return None;
+  }
+
+  let operation = value.trim();
+  if operation.is_empty() {
+    None
+  } else {
+    Some(operation.to_string())
+  }
+}
+
+fn parse_gtms_status_note_trailer(line: &str) -> Option<String> {
+  let (name, value) = line.split_once(':')?;
+  if !name.trim().eq_ignore_ascii_case("GTMS-Status-Note") {
+    return None;
+  }
+
+  let note = value.trim();
+  if note.is_empty() {
+    None
+  } else {
+    Some(note.to_string())
+  }
+}
+
+fn infer_commit_operation_from_subject(subject: &str) -> Option<String> {
+  let trimmed_subject = subject.trim();
+  if trimmed_subject.starts_with("Import ") {
+    Some("import".to_string())
+  } else {
+    None
+  }
+}
+
+fn status_note_for_field_flag(flag: &str, enabled: bool) -> &'static str {
+  match (flag, enabled) {
+    ("reviewed", true) => "Marked reviewed",
+    ("reviewed", false) => "Marked unreviewed",
+    ("please_check", true) => "Marked \"Please check\"",
+    ("please_check", false) => "Removed \"Please check\"",
+    _ => "Updated markers",
+  }
+}
+
+fn ensure_editor_field_object_defaults(
+  field_object: &mut serde_json::Map<String, Value>,
+) -> Result<(), String> {
+  let plain_text = field_object
+    .get("plain_text")
+    .and_then(Value::as_str)
+    .unwrap_or_default()
+    .to_string();
+  field_object
+    .entry("value_kind".to_string())
+    .or_insert_with(|| Value::String("text".to_string()));
+  field_object
+    .entry("plain_text".to_string())
+    .or_insert_with(|| Value::String(plain_text.clone()));
+  field_object
+    .entry("html_preview".to_string())
+    .or_insert_with(|| html_preview(&plain_text).map(Value::String).unwrap_or(Value::Null));
+
+  let editor_flags_value = field_object
+    .entry("editor_flags".to_string())
+    .or_insert_with(|| json!({}));
+  let editor_flags_object = editor_flags_value
+    .as_object_mut()
+    .ok_or_else(|| "The row field editor flags are not a JSON object.".to_string())?;
+  editor_flags_object
+    .entry("reviewed".to_string())
+    .or_insert(Value::Bool(false));
+  editor_flags_object
+    .entry("please_check".to_string())
+    .or_insert(Value::Bool(false));
+
+  Ok(())
+}
+
+fn set_editor_field_flags(field_object: &mut serde_json::Map<String, Value>, flags: &StoredFieldEditorFlags) {
+  if let Some(editor_flags_object) = field_object
+    .get_mut("editor_flags")
+    .and_then(Value::as_object_mut)
+  {
+    editor_flags_object.insert("reviewed".to_string(), Value::Bool(flags.reviewed));
+    editor_flags_object.insert("please_check".to_string(), Value::Bool(flags.please_check));
+  }
 }
 
 fn load_historical_row_field_plain_text(
@@ -883,6 +1169,35 @@ fn load_historical_row_field_plain_text(
   commit_sha: &str,
   language_code: &str,
 ) -> Result<Option<String>, String> {
+  Ok(
+    load_historical_row_field_value(repo_path, relative_row_json, commit_sha, language_code)?
+      .map(|field| field.plain_text),
+  )
+}
+
+#[derive(Clone, PartialEq, Eq)]
+struct HistoricalFieldSignature {
+  plain_text: String,
+  reviewed: bool,
+  please_check: bool,
+}
+
+impl HistoricalFieldSignature {
+  fn from_field_value(field: &StoredFieldValue) -> Self {
+    Self {
+      plain_text: field.plain_text.clone(),
+      reviewed: field.editor_flags.reviewed,
+      please_check: field.editor_flags.please_check,
+    }
+  }
+}
+
+fn load_historical_row_field_value(
+  repo_path: &Path,
+  relative_row_json: &str,
+  commit_sha: &str,
+  language_code: &str,
+) -> Result<Option<StoredFieldValue>, String> {
   let row_text = git_output(repo_path, &["show", &format!("{commit_sha}:{relative_row_json}")])?;
   let row_file: StoredRowFile = serde_json::from_str(&row_text).map_err(|error| {
     format!(
@@ -895,7 +1210,7 @@ fn load_historical_row_field_plain_text(
     row_file
       .fields
       .get(language_code)
-      .map(|field| field.plain_text.clone()),
+      .cloned(),
   )
 }
 

@@ -4,6 +4,11 @@ use tauri::AppHandle;
 
 use crate::broker_auth_storage::load_broker_auth_session;
 
+pub(crate) struct GitCommitMetadata<'a> {
+  pub(crate) operation: Option<&'a str>,
+  pub(crate) status_note: Option<&'a str>,
+}
+
 struct SignedInGitAuthor {
   login: String,
   email: String,
@@ -29,6 +34,25 @@ pub(crate) fn git_commit_as_signed_in_user(
   message: &str,
   paths: &[&str],
 ) -> Result<String, String> {
+  git_commit_as_signed_in_user_with_metadata(
+    app,
+    repo_path,
+    message,
+    paths,
+    GitCommitMetadata {
+      operation: None,
+      status_note: None,
+    },
+  )
+}
+
+pub(crate) fn git_commit_as_signed_in_user_with_metadata(
+  app: &AppHandle,
+  repo_path: &Path,
+  message: &str,
+  paths: &[&str],
+  metadata: GitCommitMetadata<'_>,
+) -> Result<String, String> {
   let author = signed_in_git_author(app)?;
   let mut command = Command::new("git");
   command
@@ -40,6 +64,14 @@ pub(crate) fn git_commit_as_signed_in_user(
     .env("GIT_AUTHOR_EMAIL", &author.email)
     .env("GIT_COMMITTER_NAME", &author.login)
     .env("GIT_COMMITTER_EMAIL", &author.email);
+
+  if let Some(operation) = metadata.operation.map(str::trim).filter(|value| !value.is_empty()) {
+    command.arg("-m").arg(format!("GTMS-Operation: {operation}"));
+  }
+
+  if let Some(status_note) = metadata.status_note.map(str::trim).filter(|value| !value.is_empty()) {
+    command.arg("-m").arg(format!("GTMS-Status-Note: {status_note}"));
+  }
 
   if !paths.is_empty() {
     command.arg("--").args(paths);
