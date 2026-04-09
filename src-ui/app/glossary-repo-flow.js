@@ -179,7 +179,7 @@ export function mergeRepoBackedGlossarySummaries(localSummaries, remoteRepos) {
 
         const remoteRepo = remoteByRepoName.get(normalized.repoName);
         if (!remoteRepo) {
-          return null;
+          return normalized;
         }
 
         return {
@@ -192,6 +192,33 @@ export function mergeRepoBackedGlossarySummaries(localSummaries, remoteRepos) {
       })
       .filter(Boolean),
   );
+}
+
+function getMissingRemoteGlossaryMessage(localSummaries, remoteRepos) {
+  const localRepoNames = new Set(
+    (Array.isArray(localSummaries) ? localSummaries : [])
+      .map((summary) => normalizeGlossarySummary(summary))
+      .filter(Boolean)
+      .map((summary) => summary.repoName),
+  );
+  if (localRepoNames.size === 0) {
+    return "";
+  }
+
+  const remoteRepoNames = new Set(
+    (Array.isArray(remoteRepos) ? remoteRepos : [])
+      .map(normalizeRemoteGlossaryRepo)
+      .filter(Boolean)
+      .map((repo) => repo.name),
+  );
+  const missingCount = [...localRepoNames].filter((repoName) => !remoteRepoNames.has(repoName)).length;
+  if (missingCount === 0) {
+    return "";
+  }
+
+  return `Showing ${missingCount} local ${
+    missingCount === 1 ? "glossary" : "glossaries"
+  } that remote discovery did not recognize yet.`;
 }
 
 export async function loadRepoBackedGlossariesForTeam(team, options = {}) {
@@ -227,7 +254,9 @@ export async function loadRepoBackedGlossariesForTeam(team, options = {}) {
   }
   const syncSnapshots = await syncGlossaryReposForTeam(team, remoteRepos);
   const refreshedLocalSummaries = await listLocalGlossarySummariesForTeam(team);
-  const syncIssue = getGlossarySyncIssueMessage(syncSnapshots);
+  const syncIssue =
+    getGlossarySyncIssueMessage(syncSnapshots)
+    || getMissingRemoteGlossaryMessage(refreshedLocalSummaries, remoteRepos);
 
   return {
     glossaries: mergeRepoBackedGlossarySummaries(refreshedLocalSummaries, remoteRepos),

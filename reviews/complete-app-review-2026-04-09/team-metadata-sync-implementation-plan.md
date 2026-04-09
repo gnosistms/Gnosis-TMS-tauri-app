@@ -4,11 +4,18 @@
 
 Make local git repos the only user-facing source of truth for Projects and Glossaries, while adding a shared `team-metadata` repo so repo identity, lifecycle, permanent deletion, and remote reconciliation become unambiguous across clients.
 
+Fast UI rule:
+
+- when local repos already exist, first paint must come from local disk immediately
+- metadata reads and remote sync must enrich or reconcile that local view afterward in the background
+- remote or broker work must not block the initial visible UI for existing local resources
+
 ## Core Design
 
 - UI state mirrors only local repos.
 - Project and glossary content lives in their own local git repos.
 - Remote GitHub sync only changes the UI indirectly by changing local repos through pull/push/relink flows.
+- Metadata and remote reconciliation happen after local-first render, not before it.
 - A per-team `team-metadata` repo becomes the authoritative shared registry for:
   - stable UUID identity
   - repo mapping
@@ -84,6 +91,8 @@ A team should be considered ready for project/glossary lifecycle features only w
 - the `team-metadata` repo exists
 - the metadata manifest has been initialized
 - broker read/write access to that repo is confirmed
+
+This readiness rule applies to lifecycle operations and metadata-backed reconciliation. If local repos already exist on disk, the app should still render them immediately while showing any setup-incomplete warning state in parallel.
 
 ### Suggested Verification For New Team Setup
 
@@ -315,11 +324,16 @@ Glossaries already have a `glossaryId` in `glossary.json`; extend the local meta
 
 On refresh:
 
-1. Load `team-metadata`.
-2. Load local repos.
-3. Reconcile by UUID first and repo name second.
-4. Render from local repos.
+1. Load local repos first.
+2. Render from local repos immediately.
+3. Load `team-metadata` in the background.
+4. Reconcile by UUID first and repo name second.
 5. Run sync/relink/recovery in the background.
+
+Important rule:
+
+- `team-metadata` is authoritative for identity and lifecycle, but it must not delay first paint when local repos already exist
+- persistent cache can help as a warm-start optimization, but local git remains the canonical first-load source
 
 If local repo exists but no metadata record exists:
 
@@ -377,6 +391,7 @@ Desktop app repo location:
 The app should:
 
 - render Projects and Glossaries from local repos only
+- render immediately from local repos before waiting on metadata or broker reads
 - use `team-metadata` for identity/lifecycle decisions
 - treat remote divergence as sync state, not presence/absence state
 - stop filtering local glossaries/projects out of the page because remote discovery omitted them
@@ -421,6 +436,7 @@ This is not only a Glossaries-page and Projects-page change. The same metadata m
 - on a new machine, the app should reconstruct the team’s project and glossary resource set from `team-metadata`
 - after reconstruction, local clone/sync can materialize the underlying repos
 - bootstrap should not have to guess team resources purely from repo names or broker repo-property filtering
+- this is the main case where no local repos exist yet, so a loading/bootstrap state is acceptable until local repos are materialized
 
 ## Creation / Import / Delete Flows
 
@@ -434,15 +450,17 @@ This is not only a Glossaries-page and Projects-page change. The same metadata m
 
 ### Soft Delete
 
-1. Update local repo content/state.
-2. Update metadata to `lifecycleState = softDeleted`.
-3. Keep repo link intact so restore remains possible.
+1. Update local repo content/state immediately.
+2. Update the UI immediately from that local change.
+3. Update metadata to `lifecycleState = softDeleted`.
+4. Keep repo link intact so restore remains possible.
 
 ### Permanent Delete
 
-1. Convert metadata record to tombstone first.
-2. Delete remote repo.
-3. Local clients that still have the repo should see the tombstone state and resolve safely.
+1. Update the local UI state immediately so the action feels instant.
+2. Convert metadata record to tombstone.
+3. Delete remote repo.
+4. Local clients that still have the repo should see the tombstone state and resolve safely.
 
 ## Partial Failure Rules
 
@@ -484,6 +502,7 @@ If team/org creation succeeds but `team-metadata` setup fails:
 - leave the team in `setup incomplete`
 - do not allow normal project/glossary lifecycle actions
 - allow retry of metadata repo creation/bootstrap
+- if local repos already exist, still render them immediately while showing the setup warning
 
 ## Repair And Admin Tooling
 
@@ -505,6 +524,7 @@ Repair tools should be designed to work from metadata record truth first, local 
 ### Phase 1
 
 - Fix app visibility so Projects and Glossaries no longer filter valid local repos out of the UI because of remote listing gaps.
+- Ensure first paint comes from local repos immediately, with remote sync updates happening afterward.
 
 ### Phase 2
 
@@ -540,10 +560,11 @@ Repo:
 ### A. Replace Remote-Gated Discovery With Local-First Discovery
 
 1. Change glossary discovery so the visible list always comes from local glossary repos.
-2. Keep remote/broker data only as sync metadata and warning state.
-3. Remove any code path that intersects local glossaries with the remote glossary repo list to decide visibility.
-4. Apply the same rule to Projects for already-known local repos.
-5. Preserve visible local items during refresh, background sync, and navigation back from detail screens.
+2. Render immediately from local repos without waiting on metadata or broker calls.
+3. Keep remote/broker data only as sync metadata and warning state.
+4. Remove any code path that intersects local glossaries with the remote glossary repo list to decide visibility.
+5. Apply the same rule to Projects for already-known local repos.
+6. Preserve visible local items during refresh, background sync, and navigation back from detail screens.
 
 Primary files to inspect:
 
@@ -598,6 +619,7 @@ Primary files to inspect:
    - glossary selection
    - chapter glossary links
    - project/glossary navigation and actions
+6. Ensure metadata loads enrich already-rendered local resources instead of blocking their first display.
 
 Primary files to add or inspect:
 
@@ -615,14 +637,17 @@ Primary files to add or inspect:
    - render from local immediately
    - start remote creation/link/push in the background
 2. Soft delete should:
-   - update local repo content
+   - update local repo content immediately
+   - update UI immediately from local state
    - update metadata lifecycle state
 3. Permanent delete should:
+   - update local UI state immediately
    - write tombstone to `team-metadata`
    - delete remote repo
    - leave stale local copies visible only as tombstoned/conflict state
 4. Rename should:
-   - update local repo metadata
+   - update local repo metadata immediately
+   - update UI immediately from local state
    - update metadata record `repoName`
    - append prior name to `previousRepoNames`
    - sync remote rename/relink once supported
@@ -824,7 +849,7 @@ Because of that:
 
 1. Import glossary with no remote collision:
    - local repo created
-   - visible immediately
+   - visible immediately from local repo before remote sync finishes
    - metadata written
    - remote created later
 2. Import glossary with remote repo-name collision:
@@ -845,9 +870,10 @@ Because of that:
 ### Projects
 
 1. Existing local project remains visible when remote listing fails.
-2. Previously synced project whose remote is missing becomes `remote missing`, not silently hidden.
-3. Project rename updates metadata and historical repo names.
-4. Project repo relinks correctly if remote name changes but repo ID matches.
+2. Existing local project renders immediately from local data before remote refresh completes.
+3. Previously synced project whose remote is missing becomes `remote missing`, not silently hidden.
+4. Project rename updates metadata and historical repo names.
+5. Project repo relinks correctly if remote name changes but repo ID matches.
 
 ### Cross-Page Identity And Linking
 
@@ -861,6 +887,7 @@ Because of that:
 1. In a fresh local install, the app reconstructs available projects and glossaries from `team-metadata`.
 2. Local clone/sync after bootstrap materializes the expected repos.
 3. Repo-name changes and historical names do not break bootstrap resolution.
+4. Once local repos exist, subsequent launches render immediately from local repos before reconciliation completes.
 
 ### Cross-Client / Long-Gap Cases
 
@@ -902,12 +929,14 @@ Expected outcome:
 
 - local repos remain visible across navigation and refresh
 - remote problems show warnings instead of empty-state disappearance
+- first paint comes from local repos without waiting for remote/broker work
 
 Testing after Stage 1:
 
 - import a glossary, open editor, go back to Glossaries page
 - refresh Glossaries page
 - restart app and verify local glossary still appears
+- verify the glossary list paints from local data immediately, before remote refresh completes
 - verify Projects still load and local project file state still appears
 - run:
   - `npm test`
@@ -925,6 +954,7 @@ Scope:
 Expected outcome:
 
 - every newly created/imported local repo has enough identity metadata to classify `pendingCreate` versus `previously synced`
+- UI remains fast because newly created/imported resources still render from local repos immediately
 
 Testing after Stage 2:
 
@@ -977,6 +1007,7 @@ Scope:
 Expected outcome:
 
 - all newly created/imported alpha data has metadata from birth
+- local-first optimistic rendering is preserved
 
 Testing after Stage 4:
 
@@ -985,6 +1016,7 @@ Testing after Stage 4:
 - create project and inspect metadata record
 - refresh app and ensure all resources remain visible
 - restart app and ensure all resources remain visible
+- verify create/import still render from local immediately before background remote work completes
 - run:
   - `npm test`
   - `npm run build`
@@ -1002,6 +1034,7 @@ Scope:
 Expected outcome:
 
 - local-first UI is backed by explicit shared identity/lifecycle state
+- metadata enrichment does not slow first paint for existing local repos
 
 Testing after Stage 5:
 
@@ -1009,6 +1042,7 @@ Testing after Stage 5:
 - rename resource and verify metadata updates
 - verify resource remains visible if broker listing is delayed or incomplete
 - verify project and glossary pages both still work
+- verify local-first render still happens before metadata reconciliation completes
 - run:
   - `npm test`
   - `npm run build`
@@ -1071,6 +1105,11 @@ Testing after Stage 7:
 5. Stage 5: read metadata during discovery/reconciliation.
 6. Stage 6: add tombstones and permanent-delete handling.
 7. Stage 7: add explicit conflict-resolution UI.
+
+Throughout all stages:
+
+- preserve the fast local-first UX rule
+- if a change risks making metadata or broker work block first paint for existing local repos, revise the design before merging
 
 ## Immediate Risk Notes
 
