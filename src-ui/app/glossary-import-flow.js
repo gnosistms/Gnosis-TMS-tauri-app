@@ -8,7 +8,7 @@ import { openGlossaryEditor } from "./glossary-editor-flow.js";
 import { canManageGlossaries, selectedTeam } from "./glossary-shared.js";
 import { openLocalFilePicker } from "./local-file-picker.js";
 import {
-  createRemoteGlossaryRepoForTeam,
+  createUniqueRemoteGlossaryRepoForTeam,
   permanentlyDeleteRemoteGlossaryRepoForTeam,
   syncGlossaryReposForTeam,
 } from "./glossary-repo-flow.js";
@@ -129,8 +129,11 @@ export async function submitGlossaryCreation(render) {
 
   let remoteRepo = null;
   let glossary = null;
+  let collisionResolved = false;
   try {
-    remoteRepo = await createRemoteGlossaryRepoForTeam(team, repoName);
+    const createResult = await createUniqueRemoteGlossaryRepoForTeam(team, repoName);
+    remoteRepo = createResult.remoteRepo;
+    collisionResolved = createResult.collisionResolved === true;
     await syncGlossaryReposForTeam(team, [remoteRepo]);
     glossary = await invoke("initialize_gtms_glossary_repo", {
       input: {
@@ -174,7 +177,12 @@ export async function submitGlossaryCreation(render) {
   try {
     await loadTeamGlossaries(render, team.id);
     await openGlossaryEditor(render, glossary.glossaryId);
-    showNoticeBadge(`Created glossary ${glossary.title}.`, render);
+    showNoticeBadge(
+      collisionResolved
+        ? `Created glossary ${glossary.title} in repo ${remoteRepo.name} because that glossary name was already taken.`
+        : `Created glossary ${glossary.title}.`,
+      render,
+    );
   } catch (error) {
     showNoticeBadge(
       `Created glossary ${glossary.title}, but the app could not refresh automatically: ${error?.message ?? String(error)}`,
@@ -223,6 +231,7 @@ export async function importGlossaryFromTmx(render) {
 
   let remoteRepo = null;
   let glossary = null;
+  let collisionResolved = false;
   try {
     const bytes = Array.from(new Uint8Array(await selectedFile.arrayBuffer()));
     const repoName = slugifyRepoName(
@@ -232,7 +241,9 @@ export async function importGlossaryFromTmx(render) {
       throw new Error("Could not determine a glossary repo name from this import file.");
     }
 
-    remoteRepo = await createRemoteGlossaryRepoForTeam(team, repoName);
+    const createResult = await createUniqueRemoteGlossaryRepoForTeam(team, repoName);
+    remoteRepo = createResult.remoteRepo;
+    collisionResolved = createResult.collisionResolved === true;
     await syncGlossaryReposForTeam(team, [remoteRepo]);
     glossary = await invoke("import_tmx_to_gtms_glossary_repo", {
       input: {
@@ -273,7 +284,9 @@ export async function importGlossaryFromTmx(render) {
     await loadTeamGlossaries(render, team.id);
     await openGlossaryEditor(render, glossary.glossaryId);
     showNoticeBadge(
-      `Imported ${glossary.termCount} terms from ${selectedFile.name} into ${glossary.title}.`,
+      collisionResolved
+        ? `Imported ${glossary.termCount} terms from ${selectedFile.name} into ${glossary.title} in repo ${remoteRepo.name} because that repo name was already taken.`
+        : `Imported ${glossary.termCount} terms from ${selectedFile.name} into ${glossary.title}.`,
       render,
     );
   } catch (error) {

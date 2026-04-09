@@ -1,30 +1,10 @@
-import { getActiveStorageLogin } from "./team-storage.js";
 import {
-  readPersistentValue,
-  writePersistentValue,
-} from "./persistent-store.js";
+  loadTeamScopedCacheMap,
+  saveTeamScopedCacheMap,
+  teamCacheKey,
+} from "./team-cache.js";
 
 const MEMBER_CACHE_STORAGE_KEY = "gnosis-tms-member-cache";
-
-function scopedStorageKey(baseKey, login = getActiveStorageLogin()) {
-  return login ? `${baseKey}:${login}` : null;
-}
-
-function memberCacheKey(team) {
-  if (Number.isFinite(team?.installationId)) {
-    return `installation:${team.installationId}`;
-  }
-
-  if (typeof team?.githubOrg === "string" && team.githubOrg.trim()) {
-    return `org:${team.githubOrg.trim().toLowerCase()}`;
-  }
-
-  if (typeof team?.id === "string" && team.id.trim()) {
-    return `team:${team.id.trim()}`;
-  }
-
-  return null;
-}
 
 function normalizeMember(member) {
   if (!member || typeof member !== "object") {
@@ -72,34 +52,16 @@ function normalizeMember(member) {
   };
 }
 
-function loadMemberCacheMap(login = getActiveStorageLogin()) {
-  try {
-    const scopedKey = scopedStorageKey(MEMBER_CACHE_STORAGE_KEY, login);
-    const storedValue = scopedKey ? readPersistentValue(scopedKey, null) : null;
-    if (!storedValue) {
-      return {};
-    }
-
-    const parsed = storedValue;
-    return parsed && typeof parsed === "object" ? parsed : {};
-  } catch {
-    return {};
-  }
+function loadMemberCacheMap() {
+  return loadTeamScopedCacheMap(MEMBER_CACHE_STORAGE_KEY);
 }
 
-function saveMemberCacheMap(cacheMap, login = getActiveStorageLogin()) {
-  try {
-    const scopedKey = scopedStorageKey(MEMBER_CACHE_STORAGE_KEY, login);
-    if (!scopedKey) {
-      return;
-    }
-
-    writePersistentValue(scopedKey, cacheMap);
-  } catch {}
+function saveMemberCacheMap(cacheMap) {
+  saveTeamScopedCacheMap(MEMBER_CACHE_STORAGE_KEY, cacheMap);
 }
 
 export function loadStoredMembersForTeam(team) {
-  const cacheKey = memberCacheKey(team);
+  const cacheKey = teamCacheKey(team);
   if (!cacheKey) {
     return { exists: false, members: [] };
   }
@@ -119,7 +81,7 @@ export function loadStoredMembersForTeam(team) {
 }
 
 export function saveStoredMembersForTeam(team, members = []) {
-  const cacheKey = memberCacheKey(team);
+  const cacheKey = teamCacheKey(team);
   if (!cacheKey) {
     return;
   }

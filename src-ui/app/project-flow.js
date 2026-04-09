@@ -34,6 +34,7 @@ import { reconcileProjectRepoSyncStates } from "./project-repo-sync-flow.js";
 import { clearScopedSyncBadge, showNoticeBadge, showScopedSyncBadge } from "./status-feedback.js";
 import { classifySyncError } from "./sync-error.js";
 import { handleSyncFailure } from "./sync-recovery.js";
+import { createUniqueRepoWithNumericSuffix } from "./repo-creation.js";
 import { slugifyRepoName } from "./repo-names.js";
 
 function setProjectUiDebug(render, text) {
@@ -977,17 +978,27 @@ export async function submitProjectCreation(render) {
     state.projectCreation.error = "";
     render();
     await waitForNextPaint();
-    await invoke("create_gnosis_project_repo", {
-      input: {
-        installationId: selectedTeam.installationId,
-        orgLogin: selectedTeam.githubOrg,
-        repoName,
-        projectTitle,
-      },
-      sessionToken: requireBrokerSession(),
-    });
+    const { attemptedRepoName, collisionResolved } = await createUniqueRepoWithNumericSuffix(
+      repoName,
+      (candidateRepoName) =>
+        invoke("create_gnosis_project_repo", {
+          input: {
+            installationId: selectedTeam.installationId,
+            orgLogin: selectedTeam.githubOrg,
+            repoName: candidateRepoName,
+            projectTitle,
+          },
+          sessionToken: requireBrokerSession(),
+        }),
+    );
     resetProjectCreation();
     await loadTeamProjects(render, selectedTeam.id);
+    showNoticeBadge(
+      collisionResolved
+        ? `Created project ${projectTitle} in repo ${attemptedRepoName} because that repo name was already taken.`
+        : `Created project ${projectTitle}.`,
+      render,
+    );
   } catch (error) {
     if (await handleSyncFailure(classifySyncError(error), { render })) {
       return;

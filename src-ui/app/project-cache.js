@@ -1,18 +1,14 @@
+import { readPersistentValue, writePersistentValue } from "./persistent-store.js";
 import {
-  getActiveStorageLogin,
-} from "./team-storage.js";
-import {
-  readPersistentValue,
-  writePersistentValue,
-} from "./persistent-store.js";
+  loadTeamScopedCacheMap,
+  saveTeamScopedCacheMap,
+  scopedTeamStorageKey,
+  teamCacheKey,
+} from "./team-cache.js";
 
 const PROJECT_CACHE_STORAGE_KEY = "gnosis-tms-project-cache";
 const PROJECT_PENDING_MUTATIONS_STORAGE_KEY = "gnosis-tms-project-pending-mutations";
 const CHAPTER_PENDING_MUTATIONS_STORAGE_KEY = "gnosis-tms-chapter-pending-mutations";
-
-function scopedStorageKey(baseKey, login = getActiveStorageLogin()) {
-  return login ? `${baseKey}:${login}` : null;
-}
 
 function normalizeProject(project) {
   if (!project || typeof project !== "object") {
@@ -96,46 +92,15 @@ function normalizeChapterGlossaryLink(link) {
   };
 }
 
-function loadProjectCacheMap(login = getActiveStorageLogin()) {
-  try {
-    const scopedKey = scopedStorageKey(PROJECT_CACHE_STORAGE_KEY, login);
-    const storedValue = scopedKey ? readPersistentValue(scopedKey, null) : null;
-    if (!storedValue) {
-      return {};
-    }
-
-    const parsed = storedValue;
-    return parsed && typeof parsed === "object" ? parsed : {};
-  } catch {
-    return {};
-  }
+function loadProjectCacheMap() {
+  return loadTeamScopedCacheMap(PROJECT_CACHE_STORAGE_KEY);
 }
 
-function saveProjectCacheMap(cacheMap, login = getActiveStorageLogin()) {
-  try {
-    const scopedKey = scopedStorageKey(PROJECT_CACHE_STORAGE_KEY, login);
-    if (!scopedKey) {
-      return;
-    }
-    writePersistentValue(scopedKey, cacheMap);
-  } catch {}
+function saveProjectCacheMap(cacheMap) {
+  saveTeamScopedCacheMap(PROJECT_CACHE_STORAGE_KEY, cacheMap);
 }
 
-export function projectCacheKey(team) {
-  if (Number.isFinite(team?.installationId)) {
-    return `installation:${team.installationId}`;
-  }
-
-  if (typeof team?.githubOrg === "string" && team.githubOrg.trim()) {
-    return `org:${team.githubOrg.trim().toLowerCase()}`;
-  }
-
-  if (typeof team?.id === "string" && team.id.trim()) {
-    return `team:${team.id.trim()}`;
-  }
-
-  return null;
-}
+export const projectCacheKey = teamCacheKey;
 
 export function loadStoredProjectsForTeam(team) {
   const cacheKey = projectCacheKey(team);
@@ -182,7 +147,7 @@ export function loadStoredProjectPendingMutations(team) {
   }
 
   try {
-    const scopedKey = scopedStorageKey(PROJECT_PENDING_MUTATIONS_STORAGE_KEY);
+    const scopedKey = scopedTeamStorageKey(PROJECT_PENDING_MUTATIONS_STORAGE_KEY);
     const storedValue = scopedKey ? readPersistentValue(scopedKey, null) : null;
     if (!storedValue) {
       return [];
@@ -206,7 +171,7 @@ export function saveStoredProjectPendingMutations(team, mutations) {
   }
 
   try {
-    const scopedKey = scopedStorageKey(PROJECT_PENDING_MUTATIONS_STORAGE_KEY);
+    const scopedKey = scopedTeamStorageKey(PROJECT_PENDING_MUTATIONS_STORAGE_KEY);
     if (!scopedKey) {
       return;
     }
@@ -225,7 +190,7 @@ export function loadStoredChapterPendingMutations(team) {
   }
 
   try {
-    const scopedKey = scopedStorageKey(CHAPTER_PENDING_MUTATIONS_STORAGE_KEY);
+    const scopedKey = scopedTeamStorageKey(CHAPTER_PENDING_MUTATIONS_STORAGE_KEY);
     const storedValue = scopedKey ? readPersistentValue(scopedKey, null) : null;
     if (!storedValue) {
       return [];
@@ -249,7 +214,7 @@ export function saveStoredChapterPendingMutations(team, mutations) {
   }
 
   try {
-    const scopedKey = scopedStorageKey(CHAPTER_PENDING_MUTATIONS_STORAGE_KEY);
+    const scopedKey = scopedTeamStorageKey(CHAPTER_PENDING_MUTATIONS_STORAGE_KEY);
     if (!scopedKey) {
       return;
     }

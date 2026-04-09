@@ -1,6 +1,7 @@
 import { requireBrokerSession } from "./auth-flow.js";
 import { invoke } from "./runtime.js";
 import { normalizeGlossarySummary, sortGlossaries } from "./glossary-shared.js";
+import { createUniqueRepoWithNumericSuffix } from "./repo-creation.js";
 
 const GLOSSARY_BROKER_ROUTE_UNAVAILABLE_MESSAGE =
   "The GitHub App broker does not have glossary repo routes deployed yet. Remote glossary sync and repo actions are unavailable right now.";
@@ -257,6 +258,19 @@ export async function createRemoteGlossaryRepoForTeam(team, repoName) {
     throw new Error("Could not determine the new glossary repo metadata.");
   }
   return remoteRepo;
+}
+
+export async function createUniqueRemoteGlossaryRepoForTeam(team, baseRepoName) {
+  const { result, attemptedRepoName, collisionResolved } =
+    await createUniqueRepoWithNumericSuffix(
+      baseRepoName,
+      (candidateRepoName) => createRemoteGlossaryRepoForTeam(team, candidateRepoName),
+    );
+  return {
+    remoteRepo: result,
+    attemptedRepoName,
+    collisionResolved,
+  };
 }
 
 export async function permanentlyDeleteRemoteGlossaryRepoForTeam(team, repoName) {

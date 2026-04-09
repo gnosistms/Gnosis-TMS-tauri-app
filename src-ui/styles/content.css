@@ -105,7 +105,7 @@
 }
 
 .glossary-card__language-arrow {
-  color: rgba(137, 107, 71, 0.74);
+  color: inherit;
 }
 
 .list-row__warning-box,
