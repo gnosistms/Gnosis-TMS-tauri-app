@@ -20,6 +20,7 @@ function buildProjectRepoSyncInput(team, projects) {
       projectId: project.id,
       repoName: project.name,
       fullName: project.fullName,
+      repoId: Number.isFinite(project.repoId) ? project.repoId : null,
       defaultBranchName: project.defaultBranchName ?? null,
       defaultBranchHeadOid: project.defaultBranchHeadOid ?? null,
     })),

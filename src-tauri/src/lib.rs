@@ -10,6 +10,7 @@ mod glossary_storage;
 mod github;
 mod github_app_test;
 mod insecure_github_app_config;
+mod local_repo_sync_state;
 mod project_import;
 mod project_repo_sync;
 mod repo_sync_shared;

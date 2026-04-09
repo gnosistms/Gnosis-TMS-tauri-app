@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
 
 use crate::{
+  local_repo_sync_state::{LocalRepoSyncStateUpdate, upsert_local_repo_sync_state},
   repo_sync_shared::{
     GitTransportAuth,
     abort_rebase_after_failed_pull,
@@ -33,6 +34,7 @@ pub(crate) struct ProjectRepoSyncDescriptor {
   pub(crate) project_id: String,
   pub(crate) repo_name: String,
   pub(crate) full_name: String,
+  pub(crate) repo_id: Option<i64>,
   pub(crate) default_branch_name: Option<String>,
   pub(crate) default_branch_head_oid: Option<String>,
 }
@@ -330,7 +332,9 @@ fn sync_project_repo(
     return Err(abort_rebase_after_failed_pull(repo_path, error));
   }
   git_output(repo_path, &["push", "origin", branch_name], Some(&git_transport_auth))?;
-  Ok(Some(git_output(repo_path, &["rev-parse", "HEAD"], None)?))
+  let current_head_oid = Some(git_output(repo_path, &["rev-parse", "HEAD"], None)?);
+  mark_project_repo_synced(project, repo_path)?;
+  Ok(current_head_oid)
 }
 
 fn clone_project_repo(
@@ -365,7 +369,28 @@ fn clone_project_repo(
     return Ok(None);
   }
 
-  Ok(Some(git_output(repo_path, &["rev-parse", "HEAD"], None)?))
+  let current_head_oid = Some(git_output(repo_path, &["rev-parse", "HEAD"], None)?);
+  mark_project_repo_synced(project, repo_path)?;
+  Ok(current_head_oid)
+}
+
+fn mark_project_repo_synced(
+  project: &ProjectRepoSyncDescriptor,
+  repo_path: &Path,
+) -> Result<(), String> {
+  upsert_local_repo_sync_state(
+    repo_path,
+    LocalRepoSyncStateUpdate {
+      resource_id: Some(project.project_id.clone()),
+      kind: Some("project".to_string()),
+      has_ever_synced: Some(true),
+      last_known_github_repo_id: project.repo_id,
+      last_known_full_name: Some(project.full_name.clone()),
+      touch_success_timestamp: true,
+    },
+  )?;
+
+  Ok(())
 }
 
 fn sync_store_key(installation_id: i64, repo_name: &str) -> String {

@@ -14,6 +14,7 @@ use uuid::Uuid;
 
 use crate::{
   git_commit::git_commit_as_signed_in_user,
+  local_repo_sync_state::{LocalRepoSyncStateUpdate, upsert_local_repo_sync_state},
   storage_paths::local_glossary_repo_root,
 };
 
@@ -492,6 +493,15 @@ fn initialize_gtms_glossary_repo_sync(
     "Initialize glossary",
     &[".gitattributes", "glossary.json"],
   )?;
+  let _ = upsert_local_repo_sync_state(
+    &repo_path,
+    LocalRepoSyncStateUpdate {
+      resource_id: Some(glossary_file.glossary_id.clone()),
+      kind: Some("glossary".to_string()),
+      has_ever_synced: Some(false),
+      ..Default::default()
+    },
+  );
 
   Ok(LocalGlossarySummary {
     glossary_id: glossary_file.glossary_id,
@@ -558,6 +568,15 @@ fn import_tmx_to_gtms_glossary_repo_sync(
     &format!("Import glossary from {}", input.file_name),
     &[".gitattributes", "glossary.json", "terms"],
   )?;
+  let _ = upsert_local_repo_sync_state(
+    &repo_path,
+    LocalRepoSyncStateUpdate {
+      resource_id: Some(glossary_file.glossary_id.clone()),
+      kind: Some("glossary".to_string()),
+      has_ever_synced: Some(false),
+      ..Default::default()
+    },
+  );
 
   Ok(LocalGlossarySummary {
     glossary_id: glossary_file.glossary_id,

@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
 
 use crate::{
+  local_repo_sync_state::{LocalRepoSyncStateUpdate, upsert_local_repo_sync_state},
   repo_sync_shared::{
     GitTransportAuth,
     abort_rebase_after_failed_pull,
@@ -22,6 +23,7 @@ use crate::{
 pub(crate) struct GlossaryRepoSyncDescriptor {
   pub(crate) repo_name: String,
   pub(crate) full_name: String,
+  pub(crate) repo_id: Option<i64>,
   pub(crate) default_branch_name: Option<String>,
   pub(crate) default_branch_head_oid: Option<String>,
 }
@@ -211,7 +213,9 @@ fn sync_glossary_repo(
     if local_head_oid.is_some() {
       git_output(repo_path, &["push", "-u", "origin", branch_name], Some(&git_transport_auth))?;
     }
-    return Ok(read_current_head_oid(repo_path));
+    let current_head_oid = read_current_head_oid(repo_path);
+    mark_glossary_repo_synced(glossary, repo_path)?;
+    return Ok(current_head_oid);
   }
 
   if let Err(error) = git_output(
@@ -222,7 +226,9 @@ fn sync_glossary_repo(
     return Err(abort_rebase_after_failed_pull(repo_path, error));
   }
   git_output(repo_path, &["push", "origin", branch_name], Some(&git_transport_auth))?;
-  Ok(read_current_head_oid(repo_path))
+  let current_head_oid = read_current_head_oid(repo_path);
+  mark_glossary_repo_synced(glossary, repo_path)?;
+  Ok(current_head_oid)
 }
 
 fn clone_glossary_repo(
@@ -263,5 +269,38 @@ fn clone_glossary_repo(
     let _ = git_output(repo_path, &["checkout", "-B", branch_name], None);
   }
 
-  Ok(read_current_head_oid(repo_path))
+  let current_head_oid = read_current_head_oid(repo_path);
+  mark_glossary_repo_synced(glossary, repo_path)?;
+  Ok(current_head_oid)
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct LocalGlossaryIdentityFile {
+  glossary_id: String,
+}
+
+fn mark_glossary_repo_synced(
+  glossary: &GlossaryRepoSyncDescriptor,
+  repo_path: &Path,
+) -> Result<(), String> {
+  let glossary_id = fs::read(repo_path.join("glossary.json"))
+    .ok()
+    .and_then(|bytes| serde_json::from_slice::<LocalGlossaryIdentityFile>(&bytes).ok())
+    .map(|file| file.glossary_id)
+    .filter(|value| !value.trim().is_empty());
+
+  upsert_local_repo_sync_state(
+    repo_path,
+    LocalRepoSyncStateUpdate {
+      resource_id: glossary_id,
+      kind: Some("glossary".to_string()),
+      has_ever_synced: Some(true),
+      last_known_github_repo_id: glossary.repo_id,
+      last_known_full_name: Some(glossary.full_name.clone()),
+      touch_success_timestamp: true,
+    },
+  )?;
+
+  Ok(())
 }

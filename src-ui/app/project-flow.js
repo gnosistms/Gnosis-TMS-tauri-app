@@ -692,6 +692,9 @@ export async function loadTeamProjects(render, teamId = state.selectedTeamId) {
       throw projectsResult.reason;
     }
     const projects = projectsResult.value;
+    const hasVisibleLocalProjects =
+      optimisticSnapshot.items.length > 0 || optimisticSnapshot.deletedItems.length > 0;
+    const preserveVisibleProjects = Array.isArray(projects) && projects.length === 0 && hasVisibleLocalProjects;
     if (syncVersionAtStart !== state.projectSyncVersion) {
       await completeProjectsPageSync(render);
       render();
@@ -702,37 +705,50 @@ export async function loadTeamProjects(render, teamId = state.selectedTeamId) {
         .filter(Boolean)
         .map((project) => [project.id, project]),
     );
-    const mappedProjects = projects.map((project) => ({
+    const mappedProjects = (preserveVisibleProjects ? [] : projects).map((project) => ({
       ...project,
       chapters: Array.isArray(existingProjectsById.get(project.id)?.chapters)
         ? existingProjectsById.get(project.id).chapters
         : [],
     }));
-    const nextProjectSnapshot = applyPendingMutations(
-      {
-        items: mappedProjects.filter((project) => project.status !== "deleted"),
-        deletedItems: mappedProjects.filter((project) => project.status === "deleted"),
-      },
-      state.pendingProjectMutations,
-      applyProjectPendingMutation,
-    );
-    const nextSnapshot = applyPendingMutations(
-      nextProjectSnapshot,
-      state.pendingChapterMutations,
-      applyChapterPendingMutation,
-    );
-    applyProjectSnapshotToState(nextSnapshot);
-    persistProjectsForTeam(selectedTeam);
+    if (!preserveVisibleProjects) {
+      const nextProjectSnapshot = applyPendingMutations(
+        {
+          items: mappedProjects.filter((project) => project.status !== "deleted"),
+          deletedItems: mappedProjects.filter((project) => project.status === "deleted"),
+        },
+        state.pendingProjectMutations,
+        applyProjectPendingMutation,
+      );
+      const nextSnapshot = applyPendingMutations(
+        nextProjectSnapshot,
+        state.pendingChapterMutations,
+        applyChapterPendingMutation,
+      );
+      applyProjectSnapshotToState(nextSnapshot);
+      persistProjectsForTeam(selectedTeam);
+    }
     const glossaryWarning =
       glossaryResult.status === "fulfilled"
         ? glossaryResult.value?.syncIssue || glossaryResult.value?.brokerWarning || ""
         : glossaryResult.reason?.message ?? String(glossaryResult.reason ?? "");
     setProjectDiscoveryState("ready", "", glossaryWarning);
     await reconcileProjectRepoSyncStates(render, selectedTeam, mappedProjects);
-    await refreshProjectFilesFromDisk(render, selectedTeam, mappedProjects);
+    await refreshProjectFilesFromDisk(
+      render,
+      selectedTeam,
+      preserveVisibleProjects ? [...state.projects, ...state.deletedProjects] : mappedProjects,
+    );
     clearProjectUiDebug(render);
     await completeProjectsPageSync(render);
     render();
+    if (preserveVisibleProjects) {
+      showNoticeBadge(
+        "Showing locally available projects because remote discovery returned no projects.",
+        render,
+        3200,
+      );
+    }
     if (glossaryResult.status === "rejected" && glossaryWarning) {
       showNoticeBadge(glossaryWarning, render, 3200);
     }

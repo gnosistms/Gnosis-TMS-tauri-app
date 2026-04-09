@@ -1,5 +1,102 @@
 # Team Metadata And Local-First Sync Implementation Plan
 
+## Progress Tracker
+
+### Current Status
+
+- current implementation stage: `Stage 2`
+- stage status: `implemented locally, not yet committed`
+- next intended stage: `Stage 3`
+
+### Stage 1 Progress
+
+Stage goal:
+
+- stop hiding valid local data
+- keep the UI fast and local-first
+- prevent remote discovery gaps from replacing visible local resources with empty/error states
+
+Completed in the current local worktree:
+
+- Glossaries now keep local glossary repos visible even when remote glossary discovery omits them.
+- Glossary remote-recognition mismatch is surfaced as a warning/notice instead of silently filtering those glossaries out.
+- Glossary discovery no longer replaces an already-visible local glossary list with an error card when the later remote step fails.
+- Projects now preserve the currently visible cached/local project list when a remote refresh returns an empty remote project list.
+
+Files changed for current Stage 1 work:
+
+- [src-ui/app/glossary-repo-flow.js](/Users/hans/Desktop/GnosisTMS/src-ui/app/glossary-repo-flow.js)
+- [src-ui/app/glossary-discovery-flow.js](/Users/hans/Desktop/GnosisTMS/src-ui/app/glossary-discovery-flow.js)
+- [src-ui/app/project-flow.js](/Users/hans/Desktop/GnosisTMS/src-ui/app/project-flow.js)
+
+Verification already completed for current Stage 1 work:
+
+- `npm test`: passed
+- `npm run build`: passed
+- `cargo check`: passed
+
+Current Stage 1 caveat:
+
+- the Projects-side fallback is intentionally conservative
+- it preserves already-visible cached/local project state when a remote refresh comes back empty
+- it does not yet introduce true local project identity or full local-first project discovery
+- that deeper project model is deferred to `Stage 2`
+
+Recommended resume point if a thread crashes now:
+
+1. Re-test the exact glossary regression manually:
+   - import glossary
+   - editor opens
+   - go back to Glossaries page
+   - refresh page
+   - restart app
+2. If behavior is correct, keep the Stage 1 files as-is; they are already part of the current combined Stage 1 + Stage 2 worktree.
+3. Stage 2 local sync identity work is already in the current local worktree; do not redo it before inspecting the new `.git/gnosis-sync-state.json` files.
+
+### Stage 2 Progress
+
+Stage goal:
+
+- add machine-local sync identity metadata to project and glossary repos
+- keep that metadata out of tracked content files
+- persist enough local state to distinguish unsynced-local repos from previously synced repos later
+
+Completed in the current local worktree:
+
+- Added a shared Rust helper that writes local sync identity metadata to `gnosis-sync-state.json` inside each repo's `.git` directory.
+- Glossary create/import flows now initialize local sync metadata with glossary UUID and kind immediately after successful local repo initialization.
+- Glossary repo sync now records successful remote linkage with `hasEverSynced`, `lastKnownFullName`, `lastKnownGithubRepoId`, and `lastSuccessfulSyncAt`.
+- Project repo clone/sync now records the same local sync identity fields using the shared helper.
+- Glossary and project sync descriptors now pass `repoId` through from the JS side so Rust can persist the last-known remote GitHub repo identity locally.
+
+Files changed for current Stage 2 work:
+
+- [src-tauri/src/local_repo_sync_state.rs](/Users/hans/Desktop/GnosisTMS/src-tauri/src/local_repo_sync_state.rs)
+- [src-tauri/src/glossary_storage.rs](/Users/hans/Desktop/GnosisTMS/src-tauri/src/glossary_storage.rs)
+- [src-tauri/src/glossary_repo_sync.rs](/Users/hans/Desktop/GnosisTMS/src-tauri/src/glossary_repo_sync.rs)
+- [src-tauri/src/project_repo_sync.rs](/Users/hans/Desktop/GnosisTMS/src-tauri/src/project_repo_sync.rs)
+- [src-tauri/src/lib.rs](/Users/hans/Desktop/GnosisTMS/src-tauri/src/lib.rs)
+- [src-ui/app/glossary-repo-flow.js](/Users/hans/Desktop/GnosisTMS/src-ui/app/glossary-repo-flow.js)
+- [src-ui/app/project-repo-sync-flow.js](/Users/hans/Desktop/GnosisTMS/src-ui/app/project-repo-sync-flow.js)
+
+Verification already completed for current Stage 2 work:
+
+- `npm test`: passed
+- `npm run build`: passed
+- `cargo check`: passed
+
+Current Stage 2 caveat:
+
+- the new local sync identity is being written and refreshed, but the UI does not consume it yet for conflict/recovery decisions
+- local-first visibility still depends on the Stage 1 guardrails rather than the eventual metadata-driven reconciliation model
+- `team-metadata` and local sync-state resolution are still future stages
+
+Recommended resume point if a thread crashes now:
+
+1. Spot-check a freshly created/imported glossary repo and a freshly cloned project repo for `.git/gnosis-sync-state.json`.
+2. Commit the current Stage 1 + Stage 2 work together if the local metadata files look correct.
+3. Then begin Stage 3 by creating the `team-metadata` repo contract and broker bootstrap flow for new teams.
+
 ## Goal
 
 Make local git repos the only user-facing source of truth for Projects and Glossaries, while adding a shared `team-metadata` repo so repo identity, lifecycle, permanent deletion, and remote reconciliation become unambiguous across clients.

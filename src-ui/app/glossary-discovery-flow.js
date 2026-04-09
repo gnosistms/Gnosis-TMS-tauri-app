@@ -165,11 +165,18 @@ export async function loadTeamGlossaries(
     }
 
     failPageSync();
-    if (!preserveVisibleData || state.glossaryDiscovery?.status !== "ready") {
+    const hasVisibleLocalData = state.glossaries.length > 0;
+    if (!preserveVisibleData && !hasVisibleLocalData && state.glossaryDiscovery?.status !== "ready") {
       state.glossaryDiscovery = {
         ...createGlossaryDiscoveryState(),
         status: "error",
         error: error?.message ?? String(error),
+      };
+    } else {
+      state.glossaryDiscovery = {
+        ...createGlossaryDiscoveryState(),
+        status: "ready",
+        brokerWarning: state.glossaryDiscovery?.brokerWarning ?? "",
       };
     }
     showNoticeBadge(error?.message ?? String(error), render);

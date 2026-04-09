@@ -75,6 +75,7 @@ function glossaryRepoSyncDescriptor(repo) {
   return {
     repoName: repo.name,
     fullName: repo.fullName,
+    repoId: Number.isFinite(repo.repoId) ? repo.repoId : null,
     defaultBranchName: repo.defaultBranchName || "main",
     defaultBranchHeadOid: repo.defaultBranchHeadOid || null,
   };
