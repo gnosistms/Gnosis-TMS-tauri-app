@@ -5,7 +5,9 @@
 ### Current Status
 
 - current implementation stage: `Stage 6`
-- stage status: `implemented locally, not yet committed`
+- stage status: `implemented and committed in the app repo`
+- latest app commit: `360bbfe` `Add tombstones for permanent deletes`
+- latest broker commit relevant to this plan: `3495771` `Add team metadata read routes`
 - next intended stage: `Stage 7`
 
 ### Stage 1 Progress
@@ -1066,6 +1068,22 @@ Testing after Stage 2:
 
 ### Stage 3: Create `team-metadata` Repo For New Teams
 
+Status as of April 9, 2026:
+
+- implemented
+- app commit: `ce23778` `Add team metadata repo inspection command`
+- broker commit: `51f696a` `Bootstrap team metadata repo during org setup`
+
+What is now done:
+
+- new team/org setup creates the `team-metadata` repo automatically
+- the repo is initialized with the manifest and required directory structure
+- the app verifies setup by checking that the metadata repo is readable before treating team setup as complete
+
+Deployment note:
+
+- the broker commit above was pushed so hosted broker environments can deploy this setup path
+
 Scope:
 
 - extend broker/team provisioning to create `team-metadata`
@@ -1090,6 +1108,22 @@ Testing after Stage 3:
   - `cargo check`
 
 ### Stage 4: Write Metadata Records During Create / Import
+
+Status as of April 9, 2026:
+
+- implemented
+- app commit: `50bc3db` `Persist team metadata records during repo creation`
+- broker commit: `dc54dad` `Add team metadata record routes`
+
+What is now done:
+
+- project create writes metadata records from the start instead of waiting for later discovery
+- glossary create/import writes metadata records during creation/import
+- optimistic local-first rendering stays in place while metadata and remote repo linkage complete in the background
+
+Deployment note:
+
+- the broker commit above must be deployed for live metadata writes during create/import
 
 Scope:
 
@@ -1146,6 +1180,7 @@ Known boundary after Stage 5:
 Deployment note:
 
 - Stage 5 requires the broker commit above to be pushed/deployed before the app can use the new metadata read routes live
+- that broker commit has already been pushed; deployment is the remaining hosted-environment dependency
 
 Scope:
 
@@ -1175,7 +1210,8 @@ Testing after Stage 5:
 
 Status as of April 9, 2026:
 
-- implemented locally
+- implemented
+- app commit: `360bbfe` `Add tombstones for permanent deletes`
 
 What is now done:
 
