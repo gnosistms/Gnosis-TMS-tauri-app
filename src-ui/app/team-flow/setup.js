@@ -31,6 +31,12 @@ export async function beginTeamOrgSetup(render) {
   openExternalUrl(GITHUB_FREE_ORG_SETUP_URL);
 }
 
+export function acknowledgeTeamSetup(render) {
+  state.teamSetup.step = "guide";
+  state.teamSetup.error = "";
+  render();
+}
+
 export async function beginGithubAppInstall(render) {
   try {
     const { installUrl } = await invoke("begin_github_app_install");

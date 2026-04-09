@@ -14,6 +14,7 @@ import {
   submitTeamRename,
 } from "../team-flow/actions.js";
 import {
+  acknowledgeTeamSetup,
   beginGithubAppInstall,
   beginTeamOrgSetup,
   cancelTeamSetup,
@@ -33,6 +34,7 @@ export function createTeamActions(render) {
     "cancel-team-rename": () => cancelTeamRename(render),
     "cancel-team-permanent-deletion": () => cancelTeamPermanentDeletion(render),
     "cancel-team-leave": () => cancelTeamLeave(render),
+    "acknowledge-team-setup": () => acknowledgeTeamSetup(render),
     "begin-github-app-install": () => beginGithubAppInstall(render),
     "begin-team-org-setup": () => beginTeamOrgSetup(render),
     "finish-team-setup": () => finishTeamSetup(render),

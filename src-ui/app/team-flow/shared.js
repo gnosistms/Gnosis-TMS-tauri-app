@@ -28,7 +28,7 @@ export function removeDeletedMarkerFromDescription(description) {
 
 export function resetOpenState() {
   return {
-    step: "guide",
+    step: "intro",
     error: "",
     githubAppInstallationId: null,
     githubAppInstallation: null,

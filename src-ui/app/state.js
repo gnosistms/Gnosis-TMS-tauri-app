@@ -162,7 +162,7 @@ export function createConnectionFailureState() {
 export function createTeamSetupState() {
   return {
     isOpen: false,
-    step: "guide",
+    step: "intro",
     error: "",
     githubAppInstallationId: null,
     githubAppInstallation: null,

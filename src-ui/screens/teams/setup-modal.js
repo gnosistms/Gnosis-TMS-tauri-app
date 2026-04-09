@@ -45,10 +45,23 @@ function renderFinishSummary() {
 }
 
 function getStepConfig(setup) {
+  const isIntroStep = setup.step === "intro";
   const isGuideStep = setup.step === "guide";
   const isInstallStep = setup.step === "confirm";
   const isWaitingForInstallStep = setup.step === "waitingForAppInstall";
   const isFinishInstallStep = setup.step === "finishInstall";
+
+  if (isIntroStep) {
+    return {
+      eyebrow: "New Team",
+      heading: "Before you create a new team",
+      supporting:
+        "Creating a new team is a process with several steps. It's not complicated but you must follow all the steps in order exactly as directed.",
+      afterBodySupporting: "",
+      body: "",
+      actionButton: primaryButton("I understand", "acknowledge-team-setup"),
+    };
+  }
 
   if (isGuideStep) {
     return {
@@ -107,6 +120,9 @@ export function renderSetupModal(state) {
   const errorMarkup = setup.error
     ? `<p class="modal__error">${escapeHtml(formatErrorForDisplay(setup.error))}</p>`
     : "";
+  const supportingMarkup = supporting
+    ? `<p class="modal__supporting">${supporting}</p>`
+    : "";
   const afterBodyMarkup = afterBodySupporting
     ? `<p class="modal__supporting">${afterBodySupporting}</p>`
     : "";
@@ -117,7 +133,7 @@ export function renderSetupModal(state) {
         <div class="card__body modal-card__body">
           <p class="card__eyebrow">${eyebrow}</p>
           <h2 class="modal__title">${heading}</h2>
-          <p class="modal__supporting">${supporting}</p>
+          ${supportingMarkup}
           <div class="modal__form">${body}</div>
           ${afterBodyMarkup}
           ${errorMarkup}
