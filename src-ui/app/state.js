@@ -78,9 +78,12 @@ export const state = {
   chapterPermanentDeletion: createChapterPermanentDeletionState(),
   chapterGlossaryConflict: createChapterGlossaryConflictState(),
   glossaryCreation: createGlossaryCreationState(),
+  glossaryRename: createGlossaryRenameState(),
+  glossaryPermanentDeletion: createGlossaryPermanentDeletionState(),
   glossaryTermEditor: createGlossaryTermEditorState(),
   showDeletedProjects: false,
   showDeletedTeams: false,
+  showDeletedGlossaries: false,
 };
 
 export function hydratePersistentAppState() {
@@ -270,6 +273,21 @@ export function createGlossaryCreationState() {
   });
 }
 
+export function createGlossaryRenameState() {
+  return createEntityModalState({
+    glossaryId: null,
+    glossaryName: "",
+  });
+}
+
+export function createGlossaryPermanentDeletionState() {
+  return createEntityModalState({
+    glossaryId: null,
+    glossaryName: "",
+    confirmationText: "",
+  });
+}
+
 export function createInviteUserState() {
   return {
     isOpen: false,
@@ -421,6 +439,14 @@ export function resetGlossaryCreation() {
   state.glossaryCreation = createGlossaryCreationState();
 }
 
+export function resetGlossaryRename() {
+  state.glossaryRename = createGlossaryRenameState();
+}
+
+export function resetGlossaryPermanentDeletion() {
+  state.glossaryPermanentDeletion = createGlossaryPermanentDeletionState();
+}
+
 export function resetSessionState() {
   clearActiveStorageLogin();
   const offlineState = {
@@ -477,9 +503,12 @@ export function resetSessionState() {
   resetChapterGlossaryConflict();
   resetProjectPermanentDeletion();
   resetGlossaryCreation();
+  resetGlossaryRename();
+  resetGlossaryPermanentDeletion();
   resetGlossaryTermEditor();
   state.showDeletedProjects = false;
   state.showDeletedTeams = false;
+  state.showDeletedGlossaries = false;
   state.expandedProjects = new Set();
   state.expandedDeletedFiles = new Set();
 }

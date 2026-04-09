@@ -14,6 +14,8 @@ import {
 } from "./team-setup-flow.js";
 import { updateInviteUserQuery } from "./invite-user-flow.js";
 import {
+  updateGlossaryPermanentDeletionConfirmation,
+  updateGlossaryRenameName,
   updateGlossaryTermVariant,
   updateGlossaryCreationField,
   updateGlossaryTermDraftField,
@@ -151,6 +153,31 @@ function handleGlossaryTargetLanguageInput(event) {
   }
 
   updateGlossaryCreationField("targetLanguageCode", input.value);
+  return true;
+}
+
+function handleGlossaryRenameInput(event) {
+  const input = event.target.closest("[data-glossary-rename-input]");
+  if (!input) {
+    return false;
+  }
+
+  updateGlossaryRenameName(input.value);
+  return true;
+}
+
+function handleGlossaryPermanentDeleteInput(event) {
+  const input = event.target.closest("[data-glossary-permanent-delete-input]");
+  if (!input) {
+    return false;
+  }
+
+  updateGlossaryPermanentDeletionConfirmation(input.value);
+  const deleteButton = document.querySelector("[data-glossary-permanent-delete-button]");
+  if (deleteButton) {
+    deleteButton.disabled =
+      input.value !== state.glossaryPermanentDeletion.glossaryName;
+  }
   return true;
 }
 
@@ -310,6 +337,8 @@ const inputHandlers = [
   handleGlossaryTitleInput,
   handleGlossarySourceLanguageInput,
   handleGlossaryTargetLanguageInput,
+  handleGlossaryRenameInput,
+  handleGlossaryPermanentDeleteInput,
   handleGlossaryTermSearchInput,
   handleGlossaryTermVariantInput,
   handleGlossaryTermNotesInput,

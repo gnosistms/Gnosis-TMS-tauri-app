@@ -97,6 +97,17 @@
   font-size: 0.98rem;
 }
 
+.glossary-card__language-flow {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.glossary-card__language-arrow {
+  color: rgba(137, 107, 71, 0.74);
+}
+
 .list-row__warning-box,
 .list-row__warning-box.message-box {
   width: 100%;

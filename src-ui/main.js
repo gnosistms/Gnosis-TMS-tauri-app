@@ -77,6 +77,8 @@ function captureFocusedInputState() {
     "[data-glossary-title-input]",
     "[data-glossary-source-language-select]",
     "[data-glossary-target-language-select]",
+    "[data-glossary-rename-input]",
+    "[data-glossary-permanent-delete-input]",
     "[data-glossary-term-search-input]",
   ];
 

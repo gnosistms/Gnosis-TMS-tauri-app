@@ -1,16 +1,25 @@
 import {
   addGlossaryTermVariant,
+  cancelGlossaryPermanentDeletion,
+  cancelGlossaryRename,
   cancelGlossaryCreation,
   cancelGlossaryTermEditor,
+  confirmGlossaryPermanentDeletion,
+  deleteGlossary,
   deleteGlossaryTerm,
   importGlossaryFromTmx,
   moveGlossaryTermVariantToIndex,
   openGlossaryCreation,
+  openGlossaryPermanentDeletion,
+  openGlossaryRename,
   openGlossaryTermEditor,
   removeGlossaryTermVariant,
+  restoreGlossary,
   showGlossaryFeatureNotReady,
   submitGlossaryCreation,
+  submitGlossaryRename,
   submitGlossaryTermEditor,
+  toggleDeletedGlossaries,
 } from "../glossary-flow.js";
 import { actionSuffix, runWithImmediateLoading } from "../action-helpers.js";
 
@@ -42,11 +51,14 @@ function parseVariantAction(action) {
 
 export function createGlossaryActions(render) {
   const exactActions = {
+    "cancel-glossary-permanent-deletion": () => cancelGlossaryPermanentDeletion(render),
+    "cancel-glossary-rename": () => cancelGlossaryRename(render),
     "cancel-glossary-term-editor": () => cancelGlossaryTermEditor(render),
     "cancel-glossary-creation": () => cancelGlossaryCreation(render),
     "open-new-glossary": () => openGlossaryCreation(render),
     "import-glossary": () => importGlossaryFromTmx(render),
     "open-new-term": () => openGlossaryTermEditor(render),
+    "toggle-deleted-glossaries": () => toggleDeletedGlossaries(render),
   };
 
   const prefixHandlers = [
@@ -61,11 +73,21 @@ export function createGlossaryActions(render) {
     },
     {
       prefix: "rename-glossary:",
-      handler: () => showGlossaryFeatureNotReady(render, "Glossary rename"),
+      handler: (glossaryId) => openGlossaryRename(render, glossaryId),
     },
     {
       prefix: "delete-glossary:",
-      handler: () => showGlossaryFeatureNotReady(render, "Glossary delete"),
+      handler: async (glossaryId, event) =>
+        runWithImmediateLoading(event, "Deleting...", () => deleteGlossary(render, glossaryId)),
+    },
+    {
+      prefix: "restore-glossary:",
+      handler: async (glossaryId, event) =>
+        runWithImmediateLoading(event, "Restoring...", () => restoreGlossary(render, glossaryId)),
+    },
+    {
+      prefix: "delete-deleted-glossary:",
+      handler: (glossaryId) => openGlossaryPermanentDeletion(render, glossaryId),
     },
     {
       prefix: "download-glossary:",
@@ -102,6 +124,16 @@ export function createGlossaryActions(render) {
     }
     if (action === "submit-glossary-creation") {
       await runWithImmediateLoading(event, "Creating...", () => submitGlossaryCreation(render));
+      return true;
+    }
+    if (action === "submit-glossary-rename") {
+      await runWithImmediateLoading(event, "Saving...", () => submitGlossaryRename(render));
+      return true;
+    }
+    if (action === "confirm-glossary-permanent-deletion") {
+      await runWithImmediateLoading(event, "Deleting...", () =>
+        confirmGlossaryPermanentDeletion(render),
+      );
       return true;
     }
 

@@ -2,11 +2,13 @@ import { invoke, waitForNextPaint } from "./runtime.js";
 import { beginPageSync, completePageSync, failPageSync } from "./page-sync.js";
 import { state } from "./state.js";
 import { showNoticeBadge } from "./status-feedback.js";
+import { selectedTeam } from "./glossary-shared.js";
 import {
-  normalizeGlossarySummary,
-  selectedTeam,
-  sortGlossaries,
-} from "./glossary-shared.js";
+  getGlossarySyncIssueMessage,
+  loadRepoBackedGlossariesForTeam,
+} from "./glossary-repo-flow.js";
+import { classifySyncError } from "./sync-error.js";
+import { handleSyncFailure } from "./sync-recovery.js";
 
 export function primeGlossariesLoadingState(teamId = state.selectedTeamId) {
   const team = selectedTeam(teamId);
@@ -50,22 +52,34 @@ export async function loadTeamGlossaries(
   await waitForNextPaint();
 
   try {
-    const glossaries = await invoke("list_local_gtms_glossaries", {
-      input: { installationId: team.installationId },
+    const { glossaries, syncSnapshots } = await loadRepoBackedGlossariesForTeam(team, {
+      offlineMode: state.offline?.isEnabled === true,
     });
-    state.glossaries = sortGlossaries(
-      (Array.isArray(glossaries) ? glossaries : [])
-        .map(normalizeGlossarySummary)
-        .filter(Boolean),
-    );
+    state.glossaries = glossaries;
 
-    if (!state.glossaries.some((glossary) => glossary.id === state.selectedGlossaryId)) {
-      state.selectedGlossaryId = state.glossaries[0]?.id ?? null;
+    const activeGlossaries = state.glossaries.filter((glossary) => glossary.lifecycleState !== "deleted");
+    if (!activeGlossaries.some((glossary) => glossary.id === state.selectedGlossaryId)) {
+      state.selectedGlossaryId = activeGlossaries[0]?.id ?? null;
     }
 
     state.glossaryDiscovery = { status: "ready", error: "" };
+    const syncIssue = getGlossarySyncIssueMessage(syncSnapshots);
+    if (syncIssue) {
+      showNoticeBadge(syncIssue, render);
+    }
     await completePageSync(render);
   } catch (error) {
+    if (
+      await handleSyncFailure(classifySyncError(error), {
+        render,
+        teamId: team?.id ?? null,
+        currentResource: true,
+      })
+    ) {
+      failPageSync();
+      return;
+    }
+
     failPageSync();
     if (!preserveVisibleData || state.glossaryDiscovery?.status !== "ready") {
       state.glossaryDiscovery = {

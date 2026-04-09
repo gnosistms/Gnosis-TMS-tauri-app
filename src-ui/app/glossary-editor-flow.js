@@ -9,6 +9,10 @@ import {
   selectedGlossaryRepoName,
   selectedTeam,
 } from "./glossary-shared.js";
+import {
+  getGlossarySyncIssueMessage,
+  syncSingleGlossaryForTeam,
+} from "./glossary-repo-flow.js";
 
 export function primeSelectedGlossaryEditorLoadingState() {
   const glossary = selectedGlossary();
@@ -145,6 +149,12 @@ export async function deleteGlossaryTerm(render, termId) {
         termId,
       },
     });
+    const syncIssue = getGlossarySyncIssueMessage(
+      await syncSingleGlossaryForTeam(team, selectedGlossary()),
+    );
+    if (syncIssue) {
+      showNoticeBadge(syncIssue, render);
+    }
     await loadSelectedGlossaryEditorData(render);
   } catch (error) {
     showNoticeBadge(error?.message ?? String(error), render);

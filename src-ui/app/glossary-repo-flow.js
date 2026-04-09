@@ -1,0 +1,246 @@
+import { requireBrokerSession } from "./auth-flow.js";
+import { invoke } from "./runtime.js";
+import { normalizeGlossarySummary, sortGlossaries } from "./glossary-shared.js";
+
+function normalizeRemoteGlossaryRepo(repo) {
+  if (!repo || typeof repo !== "object") {
+    return null;
+  }
+
+  const name =
+    typeof repo.name === "string" && repo.name.trim()
+      ? repo.name.trim()
+      : null;
+  const fullName =
+    typeof repo.fullName === "string" && repo.fullName.trim()
+      ? repo.fullName.trim()
+      : null;
+  if (!name || !fullName) {
+    return null;
+  }
+
+  return {
+    repoId: Number.isFinite(repo.repoId) ? repo.repoId : null,
+    name,
+    fullName,
+    htmlUrl:
+      typeof repo.htmlUrl === "string" && repo.htmlUrl.trim()
+        ? repo.htmlUrl.trim()
+        : "",
+    private: repo.private !== false,
+    description:
+      typeof repo.description === "string" && repo.description.trim()
+        ? repo.description.trim()
+        : "",
+    defaultBranchName:
+      typeof repo.defaultBranchName === "string" && repo.defaultBranchName.trim()
+        ? repo.defaultBranchName.trim()
+        : "main",
+    defaultBranchHeadOid:
+      typeof repo.defaultBranchHeadOid === "string" && repo.defaultBranchHeadOid.trim()
+        ? repo.defaultBranchHeadOid.trim()
+        : null,
+  };
+}
+
+function glossaryRepoSyncDescriptor(repo) {
+  return {
+    repoName: repo.name,
+    fullName: repo.fullName,
+    defaultBranchName: repo.defaultBranchName || "main",
+    defaultBranchHeadOid: repo.defaultBranchHeadOid || null,
+  };
+}
+
+export function glossaryArchiveDownloadUrl(glossary) {
+  const htmlUrl =
+    typeof glossary?.htmlUrl === "string" && glossary.htmlUrl.trim()
+      ? glossary.htmlUrl.trim()
+      : "";
+  if (!htmlUrl) {
+    return "";
+  }
+
+  const branchName =
+    typeof glossary?.defaultBranchName === "string" && glossary.defaultBranchName.trim()
+      ? glossary.defaultBranchName.trim()
+      : "main";
+  return `${htmlUrl}/archive/refs/heads/${encodeURIComponent(branchName)}.zip`;
+}
+
+export function getGlossarySyncIssueMessage(syncSnapshots) {
+  const snapshots = Array.isArray(syncSnapshots) ? syncSnapshots : [];
+  const failedSnapshot = snapshots.find((snapshot) =>
+    snapshot?.status === "syncError" || snapshot?.status === "dirtyLocal",
+  );
+  if (!failedSnapshot) {
+    return "";
+  }
+
+  return typeof failedSnapshot.message === "string" && failedSnapshot.message.trim()
+    ? failedSnapshot.message.trim()
+    : `Could not sync glossary repo ${failedSnapshot.repoName ?? ""}.`.trim();
+}
+
+export async function listRemoteGlossaryReposForTeam(team) {
+  if (!Number.isFinite(team?.installationId)) {
+    return [];
+  }
+
+  const repos = await invoke("list_gnosis_glossaries_for_installation", {
+    installationId: team.installationId,
+    sessionToken: requireBrokerSession(),
+  });
+
+  return (Array.isArray(repos) ? repos : [])
+    .map(normalizeRemoteGlossaryRepo)
+    .filter(Boolean);
+}
+
+export async function syncGlossaryReposForTeam(team, remoteRepos) {
+  const glossaries = (Array.isArray(remoteRepos) ? remoteRepos : [])
+    .map(normalizeRemoteGlossaryRepo)
+    .filter(Boolean);
+  if (!Number.isFinite(team?.installationId) || glossaries.length === 0) {
+    return [];
+  }
+
+  const snapshots = await invoke("sync_gtms_glossary_repos", {
+    input: {
+      installationId: team.installationId,
+      glossaries: glossaries.map(glossaryRepoSyncDescriptor),
+    },
+    sessionToken: requireBrokerSession(),
+  });
+
+  return Array.isArray(snapshots) ? snapshots : [];
+}
+
+export async function listLocalGlossarySummariesForTeam(team) {
+  if (!Number.isFinite(team?.installationId)) {
+    return [];
+  }
+
+  const glossaries = await invoke("list_local_gtms_glossaries", {
+    input: { installationId: team.installationId },
+  });
+
+  return Array.isArray(glossaries) ? glossaries : [];
+}
+
+export function mergeRepoBackedGlossarySummaries(localSummaries, remoteRepos) {
+  const remoteByRepoName = new Map(
+    (Array.isArray(remoteRepos) ? remoteRepos : [])
+      .map(normalizeRemoteGlossaryRepo)
+      .filter(Boolean)
+      .map((repo) => [repo.name, repo]),
+  );
+
+  return sortGlossaries(
+    (Array.isArray(localSummaries) ? localSummaries : [])
+      .map((summary) => {
+        const normalized = normalizeGlossarySummary(summary);
+        if (!normalized) {
+          return null;
+        }
+
+        const remoteRepo = remoteByRepoName.get(normalized.repoName);
+        if (!remoteRepo) {
+          return null;
+        }
+
+        return {
+          ...normalized,
+          fullName: remoteRepo.fullName,
+          htmlUrl: remoteRepo.htmlUrl,
+          defaultBranchName: remoteRepo.defaultBranchName,
+          defaultBranchHeadOid: remoteRepo.defaultBranchHeadOid,
+        };
+      })
+      .filter(Boolean),
+  );
+}
+
+export async function loadRepoBackedGlossariesForTeam(team, options = {}) {
+  const offlineMode = options.offlineMode === true;
+  const localSummaries = await listLocalGlossarySummariesForTeam(team);
+
+  if (offlineMode || !Number.isFinite(team?.installationId)) {
+    return {
+      glossaries: sortGlossaries(
+        localSummaries.map(normalizeGlossarySummary).filter(Boolean),
+      ),
+      remoteRepos: [],
+      syncSnapshots: [],
+    };
+  }
+
+  const remoteRepos = await listRemoteGlossaryReposForTeam(team);
+  const syncSnapshots = await syncGlossaryReposForTeam(team, remoteRepos);
+  const refreshedLocalSummaries = await listLocalGlossarySummariesForTeam(team);
+
+  return {
+    glossaries: mergeRepoBackedGlossarySummaries(refreshedLocalSummaries, remoteRepos),
+    remoteRepos,
+    syncSnapshots,
+  };
+}
+
+export async function createRemoteGlossaryRepoForTeam(team, repoName) {
+  const remoteRepo = normalizeRemoteGlossaryRepo(
+    await invoke("create_gnosis_glossary_repo", {
+      input: {
+        installationId: team.installationId,
+        orgLogin: team.githubOrg,
+        repoName,
+      },
+      sessionToken: requireBrokerSession(),
+    }),
+  );
+  if (!remoteRepo) {
+    throw new Error("Could not determine the new glossary repo metadata.");
+  }
+  return remoteRepo;
+}
+
+export async function permanentlyDeleteRemoteGlossaryRepoForTeam(team, repoName) {
+  await invoke("permanently_delete_gnosis_glossary_repo", {
+    input: {
+      installationId: team.installationId,
+      orgLogin: team.githubOrg,
+      repoName,
+    },
+    sessionToken: requireBrokerSession(),
+  });
+}
+
+export async function syncSingleGlossaryForTeam(team, glossary) {
+  const repo =
+    glossary && typeof glossary === "object"
+      ? normalizeRemoteGlossaryRepo({
+          name: glossary.repoName ?? glossary.name,
+          fullName: glossary.fullName,
+          htmlUrl: glossary.htmlUrl,
+          private: glossary.private,
+          description: glossary.description,
+          defaultBranchName: glossary.defaultBranchName,
+          defaultBranchHeadOid: glossary.defaultBranchHeadOid,
+          repoId: glossary.repoId,
+        })
+      : null;
+
+  if (!repo) {
+    return [];
+  }
+
+  return syncGlossaryReposForTeam(team, [repo]);
+}
+
+export function slugifyGlossaryRepoName(value) {
+  return String(value)
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 100);
+}

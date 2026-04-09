@@ -489,33 +489,45 @@ a {
 }
 
 .chevron-icon,
-.collapse-chevron {
+.collapse-chevron,
+.flow-arrow-icon {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   flex: 0 0 auto;
-  width: 0.72em;
-  height: 0.72em;
   color: currentColor;
   line-height: 1;
+}
+
+.chevron-icon,
+.collapse-chevron {
+  width: 0.72em;
+  height: 0.72em;
   transform: translateY(var(--collapse-chevron-shift-y, 0));
   transition: transform 160ms ease, opacity 160ms ease, color 160ms ease;
 }
 
 .chevron-icon svg,
-.collapse-chevron svg {
+.collapse-chevron svg,
+.flow-arrow-icon svg {
   display: block;
   width: 100%;
   height: 100%;
 }
 
 .chevron-icon path,
-.collapse-chevron path {
+.collapse-chevron path,
+.flow-arrow-icon path {
   fill: none;
   stroke: currentColor;
   stroke-width: 1.7;
   stroke-linecap: round;
   stroke-linejoin: round;
+}
+
+.flow-arrow-icon {
+  width: 1em;
+  height: 0.65em;
 }
 
 .chevron-icon--down,

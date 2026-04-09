@@ -42,7 +42,7 @@ export function renderGlossaryCreationModal(state) {
           <p class="card__eyebrow">NEW GLOSSARY</p>
           <h2 class="modal__title">Create A New Glossary</h2>
           <p class="modal__supporting">
-            This initializes a git-backed glossary in local app storage so you can start adding terms immediately.
+            This creates a glossary repository for this team and initializes its <strong>glossary.json</strong> so you can start adding terms immediately.
           </p>
           <div class="modal__form">
             <label class="field">

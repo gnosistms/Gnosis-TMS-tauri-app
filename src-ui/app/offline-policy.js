@@ -16,6 +16,12 @@ const OFFLINE_BLOCKED_EXACT_ACTIONS = new Set([
   "submit-project-creation",
   "submit-project-rename",
   "confirm-project-permanent-deletion",
+  "open-new-glossary",
+  "import-glossary",
+  "submit-glossary-creation",
+  "submit-glossary-rename",
+  "confirm-glossary-permanent-deletion",
+  "submit-glossary-term-editor",
   "start-github-app-test-install",
   "refresh-github-app-test-installation",
   "load-github-app-test-repositories",
@@ -34,6 +40,11 @@ const OFFLINE_BLOCKED_PREFIXES = [
   "restore-project:",
   "delete-deleted-project:",
   "delete-deleted-file:",
+  "rename-glossary:",
+  "delete-glossary:",
+  "restore-glossary:",
+  "delete-deleted-glossary:",
+  "delete-glossary-term:",
 ];
 
 export function isOfflineBlockedAction(action) {

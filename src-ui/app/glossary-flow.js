@@ -11,6 +11,19 @@ export {
   updateGlossaryTermSearchQuery,
 } from "./glossary-editor-flow.js";
 export {
+  cancelGlossaryPermanentDeletion,
+  cancelGlossaryRename,
+  confirmGlossaryPermanentDeletion,
+  deleteGlossary,
+  openGlossaryPermanentDeletion,
+  openGlossaryRename,
+  restoreGlossary,
+  submitGlossaryRename,
+  toggleDeletedGlossaries,
+  updateGlossaryPermanentDeletionConfirmation,
+  updateGlossaryRenameName,
+} from "./glossary-lifecycle-flow.js";
+export {
   cancelGlossaryCreation,
   importGlossaryFromTmx,
   openGlossaryCreation,

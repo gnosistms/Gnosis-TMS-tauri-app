@@ -147,6 +147,20 @@ export function renderCollapseChevron(isOpen = false, className = "") {
   return renderChevronIcon(isOpen ? "down" : "right", classes);
 }
 
+export function renderFlowArrowIcon(className = "") {
+  const classes = ["flow-arrow-icon", className]
+    .filter(Boolean)
+    .join(" ");
+  return `
+    <span class="${classes}" aria-hidden="true">
+      <svg viewBox="0 0 16 10" focusable="false" aria-hidden="true">
+        <path d="M1 5h12" />
+        <path d="m9.5 1.5 4 3.5-4 3.5" />
+      </svg>
+    </span>
+  `;
+}
+
 export function titleRefreshButton(action, options = {}) {
   const spinDelayMs =
     options.spinning && Number.isFinite(options.spinStartedAt)

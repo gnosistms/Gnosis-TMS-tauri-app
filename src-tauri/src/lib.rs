@@ -5,6 +5,7 @@ mod callbacks;
 mod constants;
 mod drafts;
 mod git_commit;
+mod glossary_repo_sync;
 mod glossary_storage;
 mod github;
 mod github_app_test;
@@ -31,19 +32,22 @@ use crate::{
   constants::MAIN_WINDOW_BACKGROUND,
   drafts::create_team_setup_draft,
   glossary_storage::{
-    create_local_gtms_glossary, delete_gtms_glossary_term, import_tmx_to_local_gtms_glossary,
-    list_local_gtms_glossaries,
-    load_gtms_glossary_editor_data, upsert_gtms_glossary_term,
+    delete_gtms_glossary_term, import_tmx_to_gtms_glossary_repo, initialize_gtms_glossary_repo,
+    list_local_gtms_glossaries, load_gtms_glossary_editor_data, purge_local_gtms_glossary_repo,
+    rename_gtms_glossary, restore_gtms_glossary, soft_delete_gtms_glossary,
+    upsert_gtms_glossary_term,
   },
+  glossary_repo_sync::sync_gtms_glossary_repos,
   github::{
     add_organization_admin_for_installation,
-    begin_github_app_install, create_gnosis_project_repo, delete_organization_for_installation,
+    begin_github_app_install, create_gnosis_glossary_repo, create_gnosis_project_repo, delete_organization_for_installation,
     ensure_gnosis_repo_properties_schema, inspect_github_app_installation,
-    invite_user_to_organization_for_installation,
+    invite_user_to_organization_for_installation, list_gnosis_glossaries_for_installation,
     leave_organization_for_installation, list_gnosis_projects_for_installation,
     list_accessible_github_app_installations, list_organization_members_for_installation,
     remove_organization_member_for_installation,
     mark_gnosis_project_repo_deleted, permanently_delete_gnosis_project_repo, restore_gnosis_project_repo,
+    permanently_delete_gnosis_glossary_repo,
     revoke_organization_admin_for_installation,
     search_github_users_for_installation,
     rename_gnosis_project_repo, update_organization_name_for_installation,
@@ -267,11 +271,19 @@ pub fn run() {
       update_gtms_editor_row_field_flag,
       update_gtms_editor_row_fields,
       list_local_gtms_glossaries,
-      create_local_gtms_glossary,
-      import_tmx_to_local_gtms_glossary,
+      list_gnosis_glossaries_for_installation,
+      sync_gtms_glossary_repos,
+      create_gnosis_glossary_repo,
+      initialize_gtms_glossary_repo,
+      import_tmx_to_gtms_glossary_repo,
+      rename_gtms_glossary,
+      soft_delete_gtms_glossary,
+      restore_gtms_glossary,
+      purge_local_gtms_glossary_repo,
       load_gtms_glossary_editor_data,
       upsert_gtms_glossary_term,
       delete_gtms_glossary_term,
+      permanently_delete_gnosis_glossary_repo,
       list_github_app_test_repositories,
       list_organization_members_for_installation,
       search_github_users_for_installation,

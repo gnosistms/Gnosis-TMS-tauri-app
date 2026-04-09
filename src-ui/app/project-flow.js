@@ -20,10 +20,7 @@ import {
   replaceItem,
   upsertPendingMutation,
 } from "./optimistic-collection.js";
-import {
-  normalizeGlossarySummary,
-  sortGlossaries,
-} from "./glossary-shared.js";
+import { loadRepoBackedGlossariesForTeam } from "./glossary-repo-flow.js";
 import {
   resetChapterGlossaryConflict,
   resetChapterPermanentDeletion,
@@ -238,20 +235,15 @@ async function loadAvailableGlossariesForTeam(selectedTeam, teamIdAtStart = sele
     return [];
   }
 
-  const glossaries = await invoke("list_local_gtms_glossaries", {
-    input: { installationId: selectedTeam.installationId },
+  const { glossaries } = await loadRepoBackedGlossariesForTeam(selectedTeam, {
+    offlineMode: state.offline?.isEnabled === true,
   });
-  const normalizedGlossaries = sortGlossaries(
-    (Array.isArray(glossaries) ? glossaries : [])
-      .map(normalizeGlossarySummary)
-      .filter(Boolean),
-  );
 
   if (state.selectedTeamId === teamIdAtStart) {
-    state.glossaries = normalizedGlossaries;
+    state.glossaries = glossaries;
   }
 
-  return normalizedGlossaries;
+  return glossaries;
 }
 
 export async function refreshProjectFilesFromDisk(render, selectedTeam, projects) {

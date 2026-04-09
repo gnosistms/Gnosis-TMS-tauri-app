@@ -8,6 +8,10 @@ export function canManageGlossaries(team = selectedTeam()) {
   return team?.canManageProjects === true;
 }
 
+export function canPermanentlyDeleteGlossaries(team = selectedTeam()) {
+  return team?.canDelete === true;
+}
+
 export function sortGlossaries(glossaries) {
   return [...(Array.isArray(glossaries) ? glossaries : [])].sort((left, right) =>
     String(left?.title ?? "")
@@ -54,6 +58,22 @@ export function normalizeGlossarySummary(glossary) {
     targetLanguage: glossary.targetLanguage ?? null,
     lifecycleState: glossary.lifecycleState === "deleted" ? "deleted" : "active",
     termCount: Number.isFinite(glossary.termCount) ? glossary.termCount : 0,
+    fullName:
+      typeof glossary.fullName === "string" && glossary.fullName.trim()
+        ? glossary.fullName.trim()
+        : "",
+    htmlUrl:
+      typeof glossary.htmlUrl === "string" && glossary.htmlUrl.trim()
+        ? glossary.htmlUrl.trim()
+        : "",
+    defaultBranchName:
+      typeof glossary.defaultBranchName === "string" && glossary.defaultBranchName.trim()
+        ? glossary.defaultBranchName.trim()
+        : "main",
+    defaultBranchHeadOid:
+      typeof glossary.defaultBranchHeadOid === "string" && glossary.defaultBranchHeadOid.trim()
+        ? glossary.defaultBranchHeadOid.trim()
+        : null,
   };
 }
 

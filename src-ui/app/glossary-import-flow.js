@@ -7,6 +7,12 @@ import { loadTeamGlossaries } from "./glossary-discovery-flow.js";
 import { openGlossaryEditor } from "./glossary-editor-flow.js";
 import { canManageGlossaries, selectedTeam } from "./glossary-shared.js";
 import { openLocalFilePicker } from "./local-file-picker.js";
+import {
+  createRemoteGlossaryRepoForTeam,
+  permanentlyDeleteRemoteGlossaryRepoForTeam,
+  slugifyGlossaryRepoName,
+  syncGlossaryReposForTeam,
+} from "./glossary-repo-flow.js";
 
 function detectGlossaryImportFileType(fileName) {
   const normalized = String(fileName || "").trim().toLowerCase();
@@ -20,6 +26,11 @@ export function openGlossaryCreation(render) {
   const team = selectedTeam();
   if (!Number.isFinite(team?.installationId)) {
     showNoticeBadge("Creating a glossary requires a GitHub App-connected team.", render);
+    return;
+  }
+
+  if (state.offline?.isEnabled === true) {
+    showNoticeBadge("You cannot create glossaries while offline.", render);
     return;
   }
 
@@ -68,6 +79,12 @@ export async function submitGlossaryCreation(render) {
     return;
   }
 
+  if (state.offline?.isEnabled === true) {
+    state.glossaryCreation.error = "You cannot create glossaries while offline.";
+    render();
+    return;
+  }
+
   if (!canManageGlossaries(team)) {
     state.glossaryCreation.error = "You do not have permission to create glossaries in this team.";
     render();
@@ -75,6 +92,7 @@ export async function submitGlossaryCreation(render) {
   }
 
   const title = String(draft.title ?? "").trim();
+  const repoName = slugifyGlossaryRepoName(title);
   const sourceLanguageCode = String(draft.sourceLanguageCode ?? "").trim().toLowerCase();
   const targetLanguageCode = String(draft.targetLanguageCode ?? "").trim().toLowerCase();
   const sourceLanguage = findIsoLanguageOption(sourceLanguageCode);
@@ -82,6 +100,12 @@ export async function submitGlossaryCreation(render) {
 
   if (!title) {
     state.glossaryCreation.error = "Enter a glossary name.";
+    render();
+    return;
+  }
+
+  if (!repoName) {
+    state.glossaryCreation.error = "Glossary names must contain at least one letter or number.";
     render();
     return;
   }
@@ -103,10 +127,14 @@ export async function submitGlossaryCreation(render) {
   render();
   await waitForNextPaint();
 
+  let remoteRepo = null;
   try {
-    const glossary = await invoke("create_local_gtms_glossary", {
+    remoteRepo = await createRemoteGlossaryRepoForTeam(team, repoName);
+    await syncGlossaryReposForTeam(team, [remoteRepo]);
+    const glossary = await invoke("initialize_gtms_glossary_repo", {
       input: {
         installationId: team.installationId,
+        repoName: remoteRepo.name,
         title,
         sourceLanguageCode: sourceLanguage.code,
         sourceLanguageName: sourceLanguage.name,
@@ -120,6 +148,24 @@ export async function submitGlossaryCreation(render) {
     await openGlossaryEditor(render, glossary.glossaryId);
     showNoticeBadge(`Created glossary ${glossary.title}.`, render);
   } catch (error) {
+    if (remoteRepo?.name) {
+      try {
+        await permanentlyDeleteRemoteGlossaryRepoForTeam(team, remoteRepo.name);
+      } catch {
+        // Leave the original error visible; remote cleanup can be handled later if needed.
+      }
+
+      try {
+        await invoke("purge_local_gtms_glossary_repo", {
+          input: {
+            installationId: team.installationId,
+            repoName: remoteRepo.name,
+          },
+        });
+      } catch {
+        // Ignore local cleanup failures while surfacing the primary creation error.
+      }
+    }
     state.glossaryCreation.status = "idle";
     state.glossaryCreation.error = error?.message ?? String(error);
     render();
@@ -130,6 +176,11 @@ export async function importGlossaryFromTmx(render) {
   const team = selectedTeam();
   if (!Number.isFinite(team?.installationId)) {
     showNoticeBadge("Importing a glossary requires a GitHub App-connected team.", render);
+    return;
+  }
+
+  if (state.offline?.isEnabled === true) {
+    showNoticeBadge("You cannot import glossaries while offline.", render);
     return;
   }
 
@@ -158,11 +209,22 @@ export async function importGlossaryFromTmx(render) {
   render();
   await waitForNextPaint();
 
+  let remoteRepo = null;
   try {
     const bytes = Array.from(new Uint8Array(await selectedFile.arrayBuffer()));
-    const glossary = await invoke("import_tmx_to_local_gtms_glossary", {
+    const repoName = slugifyGlossaryRepoName(
+      selectedFile.name.replace(/\.[^.]+$/, "").trim(),
+    );
+    if (!repoName) {
+      throw new Error("Could not determine a glossary repo name from this import file.");
+    }
+
+    remoteRepo = await createRemoteGlossaryRepoForTeam(team, repoName);
+    await syncGlossaryReposForTeam(team, [remoteRepo]);
+    const glossary = await invoke("import_tmx_to_gtms_glossary_repo", {
       input: {
         installationId: team.installationId,
+        repoName: remoteRepo.name,
         fileName: selectedFile.name,
         bytes,
       },
@@ -176,6 +238,24 @@ export async function importGlossaryFromTmx(render) {
       render,
     );
   } catch (error) {
+    if (remoteRepo?.name) {
+      try {
+        await permanentlyDeleteRemoteGlossaryRepoForTeam(team, remoteRepo.name);
+      } catch {
+        // Leave the original error visible; remote cleanup can be handled later if needed.
+      }
+
+      try {
+        await invoke("purge_local_gtms_glossary_repo", {
+          input: {
+            installationId: team.installationId,
+            repoName: remoteRepo.name,
+          },
+        });
+      } catch {
+        // Ignore local cleanup failures while surfacing the primary import error.
+      }
+    }
     failPageSync();
     showNoticeBadge(error?.message ?? String(error), render);
     render();

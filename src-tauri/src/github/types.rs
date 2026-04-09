@@ -69,6 +69,19 @@ pub(crate) struct GithubProjectRepo {
 
 #[derive(Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
+pub(crate) struct GithubGlossaryRepo {
+  pub(crate) repo_id: i64,
+  pub(crate) name: String,
+  pub(crate) full_name: String,
+  pub(crate) html_url: Option<String>,
+  pub(crate) private: bool,
+  pub(crate) description: Option<String>,
+  pub(crate) default_branch_name: Option<String>,
+  pub(crate) default_branch_head_oid: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct GithubOrganizationMember {
   pub(crate) login: String,
   pub(crate) avatar_url: Option<String>,
@@ -114,6 +127,22 @@ pub(crate) struct RenameGithubProjectRepoInput {
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct DeleteGithubProjectRepoInput {
+  pub(crate) installation_id: i64,
+  pub(crate) org_login: String,
+  pub(crate) repo_name: String,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct CreateGithubGlossaryRepoInput {
+  pub(crate) installation_id: i64,
+  pub(crate) org_login: String,
+  pub(crate) repo_name: String,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct DeleteGithubGlossaryRepoInput {
   pub(crate) installation_id: i64,
   pub(crate) org_login: String,
   pub(crate) repo_name: String,

@@ -7,10 +7,15 @@ import {
   normalizeEditableTerms,
   sanitizeEditableTargetTerms,
   sanitizeEditableTerms,
+  selectedGlossary,
   selectedGlossaryRepoName,
   selectedTeam,
   updateGlossaryTermArray,
 } from "./glossary-shared.js";
+import {
+  getGlossarySyncIssueMessage,
+  syncSingleGlossaryForTeam,
+} from "./glossary-repo-flow.js";
 
 export function openGlossaryTermEditor(render, termId = null) {
   if (!canManageGlossaries()) {
@@ -149,8 +154,14 @@ export async function submitGlossaryTermEditor(render) {
         untranslated: draft.untranslated === true,
       },
     });
+    const syncIssue = getGlossarySyncIssueMessage(
+      await syncSingleGlossaryForTeam(team, selectedGlossary()),
+    );
     resetGlossaryTermEditor();
     await loadSelectedGlossaryEditorData(render);
+    if (syncIssue) {
+      showNoticeBadge(syncIssue, render);
+    }
   } catch (error) {
     state.glossaryTermEditor.status = "idle";
     state.glossaryTermEditor.error = error?.message ?? String(error);

@@ -5,7 +5,15 @@ use crate::broker::{
 
 use super::{
   app_auth::github_client,
-  types::{CreateGithubProjectRepoInput, DeleteGithubProjectRepoInput, GithubProjectRepo, RenameGithubProjectRepoInput},
+  types::{
+    CreateGithubGlossaryRepoInput,
+    CreateGithubProjectRepoInput,
+    DeleteGithubGlossaryRepoInput,
+    DeleteGithubProjectRepoInput,
+    GithubGlossaryRepo,
+    GithubProjectRepo,
+    RenameGithubProjectRepoInput,
+  },
 };
 
 #[tauri::command]
@@ -45,6 +53,23 @@ pub(crate) async fn list_gnosis_projects_for_installation(
 }
 
 #[tauri::command]
+pub(crate) async fn list_gnosis_glossaries_for_installation(
+  installation_id: i64,
+  session_token: String,
+) -> Result<Vec<GithubGlossaryRepo>, String> {
+  tauri::async_runtime::spawn_blocking(move || {
+    let client = github_client()?;
+    broker_get_json_with_session(
+      &client,
+      &format!("/api/github-app/installations/{installation_id}/gnosis-glossaries"),
+      &session_token,
+    )
+  })
+  .await
+  .map_err(|error| format!("Could not run the glossary listing task: {error}"))?
+}
+
+#[tauri::command]
 pub(crate) async fn create_gnosis_project_repo(
   input: CreateGithubProjectRepoInput,
   session_token: String,
@@ -60,6 +85,24 @@ pub(crate) async fn create_gnosis_project_repo(
   })
   .await
   .map_err(|error| format!("Could not run the project creation task: {error}"))?
+}
+
+#[tauri::command]
+pub(crate) async fn create_gnosis_glossary_repo(
+  input: CreateGithubGlossaryRepoInput,
+  session_token: String,
+) -> Result<GithubGlossaryRepo, String> {
+  tauri::async_runtime::spawn_blocking(move || {
+    let client = github_client()?;
+    broker_post_json_with_session(
+      &client,
+      "/api/github-app/gnosis-glossaries",
+      &serde_json::to_value(&input).map_err(|error| error.to_string())?,
+      &session_token,
+    )
+  })
+  .await
+  .map_err(|error| format!("Could not run the glossary creation task: {error}"))?
 }
 
 #[tauri::command]
@@ -132,4 +175,22 @@ pub(crate) async fn permanently_delete_gnosis_project_repo(
   })
   .await
   .map_err(|error| format!("Could not run the permanent project deletion task: {error}"))?
+}
+
+#[tauri::command]
+pub(crate) async fn permanently_delete_gnosis_glossary_repo(
+  input: DeleteGithubGlossaryRepoInput,
+  session_token: String,
+) -> Result<(), String> {
+  tauri::async_runtime::spawn_blocking(move || {
+    let client = github_client()?;
+    broker_delete_no_content_with_session(
+      &client,
+      "/api/github-app/gnosis-glossaries",
+      &serde_json::to_value(&input).map_err(|error| error.to_string())?,
+      &session_token,
+    )
+  })
+  .await
+  .map_err(|error| format!("Could not run the permanent glossary deletion task: {error}"))?
 }
