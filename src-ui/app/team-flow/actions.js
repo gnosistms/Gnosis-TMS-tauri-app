@@ -1,4 +1,6 @@
 import { requireBrokerSession } from "../auth-flow.js";
+import { removeStoredGlossariesForTeam } from "../glossary-cache.js";
+import { removeStoredProjectDataForTeam } from "../project-cache.js";
 import { invoke, waitForNextPaint } from "../runtime.js";
 import {
   resetTeamLeave,
@@ -247,6 +249,11 @@ export async function confirmTeamPermanentDeletion(render) {
       orgLogin: team.githubOrg,
       sessionToken: requireBrokerSession(),
     });
+    await invoke("purge_local_installation_data", {
+      installationId: team.installationId,
+    });
+    removeStoredProjectDataForTeam(team);
+    removeStoredGlossariesForTeam(team);
 
     const nextStoredTeams = removeStoredTeamRecord(team.id);
     applyStoredTeamRecords(nextStoredTeams);

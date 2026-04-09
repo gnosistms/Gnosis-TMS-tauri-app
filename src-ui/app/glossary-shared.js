@@ -37,6 +37,8 @@ export function normalizeGlossarySummary(glossary) {
   const id =
     typeof glossary.glossaryId === "string" && glossary.glossaryId.trim()
       ? glossary.glossaryId.trim()
+      : typeof glossary.id === "string" && glossary.id.trim()
+        ? glossary.id.trim()
       : null;
   const repoName =
     typeof glossary.repoName === "string" && glossary.repoName.trim()

@@ -1,8 +1,11 @@
+use std::fs;
+
 use crate::broker::{
   broker_delete_no_content_with_session, broker_get_json_with_session,
   broker_patch_json_with_session, broker_patch_no_content_with_session,
   broker_post_json_with_session, broker_post_no_content_with_session,
 };
+use crate::storage_paths::installation_data_dir;
 
 use super::{
   app_auth::github_client,
@@ -266,6 +269,28 @@ pub(crate) async fn delete_organization_for_installation(
   })
   .await
   .map_err(|error| format!("Could not run the organization deletion task: {error}"))?
+}
+
+#[tauri::command]
+pub(crate) async fn purge_local_installation_data(
+  app: tauri::AppHandle,
+  installation_id: i64,
+) -> Result<(), String> {
+  tauri::async_runtime::spawn_blocking(move || {
+    let installation_root = installation_data_dir(&app, installation_id)?;
+    if !installation_root.exists() {
+      return Ok(());
+    }
+
+    fs::remove_dir_all(&installation_root).map_err(|error| {
+      format!(
+        "Could not remove the local installation data '{}': {error}",
+        installation_root.display()
+      )
+    })
+  })
+  .await
+  .map_err(|error| format!("Could not run the local installation cleanup task: {error}"))?
 }
 
 #[tauri::command]

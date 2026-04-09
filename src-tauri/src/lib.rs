@@ -48,6 +48,7 @@ use crate::{
     invite_user_to_organization_for_installation, list_gnosis_glossaries_for_installation,
     leave_organization_for_installation, list_gnosis_projects_for_installation,
     list_accessible_github_app_installations, list_organization_members_for_installation,
+    purge_local_installation_data,
     remove_organization_member_for_installation,
     mark_gnosis_project_repo_deleted, permanently_delete_gnosis_project_repo, restore_gnosis_project_repo,
     permanently_delete_gnosis_glossary_repo,
@@ -301,6 +302,7 @@ pub fn run() {
       update_organization_name_for_installation,
       update_organization_description_for_installation,
       delete_organization_for_installation,
+      purge_local_installation_data,
       leave_organization_for_installation
     ])
     .setup(|app| {

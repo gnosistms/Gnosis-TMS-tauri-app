@@ -1,4 +1,4 @@
-import { readPersistentValue, writePersistentValue } from "./persistent-store.js";
+import { readPersistentValue, removePersistentValue, writePersistentValue } from "./persistent-store.js";
 import {
   loadTeamScopedCacheMap,
   saveTeamScopedCacheMap,
@@ -100,6 +100,29 @@ function saveProjectCacheMap(cacheMap) {
   saveTeamScopedCacheMap(PROJECT_CACHE_STORAGE_KEY, cacheMap);
 }
 
+function removeScopedMutationEntry(storageKey, cacheKey) {
+  try {
+    const scopedKey = scopedTeamStorageKey(storageKey);
+    if (!scopedKey) {
+      return;
+    }
+
+    const storedValue = readPersistentValue(scopedKey, {});
+    const parsed = storedValue ?? {};
+    if (!parsed || typeof parsed !== "object" || !Object.prototype.hasOwnProperty.call(parsed, cacheKey)) {
+      return;
+    }
+
+    delete parsed[cacheKey];
+    if (Object.keys(parsed).length === 0) {
+      removePersistentValue(scopedKey);
+      return;
+    }
+
+    writePersistentValue(scopedKey, parsed);
+  } catch {}
+}
+
 export const projectCacheKey = teamCacheKey;
 
 export function loadStoredProjectsForTeam(team) {
@@ -138,6 +161,19 @@ export function saveStoredProjectsForTeam(team, { projects = [], deletedProjects
     updatedAt: new Date().toISOString(),
   };
   saveProjectCacheMap(cacheMap);
+}
+
+export function removeStoredProjectDataForTeam(team) {
+  const cacheKey = projectCacheKey(team);
+  if (!cacheKey) {
+    return;
+  }
+
+  const cacheMap = loadProjectCacheMap();
+  delete cacheMap[cacheKey];
+  saveProjectCacheMap(cacheMap);
+  removeScopedMutationEntry(PROJECT_PENDING_MUTATIONS_STORAGE_KEY, cacheKey);
+  removeScopedMutationEntry(CHAPTER_PENDING_MUTATIONS_STORAGE_KEY, cacheKey);
 }
 
 export function loadStoredProjectPendingMutations(team) {

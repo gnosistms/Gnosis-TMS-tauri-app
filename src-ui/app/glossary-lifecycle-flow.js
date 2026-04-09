@@ -5,6 +5,7 @@ import {
   state,
 } from "./state.js";
 import { loadTeamGlossaries } from "./glossary-discovery-flow.js";
+import { saveStoredGlossariesForTeam } from "./glossary-cache.js";
 import {
   canManageGlossaries,
   canPermanentlyDeleteGlossaries,
@@ -15,6 +16,45 @@ import { permanentlyDeleteRemoteGlossaryRepoForTeam } from "./glossary-repo-flow
 
 function glossaryById(glossaryId) {
   return state.glossaries.find((glossary) => glossary.id === glossaryId) ?? null;
+}
+
+function persistGlossariesForTeam(team) {
+  saveStoredGlossariesForTeam(team, state.glossaries);
+}
+
+function snapshotVisibleGlossaryState() {
+  return {
+    glossaries: structuredClone(state.glossaries),
+    selectedGlossaryId: state.selectedGlossaryId,
+    showDeletedGlossaries: state.showDeletedGlossaries,
+  };
+}
+
+function restoreVisibleGlossaryState(snapshot) {
+  state.glossaries = Array.isArray(snapshot?.glossaries) ? snapshot.glossaries : [];
+  state.selectedGlossaryId = snapshot?.selectedGlossaryId ?? null;
+  state.showDeletedGlossaries = snapshot?.showDeletedGlossaries === true;
+}
+
+function applyVisibleGlossaryLifecycle(glossaryId, nextState) {
+  state.glossaries = state.glossaries.map((glossary) => {
+    if (glossary?.id !== glossaryId) {
+      return glossary;
+    }
+
+    return {
+      ...glossary,
+      lifecycleState: nextState === "deleted" ? "deleted" : "active",
+    };
+  });
+
+  if (nextState === "deleted" && state.selectedGlossaryId === glossaryId) {
+    state.selectedGlossaryId = null;
+  }
+
+  if (!state.glossaries.some((glossary) => glossary?.lifecycleState === "deleted")) {
+    state.showDeletedGlossaries = false;
+  }
 }
 
 function lifecycleActionBlockedMessage(team, { actionLabel, requireOwner = false } = {}) {
@@ -129,20 +169,28 @@ export async function deleteGlossary(render, glossaryId) {
     return;
   }
 
-  try {
-    await invoke("soft_delete_gtms_glossary", {
-      input: {
-        installationId: team.installationId,
-        repoName: glossary.repoName,
-      },
-    });
-    if (state.selectedGlossaryId === glossaryId) {
-      state.selectedGlossaryId = null;
+  const snapshot = snapshotVisibleGlossaryState();
+  applyVisibleGlossaryLifecycle(glossaryId, "deleted");
+  persistGlossariesForTeam(team);
+  render();
+  await waitForNextPaint();
+
+  void (async () => {
+    try {
+      await invoke("soft_delete_gtms_glossary", {
+        input: {
+          installationId: team.installationId,
+          repoName: glossary.repoName,
+        },
+      });
+      await loadTeamGlossaries(render, team.id, { preserveVisibleData: true });
+    } catch (error) {
+      restoreVisibleGlossaryState(snapshot);
+      persistGlossariesForTeam(team);
+      showNoticeBadge(error?.message ?? String(error), render);
+      render();
     }
-    await loadTeamGlossaries(render, team.id, { preserveVisibleData: true });
-  } catch (error) {
-    showNoticeBadge(error?.message ?? String(error), render);
-  }
+  })();
 }
 
 export async function restoreGlossary(render, glossaryId) {
@@ -159,17 +207,28 @@ export async function restoreGlossary(render, glossaryId) {
     return;
   }
 
-  try {
-    await invoke("restore_gtms_glossary", {
-      input: {
-        installationId: team.installationId,
-        repoName: glossary.repoName,
-      },
-    });
-    await loadTeamGlossaries(render, team.id, { preserveVisibleData: true });
-  } catch (error) {
-    showNoticeBadge(error?.message ?? String(error), render);
-  }
+  const snapshot = snapshotVisibleGlossaryState();
+  applyVisibleGlossaryLifecycle(glossaryId, "active");
+  persistGlossariesForTeam(team);
+  render();
+  await waitForNextPaint();
+
+  void (async () => {
+    try {
+      await invoke("restore_gtms_glossary", {
+        input: {
+          installationId: team.installationId,
+          repoName: glossary.repoName,
+        },
+      });
+      await loadTeamGlossaries(render, team.id, { preserveVisibleData: true });
+    } catch (error) {
+      restoreVisibleGlossaryState(snapshot);
+      persistGlossariesForTeam(team);
+      showNoticeBadge(error?.message ?? String(error), render);
+      render();
+    }
+  })();
 }
 
 export function openGlossaryPermanentDeletion(render, glossaryId) {

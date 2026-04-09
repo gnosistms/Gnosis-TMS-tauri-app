@@ -2021,7 +2021,10 @@ export async function confirmProjectPermanentDeletion(render) {
       },
       sessionToken: requireBrokerSession(),
     });
+    removeVisibleProject(project.id);
+    persistProjectsForTeam(selectedTeam);
     resetProjectPermanentDeletion();
+    render();
     await loadTeamProjects(render, selectedTeam.id);
   } catch (error) {
     if (await handleSyncFailure(classifySyncError(error), { render })) {

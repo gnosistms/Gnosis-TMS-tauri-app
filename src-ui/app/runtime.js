@@ -1,3 +1,5 @@
+import { state } from "./state.js";
+
 export const app = document.querySelector("#app");
 
 const tauri = window.__TAURI__ ?? {};
@@ -131,7 +133,6 @@ async function refreshBrokerSession(sessionToken) {
       throw new Error("GitHub session refresh failed.");
     }
 
-    const { state } = await import("./state.js");
     if (
       !state.auth.session
       || state.auth.session.sessionToken === sessionToken
