@@ -4,11 +4,11 @@
 
 ### Current Status
 
-- current implementation stage: `Stage 6`
+- current implementation stage: `Stage 7`
 - stage status: `implemented and committed in the app repo`
-- latest app commit: `360bbfe` `Add tombstones for permanent deletes`
+- latest app commit: `8066a00` `Add explicit resource conflict states`
 - latest broker commit relevant to this plan: `3495771` `Add team metadata read routes`
-- next intended stage: `Stage 7`
+- next intended stage: `Stage 8`
 
 ### Stage 1 Progress
 
@@ -1253,6 +1253,26 @@ Testing after Stage 6:
 
 ### Stage 7: Add Conflict Resolution UI
 
+Status as of April 9, 2026:
+
+- implemented
+- app commit: `8066a00` `Add explicit resource conflict states`
+
+What is now done:
+
+- projects and glossaries now show explicit on-card warning/error states for `pendingCreate`, `missing`, `deleted`, `syncError`, and `unregisteredLocal`
+- conflict-state rendering is local-first and uses the existing list/card layouts instead of hiding resources behind empty states
+- project/glossary lifecycle actions are disabled when the resource is in a terminal or ambiguous metadata state
+- project discovery now classifies metadata-backed missing remotes and local unregistered resources explicitly
+- glossary discovery now classifies metadata-backed missing remotes and local unregistered resources explicitly
+- project/glossary sync no longer auto-retries resources that are already classified as `missing`
+
+Known boundary after Stage 7:
+
+- the app now explains these conflict states, but it still does not offer a dedicated repair/relink workflow from the card itself
+- follow-up UX not yet implemented:
+  if `/Users/hans/Library/Application Support/com.gnosis.tms/installations` is deleted, discovery can rebuild from GitHub, but the app does not yet show an explicit “local installation data was missing, rebuilding from GitHub” message during recovery
+
 Scope:
 
 - add user-facing states for:
@@ -1276,6 +1296,30 @@ Testing after Stage 7:
   - `npm run build`
   - `cargo check`
 
+### Stage 8: Add Missing-Installations Recovery UX
+
+Scope:
+
+- detect when the local `installations` folder or a per-team local installation repo set is missing
+- treat that condition as a rebuild-from-GitHub recovery path, not a generic error
+- show explicit recovery messaging while local repos are being recloned or rebuilt
+- avoid misleading empty-state copy while recovery is in progress
+
+Expected outcome:
+
+- deleting `/Users/hans/Library/Application Support/com.gnosis.tms/installations` becomes a clear self-healing recovery path for synced data
+
+Testing after Stage 8:
+
+- delete the full `installations` folder while remote repos still exist
+- relaunch or refresh the app
+- verify the app shows explicit rebuild messaging instead of empty-state copy
+- verify projects/glossaries reappear after the background clone/rebuild completes
+- run:
+  - `npm test`
+  - `npm run build`
+  - `cargo check`
+
 ## Recommended Implementation Sequence For The Next Thread
 
 1. Stage 1: stop hiding valid local data.
@@ -1285,6 +1329,7 @@ Testing after Stage 7:
 5. Stage 5: read metadata during discovery/reconciliation.
 6. Stage 6: add tombstones and permanent-delete handling.
 7. Stage 7: add explicit conflict-resolution UI.
+8. Stage 8: add missing-installations recovery UX.
 
 Throughout all stages:
 
