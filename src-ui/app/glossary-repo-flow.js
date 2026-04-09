@@ -307,6 +307,14 @@ function buildMetadataBackedGlossarySyncRepos(metadataRecords, remoteRepos, opti
   return syncRepos;
 }
 
+function countRecoverableGlossaryMetadataRecords(records) {
+  return (Array.isArray(records) ? records : []).filter((record) =>
+    record?.recordState === "live"
+    && record?.remoteState === "linked"
+    && record?.lifecycleState !== "purged"
+  ).length;
+}
+
 export function glossaryArchiveDownloadUrl(glossary) {
   const htmlUrl =
     typeof glossary?.htmlUrl === "string" && glossary.htmlUrl.trim()
@@ -454,6 +462,10 @@ function getMissingRemoteGlossaryMessage(localSummaries, remoteRepos) {
 
 export async function loadRepoBackedGlossariesForTeam(team, options = {}) {
   const offlineMode = options.offlineMode === true;
+  const onRecoveryDetected =
+    typeof options.onRecoveryDetected === "function"
+      ? options.onRecoveryDetected
+      : null;
   const localSummaries = await listLocalGlossarySummariesForTeam(team);
 
   if (offlineMode || !Number.isFinite(team?.installationId)) {
@@ -474,6 +486,14 @@ export async function loadRepoBackedGlossariesForTeam(team, options = {}) {
     metadataRecords = await listGlossaryMetadataRecords(team);
     metadataLoaded = true;
   } catch {}
+  const recoverableMetadataCount = countRecoverableGlossaryMetadataRecords(metadataRecords);
+  const installationRecoveryDetected =
+    metadataLoaded
+    && recoverableMetadataCount > 0
+    && localSummaries.length === 0;
+  if (installationRecoveryDetected) {
+    onRecoveryDetected?.("Local installation data was missing. Rebuilding glossary repos from GitHub.");
+  }
 
   let remoteRepos;
   let remoteLoaded = false;
@@ -499,6 +519,10 @@ export async function loadRepoBackedGlossariesForTeam(team, options = {}) {
           syncSnapshots,
           syncIssue: getGlossarySyncIssueMessage(syncSnapshots),
           brokerWarning: "",
+          recoveryMessage:
+            installationRecoveryDetected
+              ? "Local installation data was missing. Rebuilt glossary repos from GitHub."
+              : "",
         };
       }
 
@@ -508,6 +532,7 @@ export async function loadRepoBackedGlossariesForTeam(team, options = {}) {
         syncSnapshots: [],
         syncIssue: "",
         brokerWarning: GLOSSARY_BROKER_ROUTE_UNAVAILABLE_MESSAGE,
+        recoveryMessage: "",
       };
     }
     throw error;
@@ -535,6 +560,10 @@ export async function loadRepoBackedGlossariesForTeam(team, options = {}) {
     syncSnapshots,
     syncIssue,
     brokerWarning: "",
+    recoveryMessage:
+      installationRecoveryDetected
+        ? "Local installation data was missing. Rebuilt glossary repos from GitHub."
+        : "",
   };
 }
 

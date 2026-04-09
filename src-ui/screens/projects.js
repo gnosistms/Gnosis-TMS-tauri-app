@@ -310,8 +310,19 @@ export function renderProjectsScreen(state) {
   const importInProgress = state.projectImport?.status === "importing";
   const discovery = state.projectDiscovery ?? { status: "idle", error: "", glossaryWarning: "" };
   const syncSnapshotsByProjectId = state.projectRepoSyncByProjectId ?? {};
+  const recoveryMessage =
+    typeof discovery.recoveryMessage === "string" && discovery.recoveryMessage.trim()
+      ? discovery.recoveryMessage.trim()
+      : "";
   const projectsSyncBadgeText = getScopedSyncBadgeText("projects");
   const isProjectsSyncing = state.projectsPageSync?.status === "syncing";
+  const recoveryMarkup = recoveryMessage
+    ? `
+      <div class="message-box message-box--warning">
+        <p class="message-box__text">${escapeHtml(recoveryMessage)}</p>
+      </div>
+    `
+    : "";
   const glossaryWarningMarkup = discovery.glossaryWarning
     ? `
       <div class="message-box message-box--warning">
@@ -327,6 +338,7 @@ export function renderProjectsScreen(state) {
   const loadingState = renderStateCard({
     eyebrow: "LOADING PROJECTS",
     title: "Loading projects...",
+    subtitle: recoveryMessage || "",
   });
   const errorState = renderStateCard({
     eyebrow: "PROJECT LOAD FAILED",
@@ -358,6 +370,7 @@ export function renderProjectsScreen(state) {
 
   const body = `
     <section class="stack">
+      ${recoveryMarkup}
       ${glossaryWarningMarkup}
       ${projectsBody}
       ${renderDeletedProjectsSection(state)}

@@ -145,8 +145,19 @@ export function renderGlossariesScreen(state) {
   const offlineMode = state.offline?.isEnabled === true;
   const discovery = state.glossaryDiscovery ?? { status: "idle", error: "", brokerWarning: "" };
   const syncSnapshotsByRepoName = state.glossaryRepoSyncByRepoName ?? {};
+  const recoveryMessage =
+    typeof discovery.recoveryMessage === "string" && discovery.recoveryMessage.trim()
+      ? discovery.recoveryMessage.trim()
+      : "";
   const visibleGlossaries = state.glossaries.filter((glossary) => glossary.lifecycleState === "active");
   const deletedGlossaries = state.glossaries.filter((glossary) => glossary.lifecycleState === "deleted");
+  const recoveryMarkup = recoveryMessage
+    ? `
+      <div class="message-box message-box--warning">
+        <p class="message-box__text">${escapeHtml(recoveryMessage)}</p>
+      </div>
+    `
+    : "";
   const brokerWarningMarkup = discovery.brokerWarning
     ? `
       <div class="message-box message-box--warning">
@@ -162,6 +173,7 @@ export function renderGlossariesScreen(state) {
   const loadingState = renderStateCard({
     eyebrow: "LOADING GLOSSARIES",
     title: "Loading glossaries...",
+    subtitle: recoveryMessage || "",
   });
   const errorState = renderStateCard({
     eyebrow: "GLOSSARY LOAD FAILED",
@@ -191,6 +203,7 @@ export function renderGlossariesScreen(state) {
         : loadingState;
   const body = `
     <section class="stack">
+      ${recoveryMarkup}
       ${brokerWarningMarkup}
       ${bodyMarkup}
       ${renderDeletedGlossariesSection(deletedGlossaries, state.showDeletedGlossaries, {

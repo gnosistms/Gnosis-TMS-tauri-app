@@ -55,6 +55,7 @@ function setProjectDiscoveryError(render, error) {
     status: "error",
     error,
     glossaryWarning: state.projectDiscovery?.glossaryWarning ?? "",
+    recoveryMessage: state.projectDiscovery?.recoveryMessage ?? "",
   };
   render?.();
 }
@@ -63,16 +64,26 @@ function setProjectDiscoveryState(
   status,
   error = "",
   glossaryWarning = state.projectDiscovery?.glossaryWarning ?? "",
+  recoveryMessage = state.projectDiscovery?.recoveryMessage ?? "",
 ) {
   state.projectDiscovery = {
     status,
     error,
     glossaryWarning,
+    recoveryMessage,
   };
 }
 
 function selectedProjectsTeam() {
   return state.teams.find((team) => team.id === state.selectedTeamId) ?? null;
+}
+
+function countRecoverableProjectMetadataRecords(records) {
+  return (Array.isArray(records) ? records : []).filter((record) =>
+    record?.recordState === "live"
+    && record?.remoteState === "linked"
+    && record?.lifecycleState !== "purged"
+  ).length;
 }
 
 function ensureChapterMutationAllowed(
@@ -967,10 +978,10 @@ export async function loadTeamProjects(render, teamId = state.selectedTeamId) {
 
   if (cachedProjects.exists) {
     applyProjectSnapshotToState(optimisticSnapshot);
-    setProjectDiscoveryState("ready", "", "");
+    setProjectDiscoveryState("ready", "", "", "");
   } else {
     applyProjectSnapshotToState({ items: [], deletedItems: [] });
-    setProjectDiscoveryState("loading", "", "");
+    setProjectDiscoveryState("loading", "", "", "");
   }
   setProjectUiDebug(render, "Refreshing projects...");
   beginProjectsPageSync();
@@ -994,6 +1005,7 @@ export async function loadTeamProjects(render, teamId = state.selectedTeamId) {
         ? metadataResult.value
         : [];
     const metadataLoaded = metadataResult.status === "fulfilled";
+    const recoverableMetadataCount = countRecoverableProjectMetadataRecords(projectMetadataRecords);
     if (
       projectsResult.status !== "fulfilled"
       && projectMetadataRecords.length === 0
@@ -1028,6 +1040,21 @@ export async function loadTeamProjects(render, teamId = state.selectedTeamId) {
       chapters: Array.isArray(project.chapters) ? project.chapters : [],
       remoteState: project.remoteState ?? "linked",
     }));
+    const preSyncListings = await loadLocalProjectFileListings(
+      selectedTeam,
+      mappedProjects.filter((project) =>
+        project?.status !== "deleted"
+        && project?.recordState !== "tombstone"
+        && project?.remoteState !== "pendingCreate"
+      ),
+    );
+    const installationRecoveryDetected =
+      metadataLoaded
+      && recoverableMetadataCount > 0
+      && preSyncListings.length === 0;
+    const recoveryMessage = installationRecoveryDetected
+      ? "Local installation data was missing. Rebuilding project repos from GitHub."
+      : "";
     const nextProjectSnapshot = applyPendingMutations(
       {
         items: mappedProjects.filter((project) => project.status !== "deleted"),
@@ -1047,7 +1074,9 @@ export async function loadTeamProjects(render, teamId = state.selectedTeamId) {
       glossaryDiscoveryResult.status === "fulfilled"
         ? glossaryDiscoveryResult.value?.syncIssue || glossaryDiscoveryResult.value?.brokerWarning || ""
         : glossaryDiscoveryResult.reason?.message ?? String(glossaryDiscoveryResult.reason ?? "");
-    setProjectDiscoveryState("ready", "", glossaryWarning);
+    setProjectDiscoveryState("ready", "", glossaryWarning, recoveryMessage);
+    render();
+    await waitForNextPaint();
     await reconcileProjectRepoSyncStates(render, selectedTeam, mappedProjects);
     await refreshProjectFilesFromDisk(
       render,

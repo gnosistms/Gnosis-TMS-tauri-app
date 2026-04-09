@@ -135,6 +135,7 @@ export function createProjectDiscoveryState() {
     status: "idle",
     error: "",
     glossaryWarning: "",
+    recoveryMessage: "",
   };
 }
 
@@ -264,6 +265,7 @@ export function createGlossaryDiscoveryState() {
     status: "idle",
     error: "",
     brokerWarning: "",
+    recoveryMessage: "",
   };
 }
 

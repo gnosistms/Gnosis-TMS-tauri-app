@@ -41,6 +41,7 @@ export function primeGlossariesLoadingState(teamId = state.selectedTeamId, optio
     state.glossaryDiscovery = {
       ...createGlossaryDiscoveryState(),
       status: "ready",
+      recoveryMessage: "",
     };
     return;
   }
@@ -49,6 +50,7 @@ export function primeGlossariesLoadingState(teamId = state.selectedTeamId, optio
     state.glossaryDiscovery = {
       ...createGlossaryDiscoveryState(),
       status: "ready",
+      recoveryMessage: "",
     };
     return;
   }
@@ -59,6 +61,7 @@ export function primeGlossariesLoadingState(teamId = state.selectedTeamId, optio
     state.glossaryDiscovery = {
       ...createGlossaryDiscoveryState(),
       status: "ready",
+      recoveryMessage: "",
     };
     return;
   }
@@ -68,6 +71,7 @@ export function primeGlossariesLoadingState(teamId = state.selectedTeamId, optio
   state.glossaryDiscovery = {
     ...createGlossaryDiscoveryState(),
     status: "loading",
+    recoveryMessage: "",
   };
 }
 
@@ -87,6 +91,7 @@ export async function loadTeamGlossaries(
     state.glossaryDiscovery = {
       ...createGlossaryDiscoveryState(),
       status: "ready",
+      recoveryMessage: "",
     };
     render();
     return;
@@ -100,6 +105,7 @@ export async function loadTeamGlossaries(
       state.glossaryDiscovery = {
         ...createGlossaryDiscoveryState(),
         status: "ready",
+        recoveryMessage: "",
       };
     } else if (state.glossaries.length === 0) {
       state.glossaries = [];
@@ -107,6 +113,7 @@ export async function loadTeamGlossaries(
       state.glossaryDiscovery = {
         ...createGlossaryDiscoveryState(),
         status: "loading",
+        recoveryMessage: "",
       };
     }
   }
@@ -123,6 +130,7 @@ export async function loadTeamGlossaries(
         state.glossaryDiscovery = {
           ...createGlossaryDiscoveryState(),
           status: "ready",
+          recoveryMessage: "",
         };
         saveStoredGlossariesForTeam(team, state.glossaries);
         render();
@@ -130,8 +138,25 @@ export async function loadTeamGlossaries(
       }
     }
 
-    const { glossaries, syncIssue, brokerWarning, syncSnapshots = [] } = await loadRepoBackedGlossariesForTeam(team, {
+    const {
+      glossaries,
+      syncIssue,
+      brokerWarning,
+      syncSnapshots = [],
+      recoveryMessage = "",
+    } = await loadRepoBackedGlossariesForTeam(team, {
       offlineMode: state.offline?.isEnabled === true,
+      onRecoveryDetected: (message) => {
+        if (state.selectedTeamId !== team.id) {
+          return;
+        }
+        state.glossaryDiscovery = {
+          ...createGlossaryDiscoveryState(),
+          status: "loading",
+          recoveryMessage: message,
+        };
+        render();
+      },
     });
     state.glossaryRepoSyncByRepoName = Object.fromEntries(
       (Array.isArray(syncSnapshots) ? syncSnapshots : [])
@@ -156,6 +181,7 @@ export async function loadTeamGlossaries(
       ...createGlossaryDiscoveryState(),
       status: "ready",
       brokerWarning: typeof brokerWarning === "string" ? brokerWarning : "",
+      recoveryMessage: typeof recoveryMessage === "string" ? recoveryMessage : "",
     };
     const syncIssueText =
       typeof syncIssue?.message === "string"
@@ -189,12 +215,14 @@ export async function loadTeamGlossaries(
         ...createGlossaryDiscoveryState(),
         status: "error",
         error: error?.message ?? String(error),
+        recoveryMessage: "",
       };
     } else {
       state.glossaryDiscovery = {
         ...createGlossaryDiscoveryState(),
         status: "ready",
         brokerWarning: state.glossaryDiscovery?.brokerWarning ?? "",
+        recoveryMessage: state.glossaryDiscovery?.recoveryMessage ?? "",
       };
     }
     showNoticeBadge(error?.message ?? String(error), render);
