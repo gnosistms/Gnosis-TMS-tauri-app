@@ -47,29 +47,39 @@
 
 ## Handoff Snapshot (2026-04-09)
 
-- Current branch state when this note was updated:
-  - local `main` is ahead of `origin/main` by commit `5c1a451` (`Harden glossary editor and broker fallback`)
-  - there are additional uncommitted changes after that commit
-- Verified broker status:
-  - the production GitHub App broker still lacks the glossary repo routes
-  - the desktop app repo can detect and surface that condition, but it cannot implement the missing server endpoints because the broker codebase is not present here
-- Already committed in this repo:
+- Repo locations:
+  - desktop app repo: `/Users/hans/Desktop/GnosisTMS`
+  - broker repo: `/Users/hans/Desktop/gnosis-tms-github-app-broker`
+  - if the issue involves `/api/github-app/.../gnosis-glossaries`, the next thread should check the broker repo and deployment, not only this app repo.
+- Broker status:
+  - the glossary broker routes were added and pushed from the broker repo in commit `c5a73d0` (`Add glossary repo routes to broker`).
+  - if production behavior still does not reflect those routes, the likely next step is deployment verification on DigitalOcean App Platform.
+- Already committed in the desktop app repo:
   - glossary lifecycle and repo-backed glossary integration
   - glossary rollback safety fix
   - glossary term source-variant uniqueness enforcement in the modal + Rust save path
   - client fallback when glossary broker routes are missing
-- Still local and uncommitted:
-  - persistent Glossaries-page warning banner for broker glossary-route failure
-  - editor history expansion persistence so an expanded same-author run stays open while new edits and marker toggles arrive
+- Still local and uncommitted in the desktop app repo:
+  - shared page-sync controller refactor, removing the separate Projects-only sync module
+  - shared repo slug helper used by both projects and glossaries
+  - Projects-page persistent glossary warning state instead of swallowed glossary-load failures
+  - shared Rust repo-sync transport helpers used by both project and glossary repo sync modules
 - Files to inspect first if a new thread needs to resume:
+  - broker repo entrypoint: [server.js](/Users/hans/Desktop/gnosis-tms-github-app-broker/src/server.js)
+  - broker glossary routes: [glossary-routes.js](/Users/hans/Desktop/gnosis-tms-github-app-broker/src/glossary-routes.js)
+  - broker glossary repo handlers: [glossary-repos.js](/Users/hans/Desktop/gnosis-tms-github-app-broker/src/glossary-repos.js)
+  - broker repo property helpers: [repo-properties.js](/Users/hans/Desktop/gnosis-tms-github-app-broker/src/repo-properties.js)
+  - app shared repo-sync transport: [repo_sync_shared.rs](/Users/hans/Desktop/GnosisTMS/src-tauri/src/repo_sync_shared.rs)
+  - app project repo sync: [project_repo_sync.rs](/Users/hans/Desktop/GnosisTMS/src-tauri/src/project_repo_sync.rs)
+  - app glossary repo sync: [glossary_repo_sync.rs](/Users/hans/Desktop/GnosisTMS/src-tauri/src/glossary_repo_sync.rs)
+  - app project discovery/warning path: [project-flow.js](/Users/hans/Desktop/GnosisTMS/src-ui/app/project-flow.js)
+  - app project screen warning UI: [projects.js](/Users/hans/Desktop/GnosisTMS/src-ui/screens/projects.js)
+  - app shared sync controller: [page-sync.js](/Users/hans/Desktop/GnosisTMS/src-ui/app/page-sync.js)
   - [glossary-repo-flow.js](/Users/hans/Desktop/GnosisTMS/src-ui/app/glossary-repo-flow.js)
   - [glossary-discovery-flow.js](/Users/hans/Desktop/GnosisTMS/src-ui/app/glossary-discovery-flow.js)
-  - [glossaries.js](/Users/hans/Desktop/GnosisTMS/src-ui/screens/glossaries.js)
   - [state.js](/Users/hans/Desktop/GnosisTMS/src-ui/app/state.js)
-  - [editor-history.js](/Users/hans/Desktop/GnosisTMS/src-ui/app/editor-history.js)
-  - [translate-flow.js](/Users/hans/Desktop/GnosisTMS/src-ui/app/translate-flow.js)
-  - [editor-history.test.js](/Users/hans/Desktop/GnosisTMS/src-ui/app/editor-history.test.js)
 - Latest local verification before handoff:
   - `npm test`: passed
   - `npm run build`: passed
+  - `cargo check`: passed
   - the usual non-blocking Vite warning about `state.js` dynamic/static import overlap still appears

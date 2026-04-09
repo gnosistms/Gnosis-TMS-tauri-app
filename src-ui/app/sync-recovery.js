@@ -2,7 +2,7 @@ import { clearStoredAuthSession } from "./auth-storage.js";
 import { openConnectionFailureModal } from "./connection-failure.js";
 import { checkInternetConnection } from "./offline-connectivity.js";
 import { showNoticeBadge } from "./status-feedback.js";
-import { resetSessionState, state } from "./state.js";
+import { createProjectDiscoveryState, resetSessionState, state } from "./state.js";
 import { removeStoredTeamRecord, splitStoredTeamRecords } from "./team-storage.js";
 import { applyTeamSnapshotToState, resolveNextSelectedTeamId } from "./team-flow/shared.js";
 
@@ -43,7 +43,7 @@ export async function handleSyncFailure(
       state.projects = [];
       state.deletedProjects = [];
       state.users = [];
-      state.projectDiscovery = { status: "idle", error: "" };
+      state.projectDiscovery = createProjectDiscoveryState();
       state.userDiscovery = { status: "idle", error: "" };
       state.screen = "teams";
       showNoticeBadge("You no longer have access to this team.", render);

@@ -4,7 +4,7 @@ import {
   beginProjectsPageSync,
   completeProjectsPageSync,
   failProjectsPageSync,
-} from "./projects-page-sync.js";
+} from "./page-sync.js";
 import {
   loadStoredChapterPendingMutations,
   loadStoredProjectPendingMutations,
@@ -34,6 +34,7 @@ import { reconcileProjectRepoSyncStates } from "./project-repo-sync-flow.js";
 import { clearScopedSyncBadge, showNoticeBadge, showScopedSyncBadge } from "./status-feedback.js";
 import { classifySyncError } from "./sync-error.js";
 import { handleSyncFailure } from "./sync-recovery.js";
+import { slugifyRepoName } from "./repo-names.js";
 
 function setProjectUiDebug(render, text) {
   showScopedSyncBadge("projects", text, render);
@@ -47,8 +48,21 @@ function setProjectDiscoveryError(render, error) {
   state.projectDiscovery = {
     status: "error",
     error,
+    glossaryWarning: state.projectDiscovery?.glossaryWarning ?? "",
   };
   render?.();
+}
+
+function setProjectDiscoveryState(
+  status,
+  error = "",
+  glossaryWarning = state.projectDiscovery?.glossaryWarning ?? "",
+) {
+  state.projectDiscovery = {
+    status,
+    error,
+    glossaryWarning,
+  };
 }
 
 function selectedProjectsTeam() {
@@ -232,10 +246,14 @@ async function loadAvailableGlossariesForTeam(selectedTeam, teamIdAtStart = sele
     if (state.selectedTeamId === teamIdAtStart) {
       state.glossaries = [];
     }
-    return [];
+    return {
+      glossaries: [],
+      syncIssue: "",
+      brokerWarning: "",
+    };
   }
 
-  const { glossaries } = await loadRepoBackedGlossariesForTeam(selectedTeam, {
+  const { glossaries, syncIssue = "", brokerWarning = "" } = await loadRepoBackedGlossariesForTeam(selectedTeam, {
     offlineMode: state.offline?.isEnabled === true,
   });
 
@@ -243,7 +261,11 @@ async function loadAvailableGlossariesForTeam(selectedTeam, teamIdAtStart = sele
     state.glossaries = glossaries;
   }
 
-  return glossaries;
+  return {
+    glossaries,
+    syncIssue,
+    brokerWarning,
+  };
 }
 
 export async function refreshProjectFilesFromDisk(render, selectedTeam, projects) {
@@ -610,7 +632,7 @@ export async function loadTeamProjects(render, teamId = state.selectedTeamId) {
     state.pendingChapterMutations = [];
     state.projectRepoSyncByProjectId = {};
     applyProjectSnapshotToState({ items: [], deletedItems: [] });
-    state.projectDiscovery = { status: "ready", error: "" };
+    setProjectDiscoveryState("ready", "", "");
     render();
     return;
   }
@@ -631,36 +653,44 @@ export async function loadTeamProjects(render, teamId = state.selectedTeamId) {
     state.pendingChapterMutations,
     applyChapterPendingMutation,
   );
-  const glossaryLoadPromise = loadAvailableGlossariesForTeam(selectedTeam, teamId).catch(() => state.glossaries);
+  const glossaryLoadPromise = loadAvailableGlossariesForTeam(selectedTeam, teamId);
 
   if (state.offline.isEnabled) {
-    await glossaryLoadPromise;
+    const glossaryResult = await glossaryLoadPromise;
     state.projectRepoSyncByProjectId = {};
     applyProjectSnapshotToState(optimisticSnapshot);
-    state.projectDiscovery = { status: "ready", error: "" };
+    setProjectDiscoveryState(
+      "ready",
+      "",
+      glossaryResult?.syncIssue || glossaryResult?.brokerWarning || "",
+    );
     render();
     return;
   }
 
   if (cachedProjects.exists) {
     applyProjectSnapshotToState(optimisticSnapshot);
-    state.projectDiscovery = { status: "ready", error: "" };
+    setProjectDiscoveryState("ready", "", "");
   } else {
     applyProjectSnapshotToState({ items: [], deletedItems: [] });
-    state.projectDiscovery = { status: "loading", error: "" };
+    setProjectDiscoveryState("loading", "", "");
   }
   setProjectUiDebug(render, "Refreshing projects...");
   beginProjectsPageSync();
   render();
 
   try {
-    const [projects] = await Promise.all([
+    const [projectsResult, glossaryResult] = await Promise.allSettled([
       invoke("list_gnosis_projects_for_installation", {
         installationId: selectedTeam.installationId,
         sessionToken: requireBrokerSession(),
       }),
       glossaryLoadPromise,
     ]);
+    if (projectsResult.status !== "fulfilled") {
+      throw projectsResult.reason;
+    }
+    const projects = projectsResult.value;
     if (syncVersionAtStart !== state.projectSyncVersion) {
       await completeProjectsPageSync(render);
       render();
@@ -692,12 +722,19 @@ export async function loadTeamProjects(render, teamId = state.selectedTeamId) {
     );
     applyProjectSnapshotToState(nextSnapshot);
     persistProjectsForTeam(selectedTeam);
-    state.projectDiscovery = { status: "ready", error: "" };
+    const glossaryWarning =
+      glossaryResult.status === "fulfilled"
+        ? glossaryResult.value?.syncIssue || glossaryResult.value?.brokerWarning || ""
+        : glossaryResult.reason?.message ?? String(glossaryResult.reason ?? "");
+    setProjectDiscoveryState("ready", "", glossaryWarning);
     await reconcileProjectRepoSyncStates(render, selectedTeam, mappedProjects);
     await refreshProjectFilesFromDisk(render, selectedTeam, mappedProjects);
     clearProjectUiDebug(render);
     await completeProjectsPageSync(render);
     render();
+    if (glossaryResult.status === "rejected" && glossaryWarning) {
+      showNoticeBadge(glossaryWarning, render, 3200);
+    }
     if (state.pendingProjectMutations.length > 0) {
       void processPendingProjectMutations(render, selectedTeam);
     }
@@ -721,12 +758,9 @@ export async function loadTeamProjects(render, teamId = state.selectedTeamId) {
 
     if (!cachedProjects.exists) {
       applyProjectSnapshotToState({ items: [], deletedItems: [] });
-      state.projectDiscovery = {
-        status: "error",
-        error: error?.message ?? String(error),
-      };
+      setProjectDiscoveryState("error", error?.message ?? String(error), "");
     } else {
-      state.projectDiscovery = { status: "ready", error: "" };
+      setProjectDiscoveryState("ready", "", "");
     }
     clearProjectUiDebug(render);
     failProjectsPageSync();
@@ -738,19 +772,16 @@ export async function createProjectForSelectedTeam(render) {
   const selectedTeam = state.teams.find((team) => team.id === state.selectedTeamId);
 
   if (!selectedTeam?.installationId) {
-    state.projectDiscovery = {
-      status: "error",
-      error: "New projects currently require a GitHub App-connected team.",
-    };
+    setProjectDiscoveryState(
+      "error",
+      "New projects currently require a GitHub App-connected team.",
+    );
     render();
     return;
   }
 
   if (selectedTeam.canManageProjects !== true) {
-    state.projectDiscovery = {
-      status: "error",
-      error: "You do not have permission to create projects in this team.",
-    };
+    setProjectDiscoveryState("error", "You do not have permission to create projects in this team.");
     render();
     return;
   }
@@ -780,19 +811,13 @@ export function openProjectRename(render, projectId) {
   const project = state.projects.find((item) => item.id === projectId);
   const selectedTeam = state.teams.find((team) => team.id === state.selectedTeamId);
   if (!project) {
-    state.projectDiscovery = {
-      status: "error",
-      error: "Could not find the selected project.",
-    };
+    setProjectDiscoveryState("error", "Could not find the selected project.");
     render();
     return;
   }
 
   if (selectedTeam?.canManageProjects !== true) {
-    state.projectDiscovery = {
-      status: "error",
-      error: "You do not have permission to rename projects in this team.",
-    };
+    setProjectDiscoveryState("error", "You do not have permission to rename projects in this team.");
     render();
     return;
   }
@@ -823,10 +848,7 @@ export function openChapterRename(render, chapterId) {
   const context = findChapterContext(chapterId);
   const selectedTeam = state.teams.find((team) => team.id === state.selectedTeamId);
   if (!context?.chapter) {
-    state.projectDiscovery = {
-      status: "error",
-      error: "Could not find the selected file.",
-    };
+    setProjectDiscoveryState("error", "Could not find the selected file.");
     render();
     return;
   }
@@ -862,10 +884,7 @@ export function openChapterPermanentDeletion(render, chapterId) {
   const context = findChapterContext(chapterId);
   const selectedTeam = state.teams.find((team) => team.id === state.selectedTeamId);
   if (!context?.chapter) {
-    state.projectDiscovery = {
-      status: "error",
-      error: "Could not find the selected deleted file.",
-    };
+    setProjectDiscoveryState("error", "Could not find the selected deleted file.");
     render();
     return;
   }
@@ -944,7 +963,7 @@ export async function submitProjectCreation(render) {
   }
 
   const projectTitle = state.projectCreation.projectName.trim();
-  const repoName = slugifyRepositoryName(projectTitle);
+  const repoName = slugifyRepoName(projectTitle);
 
   if (!repoName) {
     state.projectCreation.error =
@@ -1234,10 +1253,7 @@ export async function updateChapterGlossaryLinks(render, chapterId, slot, glossa
 
   const context = findChapterContext(chapterId);
   if (!context?.chapter) {
-    state.projectDiscovery = {
-      status: "error",
-      error: "Could not find the selected file.",
-    };
+    setProjectDiscoveryState("error", "Could not find the selected file.");
     render();
     return;
   }
@@ -1303,28 +1319,19 @@ export async function deleteProject(render, projectId) {
   const selectedTeam = state.teams.find((team) => team.id === state.selectedTeamId);
 
   if (!project) {
-    state.projectDiscovery = {
-      status: "error",
-      error: "Could not find the selected project.",
-    };
+    setProjectDiscoveryState("error", "Could not find the selected project.");
     render();
     return;
   }
 
   if (!selectedTeam?.installationId || !project) {
-    state.projectDiscovery = {
-      status: "error",
-      error: "Could not find the selected project.",
-    };
+    setProjectDiscoveryState("error", "Could not find the selected project.");
     render();
     return;
   }
 
   if (selectedTeam.canManageProjects !== true) {
-    state.projectDiscovery = {
-      status: "error",
-      error: "You do not have permission to delete projects in this team.",
-    };
+    setProjectDiscoveryState("error", "You do not have permission to delete projects in this team.");
     render();
     return;
   }
@@ -1606,28 +1613,19 @@ export async function restoreProject(render, projectId) {
   const selectedTeam = state.teams.find((team) => team.id === state.selectedTeamId);
 
   if (!project) {
-    state.projectDiscovery = {
-      status: "error",
-      error: "Could not find the selected deleted project.",
-    };
+    setProjectDiscoveryState("error", "Could not find the selected deleted project.");
     render();
     return;
   }
 
   if (!selectedTeam?.installationId) {
-    state.projectDiscovery = {
-      status: "error",
-      error: "Could not restore the selected project.",
-    };
+    setProjectDiscoveryState("error", "Could not restore the selected project.");
     render();
     return;
   }
 
   if (selectedTeam.canManageProjects !== true) {
-    state.projectDiscovery = {
-      status: "error",
-      error: "You do not have permission to restore projects in this team.",
-    };
+    setProjectDiscoveryState("error", "You do not have permission to restore projects in this team.");
     render();
     return;
   }
@@ -1796,19 +1794,13 @@ export function permanentlyDeleteProject(render, projectId) {
   const project = state.deletedProjects.find((item) => item.id === projectId);
   const selectedTeam = state.teams.find((team) => team.id === state.selectedTeamId);
   if (!project) {
-    state.projectDiscovery = {
-      status: "error",
-      error: "Could not find the selected deleted project.",
-    };
+    setProjectDiscoveryState("error", "Could not find the selected deleted project.");
     render();
     return;
   }
 
   if (selectedTeam?.canDelete !== true) {
-    state.projectDiscovery = {
-      status: "error",
-      error: "You do not have permission to delete projects in this team.",
-    };
+    setProjectDiscoveryState("error", "You do not have permission to delete projects in this team.");
     render();
     return;
   }
@@ -1892,13 +1884,4 @@ export async function confirmProjectPermanentDeletion(render) {
     state.projectPermanentDeletion.error = error?.message ?? String(error);
     render();
   }
-}
-
-function slugifyRepositoryName(value) {
-  return String(value)
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9._-]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 100);
 }

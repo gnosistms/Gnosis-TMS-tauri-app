@@ -10,9 +10,9 @@ import { openLocalFilePicker } from "./local-file-picker.js";
 import {
   createRemoteGlossaryRepoForTeam,
   permanentlyDeleteRemoteGlossaryRepoForTeam,
-  slugifyGlossaryRepoName,
   syncGlossaryReposForTeam,
 } from "./glossary-repo-flow.js";
+import { slugifyRepoName } from "./repo-names.js";
 
 function detectGlossaryImportFileType(fileName) {
   const normalized = String(fileName || "").trim().toLowerCase();
@@ -92,7 +92,7 @@ export async function submitGlossaryCreation(render) {
   }
 
   const title = String(draft.title ?? "").trim();
-  const repoName = slugifyGlossaryRepoName(title);
+  const repoName = slugifyRepoName(title);
   const sourceLanguageCode = String(draft.sourceLanguageCode ?? "").trim().toLowerCase();
   const targetLanguageCode = String(draft.targetLanguageCode ?? "").trim().toLowerCase();
   const sourceLanguage = findIsoLanguageOption(sourceLanguageCode);
@@ -225,7 +225,7 @@ export async function importGlossaryFromTmx(render) {
   let glossary = null;
   try {
     const bytes = Array.from(new Uint8Array(await selectedFile.arrayBuffer()));
-    const repoName = slugifyGlossaryRepoName(
+    const repoName = slugifyRepoName(
       selectedFile.name.replace(/\.[^.]+$/, "").trim(),
     );
     if (!repoName) {

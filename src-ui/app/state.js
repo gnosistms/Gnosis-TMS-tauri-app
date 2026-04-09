@@ -4,6 +4,7 @@ import {
   loadStoredTeamPendingMutations,
 } from "./team-storage.js";
 import { loadStoredEditorFontSizePx } from "./editor-preferences.js";
+import { createSyncState } from "./sync-state.js";
 
 export const DEFAULT_EDITOR_FONT_SIZE_PX = 20;
 export const EDITOR_FONT_SIZE_OPTIONS = [16, 18, 20, 22, 24, 26, 28];
@@ -41,10 +42,7 @@ export const state = {
     status: "idle",
     error: "",
   },
-  projectDiscovery: {
-    status: "idle",
-    error: "",
-  },
+  projectDiscovery: createProjectDiscoveryState(),
   glossaryDiscovery: createGlossaryDiscoveryState(),
   projectImport: createProjectImportState(),
   projectRepoSyncByProjectId: {},
@@ -60,7 +58,7 @@ export const state = {
   pendingTeamMutations: [],
   pendingProjectMutations: [],
   pendingChapterMutations: [],
-  pageSync: createPageSyncState(),
+  pageSync: createSyncState(),
   projectsPageSync: createProjectsPageSyncState(),
   teamSetup: createTeamSetupState(),
   teamRename: createTeamRenameState(),
@@ -128,9 +126,14 @@ export function createAppUpdateState() {
 }
 
 export function createProjectsPageSyncState() {
+  return createSyncState();
+}
+
+export function createProjectDiscoveryState() {
   return {
     status: "idle",
-    startedAt: null,
+    error: "",
+    glossaryWarning: "",
   };
 }
 
@@ -471,7 +474,7 @@ export function resetSessionState() {
   state.selectedGlossaryId = null;
   state.users = [];
   state.orgDiscovery = { status: "idle", error: "" };
-  state.projectDiscovery = { status: "idle", error: "" };
+  state.projectDiscovery = createProjectDiscoveryState();
   state.glossaryDiscovery = createGlossaryDiscoveryState();
   state.projectImport = createProjectImportState();
   state.projectRepoSyncByProjectId = {};
@@ -485,7 +488,7 @@ export function resetSessionState() {
   state.pendingTeamMutations = [];
   state.pendingProjectMutations = [];
   state.pendingChapterMutations = [];
-  state.pageSync = createPageSyncState();
+  state.pageSync = createSyncState();
   state.projectsPageSync = createProjectsPageSyncState();
   state.offline = offlineState;
   state.connectionFailure = createConnectionFailureState();
@@ -511,13 +514,6 @@ export function resetSessionState() {
   state.showDeletedGlossaries = false;
   state.expandedProjects = new Set();
   state.expandedDeletedFiles = new Set();
-}
-
-function createPageSyncState() {
-  return {
-    status: "idle",
-    startedAt: null,
-  };
 }
 
 function createEntityModalState(fields = {}) {

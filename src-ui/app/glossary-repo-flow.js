@@ -204,6 +204,8 @@ export async function loadRepoBackedGlossariesForTeam(team, options = {}) {
       ),
       remoteRepos: [],
       syncSnapshots: [],
+      syncIssue: "",
+      brokerWarning: "",
     };
   }
 
@@ -216,6 +218,7 @@ export async function loadRepoBackedGlossariesForTeam(team, options = {}) {
         glossaries: sortGlossaries(localSummaries.map(normalizeGlossarySummary).filter(Boolean)),
         remoteRepos: [],
         syncSnapshots: [],
+        syncIssue: "",
         brokerWarning: GLOSSARY_BROKER_ROUTE_UNAVAILABLE_MESSAGE,
       };
     }
@@ -223,11 +226,13 @@ export async function loadRepoBackedGlossariesForTeam(team, options = {}) {
   }
   const syncSnapshots = await syncGlossaryReposForTeam(team, remoteRepos);
   const refreshedLocalSummaries = await listLocalGlossarySummariesForTeam(team);
+  const syncIssue = getGlossarySyncIssueMessage(syncSnapshots);
 
   return {
     glossaries: mergeRepoBackedGlossarySummaries(refreshedLocalSummaries, remoteRepos),
     remoteRepos,
     syncSnapshots,
+    syncIssue,
     brokerWarning: "",
   };
 }
@@ -289,13 +294,4 @@ export async function syncSingleGlossaryForTeam(team, glossary) {
   }
 
   return syncGlossaryReposForTeam(team, [repo]);
-}
-
-export function slugifyGlossaryRepoName(value) {
-  return String(value)
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9._-]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 100);
 }

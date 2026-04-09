@@ -37,26 +37,35 @@ Recommendation:
 
 ## Handoff Update (2026-04-09)
 
-- The glossary lifecycle rewrite itself is already landed in local/app history:
+- Important repo split for the next thread:
+  - desktop app repo: `/Users/hans/Desktop/GnosisTMS`
+  - broker repo: `/Users/hans/Desktop/gnosis-tms-github-app-broker`
+  - the broker repo is separate git history and separate deployment target; App Platform pulls from that broker repo, not from this desktop app repo.
+- Broker status:
+  - the missing glossary broker endpoints were implemented and pushed in the broker repo at commit `c5a73d0` (`Add glossary repo routes to broker`).
+  - if glossary sync still fails in production, the next thread should inspect deployment state or logs in the broker deployment first, not re-debug only the desktop app.
+- Already committed in the desktop app repo:
   - `b07fdd3` implemented glossary lifecycle and repo-backed glossary flows.
   - `b540bcd` fixed the glossary creation/import rollback bug found in review.
   - `5c1a451` hardened the glossary editor and added a client-side fallback when the broker is missing glossary routes.
-- The live GitHub App broker is still missing the glossary repo routes. Verified responses against the production broker:
-  - `GET /api/github-app/installations/{installation_id}/gnosis-projects` returns `401 Unauthorized` without a token, which shows the project route exists.
-  - `GET /api/github-app/installations/{installation_id}/gnosis-glossaries` returns `404 Cannot GET ...`.
-  - `POST /api/github-app/gnosis-glossaries` and `DELETE /api/github-app/gnosis-glossaries` also return `404`.
-- Important constraint for the next thread:
-  - this repository is the desktop/Tauri app only; it does not contain the broker server route implementations, so the missing glossary broker endpoints cannot be fixed here.
-  - from this repo, the only possible change is client behavior around that broker failure.
-- Current desktop-app behavior:
-  - committed fallback: the Glossaries page can continue showing local glossary data instead of dropping into a full-page error when the broker glossary routes are missing.
-  - uncommitted follow-up: the broker failure is also being promoted from a transient notice into persistent page state so the warning stays visible until a successful refresh clears it.
-- Current uncommitted glossary-related files:
-  - [glossary-discovery-flow.js](/Users/hans/Desktop/GnosisTMS/src-ui/app/glossary-discovery-flow.js)
+  - `cb70623` persisted glossary broker warnings and editor-history expansion state.
+- Current uncommitted app-side follow-up work:
+  - shared page-sync controller replaces the separate Projects-specific sync helper
+  - shared repo slug helper is used by both project and glossary creation/import
+  - Projects now surfaces glossary sync/broker problems as persistent page warning state instead of swallowing them
+  - shared Rust repo-sync transport helpers now back both project and glossary git sync modules
+- Current uncommitted files most relevant to that refactor:
+  - [project-flow.js](/Users/hans/Desktop/GnosisTMS/src-ui/app/project-flow.js)
+  - [projects.js](/Users/hans/Desktop/GnosisTMS/src-ui/screens/projects.js)
+  - [glossary-repo-flow.js](/Users/hans/Desktop/GnosisTMS/src-ui/app/glossary-repo-flow.js)
+  - [page-sync.js](/Users/hans/Desktop/GnosisTMS/src-ui/app/page-sync.js)
   - [state.js](/Users/hans/Desktop/GnosisTMS/src-ui/app/state.js)
-  - [glossaries.js](/Users/hans/Desktop/GnosisTMS/src-ui/screens/glossaries.js)
-- Separate uncommitted editor/history fix also in flight:
-  - [editor-history.js](/Users/hans/Desktop/GnosisTMS/src-ui/app/editor-history.js)
-  - [translate-flow.js](/Users/hans/Desktop/GnosisTMS/src-ui/app/translate-flow.js)
-  - [editor-history.test.js](/Users/hans/Desktop/GnosisTMS/src-ui/app/editor-history.test.js)
-  - purpose: keep an expanded history group open while new edits / reviewed / please-check commits arrive.
+  - [repo-names.js](/Users/hans/Desktop/GnosisTMS/src-ui/app/repo-names.js)
+  - [sync-state.js](/Users/hans/Desktop/GnosisTMS/src-ui/app/sync-state.js)
+  - [repo_sync_shared.rs](/Users/hans/Desktop/GnosisTMS/src-tauri/src/repo_sync_shared.rs)
+  - [project_repo_sync.rs](/Users/hans/Desktop/GnosisTMS/src-tauri/src/project_repo_sync.rs)
+  - [glossary_repo_sync.rs](/Users/hans/Desktop/GnosisTMS/src-tauri/src/glossary_repo_sync.rs)
+- Latest local verification for the uncommitted refactor:
+  - `npm test`: passed
+  - `npm run build`: passed
+  - `cargo check`: passed

@@ -1,6 +1,11 @@
 import { clearStoredAuthSession } from "./auth-storage.js";
-import { resetPageSync, beginPageSync, completePageSync, failPageSync } from "./page-sync.js";
-import { resetProjectsPageSync } from "./projects-page-sync.js";
+import {
+  resetPageSync,
+  beginPageSync,
+  completePageSync,
+  failPageSync,
+  resetProjectsPageSync,
+} from "./page-sync.js";
 import { lockScreenScrollSnapshot, unlockScreenScrollSnapshot } from "./scroll-state.js";
 import { state, resetSessionState } from "./state.js";
 import { waitForNextPaint } from "./runtime.js";

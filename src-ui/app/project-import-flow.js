@@ -3,7 +3,7 @@ import {
   beginProjectsPageSync,
   completeProjectsPageSync,
   failProjectsPageSync,
-} from "./projects-page-sync.js";
+} from "./page-sync.js";
 import { saveStoredProjectsForTeam } from "./project-cache.js";
 import { state } from "./state.js";
 import {

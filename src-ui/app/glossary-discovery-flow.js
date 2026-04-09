@@ -4,7 +4,6 @@ import { createGlossaryDiscoveryState, state } from "./state.js";
 import { showNoticeBadge } from "./status-feedback.js";
 import { selectedTeam } from "./glossary-shared.js";
 import {
-  getGlossarySyncIssueMessage,
   loadRepoBackedGlossariesForTeam,
 } from "./glossary-repo-flow.js";
 import { classifySyncError } from "./sync-error.js";
@@ -64,7 +63,7 @@ export async function loadTeamGlossaries(
   await waitForNextPaint();
 
   try {
-    const { glossaries, syncSnapshots, brokerWarning } = await loadRepoBackedGlossariesForTeam(team, {
+    const { glossaries, syncIssue, brokerWarning } = await loadRepoBackedGlossariesForTeam(team, {
       offlineMode: state.offline?.isEnabled === true,
     });
     state.glossaries = glossaries;
@@ -79,7 +78,6 @@ export async function loadTeamGlossaries(
       status: "ready",
       brokerWarning: typeof brokerWarning === "string" ? brokerWarning : "",
     };
-    const syncIssue = getGlossarySyncIssueMessage(syncSnapshots);
     if (syncIssue) {
       showNoticeBadge(syncIssue, render);
     } else if (brokerWarning) {

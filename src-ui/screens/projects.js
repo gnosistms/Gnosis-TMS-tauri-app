@@ -275,9 +275,16 @@ export function renderProjectsScreen(state) {
   const canPermanentlyDeleteFiles = selectedTeam?.canDelete === true;
   const offlineMode = state.offline?.isEnabled === true;
   const importInProgress = state.projectImport?.status === "importing";
-  const discovery = state.projectDiscovery ?? { status: "idle", error: "" };
+  const discovery = state.projectDiscovery ?? { status: "idle", error: "", glossaryWarning: "" };
   const projectsSyncBadgeText = getScopedSyncBadgeText("projects");
   const isProjectsSyncing = state.projectsPageSync?.status === "syncing";
+  const glossaryWarningMarkup = discovery.glossaryWarning
+    ? `
+      <div class="message-box message-box--warning">
+        <p class="message-box__text">${escapeHtml(discovery.glossaryWarning)}</p>
+      </div>
+    `
+    : "";
   const emptyState = renderStateCard({
     eyebrow: "NO PROJECTS FOUND",
     title: "This team doesn't have any projects yet.",
@@ -316,6 +323,7 @@ export function renderProjectsScreen(state) {
 
   const body = `
     <section class="stack">
+      ${glossaryWarningMarkup}
       ${projectsBody}
       ${renderDeletedProjectsSection(state)}
     </section>
