@@ -483,10 +483,6 @@
   color: rgba(var(--please-check-accent-rgb), 0.92);
 }
 
-.history-item__marker-note-icon--removed {
-  opacity: 0.72;
-}
-
 .history-item__marker-note-icon--removed::after {
   content: "";
   position: absolute;
