@@ -27,9 +27,6 @@ export function renderProjectCreationModal(state) {
         <div class="card__body modal-card__body">
           <p class="card__eyebrow">NEW PROJECT</p>
           <h2 class="modal__title">Create A New Project</h2>
-          <p class="modal__supporting">
-            Enter the project name. Gnosis TMS will create a new private repository and initialize it with the project storage spec.
-          </p>
           <div class="modal__form">
             <label class="field">
               <span class="field__label">Project Name</span>

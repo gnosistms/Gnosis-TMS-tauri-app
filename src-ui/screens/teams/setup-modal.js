@@ -82,7 +82,7 @@ function getStepConfig(setup) {
       heading: "Install The GitHub App",
       supporting: "Now install the Gnosis TMS GitHub App on the organization you just created.",
       afterBodySupporting: "",
-      body: renderInstallSummary(),
+      body: "",
       actionButton: primaryButton("Install Gnosis TMS GitHub App", "begin-github-app-install"),
     };
   }
