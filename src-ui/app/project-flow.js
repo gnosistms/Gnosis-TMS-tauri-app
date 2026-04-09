@@ -286,6 +286,12 @@ function mergeProjectsWithLocalFiles(snapshot, listings = [], targets = []) {
     if (!isTargeted) {
       return project;
     }
+    if (project?.recordState === "tombstone" || project?.remoteState === "deleted") {
+      return {
+        ...project,
+        chapters: [],
+      };
+    }
 
     const chapters =
       listingByProjectId.get(project.id)
@@ -374,8 +380,15 @@ function mapMetadataProjectToVisibleProject(record, remoteProject, existingProje
       remoteProject?.defaultBranchHeadOid
       ?? existingProject?.defaultBranchHeadOid
       ?? null,
-    chapters: Array.isArray(existingProject?.chapters) ? existingProject.chapters : [],
+    chapters:
+      record.recordState === "tombstone"
+        ? []
+        : Array.isArray(existingProject?.chapters)
+          ? existingProject.chapters
+          : [],
     remoteState: record.remoteState ?? "linked",
+    recordState: record.recordState ?? "live",
+    deletedAt: record.deletedAt ?? null,
   };
 }
 
@@ -391,7 +404,7 @@ function mergeMetadataDiscoveryProjects({
   const includedRepoNames = new Set();
 
   for (const record of Array.isArray(metadataRecords) ? metadataRecords : []) {
-    if (record?.recordState !== "live") {
+    if (record?.recordState !== "live" && record?.recordState !== "tombstone") {
       continue;
     }
 
@@ -415,6 +428,7 @@ function mergeMetadataDiscoveryProjects({
       ...remoteProject,
       chapters: Array.isArray(localProject?.chapters) ? localProject.chapters : [],
       remoteState: "linked",
+      recordState: "live",
     });
     includedProjectIds.add(remoteProject.id);
     includedRepoNames.add(remoteProject.name);
@@ -452,8 +466,12 @@ function projectMetadataRecordFromVisibleProject(project) {
     remoteState:
       project.remoteState === "pendingCreate"
         ? "pendingCreate"
-        : "linked",
-    recordState: "live",
+        : project.remoteState ?? "linked",
+    recordState: project.recordState ?? "live",
+    deletedAt:
+      typeof project.deletedAt === "string" && project.deletedAt.trim()
+        ? project.deletedAt.trim()
+        : null,
     chapterCount: Array.isArray(project.chapters) ? project.chapters.length : 0,
   };
 }
@@ -2238,11 +2256,19 @@ export async function confirmProjectPermanentDeletion(render) {
     return;
   }
 
+  let remoteDeleted = false;
   try {
     state.projectPermanentDeletion.status = "loading";
     state.projectPermanentDeletion.error = "";
     render();
     await waitForNextPaint();
+    await upsertProjectMetadataRecord(selectedTeam, {
+      ...projectMetadataRecordFromVisibleProject(project),
+      lifecycleState: "softDeleted",
+      remoteState: "deleted",
+      recordState: "tombstone",
+      deletedAt: new Date().toISOString(),
+    });
     await invoke("permanently_delete_gnosis_project_repo", {
       input: {
         installationId: selectedTeam.installationId,
@@ -2251,12 +2277,22 @@ export async function confirmProjectPermanentDeletion(render) {
       },
       sessionToken: requireBrokerSession(),
     });
-    removeVisibleProject(project.id);
-    persistProjectsForTeam(selectedTeam);
+    remoteDeleted = true;
+    await invoke("purge_local_gtms_project_repo", {
+      input: {
+        installationId: selectedTeam.installationId,
+        repoName: project.name,
+      },
+    });
     resetProjectPermanentDeletion();
     render();
     await loadTeamProjects(render, selectedTeam.id);
   } catch (error) {
+    try {
+      if (!remoteDeleted) {
+        await upsertProjectMetadataRecord(selectedTeam, projectMetadataRecordFromVisibleProject(project));
+      }
+    } catch {}
     if (await handleSyncFailure(classifySyncError(error), { render })) {
       return;
     }

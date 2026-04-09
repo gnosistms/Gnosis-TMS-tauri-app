@@ -164,14 +164,18 @@ function mergeMetadataBackedGlossarySummaries(localSummaries, metadataRecords, r
   const merged = [];
 
   for (const record of Array.isArray(metadataRecords) ? metadataRecords : []) {
-    if (record?.recordState !== "live") {
+    if (record?.recordState !== "live" && record?.recordState !== "tombstone") {
       continue;
     }
 
     const localGlossary = findMatchingLocalGlossary(record, localById, localByRepoName);
     const remoteGlossary =
-      findMatchingRemoteGlossary(record, remoteByRepoName, remoteByFullName)
-      ?? metadataBackedGlossaryRepo(record);
+      record.recordState === "live"
+        ? (
+            findMatchingRemoteGlossary(record, remoteByRepoName, remoteByFullName)
+            ?? metadataBackedGlossaryRepo(record)
+          )
+        : null;
 
     if (localGlossary) {
       matchedLocalIds.add(localGlossary.id);
@@ -182,10 +186,21 @@ function mergeMetadataBackedGlossarySummaries(localSummaries, metadataRecords, r
       glossaryId: record.id,
       repoName: record.repoName,
       title: record.title,
-      sourceLanguage: localGlossary?.sourceLanguage ?? record.sourceLanguage ?? null,
-      targetLanguage: localGlossary?.targetLanguage ?? record.targetLanguage ?? null,
+      sourceLanguage:
+        record.recordState === "tombstone"
+          ? record.sourceLanguage ?? null
+          : localGlossary?.sourceLanguage ?? record.sourceLanguage ?? null,
+      targetLanguage:
+        record.recordState === "tombstone"
+          ? record.targetLanguage ?? null
+          : localGlossary?.targetLanguage ?? record.targetLanguage ?? null,
       lifecycleState: record.lifecycleState,
-      termCount: localGlossary?.termCount ?? record.termCount ?? 0,
+      remoteState: record.remoteState ?? "linked",
+      recordState: record.recordState ?? "live",
+      termCount:
+        record.recordState === "tombstone"
+          ? record.termCount ?? 0
+          : localGlossary?.termCount ?? record.termCount ?? 0,
       repoId: remoteGlossary?.repoId ?? record.githubRepoId ?? localGlossary?.repoId ?? null,
       nodeId: remoteGlossary?.nodeId ?? record.githubNodeId ?? localGlossary?.nodeId ?? null,
       fullName: remoteGlossary?.fullName ?? record.fullName ?? localGlossary?.fullName ?? "",

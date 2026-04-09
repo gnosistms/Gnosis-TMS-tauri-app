@@ -53,6 +53,13 @@ pub(crate) struct LocalProjectFilesResponse {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub(crate) struct PurgeLocalProjectRepoInput {
+  installation_id: i64,
+  repo_name: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct UpdateChapterLanguageSelectionInput {
   installation_id: i64,
   repo_name: String,
@@ -452,6 +459,29 @@ pub(super) fn list_local_gtms_project_files_sync(
   }
 
   Ok(results)
+}
+
+pub(super) fn purge_local_gtms_project_repo_sync(
+  app: &AppHandle,
+  input: PurgeLocalProjectRepoInput,
+) -> Result<(), String> {
+  let repo_root = local_repo_root(app, input.installation_id)?;
+  let repo_name = input.repo_name.trim();
+  if repo_name.is_empty() {
+    return Err("Could not determine which project repo to remove.".to_string());
+  }
+
+  let repo_path = repo_root.join(repo_name);
+  if !repo_path.exists() {
+    return Ok(());
+  }
+
+  fs::remove_dir_all(&repo_path).map_err(|error| {
+    format!(
+      "Could not remove the local project repo '{}': {error}",
+      repo_path.display()
+    )
+  })
 }
 
 pub(super) fn update_gtms_chapter_language_selection_sync(

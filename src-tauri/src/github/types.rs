@@ -246,6 +246,7 @@ pub(crate) struct UpsertGithubProjectMetadataRecordInput {
   pub(crate) lifecycle_state: Option<String>,
   pub(crate) remote_state: Option<String>,
   pub(crate) record_state: Option<String>,
+  pub(crate) deleted_at: Option<String>,
   pub(crate) chapter_count: Option<usize>,
 }
 
@@ -273,6 +274,7 @@ pub(crate) struct UpsertGithubGlossaryMetadataRecordInput {
   pub(crate) lifecycle_state: Option<String>,
   pub(crate) remote_state: Option<String>,
   pub(crate) record_state: Option<String>,
+  pub(crate) deleted_at: Option<String>,
   pub(crate) source_language: Option<TeamMetadataLanguageInput>,
   pub(crate) target_language: Option<TeamMetadataLanguageInput>,
   pub(crate) term_count: Option<usize>,

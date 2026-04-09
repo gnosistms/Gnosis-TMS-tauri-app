@@ -71,30 +71,49 @@ function lifecycleActionBlockedMessage(team, { actionLabel, requireOwner = false
   return "";
 }
 
-function glossaryMetadataRecord(glossary) {
+function glossaryMetadataRecord(glossary, overrides = {}) {
   return {
     glossaryId: glossary.id,
-    title: glossary.title,
-    repoName: glossary.repoName,
-    githubRepoId: Number.isFinite(glossary.repoId) ? glossary.repoId : null,
+    title: overrides.title ?? glossary.title,
+    repoName: overrides.repoName ?? glossary.repoName,
+    githubRepoId:
+      Number.isFinite(overrides.githubRepoId)
+        ? overrides.githubRepoId
+        : Number.isFinite(glossary.repoId)
+          ? glossary.repoId
+          : null,
     githubNodeId:
-      typeof glossary.nodeId === "string" && glossary.nodeId.trim()
-        ? glossary.nodeId.trim()
+      typeof overrides.githubNodeId === "string" && overrides.githubNodeId.trim()
+        ? overrides.githubNodeId.trim()
+        : typeof glossary.nodeId === "string" && glossary.nodeId.trim()
+          ? glossary.nodeId.trim()
         : null,
     fullName:
-      typeof glossary.fullName === "string" && glossary.fullName.trim()
-        ? glossary.fullName.trim()
+      typeof overrides.fullName === "string" && overrides.fullName.trim()
+        ? overrides.fullName.trim()
+        : typeof glossary.fullName === "string" && glossary.fullName.trim()
+          ? glossary.fullName.trim()
         : null,
     defaultBranch:
-      typeof glossary.defaultBranchName === "string" && glossary.defaultBranchName.trim()
-        ? glossary.defaultBranchName.trim()
+      typeof overrides.defaultBranch === "string" && overrides.defaultBranch.trim()
+        ? overrides.defaultBranch.trim()
+        : typeof glossary.defaultBranchName === "string" && glossary.defaultBranchName.trim()
+          ? glossary.defaultBranchName.trim()
         : "main",
-    lifecycleState: glossary.lifecycleState === "deleted" ? "softDeleted" : "active",
-    remoteState: "linked",
-    recordState: "live",
-    sourceLanguage: glossary.sourceLanguage ?? null,
-    targetLanguage: glossary.targetLanguage ?? null,
-    termCount: Number.isFinite(glossary.termCount) ? glossary.termCount : 0,
+    lifecycleState:
+      overrides.lifecycleState
+      ?? (glossary.lifecycleState === "deleted" ? "softDeleted" : "active"),
+    remoteState: overrides.remoteState ?? glossary.remoteState ?? "linked",
+    recordState: overrides.recordState ?? glossary.recordState ?? "live",
+    deletedAt: overrides.deletedAt ?? glossary.deletedAt ?? null,
+    sourceLanguage: overrides.sourceLanguage ?? glossary.sourceLanguage ?? null,
+    targetLanguage: overrides.targetLanguage ?? glossary.targetLanguage ?? null,
+    termCount:
+      Number.isFinite(overrides.termCount)
+        ? overrides.termCount
+        : Number.isFinite(glossary.termCount)
+          ? glossary.termCount
+          : 0,
   };
 }
 
@@ -353,8 +372,16 @@ export async function confirmGlossaryPermanentDeletion(render) {
   render();
   await waitForNextPaint();
 
+  let remoteDeleted = false;
   try {
+    await upsertGlossaryMetadataRecord(team, glossaryMetadataRecord(glossary, {
+      lifecycleState: "softDeleted",
+      remoteState: "deleted",
+      recordState: "tombstone",
+      deletedAt: new Date().toISOString(),
+    }));
     await permanentlyDeleteRemoteGlossaryRepoForTeam(team, glossary.repoName);
+    remoteDeleted = true;
     await invoke("purge_local_gtms_glossary_repo", {
       input: {
         installationId: team.installationId,
@@ -367,6 +394,11 @@ export async function confirmGlossaryPermanentDeletion(render) {
     resetGlossaryPermanentDeletion();
     await loadTeamGlossaries(render, team.id, { preserveVisibleData: true });
   } catch (error) {
+    try {
+      if (!remoteDeleted && glossary) {
+        await upsertGlossaryMetadataRecord(team, glossaryMetadataRecord(glossary));
+      }
+    } catch {}
     state.glossaryPermanentDeletion.status = "idle";
     state.glossaryPermanentDeletion.error = error?.message ?? String(error);
     render();

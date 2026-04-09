@@ -97,6 +97,7 @@ function renderProjectCard(project, expanded, options = {}) {
   const isDeleted = options.isDeleted === true;
   const offlineMode = options.offlineMode === true;
   const isPendingCreate = project?.isPendingCreate === true;
+  const isTombstone = project?.recordState === "tombstone";
   const deleteAction = options.deleteAction ?? `delete-project:${project.id}`;
   const addFilesDisabled = options.addFilesDisabled === true;
   const glossaryOptions = options.glossaries ?? [];
@@ -106,23 +107,29 @@ function renderProjectCard(project, expanded, options = {}) {
   const showDeletedFiles = options.showDeletedFiles === true;
   const actions =
     options.actions ??
-    [
-      canManageProjects
-        ? textAction("Add files", `add-project-files:${project.id}`, {
-            disabled: offlineMode || addFilesDisabled || isPendingCreate,
-          })
-        : "",
-      canManageProjects
-        ? textAction("Rename", `rename-project:${project.id}`, {
-            disabled: offlineMode || isPendingCreate,
-          })
-        : "",
-      canManageProjects
-        ? textAction("Delete", deleteAction, { disabled: offlineMode || isPendingCreate })
-        : "",
-    ].filter(Boolean);
+    (
+      isDeleted && isTombstone
+        ? []
+        : [
+            canManageProjects
+              ? textAction("Add files", `add-project-files:${project.id}`, {
+                  disabled: offlineMode || addFilesDisabled || isPendingCreate,
+                })
+              : "",
+            canManageProjects
+              ? textAction("Rename", `rename-project:${project.id}`, {
+                  disabled: offlineMode || isPendingCreate,
+                })
+              : "",
+            canManageProjects
+              ? textAction("Delete", deleteAction, { disabled: offlineMode || isPendingCreate })
+              : "",
+          ].filter(Boolean)
+    );
   const fileCount = isPendingCreate
     ? project.pendingCreateStatusText ?? "Creating..."
+    : isDeleted && isTombstone
+      ? "Permanently deleted"
     : `${files.length} file${files.length === 1 ? "" : "s"}`;
 
   const fileRows = expanded
@@ -259,14 +266,17 @@ function renderDeletedProjectsSection(state) {
             canManageProjects: canManageDeletedProjects,
             isDeleted: true,
             offlineMode,
-            actions: canManageDeletedProjects
-              ? [
-                  textAction("Restore", `restore-project:${project.id}`, { disabled: offlineMode }),
-                  ...(canPermanentlyDeleteProjects
-                    ? [textAction("Delete", `delete-deleted-project:${project.id}`, { disabled: offlineMode })]
-                    : []),
-                ]
-              : [],
+            actions:
+              project?.recordState === "tombstone"
+                ? []
+                : canManageDeletedProjects
+                  ? [
+                      textAction("Restore", `restore-project:${project.id}`, { disabled: offlineMode }),
+                      ...(canPermanentlyDeleteProjects
+                        ? [textAction("Delete", `delete-deleted-project:${project.id}`, { disabled: offlineMode })]
+                        : []),
+                    ]
+                  : [],
           }),
         )
         .join("")}</section>

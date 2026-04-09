@@ -4,9 +4,9 @@
 
 ### Current Status
 
-- current implementation stage: `Stage 2`
+- current implementation stage: `Stage 6`
 - stage status: `implemented locally, not yet committed`
-- next intended stage: `Stage 3`
+- next intended stage: `Stage 7`
 
 ### Stage 1 Progress
 
@@ -1121,6 +1121,32 @@ Testing after Stage 4:
 
 ### Stage 5: Read From Metadata During Discovery / Reconciliation
 
+Status as of April 9, 2026:
+
+- implemented locally
+- app commit: `5c34f6d` `Read team metadata during discovery`
+- broker commit: `3495771` `Add team metadata read routes`
+
+What is now done:
+
+- broker exposes metadata read routes for projects and glossaries
+- Tauri exposes metadata read commands/types
+- project discovery reads `team-metadata`, merges metadata with local cache and remote repo data, and stops using remote repo listing as the visibility gate
+- glossary discovery reads `team-metadata`, reconciles by UUID first, and can still sync local repos from metadata-backed remote identity
+- project/glossary rename and soft delete/restore now best-effort update metadata so discovery stays coherent
+
+Known boundary after Stage 5:
+
+- permanent delete still removes the remote repo directly; tombstone semantics are not implemented yet
+- stale local repos are not yet blocked from reappearing via explicit tombstone/conflict state
+- those behaviors remain Stage 6 work
+- follow-up UX not yet implemented:
+  if `/Users/hans/Library/Application Support/com.gnosis.tms/installations` is deleted, discovery can rebuild from GitHub, but the app does not yet show an explicit “local installation data was missing, rebuilding from GitHub” message during recovery
+
+Deployment note:
+
+- Stage 5 requires the broker commit above to be pushed/deployed before the app can use the new metadata read routes live
+
 Scope:
 
 - load `team-metadata` in app discovery
@@ -1146,6 +1172,27 @@ Testing after Stage 5:
   - `cargo check`
 
 ### Stage 6: Add Tombstones And Permanent Delete Semantics
+
+Status as of April 9, 2026:
+
+- implemented locally
+
+What is now done:
+
+- permanent glossary delete writes a metadata tombstone first, then deletes the remote repo, then purges the local repo
+- permanent project delete writes a metadata tombstone first, then deletes the remote repo, then purges the local repo
+- if remote permanent delete fails before completion, the app best-effort restores the prior live metadata record instead of leaving a false tombstone behind
+- metadata normalization and Tauri input payloads now preserve `deletedAt`
+- project/glossary discovery keeps tombstone records visible instead of allowing stale local repos to silently reappear as active resources
+- project repo sync skips tombstoned/deleted resources so stale local state does not auto-recreate or re-sync a permanently deleted resource
+- deleted project/glossary cards now show a permanent-delete state instead of offering restore/delete actions again
+
+Known boundary after Stage 6:
+
+- Stage 7 conflict-resolution UX is still not implemented
+- tombstones are now preserved and surfaced, but there is not yet a richer user-facing recovery flow for other metadata conflict states like `missing` or `syncError`
+- follow-up UX not yet implemented:
+  if `/Users/hans/Library/Application Support/com.gnosis.tms/installations` is deleted, discovery can rebuild from GitHub, but the app does not yet show an explicit “local installation data was missing, rebuilding from GitHub” message during recovery
 
 Scope:
 

@@ -64,6 +64,14 @@ export function normalizeGlossarySummary(glossary) {
     sourceLanguage: glossary.sourceLanguage ?? null,
     targetLanguage: glossary.targetLanguage ?? null,
     lifecycleState: glossary.lifecycleState === "deleted" ? "deleted" : "active",
+    remoteState:
+      typeof glossary.remoteState === "string" && glossary.remoteState.trim()
+        ? glossary.remoteState.trim()
+        : "linked",
+    recordState:
+      typeof glossary.recordState === "string" && glossary.recordState.trim()
+        ? glossary.recordState.trim()
+        : "live",
     termCount: Number.isFinite(glossary.termCount) ? glossary.termCount : 0,
     fullName:
       typeof glossary.fullName === "string" && glossary.fullName.trim()

@@ -24,7 +24,9 @@ function buildProjectRepoSyncInput(team, projects) {
         && project.name.trim()
         && typeof project?.fullName === "string"
         && project.fullName.trim()
-        && project?.remoteState !== "pendingCreate",
+        && project?.remoteState !== "pendingCreate"
+        && project?.remoteState !== "deleted"
+        && project?.recordState !== "tombstone"
       )
       .map((project) => ({
         projectId: project.id,

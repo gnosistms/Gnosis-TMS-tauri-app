@@ -69,6 +69,7 @@ use crate::{
   },
   project_import::{
     import_xlsx_to_gtms, list_local_gtms_project_files, load_gtms_chapter_editor_data, load_gtms_editor_field_history,
+    purge_local_gtms_project_repo,
     permanently_delete_gtms_chapter, rename_gtms_chapter, restore_gtms_chapter,
     restore_gtms_editor_field_from_history, soft_delete_gtms_chapter,
     update_gtms_chapter_glossary_links, update_gtms_chapter_language_selection, update_gtms_editor_row_field_flag,
@@ -272,6 +273,7 @@ pub fn run() {
       list_project_repo_sync_states,
       import_xlsx_to_gtms,
       list_local_gtms_project_files,
+      purge_local_gtms_project_repo,
       load_gtms_chapter_editor_data,
       load_gtms_editor_field_history,
       rename_gtms_chapter,

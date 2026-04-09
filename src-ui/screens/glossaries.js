@@ -35,6 +35,7 @@ function renderGlossaryCard(glossary, options = {}) {
   const canPermanentlyDelete = options.canPermanentlyDelete === true;
   const isDeleted = options.isDeleted === true;
   const offlineMode = options.offlineMode === true;
+  const isTombstone = glossary?.recordState === "tombstone";
   const downloadUrl = glossaryArchiveDownloadUrl(glossary);
   const activeActions = [
     textAction("Open", `open-glossary:${glossary.id}`),
@@ -49,8 +50,8 @@ function renderGlossaryCard(glossary, options = {}) {
       : []),
   ];
   const deletedActions = [
-    ...(canManage ? [textAction("Restore", `restore-glossary:${glossary.id}`, { disabled: offlineMode })] : []),
-    ...(canPermanentlyDelete
+    ...(!isTombstone && canManage ? [textAction("Restore", `restore-glossary:${glossary.id}`, { disabled: offlineMode })] : []),
+    ...(!isTombstone && canPermanentlyDelete
       ? [textAction("Delete", `delete-deleted-glossary:${glossary.id}`, { disabled: offlineMode })]
       : []),
   ];
@@ -71,7 +72,10 @@ function renderGlossaryCard(glossary, options = {}) {
                   `
               }
             </h2>
-            <p class="list-row__meta">${renderGlossaryLanguageFlow(glossary)}</p>
+            <p class="list-row__meta">
+              ${renderGlossaryLanguageFlow(glossary)}
+              ${isDeleted && isTombstone ? ` <span>Permanently deleted</span>` : ""}
+            </p>
           </div>
           <div class="list-row__actions">
             ${(isDeleted ? deletedActions : activeActions).join("")}

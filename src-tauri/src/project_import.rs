@@ -10,6 +10,7 @@ use self::{
     load_gtms_editor_field_history_sync,
     list_local_gtms_project_files_sync,
     load_gtms_chapter_editor_data_sync,
+    purge_local_gtms_project_repo_sync,
     restore_gtms_editor_field_from_history_sync,
     update_gtms_chapter_glossary_links_sync,
     update_gtms_chapter_language_selection_sync,
@@ -21,6 +22,7 @@ use self::{
     LocalProjectFilesResponse,
     LoadChapterEditorInput,
     LoadChapterEditorResponse,
+    PurgeLocalProjectRepoInput,
     RestoreEditorFieldHistoryInput,
     RestoreEditorFieldHistoryResponse,
     UpdateChapterGlossaryLinksInput,
@@ -76,6 +78,16 @@ pub(crate) async fn list_local_gtms_project_files(
   tauri::async_runtime::spawn_blocking(move || list_local_gtms_project_files_sync(&app, input))
     .await
     .map_err(|error| format!("The local project file listing worker failed: {error}"))?
+}
+
+#[tauri::command]
+pub(crate) async fn purge_local_gtms_project_repo(
+  app: AppHandle,
+  input: PurgeLocalProjectRepoInput,
+) -> Result<(), String> {
+  tauri::async_runtime::spawn_blocking(move || purge_local_gtms_project_repo_sync(&app, input))
+    .await
+    .map_err(|error| format!("The local project repo removal worker failed: {error}"))?
 }
 
 #[tauri::command]
