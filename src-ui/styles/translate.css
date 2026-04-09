@@ -137,7 +137,7 @@
 
 .translation-language-panel {
   display: grid;
-  gap: 10px;
+  gap: 5.2px;
 }
 
 .translation-language-panel__header {
@@ -317,6 +317,7 @@
 }
 
 .translation-language-panel__field:focus {
+  margin-top: 4.8px;
   border-color: rgba(236, 134, 9, 0.52);
   border-radius: var(--radius-ui);
   box-shadow: 0 0 0 4px rgba(243, 156, 24, 0.12);
@@ -464,15 +465,11 @@
 .history-item__marker-note {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
   color: var(--muted);
 }
 
-.history-item__marker-note-remove {
-  color: inherit;
-}
-
 .history-item__marker-note-icon {
+  position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -484,6 +481,20 @@
 
 .history-item__marker-note-icon--please-check {
   color: rgba(var(--please-check-accent-rgb), 0.92);
+}
+
+.history-item__marker-note-icon--removed {
+  opacity: 0.72;
+}
+
+.history-item__marker-note-icon--removed::after {
+  content: "";
+  position: absolute;
+  width: 22px;
+  height: 1.8px;
+  border-radius: 999px;
+  background: currentColor;
+  transform: rotate(-28deg);
 }
 
 .history-item__marker-note-icon .translation-marker-button__icon {

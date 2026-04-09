@@ -2,6 +2,33 @@ import { requireBrokerSession } from "./auth-flow.js";
 import { invoke } from "./runtime.js";
 import { normalizeGlossarySummary, sortGlossaries } from "./glossary-shared.js";
 
+const GLOSSARY_BROKER_ROUTE_UNAVAILABLE_MESSAGE =
+  "The GitHub App broker does not have glossary repo routes deployed yet. Remote glossary sync and repo actions are unavailable right now.";
+
+function glossaryBrokerRouteUnavailable(error) {
+  const message = String(error?.message ?? error ?? "");
+  return (
+    message.includes("/gnosis-glossaries")
+    && (
+      message.includes("Cannot GET ")
+      || message.includes("Cannot POST ")
+      || message.includes("Cannot DELETE ")
+    )
+  );
+}
+
+function normalizeGlossaryBrokerError(error) {
+  if (glossaryBrokerRouteUnavailable(error)) {
+    return new Error(GLOSSARY_BROKER_ROUTE_UNAVAILABLE_MESSAGE);
+  }
+
+  if (error instanceof Error) {
+    return error;
+  }
+
+  return new Error(String(error ?? "Unknown glossary broker error."));
+}
+
 function normalizeRemoteGlossaryRepo(repo) {
   if (!repo || typeof repo !== "object") {
     return null;
@@ -87,10 +114,15 @@ export async function listRemoteGlossaryReposForTeam(team) {
     return [];
   }
 
-  const repos = await invoke("list_gnosis_glossaries_for_installation", {
-    installationId: team.installationId,
-    sessionToken: requireBrokerSession(),
-  });
+  let repos;
+  try {
+    repos = await invoke("list_gnosis_glossaries_for_installation", {
+      installationId: team.installationId,
+      sessionToken: requireBrokerSession(),
+    });
+  } catch (error) {
+    throw normalizeGlossaryBrokerError(error);
+  }
 
   return (Array.isArray(repos) ? repos : [])
     .map(normalizeRemoteGlossaryRepo)
@@ -175,7 +207,20 @@ export async function loadRepoBackedGlossariesForTeam(team, options = {}) {
     };
   }
 
-  const remoteRepos = await listRemoteGlossaryReposForTeam(team);
+  let remoteRepos;
+  try {
+    remoteRepos = await listRemoteGlossaryReposForTeam(team);
+  } catch (error) {
+    if (glossaryBrokerRouteUnavailable(error) || error?.message === GLOSSARY_BROKER_ROUTE_UNAVAILABLE_MESSAGE) {
+      return {
+        glossaries: sortGlossaries(localSummaries.map(normalizeGlossarySummary).filter(Boolean)),
+        remoteRepos: [],
+        syncSnapshots: [],
+        brokerWarning: GLOSSARY_BROKER_ROUTE_UNAVAILABLE_MESSAGE,
+      };
+    }
+    throw error;
+  }
   const syncSnapshots = await syncGlossaryReposForTeam(team, remoteRepos);
   const refreshedLocalSummaries = await listLocalGlossarySummariesForTeam(team);
 
@@ -183,20 +228,26 @@ export async function loadRepoBackedGlossariesForTeam(team, options = {}) {
     glossaries: mergeRepoBackedGlossarySummaries(refreshedLocalSummaries, remoteRepos),
     remoteRepos,
     syncSnapshots,
+    brokerWarning: "",
   };
 }
 
 export async function createRemoteGlossaryRepoForTeam(team, repoName) {
-  const remoteRepo = normalizeRemoteGlossaryRepo(
-    await invoke("create_gnosis_glossary_repo", {
+  let createdRepo;
+  try {
+    createdRepo = await invoke("create_gnosis_glossary_repo", {
       input: {
         installationId: team.installationId,
         orgLogin: team.githubOrg,
         repoName,
       },
       sessionToken: requireBrokerSession(),
-    }),
-  );
+    });
+  } catch (error) {
+    throw normalizeGlossaryBrokerError(error);
+  }
+
+  const remoteRepo = normalizeRemoteGlossaryRepo(createdRepo);
   if (!remoteRepo) {
     throw new Error("Could not determine the new glossary repo metadata.");
   }
@@ -204,14 +255,18 @@ export async function createRemoteGlossaryRepoForTeam(team, repoName) {
 }
 
 export async function permanentlyDeleteRemoteGlossaryRepoForTeam(team, repoName) {
-  await invoke("permanently_delete_gnosis_glossary_repo", {
-    input: {
-      installationId: team.installationId,
-      orgLogin: team.githubOrg,
-      repoName,
-    },
-    sessionToken: requireBrokerSession(),
-  });
+  try {
+    await invoke("permanently_delete_gnosis_glossary_repo", {
+      input: {
+        installationId: team.installationId,
+        orgLogin: team.githubOrg,
+        repoName,
+      },
+      sessionToken: requireBrokerSession(),
+    });
+  } catch (error) {
+    throw normalizeGlossaryBrokerError(error);
+  }
 }
 
 export async function syncSingleGlossaryForTeam(team, glossary) {

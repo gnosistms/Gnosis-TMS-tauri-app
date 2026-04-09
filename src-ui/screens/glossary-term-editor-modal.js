@@ -6,12 +6,16 @@ import {
 } from "../lib/ui.js";
 import { formatErrorForDisplay } from "../app/error-display.js";
 
-function renderVariantRow(side, value, index, total, isSubmitting) {
+function renderVariantRow(side, value, index, total, isSubmitting, isRedundant = false) {
   const removeDisabled = isSubmitting;
   const inputLabel = `${side === "source" ? "Source" : "Target"} variant ${index + 1}`;
   const showRemoveButton = total > 1;
   const dragLabel = "Drag to move more likely variants to the top of the list.";
   const tooltipOptions = side === "target" ? { align: "end" } : {};
+  const inputClasses = ["field__input", "term-variant-row__input"];
+  if (isRedundant) {
+    inputClasses.push("term-variant-row__input--redundant");
+  }
   const dragHandleMarkup =
     total > 1
       ? `
@@ -56,7 +60,7 @@ function renderVariantRow(side, value, index, total, isSubmitting) {
     >
       <div class="term-variant-row__shell">
         <textarea
-          class="field__input term-variant-row__input"
+          class="${inputClasses.join(" ")}"
           aria-label="${escapeHtml(inputLabel)}"
           placeholder="Enter term..."
           rows="1"
@@ -74,7 +78,13 @@ function renderVariantRow(side, value, index, total, isSubmitting) {
   `;
 }
 
-function renderVariantLane(side, languageName, values, isSubmitting) {
+function renderVariantLane(
+  side,
+  languageName,
+  values,
+  isSubmitting,
+  redundantIndices = new Set(),
+) {
   const tooltipOptions = side === "target" ? { align: "end" } : {};
 
   return `
@@ -84,7 +94,16 @@ function renderVariantLane(side, languageName, values, isSubmitting) {
       </div>
       <div class="term-lane__rows">
         ${values
-          .map((value, index) => renderVariantRow(side, value, index, values.length, isSubmitting))
+          .map((value, index) =>
+            renderVariantRow(
+              side,
+              value,
+              index,
+              values.length,
+              isSubmitting,
+              side === "source" && redundantIndices.has(index),
+            ),
+          )
           .join("")}
       </div>
       <div class="term-lane__add-row">
@@ -110,6 +129,14 @@ export function renderGlossaryTermEditorModal(state) {
   const isSubmitting = editor.status === "loading";
   const sourceLanguageName = state.glossaryEditor?.sourceLanguage?.name ?? "Source";
   const targetLanguageName = state.glossaryEditor?.targetLanguage?.name ?? "Target";
+  const redundantSourceVariantIndices = new Set(editor.redundantSourceVariantIndices ?? []);
+  const duplicateWarningMarkup = `
+    <p
+      class="glossary-term-modal__warning"
+      data-glossary-term-duplicate-warning
+      ${editor.sourceTermDuplicateWarning ? "" : "hidden"}
+    >${escapeHtml(editor.sourceTermDuplicateWarning ?? "")}</p>
+  `;
   const errorMarkup = editor.error
     ? `<p class="modal__error">${escapeHtml(formatErrorForDisplay(editor.error))}</p>`
     : "";
@@ -128,9 +155,16 @@ export function renderGlossaryTermEditorModal(state) {
       <section class="card modal-card modal-card--glossary-term">
         <div class="card__body modal-card__body glossary-term-modal">
           <h2 class="modal__title">${editor.termId ? "Edit Term" : "New Term"}</h2>
+          ${duplicateWarningMarkup}
 
           <div class="glossary-term-modal__lanes">
-            ${renderVariantLane("source", sourceLanguageName, editor.sourceTerms, isSubmitting)}
+            ${renderVariantLane(
+              "source",
+              sourceLanguageName,
+              editor.sourceTerms,
+              isSubmitting,
+              redundantSourceVariantIndices,
+            )}
             ${renderVariantLane("target", targetLanguageName, editor.targetTerms, isSubmitting)}
           </div>
 

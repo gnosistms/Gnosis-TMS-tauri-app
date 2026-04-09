@@ -19,6 +19,8 @@ use crate::{
 
 const GLOSSARY_GITATTRIBUTES: &str = "* text=auto eol=lf\n";
 const ISO_LANGUAGE_OPTIONS_SOURCE: &str = include_str!("../../src-ui/lib/language-options.js");
+const SOURCE_TERM_DUPLICATE_WARNING: &str =
+  "The terms highlighted in red below are redundant with other parts of this glossary. Please remove them before saving.";
 
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -631,10 +633,18 @@ fn upsert_gtms_glossary_term_sync(
   let glossary_file = read_glossary_file(&repo_path)?;
   ensure_gitattributes(&repo_path.join(".gitattributes"))?;
 
-  let sanitized_source_terms = sanitize_term_values(&input.source_terms);
-  if sanitized_source_terms.is_empty() {
+  let trimmed_source_terms = trim_non_empty_term_values(&input.source_terms);
+  if trimmed_source_terms.is_empty() {
     return Err("Enter at least one source term.".to_string());
   }
+  if has_duplicate_term_values(&trimmed_source_terms) {
+    return Err(SOURCE_TERM_DUPLICATE_WARNING.to_string());
+  }
+  let existing_terms = load_glossary_terms(&repo_path.join("terms"))?;
+  if has_conflicting_source_terms(&existing_terms, &trimmed_source_terms, input.term_id.as_deref()) {
+    return Err(SOURCE_TERM_DUPLICATE_WARNING.to_string());
+  }
+  let sanitized_source_terms = trimmed_source_terms;
 
   let mut sanitized_target_terms = sanitize_target_term_values(&input.target_terms);
   if input.untranslated && sanitized_target_terms.is_empty() {
@@ -893,6 +903,48 @@ fn sanitize_term_values(values: &[String]) -> Vec<String> {
     }
   }
   sanitized
+}
+
+fn trim_non_empty_term_values(values: &[String]) -> Vec<String> {
+  values
+    .iter()
+    .map(|value| value.trim().to_string())
+    .filter(|value| !value.is_empty())
+    .collect()
+}
+
+fn has_duplicate_term_values(values: &[String]) -> bool {
+  let mut seen = BTreeSet::new();
+  for value in values {
+    if !seen.insert(value.clone()) {
+      return true;
+    }
+  }
+  false
+}
+
+fn has_conflicting_source_terms(
+  existing_terms: &[StoredGlossaryTermFile],
+  source_terms: &[String],
+  current_term_id: Option<&str>,
+) -> bool {
+  let mut existing_source_terms = BTreeSet::new();
+  for term in existing_terms {
+    if term.lifecycle.state != "active" || current_term_id == Some(term.term_id.as_str()) {
+      continue;
+    }
+
+    for source_term in &term.source_terms {
+      let normalized = source_term.trim();
+      if !normalized.is_empty() {
+        existing_source_terms.insert(normalized.to_string());
+      }
+    }
+  }
+
+  source_terms
+    .iter()
+    .any(|source_term| existing_source_terms.contains(source_term))
 }
 
 fn sanitize_target_term_values(values: &[String]) -> Vec<String> {

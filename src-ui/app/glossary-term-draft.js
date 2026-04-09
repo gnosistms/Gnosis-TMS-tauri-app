@@ -17,6 +17,115 @@ import {
   syncSingleGlossaryForTeam,
 } from "./glossary-repo-flow.js";
 
+const SOURCE_TERM_DUPLICATE_WARNING =
+  "The terms highlighted in red below are redundant with other parts of this glossary. Please remove them before saving.";
+
+function findRedundantSourceVariantIndices(
+  sourceTerms = state.glossaryTermEditor?.sourceTerms,
+  glossaryTerms = state.glossaryEditor?.terms,
+  termId = state.glossaryTermEditor?.termId,
+) {
+  const candidateTerms = Array.isArray(sourceTerms) ? sourceTerms : [];
+  const candidateCounts = new Map();
+  const existingTerms = new Set();
+
+  for (const glossaryTerm of Array.isArray(glossaryTerms) ? glossaryTerms : []) {
+    if (!glossaryTerm || glossaryTerm.lifecycleState === "deleted" || glossaryTerm.termId === termId) {
+      continue;
+    }
+
+    for (const sourceTerm of Array.isArray(glossaryTerm.sourceTerms) ? glossaryTerm.sourceTerms : []) {
+      const normalized = String(sourceTerm ?? "").trim();
+      if (normalized) {
+        existingTerms.add(normalized);
+      }
+    }
+  }
+
+  for (const sourceTerm of candidateTerms) {
+    const normalized = String(sourceTerm ?? "").trim();
+    if (!normalized) {
+      continue;
+    }
+
+    candidateCounts.set(normalized, (candidateCounts.get(normalized) ?? 0) + 1);
+  }
+
+  return candidateTerms.reduce((indices, sourceTerm, index) => {
+    const normalized = String(sourceTerm ?? "").trim();
+    if (!normalized) {
+      return indices;
+    }
+
+    if ((candidateCounts.get(normalized) ?? 0) > 1 || existingTerms.has(normalized)) {
+      indices.push(index);
+    }
+
+    return indices;
+  }, []);
+}
+
+function syncGlossaryTermDuplicateFeedbackDom() {
+  if (typeof document === "undefined") {
+    return;
+  }
+
+  const redundantIndices = new Set(state.glossaryTermEditor?.redundantSourceVariantIndices ?? []);
+  document
+    .querySelectorAll('[data-glossary-term-variant-input][data-variant-side="source"]')
+    .forEach((element) => {
+      const index = Number.parseInt(element.dataset.variantIndex ?? "", 10);
+      element.classList.toggle(
+        "term-variant-row__input--redundant",
+        Number.isInteger(index) && redundantIndices.has(index),
+      );
+    });
+
+  const warning = document.querySelector("[data-glossary-term-duplicate-warning]");
+  if (warning instanceof HTMLElement) {
+    const warningText = state.glossaryTermEditor?.sourceTermDuplicateWarning ?? "";
+    warning.hidden = !warningText;
+    warning.textContent = warningText;
+  }
+}
+
+function clearGlossaryTermDuplicateFeedback() {
+  if (!state.glossaryTermEditor?.isOpen) {
+    return;
+  }
+
+  state.glossaryTermEditor.sourceTermDuplicateWarning = "";
+  state.glossaryTermEditor.redundantSourceVariantIndices = [];
+}
+
+function refreshGlossaryTermDuplicateFeedback({ activateWarning = false } = {}) {
+  if (!state.glossaryTermEditor?.isOpen) {
+    return false;
+  }
+
+  const redundantSourceVariantIndices = findRedundantSourceVariantIndices();
+  if (redundantSourceVariantIndices.length > 0) {
+    state.glossaryTermEditor.sourceTermDuplicateWarning = SOURCE_TERM_DUPLICATE_WARNING;
+    state.glossaryTermEditor.redundantSourceVariantIndices = redundantSourceVariantIndices;
+    syncGlossaryTermDuplicateFeedbackDom();
+    return true;
+  }
+
+  if (activateWarning || state.glossaryTermEditor.sourceTermDuplicateWarning) {
+    clearGlossaryTermDuplicateFeedback();
+    syncGlossaryTermDuplicateFeedbackDom();
+  }
+
+  return false;
+}
+
+function shouldRefreshGlossaryTermDuplicateFeedback() {
+  return Boolean(
+    state.glossaryTermEditor?.sourceTermDuplicateWarning
+      || (state.glossaryTermEditor?.redundantSourceVariantIndices?.length ?? 0) > 0,
+  );
+}
+
 export function openGlossaryTermEditor(render, termId = null) {
   if (!canManageGlossaries()) {
     showNoticeBadge("You do not have permission to edit glossary terms in this team.", render);
@@ -36,6 +145,8 @@ export function openGlossaryTermEditor(render, termId = null) {
     termId: term?.termId ?? null,
     sourceTerms: normalizeEditableTerms(term?.sourceTerms ?? []),
     targetTerms: normalizeEditableTerms(term?.targetTerms ?? []),
+    sourceTermDuplicateWarning: "",
+    redundantSourceVariantIndices: [],
     notesToTranslators: term?.notesToTranslators ?? "",
     footnote: term?.footnote ?? "",
     untranslated: term?.untranslated === true,
@@ -66,10 +177,16 @@ export function updateGlossaryTermVariant(side, index, value) {
   updateGlossaryTermArray(side, (terms) =>
     terms.map((term, termIndex) => (termIndex === index ? String(value ?? "") : term)),
   );
+  if (side === "source" && shouldRefreshGlossaryTermDuplicateFeedback()) {
+    refreshGlossaryTermDuplicateFeedback();
+  }
 }
 
 export function addGlossaryTermVariant(side) {
   updateGlossaryTermArray(side, (terms) => [...terms, ""]);
+  if (side === "source" && shouldRefreshGlossaryTermDuplicateFeedback()) {
+    refreshGlossaryTermDuplicateFeedback();
+  }
 }
 
 export function removeGlossaryTermVariant(side, index) {
@@ -84,6 +201,9 @@ export function removeGlossaryTermVariant(side, index) {
 
     return terms.filter((_, termIndex) => termIndex !== index);
   });
+  if (side === "source" && shouldRefreshGlossaryTermDuplicateFeedback()) {
+    refreshGlossaryTermDuplicateFeedback();
+  }
 }
 
 export function moveGlossaryTermVariantToIndex(side, fromIndex, toIndex) {
@@ -112,6 +232,9 @@ export function moveGlossaryTermVariantToIndex(side, fromIndex, toIndex) {
     nextTerms.splice(Math.min(adjustedIndex, nextTerms.length), 0, movedTerm);
     return nextTerms;
   });
+  if (side === "source" && shouldRefreshGlossaryTermDuplicateFeedback()) {
+    refreshGlossaryTermDuplicateFeedback();
+  }
 }
 
 export async function submitGlossaryTermEditor(render) {
@@ -131,6 +254,11 @@ export async function submitGlossaryTermEditor(render) {
   const sourceTerms = sanitizeEditableTerms(draft.sourceTerms);
   if (sourceTerms.length === 0) {
     state.glossaryTermEditor.error = "Enter at least one source term.";
+    render();
+    return;
+  }
+  if (refreshGlossaryTermDuplicateFeedback({ activateWarning: true })) {
+    state.glossaryTermEditor.error = "";
     render();
     return;
   }
@@ -164,7 +292,16 @@ export async function submitGlossaryTermEditor(render) {
     }
   } catch (error) {
     state.glossaryTermEditor.status = "idle";
-    state.glossaryTermEditor.error = error?.message ?? String(error);
+    const errorMessage = error?.message ?? String(error);
+    if (errorMessage === SOURCE_TERM_DUPLICATE_WARNING) {
+      if (!refreshGlossaryTermDuplicateFeedback({ activateWarning: true })) {
+        state.glossaryTermEditor.error = errorMessage;
+      } else {
+        state.glossaryTermEditor.error = "";
+      }
+    } else {
+      state.glossaryTermEditor.error = errorMessage;
+    }
     render();
   }
 }

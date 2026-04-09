@@ -365,6 +365,8 @@ export function createGlossaryTermEditorState() {
     termId: null,
     sourceTerms: [""],
     targetTerms: [""],
+    sourceTermDuplicateWarning: "",
+    redundantSourceVariantIndices: [],
     notesToTranslators: "",
     footnote: "",
     untranslated: false,

@@ -52,7 +52,7 @@ export async function loadTeamGlossaries(
   await waitForNextPaint();
 
   try {
-    const { glossaries, syncSnapshots } = await loadRepoBackedGlossariesForTeam(team, {
+    const { glossaries, syncSnapshots, brokerWarning } = await loadRepoBackedGlossariesForTeam(team, {
       offlineMode: state.offline?.isEnabled === true,
     });
     state.glossaries = glossaries;
@@ -66,6 +66,8 @@ export async function loadTeamGlossaries(
     const syncIssue = getGlossarySyncIssueMessage(syncSnapshots);
     if (syncIssue) {
       showNoticeBadge(syncIssue, render);
+    } else if (brokerWarning) {
+      showNoticeBadge(brokerWarning, render);
     }
     await completePageSync(render);
   } catch (error) {

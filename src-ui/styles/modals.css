@@ -547,6 +547,13 @@
   gap: 12px;
 }
 
+.glossary-term-modal__warning {
+  margin: 0;
+  font-size: 0.95rem;
+  line-height: 1.4;
+  color: rgba(var(--please-check-accent-rgb), 0.92);
+}
+
 .glossary-term-modal__lanes {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -643,6 +650,10 @@
 
 .term-variant-row__input:focus {
   box-shadow: none;
+}
+
+.term-variant-row__input--redundant {
+  color: rgba(var(--please-check-accent-rgb), 0.92);
 }
 
 .term-variant-row__drag-handle,

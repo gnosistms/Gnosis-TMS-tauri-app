@@ -196,35 +196,57 @@ function renderHistoryMarkerNoteAction(action) {
     action.kind === "reviewed"
       ? action.enabled
         ? "Marked reviewed"
-        : "Remove reviewed"
+        : "Removed reviewed"
       : action.enabled
         ? 'Marked "Please check"'
-        : 'Remove "Please check"';
+        : 'Removed "Please check"';
   const icon = `
-    <span class="history-item__marker-note-icon history-item__marker-note-icon--${action.kind}" aria-hidden="true">
+    <span
+      class="history-item__marker-note-icon history-item__marker-note-icon--${action.kind}${action.enabled ? "" : " history-item__marker-note-icon--removed"}"
+      aria-hidden="true"
+    >
       ${renderTranslationMarkerIcon(action.kind)}
     </span>
   `;
 
-  return action.enabled
-    ? `<span class="history-item__marker-note" title="${escapeHtml(title)}">${icon}</span>`
-    : `
-      <span class="history-item__marker-note" title="${escapeHtml(title)}">
-        <span class="history-item__marker-note-remove">Remove</span>
-        ${icon}
-      </span>
-    `;
+  return `<span class="history-item__marker-note" title="${escapeHtml(title)}">${icon}</span>`;
+}
+
+function buildHistoryMarkerNoteActionsFromStatusNote(statusNote) {
+  switch (String(statusNote ?? "").trim()) {
+    case "Marked reviewed":
+      return [{ kind: "reviewed", enabled: true }];
+    case "Marked unreviewed":
+    case "Removed reviewed":
+      return [{ kind: "reviewed", enabled: false }];
+    case 'Marked "Please check"':
+      return [{ kind: "please-check", enabled: true }];
+    case 'Removed "Please check"':
+      return [{ kind: "please-check", enabled: false }];
+    default:
+      return [];
+  }
 }
 
 function renderHistoryNote(entry, previousEntry) {
-  const markerActions =
+  const markerActions = (
     Array.isArray(entry?.markerNoteActions) && entry.markerNoteActions.length > 0
       ? entry.markerNoteActions
-      : buildHistoryMarkerNoteActions(entry, previousEntry);
+      : buildHistoryMarkerNoteActions(entry, previousEntry)
+  );
   if (markerActions.length > 0) {
     return `
       <p class="history-item__note history-item__note--markers">
         ${markerActions.map((action) => renderHistoryMarkerNoteAction(action)).join("")}
+      </p>
+    `;
+  }
+
+  const fallbackMarkerActions = buildHistoryMarkerNoteActionsFromStatusNote(entry?.statusNote);
+  if (fallbackMarkerActions.length > 0) {
+    return `
+      <p class="history-item__note history-item__note--markers">
+        ${fallbackMarkerActions.map((action) => renderHistoryMarkerNoteAction(action)).join("")}
       </p>
     `;
   }

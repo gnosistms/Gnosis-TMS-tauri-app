@@ -224,8 +224,8 @@ const sectionNavConfig = {
   ],
   glossaries: [
     { label: "Teams", target: "teams", isBack: true },
-    { label: "Members", target: "users" },
     { label: "Projects", target: "projects" },
+    { label: "Members", target: "users" },
     { label: "Logout", target: "start" },
   ],
   glossaryEditor: [
