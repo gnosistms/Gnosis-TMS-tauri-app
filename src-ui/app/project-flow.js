@@ -106,6 +106,54 @@ function persistChapterPendingMutationsForTeam(selectedTeam) {
   saveStoredChapterPendingMutations(selectedTeam, state.pendingChapterMutations);
 }
 
+function buildPendingProjectRecord(selectedTeam, projectTitle, repoName) {
+  const orgLogin =
+    typeof selectedTeam?.githubOrg === "string" && selectedTeam.githubOrg.trim()
+      ? selectedTeam.githubOrg.trim()
+      : "";
+  const fullName = orgLogin ? `${orgLogin}/${repoName}` : repoName;
+
+  return {
+    id: `pending-create:${crypto.randomUUID()}`,
+    repoId: null,
+    name: repoName,
+    title: projectTitle,
+    status: "active",
+    fullName,
+    htmlUrl: fullName ? `https://github.com/${fullName}` : null,
+    private: true,
+    description: null,
+    defaultBranchName: null,
+    defaultBranchHeadOid: null,
+    chapters: [],
+    isPendingCreate: true,
+    pendingCreateStartedAt: new Date().toISOString(),
+    pendingCreateStatusText: "Creating...",
+  };
+}
+
+function replaceVisibleProject(currentProjectId, nextProject) {
+  const nextSnapshot = {
+    items: [
+      ...state.projects.filter(
+        (item) => item.id !== currentProjectId && item.id !== nextProject.id,
+      ),
+      nextProject,
+    ],
+    deletedItems: state.deletedProjects.filter(
+      (item) => item.id !== currentProjectId && item.id !== nextProject.id,
+    ),
+  };
+  applyProjectSnapshotToState(nextSnapshot);
+}
+
+function removeVisibleProject(projectId) {
+  applyProjectSnapshotToState({
+    items: state.projects.filter((item) => item.id !== projectId),
+    deletedItems: state.deletedProjects.filter((item) => item.id !== projectId),
+  });
+}
+
 function normalizeListedChapter(chapter) {
   if (!chapter || typeof chapter !== "object") {
     return null;
@@ -994,27 +1042,99 @@ export async function submitProjectCreation(render) {
     state.projectCreation.error = "";
     render();
     await waitForNextPaint();
-    const { attemptedRepoName, collisionResolved } = await createUniqueRepoWithNumericSuffix(
-      repoName,
-      (candidateRepoName) =>
-        invoke("create_gnosis_project_repo", {
-          input: {
-            installationId: selectedTeam.installationId,
-            orgLogin: selectedTeam.githubOrg,
-            repoName: candidateRepoName,
-            projectTitle,
-          },
-          sessionToken: requireBrokerSession(),
-        }),
-    );
+    const pendingProject = buildPendingProjectRecord(selectedTeam, projectTitle, repoName);
+    state.projectSyncVersion += 1;
+    beginProjectsPageSync();
+    setProjectUiDebug(render, "Creating project...");
+    replaceVisibleProject(pendingProject.id, pendingProject);
+    persistProjectsForTeam(selectedTeam);
     resetProjectCreation();
-    await loadTeamProjects(render, selectedTeam.id);
-    showNoticeBadge(
-      collisionResolved
-        ? `Created project ${projectTitle} in repo ${attemptedRepoName} because that repo name was already taken.`
-        : `Created project ${projectTitle}.`,
-      render,
-    );
+    render();
+    await waitForNextPaint();
+
+    void (async () => {
+      let remoteProject = null;
+
+      try {
+        const { result, attemptedRepoName, collisionResolved } = await createUniqueRepoWithNumericSuffix(
+          repoName,
+          (candidateRepoName) =>
+            invoke("create_gnosis_project_repo", {
+              input: {
+                installationId: selectedTeam.installationId,
+                orgLogin: selectedTeam.githubOrg,
+                repoName: candidateRepoName,
+                projectTitle,
+              },
+              sessionToken: requireBrokerSession(),
+            }),
+        );
+
+        remoteProject = {
+          ...result,
+          chapters: [],
+          isPendingCreate: true,
+          pendingCreateStartedAt: pendingProject.pendingCreateStartedAt,
+          pendingCreateStatusText: "Syncing local repo...",
+        };
+        replaceVisibleProject(pendingProject.id, remoteProject);
+        persistProjectsForTeam(selectedTeam);
+        setProjectUiDebug(render, "Syncing new project...");
+        render();
+
+        await reconcileProjectRepoSyncStates(render, selectedTeam, [remoteProject]);
+        await refreshProjectFilesFromDisk(render, selectedTeam, [remoteProject]);
+
+        const visibleProject =
+          state.projects.find((item) => item.id === remoteProject.id)
+          ?? state.deletedProjects.find((item) => item.id === remoteProject.id);
+        replaceVisibleProject(remoteProject.id, {
+          ...visibleProject,
+          ...result,
+          chapters: Array.isArray(visibleProject?.chapters) ? visibleProject.chapters : [],
+        });
+        persistProjectsForTeam(selectedTeam);
+        clearProjectUiDebug(render);
+        await completeProjectsPageSync(render);
+        render();
+        showNoticeBadge(
+          collisionResolved
+            ? `Created project ${projectTitle} in repo ${attemptedRepoName} because that repo name was already taken.`
+            : `Created project ${projectTitle}.`,
+          render,
+        );
+      } catch (error) {
+        if (remoteProject) {
+          replaceVisibleProject(remoteProject.id, {
+            ...remoteProject,
+            isPendingCreate: false,
+            pendingCreateStartedAt: undefined,
+            pendingCreateStatusText: undefined,
+          });
+          persistProjectsForTeam(selectedTeam);
+          clearProjectUiDebug(render);
+          await completeProjectsPageSync(render);
+          showNoticeBadge(
+            `Created project ${projectTitle}, but local sync still needs attention: ${error?.message ?? String(error)}`,
+            render,
+          );
+          render();
+          return;
+        }
+
+        removeVisibleProject(pendingProject.id);
+        persistProjectsForTeam(selectedTeam);
+        if (await handleSyncFailure(classifySyncError(error), { render })) {
+          clearProjectUiDebug(render);
+          failProjectsPageSync();
+          return;
+        }
+        clearProjectUiDebug(render);
+        failProjectsPageSync();
+        showNoticeBadge(error?.message ?? String(error), render);
+        render();
+      }
+    })();
   } catch (error) {
     if (await handleSyncFailure(classifySyncError(error), { render })) {
       return;

@@ -96,6 +96,7 @@ function renderProjectCard(project, expanded, options = {}) {
   const canPermanentlyDeleteFiles = options.canPermanentlyDeleteFiles === true;
   const isDeleted = options.isDeleted === true;
   const offlineMode = options.offlineMode === true;
+  const isPendingCreate = project?.isPendingCreate === true;
   const deleteAction = options.deleteAction ?? `delete-project:${project.id}`;
   const addFilesDisabled = options.addFilesDisabled === true;
   const glossaryOptions = options.glossaries ?? [];
@@ -108,17 +109,21 @@ function renderProjectCard(project, expanded, options = {}) {
     [
       canManageProjects
         ? textAction("Add files", `add-project-files:${project.id}`, {
-            disabled: offlineMode || addFilesDisabled,
+            disabled: offlineMode || addFilesDisabled || isPendingCreate,
           })
         : "",
       canManageProjects
-        ? textAction("Rename", `rename-project:${project.id}`, { disabled: offlineMode })
+        ? textAction("Rename", `rename-project:${project.id}`, {
+            disabled: offlineMode || isPendingCreate,
+          })
         : "",
-      canManageProjects ? textAction("Delete", deleteAction, { disabled: offlineMode }) : "",
+      canManageProjects
+        ? textAction("Delete", deleteAction, { disabled: offlineMode || isPendingCreate })
+        : "",
     ].filter(Boolean);
-  const fileCount = `${files.length} file${
-    files.length === 1 ? "" : "s"
-  }`;
+  const fileCount = isPendingCreate
+    ? project.pendingCreateStatusText ?? "Creating..."
+    : `${files.length} file${files.length === 1 ? "" : "s"}`;
 
   const fileRows = expanded
     ? `
