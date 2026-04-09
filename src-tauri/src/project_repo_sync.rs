@@ -1,14 +1,18 @@
 use std::{
   collections::BTreeMap,
+  env,
   fs,
   path::{Path, PathBuf},
   process::Command,
   sync::{Arc, Mutex},
 };
 
-use base64::{engine::general_purpose::STANDARD, Engine as _};
 use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
+use uuid::Uuid;
+
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 
 use crate::{
   broker::broker_get_json_with_session,
@@ -58,6 +62,28 @@ pub(crate) struct ProjectRepoSyncSnapshot {
 #[serde(rename_all = "camelCase")]
 struct GitTransportTokenResponse {
   token: String,
+}
+
+struct GitTransportAuth {
+  askpass_path: PathBuf,
+  username: String,
+  password: String,
+}
+
+impl GitTransportAuth {
+  fn from_token(token: &str) -> Result<Self, String> {
+    Ok(Self {
+      askpass_path: write_git_askpass_script()?,
+      username: "x-access-token".to_string(),
+      password: token.to_string(),
+    })
+  }
+}
+
+impl Drop for GitTransportAuth {
+  fn drop(&mut self) {
+    let _ = fs::remove_file(&self.askpass_path);
+  }
 }
 
 #[tauri::command]
@@ -324,16 +350,16 @@ fn sync_project_repo(
     return Err("Missing remote default branch head for repo sync.".to_string());
   }
 
-  let basic_auth_header = git_basic_auth_header(git_transport_token);
+  let git_transport_auth = GitTransportAuth::from_token(git_transport_token)?;
 
   if let Err(error) = git_output(
     repo_path,
     &["pull", "--rebase", "origin", branch_name],
-    Some(&basic_auth_header),
+    Some(&git_transport_auth),
   ) {
-    return Err(abort_rebase_after_failed_pull(repo_path, &basic_auth_header, error));
+    return Err(abort_rebase_after_failed_pull(repo_path, error));
   }
-  git_output(repo_path, &["push", "origin", branch_name], Some(&basic_auth_header))?;
+  git_output(repo_path, &["push", "origin", branch_name], Some(&git_transport_auth))?;
   Ok(Some(git_output(repo_path, &["rev-parse", "HEAD"], None)?))
 }
 
@@ -350,7 +376,7 @@ fn clone_project_repo(
     .map_err(|error| format!("Could not create the local repo folder: {error}"))?;
 
   let repo_url = format!("https://github.com/{}.git", project.full_name);
-  let basic_auth_header = git_basic_auth_header(git_transport_token);
+  let git_transport_auth = GitTransportAuth::from_token(git_transport_token)?;
   let mut clone_args = vec!["clone"];
   if let Some(branch_name) = project
     .default_branch_name
@@ -363,7 +389,7 @@ fn clone_project_repo(
   let repo_path_string = repo_path.display().to_string();
   clone_args.push(repo_path_string.as_str());
 
-  git_output(repo_parent, &clone_args, Some(&basic_auth_header))?;
+  git_output(repo_parent, &clone_args, Some(&git_transport_auth))?;
 
   if remote_head_oid.trim().is_empty() {
     return Ok(None);
@@ -372,10 +398,14 @@ fn clone_project_repo(
   Ok(Some(git_output(repo_path, &["rev-parse", "HEAD"], None)?))
 }
 
-fn git_output(repo_path: &Path, args: &[&str], extra_header: Option<&str>) -> Result<String, String> {
+fn git_output(repo_path: &Path, args: &[&str], auth: Option<&GitTransportAuth>) -> Result<String, String> {
   let mut command = Command::new("git");
-  if let Some(header) = extra_header {
-    command.args(["-c", &format!("http.extraHeader={header}")]);
+  if let Some(auth) = auth {
+    command
+      .env("GIT_ASKPASS", &auth.askpass_path)
+      .env("GIT_TERMINAL_PROMPT", "0")
+      .env("GTMS_GIT_USERNAME", &auth.username)
+      .env("GTMS_GIT_PASSWORD", &auth.password);
   }
 
   let output = command
@@ -410,22 +440,46 @@ fn load_git_transport_token(installation_id: i64, session_token: &str) -> Result
   Ok(response.token)
 }
 
-fn git_basic_auth_header(token: &str) -> String {
-  let payload = STANDARD.encode(format!("x-access-token:{token}"));
-  format!("Authorization: Basic {payload}")
-}
-
-fn abort_rebase_after_failed_pull(repo_path: &Path, basic_auth_header: &str, pull_error: String) -> String {
+fn abort_rebase_after_failed_pull(repo_path: &Path, pull_error: String) -> String {
   if !repo_has_rebase_in_progress(repo_path) {
     return pull_error;
   }
 
-  match git_output(repo_path, &["rebase", "--abort"], Some(basic_auth_header)) {
+  match git_output(repo_path, &["rebase", "--abort"], None) {
     Ok(_) => format!("{pull_error} The interrupted rebase was aborted automatically."),
     Err(abort_error) => format!(
       "{pull_error} An automatic 'git rebase --abort' also failed: {abort_error}"
     ),
   }
+}
+
+fn write_git_askpass_script() -> Result<PathBuf, String> {
+  let extension = if cfg!(windows) { "cmd" } else { "sh" };
+  let script_path = env::temp_dir().join(format!("gnosis-tms-git-askpass-{}.{}", Uuid::now_v7(), extension));
+  let script_contents = if cfg!(windows) {
+    "@echo off\r\nset PROMPT=%~1\r\necho %PROMPT% | findstr /I \"Username\" >nul\r\nif not errorlevel 1 (\r\n  <nul set /p =%GTMS_GIT_USERNAME%\r\n) else (\r\n  <nul set /p =%GTMS_GIT_PASSWORD%\r\n)\r\n"
+  } else {
+    "#!/bin/sh\ncase \"$1\" in\n  *Username*) printf '%s' \"$GTMS_GIT_USERNAME\" ;;\n  *) printf '%s' \"$GTMS_GIT_PASSWORD\" ;;\nesac\n"
+  };
+
+  fs::write(&script_path, script_contents).map_err(|error| {
+    format!(
+      "Could not create the temporary git credential helper '{}': {error}",
+      script_path.display()
+    )
+  })?;
+
+  #[cfg(unix)]
+  {
+    let mut permissions = fs::metadata(&script_path)
+      .map_err(|error| format!("Could not inspect '{}': {error}", script_path.display()))?
+      .permissions();
+    permissions.set_mode(0o700);
+    fs::set_permissions(&script_path, permissions)
+      .map_err(|error| format!("Could not mark '{}' executable: {error}", script_path.display()))?;
+  }
+
+  Ok(script_path)
 }
 
 fn repo_has_rebase_in_progress(repo_path: &Path) -> bool {

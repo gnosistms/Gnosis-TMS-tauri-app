@@ -21,6 +21,16 @@ const CONNECTION_PATTERNS = [
   "offline",
 ];
 
+const RESOURCE_ACCESS_LOST_PATTERNS = [
+  "you no longer have access to this team",
+  "no longer have access to this team",
+  "team access was removed",
+  "membership in this team was removed",
+  "not a member of this organization",
+  "not a member of this team",
+  "resource access lost",
+];
+
 export function classifySyncError(error, context = {}) {
   const message = (error?.message ?? String(error ?? "")).trim();
   const normalized = message.toLowerCase();
@@ -45,7 +55,10 @@ export function classifySyncError(error, context = {}) {
     };
   }
 
-  if (status === 403 || status === 404) {
+  if (
+    (status === 403 || status === 404)
+    && RESOURCE_ACCESS_LOST_PATTERNS.some((pattern) => normalized.includes(pattern))
+  ) {
     return { type: "resource_access_lost", message, status };
   }
 

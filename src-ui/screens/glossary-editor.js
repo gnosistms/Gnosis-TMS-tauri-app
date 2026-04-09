@@ -11,9 +11,11 @@ import {
 import { formatErrorForDisplay } from "../app/error-display.js";
 import { getNoticeBadgeText } from "../app/status-feedback.js";
 import { renderGlossaryTermEditorModal } from "./glossary-term-editor-modal.js";
+import { canManageGlossaries, selectedTeam } from "../app/glossary-shared.js";
 
 export function renderGlossaryEditorScreen(state) {
   const glossary = state.glossaryEditor;
+  const canManageTerms = canManageGlossaries(selectedTeam());
   const searchQuery = String(glossary.searchQuery ?? "").trim().toLowerCase();
   const visibleTerms = (Array.isArray(glossary.terms) ? glossary.terms : []).filter((term) => {
     if (!searchQuery) {
@@ -34,6 +36,10 @@ export function renderGlossaryEditorScreen(state) {
       "data-glossary-term-search-input": true,
     },
   });
+  const renderTermCell = (termId, text) =>
+    canManageTerms
+      ? `<button class="text-link" data-action="edit-glossary-term:${termId}">${escapeHtml(text)}</button>`
+      : `<span>${escapeHtml(text)}</span>`;
   const bodyMarkup = glossary.status === "error"
     ? renderStateCard({
       eyebrow: "GLOSSARY LOAD FAILED",
@@ -59,14 +65,14 @@ export function renderGlossaryEditorScreen(state) {
               (term) => `
                 <div class="term-grid term-grid--row">
                   <div>
-                    <button class="text-link" data-action="edit-glossary-term:${term.termId}">${escapeHtml((term.sourceTerms ?? []).join(", "))}</button>
+                    ${renderTermCell(term.termId, (term.sourceTerms ?? []).join(", "))}
                   </div>
                   <div>
-                    <button class="text-link" data-action="edit-glossary-term:${term.termId}">${escapeHtml((term.targetTerms ?? []).join(", "))}</button>
+                    ${renderTermCell(term.termId, (term.targetTerms ?? []).join(", "))}
                   </div>
                   <div class="term-grid__actions">
-                    ${textAction("Edit", `edit-glossary-term:${term.termId}`)}
-                    ${textAction("Delete", `delete-glossary-term:${term.termId}`)}
+                    ${canManageTerms ? textAction("Edit", `edit-glossary-term:${term.termId}`) : ""}
+                    ${canManageTerms ? textAction("Delete", `delete-glossary-term:${term.termId}`) : ""}
                   </div>
                 </div>
               `,
@@ -90,7 +96,7 @@ export function renderGlossaryEditorScreen(state) {
       title: glossary.title || "Glossary",
       titleAction: buildPageRefreshAction(state),
       navButtons: buildSectionNav("glossaryEditor"),
-      tools: `${searchField} ${primaryButton("+ New Term", "open-new-term")}`,
+      tools: canManageTerms ? `${searchField} ${primaryButton("+ New Term", "open-new-term")}` : searchField,
       pageSync: state.pageSync,
       noticeText: getNoticeBadgeText(),
       offlineMode: state.offline?.isEnabled === true,

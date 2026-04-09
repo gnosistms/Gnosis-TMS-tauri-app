@@ -15,12 +15,12 @@ export function coerceEditorFontSizePx(value) {
 
 export const state = {
   screen: "start",
-  expandedProjects: new Set(["p2"]),
+  expandedProjects: new Set(),
   expandedDeletedFiles: new Set(),
   selectedTeamId: null,
-  selectedProjectId: "p2",
-  selectedGlossaryId: "g1",
-  selectedChapterId: "c2",
+  selectedProjectId: null,
+  selectedGlossaryId: null,
+  selectedChapterId: null,
   teams: [],
   deletedTeams: [],
   projects: [],
@@ -93,7 +93,10 @@ export function hydrateStoredTeamState() {
   state.teams = storedTeams.activeTeams;
   state.deletedTeams = storedTeams.deletedTeams;
   state.pendingTeamMutations = loadStoredTeamPendingMutations();
-  state.selectedTeamId = state.selectedTeamId ?? storedTeams.activeTeams[0]?.id ?? null;
+  state.selectedTeamId =
+    state.selectedTeamId && storedTeams.activeTeams.some((team) => team.id === state.selectedTeamId)
+      ? state.selectedTeamId
+      : storedTeams.activeTeams[0]?.id ?? null;
 }
 
 export function hydrateStoredEditorPreferences() {
@@ -434,9 +437,12 @@ export function resetSessionState() {
   state.githubAppTest = createGithubAppTestState();
   state.teams = [];
   state.deletedTeams = [];
+  state.selectedTeamId = null;
   state.projects = [];
   state.deletedProjects = [];
+  state.selectedProjectId = null;
   state.glossaries = [];
+  state.selectedGlossaryId = null;
   state.users = [];
   state.orgDiscovery = { status: "idle", error: "" };
   state.projectDiscovery = { status: "idle", error: "" };
@@ -444,6 +450,7 @@ export function resetSessionState() {
   state.projectImport = createProjectImportState();
   state.projectRepoSyncByProjectId = {};
   state.editorChapter = createEditorChapterState();
+  state.selectedChapterId = null;
   state.targetLanguageManager = createTargetLanguageManagerState();
   state.glossaryEditor = createGlossaryEditorState();
   state.userDiscovery = { status: "idle", error: "" };
@@ -473,6 +480,7 @@ export function resetSessionState() {
   resetGlossaryTermEditor();
   state.showDeletedProjects = false;
   state.showDeletedTeams = false;
+  state.expandedProjects = new Set();
   state.expandedDeletedFiles = new Set();
 }
 

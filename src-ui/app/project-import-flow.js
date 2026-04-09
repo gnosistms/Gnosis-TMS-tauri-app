@@ -90,6 +90,16 @@ export async function addFilesToProject(render, projectId) {
     return;
   }
 
+  if (state.offline?.isEnabled === true) {
+    showNoticeBadge("You cannot add files while offline.", render);
+    return;
+  }
+
+  if (selectedTeam.canManageProjects !== true) {
+    showNoticeBadge("You do not have permission to add files in this team.", render);
+    return;
+  }
+
   const selectedFile = await openLocalFilePicker({
     accept: ".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
   });

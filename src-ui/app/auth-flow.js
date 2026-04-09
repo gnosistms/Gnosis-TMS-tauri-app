@@ -129,6 +129,12 @@ export async function restoreStoredBrokerSession(render, loadUserTeams) {
 }
 
 function hydrateStoredDataForActiveUser() {
+  state.selectedTeamId = null;
+  state.selectedProjectId = null;
+  state.selectedGlossaryId = null;
+  state.selectedChapterId = null;
+  state.expandedProjects = new Set();
+  state.expandedDeletedFiles = new Set();
   hydrateStoredTeamState();
   hydrateStoredEditorPreferences();
   state.projects = [];

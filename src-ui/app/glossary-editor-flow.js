@@ -4,6 +4,7 @@ import { createGlossaryEditorState, state } from "./state.js";
 import { showNoticeBadge } from "./status-feedback.js";
 import {
   applyGlossaryEditorPayload,
+  canManageGlossaries,
   selectedGlossary,
   selectedGlossaryRepoName,
   selectedTeam,
@@ -129,6 +130,11 @@ export async function deleteGlossaryTerm(render, termId) {
   const team = selectedTeam();
   const repoName = selectedGlossaryRepoName();
   if (!Number.isFinite(team?.installationId) || !repoName || !termId) {
+    return;
+  }
+
+  if (!canManageGlossaries(team)) {
+    showNoticeBadge("You do not have permission to edit glossary terms in this team.", render);
     return;
   }
 

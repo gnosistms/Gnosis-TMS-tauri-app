@@ -1,7 +1,9 @@
 import { invoke } from "./runtime.js";
 import { resetGlossaryTermEditor, state } from "./state.js";
 import { loadSelectedGlossaryEditorData } from "./glossary-editor-flow.js";
+import { showNoticeBadge } from "./status-feedback.js";
 import {
+  canManageGlossaries,
   normalizeEditableTerms,
   sanitizeEditableTargetTerms,
   sanitizeEditableTerms,
@@ -11,6 +13,11 @@ import {
 } from "./glossary-shared.js";
 
 export function openGlossaryTermEditor(render, termId = null) {
+  if (!canManageGlossaries()) {
+    showNoticeBadge("You do not have permission to edit glossary terms in this team.", render);
+    return;
+  }
+
   const term = termId
     ? state.glossaryEditor.terms.find((item) => item.termId === termId) ?? null
     : null;
@@ -107,6 +114,12 @@ export async function submitGlossaryTermEditor(render) {
   const repoName = selectedGlossaryRepoName();
   const draft = state.glossaryTermEditor;
   if (!draft?.isOpen || !Number.isFinite(team?.installationId) || !repoName) {
+    return;
+  }
+
+  if (!canManageGlossaries(team)) {
+    state.glossaryTermEditor.error = "You do not have permission to edit glossary terms in this team.";
+    render();
     return;
   }
 

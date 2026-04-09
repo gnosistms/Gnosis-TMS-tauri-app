@@ -4,6 +4,10 @@ export function selectedTeam(teamId = state.selectedTeamId) {
   return state.teams.find((team) => team.id === teamId) ?? null;
 }
 
+export function canManageGlossaries(team = selectedTeam()) {
+  return team?.canManageProjects === true;
+}
+
 export function sortGlossaries(glossaries) {
   return [...(Array.isArray(glossaries) ? glossaries : [])].sort((left, right) =>
     String(left?.title ?? "")

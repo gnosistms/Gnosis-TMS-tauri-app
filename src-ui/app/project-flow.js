@@ -46,6 +46,43 @@ function clearProjectUiDebug(render) {
   clearScopedSyncBadge("projects", render);
 }
 
+function setProjectDiscoveryError(render, error) {
+  state.projectDiscovery = {
+    status: "error",
+    error,
+  };
+  render?.();
+}
+
+function selectedProjectsTeam() {
+  return state.teams.find((team) => team.id === state.selectedTeamId) ?? null;
+}
+
+function ensureChapterMutationAllowed(
+  render,
+  { selectedTeam = selectedProjectsTeam(), actionLabel = "modify files", requireDelete = false } = {},
+) {
+  if (state.offline?.isEnabled === true) {
+    setProjectDiscoveryError(render, `You cannot ${actionLabel} while offline.`);
+    return false;
+  }
+
+  if (!Number.isFinite(selectedTeam?.installationId)) {
+    setProjectDiscoveryError(render, "Could not determine the selected team.");
+    return false;
+  }
+
+  if (requireDelete ? selectedTeam.canDelete !== true : selectedTeam.canManageProjects !== true) {
+    setProjectDiscoveryError(
+      render,
+      `You do not have permission to ${actionLabel} in this team.`,
+    );
+    return false;
+  }
+
+  return true;
+}
+
 function persistProjectsForTeam(selectedTeam) {
   saveStoredProjectsForTeam(selectedTeam, {
     projects: state.projects,
@@ -803,11 +840,11 @@ export function openChapterRename(render, chapterId) {
   }
 
   if (!selectedTeam) {
-    state.projectDiscovery = {
-      status: "error",
-      error: "Could not determine the selected team.",
-    };
-    render();
+    setProjectDiscoveryError(render, "Could not determine the selected team.");
+    return;
+  }
+
+  if (!ensureChapterMutationAllowed(render, { selectedTeam, actionLabel: "rename files" })) {
     return;
   }
 
@@ -841,12 +878,11 @@ export function openChapterPermanentDeletion(render, chapterId) {
     return;
   }
 
-  if (selectedTeam?.canDelete !== true) {
-    state.projectDiscovery = {
-      status: "error",
-      error: "You do not have permission to permanently delete files in this team.",
-    };
-    render();
+  if (!ensureChapterMutationAllowed(render, {
+    selectedTeam,
+    actionLabel: "permanently delete files",
+    requireDelete: true,
+  })) {
     return;
   }
 
@@ -1022,6 +1058,18 @@ export async function submitChapterRename(render) {
     return;
   }
 
+  if (state.offline?.isEnabled === true) {
+    state.chapterRename.error = "You cannot rename files while offline.";
+    render();
+    return;
+  }
+
+  if (selectedTeam?.canManageProjects !== true) {
+    state.chapterRename.error = "You do not have permission to rename files in this team.";
+    render();
+    return;
+  }
+
   if (!nextTitle) {
     state.chapterRename.error = "Enter a file name.";
     render();
@@ -1108,11 +1156,14 @@ async function persistChapterGlossaryLinks(render, chapterId, nextGlossary1, nex
     || !context?.project?.name
     || !context?.chapter
   ) {
-    state.projectDiscovery = {
-      status: "error",
-      error: "Could not find the selected file.",
-    };
-    render();
+    setProjectDiscoveryError(render, "Could not find the selected file.");
+    return;
+  }
+
+  if (!ensureChapterMutationAllowed(render, {
+    selectedTeam,
+    actionLabel: "change file glossary links",
+  })) {
     return;
   }
 
@@ -1323,11 +1374,11 @@ export async function deleteChapter(render, chapterId) {
   const context = findChapterContext(chapterId);
 
   if (!Number.isFinite(selectedTeam?.installationId) || !context?.project || !context?.chapter) {
-    state.projectDiscovery = {
-      status: "error",
-      error: "Could not find the selected file.",
-    };
-    render();
+    setProjectDiscoveryError(render, "Could not find the selected file.");
+    return;
+  }
+
+  if (!ensureChapterMutationAllowed(render, { selectedTeam, actionLabel: "delete files" })) {
     return;
   }
 
@@ -1386,11 +1437,11 @@ export async function restoreChapter(render, chapterId) {
   const context = findChapterContext(chapterId);
 
   if (!Number.isFinite(selectedTeam?.installationId) || !context?.project || !context?.chapter) {
-    state.projectDiscovery = {
-      status: "error",
-      error: "Could not find the selected deleted file.",
-    };
-    render();
+    setProjectDiscoveryError(render, "Could not find the selected deleted file.");
+    return;
+  }
+
+  if (!ensureChapterMutationAllowed(render, { selectedTeam, actionLabel: "restore files" })) {
     return;
   }
 
@@ -1449,20 +1500,15 @@ export async function permanentlyDeleteChapter(render, chapterId) {
   const context = findChapterContext(chapterId);
 
   if (!Number.isFinite(selectedTeam?.installationId) || !context?.project || !context?.chapter) {
-    state.projectDiscovery = {
-      status: "error",
-      error: "Could not find the selected deleted file.",
-    };
-    render();
+    setProjectDiscoveryError(render, "Could not find the selected deleted file.");
     return;
   }
 
-  if (selectedTeam.canDelete !== true) {
-    state.projectDiscovery = {
-      status: "error",
-      error: "You do not have permission to permanently delete files in this team.",
-    };
-    render();
+  if (!ensureChapterMutationAllowed(render, {
+    selectedTeam,
+    actionLabel: "permanently delete files",
+    requireDelete: true,
+  })) {
     return;
   }
 
@@ -1523,6 +1569,13 @@ export async function confirmChapterPermanentDeletion(render) {
   if (!Number.isFinite(selectedTeam?.installationId) || !context?.project || !context?.chapter) {
     state.chapterPermanentDeletion.status = "idle";
     state.chapterPermanentDeletion.error = "Could not find the selected deleted file.";
+    render();
+    return;
+  }
+
+  if (state.offline?.isEnabled === true) {
+    state.chapterPermanentDeletion.status = "idle";
+    state.chapterPermanentDeletion.error = "You cannot permanently delete files while offline.";
     render();
     return;
   }
@@ -1804,7 +1857,14 @@ export async function confirmProjectPermanentDeletion(render) {
     return;
   }
 
-  if (selectedTeam.canManageProjects !== true) {
+  if (state.offline?.isEnabled === true) {
+    state.projectPermanentDeletion.status = "idle";
+    state.projectPermanentDeletion.error = "You cannot delete projects while offline.";
+    render();
+    return;
+  }
+
+  if (selectedTeam.canDelete !== true) {
     state.projectPermanentDeletion.status = "idle";
     state.projectPermanentDeletion.error = "You do not have permission to delete projects in this team.";
     render();

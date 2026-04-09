@@ -10,9 +10,11 @@ import {
 import { formatErrorForDisplay } from "../app/error-display.js";
 import { getNoticeBadgeText } from "../app/status-feedback.js";
 import { renderGlossaryCreationModal } from "./glossary-creation-modal.js";
+import { canManageGlossaries } from "../app/glossary-shared.js";
 
 export function renderGlossariesScreen(state) {
   const selectedTeam = state.teams.find((team) => team.id === state.selectedTeamId) ?? state.teams[0];
+  const canManage = canManageGlossaries(selectedTeam);
   const discovery = state.glossaryDiscovery ?? { status: "idle", error: "" };
   const visibleGlossaries = state.glossaries.filter((glossary) => glossary.lifecycleState === "active");
   const emptyState = renderStateCard({
@@ -52,9 +54,9 @@ export function renderGlossariesScreen(state) {
                 <div>${escapeHtml(glossary.targetLanguage?.name ?? "Unknown")}</div>
                 <div class="glossary-list__actions">
                   ${textAction("Open", `open-glossary:${glossary.id}`)}
-                  ${textAction("Download", `download-glossary:${glossary.id}`)}
-                  ${textAction("Rename", `rename-glossary:${glossary.id}`)}
-                  ${textAction("Delete", `delete-glossary:${glossary.id}`)}
+                  ${canManage ? textAction("Download", `download-glossary:${glossary.id}`) : ""}
+                  ${canManage ? textAction("Rename", `rename-glossary:${glossary.id}`) : ""}
+                  ${canManage ? textAction("Delete", `delete-glossary:${glossary.id}`) : ""}
                 </div>
               </div>
             `,
@@ -77,7 +79,9 @@ export function renderGlossariesScreen(state) {
       subtitle: selectedTeam?.name ?? "Team",
       titleAction: buildPageRefreshAction(state),
       navButtons: buildSectionNav("glossaries"),
-      tools: `${textAction("Import", "import-glossary")} ${primaryButton("+ New Glossary", "open-new-glossary")}`,
+      tools: canManage
+        ? `${textAction("Import", "import-glossary")} ${primaryButton("+ New Glossary", "open-new-glossary")}`
+        : "",
       pageSync: state.pageSync,
       noticeText: getNoticeBadgeText(),
       offlineMode: state.offline?.isEnabled === true,

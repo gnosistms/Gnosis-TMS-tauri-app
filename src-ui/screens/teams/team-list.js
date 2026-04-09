@@ -99,7 +99,7 @@ function renderDeletedTeamsSection(deletedTeams, isOpen, offlineMode = false) {
               textAction("Projects", `open-team:${team.id}`),
               textAction("Glossaries", `open-team-glossaries:${team.id}`),
               textAction("Members", `open-team-users:${team.id}`, { disabled: offlineMode }),
-              ...(team.membershipRole === "admin" && team.canDelete === true
+              ...(team.canDelete === true
                 ? [
                     textAction("Restore", `restore-team:${team.id}`, { disabled: offlineMode }),
                     textAction("Delete", `delete-deleted-team:${team.id}`, { disabled: offlineMode }),

@@ -106,9 +106,11 @@ function renderProjectCard(project, expanded, options = {}) {
   const actions =
     options.actions ??
     [
-      textAction("Add files", `add-project-files:${project.id}`, {
-        disabled: offlineMode || addFilesDisabled,
-      }),
+      canManageProjects
+        ? textAction("Add files", `add-project-files:${project.id}`, {
+            disabled: offlineMode || addFilesDisabled,
+          })
+        : "",
       canManageProjects
         ? textAction("Rename", `rename-project:${project.id}`, { disabled: offlineMode })
         : "",
@@ -142,11 +144,11 @@ function renderProjectCard(project, expanded, options = {}) {
                     }
                   </div>
                   <div class="chapter-table__actions">
-                    ${renderChapterGlossarySelect(chapter, 1, glossaryOptions, { disabled: offlineMode })}
-                    ${renderChapterGlossarySelect(chapter, 2, glossaryOptions, { disabled: offlineMode })}
+                    ${renderChapterGlossarySelect(chapter, 1, glossaryOptions, { disabled: offlineMode || !canManageProjects })}
+                    ${renderChapterGlossarySelect(chapter, 2, glossaryOptions, { disabled: offlineMode || !canManageProjects })}
                     ${textAction("Open", `open-translate:${chapter.id}`)}
-                    ${textAction("Rename", `rename-file:${chapter.id}`)}
-                    ${textAction("Delete", `delete-file:${chapter.id}`)}
+                    ${canManageProjects ? textAction("Rename", `rename-file:${chapter.id}`, { disabled: offlineMode }) : ""}
+                    ${canManageProjects ? textAction("Delete", `delete-file:${chapter.id}`, { disabled: offlineMode }) : ""}
                   </div>
                 </div>
               `;
@@ -175,8 +177,8 @@ function renderProjectCard(project, expanded, options = {}) {
                                   <span class="chapter-table__name">${escapeHtml(chapter.name)}</span>
                                 </div>
                                 <div class="chapter-table__actions">
-                                  ${textAction("Restore", `restore-file:${chapter.id}`, { disabled: offlineMode })}
-                                  ${canPermanentlyDeleteFiles ? textAction("Delete", `delete-deleted-file:${chapter.id}`, { disabled: offlineMode }) : ""}
+                                  ${canManageProjects ? textAction("Restore", `restore-file:${chapter.id}`, { disabled: offlineMode }) : ""}
+                                  ${canManageProjects && canPermanentlyDeleteFiles ? textAction("Delete", `delete-deleted-file:${chapter.id}`, { disabled: offlineMode }) : ""}
                                 </div>
                               </div>
                             `,
