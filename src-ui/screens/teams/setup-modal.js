@@ -17,39 +17,16 @@ function renderGuideStep() {
   `;
 }
 
-function renderInstallSummary() {
-  return `
-    <div class="setup-summary">
-      <p>Finish creating the GitHub organization in your browser, then return here.</p>
-      <p>The next step installs the Gnosis TMS GitHub App on that organization so the app can manage it directly.</p>
-    </div>
-  `;
-}
-
-function renderWaitingSummary() {
-  return `
-    <div class="setup-summary">
-      <p>GitHub should now be showing the Gnosis TMS GitHub App installation page.</p>
-      <p>Install the app on the organization you just created. GitHub will send you back here automatically when the installation completes.</p>
-    </div>
-  `;
-}
-
-function renderFinishSummary() {
-  return `
-    <div class="setup-summary">
-      <p>GitHub App installation received.</p>
-      <p>Click the button below to finish connecting that organization inside Gnosis TMS.</p>
-    </div>
-  `;
-}
+const INSTALL_FLOW_MESSAGE =
+  "GitHub will guide you through the steps to install Gnosis TMS into the organization that stores your team data. When you finish, you will be sent back here automatically.";
+const FINISH_INSTALL_MESSAGE =
+  "You have successfully installed Gnosis TMS into your GitHub organization. Click below to finish setup.";
 
 function getStepConfig(setup) {
   const isIntroStep = setup.step === "intro";
   const isGuideStep = setup.step === "guide";
   const isInstallStep = setup.step === "confirm";
   const isWaitingForInstallStep = setup.step === "waitingForAppInstall";
-  const isFinishInstallStep = setup.step === "finishInstall";
 
   if (isIntroStep) {
     return {
@@ -80,7 +57,7 @@ function getStepConfig(setup) {
     return {
       eyebrow: "STEP 2 OF 3",
       heading: "Install The GitHub App",
-      supporting: "Now install the Gnosis TMS GitHub App on the organization you just created.",
+      supporting: INSTALL_FLOW_MESSAGE,
       afterBodySupporting: "",
       body: "",
       actionButton: primaryButton("Install Gnosis TMS GitHub App", "begin-github-app-install"),
@@ -91,10 +68,9 @@ function getStepConfig(setup) {
     return {
       eyebrow: "STEP 2 OF 3",
       heading: "Waiting For Installation",
-      supporting:
-        "Complete the installation in GitHub. We will use the installation callback to identify the organization.",
+      supporting: INSTALL_FLOW_MESSAGE,
       afterBodySupporting: "",
-      body: renderWaitingSummary(),
+      body: "",
       actionButton: secondaryButton("Waiting for GitHub...", "noop"),
     };
   }
@@ -102,10 +78,9 @@ function getStepConfig(setup) {
   return {
     eyebrow: "STEP 3 OF 3",
     heading: "Return To Gnosis TMS",
-    supporting:
-      "GitHub organization creation and GitHub App installation both happen in the browser. Once installation is complete, finish setup here.",
+    supporting: FINISH_INSTALL_MESSAGE,
     afterBodySupporting: "",
-    body: renderFinishSummary(),
+    body: "",
     actionButton: primaryButton("Finish setting up your organization", "finish-team-setup"),
   };
 }
@@ -126,6 +101,9 @@ export function renderSetupModal(state) {
   const afterBodyMarkup = afterBodySupporting
     ? `<p class="modal__supporting">${afterBodySupporting}</p>`
     : "";
+  const bodyMarkup = body
+    ? `<div class="modal__form">${body}</div>`
+    : "";
 
   return `
     <div class="modal-backdrop">
@@ -134,7 +112,7 @@ export function renderSetupModal(state) {
           <p class="card__eyebrow">${eyebrow}</p>
           <h2 class="modal__title">${heading}</h2>
           ${supportingMarkup}
-          <div class="modal__form">${body}</div>
+          ${bodyMarkup}
           ${afterBodyMarkup}
           ${errorMarkup}
           <div class="modal__actions">
