@@ -42,6 +42,58 @@ Use three independent state axes for each project or glossary record in `team-me
 
 Create a shared repo named `team-metadata` when a new org/team is provisioned.
 
+## New Team Setup Flow
+
+When a new team is created or first provisioned for use in the app, the setup flow should explicitly establish the metadata repo before project/glossary work begins.
+
+### Required Order
+
+1. Create or connect the GitHub App team/org installation.
+2. Create the `team-metadata` repo immediately.
+3. Initialize the repo with:
+   - `manifest.json`
+   - `resources/projects/`
+   - `resources/glossaries/`
+   - optional `indexes/`
+4. Write the initial manifest contents:
+   - `schemaVersion`
+   - `teamId`
+   - `installationId`
+   - `orgLogin`
+   - `createdAt`
+   - `updatedAt`
+5. Verify the broker can read the repo.
+6. Verify the broker can write the repo by performing the initial bootstrap commit successfully.
+7. Only after those checks succeed should the team be treated as fully ready for project/glossary creation in the app.
+
+### Failure Handling
+
+If team creation succeeds but `team-metadata` setup fails:
+
+- do not silently treat the team as fully usable for projects/glossaries
+- place the team into an explicit "team setup incomplete" state
+- show a recoverable warning in the app
+- allow retry of metadata repo setup
+- avoid partial assumptions that cause later project/glossary sync ambiguity
+
+### Team Readiness Rule
+
+A team should be considered ready for project/glossary lifecycle features only when:
+
+- the GitHub App installation exists
+- the `team-metadata` repo exists
+- the metadata manifest has been initialized
+- broker read/write access to that repo is confirmed
+
+### Suggested Verification For New Team Setup
+
+- create a fresh alpha team/org
+- verify `team-metadata` repo exists remotely
+- verify manifest contents are correct
+- verify broker can read metadata repo
+- verify broker can write a metadata record to it
+- verify the app does not allow project/glossary creation until the setup succeeds
+
 ### Repo-Level Data
 
 - `schemaVersion`
@@ -108,6 +160,119 @@ Minimum tombstone fields:
 - `deletedAt`
 - `deletedBy`
 - optional `deletionReason`
+
+## Conflict Resolution And Merge Rules
+
+The plan requires explicit conflict rules for both the shared `team-metadata` repo and project/glossary lifecycle state.
+
+### Metadata Write Model
+
+- store one resource record per file, keyed by UUID
+- treat each UUID record file as the primary writable unit
+- do not treat indexes as primary writable truth
+- derive indexes from the record files whenever possible
+
+### Optimistic Concurrency
+
+Metadata writes should use optimistic concurrency.
+
+Recommended rule:
+
+1. client reads the current metadata record and remembers its base version
+2. client computes the intended update from that version
+3. client sends the write request with the base version
+4. broker rejects the write if the record changed since that base version
+5. client reloads the latest record, reapplies its intended action against the new latest version, and retries if still valid
+
+### What "Retry On Conflict" Means
+
+"Retry on conflict" does not mean blindly resubmitting the same payload.
+
+It means:
+
+1. detect stale write attempt
+2. reload the newest metadata record
+3. recompute the next valid state from the newest record
+4. attempt the write again only if that recomputed transition is still valid
+
+Example:
+
+- client A reads glossary record with `repoName = foo`
+- client B reads the same record
+- client A renames to `bar` and writes successfully
+- client B tries to soft-delete using stale `foo` data
+- broker rejects client B's stale write
+- client B reloads the latest record
+- client B reapplies "soft delete this glossary" to the new `repoName = bar` state
+- client B retries with the new base version
+
+### Suggested Version Field
+
+Use one of:
+
+- per-record `revision`
+- per-record `updatedAt` plus strict compare semantics
+- broker-side git blob/commit SHA for the record being updated
+
+Broker-side git commit or blob SHA is preferred if easy to implement cleanly.
+
+### Lifecycle Precedence Rules
+
+Recommended precedence:
+
+- `purged` beats `softDeleted`
+- `softDeleted` beats `active`
+- tombstone beats any non-terminal update
+
+Practical consequences:
+
+- permanent delete is terminal
+- rename is invalid after tombstone
+- restore is invalid after tombstone
+- content edits are invalid after tombstone
+- rename is allowed while live, including when `softDeleted`, only if product wants that behavior explicitly
+- if that behavior is undesirable, restrict rename to `active` records only
+
+### Conflict Outcomes
+
+#### Rename vs Rename
+
+- first successful write wins
+- second writer reloads latest record
+- second writer reapplies rename if still intended and repo name remains available
+- if the new desired name collides, auto-suffix according to naming rules
+
+#### Rename vs Soft Delete
+
+- stale write reloads latest record
+- apply delete to the latest renamed record
+- final state becomes `softDeleted` with the latest `repoName`
+
+#### Restore vs Soft Delete
+
+- last successful valid write wins, subject to base-version retry
+- if restore loses race, client reloads and reapplies only if resource is still live and not purged
+
+#### Any Live Update vs Permanent Delete
+
+- permanent delete wins
+- stale non-terminal update reloads and then becomes invalid if the record is now tombstoned
+- client must surface conflict instead of retrying forever
+
+### Index Update Rules
+
+- indexes such as `by-repo-name.json` and `by-github-repo-id.json` should be treated as derived data
+- do not rely on direct concurrent manual edits to index files
+- if possible, broker should regenerate or update indexes from the authoritative record files in the same write operation
+
+### Client-Side Conflict Handling
+
+When a conflict cannot be safely auto-resolved:
+
+- keep the local resource visible
+- show explicit conflict state
+- avoid destructive automatic cleanup
+- offer user/admin recovery actions where appropriate
 
 ## Local Repo Metadata
 
