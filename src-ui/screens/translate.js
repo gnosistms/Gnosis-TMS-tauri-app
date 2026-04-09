@@ -17,7 +17,7 @@ import {
 } from "../lib/vendor/diff-match-patch.js";
 import { buildEditorHistoryViewModel, editorHistoryEntryMatchesSection } from "../app/editor-history.js";
 import { buildEditorScreenViewModel } from "../app/editor-screen-model.js";
-import { renderTranslationContentRows } from "../app/editor-row-render.js";
+import { renderTranslationContentRows, renderTranslationMarkerIcon } from "../app/editor-row-render.js";
 import { getNoticeBadgeText } from "../app/status-feedback.js";
 import { MANAGE_TARGET_LANGUAGES_OPTION_VALUE } from "../app/translate-flow.js";
 import { EDITOR_FONT_SIZE_OPTIONS } from "../app/state.js";
@@ -169,6 +169,68 @@ function renderHistoryContent(entry, previousEntry) {
     .join("");
 }
 
+function buildHistoryMarkerNoteActions(entry, previousEntry) {
+  if (!entry || !previousEntry) {
+    return [];
+  }
+
+  const actions = [];
+  if ((previousEntry.reviewed === true) !== (entry.reviewed === true)) {
+    actions.push({
+      kind: "reviewed",
+      enabled: entry.reviewed === true,
+    });
+  }
+  if ((previousEntry.pleaseCheck === true) !== (entry.pleaseCheck === true)) {
+    actions.push({
+      kind: "please-check",
+      enabled: entry.pleaseCheck === true,
+    });
+  }
+
+  return actions;
+}
+
+function renderHistoryMarkerNoteAction(action) {
+  const title =
+    action.kind === "reviewed"
+      ? action.enabled
+        ? "Marked reviewed"
+        : "Remove reviewed"
+      : action.enabled
+        ? 'Marked "Please check"'
+        : 'Remove "Please check"';
+  const icon = `
+    <span class="history-item__marker-note-icon history-item__marker-note-icon--${action.kind}" aria-hidden="true">
+      ${renderTranslationMarkerIcon(action.kind)}
+    </span>
+  `;
+
+  return action.enabled
+    ? `<span class="history-item__marker-note" title="${escapeHtml(title)}">${icon}</span>`
+    : `
+      <span class="history-item__marker-note" title="${escapeHtml(title)}">
+        <span class="history-item__marker-note-remove">Remove</span>
+        ${icon}
+      </span>
+    `;
+}
+
+function renderHistoryNote(entry, previousEntry) {
+  const markerActions = buildHistoryMarkerNoteActions(entry, previousEntry);
+  if (markerActions.length > 0) {
+    return `
+      <p class="history-item__note history-item__note--markers">
+        ${markerActions.map((action) => renderHistoryMarkerNoteAction(action)).join("")}
+      </p>
+    `;
+  }
+
+  return entry?.statusNote
+    ? `<p class="history-item__note">${escapeHtml(entry.statusNote)}</p>`
+    : "";
+}
+
 function renderHistoryEntry(entry, previousEntry, activeLanguage, activeSection, canRestore, history) {
   const isCurrentValue = editorHistoryEntryMatchesSection(entry, activeSection);
   const isRestoring =
@@ -189,11 +251,7 @@ function renderHistoryEntry(entry, previousEntry, activeLanguage, activeSection,
   return `
     <article class="history-item">
       <p class="history-item__content" lang="${escapeHtml(activeLanguage.code)}">${renderHistoryContent(entry, previousEntry)}</p>
-      ${
-        entry?.statusNote
-          ? `<p class="history-item__note">${escapeHtml(entry.statusNote)}</p>`
-          : ""
-      }
+      ${renderHistoryNote(entry, previousEntry)}
       <div class="history-item__footer">
         <div class="history-item__actions">
           ${restoreButton}

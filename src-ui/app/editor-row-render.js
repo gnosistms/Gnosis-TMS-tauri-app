@@ -6,7 +6,7 @@ import {
   EDITOR_VIRTUALIZATION_MIN_ROWS,
 } from "./editor-virtualization-shared.js";
 
-function renderMarkerIcon(kind) {
+export function renderTranslationMarkerIcon(kind) {
   if (kind === "reviewed") {
     return `
       <svg class="translation-marker-button__icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false">
@@ -47,7 +47,7 @@ function renderLanguageMarkerButton(kind, rowId, language) {
       ${isSaving ? "disabled" : ""}
       ${tooltipAttributes(label, { align: "end", side: "bottom" })}
     >
-      ${renderMarkerIcon(kind)}
+      ${renderTranslationMarkerIcon(kind)}
     </button>
   `;
 }

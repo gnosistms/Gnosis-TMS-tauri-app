@@ -449,6 +449,43 @@
   line-height: 1.35;
 }
 
+.history-item__note--markers {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+
+.history-item__marker-note {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+}
+
+.history-item__marker-note-remove {
+  color: inherit;
+}
+
+.history-item__marker-note-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.history-item__marker-note-icon--reviewed {
+  color: rgba(var(--reviewed-accent-rgb), 0.96);
+}
+
+.history-item__marker-note-icon--please-check {
+  color: rgba(var(--please-check-accent-rgb), 0.92);
+}
+
+.history-item__marker-note-icon .translation-marker-button__icon {
+  width: 18px;
+  height: 18px;
+}
+
 .history-item__content .history-diff__insert,
 .history-item__content .history-diff__delete {
   font-family: inherit;
