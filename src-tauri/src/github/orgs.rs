@@ -8,7 +8,7 @@ use super::{
   app_auth::github_client,
   types::{
     GithubAppInstallationInfo, GithubOrganization, GithubOrganizationInvitation,
-    GithubOrganizationMember, GithubUserSearchResult,
+    GithubOrganizationMember, GithubTeamMetadataRepo, GithubUserSearchResult,
   },
 };
 
@@ -109,6 +109,20 @@ pub(crate) fn setup_organization_for_installation(
     &client,
     &format!("/api/github-app/installations/{installation_id}/orgs/{org_login}/setup"),
     &serde_json::json!({}),
+    &session_token,
+  )
+}
+
+#[tauri::command]
+pub(crate) fn inspect_team_metadata_repo_for_installation(
+  installation_id: i64,
+  org_login: String,
+  session_token: String,
+) -> Result<GithubTeamMetadataRepo, String> {
+  let client = github_client()?;
+  broker_get_json_with_session(
+    &client,
+    &format!("/api/github-app/installations/{installation_id}/orgs/{org_login}/team-metadata"),
     &session_token,
   )
 }

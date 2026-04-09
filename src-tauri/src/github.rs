@@ -13,6 +13,7 @@ pub(crate) use app_auth::{
 pub(crate) use orgs::{
   add_organization_admin_for_installation,
   delete_organization_for_installation, inspect_github_app_installation,
+  inspect_team_metadata_repo_for_installation,
   invite_user_to_organization_for_installation,
   leave_organization_for_installation, list_accessible_github_app_installations,
   list_organization_members_for_installation, search_github_users_for_installation,

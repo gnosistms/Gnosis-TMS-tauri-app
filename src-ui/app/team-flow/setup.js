@@ -75,6 +75,11 @@ export async function finishTeamSetup(render) {
       orgLogin: installation.accountLogin,
       sessionToken: requireBrokerSession(),
     });
+    await invoke("inspect_team_metadata_repo_for_installation", {
+      installationId: installation.installationId,
+      orgLogin: installation.accountLogin,
+      sessionToken: requireBrokerSession(),
+    });
 
     state.teamSetup.githubAppInstallation = installation;
     const nextTeamRecords = upsertStoredTeamRecords([
