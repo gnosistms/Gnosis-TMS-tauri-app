@@ -45,10 +45,7 @@ export const state = {
     status: "idle",
     error: "",
   },
-  glossaryDiscovery: {
-    status: "idle",
-    error: "",
-  },
+  glossaryDiscovery: createGlossaryDiscoveryState(),
   projectImport: createProjectImportState(),
   projectRepoSyncByProjectId: {},
   editorChapter: createEditorChapterState(),
@@ -262,6 +259,7 @@ export function createGlossaryDiscoveryState() {
   return {
     status: "idle",
     error: "",
+    brokerWarning: "",
   };
 }
 

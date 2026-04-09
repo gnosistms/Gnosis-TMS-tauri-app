@@ -1,7 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { buildEditorHistoryViewModel, editorHistoryEntryMatchesSection } from "./editor-history.js";
+import {
+  buildEditorHistoryViewModel,
+  editorHistoryEntryMatchesSection,
+  reconcileExpandedEditorHistoryGroupKeys,
+} from "./editor-history.js";
 
 function historyEntry({
   commitSha,
@@ -81,4 +85,31 @@ test("current-entry matching requires text and marker state equality", () => {
     }),
     false,
   );
+});
+
+test("expanded history groups stay expanded when new entries are added to the same author run", () => {
+  const previousEntries = [
+    historyEntry({ commitSha: "c3", plainText: "Newest" }),
+    historyEntry({ commitSha: "c2", plainText: "Older" }),
+    historyEntry({ commitSha: "c1", authorName: "another-user", plainText: "Baseline" }),
+  ];
+  const previousModel = buildEditorHistoryViewModel(previousEntries, new Set());
+
+  const nextEntries = [
+    historyEntry({ commitSha: "c4", plainText: "Newest plus one" }),
+    historyEntry({ commitSha: "c3", plainText: "Newest" }),
+    historyEntry({ commitSha: "c2", plainText: "Older" }),
+    historyEntry({ commitSha: "c1", authorName: "another-user", plainText: "Baseline" }),
+  ];
+
+  const reconciledKeys = reconcileExpandedEditorHistoryGroupKeys(
+    previousEntries,
+    nextEntries,
+    new Set([previousModel.groups[0].key]),
+  );
+  const nextModel = buildEditorHistoryViewModel(nextEntries, reconciledKeys);
+
+  assert.equal(nextModel.groups.length, 2);
+  assert.equal(nextModel.groups[0].entries.length, 3);
+  assert.equal(reconciledKeys.has(nextModel.groups[0].key), true);
 });

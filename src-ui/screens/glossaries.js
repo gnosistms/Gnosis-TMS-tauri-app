@@ -119,9 +119,16 @@ export function renderGlossariesScreen(state) {
   const canManage = canManageGlossaries(selectedTeam);
   const canPermanentlyDelete = canPermanentlyDeleteGlossaries(selectedTeam);
   const offlineMode = state.offline?.isEnabled === true;
-  const discovery = state.glossaryDiscovery ?? { status: "idle", error: "" };
+  const discovery = state.glossaryDiscovery ?? { status: "idle", error: "", brokerWarning: "" };
   const visibleGlossaries = state.glossaries.filter((glossary) => glossary.lifecycleState === "active");
   const deletedGlossaries = state.glossaries.filter((glossary) => glossary.lifecycleState === "deleted");
+  const brokerWarningMarkup = discovery.brokerWarning
+    ? `
+      <div class="message-box message-box--warning">
+        <p class="message-box__text">${escapeHtml(discovery.brokerWarning)}</p>
+      </div>
+    `
+    : "";
   const emptyState = renderStateCard({
     eyebrow: "NO GLOSSARIES FOUND",
     title: "No glossaries are available yet.",
@@ -158,6 +165,7 @@ export function renderGlossariesScreen(state) {
         : loadingState;
   const body = `
     <section class="stack">
+      ${brokerWarningMarkup}
       ${bodyMarkup}
       ${renderDeletedGlossariesSection(deletedGlossaries, state.showDeletedGlossaries, {
         canManage,

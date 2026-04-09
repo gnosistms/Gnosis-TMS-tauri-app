@@ -1,6 +1,6 @@
 import { invoke, waitForNextPaint } from "./runtime.js";
 import { beginPageSync, completePageSync, failPageSync } from "./page-sync.js";
-import { state } from "./state.js";
+import { createGlossaryDiscoveryState, state } from "./state.js";
 import { showNoticeBadge } from "./status-feedback.js";
 import { selectedTeam } from "./glossary-shared.js";
 import {
@@ -17,13 +17,19 @@ export function primeGlossariesLoadingState(teamId = state.selectedTeamId) {
   if (!Number.isFinite(team?.installationId)) {
     state.glossaries = [];
     state.selectedGlossaryId = null;
-    state.glossaryDiscovery = { status: "ready", error: "" };
+    state.glossaryDiscovery = {
+      ...createGlossaryDiscoveryState(),
+      status: "ready",
+    };
     return;
   }
 
   state.glossaries = [];
   state.selectedGlossaryId = null;
-  state.glossaryDiscovery = { status: "loading", error: "" };
+  state.glossaryDiscovery = {
+    ...createGlossaryDiscoveryState(),
+    status: "loading",
+  };
 }
 
 export async function loadTeamGlossaries(
@@ -38,13 +44,19 @@ export async function loadTeamGlossaries(
   if (!Number.isFinite(team?.installationId)) {
     state.glossaries = [];
     state.selectedGlossaryId = null;
-    state.glossaryDiscovery = { status: "ready", error: "" };
+    state.glossaryDiscovery = {
+      ...createGlossaryDiscoveryState(),
+      status: "ready",
+    };
     render();
     return;
   }
 
   if (!preserveVisibleData && state.glossaries.length === 0) {
-    state.glossaryDiscovery = { status: "loading", error: "" };
+    state.glossaryDiscovery = {
+      ...createGlossaryDiscoveryState(),
+      status: "loading",
+    };
   }
 
   beginPageSync();
@@ -62,7 +74,11 @@ export async function loadTeamGlossaries(
       state.selectedGlossaryId = activeGlossaries[0]?.id ?? null;
     }
 
-    state.glossaryDiscovery = { status: "ready", error: "" };
+    state.glossaryDiscovery = {
+      ...createGlossaryDiscoveryState(),
+      status: "ready",
+      brokerWarning: typeof brokerWarning === "string" ? brokerWarning : "",
+    };
     const syncIssue = getGlossarySyncIssueMessage(syncSnapshots);
     if (syncIssue) {
       showNoticeBadge(syncIssue, render);
@@ -85,6 +101,7 @@ export async function loadTeamGlossaries(
     failPageSync();
     if (!preserveVisibleData || state.glossaryDiscovery?.status !== "ready") {
       state.glossaryDiscovery = {
+        ...createGlossaryDiscoveryState(),
         status: "error",
         error: error?.message ?? String(error),
       };

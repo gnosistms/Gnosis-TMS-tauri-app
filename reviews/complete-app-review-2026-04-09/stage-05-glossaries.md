@@ -34,3 +34,29 @@ Recommendation:
 ## Residual Risk
 
 - The glossary slice still lacks a single shared capability helper for “can mutate glossary data.” Creation/import, term editing, and list actions currently each make their own decision or none at all, which will get harder to reason about as glossary features expand.
+
+## Handoff Update (2026-04-09)
+
+- The glossary lifecycle rewrite itself is already landed in local/app history:
+  - `b07fdd3` implemented glossary lifecycle and repo-backed glossary flows.
+  - `b540bcd` fixed the glossary creation/import rollback bug found in review.
+  - `5c1a451` hardened the glossary editor and added a client-side fallback when the broker is missing glossary routes.
+- The live GitHub App broker is still missing the glossary repo routes. Verified responses against the production broker:
+  - `GET /api/github-app/installations/{installation_id}/gnosis-projects` returns `401 Unauthorized` without a token, which shows the project route exists.
+  - `GET /api/github-app/installations/{installation_id}/gnosis-glossaries` returns `404 Cannot GET ...`.
+  - `POST /api/github-app/gnosis-glossaries` and `DELETE /api/github-app/gnosis-glossaries` also return `404`.
+- Important constraint for the next thread:
+  - this repository is the desktop/Tauri app only; it does not contain the broker server route implementations, so the missing glossary broker endpoints cannot be fixed here.
+  - from this repo, the only possible change is client behavior around that broker failure.
+- Current desktop-app behavior:
+  - committed fallback: the Glossaries page can continue showing local glossary data instead of dropping into a full-page error when the broker glossary routes are missing.
+  - uncommitted follow-up: the broker failure is also being promoted from a transient notice into persistent page state so the warning stays visible until a successful refresh clears it.
+- Current uncommitted glossary-related files:
+  - [glossary-discovery-flow.js](/Users/hans/Desktop/GnosisTMS/src-ui/app/glossary-discovery-flow.js)
+  - [state.js](/Users/hans/Desktop/GnosisTMS/src-ui/app/state.js)
+  - [glossaries.js](/Users/hans/Desktop/GnosisTMS/src-ui/screens/glossaries.js)
+- Separate uncommitted editor/history fix also in flight:
+  - [editor-history.js](/Users/hans/Desktop/GnosisTMS/src-ui/app/editor-history.js)
+  - [translate-flow.js](/Users/hans/Desktop/GnosisTMS/src-ui/app/translate-flow.js)
+  - [editor-history.test.js](/Users/hans/Desktop/GnosisTMS/src-ui/app/editor-history.test.js)
+  - purpose: keep an expanded history group open while new edits / reviewed / please-check commits arrive.

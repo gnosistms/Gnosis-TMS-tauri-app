@@ -121,6 +121,7 @@ function buildHistoryGroups(entries) {
 
     if (!isImport && previousGroup?.authorName === authorName && previousGroup?.isImport !== true) {
       previousGroup.entries.push(entry);
+      previousGroup.key = previousGroup.entries[previousGroup.entries.length - 1]?.commitSha ?? previousGroup.key;
       continue;
     }
 
@@ -134,6 +135,18 @@ function buildHistoryGroups(entries) {
   }
 
   return groups;
+}
+
+function buildGroupKeyByCommitSha(groups) {
+  const groupKeyByCommitSha = new Map();
+
+  for (const group of groups) {
+    for (const entry of group.entries) {
+      groupKeyByCommitSha.set(entry.commitSha, group.key);
+    }
+  }
+
+  return groupKeyByCommitSha;
 }
 
 function buildVisibleHistoryEntries(groups, expandedGroupKeys) {
@@ -173,4 +186,32 @@ export function buildEditorHistoryViewModel(entries, expandedGroupKeys) {
     visibleEntries,
     olderVisibleEntryByCommitSha: buildOlderVisibleEntryByCommitSha(visibleEntries),
   };
+}
+
+export function reconcileExpandedEditorHistoryGroupKeys(previousEntries, nextEntries, expandedGroupKeys) {
+  const previousExpandedGroupKeys = expandedGroupKeys instanceof Set ? expandedGroupKeys : new Set();
+  if (previousExpandedGroupKeys.size === 0) {
+    return new Set();
+  }
+
+  const previousGroups = buildHistoryGroups(compressHistoryEntries(Array.isArray(previousEntries) ? previousEntries : []));
+  const nextGroups = buildHistoryGroups(compressHistoryEntries(Array.isArray(nextEntries) ? nextEntries : []));
+  const nextGroupKeyByCommitSha = buildGroupKeyByCommitSha(nextGroups);
+  const reconciledKeys = new Set();
+
+  for (const group of previousGroups) {
+    if (!previousExpandedGroupKeys.has(group.key)) {
+      continue;
+    }
+
+    const matchingNextKey = group.entries
+      .map((entry) => nextGroupKeyByCommitSha.get(entry.commitSha))
+      .find(Boolean);
+
+    if (matchingNextKey) {
+      reconciledKeys.add(matchingNextKey);
+    }
+  }
+
+  return reconciledKeys;
 }

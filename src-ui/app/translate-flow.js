@@ -1,6 +1,7 @@
 import { saveStoredProjectsForTeam } from "./project-cache.js";
 import { invoke } from "./runtime.js";
 import { saveStoredEditorFontSizePx } from "./editor-preferences.js";
+import { reconcileExpandedEditorHistoryGroupKeys } from "./editor-history.js";
 import {
   coerceEditorFontSizePx,
   createEditorHistoryState,
@@ -382,6 +383,7 @@ async function fetchEditorFieldHistory(render, requestKey) {
       return;
     }
 
+    const previousHistory = normalizeEditorHistoryState(state.editorChapter.history);
     state.editorChapter = {
       ...state.editorChapter,
       history: {
@@ -391,7 +393,11 @@ async function fetchEditorFieldHistory(render, requestKey) {
         languageCode,
         requestKey,
         restoringCommitSha: null,
-        expandedGroupKeys: cloneExpandedHistoryGroupKeys(state.editorChapter.history?.expandedGroupKeys),
+        expandedGroupKeys: reconcileExpandedEditorHistoryGroupKeys(
+          previousHistory.entries,
+          Array.isArray(payload?.entries) ? payload.entries : [],
+          previousHistory.expandedGroupKeys,
+        ),
         entries: Array.isArray(payload?.entries) ? payload.entries : [],
       },
     };
