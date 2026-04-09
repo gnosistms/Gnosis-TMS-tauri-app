@@ -111,6 +111,7 @@ function renderProjectCard(project, expanded, options = {}) {
   const disableLifecycleActions = resolution?.blockLifecycleActions === true;
   const disableContentActions = resolution?.blockContentActions === true;
   const deleteAction = options.deleteAction ?? `delete-project:${project.id}`;
+  const disablePermanentDelete = options.disablePermanentDelete === true;
   const addFilesDisabled = options.addFilesDisabled === true;
   const glossaryOptions = options.glossaries ?? [];
   const allFiles = Array.isArray(project.chapters) ? project.chapters : [];
@@ -135,7 +136,7 @@ function renderProjectCard(project, expanded, options = {}) {
               : "",
             canManageProjects
               ? textAction("Delete", deleteAction, {
-                  disabled: offlineMode || disableLifecycleActions,
+                  disabled: offlineMode || disableLifecycleActions || disablePermanentDelete,
                 })
               : "",
           ].filter(Boolean)
@@ -277,6 +278,7 @@ function renderDeletedProjectsSection(state) {
   const canPermanentlyDeleteProjects = selectedTeam?.canDelete === true;
   const offlineMode = state.offline?.isEnabled === true;
   const syncSnapshotsByProjectId = state.projectRepoSyncByProjectId ?? {};
+  const projectCreationInFlightIds = state.projectCreationInFlightIds ?? new Set();
 
   const toggle = renderDeletedProjectsToggle(state);
   if (!state.showDeletedProjects) {
@@ -297,6 +299,7 @@ function renderDeletedProjectsSection(state) {
               isDeleted: true,
               offlineMode,
               syncSnapshot,
+              disablePermanentDelete: projectCreationInFlightIds.has(project.id),
               actions:
                 project?.recordState === "tombstone"
                   ? []
@@ -304,7 +307,9 @@ function renderDeletedProjectsSection(state) {
                     ? [
                         textAction("Restore", `restore-project:${project.id}`, { disabled: disableLifecycleActions }),
                         ...(canPermanentlyDeleteProjects
-                          ? [textAction("Delete", `delete-deleted-project:${project.id}`, { disabled: disableLifecycleActions })]
+                          ? [textAction("Delete", `delete-deleted-project:${project.id}`, {
+                              disabled: disableLifecycleActions || projectCreationInFlightIds.has(project.id),
+                            })]
                           : []),
                       ]
                     : [],

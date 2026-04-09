@@ -133,6 +133,27 @@ function setProjectRepoSyncSnapshot(projectId, snapshot) {
   };
 }
 
+function markProjectCreationInFlight(projectId) {
+  if (typeof projectId !== "string" || !projectId.trim()) {
+    return;
+  }
+
+  state.projectCreationInFlightIds = new Set([
+    ...state.projectCreationInFlightIds,
+    projectId,
+  ]);
+}
+
+function clearProjectCreationInFlight(projectId) {
+  if (typeof projectId !== "string" || !projectId.trim()) {
+    return;
+  }
+
+  const nextIds = new Set(state.projectCreationInFlightIds);
+  nextIds.delete(projectId);
+  state.projectCreationInFlightIds = nextIds;
+}
+
 function persistChapterPendingMutationsForTeam(selectedTeam) {
   saveStoredChapterPendingMutations(selectedTeam, state.pendingChapterMutations);
 }
@@ -1211,6 +1232,7 @@ export async function submitProjectCreation(render) {
     beginProjectsPageSync();
     setProjectUiDebug(render, "Creating project...");
     replaceVisibleProject(pendingProject.id, pendingProject);
+    markProjectCreationInFlight(pendingProject.id);
     persistProjectsForTeam(selectedTeam);
     resetProjectCreation();
     render();
@@ -1376,6 +1398,9 @@ export async function submitProjectCreation(render) {
         clearProjectUiDebug(render);
         failProjectsPageSync();
         showNoticeBadge(error?.message ?? String(error), render);
+        render();
+      } finally {
+        clearProjectCreationInFlight(pendingProject.id);
         render();
       }
     })();
@@ -2260,6 +2285,7 @@ export async function confirmProjectPermanentDeletion(render) {
   const project = state.deletedProjects.find(
     (item) => item.id === state.projectPermanentDeletion.projectId,
   );
+  const confirmationText = state.projectPermanentDeletion.confirmationText;
 
   if (!selectedTeam?.installationId || !project) {
     state.projectPermanentDeletion.status = "idle";
@@ -2288,50 +2314,93 @@ export async function confirmProjectPermanentDeletion(render) {
     return;
   }
 
-  let remoteDeleted = false;
-  try {
-    state.projectPermanentDeletion.status = "loading";
-    state.projectPermanentDeletion.error = "";
-    render();
-    await waitForNextPaint();
-    await upsertProjectMetadataRecord(selectedTeam, {
-      ...projectMetadataRecordFromVisibleProject(project),
-      lifecycleState: "softDeleted",
-      remoteState: "deleted",
-      recordState: "tombstone",
-      deletedAt: new Date().toISOString(),
-    });
-    await invoke("permanently_delete_gnosis_project_repo", {
-      input: {
-        installationId: selectedTeam.installationId,
-        orgLogin: selectedTeam.githubOrg,
-        repoName: project.name,
-      },
-      sessionToken: requireBrokerSession(),
-    });
-    remoteDeleted = true;
-    await invoke("purge_local_gtms_project_repo", {
-      input: {
-        installationId: selectedTeam.installationId,
-        repoName: project.name,
-      },
-    });
-    removeVisibleProject(project.id);
-    persistProjectsForTeam(selectedTeam);
-    resetProjectPermanentDeletion();
-    render();
-    await loadTeamProjects(render, selectedTeam.id);
-  } catch (error) {
-    try {
-      if (!remoteDeleted) {
-        await upsertProjectMetadataRecord(selectedTeam, projectMetadataRecordFromVisibleProject(project));
-      }
-    } catch {}
-    if (await handleSyncFailure(classifySyncError(error), { render })) {
-      return;
-    }
+  if (state.projectCreationInFlightIds.has(project.id)) {
     state.projectPermanentDeletion.status = "idle";
-    state.projectPermanentDeletion.error = error?.message ?? String(error);
+    state.projectPermanentDeletion.error =
+      "This project is still finishing creation in the background. Wait a moment, then try deleting it permanently again.";
     render();
+    return;
   }
+
+  const snapshot = cloneProjectCollections();
+  state.projectPermanentDeletion.status = "loading";
+  state.projectPermanentDeletion.error = "";
+  render();
+  await waitForNextPaint();
+
+  state.projectSyncVersion += 1;
+  beginProjectsPageSync();
+  setProjectUiDebug(render, "Deleting project...");
+  removeVisibleProject(project.id);
+  persistProjectsForTeam(selectedTeam);
+  resetProjectPermanentDeletion();
+  render();
+
+  void (async () => {
+    let remoteDeleted = false;
+
+    try {
+      await upsertProjectMetadataRecord(selectedTeam, {
+        ...projectMetadataRecordFromVisibleProject(project),
+        lifecycleState: "softDeleted",
+        remoteState: "deleted",
+        recordState: "tombstone",
+        deletedAt: new Date().toISOString(),
+      });
+      await invoke("permanently_delete_gnosis_project_repo", {
+        input: {
+          installationId: selectedTeam.installationId,
+          orgLogin: selectedTeam.githubOrg,
+          repoName: project.name,
+        },
+        sessionToken: requireBrokerSession(),
+      });
+      remoteDeleted = true;
+      await invoke("purge_local_gtms_project_repo", {
+        input: {
+          installationId: selectedTeam.installationId,
+          repoName: project.name,
+        },
+      });
+      clearProjectUiDebug(render);
+      await completeProjectsPageSync(render);
+      render();
+      await loadTeamProjects(render, selectedTeam.id);
+    } catch (error) {
+      try {
+        if (!remoteDeleted) {
+          await upsertProjectMetadataRecord(selectedTeam, projectMetadataRecordFromVisibleProject(project));
+        }
+      } catch {}
+      if (await handleSyncFailure(classifySyncError(error), { render })) {
+        clearProjectUiDebug(render);
+        failProjectsPageSync();
+        return;
+      }
+
+      if (!remoteDeleted) {
+        restoreProjectCollections(snapshot);
+        persistProjectsForTeam(selectedTeam);
+        state.projectPermanentDeletion = {
+          isOpen: true,
+          projectId: project.id,
+          projectName: project.title ?? project.name,
+          confirmationText,
+          status: "idle",
+          error: error?.message ?? String(error),
+        };
+      } else {
+        persistProjectsForTeam(selectedTeam);
+        showNoticeBadge(
+          `Project deleted remotely, but local cleanup still needs attention: ${error?.message ?? String(error)}`,
+          render,
+          4200,
+        );
+      }
+
+      clearProjectUiDebug(render);
+      failProjectsPageSync();
+      render();
+    }
+  })();
 }
