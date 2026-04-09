@@ -4,11 +4,11 @@
 
 ### Current Status
 
-- current implementation stage: `Stage 7`
+- current implementation stage: `Stage 8`
 - stage status: `implemented and committed in the app repo`
-- latest app commit: `8066a00` `Add explicit resource conflict states`
+- latest app commit: `66b2cdf` `Add missing-installations recovery messaging`
 - latest broker commit relevant to this plan: `3495771` `Add team metadata read routes`
-- next intended stage: `Stage 8`
+- next intended stage: `no further numbered stage is planned yet`
 
 ### Stage 1 Progress
 
@@ -1270,8 +1270,6 @@ What is now done:
 Known boundary after Stage 7:
 
 - the app now explains these conflict states, but it still does not offer a dedicated repair/relink workflow from the card itself
-- follow-up UX not yet implemented:
-  if `/Users/hans/Library/Application Support/com.gnosis.tms/installations` is deleted, discovery can rebuild from GitHub, but the app does not yet show an explicit “local installation data was missing, rebuilding from GitHub” message during recovery
 
 Scope:
 
@@ -1297,6 +1295,23 @@ Testing after Stage 7:
   - `cargo check`
 
 ### Stage 8: Add Missing-Installations Recovery UX
+
+Status as of April 9, 2026:
+
+- implemented
+- app commit: `66b2cdf` `Add missing-installations recovery messaging`
+
+What is now done:
+
+- project discovery now recognizes when metadata says recoverable project repos exist but no local project repos are present, and surfaces an explicit rebuild-from-GitHub message
+- glossary discovery now recognizes when metadata says recoverable glossary repos exist but no local glossary repos are present, and surfaces an explicit rebuild-from-GitHub message
+- both Projects and Glossaries pages now show recovery messaging instead of making the user infer rebuild activity from generic loading or sync badges alone
+- the recovery message is shown during the rebuild path and remains visible after the page settles so the user understands what happened
+
+Known boundary after Stage 8:
+
+- the app still does not provide dedicated repair/relink/archive actions from the resource cards themselves
+- the next likely follow-up is turning the current warning-only conflict states into actionable repair flows
 
 Scope:
 
