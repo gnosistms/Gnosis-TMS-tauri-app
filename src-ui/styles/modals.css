@@ -49,6 +49,10 @@
   line-height: 1.6;
 }
 
+.modal__supporting--please-check {
+  color: rgba(var(--please-check-accent-rgb), 0.92);
+}
+
 .modal__supporting-intro {
   display: block;
   margin-bottom: 10px;

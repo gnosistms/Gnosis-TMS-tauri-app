@@ -25,16 +25,20 @@ pub(crate) async fn list_accessible_github_app_installations(
 }
 
 #[tauri::command]
-pub(crate) fn inspect_github_app_installation(
+pub(crate) async fn inspect_github_app_installation(
   installation_id: i64,
   session_token: String,
 ) -> Result<GithubAppInstallationInfo, String> {
-  let client = github_client()?;
-  broker_get_json_with_session(
-    &client,
-    &format!("/api/github-app/installations/{installation_id}"),
-    &session_token,
-  )
+  tauri::async_runtime::spawn_blocking(move || {
+    let client = github_client()?;
+    broker_get_json_with_session(
+      &client,
+      &format!("/api/github-app/installations/{installation_id}"),
+      &session_token,
+    )
+  })
+  .await
+  .map_err(|error| format!("Could not run the installation inspection task: {error}"))?
 }
 
 #[tauri::command]
@@ -99,32 +103,40 @@ pub(crate) fn invite_user_to_organization_for_installation(
 }
 
 #[tauri::command]
-pub(crate) fn setup_organization_for_installation(
+pub(crate) async fn setup_organization_for_installation(
   installation_id: i64,
   org_login: String,
   session_token: String,
 ) -> Result<(), String> {
-  let client = github_client()?;
-  broker_post_no_content_with_session(
-    &client,
-    &format!("/api/github-app/installations/{installation_id}/orgs/{org_login}/setup"),
-    &serde_json::json!({}),
-    &session_token,
-  )
+  tauri::async_runtime::spawn_blocking(move || {
+    let client = github_client()?;
+    broker_post_no_content_with_session(
+      &client,
+      &format!("/api/github-app/installations/{installation_id}/orgs/{org_login}/setup"),
+      &serde_json::json!({}),
+      &session_token,
+    )
+  })
+  .await
+  .map_err(|error| format!("Could not run the organization setup task: {error}"))?
 }
 
 #[tauri::command]
-pub(crate) fn inspect_team_metadata_repo_for_installation(
+pub(crate) async fn inspect_team_metadata_repo_for_installation(
   installation_id: i64,
   org_login: String,
   session_token: String,
 ) -> Result<GithubTeamMetadataRepo, String> {
-  let client = github_client()?;
-  broker_get_json_with_session(
-    &client,
-    &format!("/api/github-app/installations/{installation_id}/orgs/{org_login}/team-metadata"),
-    &session_token,
-  )
+  tauri::async_runtime::spawn_blocking(move || {
+    let client = github_client()?;
+    broker_get_json_with_session(
+      &client,
+      &format!("/api/github-app/installations/{installation_id}/orgs/{org_login}/team-metadata"),
+      &session_token,
+    )
+  })
+  .await
+  .map_err(|error| format!("Could not run the team metadata inspection task: {error}"))?
 }
 
 #[tauri::command]

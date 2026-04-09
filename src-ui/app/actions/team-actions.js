@@ -18,6 +18,7 @@ import {
   beginGithubAppInstall,
   beginTeamOrgSetup,
   cancelTeamSetup,
+  continueTeamSetupAfterOrgCreation,
   finishTeamSetup,
   openTeamSetup,
 } from "../team-flow/setup.js";
@@ -37,6 +38,7 @@ export function createTeamActions(render) {
     "acknowledge-team-setup": () => acknowledgeTeamSetup(render),
     "begin-github-app-install": () => beginGithubAppInstall(render),
     "begin-team-org-setup": () => beginTeamOrgSetup(render),
+    "continue-team-setup-after-org-creation": () => continueTeamSetupAfterOrgCreation(render),
     "finish-team-setup": () => finishTeamSetup(render),
     "open-github-signup": () => openExternalUrl("https://github.com/signup"),
   };
@@ -68,6 +70,10 @@ export function createTeamActions(render) {
     if (exactActions[action]) {
       if (action === "submit-team-rename") {
         await runWithImmediateLoading(event, "Saving...", () => submitTeamRename(render));
+        return true;
+      }
+      if (action === "finish-team-setup") {
+        await runWithImmediateLoading(event, "Finishing...", () => finishTeamSetup(render));
         return true;
       }
       if (action === "confirm-team-permanent-deletion") {

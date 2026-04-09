@@ -25,7 +25,7 @@ export async function openTeamSetup(render) {
 }
 
 export async function beginTeamOrgSetup(render) {
-  state.teamSetup.step = "confirm";
+  state.teamSetup.step = "returnFromOrgCreation";
   state.teamSetup.error = "";
   render();
   openExternalUrl(GITHUB_FREE_ORG_SETUP_URL);
@@ -33,6 +33,12 @@ export async function beginTeamOrgSetup(render) {
 
 export function acknowledgeTeamSetup(render) {
   state.teamSetup.step = "guide";
+  state.teamSetup.error = "";
+  render();
+}
+
+export function continueTeamSetupAfterOrgCreation(render) {
+  state.teamSetup.step = "confirm";
   state.teamSetup.error = "";
   render();
 }
