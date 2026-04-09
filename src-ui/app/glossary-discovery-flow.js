@@ -65,7 +65,6 @@ export async function loadTeamGlossaries(
 
     state.glossaryDiscovery = { status: "ready", error: "" };
     await completePageSync(render);
-    render();
   } catch (error) {
     failPageSync();
     if (!preserveVisibleData || state.glossaryDiscovery?.status !== "ready") {

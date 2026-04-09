@@ -25,6 +25,7 @@ export async function completePageSync(render) {
   }
   state.pageSync = { status: "upToDate", startedAt: null };
   syncingStartedAt = 0;
+  render();
   resetTimer = window.setTimeout(() => {
     state.pageSync = createPageSyncState();
     render();

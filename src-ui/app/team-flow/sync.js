@@ -81,8 +81,7 @@ export async function loadUserTeams(render) {
     ];
 
     if (syncVersionAtStart !== state.teamSyncVersion) {
-      completePageSync(render);
-      render();
+      await completePageSync(render);
       return;
     }
 
@@ -100,9 +99,7 @@ export async function loadUserTeams(render) {
     saveStoredTeamRecords([...state.teams, ...state.deletedTeams]);
     state.selectedTeamId = resolveNextSelectedTeamId(state.selectedTeamId, state.teams);
     state.orgDiscovery = { status: "ready", error: "" };
-    completePageSync(render);
-
-    render();
+    await completePageSync(render);
     if (state.pendingTeamMutations.length > 0) {
       void processPendingTeamMutations(render);
     }

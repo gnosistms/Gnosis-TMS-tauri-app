@@ -54,9 +54,6 @@ export function renderGlossariesScreen(state) {
                 <div>${escapeHtml(glossary.targetLanguage?.name ?? "Unknown")}</div>
                 <div class="glossary-list__actions">
                   ${textAction("Open", `open-glossary:${glossary.id}`)}
-                  ${canManage ? textAction("Download", `download-glossary:${glossary.id}`) : ""}
-                  ${canManage ? textAction("Rename", `rename-glossary:${glossary.id}`) : ""}
-                  ${canManage ? textAction("Delete", `delete-glossary:${glossary.id}`) : ""}
                 </div>
               </div>
             `,

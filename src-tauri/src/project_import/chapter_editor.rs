@@ -3,6 +3,7 @@ use std::{
   collections::BTreeMap,
   fs,
   path::Path,
+  str,
 };
 
 use serde::{Deserialize, Serialize};
@@ -20,6 +21,7 @@ use super::project_git::{
   ensure_valid_git_repo,
   find_chapter_path_by_id,
   git_output,
+  git_output_with_stdin,
   local_repo_root,
   read_json_file,
   repo_relative_path,
@@ -263,6 +265,8 @@ struct StoredChapterFile {
   #[serde(default)]
   languages: Vec<ChapterLanguage>,
   #[serde(default)]
+  source_word_counts: BTreeMap<String, usize>,
+  #[serde(default)]
   settings: Option<StoredChapterSettings>,
 }
 
@@ -378,7 +382,7 @@ pub(super) fn load_gtms_chapter_editor_data_sync(
   let chapter_file: StoredChapterFile = read_json_file(&chapter_path.join("chapter.json"), "chapter.json")?;
   let rows = load_editor_rows(&chapter_path.join("rows"))?;
   let languages = sanitize_chapter_languages(&chapter_file.languages);
-  let source_word_counts = build_source_word_counts_from_stored_rows(&rows, &languages);
+  let source_word_counts = resolve_source_word_counts(&chapter_file, Some(&rows), &languages);
   let selected_source_language_code = preferred_source_language_code(&chapter_file, &languages);
   let selected_target_language_code = preferred_target_language_code(
     &chapter_file,
@@ -617,6 +621,8 @@ pub(super) fn update_gtms_editor_row_fields_sync(
   let row_json_path = chapter_path.join("rows").join(format!("{}.json", input.row_id));
   let original_row_text = fs::read_to_string(&row_json_path)
     .map_err(|error| format!("Could not read row file '{}': {error}", row_json_path.display()))?;
+  let original_row_file: StoredRowFile = serde_json::from_str(&original_row_text)
+    .map_err(|error| format!("Could not parse row file '{}': {error}", row_json_path.display()))?;
   let mut row_value: Value = serde_json::from_str(&original_row_text)
     .map_err(|error| format!("Could not parse row file '{}': {error}", row_json_path.display()))?;
   let row_object = row_value
@@ -646,26 +652,39 @@ pub(super) fn update_gtms_editor_row_fields_sync(
   let updated_row_json = serde_json::to_string_pretty(&row_value)
     .map_err(|error| format!("Could not serialize row file '{}': {error}", row_json_path.display()))?;
   let updated_row_text = format!("{updated_row_json}\n");
+  let languages = sanitize_chapter_languages(&chapter_file.languages);
+  let mut source_word_counts = if chapter_file.source_word_counts.is_empty() {
+    let rows = load_editor_rows(&chapter_path.join("rows"))?;
+    resolve_source_word_counts(&chapter_file, Some(&rows), &languages)
+  } else {
+    resolve_source_word_counts(&chapter_file, None, &languages)
+  };
   if updated_row_text != original_row_text {
+    let updated_row_file: StoredRowFile = serde_json::from_value(row_value.clone())
+      .map_err(|error| format!("Could not decode updated row '{}': {error}", row_json_path.display()))?;
+    source_word_counts = apply_source_word_count_delta(
+      &source_word_counts,
+      &original_row_file,
+      &updated_row_file,
+      &languages,
+    );
     write_text_file(&row_json_path, &updated_row_text)?;
+    write_chapter_source_word_counts(&chapter_json_path, &source_word_counts)?;
 
     let relative_row_json = repo_relative_path(&repo_path, &row_json_path)?;
-    git_output(&repo_path, &["add", &relative_row_json])?;
+    let relative_chapter_json = repo_relative_path(&repo_path, &chapter_json_path)?;
+    git_output(&repo_path, &["add", &relative_row_json, &relative_chapter_json])?;
     git_commit_as_signed_in_user_with_metadata(
       app,
       &repo_path,
       &format!("Update row {}", input.row_id),
-      &[&relative_row_json],
+      &[&relative_row_json, &relative_chapter_json],
       CommitMetadata {
         operation: Some("editor-update"),
         status_note: None,
       },
     )?;
   }
-
-  let rows = load_editor_rows(&chapter_path.join("rows"))?;
-  let languages = sanitize_chapter_languages(&chapter_file.languages);
-  let source_word_counts = build_source_word_counts_from_stored_rows(&rows, &languages);
 
   Ok(UpdateEditorRowFieldsResponse {
     row_id: input.row_id,
@@ -692,16 +711,13 @@ pub(super) fn load_gtms_editor_field_history_sync(
 
   let relative_row_json = repo_relative_path(&repo_path, &row_json_path)?;
   let commits = load_git_history_for_path(&repo_path, &relative_row_json)?;
+  let historical_field_values =
+    load_historical_row_field_values_batch(&repo_path, &relative_row_json, &commits, &input.language_code)?;
   let mut entries = Vec::new();
   let mut last_recorded_field_signature: Option<HistoricalFieldSignature> = None;
 
-  for commit in commits {
-    let Some(field_value) = load_historical_row_field_value(
-      &repo_path,
-      &relative_row_json,
-      &commit.commit_sha,
-      &input.language_code,
-    )? else {
+  for (commit, historical_field_value) in commits.into_iter().zip(historical_field_values.into_iter()) {
+    let Some(field_value) = historical_field_value else {
       continue;
     };
     let plain_text = field_value.plain_text.clone();
@@ -768,6 +784,8 @@ pub(super) fn restore_gtms_editor_field_from_history_sync(
 
   let original_row_text = fs::read_to_string(&row_json_path)
     .map_err(|error| format!("Could not read row file '{}': {error}", row_json_path.display()))?;
+  let original_row_file: StoredRowFile = serde_json::from_str(&original_row_text)
+    .map_err(|error| format!("Could not parse row file '{}': {error}", row_json_path.display()))?;
   let mut row_value: Value = serde_json::from_str(&original_row_text)
     .map_err(|error| format!("Could not parse row file '{}': {error}", row_json_path.display()))?;
   let row_object = row_value
@@ -803,11 +821,28 @@ pub(super) fn restore_gtms_editor_field_from_history_sync(
   let updated_row_json = serde_json::to_string_pretty(&row_value)
     .map_err(|error| format!("Could not serialize row file '{}': {error}", row_json_path.display()))?;
   let updated_row_text = format!("{updated_row_json}\n");
+  let languages = sanitize_chapter_languages(&chapter_file.languages);
+  let mut source_word_counts = if chapter_file.source_word_counts.is_empty() {
+    let rows = load_editor_rows(&chapter_path.join("rows"))?;
+    resolve_source_word_counts(&chapter_file, Some(&rows), &languages)
+  } else {
+    resolve_source_word_counts(&chapter_file, None, &languages)
+  };
   if updated_row_text != original_row_text {
+    let updated_row_file: StoredRowFile = serde_json::from_value(row_value.clone())
+      .map_err(|error| format!("Could not decode restored row '{}': {error}", row_json_path.display()))?;
+    source_word_counts = apply_source_word_count_delta(
+      &source_word_counts,
+      &original_row_file,
+      &updated_row_file,
+      &languages,
+    );
     write_text_file(&row_json_path, &updated_row_text)?;
+    write_chapter_source_word_counts(&chapter_json_path, &source_word_counts)?;
 
     let short_commit = short_commit_sha(&input.commit_sha);
-    git_output(&repo_path, &["add", &relative_row_json])?;
+    let relative_chapter_json = repo_relative_path(&repo_path, &chapter_json_path)?;
+    git_output(&repo_path, &["add", &relative_row_json, &relative_chapter_json])?;
     git_commit_as_signed_in_user_with_metadata(
       app,
       &repo_path,
@@ -815,17 +850,13 @@ pub(super) fn restore_gtms_editor_field_from_history_sync(
         "Restore row {} {} from {}",
         input.row_id, input.language_code, short_commit
       ),
-      &[&relative_row_json],
+      &[&relative_row_json, &relative_chapter_json],
       CommitMetadata {
         operation: Some("restore"),
         status_note: None,
       },
     )?;
   }
-
-  let rows = load_editor_rows(&chapter_path.join("rows"))?;
-  let languages = sanitize_chapter_languages(&chapter_file.languages);
-  let source_word_counts = build_source_word_counts_from_stored_rows(&rows, &languages);
 
   Ok(RestoreEditorFieldHistoryResponse {
     row_id: input.row_id,
@@ -894,9 +925,13 @@ fn load_project_chapter_summaries(repo_path: &Path) -> Result<Vec<ProjectChapter
     }
 
     let chapter_file: StoredChapterFile = read_json_file(&chapter_json_path, "chapter.json")?;
-    let rows = load_editor_rows(&path.join("rows"))?;
     let languages = sanitize_chapter_languages(&chapter_file.languages);
-    let source_word_counts = build_source_word_counts_from_stored_rows(&rows, &languages);
+    let source_word_counts = if chapter_file.source_word_counts.is_empty() {
+      let rows = load_editor_rows(&path.join("rows"))?;
+      resolve_source_word_counts(&chapter_file, Some(&rows), &languages)
+    } else {
+      resolve_source_word_counts(&chapter_file, None, &languages)
+    };
     let selected_source_language_code = preferred_source_language_code(&chapter_file, &languages);
     let selected_target_language_code = preferred_target_language_code(
       &chapter_file,
@@ -1203,6 +1238,113 @@ fn load_historical_row_field_value(
   )
 }
 
+fn load_historical_row_field_values_batch(
+  repo_path: &Path,
+  relative_row_json: &str,
+  commits: &[GitCommitMetadata],
+  language_code: &str,
+) -> Result<Vec<Option<StoredFieldValue>>, String> {
+  if commits.is_empty() {
+    return Ok(Vec::new());
+  }
+
+  let request = commits
+    .iter()
+    .map(|commit| format!("{}:{}\n", commit.commit_sha, relative_row_json))
+    .collect::<String>();
+  let output = git_output_with_stdin(repo_path, &["cat-file", "--batch"], &request)?;
+  let mut cursor = 0usize;
+  let mut values = Vec::with_capacity(commits.len());
+
+  for commit in commits {
+    let header_start = cursor;
+    let header_end = output[header_start..]
+      .iter()
+      .position(|byte| *byte == b'\n')
+      .map(|offset| header_start + offset)
+      .ok_or_else(|| {
+        format!(
+          "Could not parse historical row header for '{}' at commit '{}'.",
+          relative_row_json, commit.commit_sha
+        )
+      })?;
+    let header = str::from_utf8(&output[header_start..header_end]).map_err(|error| {
+      format!(
+        "Could not decode historical row header for '{}' at commit '{}': {error}",
+        relative_row_json, commit.commit_sha
+      )
+    })?;
+    cursor = header_end + 1;
+
+    if header.ends_with(" missing") {
+      values.push(None);
+      continue;
+    }
+
+    let mut header_parts = header.split_whitespace();
+    let _object_name = header_parts.next().unwrap_or_default();
+    let object_type = header_parts.next().unwrap_or_default();
+    let object_size = header_parts
+      .next()
+      .ok_or_else(|| {
+        format!(
+          "Could not parse historical row size for '{}' at commit '{}'.",
+          relative_row_json, commit.commit_sha
+        )
+      })?
+      .parse::<usize>()
+      .map_err(|error| {
+        format!(
+          "Could not decode historical row size for '{}' at commit '{}': {error}",
+          relative_row_json, commit.commit_sha
+        )
+      })?;
+
+    if object_type != "blob" {
+      return Err(format!(
+        "Expected a blob for historical row '{}' at commit '{}', found '{}'.",
+        relative_row_json, commit.commit_sha, object_type
+      ));
+    }
+
+    let body_end = cursor
+      .checked_add(object_size)
+      .ok_or_else(|| {
+        format!(
+          "Historical row size overflow for '{}' at commit '{}'.",
+          relative_row_json, commit.commit_sha
+        )
+      })?;
+    if body_end > output.len() {
+      return Err(format!(
+        "Historical row output was truncated for '{}' at commit '{}'.",
+        relative_row_json, commit.commit_sha
+      ));
+    }
+
+    let row_text = str::from_utf8(&output[cursor..body_end]).map_err(|error| {
+      format!(
+        "Could not decode historical row file '{}' at commit '{}': {error}",
+        relative_row_json, commit.commit_sha
+      )
+    })?;
+    cursor = body_end;
+    if output.get(cursor) == Some(&b'\n') {
+      cursor += 1;
+    }
+
+    let row_file: StoredRowFile = serde_json::from_str(row_text).map_err(|error| {
+      format!(
+        "Could not parse historical row file '{}' at commit '{}': {error}",
+        relative_row_json, commit.commit_sha
+      )
+    })?;
+    values.push(row_file.fields.get(language_code).cloned());
+  }
+
+  Ok(values)
+}
+
 fn short_commit_sha(commit_sha: &str) -> String {
   commit_sha.chars().take(8).collect()
 }
@@ -1296,6 +1438,80 @@ fn build_source_word_counts_from_stored_rows(
   }
 
   counts
+}
+
+fn resolve_source_word_counts(
+  chapter_file: &StoredChapterFile,
+  rows: Option<&[StoredRowFile]>,
+  languages: &[ChapterLanguage],
+) -> BTreeMap<String, usize> {
+  if !chapter_file.source_word_counts.is_empty() {
+    return languages
+      .iter()
+      .map(|language| {
+        (
+          language.code.clone(),
+          chapter_file
+            .source_word_counts
+            .get(&language.code)
+            .copied()
+            .unwrap_or(0),
+        )
+      })
+      .collect();
+  }
+
+  rows
+    .map(|stored_rows| build_source_word_counts_from_stored_rows(stored_rows, languages))
+    .unwrap_or_else(|| {
+      languages
+        .iter()
+        .map(|language| (language.code.clone(), 0usize))
+        .collect()
+    })
+}
+
+fn apply_source_word_count_delta(
+  existing_counts: &BTreeMap<String, usize>,
+  original_row: &StoredRowFile,
+  updated_row: &StoredRowFile,
+  languages: &[ChapterLanguage],
+) -> BTreeMap<String, usize> {
+  let mut next_counts = existing_counts.clone();
+
+  for language in languages {
+    let original_words = original_row
+      .fields
+      .get(&language.code)
+      .map(|field| count_words(&field.plain_text))
+      .unwrap_or(0);
+    let updated_words = updated_row
+      .fields
+      .get(&language.code)
+      .map(|field| count_words(&field.plain_text))
+      .unwrap_or(0);
+    let previous_total = next_counts.get(&language.code).copied().unwrap_or(0);
+    let adjusted_total = previous_total.saturating_sub(original_words) + updated_words;
+    next_counts.insert(language.code.clone(), adjusted_total);
+  }
+
+  next_counts
+}
+
+fn write_chapter_source_word_counts(
+  chapter_json_path: &Path,
+  source_word_counts: &BTreeMap<String, usize>,
+) -> Result<(), String> {
+  let mut chapter_value: Value = read_json_file(chapter_json_path, "chapter.json")?;
+  let chapter_object = chapter_value
+    .as_object_mut()
+    .ok_or_else(|| "The chapter.json file is not a JSON object.".to_string())?;
+  chapter_object.insert(
+    "source_word_counts".to_string(),
+    serde_json::to_value(source_word_counts)
+      .map_err(|error| format!("Could not serialize chapter source word counts: {error}"))?,
+  );
+  write_json_pretty(chapter_json_path, &chapter_value)
 }
 
 fn preferred_source_language_code(

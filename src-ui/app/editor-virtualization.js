@@ -101,6 +101,16 @@ function updateSpacerHeight(spacer, height) {
   spacer.style.height = `${Math.max(0, Math.round(height))}px`;
 }
 
+function renderWindowRange(itemsContainer, rows, collapsedLanguageCodes, startIndex, endIndex) {
+  itemsContainer.innerHTML = renderTranslationContentRowsRange(
+    rows,
+    collapsedLanguageCodes,
+    startIndex,
+    endIndex,
+  );
+  syncEditorRowTextareaHeights(itemsContainer);
+}
+
 export function initializeEditorVirtualization(root, appState) {
   activeController?.destroy?.();
   activeController = null;
@@ -168,13 +178,13 @@ export function initializeEditorVirtualization(root, appState) {
 
     currentRangeKey = nextRangeKey;
     const focusSnapshot = captureFocusedEditorField(root);
-    itemsContainer.innerHTML = renderTranslationContentRowsRange(
+    renderWindowRange(
+      itemsContainer,
       model.contentRows,
       model.collapsedLanguageCodes,
       windowState.startIndex,
       windowState.endIndex,
     );
-    syncEditorRowTextareaHeights(itemsContainer);
     restoreFocusedEditorField(root, focusSnapshot);
 
     const heightsChanged = measureVisibleRowHeights(itemsContainer, rowHeightCache);
@@ -191,8 +201,21 @@ export function initializeEditorVirtualization(root, appState) {
         scrollContainer.clientHeight,
         pinnedRowIndex,
       );
+      const measuredRangeKey = `${measuredWindow.startIndex}:${measuredWindow.endIndex}`;
       updateSpacerHeight(topSpacer, measuredWindow.topSpacerHeight);
       updateSpacerHeight(bottomSpacer, measuredWindow.bottomSpacerHeight);
+      if (measuredRangeKey !== currentRangeKey) {
+        currentRangeKey = measuredRangeKey;
+        renderWindowRange(
+          itemsContainer,
+          model.contentRows,
+          model.collapsedLanguageCodes,
+          measuredWindow.startIndex,
+          measuredWindow.endIndex,
+        );
+        restoreFocusedEditorField(root, focusSnapshot);
+        measureVisibleRowHeights(itemsContainer, rowHeightCache);
+      }
     }
   };
 

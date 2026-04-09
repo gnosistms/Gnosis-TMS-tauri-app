@@ -103,20 +103,17 @@ export async function refreshCurrentScreen(render) {
 
     if (screen === "githubAppTest") {
       await loadGithubAppTestConfig(render);
-      completePageSync(render);
-      render();
+      await completePageSync(render);
       return;
     }
 
     if (screen === "translate") {
       await loadSelectedChapterEditorData(render, { preserveVisibleRows: true });
-      completePageSync(render);
-      render();
+      await completePageSync(render);
       return;
     }
 
-    completePageSync(render);
-    render();
+    await completePageSync(render);
   } catch {
     failPageSync();
     render();

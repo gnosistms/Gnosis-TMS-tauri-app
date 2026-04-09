@@ -101,16 +101,37 @@ export function loadStoredEditorFontSizePx(login = getActiveStorageLogin()) {
   }
 
   try {
+    const persistedValue = readPersistentValue(key, null);
+    if (persistedValue !== null && persistedValue !== undefined) {
+      return Number.parseInt(String(persistedValue ?? ""), 10);
+    }
+
     const rawValue = window.localStorage?.getItem(key);
     if (rawValue === null) {
       return null;
     }
 
     const parsedValue = JSON.parse(rawValue);
-    return Number.parseInt(String(parsedValue ?? ""), 10);
+    const normalizedValue = Number.parseInt(String(parsedValue ?? ""), 10);
+    if (Number.isFinite(normalizedValue)) {
+      writePersistentValue(key, normalizedValue);
+      try {
+        window.localStorage?.removeItem(key);
+      } catch {}
+      return normalizedValue;
+    }
+    return null;
   } catch {
     try {
-      return Number.parseInt(String(window.localStorage?.getItem(key) ?? ""), 10);
+      const normalizedValue = Number.parseInt(String(window.localStorage?.getItem(key) ?? ""), 10);
+      if (Number.isFinite(normalizedValue)) {
+        writePersistentValue(key, normalizedValue);
+        try {
+          window.localStorage?.removeItem(key);
+        } catch {}
+        return normalizedValue;
+      }
+      return null;
     } catch {
       return null;
     }
@@ -128,9 +149,7 @@ export function saveStoredEditorFontSizePx(value, login = getActiveStorageLogin(
     return;
   }
 
-  try {
-    window.localStorage?.setItem(key, JSON.stringify(normalizedValue));
-  } catch {}
+  writePersistentValue(key, normalizedValue);
 }
 
 export function loadStoredEditorLocation(chapterId, login = getActiveStorageLogin()) {

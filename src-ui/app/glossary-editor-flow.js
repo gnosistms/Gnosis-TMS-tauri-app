@@ -94,7 +94,6 @@ export async function loadSelectedGlossaryEditorData(render, options = {}) {
     });
     applyGlossaryEditorPayload(payload);
     await completePageSync(render);
-    render();
   } catch (error) {
     failPageSync();
     if (!preserveVisibleData || state.glossaryEditor?.status !== "ready") {

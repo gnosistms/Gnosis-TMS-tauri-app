@@ -313,19 +313,9 @@ export async function loadTeamUsers(render, teamId = state.selectedTeamId) {
     state.users = users.map((user) => normalizeOrganizationMember(user)).filter(Boolean);
     saveStoredMembersForTeam(selectedTeam, state.users);
     state.userDiscovery = { status: "ready", error: "" };
-    completePageSync(render);
-    render();
+    await completePageSync(render);
   } catch (error) {
     const errorMessage = error?.message ?? String(error);
-    if (errorMessage.includes("/members") && errorMessage.includes("404")) {
-      state.users = buildFallbackUsers();
-      saveStoredMembersForTeam(selectedTeam, state.users);
-      state.userDiscovery = { status: "ready", error: "" };
-      completePageSync(render);
-      render();
-      return;
-    }
-
     if (
       await handleSyncFailure(classifySyncError(error), {
         render,

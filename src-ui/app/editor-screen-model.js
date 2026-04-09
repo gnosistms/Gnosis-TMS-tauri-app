@@ -14,11 +14,12 @@ function chapterLanguageOptions(chapter, editorChapter) {
 }
 
 function resolveSelectedLanguageCodes(languages, chapter, editorChapter) {
+  const roleBasedSourceCode = languages.find((language) => language.role === "source")?.code ?? null;
   const sourceCode =
     editorChapter?.selectedSourceLanguageCode
     ?? chapter?.selectedSourceLanguageCode
+    ?? roleBasedSourceCode
     ?? languages[0]?.code
-    ?? languages.find((language) => language.role === "source")?.code
     ?? null;
   const targetCode =
     editorChapter?.selectedTargetLanguageCode

@@ -1,7 +1,8 @@
 use std::{
   fs,
+  io::Write,
   path::{Path, PathBuf},
-  process::Command,
+  process::{Command, Stdio},
 };
 
 use serde::de::DeserializeOwned;
@@ -65,6 +66,50 @@ pub(super) fn git_output(repo_path: &Path, args: &[&str]) -> Result<String, Stri
   }
 
   Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+pub(super) fn git_output_with_stdin(
+  repo_path: &Path,
+  args: &[&str],
+  stdin_contents: &str,
+) -> Result<Vec<u8>, String> {
+  let mut child = Command::new("git")
+    .args(args)
+    .current_dir(repo_path)
+    .stdin(Stdio::piped())
+    .stdout(Stdio::piped())
+    .stderr(Stdio::piped())
+    .spawn()
+    .map_err(|error| format!("Could not run git {}: {error}", args.join(" ")))?;
+
+  {
+    let stdin = child
+      .stdin
+      .as_mut()
+      .ok_or_else(|| format!("Could not open stdin for git {}.", args.join(" ")))?;
+    stdin
+      .write_all(stdin_contents.as_bytes())
+      .map_err(|error| format!("Could not write stdin for git {}: {error}", args.join(" ")))?;
+  }
+
+  let output = child
+    .wait_with_output()
+    .map_err(|error| format!("Could not wait for git {}: {error}", args.join(" ")))?;
+
+  if !output.status.success() {
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let detail = if !stderr.is_empty() {
+      stderr
+    } else if !stdout.is_empty() {
+      stdout
+    } else {
+      format!("exit status {}", output.status)
+    };
+    return Err(format!("git {} failed: {detail}", args.join(" ")));
+  }
+
+  Ok(output.stdout)
 }
 
 pub(super) fn read_json_file<T: DeserializeOwned>(path: &Path, label: &str) -> Result<T, String> {

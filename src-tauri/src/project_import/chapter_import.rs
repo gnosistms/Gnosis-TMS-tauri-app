@@ -112,6 +112,7 @@ struct ChapterFile {
   source_files: Vec<SourceFile>,
   package_assets: Vec<Value>,
   languages: Vec<ChapterLanguage>,
+  source_word_counts: BTreeMap<String, usize>,
   #[serde(default)]
   settings: ChapterSettings,
 }
@@ -495,6 +496,7 @@ fn build_chapter_file(
         role: language.role.to_string(),
       })
       .collect(),
+    source_word_counts: build_source_word_counts_from_import(parsed),
     settings: ChapterSettings {
       linked_glossaries: None,
       default_source_language: parsed.languages.first().map(|language| language.code.clone()),
