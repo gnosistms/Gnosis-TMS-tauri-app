@@ -65,6 +65,7 @@
   - Projects-page persistent glossary warning state instead of swallowed glossary-load failures
   - shared Rust repo-sync transport helpers used by both project and glossary repo sync modules
 - Files to inspect first if a new thread needs to resume:
+  - implementation plan for local-first sync + team metadata: [team-metadata-sync-implementation-plan.md](/Users/hans/Desktop/GnosisTMS/reviews/complete-app-review-2026-04-09/team-metadata-sync-implementation-plan.md)
   - broker repo entrypoint: [server.js](/Users/hans/Desktop/gnosis-tms-github-app-broker/src/server.js)
   - broker glossary routes: [glossary-routes.js](/Users/hans/Desktop/gnosis-tms-github-app-broker/src/glossary-routes.js)
   - broker glossary repo handlers: [glossary-repos.js](/Users/hans/Desktop/gnosis-tms-github-app-broker/src/glossary-repos.js)
