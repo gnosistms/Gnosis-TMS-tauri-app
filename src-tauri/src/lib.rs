@@ -35,8 +35,8 @@ use crate::{
   glossary_storage::{
     delete_gtms_glossary_term, import_tmx_to_gtms_glossary_repo, initialize_gtms_glossary_repo,
     list_local_gtms_glossaries, load_gtms_glossary_editor_data, purge_local_gtms_glossary_repo,
-    rename_gtms_glossary, restore_gtms_glossary, soft_delete_gtms_glossary,
-    upsert_gtms_glossary_term,
+    prepare_local_gtms_glossary_repo, rename_gtms_glossary, rename_local_gtms_glossary_repo,
+    restore_gtms_glossary, soft_delete_gtms_glossary, upsert_gtms_glossary_term,
   },
   glossary_repo_sync::sync_gtms_glossary_repos,
   github::{
@@ -275,6 +275,8 @@ pub fn run() {
       list_gnosis_glossaries_for_installation,
       sync_gtms_glossary_repos,
       create_gnosis_glossary_repo,
+      prepare_local_gtms_glossary_repo,
+      rename_local_gtms_glossary_repo,
       initialize_gtms_glossary_repo,
       import_tmx_to_gtms_glossary_repo,
       rename_gtms_glossary,

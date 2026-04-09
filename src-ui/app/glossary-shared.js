@@ -106,6 +106,16 @@ export function applyGlossaryEditorPayload(payload) {
     .map(normalizeGlossaryTerm)
     .filter(Boolean);
 
+  const summary = normalizeGlossarySummary({
+    glossaryId: payload?.glossaryId,
+    repoName: state.glossaryEditor?.repoName || selectedGlossaryRepoName(),
+    title: payload?.title,
+    sourceLanguage: payload?.sourceLanguage ?? null,
+    targetLanguage: payload?.targetLanguage ?? null,
+    lifecycleState: payload?.lifecycleState,
+    termCount: Number.isFinite(payload?.termCount) ? payload.termCount : normalizedTerms.length,
+  });
+
   state.glossaryEditor = {
     status: "ready",
     error: "",
@@ -120,18 +130,35 @@ export function applyGlossaryEditorPayload(payload) {
     terms: normalizedTerms,
   };
 
-  state.glossaries = state.glossaries.map((glossary) =>
-    glossary.id === payload.glossaryId
-      ? {
-          ...glossary,
-          title: payload.title ?? glossary.title,
-          sourceLanguage: payload.sourceLanguage ?? glossary.sourceLanguage,
-          targetLanguage: payload.targetLanguage ?? glossary.targetLanguage,
-          lifecycleState: payload.lifecycleState ?? glossary.lifecycleState,
-          termCount: Number.isFinite(payload.termCount) ? payload.termCount : glossary.termCount,
+  if (summary) {
+    upsertGlossarySummary(summary);
+  }
+}
+
+export function upsertGlossarySummary(glossary) {
+  const normalized = normalizeGlossarySummary(glossary);
+  if (!normalized) {
+    return null;
+  }
+
+  let matched = false;
+  state.glossaries = sortGlossaries(
+    state.glossaries
+      .map((item) => {
+        if (item?.id !== normalized.id && item?.repoName !== normalized.repoName) {
+          return item;
         }
-      : glossary,
+
+        matched = true;
+        return {
+          ...item,
+          ...normalized,
+        };
+      })
+      .concat(matched ? [] : [normalized]),
   );
+
+  return normalized;
 }
 
 export function normalizeEditableTerms(terms) {

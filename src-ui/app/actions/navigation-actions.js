@@ -49,9 +49,13 @@ export function createNavigationActions(render) {
 
     if (action === "open-glossaries") {
       state.screen = "glossaries";
-      primeGlossariesLoadingState(state.selectedTeamId);
+      primeGlossariesLoadingState(state.selectedTeamId, {
+        preserveVisibleData: state.glossaries.length > 0,
+      });
       render();
-      void loadTeamGlossaries(render, state.selectedTeamId);
+      void loadTeamGlossaries(render, state.selectedTeamId, {
+        preserveVisibleData: state.glossaries.length > 0,
+      });
       return true;
     }
 

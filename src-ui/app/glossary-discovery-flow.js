@@ -28,13 +28,22 @@ function applyGlossaryList(glossaries, teamId = state.selectedTeamId) {
   }
 }
 
-export function primeGlossariesLoadingState(teamId = state.selectedTeamId) {
+export function primeGlossariesLoadingState(teamId = state.selectedTeamId, options = {}) {
   const team = selectedTeam(teamId);
   state.selectedTeamId = teamId ?? state.selectedTeamId;
+  const preserveVisibleData = options.preserveVisibleData === true;
 
   if (!Number.isFinite(team?.installationId)) {
     state.glossaries = [];
     state.selectedGlossaryId = null;
+    state.glossaryDiscovery = {
+      ...createGlossaryDiscoveryState(),
+      status: "ready",
+    };
+    return;
+  }
+
+  if (preserveVisibleData && state.glossaries.length > 0) {
     state.glossaryDiscovery = {
       ...createGlossaryDiscoveryState(),
       status: "ready",
@@ -121,7 +130,15 @@ export async function loadTeamGlossaries(
     const { glossaries, syncIssue, brokerWarning } = await loadRepoBackedGlossariesForTeam(team, {
       offlineMode: state.offline?.isEnabled === true,
     });
-    applyGlossaryList(glossaries, team.id);
+    let nextGlossaries = glossaries;
+    if (preserveVisibleData && nextGlossaries.length === 0) {
+      const localGlossaries = await listLocalGlossarySummariesForTeam(team);
+      if (localGlossaries.length > 0) {
+        nextGlossaries = localGlossaries;
+      }
+    }
+
+    applyGlossaryList(nextGlossaries, team.id);
     saveStoredGlossariesForTeam(team, state.glossaries);
 
     state.glossaryDiscovery = {

@@ -101,6 +101,15 @@ pub(crate) struct ImportTmxToGlossaryRepoInput {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub(crate) struct PrepareLocalGlossaryRepoInput {
+  installation_id: i64,
+  repo_name: String,
+  remote_url: Option<String>,
+  default_branch_name: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct RenameGlossaryInput {
   installation_id: i64,
   repo_name: String,
@@ -112,6 +121,14 @@ pub(crate) struct RenameGlossaryInput {
 pub(crate) struct UpdateGlossaryLifecycleInput {
   installation_id: i64,
   repo_name: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct RenameLocalGlossaryRepoInput {
+  installation_id: i64,
+  from_repo_name: String,
+  to_repo_name: String,
 }
 
 #[derive(Deserialize)]
@@ -232,6 +249,26 @@ pub(crate) async fn import_tmx_to_gtms_glossary_repo(
   tauri::async_runtime::spawn_blocking(move || import_tmx_to_gtms_glossary_repo_sync(&app, input))
     .await
     .map_err(|error| format!("The glossary import worker failed: {error}"))?
+}
+
+#[tauri::command]
+pub(crate) async fn prepare_local_gtms_glossary_repo(
+  app: AppHandle,
+  input: PrepareLocalGlossaryRepoInput,
+) -> Result<(), String> {
+  tauri::async_runtime::spawn_blocking(move || prepare_local_gtms_glossary_repo_sync(&app, input))
+    .await
+    .map_err(|error| format!("The local glossary repo worker failed: {error}"))?
+}
+
+#[tauri::command]
+pub(crate) async fn rename_local_gtms_glossary_repo(
+  app: AppHandle,
+  input: RenameLocalGlossaryRepoInput,
+) -> Result<(), String> {
+  tauri::async_runtime::spawn_blocking(move || rename_local_gtms_glossary_repo_sync(&app, input))
+    .await
+    .map_err(|error| format!("The local glossary repo rename worker failed: {error}"))?
 }
 
 #[tauri::command]
@@ -621,6 +658,95 @@ fn purge_local_gtms_glossary_repo_sync(
     format!(
       "Could not remove the local glossary repo '{}': {error}",
       repo_path.display()
+    )
+  })
+}
+
+fn prepare_local_gtms_glossary_repo_sync(
+  app: &AppHandle,
+  input: PrepareLocalGlossaryRepoInput,
+) -> Result<(), String> {
+  let repo_name = input.repo_name.trim();
+  if repo_name.is_empty() {
+    return Err("Could not determine which glossary repo to prepare.".to_string());
+  }
+
+  let repo_root = local_glossary_repo_root(app, input.installation_id)?;
+  let repo_path = repo_root.join(repo_name);
+  fs::create_dir_all(&repo_path).map_err(|error| {
+    format!(
+      "Could not create the local glossary repo '{}': {error}",
+      repo_path.display()
+    )
+  })?;
+
+  if git_output(&repo_path, &["rev-parse", "--git-dir"]).is_err() {
+    let branch_name = input
+      .default_branch_name
+      .as_deref()
+      .filter(|value| !value.trim().is_empty())
+      .unwrap_or("main");
+    git_output(&repo_path, &["init", "--initial-branch", branch_name])?;
+  }
+
+  let branch_name = input
+    .default_branch_name
+    .as_deref()
+    .filter(|value| !value.trim().is_empty())
+    .unwrap_or("main");
+  let _ = git_output(&repo_path, &["checkout", "-B", branch_name]);
+
+  if let Some(remote_url) = input
+    .remote_url
+    .as_deref()
+    .map(str::trim)
+    .filter(|value| !value.is_empty())
+  {
+    match git_output(&repo_path, &["remote", "get-url", "origin"]) {
+      Ok(existing_url) => {
+        if existing_url.trim() != remote_url {
+          git_output(&repo_path, &["remote", "set-url", "origin", remote_url])?;
+        }
+      }
+      Err(_) => {
+        git_output(&repo_path, &["remote", "add", "origin", remote_url])?;
+      }
+    }
+  }
+
+  Ok(())
+}
+
+fn rename_local_gtms_glossary_repo_sync(
+  app: &AppHandle,
+  input: RenameLocalGlossaryRepoInput,
+) -> Result<(), String> {
+  let from_repo_name = input.from_repo_name.trim();
+  let to_repo_name = input.to_repo_name.trim();
+  if from_repo_name.is_empty() || to_repo_name.is_empty() {
+    return Err("Could not determine which glossary repo to rename.".to_string());
+  }
+
+  if from_repo_name == to_repo_name {
+    return Ok(());
+  }
+
+  let repo_root = local_glossary_repo_root(app, input.installation_id)?;
+  let from_path = repo_root.join(from_repo_name);
+  let to_path = repo_root.join(to_repo_name);
+
+  if !from_path.exists() {
+    return Err("The local glossary repo is not available yet.".to_string());
+  }
+  if to_path.exists() {
+    return Err("The destination glossary repo folder already exists.".to_string());
+  }
+
+  fs::rename(&from_path, &to_path).map_err(|error| {
+    format!(
+      "Could not rename the local glossary repo '{}' to '{}': {error}",
+      from_path.display(),
+      to_path.display()
     )
   })
 }

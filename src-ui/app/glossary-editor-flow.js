@@ -8,14 +8,48 @@ import {
   selectedGlossary,
   selectedGlossaryRepoName,
   selectedTeam,
+  upsertGlossarySummary,
 } from "./glossary-shared.js";
 import {
   getGlossarySyncIssueMessage,
   syncSingleGlossaryForTeam,
 } from "./glossary-repo-flow.js";
 
-export function primeSelectedGlossaryEditorLoadingState() {
-  const glossary = selectedGlossary();
+function resolveGlossaryForEditor(glossaryId = state.selectedGlossaryId, preferredGlossary = null) {
+  const selected = selectedGlossary();
+  if (selected?.repoName) {
+    return selected;
+  }
+
+  const normalizedPreferred = upsertGlossarySummary(preferredGlossary);
+  if (normalizedPreferred?.repoName) {
+    return normalizedPreferred;
+  }
+
+  const editorGlossaryId = state.glossaryEditor?.glossaryId ?? null;
+  const requestedGlossaryId = glossaryId ?? editorGlossaryId;
+  if (
+    requestedGlossaryId
+    && state.glossaryEditor?.repoName
+    && (editorGlossaryId === requestedGlossaryId || state.selectedGlossaryId == null)
+  ) {
+    return {
+      id: requestedGlossaryId,
+      repoName: state.glossaryEditor.repoName,
+      title: state.glossaryEditor.title,
+      sourceLanguage: state.glossaryEditor.sourceLanguage,
+      targetLanguage: state.glossaryEditor.targetLanguage,
+      lifecycleState: state.glossaryEditor.lifecycleState,
+      termCount: state.glossaryEditor.termCount,
+    };
+  }
+
+  return null;
+}
+
+export function primeSelectedGlossaryEditorLoadingState(options = {}) {
+  const glossaryId = options.glossaryId ?? state.selectedGlossaryId;
+  const glossary = resolveGlossaryForEditor(glossaryId, options.preferredGlossary ?? null);
   const preservedSearchQuery = state.glossaryEditor?.searchQuery ?? "";
 
   if (!glossary?.repoName) {
@@ -32,7 +66,7 @@ export function primeSelectedGlossaryEditorLoadingState() {
     ...createGlossaryEditorState(),
     status: "loading",
     error: "",
-    glossaryId: glossary.id,
+    glossaryId,
     repoName: glossary.repoName,
     title: glossary.title,
     sourceLanguage: glossary.sourceLanguage,
@@ -45,8 +79,9 @@ export function primeSelectedGlossaryEditorLoadingState() {
 
 export async function loadSelectedGlossaryEditorData(render, options = {}) {
   const preserveVisibleData = options.preserveVisibleData === true;
+  const glossaryId = options.glossaryId ?? state.selectedGlossaryId ?? state.glossaryEditor?.glossaryId ?? null;
   const team = selectedTeam();
-  const glossary = selectedGlossary();
+  const glossary = resolveGlossaryForEditor(glossaryId, options.preferredGlossary ?? null);
   if (!Number.isFinite(team?.installationId) || !glossary?.repoName) {
     state.glossaryEditor = {
       ...state.glossaryEditor,
@@ -76,7 +111,7 @@ export async function loadSelectedGlossaryEditorData(render, options = {}) {
       ...state.glossaryEditor,
       status: "loading",
       error: "",
-      glossaryId: glossary.id,
+      glossaryId,
       repoName: glossary.repoName,
       title: glossary.title,
       sourceLanguage: glossary.sourceLanguage,
@@ -113,12 +148,18 @@ export async function loadSelectedGlossaryEditorData(render, options = {}) {
   }
 }
 
-export async function openGlossaryEditor(render, glossaryId) {
+export async function openGlossaryEditor(render, glossaryId, options = {}) {
   state.selectedGlossaryId = glossaryId;
   state.screen = "glossaryEditor";
-  primeSelectedGlossaryEditorLoadingState();
+  primeSelectedGlossaryEditorLoadingState({
+    glossaryId,
+    preferredGlossary: options.preferredGlossary ?? null,
+  });
   render();
-  await loadSelectedGlossaryEditorData(render);
+  await loadSelectedGlossaryEditorData(render, {
+    glossaryId,
+    preferredGlossary: options.preferredGlossary ?? null,
+  });
 }
 
 export function updateGlossaryTermSearchQuery(render, value) {

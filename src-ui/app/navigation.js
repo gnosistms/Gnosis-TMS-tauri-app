@@ -22,6 +22,8 @@ import { loadTeamUsers, primeUsersForTeam } from "./team-members-flow.js";
 import { loadSelectedChapterEditorData, persistEditorChapterSelections } from "./translate-flow.js";
 
 export function handleNavigation(navTarget, render) {
+  const previousScreen = state.screen;
+
   if (state.screen === "translate" && navTarget !== "translate") {
     void persistEditorChapterSelections(render);
   }
@@ -36,8 +38,15 @@ export function handleNavigation(navTarget, render) {
     }
   }
 
+  const preserveVisibleGlossaries =
+    navTarget === "glossaries"
+    && previousScreen === "glossaryEditor"
+    && state.glossaries.length > 0;
+
   if (navTarget === "glossaries" && state.selectedTeamId) {
-    primeGlossariesLoadingState(state.selectedTeamId);
+    primeGlossariesLoadingState(state.selectedTeamId, {
+      preserveVisibleData: preserveVisibleGlossaries,
+    });
   }
   if (navTarget === "glossaryEditor" && state.selectedGlossaryId) {
     primeSelectedGlossaryEditorLoadingState();
@@ -58,7 +67,11 @@ export function handleNavigation(navTarget, render) {
     void waitForNextPaint().then(() => loadTeamUsers(render, state.selectedTeamId));
   }
   if (navTarget === "glossaries" && state.selectedTeamId) {
-    void waitForNextPaint().then(() => loadTeamGlossaries(render, state.selectedTeamId));
+    void waitForNextPaint().then(() =>
+      loadTeamGlossaries(render, state.selectedTeamId, {
+        preserveVisibleData: preserveVisibleGlossaries,
+      })
+    );
   }
   if (navTarget === "glossaryEditor" && state.selectedGlossaryId) {
     void waitForNextPaint().then(() => loadSelectedGlossaryEditorData(render));
