@@ -118,6 +118,15 @@ export function mergeMetadataDiscoveryProjects({
     if (record?.recordState !== "live" && record?.recordState !== "tombstone") {
       continue;
     }
+    if (record?.recordState === "tombstone") {
+      if (typeof record?.id === "string" && record.id.trim()) {
+        includedProjectIds.add(record.id);
+      }
+      if (typeof record?.repoName === "string" && record.repoName.trim()) {
+        includedRepoNames.add(record.repoName);
+      }
+      continue;
+    }
 
     const remoteProject = findMatchingProjectRecord(record, remoteMaps);
     const localProject = findMatchingProjectRecord(record, localMaps);
@@ -152,6 +161,9 @@ export function mergeMetadataDiscoveryProjects({
 
   for (const localProject of Array.isArray(localProjects) ? localProjects : []) {
     if (includedProjectIds.has(localProject.id) || includedRepoNames.has(localProject.name)) {
+      continue;
+    }
+    if (localProject?.recordState === "tombstone") {
       continue;
     }
     mergedProjects.push({

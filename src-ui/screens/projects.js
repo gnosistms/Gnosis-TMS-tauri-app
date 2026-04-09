@@ -138,7 +138,7 @@ function renderProjectCard(project, expanded, options = {}) {
     : isDeleted && isTombstone
       ? "Permanently deleted"
     : `${files.length} file${files.length === 1 ? "" : "s"}`;
-  const resolutionMarkup = resolution
+  const resolutionMarkup = resolution && resolution.key !== "pendingCreate"
     ? renderInlineStateBox({
         tone: resolution.tone,
         message: resolution.message,

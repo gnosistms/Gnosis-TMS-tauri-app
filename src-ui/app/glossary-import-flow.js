@@ -186,6 +186,7 @@ function syncGlossaryInBackground(render, team, glossary, preferredBaseRepoName)
         remoteState: "linked",
         resolutionState: "",
       }, remoteRepo);
+      render();
     }
 
     try {

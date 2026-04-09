@@ -74,8 +74,8 @@ function baseResolution(resource, resourceLabel) {
     return {
       key: "pendingCreate",
       tone: "warning",
-      message: `This ${resourceLabel} is still being created on GitHub.`,
-      help: "The local copy is already available. Remote setup should finish in the background.",
+      message: `This ${resourceLabel} is still being set up.`,
+      help: "The first GitHub write and local repo setup are still finishing in the background.",
       blockLifecycleActions: true,
       blockContentActions: false,
     };

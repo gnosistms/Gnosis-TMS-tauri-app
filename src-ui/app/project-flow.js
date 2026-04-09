@@ -1229,7 +1229,7 @@ export async function submitProjectCreation(render) {
           chapters: [],
           isPendingCreate: true,
           pendingCreateStartedAt: pendingProject.pendingCreateStartedAt,
-          pendingCreateStatusText: "Syncing local repo...",
+          pendingCreateStatusText: "Setting up local repo...",
           remoteState: "pendingCreate",
           recordState: "live",
           resolutionState: "pendingCreate",
@@ -1245,7 +1245,10 @@ export async function submitProjectCreation(render) {
         );
         metadataFinalized = true;
 
-        await reconcileProjectRepoSyncStates(render, selectedTeam, [remoteProject]);
+        await reconcileProjectRepoSyncStates(render, selectedTeam, [{
+          ...remoteProject,
+          allowPendingCreateSync: true,
+        }]);
         await refreshProjectFilesFromDisk(render, selectedTeam, [remoteProject]);
 
         const visibleProject =
@@ -2283,6 +2286,8 @@ export async function confirmProjectPermanentDeletion(render) {
         repoName: project.name,
       },
     });
+    removeVisibleProject(project.id);
+    persistProjectsForTeam(selectedTeam);
     resetProjectPermanentDeletion();
     render();
     await loadTeamProjects(render, selectedTeam.id);

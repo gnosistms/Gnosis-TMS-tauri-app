@@ -59,3 +59,33 @@ test("project discovery still falls back to remote repos when metadata could not
   assert.equal(merged[0].id, "project-2");
   assert.equal(merged[0].remoteState, "linked");
 });
+
+test("project discovery hides tombstoned metadata records", () => {
+  const merged = mergeMetadataDiscoveryProjects({
+    metadataRecords: [
+      {
+        id: "project-1",
+        title: "Project 1",
+        repoName: "project-1",
+        lifecycleState: "softDeleted",
+        remoteState: "deleted",
+        recordState: "tombstone",
+        fullName: "team/project-1",
+      },
+    ],
+    remoteProjects: [],
+    localProjects: [
+      {
+        id: "project-1",
+        name: "project-1",
+        title: "Project 1",
+        fullName: "team/project-1",
+        recordState: "tombstone",
+      },
+    ],
+    metadataLoaded: true,
+    remoteLoaded: true,
+  });
+
+  assert.equal(merged.length, 0);
+});
