@@ -134,6 +134,9 @@ function buildPendingProjectRecord(selectedTeam, projectTitle, repoName) {
     isPendingCreate: true,
     pendingCreateStartedAt: new Date().toISOString(),
     pendingCreateStatusText: "Creating...",
+    remoteState: "pendingCreate",
+    recordState: "live",
+    resolutionState: "pendingCreate",
   };
 }
 
@@ -350,7 +353,26 @@ function createProjectRecordMaps(projects = []) {
   return { byId, byRepoName, byFullName };
 }
 
-function mapMetadataProjectToVisibleProject(record, remoteProject, existingProject) {
+function mapMetadataProjectToVisibleProject(record, remoteProject, existingProject, options = {}) {
+  const remoteLoaded = options.remoteLoaded === true;
+  const remoteState =
+    record.recordState === "tombstone"
+      ? (record.remoteState ?? "deleted")
+      : (
+          remoteLoaded
+          && (record.remoteState ?? "linked") === "linked"
+          && !remoteProject
+        )
+        ? "missing"
+        : (record.remoteState ?? "linked");
+  const resolutionState =
+    record.recordState === "tombstone"
+      ? "deleted"
+      : remoteState === "pendingCreate"
+        ? "pendingCreate"
+        : remoteState === "missing"
+          ? "missing"
+          : "";
   const fullName =
     remoteProject?.fullName
     ?? record.fullName
@@ -386,9 +408,10 @@ function mapMetadataProjectToVisibleProject(record, remoteProject, existingProje
         : Array.isArray(existingProject?.chapters)
           ? existingProject.chapters
           : [],
-    remoteState: record.remoteState ?? "linked",
+    remoteState,
     recordState: record.recordState ?? "live",
     deletedAt: record.deletedAt ?? null,
+    resolutionState,
   };
 }
 
@@ -396,6 +419,8 @@ function mergeMetadataDiscoveryProjects({
   metadataRecords,
   remoteProjects,
   localProjects,
+  metadataLoaded = false,
+  remoteLoaded = false,
 }) {
   const remoteMaps = createProjectRecordMaps(remoteProjects);
   const localMaps = createProjectRecordMaps(localProjects);
@@ -410,7 +435,9 @@ function mergeMetadataDiscoveryProjects({
 
     const remoteProject = findMatchingProjectRecord(record, remoteMaps);
     const localProject = findMatchingProjectRecord(record, localMaps);
-    const mergedProject = mapMetadataProjectToVisibleProject(record, remoteProject, localProject);
+    const mergedProject = mapMetadataProjectToVisibleProject(record, remoteProject, localProject, {
+      remoteLoaded,
+    });
     mergedProjects.push(mergedProject);
     includedProjectIds.add(mergedProject.id);
     includedRepoNames.add(mergedProject.name);
@@ -429,6 +456,7 @@ function mergeMetadataDiscoveryProjects({
       chapters: Array.isArray(localProject?.chapters) ? localProject.chapters : [],
       remoteState: "linked",
       recordState: "live",
+      resolutionState: "",
     });
     includedProjectIds.add(remoteProject.id);
     includedRepoNames.add(remoteProject.name);
@@ -438,7 +466,16 @@ function mergeMetadataDiscoveryProjects({
     if (includedProjectIds.has(localProject.id) || includedRepoNames.has(localProject.name)) {
       continue;
     }
-    mergedProjects.push(localProject);
+    mergedProjects.push({
+      ...localProject,
+      resolutionState:
+        metadataLoaded
+        && localProject.recordState !== "tombstone"
+        && localProject.remoteState !== "pendingCreate"
+        && localProject.isPendingCreate !== true
+          ? "unregisteredLocal"
+          : localProject.resolutionState ?? "",
+    });
   }
 
   return mergedProjects;
@@ -509,6 +546,12 @@ async function loadAvailableGlossariesForTeam(selectedTeam, teamIdAtStart = sele
   const { glossaries, syncIssue = "", brokerWarning = "" } = await loadRepoBackedGlossariesForTeam(selectedTeam, {
     offlineMode: state.offline?.isEnabled === true,
   });
+  const syncIssueMessage =
+    typeof syncIssue?.message === "string"
+      ? syncIssue.message
+      : typeof syncIssue === "string"
+        ? syncIssue
+        : "";
 
   if (state.selectedTeamId === teamIdAtStart) {
     state.glossaries = glossaries;
@@ -516,7 +559,7 @@ async function loadAvailableGlossariesForTeam(selectedTeam, teamIdAtStart = sele
 
   return {
     glossaries,
-    syncIssue,
+    syncIssue: syncIssueMessage,
     brokerWarning,
   };
 }
@@ -879,6 +922,7 @@ const inflightProjectMutationIds = new Set();
 export async function loadTeamProjects(render, teamId = state.selectedTeamId) {
   const selectedTeam = state.teams.find((team) => team.id === teamId);
   const syncVersionAtStart = state.projectSyncVersion;
+  state.projectRepoSyncByProjectId = {};
 
   if (!selectedTeam?.installationId) {
     state.pendingProjectMutations = [];
@@ -944,10 +988,12 @@ export async function loadTeamProjects(render, teamId = state.selectedTeamId) {
     const remoteProjects = projectsResult.status === "fulfilled"
       ? (Array.isArray(projectsResult.value) ? projectsResult.value : [])
       : [];
+    const remoteLoaded = projectsResult.status === "fulfilled";
     const projectMetadataRecords =
       metadataResult.status === "fulfilled"
         ? metadataResult.value
         : [];
+    const metadataLoaded = metadataResult.status === "fulfilled";
     if (
       projectsResult.status !== "fulfilled"
       && projectMetadataRecords.length === 0
@@ -971,6 +1017,8 @@ export async function loadTeamProjects(render, teamId = state.selectedTeamId) {
         ...optimisticSnapshot.items,
         ...optimisticSnapshot.deletedItems,
       ].filter(Boolean),
+      metadataLoaded,
+      remoteLoaded,
     });
     const nextVisibleProjects = mergedProjects.length > 0
       ? mergedProjects
@@ -1299,6 +1347,9 @@ export async function submitProjectCreation(render) {
           isPendingCreate: true,
           pendingCreateStartedAt: pendingProject.pendingCreateStartedAt,
           pendingCreateStatusText: "Syncing local repo...",
+          remoteState: "pendingCreate",
+          recordState: "live",
+          resolutionState: "pendingCreate",
         };
         replaceVisibleProject(pendingProject.id, remoteProject);
         persistProjectsForTeam(selectedTeam);
@@ -1328,6 +1379,12 @@ export async function submitProjectCreation(render) {
           ...visibleProject,
           ...result,
           chapters: Array.isArray(visibleProject?.chapters) ? visibleProject.chapters : [],
+          isPendingCreate: false,
+          pendingCreateStartedAt: undefined,
+          pendingCreateStatusText: undefined,
+          remoteState: "linked",
+          recordState: visibleProject?.recordState ?? "live",
+          resolutionState: "",
         });
         persistProjectsForTeam(selectedTeam);
         clearProjectUiDebug(render);
@@ -1346,6 +1403,8 @@ export async function submitProjectCreation(render) {
             isPendingCreate: false,
             pendingCreateStartedAt: undefined,
             pendingCreateStatusText: undefined,
+            remoteState: "linked",
+            resolutionState: "",
           });
           persistProjectsForTeam(selectedTeam);
           clearProjectUiDebug(render);

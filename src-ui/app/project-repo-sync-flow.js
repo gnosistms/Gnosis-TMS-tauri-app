@@ -25,6 +25,7 @@ function buildProjectRepoSyncInput(team, projects) {
         && typeof project?.fullName === "string"
         && project.fullName.trim()
         && project?.remoteState !== "pendingCreate"
+        && project?.remoteState !== "missing"
         && project?.remoteState !== "deleted"
         && project?.recordState !== "tombstone"
       )

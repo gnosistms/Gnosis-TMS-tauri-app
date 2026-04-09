@@ -263,6 +263,24 @@ export function renderStateCard({ eyebrow = "", title = "", subtitle = "", tone 
   `;
 }
 
+export function renderInlineStateBox({ tone = "warning", message = "", help = "", className = "" }) {
+  const normalizedMessage = String(message ?? "").trim();
+  const normalizedHelp = String(help ?? "").trim();
+  if (!normalizedMessage && !normalizedHelp) {
+    return "";
+  }
+
+  const toneClass = tone === "error" ? "message-box--error" : "message-box--warning";
+  const classes = ["message-box", toneClass, className].filter(Boolean).join(" ");
+
+  return `
+    <div class="${classes}">
+      <p class="message-box__text">${escapeHtml(normalizedMessage)}</p>
+      ${normalizedHelp ? `<p class="message-box__text">${escapeHtml(normalizedHelp)}</p>` : ""}
+    </div>
+  `;
+}
+
 function renderStatusBadge(text) {
   if (!text) {
     return "";

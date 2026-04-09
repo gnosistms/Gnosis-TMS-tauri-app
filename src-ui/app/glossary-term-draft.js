@@ -287,8 +287,8 @@ export async function submitGlossaryTermEditor(render) {
     );
     resetGlossaryTermEditor();
     await loadSelectedGlossaryEditorData(render);
-    if (syncIssue) {
-      showNoticeBadge(syncIssue, render);
+    if (syncIssue?.message) {
+      showNoticeBadge(syncIssue.message, render);
     }
   } catch (error) {
     state.glossaryTermEditor.status = "idle";

@@ -5,6 +5,7 @@ import {
   pageShell,
   primaryButton,
   renderFlowArrowIcon,
+  renderInlineStateBox,
   renderStateCard,
   sectionSeparator,
   textAction,
@@ -19,6 +20,7 @@ import {
   canPermanentlyDeleteGlossaries,
 } from "../app/glossary-shared.js";
 import { glossaryArchiveDownloadUrl } from "../app/glossary-repo-flow.js";
+import { deriveGlossaryResolution } from "../app/resource-resolution.js";
 
 function renderGlossaryLanguageFlow(glossary) {
   return `
@@ -36,16 +38,24 @@ function renderGlossaryCard(glossary, options = {}) {
   const isDeleted = options.isDeleted === true;
   const offlineMode = options.offlineMode === true;
   const isTombstone = glossary?.recordState === "tombstone";
+  const resolution = deriveGlossaryResolution(glossary, options.syncSnapshot);
+  const disableLifecycleActions = resolution?.blockLifecycleActions === true;
   const downloadUrl = glossaryArchiveDownloadUrl(glossary);
   const activeActions = [
     textAction("Open", `open-glossary:${glossary.id}`),
     downloadUrl
-      ? textAction("Download", `open-external:${downloadUrl}`, { disabled: offlineMode })
+      ? textAction("Download", `open-external:${downloadUrl}`, {
+          disabled: offlineMode || resolution?.key === "missing",
+        })
       : textAction("Download", "noop", { disabled: true }),
     ...(canManage
       ? [
-          textAction("Rename", `rename-glossary:${glossary.id}`, { disabled: offlineMode }),
-          textAction("Delete", `delete-glossary:${glossary.id}`, { disabled: offlineMode }),
+          textAction("Rename", `rename-glossary:${glossary.id}`, {
+            disabled: offlineMode || disableLifecycleActions,
+          }),
+          textAction("Delete", `delete-glossary:${glossary.id}`, {
+            disabled: offlineMode || disableLifecycleActions,
+          }),
         ]
       : []),
   ];
@@ -55,6 +65,14 @@ function renderGlossaryCard(glossary, options = {}) {
       ? [textAction("Delete", `delete-deleted-glossary:${glossary.id}`, { disabled: offlineMode })]
       : []),
   ];
+  const resolutionMarkup = resolution
+    ? renderInlineStateBox({
+        tone: resolution.tone,
+        message: resolution.message,
+        help: resolution.help,
+        className: "resource-state-box",
+      })
+    : "";
 
   return `
     <article class="card card--list-row ${isDeleted ? "card--deleted" : ""}">
@@ -76,6 +94,7 @@ function renderGlossaryCard(glossary, options = {}) {
               ${renderGlossaryLanguageFlow(glossary)}
               ${isDeleted && isTombstone ? ` <span>Permanently deleted</span>` : ""}
             </p>
+            ${resolutionMarkup}
           </div>
           <div class="list-row__actions">
             ${(isDeleted ? deletedActions : activeActions).join("")}
@@ -110,6 +129,7 @@ function renderDeletedGlossariesSection(glossaries, isOpen, options = {}) {
             renderGlossaryCard(glossary, {
               ...options,
               isDeleted: true,
+              syncSnapshot: options.syncSnapshotsByRepoName?.[glossary.repoName] ?? null,
             }),
           )
           .join("")}
@@ -124,6 +144,7 @@ export function renderGlossariesScreen(state) {
   const canPermanentlyDelete = canPermanentlyDeleteGlossaries(selectedTeam);
   const offlineMode = state.offline?.isEnabled === true;
   const discovery = state.glossaryDiscovery ?? { status: "idle", error: "", brokerWarning: "" };
+  const syncSnapshotsByRepoName = state.glossaryRepoSyncByRepoName ?? {};
   const visibleGlossaries = state.glossaries.filter((glossary) => glossary.lifecycleState === "active");
   const deletedGlossaries = state.glossaries.filter((glossary) => glossary.lifecycleState === "deleted");
   const brokerWarningMarkup = discovery.brokerWarning
@@ -159,6 +180,7 @@ export function renderGlossariesScreen(state) {
                 canManage,
                 canPermanentlyDelete,
                 offlineMode,
+                syncSnapshot: syncSnapshotsByRepoName[glossary.repoName] ?? null,
               }),
             )
             .join("")}
@@ -175,6 +197,7 @@ export function renderGlossariesScreen(state) {
         canManage,
         canPermanentlyDelete,
         offlineMode,
+        syncSnapshotsByRepoName,
       })}
     </section>
   `;

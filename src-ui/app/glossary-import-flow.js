@@ -149,14 +149,22 @@ function syncGlossaryInBackground(render, team, glossary, preferredBaseRepoName)
       syncedGlossary = commitLocalGlossarySummary(team, {
         ...glossary,
         repoName: remoteRepo.name,
+        remoteState: "linked",
+        resolutionState: "",
       }, remoteRepo) ?? {
         ...glossary,
         repoName: remoteRepo.name,
+        remoteState: "linked",
+        resolutionState: "",
       };
       updateCurrentGlossaryRepoName(glossary.glossaryId, remoteRepo.name);
       render();
     } else {
-      commitLocalGlossarySummary(team, glossary, remoteRepo);
+      commitLocalGlossarySummary(team, {
+        ...glossary,
+        remoteState: "linked",
+        resolutionState: "",
+      }, remoteRepo);
     }
 
     try {
@@ -172,8 +180,8 @@ function syncGlossaryInBackground(render, team, glossary, preferredBaseRepoName)
     await prepareLocalGlossaryRepo(team, remoteRepo);
     const snapshots = await syncGlossaryReposForTeam(team, [remoteRepo]);
     const syncIssue = getGlossarySyncIssueMessage(snapshots);
-    if (syncIssue) {
-      showNoticeBadge(syncIssue, render);
+    if (syncIssue?.message) {
+      showNoticeBadge(syncIssue.message, render);
       render();
     } else if (createResult.collisionResolved === true) {
       showNoticeBadge(
@@ -339,7 +347,11 @@ export async function submitGlossaryCreation(render) {
   }
 
   resetGlossaryCreation();
-  const committedGlossary = commitLocalGlossarySummary(team, glossary, null);
+  const committedGlossary = commitLocalGlossarySummary(team, {
+    ...glossary,
+    remoteState: "pendingCreate",
+    resolutionState: "pendingCreate",
+  }, null);
   state.selectedGlossaryId = glossary.glossaryId;
 
   try {
@@ -445,7 +457,11 @@ export async function importGlossaryFromTmx(render) {
     return;
   }
 
-  const committedGlossary = commitLocalGlossarySummary(team, glossary, null);
+  const committedGlossary = commitLocalGlossarySummary(team, {
+    ...glossary,
+    remoteState: "pendingCreate",
+    resolutionState: "pendingCreate",
+  }, null);
   state.selectedGlossaryId = glossary.glossaryId;
 
   try {

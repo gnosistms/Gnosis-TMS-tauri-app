@@ -141,7 +141,14 @@ function findMatchingRemoteGlossary(record, remoteByRepoName, remoteByFullName) 
   return null;
 }
 
-function mergeMetadataBackedGlossarySummaries(localSummaries, metadataRecords, remoteRepos) {
+function mergeMetadataBackedGlossarySummaries(
+  localSummaries,
+  metadataRecords,
+  remoteRepos,
+  options = {},
+) {
+  const metadataLoaded = options.metadataLoaded === true;
+  const remoteLoaded = options.remoteLoaded === true;
   const normalizedLocals = (Array.isArray(localSummaries) ? localSummaries : [])
     .map(normalizeGlossarySummary)
     .filter(Boolean);
@@ -182,6 +189,25 @@ function mergeMetadataBackedGlossarySummaries(localSummaries, metadataRecords, r
       matchedLocalRepoNames.add(localGlossary.repoName);
     }
 
+    const remoteState =
+      record.recordState === "tombstone"
+        ? (record.remoteState ?? "deleted")
+        : (
+            remoteLoaded
+            && (record.remoteState ?? "linked") === "linked"
+            && !remoteGlossary
+          )
+          ? "missing"
+          : (record.remoteState ?? "linked");
+    const resolutionState =
+      record.recordState === "tombstone"
+        ? "deleted"
+        : remoteState === "pendingCreate"
+          ? "pendingCreate"
+          : remoteState === "missing"
+            ? "missing"
+            : "";
+
     const mergedGlossary = normalizeGlossarySummary({
       glossaryId: record.id,
       repoName: record.repoName,
@@ -195,8 +221,10 @@ function mergeMetadataBackedGlossarySummaries(localSummaries, metadataRecords, r
           ? record.targetLanguage ?? null
           : localGlossary?.targetLanguage ?? record.targetLanguage ?? null,
       lifecycleState: record.lifecycleState,
-      remoteState: record.remoteState ?? "linked",
+      remoteState,
       recordState: record.recordState ?? "live",
+      resolutionState,
+      deletedAt: record.deletedAt ?? null,
       termCount:
         record.recordState === "tombstone"
           ? record.termCount ?? 0
@@ -225,13 +253,22 @@ function mergeMetadataBackedGlossarySummaries(localSummaries, metadataRecords, r
     if (matchedLocalIds.has(glossary.id) || matchedLocalRepoNames.has(glossary.repoName)) {
       continue;
     }
-    merged.push(glossary);
+    merged.push(normalizeGlossarySummary({
+      ...glossary,
+      resolutionState:
+        metadataLoaded
+        && glossary.recordState !== "tombstone"
+        && glossary.remoteState !== "pendingCreate"
+          ? "unregisteredLocal"
+          : glossary.resolutionState ?? "",
+    }));
   }
 
   return sortGlossaries(merged);
 }
 
-function buildMetadataBackedGlossarySyncRepos(metadataRecords, remoteRepos) {
+function buildMetadataBackedGlossarySyncRepos(metadataRecords, remoteRepos, options = {}) {
+  const remoteLoaded = options.remoteLoaded === true;
   const remoteByRepoName = new Map(
     (Array.isArray(remoteRepos) ? remoteRepos : [])
       .map(normalizeRemoteGlossaryRepo)
@@ -254,7 +291,11 @@ function buildMetadataBackedGlossarySyncRepos(metadataRecords, remoteRepos) {
 
     const repo =
       findMatchingRemoteGlossary(record, remoteByRepoName, remoteByFullName)
-      ?? metadataBackedGlossaryRepo(record);
+      ?? (
+        remoteLoaded
+          ? null
+          : metadataBackedGlossaryRepo(record)
+      );
     if (!repo || seenRepoNames.has(repo.name)) {
       continue;
     }
@@ -288,12 +329,16 @@ export function getGlossarySyncIssueMessage(syncSnapshots) {
     snapshot?.status === "syncError" || snapshot?.status === "dirtyLocal",
   );
   if (!failedSnapshot) {
-    return "";
+    return { message: "", snapshots };
   }
 
-  return typeof failedSnapshot.message === "string" && failedSnapshot.message.trim()
-    ? failedSnapshot.message.trim()
-    : `Could not sync glossary repo ${failedSnapshot.repoName ?? ""}.`.trim();
+  return {
+    message:
+      typeof failedSnapshot.message === "string" && failedSnapshot.message.trim()
+        ? failedSnapshot.message.trim()
+        : `Could not sync glossary repo ${failedSnapshot.repoName ?? ""}.`.trim(),
+    snapshots,
+  };
 }
 
 export async function listRemoteGlossaryReposForTeam(team) {
@@ -424,13 +469,17 @@ export async function loadRepoBackedGlossariesForTeam(team, options = {}) {
   }
 
   let metadataRecords = [];
+  let metadataLoaded = false;
   try {
     metadataRecords = await listGlossaryMetadataRecords(team);
+    metadataLoaded = true;
   } catch {}
 
   let remoteRepos;
+  let remoteLoaded = false;
   try {
     remoteRepos = await listRemoteGlossaryReposForTeam(team);
+    remoteLoaded = true;
   } catch (error) {
     if (glossaryBrokerRouteUnavailable(error) || error?.message === GLOSSARY_BROKER_ROUTE_UNAVAILABLE_MESSAGE) {
       if (metadataRecords.length > 0) {
@@ -444,6 +493,7 @@ export async function loadRepoBackedGlossariesForTeam(team, options = {}) {
             refreshedLocalSummaries,
             metadataRecords,
             syncRepos,
+            { metadataLoaded, remoteLoaded: false },
           ),
           remoteRepos: syncRepos,
           syncSnapshots,
@@ -463,7 +513,7 @@ export async function loadRepoBackedGlossariesForTeam(team, options = {}) {
     throw error;
   }
   const syncTargets = metadataRecords.length > 0
-    ? buildMetadataBackedGlossarySyncRepos(metadataRecords, remoteRepos)
+    ? buildMetadataBackedGlossarySyncRepos(metadataRecords, remoteRepos, { remoteLoaded })
     : remoteRepos;
   const syncSnapshots = syncTargets.length > 0
     ? await syncGlossaryReposForTeam(team, syncTargets)
@@ -473,8 +523,13 @@ export async function loadRepoBackedGlossariesForTeam(team, options = {}) {
 
   return {
     glossaries:
-      metadataRecords.length > 0
-        ? mergeMetadataBackedGlossarySummaries(refreshedLocalSummaries, metadataRecords, remoteRepos)
+      metadataLoaded
+        ? mergeMetadataBackedGlossarySummaries(
+            refreshedLocalSummaries,
+            metadataRecords,
+            remoteRepos,
+            { metadataLoaded, remoteLoaded },
+          )
         : mergeRepoBackedGlossarySummaries(refreshedLocalSummaries, remoteRepos),
     remoteRepos: syncTargets,
     syncSnapshots,

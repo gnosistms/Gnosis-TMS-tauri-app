@@ -6,6 +6,7 @@ import {
   pageShell,
   primaryButton,
   renderCollapseChevron,
+  renderInlineStateBox,
   renderSelectPillControl,
   renderStateCard,
   sectionSeparator,
@@ -23,6 +24,7 @@ import {
   getScopedSyncBadgeText,
 } from "../app/status-feedback.js";
 import { resolveChapterSourceWordCount } from "../app/translate-flow.js";
+import { deriveProjectResolution } from "../app/resource-resolution.js";
 
 function compareFilesByName(left, right) {
   const leftName = typeof left?.name === "string" ? left.name.trim() : "";
@@ -98,6 +100,9 @@ function renderProjectCard(project, expanded, options = {}) {
   const offlineMode = options.offlineMode === true;
   const isPendingCreate = project?.isPendingCreate === true;
   const isTombstone = project?.recordState === "tombstone";
+  const resolution = deriveProjectResolution(project, options.syncSnapshot);
+  const disableLifecycleActions = resolution?.blockLifecycleActions === true;
+  const disableContentActions = resolution?.blockContentActions === true;
   const deleteAction = options.deleteAction ?? `delete-project:${project.id}`;
   const addFilesDisabled = options.addFilesDisabled === true;
   const glossaryOptions = options.glossaries ?? [];
@@ -113,16 +118,18 @@ function renderProjectCard(project, expanded, options = {}) {
         : [
             canManageProjects
               ? textAction("Add files", `add-project-files:${project.id}`, {
-                  disabled: offlineMode || addFilesDisabled || isPendingCreate,
+                  disabled: offlineMode || addFilesDisabled || isPendingCreate || disableContentActions,
                 })
               : "",
             canManageProjects
               ? textAction("Rename", `rename-project:${project.id}`, {
-                  disabled: offlineMode || isPendingCreate,
+                  disabled: offlineMode || isPendingCreate || disableLifecycleActions,
                 })
               : "",
             canManageProjects
-              ? textAction("Delete", deleteAction, { disabled: offlineMode || isPendingCreate })
+              ? textAction("Delete", deleteAction, {
+                  disabled: offlineMode || isPendingCreate || disableLifecycleActions,
+                })
               : "",
           ].filter(Boolean)
     );
@@ -131,6 +138,14 @@ function renderProjectCard(project, expanded, options = {}) {
     : isDeleted && isTombstone
       ? "Permanently deleted"
     : `${files.length} file${files.length === 1 ? "" : "s"}`;
+  const resolutionMarkup = resolution
+    ? renderInlineStateBox({
+        tone: resolution.tone,
+        message: resolution.message,
+        help: resolution.help,
+        className: "resource-state-box expandable-card__status",
+      })
+    : "";
 
   const fileRows = expanded
     ? `
@@ -159,8 +174,8 @@ function renderProjectCard(project, expanded, options = {}) {
                     ${renderChapterGlossarySelect(chapter, 1, glossaryOptions, { disabled: offlineMode || !canManageProjects })}
                     ${renderChapterGlossarySelect(chapter, 2, glossaryOptions, { disabled: offlineMode || !canManageProjects })}
                     ${textAction("Open", `open-translate:${chapter.id}`)}
-                    ${canManageProjects ? textAction("Rename", `rename-file:${chapter.id}`, { disabled: offlineMode }) : ""}
-                    ${canManageProjects ? textAction("Delete", `delete-file:${chapter.id}`, { disabled: offlineMode }) : ""}
+                    ${canManageProjects ? textAction("Rename", `rename-file:${chapter.id}`, { disabled: offlineMode || disableContentActions }) : ""}
+                    ${canManageProjects ? textAction("Delete", `delete-file:${chapter.id}`, { disabled: offlineMode || disableContentActions }) : ""}
                   </div>
                 </div>
               `;
@@ -189,8 +204,8 @@ function renderProjectCard(project, expanded, options = {}) {
                                   <span class="chapter-table__name">${escapeHtml(chapter.name)}</span>
                                 </div>
                                 <div class="chapter-table__actions">
-                                  ${canManageProjects ? textAction("Restore", `restore-file:${chapter.id}`, { disabled: offlineMode }) : ""}
-                                  ${canManageProjects && canPermanentlyDeleteFiles ? textAction("Delete", `delete-deleted-file:${chapter.id}`, { disabled: offlineMode }) : ""}
+                                  ${canManageProjects ? textAction("Restore", `restore-file:${chapter.id}`, { disabled: offlineMode || disableContentActions }) : ""}
+                                  ${canManageProjects && canPermanentlyDeleteFiles ? textAction("Delete", `delete-deleted-file:${chapter.id}`, { disabled: offlineMode || disableContentActions }) : ""}
                                 </div>
                               </div>
                             `,
@@ -228,6 +243,7 @@ function renderProjectCard(project, expanded, options = {}) {
           ${actions.join("")}
         </div>
       </div>
+      ${resolutionMarkup}
       ${fileRows}
     </article>
   `;
@@ -251,6 +267,7 @@ function renderDeletedProjectsSection(state) {
   const canManageDeletedProjects = selectedTeam?.canManageProjects === true;
   const canPermanentlyDeleteProjects = selectedTeam?.canDelete === true;
   const offlineMode = state.offline?.isEnabled === true;
+  const syncSnapshotsByProjectId = state.projectRepoSyncByProjectId ?? {};
 
   const toggle = renderDeletedProjectsToggle(state);
   if (!state.showDeletedProjects) {
@@ -266,6 +283,7 @@ function renderDeletedProjectsSection(state) {
             canManageProjects: canManageDeletedProjects,
             isDeleted: true,
             offlineMode,
+            syncSnapshot: syncSnapshotsByProjectId[project.id] ?? null,
             actions:
               project?.recordState === "tombstone"
                 ? []
@@ -291,6 +309,7 @@ export function renderProjectsScreen(state) {
   const offlineMode = state.offline?.isEnabled === true;
   const importInProgress = state.projectImport?.status === "importing";
   const discovery = state.projectDiscovery ?? { status: "idle", error: "", glossaryWarning: "" };
+  const syncSnapshotsByProjectId = state.projectRepoSyncByProjectId ?? {};
   const projectsSyncBadgeText = getScopedSyncBadgeText("projects");
   const isProjectsSyncing = state.projectsPageSync?.status === "syncing";
   const glossaryWarningMarkup = discovery.glossaryWarning
@@ -332,6 +351,7 @@ export function renderProjectsScreen(state) {
                   addFilesDisabled: importInProgress,
                   showDeletedFiles: state.expandedDeletedFiles.has(project.id),
                   glossaries: state.glossaries,
+                  syncSnapshot: syncSnapshotsByProjectId[project.id] ?? null,
                 }),
               )
               .join("")}</section>`;

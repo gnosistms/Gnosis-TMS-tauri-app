@@ -46,6 +46,7 @@ export const state = {
   glossaryDiscovery: createGlossaryDiscoveryState(),
   projectImport: createProjectImportState(),
   projectRepoSyncByProjectId: {},
+  glossaryRepoSyncByRepoName: {},
   editorChapter: createEditorChapterState(),
   targetLanguageManager: createTargetLanguageManagerState(),
   glossaryEditor: createGlossaryEditorState(),

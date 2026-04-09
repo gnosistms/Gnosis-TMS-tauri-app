@@ -32,10 +32,12 @@ export function primeGlossariesLoadingState(teamId = state.selectedTeamId, optio
   const team = selectedTeam(teamId);
   state.selectedTeamId = teamId ?? state.selectedTeamId;
   const preserveVisibleData = options.preserveVisibleData === true;
+  state.glossaryRepoSyncByRepoName = {};
 
   if (!Number.isFinite(team?.installationId)) {
     state.glossaries = [];
     state.selectedGlossaryId = null;
+    state.glossaryRepoSyncByRepoName = {};
     state.glossaryDiscovery = {
       ...createGlossaryDiscoveryState(),
       status: "ready",
@@ -77,6 +79,7 @@ export async function loadTeamGlossaries(
   const preserveVisibleData = options.preserveVisibleData === true;
   const team = selectedTeam(teamId);
   state.selectedTeamId = teamId ?? state.selectedTeamId;
+  state.glossaryRepoSyncByRepoName = {};
 
   if (!Number.isFinite(team?.installationId)) {
     state.glossaries = [];
@@ -127,9 +130,17 @@ export async function loadTeamGlossaries(
       }
     }
 
-    const { glossaries, syncIssue, brokerWarning } = await loadRepoBackedGlossariesForTeam(team, {
+    const { glossaries, syncIssue, brokerWarning, syncSnapshots = [] } = await loadRepoBackedGlossariesForTeam(team, {
       offlineMode: state.offline?.isEnabled === true,
     });
+    state.glossaryRepoSyncByRepoName = Object.fromEntries(
+      (Array.isArray(syncSnapshots) ? syncSnapshots : [])
+        .map((snapshot) => [
+          typeof snapshot?.repoName === "string" ? snapshot.repoName : "",
+          snapshot,
+        ])
+        .filter(([repoName]) => repoName),
+    );
     let nextGlossaries = glossaries;
     if (preserveVisibleData && nextGlossaries.length === 0) {
       const localGlossaries = await listLocalGlossarySummariesForTeam(team);
@@ -146,8 +157,14 @@ export async function loadTeamGlossaries(
       status: "ready",
       brokerWarning: typeof brokerWarning === "string" ? brokerWarning : "",
     };
-    if (syncIssue) {
-      showNoticeBadge(syncIssue, render);
+    const syncIssueText =
+      typeof syncIssue?.message === "string"
+        ? syncIssue.message
+        : typeof syncIssue === "string"
+          ? syncIssue
+          : "";
+    if (syncIssueText) {
+      showNoticeBadge(syncIssueText, render);
     } else if (brokerWarning) {
       showNoticeBadge(brokerWarning, render);
     }
@@ -165,6 +182,7 @@ export async function loadTeamGlossaries(
     }
 
     failPageSync();
+    state.glossaryRepoSyncByRepoName = {};
     const hasVisibleLocalData = state.glossaries.length > 0;
     if (!preserveVisibleData && !hasVisibleLocalData && state.glossaryDiscovery?.status !== "ready") {
       state.glossaryDiscovery = {

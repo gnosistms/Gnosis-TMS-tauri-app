@@ -193,8 +193,8 @@ export async function deleteGlossaryTerm(render, termId) {
     const syncIssue = getGlossarySyncIssueMessage(
       await syncSingleGlossaryForTeam(team, selectedGlossary()),
     );
-    if (syncIssue) {
-      showNoticeBadge(syncIssue, render);
+    if (syncIssue?.message) {
+      showNoticeBadge(syncIssue.message, render);
     }
     await loadSelectedGlossaryEditorData(render);
   } catch (error) {
