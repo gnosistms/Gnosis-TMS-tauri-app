@@ -128,10 +128,11 @@ export async function submitGlossaryCreation(render) {
   await waitForNextPaint();
 
   let remoteRepo = null;
+  let glossary = null;
   try {
     remoteRepo = await createRemoteGlossaryRepoForTeam(team, repoName);
     await syncGlossaryReposForTeam(team, [remoteRepo]);
-    const glossary = await invoke("initialize_gtms_glossary_repo", {
+    glossary = await invoke("initialize_gtms_glossary_repo", {
       input: {
         installationId: team.installationId,
         repoName: remoteRepo.name,
@@ -142,13 +143,8 @@ export async function submitGlossaryCreation(render) {
         targetLanguageName: targetLanguage.name,
       },
     });
-    resetGlossaryCreation();
-    state.selectedGlossaryId = glossary.glossaryId;
-    await loadTeamGlossaries(render, team.id);
-    await openGlossaryEditor(render, glossary.glossaryId);
-    showNoticeBadge(`Created glossary ${glossary.title}.`, render);
   } catch (error) {
-    if (remoteRepo?.name) {
+    if (remoteRepo?.name && !glossary) {
       try {
         await permanentlyDeleteRemoteGlossaryRepoForTeam(team, remoteRepo.name);
       } catch {
@@ -168,6 +164,22 @@ export async function submitGlossaryCreation(render) {
     }
     state.glossaryCreation.status = "idle";
     state.glossaryCreation.error = error?.message ?? String(error);
+    render();
+    return;
+  }
+
+  resetGlossaryCreation();
+  state.selectedGlossaryId = glossary.glossaryId;
+
+  try {
+    await loadTeamGlossaries(render, team.id);
+    await openGlossaryEditor(render, glossary.glossaryId);
+    showNoticeBadge(`Created glossary ${glossary.title}.`, render);
+  } catch (error) {
+    showNoticeBadge(
+      `Created glossary ${glossary.title}, but the app could not refresh automatically: ${error?.message ?? String(error)}`,
+      render,
+    );
     render();
   }
 }
@@ -210,6 +222,7 @@ export async function importGlossaryFromTmx(render) {
   await waitForNextPaint();
 
   let remoteRepo = null;
+  let glossary = null;
   try {
     const bytes = Array.from(new Uint8Array(await selectedFile.arrayBuffer()));
     const repoName = slugifyGlossaryRepoName(
@@ -221,7 +234,7 @@ export async function importGlossaryFromTmx(render) {
 
     remoteRepo = await createRemoteGlossaryRepoForTeam(team, repoName);
     await syncGlossaryReposForTeam(team, [remoteRepo]);
-    const glossary = await invoke("import_tmx_to_gtms_glossary_repo", {
+    glossary = await invoke("import_tmx_to_gtms_glossary_repo", {
       input: {
         installationId: team.installationId,
         repoName: remoteRepo.name,
@@ -229,16 +242,8 @@ export async function importGlossaryFromTmx(render) {
         bytes,
       },
     });
-
-    state.selectedGlossaryId = glossary.glossaryId;
-    await loadTeamGlossaries(render, team.id);
-    await openGlossaryEditor(render, glossary.glossaryId);
-    showNoticeBadge(
-      `Imported ${glossary.termCount} terms from ${selectedFile.name} into ${glossary.title}.`,
-      render,
-    );
   } catch (error) {
-    if (remoteRepo?.name) {
+    if (remoteRepo?.name && !glossary) {
       try {
         await permanentlyDeleteRemoteGlossaryRepoForTeam(team, remoteRepo.name);
       } catch {
@@ -258,6 +263,25 @@ export async function importGlossaryFromTmx(render) {
     }
     failPageSync();
     showNoticeBadge(error?.message ?? String(error), render);
+    render();
+    return;
+  }
+
+  state.selectedGlossaryId = glossary.glossaryId;
+
+  try {
+    await loadTeamGlossaries(render, team.id);
+    await openGlossaryEditor(render, glossary.glossaryId);
+    showNoticeBadge(
+      `Imported ${glossary.termCount} terms from ${selectedFile.name} into ${glossary.title}.`,
+      render,
+    );
+  } catch (error) {
+    failPageSync();
+    showNoticeBadge(
+      `Imported ${glossary.termCount} terms from ${selectedFile.name} into ${glossary.title}, but the app could not refresh automatically: ${error?.message ?? String(error)}`,
+      render,
+    );
     render();
   }
 }
