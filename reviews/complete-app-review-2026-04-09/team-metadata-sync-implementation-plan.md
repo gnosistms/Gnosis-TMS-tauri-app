@@ -351,6 +351,23 @@ The broker should support:
 
 Existing project/glossary repo listing routes should remain available, but they should no longer act as the visibility gate for already-local repos.
 
+### Metadata Write Permissions
+
+The broker must enforce metadata writes with the same permission model used for project/glossary lifecycle actions.
+
+Recommended minimum rules:
+
+- create/import metadata records:
+  - require the same permission used to create projects/glossaries
+- rename metadata records:
+  - require the same permission used to rename projects/glossaries
+- soft delete / restore metadata records:
+  - require the same permission used to delete/restore projects/glossaries
+- permanent delete / tombstone conversion:
+  - require the same permission used for permanent deletion in the app
+
+The broker should reject metadata writes that do not meet those permission checks, even if the client UI attempted the action.
+
 ## App Responsibilities
 
 Desktop app repo location:
@@ -426,6 +443,62 @@ This is not only a Glossaries-page and Projects-page change. The same metadata m
 1. Convert metadata record to tombstone first.
 2. Delete remote repo.
 3. Local clients that still have the repo should see the tombstone state and resolve safely.
+
+## Partial Failure Rules
+
+Multi-step operations must keep explicit intermediate state instead of assuming every step succeeds.
+
+### Create / Import Partial Failures
+
+If local repo creation/import succeeds but metadata write fails:
+
+- keep the local repo visible
+- mark the resource as local-only / metadata-write-failed
+- do not hide it from the page
+- allow retry of metadata registration
+
+If metadata write succeeds but remote repo creation fails:
+
+- keep the local repo visible
+- keep metadata record live with `remoteState = pendingCreate` or `missing`, depending on the failure type
+- allow retry of remote creation/link
+
+### Delete Partial Failures
+
+If tombstone write succeeds but remote repo deletion fails:
+
+- keep metadata as tombstoned
+- set `remoteState = pendingDelete`
+- do not restore the live record automatically
+- allow retry of remote deletion
+
+If remote repo deletion succeeds but local stale copies still exist on some clients:
+
+- clients should resolve that through the tombstone state
+- do not recreate the remote repo
+
+### Team Setup Partial Failures
+
+If team/org creation succeeds but `team-metadata` setup fails:
+
+- leave the team in `setup incomplete`
+- do not allow normal project/glossary lifecycle actions
+- allow retry of metadata repo creation/bootstrap
+
+## Repair And Admin Tooling
+
+The first implementation can keep this minimal, but the architecture should assume a small repair surface will exist.
+
+Recommended repair/admin actions:
+
+- retry incomplete team setup
+- rebuild metadata indexes from canonical record files
+- retry `pendingCreate`
+- retry `pendingDelete`
+- relink a resource by GitHub repo ID
+- register an `unregisteredLocal` repo into metadata
+
+Repair tools should be designed to work from metadata record truth first, local repo second, and remote repo third.
 
 ## Implementation Order
 
