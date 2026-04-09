@@ -432,6 +432,11 @@
   gap: 10px;
 }
 
+.history-item + .history-item {
+  padding-top: 18px;
+  border-top: 1px solid rgba(164, 112, 41, 0.12);
+}
+
 .history-item p {
   margin: 0;
 }

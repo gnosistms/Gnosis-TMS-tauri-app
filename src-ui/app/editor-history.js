@@ -10,30 +10,23 @@ function isImportHistoryEntry(entry) {
   return String(entry?.operationType ?? "").trim().toLowerCase() === "import";
 }
 
-function buildMarkerStatusLabel(kind, enabled) {
-  if (kind === "reviewed") {
-    return enabled ? "Marked reviewed" : "Marked unreviewed";
-  }
-
-  if (kind === "pleaseCheck") {
-    return enabled ? 'Marked "Please check"' : 'Removed "Please check"';
-  }
-
-  return "";
-}
-
-function buildMarkerRunStatusNote(initialEntry, finalEntry) {
-  const parts = [];
-
+function buildMarkerRunActions(initialEntry, finalEntry) {
+  const actions = [];
   if ((initialEntry?.reviewed === true) !== (finalEntry?.reviewed === true)) {
-    parts.push(buildMarkerStatusLabel("reviewed", finalEntry?.reviewed === true));
+    actions.push({
+      kind: "reviewed",
+      enabled: finalEntry?.reviewed === true,
+    });
   }
 
   if ((initialEntry?.pleaseCheck === true) !== (finalEntry?.pleaseCheck === true)) {
-    parts.push(buildMarkerStatusLabel("pleaseCheck", finalEntry?.pleaseCheck === true));
+    actions.push({
+      kind: "please-check",
+      enabled: finalEntry?.pleaseCheck === true,
+    });
   }
 
-  return parts.join(", ");
+  return actions;
 }
 
 function isMarkerStateChangeOnly(previousEntry, currentEntry) {
@@ -56,14 +49,15 @@ function isMarkerStateChangeOnly(previousEntry, currentEntry) {
 }
 
 function buildMarkerRunEntry(initialEntry, finalEntry) {
-  const statusNote = buildMarkerRunStatusNote(initialEntry, finalEntry);
-  if (!statusNote) {
+  const markerNoteActions = buildMarkerRunActions(initialEntry, finalEntry);
+  if (markerNoteActions.length === 0) {
     return null;
   }
 
   return {
     ...finalEntry,
-    statusNote,
+    statusNote: "",
+    markerNoteActions,
   };
 }
 

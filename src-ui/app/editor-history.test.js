@@ -48,7 +48,12 @@ test("marker-only runs collapse to the final net state within a same-author grou
   assert.equal(collapsedModel.groups.length, 1);
   assert.equal(collapsedModel.groups[0].entries.length, 2);
   assert.equal(collapsedModel.groups[0].entries[0].commitSha, "c4");
-  assert.equal(collapsedModel.groups[0].entries[0].statusNote, 'Marked "Please check"');
+  assert.deepEqual(collapsedModel.groups[0].entries[0].markerNoteActions, [
+    {
+      kind: "please-check",
+      enabled: true,
+    },
+  ]);
   assert.equal(collapsedModel.groups[0].entries[1].commitSha, "c1");
 });
 

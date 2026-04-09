@@ -217,7 +217,10 @@ function renderHistoryMarkerNoteAction(action) {
 }
 
 function renderHistoryNote(entry, previousEntry) {
-  const markerActions = buildHistoryMarkerNoteActions(entry, previousEntry);
+  const markerActions =
+    Array.isArray(entry?.markerNoteActions) && entry.markerNoteActions.length > 0
+      ? entry.markerNoteActions
+      : buildHistoryMarkerNoteActions(entry, previousEntry);
   if (markerActions.length > 0) {
     return `
       <p class="history-item__note history-item__note--markers">
