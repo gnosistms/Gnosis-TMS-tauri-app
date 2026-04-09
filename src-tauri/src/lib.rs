@@ -43,6 +43,7 @@ use crate::{
   github::{
     add_organization_admin_for_installation,
     begin_github_app_install, create_gnosis_glossary_repo, create_gnosis_project_repo, delete_organization_for_installation,
+    delete_gnosis_glossary_metadata_record,
     delete_gnosis_project_metadata_record,
     ensure_gnosis_repo_properties_schema, inspect_github_app_installation,
     inspect_team_metadata_repo_for_installation,
@@ -258,6 +259,7 @@ pub fn run() {
       create_gnosis_project_repo,
       upsert_gnosis_project_metadata_record,
       delete_gnosis_project_metadata_record,
+      delete_gnosis_glossary_metadata_record,
       rename_gnosis_project_repo,
       mark_gnosis_project_repo_deleted,
       restore_gnosis_project_repo,

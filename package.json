@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "test": "node --test src-ui/app/editor-history.test.js",
+    "test": "node --test src-ui/app/*.test.js",
     "icons:sync": "bash src-tauri/icons/sync-all-icons.sh",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",

@@ -15,7 +15,10 @@ import {
   syncGlossaryReposForTeam,
 } from "./glossary-repo-flow.js";
 import { appendRepoNameSuffix, slugifyRepoName } from "./repo-names.js";
-import { upsertGlossaryMetadataRecord } from "./team-metadata-flow.js";
+import {
+  deleteGlossaryMetadataRecord,
+  upsertGlossaryMetadataRecord,
+} from "./team-metadata-flow.js";
 
 function detectGlossaryImportFileType(fileName) {
   const normalized = String(fileName || "").trim().toLowerCase();
@@ -121,16 +124,34 @@ function linkedGlossaryMetadataRecord(glossary, remoteRepo) {
   };
 }
 
+function markGlossaryAsLocalOnly(team, glossary, render) {
+  const localOnlyGlossary = commitLocalGlossarySummary(team, {
+    ...glossary,
+    remoteState: "linked",
+    resolutionState: "unregisteredLocal",
+  }, null) ?? {
+    ...glossary,
+    remoteState: "linked",
+    resolutionState: "unregisteredLocal",
+  };
+  updateCurrentGlossaryRepoName(localOnlyGlossary.id ?? localOnlyGlossary.glossaryId, localOnlyGlossary.repoName);
+  render();
+  return localOnlyGlossary;
+}
+
 function syncGlossaryInBackground(render, team, glossary, preferredBaseRepoName) {
   void (async () => {
     try {
       await upsertGlossaryMetadataRecord(team, pendingGlossaryMetadataRecord(glossary));
     } catch (error) {
+      markGlossaryAsLocalOnly(team, glossary, render);
       showNoticeBadge(
-        `The glossary metadata record could not be written yet: ${error?.message ?? String(error)}`,
+        `The glossary stays local-only because its team metadata record could not be created: ${
+          error?.message ?? String(error)
+        }`,
         render,
       );
-      render();
+      return;
     }
 
     const createResult = await createUniqueRemoteGlossaryRepoForTeam(team, preferredBaseRepoName);
@@ -170,11 +191,31 @@ function syncGlossaryInBackground(render, team, glossary, preferredBaseRepoName)
     try {
       await upsertGlossaryMetadataRecord(team, linkedGlossaryMetadataRecord(syncedGlossary, remoteRepo));
     } catch (error) {
+      try {
+        await permanentlyDeleteRemoteGlossaryRepoForTeam(team, remoteRepo.name);
+      } catch (rollbackError) {
+        markGlossaryAsLocalOnly(team, syncedGlossary, render);
+        showNoticeBadge(
+          `The glossary repo was created, but its metadata could not be finalized or rolled back automatically: ${
+            rollbackError?.message ?? String(rollbackError)
+          }`,
+          render,
+        );
+        return;
+      }
+      try {
+        await deleteGlossaryMetadataRecord(team, syncedGlossary.id ?? syncedGlossary.glossaryId);
+      } catch {
+        // Leave the local-only glossary visible even if cleanup metadata could not be removed.
+      }
+      markGlossaryAsLocalOnly(team, syncedGlossary, render);
       showNoticeBadge(
-        `The glossary metadata record could not be finalized yet: ${error?.message ?? String(error)}`,
+        `The glossary stays local-only because its team metadata record could not be finalized: ${
+          error?.message ?? String(error)
+        }`,
         render,
       );
-      render();
+      return;
     }
 
     await prepareLocalGlossaryRepo(team, remoteRepo);

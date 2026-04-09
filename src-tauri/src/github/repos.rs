@@ -8,6 +8,7 @@ use super::{
   types::{
     CreateGithubGlossaryRepoInput,
     CreateGithubProjectRepoInput,
+    DeleteGithubGlossaryMetadataRecordInput,
     DeleteGithubProjectMetadataRecordInput,
     DeleteGithubGlossaryRepoInput,
     DeleteGithubProjectRepoInput,
@@ -203,6 +204,24 @@ pub(crate) async fn upsert_gnosis_glossary_metadata_record(
   })
   .await
   .map_err(|error| format!("Could not run the glossary metadata write task: {error}"))?
+}
+
+#[tauri::command]
+pub(crate) async fn delete_gnosis_glossary_metadata_record(
+  input: DeleteGithubGlossaryMetadataRecordInput,
+  session_token: String,
+) -> Result<(), String> {
+  tauri::async_runtime::spawn_blocking(move || {
+    let client = github_client()?;
+    broker_delete_no_content_with_session(
+      &client,
+      "/api/github-app/gnosis-glossaries/metadata-record",
+      &serde_json::to_value(&input).map_err(|error| error.to_string())?,
+      &session_token,
+    )
+  })
+  .await
+  .map_err(|error| format!("Could not run the glossary metadata delete task: {error}"))?
 }
 
 #[tauri::command]

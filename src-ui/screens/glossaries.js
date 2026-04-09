@@ -60,9 +60,9 @@ function renderGlossaryCard(glossary, options = {}) {
       : []),
   ];
   const deletedActions = [
-    ...(!isTombstone && canManage ? [textAction("Restore", `restore-glossary:${glossary.id}`, { disabled: offlineMode })] : []),
+    ...(!isTombstone && canManage ? [textAction("Restore", `restore-glossary:${glossary.id}`, { disabled: offlineMode || disableLifecycleActions })] : []),
     ...(!isTombstone && canPermanentlyDelete
-      ? [textAction("Delete", `delete-deleted-glossary:${glossary.id}`, { disabled: offlineMode })]
+      ? [textAction("Delete", `delete-deleted-glossary:${glossary.id}`, { disabled: offlineMode || disableLifecycleActions })]
       : []),
   ];
   const resolutionMarkup = resolution

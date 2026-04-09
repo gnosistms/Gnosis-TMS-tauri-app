@@ -117,6 +117,23 @@ function glossaryMetadataRecord(glossary, overrides = {}) {
   };
 }
 
+async function syncGlossaryMetadataAfterRemoteMutation(team, record, rollbackRemoteMutation) {
+  try {
+    await upsertGlossaryMetadataRecord(team, record);
+  } catch (error) {
+    try {
+      await rollbackRemoteMutation();
+    } catch (rollbackError) {
+      throw new Error(
+        `${error?.message ?? String(error)} The remote glossary change could not be rolled back automatically: ${
+          rollbackError?.message ?? String(rollbackError)
+        }`,
+      );
+    }
+    throw error;
+  }
+}
+
 export function toggleDeletedGlossaries(render) {
   state.showDeletedGlossaries = !state.showDeletedGlossaries;
   render();
@@ -193,14 +210,20 @@ export async function submitGlossaryRename(render) {
         title: nextTitle,
         },
       });
-      try {
-        await upsertGlossaryMetadataRecord(team, glossaryMetadataRecord({
+      await syncGlossaryMetadataAfterRemoteMutation(
+        team,
+        glossaryMetadataRecord({
           ...glossary,
           title: nextTitle,
-        }));
-      } catch (error) {
-        showNoticeBadge(error?.message ?? String(error), render);
-      }
+        }),
+        () => invoke("rename_gtms_glossary", {
+          input: {
+            installationId: team.installationId,
+            repoName: glossary.repoName,
+            title: glossary.title,
+          },
+        }),
+      );
       resetGlossaryRename();
       await loadTeamGlossaries(render, team.id, { preserveVisibleData: true });
   } catch (error) {
@@ -238,14 +261,19 @@ export async function deleteGlossary(render, glossaryId) {
           repoName: glossary.repoName,
         },
       });
-      try {
-        await upsertGlossaryMetadataRecord(team, glossaryMetadataRecord({
+      await syncGlossaryMetadataAfterRemoteMutation(
+        team,
+        glossaryMetadataRecord({
           ...glossary,
           lifecycleState: "deleted",
-        }));
-      } catch (error) {
-        showNoticeBadge(error?.message ?? String(error), render);
-      }
+        }),
+        () => invoke("restore_gtms_glossary", {
+          input: {
+            installationId: team.installationId,
+            repoName: glossary.repoName,
+          },
+        }),
+      );
       await loadTeamGlossaries(render, team.id, { preserveVisibleData: true });
     } catch (error) {
       restoreVisibleGlossaryState(snapshot);
@@ -284,14 +312,19 @@ export async function restoreGlossary(render, glossaryId) {
           repoName: glossary.repoName,
         },
       });
-      try {
-        await upsertGlossaryMetadataRecord(team, glossaryMetadataRecord({
+      await syncGlossaryMetadataAfterRemoteMutation(
+        team,
+        glossaryMetadataRecord({
           ...glossary,
           lifecycleState: "active",
-        }));
-      } catch (error) {
-        showNoticeBadge(error?.message ?? String(error), render);
-      }
+        }),
+        () => invoke("soft_delete_gtms_glossary", {
+          input: {
+            installationId: team.installationId,
+            repoName: glossary.repoName,
+          },
+        }),
+      );
       await loadTeamGlossaries(render, team.id, { preserveVisibleData: true });
     } catch (error) {
       restoreVisibleGlossaryState(snapshot);

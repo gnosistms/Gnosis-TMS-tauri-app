@@ -1,6 +1,8 @@
 import { requireBrokerSession } from "./auth-flow.js";
 import { invoke } from "./runtime.js";
 
+const METADATA_WRITE_RETRY_DELAYS_MS = [180, 420];
+
 function metadataRouteUnavailable(error, resourcePath, methods = ["PATCH", "DELETE"]) {
   const message = String(error?.message ?? error ?? "");
   return message.includes(resourcePath) && methods.some((method) => message.includes(`Cannot ${method} `));
@@ -16,6 +18,39 @@ function normalizeMetadataError(error, fallbackMessage, resourcePath, methods) {
   }
 
   return new Error(String(error ?? fallbackMessage));
+}
+
+function metadataWriteConflict(error) {
+  const message = String(error?.message ?? error ?? "").toLowerCase();
+  return (
+    message.includes("status: 409")
+    || message.includes("github api conflict")
+    || (message.includes("sha") && message.includes("match"))
+  );
+}
+
+function delay(ms) {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, ms);
+  });
+}
+
+async function withMetadataWriteRetries(operation) {
+  let lastError = null;
+
+  for (let attempt = 0; attempt <= METADATA_WRITE_RETRY_DELAYS_MS.length; attempt += 1) {
+    try {
+      return await operation();
+    } catch (error) {
+      lastError = error;
+      if (!metadataWriteConflict(error) || attempt === METADATA_WRITE_RETRY_DELAYS_MS.length) {
+        throw error;
+      }
+      await delay(METADATA_WRITE_RETRY_DELAYS_MS[attempt]);
+    }
+  }
+
+  throw lastError ?? new Error("The metadata write could not be completed.");
 }
 
 function metadataLanguagePayload(language) {
@@ -141,38 +176,40 @@ function previousRepoNamesPayload(previousRepoNames = []) {
 
 export async function upsertProjectMetadataRecord(team, record) {
   try {
-    await invoke("upsert_gnosis_project_metadata_record", {
-      input: {
-        installationId: team.installationId,
-        orgLogin: team.githubOrg,
-        projectId: record.projectId,
-        title: record.title,
-        repoName: record.repoName,
-        previousRepoNames: previousRepoNamesPayload(record.previousRepoNames),
-        githubRepoId: Number.isFinite(record.githubRepoId) ? record.githubRepoId : null,
-        githubNodeId:
-          typeof record.githubNodeId === "string" && record.githubNodeId.trim()
-            ? record.githubNodeId.trim()
-            : null,
-        fullName:
-          typeof record.fullName === "string" && record.fullName.trim()
-            ? record.fullName.trim()
-            : null,
-        defaultBranch:
-          typeof record.defaultBranch === "string" && record.defaultBranch.trim()
-            ? record.defaultBranch.trim()
-            : null,
-        lifecycleState: record.lifecycleState ?? null,
-        remoteState: record.remoteState ?? null,
-        recordState: record.recordState ?? null,
-        deletedAt:
-          typeof record.deletedAt === "string" && record.deletedAt.trim()
-            ? record.deletedAt.trim()
-            : null,
-        chapterCount: Number.isFinite(record.chapterCount) ? record.chapterCount : null,
-      },
-      sessionToken: requireBrokerSession(),
-    });
+    await withMetadataWriteRetries(() =>
+      invoke("upsert_gnosis_project_metadata_record", {
+        input: {
+          installationId: team.installationId,
+          orgLogin: team.githubOrg,
+          projectId: record.projectId,
+          title: record.title,
+          repoName: record.repoName,
+          previousRepoNames: previousRepoNamesPayload(record.previousRepoNames),
+          githubRepoId: Number.isFinite(record.githubRepoId) ? record.githubRepoId : null,
+          githubNodeId:
+            typeof record.githubNodeId === "string" && record.githubNodeId.trim()
+              ? record.githubNodeId.trim()
+              : null,
+          fullName:
+            typeof record.fullName === "string" && record.fullName.trim()
+              ? record.fullName.trim()
+              : null,
+          defaultBranch:
+            typeof record.defaultBranch === "string" && record.defaultBranch.trim()
+              ? record.defaultBranch.trim()
+              : null,
+          lifecycleState: record.lifecycleState ?? null,
+          remoteState: record.remoteState ?? null,
+          recordState: record.recordState ?? null,
+          deletedAt:
+            typeof record.deletedAt === "string" && record.deletedAt.trim()
+              ? record.deletedAt.trim()
+              : null,
+          chapterCount: Number.isFinite(record.chapterCount) ? record.chapterCount : null,
+        },
+        sessionToken: requireBrokerSession(),
+      }),
+    );
   } catch (error) {
     throw normalizeMetadataError(
       error,
@@ -185,14 +222,16 @@ export async function upsertProjectMetadataRecord(team, record) {
 
 export async function deleteProjectMetadataRecord(team, projectId) {
   try {
-    await invoke("delete_gnosis_project_metadata_record", {
-      input: {
-        installationId: team.installationId,
-        orgLogin: team.githubOrg,
-        projectId,
-      },
-      sessionToken: requireBrokerSession(),
-    });
+    await withMetadataWriteRetries(() =>
+      invoke("delete_gnosis_project_metadata_record", {
+        input: {
+          installationId: team.installationId,
+          orgLogin: team.githubOrg,
+          projectId,
+        },
+        sessionToken: requireBrokerSession(),
+      }),
+    );
   } catch (error) {
     throw normalizeMetadataError(
       error,
@@ -205,40 +244,64 @@ export async function deleteProjectMetadataRecord(team, projectId) {
 
 export async function upsertGlossaryMetadataRecord(team, record) {
   try {
-    await invoke("upsert_gnosis_glossary_metadata_record", {
-      input: {
-        installationId: team.installationId,
-        orgLogin: team.githubOrg,
-        glossaryId: record.glossaryId,
-        title: record.title,
-        repoName: record.repoName,
-        previousRepoNames: previousRepoNamesPayload(record.previousRepoNames),
-        githubRepoId: Number.isFinite(record.githubRepoId) ? record.githubRepoId : null,
-        githubNodeId:
-          typeof record.githubNodeId === "string" && record.githubNodeId.trim()
-            ? record.githubNodeId.trim()
-            : null,
-        fullName:
-          typeof record.fullName === "string" && record.fullName.trim()
-            ? record.fullName.trim()
-            : null,
-        defaultBranch:
-          typeof record.defaultBranch === "string" && record.defaultBranch.trim()
-            ? record.defaultBranch.trim()
-            : null,
-        lifecycleState: record.lifecycleState ?? null,
-        remoteState: record.remoteState ?? null,
-        recordState: record.recordState ?? null,
-        deletedAt:
-          typeof record.deletedAt === "string" && record.deletedAt.trim()
-            ? record.deletedAt.trim()
-            : null,
-        sourceLanguage: metadataLanguagePayload(record.sourceLanguage),
-        targetLanguage: metadataLanguagePayload(record.targetLanguage),
-        termCount: Number.isFinite(record.termCount) ? record.termCount : null,
-      },
-      sessionToken: requireBrokerSession(),
-    });
+    await withMetadataWriteRetries(() =>
+      invoke("upsert_gnosis_glossary_metadata_record", {
+        input: {
+          installationId: team.installationId,
+          orgLogin: team.githubOrg,
+          glossaryId: record.glossaryId,
+          title: record.title,
+          repoName: record.repoName,
+          previousRepoNames: previousRepoNamesPayload(record.previousRepoNames),
+          githubRepoId: Number.isFinite(record.githubRepoId) ? record.githubRepoId : null,
+          githubNodeId:
+            typeof record.githubNodeId === "string" && record.githubNodeId.trim()
+              ? record.githubNodeId.trim()
+              : null,
+          fullName:
+            typeof record.fullName === "string" && record.fullName.trim()
+              ? record.fullName.trim()
+              : null,
+          defaultBranch:
+            typeof record.defaultBranch === "string" && record.defaultBranch.trim()
+              ? record.defaultBranch.trim()
+              : null,
+          lifecycleState: record.lifecycleState ?? null,
+          remoteState: record.remoteState ?? null,
+          recordState: record.recordState ?? null,
+          deletedAt:
+            typeof record.deletedAt === "string" && record.deletedAt.trim()
+              ? record.deletedAt.trim()
+              : null,
+          sourceLanguage: metadataLanguagePayload(record.sourceLanguage),
+          targetLanguage: metadataLanguagePayload(record.targetLanguage),
+          termCount: Number.isFinite(record.termCount) ? record.termCount : null,
+        },
+        sessionToken: requireBrokerSession(),
+      }),
+    );
+  } catch (error) {
+    throw normalizeMetadataError(
+      error,
+      "The broker does not have glossary metadata routes deployed yet. Team metadata could not be updated.",
+      "/gnosis-glossaries/metadata-record",
+      ["PATCH", "DELETE"],
+    );
+  }
+}
+
+export async function deleteGlossaryMetadataRecord(team, glossaryId) {
+  try {
+    await withMetadataWriteRetries(() =>
+      invoke("delete_gnosis_glossary_metadata_record", {
+        input: {
+          installationId: team.installationId,
+          orgLogin: team.githubOrg,
+          glossaryId,
+        },
+        sessionToken: requireBrokerSession(),
+      }),
+    );
   } catch (error) {
     throw normalizeMetadataError(
       error,

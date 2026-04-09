@@ -209,6 +209,14 @@ pub(crate) struct DeleteGithubProjectRepoInput {
 
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub(crate) struct DeleteGithubGlossaryMetadataRecordInput {
+  pub(crate) installation_id: i64,
+  pub(crate) org_login: String,
+  pub(crate) glossary_id: String,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct CreateGithubGlossaryRepoInput {
   pub(crate) installation_id: i64,
   pub(crate) org_login: String,

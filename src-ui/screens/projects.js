@@ -279,23 +279,28 @@ function renderDeletedProjectsSection(state) {
     <section class="stack stack--deleted-projects">
       <section class="stack">${state.deletedProjects
         .map((project) =>
-          renderProjectCard(project, state.expandedProjects.has(project.id), {
-            canManageProjects: canManageDeletedProjects,
-            isDeleted: true,
-            offlineMode,
-            syncSnapshot: syncSnapshotsByProjectId[project.id] ?? null,
-            actions:
-              project?.recordState === "tombstone"
-                ? []
-                : canManageDeletedProjects
-                  ? [
-                      textAction("Restore", `restore-project:${project.id}`, { disabled: offlineMode }),
-                      ...(canPermanentlyDeleteProjects
-                        ? [textAction("Delete", `delete-deleted-project:${project.id}`, { disabled: offlineMode })]
-                        : []),
-                    ]
-                  : [],
-          }),
+          {
+            const syncSnapshot = syncSnapshotsByProjectId[project.id] ?? null;
+            const resolution = deriveProjectResolution(project, syncSnapshot);
+            const disableLifecycleActions = offlineMode || resolution?.blockLifecycleActions === true;
+            return renderProjectCard(project, state.expandedProjects.has(project.id), {
+              canManageProjects: canManageDeletedProjects,
+              isDeleted: true,
+              offlineMode,
+              syncSnapshot,
+              actions:
+                project?.recordState === "tombstone"
+                  ? []
+                  : canManageDeletedProjects
+                    ? [
+                        textAction("Restore", `restore-project:${project.id}`, { disabled: disableLifecycleActions }),
+                        ...(canPermanentlyDeleteProjects
+                          ? [textAction("Delete", `delete-deleted-project:${project.id}`, { disabled: disableLifecycleActions })]
+                          : []),
+                      ]
+                    : [],
+            });
+          },
         )
         .join("")}</section>
     </section>
