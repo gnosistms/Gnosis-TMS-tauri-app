@@ -84,6 +84,63 @@ pub(crate) struct GithubGlossaryRepo {
 
 #[derive(Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
+pub(crate) struct TeamMetadataRecordListInput {
+  pub(crate) installation_id: i64,
+  pub(crate) org_login: String,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct GithubProjectMetadataRecord {
+  pub(crate) id: String,
+  pub(crate) kind: String,
+  pub(crate) title: String,
+  pub(crate) repo_name: String,
+  pub(crate) previous_repo_names: Vec<String>,
+  pub(crate) github_repo_id: Option<i64>,
+  pub(crate) github_node_id: Option<String>,
+  pub(crate) full_name: Option<String>,
+  pub(crate) default_branch: String,
+  pub(crate) lifecycle_state: String,
+  pub(crate) remote_state: String,
+  pub(crate) record_state: String,
+  pub(crate) created_at: Option<String>,
+  pub(crate) updated_at: Option<String>,
+  pub(crate) deleted_at: Option<String>,
+  pub(crate) created_by: Option<String>,
+  pub(crate) updated_by: Option<String>,
+  pub(crate) deleted_by: Option<String>,
+  pub(crate) chapter_count: usize,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct GithubGlossaryMetadataRecord {
+  pub(crate) id: String,
+  pub(crate) kind: String,
+  pub(crate) title: String,
+  pub(crate) repo_name: String,
+  pub(crate) previous_repo_names: Vec<String>,
+  pub(crate) github_repo_id: Option<i64>,
+  pub(crate) github_node_id: Option<String>,
+  pub(crate) full_name: Option<String>,
+  pub(crate) default_branch: String,
+  pub(crate) lifecycle_state: String,
+  pub(crate) remote_state: String,
+  pub(crate) record_state: String,
+  pub(crate) created_at: Option<String>,
+  pub(crate) updated_at: Option<String>,
+  pub(crate) deleted_at: Option<String>,
+  pub(crate) created_by: Option<String>,
+  pub(crate) updated_by: Option<String>,
+  pub(crate) deleted_by: Option<String>,
+  pub(crate) source_language: Option<TeamMetadataLanguageInput>,
+  pub(crate) target_language: Option<TeamMetadataLanguageInput>,
+  pub(crate) term_count: usize,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct GithubTeamMetadataRepo {
   pub(crate) repo_id: i64,
   pub(crate) name: String,

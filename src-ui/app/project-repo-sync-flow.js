@@ -16,14 +16,24 @@ function delay(ms) {
 function buildProjectRepoSyncInput(team, projects) {
   return {
     installationId: team.installationId,
-    projects: projects.map((project) => ({
-      projectId: project.id,
-      repoName: project.name,
-      fullName: project.fullName,
-      repoId: Number.isFinite(project.repoId) ? project.repoId : null,
-      defaultBranchName: project.defaultBranchName ?? null,
-      defaultBranchHeadOid: project.defaultBranchHeadOid ?? null,
-    })),
+    projects: projects
+      .filter((project) =>
+        typeof project?.id === "string"
+        && project.id.trim()
+        && typeof project?.name === "string"
+        && project.name.trim()
+        && typeof project?.fullName === "string"
+        && project.fullName.trim()
+        && project?.remoteState !== "pendingCreate",
+      )
+      .map((project) => ({
+        projectId: project.id,
+        repoName: project.name,
+        fullName: project.fullName,
+        repoId: Number.isFinite(project.repoId) ? project.repoId : null,
+        defaultBranchName: project.defaultBranchName ?? null,
+        defaultBranchHeadOid: project.defaultBranchHeadOid ?? null,
+      })),
   };
 }
 
@@ -123,6 +133,12 @@ export async function reconcileProjectRepoSyncStates(render, team, projects) {
   }
 
   const input = buildProjectRepoSyncInput(team, projects);
+  if (input.projects.length === 0) {
+    state.projectRepoSyncByProjectId = {};
+    clearScopedSyncBadge("projects", render);
+    render();
+    return;
+  }
   showScopedSyncBadge("projects", "Checking local repos...", render);
 
   const initialSnapshots = await invoke("reconcile_project_repo_sync_states", {

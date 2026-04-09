@@ -2,6 +2,7 @@ import { requireBrokerSession } from "./auth-flow.js";
 import { invoke } from "./runtime.js";
 import { normalizeGlossarySummary, sortGlossaries } from "./glossary-shared.js";
 import { createUniqueRepoWithNumericSuffix } from "./repo-creation.js";
+import { listGlossaryMetadataRecords } from "./team-metadata-flow.js";
 
 const GLOSSARY_BROKER_ROUTE_UNAVAILABLE_MESSAGE =
   "The GitHub App broker does not have glossary repo routes deployed yet. Remote glossary sync and repo actions are unavailable right now.";
@@ -83,6 +84,171 @@ function glossaryRepoSyncDescriptor(repo) {
     defaultBranchName: repo.defaultBranchName || "main",
     defaultBranchHeadOid: repo.defaultBranchHeadOid || null,
   };
+}
+
+function metadataBackedGlossaryRepo(record) {
+  if (
+    !record
+    || record.recordState !== "live"
+    || record.remoteState !== "linked"
+    || typeof record.repoName !== "string"
+    || !record.repoName.trim()
+    || typeof record.fullName !== "string"
+    || !record.fullName.trim()
+  ) {
+    return null;
+  }
+
+  return normalizeRemoteGlossaryRepo({
+    repoId: record.githubRepoId,
+    nodeId: record.githubNodeId,
+    name: record.repoName,
+    fullName: record.fullName,
+    defaultBranchName: record.defaultBranch || "main",
+  });
+}
+
+function findMatchingLocalGlossary(record, localById, localByRepoName) {
+  const byId = localById.get(record.id);
+  if (byId) {
+    return byId;
+  }
+
+  const repoNames = [record.repoName, ...(Array.isArray(record.previousRepoNames) ? record.previousRepoNames : [])];
+  for (const repoName of repoNames) {
+    const match = localByRepoName.get(repoName);
+    if (match) {
+      return match;
+    }
+  }
+
+  return null;
+}
+
+function findMatchingRemoteGlossary(record, remoteByRepoName, remoteByFullName) {
+  if (record.fullName && remoteByFullName.has(record.fullName)) {
+    return remoteByFullName.get(record.fullName);
+  }
+
+  const repoNames = [record.repoName, ...(Array.isArray(record.previousRepoNames) ? record.previousRepoNames : [])];
+  for (const repoName of repoNames) {
+    const match = remoteByRepoName.get(repoName);
+    if (match) {
+      return match;
+    }
+  }
+
+  return null;
+}
+
+function mergeMetadataBackedGlossarySummaries(localSummaries, metadataRecords, remoteRepos) {
+  const normalizedLocals = (Array.isArray(localSummaries) ? localSummaries : [])
+    .map(normalizeGlossarySummary)
+    .filter(Boolean);
+  const localById = new Map(normalizedLocals.map((glossary) => [glossary.id, glossary]));
+  const localByRepoName = new Map(normalizedLocals.map((glossary) => [glossary.repoName, glossary]));
+  const remoteByRepoName = new Map(
+    (Array.isArray(remoteRepos) ? remoteRepos : [])
+      .map(normalizeRemoteGlossaryRepo)
+      .filter(Boolean)
+      .map((repo) => [repo.name, repo]),
+  );
+  const remoteByFullName = new Map(
+    (Array.isArray(remoteRepos) ? remoteRepos : [])
+      .map(normalizeRemoteGlossaryRepo)
+      .filter(Boolean)
+      .map((repo) => [repo.fullName, repo]),
+  );
+  const matchedLocalIds = new Set();
+  const matchedLocalRepoNames = new Set();
+  const merged = [];
+
+  for (const record of Array.isArray(metadataRecords) ? metadataRecords : []) {
+    if (record?.recordState !== "live") {
+      continue;
+    }
+
+    const localGlossary = findMatchingLocalGlossary(record, localById, localByRepoName);
+    const remoteGlossary =
+      findMatchingRemoteGlossary(record, remoteByRepoName, remoteByFullName)
+      ?? metadataBackedGlossaryRepo(record);
+
+    if (localGlossary) {
+      matchedLocalIds.add(localGlossary.id);
+      matchedLocalRepoNames.add(localGlossary.repoName);
+    }
+
+    const mergedGlossary = normalizeGlossarySummary({
+      glossaryId: record.id,
+      repoName: record.repoName,
+      title: record.title,
+      sourceLanguage: localGlossary?.sourceLanguage ?? record.sourceLanguage ?? null,
+      targetLanguage: localGlossary?.targetLanguage ?? record.targetLanguage ?? null,
+      lifecycleState: record.lifecycleState,
+      termCount: localGlossary?.termCount ?? record.termCount ?? 0,
+      repoId: remoteGlossary?.repoId ?? record.githubRepoId ?? localGlossary?.repoId ?? null,
+      nodeId: remoteGlossary?.nodeId ?? record.githubNodeId ?? localGlossary?.nodeId ?? null,
+      fullName: remoteGlossary?.fullName ?? record.fullName ?? localGlossary?.fullName ?? "",
+      htmlUrl: remoteGlossary?.htmlUrl ?? localGlossary?.htmlUrl ?? "",
+      defaultBranchName:
+        remoteGlossary?.defaultBranchName
+        ?? record.defaultBranch
+        ?? localGlossary?.defaultBranchName
+        ?? "main",
+      defaultBranchHeadOid:
+        remoteGlossary?.defaultBranchHeadOid
+        ?? localGlossary?.defaultBranchHeadOid
+        ?? null,
+    });
+
+    if (mergedGlossary) {
+      merged.push(mergedGlossary);
+    }
+  }
+
+  for (const glossary of normalizedLocals) {
+    if (matchedLocalIds.has(glossary.id) || matchedLocalRepoNames.has(glossary.repoName)) {
+      continue;
+    }
+    merged.push(glossary);
+  }
+
+  return sortGlossaries(merged);
+}
+
+function buildMetadataBackedGlossarySyncRepos(metadataRecords, remoteRepos) {
+  const remoteByRepoName = new Map(
+    (Array.isArray(remoteRepos) ? remoteRepos : [])
+      .map(normalizeRemoteGlossaryRepo)
+      .filter(Boolean)
+      .map((repo) => [repo.name, repo]),
+  );
+  const remoteByFullName = new Map(
+    (Array.isArray(remoteRepos) ? remoteRepos : [])
+      .map(normalizeRemoteGlossaryRepo)
+      .filter(Boolean)
+      .map((repo) => [repo.fullName, repo]),
+  );
+  const syncRepos = [];
+  const seenRepoNames = new Set();
+
+  for (const record of Array.isArray(metadataRecords) ? metadataRecords : []) {
+    if (record?.recordState !== "live" || record?.remoteState !== "linked") {
+      continue;
+    }
+
+    const repo =
+      findMatchingRemoteGlossary(record, remoteByRepoName, remoteByFullName)
+      ?? metadataBackedGlossaryRepo(record);
+    if (!repo || seenRepoNames.has(repo.name)) {
+      continue;
+    }
+
+    seenRepoNames.add(repo.name);
+    syncRepos.push(repo);
+  }
+
+  return syncRepos;
 }
 
 export function glossaryArchiveDownloadUrl(glossary) {
@@ -242,11 +408,35 @@ export async function loadRepoBackedGlossariesForTeam(team, options = {}) {
     };
   }
 
+  let metadataRecords = [];
+  try {
+    metadataRecords = await listGlossaryMetadataRecords(team);
+  } catch {}
+
   let remoteRepos;
   try {
     remoteRepos = await listRemoteGlossaryReposForTeam(team);
   } catch (error) {
     if (glossaryBrokerRouteUnavailable(error) || error?.message === GLOSSARY_BROKER_ROUTE_UNAVAILABLE_MESSAGE) {
+      if (metadataRecords.length > 0) {
+        const syncRepos = buildMetadataBackedGlossarySyncRepos(metadataRecords, []);
+        const syncSnapshots = syncRepos.length > 0
+          ? await syncGlossaryReposForTeam(team, syncRepos)
+          : [];
+        const refreshedLocalSummaries = await listLocalGlossarySummariesForTeam(team);
+        return {
+          glossaries: mergeMetadataBackedGlossarySummaries(
+            refreshedLocalSummaries,
+            metadataRecords,
+            syncRepos,
+          ),
+          remoteRepos: syncRepos,
+          syncSnapshots,
+          syncIssue: getGlossarySyncIssueMessage(syncSnapshots),
+          brokerWarning: "",
+        };
+      }
+
       return {
         glossaries: sortGlossaries(localSummaries.map(normalizeGlossarySummary).filter(Boolean)),
         remoteRepos: [],
@@ -257,15 +447,21 @@ export async function loadRepoBackedGlossariesForTeam(team, options = {}) {
     }
     throw error;
   }
-  const syncSnapshots = await syncGlossaryReposForTeam(team, remoteRepos);
+  const syncTargets = metadataRecords.length > 0
+    ? buildMetadataBackedGlossarySyncRepos(metadataRecords, remoteRepos)
+    : remoteRepos;
+  const syncSnapshots = syncTargets.length > 0
+    ? await syncGlossaryReposForTeam(team, syncTargets)
+    : [];
   const refreshedLocalSummaries = await listLocalGlossarySummariesForTeam(team);
-  const syncIssue =
-    getGlossarySyncIssueMessage(syncSnapshots)
-    || getMissingRemoteGlossaryMessage(refreshedLocalSummaries, remoteRepos);
+  const syncIssue = getGlossarySyncIssueMessage(syncSnapshots);
 
   return {
-    glossaries: mergeRepoBackedGlossarySummaries(refreshedLocalSummaries, remoteRepos),
-    remoteRepos,
+    glossaries:
+      metadataRecords.length > 0
+        ? mergeMetadataBackedGlossarySummaries(refreshedLocalSummaries, metadataRecords, remoteRepos)
+        : mergeRepoBackedGlossarySummaries(refreshedLocalSummaries, remoteRepos),
+    remoteRepos: syncTargets,
     syncSnapshots,
     syncIssue,
     brokerWarning: "",

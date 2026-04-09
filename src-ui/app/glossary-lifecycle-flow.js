@@ -13,6 +13,7 @@ import {
 } from "./glossary-shared.js";
 import { showNoticeBadge } from "./status-feedback.js";
 import { permanentlyDeleteRemoteGlossaryRepoForTeam } from "./glossary-repo-flow.js";
+import { upsertGlossaryMetadataRecord } from "./team-metadata-flow.js";
 
 function glossaryById(glossaryId) {
   return state.glossaries.find((glossary) => glossary.id === glossaryId) ?? null;
@@ -68,6 +69,33 @@ function lifecycleActionBlockedMessage(team, { actionLabel, requireOwner = false
     return `You do not have permission to ${actionLabel} in this team.`;
   }
   return "";
+}
+
+function glossaryMetadataRecord(glossary) {
+  return {
+    glossaryId: glossary.id,
+    title: glossary.title,
+    repoName: glossary.repoName,
+    githubRepoId: Number.isFinite(glossary.repoId) ? glossary.repoId : null,
+    githubNodeId:
+      typeof glossary.nodeId === "string" && glossary.nodeId.trim()
+        ? glossary.nodeId.trim()
+        : null,
+    fullName:
+      typeof glossary.fullName === "string" && glossary.fullName.trim()
+        ? glossary.fullName.trim()
+        : null,
+    defaultBranch:
+      typeof glossary.defaultBranchName === "string" && glossary.defaultBranchName.trim()
+        ? glossary.defaultBranchName.trim()
+        : "main",
+    lifecycleState: glossary.lifecycleState === "deleted" ? "softDeleted" : "active",
+    remoteState: "linked",
+    recordState: "live",
+    sourceLanguage: glossary.sourceLanguage ?? null,
+    targetLanguage: glossary.targetLanguage ?? null,
+    termCount: Number.isFinite(glossary.termCount) ? glossary.termCount : 0,
+  };
 }
 
 export function toggleDeletedGlossaries(render) {
@@ -144,10 +172,18 @@ export async function submitGlossaryRename(render) {
         installationId: team.installationId,
         repoName: glossary.repoName,
         title: nextTitle,
-      },
-    });
-    resetGlossaryRename();
-    await loadTeamGlossaries(render, team.id, { preserveVisibleData: true });
+        },
+      });
+      try {
+        await upsertGlossaryMetadataRecord(team, glossaryMetadataRecord({
+          ...glossary,
+          title: nextTitle,
+        }));
+      } catch (error) {
+        showNoticeBadge(error?.message ?? String(error), render);
+      }
+      resetGlossaryRename();
+      await loadTeamGlossaries(render, team.id, { preserveVisibleData: true });
   } catch (error) {
     state.glossaryRename.status = "idle";
     state.glossaryRename.error = error?.message ?? String(error);
@@ -183,6 +219,14 @@ export async function deleteGlossary(render, glossaryId) {
           repoName: glossary.repoName,
         },
       });
+      try {
+        await upsertGlossaryMetadataRecord(team, glossaryMetadataRecord({
+          ...glossary,
+          lifecycleState: "deleted",
+        }));
+      } catch (error) {
+        showNoticeBadge(error?.message ?? String(error), render);
+      }
       await loadTeamGlossaries(render, team.id, { preserveVisibleData: true });
     } catch (error) {
       restoreVisibleGlossaryState(snapshot);
@@ -221,6 +265,14 @@ export async function restoreGlossary(render, glossaryId) {
           repoName: glossary.repoName,
         },
       });
+      try {
+        await upsertGlossaryMetadataRecord(team, glossaryMetadataRecord({
+          ...glossary,
+          lifecycleState: "active",
+        }));
+      } catch (error) {
+        showNoticeBadge(error?.message ?? String(error), render);
+      }
       await loadTeamGlossaries(render, team.id, { preserveVisibleData: true });
     } catch (error) {
       restoreVisibleGlossaryState(snapshot);

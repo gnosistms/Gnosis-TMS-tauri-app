@@ -11,9 +11,12 @@ use super::{
     DeleteGithubProjectMetadataRecordInput,
     DeleteGithubGlossaryRepoInput,
     DeleteGithubProjectRepoInput,
+    GithubGlossaryMetadataRecord,
     GithubGlossaryRepo,
+    GithubProjectMetadataRecord,
     GithubProjectRepo,
     RenameGithubProjectRepoInput,
+    TeamMetadataRecordListInput,
     UpsertGithubGlossaryMetadataRecordInput,
     UpsertGithubProjectMetadataRecordInput,
   },
@@ -70,6 +73,46 @@ pub(crate) async fn list_gnosis_glossaries_for_installation(
   })
   .await
   .map_err(|error| format!("Could not run the glossary listing task: {error}"))?
+}
+
+#[tauri::command]
+pub(crate) async fn list_gnosis_project_metadata_records(
+  input: TeamMetadataRecordListInput,
+  session_token: String,
+) -> Result<Vec<GithubProjectMetadataRecord>, String> {
+  tauri::async_runtime::spawn_blocking(move || {
+    let client = github_client()?;
+    broker_get_json_with_session(
+      &client,
+      &format!(
+        "/api/github-app/installations/{}/orgs/{}/gnosis-projects/metadata-records",
+        input.installation_id, input.org_login,
+      ),
+      &session_token,
+    )
+  })
+  .await
+  .map_err(|error| format!("Could not run the project metadata listing task: {error}"))?
+}
+
+#[tauri::command]
+pub(crate) async fn list_gnosis_glossary_metadata_records(
+  input: TeamMetadataRecordListInput,
+  session_token: String,
+) -> Result<Vec<GithubGlossaryMetadataRecord>, String> {
+  tauri::async_runtime::spawn_blocking(move || {
+    let client = github_client()?;
+    broker_get_json_with_session(
+      &client,
+      &format!(
+        "/api/github-app/installations/{}/orgs/{}/gnosis-glossaries/metadata-records",
+        input.installation_id, input.org_login,
+      ),
+      &session_token,
+    )
+  })
+  .await
+  .map_err(|error| format!("Could not run the glossary metadata listing task: {error}"))?
 }
 
 #[tauri::command]

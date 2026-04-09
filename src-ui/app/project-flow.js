@@ -36,7 +36,11 @@ import { classifySyncError } from "./sync-error.js";
 import { handleSyncFailure } from "./sync-recovery.js";
 import { createUniqueRepoWithNumericSuffix } from "./repo-creation.js";
 import { slugifyRepoName } from "./repo-names.js";
-import { deleteProjectMetadataRecord, upsertProjectMetadataRecord } from "./team-metadata-flow.js";
+import {
+  deleteProjectMetadataRecord,
+  listProjectMetadataRecords,
+  upsertProjectMetadataRecord,
+} from "./team-metadata-flow.js";
 
 function setProjectUiDebug(render, text) {
   showScopedSyncBadge("projects", text, render);
@@ -296,6 +300,161 @@ function mergeProjectsWithLocalFiles(snapshot, listings = [], targets = []) {
   return {
     items: snapshot.items.map(applyToProject),
     deletedItems: snapshot.deletedItems.map(applyToProject),
+  };
+}
+
+function findMatchingProjectRecord(record, projectMaps) {
+  const byId = projectMaps.byId.get(record.id);
+  if (byId) {
+    return byId;
+  }
+
+  if (projectMaps.byFullName.has(record.fullName)) {
+    return projectMaps.byFullName.get(record.fullName);
+  }
+
+  const repoNames = [record.repoName, ...(Array.isArray(record.previousRepoNames) ? record.previousRepoNames : [])];
+  for (const repoName of repoNames) {
+    const match = projectMaps.byRepoName.get(repoName);
+    if (match) {
+      return match;
+    }
+  }
+
+  return null;
+}
+
+function createProjectRecordMaps(projects = []) {
+  const byId = new Map();
+  const byRepoName = new Map();
+  const byFullName = new Map();
+
+  for (const project of Array.isArray(projects) ? projects : []) {
+    if (typeof project?.id === "string" && project.id.trim()) {
+      byId.set(project.id, project);
+    }
+    if (typeof project?.name === "string" && project.name.trim()) {
+      byRepoName.set(project.name, project);
+    }
+    if (typeof project?.fullName === "string" && project.fullName.trim()) {
+      byFullName.set(project.fullName, project);
+    }
+  }
+
+  return { byId, byRepoName, byFullName };
+}
+
+function mapMetadataProjectToVisibleProject(record, remoteProject, existingProject) {
+  const fullName =
+    remoteProject?.fullName
+    ?? record.fullName
+    ?? existingProject?.fullName
+    ?? "";
+
+  return {
+    id: record.id,
+    repoId: remoteProject?.repoId ?? record.githubRepoId ?? existingProject?.repoId ?? null,
+    nodeId: remoteProject?.nodeId ?? record.githubNodeId ?? existingProject?.nodeId ?? null,
+    name: record.repoName,
+    title: record.title,
+    status: record.lifecycleState === "deleted" ? "deleted" : "active",
+    fullName,
+    htmlUrl:
+      remoteProject?.htmlUrl
+      ?? existingProject?.htmlUrl
+      ?? (fullName ? `https://github.com/${fullName}` : null),
+    private: remoteProject?.private ?? existingProject?.private ?? true,
+    description: remoteProject?.description ?? existingProject?.description ?? null,
+    defaultBranchName:
+      remoteProject?.defaultBranchName
+      ?? record.defaultBranch
+      ?? existingProject?.defaultBranchName
+      ?? null,
+    defaultBranchHeadOid:
+      remoteProject?.defaultBranchHeadOid
+      ?? existingProject?.defaultBranchHeadOid
+      ?? null,
+    chapters: Array.isArray(existingProject?.chapters) ? existingProject.chapters : [],
+    remoteState: record.remoteState ?? "linked",
+  };
+}
+
+function mergeMetadataDiscoveryProjects({
+  metadataRecords,
+  remoteProjects,
+  localProjects,
+}) {
+  const remoteMaps = createProjectRecordMaps(remoteProjects);
+  const localMaps = createProjectRecordMaps(localProjects);
+  const mergedProjects = [];
+  const includedProjectIds = new Set();
+  const includedRepoNames = new Set();
+
+  for (const record of Array.isArray(metadataRecords) ? metadataRecords : []) {
+    if (record?.recordState !== "live") {
+      continue;
+    }
+
+    const remoteProject = findMatchingProjectRecord(record, remoteMaps);
+    const localProject = findMatchingProjectRecord(record, localMaps);
+    const mergedProject = mapMetadataProjectToVisibleProject(record, remoteProject, localProject);
+    mergedProjects.push(mergedProject);
+    includedProjectIds.add(mergedProject.id);
+    includedRepoNames.add(mergedProject.name);
+  }
+
+  for (const remoteProject of Array.isArray(remoteProjects) ? remoteProjects : []) {
+    if (includedProjectIds.has(remoteProject.id) || includedRepoNames.has(remoteProject.name)) {
+      continue;
+    }
+    const localProject =
+      localMaps.byId.get(remoteProject.id)
+      ?? localMaps.byRepoName.get(remoteProject.name)
+      ?? null;
+    mergedProjects.push({
+      ...remoteProject,
+      chapters: Array.isArray(localProject?.chapters) ? localProject.chapters : [],
+      remoteState: "linked",
+    });
+    includedProjectIds.add(remoteProject.id);
+    includedRepoNames.add(remoteProject.name);
+  }
+
+  for (const localProject of Array.isArray(localProjects) ? localProjects : []) {
+    if (includedProjectIds.has(localProject.id) || includedRepoNames.has(localProject.name)) {
+      continue;
+    }
+    mergedProjects.push(localProject);
+  }
+
+  return mergedProjects;
+}
+
+function projectMetadataRecordFromVisibleProject(project) {
+  return {
+    projectId: project.id,
+    title: project.title,
+    repoName: project.name,
+    githubRepoId: Number.isFinite(project.repoId) ? project.repoId : null,
+    githubNodeId:
+      typeof project.nodeId === "string" && project.nodeId.trim()
+        ? project.nodeId.trim()
+        : null,
+    fullName:
+      typeof project.fullName === "string" && project.fullName.trim()
+        ? project.fullName.trim()
+        : null,
+    defaultBranch:
+      typeof project.defaultBranchName === "string" && project.defaultBranchName.trim()
+        ? project.defaultBranchName.trim()
+        : "main",
+    lifecycleState: project.status === "deleted" ? "softDeleted" : "active",
+    remoteState:
+      project.remoteState === "pendingCreate"
+        ? "pendingCreate"
+        : "linked",
+    recordState: "live",
+    chapterCount: Array.isArray(project.chapters) ? project.chapters.length : 0,
   };
 }
 
@@ -756,75 +915,83 @@ export async function loadTeamProjects(render, teamId = state.selectedTeamId) {
   render();
 
   try {
-    const [projectsResult, glossaryResult] = await Promise.allSettled([
+    const [projectsResult, metadataResult, glossaryDiscoveryResult] = await Promise.allSettled([
       invoke("list_gnosis_projects_for_installation", {
         installationId: selectedTeam.installationId,
         sessionToken: requireBrokerSession(),
       }),
+      listProjectMetadataRecords(selectedTeam),
       glossaryLoadPromise,
     ]);
-    if (projectsResult.status !== "fulfilled") {
+    const remoteProjects = projectsResult.status === "fulfilled"
+      ? (Array.isArray(projectsResult.value) ? projectsResult.value : [])
+      : [];
+    const projectMetadataRecords =
+      metadataResult.status === "fulfilled"
+        ? metadataResult.value
+        : [];
+    if (
+      projectsResult.status !== "fulfilled"
+      && projectMetadataRecords.length === 0
+      && !cachedProjects.exists
+      && optimisticSnapshot.items.length === 0
+      && optimisticSnapshot.deletedItems.length === 0
+    ) {
       throw projectsResult.reason;
     }
-    const projects = projectsResult.value;
-    const hasVisibleLocalProjects =
-      optimisticSnapshot.items.length > 0 || optimisticSnapshot.deletedItems.length > 0;
-    const preserveVisibleProjects = Array.isArray(projects) && projects.length === 0 && hasVisibleLocalProjects;
     if (syncVersionAtStart !== state.projectSyncVersion) {
       await completeProjectsPageSync(render);
       render();
       return;
     }
-    const existingProjectsById = new Map(
-      [...state.projects, ...state.deletedProjects, ...optimisticSnapshot.items, ...optimisticSnapshot.deletedItems]
-        .filter(Boolean)
-        .map((project) => [project.id, project]),
-    );
-    const mappedProjects = (preserveVisibleProjects ? [] : projects).map((project) => ({
+    const mergedProjects = mergeMetadataDiscoveryProjects({
+      metadataRecords: projectMetadataRecords,
+      remoteProjects,
+      localProjects: [
+        ...state.projects,
+        ...state.deletedProjects,
+        ...optimisticSnapshot.items,
+        ...optimisticSnapshot.deletedItems,
+      ].filter(Boolean),
+    });
+    const nextVisibleProjects = mergedProjects.length > 0
+      ? mergedProjects
+      : [...optimisticSnapshot.items, ...optimisticSnapshot.deletedItems];
+    const mappedProjects = nextVisibleProjects.map((project) => ({
       ...project,
-      chapters: Array.isArray(existingProjectsById.get(project.id)?.chapters)
-        ? existingProjectsById.get(project.id).chapters
-        : [],
+      chapters: Array.isArray(project.chapters) ? project.chapters : [],
+      remoteState: project.remoteState ?? "linked",
     }));
-    if (!preserveVisibleProjects) {
-      const nextProjectSnapshot = applyPendingMutations(
-        {
-          items: mappedProjects.filter((project) => project.status !== "deleted"),
-          deletedItems: mappedProjects.filter((project) => project.status === "deleted"),
-        },
-        state.pendingProjectMutations,
-        applyProjectPendingMutation,
-      );
-      const nextSnapshot = applyPendingMutations(
-        nextProjectSnapshot,
-        state.pendingChapterMutations,
-        applyChapterPendingMutation,
-      );
-      applyProjectSnapshotToState(nextSnapshot);
-      persistProjectsForTeam(selectedTeam);
-    }
+    const nextProjectSnapshot = applyPendingMutations(
+      {
+        items: mappedProjects.filter((project) => project.status !== "deleted"),
+        deletedItems: mappedProjects.filter((project) => project.status === "deleted"),
+      },
+      state.pendingProjectMutations,
+      applyProjectPendingMutation,
+    );
+    const nextSnapshot = applyPendingMutations(
+      nextProjectSnapshot,
+      state.pendingChapterMutations,
+      applyChapterPendingMutation,
+    );
+    applyProjectSnapshotToState(nextSnapshot);
+    persistProjectsForTeam(selectedTeam);
     const glossaryWarning =
-      glossaryResult.status === "fulfilled"
-        ? glossaryResult.value?.syncIssue || glossaryResult.value?.brokerWarning || ""
-        : glossaryResult.reason?.message ?? String(glossaryResult.reason ?? "");
+      glossaryDiscoveryResult.status === "fulfilled"
+        ? glossaryDiscoveryResult.value?.syncIssue || glossaryDiscoveryResult.value?.brokerWarning || ""
+        : glossaryDiscoveryResult.reason?.message ?? String(glossaryDiscoveryResult.reason ?? "");
     setProjectDiscoveryState("ready", "", glossaryWarning);
     await reconcileProjectRepoSyncStates(render, selectedTeam, mappedProjects);
     await refreshProjectFilesFromDisk(
       render,
       selectedTeam,
-      preserveVisibleProjects ? [...state.projects, ...state.deletedProjects] : mappedProjects,
+      mappedProjects,
     );
     clearProjectUiDebug(render);
     await completeProjectsPageSync(render);
     render();
-    if (preserveVisibleProjects) {
-      showNoticeBadge(
-        "Showing locally available projects because remote discovery returned no projects.",
-        render,
-        3200,
-      );
-    }
-    if (glossaryResult.status === "rejected" && glossaryWarning) {
+    if (glossaryDiscoveryResult.status === "rejected" && glossaryWarning) {
       showNoticeBadge(glossaryWarning, render, 3200);
     }
     if (state.pendingProjectMutations.length > 0) {
@@ -1878,6 +2045,9 @@ async function commitProjectMutation(selectedTeam, mutation) {
       },
       sessionToken: requireBrokerSession(),
     });
+    try {
+      await upsertProjectMetadataRecord(selectedTeam, projectMetadataRecordFromVisibleProject(project));
+    } catch {}
     return;
   }
 
@@ -1890,6 +2060,9 @@ async function commitProjectMutation(selectedTeam, mutation) {
       },
       sessionToken: requireBrokerSession(),
     });
+    try {
+      await upsertProjectMetadataRecord(selectedTeam, projectMetadataRecordFromVisibleProject(project));
+    } catch {}
     return;
   }
 
@@ -1902,6 +2075,9 @@ async function commitProjectMutation(selectedTeam, mutation) {
       },
       sessionToken: requireBrokerSession(),
     });
+    try {
+      await upsertProjectMetadataRecord(selectedTeam, projectMetadataRecordFromVisibleProject(project));
+    } catch {}
   }
 }
 
