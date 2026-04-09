@@ -119,6 +119,20 @@ function persistProjectsForTeam(selectedTeam) {
   });
 }
 
+function setProjectRepoSyncSnapshot(projectId, snapshot) {
+  if (typeof projectId !== "string" || !projectId.trim()) {
+    return;
+  }
+
+  state.projectRepoSyncByProjectId = {
+    ...state.projectRepoSyncByProjectId,
+    [projectId]: {
+      projectId,
+      ...(snapshot && typeof snapshot === "object" ? snapshot : {}),
+    },
+  };
+}
+
 function persistChapterPendingMutationsForTeam(selectedTeam) {
   saveStoredChapterPendingMutations(selectedTeam, state.pendingChapterMutations);
 }
@@ -1244,6 +1258,22 @@ export async function submitProjectCreation(render) {
           linkedProjectMetadataRecord(pendingProject, remoteProject),
         );
         metadataFinalized = true;
+
+        remoteProject = {
+          ...remoteProject,
+          isPendingCreate: false,
+          pendingCreateStartedAt: undefined,
+          pendingCreateStatusText: undefined,
+          remoteState: "linked",
+          resolutionState: "",
+        };
+        replaceVisibleProject(remoteProject.id, remoteProject);
+        setProjectRepoSyncSnapshot(remoteProject.id, {
+          status: "syncing",
+          message: "Cloning local repo...",
+        });
+        persistProjectsForTeam(selectedTeam);
+        render();
 
         await reconcileProjectRepoSyncStates(render, selectedTeam, [{
           ...remoteProject,

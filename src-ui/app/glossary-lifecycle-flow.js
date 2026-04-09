@@ -23,6 +23,12 @@ function persistGlossariesForTeam(team) {
   saveStoredGlossariesForTeam(team, state.glossaries);
 }
 
+function removeGlossaryFromState(glossaryId, repoName) {
+  state.glossaries = (Array.isArray(state.glossaries) ? state.glossaries : []).filter((glossary) =>
+    glossary?.id !== glossaryId && glossary?.repoName !== repoName
+  );
+}
+
 function snapshotVisibleGlossaryState() {
   return {
     glossaries: structuredClone(state.glossaries),
@@ -421,6 +427,8 @@ export async function confirmGlossaryPermanentDeletion(render) {
         repoName: glossary.repoName,
       },
     });
+    removeGlossaryFromState(glossary.id, glossary.repoName);
+    persistGlossariesForTeam(team);
     if (state.selectedGlossaryId === glossary.id) {
       state.selectedGlossaryId = null;
     }

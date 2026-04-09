@@ -100,7 +100,14 @@ function renderProjectCard(project, expanded, options = {}) {
   const offlineMode = options.offlineMode === true;
   const isPendingCreate = project?.isPendingCreate === true;
   const isTombstone = project?.recordState === "tombstone";
-  const resolution = deriveProjectResolution(project, options.syncSnapshot);
+  const syncSnapshot = options.syncSnapshot ?? null;
+  const syncStatus = typeof syncSnapshot?.status === "string" ? syncSnapshot.status.trim() : "";
+  const localRepoSetupPending = (
+    syncStatus === "syncing"
+    || syncStatus === "notCloned"
+    || (isPendingCreate && !Number.isFinite(project?.repoId))
+  );
+  const resolution = deriveProjectResolution(project, syncSnapshot);
   const disableLifecycleActions = resolution?.blockLifecycleActions === true;
   const disableContentActions = resolution?.blockContentActions === true;
   const deleteAction = options.deleteAction ?? `delete-project:${project.id}`;
@@ -118,17 +125,17 @@ function renderProjectCard(project, expanded, options = {}) {
         : [
             canManageProjects
               ? textAction("Add files", `add-project-files:${project.id}`, {
-                  disabled: offlineMode || addFilesDisabled || isPendingCreate || disableContentActions,
+                  disabled: offlineMode || addFilesDisabled || localRepoSetupPending || disableContentActions,
                 })
               : "",
             canManageProjects
               ? textAction("Rename", `rename-project:${project.id}`, {
-                  disabled: offlineMode || isPendingCreate || disableLifecycleActions,
+                  disabled: offlineMode || disableLifecycleActions,
                 })
               : "",
             canManageProjects
               ? textAction("Delete", deleteAction, {
-                  disabled: offlineMode || isPendingCreate || disableLifecycleActions,
+                  disabled: offlineMode || disableLifecycleActions,
                 })
               : "",
           ].filter(Boolean)
@@ -137,7 +144,9 @@ function renderProjectCard(project, expanded, options = {}) {
     ? project.pendingCreateStatusText ?? "Creating..."
     : isDeleted && isTombstone
       ? "Permanently deleted"
-    : `${files.length} file${files.length === 1 ? "" : "s"}`;
+    : localRepoSetupPending && files.length === 0
+      ? "Setting up local repo..."
+      : `${files.length} file${files.length === 1 ? "" : "s"}`;
   const resolutionMarkup = resolution && resolution.key !== "pendingCreate"
     ? renderInlineStateBox({
         tone: resolution.tone,
