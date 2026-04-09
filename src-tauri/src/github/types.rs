@@ -56,6 +56,7 @@ pub(crate) struct GithubRepository {
 pub(crate) struct GithubProjectRepo {
   pub(crate) id: String,
   pub(crate) repo_id: i64,
+  pub(crate) node_id: Option<String>,
   pub(crate) name: String,
   pub(crate) title: String,
   pub(crate) status: String,
@@ -71,6 +72,7 @@ pub(crate) struct GithubProjectRepo {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct GithubGlossaryRepo {
   pub(crate) repo_id: i64,
+  pub(crate) node_id: Option<String>,
   pub(crate) name: String,
   pub(crate) full_name: String,
   pub(crate) html_url: Option<String>,
@@ -129,6 +131,7 @@ pub(crate) struct CreateGithubProjectRepoInput {
   pub(crate) org_login: String,
   pub(crate) repo_name: String,
   pub(crate) project_title: String,
+  pub(crate) project_id: Option<String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -161,4 +164,59 @@ pub(crate) struct DeleteGithubGlossaryRepoInput {
   pub(crate) installation_id: i64,
   pub(crate) org_login: String,
   pub(crate) repo_name: String,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct TeamMetadataLanguageInput {
+  pub(crate) code: String,
+  pub(crate) name: String,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct UpsertGithubProjectMetadataRecordInput {
+  pub(crate) installation_id: i64,
+  pub(crate) org_login: String,
+  pub(crate) project_id: String,
+  pub(crate) title: String,
+  pub(crate) repo_name: String,
+  pub(crate) previous_repo_names: Option<Vec<String>>,
+  pub(crate) github_repo_id: Option<i64>,
+  pub(crate) github_node_id: Option<String>,
+  pub(crate) full_name: Option<String>,
+  pub(crate) default_branch: Option<String>,
+  pub(crate) lifecycle_state: Option<String>,
+  pub(crate) remote_state: Option<String>,
+  pub(crate) record_state: Option<String>,
+  pub(crate) chapter_count: Option<usize>,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct DeleteGithubProjectMetadataRecordInput {
+  pub(crate) installation_id: i64,
+  pub(crate) org_login: String,
+  pub(crate) project_id: String,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct UpsertGithubGlossaryMetadataRecordInput {
+  pub(crate) installation_id: i64,
+  pub(crate) org_login: String,
+  pub(crate) glossary_id: String,
+  pub(crate) title: String,
+  pub(crate) repo_name: String,
+  pub(crate) previous_repo_names: Option<Vec<String>>,
+  pub(crate) github_repo_id: Option<i64>,
+  pub(crate) github_node_id: Option<String>,
+  pub(crate) full_name: Option<String>,
+  pub(crate) default_branch: Option<String>,
+  pub(crate) lifecycle_state: Option<String>,
+  pub(crate) remote_state: Option<String>,
+  pub(crate) record_state: Option<String>,
+  pub(crate) source_language: Option<TeamMetadataLanguageInput>,
+  pub(crate) target_language: Option<TeamMetadataLanguageInput>,
+  pub(crate) term_count: Option<usize>,
 }

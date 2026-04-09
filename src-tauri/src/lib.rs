@@ -43,6 +43,7 @@ use crate::{
   github::{
     add_organization_admin_for_installation,
     begin_github_app_install, create_gnosis_glossary_repo, create_gnosis_project_repo, delete_organization_for_installation,
+    delete_gnosis_project_metadata_record,
     ensure_gnosis_repo_properties_schema, inspect_github_app_installation,
     inspect_team_metadata_repo_for_installation,
     invite_user_to_organization_for_installation, list_gnosis_glossaries_for_installation,
@@ -56,6 +57,8 @@ use crate::{
     search_github_users_for_installation,
     rename_gnosis_project_repo, update_organization_name_for_installation,
     setup_organization_for_installation,
+    upsert_gnosis_glossary_metadata_record,
+    upsert_gnosis_project_metadata_record,
     update_organization_description_for_installation,
   },
   github_app_test::{
@@ -250,6 +253,8 @@ pub fn run() {
       begin_github_app_test_install,
       get_github_app_test_config,
       create_gnosis_project_repo,
+      upsert_gnosis_project_metadata_record,
+      delete_gnosis_project_metadata_record,
       rename_gnosis_project_repo,
       mark_gnosis_project_repo_deleted,
       restore_gnosis_project_repo,
@@ -279,6 +284,7 @@ pub fn run() {
       list_gnosis_glossaries_for_installation,
       sync_gtms_glossary_repos,
       create_gnosis_glossary_repo,
+      upsert_gnosis_glossary_metadata_record,
       prepare_local_gtms_glossary_repo,
       rename_local_gtms_glossary_repo,
       initialize_gtms_glossary_repo,

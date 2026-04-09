@@ -8,11 +8,14 @@ use super::{
   types::{
     CreateGithubGlossaryRepoInput,
     CreateGithubProjectRepoInput,
+    DeleteGithubProjectMetadataRecordInput,
     DeleteGithubGlossaryRepoInput,
     DeleteGithubProjectRepoInput,
     GithubGlossaryRepo,
     GithubProjectRepo,
     RenameGithubProjectRepoInput,
+    UpsertGithubGlossaryMetadataRecordInput,
+    UpsertGithubProjectMetadataRecordInput,
   },
 };
 
@@ -88,6 +91,42 @@ pub(crate) async fn create_gnosis_project_repo(
 }
 
 #[tauri::command]
+pub(crate) async fn upsert_gnosis_project_metadata_record(
+  input: UpsertGithubProjectMetadataRecordInput,
+  session_token: String,
+) -> Result<(), String> {
+  tauri::async_runtime::spawn_blocking(move || {
+    let client = github_client()?;
+    broker_patch_no_content_with_session(
+      &client,
+      "/api/github-app/gnosis-projects/metadata-record",
+      Some(&serde_json::to_value(&input).map_err(|error| error.to_string())?),
+      &session_token,
+    )
+  })
+  .await
+  .map_err(|error| format!("Could not run the project metadata write task: {error}"))?
+}
+
+#[tauri::command]
+pub(crate) async fn delete_gnosis_project_metadata_record(
+  input: DeleteGithubProjectMetadataRecordInput,
+  session_token: String,
+) -> Result<(), String> {
+  tauri::async_runtime::spawn_blocking(move || {
+    let client = github_client()?;
+    broker_delete_no_content_with_session(
+      &client,
+      "/api/github-app/gnosis-projects/metadata-record",
+      &serde_json::to_value(&input).map_err(|error| error.to_string())?,
+      &session_token,
+    )
+  })
+  .await
+  .map_err(|error| format!("Could not run the project metadata delete task: {error}"))?
+}
+
+#[tauri::command]
 pub(crate) async fn create_gnosis_glossary_repo(
   input: CreateGithubGlossaryRepoInput,
   session_token: String,
@@ -103,6 +142,24 @@ pub(crate) async fn create_gnosis_glossary_repo(
   })
   .await
   .map_err(|error| format!("Could not run the glossary creation task: {error}"))?
+}
+
+#[tauri::command]
+pub(crate) async fn upsert_gnosis_glossary_metadata_record(
+  input: UpsertGithubGlossaryMetadataRecordInput,
+  session_token: String,
+) -> Result<(), String> {
+  tauri::async_runtime::spawn_blocking(move || {
+    let client = github_client()?;
+    broker_patch_no_content_with_session(
+      &client,
+      "/api/github-app/gnosis-glossaries/metadata-record",
+      Some(&serde_json::to_value(&input).map_err(|error| error.to_string())?),
+      &session_token,
+    )
+  })
+  .await
+  .map_err(|error| format!("Could not run the glossary metadata write task: {error}"))?
 }
 
 #[tauri::command]

@@ -49,6 +49,10 @@ function normalizeRemoteGlossaryRepo(repo) {
 
   return {
     repoId: Number.isFinite(repo.repoId) ? repo.repoId : null,
+    nodeId:
+      typeof repo.nodeId === "string" && repo.nodeId.trim()
+        ? repo.nodeId.trim()
+        : null,
     name,
     fullName,
     htmlUrl:
@@ -330,6 +334,7 @@ export async function syncSingleGlossaryForTeam(team, glossary) {
           defaultBranchName: glossary.defaultBranchName,
           defaultBranchHeadOid: glossary.defaultBranchHeadOid,
           repoId: glossary.repoId,
+          nodeId: glossary.nodeId,
         })
       : null;
 

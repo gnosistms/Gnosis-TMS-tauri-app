@@ -36,6 +36,7 @@ import { classifySyncError } from "./sync-error.js";
 import { handleSyncFailure } from "./sync-recovery.js";
 import { createUniqueRepoWithNumericSuffix } from "./repo-creation.js";
 import { slugifyRepoName } from "./repo-names.js";
+import { deleteProjectMetadataRecord, upsertProjectMetadataRecord } from "./team-metadata-flow.js";
 
 function setProjectUiDebug(render, text) {
   showScopedSyncBadge("projects", text, render);
@@ -114,7 +115,7 @@ function buildPendingProjectRecord(selectedTeam, projectTitle, repoName) {
   const fullName = orgLogin ? `${orgLogin}/${repoName}` : repoName;
 
   return {
-    id: `pending-create:${crypto.randomUUID()}`,
+    id: crypto.randomUUID(),
     repoId: null,
     name: repoName,
     title: projectTitle,
@@ -129,6 +130,32 @@ function buildPendingProjectRecord(selectedTeam, projectTitle, repoName) {
     isPendingCreate: true,
     pendingCreateStartedAt: new Date().toISOString(),
     pendingCreateStatusText: "Creating...",
+  };
+}
+
+function pendingProjectMetadataRecord(project) {
+  return {
+    projectId: project.id,
+    title: project.title,
+    repoName: project.name,
+    lifecycleState: project.status === "deleted" ? "softDeleted" : "active",
+    remoteState: "pendingCreate",
+    recordState: "live",
+    defaultBranch: "main",
+    chapterCount: Array.isArray(project.chapters) ? project.chapters.length : 0,
+  };
+}
+
+function linkedProjectMetadataRecord(project, remoteProject) {
+  return {
+    ...pendingProjectMetadataRecord(project),
+    repoName: remoteProject.name,
+    previousRepoNames: remoteProject.name !== project.name ? [project.name] : [],
+    githubRepoId: remoteProject.repoId ?? null,
+    githubNodeId: remoteProject.nodeId ?? null,
+    fullName: remoteProject.fullName ?? null,
+    defaultBranch: remoteProject.defaultBranchName || "main",
+    remoteState: "linked",
   };
 }
 
@@ -1056,6 +1083,16 @@ export async function submitProjectCreation(render) {
       let remoteProject = null;
 
       try {
+        try {
+          await upsertProjectMetadataRecord(selectedTeam, pendingProjectMetadataRecord(pendingProject));
+        } catch (error) {
+          showNoticeBadge(
+            `The project metadata record could not be written yet: ${error?.message ?? String(error)}`,
+            render,
+          );
+          render();
+        }
+
         const { result, attemptedRepoName, collisionResolved } = await createUniqueRepoWithNumericSuffix(
           repoName,
           (candidateRepoName) =>
@@ -1065,6 +1102,7 @@ export async function submitProjectCreation(render) {
                 orgLogin: selectedTeam.githubOrg,
                 repoName: candidateRepoName,
                 projectTitle,
+                projectId: pendingProject.id,
               },
               sessionToken: requireBrokerSession(),
             }),
@@ -1081,6 +1119,19 @@ export async function submitProjectCreation(render) {
         persistProjectsForTeam(selectedTeam);
         setProjectUiDebug(render, "Syncing new project...");
         render();
+
+        try {
+          await upsertProjectMetadataRecord(
+            selectedTeam,
+            linkedProjectMetadataRecord(pendingProject, remoteProject),
+          );
+        } catch (error) {
+          showNoticeBadge(
+            `The project metadata record could not be finalized yet: ${error?.message ?? String(error)}`,
+            render,
+          );
+          render();
+        }
 
         await reconcileProjectRepoSyncStates(render, selectedTeam, [remoteProject]);
         await refreshProjectFilesFromDisk(render, selectedTeam, [remoteProject]);
@@ -1124,6 +1175,9 @@ export async function submitProjectCreation(render) {
 
         removeVisibleProject(pendingProject.id);
         persistProjectsForTeam(selectedTeam);
+        try {
+          await deleteProjectMetadataRecord(selectedTeam, pendingProject.id);
+        } catch {}
         if (await handleSyncFailure(classifySyncError(error), { render })) {
           clearProjectUiDebug(render);
           failProjectsPageSync();

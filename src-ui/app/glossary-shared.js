@@ -56,6 +56,11 @@ export function normalizeGlossarySummary(glossary) {
     id,
     repoName,
     title,
+    repoId: Number.isFinite(glossary.repoId) ? glossary.repoId : null,
+    nodeId:
+      typeof glossary.nodeId === "string" && glossary.nodeId.trim()
+        ? glossary.nodeId.trim()
+        : null,
     sourceLanguage: glossary.sourceLanguage ?? null,
     targetLanguage: glossary.targetLanguage ?? null,
     lifecycleState: glossary.lifecycleState === "deleted" ? "deleted" : "active",

@@ -15,6 +15,7 @@ import {
   syncGlossaryReposForTeam,
 } from "./glossary-repo-flow.js";
 import { appendRepoNameSuffix, slugifyRepoName } from "./repo-names.js";
+import { upsertGlossaryMetadataRecord } from "./team-metadata-flow.js";
 
 function detectGlossaryImportFileType(fileName) {
   const normalized = String(fileName || "").trim().toLowerCase();
@@ -91,8 +92,47 @@ function updateCurrentGlossaryRepoName(glossaryId, repoName) {
   };
 }
 
+function pendingGlossaryMetadataRecord(glossary) {
+  return {
+    glossaryId: glossary.id ?? glossary.glossaryId,
+    title: glossary.title,
+    repoName: glossary.repoName,
+    lifecycleState: glossary.lifecycleState === "deleted" ? "softDeleted" : "active",
+    remoteState: "pendingCreate",
+    recordState: "live",
+    defaultBranch: "main",
+    sourceLanguage: glossary.sourceLanguage ?? null,
+    targetLanguage: glossary.targetLanguage ?? null,
+    termCount: Number.isFinite(glossary.termCount) ? glossary.termCount : 0,
+  };
+}
+
+function linkedGlossaryMetadataRecord(glossary, remoteRepo) {
+  return {
+    ...pendingGlossaryMetadataRecord(glossary),
+    repoName: remoteRepo.name,
+    previousRepoNames:
+      remoteRepo.name !== glossary.repoName ? [glossary.repoName] : [],
+    githubRepoId: remoteRepo.repoId ?? null,
+    githubNodeId: remoteRepo.nodeId ?? null,
+    fullName: remoteRepo.fullName ?? null,
+    defaultBranch: remoteRepo.defaultBranchName || "main",
+    remoteState: "linked",
+  };
+}
+
 function syncGlossaryInBackground(render, team, glossary, preferredBaseRepoName) {
   void (async () => {
+    try {
+      await upsertGlossaryMetadataRecord(team, pendingGlossaryMetadataRecord(glossary));
+    } catch (error) {
+      showNoticeBadge(
+        `The glossary metadata record could not be written yet: ${error?.message ?? String(error)}`,
+        render,
+      );
+      render();
+    }
+
     const createResult = await createUniqueRemoteGlossaryRepoForTeam(team, preferredBaseRepoName);
     const remoteRepo = createResult.remoteRepo;
     let syncedGlossary = glossary;
@@ -117,6 +157,16 @@ function syncGlossaryInBackground(render, team, glossary, preferredBaseRepoName)
       render();
     } else {
       commitLocalGlossarySummary(team, glossary, remoteRepo);
+    }
+
+    try {
+      await upsertGlossaryMetadataRecord(team, linkedGlossaryMetadataRecord(syncedGlossary, remoteRepo));
+    } catch (error) {
+      showNoticeBadge(
+        `The glossary metadata record could not be finalized yet: ${error?.message ?? String(error)}`,
+        render,
+      );
+      render();
     }
 
     await prepareLocalGlossaryRepo(team, remoteRepo);
