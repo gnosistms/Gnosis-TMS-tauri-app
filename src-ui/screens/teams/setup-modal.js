@@ -96,7 +96,7 @@ function getStepConfig(setup) {
 
   return {
     eyebrow: "STEP 4 OF 4",
-    heading: "Return To Gnosis TMS",
+    heading: "Finish team setup",
     supporting: FINISH_INSTALL_MESSAGE,
     afterBodyClass: "",
     afterBodySupporting: "",
