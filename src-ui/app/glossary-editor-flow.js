@@ -12,6 +12,7 @@ import {
 } from "./glossary-shared.js";
 import {
   getGlossarySyncIssueMessage,
+  ensureGlossaryNotTombstoned,
   syncSingleGlossaryForTeam,
 } from "./glossary-repo-flow.js";
 
@@ -88,6 +89,16 @@ export async function loadSelectedGlossaryEditorData(render, options = {}) {
       status: "error",
       error: "Could not determine which glossary to open.",
       terms: [],
+    };
+    render();
+    return;
+  }
+  if (await ensureGlossaryNotTombstoned(render, team, glossary, { showNotice: false })) {
+    state.glossaryEditor = {
+      ...createGlossaryEditorState(),
+      status: "error",
+      error: "This glossary was permanently deleted.",
+      searchQuery: state.glossaryEditor?.searchQuery ?? "",
     };
     render();
     return;
@@ -173,12 +184,16 @@ export function updateGlossaryTermSearchQuery(render, value) {
 export async function deleteGlossaryTerm(render, termId) {
   const team = selectedTeam();
   const repoName = selectedGlossaryRepoName();
+  const glossary = selectedGlossary();
   if (!Number.isFinite(team?.installationId) || !repoName || !termId) {
     return;
   }
 
   if (!canManageGlossaries(team)) {
     showNoticeBadge("You do not have permission to edit glossary terms in this team.", render);
+    return;
+  }
+  if (await ensureGlossaryNotTombstoned(render, team, glossary)) {
     return;
   }
 

@@ -42,6 +42,11 @@ import {
   listProjectMetadataRecords,
   upsertProjectMetadataRecord,
 } from "./team-metadata-flow.js";
+import {
+  applyTopLevelResourceMutation,
+  processQueuedResourceMutations,
+  rollbackTopLevelResourceMutation,
+} from "./resource-top-level-mutations.js";
 
 function setProjectUiDebug(render, text) {
   showScopedSyncBadge("projects", text, render);
@@ -391,6 +396,156 @@ function projectMetadataRecordFromVisibleProject(project) {
   };
 }
 
+function projectMetadataRecordIsTombstone(record) {
+  return record?.recordState === "tombstone" || record?.remoteState === "deleted";
+}
+
+function projectMatchesMetadataRecord(project, record) {
+  const projectId =
+    typeof project?.id === "string" && project.id.trim()
+      ? project.id.trim()
+      : "";
+  const repoName =
+    typeof project?.name === "string" && project.name.trim()
+      ? project.name.trim()
+      : "";
+  const fullName =
+    typeof project?.fullName === "string" && project.fullName.trim()
+      ? project.fullName.trim()
+      : "";
+  const recordRepoNames = [
+    typeof record?.repoName === "string" ? record.repoName.trim() : "",
+    ...(
+      Array.isArray(record?.previousRepoNames)
+        ? record.previousRepoNames.map((value) => String(value ?? "").trim())
+        : []
+    ),
+  ].filter(Boolean);
+
+  return (
+    (projectId && projectId === record?.id)
+    || (fullName && fullName === record?.fullName)
+    || (repoName && recordRepoNames.includes(repoName))
+  );
+}
+
+function dropProjectMutationsForProject(selectedTeam, projectId) {
+  state.pendingProjectMutations = (Array.isArray(state.pendingProjectMutations) ? state.pendingProjectMutations : [])
+    .filter((mutation) => mutation?.projectId !== projectId);
+  saveStoredProjectPendingMutations(selectedTeam, state.pendingProjectMutations);
+  state.pendingChapterMutations = (Array.isArray(state.pendingChapterMutations) ? state.pendingChapterMutations : [])
+    .filter((mutation) => mutation?.projectId !== projectId);
+  persistChapterPendingMutationsForTeam(selectedTeam);
+}
+
+function clearSelectedProjectState(project) {
+  if (state.selectedProjectId === project?.id) {
+    state.selectedProjectId = null;
+  }
+  if (
+    state.selectedChapterId
+    && Array.isArray(project?.chapters)
+    && project.chapters.some((chapter) => chapter?.id === state.selectedChapterId)
+  ) {
+    state.selectedChapterId = null;
+  }
+}
+
+async function purgeLocalProjectRepo(selectedTeam, projectName) {
+  if (!Number.isFinite(selectedTeam?.installationId) || !String(projectName ?? "").trim()) {
+    return;
+  }
+
+  await invoke("purge_local_gtms_project_repo", {
+    input: {
+      installationId: selectedTeam.installationId,
+      repoName: projectName,
+    },
+  });
+}
+
+export async function ensureProjectNotTombstoned(render, selectedTeam, project, options = {}) {
+  if (!selectedTeam?.installationId || !project) {
+    return false;
+  }
+
+  let metadataRecords = [];
+  try {
+    metadataRecords = await listProjectMetadataRecords(selectedTeam);
+  } catch {
+    return false;
+  }
+
+  const tombstoneRecord = metadataRecords.find((record) =>
+    projectMetadataRecordIsTombstone(record) && projectMatchesMetadataRecord(project, record),
+  );
+  if (!tombstoneRecord) {
+    return false;
+  }
+
+  try {
+    await purgeLocalProjectRepo(selectedTeam, project.name);
+  } catch (error) {
+    removeVisibleProject(project.id);
+    clearSelectedProjectState(project);
+    dropProjectMutationsForProject(selectedTeam, project.id);
+    delete state.projectRepoSyncByProjectId[project.id];
+    persistProjectsForTeam(selectedTeam);
+    render?.();
+    showNoticeBadge(
+      `This project was already permanently deleted, but local cleanup still needs attention: ${
+        error?.message ?? String(error)
+      }`,
+      render,
+      4200,
+    );
+    return true;
+  }
+  removeVisibleProject(project.id);
+  clearSelectedProjectState(project);
+  dropProjectMutationsForProject(selectedTeam, project.id);
+  delete state.projectRepoSyncByProjectId[project.id];
+  persistProjectsForTeam(selectedTeam);
+  render?.();
+  if (options.showNotice !== false) {
+    showNoticeBadge(
+      "This project was already permanently deleted. The local repo was removed and the operation was stopped.",
+      render,
+      4200,
+    );
+  }
+  return true;
+}
+
+async function purgeTombstonedProjectsForTeam(selectedTeam, projects, metadataRecords) {
+  const visibleProjects = Array.isArray(projects) ? projects : [];
+  const tombstoneRecords = (Array.isArray(metadataRecords) ? metadataRecords : []).filter(projectMetadataRecordIsTombstone);
+  if (!selectedTeam?.installationId || visibleProjects.length === 0 || tombstoneRecords.length === 0) {
+    return;
+  }
+
+  const purgedProjectIds = new Set();
+  for (const project of visibleProjects) {
+    if (!project || purgedProjectIds.has(project.id)) {
+      continue;
+    }
+    if (!tombstoneRecords.some((record) => projectMatchesMetadataRecord(project, record))) {
+      continue;
+    }
+
+    await purgeLocalProjectRepo(selectedTeam, project.name);
+    removeVisibleProject(project.id);
+    clearSelectedProjectState(project);
+    dropProjectMutationsForProject(selectedTeam, project.id);
+    delete state.projectRepoSyncByProjectId[project.id];
+    purgedProjectIds.add(project.id);
+  }
+
+  if (purgedProjectIds.size > 0) {
+    persistProjectsForTeam(selectedTeam);
+  }
+}
+
 async function loadLocalProjectFileListings(selectedTeam, projects) {
   if (!Number.isFinite(selectedTeam?.installationId) || !Array.isArray(projects) || projects.length === 0) {
     return [];
@@ -703,58 +858,22 @@ function normalizeProjectSnapshot(snapshot, pendingMutations = []) {
 }
 
 function applyProjectPendingMutation(snapshot, mutation) {
-  const normalizedSnapshot = normalizeProjectSnapshot(snapshot);
-  const findProject = () =>
-    normalizedSnapshot.items.find((item) => item.id === mutation.projectId) ??
-    normalizedSnapshot.deletedItems.find((item) => item.id === mutation.projectId);
-  const currentProject = findProject();
-
-  if (!currentProject) {
-    return normalizedSnapshot;
-  }
-
-  if (mutation.type === "softDelete") {
-    const deletedProject = {
-      ...currentProject,
+  return applyTopLevelResourceMutation(snapshot, mutation, {
+    getMutationResourceId: (nextMutation) => nextMutation.resourceId ?? nextMutation.projectId ?? "",
+    normalizeSnapshot: normalizeProjectSnapshot,
+    markDeleted: (project) => ({
+      ...project,
       status: "deleted",
-    };
-    return normalizeProjectSnapshot({
-      items: removeItem(normalizedSnapshot.items, mutation.projectId),
-      deletedItems: [deletedProject, ...removeItem(normalizedSnapshot.deletedItems, mutation.projectId)],
-    });
-  }
-
-  if (mutation.type === "restore") {
-    const restoredProject = {
-      ...currentProject,
+    }),
+    markActive: (project) => ({
+      ...project,
       status: "active",
-    };
-    return normalizeProjectSnapshot({
-      items: replaceItem(removeItem(normalizedSnapshot.items, mutation.projectId), restoredProject),
-      deletedItems: removeItem(normalizedSnapshot.deletedItems, mutation.projectId),
-    });
-  }
-
-  if (mutation.type === "rename") {
-    const renamedProject = {
-      ...currentProject,
-      title: mutation.title,
-    };
-    const isDeleted = normalizedSnapshot.deletedItems.some((item) => item.id === mutation.projectId);
-    return normalizeProjectSnapshot(
-      isDeleted
-        ? {
-            items: normalizedSnapshot.items,
-            deletedItems: replaceItem(normalizedSnapshot.deletedItems, renamedProject),
-          }
-        : {
-            items: replaceItem(normalizedSnapshot.items, renamedProject),
-            deletedItems: normalizedSnapshot.deletedItems,
-          },
-    );
-  }
-
-  return normalizedSnapshot;
+    }),
+    renameResource: (project, nextMutation) => ({
+      ...project,
+      title: nextMutation.title,
+    }),
+  });
 }
 
 function applyChapterPendingMutation(snapshot, mutation) {
@@ -911,6 +1030,16 @@ export async function loadTeamProjects(render, teamId = state.selectedTeamId) {
     ) {
       throw projectsResult.reason;
     }
+    await purgeTombstonedProjectsForTeam(
+      selectedTeam,
+      [
+        ...state.projects,
+        ...state.deletedProjects,
+        ...optimisticSnapshot.items,
+        ...optimisticSnapshot.deletedItems,
+      ].filter(Boolean),
+      projectMetadataRecords,
+    );
     if (syncVersionAtStart !== state.projectSyncVersion) {
       await completeProjectsPageSync(render);
       render();
@@ -1071,15 +1200,20 @@ export function openProjectRename(render, projectId) {
     render();
     return;
   }
+  void ensureProjectNotTombstoned(render, selectedTeam, project).then((blocked) => {
+    if (blocked) {
+      return;
+    }
 
-  state.projectRename = {
-    isOpen: true,
-    projectId,
-    projectName: project.title ?? project.name,
-    status: "idle",
-    error: "",
-  };
-  render();
+    state.projectRename = {
+      isOpen: true,
+      projectId,
+      projectName: project.title ?? project.name,
+      status: "idle",
+      error: "",
+    };
+    render();
+  });
 }
 
 export function updateProjectRenameName(projectName) {
@@ -1436,6 +1570,11 @@ export async function submitProjectRename(render) {
     render();
     return;
   }
+  if (await ensureProjectNotTombstoned(render, selectedTeam, project)) {
+    resetProjectRename();
+    render();
+    return;
+  }
 
   try {
     state.projectRename.status = "loading";
@@ -1444,6 +1583,7 @@ export async function submitProjectRename(render) {
   const mutation = {
     id: crypto.randomUUID(),
     type: "rename",
+    resourceId: project.id,
     projectId: project.id,
     title: nextTitle,
       previousTitle: project.title ?? project.name,
@@ -1499,6 +1639,11 @@ export async function submitChapterRename(render) {
 
   if (!nextTitle) {
     state.chapterRename.error = "Enter a file name.";
+    render();
+    return;
+  }
+  if (await ensureProjectNotTombstoned(render, selectedTeam, context.project)) {
+    resetChapterRename();
     render();
     return;
   }
@@ -1591,6 +1736,9 @@ async function persistChapterGlossaryLinks(render, chapterId, nextGlossary1, nex
     selectedTeam,
     actionLabel: "change file glossary links",
   })) {
+    return;
+  }
+  if (await ensureProjectNotTombstoned(render, selectedTeam, context.project)) {
     return;
   }
 
@@ -1751,12 +1899,16 @@ export async function deleteProject(render, projectId) {
     render();
     return;
   }
+  if (await ensureProjectNotTombstoned(render, selectedTeam, project)) {
+    return;
+  }
 
   state.projectSyncVersion += 1;
   setProjectUiDebug(render, "Delete clicked");
   const mutation = {
     id: crypto.randomUUID(),
     type: "softDelete",
+    resourceId: project.id,
     projectId: project.id,
   };
   const snapshot = applyProjectPendingMutation(
@@ -1794,6 +1946,9 @@ export async function deleteChapter(render, chapterId) {
   }
 
   if (!ensureChapterMutationAllowed(render, { selectedTeam, actionLabel: "delete files" })) {
+    return;
+  }
+  if (await ensureProjectNotTombstoned(render, selectedTeam, context.project)) {
     return;
   }
 
@@ -1857,6 +2012,9 @@ export async function restoreChapter(render, chapterId) {
   }
 
   if (!ensureChapterMutationAllowed(render, { selectedTeam, actionLabel: "restore files" })) {
+    return;
+  }
+  if (await ensureProjectNotTombstoned(render, selectedTeam, context.project)) {
     return;
   }
 
@@ -1924,6 +2082,9 @@ export async function permanentlyDeleteChapter(render, chapterId) {
     actionLabel: "permanently delete files",
     requireDelete: true,
   })) {
+    return;
+  }
+  if (await ensureProjectNotTombstoned(render, selectedTeam, context.project)) {
     return;
   }
 
@@ -2045,12 +2206,16 @@ export async function restoreProject(render, projectId) {
     render();
     return;
   }
+  if (await ensureProjectNotTombstoned(render, selectedTeam, project)) {
+    return;
+  }
 
   state.projectSyncVersion += 1;
   setProjectUiDebug(render, "Restore clicked");
   const mutation = {
     id: crypto.randomUUID(),
     type: "restore",
+    resourceId: project.id,
     projectId: project.id,
   };
   const snapshot = applyProjectPendingMutation(
@@ -2157,89 +2322,50 @@ async function commitProjectMutation(selectedTeam, mutation) {
 }
 
 function rollbackVisibleProjectMutation(mutation) {
-  const inverseMutation =
-    mutation.type === "rename"
-      ? {
-          id: `${mutation.id}-rollback`,
-          type: "rename",
-          projectId: mutation.projectId,
-          title: mutation.previousTitle,
-        }
-      : mutation.type === "softDelete"
-        ? {
-            id: `${mutation.id}-rollback`,
-            type: "restore",
-            projectId: mutation.projectId,
-          }
-        : mutation.type === "restore"
-          ? {
-              id: `${mutation.id}-rollback`,
-              type: "softDelete",
-              projectId: mutation.projectId,
-            }
-          : null;
-
-  if (!inverseMutation) {
-    return;
-  }
-
-  const snapshot = applyProjectPendingMutation(
+  const snapshot = rollbackTopLevelResourceMutation(
     { items: state.projects, deletedItems: state.deletedProjects },
-    inverseMutation,
+    mutation,
+    applyProjectPendingMutation,
+    {
+      getMutationResourceId: (nextMutation) => nextMutation.resourceId ?? nextMutation.projectId ?? "",
+    },
   );
   applyProjectSnapshotToState(snapshot);
 }
 
 async function processPendingProjectMutations(render, selectedTeam) {
-  const pendingMutations = [...state.pendingProjectMutations];
-
-  for (const mutation of pendingMutations) {
-    if (inflightProjectMutationIds.has(mutation.id)) {
-      continue;
-    }
-
-    inflightProjectMutationIds.add(mutation.id);
-    try {
-      await waitForNextPaint();
-      await commitProjectMutation(selectedTeam, mutation);
-      state.pendingProjectMutations = removePendingMutation(
-        state.pendingProjectMutations,
-        mutation.id,
-      );
-      saveStoredProjectPendingMutations(selectedTeam, state.pendingProjectMutations);
-      saveStoredProjectsForTeam(selectedTeam, {
-        projects: state.projects,
-        deletedProjects: state.deletedProjects,
-      });
-    } catch (error) {
-      inflightProjectMutationIds.delete(mutation.id);
-      state.pendingProjectMutations = removePendingMutation(
-        state.pendingProjectMutations,
-        mutation.id,
-      );
-      saveStoredProjectPendingMutations(selectedTeam, state.pendingProjectMutations);
-      rollbackVisibleProjectMutation(mutation);
-      saveStoredProjectsForTeam(selectedTeam, {
-        projects: state.projects,
-        deletedProjects: state.deletedProjects,
-      });
+  await processQueuedResourceMutations({
+    getPendingMutations: () => state.pendingProjectMutations,
+    inflightMutationIds: inflightProjectMutationIds,
+    waitForNextPaint,
+    commitMutation: (mutation) => commitProjectMutation(selectedTeam, mutation),
+    setPendingMutations: (mutations) => {
+      state.pendingProjectMutations = mutations;
+    },
+    persistPendingMutations: (mutations) => saveStoredProjectPendingMutations(selectedTeam, mutations),
+    persistVisibleState: () => saveStoredProjectsForTeam(selectedTeam, {
+      projects: state.projects,
+      deletedProjects: state.deletedProjects,
+    }),
+    rollbackVisibleMutation: rollbackVisibleProjectMutation,
+    onMutationError: async (_mutation, error) => {
       if (await handleSyncFailure(classifySyncError(error), { render })) {
         clearProjectUiDebug(render);
         failProjectsPageSync();
-        return;
+        return true;
       }
       await loadTeamProjects(render, selectedTeam?.id);
       clearProjectUiDebug(render);
       await completeProjectsPageSync(render);
       render();
-      return;
-    }
-    inflightProjectMutationIds.delete(mutation.id);
-  }
-
-  clearProjectUiDebug(render);
-  await completeProjectsPageSync(render);
-  render();
+      return true;
+    },
+    onQueueComplete: async () => {
+      clearProjectUiDebug(render);
+      await completeProjectsPageSync(render);
+      render();
+    },
+  });
 }
 
 export function permanentlyDeleteProject(render, projectId) {
@@ -2256,16 +2382,21 @@ export function permanentlyDeleteProject(render, projectId) {
     render();
     return;
   }
+  void ensureProjectNotTombstoned(render, selectedTeam, project).then((blocked) => {
+    if (blocked) {
+      return;
+    }
 
-  state.projectPermanentDeletion = {
-    isOpen: true,
-    projectId,
-    projectName: project.title ?? project.name,
-    confirmationText: "",
-    status: "idle",
-    error: "",
-  };
-  render();
+    state.projectPermanentDeletion = {
+      isOpen: true,
+      projectId,
+      projectName: project.title ?? project.name,
+      confirmationText: "",
+      status: "idle",
+      error: "",
+    };
+    render();
+  });
 }
 
 export function updateProjectPermanentDeletionConfirmation(value) {
@@ -2310,6 +2441,11 @@ export async function confirmProjectPermanentDeletion(render) {
 
   if (state.projectPermanentDeletion.confirmationText !== state.projectPermanentDeletion.projectName) {
     state.projectPermanentDeletion.error = "Project name confirmation does not match.";
+    render();
+    return;
+  }
+  if (await ensureProjectNotTombstoned(render, selectedTeam, project)) {
+    resetProjectPermanentDeletion();
     render();
     return;
   }

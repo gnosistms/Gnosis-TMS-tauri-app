@@ -58,8 +58,10 @@ export const state = {
   },
   teamSyncVersion: 0,
   projectSyncVersion: 0,
+  glossarySyncVersion: 0,
   pendingTeamMutations: [],
   pendingProjectMutations: [],
+  pendingGlossaryMutations: [],
   pendingChapterMutations: [],
   pageSync: createSyncState(),
   projectsPageSync: createProjectsPageSyncState(),
@@ -491,8 +493,10 @@ export function resetSessionState() {
   state.userDiscovery = { status: "idle", error: "" };
   state.teamSyncVersion = 0;
   state.projectSyncVersion = 0;
+  state.glossarySyncVersion = 0;
   state.pendingTeamMutations = [];
   state.pendingProjectMutations = [];
+  state.pendingGlossaryMutations = [];
   state.pendingChapterMutations = [];
   state.pageSync = createSyncState();
   state.projectsPageSync = createProjectsPageSyncState();

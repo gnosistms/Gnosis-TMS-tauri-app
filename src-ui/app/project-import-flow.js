@@ -12,7 +12,7 @@ import {
   showScopedSyncBadge,
 } from "./status-feedback.js";
 import { reconcileProjectRepoSyncStates } from "./project-repo-sync-flow.js";
-import { refreshProjectFilesFromDisk } from "./project-flow.js";
+import { ensureProjectNotTombstoned, refreshProjectFilesFromDisk } from "./project-flow.js";
 import { openLocalFilePicker } from "./local-file-picker.js";
 
 function detectImportFileType(fileName) {
@@ -97,6 +97,9 @@ export async function addFilesToProject(render, projectId) {
 
   if (selectedTeam.canManageProjects !== true) {
     showNoticeBadge("You do not have permission to add files in this team.", render);
+    return;
+  }
+  if (await ensureProjectNotTombstoned(render, selectedTeam, targetProject)) {
     return;
   }
 

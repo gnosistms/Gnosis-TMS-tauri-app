@@ -1,4 +1,5 @@
 import { saveStoredProjectsForTeam } from "./project-cache.js";
+import { ensureProjectNotTombstoned } from "./project-flow.js";
 import { invoke } from "./runtime.js";
 import { saveStoredEditorFontSizePx } from "./editor-preferences.js";
 import { reconcileExpandedEditorHistoryGroupKeys } from "./editor-history.js";
@@ -618,6 +619,16 @@ export async function loadSelectedChapterEditorData(render, options = {}) {
       ...state.editorChapter,
       status: "error",
       error: "Could not determine which file to open.",
+    };
+    render();
+    return;
+  }
+  if (await ensureProjectNotTombstoned(render, team, context.project)) {
+    state.editorChapter = {
+      ...state.editorChapter,
+      status: "error",
+      error: "This project was permanently deleted.",
+      rows: [],
     };
     render();
     return;

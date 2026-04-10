@@ -1,67 +1,61 @@
 import { invoke, waitForNextPaint } from "./runtime.js";
+import { beginPageSync, completePageSync, failPageSync } from "./page-sync.js";
+import {
+  saveStoredGlossaryPendingMutations,
+} from "./glossary-cache.js";
+import {
+  removePendingMutation,
+  upsertPendingMutation,
+} from "./optimistic-collection.js";
 import {
   resetGlossaryPermanentDeletion,
   resetGlossaryRename,
   state,
 } from "./state.js";
 import { loadTeamGlossaries } from "./glossary-discovery-flow.js";
-import { saveStoredGlossariesForTeam } from "./glossary-cache.js";
 import {
   canManageGlossaries,
   canPermanentlyDeleteGlossaries,
   selectedTeam,
 } from "./glossary-shared.js";
 import { showNoticeBadge } from "./status-feedback.js";
-import { permanentlyDeleteRemoteGlossaryRepoForTeam } from "./glossary-repo-flow.js";
+import {
+  ensureGlossaryNotTombstoned,
+  permanentlyDeleteRemoteGlossaryRepoForTeam,
+} from "./glossary-repo-flow.js";
 import { upsertGlossaryMetadataRecord } from "./team-metadata-flow.js";
+import {
+  applyGlossaryPendingMutation,
+  applyGlossarySnapshotToState,
+  glossarySnapshotFromState,
+  persistGlossariesForTeam,
+  removeGlossaryFromState,
+  rollbackVisibleGlossaryMutation,
+} from "./glossary-top-level-state.js";
+import { processQueuedResourceMutations } from "./resource-top-level-mutations.js";
+import { classifySyncError } from "./sync-error.js";
+import { handleSyncFailure } from "./sync-recovery.js";
+
+const inflightGlossaryMutationIds = new Set();
 
 function glossaryById(glossaryId) {
   return state.glossaries.find((glossary) => glossary.id === glossaryId) ?? null;
 }
 
-function persistGlossariesForTeam(team) {
-  saveStoredGlossariesForTeam(team, state.glossaries);
-}
-
-function removeGlossaryFromState(glossaryId, repoName) {
-  state.glossaries = (Array.isArray(state.glossaries) ? state.glossaries : []).filter((glossary) =>
-    glossary?.id !== glossaryId && glossary?.repoName !== repoName
-  );
-}
-
 function snapshotVisibleGlossaryState() {
   return {
-    glossaries: structuredClone(state.glossaries),
+    snapshot: glossarySnapshotFromState(),
     selectedGlossaryId: state.selectedGlossaryId,
     showDeletedGlossaries: state.showDeletedGlossaries,
   };
 }
 
 function restoreVisibleGlossaryState(snapshot) {
-  state.glossaries = Array.isArray(snapshot?.glossaries) ? snapshot.glossaries : [];
+  applyGlossarySnapshotToState(snapshot?.snapshot ?? { items: [], deletedItems: [] }, {
+    fallbackToFirstActive: false,
+  });
   state.selectedGlossaryId = snapshot?.selectedGlossaryId ?? null;
   state.showDeletedGlossaries = snapshot?.showDeletedGlossaries === true;
-}
-
-function applyVisibleGlossaryLifecycle(glossaryId, nextState) {
-  state.glossaries = state.glossaries.map((glossary) => {
-    if (glossary?.id !== glossaryId) {
-      return glossary;
-    }
-
-    return {
-      ...glossary,
-      lifecycleState: nextState === "deleted" ? "deleted" : "active",
-    };
-  });
-
-  if (nextState === "deleted" && state.selectedGlossaryId === glossaryId) {
-    state.selectedGlossaryId = null;
-  }
-
-  if (!state.glossaries.some((glossary) => glossary?.lifecycleState === "deleted")) {
-    state.showDeletedGlossaries = false;
-  }
 }
 
 function lifecycleActionBlockedMessage(team, { actionLabel, requireOwner = false } = {}) {
@@ -140,6 +134,119 @@ async function syncGlossaryMetadataAfterRemoteMutation(team, record, rollbackRem
   }
 }
 
+async function commitGlossaryMutation(team, mutation) {
+  const glossary = glossaryById(mutation.glossaryId ?? mutation.resourceId);
+
+  if (!Number.isFinite(team?.installationId) || !glossary) {
+    return;
+  }
+
+  if (mutation.type === "rename") {
+    await invoke("rename_gtms_glossary", {
+      input: {
+        installationId: team.installationId,
+        repoName: glossary.repoName,
+        title: mutation.title,
+      },
+    });
+    await syncGlossaryMetadataAfterRemoteMutation(
+      team,
+      glossaryMetadataRecord({
+        ...glossary,
+        title: mutation.title,
+      }),
+      () => invoke("rename_gtms_glossary", {
+        input: {
+          installationId: team.installationId,
+          repoName: glossary.repoName,
+          title: mutation.previousTitle,
+        },
+      }),
+    );
+    return;
+  }
+
+  if (mutation.type === "softDelete") {
+    await invoke("soft_delete_gtms_glossary", {
+      input: {
+        installationId: team.installationId,
+        repoName: glossary.repoName,
+      },
+    });
+    await syncGlossaryMetadataAfterRemoteMutation(
+      team,
+      glossaryMetadataRecord({
+        ...glossary,
+        lifecycleState: "deleted",
+      }),
+      () => invoke("restore_gtms_glossary", {
+        input: {
+          installationId: team.installationId,
+          repoName: glossary.repoName,
+        },
+      }),
+    );
+    return;
+  }
+
+  if (mutation.type === "restore") {
+    await invoke("restore_gtms_glossary", {
+      input: {
+        installationId: team.installationId,
+        repoName: glossary.repoName,
+      },
+    });
+    await syncGlossaryMetadataAfterRemoteMutation(
+      team,
+      glossaryMetadataRecord({
+        ...glossary,
+        lifecycleState: "active",
+      }),
+      () => invoke("soft_delete_gtms_glossary", {
+        input: {
+          installationId: team.installationId,
+          repoName: glossary.repoName,
+        },
+      }),
+    );
+  }
+}
+
+export async function processPendingGlossaryMutations(render, team = selectedTeam()) {
+  await processQueuedResourceMutations({
+    getPendingMutations: () => state.pendingGlossaryMutations,
+    inflightMutationIds: inflightGlossaryMutationIds,
+    waitForNextPaint,
+    commitMutation: (mutation) => commitGlossaryMutation(team, mutation),
+    setPendingMutations: (mutations) => {
+      state.pendingGlossaryMutations = mutations;
+    },
+    persistPendingMutations: (mutations) => saveStoredGlossaryPendingMutations(team, mutations),
+    persistVisibleState: () => persistGlossariesForTeam(team),
+    rollbackVisibleMutation: rollbackVisibleGlossaryMutation,
+    onMutationError: async (_mutation, error) => {
+      if (
+        await handleSyncFailure(classifySyncError(error), {
+          render,
+          teamId: team?.id ?? null,
+          currentResource: true,
+        })
+      ) {
+        failPageSync();
+        return true;
+      }
+
+      showNoticeBadge(error?.message ?? String(error), render);
+      await loadTeamGlossaries(render, team?.id, { preserveVisibleData: true });
+      return true;
+    },
+    onQueueComplete: async () => {
+      await completePageSync(render);
+      render();
+    },
+  });
+}
+
 export function toggleDeletedGlossaries(render) {
   state.showDeletedGlossaries = !state.showDeletedGlossaries;
   render();
@@ -158,15 +265,20 @@ export function openGlossaryRename(render, glossaryId) {
     showNoticeBadge(blockedMessage, render);
     return;
   }
+  void ensureGlossaryNotTombstoned(render, team, glossary).then((blocked) => {
+    if (blocked) {
+      return;
+    }
 
-  state.glossaryRename = {
-    isOpen: true,
-    status: "idle",
-    error: "",
-    glossaryId,
-    glossaryName: glossary.title,
-  };
-  render();
+    state.glossaryRename = {
+      isOpen: true,
+      status: "idle",
+      error: "",
+      glossaryId,
+      glossaryName: glossary.title,
+    };
+    render();
+  });
 }
 
 export function updateGlossaryRenameName(value) {
@@ -202,37 +314,39 @@ export async function submitGlossaryRename(render) {
     render();
     return;
   }
+  if (await ensureGlossaryNotTombstoned(render, team, glossary)) {
+    resetGlossaryRename();
+    render();
+    return;
+  }
 
   state.glossaryRename.status = "loading";
   state.glossaryRename.error = "";
   render();
-  await waitForNextPaint();
+  state.glossarySyncVersion += 1;
 
   try {
-    await invoke("rename_gtms_glossary", {
-      input: {
-        installationId: team.installationId,
-        repoName: glossary.repoName,
-        title: nextTitle,
-        },
-      });
-      await syncGlossaryMetadataAfterRemoteMutation(
-        team,
-        glossaryMetadataRecord({
-          ...glossary,
-          title: nextTitle,
-        }),
-        () => invoke("rename_gtms_glossary", {
-          input: {
-            installationId: team.installationId,
-            repoName: glossary.repoName,
-            title: glossary.title,
-          },
-        }),
-      );
-      resetGlossaryRename();
-      await loadTeamGlossaries(render, team.id, { preserveVisibleData: true });
+    const mutation = {
+      id: crypto.randomUUID(),
+      type: "rename",
+      resourceId: glossary.id,
+      glossaryId: glossary.id,
+      title: nextTitle,
+      previousTitle: glossary.title,
+    };
+    const snapshot = applyGlossaryPendingMutation(glossarySnapshotFromState(), mutation);
+    applyGlossarySnapshotToState(snapshot, { fallbackToFirstActive: false });
+    beginPageSync();
+    state.pendingGlossaryMutations = upsertPendingMutation(state.pendingGlossaryMutations, mutation);
+    persistGlossariesForTeam(team);
+    saveStoredGlossaryPendingMutations(team, state.pendingGlossaryMutations);
+    resetGlossaryRename();
+    render();
+    void processPendingGlossaryMutations(render, team);
   } catch (error) {
+    if (await handleSyncFailure(classifySyncError(error), { render })) {
+      return;
+    }
     state.glossaryRename.status = "idle";
     state.glossaryRename.error = error?.message ?? String(error);
     render();
@@ -252,42 +366,27 @@ export async function deleteGlossary(render, glossaryId) {
     showNoticeBadge(blockedMessage, render);
     return;
   }
+  if (await ensureGlossaryNotTombstoned(render, team, glossary)) {
+    return;
+  }
 
-  const snapshot = snapshotVisibleGlossaryState();
-  applyVisibleGlossaryLifecycle(glossaryId, "deleted");
+  state.glossarySyncVersion += 1;
+  const mutation = {
+    id: crypto.randomUUID(),
+    type: "softDelete",
+    resourceId: glossary.id,
+    glossaryId: glossary.id,
+  };
+  applyGlossarySnapshotToState(
+    applyGlossaryPendingMutation(glossarySnapshotFromState(), mutation),
+    { fallbackToFirstActive: false },
+  );
+  beginPageSync();
+  state.pendingGlossaryMutations = upsertPendingMutation(state.pendingGlossaryMutations, mutation);
   persistGlossariesForTeam(team);
+  saveStoredGlossaryPendingMutations(team, state.pendingGlossaryMutations);
   render();
-  await waitForNextPaint();
-
-  void (async () => {
-    try {
-      await invoke("soft_delete_gtms_glossary", {
-        input: {
-          installationId: team.installationId,
-          repoName: glossary.repoName,
-        },
-      });
-      await syncGlossaryMetadataAfterRemoteMutation(
-        team,
-        glossaryMetadataRecord({
-          ...glossary,
-          lifecycleState: "deleted",
-        }),
-        () => invoke("restore_gtms_glossary", {
-          input: {
-            installationId: team.installationId,
-            repoName: glossary.repoName,
-          },
-        }),
-      );
-      await loadTeamGlossaries(render, team.id, { preserveVisibleData: true });
-    } catch (error) {
-      restoreVisibleGlossaryState(snapshot);
-      persistGlossariesForTeam(team);
-      showNoticeBadge(error?.message ?? String(error), render);
-      render();
-    }
-  })();
+  void waitForNextPaint().then(() => processPendingGlossaryMutations(render, team));
 }
 
 export async function restoreGlossary(render, glossaryId) {
@@ -303,42 +402,27 @@ export async function restoreGlossary(render, glossaryId) {
     showNoticeBadge(blockedMessage, render);
     return;
   }
+  if (await ensureGlossaryNotTombstoned(render, team, glossary)) {
+    return;
+  }
 
-  const snapshot = snapshotVisibleGlossaryState();
-  applyVisibleGlossaryLifecycle(glossaryId, "active");
+  state.glossarySyncVersion += 1;
+  const mutation = {
+    id: crypto.randomUUID(),
+    type: "restore",
+    resourceId: glossary.id,
+    glossaryId: glossary.id,
+  };
+  applyGlossarySnapshotToState(
+    applyGlossaryPendingMutation(glossarySnapshotFromState(), mutation),
+    { fallbackToFirstActive: false },
+  );
+  beginPageSync();
+  state.pendingGlossaryMutations = upsertPendingMutation(state.pendingGlossaryMutations, mutation);
   persistGlossariesForTeam(team);
+  saveStoredGlossaryPendingMutations(team, state.pendingGlossaryMutations);
   render();
-  await waitForNextPaint();
-
-  void (async () => {
-    try {
-      await invoke("restore_gtms_glossary", {
-        input: {
-          installationId: team.installationId,
-          repoName: glossary.repoName,
-        },
-      });
-      await syncGlossaryMetadataAfterRemoteMutation(
-        team,
-        glossaryMetadataRecord({
-          ...glossary,
-          lifecycleState: "active",
-        }),
-        () => invoke("soft_delete_gtms_glossary", {
-          input: {
-            installationId: team.installationId,
-            repoName: glossary.repoName,
-          },
-        }),
-      );
-      await loadTeamGlossaries(render, team.id, { preserveVisibleData: true });
-    } catch (error) {
-      restoreVisibleGlossaryState(snapshot);
-      persistGlossariesForTeam(team);
-      showNoticeBadge(error?.message ?? String(error), render);
-      render();
-    }
-  })();
+  void waitForNextPaint().then(() => processPendingGlossaryMutations(render, team));
 }
 
 export function openGlossaryPermanentDeletion(render, glossaryId) {
@@ -357,16 +441,21 @@ export function openGlossaryPermanentDeletion(render, glossaryId) {
     showNoticeBadge(blockedMessage, render);
     return;
   }
+  void ensureGlossaryNotTombstoned(render, team, glossary).then((blocked) => {
+    if (blocked) {
+      return;
+    }
 
-  state.glossaryPermanentDeletion = {
-    isOpen: true,
-    status: "idle",
-    error: "",
-    glossaryId,
-    glossaryName: glossary.title,
-    confirmationText: "",
-  };
-  render();
+    state.glossaryPermanentDeletion = {
+      isOpen: true,
+      status: "idle",
+      error: "",
+      glossaryId,
+      glossaryName: glossary.title,
+      confirmationText: "",
+    };
+    render();
+  });
 }
 
 export function updateGlossaryPermanentDeletionConfirmation(value) {
@@ -405,11 +494,17 @@ export async function confirmGlossaryPermanentDeletion(render) {
     render();
     return;
   }
+  if (await ensureGlossaryNotTombstoned(render, team, glossary)) {
+    resetGlossaryPermanentDeletion();
+    render();
+    return;
+  }
 
   state.glossaryPermanentDeletion.status = "loading";
   state.glossaryPermanentDeletion.error = "";
   render();
   await waitForNextPaint();
+  state.glossarySyncVersion += 1;
   const snapshot = snapshotVisibleGlossaryState();
   removeGlossaryFromState(glossary.id, glossary.repoName);
   persistGlossariesForTeam(team);

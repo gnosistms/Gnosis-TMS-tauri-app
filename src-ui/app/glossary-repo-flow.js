@@ -1,7 +1,9 @@
 import { requireBrokerSession } from "./auth-flow.js";
 import { invoke } from "./runtime.js";
+import { saveStoredGlossariesForTeam } from "./glossary-cache.js";
 import { normalizeGlossarySummary, sortGlossaries } from "./glossary-shared.js";
 import { createUniqueRepoWithNumericSuffix } from "./repo-creation.js";
+import { showNoticeBadge } from "./status-feedback.js";
 import { state } from "./state.js";
 import { listGlossaryMetadataRecords } from "./team-metadata-flow.js";
 import { mergeMetadataBackedGlossarySummaries } from "./glossary-discovery.js";
@@ -329,6 +331,149 @@ function getMissingRemoteGlossaryMessage(localSummaries, remoteRepos) {
   } that remote discovery did not recognize yet.`;
 }
 
+function glossaryMetadataRecordIsTombstone(record) {
+  return record?.recordState === "tombstone" || record?.remoteState === "deleted";
+}
+
+function glossaryMatchesMetadataRecord(glossary, record) {
+  const glossaryId =
+    typeof glossary?.id === "string" && glossary.id.trim()
+      ? glossary.id.trim()
+      : typeof glossary?.glossaryId === "string" && glossary.glossaryId.trim()
+        ? glossary.glossaryId.trim()
+        : "";
+  const repoName =
+    typeof glossary?.repoName === "string" && glossary.repoName.trim()
+      ? glossary.repoName.trim()
+      : "";
+  const fullName =
+    typeof glossary?.fullName === "string" && glossary.fullName.trim()
+      ? glossary.fullName.trim()
+      : "";
+  const recordRepoNames = [
+    typeof record?.repoName === "string" ? record.repoName.trim() : "",
+    ...(
+      Array.isArray(record?.previousRepoNames)
+        ? record.previousRepoNames.map((value) => String(value ?? "").trim())
+        : []
+    ),
+  ].filter(Boolean);
+
+  return (
+    (glossaryId && glossaryId === record?.id)
+    || (fullName && fullName === record?.fullName)
+    || (repoName && recordRepoNames.includes(repoName))
+  );
+}
+
+async function purgeLocalGlossaryRepo(team, repoName) {
+  if (!Number.isFinite(team?.installationId) || !String(repoName ?? "").trim()) {
+    return;
+  }
+
+  await invoke("purge_local_gtms_glossary_repo", {
+    input: {
+      installationId: team.installationId,
+      repoName,
+    },
+  });
+}
+
+function removeGlossaryFromState(glossaryId, repoName) {
+  state.glossaries = (Array.isArray(state.glossaries) ? state.glossaries : []).filter((glossary) =>
+    glossary?.id !== glossaryId && glossary?.repoName !== repoName
+  );
+  if (state.selectedGlossaryId === glossaryId) {
+    state.selectedGlossaryId = null;
+  }
+  if (state.glossaryEditor?.glossaryId === glossaryId || state.glossaryEditor?.repoName === repoName) {
+    state.glossaryEditor = {
+      ...state.glossaryEditor,
+      glossaryId: null,
+      repoName: "",
+      status: "idle",
+      error: "",
+      terms: [],
+    };
+  }
+}
+
+function persistVisibleGlossaries(team) {
+  saveStoredGlossariesForTeam(team, state.glossaries);
+}
+
+export async function ensureGlossaryNotTombstoned(render, team, glossary, options = {}) {
+  if (!Number.isFinite(team?.installationId) || !glossary) {
+    return false;
+  }
+
+  let metadataRecords = [];
+  try {
+    metadataRecords = await listGlossaryMetadataRecords(team);
+  } catch {
+    return false;
+  }
+
+  const tombstoneRecord = metadataRecords.find((record) =>
+    glossaryMetadataRecordIsTombstone(record) && glossaryMatchesMetadataRecord(glossary, record),
+  );
+  if (!tombstoneRecord) {
+    return false;
+  }
+
+  try {
+    await purgeLocalGlossaryRepo(team, glossary.repoName);
+  } catch (error) {
+    removeGlossaryFromState(glossary.id ?? glossary.glossaryId ?? null, glossary.repoName);
+    persistVisibleGlossaries(team);
+    render?.();
+    showNoticeBadge(
+      `This glossary was already permanently deleted, but local cleanup still needs attention: ${
+        error?.message ?? String(error)
+      }`,
+      render,
+      4200,
+    );
+    return true;
+  }
+  removeGlossaryFromState(glossary.id ?? glossary.glossaryId ?? null, glossary.repoName);
+  persistVisibleGlossaries(team);
+  render?.();
+  if (options.showNotice !== false) {
+    showNoticeBadge(
+      `This glossary was already permanently deleted. The local repo was removed and the operation was stopped.`,
+      render,
+      4200,
+    );
+  }
+  return true;
+}
+
+async function purgeTombstonedGlossariesForTeam(team, localSummaries, metadataRecords) {
+  const localGlossaries = (Array.isArray(localSummaries) ? localSummaries : [])
+    .map(normalizeGlossarySummary)
+    .filter(Boolean);
+  const tombstoneRecords = (Array.isArray(metadataRecords) ? metadataRecords : []).filter(glossaryMetadataRecordIsTombstone);
+  if (!Number.isFinite(team?.installationId) || localGlossaries.length === 0 || tombstoneRecords.length === 0) {
+    return localGlossaries;
+  }
+
+  const tombstonedGlossaries = localGlossaries.filter((glossary) =>
+    tombstoneRecords.some((record) => glossaryMatchesMetadataRecord(glossary, record)),
+  );
+  if (tombstonedGlossaries.length === 0) {
+    return localGlossaries;
+  }
+
+  for (const glossary of tombstonedGlossaries) {
+    await purgeLocalGlossaryRepo(team, glossary.repoName);
+    removeGlossaryFromState(glossary.id, glossary.repoName);
+  }
+  persistVisibleGlossaries(team);
+
+  return listLocalGlossarySummariesForTeam(team);
+}
+
 export async function loadRepoBackedGlossariesForTeam(team, options = {}) {
   const offlineMode = options.offlineMode === true;
   const onRecoveryDetected =
@@ -338,7 +483,7 @@ export async function loadRepoBackedGlossariesForTeam(team, options = {}) {
   const glossaryIdsInFlight = state.glossarySyncInFlightIds instanceof Set
     ? state.glossarySyncInFlightIds
     : new Set();
-  const localSummaries = await listLocalGlossarySummariesForTeam(team);
+  let localSummaries = await listLocalGlossarySummariesForTeam(team);
 
   if (offlineMode || !Number.isFinite(team?.installationId)) {
     return {
@@ -357,6 +502,7 @@ export async function loadRepoBackedGlossariesForTeam(team, options = {}) {
   try {
     metadataRecords = await listGlossaryMetadataRecords(team);
     metadataLoaded = true;
+    localSummaries = await purgeTombstonedGlossariesForTeam(team, localSummaries, metadataRecords);
   } catch {}
   const recoverableMetadataCount = countRecoverableGlossaryMetadataRecords(metadataRecords);
   const installationRecoveryDetected =

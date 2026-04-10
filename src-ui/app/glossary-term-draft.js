@@ -13,6 +13,7 @@ import {
   updateGlossaryTermArray,
 } from "./glossary-shared.js";
 import {
+  ensureGlossaryNotTombstoned,
   getGlossarySyncIssueMessage,
   syncSingleGlossaryForTeam,
 } from "./glossary-repo-flow.js";
@@ -127,31 +128,38 @@ function shouldRefreshGlossaryTermDuplicateFeedback() {
 }
 
 export function openGlossaryTermEditor(render, termId = null) {
+  const team = selectedTeam();
+  const glossary = selectedGlossary();
   if (!canManageGlossaries()) {
     showNoticeBadge("You do not have permission to edit glossary terms in this team.", render);
     return;
   }
+  void ensureGlossaryNotTombstoned(render, team, glossary).then((blocked) => {
+    if (blocked) {
+      return;
+    }
 
-  const term = termId
-    ? state.glossaryEditor.terms.find((item) => item.termId === termId) ?? null
-    : null;
+    const term = termId
+      ? state.glossaryEditor.terms.find((item) => item.termId === termId) ?? null
+      : null;
 
-  state.glossaryTermEditor = {
-    ...state.glossaryTermEditor,
-    isOpen: true,
-    status: "idle",
-    error: "",
-    glossaryId: state.glossaryEditor.glossaryId,
-    termId: term?.termId ?? null,
-    sourceTerms: normalizeEditableTerms(term?.sourceTerms ?? []),
-    targetTerms: normalizeEditableTerms(term?.targetTerms ?? []),
-    sourceTermDuplicateWarning: "",
-    redundantSourceVariantIndices: [],
-    notesToTranslators: term?.notesToTranslators ?? "",
-    footnote: term?.footnote ?? "",
-    untranslated: term?.untranslated === true,
-  };
-  render();
+    state.glossaryTermEditor = {
+      ...state.glossaryTermEditor,
+      isOpen: true,
+      status: "idle",
+      error: "",
+      glossaryId: state.glossaryEditor.glossaryId,
+      termId: term?.termId ?? null,
+      sourceTerms: normalizeEditableTerms(term?.sourceTerms ?? []),
+      targetTerms: normalizeEditableTerms(term?.targetTerms ?? []),
+      sourceTermDuplicateWarning: "",
+      redundantSourceVariantIndices: [],
+      notesToTranslators: term?.notesToTranslators ?? "",
+      footnote: term?.footnote ?? "",
+      untranslated: term?.untranslated === true,
+    };
+    render();
+  });
 }
 
 export function cancelGlossaryTermEditor(render) {
@@ -240,6 +248,7 @@ export function moveGlossaryTermVariantToIndex(side, fromIndex, toIndex) {
 export async function submitGlossaryTermEditor(render) {
   const team = selectedTeam();
   const repoName = selectedGlossaryRepoName();
+  const glossary = selectedGlossary();
   const draft = state.glossaryTermEditor;
   if (!draft?.isOpen || !Number.isFinite(team?.installationId) || !repoName) {
     return;
@@ -247,6 +256,11 @@ export async function submitGlossaryTermEditor(render) {
 
   if (!canManageGlossaries(team)) {
     state.glossaryTermEditor.error = "You do not have permission to edit glossary terms in this team.";
+    render();
+    return;
+  }
+  if (await ensureGlossaryNotTombstoned(render, team, glossary)) {
+    resetGlossaryTermEditor();
     render();
     return;
   }

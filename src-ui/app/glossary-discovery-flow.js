@@ -1,32 +1,26 @@
-import { invoke, waitForNextPaint } from "./runtime.js";
+import { waitForNextPaint } from "./runtime.js";
 import { beginPageSync, completePageSync, failPageSync } from "./page-sync.js";
 import { createGlossaryDiscoveryState, state } from "./state.js";
+import { applyPendingMutations } from "./optimistic-collection.js";
 import { showNoticeBadge } from "./status-feedback.js";
-import { normalizeGlossarySummary, selectedTeam, sortGlossaries } from "./glossary-shared.js";
-import { loadStoredGlossariesForTeam, saveStoredGlossariesForTeam } from "./glossary-cache.js";
+import { selectedTeam } from "./glossary-shared.js";
+import {
+  loadStoredGlossaryPendingMutations,
+  saveStoredGlossaryPendingMutations,
+} from "./glossary-cache.js";
 import {
   listLocalGlossarySummariesForTeam,
   loadRepoBackedGlossariesForTeam,
 } from "./glossary-repo-flow.js";
+import { processPendingGlossaryMutations } from "./glossary-lifecycle-flow.js";
+import {
+  applyGlossaryPendingMutation,
+  applyGlossarySnapshotToState,
+  glossarySnapshotFromList,
+  persistGlossariesForTeam,
+} from "./glossary-top-level-state.js";
 import { classifySyncError } from "./sync-error.js";
 import { handleSyncFailure } from "./sync-recovery.js";
-
-function applyGlossaryList(glossaries, teamId = state.selectedTeamId) {
-  if (state.selectedTeamId !== teamId) {
-    return;
-  }
-
-  state.glossaries = sortGlossaries(
-    (Array.isArray(glossaries) ? glossaries : [])
-      .map(normalizeGlossarySummary)
-      .filter(Boolean),
-  );
-
-  const activeGlossaries = state.glossaries.filter((glossary) => glossary.lifecycleState !== "deleted");
-  if (!activeGlossaries.some((glossary) => glossary.id === state.selectedGlossaryId)) {
-    state.selectedGlossaryId = activeGlossaries[0]?.id ?? null;
-  }
-}
 
 export function primeGlossariesLoadingState(teamId = state.selectedTeamId, options = {}) {
   const team = selectedTeam(teamId);
@@ -37,6 +31,7 @@ export function primeGlossariesLoadingState(teamId = state.selectedTeamId, optio
   if (!Number.isFinite(team?.installationId)) {
     state.glossaries = [];
     state.selectedGlossaryId = null;
+    state.pendingGlossaryMutations = [];
     state.glossaryRepoSyncByRepoName = {};
     state.glossaryDiscovery = {
       ...createGlossaryDiscoveryState(),
@@ -47,17 +42,6 @@ export function primeGlossariesLoadingState(teamId = state.selectedTeamId, optio
   }
 
   if (preserveVisibleData && state.glossaries.length > 0) {
-    state.glossaryDiscovery = {
-      ...createGlossaryDiscoveryState(),
-      status: "ready",
-      recoveryMessage: "",
-    };
-    return;
-  }
-
-  const cachedGlossaries = loadStoredGlossariesForTeam(team);
-  if (cachedGlossaries.exists) {
-    applyGlossaryList(cachedGlossaries.glossaries, teamId);
     state.glossaryDiscovery = {
       ...createGlossaryDiscoveryState(),
       status: "ready",
@@ -80,6 +64,7 @@ export async function loadTeamGlossaries(
   teamId = state.selectedTeamId,
   options = {},
 ) {
+  const syncVersionAtStart = state.glossarySyncVersion;
   const preserveVisibleData = options.preserveVisibleData === true;
   const team = selectedTeam(teamId);
   state.selectedTeamId = teamId ?? state.selectedTeamId;
@@ -88,6 +73,7 @@ export async function loadTeamGlossaries(
   if (!Number.isFinite(team?.installationId)) {
     state.glossaries = [];
     state.selectedGlossaryId = null;
+    state.pendingGlossaryMutations = [];
     state.glossaryDiscovery = {
       ...createGlossaryDiscoveryState(),
       status: "ready",
@@ -97,17 +83,10 @@ export async function loadTeamGlossaries(
     return;
   }
 
-  const cachedGlossaries = loadStoredGlossariesForTeam(team);
+  state.pendingGlossaryMutations = loadStoredGlossaryPendingMutations(team);
 
   if (!preserveVisibleData) {
-    if (cachedGlossaries.exists) {
-      applyGlossaryList(cachedGlossaries.glossaries, team.id);
-      state.glossaryDiscovery = {
-        ...createGlossaryDiscoveryState(),
-        status: "ready",
-        recoveryMessage: "",
-      };
-    } else if (state.glossaries.length === 0) {
+    if (state.glossaries.length === 0) {
       state.glossaries = [];
       state.selectedGlossaryId = null;
       state.glossaryDiscovery = {
@@ -123,16 +102,26 @@ export async function loadTeamGlossaries(
   await waitForNextPaint();
 
   try {
-    if (!preserveVisibleData && !cachedGlossaries.exists) {
+    if (!preserveVisibleData) {
       const localGlossaries = await listLocalGlossarySummariesForTeam(team);
+      if (syncVersionAtStart !== state.glossarySyncVersion) {
+        await completePageSync(render);
+        render();
+        return;
+      }
       if (localGlossaries.length > 0 && state.selectedTeamId === team.id) {
-        applyGlossaryList(localGlossaries, team.id);
+        const optimisticSnapshot = applyPendingMutations(
+          glossarySnapshotFromList(localGlossaries),
+          state.pendingGlossaryMutations,
+          applyGlossaryPendingMutation,
+        );
+        applyGlossarySnapshotToState(optimisticSnapshot, { teamId: team.id });
         state.glossaryDiscovery = {
           ...createGlossaryDiscoveryState(),
           status: "ready",
           recoveryMessage: "",
         };
-        saveStoredGlossariesForTeam(team, state.glossaries);
+        persistGlossariesForTeam(team);
         render();
         await waitForNextPaint();
       }
@@ -158,6 +147,11 @@ export async function loadTeamGlossaries(
         render();
       },
     });
+    if (syncVersionAtStart !== state.glossarySyncVersion) {
+      await completePageSync(render);
+      render();
+      return;
+    }
     state.glossaryRepoSyncByRepoName = Object.fromEntries(
       (Array.isArray(syncSnapshots) ? syncSnapshots : [])
         .map((snapshot) => [
@@ -174,8 +168,14 @@ export async function loadTeamGlossaries(
       }
     }
 
-    applyGlossaryList(nextGlossaries, team.id);
-    saveStoredGlossariesForTeam(team, state.glossaries);
+    const optimisticSnapshot = applyPendingMutations(
+      glossarySnapshotFromList(nextGlossaries),
+      state.pendingGlossaryMutations,
+      applyGlossaryPendingMutation,
+    );
+    applyGlossarySnapshotToState(optimisticSnapshot, { teamId: team.id });
+    persistGlossariesForTeam(team);
+    saveStoredGlossaryPendingMutations(team, state.pendingGlossaryMutations);
 
     state.glossaryDiscovery = {
       ...createGlossaryDiscoveryState(),
@@ -195,7 +195,15 @@ export async function loadTeamGlossaries(
       showNoticeBadge(brokerWarning, render);
     }
     await completePageSync(render);
+    if (state.pendingGlossaryMutations.length > 0) {
+      void processPendingGlossaryMutations(render, team);
+    }
   } catch (error) {
+    if (syncVersionAtStart !== state.glossarySyncVersion) {
+      failPageSync();
+      render();
+      return;
+    }
     if (
       await handleSyncFailure(classifySyncError(error), {
         render,

@@ -201,6 +201,8 @@ fn sync_glossary_repo(
     return clone_glossary_repo(glossary, repo_path, remote_head_oid, git_transport_token);
   }
 
+  ensure_glossary_origin_remote(glossary, repo_path)?;
+
   let branch_name = glossary
     .default_branch_name
     .as_deref()
@@ -229,6 +231,30 @@ fn sync_glossary_repo(
   let current_head_oid = read_current_head_oid(repo_path);
   mark_glossary_repo_synced(glossary, repo_path)?;
   Ok(current_head_oid)
+}
+
+fn ensure_glossary_origin_remote(
+  glossary: &GlossaryRepoSyncDescriptor,
+  repo_path: &Path,
+) -> Result<(), String> {
+  let full_name = glossary.full_name.trim();
+  if full_name.is_empty() {
+    return Err("Could not determine the remote glossary repository.".to_string());
+  }
+
+  let remote_url = format!("https://github.com/{full_name}.git");
+  match git_output(repo_path, &["remote", "get-url", "origin"], None) {
+    Ok(existing_url) => {
+      if existing_url.trim() != remote_url {
+        git_output(repo_path, &["remote", "set-url", "origin", &remote_url], None)?;
+      }
+    }
+    Err(_) => {
+      git_output(repo_path, &["remote", "add", "origin", &remote_url], None)?;
+    }
+  }
+
+  Ok(())
 }
 
 fn clone_glossary_repo(
