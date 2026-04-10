@@ -5,7 +5,7 @@ import { normalizeGlossarySummary, sortGlossaries } from "./glossary-shared.js";
 import { createUniqueRepoWithNumericSuffix } from "./repo-creation.js";
 import { showNoticeBadge } from "./status-feedback.js";
 import { state } from "./state.js";
-import { listGlossaryMetadataRecords } from "./team-metadata-flow.js";
+import { listGlossaryMetadataRecords, lookupLocalMetadataTombstone } from "./team-metadata-flow.js";
 import { mergeMetadataBackedGlossarySummaries } from "./glossary-discovery.js";
 
 const GLOSSARY_BROKER_ROUTE_UNAVAILABLE_MESSAGE =
@@ -407,17 +407,27 @@ export async function ensureGlossaryNotTombstoned(render, team, glossary, option
     return false;
   }
 
-  let metadataRecords = [];
   try {
-    metadataRecords = await listGlossaryMetadataRecords(team);
+    if (!(await lookupLocalMetadataTombstone(team, "glossary", glossary.id ?? glossary.glossaryId))) {
+      return false;
+    }
   } catch {
-    return false;
+    let metadataRecords = [];
+    try {
+      metadataRecords = await listGlossaryMetadataRecords(team);
+    } catch {
+      return false;
+    }
+
+    const tombstoneRecord = metadataRecords.find((record) =>
+      glossaryMetadataRecordIsTombstone(record) && glossaryMatchesMetadataRecord(glossary, record),
+    );
+    if (!tombstoneRecord) {
+      return false;
+    }
   }
 
-  const tombstoneRecord = metadataRecords.find((record) =>
-    glossaryMetadataRecordIsTombstone(record) && glossaryMatchesMetadataRecord(glossary, record),
-  );
-  if (!tombstoneRecord) {
+  if (!(glossary.id ?? glossary.glossaryId)) {
     return false;
   }
 

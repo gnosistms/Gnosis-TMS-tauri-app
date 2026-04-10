@@ -102,6 +102,13 @@ export async function finishTeamSetup(render) {
         sessionToken: requireBrokerSession(),
       })
     );
+    await runFinishTeamSetupStep("preparing the local team-metadata repository", () =>
+      invoke("ensure_local_team_metadata_repo", {
+        installationId: installation.installationId,
+        orgLogin: installation.accountLogin,
+        sessionToken: requireBrokerSession(),
+      })
+    );
 
     state.teamSetup.githubAppInstallation = installation;
     const nextTeamRecords = upsertStoredTeamRecords([

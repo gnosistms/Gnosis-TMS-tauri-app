@@ -40,6 +40,7 @@ import { mergeMetadataDiscoveryProjects } from "./project-discovery.js";
 import {
   deleteProjectMetadataRecord,
   listProjectMetadataRecords,
+  lookupLocalMetadataTombstone,
   upsertProjectMetadataRecord,
 } from "./team-metadata-flow.js";
 import {
@@ -469,17 +470,27 @@ export async function ensureProjectNotTombstoned(render, selectedTeam, project, 
     return false;
   }
 
-  let metadataRecords = [];
   try {
-    metadataRecords = await listProjectMetadataRecords(selectedTeam);
+    if (!(await lookupLocalMetadataTombstone(selectedTeam, "project", project.id))) {
+      return false;
+    }
   } catch {
-    return false;
+    let metadataRecords = [];
+    try {
+      metadataRecords = await listProjectMetadataRecords(selectedTeam);
+    } catch {
+      return false;
+    }
+
+    const tombstoneRecord = metadataRecords.find((record) =>
+      projectMetadataRecordIsTombstone(record) && projectMatchesMetadataRecord(project, record),
+    );
+    if (!tombstoneRecord) {
+      return false;
+    }
   }
 
-  const tombstoneRecord = metadataRecords.find((record) =>
-    projectMetadataRecordIsTombstone(record) && projectMatchesMetadataRecord(project, record),
-  );
-  if (!tombstoneRecord) {
+  if (!project.id) {
     return false;
   }
 

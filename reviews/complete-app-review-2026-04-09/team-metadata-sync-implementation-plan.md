@@ -10,6 +10,14 @@
 - latest broker commit relevant to this plan: `fc2a847` `Diagnose custom property schema failures`
 - next intended stage: `no further numbered stage is planned yet`
 - active blocker under investigation: new-team setup can still fail on the final finish step while configuring the org-level GitHub custom repository property schema
+- separate follow-up redesign plan: [local-first-repo-management-plan.md](/Users/hans/Desktop/GnosisTMS/reviews/complete-app-review-2026-04-09/local-first-repo-management-plan.md)
+- current redesign progress: `Stage 9` is in progress locally
+  - local `team-metadata` bootstrap is wired into team setup
+  - project/glossary metadata reads now load from the local `team-metadata` clone first
+  - local metadata write/commit/push helpers now exist in Tauri
+  - app-side metadata mutation callers now go through local commit + best-effort push
+  - direct tombstone lookup is now used by the operation guards
+  - full lifecycle sequencing is still not metadata-first yet
 
 ### Stage 1 Progress
 
@@ -1418,3 +1426,17 @@ Throughout all stages:
 - UUID repo names are not required.
 - Human-readable repo names can remain, but they must not be treated as stable identity.
 - UUID should be the true identity; repo names should be mutable aliases tracked in metadata history.
+
+## Proposed Next Phase: Shared Local-First Repo Management
+
+See [local-first-repo-management-plan.md](/Users/hans/Desktop/GnosisTMS/reviews/complete-app-review-2026-04-09/local-first-repo-management-plan.md).
+
+That separate plan now holds the detailed design for:
+
+- local metadata repo foundation
+- UUID-based local identity with human-readable GitHub repo names
+- shared repo-management state machine
+- fully local-first create/update/delete/read flows
+- background reconciliation, migration, and repair tooling
+
+Load that file only when actively working on the shared repo-management redesign.

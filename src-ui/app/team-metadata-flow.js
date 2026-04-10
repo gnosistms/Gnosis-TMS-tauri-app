@@ -174,184 +174,254 @@ function previousRepoNamesPayload(previousRepoNames = []) {
   return names.length > 0 ? names : undefined;
 }
 
+async function ensureLocalTeamMetadataRepo(team) {
+  return invoke("ensure_local_team_metadata_repo", {
+    installationId: team.installationId,
+    orgLogin: team.githubOrg,
+    sessionToken: requireBrokerSession(),
+  });
+}
+
+async function syncLocalTeamMetadataRepo(team) {
+  return invoke("sync_local_team_metadata_repo", {
+    installationId: team.installationId,
+    orgLogin: team.githubOrg,
+    sessionToken: requireBrokerSession(),
+  });
+}
+
+async function pushLocalTeamMetadataRepo(team) {
+  return invoke("push_local_team_metadata_repo", {
+    installationId: team.installationId,
+    orgLogin: team.githubOrg,
+    sessionToken: requireBrokerSession(),
+  });
+}
+
+function localMetadataPushConflict(error) {
+  const message = String(error?.message ?? error ?? "").toLowerCase();
+  return (
+    message.includes("non-fast-forward")
+    || message.includes("fetch first")
+    || message.includes("failed to push some refs")
+    || message.includes("tip of your current branch is behind")
+  );
+}
+
+async function commitLocalMetadataMutation(team, operation) {
+  await ensureLocalTeamMetadataRepo(team);
+
+  let syncError = null;
+  try {
+    await syncLocalTeamMetadataRepo(team);
+  } catch (error) {
+    syncError = error;
+  }
+
+  try {
+    const result = await operation();
+    if (result?.commitCreated !== false) {
+      try {
+        await pushLocalTeamMetadataRepo(team);
+      } catch (pushError) {
+        console.warn(
+          localMetadataPushConflict(pushError)
+            ? `team-metadata push conflict after local commit: ${pushError?.message ?? String(pushError)}`
+            : `team-metadata push failed after local commit: ${pushError?.message ?? String(pushError)}`,
+        );
+      }
+    }
+    if (syncError) {
+      console.warn(`Best-effort team-metadata sync failed before local commit: ${syncError?.message ?? String(syncError)}`);
+    }
+    return result;
+  } catch (error) {
+    if (syncError) {
+      throw new Error(
+        `${error?.message ?? String(error)} A best-effort sync of the local team-metadata repo also failed before this write: ${
+          syncError?.message ?? String(syncError)
+        }`,
+      );
+    }
+    throw error;
+  }
+}
+
 export async function upsertProjectMetadataRecord(team, record) {
-  try {
-    await withMetadataWriteRetries(() =>
-      invoke("upsert_gnosis_project_metadata_record", {
-        input: {
-          installationId: team.installationId,
-          orgLogin: team.githubOrg,
-          projectId: record.projectId,
-          title: record.title,
-          repoName: record.repoName,
-          previousRepoNames: previousRepoNamesPayload(record.previousRepoNames),
-          githubRepoId: Number.isFinite(record.githubRepoId) ? record.githubRepoId : null,
-          githubNodeId:
-            typeof record.githubNodeId === "string" && record.githubNodeId.trim()
-              ? record.githubNodeId.trim()
-              : null,
-          fullName:
-            typeof record.fullName === "string" && record.fullName.trim()
-              ? record.fullName.trim()
-              : null,
-          defaultBranch:
-            typeof record.defaultBranch === "string" && record.defaultBranch.trim()
-              ? record.defaultBranch.trim()
-              : null,
-          lifecycleState: record.lifecycleState ?? null,
-          remoteState: record.remoteState ?? null,
-          recordState: record.recordState ?? null,
-          deletedAt:
-            typeof record.deletedAt === "string" && record.deletedAt.trim()
-              ? record.deletedAt.trim()
-              : null,
-          chapterCount: Number.isFinite(record.chapterCount) ? record.chapterCount : null,
-        },
-        sessionToken: requireBrokerSession(),
-      }),
-    );
-  } catch (error) {
-    throw normalizeMetadataError(
-      error,
-      "The broker does not have project metadata routes deployed yet. Team metadata could not be updated.",
-      "/gnosis-projects/metadata-record",
-      ["PATCH", "DELETE"],
-    );
-  }
-}
-
-export async function deleteProjectMetadataRecord(team, projectId) {
-  try {
-    await withMetadataWriteRetries(() =>
-      invoke("delete_gnosis_project_metadata_record", {
-        input: {
-          installationId: team.installationId,
-          orgLogin: team.githubOrg,
-          projectId,
-        },
-        sessionToken: requireBrokerSession(),
-      }),
-    );
-  } catch (error) {
-    throw normalizeMetadataError(
-      error,
-      "The broker does not have project metadata routes deployed yet. Team metadata could not be updated.",
-      "/gnosis-projects/metadata-record",
-      ["PATCH", "DELETE"],
-    );
-  }
-}
-
-export async function upsertGlossaryMetadataRecord(team, record) {
-  try {
-    await withMetadataWriteRetries(() =>
-      invoke("upsert_gnosis_glossary_metadata_record", {
-        input: {
-          installationId: team.installationId,
-          orgLogin: team.githubOrg,
-          glossaryId: record.glossaryId,
-          title: record.title,
-          repoName: record.repoName,
-          previousRepoNames: previousRepoNamesPayload(record.previousRepoNames),
-          githubRepoId: Number.isFinite(record.githubRepoId) ? record.githubRepoId : null,
-          githubNodeId:
-            typeof record.githubNodeId === "string" && record.githubNodeId.trim()
-              ? record.githubNodeId.trim()
-              : null,
-          fullName:
-            typeof record.fullName === "string" && record.fullName.trim()
-              ? record.fullName.trim()
-              : null,
-          defaultBranch:
-            typeof record.defaultBranch === "string" && record.defaultBranch.trim()
-              ? record.defaultBranch.trim()
-              : null,
-          lifecycleState: record.lifecycleState ?? null,
-          remoteState: record.remoteState ?? null,
-          recordState: record.recordState ?? null,
-          deletedAt:
-            typeof record.deletedAt === "string" && record.deletedAt.trim()
-              ? record.deletedAt.trim()
-              : null,
-          sourceLanguage: metadataLanguagePayload(record.sourceLanguage),
-          targetLanguage: metadataLanguagePayload(record.targetLanguage),
-          termCount: Number.isFinite(record.termCount) ? record.termCount : null,
-        },
-        sessionToken: requireBrokerSession(),
-      }),
-    );
-  } catch (error) {
-    throw normalizeMetadataError(
-      error,
-      "The broker does not have glossary metadata routes deployed yet. Team metadata could not be updated.",
-      "/gnosis-glossaries/metadata-record",
-      ["PATCH", "DELETE"],
-    );
-  }
-}
-
-export async function deleteGlossaryMetadataRecord(team, glossaryId) {
-  try {
-    await withMetadataWriteRetries(() =>
-      invoke("delete_gnosis_glossary_metadata_record", {
-        input: {
-          installationId: team.installationId,
-          orgLogin: team.githubOrg,
-          glossaryId,
-        },
-        sessionToken: requireBrokerSession(),
-      }),
-    );
-  } catch (error) {
-    throw normalizeMetadataError(
-      error,
-      "The broker does not have glossary metadata routes deployed yet. Team metadata could not be updated.",
-      "/gnosis-glossaries/metadata-record",
-      ["PATCH", "DELETE"],
-    );
-  }
-}
-
-export async function listProjectMetadataRecords(team) {
-  try {
-    const records = await invoke("list_gnosis_project_metadata_records", {
+  await commitLocalMetadataMutation(team, () =>
+    invoke("upsert_local_gnosis_project_metadata_record", {
       input: {
         installationId: team.installationId,
         orgLogin: team.githubOrg,
+        projectId: record.projectId,
+        title: record.title,
+        repoName: record.repoName,
+        previousRepoNames: previousRepoNamesPayload(record.previousRepoNames),
+        githubRepoId: Number.isFinite(record.githubRepoId) ? record.githubRepoId : null,
+        githubNodeId:
+          typeof record.githubNodeId === "string" && record.githubNodeId.trim()
+            ? record.githubNodeId.trim()
+            : null,
+        fullName:
+          typeof record.fullName === "string" && record.fullName.trim()
+            ? record.fullName.trim()
+            : null,
+        defaultBranch:
+          typeof record.defaultBranch === "string" && record.defaultBranch.trim()
+            ? record.defaultBranch.trim()
+            : null,
+        lifecycleState: record.lifecycleState ?? null,
+        remoteState: record.remoteState ?? null,
+        recordState: record.recordState ?? null,
+        deletedAt:
+          typeof record.deletedAt === "string" && record.deletedAt.trim()
+            ? record.deletedAt.trim()
+            : null,
+        chapterCount: Number.isFinite(record.chapterCount) ? record.chapterCount : null,
       },
       sessionToken: requireBrokerSession(),
+    }),
+  );
+}
+
+export async function deleteProjectMetadataRecord(team, projectId) {
+  await commitLocalMetadataMutation(team, () =>
+    invoke("delete_local_gnosis_project_metadata_record", {
+      input: {
+        installationId: team.installationId,
+        orgLogin: team.githubOrg,
+        projectId,
+      },
+      sessionToken: requireBrokerSession(),
+    }),
+  );
+}
+
+export async function upsertGlossaryMetadataRecord(team, record) {
+  await commitLocalMetadataMutation(team, () =>
+    invoke("upsert_local_gnosis_glossary_metadata_record", {
+      input: {
+        installationId: team.installationId,
+        orgLogin: team.githubOrg,
+        glossaryId: record.glossaryId,
+        title: record.title,
+        repoName: record.repoName,
+        previousRepoNames: previousRepoNamesPayload(record.previousRepoNames),
+        githubRepoId: Number.isFinite(record.githubRepoId) ? record.githubRepoId : null,
+        githubNodeId:
+          typeof record.githubNodeId === "string" && record.githubNodeId.trim()
+            ? record.githubNodeId.trim()
+            : null,
+        fullName:
+          typeof record.fullName === "string" && record.fullName.trim()
+            ? record.fullName.trim()
+            : null,
+        defaultBranch:
+          typeof record.defaultBranch === "string" && record.defaultBranch.trim()
+            ? record.defaultBranch.trim()
+            : null,
+        lifecycleState: record.lifecycleState ?? null,
+        remoteState: record.remoteState ?? null,
+        recordState: record.recordState ?? null,
+        deletedAt:
+          typeof record.deletedAt === "string" && record.deletedAt.trim()
+            ? record.deletedAt.trim()
+            : null,
+        sourceLanguage: metadataLanguagePayload(record.sourceLanguage),
+        targetLanguage: metadataLanguagePayload(record.targetLanguage),
+        termCount: Number.isFinite(record.termCount) ? record.termCount : null,
+      },
+      sessionToken: requireBrokerSession(),
+    }),
+  );
+}
+
+export async function deleteGlossaryMetadataRecord(team, glossaryId) {
+  await commitLocalMetadataMutation(team, () =>
+    invoke("delete_local_gnosis_glossary_metadata_record", {
+      input: {
+        installationId: team.installationId,
+        orgLogin: team.githubOrg,
+        glossaryId,
+      },
+      sessionToken: requireBrokerSession(),
+    }),
+  );
+}
+
+export async function lookupLocalMetadataTombstone(team, kind, resourceId) {
+  if (!Number.isFinite(team?.installationId) || typeof resourceId !== "string" || !resourceId.trim()) {
+    return false;
+  }
+
+  await ensureLocalTeamMetadataRepo(team);
+  return invoke("lookup_local_team_metadata_tombstone", {
+    installationId: team.installationId,
+    kind,
+    resourceId,
+  });
+}
+
+export async function listProjectMetadataRecords(team) {
+  const syncPromise = invoke("sync_local_team_metadata_repo", {
+    installationId: team.installationId,
+    orgLogin: team.githubOrg,
+    sessionToken: requireBrokerSession(),
+  });
+
+  try {
+    const records = await invoke("list_local_gnosis_project_metadata_records", {
+      installationId: team.installationId,
     });
+    void syncPromise.catch(() => null);
     return (Array.isArray(records) ? records : [])
       .map(normalizeProjectMetadataRecord)
       .filter(Boolean);
   } catch (error) {
-    throw normalizeMetadataError(
-      error,
-      "The broker does not have project metadata read routes deployed yet. Project metadata could not be loaded.",
-      "/gnosis-projects/metadata-records",
-      ["GET"],
-    );
+    let detail = error?.message ?? String(error);
+    try {
+      await syncPromise;
+      const records = await invoke("list_local_gnosis_project_metadata_records", {
+        installationId: team.installationId,
+      });
+      return (Array.isArray(records) ? records : [])
+        .map(normalizeProjectMetadataRecord)
+        .filter(Boolean);
+    } catch (syncError) {
+      detail = syncError?.message ?? detail;
+    }
+    throw new Error(`Project metadata could not be loaded from the local team-metadata repo. ${detail}`);
   }
 }
 
 export async function listGlossaryMetadataRecords(team) {
+  const syncPromise = invoke("sync_local_team_metadata_repo", {
+    installationId: team.installationId,
+    orgLogin: team.githubOrg,
+    sessionToken: requireBrokerSession(),
+  });
+
   try {
-    const records = await invoke("list_gnosis_glossary_metadata_records", {
-      input: {
-        installationId: team.installationId,
-        orgLogin: team.githubOrg,
-      },
-      sessionToken: requireBrokerSession(),
+    const records = await invoke("list_local_gnosis_glossary_metadata_records", {
+      installationId: team.installationId,
     });
+    void syncPromise.catch(() => null);
     return (Array.isArray(records) ? records : [])
       .map(normalizeGlossaryMetadataRecord)
       .filter(Boolean);
   } catch (error) {
-    throw normalizeMetadataError(
-      error,
-      "The broker does not have glossary metadata read routes deployed yet. Glossary metadata could not be loaded.",
-      "/gnosis-glossaries/metadata-records",
-      ["GET"],
-    );
+    let detail = error?.message ?? String(error);
+    try {
+      await syncPromise;
+      const records = await invoke("list_local_gnosis_glossary_metadata_records", {
+        installationId: team.installationId,
+      });
+      return (Array.isArray(records) ? records : [])
+        .map(normalizeGlossaryMetadataRecord)
+        .filter(Boolean);
+    } catch (syncError) {
+      detail = syncError?.message ?? detail;
+    }
+    throw new Error(`Glossary metadata could not be loaded from the local team-metadata repo. ${detail}`);
   }
 }

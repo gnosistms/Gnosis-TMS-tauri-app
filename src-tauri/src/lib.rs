@@ -17,6 +17,7 @@ mod repo_sync_shared;
 mod state;
 mod store;
 mod storage_paths;
+mod team_metadata_local;
 mod updater;
 mod window;
 
@@ -78,6 +79,14 @@ use crate::{
   },
   project_repo_sync::{list_project_repo_sync_states, reconcile_project_repo_sync_states},
   state::{AuthState, ProjectRepoSyncStore},
+  team_metadata_local::{
+    delete_local_gnosis_glossary_metadata_record,
+    delete_local_gnosis_project_metadata_record,
+    ensure_local_team_metadata_repo, list_local_gnosis_glossary_metadata_records,
+    list_local_gnosis_project_metadata_records, lookup_local_team_metadata_tombstone,
+    push_local_team_metadata_repo, sync_local_team_metadata_repo,
+    upsert_local_gnosis_glossary_metadata_record, upsert_local_gnosis_project_metadata_record,
+  },
   updater::{check_for_app_update, install_app_update, PendingUpdate},
 };
 
@@ -266,6 +275,16 @@ pub fn run() {
       permanently_delete_gnosis_project_repo,
       inspect_github_app_installation,
       inspect_team_metadata_repo_for_installation,
+      ensure_local_team_metadata_repo,
+      sync_local_team_metadata_repo,
+      list_local_gnosis_project_metadata_records,
+      list_local_gnosis_glossary_metadata_records,
+      lookup_local_team_metadata_tombstone,
+      upsert_local_gnosis_project_metadata_record,
+      delete_local_gnosis_project_metadata_record,
+      upsert_local_gnosis_glossary_metadata_record,
+      delete_local_gnosis_glossary_metadata_record,
+      push_local_team_metadata_repo,
       list_accessible_github_app_installations,
       inspect_github_app_test_installation,
       ensure_gnosis_repo_properties_schema,
