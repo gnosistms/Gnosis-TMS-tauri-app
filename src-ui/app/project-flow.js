@@ -77,6 +77,10 @@ import {
   updateEntityModalConfirmation,
   updateEntityModalName,
 } from "./resource-entity-modal.js";
+import {
+  autoResumePendingResources,
+  resumePendingResourceSetup,
+} from "./resource-pending-create.js";
 
 function setProjectUiDebug(render, text) {
   showScopedSyncBadge("projects", text, render);
@@ -1822,97 +1826,60 @@ async function resumePendingProjectSetupInternal(render, projectId, options = {}
   const showStartNotice = options.showStartNotice !== false;
   const showSuccessNotice = options.showSuccessNotice !== false;
   const showErrorNotice = options.showErrorNotice !== false;
-  const project =
-    state.projects.find((item) => item.id === projectId)
-    ?? state.deletedProjects.find((item) => item.id === projectId)
-    ?? null;
-
-  if (!project) {
-    showNoticeBadge("Could not find the selected project.", render);
-    return;
-  }
-
-  if (!ensureChapterMutationAllowed(render, {
-    selectedTeam,
-    actionLabel: "resume project setup",
-    requireDelete: true,
-  })) {
-    return;
-  }
-
-  if (project.remoteState !== "pendingCreate" && project.resolutionState !== "pendingCreate") {
-    showNoticeBadge("This project is no longer waiting for setup recovery.", render);
-    return;
-  }
-
-  if (state.projectCreationInFlightIds.has(project.id)) {
-    showNoticeBadge("This project setup is already running.", render, 2200);
-    return;
-  }
-
-  markProjectCreationInFlight(project.id);
-  let handedOffToBackgroundCreate = false;
-
-  try {
-    const remoteProjects = await invoke("list_gnosis_projects_for_installation", {
+  await resumePendingResourceSetup({
+    render,
+    resourceId: projectId,
+    resourceLabel: "project",
+    showStartNotice,
+    showSuccessNotice,
+    showErrorNotice,
+    getResource: (nextProjectId) =>
+      state.projects.find((item) => item.id === nextProjectId)
+      ?? state.deletedProjects.find((item) => item.id === nextProjectId)
+      ?? null,
+    ensureResumeAllowed: () =>
+      ensureChapterMutationAllowed(render, {
+        selectedTeam,
+        actionLabel: "resume project setup",
+        requireDelete: true,
+      }),
+    isPendingCreate: (project) =>
+      project?.remoteState === "pendingCreate" || project?.resolutionState === "pendingCreate",
+    isInFlight: (project) => state.projectCreationInFlightIds.has(project.id),
+    markInFlight: (project) => markProjectCreationInFlight(project.id),
+    clearInFlight: (project) => clearProjectCreationInFlight(project.id),
+    listRemoteResources: async () => invoke("list_gnosis_projects_for_installation", {
       installationId: selectedTeam.installationId,
       sessionToken: requireBrokerSession(),
-    });
-    const matchedRemoteProject = findMatchingRemoteProjectForPendingCreate(
-      currentProjectSnapshot(project),
-      Array.isArray(remoteProjects) ? remoteProjects : [],
-    );
-
-    if (!matchedRemoteProject) {
-      handedOffToBackgroundCreate = true;
+    }),
+    findMatchingRemoteResource: (project, remoteProjects) =>
+      findMatchingRemoteProjectForPendingCreate(
+        currentProjectSnapshot(project),
+        Array.isArray(remoteProjects) ? remoteProjects : [],
+      ),
+    syncInBackground: async (project) => {
       syncProjectInBackground(
         render,
         selectedTeam,
         currentProjectSnapshot(project),
         currentProjectSnapshot(project)?.name ?? "",
       );
-      if (showStartNotice) {
-        showNoticeBadge("Resuming GitHub setup for this project...", render, 2200);
-      }
-      return;
-    }
-
-    await finalizePendingProjectSetup(render, selectedTeam, project, matchedRemoteProject);
-    if (showSuccessNotice) {
-      showNoticeBadge("Finished recovering this pending project setup.", render, 2200);
-    }
-  } catch (error) {
-    if (showErrorNotice) {
-      showNoticeBadge(
-        `Could not resume this project setup: ${error?.message ?? String(error)}`,
-        render,
-        3200,
-      );
-    }
-    render();
-  } finally {
-    if (!handedOffToBackgroundCreate) {
-      clearProjectCreationInFlight(project.id);
-      render();
-    }
-  }
+    },
+    finalizePendingSetup: (project, matchedRemoteProject) =>
+      finalizePendingProjectSetup(render, selectedTeam, project, matchedRemoteProject),
+  });
 }
 
 async function autoResumePendingProjects(render, projects) {
-  const pendingProjects = (Array.isArray(projects) ? projects : []).filter((project) =>
-    typeof project?.id === "string"
-    && project.id.trim()
-    && (project.remoteState === "pendingCreate" || project.resolutionState === "pendingCreate")
-    && !state.projectCreationInFlightIds.has(project.id)
-  );
-
-  for (const project of pendingProjects) {
-    await resumePendingProjectSetupInternal(render, project.id, {
-      showStartNotice: false,
-      showSuccessNotice: false,
-      showErrorNotice: true,
-    });
-  }
+  await autoResumePendingResources({
+    resources: projects,
+    getResourceId: (project) => project?.id ?? "",
+    isPendingCreate: (project) =>
+      project?.remoteState === "pendingCreate" || project?.resolutionState === "pendingCreate",
+    isInFlight: (project) => state.projectCreationInFlightIds.has(project.id),
+    resumePendingSetup: (projectId, options = {}) =>
+      resumePendingProjectSetupInternal(render, projectId, options),
+  });
 }
 
 export async function resumePendingProjectSetup(render, projectId) {

@@ -26,6 +26,10 @@ import {
   deleteGlossaryMetadataRecord,
   upsertGlossaryMetadataRecord,
 } from "./team-metadata-flow.js";
+import {
+  autoResumePendingResources,
+  resumePendingResourceSetup,
+} from "./resource-pending-create.js";
 
 function detectGlossaryImportFileType(fileName) {
   const normalized = String(fileName || "").trim().toLowerCase();
@@ -424,84 +428,57 @@ async function resumePendingGlossarySetupInternal(render, glossaryId, options = 
   const showStartNotice = options.showStartNotice !== false;
   const showSuccessNotice = options.showSuccessNotice !== false;
   const showErrorNotice = options.showErrorNotice !== false;
-  const glossary = currentGlossarySnapshot(
-    state.glossaries.find((item) => item.id === glossaryId) ?? null,
-  );
+  await resumePendingResourceSetup({
+    render,
+    resourceId: glossaryId,
+    resourceLabel: "glossary",
+    showStartNotice,
+    showSuccessNotice,
+    showErrorNotice,
+    getResource: (nextGlossaryId) =>
+      currentGlossarySnapshot(
+        state.glossaries.find((item) => item.id === nextGlossaryId) ?? null,
+      ),
+    ensureResumeAllowed: () => {
+      if (!Number.isFinite(team?.installationId)) {
+        showNoticeBadge("Could not determine the selected team.", render);
+        return false;
+      }
 
-  if (!glossary) {
-    showNoticeBadge("Could not find the selected glossary.", render);
-    return;
-  }
+      if (state.offline?.isEnabled === true) {
+        showNoticeBadge("You cannot resume glossary setup while offline.", render);
+        return false;
+      }
 
-  if (!Number.isFinite(team?.installationId)) {
-    showNoticeBadge("Could not determine the selected team.", render);
-    return;
-  }
+      if (!canPermanentlyDeleteGlossaries(team)) {
+        showNoticeBadge("You do not have permission to resume glossary setup in this team.", render);
+        return false;
+      }
 
-  if (state.offline?.isEnabled === true) {
-    showNoticeBadge("You cannot resume glossary setup while offline.", render);
-    return;
-  }
-
-  if (!canPermanentlyDeleteGlossaries(team)) {
-    showNoticeBadge("You do not have permission to resume glossary setup in this team.", render);
-    return;
-  }
-
-  if (glossary.remoteState !== "pendingCreate" && glossary.resolutionState !== "pendingCreate") {
-    showNoticeBadge("This glossary is no longer waiting for setup recovery.", render);
-    return;
-  }
-
-  if (state.glossarySyncInFlightIds.has(glossary.id)) {
-    showNoticeBadge("This glossary setup is already running.", render, 2200);
-    return;
-  }
-
-  markGlossarySyncInFlight(glossary.id);
-  let handedOffToBackgroundCreate = false;
-
-  try {
-    const remoteRepos = await listRemoteGlossaryReposForTeam(team);
-    const matchedRemoteRepo = findMatchingRemoteGlossaryForPendingCreate(
-      currentGlossarySnapshot(glossary),
-      remoteRepos,
-    );
-
-    if (!matchedRemoteRepo) {
-      handedOffToBackgroundCreate = true;
-      clearGlossarySyncInFlight(glossary.id);
+      return true;
+    },
+    isPendingCreate: (glossary) =>
+      glossary?.remoteState === "pendingCreate" || glossary?.resolutionState === "pendingCreate",
+    isInFlight: (glossary) => state.glossarySyncInFlightIds.has(glossary.id),
+    markInFlight: (glossary) => markGlossarySyncInFlight(glossary.id),
+    clearInFlight: (glossary) => clearGlossarySyncInFlight(glossary.id),
+    listRemoteResources: async () => listRemoteGlossaryReposForTeam(team),
+    findMatchingRemoteResource: (glossary, remoteRepos) =>
+      findMatchingRemoteGlossaryForPendingCreate(
+        currentGlossarySnapshot(glossary),
+        remoteRepos,
+      ),
+    syncInBackground: async (glossary) => {
       syncGlossaryInBackground(
         render,
         team,
         currentGlossarySnapshot(glossary),
         currentGlossarySnapshot(glossary)?.repoName ?? "",
       );
-      if (showStartNotice) {
-        showNoticeBadge("Resuming GitHub setup for this glossary...", render, 2200);
-      }
-      return;
-    }
-
-    await finalizePendingGlossarySetup(render, team, glossary, matchedRemoteRepo);
-    if (showSuccessNotice) {
-      showNoticeBadge("Finished recovering this pending glossary setup.", render, 2200);
-    }
-  } catch (error) {
-    if (showErrorNotice) {
-      showNoticeBadge(
-        `Could not resume this glossary setup: ${error?.message ?? String(error)}`,
-        render,
-        3200,
-      );
-    }
-    render();
-  } finally {
-    if (!handedOffToBackgroundCreate) {
-      clearGlossarySyncInFlight(glossary.id);
-      render();
-    }
-  }
+    },
+    finalizePendingSetup: (glossary, matchedRemoteRepo) =>
+      finalizePendingGlossarySetup(render, team, glossary, matchedRemoteRepo),
+  });
 }
 
 export async function resumePendingGlossarySetup(render, glossaryId) {
@@ -509,20 +486,15 @@ export async function resumePendingGlossarySetup(render, glossaryId) {
 }
 
 export async function autoResumePendingGlossarySetup(render, glossaries) {
-  const pendingGlossaries = (Array.isArray(glossaries) ? glossaries : []).filter((glossary) =>
-    typeof glossary?.id === "string"
-    && glossary.id.trim()
-    && (glossary.remoteState === "pendingCreate" || glossary.resolutionState === "pendingCreate")
-    && !state.glossarySyncInFlightIds.has(glossary.id)
-  );
-
-  for (const glossary of pendingGlossaries) {
-    await resumePendingGlossarySetupInternal(render, glossary.id, {
-      showStartNotice: false,
-      showSuccessNotice: false,
-      showErrorNotice: true,
-    });
-  }
+  await autoResumePendingResources({
+    resources: glossaries,
+    getResourceId: (glossary) => glossary?.id ?? "",
+    isPendingCreate: (glossary) =>
+      glossary?.remoteState === "pendingCreate" || glossary?.resolutionState === "pendingCreate",
+    isInFlight: (glossary) => state.glossarySyncInFlightIds.has(glossary.id),
+    resumePendingSetup: (glossaryId, options = {}) =>
+      resumePendingGlossarySetupInternal(render, glossaryId, options),
+  });
 }
 
 export function cancelGlossaryCreation(render) {
