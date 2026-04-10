@@ -37,6 +37,7 @@ import {
 import {
   commitMetadataFirstTopLevelMutation,
   guardTopLevelResourceAction,
+  runPermanentDeleteLocalFirst,
 } from "./resource-lifecycle-engine.js";
 import { classifySyncError } from "./sync-error.js";
 import { handleSyncFailure } from "./sync-recovery.js";
@@ -546,57 +547,53 @@ export async function confirmGlossaryPermanentDeletion(render) {
   resetGlossaryPermanentDeletion();
   render();
 
-  void (async () => {
-    let tombstoneCommitted = false;
-    try {
-      await upsertGlossaryMetadataRecord(team, glossaryMetadataRecord(glossary, {
-        lifecycleState: "softDeleted",
-        remoteState: "deleted",
-        recordState: "tombstone",
-        deletedAt: new Date().toISOString(),
-      }));
-      tombstoneCommitted = true;
-      await invoke("purge_local_gtms_glossary_repo", {
-        input: {
-          installationId: team.installationId,
-          glossaryId: glossary.id,
-          repoName: glossary.repoName,
-        },
-      });
-      try {
-        await permanentlyDeleteRemoteGlossaryRepoForTeam(team, glossary.repoName);
-      } catch (error) {
-        showNoticeBadge(
-          `Glossary deletion was committed locally, but remote cleanup still needs attention: ${
+  runPermanentDeleteLocalFirst({
+    commitTombstone: () => upsertGlossaryMetadataRecord(team, glossaryMetadataRecord(glossary, {
+      lifecycleState: "softDeleted",
+      remoteState: "deleted",
+      recordState: "tombstone",
+      deletedAt: new Date().toISOString(),
+    })),
+    purgeLocalRepo: () => invoke("purge_local_gtms_glossary_repo", {
+      input: {
+        installationId: team.installationId,
+        glossaryId: glossary.id,
+        repoName: glossary.repoName,
+      },
+    }),
+    deleteRemote: () => permanentlyDeleteRemoteGlossaryRepoForTeam(team, glossary.repoName),
+    reloadAfterSuccess: () => loadTeamGlossaries(render, team.id, { preserveVisibleData: true }),
+    rollbackBeforeTombstone: async (error) => {
+      restoreVisibleGlossaryState(snapshot);
+      persistGlossariesForTeam(team);
+      state.glossaryPermanentDeletion = {
+        isOpen: true,
+        status: "idle",
+        error: error?.message ?? String(error),
+        glossaryId: glossary.id,
+        glossaryName: glossary.title,
+        confirmationText,
+      };
+      render();
+    },
+    onRemoteDeleteError: async (error) => {
+      showNoticeBadge(
+        `Glossary deletion was committed locally, but remote cleanup still needs attention: ${
           error?.message ?? String(error)
         }`,
-          render,
-          4200,
-        );
-        render();
-        return;
-      }
-      await loadTeamGlossaries(render, team.id, { preserveVisibleData: true });
-    } catch (error) {
-      if (!tombstoneCommitted) {
-        restoreVisibleGlossaryState(snapshot);
-        persistGlossariesForTeam(team);
-        state.glossaryPermanentDeletion = {
-          isOpen: true,
-          status: "idle",
-          error: error?.message ?? String(error),
-          glossaryId: glossary.id,
-          glossaryName: glossary.title,
-          confirmationText,
-        };
-      } else {
-        showNoticeBadge(
-          `Glossary deletion was committed locally, but local cleanup still needs attention: ${error?.message ?? String(error)}`,
-          render,
-          4200,
-        );
-      }
+        render,
+        4200,
+      );
       render();
-    }
-  })();
+    },
+    onLocalDeleteError: async (error) => {
+      showNoticeBadge(
+        `Glossary deletion was committed locally, but local cleanup still needs attention: ${error?.message ?? String(error)}`,
+        render,
+        4200,
+      );
+      render();
+      return true;
+    },
+  });
 }

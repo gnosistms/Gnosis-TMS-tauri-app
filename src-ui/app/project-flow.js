@@ -57,6 +57,7 @@ import {
   commitMetadataFirstTopLevelMutation,
   ensureResourceNotTombstoned,
   guardTopLevelResourceAction,
+  runPermanentDeleteLocalFirst,
 } from "./resource-lifecycle-engine.js";
 import {
   canCreateRepoResources,
@@ -2899,79 +2900,84 @@ export async function confirmProjectPermanentDeletion(render) {
   resetProjectPermanentDeletion();
   render();
 
-  void (async () => {
-    let tombstoneCommitted = false;
-    try {
-      await upsertProjectMetadataRecord(selectedTeam, {
-        ...projectMetadataRecordFromVisibleProject(project),
-        lifecycleState: "softDeleted",
-        remoteState: "deleted",
-        recordState: "tombstone",
-        deletedAt: new Date().toISOString(),
-      });
-      tombstoneCommitted = true;
-      await invoke("purge_local_gtms_project_repo", {
-        input: {
-          installationId: selectedTeam.installationId,
-          projectId: project.id,
-          repoName: project.name,
-        },
-      });
-      try {
-        await invoke("permanently_delete_gnosis_project_repo", {
-          input: {
-            installationId: selectedTeam.installationId,
-            orgLogin: selectedTeam.githubOrg,
-            repoName: project.name,
-          },
-          sessionToken: requireBrokerSession(),
-        });
-      } catch (error) {
-        clearProjectUiDebug(render);
-        await completeProjectsPageSync(render);
-        showNoticeBadge(
-          `Project deletion was committed locally, but remote cleanup still needs attention: ${
-            error?.message ?? String(error)
-          }`,
-          render,
-          4200,
-        );
-        render();
-        return;
-      }
+  runPermanentDeleteLocalFirst({
+    commitTombstone: () => upsertProjectMetadataRecord(selectedTeam, {
+      ...projectMetadataRecordFromVisibleProject(project),
+      lifecycleState: "softDeleted",
+      remoteState: "deleted",
+      recordState: "tombstone",
+      deletedAt: new Date().toISOString(),
+    }),
+    purgeLocalRepo: () => invoke("purge_local_gtms_project_repo", {
+      input: {
+        installationId: selectedTeam.installationId,
+        projectId: project.id,
+        repoName: project.name,
+      },
+    }),
+    deleteRemote: () => invoke("permanently_delete_gnosis_project_repo", {
+      input: {
+        installationId: selectedTeam.installationId,
+        orgLogin: selectedTeam.githubOrg,
+        repoName: project.name,
+      },
+      sessionToken: requireBrokerSession(),
+    }),
+    reloadAfterSuccess: async () => {
       clearProjectUiDebug(render);
       await completeProjectsPageSync(render);
       render();
       await loadTeamProjects(render, selectedTeam.id);
-    } catch (error) {
+    },
+    rollbackBeforeTombstone: async (error) => {
       if (await handleSyncFailure(classifySyncError(error), { render })) {
         clearProjectUiDebug(render);
         failProjectsPageSync();
         return;
       }
 
-      if (!tombstoneCommitted) {
-        restoreProjectCollections(snapshot);
-        persistProjectsForTeam(selectedTeam);
-        state.projectPermanentDeletion = {
-          isOpen: true,
-          projectId: project.id,
-          projectName: project.title ?? project.name,
-          confirmationText,
-          status: "idle",
-          error: error?.message ?? String(error),
-        };
-      } else {
-        showNoticeBadge(
-          `Project deletion was committed locally, but local cleanup still needs attention: ${error?.message ?? String(error)}`,
-          render,
-          4200,
-        );
-      }
-
+      restoreProjectCollections(snapshot);
+      persistProjectsForTeam(selectedTeam);
+      state.projectPermanentDeletion = {
+        isOpen: true,
+        projectId: project.id,
+        projectName: project.title ?? project.name,
+        confirmationText,
+        status: "idle",
+        error: error?.message ?? String(error),
+      };
       clearProjectUiDebug(render);
       failProjectsPageSync();
       render();
-    }
-  })();
+    },
+    onRemoteDeleteError: async (error) => {
+      clearProjectUiDebug(render);
+      await completeProjectsPageSync(render);
+      showNoticeBadge(
+        `Project deletion was committed locally, but remote cleanup still needs attention: ${
+          error?.message ?? String(error)
+        }`,
+        render,
+        4200,
+      );
+      render();
+    },
+    onLocalDeleteError: async (error) => {
+      if (await handleSyncFailure(classifySyncError(error), { render })) {
+        clearProjectUiDebug(render);
+        failProjectsPageSync();
+        return true;
+      }
+
+      showNoticeBadge(
+        `Project deletion was committed locally, but local cleanup still needs attention: ${error?.message ?? String(error)}`,
+        render,
+        4200,
+      );
+      clearProjectUiDebug(render);
+      failProjectsPageSync();
+      render();
+      return true;
+    },
+  });
 }

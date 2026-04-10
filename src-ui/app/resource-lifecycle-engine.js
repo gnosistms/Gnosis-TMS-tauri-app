@@ -128,6 +128,44 @@ export async function guardTopLevelResourceAction(options) {
   return true;
 }
 
+export function runPermanentDeleteLocalFirst(options) {
+  const commitTombstone = options?.commitTombstone;
+  const purgeLocalRepo = options?.purgeLocalRepo;
+  const deleteRemote = options?.deleteRemote;
+  const reloadAfterSuccess = options?.reloadAfterSuccess;
+  const rollbackBeforeTombstone = options?.rollbackBeforeTombstone;
+  const onRemoteDeleteError = options?.onRemoteDeleteError;
+  const onLocalDeleteError = options?.onLocalDeleteError;
+  const onFatalError = options?.onFatalError;
+
+  void (async () => {
+    let tombstoneCommitted = false;
+    try {
+      await commitTombstone?.();
+      tombstoneCommitted = true;
+      await purgeLocalRepo?.();
+      try {
+        await deleteRemote?.();
+      } catch (error) {
+        await onRemoteDeleteError?.(error);
+        return;
+      }
+      await reloadAfterSuccess?.();
+    } catch (error) {
+      if (!tombstoneCommitted) {
+        await rollbackBeforeTombstone?.(error);
+        return;
+      }
+
+      const handled = await onLocalDeleteError?.(error);
+      if (handled === true) {
+        return;
+      }
+      await onFatalError?.(error);
+    }
+  })();
+}
+
 export async function ensureResourceNotTombstoned(options) {
   const installationId = options?.installationId;
   const resource = options?.resource;
