@@ -56,6 +56,7 @@ import {
 import {
   commitMetadataFirstTopLevelMutation,
   ensureResourceNotTombstoned,
+  guardTopLevelResourceAction,
 } from "./resource-lifecycle-engine.js";
 import {
   canCreateRepoResources,
@@ -1554,19 +1555,24 @@ export function cancelProjectCreation(render) {
 export function openProjectRename(render, projectId) {
   const project = state.projects.find((item) => item.id === projectId);
   const selectedTeam = state.teams.find((team) => team.id === state.selectedTeamId);
-  if (!project) {
-    setProjectDiscoveryState("error", "Could not find the selected project.");
-    render();
-    return;
-  }
-
-  if (selectedTeam?.canManageProjects !== true) {
-    setProjectDiscoveryState("error", "You do not have permission to rename projects in this team.");
-    render();
-    return;
-  }
-  void ensureProjectNotTombstoned(render, selectedTeam, project).then((blocked) => {
-    if (blocked) {
+  void guardTopLevelResourceAction({
+    resource: project,
+    getBlockedMessage: () =>
+      selectedTeam?.canManageProjects === true
+        ? ""
+        : "You do not have permission to rename projects in this team.",
+    ensureNotTombstoned: (currentProject) =>
+      ensureProjectNotTombstoned(render, selectedTeam, currentProject),
+    onMissing: () => {
+      setProjectDiscoveryState("error", "Could not find the selected project.");
+      render();
+    },
+    onBlocked: (blockedMessage) => {
+      setProjectDiscoveryState("error", blockedMessage);
+      render();
+    },
+  }).then((allowed) => {
+    if (!allowed) {
       return;
     }
 
@@ -1903,27 +1909,34 @@ export async function resumePendingProjectSetup(render, projectId) {
 export async function submitProjectRename(render) {
   const selectedTeam = state.teams.find((team) => team.id === state.selectedTeamId);
   const project = state.projects.find((item) => item.id === state.projectRename.projectId);
-
-  if (!selectedTeam?.installationId || !project) {
-    state.projectRename.error = "Could not find the selected project.";
-    render();
-    return;
-  }
-
-  if (selectedTeam.canManageProjects !== true) {
-    state.projectRename.error = "You do not have permission to rename projects in this team.";
-    render();
+  const allowed = await guardTopLevelResourceAction({
+    resource: selectedTeam?.installationId ? project : null,
+    getBlockedMessage: () =>
+      selectedTeam?.canManageProjects === true
+        ? ""
+        : "You do not have permission to rename projects in this team.",
+    ensureNotTombstoned: (currentProject) =>
+      ensureProjectNotTombstoned(render, selectedTeam, currentProject),
+    onMissing: () => {
+      state.projectRename.error = "Could not find the selected project.";
+      render();
+    },
+    onBlocked: (blockedMessage) => {
+      state.projectRename.error = blockedMessage;
+      render();
+    },
+    onTombstoned: () => {
+      resetProjectRename();
+      render();
+    },
+  });
+  if (!allowed) {
     return;
   }
 
   const nextTitle = state.projectRename.projectName.trim();
   if (!nextTitle) {
     state.projectRename.error = "Enter a project name.";
-    render();
-    return;
-  }
-  if (await ensureProjectNotTombstoned(render, selectedTeam, project)) {
-    resetProjectRename();
     render();
     return;
   }
@@ -2275,25 +2288,24 @@ export async function acknowledgeChapterGlossaryConflict(render) {
 export async function deleteProject(render, projectId) {
   const project = state.projects.find((item) => item.id === projectId);
   const selectedTeam = state.teams.find((team) => team.id === state.selectedTeamId);
-
-  if (!project) {
-    setProjectDiscoveryState("error", "Could not find the selected project.");
-    render();
-    return;
-  }
-
-  if (!selectedTeam?.installationId || !project) {
-    setProjectDiscoveryState("error", "Could not find the selected project.");
-    render();
-    return;
-  }
-
-  if (selectedTeam.canManageProjects !== true) {
-    setProjectDiscoveryState("error", "You do not have permission to delete projects in this team.");
-    render();
-    return;
-  }
-  if (await ensureProjectNotTombstoned(render, selectedTeam, project)) {
+  const allowed = await guardTopLevelResourceAction({
+    resource: selectedTeam?.installationId ? project : null,
+    getBlockedMessage: () =>
+      selectedTeam?.canManageProjects === true
+        ? ""
+        : "You do not have permission to delete projects in this team.",
+    ensureNotTombstoned: (currentProject) =>
+      ensureProjectNotTombstoned(render, selectedTeam, currentProject),
+    onMissing: () => {
+      setProjectDiscoveryState("error", "Could not find the selected project.");
+      render();
+    },
+    onBlocked: (blockedMessage) => {
+      setProjectDiscoveryState("error", blockedMessage);
+      render();
+    },
+  });
+  if (!allowed) {
     return;
   }
 
@@ -2601,25 +2613,26 @@ export function toggleDeletedProjects(render) {
 export async function restoreProject(render, projectId) {
   const project = state.deletedProjects.find((item) => item.id === projectId);
   const selectedTeam = state.teams.find((team) => team.id === state.selectedTeamId);
-
-  if (!project) {
-    setProjectDiscoveryState("error", "Could not find the selected deleted project.");
-    render();
-    return;
-  }
-
-  if (!selectedTeam?.installationId) {
-    setProjectDiscoveryState("error", "Could not restore the selected project.");
-    render();
-    return;
-  }
-
-  if (selectedTeam.canManageProjects !== true) {
-    setProjectDiscoveryState("error", "You do not have permission to restore projects in this team.");
-    render();
-    return;
-  }
-  if (await ensureProjectNotTombstoned(render, selectedTeam, project)) {
+  const allowed = await guardTopLevelResourceAction({
+    resource: selectedTeam?.installationId ? project : null,
+    getBlockedMessage: () =>
+      selectedTeam?.canManageProjects === true
+        ? ""
+        : "You do not have permission to restore projects in this team.",
+    ensureNotTombstoned: (currentProject) =>
+      ensureProjectNotTombstoned(render, selectedTeam, currentProject),
+    onMissing: () => {
+      setProjectDiscoveryState("error", selectedTeam?.installationId
+        ? "Could not find the selected deleted project."
+        : "Could not restore the selected project.");
+      render();
+    },
+    onBlocked: (blockedMessage) => {
+      setProjectDiscoveryState("error", blockedMessage);
+      render();
+    },
+  });
+  if (!allowed) {
     return;
   }
 

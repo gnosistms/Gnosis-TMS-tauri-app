@@ -34,7 +34,10 @@ import {
   queueTopLevelResourceMutation,
   submitTopLevelResourceMutation,
 } from "./resource-top-level-mutations.js";
-import { commitMetadataFirstTopLevelMutation } from "./resource-lifecycle-engine.js";
+import {
+  commitMetadataFirstTopLevelMutation,
+  guardTopLevelResourceAction,
+} from "./resource-lifecycle-engine.js";
 import { classifySyncError } from "./sync-error.js";
 import { handleSyncFailure } from "./sync-recovery.js";
 
@@ -213,18 +216,22 @@ export function toggleDeletedGlossaries(render) {
 export function openGlossaryRename(render, glossaryId) {
   const glossary = glossaryById(glossaryId);
   const team = selectedTeam();
-  const blockedMessage = lifecycleActionBlockedMessage(team, { actionLabel: "rename glossaries" });
-
-  if (!glossary || glossary.lifecycleState === "deleted") {
-    showNoticeBadge("Could not find the selected glossary.", render);
-    return;
-  }
-  if (blockedMessage) {
-    showNoticeBadge(blockedMessage, render);
-    return;
-  }
-  void ensureGlossaryNotTombstoned(render, team, glossary).then((blocked) => {
-    if (blocked) {
+  void guardTopLevelResourceAction({
+    resource: glossary,
+    isExpectedResource: (currentGlossary) =>
+      Boolean(currentGlossary) && currentGlossary.lifecycleState !== "deleted",
+    getBlockedMessage: () =>
+      lifecycleActionBlockedMessage(team, { actionLabel: "rename glossaries" }),
+    ensureNotTombstoned: (currentGlossary) =>
+      ensureGlossaryNotTombstoned(render, team, currentGlossary),
+    onMissing: () => {
+      showNoticeBadge("Could not find the selected glossary.", render);
+    },
+    onBlocked: (blockedMessage) => {
+      showNoticeBadge(blockedMessage, render);
+    },
+  }).then((allowed) => {
+    if (!allowed) {
       return;
     }
 
@@ -255,25 +262,30 @@ export async function submitGlossaryRename(render) {
   const team = selectedTeam();
   const glossary = glossaryById(state.glossaryRename.glossaryId);
   const nextTitle = String(state.glossaryRename.glossaryName ?? "").trim();
-  const blockedMessage = lifecycleActionBlockedMessage(team, { actionLabel: "rename glossaries" });
-
-  if (!glossary) {
-    state.glossaryRename.error = "Could not find the selected glossary.";
-    render();
-    return;
-  }
-  if (blockedMessage) {
-    state.glossaryRename.error = blockedMessage;
-    render();
+  const allowed = await guardTopLevelResourceAction({
+    resource: glossary,
+    getBlockedMessage: () =>
+      lifecycleActionBlockedMessage(team, { actionLabel: "rename glossaries" }),
+    ensureNotTombstoned: (currentGlossary) =>
+      ensureGlossaryNotTombstoned(render, team, currentGlossary),
+    onMissing: () => {
+      state.glossaryRename.error = "Could not find the selected glossary.";
+      render();
+    },
+    onBlocked: (blockedMessage) => {
+      state.glossaryRename.error = blockedMessage;
+      render();
+    },
+    onTombstoned: () => {
+      resetGlossaryRename();
+      render();
+    },
+  });
+  if (!allowed) {
     return;
   }
   if (!nextTitle) {
     state.glossaryRename.error = "Enter a glossary name.";
-    render();
-    return;
-  }
-  if (await ensureGlossaryNotTombstoned(render, team, glossary)) {
-    resetGlossaryRename();
     render();
     return;
   }
@@ -331,17 +343,22 @@ export async function submitGlossaryRename(render) {
 export async function deleteGlossary(render, glossaryId) {
   const team = selectedTeam();
   const glossary = glossaryById(glossaryId);
-  const blockedMessage = lifecycleActionBlockedMessage(team, { actionLabel: "delete glossaries" });
-
-  if (!glossary || glossary.lifecycleState === "deleted") {
-    showNoticeBadge("Could not find the selected glossary.", render);
-    return;
-  }
-  if (blockedMessage) {
-    showNoticeBadge(blockedMessage, render);
-    return;
-  }
-  if (await ensureGlossaryNotTombstoned(render, team, glossary)) {
+  const allowed = await guardTopLevelResourceAction({
+    resource: glossary,
+    isExpectedResource: (currentGlossary) =>
+      Boolean(currentGlossary) && currentGlossary.lifecycleState !== "deleted",
+    getBlockedMessage: () =>
+      lifecycleActionBlockedMessage(team, { actionLabel: "delete glossaries" }),
+    ensureNotTombstoned: (currentGlossary) =>
+      ensureGlossaryNotTombstoned(render, team, currentGlossary),
+    onMissing: () => {
+      showNoticeBadge("Could not find the selected glossary.", render);
+    },
+    onBlocked: (blockedMessage) => {
+      showNoticeBadge(blockedMessage, render);
+    },
+  });
+  if (!allowed) {
     return;
   }
 
@@ -380,17 +397,22 @@ export async function deleteGlossary(render, glossaryId) {
 export async function restoreGlossary(render, glossaryId) {
   const team = selectedTeam();
   const glossary = glossaryById(glossaryId);
-  const blockedMessage = lifecycleActionBlockedMessage(team, { actionLabel: "restore glossaries" });
-
-  if (!glossary || glossary.lifecycleState !== "deleted") {
-    showNoticeBadge("Could not find the selected deleted glossary.", render);
-    return;
-  }
-  if (blockedMessage) {
-    showNoticeBadge(blockedMessage, render);
-    return;
-  }
-  if (await ensureGlossaryNotTombstoned(render, team, glossary)) {
+  const allowed = await guardTopLevelResourceAction({
+    resource: glossary,
+    isExpectedResource: (currentGlossary) =>
+      Boolean(currentGlossary) && currentGlossary.lifecycleState === "deleted",
+    getBlockedMessage: () =>
+      lifecycleActionBlockedMessage(team, { actionLabel: "restore glossaries" }),
+    ensureNotTombstoned: (currentGlossary) =>
+      ensureGlossaryNotTombstoned(render, team, currentGlossary),
+    onMissing: () => {
+      showNoticeBadge("Could not find the selected deleted glossary.", render);
+    },
+    onBlocked: (blockedMessage) => {
+      showNoticeBadge(blockedMessage, render);
+    },
+  });
+  if (!allowed) {
     return;
   }
 

@@ -94,6 +94,40 @@ export async function commitMetadataFirstTopLevelMutation(options) {
   return false;
 }
 
+export async function guardTopLevelResourceAction(options) {
+  const resource = options?.resource ?? null;
+  const isExpectedResource =
+    typeof options?.isExpectedResource === "function"
+      ? options.isExpectedResource
+      : (currentResource) => Boolean(currentResource);
+  const getBlockedMessage =
+    typeof options?.getBlockedMessage === "function"
+      ? options.getBlockedMessage
+      : () => "";
+  const ensureNotTombstoned =
+    typeof options?.ensureNotTombstoned === "function"
+      ? options.ensureNotTombstoned
+      : async () => false;
+
+  if (!isExpectedResource(resource)) {
+    await options?.onMissing?.();
+    return false;
+  }
+
+  const blockedMessage = getBlockedMessage(resource);
+  if (blockedMessage) {
+    await options?.onBlocked?.(blockedMessage);
+    return false;
+  }
+
+  if (await ensureNotTombstoned(resource)) {
+    await options?.onTombstoned?.();
+    return false;
+  }
+
+  return true;
+}
+
 export async function ensureResourceNotTombstoned(options) {
   const installationId = options?.installationId;
   const resource = options?.resource;

@@ -202,8 +202,8 @@ Expected outcome:
 Status on 2026-04-10:
 
 - partially complete
-- shared helpers now cover metadata-first mutations, tombstone prechecks, shared top-level rename / soft-delete / restore commit sequencing, shared optimistic queue setup, and the standard top-level submit wrapper that queues then kicks background processing
-- projects and glossaries still have separate action-entry validation messages, modal/reset state, and some higher-level lifecycle wrappers, so the full adapter-based shared state machine is not finished
+- shared helpers now cover metadata-first mutations, tombstone prechecks, shared top-level rename / soft-delete / restore commit sequencing, shared optimistic queue setup, the standard top-level submit wrapper that queues then kicks background processing, and a shared guard for missing-resource / permission / tombstone entry checks
+- projects and glossaries still have separate modal/reset state and some higher-level lifecycle wrappers, so the full adapter-based shared state machine is not finished
 
 - build one shared engine for:
   - create
@@ -248,7 +248,8 @@ Status on 2026-04-10:
 - top-level rename / soft-delete / restore commit handling now flows through the shared lifecycle engine
 - top-level rename / soft-delete / restore optimistic queue setup now also flows through a shared helper
 - top-level rename / soft-delete / restore submit wrappers now also flow through a shared helper that handles queueing and background processing
-- remaining gap: action-entry validation messages, modal/reset handling, and some secondary lifecycle paths are still duplicated and need to be folded into the same shared adapter-driven engine
+- top-level rename / soft-delete / restore action-entry validation now also shares one guard helper for missing-resource / permission / tombstone checks
+- remaining gap: modal/reset handling and some secondary lifecycle paths are still duplicated and need to be folded into the same shared adapter-driven engine
 
 - rename: commit new title/desired repo name locally first, then perform remote rename later
 - soft-delete/restore: commit lifecycle locally first, then update remote repo metadata later
