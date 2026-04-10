@@ -166,6 +166,31 @@ export function runPermanentDeleteLocalFirst(options) {
   })();
 }
 
+export async function applyOptimisticPermanentDelete(options) {
+  const beforeWait = options?.beforeWait;
+  const waitForNextPaint =
+    typeof options?.waitForNextPaint === "function"
+      ? options.waitForNextPaint
+      : async () => {};
+  const beforeRemove = options?.beforeRemove;
+  const removeVisibleResource = options?.removeVisibleResource;
+  const persistVisibleState = options?.persistVisibleState;
+  const clearSelection = options?.clearSelection;
+  const resetModal = options?.resetModal;
+  const afterReset = options?.afterReset;
+  const render = options?.render;
+
+  beforeWait?.();
+  await waitForNextPaint();
+  beforeRemove?.();
+  removeVisibleResource?.();
+  persistVisibleState?.();
+  clearSelection?.();
+  resetModal?.();
+  afterReset?.();
+  render?.();
+}
+
 export async function ensureResourceNotTombstoned(options) {
   const installationId = options?.installationId;
   const resource = options?.resource;

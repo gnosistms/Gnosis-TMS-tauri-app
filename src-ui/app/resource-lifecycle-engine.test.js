@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  applyOptimisticPermanentDelete,
   guardTopLevelResourceAction,
   runPermanentDeleteLocalFirst,
 } from "./resource-lifecycle-engine.js";
@@ -169,5 +170,51 @@ test("shared permanent delete helper handles post-tombstone local cleanup failur
     "commitTombstone",
     "purgeLocalRepo",
     ["onLocalDeleteError", "purge failed"],
+  ]);
+});
+
+test("shared optimistic permanent delete helper applies the local-hide sequence in order", async () => {
+  const calls = [];
+
+  await applyOptimisticPermanentDelete({
+    beforeWait: () => {
+      calls.push("beforeWait");
+    },
+    waitForNextPaint: async () => {
+      calls.push("waitForNextPaint");
+    },
+    beforeRemove: () => {
+      calls.push("beforeRemove");
+    },
+    removeVisibleResource: () => {
+      calls.push("removeVisibleResource");
+    },
+    persistVisibleState: () => {
+      calls.push("persistVisibleState");
+    },
+    clearSelection: () => {
+      calls.push("clearSelection");
+    },
+    resetModal: () => {
+      calls.push("resetModal");
+    },
+    afterReset: () => {
+      calls.push("afterReset");
+    },
+    render: () => {
+      calls.push("render");
+    },
+  });
+
+  assert.deepEqual(calls, [
+    "beforeWait",
+    "waitForNextPaint",
+    "beforeRemove",
+    "removeVisibleResource",
+    "persistVisibleState",
+    "clearSelection",
+    "resetModal",
+    "afterReset",
+    "render",
   ]);
 });

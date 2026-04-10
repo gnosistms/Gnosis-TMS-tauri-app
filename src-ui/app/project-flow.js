@@ -54,6 +54,7 @@ import {
   submitTopLevelResourceMutation,
 } from "./resource-top-level-mutations.js";
 import {
+  applyOptimisticPermanentDelete,
   commitMetadataFirstTopLevelMutation,
   ensureResourceNotTombstoned,
   guardTopLevelResourceAction,
@@ -2889,16 +2890,25 @@ export async function confirmProjectPermanentDeletion(render) {
   }
 
   const snapshot = cloneProjectCollections();
-  beginEntityModalSubmit(state.projectPermanentDeletion, render);
-  await waitForNextPaint();
-
-  state.projectSyncVersion += 1;
-  beginProjectsPageSync();
-  setProjectUiDebug(render, "Deleting project...");
-  removeVisibleProject(project.id);
-  persistProjectsForTeam(selectedTeam);
-  resetProjectPermanentDeletion();
-  render();
+  await applyOptimisticPermanentDelete({
+    beforeWait: () => {
+      beginEntityModalSubmit(state.projectPermanentDeletion, render);
+    },
+    waitForNextPaint,
+    beforeRemove: () => {
+      state.projectSyncVersion += 1;
+      beginProjectsPageSync();
+      setProjectUiDebug(render, "Deleting project...");
+    },
+    removeVisibleResource: () => {
+      removeVisibleProject(project.id);
+    },
+    persistVisibleState: () => {
+      persistProjectsForTeam(selectedTeam);
+    },
+    resetModal: resetProjectPermanentDeletion,
+    render,
+  });
 
   runPermanentDeleteLocalFirst({
     commitTombstone: () => upsertProjectMetadataRecord(selectedTeam, {

@@ -35,6 +35,7 @@ import {
   submitTopLevelResourceMutation,
 } from "./resource-top-level-mutations.js";
 import {
+  applyOptimisticPermanentDelete,
   commitMetadataFirstTopLevelMutation,
   guardTopLevelResourceAction,
   runPermanentDeleteLocalFirst,
@@ -535,17 +536,29 @@ export async function confirmGlossaryPermanentDeletion(render) {
     return;
   }
 
-  beginEntityModalSubmit(state.glossaryPermanentDeletion, render);
-  await waitForNextPaint();
-  state.glossarySyncVersion += 1;
   const snapshot = snapshotVisibleGlossaryState();
-  removeGlossaryFromState(glossary.id, glossary.repoName);
-  persistGlossariesForTeam(team);
-  if (state.selectedGlossaryId === glossary.id) {
-    state.selectedGlossaryId = null;
-  }
-  resetGlossaryPermanentDeletion();
-  render();
+  await applyOptimisticPermanentDelete({
+    beforeWait: () => {
+      beginEntityModalSubmit(state.glossaryPermanentDeletion, render);
+    },
+    waitForNextPaint,
+    beforeRemove: () => {
+      state.glossarySyncVersion += 1;
+    },
+    removeVisibleResource: () => {
+      removeGlossaryFromState(glossary.id, glossary.repoName);
+    },
+    persistVisibleState: () => {
+      persistGlossariesForTeam(team);
+    },
+    clearSelection: () => {
+      if (state.selectedGlossaryId === glossary.id) {
+        state.selectedGlossaryId = null;
+      }
+    },
+    resetModal: resetGlossaryPermanentDeletion,
+    render,
+  });
 
   runPermanentDeleteLocalFirst({
     commitTombstone: () => upsertGlossaryMetadataRecord(team, glossaryMetadataRecord(glossary, {
