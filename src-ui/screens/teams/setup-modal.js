@@ -24,6 +24,15 @@ const INSTALL_FLOW_MESSAGE =
 const FINISH_INSTALL_MESSAGE =
   "You have successfully installed Gnosis TMS into your GitHub organization. Click below to finish setup.";
 
+function renderInvalidInstallationMessage(setup) {
+  const expectedOrganizationName = String(setup.expectedOrganizationName ?? "").trim();
+  if (expectedOrganizationName) {
+    return `You MUST install this app to the ${escapeHtml(expectedOrganizationName)} organization, not to your personal GitHub account. Click below to go back to GitHub and redo the installation.`;
+  }
+
+  return "You MUST install this app to your organization, not to your personal GitHub account. Click below to go back to GitHub and redo the installation.";
+}
+
 function getStepConfig(setup) {
   const isIntroStep = setup.step === "intro";
   const isGuideStep = setup.step === "guide";
@@ -91,6 +100,18 @@ function getStepConfig(setup) {
       afterBodySupporting: "",
       body: "",
       actionButton: secondaryButton("Waiting for GitHub...", "noop"),
+    };
+  }
+
+  if (setup.step === "invalidInstallationTarget") {
+    return {
+      eyebrow: "Error",
+      heading: "You installed the app to your personal account",
+      supporting: renderInvalidInstallationMessage(setup),
+      afterBodyClass: "",
+      afterBodySupporting: "",
+      body: "",
+      actionButton: primaryButton("Redo installation", "redo-github-app-install"),
     };
   }
 

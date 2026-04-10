@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
 
 use crate::{
-  local_repo_sync_state::{LocalRepoSyncStateUpdate, upsert_local_repo_sync_state},
+  local_repo_sync_state::{LocalRepoSyncStateUpdate, read_local_repo_sync_state, upsert_local_repo_sync_state},
   project_repo_paths::resolve_or_desired_project_git_repo_path,
   repo_sync_shared::{
     GitTransportAuth,
@@ -333,6 +333,7 @@ fn sync_project_repo(
     .filter(|value| !value.trim().is_empty())
     .unwrap_or("main");
   let local_head_oid = git_output(repo_path, &["rev-parse", "HEAD"], None).ok();
+  let local_sync_state = read_local_repo_sync_state(repo_path)?;
 
   let git_transport_auth = GitTransportAuth::from_token(git_transport_token)?;
   if remote_head_oid.trim().is_empty() {
@@ -340,6 +341,20 @@ fn sync_project_repo(
       git_output(repo_path, &["push", "-u", "origin", branch_name], Some(&git_transport_auth))?;
     }
     let current_head_oid = git_output(repo_path, &["rev-parse", "HEAD"], None).ok();
+    mark_project_repo_synced(project, repo_path)?;
+    return Ok(current_head_oid);
+  }
+
+  if local_sync_state
+    .as_ref()
+    .map(|state| !state.has_ever_synced)
+    .unwrap_or(false)
+  {
+    let current_head_oid = attach_unsynced_local_project_repo_to_remote(
+      repo_path,
+      branch_name,
+      &git_transport_auth,
+    )?;
     mark_project_repo_synced(project, repo_path)?;
     return Ok(current_head_oid);
   }
@@ -355,6 +370,23 @@ fn sync_project_repo(
   let current_head_oid = Some(git_output(repo_path, &["rev-parse", "HEAD"], None)?);
   mark_project_repo_synced(project, repo_path)?;
   Ok(current_head_oid)
+}
+
+fn attach_unsynced_local_project_repo_to_remote(
+  repo_path: &Path,
+  branch_name: &str,
+  git_transport_auth: &GitTransportAuth,
+) -> Result<Option<String>, String> {
+  git_output(repo_path, &["fetch", "origin", branch_name], Some(git_transport_auth))?;
+
+  let remote_tracking_ref = format!("origin/{branch_name}");
+  git_output(
+    repo_path,
+    &["checkout", "-B", branch_name, &remote_tracking_ref],
+    None,
+  )?;
+
+  Ok(Some(git_output(repo_path, &["rev-parse", "HEAD"], None)?))
 }
 
 fn ensure_project_origin_remote(

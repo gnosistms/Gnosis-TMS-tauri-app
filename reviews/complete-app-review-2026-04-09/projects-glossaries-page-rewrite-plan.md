@@ -169,6 +169,13 @@ Status on 2026-04-10:
 - repetitive selected-team lookups were also collapsed back onto the existing `selectedProjectsTeam()` helper instead of being repeated inline
 - current focused rewrite diff across the active simplification files is now `202 insertions, 1133 deletions`
 - the repeated chapter mutation skeleton in `project-flow.js` (`rename`, `delete`, `restore`, `permanentDelete`, glossary-link persistence) was collapsed into one internal helper without introducing another module
+- project repo-internal chapter/file flow now lives in `src-ui/app/project-chapter-flow.js`
+- the call sites that operate on repo-internal project data now import from `project-chapter-flow.js` instead of `project-flow.js`
+- `project-chapter-flow.js` now also has an internal shared chapter-mutation context path instead of repeating the same team/context/permission/tombstone boilerplate around each chapter action
+- broader verification now passes with the split in place:
+  - `node --test src-ui/app/*.test.js`
+  - `npm run build`
+  - `cargo check`
 
 - create a brand-new shared controller for top-level resource pages
 - controller surface should cover:
@@ -195,7 +202,13 @@ Status on 2026-04-10:
 - the old project top-level pending-mutation queue and replay path are gone
 - the old project pending-create / resume-setup path is gone from the page model
 - strict project create remains in place, but more delete-first cleanup is still needed inside `project-flow.js`
-- `project-flow.js` is now at `1908` lines in the current worktree after removing dead top-level rewrite scaffolding and collapsing repeated chapter mutation machinery
+- `project-flow.js` is now at `855` lines in the current worktree and owns top-level project page lifecycle
+- `project-chapter-flow.js` is `1012` lines and owns repo-internal chapter/file behavior
+- the project boundary is now explicit in code:
+  - `project-flow.js` = top-level page lifecycle
+  - `project-chapter-flow.js` = repo-internal chapter/file lifecycle
+- this project split is now build- and test-verified
+- the tracked split diff remains strongly net-negative (`64 insertions, 1100 deletions`), not counting the new `project-chapter-flow.js` file itself
 
 - rewrite the Projects page top-level flow from scratch
 - keep the UI appearance the same

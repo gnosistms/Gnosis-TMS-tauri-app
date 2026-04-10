@@ -42,6 +42,7 @@ export function applyBrokerAuthResult(payload, render, loadUserTeams) {
       status: "success",
       message: payload.message ?? `Signed in as @${session.login}.`,
       session,
+      pendingAutoOpenSingleTeam: true,
     };
     void saveStoredAuthSession(session);
     state.screen = "teams";
@@ -73,6 +74,7 @@ export async function restoreStoredBrokerSession(render, loadUserTeams) {
       status: "success",
       message: `Signed in as @${session.login}.`,
       session,
+      pendingAutoOpenSingleTeam: true,
     };
     state.screen = "teams";
     render();
@@ -95,6 +97,7 @@ export async function restoreStoredBrokerSession(render, loadUserTeams) {
       status: "success",
       message: `Signed in as @${verifiedSession.login}.`,
       session: verifiedSession,
+      pendingAutoOpenSingleTeam: true,
     };
     void saveStoredAuthSession(verifiedSession);
     state.screen = "teams";
@@ -121,6 +124,7 @@ export async function restoreStoredBrokerSession(render, loadUserTeams) {
       status: "success",
       message: `Signed in as @${session.login}.`,
       session,
+      pendingAutoOpenSingleTeam: true,
     };
     state.screen = "teams";
     render();

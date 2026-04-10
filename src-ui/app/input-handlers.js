@@ -1,13 +1,15 @@
 import { state } from "./state.js";
 import { syncAutoSizeTextarea, syncEditorRowTextareaHeight } from "./autosize.js";
 import {
-  updateChapterPermanentDeletionConfirmation,
-  updateChapterGlossaryLinks,
-  updateChapterRenameName,
   updateProjectCreationName,
   updateProjectPermanentDeletionConfirmation,
   updateProjectRenameName,
 } from "./project-flow.js";
+import {
+  updateChapterPermanentDeletionConfirmation,
+  updateChapterGlossaryLinks,
+  updateChapterRenameName,
+} from "./project-chapter-flow.js";
 import {
   updateTeamPermanentDeletionConfirmation,
   updateTeamRenameName,

@@ -2,6 +2,7 @@ import { GITHUB_FREE_ORG_SETUP_URL } from "../constants.js";
 import { handleBrokerAuthExpired, requireBrokerSession } from "../auth-flow.js";
 import { loadTeamProjects } from "../project-flow.js";
 import { invoke, openExternalUrl } from "../runtime.js";
+import { clearNoticeBadge, showNoticeBadge } from "../status-feedback.js";
 import { resetTeamSetup, state } from "../state.js";
 import { upsertStoredTeamRecords } from "../team-storage.js";
 import {
@@ -16,6 +17,23 @@ async function runFinishTeamSetupStep(label, action) {
   } catch (error) {
     throw new Error(`Failed while ${label}: ${error?.message ?? String(error)}`);
   }
+}
+
+function showTeamSetupProgress(render, text) {
+  showNoticeBadge(text, render, null);
+}
+
+function isOrganizationInstallation(installation) {
+  return String(installation?.accountType ?? "").trim().toLowerCase() === "organization";
+}
+
+function openInvalidInstallationModal(render, installation) {
+  state.teamSetup.step = "invalidInstallationTarget";
+  state.teamSetup.error = "";
+  state.teamSetup.githubAppInstallation = installation ?? null;
+  state.teamSetup.invalidInstallationAccountLogin = installation?.accountLogin ?? "";
+  state.teamSetup.invalidInstallationAccountType = installation?.accountType ?? "";
+  render();
 }
 
 export async function openTeamSetup(render) {
@@ -75,12 +93,19 @@ export async function finishTeamSetup(render) {
   }
 
   try {
+    showTeamSetupProgress(render, "Checking GitHub App installation...");
     const installation = await runFinishTeamSetupStep("loading the GitHub App installation details", () =>
       invoke("inspect_github_app_installation", {
         installationId: state.teamSetup.githubAppInstallationId,
         sessionToken: requireBrokerSession(),
       })
     );
+    if (!isOrganizationInstallation(installation)) {
+      clearNoticeBadge();
+      openInvalidInstallationModal(render, installation);
+      return;
+    }
+    showTeamSetupProgress(render, "Configuring GitHub organization...");
     await runFinishTeamSetupStep("configuring the GitHub organization", () =>
       invoke("setup_organization_for_installation", {
         installationId: installation.installationId,
@@ -88,6 +113,7 @@ export async function finishTeamSetup(render) {
         sessionToken: requireBrokerSession(),
       })
     );
+    showTeamSetupProgress(render, "Configuring repository properties...");
     await runFinishTeamSetupStep("configuring the GitHub custom repository property schema", () =>
       invoke("ensure_gnosis_repo_properties_schema", {
         installationId: installation.installationId,
@@ -95,6 +121,7 @@ export async function finishTeamSetup(render) {
         sessionToken: requireBrokerSession(),
       })
     );
+    showTeamSetupProgress(render, "Checking team metadata repository...");
     await runFinishTeamSetupStep("verifying the team-metadata repository", () =>
       invoke("inspect_team_metadata_repo_for_installation", {
         installationId: installation.installationId,
@@ -102,6 +129,7 @@ export async function finishTeamSetup(render) {
         sessionToken: requireBrokerSession(),
       })
     );
+    showTeamSetupProgress(render, "Preparing local team metadata...");
     await runFinishTeamSetupStep("preparing the local team-metadata repository", () =>
       invoke("ensure_local_team_metadata_repo", {
         installationId: installation.installationId,
@@ -124,8 +152,11 @@ export async function finishTeamSetup(render) {
     state.showDeletedTeams = false;
     resetTeamSetup();
     render();
+    showTeamSetupProgress(render, "Loading projects...");
     await loadTeamProjects(render, teamId);
+    clearNoticeBadge();
   } catch (error) {
+    clearNoticeBadge();
     if (await handleBrokerAuthExpired(render, error)) {
       return;
     }
@@ -150,6 +181,17 @@ export function setGithubAppInstallation(payload, render) {
   state.teamSetup.error =
     payload?.message ?? "GitHub App installation did not complete.";
   render();
+}
+
+export async function redoGithubAppInstall(render) {
+  state.teamSetup.step = "confirm";
+  state.teamSetup.error = "";
+  state.teamSetup.githubAppInstallationId = null;
+  state.teamSetup.githubAppInstallation = null;
+  state.teamSetup.invalidInstallationAccountLogin = "";
+  state.teamSetup.invalidInstallationAccountType = "";
+  render();
+  await beginGithubAppInstall(render);
 }
 
 export function cancelTeamSetup(render) {

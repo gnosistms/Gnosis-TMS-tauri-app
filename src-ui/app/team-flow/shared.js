@@ -32,22 +32,32 @@ export function resetOpenState() {
     error: "",
     githubAppInstallationId: null,
     githubAppInstallation: null,
+    invalidInstallationAccountLogin: "",
+    invalidInstallationAccountType: "",
+    expectedOrganizationName: "",
   };
+}
+
+export function isOrganizationTeamRecord(team) {
+  const accountType = String(team?.accountType ?? "").trim().toLowerCase();
+  return accountType === "" || accountType === "organization";
 }
 
 export function applyStoredTeamRecords(teamRecords) {
   const { activeTeams, deletedTeams } = splitStoredTeamRecords(teamRecords);
-  state.teams = activeTeams;
-  state.deletedTeams = deletedTeams;
-  if (deletedTeams.length === 0) {
+  const visibleActiveTeams = activeTeams.filter(isOrganizationTeamRecord);
+  const visibleDeletedTeams = deletedTeams.filter(isOrganizationTeamRecord);
+  state.teams = visibleActiveTeams;
+  state.deletedTeams = visibleDeletedTeams;
+  if (visibleDeletedTeams.length === 0) {
     state.showDeletedTeams = false;
   }
 }
 
 export function applyTeamSnapshotToState(snapshot) {
-  state.teams = snapshot.items;
-  state.deletedTeams = snapshot.deletedItems;
-  if (snapshot.deletedItems.length === 0) {
+  state.teams = snapshot.items.filter(isOrganizationTeamRecord);
+  state.deletedTeams = snapshot.deletedItems.filter(isOrganizationTeamRecord);
+  if (state.deletedTeams.length === 0) {
     state.showDeletedTeams = false;
   }
 }
@@ -71,6 +81,7 @@ export function buildTeamRecordFromInstallation(installation) {
     description: installation.description ?? null,
     installationId: installation.installationId,
     membershipRole: installation.membershipRole ?? "member",
+    accountType: installation.accountType ?? null,
     isDeleted: deleted,
     deletedAt: deleted ? new Date().toISOString() : null,
     syncState: deleted ? "deleted" : "active",
@@ -89,6 +100,7 @@ export function reconcileStoredTeam(storedTeam, installation) {
     ownerLogin: installation.accountLogin || storedTeam.ownerLogin || storedTeam.githubOrg,
     description: installation.description ?? storedTeam.description ?? null,
     membershipRole: installation.membershipRole || storedTeam.membershipRole || "member",
+    accountType: installation.accountType ?? storedTeam.accountType ?? null,
     lastSeenAt: new Date().toISOString(),
     isDeleted: deleted,
     deletedAt: deleted ? storedTeam.deletedAt ?? new Date().toISOString() : null,

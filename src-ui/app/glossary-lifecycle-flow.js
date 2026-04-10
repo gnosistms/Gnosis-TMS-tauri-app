@@ -1,4 +1,5 @@
 import { invoke } from "./runtime.js";
+import { beginPageSync, completePageSync, failPageSync } from "./page-sync.js";
 import {
   resetGlossaryPermanentDeletion,
   resetGlossaryRename,
@@ -10,7 +11,7 @@ import {
   canPermanentlyDeleteGlossaries,
   selectedTeam,
 } from "./glossary-shared.js";
-import { clearScopedSyncBadge, showNoticeBadge, showScopedSyncBadge } from "./status-feedback.js";
+import { clearNoticeBadge, clearScopedSyncBadge, showNoticeBadge, showScopedSyncBadge } from "./status-feedback.js";
 import {
   ensureGlossaryNotTombstoned,
   permanentlyDeleteRemoteGlossaryRepoForTeam,
@@ -49,6 +50,16 @@ function clearGlossaryUiDebug(render) {
 
 function glossaryById(glossaryId) {
   return state.glossaries.find((glossary) => glossary.id === glossaryId) ?? null;
+}
+
+const glossaryPageSyncController = {
+  begin: beginPageSync,
+  complete: completePageSync,
+  fail: failPageSync,
+};
+
+function setGlossariesPageProgress(render, text) {
+  showNoticeBadge(text, render, null);
 }
 
 function lifecycleActionBlockedMessage(team, { actionLabel, requireOwner = false } = {}) {
@@ -251,7 +262,14 @@ export async function submitGlossaryRename(render) {
   render();
   await submitResourcePageWrite({
     pageState: state.glossariesPage,
+    syncController: glossaryPageSyncController,
+    setProgress: (text) => setGlossariesPageProgress(render, text),
+    clearProgress: clearNoticeBadge,
     render,
+    progressLabels: {
+      submitting: "Saving glossary rename...",
+      refreshing: "Refreshing glossary list...",
+    },
     onBlocked: async () => {
       state.glossaryRename.status = "idle";
       state.glossaryRename.error = glossaryWriteBlockedMessage();
@@ -306,7 +324,14 @@ export async function deleteGlossary(render, glossaryId) {
 
   await submitResourcePageWrite({
     pageState: state.glossariesPage,
+    syncController: glossaryPageSyncController,
+    setProgress: (text) => setGlossariesPageProgress(render, text),
+    clearProgress: clearNoticeBadge,
     render,
+    progressLabels: {
+      submitting: "Deleting glossary...",
+      refreshing: "Refreshing glossary list...",
+    },
     onBlocked: async () => {
       showNoticeBadge(glossaryWriteBlockedMessage(), render);
     },
@@ -353,7 +378,14 @@ export async function restoreGlossary(render, glossaryId) {
 
   await submitResourcePageWrite({
     pageState: state.glossariesPage,
+    syncController: glossaryPageSyncController,
+    setProgress: (text) => setGlossariesPageProgress(render, text),
+    clearProgress: clearNoticeBadge,
     render,
+    progressLabels: {
+      submitting: "Restoring glossary...",
+      refreshing: "Refreshing glossary list...",
+    },
     onBlocked: async () => {
       showNoticeBadge(glossaryWriteBlockedMessage(), render);
     },
@@ -466,7 +498,14 @@ export async function confirmGlossaryPermanentDeletion(render) {
 
   await submitResourcePageWrite({
     pageState: state.glossariesPage,
+    syncController: glossaryPageSyncController,
+    setProgress: (text) => setGlossariesPageProgress(render, text),
+    clearProgress: clearNoticeBadge,
     render,
+    progressLabels: {
+      submitting: "Deleting glossary permanently...",
+      refreshing: "Refreshing glossary list...",
+    },
     onBlocked: async () => {
       state.glossaryPermanentDeletion.status = "idle";
       state.glossaryPermanentDeletion.error = glossaryWriteBlockedMessage();

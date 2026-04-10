@@ -21,6 +21,11 @@ import {
 import { processPendingTeamMutations } from "./actions.js";
 import { classifySyncError } from "../sync-error.js";
 import { handleSyncFailure } from "../sync-recovery.js";
+import { loadTeamProjects } from "../project-flow.js";
+
+function isOrganizationInstallation(installation) {
+  return String(installation?.accountType ?? "").toLowerCase() === "organization";
+}
 
 export async function loadUserTeams(render) {
   const syncVersionAtStart = state.teamSyncVersion;
@@ -65,7 +70,8 @@ export async function loadUserTeams(render) {
     const installations = await invoke("list_accessible_github_app_installations", {
       sessionToken: requireBrokerSession(),
     });
-    const installationList = Array.isArray(installations) ? installations : [];
+    const installationList = (Array.isArray(installations) ? installations : [])
+      .filter(isOrganizationInstallation);
     const storedTeamsByInstallationId = new Map(
       existingTeamRecords
         .filter((team) => Number.isFinite(team.installationId))
@@ -100,6 +106,15 @@ export async function loadUserTeams(render) {
     state.selectedTeamId = resolveNextSelectedTeamId(state.selectedTeamId, state.teams);
     state.orgDiscovery = { status: "ready", error: "" };
     await completePageSync(render);
+    const shouldAutoOpenSingleTeam = state.auth.pendingAutoOpenSingleTeam === true;
+    state.auth.pendingAutoOpenSingleTeam = false;
+    if (shouldAutoOpenSingleTeam && state.teams.length === 1) {
+      state.selectedTeamId = state.teams[0].id;
+      state.screen = "projects";
+      render();
+      await loadTeamProjects(render, state.selectedTeamId);
+      return;
+    }
     if (state.pendingTeamMutations.length > 0) {
       void processPendingTeamMutations(render);
     }

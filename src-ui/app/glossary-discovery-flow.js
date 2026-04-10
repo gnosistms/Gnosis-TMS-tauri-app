@@ -1,7 +1,7 @@
 import { waitForNextPaint } from "./runtime.js";
 import { beginPageSync, completePageSync, failPageSync } from "./page-sync.js";
 import { createGlossaryDiscoveryState, state } from "./state.js";
-import { showNoticeBadge } from "./status-feedback.js";
+import { clearNoticeBadge, showNoticeBadge } from "./status-feedback.js";
 import { selectedTeam } from "./glossary-shared.js";
 import {
   listLocalGlossarySummariesForTeam,
@@ -92,6 +92,7 @@ export async function loadTeamGlossaries(
   }
 
   beginPageSync();
+  showNoticeBadge("Loading glossaries...", render, null);
   render();
   await waitForNextPaint();
 
@@ -100,6 +101,7 @@ export async function loadTeamGlossaries(
       const localGlossaries = await listLocalGlossarySummariesForTeam(team);
       if (syncVersionAtStart !== state.glossarySyncVersion) {
         await completePageSync(render);
+        clearNoticeBadge();
         state.glossariesPage.isRefreshing = false;
         render();
         return;
@@ -139,10 +141,12 @@ export async function loadTeamGlossaries(
     });
     if (syncVersionAtStart !== state.glossarySyncVersion) {
       await completePageSync(render);
+      clearNoticeBadge();
       state.glossariesPage.isRefreshing = false;
       render();
       return;
     }
+    showNoticeBadge("Refreshing glossary list...", render, null);
     state.glossaryRepoSyncByRepoName = Object.fromEntries(
       (Array.isArray(syncSnapshots) ? syncSnapshots : [])
         .map((snapshot) => [
@@ -180,11 +184,15 @@ export async function loadTeamGlossaries(
       showNoticeBadge(brokerWarning, render);
     }
     await completePageSync(render);
+    if (!syncIssueText && !brokerWarning) {
+      clearNoticeBadge();
+    }
     state.glossariesPage.isRefreshing = false;
     render();
   } catch (error) {
     if (syncVersionAtStart !== state.glossarySyncVersion) {
       failPageSync();
+      clearNoticeBadge();
       state.glossariesPage.isRefreshing = false;
       render();
       return;
@@ -202,6 +210,7 @@ export async function loadTeamGlossaries(
     }
 
     failPageSync();
+    clearNoticeBadge();
     state.glossariesPage.isRefreshing = false;
     state.glossaryRepoSyncByRepoName = {};
     const hasVisibleLocalData = state.glossaries.length > 0;

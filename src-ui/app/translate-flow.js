@@ -1,5 +1,9 @@
 import { saveStoredProjectsForTeam } from "./project-cache.js";
-import { ensureProjectNotTombstoned } from "./project-flow.js";
+import {
+  ensureProjectNotTombstoned,
+  findChapterContext,
+  selectedProjectsTeam,
+} from "./project-chapter-flow.js";
 import { invoke } from "./runtime.js";
 import { saveStoredEditorFontSizePx } from "./editor-preferences.js";
 import { reconcileExpandedEditorHistoryGroupKeys } from "./editor-history.js";
@@ -13,25 +17,8 @@ import { showNoticeBadge } from "./status-feedback.js";
 
 export const MANAGE_TARGET_LANGUAGES_OPTION_VALUE = "__manage_target_languages__";
 
-function selectedTeam() {
-  return state.teams.find((team) => team.id === state.selectedTeamId) ?? null;
-}
-
 export function findChapterContextById(chapterId = state.selectedChapterId) {
-  if (!chapterId) {
-    return null;
-  }
-
-  for (const project of [...(state.projects ?? []), ...(state.deletedProjects ?? [])]) {
-    const chapter = Array.isArray(project?.chapters)
-      ? project.chapters.find((item) => item?.id === chapterId)
-      : null;
-    if (chapter) {
-      return { project, chapter };
-    }
-  }
-
-  return null;
+  return chapterId ? findChapterContext(chapterId) : null;
 }
 
 function normalizeLanguageSelections(languages, sourceCode, targetCode) {
@@ -220,7 +207,7 @@ export function resolveChapterSourceWordCount(chapter) {
 }
 
 function persistProjectsForSelectedTeam() {
-  const team = selectedTeam();
+  const team = selectedProjectsTeam();
   if (!team) {
     return;
   }
@@ -355,7 +342,7 @@ async function fetchEditorFieldHistory(render, requestKey) {
     return;
   }
 
-  const team = selectedTeam();
+  const team = selectedProjectsTeam();
   const context = findChapterContextById(editorChapter.chapterId);
   if (!Number.isFinite(team?.installationId) || !context?.project?.name) {
     return;
@@ -544,7 +531,7 @@ export async function persistEditorChapterSelections(render) {
     return;
   }
 
-  const team = selectedTeam();
+  const team = selectedProjectsTeam();
   const context = findChapterContextById(editorChapter.chapterId);
   if (!Number.isFinite(team?.installationId) || !context?.project?.name) {
     return;
@@ -614,7 +601,7 @@ export async function persistEditorChapterSelections(render) {
 }
 
 export async function loadSelectedChapterEditorData(render, options = {}) {
-  const team = selectedTeam();
+  const team = selectedProjectsTeam();
   const context = findChapterContextById();
   if (!context || !Number.isFinite(team?.installationId)) {
     state.editorChapter = {
@@ -773,7 +760,7 @@ export async function restoreEditorFieldHistory(render, commitSha) {
     return;
   }
 
-  const team = selectedTeam();
+  const team = selectedProjectsTeam();
   const context = findChapterContextById(editorChapter.chapterId);
   if (!Number.isFinite(team?.installationId) || !context?.project?.name) {
     return;
@@ -960,7 +947,7 @@ export async function toggleEditorRowFieldMarker(render, rowId, languageCode, ki
       : { pleaseCheck: nextEnabled }),
   };
 
-  const team = selectedTeam();
+  const team = selectedProjectsTeam();
   const context = findChapterContextById(editorChapter.chapterId);
   if (!Number.isFinite(team?.installationId) || !context?.project?.name) {
     return;
@@ -1101,7 +1088,7 @@ export async function persistEditorRowOnBlur(render, rowId) {
     return;
   }
 
-  const team = selectedTeam();
+  const team = selectedProjectsTeam();
   const context = findChapterContextById(editorChapter.chapterId);
   if (!Number.isFinite(team?.installationId) || !context?.project?.name) {
     return;

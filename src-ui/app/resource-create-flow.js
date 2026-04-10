@@ -1,3 +1,5 @@
+import { clearNoticeBadge, showNoticeBadge } from "./status-feedback.js";
+
 export function guardResourceCreateStart(options) {
   const installationReady =
     typeof options?.installationReady === "function"
@@ -29,4 +31,12 @@ export function guardResourceCreateStart(options) {
   }
 
   return true;
+}
+
+export function showResourceCreateProgress(render, text) {
+  showNoticeBadge(text, render, null);
+}
+
+export function clearResourceCreateProgress() {
+  clearNoticeBadge();
 }

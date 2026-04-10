@@ -60,6 +60,10 @@ function normalizeTeamRecord(team) {
       : "member";
   const grantedAppPermissions = normalizeInstallationPermissions(team.grantedAppPermissions);
   const approvalState = deriveInstallationApprovalState(grantedAppPermissions);
+  const accountType =
+    typeof team.accountType === "string" && team.accountType.trim()
+      ? team.accountType.trim()
+      : null;
 
   return {
     id:
@@ -95,6 +99,7 @@ function normalizeTeamRecord(team) {
     missingAppPermissions: approvalState.missingAppPermissions,
     installationId:
       Number.isFinite(team.installationId) ? team.installationId : null,
+    accountType,
     orgCreatedAt:
       typeof team.orgCreatedAt === "string" && team.orgCreatedAt.trim()
         ? team.orgCreatedAt

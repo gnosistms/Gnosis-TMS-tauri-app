@@ -20,6 +20,7 @@ export {
   beginTeamOrgSetup,
   beginGithubAppInstall,
   finishTeamSetup,
+  redoGithubAppInstall,
   setGithubAppInstallation,
 } from "./team-flow/setup.js";
 

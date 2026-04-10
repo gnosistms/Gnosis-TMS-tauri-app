@@ -12,7 +12,7 @@ import { applyPendingMutations } from "./optimistic-collection.js";
 import { loadRepoBackedGlossariesForTeam } from "./glossary-repo-flow.js";
 import { state } from "./state.js";
 import { reconcileProjectRepoSyncStates } from "./project-repo-sync-flow.js";
-import { showNoticeBadge } from "./status-feedback.js";
+import { clearNoticeBadge, showNoticeBadge } from "./status-feedback.js";
 import { classifySyncError } from "./sync-error.js";
 import { handleSyncFailure } from "./sync-recovery.js";
 import { mergeMetadataDiscoveryProjects } from "./project-discovery.js";
@@ -320,6 +320,7 @@ export async function loadTeamProjects(render, teamId = state.selectedTeamId, op
     options.setProjectDiscoveryState("loading", "", "", "");
   }
   options.setProjectUiDebug(render, "Refreshing projects...");
+  showNoticeBadge("Loading projects from GitHub...", render, null);
   beginProjectsPageSync();
   render();
 
@@ -385,6 +386,7 @@ export async function loadTeamProjects(render, teamId = state.selectedTeamId, op
     );
     if (syncVersionAtStart !== state.projectSyncVersion) {
       await completeProjectsPageSync(render);
+      clearNoticeBadge();
       render();
       return;
     }
@@ -404,6 +406,7 @@ export async function loadTeamProjects(render, teamId = state.selectedTeamId, op
     const nextVisibleProjects = mergedProjects.length > 0
       ? mergedProjects
       : [...optimisticSnapshot.items, ...optimisticSnapshot.deletedItems];
+    showNoticeBadge("Refreshing local project data...", render, null);
     const mappedProjects = nextVisibleProjects.map((project) => ({
       ...project,
       chapters: Array.isArray(project.chapters) ? project.chapters : [],
@@ -442,6 +445,7 @@ export async function loadTeamProjects(render, teamId = state.selectedTeamId, op
     options.setProjectDiscoveryState("ready", "", glossaryWarning, recoveryMessage);
     render();
     await waitForNextPaint();
+    showNoticeBadge("Rebuilding local project repo state...", render, null);
     await reconcileProjectRepoSyncStates(render, selectedTeam, mappedProjects);
     await refreshProjectFilesFromDisk(
       render,
@@ -451,6 +455,7 @@ export async function loadTeamProjects(render, teamId = state.selectedTeamId, op
     );
     options.clearProjectUiDebug(render);
     await completeProjectsPageSync(render);
+    clearNoticeBadge();
     render();
     if (glossaryDiscoveryResult.status === "rejected" && glossaryWarning) {
       showNoticeBadge(glossaryWarning, render, 3200);
@@ -483,6 +488,7 @@ export async function loadTeamProjects(render, teamId = state.selectedTeamId, op
     }
     options.clearProjectUiDebug(render);
     failProjectsPageSync();
+    clearNoticeBadge();
     render();
   }
 }

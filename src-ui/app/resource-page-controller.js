@@ -30,6 +30,15 @@ function setPageData(pageState, items) {
   pageState.visibleData = normalized;
 }
 
+function progressTextFor(options, key) {
+  if (!options || typeof options !== "object") {
+    return "";
+  }
+
+  const value = options[key];
+  return typeof value === "string" && value.trim() ? value.trim() : "";
+}
+
 export async function loadResourcePageFromCacheThenRefresh(options) {
   const pageState = options?.pageState;
   if (!pageState) {
@@ -69,11 +78,28 @@ export async function refreshResourcePage(options) {
   const render = options?.render;
   const onError = options?.onError;
   const skipWriteBlock = options?.skipWriteBlock === true;
+  const syncController = options?.syncController;
+  const syncAlreadyActive = options?.syncAlreadyActive === true;
+  const progressText = progressTextFor(options?.progressLabels, "refreshing");
+  const setProgress =
+    typeof options?.setProgress === "function"
+      ? options.setProgress
+      : null;
+  const clearProgress =
+    typeof options?.clearProgress === "function"
+      ? options.clearProgress
+      : null;
 
   if (!skipWriteBlock && pageState.writeState !== "idle") {
     return null;
   }
 
+  if (!syncAlreadyActive) {
+    syncController?.begin?.();
+  }
+  if (progressText) {
+    setProgress?.(progressText);
+  }
   pageState.isRefreshing = true;
   pageState.error = "";
   render?.();
@@ -82,11 +108,19 @@ export async function refreshResourcePage(options) {
     const refreshedData = normalizeData(await loadData());
     setPageData(pageState, refreshedData);
     pageState.isRefreshing = false;
+    if (!syncAlreadyActive) {
+      await syncController?.complete?.(render);
+    }
+    clearProgress?.();
     render?.();
     return refreshedData;
   } catch (error) {
     pageState.isRefreshing = false;
     pageState.error = error?.message ?? String(error);
+    if (!syncAlreadyActive) {
+      syncController?.fail?.();
+    }
+    clearProgress?.();
     await onError?.(error);
     render?.();
     throw error;
@@ -113,14 +147,34 @@ export async function submitResourcePageWrite(options) {
       ? options.refreshOptions
       : {};
   const render = options?.render;
+  const syncController = options?.syncController;
+  const submittingProgressText = progressTextFor(options?.progressLabels, "submitting");
+  const refreshingProgressText =
+    progressTextFor(options?.progressLabels, "refreshing")
+    || progressTextFor(refreshOptions?.progressLabels, "refreshing");
+  const setProgress =
+    typeof options?.setProgress === "function"
+      ? options.setProgress
+      : null;
+  const clearProgress =
+    typeof options?.clearProgress === "function"
+      ? options.clearProgress
+      : null;
 
   pageState.writeState = "submitting";
   pageState.error = "";
+  syncController?.begin?.();
+  if (submittingProgressText) {
+    setProgress?.(submittingProgressText);
+  }
   render?.();
 
   try {
     const mutationResult = await runMutation();
     pageState.writeState = "refreshingAfterWrite";
+    if (refreshingProgressText) {
+      setProgress?.(refreshingProgressText);
+    }
     render?.();
 
     await refreshResourcePage({
@@ -128,15 +182,29 @@ export async function submitResourcePageWrite(options) {
       pageState,
       render,
       skipWriteBlock: true,
+      syncController,
+      syncAlreadyActive: true,
+      setProgress,
+      clearProgress,
+      progressLabels: {
+        ...(refreshOptions.progressLabels ?? {}),
+        refreshing:
+          progressTextFor(refreshOptions.progressLabels, "refreshing")
+          || refreshingProgressText,
+      },
     });
 
     pageState.writeState = "idle";
+    await syncController?.complete?.(render);
+    clearProgress?.();
     await options?.onSuccess?.(mutationResult);
     render?.();
     return true;
   } catch (error) {
     pageState.writeState = "idle";
     pageState.error = error?.message ?? String(error);
+    syncController?.fail?.();
+    clearProgress?.();
     await options?.onError?.(error);
     render?.();
     return false;

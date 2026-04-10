@@ -21,6 +21,7 @@ import {
   continueTeamSetupAfterOrgCreation,
   finishTeamSetup,
   openTeamSetup,
+  redoGithubAppInstall,
 } from "../team-flow/setup.js";
 import { actionSuffix, runWithImmediateLoading } from "../action-helpers.js";
 
@@ -37,6 +38,7 @@ export function createTeamActions(render) {
     "cancel-team-leave": () => cancelTeamLeave(render),
     "acknowledge-team-setup": () => acknowledgeTeamSetup(render),
     "begin-github-app-install": () => beginGithubAppInstall(render),
+    "redo-github-app-install": () => redoGithubAppInstall(render),
     "begin-team-org-setup": () => beginTeamOrgSetup(render),
     "continue-team-setup-after-org-creation": () => continueTeamSetupAfterOrgCreation(render),
     "finish-team-setup": () => finishTeamSetup(render),

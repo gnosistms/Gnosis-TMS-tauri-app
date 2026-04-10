@@ -33,6 +33,7 @@ export const state = {
     status: "idle",
     message: "",
     session: null,
+    pendingAutoOpenSingleTeam: false,
   },
   appUpdate: createAppUpdateState(),
   offline: createOfflineState(),
@@ -90,15 +91,20 @@ export function hydratePersistentAppState() {
   hydrateStoredEditorPreferences();
 }
 
+function isOrganizationTeamRecord(team) {
+  const accountType = String(team?.accountType ?? "").trim().toLowerCase();
+  return accountType === "" || accountType === "organization";
+}
+
 export function hydrateStoredTeamState() {
   const storedTeams = splitStoredTeamRecords();
-  state.teams = storedTeams.activeTeams;
-  state.deletedTeams = storedTeams.deletedTeams;
+  state.teams = storedTeams.activeTeams.filter(isOrganizationTeamRecord);
+  state.deletedTeams = storedTeams.deletedTeams.filter(isOrganizationTeamRecord);
   state.pendingTeamMutations = loadStoredTeamPendingMutations();
   state.selectedTeamId =
-    state.selectedTeamId && storedTeams.activeTeams.some((team) => team.id === state.selectedTeamId)
+    state.selectedTeamId && state.teams.some((team) => team.id === state.selectedTeamId)
       ? state.selectedTeamId
-      : storedTeams.activeTeams[0]?.id ?? null;
+      : state.teams[0]?.id ?? null;
 }
 
 export function hydrateStoredEditorPreferences() {
@@ -171,6 +177,9 @@ export function createTeamSetupState() {
     error: "",
     githubAppInstallationId: null,
     githubAppInstallation: null,
+    invalidInstallationAccountLogin: "",
+    invalidInstallationAccountType: "",
+    expectedOrganizationName: "",
   };
 }
 
@@ -467,6 +476,7 @@ export function resetSessionState() {
     status: "idle",
     message: "",
     session: null,
+    pendingAutoOpenSingleTeam: false,
   };
   state.appUpdate = createAppUpdateState();
   state.githubAppTest = createGithubAppTestState();

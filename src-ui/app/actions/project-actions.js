@@ -1,30 +1,32 @@
 import { state } from "../state.js";
 import {
-  acknowledgeChapterGlossaryConflict,
-  cancelChapterPermanentDeletion,
-  cancelChapterRename,
   cancelProjectCreation,
   cancelProjectPermanentDeletion,
   cancelProjectRename,
-  confirmChapterPermanentDeletion,
   confirmProjectPermanentDeletion,
   createProjectForSelectedTeam,
-  deleteChapter,
   deleteProject,
-  openChapterPermanentDeletion,
-  openChapterRename,
   openProjectRename,
   permanentlyDeleteProject,
   repairProjectRepoBinding,
   rebuildProjectLocalRepo,
-  restoreChapter,
   restoreProject,
-  submitChapterRename,
   submitProjectCreation,
   submitProjectRename,
-  toggleDeletedFiles,
   toggleDeletedProjects,
 } from "../project-flow.js";
+import {
+  acknowledgeChapterGlossaryConflict,
+  cancelChapterPermanentDeletion,
+  cancelChapterRename,
+  confirmChapterPermanentDeletion,
+  deleteChapter,
+  openChapterPermanentDeletion,
+  openChapterRename,
+  restoreChapter,
+  submitChapterRename,
+  toggleDeletedFiles,
+} from "../project-chapter-flow.js";
 import { addFilesToProject } from "../project-import-flow.js";
 import { actionSuffix, runWithImmediateLoading } from "../action-helpers.js";
 

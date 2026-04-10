@@ -1,6 +1,7 @@
 import { invoke } from "./runtime.js";
 import { resetGlossaryCreation, state } from "./state.js";
-import { showNoticeBadge } from "./status-feedback.js";
+import { clearNoticeBadge, showNoticeBadge } from "./status-feedback.js";
+import { beginPageSync, completePageSync, failPageSync } from "./page-sync.js";
 import { findIsoLanguageOption } from "../lib/language-options.js";
 import { openGlossaryEditor } from "./glossary-editor-flow.js";
 import {
@@ -25,7 +26,9 @@ import {
   updateEntityFormField,
 } from "./resource-entity-modal.js";
 import {
+  clearResourceCreateProgress,
   guardResourceCreateStart,
+  showResourceCreateProgress,
 } from "./resource-create-flow.js";
 import {
   areResourcePageWritesDisabled,
@@ -39,6 +42,16 @@ function detectGlossaryImportFileType(fileName) {
     return "tmx";
   }
   return null;
+}
+
+const glossaryPageSyncController = {
+  begin: beginPageSync,
+  complete: completePageSync,
+  fail: failPageSync,
+};
+
+function setGlossariesPageProgress(render, text) {
+  showNoticeBadge(text, render, null);
 }
 
 function remoteGlossaryRepoUrl(remoteRepo) {
@@ -147,16 +160,18 @@ async function createRemoteGlossaryRepoForAvailableName(team, baseRepoName) {
   throw new Error("Could not determine an available repo name.");
 }
 
-async function completeGlossaryCreateSynchronously(team, input) {
+async function completeGlossaryCreateSynchronously(team, input, render) {
   const glossaryId = crypto.randomUUID();
   let remoteRepo = null;
   let localRepoName = "";
 
   try {
+    showResourceCreateProgress(render, "Creating GitHub repository...");
     const remoteCreateResult = await createRemoteGlossaryRepoForAvailableName(team, input.repoName);
     remoteRepo = remoteCreateResult.remoteRepo;
     localRepoName = remoteCreateResult.repoName;
 
+    showResourceCreateProgress(render, "Preparing local glossary repo...");
     await invoke("prepare_local_gtms_glossary_repo", {
       input: {
         installationId: team.installationId,
@@ -164,6 +179,7 @@ async function completeGlossaryCreateSynchronously(team, input) {
         repoName: localRepoName,
       },
     });
+    showResourceCreateProgress(render, "Initializing local glossary repo...");
     const glossary = await invoke("initialize_gtms_glossary_repo", {
       input: {
         installationId: team.installationId,
@@ -183,13 +199,16 @@ async function completeGlossaryCreateSynchronously(team, input) {
       remoteState: "linked",
       resolutionState: "",
     };
+    showResourceCreateProgress(render, "Saving team metadata...");
     await upsertGlossaryMetadataRecord(
       team,
       linkedGlossaryMetadataRecord(linkedGlossary, remoteRepo),
       { requirePushSuccess: true },
     );
+    showResourceCreateProgress(render, "Linking local glossary repo...");
     await prepareLocalGlossaryRepo(team, remoteRepo, glossaryId);
 
+    showResourceCreateProgress(render, "Syncing glossary repo...");
     const snapshots = await syncGlossaryReposForTeam(team, [remoteRepo]);
     const syncIssue = getGlossarySyncIssueMessage(snapshots);
     if (syncIssue?.message) {
@@ -332,6 +351,9 @@ export async function submitGlossaryCreation(render) {
   render();
   await submitResourcePageWrite({
     pageState: state.glossariesPage,
+    syncController: glossaryPageSyncController,
+    setProgress: (text) => setGlossariesPageProgress(render, text),
+    clearProgress: clearNoticeBadge,
     render,
     onBlocked: async () => {
       state.glossaryCreation.status = "idle";
@@ -344,11 +366,15 @@ export async function submitGlossaryCreation(render) {
         repoName,
         sourceLanguage,
         targetLanguage,
-      }),
+      }, render),
     refreshOptions: {
-      loadData: async () => reloadGlossariesAfterWrite(render, team),
+      loadData: async () => {
+        showResourceCreateProgress(render, "Refreshing glossary list...");
+        return reloadGlossariesAfterWrite(render, team);
+      },
     },
     onSuccess: async (result) => {
+      clearResourceCreateProgress();
       resetGlossaryCreation();
       state.selectedGlossaryId = result.glossaryId;
       const refreshedGlossary = state.glossaries.find((item) => item.id === result.glossaryId) ?? null;
@@ -363,6 +389,7 @@ export async function submitGlossaryCreation(render) {
       });
     },
     onError: async (error) => {
+      clearResourceCreateProgress();
       state.glossaryCreation.status = "idle";
       state.glossaryCreation.error = error?.message ?? String(error);
     },
@@ -408,6 +435,9 @@ export async function importGlossaryFromTmx(render) {
 
   await submitResourcePageWrite({
     pageState: state.glossariesPage,
+    syncController: glossaryPageSyncController,
+    setProgress: (text) => setGlossariesPageProgress(render, text),
+    clearProgress: clearNoticeBadge,
     render,
     onBlocked: async () => {
       showNoticeBadge("Wait for the current glossary refresh or write to finish.", render);
@@ -415,6 +445,7 @@ export async function importGlossaryFromTmx(render) {
     runMutation: async () => {
       const glossaryId = crypto.randomUUID();
       const bytes = Array.from(new Uint8Array(await selectedFile.arrayBuffer()));
+      showResourceCreateProgress(render, "Reading TMX file...");
       const importPreview = await invoke("inspect_tmx_glossary_import", {
         input: {
           fileName: selectedFile.name,
@@ -429,10 +460,12 @@ export async function importGlossaryFromTmx(render) {
       let remoteRepo = null;
       let localRepoName = "";
       try {
+        showResourceCreateProgress(render, "Creating GitHub repository...");
         const remoteCreateResult = await createRemoteGlossaryRepoForAvailableName(team, repoName);
         remoteRepo = remoteCreateResult.remoteRepo;
         localRepoName = remoteCreateResult.repoName;
 
+        showResourceCreateProgress(render, "Preparing local glossary repo...");
         await invoke("prepare_local_gtms_glossary_repo", {
           input: {
             installationId: team.installationId,
@@ -440,6 +473,7 @@ export async function importGlossaryFromTmx(render) {
             repoName: localRepoName,
           },
         });
+        showResourceCreateProgress(render, "Importing TMX into local glossary repo...");
         const glossary = await invoke("import_tmx_to_gtms_glossary_repo", {
           input: {
             installationId: team.installationId,
@@ -456,13 +490,16 @@ export async function importGlossaryFromTmx(render) {
           remoteState: "linked",
           resolutionState: "",
         };
+        showResourceCreateProgress(render, "Saving team metadata...");
         await upsertGlossaryMetadataRecord(
           team,
           linkedGlossaryMetadataRecord(linkedGlossary, remoteRepo),
           { requirePushSuccess: true },
         );
+        showResourceCreateProgress(render, "Linking local glossary repo...");
         await prepareLocalGlossaryRepo(team, remoteRepo, glossaryId);
 
+        showResourceCreateProgress(render, "Syncing glossary repo...");
         const snapshots = await syncGlossaryReposForTeam(team, [remoteRepo]);
         const syncIssue = getGlossarySyncIssueMessage(snapshots);
         if (syncIssue?.message) {
@@ -493,9 +530,13 @@ export async function importGlossaryFromTmx(render) {
       }
     },
     refreshOptions: {
-      loadData: async () => reloadGlossariesAfterWrite(render, team),
+      loadData: async () => {
+        showResourceCreateProgress(render, "Refreshing glossary list...");
+        return reloadGlossariesAfterWrite(render, team);
+      },
     },
     onSuccess: async (result) => {
+      clearResourceCreateProgress();
       state.selectedGlossaryId = result.glossaryId;
       const refreshedGlossary = state.glossaries.find((item) => item.id === result.glossaryId) ?? null;
       showNoticeBadge(
@@ -507,6 +548,7 @@ export async function importGlossaryFromTmx(render) {
       await openGlossaryEditor(render, result.glossaryId, { preferredGlossary: refreshedGlossary });
     },
     onError: async (error) => {
+      clearResourceCreateProgress();
       showNoticeBadge(error?.message ?? String(error), render);
     },
   });

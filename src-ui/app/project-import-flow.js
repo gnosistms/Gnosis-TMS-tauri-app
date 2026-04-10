@@ -12,7 +12,7 @@ import {
   showScopedSyncBadge,
 } from "./status-feedback.js";
 import { reconcileProjectRepoSyncStates } from "./project-repo-sync-flow.js";
-import { ensureProjectNotTombstoned, refreshProjectFilesFromDisk } from "./project-flow.js";
+import { ensureProjectNotTombstoned, refreshProjectFilesFromDisk } from "./project-chapter-flow.js";
 import { openLocalFilePicker } from "./local-file-picker.js";
 
 function detectImportFileType(fileName) {
