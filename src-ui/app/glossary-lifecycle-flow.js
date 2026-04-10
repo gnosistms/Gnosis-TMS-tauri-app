@@ -40,6 +40,15 @@ import {
 } from "./resource-lifecycle-engine.js";
 import { classifySyncError } from "./sync-error.js";
 import { handleSyncFailure } from "./sync-recovery.js";
+import {
+  beginEntityModalSubmit,
+  cancelEntityModal,
+  entityConfirmationMatches,
+  openEntityConfirmationModal,
+  openEntityRenameModal,
+  updateEntityModalConfirmation,
+  updateEntityModalName,
+} from "./resource-entity-modal.js";
 
 const inflightGlossaryMutationIds = new Set();
 
@@ -235,27 +244,25 @@ export function openGlossaryRename(render, glossaryId) {
       return;
     }
 
-    state.glossaryRename = {
-      isOpen: true,
-      status: "idle",
-      error: "",
-      glossaryId,
-      glossaryName: glossary.title,
-    };
+    openEntityRenameModal({
+      setState: (nextState) => {
+        state.glossaryRename = nextState;
+      },
+      entityId: glossaryId,
+      idField: "glossaryId",
+      nameField: "glossaryName",
+      currentName: glossary.title,
+    });
     render();
   });
 }
 
 export function updateGlossaryRenameName(value) {
-  state.glossaryRename.glossaryName = value;
-  if (state.glossaryRename.error) {
-    state.glossaryRename.error = "";
-  }
+  updateEntityModalName(state.glossaryRename, "glossaryName", value);
 }
 
 export function cancelGlossaryRename(render) {
-  resetGlossaryRename();
-  render();
+  cancelEntityModal(resetGlossaryRename, render);
 }
 
 export async function submitGlossaryRename(render) {
@@ -451,46 +458,47 @@ export async function restoreGlossary(render, glossaryId) {
 export function openGlossaryPermanentDeletion(render, glossaryId) {
   const glossary = glossaryById(glossaryId);
   const team = selectedTeam();
-  const blockedMessage = lifecycleActionBlockedMessage(team, {
-    actionLabel: "permanently delete glossaries",
-    requireOwner: true,
-  });
-
-  if (!glossary || glossary.lifecycleState !== "deleted") {
-    showNoticeBadge("Could not find the selected deleted glossary.", render);
-    return;
-  }
-  if (blockedMessage) {
-    showNoticeBadge(blockedMessage, render);
-    return;
-  }
-  void ensureGlossaryNotTombstoned(render, team, glossary).then((blocked) => {
-    if (blocked) {
+  void guardTopLevelResourceAction({
+    resource: glossary,
+    isExpectedResource: (currentGlossary) =>
+      Boolean(currentGlossary) && currentGlossary.lifecycleState === "deleted",
+    getBlockedMessage: () => lifecycleActionBlockedMessage(team, {
+      actionLabel: "permanently delete glossaries",
+      requireOwner: true,
+    }),
+    ensureNotTombstoned: (currentGlossary) =>
+      ensureGlossaryNotTombstoned(render, team, currentGlossary),
+    onMissing: () => {
+      showNoticeBadge("Could not find the selected deleted glossary.", render);
+    },
+    onBlocked: (blockedMessage) => {
+      showNoticeBadge(blockedMessage, render);
+    },
+  }).then((allowed) => {
+    if (!allowed) {
       return;
     }
 
-    state.glossaryPermanentDeletion = {
-      isOpen: true,
-      status: "idle",
-      error: "",
-      glossaryId,
-      glossaryName: glossary.title,
-      confirmationText: "",
-    };
+    openEntityConfirmationModal({
+      setState: (nextState) => {
+        state.glossaryPermanentDeletion = nextState;
+      },
+      entityId: glossaryId,
+      idField: "glossaryId",
+      nameField: "glossaryName",
+      confirmationField: "confirmationText",
+      currentName: glossary.title,
+    });
     render();
   });
 }
 
 export function updateGlossaryPermanentDeletionConfirmation(value) {
-  state.glossaryPermanentDeletion.confirmationText = value;
-  if (state.glossaryPermanentDeletion.error) {
-    state.glossaryPermanentDeletion.error = "";
-  }
+  updateEntityModalConfirmation(state.glossaryPermanentDeletion, "confirmationText", value);
 }
 
 export function cancelGlossaryPermanentDeletion(render) {
-  resetGlossaryPermanentDeletion();
-  render();
+  cancelEntityModal(resetGlossaryPermanentDeletion, render);
 }
 
 export async function confirmGlossaryPermanentDeletion(render) {
@@ -512,7 +520,10 @@ export async function confirmGlossaryPermanentDeletion(render) {
     render();
     return;
   }
-  if (confirmationText !== state.glossaryPermanentDeletion.glossaryName) {
+  if (!entityConfirmationMatches(state.glossaryPermanentDeletion, {
+    nameField: "glossaryName",
+    confirmationField: "confirmationText",
+  })) {
     state.glossaryPermanentDeletion.error = "Enter the glossary name exactly to delete it.";
     render();
     return;
@@ -523,9 +534,7 @@ export async function confirmGlossaryPermanentDeletion(render) {
     return;
   }
 
-  state.glossaryPermanentDeletion.status = "loading";
-  state.glossaryPermanentDeletion.error = "";
-  render();
+  beginEntityModalSubmit(state.glossaryPermanentDeletion, render);
   await waitForNextPaint();
   state.glossarySyncVersion += 1;
   const snapshot = snapshotVisibleGlossaryState();
@@ -559,8 +568,8 @@ export async function confirmGlossaryPermanentDeletion(render) {
       } catch (error) {
         showNoticeBadge(
           `Glossary deletion was committed locally, but remote cleanup still needs attention: ${
-            error?.message ?? String(error)
-          }`,
+          error?.message ?? String(error)
+        }`,
           render,
           4200,
         );

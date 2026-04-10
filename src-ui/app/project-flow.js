@@ -62,6 +62,15 @@ import {
   canCreateRepoResources,
   canPermanentlyDeleteProjectFiles,
 } from "./resource-capabilities.js";
+import {
+  beginEntityModalSubmit,
+  cancelEntityModal,
+  entityConfirmationMatches,
+  openEntityConfirmationModal,
+  openEntityRenameModal,
+  updateEntityModalConfirmation,
+  updateEntityModalName,
+} from "./resource-entity-modal.js";
 
 function setProjectUiDebug(render, text) {
   showScopedSyncBadge("projects", text, render);
@@ -1576,27 +1585,25 @@ export function openProjectRename(render, projectId) {
       return;
     }
 
-    state.projectRename = {
-      isOpen: true,
-      projectId,
-      projectName: project.title ?? project.name,
-      status: "idle",
-      error: "",
-    };
+    openEntityRenameModal({
+      setState: (nextState) => {
+        state.projectRename = nextState;
+      },
+      entityId: projectId,
+      idField: "projectId",
+      nameField: "projectName",
+      currentName: project.title ?? project.name,
+    });
     render();
   });
 }
 
 export function updateProjectRenameName(projectName) {
-  state.projectRename.projectName = projectName;
-  if (state.projectRename.error) {
-    state.projectRename.error = "";
-  }
+  updateEntityModalName(state.projectRename, "projectName", projectName);
 }
 
 export function cancelProjectRename(render) {
-  resetProjectRename();
-  render();
+  cancelEntityModal(resetProjectRename, render);
 }
 
 export function openChapterRename(render, chapterId) {
@@ -2785,44 +2792,49 @@ async function processPendingProjectMutations(render, selectedTeam) {
 export function permanentlyDeleteProject(render, projectId) {
   const project = state.deletedProjects.find((item) => item.id === projectId);
   const selectedTeam = state.teams.find((team) => team.id === state.selectedTeamId);
-  if (!project) {
-    setProjectDiscoveryState("error", "Could not find the selected deleted project.");
-    render();
-    return;
-  }
-
-  if (selectedTeam?.canDelete !== true) {
-    setProjectDiscoveryState("error", "You do not have permission to delete projects in this team.");
-    render();
-    return;
-  }
-  void ensureProjectNotTombstoned(render, selectedTeam, project).then((blocked) => {
-    if (blocked) {
+  void guardTopLevelResourceAction({
+    resource: project,
+    isExpectedResource: (currentProject) =>
+      Boolean(currentProject) && currentProject.lifecycleState === "deleted",
+    getBlockedMessage: () =>
+      selectedTeam?.canDelete === true
+        ? ""
+        : "You do not have permission to delete projects in this team.",
+    ensureNotTombstoned: (currentProject) =>
+      ensureProjectNotTombstoned(render, selectedTeam, currentProject),
+    onMissing: () => {
+      setProjectDiscoveryState("error", "Could not find the selected deleted project.");
+      render();
+    },
+    onBlocked: (blockedMessage) => {
+      setProjectDiscoveryState("error", blockedMessage);
+      render();
+    },
+  }).then((allowed) => {
+    if (!allowed) {
       return;
     }
 
-    state.projectPermanentDeletion = {
-      isOpen: true,
-      projectId,
-      projectName: project.title ?? project.name,
-      confirmationText: "",
-      status: "idle",
-      error: "",
-    };
+    openEntityConfirmationModal({
+      setState: (nextState) => {
+        state.projectPermanentDeletion = nextState;
+      },
+      entityId: projectId,
+      idField: "projectId",
+      nameField: "projectName",
+      confirmationField: "confirmationText",
+      currentName: project.title ?? project.name,
+    });
     render();
   });
 }
 
 export function updateProjectPermanentDeletionConfirmation(value) {
-  state.projectPermanentDeletion.confirmationText = value;
-  if (state.projectPermanentDeletion.error) {
-    state.projectPermanentDeletion.error = "";
-  }
+  updateEntityModalConfirmation(state.projectPermanentDeletion, "confirmationText", value);
 }
 
 export function cancelProjectPermanentDeletion(render) {
-  resetProjectPermanentDeletion();
-  render();
+  cancelEntityModal(resetProjectPermanentDeletion, render);
 }
 
 export async function confirmProjectPermanentDeletion(render) {
@@ -2853,7 +2865,10 @@ export async function confirmProjectPermanentDeletion(render) {
     return;
   }
 
-  if (state.projectPermanentDeletion.confirmationText !== state.projectPermanentDeletion.projectName) {
+  if (!entityConfirmationMatches(state.projectPermanentDeletion, {
+    nameField: "projectName",
+    confirmationField: "confirmationText",
+  })) {
     state.projectPermanentDeletion.error = "Project name confirmation does not match.";
     render();
     return;
@@ -2873,9 +2888,7 @@ export async function confirmProjectPermanentDeletion(render) {
   }
 
   const snapshot = cloneProjectCollections();
-  state.projectPermanentDeletion.status = "loading";
-  state.projectPermanentDeletion.error = "";
-  render();
+  beginEntityModalSubmit(state.projectPermanentDeletion, render);
   await waitForNextPaint();
 
   state.projectSyncVersion += 1;
