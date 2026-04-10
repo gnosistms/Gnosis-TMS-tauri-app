@@ -49,7 +49,9 @@ import {
 import {
   applyTopLevelResourceMutation,
   processQueuedResourceMutations,
+  queueTopLevelResourceMutation,
   rollbackTopLevelResourceMutation,
+  submitTopLevelResourceMutation,
 } from "./resource-top-level-mutations.js";
 import {
   commitMetadataFirstTopLevelMutation,
@@ -1926,42 +1928,56 @@ export async function submitProjectRename(render) {
     return;
   }
 
-  try {
-    state.projectRename.status = "loading";
-    state.projectRename.error = "";
-    render();
-  const mutation = {
-    id: crypto.randomUUID(),
-    type: "rename",
-    resourceId: project.id,
-    projectId: project.id,
-    title: nextTitle,
-      previousTitle: project.title ?? project.name,
-    };
   state.projectSyncVersion += 1;
-  const snapshot = applyProjectPendingMutation(
-    { items: state.projects, deletedItems: state.deletedProjects },
-    mutation,
-  );
-  applyProjectSnapshotToState(snapshot);
-  beginProjectsPageSync();
-  state.pendingProjectMutations = upsertPendingMutation(state.pendingProjectMutations, mutation);
-  saveStoredProjectsForTeam(selectedTeam, {
-    projects: state.projects,
-      deletedProjects: state.deletedProjects,
-    });
-    saveStoredProjectPendingMutations(selectedTeam, state.pendingProjectMutations);
-    resetProjectRename();
-    render();
-    void processPendingProjectMutations(render, selectedTeam);
-  } catch (error) {
-    if (await handleSyncFailure(classifySyncError(error), { render })) {
-      return;
-    }
-    state.projectRename.status = "idle";
-    state.projectRename.error = error?.message ?? String(error);
-    render();
-  }
+  await submitTopLevelResourceMutation({
+    setLoading: () => {
+      state.projectRename.status = "loading";
+      state.projectRename.error = "";
+      render();
+    },
+    buildMutation: () => ({
+      id: crypto.randomUUID(),
+      type: "rename",
+      resourceId: project.id,
+      projectId: project.id,
+      title: nextTitle,
+      previousTitle: project.title ?? project.name,
+    }),
+    queueMutation: (mutation) => {
+      queueTopLevelResourceMutation({
+        mutation,
+        currentSnapshot: () => ({ items: state.projects, deletedItems: state.deletedProjects }),
+        applyMutation: (snapshot, nextMutation) =>
+          applyProjectPendingMutation(snapshot, nextMutation),
+        applySnapshot: (snapshot) => applyProjectSnapshotToState(snapshot),
+        beginSync: () => beginProjectsPageSync(),
+        getPendingMutations: () => state.pendingProjectMutations,
+        setPendingMutations: (mutations) => {
+          state.pendingProjectMutations = mutations;
+        },
+        persistPendingMutations: (mutations) =>
+          saveStoredProjectPendingMutations(selectedTeam, mutations),
+        persistVisibleState: () => saveStoredProjectsForTeam(selectedTeam, {
+          projects: state.projects,
+          deletedProjects: state.deletedProjects,
+        }),
+        render,
+      });
+    },
+    afterQueue: () => {
+      resetProjectRename();
+      render();
+    },
+    processQueue: () => processPendingProjectMutations(render, selectedTeam),
+    onError: async (error) => {
+      if (await handleSyncFailure(classifySyncError(error), { render })) {
+        return;
+      }
+      state.projectRename.status = "idle";
+      state.projectRename.error = error?.message ?? String(error);
+      render();
+    },
+  });
 }
 
 export async function repairProjectRepoBinding(render, projectId) {
@@ -2283,34 +2299,50 @@ export async function deleteProject(render, projectId) {
 
   state.projectSyncVersion += 1;
   setProjectUiDebug(render, "Delete clicked");
-  const mutation = {
-    id: crypto.randomUUID(),
-    type: "softDelete",
-    resourceId: project.id,
-    projectId: project.id,
-  };
-  const snapshot = applyProjectPendingMutation(
-    { items: state.projects, deletedItems: state.deletedProjects },
-    mutation,
-  );
-  applyProjectSnapshotToState(snapshot);
-  state.pendingProjectMutations = upsertPendingMutation(state.pendingProjectMutations, mutation);
-  beginProjectsPageSync();
-  if (state.projects.length === 0 && state.deletedProjects.length > 0) {
-    state.showDeletedProjects = true;
-  }
-  saveStoredProjectsForTeam(selectedTeam, {
-    projects: state.projects,
-    deletedProjects: state.deletedProjects,
-  });
-  saveStoredProjectPendingMutations(selectedTeam, state.pendingProjectMutations);
-  render();
-
-  setProjectUiDebug(render, "Optimistic delete applied");
-  void waitForNextPaint().then(() => {
-    setProjectUiDebug(render, "First paint reached");
-    setProjectUiDebug(render, "Background sync started");
-    void processPendingProjectMutations(render, selectedTeam);
+  await submitTopLevelResourceMutation({
+    buildMutation: () => ({
+      id: crypto.randomUUID(),
+      type: "softDelete",
+      resourceId: project.id,
+      projectId: project.id,
+    }),
+    queueMutation: (mutation) => {
+      queueTopLevelResourceMutation({
+        mutation,
+        currentSnapshot: () => ({ items: state.projects, deletedItems: state.deletedProjects }),
+        applyMutation: (snapshot, nextMutation) =>
+          applyProjectPendingMutation(snapshot, nextMutation),
+        applySnapshot: (snapshot) => applyProjectSnapshotToState(snapshot),
+        beginSync: () => beginProjectsPageSync(),
+        beforePersist: () => {
+          if (state.projects.length === 0 && state.deletedProjects.length > 0) {
+            state.showDeletedProjects = true;
+          }
+        },
+        getPendingMutations: () => state.pendingProjectMutations,
+        setPendingMutations: (mutations) => {
+          state.pendingProjectMutations = mutations;
+        },
+        persistPendingMutations: (mutations) =>
+          saveStoredProjectPendingMutations(selectedTeam, mutations),
+        persistVisibleState: () => saveStoredProjectsForTeam(selectedTeam, {
+          projects: state.projects,
+          deletedProjects: state.deletedProjects,
+        }),
+        render,
+      });
+    },
+    afterQueue: () => {
+      setProjectUiDebug(render, "Optimistic delete applied");
+    },
+    processQueue: () => {
+      setProjectUiDebug(render, "Background sync started");
+      return processPendingProjectMutations(render, selectedTeam);
+    },
+    waitForProcessing: async () => {
+      await waitForNextPaint();
+      setProjectUiDebug(render, "First paint reached");
+    },
   });
 }
 
@@ -2593,31 +2625,45 @@ export async function restoreProject(render, projectId) {
 
   state.projectSyncVersion += 1;
   setProjectUiDebug(render, "Restore clicked");
-  const mutation = {
-    id: crypto.randomUUID(),
-    type: "restore",
-    resourceId: project.id,
-    projectId: project.id,
-  };
-  const snapshot = applyProjectPendingMutation(
-    { items: state.projects, deletedItems: state.deletedProjects },
-    mutation,
-  );
-  applyProjectSnapshotToState(snapshot);
-  state.pendingProjectMutations = upsertPendingMutation(state.pendingProjectMutations, mutation);
-  beginProjectsPageSync();
-  saveStoredProjectsForTeam(selectedTeam, {
-    projects: state.projects,
-    deletedProjects: state.deletedProjects,
-  });
-  saveStoredProjectPendingMutations(selectedTeam, state.pendingProjectMutations);
-  render();
-
-  setProjectUiDebug(render, "Optimistic restore applied");
-  void waitForNextPaint().then(() => {
-    setProjectUiDebug(render, "First paint reached");
-    setProjectUiDebug(render, "Background sync started");
-    void processPendingProjectMutations(render, selectedTeam);
+  await submitTopLevelResourceMutation({
+    buildMutation: () => ({
+      id: crypto.randomUUID(),
+      type: "restore",
+      resourceId: project.id,
+      projectId: project.id,
+    }),
+    queueMutation: (mutation) => {
+      queueTopLevelResourceMutation({
+        mutation,
+        currentSnapshot: () => ({ items: state.projects, deletedItems: state.deletedProjects }),
+        applyMutation: (snapshot, nextMutation) =>
+          applyProjectPendingMutation(snapshot, nextMutation),
+        applySnapshot: (snapshot) => applyProjectSnapshotToState(snapshot),
+        beginSync: () => beginProjectsPageSync(),
+        getPendingMutations: () => state.pendingProjectMutations,
+        setPendingMutations: (mutations) => {
+          state.pendingProjectMutations = mutations;
+        },
+        persistPendingMutations: (mutations) =>
+          saveStoredProjectPendingMutations(selectedTeam, mutations),
+        persistVisibleState: () => saveStoredProjectsForTeam(selectedTeam, {
+          projects: state.projects,
+          deletedProjects: state.deletedProjects,
+        }),
+        render,
+      });
+    },
+    afterQueue: () => {
+      setProjectUiDebug(render, "Optimistic restore applied");
+    },
+    processQueue: () => {
+      setProjectUiDebug(render, "Background sync started");
+      return processPendingProjectMutations(render, selectedTeam);
+    },
+    waitForProcessing: async () => {
+      await waitForNextPaint();
+      setProjectUiDebug(render, "First paint reached");
+    },
   });
 }
 

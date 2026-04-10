@@ -3,10 +3,7 @@ import { beginPageSync, completePageSync, failPageSync } from "./page-sync.js";
 import {
   saveStoredGlossaryPendingMutations,
 } from "./glossary-cache.js";
-import {
-  removePendingMutation,
-  upsertPendingMutation,
-} from "./optimistic-collection.js";
+import { removePendingMutation } from "./optimistic-collection.js";
 import {
   resetGlossaryPermanentDeletion,
   resetGlossaryRename,
@@ -32,7 +29,11 @@ import {
   removeGlossaryFromState,
   rollbackVisibleGlossaryMutation,
 } from "./glossary-top-level-state.js";
-import { processQueuedResourceMutations } from "./resource-top-level-mutations.js";
+import {
+  processQueuedResourceMutations,
+  queueTopLevelResourceMutation,
+  submitTopLevelResourceMutation,
+} from "./resource-top-level-mutations.js";
 import { commitMetadataFirstTopLevelMutation } from "./resource-lifecycle-engine.js";
 import { classifySyncError } from "./sync-error.js";
 import { handleSyncFailure } from "./sync-recovery.js";
@@ -277,37 +278,54 @@ export async function submitGlossaryRename(render) {
     return;
   }
 
-  state.glossaryRename.status = "loading";
-  state.glossaryRename.error = "";
-  render();
   state.glossarySyncVersion += 1;
-
-  try {
-    const mutation = {
+  await submitTopLevelResourceMutation({
+    setLoading: () => {
+      state.glossaryRename.status = "loading";
+      state.glossaryRename.error = "";
+      render();
+    },
+    buildMutation: () => ({
       id: crypto.randomUUID(),
       type: "rename",
       resourceId: glossary.id,
       glossaryId: glossary.id,
       title: nextTitle,
       previousTitle: glossary.title,
-    };
-    const snapshot = applyGlossaryPendingMutation(glossarySnapshotFromState(), mutation);
-    applyGlossarySnapshotToState(snapshot, { fallbackToFirstActive: false });
-    beginPageSync();
-    state.pendingGlossaryMutations = upsertPendingMutation(state.pendingGlossaryMutations, mutation);
-    persistGlossariesForTeam(team);
-    saveStoredGlossaryPendingMutations(team, state.pendingGlossaryMutations);
-    resetGlossaryRename();
-    render();
-    void processPendingGlossaryMutations(render, team);
-  } catch (error) {
-    if (await handleSyncFailure(classifySyncError(error), { render })) {
-      return;
-    }
-    state.glossaryRename.status = "idle";
-    state.glossaryRename.error = error?.message ?? String(error);
-    render();
-  }
+    }),
+    queueMutation: (mutation) => {
+      queueTopLevelResourceMutation({
+        mutation,
+        currentSnapshot: () => glossarySnapshotFromState(),
+        applyMutation: (snapshot, nextMutation) =>
+          applyGlossaryPendingMutation(snapshot, nextMutation),
+        applySnapshot: (snapshot) =>
+          applyGlossarySnapshotToState(snapshot, { fallbackToFirstActive: false }),
+        beginSync: () => beginPageSync(),
+        getPendingMutations: () => state.pendingGlossaryMutations,
+        setPendingMutations: (mutations) => {
+          state.pendingGlossaryMutations = mutations;
+        },
+        persistPendingMutations: (mutations) =>
+          saveStoredGlossaryPendingMutations(team, mutations),
+        persistVisibleState: () => persistGlossariesForTeam(team),
+        render,
+      });
+    },
+    afterQueue: () => {
+      resetGlossaryRename();
+      render();
+    },
+    processQueue: () => processPendingGlossaryMutations(render, team),
+    onError: async (error) => {
+      if (await handleSyncFailure(classifySyncError(error), { render })) {
+        return;
+      }
+      state.glossaryRename.status = "idle";
+      state.glossaryRename.error = error?.message ?? String(error);
+      render();
+    },
+  });
 }
 
 export async function deleteGlossary(render, glossaryId) {
@@ -328,22 +346,35 @@ export async function deleteGlossary(render, glossaryId) {
   }
 
   state.glossarySyncVersion += 1;
-  const mutation = {
-    id: crypto.randomUUID(),
-    type: "softDelete",
-    resourceId: glossary.id,
-    glossaryId: glossary.id,
-  };
-  applyGlossarySnapshotToState(
-    applyGlossaryPendingMutation(glossarySnapshotFromState(), mutation),
-    { fallbackToFirstActive: false },
-  );
-  beginPageSync();
-  state.pendingGlossaryMutations = upsertPendingMutation(state.pendingGlossaryMutations, mutation);
-  persistGlossariesForTeam(team);
-  saveStoredGlossaryPendingMutations(team, state.pendingGlossaryMutations);
-  render();
-  void waitForNextPaint().then(() => processPendingGlossaryMutations(render, team));
+  await submitTopLevelResourceMutation({
+    buildMutation: () => ({
+      id: crypto.randomUUID(),
+      type: "softDelete",
+      resourceId: glossary.id,
+      glossaryId: glossary.id,
+    }),
+    queueMutation: (mutation) => {
+      queueTopLevelResourceMutation({
+        mutation,
+        currentSnapshot: () => glossarySnapshotFromState(),
+        applyMutation: (snapshot, nextMutation) =>
+          applyGlossaryPendingMutation(snapshot, nextMutation),
+        applySnapshot: (snapshot) =>
+          applyGlossarySnapshotToState(snapshot, { fallbackToFirstActive: false }),
+        beginSync: () => beginPageSync(),
+        getPendingMutations: () => state.pendingGlossaryMutations,
+        setPendingMutations: (mutations) => {
+          state.pendingGlossaryMutations = mutations;
+        },
+        persistPendingMutations: (mutations) =>
+          saveStoredGlossaryPendingMutations(team, mutations),
+        persistVisibleState: () => persistGlossariesForTeam(team),
+        render,
+      });
+    },
+    processQueue: () => processPendingGlossaryMutations(render, team),
+    waitForProcessing: waitForNextPaint,
+  });
 }
 
 export async function restoreGlossary(render, glossaryId) {
@@ -364,22 +395,35 @@ export async function restoreGlossary(render, glossaryId) {
   }
 
   state.glossarySyncVersion += 1;
-  const mutation = {
-    id: crypto.randomUUID(),
-    type: "restore",
-    resourceId: glossary.id,
-    glossaryId: glossary.id,
-  };
-  applyGlossarySnapshotToState(
-    applyGlossaryPendingMutation(glossarySnapshotFromState(), mutation),
-    { fallbackToFirstActive: false },
-  );
-  beginPageSync();
-  state.pendingGlossaryMutations = upsertPendingMutation(state.pendingGlossaryMutations, mutation);
-  persistGlossariesForTeam(team);
-  saveStoredGlossaryPendingMutations(team, state.pendingGlossaryMutations);
-  render();
-  void waitForNextPaint().then(() => processPendingGlossaryMutations(render, team));
+  await submitTopLevelResourceMutation({
+    buildMutation: () => ({
+      id: crypto.randomUUID(),
+      type: "restore",
+      resourceId: glossary.id,
+      glossaryId: glossary.id,
+    }),
+    queueMutation: (mutation) => {
+      queueTopLevelResourceMutation({
+        mutation,
+        currentSnapshot: () => glossarySnapshotFromState(),
+        applyMutation: (snapshot, nextMutation) =>
+          applyGlossaryPendingMutation(snapshot, nextMutation),
+        applySnapshot: (snapshot) =>
+          applyGlossarySnapshotToState(snapshot, { fallbackToFirstActive: false }),
+        beginSync: () => beginPageSync(),
+        getPendingMutations: () => state.pendingGlossaryMutations,
+        setPendingMutations: (mutations) => {
+          state.pendingGlossaryMutations = mutations;
+        },
+        persistPendingMutations: (mutations) =>
+          saveStoredGlossaryPendingMutations(team, mutations),
+        persistVisibleState: () => persistGlossariesForTeam(team),
+        render,
+      });
+    },
+    processQueue: () => processPendingGlossaryMutations(render, team),
+    waitForProcessing: waitForNextPaint,
+  });
 }
 
 export function openGlossaryPermanentDeletion(render, glossaryId) {

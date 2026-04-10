@@ -2,7 +2,10 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { applyGlossaryPendingMutation, glossarySnapshotFromList } from "./glossary-top-level-state.js";
-import { applyTopLevelResourceMutation } from "./resource-top-level-mutations.js";
+import {
+  applyTopLevelResourceMutation,
+  submitTopLevelResourceMutation,
+} from "./resource-top-level-mutations.js";
 
 test("shared top-level mutation engine renames and soft-deletes resources through one pipeline", () => {
   const renamedThenDeleted = applyTopLevelResourceMutation(
@@ -88,4 +91,51 @@ test("glossary pending mutation replay preserves optimistic deleted state across
   assert.equal(optimisticSnapshot.deletedItems.length, 1);
   assert.equal(optimisticSnapshot.deletedItems[0].id, "glossary-1");
   assert.equal(optimisticSnapshot.deletedItems[0].lifecycleState, "deleted");
+});
+
+test("shared top-level submit helper queues then processes after the requested wait", async () => {
+  const calls = [];
+
+  const mutation = await submitTopLevelResourceMutation({
+    validate: async () => {
+      calls.push("validate");
+      return true;
+    },
+    setLoading: () => {
+      calls.push("setLoading");
+    },
+    buildMutation: () => {
+      calls.push("buildMutation");
+      return { id: "mutation-1", type: "rename", resourceId: "resource-1" };
+    },
+    queueMutation: (nextMutation) => {
+      calls.push(["queueMutation", nextMutation.id]);
+    },
+    afterQueue: () => {
+      calls.push("afterQueue");
+    },
+    waitForProcessing: async () => {
+      calls.push("waitForProcessing");
+    },
+    processQueue: (nextMutation) => {
+      calls.push(["processQueue", nextMutation.id]);
+    },
+  });
+
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.deepEqual(mutation, {
+    id: "mutation-1",
+    type: "rename",
+    resourceId: "resource-1",
+  });
+  assert.deepEqual(calls, [
+    "validate",
+    "setLoading",
+    "buildMutation",
+    ["queueMutation", "mutation-1"],
+    "afterQueue",
+    "waitForProcessing",
+    ["processQueue", "mutation-1"],
+  ]);
 });

@@ -1,4 +1,9 @@
-import { removePendingMutation, removeItem, replaceItem } from "./optimistic-collection.js";
+import {
+  removePendingMutation,
+  removeItem,
+  replaceItem,
+  upsertPendingMutation,
+} from "./optimistic-collection.js";
 
 function defaultMutationResourceId(mutation) {
   if (typeof mutation?.resourceId === "string" && mutation.resourceId.trim()) {
@@ -134,6 +139,86 @@ export function rollbackTopLevelResourceMutation(snapshot, mutation, applyMutati
     return snapshot;
   }
   return applyMutation(snapshot, inverseMutation);
+}
+
+export function queueTopLevelResourceMutation(options) {
+  const mutation = options?.mutation;
+  const currentSnapshot =
+    typeof options?.currentSnapshot === "function"
+      ? options.currentSnapshot
+      : () => ({ items: [], deletedItems: [] });
+  const applyMutation = options?.applyMutation;
+  const applySnapshot = options?.applySnapshot;
+  const beginSync = options?.beginSync;
+  const getPendingMutations =
+    typeof options?.getPendingMutations === "function"
+      ? options.getPendingMutations
+      : () => [];
+  const setPendingMutations = options?.setPendingMutations;
+  const persistPendingMutations = options?.persistPendingMutations;
+  const persistVisibleState = options?.persistVisibleState;
+  const beforePersist = options?.beforePersist;
+  const afterQueue = options?.afterQueue;
+  const render = options?.render;
+
+  if (!mutation || typeof applyMutation !== "function" || typeof applySnapshot !== "function" || typeof setPendingMutations !== "function") {
+    return null;
+  }
+
+  const nextSnapshot = applyMutation(currentSnapshot(), mutation);
+  applySnapshot(nextSnapshot);
+  beginSync?.();
+  beforePersist?.(nextSnapshot, mutation);
+  const nextPendingMutations = upsertPendingMutation(getPendingMutations(), mutation);
+  setPendingMutations(nextPendingMutations);
+  persistVisibleState?.();
+  persistPendingMutations?.(nextPendingMutations);
+  afterQueue?.(nextSnapshot, mutation);
+  render?.();
+  return mutation;
+}
+
+export async function submitTopLevelResourceMutation(options) {
+  const validate = options?.validate;
+  const setLoading = options?.setLoading;
+  const buildMutation = options?.buildMutation;
+  const queueMutation = options?.queueMutation;
+  const afterQueue = options?.afterQueue;
+  const processQueue = options?.processQueue;
+  const onError = options?.onError;
+  const waitForProcessing =
+    typeof options?.waitForProcessing === "function"
+      ? options.waitForProcessing
+      : null;
+
+  try {
+    const validationResult = await validate?.();
+    if (validationResult === false) {
+      return null;
+    }
+
+    setLoading?.();
+    const mutation = buildMutation?.();
+    if (!mutation || typeof queueMutation !== "function") {
+      return null;
+    }
+
+    queueMutation(mutation);
+    afterQueue?.(mutation);
+
+    if (typeof processQueue === "function") {
+      if (waitForProcessing) {
+        void waitForProcessing().then(() => processQueue(mutation));
+      } else {
+        void processQueue(mutation);
+      }
+    }
+
+    return mutation;
+  } catch (error) {
+    await onError?.(error);
+    return null;
+  }
 }
 
 export async function processQueuedResourceMutations(options) {
