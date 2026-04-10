@@ -59,6 +59,7 @@ import {
   ensureResourceNotTombstoned,
   guardPermanentDeleteConfirmation,
   guardTopLevelResourceAction,
+  rollbackOptimisticPermanentDelete,
   runPermanentDeleteLocalFirst,
   showPermanentDeleteFollowupNotice,
 } from "./resource-lifecycle-engine.js";
@@ -2943,23 +2944,33 @@ export async function confirmProjectPermanentDeletion(render) {
         return;
       }
 
-      restoreProjectCollections(snapshot);
-      persistProjectsForTeam(selectedTeam);
-      reopenEntityConfirmationModalWithError({
-        setState: (nextState) => {
-          state.projectPermanentDeletion = nextState;
+      rollbackOptimisticPermanentDelete({
+        restoreVisibleState: () => {
+          restoreProjectCollections(snapshot);
         },
-        entityId: project.id,
-        idField: "projectId",
-        nameField: "projectName",
-        confirmationField: "confirmationText",
-        currentName: project.title ?? project.name,
-        confirmationText,
-        error: error?.message ?? String(error),
+        persistVisibleState: () => {
+          persistProjectsForTeam(selectedTeam);
+        },
+        reopenModal: () => {
+          reopenEntityConfirmationModalWithError({
+            setState: (nextState) => {
+              state.projectPermanentDeletion = nextState;
+            },
+            entityId: project.id,
+            idField: "projectId",
+            nameField: "projectName",
+            confirmationField: "confirmationText",
+            currentName: project.title ?? project.name,
+            confirmationText,
+            error: error?.message ?? String(error),
+          });
+        },
+        afterRollback: () => {
+          clearProjectUiDebug(render);
+          failProjectsPageSync();
+        },
+        render,
       });
-      clearProjectUiDebug(render);
-      failProjectsPageSync();
-      render();
     },
     onRemoteDeleteError: async (error) => {
       clearProjectUiDebug(render);

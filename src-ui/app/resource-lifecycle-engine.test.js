@@ -5,6 +5,7 @@ import {
   applyOptimisticPermanentDelete,
   guardPermanentDeleteConfirmation,
   guardTopLevelResourceAction,
+  rollbackOptimisticPermanentDelete,
   runPermanentDeleteLocalFirst,
 } from "./resource-lifecycle-engine.js";
 
@@ -290,6 +291,36 @@ test("shared optimistic permanent delete helper applies the local-hide sequence 
     "clearSelection",
     "resetModal",
     "afterReset",
+    "render",
+  ]);
+});
+
+test("shared permanent delete rollback helper restores state, reopens modal, and renders in order", () => {
+  const calls = [];
+
+  rollbackOptimisticPermanentDelete({
+    restoreVisibleState: () => {
+      calls.push("restoreVisibleState");
+    },
+    persistVisibleState: () => {
+      calls.push("persistVisibleState");
+    },
+    reopenModal: () => {
+      calls.push("reopenModal");
+    },
+    afterRollback: () => {
+      calls.push("afterRollback");
+    },
+    render: () => {
+      calls.push("render");
+    },
+  });
+
+  assert.deepEqual(calls, [
+    "restoreVisibleState",
+    "persistVisibleState",
+    "reopenModal",
+    "afterRollback",
     "render",
   ]);
 });

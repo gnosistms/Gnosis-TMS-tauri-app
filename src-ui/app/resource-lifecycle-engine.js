@@ -255,6 +255,14 @@ export function showPermanentDeleteFollowupNotice(options) {
   );
 }
 
+export function rollbackOptimisticPermanentDelete(options) {
+  options?.restoreVisibleState?.();
+  options?.persistVisibleState?.();
+  options?.reopenModal?.();
+  options?.afterRollback?.();
+  options?.render?.();
+}
+
 export async function applyOptimisticPermanentDelete(options) {
   const beforeWait = options?.beforeWait;
   const waitForNextPaint =

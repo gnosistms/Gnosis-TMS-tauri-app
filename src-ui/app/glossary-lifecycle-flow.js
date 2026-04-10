@@ -39,6 +39,7 @@ import {
   commitMetadataFirstTopLevelMutation,
   guardPermanentDeleteConfirmation,
   guardTopLevelResourceAction,
+  rollbackOptimisticPermanentDelete,
   runPermanentDeleteLocalFirst,
   showPermanentDeleteFollowupNotice,
 } from "./resource-lifecycle-engine.js";
@@ -576,21 +577,29 @@ export async function confirmGlossaryPermanentDeletion(render) {
     deleteRemote: () => permanentlyDeleteRemoteGlossaryRepoForTeam(team, glossary.repoName),
     reloadAfterSuccess: () => loadTeamGlossaries(render, team.id, { preserveVisibleData: true }),
     rollbackBeforeTombstone: async (error) => {
-      restoreVisibleGlossaryState(snapshot);
-      persistGlossariesForTeam(team);
-      reopenEntityConfirmationModalWithError({
-        setState: (nextState) => {
-          state.glossaryPermanentDeletion = nextState;
+      rollbackOptimisticPermanentDelete({
+        restoreVisibleState: () => {
+          restoreVisibleGlossaryState(snapshot);
         },
-        entityId: glossary.id,
-        idField: "glossaryId",
-        nameField: "glossaryName",
-        confirmationField: "confirmationText",
-        currentName: glossary.title,
-        confirmationText,
-        error: error?.message ?? String(error),
+        persistVisibleState: () => {
+          persistGlossariesForTeam(team);
+        },
+        reopenModal: () => {
+          reopenEntityConfirmationModalWithError({
+            setState: (nextState) => {
+              state.glossaryPermanentDeletion = nextState;
+            },
+            entityId: glossary.id,
+            idField: "glossaryId",
+            nameField: "glossaryName",
+            confirmationField: "confirmationText",
+            currentName: glossary.title,
+            confirmationText,
+            error: error?.message ?? String(error),
+          });
+        },
+        render,
       });
-      render();
     },
     onRemoteDeleteError: async (error) => {
       showPermanentDeleteFollowupNotice({
