@@ -55,7 +55,10 @@ import {
   applyMetadataFirstResourceMutation,
   ensureResourceNotTombstoned,
 } from "./resource-lifecycle-engine.js";
-import { canCreateRepoResources } from "./resource-capabilities.js";
+import {
+  canCreateRepoResources,
+  canPermanentlyDeleteProjectFiles,
+} from "./resource-capabilities.js";
 
 function setProjectUiDebug(render, text) {
   showScopedSyncBadge("projects", text, render);
@@ -1636,7 +1639,7 @@ export function openChapterPermanentDeletion(render, chapterId) {
   if (!ensureChapterMutationAllowed(render, {
     selectedTeam,
     actionLabel: "permanently delete files",
-    requireDelete: true,
+    requireDelete: false,
   })) {
     return;
   }
@@ -2534,7 +2537,7 @@ export async function confirmChapterPermanentDeletion(render) {
     return;
   }
 
-  if (selectedTeam.canDelete !== true) {
+  if (!canPermanentlyDeleteProjectFiles(selectedTeam)) {
     state.chapterPermanentDeletion.status = "idle";
     state.chapterPermanentDeletion.error =
       "You do not have permission to permanently delete files in this team.";

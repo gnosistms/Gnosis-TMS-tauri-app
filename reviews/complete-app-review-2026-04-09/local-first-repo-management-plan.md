@@ -312,14 +312,15 @@ Expected outcome:
 
 Status on 2026-04-10:
 
-- partially complete
+- mostly complete
 - project and glossary top-level create affordances now use explicit owner-only capability helpers instead of the broader `canManageProjects` gate
 - glossary import now follows the same owner-only policy as glossary creation, so admins no longer have a side path to create repo-backed glossaries
 - soft-deleted project and glossary permanent-delete affordances are now keyed off the same owner-only helper
 - owner-only capability helpers now live in `src-ui/app/resource-capabilities.js`
+- deleted-file permanent delete is now explicitly treated as a file-management action, not a repo-destroying action, so admins can still use it while repo permanent delete remains owner-only
 - capability tests now explicitly cover owner vs admin vs translator visibility for create and permanent-delete affordances
-- remaining gap: finish the broader audit of any secondary create/permanent-delete entry points and decide whether deleted-file permanent delete should stay separate or also be folded under the same owner-only policy
-- remaining gap: commit the Stage 16 owner-only gate work after the secondary audit is complete
+- the main project/glossary screens and their create/delete flows have been audited and aligned with the owner-only policy
+- remaining gap: commit the Stage 16 owner-only gate work, and optionally add deeper UI-level rendering tests if we want coverage beyond the capability-helper tests
 
 - audit project and glossary screens for every top-level create affordance:
   - remove `+ New Project` from non-owner users
@@ -328,7 +329,7 @@ Status on 2026-04-10:
 - audit deleted-resource UI for every permanent-delete affordance:
   - deleted projects must not show permanent delete for admins
   - deleted glossaries must not show permanent delete for admins
-  - deleted files should follow the same owner-only policy if they still map to repo-destroying behavior
+  - deleted files should stay on the file-management policy unless they are found to trigger repo-destroying behavior
 - introduce explicit owner-only capability helpers for repo-creating and repo-destroying actions instead of reusing the broader `canManageProjects` gate
 - update action handlers and modal entry points so hidden buttons are matched by the same owner-only backend checks
 - add UI tests covering:

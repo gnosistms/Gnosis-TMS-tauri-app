@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  canPermanentlyDeleteProjectFiles,
   canCreateRepoResources,
   canPermanentlyDeleteRepoResources,
   shouldShowDeletedGlossaryPermanentDelete,
@@ -44,4 +45,14 @@ test("owner-only permanent delete helpers allow only owners", () => {
   assert.equal(shouldShowDeletedGlossaryPermanentDelete(ownerTeam), true);
   assert.equal(shouldShowDeletedGlossaryPermanentDelete(adminTeam), false);
   assert.equal(shouldShowDeletedGlossaryPermanentDelete(translatorTeam), false);
+});
+
+test("deleted project file permanent delete stays on the project-management gate", () => {
+  const ownerTeam = { canDelete: true, canManageProjects: true };
+  const adminTeam = { canDelete: false, canManageProjects: true };
+  const translatorTeam = { canDelete: false, canManageProjects: false };
+
+  assert.equal(canPermanentlyDeleteProjectFiles(ownerTeam), true);
+  assert.equal(canPermanentlyDeleteProjectFiles(adminTeam), true);
+  assert.equal(canPermanentlyDeleteProjectFiles(translatorTeam), false);
 });

@@ -21,3 +21,7 @@ export function shouldShowDeletedProjectPermanentDelete(team) {
 export function shouldShowDeletedGlossaryPermanentDelete(team) {
   return canPermanentlyDeleteRepoResources(team);
 }
+
+export function canPermanentlyDeleteProjectFiles(team) {
+  return team?.canManageProjects === true;
+}

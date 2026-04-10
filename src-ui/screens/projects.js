@@ -26,6 +26,7 @@ import {
 import { resolveChapterSourceWordCount } from "../app/translate-flow.js";
 import { deriveProjectResolution } from "../app/resource-resolution.js";
 import {
+  canPermanentlyDeleteProjectFiles,
   shouldShowDeletedProjectPermanentDelete,
   shouldShowNewProjectButton,
 } from "../app/resource-capabilities.js";
@@ -331,7 +332,7 @@ export function renderProjectsScreen(state) {
   const selectedTeam = state.teams.find((team) => team.id === state.selectedTeamId) ?? state.teams[0];
   const canManageProjects = selectedTeam?.canManageProjects === true;
   const canCreateProjects = shouldShowNewProjectButton(selectedTeam);
-  const canPermanentlyDeleteFiles = canPermanentlyDeleteRepoResources(selectedTeam);
+  const canPermanentlyDeleteFiles = canPermanentlyDeleteProjectFiles(selectedTeam);
   const offlineMode = state.offline?.isEnabled === true;
   const importInProgress = state.projectImport?.status === "importing";
   const discovery = state.projectDiscovery ?? { status: "idle", error: "", glossaryWarning: "" };
