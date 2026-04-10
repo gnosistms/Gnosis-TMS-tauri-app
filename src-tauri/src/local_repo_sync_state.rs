@@ -15,6 +15,8 @@ pub(crate) struct LocalRepoSyncState {
   #[serde(default)]
   pub(crate) resource_id: Option<String>,
   #[serde(default)]
+  pub(crate) current_repo_name: Option<String>,
+  #[serde(default)]
   pub(crate) kind: Option<String>,
   #[serde(default)]
   pub(crate) has_ever_synced: bool,
@@ -29,6 +31,7 @@ pub(crate) struct LocalRepoSyncState {
 #[derive(Default)]
 pub(crate) struct LocalRepoSyncStateUpdate {
   pub(crate) resource_id: Option<String>,
+  pub(crate) current_repo_name: Option<String>,
   pub(crate) kind: Option<String>,
   pub(crate) has_ever_synced: Option<bool>,
   pub(crate) last_known_github_repo_id: Option<i64>,
@@ -65,6 +68,15 @@ pub(crate) fn upsert_local_repo_sync_state(
     .filter(|value| !value.is_empty())
   {
     state.resource_id = Some(resource_id.to_string());
+  }
+
+  if let Some(current_repo_name) = update
+    .current_repo_name
+    .as_deref()
+    .map(str::trim)
+    .filter(|value| !value.is_empty())
+  {
+    state.current_repo_name = Some(current_repo_name.to_string());
   }
 
   if let Some(kind) = update
@@ -107,6 +119,29 @@ pub(crate) fn upsert_local_repo_sync_state(
   })?;
 
   Ok(state)
+}
+
+pub(crate) fn read_local_repo_sync_state(
+  repo_path: &Path,
+) -> Result<Option<LocalRepoSyncState>, String> {
+  let state_path = local_repo_sync_state_path(repo_path)?;
+  if !state_path.exists() {
+    return Ok(None);
+  }
+
+  let bytes = fs::read(&state_path).map_err(|error| {
+    format!(
+      "Could not read local repo sync state '{}': {error}",
+      state_path.display()
+    )
+  })?;
+  let state = serde_json::from_slice::<LocalRepoSyncState>(&bytes).map_err(|error| {
+    format!(
+      "Could not parse local repo sync state '{}': {error}",
+      state_path.display()
+    )
+  })?;
+  Ok(Some(state))
 }
 
 fn local_repo_sync_state_path(repo_path: &Path) -> Result<PathBuf, String> {

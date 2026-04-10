@@ -5,13 +5,13 @@ use serde_json::{json, Value};
 use tauri::AppHandle;
 
 use crate::git_commit::git_commit_as_signed_in_user;
+use crate::project_repo_paths::resolve_project_git_repo_path;
 
 use super::project_git::{
   ensure_repo_exists,
   ensure_valid_git_repo,
   find_chapter_path_by_id,
   git_output,
-  local_repo_root,
   read_json_file,
   repo_relative_path,
   write_json_pretty,
@@ -22,6 +22,7 @@ use super::project_git::{
 pub(crate) struct RenameChapterInput {
   installation_id: i64,
   repo_name: String,
+  project_id: Option<String>,
   chapter_id: String,
   title: String,
 }
@@ -38,6 +39,7 @@ pub(crate) struct RenameChapterResponse {
 pub(crate) struct UpdateChapterLifecycleInput {
   installation_id: i64,
   repo_name: String,
+  project_id: Option<String>,
   chapter_id: String,
 }
 
@@ -57,7 +59,12 @@ pub(super) fn rename_gtms_chapter_sync(
     return Err("Enter a file name.".to_string());
   }
 
-  let repo_path = local_repo_root(app, input.installation_id)?.join(&input.repo_name);
+  let repo_path = resolve_project_git_repo_path(
+    app,
+    input.installation_id,
+    input.project_id.as_deref(),
+    Some(&input.repo_name),
+  )?;
   ensure_repo_exists(&repo_path, "The local project repo is not available yet.")?;
   ensure_valid_git_repo(&repo_path, "The local project repo is missing or invalid.")?;
 
@@ -104,7 +111,12 @@ pub(super) fn update_gtms_chapter_lifecycle_sync(
   input: UpdateChapterLifecycleInput,
   next_state: &str,
 ) -> Result<UpdateChapterLifecycleResponse, String> {
-  let repo_path = local_repo_root(app, input.installation_id)?.join(&input.repo_name);
+  let repo_path = resolve_project_git_repo_path(
+    app,
+    input.installation_id,
+    input.project_id.as_deref(),
+    Some(&input.repo_name),
+  )?;
   ensure_repo_exists(&repo_path, "The local project repo is not available yet.")?;
   ensure_valid_git_repo(&repo_path, "The local project repo is missing or invalid.")?;
 
@@ -161,7 +173,12 @@ pub(super) fn permanently_delete_gtms_chapter_sync(
   app: &AppHandle,
   input: UpdateChapterLifecycleInput,
 ) -> Result<UpdateChapterLifecycleResponse, String> {
-  let repo_path = local_repo_root(app, input.installation_id)?.join(&input.repo_name);
+  let repo_path = resolve_project_git_repo_path(
+    app,
+    input.installation_id,
+    input.project_id.as_deref(),
+    Some(&input.repo_name),
+  )?;
   ensure_repo_exists(&repo_path, "The local project repo is not available yet.")?;
   ensure_valid_git_repo(&repo_path, "The local project repo is missing or invalid.")?;
 

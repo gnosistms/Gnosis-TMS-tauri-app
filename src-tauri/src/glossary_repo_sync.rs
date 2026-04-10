@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
 
 use crate::{
-  local_repo_sync_state::{LocalRepoSyncStateUpdate, upsert_local_repo_sync_state},
+  local_repo_sync_state::{LocalRepoSyncStateUpdate, read_local_repo_sync_state, upsert_local_repo_sync_state},
   repo_sync_shared::{
     GitTransportAuth,
     abort_rebase_after_failed_pull,
@@ -21,6 +21,7 @@ use crate::{
 #[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct GlossaryRepoSyncDescriptor {
+  pub(crate) glossary_id: Option<String>,
   pub(crate) repo_name: String,
   pub(crate) full_name: String,
   pub(crate) repo_id: Option<i64>,
@@ -68,9 +69,18 @@ fn sync_gtms_glossary_repos_sync(
   input: GlossaryRepoSyncInput,
   session_token: &str,
 ) -> Result<Vec<GlossaryRepoSyncSnapshot>, String> {
-  let repo_root = local_glossary_repo_root(app, input.installation_id)?;
   let needs_transport = input.glossaries.iter().any(|glossary| {
-    let repo_path = repo_root.join(&glossary.repo_name);
+    let repo_path = resolve_or_desired_glossary_git_repo_path(
+      app,
+      input.installation_id,
+      glossary.glossary_id.as_deref(),
+      &glossary.repo_name,
+    )
+    .unwrap_or_else(|_| {
+      local_glossary_repo_root(app, input.installation_id)
+        .unwrap_or_else(|_| Path::new("").to_path_buf())
+        .join(&glossary.repo_name)
+    });
     matches!(
       inspect_glossary_repo_state(glossary, &repo_path).status.as_str(),
       GLOSSARY_REPO_SYNC_STATUS_NOT_CLONED | GLOSSARY_REPO_SYNC_STATUS_OUT_OF_SYNC
@@ -84,7 +94,12 @@ fn sync_gtms_glossary_repos_sync(
 
   let mut snapshots = Vec::with_capacity(input.glossaries.len());
   for glossary in input.glossaries {
-    let repo_path = repo_root.join(&glossary.repo_name);
+    let repo_path = resolve_or_desired_glossary_git_repo_path(
+      app,
+      input.installation_id,
+      glossary.glossary_id.as_deref(),
+      &glossary.repo_name,
+    )?;
     let inspected = inspect_glossary_repo_state(&glossary, &repo_path);
 
     if matches!(
@@ -188,6 +203,94 @@ fn inspect_glossary_repo_state(
     remote_head_oid,
     status: status.to_string(),
     ..default_snapshot()
+  }
+}
+
+fn normalized_optional_identifier(value: Option<&str>) -> Option<String> {
+  value
+    .map(str::trim)
+    .filter(|value| !value.is_empty())
+    .map(str::to_string)
+}
+
+fn glossary_repo_matches_identifier(
+  repo_path: &Path,
+  glossary_id: Option<&str>,
+  repo_name: Option<&str>,
+) -> bool {
+  let normalized_glossary_id = normalized_optional_identifier(glossary_id);
+  let normalized_repo_name = normalized_optional_identifier(repo_name);
+  let sync_state = read_local_repo_sync_state(repo_path).ok().flatten();
+
+  if let Some(glossary_id) = normalized_glossary_id.as_deref() {
+    return sync_state
+      .as_ref()
+      .and_then(|state| state.resource_id.as_deref())
+      .map(str::trim)
+      .filter(|value| !value.is_empty())
+      == Some(glossary_id);
+  }
+
+  if let Some(repo_name) = normalized_repo_name.as_deref() {
+    if sync_state
+      .as_ref()
+      .and_then(|state| state.current_repo_name.as_deref())
+      .map(str::trim)
+      .filter(|value| !value.is_empty())
+      == Some(repo_name)
+    {
+      return true;
+    }
+
+    let folder_name = repo_path
+      .file_name()
+      .and_then(|name| name.to_str())
+      .map(str::trim)
+      .unwrap_or_default();
+    return folder_name == repo_name;
+  }
+
+  false
+}
+
+fn find_glossary_repo_path(
+  app: &AppHandle,
+  installation_id: i64,
+  glossary_id: Option<&str>,
+  repo_name: Option<&str>,
+) -> Result<Option<std::path::PathBuf>, String> {
+  let repo_root = local_glossary_repo_root(app, installation_id)?;
+  for entry in fs::read_dir(&repo_root)
+    .map_err(|error| format!("Could not read the local glossary repo folder: {error}"))?
+  {
+    let entry = entry.map_err(|error| format!("Could not read a glossary repo entry: {error}"))?;
+    let repo_path = entry.path();
+    if !repo_path.is_dir() {
+      continue;
+    }
+    if git_output(&repo_path, &["rev-parse", "--git-dir"], None).is_err() {
+      continue;
+    }
+    if glossary_repo_matches_identifier(&repo_path, glossary_id, repo_name) {
+      return Ok(Some(repo_path));
+    }
+  }
+
+  Ok(None)
+}
+
+fn resolve_or_desired_glossary_git_repo_path(
+  app: &AppHandle,
+  installation_id: i64,
+  glossary_id: Option<&str>,
+  repo_name: &str,
+) -> Result<std::path::PathBuf, String> {
+  match find_glossary_repo_path(app, installation_id, glossary_id, Some(repo_name))? {
+    Some(repo_path) => Ok(repo_path),
+    None => {
+      let repo_root = local_glossary_repo_root(app, installation_id)?;
+      Ok(repo_root.join(repo_name.trim()))
+    }
   }
 }
 
@@ -320,6 +423,7 @@ fn mark_glossary_repo_synced(
     repo_path,
     LocalRepoSyncStateUpdate {
       resource_id: glossary_id,
+      current_repo_name: Some(glossary.repo_name.clone()),
       kind: Some("glossary".to_string()),
       has_ever_synced: Some(true),
       last_known_github_repo_id: glossary.repo_id,

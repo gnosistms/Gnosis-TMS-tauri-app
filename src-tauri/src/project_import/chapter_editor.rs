@@ -15,8 +15,10 @@ use crate::git_commit::{
   git_commit_as_signed_in_user_with_metadata,
   GitCommitMetadata as CommitMetadata,
 };
+use crate::project_repo_paths::{find_project_repo_path, resolve_project_git_repo_path};
 
 use super::project_git::{
+  ensure_gitattributes,
   ensure_repo_exists,
   ensure_valid_git_repo,
   find_chapter_path_by_id,
@@ -28,6 +30,15 @@ use super::project_git::{
   write_json_pretty,
   write_text_file,
 };
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct InitializeProjectRepoInput {
+  installation_id: i64,
+  repo_name: String,
+  project_id: Option<String>,
+  title: String,
+}
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -51,11 +62,20 @@ pub(crate) struct LocalProjectFilesResponse {
   chapters: Vec<ProjectChapterSummary>,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct InitializeProjectRepoResponse {
+  project_id: String,
+  repo_name: String,
+  title: String,
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct PurgeLocalProjectRepoInput {
   installation_id: i64,
   repo_name: String,
+  project_id: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -63,6 +83,7 @@ pub(crate) struct PurgeLocalProjectRepoInput {
 pub(crate) struct UpdateChapterLanguageSelectionInput {
   installation_id: i64,
   repo_name: String,
+  project_id: Option<String>,
   chapter_id: String,
   source_language_code: String,
   target_language_code: String,
@@ -81,6 +102,7 @@ pub(crate) struct UpdateChapterLanguageSelectionResponse {
 pub(crate) struct UpdateChapterGlossaryLinksInput {
   installation_id: i64,
   repo_name: String,
+  project_id: Option<String>,
   chapter_id: String,
   glossary_1: Option<GlossaryLinkSelectionInput>,
   glossary_2: Option<GlossaryLinkSelectionInput>,
@@ -106,6 +128,7 @@ pub(crate) struct UpdateChapterGlossaryLinksResponse {
 pub(crate) struct UpdateEditorRowFieldsInput {
   installation_id: i64,
   repo_name: String,
+  project_id: Option<String>,
   chapter_id: String,
   row_id: String,
   fields: BTreeMap<String, String>,
@@ -116,6 +139,7 @@ pub(crate) struct UpdateEditorRowFieldsInput {
 pub(crate) struct UpdateEditorRowFieldFlagInput {
   installation_id: i64,
   repo_name: String,
+  project_id: Option<String>,
   chapter_id: String,
   row_id: String,
   language_code: String,
@@ -144,6 +168,7 @@ pub(crate) struct UpdateEditorRowFieldFlagResponse {
 pub(crate) struct LoadChapterEditorInput {
   installation_id: i64,
   repo_name: String,
+  project_id: Option<String>,
   chapter_id: String,
 }
 
@@ -152,6 +177,7 @@ pub(crate) struct LoadChapterEditorInput {
 pub(crate) struct LoadEditorFieldHistoryInput {
   installation_id: i64,
   repo_name: String,
+  project_id: Option<String>,
   chapter_id: String,
   row_id: String,
   language_code: String,
@@ -184,6 +210,7 @@ pub(crate) struct EditorFieldHistoryEntry {
 pub(crate) struct RestoreEditorFieldHistoryInput {
   installation_id: i64,
   repo_name: String,
+  project_id: Option<String>,
   chapter_id: String,
   row_id: String,
   language_code: String,
@@ -381,7 +408,12 @@ pub(super) fn load_gtms_chapter_editor_data_sync(
   app: &AppHandle,
   input: LoadChapterEditorInput,
 ) -> Result<LoadChapterEditorResponse, String> {
-  let repo_path = local_repo_root(app, input.installation_id)?.join(&input.repo_name);
+  let repo_path = resolve_project_git_repo_path(
+    app,
+    input.installation_id,
+    input.project_id.as_deref(),
+    Some(&input.repo_name),
+  )?;
   ensure_repo_exists(&repo_path, "The local project repo is not available yet.")?;
   ensure_valid_git_repo(&repo_path, "The local project repo is missing or invalid.")?;
 
@@ -444,7 +476,13 @@ pub(super) fn list_local_gtms_project_files_sync(
   let mut results = Vec::with_capacity(input.projects.len());
 
   for project in input.projects {
-    let repo_path = repo_root.join(&project.repo_name);
+    let repo_path = find_project_repo_path(
+      app,
+      input.installation_id,
+      Some(&project.project_id),
+      Some(&project.repo_name),
+    )?
+    .unwrap_or_else(|| repo_root.join(&project.repo_name));
     let chapters = if repo_path.exists() && git_output(&repo_path, &["rev-parse", "--git-dir"]).is_ok() {
       load_project_chapter_summaries(&repo_path)?
     } else {
@@ -461,17 +499,101 @@ pub(super) fn list_local_gtms_project_files_sync(
   Ok(results)
 }
 
+pub(super) fn initialize_gtms_project_repo_sync(
+  app: &AppHandle,
+  input: InitializeProjectRepoInput,
+) -> Result<InitializeProjectRepoResponse, String> {
+  let repo_name = input.repo_name.trim();
+  if repo_name.is_empty() {
+    return Err("Could not determine which project repo to initialize.".to_string());
+  }
+
+  let title = input.title.trim();
+  if title.is_empty() {
+    return Err("Enter a project name.".to_string());
+  }
+
+  let project_id = input
+    .project_id
+    .as_deref()
+    .map(str::trim)
+    .filter(|value| !value.is_empty())
+    .map(str::to_string)
+    .ok_or_else(|| "Could not determine which project to initialize.".to_string())?;
+  let repo_root = local_repo_root(app, input.installation_id)?;
+  let repo_path = find_project_repo_path(
+    app,
+    input.installation_id,
+    Some(&project_id),
+    Some(repo_name),
+  )?
+  .unwrap_or_else(|| repo_root.join(repo_name));
+
+  fs::create_dir_all(&repo_path).map_err(|error| {
+    format!(
+      "Could not create the local project repo '{}': {error}",
+      repo_path.display()
+    )
+  })?;
+
+  if git_output(&repo_path, &["rev-parse", "--git-dir"]).is_err() {
+    git_output(&repo_path, &["init", "--initial-branch", "main"])?;
+  }
+
+  if repo_path.join("project.json").exists() {
+    return Err("This project repo is already initialized.".to_string());
+  }
+
+  ensure_gitattributes(&repo_path.join(".gitattributes"))?;
+  write_json_pretty(
+    &repo_path.join("project.json"),
+    &json!({
+      "title": title,
+    }),
+  )?;
+  git_output(&repo_path, &["add", ".gitattributes", "project.json"])?;
+  git_commit_as_signed_in_user(
+    app,
+    &repo_path,
+    "Initialize project",
+    &[".gitattributes", "project.json"],
+  )?;
+
+  let _ = crate::local_repo_sync_state::upsert_local_repo_sync_state(
+    &repo_path,
+    crate::local_repo_sync_state::LocalRepoSyncStateUpdate {
+      resource_id: Some(project_id.clone()),
+      current_repo_name: Some(repo_name.to_string()),
+      kind: Some("project".to_string()),
+      has_ever_synced: Some(false),
+      ..Default::default()
+    },
+  );
+
+  Ok(InitializeProjectRepoResponse {
+    project_id,
+    repo_name: repo_name.to_string(),
+    title: title.to_string(),
+  })
+}
+
 pub(super) fn purge_local_gtms_project_repo_sync(
   app: &AppHandle,
   input: PurgeLocalProjectRepoInput,
 ) -> Result<(), String> {
-  let repo_root = local_repo_root(app, input.installation_id)?;
-  let repo_name = input.repo_name.trim();
+  let repo_name = input.repo_name.trim().to_string();
   if repo_name.is_empty() {
     return Err("Could not determine which project repo to remove.".to_string());
   }
 
-  let repo_path = repo_root.join(repo_name);
+  let Some(repo_path) = find_project_repo_path(
+    app,
+    input.installation_id,
+    input.project_id.as_deref(),
+    Some(&repo_name),
+  )? else {
+    return Ok(());
+  };
   if !repo_path.exists() {
     return Ok(());
   }
@@ -488,7 +610,12 @@ pub(super) fn update_gtms_chapter_language_selection_sync(
   app: &AppHandle,
   input: UpdateChapterLanguageSelectionInput,
 ) -> Result<UpdateChapterLanguageSelectionResponse, String> {
-  let repo_path = local_repo_root(app, input.installation_id)?.join(&input.repo_name);
+  let repo_path = resolve_project_git_repo_path(
+    app,
+    input.installation_id,
+    input.project_id.as_deref(),
+    Some(&input.repo_name),
+  )?;
   ensure_repo_exists(&repo_path, "The local project repo is not available yet.")?;
   ensure_valid_git_repo(&repo_path, "The local project repo is missing or invalid.")?;
 
@@ -581,7 +708,12 @@ pub(super) fn update_gtms_chapter_glossary_links_sync(
   app: &AppHandle,
   input: UpdateChapterGlossaryLinksInput,
 ) -> Result<UpdateChapterGlossaryLinksResponse, String> {
-  let repo_path = local_repo_root(app, input.installation_id)?.join(&input.repo_name);
+  let repo_path = resolve_project_git_repo_path(
+    app,
+    input.installation_id,
+    input.project_id.as_deref(),
+    Some(&input.repo_name),
+  )?;
   ensure_repo_exists(&repo_path, "The local project repo is not available yet.")?;
   ensure_valid_git_repo(&repo_path, "The local project repo is missing or invalid.")?;
 
@@ -641,7 +773,12 @@ pub(super) fn update_gtms_editor_row_fields_sync(
   app: &AppHandle,
   input: UpdateEditorRowFieldsInput,
 ) -> Result<UpdateEditorRowFieldsResponse, String> {
-  let repo_path = local_repo_root(app, input.installation_id)?.join(&input.repo_name);
+  let repo_path = resolve_project_git_repo_path(
+    app,
+    input.installation_id,
+    input.project_id.as_deref(),
+    Some(&input.repo_name),
+  )?;
   ensure_repo_exists(&repo_path, "The local project repo is not available yet.")?;
   ensure_valid_git_repo(&repo_path, "The local project repo is missing or invalid.")?;
 
@@ -726,7 +863,12 @@ pub(super) fn load_gtms_editor_field_history_sync(
   app: &AppHandle,
   input: LoadEditorFieldHistoryInput,
 ) -> Result<LoadEditorFieldHistoryResponse, String> {
-  let repo_path = local_repo_root(app, input.installation_id)?.join(&input.repo_name);
+  let repo_path = resolve_project_git_repo_path(
+    app,
+    input.installation_id,
+    input.project_id.as_deref(),
+    Some(&input.repo_name),
+  )?;
   ensure_repo_exists(&repo_path, "The local project repo is not available yet.")?;
   ensure_valid_git_repo(&repo_path, "The local project repo is missing or invalid.")?;
 
@@ -782,7 +924,12 @@ pub(super) fn restore_gtms_editor_field_from_history_sync(
   app: &AppHandle,
   input: RestoreEditorFieldHistoryInput,
 ) -> Result<RestoreEditorFieldHistoryResponse, String> {
-  let repo_path = local_repo_root(app, input.installation_id)?.join(&input.repo_name);
+  let repo_path = resolve_project_git_repo_path(
+    app,
+    input.installation_id,
+    input.project_id.as_deref(),
+    Some(&input.repo_name),
+  )?;
   ensure_repo_exists(&repo_path, "The local project repo is not available yet.")?;
   ensure_valid_git_repo(&repo_path, "The local project repo is missing or invalid.")?;
 
@@ -995,7 +1142,12 @@ pub(super) fn update_gtms_editor_row_field_flag_sync(
   app: &AppHandle,
   input: UpdateEditorRowFieldFlagInput,
 ) -> Result<UpdateEditorRowFieldFlagResponse, String> {
-  let repo_path = local_repo_root(app, input.installation_id)?.join(&input.repo_name);
+  let repo_path = resolve_project_git_repo_path(
+    app,
+    input.installation_id,
+    input.project_id.as_deref(),
+    Some(&input.repo_name),
+  )?;
   ensure_repo_exists(&repo_path, "The local project repo is not available yet.")?;
   ensure_valid_git_repo(&repo_path, "The local project repo is missing or invalid.")?;
 

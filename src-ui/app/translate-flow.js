@@ -368,6 +368,7 @@ async function fetchEditorFieldHistory(render, requestKey) {
     const payload = await invoke("load_gtms_editor_field_history", {
       input: {
         installationId: team.installationId,
+        projectId: context.project.id,
         repoName: context.project.name,
         chapterId: editorChapter.chapterId,
         rowId,
@@ -558,6 +559,7 @@ export async function persistEditorChapterSelections(render) {
     const payload = await invoke("update_gtms_chapter_language_selection", {
       input: {
         installationId: team.installationId,
+        projectId: context.project.id,
         repoName: context.project.name,
         chapterId: editorChapter.chapterId,
         sourceLanguageCode: desiredSourceLanguageCode,
@@ -680,6 +682,7 @@ export async function loadSelectedChapterEditorData(render, options = {}) {
     const payload = await invoke("load_gtms_chapter_editor_data", {
       input: {
         installationId: team.installationId,
+        projectId: context.project.id,
         repoName: context.project.name,
         chapterId: context.chapter.id,
       },
@@ -802,6 +805,7 @@ export async function restoreEditorFieldHistory(render, commitSha) {
     const payload = await invoke("restore_gtms_editor_field_from_history", {
       input: {
         installationId: team.installationId,
+        projectId: context.project.id,
         repoName: context.project.name,
         chapterId: editorChapter.chapterId,
         rowId: editorChapter.activeRowId,
@@ -982,6 +986,7 @@ export async function toggleEditorRowFieldMarker(render, rowId, languageCode, ki
     const payload = await invoke("update_gtms_editor_row_field_flag", {
       input: {
         installationId: team.installationId,
+        projectId: context.project.id,
         repoName: context.project.name,
         chapterId: editorChapter.chapterId,
         rowId,
@@ -1114,6 +1119,7 @@ export async function persistEditorRowOnBlur(render, rowId) {
     const payload = await invoke("update_gtms_editor_row_fields", {
       input: {
         installationId: team.installationId,
+        projectId: context.project.id,
         repoName: context.project.name,
         chapterId: editorChapter.chapterId,
         rowId,

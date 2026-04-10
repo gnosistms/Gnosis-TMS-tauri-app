@@ -287,6 +287,7 @@ export async function submitGlossaryTermEditor(render) {
     await invoke("upsert_gtms_glossary_term", {
       input: {
         installationId: team.installationId,
+        glossaryId: glossary?.id ?? null,
         repoName,
         termId: draft.termId || null,
         sourceTerms,

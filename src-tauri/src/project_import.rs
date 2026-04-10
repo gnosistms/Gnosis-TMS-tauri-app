@@ -7,6 +7,7 @@ use tauri::AppHandle;
 
 use self::{
   chapter_editor::{
+    initialize_gtms_project_repo_sync,
     load_gtms_editor_field_history_sync,
     list_local_gtms_project_files_sync,
     load_gtms_chapter_editor_data_sync,
@@ -20,6 +21,8 @@ use self::{
     LoadEditorFieldHistoryResponse,
     ListLocalProjectFilesInput,
     LocalProjectFilesResponse,
+    InitializeProjectRepoInput,
+    InitializeProjectRepoResponse,
     LoadChapterEditorInput,
     LoadChapterEditorResponse,
     PurgeLocalProjectRepoInput,
@@ -49,6 +52,16 @@ use self::{
     UpdateChapterLifecycleResponse,
   },
 };
+
+#[tauri::command]
+pub(crate) async fn initialize_gtms_project_repo(
+  app: AppHandle,
+  input: InitializeProjectRepoInput,
+) -> Result<InitializeProjectRepoResponse, String> {
+  tauri::async_runtime::spawn_blocking(move || initialize_gtms_project_repo_sync(&app, input))
+    .await
+    .map_err(|error| format!("The local project repo initialization worker failed: {error}"))?
+}
 
 #[tauri::command]
 pub(crate) async fn import_xlsx_to_gtms(

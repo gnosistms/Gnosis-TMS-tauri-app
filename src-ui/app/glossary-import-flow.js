@@ -52,10 +52,11 @@ function remoteGlossaryRepoUrl(remoteRepo) {
     : "";
 }
 
-async function prepareLocalGlossaryRepo(team, remoteRepo) {
+async function prepareLocalGlossaryRepo(team, remoteRepo, glossaryId = null) {
   await invoke("prepare_local_gtms_glossary_repo", {
     input: {
       installationId: team.installationId,
+      glossaryId,
       repoName: remoteRepo.name,
       remoteUrl: remoteGlossaryRepoUrl(remoteRepo),
       defaultBranchName: remoteRepo.defaultBranchName || "main",
@@ -208,6 +209,7 @@ function syncGlossaryInBackground(render, team, glossary, preferredBaseRepoName)
       await invoke("rename_local_gtms_glossary_repo", {
         input: {
           installationId: team.installationId,
+          glossaryId,
           fromRepoName: syncedGlossary.repoName,
           toRepoName: remoteRepo.name,
         },
@@ -272,7 +274,7 @@ function syncGlossaryInBackground(render, team, glossary, preferredBaseRepoName)
       return;
     }
 
-    await prepareLocalGlossaryRepo(team, remoteRepo);
+    await prepareLocalGlossaryRepo(team, remoteRepo, glossaryId);
     const snapshots = await syncGlossaryReposForTeam(team, [remoteRepo]);
     const syncIssue = getGlossarySyncIssueMessage(snapshots);
     if (syncIssue?.message) {
@@ -423,6 +425,7 @@ export async function submitGlossaryCreation(render) {
     await invoke("prepare_local_gtms_glossary_repo", {
       input: {
         installationId: team.installationId,
+        glossaryId,
         repoName: localRepoName,
       },
     });
@@ -444,6 +447,7 @@ export async function submitGlossaryCreation(render) {
         await invoke("purge_local_gtms_glossary_repo", {
           input: {
             installationId: team.installationId,
+            glossaryId,
             repoName: localRepoName,
           },
         });
@@ -562,6 +566,7 @@ export async function importGlossaryFromTmx(render) {
     await invoke("prepare_local_gtms_glossary_repo", {
       input: {
         installationId: team.installationId,
+        glossaryId,
         repoName: localRepoName,
       },
     });
@@ -580,6 +585,7 @@ export async function importGlossaryFromTmx(render) {
         await invoke("purge_local_gtms_glossary_repo", {
           input: {
             installationId: team.installationId,
+            glossaryId,
             repoName: localRepoName,
           },
         });

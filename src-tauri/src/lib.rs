@@ -12,6 +12,7 @@ mod github_app_test;
 mod insecure_github_app_config;
 mod local_repo_sync_state;
 mod project_import;
+mod project_repo_paths;
 mod project_repo_sync;
 mod repo_sync_shared;
 mod state;
@@ -71,7 +72,7 @@ use crate::{
     inspect_github_app_test_installation, list_github_app_test_repositories,
   },
   project_import::{
-    import_xlsx_to_gtms, list_local_gtms_project_files, load_gtms_chapter_editor_data, load_gtms_editor_field_history,
+    import_xlsx_to_gtms, initialize_gtms_project_repo, list_local_gtms_project_files, load_gtms_chapter_editor_data, load_gtms_editor_field_history,
     purge_local_gtms_project_repo,
     permanently_delete_gtms_chapter, rename_gtms_chapter, restore_gtms_chapter,
     restore_gtms_editor_field_from_history, soft_delete_gtms_chapter,
@@ -293,6 +294,7 @@ pub fn run() {
       list_gnosis_projects_for_installation,
       reconcile_project_repo_sync_states,
       list_project_repo_sync_states,
+      initialize_gtms_project_repo,
       import_xlsx_to_gtms,
       list_local_gtms_project_files,
       purge_local_gtms_project_repo,

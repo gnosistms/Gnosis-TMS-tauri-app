@@ -10,13 +10,13 @@ use tauri::AppHandle;
 
 use crate::{
   local_repo_sync_state::{LocalRepoSyncStateUpdate, upsert_local_repo_sync_state},
+  project_repo_paths::resolve_or_desired_project_git_repo_path,
   repo_sync_shared::{
     GitTransportAuth,
     abort_rebase_after_failed_pull,
     git_output,
     load_git_transport_token,
   },
-  storage_paths::local_project_repo_root,
 };
 use crate::state::ProjectRepoSyncStore;
 
@@ -91,11 +91,15 @@ fn reconcile_project_repo_sync_states_sync(
   input: ProjectRepoSyncInput,
   session_token: &str,
 ) -> Result<Vec<ProjectRepoSyncSnapshot>, String> {
-  let repo_root = local_project_repo_root(app, input.installation_id)?;
   let mut repos_needing_transport = false;
 
   for project in &input.projects {
-    let repo_path = repo_root.join(&project.repo_name);
+    let repo_path = resolve_or_desired_project_git_repo_path(
+      app,
+      input.installation_id,
+      Some(&project.project_id),
+      &project.repo_name,
+    )?;
     let snapshot = inspect_project_repo_state(project, &repo_path);
     if snapshot.status == PROJECT_REPO_SYNC_STATUS_NOT_CLONED
       || snapshot.status == PROJECT_REPO_SYNC_STATUS_OUT_OF_SYNC
@@ -113,7 +117,7 @@ fn reconcile_project_repo_sync_states_sync(
   let mut snapshots = Vec::with_capacity(input.projects.len());
 
   for project in input.projects {
-    let key = sync_store_key(input.installation_id, &project.repo_name);
+    let key = sync_store_key(input.installation_id, &project.project_id);
     let existing = load_sync_snapshot(&store, &key);
     if existing
       .as_ref()
@@ -126,7 +130,12 @@ fn reconcile_project_repo_sync_states_sync(
       continue;
     }
 
-    let repo_path = repo_root.join(&project.repo_name);
+    let repo_path = resolve_or_desired_project_git_repo_path(
+      app,
+      input.installation_id,
+      Some(&project.project_id),
+      &project.repo_name,
+    )?;
     let inspected_snapshot = inspect_project_repo_state(&project, &repo_path);
 
     if inspected_snapshot.status == PROJECT_REPO_SYNC_STATUS_NOT_CLONED
@@ -167,17 +176,21 @@ fn list_project_repo_sync_states_sync(
   store: Arc<Mutex<BTreeMap<String, ProjectRepoSyncSnapshot>>>,
   input: ProjectRepoSyncInput,
 ) -> Result<Vec<ProjectRepoSyncSnapshot>, String> {
-  let repo_root = local_project_repo_root(app, input.installation_id)?;
   let mut snapshots = Vec::with_capacity(input.projects.len());
 
   for project in input.projects {
-    let key = sync_store_key(input.installation_id, &project.repo_name);
+    let key = sync_store_key(input.installation_id, &project.project_id);
     if let Some(snapshot) = load_sync_snapshot(&store, &key) {
       snapshots.push(snapshot);
       continue;
     }
 
-    let repo_path = repo_root.join(&project.repo_name);
+    let repo_path = resolve_or_desired_project_git_repo_path(
+      app,
+      input.installation_id,
+      Some(&project.project_id),
+      &project.repo_name,
+    )?;
     let snapshot = inspect_project_repo_state(&project, &repo_path);
     save_sync_snapshot(&store, &key, snapshot.clone());
     snapshots.push(snapshot);
@@ -312,17 +325,24 @@ fn sync_project_repo(
     return clone_project_repo(project, repo_path, remote_head_oid, git_transport_token);
   }
 
+  ensure_project_origin_remote(project, repo_path)?;
+
   let branch_name = project
     .default_branch_name
     .as_deref()
     .filter(|value| !value.trim().is_empty())
-    .ok_or_else(|| "Missing default branch name for repo sync.".to_string())?;
-
-  if remote_head_oid.trim().is_empty() {
-    return Err("Missing remote default branch head for repo sync.".to_string());
-  }
+    .unwrap_or("main");
+  let local_head_oid = git_output(repo_path, &["rev-parse", "HEAD"], None).ok();
 
   let git_transport_auth = GitTransportAuth::from_token(git_transport_token)?;
+  if remote_head_oid.trim().is_empty() {
+    if local_head_oid.is_some() {
+      git_output(repo_path, &["push", "-u", "origin", branch_name], Some(&git_transport_auth))?;
+    }
+    let current_head_oid = git_output(repo_path, &["rev-parse", "HEAD"], None).ok();
+    mark_project_repo_synced(project, repo_path)?;
+    return Ok(current_head_oid);
+  }
 
   if let Err(error) = git_output(
     repo_path,
@@ -335,6 +355,30 @@ fn sync_project_repo(
   let current_head_oid = Some(git_output(repo_path, &["rev-parse", "HEAD"], None)?);
   mark_project_repo_synced(project, repo_path)?;
   Ok(current_head_oid)
+}
+
+fn ensure_project_origin_remote(
+  project: &ProjectRepoSyncDescriptor,
+  repo_path: &Path,
+) -> Result<(), String> {
+  let full_name = project.full_name.trim();
+  if full_name.is_empty() {
+    return Err("Could not determine the remote project repository.".to_string());
+  }
+
+  let remote_url = format!("https://github.com/{full_name}.git");
+  match git_output(repo_path, &["remote", "get-url", "origin"], None) {
+    Ok(existing_url) => {
+      if existing_url.trim() != remote_url {
+        git_output(repo_path, &["remote", "set-url", "origin", &remote_url], None)?;
+      }
+    }
+    Err(_) => {
+      git_output(repo_path, &["remote", "add", "origin", &remote_url], None)?;
+    }
+  }
+
+  Ok(())
 }
 
 fn clone_project_repo(
@@ -352,12 +396,14 @@ fn clone_project_repo(
   let repo_url = format!("https://github.com/{}.git", project.full_name);
   let git_transport_auth = GitTransportAuth::from_token(git_transport_token)?;
   let mut clone_args = vec!["clone"];
-  if let Some(branch_name) = project
-    .default_branch_name
-    .as_deref()
-    .filter(|value| !value.trim().is_empty())
-  {
-    clone_args.extend(["--branch", branch_name, "--single-branch"]);
+  if !remote_head_oid.trim().is_empty() {
+    if let Some(branch_name) = project
+      .default_branch_name
+      .as_deref()
+      .filter(|value| !value.trim().is_empty())
+    {
+      clone_args.extend(["--branch", branch_name, "--single-branch"]);
+    }
   }
   clone_args.push(repo_url.as_str());
   let repo_path_string = repo_path.display().to_string();
@@ -366,10 +412,15 @@ fn clone_project_repo(
   git_output(repo_parent, &clone_args, Some(&git_transport_auth))?;
 
   if remote_head_oid.trim().is_empty() {
-    return Ok(None);
+    let branch_name = project
+      .default_branch_name
+      .as_deref()
+      .filter(|value| !value.trim().is_empty())
+      .unwrap_or("main");
+    let _ = git_output(repo_path, &["checkout", "-B", branch_name], None);
   }
 
-  let current_head_oid = Some(git_output(repo_path, &["rev-parse", "HEAD"], None)?);
+  let current_head_oid = git_output(repo_path, &["rev-parse", "HEAD"], None).ok();
   mark_project_repo_synced(project, repo_path)?;
   Ok(current_head_oid)
 }
@@ -382,6 +433,7 @@ fn mark_project_repo_synced(
     repo_path,
     LocalRepoSyncStateUpdate {
       resource_id: Some(project.project_id.clone()),
+      current_repo_name: Some(project.repo_name.clone()),
       kind: Some("project".to_string()),
       has_ever_synced: Some(true),
       last_known_github_repo_id: project.repo_id,
@@ -393,8 +445,8 @@ fn mark_project_repo_synced(
   Ok(())
 }
 
-fn sync_store_key(installation_id: i64, repo_name: &str) -> String {
-  format!("installation:{installation_id}:{}", repo_name.trim().to_lowercase())
+fn sync_store_key(installation_id: i64, project_id: &str) -> String {
+  format!("installation:{installation_id}:{}", project_id.trim().to_lowercase())
 }
 
 fn load_sync_snapshot(

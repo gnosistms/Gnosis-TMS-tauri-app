@@ -12,6 +12,7 @@ use tauri::AppHandle;
 use uuid::Uuid;
 
 use crate::git_commit::{git_commit_as_signed_in_user_with_metadata, GitCommitMetadata};
+use crate::project_repo_paths::resolve_project_git_repo_path;
 
 use super::project_git::{
   ensure_clean_git_repo,
@@ -19,7 +20,6 @@ use super::project_git::{
   ensure_repo_exists,
   ensure_valid_git_repo,
   git_output,
-  local_repo_root,
   read_json_file,
   write_json_pretty,
 };
@@ -33,6 +33,7 @@ const ORDER_KEY_SPACING: u128 = 1u128 << 64;
 pub(crate) struct ImportXlsxInput {
   installation_id: i64,
   repo_name: String,
+  project_id: Option<String>,
   file_name: String,
   bytes: Vec<u8>,
 }
@@ -59,6 +60,7 @@ pub(crate) struct ImportXlsxResponse {
 struct ParsedWorkbook {
   installation_id: i64,
   repo_name: String,
+  project_id: Option<String>,
   file_title: String,
   worksheet_name: String,
   source_file_name: String,
@@ -271,7 +273,12 @@ pub(super) fn import_xlsx_to_gtms_sync(
 ) -> Result<ImportXlsxResponse, String> {
   let parsed = parse_xlsx_workbook(input)?;
   let chapter_id = Uuid::now_v7();
-  let repo_path = local_repo_root(app, parsed.installation_id)?.join(&parsed.repo_name);
+  let repo_path = resolve_project_git_repo_path(
+    app,
+    parsed.installation_id,
+    parsed.project_id.as_deref(),
+    Some(&parsed.repo_name),
+  )?;
   ensure_repo_exists(
     &repo_path,
     "The local project repo is not available yet. Refresh the Projects page first so the repo can be cloned.",
@@ -437,6 +444,7 @@ fn parse_xlsx_workbook(input: ImportXlsxInput) -> Result<ParsedWorkbook, String>
   Ok(ParsedWorkbook {
     installation_id: input.installation_id,
     repo_name: input.repo_name,
+    project_id: input.project_id,
     file_title: humanize_file_stem(&input.file_name),
     worksheet_name: sheet_name,
     source_file_name: input.file_name,

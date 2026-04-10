@@ -33,6 +33,7 @@ import {
   rollbackVisibleGlossaryMutation,
 } from "./glossary-top-level-state.js";
 import { processQueuedResourceMutations } from "./resource-top-level-mutations.js";
+import { applyMetadataFirstResourceMutation } from "./resource-lifecycle-engine.js";
 import { classifySyncError } from "./sync-error.js";
 import { handleSyncFailure } from "./sync-recovery.js";
 
@@ -117,24 +118,6 @@ function glossaryMetadataRecord(glossary, overrides = {}) {
   };
 }
 
-async function applyMetadataFirstGlossaryMutation(team, nextRecord, applyLocalMutation, rollbackRecord) {
-  await upsertGlossaryMetadataRecord(team, nextRecord);
-  try {
-    await applyLocalMutation();
-  } catch (error) {
-    try {
-      await upsertGlossaryMetadataRecord(team, rollbackRecord);
-    } catch (rollbackError) {
-      throw new Error(
-        `${error?.message ?? String(error)} The glossary metadata intent was committed locally first, and the automatic metadata rollback also failed: ${
-          rollbackError?.message ?? String(rollbackError)
-        }`,
-      );
-    }
-    throw error;
-  }
-}
-
 async function commitGlossaryMutation(team, mutation) {
   const glossary = glossaryById(mutation.glossaryId ?? mutation.resourceId);
 
@@ -143,66 +126,72 @@ async function commitGlossaryMutation(team, mutation) {
   }
 
   if (mutation.type === "rename") {
-    await applyMetadataFirstGlossaryMutation(
-      team,
-      glossaryMetadataRecord({
+    await applyMetadataFirstResourceMutation({
+      resourceLabel: "glossary",
+      writeMetadata: (record) => upsertGlossaryMetadataRecord(team, record),
+      nextRecord: glossaryMetadataRecord({
         ...glossary,
         title: mutation.title,
       }),
-      () => invoke("rename_gtms_glossary", {
+      applyLocalMutation: () => invoke("rename_gtms_glossary", {
         input: {
           installationId: team.installationId,
+          glossaryId: glossary.id,
           repoName: glossary.repoName,
           title: mutation.title,
         },
       }),
-      glossaryMetadataRecord({
+      rollbackRecord: glossaryMetadataRecord({
         ...glossary,
         title: mutation.previousTitle,
       }),
-    );
+    });
     return;
   }
 
   if (mutation.type === "softDelete") {
-    await applyMetadataFirstGlossaryMutation(
-      team,
-      glossaryMetadataRecord({
+    await applyMetadataFirstResourceMutation({
+      resourceLabel: "glossary",
+      writeMetadata: (record) => upsertGlossaryMetadataRecord(team, record),
+      nextRecord: glossaryMetadataRecord({
         ...glossary,
         lifecycleState: "deleted",
       }),
-      () => invoke("soft_delete_gtms_glossary", {
+      applyLocalMutation: () => invoke("soft_delete_gtms_glossary", {
         input: {
           installationId: team.installationId,
+          glossaryId: glossary.id,
           repoName: glossary.repoName,
         },
       }),
-      glossaryMetadataRecord({
+      rollbackRecord: glossaryMetadataRecord({
         ...glossary,
         lifecycleState: "active",
       }),
-    );
+    });
     return;
   }
 
   if (mutation.type === "restore") {
-    await applyMetadataFirstGlossaryMutation(
-      team,
-      glossaryMetadataRecord({
+    await applyMetadataFirstResourceMutation({
+      resourceLabel: "glossary",
+      writeMetadata: (record) => upsertGlossaryMetadataRecord(team, record),
+      nextRecord: glossaryMetadataRecord({
         ...glossary,
         lifecycleState: "active",
       }),
-      () => invoke("restore_gtms_glossary", {
+      applyLocalMutation: () => invoke("restore_gtms_glossary", {
         input: {
           installationId: team.installationId,
+          glossaryId: glossary.id,
           repoName: glossary.repoName,
         },
       }),
-      glossaryMetadataRecord({
+      rollbackRecord: glossaryMetadataRecord({
         ...glossary,
         lifecycleState: "deleted",
       }),
-    );
+    });
   }
 }
 
@@ -509,8 +498,7 @@ export async function confirmGlossaryPermanentDeletion(render) {
   render();
 
   void (async () => {
-    let remoteDeleted = false;
-
+    let tombstoneCommitted = false;
     try {
       await upsertGlossaryMetadataRecord(team, glossaryMetadataRecord(glossary, {
         lifecycleState: "softDeleted",
@@ -518,23 +506,30 @@ export async function confirmGlossaryPermanentDeletion(render) {
         recordState: "tombstone",
         deletedAt: new Date().toISOString(),
       }));
-      await permanentlyDeleteRemoteGlossaryRepoForTeam(team, glossary.repoName);
-      remoteDeleted = true;
+      tombstoneCommitted = true;
       await invoke("purge_local_gtms_glossary_repo", {
         input: {
           installationId: team.installationId,
+          glossaryId: glossary.id,
           repoName: glossary.repoName,
         },
       });
+      try {
+        await permanentlyDeleteRemoteGlossaryRepoForTeam(team, glossary.repoName);
+      } catch (error) {
+        showNoticeBadge(
+          `Glossary deletion was committed locally, but remote cleanup still needs attention: ${
+            error?.message ?? String(error)
+          }`,
+          render,
+          4200,
+        );
+        render();
+        return;
+      }
       await loadTeamGlossaries(render, team.id, { preserveVisibleData: true });
     } catch (error) {
-      try {
-        if (!remoteDeleted && glossary) {
-          await upsertGlossaryMetadataRecord(team, glossaryMetadataRecord(glossary));
-        }
-      } catch {}
-
-      if (!remoteDeleted) {
+      if (!tombstoneCommitted) {
         restoreVisibleGlossaryState(snapshot);
         persistGlossariesForTeam(team);
         state.glossaryPermanentDeletion = {
@@ -546,9 +541,8 @@ export async function confirmGlossaryPermanentDeletion(render) {
           confirmationText,
         };
       } else {
-        persistGlossariesForTeam(team);
         showNoticeBadge(
-          `Glossary deleted remotely, but local cleanup still needs attention: ${error?.message ?? String(error)}`,
+          `Glossary deletion was committed locally, but local cleanup still needs attention: ${error?.message ?? String(error)}`,
           render,
           4200,
         );

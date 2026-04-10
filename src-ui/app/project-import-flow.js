@@ -140,6 +140,7 @@ export async function addFilesToProject(render, projectId) {
       result = await invoke("import_xlsx_to_gtms", {
         input: {
           installationId: selectedTeam.installationId,
+          projectId: targetProject.id,
           repoName: targetProject.name,
           fileName: selectedFile.name,
           bytes,

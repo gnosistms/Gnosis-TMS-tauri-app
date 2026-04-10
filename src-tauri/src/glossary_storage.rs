@@ -14,7 +14,7 @@ use uuid::Uuid;
 
 use crate::{
   git_commit::git_commit_as_signed_in_user,
-  local_repo_sync_state::{LocalRepoSyncStateUpdate, upsert_local_repo_sync_state},
+  local_repo_sync_state::{LocalRepoSyncStateUpdate, read_local_repo_sync_state, upsert_local_repo_sync_state},
   storage_paths::local_glossary_repo_root,
 };
 
@@ -77,6 +77,7 @@ pub(crate) struct ListLocalGlossariesInput {
 pub(crate) struct LoadGlossaryEditorDataInput {
   installation_id: i64,
   repo_name: String,
+  glossary_id: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -114,6 +115,7 @@ pub(crate) struct InspectTmxGlossaryImportInput {
 pub(crate) struct PrepareLocalGlossaryRepoInput {
   installation_id: i64,
   repo_name: String,
+  glossary_id: Option<String>,
   remote_url: Option<String>,
   default_branch_name: Option<String>,
 }
@@ -123,6 +125,7 @@ pub(crate) struct PrepareLocalGlossaryRepoInput {
 pub(crate) struct RenameGlossaryInput {
   installation_id: i64,
   repo_name: String,
+  glossary_id: Option<String>,
   title: String,
 }
 
@@ -131,12 +134,14 @@ pub(crate) struct RenameGlossaryInput {
 pub(crate) struct UpdateGlossaryLifecycleInput {
   installation_id: i64,
   repo_name: String,
+  glossary_id: Option<String>,
 }
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct RenameLocalGlossaryRepoInput {
   installation_id: i64,
+  glossary_id: Option<String>,
   from_repo_name: String,
   to_repo_name: String,
 }
@@ -146,6 +151,7 @@ pub(crate) struct RenameLocalGlossaryRepoInput {
 pub(crate) struct UpsertGlossaryTermInput {
   installation_id: i64,
   repo_name: String,
+  glossary_id: Option<String>,
   term_id: Option<String>,
   source_terms: Vec<String>,
   target_terms: Vec<String>,
@@ -159,6 +165,7 @@ pub(crate) struct UpsertGlossaryTermInput {
 pub(crate) struct DeleteGlossaryTermInput {
   installation_id: i64,
   repo_name: String,
+  glossary_id: Option<String>,
   term_id: String,
 }
 
@@ -384,32 +391,7 @@ fn list_local_gtms_glossaries_sync(
       continue;
     }
 
-    let glossary_file: StoredGlossaryFile = read_json_file(&glossary_json_path, "glossary.json")?;
-    let terms = load_glossary_terms(&repo_path.join("terms"))?;
-    let active_term_count = terms
-      .iter()
-      .filter(|term| term.lifecycle.state == "active")
-      .count();
-
-    summaries.push(LocalGlossarySummary {
-      glossary_id: glossary_file.glossary_id,
-      repo_name: repo_path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or_default()
-        .to_string(),
-      title: glossary_file.title,
-      source_language: GlossaryLanguageInfo {
-        code: glossary_file.languages.source.code,
-        name: glossary_file.languages.source.name,
-      },
-      target_language: GlossaryLanguageInfo {
-        code: glossary_file.languages.target.code,
-        name: glossary_file.languages.target.name,
-      },
-      lifecycle_state: glossary_file.lifecycle.state,
-      term_count: active_term_count,
-    });
+    summaries.push(build_local_glossary_summary(&repo_path)?);
   }
 
   summaries.sort_by(|left, right| {
@@ -427,7 +409,12 @@ fn load_gtms_glossary_editor_data_sync(
   app: &AppHandle,
   input: LoadGlossaryEditorDataInput,
 ) -> Result<LoadGlossaryEditorDataResponse, String> {
-  let repo_path = glossary_repo_path(app, input.installation_id, &input.repo_name)?;
+  let repo_path = glossary_repo_path(
+    app,
+    input.installation_id,
+    input.glossary_id.as_deref(),
+    Some(&input.repo_name),
+  )?;
   let glossary_file = read_glossary_file(&repo_path)?;
   let terms = load_glossary_terms(&repo_path.join("terms"))?;
 
@@ -488,7 +475,12 @@ fn initialize_gtms_glossary_repo_sync(
     return Err("Could not determine which glossary repo to initialize.".to_string());
   }
 
-  let repo_path = glossary_git_repo_path(app, input.installation_id, &repo_name)?;
+  let repo_path = glossary_git_repo_path(
+    app,
+    input.installation_id,
+    input.glossary_id.as_deref(),
+    Some(&repo_name),
+  )?;
   if repo_path.join("glossary.json").exists() {
     return Err("This glossary repo is already initialized.".to_string());
   }
@@ -531,6 +523,7 @@ fn initialize_gtms_glossary_repo_sync(
     &repo_path,
     LocalRepoSyncStateUpdate {
       resource_id: Some(glossary_file.glossary_id.clone()),
+      current_repo_name: Some(repo_name.clone()),
       kind: Some("glossary".to_string()),
       has_ever_synced: Some(false),
       ..Default::default()
@@ -564,7 +557,12 @@ fn import_tmx_to_gtms_glossary_repo_sync(
     return Err("Could not determine which glossary repo to import into.".to_string());
   }
 
-  let repo_path = glossary_git_repo_path(app, input.installation_id, &repo_name)?;
+  let repo_path = glossary_git_repo_path(
+    app,
+    input.installation_id,
+    input.glossary_id.as_deref(),
+    Some(&repo_name),
+  )?;
   if repo_path.join("glossary.json").exists() {
     return Err("This glossary repo is already initialized.".to_string());
   }
@@ -613,6 +611,7 @@ fn import_tmx_to_gtms_glossary_repo_sync(
     &repo_path,
     LocalRepoSyncStateUpdate {
       resource_id: Some(glossary_file.glossary_id.clone()),
+      current_repo_name: Some(repo_name.clone()),
       kind: Some("glossary".to_string()),
       has_ever_synced: Some(false),
       ..Default::default()
@@ -651,7 +650,12 @@ fn rename_gtms_glossary_sync(
     return Err("Enter a glossary name.".to_string());
   }
 
-  let repo_path = glossary_repo_path(app, input.installation_id, &input.repo_name)?;
+  let repo_path = glossary_repo_path(
+    app,
+    input.installation_id,
+    input.glossary_id.as_deref(),
+    Some(&input.repo_name),
+  )?;
   let mut glossary_value = read_glossary_value(&repo_path)?;
   let glossary_object = glossary_value
     .as_object_mut()
@@ -679,7 +683,12 @@ fn update_gtms_glossary_lifecycle_sync(
   input: UpdateGlossaryLifecycleInput,
   next_state: &str,
 ) -> Result<LocalGlossarySummary, String> {
-  let repo_path = glossary_repo_path(app, input.installation_id, &input.repo_name)?;
+  let repo_path = glossary_repo_path(
+    app,
+    input.installation_id,
+    input.glossary_id.as_deref(),
+    Some(&input.repo_name),
+  )?;
   let mut glossary_value = read_glossary_value(&repo_path)?;
   let glossary_object = glossary_value
     .as_object_mut()
@@ -716,12 +725,12 @@ fn purge_local_gtms_glossary_repo_sync(
   app: &AppHandle,
   input: UpdateGlossaryLifecycleInput,
 ) -> Result<(), String> {
-  let repo_root = local_glossary_repo_root(app, input.installation_id)?;
-  let repo_name = input.repo_name.trim();
-  if repo_name.is_empty() {
-    return Err("Could not determine which glossary repo to remove.".to_string());
-  }
-  let repo_path = repo_root.join(repo_name);
+  let repo_path = glossary_git_repo_path(
+    app,
+    input.installation_id,
+    input.glossary_id.as_deref(),
+    Some(&input.repo_name),
+  )?;
   if !repo_path.exists() {
     return Ok(());
   }
@@ -743,8 +752,12 @@ fn prepare_local_gtms_glossary_repo_sync(
     return Err("Could not determine which glossary repo to prepare.".to_string());
   }
 
-  let repo_root = local_glossary_repo_root(app, input.installation_id)?;
-  let repo_path = repo_root.join(repo_name);
+  let repo_path = desired_glossary_git_repo_path(
+    app,
+    input.installation_id,
+    input.glossary_id.as_deref(),
+    repo_name,
+  )?;
   fs::create_dir_all(&repo_path).map_err(|error| {
     format!(
       "Could not create the local glossary repo '{}': {error}",
@@ -760,6 +773,21 @@ fn prepare_local_gtms_glossary_repo_sync(
       .unwrap_or("main");
     git_output(&repo_path, &["init", "--initial-branch", branch_name])?;
   }
+
+  let _ = upsert_local_repo_sync_state(
+    &repo_path,
+    LocalRepoSyncStateUpdate {
+      resource_id: input
+        .glossary_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string),
+      current_repo_name: Some(repo_name.to_string()),
+      kind: Some("glossary".to_string()),
+      ..Default::default()
+    },
+  );
 
   let branch_name = input
     .default_branch_name
@@ -804,7 +832,13 @@ fn rename_local_gtms_glossary_repo_sync(
   }
 
   let repo_root = local_glossary_repo_root(app, input.installation_id)?;
-  let from_path = repo_root.join(from_repo_name);
+  let from_path = find_glossary_repo_path(
+    app,
+    input.installation_id,
+    input.glossary_id.as_deref(),
+    Some(from_repo_name),
+  )?
+  .unwrap_or_else(|| repo_root.join(from_repo_name));
   let to_path = repo_root.join(to_repo_name);
 
   if !from_path.exists() {
@@ -820,14 +854,30 @@ fn rename_local_gtms_glossary_repo_sync(
       from_path.display(),
       to_path.display()
     )
-  })
+  })?;
+
+  let _ = upsert_local_repo_sync_state(
+    &to_path,
+    LocalRepoSyncStateUpdate {
+      current_repo_name: Some(to_repo_name.to_string()),
+      kind: Some("glossary".to_string()),
+      ..Default::default()
+    },
+  );
+
+  Ok(())
 }
 
 fn upsert_gtms_glossary_term_sync(
   app: &AppHandle,
   input: UpsertGlossaryTermInput,
 ) -> Result<UpsertGlossaryTermResponse, String> {
-  let repo_path = glossary_repo_path(app, input.installation_id, &input.repo_name)?;
+  let repo_path = glossary_repo_path(
+    app,
+    input.installation_id,
+    input.glossary_id.as_deref(),
+    Some(&input.repo_name),
+  )?;
   let glossary_file = read_glossary_file(&repo_path)?;
   ensure_gitattributes(&repo_path.join(".gitattributes"))?;
 
@@ -945,7 +995,12 @@ fn delete_gtms_glossary_term_sync(
   app: &AppHandle,
   input: DeleteGlossaryTermInput,
 ) -> Result<DeleteGlossaryTermResponse, String> {
-  let repo_path = glossary_repo_path(app, input.installation_id, &input.repo_name)?;
+  let repo_path = glossary_repo_path(
+    app,
+    input.installation_id,
+    input.glossary_id.as_deref(),
+    Some(&input.repo_name),
+  )?;
   let glossary_file = read_glossary_file(&repo_path)?;
   let term_path = repo_path.join("terms").join(format!("{}.json", input.term_id));
   if !term_path.exists() {
@@ -977,8 +1032,94 @@ fn delete_gtms_glossary_term_sync(
   })
 }
 
-fn glossary_repo_path(app: &AppHandle, installation_id: i64, repo_name: &str) -> Result<PathBuf, String> {
-  let repo_path = glossary_git_repo_path(app, installation_id, repo_name)?;
+fn normalized_optional_identifier(value: Option<&str>) -> Option<String> {
+  value
+    .map(str::trim)
+    .filter(|value| !value.is_empty())
+    .map(str::to_string)
+}
+
+fn glossary_repo_matches_identifier(
+  repo_path: &Path,
+  glossary_id: Option<&str>,
+  repo_name: Option<&str>,
+) -> bool {
+  let normalized_glossary_id = normalized_optional_identifier(glossary_id);
+  let normalized_repo_name = normalized_optional_identifier(repo_name);
+  let sync_state = read_local_repo_sync_state(repo_path).ok().flatten();
+
+  if let Some(glossary_id) = normalized_glossary_id.as_deref() {
+    if sync_state
+      .as_ref()
+      .and_then(|state| state.resource_id.as_deref())
+      .map(str::trim)
+      .filter(|value| !value.is_empty())
+      == Some(glossary_id)
+    {
+      return true;
+    }
+
+    if let Ok(glossary_file) = read_glossary_file(repo_path) {
+      return glossary_file.glossary_id.trim() == glossary_id;
+    }
+    return false;
+  }
+
+  if let Some(repo_name) = normalized_repo_name.as_deref() {
+    if sync_state
+      .as_ref()
+      .and_then(|state| state.current_repo_name.as_deref())
+      .map(str::trim)
+      .filter(|value| !value.is_empty())
+      == Some(repo_name)
+    {
+      return true;
+    }
+
+    let folder_name = repo_path
+      .file_name()
+      .and_then(|name| name.to_str())
+      .map(str::trim)
+      .unwrap_or_default();
+    return folder_name == repo_name;
+  }
+
+  false
+}
+
+fn find_glossary_repo_path(
+  app: &AppHandle,
+  installation_id: i64,
+  glossary_id: Option<&str>,
+  repo_name: Option<&str>,
+) -> Result<Option<PathBuf>, String> {
+  let repo_root = local_glossary_repo_root(app, installation_id)?;
+  for entry in fs::read_dir(&repo_root)
+    .map_err(|error| format!("Could not read the local glossary repo folder: {error}"))?
+  {
+    let entry = entry.map_err(|error| format!("Could not read a glossary repo entry: {error}"))?;
+    let repo_path = entry.path();
+    if !repo_path.is_dir() || !repo_path.join("glossary.json").exists() {
+      continue;
+    }
+    if git_output(&repo_path, &["rev-parse", "--git-dir"]).is_err() {
+      continue;
+    }
+    if glossary_repo_matches_identifier(&repo_path, glossary_id, repo_name) {
+      return Ok(Some(repo_path));
+    }
+  }
+
+  Ok(None)
+}
+
+fn glossary_repo_path(
+  app: &AppHandle,
+  installation_id: i64,
+  glossary_id: Option<&str>,
+  repo_name: Option<&str>,
+) -> Result<PathBuf, String> {
+  let repo_path = glossary_git_repo_path(app, installation_id, glossary_id, repo_name)?;
   if !repo_path.join("glossary.json").exists() {
     return Err("The local glossary repo is missing glossary.json.".to_string());
   }
@@ -988,6 +1129,31 @@ fn glossary_repo_path(app: &AppHandle, installation_id: i64, repo_name: &str) ->
 fn glossary_git_repo_path(
   app: &AppHandle,
   installation_id: i64,
+  glossary_id: Option<&str>,
+  repo_name: Option<&str>,
+) -> Result<PathBuf, String> {
+  if let Some(repo_name) = normalized_optional_identifier(repo_name) {
+    let repo_root = local_glossary_repo_root(app, installation_id)?;
+    let repo_path = repo_root.join(&repo_name);
+    if repo_path.exists() {
+      if git_output(&repo_path, &["rev-parse", "--git-dir"]).is_err() {
+        return Err("The local glossary repo is missing or invalid.".to_string());
+      }
+      return Ok(repo_path);
+    }
+  }
+
+  if let Some(repo_path) = find_glossary_repo_path(app, installation_id, glossary_id, repo_name)? {
+    return Ok(repo_path);
+  }
+
+  Err("The local glossary repo is not available yet.".to_string())
+}
+
+fn desired_glossary_git_repo_path(
+  app: &AppHandle,
+  installation_id: i64,
+  _glossary_id: Option<&str>,
   repo_name: &str,
 ) -> Result<PathBuf, String> {
   let normalized_repo_name = repo_name.trim();
@@ -996,14 +1162,7 @@ fn glossary_git_repo_path(
   }
 
   let repo_root = local_glossary_repo_root(app, installation_id)?;
-  let repo_path = repo_root.join(normalized_repo_name);
-  if !repo_path.exists() {
-    return Err("The local glossary repo is not available yet.".to_string());
-  }
-  if git_output(&repo_path, &["rev-parse", "--git-dir"]).is_err() {
-    return Err("The local glossary repo is missing or invalid.".to_string());
-  }
-  Ok(repo_path)
+  Ok(repo_root.join(normalized_repo_name))
 }
 
 fn read_glossary_value(repo_path: &Path) -> Result<Value, String> {
@@ -1012,6 +1171,19 @@ fn read_glossary_value(repo_path: &Path) -> Result<Value, String> {
 
 fn build_local_glossary_summary(repo_path: &Path) -> Result<LocalGlossarySummary, String> {
   let glossary_file = read_glossary_file(repo_path)?;
+  let repo_name = read_local_repo_sync_state(repo_path)
+    .ok()
+    .flatten()
+    .and_then(|state| state.current_repo_name)
+    .map(|value| value.trim().to_string())
+    .filter(|value| !value.is_empty())
+    .unwrap_or_else(|| {
+      repo_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or_default()
+        .to_string()
+    });
   let term_count = load_glossary_terms(&repo_path.join("terms"))?
     .into_iter()
     .filter(|term| term.lifecycle.state == "active")
@@ -1019,11 +1191,7 @@ fn build_local_glossary_summary(repo_path: &Path) -> Result<LocalGlossarySummary
 
   Ok(LocalGlossarySummary {
     glossary_id: glossary_file.glossary_id,
-    repo_name: repo_path
-      .file_name()
-      .and_then(|name| name.to_str())
-      .unwrap_or_default()
-      .to_string(),
+    repo_name,
     title: glossary_file.title,
     source_language: GlossaryLanguageInfo {
       code: glossary_file.languages.source.code,
@@ -1565,6 +1733,12 @@ fn write_text_file(path: &Path, contents: &str) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
+  use std::{fs, process::Command};
+
+  use uuid::Uuid;
+
+  use crate::local_repo_sync_state::{LocalRepoSyncStateUpdate, upsert_local_repo_sync_state};
+
   use super::*;
 
   const GNOSIS_ES_VI_TMX: &str = include_str!("../tests/fixtures/gnosis-es-vi.tmx");
@@ -1596,5 +1770,58 @@ mod tests {
       .expect("antítesis term should be present");
     assert!(antitesis.target_terms.iter().any(|value| value == "phản đề"));
     assert!(antitesis.notes_to_translators.contains("Hãy tham khảo khái niệm"));
+  }
+
+  #[test]
+  fn glossary_matcher_prefers_glossary_id_over_folder_name_match() {
+    let repo_root = std::env::temp_dir().join(format!("gnosis-glossary-storage-{}", Uuid::now_v7()));
+    let stray_repo_path = repo_root.join("shared-name");
+    fs::create_dir_all(&stray_repo_path).expect("create repo dir");
+    let output = Command::new("git")
+      .args(["init", "--initial-branch", "main"])
+      .current_dir(&stray_repo_path)
+      .output()
+      .expect("run git init");
+    assert!(output.status.success(), "git init failed");
+
+    write_json_pretty(
+      &stray_repo_path.join("glossary.json"),
+      &StoredGlossaryFile {
+        glossary_id: "glossary-stray".to_string(),
+        title: "Glossary".to_string(),
+        lifecycle: StoredLifecycle {
+          state: "active".to_string(),
+        },
+        languages: StoredGlossaryLanguages {
+          source: StoredGlossaryLanguage {
+            code: "en".to_string(),
+            name: "English".to_string(),
+          },
+          target: StoredGlossaryLanguage {
+            code: "es".to_string(),
+            name: "Spanish".to_string(),
+          },
+        },
+      },
+    )
+    .expect("write glossary");
+    upsert_local_repo_sync_state(
+      &stray_repo_path,
+      LocalRepoSyncStateUpdate {
+        resource_id: Some("glossary-stray".to_string()),
+        current_repo_name: Some("shared-name".to_string()),
+        kind: Some("glossary".to_string()),
+        ..Default::default()
+      },
+    )
+    .expect("write sync state");
+
+    assert!(!glossary_repo_matches_identifier(
+      &stray_repo_path,
+      Some("glossary-live"),
+      Some("shared-name"),
+    ));
+
+    let _ = fs::remove_dir_all(&repo_root);
   }
 }

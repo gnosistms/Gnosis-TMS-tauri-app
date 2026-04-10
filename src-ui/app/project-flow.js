@@ -35,7 +35,7 @@ import { clearScopedSyncBadge, showNoticeBadge, showScopedSyncBadge } from "./st
 import { classifySyncError } from "./sync-error.js";
 import { handleSyncFailure } from "./sync-recovery.js";
 import { createUniqueRepoWithNumericSuffix } from "./repo-creation.js";
-import { slugifyRepoName } from "./repo-names.js";
+import { appendRepoNameSuffix, slugifyRepoName } from "./repo-names.js";
 import { mergeMetadataDiscoveryProjects } from "./project-discovery.js";
 import {
   deleteProjectMetadataRecord,
@@ -48,6 +48,10 @@ import {
   processQueuedResourceMutations,
   rollbackTopLevelResourceMutation,
 } from "./resource-top-level-mutations.js";
+import {
+  applyMetadataFirstResourceMutation,
+  ensureResourceNotTombstoned,
+} from "./resource-lifecycle-engine.js";
 
 function setProjectUiDebug(render, text) {
   showScopedSyncBadge("projects", text, render);
@@ -206,6 +210,18 @@ function pendingProjectMetadataRecord(project) {
   };
 }
 
+async function rollbackPendingProjectMetadataOnLocalFailure(selectedTeam, projectId, error) {
+  try {
+    await deleteProjectMetadataRecord(selectedTeam, projectId);
+  } catch (rollbackError) {
+    throw new Error(
+      `${error?.message ?? String(error)} The pending project metadata intent was committed locally first, and the automatic metadata rollback also failed: ${
+        rollbackError?.message ?? String(rollbackError)
+      }`,
+    );
+  }
+}
+
 function linkedProjectMetadataRecord(project, remoteProject) {
   return {
     ...pendingProjectMetadataRecord(project),
@@ -217,6 +233,53 @@ function linkedProjectMetadataRecord(project, remoteProject) {
     defaultBranch: remoteProject.defaultBranchName || "main",
     remoteState: "linked",
   };
+}
+
+function reserveLocalProjectRepoName(baseRepoName) {
+  const usedRepoNames = new Set(
+    [...(state.projects ?? []), ...(state.deletedProjects ?? [])]
+      .map((project) => String(project?.name ?? "").trim())
+      .filter(Boolean),
+  );
+
+  for (let attempt = 1; attempt <= 100; attempt += 1) {
+    const candidateRepoName = appendRepoNameSuffix(baseRepoName, attempt);
+    if (!usedRepoNames.has(candidateRepoName)) {
+      return {
+        repoName: candidateRepoName,
+        collisionResolved: attempt > 1,
+      };
+    }
+  }
+
+  throw new Error("Could not determine an available local project repo name.");
+}
+
+function currentProjectSnapshot(project) {
+  const projectId = project?.id ?? null;
+  const repoName = project?.name ?? null;
+  return (
+    state.projects.find((item) => item?.id === projectId)
+    ?? state.deletedProjects.find((item) => item?.id === projectId)
+    ?? state.projects.find((item) => item?.name === repoName)
+    ?? state.deletedProjects.find((item) => item?.name === repoName)
+    ?? project
+  );
+}
+
+function markProjectAsLocalOnly(selectedTeam, project, render) {
+  const localOnlyProject = {
+    ...currentProjectSnapshot(project),
+    isPendingCreate: false,
+    pendingCreateStartedAt: undefined,
+    pendingCreateStatusText: undefined,
+    remoteState: "linked",
+    resolutionState: "unregisteredLocal",
+  };
+  replaceVisibleProject(localOnlyProject.id, localOnlyProject);
+  persistProjectsForTeam(selectedTeam);
+  render();
+  return localOnlyProject;
 }
 
 function replaceVisibleProject(currentProjectId, nextProject) {
@@ -473,7 +536,7 @@ function clearSelectedProjectState(project) {
   }
 }
 
-async function purgeLocalProjectRepo(selectedTeam, projectName) {
+async function purgeLocalProjectRepo(selectedTeam, projectName, projectId = null) {
   if (!Number.isFinite(selectedTeam?.installationId) || !String(projectName ?? "").trim()) {
     return;
   }
@@ -481,72 +544,33 @@ async function purgeLocalProjectRepo(selectedTeam, projectName) {
   await invoke("purge_local_gtms_project_repo", {
     input: {
       installationId: selectedTeam.installationId,
+      projectId,
       repoName: projectName,
     },
   });
 }
 
 export async function ensureProjectNotTombstoned(render, selectedTeam, project, options = {}) {
-  if (!selectedTeam?.installationId || !project) {
-    return false;
-  }
-
-  try {
-    if (!(await lookupLocalMetadataTombstone(selectedTeam, "project", project.id))) {
-      return false;
-    }
-  } catch {
-    let metadataRecords = [];
-    try {
-      metadataRecords = await listProjectMetadataRecords(selectedTeam);
-    } catch {
-      return false;
-    }
-
-    const tombstoneRecord = metadataRecords.find((record) =>
-      projectMetadataRecordIsTombstone(record) && projectMatchesMetadataRecord(project, record),
-    );
-    if (!tombstoneRecord) {
-      return false;
-    }
-  }
-
-  if (!project.id) {
-    return false;
-  }
-
-  try {
-    await purgeLocalProjectRepo(selectedTeam, project.name);
-  } catch (error) {
-    removeVisibleProject(project.id);
-    clearSelectedProjectState(project);
-    dropProjectMutationsForProject(selectedTeam, project.id);
-    delete state.projectRepoSyncByProjectId[project.id];
-    persistProjectsForTeam(selectedTeam);
-    render?.();
-    showNoticeBadge(
-      `This project was already permanently deleted, but local cleanup still needs attention: ${
-        error?.message ?? String(error)
-      }`,
-      render,
-      4200,
-    );
-    return true;
-  }
-  removeVisibleProject(project.id);
-  clearSelectedProjectState(project);
-  dropProjectMutationsForProject(selectedTeam, project.id);
-  delete state.projectRepoSyncByProjectId[project.id];
-  persistProjectsForTeam(selectedTeam);
-  render?.();
-  if (options.showNotice !== false) {
-    showNoticeBadge(
-      "This project was already permanently deleted. The local repo was removed and the operation was stopped.",
-      render,
-      4200,
-    );
-  }
-  return true;
+  return ensureResourceNotTombstoned({
+    installationId: selectedTeam?.installationId,
+    resource: project,
+    resourceId: project?.id ?? "",
+    render,
+    showNotice: options.showNotice !== false,
+    resourceLabel: "project",
+    lookupMetadataTombstone: (resourceId) => lookupLocalMetadataTombstone(selectedTeam, "project", resourceId),
+    listMetadataRecords: () => listProjectMetadataRecords(selectedTeam),
+    isTombstoneRecord: projectMetadataRecordIsTombstone,
+    matchesMetadataRecord: projectMatchesMetadataRecord,
+    purgeLocalRepo: () => purgeLocalProjectRepo(selectedTeam, project.name, project.id),
+    removeVisibleResource: () => {
+      removeVisibleProject(project.id);
+      clearSelectedProjectState(project);
+      dropProjectMutationsForProject(selectedTeam, project.id);
+      delete state.projectRepoSyncByProjectId[project.id];
+    },
+    persistVisibleState: () => persistProjectsForTeam(selectedTeam),
+  });
 }
 
 async function purgeTombstonedProjectsForTeam(selectedTeam, projects, metadataRecords) {
@@ -565,7 +589,7 @@ async function purgeTombstonedProjectsForTeam(selectedTeam, projects, metadataRe
       continue;
     }
 
-    await purgeLocalProjectRepo(selectedTeam, project.name);
+    await purgeLocalProjectRepo(selectedTeam, project.name, project.id);
     removeVisibleProject(project.id);
     clearSelectedProjectState(project);
     dropProjectMutationsForProject(selectedTeam, project.id);
@@ -585,10 +609,10 @@ async function loadLocalProjectFileListings(selectedTeam, projects) {
 
   const listings = await invoke("list_local_gtms_project_files", {
     input: {
-      installationId: selectedTeam.installationId,
-      projects: projects.map((project) => ({
-        projectId: project.id,
-        repoName: project.name,
+        installationId: selectedTeam.installationId,
+        projects: projects.map((project) => ({
+          projectId: project.id,
+          repoName: project.name,
       })),
     },
   });
@@ -608,27 +632,150 @@ async function rollbackCreatedRemoteProject(selectedTeam, projectId, remoteProje
   await deleteProjectMetadataRecord(selectedTeam, projectId);
 }
 
-async function applyMetadataFirstProjectMutation(
-  selectedTeam,
-  nextRecord,
-  applyRemoteMutation,
-  rollbackRecord,
-) {
-  await upsertProjectMetadataRecord(selectedTeam, nextRecord);
-  try {
-    await applyRemoteMutation();
-  } catch (error) {
+function syncProjectInBackground(render, selectedTeam, project, preferredBaseRepoName) {
+  void (async () => {
+    const projectId = project?.id ?? null;
+    let pendingProject = currentProjectSnapshot(project);
+    let remoteProject = null;
+
     try {
-      await upsertProjectMetadataRecord(selectedTeam, rollbackRecord);
-    } catch (rollbackError) {
-      throw new Error(
-        `${error?.message ?? String(error)} The project metadata intent was committed locally first, and the automatic metadata rollback also failed: ${
-          rollbackError?.message ?? String(rollbackError)
+      await upsertProjectMetadataRecord(selectedTeam, pendingProjectMetadataRecord(pendingProject));
+    } catch (error) {
+      markProjectAsLocalOnly(selectedTeam, pendingProject, render);
+      clearProjectCreationInFlight(projectId);
+      showNoticeBadge(
+        `The project stays local-only because its team metadata record could not be created: ${
+          error?.message ?? String(error)
         }`,
+        render,
       );
+      return;
     }
-    throw error;
-  }
+
+    try {
+      const createResult = await createUniqueRepoWithNumericSuffix(
+        preferredBaseRepoName,
+        (candidateRepoName) =>
+          invoke("create_gnosis_project_repo", {
+            input: {
+              installationId: selectedTeam.installationId,
+              orgLogin: selectedTeam.githubOrg,
+              repoName: candidateRepoName,
+              projectTitle: pendingProject.title,
+              projectId,
+            },
+            sessionToken: requireBrokerSession(),
+          }),
+      );
+
+      remoteProject = {
+        ...currentProjectSnapshot(pendingProject),
+        ...createResult.result,
+        chapters: Array.isArray(currentProjectSnapshot(pendingProject)?.chapters)
+          ? currentProjectSnapshot(pendingProject).chapters
+          : [],
+        isPendingCreate: true,
+        pendingCreateStartedAt: pendingProject.pendingCreateStartedAt,
+        pendingCreateStatusText: "Syncing local repo...",
+        remoteState: "pendingCreate",
+        recordState: "live",
+        resolutionState: "pendingCreate",
+      };
+      replaceVisibleProject(projectId, remoteProject);
+      persistProjectsForTeam(selectedTeam);
+      setProjectRepoSyncSnapshot(projectId, {
+        status: "syncing",
+        message: "Syncing local repo...",
+      });
+      render();
+
+      try {
+        await upsertProjectMetadataRecord(
+          selectedTeam,
+          linkedProjectMetadataRecord(currentProjectSnapshot(remoteProject), createResult.result),
+        );
+      } catch (error) {
+        try {
+          await rollbackCreatedRemoteProject(selectedTeam, projectId, createResult.result);
+        } catch (rollbackError) {
+          markProjectAsLocalOnly(selectedTeam, currentProjectSnapshot(remoteProject), render);
+          clearProjectCreationInFlight(projectId);
+          showNoticeBadge(
+            `The project repo was created, but team metadata could not be finalized or rolled back automatically: ${
+              rollbackError?.message ?? String(rollbackError)
+            }`,
+            render,
+          );
+          return;
+        }
+
+        markProjectAsLocalOnly(selectedTeam, currentProjectSnapshot(remoteProject), render);
+        clearProjectCreationInFlight(projectId);
+        showNoticeBadge(
+          `The project stays local-only because its team metadata record could not be finalized: ${
+            error?.message ?? String(error)
+          }`,
+          render,
+        );
+        return;
+      }
+
+      remoteProject = {
+        ...currentProjectSnapshot(remoteProject),
+        ...createResult.result,
+        chapters: Array.isArray(currentProjectSnapshot(remoteProject)?.chapters)
+          ? currentProjectSnapshot(remoteProject).chapters
+          : [],
+        isPendingCreate: false,
+        pendingCreateStartedAt: undefined,
+        pendingCreateStatusText: undefined,
+        remoteState: "linked",
+        resolutionState: "",
+      };
+      replaceVisibleProject(projectId, remoteProject);
+      persistProjectsForTeam(selectedTeam);
+      render();
+
+      await reconcileProjectRepoSyncStates(render, selectedTeam, [{
+        ...remoteProject,
+        allowPendingCreateSync: true,
+      }]);
+      await refreshProjectFilesFromDisk(render, selectedTeam, [remoteProject]);
+
+      const latestProject = currentProjectSnapshot(remoteProject);
+      replaceVisibleProject(projectId, {
+        ...latestProject,
+        ...createResult.result,
+        chapters: Array.isArray(latestProject?.chapters) ? latestProject.chapters : [],
+        isPendingCreate: false,
+        pendingCreateStartedAt: undefined,
+        pendingCreateStatusText: undefined,
+        remoteState: "linked",
+        resolutionState: "",
+      });
+      persistProjectsForTeam(selectedTeam);
+      if (createResult.collisionResolved === true) {
+        showNoticeBadge(
+          `Saved ${pendingProject.title} to repo ${createResult.attemptedRepoName} because that repo name was already taken.`,
+          render,
+        );
+      }
+    } catch (error) {
+      if (remoteProject) {
+        markProjectAsLocalOnly(selectedTeam, currentProjectSnapshot(remoteProject), render);
+      } else {
+        markProjectAsLocalOnly(selectedTeam, currentProjectSnapshot(pendingProject), render);
+      }
+      showNoticeBadge(
+        `The project could not sync to GitHub automatically: ${error?.message ?? String(error)}`,
+        render,
+      );
+      render();
+    } finally {
+      clearProjectCreationInFlight(projectId);
+      render();
+    }
+  })();
 }
 
 async function loadAvailableGlossariesForTeam(selectedTeam, teamIdAtStart = selectedTeam?.id) {
@@ -1399,10 +1546,16 @@ export async function submitProjectCreation(render) {
     state.projectCreation.error = "";
     render();
     await waitForNextPaint();
-    const pendingProject = buildPendingProjectRecord(selectedTeam, projectTitle, repoName);
+    const localRepoReservation = reserveLocalProjectRepoName(repoName);
+    const pendingProject = buildPendingProjectRecord(
+      selectedTeam,
+      projectTitle,
+      localRepoReservation.repoName,
+    );
+    let metadataIntentCommitted = false;
     state.projectSyncVersion += 1;
     beginProjectsPageSync();
-    setProjectUiDebug(render, "Creating project...");
+    setProjectUiDebug(render, "Initializing local project...");
     replaceVisibleProject(pendingProject.id, pendingProject);
     markProjectCreationInFlight(pendingProject.id);
     persistProjectsForTeam(selectedTeam);
@@ -1410,172 +1563,51 @@ export async function submitProjectCreation(render) {
     render();
     await waitForNextPaint();
 
-    void (async () => {
-      let remoteProject = null;
-      let metadataFinalized = false;
-
-      try {
-        await upsertProjectMetadataRecord(selectedTeam, pendingProjectMetadataRecord(pendingProject));
-
-        const { result, attemptedRepoName, collisionResolved } = await createUniqueRepoWithNumericSuffix(
-          repoName,
-          (candidateRepoName) =>
-            invoke("create_gnosis_project_repo", {
-              input: {
-                installationId: selectedTeam.installationId,
-                orgLogin: selectedTeam.githubOrg,
-                repoName: candidateRepoName,
-                projectTitle,
-                projectId: pendingProject.id,
-              },
-              sessionToken: requireBrokerSession(),
-            }),
-        );
-
-        remoteProject = {
-          ...result,
-          chapters: [],
-          isPendingCreate: true,
-          pendingCreateStartedAt: pendingProject.pendingCreateStartedAt,
-          pendingCreateStatusText: "Setting up local repo...",
-          remoteState: "pendingCreate",
-          recordState: "live",
-          resolutionState: "pendingCreate",
-        };
-        replaceVisibleProject(pendingProject.id, remoteProject);
-        persistProjectsForTeam(selectedTeam);
-        setProjectUiDebug(render, "Syncing new project...");
-        render();
-
-        await upsertProjectMetadataRecord(
-          selectedTeam,
-          linkedProjectMetadataRecord(pendingProject, remoteProject),
-        );
-        metadataFinalized = true;
-
-        remoteProject = {
-          ...remoteProject,
-          isPendingCreate: false,
-          pendingCreateStartedAt: undefined,
-          pendingCreateStatusText: undefined,
-          remoteState: "linked",
-          resolutionState: "",
-        };
-        replaceVisibleProject(remoteProject.id, remoteProject);
-        setProjectRepoSyncSnapshot(remoteProject.id, {
-          status: "syncing",
-          message: "Cloning local repo...",
-        });
-        persistProjectsForTeam(selectedTeam);
-        render();
-
-        await reconcileProjectRepoSyncStates(render, selectedTeam, [{
-          ...remoteProject,
-          allowPendingCreateSync: true,
-        }]);
-        await refreshProjectFilesFromDisk(render, selectedTeam, [remoteProject]);
-
-        const visibleProject =
-          state.projects.find((item) => item.id === remoteProject.id)
-          ?? state.deletedProjects.find((item) => item.id === remoteProject.id);
-        replaceVisibleProject(remoteProject.id, {
-          ...visibleProject,
-          ...result,
-          chapters: Array.isArray(visibleProject?.chapters) ? visibleProject.chapters : [],
-          isPendingCreate: false,
-          pendingCreateStartedAt: undefined,
-          pendingCreateStatusText: undefined,
-          remoteState: "linked",
-          recordState: visibleProject?.recordState ?? "live",
-          resolutionState: "",
-        });
-        persistProjectsForTeam(selectedTeam);
-        clearProjectUiDebug(render);
-        await completeProjectsPageSync(render);
-        render();
-        showNoticeBadge(
-          collisionResolved
-            ? `Created project ${projectTitle} in repo ${attemptedRepoName} because that repo name was already taken.`
-            : `Created project ${projectTitle}.`,
-          render,
-        );
-      } catch (error) {
-        if (remoteProject && !metadataFinalized) {
-          let rollbackError = null;
-          try {
-            await rollbackCreatedRemoteProject(selectedTeam, pendingProject.id, remoteProject);
-          } catch (rollbackFailure) {
-            rollbackError = rollbackFailure;
-          }
-
-          if (!rollbackError) {
-            removeVisibleProject(remoteProject.id);
-          } else {
-            replaceVisibleProject(remoteProject.id, {
-              ...remoteProject,
-              isPendingCreate: false,
-              pendingCreateStartedAt: undefined,
-              pendingCreateStatusText: undefined,
-              resolutionState: "unregisteredLocal",
-              remoteState: "linked",
-            });
-          }
-          persistProjectsForTeam(selectedTeam);
-          clearProjectUiDebug(render);
-          failProjectsPageSync();
-          showNoticeBadge(
-            rollbackError
-              ? `The project repo was created, but team metadata could not be finalized or rolled back automatically: ${
-                  rollbackError?.message ?? String(rollbackError)
-                }`
-              : `The project could not be created because team metadata could not be finalized: ${
-                  error?.message ?? String(error)
-                }`,
-            render,
-          );
-          render();
-          return;
-        }
-
-        if (remoteProject) {
-          replaceVisibleProject(remoteProject.id, {
-            ...remoteProject,
-            isPendingCreate: false,
-            pendingCreateStartedAt: undefined,
-            pendingCreateStatusText: undefined,
-            remoteState: "linked",
-            resolutionState: "",
-          });
-          persistProjectsForTeam(selectedTeam);
-          clearProjectUiDebug(render);
-          await completeProjectsPageSync(render);
-          showNoticeBadge(
-            `Created project ${projectTitle}, but local sync still needs attention: ${error?.message ?? String(error)}`,
-            render,
-          );
-          render();
-          return;
-        }
-
-        removeVisibleProject(pendingProject.id);
-        persistProjectsForTeam(selectedTeam);
+    try {
+      await upsertProjectMetadataRecord(selectedTeam, pendingProjectMetadataRecord(pendingProject));
+      metadataIntentCommitted = true;
+      await invoke("initialize_gtms_project_repo", {
+        input: {
+          installationId: selectedTeam.installationId,
+          projectId: pendingProject.id,
+          repoName: pendingProject.name,
+          title: projectTitle,
+        },
+      });
+      await refreshProjectFilesFromDisk(render, selectedTeam, [pendingProject]);
+      clearProjectUiDebug(render);
+      await completeProjectsPageSync(render);
+      render();
+      showNoticeBadge(
+        localRepoReservation.collisionResolved
+          ? `Created project ${projectTitle} in local repo ${pendingProject.name} because that name was already used locally.`
+          : `Created project ${projectTitle}.`,
+        render,
+      );
+      syncProjectInBackground(render, selectedTeam, currentProjectSnapshot(pendingProject), repoName);
+    } catch (error) {
+      removeVisibleProject(pendingProject.id);
+      persistProjectsForTeam(selectedTeam);
+      if (metadataIntentCommitted) {
         try {
-          await deleteProjectMetadataRecord(selectedTeam, pendingProject.id);
-        } catch {}
-        if (await handleSyncFailure(classifySyncError(error), { render })) {
-          clearProjectUiDebug(render);
-          failProjectsPageSync();
-          return;
+          await rollbackPendingProjectMetadataOnLocalFailure(selectedTeam, pendingProject.id, error);
+        } catch (metadataRollbackError) {
+          error = metadataRollbackError;
         }
+      }
+      if (await handleSyncFailure(classifySyncError(error), { render })) {
         clearProjectUiDebug(render);
         failProjectsPageSync();
-        showNoticeBadge(error?.message ?? String(error), render);
-        render();
-      } finally {
         clearProjectCreationInFlight(pendingProject.id);
-        render();
+        return;
       }
-    })();
+      clearProjectUiDebug(render);
+      failProjectsPageSync();
+      clearProjectCreationInFlight(pendingProject.id);
+      state.projectCreation.status = "idle";
+      state.projectCreation.error = error?.message ?? String(error);
+      render();
+    }
   } catch (error) {
     if (await handleSyncFailure(classifySyncError(error), { render })) {
       return;
@@ -1718,6 +1750,7 @@ export async function submitChapterRename(render) {
       await invoke("rename_gtms_chapter", {
         input: {
           installationId: selectedTeam.installationId,
+          projectId: context.project.id,
           repoName: context.project.name,
           chapterId: context.chapter.id,
           title: nextTitle,
@@ -1817,6 +1850,7 @@ async function persistChapterGlossaryLinks(render, chapterId, nextGlossary1, nex
       const payload = await invoke("update_gtms_chapter_glossary_links", {
         input: {
           installationId: selectedTeam.installationId,
+          projectId: context.project.id,
           repoName: context.project.name,
           chapterId,
           glossary1: chapterGlossaryLinkInput(nextGlossary1),
@@ -2016,6 +2050,7 @@ export async function deleteChapter(render, chapterId) {
       await invoke("soft_delete_gtms_chapter", {
         input: {
           installationId: selectedTeam.installationId,
+          projectId: context.project.id,
           repoName: context.project.name,
           chapterId,
         },
@@ -2082,6 +2117,7 @@ export async function restoreChapter(render, chapterId) {
       await invoke("restore_gtms_chapter", {
         input: {
           installationId: selectedTeam.installationId,
+          projectId: context.project.id,
           repoName: context.project.name,
           chapterId,
         },
@@ -2152,6 +2188,7 @@ export async function permanentlyDeleteChapter(render, chapterId) {
       await invoke("permanently_delete_gtms_chapter", {
         input: {
           installationId: selectedTeam.installationId,
+          projectId: context.project.id,
           repoName: context.project.name,
           chapterId,
         },
@@ -2288,12 +2325,13 @@ async function commitProjectMutation(selectedTeam, mutation) {
   }
 
   if (mutation.type === "rename") {
-    await applyMetadataFirstProjectMutation(
-      selectedTeam,
-      projectMetadataRecordFromVisibleProject(project, {
+    await applyMetadataFirstResourceMutation({
+      resourceLabel: "project",
+      writeMetadata: (record) => upsertProjectMetadataRecord(selectedTeam, record),
+      nextRecord: projectMetadataRecordFromVisibleProject(project, {
         title: mutation.title,
       }),
-      () => invoke("rename_gnosis_project_repo", {
+      applyLocalMutation: () => invoke("rename_gnosis_project_repo", {
         input: {
           installationId: selectedTeam.installationId,
           fullName: project.fullName,
@@ -2301,20 +2339,21 @@ async function commitProjectMutation(selectedTeam, mutation) {
         },
         sessionToken: requireBrokerSession(),
       }),
-      projectMetadataRecordFromVisibleProject(project, {
+      rollbackRecord: projectMetadataRecordFromVisibleProject(project, {
         title: mutation.previousTitle,
       }),
-    );
+    });
     return;
   }
 
   if (mutation.type === "softDelete") {
-    await applyMetadataFirstProjectMutation(
-      selectedTeam,
-      projectMetadataRecordFromVisibleProject(project, {
+    await applyMetadataFirstResourceMutation({
+      resourceLabel: "project",
+      writeMetadata: (record) => upsertProjectMetadataRecord(selectedTeam, record),
+      nextRecord: projectMetadataRecordFromVisibleProject(project, {
         lifecycleState: "softDeleted",
       }),
-      () => invoke("mark_gnosis_project_repo_deleted", {
+      applyLocalMutation: () => invoke("mark_gnosis_project_repo_deleted", {
         input: {
           installationId: selectedTeam.installationId,
           orgLogin: selectedTeam.githubOrg,
@@ -2322,20 +2361,21 @@ async function commitProjectMutation(selectedTeam, mutation) {
         },
         sessionToken: requireBrokerSession(),
       }),
-      projectMetadataRecordFromVisibleProject(project, {
+      rollbackRecord: projectMetadataRecordFromVisibleProject(project, {
         lifecycleState: "active",
       }),
-    );
+    });
     return;
   }
 
   if (mutation.type === "restore") {
-    await applyMetadataFirstProjectMutation(
-      selectedTeam,
-      projectMetadataRecordFromVisibleProject(project, {
+    await applyMetadataFirstResourceMutation({
+      resourceLabel: "project",
+      writeMetadata: (record) => upsertProjectMetadataRecord(selectedTeam, record),
+      nextRecord: projectMetadataRecordFromVisibleProject(project, {
         lifecycleState: "active",
       }),
-      () => invoke("restore_gnosis_project_repo", {
+      applyLocalMutation: () => invoke("restore_gnosis_project_repo", {
         input: {
           installationId: selectedTeam.installationId,
           orgLogin: selectedTeam.githubOrg,
@@ -2343,10 +2383,10 @@ async function commitProjectMutation(selectedTeam, mutation) {
         },
         sessionToken: requireBrokerSession(),
       }),
-      projectMetadataRecordFromVisibleProject(project, {
+      rollbackRecord: projectMetadataRecordFromVisibleProject(project, {
         lifecycleState: "softDeleted",
       }),
-    );
+    });
   }
 }
 
@@ -2502,8 +2542,7 @@ export async function confirmProjectPermanentDeletion(render) {
   render();
 
   void (async () => {
-    let remoteDeleted = false;
-
+    let tombstoneCommitted = false;
     try {
       await upsertProjectMetadataRecord(selectedTeam, {
         ...projectMetadataRecordFromVisibleProject(project),
@@ -2512,38 +2551,48 @@ export async function confirmProjectPermanentDeletion(render) {
         recordState: "tombstone",
         deletedAt: new Date().toISOString(),
       });
-      await invoke("permanently_delete_gnosis_project_repo", {
-        input: {
-          installationId: selectedTeam.installationId,
-          orgLogin: selectedTeam.githubOrg,
-          repoName: project.name,
-        },
-        sessionToken: requireBrokerSession(),
-      });
-      remoteDeleted = true;
+      tombstoneCommitted = true;
       await invoke("purge_local_gtms_project_repo", {
         input: {
           installationId: selectedTeam.installationId,
+          projectId: project.id,
           repoName: project.name,
         },
       });
+      try {
+        await invoke("permanently_delete_gnosis_project_repo", {
+          input: {
+            installationId: selectedTeam.installationId,
+            orgLogin: selectedTeam.githubOrg,
+            repoName: project.name,
+          },
+          sessionToken: requireBrokerSession(),
+        });
+      } catch (error) {
+        clearProjectUiDebug(render);
+        await completeProjectsPageSync(render);
+        showNoticeBadge(
+          `Project deletion was committed locally, but remote cleanup still needs attention: ${
+            error?.message ?? String(error)
+          }`,
+          render,
+          4200,
+        );
+        render();
+        return;
+      }
       clearProjectUiDebug(render);
       await completeProjectsPageSync(render);
       render();
       await loadTeamProjects(render, selectedTeam.id);
     } catch (error) {
-      try {
-        if (!remoteDeleted) {
-          await upsertProjectMetadataRecord(selectedTeam, projectMetadataRecordFromVisibleProject(project));
-        }
-      } catch {}
       if (await handleSyncFailure(classifySyncError(error), { render })) {
         clearProjectUiDebug(render);
         failProjectsPageSync();
         return;
       }
 
-      if (!remoteDeleted) {
+      if (!tombstoneCommitted) {
         restoreProjectCollections(snapshot);
         persistProjectsForTeam(selectedTeam);
         state.projectPermanentDeletion = {
@@ -2555,9 +2604,8 @@ export async function confirmProjectPermanentDeletion(render) {
           error: error?.message ?? String(error),
         };
       } else {
-        persistProjectsForTeam(selectedTeam);
         showNoticeBadge(
-          `Project deleted remotely, but local cleanup still needs attention: ${error?.message ?? String(error)}`,
+          `Project deletion was committed locally, but local cleanup still needs attention: ${error?.message ?? String(error)}`,
           render,
           4200,
         );

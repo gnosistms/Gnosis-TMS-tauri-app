@@ -139,6 +139,7 @@ export async function loadSelectedGlossaryEditorData(render, options = {}) {
     const payload = await invoke("load_gtms_glossary_editor_data", {
       input: {
         installationId: team.installationId,
+        glossaryId: glossary.id,
         repoName: glossary.repoName,
       },
     });
@@ -201,6 +202,7 @@ export async function deleteGlossaryTerm(render, termId) {
     await invoke("delete_gtms_glossary_term", {
       input: {
         installationId: team.installationId,
+        glossaryId: glossary?.id ?? null,
         repoName,
         termId,
       },
