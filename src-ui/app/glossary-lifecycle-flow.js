@@ -410,38 +410,61 @@ export async function confirmGlossaryPermanentDeletion(render) {
   state.glossaryPermanentDeletion.error = "";
   render();
   await waitForNextPaint();
-
-  let remoteDeleted = false;
-  try {
-    await upsertGlossaryMetadataRecord(team, glossaryMetadataRecord(glossary, {
-      lifecycleState: "softDeleted",
-      remoteState: "deleted",
-      recordState: "tombstone",
-      deletedAt: new Date().toISOString(),
-    }));
-    await permanentlyDeleteRemoteGlossaryRepoForTeam(team, glossary.repoName);
-    remoteDeleted = true;
-    await invoke("purge_local_gtms_glossary_repo", {
-      input: {
-        installationId: team.installationId,
-        repoName: glossary.repoName,
-      },
-    });
-    removeGlossaryFromState(glossary.id, glossary.repoName);
-    persistGlossariesForTeam(team);
-    if (state.selectedGlossaryId === glossary.id) {
-      state.selectedGlossaryId = null;
-    }
-    resetGlossaryPermanentDeletion();
-    await loadTeamGlossaries(render, team.id, { preserveVisibleData: true });
-  } catch (error) {
-    try {
-      if (!remoteDeleted && glossary) {
-        await upsertGlossaryMetadataRecord(team, glossaryMetadataRecord(glossary));
-      }
-    } catch {}
-    state.glossaryPermanentDeletion.status = "idle";
-    state.glossaryPermanentDeletion.error = error?.message ?? String(error);
-    render();
+  const snapshot = snapshotVisibleGlossaryState();
+  removeGlossaryFromState(glossary.id, glossary.repoName);
+  persistGlossariesForTeam(team);
+  if (state.selectedGlossaryId === glossary.id) {
+    state.selectedGlossaryId = null;
   }
+  resetGlossaryPermanentDeletion();
+  render();
+
+  void (async () => {
+    let remoteDeleted = false;
+
+    try {
+      await upsertGlossaryMetadataRecord(team, glossaryMetadataRecord(glossary, {
+        lifecycleState: "softDeleted",
+        remoteState: "deleted",
+        recordState: "tombstone",
+        deletedAt: new Date().toISOString(),
+      }));
+      await permanentlyDeleteRemoteGlossaryRepoForTeam(team, glossary.repoName);
+      remoteDeleted = true;
+      await invoke("purge_local_gtms_glossary_repo", {
+        input: {
+          installationId: team.installationId,
+          repoName: glossary.repoName,
+        },
+      });
+      await loadTeamGlossaries(render, team.id, { preserveVisibleData: true });
+    } catch (error) {
+      try {
+        if (!remoteDeleted && glossary) {
+          await upsertGlossaryMetadataRecord(team, glossaryMetadataRecord(glossary));
+        }
+      } catch {}
+
+      if (!remoteDeleted) {
+        restoreVisibleGlossaryState(snapshot);
+        persistGlossariesForTeam(team);
+        state.glossaryPermanentDeletion = {
+          isOpen: true,
+          status: "idle",
+          error: error?.message ?? String(error),
+          glossaryId: glossary.id,
+          glossaryName: glossary.title,
+          confirmationText,
+        };
+      } else {
+        persistGlossariesForTeam(team);
+        showNoticeBadge(
+          `Glossary deleted remotely, but local cleanup still needs attention: ${error?.message ?? String(error)}`,
+          render,
+          4200,
+        );
+      }
+      render();
+    }
+  })();
 }

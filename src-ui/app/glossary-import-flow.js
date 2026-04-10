@@ -105,6 +105,27 @@ function currentGlossarySnapshot(glossary) {
   );
 }
 
+function markGlossarySyncInFlight(glossaryId) {
+  if (typeof glossaryId !== "string" || !glossaryId.trim()) {
+    return;
+  }
+
+  state.glossarySyncInFlightIds = new Set([
+    ...state.glossarySyncInFlightIds,
+    glossaryId,
+  ]);
+}
+
+function clearGlossarySyncInFlight(glossaryId) {
+  if (typeof glossaryId !== "string" || !glossaryId.trim()) {
+    return;
+  }
+
+  const nextIds = new Set(state.glossarySyncInFlightIds);
+  nextIds.delete(glossaryId);
+  state.glossarySyncInFlightIds = nextIds;
+}
+
 function pendingGlossaryMetadataRecord(glossary) {
   return {
     glossaryId: glossary.id ?? glossary.glossaryId,
@@ -151,10 +172,13 @@ function markGlossaryAsLocalOnly(team, glossary, render) {
 
 function syncGlossaryInBackground(render, team, glossary, preferredBaseRepoName) {
   void (async () => {
+    const glossaryId = glossary?.id ?? glossary?.glossaryId ?? null;
+    markGlossarySyncInFlight(glossaryId);
     try {
       await upsertGlossaryMetadataRecord(team, pendingGlossaryMetadataRecord(currentGlossarySnapshot(glossary)));
     } catch (error) {
       markGlossaryAsLocalOnly(team, currentGlossarySnapshot(glossary), render);
+      clearGlossarySyncInFlight(glossaryId);
       showNoticeBadge(
         `The glossary stays local-only because its team metadata record could not be created: ${
           error?.message ?? String(error)
@@ -210,6 +234,7 @@ function syncGlossaryInBackground(render, team, glossary, preferredBaseRepoName)
         await permanentlyDeleteRemoteGlossaryRepoForTeam(team, remoteRepo.name);
       } catch (rollbackError) {
         markGlossaryAsLocalOnly(team, currentGlossarySnapshot(syncedGlossary), render);
+        clearGlossarySyncInFlight(glossaryId);
         showNoticeBadge(
           `The glossary repo was created, but its metadata could not be finalized or rolled back automatically: ${
             rollbackError?.message ?? String(rollbackError)
@@ -225,6 +250,7 @@ function syncGlossaryInBackground(render, team, glossary, preferredBaseRepoName)
         // Leave the local-only glossary visible even if cleanup metadata could not be removed.
       }
       markGlossaryAsLocalOnly(team, currentGlossarySnapshot(syncedGlossary), render);
+      clearGlossarySyncInFlight(glossaryId);
       showNoticeBadge(
         `The glossary stays local-only because its team metadata record could not be finalized: ${
           error?.message ?? String(error)
@@ -247,7 +273,10 @@ function syncGlossaryInBackground(render, team, glossary, preferredBaseRepoName)
         render,
       );
     }
+    clearGlossarySyncInFlight(glossaryId);
   })().catch((error) => {
+    const glossaryId = glossary?.id ?? glossary?.glossaryId ?? null;
+    clearGlossarySyncInFlight(glossaryId);
     showNoticeBadge(
       `The glossary could not sync to GitHub automatically: ${error?.message ?? String(error)}`,
       render,

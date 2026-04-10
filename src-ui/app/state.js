@@ -47,6 +47,7 @@ export const state = {
   projectImport: createProjectImportState(),
   projectRepoSyncByProjectId: {},
   projectCreationInFlightIds: new Set(),
+  glossarySyncInFlightIds: new Set(),
   glossaryRepoSyncByRepoName: {},
   editorChapter: createEditorChapterState(),
   targetLanguageManager: createTargetLanguageManagerState(),
@@ -482,6 +483,7 @@ export function resetSessionState() {
   state.glossaryDiscovery = createGlossaryDiscoveryState();
   state.projectImport = createProjectImportState();
   state.projectRepoSyncByProjectId = {};
+  state.glossarySyncInFlightIds = new Set();
   state.editorChapter = createEditorChapterState();
   state.selectedChapterId = null;
   state.targetLanguageManager = createTargetLanguageManagerState();

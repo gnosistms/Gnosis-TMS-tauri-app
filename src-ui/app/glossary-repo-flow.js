@@ -2,6 +2,7 @@ import { requireBrokerSession } from "./auth-flow.js";
 import { invoke } from "./runtime.js";
 import { normalizeGlossarySummary, sortGlossaries } from "./glossary-shared.js";
 import { createUniqueRepoWithNumericSuffix } from "./repo-creation.js";
+import { state } from "./state.js";
 import { listGlossaryMetadataRecords } from "./team-metadata-flow.js";
 import { mergeMetadataBackedGlossarySummaries } from "./glossary-discovery.js";
 
@@ -87,6 +88,50 @@ function glossaryRepoSyncDescriptor(repo) {
   };
 }
 
+function metadataBackedGlossaryRepo(record) {
+  if (
+    !record
+    || record.recordState !== "live"
+    || record.remoteState !== "linked"
+    || typeof record.repoName !== "string"
+    || !record.repoName.trim()
+    || typeof record.fullName !== "string"
+    || !record.fullName.trim()
+  ) {
+    return null;
+  }
+
+  return normalizeRemoteGlossaryRepo({
+    repoId: record.githubRepoId,
+    nodeId: record.githubNodeId,
+    name: record.repoName,
+    fullName: record.fullName,
+    defaultBranchName: record.defaultBranch || "main",
+  });
+}
+
+function findMatchingRemoteGlossary(record, remoteByRepoName, remoteByFullName) {
+  if (record?.fullName && remoteByFullName.has(record.fullName)) {
+    return remoteByFullName.get(record.fullName);
+  }
+
+  const repoNames = [
+    record?.repoName,
+    ...(Array.isArray(record?.previousRepoNames) ? record.previousRepoNames : []),
+  ];
+  for (const repoName of repoNames) {
+    if (!repoName) {
+      continue;
+    }
+    const match = remoteByRepoName.get(repoName);
+    if (match) {
+      return match;
+    }
+  }
+
+  return null;
+}
+
 function buildMetadataBackedGlossarySyncRepos(metadataRecords, remoteRepos, options = {}) {
   const remoteLoaded = options.remoteLoaded === true;
   const remoteByRepoName = new Map(
@@ -139,7 +184,11 @@ export function glossaryArchiveDownloadUrl(glossary) {
   const htmlUrl =
     typeof glossary?.htmlUrl === "string" && glossary.htmlUrl.trim()
       ? glossary.htmlUrl.trim()
-      : "";
+      : (
+          typeof glossary?.fullName === "string" && glossary.fullName.trim()
+            ? `https://github.com/${glossary.fullName.trim()}`
+            : ""
+        );
   if (!htmlUrl) {
     return "";
   }
@@ -286,6 +335,9 @@ export async function loadRepoBackedGlossariesForTeam(team, options = {}) {
     typeof options.onRecoveryDetected === "function"
       ? options.onRecoveryDetected
       : null;
+  const glossaryIdsInFlight = state.glossarySyncInFlightIds instanceof Set
+    ? state.glossarySyncInFlightIds
+    : new Set();
   const localSummaries = await listLocalGlossarySummariesForTeam(team);
 
   if (offlineMode || !Number.isFinite(team?.installationId)) {
@@ -333,7 +385,7 @@ export async function loadRepoBackedGlossariesForTeam(team, options = {}) {
             refreshedLocalSummaries,
             metadataRecords,
             syncRepos,
-            { metadataLoaded, remoteLoaded: false },
+            { metadataLoaded, remoteLoaded: false, glossaryIdsInFlight },
           ),
           remoteRepos: syncRepos,
           syncSnapshots,
@@ -373,7 +425,7 @@ export async function loadRepoBackedGlossariesForTeam(team, options = {}) {
             refreshedLocalSummaries,
             metadataRecords,
             remoteRepos,
-            { metadataLoaded, remoteLoaded },
+            { metadataLoaded, remoteLoaded, glossaryIdsInFlight },
           )
         : mergeRepoBackedGlossarySummaries(refreshedLocalSummaries, remoteRepos),
     remoteRepos: syncTargets,
