@@ -11,6 +11,17 @@ function getSelectedTeam(teamId = state.selectedTeamId) {
   return state.teams.find((team) => team.id === teamId);
 }
 
+function teamHasInstallation(selectedTeam) {
+  return Number.isFinite(selectedTeam?.installationId);
+}
+
+function persistTeamUsers(selectedTeam, users) {
+  state.users = users;
+  if (selectedTeam) {
+    saveStoredMembersForTeam(selectedTeam, users);
+  }
+}
+
 function setUsersUnavailable(message) {
   state.users = [];
   state.userDiscovery = {
@@ -97,13 +108,13 @@ const inflightAdminMembershipUsernames = new Set();
 function initializeUsersFromCachedState(selectedTeam) {
   if (state.offline.isEnabled) {
     setUsersUnavailable("Members are unavailable in offline mode.");
-    return { selectedTeam: null, cachedMembers: null };
+    return null;
   }
 
-  if (!selectedTeam?.installationId) {
+  if (!teamHasInstallation(selectedTeam)) {
     state.users = [];
     state.userDiscovery = { status: "ready", error: "" };
-    return { selectedTeam: null, cachedMembers: null };
+    return null;
   }
 
   const cachedMembers = loadStoredMembersForTeam(selectedTeam);
@@ -115,7 +126,7 @@ function initializeUsersFromCachedState(selectedTeam) {
     state.userDiscovery = { status: "loading", error: "" };
   }
 
-  return { selectedTeam, cachedMembers };
+  return cachedMembers;
 }
 
 export function primeUsersForTeam(teamId = state.selectedTeamId) {
@@ -159,7 +170,7 @@ export async function confirmTeamMemberRemoval(render) {
   const selectedTeam = getSelectedTeam();
   const removal = state.teamMemberRemoval;
   const username = String(removal?.username ?? "").trim();
-  if (!selectedTeam?.installationId || !username) {
+  if (!teamHasInstallation(selectedTeam) || !username) {
     resetTeamMemberRemoval();
     render();
     return;
@@ -190,8 +201,7 @@ export async function confirmTeamMemberRemoval(render) {
       sessionToken: requireBrokerSession(),
     });
 
-    state.users = state.users.filter((user) => user?.username !== username);
-    saveStoredMembersForTeam(selectedTeam, state.users);
+    persistTeamUsers(selectedTeam, state.users.filter((user) => user?.username !== username));
     resetTeamMemberRemoval();
     render();
     await loadTeamUsers(render, selectedTeam.id);
@@ -207,7 +217,7 @@ export async function confirmTeamMemberRemoval(render) {
 
 async function updateOrganizationAdminMembership(render, username, shouldBeAdmin) {
   const selectedTeam = getSelectedTeam();
-  if (!selectedTeam?.installationId) {
+  if (!teamHasInstallation(selectedTeam)) {
     return;
   }
 
@@ -231,8 +241,7 @@ async function updateOrganizationAdminMembership(render, username, shouldBeAdmin
     const optimisticUsers = updateLocalAdminRole(previousUsers, username, shouldBeAdmin);
     beginPageSync();
     if (optimisticUsers.didUpdate) {
-      state.users = optimisticUsers.users;
-      saveStoredMembersForTeam(selectedTeam, state.users);
+      persistTeamUsers(selectedTeam, optimisticUsers.users);
     }
     state.userDiscovery = { status: "ready", error: "" };
     render();
@@ -256,8 +265,7 @@ async function updateOrganizationAdminMembership(render, username, shouldBeAdmin
 
     await loadTeamUsers(render, selectedTeam.id);
   } catch (error) {
-    state.users = previousUsers;
-    saveStoredMembersForTeam(selectedTeam, state.users);
+    persistTeamUsers(selectedTeam, previousUsers);
     if (await handleSyncFailure(classifySyncError(error), { render })) {
       return;
     }
@@ -294,15 +302,16 @@ async function updateOrganizationAdminMembership(render, username, shouldBeAdmin
 
 export async function loadTeamUsers(render, teamId = state.selectedTeamId) {
   const selectedTeam = getSelectedTeam(teamId);
-  const { cachedMembers } = initializeUsersFromCachedState(selectedTeam);
+  const cachedMembers = initializeUsersFromCachedState(selectedTeam);
+  const shouldSync = teamHasInstallation(selectedTeam) && !state.offline.isEnabled;
+  if (shouldSync) {
+    beginPageSync();
+  }
   render();
 
-  if (!selectedTeam?.installationId || state.offline.isEnabled) {
+  if (!shouldSync) {
     return;
   }
-
-  beginPageSync();
-  render();
 
   try {
     const users = await invoke("list_organization_members_for_installation", {
@@ -310,8 +319,10 @@ export async function loadTeamUsers(render, teamId = state.selectedTeamId) {
       orgLogin: selectedTeam.githubOrg,
       sessionToken: requireBrokerSession(),
     });
-    state.users = users.map((user) => normalizeOrganizationMember(user)).filter(Boolean);
-    saveStoredMembersForTeam(selectedTeam, state.users);
+    persistTeamUsers(
+      selectedTeam,
+      users.map((user) => normalizeOrganizationMember(user)).filter(Boolean),
+    );
     state.userDiscovery = { status: "ready", error: "" };
     await completePageSync(render);
   } catch (error) {

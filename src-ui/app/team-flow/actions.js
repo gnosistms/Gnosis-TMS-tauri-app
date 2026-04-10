@@ -43,6 +43,26 @@ function clearTeamUiDebug(render) {
   clearScopedSyncBadge("teams", render);
 }
 
+function applyOptimisticTeamMutation(render, mutation, debugText) {
+  state.teamSyncVersion += 1;
+  const snapshot = applyTeamPendingMutation(
+    { items: state.teams, deletedItems: state.deletedTeams },
+    mutation,
+  );
+  applyTeamSnapshotToState(snapshot);
+  state.pendingTeamMutations = upsertPendingMutation(state.pendingTeamMutations, mutation);
+  state.selectedTeamId = resolveNextSelectedTeamId(state.selectedTeamId, state.teams);
+  render();
+  if (debugText) {
+    setTeamUiDebug(render, debugText);
+  }
+}
+
+function persistOptimisticTeamSnapshot() {
+  saveStoredTeamRecords([...state.teams, ...state.deletedTeams]);
+  saveStoredTeamPendingMutations(state.pendingTeamMutations);
+}
+
 export function openTeamRename(render, teamId) {
   const team = state.teams.find((item) => item.id === teamId);
   if (!team) {
@@ -97,15 +117,8 @@ export async function submitTeamRename(render) {
       name: nextName,
       previousName: team.name || team.githubOrg,
     };
-    state.teamSyncVersion += 1;
-    const snapshot = applyTeamPendingMutation(
-      { items: state.teams, deletedItems: state.deletedTeams },
-      mutation,
-    );
-    applyTeamSnapshotToState(snapshot);
-    state.pendingTeamMutations = upsertPendingMutation(state.pendingTeamMutations, mutation);
-    saveStoredTeamRecords([...state.teams, ...state.deletedTeams]);
-    saveStoredTeamPendingMutations(state.pendingTeamMutations);
+    applyOptimisticTeamMutation(render, mutation);
+    persistOptimisticTeamSnapshot();
     resetTeamRename();
     render();
     void processPendingTeamMutations(render);
@@ -132,30 +145,19 @@ export function deleteTeam(render, teamId) {
     return;
   }
 
-  const previousSelectedTeamId = state.selectedTeamId;
-  state.teamSyncVersion += 1;
   const mutation = {
     id: crypto.randomUUID(),
     type: "softDelete",
     teamId: team.id,
     deletedAt: new Date().toISOString(),
   };
-  const snapshot = applyTeamPendingMutation(
-    { items: state.teams, deletedItems: state.deletedTeams },
-    mutation,
-  );
-  applyTeamSnapshotToState(snapshot);
-  state.pendingTeamMutations = upsertPendingMutation(state.pendingTeamMutations, mutation);
-  state.selectedTeamId = resolveNextSelectedTeamId(state.selectedTeamId, state.teams);
-  render();
-  setTeamUiDebug(render, "Optimistic delete applied");
+  applyOptimisticTeamMutation(render, mutation, "Optimistic delete applied");
 
   void waitForNextPaint().then(() => {
     setTeamUiDebug(render, "First paint reached");
-    saveStoredTeamRecords([...state.teams, ...state.deletedTeams]);
-    saveStoredTeamPendingMutations(state.pendingTeamMutations);
+    persistOptimisticTeamSnapshot();
     setTeamUiDebug(render, "Background sync started");
-    void processPendingTeamMutations(render, previousSelectedTeamId);
+    void processPendingTeamMutations(render);
   });
 }
 
@@ -167,29 +169,19 @@ export function restoreTeam(render, teamId) {
     return;
   }
 
-  state.teamSyncVersion += 1;
   const mutation = {
     id: crypto.randomUUID(),
     type: "restore",
     teamId: team.id,
     deletedAt: team.deletedAt ?? new Date().toISOString(),
   };
-  const snapshot = applyTeamPendingMutation(
-    { items: state.teams, deletedItems: state.deletedTeams },
-    mutation,
-  );
-  applyTeamSnapshotToState(snapshot);
-  state.pendingTeamMutations = upsertPendingMutation(state.pendingTeamMutations, mutation);
-  state.selectedTeamId = resolveNextSelectedTeamId(state.selectedTeamId, state.teams);
-  render();
-  setTeamUiDebug(render, "Optimistic restore applied");
+  applyOptimisticTeamMutation(render, mutation, "Optimistic restore applied");
 
   void waitForNextPaint().then(() => {
     setTeamUiDebug(render, "First paint reached");
-    saveStoredTeamRecords([...state.teams, ...state.deletedTeams]);
-    saveStoredTeamPendingMutations(state.pendingTeamMutations);
+    persistOptimisticTeamSnapshot();
     setTeamUiDebug(render, "Background sync started");
-    void processPendingTeamMutations(render, state.selectedTeamId);
+    void processPendingTeamMutations(render);
   });
 }
 

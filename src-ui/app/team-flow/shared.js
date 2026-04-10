@@ -109,14 +109,7 @@ export function reconcileStoredTeam(storedTeam, installation) {
   });
 }
 
-export function normalizeTeamSnapshot(snapshot, pendingMutations = []) {
-  const latestMutationByTeamId = new Map();
-  for (const mutation of pendingMutations) {
-    if (mutation?.teamId) {
-      latestMutationByTeamId.set(mutation.teamId, mutation.type);
-    }
-  }
-
+export function normalizeTeamSnapshot(snapshot) {
   const activeById = new Map(snapshot.items.map((team) => [team.id, team]));
   const deletedById = new Map(snapshot.deletedItems.map((team) => [team.id, team]));
   const teamIds = new Set([...activeById.keys(), ...deletedById.keys()]);
@@ -127,30 +120,8 @@ export function normalizeTeamSnapshot(snapshot, pendingMutations = []) {
   for (const teamId of teamIds) {
     const activeTeam = activeById.get(teamId);
     const deletedTeam = deletedById.get(teamId);
-    const latestMutation = latestMutationByTeamId.get(teamId);
 
     if (activeTeam && deletedTeam) {
-      if (latestMutation === "softDelete") {
-        deletedItems.push({
-          ...deletedTeam,
-          isDeleted: true,
-          syncState: "deleted",
-          statusLabel: deletedTeam.statusLabel || "Removed from active teams",
-        });
-        continue;
-      }
-
-      if (latestMutation === "restore" || latestMutation === "rename") {
-        items.push({
-          ...activeTeam,
-          isDeleted: false,
-          deletedAt: null,
-          syncState: "active",
-          statusLabel: "",
-        });
-        continue;
-      }
-
       if (deletedTeam.isDeleted === true && activeTeam.isDeleted !== true) {
         deletedItems.push({
           ...deletedTeam,
