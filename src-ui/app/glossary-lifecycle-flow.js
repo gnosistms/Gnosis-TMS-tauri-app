@@ -40,6 +40,7 @@ import {
   guardPermanentDeleteConfirmation,
   guardTopLevelResourceAction,
   runPermanentDeleteLocalFirst,
+  showPermanentDeleteFollowupNotice,
 } from "./resource-lifecycle-engine.js";
 import { classifySyncError } from "./sync-error.js";
 import { handleSyncFailure } from "./sync-recovery.js";
@@ -49,6 +50,7 @@ import {
   entityConfirmationMatches,
   openEntityConfirmationModal,
   openEntityRenameModal,
+  reopenEntityConfirmationModalWithError,
   updateEntityModalConfirmation,
   updateEntityModalName,
 } from "./resource-entity-modal.js";
@@ -576,32 +578,36 @@ export async function confirmGlossaryPermanentDeletion(render) {
     rollbackBeforeTombstone: async (error) => {
       restoreVisibleGlossaryState(snapshot);
       persistGlossariesForTeam(team);
-      state.glossaryPermanentDeletion = {
-        isOpen: true,
-        status: "idle",
-        error: error?.message ?? String(error),
-        glossaryId: glossary.id,
-        glossaryName: glossary.title,
+      reopenEntityConfirmationModalWithError({
+        setState: (nextState) => {
+          state.glossaryPermanentDeletion = nextState;
+        },
+        entityId: glossary.id,
+        idField: "glossaryId",
+        nameField: "glossaryName",
+        confirmationField: "confirmationText",
+        currentName: glossary.title,
         confirmationText,
-      };
+        error: error?.message ?? String(error),
+      });
       render();
     },
     onRemoteDeleteError: async (error) => {
-      showNoticeBadge(
-        `Glossary deletion was committed locally, but remote cleanup still needs attention: ${
-          error?.message ?? String(error)
-        }`,
+      showPermanentDeleteFollowupNotice({
+        resourceLabel: "Glossary",
+        phase: "remote cleanup",
+        error,
         render,
-        4200,
-      );
+      });
       render();
     },
     onLocalDeleteError: async (error) => {
-      showNoticeBadge(
-        `Glossary deletion was committed locally, but local cleanup still needs attention: ${error?.message ?? String(error)}`,
+      showPermanentDeleteFollowupNotice({
+        resourceLabel: "Glossary",
+        phase: "local cleanup",
+        error,
         render,
-        4200,
-      );
+      });
       render();
       return true;
     },

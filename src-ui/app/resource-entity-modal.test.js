@@ -7,6 +7,7 @@ import {
   entityConfirmationMatches,
   openEntityConfirmationModal,
   openEntityRenameModal,
+  reopenEntityConfirmationModalWithError,
   updateEntityModalConfirmation,
   updateEntityModalName,
 } from "./resource-entity-modal.js";
@@ -88,6 +89,33 @@ test("shared entity confirmation helper clears modal errors when confirmation te
 
   assert.equal(modalState.confirmationText, "Project One");
   assert.equal(modalState.error, "");
+});
+
+test("shared entity confirmation helper can reopen a modal with the prior confirmation text and error", () => {
+  let modalState = null;
+
+  const reopened = reopenEntityConfirmationModalWithError({
+    setState: (nextState) => {
+      modalState = nextState;
+    },
+    entityId: "project-1",
+    idField: "projectId",
+    nameField: "projectName",
+    confirmationField: "confirmationText",
+    currentName: "Project One",
+    confirmationText: "Project One",
+    error: "Delete failed",
+  });
+
+  assert.equal(reopened, true);
+  assert.deepEqual(modalState, {
+    isOpen: true,
+    status: "idle",
+    error: "Delete failed",
+    projectId: "project-1",
+    projectName: "Project One",
+    confirmationText: "Project One",
+  });
 });
 
 test("shared entity confirmation helper compares confirmation text against the entity name", () => {

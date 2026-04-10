@@ -60,6 +60,7 @@ import {
   guardPermanentDeleteConfirmation,
   guardTopLevelResourceAction,
   runPermanentDeleteLocalFirst,
+  showPermanentDeleteFollowupNotice,
 } from "./resource-lifecycle-engine.js";
 import {
   canCreateRepoResources,
@@ -71,6 +72,7 @@ import {
   entityConfirmationMatches,
   openEntityConfirmationModal,
   openEntityRenameModal,
+  reopenEntityConfirmationModalWithError,
   updateEntityModalConfirmation,
   updateEntityModalName,
 } from "./resource-entity-modal.js";
@@ -2943,14 +2945,18 @@ export async function confirmProjectPermanentDeletion(render) {
 
       restoreProjectCollections(snapshot);
       persistProjectsForTeam(selectedTeam);
-      state.projectPermanentDeletion = {
-        isOpen: true,
-        projectId: project.id,
-        projectName: project.title ?? project.name,
+      reopenEntityConfirmationModalWithError({
+        setState: (nextState) => {
+          state.projectPermanentDeletion = nextState;
+        },
+        entityId: project.id,
+        idField: "projectId",
+        nameField: "projectName",
+        confirmationField: "confirmationText",
+        currentName: project.title ?? project.name,
         confirmationText,
-        status: "idle",
         error: error?.message ?? String(error),
-      };
+      });
       clearProjectUiDebug(render);
       failProjectsPageSync();
       render();
@@ -2958,13 +2964,12 @@ export async function confirmProjectPermanentDeletion(render) {
     onRemoteDeleteError: async (error) => {
       clearProjectUiDebug(render);
       await completeProjectsPageSync(render);
-      showNoticeBadge(
-        `Project deletion was committed locally, but remote cleanup still needs attention: ${
-          error?.message ?? String(error)
-        }`,
+      showPermanentDeleteFollowupNotice({
+        resourceLabel: "Project",
+        phase: "remote cleanup",
+        error,
         render,
-        4200,
-      );
+      });
       render();
     },
     onLocalDeleteError: async (error) => {
@@ -2974,11 +2979,12 @@ export async function confirmProjectPermanentDeletion(render) {
         return true;
       }
 
-      showNoticeBadge(
-        `Project deletion was committed locally, but local cleanup still needs attention: ${error?.message ?? String(error)}`,
+      showPermanentDeleteFollowupNotice({
+        resourceLabel: "Project",
+        phase: "local cleanup",
+        error,
         render,
-        4200,
-      );
+      });
       clearProjectUiDebug(render);
       failProjectsPageSync();
       render();

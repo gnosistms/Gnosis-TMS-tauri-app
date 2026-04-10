@@ -233,6 +233,28 @@ export function runPermanentDeleteLocalFirst(options) {
   })();
 }
 
+export function showPermanentDeleteFollowupNotice(options) {
+  const phase =
+    typeof options?.phase === "string" && options.phase.trim()
+      ? options.phase.trim()
+      : "local cleanup";
+  const resourceLabel =
+    typeof options?.resourceLabel === "string" && options.resourceLabel.trim()
+      ? options.resourceLabel.trim()
+      : "Resource";
+  const error = options?.error;
+  const render = options?.render;
+  const durationMs = Number.isFinite(options?.durationMs) ? options.durationMs : 4200;
+
+  showNoticeBadge(
+    `${resourceLabel} deletion was committed locally, but ${phase} still needs attention: ${
+      error?.message ?? String(error)
+    }`,
+    render,
+    durationMs,
+  );
+}
+
 export async function applyOptimisticPermanentDelete(options) {
   const beforeWait = options?.beforeWait;
   const waitForNextPaint =

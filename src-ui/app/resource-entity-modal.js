@@ -52,6 +52,42 @@ export function openEntityConfirmationModal(options) {
   return true;
 }
 
+export function reopenEntityConfirmationModalWithError(options) {
+  const setState = options?.setState;
+  const entityId = options?.entityId ?? null;
+  const idField = options?.idField;
+  const nameField = options?.nameField;
+  const confirmationField = options?.confirmationField;
+  const currentName =
+    typeof options?.currentName === "string" ? options.currentName : "";
+  const confirmationText =
+    typeof options?.confirmationText === "string" ? options.confirmationText : "";
+  const error =
+    typeof options?.error === "string" ? options.error : "";
+
+  if (
+    typeof setState !== "function"
+    || typeof idField !== "string"
+    || !idField.trim()
+    || typeof nameField !== "string"
+    || !nameField.trim()
+    || typeof confirmationField !== "string"
+    || !confirmationField.trim()
+  ) {
+    return false;
+  }
+
+  setState({
+    isOpen: true,
+    status: "idle",
+    error,
+    [idField]: entityId,
+    [nameField]: currentName,
+    [confirmationField]: confirmationText,
+  });
+  return true;
+}
+
 export function updateEntityModalName(modalState, nameField, value) {
   if (!modalState || typeof nameField !== "string" || !nameField.trim()) {
     return;
