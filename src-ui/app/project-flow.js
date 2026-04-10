@@ -83,7 +83,10 @@ import {
   autoResumePendingResources,
   resumePendingResourceSetup,
 } from "./resource-pending-create.js";
-import { runLocalFirstCreate } from "./resource-create-flow.js";
+import {
+  finalizeLocalFirstCreate,
+  runLocalFirstCreate,
+} from "./resource-create-flow.js";
 
 function setProjectUiDebug(render, text) {
   showScopedSyncBadge("projects", text, render);
@@ -1805,13 +1808,21 @@ export async function submitProjectCreation(render) {
       clearProjectUiDebug(render);
       await completeProjectsPageSync(render);
       render();
-      showNoticeBadge(
-        createResult.localNameCollisionResolved
-          ? `Created project ${projectTitle} in local repo ${pendingProject.name} because that name was already used locally.`
-          : `Created project ${projectTitle}.`,
-        render,
-      );
-      syncProjectInBackground(render, selectedTeam, currentProjectSnapshot(pendingProject), repoName);
+      await finalizeLocalFirstCreate({
+        createdResource: pendingProject,
+        commitVisibleResource: (project) => currentProjectSnapshot(project),
+        syncInBackground: async (project) => {
+          syncProjectInBackground(render, selectedTeam, project, repoName);
+        },
+        showSuccessNotice: () => {
+          showNoticeBadge(
+            createResult.localNameCollisionResolved
+              ? `Created project ${projectTitle} in local repo ${pendingProject.name} because that name was already used locally.`
+              : `Created project ${projectTitle}.`,
+            render,
+          );
+        },
+      });
     } catch (error) {
       if (await handleSyncFailure(classifySyncError(error), { render })) {
         clearProjectUiDebug(render);

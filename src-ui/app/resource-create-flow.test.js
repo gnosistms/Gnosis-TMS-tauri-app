@@ -1,7 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { runLocalFirstCreate } from "./resource-create-flow.js";
+import {
+  finalizeLocalFirstCreate,
+  runLocalFirstCreate,
+} from "./resource-create-flow.js";
 
 test("shared local-first create helper returns reservation and created resource on success", async () => {
   const calls = [];
@@ -60,5 +63,42 @@ test("shared local-first create helper purges local repo and rolls back metadata
     "initializeLocalResource",
     ["purgeLocalRepo", "repo-1"],
     ["rollbackPendingMetadata", "initialize failed"],
+  ]);
+});
+
+test("shared local-first create finalizer commits visible resource, selects it, opens it, and starts background sync", async () => {
+  const calls = [];
+
+  const committedResource = await finalizeLocalFirstCreate({
+    createdResource: { id: "resource-1" },
+    clearCreateState: () => {
+      calls.push("clearCreateState");
+    },
+    commitVisibleResource: (resource) => {
+      calls.push(["commitVisibleResource", resource.id]);
+      return { ...resource, committed: true };
+    },
+    selectResource: (resource) => {
+      calls.push(["selectResource", resource.id, resource.committed]);
+    },
+    openCreatedResource: async (resource) => {
+      calls.push(["openCreatedResource", resource.id, resource.committed]);
+    },
+    syncInBackground: async (resource) => {
+      calls.push(["syncInBackground", resource.id, resource.committed]);
+    },
+    showSuccessNotice: (resource) => {
+      calls.push(["showSuccessNotice", resource.id, resource.committed]);
+    },
+  });
+
+  assert.deepEqual(committedResource, { id: "resource-1", committed: true });
+  assert.deepEqual(calls, [
+    "clearCreateState",
+    ["commitVisibleResource", "resource-1"],
+    ["selectResource", "resource-1", true],
+    ["openCreatedResource", "resource-1", true],
+    ["syncInBackground", "resource-1", true],
+    ["showSuccessNotice", "resource-1", true],
   ]);
 });

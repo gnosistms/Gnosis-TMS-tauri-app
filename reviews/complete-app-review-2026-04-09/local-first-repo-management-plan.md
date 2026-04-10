@@ -207,6 +207,7 @@ Status on 2026-04-10:
 - pending-create resume and auto-resume orchestration now also flows through a shared helper for projects and glossaries
 - create-modal open/update plumbing now also flows through shared form-modal helpers for projects and glossaries
 - the metadata-first local bootstrap sequence for project creation and glossary creation now also flows through a shared helper, with resource adapters for reservation rules, metadata records, and local repo initialization
+- post-create local finalize/open/background-sync orchestration now also flows through a shared helper, with resource adapters for visible-state commit and editor/open behavior
 - projects and glossaries still have a few resource-specific reload/failure callbacks and some higher-level lifecycle wrappers, so the full adapter-based shared state machine is not finished
 - remaining intended-model cleanup:
   - projects and glossaries should share the same top-level lifecycle model
@@ -239,6 +240,7 @@ Status on 2026-04-10:
 - project background reconciliation now repairs `origin` and can push the first local commit into an empty remote repo
 - create-modal/open/update UI plumbing is now partially shared, but the actual local repo/bootstrap/create execution path is still separate
 - create execution is now partially shared through a common local-first bootstrap helper, but project/glossary create still use separate validation fields and separate post-create editor/load behavior
+- create execution now also shares the post-create finalize/open/background-sync tail, but project/glossary create still use separate validation fields and separate resource-specific editor/load adapters
 
 - write `pendingCreate` to local metadata first
 - initialize local repo first

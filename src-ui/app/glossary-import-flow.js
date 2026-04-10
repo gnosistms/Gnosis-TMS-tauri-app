@@ -34,7 +34,10 @@ import {
   autoResumePendingResources,
   resumePendingResourceSetup,
 } from "./resource-pending-create.js";
-import { runLocalFirstCreate } from "./resource-create-flow.js";
+import {
+  finalizeLocalFirstCreate,
+  runLocalFirstCreate,
+} from "./resource-create-flow.js";
 
 function detectGlossaryImportFileType(fileName) {
   const normalized = String(fileName || "").trim().toLowerCase();
@@ -625,30 +628,41 @@ export async function submitGlossaryCreation(render) {
     const glossary = createResult.createdResource;
     const localRepoName = createResult.localRepoName;
     state.glossaryCreation.status = "idle";
-    resetGlossaryCreation();
-    const committedGlossary = commitLocalGlossarySummary(team, {
-      ...glossary,
-      remoteState: "pendingCreate",
-      resolutionState: "pendingCreate",
-    }, null);
-    state.selectedGlossaryId = glossary.glossaryId;
-
-    try {
-      await openGlossaryEditor(render, glossary.glossaryId, { preferredGlossary: committedGlossary ?? glossary });
-      syncGlossaryInBackground(render, team, committedGlossary ?? glossary, repoName);
-      showNoticeBadge(
-        createResult.localNameCollisionResolved
-          ? `Created glossary ${glossary.title} in local repo ${localRepoName} because that name was already used locally.`
-          : `Created glossary ${glossary.title}.`,
-        render,
-      );
-    } catch (error) {
-      showNoticeBadge(
-        `Created glossary ${glossary.title}, but the app could not refresh automatically: ${error?.message ?? String(error)}`,
-        render,
-      );
-      render();
-    }
+    await finalizeLocalFirstCreate({
+      createdResource: glossary,
+      clearCreateState: resetGlossaryCreation,
+      commitVisibleResource: (createdGlossary) => commitLocalGlossarySummary(team, {
+        ...createdGlossary,
+        remoteState: "pendingCreate",
+        resolutionState: "pendingCreate",
+      }, null),
+      selectResource: (committedGlossary) => {
+        state.selectedGlossaryId = committedGlossary?.glossaryId ?? glossary.glossaryId;
+      },
+      openCreatedResource: async (committedGlossary) => {
+        await openGlossaryEditor(render, glossary.glossaryId, {
+          preferredGlossary: committedGlossary ?? glossary,
+        });
+      },
+      syncInBackground: async (committedGlossary) => {
+        syncGlossaryInBackground(render, team, committedGlossary ?? glossary, repoName);
+      },
+      showSuccessNotice: () => {
+        showNoticeBadge(
+          createResult.localNameCollisionResolved
+            ? `Created glossary ${glossary.title} in local repo ${localRepoName} because that name was already used locally.`
+            : `Created glossary ${glossary.title}.`,
+          render,
+        );
+      },
+      showRefreshFailureNotice: (error) => {
+        showNoticeBadge(
+          `Created glossary ${glossary.title}, but the app could not refresh automatically: ${error?.message ?? String(error)}`,
+          render,
+        );
+        render();
+      },
+    });
   } catch (error) {
     state.glossaryCreation.status = "idle";
     state.glossaryCreation.error = error?.message ?? String(error);
