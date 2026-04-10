@@ -31,6 +31,69 @@ export async function applyMetadataFirstResourceMutation(options) {
   }
 }
 
+export async function commitMetadataFirstTopLevelMutation(options) {
+  const mutation = options?.mutation;
+  const resource = options?.resource;
+  const writeMetadata = options?.writeMetadata;
+  const buildRecord = options?.buildRecord;
+  const applyLocalMutation = options?.applyLocalMutation;
+  const resourceLabel =
+    typeof options?.resourceLabel === "string" && options.resourceLabel.trim()
+      ? options.resourceLabel.trim()
+      : "resource";
+
+  if (!mutation || !resource || typeof buildRecord !== "function" || typeof applyLocalMutation !== "function") {
+    return false;
+  }
+
+  if (mutation.type === "rename") {
+    await applyMetadataFirstResourceMutation({
+      resourceLabel,
+      writeMetadata,
+      nextRecord: buildRecord(resource, {
+        title: mutation.title,
+      }),
+      applyLocalMutation: () => applyLocalMutation(resource, mutation),
+      rollbackRecord: buildRecord(resource, {
+        title: mutation.previousTitle,
+      }),
+    });
+    return true;
+  }
+
+  if (mutation.type === "softDelete") {
+    await applyMetadataFirstResourceMutation({
+      resourceLabel,
+      writeMetadata,
+      nextRecord: buildRecord(resource, {
+        lifecycleState: resourceLabel === "project" ? "softDeleted" : "deleted",
+      }),
+      applyLocalMutation: () => applyLocalMutation(resource, mutation),
+      rollbackRecord: buildRecord(resource, {
+        lifecycleState: "active",
+      }),
+    });
+    return true;
+  }
+
+  if (mutation.type === "restore") {
+    await applyMetadataFirstResourceMutation({
+      resourceLabel,
+      writeMetadata,
+      nextRecord: buildRecord(resource, {
+        lifecycleState: "active",
+      }),
+      applyLocalMutation: () => applyLocalMutation(resource, mutation),
+      rollbackRecord: buildRecord(resource, {
+        lifecycleState: resourceLabel === "project" ? "softDeleted" : "deleted",
+      }),
+    });
+    return true;
+  }
+
+  return false;
+}
+
 export async function ensureResourceNotTombstoned(options) {
   const installationId = options?.installationId;
   const resource = options?.resource;

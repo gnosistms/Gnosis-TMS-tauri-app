@@ -52,7 +52,7 @@ import {
   rollbackTopLevelResourceMutation,
 } from "./resource-top-level-mutations.js";
 import {
-  applyMetadataFirstResourceMutation,
+  commitMetadataFirstTopLevelMutation,
   ensureResourceNotTombstoned,
 } from "./resource-lifecycle-engine.js";
 import {
@@ -2630,70 +2630,50 @@ async function commitProjectMutation(selectedTeam, mutation) {
     return;
   }
 
-  if (mutation.type === "rename") {
-    await applyMetadataFirstResourceMutation({
-      resourceLabel: "project",
-      writeMetadata: (record) => upsertProjectMetadataRecord(selectedTeam, record),
-      nextRecord: projectMetadataRecordFromVisibleProject(project, {
-        title: mutation.title,
-      }),
-      applyLocalMutation: () => invoke("rename_gnosis_project_repo", {
-        input: {
-          installationId: selectedTeam.installationId,
-          fullName: project.fullName,
-          projectTitle: mutation.title,
-        },
-        sessionToken: requireBrokerSession(),
-      }),
-      rollbackRecord: projectMetadataRecordFromVisibleProject(project, {
-        title: mutation.previousTitle,
-      }),
-    });
-    return;
-  }
+  await commitMetadataFirstTopLevelMutation({
+    mutation,
+    resource: project,
+    resourceLabel: "project",
+    writeMetadata: (record) => upsertProjectMetadataRecord(selectedTeam, record),
+    buildRecord: (currentProject, overrides = {}) =>
+      projectMetadataRecordFromVisibleProject(currentProject, overrides),
+    applyLocalMutation: (currentProject, currentMutation) => {
+      if (currentMutation.type === "rename") {
+        return invoke("rename_gnosis_project_repo", {
+          input: {
+            installationId: selectedTeam.installationId,
+            fullName: currentProject.fullName,
+            projectTitle: currentMutation.title,
+          },
+          sessionToken: requireBrokerSession(),
+        });
+      }
 
-  if (mutation.type === "softDelete") {
-    await applyMetadataFirstResourceMutation({
-      resourceLabel: "project",
-      writeMetadata: (record) => upsertProjectMetadataRecord(selectedTeam, record),
-      nextRecord: projectMetadataRecordFromVisibleProject(project, {
-        lifecycleState: "softDeleted",
-      }),
-      applyLocalMutation: () => invoke("mark_gnosis_project_repo_deleted", {
-        input: {
-          installationId: selectedTeam.installationId,
-          orgLogin: selectedTeam.githubOrg,
-          repoName: project.name,
-        },
-        sessionToken: requireBrokerSession(),
-      }),
-      rollbackRecord: projectMetadataRecordFromVisibleProject(project, {
-        lifecycleState: "active",
-      }),
-    });
-    return;
-  }
+      if (currentMutation.type === "softDelete") {
+        return invoke("mark_gnosis_project_repo_deleted", {
+          input: {
+            installationId: selectedTeam.installationId,
+            orgLogin: selectedTeam.githubOrg,
+            repoName: currentProject.name,
+          },
+          sessionToken: requireBrokerSession(),
+        });
+      }
 
-  if (mutation.type === "restore") {
-    await applyMetadataFirstResourceMutation({
-      resourceLabel: "project",
-      writeMetadata: (record) => upsertProjectMetadataRecord(selectedTeam, record),
-      nextRecord: projectMetadataRecordFromVisibleProject(project, {
-        lifecycleState: "active",
-      }),
-      applyLocalMutation: () => invoke("restore_gnosis_project_repo", {
-        input: {
-          installationId: selectedTeam.installationId,
-          orgLogin: selectedTeam.githubOrg,
-          repoName: project.name,
-        },
-        sessionToken: requireBrokerSession(),
-      }),
-      rollbackRecord: projectMetadataRecordFromVisibleProject(project, {
-        lifecycleState: "softDeleted",
-      }),
-    });
-  }
+      if (currentMutation.type === "restore") {
+        return invoke("restore_gnosis_project_repo", {
+          input: {
+            installationId: selectedTeam.installationId,
+            orgLogin: selectedTeam.githubOrg,
+            repoName: currentProject.name,
+          },
+          sessionToken: requireBrokerSession(),
+        });
+      }
+
+      return Promise.resolve();
+    },
+  });
 }
 
 function rollbackVisibleProjectMutation(mutation) {

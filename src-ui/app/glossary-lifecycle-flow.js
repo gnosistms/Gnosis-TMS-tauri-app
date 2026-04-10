@@ -33,7 +33,7 @@ import {
   rollbackVisibleGlossaryMutation,
 } from "./glossary-top-level-state.js";
 import { processQueuedResourceMutations } from "./resource-top-level-mutations.js";
-import { applyMetadataFirstResourceMutation } from "./resource-lifecycle-engine.js";
+import { commitMetadataFirstTopLevelMutation } from "./resource-lifecycle-engine.js";
 import { classifySyncError } from "./sync-error.js";
 import { handleSyncFailure } from "./sync-recovery.js";
 
@@ -125,74 +125,48 @@ async function commitGlossaryMutation(team, mutation) {
     return;
   }
 
-  if (mutation.type === "rename") {
-    await applyMetadataFirstResourceMutation({
-      resourceLabel: "glossary",
-      writeMetadata: (record) => upsertGlossaryMetadataRecord(team, record),
-      nextRecord: glossaryMetadataRecord({
-        ...glossary,
-        title: mutation.title,
-      }),
-      applyLocalMutation: () => invoke("rename_gtms_glossary", {
-        input: {
-          installationId: team.installationId,
-          glossaryId: glossary.id,
-          repoName: glossary.repoName,
-          title: mutation.title,
-        },
-      }),
-      rollbackRecord: glossaryMetadataRecord({
-        ...glossary,
-        title: mutation.previousTitle,
-      }),
-    });
-    return;
-  }
+  await commitMetadataFirstTopLevelMutation({
+    mutation,
+    resource: glossary,
+    resourceLabel: "glossary",
+    writeMetadata: (record) => upsertGlossaryMetadataRecord(team, record),
+    buildRecord: (currentGlossary, overrides = {}) =>
+      glossaryMetadataRecord(currentGlossary, overrides),
+    applyLocalMutation: (currentGlossary, currentMutation) => {
+      if (currentMutation.type === "rename") {
+        return invoke("rename_gtms_glossary", {
+          input: {
+            installationId: team.installationId,
+            glossaryId: currentGlossary.id,
+            repoName: currentGlossary.repoName,
+            title: currentMutation.title,
+          },
+        });
+      }
 
-  if (mutation.type === "softDelete") {
-    await applyMetadataFirstResourceMutation({
-      resourceLabel: "glossary",
-      writeMetadata: (record) => upsertGlossaryMetadataRecord(team, record),
-      nextRecord: glossaryMetadataRecord({
-        ...glossary,
-        lifecycleState: "deleted",
-      }),
-      applyLocalMutation: () => invoke("soft_delete_gtms_glossary", {
-        input: {
-          installationId: team.installationId,
-          glossaryId: glossary.id,
-          repoName: glossary.repoName,
-        },
-      }),
-      rollbackRecord: glossaryMetadataRecord({
-        ...glossary,
-        lifecycleState: "active",
-      }),
-    });
-    return;
-  }
+      if (currentMutation.type === "softDelete") {
+        return invoke("soft_delete_gtms_glossary", {
+          input: {
+            installationId: team.installationId,
+            glossaryId: currentGlossary.id,
+            repoName: currentGlossary.repoName,
+          },
+        });
+      }
 
-  if (mutation.type === "restore") {
-    await applyMetadataFirstResourceMutation({
-      resourceLabel: "glossary",
-      writeMetadata: (record) => upsertGlossaryMetadataRecord(team, record),
-      nextRecord: glossaryMetadataRecord({
-        ...glossary,
-        lifecycleState: "active",
-      }),
-      applyLocalMutation: () => invoke("restore_gtms_glossary", {
-        input: {
-          installationId: team.installationId,
-          glossaryId: glossary.id,
-          repoName: glossary.repoName,
-        },
-      }),
-      rollbackRecord: glossaryMetadataRecord({
-        ...glossary,
-        lifecycleState: "deleted",
-      }),
-    });
-  }
+      if (currentMutation.type === "restore") {
+        return invoke("restore_gtms_glossary", {
+          input: {
+            installationId: team.installationId,
+            glossaryId: currentGlossary.id,
+            repoName: currentGlossary.repoName,
+          },
+        });
+      }
+
+      return Promise.resolve();
+    },
+  });
 }
 
 export async function processPendingGlossaryMutations(render, team = selectedTeam()) {
