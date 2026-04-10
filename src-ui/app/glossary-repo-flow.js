@@ -6,7 +6,12 @@ import { createUniqueRepoWithNumericSuffix } from "./repo-creation.js";
 import { ensureResourceNotTombstoned } from "./resource-lifecycle-engine.js";
 import { showNoticeBadge } from "./status-feedback.js";
 import { state } from "./state.js";
-import { inspectAndMigrateLocalRepoBindings, listGlossaryMetadataRecords, lookupLocalMetadataTombstone } from "./team-metadata-flow.js";
+import {
+  inspectAndMigrateLocalRepoBindings,
+  listGlossaryMetadataRecords,
+  lookupLocalMetadataTombstone,
+  repairAutoRepairableRepoBindings,
+} from "./team-metadata-flow.js";
 import { mergeMetadataBackedGlossarySummaries } from "./glossary-discovery.js";
 
 const GLOSSARY_BROKER_ROUTE_UNAVAILABLE_MESSAGE =
@@ -487,6 +492,10 @@ export async function loadRepoBackedGlossariesForTeam(team, options = {}) {
     metadataRecords = await listGlossaryMetadataRecords(team);
     metadataLoaded = true;
     repairIssues = (await inspectAndMigrateLocalRepoBindings(team))?.issues ?? [];
+    if (repairIssues.length > 0) {
+      await repairAutoRepairableRepoBindings(team, repairIssues);
+      repairIssues = (await inspectAndMigrateLocalRepoBindings(team).catch(() => null))?.issues ?? repairIssues;
+    }
     localSummaries = await purgeTombstonedGlossariesForTeam(team, localSummaries, metadataRecords);
   } catch {}
   const recoverableMetadataCount = countRecoverableGlossaryMetadataRecords(metadataRecords);

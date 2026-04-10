@@ -489,3 +489,52 @@ export async function inspectAndMigrateLocalRepoBindings(team) {
       : 0,
   };
 }
+
+export async function repairLocalRepoBinding(team, kind, resourceId) {
+  if (!Number.isFinite(team?.installationId)) {
+    throw new Error("Could not determine which installation to repair.");
+  }
+
+  const result = await invoke("repair_local_repo_binding", {
+    input: {
+      installationId: team.installationId,
+      kind,
+      resourceId,
+    },
+  });
+
+  return normalizeLocalRepoRepairIssue(result);
+}
+
+export async function repairAutoRepairableRepoBindings(team, issues) {
+  const repairTargets = [...new Map(
+    (Array.isArray(issues) ? issues : [])
+      .filter((issue) =>
+        issue?.canAutoRepair === true
+        && issue?.issueType === "missingOrigin"
+        && typeof issue?.kind === "string"
+        && issue.kind.trim()
+        && typeof issue?.resourceId === "string"
+        && issue.resourceId.trim()
+      )
+      .map((issue) => [`${issue.kind}:${issue.resourceId}`, issue]),
+  ).values()];
+
+  if (repairTargets.length === 0) {
+    return [];
+  }
+
+  const repaired = [];
+  for (const issue of repairTargets) {
+    try {
+      const result = await repairLocalRepoBinding(team, issue.kind, issue.resourceId);
+      if (result) {
+        repaired.push(result);
+      }
+    } catch {
+      // Leave unrepaired issues visible in discovery rather than failing the whole load path.
+    }
+  }
+
+  return repaired;
+}

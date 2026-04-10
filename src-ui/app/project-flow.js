@@ -42,6 +42,7 @@ import {
   inspectAndMigrateLocalRepoBindings,
   listProjectMetadataRecords,
   lookupLocalMetadataTombstone,
+  repairAutoRepairableRepoBindings,
   upsertProjectMetadataRecord,
 } from "./team-metadata-flow.js";
 import {
@@ -1207,10 +1208,15 @@ export async function loadTeamProjects(render, teamId = state.selectedTeamId) {
         ? metadataResult.value
         : [];
     const metadataLoaded = metadataResult.status === "fulfilled";
-    const repairIssues =
+    let repairIssues =
       repairResult.status === "fulfilled"
         ? repairResult.value?.issues ?? []
         : [];
+    if (repairIssues.length > 0) {
+      await repairAutoRepairableRepoBindings(selectedTeam, repairIssues);
+      const refreshedRepairResult = await inspectAndMigrateLocalRepoBindings(selectedTeam).catch(() => null);
+      repairIssues = refreshedRepairResult?.issues ?? repairIssues;
+    }
     const recoverableMetadataCount = countRecoverableProjectMetadataRecords(projectMetadataRecords);
     if (
       projectsResult.status !== "fulfilled"
