@@ -128,6 +128,73 @@ export async function guardTopLevelResourceAction(options) {
   return true;
 }
 
+export async function guardPermanentDeleteConfirmation(options) {
+  const modalState = options?.modalState ?? null;
+  const missingMessage =
+    typeof options?.missingMessage === "string" ? options.missingMessage : "Could not find the selected resource.";
+  const getBlockedMessage =
+    typeof options?.getBlockedMessage === "function"
+      ? options.getBlockedMessage
+      : () => "";
+  const confirmationMessage =
+    typeof options?.confirmationMessage === "string"
+      ? options.confirmationMessage
+      : "Confirmation text does not match.";
+  const matchesConfirmation =
+    typeof options?.matchesConfirmation === "function"
+      ? options.matchesConfirmation
+      : () => true;
+  const ensureNotTombstoned =
+    typeof options?.ensureNotTombstoned === "function"
+      ? options.ensureNotTombstoned
+      : async () => false;
+  const extraGuard =
+    typeof options?.extraGuard === "function"
+      ? options.extraGuard
+      : async () => true;
+  const render = options?.render;
+
+  if (!options?.resource) {
+    if (modalState) {
+      modalState.status = "idle";
+      modalState.error = missingMessage;
+    }
+    render?.();
+    return false;
+  }
+
+  const blockedMessage = getBlockedMessage(options.resource);
+  if (blockedMessage) {
+    if (modalState) {
+      modalState.status = "idle";
+      modalState.error = blockedMessage;
+    }
+    render?.();
+    return false;
+  }
+
+  if (!matchesConfirmation()) {
+    if (modalState) {
+      modalState.error = confirmationMessage;
+    }
+    render?.();
+    return false;
+  }
+
+  if (await ensureNotTombstoned(options.resource)) {
+    await options?.onTombstoned?.();
+    return false;
+  }
+
+  const extraGuardResult = await extraGuard();
+  if (extraGuardResult === false) {
+    render?.();
+    return false;
+  }
+
+  return true;
+}
+
 export function runPermanentDeleteLocalFirst(options) {
   const commitTombstone = options?.commitTombstone;
   const purgeLocalRepo = options?.purgeLocalRepo;

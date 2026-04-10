@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import {
   applyOptimisticPermanentDelete,
+  guardPermanentDeleteConfirmation,
   guardTopLevelResourceAction,
   runPermanentDeleteLocalFirst,
 } from "./resource-lifecycle-engine.js";
@@ -94,6 +95,80 @@ test("shared top-level guard allows valid actions through", async () => {
     ["isExpectedResource", "resource-1"],
     "getBlockedMessage",
     "ensureNotTombstoned",
+  ]);
+});
+
+test("shared permanent delete confirmation guard sets modal error for missing resources", async () => {
+  const modalState = { status: "loading", error: "" };
+  const renders = [];
+
+  const allowed = await guardPermanentDeleteConfirmation({
+    resource: null,
+    modalState,
+    missingMessage: "Missing resource.",
+    render: () => {
+      renders.push("render");
+    },
+  });
+
+  assert.equal(allowed, false);
+  assert.equal(modalState.status, "idle");
+  assert.equal(modalState.error, "Missing resource.");
+  assert.deepEqual(renders, ["render"]);
+});
+
+test("shared permanent delete confirmation guard stops on blocked actions", async () => {
+  const modalState = { status: "loading", error: "" };
+
+  const allowed = await guardPermanentDeleteConfirmation({
+    resource: { id: "resource-1" },
+    modalState,
+    getBlockedMessage: () => "blocked",
+  });
+
+  assert.equal(allowed, false);
+  assert.equal(modalState.status, "idle");
+  assert.equal(modalState.error, "blocked");
+});
+
+test("shared permanent delete confirmation guard stops on confirmation mismatch", async () => {
+  const modalState = { status: "idle", error: "" };
+
+  const allowed = await guardPermanentDeleteConfirmation({
+    resource: { id: "resource-1" },
+    modalState,
+    confirmationMessage: "Mismatch.",
+    matchesConfirmation: () => false,
+  });
+
+  assert.equal(allowed, false);
+  assert.equal(modalState.error, "Mismatch.");
+});
+
+test("shared permanent delete confirmation guard calls the extra guard after tombstone check", async () => {
+  const calls = [];
+
+  const allowed = await guardPermanentDeleteConfirmation({
+    resource: { id: "resource-1" },
+    matchesConfirmation: () => {
+      calls.push("matchesConfirmation");
+      return true;
+    },
+    ensureNotTombstoned: async () => {
+      calls.push("ensureNotTombstoned");
+      return false;
+    },
+    extraGuard: async () => {
+      calls.push("extraGuard");
+      return true;
+    },
+  });
+
+  assert.equal(allowed, true);
+  assert.deepEqual(calls, [
+    "matchesConfirmation",
+    "ensureNotTombstoned",
+    "extraGuard",
   ]);
 });
 

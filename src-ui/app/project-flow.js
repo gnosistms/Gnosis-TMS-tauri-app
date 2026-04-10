@@ -57,6 +57,7 @@ import {
   applyOptimisticPermanentDelete,
   commitMetadataFirstTopLevelMutation,
   ensureResourceNotTombstoned,
+  guardPermanentDeleteConfirmation,
   guardTopLevelResourceAction,
   runPermanentDeleteLocalFirst,
 } from "./resource-lifecycle-engine.js";
@@ -2845,47 +2846,41 @@ export async function confirmProjectPermanentDeletion(render) {
     (item) => item.id === state.projectPermanentDeletion.projectId,
   );
   const confirmationText = state.projectPermanentDeletion.confirmationText;
-
-  if (!selectedTeam?.installationId || !project) {
-    state.projectPermanentDeletion.status = "idle";
-    state.projectPermanentDeletion.error = "Could not find the selected deleted project.";
-    render();
-    return;
-  }
-
-  if (state.offline?.isEnabled === true) {
-    state.projectPermanentDeletion.status = "idle";
-    state.projectPermanentDeletion.error = "You cannot delete projects while offline.";
-    render();
-    return;
-  }
-
-  if (selectedTeam.canDelete !== true) {
-    state.projectPermanentDeletion.status = "idle";
-    state.projectPermanentDeletion.error = "You do not have permission to delete projects in this team.";
-    render();
-    return;
-  }
-
-  if (!entityConfirmationMatches(state.projectPermanentDeletion, {
-    nameField: "projectName",
-    confirmationField: "confirmationText",
-  })) {
-    state.projectPermanentDeletion.error = "Project name confirmation does not match.";
-    render();
-    return;
-  }
-  if (await ensureProjectNotTombstoned(render, selectedTeam, project)) {
-    resetProjectPermanentDeletion();
-    render();
-    return;
-  }
-
-  if (state.projectCreationInFlightIds.has(project.id)) {
-    state.projectPermanentDeletion.status = "idle";
-    state.projectPermanentDeletion.error =
-      "This project is still finishing creation in the background. Wait a moment, then try deleting it permanently again.";
-    render();
+  const allowed = await guardPermanentDeleteConfirmation({
+    resource: selectedTeam?.installationId ? project : null,
+    modalState: state.projectPermanentDeletion,
+    missingMessage: "Could not find the selected deleted project.",
+    getBlockedMessage: () => {
+      if (state.offline?.isEnabled === true) {
+        return "You cannot delete projects while offline.";
+      }
+      return selectedTeam?.canDelete === true
+        ? ""
+        : "You do not have permission to delete projects in this team.";
+    },
+    confirmationMessage: "Project name confirmation does not match.",
+    matchesConfirmation: () => entityConfirmationMatches(state.projectPermanentDeletion, {
+      nameField: "projectName",
+      confirmationField: "confirmationText",
+    }),
+    ensureNotTombstoned: (currentProject) =>
+      ensureProjectNotTombstoned(render, selectedTeam, currentProject),
+    onTombstoned: () => {
+      resetProjectPermanentDeletion();
+      render();
+    },
+    extraGuard: () => {
+      if (!state.projectCreationInFlightIds.has(project.id)) {
+        return true;
+      }
+      state.projectPermanentDeletion.status = "idle";
+      state.projectPermanentDeletion.error =
+        "This project is still finishing creation in the background. Wait a moment, then try deleting it permanently again.";
+      return false;
+    },
+    render,
+  });
+  if (!allowed) {
     return;
   }
 

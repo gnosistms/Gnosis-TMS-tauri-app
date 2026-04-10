@@ -37,6 +37,7 @@ import {
 import {
   applyOptimisticPermanentDelete,
   commitMetadataFirstTopLevelMutation,
+  guardPermanentDeleteConfirmation,
   guardTopLevelResourceAction,
   runPermanentDeleteLocalFirst,
 } from "./resource-lifecycle-engine.js";
@@ -507,32 +508,28 @@ export async function confirmGlossaryPermanentDeletion(render) {
   const team = selectedTeam();
   const glossary = glossaryById(state.glossaryPermanentDeletion.glossaryId);
   const confirmationText = String(state.glossaryPermanentDeletion.confirmationText ?? "");
-  const blockedMessage = lifecycleActionBlockedMessage(team, {
-    actionLabel: "permanently delete glossaries",
-    requireOwner: true,
+  const allowed = await guardPermanentDeleteConfirmation({
+    resource: glossary,
+    modalState: state.glossaryPermanentDeletion,
+    missingMessage: "Could not find the selected glossary.",
+    getBlockedMessage: () => lifecycleActionBlockedMessage(team, {
+      actionLabel: "permanently delete glossaries",
+      requireOwner: true,
+    }),
+    confirmationMessage: "Enter the glossary name exactly to delete it.",
+    matchesConfirmation: () => entityConfirmationMatches(state.glossaryPermanentDeletion, {
+      nameField: "glossaryName",
+      confirmationField: "confirmationText",
+    }),
+    ensureNotTombstoned: (currentGlossary) =>
+      ensureGlossaryNotTombstoned(render, team, currentGlossary),
+    onTombstoned: () => {
+      resetGlossaryPermanentDeletion();
+      render();
+    },
+    render,
   });
-
-  if (!glossary) {
-    state.glossaryPermanentDeletion.error = "Could not find the selected glossary.";
-    render();
-    return;
-  }
-  if (blockedMessage) {
-    state.glossaryPermanentDeletion.error = blockedMessage;
-    render();
-    return;
-  }
-  if (!entityConfirmationMatches(state.glossaryPermanentDeletion, {
-    nameField: "glossaryName",
-    confirmationField: "confirmationText",
-  })) {
-    state.glossaryPermanentDeletion.error = "Enter the glossary name exactly to delete it.";
-    render();
-    return;
-  }
-  if (await ensureGlossaryNotTombstoned(render, team, glossary)) {
-    resetGlossaryPermanentDeletion();
-    render();
+  if (!allowed) {
     return;
   }
 
