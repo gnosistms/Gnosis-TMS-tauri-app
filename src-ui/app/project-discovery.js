@@ -143,6 +143,7 @@ function mapMetadataProjectToVisibleProject(record, remoteProject, existingProje
     recordState: record.recordState ?? "live",
     deletedAt: record.deletedAt ?? null,
     resolutionState,
+    repairIssueType: repairIssue?.issueType ?? "",
     repairIssueMessage: repairIssue?.message ?? "",
     };
 }
@@ -226,6 +227,7 @@ export function mergeMetadataDiscoveryProjects({
             && localProject.isPendingCreate !== true
               ? "unregisteredLocal"
               : localProject.resolutionState ?? "",
+      repairIssueType: matchingRepairIssue(localProject, repairIssueMaps)?.issueType ?? "",
       repairIssueMessage: matchingRepairIssue(localProject, repairIssueMaps)?.message ?? "",
     });
   }

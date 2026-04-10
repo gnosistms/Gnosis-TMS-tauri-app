@@ -76,6 +76,10 @@ export function normalizeGlossarySummary(glossary) {
       typeof glossary.resolutionState === "string" && glossary.resolutionState.trim()
         ? glossary.resolutionState.trim()
         : "",
+    repairIssueType:
+      typeof glossary.repairIssueType === "string" && glossary.repairIssueType.trim()
+        ? glossary.repairIssueType.trim()
+        : "",
     repairIssueMessage:
       typeof glossary.repairIssueMessage === "string" && glossary.repairIssueMessage.trim()
         ? glossary.repairIssueMessage.trim()

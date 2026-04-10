@@ -93,6 +93,15 @@ function baseResolution(resource, resourceLabel) {
   }
 
   if (resolutionState === "repair") {
+    const repairIssueType = normalizeText(resource.repairIssueType);
+    const repairAction =
+      typeof resource?.id === "string" && resource.id.trim()
+        ? (
+            repairIssueType === "missingLocalRepo"
+              ? `${resourceLabel === "project" ? "rebuild-project-repo" : "rebuild-glossary-repo"}:${resource.id.trim()}`
+              : `${resourceLabel === "project" ? "repair-project" : "repair-glossary"}:${resource.id.trim()}`
+          )
+        : "";
     return {
       key: "repair",
       tone: "warning",
@@ -102,11 +111,8 @@ function baseResolution(resource, resourceLabel) {
       help: "The local-first copy stays visible, but this repo or metadata binding needs explicit repair.",
       blockLifecycleActions: true,
       blockContentActions: false,
-      actionLabel: "Repair",
-      action:
-        typeof resource?.id === "string" && resource.id.trim()
-          ? `${resourceLabel === "project" ? "repair-project" : "repair-glossary"}:${resource.id.trim()}`
-          : "",
+      actionLabel: repairIssueType === "missingLocalRepo" ? "Rebuild Local Repo" : "Repair",
+      action: repairAction,
     };
   }
 

@@ -1714,6 +1714,16 @@ export async function repairProjectRepoBinding(render, projectId) {
   }
 }
 
+export async function rebuildProjectLocalRepo(render, projectId) {
+  const selectedTeam = state.teams.find((team) => team.id === state.selectedTeamId);
+  if (!selectedTeam?.installationId || typeof projectId !== "string" || !projectId.trim()) {
+    return;
+  }
+
+  showNoticeBadge("Rebuilding the local project repo from metadata and GitHub...", render, 2200);
+  await loadTeamProjects(render, selectedTeam.id);
+}
+
 export async function submitChapterRename(render) {
   const selectedTeam = state.teams.find((team) => team.id === state.selectedTeamId);
   const context = findChapterContext(state.chapterRename.chapterId);

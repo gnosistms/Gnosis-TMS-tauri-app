@@ -217,6 +217,7 @@ export function mergeMetadataBackedGlossarySummaries(
       remoteState,
       recordState: record.recordState ?? "live",
       resolutionState,
+      repairIssueType: matchingRepairIssue({ id: record.id, repoName: record.repoName }, repairIssueMaps)?.issueType ?? "",
       repairIssueMessage: matchingRepairIssue({ id: record.id, repoName: record.repoName }, repairIssueMaps)?.message ?? "",
       deletedAt: record.deletedAt ?? null,
       termCount: localGlossary?.termCount ?? record.termCount ?? 0,
@@ -259,6 +260,7 @@ export function mergeMetadataBackedGlossarySummaries(
             && glossary.remoteState !== "pendingCreate"
               ? "unregisteredLocal"
               : glossary.resolutionState ?? "",
+      repairIssueType: matchingRepairIssue(glossary, repairIssueMaps)?.issueType ?? "",
       repairIssueMessage: matchingRepairIssue(glossary, repairIssueMaps)?.message ?? "",
     }));
   }

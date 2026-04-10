@@ -15,6 +15,7 @@ import {
   openGlossaryRename,
   openGlossaryTermEditor,
   repairGlossaryRepoBinding,
+  rebuildGlossaryLocalRepo,
   removeGlossaryTermVariant,
   restoreGlossary,
   showGlossaryFeatureNotReady,
@@ -86,6 +87,11 @@ export function createGlossaryActions(render) {
       prefix: "repair-glossary:",
       handler: async (glossaryId, event) =>
         runWithImmediateLoading(event, "Repairing...", () => repairGlossaryRepoBinding(render, state.teams.find((team) => team.id === state.selectedTeamId), glossaryId)),
+    },
+    {
+      prefix: "rebuild-glossary-repo:",
+      handler: async (glossaryId, event) =>
+        runWithImmediateLoading(event, "Rebuilding...", () => rebuildGlossaryLocalRepo(render, state.teams.find((team) => team.id === state.selectedTeamId), glossaryId)),
     },
     {
       prefix: "restore-glossary:",

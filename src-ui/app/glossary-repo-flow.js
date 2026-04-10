@@ -649,6 +649,19 @@ export async function repairGlossaryRepoBinding(render, team, glossaryId) {
   }
 }
 
+export async function rebuildGlossaryLocalRepo(render, team, glossaryId) {
+  if (!Number.isFinite(team?.installationId) || typeof glossaryId !== "string" || !glossaryId.trim()) {
+    return;
+  }
+
+  showNoticeBadge("Rebuilding the local glossary repo from metadata and GitHub...", render, 2200);
+  const result = await loadRepoBackedGlossariesForTeam(team, {
+    offlineMode: state.offline?.isEnabled === true,
+  });
+  state.glossaries = result.glossaries;
+  render();
+}
+
 export async function syncSingleGlossaryForTeam(team, glossary) {
   const repo =
     glossary && typeof glossary === "object"

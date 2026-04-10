@@ -56,3 +56,17 @@ test("repair state surfaces a repair warning without blocking content access", (
   assert.equal(resolution?.blockContentActions, false);
   assert.match(resolution?.message ?? "", /needs repair/i);
 });
+
+test("missing local repo repair state points to rebuild action", () => {
+  const resolution = deriveGlossaryResolution({
+    id: "glossary-1",
+    resolutionState: "repair",
+    remoteState: "linked",
+    recordState: "live",
+    repairIssueType: "missingLocalRepo",
+    repairIssueMessage: "Team metadata references this glossary, but its local repo is missing.",
+  });
+
+  assert.equal(resolution?.actionLabel, "Rebuild Local Repo");
+  assert.equal(resolution?.action, "rebuild-glossary-repo:glossary-1");
+});

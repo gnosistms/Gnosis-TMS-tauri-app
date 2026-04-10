@@ -4,6 +4,7 @@ export {
 } from "./glossary-discovery-flow.js";
 export {
   repairGlossaryRepoBinding,
+  rebuildGlossaryLocalRepo,
 } from "./glossary-repo-flow.js";
 export {
   deleteGlossaryTerm,
