@@ -92,6 +92,8 @@ function findMatchingProjectRecord(record, projectMaps) {
 }
 
 function mapMetadataProjectToVisibleProject(record, remoteProject, existingProject, options = {}) {
+  const isDeletedLifecycleState =
+    record?.lifecycleState === "deleted" || record?.lifecycleState === "softDeleted";
   const remoteLoaded = options.remoteLoaded === true;
   const repairIssue = matchingRepairIssue(
     {
@@ -130,7 +132,8 @@ function mapMetadataProjectToVisibleProject(record, remoteProject, existingProje
     nodeId: remoteProject?.nodeId ?? record.githubNodeId ?? existingProject?.nodeId ?? null,
     name: record.repoName,
     title: record.title,
-    status: record.lifecycleState === "deleted" ? "deleted" : "active",
+    status: isDeletedLifecycleState ? "deleted" : "active",
+    lifecycleState: isDeletedLifecycleState ? "deleted" : "active",
     fullName,
     htmlUrl:
       remoteProject?.htmlUrl

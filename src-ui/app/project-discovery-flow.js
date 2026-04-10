@@ -29,7 +29,7 @@ function countRecoverableProjectMetadataRecords(records) {
   return (Array.isArray(records) ? records : []).filter((record) =>
     record?.recordState === "live"
     && record?.remoteState === "linked"
-    && record?.lifecycleState !== "purged"
+    && record?.lifecycleState === "active"
   ).length;
 }
 
@@ -403,9 +403,10 @@ export async function loadTeamProjects(render, teamId = state.selectedTeamId, op
       remoteLoaded,
       repairIssues,
     });
-    const nextVisibleProjects = mergedProjects.length > 0
-      ? mergedProjects
-      : [...optimisticSnapshot.items, ...optimisticSnapshot.deletedItems];
+    const nextVisibleProjects =
+      mergedProjects.length > 0 || metadataLoaded || remoteLoaded
+        ? mergedProjects
+        : [...optimisticSnapshot.items, ...optimisticSnapshot.deletedItems];
     showNoticeBadge("Refreshing local project data...", render, null);
     const mappedProjects = nextVisibleProjects.map((project) => ({
       ...project,
@@ -415,7 +416,7 @@ export async function loadTeamProjects(render, teamId = state.selectedTeamId, op
     const preSyncListings = await loadLocalProjectFileListings(
       selectedTeam,
       mappedProjects.filter((project) =>
-        project?.status !== "deleted"
+        project?.lifecycleState !== "deleted"
         && project?.recordState !== "tombstone"
       ),
     );
@@ -423,13 +424,14 @@ export async function loadTeamProjects(render, teamId = state.selectedTeamId, op
       metadataLoaded
       && recoverableMetadataCount > 0
       && preSyncListings.length === 0;
-    const recoveryMessage = installationRecoveryDetected
-      ? "Local installation data was missing. Rebuilding project repos from GitHub."
-      : "";
+    const recoveryMessage =
+      installationRecoveryDetected && options.suppressRecoveryWarning !== true
+        ? "Local installation data was missing. Rebuilding project repos from GitHub."
+        : "";
     const nextSnapshot = applyPendingMutations(
       {
-        items: mappedProjects.filter((project) => project.status !== "deleted"),
-        deletedItems: mappedProjects.filter((project) => project.status === "deleted"),
+        items: mappedProjects.filter((project) => project.lifecycleState !== "deleted"),
+        deletedItems: mappedProjects.filter((project) => project.lifecycleState === "deleted"),
       },
       state.pendingChapterMutations,
       options.applyChapterPendingMutation,

@@ -99,14 +99,15 @@ export async function addFilesToProject(render, projectId) {
     showNoticeBadge("You do not have permission to add files in this team.", render);
     return;
   }
-  if (await ensureProjectNotTombstoned(render, selectedTeam, targetProject)) {
-    return;
-  }
 
   const selectedFile = await openLocalFilePicker({
     accept: ".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
   });
   if (!selectedFile) {
+    return;
+  }
+
+  if (await ensureProjectNotTombstoned(render, selectedTeam, targetProject)) {
     return;
   }
 

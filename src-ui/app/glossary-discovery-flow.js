@@ -127,6 +127,7 @@ export async function loadTeamGlossaries(
       recoveryMessage = "",
     } = await loadRepoBackedGlossariesForTeam(team, {
       offlineMode: state.offline?.isEnabled === true,
+      suppressRecoveryWarning: options.suppressRecoveryWarning === true,
       onRecoveryDetected: (message) => {
         if (state.selectedTeamId !== team.id) {
           return;

@@ -262,7 +262,7 @@ function countRecoverableGlossaryMetadataRecords(records) {
   return (Array.isArray(records) ? records : []).filter((record) =>
     record?.recordState === "live"
     && record?.remoteState === "linked"
-    && record?.lifecycleState !== "purged"
+    && record?.lifecycleState === "active"
   ).length;
 }
 
@@ -532,6 +532,7 @@ async function purgeTombstonedGlossariesForTeam(team, localSummaries, metadataRe
 
 export async function loadRepoBackedGlossariesForTeam(team, options = {}) {
   const offlineMode = options.offlineMode === true;
+  const suppressRecoveryWarning = options.suppressRecoveryWarning === true;
   const onRecoveryDetected =
     typeof options.onRecoveryDetected === "function"
       ? options.onRecoveryDetected
@@ -568,7 +569,7 @@ export async function loadRepoBackedGlossariesForTeam(team, options = {}) {
     metadataLoaded
     && recoverableMetadataCount > 0
     && localSummaries.length === 0;
-  if (installationRecoveryDetected) {
+  if (installationRecoveryDetected && !suppressRecoveryWarning) {
     onRecoveryDetected?.("Local installation data was missing. Rebuilding glossary repos from GitHub.");
   }
 
@@ -603,7 +604,7 @@ export async function loadRepoBackedGlossariesForTeam(team, options = {}) {
           syncIssue: getGlossarySyncIssueMessage(syncSnapshots),
           brokerWarning: "",
           recoveryMessage:
-            installationRecoveryDetected
+            installationRecoveryDetected && !suppressRecoveryWarning
               ? "Local installation data was missing. Rebuilt glossary repos from GitHub."
               : "",
         };
@@ -644,7 +645,7 @@ export async function loadRepoBackedGlossariesForTeam(team, options = {}) {
     syncIssue,
     brokerWarning: "",
     recoveryMessage:
-      installationRecoveryDetected
+      installationRecoveryDetected && !suppressRecoveryWarning
         ? "Local installation data was missing. Rebuilt glossary repos from GitHub."
         : "",
   };

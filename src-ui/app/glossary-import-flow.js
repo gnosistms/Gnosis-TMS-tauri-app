@@ -238,8 +238,11 @@ async function completeGlossaryCreateSynchronously(team, input, render) {
   }
 }
 
-async function reloadGlossariesAfterWrite(render, team) {
-  await loadTeamGlossaries(render, team.id, { preserveVisibleData: false });
+async function reloadGlossariesAfterWrite(render, team, options = {}) {
+  await loadTeamGlossaries(render, team.id, {
+    preserveVisibleData: false,
+    suppressRecoveryWarning: options.suppressRecoveryWarning === true,
+  });
   return state.glossaries;
 }
 
@@ -370,7 +373,7 @@ export async function submitGlossaryCreation(render) {
     refreshOptions: {
       loadData: async () => {
         showResourceCreateProgress(render, "Refreshing glossary list...");
-        return reloadGlossariesAfterWrite(render, team);
+        return reloadGlossariesAfterWrite(render, team, { suppressRecoveryWarning: true });
       },
     },
     onSuccess: async (result) => {
@@ -381,7 +384,7 @@ export async function submitGlossaryCreation(render) {
       showNoticeBadge(
         result.localNameCollisionResolved
           ? `Created glossary ${result.title} in local repo ${result.localRepoName} because that name was already used locally.`
-          : `Created glossary ${result.title}.`,
+          : `Created glossary ${result.title}`,
         render,
       );
       await openGlossaryEditor(render, result.glossaryId, {
@@ -532,7 +535,7 @@ export async function importGlossaryFromTmx(render) {
     refreshOptions: {
       loadData: async () => {
         showResourceCreateProgress(render, "Refreshing glossary list...");
-        return reloadGlossariesAfterWrite(render, team);
+        return reloadGlossariesAfterWrite(render, team, { suppressRecoveryWarning: true });
       },
     },
     onSuccess: async (result) => {
@@ -542,7 +545,7 @@ export async function importGlossaryFromTmx(render) {
       showNoticeBadge(
         result.localNameCollisionResolved
           ? `Imported ${result.termCount} terms from ${result.fileName} into ${result.title} in local repo ${result.localRepoName} because that name was already used locally.`
-          : `Imported ${result.termCount} terms from ${result.fileName} into ${result.title}.`,
+          : `Imported ${result.termCount} terms from ${result.fileName} into ${result.title}`,
         render,
       );
       await openGlossaryEditor(render, result.glossaryId, { preferredGlossary: refreshedGlossary });

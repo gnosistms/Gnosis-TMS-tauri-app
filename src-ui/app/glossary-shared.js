@@ -60,6 +60,9 @@ export function normalizeGlossarySummary(glossary) {
     return null;
   }
 
+  const isDeletedLifecycleState =
+    glossary.lifecycleState === "deleted" || glossary.lifecycleState === "softDeleted";
+
   return {
     id,
     repoName,
@@ -71,7 +74,7 @@ export function normalizeGlossarySummary(glossary) {
         : null,
     sourceLanguage: glossary.sourceLanguage ?? null,
     targetLanguage: glossary.targetLanguage ?? null,
-    lifecycleState: glossary.lifecycleState === "deleted" ? "deleted" : "active",
+    lifecycleState: isDeletedLifecycleState ? "deleted" : "active",
     remoteState:
       typeof glossary.remoteState === "string" && glossary.remoteState.trim()
         ? glossary.remoteState.trim()
@@ -128,6 +131,9 @@ export function normalizeGlossaryTerm(term) {
     return null;
   }
 
+  const isDeletedLifecycleState =
+    term.lifecycleState === "deleted" || term.lifecycleState === "softDeleted";
+
   return {
     termId,
     sourceTerms: Array.isArray(term.sourceTerms) ? term.sourceTerms : [],
@@ -136,7 +142,7 @@ export function normalizeGlossaryTerm(term) {
       typeof term.notesToTranslators === "string" ? term.notesToTranslators : "",
     footnote: typeof term.footnote === "string" ? term.footnote : "",
     untranslated: term.untranslated === true,
-    lifecycleState: term.lifecycleState === "deleted" ? "deleted" : "active",
+    lifecycleState: isDeletedLifecycleState ? "deleted" : "active",
   };
 }
 
@@ -161,7 +167,10 @@ export function applyGlossaryEditorPayload(payload) {
     glossaryId: payload.glossaryId,
     repoName: selectedGlossaryRepoName(),
     title: payload.title ?? "",
-    lifecycleState: payload.lifecycleState === "deleted" ? "deleted" : "active",
+    lifecycleState:
+      payload.lifecycleState === "deleted" || payload.lifecycleState === "softDeleted"
+        ? "deleted"
+        : "active",
     sourceLanguage: payload.sourceLanguage ?? null,
     targetLanguage: payload.targetLanguage ?? null,
     termCount: Number.isFinite(payload.termCount) ? payload.termCount : normalizedTerms.length,

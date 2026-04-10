@@ -244,6 +244,10 @@ async function completeProjectCreateSynchronously(selectedTeam, projectTitle, ba
 }
 
 function projectMetadataRecordFromVisibleProject(project, overrides = {}) {
+  const isDeletedLifecycleState =
+    project?.lifecycleState === "deleted"
+    || project?.lifecycleState === "softDeleted"
+    || project?.status === "deleted";
   return {
     projectId: project.id,
     title: overrides.title ?? project.title,
@@ -274,7 +278,7 @@ function projectMetadataRecordFromVisibleProject(project, overrides = {}) {
         : "main",
     lifecycleState:
       overrides.lifecycleState
-      ?? (project.status === "deleted" ? "softDeleted" : "active"),
+      ?? (isDeletedLifecycleState ? "softDeleted" : "active"),
     remoteState:
       overrides.remoteState
       ?? (project.remoteState ?? "linked"),
@@ -460,7 +464,7 @@ export async function submitProjectCreation(render) {
     refreshOptions: {
       loadData: async () => {
         showResourceCreateProgress(render, "Refreshing project list...");
-        return reloadProjectsAfterWrite(render, selectedTeam);
+        return reloadProjectsAfterWrite(render, selectedTeam, { suppressRecoveryWarning: true });
       },
     },
     onSuccess: async (result) => {
@@ -470,7 +474,7 @@ export async function submitProjectCreation(render) {
       showNoticeBadge(
         result.collisionResolved
           ? `Created project ${result.title} in repo ${result.repoName} because that repo name was already taken.`
-          : `Created project ${result.title}.`,
+          : `Created project ${result.title}`,
         render,
       );
     },
@@ -763,8 +767,10 @@ async function commitProjectMutationStrict(selectedTeam, mutation) {
   });
 }
 
-async function reloadProjectsAfterWrite(render, selectedTeam) {
-  await loadTeamProjects(render, selectedTeam?.id);
+async function reloadProjectsAfterWrite(render, selectedTeam, options = {}) {
+  await loadTeamProjects(render, selectedTeam?.id, {
+    suppressRecoveryWarning: options.suppressRecoveryWarning === true,
+  });
   return [...state.projects, ...state.deletedProjects];
 }
 

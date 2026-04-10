@@ -29,6 +29,7 @@ function isOrganizationInstallation(installation) {
 
 function openInvalidInstallationModal(render, installation) {
   state.teamSetup.step = "invalidInstallationTarget";
+  state.teamSetup.status = "idle";
   state.teamSetup.error = "";
   state.teamSetup.githubAppInstallation = installation ?? null;
   state.teamSetup.invalidInstallationAccountLogin = installation?.accountLogin ?? "";
@@ -52,6 +53,7 @@ export async function openTeamSetup(render) {
 
 export async function beginTeamOrgSetup(render) {
   state.teamSetup.step = "returnFromOrgCreation";
+  state.teamSetup.status = "idle";
   state.teamSetup.error = "";
   render();
   openExternalUrl(GITHUB_FREE_ORG_SETUP_URL);
@@ -59,12 +61,14 @@ export async function beginTeamOrgSetup(render) {
 
 export function acknowledgeTeamSetup(render) {
   state.teamSetup.step = "guide";
+  state.teamSetup.status = "idle";
   state.teamSetup.error = "";
   render();
 }
 
 export function continueTeamSetupAfterOrgCreation(render) {
   state.teamSetup.step = "confirm";
+  state.teamSetup.status = "idle";
   state.teamSetup.error = "";
   render();
 }
@@ -73,6 +77,7 @@ export async function beginGithubAppInstall(render) {
   try {
     const { installUrl } = await invoke("begin_github_app_install");
     state.teamSetup.step = "waitingForAppInstall";
+    state.teamSetup.status = "idle";
     state.teamSetup.error = "";
     render();
     openExternalUrl(installUrl);
@@ -93,6 +98,9 @@ export async function finishTeamSetup(render) {
   }
 
   try {
+    state.teamSetup.status = "loading";
+    state.teamSetup.error = "";
+    render();
     showTeamSetupProgress(render, "Checking GitHub App installation...");
     const installation = await runFinishTeamSetupStep("loading the GitHub App installation details", () =>
       invoke("inspect_github_app_installation", {
@@ -156,6 +164,7 @@ export async function finishTeamSetup(render) {
     await loadTeamProjects(render, teamId);
     clearNoticeBadge();
   } catch (error) {
+    state.teamSetup.status = "idle";
     clearNoticeBadge();
     if (await handleBrokerAuthExpired(render, error)) {
       return;
@@ -173,6 +182,7 @@ export function setGithubAppInstallation(payload, render) {
   if (payload?.status === "success" && payload.installationId) {
     state.teamSetup.githubAppInstallationId = payload.installationId;
     state.teamSetup.step = "finishInstall";
+    state.teamSetup.status = "idle";
     state.teamSetup.error = "";
     render();
     return;
@@ -185,6 +195,7 @@ export function setGithubAppInstallation(payload, render) {
 
 export async function redoGithubAppInstall(render) {
   state.teamSetup.step = "confirm";
+  state.teamSetup.status = "idle";
   state.teamSetup.error = "";
   state.teamSetup.githubAppInstallationId = null;
   state.teamSetup.githubAppInstallation = null;

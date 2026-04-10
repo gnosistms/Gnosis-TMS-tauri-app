@@ -27,9 +27,6 @@ export function renderProjectRenameModal(state) {
         <div class="card__body modal-card__body">
           <p class="card__eyebrow">RENAME PROJECT</p>
           <h2 class="modal__title">Rename This Project</h2>
-          <p class="modal__supporting">
-            This changes the human-readable project title stored in <strong>project.json</strong>. The GitHub repository slug will stay the same.
-          </p>
           <div class="modal__form">
             <label class="field">
               <span class="field__label">Project Name</span>

@@ -1,4 +1,4 @@
-import { escapeHtml, primaryButton, secondaryButton } from "../../lib/ui.js";
+import { escapeHtml, loadingPrimaryButton, primaryButton, secondaryButton } from "../../lib/ui.js";
 import { formatErrorForDisplay } from "../../app/error-display.js";
 
 function renderGuideStep() {
@@ -122,7 +122,14 @@ function getStepConfig(setup) {
     afterBodyClass: "",
     afterBodySupporting: "",
     body: "",
-    actionButton: primaryButton("Finish setting up your team", "finish-team-setup"),
+    actionButton: setup.status === "loading"
+      ? loadingPrimaryButton({
+          label: "Finish setting up your team",
+          loadingLabel: "Finishing...",
+          action: "finish-team-setup",
+          isLoading: true,
+        })
+      : primaryButton("Finish setting up your team", "finish-team-setup"),
   };
 }
 

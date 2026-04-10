@@ -174,6 +174,7 @@ export function createTeamSetupState() {
   return {
     isOpen: false,
     step: "intro",
+    status: "idle",
     error: "",
     githubAppInstallationId: null,
     githubAppInstallation: null,

@@ -90,6 +90,30 @@ test("project discovery hides tombstoned metadata records", () => {
   assert.equal(merged.length, 0);
 });
 
+test("project discovery maps softDeleted metadata records into deleted visible projects", () => {
+  const merged = mergeMetadataDiscoveryProjects({
+    metadataRecords: [
+      {
+        id: "project-1",
+        title: "Project 1",
+        repoName: "project-1",
+        lifecycleState: "softDeleted",
+        remoteState: "deleted",
+        recordState: "live",
+        fullName: "team/project-1",
+      },
+    ],
+    remoteProjects: [],
+    localProjects: [],
+    metadataLoaded: true,
+    remoteLoaded: true,
+  });
+
+  assert.equal(merged.length, 1);
+  assert.equal(merged[0].status, "deleted");
+  assert.equal(merged[0].lifecycleState, "deleted");
+});
+
 test("project discovery surfaces repair issues from local repo scans", () => {
   const merged = mergeMetadataDiscoveryProjects({
     metadataRecords: [
