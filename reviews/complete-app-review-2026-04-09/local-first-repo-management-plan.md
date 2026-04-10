@@ -316,8 +316,10 @@ Status on 2026-04-10:
 - project and glossary top-level create affordances now use explicit owner-only capability helpers instead of the broader `canManageProjects` gate
 - glossary import now follows the same owner-only policy as glossary creation, so admins no longer have a side path to create repo-backed glossaries
 - soft-deleted project and glossary permanent-delete affordances are now keyed off the same owner-only helper
+- owner-only capability helpers now live in `src-ui/app/resource-capabilities.js`
 - capability tests now explicitly cover owner vs admin vs translator visibility for create and permanent-delete affordances
 - remaining gap: finish the broader audit of any secondary create/permanent-delete entry points and decide whether deleted-file permanent delete should stay separate or also be folded under the same owner-only policy
+- remaining gap: commit the Stage 16 owner-only gate work after the secondary audit is complete
 
 - audit project and glossary screens for every top-level create affordance:
   - remove `+ New Project` from non-owner users
