@@ -47,11 +47,7 @@ import {
   upsertProjectMetadataRecord,
 } from "./team-metadata-flow.js";
 import {
-  applyTopLevelResourceMutation,
   processQueuedResourceMutations,
-  queueTopLevelResourceMutation,
-  rollbackTopLevelResourceMutation,
-  submitTopLevelResourceMutation,
 } from "./resource-top-level-mutations.js";
 import {
   applyOptimisticPermanentDelete,
@@ -63,6 +59,18 @@ import {
   runPermanentDeleteLocalFirst,
   showPermanentDeleteFollowupNotice,
 } from "./resource-lifecycle-engine.js";
+import {
+  openTopLevelRenameModal,
+  submitSimpleTopLevelMutation,
+  submitTopLevelRename,
+} from "./resource-top-level-controller.js";
+import {
+  applyProjectPendingMutation,
+  applyProjectSnapshotToState,
+  projectSnapshotFromState,
+  rollbackVisibleProjectMutation,
+  sortProjectSnapshot,
+} from "./project-top-level-state.js";
 import {
   canCreateRepoResources,
   canPermanentlyDeleteProjectFiles,
@@ -85,6 +93,7 @@ import {
 } from "./resource-pending-create.js";
 import {
   finalizeLocalFirstCreate,
+  guardResourceCreateStart,
   runLocalFirstCreate,
 } from "./resource-create-flow.js";
 
@@ -226,6 +235,12 @@ function persistProjectsForTeam(selectedTeam) {
     projects: state.projects,
     deletedProjects: state.deletedProjects,
   });
+}
+
+function projectLifecycleBlockedMessage(selectedTeam, actionLabel) {
+  return selectedTeam?.canManageProjects === true
+    ? ""
+    : `You do not have permission to ${actionLabel} in this team.`;
 }
 
 function setProjectRepoSyncSnapshot(projectId, snapshot) {
@@ -482,14 +497,14 @@ function replaceVisibleProject(currentProjectId, nextProject) {
       (item) => item.id !== currentProjectId && item.id !== nextProject.id,
     ),
   };
-  applyProjectSnapshotToState(nextSnapshot);
+  applyProjectSnapshotToState(nextSnapshot, { reconcileExpandedDeletedFiles });
 }
 
 function removeVisibleProject(projectId) {
   applyProjectSnapshotToState({
     items: state.projects.filter((item) => item.id !== projectId),
     deletedItems: state.deletedProjects.filter((item) => item.id !== projectId),
-  });
+  }, { reconcileExpandedDeletedFiles });
 }
 
 function normalizeListedChapter(chapter) {
@@ -1021,7 +1036,7 @@ export async function refreshProjectFilesFromDisk(render, selectedTeam, projects
     state.pendingChapterMutations,
     applyChapterPendingMutation,
   );
-  applyProjectSnapshotToState(nextSnapshot);
+  applyProjectSnapshotToState(nextSnapshot, { reconcileExpandedDeletedFiles });
   persistProjectsForTeam(selectedTeam);
   render();
   return mergedSnapshot;
@@ -1148,105 +1163,20 @@ function reconcileExpandedDeletedFiles() {
   state.expandedDeletedFiles = nextExpandedDeletedFiles;
 }
 
-function getProjectSortName(project) {
-  if (typeof project?.title === "string" && project.title.trim()) {
-    return project.title.trim();
-  }
-
-  if (typeof project?.name === "string" && project.name.trim()) {
-    return project.name.trim();
-  }
-
-  return "";
-}
-
-function compareProjectsByName(left, right) {
-  const nameComparison = getProjectSortName(left).localeCompare(getProjectSortName(right), undefined, {
-    sensitivity: "base",
-    numeric: true,
-  });
-  if (nameComparison !== 0) {
-    return nameComparison;
-  }
-
-  return String(left?.id ?? "").localeCompare(String(right?.id ?? ""), undefined, {
-    sensitivity: "base",
-    numeric: true,
-  });
-}
-
-function sortProjectsByName(projects = []) {
-  return [...projects].sort(compareProjectsByName);
-}
-
-function sortProjectSnapshot(snapshot) {
+function projectTopLevelMutationStore(selectedTeam) {
   return {
-    items: sortProjectsByName(snapshot.items),
-    deletedItems: sortProjectsByName(snapshot.deletedItems),
+    currentSnapshot: () => projectSnapshotFromState(),
+    applyMutation: (snapshot, mutation) => applyProjectPendingMutation(snapshot, mutation),
+    applySnapshot: (snapshot) => applyProjectSnapshotToState(snapshot, { reconcileExpandedDeletedFiles }),
+    beginSync: () => beginProjectsPageSync(),
+    getPendingMutations: () => state.pendingProjectMutations,
+    setPendingMutations: (mutations) => {
+      state.pendingProjectMutations = mutations;
+    },
+    persistPendingMutations: (mutations) =>
+      saveStoredProjectPendingMutations(selectedTeam, mutations),
+    persistVisibleState: () => persistProjectsForTeam(selectedTeam),
   };
-}
-
-function applyProjectSnapshotToState(snapshot) {
-  const sortedSnapshot = sortProjectSnapshot(snapshot);
-  state.projects = sortedSnapshot.items;
-  state.deletedProjects = sortedSnapshot.deletedItems;
-  if (sortedSnapshot.deletedItems.length === 0) {
-    state.showDeletedProjects = false;
-  }
-  reconcileExpandedDeletedFiles();
-}
-
-function normalizeProjectSnapshot(snapshot, pendingMutations = []) {
-  const latestMutationByProjectId = new Map();
-  for (const mutation of pendingMutations) {
-    latestMutationByProjectId.set(mutation.projectId, mutation.type);
-  }
-
-  const activeById = new Map(snapshot.items.map((item) => [item.id, item]));
-  const deletedById = new Map(snapshot.deletedItems.map((item) => [item.id, item]));
-
-  for (const [projectId, deletedItem] of deletedById.entries()) {
-    if (!activeById.has(projectId)) {
-      continue;
-    }
-
-    const latestMutation = latestMutationByProjectId.get(projectId);
-    if (latestMutation === "restore" || latestMutation === "rename") {
-      deletedById.delete(projectId);
-      continue;
-    }
-
-    if (latestMutation === "softDelete") {
-      activeById.delete(projectId);
-      continue;
-    }
-
-    activeById.delete(projectId);
-  }
-
-  return sortProjectSnapshot({
-    items: [...activeById.values()],
-    deletedItems: [...deletedById.values()],
-  });
-}
-
-function applyProjectPendingMutation(snapshot, mutation) {
-  return applyTopLevelResourceMutation(snapshot, mutation, {
-    getMutationResourceId: (nextMutation) => nextMutation.resourceId ?? nextMutation.projectId ?? "",
-    normalizeSnapshot: normalizeProjectSnapshot,
-    markDeleted: (project) => ({
-      ...project,
-      status: "deleted",
-    }),
-    markActive: (project) => ({
-      ...project,
-      status: "active",
-    }),
-    renameResource: (project, nextMutation) => ({
-      ...project,
-      title: nextMutation.title,
-    }),
-  });
 }
 
 function applyChapterPendingMutation(snapshot, mutation) {
@@ -1327,7 +1257,7 @@ export async function loadTeamProjects(render, teamId = state.selectedTeamId) {
     state.pendingProjectMutations = [];
     state.pendingChapterMutations = [];
     state.projectRepoSyncByProjectId = {};
-    applyProjectSnapshotToState({ items: [], deletedItems: [] });
+    applyProjectSnapshotToState({ items: [], deletedItems: [] }, { reconcileExpandedDeletedFiles });
     setProjectDiscoveryState("ready", "", "");
     render();
     return;
@@ -1354,7 +1284,7 @@ export async function loadTeamProjects(render, teamId = state.selectedTeamId) {
   if (state.offline.isEnabled) {
     const glossaryResult = await glossaryLoadPromise;
     state.projectRepoSyncByProjectId = {};
-    applyProjectSnapshotToState(optimisticSnapshot);
+    applyProjectSnapshotToState(optimisticSnapshot, { reconcileExpandedDeletedFiles });
     setProjectDiscoveryState(
       "ready",
       "",
@@ -1365,10 +1295,10 @@ export async function loadTeamProjects(render, teamId = state.selectedTeamId) {
   }
 
   if (cachedProjects.exists) {
-    applyProjectSnapshotToState(optimisticSnapshot);
+    applyProjectSnapshotToState(optimisticSnapshot, { reconcileExpandedDeletedFiles });
     setProjectDiscoveryState("ready", "", "", "");
   } else {
-    applyProjectSnapshotToState({ items: [], deletedItems: [] });
+    applyProjectSnapshotToState({ items: [], deletedItems: [] }, { reconcileExpandedDeletedFiles });
     setProjectDiscoveryState("loading", "", "", "");
   }
   setProjectUiDebug(render, "Refreshing projects...");
@@ -1483,7 +1413,7 @@ export async function loadTeamProjects(render, teamId = state.selectedTeamId) {
       state.pendingChapterMutations,
       applyChapterPendingMutation,
     );
-    applyProjectSnapshotToState(nextSnapshot);
+    applyProjectSnapshotToState(nextSnapshot, { reconcileExpandedDeletedFiles });
     persistProjectsForTeam(selectedTeam);
     const glossaryWarning =
       glossaryDiscoveryResult.status === "fulfilled"
@@ -1527,7 +1457,7 @@ export async function loadTeamProjects(render, teamId = state.selectedTeamId) {
     }
 
     if (!cachedProjects.exists) {
-      applyProjectSnapshotToState({ items: [], deletedItems: [] });
+      applyProjectSnapshotToState({ items: [], deletedItems: [] }, { reconcileExpandedDeletedFiles });
       setProjectDiscoveryState("error", error?.message ?? String(error), "");
     } else {
       setProjectDiscoveryState("ready", "", "");
@@ -1540,19 +1470,16 @@ export async function loadTeamProjects(render, teamId = state.selectedTeamId) {
 
 export async function createProjectForSelectedTeam(render) {
   const selectedTeam = state.teams.find((team) => team.id === state.selectedTeamId);
-
-  if (!selectedTeam?.installationId) {
-    setProjectDiscoveryState(
-      "error",
-      "New projects currently require a GitHub App-connected team.",
-    );
-    render();
-    return;
-  }
-
-  if (!canCreateRepoResources(selectedTeam)) {
-    setProjectDiscoveryState("error", "You do not have permission to create projects in this team.");
-    render();
+  if (!guardResourceCreateStart({
+    installationReady: () => Boolean(selectedTeam?.installationId),
+    canCreate: () => canCreateRepoResources(selectedTeam),
+    installationMessage: "New projects currently require a GitHub App-connected team.",
+    permissionMessage: "You do not have permission to create projects in this team.",
+    onBlocked: (message) => {
+      setProjectDiscoveryState("error", message);
+      render();
+    },
+  })) {
     return;
   }
 
@@ -1579,12 +1506,10 @@ export function cancelProjectCreation(render) {
 export function openProjectRename(render, projectId) {
   const project = state.projects.find((item) => item.id === projectId);
   const selectedTeam = state.teams.find((team) => team.id === state.selectedTeamId);
-  void guardTopLevelResourceAction({
+  openTopLevelRenameModal({
     resource: project,
     getBlockedMessage: () =>
-      selectedTeam?.canManageProjects === true
-        ? ""
-        : "You do not have permission to rename projects in this team.",
+      projectLifecycleBlockedMessage(selectedTeam, "rename projects"),
     ensureNotTombstoned: (currentProject) =>
       ensureProjectNotTombstoned(render, selectedTeam, currentProject),
     onMissing: () => {
@@ -1595,21 +1520,13 @@ export function openProjectRename(render, projectId) {
       setProjectDiscoveryState("error", blockedMessage);
       render();
     },
-  }).then((allowed) => {
-    if (!allowed) {
-      return;
-    }
-
-    openEntityRenameModal({
-      setState: (nextState) => {
-        state.projectRename = nextState;
-      },
-      entityId: projectId,
-      idField: "projectId",
-      nameField: "projectName",
-      currentName: project.title ?? project.name,
-    });
-    render();
+    setModalState: (nextState) => {
+      state.projectRename = nextState;
+    },
+    idField: "projectId",
+    nameField: "projectName",
+    currentName: project?.title ?? project?.name ?? "",
+    render,
   });
 }
 
@@ -1727,15 +1644,16 @@ export function toggleDeletedFiles(render, projectId) {
 
 export async function submitProjectCreation(render) {
   const selectedTeam = state.teams.find((team) => team.id === state.selectedTeamId);
-  if (!selectedTeam?.installationId) {
-    state.projectCreation.error = "New projects currently require a GitHub App-connected team.";
-    render();
-    return;
-  }
-
-  if (!canCreateRepoResources(selectedTeam)) {
-    state.projectCreation.error = "You do not have permission to create projects in this team.";
-    render();
+  if (!guardResourceCreateStart({
+    installationReady: () => Boolean(selectedTeam?.installationId),
+    canCreate: () => canCreateRepoResources(selectedTeam),
+    installationMessage: "New projects currently require a GitHub App-connected team.",
+    permissionMessage: "You do not have permission to create projects in this team.",
+    onBlocked: (message) => {
+      state.projectCreation.error = message;
+      render();
+    },
+  })) {
     return;
   }
 
@@ -1915,74 +1833,26 @@ export async function resumePendingProjectSetup(render, projectId) {
 export async function submitProjectRename(render) {
   const selectedTeam = state.teams.find((team) => team.id === state.selectedTeamId);
   const project = state.projects.find((item) => item.id === state.projectRename.projectId);
-  const allowed = await guardTopLevelResourceAction({
+  state.projectSyncVersion += 1;
+  await submitTopLevelRename({
     resource: selectedTeam?.installationId ? project : null,
+    modalState: state.projectRename,
+    render,
+    nameField: "projectName",
     getBlockedMessage: () =>
-      selectedTeam?.canManageProjects === true
-        ? ""
-        : "You do not have permission to rename projects in this team.",
+      projectLifecycleBlockedMessage(selectedTeam, "rename projects"),
     ensureNotTombstoned: (currentProject) =>
       ensureProjectNotTombstoned(render, selectedTeam, currentProject),
-    onMissing: () => {
-      state.projectRename.error = "Could not find the selected project.";
-      render();
-    },
-    onBlocked: (blockedMessage) => {
-      state.projectRename.error = blockedMessage;
-      render();
-    },
+    missingMessage: "Could not find the selected project.",
+    emptyTitleMessage: "Enter a project name.",
     onTombstoned: () => {
       resetProjectRename();
-      render();
     },
-  });
-  if (!allowed) {
-    return;
-  }
-
-  const nextTitle = state.projectRename.projectName.trim();
-  if (!nextTitle) {
-    state.projectRename.error = "Enter a project name.";
-    render();
-    return;
-  }
-
-  state.projectSyncVersion += 1;
-  await submitTopLevelResourceMutation({
-    setLoading: () => {
-      state.projectRename.status = "loading";
-      state.projectRename.error = "";
-      render();
-    },
-    buildMutation: () => ({
-      id: crypto.randomUUID(),
-      type: "rename",
-      resourceId: project.id,
-      projectId: project.id,
-      title: nextTitle,
-      previousTitle: project.title ?? project.name,
+    previousTitle: (currentProject) => currentProject.title ?? currentProject.name,
+    buildMutationFields: (currentProject) => ({
+      projectId: currentProject.id,
     }),
-    queueMutation: (mutation) => {
-      queueTopLevelResourceMutation({
-        mutation,
-        currentSnapshot: () => ({ items: state.projects, deletedItems: state.deletedProjects }),
-        applyMutation: (snapshot, nextMutation) =>
-          applyProjectPendingMutation(snapshot, nextMutation),
-        applySnapshot: (snapshot) => applyProjectSnapshotToState(snapshot),
-        beginSync: () => beginProjectsPageSync(),
-        getPendingMutations: () => state.pendingProjectMutations,
-        setPendingMutations: (mutations) => {
-          state.pendingProjectMutations = mutations;
-        },
-        persistPendingMutations: (mutations) =>
-          saveStoredProjectPendingMutations(selectedTeam, mutations),
-        persistVisibleState: () => saveStoredProjectsForTeam(selectedTeam, {
-          projects: state.projects,
-          deletedProjects: state.deletedProjects,
-        }),
-        render,
-      });
-    },
+    store: projectTopLevelMutationStore(selectedTeam),
     afterQueue: () => {
       resetProjectRename();
       render();
@@ -2294,12 +2164,14 @@ export async function acknowledgeChapterGlossaryConflict(render) {
 export async function deleteProject(render, projectId) {
   const project = state.projects.find((item) => item.id === projectId);
   const selectedTeam = state.teams.find((team) => team.id === state.selectedTeamId);
-  const allowed = await guardTopLevelResourceAction({
+  state.projectSyncVersion += 1;
+  setProjectUiDebug(render, "Delete clicked");
+  await submitSimpleTopLevelMutation({
     resource: selectedTeam?.installationId ? project : null,
+    type: "softDelete",
+    render,
     getBlockedMessage: () =>
-      selectedTeam?.canManageProjects === true
-        ? ""
-        : "You do not have permission to delete projects in this team.",
+      projectLifecycleBlockedMessage(selectedTeam, "delete projects"),
     ensureNotTombstoned: (currentProject) =>
       ensureProjectNotTombstoned(render, selectedTeam, currentProject),
     onMissing: () => {
@@ -2310,45 +2182,16 @@ export async function deleteProject(render, projectId) {
       setProjectDiscoveryState("error", blockedMessage);
       render();
     },
-  });
-  if (!allowed) {
-    return;
-  }
-
-  state.projectSyncVersion += 1;
-  setProjectUiDebug(render, "Delete clicked");
-  await submitTopLevelResourceMutation({
-    buildMutation: () => ({
-      id: crypto.randomUUID(),
-      type: "softDelete",
-      resourceId: project.id,
-      projectId: project.id,
+    buildMutationFields: (currentProject) => ({
+      projectId: currentProject.id,
     }),
-    queueMutation: (mutation) => {
-      queueTopLevelResourceMutation({
-        mutation,
-        currentSnapshot: () => ({ items: state.projects, deletedItems: state.deletedProjects }),
-        applyMutation: (snapshot, nextMutation) =>
-          applyProjectPendingMutation(snapshot, nextMutation),
-        applySnapshot: (snapshot) => applyProjectSnapshotToState(snapshot),
-        beginSync: () => beginProjectsPageSync(),
-        beforePersist: () => {
-          if (state.projects.length === 0 && state.deletedProjects.length > 0) {
-            state.showDeletedProjects = true;
-          }
-        },
-        getPendingMutations: () => state.pendingProjectMutations,
-        setPendingMutations: (mutations) => {
-          state.pendingProjectMutations = mutations;
-        },
-        persistPendingMutations: (mutations) =>
-          saveStoredProjectPendingMutations(selectedTeam, mutations),
-        persistVisibleState: () => saveStoredProjectsForTeam(selectedTeam, {
-          projects: state.projects,
-          deletedProjects: state.deletedProjects,
-        }),
-        render,
-      });
+    store: {
+      ...projectTopLevelMutationStore(selectedTeam),
+      beforePersist: () => {
+        if (state.projects.length === 0 && state.deletedProjects.length > 0) {
+          state.showDeletedProjects = true;
+        }
+      },
     },
     afterQueue: () => {
       setProjectUiDebug(render, "Optimistic delete applied");
@@ -2531,7 +2374,7 @@ export async function permanentlyDeleteChapter(render, chapterId) {
     { items: state.projects, deletedItems: state.deletedProjects },
     mutation,
   );
-  applyProjectSnapshotToState(nextSnapshot);
+  applyProjectSnapshotToState(nextSnapshot, { reconcileExpandedDeletedFiles });
   beginProjectsPageSync();
   persistProjectsForTeam(selectedTeam);
   state.pendingChapterMutations = upsertPendingMutation(state.pendingChapterMutations, mutation);
@@ -2619,12 +2462,14 @@ export function toggleDeletedProjects(render) {
 export async function restoreProject(render, projectId) {
   const project = state.deletedProjects.find((item) => item.id === projectId);
   const selectedTeam = state.teams.find((team) => team.id === state.selectedTeamId);
-  const allowed = await guardTopLevelResourceAction({
+  state.projectSyncVersion += 1;
+  setProjectUiDebug(render, "Restore clicked");
+  await submitSimpleTopLevelMutation({
     resource: selectedTeam?.installationId ? project : null,
+    type: "restore",
+    render,
     getBlockedMessage: () =>
-      selectedTeam?.canManageProjects === true
-        ? ""
-        : "You do not have permission to restore projects in this team.",
+      projectLifecycleBlockedMessage(selectedTeam, "restore projects"),
     ensureNotTombstoned: (currentProject) =>
       ensureProjectNotTombstoned(render, selectedTeam, currentProject),
     onMissing: () => {
@@ -2637,41 +2482,10 @@ export async function restoreProject(render, projectId) {
       setProjectDiscoveryState("error", blockedMessage);
       render();
     },
-  });
-  if (!allowed) {
-    return;
-  }
-
-  state.projectSyncVersion += 1;
-  setProjectUiDebug(render, "Restore clicked");
-  await submitTopLevelResourceMutation({
-    buildMutation: () => ({
-      id: crypto.randomUUID(),
-      type: "restore",
-      resourceId: project.id,
-      projectId: project.id,
+    buildMutationFields: (currentProject) => ({
+      projectId: currentProject.id,
     }),
-    queueMutation: (mutation) => {
-      queueTopLevelResourceMutation({
-        mutation,
-        currentSnapshot: () => ({ items: state.projects, deletedItems: state.deletedProjects }),
-        applyMutation: (snapshot, nextMutation) =>
-          applyProjectPendingMutation(snapshot, nextMutation),
-        applySnapshot: (snapshot) => applyProjectSnapshotToState(snapshot),
-        beginSync: () => beginProjectsPageSync(),
-        getPendingMutations: () => state.pendingProjectMutations,
-        setPendingMutations: (mutations) => {
-          state.pendingProjectMutations = mutations;
-        },
-        persistPendingMutations: (mutations) =>
-          saveStoredProjectPendingMutations(selectedTeam, mutations),
-        persistVisibleState: () => saveStoredProjectsForTeam(selectedTeam, {
-          projects: state.projects,
-          deletedProjects: state.deletedProjects,
-        }),
-        render,
-      });
-    },
+    store: projectTopLevelMutationStore(selectedTeam),
     afterQueue: () => {
       setProjectUiDebug(render, "Optimistic restore applied");
     },
@@ -2741,18 +2555,6 @@ async function commitProjectMutation(selectedTeam, mutation) {
   });
 }
 
-function rollbackVisibleProjectMutation(mutation) {
-  const snapshot = rollbackTopLevelResourceMutation(
-    { items: state.projects, deletedItems: state.deletedProjects },
-    mutation,
-    applyProjectPendingMutation,
-    {
-      getMutationResourceId: (nextMutation) => nextMutation.resourceId ?? nextMutation.projectId ?? "",
-    },
-  );
-  applyProjectSnapshotToState(snapshot);
-}
-
 async function processPendingProjectMutations(render, selectedTeam) {
   await processQueuedResourceMutations({
     getPendingMutations: () => state.pendingProjectMutations,
@@ -2767,7 +2569,8 @@ async function processPendingProjectMutations(render, selectedTeam) {
       projects: state.projects,
       deletedProjects: state.deletedProjects,
     }),
-    rollbackVisibleMutation: rollbackVisibleProjectMutation,
+    rollbackVisibleMutation: (mutation) =>
+      rollbackVisibleProjectMutation(mutation, { reconcileExpandedDeletedFiles }),
     onMutationError: async (_mutation, error) => {
       if (await handleSyncFailure(classifySyncError(error), { render })) {
         clearProjectUiDebug(render);

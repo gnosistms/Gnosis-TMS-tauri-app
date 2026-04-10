@@ -206,13 +206,15 @@ Status on 2026-04-10:
 - glossary permanent delete now intentionally follows the same sync/debug lifecycle pattern as projects instead of using a looser page-refresh-only path
 - pending-create resume and auto-resume orchestration now also flows through a shared helper for projects and glossaries
 - create-modal open/update plumbing now also flows through shared form-modal helpers for projects and glossaries
+- create entry preflight for installation/offline/permission now also flows through a shared helper
 - the metadata-first local bootstrap sequence for project creation and glossary creation now also flows through a shared helper, with resource adapters for reservation rules, metadata records, and local repo initialization
 - post-create local finalize/open/background-sync orchestration now also flows through a shared helper, with resource adapters for visible-state commit and editor/open behavior
+- top-level rename / soft-delete / restore entry points now also route through one shared controller path for open/guard/queue/submit, with only resource adapters for modal state, snapshot storage, and error presentation
 - projects and glossaries still have a few resource-specific reload/failure callbacks and some higher-level lifecycle wrappers, so the full adapter-based shared state machine is not finished
 - remaining intended-model cleanup:
   - projects and glossaries should share the same top-level lifecycle model
   - the main remaining exception should be that projects additionally expose chapters/files on the projects page
-  - create flow still needs to be collapsed into one shared adapter-driven path
+  - create flow still needs one last cleanup pass to collapse the remaining resource-specific validation fields and editor/load adapters into a cleaner shared controller shape
   - read/discovery/reload orchestration still needs to be collapsed into one shared adapter-driven path
   - project-specific chapter/file loading should remain an adapter concern layered on top of the shared lifecycle, not a separate lifecycle model
 
@@ -240,7 +242,7 @@ Status on 2026-04-10:
 - project background reconciliation now repairs `origin` and can push the first local commit into an empty remote repo
 - create-modal/open/update UI plumbing is now partially shared, but the actual local repo/bootstrap/create execution path is still separate
 - create execution is now partially shared through a common local-first bootstrap helper, but project/glossary create still use separate validation fields and separate post-create editor/load behavior
-- create execution now also shares the post-create finalize/open/background-sync tail, but project/glossary create still use separate validation fields and separate resource-specific editor/load adapters
+- create execution now also shares the entry preflight and post-create finalize/open/background-sync tail, but project/glossary create still use separate validation fields and separate resource-specific editor/load adapters
 
 - write `pendingCreate` to local metadata first
 - initialize local repo first

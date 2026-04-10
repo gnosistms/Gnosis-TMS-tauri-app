@@ -31,8 +31,6 @@ import {
 } from "./glossary-top-level-state.js";
 import {
   processQueuedResourceMutations,
-  queueTopLevelResourceMutation,
-  submitTopLevelResourceMutation,
 } from "./resource-top-level-mutations.js";
 import {
   applyOptimisticPermanentDelete,
@@ -43,6 +41,11 @@ import {
   runPermanentDeleteLocalFirst,
   showPermanentDeleteFollowupNotice,
 } from "./resource-lifecycle-engine.js";
+import {
+  openTopLevelRenameModal,
+  submitSimpleTopLevelMutation,
+  submitTopLevelRename,
+} from "./resource-top-level-controller.js";
 import { classifySyncError } from "./sync-error.js";
 import { handleSyncFailure } from "./sync-recovery.js";
 import {
@@ -145,6 +148,24 @@ function glossaryMetadataRecord(glossary, overrides = {}) {
   };
 }
 
+function glossaryTopLevelMutationStore(team) {
+  return {
+    currentSnapshot: () => glossarySnapshotFromState(),
+    applyMutation: (snapshot, mutation) =>
+      applyGlossaryPendingMutation(snapshot, mutation),
+    applySnapshot: (snapshot) =>
+      applyGlossarySnapshotToState(snapshot, { fallbackToFirstActive: false }),
+    beginSync: () => beginPageSync(),
+    getPendingMutations: () => state.pendingGlossaryMutations,
+    setPendingMutations: (mutations) => {
+      state.pendingGlossaryMutations = mutations;
+    },
+    persistPendingMutations: (mutations) =>
+      saveStoredGlossaryPendingMutations(team, mutations),
+    persistVisibleState: () => persistGlossariesForTeam(team),
+  };
+}
+
 async function commitGlossaryMutation(team, mutation) {
   const glossary = glossaryById(mutation.glossaryId ?? mutation.resourceId);
 
@@ -239,7 +260,7 @@ export function toggleDeletedGlossaries(render) {
 export function openGlossaryRename(render, glossaryId) {
   const glossary = glossaryById(glossaryId);
   const team = selectedTeam();
-  void guardTopLevelResourceAction({
+  openTopLevelRenameModal({
     resource: glossary,
     isExpectedResource: (currentGlossary) =>
       Boolean(currentGlossary) && currentGlossary.lifecycleState !== "deleted",
@@ -253,21 +274,13 @@ export function openGlossaryRename(render, glossaryId) {
     onBlocked: (blockedMessage) => {
       showNoticeBadge(blockedMessage, render);
     },
-  }).then((allowed) => {
-    if (!allowed) {
-      return;
-    }
-
-    openEntityRenameModal({
-      setState: (nextState) => {
-        state.glossaryRename = nextState;
-      },
-      entityId: glossaryId,
-      idField: "glossaryId",
-      nameField: "glossaryName",
-      currentName: glossary.title,
-    });
-    render();
+    setModalState: (nextState) => {
+      state.glossaryRename = nextState;
+    },
+    idField: "glossaryId",
+    nameField: "glossaryName",
+    currentName: glossary?.title ?? "",
+    render,
   });
 }
 
@@ -282,69 +295,26 @@ export function cancelGlossaryRename(render) {
 export async function submitGlossaryRename(render) {
   const team = selectedTeam();
   const glossary = glossaryById(state.glossaryRename.glossaryId);
-  const nextTitle = String(state.glossaryRename.glossaryName ?? "").trim();
-  const allowed = await guardTopLevelResourceAction({
+  state.glossarySyncVersion += 1;
+  await submitTopLevelRename({
     resource: glossary,
+    modalState: state.glossaryRename,
+    render,
+    nameField: "glossaryName",
     getBlockedMessage: () =>
       lifecycleActionBlockedMessage(team, { actionLabel: "rename glossaries" }),
     ensureNotTombstoned: (currentGlossary) =>
       ensureGlossaryNotTombstoned(render, team, currentGlossary),
-    onMissing: () => {
-      state.glossaryRename.error = "Could not find the selected glossary.";
-      render();
-    },
-    onBlocked: (blockedMessage) => {
-      state.glossaryRename.error = blockedMessage;
-      render();
-    },
+    missingMessage: "Could not find the selected glossary.",
+    emptyTitleMessage: "Enter a glossary name.",
     onTombstoned: () => {
       resetGlossaryRename();
-      render();
     },
-  });
-  if (!allowed) {
-    return;
-  }
-  if (!nextTitle) {
-    state.glossaryRename.error = "Enter a glossary name.";
-    render();
-    return;
-  }
-
-  state.glossarySyncVersion += 1;
-  await submitTopLevelResourceMutation({
-    setLoading: () => {
-      state.glossaryRename.status = "loading";
-      state.glossaryRename.error = "";
-      render();
-    },
-    buildMutation: () => ({
-      id: crypto.randomUUID(),
-      type: "rename",
-      resourceId: glossary.id,
-      glossaryId: glossary.id,
-      title: nextTitle,
-      previousTitle: glossary.title,
+    previousTitle: (currentGlossary) => currentGlossary.title,
+    buildMutationFields: (currentGlossary) => ({
+      glossaryId: currentGlossary.id,
     }),
-    queueMutation: (mutation) => {
-      queueTopLevelResourceMutation({
-        mutation,
-        currentSnapshot: () => glossarySnapshotFromState(),
-        applyMutation: (snapshot, nextMutation) =>
-          applyGlossaryPendingMutation(snapshot, nextMutation),
-        applySnapshot: (snapshot) =>
-          applyGlossarySnapshotToState(snapshot, { fallbackToFirstActive: false }),
-        beginSync: () => beginPageSync(),
-        getPendingMutations: () => state.pendingGlossaryMutations,
-        setPendingMutations: (mutations) => {
-          state.pendingGlossaryMutations = mutations;
-        },
-        persistPendingMutations: (mutations) =>
-          saveStoredGlossaryPendingMutations(team, mutations),
-        persistVisibleState: () => persistGlossariesForTeam(team),
-        render,
-      });
-    },
+    store: glossaryTopLevelMutationStore(team),
     afterQueue: () => {
       resetGlossaryRename();
       render();
@@ -364,8 +334,11 @@ export async function submitGlossaryRename(render) {
 export async function deleteGlossary(render, glossaryId) {
   const team = selectedTeam();
   const glossary = glossaryById(glossaryId);
-  const allowed = await guardTopLevelResourceAction({
+  state.glossarySyncVersion += 1;
+  await submitSimpleTopLevelMutation({
     resource: glossary,
+    type: "softDelete",
+    render,
     isExpectedResource: (currentGlossary) =>
       Boolean(currentGlossary) && currentGlossary.lifecycleState !== "deleted",
     getBlockedMessage: () =>
@@ -378,38 +351,10 @@ export async function deleteGlossary(render, glossaryId) {
     onBlocked: (blockedMessage) => {
       showNoticeBadge(blockedMessage, render);
     },
-  });
-  if (!allowed) {
-    return;
-  }
-
-  state.glossarySyncVersion += 1;
-  await submitTopLevelResourceMutation({
-    buildMutation: () => ({
-      id: crypto.randomUUID(),
-      type: "softDelete",
-      resourceId: glossary.id,
-      glossaryId: glossary.id,
+    buildMutationFields: (currentGlossary) => ({
+      glossaryId: currentGlossary.id,
     }),
-    queueMutation: (mutation) => {
-      queueTopLevelResourceMutation({
-        mutation,
-        currentSnapshot: () => glossarySnapshotFromState(),
-        applyMutation: (snapshot, nextMutation) =>
-          applyGlossaryPendingMutation(snapshot, nextMutation),
-        applySnapshot: (snapshot) =>
-          applyGlossarySnapshotToState(snapshot, { fallbackToFirstActive: false }),
-        beginSync: () => beginPageSync(),
-        getPendingMutations: () => state.pendingGlossaryMutations,
-        setPendingMutations: (mutations) => {
-          state.pendingGlossaryMutations = mutations;
-        },
-        persistPendingMutations: (mutations) =>
-          saveStoredGlossaryPendingMutations(team, mutations),
-        persistVisibleState: () => persistGlossariesForTeam(team),
-        render,
-      });
-    },
+    store: glossaryTopLevelMutationStore(team),
     processQueue: () => processPendingGlossaryMutations(render, team),
     waitForProcessing: waitForNextPaint,
   });
@@ -418,8 +363,11 @@ export async function deleteGlossary(render, glossaryId) {
 export async function restoreGlossary(render, glossaryId) {
   const team = selectedTeam();
   const glossary = glossaryById(glossaryId);
-  const allowed = await guardTopLevelResourceAction({
+  state.glossarySyncVersion += 1;
+  await submitSimpleTopLevelMutation({
     resource: glossary,
+    type: "restore",
+    render,
     isExpectedResource: (currentGlossary) =>
       Boolean(currentGlossary) && currentGlossary.lifecycleState === "deleted",
     getBlockedMessage: () =>
@@ -432,38 +380,10 @@ export async function restoreGlossary(render, glossaryId) {
     onBlocked: (blockedMessage) => {
       showNoticeBadge(blockedMessage, render);
     },
-  });
-  if (!allowed) {
-    return;
-  }
-
-  state.glossarySyncVersion += 1;
-  await submitTopLevelResourceMutation({
-    buildMutation: () => ({
-      id: crypto.randomUUID(),
-      type: "restore",
-      resourceId: glossary.id,
-      glossaryId: glossary.id,
+    buildMutationFields: (currentGlossary) => ({
+      glossaryId: currentGlossary.id,
     }),
-    queueMutation: (mutation) => {
-      queueTopLevelResourceMutation({
-        mutation,
-        currentSnapshot: () => glossarySnapshotFromState(),
-        applyMutation: (snapshot, nextMutation) =>
-          applyGlossaryPendingMutation(snapshot, nextMutation),
-        applySnapshot: (snapshot) =>
-          applyGlossarySnapshotToState(snapshot, { fallbackToFirstActive: false }),
-        beginSync: () => beginPageSync(),
-        getPendingMutations: () => state.pendingGlossaryMutations,
-        setPendingMutations: (mutations) => {
-          state.pendingGlossaryMutations = mutations;
-        },
-        persistPendingMutations: (mutations) =>
-          saveStoredGlossaryPendingMutations(team, mutations),
-        persistVisibleState: () => persistGlossariesForTeam(team),
-        render,
-      });
-    },
+    store: glossaryTopLevelMutationStore(team),
     processQueue: () => processPendingGlossaryMutations(render, team),
     waitForProcessing: waitForNextPaint,
   });

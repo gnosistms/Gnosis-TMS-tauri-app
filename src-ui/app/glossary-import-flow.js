@@ -36,6 +36,7 @@ import {
 } from "./resource-pending-create.js";
 import {
   finalizeLocalFirstCreate,
+  guardResourceCreateStart,
   runLocalFirstCreate,
 } from "./resource-create-flow.js";
 
@@ -405,18 +406,17 @@ function syncGlossaryInBackground(render, team, glossary, preferredBaseRepoName)
 
 export function openGlossaryCreation(render) {
   const team = selectedTeam();
-  if (!Number.isFinite(team?.installationId)) {
-    showNoticeBadge("Creating a glossary requires a GitHub App-connected team.", render);
-    return;
-  }
-
-  if (state.offline?.isEnabled === true) {
-    showNoticeBadge("You cannot create glossaries while offline.", render);
-    return;
-  }
-
-  if (!canCreateGlossaries(team)) {
-    showNoticeBadge("You do not have permission to create glossaries in this team.", render);
+  if (!guardResourceCreateStart({
+    installationReady: () => Number.isFinite(team?.installationId),
+    offlineBlocked: () => state.offline?.isEnabled === true,
+    canCreate: () => canCreateGlossaries(team),
+    installationMessage: "Creating a glossary requires a GitHub App-connected team.",
+    offlineMessage: "You cannot create glossaries while offline.",
+    permissionMessage: "You do not have permission to create glossaries in this team.",
+    onBlocked: (message) => {
+      showNoticeBadge(message, render);
+    },
+  })) {
     return;
   }
 
@@ -526,22 +526,18 @@ export async function submitGlossaryCreation(render) {
   if (!draft?.isOpen) {
     return;
   }
-
-  if (!Number.isFinite(team?.installationId)) {
-    state.glossaryCreation.error = "Creating a glossary requires a GitHub App-connected team.";
-    render();
-    return;
-  }
-
-  if (state.offline?.isEnabled === true) {
-    state.glossaryCreation.error = "You cannot create glossaries while offline.";
-    render();
-    return;
-  }
-
-  if (!canCreateGlossaries(team)) {
-    state.glossaryCreation.error = "You do not have permission to create glossaries in this team.";
-    render();
+  if (!guardResourceCreateStart({
+    installationReady: () => Number.isFinite(team?.installationId),
+    offlineBlocked: () => state.offline?.isEnabled === true,
+    canCreate: () => canCreateGlossaries(team),
+    installationMessage: "Creating a glossary requires a GitHub App-connected team.",
+    offlineMessage: "You cannot create glossaries while offline.",
+    permissionMessage: "You do not have permission to create glossaries in this team.",
+    onBlocked: (message) => {
+      state.glossaryCreation.error = message;
+      render();
+    },
+  })) {
     return;
   }
 
