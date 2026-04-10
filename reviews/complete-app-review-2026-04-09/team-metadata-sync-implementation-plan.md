@@ -6,9 +6,10 @@
 
 - current implementation stage: `Stage 8`
 - stage status: `implemented and committed in the app repo`
-- latest app commit: `66b2cdf` `Add missing-installations recovery messaging`
-- latest broker commit relevant to this plan: `3495771` `Add team metadata read routes`
+- latest app commit: `ccec3b1` `Label team setup finish-step failures`
+- latest broker commit relevant to this plan: `fc2a847` `Diagnose custom property schema failures`
 - next intended stage: `no further numbered stage is planned yet`
+- active blocker under investigation: new-team setup can still fail on the final finish step while configuring the org-level GitHub custom repository property schema
 
 ### Stage 1 Progress
 
@@ -1334,6 +1335,67 @@ Testing after Stage 8:
   - `npm test`
   - `npm run build`
   - `cargo check`
+
+### Post-Stage 8 Follow-Up Work
+
+Status as of April 10, 2026:
+
+- implemented and committed where noted below
+
+Additional app commits after Stage 8:
+
+- `6f6f636` `Unify resource mutations and glossary sync handling`
+- `aaced8c` `Rename final team setup step`
+- `ccec3b1` `Label team setup finish-step failures`
+
+Additional broker commits after Stage 8:
+
+- `84540be` `Add glossary metadata delete route`
+- `fc2a847` `Diagnose custom property schema failures`
+
+What is now done:
+
+- projects and glossaries now share one top-level optimistic mutation/replay pipeline for rename, soft-delete, and restore
+- glossary top-level optimistic mutations now persist and replay after reload the same way project mutations do
+- the final team-setup modal heading now says `Finish team setup`
+- the final finish-team-setup flow now labels which sub-step failed instead of surfacing an unlabeled raw error
+- broker-side diagnostics for the org-level custom-properties schema step now include:
+  - the failing finish-step label
+  - installation account type
+  - installation permission snapshot
+  - the raw GitHub response body
+
+Current blocker:
+
+- new-team setup can still fail on the final finish step with a GitHub `404`
+- the failing step is not project or glossary repo creation; it is the org-level custom property schema setup call:
+  - `PATCH /orgs/{orgLogin}/properties/schema`
+- the finish flow currently runs in this order:
+  1. inspect installation
+  2. configure organization / ensure admins team / ensure `team-metadata`
+  3. configure GitHub custom repository property schema
+  4. inspect `team-metadata`
+- because the team usually appears after cancelling and refreshing, the likely interpretation is:
+  - org setup and `team-metadata` creation already succeeded
+  - the remaining failure is specifically the custom-properties schema step
+
+What the `gnosis_tms_repo_type` custom property is for:
+
+- property name: `gnosis_tms_repo_type`
+- allowed values: `project`, `glossary`
+- purpose:
+  - mark GitHub repos created by Gnosis TMS
+  - distinguish project repos from glossary repos
+  - let broker-side repo listing filter the installation’s repos down to Gnosis TMS-managed repos
+
+Immediate next step for the next thread:
+
+- reproduce new-team setup again after the deployed broker includes `fc2a847`
+- capture the full new finish-step error text
+- determine from that message whether the `404` means:
+  - missing GitHub App custom-properties permission
+  - org/account context does not support the endpoint for this installation token
+  - or some other org-level access condition that GitHub masks as `404`
 
 ## Recommended Implementation Sequence For The Next Thread
 
