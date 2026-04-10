@@ -1466,6 +1466,7 @@ export async function loadTeamProjects(render, teamId = state.selectedTeamId) {
       selectedTeam,
       mappedProjects,
     );
+    await autoResumePendingProjects(render, mappedProjects);
     clearProjectUiDebug(render);
     await completeProjectsPageSync(render);
     render();
@@ -1791,8 +1792,11 @@ export async function submitProjectCreation(render) {
   }
 }
 
-export async function resumePendingProjectSetup(render, projectId) {
+async function resumePendingProjectSetupInternal(render, projectId, options = {}) {
   const selectedTeam = selectedProjectsTeam();
+  const showStartNotice = options.showStartNotice !== false;
+  const showSuccessNotice = options.showSuccessNotice !== false;
+  const showErrorNotice = options.showErrorNotice !== false;
   const project =
     state.projects.find((item) => item.id === projectId)
     ?? state.deletedProjects.find((item) => item.id === projectId)
@@ -1842,18 +1846,24 @@ export async function resumePendingProjectSetup(render, projectId) {
         currentProjectSnapshot(project),
         currentProjectSnapshot(project)?.name ?? "",
       );
-      showNoticeBadge("Resuming GitHub setup for this project...", render, 2200);
+      if (showStartNotice) {
+        showNoticeBadge("Resuming GitHub setup for this project...", render, 2200);
+      }
       return;
     }
 
     await finalizePendingProjectSetup(render, selectedTeam, project, matchedRemoteProject);
-    showNoticeBadge("Finished recovering this pending project setup.", render, 2200);
+    if (showSuccessNotice) {
+      showNoticeBadge("Finished recovering this pending project setup.", render, 2200);
+    }
   } catch (error) {
-    showNoticeBadge(
-      `Could not resume this project setup: ${error?.message ?? String(error)}`,
-      render,
-      3200,
-    );
+    if (showErrorNotice) {
+      showNoticeBadge(
+        `Could not resume this project setup: ${error?.message ?? String(error)}`,
+        render,
+        3200,
+      );
+    }
     render();
   } finally {
     if (!handedOffToBackgroundCreate) {
@@ -1861,6 +1871,27 @@ export async function resumePendingProjectSetup(render, projectId) {
       render();
     }
   }
+}
+
+async function autoResumePendingProjects(render, projects) {
+  const pendingProjects = (Array.isArray(projects) ? projects : []).filter((project) =>
+    typeof project?.id === "string"
+    && project.id.trim()
+    && (project.remoteState === "pendingCreate" || project.resolutionState === "pendingCreate")
+    && !state.projectCreationInFlightIds.has(project.id)
+  );
+
+  for (const project of pendingProjects) {
+    await resumePendingProjectSetupInternal(render, project.id, {
+      showStartNotice: false,
+      showSuccessNotice: false,
+      showErrorNotice: true,
+    });
+  }
+}
+
+export async function resumePendingProjectSetup(render, projectId) {
+  await resumePendingProjectSetupInternal(render, projectId);
 }
 
 export async function submitProjectRename(render) {

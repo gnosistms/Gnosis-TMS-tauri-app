@@ -12,6 +12,7 @@ import {
   listLocalGlossarySummariesForTeam,
   loadRepoBackedGlossariesForTeam,
 } from "./glossary-repo-flow.js";
+import { autoResumePendingGlossarySetup } from "./glossary-import-flow.js";
 import { processPendingGlossaryMutations } from "./glossary-lifecycle-flow.js";
 import {
   applyGlossaryPendingMutation,
@@ -194,6 +195,7 @@ export async function loadTeamGlossaries(
     } else if (brokerWarning) {
       showNoticeBadge(brokerWarning, render);
     }
+    await autoResumePendingGlossarySetup(render, state.glossaries);
     await completePageSync(render);
     if (state.pendingGlossaryMutations.length > 0) {
       void processPendingGlossaryMutations(render, team);

@@ -418,8 +418,11 @@ export function openGlossaryCreation(render) {
   render();
 }
 
-export async function resumePendingGlossarySetup(render, glossaryId) {
+async function resumePendingGlossarySetupInternal(render, glossaryId, options = {}) {
   const team = selectedTeam();
+  const showStartNotice = options.showStartNotice !== false;
+  const showSuccessNotice = options.showSuccessNotice !== false;
+  const showErrorNotice = options.showErrorNotice !== false;
   const glossary = currentGlossarySnapshot(
     state.glossaries.find((item) => item.id === glossaryId) ?? null,
   );
@@ -473,24 +476,51 @@ export async function resumePendingGlossarySetup(render, glossaryId) {
         currentGlossarySnapshot(glossary),
         currentGlossarySnapshot(glossary)?.repoName ?? "",
       );
-      showNoticeBadge("Resuming GitHub setup for this glossary...", render, 2200);
+      if (showStartNotice) {
+        showNoticeBadge("Resuming GitHub setup for this glossary...", render, 2200);
+      }
       return;
     }
 
     await finalizePendingGlossarySetup(render, team, glossary, matchedRemoteRepo);
-    showNoticeBadge("Finished recovering this pending glossary setup.", render, 2200);
+    if (showSuccessNotice) {
+      showNoticeBadge("Finished recovering this pending glossary setup.", render, 2200);
+    }
   } catch (error) {
-    showNoticeBadge(
-      `Could not resume this glossary setup: ${error?.message ?? String(error)}`,
-      render,
-      3200,
-    );
+    if (showErrorNotice) {
+      showNoticeBadge(
+        `Could not resume this glossary setup: ${error?.message ?? String(error)}`,
+        render,
+        3200,
+      );
+    }
     render();
   } finally {
     if (!handedOffToBackgroundCreate) {
       clearGlossarySyncInFlight(glossary.id);
       render();
     }
+  }
+}
+
+export async function resumePendingGlossarySetup(render, glossaryId) {
+  await resumePendingGlossarySetupInternal(render, glossaryId);
+}
+
+export async function autoResumePendingGlossarySetup(render, glossaries) {
+  const pendingGlossaries = (Array.isArray(glossaries) ? glossaries : []).filter((glossary) =>
+    typeof glossary?.id === "string"
+    && glossary.id.trim()
+    && (glossary.remoteState === "pendingCreate" || glossary.resolutionState === "pendingCreate")
+    && !state.glossarySyncInFlightIds.has(glossary.id)
+  );
+
+  for (const glossary of pendingGlossaries) {
+    await resumePendingGlossarySetupInternal(render, glossary.id, {
+      showStartNotice: false,
+      showSuccessNotice: false,
+      showErrorNotice: true,
+    });
   }
 }
 
