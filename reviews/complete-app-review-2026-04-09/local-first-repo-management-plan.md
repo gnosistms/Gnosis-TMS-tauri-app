@@ -202,7 +202,7 @@ Expected outcome:
 Status on 2026-04-10:
 
 - partially complete
-- shared helpers now cover metadata-first mutations and tombstone prechecks
+- shared helpers now cover metadata-first mutations, tombstone prechecks, and shared top-level rename / soft-delete / restore commit sequencing
 - projects and glossaries still have separate higher-level lifecycle flows, so the full adapter-based shared state machine is not finished
 
 - build one shared engine for:
@@ -245,7 +245,8 @@ Status on 2026-04-10:
 
 - partially complete
 - rename, soft-delete, restore, and permanent delete are metadata-first in the main project/glossary flows that were refactored
-- remaining gap: there is still duplicated lifecycle orchestration and some secondary paths still need to be folded into the same shared engine
+- top-level rename / soft-delete / restore commit handling now flows through the shared lifecycle engine
+- remaining gap: optimistic orchestration and some secondary lifecycle paths are still duplicated and need to be folded into the same shared adapter-driven engine
 
 - rename: commit new title/desired repo name locally first, then perform remote rename later
 - soft-delete/restore: commit lifecycle locally first, then update remote repo metadata later
@@ -266,7 +267,8 @@ Status on 2026-04-10:
 - background reconciliation now repairs `origin` for projects and glossaries, and project sync can handle empty remotes
 - explicit repair actions now exist for repairable local binding/origin issues
 - missing-local-repo repair states now route to rebuild actions instead of the generic binding repair path
-- remaining gap: interrupted-create recovery still needs to be tightened so incomplete remote setup does not leave ambiguous local pending state after relaunch
+- interrupted-create recovery now auto-resumes on load where safe and still exposes an explicit `Resume Setup` action when user intervention is useful
+- remaining gap: the read path still depends on some separate project/glossary orchestration around the shared engine instead of one fully unified adapter layer
 
 - make page loads read local metadata + local repos first
 - remove remaining repo-name-driven discovery shortcuts
@@ -285,7 +287,7 @@ Expected outcome:
 
 Status on 2026-04-10:
 
-- partially complete
+- mostly complete
 - added backend repair/migration scan for local repo bindings against local team-metadata
 - safe sync-state repairs are applied automatically
 - repair issues are surfaced into discovery/UI state as explicit `repair` resolutions
@@ -293,7 +295,8 @@ Status on 2026-04-10:
 - repair actions are now split so missing local repos use rebuild actions while binding/origin problems use the direct repair command
 - pending-create resources now surface explicit `Resume Setup` actions for interrupted create recovery
 - pending-create resume now checks for an already-created remote repo before deciding whether to finish metadata/local sync or continue the remote create step
-- remaining gap: make interrupted-create recovery resume automatically on load where safe, instead of requiring the explicit resume action
+- interrupted-create recovery now resumes automatically on load where safe
+- remaining gap: migration/repair coverage is still broader than needed for a pre-release app, and the remaining work is mostly cleanup rather than core capability
 
 - add a repair command for:
   - missing `origin`
