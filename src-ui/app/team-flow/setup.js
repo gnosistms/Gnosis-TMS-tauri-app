@@ -10,6 +10,14 @@ import {
   resetOpenState,
 } from "./shared.js";
 
+async function runFinishTeamSetupStep(label, action) {
+  try {
+    return await action();
+  } catch (error) {
+    throw new Error(`Failed while ${label}: ${error?.message ?? String(error)}`);
+  }
+}
+
 export async function openTeamSetup(render) {
   state.teamSetup = {
     ...state.teamSetup,
@@ -67,25 +75,33 @@ export async function finishTeamSetup(render) {
   }
 
   try {
-    const installation = await invoke("inspect_github_app_installation", {
-      installationId: state.teamSetup.githubAppInstallationId,
-      sessionToken: requireBrokerSession(),
-    });
-    await invoke("setup_organization_for_installation", {
-      installationId: installation.installationId,
-      orgLogin: installation.accountLogin,
-      sessionToken: requireBrokerSession(),
-    });
-    await invoke("ensure_gnosis_repo_properties_schema", {
-      installationId: installation.installationId,
-      orgLogin: installation.accountLogin,
-      sessionToken: requireBrokerSession(),
-    });
-    await invoke("inspect_team_metadata_repo_for_installation", {
-      installationId: installation.installationId,
-      orgLogin: installation.accountLogin,
-      sessionToken: requireBrokerSession(),
-    });
+    const installation = await runFinishTeamSetupStep("loading the GitHub App installation details", () =>
+      invoke("inspect_github_app_installation", {
+        installationId: state.teamSetup.githubAppInstallationId,
+        sessionToken: requireBrokerSession(),
+      })
+    );
+    await runFinishTeamSetupStep("configuring the GitHub organization", () =>
+      invoke("setup_organization_for_installation", {
+        installationId: installation.installationId,
+        orgLogin: installation.accountLogin,
+        sessionToken: requireBrokerSession(),
+      })
+    );
+    await runFinishTeamSetupStep("configuring the GitHub custom repository property schema", () =>
+      invoke("ensure_gnosis_repo_properties_schema", {
+        installationId: installation.installationId,
+        orgLogin: installation.accountLogin,
+        sessionToken: requireBrokerSession(),
+      })
+    );
+    await runFinishTeamSetupStep("verifying the team-metadata repository", () =>
+      invoke("inspect_team_metadata_repo_for_installation", {
+        installationId: installation.installationId,
+        orgLogin: installation.accountLogin,
+        sessionToken: requireBrokerSession(),
+      })
+    );
 
     state.teamSetup.githubAppInstallation = installation;
     const nextTeamRecords = upsertStoredTeamRecords([
