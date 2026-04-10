@@ -117,15 +117,16 @@ function glossaryMetadataRecord(glossary, overrides = {}) {
   };
 }
 
-async function syncGlossaryMetadataAfterRemoteMutation(team, record, rollbackRemoteMutation) {
+async function applyMetadataFirstGlossaryMutation(team, nextRecord, applyLocalMutation, rollbackRecord) {
+  await upsertGlossaryMetadataRecord(team, nextRecord);
   try {
-    await upsertGlossaryMetadataRecord(team, record);
+    await applyLocalMutation();
   } catch (error) {
     try {
-      await rollbackRemoteMutation();
+      await upsertGlossaryMetadataRecord(team, rollbackRecord);
     } catch (rollbackError) {
       throw new Error(
-        `${error?.message ?? String(error)} The remote glossary change could not be rolled back automatically: ${
+        `${error?.message ?? String(error)} The glossary metadata intent was committed locally first, and the automatic metadata rollback also failed: ${
           rollbackError?.message ?? String(rollbackError)
         }`,
       );
@@ -142,14 +143,7 @@ async function commitGlossaryMutation(team, mutation) {
   }
 
   if (mutation.type === "rename") {
-    await invoke("rename_gtms_glossary", {
-      input: {
-        installationId: team.installationId,
-        repoName: glossary.repoName,
-        title: mutation.title,
-      },
-    });
-    await syncGlossaryMetadataAfterRemoteMutation(
+    await applyMetadataFirstGlossaryMutation(
       team,
       glossaryMetadataRecord({
         ...glossary,
@@ -159,25 +153,44 @@ async function commitGlossaryMutation(team, mutation) {
         input: {
           installationId: team.installationId,
           repoName: glossary.repoName,
-          title: mutation.previousTitle,
+          title: mutation.title,
         },
+      }),
+      glossaryMetadataRecord({
+        ...glossary,
+        title: mutation.previousTitle,
       }),
     );
     return;
   }
 
   if (mutation.type === "softDelete") {
-    await invoke("soft_delete_gtms_glossary", {
-      input: {
-        installationId: team.installationId,
-        repoName: glossary.repoName,
-      },
-    });
-    await syncGlossaryMetadataAfterRemoteMutation(
+    await applyMetadataFirstGlossaryMutation(
       team,
       glossaryMetadataRecord({
         ...glossary,
         lifecycleState: "deleted",
+      }),
+      () => invoke("soft_delete_gtms_glossary", {
+        input: {
+          installationId: team.installationId,
+          repoName: glossary.repoName,
+        },
+      }),
+      glossaryMetadataRecord({
+        ...glossary,
+        lifecycleState: "active",
+      }),
+    );
+    return;
+  }
+
+  if (mutation.type === "restore") {
+    await applyMetadataFirstGlossaryMutation(
+      team,
+      glossaryMetadataRecord({
+        ...glossary,
+        lifecycleState: "active",
       }),
       () => invoke("restore_gtms_glossary", {
         input: {
@@ -185,28 +198,9 @@ async function commitGlossaryMutation(team, mutation) {
           repoName: glossary.repoName,
         },
       }),
-    );
-    return;
-  }
-
-  if (mutation.type === "restore") {
-    await invoke("restore_gtms_glossary", {
-      input: {
-        installationId: team.installationId,
-        repoName: glossary.repoName,
-      },
-    });
-    await syncGlossaryMetadataAfterRemoteMutation(
-      team,
       glossaryMetadataRecord({
         ...glossary,
-        lifecycleState: "active",
-      }),
-      () => invoke("soft_delete_gtms_glossary", {
-        input: {
-          installationId: team.installationId,
-          repoName: glossary.repoName,
-        },
+        lifecycleState: "deleted",
       }),
     );
   }

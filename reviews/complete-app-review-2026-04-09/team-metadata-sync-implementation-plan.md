@@ -17,7 +17,9 @@
   - local metadata write/commit/push helpers now exist in Tauri
   - app-side metadata mutation callers now go through local commit + best-effort push
   - direct tombstone lookup is now used by the operation guards
-  - full lifecycle sequencing is still not metadata-first yet
+  - glossary top-level rename / soft-delete / restore now commit local metadata intent before the glossary repo mutation
+  - project top-level rename / soft-delete / restore now commit local metadata intent before the remote broker mutation
+  - create and some other lifecycle paths are still not metadata-first yet
 
 ### Stage 1 Progress
 

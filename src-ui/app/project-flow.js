@@ -365,35 +365,56 @@ function mergeProjectsWithLocalFiles(snapshot, listings = [], targets = []) {
   };
 }
 
-function projectMetadataRecordFromVisibleProject(project) {
+function projectMetadataRecordFromVisibleProject(project, overrides = {}) {
   return {
     projectId: project.id,
-    title: project.title,
-    repoName: project.name,
-    githubRepoId: Number.isFinite(project.repoId) ? project.repoId : null,
+    title: overrides.title ?? project.title,
+    repoName: overrides.repoName ?? project.name,
+    githubRepoId:
+      Number.isFinite(overrides.githubRepoId)
+        ? overrides.githubRepoId
+        : Number.isFinite(project.repoId)
+          ? project.repoId
+          : null,
     githubNodeId:
-      typeof project.nodeId === "string" && project.nodeId.trim()
+      typeof overrides.githubNodeId === "string" && overrides.githubNodeId.trim()
+        ? overrides.githubNodeId.trim()
+        : typeof project.nodeId === "string" && project.nodeId.trim()
         ? project.nodeId.trim()
         : null,
     fullName:
-      typeof project.fullName === "string" && project.fullName.trim()
+      typeof overrides.fullName === "string" && overrides.fullName.trim()
+        ? overrides.fullName.trim()
+        : typeof project.fullName === "string" && project.fullName.trim()
         ? project.fullName.trim()
         : null,
     defaultBranch:
-      typeof project.defaultBranchName === "string" && project.defaultBranchName.trim()
+      typeof overrides.defaultBranch === "string" && overrides.defaultBranch.trim()
+        ? overrides.defaultBranch.trim()
+        : typeof project.defaultBranchName === "string" && project.defaultBranchName.trim()
         ? project.defaultBranchName.trim()
         : "main",
-    lifecycleState: project.status === "deleted" ? "softDeleted" : "active",
+    lifecycleState:
+      overrides.lifecycleState
+      ?? (project.status === "deleted" ? "softDeleted" : "active"),
     remoteState:
-      project.remoteState === "pendingCreate"
+      overrides.remoteState
+      ?? (project.remoteState === "pendingCreate"
         ? "pendingCreate"
-        : project.remoteState ?? "linked",
-    recordState: project.recordState ?? "live",
+        : project.remoteState ?? "linked"),
+    recordState: overrides.recordState ?? project.recordState ?? "live",
     deletedAt:
-      typeof project.deletedAt === "string" && project.deletedAt.trim()
+      typeof overrides.deletedAt === "string" && overrides.deletedAt.trim()
+        ? overrides.deletedAt.trim()
+        : typeof project.deletedAt === "string" && project.deletedAt.trim()
         ? project.deletedAt.trim()
         : null,
-    chapterCount: Array.isArray(project.chapters) ? project.chapters.length : 0,
+    chapterCount:
+      Number.isFinite(overrides.chapterCount)
+        ? overrides.chapterCount
+        : Array.isArray(project.chapters)
+          ? project.chapters.length
+          : 0,
   };
 }
 
@@ -587,15 +608,21 @@ async function rollbackCreatedRemoteProject(selectedTeam, projectId, remoteProje
   await deleteProjectMetadataRecord(selectedTeam, projectId);
 }
 
-async function syncProjectMetadataAfterRemoteMutation(selectedTeam, project, rollbackRemoteMutation) {
+async function applyMetadataFirstProjectMutation(
+  selectedTeam,
+  nextRecord,
+  applyRemoteMutation,
+  rollbackRecord,
+) {
+  await upsertProjectMetadataRecord(selectedTeam, nextRecord);
   try {
-    await upsertProjectMetadataRecord(selectedTeam, projectMetadataRecordFromVisibleProject(project));
+    await applyRemoteMutation();
   } catch (error) {
     try {
-      await rollbackRemoteMutation();
+      await upsertProjectMetadataRecord(selectedTeam, rollbackRecord);
     } catch (rollbackError) {
       throw new Error(
-        `${error?.message ?? String(error)} The remote project change could not be rolled back automatically: ${
+        `${error?.message ?? String(error)} The project metadata intent was committed locally first, and the automatic metadata rollback also failed: ${
           rollbackError?.message ?? String(rollbackError)
         }`,
       );
@@ -2261,41 +2288,53 @@ async function commitProjectMutation(selectedTeam, mutation) {
   }
 
   if (mutation.type === "rename") {
-    await invoke("rename_gnosis_project_repo", {
-      input: {
-        installationId: selectedTeam.installationId,
-        fullName: project.fullName,
-        projectTitle: mutation.title,
-      },
-      sessionToken: requireBrokerSession(),
-    });
-    await syncProjectMetadataAfterRemoteMutation(
+    await applyMetadataFirstProjectMutation(
       selectedTeam,
-      project,
+      projectMetadataRecordFromVisibleProject(project, {
+        title: mutation.title,
+      }),
       () => invoke("rename_gnosis_project_repo", {
         input: {
           installationId: selectedTeam.installationId,
           fullName: project.fullName,
-          projectTitle: mutation.previousTitle,
+          projectTitle: mutation.title,
         },
         sessionToken: requireBrokerSession(),
+      }),
+      projectMetadataRecordFromVisibleProject(project, {
+        title: mutation.previousTitle,
       }),
     );
     return;
   }
 
   if (mutation.type === "softDelete") {
-    await invoke("mark_gnosis_project_repo_deleted", {
-      input: {
-        installationId: selectedTeam.installationId,
-        orgLogin: selectedTeam.githubOrg,
-        repoName: project.name,
-      },
-      sessionToken: requireBrokerSession(),
-    });
-    await syncProjectMetadataAfterRemoteMutation(
+    await applyMetadataFirstProjectMutation(
       selectedTeam,
-      project,
+      projectMetadataRecordFromVisibleProject(project, {
+        lifecycleState: "softDeleted",
+      }),
+      () => invoke("mark_gnosis_project_repo_deleted", {
+        input: {
+          installationId: selectedTeam.installationId,
+          orgLogin: selectedTeam.githubOrg,
+          repoName: project.name,
+        },
+        sessionToken: requireBrokerSession(),
+      }),
+      projectMetadataRecordFromVisibleProject(project, {
+        lifecycleState: "active",
+      }),
+    );
+    return;
+  }
+
+  if (mutation.type === "restore") {
+    await applyMetadataFirstProjectMutation(
+      selectedTeam,
+      projectMetadataRecordFromVisibleProject(project, {
+        lifecycleState: "active",
+      }),
       () => invoke("restore_gnosis_project_repo", {
         input: {
           installationId: selectedTeam.installationId,
@@ -2304,29 +2343,8 @@ async function commitProjectMutation(selectedTeam, mutation) {
         },
         sessionToken: requireBrokerSession(),
       }),
-    );
-    return;
-  }
-
-  if (mutation.type === "restore") {
-    await invoke("restore_gnosis_project_repo", {
-      input: {
-        installationId: selectedTeam.installationId,
-        orgLogin: selectedTeam.githubOrg,
-        repoName: project.name,
-      },
-      sessionToken: requireBrokerSession(),
-    });
-    await syncProjectMetadataAfterRemoteMutation(
-      selectedTeam,
-      project,
-      () => invoke("mark_gnosis_project_repo_deleted", {
-        input: {
-          installationId: selectedTeam.installationId,
-          orgLogin: selectedTeam.githubOrg,
-          repoName: project.name,
-        },
-        sessionToken: requireBrokerSession(),
+      projectMetadataRecordFromVisibleProject(project, {
+        lifecycleState: "softDeleted",
       }),
     );
   }

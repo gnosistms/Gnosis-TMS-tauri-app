@@ -12,8 +12,11 @@ Status as of April 10, 2026:
   - local metadata push helper in Tauri
   - app-side project/glossary metadata writes now commit to the local `team-metadata` repo first and only push best-effort afterward
   - operation tombstone guards now check the local metadata repo by `resourceId` first
+  - glossary top-level rename / soft-delete / restore mutations now commit metadata intent locally before running the repo mutation
+  - project top-level rename / soft-delete / restore mutations now commit metadata intent locally before running the remote broker mutation
 - not implemented yet:
-  - full lifecycle sequencing is still not metadata-first; several handlers still mutate the resource repo or remote repo before they update metadata
+  - create flows are still not metadata-first end to end
+  - some non-queued handlers still mutate the resource repo or remote repo before metadata reconciliation is complete
   - persistent retry tracking for failed metadata pushes is not implemented yet
 
 Goal:
@@ -170,6 +173,7 @@ Cross-client reconciliation rule:
 Expected outcome:
 
 - the app has a local authoritative lifecycle ledger instead of talking only to broker metadata routes
+- top-level rename / soft-delete / restore flows can start moving onto metadata-first sequencing without waiting for the full shared repo manager
 
 ### Stage 10: Move Resource Identity Off Repo Names
 
