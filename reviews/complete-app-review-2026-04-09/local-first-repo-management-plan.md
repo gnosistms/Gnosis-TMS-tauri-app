@@ -292,7 +292,9 @@ Status on 2026-04-10:
 - repair issues are surfaced into discovery/UI state as explicit `repair` resolutions
 - added explicit repair commands plus user-facing repair actions for repairable local binding/origin issues
 - repair actions are now split so missing local repos use rebuild actions while binding/origin problems use the direct repair command
-- remaining gap: narrow the repair model so it focuses on interrupted create/setup flows instead of broad owner-caused remote mutation recovery
+- pending-create resources now surface explicit `Resume Setup` actions for interrupted create recovery
+- pending-create resume now checks for an already-created remote repo before deciding whether to finish metadata/local sync or continue the remote create step
+- remaining gap: make interrupted-create recovery resume automatically on load where safe, instead of requiring the explicit resume action
 
 - add a repair command for:
   - missing `origin`
@@ -305,6 +307,36 @@ Status on 2026-04-10:
 Expected outcome:
 
 - local-first repo management is robust enough to recover from interrupted create flows without manual file surgery
+
+### Stage 16: Align UI With Owner-Only Repo Creation And Permanent Delete
+
+Status on 2026-04-10:
+
+- not started
+- current project/glossary creation affordances are still keyed off `canManageProjects`, so admins still see `+ New Project` and `+ New Glossary`
+- translator users who are not admins should already be hidden by the existing `canManageProjects` gate, but this needs explicit verification coverage
+- permanent delete affordances for soft-deleted projects/glossaries are intended to be owner-only and need an explicit audit so admins never see them
+
+- audit project and glossary screens for every top-level create affordance:
+  - remove `+ New Project` from non-owner users
+  - remove `+ New Glossary` from non-owner users
+  - keep translators who are not admins on the same hidden path
+- audit deleted-resource UI for every permanent-delete affordance:
+  - deleted projects must not show permanent delete for admins
+  - deleted glossaries must not show permanent delete for admins
+  - deleted files should follow the same owner-only policy if they still map to repo-destroying behavior
+- introduce explicit owner-only capability helpers for repo-creating and repo-destroying actions instead of reusing the broader `canManageProjects` gate
+- update action handlers and modal entry points so hidden buttons are matched by the same owner-only backend checks
+- add UI tests covering:
+  - owner sees create buttons and permanent-delete buttons
+  - admin does not see create buttons or permanent-delete buttons
+  - translator does not see create buttons or permanent-delete buttons
+
+Expected outcome:
+
+- only owners ever see repo-creating or permanently destructive top-level actions in the UI
+- admins keep non-owner management actions, but not create/permanent-delete repo controls
+- translators who are not admins never see those controls either
 
 ## Testing Plan
 

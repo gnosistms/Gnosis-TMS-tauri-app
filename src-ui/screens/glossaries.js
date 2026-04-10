@@ -66,7 +66,7 @@ function renderGlossaryCard(glossary, options = {}) {
       ? [textAction("Delete", `delete-deleted-glossary:${glossary.id}`, { disabled: offlineMode || disableLifecycleActions })]
       : []),
   ];
-  const resolutionMarkup = resolution && resolution.key !== "pendingCreate"
+  const resolutionMarkup = resolution
     ? renderInlineStateBox({
         tone: resolution.tone,
         message: resolution.message,

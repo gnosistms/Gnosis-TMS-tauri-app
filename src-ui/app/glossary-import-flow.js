@@ -5,12 +5,18 @@ import { showNoticeBadge } from "./status-feedback.js";
 import { findIsoLanguageOption } from "../lib/language-options.js";
 import { openGlossaryEditor } from "./glossary-editor-flow.js";
 import { saveStoredGlossariesForTeam } from "./glossary-cache.js";
-import { canManageGlossaries, selectedTeam, upsertGlossarySummary } from "./glossary-shared.js";
+import {
+  canManageGlossaries,
+  canPermanentlyDeleteGlossaries,
+  selectedTeam,
+  upsertGlossarySummary,
+} from "./glossary-shared.js";
 import { openLocalFilePicker } from "./local-file-picker.js";
 import {
   createUniqueRemoteGlossaryRepoForTeam,
   getGlossarySyncIssueMessage,
   listLocalGlossarySummariesForTeam,
+  listRemoteGlossaryReposForTeam,
   permanentlyDeleteRemoteGlossaryRepoForTeam,
   syncGlossaryReposForTeam,
 } from "./glossary-repo-flow.js";
@@ -183,6 +189,91 @@ function markGlossaryAsLocalOnly(team, glossary, render) {
   return localOnlyGlossary;
 }
 
+function findMatchingRemoteGlossaryForPendingCreate(glossary, remoteRepos) {
+  if (!glossary || !Array.isArray(remoteRepos)) {
+    return null;
+  }
+
+  if (Number.isFinite(glossary.repoId)) {
+    const byRepoId = remoteRepos.find((remoteRepo) => remoteRepo?.repoId === glossary.repoId);
+    if (byRepoId) {
+      return byRepoId;
+    }
+  }
+
+  if (typeof glossary.nodeId === "string" && glossary.nodeId.trim()) {
+    const byNodeId = remoteRepos.find((remoteRepo) =>
+      typeof remoteRepo?.nodeId === "string" && remoteRepo.nodeId.trim() === glossary.nodeId.trim(),
+    );
+    if (byNodeId) {
+      return byNodeId;
+    }
+  }
+
+  if (typeof glossary.fullName === "string" && glossary.fullName.trim()) {
+    const byFullName = remoteRepos.find((remoteRepo) =>
+      typeof remoteRepo?.fullName === "string" && remoteRepo.fullName.trim() === glossary.fullName.trim(),
+    );
+    if (byFullName) {
+      return byFullName;
+    }
+  }
+
+  if (typeof glossary.repoName === "string" && glossary.repoName.trim()) {
+    return remoteRepos.find((remoteRepo) =>
+      typeof remoteRepo?.name === "string" && remoteRepo.name.trim() === glossary.repoName.trim(),
+    ) ?? null;
+  }
+
+  return null;
+}
+
+async function finalizePendingGlossarySetup(render, team, glossary, remoteRepo) {
+  const currentGlossary = currentGlossarySnapshot(glossary);
+  const glossaryId = currentGlossary?.id ?? currentGlossary?.glossaryId ?? null;
+
+  if (
+    remoteRepo?.name
+    && currentGlossary?.repoName
+    && remoteRepo.name !== currentGlossary.repoName
+  ) {
+    await invoke("rename_local_gtms_glossary_repo", {
+      input: {
+        installationId: team.installationId,
+        glossaryId,
+        fromRepoName: currentGlossary.repoName,
+        toRepoName: remoteRepo.name,
+      },
+    });
+  }
+
+  const linkedGlossary = commitLocalGlossarySummary(team, {
+    ...currentGlossary,
+    repoName: remoteRepo.name,
+    remoteState: "linked",
+    resolutionState: "",
+  }, remoteRepo) ?? {
+    ...currentGlossary,
+    repoName: remoteRepo.name,
+    remoteState: "linked",
+    resolutionState: "",
+  };
+  updateCurrentGlossaryRepoName(glossaryId, remoteRepo.name);
+  render();
+
+  await upsertGlossaryMetadataRecord(
+    team,
+    linkedGlossaryMetadataRecord(currentGlossarySnapshot(linkedGlossary), remoteRepo),
+  );
+  await prepareLocalGlossaryRepo(team, remoteRepo, glossaryId);
+
+  const snapshots = await syncGlossaryReposForTeam(team, [remoteRepo]);
+  const syncIssue = getGlossarySyncIssueMessage(snapshots);
+  if (syncIssue?.message) {
+    showNoticeBadge(syncIssue.message, render, 3200);
+  }
+}
+
 function syncGlossaryInBackground(render, team, glossary, preferredBaseRepoName) {
   void (async () => {
     const glossaryId = glossary?.id ?? glossary?.glossaryId ?? null;
@@ -325,6 +416,82 @@ export function openGlossaryCreation(render) {
     targetLanguageCode: "",
   };
   render();
+}
+
+export async function resumePendingGlossarySetup(render, glossaryId) {
+  const team = selectedTeam();
+  const glossary = currentGlossarySnapshot(
+    state.glossaries.find((item) => item.id === glossaryId) ?? null,
+  );
+
+  if (!glossary) {
+    showNoticeBadge("Could not find the selected glossary.", render);
+    return;
+  }
+
+  if (!Number.isFinite(team?.installationId)) {
+    showNoticeBadge("Could not determine the selected team.", render);
+    return;
+  }
+
+  if (state.offline?.isEnabled === true) {
+    showNoticeBadge("You cannot resume glossary setup while offline.", render);
+    return;
+  }
+
+  if (!canPermanentlyDeleteGlossaries(team)) {
+    showNoticeBadge("You do not have permission to resume glossary setup in this team.", render);
+    return;
+  }
+
+  if (glossary.remoteState !== "pendingCreate" && glossary.resolutionState !== "pendingCreate") {
+    showNoticeBadge("This glossary is no longer waiting for setup recovery.", render);
+    return;
+  }
+
+  if (state.glossarySyncInFlightIds.has(glossary.id)) {
+    showNoticeBadge("This glossary setup is already running.", render, 2200);
+    return;
+  }
+
+  markGlossarySyncInFlight(glossary.id);
+  let handedOffToBackgroundCreate = false;
+
+  try {
+    const remoteRepos = await listRemoteGlossaryReposForTeam(team);
+    const matchedRemoteRepo = findMatchingRemoteGlossaryForPendingCreate(
+      currentGlossarySnapshot(glossary),
+      remoteRepos,
+    );
+
+    if (!matchedRemoteRepo) {
+      handedOffToBackgroundCreate = true;
+      clearGlossarySyncInFlight(glossary.id);
+      syncGlossaryInBackground(
+        render,
+        team,
+        currentGlossarySnapshot(glossary),
+        currentGlossarySnapshot(glossary)?.repoName ?? "",
+      );
+      showNoticeBadge("Resuming GitHub setup for this glossary...", render, 2200);
+      return;
+    }
+
+    await finalizePendingGlossarySetup(render, team, glossary, matchedRemoteRepo);
+    showNoticeBadge("Finished recovering this pending glossary setup.", render, 2200);
+  } catch (error) {
+    showNoticeBadge(
+      `Could not resume this glossary setup: ${error?.message ?? String(error)}`,
+      render,
+      3200,
+    );
+    render();
+  } finally {
+    if (!handedOffToBackgroundCreate) {
+      clearGlossarySyncInFlight(glossary.id);
+      render();
+    }
+  }
 }
 
 export function cancelGlossaryCreation(render) {

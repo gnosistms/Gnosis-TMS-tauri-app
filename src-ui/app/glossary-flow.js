@@ -31,6 +31,7 @@ export {
   cancelGlossaryCreation,
   importGlossaryFromTmx,
   openGlossaryCreation,
+  resumePendingGlossarySetup,
   submitGlossaryCreation,
   updateGlossaryCreationField,
 } from "./glossary-import-flow.js";

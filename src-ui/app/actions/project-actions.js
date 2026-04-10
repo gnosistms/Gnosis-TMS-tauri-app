@@ -17,6 +17,7 @@ import {
   permanentlyDeleteProject,
   repairProjectRepoBinding,
   rebuildProjectLocalRepo,
+  resumePendingProjectSetup,
   restoreChapter,
   restoreProject,
   submitChapterRename,
@@ -96,6 +97,11 @@ export function createProjectActions(render) {
       prefix: "rebuild-project-repo:",
       handler: async (projectId, event) =>
         runWithImmediateLoading(event, "Rebuilding...", () => rebuildProjectLocalRepo(render, projectId)),
+    },
+    {
+      prefix: "resume-pending-project:",
+      handler: async (projectId, event) =>
+        runWithImmediateLoading(event, "Resuming...", () => resumePendingProjectSetup(render, projectId)),
     },
     {
       prefix: "restore-project:",

@@ -148,7 +148,7 @@ function renderProjectCard(project, expanded, options = {}) {
     : localRepoSetupPending && files.length === 0
       ? "Setting up local repo..."
       : `${files.length} file${files.length === 1 ? "" : "s"}`;
-  const resolutionMarkup = resolution && resolution.key !== "pendingCreate"
+  const resolutionMarkup = resolution
     ? renderInlineStateBox({
         tone: resolution.tone,
         message: resolution.message,

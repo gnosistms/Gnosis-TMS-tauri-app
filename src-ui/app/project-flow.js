@@ -302,6 +302,95 @@ function linkedProjectMetadataRecord(project, remoteProject) {
   };
 }
 
+function findMatchingRemoteProjectForPendingCreate(project, remoteProjects) {
+  if (!project || !Array.isArray(remoteProjects)) {
+    return null;
+  }
+
+  if (Number.isFinite(project.repoId)) {
+    const byRepoId = remoteProjects.find((remoteProject) => remoteProject?.repoId === project.repoId);
+    if (byRepoId) {
+      return byRepoId;
+    }
+  }
+
+  if (typeof project.nodeId === "string" && project.nodeId.trim()) {
+    const byNodeId = remoteProjects.find((remoteProject) =>
+      typeof remoteProject?.nodeId === "string" && remoteProject.nodeId.trim() === project.nodeId.trim(),
+    );
+    if (byNodeId) {
+      return byNodeId;
+    }
+  }
+
+  if (typeof project.fullName === "string" && project.fullName.trim()) {
+    const byFullName = remoteProjects.find((remoteProject) =>
+      typeof remoteProject?.fullName === "string" && remoteProject.fullName.trim() === project.fullName.trim(),
+    );
+    if (byFullName) {
+      return byFullName;
+    }
+  }
+
+  if (typeof project.name === "string" && project.name.trim()) {
+    return remoteProjects.find((remoteProject) =>
+      typeof remoteProject?.name === "string" && remoteProject.name.trim() === project.name.trim(),
+    ) ?? null;
+  }
+
+  return null;
+}
+
+async function finalizePendingProjectSetup(render, selectedTeam, project, remoteProject) {
+  const currentProject = currentProjectSnapshot(project);
+  const projectId = currentProject?.id ?? project?.id ?? null;
+  const linkedProject = {
+    ...currentProject,
+    ...remoteProject,
+    chapters: Array.isArray(currentProject?.chapters) ? currentProject.chapters : [],
+    isPendingCreate: false,
+    pendingCreateStartedAt: undefined,
+    pendingCreateStatusText: undefined,
+    remoteState: "linked",
+    resolutionState: "",
+  };
+
+  if (typeof projectId === "string" && projectId.trim()) {
+    setProjectRepoSyncSnapshot(projectId, {
+      status: "syncing",
+      message: "Finishing project setup...",
+    });
+  }
+
+  await upsertProjectMetadataRecord(
+    selectedTeam,
+    linkedProjectMetadataRecord(currentProject, remoteProject),
+  );
+  replaceVisibleProject(projectId, linkedProject);
+  persistProjectsForTeam(selectedTeam);
+  render();
+
+  await reconcileProjectRepoSyncStates(render, selectedTeam, [{
+    ...linkedProject,
+    allowPendingCreateSync: true,
+  }]);
+  await refreshProjectFilesFromDisk(render, selectedTeam, [linkedProject]);
+
+  const latestProject = currentProjectSnapshot(linkedProject);
+  replaceVisibleProject(projectId, {
+    ...latestProject,
+    ...remoteProject,
+    chapters: Array.isArray(latestProject?.chapters) ? latestProject.chapters : [],
+    isPendingCreate: false,
+    pendingCreateStartedAt: undefined,
+    pendingCreateStatusText: undefined,
+    remoteState: "linked",
+    resolutionState: "",
+  });
+  persistProjectsForTeam(selectedTeam);
+  render();
+}
+
 function reserveLocalProjectRepoName(baseRepoName) {
   const usedRepoNames = new Set(
     [...(state.projects ?? []), ...(state.deletedProjects ?? [])]
@@ -1699,6 +1788,78 @@ export async function submitProjectCreation(render) {
     state.projectCreation.status = "idle";
     state.projectCreation.error = error?.message ?? String(error);
     render();
+  }
+}
+
+export async function resumePendingProjectSetup(render, projectId) {
+  const selectedTeam = selectedProjectsTeam();
+  const project =
+    state.projects.find((item) => item.id === projectId)
+    ?? state.deletedProjects.find((item) => item.id === projectId)
+    ?? null;
+
+  if (!project) {
+    showNoticeBadge("Could not find the selected project.", render);
+    return;
+  }
+
+  if (!ensureChapterMutationAllowed(render, {
+    selectedTeam,
+    actionLabel: "resume project setup",
+    requireDelete: true,
+  })) {
+    return;
+  }
+
+  if (project.remoteState !== "pendingCreate" && project.resolutionState !== "pendingCreate") {
+    showNoticeBadge("This project is no longer waiting for setup recovery.", render);
+    return;
+  }
+
+  if (state.projectCreationInFlightIds.has(project.id)) {
+    showNoticeBadge("This project setup is already running.", render, 2200);
+    return;
+  }
+
+  markProjectCreationInFlight(project.id);
+  let handedOffToBackgroundCreate = false;
+
+  try {
+    const remoteProjects = await invoke("list_gnosis_projects_for_installation", {
+      installationId: selectedTeam.installationId,
+      sessionToken: requireBrokerSession(),
+    });
+    const matchedRemoteProject = findMatchingRemoteProjectForPendingCreate(
+      currentProjectSnapshot(project),
+      Array.isArray(remoteProjects) ? remoteProjects : [],
+    );
+
+    if (!matchedRemoteProject) {
+      handedOffToBackgroundCreate = true;
+      syncProjectInBackground(
+        render,
+        selectedTeam,
+        currentProjectSnapshot(project),
+        currentProjectSnapshot(project)?.name ?? "",
+      );
+      showNoticeBadge("Resuming GitHub setup for this project...", render, 2200);
+      return;
+    }
+
+    await finalizePendingProjectSetup(render, selectedTeam, project, matchedRemoteProject);
+    showNoticeBadge("Finished recovering this pending project setup.", render, 2200);
+  } catch (error) {
+    showNoticeBadge(
+      `Could not resume this project setup: ${error?.message ?? String(error)}`,
+      render,
+      3200,
+    );
+    render();
+  } finally {
+    if (!handedOffToBackgroundCreate) {
+      clearProjectCreationInFlight(project.id);
+      render();
+    }
   }
 }
 
