@@ -1,11 +1,19 @@
 function createProjectRecordMaps(projects = []) {
   const byId = new Map();
+  const byRepoId = new Map();
+  const byNodeId = new Map();
   const byRepoName = new Map();
   const byFullName = new Map();
 
   for (const project of Array.isArray(projects) ? projects : []) {
     if (typeof project?.id === "string" && project.id.trim()) {
       byId.set(project.id, project);
+    }
+    if (Number.isFinite(project?.repoId)) {
+      byRepoId.set(project.repoId, project);
+    }
+    if (typeof project?.nodeId === "string" && project.nodeId.trim()) {
+      byNodeId.set(project.nodeId, project);
     }
     if (typeof project?.name === "string" && project.name.trim()) {
       byRepoName.set(project.name, project);
@@ -15,7 +23,7 @@ function createProjectRecordMaps(projects = []) {
     }
   }
 
-  return { byId, byRepoName, byFullName };
+  return { byId, byRepoId, byNodeId, byRepoName, byFullName };
 }
 
 function createRepairIssueMaps(repairIssues = []) {
@@ -58,6 +66,14 @@ function findMatchingProjectRecord(record, projectMaps) {
   const byId = projectMaps.byId.get(record.id);
   if (byId) {
     return byId;
+  }
+
+  if (Number.isFinite(record.githubRepoId) && projectMaps.byRepoId.has(record.githubRepoId)) {
+    return projectMaps.byRepoId.get(record.githubRepoId);
+  }
+
+  if (typeof record.githubNodeId === "string" && record.githubNodeId.trim() && projectMaps.byNodeId.has(record.githubNodeId)) {
+    return projectMaps.byNodeId.get(record.githubNodeId);
   }
 
   if (projectMaps.byFullName.has(record.fullName)) {

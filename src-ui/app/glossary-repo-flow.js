@@ -12,6 +12,7 @@ import {
   lookupLocalMetadataTombstone,
   repairAutoRepairableRepoBindings,
   repairLocalRepoBinding,
+  upsertGlossaryMetadataRecord,
 } from "./team-metadata-flow.js";
 import { mergeMetadataBackedGlossarySummaries } from "./glossary-discovery.js";
 
@@ -40,6 +41,72 @@ function normalizeGlossaryBrokerError(error) {
   }
 
   return new Error(String(error ?? "Unknown glossary broker error."));
+}
+
+async function repairGlossaryMetadataFromRemoteRename(team, metadataRecords, remoteRepos) {
+  const remoteByRepoId = new Map(
+    (Array.isArray(remoteRepos) ? remoteRepos : [])
+      .filter((repo) => Number.isFinite(repo?.repoId))
+      .map((repo) => [repo.repoId, repo]),
+  );
+  const remoteByNodeId = new Map(
+    (Array.isArray(remoteRepos) ? remoteRepos : [])
+      .filter((repo) => typeof repo?.nodeId === "string" && repo.nodeId.trim())
+      .map((repo) => [repo.nodeId, repo]),
+  );
+  const repairWrites = [];
+
+  for (const record of Array.isArray(metadataRecords) ? metadataRecords : []) {
+    if (record?.recordState !== "live" || record?.remoteState !== "linked") {
+      continue;
+    }
+
+    const remoteRepo =
+      (Number.isFinite(record?.githubRepoId) ? remoteByRepoId.get(record.githubRepoId) : null)
+      ?? ((typeof record?.githubNodeId === "string" && record.githubNodeId.trim()) ? remoteByNodeId.get(record.githubNodeId) : null)
+      ?? null;
+    if (!remoteRepo) {
+      continue;
+    }
+
+    const repoNameChanged = typeof remoteRepo.name === "string" && remoteRepo.name.trim() && remoteRepo.name !== record.repoName;
+    const fullNameChanged = typeof remoteRepo.fullName === "string" && remoteRepo.fullName.trim() && remoteRepo.fullName !== record.fullName;
+    const branchChanged = typeof remoteRepo.defaultBranchName === "string" && remoteRepo.defaultBranchName.trim() && remoteRepo.defaultBranchName !== record.defaultBranch;
+    if (!repoNameChanged && !fullNameChanged && !branchChanged) {
+      continue;
+    }
+
+    const previousRepoNames = [
+      ...(Array.isArray(record.previousRepoNames) ? record.previousRepoNames : []),
+      ...(repoNameChanged ? [record.repoName] : []),
+    ];
+    repairWrites.push(
+      upsertGlossaryMetadataRecord(team, {
+        glossaryId: record.id,
+        title: record.title,
+        repoName: remoteRepo.name ?? record.repoName,
+        previousRepoNames,
+        githubRepoId: remoteRepo.repoId ?? record.githubRepoId ?? null,
+        githubNodeId: remoteRepo.nodeId ?? record.githubNodeId ?? null,
+        fullName: remoteRepo.fullName ?? record.fullName ?? null,
+        defaultBranch: remoteRepo.defaultBranchName ?? record.defaultBranch ?? "main",
+        lifecycleState: record.lifecycleState,
+        remoteState: record.remoteState,
+        recordState: record.recordState,
+        deletedAt: record.deletedAt ?? null,
+        sourceLanguage: record.sourceLanguage ?? null,
+        targetLanguage: record.targetLanguage ?? null,
+        termCount: Number.isFinite(record.termCount) ? record.termCount : 0,
+      }).catch(() => null),
+    );
+  }
+
+  if (repairWrites.length > 0) {
+    await Promise.all(repairWrites);
+    return true;
+  }
+
+  return false;
 }
 
 function normalizeRemoteGlossaryRepo(repo) {
@@ -513,6 +580,12 @@ export async function loadRepoBackedGlossariesForTeam(team, options = {}) {
   try {
     remoteRepos = await listRemoteGlossaryReposForTeam(team);
     remoteLoaded = true;
+    if (metadataLoaded) {
+      const metadataRepaired = await repairGlossaryMetadataFromRemoteRename(team, metadataRecords, remoteRepos);
+      if (metadataRepaired) {
+        metadataRecords = await listGlossaryMetadataRecords(team).catch(() => metadataRecords);
+      }
+    }
   } catch (error) {
     if (glossaryBrokerRouteUnavailable(error) || error?.message === GLOSSARY_BROKER_ROUTE_UNAVAILABLE_MESSAGE) {
       if (metadataRecords.length > 0) {

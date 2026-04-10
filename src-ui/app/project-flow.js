@@ -100,6 +100,70 @@ function countRecoverableProjectMetadataRecords(records) {
   ).length;
 }
 
+async function repairProjectMetadataFromRemoteRename(selectedTeam, metadataRecords, remoteProjects) {
+  const remoteByRepoId = new Map(
+    (Array.isArray(remoteProjects) ? remoteProjects : [])
+      .filter((project) => Number.isFinite(project?.repoId))
+      .map((project) => [project.repoId, project]),
+  );
+  const remoteByNodeId = new Map(
+    (Array.isArray(remoteProjects) ? remoteProjects : [])
+      .filter((project) => typeof project?.nodeId === "string" && project.nodeId.trim())
+      .map((project) => [project.nodeId, project]),
+  );
+  const repairWrites = [];
+
+  for (const record of Array.isArray(metadataRecords) ? metadataRecords : []) {
+    if (record?.recordState !== "live" || record?.remoteState !== "linked") {
+      continue;
+    }
+
+    const remoteProject =
+      (Number.isFinite(record?.githubRepoId) ? remoteByRepoId.get(record.githubRepoId) : null)
+      ?? ((typeof record?.githubNodeId === "string" && record.githubNodeId.trim()) ? remoteByNodeId.get(record.githubNodeId) : null)
+      ?? null;
+    if (!remoteProject) {
+      continue;
+    }
+
+    const repoNameChanged = typeof remoteProject.name === "string" && remoteProject.name.trim() && remoteProject.name !== record.repoName;
+    const fullNameChanged = typeof remoteProject.fullName === "string" && remoteProject.fullName.trim() && remoteProject.fullName !== record.fullName;
+    const branchChanged = typeof remoteProject.defaultBranchName === "string" && remoteProject.defaultBranchName.trim() && remoteProject.defaultBranchName !== record.defaultBranch;
+    if (!repoNameChanged && !fullNameChanged && !branchChanged) {
+      continue;
+    }
+
+    const previousRepoNames = [
+      ...(Array.isArray(record.previousRepoNames) ? record.previousRepoNames : []),
+      ...(repoNameChanged ? [record.repoName] : []),
+    ];
+    repairWrites.push(
+      upsertProjectMetadataRecord(selectedTeam, {
+        projectId: record.id,
+        title: record.title,
+        repoName: remoteProject.name ?? record.repoName,
+        previousRepoNames,
+        githubRepoId: remoteProject.repoId ?? record.githubRepoId ?? null,
+        githubNodeId: remoteProject.nodeId ?? record.githubNodeId ?? null,
+        fullName: remoteProject.fullName ?? record.fullName ?? null,
+        defaultBranch: remoteProject.defaultBranchName ?? record.defaultBranch ?? "main",
+        lifecycleState: record.lifecycleState,
+        remoteState: record.remoteState,
+        recordState: record.recordState,
+        deletedAt: record.deletedAt ?? null,
+        chapterCount: Number.isFinite(record.chapterCount) ? record.chapterCount : 0,
+      }).catch(() => null),
+    );
+  }
+
+  if (repairWrites.length > 0) {
+    await Promise.all(repairWrites);
+    return true;
+  }
+
+  return false;
+}
+
 function ensureChapterMutationAllowed(
   render,
   { selectedTeam = selectedProjectsTeam(), actionLabel = "modify files", requireDelete = false } = {},
@@ -1204,7 +1268,7 @@ export async function loadTeamProjects(render, teamId = state.selectedTeamId) {
       ? (Array.isArray(projectsResult.value) ? projectsResult.value : [])
       : [];
     const remoteLoaded = projectsResult.status === "fulfilled";
-    const projectMetadataRecords =
+    let projectMetadataRecords =
       metadataResult.status === "fulfilled"
         ? metadataResult.value
         : [];
@@ -1217,6 +1281,12 @@ export async function loadTeamProjects(render, teamId = state.selectedTeamId) {
       await repairAutoRepairableRepoBindings(selectedTeam, repairIssues);
       const refreshedRepairResult = await inspectAndMigrateLocalRepoBindings(selectedTeam).catch(() => null);
       repairIssues = refreshedRepairResult?.issues ?? repairIssues;
+    }
+    if (remoteLoaded && metadataLoaded) {
+      const metadataRepaired = await repairProjectMetadataFromRemoteRename(selectedTeam, projectMetadataRecords, remoteProjects);
+      if (metadataRepaired) {
+        projectMetadataRecords = await listProjectMetadataRecords(selectedTeam).catch(() => projectMetadataRecords);
+      }
     }
     const recoverableMetadataCount = countRecoverableProjectMetadataRecords(projectMetadataRecords);
     if (

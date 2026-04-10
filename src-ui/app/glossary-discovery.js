@@ -119,7 +119,15 @@ function findMatchingLocalGlossary(record, localById, localByRepoName) {
   return null;
 }
 
-function findMatchingRemoteGlossary(record, remoteByRepoName, remoteByFullName) {
+function findMatchingRemoteGlossary(record, remoteByRepoName, remoteByFullName, remoteByRepoId, remoteByNodeId) {
+  if (Number.isFinite(record.githubRepoId) && remoteByRepoId.has(record.githubRepoId)) {
+    return remoteByRepoId.get(record.githubRepoId);
+  }
+
+  if (record.githubNodeId && remoteByNodeId.has(record.githubNodeId)) {
+    return remoteByNodeId.get(record.githubNodeId);
+  }
+
   if (record.fullName && remoteByFullName.has(record.fullName)) {
     return remoteByFullName.get(record.fullName);
   }
@@ -152,16 +160,25 @@ export function mergeMetadataBackedGlossarySummaries(
     .filter(Boolean);
   const localById = new Map(normalizedLocals.map((glossary) => [glossary.id, glossary]));
   const localByRepoName = new Map(normalizedLocals.map((glossary) => [glossary.repoName, glossary]));
+  const normalizedRemotes = (Array.isArray(remoteRepos) ? remoteRepos : [])
+    .map(normalizeRemoteGlossaryRepo)
+    .filter(Boolean);
+  const remoteByRepoId = new Map(
+    normalizedRemotes
+      .filter((repo) => Number.isFinite(repo.repoId))
+      .map((repo) => [repo.repoId, repo]),
+  );
+  const remoteByNodeId = new Map(
+    normalizedRemotes
+      .filter((repo) => typeof repo.nodeId === "string" && repo.nodeId.trim())
+      .map((repo) => [repo.nodeId, repo]),
+  );
   const remoteByRepoName = new Map(
-    (Array.isArray(remoteRepos) ? remoteRepos : [])
-      .map(normalizeRemoteGlossaryRepo)
-      .filter(Boolean)
+    normalizedRemotes
       .map((repo) => [repo.name, repo]),
   );
   const remoteByFullName = new Map(
-    (Array.isArray(remoteRepos) ? remoteRepos : [])
-      .map(normalizeRemoteGlossaryRepo)
-      .filter(Boolean)
+    normalizedRemotes
       .map((repo) => [repo.fullName, repo]),
   );
   const matchedLocalIds = new Set();
@@ -184,7 +201,7 @@ export function mergeMetadataBackedGlossarySummaries(
 
     const localGlossary = findMatchingLocalGlossary(record, localById, localByRepoName);
     const remoteGlossary =
-      findMatchingRemoteGlossary(record, remoteByRepoName, remoteByFullName)
+      findMatchingRemoteGlossary(record, remoteByRepoName, remoteByFullName, remoteByRepoId, remoteByNodeId)
       ?? metadataBackedGlossaryRepo(record);
 
     if (localGlossary) {

@@ -89,3 +89,38 @@ test("glossary discovery surfaces repair issues from local repo scans", () => {
   assert.equal(merged[0].resolutionState, "repair");
   assert.match(merged[0].repairIssueMessage, /local repo is missing/i);
 });
+
+test("glossary discovery matches renamed remote repos by stable github repo identity", () => {
+  const merged = mergeMetadataBackedGlossarySummaries(
+    [],
+    [
+      {
+        id: "glossary-1",
+        title: "Glossary 1",
+        repoName: "old-glossary-name",
+        lifecycleState: "active",
+        remoteState: "linked",
+        recordState: "live",
+        fullName: "team/old-glossary-name",
+        githubRepoId: 84,
+      },
+    ],
+    [
+      {
+        repoId: 84,
+        name: "new-glossary-name",
+        fullName: "team/new-glossary-name",
+      },
+    ],
+    {
+      metadataLoaded: true,
+      remoteLoaded: true,
+    },
+  );
+
+  assert.equal(merged.length, 1);
+  assert.equal(merged[0].remoteState, "linked");
+  assert.equal(merged[0].resolutionState, "");
+  assert.equal(merged[0].repoId, 84);
+  assert.equal(merged[0].fullName, "team/new-glossary-name");
+});

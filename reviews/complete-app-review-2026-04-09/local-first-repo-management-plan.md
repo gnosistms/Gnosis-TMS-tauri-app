@@ -267,15 +267,15 @@ Status on 2026-04-10:
 - background reconciliation now repairs `origin` for projects and glossaries, and project sync can handle empty remotes
 - explicit repair actions now exist for repairable local binding/origin issues
 - missing-local-repo repair states now route to rebuild actions instead of the generic binding repair path
-- remaining gap: deeper remote mismatch recovery is still incomplete, especially out-of-band remote rename/delete cases
+- remaining gap: interrupted-create recovery still needs to be tightened so incomplete remote setup does not leave ambiguous local pending state after relaunch
 
 - make page loads read local metadata + local repos first
 - remove remaining repo-name-driven discovery shortcuts
 - background remote reconciliation should:
   - attach/fix `origin`
-  - repair missing remote identifiers
+  - fill in missing remote identifiers created by interrupted local-first create flows
   - refresh remote head/default branch
-  - surface repairable mismatch states
+  - surface interrupted-create recovery state when the remote repo was not fully created yet
 - keep the page usable even if remote reconciliation is slow or temporarily failing
 
 Expected outcome:
@@ -292,27 +292,28 @@ Status on 2026-04-10:
 - repair issues are surfaced into discovery/UI state as explicit `repair` resolutions
 - added explicit repair commands plus user-facing repair actions for repairable local binding/origin issues
 - repair actions are now split so missing local repos use rebuild actions while binding/origin problems use the direct repair command
-- remaining gap: persistent conflicts like out-of-band remote rename or missing remote linkage still need deeper guided repair flows
+- remaining gap: narrow the repair model so it focuses on interrupted create/setup flows instead of broad owner-caused remote mutation recovery
 
 - add a repair command for:
   - missing `origin`
-  - remote repo renamed out-of-band
-  - metadata/remote mismatch
+  - incomplete remote setup after local-first create
+  - missing remote identifiers caused by interrupted create replay
 - add migration for existing installations to local metadata repo + resource-ID paths
-- add explicit user-facing repair flows for persistent conflict states
+- add explicit user-facing recovery flows for pending resources whose create operation stopped before remote completion
+- treat owner-caused remote delete/rename/transfer/permission changes as hard errors to report, not states to auto-repair
 
 Expected outcome:
 
-- local-first repo management is robust enough to recover from partial failures without manual file surgery
+- local-first repo management is robust enough to recover from interrupted create flows without manual file surgery
 
 ## Testing Plan
 
 - create two resources locally with the same desired repo name and verify only remote naming is disambiguated
 - create a resource locally, kill the app before remote create finishes, relaunch, and verify replay continues from local metadata
 - soft-delete then immediately permanently delete while background sync is still running and verify the tombstone wins
-- manually delete a remote repo while local metadata says live and verify the app surfaces repair state without resurrecting deleted resources
 - manually leave a stale local repo behind after tombstone and verify the tombstone gate purges it before display
 - delete the full `installations` folder and verify the app rebuilds local metadata and resource repos from GitHub where possible
+- simulate a local-first create that wrote metadata and local repo but never received the remote repo identity, then verify recovery completes or fails with a clear owner-facing error
 - run:
   - `npm test`
   - `npm run build`

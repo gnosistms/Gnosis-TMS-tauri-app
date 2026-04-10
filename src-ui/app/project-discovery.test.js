@@ -122,3 +122,38 @@ test("project discovery surfaces repair issues from local repo scans", () => {
   assert.equal(merged[0].resolutionState, "repair");
   assert.match(merged[0].repairIssueMessage, /local repo is missing/i);
 });
+
+test("project discovery matches renamed remote repos by stable github repo identity", () => {
+  const merged = mergeMetadataDiscoveryProjects({
+    metadataRecords: [
+      {
+        id: "project-1",
+        title: "Project 1",
+        repoName: "old-project-name",
+        lifecycleState: "active",
+        remoteState: "linked",
+        recordState: "live",
+        fullName: "team/old-project-name",
+        githubRepoId: 42,
+      },
+    ],
+    remoteProjects: [
+      {
+        id: "project-remote",
+        repoId: 42,
+        name: "new-project-name",
+        title: "Project 1",
+        fullName: "team/new-project-name",
+      },
+    ],
+    localProjects: [],
+    metadataLoaded: true,
+    remoteLoaded: true,
+  });
+
+  assert.equal(merged.length, 1);
+  assert.equal(merged[0].remoteState, "linked");
+  assert.equal(merged[0].resolutionState, "");
+  assert.equal(merged[0].repoId, 42);
+  assert.equal(merged[0].fullName, "team/new-project-name");
+});
