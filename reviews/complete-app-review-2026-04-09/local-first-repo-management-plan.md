@@ -206,6 +206,7 @@ Status on 2026-04-10:
 - glossary permanent delete now intentionally follows the same sync/debug lifecycle pattern as projects instead of using a looser page-refresh-only path
 - pending-create resume and auto-resume orchestration now also flows through a shared helper for projects and glossaries
 - create-modal open/update plumbing now also flows through shared form-modal helpers for projects and glossaries
+- the metadata-first local bootstrap sequence for project creation and glossary creation now also flows through a shared helper, with resource adapters for reservation rules, metadata records, and local repo initialization
 - projects and glossaries still have a few resource-specific reload/failure callbacks and some higher-level lifecycle wrappers, so the full adapter-based shared state machine is not finished
 - remaining intended-model cleanup:
   - projects and glossaries should share the same top-level lifecycle model
@@ -237,6 +238,7 @@ Status on 2026-04-10:
 - project creation is now local metadata first, local repo first, visible immediately, then remote creation/sync in the background
 - project background reconciliation now repairs `origin` and can push the first local commit into an empty remote repo
 - create-modal/open/update UI plumbing is now partially shared, but the actual local repo/bootstrap/create execution path is still separate
+- create execution is now partially shared through a common local-first bootstrap helper, but project/glossary create still use separate validation fields and separate post-create editor/load behavior
 
 - write `pendingCreate` to local metadata first
 - initialize local repo first

@@ -34,6 +34,7 @@ import {
   autoResumePendingResources,
   resumePendingResourceSetup,
 } from "./resource-pending-create.js";
+import { runLocalFirstCreate } from "./resource-create-flow.js";
 
 function detectGlossaryImportFileType(fileName) {
   const normalized = String(fileName || "").trim().toLowerCase();
@@ -577,93 +578,82 @@ export async function submitGlossaryCreation(render) {
   render();
   await waitForNextPaint();
 
-  let localRepoName = "";
-  let glossary = null;
-  let localNameCollisionResolved = false;
   const glossaryId = crypto.randomUUID();
-  let metadataIntentCommitted = false;
   try {
-    const localRepoReservation = await reserveLocalGlossaryRepoName(team, repoName);
-    localRepoName = localRepoReservation.repoName;
-    localNameCollisionResolved = localRepoReservation.collisionResolved === true;
-    await upsertGlossaryMetadataRecord(team, pendingGlossaryMetadataRecord({
-      id: glossaryId,
-      repoName: localRepoName,
-      title,
-      sourceLanguage,
-      targetLanguage,
-      termCount: 0,
-    }));
-    metadataIntentCommitted = true;
-    await invoke("prepare_local_gtms_glossary_repo", {
-      input: {
-        installationId: team.installationId,
-        glossaryId,
+    const createResult = await runLocalFirstCreate({
+      reserveLocalRepo: async () => reserveLocalGlossaryRepoName(team, repoName),
+      commitPendingMetadata: (localRepoName) => upsertGlossaryMetadataRecord(team, pendingGlossaryMetadataRecord({
+        id: glossaryId,
         repoName: localRepoName,
-      },
-    });
-    glossary = await invoke("initialize_gtms_glossary_repo", {
-      input: {
-        installationId: team.installationId,
-        repoName: localRepoName,
-        glossaryId,
         title,
-        sourceLanguageCode: sourceLanguage.code,
-        sourceLanguageName: sourceLanguage.name,
-        targetLanguageCode: targetLanguage.code,
-        targetLanguageName: targetLanguage.name,
-      },
-    });
-  } catch (error) {
-    if (localRepoName && !glossary) {
-      try {
-        await invoke("purge_local_gtms_glossary_repo", {
+        sourceLanguage,
+        targetLanguage,
+        termCount: 0,
+      })),
+      initializeLocalResource: async (localRepoName) => {
+        await invoke("prepare_local_gtms_glossary_repo", {
           input: {
             installationId: team.installationId,
             glossaryId,
             repoName: localRepoName,
           },
         });
-      } catch {
-        // Ignore local cleanup failures while surfacing the primary creation error.
-      }
+        return invoke("initialize_gtms_glossary_repo", {
+          input: {
+            installationId: team.installationId,
+            repoName: localRepoName,
+            glossaryId,
+            title,
+            sourceLanguageCode: sourceLanguage.code,
+            sourceLanguageName: sourceLanguage.name,
+            targetLanguageCode: targetLanguage.code,
+            targetLanguageName: targetLanguage.name,
+          },
+        });
+      },
+      purgeLocalRepo: (localRepoName) => invoke("purge_local_gtms_glossary_repo", {
+        input: {
+          installationId: team.installationId,
+          glossaryId,
+          repoName: localRepoName,
+        },
+      }),
+      rollbackPendingMetadata: (error) =>
+        rollbackPendingGlossaryMetadataOnLocalFailure(team, glossaryId, error),
+    });
+
+    const glossary = createResult.createdResource;
+    const localRepoName = createResult.localRepoName;
+    state.glossaryCreation.status = "idle";
+    resetGlossaryCreation();
+    const committedGlossary = commitLocalGlossarySummary(team, {
+      ...glossary,
+      remoteState: "pendingCreate",
+      resolutionState: "pendingCreate",
+    }, null);
+    state.selectedGlossaryId = glossary.glossaryId;
+
+    try {
+      await openGlossaryEditor(render, glossary.glossaryId, { preferredGlossary: committedGlossary ?? glossary });
+      syncGlossaryInBackground(render, team, committedGlossary ?? glossary, repoName);
+      showNoticeBadge(
+        createResult.localNameCollisionResolved
+          ? `Created glossary ${glossary.title} in local repo ${localRepoName} because that name was already used locally.`
+          : `Created glossary ${glossary.title}.`,
+        render,
+      );
+    } catch (error) {
+      showNoticeBadge(
+        `Created glossary ${glossary.title}, but the app could not refresh automatically: ${error?.message ?? String(error)}`,
+        render,
+      );
+      render();
     }
-    if (metadataIntentCommitted && !glossary) {
-      try {
-        await rollbackPendingGlossaryMetadataOnLocalFailure(team, glossaryId, error);
-      } catch (metadataRollbackError) {
-        error = metadataRollbackError;
-      }
-    }
+  } catch (error) {
     state.glossaryCreation.status = "idle";
     state.glossaryCreation.error = error?.message ?? String(error);
     render();
     return;
-  }
-
-  resetGlossaryCreation();
-  const committedGlossary = commitLocalGlossarySummary(team, {
-    ...glossary,
-    remoteState: "pendingCreate",
-    resolutionState: "pendingCreate",
-  }, null);
-  state.selectedGlossaryId = glossary.glossaryId;
-
-  try {
-    await openGlossaryEditor(render, glossary.glossaryId, { preferredGlossary: committedGlossary ?? glossary });
-    syncGlossaryInBackground(render, team, committedGlossary ?? glossary, repoName);
-    showNoticeBadge(
-      localNameCollisionResolved
-        ? `Created glossary ${glossary.title} in local repo ${localRepoName} because that name was already used locally.`
-        : `Created glossary ${glossary.title}.`,
-      render,
-    );
-  } catch (error) {
-    showNoticeBadge(
-      `Created glossary ${glossary.title}, but the app could not refresh automatically: ${error?.message ?? String(error)}`,
-      render,
-    );
-    render();
   }
 }
 

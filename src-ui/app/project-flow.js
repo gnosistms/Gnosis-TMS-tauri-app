@@ -83,6 +83,7 @@ import {
   autoResumePendingResources,
   resumePendingResourceSetup,
 } from "./resource-pending-create.js";
+import { runLocalFirstCreate } from "./resource-create-flow.js";
 
 function setProjectUiDebug(render, text) {
   showScopedSyncBadge("projects", text, render);
@@ -1750,64 +1751,77 @@ export async function submitProjectCreation(render) {
     state.projectCreation.error = "";
     render();
     await waitForNextPaint();
-    const localRepoReservation = reserveLocalProjectRepoName(repoName);
-    const pendingProject = buildPendingProjectRecord(
-      selectedTeam,
-      projectTitle,
-      localRepoReservation.repoName,
-    );
-    let metadataIntentCommitted = false;
+    const pendingProjectId = crypto.randomUUID();
+    let pendingProject = null;
     state.projectSyncVersion += 1;
     beginProjectsPageSync();
     setProjectUiDebug(render, "Initializing local project...");
-    replaceVisibleProject(pendingProject.id, pendingProject);
-    markProjectCreationInFlight(pendingProject.id);
-    persistProjectsForTeam(selectedTeam);
-    resetProjectCreation();
-    render();
-    await waitForNextPaint();
 
     try {
-      await upsertProjectMetadataRecord(selectedTeam, pendingProjectMetadataRecord(pendingProject));
-      metadataIntentCommitted = true;
-      await invoke("initialize_gtms_project_repo", {
-        input: {
-          installationId: selectedTeam.installationId,
-          projectId: pendingProject.id,
-          repoName: pendingProject.name,
-          title: projectTitle,
+      const createResult = await runLocalFirstCreate({
+        reserveLocalRepo: async () => reserveLocalProjectRepoName(repoName),
+        commitPendingMetadata: async (localRepoName) => {
+          pendingProject = buildPendingProjectRecord(
+            selectedTeam,
+            projectTitle,
+            localRepoName,
+          );
+          pendingProject.id = pendingProjectId;
+          replaceVisibleProject(pendingProject.id, pendingProject);
+          markProjectCreationInFlight(pendingProject.id);
+          persistProjectsForTeam(selectedTeam);
+          resetProjectCreation();
+          render();
+          await waitForNextPaint();
+          await upsertProjectMetadataRecord(selectedTeam, pendingProjectMetadataRecord(pendingProject));
         },
+        initializeLocalResource: async (localRepoName) => {
+          await invoke("initialize_gtms_project_repo", {
+            input: {
+              installationId: selectedTeam.installationId,
+              projectId: pendingProjectId,
+              repoName: localRepoName,
+              title: projectTitle,
+            },
+          });
+          return pendingProject;
+        },
+        purgeLocalRepo: async (localRepoName) => {
+          removeVisibleProject(pendingProjectId);
+          persistProjectsForTeam(selectedTeam);
+          await invoke("purge_local_gtms_project_repo", {
+            input: {
+              installationId: selectedTeam.installationId,
+              projectId: pendingProjectId,
+              repoName: localRepoName,
+            },
+          });
+        },
+        rollbackPendingMetadata: (error) =>
+          rollbackPendingProjectMetadataOnLocalFailure(selectedTeam, pendingProjectId, error),
       });
+
       await refreshProjectFilesFromDisk(render, selectedTeam, [pendingProject]);
       clearProjectUiDebug(render);
       await completeProjectsPageSync(render);
       render();
       showNoticeBadge(
-        localRepoReservation.collisionResolved
+        createResult.localNameCollisionResolved
           ? `Created project ${projectTitle} in local repo ${pendingProject.name} because that name was already used locally.`
           : `Created project ${projectTitle}.`,
         render,
       );
       syncProjectInBackground(render, selectedTeam, currentProjectSnapshot(pendingProject), repoName);
     } catch (error) {
-      removeVisibleProject(pendingProject.id);
-      persistProjectsForTeam(selectedTeam);
-      if (metadataIntentCommitted) {
-        try {
-          await rollbackPendingProjectMetadataOnLocalFailure(selectedTeam, pendingProject.id, error);
-        } catch (metadataRollbackError) {
-          error = metadataRollbackError;
-        }
-      }
       if (await handleSyncFailure(classifySyncError(error), { render })) {
         clearProjectUiDebug(render);
         failProjectsPageSync();
-        clearProjectCreationInFlight(pendingProject.id);
+        clearProjectCreationInFlight(pendingProjectId);
         return;
       }
       clearProjectUiDebug(render);
       failProjectsPageSync();
-      clearProjectCreationInFlight(pendingProject.id);
+      clearProjectCreationInFlight(pendingProjectId);
       state.projectCreation.status = "idle";
       state.projectCreation.error = error?.message ?? String(error);
       render();
