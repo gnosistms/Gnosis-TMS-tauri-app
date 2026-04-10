@@ -1,21 +1,13 @@
 import { waitForNextPaint } from "./runtime.js";
 import { beginPageSync, completePageSync, failPageSync } from "./page-sync.js";
 import { createGlossaryDiscoveryState, state } from "./state.js";
-import { applyPendingMutations } from "./optimistic-collection.js";
 import { showNoticeBadge } from "./status-feedback.js";
 import { selectedTeam } from "./glossary-shared.js";
-import {
-  loadStoredGlossaryPendingMutations,
-  saveStoredGlossaryPendingMutations,
-} from "./glossary-cache.js";
 import {
   listLocalGlossarySummariesForTeam,
   loadRepoBackedGlossariesForTeam,
 } from "./glossary-repo-flow.js";
-import { autoResumePendingGlossarySetup } from "./glossary-import-flow.js";
-import { processPendingGlossaryMutations } from "./glossary-lifecycle-flow.js";
 import {
-  applyGlossaryPendingMutation,
   applyGlossarySnapshotToState,
   glossarySnapshotFromList,
   persistGlossariesForTeam,
@@ -28,11 +20,12 @@ export function primeGlossariesLoadingState(teamId = state.selectedTeamId, optio
   state.selectedTeamId = teamId ?? state.selectedTeamId;
   const preserveVisibleData = options.preserveVisibleData === true;
   state.glossaryRepoSyncByRepoName = {};
+  state.glossariesPage.isRefreshing = false;
+  state.glossariesPage.writeState = "idle";
 
   if (!Number.isFinite(team?.installationId)) {
     state.glossaries = [];
     state.selectedGlossaryId = null;
-    state.pendingGlossaryMutations = [];
     state.glossaryRepoSyncByRepoName = {};
     state.glossaryDiscovery = {
       ...createGlossaryDiscoveryState(),
@@ -70,21 +63,21 @@ export async function loadTeamGlossaries(
   const team = selectedTeam(teamId);
   state.selectedTeamId = teamId ?? state.selectedTeamId;
   state.glossaryRepoSyncByRepoName = {};
+  state.glossariesPage.isRefreshing = true;
+  render?.();
 
   if (!Number.isFinite(team?.installationId)) {
     state.glossaries = [];
     state.selectedGlossaryId = null;
-    state.pendingGlossaryMutations = [];
     state.glossaryDiscovery = {
       ...createGlossaryDiscoveryState(),
       status: "ready",
       recoveryMessage: "",
     };
+    state.glossariesPage.isRefreshing = false;
     render();
     return;
   }
-
-  state.pendingGlossaryMutations = loadStoredGlossaryPendingMutations(team);
 
   if (!preserveVisibleData) {
     if (state.glossaries.length === 0) {
@@ -107,16 +100,12 @@ export async function loadTeamGlossaries(
       const localGlossaries = await listLocalGlossarySummariesForTeam(team);
       if (syncVersionAtStart !== state.glossarySyncVersion) {
         await completePageSync(render);
+        state.glossariesPage.isRefreshing = false;
         render();
         return;
       }
       if (localGlossaries.length > 0 && state.selectedTeamId === team.id) {
-        const optimisticSnapshot = applyPendingMutations(
-          glossarySnapshotFromList(localGlossaries),
-          state.pendingGlossaryMutations,
-          applyGlossaryPendingMutation,
-        );
-        applyGlossarySnapshotToState(optimisticSnapshot, { teamId: team.id });
+        applyGlossarySnapshotToState(glossarySnapshotFromList(localGlossaries), { teamId: team.id });
         state.glossaryDiscovery = {
           ...createGlossaryDiscoveryState(),
           status: "ready",
@@ -150,6 +139,7 @@ export async function loadTeamGlossaries(
     });
     if (syncVersionAtStart !== state.glossarySyncVersion) {
       await completePageSync(render);
+      state.glossariesPage.isRefreshing = false;
       render();
       return;
     }
@@ -169,14 +159,8 @@ export async function loadTeamGlossaries(
       }
     }
 
-    const optimisticSnapshot = applyPendingMutations(
-      glossarySnapshotFromList(nextGlossaries),
-      state.pendingGlossaryMutations,
-      applyGlossaryPendingMutation,
-    );
-    applyGlossarySnapshotToState(optimisticSnapshot, { teamId: team.id });
+    applyGlossarySnapshotToState(glossarySnapshotFromList(nextGlossaries), { teamId: team.id });
     persistGlossariesForTeam(team);
-    saveStoredGlossaryPendingMutations(team, state.pendingGlossaryMutations);
 
     state.glossaryDiscovery = {
       ...createGlossaryDiscoveryState(),
@@ -195,14 +179,13 @@ export async function loadTeamGlossaries(
     } else if (brokerWarning) {
       showNoticeBadge(brokerWarning, render);
     }
-    await autoResumePendingGlossarySetup(render, state.glossaries);
     await completePageSync(render);
-    if (state.pendingGlossaryMutations.length > 0) {
-      void processPendingGlossaryMutations(render, team);
-    }
+    state.glossariesPage.isRefreshing = false;
+    render();
   } catch (error) {
     if (syncVersionAtStart !== state.glossarySyncVersion) {
       failPageSync();
+      state.glossariesPage.isRefreshing = false;
       render();
       return;
     }
@@ -214,10 +197,12 @@ export async function loadTeamGlossaries(
       })
     ) {
       failPageSync();
+      state.glossariesPage.isRefreshing = false;
       return;
     }
 
     failPageSync();
+    state.glossariesPage.isRefreshing = false;
     state.glossaryRepoSyncByRepoName = {};
     const hasVisibleLocalData = state.glossaries.length > 0;
     if (!preserveVisibleData && !hasVisibleLocalData && state.glossaryDiscovery?.status !== "ready") {

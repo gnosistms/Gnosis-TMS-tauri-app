@@ -4,6 +4,7 @@ import {
   loadStoredTeamPendingMutations,
 } from "./team-storage.js";
 import { loadStoredEditorFontSizePx } from "./editor-preferences.js";
+import { createResourcePageState } from "./resource-page-controller.js";
 import { createSyncState } from "./sync-state.js";
 
 export const DEFAULT_EDITOR_FONT_SIZE_PX = 20;
@@ -44,10 +45,11 @@ export const state = {
   },
   projectDiscovery: createProjectDiscoveryState(),
   glossaryDiscovery: createGlossaryDiscoveryState(),
+  projectsPage: createResourcePageState(),
+  glossariesPage: createResourcePageState(),
   projectImport: createProjectImportState(),
   projectRepoSyncByProjectId: {},
   projectCreationInFlightIds: new Set(),
-  glossarySyncInFlightIds: new Set(),
   glossaryRepoSyncByRepoName: {},
   editorChapter: createEditorChapterState(),
   targetLanguageManager: createTargetLanguageManagerState(),
@@ -60,8 +62,6 @@ export const state = {
   projectSyncVersion: 0,
   glossarySyncVersion: 0,
   pendingTeamMutations: [],
-  pendingProjectMutations: [],
-  pendingGlossaryMutations: [],
   pendingChapterMutations: [],
   pageSync: createSyncState(),
   projectsPageSync: createProjectsPageSyncState(),
@@ -485,7 +485,6 @@ export function resetSessionState() {
   state.glossaryDiscovery = createGlossaryDiscoveryState();
   state.projectImport = createProjectImportState();
   state.projectRepoSyncByProjectId = {};
-  state.glossarySyncInFlightIds = new Set();
   state.editorChapter = createEditorChapterState();
   state.selectedChapterId = null;
   state.targetLanguageManager = createTargetLanguageManagerState();
@@ -495,8 +494,6 @@ export function resetSessionState() {
   state.projectSyncVersion = 0;
   state.glossarySyncVersion = 0;
   state.pendingTeamMutations = [];
-  state.pendingProjectMutations = [];
-  state.pendingGlossaryMutations = [];
   state.pendingChapterMutations = [];
   state.pageSync = createSyncState();
   state.projectsPageSync = createProjectsPageSyncState();

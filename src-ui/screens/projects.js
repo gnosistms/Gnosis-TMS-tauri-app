@@ -30,6 +30,7 @@ import {
   shouldShowDeletedProjectPermanentDelete,
   shouldShowNewProjectButton,
 } from "../app/resource-capabilities.js";
+import { areResourcePageWritesDisabled } from "../app/resource-page-controller.js";
 
 function compareFilesByName(left, right) {
   const leftName = typeof left?.name === "string" ? left.name.trim() : "";
@@ -115,6 +116,7 @@ function renderProjectCard(project, expanded, options = {}) {
   const resolution = deriveProjectResolution(project, syncSnapshot);
   const disableLifecycleActions = resolution?.blockLifecycleActions === true;
   const disableContentActions = resolution?.blockContentActions === true;
+  const pageWritesDisabled = options.pageWritesDisabled === true;
   const deleteAction = options.deleteAction ?? `delete-project:${project.id}`;
   const disablePermanentDelete = options.disablePermanentDelete === true;
   const addFilesDisabled = options.addFilesDisabled === true;
@@ -131,17 +133,17 @@ function renderProjectCard(project, expanded, options = {}) {
         : [
             canManageProjects
               ? textAction("Add files", `add-project-files:${project.id}`, {
-                  disabled: offlineMode || addFilesDisabled || localRepoSetupPending || disableContentActions,
+                  disabled: offlineMode || pageWritesDisabled || addFilesDisabled || localRepoSetupPending || disableContentActions,
                 })
               : "",
             canManageProjects
               ? textAction("Rename", `rename-project:${project.id}`, {
-                  disabled: offlineMode || disableLifecycleActions,
+                  disabled: offlineMode || pageWritesDisabled || disableLifecycleActions,
                 })
               : "",
             canManageProjects
               ? textAction("Delete", deleteAction, {
-                  disabled: offlineMode || disableLifecycleActions || disablePermanentDelete,
+                  disabled: offlineMode || pageWritesDisabled || disableLifecycleActions || disablePermanentDelete,
                 })
               : "",
           ].filter(Boolean)
@@ -188,11 +190,11 @@ function renderProjectCard(project, expanded, options = {}) {
                     }
                   </div>
                   <div class="chapter-table__actions">
-                    ${renderChapterGlossarySelect(chapter, 1, glossaryOptions, { disabled: offlineMode || !canManageProjects })}
-                    ${renderChapterGlossarySelect(chapter, 2, glossaryOptions, { disabled: offlineMode || !canManageProjects })}
+                    ${renderChapterGlossarySelect(chapter, 1, glossaryOptions, { disabled: offlineMode || pageWritesDisabled || !canManageProjects })}
+                    ${renderChapterGlossarySelect(chapter, 2, glossaryOptions, { disabled: offlineMode || pageWritesDisabled || !canManageProjects })}
                     ${textAction("Open", `open-translate:${chapter.id}`)}
-                    ${canManageProjects ? textAction("Rename", `rename-file:${chapter.id}`, { disabled: offlineMode || disableContentActions }) : ""}
-                    ${canManageProjects ? textAction("Delete", `delete-file:${chapter.id}`, { disabled: offlineMode || disableContentActions }) : ""}
+                    ${canManageProjects ? textAction("Rename", `rename-file:${chapter.id}`, { disabled: offlineMode || pageWritesDisabled || disableContentActions }) : ""}
+                    ${canManageProjects ? textAction("Delete", `delete-file:${chapter.id}`, { disabled: offlineMode || pageWritesDisabled || disableContentActions }) : ""}
                   </div>
                 </div>
               `;
@@ -221,8 +223,8 @@ function renderProjectCard(project, expanded, options = {}) {
                                   <span class="chapter-table__name">${escapeHtml(chapter.name)}</span>
                                 </div>
                                 <div class="chapter-table__actions">
-                                  ${canManageProjects ? textAction("Restore", `restore-file:${chapter.id}`, { disabled: offlineMode || disableContentActions }) : ""}
-                                  ${canManageProjects && canPermanentlyDeleteFiles ? textAction("Delete", `delete-deleted-file:${chapter.id}`, { disabled: offlineMode || disableContentActions }) : ""}
+                                  ${canManageProjects ? textAction("Restore", `restore-file:${chapter.id}`, { disabled: offlineMode || pageWritesDisabled || disableContentActions }) : ""}
+                                  ${canManageProjects && canPermanentlyDeleteFiles ? textAction("Delete", `delete-deleted-file:${chapter.id}`, { disabled: offlineMode || pageWritesDisabled || disableContentActions }) : ""}
                                 </div>
                               </div>
                             `,
@@ -284,6 +286,7 @@ function renderDeletedProjectsSection(state) {
   const canManageDeletedProjects = selectedTeam?.canManageProjects === true;
   const canPermanentlyDeleteProjects = shouldShowDeletedProjectPermanentDelete(selectedTeam);
   const offlineMode = state.offline?.isEnabled === true;
+  const pageWritesDisabled = areResourcePageWritesDisabled(state.projectsPage);
   const syncSnapshotsByProjectId = state.projectRepoSyncByProjectId ?? {};
   const projectCreationInFlightIds = state.projectCreationInFlightIds ?? new Set();
 
@@ -305,6 +308,7 @@ function renderDeletedProjectsSection(state) {
               canManageProjects: canManageDeletedProjects,
               isDeleted: true,
               offlineMode,
+              pageWritesDisabled,
               syncSnapshot,
               disablePermanentDelete: projectCreationInFlightIds.has(project.id),
               actions:
@@ -312,10 +316,10 @@ function renderDeletedProjectsSection(state) {
                   ? []
                   : canManageDeletedProjects
                     ? [
-                        textAction("Restore", `restore-project:${project.id}`, { disabled: disableLifecycleActions }),
+                        textAction("Restore", `restore-project:${project.id}`, { disabled: pageWritesDisabled || disableLifecycleActions }),
                         ...(canPermanentlyDeleteProjects
                           ? [textAction("Delete", `delete-deleted-project:${project.id}`, {
-                              disabled: disableLifecycleActions || projectCreationInFlightIds.has(project.id),
+                              disabled: pageWritesDisabled || disableLifecycleActions || projectCreationInFlightIds.has(project.id),
                             })]
                           : []),
                       ]
@@ -334,6 +338,7 @@ export function renderProjectsScreen(state) {
   const canCreateProjects = shouldShowNewProjectButton(selectedTeam);
   const canPermanentlyDeleteFiles = canPermanentlyDeleteProjectFiles(selectedTeam);
   const offlineMode = state.offline?.isEnabled === true;
+  const pageWritesDisabled = areResourcePageWritesDisabled(state.projectsPage);
   const importInProgress = state.projectImport?.status === "importing";
   const discovery = state.projectDiscovery ?? { status: "idle", error: "", glossaryWarning: "" };
   const syncSnapshotsByProjectId = state.projectRepoSyncByProjectId ?? {};
@@ -387,6 +392,7 @@ export function renderProjectsScreen(state) {
                   canManageProjects,
                   canPermanentlyDeleteFiles,
                   offlineMode,
+                  pageWritesDisabled,
                   addFilesDisabled: importInProgress,
                   showDeletedFiles: state.expandedDeletedFiles.has(project.id),
                   glossaries: state.glossaries,
@@ -413,7 +419,7 @@ export function renderProjectsScreen(state) {
     leftTools: createSearchField("Search"),
     tools: [
       canCreateProjects
-        ? primaryButton("+ New Project", "open-new-project", { disabled: offlineMode })
+        ? primaryButton("+ New Project", "open-new-project", { disabled: offlineMode || pageWritesDisabled })
         : "",
     ]
       .filter(Boolean)

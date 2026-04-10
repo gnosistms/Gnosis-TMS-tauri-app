@@ -151,9 +151,6 @@ export function mergeMetadataBackedGlossarySummaries(
 ) {
   const metadataLoaded = options.metadataLoaded === true;
   const remoteLoaded = options.remoteLoaded === true;
-  const glossaryIdsInFlight = options.glossaryIdsInFlight instanceof Set
-    ? options.glossaryIdsInFlight
-    : new Set();
   const repairIssueMaps = createRepairIssueMaps(options.repairIssues);
   const normalizedLocals = (Array.isArray(localSummaries) ? localSummaries : [])
     .map(normalizeGlossarySummary)
@@ -265,14 +262,12 @@ export function mergeMetadataBackedGlossarySummaries(
     if (glossary?.recordState === "tombstone") {
       continue;
     }
-    const suppressUnregisteredLocal = glossaryIdsInFlight.has(glossary.id);
     merged.push(normalizeGlossarySummary({
       ...glossary,
       resolutionState:
         matchingRepairIssue(glossary, repairIssueMaps)
           ? "repair"
           : metadataLoaded
-            && !suppressUnregisteredLocal
             && glossary.recordState !== "tombstone"
             && glossary.remoteState !== "pendingCreate"
               ? "unregisteredLocal"

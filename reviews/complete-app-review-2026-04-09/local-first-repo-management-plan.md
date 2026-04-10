@@ -1,5 +1,16 @@
 # Shared Local-First Repo Management Plan
 
+Superseded note on 2026-04-10:
+
+- this file is now the historical record for the original local-first repo-management refactor
+- top-level Projects/Glossaries page work is now superseded by the rewrite plan in [projects-glossaries-page-rewrite-plan.md](/Users/hans/Desktop/GnosisTMS/reviews/complete-app-review-2026-04-09/projects-glossaries-page-rewrite-plan.md)
+- the still-valid outcomes carried forward from this plan are:
+  - stable resource IDs instead of repo-name identity
+  - metadata-first resource identity and tombstone rules
+  - owner-only create/permanent-delete policy for top-level repos
+  - local-first behavior only for data inside git repos
+  - repair/recovery expectations that still apply to metadata and repo bindings
+
 Status as of April 10, 2026:
 
 - `Stage 9` in progress locally
@@ -24,6 +35,81 @@ Status as of April 10, 2026:
 Goal:
 
 - replace the remaining project/glossary-specific repo lifecycle code with one shared repo-management system that treats the local metadata repo as the first authority for read/write/update operations and lets GitHub reconciliation happen in the background
+
+## Rewrite Reset For Projects And Glossaries Pages
+
+Decision on 2026-04-10:
+
+- the current top-level Projects/Glossaries page code has become too complex
+- incremental extraction is no longer the right strategy
+- top-level Projects/Glossaries page flows will be rewritten from scratch
+- simplicity and stability are now higher priority than optimistic speed for top-level resources
+
+New page-level rules:
+
+1. Refresh blocks all top-level writes.
+2. Top-level create / rename / soft-delete / restore / permanent-delete do not apply optimistically.
+3. A top-level write is not complete until the mutation finishes and the page refresh completes.
+4. Local cache is still allowed for read-only initial display and fallback reads.
+5. Local-first / optimistic behavior remains allowed only for data stored inside git repos:
+   - project chapters/files
+   - glossary terms/content
+6. The Projects and Glossaries screens should keep the same UI appearance, but the implementation should be treated as a full rewrite rather than a refactor of the old page-flow code.
+
+Rewrite architecture:
+
+- split the app into two layers:
+  - top-level resource pages:
+    - projects list
+    - glossaries list
+    - top-level create / rename / soft-delete / restore / permanent-delete / refresh
+  - repo-content flows:
+    - chapter/file editing
+    - glossary term/content editing
+- the top-level resource pages become slow/simple/server-synced
+- repo-content flows remain local-first where appropriate
+
+Shared top-level page state model:
+
+- `cachedData`
+- `visibleData`
+- `isRefreshing`
+- `writeState`
+- `selectedItemId`
+- modal state
+- `error`
+- `notice`
+
+Derived write-disable rule:
+
+- if `isRefreshing === true`, disable all top-level writes
+- if `writeState !== "idle"`, disable all top-level writes
+
+New shared top-level controller responsibilities:
+
+- initial load from cache, then blocking refresh
+- manual refresh
+- create
+- rename
+- soft-delete
+- restore
+- permanent-delete
+- modal loading/error handling
+- write blocking during refresh
+- post-write full refresh
+
+Explicit non-goals for the rewrite:
+
+- do not preserve the old top-level optimistic mutation queue
+- do not preserve top-level optimistic apply/rollback logic
+- do not preserve top-level background mutation replay machinery
+- do not preserve top-level speculative local hide/show flows
+
+Status impact on earlier stages:
+
+- Stages 11-16 remain useful as background/history, but their top-level optimistic page-flow direction is now superseded by the rewrite plan below
+- the stable-ID, metadata-first, repair, and owner-only policy work still stands
+- what changes is the page interaction model for top-level resources: simple and synchronous instead of optimistic
 
 Core design rules:
 
@@ -364,6 +450,98 @@ Expected outcome:
 - only owners ever see repo-creating or permanently destructive top-level actions in the UI
 - admins keep non-owner management actions, but not create/permanent-delete repo controls
 - translators who are not admins never see those controls either
+
+### Stage 17: Build A New Shared Non-Optimistic Top-Level Resource Controller
+
+- create a brand-new shared controller for top-level Projects/Glossaries page behavior
+- do not build it on top of the old optimistic mutation queue
+- controller surface should cover:
+  - `loadFromCacheThenRefresh`
+  - `refresh`
+  - `create`
+  - `rename`
+  - `softDelete`
+  - `restore`
+  - `permanentDelete`
+- require adapters only for:
+  - resource labels/messages
+  - modal field names
+  - backend commands
+  - post-success selection/open behavior
+  - resource-specific read shaping
+
+Expected outcome:
+
+- one simple shared controller owns all top-level page writes and refresh behavior
+
+### Stage 18: Rebuild Projects Page On The New Controller
+
+- rewrite the Projects page top-level flow from scratch
+- keep the UI appearance the same
+- allow cache-backed read-only first render
+- block create / rename / delete / restore / permanent-delete while refresh is running
+- wait for write completion plus full refresh before showing the operation as complete
+- keep project-specific chapter/file display as a separate adapter concern layered on top
+
+Expected outcome:
+
+- the Projects page no longer uses the old optimistic top-level mutation machinery
+
+### Stage 19: Rebuild Glossaries Page On The New Controller
+
+- rewrite the Glossaries page top-level flow from scratch
+- keep the UI appearance the same
+- use the same shared controller as Projects
+- keep glossary-specific editor/open behavior in the adapter only
+- follow the same blocking refresh / blocking write rules as Projects
+
+Expected outcome:
+
+- Projects and Glossaries share the same top-level interaction model
+
+### Stage 20: Remove Legacy Top-Level Optimistic Machinery
+
+- delete the old top-level optimistic mutation queue and replay paths once both pages are migrated
+- remove obsolete helpers/modules that only existed for top-level optimistic flows
+- keep local-first logic only where it applies to data inside repos
+- make the new non-optimistic page flows the only supported path for top-level resources
+
+Expected outcome:
+
+- code size and conceptual complexity go down instead of shifting sideways
+
+### Stage 21: Reconfirm The Repo Boundary
+
+- explicitly separate:
+  - top-level resource lifecycle:
+    - slow
+    - synchronous
+    - server-synced
+    - non-optimistic
+  - repo-internal content operations:
+    - local-first where appropriate
+    - optimistic if needed
+- audit all top-level entry points to ensure no old optimistic top-level behavior survives
+
+Expected outcome:
+
+- only repo-internal content editing remains local-first
+
+### Stage 22: Rewrite-Focused Verification
+
+- test cache-backed initial load for both pages
+- test refresh disabling all top-level writes
+- test create / rename / soft-delete / restore / permanent-delete all waiting for completion plus refresh
+- test failure paths where visible top-level state does not speculatively change on write failure
+- test that in-repo content editing still keeps its local-first behavior
+- run:
+  - `npm test`
+  - `npm run build`
+  - `cargo check`
+
+Expected outcome:
+
+- the rewritten pages are simpler, deterministic, and stable under refresh/write pressure
 
 ## Testing Plan
 

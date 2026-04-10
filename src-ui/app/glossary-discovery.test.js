@@ -31,7 +31,7 @@ test("glossary discovery hides tombstoned metadata records", () => {
   assert.equal(merged.length, 0);
 });
 
-test("glossary discovery suppresses unregisteredLocal during expected background sync", () => {
+test("glossary discovery surfaces unregisteredLocal when metadata is missing", () => {
   const merged = mergeMetadataBackedGlossarySummaries(
     [
       {
@@ -47,12 +47,11 @@ test("glossary discovery suppresses unregisteredLocal during expected background
     {
       metadataLoaded: true,
       remoteLoaded: true,
-      glossaryIdsInFlight: new Set(["glossary-1"]),
     },
   );
 
   assert.equal(merged.length, 1);
-  assert.equal(merged[0].resolutionState, "");
+  assert.equal(merged[0].resolutionState, "unregisteredLocal");
 });
 
 test("glossary discovery surfaces repair issues from local repo scans", () => {

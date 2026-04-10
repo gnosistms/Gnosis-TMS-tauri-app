@@ -7,7 +7,6 @@ import {
 } from "./team-cache.js";
 
 const PROJECT_CACHE_STORAGE_KEY = "gnosis-tms-project-cache";
-const PROJECT_PENDING_MUTATIONS_STORAGE_KEY = "gnosis-tms-project-pending-mutations";
 const CHAPTER_PENDING_MUTATIONS_STORAGE_KEY = "gnosis-tms-chapter-pending-mutations";
 
 function normalizeProject(project) {
@@ -172,51 +171,7 @@ export function removeStoredProjectDataForTeam(team) {
   const cacheMap = loadProjectCacheMap();
   delete cacheMap[cacheKey];
   saveProjectCacheMap(cacheMap);
-  removeScopedMutationEntry(PROJECT_PENDING_MUTATIONS_STORAGE_KEY, cacheKey);
   removeScopedMutationEntry(CHAPTER_PENDING_MUTATIONS_STORAGE_KEY, cacheKey);
-}
-
-export function loadStoredProjectPendingMutations(team) {
-  const cacheKey = projectCacheKey(team);
-  if (!cacheKey) {
-    return [];
-  }
-
-  try {
-    const scopedKey = scopedTeamStorageKey(PROJECT_PENDING_MUTATIONS_STORAGE_KEY);
-    const storedValue = scopedKey ? readPersistentValue(scopedKey, null) : null;
-    if (!storedValue) {
-      return [];
-    }
-
-    const parsed = storedValue;
-    if (!parsed || typeof parsed !== "object") {
-      return [];
-    }
-
-    return Array.isArray(parsed[cacheKey]) ? parsed[cacheKey] : [];
-  } catch {
-    return [];
-  }
-}
-
-export function saveStoredProjectPendingMutations(team, mutations) {
-  const cacheKey = projectCacheKey(team);
-  if (!cacheKey) {
-    return;
-  }
-
-  try {
-    const scopedKey = scopedTeamStorageKey(PROJECT_PENDING_MUTATIONS_STORAGE_KEY);
-    if (!scopedKey) {
-      return;
-    }
-    const storedValue = readPersistentValue(scopedKey, {});
-    const parsed = storedValue ?? {};
-    const nextMap = parsed && typeof parsed === "object" ? parsed : {};
-    nextMap[cacheKey] = Array.isArray(mutations) ? mutations : [];
-    writePersistentValue(scopedKey, nextMap);
-  } catch {}
 }
 
 export function loadStoredChapterPendingMutations(team) {

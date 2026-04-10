@@ -536,9 +536,6 @@ export async function loadRepoBackedGlossariesForTeam(team, options = {}) {
     typeof options.onRecoveryDetected === "function"
       ? options.onRecoveryDetected
       : null;
-  const glossaryIdsInFlight = state.glossarySyncInFlightIds instanceof Set
-    ? state.glossarySyncInFlightIds
-    : new Set();
   let localSummaries = await listLocalGlossarySummariesForTeam(team);
 
   if (offlineMode || !Number.isFinite(team?.installationId)) {
@@ -599,7 +596,7 @@ export async function loadRepoBackedGlossariesForTeam(team, options = {}) {
             refreshedLocalSummaries,
             metadataRecords,
             syncRepos,
-            { metadataLoaded, remoteLoaded: false, glossaryIdsInFlight, repairIssues },
+            { metadataLoaded, remoteLoaded: false, repairIssues },
           ),
           remoteRepos: syncRepos,
           syncSnapshots,
@@ -639,7 +636,7 @@ export async function loadRepoBackedGlossariesForTeam(team, options = {}) {
             refreshedLocalSummaries,
             metadataRecords,
             remoteRepos,
-            { metadataLoaded, remoteLoaded, glossaryIdsInFlight, repairIssues },
+            { metadataLoaded, remoteLoaded, repairIssues },
           )
         : mergeRepoBackedGlossarySummaries(refreshedLocalSummaries, remoteRepos),
     remoteRepos: syncTargets,

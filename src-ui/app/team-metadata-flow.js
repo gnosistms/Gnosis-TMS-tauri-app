@@ -249,7 +249,7 @@ function localMetadataPushConflict(error) {
   );
 }
 
-async function commitLocalMetadataMutation(team, operation) {
+async function commitLocalMetadataMutation(team, operation, options = {}) {
   await ensureLocalTeamMetadataRepo(team);
 
   let syncError = null;
@@ -265,6 +265,9 @@ async function commitLocalMetadataMutation(team, operation) {
       try {
         await pushLocalTeamMetadataRepo(team);
       } catch (pushError) {
+        if (options.requirePushSuccess === true) {
+          throw pushError;
+        }
         console.warn(
           localMetadataPushConflict(pushError)
             ? `team-metadata push conflict after local commit: ${pushError?.message ?? String(pushError)}`
@@ -288,105 +291,117 @@ async function commitLocalMetadataMutation(team, operation) {
   }
 }
 
-export async function upsertProjectMetadataRecord(team, record) {
-  await commitLocalMetadataMutation(team, () =>
-    invoke("upsert_local_gnosis_project_metadata_record", {
-      input: {
-        installationId: team.installationId,
-        orgLogin: team.githubOrg,
-        projectId: record.projectId,
-        title: record.title,
-        repoName: record.repoName,
-        previousRepoNames: previousRepoNamesPayload(record.previousRepoNames),
-        githubRepoId: Number.isFinite(record.githubRepoId) ? record.githubRepoId : null,
-        githubNodeId:
-          typeof record.githubNodeId === "string" && record.githubNodeId.trim()
-            ? record.githubNodeId.trim()
-            : null,
-        fullName:
-          typeof record.fullName === "string" && record.fullName.trim()
-            ? record.fullName.trim()
-            : null,
-        defaultBranch:
-          typeof record.defaultBranch === "string" && record.defaultBranch.trim()
-            ? record.defaultBranch.trim()
-            : null,
-        lifecycleState: record.lifecycleState ?? null,
-        remoteState: record.remoteState ?? null,
-        recordState: record.recordState ?? null,
-        deletedAt:
-          typeof record.deletedAt === "string" && record.deletedAt.trim()
-            ? record.deletedAt.trim()
-            : null,
-        chapterCount: Number.isFinite(record.chapterCount) ? record.chapterCount : null,
-      },
-      sessionToken: requireBrokerSession(),
-    }),
+export async function upsertProjectMetadataRecord(team, record, options = {}) {
+  await commitLocalMetadataMutation(
+    team,
+    () =>
+      invoke("upsert_local_gnosis_project_metadata_record", {
+        input: {
+          installationId: team.installationId,
+          orgLogin: team.githubOrg,
+          projectId: record.projectId,
+          title: record.title,
+          repoName: record.repoName,
+          previousRepoNames: previousRepoNamesPayload(record.previousRepoNames),
+          githubRepoId: Number.isFinite(record.githubRepoId) ? record.githubRepoId : null,
+          githubNodeId:
+            typeof record.githubNodeId === "string" && record.githubNodeId.trim()
+              ? record.githubNodeId.trim()
+              : null,
+          fullName:
+            typeof record.fullName === "string" && record.fullName.trim()
+              ? record.fullName.trim()
+              : null,
+          defaultBranch:
+            typeof record.defaultBranch === "string" && record.defaultBranch.trim()
+              ? record.defaultBranch.trim()
+              : null,
+          lifecycleState: record.lifecycleState ?? null,
+          remoteState: record.remoteState ?? null,
+          recordState: record.recordState ?? null,
+          deletedAt:
+            typeof record.deletedAt === "string" && record.deletedAt.trim()
+              ? record.deletedAt.trim()
+              : null,
+          chapterCount: Number.isFinite(record.chapterCount) ? record.chapterCount : null,
+        },
+        sessionToken: requireBrokerSession(),
+      }),
+    options,
   );
 }
 
-export async function deleteProjectMetadataRecord(team, projectId) {
-  await commitLocalMetadataMutation(team, () =>
-    invoke("delete_local_gnosis_project_metadata_record", {
-      input: {
-        installationId: team.installationId,
-        orgLogin: team.githubOrg,
-        projectId,
-      },
-      sessionToken: requireBrokerSession(),
-    }),
+export async function deleteProjectMetadataRecord(team, projectId, options = {}) {
+  await commitLocalMetadataMutation(
+    team,
+    () =>
+      invoke("delete_local_gnosis_project_metadata_record", {
+        input: {
+          installationId: team.installationId,
+          orgLogin: team.githubOrg,
+          projectId,
+        },
+        sessionToken: requireBrokerSession(),
+      }),
+    options,
   );
 }
 
-export async function upsertGlossaryMetadataRecord(team, record) {
-  await commitLocalMetadataMutation(team, () =>
-    invoke("upsert_local_gnosis_glossary_metadata_record", {
-      input: {
-        installationId: team.installationId,
-        orgLogin: team.githubOrg,
-        glossaryId: record.glossaryId,
-        title: record.title,
-        repoName: record.repoName,
-        previousRepoNames: previousRepoNamesPayload(record.previousRepoNames),
-        githubRepoId: Number.isFinite(record.githubRepoId) ? record.githubRepoId : null,
-        githubNodeId:
-          typeof record.githubNodeId === "string" && record.githubNodeId.trim()
-            ? record.githubNodeId.trim()
-            : null,
-        fullName:
-          typeof record.fullName === "string" && record.fullName.trim()
-            ? record.fullName.trim()
-            : null,
-        defaultBranch:
-          typeof record.defaultBranch === "string" && record.defaultBranch.trim()
-            ? record.defaultBranch.trim()
-            : null,
-        lifecycleState: record.lifecycleState ?? null,
-        remoteState: record.remoteState ?? null,
-        recordState: record.recordState ?? null,
-        deletedAt:
-          typeof record.deletedAt === "string" && record.deletedAt.trim()
-            ? record.deletedAt.trim()
-            : null,
-        sourceLanguage: metadataLanguagePayload(record.sourceLanguage),
-        targetLanguage: metadataLanguagePayload(record.targetLanguage),
-        termCount: Number.isFinite(record.termCount) ? record.termCount : null,
-      },
-      sessionToken: requireBrokerSession(),
-    }),
+export async function upsertGlossaryMetadataRecord(team, record, options = {}) {
+  await commitLocalMetadataMutation(
+    team,
+    () =>
+      invoke("upsert_local_gnosis_glossary_metadata_record", {
+        input: {
+          installationId: team.installationId,
+          orgLogin: team.githubOrg,
+          glossaryId: record.glossaryId,
+          title: record.title,
+          repoName: record.repoName,
+          previousRepoNames: previousRepoNamesPayload(record.previousRepoNames),
+          githubRepoId: Number.isFinite(record.githubRepoId) ? record.githubRepoId : null,
+          githubNodeId:
+            typeof record.githubNodeId === "string" && record.githubNodeId.trim()
+              ? record.githubNodeId.trim()
+              : null,
+          fullName:
+            typeof record.fullName === "string" && record.fullName.trim()
+              ? record.fullName.trim()
+              : null,
+          defaultBranch:
+            typeof record.defaultBranch === "string" && record.defaultBranch.trim()
+              ? record.defaultBranch.trim()
+              : null,
+          lifecycleState: record.lifecycleState ?? null,
+          remoteState: record.remoteState ?? null,
+          recordState: record.recordState ?? null,
+          deletedAt:
+            typeof record.deletedAt === "string" && record.deletedAt.trim()
+              ? record.deletedAt.trim()
+              : null,
+          sourceLanguage: metadataLanguagePayload(record.sourceLanguage),
+          targetLanguage: metadataLanguagePayload(record.targetLanguage),
+          termCount: Number.isFinite(record.termCount) ? record.termCount : null,
+        },
+        sessionToken: requireBrokerSession(),
+      }),
+    options,
   );
 }
 
-export async function deleteGlossaryMetadataRecord(team, glossaryId) {
-  await commitLocalMetadataMutation(team, () =>
-    invoke("delete_local_gnosis_glossary_metadata_record", {
-      input: {
-        installationId: team.installationId,
-        orgLogin: team.githubOrg,
-        glossaryId,
-      },
-      sessionToken: requireBrokerSession(),
-    }),
+export async function deleteGlossaryMetadataRecord(team, glossaryId, options = {}) {
+  await commitLocalMetadataMutation(
+    team,
+    () =>
+      invoke("delete_local_gnosis_glossary_metadata_record", {
+        input: {
+          installationId: team.installationId,
+          orgLogin: team.githubOrg,
+          glossaryId,
+        },
+        sessionToken: requireBrokerSession(),
+      }),
+    options,
   );
 }
 

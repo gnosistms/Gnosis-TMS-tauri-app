@@ -28,7 +28,6 @@ export {
   updateGlossaryRenameName,
 } from "./glossary-lifecycle-flow.js";
 export {
-  autoResumePendingGlossarySetup,
   cancelGlossaryCreation,
   importGlossaryFromTmx,
   openGlossaryCreation,

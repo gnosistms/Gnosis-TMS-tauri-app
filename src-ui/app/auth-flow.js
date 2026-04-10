@@ -139,7 +139,6 @@ function hydrateStoredDataForActiveUser() {
   hydrateStoredEditorPreferences();
   state.projects = [];
   state.deletedProjects = [];
-  state.pendingProjectMutations = [];
   state.users = [];
 }
 

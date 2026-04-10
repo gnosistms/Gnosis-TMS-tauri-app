@@ -1,16 +1,12 @@
-import { invoke, waitForNextPaint } from "./runtime.js";
-import { beginPageSync, failPageSync } from "./page-sync.js";
+import { invoke } from "./runtime.js";
 import { resetGlossaryCreation, state } from "./state.js";
 import { showNoticeBadge } from "./status-feedback.js";
 import { findIsoLanguageOption } from "../lib/language-options.js";
 import { openGlossaryEditor } from "./glossary-editor-flow.js";
-import { saveStoredGlossariesForTeam } from "./glossary-cache.js";
 import {
   canCreateGlossaries,
-  canManageGlossaries,
   canPermanentlyDeleteGlossaries,
   selectedTeam,
-  upsertGlossarySummary,
 } from "./glossary-shared.js";
 import { openLocalFilePicker } from "./local-file-picker.js";
 import {
@@ -31,14 +27,14 @@ import {
   updateEntityFormField,
 } from "./resource-entity-modal.js";
 import {
-  autoResumePendingResources,
-  resumePendingResourceSetup,
-} from "./resource-pending-create.js";
-import {
-  finalizeLocalFirstCreate,
   guardResourceCreateStart,
   runLocalFirstCreate,
 } from "./resource-create-flow.js";
+import {
+  areResourcePageWritesDisabled,
+  submitResourcePageWrite,
+} from "./resource-page-controller.js";
+import { loadTeamGlossaries } from "./glossary-discovery-flow.js";
 
 function detectGlossaryImportFileType(fileName) {
   const normalized = String(fileName || "").trim().toLowerCase();
@@ -46,24 +42,6 @@ function detectGlossaryImportFileType(fileName) {
     return "tmx";
   }
   return null;
-}
-
-function commitLocalGlossarySummary(team, glossary, remoteRepo = null) {
-  const normalizedGlossary = upsertGlossarySummary({
-    ...glossary,
-    repoId: remoteRepo?.repoId ?? null,
-    fullName: remoteRepo?.fullName ?? "",
-    htmlUrl: remoteRepo?.htmlUrl ?? "",
-    defaultBranchName: remoteRepo?.defaultBranchName ?? "main",
-    defaultBranchHeadOid: remoteRepo?.defaultBranchHeadOid ?? null,
-  });
-
-  if (!normalizedGlossary) {
-    return null;
-  }
-
-  saveStoredGlossariesForTeam(team, state.glossaries);
-  return normalizedGlossary;
 }
 
 function remoteGlossaryRepoUrl(remoteRepo) {
@@ -126,27 +104,6 @@ function currentGlossarySnapshot(glossary) {
   );
 }
 
-function markGlossarySyncInFlight(glossaryId) {
-  if (typeof glossaryId !== "string" || !glossaryId.trim()) {
-    return;
-  }
-
-  state.glossarySyncInFlightIds = new Set([
-    ...state.glossarySyncInFlightIds,
-    glossaryId,
-  ]);
-}
-
-function clearGlossarySyncInFlight(glossaryId) {
-  if (typeof glossaryId !== "string" || !glossaryId.trim()) {
-    return;
-  }
-
-  const nextIds = new Set(state.glossarySyncInFlightIds);
-  nextIds.delete(glossaryId);
-  state.glossarySyncInFlightIds = nextIds;
-}
-
 function pendingGlossaryMetadataRecord(glossary) {
   return {
     glossaryId: glossary.id ?? glossary.glossaryId,
@@ -186,21 +143,6 @@ function linkedGlossaryMetadataRecord(glossary, remoteRepo) {
     defaultBranch: remoteRepo.defaultBranchName || "main",
     remoteState: "linked",
   };
-}
-
-function markGlossaryAsLocalOnly(team, glossary, render) {
-  const localOnlyGlossary = commitLocalGlossarySummary(team, {
-    ...glossary,
-    remoteState: "linked",
-    resolutionState: "unregisteredLocal",
-  }, null) ?? {
-    ...glossary,
-    remoteState: "linked",
-    resolutionState: "unregisteredLocal",
-  };
-  updateCurrentGlossaryRepoName(localOnlyGlossary.id ?? localOnlyGlossary.glossaryId, localOnlyGlossary.repoName);
-  render();
-  return localOnlyGlossary;
 }
 
 function findMatchingRemoteGlossaryForPendingCreate(glossary, remoteRepos) {
@@ -261,16 +203,16 @@ async function finalizePendingGlossarySetup(render, team, glossary, remoteRepo) 
     });
   }
 
-  const linkedGlossary = commitLocalGlossarySummary(team, {
+  const linkedGlossary = {
     ...currentGlossary,
     repoName: remoteRepo.name,
     remoteState: "linked",
     resolutionState: "",
-  }, remoteRepo) ?? {
-    ...currentGlossary,
-    repoName: remoteRepo.name,
-    remoteState: "linked",
-    resolutionState: "",
+    repoId: remoteRepo?.repoId ?? null,
+    fullName: remoteRepo?.fullName ?? "",
+    htmlUrl: remoteRepo?.htmlUrl ?? "",
+    defaultBranchName: remoteRepo?.defaultBranchName ?? "main",
+    defaultBranchHeadOid: remoteRepo?.defaultBranchHeadOid ?? null,
   };
   updateCurrentGlossaryRepoName(glossaryId, remoteRepo.name);
   render();
@@ -288,124 +230,161 @@ async function finalizePendingGlossarySetup(render, team, glossary, remoteRepo) 
   }
 }
 
-function syncGlossaryInBackground(render, team, glossary, preferredBaseRepoName) {
-  void (async () => {
-    const glossaryId = glossary?.id ?? glossary?.glossaryId ?? null;
-    markGlossarySyncInFlight(glossaryId);
+async function rollbackStrictGlossaryCreate(team, glossaryId, localRepoName, remoteRepoName = "") {
+  let rollbackError = null;
+
+  if (remoteRepoName) {
     try {
-      await upsertGlossaryMetadataRecord(team, pendingGlossaryMetadataRecord(currentGlossarySnapshot(glossary)));
+      await permanentlyDeleteRemoteGlossaryRepoForTeam(team, remoteRepoName);
     } catch (error) {
-      markGlossaryAsLocalOnly(team, currentGlossarySnapshot(glossary), render);
-      clearGlossarySyncInFlight(glossaryId);
-      showNoticeBadge(
-        `The glossary stays local-only because its team metadata record could not be created: ${
-          error?.message ?? String(error)
-        }`,
-        render,
-      );
-      return;
+      rollbackError = error;
     }
+  }
 
-    const createResult = await createUniqueRemoteGlossaryRepoForTeam(team, preferredBaseRepoName);
-    const remoteRepo = createResult.remoteRepo;
-    let syncedGlossary = currentGlossarySnapshot(glossary);
+  if (localRepoName) {
+    try {
+      await invoke("purge_local_gtms_glossary_repo", {
+        input: {
+          installationId: team.installationId,
+          glossaryId,
+          repoName: localRepoName,
+        },
+      });
+    } catch (error) {
+      rollbackError ??= error;
+    }
+  }
 
-    if (remoteRepo.name !== syncedGlossary.repoName) {
+  try {
+    await deleteGlossaryMetadataRecord(team, glossaryId, { requirePushSuccess: true });
+  } catch (error) {
+    rollbackError ??= error;
+  }
+
+  if (rollbackError) {
+    throw rollbackError;
+  }
+}
+
+async function completeGlossaryCreateSynchronously(team, input) {
+  const glossaryId = crypto.randomUUID();
+  let localRepoName = "";
+  let remoteRepo = null;
+
+  try {
+    const createResult = await runLocalFirstCreate({
+      reserveLocalRepo: async () => reserveLocalGlossaryRepoName(team, input.repoName),
+      commitPendingMetadata: (nextLocalRepoName) =>
+        upsertGlossaryMetadataRecord(team, pendingGlossaryMetadataRecord({
+          id: glossaryId,
+          repoName: nextLocalRepoName,
+          title: input.title,
+          sourceLanguage: input.sourceLanguage,
+          targetLanguage: input.targetLanguage,
+          termCount: 0,
+        }), { requirePushSuccess: true }),
+      initializeLocalResource: async (nextLocalRepoName) => {
+        await invoke("prepare_local_gtms_glossary_repo", {
+          input: {
+            installationId: team.installationId,
+            glossaryId,
+            repoName: nextLocalRepoName,
+          },
+        });
+        return invoke("initialize_gtms_glossary_repo", {
+          input: {
+            installationId: team.installationId,
+            repoName: nextLocalRepoName,
+            glossaryId,
+            title: input.title,
+            sourceLanguageCode: input.sourceLanguage.code,
+            sourceLanguageName: input.sourceLanguage.name,
+            targetLanguageCode: input.targetLanguage.code,
+            targetLanguageName: input.targetLanguage.name,
+          },
+        });
+      },
+      purgeLocalRepo: (nextLocalRepoName) => invoke("purge_local_gtms_glossary_repo", {
+        input: {
+          installationId: team.installationId,
+          glossaryId,
+          repoName: nextLocalRepoName,
+        },
+      }),
+      rollbackPendingMetadata: (error) =>
+        rollbackPendingGlossaryMetadataOnLocalFailure(team, glossaryId, error),
+    });
+
+    const glossary = createResult.createdResource;
+    localRepoName = createResult.localRepoName;
+    const remoteCreateResult = await createUniqueRemoteGlossaryRepoForTeam(team, input.repoName);
+    remoteRepo = remoteCreateResult.remoteRepo;
+
+    if (remoteRepo.name !== localRepoName) {
       await invoke("rename_local_gtms_glossary_repo", {
         input: {
           installationId: team.installationId,
           glossaryId,
-          fromRepoName: syncedGlossary.repoName,
+          fromRepoName: localRepoName,
           toRepoName: remoteRepo.name,
         },
       });
-
-      const renamedBaseGlossary = currentGlossarySnapshot(syncedGlossary);
-      syncedGlossary = commitLocalGlossarySummary(team, {
-        ...renamedBaseGlossary,
-        repoName: remoteRepo.name,
-        remoteState: "linked",
-        resolutionState: "",
-      }, remoteRepo) ?? {
-        ...renamedBaseGlossary,
-        repoName: remoteRepo.name,
-        remoteState: "linked",
-        resolutionState: "",
-      };
-      updateCurrentGlossaryRepoName(syncedGlossary.id ?? glossary.glossaryId, remoteRepo.name);
-      render();
-    } else {
-      syncedGlossary = commitLocalGlossarySummary(team, {
-        ...currentGlossarySnapshot(syncedGlossary),
-        remoteState: "linked",
-        resolutionState: "",
-      }, remoteRepo) ?? currentGlossarySnapshot(syncedGlossary);
-      render();
+      localRepoName = remoteRepo.name;
     }
 
-    try {
-      await upsertGlossaryMetadataRecord(
-        team,
-        linkedGlossaryMetadataRecord(currentGlossarySnapshot(syncedGlossary), remoteRepo),
-      );
-    } catch (error) {
-      try {
-        await permanentlyDeleteRemoteGlossaryRepoForTeam(team, remoteRepo.name);
-      } catch (rollbackError) {
-        markGlossaryAsLocalOnly(team, currentGlossarySnapshot(syncedGlossary), render);
-        clearGlossarySyncInFlight(glossaryId);
-        showNoticeBadge(
-          `The glossary repo was created, but its metadata could not be finalized or rolled back automatically: ${
-            rollbackError?.message ?? String(rollbackError)
-          }`,
-          render,
-        );
-        return;
-      }
-      try {
-        const latestGlossary = currentGlossarySnapshot(syncedGlossary);
-        await deleteGlossaryMetadataRecord(team, latestGlossary.id ?? latestGlossary.glossaryId);
-      } catch {
-        // Leave the local-only glossary visible even if cleanup metadata could not be removed.
-      }
-      markGlossaryAsLocalOnly(team, currentGlossarySnapshot(syncedGlossary), render);
-      clearGlossarySyncInFlight(glossaryId);
-      showNoticeBadge(
-        `The glossary stays local-only because its team metadata record could not be finalized: ${
-          error?.message ?? String(error)
-        }`,
-        render,
-      );
-      return;
-    }
-
+    const linkedGlossary = {
+      ...glossary,
+      repoName: remoteRepo.name,
+      remoteState: "linked",
+      resolutionState: "",
+    };
+    await upsertGlossaryMetadataRecord(
+      team,
+      linkedGlossaryMetadataRecord(linkedGlossary, remoteRepo),
+      { requirePushSuccess: true },
+    );
     await prepareLocalGlossaryRepo(team, remoteRepo, glossaryId);
+
     const snapshots = await syncGlossaryReposForTeam(team, [remoteRepo]);
     const syncIssue = getGlossarySyncIssueMessage(snapshots);
     if (syncIssue?.message) {
-      showNoticeBadge(syncIssue.message, render);
-      render();
-    } else if (createResult.collisionResolved === true) {
-      const latestGlossary = currentGlossarySnapshot(syncedGlossary);
-      showNoticeBadge(
-        `Saved ${latestGlossary.title} to repo ${remoteRepo.name} because that repo name was already taken.`,
-        render,
-      );
+      throw new Error(syncIssue.message);
     }
-    clearGlossarySyncInFlight(glossaryId);
-  })().catch((error) => {
-    const glossaryId = glossary?.id ?? glossary?.glossaryId ?? null;
-    clearGlossarySyncInFlight(glossaryId);
-    showNoticeBadge(
-      `The glossary could not sync to GitHub automatically: ${error?.message ?? String(error)}`,
-      render,
-    );
-    render();
-  });
+
+    return {
+      glossaryId,
+      title: input.title,
+      finalRepoName: remoteRepo.name,
+      localRepoName: createResult.localRepoName,
+      localNameCollisionResolved: createResult.localNameCollisionResolved,
+    };
+  } catch (error) {
+    if (localRepoName || remoteRepo?.name) {
+      try {
+        await rollbackStrictGlossaryCreate(team, glossaryId, localRepoName, remoteRepo?.name ?? "");
+      } catch (rollbackError) {
+        throw new Error(
+          `${error?.message ?? String(error)} Automatic glossary create rollback also failed: ${
+            rollbackError?.message ?? String(rollbackError)
+          }`,
+        );
+      }
+    }
+    throw error;
+  }
+}
+
+async function reloadGlossariesAfterWrite(render, team) {
+  await loadTeamGlossaries(render, team.id, { preserveVisibleData: false });
+  return state.glossaries;
 }
 
 export function openGlossaryCreation(render) {
   const team = selectedTeam();
+  if (areResourcePageWritesDisabled(state.glossariesPage)) {
+    showNoticeBadge("Wait for the current glossary refresh or write to finish.", render);
+    return;
+  }
   if (!guardResourceCreateStart({
     installationReady: () => Number.isFinite(team?.installationId),
     offlineBlocked: () => state.offline?.isEnabled === true,
@@ -433,77 +412,59 @@ export function openGlossaryCreation(render) {
   render();
 }
 
-async function resumePendingGlossarySetupInternal(render, glossaryId, options = {}) {
-  const team = selectedTeam();
-  const showStartNotice = options.showStartNotice !== false;
-  const showSuccessNotice = options.showSuccessNotice !== false;
-  const showErrorNotice = options.showErrorNotice !== false;
-  await resumePendingResourceSetup({
-    render,
-    resourceId: glossaryId,
-    resourceLabel: "glossary",
-    showStartNotice,
-    showSuccessNotice,
-    showErrorNotice,
-    getResource: (nextGlossaryId) =>
-      currentGlossarySnapshot(
-        state.glossaries.find((item) => item.id === nextGlossaryId) ?? null,
-      ),
-    ensureResumeAllowed: () => {
-      if (!Number.isFinite(team?.installationId)) {
-        showNoticeBadge("Could not determine the selected team.", render);
-        return false;
-      }
-
-      if (state.offline?.isEnabled === true) {
-        showNoticeBadge("You cannot resume glossary setup while offline.", render);
-        return false;
-      }
-
-      if (!canPermanentlyDeleteGlossaries(team)) {
-        showNoticeBadge("You do not have permission to resume glossary setup in this team.", render);
-        return false;
-      }
-
-      return true;
-    },
-    isPendingCreate: (glossary) =>
-      glossary?.remoteState === "pendingCreate" || glossary?.resolutionState === "pendingCreate",
-    isInFlight: (glossary) => state.glossarySyncInFlightIds.has(glossary.id),
-    markInFlight: (glossary) => markGlossarySyncInFlight(glossary.id),
-    clearInFlight: (glossary) => clearGlossarySyncInFlight(glossary.id),
-    listRemoteResources: async () => listRemoteGlossaryReposForTeam(team),
-    findMatchingRemoteResource: (glossary, remoteRepos) =>
-      findMatchingRemoteGlossaryForPendingCreate(
-        currentGlossarySnapshot(glossary),
-        remoteRepos,
-      ),
-    syncInBackground: async (glossary) => {
-      syncGlossaryInBackground(
-        render,
-        team,
-        currentGlossarySnapshot(glossary),
-        currentGlossarySnapshot(glossary)?.repoName ?? "",
-      );
-    },
-    finalizePendingSetup: (glossary, matchedRemoteRepo) =>
-      finalizePendingGlossarySetup(render, team, glossary, matchedRemoteRepo),
-  });
-}
-
 export async function resumePendingGlossarySetup(render, glossaryId) {
-  await resumePendingGlossarySetupInternal(render, glossaryId);
-}
+  const team = selectedTeam();
+  const glossary =
+    currentGlossarySnapshot(state.glossaries.find((item) => item.id === glossaryId) ?? null);
+  if (!glossary) {
+    showNoticeBadge("Could not find the selected glossary.", render);
+    return;
+  }
+  if (
+    glossary?.remoteState !== "pendingCreate"
+    && glossary?.resolutionState !== "pendingCreate"
+  ) {
+    showNoticeBadge("This glossary no longer needs setup.", render);
+    return;
+  }
+  if (!Number.isFinite(team?.installationId)) {
+    showNoticeBadge("Could not determine the selected team.", render);
+    return;
+  }
+  if (state.offline?.isEnabled === true) {
+    showNoticeBadge("You cannot resume glossary setup while offline.", render);
+    return;
+  }
+  if (!canPermanentlyDeleteGlossaries(team)) {
+    showNoticeBadge("You do not have permission to resume glossary setup in this team.", render);
+    return;
+  }
 
-export async function autoResumePendingGlossarySetup(render, glossaries) {
-  await autoResumePendingResources({
-    resources: glossaries,
-    getResourceId: (glossary) => glossary?.id ?? "",
-    isPendingCreate: (glossary) =>
-      glossary?.remoteState === "pendingCreate" || glossary?.resolutionState === "pendingCreate",
-    isInFlight: (glossary) => state.glossarySyncInFlightIds.has(glossary.id),
-    resumePendingSetup: (glossaryId, options = {}) =>
-      resumePendingGlossarySetupInternal(render, glossaryId, options),
+  await submitResourcePageWrite({
+    pageState: state.glossariesPage,
+    render,
+    onBlocked: async () => {
+      showNoticeBadge("Wait for the current glossary refresh or write to finish.", render);
+    },
+    runMutation: async () => {
+      const remoteRepos = await listRemoteGlossaryReposForTeam(team);
+      const matchedRemoteRepo = findMatchingRemoteGlossaryForPendingCreate(glossary, remoteRepos);
+      if (matchedRemoteRepo) {
+        await finalizePendingGlossarySetup(render, team, glossary, matchedRemoteRepo);
+        return;
+      }
+      const createResult = await createUniqueRemoteGlossaryRepoForTeam(team, glossary.repoName);
+      await finalizePendingGlossarySetup(render, team, glossary, createResult.remoteRepo);
+    },
+    refreshOptions: {
+      loadData: async () => reloadGlossariesAfterWrite(render, team),
+    },
+    onSuccess: async () => {
+      showNoticeBadge(`Finished setting up ${glossary.title}.`, render);
+    },
+    onError: async (error) => {
+      showNoticeBadge(error?.message ?? String(error), render);
+    },
   });
 }
 
@@ -524,6 +485,11 @@ export async function submitGlossaryCreation(render) {
   const team = selectedTeam();
   const draft = state.glossaryCreation;
   if (!draft?.isOpen) {
+    return;
+  }
+  if (areResourcePageWritesDisabled(state.glossariesPage)) {
+    state.glossaryCreation.error = "Wait for the current glossary refresh or write to finish.";
+    render();
     return;
   }
   if (!guardResourceCreateStart({
@@ -575,100 +541,51 @@ export async function submitGlossaryCreation(render) {
   state.glossaryCreation.status = "loading";
   state.glossaryCreation.error = "";
   render();
-  await waitForNextPaint();
-
-  const glossaryId = crypto.randomUUID();
-  try {
-    const createResult = await runLocalFirstCreate({
-      reserveLocalRepo: async () => reserveLocalGlossaryRepoName(team, repoName),
-      commitPendingMetadata: (localRepoName) => upsertGlossaryMetadataRecord(team, pendingGlossaryMetadataRecord({
-        id: glossaryId,
-        repoName: localRepoName,
+  await submitResourcePageWrite({
+    pageState: state.glossariesPage,
+    render,
+    onBlocked: async () => {
+      state.glossaryCreation.status = "idle";
+      state.glossaryCreation.error = "Wait for the current glossary refresh or write to finish.";
+      render();
+    },
+    runMutation: async () =>
+      completeGlossaryCreateSynchronously(team, {
         title,
+        repoName,
         sourceLanguage,
         targetLanguage,
-        termCount: 0,
-      })),
-      initializeLocalResource: async (localRepoName) => {
-        await invoke("prepare_local_gtms_glossary_repo", {
-          input: {
-            installationId: team.installationId,
-            glossaryId,
-            repoName: localRepoName,
-          },
-        });
-        return invoke("initialize_gtms_glossary_repo", {
-          input: {
-            installationId: team.installationId,
-            repoName: localRepoName,
-            glossaryId,
-            title,
-            sourceLanguageCode: sourceLanguage.code,
-            sourceLanguageName: sourceLanguage.name,
-            targetLanguageCode: targetLanguage.code,
-            targetLanguageName: targetLanguage.name,
-          },
-        });
-      },
-      purgeLocalRepo: (localRepoName) => invoke("purge_local_gtms_glossary_repo", {
-        input: {
-          installationId: team.installationId,
-          glossaryId,
-          repoName: localRepoName,
-        },
       }),
-      rollbackPendingMetadata: (error) =>
-        rollbackPendingGlossaryMetadataOnLocalFailure(team, glossaryId, error),
-    });
-
-    const glossary = createResult.createdResource;
-    const localRepoName = createResult.localRepoName;
-    state.glossaryCreation.status = "idle";
-    await finalizeLocalFirstCreate({
-      createdResource: glossary,
-      clearCreateState: resetGlossaryCreation,
-      commitVisibleResource: (createdGlossary) => commitLocalGlossarySummary(team, {
-        ...createdGlossary,
-        remoteState: "pendingCreate",
-        resolutionState: "pendingCreate",
-      }, null),
-      selectResource: (committedGlossary) => {
-        state.selectedGlossaryId = committedGlossary?.glossaryId ?? glossary.glossaryId;
-      },
-      openCreatedResource: async (committedGlossary) => {
-        await openGlossaryEditor(render, glossary.glossaryId, {
-          preferredGlossary: committedGlossary ?? glossary,
-        });
-      },
-      syncInBackground: async (committedGlossary) => {
-        syncGlossaryInBackground(render, team, committedGlossary ?? glossary, repoName);
-      },
-      showSuccessNotice: () => {
-        showNoticeBadge(
-          createResult.localNameCollisionResolved
-            ? `Created glossary ${glossary.title} in local repo ${localRepoName} because that name was already used locally.`
-            : `Created glossary ${glossary.title}.`,
-          render,
-        );
-      },
-      showRefreshFailureNotice: (error) => {
-        showNoticeBadge(
-          `Created glossary ${glossary.title}, but the app could not refresh automatically: ${error?.message ?? String(error)}`,
-          render,
-        );
-        render();
-      },
-    });
-  } catch (error) {
-    state.glossaryCreation.status = "idle";
-    state.glossaryCreation.error = error?.message ?? String(error);
-    render();
-    return;
-  }
+    refreshOptions: {
+      loadData: async () => reloadGlossariesAfterWrite(render, team),
+    },
+    onSuccess: async (result) => {
+      resetGlossaryCreation();
+      state.selectedGlossaryId = result.glossaryId;
+      const refreshedGlossary = state.glossaries.find((item) => item.id === result.glossaryId) ?? null;
+      showNoticeBadge(
+        result.localNameCollisionResolved
+          ? `Created glossary ${result.title} in local repo ${result.localRepoName} because that name was already used locally.`
+          : `Created glossary ${result.title}.`,
+        render,
+      );
+      await openGlossaryEditor(render, result.glossaryId, {
+        preferredGlossary: refreshedGlossary,
+      });
+    },
+    onError: async (error) => {
+      state.glossaryCreation.status = "idle";
+      state.glossaryCreation.error = error?.message ?? String(error);
+    },
+  });
 }
 
 export async function importGlossaryFromTmx(render) {
   const team = selectedTeam();
+  if (areResourcePageWritesDisabled(state.glossariesPage)) {
+    showNoticeBadge("Wait for the current glossary refresh or write to finish.", render);
+    return;
+  }
   if (!Number.isFinite(team?.installationId)) {
     showNoticeBadge("Importing a glossary requires a GitHub App-connected team.", render);
     return;
@@ -700,112 +617,144 @@ export async function importGlossaryFromTmx(render) {
     return;
   }
 
-  beginPageSync();
-  render();
-  await waitForNextPaint();
+  await submitResourcePageWrite({
+    pageState: state.glossariesPage,
+    render,
+    onBlocked: async () => {
+      showNoticeBadge("Wait for the current glossary refresh or write to finish.", render);
+    },
+    runMutation: async () => {
+      const glossaryId = crypto.randomUUID();
+      const bytes = Array.from(new Uint8Array(await selectedFile.arrayBuffer()));
+      const importPreview = await invoke("inspect_tmx_glossary_import", {
+        input: {
+          fileName: selectedFile.name,
+          bytes,
+        },
+      });
+      const repoName = slugifyRepoName(selectedFile.name.replace(/\.[^.]+$/, "").trim());
+      if (!repoName) {
+        throw new Error("Could not determine a glossary repo name from this import file.");
+      }
 
-  let localRepoName = "";
-  let glossary = null;
-  let localNameCollisionResolved = false;
-  const glossaryId = crypto.randomUUID();
-  let metadataIntentCommitted = false;
-  try {
-    const bytes = Array.from(new Uint8Array(await selectedFile.arrayBuffer()));
-    const importPreview = await invoke("inspect_tmx_glossary_import", {
-      input: {
-        fileName: selectedFile.name,
-        bytes,
-      },
-    });
-    const repoName = slugifyRepoName(
-      selectedFile.name.replace(/\.[^.]+$/, "").trim(),
-    );
-    if (!repoName) {
-      throw new Error("Could not determine a glossary repo name from this import file.");
-    }
-
-    const localRepoReservation = await reserveLocalGlossaryRepoName(team, repoName);
-    localRepoName = localRepoReservation.repoName;
-    localNameCollisionResolved = localRepoReservation.collisionResolved === true;
-    await upsertGlossaryMetadataRecord(team, pendingGlossaryMetadataRecord({
-      id: glossaryId,
-      repoName: localRepoName,
-      title: importPreview.title,
-      sourceLanguage: importPreview.sourceLanguage ?? null,
-      targetLanguage: importPreview.targetLanguage ?? null,
-      termCount: Number.isFinite(importPreview.termCount) ? importPreview.termCount : 0,
-    }));
-    metadataIntentCommitted = true;
-    await invoke("prepare_local_gtms_glossary_repo", {
-      input: {
-        installationId: team.installationId,
-        glossaryId,
-        repoName: localRepoName,
-      },
-    });
-    glossary = await invoke("import_tmx_to_gtms_glossary_repo", {
-      input: {
-        installationId: team.installationId,
-        repoName: localRepoName,
-        glossaryId,
-        fileName: selectedFile.name,
-        bytes,
-      },
-    });
-  } catch (error) {
-    if (localRepoName && !glossary) {
+      let localRepoName = "";
+      let remoteRepo = null;
       try {
-        await invoke("purge_local_gtms_glossary_repo", {
-          input: {
-            installationId: team.installationId,
-            glossaryId,
-            repoName: localRepoName,
+        const createResult = await runLocalFirstCreate({
+          reserveLocalRepo: async () => reserveLocalGlossaryRepoName(team, repoName),
+          commitPendingMetadata: (nextLocalRepoName) =>
+            upsertGlossaryMetadataRecord(team, pendingGlossaryMetadataRecord({
+              id: glossaryId,
+              repoName: nextLocalRepoName,
+              title: importPreview.title,
+              sourceLanguage: importPreview.sourceLanguage ?? null,
+              targetLanguage: importPreview.targetLanguage ?? null,
+              termCount: Number.isFinite(importPreview.termCount) ? importPreview.termCount : 0,
+            }), { requirePushSuccess: true }),
+          initializeLocalResource: async (nextLocalRepoName) => {
+            await invoke("prepare_local_gtms_glossary_repo", {
+              input: {
+                installationId: team.installationId,
+                glossaryId,
+                repoName: nextLocalRepoName,
+              },
+            });
+            return invoke("import_tmx_to_gtms_glossary_repo", {
+              input: {
+                installationId: team.installationId,
+                repoName: nextLocalRepoName,
+                glossaryId,
+                fileName: selectedFile.name,
+                bytes,
+              },
+            });
           },
+          purgeLocalRepo: (nextLocalRepoName) => invoke("purge_local_gtms_glossary_repo", {
+            input: {
+              installationId: team.installationId,
+              glossaryId,
+              repoName: nextLocalRepoName,
+            },
+          }),
+          rollbackPendingMetadata: (error) =>
+            rollbackPendingGlossaryMetadataOnLocalFailure(team, glossaryId, error),
         });
-      } catch {
-        // Ignore local cleanup failures while surfacing the primary import error.
-      }
-    }
-    if (metadataIntentCommitted && !glossary) {
-      try {
-        await rollbackPendingGlossaryMetadataOnLocalFailure(team, glossaryId, error);
-      } catch (metadataRollbackError) {
-        error = metadataRollbackError;
-      }
-    }
-    failPageSync();
-    showNoticeBadge(error?.message ?? String(error), render);
-    render();
-    return;
-  }
 
-  const committedGlossary = commitLocalGlossarySummary(team, {
-    ...glossary,
-    remoteState: "pendingCreate",
-    resolutionState: "pendingCreate",
-  }, null);
-  state.selectedGlossaryId = glossary.glossaryId;
+        localRepoName = createResult.localRepoName;
+        const glossary = createResult.createdResource;
+        const remoteCreateResult = await createUniqueRemoteGlossaryRepoForTeam(team, repoName);
+        remoteRepo = remoteCreateResult.remoteRepo;
 
-  try {
-    await openGlossaryEditor(render, glossary.glossaryId, { preferredGlossary: committedGlossary ?? glossary });
-    syncGlossaryInBackground(
-      render,
-      team,
-      committedGlossary ?? glossary,
-      slugifyRepoName(selectedFile.name.replace(/\.[^.]+$/, "").trim()),
-    );
-    showNoticeBadge(
-      localNameCollisionResolved
-        ? `Imported ${glossary.termCount} terms from ${selectedFile.name} into ${glossary.title} in local repo ${localRepoName} because that name was already used locally.`
-        : `Imported ${glossary.termCount} terms from ${selectedFile.name} into ${glossary.title}.`,
-      render,
-    );
-  } catch (error) {
-    failPageSync();
-    showNoticeBadge(
-      `Imported ${glossary.termCount} terms from ${selectedFile.name} into ${glossary.title}, but the app could not refresh automatically: ${error?.message ?? String(error)}`,
-      render,
-    );
-    render();
-  }
+        if (remoteRepo.name !== localRepoName) {
+          await invoke("rename_local_gtms_glossary_repo", {
+            input: {
+              installationId: team.installationId,
+              glossaryId,
+              fromRepoName: localRepoName,
+              toRepoName: remoteRepo.name,
+            },
+          });
+          localRepoName = remoteRepo.name;
+        }
+
+        const linkedGlossary = {
+          ...glossary,
+          repoName: remoteRepo.name,
+          remoteState: "linked",
+          resolutionState: "",
+        };
+        await upsertGlossaryMetadataRecord(
+          team,
+          linkedGlossaryMetadataRecord(linkedGlossary, remoteRepo),
+          { requirePushSuccess: true },
+        );
+        await prepareLocalGlossaryRepo(team, remoteRepo, glossaryId);
+
+        const snapshots = await syncGlossaryReposForTeam(team, [remoteRepo]);
+        const syncIssue = getGlossarySyncIssueMessage(snapshots);
+        if (syncIssue?.message) {
+          throw new Error(syncIssue.message);
+        }
+
+        return {
+          glossaryId,
+          title: glossary.title,
+          termCount: Number.isFinite(glossary.termCount) ? glossary.termCount : 0,
+          localRepoName: createResult.localRepoName,
+          localNameCollisionResolved: createResult.localNameCollisionResolved,
+          fileName: selectedFile.name,
+        };
+      } catch (error) {
+        if (localRepoName || remoteRepo?.name) {
+          try {
+            await rollbackStrictGlossaryCreate(team, glossaryId, localRepoName, remoteRepo?.name ?? "");
+          } catch (rollbackError) {
+            throw new Error(
+              `${error?.message ?? String(error)} Automatic glossary import rollback also failed: ${
+                rollbackError?.message ?? String(rollbackError)
+              }`,
+            );
+          }
+        }
+        throw error;
+      }
+    },
+    refreshOptions: {
+      loadData: async () => reloadGlossariesAfterWrite(render, team),
+    },
+    onSuccess: async (result) => {
+      state.selectedGlossaryId = result.glossaryId;
+      const refreshedGlossary = state.glossaries.find((item) => item.id === result.glossaryId) ?? null;
+      showNoticeBadge(
+        result.localNameCollisionResolved
+          ? `Imported ${result.termCount} terms from ${result.fileName} into ${result.title} in local repo ${result.localRepoName} because that name was already used locally.`
+          : `Imported ${result.termCount} terms from ${result.fileName} into ${result.title}.`,
+        render,
+      );
+      await openGlossaryEditor(render, result.glossaryId, { preferredGlossary: refreshedGlossary });
+    },
+    onError: async (error) => {
+      showNoticeBadge(error?.message ?? String(error), render);
+    },
+  });
 }
