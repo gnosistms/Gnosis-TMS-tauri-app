@@ -1,10 +1,6 @@
 import { saveStoredGlossariesForTeam } from "./glossary-cache.js";
 import { normalizeGlossarySummary, sortGlossaries } from "./glossary-shared.js";
 import { state } from "./state.js";
-import {
-  applyTopLevelResourceMutation,
-  rollbackTopLevelResourceMutation,
-} from "./resource-top-level-mutations.js";
 
 export function glossarySnapshotFromList(glossaries = []) {
   const normalized = sortGlossaries(
@@ -16,17 +12,6 @@ export function glossarySnapshotFromList(glossaries = []) {
     items: normalized.filter((glossary) => glossary.lifecycleState !== "deleted"),
     deletedItems: normalized.filter((glossary) => glossary.lifecycleState === "deleted"),
   };
-}
-
-export function glossarySnapshotFromState() {
-  return glossarySnapshotFromList(state.glossaries);
-}
-
-function normalizeGlossarySnapshot(snapshot) {
-  return glossarySnapshotFromList([
-    ...(Array.isArray(snapshot?.items) ? snapshot.items : []),
-    ...(Array.isArray(snapshot?.deletedItems) ? snapshot.deletedItems : []),
-  ]);
 }
 
 export function applyGlossarySnapshotToState(
@@ -67,45 +52,17 @@ export function removeGlossaryFromState(glossaryId, repoName) {
   state.glossaries = (Array.isArray(state.glossaries) ? state.glossaries : []).filter((glossary) =>
     glossary?.id !== glossaryId && glossary?.repoName !== repoName
   );
-}
-
-function glossaryMutationResourceId(mutation) {
-  if (typeof mutation?.resourceId === "string" && mutation.resourceId.trim()) {
-    return mutation.resourceId.trim();
+  if (state.selectedGlossaryId === glossaryId) {
+    state.selectedGlossaryId = null;
   }
-  if (typeof mutation?.glossaryId === "string" && mutation.glossaryId.trim()) {
-    return mutation.glossaryId.trim();
+  if (state.glossaryEditor?.glossaryId === glossaryId || state.glossaryEditor?.repoName === repoName) {
+    state.glossaryEditor = {
+      ...state.glossaryEditor,
+      glossaryId: null,
+      repoName: "",
+      status: "idle",
+      error: "",
+      terms: [],
+    };
   }
-  return "";
-}
-
-export function applyGlossaryPendingMutation(snapshot, mutation) {
-  return applyTopLevelResourceMutation(snapshot, mutation, {
-    getMutationResourceId: glossaryMutationResourceId,
-    markDeleted: (glossary) => ({
-      ...glossary,
-      lifecycleState: "deleted",
-    }),
-    markActive: (glossary) => ({
-      ...glossary,
-      lifecycleState: "active",
-    }),
-    renameResource: (glossary, nextMutation) => ({
-      ...glossary,
-      title: nextMutation.title,
-    }),
-    normalizeSnapshot: normalizeGlossarySnapshot,
-  });
-}
-
-export function rollbackVisibleGlossaryMutation(mutation) {
-  const snapshot = rollbackTopLevelResourceMutation(
-    glossarySnapshotFromState(),
-    mutation,
-    applyGlossaryPendingMutation,
-    {
-      getMutationResourceId: glossaryMutationResourceId,
-    },
-  );
-  applyGlossarySnapshotToState(snapshot, { fallbackToFirstActive: false });
 }

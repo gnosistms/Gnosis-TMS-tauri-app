@@ -25,6 +25,7 @@ import {
 } from "./team-metadata-flow.js";
 import { ensureResourceNotTombstoned } from "./resource-lifecycle-engine.js";
 import { canPermanentlyDeleteProjectFiles } from "./resource-capabilities.js";
+import { normalizedConfirmationValue } from "./resource-entity-modal.js";
 import {
   applyProjectSnapshotToState,
   sortProjectSnapshot,
@@ -126,11 +127,7 @@ export function normalizeListedChapter(chapter) {
       typeof chapter.selectedTargetLanguageCode === "string" && chapter.selectedTargetLanguageCode.trim()
         ? chapter.selectedTargetLanguageCode
         : null,
-    linkedGlossary: normalizeChapterGlossaryLink(
-      chapter.linkedGlossary
-      ?? chapter.linkedGlossary1
-      ?? chapter.linkedGlossary2,
-    ),
+    linkedGlossary: normalizeChapterGlossaryLink(chapter.linkedGlossary),
   };
 }
 
@@ -935,7 +932,10 @@ export async function confirmChapterPermanentDeletion(render) {
     return;
   }
 
-  if (state.chapterPermanentDeletion.confirmationText !== state.chapterPermanentDeletion.chapterName) {
+  if (
+    normalizedConfirmationValue(state.chapterPermanentDeletion.confirmationText)
+    !== normalizedConfirmationValue(state.chapterPermanentDeletion.chapterName)
+  ) {
     state.chapterPermanentDeletion.error = "File name confirmation does not match.";
     render();
     return;

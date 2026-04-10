@@ -31,6 +31,7 @@ import { clearScopedSyncBadge, showScopedSyncBadge } from "../status-feedback.js
 import { classifySyncError } from "../sync-error.js";
 import { handleSyncFailure } from "../sync-recovery.js";
 import { loadUserTeams } from "./sync.js";
+import { normalizedConfirmationValue } from "../resource-entity-modal.js";
 
 const inflightTeamMutationIds = new Set();
 
@@ -230,7 +231,7 @@ export async function confirmTeamPermanentDeletion(render) {
     return;
   }
 
-  if (deletion.confirmationText !== deletion.teamName) {
+  if (normalizedConfirmationValue(deletion.confirmationText) !== normalizedConfirmationValue(deletion.teamName)) {
     state.teamPermanentDeletion.error = "Team name confirmation does not match.";
     render();
     return;

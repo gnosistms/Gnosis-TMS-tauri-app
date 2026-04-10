@@ -6,6 +6,7 @@ import { createUniqueRepoWithNumericSuffix } from "./repo-creation.js";
 import { ensureResourceNotTombstoned } from "./resource-lifecycle-engine.js";
 import { showNoticeBadge } from "./status-feedback.js";
 import { state } from "./state.js";
+import { removeGlossaryFromState } from "./glossary-top-level-state.js";
 import {
   inspectAndMigrateLocalRepoBindings,
   listGlossaryMetadataRecords,
@@ -466,25 +467,6 @@ async function purgeLocalGlossaryRepo(team, glossaryId, repoName) {
       repoName,
     },
   });
-}
-
-function removeGlossaryFromState(glossaryId, repoName) {
-  state.glossaries = (Array.isArray(state.glossaries) ? state.glossaries : []).filter((glossary) =>
-    glossary?.id !== glossaryId && glossary?.repoName !== repoName
-  );
-  if (state.selectedGlossaryId === glossaryId) {
-    state.selectedGlossaryId = null;
-  }
-  if (state.glossaryEditor?.glossaryId === glossaryId || state.glossaryEditor?.repoName === repoName) {
-    state.glossaryEditor = {
-      ...state.glossaryEditor,
-      glossaryId: null,
-      repoName: "",
-      status: "idle",
-      error: "",
-      terms: [],
-    };
-  }
 }
 
 function persistVisibleGlossaries(team) {

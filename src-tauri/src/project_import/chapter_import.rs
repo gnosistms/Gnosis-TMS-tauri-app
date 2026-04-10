@@ -173,10 +173,7 @@ struct ChapterSettings {
 struct ChapterLinkedGlossaries {
   #[serde(default)]
   #[serde(skip_serializing_if = "Option::is_none")]
-  glossary_1: Option<ChapterGlossaryLink>,
-  #[serde(default)]
-  #[serde(skip_serializing_if = "Option::is_none")]
-  glossary_2: Option<ChapterGlossaryLink>,
+  glossary: Option<ChapterGlossaryLink>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]

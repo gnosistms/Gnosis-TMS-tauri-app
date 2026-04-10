@@ -140,7 +140,15 @@ export function entityConfirmationMatches(modalState, options) {
     return false;
   }
 
-  return modalState[confirmationField] === modalState[nameField];
+  return normalizedConfirmationValue(modalState[confirmationField]) === normalizedConfirmationValue(modalState[nameField]);
+}
+
+export function normalizedConfirmationValue(value) {
+  if (typeof value !== "string") {
+    return "";
+  }
+
+  return value.normalize("NFC");
 }
 
 export function beginEntityModalSubmit(modalState, render) {

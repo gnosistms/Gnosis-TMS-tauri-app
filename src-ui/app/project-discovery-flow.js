@@ -97,7 +97,11 @@ async function repairProjectMetadataFromRemoteRename(selectedTeam, metadataRecor
   return false;
 }
 
-function mergeProjectsWithLocalFiles(snapshot, listings = [], targets = []) {
+function mergeProjectsWithLocalFiles(snapshot, listings = [], targets = [], options = {}) {
+  const normalizeListedChapter =
+    typeof options?.normalizeListedChapter === "function"
+      ? options.normalizeListedChapter
+      : (chapter) => chapter;
   const listingByProjectId = new Map();
   const listingByRepoName = new Map();
   const targetProjectIds = new Set();
@@ -118,7 +122,7 @@ function mergeProjectsWithLocalFiles(snapshot, listings = [], targets = []) {
     }
 
     const normalizedChapters = Array.isArray(listing.chapters)
-      ? listing.chapters.map(optionsNormalizeListedChapter).filter(Boolean)
+      ? listing.chapters.map(normalizeListedChapter).filter(Boolean)
       : [];
 
     if (typeof listing.projectId === "string" && listing.projectId.trim()) {
@@ -156,8 +160,6 @@ function mergeProjectsWithLocalFiles(snapshot, listings = [], targets = []) {
     deletedItems: snapshot.deletedItems.map(applyToProject),
   };
 }
-
-let optionsNormalizeListedChapter = (chapter) => chapter;
 
 async function purgeTombstonedProjectsForTeam(selectedTeam, projects, metadataRecords, options = {}) {
   const visibleProjects = Array.isArray(projects) ? projects : [];
@@ -249,9 +251,10 @@ export async function refreshProjectFilesFromDisk(render, selectedTeam, projects
     return baseSnapshot;
   }
 
-  optionsNormalizeListedChapter = options.normalizeListedChapter ?? optionsNormalizeListedChapter;
   const listings = await loadLocalProjectFileListings(selectedTeam, targetProjects);
-  const mergedSnapshot = mergeProjectsWithLocalFiles(baseSnapshot, listings, targetProjects);
+  const mergedSnapshot = mergeProjectsWithLocalFiles(baseSnapshot, listings, targetProjects, {
+    normalizeListedChapter: options.normalizeListedChapter,
+  });
   const nextSnapshot = applyPendingMutations(
     mergedSnapshot,
     state.pendingChapterMutations,

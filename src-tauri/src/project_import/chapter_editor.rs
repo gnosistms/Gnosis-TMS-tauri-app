@@ -334,10 +334,6 @@ struct StoredChapterSettings {
 struct StoredChapterLinkedGlossaries {
   #[serde(default)]
   glossary: Option<StoredChapterGlossaryLink>,
-  #[serde(default)]
-  glossary_1: Option<StoredChapterGlossaryLink>,
-  #[serde(default)]
-  glossary_2: Option<StoredChapterGlossaryLink>,
 }
 
 #[derive(Clone, Deserialize)]
@@ -1718,13 +1714,7 @@ fn linked_chapter_glossary(
     .settings
     .as_ref()
     .and_then(|settings| settings.linked_glossaries.as_ref())
-    .and_then(|linked| {
-      linked
-        .glossary
-        .as_ref()
-        .or(linked.glossary_1.as_ref())
-        .or(linked.glossary_2.as_ref())
-    })?;
+    .and_then(|linked| linked.glossary.as_ref())?;
 
   Some(ProjectChapterGlossaryLink {
     glossary_id: link.glossary_id.clone(),

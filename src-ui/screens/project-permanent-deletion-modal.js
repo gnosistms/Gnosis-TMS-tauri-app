@@ -1,5 +1,6 @@
 import { escapeHtml, loadingPrimaryButton, secondaryButton } from "../lib/ui.js";
 import { formatErrorForDisplay } from "../app/error-display.js";
+import { normalizedConfirmationValue } from "../app/resource-entity-modal.js";
 
 export function renderProjectPermanentDeletionModal(state) {
   const deletion = state.projectPermanentDeletion;
@@ -8,7 +9,8 @@ export function renderProjectPermanentDeletionModal(state) {
   }
 
   const isDeleting = deletion.status === "loading";
-  const matchesName = deletion.confirmationText === deletion.projectName;
+  const matchesName =
+    normalizedConfirmationValue(deletion.confirmationText) === normalizedConfirmationValue(deletion.projectName);
   const errorMarkup = deletion.error
     ? `<p class="modal__error">${escapeHtml(formatErrorForDisplay(deletion.error))}</p>`
     : "";

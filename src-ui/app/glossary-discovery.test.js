@@ -123,3 +123,65 @@ test("glossary discovery matches renamed remote repos by stable github repo iden
   assert.equal(merged[0].repoId, 84);
   assert.equal(merged[0].fullName, "team/new-glossary-name");
 });
+
+test("glossary discovery keeps a live glossary when old tombstones reuse the same repo name", () => {
+  const merged = mergeMetadataBackedGlossarySummaries(
+    [
+      {
+        id: "live-glossary",
+        repoName: "shared-name",
+        title: "Live Glossary",
+        lifecycleState: "active",
+        recordState: "live",
+        remoteState: "linked",
+        fullName: "team/shared-name",
+      },
+    ],
+    [
+      {
+        id: "old-glossary-1",
+        title: "Old Glossary 1",
+        repoName: "shared-name",
+        lifecycleState: "softDeleted",
+        remoteState: "deleted",
+        recordState: "tombstone",
+        fullName: "team/shared-name",
+      },
+      {
+        id: "old-glossary-2",
+        title: "Old Glossary 2",
+        repoName: "shared-name",
+        lifecycleState: "softDeleted",
+        remoteState: "deleted",
+        recordState: "tombstone",
+        fullName: "team/shared-name",
+      },
+      {
+        id: "live-glossary",
+        title: "Live Glossary",
+        repoName: "shared-name",
+        lifecycleState: "active",
+        remoteState: "linked",
+        recordState: "live",
+        fullName: "team/shared-name",
+        githubRepoId: 101,
+      },
+    ],
+    [
+      {
+        repoId: 101,
+        name: "shared-name",
+        fullName: "team/shared-name",
+      },
+    ],
+    {
+      metadataLoaded: true,
+      remoteLoaded: true,
+    },
+  );
+
+  assert.equal(merged.length, 1);
+  assert.equal(merged[0].id, "live-glossary");
+  assert.equal(merged[0].recordState, "live");
+  assert.equal(merged[0].resolutionState, "");
+});

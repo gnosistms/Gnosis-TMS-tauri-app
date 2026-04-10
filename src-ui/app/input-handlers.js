@@ -32,6 +32,7 @@ import {
   updateEditorSourceLanguage,
   updateEditorTargetLanguage,
 } from "./translate-flow.js";
+import { normalizedConfirmationValue } from "./resource-entity-modal.js";
 
 function handleProjectCreationInput(event) {
   const input = event.target.closest("[data-project-name-input]");
@@ -53,7 +54,7 @@ function handleProjectPermanentDeleteInput(event) {
   const deleteButton = document.querySelector("[data-project-permanent-delete-button]");
   if (deleteButton) {
     deleteButton.disabled =
-      input.value !== state.projectPermanentDeletion.projectName;
+      normalizedConfirmationValue(input.value) !== normalizedConfirmationValue(state.projectPermanentDeletion.projectName);
   }
   return true;
 }
@@ -78,7 +79,7 @@ function handleTeamPermanentDeleteInput(event) {
   const deleteButton = document.querySelector("[data-team-permanent-delete-button]");
   if (deleteButton) {
     deleteButton.disabled =
-      input.value !== state.teamPermanentDeletion.teamName;
+      normalizedConfirmationValue(input.value) !== normalizedConfirmationValue(state.teamPermanentDeletion.teamName);
   }
   return true;
 }
@@ -113,7 +114,7 @@ function handleChapterPermanentDeleteInput(event) {
   const deleteButton = document.querySelector("[data-chapter-permanent-delete-button]");
   if (deleteButton) {
     deleteButton.disabled =
-      input.value !== state.chapterPermanentDeletion.chapterName;
+      normalizedConfirmationValue(input.value) !== normalizedConfirmationValue(state.chapterPermanentDeletion.chapterName);
   }
   return true;
 }
@@ -178,7 +179,7 @@ function handleGlossaryPermanentDeleteInput(event) {
   const deleteButton = document.querySelector("[data-glossary-permanent-delete-button]");
   if (deleteButton) {
     deleteButton.disabled =
-      input.value !== state.glossaryPermanentDeletion.glossaryName;
+      normalizedConfirmationValue(input.value) !== normalizedConfirmationValue(state.glossaryPermanentDeletion.glossaryName);
   }
   return true;
 }

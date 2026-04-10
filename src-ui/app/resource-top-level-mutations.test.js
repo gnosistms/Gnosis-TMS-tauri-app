@@ -1,7 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { applyGlossaryPendingMutation, glossarySnapshotFromList } from "./glossary-top-level-state.js";
 import {
   applyTopLevelResourceMutation,
   submitTopLevelResourceMutation,
@@ -68,29 +67,6 @@ test("shared top-level mutation engine renames and soft-deletes resources throug
   assert.equal(deletedSnapshot.deletedItems.length, 1);
   assert.equal(deletedSnapshot.deletedItems[0].title, "Renamed");
   assert.equal(deletedSnapshot.deletedItems[0].lifecycleState, "deleted");
-});
-
-test("glossary pending mutation replay preserves optimistic deleted state across reload", () => {
-  const snapshot = glossarySnapshotFromList([
-    {
-      id: "glossary-1",
-      repoName: "glossary-1",
-      title: "Glossary 1",
-      lifecycleState: "active",
-    },
-  ]);
-
-  const optimisticSnapshot = applyGlossaryPendingMutation(snapshot, {
-    id: "mutation-1",
-    type: "softDelete",
-    resourceId: "glossary-1",
-    glossaryId: "glossary-1",
-  });
-
-  assert.equal(optimisticSnapshot.items.length, 0);
-  assert.equal(optimisticSnapshot.deletedItems.length, 1);
-  assert.equal(optimisticSnapshot.deletedItems[0].id, "glossary-1");
-  assert.equal(optimisticSnapshot.deletedItems[0].lifecycleState, "deleted");
 });
 
 test("shared top-level submit helper queues then processes after the requested wait", async () => {
