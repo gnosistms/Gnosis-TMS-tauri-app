@@ -203,7 +203,14 @@ Status on 2026-04-10:
 
 - partially complete
 - shared helpers now cover metadata-first mutations, tombstone prechecks, shared top-level rename / soft-delete / restore commit sequencing, shared optimistic queue setup, the standard top-level submit wrapper that queues then kicks background processing, a shared guard for missing-resource / permission / tombstone entry checks, shared rename-modal open/update/cancel helpers, shared permanent-delete modal open/update/cancel plus confirmation/loading helpers, a shared permanent-delete confirmation preflight guard, shared rollback modal reopening and rollback restoration helpers, shared follow-up warning notices, a shared local-first permanent-delete transaction helper for tombstone / local purge / remote cleanup sequencing, and a shared optimistic local-hide helper for permanent delete
-- projects and glossaries still have separate permanent-delete side effects around page-sync/debug/reload handling and a few higher-level lifecycle wrappers, so the full adapter-based shared state machine is not finished
+- glossary permanent delete now intentionally follows the same sync/debug lifecycle pattern as projects instead of using a looser page-refresh-only path
+- projects and glossaries still have a few resource-specific reload/failure callbacks and some higher-level lifecycle wrappers, so the full adapter-based shared state machine is not finished
+- remaining intended-model cleanup:
+  - projects and glossaries should share the same top-level lifecycle model
+  - the main remaining exception should be that projects additionally expose chapters/files on the projects page
+  - create flow still needs to be collapsed into one shared adapter-driven path
+  - read/discovery/reload orchestration still needs to be collapsed into one shared adapter-driven path
+  - project-specific chapter/file loading should remain an adapter concern layered on top of the shared lifecycle, not a separate lifecycle model
 
 - build one shared engine for:
   - create

@@ -15,7 +15,7 @@ import {
   canPermanentlyDeleteGlossaries,
   selectedTeam,
 } from "./glossary-shared.js";
-import { showNoticeBadge } from "./status-feedback.js";
+import { clearScopedSyncBadge, showNoticeBadge, showScopedSyncBadge } from "./status-feedback.js";
 import {
   ensureGlossaryNotTombstoned,
   permanentlyDeleteRemoteGlossaryRepoForTeam,
@@ -57,6 +57,14 @@ import {
 } from "./resource-entity-modal.js";
 
 const inflightGlossaryMutationIds = new Set();
+
+function setGlossaryUiDebug(render, text) {
+  showScopedSyncBadge("glossaries", text, render);
+}
+
+function clearGlossaryUiDebug(render) {
+  clearScopedSyncBadge("glossaries", render);
+}
 
 function glossaryById(glossaryId) {
   return state.glossaries.find((glossary) => glossary.id === glossaryId) ?? null;
@@ -544,6 +552,8 @@ export async function confirmGlossaryPermanentDeletion(render) {
     waitForNextPaint,
     beforeRemove: () => {
       state.glossarySyncVersion += 1;
+      beginPageSync();
+      setGlossaryUiDebug(render, "Deleting glossary...");
     },
     removeVisibleResource: () => {
       removeGlossaryFromState(glossary.id, glossary.repoName);
@@ -575,8 +585,19 @@ export async function confirmGlossaryPermanentDeletion(render) {
       },
     }),
     deleteRemote: () => permanentlyDeleteRemoteGlossaryRepoForTeam(team, glossary.repoName),
-    reloadAfterSuccess: () => loadTeamGlossaries(render, team.id, { preserveVisibleData: true }),
     rollbackBeforeTombstone: async (error) => {
+      if (
+        await handleSyncFailure(classifySyncError(error), {
+          render,
+          teamId: team?.id ?? null,
+          currentResource: true,
+        })
+      ) {
+        clearGlossaryUiDebug(render);
+        failPageSync();
+        return;
+      }
+
       rollbackOptimisticPermanentDelete({
         restoreVisibleState: () => {
           restoreVisibleGlossaryState(snapshot);
@@ -598,10 +619,16 @@ export async function confirmGlossaryPermanentDeletion(render) {
             error: error?.message ?? String(error),
           });
         },
+        afterRollback: () => {
+          clearGlossaryUiDebug(render);
+          failPageSync();
+        },
         render,
       });
     },
     onRemoteDeleteError: async (error) => {
+      clearGlossaryUiDebug(render);
+      await completePageSync(render);
       showPermanentDeleteFollowupNotice({
         resourceLabel: "Glossary",
         phase: "remote cleanup",
@@ -611,14 +638,34 @@ export async function confirmGlossaryPermanentDeletion(render) {
       render();
     },
     onLocalDeleteError: async (error) => {
+      if (
+        await handleSyncFailure(classifySyncError(error), {
+          render,
+          teamId: team?.id ?? null,
+          currentResource: true,
+        })
+      ) {
+        clearGlossaryUiDebug(render);
+        failPageSync();
+        return true;
+      }
+
       showPermanentDeleteFollowupNotice({
         resourceLabel: "Glossary",
         phase: "local cleanup",
         error,
         render,
       });
+      clearGlossaryUiDebug(render);
+      failPageSync();
       render();
       return true;
+    },
+    reloadAfterSuccess: async () => {
+      clearGlossaryUiDebug(render);
+      await completePageSync(render);
+      render();
+      await loadTeamGlossaries(render, team.id, { preserveVisibleData: true });
     },
   });
 }
