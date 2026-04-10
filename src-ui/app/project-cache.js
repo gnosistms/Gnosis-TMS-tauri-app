@@ -62,8 +62,11 @@ function normalizeChapter(chapter) {
     id,
     name,
     status: chapter.status === "deleted" ? "deleted" : "active",
-    linkedGlossary1: normalizeChapterGlossaryLink(chapter.linkedGlossary1),
-    linkedGlossary2: normalizeChapterGlossaryLink(chapter.linkedGlossary2),
+    linkedGlossary: normalizeChapterGlossaryLink(
+      chapter.linkedGlossary
+      ?? chapter.linkedGlossary1
+      ?? chapter.linkedGlossary2,
+    ),
   };
 }
 

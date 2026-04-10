@@ -16,7 +16,6 @@ import {
   toggleDeletedProjects,
 } from "../project-flow.js";
 import {
-  acknowledgeChapterGlossaryConflict,
   cancelChapterPermanentDeletion,
   cancelChapterRename,
   confirmChapterPermanentDeletion,
@@ -32,7 +31,6 @@ import { actionSuffix, runWithImmediateLoading } from "../action-helpers.js";
 
 export function createProjectActions(render) {
   const exactActions = {
-    "acknowledge-chapter-glossary-conflict": () => acknowledgeChapterGlossaryConflict(render),
     "open-new-project": () => createProjectForSelectedTeam(render),
     "cancel-project-creation": () => cancelProjectCreation(render),
     "cancel-project-permanent-deletion": () => cancelProjectPermanentDeletion(render),

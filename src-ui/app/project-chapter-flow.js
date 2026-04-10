@@ -13,7 +13,6 @@ import {
   upsertPendingMutation,
 } from "./optimistic-collection.js";
 import {
-  resetChapterGlossaryConflict,
   resetChapterPermanentDeletion,
   resetChapterRename,
   state,
@@ -127,8 +126,11 @@ export function normalizeListedChapter(chapter) {
       typeof chapter.selectedTargetLanguageCode === "string" && chapter.selectedTargetLanguageCode.trim()
         ? chapter.selectedTargetLanguageCode
         : null,
-    linkedGlossary1: normalizeChapterGlossaryLink(chapter.linkedGlossary1),
-    linkedGlossary2: normalizeChapterGlossaryLink(chapter.linkedGlossary2),
+    linkedGlossary: normalizeChapterGlossaryLink(
+      chapter.linkedGlossary
+      ?? chapter.linkedGlossary1
+      ?? chapter.linkedGlossary2,
+    ),
   };
 }
 
@@ -182,11 +184,15 @@ export function projectMatchesMetadataRecord(project, record) {
     ),
   ].filter(Boolean);
 
-  return (
-    (projectId && projectId === record?.id)
-    || (fullName && fullName === record?.fullName)
-    || (repoName && recordRepoNames.includes(repoName))
-  );
+  if (projectId && typeof record?.id === "string" && record.id.trim()) {
+    return projectId === record.id.trim();
+  }
+
+  if (fullName && typeof record?.fullName === "string" && record.fullName.trim()) {
+    return fullName === record.fullName.trim();
+  }
+
+  return repoName && recordRepoNames.includes(repoName);
 }
 
 export function dropProjectMutationsForProject(selectedTeam, projectId) {
@@ -536,8 +542,7 @@ export function applyChapterPendingMutation(snapshot, mutation) {
       if (mutation.type === "setGlossaryLinks") {
         return {
           ...chapter,
-          linkedGlossary1: normalizeChapterGlossaryLink(mutation.glossary1),
-          linkedGlossary2: normalizeChapterGlossaryLink(mutation.glossary2),
+          linkedGlossary: normalizeChapterGlossaryLink(mutation.glossary),
         };
       }
 
@@ -735,7 +740,7 @@ export async function submitChapterRename(render) {
   });
 }
 
-async function persistChapterGlossaryLinks(render, chapterId, nextGlossary1, nextGlossary2) {
+async function persistChapterGlossaryLinks(render, chapterId, nextGlossary) {
   const resolved = await resolveChapterMutationContext(render, chapterId, {
     actionLabel: "change file glossary links",
   });
@@ -745,13 +750,8 @@ async function persistChapterGlossaryLinks(render, chapterId, nextGlossary1, nex
 
   const { selectedTeam, context } = resolved;
 
-  const currentGlossary1 = normalizeChapterGlossaryLink(context.chapter.linkedGlossary1);
-  const currentGlossary2 = normalizeChapterGlossaryLink(context.chapter.linkedGlossary2);
-
-  if (
-    JSON.stringify(nextGlossary1) === JSON.stringify(currentGlossary1)
-    && JSON.stringify(nextGlossary2) === JSON.stringify(currentGlossary2)
-  ) {
+  const currentGlossary = normalizeChapterGlossaryLink(context.chapter.linkedGlossary);
+  if (JSON.stringify(nextGlossary) === JSON.stringify(currentGlossary)) {
     return;
   }
 
@@ -760,8 +760,7 @@ async function persistChapterGlossaryLinks(render, chapterId, nextGlossary1, nex
     type: "setGlossaryLinks",
     projectId: context.project.id,
     chapterId,
-    glossary1: nextGlossary1,
-    glossary2: nextGlossary2,
+    glossary: nextGlossary,
   };
 
   startOptimisticChapterMutation({
@@ -772,8 +771,7 @@ async function persistChapterGlossaryLinks(render, chapterId, nextGlossary1, nex
     applyOptimistic: () => {
       updateChapterInState(chapterId, (chapter) => ({
         ...chapter,
-        linkedGlossary1: nextGlossary1,
-        linkedGlossary2: nextGlossary2,
+        linkedGlossary: nextGlossary,
       }));
     },
     runRemote: async () => invoke("update_gtms_chapter_glossary_links", {
@@ -782,26 +780,20 @@ async function persistChapterGlossaryLinks(render, chapterId, nextGlossary1, nex
         projectId: context.project.id,
         repoName: context.project.name,
         chapterId,
-        glossary1: chapterGlossaryLinkInput(nextGlossary1),
-        glossary2: chapterGlossaryLinkInput(nextGlossary2),
+        glossary: chapterGlossaryLinkInput(nextGlossary),
       },
     }),
     beforeReconcile: async (payload) => {
       updateChapterInState(chapterId, (chapter) => ({
         ...chapter,
-        linkedGlossary1: normalizeChapterGlossaryLink(payload?.glossary1),
-        linkedGlossary2: normalizeChapterGlossaryLink(payload?.glossary2),
+        linkedGlossary: normalizeChapterGlossaryLink(payload?.glossary),
       }));
       persistProjectsForTeam(selectedTeam);
     },
   });
 }
 
-export async function updateChapterGlossaryLinks(render, chapterId, slot, glossaryId) {
-  if (slot !== "glossary_1" && slot !== "glossary_2") {
-    return;
-  }
-
+export async function updateChapterGlossaryLinks(render, chapterId, glossaryId) {
   const context = findChapterContext(chapterId);
   if (!context?.chapter) {
     setProjectDiscoveryError(render, "Could not find the selected file.");
@@ -814,54 +806,7 @@ export async function updateChapterGlossaryLinks(render, chapterId, slot, glossa
     return;
   }
 
-  const currentGlossary1 = normalizeChapterGlossaryLink(context.chapter.linkedGlossary1);
-  const currentGlossary2 = normalizeChapterGlossaryLink(context.chapter.linkedGlossary2);
-  const otherLink = slot === "glossary_1" ? currentGlossary2 : currentGlossary1;
-  const nextSummary = glossarySummaryByLink(nextLink);
-  const otherSummary = glossarySummaryByLink(otherLink);
-  const nextTargetLanguageKey = glossaryTargetLanguageKey(nextSummary);
-  const otherTargetLanguageKey = glossaryTargetLanguageKey(otherSummary);
-
-  if (
-    nextLink
-    && otherLink
-    && nextTargetLanguageKey
-    && otherTargetLanguageKey
-    && nextTargetLanguageKey === otherTargetLanguageKey
-  ) {
-    state.chapterGlossaryConflict = {
-      isOpen: true,
-      status: "idle",
-      error: "",
-      chapterId,
-      glossary1: slot === "glossary_1" ? nextLink : null,
-      glossary2: slot === "glossary_2" ? nextLink : null,
-      message: `Your two glossaries have the same target language. To prevent errors, ${otherSummary?.title ?? "the other glossary"} will be de-selected.`,
-    };
-    render();
-    return;
-  }
-
-  await persistChapterGlossaryLinks(
-    render,
-    chapterId,
-    slot === "glossary_1" ? nextLink : currentGlossary1,
-    slot === "glossary_2" ? nextLink : currentGlossary2,
-  );
-}
-
-export async function acknowledgeChapterGlossaryConflict(render) {
-  const conflict = state.chapterGlossaryConflict;
-  if (!conflict?.isOpen || !conflict.chapterId) {
-    return;
-  }
-
-  const chapterId = conflict.chapterId;
-  const glossary1 = normalizeChapterGlossaryLink(conflict.glossary1);
-  const glossary2 = normalizeChapterGlossaryLink(conflict.glossary2);
-  resetChapterGlossaryConflict();
-  render();
-  await persistChapterGlossaryLinks(render, chapterId, glossary1, glossary2);
+  await persistChapterGlossaryLinks(render, chapterId, nextLink);
 }
 
 async function submitSimpleChapterMutation(render, chapterId, options) {

@@ -80,7 +80,6 @@ import {
   toggleDeletedFiles,
   submitChapterRename,
   updateChapterGlossaryLinks,
-  acknowledgeChapterGlossaryConflict,
   deleteChapter,
   restoreChapter,
   permanentlyDeleteChapter,

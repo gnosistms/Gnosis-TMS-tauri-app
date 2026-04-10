@@ -76,7 +76,6 @@ export const state = {
   projectPermanentDeletion: createProjectPermanentDeletionState(),
   chapterRename: createChapterRenameState(),
   chapterPermanentDeletion: createChapterPermanentDeletionState(),
-  chapterGlossaryConflict: createChapterGlossaryConflictState(),
   glossaryCreation: createGlossaryCreationState(),
   glossaryRename: createGlossaryRenameState(),
   glossaryPermanentDeletion: createGlossaryPermanentDeletionState(),
@@ -367,15 +366,6 @@ export function createChapterPermanentDeletionState() {
   });
 }
 
-export function createChapterGlossaryConflictState() {
-  return createEntityModalState({
-    chapterId: null,
-    glossary1: null,
-    glossary2: null,
-    message: "",
-  });
-}
-
 export function createGlossaryTermEditorState() {
   return createEntityModalState({
     glossaryId: null,
@@ -440,10 +430,6 @@ export function resetChapterRename() {
 
 export function resetChapterPermanentDeletion() {
   state.chapterPermanentDeletion = createChapterPermanentDeletionState();
-}
-
-export function resetChapterGlossaryConflict() {
-  state.chapterGlossaryConflict = createChapterGlossaryConflictState();
 }
 
 export function resetProjectPermanentDeletion() {
@@ -520,7 +506,6 @@ export function resetSessionState() {
   resetProjectRename();
   resetChapterRename();
   resetChapterPermanentDeletion();
-  resetChapterGlossaryConflict();
   resetProjectPermanentDeletion();
   resetGlossaryCreation();
   resetGlossaryRename();

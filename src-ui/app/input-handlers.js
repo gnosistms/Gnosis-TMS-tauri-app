@@ -321,7 +321,6 @@ function handleChapterGlossarySelectInput(event, render) {
   void updateChapterGlossaryLinks(
     render,
     input.dataset.chapterId,
-    input.dataset.glossarySlot,
     input.value,
   );
   return true;

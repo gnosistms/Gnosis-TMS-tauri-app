@@ -14,7 +14,6 @@ import {
 } from "../lib/ui.js";
 import { formatErrorForDisplay } from "../app/error-display.js";
 import { renderProjectCreationModal } from "./project-creation-modal.js";
-import { renderChapterGlossaryConflictModal } from "./chapter-glossary-conflict-modal.js";
 import { renderChapterPermanentDeletionModal } from "./chapter-permanent-deletion-modal.js";
 import { renderChapterRenameModal } from "./chapter-rename-modal.js";
 import { renderProjectPermanentDeletionModal } from "./project-permanent-deletion-modal.js";
@@ -63,11 +62,10 @@ function findGlossaryOptionById(glossaries, glossaryId) {
   return availableGlossaryOptions(glossaries).find((glossary) => glossary.id === glossaryId) ?? null;
 }
 
-function renderChapterGlossarySelect(chapter, slotNumber, glossaries, options = {}) {
-  const linkedGlossary = slotNumber === 1 ? chapter.linkedGlossary1 : chapter.linkedGlossary2;
+function renderChapterGlossarySelect(chapter, glossaries, options = {}) {
+  const linkedGlossary = chapter.linkedGlossary;
   const selectedGlossary = findGlossaryOptionById(glossaries, linkedGlossary?.glossaryId);
-  const slotKey = `glossary_${slotNumber}`;
-  const tooltipText = `Select glossary ${slotNumber}`;
+  const tooltipText = "Select a glossary";
   const optionList = availableGlossaryOptions(glossaries);
 
   return renderSelectPillControl({
@@ -81,7 +79,6 @@ function renderChapterGlossarySelect(chapter, slotNumber, glossaries, options = 
     selectAttributes: {
       "data-chapter-glossary-select": true,
       "data-chapter-id": chapter.id,
-      "data-glossary-slot": slotKey,
       "aria-label": tooltipText,
     },
     options: [
@@ -186,8 +183,7 @@ function renderProjectCard(project, expanded, options = {}) {
                     }
                   </div>
                   <div class="chapter-table__actions">
-                    ${renderChapterGlossarySelect(chapter, 1, glossaryOptions, { disabled: offlineMode || pageWritesDisabled || !canManageProjects })}
-                    ${renderChapterGlossarySelect(chapter, 2, glossaryOptions, { disabled: offlineMode || pageWritesDisabled || !canManageProjects })}
+                    ${renderChapterGlossarySelect(chapter, glossaryOptions, { disabled: offlineMode || pageWritesDisabled || !canManageProjects })}
                     ${textAction("Open", `open-translate:${chapter.id}`)}
                     ${canManageProjects ? textAction("Rename", `rename-file:${chapter.id}`, { disabled: offlineMode || pageWritesDisabled || disableContentActions }) : ""}
                     ${canManageProjects ? textAction("Delete", `delete-file:${chapter.id}`, { disabled: offlineMode || pageWritesDisabled || disableContentActions }) : ""}
@@ -425,7 +421,6 @@ export function renderProjectsScreen(state) {
     offlineReconnectState: state.offline?.reconnecting === true,
     body,
     }) +
-    renderChapterGlossaryConflictModal(state) +
     renderProjectCreationModal(state) +
     renderChapterPermanentDeletionModal(state) +
     renderChapterRenameModal(state) +

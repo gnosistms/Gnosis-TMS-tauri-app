@@ -104,8 +104,7 @@ pub(crate) struct UpdateChapterGlossaryLinksInput {
   repo_name: String,
   project_id: Option<String>,
   chapter_id: String,
-  glossary_1: Option<GlossaryLinkSelectionInput>,
-  glossary_2: Option<GlossaryLinkSelectionInput>,
+  glossary: Option<GlossaryLinkSelectionInput>,
 }
 
 #[derive(Deserialize)]
@@ -119,8 +118,7 @@ pub(crate) struct GlossaryLinkSelectionInput {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct UpdateChapterGlossaryLinksResponse {
   chapter_id: String,
-  glossary_1: Option<ProjectChapterGlossaryLink>,
-  glossary_2: Option<ProjectChapterGlossaryLink>,
+  glossary: Option<ProjectChapterGlossaryLink>,
 }
 
 #[derive(Deserialize)]
@@ -270,8 +268,7 @@ pub(super) struct ProjectChapterSummary {
   source_word_counts: BTreeMap<String, usize>,
   selected_source_language_code: Option<String>,
   selected_target_language_code: Option<String>,
-  linked_glossary_1: Option<ProjectChapterGlossaryLink>,
-  linked_glossary_2: Option<ProjectChapterGlossaryLink>,
+  linked_glossary: Option<ProjectChapterGlossaryLink>,
 }
 
 #[derive(Clone, Serialize)]
@@ -335,7 +332,11 @@ struct StoredChapterSettings {
 
 #[derive(Clone, Deserialize, Default)]
 struct StoredChapterLinkedGlossaries {
+  #[serde(default)]
+  glossary: Option<StoredChapterGlossaryLink>,
+  #[serde(default)]
   glossary_1: Option<StoredChapterGlossaryLink>,
+  #[serde(default)]
   glossary_2: Option<StoredChapterGlossaryLink>,
 }
 
@@ -742,14 +743,13 @@ pub(super) fn update_gtms_chapter_glossary_links_sync(
     .as_object_mut()
     .ok_or_else(|| "The chapter linked glossaries are not a JSON object.".to_string())?;
 
-  let glossary_1_value = glossary_link_value_from_input(input.glossary_1.as_ref());
-  let glossary_2_value = glossary_link_value_from_input(input.glossary_2.as_ref());
-  let glossary_1_changed = linked_glossaries_object.get("glossary_1") != Some(&glossary_1_value);
-  let glossary_2_changed = linked_glossaries_object.get("glossary_2") != Some(&glossary_2_value);
+  let glossary_value = glossary_link_value_from_input(input.glossary.as_ref());
+  let glossary_changed = linked_glossaries_object.get("glossary") != Some(&glossary_value);
 
-  if glossary_1_changed || glossary_2_changed {
-    linked_glossaries_object.insert("glossary_1".to_string(), glossary_1_value);
-    linked_glossaries_object.insert("glossary_2".to_string(), glossary_2_value);
+  if glossary_changed {
+    linked_glossaries_object.insert("glossary".to_string(), glossary_value);
+    linked_glossaries_object.remove("glossary_1");
+    linked_glossaries_object.remove("glossary_2");
     write_json_pretty(&chapter_json_path, &chapter_value)?;
 
     let relative_chapter_json = repo_relative_path(&repo_path, &chapter_json_path)?;
@@ -764,8 +764,7 @@ pub(super) fn update_gtms_chapter_glossary_links_sync(
 
   Ok(UpdateChapterGlossaryLinksResponse {
     chapter_id: input.chapter_id,
-    glossary_1: input.glossary_1.map(project_chapter_glossary_link_from_input),
-    glossary_2: input.glossary_2.map(project_chapter_glossary_link_from_input),
+    glossary: input.glossary.map(project_chapter_glossary_link_from_input),
   })
 }
 
@@ -1115,8 +1114,7 @@ fn load_project_chapter_summaries(repo_path: &Path) -> Result<Vec<ProjectChapter
       &languages,
       selected_source_language_code.as_deref(),
     );
-    let linked_glossary_1 = linked_chapter_glossary(&chapter_file, 1);
-    let linked_glossary_2 = linked_chapter_glossary(&chapter_file, 2);
+    let linked_glossary = linked_chapter_glossary(&chapter_file);
 
     chapters.push(ProjectChapterSummary {
       id: chapter_file.chapter_id,
@@ -1130,8 +1128,7 @@ fn load_project_chapter_summaries(repo_path: &Path) -> Result<Vec<ProjectChapter
       source_word_counts,
       selected_source_language_code,
       selected_target_language_code,
-      linked_glossary_1,
-      linked_glossary_2,
+      linked_glossary,
     });
   }
 
@@ -1716,21 +1713,18 @@ fn preferred_source_language_code(
 
 fn linked_chapter_glossary(
   chapter_file: &StoredChapterFile,
-  slot: usize,
 ) -> Option<ProjectChapterGlossaryLink> {
-  let link = match slot {
-    1 => chapter_file
-      .settings
-      .as_ref()
-      .and_then(|settings| settings.linked_glossaries.as_ref())
-      .and_then(|linked| linked.glossary_1.as_ref()),
-    2 => chapter_file
-      .settings
-      .as_ref()
-      .and_then(|settings| settings.linked_glossaries.as_ref())
-      .and_then(|linked| linked.glossary_2.as_ref()),
-    _ => None,
-  }?;
+  let link = chapter_file
+    .settings
+    .as_ref()
+    .and_then(|settings| settings.linked_glossaries.as_ref())
+    .and_then(|linked| {
+      linked
+        .glossary
+        .as_ref()
+        .or(linked.glossary_1.as_ref())
+        .or(linked.glossary_2.as_ref())
+    })?;
 
   Some(ProjectChapterGlossaryLink {
     glossary_id: link.glossary_id.clone(),

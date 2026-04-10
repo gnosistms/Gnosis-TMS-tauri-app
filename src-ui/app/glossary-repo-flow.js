@@ -443,11 +443,15 @@ function glossaryMatchesMetadataRecord(glossary, record) {
     ),
   ].filter(Boolean);
 
-  return (
-    (glossaryId && glossaryId === record?.id)
-    || (fullName && fullName === record?.fullName)
-    || (repoName && recordRepoNames.includes(repoName))
-  );
+  if (glossaryId && typeof record?.id === "string" && record.id.trim()) {
+    return glossaryId === record.id.trim();
+  }
+
+  if (fullName && typeof record?.fullName === "string" && record.fullName.trim()) {
+    return fullName === record.fullName.trim();
+  }
+
+  return repoName && recordRepoNames.includes(repoName);
 }
 
 async function purgeLocalGlossaryRepo(team, glossaryId, repoName) {
