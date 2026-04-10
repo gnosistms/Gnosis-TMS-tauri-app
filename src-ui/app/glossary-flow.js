@@ -3,6 +3,9 @@ export {
   primeGlossariesLoadingState,
 } from "./glossary-discovery-flow.js";
 export {
+  repairGlossaryRepoBinding,
+} from "./glossary-repo-flow.js";
+export {
   deleteGlossaryTerm,
   loadSelectedGlossaryEditorData,
   openGlossaryEditor,

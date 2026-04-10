@@ -1,3 +1,4 @@
+import { state } from "../state.js";
 import {
   addGlossaryTermVariant,
   cancelGlossaryPermanentDeletion,
@@ -13,6 +14,7 @@ import {
   openGlossaryPermanentDeletion,
   openGlossaryRename,
   openGlossaryTermEditor,
+  repairGlossaryRepoBinding,
   removeGlossaryTermVariant,
   restoreGlossary,
   showGlossaryFeatureNotReady,
@@ -79,6 +81,11 @@ export function createGlossaryActions(render) {
       prefix: "delete-glossary:",
       handler: async (glossaryId, event) =>
         runWithImmediateLoading(event, "Deleting...", () => deleteGlossary(render, glossaryId)),
+    },
+    {
+      prefix: "repair-glossary:",
+      handler: async (glossaryId, event) =>
+        runWithImmediateLoading(event, "Repairing...", () => repairGlossaryRepoBinding(render, state.teams.find((team) => team.id === state.selectedTeamId), glossaryId)),
     },
     {
       prefix: "restore-glossary:",

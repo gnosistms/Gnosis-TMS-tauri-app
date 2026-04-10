@@ -11,6 +11,7 @@ import {
   listGlossaryMetadataRecords,
   lookupLocalMetadataTombstone,
   repairAutoRepairableRepoBindings,
+  repairLocalRepoBinding,
 } from "./team-metadata-flow.js";
 import { mergeMetadataBackedGlossarySummaries } from "./glossary-discovery.js";
 
@@ -626,6 +627,25 @@ export async function permanentlyDeleteRemoteGlossaryRepoForTeam(team, repoName)
     });
   } catch (error) {
     throw normalizeGlossaryBrokerError(error);
+  }
+}
+
+export async function repairGlossaryRepoBinding(render, team, glossaryId) {
+  if (!Number.isFinite(team?.installationId) || typeof glossaryId !== "string" || !glossaryId.trim()) {
+    return;
+  }
+
+  try {
+    await repairLocalRepoBinding(team, "glossary", glossaryId);
+    showNoticeBadge("The glossary repo binding was repaired.", render, 2200);
+    const result = await loadRepoBackedGlossariesForTeam(team, {
+      offlineMode: state.offline?.isEnabled === true,
+    });
+    state.glossaries = result.glossaries;
+    render();
+  } catch (error) {
+    showNoticeBadge(error?.message ?? String(error), render, 3200);
+    render();
   }
 }
 

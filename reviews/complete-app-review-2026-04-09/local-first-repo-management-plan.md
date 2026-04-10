@@ -265,7 +265,8 @@ Status on 2026-04-10:
 - page loads already prefer local metadata plus local repos
 - project/glossary discovery now surfaces explicit repair states instead of silently treating stray repos as authoritative
 - background reconciliation now repairs `origin` for projects and glossaries, and project sync can handle empty remotes
-- remaining gap: explicit repair actions and deeper remote mismatch recovery are still incomplete
+- explicit repair actions now exist for repairable local binding/origin issues
+- remaining gap: deeper remote mismatch recovery is still incomplete, especially out-of-band remote rename/delete cases
 
 - make page loads read local metadata + local repos first
 - remove remaining repo-name-driven discovery shortcuts
@@ -284,11 +285,12 @@ Expected outcome:
 
 Status on 2026-04-10:
 
-- started, not finished
+- partially complete
 - added backend repair/migration scan for local repo bindings against local team-metadata
 - safe sync-state repairs are applied automatically
 - repair issues are surfaced into discovery/UI state as explicit `repair` resolutions
-- remaining gap: no user-triggered repair action exists yet for persistent conflicts like out-of-band remote rename or missing remote linkage
+- added explicit repair commands plus user-facing repair actions for repairable local binding/origin issues
+- remaining gap: persistent conflicts like out-of-band remote rename or missing remote linkage still need deeper guided repair flows
 
 - add a repair command for:
   - missing `origin`

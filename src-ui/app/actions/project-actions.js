@@ -15,6 +15,7 @@ import {
   openChapterRename,
   openProjectRename,
   permanentlyDeleteProject,
+  repairProjectRepoBinding,
   restoreChapter,
   restoreProject,
   submitChapterRename,
@@ -84,6 +85,11 @@ export function createProjectActions(render) {
     {
       prefix: "delete-deleted-file:",
       handler: (chapterId) => openChapterPermanentDeletion(render, chapterId),
+    },
+    {
+      prefix: "repair-project:",
+      handler: async (projectId, event) =>
+        runWithImmediateLoading(event, "Repairing...", () => repairProjectRepoBinding(render, projectId)),
     },
     {
       prefix: "restore-project:",

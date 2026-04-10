@@ -72,6 +72,8 @@ function renderGlossaryCard(glossary, options = {}) {
         message: resolution.message,
         help: resolution.help,
         className: "resource-state-box",
+        actionLabel: resolution.actionLabel,
+        action: resolution.action,
       })
     : "";
 

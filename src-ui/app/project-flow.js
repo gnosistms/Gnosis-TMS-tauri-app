@@ -43,6 +43,7 @@ import {
   listProjectMetadataRecords,
   lookupLocalMetadataTombstone,
   repairAutoRepairableRepoBindings,
+  repairLocalRepoBinding,
   upsertProjectMetadataRecord,
 } from "./team-metadata-flow.js";
 import {
@@ -1693,6 +1694,22 @@ export async function submitProjectRename(render) {
     }
     state.projectRename.status = "idle";
     state.projectRename.error = error?.message ?? String(error);
+    render();
+  }
+}
+
+export async function repairProjectRepoBinding(render, projectId) {
+  const selectedTeam = state.teams.find((team) => team.id === state.selectedTeamId);
+  if (!selectedTeam?.installationId || typeof projectId !== "string" || !projectId.trim()) {
+    return;
+  }
+
+  try {
+    await repairLocalRepoBinding(selectedTeam, "project", projectId);
+    showNoticeBadge("The project repo binding was repaired.", render, 2200);
+    await loadTeamProjects(render, selectedTeam.id);
+  } catch (error) {
+    showNoticeBadge(error?.message ?? String(error), render, 3200);
     render();
   }
 }

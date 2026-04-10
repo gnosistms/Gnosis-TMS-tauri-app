@@ -154,6 +154,8 @@ function renderProjectCard(project, expanded, options = {}) {
         message: resolution.message,
         help: resolution.help,
         className: "resource-state-box expandable-card__status",
+        actionLabel: resolution.actionLabel,
+        action: resolution.action,
       })
     : "";
 

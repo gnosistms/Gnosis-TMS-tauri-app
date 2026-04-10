@@ -263,10 +263,19 @@ export function renderStateCard({ eyebrow = "", title = "", subtitle = "", tone 
   `;
 }
 
-export function renderInlineStateBox({ tone = "warning", message = "", help = "", className = "" }) {
+export function renderInlineStateBox({
+  tone = "warning",
+  message = "",
+  help = "",
+  className = "",
+  actionLabel = "",
+  action = "",
+}) {
   const normalizedMessage = String(message ?? "").trim();
   const normalizedHelp = String(help ?? "").trim();
-  if (!normalizedMessage && !normalizedHelp) {
+  const normalizedActionLabel = String(actionLabel ?? "").trim();
+  const normalizedAction = String(action ?? "").trim();
+  if (!normalizedMessage && !normalizedHelp && !(normalizedActionLabel && normalizedAction)) {
     return "";
   }
 
@@ -277,6 +286,11 @@ export function renderInlineStateBox({ tone = "warning", message = "", help = ""
     <div class="${classes}">
       <p class="message-box__text">${escapeHtml(normalizedMessage)}</p>
       ${normalizedHelp ? `<p class="message-box__text">${escapeHtml(normalizedHelp)}</p>` : ""}
+      ${
+        normalizedActionLabel && normalizedAction
+          ? `<div class="message-box__actions">${textAction(normalizedActionLabel, normalizedAction)}</div>`
+          : ""
+      }
     </div>
   `;
 }

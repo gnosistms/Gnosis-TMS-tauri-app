@@ -102,6 +102,11 @@ function baseResolution(resource, resourceLabel) {
       help: "The local-first copy stays visible, but this repo or metadata binding needs explicit repair.",
       blockLifecycleActions: true,
       blockContentActions: false,
+      actionLabel: "Repair",
+      action:
+        typeof resource?.id === "string" && resource.id.trim()
+          ? `${resourceLabel === "project" ? "repair-project" : "repair-glossary"}:${resource.id.trim()}`
+          : "",
     };
   }
 
