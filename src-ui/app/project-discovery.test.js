@@ -89,3 +89,36 @@ test("project discovery hides tombstoned metadata records", () => {
 
   assert.equal(merged.length, 0);
 });
+
+test("project discovery surfaces repair issues from local repo scans", () => {
+  const merged = mergeMetadataDiscoveryProjects({
+    metadataRecords: [
+      {
+        id: "project-1",
+        title: "Project 1",
+        repoName: "project-1",
+        lifecycleState: "active",
+        remoteState: "linked",
+        recordState: "live",
+        fullName: "team/project-1",
+      },
+    ],
+    remoteProjects: [],
+    localProjects: [],
+    metadataLoaded: true,
+    remoteLoaded: false,
+    repairIssues: [
+      {
+        kind: "project",
+        issueType: "missingLocalRepo",
+        resourceId: "project-1",
+        expectedRepoName: "project-1",
+        message: "Team metadata references this project, but its local repo is missing.",
+      },
+    ],
+  });
+
+  assert.equal(merged.length, 1);
+  assert.equal(merged[0].resolutionState, "repair");
+  assert.match(merged[0].repairIssueMessage, /local repo is missing/i);
+});

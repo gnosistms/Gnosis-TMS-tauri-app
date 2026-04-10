@@ -42,3 +42,17 @@ test("unregistered local resources block lifecycle actions", () => {
   assert.equal(projectResolution?.blockLifecycleActions, true);
   assert.equal(glossaryResolution?.blockLifecycleActions, true);
 });
+
+test("repair state surfaces a repair warning without blocking content access", () => {
+  const resolution = deriveProjectResolution({
+    resolutionState: "repair",
+    remoteState: "linked",
+    recordState: "live",
+    repairIssueMessage: "The local repo binding needs repair.",
+  });
+
+  assert.equal(resolution?.key, "repair");
+  assert.equal(resolution?.blockLifecycleActions, true);
+  assert.equal(resolution?.blockContentActions, false);
+  assert.match(resolution?.message ?? "", /needs repair/i);
+});

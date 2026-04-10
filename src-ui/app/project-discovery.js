@@ -18,6 +18,42 @@ function createProjectRecordMaps(projects = []) {
   return { byId, byRepoName, byFullName };
 }
 
+function createRepairIssueMaps(repairIssues = []) {
+  const byResourceId = new Map();
+  const byRepoName = new Map();
+
+  for (const issue of Array.isArray(repairIssues) ? repairIssues : []) {
+    if (issue?.kind !== "project") {
+      continue;
+    }
+    if (typeof issue.resourceId === "string" && issue.resourceId.trim()) {
+      byResourceId.set(issue.resourceId, issue);
+    }
+    if (typeof issue.repoName === "string" && issue.repoName.trim()) {
+      byRepoName.set(issue.repoName, issue);
+    }
+    if (typeof issue.expectedRepoName === "string" && issue.expectedRepoName.trim()) {
+      byRepoName.set(issue.expectedRepoName, issue);
+    }
+  }
+
+  return { byResourceId, byRepoName };
+}
+
+function matchingRepairIssue(resource, repairIssueMaps) {
+  if (!resource || !repairIssueMaps) {
+    return null;
+  }
+
+  if (repairIssueMaps.byResourceId.has(resource.id)) {
+    return repairIssueMaps.byResourceId.get(resource.id);
+  }
+  if (repairIssueMaps.byRepoName.has(resource.name)) {
+    return repairIssueMaps.byRepoName.get(resource.name);
+  }
+  return null;
+}
+
 function findMatchingProjectRecord(record, projectMaps) {
   const byId = projectMaps.byId.get(record.id);
   if (byId) {
@@ -41,6 +77,13 @@ function findMatchingProjectRecord(record, projectMaps) {
 
 function mapMetadataProjectToVisibleProject(record, remoteProject, existingProject, options = {}) {
   const remoteLoaded = options.remoteLoaded === true;
+  const repairIssue = matchingRepairIssue(
+    {
+      id: record.id,
+      name: record.repoName,
+    },
+    options.repairIssueMaps,
+  );
   const remoteState =
     record.recordState === "tombstone"
       ? (record.remoteState ?? "deleted")
@@ -58,7 +101,9 @@ function mapMetadataProjectToVisibleProject(record, remoteProject, existingProje
         ? "pendingCreate"
         : remoteState === "missing"
           ? "missing"
-          : "";
+          : repairIssue
+            ? "repair"
+            : "";
   const fullName =
     remoteProject?.fullName
     ?? record.fullName
@@ -98,7 +143,8 @@ function mapMetadataProjectToVisibleProject(record, remoteProject, existingProje
     recordState: record.recordState ?? "live",
     deletedAt: record.deletedAt ?? null,
     resolutionState,
-  };
+    repairIssueMessage: repairIssue?.message ?? "",
+    };
 }
 
 export function mergeMetadataDiscoveryProjects({
@@ -107,9 +153,11 @@ export function mergeMetadataDiscoveryProjects({
   localProjects,
   metadataLoaded = false,
   remoteLoaded = false,
+  repairIssues = [],
 }) {
   const remoteMaps = createProjectRecordMaps(remoteProjects);
   const localMaps = createProjectRecordMaps(localProjects);
+  const repairIssueMaps = createRepairIssueMaps(repairIssues);
   const mergedProjects = [];
   const includedProjectIds = new Set();
   const includedRepoNames = new Set();
@@ -132,6 +180,7 @@ export function mergeMetadataDiscoveryProjects({
     const localProject = findMatchingProjectRecord(record, localMaps);
     const mergedProject = mapMetadataProjectToVisibleProject(record, remoteProject, localProject, {
       remoteLoaded,
+      repairIssueMaps,
     });
     mergedProjects.push(mergedProject);
     includedProjectIds.add(mergedProject.id);
@@ -169,12 +218,15 @@ export function mergeMetadataDiscoveryProjects({
     mergedProjects.push({
       ...localProject,
       resolutionState:
-        metadataLoaded
-        && localProject.recordState !== "tombstone"
-        && localProject.remoteState !== "pendingCreate"
-        && localProject.isPendingCreate !== true
-          ? "unregisteredLocal"
-          : localProject.resolutionState ?? "",
+        matchingRepairIssue(localProject, repairIssueMaps)
+          ? "repair"
+          : metadataLoaded
+            && localProject.recordState !== "tombstone"
+            && localProject.remoteState !== "pendingCreate"
+            && localProject.isPendingCreate !== true
+              ? "unregisteredLocal"
+              : localProject.resolutionState ?? "",
+      repairIssueMessage: matchingRepairIssue(localProject, repairIssueMaps)?.message ?? "",
     });
   }
 

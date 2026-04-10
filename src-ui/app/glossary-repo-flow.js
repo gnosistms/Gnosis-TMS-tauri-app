@@ -6,7 +6,7 @@ import { createUniqueRepoWithNumericSuffix } from "./repo-creation.js";
 import { ensureResourceNotTombstoned } from "./resource-lifecycle-engine.js";
 import { showNoticeBadge } from "./status-feedback.js";
 import { state } from "./state.js";
-import { listGlossaryMetadataRecords, lookupLocalMetadataTombstone } from "./team-metadata-flow.js";
+import { inspectAndMigrateLocalRepoBindings, listGlossaryMetadataRecords, lookupLocalMetadataTombstone } from "./team-metadata-flow.js";
 import { mergeMetadataBackedGlossarySummaries } from "./glossary-discovery.js";
 
 const GLOSSARY_BROKER_ROUTE_UNAVAILABLE_MESSAGE =
@@ -481,10 +481,12 @@ export async function loadRepoBackedGlossariesForTeam(team, options = {}) {
   }
 
   let metadataRecords = [];
+  let repairIssues = [];
   let metadataLoaded = false;
   try {
     metadataRecords = await listGlossaryMetadataRecords(team);
     metadataLoaded = true;
+    repairIssues = (await inspectAndMigrateLocalRepoBindings(team))?.issues ?? [];
     localSummaries = await purgeTombstonedGlossariesForTeam(team, localSummaries, metadataRecords);
   } catch {}
   const recoverableMetadataCount = countRecoverableGlossaryMetadataRecords(metadataRecords);
@@ -514,7 +516,7 @@ export async function loadRepoBackedGlossariesForTeam(team, options = {}) {
             refreshedLocalSummaries,
             metadataRecords,
             syncRepos,
-            { metadataLoaded, remoteLoaded: false, glossaryIdsInFlight },
+            { metadataLoaded, remoteLoaded: false, glossaryIdsInFlight, repairIssues },
           ),
           remoteRepos: syncRepos,
           syncSnapshots,
@@ -554,7 +556,7 @@ export async function loadRepoBackedGlossariesForTeam(team, options = {}) {
             refreshedLocalSummaries,
             metadataRecords,
             remoteRepos,
-            { metadataLoaded, remoteLoaded, glossaryIdsInFlight },
+            { metadataLoaded, remoteLoaded, glossaryIdsInFlight, repairIssues },
           )
         : mergeRepoBackedGlossarySummaries(refreshedLocalSummaries, remoteRepos),
     remoteRepos: syncTargets,

@@ -54,3 +54,38 @@ test("glossary discovery suppresses unregisteredLocal during expected background
   assert.equal(merged.length, 1);
   assert.equal(merged[0].resolutionState, "");
 });
+
+test("glossary discovery surfaces repair issues from local repo scans", () => {
+  const merged = mergeMetadataBackedGlossarySummaries(
+    [],
+    [
+      {
+        id: "glossary-1",
+        title: "Glossary 1",
+        repoName: "glossary-1",
+        lifecycleState: "active",
+        remoteState: "linked",
+        recordState: "live",
+        fullName: "team/glossary-1",
+      },
+    ],
+    [],
+    {
+      metadataLoaded: true,
+      remoteLoaded: true,
+      repairIssues: [
+        {
+          kind: "glossary",
+          issueType: "missingLocalRepo",
+          resourceId: "glossary-1",
+          expectedRepoName: "glossary-1",
+          message: "Team metadata references this glossary, but its local repo is missing.",
+        },
+      ],
+    },
+  );
+
+  assert.equal(merged.length, 1);
+  assert.equal(merged[0].resolutionState, "repair");
+  assert.match(merged[0].repairIssueMessage, /local repo is missing/i);
+});

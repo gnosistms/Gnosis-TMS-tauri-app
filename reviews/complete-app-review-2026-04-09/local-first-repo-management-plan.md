@@ -179,6 +179,15 @@ Expected outcome:
 
 ### Stage 10: Move Resource Identity Off Repo Names
 
+Status on 2026-04-10:
+
+- partially complete
+- local project/glossary repo resolution is now stable-ID-first instead of repo-name-first
+- repo sync descriptors carry stable resource IDs
+- local-first create no longer depends on the final GitHub repo name for either projects or glossaries
+- a conservative migration/repair scan now maps existing local repos onto local team-metadata records and treats unmatched repos as repair candidates
+- remaining gap: project repos still do not embed a stable project ID inside `project.json`, so very old installs without sync-state can only be migrated automatically when repo-name matching is unambiguous
+
 - change local project/glossary storage to use resource IDs as the stable key
 - preserve repo name as mutable metadata only
 - migrate existing installations by first hydrating the local metadata clone from the existing remote `team-metadata` repo, then mapping current local repos onto those records
@@ -190,6 +199,12 @@ Expected outcome:
 - local creation no longer depends on knowing the final GitHub repo name
 
 ### Stage 11: Introduce Shared Repo-Management State Machine
+
+Status on 2026-04-10:
+
+- partially complete
+- shared helpers now cover metadata-first mutations and tombstone prechecks
+- projects and glossaries still have separate higher-level lifecycle flows, so the full adapter-based shared state machine is not finished
 
 - build one shared engine for:
   - create
@@ -207,6 +222,13 @@ Expected outcome:
 
 ### Stage 12: Make Create Fully Local-First
 
+Status on 2026-04-10:
+
+- mostly complete
+- glossary creation/import is local-first
+- project creation is now local metadata first, local repo first, visible immediately, then remote creation/sync in the background
+- project background reconciliation now repairs `origin` and can push the first local commit into an empty remote repo
+
 - write `pendingCreate` to local metadata first
 - initialize local repo first
 - render immediately from local state
@@ -220,6 +242,12 @@ Expected outcome:
 
 ### Stage 13: Make Rename/Delete/Restore Fully Metadata-First
 
+Status on 2026-04-10:
+
+- partially complete
+- rename, soft-delete, restore, and permanent delete are metadata-first in the main project/glossary flows that were refactored
+- remaining gap: there is still duplicated lifecycle orchestration and some secondary paths still need to be folded into the same shared engine
+
 - rename: commit new title/desired repo name locally first, then perform remote rename later
 - soft-delete/restore: commit lifecycle locally first, then update remote repo metadata later
 - permanent delete: commit tombstone locally first, purge local repo immediately, then delete remote repo later
@@ -230,6 +258,14 @@ Expected outcome:
 - all top-level lifecycle operations follow the same local-first rule
 
 ### Stage 14: Unify Read Path Around Local Metadata Plus Background Reconciliation
+
+Status on 2026-04-10:
+
+- partially complete
+- page loads already prefer local metadata plus local repos
+- project/glossary discovery now surfaces explicit repair states instead of silently treating stray repos as authoritative
+- background reconciliation now repairs `origin` for projects and glossaries, and project sync can handle empty remotes
+- remaining gap: explicit repair actions and deeper remote mismatch recovery are still incomplete
 
 - make page loads read local metadata + local repos first
 - remove remaining repo-name-driven discovery shortcuts
@@ -245,6 +281,14 @@ Expected outcome:
 - projects and glossaries load from the same local-first discovery model
 
 ### Stage 15: Add Recovery, Repair, And Migration Tooling
+
+Status on 2026-04-10:
+
+- started, not finished
+- added backend repair/migration scan for local repo bindings against local team-metadata
+- safe sync-state repairs are applied automatically
+- repair issues are surfaced into discovery/UI state as explicit `repair` resolutions
+- remaining gap: no user-triggered repair action exists yet for persistent conflicts like out-of-band remote rename or missing remote linkage
 
 - add a repair command for:
   - missing `origin`

@@ -165,6 +165,47 @@ function normalizeGlossaryMetadataRecord(record) {
   };
 }
 
+function normalizeLocalRepoRepairIssue(issue) {
+  if (!issue || typeof issue !== "object") {
+    return null;
+  }
+
+  const kind =
+    typeof issue.kind === "string" && issue.kind.trim()
+      ? issue.kind.trim()
+      : null;
+  const issueType =
+    typeof issue.issueType === "string" && issue.issueType.trim()
+      ? issue.issueType.trim()
+      : null;
+  const message =
+    typeof issue.message === "string" && issue.message.trim()
+      ? issue.message.trim()
+      : null;
+  if (!kind || !issueType || !message) {
+    return null;
+  }
+
+  return {
+    kind,
+    issueType,
+    resourceId:
+      typeof issue.resourceId === "string" && issue.resourceId.trim()
+        ? issue.resourceId.trim()
+        : null,
+    repoName:
+      typeof issue.repoName === "string" && issue.repoName.trim()
+        ? issue.repoName.trim()
+        : null,
+    expectedRepoName:
+      typeof issue.expectedRepoName === "string" && issue.expectedRepoName.trim()
+        ? issue.expectedRepoName.trim()
+        : null,
+    message,
+    canAutoRepair: issue.canAutoRepair === true,
+  };
+}
+
 function previousRepoNamesPayload(previousRepoNames = []) {
   const names = [...new Set(
     (Array.isArray(previousRepoNames) ? previousRepoNames : [])
@@ -424,4 +465,27 @@ export async function listGlossaryMetadataRecords(team) {
     }
     throw new Error(`Glossary metadata could not be loaded from the local team-metadata repo. ${detail}`);
   }
+}
+
+export async function inspectAndMigrateLocalRepoBindings(team) {
+  if (!Number.isFinite(team?.installationId)) {
+    return {
+      issues: [],
+      autoRepairedCount: 0,
+    };
+  }
+
+  await ensureLocalTeamMetadataRepo(team);
+  const result = await invoke("inspect_and_migrate_local_repo_bindings", {
+    installationId: team.installationId,
+  });
+
+  return {
+    issues: (Array.isArray(result?.issues) ? result.issues : [])
+      .map(normalizeLocalRepoRepairIssue)
+      .filter(Boolean),
+    autoRepairedCount: Number.isFinite(result?.autoRepairedCount)
+      ? result.autoRepairedCount
+      : 0,
+  };
 }

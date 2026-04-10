@@ -22,7 +22,8 @@ use crate::{
     read_current_head_oid,
     GitTransportAuth,
   },
-  storage_paths::local_team_metadata_repo_path,
+  local_repo_sync_state::{LocalRepoSyncState, LocalRepoSyncStateUpdate, read_local_repo_sync_state, upsert_local_repo_sync_state},
+  storage_paths::{local_glossary_repo_root, local_project_repo_root, local_team_metadata_repo_path},
 };
 
 const TEAM_METADATA_REPO_NAME: &str = "team-metadata";
@@ -50,6 +51,25 @@ pub(crate) struct LocalTeamMetadataMutationResult {
 pub(crate) struct LocalTeamMetadataPushResult {
   pub(crate) repo_path: String,
   pub(crate) current_head_oid: Option<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct LocalRepoRepairIssue {
+  pub(crate) kind: String,
+  pub(crate) issue_type: String,
+  pub(crate) resource_id: Option<String>,
+  pub(crate) repo_name: Option<String>,
+  pub(crate) expected_repo_name: Option<String>,
+  pub(crate) message: String,
+  pub(crate) can_auto_repair: bool,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct LocalRepoRepairScanResult {
+  pub(crate) issues: Vec<LocalRepoRepairIssue>,
+  pub(crate) auto_repaired_count: usize,
 }
 
 fn metadata_repo_full_name(org_login: &str) -> Result<String, String> {
@@ -245,6 +265,307 @@ where
       })
     })
     .collect()
+}
+
+fn is_git_repo(path: &Path) -> bool {
+  path.is_dir() && git_output(path, &["rev-parse", "--git-dir"], None).is_ok()
+}
+
+fn repo_folder_name(path: &Path) -> Option<String> {
+  path
+    .file_name()
+    .and_then(|value| value.to_str())
+    .map(str::trim)
+    .filter(|value| !value.is_empty())
+    .map(str::to_string)
+}
+
+fn normalized_optional_text(value: Option<&str>) -> Option<String> {
+  value
+    .map(str::trim)
+    .filter(|value| !value.is_empty())
+    .map(str::to_string)
+}
+
+fn read_glossary_id_from_repo(repo_path: &Path) -> Option<String> {
+  let glossary_path = repo_path.join("glossary.json");
+  let contents = fs::read_to_string(glossary_path).ok()?;
+  let value = serde_json::from_str::<Value>(&contents).ok()?;
+  value
+    .get("glossary_id")
+    .and_then(Value::as_str)
+    .map(str::trim)
+    .filter(|value| !value.is_empty())
+    .map(str::to_string)
+}
+
+fn unique_project_record_for_repo_name<'a>(
+  records: &'a [GithubProjectMetadataRecord],
+  repo_name: &str,
+) -> Option<&'a GithubProjectMetadataRecord> {
+  let normalized = repo_name.trim();
+  if normalized.is_empty() {
+    return None;
+  }
+
+  let mut matches = records.iter().filter(|record| {
+    record.record_state != "tombstone"
+      && (
+        record.repo_name.trim() == normalized
+        || record.previous_repo_names.iter().any(|value| value.trim() == normalized)
+      )
+  });
+  let first = matches.next()?;
+  if matches.next().is_some() {
+    return None;
+  }
+  Some(first)
+}
+
+fn unique_glossary_record_for_repo_name<'a>(
+  records: &'a [GithubGlossaryMetadataRecord],
+  repo_name: &str,
+) -> Option<&'a GithubGlossaryMetadataRecord> {
+  let normalized = repo_name.trim();
+  if normalized.is_empty() {
+    return None;
+  }
+
+  let mut matches = records.iter().filter(|record| {
+    record.record_state != "tombstone"
+      && (
+        record.repo_name.trim() == normalized
+        || record.previous_repo_names.iter().any(|value| value.trim() == normalized)
+      )
+  });
+  let first = matches.next()?;
+  if matches.next().is_some() {
+    return None;
+  }
+  Some(first)
+}
+
+fn maybe_repair_sync_state(
+  repo_path: &Path,
+  kind: &str,
+  resource_id: &str,
+  repo_name: &str,
+  sync_state: Option<&LocalRepoSyncState>,
+) -> Result<bool, String> {
+  let expected_resource_id = resource_id.trim();
+  let expected_repo_name = repo_name.trim();
+  if expected_resource_id.is_empty() || expected_repo_name.is_empty() {
+    return Ok(false);
+  }
+
+  let current_resource_id = sync_state
+    .and_then(|state| state.resource_id.as_deref())
+    .map(str::trim)
+    .unwrap_or_default();
+  let current_repo_name = sync_state
+    .and_then(|state| state.current_repo_name.as_deref())
+    .map(str::trim)
+    .unwrap_or_default();
+  let current_kind = sync_state
+    .and_then(|state| state.kind.as_deref())
+    .map(str::trim)
+    .unwrap_or_default();
+
+  if current_resource_id == expected_resource_id
+    && current_repo_name == expected_repo_name
+    && current_kind == kind
+  {
+    return Ok(false);
+  }
+
+  upsert_local_repo_sync_state(
+    repo_path,
+    LocalRepoSyncStateUpdate {
+      resource_id: Some(expected_resource_id.to_string()),
+      current_repo_name: Some(expected_repo_name.to_string()),
+      kind: Some(kind.to_string()),
+      ..Default::default()
+    },
+  )?;
+  Ok(true)
+}
+
+fn inspect_project_repo_repairs(
+  app: &AppHandle,
+  installation_id: i64,
+  project_records: &[GithubProjectMetadataRecord],
+) -> Result<LocalRepoRepairScanResult, String> {
+  let repo_root = local_project_repo_root(app, installation_id)?;
+  let mut issues = Vec::new();
+  let mut auto_repaired_count = 0usize;
+  let mut matched_project_ids = std::collections::BTreeSet::new();
+
+  for entry in fs::read_dir(&repo_root)
+    .map_err(|error| format!("Could not read the local project repo folder '{}': {error}", repo_root.display()))?
+  {
+    let entry = entry.map_err(|error| format!("Could not read a local project repo entry: {error}"))?;
+    let repo_path = entry.path();
+    if !is_git_repo(&repo_path) {
+      continue;
+    }
+
+    let folder_name = repo_folder_name(&repo_path);
+    let sync_state = read_local_repo_sync_state(&repo_path).ok().flatten();
+    let matched_record =
+      sync_state
+        .as_ref()
+        .and_then(|state| state.resource_id.as_deref())
+        .and_then(|resource_id| project_records.iter().find(|record| record.id.trim() == resource_id.trim()))
+      .or_else(|| {
+        sync_state
+          .as_ref()
+          .and_then(|state| state.current_repo_name.as_deref())
+          .and_then(|repo_name| unique_project_record_for_repo_name(project_records, repo_name))
+      })
+      .or_else(|| folder_name.as_deref().and_then(|repo_name| unique_project_record_for_repo_name(project_records, repo_name)));
+
+    let Some(record) = matched_record else {
+      issues.push(LocalRepoRepairIssue {
+        kind: "project".to_string(),
+        issue_type: "strayLocalRepo".to_string(),
+        resource_id: sync_state.as_ref().and_then(|state| normalized_optional_text(state.resource_id.as_deref())),
+        repo_name: folder_name.clone(),
+        expected_repo_name: None,
+        message: "This local project repo has no matching team-metadata record and was left as a repair candidate.".to_string(),
+        can_auto_repair: false,
+      });
+      continue;
+    };
+
+    matched_project_ids.insert(record.id.clone());
+    if maybe_repair_sync_state(&repo_path, "project", &record.id, &record.repo_name, sync_state.as_ref())? {
+      auto_repaired_count += 1;
+    }
+
+    if folder_name.as_deref() != Some(record.repo_name.trim()) {
+      issues.push(LocalRepoRepairIssue {
+        kind: "project".to_string(),
+        issue_type: "repoNameMismatch".to_string(),
+        resource_id: Some(record.id.clone()),
+        repo_name: folder_name.clone(),
+        expected_repo_name: Some(record.repo_name.clone()),
+        message: "The local project repo folder name no longer matches team metadata. The repo stayed bound by stable ID, but it should be repaired.".to_string(),
+        can_auto_repair: false,
+      });
+    }
+  }
+
+  for record in project_records.iter().filter(|record| record.record_state != "tombstone") {
+    if matched_project_ids.contains(&record.id) {
+      continue;
+    }
+    issues.push(LocalRepoRepairIssue {
+      kind: "project".to_string(),
+      issue_type: "missingLocalRepo".to_string(),
+      resource_id: Some(record.id.clone()),
+      repo_name: None,
+      expected_repo_name: Some(record.repo_name.clone()),
+      message: "Team metadata references this project, but its local repo is missing.".to_string(),
+      can_auto_repair: true,
+    });
+  }
+
+  Ok(LocalRepoRepairScanResult {
+    issues,
+    auto_repaired_count,
+  })
+}
+
+fn inspect_glossary_repo_repairs(
+  app: &AppHandle,
+  installation_id: i64,
+  glossary_records: &[GithubGlossaryMetadataRecord],
+) -> Result<LocalRepoRepairScanResult, String> {
+  let repo_root = local_glossary_repo_root(app, installation_id)?;
+  let mut issues = Vec::new();
+  let mut auto_repaired_count = 0usize;
+  let mut matched_glossary_ids = std::collections::BTreeSet::new();
+
+  for entry in fs::read_dir(&repo_root)
+    .map_err(|error| format!("Could not read the local glossary repo folder '{}': {error}", repo_root.display()))?
+  {
+    let entry = entry.map_err(|error| format!("Could not read a local glossary repo entry: {error}"))?;
+    let repo_path = entry.path();
+    if !is_git_repo(&repo_path) {
+      continue;
+    }
+
+    let folder_name = repo_folder_name(&repo_path);
+    let sync_state = read_local_repo_sync_state(&repo_path).ok().flatten();
+    let embedded_glossary_id = read_glossary_id_from_repo(&repo_path);
+    let matched_record =
+      sync_state
+        .as_ref()
+        .and_then(|state| state.resource_id.as_deref())
+        .and_then(|resource_id| glossary_records.iter().find(|record| record.id.trim() == resource_id.trim()))
+      .or_else(|| {
+        embedded_glossary_id
+          .as_deref()
+          .and_then(|resource_id| glossary_records.iter().find(|record| record.id.trim() == resource_id.trim()))
+      })
+      .or_else(|| {
+        sync_state
+          .as_ref()
+          .and_then(|state| state.current_repo_name.as_deref())
+          .and_then(|repo_name| unique_glossary_record_for_repo_name(glossary_records, repo_name))
+      })
+      .or_else(|| folder_name.as_deref().and_then(|repo_name| unique_glossary_record_for_repo_name(glossary_records, repo_name)));
+
+    let Some(record) = matched_record else {
+      issues.push(LocalRepoRepairIssue {
+        kind: "glossary".to_string(),
+        issue_type: "strayLocalRepo".to_string(),
+        resource_id: embedded_glossary_id.clone().or_else(|| sync_state.as_ref().and_then(|state| normalized_optional_text(state.resource_id.as_deref()))),
+        repo_name: folder_name.clone(),
+        expected_repo_name: None,
+        message: "This local glossary repo has no matching team-metadata record and was left as a repair candidate.".to_string(),
+        can_auto_repair: false,
+      });
+      continue;
+    };
+
+    matched_glossary_ids.insert(record.id.clone());
+    if maybe_repair_sync_state(&repo_path, "glossary", &record.id, &record.repo_name, sync_state.as_ref())? {
+      auto_repaired_count += 1;
+    }
+
+    if folder_name.as_deref() != Some(record.repo_name.trim()) {
+      issues.push(LocalRepoRepairIssue {
+        kind: "glossary".to_string(),
+        issue_type: "repoNameMismatch".to_string(),
+        resource_id: Some(record.id.clone()),
+        repo_name: folder_name.clone(),
+        expected_repo_name: Some(record.repo_name.clone()),
+        message: "The local glossary repo folder name no longer matches team metadata. The repo stayed bound by stable ID, but it should be repaired.".to_string(),
+        can_auto_repair: false,
+      });
+    }
+  }
+
+  for record in glossary_records.iter().filter(|record| record.record_state != "tombstone") {
+    if matched_glossary_ids.contains(&record.id) {
+      continue;
+    }
+    issues.push(LocalRepoRepairIssue {
+      kind: "glossary".to_string(),
+      issue_type: "missingLocalRepo".to_string(),
+      resource_id: Some(record.id.clone()),
+      repo_name: None,
+      expected_repo_name: Some(record.repo_name.clone()),
+      message: "Team metadata references this glossary, but its local repo is missing.".to_string(),
+      can_auto_repair: true,
+    });
+  }
+
+  Ok(LocalRepoRepairScanResult {
+    issues,
+    auto_repaired_count,
+  })
 }
 
 fn local_record_has_tombstone(repo_path: &Path, kind: &str, resource_id: &str) -> Result<bool, String> {
@@ -831,6 +1152,32 @@ pub(crate) async fn lookup_local_team_metadata_tombstone(
   })
   .await
   .map_err(|error| format!("Could not run the local tombstone lookup task: {error}"))?
+}
+
+#[tauri::command]
+pub(crate) async fn inspect_and_migrate_local_repo_bindings(
+  app: AppHandle,
+  installation_id: i64,
+) -> Result<LocalRepoRepairScanResult, String> {
+  tauri::async_runtime::spawn_blocking(move || {
+    let repo_path = require_local_metadata_repo(&app, installation_id)?;
+    let project_records = list_local_metadata_records::<GithubProjectMetadataRecord>(&repo_path, "project")?;
+    let glossary_records = list_local_metadata_records::<GithubGlossaryMetadataRecord>(&repo_path, "glossary")?;
+
+    let project_scan = inspect_project_repo_repairs(&app, installation_id, &project_records)?;
+    let glossary_scan = inspect_glossary_repo_repairs(&app, installation_id, &glossary_records)?;
+
+    Ok(LocalRepoRepairScanResult {
+      issues: project_scan
+        .issues
+        .into_iter()
+        .chain(glossary_scan.issues.into_iter())
+        .collect(),
+      auto_repaired_count: project_scan.auto_repaired_count + glossary_scan.auto_repaired_count,
+    })
+  })
+  .await
+  .map_err(|error| format!("Could not run the local repo repair inspection task: {error}"))?
 }
 
 #[tauri::command]

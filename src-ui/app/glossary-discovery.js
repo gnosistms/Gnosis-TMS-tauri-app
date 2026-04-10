@@ -45,6 +45,41 @@ function normalizeRemoteGlossaryRepo(repo) {
   };
 }
 
+function createRepairIssueMaps(repairIssues = []) {
+  const byResourceId = new Map();
+  const byRepoName = new Map();
+
+  for (const issue of Array.isArray(repairIssues) ? repairIssues : []) {
+    if (issue?.kind !== "glossary") {
+      continue;
+    }
+    if (typeof issue.resourceId === "string" && issue.resourceId.trim()) {
+      byResourceId.set(issue.resourceId, issue);
+    }
+    if (typeof issue.repoName === "string" && issue.repoName.trim()) {
+      byRepoName.set(issue.repoName, issue);
+    }
+    if (typeof issue.expectedRepoName === "string" && issue.expectedRepoName.trim()) {
+      byRepoName.set(issue.expectedRepoName, issue);
+    }
+  }
+
+  return { byResourceId, byRepoName };
+}
+
+function matchingRepairIssue(glossary, repairIssueMaps) {
+  if (!glossary || !repairIssueMaps) {
+    return null;
+  }
+  if (repairIssueMaps.byResourceId.has(glossary.id)) {
+    return repairIssueMaps.byResourceId.get(glossary.id);
+  }
+  if (repairIssueMaps.byRepoName.has(glossary.repoName)) {
+    return repairIssueMaps.byRepoName.get(glossary.repoName);
+  }
+  return null;
+}
+
 function metadataBackedGlossaryRepo(record) {
   if (
     !record
@@ -111,6 +146,7 @@ export function mergeMetadataBackedGlossarySummaries(
   const glossaryIdsInFlight = options.glossaryIdsInFlight instanceof Set
     ? options.glossaryIdsInFlight
     : new Set();
+  const repairIssueMaps = createRepairIssueMaps(options.repairIssues);
   const normalizedLocals = (Array.isArray(localSummaries) ? localSummaries : [])
     .map(normalizeGlossarySummary)
     .filter(Boolean);
@@ -167,7 +203,9 @@ export function mergeMetadataBackedGlossarySummaries(
         ? "pendingCreate"
         : remoteState === "missing"
           ? "missing"
-          : "";
+          : matchingRepairIssue({ id: record.id, repoName: record.repoName }, repairIssueMaps)
+            ? "repair"
+            : "";
 
     const mergedGlossary = normalizeGlossarySummary({
       glossaryId: record.id,
@@ -179,6 +217,7 @@ export function mergeMetadataBackedGlossarySummaries(
       remoteState,
       recordState: record.recordState ?? "live",
       resolutionState,
+      repairIssueMessage: matchingRepairIssue({ id: record.id, repoName: record.repoName }, repairIssueMaps)?.message ?? "",
       deletedAt: record.deletedAt ?? null,
       termCount: localGlossary?.termCount ?? record.termCount ?? 0,
       repoId: remoteGlossary?.repoId ?? record.githubRepoId ?? localGlossary?.repoId ?? null,
@@ -212,12 +251,15 @@ export function mergeMetadataBackedGlossarySummaries(
     merged.push(normalizeGlossarySummary({
       ...glossary,
       resolutionState:
-        metadataLoaded
-        && !suppressUnregisteredLocal
-        && glossary.recordState !== "tombstone"
-        && glossary.remoteState !== "pendingCreate"
-          ? "unregisteredLocal"
-          : glossary.resolutionState ?? "",
+        matchingRepairIssue(glossary, repairIssueMaps)
+          ? "repair"
+          : metadataLoaded
+            && !suppressUnregisteredLocal
+            && glossary.recordState !== "tombstone"
+            && glossary.remoteState !== "pendingCreate"
+              ? "unregisteredLocal"
+              : glossary.resolutionState ?? "",
+      repairIssueMessage: matchingRepairIssue(glossary, repairIssueMaps)?.message ?? "",
     }));
   }
 

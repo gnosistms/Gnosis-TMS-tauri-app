@@ -39,6 +39,7 @@ import { appendRepoNameSuffix, slugifyRepoName } from "./repo-names.js";
 import { mergeMetadataDiscoveryProjects } from "./project-discovery.js";
 import {
   deleteProjectMetadataRecord,
+  inspectAndMigrateLocalRepoBindings,
   listProjectMetadataRecords,
   lookupLocalMetadataTombstone,
   upsertProjectMetadataRecord,
@@ -1188,12 +1189,13 @@ export async function loadTeamProjects(render, teamId = state.selectedTeamId) {
   render();
 
   try {
-    const [projectsResult, metadataResult, glossaryDiscoveryResult] = await Promise.allSettled([
+    const [projectsResult, metadataResult, repairResult, glossaryDiscoveryResult] = await Promise.allSettled([
       invoke("list_gnosis_projects_for_installation", {
         installationId: selectedTeam.installationId,
         sessionToken: requireBrokerSession(),
       }),
       listProjectMetadataRecords(selectedTeam),
+      inspectAndMigrateLocalRepoBindings(selectedTeam),
       glossaryLoadPromise,
     ]);
     const remoteProjects = projectsResult.status === "fulfilled"
@@ -1205,6 +1207,10 @@ export async function loadTeamProjects(render, teamId = state.selectedTeamId) {
         ? metadataResult.value
         : [];
     const metadataLoaded = metadataResult.status === "fulfilled";
+    const repairIssues =
+      repairResult.status === "fulfilled"
+        ? repairResult.value?.issues ?? []
+        : [];
     const recoverableMetadataCount = countRecoverableProjectMetadataRecords(projectMetadataRecords);
     if (
       projectsResult.status !== "fulfilled"
@@ -1241,6 +1247,7 @@ export async function loadTeamProjects(render, teamId = state.selectedTeamId) {
       ].filter(Boolean),
       metadataLoaded,
       remoteLoaded,
+      repairIssues,
     });
     const nextVisibleProjects = mergedProjects.length > 0
       ? mergedProjects

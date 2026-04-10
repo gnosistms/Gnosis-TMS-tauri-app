@@ -92,6 +92,19 @@ function baseResolution(resource, resourceLabel) {
     };
   }
 
+  if (resolutionState === "repair") {
+    return {
+      key: "repair",
+      tone: "warning",
+      message:
+        normalizeText(resource.repairIssueMessage)
+        || `This ${resourceLabel} needs repair before repo lifecycle management is trustworthy again.`,
+      help: "The local-first copy stays visible, but this repo or metadata binding needs explicit repair.",
+      blockLifecycleActions: true,
+      blockContentActions: false,
+    };
+  }
+
   return null;
 }
 
