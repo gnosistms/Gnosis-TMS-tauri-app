@@ -17,8 +17,11 @@ import { renderGlossaryPermanentDeletionModal } from "./glossary-permanent-delet
 import { renderGlossaryRenameModal } from "./glossary-rename-modal.js";
 import {
   canManageGlossaries,
-  canPermanentlyDeleteGlossaries,
 } from "../app/glossary-shared.js";
+import {
+  shouldShowDeletedGlossaryPermanentDelete,
+  shouldShowGlossaryCreationControls,
+} from "../app/resource-capabilities.js";
 import { glossaryArchiveDownloadUrl } from "../app/glossary-repo-flow.js";
 import { deriveGlossaryResolution } from "../app/resource-resolution.js";
 
@@ -143,8 +146,9 @@ function renderDeletedGlossariesSection(glossaries, isOpen, options = {}) {
 
 export function renderGlossariesScreen(state) {
   const selectedTeam = state.teams.find((team) => team.id === state.selectedTeamId) ?? state.teams[0];
+  const canCreate = shouldShowGlossaryCreationControls(selectedTeam);
   const canManage = canManageGlossaries(selectedTeam);
-  const canPermanentlyDelete = canPermanentlyDeleteGlossaries(selectedTeam);
+  const canPermanentlyDelete = shouldShowDeletedGlossaryPermanentDelete(selectedTeam);
   const offlineMode = state.offline?.isEnabled === true;
   const discovery = state.glossaryDiscovery ?? { status: "idle", error: "", brokerWarning: "" };
   const syncSnapshotsByRepoName = state.glossaryRepoSyncByRepoName ?? {};
@@ -224,7 +228,7 @@ export function renderGlossariesScreen(state) {
       subtitle: selectedTeam?.name ?? "Team",
       titleAction: buildPageRefreshAction(state),
       navButtons: buildSectionNav("glossaries"),
-      tools: canManage
+      tools: canCreate
         ? `${textAction("Import", "import-glossary", { disabled: offlineMode })} ${primaryButton("+ New Glossary", "open-new-glossary", { disabled: offlineMode })}`
         : "",
       pageSync: state.pageSync,

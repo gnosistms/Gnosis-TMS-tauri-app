@@ -55,6 +55,7 @@ import {
   applyMetadataFirstResourceMutation,
   ensureResourceNotTombstoned,
 } from "./resource-lifecycle-engine.js";
+import { canCreateRepoResources } from "./resource-capabilities.js";
 
 function setProjectUiDebug(render, text) {
   showScopedSyncBadge("projects", text, render);
@@ -1518,7 +1519,7 @@ export async function createProjectForSelectedTeam(render) {
     return;
   }
 
-  if (selectedTeam.canManageProjects !== true) {
+  if (!canCreateRepoResources(selectedTeam)) {
     setProjectDiscoveryState("error", "You do not have permission to create projects in this team.");
     render();
     return;

@@ -25,6 +25,11 @@ import {
 } from "../app/status-feedback.js";
 import { resolveChapterSourceWordCount } from "../app/translate-flow.js";
 import { deriveProjectResolution } from "../app/resource-resolution.js";
+import {
+  canPermanentlyDeleteRepoResources,
+  shouldShowDeletedProjectPermanentDelete,
+  shouldShowNewProjectButton,
+} from "../app/resource-capabilities.js";
 
 function compareFilesByName(left, right) {
   const leftName = typeof left?.name === "string" ? left.name.trim() : "";
@@ -277,7 +282,7 @@ function renderDeletedProjectsSection(state) {
 
   const selectedTeam = state.teams.find((team) => team.id === state.selectedTeamId) ?? state.teams[0];
   const canManageDeletedProjects = selectedTeam?.canManageProjects === true;
-  const canPermanentlyDeleteProjects = selectedTeam?.canDelete === true;
+  const canPermanentlyDeleteProjects = shouldShowDeletedProjectPermanentDelete(selectedTeam);
   const offlineMode = state.offline?.isEnabled === true;
   const syncSnapshotsByProjectId = state.projectRepoSyncByProjectId ?? {};
   const projectCreationInFlightIds = state.projectCreationInFlightIds ?? new Set();
@@ -326,7 +331,8 @@ function renderDeletedProjectsSection(state) {
 export function renderProjectsScreen(state) {
   const selectedTeam = state.teams.find((team) => team.id === state.selectedTeamId) ?? state.teams[0];
   const canManageProjects = selectedTeam?.canManageProjects === true;
-  const canPermanentlyDeleteFiles = selectedTeam?.canDelete === true;
+  const canCreateProjects = shouldShowNewProjectButton(selectedTeam);
+  const canPermanentlyDeleteFiles = canPermanentlyDeleteRepoResources(selectedTeam);
   const offlineMode = state.offline?.isEnabled === true;
   const importInProgress = state.projectImport?.status === "importing";
   const discovery = state.projectDiscovery ?? { status: "idle", error: "", glossaryWarning: "" };
@@ -406,7 +412,7 @@ export function renderProjectsScreen(state) {
     navButtons: buildSectionNav("projects"),
     leftTools: createSearchField("Search"),
     tools: [
-      canManageProjects
+      canCreateProjects
         ? primaryButton("+ New Project", "open-new-project", { disabled: offlineMode })
         : "",
     ]

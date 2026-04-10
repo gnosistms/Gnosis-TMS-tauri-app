@@ -1,4 +1,8 @@
 import { state } from "./state.js";
+import {
+  canCreateRepoResources,
+  canPermanentlyDeleteRepoResources,
+} from "./resource-capabilities.js";
 
 export function selectedTeam(teamId = state.selectedTeamId) {
   return state.teams.find((team) => team.id === teamId) ?? null;
@@ -8,8 +12,12 @@ export function canManageGlossaries(team = selectedTeam()) {
   return team?.canManageProjects === true;
 }
 
+export function canCreateGlossaries(team = selectedTeam()) {
+  return canCreateRepoResources(team);
+}
+
 export function canPermanentlyDeleteGlossaries(team = selectedTeam()) {
-  return team?.canDelete === true;
+  return canPermanentlyDeleteRepoResources(team);
 }
 
 export function sortGlossaries(glossaries) {

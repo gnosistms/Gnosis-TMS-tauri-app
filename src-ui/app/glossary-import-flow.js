@@ -6,6 +6,7 @@ import { findIsoLanguageOption } from "../lib/language-options.js";
 import { openGlossaryEditor } from "./glossary-editor-flow.js";
 import { saveStoredGlossariesForTeam } from "./glossary-cache.js";
 import {
+  canCreateGlossaries,
   canManageGlossaries,
   canPermanentlyDeleteGlossaries,
   selectedTeam,
@@ -402,7 +403,7 @@ export function openGlossaryCreation(render) {
     return;
   }
 
-  if (!canManageGlossaries(team)) {
+  if (!canCreateGlossaries(team)) {
     showNoticeBadge("You do not have permission to create glossaries in this team.", render);
     return;
   }
@@ -559,7 +560,7 @@ export async function submitGlossaryCreation(render) {
     return;
   }
 
-  if (!canManageGlossaries(team)) {
+  if (!canCreateGlossaries(team)) {
     state.glossaryCreation.error = "You do not have permission to create glossaries in this team.";
     render();
     return;
@@ -703,7 +704,7 @@ export async function importGlossaryFromTmx(render) {
     return;
   }
 
-  if (!canManageGlossaries(team)) {
+  if (!canCreateGlossaries(team)) {
     showNoticeBadge("You do not have permission to import glossaries in this team.", render);
     return;
   }
