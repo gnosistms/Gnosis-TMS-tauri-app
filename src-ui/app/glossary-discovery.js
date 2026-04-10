@@ -213,9 +213,7 @@ export function mergeMetadataBackedGlossarySummaries(
         ? "missing"
         : (record.remoteState ?? "linked");
     const resolutionState =
-      remoteState === "pendingCreate"
-        ? "pendingCreate"
-        : remoteState === "missing"
+      remoteState === "missing"
           ? "missing"
           : matchingRepairIssue({ id: record.id, repoName: record.repoName }, repairIssueMaps)
             ? "repair"
@@ -269,7 +267,6 @@ export function mergeMetadataBackedGlossarySummaries(
           ? "repair"
           : metadataLoaded
             && glossary.recordState !== "tombstone"
-            && glossary.remoteState !== "pendingCreate"
               ? "unregisteredLocal"
               : glossary.resolutionState ?? "",
       repairIssueType: matchingRepairIssue(glossary, repairIssueMaps)?.issueType ?? "",

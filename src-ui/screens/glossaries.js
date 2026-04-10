@@ -44,8 +44,7 @@ function renderGlossaryCard(glossary, options = {}) {
   const pageWritesDisabled = options.pageWritesDisabled === true;
   const isTombstone = glossary?.recordState === "tombstone";
   const resolution = deriveGlossaryResolution(glossary, options.syncSnapshot);
-  const disableLifecycleActions =
-    resolution?.blockLifecycleActions === true && resolution?.key !== "pendingCreate";
+  const disableLifecycleActions = resolution?.blockLifecycleActions === true;
   const downloadUrl = glossaryArchiveDownloadUrl(glossary);
   const activeActions = [
     textAction("Open", `open-glossary:${glossary.id}`),

@@ -5,6 +5,7 @@ Status as of April 10, 2026:
 - this plan supersedes the old top-level page-flow direction in `local-first-repo-management-plan.md`
 - the goal is a complete rewrite of the Projects and Glossaries pages
 - simplicity and stability are priority #1
+- the top-level page model no longer includes `pendingCreate` or resume-setup behavior
 
 ## Carry-Forward Assumptions
 
@@ -156,7 +157,18 @@ Status on 2026-04-10:
 - glossary permanent delete now has a strict synchronous mutate-then-refresh path with no optimistic local hide
 - the old glossary top-level pending-mutation queue, replay-on-load path, and glossary pending-create auto-resume/in-flight suppression path have been removed
 - project top-level `rename`, `softDelete`, and `restore` now use strict mutate-then-refresh page writes instead of the optimistic top-level queue
+- project permanent delete now uses the same strict mutate-then-refresh path as glossaries
 - the old project top-level pending-mutation queue and its cache-backed replay path have been removed
+- top-level `pendingCreate` / resume-setup state has now been removed from the shared page model, discovery shaping, resolution banners, and screen gating
+- current rewrite direction is net-negative again: delete legacy top-level slices as soon as the synchronous replacement lands
+- latest focused cleanup remains net-negative (`218 insertions, 644 deletions`) and `project-flow.js` is down to `2046` lines
+- old local-first create helpers were removed from `resource-create-flow.js`, leaving only the shared create-entry guard used by the strict rewrite
+- unused optimistic permanent-delete helpers were removed from `resource-lifecycle-engine.js`
+- current focused rewrite diff across the active simplification files is now `192 insertions, 1085 deletions`
+- project strict create was collapsed further by deleting one-off create helper layers inside `project-flow.js`
+- repetitive selected-team lookups were also collapsed back onto the existing `selectedProjectsTeam()` helper instead of being repeated inline
+- current focused rewrite diff across the active simplification files is now `202 insertions, 1133 deletions`
+- the repeated chapter mutation skeleton in `project-flow.js` (`rename`, `delete`, `restore`, `permanentDelete`, glossary-link persistence) was collapsed into one internal helper without introducing another module
 
 - create a brand-new shared controller for top-level resource pages
 - controller surface should cover:
@@ -175,6 +187,16 @@ Expected outcome:
 
 ### Stage C: Rebuild Projects Page On The New Controller
 
+Status on 2026-04-10:
+
+- started
+- project top-level `rename`, `softDelete`, and `restore` are already on strict mutate-then-refresh page writes
+- project permanent delete is also now on the strict mutate-then-refresh path
+- the old project top-level pending-mutation queue and replay path are gone
+- the old project pending-create / resume-setup path is gone from the page model
+- strict project create remains in place, but more delete-first cleanup is still needed inside `project-flow.js`
+- `project-flow.js` is now at `1908` lines in the current worktree after removing dead top-level rewrite scaffolding and collapsing repeated chapter mutation machinery
+
 - rewrite the Projects page top-level flow from scratch
 - keep the UI appearance the same
 - use cache-backed initial render plus authoritative refresh
@@ -187,6 +209,13 @@ Expected outcome:
 - Projects no longer rely on the old top-level optimistic page flow
 
 ### Stage D: Rebuild Glossaries Page On The New Controller
+
+Status on 2026-04-10:
+
+- started
+- glossary top-level `create`, `TMX import`, `rename`, `softDelete`, `restore`, and `permanentDelete` now have strict mutate-then-refresh paths
+- the old glossary top-level optimistic queue, replay path, and pending-create/resume path are gone
+- the remaining glossary rewrite work is to keep deleting any leftover legacy top-level scaffolding now that the synchronous path exists
 
 Replacement note:
 

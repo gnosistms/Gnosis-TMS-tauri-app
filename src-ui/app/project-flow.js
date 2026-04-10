@@ -11,9 +11,7 @@ import {
   saveStoredProjectsForTeam,
 } from "./project-cache.js";
 import {
-  removeItem,
   removePendingMutation,
-  replaceItem,
   upsertPendingMutation,
 } from "./optimistic-collection.js";
 import {
@@ -29,28 +27,22 @@ import { reconcileProjectRepoSyncStates } from "./project-repo-sync-flow.js";
 import { clearScopedSyncBadge, showNoticeBadge, showScopedSyncBadge } from "./status-feedback.js";
 import { classifySyncError } from "./sync-error.js";
 import { handleSyncFailure } from "./sync-recovery.js";
-import { createUniqueRepoWithNumericSuffix } from "./repo-creation.js";
 import { appendRepoNameSuffix, slugifyRepoName } from "./repo-names.js";
 import {
   loadTeamProjects as runLoadTeamProjects,
   refreshProjectFilesFromDisk as runRefreshProjectFilesFromDisk,
 } from "./project-discovery-flow.js";
 import {
-  deleteProjectMetadataRecord,
   listProjectMetadataRecords,
   lookupLocalMetadataTombstone,
   repairLocalRepoBinding,
   upsertProjectMetadataRecord,
 } from "./team-metadata-flow.js";
 import {
-  applyOptimisticPermanentDelete,
   commitMetadataFirstTopLevelMutation,
   ensureResourceNotTombstoned,
   guardPermanentDeleteConfirmation,
   guardTopLevelResourceAction,
-  rollbackOptimisticPermanentDelete,
-  runPermanentDeleteLocalFirst,
-  showPermanentDeleteFollowupNotice,
 } from "./resource-lifecycle-engine.js";
 import {
   openTopLevelRenameModal,
@@ -68,25 +60,16 @@ import {
   submitResourcePageWrite,
 } from "./resource-page-controller.js";
 import {
-  beginEntityModalSubmit,
   cancelEntityModal,
   entityConfirmationMatches,
   openEntityFormModal,
   openEntityConfirmationModal,
-  openEntityRenameModal,
-  reopenEntityConfirmationModalWithError,
   updateEntityModalConfirmation,
   updateEntityFormField,
   updateEntityModalName,
 } from "./resource-entity-modal.js";
 import {
-  autoResumePendingResources,
-  resumePendingResourceSetup,
-} from "./resource-pending-create.js";
-import {
-  finalizeLocalFirstCreate,
   guardResourceCreateStart,
-  runLocalFirstCreate,
 } from "./resource-create-flow.js";
 
 function setProjectUiDebug(render, text) {
@@ -163,261 +146,131 @@ function projectLifecycleBlockedMessage(selectedTeam, actionLabel) {
     : `You do not have permission to ${actionLabel} in this team.`;
 }
 
-function setProjectRepoSyncSnapshot(projectId, snapshot) {
-  if (typeof projectId !== "string" || !projectId.trim()) {
-    return;
-  }
-
-  state.projectRepoSyncByProjectId = {
-    ...state.projectRepoSyncByProjectId,
-    [projectId]: {
-      projectId,
-      ...(snapshot && typeof snapshot === "object" ? snapshot : {}),
-    },
-  };
-}
-
-function markProjectCreationInFlight(projectId) {
-  if (typeof projectId !== "string" || !projectId.trim()) {
-    return;
-  }
-
-  state.projectCreationInFlightIds = new Set([
-    ...state.projectCreationInFlightIds,
-    projectId,
-  ]);
-}
-
-function clearProjectCreationInFlight(projectId) {
-  if (typeof projectId !== "string" || !projectId.trim()) {
-    return;
-  }
-
-  const nextIds = new Set(state.projectCreationInFlightIds);
-  nextIds.delete(projectId);
-  state.projectCreationInFlightIds = nextIds;
-}
-
 function persistChapterPendingMutationsForTeam(selectedTeam) {
   saveStoredChapterPendingMutations(selectedTeam, state.pendingChapterMutations);
 }
 
-function buildPendingProjectRecord(selectedTeam, projectTitle, repoName) {
-  const orgLogin =
-    typeof selectedTeam?.githubOrg === "string" && selectedTeam.githubOrg.trim()
-      ? selectedTeam.githubOrg.trim()
-      : "";
-  const fullName = orgLogin ? `${orgLogin}/${repoName}` : repoName;
+async function completeProjectCreateSynchronously(selectedTeam, projectTitle, baseRepoName) {
+  const projectId = crypto.randomUUID();
+  const normalizedBase = String(baseRepoName ?? "").trim();
+  let remoteProject = null;
+  let finalRepoName = "";
+  let collisionResolved = false;
+  let localRepoInitialized = false;
 
-  return {
-    id: crypto.randomUUID(),
-    repoId: null,
-    name: repoName,
-    title: projectTitle,
-    status: "active",
-    fullName,
-    htmlUrl: fullName ? `https://github.com/${fullName}` : null,
-    private: true,
-    description: null,
-    defaultBranchName: null,
-    defaultBranchHeadOid: null,
-    chapters: [],
-    isPendingCreate: true,
-    pendingCreateStartedAt: new Date().toISOString(),
-    pendingCreateStatusText: "Creating...",
-    remoteState: "pendingCreate",
-    recordState: "live",
-    resolutionState: "pendingCreate",
-  };
-}
+  if (!normalizedBase) {
+    throw new Error("Could not determine the repo name.");
+  }
 
-function pendingProjectMetadataRecord(project) {
-  return {
-    projectId: project.id,
-    title: project.title,
-    repoName: project.name,
-    lifecycleState: project.status === "deleted" ? "softDeleted" : "active",
-    remoteState: "pendingCreate",
-    recordState: "live",
-    defaultBranch: "main",
-    chapterCount: Array.isArray(project.chapters) ? project.chapters.length : 0,
-  };
-}
-
-async function rollbackPendingProjectMetadataOnLocalFailure(selectedTeam, projectId, error) {
   try {
-    await deleteProjectMetadataRecord(selectedTeam, projectId);
-  } catch (rollbackError) {
-    throw new Error(
-      `${error?.message ?? String(error)} The pending project metadata intent was committed locally first, and the automatic metadata rollback also failed: ${
-        rollbackError?.message ?? String(rollbackError)
-      }`,
+    const usedLocalRepoNames = new Set(
+      [...(state.projects ?? []), ...(state.deletedProjects ?? [])]
+        .map((project) => String(project?.name ?? "").trim())
+        .filter(Boolean),
     );
-  }
-}
 
-function linkedProjectMetadataRecord(project, remoteProject) {
-  return {
-    ...pendingProjectMetadataRecord(project),
-    repoName: remoteProject.name,
-    previousRepoNames: remoteProject.name !== project.name ? [project.name] : [],
-    githubRepoId: remoteProject.repoId ?? null,
-    githubNodeId: remoteProject.nodeId ?? null,
-    fullName: remoteProject.fullName ?? null,
-    defaultBranch: remoteProject.defaultBranchName || "main",
-    remoteState: "linked",
-  };
-}
+    for (let attempt = 1; attempt <= 100; attempt += 1) {
+      const candidateRepoName = appendRepoNameSuffix(normalizedBase, attempt);
+      if (usedLocalRepoNames.has(candidateRepoName)) {
+        continue;
+      }
 
-function findMatchingRemoteProjectForPendingCreate(project, remoteProjects) {
-  if (!project || !Array.isArray(remoteProjects)) {
-    return null;
-  }
-
-  if (Number.isFinite(project.repoId)) {
-    const byRepoId = remoteProjects.find((remoteProject) => remoteProject?.repoId === project.repoId);
-    if (byRepoId) {
-      return byRepoId;
+      try {
+        remoteProject = await invoke("create_gnosis_project_repo", {
+          input: {
+            installationId: selectedTeam.installationId,
+            orgLogin: selectedTeam.githubOrg,
+            repoName: candidateRepoName,
+            projectTitle,
+            projectId,
+          },
+          sessionToken: requireBrokerSession(),
+        });
+        finalRepoName = candidateRepoName;
+        collisionResolved = attempt > 1;
+        break;
+      } catch (error) {
+        const message = String(error?.message ?? error ?? "").toLowerCase();
+        if (!message.includes("name already exists on this account")) {
+          throw error;
+        }
+      }
     }
-  }
 
-  if (typeof project.nodeId === "string" && project.nodeId.trim()) {
-    const byNodeId = remoteProjects.find((remoteProject) =>
-      typeof remoteProject?.nodeId === "string" && remoteProject.nodeId.trim() === project.nodeId.trim(),
-    );
-    if (byNodeId) {
-      return byNodeId;
+    if (!remoteProject || !finalRepoName) {
+      throw new Error("Could not determine an available repo name.");
     }
-  }
 
-  if (typeof project.fullName === "string" && project.fullName.trim()) {
-    const byFullName = remoteProjects.find((remoteProject) =>
-      typeof remoteProject?.fullName === "string" && remoteProject.fullName.trim() === project.fullName.trim(),
-    );
-    if (byFullName) {
-      return byFullName;
-    }
-  }
-
-  if (typeof project.name === "string" && project.name.trim()) {
-    return remoteProjects.find((remoteProject) =>
-      typeof remoteProject?.name === "string" && remoteProject.name.trim() === project.name.trim(),
-    ) ?? null;
-  }
-
-  return null;
-}
-
-async function finalizePendingProjectSetup(render, selectedTeam, project, remoteProject) {
-  const currentProject = currentProjectSnapshot(project);
-  const projectId = currentProject?.id ?? project?.id ?? null;
-  const linkedProject = {
-    ...currentProject,
-    ...remoteProject,
-    chapters: Array.isArray(currentProject?.chapters) ? currentProject.chapters : [],
-    isPendingCreate: false,
-    pendingCreateStartedAt: undefined,
-    pendingCreateStatusText: undefined,
-    remoteState: "linked",
-    resolutionState: "",
-  };
-
-  if (typeof projectId === "string" && projectId.trim()) {
-    setProjectRepoSyncSnapshot(projectId, {
-      status: "syncing",
-      message: "Finishing project setup...",
+    await invoke("initialize_gtms_project_repo", {
+      input: {
+        installationId: selectedTeam.installationId,
+        projectId,
+        repoName: finalRepoName,
+        title: projectTitle,
+      },
     });
-  }
+    localRepoInitialized = true;
 
-  await upsertProjectMetadataRecord(
-    selectedTeam,
-    linkedProjectMetadataRecord(currentProject, remoteProject),
-  );
-  replaceVisibleProject(projectId, linkedProject);
-  persistProjectsForTeam(selectedTeam);
-  render();
+    await upsertProjectMetadataRecord(
+      selectedTeam,
+      {
+        projectId,
+        title: projectTitle,
+        repoName: remoteProject.name,
+        previousRepoNames: remoteProject.name !== finalRepoName ? [finalRepoName] : [],
+        githubRepoId: remoteProject.repoId ?? null,
+        githubNodeId: remoteProject.nodeId ?? null,
+        fullName: remoteProject.fullName ?? null,
+        defaultBranch: remoteProject.defaultBranchName || "main",
+        lifecycleState: "active",
+        remoteState: "linked",
+        recordState: "live",
+        deletedAt: null,
+        chapterCount: 0,
+      },
+      { requirePushSuccess: true },
+    );
 
-  await reconcileProjectRepoSyncStates(render, selectedTeam, [{
-    ...linkedProject,
-    allowPendingCreateSync: true,
-  }]);
-  await refreshProjectFilesFromDisk(render, selectedTeam, [linkedProject]);
-
-  const latestProject = currentProjectSnapshot(linkedProject);
-  replaceVisibleProject(projectId, {
-    ...latestProject,
-    ...remoteProject,
-    chapters: Array.isArray(latestProject?.chapters) ? latestProject.chapters : [],
-    isPendingCreate: false,
-    pendingCreateStartedAt: undefined,
-    pendingCreateStatusText: undefined,
-    remoteState: "linked",
-    resolutionState: "",
-  });
-  persistProjectsForTeam(selectedTeam);
-  render();
-}
-
-function reserveLocalProjectRepoName(baseRepoName) {
-  const usedRepoNames = new Set(
-    [...(state.projects ?? []), ...(state.deletedProjects ?? [])]
-      .map((project) => String(project?.name ?? "").trim())
-      .filter(Boolean),
-  );
-
-  for (let attempt = 1; attempt <= 100; attempt += 1) {
-    const candidateRepoName = appendRepoNameSuffix(baseRepoName, attempt);
-    if (!usedRepoNames.has(candidateRepoName)) {
-      return {
-        repoName: candidateRepoName,
-        collisionResolved: attempt > 1,
-      };
+    return {
+      projectId,
+      title: projectTitle,
+      repoName: finalRepoName,
+      collisionResolved,
+    };
+  } catch (error) {
+    if (localRepoInitialized) {
+      try {
+        await invoke("purge_local_gtms_project_repo", {
+          input: {
+            installationId: selectedTeam.installationId,
+            projectId,
+            repoName: finalRepoName || remoteProject?.name || normalizedBase,
+          },
+        });
+      } catch {}
     }
+
+    if (remoteProject) {
+      try {
+        await invoke("permanently_delete_gnosis_project_repo", {
+          input: {
+            installationId: selectedTeam.installationId,
+            orgLogin: selectedTeam.githubOrg,
+            repoName: remoteProject.name,
+          },
+          sessionToken: requireBrokerSession(),
+        });
+      } catch (rollbackError) {
+        throw new Error(
+          `${error?.message ?? String(error)} Automatic project create rollback also failed: ${
+            rollbackError?.message ?? String(rollbackError)
+          }`,
+        );
+      }
+    }
+
+    throw error;
   }
-
-  throw new Error("Could not determine an available local project repo name.");
-}
-
-function currentProjectSnapshot(project) {
-  const projectId = project?.id ?? null;
-  const repoName = project?.name ?? null;
-  return (
-    state.projects.find((item) => item?.id === projectId)
-    ?? state.deletedProjects.find((item) => item?.id === projectId)
-    ?? state.projects.find((item) => item?.name === repoName)
-    ?? state.deletedProjects.find((item) => item?.name === repoName)
-    ?? project
-  );
-}
-
-function markProjectAsLocalOnly(selectedTeam, project, render) {
-  const localOnlyProject = {
-    ...currentProjectSnapshot(project),
-    isPendingCreate: false,
-    pendingCreateStartedAt: undefined,
-    pendingCreateStatusText: undefined,
-    remoteState: "linked",
-    resolutionState: "unregisteredLocal",
-  };
-  replaceVisibleProject(localOnlyProject.id, localOnlyProject);
-  persistProjectsForTeam(selectedTeam);
-  render();
-  return localOnlyProject;
-}
-
-function replaceVisibleProject(currentProjectId, nextProject) {
-  const nextSnapshot = {
-    items: [
-      ...state.projects.filter(
-        (item) => item.id !== currentProjectId && item.id !== nextProject.id,
-      ),
-      nextProject,
-    ],
-    deletedItems: state.deletedProjects.filter(
-      (item) => item.id !== currentProjectId && item.id !== nextProject.id,
-    ),
-  };
-  applyProjectSnapshotToState(nextSnapshot, { reconcileExpandedDeletedFiles });
 }
 
 function removeVisibleProject(projectId) {
@@ -585,9 +438,7 @@ function projectMetadataRecordFromVisibleProject(project, overrides = {}) {
       ?? (project.status === "deleted" ? "softDeleted" : "active"),
     remoteState:
       overrides.remoteState
-      ?? (project.remoteState === "pendingCreate"
-        ? "pendingCreate"
-        : project.remoteState ?? "linked"),
+      ?? (project.remoteState ?? "linked"),
     recordState: overrides.recordState ?? project.recordState ?? "live",
     deletedAt:
       typeof overrides.deletedAt === "string" && overrides.deletedAt.trim()
@@ -693,164 +544,6 @@ export async function ensureProjectNotTombstoned(render, selectedTeam, project, 
   });
 }
 
-async function rollbackCreatedRemoteProject(selectedTeam, projectId, remoteProject) {
-  await invoke("permanently_delete_gnosis_project_repo", {
-    input: {
-      installationId: selectedTeam.installationId,
-      orgLogin: selectedTeam.githubOrg,
-      repoName: remoteProject.name,
-    },
-    sessionToken: requireBrokerSession(),
-  });
-  await deleteProjectMetadataRecord(selectedTeam, projectId);
-}
-
-function syncProjectInBackground(render, selectedTeam, project, preferredBaseRepoName) {
-  void (async () => {
-    const projectId = project?.id ?? null;
-    let pendingProject = currentProjectSnapshot(project);
-    let remoteProject = null;
-
-    try {
-      await upsertProjectMetadataRecord(selectedTeam, pendingProjectMetadataRecord(pendingProject));
-    } catch (error) {
-      markProjectAsLocalOnly(selectedTeam, pendingProject, render);
-      clearProjectCreationInFlight(projectId);
-      showNoticeBadge(
-        `The project stays local-only because its team metadata record could not be created: ${
-          error?.message ?? String(error)
-        }`,
-        render,
-      );
-      return;
-    }
-
-    try {
-      const createResult = await createUniqueRepoWithNumericSuffix(
-        preferredBaseRepoName,
-        (candidateRepoName) =>
-          invoke("create_gnosis_project_repo", {
-            input: {
-              installationId: selectedTeam.installationId,
-              orgLogin: selectedTeam.githubOrg,
-              repoName: candidateRepoName,
-              projectTitle: pendingProject.title,
-              projectId,
-            },
-            sessionToken: requireBrokerSession(),
-          }),
-      );
-
-      remoteProject = {
-        ...currentProjectSnapshot(pendingProject),
-        ...createResult.result,
-        chapters: Array.isArray(currentProjectSnapshot(pendingProject)?.chapters)
-          ? currentProjectSnapshot(pendingProject).chapters
-          : [],
-        isPendingCreate: true,
-        pendingCreateStartedAt: pendingProject.pendingCreateStartedAt,
-        pendingCreateStatusText: "Syncing local repo...",
-        remoteState: "pendingCreate",
-        recordState: "live",
-        resolutionState: "pendingCreate",
-      };
-      replaceVisibleProject(projectId, remoteProject);
-      persistProjectsForTeam(selectedTeam);
-      setProjectRepoSyncSnapshot(projectId, {
-        status: "syncing",
-        message: "Syncing local repo...",
-      });
-      render();
-
-      try {
-        await upsertProjectMetadataRecord(
-          selectedTeam,
-          linkedProjectMetadataRecord(currentProjectSnapshot(remoteProject), createResult.result),
-        );
-      } catch (error) {
-        try {
-          await rollbackCreatedRemoteProject(selectedTeam, projectId, createResult.result);
-        } catch (rollbackError) {
-          markProjectAsLocalOnly(selectedTeam, currentProjectSnapshot(remoteProject), render);
-          clearProjectCreationInFlight(projectId);
-          showNoticeBadge(
-            `The project repo was created, but team metadata could not be finalized or rolled back automatically: ${
-              rollbackError?.message ?? String(rollbackError)
-            }`,
-            render,
-          );
-          return;
-        }
-
-        markProjectAsLocalOnly(selectedTeam, currentProjectSnapshot(remoteProject), render);
-        clearProjectCreationInFlight(projectId);
-        showNoticeBadge(
-          `The project stays local-only because its team metadata record could not be finalized: ${
-            error?.message ?? String(error)
-          }`,
-          render,
-        );
-        return;
-      }
-
-      remoteProject = {
-        ...currentProjectSnapshot(remoteProject),
-        ...createResult.result,
-        chapters: Array.isArray(currentProjectSnapshot(remoteProject)?.chapters)
-          ? currentProjectSnapshot(remoteProject).chapters
-          : [],
-        isPendingCreate: false,
-        pendingCreateStartedAt: undefined,
-        pendingCreateStatusText: undefined,
-        remoteState: "linked",
-        resolutionState: "",
-      };
-      replaceVisibleProject(projectId, remoteProject);
-      persistProjectsForTeam(selectedTeam);
-      render();
-
-      await reconcileProjectRepoSyncStates(render, selectedTeam, [{
-        ...remoteProject,
-        allowPendingCreateSync: true,
-      }]);
-      await refreshProjectFilesFromDisk(render, selectedTeam, [remoteProject]);
-
-      const latestProject = currentProjectSnapshot(remoteProject);
-      replaceVisibleProject(projectId, {
-        ...latestProject,
-        ...createResult.result,
-        chapters: Array.isArray(latestProject?.chapters) ? latestProject.chapters : [],
-        isPendingCreate: false,
-        pendingCreateStartedAt: undefined,
-        pendingCreateStatusText: undefined,
-        remoteState: "linked",
-        resolutionState: "",
-      });
-      persistProjectsForTeam(selectedTeam);
-      if (createResult.collisionResolved === true) {
-        showNoticeBadge(
-          `Saved ${pendingProject.title} to repo ${createResult.attemptedRepoName} because that repo name was already taken.`,
-          render,
-        );
-      }
-    } catch (error) {
-      if (remoteProject) {
-        markProjectAsLocalOnly(selectedTeam, currentProjectSnapshot(remoteProject), render);
-      } else {
-        markProjectAsLocalOnly(selectedTeam, currentProjectSnapshot(pendingProject), render);
-      }
-      showNoticeBadge(
-        `The project could not sync to GitHub automatically: ${error?.message ?? String(error)}`,
-        render,
-      );
-      render();
-    } finally {
-      clearProjectCreationInFlight(projectId);
-      render();
-    }
-  })();
-}
-
 export async function refreshProjectFilesFromDisk(render, selectedTeam, projects) {
   return runRefreshProjectFilesFromDisk(render, selectedTeam, projects, {
     applyChapterPendingMutation,
@@ -909,6 +602,70 @@ function updateChapterInState(chapterId, updater) {
 
   state.projects = state.projects.map(applyToProject);
   state.deletedProjects = state.deletedProjects.map(applyToProject);
+}
+
+function enqueueChapterMutation(selectedTeam, mutation) {
+  state.pendingChapterMutations = upsertPendingMutation(state.pendingChapterMutations, mutation);
+  persistChapterPendingMutationsForTeam(selectedTeam);
+}
+
+function completeChapterMutation(selectedTeam, mutationId) {
+  state.pendingChapterMutations = removePendingMutation(state.pendingChapterMutations, mutationId);
+  persistChapterPendingMutationsForTeam(selectedTeam);
+}
+
+function startOptimisticChapterMutation({
+  render,
+  selectedTeam,
+  context,
+  mutation,
+  applyOptimistic,
+  optimisticDebugText = "",
+  remoteDebugText = "",
+  beforeReconcile,
+  rollback,
+  runRemote,
+  showFailureNotice = true,
+}) {
+  const snapshot = cloneProjectCollections();
+
+  state.projectSyncVersion += 1;
+  applyOptimistic?.();
+  beginProjectsPageSync();
+  persistProjectsForTeam(selectedTeam);
+  enqueueChapterMutation(selectedTeam, mutation);
+  render();
+
+  if (optimisticDebugText) {
+    setProjectUiDebug(render, optimisticDebugText);
+  }
+
+  void waitForNextPaint().then(async () => {
+    try {
+      if (remoteDebugText) {
+        setProjectUiDebug(render, remoteDebugText);
+      }
+      const payload = await runRemote();
+      completeChapterMutation(selectedTeam, mutation.id);
+      await beforeReconcile?.(payload);
+      await reconcileProjectRepoSyncStates(render, selectedTeam, [context.project]);
+      await refreshProjectFilesFromDisk(render, selectedTeam, [context.project]);
+      clearProjectUiDebug(render);
+      await completeProjectsPageSync(render);
+      render();
+    } catch (error) {
+      completeChapterMutation(selectedTeam, mutation.id);
+      restoreProjectCollections(snapshot);
+      await rollback?.(error);
+      persistProjectsForTeam(selectedTeam);
+      clearProjectUiDebug(render);
+      failProjectsPageSync();
+      if (showFailureNotice) {
+        showNoticeBadge(error?.message ?? String(error), render);
+      }
+      render();
+    }
+  });
 }
 
 function chapterGlossaryLinkFromGlossaryId(glossaryId) {
@@ -1048,15 +805,12 @@ function applyChapterPendingMutation(snapshot, mutation) {
   });
 }
 
-const inflightProjectMutationIds = new Set();
-
 export async function loadTeamProjects(render, teamId = state.selectedTeamId) {
   state.projectsPage.isRefreshing = true;
   render?.();
   try {
     return await runLoadTeamProjects(render, teamId, {
       applyChapterPendingMutation,
-      autoResumePendingProjects,
       clearProjectUiDebug,
       clearSelectedProjectState,
       dropProjectMutationsForProject,
@@ -1079,7 +833,12 @@ export async function loadTeamProjects(render, teamId = state.selectedTeamId) {
 }
 
 export async function createProjectForSelectedTeam(render) {
-  const selectedTeam = state.teams.find((team) => team.id === state.selectedTeamId);
+  const selectedTeam = selectedProjectsTeam();
+  if (areResourcePageWritesDisabled(state.projectsPage)) {
+    setProjectDiscoveryState("error", "Wait for the current projects refresh or write to finish.");
+    render();
+    return;
+  }
   if (!guardResourceCreateStart({
     installationReady: () => Boolean(selectedTeam?.installationId),
     canCreate: () => canCreateRepoResources(selectedTeam),
@@ -1115,7 +874,7 @@ export function cancelProjectCreation(render) {
 
 export function openProjectRename(render, projectId) {
   const project = state.projects.find((item) => item.id === projectId);
-  const selectedTeam = state.teams.find((team) => team.id === state.selectedTeamId);
+  const selectedTeam = selectedProjectsTeam();
   if (areResourcePageWritesDisabled(state.projectsPage)) {
     setProjectDiscoveryState("error", "Wait for the current projects refresh or write to finish.");
     render();
@@ -1155,7 +914,7 @@ export function cancelProjectRename(render) {
 
 export function openChapterRename(render, chapterId) {
   const context = findChapterContext(chapterId);
-  const selectedTeam = state.teams.find((team) => team.id === state.selectedTeamId);
+  const selectedTeam = selectedProjectsTeam();
   if (!context?.chapter) {
     setProjectDiscoveryState("error", "Could not find the selected file.");
     render();
@@ -1191,7 +950,7 @@ export function updateChapterRenameName(chapterName) {
 
 export function openChapterPermanentDeletion(render, chapterId) {
   const context = findChapterContext(chapterId);
-  const selectedTeam = state.teams.find((team) => team.id === state.selectedTeamId);
+  const selectedTeam = selectedProjectsTeam();
   if (!context?.chapter) {
     setProjectDiscoveryState("error", "Could not find the selected deleted file.");
     render();
@@ -1258,7 +1017,12 @@ export function toggleDeletedFiles(render, projectId) {
 }
 
 export async function submitProjectCreation(render) {
-  const selectedTeam = state.teams.find((team) => team.id === state.selectedTeamId);
+  const selectedTeam = selectedProjectsTeam();
+  if (areResourcePageWritesDisabled(state.projectsPage)) {
+    state.projectCreation.error = "Wait for the current projects refresh or write to finish.";
+    render();
+    return;
+  }
   if (!guardResourceCreateStart({
     installationReady: () => Boolean(selectedTeam?.installationId),
     canCreate: () => canCreateRepoResources(selectedTeam),
@@ -1282,171 +1046,44 @@ export async function submitProjectCreation(render) {
     return;
   }
 
-  try {
-    state.projectCreation.status = "loading";
-    state.projectCreation.error = "";
-    render();
-    await waitForNextPaint();
-    const pendingProjectId = crypto.randomUUID();
-    let pendingProject = null;
-    state.projectSyncVersion += 1;
-    beginProjectsPageSync();
-    setProjectUiDebug(render, "Initializing local project...");
-
-    try {
-      const createResult = await runLocalFirstCreate({
-        reserveLocalRepo: async () => reserveLocalProjectRepoName(repoName),
-        commitPendingMetadata: async (localRepoName) => {
-          pendingProject = buildPendingProjectRecord(
-            selectedTeam,
-            projectTitle,
-            localRepoName,
-          );
-          pendingProject.id = pendingProjectId;
-          replaceVisibleProject(pendingProject.id, pendingProject);
-          markProjectCreationInFlight(pendingProject.id);
-          persistProjectsForTeam(selectedTeam);
-          resetProjectCreation();
-          render();
-          await waitForNextPaint();
-          await upsertProjectMetadataRecord(selectedTeam, pendingProjectMetadataRecord(pendingProject));
-        },
-        initializeLocalResource: async (localRepoName) => {
-          await invoke("initialize_gtms_project_repo", {
-            input: {
-              installationId: selectedTeam.installationId,
-              projectId: pendingProjectId,
-              repoName: localRepoName,
-              title: projectTitle,
-            },
-          });
-          return pendingProject;
-        },
-        purgeLocalRepo: async (localRepoName) => {
-          removeVisibleProject(pendingProjectId);
-          persistProjectsForTeam(selectedTeam);
-          await invoke("purge_local_gtms_project_repo", {
-            input: {
-              installationId: selectedTeam.installationId,
-              projectId: pendingProjectId,
-              repoName: localRepoName,
-            },
-          });
-        },
-        rollbackPendingMetadata: (error) =>
-          rollbackPendingProjectMetadataOnLocalFailure(selectedTeam, pendingProjectId, error),
-      });
-
-      await refreshProjectFilesFromDisk(render, selectedTeam, [pendingProject]);
-      clearProjectUiDebug(render);
-      await completeProjectsPageSync(render);
-      render();
-      await finalizeLocalFirstCreate({
-        createdResource: pendingProject,
-        commitVisibleResource: (project) => currentProjectSnapshot(project),
-        syncInBackground: async (project) => {
-          syncProjectInBackground(render, selectedTeam, project, repoName);
-        },
-        showSuccessNotice: () => {
-          showNoticeBadge(
-            createResult.localNameCollisionResolved
-              ? `Created project ${projectTitle} in local repo ${pendingProject.name} because that name was already used locally.`
-              : `Created project ${projectTitle}.`,
-            render,
-          );
-        },
-      });
-    } catch (error) {
-      if (await handleSyncFailure(classifySyncError(error), { render })) {
-        clearProjectUiDebug(render);
-        failProjectsPageSync();
-        clearProjectCreationInFlight(pendingProjectId);
-        return;
-      }
-      clearProjectUiDebug(render);
-      failProjectsPageSync();
-      clearProjectCreationInFlight(pendingProjectId);
-      state.projectCreation.status = "idle";
-      state.projectCreation.error = error?.message ?? String(error);
-      render();
-    }
-  } catch (error) {
-    if (await handleSyncFailure(classifySyncError(error), { render })) {
-      return;
-    }
-    state.projectCreation.status = "idle";
-    state.projectCreation.error = error?.message ?? String(error);
-    render();
-  }
-}
-
-async function resumePendingProjectSetupInternal(render, projectId, options = {}) {
-  const selectedTeam = selectedProjectsTeam();
-  const showStartNotice = options.showStartNotice !== false;
-  const showSuccessNotice = options.showSuccessNotice !== false;
-  const showErrorNotice = options.showErrorNotice !== false;
-  await resumePendingResourceSetup({
+  state.projectCreation.status = "loading";
+  state.projectCreation.error = "";
+  render();
+  await submitResourcePageWrite({
+    pageState: state.projectsPage,
     render,
-    resourceId: projectId,
-    resourceLabel: "project",
-    showStartNotice,
-    showSuccessNotice,
-    showErrorNotice,
-    getResource: (nextProjectId) =>
-      state.projects.find((item) => item.id === nextProjectId)
-      ?? state.deletedProjects.find((item) => item.id === nextProjectId)
-      ?? null,
-    ensureResumeAllowed: () =>
-      ensureChapterMutationAllowed(render, {
-        selectedTeam,
-        actionLabel: "resume project setup",
-        requireDelete: true,
-      }),
-    isPendingCreate: (project) =>
-      project?.remoteState === "pendingCreate" || project?.resolutionState === "pendingCreate",
-    isInFlight: (project) => state.projectCreationInFlightIds.has(project.id),
-    markInFlight: (project) => markProjectCreationInFlight(project.id),
-    clearInFlight: (project) => clearProjectCreationInFlight(project.id),
-    listRemoteResources: async () => invoke("list_gnosis_projects_for_installation", {
-      installationId: selectedTeam.installationId,
-      sessionToken: requireBrokerSession(),
-    }),
-    findMatchingRemoteResource: (project, remoteProjects) =>
-      findMatchingRemoteProjectForPendingCreate(
-        currentProjectSnapshot(project),
-        Array.isArray(remoteProjects) ? remoteProjects : [],
-      ),
-    syncInBackground: async (project) => {
-      syncProjectInBackground(
+    onBlocked: async () => {
+      state.projectCreation.status = "idle";
+      state.projectCreation.error = "Wait for the current projects refresh or write to finish.";
+      render();
+    },
+    runMutation: async () =>
+      completeProjectCreateSynchronously(selectedTeam, projectTitle, repoName),
+    refreshOptions: {
+      loadData: async () => reloadProjectsAfterWrite(render, selectedTeam),
+    },
+    onSuccess: async (result) => {
+      resetProjectCreation();
+      state.selectedProjectId = result.projectId;
+      showNoticeBadge(
+        result.collisionResolved
+          ? `Created project ${result.title} in repo ${result.repoName} because that repo name was already taken.`
+          : `Created project ${result.title}.`,
         render,
-        selectedTeam,
-        currentProjectSnapshot(project),
-        currentProjectSnapshot(project)?.name ?? "",
       );
     },
-    finalizePendingSetup: (project, matchedRemoteProject) =>
-      finalizePendingProjectSetup(render, selectedTeam, project, matchedRemoteProject),
+    onError: async (error) => {
+      if (await handleSyncFailure(classifySyncError(error), { render })) {
+        return;
+      }
+      state.projectCreation.status = "idle";
+      state.projectCreation.error = error?.message ?? String(error);
+    },
   });
-}
-
-async function autoResumePendingProjects(render, projects) {
-  await autoResumePendingResources({
-    resources: projects,
-    getResourceId: (project) => project?.id ?? "",
-    isPendingCreate: (project) =>
-      project?.remoteState === "pendingCreate" || project?.resolutionState === "pendingCreate",
-    isInFlight: (project) => state.projectCreationInFlightIds.has(project.id),
-    resumePendingSetup: (projectId, options = {}) =>
-      resumePendingProjectSetupInternal(render, projectId, options),
-  });
-}
-
-export async function resumePendingProjectSetup(render, projectId) {
-  await resumePendingProjectSetupInternal(render, projectId);
 }
 
 export async function submitProjectRename(render) {
-  const selectedTeam = state.teams.find((team) => team.id === state.selectedTeamId);
+  const selectedTeam = selectedProjectsTeam();
   const project = state.projects.find((item) => item.id === state.projectRename.projectId);
   const nextTitle = String(state.projectRename.projectName ?? "").trim();
   const allowed = await guardTopLevelResourceAction({
@@ -1514,7 +1151,7 @@ export async function submitProjectRename(render) {
 }
 
 export async function repairProjectRepoBinding(render, projectId) {
-  const selectedTeam = state.teams.find((team) => team.id === state.selectedTeamId);
+  const selectedTeam = selectedProjectsTeam();
   if (!selectedTeam?.installationId || typeof projectId !== "string" || !projectId.trim()) {
     return;
   }
@@ -1530,7 +1167,7 @@ export async function repairProjectRepoBinding(render, projectId) {
 }
 
 export async function rebuildProjectLocalRepo(render, projectId) {
-  const selectedTeam = state.teams.find((team) => team.id === state.selectedTeamId);
+  const selectedTeam = selectedProjectsTeam();
   if (!selectedTeam?.installationId || typeof projectId !== "string" || !projectId.trim()) {
     return;
   }
@@ -1540,7 +1177,7 @@ export async function rebuildProjectLocalRepo(render, projectId) {
 }
 
 export async function submitChapterRename(render) {
-  const selectedTeam = state.teams.find((team) => team.id === state.selectedTeamId);
+  const selectedTeam = selectedProjectsTeam();
   const context = findChapterContext(state.chapterRename.chapterId);
   const nextTitle = state.chapterRename.chapterName.trim();
 
@@ -1573,7 +1210,6 @@ export async function submitChapterRename(render) {
     return;
   }
 
-  const snapshot = cloneProjectCollections();
   const mutation = {
     id: crypto.randomUUID(),
     type: "rename",
@@ -1581,48 +1217,30 @@ export async function submitChapterRename(render) {
     chapterId: context.chapter.id,
     title: nextTitle,
   };
-  state.projectSyncVersion += 1;
-  updateChapterInState(context.chapter.id, (chapter) => ({
-    ...chapter,
-    name: nextTitle,
-  }));
-  if (state.editorChapter?.chapterId === context.chapter.id) {
-    state.editorChapter = {
-      ...state.editorChapter,
-      fileTitle: nextTitle,
-    };
-  }
-  beginProjectsPageSync();
-  persistProjectsForTeam(selectedTeam);
-  state.pendingChapterMutations = upsertPendingMutation(state.pendingChapterMutations, mutation);
-  persistChapterPendingMutationsForTeam(selectedTeam);
   resetChapterRename();
-  render();
-  setProjectUiDebug(render, "Optimistic file rename applied");
-  void waitForNextPaint().then(async () => {
-    try {
-      setProjectUiDebug(render, "Saving file...");
-      await invoke("rename_gtms_chapter", {
-        input: {
-          installationId: selectedTeam.installationId,
-          projectId: context.project.id,
-          repoName: context.project.name,
-          chapterId: context.chapter.id,
-          title: nextTitle,
-        },
-      });
-      state.pendingChapterMutations = removePendingMutation(state.pendingChapterMutations, mutation.id);
-      persistChapterPendingMutationsForTeam(selectedTeam);
+  startOptimisticChapterMutation({
+    render,
+    selectedTeam,
+    context,
+    mutation,
+    applyOptimistic: () => {
+      updateChapterInState(context.chapter.id, (chapter) => ({
+        ...chapter,
+        name: nextTitle,
+      }));
+      if (state.editorChapter?.chapterId === context.chapter.id) {
+        state.editorChapter = {
+          ...state.editorChapter,
+          fileTitle: nextTitle,
+        };
+      }
+    },
+    optimisticDebugText: "Optimistic file rename applied",
+    remoteDebugText: "Saving file...",
+    beforeReconcile: async () => {
       setProjectUiDebug(render, "Background sync started");
-      await reconcileProjectRepoSyncStates(render, selectedTeam, [context.project]);
-      await refreshProjectFilesFromDisk(render, selectedTeam, [context.project]);
-      clearProjectUiDebug(render);
-      await completeProjectsPageSync(render);
-      render();
-    } catch (error) {
-      state.pendingChapterMutations = removePendingMutation(state.pendingChapterMutations, mutation.id);
-      persistChapterPendingMutationsForTeam(selectedTeam);
-      restoreProjectCollections(snapshot);
+    },
+    rollback: async (error) => {
       state.chapterRename = {
         isOpen: true,
         projectId: context.project.id,
@@ -1637,16 +1255,22 @@ export async function submitChapterRename(render) {
           fileTitle: context.chapter.name,
         };
       }
-      persistProjectsForTeam(selectedTeam);
-      clearProjectUiDebug(render);
-      failProjectsPageSync();
-      render();
-    }
+    },
+    runRemote: async () => invoke("rename_gtms_chapter", {
+        input: {
+          installationId: selectedTeam.installationId,
+          projectId: context.project.id,
+          repoName: context.project.name,
+          chapterId: context.chapter.id,
+          title: nextTitle,
+        },
+      }),
+    showFailureNotice: false,
   });
 }
 
 async function persistChapterGlossaryLinks(render, chapterId, nextGlossary1, nextGlossary2) {
-  const selectedTeam = state.teams.find((team) => team.id === state.selectedTeamId);
+  const selectedTeam = selectedProjectsTeam();
   const context = findChapterContext(chapterId);
 
   if (
@@ -1678,7 +1302,6 @@ async function persistChapterGlossaryLinks(render, chapterId, nextGlossary1, nex
     return;
   }
 
-  const snapshot = cloneProjectCollections();
   const mutation = {
     id: crypto.randomUUID(),
     type: "setGlossaryLinks",
@@ -1688,21 +1311,19 @@ async function persistChapterGlossaryLinks(render, chapterId, nextGlossary1, nex
     glossary2: nextGlossary2,
   };
 
-  state.projectSyncVersion += 1;
-  updateChapterInState(chapterId, (chapter) => ({
-    ...chapter,
-    linkedGlossary1: nextGlossary1,
-    linkedGlossary2: nextGlossary2,
-  }));
-  beginProjectsPageSync();
-  persistProjectsForTeam(selectedTeam);
-  state.pendingChapterMutations = upsertPendingMutation(state.pendingChapterMutations, mutation);
-  persistChapterPendingMutationsForTeam(selectedTeam);
-  render();
-
-  void waitForNextPaint().then(async () => {
-    try {
-      const payload = await invoke("update_gtms_chapter_glossary_links", {
+  startOptimisticChapterMutation({
+    render,
+    selectedTeam,
+    context,
+    mutation,
+    applyOptimistic: () => {
+      updateChapterInState(chapterId, (chapter) => ({
+        ...chapter,
+        linkedGlossary1: nextGlossary1,
+        linkedGlossary2: nextGlossary2,
+      }));
+    },
+    runRemote: async () => invoke("update_gtms_chapter_glossary_links", {
         input: {
           installationId: selectedTeam.installationId,
           projectId: context.project.id,
@@ -1711,29 +1332,15 @@ async function persistChapterGlossaryLinks(render, chapterId, nextGlossary1, nex
           glossary1: chapterGlossaryLinkInput(nextGlossary1),
           glossary2: chapterGlossaryLinkInput(nextGlossary2),
         },
-      });
-
-      state.pendingChapterMutations = removePendingMutation(state.pendingChapterMutations, mutation.id);
-      persistChapterPendingMutationsForTeam(selectedTeam);
+      }),
+    beforeReconcile: async (payload) => {
       updateChapterInState(chapterId, (chapter) => ({
         ...chapter,
         linkedGlossary1: normalizeChapterGlossaryLink(payload?.glossary1),
         linkedGlossary2: normalizeChapterGlossaryLink(payload?.glossary2),
       }));
       persistProjectsForTeam(selectedTeam);
-      await reconcileProjectRepoSyncStates(render, selectedTeam, [context.project]);
-      await refreshProjectFilesFromDisk(render, selectedTeam, [context.project]);
-      await completeProjectsPageSync(render);
-      render();
-    } catch (error) {
-      state.pendingChapterMutations = removePendingMutation(state.pendingChapterMutations, mutation.id);
-      persistChapterPendingMutationsForTeam(selectedTeam);
-      restoreProjectCollections(snapshot);
-      persistProjectsForTeam(selectedTeam);
-      showNoticeBadge(error?.message ?? String(error), render);
-      failProjectsPageSync();
-      render();
-    }
+    },
   });
 }
 
@@ -1807,7 +1414,7 @@ export async function acknowledgeChapterGlossaryConflict(render) {
 
 export async function deleteProject(render, projectId) {
   const project = state.projects.find((item) => item.id === projectId);
-  const selectedTeam = state.teams.find((team) => team.id === state.selectedTeamId);
+  const selectedTeam = selectedProjectsTeam();
   const allowed = await guardTopLevelResourceAction({
     resource: selectedTeam?.installationId ? project : null,
     getBlockedMessage: () =>
@@ -1859,7 +1466,7 @@ export async function deleteProject(render, projectId) {
 }
 
 export async function deleteChapter(render, chapterId) {
-  const selectedTeam = state.teams.find((team) => team.id === state.selectedTeamId);
+  const selectedTeam = selectedProjectsTeam();
   const context = findChapterContext(chapterId);
 
   if (!Number.isFinite(selectedTeam?.installationId) || !context?.project || !context?.chapter) {
@@ -1874,59 +1481,40 @@ export async function deleteChapter(render, chapterId) {
     return;
   }
 
-  const snapshot = cloneProjectCollections();
   const mutation = {
     id: crypto.randomUUID(),
     type: "softDelete",
     projectId: context.project.id,
     chapterId,
   };
-  state.projectSyncVersion += 1;
-  setProjectUiDebug(render, "Delete clicked");
-  updateChapterInState(chapterId, (chapter) => ({
-    ...chapter,
-    status: "deleted",
-  }));
-  reconcileExpandedDeletedFiles();
-  beginProjectsPageSync();
-  persistProjectsForTeam(selectedTeam);
-  state.pendingChapterMutations = upsertPendingMutation(state.pendingChapterMutations, mutation);
-  persistChapterPendingMutationsForTeam(selectedTeam);
-  render();
-  setProjectUiDebug(render, "Optimistic delete applied");
-  void waitForNextPaint().then(async () => {
-    try {
-      setProjectUiDebug(render, "Background sync started");
-      await invoke("soft_delete_gtms_chapter", {
+  startOptimisticChapterMutation({
+    render,
+    selectedTeam,
+    context,
+    mutation,
+    applyOptimistic: () => {
+      setProjectUiDebug(render, "Delete clicked");
+      updateChapterInState(chapterId, (chapter) => ({
+        ...chapter,
+        status: "deleted",
+      }));
+      reconcileExpandedDeletedFiles();
+    },
+    optimisticDebugText: "Optimistic delete applied",
+    remoteDebugText: "Background sync started",
+    runRemote: async () => invoke("soft_delete_gtms_chapter", {
         input: {
           installationId: selectedTeam.installationId,
           projectId: context.project.id,
           repoName: context.project.name,
           chapterId,
         },
-      });
-      state.pendingChapterMutations = removePendingMutation(state.pendingChapterMutations, mutation.id);
-      persistChapterPendingMutationsForTeam(selectedTeam);
-      await reconcileProjectRepoSyncStates(render, selectedTeam, [context.project]);
-      await refreshProjectFilesFromDisk(render, selectedTeam, [context.project]);
-      clearProjectUiDebug(render);
-      await completeProjectsPageSync(render);
-      render();
-    } catch (error) {
-      state.pendingChapterMutations = removePendingMutation(state.pendingChapterMutations, mutation.id);
-      persistChapterPendingMutationsForTeam(selectedTeam);
-      restoreProjectCollections(snapshot);
-      persistProjectsForTeam(selectedTeam);
-      clearProjectUiDebug(render);
-      failProjectsPageSync();
-      showNoticeBadge(error?.message ?? String(error), render);
-      render();
-    }
+      }),
   });
 }
 
 export async function restoreChapter(render, chapterId) {
-  const selectedTeam = state.teams.find((team) => team.id === state.selectedTeamId);
+  const selectedTeam = selectedProjectsTeam();
   const context = findChapterContext(chapterId);
 
   if (!Number.isFinite(selectedTeam?.installationId) || !context?.project || !context?.chapter) {
@@ -1941,59 +1529,40 @@ export async function restoreChapter(render, chapterId) {
     return;
   }
 
-  const snapshot = cloneProjectCollections();
   const mutation = {
     id: crypto.randomUUID(),
     type: "restore",
     projectId: context.project.id,
     chapterId,
   };
-  state.projectSyncVersion += 1;
-  setProjectUiDebug(render, "Restore clicked");
-  updateChapterInState(chapterId, (chapter) => ({
-    ...chapter,
-    status: "active",
-  }));
-  reconcileExpandedDeletedFiles();
-  beginProjectsPageSync();
-  persistProjectsForTeam(selectedTeam);
-  state.pendingChapterMutations = upsertPendingMutation(state.pendingChapterMutations, mutation);
-  persistChapterPendingMutationsForTeam(selectedTeam);
-  render();
-  setProjectUiDebug(render, "Optimistic restore applied");
-  void waitForNextPaint().then(async () => {
-    try {
-      setProjectUiDebug(render, "Background sync started");
-      await invoke("restore_gtms_chapter", {
+  startOptimisticChapterMutation({
+    render,
+    selectedTeam,
+    context,
+    mutation,
+    applyOptimistic: () => {
+      setProjectUiDebug(render, "Restore clicked");
+      updateChapterInState(chapterId, (chapter) => ({
+        ...chapter,
+        status: "active",
+      }));
+      reconcileExpandedDeletedFiles();
+    },
+    optimisticDebugText: "Optimistic restore applied",
+    remoteDebugText: "Background sync started",
+    runRemote: async () => invoke("restore_gtms_chapter", {
         input: {
           installationId: selectedTeam.installationId,
           projectId: context.project.id,
           repoName: context.project.name,
           chapterId,
         },
-      });
-      state.pendingChapterMutations = removePendingMutation(state.pendingChapterMutations, mutation.id);
-      persistChapterPendingMutationsForTeam(selectedTeam);
-      await reconcileProjectRepoSyncStates(render, selectedTeam, [context.project]);
-      await refreshProjectFilesFromDisk(render, selectedTeam, [context.project]);
-      clearProjectUiDebug(render);
-      await completeProjectsPageSync(render);
-      render();
-    } catch (error) {
-      state.pendingChapterMutations = removePendingMutation(state.pendingChapterMutations, mutation.id);
-      persistChapterPendingMutationsForTeam(selectedTeam);
-      restoreProjectCollections(snapshot);
-      persistProjectsForTeam(selectedTeam);
-      clearProjectUiDebug(render);
-      failProjectsPageSync();
-      showNoticeBadge(error?.message ?? String(error), render);
-      render();
-    }
+      }),
   });
 }
 
 export async function permanentlyDeleteChapter(render, chapterId) {
-  const selectedTeam = state.teams.find((team) => team.id === state.selectedTeamId);
+  const selectedTeam = selectedProjectsTeam();
   const context = findChapterContext(chapterId);
 
   if (!Number.isFinite(selectedTeam?.installationId) || !context?.project || !context?.chapter) {
@@ -2012,59 +1581,40 @@ export async function permanentlyDeleteChapter(render, chapterId) {
     return;
   }
 
-  const snapshot = cloneProjectCollections();
   const mutation = {
     id: crypto.randomUUID(),
     type: "permanentDelete",
     projectId: context.project.id,
     chapterId,
   };
-  state.projectSyncVersion += 1;
-  setProjectUiDebug(render, "Permanent delete clicked");
-  const nextSnapshot = applyChapterPendingMutation(
-    { items: state.projects, deletedItems: state.deletedProjects },
+  startOptimisticChapterMutation({
+    render,
+    selectedTeam,
+    context,
     mutation,
-  );
-  applyProjectSnapshotToState(nextSnapshot, { reconcileExpandedDeletedFiles });
-  beginProjectsPageSync();
-  persistProjectsForTeam(selectedTeam);
-  state.pendingChapterMutations = upsertPendingMutation(state.pendingChapterMutations, mutation);
-  persistChapterPendingMutationsForTeam(selectedTeam);
-  render();
-  setProjectUiDebug(render, "Optimistic permanent delete applied");
-  void waitForNextPaint().then(async () => {
-    try {
-      setProjectUiDebug(render, "Background sync started");
-      await invoke("permanently_delete_gtms_chapter", {
+    applyOptimistic: () => {
+      setProjectUiDebug(render, "Permanent delete clicked");
+      const nextSnapshot = applyChapterPendingMutation(
+        { items: state.projects, deletedItems: state.deletedProjects },
+        mutation,
+      );
+      applyProjectSnapshotToState(nextSnapshot, { reconcileExpandedDeletedFiles });
+    },
+    optimisticDebugText: "Optimistic permanent delete applied",
+    remoteDebugText: "Background sync started",
+    runRemote: async () => invoke("permanently_delete_gtms_chapter", {
         input: {
           installationId: selectedTeam.installationId,
           projectId: context.project.id,
           repoName: context.project.name,
           chapterId,
         },
-      });
-      state.pendingChapterMutations = removePendingMutation(state.pendingChapterMutations, mutation.id);
-      persistChapterPendingMutationsForTeam(selectedTeam);
-      await reconcileProjectRepoSyncStates(render, selectedTeam, [context.project]);
-      await refreshProjectFilesFromDisk(render, selectedTeam, [context.project]);
-      clearProjectUiDebug(render);
-      await completeProjectsPageSync(render);
-      render();
-    } catch (error) {
-      state.pendingChapterMutations = removePendingMutation(state.pendingChapterMutations, mutation.id);
-      persistChapterPendingMutationsForTeam(selectedTeam);
-      restoreProjectCollections(snapshot);
-      persistProjectsForTeam(selectedTeam);
-      clearProjectUiDebug(render);
-      failProjectsPageSync();
-      showNoticeBadge(error?.message ?? String(error), render);
-      render();
-    }
+      }),
   });
 }
 
 export async function confirmChapterPermanentDeletion(render) {
-  const selectedTeam = state.teams.find((team) => team.id === state.selectedTeamId);
+  const selectedTeam = selectedProjectsTeam();
   const context = findChapterContext(state.chapterPermanentDeletion.chapterId);
 
   if (!Number.isFinite(selectedTeam?.installationId) || !context?.project || !context?.chapter) {
@@ -2112,7 +1662,7 @@ export function toggleDeletedProjects(render) {
 
 export async function restoreProject(render, projectId) {
   const project = state.deletedProjects.find((item) => item.id === projectId);
-  const selectedTeam = state.teams.find((team) => team.id === state.selectedTeamId);
+  const selectedTeam = selectedProjectsTeam();
   const allowed = await guardTopLevelResourceAction({
     resource: selectedTeam?.installationId ? project : null,
     getBlockedMessage: () =>
@@ -2222,7 +1772,7 @@ async function reloadProjectsAfterWrite(render, selectedTeam) {
 
 export function permanentlyDeleteProject(render, projectId) {
   const project = state.deletedProjects.find((item) => item.id === projectId);
-  const selectedTeam = state.teams.find((team) => team.id === state.selectedTeamId);
+  const selectedTeam = selectedProjectsTeam();
   void guardTopLevelResourceAction({
     resource: project,
     isExpectedResource: (currentProject) =>
@@ -2269,11 +1819,10 @@ export function cancelProjectPermanentDeletion(render) {
 }
 
 export async function confirmProjectPermanentDeletion(render) {
-  const selectedTeam = state.teams.find((team) => team.id === state.selectedTeamId);
+  const selectedTeam = selectedProjectsTeam();
   const project = state.deletedProjects.find(
     (item) => item.id === state.projectPermanentDeletion.projectId,
   );
-  const confirmationText = state.projectPermanentDeletion.confirmationText;
   const allowed = await guardPermanentDeleteConfirmation({
     resource: selectedTeam?.installationId ? project : null,
     modalState: state.projectPermanentDeletion,
@@ -2297,134 +1846,63 @@ export async function confirmProjectPermanentDeletion(render) {
       resetProjectPermanentDeletion();
       render();
     },
-    extraGuard: () => {
-      if (!state.projectCreationInFlightIds.has(project.id)) {
-        return true;
-      }
-      state.projectPermanentDeletion.status = "idle";
-      state.projectPermanentDeletion.error =
-        "This project is still finishing creation in the background. Wait a moment, then try deleting it permanently again.";
-      return false;
-    },
     render,
   });
   if (!allowed) {
     return;
   }
 
-  const snapshot = cloneProjectCollections();
-  await applyOptimisticPermanentDelete({
-    beforeWait: () => {
-      beginEntityModalSubmit(state.projectPermanentDeletion, render);
-    },
-    waitForNextPaint,
-    beforeRemove: () => {
-      state.projectSyncVersion += 1;
-      beginProjectsPageSync();
-      setProjectUiDebug(render, "Deleting project...");
-    },
-    removeVisibleResource: () => {
-      removeVisibleProject(project.id);
-    },
-    persistVisibleState: () => {
-      persistProjectsForTeam(selectedTeam);
-    },
-    resetModal: resetProjectPermanentDeletion,
-    render,
-  });
+  state.projectPermanentDeletion.status = "loading";
+  state.projectPermanentDeletion.error = "";
+  render();
 
-  runPermanentDeleteLocalFirst({
-    commitTombstone: () => upsertProjectMetadataRecord(selectedTeam, {
-      ...projectMetadataRecordFromVisibleProject(project),
-      lifecycleState: "softDeleted",
-      remoteState: "deleted",
-      recordState: "tombstone",
-      deletedAt: new Date().toISOString(),
-    }),
-    purgeLocalRepo: () => invoke("purge_local_gtms_project_repo", {
-      input: {
-        installationId: selectedTeam.installationId,
-        projectId: project.id,
-        repoName: project.name,
-      },
-    }),
-    deleteRemote: () => invoke("permanently_delete_gnosis_project_repo", {
-      input: {
-        installationId: selectedTeam.installationId,
-        orgLogin: selectedTeam.githubOrg,
-        repoName: project.name,
-      },
-      sessionToken: requireBrokerSession(),
-    }),
-    reloadAfterSuccess: async () => {
-      clearProjectUiDebug(render);
-      await completeProjectsPageSync(render);
+  await submitResourcePageWrite({
+    pageState: state.projectsPage,
+    render,
+    onBlocked: async () => {
+      state.projectPermanentDeletion.status = "idle";
+      state.projectPermanentDeletion.error = "Wait for the current projects refresh or write to finish.";
       render();
-      await loadTeamProjects(render, selectedTeam.id);
     },
-    rollbackBeforeTombstone: async (error) => {
+    runMutation: async () => {
+      await upsertProjectMetadataRecord(selectedTeam, {
+        ...projectMetadataRecordFromVisibleProject(project),
+        lifecycleState: "softDeleted",
+        remoteState: "deleted",
+        recordState: "tombstone",
+        deletedAt: new Date().toISOString(),
+      }, { requirePushSuccess: true });
+      await invoke("purge_local_gtms_project_repo", {
+        input: {
+          installationId: selectedTeam.installationId,
+          projectId: project.id,
+          repoName: project.name,
+        },
+      });
+      await invoke("permanently_delete_gnosis_project_repo", {
+        input: {
+          installationId: selectedTeam.installationId,
+          orgLogin: selectedTeam.githubOrg,
+          repoName: project.name,
+        },
+        sessionToken: requireBrokerSession(),
+      });
+    },
+    refreshOptions: {
+      loadData: async () => reloadProjectsAfterWrite(render, selectedTeam),
+    },
+    onSuccess: async () => {
+      resetProjectPermanentDeletion();
+      if (state.selectedProjectId === project.id) {
+        state.selectedProjectId = null;
+      }
+    },
+    onError: async (error) => {
       if (await handleSyncFailure(classifySyncError(error), { render })) {
-        clearProjectUiDebug(render);
-        failProjectsPageSync();
         return;
       }
-
-      rollbackOptimisticPermanentDelete({
-        restoreVisibleState: () => {
-          restoreProjectCollections(snapshot);
-        },
-        persistVisibleState: () => {
-          persistProjectsForTeam(selectedTeam);
-        },
-        reopenModal: () => {
-          reopenEntityConfirmationModalWithError({
-            setState: (nextState) => {
-              state.projectPermanentDeletion = nextState;
-            },
-            entityId: project.id,
-            idField: "projectId",
-            nameField: "projectName",
-            confirmationField: "confirmationText",
-            currentName: project.title ?? project.name,
-            confirmationText,
-            error: error?.message ?? String(error),
-          });
-        },
-        afterRollback: () => {
-          clearProjectUiDebug(render);
-          failProjectsPageSync();
-        },
-        render,
-      });
-    },
-    onRemoteDeleteError: async (error) => {
-      clearProjectUiDebug(render);
-      await completeProjectsPageSync(render);
-      showPermanentDeleteFollowupNotice({
-        resourceLabel: "Project",
-        phase: "remote cleanup",
-        error,
-        render,
-      });
-      render();
-    },
-    onLocalDeleteError: async (error) => {
-      if (await handleSyncFailure(classifySyncError(error), { render })) {
-        clearProjectUiDebug(render);
-        failProjectsPageSync();
-        return true;
-      }
-
-      showPermanentDeleteFollowupNotice({
-        resourceLabel: "Project",
-        phase: "local cleanup",
-        error,
-        render,
-      });
-      clearProjectUiDebug(render);
-      failProjectsPageSync();
-      render();
-      return true;
+      state.projectPermanentDeletion.status = "idle";
+      state.projectPermanentDeletion.error = error?.message ?? String(error);
     },
   });
 }

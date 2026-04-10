@@ -113,9 +113,7 @@ function mapMetadataProjectToVisibleProject(record, remoteProject, existingProje
   const resolutionState =
     record.recordState === "tombstone"
       ? "deleted"
-      : remoteState === "pendingCreate"
-        ? "pendingCreate"
-        : remoteState === "missing"
+      : remoteState === "missing"
           ? "missing"
           : repairIssue
             ? "repair"
@@ -239,8 +237,6 @@ export function mergeMetadataDiscoveryProjects({
           ? "repair"
           : metadataLoaded
             && localProject.recordState !== "tombstone"
-            && localProject.remoteState !== "pendingCreate"
-            && localProject.isPendingCreate !== true
               ? "unregisteredLocal"
               : localProject.resolutionState ?? "",
       repairIssueType: matchingRepairIssue(localProject, repairIssueMaps)?.issueType ?? "",

@@ -104,14 +104,12 @@ function renderProjectCard(project, expanded, options = {}) {
   const canPermanentlyDeleteFiles = options.canPermanentlyDeleteFiles === true;
   const isDeleted = options.isDeleted === true;
   const offlineMode = options.offlineMode === true;
-  const isPendingCreate = project?.isPendingCreate === true;
   const isTombstone = project?.recordState === "tombstone";
   const syncSnapshot = options.syncSnapshot ?? null;
   const syncStatus = typeof syncSnapshot?.status === "string" ? syncSnapshot.status.trim() : "";
   const localRepoSetupPending = (
     syncStatus === "syncing"
     || syncStatus === "notCloned"
-    || (isPendingCreate && !Number.isFinite(project?.repoId))
   );
   const resolution = deriveProjectResolution(project, syncSnapshot);
   const disableLifecycleActions = resolution?.blockLifecycleActions === true;
@@ -148,9 +146,7 @@ function renderProjectCard(project, expanded, options = {}) {
               : "",
           ].filter(Boolean)
     );
-  const fileCount = isPendingCreate
-    ? project.pendingCreateStatusText ?? "Creating..."
-    : isDeleted && isTombstone
+  const fileCount = isDeleted && isTombstone
       ? "Permanently deleted"
     : localRepoSetupPending && files.length === 0
       ? "Setting up local repo..."
@@ -288,7 +284,6 @@ function renderDeletedProjectsSection(state) {
   const offlineMode = state.offline?.isEnabled === true;
   const pageWritesDisabled = areResourcePageWritesDisabled(state.projectsPage);
   const syncSnapshotsByProjectId = state.projectRepoSyncByProjectId ?? {};
-  const projectCreationInFlightIds = state.projectCreationInFlightIds ?? new Set();
 
   const toggle = renderDeletedProjectsToggle(state);
   if (!state.showDeletedProjects) {
@@ -310,7 +305,6 @@ function renderDeletedProjectsSection(state) {
               offlineMode,
               pageWritesDisabled,
               syncSnapshot,
-              disablePermanentDelete: projectCreationInFlightIds.has(project.id),
               actions:
                 project?.recordState === "tombstone"
                   ? []
@@ -319,7 +313,7 @@ function renderDeletedProjectsSection(state) {
                         textAction("Restore", `restore-project:${project.id}`, { disabled: pageWritesDisabled || disableLifecycleActions }),
                         ...(canPermanentlyDeleteProjects
                           ? [textAction("Delete", `delete-deleted-project:${project.id}`, {
-                              disabled: pageWritesDisabled || disableLifecycleActions || projectCreationInFlightIds.has(project.id),
+                              disabled: pageWritesDisabled || disableLifecycleActions,
                             })]
                           : []),
                       ]

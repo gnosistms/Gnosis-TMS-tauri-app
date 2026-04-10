@@ -49,7 +49,6 @@ export const state = {
   glossariesPage: createResourcePageState(),
   projectImport: createProjectImportState(),
   projectRepoSyncByProjectId: {},
-  projectCreationInFlightIds: new Set(),
   glossaryRepoSyncByRepoName: {},
   editorChapter: createEditorChapterState(),
   targetLanguageManager: createTargetLanguageManagerState(),

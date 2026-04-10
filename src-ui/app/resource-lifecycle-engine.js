@@ -1,5 +1,3 @@
-import { showNoticeBadge } from "./status-feedback.js";
-
 export async function applyMetadataFirstResourceMutation(options) {
   const writeMetadata = options?.writeMetadata;
   const nextRecord = options?.nextRecord ?? null;
@@ -193,99 +191,6 @@ export async function guardPermanentDeleteConfirmation(options) {
   }
 
   return true;
-}
-
-export function runPermanentDeleteLocalFirst(options) {
-  const commitTombstone = options?.commitTombstone;
-  const purgeLocalRepo = options?.purgeLocalRepo;
-  const deleteRemote = options?.deleteRemote;
-  const reloadAfterSuccess = options?.reloadAfterSuccess;
-  const rollbackBeforeTombstone = options?.rollbackBeforeTombstone;
-  const onRemoteDeleteError = options?.onRemoteDeleteError;
-  const onLocalDeleteError = options?.onLocalDeleteError;
-  const onFatalError = options?.onFatalError;
-
-  void (async () => {
-    let tombstoneCommitted = false;
-    try {
-      await commitTombstone?.();
-      tombstoneCommitted = true;
-      await purgeLocalRepo?.();
-      try {
-        await deleteRemote?.();
-      } catch (error) {
-        await onRemoteDeleteError?.(error);
-        return;
-      }
-      await reloadAfterSuccess?.();
-    } catch (error) {
-      if (!tombstoneCommitted) {
-        await rollbackBeforeTombstone?.(error);
-        return;
-      }
-
-      const handled = await onLocalDeleteError?.(error);
-      if (handled === true) {
-        return;
-      }
-      await onFatalError?.(error);
-    }
-  })();
-}
-
-export function showPermanentDeleteFollowupNotice(options) {
-  const phase =
-    typeof options?.phase === "string" && options.phase.trim()
-      ? options.phase.trim()
-      : "local cleanup";
-  const resourceLabel =
-    typeof options?.resourceLabel === "string" && options.resourceLabel.trim()
-      ? options.resourceLabel.trim()
-      : "Resource";
-  const error = options?.error;
-  const render = options?.render;
-  const durationMs = Number.isFinite(options?.durationMs) ? options.durationMs : 4200;
-
-  showNoticeBadge(
-    `${resourceLabel} deletion was committed locally, but ${phase} still needs attention: ${
-      error?.message ?? String(error)
-    }`,
-    render,
-    durationMs,
-  );
-}
-
-export function rollbackOptimisticPermanentDelete(options) {
-  options?.restoreVisibleState?.();
-  options?.persistVisibleState?.();
-  options?.reopenModal?.();
-  options?.afterRollback?.();
-  options?.render?.();
-}
-
-export async function applyOptimisticPermanentDelete(options) {
-  const beforeWait = options?.beforeWait;
-  const waitForNextPaint =
-    typeof options?.waitForNextPaint === "function"
-      ? options.waitForNextPaint
-      : async () => {};
-  const beforeRemove = options?.beforeRemove;
-  const removeVisibleResource = options?.removeVisibleResource;
-  const persistVisibleState = options?.persistVisibleState;
-  const clearSelection = options?.clearSelection;
-  const resetModal = options?.resetModal;
-  const afterReset = options?.afterReset;
-  const render = options?.render;
-
-  beforeWait?.();
-  await waitForNextPaint();
-  beforeRemove?.();
-  removeVisibleResource?.();
-  persistVisibleState?.();
-  clearSelection?.();
-  resetModal?.();
-  afterReset?.();
-  render?.();
 }
 
 export async function ensureResourceNotTombstoned(options) {

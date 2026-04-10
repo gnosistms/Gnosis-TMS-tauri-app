@@ -137,7 +137,7 @@ function normalizeProjectMetadataRecord(record) {
     remoteState:
       typeof record.remoteState === "string" && record.remoteState.trim()
         ? record.remoteState.trim()
-        : "pendingCreate",
+        : "linked",
     recordState:
       typeof record.recordState === "string" && record.recordState.trim()
         ? record.recordState.trim()

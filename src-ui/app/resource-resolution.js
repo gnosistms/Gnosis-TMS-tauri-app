@@ -66,30 +66,6 @@ function baseResolution(resource, resourceLabel) {
     };
   }
 
-  if (
-    resolutionState === "pendingCreate"
-    || remoteState === "pendingCreate"
-    || resource.isPendingCreate === true
-  ) {
-    const resourceId =
-      typeof resource?.id === "string" && resource.id.trim()
-        ? resource.id.trim()
-        : "";
-    return {
-      key: "pendingCreate",
-      tone: "warning",
-      message: `This ${resourceLabel} is still being set up.`,
-      help: "If setup was interrupted, resume it to finish the first GitHub write and local repo linkage.",
-      blockLifecycleActions: true,
-      blockContentActions: false,
-      actionLabel: resourceId ? "Resume Setup" : "",
-      action:
-        resourceId
-          ? `${resourceLabel === "project" ? "resume-pending-project" : "resume-pending-glossary"}:${resourceId}`
-          : "",
-    };
-  }
-
   if (resolutionState === "unregisteredLocal") {
     return {
       key: "unregisteredLocal",

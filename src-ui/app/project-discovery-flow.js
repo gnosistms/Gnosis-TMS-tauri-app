@@ -414,7 +414,6 @@ export async function loadTeamProjects(render, teamId = state.selectedTeamId, op
       mappedProjects.filter((project) =>
         project?.status !== "deleted"
         && project?.recordState !== "tombstone"
-        && project?.remoteState !== "pendingCreate"
       ),
     );
     const installationRecoveryDetected =
@@ -450,7 +449,6 @@ export async function loadTeamProjects(render, teamId = state.selectedTeamId, op
       mappedProjects,
       options,
     );
-    await options.autoResumePendingProjects(render, mappedProjects);
     options.clearProjectUiDebug(render);
     await completeProjectsPageSync(render);
     render();

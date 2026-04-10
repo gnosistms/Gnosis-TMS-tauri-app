@@ -71,22 +71,18 @@ test("missing local repo repair state points to rebuild action", () => {
   assert.equal(resolution?.action, "rebuild-glossary-repo:glossary-1");
 });
 
-test("pending create resources surface an explicit resume action", () => {
+test("linked resources do not surface a top-level resolution banner", () => {
   const projectResolution = deriveProjectResolution({
     id: "project-1",
-    resolutionState: "pendingCreate",
-    remoteState: "pendingCreate",
+    remoteState: "linked",
     recordState: "live",
   });
   const glossaryResolution = deriveGlossaryResolution({
     id: "glossary-1",
-    resolutionState: "pendingCreate",
-    remoteState: "pendingCreate",
+    remoteState: "linked",
     recordState: "live",
   });
 
-  assert.equal(projectResolution?.actionLabel, "Resume Setup");
-  assert.equal(projectResolution?.action, "resume-pending-project:project-1");
-  assert.equal(glossaryResolution?.actionLabel, "Resume Setup");
-  assert.equal(glossaryResolution?.action, "resume-pending-glossary:glossary-1");
+  assert.equal(projectResolution, null);
+  assert.equal(glossaryResolution, null);
 });
