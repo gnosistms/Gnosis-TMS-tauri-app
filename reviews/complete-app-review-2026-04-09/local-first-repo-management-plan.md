@@ -181,12 +181,11 @@ Expected outcome:
 
 Status on 2026-04-10:
 
-- partially complete
+- complete for the supported pre-release install base
 - local project/glossary repo resolution is now stable-ID-first instead of repo-name-first
 - repo sync descriptors carry stable resource IDs
 - local-first create no longer depends on the final GitHub repo name for either projects or glossaries
 - a conservative migration/repair scan now maps existing local repos onto local team-metadata records and treats unmatched repos as repair candidates
-- remaining gap: project repos still do not embed a stable project ID inside `project.json`, so very old installs without sync-state can only be migrated automatically when repo-name matching is unambiguous
 
 - change local project/glossary storage to use resource IDs as the stable key
 - preserve repo name as mutable metadata only
