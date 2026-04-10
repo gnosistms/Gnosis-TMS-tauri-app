@@ -1700,7 +1700,7 @@ export async function submitProjectCreation(render) {
     return;
   }
 
-  if (selectedTeam.canManageProjects !== true) {
+  if (!canCreateRepoResources(selectedTeam)) {
     state.projectCreation.error = "You do not have permission to create projects in this team.";
     render();
     return;

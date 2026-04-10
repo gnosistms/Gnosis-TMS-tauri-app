@@ -312,10 +312,12 @@ Expected outcome:
 
 Status on 2026-04-10:
 
-- not started
-- current project/glossary creation affordances are still keyed off `canManageProjects`, so admins still see `+ New Project` and `+ New Glossary`
-- translator users who are not admins should already be hidden by the existing `canManageProjects` gate, but this needs explicit verification coverage
-- permanent delete affordances for soft-deleted projects/glossaries are intended to be owner-only and need an explicit audit so admins never see them
+- partially complete
+- project and glossary top-level create affordances now use explicit owner-only capability helpers instead of the broader `canManageProjects` gate
+- glossary import now follows the same owner-only policy as glossary creation, so admins no longer have a side path to create repo-backed glossaries
+- soft-deleted project and glossary permanent-delete affordances are now keyed off the same owner-only helper
+- capability tests now explicitly cover owner vs admin vs translator visibility for create and permanent-delete affordances
+- remaining gap: finish the broader audit of any secondary create/permanent-delete entry points and decide whether deleted-file permanent delete should stay separate or also be folded under the same owner-only policy
 
 - audit project and glossary screens for every top-level create affordance:
   - remove `+ New Project` from non-owner users

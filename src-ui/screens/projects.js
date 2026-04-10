@@ -26,7 +26,6 @@ import {
 import { resolveChapterSourceWordCount } from "../app/translate-flow.js";
 import { deriveProjectResolution } from "../app/resource-resolution.js";
 import {
-  canPermanentlyDeleteRepoResources,
   shouldShowDeletedProjectPermanentDelete,
   shouldShowNewProjectButton,
 } from "../app/resource-capabilities.js";
