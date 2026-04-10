@@ -27,6 +27,10 @@ import {
   upsertGlossaryMetadataRecord,
 } from "./team-metadata-flow.js";
 import {
+  openEntityFormModal,
+  updateEntityFormField,
+} from "./resource-entity-modal.js";
+import {
   autoResumePendingResources,
   resumePendingResourceSetup,
 } from "./resource-pending-create.js";
@@ -412,14 +416,16 @@ export function openGlossaryCreation(render) {
     return;
   }
 
-  state.glossaryCreation = {
-    isOpen: true,
-    status: "idle",
-    error: "",
-    title: "",
-    sourceLanguageCode: "",
-    targetLanguageCode: "",
-  };
+  openEntityFormModal({
+    setState: (nextState) => {
+      state.glossaryCreation = nextState;
+    },
+    fields: {
+      title: "",
+      sourceLanguageCode: "",
+      targetLanguageCode: "",
+    },
+  });
   render();
 }
 
@@ -507,10 +513,7 @@ export function updateGlossaryCreationField(field, value) {
     return;
   }
 
-  state.glossaryCreation[field] = value;
-  if (state.glossaryCreation.error) {
-    state.glossaryCreation.error = "";
-  }
+  updateEntityFormField(state.glossaryCreation, field, value);
 }
 
 export async function submitGlossaryCreation(render) {

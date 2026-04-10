@@ -205,6 +205,7 @@ Status on 2026-04-10:
 - shared helpers now cover metadata-first mutations, tombstone prechecks, shared top-level rename / soft-delete / restore commit sequencing, shared optimistic queue setup, the standard top-level submit wrapper that queues then kicks background processing, a shared guard for missing-resource / permission / tombstone entry checks, shared rename-modal open/update/cancel helpers, shared permanent-delete modal open/update/cancel plus confirmation/loading helpers, a shared permanent-delete confirmation preflight guard, shared rollback modal reopening and rollback restoration helpers, shared follow-up warning notices, a shared local-first permanent-delete transaction helper for tombstone / local purge / remote cleanup sequencing, and a shared optimistic local-hide helper for permanent delete
 - glossary permanent delete now intentionally follows the same sync/debug lifecycle pattern as projects instead of using a looser page-refresh-only path
 - pending-create resume and auto-resume orchestration now also flows through a shared helper for projects and glossaries
+- create-modal open/update plumbing now also flows through shared form-modal helpers for projects and glossaries
 - projects and glossaries still have a few resource-specific reload/failure callbacks and some higher-level lifecycle wrappers, so the full adapter-based shared state machine is not finished
 - remaining intended-model cleanup:
   - projects and glossaries should share the same top-level lifecycle model
@@ -235,6 +236,7 @@ Status on 2026-04-10:
 - glossary creation/import is local-first
 - project creation is now local metadata first, local repo first, visible immediately, then remote creation/sync in the background
 - project background reconciliation now repairs `origin` and can push the first local commit into an empty remote repo
+- create-modal/open/update UI plumbing is now partially shared, but the actual local repo/bootstrap/create execution path is still separate
 
 - write `pendingCreate` to local metadata first
 - initialize local repo first

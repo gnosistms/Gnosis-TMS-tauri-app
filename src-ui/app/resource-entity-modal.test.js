@@ -5,9 +5,11 @@ import {
   beginEntityModalSubmit,
   cancelEntityModal,
   entityConfirmationMatches,
+  openEntityFormModal,
   openEntityConfirmationModal,
   openEntityRenameModal,
   reopenEntityConfirmationModalWithError,
+  updateEntityFormField,
   updateEntityModalConfirmation,
   updateEntityModalName,
 } from "./resource-entity-modal.js";
@@ -35,6 +37,29 @@ test("shared entity rename modal helper opens modal state with the requested id 
   });
 });
 
+test("shared entity form modal helper opens modal state with arbitrary fields", () => {
+  let modalState = null;
+
+  const opened = openEntityFormModal({
+    setState: (nextState) => {
+      modalState = nextState;
+    },
+    fields: {
+      title: "Glossary One",
+      sourceLanguageCode: "en",
+    },
+  });
+
+  assert.equal(opened, true);
+  assert.deepEqual(modalState, {
+    isOpen: true,
+    status: "idle",
+    error: "",
+    title: "Glossary One",
+    sourceLanguageCode: "en",
+  });
+});
+
 test("shared entity rename modal helper clears modal errors when the name changes", () => {
   const modalState = {
     isOpen: true,
@@ -47,6 +72,20 @@ test("shared entity rename modal helper clears modal errors when the name change
   updateEntityModalName(modalState, "glossaryName", "New");
 
   assert.equal(modalState.glossaryName, "New");
+  assert.equal(modalState.error, "");
+});
+
+test("shared entity form helper clears modal errors when a field changes", () => {
+  const modalState = {
+    isOpen: true,
+    status: "idle",
+    error: "Existing error",
+    projectName: "Old",
+  };
+
+  updateEntityFormField(modalState, "projectName", "New");
+
+  assert.equal(modalState.projectName, "New");
   assert.equal(modalState.error, "");
 });
 

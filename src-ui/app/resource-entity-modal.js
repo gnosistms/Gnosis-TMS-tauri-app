@@ -20,6 +20,26 @@ export function openEntityRenameModal(options) {
   return true;
 }
 
+export function openEntityFormModal(options) {
+  const setState = options?.setState;
+  const fields =
+    options?.fields && typeof options.fields === "object"
+      ? options.fields
+      : {};
+
+  if (typeof setState !== "function") {
+    return false;
+  }
+
+  setState({
+    isOpen: true,
+    status: "idle",
+    error: "",
+    ...fields,
+  });
+  return true;
+}
+
 export function openEntityConfirmationModal(options) {
   const setState = options?.setState;
   const entityId = options?.entityId ?? null;
@@ -101,6 +121,10 @@ export function updateEntityModalName(modalState, nameField, value) {
 
 export function updateEntityModalConfirmation(modalState, confirmationField, value) {
   updateEntityModalName(modalState, confirmationField, value);
+}
+
+export function updateEntityFormField(modalState, field, value) {
+  updateEntityModalName(modalState, field, value);
 }
 
 export function entityConfirmationMatches(modalState, options) {

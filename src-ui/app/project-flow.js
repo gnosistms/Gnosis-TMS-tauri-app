@@ -71,10 +71,12 @@ import {
   beginEntityModalSubmit,
   cancelEntityModal,
   entityConfirmationMatches,
+  openEntityFormModal,
   openEntityConfirmationModal,
   openEntityRenameModal,
   reopenEntityConfirmationModalWithError,
   updateEntityModalConfirmation,
+  updateEntityFormField,
   updateEntityModalName,
 } from "./resource-entity-modal.js";
 import {
@@ -1550,20 +1552,19 @@ export async function createProjectForSelectedTeam(render) {
     return;
   }
 
-  state.projectCreation = {
-    isOpen: true,
-    projectName: "",
-    status: "idle",
-    error: "",
-  };
+  openEntityFormModal({
+    setState: (nextState) => {
+      state.projectCreation = nextState;
+    },
+    fields: {
+      projectName: "",
+    },
+  });
   render();
 }
 
 export function updateProjectCreationName(projectName) {
-  state.projectCreation.projectName = projectName;
-  if (state.projectCreation.error) {
-    state.projectCreation.error = "";
-  }
+  updateEntityFormField(state.projectCreation, "projectName", projectName);
 }
 
 export function cancelProjectCreation(render) {
