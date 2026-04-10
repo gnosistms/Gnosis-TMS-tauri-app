@@ -141,6 +141,18 @@ function pendingGlossaryMetadataRecord(glossary) {
   };
 }
 
+async function rollbackPendingGlossaryMetadataOnLocalFailure(team, glossaryId, error) {
+  try {
+    await deleteGlossaryMetadataRecord(team, glossaryId);
+  } catch (rollbackError) {
+    throw new Error(
+      `${error?.message ?? String(error)} The pending glossary metadata intent was committed locally first, and the automatic metadata rollback also failed: ${
+        rollbackError?.message ?? String(rollbackError)
+      }`,
+    );
+  }
+}
+
 function linkedGlossaryMetadataRecord(glossary, remoteRepo) {
   return {
     ...pendingGlossaryMetadataRecord(glossary),
@@ -393,10 +405,21 @@ export async function submitGlossaryCreation(render) {
   let localRepoName = "";
   let glossary = null;
   let localNameCollisionResolved = false;
+  const glossaryId = crypto.randomUUID();
+  let metadataIntentCommitted = false;
   try {
     const localRepoReservation = await reserveLocalGlossaryRepoName(team, repoName);
     localRepoName = localRepoReservation.repoName;
     localNameCollisionResolved = localRepoReservation.collisionResolved === true;
+    await upsertGlossaryMetadataRecord(team, pendingGlossaryMetadataRecord({
+      id: glossaryId,
+      repoName: localRepoName,
+      title,
+      sourceLanguage,
+      targetLanguage,
+      termCount: 0,
+    }));
+    metadataIntentCommitted = true;
     await invoke("prepare_local_gtms_glossary_repo", {
       input: {
         installationId: team.installationId,
@@ -407,6 +430,7 @@ export async function submitGlossaryCreation(render) {
       input: {
         installationId: team.installationId,
         repoName: localRepoName,
+        glossaryId,
         title,
         sourceLanguageCode: sourceLanguage.code,
         sourceLanguageName: sourceLanguage.name,
@@ -425,6 +449,13 @@ export async function submitGlossaryCreation(render) {
         });
       } catch {
         // Ignore local cleanup failures while surfacing the primary creation error.
+      }
+    }
+    if (metadataIntentCommitted && !glossary) {
+      try {
+        await rollbackPendingGlossaryMetadataOnLocalFailure(team, glossaryId, error);
+      } catch (metadataRollbackError) {
+        error = metadataRollbackError;
       }
     }
     state.glossaryCreation.status = "idle";
@@ -499,8 +530,16 @@ export async function importGlossaryFromTmx(render) {
   let localRepoName = "";
   let glossary = null;
   let localNameCollisionResolved = false;
+  const glossaryId = crypto.randomUUID();
+  let metadataIntentCommitted = false;
   try {
     const bytes = Array.from(new Uint8Array(await selectedFile.arrayBuffer()));
+    const importPreview = await invoke("inspect_tmx_glossary_import", {
+      input: {
+        fileName: selectedFile.name,
+        bytes,
+      },
+    });
     const repoName = slugifyRepoName(
       selectedFile.name.replace(/\.[^.]+$/, "").trim(),
     );
@@ -511,6 +550,15 @@ export async function importGlossaryFromTmx(render) {
     const localRepoReservation = await reserveLocalGlossaryRepoName(team, repoName);
     localRepoName = localRepoReservation.repoName;
     localNameCollisionResolved = localRepoReservation.collisionResolved === true;
+    await upsertGlossaryMetadataRecord(team, pendingGlossaryMetadataRecord({
+      id: glossaryId,
+      repoName: localRepoName,
+      title: importPreview.title,
+      sourceLanguage: importPreview.sourceLanguage ?? null,
+      targetLanguage: importPreview.targetLanguage ?? null,
+      termCount: Number.isFinite(importPreview.termCount) ? importPreview.termCount : 0,
+    }));
+    metadataIntentCommitted = true;
     await invoke("prepare_local_gtms_glossary_repo", {
       input: {
         installationId: team.installationId,
@@ -521,6 +569,7 @@ export async function importGlossaryFromTmx(render) {
       input: {
         installationId: team.installationId,
         repoName: localRepoName,
+        glossaryId,
         fileName: selectedFile.name,
         bytes,
       },
@@ -536,6 +585,13 @@ export async function importGlossaryFromTmx(render) {
         });
       } catch {
         // Ignore local cleanup failures while surfacing the primary import error.
+      }
+    }
+    if (metadataIntentCommitted && !glossary) {
+      try {
+        await rollbackPendingGlossaryMetadataOnLocalFailure(team, glossaryId, error);
+      } catch (metadataRollbackError) {
+        error = metadataRollbackError;
       }
     }
     failPageSync();

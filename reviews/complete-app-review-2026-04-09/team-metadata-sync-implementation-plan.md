@@ -19,6 +19,8 @@
   - direct tombstone lookup is now used by the operation guards
   - glossary top-level rename / soft-delete / restore now commit local metadata intent before the glossary repo mutation
   - project top-level rename / soft-delete / restore now commit local metadata intent before the remote broker mutation
+  - glossary manual creation now commits pending metadata locally before local repo initialization
+  - TMX glossary import now inspects the file first and commits pending metadata locally before local repo import
   - create and some other lifecycle paths are still not metadata-first yet
 
 ### Stage 1 Progress

@@ -14,6 +14,8 @@ Status as of April 10, 2026:
   - operation tombstone guards now check the local metadata repo by `resourceId` first
   - glossary top-level rename / soft-delete / restore mutations now commit metadata intent locally before running the repo mutation
   - project top-level rename / soft-delete / restore mutations now commit metadata intent locally before running the remote broker mutation
+  - glossary manual creation now generates `glossaryId` in the app, commits pending metadata locally first, then initializes the local repo with that supplied ID
+  - TMX glossary import now inspects the file first, commits pending metadata locally first, then imports into the local repo with the same supplied `glossaryId`
 - not implemented yet:
   - create flows are still not metadata-first end to end
   - some non-queued handlers still mutate the resource repo or remote repo before metadata reconciliation is complete

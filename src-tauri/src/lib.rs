@@ -36,6 +36,7 @@ use crate::{
   drafts::create_team_setup_draft,
   glossary_storage::{
     delete_gtms_glossary_term, import_tmx_to_gtms_glossary_repo, initialize_gtms_glossary_repo,
+    inspect_tmx_glossary_import,
     list_local_gtms_glossaries, load_gtms_glossary_editor_data, purge_local_gtms_glossary_repo,
     prepare_local_gtms_glossary_repo, rename_gtms_glossary, rename_local_gtms_glossary_repo,
     restore_gtms_glossary, soft_delete_gtms_glossary, upsert_gtms_glossary_term,
@@ -315,6 +316,7 @@ pub fn run() {
       prepare_local_gtms_glossary_repo,
       rename_local_gtms_glossary_repo,
       initialize_gtms_glossary_repo,
+      inspect_tmx_glossary_import,
       import_tmx_to_gtms_glossary_repo,
       rename_gtms_glossary,
       soft_delete_gtms_glossary,

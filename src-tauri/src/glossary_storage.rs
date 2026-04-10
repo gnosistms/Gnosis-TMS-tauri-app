@@ -84,6 +84,7 @@ pub(crate) struct LoadGlossaryEditorDataInput {
 pub(crate) struct InitializeGlossaryRepoInput {
   installation_id: i64,
   repo_name: String,
+  glossary_id: Option<String>,
   title: String,
   source_language_code: String,
   source_language_name: String,
@@ -96,6 +97,14 @@ pub(crate) struct InitializeGlossaryRepoInput {
 pub(crate) struct ImportTmxToGlossaryRepoInput {
   installation_id: i64,
   repo_name: String,
+  glossary_id: Option<String>,
+  file_name: String,
+  bytes: Vec<u8>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct InspectTmxGlossaryImportInput {
   file_name: String,
   bytes: Vec<u8>,
 }
@@ -169,6 +178,15 @@ pub(crate) struct LocalGlossarySummary {
   source_language: GlossaryLanguageInfo,
   target_language: GlossaryLanguageInfo,
   lifecycle_state: String,
+  term_count: usize,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct GlossaryImportPreview {
+  title: String,
+  source_language: GlossaryLanguageInfo,
+  target_language: GlossaryLanguageInfo,
   term_count: usize,
 }
 
@@ -250,6 +268,15 @@ pub(crate) async fn import_tmx_to_gtms_glossary_repo(
   tauri::async_runtime::spawn_blocking(move || import_tmx_to_gtms_glossary_repo_sync(&app, input))
     .await
     .map_err(|error| format!("The glossary import worker failed: {error}"))?
+}
+
+#[tauri::command]
+pub(crate) async fn inspect_tmx_glossary_import(
+  input: InspectTmxGlossaryImportInput,
+) -> Result<GlossaryImportPreview, String> {
+  tauri::async_runtime::spawn_blocking(move || inspect_tmx_glossary_import_sync(input))
+    .await
+    .map_err(|error| format!("The glossary import inspection worker failed: {error}"))?
 }
 
 #[tauri::command]
@@ -466,9 +493,16 @@ fn initialize_gtms_glossary_repo_sync(
     return Err("This glossary repo is already initialized.".to_string());
   }
   ensure_gitattributes(&repo_path.join(".gitattributes"))?;
+  let glossary_id = input
+    .glossary_id
+    .as_deref()
+    .map(str::trim)
+    .filter(|value| !value.is_empty())
+    .map(str::to_string)
+    .unwrap_or_else(|| Uuid::now_v7().to_string());
 
   let glossary_file = StoredGlossaryFile {
-    glossary_id: Uuid::now_v7().to_string(),
+    glossary_id,
     title: title.to_string(),
     lifecycle: StoredLifecycle {
       state: "active".to_string(),
@@ -535,9 +569,16 @@ fn import_tmx_to_gtms_glossary_repo_sync(
     return Err("This glossary repo is already initialized.".to_string());
   }
   ensure_gitattributes(&repo_path.join(".gitattributes"))?;
+  let glossary_id = input
+    .glossary_id
+    .as_deref()
+    .map(str::trim)
+    .filter(|value| !value.is_empty())
+    .map(str::to_string)
+    .unwrap_or_else(|| Uuid::now_v7().to_string());
 
   let glossary_file = StoredGlossaryFile {
-    glossary_id: Uuid::now_v7().to_string(),
+    glossary_id,
     title: parsed.title.clone(),
     lifecycle: StoredLifecycle {
       state: "active".to_string(),
@@ -585,6 +626,18 @@ fn import_tmx_to_gtms_glossary_repo_sync(
     source_language: parsed.source_language,
     target_language: parsed.target_language,
     lifecycle_state: "active".to_string(),
+    term_count: parsed.terms.len(),
+  })
+}
+
+fn inspect_tmx_glossary_import_sync(
+  input: InspectTmxGlossaryImportInput,
+) -> Result<GlossaryImportPreview, String> {
+  let parsed = parse_tmx_glossary(&input.file_name, &input.bytes)?;
+  Ok(GlossaryImportPreview {
+    title: parsed.title,
+    source_language: parsed.source_language,
+    target_language: parsed.target_language,
     term_count: parsed.terms.len(),
   })
 }
