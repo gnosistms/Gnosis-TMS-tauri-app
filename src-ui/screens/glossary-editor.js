@@ -38,7 +38,7 @@ export function renderGlossaryEditorScreen(state) {
   });
   const renderTermCell = (termId, text) =>
     canManageTerms
-      ? `<button class="text-link" data-action="edit-glossary-term:${termId}">${escapeHtml(text)}</button>`
+      ? `<button class="glossary-term-link" data-action="edit-glossary-term:${termId}">${escapeHtml(text)}</button>`
       : `<span>${escapeHtml(text)}</span>`;
   const bodyMarkup = glossary.status === "error"
     ? renderStateCard({

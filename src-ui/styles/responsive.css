@@ -7,11 +7,6 @@
     padding: 0 0 40px;
   }
 
-  .page-body > * {
-    width: calc(100% - 44px);
-    margin-top: 18px;
-  }
-
   .card--hero .card__body,
   .card__body {
     padding: 24px;

@@ -15,7 +15,7 @@
 }
 
 .page-body > * {
-  width: min(var(--page-width), calc(100% - 60px));
+  width: min(var(--page-width), calc(100% - 32px));
   margin: 18px auto 0;
 }
 
@@ -294,9 +294,25 @@
   transition: color 160ms ease;
 }
 
+.glossary-term-link {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: inherit;
+  text-align: left;
+  font: inherit;
+  font-size: 1.12rem;
+  font-weight: 600;
+  transition: color 160ms ease;
+}
+
 .chapter-table__row--deleted .chapter-table__name,
 .chapter-table__row--deleted .chapter-table__meta {
   opacity: 0.58;
+}
+
+.glossary-term-link:hover {
+  color: var(--text-hover);
 }
 
 .chapter-table__meta {
@@ -473,7 +489,7 @@
 
 .glossary-list--row,
 .term-grid--row {
-  min-height: 94px;
+  min-height: 56px;
   border-bottom: 1px solid rgba(164, 112, 41, 0.12);
 }
 
