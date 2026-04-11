@@ -1,5 +1,4 @@
 import { escapeHtml, renderCollapseChevron, tooltipAttributes } from "../lib/ui.js";
-import { buildEditorRowViewModelsRange } from "./editor-row-model.js";
 import {
   buildEditorRowHeights,
   calculateEditorVirtualWindow,
@@ -147,44 +146,31 @@ export function renderTranslationContentRow(
 }
 
 export function renderTranslationContentRowsRange(
-  editorRows,
-  languages,
+  rows,
   collapsedLanguageCodes = new Set(),
   startIndex = 0,
-  endIndex = editorRows?.length ?? 0,
+  endIndex = rows.length,
 ) {
-  return buildEditorRowViewModelsRange(editorRows, languages, startIndex, endIndex)
+  return rows
+    .slice(startIndex, endIndex)
     .map((row, offset) => renderTranslationContentRow(row, collapsedLanguageCodes, startIndex + offset))
     .join("");
 }
 
-function shouldVirtualizeEditorRows(editorRows) {
-  return Array.isArray(editorRows) && editorRows.length >= EDITOR_VIRTUALIZATION_MIN_ROWS;
+function shouldVirtualizeEditorRows(rows) {
+  return Array.isArray(rows) && rows.length >= EDITOR_VIRTUALIZATION_MIN_ROWS;
 }
 
 export function renderTranslationContentRows(
-  editorRows,
-  languages,
+  rows,
   collapsedLanguageCodes = new Set(),
   editorFontSizePx = 20,
 ) {
-  if (!shouldVirtualizeEditorRows(editorRows)) {
-    return renderTranslationContentRowsRange(
-      editorRows,
-      languages,
-      collapsedLanguageCodes,
-      0,
-      editorRows?.length ?? 0,
-    );
+  if (!shouldVirtualizeEditorRows(rows)) {
+    return renderTranslationContentRowsRange(rows, collapsedLanguageCodes, 0, rows.length);
   }
 
-  const initialRowHeights = buildEditorRowHeights(
-    editorRows,
-    new Map(),
-    collapsedLanguageCodes,
-    editorFontSizePx,
-    languages,
-  );
+  const initialRowHeights = buildEditorRowHeights(rows, new Map(), collapsedLanguageCodes, editorFontSizePx);
   const initialWindow = calculateEditorVirtualWindow(
     initialRowHeights,
     0,
@@ -200,8 +186,7 @@ export function renderTranslationContentRows(
       ></div>
       <div class="translate-virtual-list__items" data-editor-virtual-items>
         ${renderTranslationContentRowsRange(
-          editorRows,
-          languages,
+          rows,
           collapsedLanguageCodes,
           initialWindow.startIndex,
           initialWindow.endIndex,

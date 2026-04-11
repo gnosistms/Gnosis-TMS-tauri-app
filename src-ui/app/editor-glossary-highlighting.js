@@ -325,7 +325,7 @@ function buildHighlightMarkup(text, matcher, glossaryModel, resolveMatchState = 
       }
       const tooltipText = buildGlossaryTooltipText(currentMatch.candidate, glossaryModel);
       const tooltipAttribute = tooltipText
-        ? ` data-tooltip="${escapeHtmlAttribute(tooltipText)}"`
+        ? ` data-editor-glossary-tooltip="${escapeHtmlAttribute(tooltipText)}"`
         : "";
       htmlParts.push(
         `<mark class="${matchClasses.join(" ")}" data-editor-glossary-mark data-text-start="${matchStart}" data-text-end="${matchEnd}"${tooltipAttribute}>${escapeHtml(segment)}</mark>`,

@@ -4,10 +4,6 @@ import {
   buildEditorRowGlossaryHighlights,
 } from "./editor-glossary-highlighting.js";
 import {
-  findEditorChapterRow,
-  findEditorChapterRowIndex,
-} from "./editor-row-model.js";
-import {
   ensureProjectNotTombstoned,
   findChapterContext,
   selectedProjectsTeam,
@@ -150,7 +146,8 @@ function editorGlossaryStateMatchesLink(glossaryState, linkedGlossary) {
 }
 
 function hasEditorRow(chapterState, rowId) {
-  return findEditorChapterRow(chapterState, rowId) !== null;
+  return Array.isArray(chapterState?.rows)
+    && chapterState.rows.some((row) => row?.rowId === rowId);
 }
 
 function hasEditorLanguage(chapterState, languageCode) {
@@ -206,7 +203,7 @@ function applyEditorUiState(nextEditorChapter, previousEditorChapter = state.edi
 }
 
 function findEditorRowById(rowId, chapterState = state.editorChapter) {
-  return findEditorChapterRow(chapterState, rowId);
+  return chapterState?.rows?.find((row) => row?.rowId === rowId) ?? null;
 }
 
 function rowFieldsEqual(left, right) {
@@ -305,23 +302,19 @@ function updateEditorChapterRow(rowId, updater) {
     return null;
   }
 
-  const rowIndex = findEditorChapterRowIndex(state.editorChapter, rowId);
-  if (rowIndex < 0) {
-    return null;
-  }
+  let updatedRow = null;
+  const nextRows = state.editorChapter.rows.map((row) => {
+    if (!row || row.rowId !== rowId) {
+      return row;
+    }
 
-  const currentRow = state.editorChapter.rows[rowIndex];
-  if (!currentRow) {
-    return null;
-  }
+    updatedRow = updater(row);
+    return updatedRow;
+  });
 
-  const updatedRow = updater(currentRow);
   if (!updatedRow) {
     return null;
   }
-
-  const nextRows = state.editorChapter.rows.slice();
-  nextRows[rowIndex] = updatedRow;
 
   state.editorChapter = {
     ...state.editorChapter,

@@ -10,6 +10,7 @@ let activeGlossaryTermVariantDrag = null;
 let activeGlossaryTooltipMark = null;
 let activeGlossaryTooltipPointer = null;
 let glossaryTooltipPlacementFrameId = 0;
+let glossaryTooltipElement = null;
 
 function shouldTriggerSyncShortcut(event) {
   if (event.defaultPrevented || event.repeat) {
@@ -87,22 +88,38 @@ function focusEditorFieldFromGlossaryMark(event) {
 
 function glossaryTooltipMark(target) {
   return target instanceof Element
-    ? target.closest("[data-editor-glossary-mark][data-tooltip]")
+    ? target.closest("[data-editor-glossary-mark][data-editor-glossary-tooltip]")
     : null;
 }
 
-function glossaryTooltipBoundaryRect(mark) {
-  const scrollContainer = mark.closest(".translate-main-scroll");
-  if (scrollContainer instanceof HTMLElement) {
-    return scrollContainer.getBoundingClientRect();
+function ensureGlossaryTooltipElement() {
+  if (glossaryTooltipElement instanceof HTMLElement && glossaryTooltipElement.isConnected) {
+    return glossaryTooltipElement;
   }
 
-  return {
-    left: 0,
-    right: window.innerWidth,
-    top: 0,
-    bottom: window.innerHeight,
-  };
+  const tooltip = document.createElement("div");
+  tooltip.className = "editor-glossary-tooltip";
+  tooltip.setAttribute("aria-hidden", "true");
+  tooltip.hidden = true;
+
+  const body = document.createElement("div");
+  body.className = "editor-glossary-tooltip__body";
+  tooltip.append(body);
+
+  document.body.append(tooltip);
+  glossaryTooltipElement = tooltip;
+  return tooltip;
+}
+
+function glossaryTooltipBodyElement() {
+  const tooltip = ensureGlossaryTooltipElement();
+  return tooltip.querySelector(".editor-glossary-tooltip__body");
+}
+
+function glossaryTooltipText(mark) {
+  return typeof mark?.dataset?.editorGlossaryTooltip === "string"
+    ? mark.dataset.editorGlossaryTooltip.trim()
+    : "";
 }
 
 function setActiveGlossaryTooltipPointer(clientX, clientY) {
@@ -114,47 +131,48 @@ function setActiveGlossaryTooltipPointer(clientX, clientY) {
   activeGlossaryTooltipPointer = null;
 }
 
-function glossaryTooltipAnchorPoint(mark) {
-  const pointerClientX = activeGlossaryTooltipPointer?.clientX;
-  const pointerClientY = activeGlossaryTooltipPointer?.clientY;
-  if (Number.isFinite(pointerClientX) && Number.isFinite(pointerClientY)) {
-    return {
-      clientX: pointerClientX,
-      clientY: pointerClientY,
-    };
+function hideGlossaryTooltip() {
+  if (!(glossaryTooltipElement instanceof HTMLElement)) {
+    return;
   }
 
-  const markRect = mark.getBoundingClientRect();
-  return {
-    clientX: markRect.left + (markRect.width / 2),
-    clientY: markRect.top + (markRect.height / 2),
-  };
+  glossaryTooltipElement.hidden = true;
+  glossaryTooltipElement.classList.remove("is-visible");
 }
 
 function updateGlossaryTooltipPlacement(mark) {
   if (!(mark instanceof HTMLElement) || !mark.isConnected) {
+    hideGlossaryTooltip();
     return;
   }
 
-  const boundaryRect = glossaryTooltipBoundaryRect(mark);
-  const boundaryVerticalMidline = boundaryRect.top + ((boundaryRect.bottom - boundaryRect.top) / 2);
-  const boundaryHorizontalMidline = boundaryRect.left + ((boundaryRect.right - boundaryRect.left) / 2);
-  const anchorPoint = glossaryTooltipAnchorPoint(mark);
-  const shouldPlaceBelow = anchorPoint.clientY < boundaryVerticalMidline;
-  const shouldAlignStart = anchorPoint.clientX < boundaryHorizontalMidline;
-
-  if (shouldPlaceBelow) {
-    mark.dataset.tooltipSide = "bottom";
-  } else {
-    mark.removeAttribute("data-tooltip-side");
-  }
-
-  if (shouldAlignStart) {
-    mark.dataset.tooltipAlign = "start";
+  const tooltipText = glossaryTooltipText(mark);
+  if (!tooltipText) {
+    hideGlossaryTooltip();
     return;
   }
 
-  mark.dataset.tooltipAlign = "end";
+  const tooltip = ensureGlossaryTooltipElement();
+  const body = glossaryTooltipBodyElement();
+  if (!(body instanceof HTMLElement)) {
+    hideGlossaryTooltip();
+    return;
+  }
+
+  body.textContent = tooltipText;
+  tooltip.hidden = false;
+  tooltip.classList.add("is-visible");
+  const markRect = mark.getBoundingClientRect();
+  const anchorClientX = Number.isFinite(activeGlossaryTooltipPointer?.clientX)
+    ? activeGlossaryTooltipPointer.clientX
+    : markRect.left;
+  const anchorClientY = Number.isFinite(activeGlossaryTooltipPointer?.clientY)
+    ? activeGlossaryTooltipPointer.clientY
+    : markRect.top;
+  const offsetHeight = tooltip.offsetHeight;
+  const gap = 14;
+  tooltip.style.left = `${Math.round(anchorClientX + gap)}px`;
+  tooltip.style.top = `${Math.round(anchorClientY - offsetHeight - gap)}px`;
 }
 
 function scheduleActiveGlossaryTooltipPlacementUpdate() {
@@ -188,10 +206,7 @@ function deactivateGlossaryTooltipMark(mark = activeGlossaryTooltipMark) {
     glossaryTooltipPlacementFrameId = 0;
   }
 
-  if (mark instanceof HTMLElement) {
-    mark.removeAttribute("data-tooltip-side");
-    mark.removeAttribute("data-tooltip-align");
-  }
+  hideGlossaryTooltip();
 
   if (!mark || activeGlossaryTooltipMark === mark) {
     activeGlossaryTooltipMark = null;

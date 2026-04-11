@@ -733,6 +733,33 @@ a {
   transform: translate(0, 0);
 }
 
+.editor-glossary-tooltip {
+  position: fixed;
+  max-width: 220px;
+  width: max-content;
+  pointer-events: none;
+  z-index: 90;
+  opacity: 0;
+  transition: opacity 140ms ease;
+}
+
+.editor-glossary-tooltip.is-visible {
+  opacity: 1;
+}
+
+.editor-glossary-tooltip__body {
+  padding: 8px 10px;
+  border-radius: 12px;
+  background: rgba(255, 249, 242, 0.98);
+  box-shadow: 0 10px 20px rgba(88, 60, 21, 0.08);
+  color: rgb(156, 132, 98);
+  font-size: 0.85rem;
+  font-weight: 600;
+  line-height: 1.25;
+  text-align: center;
+  white-space: normal;
+}
+
 .button--primary:disabled {
   background: rgba(215, 176, 120, 0.65);
 }

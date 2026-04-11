@@ -16,7 +16,6 @@ import {
   DIFF_INSERT,
 } from "../lib/vendor/diff-match-patch.js";
 import { buildEditorHistoryViewModel, editorHistoryEntryMatchesSection } from "../app/editor-history.js";
-import { buildEditorChapterRowViewModelById } from "../app/editor-row-model.js";
 import { buildEditorScreenViewModel } from "../app/editor-screen-model.js";
 import { renderTranslationContentRows, renderTranslationMarkerIcon } from "../app/editor-row-render.js";
 import { getNoticeBadgeText } from "../app/status-feedback.js";
@@ -288,8 +287,8 @@ function renderHistoryEntry(entry, previousEntry, activeLanguage, activeSection,
   `;
 }
 
-function renderHistorySidebar(editorChapter, languages) {
-  const activeRow = buildEditorChapterRowViewModelById(editorChapter, languages, editorChapter?.activeRowId);
+function renderHistorySidebar(editorChapter, rows, languages) {
+  const activeRow = rows.find((row) => row.id === editorChapter?.activeRowId) ?? null;
   const activeLanguage =
     languages.find((language) => language.code === editorChapter?.activeLanguageCode) ?? null;
   const activeSection =
@@ -402,8 +401,7 @@ export function renderTranslateScreen(state) {
     languages,
     sourceCode,
     targetCode,
-    editorRows,
-    rowCount,
+    contentRows,
     collapsedLanguageCodes,
     editorFontSizePx,
   } = buildEditorScreenViewModel(state);
@@ -458,7 +456,7 @@ export function renderTranslateScreen(state) {
         </div>
       </article>
     `;
-  } else if (rowCount === 0) {
+  } else if (contentRows.length === 0) {
     translateBody = `
       <article class="card card--translation">
         <div class="card__body">
@@ -468,8 +466,7 @@ export function renderTranslateScreen(state) {
     `;
   } else {
     translateBody = renderTranslationContentRows(
-      editorRows,
-      languages,
+      contentRows,
       collapsedLanguageCodes,
       editorFontSizePx,
     );
@@ -496,7 +493,7 @@ export function renderTranslateScreen(state) {
           </div>
         </div>
         <div class="translate-sidebar-scroll">
-          ${renderHistorySidebar(editorChapter, languages)}
+          ${renderHistorySidebar(editorChapter, contentRows, languages)}
         </div>
       </section>
     `,

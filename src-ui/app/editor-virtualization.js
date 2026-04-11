@@ -1,6 +1,5 @@
 import { syncEditorRowTextareaHeights } from "./autosize.js";
 import { pendingTranslateAnchorRowId } from "./scroll-state.js";
-import { findEditorChapterRowIndex } from "./editor-row-model.js";
 import {
   buildEditorRowHeights,
   calculateEditorVirtualWindow,
@@ -110,14 +109,12 @@ function updateSpacerHeight(spacer, height) {
 function renderWindowRange(
   itemsContainer,
   rows,
-  languages,
   collapsedLanguageCodes,
   startIndex,
   endIndex,
 ) {
   itemsContainer.innerHTML = renderTranslationContentRowsRange(
     rows,
-    languages,
     collapsedLanguageCodes,
     startIndex,
     endIndex,
@@ -144,8 +141,8 @@ export function initializeEditorVirtualization(root, appState) {
 
   const initialModel = buildEditorScreenViewModel(appState);
   const shouldVirtualize =
-    Array.isArray(initialModel.editorRows)
-    && initialModel.rowCount >= EDITOR_VIRTUALIZATION_MIN_ROWS
+    Array.isArray(initialModel.contentRows)
+    && initialModel.contentRows.length >= EDITOR_VIRTUALIZATION_MIN_ROWS
     && list instanceof HTMLElement
     && itemsContainer instanceof HTMLElement
     && topSpacer instanceof HTMLElement
@@ -188,11 +185,10 @@ export function initializeEditorVirtualization(root, appState) {
 
     const model = buildEditorScreenViewModel(appState);
     const rowHeights = buildEditorRowHeights(
-      model.editorRows,
+      model.contentRows,
       rowHeightCache,
       model.collapsedLanguageCodes,
       model.editorFontSizePx,
-      model.languages,
     );
     const activeRowId =
       pendingTranslateAnchorRowId()
@@ -200,7 +196,7 @@ export function initializeEditorVirtualization(root, appState) {
       || model.editorChapter?.activeRowId
       || "";
     const pinnedRowIndex = activeRowId
-      ? findEditorChapterRowIndex(model.editorChapter, activeRowId)
+      ? model.contentRows.findIndex((row) => row.id === activeRowId)
       : -1;
     const windowState = calculateEditorVirtualWindow(
       rowHeights,
@@ -221,8 +217,7 @@ export function initializeEditorVirtualization(root, appState) {
     const focusSnapshot = captureFocusedEditorField(root);
     renderWindowRange(
       itemsContainer,
-      model.editorRows,
-      model.languages,
+      model.contentRows,
       model.collapsedLanguageCodes,
       windowState.startIndex,
       windowState.endIndex,
@@ -233,11 +228,10 @@ export function initializeEditorVirtualization(root, appState) {
     const heightsChanged = measureVisibleRowHeights(itemsContainer, rowHeightCache);
     if (heightsChanged) {
       const measuredHeights = buildEditorRowHeights(
-        model.editorRows,
+        model.contentRows,
         rowHeightCache,
         model.collapsedLanguageCodes,
         model.editorFontSizePx,
-        model.languages,
       );
       const measuredWindow = calculateEditorVirtualWindow(
         measuredHeights,
@@ -252,8 +246,7 @@ export function initializeEditorVirtualization(root, appState) {
         currentRangeKey = measuredRangeKey;
         renderWindowRange(
           itemsContainer,
-          model.editorRows,
-          model.languages,
+          model.contentRows,
           model.collapsedLanguageCodes,
           measuredWindow.startIndex,
           measuredWindow.endIndex,
