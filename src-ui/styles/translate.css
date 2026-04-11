@@ -263,6 +263,8 @@
 .translation-language-panel__field-highlight {
   display: none;
   pointer-events: none;
+  position: relative;
+  z-index: 1;
 }
 
 .translation-language-panel__field-stack--glossary .translation-language-panel__field-highlight {
@@ -275,6 +277,8 @@
   border: 1px solid transparent;
   border-radius: 0;
   background: transparent;
+  position: relative;
+  z-index: 0;
   resize: none;
   outline: none;
   transition:

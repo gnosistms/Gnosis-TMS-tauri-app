@@ -88,7 +88,9 @@ function focusEditorFieldFromGlossaryMark(event) {
 
 function glossaryTooltipMark(target) {
   return target instanceof Element
-    ? target.closest("[data-editor-glossary-mark][data-editor-glossary-tooltip]")
+    ? target.closest(
+      "[data-editor-glossary-mark][data-editor-glossary-tooltip], [data-editor-glossary-mark][data-tooltip]",
+    )
     : null;
 }
 
@@ -117,8 +119,15 @@ function glossaryTooltipBodyElement() {
 }
 
 function glossaryTooltipText(mark) {
-  return typeof mark?.dataset?.editorGlossaryTooltip === "string"
-    ? mark.dataset.editorGlossaryTooltip.trim()
+  if (typeof mark?.dataset?.editorGlossaryTooltip === "string") {
+    const explicitTooltip = mark.dataset.editorGlossaryTooltip.trim();
+    if (explicitTooltip) {
+      return explicitTooltip;
+    }
+  }
+
+  return typeof mark?.dataset?.tooltip === "string"
+    ? mark.dataset.tooltip.trim()
     : "";
 }
 
@@ -170,9 +179,15 @@ function updateGlossaryTooltipPlacement(mark) {
     ? activeGlossaryTooltipPointer.clientY
     : markRect.top;
   const offsetHeight = tooltip.offsetHeight;
+  const offsetWidth = tooltip.offsetWidth;
   const gap = 14;
-  tooltip.style.left = `${Math.round(anchorClientX + gap)}px`;
-  tooltip.style.top = `${Math.round(anchorClientY - offsetHeight - gap)}px`;
+  const left = Math.min(
+    Math.max(gap, Math.round(anchorClientX + gap)),
+    Math.max(gap, window.innerWidth - offsetWidth - gap),
+  );
+  const top = Math.max(gap, Math.round(anchorClientY - offsetHeight - gap));
+  tooltip.style.left = `${left}px`;
+  tooltip.style.top = `${top}px`;
 }
 
 function scheduleActiveGlossaryTooltipPlacementUpdate() {
