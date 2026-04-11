@@ -138,7 +138,13 @@
 }
 
 .expandable-card__status {
-  margin: 0 22px 18px 58px;
+  width: auto;
+  margin: 14px 28px 18px;
+}
+
+.card--expandable .message-box.resource-state-box.expandable-card__status {
+  width: calc(100% - 44px);
+  margin: 14px 22px 18px;
 }
 
 .list-row__actions,
@@ -427,6 +433,14 @@
   overflow: hidden;
 }
 
+.table-card--glossary-editor {
+  background: transparent;
+}
+
+.table-card--glossary-editor .term-grid__body {
+  background: var(--panel-surface);
+}
+
 .glossary-list,
 .term-grid {
   display: grid;
@@ -437,7 +451,7 @@
 }
 
 .term-grid {
-  grid-template-columns: minmax(260px, 1fr) minmax(260px, 1fr) auto;
+  grid-template-columns: minmax(260px, 1fr) minmax(260px, 1fr) 160px;
 }
 
 .glossary-list--head,
@@ -449,10 +463,22 @@
   background: rgba(255, 255, 255, 0.32);
 }
 
+.table-card--glossary-editor .term-grid--head {
+  background: linear-gradient(
+    180deg,
+    rgba(251, 242, 226, 1) 0%,
+    rgba(251, 242, 226, 0.65) 100%
+  );
+}
+
 .glossary-list--row,
 .term-grid--row {
   min-height: 94px;
   border-bottom: 1px solid rgba(164, 112, 41, 0.12);
+}
+
+.term-grid__actions {
+  width: 100%;
 }
 
 .glossary-list--row:last-child,

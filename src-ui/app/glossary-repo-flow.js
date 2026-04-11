@@ -15,7 +15,10 @@ import {
   repairLocalRepoBinding,
   upsertGlossaryMetadataRecord,
 } from "./team-metadata-flow.js";
-import { mergeMetadataBackedGlossarySummaries } from "./glossary-discovery.js";
+import {
+  findConfirmedMissingGlossaryRecords,
+  mergeMetadataBackedGlossarySummaries,
+} from "./glossary-discovery.js";
 
 const GLOSSARY_BROKER_ROUTE_UNAVAILABLE_MESSAGE =
   "The GitHub App broker does not have glossary repo routes deployed yet. Remote glossary sync and repo actions are unavailable right now.";
@@ -108,6 +111,50 @@ async function repairGlossaryMetadataFromRemoteRename(team, metadataRecords, rem
   }
 
   return false;
+}
+
+async function finalizeMissingGlossariesForTeam(team, metadataRecords, remoteRepos) {
+  const missingRecords = findConfirmedMissingGlossaryRecords(metadataRecords, remoteRepos);
+  if (!Number.isFinite(team?.installationId) || missingRecords.length === 0) {
+    return metadataRecords;
+  }
+
+  const deletedAt = new Date().toISOString();
+
+  for (const record of missingRecords) {
+    await upsertGlossaryMetadataRecord(team, {
+      glossaryId: record.id,
+      title: record.title,
+      repoName: record.repoName,
+      previousRepoNames: Array.isArray(record.previousRepoNames) ? record.previousRepoNames : [],
+      githubRepoId: Number.isFinite(record.githubRepoId) ? record.githubRepoId : null,
+      githubNodeId:
+        typeof record.githubNodeId === "string" && record.githubNodeId.trim()
+          ? record.githubNodeId.trim()
+          : null,
+      fullName:
+        typeof record.fullName === "string" && record.fullName.trim()
+          ? record.fullName.trim()
+          : null,
+      defaultBranch:
+        typeof record.defaultBranch === "string" && record.defaultBranch.trim()
+          ? record.defaultBranch.trim()
+          : "main",
+      lifecycleState: "deleted",
+      remoteState: "deleted",
+      recordState: "tombstone",
+      deletedAt,
+      sourceLanguage: record.sourceLanguage ?? null,
+      targetLanguage: record.targetLanguage ?? null,
+      termCount: Number.isFinite(record.termCount) ? record.termCount : 0,
+    }, { requirePushSuccess: true });
+
+    try {
+      await purgeLocalGlossaryRepo(team, record.id, record.repoName);
+    } catch {}
+  }
+
+  return listGlossaryMetadataRecords(team).catch(() => metadataRecords);
 }
 
 function normalizeRemoteGlossaryRepo(repo) {
@@ -496,22 +543,29 @@ async function purgeTombstonedGlossariesForTeam(team, localSummaries, metadataRe
     .map(normalizeGlossarySummary)
     .filter(Boolean);
   const tombstoneRecords = (Array.isArray(metadataRecords) ? metadataRecords : []).filter(glossaryMetadataRecordIsTombstone);
-  if (!Number.isFinite(team?.installationId) || localGlossaries.length === 0 || tombstoneRecords.length === 0) {
+  if (!Number.isFinite(team?.installationId) || tombstoneRecords.length === 0) {
     return localGlossaries;
   }
 
-  const tombstonedGlossaries = localGlossaries.filter((glossary) =>
-    tombstoneRecords.some((record) => glossaryMatchesMetadataRecord(glossary, record)),
-  );
-  if (tombstonedGlossaries.length === 0) {
-    return localGlossaries;
-  }
+  let changed = false;
+  for (const record of tombstoneRecords) {
+    if (typeof record?.repoName === "string" && record.repoName.trim()) {
+      try {
+        await purgeLocalGlossaryRepo(team, record.id, record.repoName);
+      } catch {}
+    }
 
-  for (const glossary of tombstonedGlossaries) {
-    await purgeLocalGlossaryRepo(team, glossary.id, glossary.repoName);
-    removeGlossaryFromState(glossary.id, glossary.repoName);
+    for (const glossary of localGlossaries) {
+      if (!glossaryMatchesMetadataRecord(glossary, record)) {
+        continue;
+      }
+      removeGlossaryFromState(glossary.id, glossary.repoName);
+      changed = true;
+    }
   }
-  persistVisibleGlossaries(team);
+  if (changed) {
+    persistVisibleGlossaries(team);
+  }
 
   return listLocalGlossarySummariesForTeam(team);
 }
@@ -540,10 +594,12 @@ export async function loadRepoBackedGlossariesForTeam(team, options = {}) {
   let metadataRecords = [];
   let repairIssues = [];
   let metadataLoaded = false;
+  let repairLoaded = false;
   try {
     metadataRecords = await listGlossaryMetadataRecords(team);
     metadataLoaded = true;
     repairIssues = (await inspectAndMigrateLocalRepoBindings(team))?.issues ?? [];
+    repairLoaded = true;
     if (repairIssues.length > 0) {
       await repairAutoRepairableRepoBindings(team, repairIssues);
       repairIssues = (await inspectAndMigrateLocalRepoBindings(team).catch(() => null))?.issues ?? repairIssues;
@@ -569,6 +625,8 @@ export async function loadRepoBackedGlossariesForTeam(team, options = {}) {
       if (metadataRepaired) {
         metadataRecords = await listGlossaryMetadataRecords(team).catch(() => metadataRecords);
       }
+      metadataRecords = await finalizeMissingGlossariesForTeam(team, metadataRecords, remoteRepos);
+      localSummaries = await purgeTombstonedGlossariesForTeam(team, localSummaries, metadataRecords);
     }
   } catch (error) {
     if (glossaryBrokerRouteUnavailable(error) || error?.message === GLOSSARY_BROKER_ROUTE_UNAVAILABLE_MESSAGE) {
@@ -583,7 +641,7 @@ export async function loadRepoBackedGlossariesForTeam(team, options = {}) {
             refreshedLocalSummaries,
             metadataRecords,
             syncRepos,
-            { metadataLoaded, remoteLoaded: false, repairIssues },
+            { metadataLoaded, remoteLoaded: false, repairLoaded, repairIssues },
           ),
           remoteRepos: syncRepos,
           syncSnapshots,
@@ -623,7 +681,7 @@ export async function loadRepoBackedGlossariesForTeam(team, options = {}) {
             refreshedLocalSummaries,
             metadataRecords,
             remoteRepos,
-            { metadataLoaded, remoteLoaded, repairIssues },
+            { metadataLoaded, remoteLoaded, repairLoaded, repairIssues },
           )
         : mergeRepoBackedGlossarySummaries(refreshedLocalSummaries, remoteRepos),
     remoteRepos: syncTargets,

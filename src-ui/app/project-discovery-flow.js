@@ -15,7 +15,10 @@ import { reconcileProjectRepoSyncStates } from "./project-repo-sync-flow.js";
 import { clearNoticeBadge, showNoticeBadge } from "./status-feedback.js";
 import { classifySyncError } from "./sync-error.js";
 import { handleSyncFailure } from "./sync-recovery.js";
-import { mergeMetadataDiscoveryProjects } from "./project-discovery.js";
+import {
+  findConfirmedMissingProjectRecords,
+  mergeMetadataDiscoveryProjects,
+} from "./project-discovery.js";
 import {
   inspectAndMigrateLocalRepoBindings,
   listProjectMetadataRecords,
@@ -97,6 +100,52 @@ async function repairProjectMetadataFromRemoteRename(selectedTeam, metadataRecor
   return false;
 }
 
+async function finalizeMissingProjectsForTeam(selectedTeam, metadataRecords, remoteProjects, options = {}) {
+  const missingRecords = findConfirmedMissingProjectRecords(metadataRecords, remoteProjects);
+  if (!Number.isFinite(selectedTeam?.installationId) || missingRecords.length === 0) {
+    return metadataRecords;
+  }
+
+  const deletedAt = new Date().toISOString();
+
+  for (const record of missingRecords) {
+    await options.upsertProjectMetadataRecord?.(selectedTeam, {
+      projectId: record.id,
+      title: record.title,
+      repoName: record.repoName,
+      previousRepoNames: Array.isArray(record.previousRepoNames) ? record.previousRepoNames : [],
+      githubRepoId: Number.isFinite(record.githubRepoId) ? record.githubRepoId : null,
+      githubNodeId:
+        typeof record.githubNodeId === "string" && record.githubNodeId.trim()
+          ? record.githubNodeId.trim()
+          : null,
+      fullName:
+        typeof record.fullName === "string" && record.fullName.trim()
+          ? record.fullName.trim()
+          : null,
+      defaultBranch:
+        typeof record.defaultBranch === "string" && record.defaultBranch.trim()
+          ? record.defaultBranch.trim()
+          : "main",
+      lifecycleState: "softDeleted",
+      remoteState: "deleted",
+      recordState: "tombstone",
+      deletedAt,
+      chapterCount: Number.isFinite(record.chapterCount) ? record.chapterCount : 0,
+    }, { requirePushSuccess: true });
+
+    try {
+      await options.purgeLocalProjectRepo?.(selectedTeam, record.repoName, record.id);
+    } catch {}
+  }
+
+  const reloadMetadataRecords =
+    typeof options.listProjectMetadataRecords === "function"
+      ? options.listProjectMetadataRecords
+      : listProjectMetadataRecords;
+  return reloadMetadataRecords(selectedTeam).catch(() => metadataRecords);
+}
+
 function mergeProjectsWithLocalFiles(snapshot, listings = [], targets = [], options = {}) {
   const normalizeListedChapter =
     typeof options?.normalizeListedChapter === "function"
@@ -164,25 +213,40 @@ function mergeProjectsWithLocalFiles(snapshot, listings = [], targets = [], opti
 async function purgeTombstonedProjectsForTeam(selectedTeam, projects, metadataRecords, options = {}) {
   const visibleProjects = Array.isArray(projects) ? projects : [];
   const tombstoneRecords = (Array.isArray(metadataRecords) ? metadataRecords : []).filter(options.projectMetadataRecordIsTombstone);
-  if (!selectedTeam?.installationId || visibleProjects.length === 0 || tombstoneRecords.length === 0) {
+  if (!selectedTeam?.installationId || tombstoneRecords.length === 0) {
     return;
   }
 
   const purgedProjectIds = new Set();
-  for (const project of visibleProjects) {
-    if (!project || purgedProjectIds.has(project.id)) {
-      continue;
-    }
-    if (!tombstoneRecords.some((record) => options.projectMatchesMetadataRecord(project, record))) {
+  for (const record of tombstoneRecords) {
+    if (typeof record?.id === "string" && record.id.trim() && purgedProjectIds.has(record.id.trim())) {
       continue;
     }
 
-    await options.purgeLocalProjectRepo(selectedTeam, project.name, project.id);
-    options.removeVisibleProject(project.id);
-    options.clearSelectedProjectState(project);
-    options.dropProjectMutationsForProject(selectedTeam, project.id);
-    delete state.projectRepoSyncByProjectId[project.id];
-    purgedProjectIds.add(project.id);
+    if (typeof record?.repoName === "string" && record.repoName.trim()) {
+      try {
+        await options.purgeLocalProjectRepo(selectedTeam, record.repoName, record.id ?? null);
+      } catch {}
+    }
+
+    for (const project of visibleProjects) {
+      if (!project || purgedProjectIds.has(project.id)) {
+        continue;
+      }
+      if (!options.projectMatchesMetadataRecord(project, record)) {
+        continue;
+      }
+
+      options.removeVisibleProject(project.id);
+      options.clearSelectedProjectState(project);
+      options.dropProjectMutationsForProject(selectedTeam, project.id);
+      delete state.projectRepoSyncByProjectId[project.id];
+      purgedProjectIds.add(project.id);
+    }
+
+    if (typeof record?.id === "string" && record.id.trim()) {
+      purgedProjectIds.add(record.id.trim());
+    }
   }
 
   if (purgedProjectIds.size > 0) {
@@ -346,6 +410,7 @@ export async function loadTeamProjects(render, teamId = state.selectedTeamId, op
         ? metadataResult.value
         : [];
     const metadataLoaded = metadataResult.status === "fulfilled";
+    const repairLoaded = repairResult.status === "fulfilled";
     let repairIssues =
       repairResult.status === "fulfilled"
         ? repairResult.value?.issues ?? []
@@ -365,6 +430,12 @@ export async function loadTeamProjects(render, teamId = state.selectedTeamId, op
       if (metadataRepaired) {
         projectMetadataRecords = await listProjectMetadataRecords(selectedTeam).catch(() => projectMetadataRecords);
       }
+      projectMetadataRecords = await finalizeMissingProjectsForTeam(
+        selectedTeam,
+        projectMetadataRecords,
+        remoteProjects,
+        options,
+      );
     }
     const recoverableMetadataCount = countRecoverableProjectMetadataRecords(projectMetadataRecords);
     if (
@@ -376,14 +447,13 @@ export async function loadTeamProjects(render, teamId = state.selectedTeamId, op
     ) {
       throw projectsResult.reason;
     }
+    const discoveredLocalProjects = [
+      ...optimisticSnapshot.items,
+      ...optimisticSnapshot.deletedItems,
+    ].filter(Boolean);
     await purgeTombstonedProjectsForTeam(
       selectedTeam,
-      [
-        ...state.projects,
-        ...state.deletedProjects,
-        ...optimisticSnapshot.items,
-        ...optimisticSnapshot.deletedItems,
-      ].filter(Boolean),
+      discoveredLocalProjects,
       projectMetadataRecords,
       options,
     );
@@ -396,14 +466,10 @@ export async function loadTeamProjects(render, teamId = state.selectedTeamId, op
     const mergedProjects = mergeMetadataDiscoveryProjects({
       metadataRecords: projectMetadataRecords,
       remoteProjects,
-      localProjects: [
-        ...state.projects,
-        ...state.deletedProjects,
-        ...optimisticSnapshot.items,
-        ...optimisticSnapshot.deletedItems,
-      ].filter(Boolean),
+      localProjects: discoveredLocalProjects,
       metadataLoaded,
       remoteLoaded,
+      repairLoaded,
       repairIssues,
     });
     const nextVisibleProjects =

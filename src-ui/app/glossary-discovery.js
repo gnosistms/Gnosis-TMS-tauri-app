@@ -80,6 +80,11 @@ function matchingRepairIssue(glossary, repairIssueMaps) {
   return null;
 }
 
+function supportsUnmatchedLocalGlossary(glossary, repairIssueMaps) {
+  const repairIssue = matchingRepairIssue(glossary, repairIssueMaps);
+  return repairIssue?.issueType === "strayLocalRepo";
+}
+
 function metadataBackedGlossaryRepo(record) {
   if (
     !record
@@ -119,7 +124,7 @@ function findMatchingLocalGlossary(record, localById, localByRepoName) {
   return null;
 }
 
-function findMatchingRemoteGlossary(record, remoteByRepoName, remoteByFullName, remoteByRepoId, remoteByNodeId) {
+export function findMatchingRemoteGlossary(record, remoteByRepoName, remoteByFullName, remoteByRepoId, remoteByNodeId) {
   if (Number.isFinite(record.githubRepoId) && remoteByRepoId.has(record.githubRepoId)) {
     return remoteByRepoId.get(record.githubRepoId);
   }
@@ -143,6 +148,36 @@ function findMatchingRemoteGlossary(record, remoteByRepoName, remoteByFullName, 
   return null;
 }
 
+export function findConfirmedMissingGlossaryRecords(metadataRecords = [], remoteRepos = []) {
+  const normalizedRemotes = (Array.isArray(remoteRepos) ? remoteRepos : [])
+    .map(normalizeRemoteGlossaryRepo)
+    .filter(Boolean);
+  const remoteByRepoId = new Map(
+    normalizedRemotes
+      .filter((repo) => Number.isFinite(repo.repoId))
+      .map((repo) => [repo.repoId, repo]),
+  );
+  const remoteByNodeId = new Map(
+    normalizedRemotes
+      .filter((repo) => typeof repo.nodeId === "string" && repo.nodeId.trim())
+      .map((repo) => [repo.nodeId, repo]),
+  );
+  const remoteByRepoName = new Map(normalizedRemotes.map((repo) => [repo.name, repo]));
+  const remoteByFullName = new Map(normalizedRemotes.map((repo) => [repo.fullName, repo]));
+
+  return (Array.isArray(metadataRecords) ? metadataRecords : []).filter((record) =>
+    record?.recordState === "live"
+    && (record?.remoteState ?? "linked") === "linked"
+    && !findMatchingRemoteGlossary(
+      record,
+      remoteByRepoName,
+      remoteByFullName,
+      remoteByRepoId,
+      remoteByNodeId,
+    )
+  );
+}
+
 export function mergeMetadataBackedGlossarySummaries(
   localSummaries,
   metadataRecords,
@@ -151,6 +186,7 @@ export function mergeMetadataBackedGlossarySummaries(
 ) {
   const metadataLoaded = options.metadataLoaded === true;
   const remoteLoaded = options.remoteLoaded === true;
+  const repairLoaded = options.repairLoaded === true;
   const repairIssueMaps = createRepairIssueMaps(options.repairIssues);
   const normalizedLocals = (Array.isArray(localSummaries) ? localSummaries : [])
     .map(normalizeGlossarySummary)
@@ -260,17 +296,21 @@ export function mergeMetadataBackedGlossarySummaries(
     if (glossary?.recordState === "tombstone") {
       continue;
     }
+    const repairIssue = matchingRepairIssue(glossary, repairIssueMaps);
+    if (metadataLoaded && repairLoaded && !supportsUnmatchedLocalGlossary(glossary, repairIssueMaps)) {
+      continue;
+    }
     merged.push(normalizeGlossarySummary({
       ...glossary,
       resolutionState:
-        matchingRepairIssue(glossary, repairIssueMaps)
+        repairIssue
           ? "repair"
           : metadataLoaded
             && glossary.recordState !== "tombstone"
               ? "unregisteredLocal"
               : glossary.resolutionState ?? "",
-      repairIssueType: matchingRepairIssue(glossary, repairIssueMaps)?.issueType ?? "",
-      repairIssueMessage: matchingRepairIssue(glossary, repairIssueMaps)?.message ?? "",
+      repairIssueType: repairIssue?.issueType ?? "",
+      repairIssueMessage: repairIssue?.message ?? "",
     }));
   }
 

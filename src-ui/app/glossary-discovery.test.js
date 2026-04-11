@@ -1,7 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { mergeMetadataBackedGlossarySummaries } from "./glossary-discovery.js";
+import {
+  findConfirmedMissingGlossaryRecords,
+  mergeMetadataBackedGlossarySummaries,
+} from "./glossary-discovery.js";
 
 test("glossary discovery hides tombstoned metadata records", () => {
   const merged = mergeMetadataBackedGlossarySummaries(
@@ -184,4 +187,96 @@ test("glossary discovery keeps a live glossary when old tombstones reuse the sam
   assert.equal(merged[0].id, "live-glossary");
   assert.equal(merged[0].recordState, "live");
   assert.equal(merged[0].resolutionState, "");
+});
+
+test("glossary discovery identifies live linked metadata records whose remote repo is gone", () => {
+  const missing = findConfirmedMissingGlossaryRecords(
+    [
+      {
+        id: "glossary-1",
+        title: "Glossary 1",
+        repoName: "glossary-1",
+        lifecycleState: "active",
+        remoteState: "linked",
+        recordState: "live",
+        fullName: "team/glossary-1",
+      },
+      {
+        id: "glossary-2",
+        title: "Glossary 2",
+        repoName: "old-glossary-2",
+        lifecycleState: "active",
+        remoteState: "linked",
+        recordState: "live",
+        fullName: "team/old-glossary-2",
+        githubRepoId: 84,
+      },
+    ],
+    [
+      {
+        repoId: 84,
+        name: "new-glossary-2",
+        fullName: "team/new-glossary-2",
+      },
+    ],
+  );
+
+  assert.deepEqual(missing.map((record) => record.id), ["glossary-1"]);
+});
+
+test("glossary discovery drops stale unmatched local glossaries once metadata and repo scan are authoritative", () => {
+  const merged = mergeMetadataBackedGlossarySummaries(
+    [
+      {
+        id: "glossary-1",
+        repoName: "glossary-1",
+        title: "Glossary 1",
+        remoteState: "missing",
+        recordState: "live",
+      },
+    ],
+    [],
+    [],
+    {
+      metadataLoaded: true,
+      remoteLoaded: true,
+      repairLoaded: true,
+      repairIssues: [],
+    },
+  );
+
+  assert.equal(merged.length, 0);
+});
+
+test("glossary discovery keeps real stray local glossaries after the repo scan", () => {
+  const merged = mergeMetadataBackedGlossarySummaries(
+    [
+      {
+        id: "glossary-1",
+        repoName: "glossary-1",
+        title: "Glossary 1",
+        recordState: "live",
+      },
+    ],
+    [],
+    [],
+    {
+      metadataLoaded: true,
+      remoteLoaded: true,
+      repairLoaded: true,
+      repairIssues: [
+        {
+          kind: "glossary",
+          issueType: "strayLocalRepo",
+          repoName: "glossary-1",
+          message: "This local glossary repo has no matching team-metadata record and was left as a repair candidate.",
+        },
+      ],
+    },
+  );
+
+  assert.equal(merged.length, 1);
+  assert.equal(merged[0].id, "glossary-1");
+  assert.equal(merged[0].resolutionState, "repair");
+  assert.equal(merged[0].repairIssueType, "strayLocalRepo");
 });

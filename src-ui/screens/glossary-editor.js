@@ -54,30 +54,32 @@ export function renderGlossaryEditorScreen(state) {
       })
     : visibleTerms.length
       ? `
-        <section class="table-card">
+        <section class="table-card table-card--glossary-editor">
           <div class="term-grid term-grid--head">
             <div>${escapeHtml(glossary.sourceLanguage?.name ?? "Source")}</div>
             <div>${escapeHtml(glossary.targetLanguage?.name ?? "Target")}</div>
             <div></div>
           </div>
-          ${visibleTerms
-            .map(
-              (term) => `
-                <div class="term-grid term-grid--row">
-                  <div>
-                    ${renderTermCell(term.termId, (term.sourceTerms ?? []).join(", "))}
+          <div class="term-grid__body">
+            ${visibleTerms
+              .map(
+                (term) => `
+                  <div class="term-grid term-grid--row">
+                    <div>
+                      ${renderTermCell(term.termId, (term.sourceTerms ?? []).join(", "))}
+                    </div>
+                    <div>
+                      ${renderTermCell(term.termId, (term.targetTerms ?? []).join(", "))}
+                    </div>
+                    <div class="term-grid__actions">
+                      ${canManageTerms ? textAction("Edit", `edit-glossary-term:${term.termId}`) : ""}
+                      ${canManageTerms ? textAction("Delete", `delete-glossary-term:${term.termId}`) : ""}
+                    </div>
                   </div>
-                  <div>
-                    ${renderTermCell(term.termId, (term.targetTerms ?? []).join(", "))}
-                  </div>
-                  <div class="term-grid__actions">
-                    ${canManageTerms ? textAction("Edit", `edit-glossary-term:${term.termId}`) : ""}
-                    ${canManageTerms ? textAction("Delete", `delete-glossary-term:${term.termId}`) : ""}
-                  </div>
-                </div>
-              `,
-            )
-            .join("")}
+                `,
+              )
+              .join("")}
+          </div>
         </section>
       `
       : renderStateCard({

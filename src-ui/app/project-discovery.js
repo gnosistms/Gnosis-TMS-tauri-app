@@ -1,4 +1,4 @@
-function createProjectRecordMaps(projects = []) {
+export function createProjectRecordMaps(projects = []) {
   const byId = new Map();
   const byRepoId = new Map();
   const byNodeId = new Map();
@@ -62,7 +62,12 @@ function matchingRepairIssue(resource, repairIssueMaps) {
   return null;
 }
 
-function findMatchingProjectRecord(record, projectMaps) {
+function supportsUnmatchedLocalProject(resource, repairIssueMaps) {
+  const repairIssue = matchingRepairIssue(resource, repairIssueMaps);
+  return repairIssue?.issueType === "strayLocalRepo";
+}
+
+export function findMatchingProjectRecord(record, projectMaps) {
   const byId = projectMaps.byId.get(record.id);
   if (byId) {
     return byId;
@@ -89,6 +94,16 @@ function findMatchingProjectRecord(record, projectMaps) {
   }
 
   return null;
+}
+
+export function findConfirmedMissingProjectRecords(metadataRecords = [], remoteProjects = []) {
+  const remoteMaps = createProjectRecordMaps(remoteProjects);
+
+  return (Array.isArray(metadataRecords) ? metadataRecords : []).filter((record) =>
+    record?.recordState === "live"
+    && (record?.remoteState ?? "linked") === "linked"
+    && !findMatchingProjectRecord(record, remoteMaps)
+  );
 }
 
 function mapMetadataProjectToVisibleProject(record, remoteProject, existingProject, options = {}) {
@@ -171,6 +186,7 @@ export function mergeMetadataDiscoveryProjects({
   localProjects,
   metadataLoaded = false,
   remoteLoaded = false,
+  repairLoaded = false,
   repairIssues = [],
 }) {
   const remoteMaps = createProjectRecordMaps(remoteProjects);
@@ -233,17 +249,21 @@ export function mergeMetadataDiscoveryProjects({
     if (localProject?.recordState === "tombstone") {
       continue;
     }
+    const repairIssue = matchingRepairIssue(localProject, repairIssueMaps);
+    if (metadataLoaded && repairLoaded && !supportsUnmatchedLocalProject(localProject, repairIssueMaps)) {
+      continue;
+    }
     mergedProjects.push({
       ...localProject,
       resolutionState:
-        matchingRepairIssue(localProject, repairIssueMaps)
+        repairIssue
           ? "repair"
           : metadataLoaded
             && localProject.recordState !== "tombstone"
               ? "unregisteredLocal"
               : localProject.resolutionState ?? "",
-      repairIssueType: matchingRepairIssue(localProject, repairIssueMaps)?.issueType ?? "",
-      repairIssueMessage: matchingRepairIssue(localProject, repairIssueMaps)?.message ?? "",
+      repairIssueType: repairIssue?.issueType ?? "",
+      repairIssueMessage: repairIssue?.message ?? "",
     });
   }
 

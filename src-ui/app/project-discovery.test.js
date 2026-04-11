@@ -1,7 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { mergeMetadataDiscoveryProjects } from "./project-discovery.js";
+import {
+  findConfirmedMissingProjectRecords,
+  mergeMetadataDiscoveryProjects,
+} from "./project-discovery.js";
 
 test("metadata-backed project discovery ignores remote repos that have no metadata record", () => {
   const merged = mergeMetadataDiscoveryProjects({
@@ -180,4 +183,94 @@ test("project discovery matches renamed remote repos by stable github repo ident
   assert.equal(merged[0].resolutionState, "");
   assert.equal(merged[0].repoId, 42);
   assert.equal(merged[0].fullName, "team/new-project-name");
+});
+
+test("project discovery identifies live linked metadata records whose remote repo is gone", () => {
+  const missing = findConfirmedMissingProjectRecords(
+    [
+      {
+        id: "project-1",
+        title: "Project 1",
+        repoName: "project-1",
+        lifecycleState: "active",
+        remoteState: "linked",
+        recordState: "live",
+        fullName: "team/project-1",
+      },
+      {
+        id: "project-2",
+        title: "Project 2",
+        repoName: "old-project-2",
+        lifecycleState: "active",
+        remoteState: "linked",
+        recordState: "live",
+        fullName: "team/old-project-2",
+        githubRepoId: 42,
+      },
+    ],
+    [
+      {
+        id: "remote-2",
+        repoId: 42,
+        name: "new-project-2",
+        title: "Project 2",
+        fullName: "team/new-project-2",
+      },
+    ],
+  );
+
+  assert.deepEqual(missing.map((record) => record.id), ["project-1"]);
+});
+
+test("project discovery drops stale cached local projects once metadata and repo scan are authoritative", () => {
+  const merged = mergeMetadataDiscoveryProjects({
+    metadataRecords: [],
+    remoteProjects: [],
+    localProjects: [
+      {
+        id: "project-1",
+        name: "project-1",
+        title: "Project 1",
+        remoteState: "missing",
+        recordState: "live",
+      },
+    ],
+    metadataLoaded: true,
+    remoteLoaded: true,
+    repairLoaded: true,
+    repairIssues: [],
+  });
+
+  assert.equal(merged.length, 0);
+});
+
+test("project discovery keeps real stray local repos after the repo scan", () => {
+  const merged = mergeMetadataDiscoveryProjects({
+    metadataRecords: [],
+    remoteProjects: [],
+    localProjects: [
+      {
+        id: "project-1",
+        name: "project-1",
+        title: "Project 1",
+        recordState: "live",
+      },
+    ],
+    metadataLoaded: true,
+    remoteLoaded: true,
+    repairLoaded: true,
+    repairIssues: [
+      {
+        kind: "project",
+        issueType: "strayLocalRepo",
+        repoName: "project-1",
+        message: "This local project repo has no matching team-metadata record and was left as a repair candidate.",
+      },
+    ],
+  });
+
+  assert.equal(merged.length, 1);
+  assert.equal(merged[0].id, "project-1");
+  assert.equal(merged[0].resolutionState, "repair");
+  assert.equal(merged[0].repairIssueType, "strayLocalRepo");
 });
