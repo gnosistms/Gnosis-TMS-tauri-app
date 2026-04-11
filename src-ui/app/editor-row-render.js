@@ -1,4 +1,5 @@
 import { escapeHtml, renderCollapseChevron, tooltipAttributes } from "../lib/ui.js";
+import { buildEditorRowViewModelsRange } from "./editor-row-model.js";
 import {
   buildEditorRowHeights,
   calculateEditorVirtualWindow,
@@ -67,7 +68,11 @@ function orderRowSectionsByCollapsedState(sections, collapsedLanguageCodes = new
   return [...expandedSections, ...collapsedSections];
 }
 
-export function renderTranslationContentRow(row, collapsedLanguageCodes = new Set(), rowIndex = null) {
+export function renderTranslationContentRow(
+  row,
+  collapsedLanguageCodes = new Set(),
+  rowIndex = null,
+) {
   const orderedSections = orderRowSectionsByCollapsedState(row.sections, collapsedLanguageCodes);
   const rowIndexAttribute = Number.isInteger(rowIndex) ? ` data-row-index="${rowIndex}"` : "";
 
@@ -108,14 +113,27 @@ export function renderTranslationContentRow(row, collapsedLanguageCodes = new Se
                     isCollapsed
                       ? ""
                       : `
-                        <textarea
-                          class="translation-language-panel__field"
-                          data-editor-row-field
+                        <div
+                          class="translation-language-panel__field-stack"
+                          data-editor-glossary-field-stack
                           data-row-id="${escapeHtml(row.id)}"
                           data-language-code="${escapeHtml(language.code)}"
-                          lang="${escapeHtml(language.code)}"
-                          spellcheck="false"
-                        >${escapeHtml(language.text)}</textarea>
+                        >
+                          <div
+                            class="translation-language-panel__field-highlight"
+                            data-editor-glossary-highlight
+                            lang="${escapeHtml(language.code)}"
+                            aria-hidden="true"
+                          ></div>
+                          <textarea
+                            class="translation-language-panel__field"
+                            data-editor-row-field
+                            data-row-id="${escapeHtml(row.id)}"
+                            data-language-code="${escapeHtml(language.code)}"
+                            lang="${escapeHtml(language.code)}"
+                            spellcheck="false"
+                          >${escapeHtml(language.text)}</textarea>
+                        </div>
                       `
                   }
                 </section>
@@ -129,31 +147,44 @@ export function renderTranslationContentRow(row, collapsedLanguageCodes = new Se
 }
 
 export function renderTranslationContentRowsRange(
-  rows,
+  editorRows,
+  languages,
   collapsedLanguageCodes = new Set(),
   startIndex = 0,
-  endIndex = rows.length,
+  endIndex = editorRows?.length ?? 0,
 ) {
-  return rows
-    .slice(startIndex, endIndex)
+  return buildEditorRowViewModelsRange(editorRows, languages, startIndex, endIndex)
     .map((row, offset) => renderTranslationContentRow(row, collapsedLanguageCodes, startIndex + offset))
     .join("");
 }
 
-function shouldVirtualizeEditorRows(rows) {
-  return Array.isArray(rows) && rows.length >= EDITOR_VIRTUALIZATION_MIN_ROWS;
+function shouldVirtualizeEditorRows(editorRows) {
+  return Array.isArray(editorRows) && editorRows.length >= EDITOR_VIRTUALIZATION_MIN_ROWS;
 }
 
 export function renderTranslationContentRows(
-  rows,
+  editorRows,
+  languages,
   collapsedLanguageCodes = new Set(),
   editorFontSizePx = 20,
 ) {
-  if (!shouldVirtualizeEditorRows(rows)) {
-    return renderTranslationContentRowsRange(rows, collapsedLanguageCodes);
+  if (!shouldVirtualizeEditorRows(editorRows)) {
+    return renderTranslationContentRowsRange(
+      editorRows,
+      languages,
+      collapsedLanguageCodes,
+      0,
+      editorRows?.length ?? 0,
+    );
   }
 
-  const initialRowHeights = buildEditorRowHeights(rows, new Map(), collapsedLanguageCodes, editorFontSizePx);
+  const initialRowHeights = buildEditorRowHeights(
+    editorRows,
+    new Map(),
+    collapsedLanguageCodes,
+    editorFontSizePx,
+    languages,
+  );
   const initialWindow = calculateEditorVirtualWindow(
     initialRowHeights,
     0,
@@ -169,7 +200,8 @@ export function renderTranslationContentRows(
       ></div>
       <div class="translate-virtual-list__items" data-editor-virtual-items>
         ${renderTranslationContentRowsRange(
-          rows,
+          editorRows,
+          languages,
           collapsedLanguageCodes,
           initialWindow.startIndex,
           initialWindow.endIndex,

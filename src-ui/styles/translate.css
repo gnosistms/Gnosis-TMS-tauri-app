@@ -230,6 +230,7 @@
   display: block;
 }
 
+.translation-language-panel__field-highlight,
 .translation-language-panel__field,
 .history-item__content {
   width: 100%;
@@ -239,6 +240,35 @@
   line-height: 1.5;
 }
 
+.translation-language-panel__field-stack {
+  display: grid;
+  position: relative;
+  border: 1px solid transparent;
+  border-radius: 0;
+  transition:
+    border-color 140ms ease,
+    box-shadow 140ms ease,
+    background 140ms ease;
+}
+
+.translation-language-panel__field-highlight,
+.translation-language-panel__field {
+  grid-area: 1 / 1;
+  padding: 2px 16px 8px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.translation-language-panel__field-highlight {
+  display: none;
+  pointer-events: none;
+}
+
+.translation-language-panel__field-stack--glossary .translation-language-panel__field-highlight {
+  display: block;
+}
+
 .translation-language-panel__field {
   width: 100%;
   min-height: 44px;
@@ -246,7 +276,6 @@
   border-radius: 0;
   background: transparent;
   resize: none;
-  padding: 2px 16px 8px;
   outline: none;
   transition:
     border-color 140ms ease,
@@ -254,13 +283,17 @@
     background 140ms ease;
 }
 
+.translation-language-panel__field-highlight:lang(ja),
 .translation-language-panel__field:lang(ja),
 .history-item__content:lang(ja) {
   font-family: var(--font-serif-ja);
 }
 
+.translation-language-panel__field-highlight:lang(zh-Hans),
 .translation-language-panel__field:lang(zh-Hans),
+.translation-language-panel__field-highlight:lang(zh-CN),
 .translation-language-panel__field:lang(zh-CN),
+.translation-language-panel__field-highlight:lang(zh-SG),
 .translation-language-panel__field:lang(zh-SG),
 .history-item__content:lang(zh-Hans),
 .history-item__content:lang(zh-CN),
@@ -268,9 +301,13 @@
   font-family: var(--font-serif-zh-hans);
 }
 
+.translation-language-panel__field-highlight:lang(zh-Hant),
 .translation-language-panel__field:lang(zh-Hant),
+.translation-language-panel__field-highlight:lang(zh-TW),
 .translation-language-panel__field:lang(zh-TW),
+.translation-language-panel__field-highlight:lang(zh-HK),
 .translation-language-panel__field:lang(zh-HK),
+.translation-language-panel__field-highlight:lang(zh-MO),
 .translation-language-panel__field:lang(zh-MO),
 .history-item__content:lang(zh-Hant),
 .history-item__content:lang(zh-TW),
@@ -279,28 +316,42 @@
   font-family: var(--font-serif-zh-hant);
 }
 
+.translation-language-panel__field-highlight:lang(fa),
 .translation-language-panel__field:lang(fa),
+.translation-language-panel__field-highlight:lang(ar),
 .translation-language-panel__field:lang(ar),
 .history-item__content:lang(fa),
 .history-item__content:lang(ar) {
   font-family: var(--font-serif-fa);
 }
 
+.translation-language-panel__field-highlight:lang(ko),
 .translation-language-panel__field:lang(ko),
 .history-item__content:lang(ko) {
   font-family: var(--font-serif-ko);
 }
 
+.translation-language-panel__field-highlight:lang(ja),
 .translation-language-panel__field:lang(ja),
+.translation-language-panel__field-highlight:lang(zh-Hans),
 .translation-language-panel__field:lang(zh-Hans),
+.translation-language-panel__field-highlight:lang(zh-CN),
 .translation-language-panel__field:lang(zh-CN),
+.translation-language-panel__field-highlight:lang(zh-SG),
 .translation-language-panel__field:lang(zh-SG),
+.translation-language-panel__field-highlight:lang(zh-Hant),
 .translation-language-panel__field:lang(zh-Hant),
+.translation-language-panel__field-highlight:lang(zh-TW),
 .translation-language-panel__field:lang(zh-TW),
+.translation-language-panel__field-highlight:lang(zh-HK),
 .translation-language-panel__field:lang(zh-HK),
+.translation-language-panel__field-highlight:lang(zh-MO),
 .translation-language-panel__field:lang(zh-MO),
+.translation-language-panel__field-highlight:lang(ko),
 .translation-language-panel__field:lang(ko),
+.translation-language-panel__field-highlight:lang(fa),
 .translation-language-panel__field:lang(fa),
+.translation-language-panel__field-highlight:lang(ar),
 .translation-language-panel__field:lang(ar),
 .history-item__content:lang(ja),
 .history-item__content:lang(zh-Hans),
@@ -316,13 +367,52 @@
   font-weight: var(--editor-non-latin-serif-weight);
 }
 
-.translation-language-panel__field:focus {
+.translation-language-panel__field-stack:focus-within {
   margin-top: 4.8px;
   border-color: rgba(236, 134, 9, 0.52);
   border-radius: var(--radius-ui);
   box-shadow: 0 0 0 4px rgba(243, 156, 24, 0.12);
   background: rgba(255, 251, 246, 0.96);
+}
+
+.translation-language-panel__field-stack:focus-within .translation-language-panel__field-highlight,
+.translation-language-panel__field-stack:focus-within .translation-language-panel__field {
   padding: 14px 16px;
+}
+
+.translation-language-panel__field:focus {
+  margin-top: 0;
+  border-color: transparent;
+  border-radius: 0;
+  box-shadow: none;
+  background: transparent;
+  padding: 2px 16px 8px;
+}
+
+.translation-language-panel__field-stack--glossary .translation-language-panel__field {
+  color: transparent;
+  caret-color: var(--text);
+  -webkit-text-fill-color: transparent;
+}
+
+.translation-language-panel__field-stack--glossary .translation-language-panel__field::selection {
+  background: rgba(243, 156, 24, 0.2);
+}
+
+.translation-language-panel__glossary-mark {
+  background: transparent;
+  color: inherit;
+  pointer-events: auto;
+  text-decoration: underline;
+  text-decoration-thickness: 0.06em;
+  text-decoration-color: var(--text);
+  text-underline-offset: 0.16em;
+  cursor: help;
+}
+
+.translation-language-panel__glossary-mark.glossary-match-error {
+  color: #d94735;
+  text-decoration-color: #d94735;
 }
 
 .history-empty {

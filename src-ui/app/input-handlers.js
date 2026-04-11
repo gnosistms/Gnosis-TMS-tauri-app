@@ -27,6 +27,7 @@ import {
   MANAGE_TARGET_LANGUAGES_OPTION_VALUE,
   openTargetLanguageManager,
   persistEditorRowOnBlur,
+  syncEditorGlossaryHighlightRowDom,
   updateEditorFontSize,
   updateEditorRowFieldValue,
   updateEditorSourceLanguage,
@@ -292,6 +293,7 @@ function handleEditorRowFieldInput(event) {
     input.value,
   );
   syncEditorRowTextareaHeight(input);
+  syncEditorGlossaryHighlightRowDom(input.dataset.rowId);
   return true;
 }
 

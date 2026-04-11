@@ -112,6 +112,7 @@ function renderProjectCard(project, expanded, options = {}) {
   const disableLifecycleActions = resolution?.blockLifecycleActions === true;
   const disableContentActions = resolution?.blockContentActions === true;
   const pageWritesDisabled = options.pageWritesDisabled === true;
+  const glossaryChangesDisabled = options.glossaryChangesDisabled === true;
   const deleteAction = options.deleteAction ?? `delete-project:${project.id}`;
   const disablePermanentDelete = options.disablePermanentDelete === true;
   const addFilesDisabled = options.addFilesDisabled === true;
@@ -183,7 +184,9 @@ function renderProjectCard(project, expanded, options = {}) {
                     }
                   </div>
                   <div class="chapter-table__actions">
-                    ${renderChapterGlossarySelect(chapter, glossaryOptions, { disabled: offlineMode || pageWritesDisabled || !canManageProjects })}
+                    ${renderChapterGlossarySelect(chapter, glossaryOptions, {
+                      disabled: offlineMode || pageWritesDisabled || glossaryChangesDisabled || !canManageProjects,
+                    })}
                     ${textAction("Open", `open-translate:${chapter.id}`)}
                     ${canManageProjects ? textAction("Rename", `rename-file:${chapter.id}`, { disabled: offlineMode || pageWritesDisabled || disableContentActions }) : ""}
                     ${canManageProjects ? textAction("Delete", `delete-file:${chapter.id}`, { disabled: offlineMode || pageWritesDisabled || disableContentActions }) : ""}
@@ -280,6 +283,11 @@ function renderDeletedProjectsSection(state) {
   const offlineMode = state.offline?.isEnabled === true;
   const pageWritesDisabled = areResourcePageWritesDisabled(state.projectsPage);
   const syncSnapshotsByProjectId = state.projectRepoSyncByProjectId ?? {};
+  const glossaryChangesDisabled =
+    pageWritesDisabled
+    || state.projectDiscovery?.status === "loading"
+    || state.projectsPageSync?.status === "syncing"
+    || state.projectImport?.status === "importing";
 
   const toggle = renderDeletedProjectsToggle(state);
   if (!state.showDeletedProjects) {
@@ -300,6 +308,7 @@ function renderDeletedProjectsSection(state) {
               isDeleted: true,
               offlineMode,
               pageWritesDisabled,
+              glossaryChangesDisabled,
               syncSnapshot,
               actions:
                 project?.recordState === "tombstone"
@@ -338,6 +347,11 @@ export function renderProjectsScreen(state) {
       : "";
   const projectsSyncBadgeText = getScopedSyncBadgeText("projects");
   const isProjectsSyncing = state.projectsPageSync?.status === "syncing";
+  const glossaryChangesDisabled =
+    pageWritesDisabled
+    || discovery.status === "loading"
+    || isProjectsSyncing
+    || importInProgress;
   const recoveryMarkup = recoveryMessage
     ? `
       <div class="message-box message-box--warning">
@@ -384,6 +398,7 @@ export function renderProjectsScreen(state) {
                   offlineMode,
                   pageWritesDisabled,
                   addFilesDisabled: importInProgress,
+                  glossaryChangesDisabled,
                   showDeletedFiles: state.expandedDeletedFiles.has(project.id),
                   glossaries: state.glossaries,
                   syncSnapshot: syncSnapshotsByProjectId[project.id] ?? null,

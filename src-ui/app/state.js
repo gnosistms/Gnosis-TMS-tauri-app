@@ -232,10 +232,25 @@ export function createEditorChapterState() {
     selectionPersistStatus: "idle",
     fontSizePx: DEFAULT_EDITOR_FONT_SIZE_PX,
     collapsedLanguageCodes: new Set(),
+    glossary: createEditorChapterGlossaryState(),
     activeRowId: null,
     activeLanguageCode: null,
     history: createEditorHistoryState(),
     rows: [],
+  };
+}
+
+export function createEditorChapterGlossaryState() {
+  return {
+    status: "idle",
+    error: "",
+    glossaryId: null,
+    repoName: "",
+    title: "",
+    sourceLanguage: null,
+    targetLanguage: null,
+    terms: [],
+    matcherModel: null,
   };
 }
 

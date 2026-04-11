@@ -1,5 +1,6 @@
 import { syncEditorRowTextareaHeights } from "./autosize.js";
 import { pendingTranslateAnchorRowId } from "./scroll-state.js";
+import { findEditorChapterRowIndex } from "./editor-row-model.js";
 import {
   buildEditorRowHeights,
   calculateEditorVirtualWindow,
@@ -7,10 +8,15 @@ import {
 } from "./editor-virtualization-shared.js";
 import { buildEditorScreenViewModel } from "./editor-screen-model.js";
 import { renderTranslationContentRowsRange } from "./editor-row-render.js";
+import {
+  restoreMountedEditorGlossaryHighlightsFromCache,
+  syncVisibleEditorGlossaryHighlightRows,
+} from "./translate-flow.js";
 
 let activeController = null;
 
 const rowHeightCacheByLayoutKey = new Map();
+const EDITOR_GLOSSARY_SCROLL_DEBOUNCE_MS = 100;
 
 function captureFocusedEditorField(root) {
   const activeElement = root.ownerDocument?.activeElement;
@@ -101,9 +107,17 @@ function updateSpacerHeight(spacer, height) {
   spacer.style.height = `${Math.max(0, Math.round(height))}px`;
 }
 
-function renderWindowRange(itemsContainer, rows, collapsedLanguageCodes, startIndex, endIndex) {
+function renderWindowRange(
+  itemsContainer,
+  rows,
+  languages,
+  collapsedLanguageCodes,
+  startIndex,
+  endIndex,
+) {
   itemsContainer.innerHTML = renderTranslationContentRowsRange(
     rows,
+    languages,
     collapsedLanguageCodes,
     startIndex,
     endIndex,
@@ -124,34 +138,61 @@ export function initializeEditorVirtualization(root, appState) {
   const itemsContainer = root.querySelector("[data-editor-virtual-items]");
   const topSpacer = root.querySelector('[data-editor-virtual-spacer="top"]');
   const bottomSpacer = root.querySelector('[data-editor-virtual-spacer="bottom"]');
-  if (
-    !(scrollContainer instanceof HTMLElement)
-    || !(list instanceof HTMLElement)
-    || !(itemsContainer instanceof HTMLElement)
-  ) {
+  if (!(scrollContainer instanceof HTMLElement)) {
     return;
   }
 
   const initialModel = buildEditorScreenViewModel(appState);
-  if (!Array.isArray(initialModel.contentRows) || initialModel.contentRows.length < EDITOR_VIRTUALIZATION_MIN_ROWS) {
-    return;
-  }
-
-  const rowHeightCache = getRowHeightCache(
-    initialModel.editorChapter?.chapterId ?? initialModel.chapter?.id ?? "",
-    initialModel.collapsedLanguageCodes,
-    initialModel.editorFontSizePx,
-  );
+  const shouldVirtualize =
+    Array.isArray(initialModel.editorRows)
+    && initialModel.rowCount >= EDITOR_VIRTUALIZATION_MIN_ROWS
+    && list instanceof HTMLElement
+    && itemsContainer instanceof HTMLElement
+    && topSpacer instanceof HTMLElement
+    && bottomSpacer instanceof HTMLElement;
+  const rowHeightCache = shouldVirtualize
+    ? getRowHeightCache(
+      initialModel.editorChapter?.chapterId ?? initialModel.chapter?.id ?? "",
+      initialModel.collapsedLanguageCodes,
+      initialModel.editorFontSizePx,
+    )
+    : null;
   let currentRangeKey = "";
   let animationFrameId = 0;
+  let glossaryHighlightTimeoutId = 0;
+  let glossaryHighlightFrameId = 0;
+
+  const scheduleVisibleGlossaryHighlights = () => {
+    if (glossaryHighlightTimeoutId) {
+      window.clearTimeout(glossaryHighlightTimeoutId);
+    }
+    if (glossaryHighlightFrameId) {
+      window.cancelAnimationFrame(glossaryHighlightFrameId);
+      glossaryHighlightFrameId = 0;
+    }
+
+    glossaryHighlightTimeoutId = window.setTimeout(() => {
+      glossaryHighlightTimeoutId = 0;
+      glossaryHighlightFrameId = window.requestAnimationFrame(() => {
+        glossaryHighlightFrameId = 0;
+        const model = buildEditorScreenViewModel(appState);
+        syncVisibleEditorGlossaryHighlightRows(root, scrollContainer, model.editorChapter);
+      });
+    }, EDITOR_GLOSSARY_SCROLL_DEBOUNCE_MS);
+  };
 
   const renderWindow = (force = false) => {
+    if (!shouldVirtualize || !(itemsContainer instanceof HTMLElement)) {
+      return;
+    }
+
     const model = buildEditorScreenViewModel(appState);
     const rowHeights = buildEditorRowHeights(
-      model.contentRows,
+      model.editorRows,
       rowHeightCache,
       model.collapsedLanguageCodes,
       model.editorFontSizePx,
+      model.languages,
     );
     const activeRowId =
       pendingTranslateAnchorRowId()
@@ -159,7 +200,7 @@ export function initializeEditorVirtualization(root, appState) {
       || model.editorChapter?.activeRowId
       || "";
     const pinnedRowIndex = activeRowId
-      ? model.contentRows.findIndex((row) => row.id === activeRowId)
+      ? findEditorChapterRowIndex(model.editorChapter, activeRowId)
       : -1;
     const windowState = calculateEditorVirtualWindow(
       rowHeights,
@@ -180,20 +221,23 @@ export function initializeEditorVirtualization(root, appState) {
     const focusSnapshot = captureFocusedEditorField(root);
     renderWindowRange(
       itemsContainer,
-      model.contentRows,
+      model.editorRows,
+      model.languages,
       model.collapsedLanguageCodes,
       windowState.startIndex,
       windowState.endIndex,
     );
     restoreFocusedEditorField(root, focusSnapshot);
+    restoreMountedEditorGlossaryHighlightsFromCache(itemsContainer, model.editorChapter);
 
     const heightsChanged = measureVisibleRowHeights(itemsContainer, rowHeightCache);
     if (heightsChanged) {
       const measuredHeights = buildEditorRowHeights(
-        model.contentRows,
+        model.editorRows,
         rowHeightCache,
         model.collapsedLanguageCodes,
         model.editorFontSizePx,
+        model.languages,
       );
       const measuredWindow = calculateEditorVirtualWindow(
         measuredHeights,
@@ -208,12 +252,14 @@ export function initializeEditorVirtualization(root, appState) {
         currentRangeKey = measuredRangeKey;
         renderWindowRange(
           itemsContainer,
-          model.contentRows,
+          model.editorRows,
+          model.languages,
           model.collapsedLanguageCodes,
           measuredWindow.startIndex,
           measuredWindow.endIndex,
         );
         restoreFocusedEditorField(root, focusSnapshot);
+        restoreMountedEditorGlossaryHighlightsFromCache(itemsContainer, model.editorChapter);
         measureVisibleRowHeights(itemsContainer, rowHeightCache);
       }
     }
@@ -231,10 +277,20 @@ export function initializeEditorVirtualization(root, appState) {
   };
 
   const handleResize = () => {
-    renderWindow(true);
+    if (shouldVirtualize) {
+      renderWindow(true);
+    }
+    scheduleVisibleGlossaryHighlights();
   };
 
-  scrollContainer.addEventListener("scroll", scheduleRender, { passive: true });
+  const handleScroll = () => {
+    if (shouldVirtualize) {
+      scheduleRender();
+    }
+    scheduleVisibleGlossaryHighlights();
+  };
+
+  scrollContainer.addEventListener("scroll", handleScroll, { passive: true });
   window.addEventListener("resize", handleResize);
 
   activeController = {
@@ -242,10 +298,19 @@ export function initializeEditorVirtualization(root, appState) {
       if (animationFrameId) {
         window.cancelAnimationFrame(animationFrameId);
       }
-      scrollContainer.removeEventListener("scroll", scheduleRender);
+      if (glossaryHighlightTimeoutId) {
+        window.clearTimeout(glossaryHighlightTimeoutId);
+      }
+      if (glossaryHighlightFrameId) {
+        window.cancelAnimationFrame(glossaryHighlightFrameId);
+      }
+      scrollContainer.removeEventListener("scroll", handleScroll);
       window.removeEventListener("resize", handleResize);
     },
   };
 
-  renderWindow(true);
+  if (shouldVirtualize) {
+    renderWindow(true);
+  }
+  scheduleVisibleGlossaryHighlights();
 }

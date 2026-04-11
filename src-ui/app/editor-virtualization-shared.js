@@ -11,21 +11,55 @@ function clampIndex(index, count) {
   return Math.min(Math.max(index, 0), count - 1);
 }
 
+function rowHeightCacheKey(row) {
+  if (typeof row?.id === "string" && row.id) {
+    return row.id;
+  }
+
+  if (typeof row?.rowId === "string" && row.rowId) {
+    return row.rowId;
+  }
+
+  return "";
+}
+
+function resolveEditorRowSectionCounts(row, collapsedLanguageCodes = new Set(), languages = []) {
+  if (Array.isArray(row?.sections)) {
+    const expandedSections = row.sections.filter((section) => !collapsedLanguageCodes.has(section.code)).length;
+    return {
+      sectionCount: row.sections.length,
+      expandedSections,
+      collapsedSections: row.sections.length - expandedSections,
+    };
+  }
+
+  const languageOptions = Array.isArray(languages) ? languages : [];
+  const collapsedSections = languageOptions.filter((language) => collapsedLanguageCodes.has(language.code)).length;
+  return {
+    sectionCount: languageOptions.length,
+    expandedSections: Math.max(0, languageOptions.length - collapsedSections),
+    collapsedSections,
+  };
+}
+
 export function estimateEditorRowHeight(
   row,
   collapsedLanguageCodes = new Set(),
   fontSizePx = 20,
+  languages = [],
 ) {
-  const sections = Array.isArray(row?.sections) ? row.sections : [];
-  const expandedSections = sections.filter((section) => !collapsedLanguageCodes.has(section.code)).length;
-  const collapsedSections = sections.length - expandedSections;
+  const { sectionCount, expandedSections, collapsedSections } = resolveEditorRowSectionCounts(
+    row,
+    collapsedLanguageCodes,
+    languages,
+  );
   const lineHeight = Math.max(fontSizePx * 1.5, 32);
 
   return Math.ceil(
     44
     + expandedSections * Math.max(118, lineHeight + 78)
     + collapsedSections * 34
-    + Math.max(0, sections.length - 1) * 16,
+    + Math.max(0, sectionCount - 1) * 16,
   );
 }
 
@@ -34,8 +68,12 @@ export function buildEditorRowHeights(
   rowHeightById = new Map(),
   collapsedLanguageCodes = new Set(),
   fontSizePx = 20,
+  languages = [],
 ) {
-  return rows.map((row) => rowHeightById.get(row.id) ?? estimateEditorRowHeight(row, collapsedLanguageCodes, fontSizePx));
+  return rows.map((row) => {
+    const cacheKey = rowHeightCacheKey(row);
+    return rowHeightById.get(cacheKey) ?? estimateEditorRowHeight(row, collapsedLanguageCodes, fontSizePx, languages);
+  });
 }
 
 function sumValues(values, startIndex, endIndexExclusive) {

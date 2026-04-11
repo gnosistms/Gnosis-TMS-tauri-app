@@ -7,6 +7,9 @@ import { listen } from "./runtime.js";
 const SYNC_WITH_SERVER_EVENT = "sync-with-server";
 const CHECK_FOR_UPDATES_EVENT = "check-for-updates";
 let activeGlossaryTermVariantDrag = null;
+let activeGlossaryTooltipMark = null;
+let activeGlossaryTooltipPointer = null;
+let glossaryTooltipPlacementFrameId = 0;
 
 function shouldTriggerSyncShortcut(event) {
   if (event.defaultPrevented || event.repeat) {
@@ -47,6 +50,153 @@ function shouldBlurActiveEditorField(event) {
 
   const key = typeof event.key === "string" ? event.key.toLowerCase() : "";
   return key === "enter" && event.shiftKey && !event.metaKey && !event.ctrlKey && !event.altKey;
+}
+
+function focusEditorFieldFromGlossaryMark(event) {
+  const mark = event.target instanceof Element
+    ? event.target.closest("[data-editor-glossary-mark]")
+    : null;
+  if (!mark) {
+    return false;
+  }
+
+  const fieldStack = mark.closest("[data-editor-glossary-field-stack]");
+  const field = fieldStack?.querySelector("[data-editor-row-field]");
+  if (!(field instanceof HTMLTextAreaElement)) {
+    return false;
+  }
+
+  event.preventDefault();
+  field.focus({ preventScroll: true });
+
+  const start = Number.parseInt(mark.dataset.textStart ?? "", 10);
+  const end = Number.parseInt(mark.dataset.textEnd ?? "", 10);
+  if (!Number.isInteger(start) || !Number.isInteger(end) || end <= start) {
+    return true;
+  }
+
+  const rect = mark.getBoundingClientRect();
+  const ratio =
+    rect.width > 0
+      ? Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width))
+      : 1;
+  const nextOffset = start + Math.round((end - start) * ratio);
+  field.setSelectionRange(nextOffset, nextOffset, "none");
+  return true;
+}
+
+function glossaryTooltipMark(target) {
+  return target instanceof Element
+    ? target.closest("[data-editor-glossary-mark][data-tooltip]")
+    : null;
+}
+
+function glossaryTooltipBoundaryRect(mark) {
+  const scrollContainer = mark.closest(".translate-main-scroll");
+  if (scrollContainer instanceof HTMLElement) {
+    return scrollContainer.getBoundingClientRect();
+  }
+
+  return {
+    left: 0,
+    right: window.innerWidth,
+    top: 0,
+    bottom: window.innerHeight,
+  };
+}
+
+function setActiveGlossaryTooltipPointer(clientX, clientY) {
+  if (Number.isFinite(clientX) && Number.isFinite(clientY)) {
+    activeGlossaryTooltipPointer = { clientX, clientY };
+    return;
+  }
+
+  activeGlossaryTooltipPointer = null;
+}
+
+function glossaryTooltipAnchorPoint(mark) {
+  const pointerClientX = activeGlossaryTooltipPointer?.clientX;
+  const pointerClientY = activeGlossaryTooltipPointer?.clientY;
+  if (Number.isFinite(pointerClientX) && Number.isFinite(pointerClientY)) {
+    return {
+      clientX: pointerClientX,
+      clientY: pointerClientY,
+    };
+  }
+
+  const markRect = mark.getBoundingClientRect();
+  return {
+    clientX: markRect.left + (markRect.width / 2),
+    clientY: markRect.top + (markRect.height / 2),
+  };
+}
+
+function updateGlossaryTooltipPlacement(mark) {
+  if (!(mark instanceof HTMLElement) || !mark.isConnected) {
+    return;
+  }
+
+  const boundaryRect = glossaryTooltipBoundaryRect(mark);
+  const boundaryVerticalMidline = boundaryRect.top + ((boundaryRect.bottom - boundaryRect.top) / 2);
+  const boundaryHorizontalMidline = boundaryRect.left + ((boundaryRect.right - boundaryRect.left) / 2);
+  const anchorPoint = glossaryTooltipAnchorPoint(mark);
+  const shouldPlaceBelow = anchorPoint.clientY < boundaryVerticalMidline;
+  const shouldAlignStart = anchorPoint.clientX < boundaryHorizontalMidline;
+
+  if (shouldPlaceBelow) {
+    mark.dataset.tooltipSide = "bottom";
+  } else {
+    mark.removeAttribute("data-tooltip-side");
+  }
+
+  if (shouldAlignStart) {
+    mark.dataset.tooltipAlign = "start";
+    return;
+  }
+
+  mark.dataset.tooltipAlign = "end";
+}
+
+function scheduleActiveGlossaryTooltipPlacementUpdate() {
+  if (glossaryTooltipPlacementFrameId || !(activeGlossaryTooltipMark instanceof HTMLElement)) {
+    return;
+  }
+
+  glossaryTooltipPlacementFrameId = window.requestAnimationFrame(() => {
+    glossaryTooltipPlacementFrameId = 0;
+    if (!(activeGlossaryTooltipMark instanceof HTMLElement) || !activeGlossaryTooltipMark.isConnected) {
+      activeGlossaryTooltipMark = null;
+      return;
+    }
+
+    updateGlossaryTooltipPlacement(activeGlossaryTooltipMark);
+  });
+}
+
+function activateGlossaryTooltipMark(mark) {
+  if (!(mark instanceof HTMLElement)) {
+    return;
+  }
+
+  activeGlossaryTooltipMark = mark;
+  updateGlossaryTooltipPlacement(mark);
+}
+
+function deactivateGlossaryTooltipMark(mark = activeGlossaryTooltipMark) {
+  if (glossaryTooltipPlacementFrameId) {
+    window.cancelAnimationFrame(glossaryTooltipPlacementFrameId);
+    glossaryTooltipPlacementFrameId = 0;
+  }
+
+  if (mark instanceof HTMLElement) {
+    mark.removeAttribute("data-tooltip-side");
+    mark.removeAttribute("data-tooltip-align");
+  }
+
+  if (!mark || activeGlossaryTooltipMark === mark) {
+    activeGlossaryTooltipMark = null;
+    activeGlossaryTooltipPointer = null;
+  }
 }
 
 function isGlossaryTermVariantSide(value) {
@@ -293,6 +443,42 @@ export function registerAppEvents(render) {
     void refreshCurrentScreen(render);
   });
 
+  document.addEventListener("mousedown", (event) => {
+    focusEditorFieldFromGlossaryMark(event);
+  });
+
+  document.addEventListener("pointerover", (event) => {
+    const mark = glossaryTooltipMark(event.target);
+    if (!mark) {
+      return;
+    }
+
+    setActiveGlossaryTooltipPointer(event.clientX, event.clientY);
+    activateGlossaryTooltipMark(mark);
+  });
+
+  document.addEventListener("pointerout", (event) => {
+    const mark = glossaryTooltipMark(event.target);
+    if (!mark) {
+      return;
+    }
+
+    const nextMark = glossaryTooltipMark(event.relatedTarget);
+    if (nextMark === mark) {
+      return;
+    }
+
+    deactivateGlossaryTooltipMark(mark);
+  });
+
+  document.addEventListener("scroll", () => {
+    scheduleActiveGlossaryTooltipPlacementUpdate();
+  }, true);
+
+  window.addEventListener("resize", () => {
+    scheduleActiveGlossaryTooltipPlacementUpdate();
+  });
+
   document.addEventListener("click", async (event) => {
     const disabledControl = event.target.closest('[aria-disabled="true"], :disabled');
     if (disabledControl) {
@@ -331,6 +517,12 @@ export function registerAppEvents(render) {
       return;
     }
 
+    const mark = glossaryTooltipMark(event.target);
+    if (mark && activeGlossaryTooltipMark === mark) {
+      setActiveGlossaryTooltipPointer(event.clientX, event.clientY);
+      updateGlossaryTooltipPlacement(mark);
+    }
+
     updateGlossaryTermVariantDrag(event);
   });
 
@@ -348,6 +540,7 @@ export function registerAppEvents(render) {
 
   window.addEventListener("blur", () => {
     cancelGlossaryTermVariantDrag();
+    deactivateGlossaryTooltipMark();
   });
 
   if (listen) {

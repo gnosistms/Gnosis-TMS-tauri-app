@@ -16,6 +16,7 @@ import {
   DIFF_INSERT,
 } from "../lib/vendor/diff-match-patch.js";
 import { buildEditorHistoryViewModel, editorHistoryEntryMatchesSection } from "../app/editor-history.js";
+import { buildEditorChapterRowViewModelById } from "../app/editor-row-model.js";
 import { buildEditorScreenViewModel } from "../app/editor-screen-model.js";
 import { renderTranslationContentRows, renderTranslationMarkerIcon } from "../app/editor-row-render.js";
 import { getNoticeBadgeText } from "../app/status-feedback.js";
@@ -287,8 +288,8 @@ function renderHistoryEntry(entry, previousEntry, activeLanguage, activeSection,
   `;
 }
 
-function renderHistorySidebar(editorChapter, rows, languages) {
-  const activeRow = rows.find((row) => row.id === editorChapter?.activeRowId) ?? null;
+function renderHistorySidebar(editorChapter, languages) {
+  const activeRow = buildEditorChapterRowViewModelById(editorChapter, languages, editorChapter?.activeRowId);
   const activeLanguage =
     languages.find((language) => language.code === editorChapter?.activeLanguageCode) ?? null;
   const activeSection =
@@ -401,7 +402,8 @@ export function renderTranslateScreen(state) {
     languages,
     sourceCode,
     targetCode,
-    contentRows,
+    editorRows,
+    rowCount,
     collapsedLanguageCodes,
     editorFontSizePx,
   } = buildEditorScreenViewModel(state);
@@ -456,7 +458,7 @@ export function renderTranslateScreen(state) {
         </div>
       </article>
     `;
-  } else if (contentRows.length === 0) {
+  } else if (rowCount === 0) {
     translateBody = `
       <article class="card card--translation">
         <div class="card__body">
@@ -465,7 +467,12 @@ export function renderTranslateScreen(state) {
       </article>
     `;
   } else {
-    translateBody = renderTranslationContentRows(contentRows, collapsedLanguageCodes, editorFontSizePx);
+    translateBody = renderTranslationContentRows(
+      editorRows,
+      languages,
+      collapsedLanguageCodes,
+      editorFontSizePx,
+    );
   }
 
   return pageShell({
@@ -489,7 +496,7 @@ export function renderTranslateScreen(state) {
           </div>
         </div>
         <div class="translate-sidebar-scroll">
-          ${renderHistorySidebar(editorChapter, contentRows, languages)}
+          ${renderHistorySidebar(editorChapter, languages)}
         </div>
       </section>
     `,
