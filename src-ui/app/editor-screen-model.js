@@ -1,6 +1,10 @@
 import { coerceEditorFontSizePx } from "./state.js";
 import { findChapterContextById } from "./translate-flow.js";
 
+let cachedEditorRowsRef = null;
+let cachedEditorLanguagesRef = null;
+let cachedLiveTranslationRows = [];
+
 function chapterLanguageOptions(chapter, editorChapter) {
   if (Array.isArray(editorChapter?.languages) && editorChapter.languages.length > 0) {
     return editorChapter.languages;
@@ -32,11 +36,21 @@ function resolveSelectedLanguageCodes(languages, chapter, editorChapter) {
 }
 
 function buildLiveTranslationRows(editorChapter, languages) {
-  if (!Array.isArray(editorChapter?.rows) || editorChapter.rows.length === 0) {
+  const editorRows = Array.isArray(editorChapter?.rows) ? editorChapter.rows : null;
+  const languageOptions = Array.isArray(languages) ? languages : [];
+
+  if (!editorRows || editorRows.length === 0) {
+    cachedEditorRowsRef = editorRows;
+    cachedEditorLanguagesRef = languageOptions;
+    cachedLiveTranslationRows = [];
     return [];
   }
 
-  return editorChapter.rows.map((row, index) => {
+  if (editorRows === cachedEditorRowsRef && languageOptions === cachedEditorLanguagesRef) {
+    return cachedLiveTranslationRows;
+  }
+
+  const liveRows = editorRows.map((row, index) => {
     const label =
       row.externalId?.trim()
       || row.description?.trim()
@@ -48,7 +62,7 @@ function buildLiveTranslationRows(editorChapter, languages) {
       title: label,
       saveStatus: row.saveStatus || "idle",
       saveError: row.saveError || "",
-      sections: languages.map((language) => ({
+      sections: languageOptions.map((language) => ({
         code: language.code,
         name: language.name,
         text: row.fields?.[language.code] ?? "",
@@ -61,6 +75,11 @@ function buildLiveTranslationRows(editorChapter, languages) {
       })),
     };
   });
+
+  cachedEditorRowsRef = editorRows;
+  cachedEditorLanguagesRef = languageOptions;
+  cachedLiveTranslationRows = liveRows;
+  return liveRows;
 }
 
 export function buildEditorScreenViewModel(appState) {

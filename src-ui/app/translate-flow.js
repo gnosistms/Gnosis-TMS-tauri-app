@@ -476,13 +476,15 @@ function applyEditorGlossaryHighlightMapToRowCard(rowCard, highlightMap) {
 
     const languageCode = stack.dataset.languageCode ?? "";
     const highlight = highlightMap.get(languageCode) ?? null;
+    const highlightHtml = typeof highlight?.html === "string" ? highlight.html : "";
+    const hasRenderableHighlight = highlight?.hasMatches === true && highlightHtml.length > 0;
     stack.classList.toggle(
       "translation-language-panel__field-stack--glossary",
-      highlight?.hasMatches === true,
+      hasRenderableHighlight,
     );
     const layer = stack.querySelector("[data-editor-glossary-highlight]");
     if (layer instanceof HTMLElement) {
-      layer.innerHTML = highlight?.html ?? "";
+      layer.innerHTML = hasRenderableHighlight ? highlightHtml : "";
     }
   });
 }

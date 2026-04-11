@@ -1,6 +1,6 @@
 export const EDITOR_ROW_GAP_PX = 24;
 export const EDITOR_VIRTUALIZATION_MIN_ROWS = 25;
-export const EDITOR_VIRTUALIZATION_OVERSCAN_PX = 900;
+export const EDITOR_VIRTUALIZATION_OVERSCAN_PX = 1800;
 export const EDITOR_VIRTUALIZATION_INITIAL_VIEWPORT_PX = 900;
 
 function clampIndex(index, count) {
