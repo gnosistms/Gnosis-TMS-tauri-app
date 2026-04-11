@@ -122,6 +122,24 @@ function normalizeTeamRecord(team) {
   };
 }
 
+function isOrganizationTeamRecord(team) {
+  return String(team?.accountType ?? "").trim().toLowerCase() === "organization";
+}
+
+function normalizePersistedTeamRecords(teams = []) {
+  const merged = new Map();
+  teams
+    .map(normalizeTeamRecord)
+    .filter(Boolean)
+    .filter(isOrganizationTeamRecord)
+    .forEach((team) => {
+      const key = teamIdentityKey(team);
+      const existing = merged.get(key);
+      merged.set(key, existing ? { ...existing, ...team } : team);
+    });
+  return [...merged.values()];
+}
+
 function teamIdentityKey(team) {
   return team.githubOrg.toLowerCase();
 }
@@ -139,9 +157,11 @@ export function loadStoredTeamRecords(login = getActiveStorageLogin()) {
       return [];
     }
 
-    return teams
-      .map(normalizeTeamRecord)
-      .filter(Boolean);
+    const normalizedTeams = normalizePersistedTeamRecords(teams);
+    if (normalizedTeams.length !== teams.length && scopedKey) {
+      writePersistentValue(scopedKey, normalizedTeams);
+    }
+    return normalizedTeams;
   } catch {
     return [];
   }
@@ -160,16 +180,7 @@ export function saveStoredTeamRecords(teams, login = getActiveStorageLogin()) {
     if (!scopedKey) {
       return;
     }
-    const merged = new Map();
-    teams
-      .map(normalizeTeamRecord)
-      .filter(Boolean)
-      .forEach((team) => {
-        const key = teamIdentityKey(team);
-        const existing = merged.get(key);
-        merged.set(key, existing ? { ...existing, ...team } : team);
-      });
-    writePersistentValue(scopedKey, [...merged.values()]);
+    writePersistentValue(scopedKey, normalizePersistedTeamRecords(teams));
   } catch {}
 }
 
@@ -179,14 +190,11 @@ export function upsertStoredTeamRecords(teams, login = getActiveStorageLogin()) 
     existingTeams.map((team) => [teamIdentityKey(team), team]),
   );
 
-  teams
-    .map(normalizeTeamRecord)
-    .filter(Boolean)
-    .forEach((team) => {
-      const key = teamIdentityKey(team);
-      const previous = merged.get(key);
-      merged.set(key, previous ? { ...previous, ...team } : team);
-    });
+  normalizePersistedTeamRecords(teams).forEach((team) => {
+    const key = teamIdentityKey(team);
+    const previous = merged.get(key);
+    merged.set(key, previous ? { ...previous, ...team } : team);
+  });
 
   const nextTeams = [...merged.values()];
   saveStoredTeamRecords(nextTeams, login);
@@ -194,16 +202,16 @@ export function upsertStoredTeamRecords(teams, login = getActiveStorageLogin()) 
 }
 
 export function replaceStoredTeamRecords(teams, login = getActiveStorageLogin()) {
-  const normalizedTeams = teams
-    .map(normalizeTeamRecord)
-    .filter(Boolean);
+  const normalizedTeams = normalizePersistedTeamRecords(teams);
   saveStoredTeamRecords(normalizedTeams, login);
   return normalizedTeams;
 }
 
 export function updateStoredTeamRecord(teamId, updates, login = getActiveStorageLogin()) {
-  const nextTeams = loadStoredTeamRecords(login).map((team) =>
-    team.id === teamId ? normalizeTeamRecord({ ...team, ...updates }) : team,
+  const nextTeams = normalizePersistedTeamRecords(
+    loadStoredTeamRecords(login).map((team) =>
+      team.id === teamId ? normalizeTeamRecord({ ...team, ...updates }) : team,
+    ),
   );
   saveStoredTeamRecords(nextTeams, login);
   return nextTeams;
@@ -229,14 +237,11 @@ export function updateStoredGithubAppTeam(teamId, updates) {
 
 export function mergeTeams(primaryTeams, secondaryTeams = []) {
   const mergedTeams = new Map();
-  [...secondaryTeams, ...primaryTeams]
-    .map(normalizeTeamRecord)
-    .filter(Boolean)
-    .forEach((team) => {
-      const key = teamIdentityKey(team);
-      const existing = mergedTeams.get(key);
-      mergedTeams.set(key, existing ? { ...existing, ...team } : team);
-    });
+  normalizePersistedTeamRecords([...secondaryTeams, ...primaryTeams]).forEach((team) => {
+    const key = teamIdentityKey(team);
+    const existing = mergedTeams.get(key);
+    mergedTeams.set(key, existing ? { ...existing, ...team } : team);
+  });
   return [...mergedTeams.values()];
 }
 
