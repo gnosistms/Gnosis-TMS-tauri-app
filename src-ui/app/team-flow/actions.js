@@ -123,10 +123,11 @@ export async function submitTeamRename(render) {
     render();
     void processPendingTeamMutations(render);
   } catch (error) {
+    state.teamRename.status = "idle";
     if (await handleSyncFailure(classifySyncError(error), { render })) {
+      render();
       return;
     }
-    state.teamRename.status = "idle";
     state.teamRename.error = error?.message ?? String(error);
     render();
   }
@@ -254,10 +255,11 @@ export async function confirmTeamPermanentDeletion(render) {
     resetTeamPermanentDeletion();
     render();
   } catch (error) {
+    state.teamPermanentDeletion.status = "idle";
     if (await handleSyncFailure(classifySyncError(error), { render })) {
+      render();
       return;
     }
-    state.teamPermanentDeletion.status = "idle";
     state.teamPermanentDeletion.error = error?.message ?? String(error);
     render();
   }
@@ -310,10 +312,11 @@ export async function confirmTeamLeave(render) {
     resetTeamLeave();
     render();
   } catch (error) {
+    state.teamLeave.status = "idle";
     if (await handleSyncFailure(classifySyncError(error), { render })) {
+      render();
       return;
     }
-    state.teamLeave.status = "idle";
     state.teamLeave.error = error?.message ?? String(error);
     render();
   }

@@ -206,10 +206,11 @@ export async function confirmTeamMemberRemoval(render) {
     render();
     await loadTeamUsers(render, selectedTeam.id);
   } catch (error) {
+    state.teamMemberRemoval.status = "idle";
     if (await handleSyncFailure(classifySyncError(error), { render })) {
+      render();
       return;
     }
-    state.teamMemberRemoval.status = "idle";
     state.teamMemberRemoval.error = error?.message ?? String(error);
     render();
   }

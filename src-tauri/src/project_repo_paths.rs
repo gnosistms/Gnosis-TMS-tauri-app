@@ -111,7 +111,9 @@ pub(crate) fn resolve_project_git_repo_path(
       if git_output(&repo_path, &["rev-parse", "--git-dir"], None).is_err() {
         return Err("The local project repo is missing or invalid.".to_string());
       }
-      return Ok(repo_path);
+      if project_repo_matches_identifier(&repo_path, project_id, Some(&repo_name)) {
+        return Ok(repo_path);
+      }
     }
   }
 

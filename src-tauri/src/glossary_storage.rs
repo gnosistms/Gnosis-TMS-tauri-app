@@ -1139,7 +1139,9 @@ fn glossary_git_repo_path(
       if git_output(&repo_path, &["rev-parse", "--git-dir"]).is_err() {
         return Err("The local glossary repo is missing or invalid.".to_string());
       }
-      return Ok(repo_path);
+      if glossary_repo_matches_identifier(&repo_path, glossary_id, Some(&repo_name)) {
+        return Ok(repo_path);
+      }
     }
   }
 
