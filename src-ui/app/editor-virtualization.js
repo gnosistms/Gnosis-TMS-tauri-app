@@ -72,30 +72,63 @@ function getRowHeightCache(chapterId, collapsedLanguageCodes, fontSizePx) {
   return rowHeightCacheByLayoutKey.get(cacheKey);
 }
 
+function measureRowCardHeight(rowCard, rowHeightCache) {
+  if (!(rowCard instanceof HTMLElement) || !(rowHeightCache instanceof Map)) {
+    return false;
+  }
+
+  const rowId = rowCard.dataset.rowId ?? "";
+  if (!rowId) {
+    return false;
+  }
+
+  const nextHeight = Math.ceil(rowCard.getBoundingClientRect().height);
+  if (!Number.isFinite(nextHeight) || nextHeight <= 0) {
+    return false;
+  }
+
+  if (rowHeightCache.get(rowId) === nextHeight) {
+    return false;
+  }
+
+  rowHeightCache.set(rowId, nextHeight);
+  return true;
+}
+
 function measureVisibleRowHeights(itemsContainer, rowHeightCache) {
   let changed = false;
   itemsContainer.querySelectorAll("[data-editor-row-card]").forEach((element) => {
-    if (!(element instanceof HTMLElement)) {
-      return;
-    }
-
-    const rowId = element.dataset.rowId ?? "";
-    if (!rowId) {
-      return;
-    }
-
-    const nextHeight = Math.ceil(element.getBoundingClientRect().height);
-    if (!Number.isFinite(nextHeight) || nextHeight <= 0) {
-      return;
-    }
-
-    if (rowHeightCache.get(rowId) !== nextHeight) {
-      rowHeightCache.set(rowId, nextHeight);
+    if (measureRowCardHeight(element, rowHeightCache)) {
       changed = true;
     }
   });
 
   return changed;
+}
+
+function pinnedFocusedRowId(root, scrollContainer) {
+  const activeElement = root.ownerDocument?.activeElement;
+  if (!(activeElement instanceof HTMLTextAreaElement) || !activeElement.matches("[data-editor-row-field]")) {
+    return "";
+  }
+
+  const rowCard = activeElement.closest("[data-editor-row-card]");
+  if (!(rowCard instanceof HTMLElement)) {
+    return "";
+  }
+
+  const containerRect = scrollContainer.getBoundingClientRect();
+  const rowRect = rowCard.getBoundingClientRect();
+  const pinMargin = Math.max(scrollContainer.clientHeight, 200);
+  const isNearViewport =
+    rowRect.bottom > containerRect.top - pinMargin
+    && rowRect.top < containerRect.bottom + pinMargin;
+
+  return isNearViewport ? (rowCard.dataset.rowId ?? "") : "";
+}
+
+export function syncEditorVirtualizationRowLayout(source) {
+  activeController?.syncRowLayout?.(source);
 }
 
 function updateSpacerHeight(spacer, height) {
@@ -192,8 +225,7 @@ export function initializeEditorVirtualization(root, appState) {
     );
     const activeRowId =
       pendingTranslateAnchorRowId()
-      || root.ownerDocument?.activeElement?.closest?.("[data-editor-row-card]")?.dataset?.rowId
-      || model.editorChapter?.activeRowId
+      || pinnedFocusedRowId(root, scrollContainer)
       || "";
     const pinnedRowIndex = activeRowId
       ? model.contentRows.findIndex((row) => row.id === activeRowId)
@@ -269,6 +301,19 @@ export function initializeEditorVirtualization(root, appState) {
     });
   };
 
+  const syncRowLayout = (source) => {
+    if (!shouldVirtualize || !(source instanceof Element)) {
+      return;
+    }
+
+    const rowCard = source.closest("[data-editor-row-card]");
+    if (!measureRowCardHeight(rowCard, rowHeightCache)) {
+      return;
+    }
+
+    scheduleRender();
+  };
+
   const handleResize = () => {
     if (shouldVirtualize) {
       renderWindow(true);
@@ -287,6 +332,7 @@ export function initializeEditorVirtualization(root, appState) {
   window.addEventListener("resize", handleResize);
 
   activeController = {
+    syncRowLayout,
     destroy() {
       if (animationFrameId) {
         window.cancelAnimationFrame(animationFrameId);

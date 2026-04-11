@@ -1,5 +1,6 @@
 import { state } from "./state.js";
 import { syncAutoSizeTextarea, syncEditorRowTextareaHeight } from "./autosize.js";
+import { syncEditorVirtualizationRowLayout } from "./editor-virtualization.js";
 import {
   updateProjectCreationName,
   updateProjectPermanentDeletionConfirmation,
@@ -293,6 +294,7 @@ function handleEditorRowFieldInput(event) {
     input.value,
   );
   syncEditorRowTextareaHeight(input);
+  syncEditorVirtualizationRowLayout(input);
   syncEditorGlossaryHighlightRowDom(input.dataset.rowId);
   return true;
 }

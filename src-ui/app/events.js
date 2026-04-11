@@ -140,6 +140,22 @@ function setActiveGlossaryTooltipPointer(clientX, clientY) {
   activeGlossaryTooltipPointer = null;
 }
 
+function glossaryTooltipMarkAtActivePointer() {
+  const clientX = activeGlossaryTooltipPointer?.clientX;
+  const clientY = activeGlossaryTooltipPointer?.clientY;
+  if (
+    !Number.isFinite(clientX)
+    || !Number.isFinite(clientY)
+    || typeof document.elementFromPoint !== "function"
+  ) {
+    return null;
+  }
+
+  const boundedClientX = Math.min(Math.max(0, clientX), Math.max(0, window.innerWidth - 1));
+  const boundedClientY = Math.min(Math.max(0, clientY), Math.max(0, window.innerHeight - 1));
+  return glossaryTooltipMark(document.elementFromPoint(boundedClientX, boundedClientY));
+}
+
 function hideGlossaryTooltip() {
   if (!(glossaryTooltipElement instanceof HTMLElement)) {
     return;
@@ -197,6 +213,17 @@ function scheduleActiveGlossaryTooltipPlacementUpdate() {
 
   glossaryTooltipPlacementFrameId = window.requestAnimationFrame(() => {
     glossaryTooltipPlacementFrameId = 0;
+    const hoveredMark = glossaryTooltipMarkAtActivePointer();
+    if (hoveredMark && hoveredMark !== activeGlossaryTooltipMark) {
+      activateGlossaryTooltipMark(hoveredMark);
+      return;
+    }
+
+    if (!hoveredMark && activeGlossaryTooltipPointer) {
+      deactivateGlossaryTooltipMark();
+      return;
+    }
+
     if (!(activeGlossaryTooltipMark instanceof HTMLElement) || !activeGlossaryTooltipMark.isConnected) {
       activeGlossaryTooltipMark = null;
       return;
