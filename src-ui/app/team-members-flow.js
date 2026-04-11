@@ -267,6 +267,7 @@ async function updateOrganizationAdminMembership(render, username, shouldBeAdmin
   } catch (error) {
     persistTeamUsers(selectedTeam, previousUsers);
     if (await handleSyncFailure(classifySyncError(error), { render })) {
+      failPageSync();
       return;
     }
     try {
@@ -286,6 +287,7 @@ async function updateOrganizationAdminMembership(render, username, shouldBeAdmin
           currentResource: true,
         })
       ) {
+        failPageSync();
         return;
       }
       state.userDiscovery = {

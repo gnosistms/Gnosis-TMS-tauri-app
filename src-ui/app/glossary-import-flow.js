@@ -35,6 +35,8 @@ import {
   submitResourcePageWrite,
 } from "./resource-page-controller.js";
 import { loadTeamGlossaries } from "./glossary-discovery-flow.js";
+import { classifySyncError } from "./sync-error.js";
+import { handleSyncFailure } from "./sync-recovery.js";
 
 function detectGlossaryImportFileType(fileName) {
   const normalized = String(fileName || "").trim().toLowerCase();
@@ -393,6 +395,9 @@ export async function submitGlossaryCreation(render) {
     },
     onError: async (error) => {
       clearResourceCreateProgress();
+      if (await handleSyncFailure(classifySyncError(error), { render })) {
+        return;
+      }
       state.glossaryCreation.status = "idle";
       state.glossaryCreation.error = error?.message ?? String(error);
     },
@@ -552,6 +557,9 @@ export async function importGlossaryFromTmx(render) {
     },
     onError: async (error) => {
       clearResourceCreateProgress();
+      if (await handleSyncFailure(classifySyncError(error), { render })) {
+        return;
+      }
       showNoticeBadge(error?.message ?? String(error), render);
     },
   });

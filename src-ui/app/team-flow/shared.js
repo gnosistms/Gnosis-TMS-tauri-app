@@ -40,7 +40,7 @@ export function resetOpenState() {
 
 export function isOrganizationTeamRecord(team) {
   const accountType = String(team?.accountType ?? "").trim().toLowerCase();
-  return accountType === "" || accountType === "organization";
+  return accountType === "organization";
 }
 
 export function applyStoredTeamRecords(teamRecords) {

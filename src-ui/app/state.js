@@ -92,7 +92,7 @@ export function hydratePersistentAppState() {
 
 function isOrganizationTeamRecord(team) {
   const accountType = String(team?.accountType ?? "").trim().toLowerCase();
-  return accountType === "" || accountType === "organization";
+  return accountType === "organization";
 }
 
 export function hydrateStoredTeamState() {

@@ -5,6 +5,10 @@ function renderAccessLabel(team) {
     return "owner access";
   }
 
+  if (team.canManageMembers || team.canManageProjects) {
+    return "admin access";
+  }
+
   if (team.canLeave) {
     return "translator access";
   }
