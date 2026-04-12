@@ -105,3 +105,81 @@ test("target highlights only appear for glossary terms present in the same row s
   assert.equal((targetHtml.match(/data-editor-glossary-mark/g) ?? []).length, 1);
   assert.doesNotMatch(targetHtml, /<mark[^>]*>thien dinh<\/mark>/);
 });
+
+test("source highlights include a structured tooltip payload for source-language hover cards", () => {
+  const model = buildEditorGlossaryModel(glossaryPayload({
+    terms: [
+      {
+        termId: "t1",
+        sourceTerms: ["gnostica", "gnostico"],
+        targetTerms: ["hoc tro gnosis", "cua gnosis"],
+        notesToTranslators: "Lien quan den Gnosis",
+        footnote: "Chu thich bo sung",
+      },
+    ],
+  }));
+
+  const highlights = buildEditorRowGlossaryHighlights([
+    {
+      code: "es",
+      text: "La gnostica habla.",
+    },
+  ], model);
+
+  const sourceHtml = highlights.get("es")?.html ?? "";
+  const payloadMatch = sourceHtml.match(/data-editor-glossary-tooltip-payload="([^"]+)"/);
+  assert.ok(payloadMatch);
+
+  const payloadJson = payloadMatch[1]
+    .replaceAll("&quot;", "\"")
+    .replaceAll("&#39;", "'")
+    .replaceAll("&amp;", "&");
+  const payload = JSON.parse(payloadJson);
+
+  assert.equal(payload.kind, "source");
+  assert.equal(payload.title, "gnostica");
+  assert.deepEqual(payload.variants, ["hoc tro gnosis", "cua gnosis"]);
+  assert.deepEqual(payload.translatorNotes, ["Lien quan den Gnosis"]);
+  assert.deepEqual(payload.footnotes, ["Chu thich bo sung"]);
+});
+
+test("target highlights include a structured tooltip payload with source variants", () => {
+  const model = buildEditorGlossaryModel(glossaryPayload({
+    terms: [
+      {
+        termId: "t1",
+        sourceTerms: ["gnostica", "gnostico"],
+        targetTerms: ["hoc tro gnosis", "cua gnosis"],
+        notesToTranslators: "Lien quan den Gnosis",
+        footnote: "Chu thich bo sung",
+      },
+    ],
+  }));
+
+  const highlights = buildEditorRowGlossaryHighlights([
+    {
+      code: "es",
+      text: "La gnostica habla.",
+    },
+    {
+      code: "vi",
+      text: "hoc tro gnosis dang hoc.",
+    },
+  ], model);
+
+  const targetHtml = highlights.get("vi")?.html ?? "";
+  const payloadMatch = targetHtml.match(/data-editor-glossary-tooltip-payload="([^"]+)"/);
+  assert.ok(payloadMatch);
+
+  const payloadJson = payloadMatch[1]
+    .replaceAll("&quot;", "\"")
+    .replaceAll("&#39;", "'")
+    .replaceAll("&amp;", "&");
+  const payload = JSON.parse(payloadJson);
+
+  assert.equal(payload.kind, "target");
+  assert.equal(payload.title, "hoc tro gnosis");
+  assert.deepEqual(payload.variants, ["gnostica", "gnostico"]);
+  assert.deepEqual(payload.translatorNotes, ["Lien quan den Gnosis"]);
+  assert.deepEqual(payload.footnotes, ["Chu thich bo sung"]);
+});

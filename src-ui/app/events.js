@@ -89,7 +89,7 @@ function focusEditorFieldFromGlossaryMark(event) {
 function glossaryTooltipMark(target) {
   return target instanceof Element
     ? target.closest(
-      "[data-editor-glossary-mark][data-editor-glossary-tooltip], [data-editor-glossary-mark][data-tooltip]",
+      "[data-editor-glossary-mark][data-editor-glossary-tooltip-payload], [data-editor-glossary-mark][data-editor-glossary-tooltip], [data-editor-glossary-mark][data-tooltip]",
     )
     : null;
 }
@@ -129,6 +129,95 @@ function glossaryTooltipText(mark) {
   return typeof mark?.dataset?.tooltip === "string"
     ? mark.dataset.tooltip.trim()
     : "";
+}
+
+function glossaryTooltipPayload(mark) {
+  if (typeof mark?.dataset?.editorGlossaryTooltipPayload !== "string") {
+    return null;
+  }
+
+  try {
+    const payload = JSON.parse(mark.dataset.editorGlossaryTooltipPayload);
+    if (payload?.kind !== "source" && payload?.kind !== "target") {
+      return null;
+    }
+
+    const title = typeof payload.title === "string" ? payload.title.trim() : "";
+    const variants = Array.isArray(payload.variants)
+      ? payload.variants.map((value) => String(value ?? "").trim()).filter(Boolean)
+      : [];
+    const translatorNotes = Array.isArray(payload.translatorNotes)
+      ? payload.translatorNotes.map((value) => String(value ?? "").trim()).filter(Boolean)
+      : [];
+    const footnotes = Array.isArray(payload.footnotes)
+      ? payload.footnotes.map((value) => String(value ?? "").trim()).filter(Boolean)
+      : [];
+    if (!title && variants.length === 0 && translatorNotes.length === 0 && footnotes.length === 0) {
+      return null;
+    }
+
+    return {
+      kind: payload.kind,
+      title,
+      variants,
+      translatorNotes,
+      footnotes,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function renderStructuredGlossaryTooltipBody(body, payload) {
+  body.replaceChildren();
+  body.classList.add("editor-glossary-info-card");
+
+  if (payload.title) {
+    const title = document.createElement("p");
+    title.className = "editor-glossary-info-card__title";
+    title.textContent = payload.title;
+    body.append(title);
+  }
+
+  if (payload.variants.length > 0) {
+    const variants = document.createElement("p");
+    variants.className = "editor-glossary-info-card__variants";
+    variants.textContent = payload.variants.join(", ");
+    body.append(variants);
+  }
+
+  const translatorNotes = Array.isArray(payload.translatorNotes) ? payload.translatorNotes : [];
+  const footnotes = Array.isArray(payload.footnotes) ? payload.footnotes : [];
+  if (translatorNotes.length > 0 || footnotes.length > 0) {
+    const comments = document.createElement("div");
+    comments.className = "editor-glossary-info-card__comments";
+    for (const note of translatorNotes) {
+      const comment = String(note ?? "").trim();
+      if (!comment) {
+        continue;
+      }
+
+      const paragraph = document.createElement("p");
+      paragraph.className = "editor-glossary-info-card__comment";
+      paragraph.textContent = comment;
+      comments.append(paragraph);
+    }
+    for (const footnote of footnotes) {
+      const text = String(footnote ?? "").trim();
+      if (!text) {
+        continue;
+      }
+
+      const paragraph = document.createElement("p");
+      paragraph.className = "editor-glossary-info-card__comment editor-glossary-info-card__footnote";
+      paragraph.textContent = text;
+      comments.append(paragraph);
+    }
+
+    if (comments.childElementCount > 0) {
+      body.append(comments);
+    }
+  }
 }
 
 function setActiveGlossaryTooltipPointer(clientX, clientY) {
@@ -171,8 +260,9 @@ function updateGlossaryTooltipPlacement(mark) {
     return;
   }
 
+  const tooltipPayload = glossaryTooltipPayload(mark);
   const tooltipText = glossaryTooltipText(mark);
-  if (!tooltipText) {
+  if (!tooltipPayload && !tooltipText) {
     hideGlossaryTooltip();
     return;
   }
@@ -184,7 +274,14 @@ function updateGlossaryTooltipPlacement(mark) {
     return;
   }
 
-  body.textContent = tooltipText;
+  if (tooltipPayload?.kind === "source" || tooltipPayload?.kind === "target") {
+    tooltip.classList.add("editor-glossary-tooltip--structured");
+    renderStructuredGlossaryTooltipBody(body, tooltipPayload);
+  } else {
+    tooltip.classList.remove("editor-glossary-tooltip--structured");
+    body.classList.remove("editor-glossary-info-card");
+    body.textContent = tooltipText;
+  }
   tooltip.hidden = false;
   tooltip.classList.add("is-visible");
   const markRect = mark.getBoundingClientRect();

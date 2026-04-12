@@ -79,6 +79,13 @@ export async function prepareStoredBrokerSessionRestore() {
 export async function restoreStoredBrokerSession(render, loadUserTeams, storedSession = null) {
   const session = storedSession ?? await loadStoredAuthSession();
   if (!session) {
+    state.auth = {
+      ...state.auth,
+      status: "idle",
+      message: "",
+      session: null,
+      pendingAutoOpenSingleTeam: false,
+    };
     state.screen = "start";
     render();
     return;
@@ -140,6 +147,7 @@ export async function restoreStoredBrokerSession(render, loadUserTeams, storedSe
         status: "idle",
         message: "",
         session: null,
+        pendingAutoOpenSingleTeam: false,
       };
       state.screen = "start";
       render();

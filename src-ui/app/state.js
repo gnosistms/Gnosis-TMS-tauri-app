@@ -30,7 +30,7 @@ export const state = {
   glossaries: [],
   users: [],
   auth: {
-    status: "idle",
+    status: "booting",
     message: "",
     session: null,
     pendingAutoOpenSingleTeam: false,

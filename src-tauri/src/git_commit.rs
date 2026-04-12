@@ -9,6 +9,11 @@ pub(crate) struct GitCommitMetadata<'a> {
   pub(crate) status_note: Option<&'a str>,
 }
 
+fn is_nothing_to_commit(detail: &str) -> bool {
+  let normalized = detail.trim().to_lowercase();
+  normalized.contains("nothing to commit") || normalized.contains("working tree clean")
+}
+
 struct SignedInGitAuthor {
   login: String,
   email: String,
@@ -91,6 +96,9 @@ pub(crate) fn git_commit_as_signed_in_user_with_metadata(
     } else {
       format!("exit status {}", output.status)
     };
+    if is_nothing_to_commit(&detail) {
+      return Ok(String::new());
+    }
     return Err(format!("git commit failed: {detail}"));
   }
 

@@ -151,7 +151,7 @@ export function renderGlossaryTermEditorModal(state) {
   });
 
   return `
-    <div class="modal-backdrop">
+    <div class="modal-backdrop modal-backdrop--glossary-term">
       <section class="card modal-card modal-card--glossary-term">
         <div class="card__body modal-card__body glossary-term-modal">
           <h2 class="modal__title">${editor.termId ? "Edit Term" : "New Term"}</h2>

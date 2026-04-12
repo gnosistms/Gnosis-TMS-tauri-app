@@ -61,15 +61,17 @@ function sanitizeTermList(values) {
     .filter(Boolean);
 }
 
-function glossaryDetailNotes(term) {
-  const notes = [];
-  if (typeof term?.notesToTranslators === "string" && term.notesToTranslators.trim()) {
-    notes.push(`Notes: ${term.notesToTranslators.trim()}`);
-  }
-  if (typeof term?.footnote === "string" && term.footnote.trim()) {
-    notes.push(`Footnote: ${term.footnote.trim()}`);
-  }
-  return notes;
+function glossaryDetailFields(term) {
+  return {
+    translatorNotes:
+      typeof term?.notesToTranslators === "string" && term.notesToTranslators.trim()
+        ? [term.notesToTranslators.trim()]
+        : [],
+    footnotes:
+      typeof term?.footnote === "string" && term.footnote.trim()
+        ? [term.footnote.trim()]
+        : [],
+  };
 }
 
 function buildLanguageGlossaryMatcher(entries, matchLanguage) {
@@ -96,8 +98,11 @@ function buildLanguageGlossaryMatcher(entries, matchLanguage) {
         for (const targetTerm of entry.targetTerms || []) {
           existingCandidate.targetTerms.add(targetTerm);
         }
-        for (const note of entry.notes || []) {
-          existingCandidate.notes.add(note);
+        for (const note of entry.translatorNotes || []) {
+          existingCandidate.translatorNotes.add(note);
+        }
+        for (const footnote of entry.footnotes || []) {
+          existingCandidate.footnotes.add(footnote);
         }
         continue;
       }
@@ -107,7 +112,8 @@ function buildLanguageGlossaryMatcher(entries, matchLanguage) {
         tokens,
         sourceTerms: new Set(entry.sourceTerms || []),
         targetTerms: new Set(entry.targetTerms || []),
-        notes: new Set(entry.notes || []),
+        translatorNotes: new Set(entry.translatorNotes || []),
+        footnotes: new Set(entry.footnotes || []),
         characterLength: String(matchTerm ?? "").length,
         matchLanguage,
       };
@@ -151,18 +157,26 @@ export function buildEditorGlossaryModel(glossary) {
   const activeTerms = (Array.isArray(glossary?.terms) ? glossary.terms : [])
     .filter((term) => term?.lifecycleState !== "deleted");
 
-  const sourceEntries = activeTerms.map((term) => ({
-    sourceTerms: sanitizeTermList(term?.sourceTerms),
-    targetTerms: sanitizeTermList(term?.targetTerms),
-    notes: glossaryDetailNotes(term),
-    matchTerms: sanitizeTermList(term?.sourceTerms),
-  }));
-  const targetEntries = activeTerms.map((term) => ({
-    sourceTerms: sanitizeTermList(term?.sourceTerms),
-    targetTerms: sanitizeTermList(term?.targetTerms),
-    notes: glossaryDetailNotes(term),
-    matchTerms: sanitizeTermList(term?.targetTerms),
-  }));
+  const sourceEntries = activeTerms.map((term) => {
+    const details = glossaryDetailFields(term);
+    return {
+      sourceTerms: sanitizeTermList(term?.sourceTerms),
+      targetTerms: sanitizeTermList(term?.targetTerms),
+      translatorNotes: details.translatorNotes,
+      footnotes: details.footnotes,
+      matchTerms: sanitizeTermList(term?.sourceTerms),
+    };
+  });
+  const targetEntries = activeTerms.map((term) => {
+    const details = glossaryDetailFields(term);
+    return {
+      sourceTerms: sanitizeTermList(term?.sourceTerms),
+      targetTerms: sanitizeTermList(term?.targetTerms),
+      translatorNotes: details.translatorNotes,
+      footnotes: details.footnotes,
+      matchTerms: sanitizeTermList(term?.targetTerms),
+    };
+  });
 
   const sourceMatcher = buildLanguageGlossaryMatcher(sourceEntries, sourceLanguage.code);
   const targetMatcher = buildLanguageGlossaryMatcher(targetEntries, targetLanguage.code);
@@ -271,7 +285,8 @@ export function findLongestGlossaryMatches(text, matcher) {
 function buildGlossaryTooltipText(candidate, glossaryModel) {
   const sourceTerms = Array.from(candidate?.sourceTerms || []);
   const targetTerms = Array.from(candidate?.targetTerms || []);
-  const notes = Array.from(candidate?.notes || []);
+  const translatorNotes = Array.from(candidate?.translatorNotes || []);
+  const footnotes = Array.from(candidate?.footnotes || []);
   const parts = [];
 
   if (sourceTerms.length > 0) {
@@ -281,11 +296,40 @@ function buildGlossaryTooltipText(candidate, glossaryModel) {
     const label = glossaryModel?.targetLanguage?.name || glossaryModel?.targetLanguage?.code || "Target";
     parts.push(`${label}: ${targetTerms.join(", ")}`);
   }
-  if (notes.length > 0) {
-    parts.push(notes.join(" | "));
+  if (translatorNotes.length > 0) {
+    parts.push(translatorNotes.join(" | "));
+  }
+  if (footnotes.length > 0) {
+    parts.push(footnotes.join(" | "));
   }
 
   return parts.join(" | ");
+}
+
+function buildStructuredGlossaryTooltipPayload(candidate, hoveredTerm, glossaryModel) {
+  const title = String(hoveredTerm ?? "").trim();
+  const isSourceMatch = candidate?.matchLanguage === glossaryModel?.sourceLanguage?.code;
+  const isTargetMatch = candidate?.matchLanguage === glossaryModel?.targetLanguage?.code;
+  if (!isSourceMatch && !isTargetMatch) {
+    return null;
+  }
+
+  const variants = sanitizeTermList(
+    Array.from(isSourceMatch ? candidate?.targetTerms || [] : candidate?.sourceTerms || []),
+  );
+  const translatorNotes = sanitizeTermList(Array.from(candidate?.translatorNotes || []));
+  const footnotes = sanitizeTermList(Array.from(candidate?.footnotes || []));
+  if (!title && variants.length === 0 && translatorNotes.length === 0 && footnotes.length === 0) {
+    return null;
+  }
+
+  return {
+    kind: isSourceMatch ? "source" : "target",
+    title,
+    variants,
+    translatorNotes,
+    footnotes,
+  };
 }
 
 function buildHighlightMarkup(text, matcher, glossaryModel, resolveMatchState = null) {
@@ -324,11 +368,19 @@ function buildHighlightMarkup(text, matcher, glossaryModel, resolveMatchState = 
         matchClasses.push("glossary-match-error");
       }
       const tooltipText = buildGlossaryTooltipText(currentMatch.candidate, glossaryModel);
+      const tooltipPayload = buildStructuredGlossaryTooltipPayload(
+        currentMatch.candidate,
+        segment,
+        glossaryModel,
+      );
       const tooltipAttribute = tooltipText
         ? ` data-editor-glossary-tooltip="${escapeHtmlAttribute(tooltipText)}"`
         : "";
+      const tooltipPayloadAttribute = tooltipPayload
+        ? ` data-editor-glossary-tooltip-payload="${escapeHtmlAttribute(JSON.stringify(tooltipPayload))}"`
+        : "";
       htmlParts.push(
-        `<mark class="${matchClasses.join(" ")}" data-editor-glossary-mark data-text-start="${matchStart}" data-text-end="${matchEnd}"${tooltipAttribute}>${escapeHtml(segment)}</mark>`,
+        `<mark class="${matchClasses.join(" ")}" data-editor-glossary-mark data-text-start="${matchStart}" data-text-end="${matchEnd}"${tooltipAttribute}${tooltipPayloadAttribute}>${escapeHtml(segment)}</mark>`,
       );
       characterOffset = matchEnd;
       tokenIndex = currentMatch.endTokenIndex + 1;
@@ -393,7 +445,8 @@ function buildRowTargetMatcher(sections, glossaryModel) {
   const targetEntries = matchedCandidates.map((candidate) => ({
     sourceTerms: Array.from(candidate.sourceTerms || []),
     targetTerms: Array.from(candidate.targetTerms || []),
-    notes: Array.from(candidate.notes || []),
+    translatorNotes: Array.from(candidate.translatorNotes || []),
+    footnotes: Array.from(candidate.footnotes || []),
     matchTerms: Array.from(candidate.targetTerms || []),
   }));
 

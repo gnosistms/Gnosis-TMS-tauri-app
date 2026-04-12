@@ -735,7 +735,7 @@ a {
 
 .editor-glossary-tooltip {
   position: fixed;
-  max-width: 220px;
+  max-width: min(560px, calc(100vw - 28px));
   width: max-content;
   pointer-events: none;
   z-index: 90;
@@ -749,7 +749,7 @@ a {
 
 .editor-glossary-tooltip__body {
   padding: 8px 10px;
-  border-radius: 12px;
+  border-radius: 8px;
   background: rgba(255, 249, 242, 0.98);
   box-shadow: 0 10px 20px rgba(88, 60, 21, 0.08);
   color: rgb(156, 132, 98);
@@ -758,6 +758,50 @@ a {
   line-height: 1.25;
   text-align: center;
   white-space: normal;
+}
+
+.editor-glossary-info-card {
+  min-width: min(320px, calc(100vw - 28px));
+  max-width: min(560px, calc(100vw - 28px));
+  padding: 24px 26px;
+  background: rgba(255, 249, 242, 0.98);
+  box-shadow: 0 18px 32px rgba(88, 60, 21, 0.14);
+  color: var(--text);
+  text-align: left;
+}
+
+.editor-glossary-info-card__title,
+.editor-glossary-info-card__variants,
+.editor-glossary-info-card__comment {
+  margin: 0;
+}
+
+.editor-glossary-info-card__title {
+  color: var(--text);
+  font-size: 22.4px;
+  font-weight: 750;
+  line-height: 1.08;
+}
+
+.editor-glossary-info-card__variants {
+  margin-top: 14.4px;
+  color: var(--link);
+  font-size: 16.1px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.editor-glossary-info-card__comments {
+  display: grid;
+  gap: 8.4px;
+  margin-top: 15.6px;
+}
+
+.editor-glossary-info-card__comment {
+  color: rgba(74, 45, 19, 0.74);
+  font-size: 16.1px;
+  font-weight: 500;
+  line-height: 1.4;
 }
 
 .button--primary:disabled {
