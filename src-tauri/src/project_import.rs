@@ -13,6 +13,7 @@ use self::{
     list_local_gtms_project_files_sync,
     load_gtms_chapter_editor_data_sync,
     permanently_delete_gtms_editor_row_sync,
+    reverse_gtms_editor_batch_replace_commit_sync,
     purge_local_gtms_project_repo_sync,
     restore_gtms_editor_field_from_history_sync,
     update_gtms_editor_row_lifecycle_sync,
@@ -34,6 +35,8 @@ use self::{
     PurgeLocalProjectRepoInput,
     RestoreEditorFieldHistoryInput,
     RestoreEditorFieldHistoryResponse,
+    ReverseEditorBatchReplaceCommitInput,
+    ReverseEditorBatchReplaceCommitResponse,
     UpdateChapterGlossaryLinksInput,
     UpdateChapterGlossaryLinksResponse,
     UpdateChapterLanguageSelectionInput,
@@ -241,6 +244,18 @@ pub(crate) async fn restore_gtms_editor_field_from_history(
   })
   .await
   .map_err(|error| format!("The row history restore worker failed: {error}"))?
+}
+
+#[tauri::command]
+pub(crate) async fn reverse_gtms_editor_batch_replace_commit(
+  app: AppHandle,
+  input: ReverseEditorBatchReplaceCommitInput,
+) -> Result<ReverseEditorBatchReplaceCommitResponse, String> {
+  tauri::async_runtime::spawn_blocking(move || {
+    reverse_gtms_editor_batch_replace_commit_sync(&app, input)
+  })
+  .await
+  .map_err(|error| format!("The batch replace undo worker failed: {error}"))?
 }
 
 #[tauri::command]

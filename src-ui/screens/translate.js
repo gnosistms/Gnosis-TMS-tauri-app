@@ -15,7 +15,11 @@ import {
   DIFF_DELETE,
   DIFF_INSERT,
 } from "../lib/vendor/diff-match-patch.js";
-import { buildEditorHistoryViewModel, editorHistoryEntryMatchesSection } from "../app/editor-history.js";
+import {
+  buildEditorHistoryViewModel,
+  editorHistoryEntryMatchesSection,
+  historyEntryCanUndoReplace,
+} from "../app/editor-history.js";
 import { buildEditorScreenViewModel } from "../app/editor-screen-model.js";
 import { renderTranslationContentRows, renderTranslationMarkerIcon } from "../app/editor-row-render.js";
 import { getNoticeBadgeText } from "../app/status-feedback.js";
@@ -23,6 +27,7 @@ import { MANAGE_TARGET_LANGUAGES_OPTION_VALUE } from "../app/translate-flow.js";
 import { EDITOR_FONT_SIZE_OPTIONS } from "../app/state.js";
 import { renderEditorRowInsertModal } from "./editor-row-insert-modal.js";
 import { renderEditorRowPermanentDeletionModal } from "./editor-row-permanent-deletion-modal.js";
+import { renderEditorReplaceUndoModal } from "./editor-replace-undo-modal.js";
 import { renderTargetLanguageManagerModal } from "./target-language-manager-modal.js";
 
 const historyDiffEngine = new diff_match_patch();
@@ -372,22 +377,42 @@ function renderHistoryNote(entry, previousEntry) {
     : "";
 }
 
-function renderHistoryEntry(entry, previousEntry, activeLanguage, activeSection, canRestore, history) {
+function renderHistoryEntry(entry, previousEntry, activeLanguage, activeSection, canRestore, history, replaceUndoModal) {
   const isCurrentValue = editorHistoryEntryMatchesSection(entry, activeSection);
   const isRestoring =
     history.status === "restoring" && history.restoringCommitSha === entry.commitSha;
+  const isUndoingReplace =
+    replaceUndoModal?.status === "loading" && replaceUndoModal?.commitSha === entry.commitSha;
   const restoreButton = isCurrentValue
-    ? secondaryButton("Current", "noop", { disabled: true, compact: true })
+    ? secondaryButton("Current", "noop", {
+      disabled: true,
+      compact: true,
+      className: "button--replace-toolbar",
+    })
     : secondaryButton(
       isRestoring ? "Restoring..." : "Restore",
       `restore-editor-history:${entry.commitSha}`,
       {
         disabled: !canRestore || history.status === "restoring",
         compact: true,
+        className: "button--replace-toolbar",
         tooltip: "Restore this version to the editor",
         tooltipOptions: { align: "start" },
       },
     );
+  const undoReplaceButton = historyEntryCanUndoReplace(entry)
+    ? secondaryButton(
+      isUndoingReplace ? "Undoing..." : "Undo replace",
+      `open-editor-replace-undo:${entry.commitSha}`,
+      {
+        disabled: history.status === "restoring" || replaceUndoModal?.status === "loading",
+        compact: true,
+        className: "button--replace-toolbar",
+        tooltip: "Undo this batch replace commit",
+        tooltipOptions: { align: "start" },
+      },
+    )
+    : "";
 
   return `
     <article class="history-item">
@@ -396,6 +421,7 @@ function renderHistoryEntry(entry, previousEntry, activeLanguage, activeSection,
       <div class="history-item__footer">
         <div class="history-item__actions">
           ${restoreButton}
+          ${undoReplaceButton}
         </div>
         <p class="history-item__meta">${escapeHtml(formatHistoryTimestamp(entry.committedAt))}</p>
       </div>
@@ -417,6 +443,15 @@ function renderHistorySidebar(editorChapter, rows, languages) {
           error: "",
           entries: [],
           restoringCommitSha: null,
+        };
+  const replaceUndoModal =
+    editorChapter?.replaceUndoModal && typeof editorChapter.replaceUndoModal === "object"
+      ? editorChapter.replaceUndoModal
+      : {
+          isOpen: false,
+          status: "idle",
+          error: "",
+          commitSha: null,
         };
   const expandedGroupKeys = history.expandedGroupKeys instanceof Set ? history.expandedGroupKeys : new Set();
   const canRestore =
@@ -483,6 +518,7 @@ function renderHistorySidebar(editorChapter, rows, languages) {
                                 activeSection,
                                 canRestore,
                                 history,
+                                replaceUndoModal,
                               ),
                             )
                             .join("")}
@@ -623,5 +659,6 @@ export function renderTranslateScreen(state) {
     `,
   }) + renderTargetLanguageManagerModal(state)
     + renderEditorRowInsertModal(state)
-    + renderEditorRowPermanentDeletionModal(state);
+    + renderEditorRowPermanentDeletionModal(state)
+    + renderEditorReplaceUndoModal(state);
 }

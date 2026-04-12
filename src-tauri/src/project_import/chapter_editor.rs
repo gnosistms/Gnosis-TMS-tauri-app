@@ -134,7 +134,7 @@ pub(crate) struct UpdateEditorRowFieldsInput {
   fields: BTreeMap<String, String>,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct UpdateEditorRowFieldsBatchRowInput {
   row_id: String,
@@ -288,6 +288,25 @@ pub(crate) struct RestoreEditorFieldHistoryResponse {
   reviewed: bool,
   please_check: bool,
   source_word_counts: BTreeMap<String, usize>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ReverseEditorBatchReplaceCommitInput {
+  installation_id: i64,
+  repo_name: String,
+  project_id: Option<String>,
+  chapter_id: String,
+  commit_sha: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ReverseEditorBatchReplaceCommitResponse {
+  updated_rows: Vec<UpdateEditorRowFieldsBatchRowInput>,
+  skipped_row_ids: Vec<String>,
+  source_word_counts: BTreeMap<String, usize>,
+  commit_sha: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -1498,6 +1517,130 @@ pub(super) fn restore_gtms_editor_field_from_history_sync(
   })
 }
 
+pub(super) fn reverse_gtms_editor_batch_replace_commit_sync(
+  app: &AppHandle,
+  input: ReverseEditorBatchReplaceCommitInput,
+) -> Result<ReverseEditorBatchReplaceCommitResponse, String> {
+  let repo_path = resolve_project_git_repo_path(
+    app,
+    input.installation_id,
+    input.project_id.as_deref(),
+    Some(&input.repo_name),
+  )?;
+  ensure_repo_exists(&repo_path, "The local project repo is not available yet.")?;
+  ensure_valid_git_repo(&repo_path, "The local project repo is missing or invalid.")?;
+
+  let chapter_path = find_chapter_path_by_id(&repo_path.join("chapters"), &input.chapter_id)?;
+  let chapter_json_path = chapter_path.join("chapter.json");
+  let chapter_file: StoredChapterFile = read_json_file(&chapter_json_path, "chapter.json")?;
+  let languages = sanitize_chapter_languages(&chapter_file.languages);
+  let selected_operation = load_git_commit_operation_type(&repo_path, &input.commit_sha)?;
+  if selected_operation.as_deref() != Some("editor-replace") {
+    return Err("Only batch replace commits can be undone from history.".to_string());
+  }
+
+  let parent_commit_sha = git_output(&repo_path, &["rev-parse", &format!("{}^", input.commit_sha)])
+    .map_err(|_| "The selected batch replace commit does not have a previous version to restore.".to_string())?;
+  let relative_chapter_path = repo_relative_path(&repo_path, &chapter_path)?;
+  let relative_row_paths = load_commit_row_paths_for_chapter(&repo_path, &input.commit_sha, &relative_chapter_path)?;
+  if relative_row_paths.is_empty() {
+    return Err("The selected batch replace commit does not contain any rows in this file.".to_string());
+  }
+
+  let mut updated_rows = Vec::new();
+  let mut skipped_row_ids = Vec::new();
+  let mut relative_paths_to_add = Vec::new();
+
+  for relative_row_path in relative_row_paths {
+    let row_id = row_id_from_relative_row_path(&relative_row_path)
+      .ok_or_else(|| format!("Could not determine the row id for '{}'.", relative_row_path))?;
+    if commit_has_later_changes_for_path(&repo_path, &input.commit_sha, &relative_row_path)? {
+      skipped_row_ids.push(row_id);
+      continue;
+    }
+
+    let row_json_path = repo_path.join(&relative_row_path);
+    if !row_json_path.exists() {
+      skipped_row_ids.push(row_id);
+      continue;
+    }
+
+    let restored_row_text = git_output(&repo_path, &["show", &format!("{parent_commit_sha}:{relative_row_path}")])
+      .map_err(|_| format!("Could not load the previous version of row '{}'.", row_id))?;
+    let normalized_restored_row_text = ensure_text_has_trailing_newline(&restored_row_text);
+    let current_row_text = fs::read_to_string(&row_json_path)
+      .map_err(|error| format!("Could not read row file '{}': {error}", row_json_path.display()))?;
+    if normalized_restored_row_text == current_row_text {
+      continue;
+    }
+
+    let restored_row_file: StoredRowFile = serde_json::from_str(&normalized_restored_row_text).map_err(|error| {
+      format!(
+        "Could not parse the previous version of row '{}': {error}",
+        row_id
+      )
+    })?;
+    write_text_file(&row_json_path, &normalized_restored_row_text)?;
+    relative_paths_to_add.push(relative_row_path);
+    updated_rows.push(UpdateEditorRowFieldsBatchRowInput {
+      row_id,
+      fields: row_plain_text_fields(&restored_row_file),
+    });
+  }
+
+  if updated_rows.is_empty() {
+    let source_word_counts = if chapter_file.source_word_counts.is_empty() {
+      let rows = load_editor_rows(&chapter_path.join("rows"))?;
+      resolve_source_word_counts(&chapter_file, Some(&rows), &languages)
+    } else {
+      resolve_source_word_counts(&chapter_file, None, &languages)
+    };
+    return Ok(ReverseEditorBatchReplaceCommitResponse {
+      updated_rows,
+      skipped_row_ids,
+      source_word_counts,
+      commit_sha: None,
+    });
+  }
+
+  let rows = load_editor_rows(&chapter_path.join("rows"))?;
+  let source_word_counts = resolve_source_word_counts(&chapter_file, Some(&rows), &languages);
+  write_chapter_source_word_counts(&chapter_json_path, &source_word_counts)?;
+
+  let relative_chapter_json = repo_relative_path(&repo_path, &chapter_json_path)?;
+  let mut add_args = vec!["add"];
+  for path in &relative_paths_to_add {
+    add_args.push(path.as_str());
+  }
+  add_args.push(relative_chapter_json.as_str());
+  git_output(&repo_path, &add_args)?;
+
+  let mut commit_paths: Vec<&str> = relative_paths_to_add.iter().map(String::as_str).collect();
+  commit_paths.push(relative_chapter_json.as_str());
+  let commit_output = git_commit_as_signed_in_user_with_metadata(
+    app,
+    &repo_path,
+    &format!("Undo batch replace in {} {}", updated_rows.len(), if updated_rows.len() == 1 { "row" } else { "rows" }),
+    &commit_paths,
+    CommitMetadata {
+      operation: Some("editor-replace"),
+      status_note: None,
+    },
+  )?;
+  let commit_sha = if commit_output.is_empty() {
+    None
+  } else {
+    Some(git_output(&repo_path, &["rev-parse", "--short", "HEAD"])?)
+  };
+
+  Ok(ReverseEditorBatchReplaceCommitResponse {
+    updated_rows,
+    skipped_row_ids,
+    source_word_counts,
+    commit_sha,
+  })
+}
+
 fn compare_stored_rows(left: &StoredRowFile, right: &StoredRowFile) -> Ordering {
   left
     .structure
@@ -1788,6 +1931,68 @@ fn status_note_for_field_flag(flag: &str, enabled: bool) -> &'static str {
   }
 }
 
+fn row_plain_text_fields(row: &StoredRowFile) -> BTreeMap<String, String> {
+  row
+    .fields
+    .iter()
+    .map(|(code, field)| (code.clone(), field.plain_text.clone()))
+    .collect()
+}
+
+fn ensure_text_has_trailing_newline(text: &str) -> String {
+  if text.ends_with('\n') {
+    text.to_string()
+  } else {
+    format!("{text}\n")
+  }
+}
+
+fn load_git_commit_operation_type(repo_path: &Path, commit_sha: &str) -> Result<Option<String>, String> {
+  let full_message = git_output(repo_path, &["show", "-s", "--format=%B", commit_sha])?;
+  let (_, operation_type, _) = parse_git_commit_message(&full_message);
+  Ok(operation_type)
+}
+
+fn load_commit_row_paths_for_chapter(
+  repo_path: &Path,
+  commit_sha: &str,
+  relative_chapter_path: &str,
+) -> Result<Vec<String>, String> {
+  let changed_paths = git_output(repo_path, &["show", "--format=", "--name-only", commit_sha])?;
+  Ok(filter_commit_row_paths_for_chapter(
+    changed_paths.lines(),
+    relative_chapter_path,
+  ))
+}
+
+fn filter_commit_row_paths_for_chapter<'a>(
+  changed_paths: impl IntoIterator<Item = &'a str>,
+  relative_chapter_path: &str,
+) -> Vec<String> {
+  let row_prefix = format!("{}/rows/", relative_chapter_path.trim_end_matches('/'));
+  let mut row_paths = changed_paths
+    .into_iter()
+    .map(str::trim)
+    .filter(|path| path.starts_with(&row_prefix) && path.ends_with(".json"))
+    .map(ToOwned::to_owned)
+    .collect::<Vec<_>>();
+  row_paths.sort();
+  row_paths.dedup();
+  row_paths
+}
+
+fn row_id_from_relative_row_path(relative_row_path: &str) -> Option<String> {
+  Path::new(relative_row_path)
+    .file_stem()
+    .and_then(|value| value.to_str())
+    .map(ToOwned::to_owned)
+}
+
+fn commit_has_later_changes_for_path(repo_path: &Path, commit_sha: &str, relative_path: &str) -> Result<bool, String> {
+  let output = git_output(repo_path, &["log", "--format=%H", &format!("{commit_sha}..HEAD"), "--", relative_path])?;
+  Ok(!output.trim().is_empty())
+}
+
 fn ensure_editor_field_object_defaults(
   field_object: &mut serde_json::Map<String, Value>,
 ) -> Result<(), String> {
@@ -2021,6 +2226,41 @@ fn sanitize_chapter_languages(languages: &[ChapterLanguage]) -> Vec<ChapterLangu
   }
 
   sanitized
+}
+
+#[cfg(test)]
+mod tests {
+  use super::{filter_commit_row_paths_for_chapter, parse_git_commit_message};
+
+  #[test]
+  fn parse_git_commit_message_reads_editor_replace_operation_trailer() {
+    let (subject, operation_type, status_note) = parse_git_commit_message(
+      "Undo batch replace in 3 rows\n\nGTMS-Operation: editor-replace\n",
+    );
+
+    assert_eq!(subject, "Undo batch replace in 3 rows");
+    assert_eq!(operation_type.as_deref(), Some("editor-replace"));
+    assert_eq!(status_note, None);
+  }
+
+  #[test]
+  fn filter_commit_row_paths_for_chapter_keeps_only_row_files_in_that_chapter() {
+    let row_paths = filter_commit_row_paths_for_chapter(
+      [
+        "chapters/chapter-a/chapter.json",
+        "chapters/chapter-a/rows/a.json",
+        "chapters/chapter-a/rows/b.json",
+        "chapters/chapter-b/rows/c.json",
+        "chapters/chapter-a/rows/a.json",
+      ],
+      "chapters/chapter-a",
+    );
+
+    assert_eq!(row_paths, vec![
+      "chapters/chapter-a/rows/a.json".to_string(),
+      "chapters/chapter-a/rows/b.json".to_string(),
+    ]);
+  }
 }
 
 fn is_reserved_non_language_header(value: &str) -> bool {

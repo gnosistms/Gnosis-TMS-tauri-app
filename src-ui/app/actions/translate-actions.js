@@ -2,11 +2,14 @@ import { actionSuffix } from "../action-helpers.js";
 import { waitForNextPaint } from "../runtime.js";
 import { captureTranslateRowAnchor, restoreTranslateRowAnchor } from "../scroll-state.js";
 import {
+  cancelEditorReplaceUndoModal,
   cancelEditorRowPermanentDeletionModal,
   cancelInsertEditorRowModal,
+  confirmEditorReplaceUndo,
   confirmEditorRowPermanentDeletion,
   confirmInsertEditorRow,
   closeTargetLanguageManager,
+  openEditorReplaceUndoModal,
   openEditorRowPermanentDeletionModal,
   openInsertEditorRowModal,
   replaceSelectedEditorRows,
@@ -41,6 +44,12 @@ export function createTranslateActions(render) {
       return true;
     }
 
+    if (action === "cancel-editor-replace-undo") {
+      cancelEditorReplaceUndoModal();
+      render();
+      return true;
+    }
+
     if (action === "confirm-insert-editor-row-before") {
       await confirmInsertEditorRow(render, "before");
       return true;
@@ -53,6 +62,11 @@ export function createTranslateActions(render) {
 
     if (action === "confirm-editor-row-permanent-delete") {
       await confirmEditorRowPermanentDeletion(render);
+      return true;
+    }
+
+    if (action === "confirm-editor-replace-undo") {
+      await confirmEditorReplaceUndo(render);
       return true;
     }
 
@@ -89,6 +103,13 @@ export function createTranslateActions(render) {
     const historyCommitSha = actionSuffix(action, "restore-editor-history:");
     if (historyCommitSha !== null) {
       await restoreEditorFieldHistory(render, historyCommitSha);
+      return true;
+    }
+
+    const undoReplaceCommitSha = actionSuffix(action, "open-editor-replace-undo:");
+    if (undoReplaceCommitSha !== null) {
+      openEditorReplaceUndoModal(undoReplaceCommitSha);
+      render();
       return true;
     }
 

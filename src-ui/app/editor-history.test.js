@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import {
   buildEditorHistoryViewModel,
   editorHistoryEntryMatchesSection,
+  historyEntryCanUndoReplace,
   reconcileExpandedEditorHistoryGroupKeys,
 } from "./editor-history.js";
 
@@ -112,4 +113,10 @@ test("expanded history groups stay expanded when new entries are added to the sa
   assert.equal(nextModel.groups.length, 2);
   assert.equal(nextModel.groups[0].entries.length, 3);
   assert.equal(reconciledKeys.has(nextModel.groups[0].key), true);
+});
+
+test("only editor-replace history entries expose undo replace", () => {
+  assert.equal(historyEntryCanUndoReplace(historyEntry({ commitSha: "c1", operationType: "editor-replace" })), true);
+  assert.equal(historyEntryCanUndoReplace(historyEntry({ commitSha: "c2", operationType: "editor-update" })), false);
+  assert.equal(historyEntryCanUndoReplace(historyEntry({ commitSha: "c3", operationType: "restore" })), false);
 });

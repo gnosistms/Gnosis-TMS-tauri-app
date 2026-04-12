@@ -238,6 +238,7 @@ export function createEditorChapterState() {
     activeRowId: null,
     activeLanguageCode: null,
     history: createEditorHistoryState(),
+    replaceUndoModal: createEditorReplaceUndoModalState(),
     expandedDeletedRowGroupIds: new Set(),
     insertRowModal: createEditorInsertRowModalState(),
     rowPermanentDeletionModal: createEditorRowPermanentDeletionModalState(),
@@ -271,6 +272,12 @@ export function createEditorInsertRowModalState() {
 export function createEditorRowPermanentDeletionModalState() {
   return createEntityModalState({
     rowId: null,
+  });
+}
+
+export function createEditorReplaceUndoModalState() {
+  return createEntityModalState({
+    commitSha: null,
   });
 }
 

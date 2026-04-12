@@ -164,6 +164,10 @@ function buildOlderVisibleEntryByCommitSha(entries) {
   );
 }
 
+export function historyEntryCanUndoReplace(entry) {
+  return String(entry?.operationType ?? "").trim().toLowerCase() === "editor-replace";
+}
+
 export function editorHistoryEntryMatchesSection(entry, section) {
   if (!entry || !section) {
     return false;

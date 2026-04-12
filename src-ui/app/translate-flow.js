@@ -16,11 +16,12 @@ import {
 } from "./project-chapter-flow.js";
 import { invoke, waitForNextPaint } from "./runtime.js";
 import { saveStoredEditorFontSizePx } from "./editor-preferences.js";
-import { reconcileExpandedEditorHistoryGroupKeys } from "./editor-history.js";
+import { historyEntryCanUndoReplace, reconcileExpandedEditorHistoryGroupKeys } from "./editor-history.js";
 import {
   coerceEditorFontSizePx,
   createEditorChapterFilterState,
   createEditorChapterGlossaryState,
+  createEditorReplaceUndoModalState,
   createEditorReplaceState,
   createEditorHistoryState,
   createEditorInsertRowModalState,
@@ -141,6 +142,14 @@ function normalizeEditorReplaceState(replace) {
   };
 }
 
+function normalizeEditorReplaceUndoModalState(modal) {
+  return {
+    ...createEditorReplaceUndoModalState(),
+    ...(modal && typeof modal === "object" ? modal : {}),
+    commitSha: typeof modal?.commitSha === "string" ? modal.commitSha : null,
+  };
+}
+
 function cloneCollapsedLanguageCodes(collapsedLanguageCodes) {
   return collapsedLanguageCodes instanceof Set
     ? new Set(collapsedLanguageCodes)
@@ -257,6 +266,13 @@ function applyEditorUiState(nextEditorChapter, previousEditorChapter = state.edi
           ...previousEditorChapter.rowPermanentDeletionModal,
         }
         : createEditorRowPermanentDeletionModalState(),
+    replaceUndoModal:
+      isSameChapter && previousEditorChapter?.replaceUndoModal?.isOpen === true
+        ? {
+          ...createEditorReplaceUndoModalState(),
+          ...previousEditorChapter.replaceUndoModal,
+        }
+        : createEditorReplaceUndoModalState(),
     activeRowId:
       hasEditorRow(nextEditorChapter, activeRowId) && hasEditorLanguage(nextEditorChapter, activeLanguageCode)
         ? activeRowId
@@ -880,6 +896,69 @@ async function commitEditorRowFieldsBatch({
       operation,
     },
   });
+}
+
+function hasPendingEditorRowWrites(chapterState = state.editorChapter) {
+  return (Array.isArray(chapterState?.rows) ? chapterState.rows : []).some((row) =>
+    row?.saveStatus !== "idle" || row?.markerSaveState?.status === "saving"
+  );
+}
+
+function currentActiveHistoryEntryByCommitSha(commitSha, chapterState = state.editorChapter) {
+  if (!commitSha || !hasActiveEditorField(chapterState)) {
+    return null;
+  }
+
+  const history = currentEditorHistoryForSelection(
+    chapterState,
+    chapterState.activeRowId,
+    chapterState.activeLanguageCode,
+  );
+  return history.entries.find((entry) => entry?.commitSha === commitSha) ?? null;
+}
+
+export function openEditorReplaceUndoModal(commitSha) {
+  const entry = currentActiveHistoryEntryByCommitSha(commitSha);
+  if (!state.editorChapter?.chapterId || !historyEntryCanUndoReplace(entry)) {
+    return;
+  }
+
+  state.editorChapter = {
+    ...state.editorChapter,
+    replaceUndoModal: {
+      ...createEditorReplaceUndoModalState(),
+      isOpen: true,
+      status: "idle",
+      error: "",
+      commitSha,
+    },
+  };
+}
+
+export function cancelEditorReplaceUndoModal() {
+  if (!state.editorChapter?.chapterId) {
+    return;
+  }
+
+  state.editorChapter = {
+    ...state.editorChapter,
+    replaceUndoModal: createEditorReplaceUndoModalState(),
+  };
+}
+
+function buildEditorReplaceUndoNotice(updatedCount, skippedCount) {
+  const updatedLabel = formatReplaceRowCount(updatedCount);
+  const skippedLabel = formatReplaceRowCount(skippedCount);
+  if (updatedCount > 0 && skippedCount > 0) {
+    return `Undid replace in ${updatedLabel}. ${skippedLabel} ${skippedCount === 1 ? "was" : "were"} left unchanged because ${skippedCount === 1 ? "it was" : "they were"} edited later.`;
+  }
+  if (updatedCount > 0) {
+    return `Undid replace in ${updatedLabel}.`;
+  }
+  if (skippedCount === 0) {
+    return "No rows needed to be undone.";
+  }
+  return `No rows were undone. ${skippedLabel} ${skippedCount === 1 ? "was" : "were"} edited later and left unchanged.`;
 }
 
 function editorGlossaryHighlightContextKey(chapterState = state.editorChapter) {
@@ -1735,6 +1814,98 @@ export async function restoreEditorFieldHistory(render, commitSha) {
       render?.();
     }
     showNoticeBadge(message || "The selected history entry could not be restored.", render);
+  }
+}
+
+export async function confirmEditorReplaceUndo(render) {
+  const editorChapter = state.editorChapter;
+  const modal = normalizeEditorReplaceUndoModalState(editorChapter?.replaceUndoModal);
+  if (!editorChapter?.chapterId || !modal.isOpen || !modal.commitSha || modal.status === "loading") {
+    return;
+  }
+
+  if (!historyEntryCanUndoReplace(currentActiveHistoryEntryByCommitSha(modal.commitSha, editorChapter))) {
+    state.editorChapter = {
+      ...editorChapter,
+      replaceUndoModal: {
+        ...modal,
+        status: "idle",
+        error: "The selected batch replace history entry is no longer available.",
+      },
+    };
+    render?.();
+    return;
+  }
+
+  if (hasPendingEditorRowWrites(editorChapter)) {
+    state.editorChapter = {
+      ...editorChapter,
+      replaceUndoModal: {
+        ...modal,
+        status: "idle",
+        error: "Save or resolve current row edits before undoing a batch replace.",
+      },
+    };
+    render?.();
+    return;
+  }
+
+  const team = selectedProjectsTeam();
+  const context = findChapterContextById(editorChapter.chapterId);
+  if (!Number.isFinite(team?.installationId) || !context?.project?.name) {
+    return;
+  }
+
+  state.editorChapter = {
+    ...editorChapter,
+    replaceUndoModal: {
+      ...modal,
+      status: "loading",
+      error: "",
+    },
+  };
+  render?.();
+
+  try {
+    const payload = await invoke("reverse_gtms_editor_batch_replace_commit", {
+      input: {
+        installationId: team.installationId,
+        projectId: context.project.id,
+        repoName: context.project.name,
+        chapterId: editorChapter.chapterId,
+        commitSha: modal.commitSha,
+      },
+    });
+
+    if (state.editorChapter?.chapterId === editorChapter.chapterId) {
+      const updatedRows = Array.isArray(payload?.updatedRows) ? payload.updatedRows : [];
+      const skippedRowCount = Array.isArray(payload?.skippedRowIds) ? payload.skippedRowIds.length : 0;
+      if (updatedRows.length > 0) {
+        markEditorRowsPersisted(updatedRows, payload?.sourceWordCounts);
+      }
+      state.editorChapter = {
+        ...state.editorChapter,
+        replaceUndoModal: createEditorReplaceUndoModalState(),
+      };
+      render?.();
+      if (updatedRows.some((row) => row?.rowId === state.editorChapter.activeRowId)) {
+        loadActiveEditorFieldHistory(render);
+      }
+      showNoticeBadge(buildEditorReplaceUndoNotice(updatedRows.length, skippedRowCount), render);
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (state.editorChapter?.chapterId === editorChapter.chapterId) {
+      state.editorChapter = {
+        ...state.editorChapter,
+        replaceUndoModal: {
+          ...normalizeEditorReplaceUndoModalState(state.editorChapter.replaceUndoModal),
+          status: "idle",
+          error: message,
+        },
+      };
+      render?.();
+    }
   }
 }
 
