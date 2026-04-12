@@ -1674,6 +1674,16 @@ export async function confirmInsertEditorRow(render, position) {
       return;
     }
 
+    const insertedRowId = typeof payload?.row?.rowId === "string" ? payload.row.rowId : null;
+    const insertAnchorSnapshot = insertedRowId
+      ? {
+        type: "row",
+        rowId: insertedRowId,
+        languageCode: null,
+        offsetTop: 80,
+      }
+      : null;
+
     applyStructuralEditorChange(render, () => {
       insertEditorChapterRow(payload?.row, modal.rowId, position === "before");
       state.editorChapter = {
@@ -1691,7 +1701,10 @@ export async function confirmInsertEditorRow(render, position) {
           ?? null,
       };
       applyEditorSelectionsToProjectState(state.editorChapter);
-    }, { reloadHistory: true });
+    }, {
+      anchorSnapshot: insertAnchorSnapshot,
+      reloadHistory: true,
+    });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     if (state.editorChapter?.chapterId === editorChapter.chapterId) {
