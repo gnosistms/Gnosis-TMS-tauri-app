@@ -1,4 +1,5 @@
 import {
+  prepareStoredBrokerSessionRestore,
   registerBrokerAuthListener,
   registerGithubAppInstallListener,
   restoreStoredBrokerSession,
@@ -210,6 +211,7 @@ async function bootstrap() {
   await initializePersistentStorage();
   hydratePersistentAppState();
   await initializeWindowPresentation();
+  const storedBrokerSession = await prepareStoredBrokerSessionRestore();
 
   registerAppEvents(render);
   void registerBrokerAuthListener(render, loadUserTeams);
@@ -218,7 +220,7 @@ async function bootstrap() {
   void loadGithubAppTestConfig(render);
   void checkForAppUpdate(render, { silent: true });
   render();
-  void initializeConnectivity(render, () => restoreStoredBrokerSession(render, loadUserTeams));
+  void initializeConnectivity(render, () => restoreStoredBrokerSession(render, loadUserTeams, storedBrokerSession));
 }
 
 void bootstrap();

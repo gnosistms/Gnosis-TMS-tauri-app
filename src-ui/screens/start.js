@@ -26,11 +26,18 @@ export function renderStartScreen(state) {
   }
 
   const auth = state.auth ?? {};
+  const isRestoringStoredSession = auth.status === "restoring";
   const isBusy = auth.status === "launching" || auth.status === "waiting";
   const buttonLabel = isBusy
     ? "Waiting for GitHub..."
     : "Log in with GitHub";
+  const heroTitle = isRestoringStoredSession ? "Connecting to GitHub" : "Gnosis TMS";
+  const heroSubtitle = isRestoringStoredSession
+    ? "Please wait while we log you in."
+    : `Sign in with your GitHub account. If you don't have one yet, you
+              will be invited to create one before signing in.`;
   const statusMarkup = auth.message
+    && !isRestoringStoredSession
     ? `
       <article class="card start-message-card start-message-card--${auth.status ?? "idle"}">
         <div class="card__body">
@@ -47,14 +54,17 @@ export function renderStartScreen(state) {
         <article class="card card--hero">
           <div class="card__body">
             <p class="card__eyebrow">PAZ INVERENCIAL!</p>
-            <h1 class="card__title">Gnosis TMS</h1>
-            <p class="card__subtitle">
-              Sign in with your GitHub account. If you don't have one yet, you
-              will be invited to create one before signing in.
-            </p>
+            <h1 class="card__title">${heroTitle}</h1>
+            <p class="card__subtitle">${heroSubtitle}</p>
+            ${
+              isRestoringStoredSession
+                ? ""
+                : `
             <div class="hero-actions">
               ${primaryButton(buttonLabel, "login-with-github")}
             </div>
+            `
+            }
           </div>
         </article>
       </div>

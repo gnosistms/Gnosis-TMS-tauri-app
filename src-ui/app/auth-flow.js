@@ -61,8 +61,23 @@ export function applyBrokerAuthResult(payload, render, loadUserTeams) {
   );
 }
 
-export async function restoreStoredBrokerSession(render, loadUserTeams) {
+export async function prepareStoredBrokerSessionRestore() {
   const session = await loadStoredAuthSession();
+  if (!session) {
+    return null;
+  }
+
+  state.auth = {
+    ...state.auth,
+    status: "restoring",
+    message: "",
+    session,
+  };
+  return session;
+}
+
+export async function restoreStoredBrokerSession(render, loadUserTeams, storedSession = null) {
+  const session = storedSession ?? await loadStoredAuthSession();
   if (!session) {
     state.screen = "start";
     render();
@@ -82,6 +97,19 @@ export async function restoreStoredBrokerSession(render, loadUserTeams) {
   }
 
   try {
+    if (
+      state.auth.status !== "restoring"
+      || state.auth.session?.sessionToken !== session.sessionToken
+    ) {
+      setAuthState(
+        {
+          status: "restoring",
+          message: "",
+          session,
+        },
+        render,
+      );
+    }
     const profile = await invoke("inspect_broker_auth_session", {
       sessionToken: session.sessionToken,
     });
