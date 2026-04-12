@@ -7,16 +7,21 @@ use tauri::AppHandle;
 
 use self::{
   chapter_editor::{
+    insert_gtms_editor_row_sync,
     initialize_gtms_project_repo_sync,
     load_gtms_editor_field_history_sync,
     list_local_gtms_project_files_sync,
     load_gtms_chapter_editor_data_sync,
+    permanently_delete_gtms_editor_row_sync,
     purge_local_gtms_project_repo_sync,
     restore_gtms_editor_field_from_history_sync,
+    update_gtms_editor_row_lifecycle_sync,
     update_gtms_chapter_glossary_links_sync,
     update_gtms_chapter_language_selection_sync,
     update_gtms_editor_row_field_flag_sync,
     update_gtms_editor_row_fields_sync,
+    InsertEditorRowInput,
+    InsertEditorRowResponse,
     LoadEditorFieldHistoryInput,
     LoadEditorFieldHistoryResponse,
     ListLocalProjectFilesInput,
@@ -36,6 +41,8 @@ use self::{
     UpdateEditorRowFieldFlagResponse,
     UpdateEditorRowFieldsInput,
     UpdateEditorRowFieldsResponse,
+    UpdateEditorRowLifecycleInput,
+    UpdateEditorRowLifecycleResponse,
   },
   chapter_import::{
     import_xlsx_to_gtms_sync,
@@ -136,6 +143,26 @@ pub(crate) async fn update_gtms_editor_row_fields(
 }
 
 #[tauri::command]
+pub(crate) async fn insert_gtms_editor_row_before(
+  app: AppHandle,
+  input: InsertEditorRowInput,
+) -> Result<InsertEditorRowResponse, String> {
+  tauri::async_runtime::spawn_blocking(move || insert_gtms_editor_row_sync(&app, input, true))
+    .await
+    .map_err(|error| format!("The row insert worker failed: {error}"))?
+}
+
+#[tauri::command]
+pub(crate) async fn insert_gtms_editor_row_after(
+  app: AppHandle,
+  input: InsertEditorRowInput,
+) -> Result<InsertEditorRowResponse, String> {
+  tauri::async_runtime::spawn_blocking(move || insert_gtms_editor_row_sync(&app, input, false))
+    .await
+    .map_err(|error| format!("The row insert worker failed: {error}"))?
+}
+
+#[tauri::command]
 pub(crate) async fn update_gtms_editor_row_field_flag(
   app: AppHandle,
   input: UpdateEditorRowFieldFlagInput,
@@ -143,6 +170,40 @@ pub(crate) async fn update_gtms_editor_row_field_flag(
   tauri::async_runtime::spawn_blocking(move || update_gtms_editor_row_field_flag_sync(&app, input))
     .await
     .map_err(|error| format!("The row flag update worker failed: {error}"))?
+}
+
+#[tauri::command]
+pub(crate) async fn soft_delete_gtms_editor_row(
+  app: AppHandle,
+  input: UpdateEditorRowLifecycleInput,
+) -> Result<UpdateEditorRowLifecycleResponse, String> {
+  tauri::async_runtime::spawn_blocking(move || {
+    update_gtms_editor_row_lifecycle_sync(&app, input, "deleted")
+  })
+  .await
+  .map_err(|error| format!("The row delete worker failed: {error}"))?
+}
+
+#[tauri::command]
+pub(crate) async fn restore_gtms_editor_row(
+  app: AppHandle,
+  input: UpdateEditorRowLifecycleInput,
+) -> Result<UpdateEditorRowLifecycleResponse, String> {
+  tauri::async_runtime::spawn_blocking(move || {
+    update_gtms_editor_row_lifecycle_sync(&app, input, "active")
+  })
+  .await
+  .map_err(|error| format!("The row restore worker failed: {error}"))?
+}
+
+#[tauri::command]
+pub(crate) async fn permanently_delete_gtms_editor_row(
+  app: AppHandle,
+  input: UpdateEditorRowLifecycleInput,
+) -> Result<UpdateEditorRowLifecycleResponse, String> {
+  tauri::async_runtime::spawn_blocking(move || permanently_delete_gtms_editor_row_sync(&app, input))
+    .await
+    .map_err(|error| format!("The row permanent delete worker failed: {error}"))?
 }
 
 #[tauri::command]

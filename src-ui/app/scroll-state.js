@@ -84,6 +84,18 @@ export function captureTranslateRowAnchor(target = null) {
     return pendingTranslateAnchor;
   }
 
+  const deletedGroup = source.closest("[data-editor-deleted-group]");
+  if (deletedGroup instanceof HTMLElement) {
+    const deletedGroupRect = deletedGroup.getBoundingClientRect();
+    pendingTranslateAnchor = {
+      type: "deleted-group",
+      rowId: deletedGroup.dataset.rowId ?? "",
+      languageCode: "",
+      offsetTop: deletedGroupRect.top - containerRect.top,
+    };
+    return pendingTranslateAnchor;
+  }
+
   pendingTranslateAnchor = null;
   return null;
 }
@@ -108,6 +120,8 @@ export function restoreTranslateRowAnchor(snapshot) {
     anchor = document.querySelector(
       `[data-editor-row-field][data-row-id="${CSS.escape(snapshot.rowId)}"][data-language-code="${CSS.escape(snapshot.languageCode)}"]`,
     );
+  } else if (snapshot.type === "deleted-group") {
+    anchor = document.querySelector(`[data-editor-deleted-group][data-row-id="${CSS.escape(snapshot.rowId)}"]`);
   }
 
   if (!(anchor instanceof HTMLElement)) {
@@ -148,7 +162,13 @@ export function queueTranslateRowAnchor(snapshot) {
     offsetTop: Number.isFinite(Number(snapshot.offsetTop)) && Number(snapshot.offsetTop) >= 0
       ? Number(snapshot.offsetTop)
       : 0,
-    type: "language-toggle",
+    type:
+      snapshot.type === "field"
+      || snapshot.type === "row"
+      || snapshot.type === "deleted-group"
+      || snapshot.type === "language-toggle"
+        ? snapshot.type
+        : "language-toggle",
   };
 }
 

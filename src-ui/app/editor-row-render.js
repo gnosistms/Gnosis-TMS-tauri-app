@@ -1,4 +1,10 @@
-import { escapeHtml, renderCollapseChevron, tooltipAttributes } from "../lib/ui.js";
+import {
+  escapeHtml,
+  renderCollapseChevron,
+  sectionSeparator,
+  textAction,
+  tooltipAttributes,
+} from "../lib/ui.js";
 import {
   buildEditorRowHeights,
   calculateEditorVirtualWindow,
@@ -72,13 +78,41 @@ export function renderTranslationContentRow(
   collapsedLanguageCodes = new Set(),
   rowIndex = null,
 ) {
+  if (row?.kind === "deleted-group") {
+    const rowIndexAttribute = Number.isInteger(rowIndex) ? ` data-row-index="${rowIndex}"` : "";
+    return `
+      <div class="translation-deleted-group" data-editor-deleted-group data-row-id="${escapeHtml(row.id)}"${rowIndexAttribute}>
+        ${sectionSeparator({
+          label: row.label || "Deleted rows",
+          action: `toggle-editor-deleted-row-group:${row.groupId}`,
+          isOpen: row.isOpen === true,
+        })}
+      </div>
+    `;
+  }
+
   const orderedSections = orderRowSectionsByCollapsedState(row.sections, collapsedLanguageCodes);
   const rowIndexAttribute = Number.isInteger(rowIndex) ? ` data-row-index="${rowIndex}"` : "";
+  const rowActions = row.lifecycleState === "deleted"
+    ? `
+      <div class="translation-row__actions">
+        ${row.canRestore ? textAction("Restore", `restore-editor-row:${row.id}`) : ""}
+        ${row.canPermanentDelete ? textAction("Delete", `open-editor-row-permanent-delete:${row.id}`) : ""}
+      </div>
+    `
+    : `
+      <div class="translation-row__actions">
+        ${row.canInsert ? textAction("Insert", `open-insert-editor-row:${row.id}`) : ""}
+        ${row.canSoftDelete ? textAction("Delete", `soft-delete-editor-row:${row.id}`) : ""}
+      </div>
+    `;
 
   return `
-    <article class="card card--translation" data-editor-row-card data-row-id="${escapeHtml(row.id)}"${rowIndexAttribute}>
-      <div class="card__body">
-        <div class="translation-row__stack">
+    <div class="translation-row-shell" data-editor-row-card data-row-id="${escapeHtml(row.id)}"${rowIndexAttribute}>
+      ${rowActions}
+      <article class="card card--translation${row.lifecycleState === "deleted" ? " is-deleted" : ""}">
+        <div class="card__body">
+          <div class="translation-row__stack">
           ${orderedSections
             .map((language) => {
               const isCollapsed = collapsedLanguageCodes.has(language.code);
@@ -139,9 +173,10 @@ export function renderTranslationContentRow(
               `;
             })
             .join("")}
+          </div>
         </div>
-      </div>
-    </article>
+      </article>
+    </div>
   `;
 }
 

@@ -21,6 +21,8 @@ import { renderTranslationContentRows, renderTranslationMarkerIcon } from "../ap
 import { getNoticeBadgeText } from "../app/status-feedback.js";
 import { MANAGE_TARGET_LANGUAGES_OPTION_VALUE } from "../app/translate-flow.js";
 import { EDITOR_FONT_SIZE_OPTIONS } from "../app/state.js";
+import { renderEditorRowInsertModal } from "./editor-row-insert-modal.js";
+import { renderEditorRowPermanentDeletionModal } from "./editor-row-permanent-deletion-modal.js";
 import { renderTargetLanguageManagerModal } from "./target-language-manager-modal.js";
 
 const historyDiffEngine = new diff_match_patch();
@@ -497,5 +499,7 @@ export function renderTranslateScreen(state) {
         </div>
       </section>
     `,
-  }) + renderTargetLanguageManagerModal(state);
+  }) + renderTargetLanguageManagerModal(state)
+    + renderEditorRowInsertModal(state)
+    + renderEditorRowPermanentDeletionModal(state);
 }

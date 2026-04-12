@@ -131,6 +131,19 @@ export function syncEditorVirtualizationRowLayout(source) {
   activeController?.syncRowLayout?.(source);
 }
 
+export function refreshEditorVirtualizationLayout() {
+  activeController?.refreshLayout?.();
+}
+
+export function invalidateEditorVirtualizationLayout(chapterId = "") {
+  const normalizedChapterId = typeof chapterId === "string" ? chapterId : "";
+  for (const cacheKey of [...rowHeightCacheByLayoutKey.keys()]) {
+    if (!normalizedChapterId || cacheKey.startsWith(`${normalizedChapterId}::`)) {
+      rowHeightCacheByLayoutKey.get(cacheKey)?.clear();
+    }
+  }
+}
+
 function updateSpacerHeight(spacer, height) {
   if (!(spacer instanceof HTMLElement)) {
     return;
@@ -314,6 +327,20 @@ export function initializeEditorVirtualization(root, appState) {
     scheduleRender();
   };
 
+  const refreshLayout = () => {
+    if (!shouldVirtualize) {
+      return;
+    }
+
+    if (animationFrameId) {
+      window.cancelAnimationFrame(animationFrameId);
+      animationFrameId = 0;
+    }
+
+    currentRangeKey = "";
+    renderWindow(true);
+  };
+
   const handleResize = () => {
     if (shouldVirtualize) {
       renderWindow(true);
@@ -333,6 +360,7 @@ export function initializeEditorVirtualization(root, appState) {
 
   activeController = {
     syncRowLayout,
+    refreshLayout,
     destroy() {
       if (animationFrameId) {
         window.cancelAnimationFrame(animationFrameId);

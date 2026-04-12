@@ -26,7 +26,7 @@ use super::project_git::{
 
 const GTMS_FORMAT: &str = "gtms";
 const GTMS_FORMAT_VERSION: u32 = 1;
-const ORDER_KEY_SPACING: u128 = 1u128 << 64;
+const ORDER_KEY_SPACING: u128 = 1u128 << 104;
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -190,6 +190,7 @@ struct RowFile {
   external_id: Option<String>,
   #[serde(skip_serializing_if = "Option::is_none")]
   guidance: Option<Guidance>,
+  lifecycle: LifecycleState,
   status: RowStatus,
   structure: RowStructure,
   origin: RowOrigin,
@@ -587,6 +588,7 @@ fn build_row_file(
     unit_type: "string",
     external_id: imported_row.external_id.clone(),
     guidance,
+    lifecycle: active_lifecycle_state(),
     status: RowStatus {
       review_state: "unreviewed",
       reviewed_at: None,

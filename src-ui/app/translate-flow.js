@@ -8,17 +8,30 @@ import {
   findChapterContext,
   selectedProjectsTeam,
 } from "./project-chapter-flow.js";
-import { invoke } from "./runtime.js";
+import { invoke, waitForNextPaint } from "./runtime.js";
 import { saveStoredEditorFontSizePx } from "./editor-preferences.js";
 import { reconcileExpandedEditorHistoryGroupKeys } from "./editor-history.js";
 import {
   coerceEditorFontSizePx,
   createEditorChapterGlossaryState,
   createEditorHistoryState,
+  createEditorInsertRowModalState,
+  createEditorRowPermanentDeletionModalState,
   createTargetLanguageManagerState,
   state,
 } from "./state.js";
 import { showNoticeBadge } from "./status-feedback.js";
+import { canPermanentlyDeleteProjectFiles } from "./resource-capabilities.js";
+import {
+  captureVisibleTranslateLocation,
+  queueTranslateRowAnchor,
+  restoreTranslateRowAnchor,
+} from "./scroll-state.js";
+import {
+  invalidateEditorVirtualizationLayout,
+  refreshEditorVirtualizationLayout,
+  syncEditorVirtualizationRowLayout,
+} from "./editor-virtualization.js";
 
 export const MANAGE_TARGET_LANGUAGES_OPTION_VALUE = "__manage_target_languages__";
 const EDITOR_GLOSSARY_HIGHLIGHT_CACHE_LIMIT = 400;
@@ -110,6 +123,12 @@ function cloneExpandedHistoryGroupKeys(expandedGroupKeys) {
     : new Set();
 }
 
+function cloneExpandedDeletedRowGroupIds(expandedDeletedRowGroupIds) {
+  return expandedDeletedRowGroupIds instanceof Set
+    ? new Set(expandedDeletedRowGroupIds)
+    : new Set();
+}
+
 function normalizeEditorGlossaryLink(link) {
   if (!link || typeof link !== "object") {
     return null;
@@ -186,7 +205,21 @@ function applyEditorUiState(nextEditorChapter, previousEditorChapter = state.edi
     ...nextEditorChapter,
     fontSizePx: coerceEditorFontSizePx(previousEditorChapter?.fontSizePx),
     collapsedLanguageCodes: cloneCollapsedLanguageCodes(previousEditorChapter?.collapsedLanguageCodes),
+    expandedDeletedRowGroupIds: cloneExpandedDeletedRowGroupIds(previousEditorChapter?.expandedDeletedRowGroupIds),
     glossary: nextEditorChapter?.glossary ?? previousEditorChapter?.glossary ?? createEditorChapterGlossaryState(),
+    insertRowModal:
+      previousEditorChapter?.insertRowModal?.isOpen === true
+        && hasEditorRow(nextEditorChapter, previousEditorChapter.insertRowModal.rowId)
+        ? { ...createEditorInsertRowModalState(), ...previousEditorChapter.insertRowModal }
+        : createEditorInsertRowModalState(),
+    rowPermanentDeletionModal:
+      previousEditorChapter?.rowPermanentDeletionModal?.isOpen === true
+        && hasEditorRow(nextEditorChapter, previousEditorChapter.rowPermanentDeletionModal.rowId)
+        ? {
+          ...createEditorRowPermanentDeletionModalState(),
+          ...previousEditorChapter.rowPermanentDeletionModal,
+        }
+        : createEditorRowPermanentDeletionModalState(),
     activeRowId:
       hasEditorRow(nextEditorChapter, activeRowId) && hasEditorLanguage(nextEditorChapter, activeLanguageCode)
         ? activeRowId
@@ -222,6 +255,8 @@ function normalizeEditorRows(rows) {
     const fieldStates = cloneRowFieldStates(row?.fieldStates);
     return {
       ...row,
+      lifecycleState: row?.lifecycleState === "deleted" ? "deleted" : "active",
+      orderKey: typeof row?.orderKey === "string" ? row.orderKey : "",
       fields,
       persistedFields: cloneRowFields(fields),
       fieldStates,
@@ -322,6 +357,314 @@ function updateEditorChapterRow(rowId, updater) {
   };
 
   return updatedRow;
+}
+
+function insertEditorChapterRow(nextRow, anchorRowId, insertBefore = true) {
+  if (!state.editorChapter?.chapterId || !Array.isArray(state.editorChapter.rows) || !nextRow?.rowId) {
+    return;
+  }
+
+  const normalizedRow = normalizeEditorRows([nextRow])[0];
+  const anchorIndex = state.editorChapter.rows.findIndex((row) => row?.rowId === anchorRowId);
+  const rows = [...state.editorChapter.rows];
+  const insertIndex = anchorIndex < 0
+    ? rows.length
+    : insertBefore
+      ? anchorIndex
+      : anchorIndex + 1;
+  rows.splice(insertIndex, 0, normalizedRow);
+  state.editorChapter = {
+    ...state.editorChapter,
+    rows,
+  };
+}
+
+function removeEditorChapterRow(rowId) {
+  if (!state.editorChapter?.chapterId || !Array.isArray(state.editorChapter.rows)) {
+    return;
+  }
+
+  const rows = state.editorChapter.rows.filter((row) => row?.rowId !== rowId);
+  state.editorChapter = {
+    ...state.editorChapter,
+    rows,
+    activeRowId: state.editorChapter.activeRowId === rowId ? null : state.editorChapter.activeRowId,
+    activeLanguageCode: state.editorChapter.activeRowId === rowId ? null : state.editorChapter.activeLanguageCode,
+    history: state.editorChapter.activeRowId === rowId ? createEditorHistoryState() : state.editorChapter.history,
+  };
+}
+
+function scheduleStructuralEditorScrollRestore(anchor) {
+  if (!anchor?.rowId) {
+    return;
+  }
+
+  const restorePass = () => {
+    queueTranslateRowAnchor(anchor);
+    refreshEditorVirtualizationLayout();
+    restoreTranslateRowAnchor(anchor);
+  };
+
+  void waitForNextPaint().then(() => {
+    restorePass();
+    void waitForNextPaint().then(() => {
+      restorePass();
+    });
+  });
+}
+
+function applyStructuralEditorChange(render, updateState, options = {}) {
+  const anchor = options.anchorSnapshot ?? captureVisibleTranslateLocation();
+  updateState();
+  if (anchor) {
+    queueTranslateRowAnchor(anchor);
+  }
+  invalidateEditorVirtualizationLayout(state.editorChapter?.chapterId);
+  render?.();
+  scheduleStructuralEditorScrollRestore(anchor);
+  if (options.reloadHistory === true && hasActiveEditorField(state.editorChapter)) {
+    loadActiveEditorFieldHistory(render);
+  }
+}
+
+function deletedRowGroupIdAfterSoftDelete(rows, rowId) {
+  const items = Array.isArray(rows) ? rows : [];
+  const rowIndex = items.findIndex((row) => row?.rowId === rowId);
+  if (rowIndex < 0) {
+    return null;
+  }
+
+  let startIndex = rowIndex;
+  let endIndex = rowIndex;
+  while (startIndex > 0 && items[startIndex - 1]?.lifecycleState === "deleted") {
+    startIndex -= 1;
+  }
+  while (endIndex + 1 < items.length && items[endIndex + 1]?.lifecycleState === "deleted") {
+    endIndex += 1;
+  }
+
+  const groupRowIds = items
+    .slice(startIndex, endIndex + 1)
+    .map((row) => row?.rowId)
+    .filter(Boolean);
+  if (!groupRowIds.includes(rowId)) {
+    groupRowIds.splice(rowIndex - startIndex, 0, rowId);
+  }
+  return groupRowIds.length > 0 ? groupRowIds.join(":") : null;
+}
+
+function deletedRowGroupBoundsForRow(rows, rowId) {
+  const items = Array.isArray(rows) ? rows : [];
+  const rowIndex = items.findIndex((row) => row?.rowId === rowId);
+  if (rowIndex < 0 || items[rowIndex]?.lifecycleState !== "deleted") {
+    return null;
+  }
+
+  let startIndex = rowIndex;
+  let endIndex = rowIndex;
+  while (startIndex > 0 && items[startIndex - 1]?.lifecycleState === "deleted") {
+    startIndex -= 1;
+  }
+  while (endIndex + 1 < items.length && items[endIndex + 1]?.lifecycleState === "deleted") {
+    endIndex += 1;
+  }
+
+  return {
+    rowIndex,
+    startIndex,
+    endIndex,
+  };
+}
+
+function deletedRowGroupIdFromRange(rows, startIndex, endIndex) {
+  if (!Number.isInteger(startIndex) || !Number.isInteger(endIndex) || startIndex > endIndex) {
+    return null;
+  }
+
+  const groupRowIds = (Array.isArray(rows) ? rows : [])
+    .slice(startIndex, endIndex + 1)
+    .map((row) => row?.rowId)
+    .filter(Boolean);
+  return groupRowIds.length > 0 ? groupRowIds.join(":") : null;
+}
+
+function existingDeletedRowGroupIds(rows) {
+  const items = Array.isArray(rows) ? rows : [];
+  const groupIds = new Set();
+  let index = 0;
+  while (index < items.length) {
+    if (items[index]?.lifecycleState !== "deleted") {
+      index += 1;
+      continue;
+    }
+
+    const startIndex = index;
+    while (index + 1 < items.length && items[index + 1]?.lifecycleState === "deleted") {
+      index += 1;
+    }
+    const groupId = deletedRowGroupIdFromRange(items, startIndex, index);
+    if (groupId) {
+      groupIds.add(groupId);
+    }
+    index += 1;
+  }
+
+  return groupIds;
+}
+
+function compactExpandedDeletedRowGroupIds(rows, expandedDeletedRowGroupIds) {
+  const validGroupIds = existingDeletedRowGroupIds(rows);
+  return new Set(
+    [...cloneExpandedDeletedRowGroupIds(expandedDeletedRowGroupIds)].filter((groupId) =>
+      validGroupIds.has(groupId)
+    ),
+  );
+}
+
+function rowsWithEditorRowLifecycleState(rows, rowId, lifecycleState) {
+  return normalizeEditorRows(
+    (Array.isArray(rows) ? rows : []).map((row) =>
+      row?.rowId === rowId
+        ? {
+          ...row,
+          lifecycleState,
+        }
+        : row
+    ),
+  );
+}
+
+function deletedRowGroupIdsAdjacentToSoftDelete(rows, rowId) {
+  const items = Array.isArray(rows) ? rows : [];
+  const rowIndex = items.findIndex((row) => row?.rowId === rowId);
+  if (rowIndex < 0) {
+    return [];
+  }
+
+  const groupIds = [];
+
+  if (rowIndex > 0 && items[rowIndex - 1]?.lifecycleState === "deleted") {
+    let startIndex = rowIndex - 1;
+    while (startIndex > 0 && items[startIndex - 1]?.lifecycleState === "deleted") {
+      startIndex -= 1;
+    }
+    const leftGroupId = items
+      .slice(startIndex, rowIndex)
+      .map((row) => row?.rowId)
+      .filter(Boolean)
+      .join(":");
+    if (leftGroupId) {
+      groupIds.push(leftGroupId);
+    }
+  }
+
+  if (rowIndex + 1 < items.length && items[rowIndex + 1]?.lifecycleState === "deleted") {
+    let endIndex = rowIndex + 1;
+    while (endIndex + 1 < items.length && items[endIndex + 1]?.lifecycleState === "deleted") {
+      endIndex += 1;
+    }
+    const rightGroupId = items
+      .slice(rowIndex + 1, endIndex + 1)
+      .map((row) => row?.rowId)
+      .filter(Boolean)
+      .join(":");
+    if (rightGroupId) {
+      groupIds.push(rightGroupId);
+    }
+  }
+
+  return [...new Set(groupIds)];
+}
+
+function expandedDeletedRowGroupIdsAfterSoftDelete(
+  previousRows,
+  rowId,
+  expandedDeletedRowGroupIds,
+  nextRows,
+) {
+  const nextExpandedDeletedRowGroupIds = cloneExpandedDeletedRowGroupIds(expandedDeletedRowGroupIds);
+  const adjacentGroupIds = deletedRowGroupIdsAdjacentToSoftDelete(previousRows, rowId);
+  const nextGroupId = deletedRowGroupIdAfterSoftDelete(previousRows, rowId);
+  const shouldStayOpen = adjacentGroupIds.some((groupId) => nextExpandedDeletedRowGroupIds.has(groupId));
+
+  for (const groupId of adjacentGroupIds) {
+    nextExpandedDeletedRowGroupIds.delete(groupId);
+  }
+
+  if (nextGroupId && shouldStayOpen) {
+    nextExpandedDeletedRowGroupIds.add(nextGroupId);
+  }
+
+  return compactExpandedDeletedRowGroupIds(nextRows, nextExpandedDeletedRowGroupIds);
+}
+
+function expandedDeletedRowGroupIdsAfterRestore(
+  previousRows,
+  rowId,
+  expandedDeletedRowGroupIds,
+  nextRows,
+) {
+  const nextExpandedDeletedRowGroupIds = cloneExpandedDeletedRowGroupIds(expandedDeletedRowGroupIds);
+  const bounds = deletedRowGroupBoundsForRow(previousRows, rowId);
+  if (!bounds) {
+    return compactExpandedDeletedRowGroupIds(nextRows, nextExpandedDeletedRowGroupIds);
+  }
+
+  const previousGroupId = deletedRowGroupIdFromRange(previousRows, bounds.startIndex, bounds.endIndex);
+  const shouldStayOpen = previousGroupId ? nextExpandedDeletedRowGroupIds.has(previousGroupId) : false;
+
+  if (previousGroupId) {
+    nextExpandedDeletedRowGroupIds.delete(previousGroupId);
+  }
+
+  const leftGroupId =
+    bounds.startIndex <= bounds.rowIndex - 1
+      ? deletedRowGroupIdFromRange(nextRows, bounds.startIndex, bounds.rowIndex - 1)
+      : null;
+  const rightGroupId =
+    bounds.rowIndex + 1 <= bounds.endIndex
+      ? deletedRowGroupIdFromRange(nextRows, bounds.rowIndex + 1, bounds.endIndex)
+      : null;
+
+  if (shouldStayOpen && leftGroupId) {
+    nextExpandedDeletedRowGroupIds.add(leftGroupId);
+  }
+  if (shouldStayOpen && rightGroupId) {
+    nextExpandedDeletedRowGroupIds.add(rightGroupId);
+  }
+
+  return compactExpandedDeletedRowGroupIds(nextRows, nextExpandedDeletedRowGroupIds);
+}
+
+function expandedDeletedRowGroupIdsAfterPermanentDelete(
+  previousRows,
+  rowId,
+  expandedDeletedRowGroupIds,
+  nextRows,
+) {
+  const nextExpandedDeletedRowGroupIds = cloneExpandedDeletedRowGroupIds(expandedDeletedRowGroupIds);
+  const bounds = deletedRowGroupBoundsForRow(previousRows, rowId);
+  if (!bounds) {
+    return compactExpandedDeletedRowGroupIds(nextRows, nextExpandedDeletedRowGroupIds);
+  }
+
+  const previousGroupId = deletedRowGroupIdFromRange(previousRows, bounds.startIndex, bounds.endIndex);
+  const shouldStayOpen = previousGroupId ? nextExpandedDeletedRowGroupIds.has(previousGroupId) : false;
+
+  if (previousGroupId) {
+    nextExpandedDeletedRowGroupIds.delete(previousGroupId);
+  }
+
+  const nextGroupId =
+    bounds.startIndex <= bounds.endIndex - 1
+      ? deletedRowGroupIdFromRange(nextRows, bounds.startIndex, bounds.endIndex - 1)
+      : null;
+
+  if (shouldStayOpen && nextGroupId) {
+    nextExpandedDeletedRowGroupIds.add(nextGroupId);
+  }
+
+  return compactExpandedDeletedRowGroupIds(nextRows, nextExpandedDeletedRowGroupIds);
 }
 
 function buildEditorGlossaryStateFromPayload(payload, linkedGlossary) {
@@ -1220,6 +1563,383 @@ export function openTargetLanguageManager() {
 
 export function closeTargetLanguageManager() {
   state.targetLanguageManager = createTargetLanguageManagerState();
+}
+
+export function openInsertEditorRowModal(rowId) {
+  if (!rowId || !hasEditorRow(state.editorChapter, rowId)) {
+    return;
+  }
+
+  state.editorChapter = {
+    ...state.editorChapter,
+    insertRowModal: {
+      ...createEditorInsertRowModalState(),
+      isOpen: true,
+      rowId,
+    },
+  };
+}
+
+export function cancelInsertEditorRowModal() {
+  state.editorChapter = {
+    ...state.editorChapter,
+    insertRowModal: createEditorInsertRowModalState(),
+  };
+}
+
+export function openEditorRowPermanentDeletionModal(rowId) {
+  if (!rowId || !hasEditorRow(state.editorChapter, rowId)) {
+    return;
+  }
+
+  state.editorChapter = {
+    ...state.editorChapter,
+    rowPermanentDeletionModal: {
+      ...createEditorRowPermanentDeletionModalState(),
+      isOpen: true,
+      rowId,
+    },
+  };
+}
+
+export function cancelEditorRowPermanentDeletionModal() {
+  state.editorChapter = {
+    ...state.editorChapter,
+    rowPermanentDeletionModal: createEditorRowPermanentDeletionModalState(),
+  };
+}
+
+export function toggleDeletedEditorRowGroup(render, groupId, anchorSnapshot = null) {
+  if (!groupId || !state.editorChapter?.chapterId) {
+    return;
+  }
+
+  applyStructuralEditorChange(render, () => {
+    const expandedDeletedRowGroupIds = cloneExpandedDeletedRowGroupIds(
+      state.editorChapter.expandedDeletedRowGroupIds,
+    );
+    if (expandedDeletedRowGroupIds.has(groupId)) {
+      expandedDeletedRowGroupIds.delete(groupId);
+    } else {
+      expandedDeletedRowGroupIds.add(groupId);
+    }
+    state.editorChapter = {
+      ...state.editorChapter,
+      expandedDeletedRowGroupIds,
+    };
+  }, { anchorSnapshot });
+}
+
+export async function confirmInsertEditorRow(render, position) {
+  const editorChapter = state.editorChapter;
+  const modal = editorChapter?.insertRowModal;
+  if (!editorChapter?.chapterId || !modal?.isOpen || !modal.rowId) {
+    return;
+  }
+  if (position !== "before" && position !== "after") {
+    return;
+  }
+
+  const team = selectedProjectsTeam();
+  const context = findChapterContextById(editorChapter.chapterId);
+  if (!Number.isFinite(team?.installationId) || !context?.project?.name) {
+    return;
+  }
+
+  state.editorChapter = {
+    ...editorChapter,
+    insertRowModal: {
+      ...modal,
+      status: "loading",
+      error: "",
+    },
+  };
+  render?.();
+
+  try {
+    const payload = await invoke(
+      position === "before" ? "insert_gtms_editor_row_before" : "insert_gtms_editor_row_after",
+      {
+        input: {
+          installationId: team.installationId,
+          projectId: context.project.id,
+          repoName: context.project.name,
+          chapterId: editorChapter.chapterId,
+          rowId: modal.rowId,
+        },
+      },
+    );
+
+    if (state.editorChapter?.chapterId !== editorChapter.chapterId) {
+      return;
+    }
+
+    applyStructuralEditorChange(render, () => {
+      insertEditorChapterRow(payload?.row, modal.rowId, position === "before");
+      state.editorChapter = {
+        ...state.editorChapter,
+        sourceWordCounts:
+          payload?.sourceWordCounts && typeof payload.sourceWordCounts === "object"
+            ? payload.sourceWordCounts
+            : state.editorChapter.sourceWordCounts,
+        insertRowModal: createEditorInsertRowModalState(),
+        activeRowId: payload?.row?.rowId ?? state.editorChapter.activeRowId,
+        activeLanguageCode:
+          state.editorChapter.activeLanguageCode
+          ?? state.editorChapter.selectedTargetLanguageCode
+          ?? state.editorChapter.selectedSourceLanguageCode
+          ?? null,
+      };
+      applyEditorSelectionsToProjectState(state.editorChapter);
+    }, { reloadHistory: true });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (state.editorChapter?.chapterId === editorChapter.chapterId) {
+      state.editorChapter = {
+        ...state.editorChapter,
+        insertRowModal: {
+          ...state.editorChapter.insertRowModal,
+          status: "idle",
+          error: message,
+        },
+      };
+      render?.();
+    }
+    showNoticeBadge(message || "The row could not be inserted.", render);
+  }
+}
+
+export async function softDeleteEditorRow(render, rowId, triggerAnchorSnapshot = null) {
+  const editorChapter = state.editorChapter;
+  if (!editorChapter?.chapterId || !rowId) {
+    return;
+  }
+
+  const row = findEditorRowById(rowId, editorChapter);
+  if (!row || row.saveStatus !== "idle" || row.markerSaveState?.status === "saving") {
+    showNoticeBadge("Save the current row before deleting it.", render);
+    return;
+  }
+
+  const team = selectedProjectsTeam();
+  const context = findChapterContextById(editorChapter.chapterId);
+  if (!Number.isFinite(team?.installationId) || !context?.project?.name) {
+    return;
+  }
+
+  try {
+    const payload = await invoke("soft_delete_gtms_editor_row", {
+      input: {
+        installationId: team.installationId,
+        projectId: context.project.id,
+        repoName: context.project.name,
+        chapterId: editorChapter.chapterId,
+        rowId,
+      },
+    });
+
+    if (state.editorChapter?.chapterId !== editorChapter.chapterId) {
+      return;
+    }
+
+    const previousRows = state.editorChapter.rows;
+    const nextRows = rowsWithEditorRowLifecycleState(previousRows, rowId, payload?.lifecycleState ?? "deleted");
+    const expandedDeletedRowGroupIds = expandedDeletedRowGroupIdsAfterSoftDelete(
+      previousRows,
+      rowId,
+      state.editorChapter.expandedDeletedRowGroupIds,
+      nextRows,
+    );
+    const nextDeletedGroupId = deletedRowGroupIdAfterSoftDelete(previousRows, rowId);
+    const nextDeletedGroupIsOpen =
+      typeof nextDeletedGroupId === "string" && expandedDeletedRowGroupIds.has(nextDeletedGroupId);
+    const anchorSnapshot = nextDeletedGroupId && !nextDeletedGroupIsOpen
+      ? {
+        type: "deleted-group",
+        rowId: `deleted-group:${nextDeletedGroupId}`,
+        languageCode: null,
+        offsetTop: Number.isFinite(Number(triggerAnchorSnapshot?.offsetTop))
+          ? Number(triggerAnchorSnapshot.offsetTop)
+          : 80,
+      }
+      : {
+        type: "row",
+        rowId,
+        languageCode: null,
+        offsetTop: Number.isFinite(Number(triggerAnchorSnapshot?.offsetTop))
+          ? Number(triggerAnchorSnapshot.offsetTop)
+          : 80,
+      };
+    applyStructuralEditorChange(render, () => {
+      updateEditorChapterRow(rowId, (currentRow) => ({
+        ...currentRow,
+        lifecycleState: payload?.lifecycleState ?? "deleted",
+      }));
+      state.editorChapter = {
+        ...state.editorChapter,
+        expandedDeletedRowGroupIds,
+        sourceWordCounts:
+          payload?.sourceWordCounts && typeof payload.sourceWordCounts === "object"
+            ? payload.sourceWordCounts
+            : state.editorChapter.sourceWordCounts,
+        activeRowId: state.editorChapter.activeRowId === rowId ? null : state.editorChapter.activeRowId,
+        activeLanguageCode:
+          state.editorChapter.activeRowId === rowId ? null : state.editorChapter.activeLanguageCode,
+        history:
+          state.editorChapter.activeRowId === rowId
+            ? createEditorHistoryState()
+            : state.editorChapter.history,
+      };
+      applyEditorSelectionsToProjectState(state.editorChapter);
+    }, {
+      anchorSnapshot,
+    });
+    showNoticeBadge("Row deleted.", render);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    showNoticeBadge(message || "The row could not be deleted.", render);
+  }
+}
+
+export async function restoreEditorRow(render, rowId) {
+  const editorChapter = state.editorChapter;
+  if (!editorChapter?.chapterId || !rowId) {
+    return;
+  }
+
+  const team = selectedProjectsTeam();
+  const context = findChapterContextById(editorChapter.chapterId);
+  if (!Number.isFinite(team?.installationId) || !context?.project?.name) {
+    return;
+  }
+
+  try {
+    const payload = await invoke("restore_gtms_editor_row", {
+      input: {
+        installationId: team.installationId,
+        projectId: context.project.id,
+        repoName: context.project.name,
+        chapterId: editorChapter.chapterId,
+        rowId,
+      },
+    });
+
+    if (state.editorChapter?.chapterId !== editorChapter.chapterId) {
+      return;
+    }
+
+    applyStructuralEditorChange(render, () => {
+      const previousRows = state.editorChapter.rows;
+      updateEditorChapterRow(rowId, (currentRow) => ({
+        ...currentRow,
+        lifecycleState: payload?.lifecycleState ?? "active",
+      }));
+      const expandedDeletedRowGroupIds = expandedDeletedRowGroupIdsAfterRestore(
+        previousRows,
+        rowId,
+        state.editorChapter.expandedDeletedRowGroupIds,
+        state.editorChapter.rows,
+      );
+      state.editorChapter = {
+        ...state.editorChapter,
+        expandedDeletedRowGroupIds,
+        sourceWordCounts:
+          payload?.sourceWordCounts && typeof payload.sourceWordCounts === "object"
+            ? payload.sourceWordCounts
+            : state.editorChapter.sourceWordCounts,
+      };
+      applyEditorSelectionsToProjectState(state.editorChapter);
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    showNoticeBadge(message || "The row could not be restored.", render);
+  }
+}
+
+export async function confirmEditorRowPermanentDeletion(render) {
+  const editorChapter = state.editorChapter;
+  const modal = editorChapter?.rowPermanentDeletionModal;
+  if (!editorChapter?.chapterId || !modal?.isOpen || !modal.rowId) {
+    return;
+  }
+
+  const team = selectedProjectsTeam();
+  const context = findChapterContextById(editorChapter.chapterId);
+  if (!Number.isFinite(team?.installationId) || !context?.project?.name) {
+    return;
+  }
+  if (!canPermanentlyDeleteProjectFiles(team)) {
+    state.editorChapter = {
+      ...editorChapter,
+      rowPermanentDeletionModal: {
+        ...modal,
+        error: "You do not have permission to permanently delete rows in this team.",
+      },
+    };
+    render?.();
+    return;
+  }
+
+  state.editorChapter = {
+    ...editorChapter,
+    rowPermanentDeletionModal: {
+      ...modal,
+      status: "loading",
+      error: "",
+    },
+  };
+  render?.();
+
+  try {
+    const payload = await invoke("permanently_delete_gtms_editor_row", {
+      input: {
+        installationId: team.installationId,
+        projectId: context.project.id,
+        repoName: context.project.name,
+        chapterId: editorChapter.chapterId,
+        rowId: modal.rowId,
+      },
+    });
+
+    if (state.editorChapter?.chapterId !== editorChapter.chapterId) {
+      return;
+    }
+
+    applyStructuralEditorChange(render, () => {
+      const previousRows = state.editorChapter.rows;
+      removeEditorChapterRow(modal.rowId);
+      const expandedDeletedRowGroupIds = expandedDeletedRowGroupIdsAfterPermanentDelete(
+        previousRows,
+        modal.rowId,
+        state.editorChapter.expandedDeletedRowGroupIds,
+        state.editorChapter.rows,
+      );
+      state.editorChapter = {
+        ...state.editorChapter,
+        expandedDeletedRowGroupIds,
+        sourceWordCounts:
+          payload?.sourceWordCounts && typeof payload.sourceWordCounts === "object"
+            ? payload.sourceWordCounts
+            : state.editorChapter.sourceWordCounts,
+        rowPermanentDeletionModal: createEditorRowPermanentDeletionModalState(),
+      };
+      applyEditorSelectionsToProjectState(state.editorChapter);
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (state.editorChapter?.chapterId === editorChapter.chapterId) {
+      state.editorChapter = {
+        ...state.editorChapter,
+        rowPermanentDeletionModal: {
+          ...state.editorChapter.rowPermanentDeletionModal,
+          status: "idle",
+          error: message,
+        },
+      };
+      render?.();
+    }
+    showNoticeBadge(message || "The row could not be permanently deleted.", render);
+  }
 }
 
 export function updateEditorRowFieldValue(rowId, languageCode, nextValue) {

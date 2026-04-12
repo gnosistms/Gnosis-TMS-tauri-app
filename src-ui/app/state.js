@@ -236,8 +236,23 @@ export function createEditorChapterState() {
     activeRowId: null,
     activeLanguageCode: null,
     history: createEditorHistoryState(),
+    expandedDeletedRowGroupIds: new Set(),
+    insertRowModal: createEditorInsertRowModalState(),
+    rowPermanentDeletionModal: createEditorRowPermanentDeletionModalState(),
     rows: [],
   };
+}
+
+export function createEditorInsertRowModalState() {
+  return createEntityModalState({
+    rowId: null,
+  });
+}
+
+export function createEditorRowPermanentDeletionModalState() {
+  return createEntityModalState({
+    rowId: null,
+  });
 }
 
 export function createEditorChapterGlossaryState() {

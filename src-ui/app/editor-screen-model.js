@@ -1,4 +1,6 @@
 import { coerceEditorFontSizePx } from "./state.js";
+import { canPermanentlyDeleteProjectFiles } from "./resource-capabilities.js";
+import { selectedProjectsTeam } from "./project-chapter-flow.js";
 import { findChapterContextById } from "./translate-flow.js";
 
 let cachedEditorRowsRef = null;
@@ -51,15 +53,12 @@ function buildLiveTranslationRows(editorChapter, languages) {
   }
 
   const liveRows = editorRows.map((row, index) => {
-    const label =
-      row.externalId?.trim()
-      || row.description?.trim()
-      || row.context?.trim()
-      || `Row ${index + 1}`;
-
     return {
+      kind: "row",
       id: row.rowId,
-      title: label,
+      rowId: row.rowId,
+      lifecycleState: row.lifecycleState === "deleted" ? "deleted" : "active",
+      orderKey: row.orderKey || "",
       saveStatus: row.saveStatus || "idle",
       saveError: row.saveError || "",
       sections: languageOptions.map((language) => ({
@@ -82,13 +81,68 @@ function buildLiveTranslationRows(editorChapter, languages) {
   return liveRows;
 }
 
+function buildEditorDisplayItems(contentRows, editorChapter, team) {
+  const rows = Array.isArray(contentRows) ? contentRows : [];
+  const expandedDeletedRowGroupIds =
+    editorChapter?.expandedDeletedRowGroupIds instanceof Set
+      ? editorChapter.expandedDeletedRowGroupIds
+      : new Set();
+  const canEditRows = team?.canManageProjects === true;
+  const canRestoreRows = Number.isFinite(team?.installationId);
+  const canPermanentlyDeleteRows = canPermanentlyDeleteProjectFiles(team);
+  const items = [];
+  let deletedRun = [];
+
+  const flushDeletedRun = () => {
+    if (deletedRun.length === 0) {
+      return;
+    }
+
+    const groupId = deletedRun.map((row) => row.rowId).join(":");
+    const isOpen = expandedDeletedRowGroupIds.has(groupId);
+    items.push({
+      kind: "deleted-group",
+      id: `deleted-group:${groupId}`,
+      groupId,
+      label: "Deleted rows",
+      isOpen,
+      rowCount: deletedRun.length,
+    });
+    if (isOpen) {
+      items.push(...deletedRun);
+    }
+    deletedRun = [];
+  };
+
+  for (const row of rows) {
+    const nextRow = {
+      ...row,
+      canInsert: row.lifecycleState === "active" && canEditRows,
+      canSoftDelete: row.lifecycleState === "active" && canEditRows,
+      canRestore: row.lifecycleState === "deleted" && canRestoreRows,
+      canPermanentDelete: row.lifecycleState === "deleted" && canPermanentlyDeleteRows,
+    };
+    if (nextRow.lifecycleState === "deleted") {
+      deletedRun.push(nextRow);
+      continue;
+    }
+
+    flushDeletedRun();
+    items.push(nextRow);
+  }
+
+  flushDeletedRun();
+  return items;
+}
+
 export function buildEditorScreenViewModel(appState) {
   const chapter = findChapterContextById(appState.selectedChapterId)?.chapter ?? null;
   const editorChapter =
     appState.editorChapter?.chapterId === appState.selectedChapterId ? appState.editorChapter : null;
   const languages = chapterLanguageOptions(chapter, editorChapter);
   const { sourceCode, targetCode } = resolveSelectedLanguageCodes(languages, chapter, editorChapter);
-  const contentRows = buildLiveTranslationRows(editorChapter, languages);
+  const rawRows = buildLiveTranslationRows(editorChapter, languages);
+  const contentRows = buildEditorDisplayItems(rawRows, editorChapter, selectedProjectsTeam());
   const collapsedLanguageCodes =
     editorChapter?.collapsedLanguageCodes instanceof Set
       ? editorChapter.collapsedLanguageCodes

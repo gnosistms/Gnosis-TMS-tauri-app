@@ -2,8 +2,17 @@ import { actionSuffix } from "../action-helpers.js";
 import { waitForNextPaint } from "../runtime.js";
 import { captureTranslateRowAnchor, restoreTranslateRowAnchor } from "../scroll-state.js";
 import {
+  cancelEditorRowPermanentDeletionModal,
+  cancelInsertEditorRowModal,
+  confirmEditorRowPermanentDeletion,
+  confirmInsertEditorRow,
   closeTargetLanguageManager,
+  openEditorRowPermanentDeletionModal,
+  openInsertEditorRowModal,
   restoreEditorFieldHistory,
+  restoreEditorRow,
+  softDeleteEditorRow,
+  toggleDeletedEditorRowGroup,
   toggleEditorRowFieldMarker,
   toggleEditorHistoryGroupExpanded,
   toggleEditorLanguageCollapsed,
@@ -14,6 +23,33 @@ export function createTranslateActions(render) {
     if (action === "close-target-language-manager") {
       closeTargetLanguageManager();
       render();
+      return true;
+    }
+
+    if (action === "cancel-insert-editor-row") {
+      cancelInsertEditorRowModal();
+      render();
+      return true;
+    }
+
+    if (action === "cancel-editor-row-permanent-delete") {
+      cancelEditorRowPermanentDeletionModal();
+      render();
+      return true;
+    }
+
+    if (action === "confirm-insert-editor-row-before") {
+      await confirmInsertEditorRow(render, "before");
+      return true;
+    }
+
+    if (action === "confirm-insert-editor-row-after") {
+      await confirmInsertEditorRow(render, "after");
+      return true;
+    }
+
+    if (action === "confirm-editor-row-permanent-delete") {
+      await confirmEditorRowPermanentDeletion(render);
       return true;
     }
 
@@ -37,6 +73,40 @@ export function createTranslateActions(render) {
     const historyGroupKey = actionSuffix(action, "toggle-editor-history-group:");
     if (historyGroupKey !== null) {
       toggleEditorHistoryGroupExpanded(historyGroupKey);
+      render();
+      return true;
+    }
+
+    const deletedRowGroupKey = actionSuffix(action, "toggle-editor-deleted-row-group:");
+    if (deletedRowGroupKey !== null) {
+      const scrollAnchor = captureTranslateRowAnchor(event?.target ?? null);
+      toggleDeletedEditorRowGroup(render, deletedRowGroupKey, scrollAnchor);
+      return true;
+    }
+
+    const insertRowId = actionSuffix(action, "open-insert-editor-row:");
+    if (insertRowId !== null) {
+      openInsertEditorRowModal(insertRowId);
+      render();
+      return true;
+    }
+
+    const softDeleteRowId = actionSuffix(action, "soft-delete-editor-row:");
+    if (softDeleteRowId !== null) {
+      const scrollAnchor = captureTranslateRowAnchor(event?.target ?? null);
+      await softDeleteEditorRow(render, softDeleteRowId, scrollAnchor);
+      return true;
+    }
+
+    const restoreRowId = actionSuffix(action, "restore-editor-row:");
+    if (restoreRowId !== null) {
+      await restoreEditorRow(render, restoreRowId);
+      return true;
+    }
+
+    const permanentDeleteRowId = actionSuffix(action, "open-editor-row-permanent-delete:");
+    if (permanentDeleteRowId !== null) {
+      openEditorRowPermanentDeletionModal(permanentDeleteRowId);
       render();
       return true;
     }

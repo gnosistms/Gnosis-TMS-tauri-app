@@ -16,6 +16,10 @@ export function estimateEditorRowHeight(
   collapsedLanguageCodes = new Set(),
   fontSizePx = 20,
 ) {
+  if (row?.kind === "deleted-group") {
+    return 44;
+  }
+
   const sections = Array.isArray(row?.sections) ? row.sections : [];
   const expandedSections = sections.filter((section) => !collapsedLanguageCodes.has(section.code)).length;
   const collapsedSections = sections.length - expandedSections;

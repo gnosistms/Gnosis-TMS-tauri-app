@@ -130,9 +130,35 @@
   gap: 16px;
 }
 
+.translation-row-shell {
+  position: relative;
+  padding-top: 45px;
+}
+
 .translation-row__stack {
   display: grid;
   gap: 12px;
+}
+
+.translation-row__actions {
+  position: absolute;
+  top: 0;
+  right: 16px;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 0 2px;
+}
+
+.card--translation.is-deleted {
+  opacity: 0.82;
+}
+
+.translation-deleted-group {
+  padding: 4px 0;
 }
 
 .translation-language-panel {
