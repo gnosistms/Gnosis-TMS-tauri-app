@@ -104,6 +104,120 @@ function renderFilterSelect() {
   });
 }
 
+function renderEditorSearchField(editorFilters) {
+  const caseSensitive = editorFilters?.filters?.caseSensitive === true;
+  return createSearchField({
+    placeholder: "Search",
+    value: editorFilters?.filters?.searchQuery ?? "",
+    endAdornment: `
+      <button
+        type="button"
+        class="search-field__action${caseSensitive ? " search-field__action--active" : ""}"
+        data-action="toggle-editor-search-case-sensitive"
+        data-editor-search-case-toggle
+        aria-label="${caseSensitive ? "Disable case-sensitive search" : "Enable case-sensitive search"}"
+        aria-pressed="${caseSensitive ? "true" : "false"}"
+        ${tooltipAttributes(caseSensitive ? "Disable case-sensitive search" : "Enable case-sensitive search")}
+      >
+        aA
+      </button>
+    `,
+    inputAttributes: {
+      "data-editor-search-input": true,
+      "aria-label": "Search visible rows",
+    },
+  });
+}
+
+function renderEditorReplaceField(editorReplace) {
+  return createSearchField({
+    placeholder: "Replace...",
+    value: editorReplace?.replaceQuery ?? "",
+    showIcon: false,
+    inputAttributes: {
+      "data-editor-replace-input": true,
+      "aria-label": "Replace selected search matches",
+      ...(editorReplace?.status === "saving" ? { disabled: true } : {}),
+    },
+  });
+}
+
+function renderEditorReplaceControls(editorReplace) {
+  if (!editorReplace?.isAvailable) {
+    return "";
+  }
+
+  const isBusy = editorReplace.status === "saving";
+  const toggle = `
+    <label class="replace-toggle${editorReplace.isEnabled ? " replace-toggle--checkbox-only" : ""}">
+      <input
+        type="checkbox"
+        data-editor-replace-toggle
+        aria-label="${editorReplace.isEnabled ? "Hide replace controls" : "Show replace controls"}"
+        ${editorReplace.isEnabled ? "checked" : ""}
+        ${isBusy ? "disabled" : ""}
+      />
+      ${editorReplace.isEnabled ? "" : '<span class="replace-toggle__label">Replace</span>'}
+    </label>
+  `;
+  if (!editorReplace.isEnabled) {
+    return toggle;
+  }
+
+  return `
+    ${toggle}
+    ${renderEditorReplaceField(editorReplace)}
+    ${secondaryButton(
+      isBusy ? "Replacing..." : "Replace selected",
+      "replace-selected-editor-rows",
+      {
+        compact: true,
+        disabled: isBusy || editorReplace.selectedMatchingRowCount === 0,
+        className: "button--replace-toolbar",
+      },
+    )}
+    ${secondaryButton("Select all", "select-all-editor-replace-rows", {
+      compact: true,
+      disabled: isBusy || editorReplace.matchingRowCount === 0,
+      className: "button--replace-toolbar",
+      tooltip: "Mark all search results for replacement",
+    })}
+  `;
+}
+
+function renderEditorFilterSummaryLabel(editorFilters) {
+  if (!editorFilters?.hasActiveFilters) {
+    return null;
+  }
+
+  const rowCount = Number.isFinite(editorFilters?.matchingRowCount)
+    ? editorFilters.matchingRowCount
+    : 0;
+  if (rowCount <= 0) {
+    return null;
+  }
+
+  return rowCount === 1
+    ? "Search result: 1 matching row"
+    : `Search result: ${rowCount} matching rows`;
+}
+
+function renderEditorFilterBanner(editorFilters) {
+  const label = renderEditorFilterSummaryLabel(editorFilters);
+  if (!label) {
+    return "";
+  }
+
+  return `
+    <div class="translation-results-banner" aria-live="polite">
+      <div class="translation-results-banner__gutter" aria-hidden="true"></div>
+      <div class="translation-results-banner__card">
+        <p class="translation-results-banner__text">${escapeHtml(label)}</p>
+      </div>
+    </div>
+  `;
+}
+
 function renderModeSegmentedControl() {
   return `
     <div class="segmented-control" role="tablist" aria-label="Editor mode">
@@ -404,6 +518,8 @@ export function renderTranslateScreen(state) {
     sourceCode,
     targetCode,
     contentRows,
+    editorFilters,
+    editorReplace,
     collapsedLanguageCodes,
     editorFontSizePx,
   } = buildEditorScreenViewModel(state);
@@ -423,8 +539,8 @@ export function renderTranslateScreen(state) {
       </div>
       <div class="toolbar-row toolbar-row--between">
         <div class="toolbar-search">
-          ${createSearchField("Search")}
-          <label class="replace-toggle"><input type="checkbox" /> Replace</label>
+          ${renderEditorSearchField(editorFilters)}
+          ${renderEditorReplaceControls(editorReplace)}
         </div>
         <div class="toolbar-meta">
           ${textAction("Unreview All", "noop")}
@@ -462,7 +578,11 @@ export function renderTranslateScreen(state) {
     translateBody = `
       <article class="card card--translation">
         <div class="card__body">
-          <p>This file does not contain any translatable rows.</p>
+          <p>${escapeHtml(
+            editorFilters?.hasActiveFilters
+              ? "No rows match the current search."
+              : "This file does not contain any translatable rows.",
+          )}</p>
         </div>
       </article>
     `;
@@ -471,6 +591,7 @@ export function renderTranslateScreen(state) {
       contentRows,
       collapsedLanguageCodes,
       editorFontSizePx,
+      editorReplace,
     );
   }
 
@@ -490,7 +611,8 @@ export function renderTranslateScreen(state) {
     body: `
       <section class="translate-layout" style="--translation-editor-font-size: ${escapeHtml(String(editorFontSizePx))}px;">
         <div class="translate-main-scroll">
-          <div class="translate-main">
+          <div class="translate-main${editorReplace?.isEnabled ? " translate-main--replace-mode" : ""}">
+            ${renderEditorFilterBanner(editorFilters)}
             ${translateBody}
           </div>
         </div>

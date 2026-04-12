@@ -19,6 +19,7 @@ use self::{
     update_gtms_chapter_glossary_links_sync,
     update_gtms_chapter_language_selection_sync,
     update_gtms_editor_row_field_flag_sync,
+    update_gtms_editor_row_fields_batch_sync,
     update_gtms_editor_row_fields_sync,
     InsertEditorRowInput,
     InsertEditorRowResponse,
@@ -39,6 +40,8 @@ use self::{
     UpdateChapterLanguageSelectionResponse,
     UpdateEditorRowFieldFlagInput,
     UpdateEditorRowFieldFlagResponse,
+    UpdateEditorRowFieldsBatchInput,
+    UpdateEditorRowFieldsBatchResponse,
     UpdateEditorRowFieldsInput,
     UpdateEditorRowFieldsResponse,
     UpdateEditorRowLifecycleInput,
@@ -140,6 +143,18 @@ pub(crate) async fn update_gtms_editor_row_fields(
   tauri::async_runtime::spawn_blocking(move || update_gtms_editor_row_fields_sync(&app, input))
     .await
     .map_err(|error| format!("The row update worker failed: {error}"))?
+}
+
+#[tauri::command]
+pub(crate) async fn update_gtms_editor_row_fields_batch(
+  app: AppHandle,
+  input: UpdateEditorRowFieldsBatchInput,
+) -> Result<UpdateEditorRowFieldsBatchResponse, String> {
+  tauri::async_runtime::spawn_blocking(move || {
+    update_gtms_editor_row_fields_batch_sync(&app, input)
+  })
+  .await
+  .map_err(|error| format!("The row batch update worker failed: {error}"))?
 }
 
 #[tauri::command]

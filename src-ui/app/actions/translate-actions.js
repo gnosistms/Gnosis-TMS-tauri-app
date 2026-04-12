@@ -9,9 +9,12 @@ import {
   closeTargetLanguageManager,
   openEditorRowPermanentDeletionModal,
   openInsertEditorRowModal,
+  replaceSelectedEditorRows,
   restoreEditorFieldHistory,
   restoreEditorRow,
+  selectAllEditorReplaceRows,
   softDeleteEditorRow,
+  toggleEditorSearchFilterCaseSensitive,
   toggleDeletedEditorRowGroup,
   toggleEditorRowFieldMarker,
   toggleEditorHistoryGroupExpanded,
@@ -50,6 +53,25 @@ export function createTranslateActions(render) {
 
     if (action === "confirm-editor-row-permanent-delete") {
       await confirmEditorRowPermanentDeletion(render);
+      return true;
+    }
+
+    if (action === "select-all-editor-replace-rows") {
+      selectAllEditorReplaceRows(render);
+      return true;
+    }
+
+    if (action === "replace-selected-editor-rows") {
+      await replaceSelectedEditorRows(render);
+      return true;
+    }
+
+    if (action === "toggle-editor-search-case-sensitive") {
+      const button = event?.target instanceof Element
+        ? event.target.closest("[data-editor-search-case-toggle]")
+        : null;
+      const nextPressed = button?.getAttribute("aria-pressed") !== "true";
+      toggleEditorSearchFilterCaseSensitive(render, nextPressed);
       return true;
     }
 

@@ -136,6 +136,25 @@ pub(crate) struct UpdateEditorRowFieldsInput {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub(crate) struct UpdateEditorRowFieldsBatchRowInput {
+  row_id: String,
+  fields: BTreeMap<String, String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct UpdateEditorRowFieldsBatchInput {
+  installation_id: i64,
+  repo_name: String,
+  project_id: Option<String>,
+  chapter_id: String,
+  rows: Vec<UpdateEditorRowFieldsBatchRowInput>,
+  commit_message: String,
+  operation: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct UpdateEditorRowFieldFlagInput {
   installation_id: i64,
   repo_name: String,
@@ -172,6 +191,14 @@ pub(crate) struct UpdateEditorRowLifecycleInput {
 pub(crate) struct UpdateEditorRowFieldsResponse {
   row_id: String,
   source_word_counts: BTreeMap<String, usize>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct UpdateEditorRowFieldsBatchResponse {
+  row_ids: Vec<String>,
+  source_word_counts: BTreeMap<String, usize>,
+  commit_sha: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -1139,6 +1166,149 @@ pub(super) fn update_gtms_editor_row_fields_sync(
   Ok(UpdateEditorRowFieldsResponse {
     row_id: input.row_id,
     source_word_counts,
+  })
+}
+
+pub(super) fn update_gtms_editor_row_fields_batch_sync(
+  app: &AppHandle,
+  input: UpdateEditorRowFieldsBatchInput,
+) -> Result<UpdateEditorRowFieldsBatchResponse, String> {
+  let repo_path = resolve_project_git_repo_path(
+    app,
+    input.installation_id,
+    input.project_id.as_deref(),
+    Some(&input.repo_name),
+  )?;
+  ensure_repo_exists(&repo_path, "The local project repo is not available yet.")?;
+  ensure_valid_git_repo(&repo_path, "The local project repo is missing or invalid.")?;
+
+  let chapter_path = find_chapter_path_by_id(&repo_path.join("chapters"), &input.chapter_id)?;
+  let chapter_json_path = chapter_path.join("chapter.json");
+  let chapter_file: StoredChapterFile = read_json_file(&chapter_json_path, "chapter.json")?;
+  let languages = sanitize_chapter_languages(&chapter_file.languages);
+  let mut source_word_counts = if chapter_file.source_word_counts.is_empty() {
+    let rows = load_editor_rows(&chapter_path.join("rows"))?;
+    resolve_source_word_counts(&chapter_file, Some(&rows), &languages)
+  } else {
+    resolve_source_word_counts(&chapter_file, None, &languages)
+  };
+  let mut rows_by_id = BTreeMap::new();
+  for row in input.rows {
+    let row_id = row.row_id.trim().to_string();
+    if row_id.is_empty() {
+      continue;
+    }
+
+    rows_by_id.insert(
+      row_id,
+      row
+        .fields
+        .into_iter()
+        .map(|(code, plain_text)| (code, plain_text))
+        .collect::<BTreeMap<_, _>>(),
+    );
+  }
+
+  let mut changed_row_ids = Vec::new();
+  let mut relative_row_paths = Vec::new();
+
+  for (row_id, fields) in rows_by_id {
+    let row_json_path = chapter_path.join("rows").join(format!("{row_id}.json"));
+    let original_row_text = fs::read_to_string(&row_json_path)
+      .map_err(|error| format!("Could not read row file '{}': {error}", row_json_path.display()))?;
+    let original_row_file: StoredRowFile = serde_json::from_str(&original_row_text)
+      .map_err(|error| format!("Could not parse row file '{}': {error}", row_json_path.display()))?;
+    let mut row_value: Value = serde_json::from_str(&original_row_text)
+      .map_err(|error| format!("Could not parse row file '{}': {error}", row_json_path.display()))?;
+    let row_object = row_value
+      .as_object_mut()
+      .ok_or_else(|| "The row file is not a JSON object.".to_string())?;
+    let fields_value = row_object
+      .entry("fields".to_string())
+      .or_insert_with(|| json!({}));
+    let fields_object = fields_value
+      .as_object_mut()
+      .ok_or_else(|| "The row fields are not a JSON object.".to_string())?;
+
+    for (code, plain_text) in fields {
+      let field_value = fields_object.entry(code).or_insert_with(|| json!({}));
+      let field_object = field_value
+        .as_object_mut()
+        .ok_or_else(|| "A row field is not a JSON object.".to_string())?;
+      ensure_editor_field_object_defaults(field_object)?;
+      field_object.insert("value_kind".to_string(), Value::String("text".to_string()));
+      field_object.insert("plain_text".to_string(), Value::String(plain_text.clone()));
+      field_object.insert(
+        "html_preview".to_string(),
+        html_preview(&plain_text).map(Value::String).unwrap_or(Value::Null),
+      );
+    }
+
+    let updated_row_json = serde_json::to_string_pretty(&row_value)
+      .map_err(|error| format!("Could not serialize row file '{}': {error}", row_json_path.display()))?;
+    let updated_row_text = format!("{updated_row_json}\n");
+    if updated_row_text == original_row_text {
+      continue;
+    }
+
+    let updated_row_file: StoredRowFile = serde_json::from_value(row_value.clone())
+      .map_err(|error| format!("Could not decode updated row '{}': {error}", row_json_path.display()))?;
+    source_word_counts = apply_source_word_count_delta(
+      &source_word_counts,
+      &original_row_file,
+      &updated_row_file,
+      &languages,
+    );
+    write_text_file(&row_json_path, &updated_row_text)?;
+    relative_row_paths.push(repo_relative_path(&repo_path, &row_json_path)?);
+    changed_row_ids.push(row_id);
+  }
+
+  if !changed_row_ids.is_empty() {
+    write_chapter_source_word_counts(&chapter_json_path, &source_word_counts)?;
+    let relative_chapter_json = repo_relative_path(&repo_path, &chapter_json_path)?;
+    let mut add_args = vec!["add"];
+    for path in &relative_row_paths {
+      add_args.push(path.as_str());
+    }
+    add_args.push(relative_chapter_json.as_str());
+    git_output(&repo_path, &add_args)?;
+
+    let mut commit_paths: Vec<&str> = relative_row_paths.iter().map(String::as_str).collect();
+    commit_paths.push(relative_chapter_json.as_str());
+    let commit_message = input.commit_message.trim();
+    let operation = input.operation.trim();
+    let commit_output = git_commit_as_signed_in_user_with_metadata(
+      app,
+      &repo_path,
+      if commit_message.is_empty() {
+        "Update editor rows"
+      } else {
+        commit_message
+      },
+      &commit_paths,
+      CommitMetadata {
+        operation: if operation.is_empty() { None } else { Some(operation) },
+        status_note: None,
+      },
+    )?;
+    let commit_sha = if commit_output.is_empty() {
+      None
+    } else {
+      Some(git_output(&repo_path, &["rev-parse", "--short", "HEAD"])?)
+    };
+
+    return Ok(UpdateEditorRowFieldsBatchResponse {
+      row_ids: changed_row_ids,
+      source_word_counts,
+      commit_sha,
+    });
+  }
+
+  Ok(UpdateEditorRowFieldsBatchResponse {
+    row_ids: changed_row_ids,
+    source_word_counts,
+    commit_sha: None,
   })
 }
 

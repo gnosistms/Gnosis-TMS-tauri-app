@@ -1,0 +1,66 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+
+import {
+  buildEditorRowSearchHighlights,
+  buildEditorSearchHighlightMarkup,
+  mergeEditorTextHighlightMaps,
+} from "./editor-search-highlighting.js";
+
+test("buildEditorSearchHighlightMarkup wraps matching segments", () => {
+  const highlight = buildEditorSearchHighlightMarkup("distintos distintos", [
+    { start: 0, end: 9 },
+    { start: 10, end: 19 },
+  ]);
+
+  assert.equal(highlight.kind, "search");
+  assert.equal(highlight.hasMatches, true);
+  assert.match(
+    highlight.html,
+    /^<mark class="translation-language-panel__search-match">distintos<\/mark> <mark class="translation-language-panel__search-match">distintos<\/mark>$/,
+  );
+});
+
+test("buildEditorRowSearchHighlights only includes visible languages with matches", () => {
+  const highlights = buildEditorRowSearchHighlights(
+    [
+      { code: "es", text: "distintos caminos" },
+      { code: "en", text: "different paths" },
+      { code: "vi", text: "nhung loi khac nhau" },
+    ],
+    "distintos",
+    new Set(["es", "en"]),
+  );
+
+  assert.equal(highlights.size, 1);
+  assert.match(highlights.get("es")?.html ?? "", /translation-language-panel__search-match/);
+  assert.equal(highlights.has("en"), false);
+  assert.equal(highlights.has("vi"), false);
+});
+
+test("buildEditorRowSearchHighlights respects case-sensitive search", () => {
+  const highlights = buildEditorRowSearchHighlights(
+    [
+      { code: "es", text: "Distintos caminos" },
+      { code: "en", text: "Different paths" },
+    ],
+    "distintos",
+    new Set(["es", "en"]),
+    { caseSensitive: true },
+  );
+
+  assert.equal(highlights.size, 0);
+});
+
+test("mergeEditorTextHighlightMaps prefers primary entries by language", () => {
+  const merged = mergeEditorTextHighlightMaps(
+    new Map([["es", { kind: "search", html: "search", hasMatches: true }]]),
+    new Map([
+      ["es", { kind: "glossary", html: "glossary", hasMatches: true }],
+      ["vi", { kind: "glossary", html: "fallback", hasMatches: true }],
+    ]),
+  );
+
+  assert.equal(merged.get("es")?.html, "search");
+  assert.equal(merged.get("vi")?.html, "fallback");
+});

@@ -232,6 +232,8 @@ export function createEditorChapterState() {
     selectionPersistStatus: "idle",
     fontSizePx: DEFAULT_EDITOR_FONT_SIZE_PX,
     collapsedLanguageCodes: new Set(),
+    filters: createEditorChapterFilterState(),
+    replace: createEditorReplaceState(),
     glossary: createEditorChapterGlossaryState(),
     activeRowId: null,
     activeLanguageCode: null,
@@ -240,6 +242,23 @@ export function createEditorChapterState() {
     insertRowModal: createEditorInsertRowModalState(),
     rowPermanentDeletionModal: createEditorRowPermanentDeletionModalState(),
     rows: [],
+  };
+}
+
+export function createEditorChapterFilterState() {
+  return {
+    searchQuery: "",
+    caseSensitive: false,
+  };
+}
+
+export function createEditorReplaceState() {
+  return {
+    enabled: false,
+    replaceQuery: "",
+    selectedRowIds: new Set(),
+    status: "idle",
+    error: "",
   };
 }
 

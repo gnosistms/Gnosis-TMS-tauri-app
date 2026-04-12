@@ -53,6 +53,36 @@ function shouldBlurActiveEditorField(event) {
   return key === "enter" && event.shiftKey && !event.metaKey && !event.ctrlKey && !event.altKey;
 }
 
+function shouldFocusEditorSearch(event) {
+  if (event.defaultPrevented || event.repeat || event.isComposing) {
+    return false;
+  }
+
+  const key = typeof event.key === "string" ? event.key.toLowerCase() : "";
+  if (key !== "f" || event.shiftKey || event.altKey) {
+    return false;
+  }
+
+  if (navigator.platform.includes("Mac")) {
+    return event.metaKey && !event.ctrlKey;
+  }
+
+  return event.ctrlKey && !event.metaKey;
+}
+
+function focusEditorSearchInput(selectContents = false) {
+  const input = document.querySelector("[data-editor-search-input]");
+  if (!(input instanceof HTMLInputElement)) {
+    return false;
+  }
+
+  input.focus({ preventScroll: true });
+  if (selectContents) {
+    input.select();
+  }
+  return true;
+}
+
 function focusEditorFieldFromGlossaryMark(event) {
   const mark = event.target instanceof Element
     ? event.target.closest("[data-editor-glossary-mark]")
@@ -583,6 +613,13 @@ export function registerAppEvents(render) {
   document.addEventListener("input", (event) => handleInputEvent(event, render));
   document.addEventListener("change", (event) => handleInputEvent(event, render));
   document.addEventListener("keydown", (event) => {
+    if (shouldFocusEditorSearch(event)) {
+      if (focusEditorSearchInput(true)) {
+        event.preventDefault();
+      }
+      return;
+    }
+
     if (shouldBlurActiveEditorField(event)) {
       event.preventDefault();
       event.target.blur();
@@ -660,6 +697,11 @@ export function registerAppEvents(render) {
 
   document.addEventListener("pointerdown", (event) => {
     if (!(event instanceof PointerEvent) || event.button !== 0) {
+      return;
+    }
+
+    if (event.target instanceof Element && event.target.closest("[data-editor-search-case-toggle]")) {
+      event.preventDefault();
       return;
     }
 

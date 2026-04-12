@@ -81,11 +81,15 @@ function captureFocusedInputState() {
     "[data-glossary-rename-input]",
     "[data-glossary-permanent-delete-input]",
     "[data-glossary-term-search-input]",
+    "[data-editor-search-input]",
+    "[data-editor-replace-input]",
   ];
 
   const selector =
     activeElement instanceof HTMLTextAreaElement && activeElement.matches("[data-editor-row-field]")
       ? `[data-editor-row-field][data-row-id="${activeElement.dataset.rowId}"][data-language-code="${activeElement.dataset.languageCode}"]`
+      : activeElement instanceof HTMLInputElement && activeElement.matches("[data-editor-replace-row-select]")
+        ? `[data-editor-replace-row-select][data-row-id="${activeElement.dataset.rowId}"]`
       : activeElement instanceof HTMLSelectElement && activeElement.matches("[data-chapter-glossary-select]")
         ? `[data-chapter-glossary-select][data-chapter-id="${activeElement.dataset.chapterId}"]`
         : supportedSelectors.find((candidate) => activeElement.matches(candidate));

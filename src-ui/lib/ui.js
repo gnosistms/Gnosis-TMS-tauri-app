@@ -30,7 +30,7 @@ function disabledActionAttributes(options = {}) {
     return "";
   }
 
-  return ' aria-disabled="true" data-offline-blocked="true"';
+  return ' disabled aria-disabled="true" data-offline-blocked="true"';
 }
 
 function serializeAttributes(attributes = {}) {
@@ -113,7 +113,10 @@ export function secondaryButton(label, action, options = {}) {
   const tooltip = options.tooltip
     ? tooltipAttributes(options.tooltip, options.tooltipOptions)
     : "";
-  return `<button class="button button--secondary${options.compact ? " button--compact" : ""}${options.disabled ? " is-disabled" : ""}" data-action="${escapeHtml(
+  const className = typeof options.className === "string" && options.className.trim()
+    ? ` ${escapeHtml(options.className.trim())}`
+    : "";
+  return `<button class="button button--secondary${options.compact ? " button--compact" : ""}${options.disabled ? " is-disabled" : ""}${className}" data-action="${escapeHtml(
     action,
   )}"${tooltip}${disabledActionAttributes(options)}>${escapeHtml(label)}</button>`;
 }
@@ -394,13 +397,23 @@ export function createSearchField(config = "Search") {
       : (config ?? {});
   const placeholder = options.placeholder ?? "Search";
   const value = options.value ?? "";
+  const showIcon = options.showIcon !== false;
+  const className = [
+    "search-field",
+    showIcon ? "" : "search-field--no-icon",
+    typeof options.className === "string" ? options.className : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
   const inputAttributes = serializeAttributes(options.inputAttributes ?? {});
   const labelAttributes = serializeAttributes(options.labelAttributes ?? {});
+  const endAdornment = typeof options.endAdornment === "string" ? options.endAdornment : "";
 
   return `
-    <label class="search-field"${labelAttributes}>
-      <span class="search-field__icon">⌕</span>
+    <label class="${className}"${labelAttributes}>
+      ${showIcon ? '<span class="search-field__icon">⌕</span>' : ""}
       <input type="text" placeholder="${escapeHtml(placeholder)}" value="${escapeHtml(value)}"${inputAttributes} />
+      ${endAdornment}
     </label>
   `;
 }

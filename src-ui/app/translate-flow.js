@@ -4,6 +4,12 @@ import {
   buildEditorRowGlossaryHighlights,
 } from "./editor-glossary-highlighting.js";
 import {
+  buildEditorRowSearchHighlights,
+  mergeEditorTextHighlightMaps,
+} from "./editor-search-highlighting.js";
+import { normalizeEditorChapterFilterState } from "./editor-filters.js";
+import { buildEditorBatchReplaceUpdates } from "./editor-replace.js";
+import {
   ensureProjectNotTombstoned,
   findChapterContext,
   selectedProjectsTeam,
@@ -13,7 +19,9 @@ import { saveStoredEditorFontSizePx } from "./editor-preferences.js";
 import { reconcileExpandedEditorHistoryGroupKeys } from "./editor-history.js";
 import {
   coerceEditorFontSizePx,
+  createEditorChapterFilterState,
   createEditorChapterGlossaryState,
+  createEditorReplaceState,
   createEditorHistoryState,
   createEditorInsertRowModalState,
   createEditorRowPermanentDeletionModalState,
@@ -111,6 +119,28 @@ function normalizeEditorHistoryState(history) {
   };
 }
 
+function normalizeEditorChapterFilters(filters) {
+  return normalizeEditorChapterFilterState(filters);
+}
+
+function cloneEditorReplaceSelectedRowIds(selectedRowIds) {
+  return selectedRowIds instanceof Set
+    ? new Set([...selectedRowIds].filter(Boolean))
+    : new Set();
+}
+
+function normalizeEditorReplaceState(replace) {
+  return {
+    ...createEditorReplaceState(),
+    ...(replace && typeof replace === "object" ? replace : {}),
+    enabled: replace?.enabled === true,
+    replaceQuery: typeof replace?.replaceQuery === "string" ? replace.replaceQuery : "",
+    selectedRowIds: cloneEditorReplaceSelectedRowIds(replace?.selectedRowIds),
+    status: replace?.status === "saving" ? "saving" : "idle",
+    error: typeof replace?.error === "string" ? replace.error : "",
+  };
+}
+
 function cloneCollapsedLanguageCodes(collapsedLanguageCodes) {
   return collapsedLanguageCodes instanceof Set
     ? new Set(collapsedLanguageCodes)
@@ -189,6 +219,7 @@ function currentEditorHistoryForSelection(chapterState, rowId, languageCode) {
 }
 
 function applyEditorUiState(nextEditorChapter, previousEditorChapter = state.editorChapter) {
+  const isSameChapter = previousEditorChapter?.chapterId === nextEditorChapter?.chapterId;
   const activeRowId =
     typeof previousEditorChapter?.activeRowId === "string" ? previousEditorChapter.activeRowId : null;
   const activeLanguageCode =
@@ -205,6 +236,12 @@ function applyEditorUiState(nextEditorChapter, previousEditorChapter = state.edi
     ...nextEditorChapter,
     fontSizePx: coerceEditorFontSizePx(previousEditorChapter?.fontSizePx),
     collapsedLanguageCodes: cloneCollapsedLanguageCodes(previousEditorChapter?.collapsedLanguageCodes),
+    filters: isSameChapter
+      ? normalizeEditorChapterFilters(previousEditorChapter?.filters)
+      : createEditorChapterFilterState(),
+    replace: isSameChapter
+      ? normalizeEditorReplaceState(previousEditorChapter?.replace)
+      : createEditorReplaceState(),
     expandedDeletedRowGroupIds: cloneExpandedDeletedRowGroupIds(previousEditorChapter?.expandedDeletedRowGroupIds),
     glossary: nextEditorChapter?.glossary ?? previousEditorChapter?.glossary ?? createEditorChapterGlossaryState(),
     insertRowModal:
@@ -723,6 +760,128 @@ function buildEditorRowSections(row, chapterState = state.editorChapter) {
   }));
 }
 
+function buildVisibleEditorLanguageCodeSet(chapterState = state.editorChapter) {
+  const collapsedLanguageCodes =
+    chapterState?.collapsedLanguageCodes instanceof Set
+      ? chapterState.collapsedLanguageCodes
+      : new Set();
+
+  return new Set(
+    (Array.isArray(chapterState?.languages) ? chapterState.languages : [])
+      .map((language) => (typeof language?.code === "string" ? language.code.trim() : ""))
+      .filter((code) => code && !collapsedLanguageCodes.has(code)),
+  );
+}
+
+function currentMatchingEditorReplaceRowIds(chapterState = state.editorChapter) {
+  return (Array.isArray(chapterState?.rows) ? chapterState.rows : [])
+    .filter((row) => row?.lifecycleState !== "deleted")
+    .filter((row) => buildEditorRowSearchHighlightMap(row, chapterState).size > 0)
+    .map((row) => row.rowId)
+    .filter(Boolean);
+}
+
+function selectedMatchingEditorReplaceRowIds(chapterState = state.editorChapter) {
+  const replaceState = normalizeEditorReplaceState(chapterState?.replace);
+  if (!replaceState.enabled) {
+    return [];
+  }
+
+  const matchingRowIds = new Set(currentMatchingEditorReplaceRowIds(chapterState));
+  return [...replaceState.selectedRowIds].filter((rowId) => matchingRowIds.has(rowId));
+}
+
+function updateEditorReplaceState(nextValue) {
+  if (!state.editorChapter?.chapterId) {
+    return;
+  }
+
+  const currentReplaceState = normalizeEditorReplaceState(state.editorChapter?.replace);
+  state.editorChapter = {
+    ...state.editorChapter,
+    replace:
+      typeof nextValue === "function"
+        ? normalizeEditorReplaceState(nextValue(currentReplaceState))
+        : normalizeEditorReplaceState(nextValue),
+  };
+}
+
+function markEditorRowsPersisted(rowUpdates, sourceWordCounts = null) {
+  const updatesByRowId = new Map(
+    (Array.isArray(rowUpdates) ? rowUpdates : []).map((row) => [row.rowId, cloneRowFields(row.fields)]),
+  );
+  if (updatesByRowId.size === 0 || !state.editorChapter?.chapterId) {
+    return;
+  }
+
+  state.editorChapter = {
+    ...state.editorChapter,
+    rows: state.editorChapter.rows.map((row) => {
+      if (!updatesByRowId.has(row.rowId)) {
+        return row;
+      }
+
+      const fields = updatesByRowId.get(row.rowId);
+      return {
+        ...row,
+        fields,
+        persistedFields: cloneRowFields(fields),
+        saveStatus: "idle",
+        saveError: "",
+      };
+    }),
+    sourceWordCounts:
+      sourceWordCounts && typeof sourceWordCounts === "object"
+        ? sourceWordCounts
+        : state.editorChapter.sourceWordCounts,
+  };
+  applyEditorSelectionsToProjectState(state.editorChapter);
+}
+
+function formatReplaceRowCount(rowCount) {
+  return rowCount === 1 ? "1 row" : `${rowCount} rows`;
+}
+
+function summarizeReplaceSearchQuery(searchQuery, maxLength = 36) {
+  const text = String(searchQuery ?? "").trim();
+  if (text.length <= maxLength) {
+    return text;
+  }
+
+  return `${text.slice(0, maxLength - 1)}...`;
+}
+
+function buildEditorReplaceResetCommitMessage(rowCount) {
+  return `Create reset point before replace in ${formatReplaceRowCount(rowCount)}`;
+}
+
+function buildEditorReplaceCommitMessage(searchQuery, rowCount) {
+  const queryLabel = summarizeReplaceSearchQuery(searchQuery);
+  return `Replace "${queryLabel}" in ${formatReplaceRowCount(rowCount)}`;
+}
+
+async function commitEditorRowFieldsBatch({
+  installationId,
+  projectId,
+  repoName,
+  chapterId,
+  rows,
+  commitMessage,
+  operation,
+}) {
+  return invoke("update_gtms_editor_row_fields_batch", {
+    input: {
+      installationId,
+      projectId,
+      repoName,
+      chapterId,
+      rows,
+      commitMessage,
+      operation,
+    },
+  });
+}
+
 function editorGlossaryHighlightContextKey(chapterState = state.editorChapter) {
   const glossaryId = chapterState?.glossary?.glossaryId ?? "";
   const repoName = chapterState?.glossary?.repoName ?? "";
@@ -795,6 +954,21 @@ function buildCachedEditorRowGlossaryHighlights(row, chapterState = state.editor
   return highlightMap;
 }
 
+function buildEditorRowSearchHighlightMap(row, chapterState = state.editorChapter) {
+  const filters = normalizeEditorChapterFilters(chapterState?.filters);
+  const searchQuery = typeof filters?.searchQuery === "string" ? filters.searchQuery.trim() : "";
+  if (!searchQuery) {
+    return new Map();
+  }
+
+  return buildEditorRowSearchHighlights(
+    buildEditorRowSections(row, chapterState),
+    searchQuery,
+    buildVisibleEditorLanguageCodeSet(chapterState),
+    { caseSensitive: filters.caseSensitive === true },
+  );
+}
+
 function readCachedEditorRowGlossaryHighlights(row, chapterState = state.editorChapter) {
   synchronizeEditorGlossaryHighlightCache(chapterState);
 
@@ -811,7 +985,7 @@ function readCachedEditorRowGlossaryHighlights(row, chapterState = state.editorC
   return editorGlossaryHighlightCache.get(cacheKey) ?? null;
 }
 
-function applyEditorGlossaryHighlightMapToRowCard(rowCard, highlightMap) {
+function applyEditorTextHighlightMapToRowCard(rowCard, highlightMap) {
   rowCard.querySelectorAll("[data-editor-glossary-field-stack]").forEach((stack) => {
     if (!(stack instanceof HTMLElement)) {
       return;
@@ -821,9 +995,18 @@ function applyEditorGlossaryHighlightMapToRowCard(rowCard, highlightMap) {
     const highlight = highlightMap.get(languageCode) ?? null;
     const highlightHtml = typeof highlight?.html === "string" ? highlight.html : "";
     const hasRenderableHighlight = highlight?.hasMatches === true && highlightHtml.length > 0;
+    const highlightKind = highlight?.kind === "search" ? "search" : "glossary";
+    stack.classList.toggle(
+      "translation-language-panel__field-stack--highlighted",
+      hasRenderableHighlight,
+    );
     stack.classList.toggle(
       "translation-language-panel__field-stack--glossary",
-      hasRenderableHighlight,
+      hasRenderableHighlight && highlightKind === "glossary",
+    );
+    stack.classList.toggle(
+      "translation-language-panel__field-stack--search",
+      hasRenderableHighlight && highlightKind === "search",
     );
     const layer = stack.querySelector("[data-editor-glossary-highlight]");
     if (layer instanceof HTMLElement) {
@@ -843,8 +1026,10 @@ function syncEditorGlossaryHighlightRowCard(rowCard, chapterState = state.editor
     return;
   }
 
-  const highlightMap = buildCachedEditorRowGlossaryHighlights(row, chapterState);
-  applyEditorGlossaryHighlightMapToRowCard(rowCard, highlightMap);
+  const glossaryHighlightMap = buildCachedEditorRowGlossaryHighlights(row, chapterState);
+  const searchHighlightMap = buildEditorRowSearchHighlightMap(row, chapterState);
+  const highlightMap = mergeEditorTextHighlightMaps(searchHighlightMap, glossaryHighlightMap);
+  applyEditorTextHighlightMapToRowCard(rowCard, highlightMap);
 }
 
 function syncMountedEditorGlossaryHighlightRows(
@@ -887,14 +1072,12 @@ function syncMountedEditorGlossaryHighlightRows(
       return;
     }
 
-    const highlightMap = computeIfMissing
+    const glossaryHighlightMap = computeIfMissing
       ? buildCachedEditorRowGlossaryHighlights(row, chapterState)
       : readCachedEditorRowGlossaryHighlights(row, chapterState);
-    if (!highlightMap) {
-      return;
-    }
-
-    applyEditorGlossaryHighlightMapToRowCard(rowCard, highlightMap);
+    const searchHighlightMap = buildEditorRowSearchHighlightMap(row, chapterState);
+    const highlightMap = mergeEditorTextHighlightMaps(searchHighlightMap, glossaryHighlightMap);
+    applyEditorTextHighlightMapToRowCard(rowCard, highlightMap);
   });
 }
 
@@ -1335,6 +1518,9 @@ export async function loadSelectedChapterEditorData(render, options = {}) {
     persistedSourceLanguageCode: nextSelectedSourceLanguageCode,
     persistedTargetLanguageCode: nextSelectedTargetLanguageCode,
     selectionPersistStatus: "idle",
+    filters: preserveVisibleRows
+      ? normalizeEditorChapterFilters(state.editorChapter.filters)
+      : createEditorChapterFilterState(),
     glossary: nextGlossaryState,
     activeRowId: preserveVisibleRows ? state.editorChapter.activeRowId : null,
     activeLanguageCode: preserveVisibleRows ? state.editorChapter.activeLanguageCode : null,
@@ -1979,6 +2165,272 @@ export function updateEditorRowFieldValue(rowId, languageCode, nextValue) {
       saveError: "",
     };
   });
+}
+
+function scrollTranslateMainToTop() {
+  const container = document.querySelector(".translate-main-scroll");
+  if (!(container instanceof HTMLElement)) {
+    return;
+  }
+
+  container.scrollTop = 0;
+}
+
+export function updateEditorSearchFilterQuery(render, nextValue) {
+  const previousSearchQuery = normalizeEditorChapterFilters(state.editorChapter?.filters).searchQuery;
+  const nextSearchQuery = typeof nextValue === "string" ? nextValue : String(nextValue ?? "");
+  const searchChanged = previousSearchQuery !== nextSearchQuery;
+  const searchIsActive = nextSearchQuery.trim().length > 0;
+  const currentReplaceState = normalizeEditorReplaceState(state.editorChapter?.replace);
+  state.editorChapter = {
+    ...state.editorChapter,
+    filters: {
+      ...normalizeEditorChapterFilters(state.editorChapter?.filters),
+      searchQuery: nextSearchQuery,
+    },
+    replace: {
+      ...currentReplaceState,
+      enabled: searchIsActive ? currentReplaceState.enabled : false,
+      selectedRowIds: searchChanged ? new Set() : cloneEditorReplaceSelectedRowIds(currentReplaceState.selectedRowIds),
+      status: "idle",
+      error: "",
+    },
+  };
+  render?.();
+  void waitForNextPaint().then(() => {
+    scrollTranslateMainToTop();
+  });
+}
+
+export function toggleEditorSearchFilterCaseSensitive(render, enabled) {
+  if (!state.editorChapter?.chapterId) {
+    return;
+  }
+
+  const nextCaseSensitive = enabled === true;
+  const currentFilters = normalizeEditorChapterFilters(state.editorChapter?.filters);
+  if (currentFilters.caseSensitive === nextCaseSensitive) {
+    return;
+  }
+
+  const searchIsActive = currentFilters.searchQuery.trim().length > 0;
+  const currentReplaceState = normalizeEditorReplaceState(state.editorChapter?.replace);
+  state.editorChapter = {
+    ...state.editorChapter,
+    filters: {
+      ...currentFilters,
+      caseSensitive: nextCaseSensitive,
+    },
+    replace: {
+      ...currentReplaceState,
+      enabled: searchIsActive ? currentReplaceState.enabled : false,
+      selectedRowIds: new Set(),
+      status: "idle",
+      error: "",
+    },
+  };
+  render?.();
+  void waitForNextPaint().then(() => {
+    scrollTranslateMainToTop();
+  });
+}
+
+export function toggleEditorReplaceEnabled(render, enabled) {
+  if (!state.editorChapter?.chapterId) {
+    return;
+  }
+
+  const searchIsActive = normalizeEditorChapterFilters(state.editorChapter?.filters).searchQuery.trim().length > 0;
+  updateEditorReplaceState((replaceState) => ({
+    ...replaceState,
+    enabled: searchIsActive && enabled === true,
+    selectedRowIds: new Set(),
+    status: "idle",
+    error: "",
+  }));
+  render?.();
+}
+
+export function updateEditorReplaceQuery(render, nextValue) {
+  if (!state.editorChapter?.chapterId) {
+    return;
+  }
+
+  updateEditorReplaceState((replaceState) => ({
+    ...replaceState,
+    replaceQuery: typeof nextValue === "string" ? nextValue : String(nextValue ?? ""),
+    status: "idle",
+    error: "",
+  }));
+  render?.();
+}
+
+export function toggleEditorReplaceRowSelected(render, rowId, selected, anchorTarget = null) {
+  if (!rowId || !state.editorChapter?.chapterId) {
+    return;
+  }
+
+  const scrollAnchor = captureTranslateRowAnchor(anchorTarget);
+
+  const matchingRowIds = new Set(currentMatchingEditorReplaceRowIds(state.editorChapter));
+  if (!matchingRowIds.has(rowId)) {
+    return;
+  }
+
+  updateEditorReplaceState((replaceState) => {
+    const selectedRowIds = cloneEditorReplaceSelectedRowIds(replaceState.selectedRowIds);
+    if (selected) {
+      selectedRowIds.add(rowId);
+    } else {
+      selectedRowIds.delete(rowId);
+    }
+
+    return {
+      ...replaceState,
+      selectedRowIds,
+      status: "idle",
+      error: "",
+    };
+  });
+  render?.();
+  if (scrollAnchor) {
+    void waitForNextPaint().then(() => restoreTranslateRowAnchor(scrollAnchor));
+  }
+}
+
+export function selectAllEditorReplaceRows(render) {
+  if (!state.editorChapter?.chapterId) {
+    return;
+  }
+
+  updateEditorReplaceState((replaceState) => ({
+    ...replaceState,
+    selectedRowIds: new Set(currentMatchingEditorReplaceRowIds(state.editorChapter)),
+    status: "idle",
+    error: "",
+  }));
+  render?.();
+}
+
+export async function replaceSelectedEditorRows(render) {
+  const editorChapter = state.editorChapter;
+  if (!editorChapter?.chapterId) {
+    return;
+  }
+
+  const replaceState = normalizeEditorReplaceState(editorChapter.replace);
+  if (!replaceState.enabled || replaceState.status === "saving") {
+    return;
+  }
+
+  const searchQuery = normalizeEditorChapterFilters(editorChapter.filters).searchQuery.trim();
+  const caseSensitive = normalizeEditorChapterFilters(editorChapter.filters).caseSensitive === true;
+  if (!searchQuery) {
+    return;
+  }
+
+  const selectedRowIds = selectedMatchingEditorReplaceRowIds(editorChapter);
+  if (selectedRowIds.length === 0) {
+    showNoticeBadge("Select at least one matching row to replace.", render);
+    return;
+  }
+
+  const selectedRows = selectedRowIds
+    .map((rowId) => findEditorRowById(rowId, editorChapter))
+    .filter(Boolean);
+  if (selectedRows.some((row) => row.saveStatus === "saving" || row.markerSaveState?.status === "saving")) {
+    showNoticeBadge("Wait for the selected rows to finish saving before replacing.", render);
+    return;
+  }
+
+  const replacePlan = buildEditorBatchReplaceUpdates({
+    rows: editorChapter.rows,
+    selectedRowIds: new Set(selectedRowIds),
+    visibleLanguageCodes: buildVisibleEditorLanguageCodeSet(editorChapter),
+    searchQuery,
+    replaceText: replaceState.replaceQuery,
+    caseSensitive,
+  });
+  if (replacePlan.updatedRows.length === 0) {
+    showNoticeBadge("Nothing to replace in the selected rows.", render);
+    return;
+  }
+
+  const affectedRowIds = new Set(replacePlan.updatedRowIds);
+  const resetRows = selectedRows
+    .filter((row) => affectedRowIds.has(row.rowId))
+    .filter((row) => !rowFieldsEqual(row.fields, row.persistedFields))
+    .map((row) => ({
+      rowId: row.rowId,
+      fields: cloneRowFields(row.fields),
+    }));
+
+  const team = selectedProjectsTeam();
+  const context = findChapterContextById(editorChapter.chapterId);
+  if (!Number.isFinite(team?.installationId) || !context?.project?.name) {
+    return;
+  }
+
+  updateEditorReplaceState((currentState) => ({
+    ...currentState,
+    status: "saving",
+    error: "",
+  }));
+  render?.();
+
+  try {
+    if (resetRows.length > 0) {
+      const resetPayload = await commitEditorRowFieldsBatch({
+        installationId: team.installationId,
+        projectId: context.project.id,
+        repoName: context.project.name,
+        chapterId: editorChapter.chapterId,
+        rows: resetRows,
+        commitMessage: buildEditorReplaceResetCommitMessage(resetRows.length),
+        operation: "editor-replace-reset",
+      });
+
+      if (state.editorChapter?.chapterId === editorChapter.chapterId) {
+        markEditorRowsPersisted(resetRows, resetPayload?.sourceWordCounts);
+      }
+    }
+
+    const payload = await commitEditorRowFieldsBatch({
+      installationId: team.installationId,
+      projectId: context.project.id,
+      repoName: context.project.name,
+      chapterId: editorChapter.chapterId,
+      rows: replacePlan.updatedRows,
+      commitMessage: buildEditorReplaceCommitMessage(searchQuery, replacePlan.updatedRows.length),
+      operation: "editor-replace",
+    });
+
+    if (state.editorChapter?.chapterId === editorChapter.chapterId) {
+      markEditorRowsPersisted(replacePlan.updatedRows, payload?.sourceWordCounts);
+      updateEditorReplaceState((currentState) => ({
+        ...currentState,
+        status: "idle",
+        error: "",
+        selectedRowIds: new Set(),
+      }));
+      render?.();
+      if (affectedRowIds.has(state.editorChapter.activeRowId)) {
+        loadActiveEditorFieldHistory(render);
+      }
+      showNoticeBadge(`Replaced text in ${formatReplaceRowCount(replacePlan.updatedRows.length)}.`, render);
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (state.editorChapter?.chapterId === editorChapter.chapterId) {
+      updateEditorReplaceState((currentState) => ({
+        ...currentState,
+        status: "idle",
+        error: message,
+      }));
+      render?.();
+    }
+    showNoticeBadge(message || "The selected rows could not be replaced.", render);
+  }
 }
 
 export async function toggleEditorRowFieldMarker(render, rowId, languageCode, kind) {

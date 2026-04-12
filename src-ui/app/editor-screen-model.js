@@ -1,11 +1,25 @@
 import { coerceEditorFontSizePx } from "./state.js";
 import { canPermanentlyDeleteProjectFiles } from "./resource-capabilities.js";
 import { selectedProjectsTeam } from "./project-chapter-flow.js";
+import { buildEditorFilterResult } from "./editor-filters.js";
 import { findChapterContextById } from "./translate-flow.js";
 
 let cachedEditorRowsRef = null;
 let cachedEditorLanguagesRef = null;
 let cachedLiveTranslationRows = [];
+
+function normalizeEditorReplaceState(replace) {
+  return {
+    enabled: replace?.enabled === true,
+    replaceQuery: typeof replace?.replaceQuery === "string" ? replace.replaceQuery : "",
+    selectedRowIds:
+      replace?.selectedRowIds instanceof Set
+        ? new Set([...replace.selectedRowIds].filter(Boolean))
+        : new Set(),
+    status: replace?.status === "saving" ? "saving" : "idle",
+    error: typeof replace?.error === "string" ? replace.error : "",
+  };
+}
 
 function chapterLanguageOptions(chapter, editorChapter) {
   if (Array.isArray(editorChapter?.languages) && editorChapter.languages.length > 0) {
@@ -81,7 +95,32 @@ function buildLiveTranslationRows(editorChapter, languages) {
   return liveRows;
 }
 
-function buildEditorDisplayItems(contentRows, editorChapter, team) {
+function buildEditorReplaceViewModel(editorChapter, editorFilters) {
+  const replaceState = normalizeEditorReplaceState(editorChapter?.replace);
+  const isAvailable = (editorFilters?.filters?.searchQuery ?? "").trim().length > 0;
+  const isEnabled = isAvailable && replaceState.enabled;
+  const matchingRowIds = new Set(
+    (Array.isArray(editorFilters?.filteredRows) ? editorFilters.filteredRows : [])
+      .filter((row) => row?.lifecycleState !== "deleted")
+      .map((row) => row.id)
+      .filter(Boolean),
+  );
+  const selectedMatchingRowIds = isEnabled
+    ? [...replaceState.selectedRowIds].filter((rowId) => matchingRowIds.has(rowId))
+    : [];
+
+  return {
+    ...replaceState,
+    isAvailable,
+    isEnabled,
+    matchingRowIds,
+    matchingRowCount: matchingRowIds.size,
+    selectedMatchingRowIds,
+    selectedMatchingRowCount: selectedMatchingRowIds.length,
+  };
+}
+
+function buildEditorDisplayItems(contentRows, editorChapter, team, editorReplace) {
   const rows = Array.isArray(contentRows) ? contentRows : [];
   const expandedDeletedRowGroupIds =
     editorChapter?.expandedDeletedRowGroupIds instanceof Set
@@ -90,6 +129,10 @@ function buildEditorDisplayItems(contentRows, editorChapter, team) {
   const canEditRows = team?.canManageProjects === true;
   const canRestoreRows = Number.isFinite(team?.installationId);
   const canPermanentlyDeleteRows = canPermanentlyDeleteProjectFiles(team);
+  const selectedReplaceRowIds =
+    editorReplace?.selectedMatchingRowIds instanceof Array
+      ? new Set(editorReplace.selectedMatchingRowIds)
+      : new Set();
   const items = [];
   let deletedRun = [];
 
@@ -121,6 +164,9 @@ function buildEditorDisplayItems(contentRows, editorChapter, team) {
       canSoftDelete: row.lifecycleState === "active" && canEditRows,
       canRestore: row.lifecycleState === "deleted" && canRestoreRows,
       canPermanentDelete: row.lifecycleState === "deleted" && canPermanentlyDeleteRows,
+      canReplaceSelect: row.lifecycleState === "active" && editorReplace?.isEnabled === true,
+      replaceSelected: selectedReplaceRowIds.has(row.id),
+      replaceSelectionDisabled: editorReplace?.status === "saving",
     };
     if (nextRow.lifecycleState === "deleted") {
       deletedRun.push(nextRow);
@@ -142,11 +188,23 @@ export function buildEditorScreenViewModel(appState) {
   const languages = chapterLanguageOptions(chapter, editorChapter);
   const { sourceCode, targetCode } = resolveSelectedLanguageCodes(languages, chapter, editorChapter);
   const rawRows = buildLiveTranslationRows(editorChapter, languages);
-  const contentRows = buildEditorDisplayItems(rawRows, editorChapter, selectedProjectsTeam());
   const collapsedLanguageCodes =
     editorChapter?.collapsedLanguageCodes instanceof Set
       ? editorChapter.collapsedLanguageCodes
       : new Set();
+  const editorFilters = buildEditorFilterResult({
+    rows: rawRows,
+    languages,
+    collapsedLanguageCodes,
+    filters: editorChapter?.filters,
+  });
+  const editorReplace = buildEditorReplaceViewModel(editorChapter, editorFilters);
+  const contentRows = buildEditorDisplayItems(
+    editorFilters.filteredRows,
+    editorChapter,
+    selectedProjectsTeam(),
+    editorReplace,
+  );
   const editorFontSizePx = coerceEditorFontSizePx(editorChapter?.fontSizePx);
 
   return {
@@ -156,6 +214,8 @@ export function buildEditorScreenViewModel(appState) {
     sourceCode,
     targetCode,
     contentRows,
+    editorFilters,
+    editorReplace,
     collapsedLanguageCodes,
     editorFontSizePx,
   };

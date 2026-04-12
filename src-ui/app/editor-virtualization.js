@@ -158,12 +158,14 @@ function renderWindowRange(
   collapsedLanguageCodes,
   startIndex,
   endIndex,
+  editorReplace,
 ) {
   itemsContainer.innerHTML = renderTranslationContentRowsRange(
     rows,
     collapsedLanguageCodes,
     startIndex,
     endIndex,
+    editorReplace,
   );
   syncEditorRowTextareaHeights(itemsContainer);
 }
@@ -266,6 +268,7 @@ export function initializeEditorVirtualization(root, appState) {
       model.collapsedLanguageCodes,
       windowState.startIndex,
       windowState.endIndex,
+      model.editorReplace,
     );
     restoreFocusedEditorField(root, focusSnapshot);
     restoreMountedEditorGlossaryHighlightsFromCache(itemsContainer, model.editorChapter);
@@ -295,6 +298,7 @@ export function initializeEditorVirtualization(root, appState) {
           model.collapsedLanguageCodes,
           measuredWindow.startIndex,
           measuredWindow.endIndex,
+          model.editorReplace,
         );
         restoreFocusedEditorField(root, focusSnapshot);
         restoreMountedEditorGlossaryHighlightsFromCache(itemsContainer, model.editorChapter);

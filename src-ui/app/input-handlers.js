@@ -1,6 +1,7 @@
 import { state } from "./state.js";
 import { syncAutoSizeTextarea, syncEditorRowTextareaHeight } from "./autosize.js";
 import { syncEditorVirtualizationRowLayout } from "./editor-virtualization.js";
+import { editorChapterFiltersAreActive } from "./editor-filters.js";
 import {
   updateProjectCreationName,
   updateProjectPermanentDeletionConfirmation,
@@ -29,8 +30,12 @@ import {
   openTargetLanguageManager,
   persistEditorRowOnBlur,
   syncEditorGlossaryHighlightRowDom,
+  toggleEditorReplaceEnabled,
+  toggleEditorReplaceRowSelected,
   updateEditorFontSize,
+  updateEditorReplaceQuery,
   updateEditorRowFieldValue,
+  updateEditorSearchFilterQuery,
   updateEditorSourceLanguage,
   updateEditorTargetLanguage,
 } from "./translate-flow.js";
@@ -278,7 +283,55 @@ function handleEditorFontSizeInput(event, render) {
   return true;
 }
 
-function handleEditorRowFieldInput(event) {
+function handleEditorSearchInput(event, render) {
+  const input = event.target.closest("[data-editor-search-input]");
+  if (!input) {
+    return false;
+  }
+
+  updateEditorSearchFilterQuery(render, input.value);
+  return true;
+}
+
+function handleEditorReplaceToggleInput(event, render) {
+  if (event.type !== "change") {
+    return false;
+  }
+
+  const input = event.target.closest("[data-editor-replace-toggle]");
+  if (!(input instanceof HTMLInputElement)) {
+    return false;
+  }
+
+  toggleEditorReplaceEnabled(render, input.checked);
+  return true;
+}
+
+function handleEditorReplaceInput(event, render) {
+  const input = event.target.closest("[data-editor-replace-input]");
+  if (!input) {
+    return false;
+  }
+
+  updateEditorReplaceQuery(render, input.value);
+  return true;
+}
+
+function handleEditorReplaceRowSelectionInput(event, render) {
+  if (event.type !== "change") {
+    return false;
+  }
+
+  const input = event.target.closest("[data-editor-replace-row-select]");
+  if (!(input instanceof HTMLInputElement)) {
+    return false;
+  }
+
+  toggleEditorReplaceRowSelected(render, input.dataset.rowId, input.checked, input);
+  return true;
+}
+
+function handleEditorRowFieldInput(event, render) {
   if (event.type !== "input") {
     return false;
   }
@@ -293,6 +346,10 @@ function handleEditorRowFieldInput(event) {
     input.dataset.languageCode,
     input.value,
   );
+  if (editorChapterFiltersAreActive(state.editorChapter?.filters)) {
+    render();
+    return true;
+  }
   syncEditorRowTextareaHeight(input);
   syncEditorVirtualizationRowLayout(input);
   syncEditorGlossaryHighlightRowDom(input.dataset.rowId);
@@ -352,6 +409,10 @@ const inputHandlers = [
   handleEditorSourceLanguageInput,
   handleEditorTargetLanguageInput,
   handleEditorFontSizeInput,
+  handleEditorSearchInput,
+  handleEditorReplaceToggleInput,
+  handleEditorReplaceInput,
+  handleEditorReplaceRowSelectionInput,
   handleEditorRowFieldInput,
   handleEditorRowFieldChange,
   handleChapterGlossarySelectInput,
