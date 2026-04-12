@@ -1,0 +1,226 @@
+import {
+  createSearchField,
+  escapeHtml,
+  renderSelectPillControl,
+  secondaryButton,
+  textAction,
+  tooltipAttributes,
+} from "../lib/ui.js";
+import { EDITOR_FONT_SIZE_OPTIONS } from "../app/state.js";
+
+function renderLanguageSelect(label, dataAttribute, selectedCode, languages, extraOptions = []) {
+  const selectedLanguage =
+    languages.find((language) => language.code === selectedCode)
+    ?? languages[0]
+    ?? { name: "" };
+
+  return renderSelectPillControl({
+    className: "select-pill--toolbar",
+    label: `${label}:`,
+    value: selectedLanguage.name,
+    selectAttributes: {
+      [`data-${dataAttribute}`]: true,
+      "aria-label": `${label} language`,
+    },
+    options: [
+      ...languages.map((language) => ({
+        value: language.code,
+        label: language.name,
+        selected: language.code === selectedCode,
+      })),
+      ...extraOptions.map((option) => ({
+        value: option.value,
+        label: option.label,
+      })),
+    ],
+  });
+}
+
+function renderFontSizeSelect(fontSizePx) {
+  return renderSelectPillControl({
+    className: "select-pill--toolbar select-pill--font-size",
+    label: "Font Size:",
+    value: String(fontSizePx),
+    selectAttributes: {
+      "data-editor-font-size-select": true,
+      "aria-label": "Editor font size",
+    },
+    options: EDITOR_FONT_SIZE_OPTIONS.map((option) => ({
+      value: String(option),
+      label: String(option),
+      selected: option === fontSizePx,
+    })),
+  });
+}
+
+function renderFilterSelect() {
+  return renderSelectPillControl({
+    className: "select-pill--toolbar",
+    label: "Filter:",
+    value: "Show all",
+    selectAttributes: {
+      "data-editor-filter-select": true,
+      "aria-label": "Editor filter",
+    },
+    options: [
+      {
+        value: "show-all",
+        label: "Show all",
+        selected: true,
+      },
+    ],
+  });
+}
+
+function renderEditorSearchField(editorFilters) {
+  const caseSensitive = editorFilters?.filters?.caseSensitive === true;
+  return createSearchField({
+    placeholder: "Search",
+    value: editorFilters?.filters?.searchQuery ?? "",
+    endAdornment: `
+      <button
+        type="button"
+        class="search-field__action${caseSensitive ? " search-field__action--active" : ""}"
+        data-action="toggle-editor-search-case-sensitive"
+        data-editor-search-case-toggle
+        aria-label="${caseSensitive ? "Disable case-sensitive search" : "Enable case-sensitive search"}"
+        aria-pressed="${caseSensitive ? "true" : "false"}"
+        ${tooltipAttributes(caseSensitive ? "Disable case-sensitive search" : "Enable case-sensitive search")}
+      >
+        aA
+      </button>
+    `,
+    inputAttributes: {
+      "data-editor-search-input": true,
+      "aria-label": "Search visible rows",
+    },
+  });
+}
+
+function renderEditorReplaceField(editorReplace) {
+  return createSearchField({
+    placeholder: "Replace...",
+    value: editorReplace?.replaceQuery ?? "",
+    showIcon: false,
+    inputAttributes: {
+      "data-editor-replace-input": true,
+      "aria-label": "Replace selected search matches",
+      ...(editorReplace?.status === "saving" ? { disabled: true } : {}),
+    },
+  });
+}
+
+function renderEditorReplaceControls(editorReplace) {
+  if (!editorReplace?.isAvailable) {
+    return "";
+  }
+
+  const isBusy = editorReplace.status === "saving";
+  const toggle = `
+    <label class="replace-toggle${editorReplace.isEnabled ? " replace-toggle--checkbox-only" : ""}">
+      <input
+        type="checkbox"
+        data-editor-replace-toggle
+        aria-label="${editorReplace.isEnabled ? "Hide replace controls" : "Show replace controls"}"
+        ${editorReplace.isEnabled ? "checked" : ""}
+        ${isBusy ? "disabled" : ""}
+      />
+      ${editorReplace.isEnabled ? "" : '<span class="replace-toggle__label">Replace</span>'}
+    </label>
+  `;
+  if (!editorReplace.isEnabled) {
+    return toggle;
+  }
+
+  return `
+    ${toggle}
+    ${renderEditorReplaceField(editorReplace)}
+    ${secondaryButton(
+      isBusy ? "Replacing..." : "Replace selected",
+      "replace-selected-editor-rows",
+      {
+        compact: true,
+        disabled: isBusy || editorReplace.selectedMatchingRowCount === 0,
+        className: "button--replace-toolbar",
+      },
+    )}
+    ${secondaryButton("Select all", "select-all-editor-replace-rows", {
+      compact: true,
+      disabled: isBusy || editorReplace.matchingRowCount === 0,
+      className: "button--replace-toolbar",
+      tooltip: "Mark all search results for replacement",
+    })}
+  `;
+}
+
+function renderEditorFilterSummaryLabel(editorFilters) {
+  if (!editorFilters?.hasActiveFilters) {
+    return null;
+  }
+
+  const rowCount = Number.isFinite(editorFilters?.matchingRowCount)
+    ? editorFilters.matchingRowCount
+    : 0;
+  if (rowCount <= 0) {
+    return null;
+  }
+
+  return rowCount === 1
+    ? "Search result: 1 matching row"
+    : `Search result: ${rowCount} matching rows`;
+}
+
+export function renderEditorFilterBanner(editorFilters) {
+  const label = renderEditorFilterSummaryLabel(editorFilters);
+  if (!label) {
+    return "";
+  }
+
+  return `
+    <div class="translation-results-banner" aria-live="polite">
+      <div class="translation-results-banner__gutter" aria-hidden="true"></div>
+      <div class="translation-results-banner__card">
+        <p class="translation-results-banner__text">${escapeHtml(label)}</p>
+      </div>
+    </div>
+  `;
+}
+
+export function renderTranslateModeControl() {
+  return `
+    <div class="segmented-control" role="tablist" aria-label="Editor mode">
+      <button class="segmented-control__button is-active" aria-selected="true">Translate</button>
+      <button class="segmented-control__button" aria-selected="false">Preview</button>
+    </div>
+  `;
+}
+
+export function renderTranslateToolbar({
+  languages,
+  sourceCode,
+  targetCode,
+  editorFilters,
+  editorReplace,
+  editorFontSizePx,
+  targetLanguageExtraOptions = [],
+}) {
+  return `
+    <div class="translate-toolbar__body translate-toolbar__body--header">
+      <div class="toolbar-row">
+        ${renderLanguageSelect("Source", "editor-source-language-select", sourceCode, languages)}
+        ${renderLanguageSelect("Target", "editor-target-language-select", targetCode, languages, targetLanguageExtraOptions)}
+        ${renderFontSizeSelect(editorFontSizePx)}
+        ${renderFilterSelect()}
+      </div>
+      <div class="toolbar-row toolbar-row--between">
+        <div class="toolbar-search">
+          ${renderEditorSearchField(editorFilters)}
+          ${renderEditorReplaceControls(editorReplace)}
+        </div>
+        <div class="toolbar-meta">
+          ${textAction("Unreview All", "noop")}
+        </div>
+      </div>
+    </div>
+  `;
+}

@@ -237,6 +237,7 @@ export function createEditorChapterState() {
     glossary: createEditorChapterGlossaryState(),
     activeRowId: null,
     activeLanguageCode: null,
+    dirtyRowIds: new Set(),
     history: createEditorHistoryState(),
     replaceUndoModal: createEditorReplaceUndoModalState(),
     expandedDeletedRowGroupIds: new Set(),

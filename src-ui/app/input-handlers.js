@@ -1,7 +1,7 @@
 import { state } from "./state.js";
 import { syncAutoSizeTextarea, syncEditorRowTextareaHeight } from "./autosize.js";
 import { syncEditorVirtualizationRowLayout } from "./editor-virtualization.js";
-import { editorChapterFiltersAreActive } from "./editor-filters.js";
+import { applyEditorRowFieldInput } from "./editor-row-input.js";
 import {
   updateProjectCreationName,
   updateProjectPermanentDeletionConfirmation,
@@ -28,7 +28,6 @@ import {
 import {
   MANAGE_TARGET_LANGUAGES_OPTION_VALUE,
   openTargetLanguageManager,
-  persistEditorRowOnBlur,
   syncEditorGlossaryHighlightRowDom,
   toggleEditorReplaceEnabled,
   toggleEditorReplaceRowSelected,
@@ -341,32 +340,15 @@ function handleEditorRowFieldInput(event, render) {
     return false;
   }
 
-  updateEditorRowFieldValue(
-    input.dataset.rowId,
-    input.dataset.languageCode,
-    input.value,
-  );
-  if (editorChapterFiltersAreActive(state.editorChapter?.filters)) {
-    render();
-    return true;
-  }
-  syncEditorRowTextareaHeight(input);
-  syncEditorVirtualizationRowLayout(input);
-  syncEditorGlossaryHighlightRowDom(input.dataset.rowId);
-  return true;
-}
-
-function handleEditorRowFieldChange(event, render) {
-  if (event.type !== "change") {
-    return false;
-  }
-
-  const input = event.target.closest("[data-editor-row-field]");
-  if (!input) {
-    return false;
-  }
-
-  void persistEditorRowOnBlur(render, input.dataset.rowId);
+  applyEditorRowFieldInput({
+    input,
+    filters: state.editorChapter?.filters,
+    render,
+    updateEditorRowFieldValue,
+    syncEditorRowTextareaHeight,
+    syncEditorVirtualizationRowLayout,
+    syncEditorGlossaryHighlightRowDom,
+  });
   return true;
 }
 
@@ -414,7 +396,6 @@ const inputHandlers = [
   handleEditorReplaceInput,
   handleEditorReplaceRowSelectionInput,
   handleEditorRowFieldInput,
-  handleEditorRowFieldChange,
   handleChapterGlossarySelectInput,
 ];
 

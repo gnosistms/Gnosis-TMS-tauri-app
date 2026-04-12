@@ -24,7 +24,7 @@ import {
 } from "./app/editor-location.js";
 import { captureRenderScrollSnapshot, restoreRenderScrollSnapshot } from "./app/scroll-state.js";
 import { hydratePersistentAppState, state } from "./app/state.js";
-import { setActiveEditorField } from "./app/translate-flow.js";
+import { flushDirtyEditorRows, scheduleDirtyEditorRowScan, setActiveEditorField } from "./app/translate-flow.js";
 import { checkForAppUpdate } from "./app/updater-flow.js";
 import { renderGithubAppTestScreen } from "./screens/github-app-test.js";
 import { renderConnectionFailureModal } from "./screens/connection-failure-modal.js";
@@ -33,7 +33,7 @@ import { renderGlossaryEditorScreen } from "./screens/glossary-editor.js";
 import { renderProjectsScreen } from "./screens/projects.js";
 import { renderStartScreen } from "./screens/start.js";
 import { renderTeamsScreen } from "./screens/teams/index.js";
-import { renderTranslateScreen } from "./screens/translate.js";
+import { renderTranslateEditorBody, renderTranslateScreen } from "./screens/translate.js";
 import { renderUsersScreen } from "./screens/users.js";
 
 const screenRenderers = {
@@ -98,7 +98,19 @@ function captureFocusedInputState() {
   }
 
   return {
+    kind:
+      activeElement instanceof HTMLTextAreaElement && activeElement.matches("[data-editor-row-field]")
+        ? "editor-row-field"
+        : "generic",
     selector,
+    rowId:
+      activeElement instanceof HTMLTextAreaElement && activeElement.matches("[data-editor-row-field]")
+        ? activeElement.dataset.rowId ?? ""
+        : "",
+    languageCode:
+      activeElement instanceof HTMLTextAreaElement && activeElement.matches("[data-editor-row-field]")
+        ? activeElement.dataset.languageCode ?? ""
+        : "",
     selectionStart:
       activeElement instanceof HTMLInputElement || activeElement instanceof HTMLTextAreaElement
         ? activeElement.selectionStart
@@ -116,7 +128,7 @@ function captureFocusedInputState() {
 
 function restoreFocusedInputState(focusSnapshot) {
   if (!focusSnapshot) {
-    return;
+    return false;
   }
 
   const nextInput = document.querySelector(focusSnapshot.selector);
@@ -126,7 +138,7 @@ function restoreFocusedInputState(focusSnapshot) {
       && !(nextInput instanceof HTMLTextAreaElement))
     || nextInput.disabled
   ) {
-    return;
+    return false;
   }
 
   nextInput.focus({ preventScroll: true });
@@ -142,9 +154,41 @@ function restoreFocusedInputState(focusSnapshot) {
       focusSnapshot.selectionDirection ?? "none",
     );
   }
+
+  return true;
 }
 
-function render() {
+function render(options = {}) {
+  return renderWithOptions(options);
+}
+
+function renderTranslateBodyOnly() {
+  const body = app.querySelector(".page-body.page-body--editor");
+  if (!(body instanceof HTMLElement)) {
+    renderWithOptions();
+    return;
+  }
+
+  const focusSnapshot = captureFocusedInputState();
+  const scrollSnapshot = captureRenderScrollSnapshot("translate");
+  body.innerHTML = renderTranslateEditorBody(state);
+  restoreRenderScrollSnapshot("translate", "translate", scrollSnapshot);
+  queuePendingEditorLocationRestore(state);
+  initializeEditorVirtualization(app, state);
+  restorePendingEditorLocation(state);
+  const restoredFocus = restoreFocusedInputState(focusSnapshot);
+  if (focusSnapshot?.kind === "editor-row-field" && !restoredFocus && focusSnapshot.rowId) {
+    scheduleDirtyEditorRowScan(render, focusSnapshot.rowId);
+  }
+  syncEditorRowTextareaHeights(body);
+}
+
+function renderWithOptions(options = {}) {
+  if (options?.scope === "translate-body" && state.screen === "translate") {
+    renderTranslateBodyOnly();
+    return;
+  }
+
   const previousScreen = app.firstElementChild?.getAttribute("data-screen") ?? null;
   prepareEditorLocationBeforeRender(previousScreen, state);
   const focusSnapshot = captureFocusedInputState();
@@ -159,7 +203,10 @@ function render() {
   queuePendingEditorLocationRestore(state);
   initializeEditorVirtualization(app, state);
   restorePendingEditorLocation(state);
-  restoreFocusedInputState(focusSnapshot);
+  const restoredFocus = restoreFocusedInputState(focusSnapshot);
+  if (focusSnapshot?.kind === "editor-row-field" && !restoredFocus && focusSnapshot.rowId) {
+    scheduleDirtyEditorRowScan(render, focusSnapshot.rowId);
+  }
   syncEditorRowTextareaHeights(app);
   document.title = titles[state.screen] ?? "Gnosis TMS";
 }
@@ -170,6 +217,7 @@ app.addEventListener("focusin", (event) => {
     return;
   }
 
+  void flushDirtyEditorRows(render, { excludeRowId: input.dataset.rowId });
   setActiveEditorField(render, input.dataset.rowId, input.dataset.languageCode);
   syncEditorRowTextareaHeight(input);
 });
@@ -181,6 +229,7 @@ app.addEventListener("focusout", (event) => {
   }
 
   requestAnimationFrame(() => syncEditorRowTextareaHeight(input));
+  scheduleDirtyEditorRowScan(render, input.dataset.rowId);
 });
 
 app.addEventListener("scroll", (event) => {

@@ -19,10 +19,29 @@ import {
 import { loadTeamProjects } from "./project-flow.js";
 import { loadUserTeams } from "./team-setup-flow.js";
 import { loadTeamUsers, primeUsersForTeam } from "./team-members-flow.js";
-import { loadSelectedChapterEditorData, persistEditorChapterSelections } from "./translate-flow.js";
+import {
+  guardLeavingTranslateEditor,
+  guardRefreshingTranslateEditor,
+} from "./editor-navigation-guards.js";
+import {
+  flushDirtyEditorRows,
+  loadSelectedChapterEditorData,
+  persistEditorChapterSelections,
+} from "./translate-flow.js";
+import { showNoticeBadge } from "./status-feedback.js";
 
-export function handleNavigation(navTarget, render) {
+export async function handleNavigation(navTarget, render) {
   const previousScreen = state.screen;
+
+  if (!(await guardLeavingTranslateEditor({
+    currentScreen: state.screen,
+    nextScreen: navTarget,
+    render,
+    flushDirtyEditorRows,
+    showBlockedNotice: (message) => showNoticeBadge(message, render),
+  }))) {
+    return;
+  }
 
   if (state.screen === "translate" && navTarget !== "translate") {
     void persistEditorChapterSelections(render);
@@ -84,6 +103,14 @@ export async function refreshCurrentScreen(render) {
   }
 
   const screen = state.screen;
+
+  if (!(await guardRefreshingTranslateEditor({
+    currentScreen: screen,
+    render,
+    flushDirtyEditorRows,
+  }))) {
+    return;
+  }
 
   if (screen === "projects") {
     await loadTeamProjects(render, state.selectedTeamId);

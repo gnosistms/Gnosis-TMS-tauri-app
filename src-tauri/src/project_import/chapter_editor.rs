@@ -1121,29 +1121,7 @@ pub(super) fn update_gtms_editor_row_fields_sync(
     .map_err(|error| format!("Could not parse row file '{}': {error}", row_json_path.display()))?;
   let mut row_value: Value = serde_json::from_str(&original_row_text)
     .map_err(|error| format!("Could not parse row file '{}': {error}", row_json_path.display()))?;
-  let row_object = row_value
-    .as_object_mut()
-    .ok_or_else(|| "The row file is not a JSON object.".to_string())?;
-  let fields_value = row_object
-    .entry("fields".to_string())
-    .or_insert_with(|| json!({}));
-  let fields_object = fields_value
-    .as_object_mut()
-    .ok_or_else(|| "The row fields are not a JSON object.".to_string())?;
-
-  for (code, plain_text) in input.fields {
-    let field_value = fields_object.entry(code).or_insert_with(|| json!({}));
-    let field_object = field_value
-      .as_object_mut()
-      .ok_or_else(|| "A row field is not a JSON object.".to_string())?;
-    ensure_editor_field_object_defaults(field_object)?;
-    field_object.insert("value_kind".to_string(), Value::String("text".to_string()));
-    field_object.insert("plain_text".to_string(), Value::String(plain_text.clone()));
-    field_object.insert(
-      "html_preview".to_string(),
-      html_preview(&plain_text).map(Value::String).unwrap_or(Value::Null),
-    );
-  }
+  apply_editor_plain_text_updates(&mut row_value, &input.fields)?;
 
   let updated_row_json = serde_json::to_string_pretty(&row_value)
     .map_err(|error| format!("Could not serialize row file '{}': {error}", row_json_path.display()))?;
@@ -1239,29 +1217,7 @@ pub(super) fn update_gtms_editor_row_fields_batch_sync(
       .map_err(|error| format!("Could not parse row file '{}': {error}", row_json_path.display()))?;
     let mut row_value: Value = serde_json::from_str(&original_row_text)
       .map_err(|error| format!("Could not parse row file '{}': {error}", row_json_path.display()))?;
-    let row_object = row_value
-      .as_object_mut()
-      .ok_or_else(|| "The row file is not a JSON object.".to_string())?;
-    let fields_value = row_object
-      .entry("fields".to_string())
-      .or_insert_with(|| json!({}));
-    let fields_object = fields_value
-      .as_object_mut()
-      .ok_or_else(|| "The row fields are not a JSON object.".to_string())?;
-
-    for (code, plain_text) in fields {
-      let field_value = fields_object.entry(code).or_insert_with(|| json!({}));
-      let field_object = field_value
-        .as_object_mut()
-        .ok_or_else(|| "A row field is not a JSON object.".to_string())?;
-      ensure_editor_field_object_defaults(field_object)?;
-      field_object.insert("value_kind".to_string(), Value::String("text".to_string()));
-      field_object.insert("plain_text".to_string(), Value::String(plain_text.clone()));
-      field_object.insert(
-        "html_preview".to_string(),
-        html_preview(&plain_text).map(Value::String).unwrap_or(Value::Null),
-      );
-    }
+    apply_editor_plain_text_updates(&mut row_value, &fields)?;
 
     let updated_row_json = serde_json::to_string_pretty(&row_value)
       .map_err(|error| format!("Could not serialize row file '{}': {error}", row_json_path.display()))?;
@@ -1751,50 +1707,12 @@ pub(super) fn update_gtms_editor_row_field_flag_sync(
     .map_err(|error| format!("Could not read row file '{}': {error}", row_json_path.display()))?;
   let mut row_value: Value = serde_json::from_str(&original_row_text)
     .map_err(|error| format!("Could not parse row file '{}': {error}", row_json_path.display()))?;
-  let row_object = row_value
-    .as_object_mut()
-    .ok_or_else(|| "The row file is not a JSON object.".to_string())?;
-  let fields_value = row_object
-    .entry("fields".to_string())
-    .or_insert_with(|| json!({}));
-  let fields_object = fields_value
-    .as_object_mut()
-    .ok_or_else(|| "The row fields are not a JSON object.".to_string())?;
-  let field_value = fields_object
-    .entry(input.language_code.clone())
-    .or_insert_with(|| json!({}));
-  let field_object = field_value
-    .as_object_mut()
-    .ok_or_else(|| "The row field is not a JSON object.".to_string())?;
-  ensure_editor_field_object_defaults(field_object)?;
-  let flag_key = match input.flag.trim() {
-    "reviewed" => "reviewed",
-    "please-check" => "please_check",
-    _ => return Err("Unknown row field flag.".to_string()),
-  };
-  let (reviewed, please_check, changed) = {
-    let editor_flags_object = field_object
-      .get_mut("editor_flags")
-      .and_then(Value::as_object_mut)
-      .ok_or_else(|| "The row field editor flags are not a JSON object.".to_string())?;
-    let previous_value = editor_flags_object
-      .get(flag_key)
-      .and_then(Value::as_bool)
-      .unwrap_or(false);
-    let changed = previous_value != input.enabled;
-    if changed {
-      editor_flags_object.insert(flag_key.to_string(), Value::Bool(input.enabled));
-    }
-    let reviewed = editor_flags_object
-      .get("reviewed")
-      .and_then(Value::as_bool)
-      .unwrap_or(false);
-    let please_check = editor_flags_object
-      .get("please_check")
-      .and_then(Value::as_bool)
-      .unwrap_or(false);
-    (reviewed, please_check, changed)
-  };
+  let (reviewed, please_check, changed) = apply_editor_field_flag_update(
+    &mut row_value,
+    &input.language_code,
+    &input.flag,
+    input.enabled,
+  )?;
 
   if changed {
     let updated_row_json = serde_json::to_string_pretty(&row_value)
@@ -1803,7 +1721,7 @@ pub(super) fn update_gtms_editor_row_field_flag_sync(
     write_text_file(&row_json_path, &updated_row_text)?;
 
     let relative_row_json = repo_relative_path(&repo_path, &row_json_path)?;
-    let status_note = status_note_for_field_flag(flag_key, input.enabled);
+    let status_note = status_note_for_field_flag(normalize_editor_field_flag_key(&input.flag)?, input.enabled);
     git_output(&repo_path, &["add", &relative_row_json])?;
     git_commit_as_signed_in_user_with_metadata(
       app,
@@ -2027,6 +1945,91 @@ fn ensure_editor_field_object_defaults(
   Ok(())
 }
 
+fn row_fields_object_mut(
+  row_value: &mut Value,
+) -> Result<&mut serde_json::Map<String, Value>, String> {
+  let row_object = row_value
+    .as_object_mut()
+    .ok_or_else(|| "The row file is not a JSON object.".to_string())?;
+  let fields_value = row_object
+    .entry("fields".to_string())
+    .or_insert_with(|| json!({}));
+  fields_value
+    .as_object_mut()
+    .ok_or_else(|| "The row fields are not a JSON object.".to_string())
+}
+
+fn apply_editor_plain_text_updates(
+  row_value: &mut Value,
+  fields: &BTreeMap<String, String>,
+) -> Result<(), String> {
+  let fields_object = row_fields_object_mut(row_value)?;
+
+  for (code, plain_text) in fields {
+    let field_value = fields_object.entry(code.clone()).or_insert_with(|| json!({}));
+    let field_object = field_value
+      .as_object_mut()
+      .ok_or_else(|| "A row field is not a JSON object.".to_string())?;
+    ensure_editor_field_object_defaults(field_object)?;
+    field_object.insert("value_kind".to_string(), Value::String("text".to_string()));
+    field_object.insert("plain_text".to_string(), Value::String(plain_text.clone()));
+    field_object.insert(
+      "html_preview".to_string(),
+      html_preview(plain_text).map(Value::String).unwrap_or(Value::Null),
+    );
+  }
+
+  Ok(())
+}
+
+fn apply_editor_field_flag_update(
+  row_value: &mut Value,
+  language_code: &str,
+  flag: &str,
+  enabled: bool,
+) -> Result<(bool, bool, bool), String> {
+  let fields_object = row_fields_object_mut(row_value)?;
+  let field_value = fields_object
+    .entry(language_code.to_string())
+    .or_insert_with(|| json!({}));
+  let field_object = field_value
+    .as_object_mut()
+    .ok_or_else(|| "The row field is not a JSON object.".to_string())?;
+  ensure_editor_field_object_defaults(field_object)?;
+  let flag_key = normalize_editor_field_flag_key(flag)?;
+
+  let editor_flags_object = field_object
+    .get_mut("editor_flags")
+    .and_then(Value::as_object_mut)
+    .ok_or_else(|| "The row field editor flags are not a JSON object.".to_string())?;
+  let previous_value = editor_flags_object
+    .get(flag_key)
+    .and_then(Value::as_bool)
+    .unwrap_or(false);
+  let changed = previous_value != enabled;
+  if changed {
+    editor_flags_object.insert(flag_key.to_string(), Value::Bool(enabled));
+  }
+  let reviewed = editor_flags_object
+    .get("reviewed")
+    .and_then(Value::as_bool)
+    .unwrap_or(false);
+  let please_check = editor_flags_object
+    .get("please_check")
+    .and_then(Value::as_bool)
+    .unwrap_or(false);
+
+  Ok((reviewed, please_check, changed))
+}
+
+fn normalize_editor_field_flag_key(flag: &str) -> Result<&'static str, String> {
+  match flag.trim() {
+    "reviewed" => Ok("reviewed"),
+    "please-check" => Ok("please_check"),
+    _ => Err("Unknown row field flag.".to_string()),
+  }
+}
+
 fn set_editor_field_flags(field_object: &mut serde_json::Map<String, Value>, flags: &StoredFieldEditorFlags) {
   if let Some(editor_flags_object) = field_object
     .get_mut("editor_flags")
@@ -2230,7 +2233,14 @@ fn sanitize_chapter_languages(languages: &[ChapterLanguage]) -> Vec<ChapterLangu
 
 #[cfg(test)]
 mod tests {
-  use super::{filter_commit_row_paths_for_chapter, parse_git_commit_message};
+  use serde_json::json;
+
+  use super::{
+    apply_editor_field_flag_update,
+    apply_editor_plain_text_updates,
+    filter_commit_row_paths_for_chapter,
+    parse_git_commit_message,
+  };
 
   #[test]
   fn parse_git_commit_message_reads_editor_replace_operation_trailer() {
@@ -2260,6 +2270,118 @@ mod tests {
       "chapters/chapter-a/rows/a.json".to_string(),
       "chapters/chapter-a/rows/b.json".to_string(),
     ]);
+  }
+
+  #[test]
+  fn apply_editor_plain_text_updates_changes_requested_field_and_preview() {
+    let mut row_value = json!({
+      "fields": {
+        "es": {
+          "value_kind": "text",
+          "plain_text": "uno",
+          "html_preview": "<p>uno</p>",
+          "editor_flags": {
+            "reviewed": false,
+            "please_check": false
+          }
+        },
+        "en": {
+          "value_kind": "text",
+          "plain_text": "one",
+          "html_preview": "<p>one</p>",
+          "editor_flags": {
+            "reviewed": false,
+            "please_check": false
+          }
+        }
+      }
+    });
+
+    apply_editor_plain_text_updates(
+      &mut row_value,
+      &[(String::from("es"), String::from("dos"))].into_iter().collect(),
+    )
+    .expect("plain text update should succeed");
+
+    assert_eq!(row_value["fields"]["es"]["plain_text"], json!("dos"));
+    assert_eq!(row_value["fields"]["es"]["html_preview"], json!("<p>dos</p>"));
+    assert_eq!(row_value["fields"]["en"]["plain_text"], json!("one"));
+  }
+
+  #[test]
+  fn apply_editor_plain_text_updates_is_a_no_op_for_identical_text() {
+    let mut row_value = json!({
+      "fields": {
+        "es": {
+          "value_kind": "text",
+          "plain_text": "uno",
+          "html_preview": "<p>uno</p>",
+          "editor_flags": {
+            "reviewed": false,
+            "please_check": false
+          }
+        }
+      }
+    });
+    let original_serialized = serde_json::to_string_pretty(&row_value).unwrap();
+
+    apply_editor_plain_text_updates(
+      &mut row_value,
+      &[(String::from("es"), String::from("uno"))].into_iter().collect(),
+    )
+    .expect("plain text update should succeed");
+
+    assert_eq!(serde_json::to_string_pretty(&row_value).unwrap(), original_serialized);
+  }
+
+  #[test]
+  fn apply_editor_field_flag_update_reports_changes_and_preserves_other_flags() {
+    let mut row_value = json!({
+      "fields": {
+        "es": {
+          "value_kind": "text",
+          "plain_text": "uno",
+          "html_preview": "<p>uno</p>",
+          "editor_flags": {
+            "reviewed": false,
+            "please_check": true
+          }
+        }
+      }
+    });
+
+    let (reviewed, please_check, changed) =
+      apply_editor_field_flag_update(&mut row_value, "es", "reviewed", true)
+        .expect("flag update should succeed");
+
+    assert!(changed);
+    assert!(reviewed);
+    assert!(please_check);
+    assert_eq!(row_value["fields"]["es"]["editor_flags"]["reviewed"], json!(true));
+    assert_eq!(row_value["fields"]["es"]["editor_flags"]["please_check"], json!(true));
+  }
+
+  #[test]
+  fn apply_editor_field_flag_update_is_a_no_op_when_flag_already_matches() {
+    let mut row_value = json!({
+      "fields": {
+        "es": {
+          "value_kind": "text",
+          "plain_text": "uno",
+          "html_preview": "<p>uno</p>",
+          "editor_flags": {
+            "reviewed": true,
+            "please_check": false
+          }
+        }
+      }
+    });
+
+    let (_, _, changed) =
+      apply_editor_field_flag_update(&mut row_value, "es", "reviewed", true)
+        .expect("flag update should succeed");
+
+    assert!(!changed);
   }
 }
 

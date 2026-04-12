@@ -683,7 +683,7 @@ export function registerAppEvents(render) {
 
     const navTarget = event.target.closest("[data-nav-target]")?.dataset.navTarget;
     if (navTarget) {
-      handleNavigation(navTarget, render);
+      await handleNavigation(navTarget, render);
       return;
     }
 
