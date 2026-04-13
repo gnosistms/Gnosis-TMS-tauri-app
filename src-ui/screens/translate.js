@@ -140,6 +140,11 @@ export function renderTranslateEditorBody(state) {
   return renderTranslateEditorBodyFromFrame(buildTranslateScreenFrame(state));
 }
 
+export function renderTranslateSidebar(state) {
+  const { editorChapter, contentRows, languages } = buildTranslateScreenFrame(state);
+  return renderHistorySidebar(editorChapter, contentRows, languages);
+}
+
 export function renderTranslateScreen(state) {
   const frame = buildTranslateScreenFrame(state);
   const {

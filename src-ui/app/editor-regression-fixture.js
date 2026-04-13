@@ -1,4 +1,9 @@
-import { createEditorChapterState } from "./state.js";
+import {
+  deletedRowGroupIdAfterSoftDelete,
+  expandedDeletedRowGroupIdsAfterRestore,
+  expandedDeletedRowGroupIdsAfterSoftDelete,
+} from "./editor-deleted-rows.js";
+import { createEditorChapterState, createEditorHistoryState } from "./state.js";
 
 const DEFAULT_LANGUAGES = [
   { code: "es", name: "Spanish", role: "source" },
@@ -51,6 +56,34 @@ function createFixtureRow(index, languages) {
       error: "",
     },
   };
+}
+
+function rowsWithFixtureLifecycleState(rows, rowId, lifecycleState) {
+  return (Array.isArray(rows) ? rows : []).map((row) =>
+    row?.rowId === rowId
+      ? {
+          ...row,
+          lifecycleState,
+        }
+      : row
+  );
+}
+
+function notifyMockTauriFixture(payload) {
+  const mockTauri = globalThis?.__gnosisMockTauri;
+  if (!mockTauri || typeof mockTauri.mountEditorFixture !== "function") {
+    return;
+  }
+
+  try {
+    mockTauri.mountEditorFixture(
+      typeof structuredClone === "function"
+        ? structuredClone(payload)
+        : JSON.parse(JSON.stringify(payload)),
+    );
+  } catch {
+    // Ignore test-harness sync failures in the normal app runtime.
+  }
 }
 
 export function applyEditorRegressionFixture(appState, options = {}) {
@@ -164,6 +197,17 @@ export function applyEditorRegressionFixture(appState, options = {}) {
   };
   appState.editorChapter = editorChapter;
 
+  notifyMockTauriFixture({
+    rowCount,
+    chapterId,
+    projectId,
+    teamId,
+    sourceCode,
+    targetCode,
+    languages,
+    rows,
+  });
+
   return {
     rowCount,
     chapterId,
@@ -172,6 +216,90 @@ export function applyEditorRegressionFixture(appState, options = {}) {
     sourceCode,
     targetCode,
     firstRowId: rows[0]?.rowId ?? null,
+  };
+}
+
+export function applyEditorRegressionSoftDelete(appState, rowId) {
+  const editorChapter = appState?.editorChapter;
+  if (!editorChapter?.chapterId || !rowId) {
+    return null;
+  }
+
+  const targetRow = Array.isArray(editorChapter.rows)
+    ? editorChapter.rows.find((row) => row?.rowId === rowId)
+    : null;
+  if (!targetRow || targetRow.lifecycleState === "deleted") {
+    return null;
+  }
+
+  const previousRows = editorChapter.rows;
+  const nextRows = rowsWithFixtureLifecycleState(previousRows, rowId, "deleted");
+  const expandedDeletedRowGroupIds = expandedDeletedRowGroupIdsAfterSoftDelete(
+    previousRows,
+    rowId,
+    editorChapter.expandedDeletedRowGroupIds,
+    nextRows,
+  );
+  const nextDeletedGroupId = deletedRowGroupIdAfterSoftDelete(previousRows, rowId);
+  const selectedRowIds =
+    editorChapter.replace?.selectedRowIds instanceof Set
+      ? new Set([...editorChapter.replace.selectedRowIds].filter((candidate) => candidate !== rowId))
+      : new Set();
+
+  appState.editorChapter = {
+    ...editorChapter,
+    rows: nextRows,
+    expandedDeletedRowGroupIds,
+    activeRowId: editorChapter.activeRowId === rowId ? null : editorChapter.activeRowId,
+    activeLanguageCode: editorChapter.activeRowId === rowId ? null : editorChapter.activeLanguageCode,
+    history:
+      editorChapter.activeRowId === rowId
+        ? createEditorHistoryState()
+        : editorChapter.history,
+    replace: {
+      ...editorChapter.replace,
+      selectedRowIds,
+    },
+  };
+
+  return {
+    rowId,
+    deletedGroupId: nextDeletedGroupId,
+    expandedDeletedRowGroupIds: [...expandedDeletedRowGroupIds],
+  };
+}
+
+export function applyEditorRegressionRestore(appState, rowId) {
+  const editorChapter = appState?.editorChapter;
+  if (!editorChapter?.chapterId || !rowId) {
+    return null;
+  }
+
+  const targetRow = Array.isArray(editorChapter.rows)
+    ? editorChapter.rows.find((row) => row?.rowId === rowId)
+    : null;
+  if (!targetRow || targetRow.lifecycleState !== "deleted") {
+    return null;
+  }
+
+  const previousRows = editorChapter.rows;
+  const nextRows = rowsWithFixtureLifecycleState(previousRows, rowId, "active");
+  const expandedDeletedRowGroupIds = expandedDeletedRowGroupIdsAfterRestore(
+    previousRows,
+    rowId,
+    editorChapter.expandedDeletedRowGroupIds,
+    nextRows,
+  );
+
+  appState.editorChapter = {
+    ...editorChapter,
+    rows: nextRows,
+    expandedDeletedRowGroupIds,
+  };
+
+  return {
+    rowId,
+    expandedDeletedRowGroupIds: [...expandedDeletedRowGroupIds],
   };
 }
 
@@ -186,6 +314,10 @@ export function readEditorRegressionSnapshot(appState) {
     dirtyRowIds:
       appState.editorChapter?.dirtyRowIds instanceof Set
         ? [...appState.editorChapter.dirtyRowIds]
+        : [],
+    expandedDeletedRowGroupIds:
+      appState.editorChapter?.expandedDeletedRowGroupIds instanceof Set
+        ? [...appState.editorChapter.expandedDeletedRowGroupIds]
         : [],
     filters: appState.editorChapter?.filters
       ? {

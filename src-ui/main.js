@@ -17,6 +17,8 @@ import { app, initializeWindowPresentation } from "./app/runtime.js";
 import { syncEditorRowTextareaHeight, syncEditorRowTextareaHeights, syncGlossaryVariantTextareaHeights } from "./app/autosize.js";
 import {
   applyEditorRegressionFixture,
+  applyEditorRegressionRestore,
+  applyEditorRegressionSoftDelete,
   readEditorRegressionSnapshot,
 } from "./app/editor-regression-fixture.js";
 import {
@@ -37,7 +39,7 @@ import { renderGlossaryEditorScreen } from "./screens/glossary-editor.js";
 import { renderProjectsScreen } from "./screens/projects.js";
 import { renderStartScreen } from "./screens/start.js";
 import { renderTeamsScreen } from "./screens/teams/index.js";
-import { renderTranslateEditorBody, renderTranslateScreen } from "./screens/translate.js";
+import { renderTranslateEditorBody, renderTranslateScreen, renderTranslateSidebar } from "./screens/translate.js";
 import { renderUsersScreen } from "./screens/users.js";
 
 const screenRenderers = {
@@ -189,9 +191,26 @@ function renderTranslateBodyOnly() {
   syncEditorRowTextareaHeights(body);
 }
 
+function renderTranslateSidebarOnly() {
+  const sidebar = app.querySelector(".translate-sidebar-scroll");
+  if (!(sidebar instanceof HTMLElement)) {
+    renderWithOptions();
+    return;
+  }
+
+  const scrollTop = sidebar.scrollTop;
+  sidebar.innerHTML = renderTranslateSidebar(state);
+  sidebar.scrollTop = scrollTop;
+}
+
 function renderWithOptions(options = {}) {
   if (options?.scope === "translate-body" && state.screen === "translate") {
     renderTranslateBodyOnly();
+    return;
+  }
+
+  if (options?.scope === "translate-sidebar" && state.screen === "translate") {
+    renderTranslateSidebarOnly();
     return;
   }
 
@@ -223,9 +242,23 @@ app.addEventListener("focusin", (event) => {
     return;
   }
 
-  void flushDirtyEditorRows(render, { excludeRowId: input.dataset.rowId });
-  setActiveEditorField(render, input.dataset.rowId, input.dataset.languageCode);
+  const rowId = input.dataset.rowId ?? "";
+  const languageCode = input.dataset.languageCode ?? "";
+  setActiveEditorField(render, rowId, languageCode);
   syncEditorRowTextareaHeight(input);
+  requestAnimationFrame(() => {
+    const activeElement = document.activeElement;
+    if (
+      !(activeElement instanceof HTMLTextAreaElement)
+      || !activeElement.matches("[data-editor-row-field]")
+      || activeElement.dataset.rowId !== rowId
+      || activeElement.dataset.languageCode !== languageCode
+    ) {
+      return;
+    }
+
+    void flushDirtyEditorRows(render, { excludeRowId: rowId });
+  });
 });
 
 app.addEventListener("focusout", (event) => {
@@ -275,6 +308,24 @@ window.__gnosisDebug = {
       ...summary,
       state: readEditorRegressionSnapshot(state),
     };
+  },
+  async flushDirtyRows() {
+    await flushDirtyEditorRows(render);
+    return readEditorRegressionSnapshot(state);
+  },
+  softDeleteFixtureRow(rowId) {
+    const summary = applyEditorRegressionSoftDelete(state, rowId);
+    if (summary) {
+      render();
+    }
+    return summary;
+  },
+  restoreFixtureRow(rowId) {
+    const summary = applyEditorRegressionRestore(state, rowId);
+    if (summary) {
+      render();
+    }
+    return summary;
   },
   readEditorState() {
     return readEditorRegressionSnapshot(state);
