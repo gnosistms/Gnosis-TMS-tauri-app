@@ -53,12 +53,9 @@ import {
   applyChapterMetadataToState,
   applyEditorSelectionsToProjectState,
   applyEditorUiState,
-  insertEditorChapterRow,
   markEditorRowsPersisted,
   normalizeEditorRows,
-  removeEditorChapterRow,
   resolveChapterSourceWordCount,
-  rowsWithEditorRowLifecycleState,
   updateEditorChapterRow,
 } from "./editor-state-flow.js";
 import { applyStructuralEditorChange } from "./editor-structural-change-flow.js";
@@ -121,11 +118,7 @@ function editorPersistenceOperations() {
 
 function editorRowStructureOperations() {
   return {
-    updateEditorChapterRow,
-    insertEditorChapterRow,
-    removeEditorChapterRow,
     applyStructuralEditorChange,
-    rowsWithEditorRowLifecycleState,
     applyEditorSelectionsToProjectState,
   };
 }

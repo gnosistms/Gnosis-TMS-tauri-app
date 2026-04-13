@@ -8,9 +8,8 @@ import { normalizeLanguageSelections } from "./editor-selection-flow.js";
 import { hasActiveEditorField } from "./editor-utils.js";
 import {
   ensureProjectNotTombstoned,
-  findChapterContextById,
-  selectedProjectsTeam,
 } from "./project-chapter-flow.js";
+import { findChapterContextById, selectedProjectsTeam } from "./project-context.js";
 import { invoke } from "./runtime.js";
 import {
   createEditorChapterFilterState,

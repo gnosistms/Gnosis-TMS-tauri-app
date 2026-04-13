@@ -1,6 +1,6 @@
 import { coerceEditorFontSizePx } from "./state.js";
 import { canPermanentlyDeleteProjectFiles } from "./resource-capabilities.js";
-import { findChapterContextById, selectedProjectsTeam } from "./project-chapter-flow.js";
+import { findChapterContextById, selectedProjectsTeam } from "./project-context.js";
 import { buildEditorFilterResult } from "./editor-filters.js";
 import { normalizeEditorReplaceState } from "./editor-replace.js";
 

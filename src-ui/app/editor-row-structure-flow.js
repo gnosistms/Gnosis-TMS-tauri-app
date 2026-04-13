@@ -1,74 +1,44 @@
 import {
-  deletedRowGroupIdAfterSoftDelete,
-  expandedDeletedRowGroupIdsAfterPermanentDelete,
-  expandedDeletedRowGroupIdsAfterRestore,
-  expandedDeletedRowGroupIdsAfterSoftDelete,
-} from "./editor-deleted-rows.js";
-import { findChapterContextById, selectedProjectsTeam } from "./project-chapter-flow.js";
+  applyInsertedEditorRowState,
+  applyPermanentlyDeletedEditorRowState,
+  applyRestoredEditorRowState,
+  applySoftDeletedEditorRowState,
+  cancelEditorRowPermanentDeletionModalState,
+  cancelInsertEditorRowModalState,
+  openEditorRowPermanentDeletionModalState,
+  openInsertEditorRowModalState,
+  toggleDeletedEditorRowGroupState,
+} from "./editor-row-structure-state.js";
+import { findChapterContextById, selectedProjectsTeam } from "./project-context.js";
 import { invoke } from "./runtime.js";
 import {
-  createEditorHistoryState,
-  createEditorInsertRowModalState,
-  createEditorRowPermanentDeletionModalState,
   state,
 } from "./state.js";
 import { showNoticeBadge } from "./status-feedback.js";
 import { canPermanentlyDeleteProjectFiles } from "./resource-capabilities.js";
-import { findEditorRowById, hasEditorRow } from "./editor-utils.js";
+import { findEditorRowById } from "./editor-utils.js";
 
 function hasRowStructureOperations(operations) {
   return (
-    typeof operations?.updateEditorChapterRow === "function"
-    && typeof operations?.insertEditorChapterRow === "function"
-    && typeof operations?.removeEditorChapterRow === "function"
-    && typeof operations?.applyStructuralEditorChange === "function"
-    && typeof operations?.rowsWithEditorRowLifecycleState === "function"
+    typeof operations?.applyStructuralEditorChange === "function"
     && typeof operations?.applyEditorSelectionsToProjectState === "function"
   );
 }
 
 export function openInsertEditorRowModal(rowId) {
-  if (!rowId || !hasEditorRow(state.editorChapter, rowId)) {
-    return;
-  }
-
-  state.editorChapter = {
-    ...state.editorChapter,
-    insertRowModal: {
-      ...createEditorInsertRowModalState(),
-      isOpen: true,
-      rowId,
-    },
-  };
+  state.editorChapter = openInsertEditorRowModalState(state.editorChapter, rowId);
 }
 
 export function cancelInsertEditorRowModal() {
-  state.editorChapter = {
-    ...state.editorChapter,
-    insertRowModal: createEditorInsertRowModalState(),
-  };
+  state.editorChapter = cancelInsertEditorRowModalState(state.editorChapter);
 }
 
 export function openEditorRowPermanentDeletionModal(rowId) {
-  if (!rowId || !hasEditorRow(state.editorChapter, rowId)) {
-    return;
-  }
-
-  state.editorChapter = {
-    ...state.editorChapter,
-    rowPermanentDeletionModal: {
-      ...createEditorRowPermanentDeletionModalState(),
-      isOpen: true,
-      rowId,
-    },
-  };
+  state.editorChapter = openEditorRowPermanentDeletionModalState(state.editorChapter, rowId);
 }
 
 export function cancelEditorRowPermanentDeletionModal() {
-  state.editorChapter = {
-    ...state.editorChapter,
-    rowPermanentDeletionModal: createEditorRowPermanentDeletionModalState(),
-  };
+  state.editorChapter = cancelEditorRowPermanentDeletionModalState(state.editorChapter);
 }
 
 export function toggleDeletedEditorRowGroup(render, groupId, anchorSnapshot = null, operations = {}) {
@@ -77,19 +47,7 @@ export function toggleDeletedEditorRowGroup(render, groupId, anchorSnapshot = nu
   }
 
   operations.applyStructuralEditorChange(render, () => {
-    const expandedDeletedRowGroupIds =
-      state.editorChapter?.expandedDeletedRowGroupIds instanceof Set
-        ? new Set(state.editorChapter.expandedDeletedRowGroupIds)
-        : new Set();
-    if (expandedDeletedRowGroupIds.has(groupId)) {
-      expandedDeletedRowGroupIds.delete(groupId);
-    } else {
-      expandedDeletedRowGroupIds.add(groupId);
-    }
-    state.editorChapter = {
-      ...state.editorChapter,
-      expandedDeletedRowGroupIds,
-    };
+    state.editorChapter = toggleDeletedEditorRowGroupState(state.editorChapter, groupId);
   }, { anchorSnapshot });
 }
 
@@ -152,21 +110,13 @@ export async function confirmInsertEditorRow(render, position, operations = {}) 
       : null;
 
     operations.applyStructuralEditorChange(render, () => {
-      operations.insertEditorChapterRow(payload?.row, modal.rowId, position === "before");
-      state.editorChapter = {
-        ...state.editorChapter,
-        sourceWordCounts:
-          payload?.sourceWordCounts && typeof payload.sourceWordCounts === "object"
-            ? payload.sourceWordCounts
-            : state.editorChapter.sourceWordCounts,
-        insertRowModal: createEditorInsertRowModalState(),
-        activeRowId: payload?.row?.rowId ?? state.editorChapter.activeRowId,
-        activeLanguageCode:
-          state.editorChapter.activeLanguageCode
-          ?? state.editorChapter.selectedTargetLanguageCode
-          ?? state.editorChapter.selectedSourceLanguageCode
-          ?? null,
-      };
+      state.editorChapter = applyInsertedEditorRowState(
+        state.editorChapter,
+        payload?.row,
+        modal.rowId,
+        position === "before",
+        payload?.sourceWordCounts,
+      );
       operations.applyEditorSelectionsToProjectState(state.editorChapter);
     }, {
       anchorSnapshot: insertAnchorSnapshot,
@@ -226,61 +176,18 @@ export async function softDeleteEditorRow(render, rowId, triggerAnchorSnapshot =
       return;
     }
 
-    const previousRows = state.editorChapter.rows;
-    const nextRows = operations.rowsWithEditorRowLifecycleState(
-      previousRows,
+    const result = applySoftDeletedEditorRowState(
+      state.editorChapter,
       rowId,
       payload?.lifecycleState ?? "deleted",
+      payload?.sourceWordCounts,
+      triggerAnchorSnapshot,
     );
-    const expandedDeletedRowGroupIds = expandedDeletedRowGroupIdsAfterSoftDelete(
-      previousRows,
-      rowId,
-      state.editorChapter.expandedDeletedRowGroupIds,
-      nextRows,
-    );
-    const nextDeletedGroupId = deletedRowGroupIdAfterSoftDelete(previousRows, rowId);
-    const nextDeletedGroupIsOpen =
-      typeof nextDeletedGroupId === "string" && expandedDeletedRowGroupIds.has(nextDeletedGroupId);
-    const anchorSnapshot = nextDeletedGroupId && !nextDeletedGroupIsOpen
-      ? {
-        type: "deleted-group",
-        rowId: `deleted-group:${nextDeletedGroupId}`,
-        languageCode: null,
-        offsetTop: Number.isFinite(Number(triggerAnchorSnapshot?.offsetTop))
-          ? Number(triggerAnchorSnapshot.offsetTop)
-          : 80,
-      }
-      : {
-        type: "row",
-        rowId,
-        languageCode: null,
-        offsetTop: Number.isFinite(Number(triggerAnchorSnapshot?.offsetTop))
-          ? Number(triggerAnchorSnapshot.offsetTop)
-          : 80,
-      };
     operations.applyStructuralEditorChange(render, () => {
-      operations.updateEditorChapterRow(rowId, (currentRow) => ({
-        ...currentRow,
-        lifecycleState: payload?.lifecycleState ?? "deleted",
-      }));
-      state.editorChapter = {
-        ...state.editorChapter,
-        expandedDeletedRowGroupIds,
-        sourceWordCounts:
-          payload?.sourceWordCounts && typeof payload.sourceWordCounts === "object"
-            ? payload.sourceWordCounts
-            : state.editorChapter.sourceWordCounts,
-        activeRowId: state.editorChapter.activeRowId === rowId ? null : state.editorChapter.activeRowId,
-        activeLanguageCode:
-          state.editorChapter.activeRowId === rowId ? null : state.editorChapter.activeLanguageCode,
-        history:
-          state.editorChapter.activeRowId === rowId
-            ? createEditorHistoryState()
-            : state.editorChapter.history,
-      };
+      state.editorChapter = result.chapterState;
       operations.applyEditorSelectionsToProjectState(state.editorChapter);
     }, {
-      anchorSnapshot,
+      anchorSnapshot: result.anchorSnapshot,
     });
     showNoticeBadge("Row deleted.", render);
   } catch (error) {
@@ -321,25 +228,12 @@ export async function restoreEditorRow(render, rowId, operations = {}) {
     }
 
     operations.applyStructuralEditorChange(render, () => {
-      const previousRows = state.editorChapter.rows;
-      operations.updateEditorChapterRow(rowId, (currentRow) => ({
-        ...currentRow,
-        lifecycleState: payload?.lifecycleState ?? "active",
-      }));
-      const expandedDeletedRowGroupIds = expandedDeletedRowGroupIdsAfterRestore(
-        previousRows,
+      state.editorChapter = applyRestoredEditorRowState(
+        state.editorChapter,
         rowId,
-        state.editorChapter.expandedDeletedRowGroupIds,
-        state.editorChapter.rows,
+        payload?.lifecycleState ?? "active",
+        payload?.sourceWordCounts,
       );
-      state.editorChapter = {
-        ...state.editorChapter,
-        expandedDeletedRowGroupIds,
-        sourceWordCounts:
-          payload?.sourceWordCounts && typeof payload.sourceWordCounts === "object"
-            ? payload.sourceWordCounts
-            : state.editorChapter.sourceWordCounts,
-      };
       operations.applyEditorSelectionsToProjectState(state.editorChapter);
     });
   } catch (error) {
@@ -402,23 +296,11 @@ export async function confirmEditorRowPermanentDeletion(render, operations = {})
     }
 
     operations.applyStructuralEditorChange(render, () => {
-      const previousRows = state.editorChapter.rows;
-      operations.removeEditorChapterRow(modal.rowId);
-      const expandedDeletedRowGroupIds = expandedDeletedRowGroupIdsAfterPermanentDelete(
-        previousRows,
+      state.editorChapter = applyPermanentlyDeletedEditorRowState(
+        state.editorChapter,
         modal.rowId,
-        state.editorChapter.expandedDeletedRowGroupIds,
-        state.editorChapter.rows,
+        payload?.sourceWordCounts,
       );
-      state.editorChapter = {
-        ...state.editorChapter,
-        expandedDeletedRowGroupIds,
-        sourceWordCounts:
-          payload?.sourceWordCounts && typeof payload.sourceWordCounts === "object"
-            ? payload.sourceWordCounts
-            : state.editorChapter.sourceWordCounts,
-        rowPermanentDeletionModal: createEditorRowPermanentDeletionModalState(),
-      };
       operations.applyEditorSelectionsToProjectState(state.editorChapter);
     });
   } catch (error) {

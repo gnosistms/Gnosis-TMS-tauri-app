@@ -33,6 +33,17 @@ import {
 import {
   refreshProjectFilesFromDisk as runRefreshProjectFilesFromDisk,
 } from "./project-discovery-flow.js";
+import {
+  findChapterContext,
+  findChapterContextById,
+  selectedProjectsTeam,
+} from "./project-context.js";
+
+export {
+  findChapterContext,
+  findChapterContextById,
+  selectedProjectsTeam,
+};
 
 export function setProjectUiDebug(render, text) {
   showScopedSyncBadge("projects", text, render);
@@ -50,10 +61,6 @@ function setProjectDiscoveryError(render, error) {
     recoveryMessage: state.projectDiscovery?.recoveryMessage ?? "",
   };
   render?.();
-}
-
-export function selectedProjectsTeam() {
-  return state.teams.find((team) => team.id === state.selectedTeamId) ?? null;
 }
 
 function ensureChapterMutationAllowed(
@@ -262,23 +269,6 @@ export async function refreshProjectFilesFromDisk(render, selectedTeam, projects
     persistProjectsForTeam,
     reconcileExpandedDeletedFiles,
   });
-}
-
-export function findChapterContext(chapterId) {
-  for (const project of [...state.projects, ...state.deletedProjects]) {
-    const chapter = Array.isArray(project?.chapters)
-      ? project.chapters.find((item) => item?.id === chapterId)
-      : null;
-    if (chapter) {
-      return { project, chapter };
-    }
-  }
-
-  return null;
-}
-
-export function findChapterContextById(chapterId = state.selectedChapterId) {
-  return chapterId ? findChapterContext(chapterId) : null;
 }
 
 function resolveChapterContext(render, chapterId, missingMessage) {

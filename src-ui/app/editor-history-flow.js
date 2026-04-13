@@ -5,7 +5,7 @@ import {
   normalizeEditorHistoryState,
 } from "./editor-history-state.js";
 import { buildEditorReplaceUndoNotice, normalizeEditorReplaceUndoModalState } from "./editor-replace.js";
-import { findChapterContextById, selectedProjectsTeam } from "./project-chapter-flow.js";
+import { findChapterContextById, selectedProjectsTeam } from "./project-context.js";
 import { invoke } from "./runtime.js";
 import {
   createEditorReplaceUndoModalState,

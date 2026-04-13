@@ -6,13 +6,12 @@ import {
   rowHasPersistedChanges,
 } from "./editor-row-persistence-model.js";
 import {
-  compactDirtyRowIds,
   dirtyTrackedEditorRowIds,
   markEditorRowDirty,
   reconcileDirtyTrackedEditorRows,
 } from "./editor-dirty-row-state.js";
 import { loadActiveEditorFieldHistory } from "./editor-history-flow.js";
-import { findChapterContextById, selectedProjectsTeam } from "./project-chapter-flow.js";
+import { findChapterContextById, selectedProjectsTeam } from "./project-context.js";
 import { invoke } from "./runtime.js";
 import { state } from "./state.js";
 import { showNoticeBadge } from "./status-feedback.js";
