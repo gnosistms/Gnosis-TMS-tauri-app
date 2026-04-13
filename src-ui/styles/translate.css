@@ -17,6 +17,7 @@
 
 .toolbar-row--between {
   justify-content: space-between;
+  gap: 14px;
 }
 
 .translate-toolbar__body--header .toolbar-row {
@@ -28,6 +29,8 @@
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
+  flex: 1 1 0;
+  min-width: 0;
 }
 
 .toolbar-meta {
@@ -37,6 +40,9 @@
   color: var(--muted);
   flex-wrap: wrap;
   justify-content: flex-end;
+  flex: 0 1 auto;
+  min-width: 0;
+  margin-left: auto;
 }
 
 .replace-toggle {
@@ -124,9 +130,17 @@
 
 .page-header--editor .search-field {
   height: 36px;
-  min-width: 300px;
+  min-width: min(220px, 100%);
   gap: 10px;
   padding: 0 14px;
+}
+
+.toolbar-search .search-field {
+  flex: 1 1 220px;
+}
+
+.toolbar-search > * {
+  min-width: 0;
 }
 
 .page-header--editor .search-field--no-icon {
