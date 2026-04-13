@@ -28,6 +28,15 @@ import { state } from "./state.js";
 import { showNoticeBadge } from "./status-feedback.js";
 import { findEditorRowById, hasEditorLanguage, hasEditorRow } from "./editor-utils.js";
 
+function renderEditorCommentsSidebar(render) {
+  render?.({ scope: "translate-sidebar" });
+}
+
+function renderEditorCommentsSidebarAndBody(render) {
+  render?.({ scope: "translate-body" });
+  renderEditorCommentsSidebar(render);
+}
+
 function persistSeenRevision(chapterId, rowId, commentsRevision) {
   const seenRevisions = saveStoredEditorCommentSeenRevision(chapterId, rowId, commentsRevision);
   state.editorChapter = applyEditorCommentSeenRevisions(state.editorChapter, seenRevisions);
@@ -40,11 +49,25 @@ export function hydrateEditorCommentSeenRevisions(chapterId, rowIds = []) {
 
 function markRowCommentsSeen(rowId, commentsRevision) {
   if (!state.editorChapter?.chapterId || !rowId) {
-    return;
+    return false;
+  }
+
+  const previousRevision = Number.parseInt(
+    String(state.editorChapter.commentSeenRevisions?.[rowId] ?? ""),
+    10,
+  );
+  const nextRevision = Number.parseInt(String(commentsRevision ?? ""), 10);
+  if (
+    Number.isInteger(previousRevision)
+    && Number.isInteger(nextRevision)
+    && previousRevision >= nextRevision
+  ) {
+    return false;
   }
 
   state.editorChapter = applyEditorRowCommentSeen(state.editorChapter, rowId, commentsRevision);
   persistSeenRevision(state.editorChapter.chapterId, rowId, commentsRevision);
+  return true;
 }
 
 async function fetchEditorRowComments(render, requestKey) {
@@ -78,7 +101,7 @@ async function fetchEditorRowComments(render, requestKey) {
 
     state.editorChapter = applyEditorCommentsLoaded(state.editorChapter, rowId, requestKey, payload);
     markRowCommentsSeen(rowId, payload?.commentsRevision ?? 0);
-    render?.();
+    renderEditorCommentsSidebarAndBody(render);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     if (!currentEditorCommentsRequestMatches(state.editorChapter, editorChapter.chapterId, rowId, requestKey)) {
@@ -91,7 +114,7 @@ async function fetchEditorRowComments(render, requestKey) {
       requestKey,
       message,
     );
-    render?.();
+    renderEditorCommentsSidebar(render);
   }
 }
 
@@ -103,7 +126,7 @@ export function loadActiveEditorRowComments(render) {
 
   const requestKey = buildEditorCommentsRequestKey(editorChapter.chapterId, editorChapter.activeRowId);
   state.editorChapter = applyEditorCommentsLoading(editorChapter, editorChapter.activeRowId);
-  render?.();
+  renderEditorCommentsSidebar(render);
   void fetchEditorRowComments(render, requestKey);
 }
 
@@ -117,21 +140,47 @@ export function openEditorRowComments(render, rowId, languageCode) {
     return;
   }
 
+  const currentRow = findEditorRowById(rowId, state.editorChapter);
+  const currentComments = currentEditorCommentsForRow(state.editorChapter, rowId);
+  if (
+    state.editorChapter.activeRowId === rowId
+    && state.editorChapter.activeLanguageCode === languageCode
+  ) {
+    if (
+      currentComments.status === "ready"
+      && currentComments.commentsRevision === (currentRow?.commentsRevision ?? 0)
+    ) {
+      if (markRowCommentsSeen(rowId, currentComments.commentsRevision)) {
+        renderEditorCommentsSidebarAndBody(render);
+      }
+      return;
+    }
+
+    if (currentComments.status === "loading") {
+      return;
+    }
+  }
+
   state.editorChapter = applyEditorCommentsSelection(state.editorChapter, rowId, languageCode);
+  const row = findEditorRowById(rowId, state.editorChapter);
   const comments = currentEditorCommentsForRow(state.editorChapter, rowId);
-  render?.();
 
   if (
     comments.status === "ready"
     && comments.rowId === rowId
     && comments.commentsRevision === (row?.commentsRevision ?? 0)
   ) {
-    markRowCommentsSeen(rowId, comments.commentsRevision);
-    render?.();
+    const seenChanged = markRowCommentsSeen(rowId, comments.commentsRevision);
+    if (seenChanged) {
+      renderEditorCommentsSidebarAndBody(render);
+    } else {
+      renderEditorCommentsSidebar(render);
+    }
     return;
   }
 
   if (comments.status === "loading" && comments.rowId === rowId) {
+    renderEditorCommentsSidebar(render);
     return;
   }
 
@@ -145,7 +194,6 @@ export function switchEditorSidebarTab(render, tab, operations = {}) {
 
   const normalizedTab = tab === "comments" || tab === "duplicates" ? tab : "history";
   state.editorChapter = applyEditorSidebarTab(state.editorChapter, normalizedTab);
-  render?.();
 
   if (normalizedTab === "comments" && state.editorChapter.activeRowId) {
     const row = findEditorRowById(state.editorChapter.activeRowId, state.editorChapter);
@@ -154,8 +202,15 @@ export function switchEditorSidebarTab(render, tab, operations = {}) {
       comments.status === "ready"
       && comments.commentsRevision === (row?.commentsRevision ?? 0)
     ) {
-      markRowCommentsSeen(state.editorChapter.activeRowId, comments.commentsRevision);
-      render?.();
+      const seenChanged = markRowCommentsSeen(
+        state.editorChapter.activeRowId,
+        comments.commentsRevision,
+      );
+      if (seenChanged) {
+        renderEditorCommentsSidebarAndBody(render);
+      } else {
+        renderEditorCommentsSidebar(render);
+      }
       return;
     }
 
@@ -165,7 +220,10 @@ export function switchEditorSidebarTab(render, tab, operations = {}) {
 
   if (normalizedTab === "history" && typeof operations?.loadActiveEditorFieldHistory === "function") {
     operations.loadActiveEditorFieldHistory(render);
+    return;
   }
+
+  renderEditorCommentsSidebar(render);
 }
 
 export function updateEditorCommentDraft(nextValue) {
@@ -198,7 +256,7 @@ export async function saveActiveEditorRowComment(render) {
   }
 
   state.editorChapter = applyEditorCommentSaving(editorChapter);
-  render?.();
+  renderEditorCommentsSidebar(render);
 
   try {
     const payload = await invoke("save_gtms_editor_row_comment", {
@@ -218,12 +276,12 @@ export async function saveActiveEditorRowComment(render) {
 
     state.editorChapter = applyEditorCommentSaveSucceeded(state.editorChapter, rowId, payload);
     markRowCommentsSeen(rowId, payload?.commentsRevision ?? 0);
-    render?.();
+    renderEditorCommentsSidebarAndBody(render);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     if (state.editorChapter?.chapterId === editorChapter.chapterId && state.editorChapter.activeRowId === rowId) {
       state.editorChapter = applyEditorCommentSaveFailed(state.editorChapter, message);
-      render?.();
+      renderEditorCommentsSidebar(render);
     }
     showNoticeBadge(message || "The comment could not be saved.", render);
   }
@@ -243,7 +301,7 @@ export async function deleteActiveEditorRowComment(render, commentId) {
   }
 
   state.editorChapter = applyEditorCommentDeleting(editorChapter, commentId);
-  render?.();
+  renderEditorCommentsSidebar(render);
 
   try {
     const payload = await invoke("delete_gtms_editor_row_comment", {
@@ -263,12 +321,12 @@ export async function deleteActiveEditorRowComment(render, commentId) {
 
     state.editorChapter = applyEditorCommentDeleteSucceeded(state.editorChapter, rowId, payload);
     markRowCommentsSeen(rowId, payload?.commentsRevision ?? 0);
-    render?.();
+    renderEditorCommentsSidebarAndBody(render);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     if (state.editorChapter?.chapterId === editorChapter.chapterId && state.editorChapter.activeRowId === rowId) {
       state.editorChapter = applyEditorCommentDeleteFailed(state.editorChapter, message);
-      render?.();
+      renderEditorCommentsSidebar(render);
     }
     showNoticeBadge(message || "The comment could not be deleted.", render);
   }
