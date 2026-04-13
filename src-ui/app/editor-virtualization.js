@@ -1,5 +1,6 @@
 import { syncEditorRowTextareaHeights } from "./autosize.js";
 import { pendingTranslateAnchorRowId } from "./scroll-state.js";
+import { createEditorVisibleGlossarySync } from "./editor-visible-glossary-sync.js";
 import {
   buildEditorRowHeights,
   calculateEditorVirtualWindow,
@@ -7,15 +8,10 @@ import {
 } from "./editor-virtualization-shared.js";
 import { buildEditorScreenViewModel } from "./editor-screen-model.js";
 import { renderTranslationContentRowsRange } from "./editor-row-render.js";
-import {
-  restoreMountedEditorGlossaryHighlightsFromCache,
-  syncVisibleEditorGlossaryHighlightRows,
-} from "./translate-flow.js";
 
 let activeController = null;
 
 const rowHeightCacheByLayoutKey = new Map();
-const EDITOR_GLOSSARY_SCROLL_DEBOUNCE_MS = 100;
 
 function captureFocusedEditorField(root) {
   const activeElement = root.ownerDocument?.activeElement;
@@ -204,27 +200,7 @@ export function initializeEditorVirtualization(root, appState) {
     : null;
   let currentRangeKey = "";
   let animationFrameId = 0;
-  let glossaryHighlightTimeoutId = 0;
-  let glossaryHighlightFrameId = 0;
-
-  const scheduleVisibleGlossaryHighlights = () => {
-    if (glossaryHighlightTimeoutId) {
-      window.clearTimeout(glossaryHighlightTimeoutId);
-    }
-    if (glossaryHighlightFrameId) {
-      window.cancelAnimationFrame(glossaryHighlightFrameId);
-      glossaryHighlightFrameId = 0;
-    }
-
-    glossaryHighlightTimeoutId = window.setTimeout(() => {
-      glossaryHighlightTimeoutId = 0;
-      glossaryHighlightFrameId = window.requestAnimationFrame(() => {
-        glossaryHighlightFrameId = 0;
-        const model = buildEditorScreenViewModel(appState);
-        syncVisibleEditorGlossaryHighlightRows(root, scrollContainer, model.editorChapter);
-      });
-    }, EDITOR_GLOSSARY_SCROLL_DEBOUNCE_MS);
-  };
+  const glossarySync = createEditorVisibleGlossarySync(root, scrollContainer, appState);
 
   const renderWindow = (force = false) => {
     if (!shouldVirtualize || !(itemsContainer instanceof HTMLElement)) {
@@ -271,7 +247,7 @@ export function initializeEditorVirtualization(root, appState) {
       model.editorReplace,
     );
     restoreFocusedEditorField(root, focusSnapshot);
-    restoreMountedEditorGlossaryHighlightsFromCache(itemsContainer, model.editorChapter);
+    glossarySync.restoreMounted(itemsContainer, model.editorChapter);
 
     const heightsChanged = measureVisibleRowHeights(itemsContainer, rowHeightCache);
     if (heightsChanged) {
@@ -301,7 +277,7 @@ export function initializeEditorVirtualization(root, appState) {
           model.editorReplace,
         );
         restoreFocusedEditorField(root, focusSnapshot);
-        restoreMountedEditorGlossaryHighlightsFromCache(itemsContainer, model.editorChapter);
+        glossarySync.restoreMounted(itemsContainer, model.editorChapter);
         measureVisibleRowHeights(itemsContainer, rowHeightCache);
       }
     }
@@ -349,14 +325,14 @@ export function initializeEditorVirtualization(root, appState) {
     if (shouldVirtualize) {
       renderWindow(true);
     }
-    scheduleVisibleGlossaryHighlights();
+    glossarySync.schedule();
   };
 
   const handleScroll = () => {
     if (shouldVirtualize) {
       scheduleRender();
     }
-    scheduleVisibleGlossaryHighlights();
+    glossarySync.schedule();
   };
 
   scrollContainer.addEventListener("scroll", handleScroll, { passive: true });
@@ -369,12 +345,7 @@ export function initializeEditorVirtualization(root, appState) {
       if (animationFrameId) {
         window.cancelAnimationFrame(animationFrameId);
       }
-      if (glossaryHighlightTimeoutId) {
-        window.clearTimeout(glossaryHighlightTimeoutId);
-      }
-      if (glossaryHighlightFrameId) {
-        window.cancelAnimationFrame(glossaryHighlightFrameId);
-      }
+      glossarySync.destroy();
       scrollContainer.removeEventListener("scroll", handleScroll);
       window.removeEventListener("resize", handleResize);
     },
@@ -383,5 +354,5 @@ export function initializeEditorVirtualization(root, appState) {
   if (shouldVirtualize) {
     renderWindow(true);
   }
-  scheduleVisibleGlossaryHighlights();
+  glossarySync.schedule();
 }

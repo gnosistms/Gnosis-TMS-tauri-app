@@ -412,6 +412,23 @@ async function restoreFixtureRow(page, rowId) {
   }, rowId);
 }
 
+async function readTranslateScrollTop(page) {
+  return await page.evaluate(() => {
+    const container = document.querySelector(".translate-main-scroll");
+    return container instanceof HTMLElement ? container.scrollTop : 0;
+  });
+}
+
+async function setTranslateScrollTop(page, top) {
+  await page.evaluate((nextTop) => {
+    const container = document.querySelector(".translate-main-scroll");
+    if (container instanceof HTMLElement) {
+      container.scrollTop = nextTop;
+      container.dispatchEvent(new Event("scroll"));
+    }
+  }, top);
+}
+
 test.describe("editor regressions", () => {
   test("search input keeps focus while typing", async ({ page }) => {
     await mountEditorFixture(page, { rowCount: 60 });
@@ -506,6 +523,58 @@ test.describe("editor regressions", () => {
     await expect.poll(async () => {
       return await page.evaluate(() => window.__gnosisDebug.readEditorState().expandedDeletedRowGroupIds);
     }).toEqual(["fixture-row-0004:fixture-row-0005"]);
+  });
+
+  test("selecting a replace row under virtualization keeps the main scroll position stable", async ({ page }) => {
+    await mountEditorFixture(page, { rowCount: 80 });
+
+    const searchInput = page.locator("[data-editor-search-input]");
+    await searchInput.fill("alpha");
+    await page.evaluate(() => window.__gnosisDebug.setEditorReplaceEnabled(true));
+
+    await setTranslateScrollTop(page, 9000);
+    const rowSelect = page.locator('[data-editor-replace-row-select][data-row-id="fixture-row-0030"]');
+    await expect(rowSelect).toBeVisible();
+
+    const beforeScrollTop = await readTranslateScrollTop(page);
+    await rowSelect.click();
+
+    await expect(rowSelect).toBeChecked();
+    const afterScrollTop = await readTranslateScrollTop(page);
+    expect(Math.abs(afterScrollTop - beforeScrollTop)).toBeLessThan(40);
+  });
+
+  test("the first soft-delete after scrolling keeps the deleted section in view", async ({ page }) => {
+    await mountEditorFixture(page, { rowCount: 80 }, { mockTauri: true });
+
+    await setTranslateScrollTop(page, 9000);
+    const row = page.locator('[data-editor-row-card][data-row-id="fixture-row-0030"]');
+    await expect(row).toBeVisible();
+
+    const beforeScrollTop = await readTranslateScrollTop(page);
+    await row.getByRole("button", { name: "Delete" }).click();
+
+    const deletedGroup = page.locator("[data-editor-deleted-group]").first();
+    await expect(deletedGroup).toBeVisible();
+    const afterScrollTop = await readTranslateScrollTop(page);
+    expect(Math.abs(afterScrollTop - beforeScrollTop)).toBeLessThan(120);
+  });
+
+  test("fast scrolling after a structural edit still renders rows", async ({ page }) => {
+    await mountEditorFixture(page, { rowCount: 120 }, { mockTauri: true });
+
+    await setTranslateScrollTop(page, 9000);
+    const deleteButton = page.locator('[data-action="soft-delete-editor-row:fixture-row-0030"]');
+    await expect(deleteButton).toBeVisible();
+    await deleteButton.click();
+
+    await setTranslateScrollTop(page, 26000);
+    await expect(page.locator("[data-editor-row-card]").first()).toBeVisible();
+    await expect.poll(async () => {
+      return await page.evaluate(() => {
+        return document.querySelectorAll("[data-editor-row-card]").length;
+      });
+    }).toBeGreaterThan(0);
   });
 
   test("typing in one row then flushing dirty rows persists the row through the backend", async ({ page }) => {
