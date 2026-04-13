@@ -1,0 +1,353 @@
+import { saveStoredProjectsForTeam } from "./project-cache.js";
+import { loadActiveEditorFieldHistory, currentEditorHistoryForSelection } from "./editor-history-flow.js";
+import { compactDirtyRowIds, reconcileDirtyTrackedEditorRows } from "./editor-persistence-flow.js";
+import { normalizeEditorChapterFilterState } from "./editor-filters.js";
+import { normalizeEditorReplaceState } from "./editor-replace.js";
+import {
+  cloneRowFields,
+  cloneRowFieldStates,
+  hasActiveEditorField,
+  hasEditorLanguage,
+  hasEditorRow,
+} from "./editor-utils.js";
+import { selectedProjectsTeam } from "./project-chapter-flow.js";
+import { waitForNextPaint } from "./runtime.js";
+import {
+  coerceEditorFontSizePx,
+  createEditorChapterFilterState,
+  createEditorChapterGlossaryState,
+  createEditorReplaceUndoModalState,
+  createEditorReplaceState,
+  createEditorHistoryState,
+  createEditorInsertRowModalState,
+  createEditorRowPermanentDeletionModalState,
+  state,
+} from "./state.js";
+import {
+  captureVisibleTranslateLocation,
+  queueTranslateRowAnchor,
+  restoreTranslateRowAnchor,
+} from "./scroll-state.js";
+import {
+  invalidateEditorVirtualizationLayout,
+  refreshEditorVirtualizationLayout,
+} from "./editor-virtualization.js";
+
+function normalizeEditorChapterFilters(filters) {
+  return normalizeEditorChapterFilterState(filters);
+}
+
+function cloneCollapsedLanguageCodes(collapsedLanguageCodes) {
+  return collapsedLanguageCodes instanceof Set
+    ? new Set(collapsedLanguageCodes)
+    : new Set();
+}
+
+function cloneExpandedDeletedRowGroupIds(expandedDeletedRowGroupIds) {
+  return expandedDeletedRowGroupIds instanceof Set
+    ? new Set(expandedDeletedRowGroupIds)
+    : new Set();
+}
+
+export function applyEditorUiState(nextEditorChapter, previousEditorChapter = state.editorChapter) {
+  const isSameChapter = previousEditorChapter?.chapterId === nextEditorChapter?.chapterId;
+  const activeRowId =
+    typeof previousEditorChapter?.activeRowId === "string" ? previousEditorChapter.activeRowId : null;
+  const activeLanguageCode =
+    typeof previousEditorChapter?.activeLanguageCode === "string"
+      ? previousEditorChapter.activeLanguageCode
+      : null;
+  const history = currentEditorHistoryForSelection(
+    previousEditorChapter,
+    activeRowId,
+    activeLanguageCode,
+  );
+
+  return {
+    ...nextEditorChapter,
+    fontSizePx: coerceEditorFontSizePx(previousEditorChapter?.fontSizePx),
+    collapsedLanguageCodes: cloneCollapsedLanguageCodes(previousEditorChapter?.collapsedLanguageCodes),
+    dirtyRowIds: isSameChapter
+      ? compactDirtyRowIds(nextEditorChapter?.rows, previousEditorChapter?.dirtyRowIds)
+      : new Set(),
+    filters: isSameChapter
+      ? normalizeEditorChapterFilters(previousEditorChapter?.filters)
+      : createEditorChapterFilterState(),
+    replace: isSameChapter
+      ? normalizeEditorReplaceState(previousEditorChapter?.replace)
+      : createEditorReplaceState(),
+    expandedDeletedRowGroupIds: cloneExpandedDeletedRowGroupIds(previousEditorChapter?.expandedDeletedRowGroupIds),
+    glossary: nextEditorChapter?.glossary ?? previousEditorChapter?.glossary ?? createEditorChapterGlossaryState(),
+    insertRowModal:
+      previousEditorChapter?.insertRowModal?.isOpen === true
+        && hasEditorRow(nextEditorChapter, previousEditorChapter.insertRowModal.rowId)
+        ? { ...createEditorInsertRowModalState(), ...previousEditorChapter.insertRowModal }
+        : createEditorInsertRowModalState(),
+    rowPermanentDeletionModal:
+      previousEditorChapter?.rowPermanentDeletionModal?.isOpen === true
+        && hasEditorRow(nextEditorChapter, previousEditorChapter.rowPermanentDeletionModal.rowId)
+        ? {
+          ...createEditorRowPermanentDeletionModalState(),
+          ...previousEditorChapter.rowPermanentDeletionModal,
+        }
+        : createEditorRowPermanentDeletionModalState(),
+    replaceUndoModal:
+      isSameChapter && previousEditorChapter?.replaceUndoModal?.isOpen === true
+        ? {
+          ...createEditorReplaceUndoModalState(),
+          ...previousEditorChapter.replaceUndoModal,
+        }
+        : createEditorReplaceUndoModalState(),
+    activeRowId:
+      hasEditorRow(nextEditorChapter, activeRowId) && hasEditorLanguage(nextEditorChapter, activeLanguageCode)
+        ? activeRowId
+        : null,
+    activeLanguageCode:
+      hasEditorRow(nextEditorChapter, activeRowId) && hasEditorLanguage(nextEditorChapter, activeLanguageCode)
+        ? activeLanguageCode
+        : null,
+    history:
+      hasEditorRow(nextEditorChapter, activeRowId) && hasEditorLanguage(nextEditorChapter, activeLanguageCode)
+        ? history
+        : createEditorHistoryState(),
+  };
+}
+
+export function normalizeEditorRows(rows) {
+  return (Array.isArray(rows) ? rows : []).map((row) => {
+    const fields = cloneRowFields(row?.fields);
+    const fieldStates = cloneRowFieldStates(row?.fieldStates);
+    return {
+      ...row,
+      lifecycleState: row?.lifecycleState === "deleted" ? "deleted" : "active",
+      orderKey: typeof row?.orderKey === "string" ? row.orderKey : "",
+      fields,
+      persistedFields: cloneRowFields(fields),
+      fieldStates,
+      persistedFieldStates: cloneRowFieldStates(fieldStates),
+      saveStatus: "idle",
+      saveError: "",
+      markerSaveState: {
+        status: "idle",
+        languageCode: null,
+        kind: null,
+        error: "",
+      },
+    };
+  });
+}
+
+export function resolveChapterSourceWordCount(chapter) {
+  if (!chapter || typeof chapter !== "object") {
+    return 0;
+  }
+
+  const sourceCode = chapter.selectedSourceLanguageCode;
+  const counts =
+    chapter.sourceWordCounts && typeof chapter.sourceWordCounts === "object"
+      ? chapter.sourceWordCounts
+      : {};
+  const value = sourceCode ? counts[sourceCode] : null;
+  return Number.isFinite(value) ? value : 0;
+}
+
+function persistProjectsForSelectedTeam() {
+  const team = selectedProjectsTeam();
+  if (!team) {
+    return;
+  }
+
+  saveStoredProjectsForTeam(team, {
+    projects: state.projects,
+    deletedProjects: state.deletedProjects,
+  });
+}
+
+export function applyChapterMetadataToState(chapterId, updates) {
+  if (!chapterId || !updates || typeof updates !== "object") {
+    return;
+  }
+
+  const applyToProject = (project) => {
+    if (!project || !Array.isArray(project.chapters)) {
+      return project;
+    }
+
+    let changed = false;
+    const chapters = project.chapters.map((chapter) => {
+      if (!chapter || chapter.id !== chapterId) {
+        return chapter;
+      }
+
+      changed = true;
+      const nextChapter = {
+        ...chapter,
+        ...updates,
+      };
+      nextChapter.sourceWordCount = resolveChapterSourceWordCount(nextChapter);
+      return nextChapter;
+    });
+
+    return changed ? { ...project, chapters } : project;
+  };
+
+  state.projects = state.projects.map(applyToProject);
+  state.deletedProjects = state.deletedProjects.map(applyToProject);
+  persistProjectsForSelectedTeam();
+}
+
+export function applyEditorSelectionsToProjectState(chapterState = state.editorChapter) {
+  if (!chapterState?.chapterId) {
+    return;
+  }
+
+  applyChapterMetadataToState(chapterState.chapterId, {
+    name: chapterState.fileTitle,
+    languages: chapterState.languages,
+    sourceWordCounts: chapterState.sourceWordCounts,
+    selectedSourceLanguageCode: chapterState.selectedSourceLanguageCode,
+    selectedTargetLanguageCode: chapterState.selectedTargetLanguageCode,
+  });
+}
+
+export function updateEditorChapterRow(rowId, updater) {
+  if (!state.editorChapter?.chapterId || !Array.isArray(state.editorChapter.rows)) {
+    return null;
+  }
+
+  let updatedRow = null;
+  const nextRows = state.editorChapter.rows.map((row) => {
+    if (!row || row.rowId !== rowId) {
+      return row;
+    }
+
+    updatedRow = updater(row);
+    return updatedRow;
+  });
+
+  if (!updatedRow) {
+    return null;
+  }
+
+  state.editorChapter = {
+    ...state.editorChapter,
+    rows: nextRows,
+  };
+
+  return updatedRow;
+}
+
+export function insertEditorChapterRow(nextRow, anchorRowId, insertBefore = true) {
+  if (!state.editorChapter?.chapterId || !Array.isArray(state.editorChapter.rows) || !nextRow?.rowId) {
+    return;
+  }
+
+  const normalizedRow = normalizeEditorRows([nextRow])[0];
+  const anchorIndex = state.editorChapter.rows.findIndex((row) => row?.rowId === anchorRowId);
+  const rows = [...state.editorChapter.rows];
+  const insertIndex = anchorIndex < 0
+    ? rows.length
+    : insertBefore
+      ? anchorIndex
+      : anchorIndex + 1;
+  rows.splice(insertIndex, 0, normalizedRow);
+  state.editorChapter = {
+    ...state.editorChapter,
+    rows,
+  };
+}
+
+export function removeEditorChapterRow(rowId) {
+  if (!state.editorChapter?.chapterId || !Array.isArray(state.editorChapter.rows)) {
+    return;
+  }
+
+  const rows = state.editorChapter.rows.filter((row) => row?.rowId !== rowId);
+  state.editorChapter = {
+    ...state.editorChapter,
+    rows,
+    dirtyRowIds: compactDirtyRowIds(rows, state.editorChapter.dirtyRowIds),
+    activeRowId: state.editorChapter.activeRowId === rowId ? null : state.editorChapter.activeRowId,
+    activeLanguageCode: state.editorChapter.activeRowId === rowId ? null : state.editorChapter.activeLanguageCode,
+    history: state.editorChapter.activeRowId === rowId ? createEditorHistoryState() : state.editorChapter.history,
+  };
+}
+
+function scheduleStructuralEditorScrollRestore(anchor) {
+  if (!anchor?.rowId) {
+    return;
+  }
+
+  const restorePass = () => {
+    queueTranslateRowAnchor(anchor);
+    refreshEditorVirtualizationLayout();
+    restoreTranslateRowAnchor(anchor);
+  };
+
+  void waitForNextPaint().then(() => {
+    restorePass();
+    void waitForNextPaint().then(() => {
+      restorePass();
+    });
+  });
+}
+
+export function applyStructuralEditorChange(render, updateState, options = {}) {
+  const anchor = options.anchorSnapshot ?? captureVisibleTranslateLocation();
+  updateState();
+  if (anchor) {
+    queueTranslateRowAnchor(anchor);
+  }
+  invalidateEditorVirtualizationLayout(state.editorChapter?.chapterId);
+  render?.();
+  scheduleStructuralEditorScrollRestore(anchor);
+  if (options.reloadHistory === true && hasActiveEditorField(state.editorChapter)) {
+    loadActiveEditorFieldHistory(render);
+  }
+}
+
+export function rowsWithEditorRowLifecycleState(rows, rowId, lifecycleState) {
+  return normalizeEditorRows(
+    (Array.isArray(rows) ? rows : []).map((row) =>
+      row?.rowId === rowId
+        ? {
+          ...row,
+          lifecycleState,
+        }
+        : row
+    ),
+  );
+}
+
+export function markEditorRowsPersisted(rowUpdates, sourceWordCounts = null) {
+  const updatesByRowId = new Map(
+    (Array.isArray(rowUpdates) ? rowUpdates : []).map((row) => [row.rowId, cloneRowFields(row.fields)]),
+  );
+  if (updatesByRowId.size === 0 || !state.editorChapter?.chapterId) {
+    return;
+  }
+
+  state.editorChapter = {
+    ...state.editorChapter,
+    rows: state.editorChapter.rows.map((row) => {
+      if (!updatesByRowId.has(row.rowId)) {
+        return row;
+      }
+
+      const fields = updatesByRowId.get(row.rowId);
+      return {
+        ...row,
+        fields,
+        persistedFields: cloneRowFields(fields),
+        saveStatus: "idle",
+        saveError: "",
+      };
+    }),
+    sourceWordCounts:
+      sourceWordCounts && typeof sourceWordCounts === "object"
+        ? sourceWordCounts
+        : state.editorChapter.sourceWordCounts,
+  };
+  reconcileDirtyTrackedEditorRows([...updatesByRowId.keys()]);
+  applyEditorSelectionsToProjectState(state.editorChapter);
+}
