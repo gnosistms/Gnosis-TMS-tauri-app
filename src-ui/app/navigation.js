@@ -28,7 +28,7 @@ import {
   loadSelectedChapterEditorData,
   persistEditorChapterSelections,
 } from "./translate-flow.js";
-import { showNoticeBadge } from "./status-feedback.js";
+import { clearNoticeBadge, clearScopedSyncBadge, showNoticeBadge } from "./status-feedback.js";
 
 export async function handleNavigation(navTarget, render) {
   const previousScreen = state.screen;
@@ -55,6 +55,11 @@ export async function handleNavigation(navTarget, render) {
     if (navTarget !== "projects") {
       resetProjectsPageSync();
     }
+  }
+
+  if (previousScreen === "projects" && navTarget !== "projects") {
+    clearNoticeBadge();
+    clearScopedSyncBadge("projects", render);
   }
 
   const preserveVisibleGlossaries =

@@ -885,23 +885,52 @@
   border-top: 1px solid rgba(164, 112, 41, 0.12);
 }
 
+.translate-comments-composer__field-shell {
+  display: grid;
+  position: relative;
+  border: 1px solid rgba(164, 112, 41, 0.18);
+  border-radius: var(--radius-ui);
+  background: rgba(255, 251, 246, 0.84);
+  transition:
+    border-color 140ms ease,
+    box-shadow 140ms ease,
+    background 140ms ease;
+}
+
+.translate-comments-composer__field-shell:focus-within {
+  border-color: rgba(236, 134, 9, 0.52);
+  box-shadow: 0 0 0 4px rgba(243, 156, 24, 0.12);
+  background: rgba(255, 251, 246, 0.96);
+}
+
 .translate-comments-composer__field {
+  grid-area: 1 / 1;
   width: 100%;
   min-height: 88px;
-  padding: 12px 14px;
-  border: 1px solid rgba(164, 112, 41, 0.18);
-  border-radius: 6px;
-  background: rgba(255, 252, 248, 0.96);
+  padding: 14px 16px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
   color: var(--text);
-  font: inherit;
-  line-height: 1.45;
-  resize: vertical;
+  font-family: var(--font-serif);
+  font-size: var(--translation-editor-font-size, 14px);
+  font-weight: 400;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  resize: none;
   outline: none;
 }
 
+.translate-comments-composer__field::placeholder {
+  color: var(--placeholder-text);
+}
+
 .translate-comments-composer__field:focus {
-  border-color: rgba(236, 134, 9, 0.52);
-  box-shadow: 0 0 0 4px rgba(243, 156, 24, 0.12);
+  border-color: transparent;
+  box-shadow: none;
+  background: transparent;
 }
 
 .translate-comments-composer__actions {

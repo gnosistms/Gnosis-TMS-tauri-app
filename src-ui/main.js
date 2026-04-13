@@ -14,7 +14,12 @@ import { loadUserTeams, setGithubAppInstallation } from "./app/team-setup-flow.j
 import { initializeConnectivity } from "./app/offline-connectivity.js";
 import { initializePersistentStorage } from "./app/persistent-store.js";
 import { app, initializeWindowPresentation } from "./app/runtime.js";
-import { syncEditorRowTextareaHeight, syncEditorRowTextareaHeights, syncGlossaryVariantTextareaHeights } from "./app/autosize.js";
+import {
+  syncEditorCommentDraftTextareaHeights,
+  syncEditorRowTextareaHeight,
+  syncEditorRowTextareaHeights,
+  syncGlossaryVariantTextareaHeights,
+} from "./app/autosize.js";
 import {
   applyEditorRegressionFixture,
   applyEditorRegressionRestore,
@@ -96,6 +101,7 @@ function captureFocusedInputState() {
     "[data-glossary-term-search-input]",
     "[data-editor-search-input]",
     "[data-editor-replace-input]",
+    "[data-editor-comment-draft]",
   ];
 
   const selector =
@@ -203,9 +209,12 @@ function renderTranslateSidebarOnly() {
     return;
   }
 
+  const focusSnapshot = captureFocusedInputState();
   const scrollTop = sidebar.scrollTop;
   sidebar.innerHTML = renderTranslateSidebar(state);
   sidebar.scrollTop = scrollTop;
+  syncEditorCommentDraftTextareaHeights(sidebar);
+  restoreFocusedInputState(focusSnapshot);
 }
 
 function renderWithOptions(options = {}) {
@@ -238,6 +247,7 @@ function renderWithOptions(options = {}) {
     scheduleDirtyEditorRowScan(render, focusSnapshot.rowId);
   }
   syncEditorRowTextareaHeights(app);
+  syncEditorCommentDraftTextareaHeights(app);
   document.title = titles[state.screen] ?? "Gnosis TMS";
 }
 

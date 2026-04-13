@@ -121,7 +121,13 @@ function hasSyncingRepos(snapshots) {
   return (snapshots || []).some((snapshot) => snapshot?.status === "syncing");
 }
 
-export async function reconcileProjectRepoSyncStates(render, team, projects) {
+export async function reconcileProjectRepoSyncStates(render, team, projects, options = {}) {
+  const shouldAbort = typeof options.shouldAbort === "function" ? options.shouldAbort : null;
+
+  if (shouldAbort?.()) {
+    return [];
+  }
+
   if (
     state.offline?.isEnabled === true ||
     !Number.isFinite(team?.installationId) ||
@@ -147,6 +153,9 @@ export async function reconcileProjectRepoSyncStates(render, team, projects) {
     input,
     sessionToken: requireBrokerSession(),
   });
+  if (shouldAbort?.()) {
+    return Array.isArray(initialSnapshots) ? initialSnapshots : [];
+  }
   applyProjectRepoSyncSnapshots(initialSnapshots);
   showScopedSyncBadge("projects", syncingBadgeText(initialSnapshots), render);
   render();
@@ -154,15 +163,21 @@ export async function reconcileProjectRepoSyncStates(render, team, projects) {
   let snapshots = initialSnapshots;
   while (hasSyncingRepos(snapshots)) {
     await delay(PROJECT_REPO_SYNC_POLL_DELAY_MS);
-    if (state.selectedTeamId !== team.id) {
-      return;
+    if (shouldAbort?.() || state.selectedTeamId !== team.id) {
+      return Array.isArray(snapshots) ? snapshots : [];
     }
     snapshots = await invoke("list_project_repo_sync_states", { input });
+    if (shouldAbort?.()) {
+      return Array.isArray(snapshots) ? snapshots : [];
+    }
     applyProjectRepoSyncSnapshots(snapshots);
     showScopedSyncBadge("projects", syncingBadgeText(snapshots), render);
     render();
   }
 
+  if (shouldAbort?.()) {
+    return Array.isArray(snapshots) ? snapshots : [];
+  }
   clearScopedSyncBadge("projects", render);
   const issueText = issueNoticeText(snapshots);
   if (issueText) {
@@ -170,4 +185,6 @@ export async function reconcileProjectRepoSyncStates(render, team, projects) {
   } else {
     render();
   }
+
+  return Array.isArray(snapshots) ? snapshots : [];
 }

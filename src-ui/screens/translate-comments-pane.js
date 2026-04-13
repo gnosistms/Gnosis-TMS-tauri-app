@@ -101,12 +101,14 @@ export function renderCommentsPane(editorChapter, rows, session) {
     <div class="translate-comments-pane">
       ${commentsBody}
       <div class="translate-comments-composer">
-        <textarea
-          class="translate-comments-composer__field"
-          data-editor-comment-draft
-          placeholder="Add a comment"
-          spellcheck="true"
-        >${escapeHtml(draft)}</textarea>
+        <div class="translate-comments-composer__field-shell">
+          <textarea
+            class="translate-comments-composer__field"
+            data-editor-comment-draft
+            placeholder="Add a comment"
+            spellcheck="true"
+          >${escapeHtml(draft)}</textarea>
+        </div>
         <div class="translate-comments-composer__actions">
           ${primaryButton(
             commentsState.status === "saving" ? "Saving..." : "Save comment",

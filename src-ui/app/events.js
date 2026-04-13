@@ -671,23 +671,28 @@ export function registerAppEvents(render) {
   });
 
   document.addEventListener("click", async (event) => {
-    const disabledControl = event.target.closest('[aria-disabled="true"], :disabled');
+    const target = event.target instanceof Element ? event.target : null;
+    if (!target) {
+      return;
+    }
+
+    const disabledControl = target.closest('[aria-disabled="true"], :disabled');
     if (disabledControl) {
       event.preventDefault();
       return;
     }
 
-    if (event.target.closest("[data-stop-row-action]")) {
+    if (target.closest("[data-stop-row-action]")) {
       return;
     }
 
-    const navTarget = event.target.closest("[data-nav-target]")?.dataset.navTarget;
+    const navTarget = target.closest("[data-nav-target]")?.dataset.navTarget;
     if (navTarget) {
       await handleNavigation(navTarget, render);
       return;
     }
 
-    const action = event.target.closest("[data-action]")?.dataset.action;
+    const action = target.closest("[data-action]")?.dataset.action;
     if (!action) {
       return;
     }

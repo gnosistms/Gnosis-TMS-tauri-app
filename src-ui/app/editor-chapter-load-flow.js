@@ -12,6 +12,7 @@ import {
 } from "./project-chapter-flow.js";
 import { findChapterContextById, selectedProjectsTeam } from "./project-context.js";
 import { invoke } from "./runtime.js";
+import { resetProjectsPageSync } from "./page-sync.js";
 import {
   createEditorChapterFilterState,
   createEditorChapterGlossaryState,
@@ -19,7 +20,7 @@ import {
   createEditorHistoryState,
   state,
 } from "./state.js";
-import { showNoticeBadge } from "./status-feedback.js";
+import { clearNoticeBadge, clearScopedSyncBadge, showNoticeBadge } from "./status-feedback.js";
 
 function normalizeEditorChapterFilters(filters) {
   return normalizeEditorChapterFilterState(filters);
@@ -221,6 +222,11 @@ export async function openTranslateChapter(render, chapterId, operations = {}) {
   }
 
   void operations.persistEditorChapterSelections(render);
+  if (state.screen === "projects") {
+    resetProjectsPageSync();
+    clearNoticeBadge();
+    clearScopedSyncBadge("projects", render);
+  }
   state.selectedProjectId = context.project.id;
   state.selectedChapterId = chapterId;
   state.screen = "translate";

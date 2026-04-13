@@ -2,7 +2,8 @@ import { waitForNextPaint } from "./runtime.js";
 import { setImmediateLoadingButton } from "../lib/ui.js";
 
 export async function runWithImmediateLoading(event, label, action) {
-  setImmediateLoadingButton(event.target.closest("button"), label);
+  const target = event?.target instanceof Element ? event.target : null;
+  setImmediateLoadingButton(target?.closest("button") ?? null, label);
   await waitForNextPaint();
   return action();
 }

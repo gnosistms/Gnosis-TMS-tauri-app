@@ -36,6 +36,41 @@ function countRecoverableProjectMetadataRecords(records) {
   ).length;
 }
 
+function nextProjectDiscoveryRequestId() {
+  const nextId = Number.isInteger(state.projectDiscoveryRequestId)
+    ? state.projectDiscoveryRequestId + 1
+    : 1;
+  state.projectDiscoveryRequestId = nextId;
+  return nextId;
+}
+
+function isProjectDiscoveryCurrent(teamId, requestId, syncVersionAtStart) {
+  return (
+    state.screen === "projects"
+    && state.selectedTeamId === teamId
+    && state.projectDiscoveryRequestId === requestId
+    && state.projectSyncVersion === syncVersionAtStart
+  );
+}
+
+async function abortProjectDiscoveryIfStale(
+  render,
+  teamId,
+  requestId,
+  syncVersionAtStart,
+  beganProjectsPageSync = false,
+) {
+  if (isProjectDiscoveryCurrent(teamId, requestId, syncVersionAtStart)) {
+    return false;
+  }
+
+  if (beganProjectsPageSync) {
+    await completeProjectsPageSync(render);
+  }
+  render?.();
+  return true;
+}
+
 async function repairProjectMetadataFromRemoteRename(selectedTeam, metadataRecords, remoteProjects, options = {}) {
   const remoteByRepoId = new Map(
     (Array.isArray(remoteProjects) ? remoteProjects : [])
@@ -335,6 +370,7 @@ export async function refreshProjectFilesFromDisk(render, selectedTeam, projects
 export async function loadTeamProjects(render, teamId = state.selectedTeamId, options = {}) {
   const selectedTeam = state.teams.find((team) => team.id === teamId);
   const syncVersionAtStart = state.projectSyncVersion;
+  const requestId = nextProjectDiscoveryRequestId();
   state.projectRepoSyncByProjectId = {};
 
   if (!selectedTeam?.installationId) {
@@ -362,6 +398,9 @@ export async function loadTeamProjects(render, teamId = state.selectedTeamId, op
 
   if (state.offline.isEnabled) {
     const glossaryResult = await glossaryLoadPromise;
+    if (await abortProjectDiscoveryIfStale(render, selectedTeam?.id ?? teamId, requestId, syncVersionAtStart)) {
+      return;
+    }
     state.projectRepoSyncByProjectId = {};
     applyProjectSnapshotToState(optimisticSnapshot, {
       reconcileExpandedDeletedFiles: options.reconcileExpandedDeletedFiles,
@@ -386,6 +425,9 @@ export async function loadTeamProjects(render, teamId = state.selectedTeamId, op
     });
     options.setProjectDiscoveryState("loading", "", "", "");
   }
+  if (await abortProjectDiscoveryIfStale(render, selectedTeam.id, requestId, syncVersionAtStart)) {
+    return;
+  }
   options.setProjectUiDebug(render, "Refreshing projects...");
   showNoticeBadge("Loading projects from GitHub...", render, null);
   beginProjectsPageSync();
@@ -401,6 +443,17 @@ export async function loadTeamProjects(render, teamId = state.selectedTeamId, op
       inspectAndMigrateLocalRepoBindings(selectedTeam),
       glossaryLoadPromise,
     ]);
+    if (
+      await abortProjectDiscoveryIfStale(
+        render,
+        selectedTeam.id,
+        requestId,
+        syncVersionAtStart,
+        true,
+      )
+    ) {
+      return;
+    }
     const remoteProjects = projectsResult.status === "fulfilled"
       ? (Array.isArray(projectsResult.value) ? projectsResult.value : [])
       : [];
@@ -457,6 +510,17 @@ export async function loadTeamProjects(render, teamId = state.selectedTeamId, op
       projectMetadataRecords,
       options,
     );
+    if (
+      await abortProjectDiscoveryIfStale(
+        render,
+        selectedTeam.id,
+        requestId,
+        syncVersionAtStart,
+        true,
+      )
+    ) {
+      return;
+    }
     if (syncVersionAtStart !== state.projectSyncVersion) {
       await completeProjectsPageSync(render);
       clearNoticeBadge();
@@ -489,6 +553,17 @@ export async function loadTeamProjects(render, teamId = state.selectedTeamId, op
         && project?.recordState !== "tombstone"
       ),
     );
+    if (
+      await abortProjectDiscoveryIfStale(
+        render,
+        selectedTeam.id,
+        requestId,
+        syncVersionAtStart,
+        true,
+      )
+    ) {
+      return;
+    }
     const installationRecoveryDetected =
       metadataLoaded
       && recoverableMetadataCount > 0
@@ -516,14 +591,49 @@ export async function loadTeamProjects(render, teamId = state.selectedTeamId, op
     options.setProjectDiscoveryState("ready", "", glossaryWarning, recoveryMessage);
     render();
     await waitForNextPaint();
+    if (
+      await abortProjectDiscoveryIfStale(
+        render,
+        selectedTeam.id,
+        requestId,
+        syncVersionAtStart,
+        true,
+      )
+    ) {
+      return;
+    }
     showNoticeBadge("Rebuilding local project repo state...", render, null);
-    await reconcileProjectRepoSyncStates(render, selectedTeam, mappedProjects);
+    await reconcileProjectRepoSyncStates(render, selectedTeam, mappedProjects, {
+      shouldAbort: () => !isProjectDiscoveryCurrent(selectedTeam.id, requestId, syncVersionAtStart),
+    });
+    if (
+      await abortProjectDiscoveryIfStale(
+        render,
+        selectedTeam.id,
+        requestId,
+        syncVersionAtStart,
+        true,
+      )
+    ) {
+      return;
+    }
     await refreshProjectFilesFromDisk(
       render,
       selectedTeam,
       mappedProjects,
       options,
     );
+    if (
+      await abortProjectDiscoveryIfStale(
+        render,
+        selectedTeam.id,
+        requestId,
+        syncVersionAtStart,
+        true,
+      )
+    ) {
+      return;
+    }
     options.clearProjectUiDebug(render);
     await completeProjectsPageSync(render);
     clearNoticeBadge();
@@ -532,6 +642,19 @@ export async function loadTeamProjects(render, teamId = state.selectedTeamId, op
       showNoticeBadge(glossaryWarning, render, 3200);
     }
   } catch (error) {
+    if (
+      !isProjectDiscoveryCurrent(selectedTeam?.id ?? teamId, requestId, syncVersionAtStart)
+      && await abortProjectDiscoveryIfStale(
+        render,
+        selectedTeam?.id ?? teamId,
+        requestId,
+        syncVersionAtStart,
+        true,
+      )
+    ) {
+      return;
+    }
+
     if (
       await handleSyncFailure(classifySyncError(error), {
         render,

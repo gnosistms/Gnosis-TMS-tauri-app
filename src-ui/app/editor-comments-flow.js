@@ -118,7 +118,6 @@ export function openEditorRowComments(render, rowId, languageCode) {
   }
 
   state.editorChapter = applyEditorCommentsSelection(state.editorChapter, rowId, languageCode);
-  const row = findEditorRowById(rowId, state.editorChapter);
   const comments = currentEditorCommentsForRow(state.editorChapter, rowId);
   render?.();
 

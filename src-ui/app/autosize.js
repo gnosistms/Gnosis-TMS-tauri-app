@@ -64,3 +64,9 @@ export function syncEditorRowTextareaHeights(root = document) {
     .querySelectorAll("[data-editor-row-field]")
     .forEach((element) => syncEditorRowTextareaHeight(element));
 }
+
+export function syncEditorCommentDraftTextareaHeights(root = document) {
+  root
+    .querySelectorAll("[data-editor-comment-draft]")
+    .forEach((element) => syncAutoSizeTextarea(element, { minHeight: 88, maxHeight: 220 }));
+}
