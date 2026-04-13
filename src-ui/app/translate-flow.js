@@ -24,11 +24,11 @@ import {
 import {
   flushDirtyEditorRows as flushDirtyEditorRowsFlow,
   persistEditorRowOnBlur as persistEditorRowOnBlurFlow,
-  reconcileDirtyTrackedEditorRows,
   scheduleDirtyEditorRowScan as scheduleDirtyEditorRowScanFlow,
   toggleEditorRowFieldMarker as toggleEditorRowFieldMarkerFlow,
   updateEditorRowFieldValue as updateEditorRowFieldValueFlow,
 } from "./editor-persistence-flow.js";
+import { reconcileDirtyTrackedEditorRows } from "./editor-dirty-row-state.js";
 import {
   cancelEditorReplaceUndoModal as cancelEditorReplaceUndoModalFlow,
   confirmEditorReplaceUndo as confirmEditorReplaceUndoFlow,
@@ -53,7 +53,6 @@ import {
   applyChapterMetadataToState,
   applyEditorSelectionsToProjectState,
   applyEditorUiState,
-  applyStructuralEditorChange,
   insertEditorChapterRow,
   markEditorRowsPersisted,
   normalizeEditorRows,
@@ -62,6 +61,7 @@ import {
   rowsWithEditorRowLifecycleState,
   updateEditorChapterRow,
 } from "./editor-state-flow.js";
+import { applyStructuralEditorChange } from "./editor-structural-change-flow.js";
 import { waitForNextPaint } from "./runtime.js";
 import { saveStoredEditorFontSizePx } from "./editor-preferences.js";
 import {

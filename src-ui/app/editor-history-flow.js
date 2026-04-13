@@ -1,9 +1,13 @@
 import { historyEntryCanUndoReplace, reconcileExpandedEditorHistoryGroupKeys } from "./editor-history.js";
+import {
+  cloneExpandedHistoryGroupKeys,
+  currentEditorHistoryForSelection,
+  normalizeEditorHistoryState,
+} from "./editor-history-state.js";
 import { buildEditorReplaceUndoNotice, normalizeEditorReplaceUndoModalState } from "./editor-replace.js";
 import { findChapterContextById, selectedProjectsTeam } from "./project-chapter-flow.js";
 import { invoke } from "./runtime.js";
 import {
-  createEditorHistoryState,
   createEditorReplaceUndoModalState,
   state,
 } from "./state.js";
@@ -24,35 +28,6 @@ function buildEditorHistoryRequestKey(chapterId, rowId, languageCode) {
   }
 
   return `${chapterId}:${rowId}:${languageCode}`;
-}
-
-export function cloneExpandedHistoryGroupKeys(expandedGroupKeys) {
-  return expandedGroupKeys instanceof Set
-    ? new Set(expandedGroupKeys)
-    : new Set();
-}
-
-export function normalizeEditorHistoryState(history) {
-  return {
-    ...createEditorHistoryState(),
-    ...(history && typeof history === "object" ? history : {}),
-    rowId: typeof history?.rowId === "string" ? history.rowId : null,
-    languageCode: typeof history?.languageCode === "string" ? history.languageCode : null,
-    requestKey: typeof history?.requestKey === "string" ? history.requestKey : null,
-    restoringCommitSha:
-      typeof history?.restoringCommitSha === "string" ? history.restoringCommitSha : null,
-    expandedGroupKeys: cloneExpandedHistoryGroupKeys(history?.expandedGroupKeys),
-    entries: Array.isArray(history?.entries) ? history.entries : [],
-  };
-}
-
-export function currentEditorHistoryForSelection(chapterState, rowId, languageCode) {
-  const history = normalizeEditorHistoryState(chapterState?.history);
-  if (history.rowId === rowId && history.languageCode === languageCode) {
-    return history;
-  }
-
-  return createEditorHistoryState();
 }
 
 function currentHistoryRequestMatches(editorChapter, chapterId, rowId, languageCode, requestKey) {

@@ -1,17 +1,15 @@
 import { saveStoredProjectsForTeam } from "./project-cache.js";
-import { loadActiveEditorFieldHistory, currentEditorHistoryForSelection } from "./editor-history-flow.js";
-import { compactDirtyRowIds, reconcileDirtyTrackedEditorRows } from "./editor-persistence-flow.js";
+import { currentEditorHistoryForSelection } from "./editor-history-state.js";
+import { compactDirtyRowIds, reconcileDirtyTrackedEditorRows } from "./editor-dirty-row-state.js";
 import { normalizeEditorChapterFilterState } from "./editor-filters.js";
 import { normalizeEditorReplaceState } from "./editor-replace.js";
 import {
   cloneRowFields,
   cloneRowFieldStates,
-  hasActiveEditorField,
   hasEditorLanguage,
   hasEditorRow,
 } from "./editor-utils.js";
-import { selectedProjectsTeam } from "./project-chapter-flow.js";
-import { waitForNextPaint } from "./runtime.js";
+import { selectedProjectsTeam } from "./project-context.js";
 import {
   coerceEditorFontSizePx,
   createEditorChapterFilterState,
@@ -23,15 +21,6 @@ import {
   createEditorRowPermanentDeletionModalState,
   state,
 } from "./state.js";
-import {
-  captureVisibleTranslateLocation,
-  queueTranslateRowAnchor,
-  restoreTranslateRowAnchor,
-} from "./scroll-state.js";
-import {
-  invalidateEditorVirtualizationLayout,
-  refreshEditorVirtualizationLayout,
-} from "./editor-virtualization.js";
 
 function normalizeEditorChapterFilters(filters) {
   return normalizeEditorChapterFilterState(filters);
@@ -271,39 +260,6 @@ export function removeEditorChapterRow(rowId) {
     activeLanguageCode: state.editorChapter.activeRowId === rowId ? null : state.editorChapter.activeLanguageCode,
     history: state.editorChapter.activeRowId === rowId ? createEditorHistoryState() : state.editorChapter.history,
   };
-}
-
-function scheduleStructuralEditorScrollRestore(anchor) {
-  if (!anchor?.rowId) {
-    return;
-  }
-
-  const restorePass = () => {
-    queueTranslateRowAnchor(anchor);
-    refreshEditorVirtualizationLayout();
-    restoreTranslateRowAnchor(anchor);
-  };
-
-  void waitForNextPaint().then(() => {
-    restorePass();
-    void waitForNextPaint().then(() => {
-      restorePass();
-    });
-  });
-}
-
-export function applyStructuralEditorChange(render, updateState, options = {}) {
-  const anchor = options.anchorSnapshot ?? captureVisibleTranslateLocation();
-  updateState();
-  if (anchor) {
-    queueTranslateRowAnchor(anchor);
-  }
-  invalidateEditorVirtualizationLayout(state.editorChapter?.chapterId);
-  render?.();
-  scheduleStructuralEditorScrollRestore(anchor);
-  if (options.reloadHistory === true && hasActiveEditorField(state.editorChapter)) {
-    loadActiveEditorFieldHistory(render);
-  }
 }
 
 export function rowsWithEditorRowLifecycleState(rows, rowId, lifecycleState) {
