@@ -16,6 +16,10 @@ import { initializePersistentStorage } from "./app/persistent-store.js";
 import { app, initializeWindowPresentation } from "./app/runtime.js";
 import { syncEditorRowTextareaHeight, syncEditorRowTextareaHeights, syncGlossaryVariantTextareaHeights } from "./app/autosize.js";
 import {
+  applyEditorRegressionFixture,
+  readEditorRegressionSnapshot,
+} from "./app/editor-regression-fixture.js";
+import {
   persistCurrentEditorLocation,
   prepareEditorLocationBeforeRender,
   queuePendingEditorLocationRestore,
@@ -57,6 +61,8 @@ const titles = {
   glossaryEditor: "Glossary Editor - Gnosis TMS",
   translate: "Translate - Gnosis TMS",
 };
+
+let bootstrapPromise = Promise.resolve();
 
 function captureFocusedInputState() {
   const activeElement = document.activeElement;
@@ -246,6 +252,9 @@ window.addEventListener("beforeunload", () => {
 });
 
 window.__gnosisDebug = {
+  waitForBootstrap() {
+    return bootstrapPromise.catch(() => undefined);
+  },
   showStartAuthMessage(message, status = "expired") {
     state.screen = "start";
     state.auth.status = status;
@@ -257,6 +266,18 @@ window.__gnosisDebug = {
     state.auth.status = "idle";
     state.auth.message = "";
     render();
+  },
+  async mountEditorFixture(options = {}) {
+    await bootstrapPromise.catch(() => undefined);
+    const summary = applyEditorRegressionFixture(state, options);
+    render();
+    return {
+      ...summary,
+      state: readEditorRegressionSnapshot(state),
+    };
+  },
+  readEditorState() {
+    return readEditorRegressionSnapshot(state);
   },
 };
 
@@ -276,4 +297,5 @@ async function bootstrap() {
   void initializeConnectivity(render, () => restoreStoredBrokerSession(render, loadUserTeams, storedBrokerSession));
 }
 
-void bootstrap();
+bootstrapPromise = bootstrap();
+void bootstrapPromise;

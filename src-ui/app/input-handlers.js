@@ -302,7 +302,7 @@ function handleEditorReplaceToggleInput(event, render) {
     return false;
   }
 
-  toggleEditorReplaceEnabled(render, input.checked);
+  toggleEditorReplaceEnabled(render, input.checked, input);
   return true;
 }
 

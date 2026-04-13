@@ -2545,11 +2545,12 @@ export function toggleEditorSearchFilterCaseSensitive(render, enabled) {
   });
 }
 
-export function toggleEditorReplaceEnabled(render, enabled) {
+export function toggleEditorReplaceEnabled(render, enabled, anchorTarget = null) {
   if (!state.editorChapter?.chapterId) {
     return;
   }
 
+  const scrollAnchor = captureTranslateRowAnchor(anchorTarget);
   const searchIsActive = normalizeEditorChapterFilters(state.editorChapter?.filters).searchQuery.trim().length > 0;
   updateEditorReplaceState((replaceState) => ({
     ...replaceState,
@@ -2559,6 +2560,9 @@ export function toggleEditorReplaceEnabled(render, enabled) {
     error: "",
   }));
   render?.();
+  if (scrollAnchor) {
+    void waitForNextPaint().then(() => restoreTranslateRowAnchor(scrollAnchor));
+  }
 }
 
 export function updateEditorReplaceQuery(render, nextValue) {

@@ -7,12 +7,14 @@
     "dev": "vite",
     "build": "vite build",
     "test": "node --test src-ui/app/*.test.js",
+    "test:browser": "playwright test",
     "icons:sync": "bash src-tauri/icons/sync-all-icons.sh",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build"
   },
   "devDependencies": {
+    "@playwright/test": "^1.59.1",
     "@tauri-apps/cli": "^2.5.0",
     "vite": "^5.4.19"
   },
