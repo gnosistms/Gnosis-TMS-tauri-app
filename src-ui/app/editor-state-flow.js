@@ -1,4 +1,5 @@
 import { saveStoredProjectsForTeam } from "./project-cache.js";
+import { pruneEditorCommentSeenRevisionsForRows } from "./editor-comments-state.js";
 import { currentEditorHistoryForSelection } from "./editor-history-state.js";
 import { compactDirtyRowIds, reconcileDirtyTrackedEditorRows } from "./editor-dirty-row-state.js";
 import { normalizeEditorChapterFilterState } from "./editor-filters.js";
@@ -14,6 +15,7 @@ import {
   coerceEditorFontSizePx,
   createEditorChapterFilterState,
   createEditorChapterGlossaryState,
+  createEditorCommentsState,
   createEditorReplaceUndoModalState,
   createEditorReplaceState,
   createEditorHistoryState,
@@ -51,8 +53,12 @@ export function applyEditorUiState(nextEditorChapter, previousEditorChapter = st
     activeRowId,
     activeLanguageCode,
   );
+  const sidebarTab =
+    typeof previousEditorChapter?.sidebarTab === "string"
+      ? previousEditorChapter.sidebarTab
+      : "history";
 
-  return {
+  return pruneEditorCommentSeenRevisionsForRows({
     ...nextEditorChapter,
     fontSizePx: coerceEditorFontSizePx(previousEditorChapter?.fontSizePx),
     collapsedLanguageCodes: cloneCollapsedLanguageCodes(previousEditorChapter?.collapsedLanguageCodes),
@@ -95,11 +101,33 @@ export function applyEditorUiState(nextEditorChapter, previousEditorChapter = st
       hasEditorRow(nextEditorChapter, activeRowId) && hasEditorLanguage(nextEditorChapter, activeLanguageCode)
         ? activeLanguageCode
         : null,
+    sidebarTab: sidebarTab === "comments" || sidebarTab === "duplicates" ? sidebarTab : "history",
+    commentSeenRevisions:
+      isSameChapter && previousEditorChapter?.commentSeenRevisions && typeof previousEditorChapter.commentSeenRevisions === "object"
+        ? previousEditorChapter.commentSeenRevisions
+        : {},
+    comments:
+      isSameChapter && hasEditorRow(nextEditorChapter, activeRowId)
+        ? {
+          ...createEditorCommentsState(),
+          ...(previousEditorChapter?.comments && typeof previousEditorChapter.comments === "object"
+            ? previousEditorChapter.comments
+            : {}),
+          rowId:
+            previousEditorChapter?.comments?.rowId && hasEditorRow(nextEditorChapter, previousEditorChapter.comments.rowId)
+              ? previousEditorChapter.comments.rowId
+              : null,
+          requestKey:
+            previousEditorChapter?.comments?.rowId && hasEditorRow(nextEditorChapter, previousEditorChapter.comments.rowId)
+              ? previousEditorChapter.comments.requestKey ?? null
+              : null,
+        }
+        : createEditorCommentsState(),
     history:
       hasEditorRow(nextEditorChapter, activeRowId) && hasEditorLanguage(nextEditorChapter, activeLanguageCode)
         ? history
         : createEditorHistoryState(),
-  };
+  });
 }
 
 export function normalizeEditorRows(rows) {
@@ -110,6 +138,9 @@ export function normalizeEditorRows(rows) {
       ...row,
       lifecycleState: row?.lifecycleState === "deleted" ? "deleted" : "active",
       orderKey: typeof row?.orderKey === "string" ? row.orderKey : "",
+      commentCount: Number.isInteger(row?.commentCount) && row.commentCount >= 0 ? row.commentCount : 0,
+      commentsRevision:
+        Number.isInteger(row?.commentsRevision) && row.commentsRevision >= 0 ? row.commentsRevision : 0,
       fields,
       persistedFields: cloneRowFields(fields),
       fieldStates,
@@ -258,6 +289,7 @@ export function removeEditorChapterRow(rowId) {
     dirtyRowIds: compactDirtyRowIds(rows, state.editorChapter.dirtyRowIds),
     activeRowId: state.editorChapter.activeRowId === rowId ? null : state.editorChapter.activeRowId,
     activeLanguageCode: state.editorChapter.activeRowId === rowId ? null : state.editorChapter.activeLanguageCode,
+    comments: state.editorChapter.activeRowId === rowId ? createEditorCommentsState() : state.editorChapter.comments,
     history: state.editorChapter.activeRowId === rowId ? createEditorHistoryState() : state.editorChapter.history,
   };
 }

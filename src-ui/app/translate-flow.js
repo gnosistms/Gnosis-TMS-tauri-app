@@ -1,4 +1,12 @@
 import {
+  deleteActiveEditorRowComment as deleteActiveEditorRowCommentFlow,
+  loadActiveEditorRowComments as loadActiveEditorRowCommentsFlow,
+  openEditorRowComments as openEditorRowCommentsFlow,
+  saveActiveEditorRowComment as saveActiveEditorRowCommentFlow,
+  switchEditorSidebarTab as switchEditorSidebarTabFlow,
+  updateEditorCommentDraft as updateEditorCommentDraftFlow,
+} from "./editor-comments-flow.js";
+import {
   loadSelectedChapterEditorData as loadSelectedChapterEditorDataFlow,
   openTranslateChapter as openTranslateChapterFlow,
 } from "./editor-chapter-load-flow.js";
@@ -35,7 +43,6 @@ import {
   loadActiveEditorFieldHistory as loadActiveEditorFieldHistoryFlow,
   openEditorReplaceUndoModal as openEditorReplaceUndoModalFlow,
   restoreEditorFieldHistory as restoreEditorFieldHistoryFlow,
-  setActiveEditorField as setActiveEditorFieldFlow,
   toggleEditorHistoryGroupExpanded as toggleEditorHistoryGroupExpandedFlow,
 } from "./editor-history-flow.js";
 import {
@@ -105,8 +112,30 @@ export function loadActiveEditorFieldHistory(render) {
   loadActiveEditorFieldHistoryFlow(render);
 }
 
+export function loadActiveEditorRowComments(render) {
+  loadActiveEditorRowCommentsFlow(render);
+}
+
 export function setActiveEditorField(render, rowId, languageCode) {
-  setActiveEditorFieldFlow(render, rowId, languageCode);
+  if (!rowId || !languageCode) {
+    return;
+  }
+
+  state.editorChapter = {
+    ...state.editorChapter,
+    activeRowId: rowId,
+    activeLanguageCode: languageCode,
+  };
+  if (state.editorChapter.sidebarTab === "comments") {
+    openEditorRowCommentsFlow(render, rowId, languageCode);
+    return;
+  }
+  if (state.editorChapter.sidebarTab === "duplicates") {
+    render?.();
+    return;
+  }
+
+  loadActiveEditorFieldHistoryFlow(render);
 }
 
 function editorPersistenceOperations() {
@@ -144,6 +173,28 @@ export async function flushDirtyEditorRows(render, options = {}) {
 
 export function toggleEditorHistoryGroupExpanded(groupKey) {
   toggleEditorHistoryGroupExpandedFlow(groupKey);
+}
+
+export function openEditorRowComments(render, rowId, languageCode) {
+  openEditorRowCommentsFlow(render, rowId, languageCode);
+}
+
+export function switchEditorSidebarTab(render, tab) {
+  switchEditorSidebarTabFlow(render, tab, {
+    loadActiveEditorFieldHistory,
+  });
+}
+
+export function updateEditorCommentDraft(nextValue) {
+  updateEditorCommentDraftFlow(nextValue);
+}
+
+export async function saveActiveEditorRowComment(render) {
+  await saveActiveEditorRowCommentFlow(render);
+}
+
+export async function deleteActiveEditorRowComment(render, commentId) {
+  await deleteActiveEditorRowCommentFlow(render, commentId);
 }
 
 export async function persistEditorChapterSelections(render) {

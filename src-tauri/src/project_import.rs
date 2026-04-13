@@ -7,25 +7,32 @@ use tauri::AppHandle;
 
 use self::{
   chapter_editor::{
+    delete_gtms_editor_row_comment_sync,
     insert_gtms_editor_row_sync,
     initialize_gtms_project_repo_sync,
     load_gtms_editor_field_history_sync,
+    load_gtms_editor_row_comments_sync,
     list_local_gtms_project_files_sync,
     load_gtms_chapter_editor_data_sync,
     permanently_delete_gtms_editor_row_sync,
     reverse_gtms_editor_batch_replace_commit_sync,
     purge_local_gtms_project_repo_sync,
     restore_gtms_editor_field_from_history_sync,
+    save_gtms_editor_row_comment_sync,
     update_gtms_editor_row_lifecycle_sync,
     update_gtms_chapter_glossary_links_sync,
     update_gtms_chapter_language_selection_sync,
     update_gtms_editor_row_field_flag_sync,
     update_gtms_editor_row_fields_batch_sync,
     update_gtms_editor_row_fields_sync,
+    DeleteEditorRowCommentInput,
+    DeleteEditorRowCommentResponse,
     InsertEditorRowInput,
     InsertEditorRowResponse,
     LoadEditorFieldHistoryInput,
     LoadEditorFieldHistoryResponse,
+    LoadEditorRowCommentsInput,
+    LoadEditorRowCommentsResponse,
     ListLocalProjectFilesInput,
     LocalProjectFilesResponse,
     InitializeProjectRepoInput,
@@ -37,6 +44,8 @@ use self::{
     RestoreEditorFieldHistoryResponse,
     ReverseEditorBatchReplaceCommitInput,
     ReverseEditorBatchReplaceCommitResponse,
+    SaveEditorRowCommentInput,
+    SaveEditorRowCommentResponse,
     UpdateChapterGlossaryLinksInput,
     UpdateChapterGlossaryLinksResponse,
     UpdateChapterLanguageSelectionInput,
@@ -244,6 +253,36 @@ pub(crate) async fn restore_gtms_editor_field_from_history(
   })
   .await
   .map_err(|error| format!("The row history restore worker failed: {error}"))?
+}
+
+#[tauri::command]
+pub(crate) async fn load_gtms_editor_row_comments(
+  app: AppHandle,
+  input: LoadEditorRowCommentsInput,
+) -> Result<LoadEditorRowCommentsResponse, String> {
+  tauri::async_runtime::spawn_blocking(move || load_gtms_editor_row_comments_sync(&app, input))
+    .await
+    .map_err(|error| format!("The row comments worker failed: {error}"))?
+}
+
+#[tauri::command]
+pub(crate) async fn save_gtms_editor_row_comment(
+  app: AppHandle,
+  input: SaveEditorRowCommentInput,
+) -> Result<SaveEditorRowCommentResponse, String> {
+  tauri::async_runtime::spawn_blocking(move || save_gtms_editor_row_comment_sync(&app, input))
+    .await
+    .map_err(|error| format!("The row comment save worker failed: {error}"))?
+}
+
+#[tauri::command]
+pub(crate) async fn delete_gtms_editor_row_comment(
+  app: AppHandle,
+  input: DeleteEditorRowCommentInput,
+) -> Result<DeleteEditorRowCommentResponse, String> {
+  tauri::async_runtime::spawn_blocking(move || delete_gtms_editor_row_comment_sync(&app, input))
+    .await
+    .map_err(|error| format!("The row comment delete worker failed: {error}"))?
 }
 
 #[tauri::command]

@@ -1,3 +1,4 @@
+import { loadActiveEditorRowComments, loadEditorCommentSeenRevisionsForChapter } from "./editor-comments-flow.js";
 import {
   editorGlossaryStateMatchesLink,
   loadEditorGlossaryState,
@@ -14,6 +15,7 @@ import { invoke } from "./runtime.js";
 import {
   createEditorChapterFilterState,
   createEditorChapterGlossaryState,
+  createEditorCommentsState,
   createEditorHistoryState,
   state,
 } from "./state.js";
@@ -62,6 +64,10 @@ function applyEditorPayloadToState(payload, projectId, existingChapter = {}, glo
     persistedSourceLanguageCode: selectedSourceLanguageCode,
     persistedTargetLanguageCode: selectedTargetLanguageCode,
     selectionPersistStatus: "idle",
+    commentSeenRevisions: loadEditorCommentSeenRevisionsForChapter(
+      payload.chapterId,
+      (Array.isArray(payload.rows) ? payload.rows : []).map((row) => row?.rowId).filter(Boolean),
+    ),
     glossary: glossaryState ?? previousEditorChapter?.glossary ?? createEditorChapterGlossaryState(),
     rows: operations.normalizeEditorRows(payload.rows),
   }, previousEditorChapter);
@@ -156,6 +162,9 @@ export async function loadSelectedChapterEditorData(render, options = {}, operat
     glossary: nextGlossaryState,
     activeRowId: preserveVisibleRows ? state.editorChapter.activeRowId : null,
     activeLanguageCode: preserveVisibleRows ? state.editorChapter.activeLanguageCode : null,
+    sidebarTab: preserveVisibleRows ? state.editorChapter.sidebarTab : "history",
+    commentSeenRevisions: preserveVisibleRows ? state.editorChapter.commentSeenRevisions : {},
+    comments: preserveVisibleRows ? state.editorChapter.comments : createEditorCommentsState(),
     history: preserveVisibleRows ? state.editorChapter.history : createEditorHistoryState(),
     rows: preserveVisibleRows ? state.editorChapter.rows : [],
   };
@@ -173,7 +182,9 @@ export async function loadSelectedChapterEditorData(render, options = {}, operat
     const glossaryState = await glossaryStatePromise;
     applyEditorPayloadToState(payload, context.project.id, context.chapter, glossaryState, operations);
     render?.();
-    if (hasActiveEditorField(state.editorChapter)) {
+    if (state.editorChapter.sidebarTab === "comments" && state.editorChapter.activeRowId) {
+      loadActiveEditorRowComments(render);
+    } else if (hasActiveEditorField(state.editorChapter)) {
       operations.loadActiveEditorFieldHistory(render);
     }
   } catch (error) {
@@ -184,6 +195,7 @@ export async function loadSelectedChapterEditorData(render, options = {}, operat
       error: message,
       activeRowId: null,
       activeLanguageCode: null,
+      comments: createEditorCommentsState(),
       history: createEditorHistoryState(),
       rows: [],
     };

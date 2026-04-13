@@ -19,8 +19,19 @@ function padFixtureIndex(index) {
   return String(index).padStart(4, "0");
 }
 
-function createFixtureRow(index, languages) {
+function createFixtureRow(index, languages, options = {}) {
   const label = padFixtureIndex(index);
+  const rowId = `fixture-row-${label}`;
+  const storedCommentConfig =
+    options?.commentsByRowId && typeof options.commentsByRowId === "object"
+      ? options.commentsByRowId[rowId] ?? null
+      : null;
+  const editorComments = Array.isArray(storedCommentConfig?.comments)
+    ? structuredClone(storedCommentConfig.comments)
+    : [];
+  const commentsRevision = Number.isInteger(storedCommentConfig?.commentsRevision)
+    ? storedCommentConfig.commentsRevision
+    : editorComments.length;
   const fields = {};
   const fieldStates = {};
 
@@ -40,9 +51,12 @@ function createFixtureRow(index, languages) {
   }
 
   return {
-    rowId: `fixture-row-${label}`,
+    rowId,
     orderKey: label,
     lifecycleState: "active",
+    commentCount: editorComments.length,
+    commentsRevision,
+    editorComments,
     fields,
     persistedFields: { ...fields },
     fieldStates,
@@ -102,7 +116,7 @@ export function applyEditorRegressionFixture(appState, options = {}) {
   const fileTitle = typeof options?.fileTitle === "string" && options.fileTitle.trim()
     ? options.fileTitle.trim()
     : "Editor Regression Fixture";
-  const rows = Array.from({ length: rowCount }, (_, index) => createFixtureRow(index + 1, languages));
+  const rows = Array.from({ length: rowCount }, (_, index) => createFixtureRow(index + 1, languages, options));
   const chapter = {
     id: chapterId,
     name: fileTitle,
@@ -319,6 +333,10 @@ export function readEditorRegressionSnapshot(appState) {
       appState.editorChapter?.expandedDeletedRowGroupIds instanceof Set
         ? [...appState.editorChapter.expandedDeletedRowGroupIds]
         : [],
+    commentSeenRevisions:
+      appState.editorChapter?.commentSeenRevisions && typeof appState.editorChapter.commentSeenRevisions === "object"
+        ? { ...appState.editorChapter.commentSeenRevisions }
+        : {},
     filters: appState.editorChapter?.filters
       ? {
           searchQuery: appState.editorChapter.filters.searchQuery ?? "",

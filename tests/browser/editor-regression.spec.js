@@ -8,6 +8,7 @@ async function installMockTauri(page) {
     const fixtureByChapterId = new Map();
     const rowFieldsByChapterId = new Map();
     const fieldStatesByChapterId = new Map();
+    const rowCommentsByChapterId = new Map();
     const rowLatestCommitByChapterId = new Map();
     const historyEntriesByKey = new Map();
     const batchReplaceSnapshotsByCommitSha = new Map();
@@ -75,6 +76,13 @@ async function installMockTauri(page) {
         chapterId,
         new Map(rows.map((row) => [row.rowId, clone(row.fieldStates ?? {})])),
       );
+      rowCommentsByChapterId.set(
+        chapterId,
+        new Map(rows.map((row) => [row.rowId, {
+          commentsRevision: Number.isInteger(row.commentsRevision) ? row.commentsRevision : 0,
+          comments: clone(row.editorComments ?? []),
+        }])),
+      );
       rowLatestCommitByChapterId.set(chapterId, new Map());
 
       for (const row of rows) {
@@ -91,6 +99,10 @@ async function installMockTauri(page) {
 
     function findFieldStates(chapterId, rowId) {
       return fieldStatesByChapterId.get(chapterId)?.get(rowId) ?? null;
+    }
+
+    function findRowComments(chapterId, rowId) {
+      return rowCommentsByChapterId.get(chapterId)?.get(rowId) ?? null;
     }
 
     async function invoke(command, payload = {}) {
@@ -130,6 +142,70 @@ async function installMockTauri(page) {
         const input = payload?.input ?? {};
         return {
           entries: clone(historyEntriesByKey.get(historyKey(input.chapterId, input.rowId, input.languageCode)) ?? []),
+        };
+      }
+
+      if (command === "load_gtms_editor_row_comments") {
+        const input = payload?.input ?? {};
+        const storedComments = findRowComments(input.chapterId, input.rowId);
+        if (!storedComments) {
+          throw new Error(`Unknown editor row comments target: ${input.rowId}`);
+        }
+
+        return {
+          rowId: input.rowId,
+          commentsRevision: storedComments.commentsRevision,
+          commentCount: storedComments.comments.length,
+          comments: clone(storedComments.comments),
+        };
+      }
+
+      if (command === "save_gtms_editor_row_comment") {
+        const input = payload?.input ?? {};
+        const storedComments = findRowComments(input.chapterId, input.rowId);
+        if (!storedComments) {
+          throw new Error(`Unknown editor row comments target: ${input.rowId}`);
+        }
+
+        storedComments.commentsRevision += 1;
+        storedComments.comments.unshift({
+          commentId: `mock-comment-${String(storedComments.commentsRevision).padStart(4, "0")}`,
+          authorLogin: "fixture-user",
+          authorName: "Fixture User",
+          body: String(input.body ?? "").trim(),
+          createdAt: nextCommittedAt(),
+        });
+
+        return {
+          rowId: input.rowId,
+          commentsRevision: storedComments.commentsRevision,
+          commentCount: storedComments.comments.length,
+          comments: clone(storedComments.comments),
+        };
+      }
+
+      if (command === "delete_gtms_editor_row_comment") {
+        const input = payload?.input ?? {};
+        const storedComments = findRowComments(input.chapterId, input.rowId);
+        if (!storedComments) {
+          throw new Error(`Unknown editor row comments target: ${input.rowId}`);
+        }
+
+        const commentIndex = storedComments.comments.findIndex((comment) => comment.commentId === input.commentId);
+        if (commentIndex < 0) {
+          throw new Error("Requested comment not found.");
+        }
+        if (String(storedComments.comments[commentIndex]?.authorLogin ?? "").toLowerCase() !== "fixture-user") {
+          throw new Error("Only the comment author can delete this comment.");
+        }
+
+        storedComments.comments.splice(commentIndex, 1);
+        storedComments.commentsRevision += 1;
+        return {
+          rowId: input.rowId,
+          commentsRevision: storedComments.commentsRevision,
+          commentCount: storedComments.comments.length,
+          comments: clone(storedComments.comments),
         };
       }
 
@@ -752,5 +828,73 @@ test.describe("editor regressions", () => {
       const mockState = await readMockTauriState(page);
       return mockState?.histories?.["fixture-chapter::fixture-row-0001::vi"]?.[0]?.operationType ?? null;
     }).toBe("restore");
+  });
+
+  test("comments marker appears only on the target-language panel", async ({ page }) => {
+    await mountEditorFixture(page, { rowCount: 6 }, { mockTauri: true });
+
+    const sourcePanel = page.locator('[data-editor-language-panel][data-row-id="fixture-row-0001"][data-language-code="es"]');
+    const targetPanel = page.locator('[data-editor-language-panel][data-row-id="fixture-row-0001"][data-language-code="vi"]');
+
+    await expect(sourcePanel.locator('[data-action="open-editor-comments"]')).toHaveCount(0);
+    await expect(targetPanel.locator('[data-action="open-editor-comments"]')).toHaveCount(1);
+  });
+
+  test("opening comments switches the sidebar and marks that row as read", async ({ page }) => {
+    await mountEditorFixture(page, {
+      rowCount: 6,
+      commentsByRowId: {
+        "fixture-row-0001": {
+          commentsRevision: 2,
+          comments: [
+            {
+              commentId: "comment-1",
+              authorLogin: "other-user",
+              authorName: "Other User",
+              body: "Please verify this wording.",
+              createdAt: "2026-04-13T09:12:33Z",
+            },
+          ],
+        },
+      },
+    }, { mockTauri: true });
+
+    const commentsButton = page.locator(
+      '[data-action="open-editor-comments"][data-row-id="fixture-row-0001"][data-language-code="vi"]',
+    );
+    await expect(commentsButton).toHaveClass(/is-unread/);
+
+    await commentsButton.click();
+
+    await expect(page.locator(".history-tabs__item--active")).toHaveText("Comments");
+    await expect(page.locator(".history-item__content")).toContainText("Please verify this wording.");
+    await expect(commentsButton).not.toHaveClass(/is-unread/);
+    await expect.poll(async () => {
+      return await page.evaluate(() => window.__gnosisDebug.readEditorState().commentSeenRevisions);
+    }).toEqual({ "fixture-row-0001": 2 });
+
+    const mockState = await readMockTauriState(page);
+    expect(mockState.invocations.some((entry) => entry.command === "load_gtms_editor_row_comments")).toBe(true);
+  });
+
+  test("saving and deleting a comment keeps the comments tab in sync", async ({ page }) => {
+    await mountEditorFixture(page, { rowCount: 6 }, { mockTauri: true });
+
+    await page.locator(
+      '[data-action="open-editor-comments"][data-row-id="fixture-row-0001"][data-language-code="vi"]',
+    ).click();
+    await expect(page.locator(".history-empty")).toContainText("No comments yet for this row.");
+    await page.locator("[data-editor-comment-draft]").fill("Check the final clause.");
+    await page.getByRole("button", { name: "Save comment" }).click();
+
+    await expect(page.locator(".history-item__content")).toContainText("Check the final clause.");
+    const deleteCommentButton = page.locator('[data-action^="delete-editor-comment:"]');
+    await expect(deleteCommentButton).toBeVisible();
+
+    await deleteCommentButton.click();
+    await expect(page.locator(".history-empty")).toContainText("No comments yet for this row.");
+    await expect(page.locator(
+      '[data-action="open-editor-comments"][data-row-id="fixture-row-0001"][data-language-code="vi"]',
+    )).not.toHaveClass(/is-active/);
   });
 });

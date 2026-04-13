@@ -12,7 +12,7 @@ import { renderEditorRowInsertModal } from "./editor-row-insert-modal.js";
 import { renderEditorRowPermanentDeletionModal } from "./editor-row-permanent-deletion-modal.js";
 import { renderEditorReplaceUndoModal } from "./editor-replace-undo-modal.js";
 import { renderTargetLanguageManagerModal } from "./target-language-manager-modal.js";
-import { renderHistorySidebar } from "./translate-history-sidebar.js";
+import { renderTranslateSidebar as renderTranslateEditorSidebar } from "./translate-sidebar.js";
 import {
   renderEditorFilterBanner,
   renderTranslateModeControl,
@@ -44,7 +44,9 @@ function buildTranslateScreenFrame(state) {
     editorReplace,
     collapsedLanguageCodes,
     editorFontSizePx,
+    sidebarTab,
   } = buildEditorScreenViewModel(state);
+  const authSession = state.auth?.session ?? null;
   const titleText = chapter?.name ?? editorChapter?.fileTitle ?? "Translate";
   const displayTitle = middleTruncateTitle(titleText);
 
@@ -105,6 +107,8 @@ function buildTranslateScreenFrame(state) {
     editorReplace,
     collapsedLanguageCodes,
     editorFontSizePx,
+    sidebarTab,
+    authSession,
     titleText,
     displayTitle,
     translateBody,
@@ -120,6 +124,7 @@ function renderTranslateEditorBodyFromFrame(frame) {
     editorReplace,
     editorFontSizePx,
     translateBody,
+    authSession,
   } = frame;
   return `
     <section class="translate-layout" style="--translation-editor-font-size: ${escapeHtml(String(editorFontSizePx))}px;">
@@ -130,7 +135,7 @@ function renderTranslateEditorBodyFromFrame(frame) {
         </div>
       </div>
       <div class="translate-sidebar-scroll">
-        ${renderHistorySidebar(editorChapter, contentRows, languages)}
+        ${renderTranslateEditorSidebar(editorChapter, contentRows, languages, authSession)}
       </div>
     </section>
   `;
@@ -141,8 +146,8 @@ export function renderTranslateEditorBody(state) {
 }
 
 export function renderTranslateSidebar(state) {
-  const { editorChapter, contentRows, languages } = buildTranslateScreenFrame(state);
-  return renderHistorySidebar(editorChapter, contentRows, languages);
+  const { editorChapter, contentRows, languages, authSession } = buildTranslateScreenFrame(state);
+  return renderTranslateEditorSidebar(editorChapter, contentRows, languages, authSession);
 }
 
 export function renderTranslateScreen(state) {

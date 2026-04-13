@@ -32,6 +32,7 @@ import {
   toggleEditorReplaceEnabled,
   toggleEditorReplaceRowSelected,
   updateEditorFontSize,
+  updateEditorCommentDraft,
   updateEditorReplaceQuery,
   updateEditorRowFieldValue,
   updateEditorSearchFilterQuery,
@@ -352,6 +353,18 @@ function handleEditorRowFieldInput(event, render) {
   return true;
 }
 
+function handleEditorCommentDraftInput(event, render) {
+  const input = event.target.closest("[data-editor-comment-draft]");
+  if (!input) {
+    return false;
+  }
+
+  updateEditorCommentDraft(input.value);
+  syncAutoSizeTextarea(input, { minHeight: 88, maxHeight: 220 });
+  render?.({ scope: "translate-sidebar" });
+  return true;
+}
+
 function handleChapterGlossarySelectInput(event, render) {
   if (event.type !== "change") {
     return false;
@@ -396,6 +409,7 @@ const inputHandlers = [
   handleEditorReplaceInput,
   handleEditorReplaceRowSelectionInput,
   handleEditorRowFieldInput,
+  handleEditorCommentDraftInput,
   handleChapterGlossarySelectInput,
 ];
 

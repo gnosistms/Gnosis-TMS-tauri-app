@@ -1,3 +1,4 @@
+import { buildEditorCommentsButtonState, normalizeEditorSidebarTab } from "./editor-comments.js";
 import { coerceEditorFontSizePx } from "./state.js";
 import { canPermanentlyDeleteProjectFiles } from "./resource-capabilities.js";
 import { findChapterContextById, selectedProjectsTeam } from "./project-context.js";
@@ -60,6 +61,9 @@ function buildLiveTranslationRows(editorChapter, languages) {
       rowId: row.rowId,
       lifecycleState: row.lifecycleState === "deleted" ? "deleted" : "active",
       orderKey: row.orderKey || "",
+      commentCount: Number.isInteger(row?.commentCount) && row.commentCount >= 0 ? row.commentCount : 0,
+      commentsRevision:
+        Number.isInteger(row?.commentsRevision) && row.commentsRevision >= 0 ? row.commentsRevision : 0,
       saveStatus: row.saveStatus || "idle",
       saveError: row.saveError || "",
       sections: languageOptions.map((language) => ({
@@ -179,6 +183,10 @@ export function buildEditorScreenViewModel(appState) {
     editorChapter?.collapsedLanguageCodes instanceof Set
       ? editorChapter.collapsedLanguageCodes
       : new Set();
+  const commentSeenRevisions =
+    editorChapter?.commentSeenRevisions && typeof editorChapter.commentSeenRevisions === "object"
+      ? editorChapter.commentSeenRevisions
+      : {};
   const editorFilters = buildEditorFilterResult({
     rows: rawRows,
     languages,
@@ -191,7 +199,28 @@ export function buildEditorScreenViewModel(appState) {
     editorChapter,
     selectedProjectsTeam(),
     editorReplace,
-  );
+  ).map((row) => {
+    if (row?.kind !== "row") {
+      return row;
+    }
+
+    return {
+      ...row,
+      sections: (Array.isArray(row.sections) ? row.sections : []).map((section) => ({
+        ...section,
+        ...buildEditorCommentsButtonState({
+          row,
+          languageCode: section.code,
+          targetLanguageCode: targetCode,
+          seenRevisions: commentSeenRevisions,
+        }),
+        isSelectedCommentsRow:
+          normalizeEditorSidebarTab(editorChapter?.sidebarTab) === "comments"
+          && editorChapter?.activeRowId === row.rowId
+          && editorChapter?.activeLanguageCode === section.code,
+      })),
+    };
+  });
   const editorFontSizePx = coerceEditorFontSizePx(editorChapter?.fontSizePx);
 
   return {
@@ -205,5 +234,6 @@ export function buildEditorScreenViewModel(appState) {
     editorReplace,
     collapsedLanguageCodes,
     editorFontSizePx,
+    sidebarTab: normalizeEditorSidebarTab(editorChapter?.sidebarTab),
   };
 }

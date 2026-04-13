@@ -13,6 +13,16 @@ import {
 } from "./editor-virtualization-shared.js";
 
 export function renderTranslationMarkerIcon(kind) {
+  if (kind === "comments") {
+    return `
+      <svg class="translation-marker-button__icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false">
+        <rect x="2.25" y="2.25" width="15.5" height="15.5" rx="4" fill="none" stroke="currentColor" stroke-width="1.8"></rect>
+        <path d="M10 6.1c1.03 0 1.86.84 1.86 1.87 0 .72-.33 1.1-.85 1.58-.54.5-.86.84-.86 1.66" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"></path>
+        <circle cx="10" cy="14.1" r="1" fill="currentColor"></circle>
+      </svg>
+    `;
+  }
+
   if (kind === "reviewed") {
     return `
       <svg class="translation-marker-button__icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false">
@@ -27,6 +37,16 @@ export function renderTranslationMarkerIcon(kind) {
       <rect x="2.25" y="2.25" width="15.5" height="15.5" rx="4" fill="none" stroke="currentColor" stroke-width="1.8"></rect>
       <path d="M8 7.3a2.15 2.15 0 1 1 3.76 1.4c-.74.78-1.5 1.22-1.5 2.33" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"></path>
       <circle cx="10" cy="13.9" r="0.95" fill="currentColor"></circle>
+    </svg>
+  `;
+}
+
+function renderUnreadCommentsMarkerIcon() {
+  return `
+    <svg class="translation-marker-button__icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false">
+      <rect x="2.25" y="2.25" width="15.5" height="15.5" rx="4" fill="currentColor"></rect>
+      <path d="M10 6.25c1.03 0 1.86.84 1.86 1.87 0 .72-.33 1.1-.85 1.58-.54.5-.86.84-.86 1.66" fill="none" stroke="var(--translation-marker-cutout, #ffffff)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"></path>
+      <circle cx="10" cy="14.1" r="1" fill="var(--translation-marker-cutout, #ffffff)"></circle>
     </svg>
   `;
 }
@@ -54,6 +74,31 @@ function renderLanguageMarkerButton(kind, rowId, language) {
       ${tooltipAttributes(label, { align: "end", side: "bottom" })}
     >
       ${renderTranslationMarkerIcon(kind)}
+    </button>
+  `;
+}
+
+function renderCommentsMarkerButton(rowId, language) {
+  if (language.showCommentsButton !== true) {
+    return "";
+  }
+
+  const hasComments = language.hasComments === true;
+  const hasUnreadComments = language.hasUnreadComments === true;
+  const isSelectedCommentsRow = language.isSelectedCommentsRow === true;
+  const title = "View / edit comments";
+
+  return `
+    <button
+      class="translation-marker-button translation-marker-button--comments${hasComments ? " is-active" : ""}${hasUnreadComments ? " is-unread" : ""}${isSelectedCommentsRow ? " is-selected" : ""}"
+      type="button"
+      data-action="open-editor-comments"
+      data-row-id="${escapeHtml(rowId)}"
+      data-language-code="${escapeHtml(language.code)}"
+      aria-pressed="${isSelectedCommentsRow ? "true" : "false"}"
+      ${tooltipAttributes(title, { align: "end", side: "bottom" })}
+    >
+      ${hasUnreadComments ? renderUnreadCommentsMarkerIcon() : renderTranslationMarkerIcon("comments")}
     </button>
   `;
 }
@@ -156,6 +201,7 @@ export function renderTranslationContentRow(
                         <span class="translation-language-panel__label">${escapeHtml(language.name)}</span>
                       </button>
                       <div class="translation-language-panel__actions">
+                        ${renderCommentsMarkerButton(row.id, language)}
                         ${renderLanguageMarkerButton("reviewed", row.id, language)}
                         ${renderLanguageMarkerButton("please-check", row.id, language)}
                       </div>

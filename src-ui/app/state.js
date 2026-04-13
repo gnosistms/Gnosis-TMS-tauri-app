@@ -237,6 +237,9 @@ export function createEditorChapterState() {
     glossary: createEditorChapterGlossaryState(),
     activeRowId: null,
     activeLanguageCode: null,
+    sidebarTab: "history",
+    commentSeenRevisions: {},
+    comments: createEditorCommentsState(),
     dirtyRowIds: new Set(),
     history: createEditorHistoryState(),
     replaceUndoModal: createEditorReplaceUndoModalState(),
@@ -306,6 +309,19 @@ export function createEditorHistoryState() {
     restoringCommitSha: null,
     expandedGroupKeys: new Set(),
     entries: [],
+  };
+}
+
+export function createEditorCommentsState() {
+  return {
+    status: "idle",
+    error: "",
+    rowId: null,
+    requestKey: null,
+    commentsRevision: 0,
+    entries: [],
+    draft: "",
+    deletingCommentId: null,
   };
 }
 

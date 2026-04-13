@@ -9,14 +9,18 @@ import {
   confirmEditorRowPermanentDeletion,
   confirmInsertEditorRow,
   closeTargetLanguageManager,
+  deleteActiveEditorRowComment,
   openEditorReplaceUndoModal,
+  openEditorRowComments,
   openEditorRowPermanentDeletionModal,
   openInsertEditorRowModal,
   replaceSelectedEditorRows,
   restoreEditorFieldHistory,
   restoreEditorRow,
+  saveActiveEditorRowComment,
   selectAllEditorReplaceRows,
   softDeleteEditorRow,
+  switchEditorSidebarTab,
   toggleEditorSearchFilterCaseSensitive,
   toggleDeletedEditorRowGroup,
   toggleEditorRowFieldMarker,
@@ -80,6 +84,11 @@ export function createTranslateActions(render) {
       return true;
     }
 
+    if (action === "save-editor-comment") {
+      await saveActiveEditorRowComment(render);
+      return true;
+    }
+
     if (action === "toggle-editor-search-case-sensitive") {
       const button = event?.target instanceof Element
         ? event.target.closest("[data-editor-search-case-toggle]")
@@ -97,6 +106,16 @@ export function createTranslateActions(render) {
       const languageCode = button?.dataset.languageCode ?? null;
       const kind = action === "toggle-editor-reviewed" ? "reviewed" : "please-check";
       await toggleEditorRowFieldMarker(render, rowId, languageCode, kind);
+      return true;
+    }
+
+    if (action === "open-editor-comments") {
+      const button = event?.target instanceof Element
+        ? event.target.closest("[data-row-id][data-language-code]")
+        : null;
+      const rowId = button?.dataset.rowId ?? null;
+      const languageCode = button?.dataset.languageCode ?? null;
+      openEditorRowComments(render, rowId, languageCode);
       return true;
     }
 
@@ -124,6 +143,18 @@ export function createTranslateActions(render) {
     if (deletedRowGroupKey !== null) {
       const scrollAnchor = captureTranslateRowAnchor(event?.target ?? null);
       toggleDeletedEditorRowGroup(render, deletedRowGroupKey, scrollAnchor);
+      return true;
+    }
+
+    const sidebarTab = actionSuffix(action, "switch-editor-sidebar-tab:");
+    if (sidebarTab !== null) {
+      switchEditorSidebarTab(render, sidebarTab);
+      return true;
+    }
+
+    const commentId = actionSuffix(action, "delete-editor-comment:");
+    if (commentId !== null) {
+      await deleteActiveEditorRowComment(render, commentId);
       return true;
     }
 

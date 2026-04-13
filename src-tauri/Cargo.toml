@@ -28,3 +28,4 @@ uuid = { version = "1", features = ["v7", "serde"] }
 tauri-plugin-store = "2"
 calamine = "0.26"
 quick-xml = "0.31"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
