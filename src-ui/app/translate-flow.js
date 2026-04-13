@@ -8,20 +8,22 @@ import {
   mergeEditorTextHighlightMaps,
 } from "./editor-search-highlighting.js";
 import {
-  cloneDirtyRowIds,
-  reconcileDirtyRowIds,
-  resolveDirtyTrackedEditorRowIds,
-  rowFieldsEqual,
-  rowHasFieldChanges,
-  rowHasPersistedChanges,
-  rowNeedsDirtyTracking,
-} from "./editor-row-persistence-model.js";
+  compactDirtyRowIds,
+  flushDirtyEditorRows as flushDirtyEditorRowsFlow,
+  persistEditorRowOnBlur as persistEditorRowOnBlurFlow,
+  reconcileDirtyTrackedEditorRows,
+  scheduleDirtyEditorRowScan as scheduleDirtyEditorRowScanFlow,
+  toggleEditorRowFieldMarker as toggleEditorRowFieldMarkerFlow,
+  updateEditorRowFieldValue as updateEditorRowFieldValueFlow,
+} from "./editor-persistence-flow.js";
 import { normalizeEditorChapterFilterState } from "./editor-filters.js";
+import {
+  rowFieldsEqual,
+} from "./editor-row-persistence-model.js";
 import {
   buildEditorBatchReplaceUpdates,
   buildEditorReplaceCommitMessage,
   buildEditorReplaceResetCommitMessage,
-  buildEditorReplaceUndoNotice,
   cloneEditorReplaceSelectedRowIds,
   currentMatchingEditorReplaceRowIds,
   formatReplaceRowCount,
@@ -30,19 +32,40 @@ import {
   updateEditorReplaceState,
 } from "./editor-replace.js";
 import {
+  cancelEditorReplaceUndoModal as cancelEditorReplaceUndoModalFlow,
+  cloneExpandedHistoryGroupKeys,
+  confirmEditorReplaceUndo as confirmEditorReplaceUndoFlow,
+  currentEditorHistoryForSelection,
+  loadActiveEditorFieldHistory as loadActiveEditorFieldHistoryFlow,
+  normalizeEditorHistoryState,
+  openEditorReplaceUndoModal as openEditorReplaceUndoModalFlow,
+  restoreEditorFieldHistory as restoreEditorFieldHistoryFlow,
+  setActiveEditorField as setActiveEditorFieldFlow,
+  toggleEditorHistoryGroupExpanded as toggleEditorHistoryGroupExpandedFlow,
+} from "./editor-history-flow.js";
+import {
   deletedRowGroupIdAfterSoftDelete,
   expandedDeletedRowGroupIdsAfterPermanentDelete,
   expandedDeletedRowGroupIdsAfterRestore,
   expandedDeletedRowGroupIdsAfterSoftDelete,
 } from "./editor-deleted-rows.js";
 import {
+  buildVisibleEditorLanguageCodeSet,
+  cloneRowFields,
+  cloneRowFieldStates,
+  findEditorRowById,
+  hasActiveEditorField,
+  hasEditorRow,
+  hasEditorLanguage,
+  normalizeFieldState,
+} from "./editor-utils.js";
+import {
   ensureProjectNotTombstoned,
-  findChapterContext,
+  findChapterContextById,
   selectedProjectsTeam,
 } from "./project-chapter-flow.js";
 import { invoke, waitForNextPaint } from "./runtime.js";
 import { saveStoredEditorFontSizePx } from "./editor-preferences.js";
-import { historyEntryCanUndoReplace, reconcileExpandedEditorHistoryGroupKeys } from "./editor-history.js";
 import {
   coerceEditorFontSizePx,
   createEditorChapterFilterState,
@@ -75,28 +98,6 @@ const EDITOR_GLOSSARY_HIGHLIGHT_CACHE_LIMIT = 400;
 let editorGlossaryHighlightCacheContextKey = "";
 let editorGlossaryHighlightCacheMatcherModel = null;
 const editorGlossaryHighlightCache = new Map();
-const pendingEditorRowPersistByRowId = new Map();
-const pendingEditorDirtyRowScanFrameByRowId = new Map();
-
-function cancelScheduledDirtyRowScan(rowId) {
-  const pendingScan = pendingEditorDirtyRowScanFrameByRowId.get(rowId);
-  if (!pendingScan) {
-    return;
-  }
-
-  if (Number.isInteger(pendingScan.frameId) && pendingScan.frameId !== 0) {
-    window.cancelAnimationFrame(pendingScan.frameId);
-  }
-  if (Number.isInteger(pendingScan.verifyFrameId) && pendingScan.verifyFrameId !== 0) {
-    window.cancelAnimationFrame(pendingScan.verifyFrameId);
-  }
-
-  pendingEditorDirtyRowScanFrameByRowId.delete(rowId);
-}
-
-export function findChapterContextById(chapterId = state.selectedChapterId) {
-  return chapterId ? findChapterContext(chapterId) : null;
-}
 
 function normalizeLanguageSelections(languages, sourceCode, targetCode) {
   const options = Array.isArray(languages) ? languages : [];
@@ -118,63 +119,8 @@ function normalizeLanguageSelections(languages, sourceCode, targetCode) {
   };
 }
 
-function cloneRowFields(fields) {
-  return Object.fromEntries(
-    Object.entries(fields && typeof fields === "object" ? fields : {}).map(([code, value]) => [
-      code,
-      typeof value === "string" ? value : String(value ?? ""),
-    ]),
-  );
-}
-
-function normalizeFieldState(fieldState) {
-  return {
-    reviewed: fieldState?.reviewed === true,
-    pleaseCheck: fieldState?.pleaseCheck === true,
-  };
-}
-
-function cloneRowFieldStates(fieldStates) {
-  return Object.fromEntries(
-    Object.entries(fieldStates && typeof fieldStates === "object" ? fieldStates : {}).map(([code, value]) => [
-      code,
-      normalizeFieldState(value),
-    ]),
-  );
-}
-
-function buildEditorHistoryRequestKey(chapterId, rowId, languageCode) {
-  if (!chapterId || !rowId || !languageCode) {
-    return null;
-  }
-
-  return `${chapterId}:${rowId}:${languageCode}`;
-}
-
-function normalizeEditorHistoryState(history) {
-  return {
-    ...createEditorHistoryState(),
-    ...(history && typeof history === "object" ? history : {}),
-    rowId: typeof history?.rowId === "string" ? history.rowId : null,
-    languageCode: typeof history?.languageCode === "string" ? history.languageCode : null,
-    requestKey: typeof history?.requestKey === "string" ? history.requestKey : null,
-    restoringCommitSha:
-      typeof history?.restoringCommitSha === "string" ? history.restoringCommitSha : null,
-    expandedGroupKeys: cloneExpandedHistoryGroupKeys(history?.expandedGroupKeys),
-    entries: Array.isArray(history?.entries) ? history.entries : [],
-  };
-}
-
 function normalizeEditorChapterFilters(filters) {
   return normalizeEditorChapterFilterState(filters);
-}
-
-function normalizeEditorReplaceUndoModalState(modal) {
-  return {
-    ...createEditorReplaceUndoModalState(),
-    ...(modal && typeof modal === "object" ? modal : {}),
-    commitSha: typeof modal?.commitSha === "string" ? modal.commitSha : null,
-  };
 }
 
 function cloneCollapsedLanguageCodes(collapsedLanguageCodes) {
@@ -183,28 +129,10 @@ function cloneCollapsedLanguageCodes(collapsedLanguageCodes) {
     : new Set();
 }
 
-function cloneExpandedHistoryGroupKeys(expandedGroupKeys) {
-  return expandedGroupKeys instanceof Set
-    ? new Set(expandedGroupKeys)
-    : new Set();
-}
-
 function cloneExpandedDeletedRowGroupIds(expandedDeletedRowGroupIds) {
   return expandedDeletedRowGroupIds instanceof Set
     ? new Set(expandedDeletedRowGroupIds)
     : new Set();
-}
-
-function compactDirtyRowIds(rows, dirtyRowIds) {
-  const validRowIds = new Set(
-    (Array.isArray(rows) ? rows : [])
-      .map((row) => row?.rowId)
-      .filter(Boolean),
-  );
-
-  return new Set(
-    [...cloneDirtyRowIds(dirtyRowIds)].filter((rowId) => validRowIds.has(rowId)),
-  );
 }
 
 function normalizeEditorGlossaryLink(link) {
@@ -240,30 +168,6 @@ function editorGlossaryStateMatchesLink(glossaryState, linkedGlossary) {
     glossaryState?.glossaryId === normalizedLink.glossaryId
     && glossaryState?.repoName === normalizedLink.repoName
   );
-}
-
-function hasEditorRow(chapterState, rowId) {
-  return Array.isArray(chapterState?.rows)
-    && chapterState.rows.some((row) => row?.rowId === rowId);
-}
-
-function hasEditorLanguage(chapterState, languageCode) {
-  return Array.isArray(chapterState?.languages)
-    && chapterState.languages.some((language) => language?.code === languageCode);
-}
-
-function hasActiveEditorField(chapterState) {
-  return hasEditorRow(chapterState, chapterState?.activeRowId)
-    && hasEditorLanguage(chapterState, chapterState?.activeLanguageCode);
-}
-
-function currentEditorHistoryForSelection(chapterState, rowId, languageCode) {
-  const history = normalizeEditorHistoryState(chapterState?.history);
-  if (history.rowId === rowId && history.languageCode === languageCode) {
-    return history;
-  }
-
-  return createEditorHistoryState();
 }
 
 function applyEditorUiState(nextEditorChapter, previousEditorChapter = state.editorChapter) {
@@ -328,58 +232,6 @@ function applyEditorUiState(nextEditorChapter, previousEditorChapter = state.edi
         ? history
         : createEditorHistoryState(),
   };
-}
-
-function findEditorRowById(rowId, chapterState = state.editorChapter) {
-  return chapterState?.rows?.find((row) => row?.rowId === rowId) ?? null;
-}
-
-function dirtyTrackedEditorRowIds(chapterState = state.editorChapter, rowIds = null) {
-  return resolveDirtyTrackedEditorRowIds(chapterState?.dirtyRowIds, { rowIds });
-}
-
-function setEditorDirtyRowIds(dirtyRowIds) {
-  if (!state.editorChapter?.chapterId) {
-    return;
-  }
-
-  state.editorChapter = {
-    ...state.editorChapter,
-    dirtyRowIds,
-  };
-}
-
-function markEditorRowDirty(rowId) {
-  if (!rowId || !state.editorChapter?.chapterId) {
-    return;
-  }
-
-  const dirtyRowIds = cloneDirtyRowIds(state.editorChapter.dirtyRowIds);
-  if (dirtyRowIds.has(rowId)) {
-    return;
-  }
-
-  dirtyRowIds.add(rowId);
-  setEditorDirtyRowIds(dirtyRowIds);
-}
-
-function reconcileDirtyTrackedEditorRows(rowIds = null) {
-  if (!state.editorChapter?.chapterId) {
-    return;
-  }
-
-  const currentDirtyRowIds = cloneDirtyRowIds(state.editorChapter.dirtyRowIds);
-  const nextDirtyRowIds = reconcileDirtyRowIds(
-    state.editorChapter.rows,
-    currentDirtyRowIds,
-    rowIds,
-  );
-  const dirtyRowIdsChanged =
-    nextDirtyRowIds.size !== currentDirtyRowIds.size
-    || [...nextDirtyRowIds].some((rowId) => !currentDirtyRowIds.has(rowId));
-  if (dirtyRowIdsChanged) {
-    setEditorDirtyRowIds(nextDirtyRowIds);
-  }
 }
 
 function normalizeEditorRows(rows) {
@@ -630,19 +482,6 @@ function buildEditorRowSections(row, chapterState = state.editorChapter) {
   }));
 }
 
-function buildVisibleEditorLanguageCodeSet(chapterState = state.editorChapter) {
-  const collapsedLanguageCodes =
-    chapterState?.collapsedLanguageCodes instanceof Set
-      ? chapterState.collapsedLanguageCodes
-      : new Set();
-
-  return new Set(
-    (Array.isArray(chapterState?.languages) ? chapterState.languages : [])
-      .map((language) => (typeof language?.code === "string" ? language.code.trim() : ""))
-      .filter((code) => code && !collapsedLanguageCodes.has(code)),
-  );
-}
-
 function markEditorRowsPersisted(rowUpdates, sourceWordCounts = null) {
   const updatesByRowId = new Map(
     (Array.isArray(rowUpdates) ? rowUpdates : []).map((row) => [row.rowId, cloneRowFields(row.fields)]),
@@ -698,52 +537,12 @@ async function commitEditorRowFieldsBatch({
   });
 }
 
-function hasPendingEditorRowWrites(chapterState = state.editorChapter) {
-  return (Array.isArray(chapterState?.rows) ? chapterState.rows : []).some((row) =>
-    row?.saveStatus !== "idle" || row?.markerSaveState?.status === "saving"
-  );
-}
-
-function currentActiveHistoryEntryByCommitSha(commitSha, chapterState = state.editorChapter) {
-  if (!commitSha || !hasActiveEditorField(chapterState)) {
-    return null;
-  }
-
-  const history = currentEditorHistoryForSelection(
-    chapterState,
-    chapterState.activeRowId,
-    chapterState.activeLanguageCode,
-  );
-  return history.entries.find((entry) => entry?.commitSha === commitSha) ?? null;
-}
-
 export function openEditorReplaceUndoModal(commitSha) {
-  const entry = currentActiveHistoryEntryByCommitSha(commitSha);
-  if (!state.editorChapter?.chapterId || !historyEntryCanUndoReplace(entry)) {
-    return;
-  }
-
-  state.editorChapter = {
-    ...state.editorChapter,
-    replaceUndoModal: {
-      ...createEditorReplaceUndoModalState(),
-      isOpen: true,
-      status: "idle",
-      error: "",
-      commitSha,
-    },
-  };
+  openEditorReplaceUndoModalFlow(commitSha);
 }
 
 export function cancelEditorReplaceUndoModal() {
-  if (!state.editorChapter?.chapterId) {
-    return;
-  }
-
-  state.editorChapter = {
-    ...state.editorChapter,
-    replaceUndoModal: createEditorReplaceUndoModalState(),
-  };
+  cancelEditorReplaceUndoModalFlow();
 }
 
 function editorGlossaryHighlightContextKey(chapterState = state.editorChapter) {
@@ -1047,234 +846,31 @@ function setEditorSelections(nextSelections) {
   applyEditorSelectionsToProjectState(state.editorChapter);
 }
 
-async function fetchEditorFieldHistory(render, requestKey) {
-  const editorChapter = state.editorChapter;
-  if (!editorChapter?.chapterId || !editorChapter.activeRowId || !editorChapter.activeLanguageCode) {
-    return;
-  }
-
-  const team = selectedProjectsTeam();
-  const context = findChapterContextById(editorChapter.chapterId);
-  if (!Number.isFinite(team?.installationId) || !context?.project?.name) {
-    return;
-  }
-
-  const rowId = editorChapter.activeRowId;
-  const languageCode = editorChapter.activeLanguageCode;
-
-  try {
-    const payload = await invoke("load_gtms_editor_field_history", {
-      input: {
-        installationId: team.installationId,
-        projectId: context.project.id,
-        repoName: context.project.name,
-        chapterId: editorChapter.chapterId,
-        rowId,
-        languageCode,
-      },
-    });
-
-    if (
-      state.editorChapter?.chapterId !== editorChapter.chapterId
-      || state.editorChapter.activeRowId !== rowId
-      || state.editorChapter.activeLanguageCode !== languageCode
-      || state.editorChapter.history?.requestKey !== requestKey
-    ) {
-      return;
-    }
-
-    const previousHistory = normalizeEditorHistoryState(state.editorChapter.history);
-    state.editorChapter = {
-      ...state.editorChapter,
-      history: {
-        status: "ready",
-        error: "",
-        rowId,
-        languageCode,
-        requestKey,
-        restoringCommitSha: null,
-        expandedGroupKeys: reconcileExpandedEditorHistoryGroupKeys(
-          previousHistory.entries,
-          Array.isArray(payload?.entries) ? payload.entries : [],
-          previousHistory.expandedGroupKeys,
-        ),
-        entries: Array.isArray(payload?.entries) ? payload.entries : [],
-      },
-    };
-    render?.({ scope: "translate-sidebar" });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    if (
-      state.editorChapter?.chapterId !== editorChapter.chapterId
-      || state.editorChapter.activeRowId !== rowId
-      || state.editorChapter.activeLanguageCode !== languageCode
-      || state.editorChapter.history?.requestKey !== requestKey
-    ) {
-      return;
-    }
-
-    state.editorChapter = {
-      ...state.editorChapter,
-      history: {
-        ...normalizeEditorHistoryState(state.editorChapter.history),
-        status: "error",
-        error: message,
-        rowId,
-        languageCode,
-        requestKey,
-        restoringCommitSha: null,
-        expandedGroupKeys: cloneExpandedHistoryGroupKeys(state.editorChapter.history?.expandedGroupKeys),
-      },
-    };
-    render?.({ scope: "translate-sidebar" });
-  }
-}
-
 export function loadActiveEditorFieldHistory(render) {
-  const editorChapter = state.editorChapter;
-  if (!editorChapter?.chapterId || !hasActiveEditorField(editorChapter)) {
-    return;
-  }
-
-  const currentHistory = currentEditorHistoryForSelection(
-    editorChapter,
-    editorChapter.activeRowId,
-    editorChapter.activeLanguageCode,
-  );
-  const requestKey = buildEditorHistoryRequestKey(
-    editorChapter.chapterId,
-    editorChapter.activeRowId,
-    editorChapter.activeLanguageCode,
-  );
-  state.editorChapter = {
-    ...editorChapter,
-    history: {
-      ...normalizeEditorHistoryState(editorChapter.history),
-      status: "loading",
-      error: "",
-      rowId: editorChapter.activeRowId,
-      languageCode: editorChapter.activeLanguageCode,
-      requestKey,
-      restoringCommitSha: null,
-      expandedGroupKeys: cloneExpandedHistoryGroupKeys(currentHistory.expandedGroupKeys),
-    },
-  };
-  render?.({ scope: "translate-sidebar" });
-  void fetchEditorFieldHistory(render, requestKey);
+  loadActiveEditorFieldHistoryFlow(render);
 }
 
 export function setActiveEditorField(render, rowId, languageCode) {
-  if (!rowId || !languageCode || !hasEditorRow(state.editorChapter, rowId) || !hasEditorLanguage(state.editorChapter, languageCode)) {
-    return;
-  }
+  setActiveEditorFieldFlow(render, rowId, languageCode);
+}
 
-  const editorChapter = state.editorChapter;
-  if (
-    editorChapter.activeRowId === rowId
-    && editorChapter.activeLanguageCode === languageCode
-    && (editorChapter.history?.status === "loading" || editorChapter.history?.status === "ready")
-  ) {
-    return;
-  }
-
-  state.editorChapter = {
-    ...editorChapter,
-    activeRowId: rowId,
-    activeLanguageCode: languageCode,
+function editorPersistenceOperations() {
+  return {
+    updateEditorChapterRow,
+    applyEditorSelectionsToProjectState,
   };
-  loadActiveEditorFieldHistory(render);
 }
 
 export function scheduleDirtyEditorRowScan(render, rowId) {
-  if (!rowId || typeof window === "undefined") {
-    return;
-  }
-
-  cancelScheduledDirtyRowScan(rowId);
-
-  const pendingScan = {
-    frameId: 0,
-    verifyFrameId: 0,
-  };
-  pendingScan.frameId = window.requestAnimationFrame(() => {
-    pendingScan.frameId = 0;
-    pendingScan.verifyFrameId = window.requestAnimationFrame(() => {
-      pendingEditorDirtyRowScanFrameByRowId.delete(rowId);
-      const activeElement = document.activeElement;
-      const focusedRowId =
-        activeElement instanceof HTMLTextAreaElement && activeElement.matches("[data-editor-row-field]")
-          ? activeElement.dataset.rowId ?? ""
-          : "";
-      if (focusedRowId === rowId) {
-        return;
-      }
-
-      void flushDirtyEditorRows(render, { rowIds: [rowId] });
-    });
-  });
-
-  pendingEditorDirtyRowScanFrameByRowId.set(rowId, pendingScan);
+  scheduleDirtyEditorRowScanFlow(render, rowId, editorPersistenceOperations());
 }
 
 export async function flushDirtyEditorRows(render, options = {}) {
-  if (!state.editorChapter?.chapterId) {
-    return true;
-  }
-
-  const candidateRowIds = resolveDirtyTrackedEditorRowIds(state.editorChapter?.dirtyRowIds, {
-    rowIds: Array.isArray(options?.rowIds) ? options.rowIds : null,
-    excludeRowId: typeof options?.excludeRowId === "string" ? options.excludeRowId : "",
-  });
-  if (candidateRowIds.length === 0) {
-    return true;
-  }
-
-  for (const rowId of candidateRowIds) {
-    const row = findEditorRowById(rowId, state.editorChapter);
-    if (!row) {
-      reconcileDirtyTrackedEditorRows([rowId]);
-      continue;
-    }
-
-    if (!rowHasPersistedChanges(row)) {
-      reconcileDirtyTrackedEditorRows([rowId]);
-      continue;
-    }
-
-    if (!rowHasFieldChanges(row)) {
-      continue;
-    }
-
-    await persistEditorRowOnBlur(render, rowId);
-  }
-
-  reconcileDirtyTrackedEditorRows(candidateRowIds);
-  return dirtyTrackedEditorRowIds(state.editorChapter, candidateRowIds).every((rowId) => {
-    const row = findEditorRowById(rowId, state.editorChapter);
-    return !row || !rowHasPersistedChanges(row);
-  });
+  return flushDirtyEditorRowsFlow(render, editorPersistenceOperations(), options);
 }
 
 export function toggleEditorHistoryGroupExpanded(groupKey) {
-  if (!groupKey || !state.editorChapter?.chapterId) {
-    return;
-  }
-
-  const history = normalizeEditorHistoryState(state.editorChapter.history);
-  const expandedGroupKeys = cloneExpandedHistoryGroupKeys(history.expandedGroupKeys);
-  if (expandedGroupKeys.has(groupKey)) {
-    expandedGroupKeys.delete(groupKey);
-  } else {
-    expandedGroupKeys.add(groupKey);
-  }
-
-  state.editorChapter = {
-    ...state.editorChapter,
-    history: {
-      ...history,
-      expandedGroupKeys,
-    },
-  };
+  toggleEditorHistoryGroupExpandedFlow(groupKey);
 }
 
 export async function persistEditorChapterSelections(render) {
@@ -1554,221 +1150,17 @@ export function updateEditorFontSize(nextValue) {
 }
 
 export async function restoreEditorFieldHistory(render, commitSha) {
-  const editorChapter = state.editorChapter;
-  if (!commitSha || !editorChapter?.chapterId || !hasActiveEditorField(editorChapter)) {
-    return;
-  }
-
-  const row = findEditorRowById(editorChapter.activeRowId, editorChapter);
-  if (!row || row.saveStatus !== "idle" || row.markerSaveState?.status === "saving") {
-    showNoticeBadge("Save the current row before restoring history.", render);
-    return;
-  }
-
-  const team = selectedProjectsTeam();
-  const context = findChapterContextById(editorChapter.chapterId);
-  if (!Number.isFinite(team?.installationId) || !context?.project?.name) {
-    return;
-  }
-
-  state.editorChapter = {
-    ...editorChapter,
-    history: {
-      ...currentEditorHistoryForSelection(
-        editorChapter,
-        editorChapter.activeRowId,
-        editorChapter.activeLanguageCode,
-      ),
-      status: "restoring",
-      error: "",
-      rowId: editorChapter.activeRowId,
-      languageCode: editorChapter.activeLanguageCode,
-      requestKey: buildEditorHistoryRequestKey(
-        editorChapter.chapterId,
-        editorChapter.activeRowId,
-        editorChapter.activeLanguageCode,
-      ),
-      restoringCommitSha: commitSha,
-    },
-  };
-  render?.();
-
-  try {
-    const payload = await invoke("restore_gtms_editor_field_from_history", {
-      input: {
-        installationId: team.installationId,
-        projectId: context.project.id,
-        repoName: context.project.name,
-        chapterId: editorChapter.chapterId,
-        rowId: editorChapter.activeRowId,
-        languageCode: editorChapter.activeLanguageCode,
-        commitSha,
-      },
-    });
-
-    if (
-      state.editorChapter?.chapterId === editorChapter.chapterId
-      && state.editorChapter.activeRowId === editorChapter.activeRowId
-      && state.editorChapter.activeLanguageCode === editorChapter.activeLanguageCode
-    ) {
-      updateEditorChapterRow(editorChapter.activeRowId, (currentRow) => ({
-        ...currentRow,
-        fields: {
-          ...cloneRowFields(currentRow.fields),
-          [editorChapter.activeLanguageCode]: payload?.plainText ?? "",
-        },
-        fieldStates: {
-          ...cloneRowFieldStates(currentRow.fieldStates),
-          [editorChapter.activeLanguageCode]: normalizeFieldState({
-            reviewed: payload?.reviewed,
-            pleaseCheck: payload?.pleaseCheck,
-          }),
-        },
-        persistedFields: {
-          ...cloneRowFields(currentRow.persistedFields),
-          [editorChapter.activeLanguageCode]: payload?.plainText ?? "",
-        },
-        persistedFieldStates: {
-          ...cloneRowFieldStates(currentRow.persistedFieldStates),
-          [editorChapter.activeLanguageCode]: normalizeFieldState({
-            reviewed: payload?.reviewed,
-            pleaseCheck: payload?.pleaseCheck,
-          }),
-        },
-        saveStatus: "idle",
-        saveError: "",
-      }));
-
-      state.editorChapter = {
-        ...state.editorChapter,
-        sourceWordCounts:
-          payload?.sourceWordCounts && typeof payload.sourceWordCounts === "object"
-            ? payload.sourceWordCounts
-            : state.editorChapter.sourceWordCounts,
-        history: {
-          ...normalizeEditorHistoryState(state.editorChapter.history),
-          status: "idle",
-          error: "",
-          restoringCommitSha: null,
-        },
-      };
-      reconcileDirtyTrackedEditorRows([editorChapter.activeRowId]);
-      applyEditorSelectionsToProjectState(state.editorChapter);
-      render?.();
-      loadActiveEditorFieldHistory(render);
-    }
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    if (
-      state.editorChapter?.chapterId === editorChapter.chapterId
-      && state.editorChapter.activeRowId === editorChapter.activeRowId
-      && state.editorChapter.activeLanguageCode === editorChapter.activeLanguageCode
-    ) {
-      state.editorChapter = {
-        ...state.editorChapter,
-        history: {
-          ...normalizeEditorHistoryState(state.editorChapter.history),
-          status: "ready",
-          error: "",
-          restoringCommitSha: null,
-        },
-      };
-      render?.();
-    }
-    showNoticeBadge(message || "The selected history entry could not be restored.", render);
-  }
+  await restoreEditorFieldHistoryFlow(render, commitSha, {
+    updateEditorChapterRow,
+    reconcileDirtyTrackedEditorRows,
+    applyEditorSelectionsToProjectState,
+  });
 }
 
 export async function confirmEditorReplaceUndo(render) {
-  const editorChapter = state.editorChapter;
-  const modal = normalizeEditorReplaceUndoModalState(editorChapter?.replaceUndoModal);
-  if (!editorChapter?.chapterId || !modal.isOpen || !modal.commitSha || modal.status === "loading") {
-    return;
-  }
-
-  if (!historyEntryCanUndoReplace(currentActiveHistoryEntryByCommitSha(modal.commitSha, editorChapter))) {
-    state.editorChapter = {
-      ...editorChapter,
-      replaceUndoModal: {
-        ...modal,
-        status: "idle",
-        error: "The selected batch replace history entry is no longer available.",
-      },
-    };
-    render?.();
-    return;
-  }
-
-  if (hasPendingEditorRowWrites(editorChapter)) {
-    state.editorChapter = {
-      ...editorChapter,
-      replaceUndoModal: {
-        ...modal,
-        status: "idle",
-        error: "Save or resolve current row edits before undoing a batch replace.",
-      },
-    };
-    render?.();
-    return;
-  }
-
-  const team = selectedProjectsTeam();
-  const context = findChapterContextById(editorChapter.chapterId);
-  if (!Number.isFinite(team?.installationId) || !context?.project?.name) {
-    return;
-  }
-
-  state.editorChapter = {
-    ...editorChapter,
-    replaceUndoModal: {
-      ...modal,
-      status: "loading",
-      error: "",
-    },
-  };
-  render?.();
-
-  try {
-    const payload = await invoke("reverse_gtms_editor_batch_replace_commit", {
-      input: {
-        installationId: team.installationId,
-        projectId: context.project.id,
-        repoName: context.project.name,
-        chapterId: editorChapter.chapterId,
-        commitSha: modal.commitSha,
-      },
-    });
-
-    if (state.editorChapter?.chapterId === editorChapter.chapterId) {
-      const updatedRows = Array.isArray(payload?.updatedRows) ? payload.updatedRows : [];
-      const skippedRowCount = Array.isArray(payload?.skippedRowIds) ? payload.skippedRowIds.length : 0;
-      if (updatedRows.length > 0) {
-        markEditorRowsPersisted(updatedRows, payload?.sourceWordCounts);
-      }
-      state.editorChapter = {
-        ...state.editorChapter,
-        replaceUndoModal: createEditorReplaceUndoModalState(),
-      };
-      render?.();
-      if (updatedRows.some((row) => row?.rowId === state.editorChapter.activeRowId)) {
-        loadActiveEditorFieldHistory(render);
-      }
-      showNoticeBadge(buildEditorReplaceUndoNotice(updatedRows.length, skippedRowCount), render);
-    }
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    if (state.editorChapter?.chapterId === editorChapter.chapterId) {
-      state.editorChapter = {
-        ...state.editorChapter,
-        replaceUndoModal: {
-          ...normalizeEditorReplaceUndoModalState(state.editorChapter.replaceUndoModal),
-          status: "idle",
-          error: message,
-        },
-      };
-      render?.();
-    }
-  }
+  await confirmEditorReplaceUndoFlow(render, {
+    markEditorRowsPersisted,
+  });
 }
 
 export function openTargetLanguageManager() {
@@ -2175,30 +1567,9 @@ export async function confirmEditorRowPermanentDeletion(render) {
 }
 
 export function updateEditorRowFieldValue(rowId, languageCode, nextValue) {
-  if (!rowId || !languageCode) {
-    return;
-  }
-
-  updateEditorChapterRow(rowId, (row) => {
-    const fields = {
-      ...cloneRowFields(row.fields),
-      [languageCode]: nextValue,
-    };
-    const nextSaveStatus =
-      row.saveStatus === "saving"
-        ? "dirty"
-        : rowFieldsEqual(fields, row.persistedFields)
-          ? "idle"
-          : "dirty";
-
-    return {
-      ...row,
-      fields,
-      saveStatus: nextSaveStatus,
-      saveError: "",
-    };
+  updateEditorRowFieldValueFlow(rowId, languageCode, nextValue, {
+    updateEditorChapterRow,
   });
-  markEditorRowDirty(rowId);
 }
 
 function scrollTranslateMainToTop() {
@@ -2485,129 +1856,9 @@ export async function replaceSelectedEditorRows(render) {
 }
 
 export async function toggleEditorRowFieldMarker(render, rowId, languageCode, kind) {
-  if (!rowId || !languageCode || (kind !== "reviewed" && kind !== "please-check")) {
-    return;
-  }
-
-  const editorChapter = state.editorChapter;
-  if (!editorChapter?.chapterId) {
-    return;
-  }
-
-  const row = findEditorRowById(rowId, editorChapter);
-  if (!row) {
-    return;
-  }
-
-  if (row.saveStatus !== "idle") {
-    showNoticeBadge("Save the row text before updating review markers.", render);
-    return;
-  }
-
-  if (row.markerSaveState?.status === "saving") {
-    return;
-  }
-
-  const currentFieldState = normalizeFieldState(row.fieldStates?.[languageCode]);
-  const nextEnabled = kind === "reviewed"
-    ? !currentFieldState.reviewed
-    : !currentFieldState.pleaseCheck;
-  const nextFieldState = {
-    ...currentFieldState,
-    ...(kind === "reviewed"
-      ? { reviewed: nextEnabled }
-      : { pleaseCheck: nextEnabled }),
-  };
-
-  const team = selectedProjectsTeam();
-  const context = findChapterContextById(editorChapter.chapterId);
-  if (!Number.isFinite(team?.installationId) || !context?.project?.name) {
-    return;
-  }
-
-  const previousFieldState = currentFieldState;
-  markEditorRowDirty(rowId);
-  updateEditorChapterRow(rowId, (currentRow) => ({
-    ...currentRow,
-    fieldStates: {
-      ...cloneRowFieldStates(currentRow.fieldStates),
-      [languageCode]: nextFieldState,
-    },
-    markerSaveState: {
-      status: "saving",
-      languageCode,
-      kind,
-      error: "",
-    },
-  }));
-  render?.();
-
-  try {
-    const payload = await invoke("update_gtms_editor_row_field_flag", {
-      input: {
-        installationId: team.installationId,
-        projectId: context.project.id,
-        repoName: context.project.name,
-        chapterId: editorChapter.chapterId,
-        rowId,
-        languageCode,
-        flag: kind,
-        enabled: nextEnabled,
-      },
-    });
-
-    if (state.editorChapter?.chapterId === editorChapter.chapterId) {
-      updateEditorChapterRow(rowId, (currentRow) => ({
-        ...currentRow,
-        fieldStates: {
-          ...cloneRowFieldStates(currentRow.fieldStates),
-          [languageCode]: normalizeFieldState({
-            reviewed: payload?.reviewed,
-            pleaseCheck: payload?.pleaseCheck,
-          }),
-        },
-        persistedFieldStates: {
-          ...cloneRowFieldStates(currentRow.persistedFieldStates),
-          [languageCode]: normalizeFieldState({
-            reviewed: payload?.reviewed,
-            pleaseCheck: payload?.pleaseCheck,
-          }),
-        },
-        markerSaveState: {
-          status: "idle",
-          languageCode: null,
-          kind: null,
-          error: "",
-        },
-      }));
-      reconcileDirtyTrackedEditorRows([rowId]);
-      render?.();
-
-      if (state.editorChapter.activeRowId === rowId && state.editorChapter.activeLanguageCode === languageCode) {
-        loadActiveEditorFieldHistory(render);
-      }
-    }
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    if (state.editorChapter?.chapterId === editorChapter.chapterId) {
-      updateEditorChapterRow(rowId, (currentRow) => ({
-        ...currentRow,
-        fieldStates: {
-          ...cloneRowFieldStates(currentRow.fieldStates),
-          [languageCode]: previousFieldState,
-        },
-        markerSaveState: {
-          status: "idle",
-          languageCode: null,
-          kind: null,
-          error: message,
-        },
-      }));
-      reconcileDirtyTrackedEditorRows([rowId]);
-      render?.();
-    }
-    showNoticeBadge(message || "The review marker could not be saved.", render);
-  }
+  await toggleEditorRowFieldMarkerFlow(render, rowId, languageCode, kind, {
+    updateEditorChapterRow,
+  });
 }
 
 export function toggleEditorLanguageCollapsed(languageCode) {
@@ -2633,123 +1884,5 @@ export function toggleEditorLanguageCollapsed(languageCode) {
 }
 
 export async function persistEditorRowOnBlur(render, rowId) {
-  if (!rowId || !state.editorChapter?.chapterId) {
-    return;
-  }
-
-  const existingPersist = pendingEditorRowPersistByRowId.get(rowId);
-  if (existingPersist) {
-    const row = findEditorRowById(rowId, state.editorChapter);
-    if (row?.saveStatus === "saving") {
-      updateEditorChapterRow(rowId, (currentRow) => ({
-        ...currentRow,
-        saveStatus: "dirty",
-      }));
-    }
-    await existingPersist;
-    return;
-  }
-
-  const persistPromise = (async () => {
-    while (state.editorChapter?.chapterId) {
-      const editorChapter = state.editorChapter;
-      const row = findEditorRowById(rowId, editorChapter);
-      if (!row) {
-        reconcileDirtyTrackedEditorRows([rowId]);
-        return;
-      }
-
-      if (!rowHasFieldChanges(row)) {
-        if (row.saveStatus !== "idle" || row.saveError) {
-          updateEditorChapterRow(rowId, (currentRow) => ({
-            ...currentRow,
-            saveStatus: "idle",
-            saveError: "",
-          }));
-          render?.({ scope: "translate-sidebar" });
-        }
-        reconcileDirtyTrackedEditorRows([rowId]);
-        return;
-      }
-
-      const team = selectedProjectsTeam();
-      const context = findChapterContextById(editorChapter.chapterId);
-      if (!Number.isFinite(team?.installationId) || !context?.project?.name) {
-        return;
-      }
-
-      const fieldsToPersist = cloneRowFields(row.fields);
-      updateEditorChapterRow(rowId, (currentRow) => ({
-        ...currentRow,
-        saveStatus: "saving",
-        saveError: "",
-      }));
-      render?.({ scope: "translate-sidebar" });
-
-      try {
-        const payload = await invoke("update_gtms_editor_row_fields", {
-          input: {
-            installationId: team.installationId,
-            projectId: context.project.id,
-            repoName: context.project.name,
-            chapterId: editorChapter.chapterId,
-            rowId,
-            fields: fieldsToPersist,
-          },
-        });
-
-        if (state.editorChapter?.chapterId !== editorChapter.chapterId) {
-          return;
-        }
-
-        const updatedRow = updateEditorChapterRow(rowId, (currentRow) => {
-          const rowChangedDuringSave = !rowFieldsEqual(currentRow.fields, fieldsToPersist);
-          return {
-            ...currentRow,
-            persistedFields: cloneRowFields(fieldsToPersist),
-            saveStatus: rowChangedDuringSave ? "dirty" : "idle",
-            saveError: "",
-          };
-        });
-
-        state.editorChapter = {
-          ...state.editorChapter,
-          sourceWordCounts:
-            payload?.sourceWordCounts && typeof payload.sourceWordCounts === "object"
-              ? payload.sourceWordCounts
-              : state.editorChapter.sourceWordCounts,
-        };
-        reconcileDirtyTrackedEditorRows([rowId]);
-        applyEditorSelectionsToProjectState(state.editorChapter);
-        render?.({ scope: "translate-sidebar" });
-        if (state.editorChapter.activeRowId === rowId) {
-          loadActiveEditorFieldHistory(render);
-        }
-
-        if (updatedRow?.saveStatus !== "dirty") {
-          return;
-        }
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        if (state.editorChapter?.chapterId === editorChapter.chapterId) {
-          updateEditorChapterRow(rowId, (currentRow) => ({
-            ...currentRow,
-            saveStatus: "error",
-            saveError: message,
-          }));
-          reconcileDirtyTrackedEditorRows([rowId]);
-          render?.({ scope: "translate-sidebar" });
-        }
-        showNoticeBadge(message || "The row could not be saved.", render);
-        return;
-      }
-    }
-  })();
-
-  pendingEditorRowPersistByRowId.set(rowId, persistPromise);
-  try {
-    await persistPromise;
-  } finally {
-    pendingEditorRowPersistByRowId.delete(rowId);
-  }
+  await persistEditorRowOnBlurFlow(render, rowId, editorPersistenceOperations());
 }

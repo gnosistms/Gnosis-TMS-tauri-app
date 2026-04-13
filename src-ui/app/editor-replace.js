@@ -1,17 +1,9 @@
 import { findEditorSearchMatches } from "./editor-filters.js";
-import { createEditorReplaceState } from "./state.js";
+import { cloneRowFields } from "./editor-utils.js";
+import { createEditorReplaceState, createEditorReplaceUndoModalState } from "./state.js";
 
 function normalizeString(value) {
   return typeof value === "string" ? value : String(value ?? "");
-}
-
-function cloneRowFields(fields) {
-  return Object.fromEntries(
-    Object.entries(fields && typeof fields === "object" ? fields : {}).map(([code, value]) => [
-      code,
-      normalizeString(value),
-    ]),
-  );
 }
 
 export function cloneEditorReplaceSelectedRowIds(selectedRowIds) {
@@ -29,6 +21,14 @@ export function normalizeEditorReplaceState(replace) {
     selectedRowIds: cloneEditorReplaceSelectedRowIds(replace?.selectedRowIds),
     status: replace?.status === "saving" ? "saving" : "idle",
     error: typeof replace?.error === "string" ? replace.error : "",
+  };
+}
+
+export function normalizeEditorReplaceUndoModalState(modal) {
+  return {
+    ...createEditorReplaceUndoModalState(),
+    ...(modal && typeof modal === "object" ? modal : {}),
+    commitSha: typeof modal?.commitSha === "string" ? modal.commitSha : null,
   };
 }
 

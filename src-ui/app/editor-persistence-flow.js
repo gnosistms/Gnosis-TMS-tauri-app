@@ -1,0 +1,465 @@
+import {
+  cloneDirtyRowIds,
+  reconcileDirtyRowIds,
+  resolveDirtyTrackedEditorRowIds,
+  rowFieldsEqual,
+  rowHasFieldChanges,
+  rowHasPersistedChanges,
+} from "./editor-row-persistence-model.js";
+import { loadActiveEditorFieldHistory } from "./editor-history-flow.js";
+import { findChapterContextById, selectedProjectsTeam } from "./project-chapter-flow.js";
+import { invoke } from "./runtime.js";
+import { state } from "./state.js";
+import { showNoticeBadge } from "./status-feedback.js";
+import {
+  cloneRowFields,
+  cloneRowFieldStates,
+  findEditorRowById,
+  normalizeFieldState,
+} from "./editor-utils.js";
+
+const pendingEditorRowPersistByRowId = new Map();
+const pendingEditorDirtyRowScanFrameByRowId = new Map();
+
+function cancelScheduledDirtyRowScan(rowId) {
+  const pendingScan = pendingEditorDirtyRowScanFrameByRowId.get(rowId);
+  if (!pendingScan) {
+    return;
+  }
+
+  if (Number.isInteger(pendingScan.frameId) && pendingScan.frameId !== 0) {
+    window.cancelAnimationFrame(pendingScan.frameId);
+  }
+  if (Number.isInteger(pendingScan.verifyFrameId) && pendingScan.verifyFrameId !== 0) {
+    window.cancelAnimationFrame(pendingScan.verifyFrameId);
+  }
+
+  pendingEditorDirtyRowScanFrameByRowId.delete(rowId);
+}
+
+export function compactDirtyRowIds(rows, dirtyRowIds) {
+  const validRowIds = new Set(
+    (Array.isArray(rows) ? rows : [])
+      .map((row) => row?.rowId)
+      .filter(Boolean),
+  );
+
+  return new Set(
+    [...cloneDirtyRowIds(dirtyRowIds)].filter((rowId) => validRowIds.has(rowId)),
+  );
+}
+
+function dirtyTrackedEditorRowIds(chapterState = state.editorChapter, rowIds = null) {
+  return resolveDirtyTrackedEditorRowIds(chapterState?.dirtyRowIds, { rowIds });
+}
+
+function setEditorDirtyRowIds(dirtyRowIds) {
+  if (!state.editorChapter?.chapterId) {
+    return;
+  }
+
+  state.editorChapter = {
+    ...state.editorChapter,
+    dirtyRowIds,
+  };
+}
+
+export function markEditorRowDirty(rowId) {
+  if (!rowId || !state.editorChapter?.chapterId) {
+    return;
+  }
+
+  const dirtyRowIds = cloneDirtyRowIds(state.editorChapter.dirtyRowIds);
+  if (dirtyRowIds.has(rowId)) {
+    return;
+  }
+
+  dirtyRowIds.add(rowId);
+  setEditorDirtyRowIds(dirtyRowIds);
+}
+
+export function reconcileDirtyTrackedEditorRows(rowIds = null) {
+  if (!state.editorChapter?.chapterId) {
+    return;
+  }
+
+  const currentDirtyRowIds = cloneDirtyRowIds(state.editorChapter.dirtyRowIds);
+  const nextDirtyRowIds = reconcileDirtyRowIds(
+    state.editorChapter.rows,
+    currentDirtyRowIds,
+    rowIds,
+  );
+  const dirtyRowIdsChanged =
+    nextDirtyRowIds.size !== currentDirtyRowIds.size
+    || [...nextDirtyRowIds].some((rowId) => !currentDirtyRowIds.has(rowId));
+  if (dirtyRowIdsChanged) {
+    setEditorDirtyRowIds(nextDirtyRowIds);
+  }
+}
+
+export function scheduleDirtyEditorRowScan(render, rowId, operations = {}) {
+  if (!rowId || typeof window === "undefined") {
+    return;
+  }
+
+  cancelScheduledDirtyRowScan(rowId);
+
+  const pendingScan = {
+    frameId: 0,
+    verifyFrameId: 0,
+  };
+  pendingScan.frameId = window.requestAnimationFrame(() => {
+    pendingScan.frameId = 0;
+    pendingScan.verifyFrameId = window.requestAnimationFrame(() => {
+      pendingEditorDirtyRowScanFrameByRowId.delete(rowId);
+      const activeElement = document.activeElement;
+      const focusedRowId =
+        activeElement instanceof HTMLTextAreaElement && activeElement.matches("[data-editor-row-field]")
+          ? activeElement.dataset.rowId ?? ""
+          : "";
+      if (focusedRowId === rowId) {
+        return;
+      }
+
+      void flushDirtyEditorRows(render, operations, { rowIds: [rowId] });
+    });
+  });
+
+  pendingEditorDirtyRowScanFrameByRowId.set(rowId, pendingScan);
+}
+
+export async function flushDirtyEditorRows(render, operations = {}, options = {}) {
+  if (!state.editorChapter?.chapterId) {
+    return true;
+  }
+
+  const candidateRowIds = resolveDirtyTrackedEditorRowIds(state.editorChapter?.dirtyRowIds, {
+    rowIds: Array.isArray(options?.rowIds) ? options.rowIds : null,
+    excludeRowId: typeof options?.excludeRowId === "string" ? options.excludeRowId : "",
+  });
+  if (candidateRowIds.length === 0) {
+    return true;
+  }
+
+  for (const rowId of candidateRowIds) {
+    const row = findEditorRowById(rowId, state.editorChapter);
+    if (!row) {
+      reconcileDirtyTrackedEditorRows([rowId]);
+      continue;
+    }
+
+    if (!rowHasPersistedChanges(row)) {
+      reconcileDirtyTrackedEditorRows([rowId]);
+      continue;
+    }
+
+    if (!rowHasFieldChanges(row)) {
+      continue;
+    }
+
+    await persistEditorRowOnBlur(render, rowId, operations);
+  }
+
+  reconcileDirtyTrackedEditorRows(candidateRowIds);
+  return dirtyTrackedEditorRowIds(state.editorChapter, candidateRowIds).every((rowId) => {
+    const row = findEditorRowById(rowId, state.editorChapter);
+    return !row || !rowHasPersistedChanges(row);
+  });
+}
+
+export function updateEditorRowFieldValue(rowId, languageCode, nextValue, operations = {}) {
+  const { updateEditorChapterRow } = operations;
+  if (!rowId || !languageCode || typeof updateEditorChapterRow !== "function") {
+    return;
+  }
+
+  updateEditorChapterRow(rowId, (row) => {
+    const fields = {
+      ...cloneRowFields(row.fields),
+      [languageCode]: nextValue,
+    };
+    const nextSaveStatus =
+      row.saveStatus === "saving"
+        ? "dirty"
+        : rowFieldsEqual(fields, row.persistedFields)
+          ? "idle"
+          : "dirty";
+
+    return {
+      ...row,
+      fields,
+      saveStatus: nextSaveStatus,
+      saveError: "",
+    };
+  });
+  markEditorRowDirty(rowId);
+}
+
+export async function toggleEditorRowFieldMarker(
+  render,
+  rowId,
+  languageCode,
+  kind,
+  operations = {},
+) {
+  const { updateEditorChapterRow } = operations;
+  if (
+    !rowId
+    || !languageCode
+    || (kind !== "reviewed" && kind !== "please-check")
+    || typeof updateEditorChapterRow !== "function"
+  ) {
+    return;
+  }
+
+  const editorChapter = state.editorChapter;
+  if (!editorChapter?.chapterId) {
+    return;
+  }
+
+  const row = findEditorRowById(rowId, editorChapter);
+  if (!row) {
+    return;
+  }
+
+  if (row.saveStatus !== "idle") {
+    showNoticeBadge("Save the row text before updating review markers.", render);
+    return;
+  }
+
+  if (row.markerSaveState?.status === "saving") {
+    return;
+  }
+
+  const currentFieldState = normalizeFieldState(row.fieldStates?.[languageCode]);
+  const nextEnabled = kind === "reviewed"
+    ? !currentFieldState.reviewed
+    : !currentFieldState.pleaseCheck;
+  const nextFieldState = {
+    ...currentFieldState,
+    ...(kind === "reviewed"
+      ? { reviewed: nextEnabled }
+      : { pleaseCheck: nextEnabled }),
+  };
+
+  const team = selectedProjectsTeam();
+  const context = findChapterContextById(editorChapter.chapterId);
+  if (!Number.isFinite(team?.installationId) || !context?.project?.name) {
+    return;
+  }
+
+  const previousFieldState = currentFieldState;
+  markEditorRowDirty(rowId);
+  updateEditorChapterRow(rowId, (currentRow) => ({
+    ...currentRow,
+    fieldStates: {
+      ...cloneRowFieldStates(currentRow.fieldStates),
+      [languageCode]: nextFieldState,
+    },
+    markerSaveState: {
+      status: "saving",
+      languageCode,
+      kind,
+      error: "",
+    },
+  }));
+  render?.();
+
+  try {
+    const payload = await invoke("update_gtms_editor_row_field_flag", {
+      input: {
+        installationId: team.installationId,
+        projectId: context.project.id,
+        repoName: context.project.name,
+        chapterId: editorChapter.chapterId,
+        rowId,
+        languageCode,
+        flag: kind,
+        enabled: nextEnabled,
+      },
+    });
+
+    if (state.editorChapter?.chapterId === editorChapter.chapterId) {
+      updateEditorChapterRow(rowId, (currentRow) => ({
+        ...currentRow,
+        fieldStates: {
+          ...cloneRowFieldStates(currentRow.fieldStates),
+          [languageCode]: normalizeFieldState({
+            reviewed: payload?.reviewed,
+            pleaseCheck: payload?.pleaseCheck,
+          }),
+        },
+        persistedFieldStates: {
+          ...cloneRowFieldStates(currentRow.persistedFieldStates),
+          [languageCode]: normalizeFieldState({
+            reviewed: payload?.reviewed,
+            pleaseCheck: payload?.pleaseCheck,
+          }),
+        },
+        markerSaveState: {
+          status: "idle",
+          languageCode: null,
+          kind: null,
+          error: "",
+        },
+      }));
+      reconcileDirtyTrackedEditorRows([rowId]);
+      render?.();
+
+      if (state.editorChapter.activeRowId === rowId && state.editorChapter.activeLanguageCode === languageCode) {
+        loadActiveEditorFieldHistory(render);
+      }
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (state.editorChapter?.chapterId === editorChapter.chapterId) {
+      updateEditorChapterRow(rowId, (currentRow) => ({
+        ...currentRow,
+        fieldStates: {
+          ...cloneRowFieldStates(currentRow.fieldStates),
+          [languageCode]: previousFieldState,
+        },
+        markerSaveState: {
+          status: "idle",
+          languageCode: null,
+          kind: null,
+          error: message,
+        },
+      }));
+      reconcileDirtyTrackedEditorRows([rowId]);
+      render?.();
+    }
+    showNoticeBadge(message || "The review marker could not be saved.", render);
+  }
+}
+
+export async function persistEditorRowOnBlur(render, rowId, operations = {}) {
+  const {
+    updateEditorChapterRow,
+    applyEditorSelectionsToProjectState,
+  } = operations;
+  if (
+    !rowId
+    || !state.editorChapter?.chapterId
+    || typeof updateEditorChapterRow !== "function"
+    || typeof applyEditorSelectionsToProjectState !== "function"
+  ) {
+    return;
+  }
+
+  const existingPersist = pendingEditorRowPersistByRowId.get(rowId);
+  if (existingPersist) {
+    const row = findEditorRowById(rowId, state.editorChapter);
+    if (row?.saveStatus === "saving") {
+      updateEditorChapterRow(rowId, (currentRow) => ({
+        ...currentRow,
+        saveStatus: "dirty",
+      }));
+    }
+    await existingPersist;
+    return;
+  }
+
+  const persistPromise = (async () => {
+    while (state.editorChapter?.chapterId) {
+      const editorChapter = state.editorChapter;
+      const row = findEditorRowById(rowId, editorChapter);
+      if (!row) {
+        reconcileDirtyTrackedEditorRows([rowId]);
+        return;
+      }
+
+      if (!rowHasFieldChanges(row)) {
+        if (row.saveStatus !== "idle" || row.saveError) {
+          updateEditorChapterRow(rowId, (currentRow) => ({
+            ...currentRow,
+            saveStatus: "idle",
+            saveError: "",
+          }));
+          render?.({ scope: "translate-sidebar" });
+        }
+        reconcileDirtyTrackedEditorRows([rowId]);
+        return;
+      }
+
+      const team = selectedProjectsTeam();
+      const context = findChapterContextById(editorChapter.chapterId);
+      if (!Number.isFinite(team?.installationId) || !context?.project?.name) {
+        return;
+      }
+
+      const fieldsToPersist = cloneRowFields(row.fields);
+      updateEditorChapterRow(rowId, (currentRow) => ({
+        ...currentRow,
+        saveStatus: "saving",
+        saveError: "",
+      }));
+      render?.({ scope: "translate-sidebar" });
+
+      try {
+        const payload = await invoke("update_gtms_editor_row_fields", {
+          input: {
+            installationId: team.installationId,
+            projectId: context.project.id,
+            repoName: context.project.name,
+            chapterId: editorChapter.chapterId,
+            rowId,
+            fields: fieldsToPersist,
+          },
+        });
+
+        if (state.editorChapter?.chapterId !== editorChapter.chapterId) {
+          return;
+        }
+
+        const updatedRow = updateEditorChapterRow(rowId, (currentRow) => {
+          const rowChangedDuringSave = !rowFieldsEqual(currentRow.fields, fieldsToPersist);
+          return {
+            ...currentRow,
+            persistedFields: cloneRowFields(fieldsToPersist),
+            saveStatus: rowChangedDuringSave ? "dirty" : "idle",
+            saveError: "",
+          };
+        });
+
+        state.editorChapter = {
+          ...state.editorChapter,
+          sourceWordCounts:
+            payload?.sourceWordCounts && typeof payload.sourceWordCounts === "object"
+              ? payload.sourceWordCounts
+              : state.editorChapter.sourceWordCounts,
+        };
+        reconcileDirtyTrackedEditorRows([rowId]);
+        applyEditorSelectionsToProjectState(state.editorChapter);
+        render?.({ scope: "translate-sidebar" });
+        if (state.editorChapter.activeRowId === rowId) {
+          loadActiveEditorFieldHistory(render);
+        }
+
+        if (updatedRow?.saveStatus !== "dirty") {
+          return;
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (state.editorChapter?.chapterId === editorChapter.chapterId) {
+          updateEditorChapterRow(rowId, (currentRow) => ({
+            ...currentRow,
+            saveStatus: "error",
+            saveError: message,
+          }));
+          reconcileDirtyTrackedEditorRows([rowId]);
+          render?.({ scope: "translate-sidebar" });
+        }
+        showNoticeBadge(message || "The row could not be saved.", render);
+        return;
+      }
+    }
+  })();
+
+  pendingEditorRowPersistByRowId.set(rowId, persistPromise);
+  try {
+    await persistPromise;
+  } finally {
+    pendingEditorRowPersistByRowId.delete(rowId);
+  }
+}

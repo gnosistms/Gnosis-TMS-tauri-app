@@ -1,25 +1,12 @@
 import { coerceEditorFontSizePx } from "./state.js";
 import { canPermanentlyDeleteProjectFiles } from "./resource-capabilities.js";
-import { selectedProjectsTeam } from "./project-chapter-flow.js";
+import { findChapterContextById, selectedProjectsTeam } from "./project-chapter-flow.js";
 import { buildEditorFilterResult } from "./editor-filters.js";
-import { findChapterContextById } from "./translate-flow.js";
+import { normalizeEditorReplaceState } from "./editor-replace.js";
 
 let cachedEditorRowsRef = null;
 let cachedEditorLanguagesRef = null;
 let cachedLiveTranslationRows = [];
-
-function normalizeEditorReplaceState(replace) {
-  return {
-    enabled: replace?.enabled === true,
-    replaceQuery: typeof replace?.replaceQuery === "string" ? replace.replaceQuery : "",
-    selectedRowIds:
-      replace?.selectedRowIds instanceof Set
-        ? new Set([...replace.selectedRowIds].filter(Boolean))
-        : new Set(),
-    status: replace?.status === "saving" ? "saving" : "idle",
-    error: typeof replace?.error === "string" ? replace.error : "",
-  };
-}
 
 function chapterLanguageOptions(chapter, editorChapter) {
   if (Array.isArray(editorChapter?.languages) && editorChapter.languages.length > 0) {

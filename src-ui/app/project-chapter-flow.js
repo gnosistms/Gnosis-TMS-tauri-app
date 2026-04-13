@@ -277,6 +277,10 @@ export function findChapterContext(chapterId) {
   return null;
 }
 
+export function findChapterContextById(chapterId = state.selectedChapterId) {
+  return chapterId ? findChapterContext(chapterId) : null;
+}
+
 function resolveChapterContext(render, chapterId, missingMessage) {
   const selectedTeam = selectedProjectsTeam();
   const context = findChapterContext(chapterId);
