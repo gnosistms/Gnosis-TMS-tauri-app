@@ -30,7 +30,12 @@ import {
 } from "./app/editor-location.js";
 import { captureRenderScrollSnapshot, restoreRenderScrollSnapshot } from "./app/scroll-state.js";
 import { hydratePersistentAppState, state } from "./app/state.js";
-import { flushDirtyEditorRows, scheduleDirtyEditorRowScan, setActiveEditorField } from "./app/translate-flow.js";
+import {
+  flushDirtyEditorRows,
+  scheduleDirtyEditorRowScan,
+  setActiveEditorField,
+  toggleEditorReplaceEnabled,
+} from "./app/translate-flow.js";
 import { checkForAppUpdate } from "./app/updater-flow.js";
 import { renderGithubAppTestScreen } from "./screens/github-app-test.js";
 import { renderConnectionFailureModal } from "./screens/connection-failure-modal.js";
@@ -328,6 +333,10 @@ window.__gnosisDebug = {
     return summary;
   },
   readEditorState() {
+    return readEditorRegressionSnapshot(state);
+  },
+  setEditorReplaceEnabled(enabled) {
+    toggleEditorReplaceEnabled(render, enabled === true);
     return readEditorRegressionSnapshot(state);
   },
 };

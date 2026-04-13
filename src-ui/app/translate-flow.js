@@ -17,7 +17,18 @@ import {
   rowNeedsDirtyTracking,
 } from "./editor-row-persistence-model.js";
 import { normalizeEditorChapterFilterState } from "./editor-filters.js";
-import { buildEditorBatchReplaceUpdates } from "./editor-replace.js";
+import {
+  buildEditorBatchReplaceUpdates,
+  buildEditorReplaceCommitMessage,
+  buildEditorReplaceResetCommitMessage,
+  buildEditorReplaceUndoNotice,
+  cloneEditorReplaceSelectedRowIds,
+  currentMatchingEditorReplaceRowIds,
+  formatReplaceRowCount,
+  normalizeEditorReplaceState,
+  selectedMatchingEditorReplaceRowIds,
+  updateEditorReplaceState,
+} from "./editor-replace.js";
 import {
   deletedRowGroupIdAfterSoftDelete,
   expandedDeletedRowGroupIdsAfterPermanentDelete,
@@ -47,6 +58,7 @@ import {
 import { showNoticeBadge } from "./status-feedback.js";
 import { canPermanentlyDeleteProjectFiles } from "./resource-capabilities.js";
 import {
+  captureTranslateRowAnchor,
   captureVisibleTranslateLocation,
   queueTranslateRowAnchor,
   restoreTranslateRowAnchor,
@@ -155,24 +167,6 @@ function normalizeEditorHistoryState(history) {
 
 function normalizeEditorChapterFilters(filters) {
   return normalizeEditorChapterFilterState(filters);
-}
-
-function cloneEditorReplaceSelectedRowIds(selectedRowIds) {
-  return selectedRowIds instanceof Set
-    ? new Set([...selectedRowIds].filter(Boolean))
-    : new Set();
-}
-
-function normalizeEditorReplaceState(replace) {
-  return {
-    ...createEditorReplaceState(),
-    ...(replace && typeof replace === "object" ? replace : {}),
-    enabled: replace?.enabled === true,
-    replaceQuery: typeof replace?.replaceQuery === "string" ? replace.replaceQuery : "",
-    selectedRowIds: cloneEditorReplaceSelectedRowIds(replace?.selectedRowIds),
-    status: replace?.status === "saving" ? "saving" : "idle",
-    error: typeof replace?.error === "string" ? replace.error : "",
-  };
 }
 
 function normalizeEditorReplaceUndoModalState(modal) {
@@ -649,39 +643,6 @@ function buildVisibleEditorLanguageCodeSet(chapterState = state.editorChapter) {
   );
 }
 
-function currentMatchingEditorReplaceRowIds(chapterState = state.editorChapter) {
-  return (Array.isArray(chapterState?.rows) ? chapterState.rows : [])
-    .filter((row) => row?.lifecycleState !== "deleted")
-    .filter((row) => buildEditorRowSearchHighlightMap(row, chapterState).size > 0)
-    .map((row) => row.rowId)
-    .filter(Boolean);
-}
-
-function selectedMatchingEditorReplaceRowIds(chapterState = state.editorChapter) {
-  const replaceState = normalizeEditorReplaceState(chapterState?.replace);
-  if (!replaceState.enabled) {
-    return [];
-  }
-
-  const matchingRowIds = new Set(currentMatchingEditorReplaceRowIds(chapterState));
-  return [...replaceState.selectedRowIds].filter((rowId) => matchingRowIds.has(rowId));
-}
-
-function updateEditorReplaceState(nextValue) {
-  if (!state.editorChapter?.chapterId) {
-    return;
-  }
-
-  const currentReplaceState = normalizeEditorReplaceState(state.editorChapter?.replace);
-  state.editorChapter = {
-    ...state.editorChapter,
-    replace:
-      typeof nextValue === "function"
-        ? normalizeEditorReplaceState(nextValue(currentReplaceState))
-        : normalizeEditorReplaceState(nextValue),
-  };
-}
-
 function markEditorRowsPersisted(rowUpdates, sourceWordCounts = null) {
   const updatesByRowId = new Map(
     (Array.isArray(rowUpdates) ? rowUpdates : []).map((row) => [row.rowId, cloneRowFields(row.fields)]),
@@ -713,28 +674,6 @@ function markEditorRowsPersisted(rowUpdates, sourceWordCounts = null) {
   };
   reconcileDirtyTrackedEditorRows([...updatesByRowId.keys()]);
   applyEditorSelectionsToProjectState(state.editorChapter);
-}
-
-function formatReplaceRowCount(rowCount) {
-  return rowCount === 1 ? "1 row" : `${rowCount} rows`;
-}
-
-function summarizeReplaceSearchQuery(searchQuery, maxLength = 36) {
-  const text = String(searchQuery ?? "").trim();
-  if (text.length <= maxLength) {
-    return text;
-  }
-
-  return `${text.slice(0, maxLength - 1)}...`;
-}
-
-function buildEditorReplaceResetCommitMessage(rowCount) {
-  return `Create reset point before replace in ${formatReplaceRowCount(rowCount)}`;
-}
-
-function buildEditorReplaceCommitMessage(searchQuery, rowCount) {
-  const queryLabel = summarizeReplaceSearchQuery(searchQuery);
-  return `Replace "${queryLabel}" in ${formatReplaceRowCount(rowCount)}`;
 }
 
 async function commitEditorRowFieldsBatch({
@@ -805,21 +744,6 @@ export function cancelEditorReplaceUndoModal() {
     ...state.editorChapter,
     replaceUndoModal: createEditorReplaceUndoModalState(),
   };
-}
-
-function buildEditorReplaceUndoNotice(updatedCount, skippedCount) {
-  const updatedLabel = formatReplaceRowCount(updatedCount);
-  const skippedLabel = formatReplaceRowCount(skippedCount);
-  if (updatedCount > 0 && skippedCount > 0) {
-    return `Undid replace in ${updatedLabel}. ${skippedLabel} ${skippedCount === 1 ? "was" : "were"} left unchanged because ${skippedCount === 1 ? "it was" : "they were"} edited later.`;
-  }
-  if (updatedCount > 0) {
-    return `Undid replace in ${updatedLabel}.`;
-  }
-  if (skippedCount === 0) {
-    return "No rows needed to be undone.";
-  }
-  return `No rows were undone. ${skippedLabel} ${skippedCount === 1 ? "was" : "were"} edited later and left unchanged.`;
 }
 
 function editorGlossaryHighlightContextKey(chapterState = state.editorChapter) {
@@ -2352,7 +2276,7 @@ export function toggleEditorReplaceEnabled(render, enabled, anchorTarget = null)
 
   const scrollAnchor = captureTranslateRowAnchor(anchorTarget);
   const searchIsActive = normalizeEditorChapterFilters(state.editorChapter?.filters).searchQuery.trim().length > 0;
-  updateEditorReplaceState((replaceState) => ({
+  updateEditorReplaceState(state, (replaceState) => ({
     ...replaceState,
     enabled: searchIsActive && enabled === true,
     selectedRowIds: new Set(),
@@ -2370,7 +2294,7 @@ export function updateEditorReplaceQuery(render, nextValue) {
     return;
   }
 
-  updateEditorReplaceState((replaceState) => ({
+  updateEditorReplaceState(state, (replaceState) => ({
     ...replaceState,
     replaceQuery: typeof nextValue === "string" ? nextValue : String(nextValue ?? ""),
     status: "idle",
@@ -2386,12 +2310,17 @@ export function toggleEditorReplaceRowSelected(render, rowId, selected, anchorTa
 
   const scrollAnchor = captureTranslateRowAnchor(anchorTarget);
 
-  const matchingRowIds = new Set(currentMatchingEditorReplaceRowIds(state.editorChapter));
+  const matchingRowIds = new Set(
+    currentMatchingEditorReplaceRowIds(
+      state.editorChapter,
+      (row, chapterState) => buildEditorRowSearchHighlightMap(row, chapterState).size > 0,
+    ),
+  );
   if (!matchingRowIds.has(rowId)) {
     return;
   }
 
-  updateEditorReplaceState((replaceState) => {
+  updateEditorReplaceState(state, (replaceState) => {
     const selectedRowIds = cloneEditorReplaceSelectedRowIds(replaceState.selectedRowIds);
     if (selected) {
       selectedRowIds.add(rowId);
@@ -2417,9 +2346,14 @@ export function selectAllEditorReplaceRows(render) {
     return;
   }
 
-  updateEditorReplaceState((replaceState) => ({
+  updateEditorReplaceState(state, (replaceState) => ({
     ...replaceState,
-    selectedRowIds: new Set(currentMatchingEditorReplaceRowIds(state.editorChapter)),
+    selectedRowIds: new Set(
+      currentMatchingEditorReplaceRowIds(
+        state.editorChapter,
+        (row, chapterState) => buildEditorRowSearchHighlightMap(row, chapterState).size > 0,
+      ),
+    ),
     status: "idle",
     error: "",
   }));
@@ -2443,7 +2377,10 @@ export async function replaceSelectedEditorRows(render) {
     return;
   }
 
-  const selectedRowIds = selectedMatchingEditorReplaceRowIds(editorChapter);
+  const selectedRowIds = selectedMatchingEditorReplaceRowIds(
+    editorChapter,
+    (row, chapterState) => buildEditorRowSearchHighlightMap(row, chapterState).size > 0,
+  );
   if (selectedRowIds.length === 0) {
     showNoticeBadge("Select at least one matching row to replace.", render);
     return;
@@ -2485,7 +2422,7 @@ export async function replaceSelectedEditorRows(render) {
     return;
   }
 
-  updateEditorReplaceState((currentState) => ({
+  updateEditorReplaceState(state, (currentState) => ({
     ...currentState,
     status: "saving",
     error: "",
@@ -2521,7 +2458,7 @@ export async function replaceSelectedEditorRows(render) {
 
     if (state.editorChapter?.chapterId === editorChapter.chapterId) {
       markEditorRowsPersisted(replacePlan.updatedRows, payload?.sourceWordCounts);
-      updateEditorReplaceState((currentState) => ({
+      updateEditorReplaceState(state, (currentState) => ({
         ...currentState,
         status: "idle",
         error: "",
@@ -2536,7 +2473,7 @@ export async function replaceSelectedEditorRows(render) {
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     if (state.editorChapter?.chapterId === editorChapter.chapterId) {
-      updateEditorReplaceState((currentState) => ({
+      updateEditorReplaceState(state, (currentState) => ({
         ...currentState,
         status: "idle",
         error: message,

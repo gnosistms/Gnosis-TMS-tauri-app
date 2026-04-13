@@ -8,7 +8,9 @@ async function installMockTauri(page) {
     const fixtureByChapterId = new Map();
     const rowFieldsByChapterId = new Map();
     const fieldStatesByChapterId = new Map();
+    const rowLatestCommitByChapterId = new Map();
     const historyEntriesByKey = new Map();
+    const batchReplaceSnapshotsByCommitSha = new Map();
     const invocationLog = [];
 
     function nextCommitSha() {
@@ -28,9 +30,9 @@ async function installMockTauri(page) {
       return historyEntriesByKey.get(key);
     }
 
-    function pushHistoryEntries(chapterId, rowId, fields, fieldStates, operationType, message) {
-      const commitSha = nextCommitSha();
-      const committedAt = nextCommittedAt();
+    function pushHistoryEntriesWithCommit(chapterId, rowId, fields, fieldStates, commitInfo = {}) {
+      const commitSha = commitInfo?.commitSha ?? nextCommitSha();
+      const committedAt = commitInfo?.committedAt ?? nextCommittedAt();
       for (const [languageCode, plainText] of Object.entries(fields ?? {})) {
         const entries = ensureHistoryBucket(chapterId, rowId, languageCode);
         const state = fieldStates?.[languageCode] ?? {};
@@ -38,15 +40,23 @@ async function installMockTauri(page) {
           commitSha,
           authorName: "Mock Backend",
           committedAt,
-          message,
-          operationType,
+          message: commitInfo?.message ?? "Update row",
+          operationType: commitInfo?.operationType ?? "editor-update",
           statusNote: null,
           plainText: typeof plainText === "string" ? plainText : String(plainText ?? ""),
           reviewed: state.reviewed === true,
           pleaseCheck: state.pleaseCheck === true,
         });
       }
+      rowLatestCommitByChapterId.get(chapterId)?.set(rowId, commitSha);
       return commitSha;
+    }
+
+    function pushHistoryEntries(chapterId, rowId, fields, fieldStates, operationType, message) {
+      return pushHistoryEntriesWithCommit(chapterId, rowId, fields, fieldStates, {
+        operationType,
+        message,
+      });
     }
 
     function mountEditorFixture(payload) {
@@ -65,6 +75,7 @@ async function installMockTauri(page) {
         chapterId,
         new Map(rows.map((row) => [row.rowId, clone(row.fieldStates ?? {})])),
       );
+      rowLatestCommitByChapterId.set(chapterId, new Map());
 
       for (const row of rows) {
         for (const languageCode of Object.keys(row.fields ?? {})) {
@@ -135,6 +146,151 @@ async function installMockTauri(page) {
         pushHistoryEntries(input.chapterId, input.rowId, nextFields, storedFieldStates, "editor-update", "Update row");
         return {
           sourceWordCounts: {},
+        };
+      }
+
+      if (command === "update_gtms_editor_row_fields_batch") {
+        const input = payload?.input ?? {};
+        const chapterRows = rowFieldsByChapterId.get(input.chapterId);
+        const chapterFieldStates = fieldStatesByChapterId.get(input.chapterId);
+        const rows = Array.isArray(input.rows) ? clone(input.rows) : [];
+        if (!chapterRows || !chapterFieldStates) {
+          throw new Error(`Unknown editor chapter: ${input.chapterId}`);
+        }
+
+        const commitSha = nextCommitSha();
+        const committedAt = nextCommittedAt();
+        const snapshotRows = [];
+
+        for (const rowUpdate of rows) {
+          const storedFields = chapterRows.get(rowUpdate.rowId);
+          const storedFieldStates = chapterFieldStates.get(rowUpdate.rowId);
+          if (!storedFields || !storedFieldStates) {
+            throw new Error(`Unknown editor row in batch: ${rowUpdate.rowId}`);
+          }
+
+          snapshotRows.push({
+            rowId: rowUpdate.rowId,
+            fields: clone(storedFields),
+            fieldStates: clone(storedFieldStates),
+          });
+
+          const nextFields = clone(rowUpdate.fields ?? {});
+          chapterRows.set(rowUpdate.rowId, nextFields);
+          pushHistoryEntriesWithCommit(input.chapterId, rowUpdate.rowId, nextFields, storedFieldStates, {
+            commitSha,
+            committedAt,
+            operationType: input.operation ?? "editor-update",
+            message: input.commitMessage ?? "Update rows",
+          });
+        }
+
+        if (input.operation === "editor-replace") {
+          batchReplaceSnapshotsByCommitSha.set(commitSha, {
+            chapterId: input.chapterId,
+            rows: snapshotRows,
+          });
+        }
+
+        return {
+          sourceWordCounts: {},
+        };
+      }
+
+      if (command === "update_gtms_editor_row_field_flag") {
+        const input = payload?.input ?? {};
+        const storedFields = findRowFields(input.chapterId, input.rowId);
+        const storedFieldStates = findFieldStates(input.chapterId, input.rowId);
+        const previousState = storedFieldStates?.[input.languageCode] ?? null;
+        if (!storedFields || !storedFieldStates || !previousState) {
+          throw new Error(`Unknown editor row field flag target: ${input.rowId}/${input.languageCode}`);
+        }
+
+        const nextState = {
+          ...previousState,
+          ...(input.flag === "reviewed"
+            ? { reviewed: input.enabled === true }
+            : { pleaseCheck: input.enabled === true }),
+        };
+        storedFieldStates[input.languageCode] = nextState;
+        pushHistoryEntries(
+          input.chapterId,
+          input.rowId,
+          storedFields,
+          storedFieldStates,
+          "editor-update",
+          "Update row marker",
+        );
+        return {
+          reviewed: nextState.reviewed === true,
+          pleaseCheck: nextState.pleaseCheck === true,
+        };
+      }
+
+      if (command === "reverse_gtms_editor_batch_replace_commit") {
+        const input = payload?.input ?? {};
+        const snapshot = batchReplaceSnapshotsByCommitSha.get(input.commitSha);
+        const chapterRows = rowFieldsByChapterId.get(input.chapterId);
+        const chapterFieldStates = fieldStatesByChapterId.get(input.chapterId);
+        const latestRowCommits = rowLatestCommitByChapterId.get(input.chapterId);
+        if (!snapshot || snapshot.chapterId !== input.chapterId || !chapterRows || !chapterFieldStates || !latestRowCommits) {
+          throw new Error("The selected batch replace commit does not exist in the mock backend.");
+        }
+
+        const commitSha = nextCommitSha();
+        const committedAt = nextCommittedAt();
+        const updatedRows = [];
+        const skippedRowIds = [];
+        const undoSnapshotRows = [];
+
+        for (const rowSnapshot of snapshot.rows) {
+          const latestCommitSha = latestRowCommits.get(rowSnapshot.rowId) ?? null;
+          if (latestCommitSha !== input.commitSha) {
+            skippedRowIds.push(rowSnapshot.rowId);
+            continue;
+          }
+
+          const currentFields = chapterRows.get(rowSnapshot.rowId);
+          const currentFieldStates = chapterFieldStates.get(rowSnapshot.rowId);
+          if (!currentFields || !currentFieldStates) {
+            skippedRowIds.push(rowSnapshot.rowId);
+            continue;
+          }
+
+          undoSnapshotRows.push({
+            rowId: rowSnapshot.rowId,
+            fields: clone(currentFields),
+            fieldStates: clone(currentFieldStates),
+          });
+
+          const restoredFields = clone(rowSnapshot.fields);
+          const restoredFieldStates = clone(rowSnapshot.fieldStates);
+          chapterRows.set(rowSnapshot.rowId, restoredFields);
+          chapterFieldStates.set(rowSnapshot.rowId, restoredFieldStates);
+          updatedRows.push({
+            rowId: rowSnapshot.rowId,
+            fields: restoredFields,
+          });
+          pushHistoryEntriesWithCommit(input.chapterId, rowSnapshot.rowId, restoredFields, restoredFieldStates, {
+            commitSha,
+            committedAt,
+            operationType: "editor-replace",
+            message: "Undo batch replace",
+          });
+        }
+
+        if (updatedRows.length > 0) {
+          batchReplaceSnapshotsByCommitSha.set(commitSha, {
+            chapterId: input.chapterId,
+            rows: undoSnapshotRows,
+          });
+        }
+
+        return {
+          updatedRows,
+          skippedRowIds,
+          sourceWordCounts: {},
+          commitSha: updatedRows.length > 0 ? commitSha : null,
         };
       }
 
@@ -413,6 +569,84 @@ test.describe("editor regressions", () => {
     await expect.poll(async () => {
       return await page.evaluate(() => window.__gnosisDebug.readEditorState().dirtyRowIds);
     }).toEqual([]);
+  });
+
+  test("typing in one row then toggling a marker in another row persists the dirty row", async ({ page }) => {
+    await mountEditorFixture(page, { rowCount: 40 }, { mockTauri: true });
+
+    const firstField = page.locator(
+      '[data-editor-row-field][data-row-id="fixture-row-0001"][data-language-code="vi"]',
+    );
+    const reviewedButton = page.locator(
+      '[data-action="toggle-editor-reviewed"][data-row-id="fixture-row-0002"][data-language-code="vi"]',
+    );
+
+    await firstField.click();
+    await firstField.evaluate((element) => {
+      element.focus();
+      element.selectionStart = element.value.length;
+      element.selectionEnd = element.value.length;
+    });
+    await page.keyboard.type(" saved");
+
+    await expect(reviewedButton).toBeVisible();
+    await reviewedButton.click();
+    await expect(reviewedButton).toHaveAttribute("aria-pressed", "true");
+
+    await expect.poll(async () => {
+      const mockState = await readMockTauriState(page);
+      return mockState?.histories?.["fixture-chapter::fixture-row-0001::vi"]?.[0]?.plainText ?? null;
+    }).toBe("alpha 0001 target text saved");
+
+    await expect.poll(async () => {
+      const mockState = await readMockTauriState(page);
+      return mockState?.histories?.["fixture-chapter::fixture-row-0002::vi"]?.[0]?.reviewed ?? null;
+    }).toBe(true);
+
+    await expect.poll(async () => {
+      return await page.evaluate(() => window.__gnosisDebug.readEditorState().dirtyRowIds);
+    }).toEqual([]);
+  });
+
+  test("replace selected and undo replace round-trip through history", async ({ page }) => {
+    await mountEditorFixture(page, { rowCount: 18 }, { mockTauri: true });
+
+    const searchInput = page.locator("[data-editor-search-input]");
+    await searchInput.fill("0001");
+
+    await page.evaluate(() => window.__gnosisDebug.setEditorReplaceEnabled(true));
+
+    const replaceInput = page.locator("[data-editor-replace-input]");
+    await expect(replaceInput).toBeVisible();
+    await replaceInput.fill("0001x");
+
+    await page.getByRole("button", { name: "Select all" }).click();
+    const replaceSelectedButton = page.getByRole("button", { name: "Replace selected" });
+    await expect(replaceSelectedButton).toBeEnabled();
+    await replaceSelectedButton.click();
+
+    const firstField = page.locator(
+      '[data-editor-row-field][data-row-id="fixture-row-0001"][data-language-code="vi"]',
+    );
+    await expect(firstField).toHaveValue("alpha 0001x target text");
+
+    await expect.poll(async () => {
+      const mockState = await readMockTauriState(page);
+      return mockState?.histories?.["fixture-chapter::fixture-row-0001::vi"]?.[0]?.operationType ?? null;
+    }).toBe("editor-replace");
+
+    const undoReplaceButton = page.getByRole("button", { name: "Undo replace" }).first();
+    await expect(undoReplaceButton).toBeVisible();
+    await undoReplaceButton.click();
+
+    await expect(page.getByText("Undo batch find and replace")).toBeVisible();
+    await page.getByRole("button", { name: "Undo replace" }).last().click();
+
+    await expect(firstField).toHaveValue("alpha 0001 target text");
+    await expect.poll(async () => {
+      const mockState = await readMockTauriState(page);
+      return mockState?.histories?.["fixture-chapter::fixture-row-0001::vi"]?.[0]?.plainText ?? null;
+    }).toBe("alpha 0001 target text");
   });
 
   test("history restore updates the active field through the backend flow", async ({ page }) => {
