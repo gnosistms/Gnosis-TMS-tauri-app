@@ -1,7 +1,6 @@
 import {
   cloneDirtyRowIds,
   resolveDirtyTrackedEditorRowIds,
-  rowFieldsEqual,
   rowHasFieldChanges,
   rowHasPersistedChanges,
 } from "./editor-row-persistence-model.js";
@@ -11,13 +10,23 @@ import {
   reconcileDirtyTrackedEditorRows,
 } from "./editor-dirty-row-state.js";
 import { loadActiveEditorFieldHistory } from "./editor-history-flow.js";
+import {
+  applyEditorRowFieldValue,
+  applyEditorRowMarkerSaved,
+  applyEditorRowMarkerSaveFailed,
+  applyEditorRowMarkerSaving,
+  applyEditorRowPersistFailed,
+  applyEditorRowPersistQueuedWhileSaving,
+  applyEditorRowPersistRequested,
+  applyEditorRowPersistReset,
+  applyEditorRowPersistSucceeded,
+} from "./editor-persistence-state.js";
 import { findChapterContextById, selectedProjectsTeam } from "./project-context.js";
 import { invoke } from "./runtime.js";
 import { state } from "./state.js";
 import { showNoticeBadge } from "./status-feedback.js";
 import {
   cloneRowFields,
-  cloneRowFieldStates,
   findEditorRowById,
   normalizeFieldState,
 } from "./editor-utils.js";
@@ -117,25 +126,7 @@ export function updateEditorRowFieldValue(rowId, languageCode, nextValue, operat
     return;
   }
 
-  updateEditorChapterRow(rowId, (row) => {
-    const fields = {
-      ...cloneRowFields(row.fields),
-      [languageCode]: nextValue,
-    };
-    const nextSaveStatus =
-      row.saveStatus === "saving"
-        ? "dirty"
-        : rowFieldsEqual(fields, row.persistedFields)
-          ? "idle"
-          : "dirty";
-
-    return {
-      ...row,
-      fields,
-      saveStatus: nextSaveStatus,
-      saveError: "",
-    };
-  });
+  updateEditorChapterRow(rowId, (row) => applyEditorRowFieldValue(row, languageCode, nextValue));
   markEditorRowDirty(rowId);
 }
 
@@ -194,19 +185,10 @@ export async function toggleEditorRowFieldMarker(
 
   const previousFieldState = currentFieldState;
   markEditorRowDirty(rowId);
-  updateEditorChapterRow(rowId, (currentRow) => ({
-    ...currentRow,
-    fieldStates: {
-      ...cloneRowFieldStates(currentRow.fieldStates),
-      [languageCode]: nextFieldState,
-    },
-    markerSaveState: {
-      status: "saving",
-      languageCode,
-      kind,
-      error: "",
-    },
-  }));
+  updateEditorChapterRow(
+    rowId,
+    (currentRow) => applyEditorRowMarkerSaving(currentRow, languageCode, kind, nextFieldState),
+  );
   render?.();
 
   try {
@@ -224,29 +206,10 @@ export async function toggleEditorRowFieldMarker(
     });
 
     if (state.editorChapter?.chapterId === editorChapter.chapterId) {
-      updateEditorChapterRow(rowId, (currentRow) => ({
-        ...currentRow,
-        fieldStates: {
-          ...cloneRowFieldStates(currentRow.fieldStates),
-          [languageCode]: normalizeFieldState({
-            reviewed: payload?.reviewed,
-            pleaseCheck: payload?.pleaseCheck,
-          }),
-        },
-        persistedFieldStates: {
-          ...cloneRowFieldStates(currentRow.persistedFieldStates),
-          [languageCode]: normalizeFieldState({
-            reviewed: payload?.reviewed,
-            pleaseCheck: payload?.pleaseCheck,
-          }),
-        },
-        markerSaveState: {
-          status: "idle",
-          languageCode: null,
-          kind: null,
-          error: "",
-        },
-      }));
+      updateEditorChapterRow(
+        rowId,
+        (currentRow) => applyEditorRowMarkerSaved(currentRow, languageCode, payload),
+      );
       reconcileDirtyTrackedEditorRows([rowId]);
       render?.();
 
@@ -257,19 +220,10 @@ export async function toggleEditorRowFieldMarker(
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     if (state.editorChapter?.chapterId === editorChapter.chapterId) {
-      updateEditorChapterRow(rowId, (currentRow) => ({
-        ...currentRow,
-        fieldStates: {
-          ...cloneRowFieldStates(currentRow.fieldStates),
-          [languageCode]: previousFieldState,
-        },
-        markerSaveState: {
-          status: "idle",
-          languageCode: null,
-          kind: null,
-          error: message,
-        },
-      }));
+      updateEditorChapterRow(
+        rowId,
+        (currentRow) => applyEditorRowMarkerSaveFailed(currentRow, languageCode, previousFieldState, message),
+      );
       reconcileDirtyTrackedEditorRows([rowId]);
       render?.();
     }
@@ -295,10 +249,7 @@ export async function persistEditorRowOnBlur(render, rowId, operations = {}) {
   if (existingPersist) {
     const row = findEditorRowById(rowId, state.editorChapter);
     if (row?.saveStatus === "saving") {
-      updateEditorChapterRow(rowId, (currentRow) => ({
-        ...currentRow,
-        saveStatus: "dirty",
-      }));
+      updateEditorChapterRow(rowId, (currentRow) => applyEditorRowPersistQueuedWhileSaving(currentRow));
     }
     await existingPersist;
     return;
@@ -315,11 +266,7 @@ export async function persistEditorRowOnBlur(render, rowId, operations = {}) {
 
       if (!rowHasFieldChanges(row)) {
         if (row.saveStatus !== "idle" || row.saveError) {
-          updateEditorChapterRow(rowId, (currentRow) => ({
-            ...currentRow,
-            saveStatus: "idle",
-            saveError: "",
-          }));
+          updateEditorChapterRow(rowId, (currentRow) => applyEditorRowPersistReset(currentRow));
           render?.({ scope: "translate-sidebar" });
         }
         reconcileDirtyTrackedEditorRows([rowId]);
@@ -333,11 +280,7 @@ export async function persistEditorRowOnBlur(render, rowId, operations = {}) {
       }
 
       const fieldsToPersist = cloneRowFields(row.fields);
-      updateEditorChapterRow(rowId, (currentRow) => ({
-        ...currentRow,
-        saveStatus: "saving",
-        saveError: "",
-      }));
+      updateEditorChapterRow(rowId, (currentRow) => applyEditorRowPersistRequested(currentRow));
       render?.({ scope: "translate-sidebar" });
 
       try {
@@ -356,15 +299,10 @@ export async function persistEditorRowOnBlur(render, rowId, operations = {}) {
           return;
         }
 
-        const updatedRow = updateEditorChapterRow(rowId, (currentRow) => {
-          const rowChangedDuringSave = !rowFieldsEqual(currentRow.fields, fieldsToPersist);
-          return {
-            ...currentRow,
-            persistedFields: cloneRowFields(fieldsToPersist),
-            saveStatus: rowChangedDuringSave ? "dirty" : "idle",
-            saveError: "",
-          };
-        });
+        const updatedRow = updateEditorChapterRow(
+          rowId,
+          (currentRow) => applyEditorRowPersistSucceeded(currentRow, fieldsToPersist),
+        );
 
         state.editorChapter = {
           ...state.editorChapter,
@@ -386,11 +324,7 @@ export async function persistEditorRowOnBlur(render, rowId, operations = {}) {
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         if (state.editorChapter?.chapterId === editorChapter.chapterId) {
-          updateEditorChapterRow(rowId, (currentRow) => ({
-            ...currentRow,
-            saveStatus: "error",
-            saveError: message,
-          }));
+          updateEditorChapterRow(rowId, (currentRow) => applyEditorRowPersistFailed(currentRow, message));
           reconcileDirtyTrackedEditorRows([rowId]);
           render?.({ scope: "translate-sidebar" });
         }
