@@ -1,4 +1,5 @@
 mod chapter_editor;
+mod chapter_editor_comments;
 mod chapter_import;
 mod chapter_lifecycle;
 mod project_git;
@@ -7,32 +8,25 @@ use tauri::AppHandle;
 
 use self::{
   chapter_editor::{
-    delete_gtms_editor_row_comment_sync,
     insert_gtms_editor_row_sync,
     initialize_gtms_project_repo_sync,
     load_gtms_editor_field_history_sync,
-    load_gtms_editor_row_comments_sync,
     list_local_gtms_project_files_sync,
     load_gtms_chapter_editor_data_sync,
     permanently_delete_gtms_editor_row_sync,
     reverse_gtms_editor_batch_replace_commit_sync,
     purge_local_gtms_project_repo_sync,
     restore_gtms_editor_field_from_history_sync,
-    save_gtms_editor_row_comment_sync,
     update_gtms_editor_row_lifecycle_sync,
     update_gtms_chapter_glossary_links_sync,
     update_gtms_chapter_language_selection_sync,
     update_gtms_editor_row_field_flag_sync,
     update_gtms_editor_row_fields_batch_sync,
     update_gtms_editor_row_fields_sync,
-    DeleteEditorRowCommentInput,
-    DeleteEditorRowCommentResponse,
     InsertEditorRowInput,
     InsertEditorRowResponse,
     LoadEditorFieldHistoryInput,
     LoadEditorFieldHistoryResponse,
-    LoadEditorRowCommentsInput,
-    LoadEditorRowCommentsResponse,
     ListLocalProjectFilesInput,
     LocalProjectFilesResponse,
     InitializeProjectRepoInput,
@@ -44,8 +38,6 @@ use self::{
     RestoreEditorFieldHistoryResponse,
     ReverseEditorBatchReplaceCommitInput,
     ReverseEditorBatchReplaceCommitResponse,
-    SaveEditorRowCommentInput,
-    SaveEditorRowCommentResponse,
     UpdateChapterGlossaryLinksInput,
     UpdateChapterGlossaryLinksResponse,
     UpdateChapterLanguageSelectionInput,
@@ -58,6 +50,17 @@ use self::{
     UpdateEditorRowFieldsResponse,
     UpdateEditorRowLifecycleInput,
     UpdateEditorRowLifecycleResponse,
+  },
+  chapter_editor_comments::{
+    delete_gtms_editor_row_comment_sync,
+    load_gtms_editor_row_comments_sync,
+    save_gtms_editor_row_comment_sync,
+    DeleteEditorRowCommentInput,
+    DeleteEditorRowCommentResponse,
+    LoadEditorRowCommentsInput,
+    LoadEditorRowCommentsResponse,
+    SaveEditorRowCommentInput,
+    SaveEditorRowCommentResponse,
   },
   chapter_import::{
     import_xlsx_to_gtms_sync,

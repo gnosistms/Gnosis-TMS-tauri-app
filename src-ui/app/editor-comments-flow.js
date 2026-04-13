@@ -18,15 +18,15 @@ import {
   currentEditorCommentsRequestMatches,
 } from "./editor-comments-state.js";
 import { findChapterContextById, selectedProjectsTeam } from "./project-context.js";
-import { invoke } from "./runtime.js";
-import { state } from "./state.js";
-import { showNoticeBadge } from "./status-feedback.js";
-import { findEditorRowById, hasEditorLanguage, hasEditorRow } from "./editor-utils.js";
 import {
   loadStoredEditorCommentSeenRevisions,
   pruneStoredEditorCommentSeenRevisions,
   saveStoredEditorCommentSeenRevision,
-} from "./editor-preferences.js";
+} from "./editor-comment-preferences.js";
+import { invoke } from "./runtime.js";
+import { state } from "./state.js";
+import { showNoticeBadge } from "./status-feedback.js";
+import { findEditorRowById, hasEditorLanguage, hasEditorRow } from "./editor-utils.js";
 
 function persistSeenRevision(chapterId, rowId, commentsRevision) {
   const seenRevisions = saveStoredEditorCommentSeenRevision(chapterId, rowId, commentsRevision);
