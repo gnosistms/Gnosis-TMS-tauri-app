@@ -15,6 +15,7 @@ import { renderTargetLanguageManagerModal } from "./target-language-manager-moda
 import { renderTranslateSidebar as renderTranslateEditorSidebar } from "./translate-sidebar.js";
 import {
   renderEditorFilterBanner,
+  renderEditorSyncBanner,
   renderTranslateModeControl,
   renderTranslateToolbar,
 } from "./translate-toolbar.js";
@@ -131,6 +132,7 @@ function renderTranslateEditorBodyFromFrame(frame) {
       <div class="translate-main-scroll">
         <div class="translate-main${editorReplace?.isEnabled ? " translate-main--replace-mode" : ""}">
           ${renderEditorFilterBanner(editorFilters)}
+          ${renderEditorSyncBanner(editorChapter)}
           ${translateBody}
         </div>
       </div>

@@ -27,6 +27,7 @@ import {
   hasEditorLanguage,
   hasEditorRow,
 } from "./editor-utils.js";
+import { ensureEditorRowReadyForWrite } from "./editor-row-sync-flow.js";
 
 async function fetchEditorFieldHistory(render, requestKey) {
   const editorChapter = state.editorChapter;
@@ -175,7 +176,7 @@ export async function restoreEditorFieldHistory(render, commitSha, operations = 
     return;
   }
 
-  const row = findEditorRowById(editorChapter.activeRowId, editorChapter);
+  const row = await ensureEditorRowReadyForWrite(render, editorChapter.activeRowId);
   if (!row || row.saveStatus !== "idle" || row.markerSaveState?.status === "saving") {
     showNoticeBadge("Save the current row before restoring history.", render);
     return;

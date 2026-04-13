@@ -10,6 +10,7 @@ use self::{
   chapter_editor::{
     insert_gtms_editor_row_sync,
     initialize_gtms_project_repo_sync,
+    load_gtms_editor_row_sync,
     load_gtms_editor_field_history_sync,
     list_local_gtms_project_files_sync,
     load_gtms_chapter_editor_data_sync,
@@ -27,6 +28,8 @@ use self::{
     InsertEditorRowResponse,
     LoadEditorFieldHistoryInput,
     LoadEditorFieldHistoryResponse,
+    LoadEditorRowInput,
+    LoadEditorRowResponse,
     ListLocalProjectFilesInput,
     LocalProjectFilesResponse,
     InitializeProjectRepoInput,
@@ -47,7 +50,7 @@ use self::{
     UpdateEditorRowFieldsBatchInput,
     UpdateEditorRowFieldsBatchResponse,
     UpdateEditorRowFieldsInput,
-    UpdateEditorRowFieldsResponse,
+    SaveEditorRowWithConcurrencyResponse,
     UpdateEditorRowLifecycleInput,
     UpdateEditorRowLifecycleResponse,
   },
@@ -154,10 +157,20 @@ pub(crate) async fn update_gtms_chapter_glossary_links(
 pub(crate) async fn update_gtms_editor_row_fields(
   app: AppHandle,
   input: UpdateEditorRowFieldsInput,
-) -> Result<UpdateEditorRowFieldsResponse, String> {
+) -> Result<SaveEditorRowWithConcurrencyResponse, String> {
   tauri::async_runtime::spawn_blocking(move || update_gtms_editor_row_fields_sync(&app, input))
     .await
     .map_err(|error| format!("The row update worker failed: {error}"))?
+}
+
+#[tauri::command]
+pub(crate) async fn load_gtms_editor_row(
+  app: AppHandle,
+  input: LoadEditorRowInput,
+) -> Result<LoadEditorRowResponse, String> {
+  tauri::async_runtime::spawn_blocking(move || load_gtms_editor_row_sync(&app, input))
+    .await
+    .map_err(|error| format!("The row reload worker failed: {error}"))?
 }
 
 #[tauri::command]

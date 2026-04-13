@@ -15,6 +15,7 @@ import {
   openEditorRowPermanentDeletionModal,
   openInsertEditorRowModal,
   replaceSelectedEditorRows,
+  resolveEditorRowConflict,
   restoreEditorFieldHistory,
   restoreEditorRow,
   saveActiveEditorRowComment,
@@ -182,6 +183,13 @@ export function createTranslateActions(render) {
     if (permanentDeleteRowId !== null) {
       openEditorRowPermanentDeletionModal(permanentDeleteRowId);
       render();
+      return true;
+    }
+
+    const conflictAction = actionSuffix(action, "resolve-editor-row-conflict:");
+    if (conflictAction !== null) {
+      const [rowId, resolution] = conflictAction.split(":");
+      await resolveEditorRowConflict(render, rowId, resolution);
       return true;
     }
 

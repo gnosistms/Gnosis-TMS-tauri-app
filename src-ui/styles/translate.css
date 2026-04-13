@@ -252,7 +252,44 @@
 
 .translation-row-shell {
   position: relative;
-  padding-top: 30px;
+  padding-top: 34px;
+}
+
+.translation-row__badges {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.translation-row-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 0 10px;
+  border: 1px solid rgba(164, 112, 41, 0.18);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.86);
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.translation-row-badge--stale {
+  color: #8f631b;
+}
+
+.translation-row-badge--conflict {
+  color: #9a1f3b;
+}
+
+.translation-row-badge--deleted {
+  color: #8b3030;
 }
 
 .translation-row__content {

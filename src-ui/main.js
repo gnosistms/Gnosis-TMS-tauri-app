@@ -37,6 +37,7 @@ import { captureRenderScrollSnapshot, restoreRenderScrollSnapshot } from "./app/
 import { hydratePersistentAppState, state } from "./app/state.js";
 import {
   flushDirtyEditorRows,
+  noteEditorBackgroundSyncScrollActivity,
   scheduleDirtyEditorRowScan,
   setActiveEditorField,
   toggleEditorReplaceEnabled,
@@ -259,7 +260,7 @@ app.addEventListener("focusin", (event) => {
 
   const rowId = input.dataset.rowId ?? "";
   const languageCode = input.dataset.languageCode ?? "";
-  setActiveEditorField(render, rowId, languageCode);
+  void setActiveEditorField(render, rowId, languageCode, { input });
   syncEditorRowTextareaHeight(input);
   requestAnimationFrame(() => {
     const activeElement = document.activeElement;
@@ -286,12 +287,31 @@ app.addEventListener("focusout", (event) => {
   scheduleDirtyEditorRowScan(render, input.dataset.rowId);
 });
 
+app.addEventListener("beforeinput", (event) => {
+  const input = event.target.closest?.("[data-editor-row-field]");
+  if (!(input instanceof HTMLTextAreaElement)) {
+    return;
+  }
+
+  const row = state.editorChapter?.rows?.find?.((candidate) => candidate?.rowId === input.dataset.rowId) ?? null;
+  if (!row || (row.freshness !== "stale" && row.remotelyDeleted !== true)) {
+    return;
+  }
+
+  event.preventDefault();
+  void setActiveEditorField(render, input.dataset.rowId ?? "", input.dataset.languageCode ?? "", {
+    input,
+    suppressNotice: true,
+  });
+}, true);
+
 app.addEventListener("scroll", (event) => {
   const container = event.target instanceof Element ? event.target.closest(".translate-main-scroll") : null;
   if (!(container instanceof HTMLElement)) {
     return;
   }
 
+  noteEditorBackgroundSyncScrollActivity();
   scheduleEditorLocationSave(state);
 }, true);
 

@@ -54,6 +54,7 @@ function applyEditorPayloadToState(payload, projectId, existingChapter = {}, glo
     error: "",
     projectId,
     chapterId: payload.chapterId,
+    chapterBaseCommitSha: payload.chapterBaseCommitSha ?? null,
     fileTitle: payload.fileTitle,
     languages: Array.isArray(payload.languages) ? payload.languages : [],
     sourceWordCounts:
@@ -70,6 +71,9 @@ function applyEditorPayloadToState(payload, projectId, existingChapter = {}, glo
       (Array.isArray(payload.rows) ? payload.rows : []).map((row) => row?.rowId).filter(Boolean),
     ),
     glossary: glossaryState ?? previousEditorChapter?.glossary ?? createEditorChapterGlossaryState(),
+    deferredStructuralChanges: false,
+    backgroundSyncStatus: "idle",
+    backgroundSyncError: "",
     rows: operations.normalizeEditorRows(payload.rows),
   }, previousEditorChapter);
 
@@ -142,6 +146,7 @@ export async function loadSelectedChapterEditorData(render, options = {}, operat
     error: "",
     projectId: context.project.id,
     chapterId: context.chapter.id,
+    chapterBaseCommitSha: preserveVisibleRows ? state.editorChapter.chapterBaseCommitSha : null,
     fileTitle: context.chapter.name ?? "",
     languages: preserveVisibleRows
       ? state.editorChapter.languages
@@ -167,6 +172,9 @@ export async function loadSelectedChapterEditorData(render, options = {}, operat
     commentSeenRevisions: preserveVisibleRows ? state.editorChapter.commentSeenRevisions : {},
     comments: preserveVisibleRows ? state.editorChapter.comments : createEditorCommentsState(),
     history: preserveVisibleRows ? state.editorChapter.history : createEditorHistoryState(),
+    deferredStructuralChanges: preserveVisibleRows ? state.editorChapter.deferredStructuralChanges : false,
+    backgroundSyncStatus: preserveVisibleRows ? state.editorChapter.backgroundSyncStatus : "idle",
+    backgroundSyncError: preserveVisibleRows ? state.editorChapter.backgroundSyncError : "",
     rows: preserveVisibleRows ? state.editorChapter.rows : [],
   };
   render?.();

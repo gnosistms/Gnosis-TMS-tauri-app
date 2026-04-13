@@ -106,6 +106,19 @@ export function applyEditorUiState(nextEditorChapter, previousEditorChapter = st
       isSameChapter && previousEditorChapter?.commentSeenRevisions && typeof previousEditorChapter.commentSeenRevisions === "object"
         ? previousEditorChapter.commentSeenRevisions
         : {},
+    chapterBaseCommitSha:
+      typeof nextEditorChapter?.chapterBaseCommitSha === "string" && nextEditorChapter.chapterBaseCommitSha.trim()
+        ? nextEditorChapter.chapterBaseCommitSha
+        : null,
+    deferredStructuralChanges: nextEditorChapter?.deferredStructuralChanges === true,
+    backgroundSyncStatus:
+      typeof nextEditorChapter?.backgroundSyncStatus === "string"
+        ? nextEditorChapter.backgroundSyncStatus
+        : "idle",
+    backgroundSyncError:
+      typeof nextEditorChapter?.backgroundSyncError === "string"
+        ? nextEditorChapter.backgroundSyncError
+        : "",
     comments:
       isSameChapter && hasEditorRow(nextEditorChapter, activeRowId)
         ? {
@@ -130,31 +143,41 @@ export function applyEditorUiState(nextEditorChapter, previousEditorChapter = st
   });
 }
 
+export function normalizeEditorRow(row) {
+  const fields = cloneRowFields(row?.fields);
+  const fieldStates = cloneRowFieldStates(row?.fieldStates);
+  return {
+    ...row,
+    lifecycleState: row?.lifecycleState === "deleted" ? "deleted" : "active",
+    orderKey: typeof row?.orderKey === "string" ? row.orderKey : "",
+    revisionToken:
+      typeof row?.revisionToken === "string" && row.revisionToken.trim()
+        ? row.revisionToken
+        : "",
+    commentCount: Number.isInteger(row?.commentCount) && row.commentCount >= 0 ? row.commentCount : 0,
+    commentsRevision:
+      Number.isInteger(row?.commentsRevision) && row.commentsRevision >= 0 ? row.commentsRevision : 0,
+    fields,
+    baseFields: cloneRowFields(fields),
+    persistedFields: cloneRowFields(fields),
+    fieldStates,
+    persistedFieldStates: cloneRowFieldStates(fieldStates),
+    freshness: "fresh",
+    remotelyDeleted: false,
+    conflictState: null,
+    saveStatus: "idle",
+    saveError: "",
+    markerSaveState: {
+      status: "idle",
+      languageCode: null,
+      kind: null,
+      error: "",
+    },
+  };
+}
+
 export function normalizeEditorRows(rows) {
-  return (Array.isArray(rows) ? rows : []).map((row) => {
-    const fields = cloneRowFields(row?.fields);
-    const fieldStates = cloneRowFieldStates(row?.fieldStates);
-    return {
-      ...row,
-      lifecycleState: row?.lifecycleState === "deleted" ? "deleted" : "active",
-      orderKey: typeof row?.orderKey === "string" ? row.orderKey : "",
-      commentCount: Number.isInteger(row?.commentCount) && row.commentCount >= 0 ? row.commentCount : 0,
-      commentsRevision:
-        Number.isInteger(row?.commentsRevision) && row.commentsRevision >= 0 ? row.commentsRevision : 0,
-      fields,
-      persistedFields: cloneRowFields(fields),
-      fieldStates,
-      persistedFieldStates: cloneRowFieldStates(fieldStates),
-      saveStatus: "idle",
-      saveError: "",
-      markerSaveState: {
-        status: "idle",
-        languageCode: null,
-        kind: null,
-        error: "",
-      },
-    };
-  });
+  return (Array.isArray(rows) ? rows : []).map((row) => normalizeEditorRow(row));
 }
 
 export function resolveChapterSourceWordCount(chapter) {

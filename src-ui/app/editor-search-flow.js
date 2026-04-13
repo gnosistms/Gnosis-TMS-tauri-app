@@ -307,6 +307,14 @@ export async function replaceSelectedEditorRows(render, operations = {}) {
     showNoticeBadge("Wait for the selected rows to finish saving before replacing.", render);
     return;
   }
+  if (state.editorChapter.deferredStructuralChanges === true) {
+    showNoticeBadge("Refresh the file before running replace.", render);
+    return;
+  }
+  if (selectedRows.some((row) => row.freshness === "stale" || row.freshness === "staleDirty" || row.freshness === "conflict" || row.remotelyDeleted === true)) {
+    showNoticeBadge("Refresh or resolve the selected rows before running replace.", render);
+    return;
+  }
 
   const replacePlan = buildEditorBatchReplaceUpdates({
     rows: editorChapter.rows,

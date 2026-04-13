@@ -97,6 +97,34 @@ function renderCommentsMarkerButton(rowId, language) {
   `;
 }
 
+function renderEditorRowSyncBadges(row) {
+  const badges = [];
+  if (row.hasConflict) {
+    badges.push('<span class="translation-row-badge translation-row-badge--conflict">Conflict</span>');
+  } else if (row.remotelyDeleted) {
+    badges.push('<span class="translation-row-badge translation-row-badge--deleted">Deleted Remotely</span>');
+  } else if (row.isStale) {
+    badges.push('<span class="translation-row-badge translation-row-badge--stale">Stale</span>');
+  }
+
+  if (badges.length === 0) {
+    return "";
+  }
+
+  return `<div class="translation-row__badges">${badges.join("")}</div>`;
+}
+
+function renderEditorRowConflictActions(row) {
+  if (!row.hasConflict) {
+    return "";
+  }
+
+  return `
+    ${textAction("Keep mine", `resolve-editor-row-conflict:${row.id}:keep-local`)}
+    ${textAction("Use remote", `resolve-editor-row-conflict:${row.id}:use-remote`)}
+  `;
+}
+
 function orderRowSectionsByCollapsedState(sections, collapsedLanguageCodes = new Set()) {
   const expandedSections = [];
   const collapsedSections = [];
@@ -136,12 +164,14 @@ export function renderTranslationContentRow(
   const rowActions = row.lifecycleState === "deleted"
     ? `
       <div class="translation-row__actions">
+        ${renderEditorRowConflictActions(row)}
         ${row.canRestore ? textAction("Restore", `restore-editor-row:${row.id}`) : ""}
         ${row.canPermanentDelete ? textAction("Delete", `open-editor-row-permanent-delete:${row.id}`) : ""}
       </div>
     `
     : `
       <div class="translation-row__actions">
+        ${renderEditorRowConflictActions(row)}
         ${row.canInsert ? textAction("Insert", `open-insert-editor-row:${row.id}`) : ""}
         ${row.canSoftDelete ? textAction("Delete", `soft-delete-editor-row:${row.id}`) : ""}
       </div>
@@ -164,6 +194,7 @@ export function renderTranslationContentRow(
 
   return `
     <div class="translation-row-shell" data-editor-row-card data-row-id="${escapeHtml(row.id)}"${rowIndexAttribute}>
+      ${renderEditorRowSyncBadges(row)}
       ${rowActions}
       <div class="translation-row__content">
         ${rowSelection}

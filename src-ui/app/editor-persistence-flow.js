@@ -11,6 +11,8 @@ import {
 } from "./editor-dirty-row-state.js";
 import { loadActiveEditorFieldHistory } from "./editor-history-flow.js";
 import {
+  applyEditorRowConflictDetected,
+  applyEditorRowConflictResolvedWithRemote,
   applyEditorRowFieldValue,
   applyEditorRowMarkerSaved,
   applyEditorRowMarkerSaveFailed,
@@ -30,6 +32,10 @@ import {
   findEditorRowById,
   normalizeFieldState,
 } from "./editor-utils.js";
+import {
+  ensureEditorRowReadyForWrite,
+  reloadEditorRowFromDisk,
+} from "./editor-row-sync-flow.js";
 
 const pendingEditorRowPersistByRowId = new Map();
 const pendingEditorDirtyRowScanFrameByRowId = new Map();
@@ -152,7 +158,7 @@ export async function toggleEditorRowFieldMarker(
     return;
   }
 
-  const row = findEditorRowById(rowId, editorChapter);
+  const row = await ensureEditorRowReadyForWrite(render, rowId);
   if (!row) {
     return;
   }
@@ -232,6 +238,38 @@ export async function toggleEditorRowFieldMarker(
 }
 
 export async function persistEditorRowOnBlur(render, rowId, operations = {}) {
+  await persistEditorRow(render, rowId, operations);
+}
+
+export async function resolveEditorRowConflict(render, rowId, resolution, operations = {}) {
+  const { updateEditorChapterRow } = operations;
+  if (!rowId || typeof updateEditorChapterRow !== "function") {
+    return;
+  }
+
+  const row = findEditorRowById(rowId, state.editorChapter);
+  if (!row?.conflictState) {
+    return;
+  }
+
+  if (resolution === "use-remote") {
+    updateEditorChapterRow(rowId, (currentRow) => applyEditorRowConflictResolvedWithRemote(currentRow));
+    reconcileDirtyTrackedEditorRows([rowId]);
+    render?.({ scope: "translate-body" });
+    render?.({ scope: "translate-sidebar" });
+    return;
+  }
+
+  if (resolution !== "keep-local") {
+    return;
+  }
+
+  await persistEditorRow(render, rowId, operations, {
+    baseFieldsOverride: row.conflictState?.remoteRow?.fields ?? null,
+  });
+}
+
+async function persistEditorRow(render, rowId, operations = {}, options = {}) {
   const {
     updateEditorChapterRow,
     applyEditorSelectionsToProjectState,
@@ -258,7 +296,11 @@ export async function persistEditorRowOnBlur(render, rowId, operations = {}) {
   const persistPromise = (async () => {
     while (state.editorChapter?.chapterId) {
       const editorChapter = state.editorChapter;
-      const row = findEditorRowById(rowId, editorChapter);
+      const row = options?.baseFieldsOverride
+        ? findEditorRowById(rowId, state.editorChapter)
+        : await ensureEditorRowReadyForWrite(render, rowId, {
+          allowStaleDirty: true,
+        });
       if (!row) {
         reconcileDirtyTrackedEditorRows([rowId]);
         return;
@@ -292,6 +334,10 @@ export async function persistEditorRowOnBlur(render, rowId, operations = {}) {
             chapterId: editorChapter.chapterId,
             rowId,
             fields: fieldsToPersist,
+            baseFields:
+              options?.baseFieldsOverride && typeof options.baseFieldsOverride === "object"
+                ? cloneRowFields(options.baseFieldsOverride)
+                : cloneRowFields(row.baseFields),
           },
         });
 
@@ -299,9 +345,26 @@ export async function persistEditorRowOnBlur(render, rowId, operations = {}) {
           return;
         }
 
+        if (payload?.status === "conflict") {
+          updateEditorChapterRow(
+            rowId,
+            (currentRow) => applyEditorRowConflictDetected(currentRow, payload),
+          );
+          render?.({ scope: "translate-body" });
+          render?.({ scope: "translate-sidebar" });
+          showNoticeBadge("Translation text changed on disk. Choose which version to keep.", render, 2400);
+          return;
+        }
+
+        if (payload?.status === "deleted") {
+          await reloadEditorRowFromDisk(render, rowId, { suppressNotice: false });
+          reconcileDirtyTrackedEditorRows([rowId]);
+          return;
+        }
+
         const updatedRow = updateEditorChapterRow(
           rowId,
-          (currentRow) => applyEditorRowPersistSucceeded(currentRow, fieldsToPersist),
+          (currentRow) => applyEditorRowPersistSucceeded(currentRow, payload?.row),
         );
 
         state.editorChapter = {

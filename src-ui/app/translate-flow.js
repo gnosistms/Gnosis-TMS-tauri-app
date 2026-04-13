@@ -33,6 +33,7 @@ import {
 import {
   flushDirtyEditorRows as flushDirtyEditorRowsFlow,
   persistEditorRowOnBlur as persistEditorRowOnBlurFlow,
+  resolveEditorRowConflict as resolveEditorRowConflictFlow,
   scheduleDirtyEditorRowScan as scheduleDirtyEditorRowScanFlow,
   toggleEditorRowFieldMarker as toggleEditorRowFieldMarkerFlow,
   updateEditorRowFieldValue as updateEditorRowFieldValueFlow,
@@ -69,6 +70,12 @@ import {
 import { applyStructuralEditorChange } from "./editor-structural-change-flow.js";
 import { waitForNextPaint } from "./runtime.js";
 import { saveStoredEditorFontSizePx } from "./editor-preferences.js";
+import { ensureEditorRowReadyForActivation } from "./editor-row-sync-flow.js";
+import {
+  noteEditorBackgroundSyncScrollActivity as noteEditorBackgroundSyncScrollActivityFlow,
+  startEditorBackgroundSyncSession,
+  syncAndStopEditorBackgroundSyncSession,
+} from "./editor-background-sync.js";
 import {
   coerceEditorFontSizePx,
   createTargetLanguageManagerState,
@@ -117,8 +124,12 @@ export function loadActiveEditorRowComments(render) {
   loadActiveEditorRowCommentsFlow(render);
 }
 
-export function setActiveEditorField(render, rowId, languageCode) {
+export async function setActiveEditorField(render, rowId, languageCode, options = {}) {
   if (!rowId || !languageCode) {
+    return;
+  }
+
+  if (!(await ensureEditorRowReadyForActivation(render, rowId, options))) {
     return;
   }
 
@@ -168,6 +179,10 @@ export function scheduleDirtyEditorRowScan(render, rowId) {
   scheduleDirtyEditorRowScanFlow(render, rowId, editorPersistenceOperations());
 }
 
+export function noteEditorBackgroundSyncScrollActivity() {
+  noteEditorBackgroundSyncScrollActivityFlow();
+}
+
 export async function flushDirtyEditorRows(render, options = {}) {
   return flushDirtyEditorRowsFlow(render, editorPersistenceOperations(), options);
 }
@@ -210,7 +225,18 @@ export async function loadSelectedChapterEditorData(render, options = {}) {
 }
 
 export async function openTranslateChapter(render, chapterId) {
+  if (
+    state.screen === "translate"
+    && state.editorChapter?.chapterId
+    && state.editorChapter.chapterId !== chapterId
+  ) {
+    await syncAndStopEditorBackgroundSyncSession(render);
+  }
+
   await openTranslateChapterFlow(render, chapterId, editorChapterLoadOperations());
+  if (state.screen === "translate" && state.editorChapter?.chapterId === chapterId && state.editorChapter.status === "ready") {
+    startEditorBackgroundSyncSession(render);
+  }
 }
 
 export function updateEditorSourceLanguage(render, nextCode) {
@@ -370,4 +396,8 @@ export function toggleEditorLanguageCollapsed(languageCode) {
 
 export async function persistEditorRowOnBlur(render, rowId) {
   await persistEditorRowOnBlurFlow(render, rowId, editorPersistenceOperations());
+}
+
+export async function resolveEditorRowConflict(render, rowId, resolution) {
+  await resolveEditorRowConflictFlow(render, rowId, resolution, editorPersistenceOperations());
 }

@@ -188,6 +188,25 @@ export function renderEditorFilterBanner(editorFilters) {
   `;
 }
 
+export function renderEditorSyncBanner(editorChapter) {
+  const banners = [];
+  if (editorChapter?.deferredStructuralChanges === true) {
+    banners.push("Remote row structure changed. Refresh the file to show inserted or removed rows.");
+  }
+  if (editorChapter?.backgroundSyncStatus === "error" && editorChapter?.backgroundSyncError) {
+    banners.push(`Background sync paused: ${editorChapter.backgroundSyncError}`);
+  }
+
+  return banners.map((label) => `
+    <div class="translation-results-banner" aria-live="polite">
+      <div class="translation-results-banner__gutter" aria-hidden="true"></div>
+      <div class="translation-results-banner__card">
+        <p class="translation-results-banner__text">${escapeHtml(label)}</p>
+      </div>
+    </div>
+  `).join("");
+}
+
 export function renderTranslateModeControl() {
   return `
     <div class="segmented-control" role="tablist" aria-label="Editor mode">

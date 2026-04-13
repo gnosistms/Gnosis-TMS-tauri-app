@@ -4,6 +4,7 @@ import {
   cloneRowFieldStates,
   normalizeFieldState,
 } from "./editor-utils.js";
+import { normalizeEditorRow } from "./editor-state-flow.js";
 
 export function applyEditorRowFieldValue(row, languageCode, nextValue) {
   if (!row || !languageCode) {
@@ -17,6 +18,8 @@ export function applyEditorRowFieldValue(row, languageCode, nextValue) {
   const nextSaveStatus =
     row.saveStatus === "saving"
       ? "dirty"
+      : row.saveStatus === "conflict"
+        ? "conflict"
       : rowFieldsEqual(fields, row.persistedFields)
         ? "idle"
         : "dirty";
@@ -24,6 +27,14 @@ export function applyEditorRowFieldValue(row, languageCode, nextValue) {
   return {
     ...row,
     fields,
+    freshness:
+      row.freshness === "conflict"
+        ? "conflict"
+        : row.freshness === "stale" || row.freshness === "staleDirty"
+          ? "staleDirty"
+          : rowFieldsEqual(fields, row.persistedFields)
+            ? "fresh"
+            : "dirty",
     saveStatus: nextSaveStatus,
     saveError: "",
   };
@@ -128,24 +139,25 @@ export function applyEditorRowPersistReset(row) {
 
   return {
     ...row,
-    saveStatus: "idle",
+    saveStatus: row.freshness === "conflict" ? "conflict" : "idle",
     saveError: "",
   };
 }
 
-export function applyEditorRowPersistSucceeded(row, fieldsToPersist) {
-  if (!row) {
+export function applyEditorRowPersistSucceeded(row, payloadRow) {
+  if (!row || !payloadRow) {
     return row;
   }
 
-  const persistedFields = cloneRowFields(fieldsToPersist);
-  const rowChangedDuringSave = !rowFieldsEqual(row.fields, fieldsToPersist);
+  const normalizedRow = normalizeEditorRow(payloadRow);
+  const rowChangedDuringSave = !rowFieldsEqual(row.fields, normalizedRow.fields);
 
   return {
-    ...row,
-    persistedFields,
+    ...normalizedRow,
+    fields: rowChangedDuringSave ? cloneRowFields(row.fields) : normalizedRow.fields,
     saveStatus: rowChangedDuringSave ? "dirty" : "idle",
-    saveError: "",
+    freshness: rowChangedDuringSave ? "dirty" : "fresh",
+    conflictState: null,
   };
 }
 
@@ -158,5 +170,34 @@ export function applyEditorRowPersistFailed(row, message = "") {
     ...row,
     saveStatus: "error",
     saveError: message,
+  };
+}
+
+export function applyEditorRowConflictDetected(row, payload = {}) {
+  if (!row) {
+    return row;
+  }
+
+  return {
+    ...row,
+    freshness: "conflict",
+    saveStatus: "conflict",
+    saveError: "Translation text changed on disk.",
+    remotelyDeleted: false,
+    conflictState: {
+      baseFields: cloneRowFields(payload?.baseFields),
+      remoteRow: payload?.row ? normalizeEditorRow(payload.row) : null,
+    },
+  };
+}
+
+export function applyEditorRowConflictResolvedWithRemote(row) {
+  if (!row?.conflictState?.remoteRow) {
+    return row;
+  }
+
+  return {
+    ...normalizeEditorRow(row.conflictState.remoteRow),
+    conflictState: null,
   };
 }

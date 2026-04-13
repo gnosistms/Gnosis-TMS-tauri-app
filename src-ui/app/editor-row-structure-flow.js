@@ -17,6 +17,7 @@ import {
 import { showNoticeBadge } from "./status-feedback.js";
 import { canPermanentlyDeleteProjectFiles } from "./resource-capabilities.js";
 import { findEditorRowById } from "./editor-utils.js";
+import { ensureEditorRowReadyForWrite } from "./editor-row-sync-flow.js";
 
 function hasRowStructureOperations(operations) {
   return (
@@ -149,7 +150,7 @@ export async function softDeleteEditorRow(render, rowId, triggerAnchorSnapshot =
     return;
   }
 
-  const row = findEditorRowById(rowId, editorChapter);
+  const row = await ensureEditorRowReadyForWrite(render, rowId, { structural: true });
   if (!row || row.saveStatus !== "idle" || row.markerSaveState?.status === "saving") {
     showNoticeBadge("Save the current row before deleting it.", render);
     return;
@@ -206,6 +207,10 @@ export async function restoreEditorRow(render, rowId, operations = {}) {
     return;
   }
 
+  if (!(await ensureEditorRowReadyForWrite(render, rowId, { structural: true }))) {
+    return;
+  }
+
   const team = selectedProjectsTeam();
   const context = findChapterContextById(editorChapter.chapterId);
   if (!Number.isFinite(team?.installationId) || !context?.project?.name) {
@@ -250,6 +255,10 @@ export async function confirmEditorRowPermanentDeletion(render, operations = {})
   const editorChapter = state.editorChapter;
   const modal = editorChapter?.rowPermanentDeletionModal;
   if (!editorChapter?.chapterId || !modal?.isOpen || !modal.rowId) {
+    return;
+  }
+
+  if (!(await ensureEditorRowReadyForWrite(render, modal.rowId, { structural: true }))) {
     return;
   }
 
@@ -319,3 +328,6 @@ export async function confirmEditorRowPermanentDeletion(render, operations = {})
     showNoticeBadge(message || "The row could not be permanently deleted.", render);
   }
 }
+  if (!(await ensureEditorRowReadyForWrite(render, modal.rowId, { structural: true }))) {
+    return;
+  }

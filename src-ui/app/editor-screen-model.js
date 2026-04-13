@@ -67,6 +67,11 @@ function buildLiveTranslationRows(editorChapter, languages) {
         Number.isInteger(row?.commentsRevision) && row.commentsRevision >= 0 ? row.commentsRevision : 0,
       saveStatus: row.saveStatus || "idle",
       saveError: row.saveError || "",
+      freshness: typeof row?.freshness === "string" ? row.freshness : "fresh",
+      remotelyDeleted: row?.remotelyDeleted === true,
+      hasConflict: row?.freshness === "conflict",
+      isStale: row?.freshness === "stale" || row?.freshness === "staleDirty",
+      conflictState: row?.conflictState ?? null,
       sections: languageOptions.map((language) => ({
         code: language.code,
         name: language.name,

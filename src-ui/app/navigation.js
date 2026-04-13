@@ -28,6 +28,7 @@ import {
   loadSelectedChapterEditorData,
   persistEditorChapterSelections,
 } from "./translate-flow.js";
+import { syncAndStopEditorBackgroundSyncSession } from "./editor-background-sync.js";
 import { clearNoticeBadge, clearScopedSyncBadge, showNoticeBadge } from "./status-feedback.js";
 
 export async function handleNavigation(navTarget, render) {
@@ -45,6 +46,7 @@ export async function handleNavigation(navTarget, render) {
 
   if (state.screen === "translate" && navTarget !== "translate") {
     void persistEditorChapterSelections(render);
+    await syncAndStopEditorBackgroundSyncSession(render);
   }
 
   if (navTarget === "start") {

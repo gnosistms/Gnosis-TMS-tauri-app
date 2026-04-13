@@ -6,6 +6,7 @@ use std::{
 };
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use tauri::AppHandle;
 
 use crate::{
@@ -16,6 +17,7 @@ use crate::{
     abort_rebase_after_failed_pull,
     git_output,
     load_git_transport_token,
+    read_current_head_oid,
   },
 };
 use crate::state::ProjectRepoSyncStore;
@@ -46,6 +48,28 @@ pub(crate) struct ProjectRepoSyncInput {
   pub(crate) projects: Vec<ProjectRepoSyncDescriptor>,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ProjectEditorRepoSyncInput {
+  pub(crate) installation_id: i64,
+  pub(crate) project_id: String,
+  pub(crate) repo_name: String,
+  pub(crate) full_name: String,
+  pub(crate) repo_id: Option<i64>,
+  pub(crate) default_branch_name: Option<String>,
+  pub(crate) default_branch_head_oid: Option<String>,
+  pub(crate) chapter_id: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct InspectProjectEditorRepoSyncStateInput {
+  pub(crate) installation_id: i64,
+  pub(crate) project_id: String,
+  pub(crate) repo_name: String,
+  pub(crate) since_head_sha: Option<String>,
+}
+
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ProjectRepoSyncSnapshot {
@@ -56,6 +80,23 @@ pub(crate) struct ProjectRepoSyncSnapshot {
   pub(crate) remote_head_oid: Option<String>,
   pub(crate) status: String,
   pub(crate) message: Option<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ProjectEditorRepoSyncResponse {
+  pub(crate) old_head_sha: Option<String>,
+  pub(crate) new_head_sha: Option<String>,
+  pub(crate) changed_row_ids: Vec<String>,
+  pub(crate) inserted_row_ids: Vec<String>,
+  pub(crate) deleted_row_ids: Vec<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct InspectProjectEditorRepoSyncStateResponse {
+  pub(crate) current_head_sha: Option<String>,
+  pub(crate) commits_since_head: usize,
 }
 
 #[tauri::command]
@@ -83,6 +124,29 @@ pub(crate) async fn list_project_repo_sync_states(
   tauri::async_runtime::spawn_blocking(move || list_project_repo_sync_states_sync(&app, store, input))
     .await
     .map_err(|error| format!("The project repo sync listing task failed: {error}"))?
+}
+
+#[tauri::command]
+pub(crate) async fn sync_gtms_project_editor_repo(
+  app: AppHandle,
+  input: ProjectEditorRepoSyncInput,
+  session_token: String,
+) -> Result<ProjectEditorRepoSyncResponse, String> {
+  tauri::async_runtime::spawn_blocking(move || {
+    sync_gtms_project_editor_repo_sync(&app, input, &session_token)
+  })
+  .await
+  .map_err(|error| format!("The editor repo sync task failed: {error}"))?
+}
+
+#[tauri::command]
+pub(crate) async fn inspect_gtms_project_editor_repo_sync_state(
+  app: AppHandle,
+  input: InspectProjectEditorRepoSyncStateInput,
+) -> Result<InspectProjectEditorRepoSyncStateResponse, String> {
+  tauri::async_runtime::spawn_blocking(move || inspect_gtms_project_editor_repo_sync_state_sync(&app, input))
+    .await
+    .map_err(|error| format!("The editor repo sync inspection task failed: {error}"))?
 }
 
 fn reconcile_project_repo_sync_states_sync(
@@ -199,6 +263,98 @@ fn list_project_repo_sync_states_sync(
   Ok(snapshots)
 }
 
+fn sync_gtms_project_editor_repo_sync(
+  app: &AppHandle,
+  input: ProjectEditorRepoSyncInput,
+  session_token: &str,
+) -> Result<ProjectEditorRepoSyncResponse, String> {
+  let project = ProjectRepoSyncDescriptor {
+    project_id: input.project_id.clone(),
+    repo_name: input.repo_name.clone(),
+    full_name: input.full_name.clone(),
+    repo_id: input.repo_id,
+    default_branch_name: input.default_branch_name.clone(),
+    default_branch_head_oid: input.default_branch_head_oid.clone(),
+  };
+  let repo_path = resolve_or_desired_project_git_repo_path(
+    app,
+    input.installation_id,
+    Some(&input.project_id),
+    &input.repo_name,
+  )?;
+  let old_head_sha = read_current_head_oid(&repo_path);
+  let git_status = git_output(&repo_path, &["status", "--porcelain"], None)?;
+  if !git_status.trim().is_empty() {
+    return Err("Local repo has uncommitted changes.".to_string());
+  }
+
+  let git_transport_token = load_git_transport_token(input.installation_id, session_token)?;
+  let new_head_sha = sync_project_repo(
+    &project,
+    &repo_path,
+    input.default_branch_head_oid.as_deref().unwrap_or_default(),
+    &git_transport_token,
+  )?;
+  let chapter_path = find_editor_chapter_path_by_id(&repo_path, &input.chapter_id)?;
+  let chapter_rows_path = chapter_path.join("rows");
+  let chapter_rows_relative_path = chapter_rows_path
+    .strip_prefix(&repo_path)
+    .map_err(|error| format!("Could not resolve the chapter rows path for git: {error}"))?
+    .to_string_lossy()
+    .to_string();
+  let (changed_row_ids, inserted_row_ids, deleted_row_ids) = match (old_head_sha.as_deref(), new_head_sha.as_deref()) {
+    (Some(old_head), Some(new_head)) if old_head != new_head => {
+      chapter_row_changes_between_commits(&repo_path, &chapter_rows_relative_path, old_head, new_head)?
+    }
+    _ => (Vec::new(), Vec::new(), Vec::new()),
+  };
+
+  Ok(ProjectEditorRepoSyncResponse {
+    old_head_sha,
+    new_head_sha,
+    changed_row_ids,
+    inserted_row_ids,
+    deleted_row_ids,
+  })
+}
+
+fn inspect_gtms_project_editor_repo_sync_state_sync(
+  app: &AppHandle,
+  input: InspectProjectEditorRepoSyncStateInput,
+) -> Result<InspectProjectEditorRepoSyncStateResponse, String> {
+  let repo_path = resolve_or_desired_project_git_repo_path(
+    app,
+    input.installation_id,
+    Some(&input.project_id),
+    &input.repo_name,
+  )?;
+  let current_head_sha = read_current_head_oid(&repo_path);
+  let commits_since_head = input
+    .since_head_sha
+    .as_deref()
+    .map(str::trim)
+    .filter(|value| !value.is_empty())
+    .map(|since_head_sha| {
+      if current_head_sha.as_deref() == Some(since_head_sha) {
+        return Ok(0usize);
+      }
+
+      let revision_range = format!("{since_head_sha}..HEAD");
+      let count_text = git_output(&repo_path, &["rev-list", "--count", &revision_range], None)?;
+      count_text
+        .trim()
+        .parse::<usize>()
+        .map_err(|error| format!("Could not parse the local commit count: {error}"))
+    })
+    .transpose()?
+    .unwrap_or(0);
+
+  Ok(InspectProjectEditorRepoSyncStateResponse {
+    current_head_sha,
+    commits_since_head,
+  })
+}
+
 fn spawn_project_repo_sync_job(
   store: Arc<Mutex<BTreeMap<String, ProjectRepoSyncSnapshot>>>,
   key: String,
@@ -235,6 +391,116 @@ fn spawn_project_repo_sync_job(
 
     save_sync_snapshot(&store, &key, next_snapshot);
   });
+}
+
+fn chapter_row_changes_between_commits(
+  repo_path: &Path,
+  chapter_rows_relative_path: &str,
+  old_head_sha: &str,
+  new_head_sha: &str,
+) -> Result<(Vec<String>, Vec<String>, Vec<String>), String> {
+  let diff_output = git_output(
+    repo_path,
+    &["diff", "--name-status", old_head_sha, new_head_sha, "--", chapter_rows_relative_path],
+    None,
+  )?;
+  let mut changed_row_ids = Vec::new();
+  let mut inserted_row_ids = Vec::new();
+  let mut deleted_row_ids = Vec::new();
+
+  for line in diff_output.lines() {
+    let fields = line.split('\t').collect::<Vec<_>>();
+    let Some(status) = fields.first().copied() else {
+      continue;
+    };
+    match status.chars().next().unwrap_or_default() {
+      'A' => {
+        if let Some(path) = fields.get(1).copied() {
+          if let Some(row_id) = row_id_from_repo_relative_path(path) {
+            inserted_row_ids.push(row_id);
+          }
+        }
+      }
+      'D' => {
+        if let Some(path) = fields.get(1).copied() {
+          if let Some(row_id) = row_id_from_repo_relative_path(path) {
+            deleted_row_ids.push(row_id);
+          }
+        }
+      }
+      'R' => {
+        if let Some(path) = fields.get(1).copied() {
+          if let Some(row_id) = row_id_from_repo_relative_path(path) {
+            deleted_row_ids.push(row_id);
+          }
+        }
+        if let Some(path) = fields.get(2).copied() {
+          if let Some(row_id) = row_id_from_repo_relative_path(path) {
+            inserted_row_ids.push(row_id);
+          }
+        }
+      }
+      _ => {
+        if let Some(path) = fields.last().copied() {
+          if let Some(row_id) = row_id_from_repo_relative_path(path) {
+            changed_row_ids.push(row_id);
+          }
+        }
+      }
+    }
+  }
+
+  changed_row_ids.sort();
+  changed_row_ids.dedup();
+  inserted_row_ids.sort();
+  inserted_row_ids.dedup();
+  deleted_row_ids.sort();
+  deleted_row_ids.dedup();
+
+  Ok((changed_row_ids, inserted_row_ids, deleted_row_ids))
+}
+
+fn row_id_from_repo_relative_path(path: &str) -> Option<String> {
+  let normalized = path.trim();
+  if !normalized.ends_with(".json") {
+    return None;
+  }
+
+  Path::new(normalized)
+    .file_stem()
+    .and_then(|value| value.to_str())
+    .map(str::trim)
+    .filter(|value| !value.is_empty())
+    .map(str::to_string)
+}
+
+fn find_editor_chapter_path_by_id(repo_path: &Path, chapter_id: &str) -> Result<PathBuf, String> {
+  let chapters_root = repo_path.join("chapters");
+  let entries = fs::read_dir(&chapters_root)
+    .map_err(|error| format!("Could not read chapters folder '{}': {error}", chapters_root.display()))?;
+
+  for entry in entries {
+    let entry = entry.map_err(|error| format!("Could not read a chapter folder entry: {error}"))?;
+    let chapter_path = entry.path();
+    if !chapter_path.is_dir() {
+      continue;
+    }
+
+    let chapter_json_path = chapter_path.join("chapter.json");
+    if !chapter_json_path.exists() {
+      continue;
+    }
+
+    let chapter_json = fs::read_to_string(&chapter_json_path)
+      .map_err(|error| format!("Could not read chapter metadata '{}': {error}", chapter_json_path.display()))?;
+    let chapter_value: Value = serde_json::from_str(&chapter_json)
+      .map_err(|error| format!("Could not parse chapter metadata '{}': {error}", chapter_json_path.display()))?;
+    if chapter_value.get("chapter_id").and_then(Value::as_str) == Some(chapter_id) {
+      return Ok(chapter_path);
+    }
+  }
+
+  Err(format!("Could not find chapter '{chapter_id}' in the local project repo."))
 }
 
 fn inspect_project_repo_state(

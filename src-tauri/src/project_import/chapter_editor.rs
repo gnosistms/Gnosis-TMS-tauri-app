@@ -2,12 +2,14 @@ use std::{
   cmp::Ordering,
   collections::BTreeMap,
   fs,
+  fmt::Write as _,
   path::Path,
   str,
 };
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use tauri::AppHandle;
 
 use crate::git_commit::{
@@ -135,6 +137,8 @@ pub(crate) struct UpdateEditorRowFieldsInput {
   chapter_id: String,
   row_id: String,
   fields: BTreeMap<String, String>,
+  #[serde(default)]
+  base_fields: BTreeMap<String, String>,
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -248,6 +252,16 @@ pub(crate) struct LoadEditorFieldHistoryInput {
   language_code: String,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct LoadEditorRowInput {
+  installation_id: i64,
+  repo_name: String,
+  project_id: Option<String>,
+  chapter_id: String,
+  row_id: String,
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct LoadEditorFieldHistoryResponse {
@@ -293,6 +307,14 @@ pub(crate) struct RestoreEditorFieldHistoryResponse {
   source_word_counts: BTreeMap<String, usize>,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct LoadEditorRowResponse {
+  row_id: String,
+  row: Option<EditorRow>,
+  chapter_base_commit_sha: Option<String>,
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ReverseEditorBatchReplaceCommitInput {
@@ -321,6 +343,7 @@ pub(crate) struct LoadChapterEditorResponse {
   source_word_counts: BTreeMap<String, usize>,
   selected_source_language_code: Option<String>,
   selected_target_language_code: Option<String>,
+  chapter_base_commit_sha: Option<String>,
   rows: Vec<EditorRow>,
 }
 
@@ -328,6 +351,7 @@ pub(crate) struct LoadChapterEditorResponse {
 #[serde(rename_all = "camelCase")]
 struct EditorRow {
   row_id: String,
+  revision_token: String,
   external_id: Option<String>,
   description: Option<String>,
   context: Option<String>,
@@ -373,6 +397,16 @@ struct ChapterLanguage {
   code: String,
   name: String,
   role: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SaveEditorRowWithConcurrencyResponse {
+  row_id: String,
+  status: String,
+  row: Option<EditorRow>,
+  source_word_counts: BTreeMap<String, usize>,
+  base_fields: BTreeMap<String, String>,
 }
 
 #[derive(Deserialize)]
@@ -537,7 +571,39 @@ pub(super) fn load_gtms_chapter_editor_data_sync(
     source_word_counts,
     selected_source_language_code,
     selected_target_language_code,
-    rows: rows.into_iter().map(editor_row_from_stored_row_file).collect(),
+    chapter_base_commit_sha: git_output(&repo_path, &["rev-parse", "--verify", "HEAD"], None).ok(),
+    rows: rows
+      .into_iter()
+      .map(editor_row_from_stored_row_file)
+      .collect::<Result<Vec<_>, _>>()?,
+  })
+}
+
+pub(super) fn load_gtms_editor_row_sync(
+  app: &AppHandle,
+  input: LoadEditorRowInput,
+) -> Result<LoadEditorRowResponse, String> {
+  let repo_path = resolve_project_git_repo_path(
+    app,
+    input.installation_id,
+    input.project_id.as_deref(),
+    Some(&input.repo_name),
+  )?;
+  ensure_repo_exists(&repo_path, "The local project repo is not available yet.")?;
+  ensure_valid_git_repo(&repo_path, "The local project repo is missing or invalid.")?;
+
+  let chapter_path = find_chapter_path_by_id(&repo_path.join("chapters"), &input.chapter_id)?;
+  let row_json_path = chapter_path.join("rows").join(format!("{}.json", input.row_id));
+  let row = if row_json_path.exists() {
+    Some(editor_row_from_stored_row_file(read_json_file(&row_json_path, "row file")?)?)
+  } else {
+    None
+  };
+
+  Ok(LoadEditorRowResponse {
+    row_id: input.row_id,
+    row,
+    chapter_base_commit_sha: git_output(&repo_path, &["rev-parse", "--verify", "HEAD"], None).ok(),
   })
 }
 
@@ -599,8 +665,11 @@ pub(super) fn insert_gtms_editor_row_sync(
     },
   )?;
 
+  let inserted_row_file: StoredRowFile = serde_json::from_value(row_file)
+    .map_err(|error| format!("Could not decode inserted row '{}': {error}", row_id))?;
+
   Ok(InsertEditorRowResponse {
-    row: create_inserted_editor_row(&row_id, &order_key, &languages),
+    row: editor_row_from_stored_row_file(inserted_row_file)?,
     source_word_counts: resolve_source_word_counts(&chapter_file, Some(&rows), &languages),
   })
 }
@@ -1080,7 +1149,7 @@ pub(super) fn permanently_delete_gtms_editor_row_sync(
 pub(super) fn update_gtms_editor_row_fields_sync(
   app: &AppHandle,
   input: UpdateEditorRowFieldsInput,
-) -> Result<UpdateEditorRowFieldsResponse, String> {
+) -> Result<SaveEditorRowWithConcurrencyResponse, String> {
   let repo_path = resolve_project_git_repo_path(
     app,
     input.installation_id,
@@ -1094,10 +1163,47 @@ pub(super) fn update_gtms_editor_row_fields_sync(
   let chapter_json_path = chapter_path.join("chapter.json");
   let chapter_file: StoredChapterFile = read_json_file(&chapter_json_path, "chapter.json")?;
   let row_json_path = chapter_path.join("rows").join(format!("{}.json", input.row_id));
+  let languages = sanitize_chapter_languages(&chapter_file.languages);
+  let source_word_counts = if chapter_file.source_word_counts.is_empty() {
+    let rows = load_editor_rows(&chapter_path.join("rows"))?;
+    resolve_source_word_counts(&chapter_file, Some(&rows), &languages)
+  } else {
+    resolve_source_word_counts(&chapter_file, None, &languages)
+  };
+  if !row_json_path.exists() {
+    return Ok(SaveEditorRowWithConcurrencyResponse {
+      row_id: input.row_id,
+      status: "deleted".to_string(),
+      row: None,
+      source_word_counts,
+      base_fields: input.base_fields,
+    });
+  }
+
   let original_row_text = fs::read_to_string(&row_json_path)
     .map_err(|error| format!("Could not read row file '{}': {error}", row_json_path.display()))?;
   let original_row_file: StoredRowFile = serde_json::from_str(&original_row_text)
     .map_err(|error| format!("Could not parse row file '{}': {error}", row_json_path.display()))?;
+  if original_row_file.lifecycle.state == "deleted" {
+    return Ok(SaveEditorRowWithConcurrencyResponse {
+      row_id: input.row_id,
+      status: "deleted".to_string(),
+      row: Some(editor_row_from_stored_row_file(original_row_file)?),
+      source_word_counts,
+      base_fields: input.base_fields,
+    });
+  }
+
+  if row_plain_text_map(&original_row_file) != input.base_fields {
+    return Ok(SaveEditorRowWithConcurrencyResponse {
+      row_id: input.row_id,
+      status: "conflict".to_string(),
+      row: Some(editor_row_from_stored_row_file(original_row_file)?),
+      source_word_counts,
+      base_fields: input.base_fields,
+    });
+  }
+
   let mut row_value: Value = serde_json::from_str(&original_row_text)
     .map_err(|error| format!("Could not parse row file '{}': {error}", row_json_path.display()))?;
   apply_editor_plain_text_updates(&mut row_value, &input.fields)?;
@@ -1105,24 +1211,19 @@ pub(super) fn update_gtms_editor_row_fields_sync(
   let updated_row_json = serde_json::to_string_pretty(&row_value)
     .map_err(|error| format!("Could not serialize row file '{}': {error}", row_json_path.display()))?;
   let updated_row_text = format!("{updated_row_json}\n");
-  let languages = sanitize_chapter_languages(&chapter_file.languages);
-  let mut source_word_counts = if chapter_file.source_word_counts.is_empty() {
-    let rows = load_editor_rows(&chapter_path.join("rows"))?;
-    resolve_source_word_counts(&chapter_file, Some(&rows), &languages)
-  } else {
-    resolve_source_word_counts(&chapter_file, None, &languages)
-  };
+  let mut next_source_word_counts = source_word_counts.clone();
+  let mut next_row = original_row_file.clone();
   if updated_row_text != original_row_text {
     let updated_row_file: StoredRowFile = serde_json::from_value(row_value.clone())
       .map_err(|error| format!("Could not decode updated row '{}': {error}", row_json_path.display()))?;
-    source_word_counts = apply_source_word_count_delta(
+    next_source_word_counts = apply_source_word_count_delta(
       &source_word_counts,
       &original_row_file,
       &updated_row_file,
       &languages,
     );
     write_text_file(&row_json_path, &updated_row_text)?;
-    write_chapter_source_word_counts(&chapter_json_path, &source_word_counts)?;
+    write_chapter_source_word_counts(&chapter_json_path, &next_source_word_counts)?;
 
     let relative_row_json = repo_relative_path(&repo_path, &row_json_path)?;
     let relative_chapter_json = repo_relative_path(&repo_path, &chapter_json_path)?;
@@ -1137,11 +1238,15 @@ pub(super) fn update_gtms_editor_row_fields_sync(
         status_note: None,
       },
     )?;
+    next_row = updated_row_file;
   }
 
-  Ok(UpdateEditorRowFieldsResponse {
+  Ok(SaveEditorRowWithConcurrencyResponse {
     row_id: input.row_id,
-    source_word_counts,
+    status: "saved".to_string(),
+    row: Some(editor_row_from_stored_row_file(next_row)?),
+    source_word_counts: next_source_word_counts,
+    base_fields: input.base_fields,
   })
 }
 
@@ -2210,9 +2315,10 @@ fn sanitize_chapter_languages(languages: &[ChapterLanguage]) -> Vec<ChapterLangu
   sanitized
 }
 
-fn editor_row_from_stored_row_file(row: StoredRowFile) -> EditorRow {
-  EditorRow {
+fn editor_row_from_stored_row_file(row: StoredRowFile) -> Result<EditorRow, String> {
+  Ok(EditorRow {
     row_id: row.row_id,
+    revision_token: row_revision_token(&row)?,
     external_id: row.external_id,
     description: row.guidance.as_ref().and_then(|guidance| guidance.description.clone()),
     context: row.guidance.as_ref().and_then(|guidance| guidance.context.clone()),
@@ -2222,11 +2328,7 @@ fn editor_row_from_stored_row_file(row: StoredRowFile) -> EditorRow {
     review_state: row.status.review_state,
     lifecycle_state: row.lifecycle.state,
     order_key: row.structure.order_key,
-    fields: row
-      .fields
-      .iter()
-      .map(|(code, value)| (code.clone(), value.plain_text.clone()))
-      .collect(),
+    fields: row_plain_text_map(&row),
     field_states: row
       .fields
       .into_iter()
@@ -2240,7 +2342,29 @@ fn editor_row_from_stored_row_file(row: StoredRowFile) -> EditorRow {
         )
       })
       .collect(),
+  })
+}
+
+fn row_plain_text_map(row: &StoredRowFile) -> BTreeMap<String, String> {
+  row
+    .fields
+    .iter()
+    .map(|(code, value)| (code.clone(), value.plain_text.clone()))
+    .collect()
+}
+
+fn row_revision_token(row: &StoredRowFile) -> Result<String, String> {
+  let row_json = serde_json::to_string_pretty(row)
+    .map_err(|error| format!("Could not serialize the row revision token: {error}"))?;
+  let mut digest = Sha256::new();
+  digest.update(row_json.as_bytes());
+  digest.update(b"\n");
+  let hash = digest.finalize();
+  let mut token = String::with_capacity(hash.len() * 2);
+  for byte in hash {
+    let _ = write!(&mut token, "{byte:02x}");
   }
+  Ok(token)
 }
 
 #[cfg(test)]
@@ -2720,7 +2844,7 @@ fn create_inserted_editor_row(
   row_id: &str,
   order_key: &str,
   languages: &[ChapterLanguage],
-) -> EditorRow {
+) -> Result<EditorRow, String> {
   let fields = languages
     .iter()
     .map(|language| (language.code.clone(), String::new()))
@@ -2738,8 +2862,20 @@ fn create_inserted_editor_row(
     })
     .collect();
 
-  EditorRow {
+  Ok(EditorRow {
     row_id: row_id.to_string(),
+    revision_token: row_revision_token(
+      &serde_json::from_value(create_inserted_row_file(row_id, order_key, &StoredChapterFile {
+        chapter_id: String::new(),
+        title: String::new(),
+        lifecycle: active_lifecycle_state(),
+        source_files: Vec::new(),
+        languages: languages.to_vec(),
+        source_word_counts: BTreeMap::new(),
+        settings: None,
+      }, languages))
+      .map_err(|error| format!("Could not build the inserted row token: {error}"))?,
+    )?,
     external_id: None,
     description: None,
     context: None,
@@ -2751,7 +2887,7 @@ fn create_inserted_editor_row(
     order_key: order_key.to_string(),
     fields,
     field_states,
-  }
+  })
 }
 
 fn empty_deleted_row_stub(row: &StoredRowFile) -> StoredRowFile {
