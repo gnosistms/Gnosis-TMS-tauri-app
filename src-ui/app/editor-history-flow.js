@@ -1,43 +1,32 @@
-import { historyEntryCanUndoReplace, reconcileExpandedEditorHistoryGroupKeys } from "./editor-history.js";
 import {
-  cloneExpandedHistoryGroupKeys,
-  currentEditorHistoryForSelection,
-  normalizeEditorHistoryState,
+  applyActiveEditorFieldHistoryLoaded,
+  applyActiveEditorFieldHistoryLoadFailed,
+  applyActiveEditorFieldHistoryLoading,
+  applyEditorHistoryGroupExpandedToggle,
+  applyEditorHistoryRestoreFailed,
+  applyEditorHistoryRestoreRequested,
+  applyEditorHistoryRestoreSucceeded,
+  applyEditorReplaceUndoModalError,
+  applyEditorReplaceUndoModalLoading,
+  applyEditorRowHistoryRestored,
+  buildEditorHistoryRequestKey,
+  cancelEditorReplaceUndoModalState,
+  currentActiveEditorHistoryEntryByCommitSha,
+  currentEditorHistoryRequestMatches,
+  historyEntryCanOpenReplaceUndo,
+  openEditorReplaceUndoModalState,
 } from "./editor-history-state.js";
 import { buildEditorReplaceUndoNotice, normalizeEditorReplaceUndoModalState } from "./editor-replace.js";
 import { findChapterContextById, selectedProjectsTeam } from "./project-context.js";
 import { invoke } from "./runtime.js";
-import {
-  createEditorReplaceUndoModalState,
-  state,
-} from "./state.js";
+import { state } from "./state.js";
 import { showNoticeBadge } from "./status-feedback.js";
 import {
-  cloneRowFields,
-  cloneRowFieldStates,
   findEditorRowById,
   hasActiveEditorField,
   hasEditorLanguage,
   hasEditorRow,
-  normalizeFieldState,
 } from "./editor-utils.js";
-
-function buildEditorHistoryRequestKey(chapterId, rowId, languageCode) {
-  if (!chapterId || !rowId || !languageCode) {
-    return null;
-  }
-
-  return `${chapterId}:${rowId}:${languageCode}`;
-}
-
-function currentHistoryRequestMatches(editorChapter, chapterId, rowId, languageCode, requestKey) {
-  return (
-    editorChapter?.chapterId === chapterId
-    && editorChapter.activeRowId === rowId
-    && editorChapter.activeLanguageCode === languageCode
-    && editorChapter.history?.requestKey === requestKey
-  );
-}
 
 async function fetchEditorFieldHistory(render, requestKey) {
   const editorChapter = state.editorChapter;
@@ -66,48 +55,31 @@ async function fetchEditorFieldHistory(render, requestKey) {
       },
     });
 
-    if (!currentHistoryRequestMatches(state.editorChapter, editorChapter.chapterId, rowId, languageCode, requestKey)) {
+    if (!currentEditorHistoryRequestMatches(state.editorChapter, editorChapter.chapterId, rowId, languageCode, requestKey)) {
       return;
     }
 
-    const previousHistory = normalizeEditorHistoryState(state.editorChapter.history);
-    state.editorChapter = {
-      ...state.editorChapter,
-      history: {
-        status: "ready",
-        error: "",
-        rowId,
-        languageCode,
-        requestKey,
-        restoringCommitSha: null,
-        expandedGroupKeys: reconcileExpandedEditorHistoryGroupKeys(
-          previousHistory.entries,
-          Array.isArray(payload?.entries) ? payload.entries : [],
-          previousHistory.expandedGroupKeys,
-        ),
-        entries: Array.isArray(payload?.entries) ? payload.entries : [],
-      },
-    };
+    state.editorChapter = applyActiveEditorFieldHistoryLoaded(
+      state.editorChapter,
+      rowId,
+      languageCode,
+      requestKey,
+      payload?.entries,
+    );
     render?.({ scope: "translate-sidebar" });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    if (!currentHistoryRequestMatches(state.editorChapter, editorChapter.chapterId, rowId, languageCode, requestKey)) {
+    if (!currentEditorHistoryRequestMatches(state.editorChapter, editorChapter.chapterId, rowId, languageCode, requestKey)) {
       return;
     }
 
-    state.editorChapter = {
-      ...state.editorChapter,
-      history: {
-        ...normalizeEditorHistoryState(state.editorChapter.history),
-        status: "error",
-        error: message,
-        rowId,
-        languageCode,
-        requestKey,
-        restoringCommitSha: null,
-        expandedGroupKeys: cloneExpandedHistoryGroupKeys(state.editorChapter.history?.expandedGroupKeys),
-      },
-    };
+    state.editorChapter = applyActiveEditorFieldHistoryLoadFailed(
+      state.editorChapter,
+      rowId,
+      languageCode,
+      requestKey,
+      message,
+    );
     render?.({ scope: "translate-sidebar" });
   }
 }
@@ -118,29 +90,12 @@ export function loadActiveEditorFieldHistory(render) {
     return;
   }
 
-  const currentHistory = currentEditorHistoryForSelection(
-    editorChapter,
-    editorChapter.activeRowId,
-    editorChapter.activeLanguageCode,
-  );
   const requestKey = buildEditorHistoryRequestKey(
     editorChapter.chapterId,
     editorChapter.activeRowId,
     editorChapter.activeLanguageCode,
   );
-  state.editorChapter = {
-    ...editorChapter,
-    history: {
-      ...normalizeEditorHistoryState(editorChapter.history),
-      status: "loading",
-      error: "",
-      rowId: editorChapter.activeRowId,
-      languageCode: editorChapter.activeLanguageCode,
-      requestKey,
-      restoringCommitSha: null,
-      expandedGroupKeys: cloneExpandedHistoryGroupKeys(currentHistory.expandedGroupKeys),
-    },
-  };
+  state.editorChapter = applyActiveEditorFieldHistoryLoading(editorChapter);
   render?.({ scope: "translate-sidebar" });
   void fetchEditorFieldHistory(render, requestKey);
 }
@@ -172,21 +127,7 @@ export function toggleEditorHistoryGroupExpanded(groupKey) {
     return;
   }
 
-  const history = normalizeEditorHistoryState(state.editorChapter.history);
-  const expandedGroupKeys = cloneExpandedHistoryGroupKeys(history.expandedGroupKeys);
-  if (expandedGroupKeys.has(groupKey)) {
-    expandedGroupKeys.delete(groupKey);
-  } else {
-    expandedGroupKeys.add(groupKey);
-  }
-
-  state.editorChapter = {
-    ...state.editorChapter,
-    history: {
-      ...history,
-      expandedGroupKeys,
-    },
-  };
+  state.editorChapter = applyEditorHistoryGroupExpandedToggle(state.editorChapter, groupKey);
 }
 
 export function hasPendingEditorRowWrites(chapterState = state.editorChapter) {
@@ -196,34 +137,15 @@ export function hasPendingEditorRowWrites(chapterState = state.editorChapter) {
 }
 
 export function currentActiveHistoryEntryByCommitSha(commitSha, chapterState = state.editorChapter) {
-  if (!commitSha || !hasActiveEditorField(chapterState)) {
-    return null;
-  }
-
-  const history = currentEditorHistoryForSelection(
-    chapterState,
-    chapterState.activeRowId,
-    chapterState.activeLanguageCode,
-  );
-  return history.entries.find((entry) => entry?.commitSha === commitSha) ?? null;
+  return currentActiveEditorHistoryEntryByCommitSha(chapterState, commitSha);
 }
 
 export function openEditorReplaceUndoModal(commitSha) {
-  const entry = currentActiveHistoryEntryByCommitSha(commitSha);
-  if (!state.editorChapter?.chapterId || !historyEntryCanUndoReplace(entry)) {
+  if (!state.editorChapter?.chapterId || !historyEntryCanOpenReplaceUndo(state.editorChapter, commitSha)) {
     return;
   }
 
-  state.editorChapter = {
-    ...state.editorChapter,
-    replaceUndoModal: {
-      ...createEditorReplaceUndoModalState(),
-      isOpen: true,
-      status: "idle",
-      error: "",
-      commitSha,
-    },
-  };
+  state.editorChapter = openEditorReplaceUndoModalState(state.editorChapter, commitSha);
 }
 
 export function cancelEditorReplaceUndoModal() {
@@ -231,10 +153,7 @@ export function cancelEditorReplaceUndoModal() {
     return;
   }
 
-  state.editorChapter = {
-    ...state.editorChapter,
-    replaceUndoModal: createEditorReplaceUndoModalState(),
-  };
+  state.editorChapter = cancelEditorReplaceUndoModalState(state.editorChapter);
 }
 
 export async function restoreEditorFieldHistory(render, commitSha, operations = {}) {
@@ -268,26 +187,7 @@ export async function restoreEditorFieldHistory(render, commitSha, operations = 
     return;
   }
 
-  state.editorChapter = {
-    ...editorChapter,
-    history: {
-      ...currentEditorHistoryForSelection(
-        editorChapter,
-        editorChapter.activeRowId,
-        editorChapter.activeLanguageCode,
-      ),
-      status: "restoring",
-      error: "",
-      rowId: editorChapter.activeRowId,
-      languageCode: editorChapter.activeLanguageCode,
-      requestKey: buildEditorHistoryRequestKey(
-        editorChapter.chapterId,
-        editorChapter.activeRowId,
-        editorChapter.activeLanguageCode,
-      ),
-      restoringCommitSha: commitSha,
-    },
-  };
+  state.editorChapter = applyEditorHistoryRestoreRequested(editorChapter, commitSha);
   render?.();
 
   try {
@@ -308,47 +208,18 @@ export async function restoreEditorFieldHistory(render, commitSha, operations = 
       && state.editorChapter.activeRowId === editorChapter.activeRowId
       && state.editorChapter.activeLanguageCode === editorChapter.activeLanguageCode
     ) {
-      updateEditorChapterRow(editorChapter.activeRowId, (currentRow) => ({
-        ...currentRow,
-        fields: {
-          ...cloneRowFields(currentRow.fields),
-          [editorChapter.activeLanguageCode]: payload?.plainText ?? "",
-        },
-        fieldStates: {
-          ...cloneRowFieldStates(currentRow.fieldStates),
-          [editorChapter.activeLanguageCode]: normalizeFieldState({
-            reviewed: payload?.reviewed,
-            pleaseCheck: payload?.pleaseCheck,
-          }),
-        },
-        persistedFields: {
-          ...cloneRowFields(currentRow.persistedFields),
-          [editorChapter.activeLanguageCode]: payload?.plainText ?? "",
-        },
-        persistedFieldStates: {
-          ...cloneRowFieldStates(currentRow.persistedFieldStates),
-          [editorChapter.activeLanguageCode]: normalizeFieldState({
-            reviewed: payload?.reviewed,
-            pleaseCheck: payload?.pleaseCheck,
-          }),
-        },
-        saveStatus: "idle",
-        saveError: "",
-      }));
+      updateEditorChapterRow(
+        editorChapter.activeRowId,
+        (currentRow) => applyEditorRowHistoryRestored(currentRow, editorChapter.activeLanguageCode, payload),
+      );
 
-      state.editorChapter = {
+      state.editorChapter = applyEditorHistoryRestoreSucceeded({
         ...state.editorChapter,
         sourceWordCounts:
           payload?.sourceWordCounts && typeof payload.sourceWordCounts === "object"
             ? payload.sourceWordCounts
             : state.editorChapter.sourceWordCounts,
-        history: {
-          ...normalizeEditorHistoryState(state.editorChapter.history),
-          status: "idle",
-          error: "",
-          restoringCommitSha: null,
-        },
-      };
+      });
       reconcileDirtyTrackedEditorRows([editorChapter.activeRowId]);
       applyEditorSelectionsToProjectState(state.editorChapter);
       render?.();
@@ -361,15 +232,7 @@ export async function restoreEditorFieldHistory(render, commitSha, operations = 
       && state.editorChapter.activeRowId === editorChapter.activeRowId
       && state.editorChapter.activeLanguageCode === editorChapter.activeLanguageCode
     ) {
-      state.editorChapter = {
-        ...state.editorChapter,
-        history: {
-          ...normalizeEditorHistoryState(state.editorChapter.history),
-          status: "ready",
-          error: "",
-          restoringCommitSha: null,
-        },
-      };
+      state.editorChapter = applyEditorHistoryRestoreFailed(state.editorChapter);
       render?.();
     }
     showNoticeBadge(message || "The selected history entry could not be restored.", render);
@@ -388,28 +251,20 @@ export async function confirmEditorReplaceUndo(render, operations = {}) {
     return;
   }
 
-  if (!historyEntryCanUndoReplace(currentActiveHistoryEntryByCommitSha(modal.commitSha, editorChapter))) {
-    state.editorChapter = {
-      ...editorChapter,
-      replaceUndoModal: {
-        ...modal,
-        status: "idle",
-        error: "The selected batch replace history entry is no longer available.",
-      },
-    };
+  if (!historyEntryCanOpenReplaceUndo(editorChapter, modal.commitSha)) {
+    state.editorChapter = applyEditorReplaceUndoModalError(
+      editorChapter,
+      "The selected batch replace history entry is no longer available.",
+    );
     render?.();
     return;
   }
 
   if (hasPendingEditorRowWrites(editorChapter)) {
-    state.editorChapter = {
-      ...editorChapter,
-      replaceUndoModal: {
-        ...modal,
-        status: "idle",
-        error: "Save or resolve current row edits before undoing a batch replace.",
-      },
-    };
+    state.editorChapter = applyEditorReplaceUndoModalError(
+      editorChapter,
+      "Save or resolve current row edits before undoing a batch replace.",
+    );
     render?.();
     return;
   }
@@ -420,14 +275,7 @@ export async function confirmEditorReplaceUndo(render, operations = {}) {
     return;
   }
 
-  state.editorChapter = {
-    ...editorChapter,
-    replaceUndoModal: {
-      ...modal,
-      status: "loading",
-      error: "",
-    },
-  };
+  state.editorChapter = applyEditorReplaceUndoModalLoading(editorChapter);
   render?.();
 
   try {
@@ -447,10 +295,7 @@ export async function confirmEditorReplaceUndo(render, operations = {}) {
       if (updatedRows.length > 0) {
         markEditorRowsPersisted(updatedRows, payload?.sourceWordCounts);
       }
-      state.editorChapter = {
-        ...state.editorChapter,
-        replaceUndoModal: createEditorReplaceUndoModalState(),
-      };
+      state.editorChapter = cancelEditorReplaceUndoModalState(state.editorChapter);
       render?.();
       if (updatedRows.some((row) => row?.rowId === state.editorChapter.activeRowId)) {
         loadActiveEditorFieldHistory(render);
@@ -460,14 +305,7 @@ export async function confirmEditorReplaceUndo(render, operations = {}) {
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     if (state.editorChapter?.chapterId === editorChapter.chapterId) {
-      state.editorChapter = {
-        ...state.editorChapter,
-        replaceUndoModal: {
-          ...normalizeEditorReplaceUndoModalState(state.editorChapter.replaceUndoModal),
-          status: "idle",
-          error: message,
-        },
-      };
+      state.editorChapter = applyEditorReplaceUndoModalError(state.editorChapter, message);
       render?.();
     }
   }
