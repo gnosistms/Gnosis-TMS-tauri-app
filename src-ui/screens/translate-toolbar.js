@@ -6,6 +6,11 @@ import {
   textAction,
   tooltipAttributes,
 } from "../lib/ui.js";
+import {
+  EDITOR_ROW_FILTER_MODE_SHOW_ALL,
+  EDITOR_ROW_FILTER_OPTIONS,
+  labelForEditorRowFilterMode,
+} from "../app/editor-filters.js";
 import { EDITOR_FONT_SIZE_OPTIONS } from "../app/state.js";
 
 function renderLanguageSelect(label, dataAttribute, selectedCode, languages, extraOptions = []) {
@@ -53,22 +58,21 @@ function renderFontSizeSelect(fontSizePx) {
   });
 }
 
-function renderFilterSelect() {
+function renderFilterSelect(editorFilters) {
+  const selectedMode = editorFilters?.filters?.rowFilterMode ?? EDITOR_ROW_FILTER_MODE_SHOW_ALL;
   return renderSelectPillControl({
     className: "select-pill--toolbar",
     label: "Filter:",
-    value: "Show all",
+    value: labelForEditorRowFilterMode(selectedMode),
     selectAttributes: {
       "data-editor-filter-select": true,
       "aria-label": "Editor filter",
     },
-    options: [
-      {
-        value: "show-all",
-        label: "Show all",
-        selected: true,
-      },
-    ],
+    options: EDITOR_ROW_FILTER_OPTIONS.map((option) => ({
+      value: option.value,
+      label: option.label,
+      selected: option.value === selectedMode,
+    })),
   });
 }
 
@@ -165,9 +169,7 @@ function renderEditorFilterSummaryLabel(editorFilters) {
     return null;
   }
 
-  return rowCount === 1
-    ? "Search result: 1 matching row"
-    : `Search result: ${rowCount} matching rows`;
+  return rowCount === 1 ? "Showing 1 matching row" : `Showing ${rowCount} matching rows`;
 }
 
 export function renderEditorFilterBanner(editorFilters) {
@@ -210,7 +212,7 @@ export function renderTranslateToolbar({
         ${renderLanguageSelect("Source", "editor-source-language-select", sourceCode, languages)}
         ${renderLanguageSelect("Target", "editor-target-language-select", targetCode, languages, targetLanguageExtraOptions)}
         ${renderFontSizeSelect(editorFontSizePx)}
-        ${renderFilterSelect()}
+        ${renderFilterSelect(editorFilters)}
       </div>
       <div class="toolbar-row toolbar-row--between">
         <div class="toolbar-search">

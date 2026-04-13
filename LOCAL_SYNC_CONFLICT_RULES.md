@@ -169,9 +169,9 @@ Examples:
 Handling rule:
 
 - if the values are equal, resolve automatically
-- if the values differ, do not silently overwrite
-- show local and remote values
-- require explicit resolution
+- if the field has a declared automatic merge rule, apply that rule and continue sync
+- if the field is row translation text, materialize a row text-conflict payload and continue sync
+- only row translation text should remain unresolved for later user action
 
 ### 4. `StructuralDivergence`
 
@@ -189,8 +189,8 @@ Handling rule:
 
 - do not treat this like a plain text conflict
 - for chapter order, newest value wins
-- for row order, require explicit conflict handling
-- do not silently overwrite row-order conflicts
+- for row order, merge by stable row id and rewrite normalized `order_key` values
+- only escalate to `SyncFailure` if the structure cannot be parsed or normalized
 
 ### 5. `SyncFailure`
 
@@ -299,7 +299,7 @@ This means:
 And more specifically:
 
 - chapter order is safe to resolve with newest-wins
-- row order is not safe to resolve automatically
+- row order is safe to resolve automatically by ordered merge and renormalization
 
 ### Rule D: Never Drop Unsaved Local Work
 
@@ -375,16 +375,16 @@ Effects on descendants:
 Row conflicts should map like this:
 
 - Row deleted -> `ObjectMissing`, but preserved locally as deleted row if local state exists
-- same row field changed locally/remotely -> `ConcurrentEdit(field)`
-- row order changed incompatibly -> `StructuralDivergence`
+- same row translation text changed locally/remotely -> `ConcurrentEdit(field)`, materialized as row text-conflict state
+- same non-text row field changed locally/remotely -> `ConcurrentEdit(field)`, auto-resolved by field rule
+- row order changed incompatibly -> `StructuralDivergence`, auto-resolved
 - save/push failure -> `SyncFailure`
 
-This is the main place where true user-visible conflict resolution remains necessary.
+This is the only place where true user-visible conflict resolution should remain necessary.
 
-The two important unresolved row-level conflict classes are:
+The only unresolved row-level conflict class should be:
 
-- row content conflict
-- row order conflict
+- row translation text conflict
 
 ## Minimal Resolution Policies
 
@@ -413,16 +413,16 @@ Default behavior:
 Default behavior:
 
 - if the field is a human-readable name, newest value wins
-- if the field is row content or another important content field, show local vs remote
-- require explicit choice only for real content conflicts
+- if the field has an automatic rule in [MERGE_CONFLICT_DATA_TYPES.md](/Users/hans/Desktop/GnosisTMS/MERGE_CONFLICT_DATA_TYPES.md), apply it silently
+- if the field is row translation text, store base/local/remote values in the row conflict payload and require later user resolution in the editor
 
 ### `StructuralDivergence`
 
 Default behavior:
 
 - if the divergence is chapter order, newest value wins
-- if the divergence is row order, show structural conflict state
-- do not silently overwrite row-order conflicts
+- if the divergence is row order, merge order automatically and rewrite normalized `order_key` values
+- if structure cannot be parsed or normalized, abort the rebase and mark the repo unsynced
 
 ### `SyncFailure`
 
@@ -492,7 +492,7 @@ Instead of treating rename as a true conflict across Team / Project / Chapter, w
 Instead of treating all order conflicts the same, we split them:
 
 - chapter order -> newest wins
-- row order -> explicit conflict UI
+- row order -> ordered merge plus renormalization
 
 Instead of writing unique rename logic for:
 
@@ -507,13 +507,145 @@ we write one rule:
 
 That is the main simplification.
 
-## Recommended Next Step
+## Automatic Background Sync Triggers
 
-Before implementing local-first repos, decide these policy questions:
+For project, glossary, and editor repos, the normal background-sync trigger is:
 
-1. For `ParentMissing`, do we always preserve local work as an orphan draft?
-2. For `ConcurrentEdit`, which non-name fields can be auto-merged and which always require explicit resolution?
-3. For row-order conflicts, what information must the user see to resolve them safely?
-4. For row-content conflicts, what local/remote context must be shown in the resolution UI?
-5. For `SyncFailure`, which pages remain usable in read-only mode?
-6. Do we block Translate editing until row-level conflict UI exists, or ship with a minimal fallback?
+- after 5 unsynced local commits in that repo, mark the repo `sync pending` and call `maybeStartSync()`
+
+Once a repo is `sync pending`, it stays due for sync until a successful
+`pull --rebase` / `push` clears that state.
+
+## Automatic Background Sync Gating
+
+Threshold-driven background sync should not run the moment a local commit is
+created.
+
+For project, glossary, and editor repos, threshold-driven background
+`pull --rebase` / `push` should run only when all of these are true:
+
+- there are no unsaved in-memory editor changes
+- there is no local write operation in flight
+- there is no other sync job already running for that repo
+- the relevant window/scroll container has not scrolled for at least 10 seconds
+
+Any scroll event should reset the 10-second timer.
+
+This is a scheduling rule, not a conflict-resolution rule. Its purpose is to
+reduce the chance that the app rebases local commits while the user is actively
+reading, navigating, or editing nearby content.
+
+## Mandatory Editor Boundary Sync
+
+The app must also trigger a sync attempt when:
+
+- entering the file editor
+- exiting the file editor
+- entering the glossary editor
+- exiting the glossary editor
+
+These boundary-triggered sync attempts bypass:
+
+- the 5-commit threshold
+- the 10-second no-scroll gate
+
+But they still must respect the safety constraints above:
+
+- flush unsaved in-memory editor changes first when leaving an editor
+- wait for any in-flight local write operation to finish
+- serialize with any already-running sync job for that repo
+
+If a mandatory boundary sync cannot complete, the app should preserve local
+work, mark the repo unsynced, and surface the failure instead of silently
+skipping it.
+
+## Editor Sync Scope
+
+When the user is entering or leaving an editor, the sync scope must stay narrow.
+
+- entering or leaving the file editor should sync only the currently edited project repo
+- entering or leaving the glossary editor should sync only the currently edited glossary repo
+
+Editor entry/exit must not trigger a team-wide sync of unrelated project repos or
+glossary repos.
+
+## Production Merge Resolution Plan
+
+### 1. One Conflict-Capable Sync Pipeline Per Repo Type
+
+- project repos and glossary repos already sync through `pull --rebase` and `push`
+- team metadata currently uses `pull --ff-only`; before shipping automatic conflict resolution, move it onto the same conflict-capable rebase pipeline
+- all repo types should share the same outer sync flow and differ only in the typed file resolver that handles conflicted paths
+
+### 2. Sync Loop
+
+1. `maybeStartSync(repo)` acquires a per-repo sync lock.
+2. Confirm the sync gating rules are still satisfied.
+3. Run `git pull --rebase origin <branch>` or the equivalent fetch-plus-rebase flow.
+4. If rebase stops on conflicts, list the unmerged paths.
+5. Resolve each conflicted path using stage `1` / `2` / `3` blobs and the rules in [MERGE_CONFLICT_DATA_TYPES.md](/Users/hans/Desktop/GnosisTMS/MERGE_CONFLICT_DATA_TYPES.md).
+6. `git add` every resolved file and run `git rebase --continue`.
+7. Repeat until rebase completes or an unhandled path forces `git rebase --abort`.
+8. Run `git push origin <branch>`.
+9. If push is rejected because remote advanced again, retry the cycle once from the top.
+
+### 3. File Resolver Contract
+
+- input: repo type, relative path, base blob, local blob, remote blob
+- parse JSON into the typed object model for that repo
+- merge by stable IDs and field rules, never by raw line merge
+- recompute all derived fields before writing
+- serialize canonical JSON and stage the file
+- if a file is unknown, malformed, or missing required stable IDs, fail closed and abort the sync
+
+### 4. Manual Translation Text Conflicts
+
+When the conflicting field is `fields[language].plain_text`:
+
+- do not leave raw Git conflict markers in the file
+- write a normal JSON row file that preserves:
+  - `base_text`
+  - `local_text`
+  - `remote_text`
+  - `detected_at`
+  - the conflicting language code
+- set row or field `textConflictState = unresolved`
+- keep one display value in `plain_text`; use the rebasing local value so the user never loses their last local text
+- force `reviewed = false`
+- force `please_check = true`
+- complete the rebase and push normally
+
+### 5. Repo State After Translation Conflicts
+
+- a repo with unresolved row translation conflicts is still `synced`, not `sync failed`
+- unresolved work lives on the row data and drives the `Has conflict` filter
+- `SyncFailure` is only for transport failures, unhandled files, malformed data, or resolver failures
+
+### 6. Repo Coverage
+
+- team metadata repo: project and glossary metadata records auto-resolve with the metadata rules
+- project repos: chapter metadata, row order, review flags, comments, delete/restore, and derived counters auto-resolve; only row translation text becomes manual
+- glossary repos: term variants, notes, footnotes, lifecycle, and derived flags auto-resolve
+
+### 7. User Resolution Flow
+
+- the editor opens rows with `textConflictState = unresolved`
+- the conflict UI shows local, remote, and base text
+- the user can accept local, accept remote, or write a merged text
+- saving the resolution writes the chosen `plain_text`, clears the conflict payload, keeps `reviewed = false`, and leaves `please_check` unchanged until the user decides otherwise
+
+### 8. Failure Policy
+
+- never leave a repo in `rebase in progress` state when sync returns control
+- if every conflicted path is resolved, finish the rebase and push
+- if any conflicted path cannot be resolved automatically, abort the rebase, preserve local commits, and mark the repo unsynced with a concrete error
+
+### 9. Test Plan
+
+- unit tests for each rule group against base/local/remote triples
+- resolver tests for representative team metadata, project row, row comment, and glossary term files
+- sync tests where `pull --rebase` produces:
+  - pure automatic resolution
+  - unresolved row translation text conflict that still ends in successful push
+  - malformed or unknown files that abort and mark `SyncFailure`
+- editor tests for the `Has conflict` filter and the conflict-resolution flow

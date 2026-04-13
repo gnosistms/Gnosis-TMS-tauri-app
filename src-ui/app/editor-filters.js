@@ -1,3 +1,29 @@
+import { editorRowHasUnreadComments } from "./editor-comments.js";
+
+export const EDITOR_ROW_FILTER_MODE_SHOW_ALL = "show-all";
+export const EDITOR_ROW_FILTER_MODE_REVIEWED = "reviewed";
+export const EDITOR_ROW_FILTER_MODE_NOT_REVIEWED = "not-reviewed";
+export const EDITOR_ROW_FILTER_MODE_PLEASE_CHECK = "please-check";
+export const EDITOR_ROW_FILTER_MODE_TARGET_EMPTY = "target-empty";
+export const EDITOR_ROW_FILTER_MODE_HAS_COMMENTS = "has-comments";
+export const EDITOR_ROW_FILTER_MODE_HAS_UNREAD_COMMENTS = "has-unread-comments";
+export const EDITOR_ROW_FILTER_MODE_HAS_CONFLICT = "has-conflict";
+
+export const EDITOR_ROW_FILTER_OPTIONS = [
+  { value: EDITOR_ROW_FILTER_MODE_SHOW_ALL, label: "Show all" },
+  { value: EDITOR_ROW_FILTER_MODE_REVIEWED, label: "Reviewed" },
+  { value: EDITOR_ROW_FILTER_MODE_NOT_REVIEWED, label: "Not reviewed" },
+  { value: EDITOR_ROW_FILTER_MODE_PLEASE_CHECK, label: "Please check" },
+  { value: EDITOR_ROW_FILTER_MODE_TARGET_EMPTY, label: "Target empty" },
+  { value: EDITOR_ROW_FILTER_MODE_HAS_COMMENTS, label: "Has comments" },
+  { value: EDITOR_ROW_FILTER_MODE_HAS_UNREAD_COMMENTS, label: "Has unread comments" },
+  { value: EDITOR_ROW_FILTER_MODE_HAS_CONFLICT, label: "Has conflict" },
+];
+
+const EDITOR_ROW_FILTER_OPTION_VALUES = new Set(
+  EDITOR_ROW_FILTER_OPTIONS.map((option) => option.value),
+);
+
 function normalizeSearchCase(value, languageCode = "") {
   const text = String(value ?? "");
   if (!text) {
@@ -27,12 +53,23 @@ export function normalizeEditorChapterFilterState(filters) {
   return {
     searchQuery: typeof filters?.searchQuery === "string" ? filters.searchQuery : "",
     caseSensitive: filters?.caseSensitive === true,
+    rowFilterMode:
+      typeof filters?.rowFilterMode === "string" && EDITOR_ROW_FILTER_OPTION_VALUES.has(filters.rowFilterMode)
+        ? filters.rowFilterMode
+        : EDITOR_ROW_FILTER_MODE_SHOW_ALL,
   };
 }
 
 export function editorChapterFiltersAreActive(filters) {
   const normalizedFilters = normalizeEditorChapterFilterState(filters);
-  return normalizedFilters.searchQuery.trim().length > 0;
+  return (
+    normalizedFilters.searchQuery.trim().length > 0
+    || normalizedFilters.rowFilterMode !== EDITOR_ROW_FILTER_MODE_SHOW_ALL
+  );
+}
+
+export function labelForEditorRowFilterMode(mode) {
+  return EDITOR_ROW_FILTER_OPTIONS.find((option) => option.value === mode)?.label ?? "Show all";
 }
 
 export function buildEditorSearchResultKey(rowId, languageCode, start, end) {
@@ -82,6 +119,63 @@ function buildVisibleLanguageCodeSet(languages, collapsedLanguageCodes) {
   );
 }
 
+function findRowSection(row, languageCode) {
+  if (!languageCode) {
+    return null;
+  }
+
+  return (Array.isArray(row?.sections) ? row.sections : []).find((section) => resolveLanguageCode(section) === languageCode) ?? null;
+}
+
+function rowHasUnresolvedTextConflict(row, targetLanguageCode) {
+  const targetSection = findRowSection(row, targetLanguageCode);
+  if (
+    targetSection?.hasTextConflict === true
+    || targetSection?.textConflict?.isUnresolved === true
+    || targetSection?.textConflict?.status === "unresolved"
+    || targetSection?.textConflictState === "unresolved"
+    || targetSection?.textConflictState === "conflict"
+  ) {
+    return true;
+  }
+
+  return (
+    row?.hasTextConflict === true
+    || row?.textConflict?.isUnresolved === true
+    || row?.textConflict?.status === "unresolved"
+    || row?.textConflictState === "unresolved"
+    || row?.textConflictState === "conflict"
+    || row?.translationConflictState === "unresolved"
+    || row?.translationConflictState === "conflict"
+  );
+}
+
+function rowMatchesFilterMode(row, rowFilterMode, targetLanguageCode, seenRevisions) {
+  if (rowFilterMode === EDITOR_ROW_FILTER_MODE_SHOW_ALL) {
+    return true;
+  }
+
+  const targetSection = findRowSection(row, targetLanguageCode);
+  switch (rowFilterMode) {
+    case EDITOR_ROW_FILTER_MODE_REVIEWED:
+      return targetSection?.reviewed === true;
+    case EDITOR_ROW_FILTER_MODE_NOT_REVIEWED:
+      return Boolean(targetSection) && targetSection.reviewed !== true;
+    case EDITOR_ROW_FILTER_MODE_PLEASE_CHECK:
+      return targetSection?.pleaseCheck === true;
+    case EDITOR_ROW_FILTER_MODE_TARGET_EMPTY:
+      return Boolean(targetSection) && String(targetSection.text ?? "").trim().length === 0;
+    case EDITOR_ROW_FILTER_MODE_HAS_COMMENTS:
+      return Number.parseInt(String(row?.commentCount ?? ""), 10) > 0;
+    case EDITOR_ROW_FILTER_MODE_HAS_UNREAD_COMMENTS:
+      return editorRowHasUnreadComments(row, seenRevisions);
+    case EDITOR_ROW_FILTER_MODE_HAS_CONFLICT:
+      return rowHasUnresolvedTextConflict(row, targetLanguageCode);
+    default:
+      return true;
+  }
+}
+
 function buildRowSearchMatches(row, searchQuery, visibleLanguageCodes, caseSensitive = false) {
   const sections = Array.isArray(row?.sections) ? row.sections : [];
   const matchesByLanguage = new Map();
@@ -124,10 +218,14 @@ export function buildEditorFilterResult({
   languages,
   collapsedLanguageCodes,
   filters,
+  targetLanguageCode = "",
+  commentSeenRevisions = {},
 }) {
   const normalizedFilters = normalizeEditorChapterFilterState(filters);
   const visibleLanguageCodes = buildVisibleLanguageCodeSet(languages, collapsedLanguageCodes);
-  const hasActiveFilters = editorChapterFiltersAreActive(normalizedFilters);
+  const hasSearchFilter = normalizedFilters.searchQuery.trim().length > 0;
+  const hasRowFilter = normalizedFilters.rowFilterMode !== EDITOR_ROW_FILTER_MODE_SHOW_ALL;
+  const hasActiveFilters = hasSearchFilter || hasRowFilter;
   const rowList = Array.isArray(rows) ? rows : [];
 
   if (!hasActiveFilters) {
@@ -148,6 +246,15 @@ export function buildEditorFilterResult({
 
   for (const row of rowList) {
     if (!row || row.kind === "deleted-group" || row.lifecycleState === "deleted") {
+      continue;
+    }
+
+    if (!rowMatchesFilterMode(row, normalizedFilters.rowFilterMode, targetLanguageCode, commentSeenRevisions)) {
+      continue;
+    }
+
+    if (!hasSearchFilter) {
+      filteredRows.push(row);
       continue;
     }
 

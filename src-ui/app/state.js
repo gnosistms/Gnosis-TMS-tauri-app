@@ -254,6 +254,7 @@ export function createEditorChapterFilterState() {
   return {
     searchQuery: "",
     caseSensitive: false,
+    rowFilterMode: "show-all",
   };
 }
 

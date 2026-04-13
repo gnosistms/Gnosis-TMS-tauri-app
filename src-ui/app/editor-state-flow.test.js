@@ -41,7 +41,7 @@ test("applyEditorUiState preserves same-chapter editor UI state when the active 
     fontSizePx: 24,
     collapsedLanguageCodes: new Set(["fr"]),
     dirtyRowIds: new Set(["row-1", "row-missing"]),
-    filters: { searchQuery: "needle", caseSensitive: true },
+    filters: { searchQuery: "needle", caseSensitive: true, rowFilterMode: "reviewed" },
     replace: {
       enabled: true,
       replaceQuery: "swap",
@@ -80,6 +80,7 @@ test("applyEditorUiState preserves same-chapter editor UI state when the active 
   assert.equal(result.replaceUndoModal.isOpen, true);
   assert.equal(result.filters.searchQuery, "needle");
   assert.equal(result.filters.caseSensitive, true);
+  assert.equal(result.filters.rowFilterMode, "reviewed");
   assert.equal(result.replace.enabled, true);
   assert.equal(result.replace.replaceQuery, "swap");
   assert.deepEqual([...result.replace.selectedRowIds], ["row-1"]);

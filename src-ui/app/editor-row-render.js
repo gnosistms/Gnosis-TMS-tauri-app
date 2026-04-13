@@ -17,8 +17,8 @@ export function renderTranslationMarkerIcon(kind) {
     return `
       <svg class="translation-marker-button__icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false">
         <rect x="2.25" y="2.25" width="15.5" height="15.5" rx="4" fill="none" stroke="currentColor" stroke-width="1.8"></rect>
-        <path d="M10 6.1c1.03 0 1.86.84 1.86 1.87 0 .72-.33 1.1-.85 1.58-.54.5-.86.84-.86 1.66" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"></path>
-        <circle cx="10" cy="14.1" r="1" fill="currentColor"></circle>
+        <path d="M10 5.9v5.8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"></path>
+        <circle cx="10" cy="14.1" r="1.05" fill="currentColor"></circle>
       </svg>
     `;
   }
@@ -42,13 +42,7 @@ export function renderTranslationMarkerIcon(kind) {
 }
 
 function renderUnreadCommentsMarkerIcon() {
-  return `
-    <svg class="translation-marker-button__icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false">
-      <rect x="2.25" y="2.25" width="15.5" height="15.5" rx="4" fill="currentColor"></rect>
-      <path d="M10 6.25c1.03 0 1.86.84 1.86 1.87 0 .72-.33 1.1-.85 1.58-.54.5-.86.84-.86 1.66" fill="none" stroke="var(--translation-marker-cutout, #ffffff)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"></path>
-      <circle cx="10" cy="14.1" r="1" fill="var(--translation-marker-cutout, #ffffff)"></circle>
-    </svg>
-  `;
+  return renderTranslationMarkerIcon("comments");
 }
 
 function renderLanguageMarkerButton(kind, rowId, language) {

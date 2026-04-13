@@ -162,6 +162,7 @@ export function applyEditorRegressionFixture(appState, options = {}) {
     filters: {
       searchQuery: typeof options?.searchQuery === "string" ? options.searchQuery : "",
       caseSensitive: options?.caseSensitive === true,
+      rowFilterMode: typeof options?.rowFilterMode === "string" ? options.rowFilterMode : "show-all",
     },
     replace: {
       enabled: options?.replaceEnabled === true,
@@ -341,6 +342,7 @@ export function readEditorRegressionSnapshot(appState) {
       ? {
           searchQuery: appState.editorChapter.filters.searchQuery ?? "",
           caseSensitive: appState.editorChapter.filters.caseSensitive === true,
+          rowFilterMode: appState.editorChapter.filters.rowFilterMode ?? "show-all",
         }
       : null,
     replace: appState.editorChapter?.replace

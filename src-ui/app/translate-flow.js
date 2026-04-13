@@ -19,6 +19,7 @@ import {
   replaceSelectedEditorRows as replaceSelectedEditorRowsFlow,
   selectAllEditorReplaceRows as selectAllEditorReplaceRowsFlow,
   toggleEditorReplaceEnabled as toggleEditorReplaceEnabledFlow,
+  updateEditorRowFilterMode as updateEditorRowFilterModeFlow,
   toggleEditorReplaceRowSelected as toggleEditorReplaceRowSelectedFlow,
   toggleEditorSearchFilterCaseSensitive as toggleEditorSearchFilterCaseSensitiveFlow,
   updateEditorReplaceQuery as updateEditorReplaceQueryFlow,
@@ -306,6 +307,10 @@ export function updateEditorRowFieldValue(rowId, languageCode, nextValue) {
 
 export function updateEditorSearchFilterQuery(render, nextValue) {
   updateEditorSearchFilterQueryFlow(render, nextValue);
+}
+
+export function updateEditorRowFilterMode(render, nextValue) {
+  updateEditorRowFilterModeFlow(render, nextValue);
 }
 
 export function toggleEditorSearchFilterCaseSensitive(render, enabled) {

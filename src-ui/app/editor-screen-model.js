@@ -54,8 +54,9 @@ function buildLiveTranslationRows(editorChapter, languages) {
     return cachedLiveTranslationRows;
   }
 
-  const liveRows = editorRows.map((row, index) => {
+  const liveRows = editorRows.map((row) => {
     return {
+      ...row,
       kind: "row",
       id: row.rowId,
       rowId: row.rowId,
@@ -192,6 +193,8 @@ export function buildEditorScreenViewModel(appState) {
     languages,
     collapsedLanguageCodes,
     filters: editorChapter?.filters,
+    targetLanguageCode: targetCode,
+    commentSeenRevisions,
   });
   const editorReplace = buildEditorReplaceViewModel(editorChapter, editorFilters);
   const contentRows = buildEditorDisplayItems(

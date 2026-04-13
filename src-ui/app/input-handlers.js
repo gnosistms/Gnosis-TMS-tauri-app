@@ -34,6 +34,7 @@ import {
   updateEditorFontSize,
   updateEditorCommentDraft,
   updateEditorReplaceQuery,
+  updateEditorRowFilterMode,
   updateEditorRowFieldValue,
   updateEditorSearchFilterQuery,
   updateEditorSourceLanguage,
@@ -283,6 +284,20 @@ function handleEditorFontSizeInput(event, render) {
   return true;
 }
 
+function handleEditorFilterSelectInput(event, render) {
+  if (event.type !== "change") {
+    return false;
+  }
+
+  const input = event.target.closest("[data-editor-filter-select]");
+  if (!input) {
+    return false;
+  }
+
+  updateEditorRowFilterMode(render, input.value);
+  return true;
+}
+
 function handleEditorSearchInput(event, render) {
   const input = event.target.closest("[data-editor-search-input]");
   if (!input) {
@@ -404,6 +419,7 @@ const inputHandlers = [
   handleEditorSourceLanguageInput,
   handleEditorTargetLanguageInput,
   handleEditorFontSizeInput,
+  handleEditorFilterSelectInput,
   handleEditorSearchInput,
   handleEditorReplaceToggleInput,
   handleEditorReplaceInput,

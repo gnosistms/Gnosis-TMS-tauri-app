@@ -81,7 +81,7 @@ function buildTranslateScreenFrame(state) {
         <div class="card__body">
           <p>${escapeHtml(
             editorFilters?.hasActiveFilters
-              ? "No rows match the current search."
+              ? "No rows match the current filters."
               : "This file does not contain any translatable rows.",
           )}</p>
         </div>

@@ -146,6 +146,39 @@ export function toggleEditorSearchFilterCaseSensitive(render, enabled) {
   });
 }
 
+export function updateEditorRowFilterMode(render, nextValue) {
+  if (!state.editorChapter?.chapterId) {
+    return;
+  }
+
+  const currentFilters = normalizeEditorChapterFilters(state.editorChapter?.filters);
+  const nextFilters = normalizeEditorChapterFilters({
+    ...currentFilters,
+    rowFilterMode: nextValue,
+  });
+  if (currentFilters.rowFilterMode === nextFilters.rowFilterMode) {
+    return;
+  }
+
+  const searchIsActive = currentFilters.searchQuery.trim().length > 0;
+  const currentReplaceState = normalizeEditorReplaceState(state.editorChapter?.replace);
+  state.editorChapter = {
+    ...state.editorChapter,
+    filters: nextFilters,
+    replace: {
+      ...currentReplaceState,
+      enabled: searchIsActive ? currentReplaceState.enabled : false,
+      selectedRowIds: new Set(),
+      status: "idle",
+      error: "",
+    },
+  };
+  render?.();
+  void waitForNextPaint().then(() => {
+    scrollTranslateMainToTop();
+  });
+}
+
 export function toggleEditorReplaceEnabled(render, enabled, anchorTarget = null) {
   if (!state.editorChapter?.chapterId) {
     return;
