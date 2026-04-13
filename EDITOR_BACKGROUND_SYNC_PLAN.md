@@ -101,6 +101,7 @@ Examples:
 - search/filter result counts
 - row ordering
 - deleted-group structure
+- newly inserted rows that arrived remotely
 
 These may be visually behind the repo for a while, but they must be revalidated before any write that depends on them.
 
@@ -189,6 +190,64 @@ The goal is:
 - track staleness
 - defer visible row replacement until the user interacts with a specific row
 
+## Structural Change Rules
+
+Insertions and deletions should be handled more simply than text edits.
+
+### Remote Insertions
+
+Remote row insertions do **not** need to appear immediately in the open editor.
+
+Handling:
+
+- do not inject newly inserted rows into the open editor snapshot
+- mark the chapter as having deferred structural changes
+- show the new rows only after:
+  - chapter reload
+  - chapter reopen
+  - explicit refresh
+
+This is acceptable because not seeing a newly inserted row immediately does not create overwrite risk.
+
+### Remote Deletions
+
+Remote deletions win.
+
+If a row is deleted remotely while the editor is open:
+
+- do not silently keep treating that row as a normal editable row
+- do not preserve local edits to that row if the deletion has already won remotely
+- on the next save or row-level action, revalidate row existence
+
+If the row no longer exists on disk:
+
+- discard the local draft for that row
+- treat the row as deleted
+- remove it from active editing state
+
+If the row still exists but its lifecycle is now deleted:
+
+- discard the local draft for that row
+- move the row into deleted state in the UI model
+
+This matches the product decision:
+
+- the user may temporarily see a stale deleted row in the snapshot
+- but they do not get to save new edits onto a row that has already been deleted remotely
+
+### No Live Structural Reshaping
+
+While the editor is open:
+
+- do not live-insert new rows into the list
+- do not live-remove rows from the list during background sync
+
+Instead:
+
+- defer insert visibility
+- enforce delete-win behavior at validation time
+- apply structural refresh later
+
 ## Row Activation Flow
 
 When the user clicks into a row field:
@@ -204,6 +263,10 @@ When the user clicks into a row field:
    - keep the user’s draft
    - show stale/conflict status
    - resolve on save
+5. if the row was deleted remotely:
+   - do not activate normal text editing
+   - discard the local draft for that row if needed
+   - move the row out of active editing state
 
 ## Save Flow
 
@@ -239,11 +302,23 @@ Handling:
 - do not overwrite silently
 - create row conflict state
 - preserve:
-  - local draft
-  - latest disk text
-  - base text
+- local draft
+- latest disk text
+- base text
 
 This is the only unresolved editor conflict case.
+
+### Case D: Row Was Deleted Remotely
+
+Handling:
+
+- deletion wins
+- do not save the local draft
+- discard local row text edits for that row
+- treat the row as deleted or missing
+- remove the row from active editing state
+
+This is an intentional exception to the normal local-draft-preservation rule.
 
 ## Disk Change Detection
 
@@ -255,8 +330,12 @@ Recommended first implementation:
 2. after sync, compare old `HEAD` to new `HEAD`
 3. if unchanged, do nothing
 4. if changed:
-   - compute changed row files for the open chapter
-   - mark those rows stale in memory
+   - compute changed row ids for the open chapter
+   - compute inserted row ids for the open chapter
+   - compute deleted row ids for the open chapter
+   - mark changed surviving rows stale in memory
+   - mark the chapter as having deferred structural changes if inserted row ids are non-empty
+   - mark deleted rows as remotely deleted for validation-time handling
 
 This should be done without rebuilding the whole chapter state.
 
@@ -269,6 +348,7 @@ The UI should surface row freshness with minimal disruption.
 - row stale marker
 - row text conflict marker
 - optional repo sync status badge
+- optional chapter-level deferred-structure marker
 
 ### Not Needed
 
@@ -285,6 +365,7 @@ Needed commands:
 - load one row from disk
 - compute row revision token
 - read changed row ids for a chapter between two commits
+- read inserted and deleted row ids for a chapter between two commits
 - save a row with a concurrency check against a base token
 
 The current whole-row write path is not enough by itself because it assumes the caller already has fresh row state.
@@ -299,6 +380,8 @@ Needed state additions:
 - per-row revision token
 - per-row freshness state
 - per-row stale/conflict badge state
+- per-row remotely deleted state
+- chapter deferred-structure state
 - pending sync scheduler state for the active repo
 
 ## Suggested Implementation Order
@@ -322,18 +405,25 @@ Needed state additions:
 
 - add base sha and row revision tokens
 - mark rows stale after sync when their files changed
+- track inserted row ids and deleted row ids separately
 
 ### Phase 4: Reload-On-Activate
 
 - before entering edit on a clean stale row, reload latest row from disk
 
-### Phase 5: Save-Time Concurrency Check
+### Phase 5: Structural Deferral And Delete-Win Validation
+
+- defer visibility of remotely inserted rows
+- validate remotely deleted rows on save and row actions
+- discard local drafts for rows deleted remotely
+
+### Phase 6: Save-Time Concurrency Check
 
 - save row against a base token
 - auto-merge non-text changes
 - create text conflict state when needed
 
-### Phase 6: Conflict UI
+### Phase 7: Conflict UI
 
 - show row text conflict state
 - provide later conflict resolution workflow
@@ -373,6 +463,8 @@ The editor should behave like this:
 - chapter view is a stable snapshot
 - repo sync happens in background
 - changed rows become stale, not auto-reloaded
+- remotely inserted rows are deferred until later refresh
+- remotely deleted rows win and discard local edits to those rows
 - clean stale rows refresh before edit
 - dirty stale rows resolve on save
 - only translation text conflicts remain user-visible
