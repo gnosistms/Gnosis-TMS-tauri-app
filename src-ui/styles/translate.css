@@ -137,7 +137,6 @@
 
 .toolbar-search .search-field {
   flex: 1 1 220px;
-  max-width: 300px;
 }
 
 .toolbar-search > * {
@@ -502,10 +501,6 @@
   height: 5px;
   border-radius: 999px;
   background: rgba(32, 101, 215, 0.92);
-}
-
-.translation-marker-button--comments.is-selected:not(.is-unread) {
-  color: rgba(32, 101, 215, 0.92);
 }
 
 .translation-marker-button__icon {

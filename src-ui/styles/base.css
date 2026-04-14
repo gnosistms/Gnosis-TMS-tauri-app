@@ -309,6 +309,8 @@ a {
 }
 
 .page-header--editor .page-header__detail {
+  width: 100%;
+  justify-self: stretch;
   margin-top: 0;
   border-top: 0;
   padding: 4px 18px 0;

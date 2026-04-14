@@ -84,7 +84,7 @@ function renderCommentsMarkerButton(rowId, language) {
 
   return `
     <button
-      class="translation-marker-button translation-marker-button--comments${hasComments ? " is-active" : ""}${hasUnreadComments ? " is-unread" : ""}${isSelectedCommentsRow ? " is-selected" : ""}"
+      class="translation-marker-button translation-marker-button--comments${hasComments ? " is-active" : ""}${hasUnreadComments ? " is-unread" : ""}"
       type="button"
       data-action="open-editor-comments"
       data-row-id="${escapeHtml(rowId)}"
