@@ -1397,33 +1397,7 @@ pub(super) fn load_gtms_editor_field_history_sync(
   let commits = load_git_history_for_path(&repo_path, &relative_row_json)?;
   let historical_field_values =
     load_historical_row_field_values_batch(&repo_path, &relative_row_json, &commits, &input.language_code)?;
-  let mut entries = Vec::new();
-  let mut last_recorded_field_signature: Option<HistoricalFieldSignature> = None;
-
-  for (commit, historical_field_value) in commits.into_iter().zip(historical_field_values.into_iter()) {
-    let Some(field_value) = historical_field_value else {
-      continue;
-    };
-    let plain_text = field_value.plain_text.clone();
-    let field_signature = HistoricalFieldSignature::from_field_value(&field_value);
-
-    if last_recorded_field_signature.as_ref() == Some(&field_signature) {
-      continue;
-    }
-
-    last_recorded_field_signature = Some(field_signature);
-    entries.push(EditorFieldHistoryEntry {
-      commit_sha: commit.commit_sha,
-      author_name: commit.author_name,
-      committed_at: commit.committed_at,
-      message: commit.message,
-      operation_type: commit.operation_type,
-      status_note: commit.status_note,
-      plain_text,
-      reviewed: field_value.editor_flags.reviewed,
-      please_check: field_value.editor_flags.please_check,
-    });
-  }
+  let entries = build_editor_field_history_entries(commits, historical_field_values);
 
   Ok(LoadEditorFieldHistoryResponse {
     row_id: input.row_id,
@@ -2141,6 +2115,47 @@ impl HistoricalFieldSignature {
   }
 }
 
+fn build_editor_field_history_entries(
+  commits: Vec<GitCommitMetadata>,
+  historical_field_values: Vec<Option<StoredFieldValue>>,
+) -> Vec<EditorFieldHistoryEntry> {
+  let baseline_index = historical_field_values.iter().rposition(Option::is_some);
+  let mut entries = Vec::new();
+  let mut last_recorded_field_signature: Option<HistoricalFieldSignature> = None;
+
+  for (index, (commit, historical_field_value)) in commits
+    .into_iter()
+    .zip(historical_field_values.into_iter())
+    .enumerate()
+  {
+    let Some(field_value) = historical_field_value else {
+      continue;
+    };
+    let plain_text = field_value.plain_text.clone();
+    let field_signature = HistoricalFieldSignature::from_field_value(&field_value);
+    let is_baseline_entry = baseline_index == Some(index);
+
+    if !is_baseline_entry && last_recorded_field_signature.as_ref() == Some(&field_signature) {
+      continue;
+    }
+
+    last_recorded_field_signature = Some(field_signature);
+    entries.push(EditorFieldHistoryEntry {
+      commit_sha: commit.commit_sha,
+      author_name: commit.author_name,
+      committed_at: commit.committed_at,
+      message: commit.message,
+      operation_type: commit.operation_type,
+      status_note: commit.status_note,
+      plain_text,
+      reviewed: field_value.editor_flags.reviewed,
+      please_check: field_value.editor_flags.please_check,
+    });
+  }
+
+  entries
+}
+
 fn load_historical_row_field_value(
   repo_path: &Path,
   relative_row_json: &str,
@@ -2377,14 +2392,39 @@ mod tests {
   use super::{
     apply_editor_field_flag_update,
     apply_editor_plain_text_updates,
+    build_editor_field_history_entries,
     create_inserted_editor_row,
     create_inserted_row_file,
     editor_row_from_stored_row_file,
     filter_commit_row_paths_for_chapter,
     parse_git_commit_message,
+    GitCommitMetadata,
     StoredChapterFile,
+    StoredFieldEditorFlags,
+    StoredFieldValue,
     StoredRowFile,
   };
+
+  fn history_commit(commit_sha: &str, operation_type: Option<&str>) -> GitCommitMetadata {
+    GitCommitMetadata {
+      commit_sha: commit_sha.to_string(),
+      author_name: "Test User".to_string(),
+      committed_at: "2026-04-14T00:00:00Z".to_string(),
+      message: format!("Commit {commit_sha}"),
+      operation_type: operation_type.map(str::to_string),
+      status_note: None,
+    }
+  }
+
+  fn history_field(plain_text: &str, reviewed: bool, please_check: bool) -> StoredFieldValue {
+    StoredFieldValue {
+      plain_text: plain_text.to_string(),
+      editor_flags: StoredFieldEditorFlags {
+        reviewed,
+        please_check,
+      },
+    }
+  }
 
   #[test]
   fn parse_git_commit_message_reads_editor_replace_operation_trailer() {
@@ -2580,7 +2620,7 @@ mod tests {
     }))
     .expect("row should deserialize");
 
-    let editor_row = editor_row_from_stored_row_file(row);
+    let editor_row = editor_row_from_stored_row_file(row).expect("editor row should build");
     assert_eq!(editor_row.comment_count, 1);
     assert_eq!(editor_row.comments_revision, 7);
   }
@@ -2604,10 +2644,56 @@ mod tests {
 
   #[test]
   fn create_inserted_editor_row_initializes_comment_summary_defaults() {
-    let row = create_inserted_editor_row("row-1", "0001", &[]);
+    let row = create_inserted_editor_row("row-1", "0001", &[]).expect("row should build");
 
     assert_eq!(row.comment_count, 0);
     assert_eq!(row.comments_revision, 0);
+  }
+
+  #[test]
+  fn build_editor_field_history_entries_keeps_oldest_import_baseline_when_field_is_unchanged() {
+    let entries = build_editor_field_history_entries(
+      vec![
+        history_commit("c3", Some("editor-update")),
+        history_commit("c2", Some("editor-update")),
+        history_commit("c1", Some("import")),
+      ],
+      vec![
+        Some(history_field("Hello", false, false)),
+        Some(history_field("Hello", false, false)),
+        Some(history_field("Hello", false, false)),
+      ],
+    );
+
+    assert_eq!(entries.len(), 2);
+    assert_eq!(entries[0].commit_sha, "c3");
+    assert_eq!(entries[0].operation_type.as_deref(), Some("editor-update"));
+    assert_eq!(entries[1].commit_sha, "c1");
+    assert_eq!(entries[1].operation_type.as_deref(), Some("import"));
+    assert_eq!(entries[1].plain_text, "Hello");
+  }
+
+  #[test]
+  fn build_editor_field_history_entries_uses_oldest_present_field_as_the_baseline() {
+    let entries = build_editor_field_history_entries(
+      vec![
+        history_commit("c3", Some("editor-update")),
+        history_commit("c2", Some("insert")),
+        history_commit("c1", Some("import")),
+      ],
+      vec![
+        Some(history_field("Translated", false, false)),
+        Some(history_field("", false, false)),
+        None,
+      ],
+    );
+
+    assert_eq!(entries.len(), 2);
+    assert_eq!(entries[0].commit_sha, "c3");
+    assert_eq!(entries[0].plain_text, "Translated");
+    assert_eq!(entries[1].commit_sha, "c2");
+    assert_eq!(entries[1].operation_type.as_deref(), Some("insert"));
+    assert_eq!(entries[1].plain_text, "");
   }
 }
 
