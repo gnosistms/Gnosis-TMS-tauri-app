@@ -2,9 +2,11 @@ import { selectedProjectsTeam } from "./project-chapter-flow.js";
 import { indexProjectSearchResults } from "./project-search-state.js";
 import { invoke, waitForNextPaint } from "./runtime.js";
 import { createProjectsSearchState, state } from "./state.js";
+import { skipNextEditorLocationRestore } from "./editor-location.js";
 import {
   openTranslateChapter,
   setActiveEditorField,
+  showEditorRowInContext,
   updateEditorSearchFilterQuery as updateTranslateEditorSearchFilterQuery,
 } from "./translate-flow.js";
 
@@ -246,6 +248,15 @@ export async function openProjectSearchResult(render, resultId) {
   if (!result?.chapterId || !result?.rowId || !result?.languageCode) {
     return;
   }
+
+  if (result.exactPhrase !== true) {
+    skipNextEditorLocationRestore(result.chapterId);
+    await openTranslateChapter(render, result.chapterId);
+    await showEditorRowInContext(render, result.rowId);
+    await setActiveEditorField(render, result.rowId, result.languageCode);
+    return;
+  }
+
   const searchQuery = typeof state.projectsSearch?.query === "string"
     ? state.projectsSearch.query
     : "";

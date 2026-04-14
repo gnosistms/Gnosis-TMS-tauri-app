@@ -77,6 +77,7 @@ pub(crate) struct ProjectSearchResult {
     language_name: String,
     snippet: String,
     match_count: usize,
+    exact_phrase: bool,
     score: f64,
 }
 
@@ -472,6 +473,7 @@ fn search_projects_sync(
                 language_name: candidate.document.language_name.clone(),
                 snippet: build_plain_text_snippet(&candidate.document.plain_text),
                 match_count: resolve_match_count(&candidate, &normalized_query),
+                exact_phrase: score.exact_phrase,
                 score: score_to_number(score),
             });
         }

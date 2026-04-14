@@ -14,6 +14,7 @@ const EDITOR_LOCATION_SAVE_DEBOUNCE_MS = 180;
 let restoredChapterId = null;
 let pendingRestoreSnapshot = null;
 let saveTimerId = null;
+let skippedRestoreChapterId = null;
 
 function loadedEditorChapterId(appState) {
   if (
@@ -85,6 +86,16 @@ function updatePendingEditorLocationRestore(appState) {
     return;
   }
 
+  if (
+    skippedRestoreChapterId
+    && (skippedRestoreChapterId === chapterId || skippedRestoreChapterId === "*")
+  ) {
+    skippedRestoreChapterId = null;
+    restoredChapterId = chapterId;
+    pendingRestoreSnapshot = null;
+    return;
+  }
+
   if (restoredChapterId === chapterId) {
     pendingRestoreSnapshot = null;
     return;
@@ -109,6 +120,13 @@ export function prepareEditorLocationBeforeRender(previousScreen, appState) {
   if (previousScreen === "translate") {
     persistEditorLocationForChapter(loadedEditorChapterId(appState));
   }
+}
+
+export function skipNextEditorLocationRestore(chapterId = null) {
+  skippedRestoreChapterId =
+    typeof chapterId === "string" && chapterId.trim()
+      ? chapterId.trim()
+      : "*";
 }
 
 export function queuePendingEditorLocationRestore(appState) {

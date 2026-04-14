@@ -125,7 +125,9 @@ function renderEditorRowContextAction(row) {
 
   return `
     <div class="translation-row__context">
-      ${textAction("Show in context", `show-editor-row-in-context:${row.id}`)}
+      ${textAction("Show in context", `show-editor-row-in-context:${row.id}`, {
+        tooltip: "Exit the search and scroll to the position of this result",
+      })}
     </div>
   `;
 }

@@ -122,9 +122,12 @@ export function secondaryButton(label, action, options = {}) {
 }
 
 export function textAction(label, action, options = {}) {
+  const tooltip = options.tooltip
+    ? tooltipAttributes(options.tooltip, options.tooltipOptions)
+    : "";
   return `<button class="text-action${options.disabled ? " is-disabled" : ""}" data-action="${escapeHtml(
     action,
-  )}"${disabledActionAttributes(options)}>${escapeHtml(label)}</button>`;
+  )}"${tooltip}${disabledActionAttributes(options)}>${escapeHtml(label)}</button>`;
 }
 
 export function renderChevronIcon(direction = "right", className = "") {
