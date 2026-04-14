@@ -38,6 +38,7 @@ export const state = {
   appUpdate: createAppUpdateState(),
   offline: createOfflineState(),
   connectionFailure: createConnectionFailureState(),
+  navigationLoadingModal: createNavigationLoadingModalState(),
   statusBadges: createStatusBadgesState(),
   githubAppTest: createGithubAppTestState(),
   orgDiscovery: {
@@ -121,6 +122,15 @@ export function createOfflineState() {
     hasLocalData: false,
     isEnabled: false,
     reconnecting: false,
+  };
+}
+
+export function createNavigationLoadingModalState() {
+  return {
+    isOpen: false,
+    title: "",
+    message: "",
+    token: null,
   };
 }
 
@@ -591,6 +601,7 @@ export function resetSessionState() {
   state.projectsPageSync = createProjectsPageSyncState();
   state.offline = offlineState;
   state.connectionFailure = createConnectionFailureState();
+  state.navigationLoadingModal = createNavigationLoadingModalState();
   state.statusBadges = createStatusBadgesState();
   resetTeamSetup();
   resetTeamRename();

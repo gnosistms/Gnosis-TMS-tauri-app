@@ -913,6 +913,39 @@
   width: min(1120px, 100%);
 }
 
+.modal-backdrop--navigation-loading {
+  z-index: 55;
+}
+
+.modal-card--navigation-loading {
+  width: min(420px, 100%);
+}
+
+.modal-card__body--navigation-loading {
+  justify-items: center;
+  text-align: center;
+  gap: 14px;
+  padding-block: 26px;
+}
+
+.navigation-loading-modal__spinner {
+  width: 42px;
+  height: 42px;
+  border-radius: 999px;
+  border: 3px solid rgba(164, 112, 41, 0.18);
+  border-top-color: rgba(236, 134, 9, 0.92);
+  animation: button-spin 0.7s linear infinite;
+}
+
+.navigation-loading-modal__title {
+  font-size: 1.9rem;
+  line-height: 1.1;
+}
+
+.navigation-loading-modal__message {
+  max-width: 32ch;
+}
+
 .editor-conflict-modal__versions {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);

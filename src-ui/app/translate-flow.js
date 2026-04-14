@@ -85,6 +85,10 @@ import {
   syncAndStopEditorBackgroundSyncSession,
 } from "./editor-background-sync.js";
 import {
+  hideNavigationLoadingModal,
+  showNavigationLoadingModal,
+} from "./navigation-loading.js";
+import {
   coerceEditorFontSizePx,
   createTargetLanguageManagerState,
   state,
@@ -261,17 +265,35 @@ export async function loadSelectedChapterEditorData(render, options = {}) {
 }
 
 export async function openTranslateChapter(render, chapterId) {
+  const navigationLoadingToken = showNavigationLoadingModal("Loading file...", "Opening the editor.");
+  render();
+
   if (
     state.screen === "translate"
     && state.editorChapter?.chapterId
     && state.editorChapter.chapterId !== chapterId
   ) {
-    await syncAndStopEditorBackgroundSyncSession(render);
+    try {
+      await syncAndStopEditorBackgroundSyncSession(render);
+      await openTranslateChapterFlow(render, chapterId, editorChapterLoadOperations());
+      if (state.screen === "translate" && state.editorChapter?.chapterId === chapterId && state.editorChapter.status === "ready") {
+        startEditorBackgroundSyncSession(render);
+      }
+    } finally {
+      hideNavigationLoadingModal(navigationLoadingToken);
+      render();
+    }
+    return;
   }
 
-  await openTranslateChapterFlow(render, chapterId, editorChapterLoadOperations());
-  if (state.screen === "translate" && state.editorChapter?.chapterId === chapterId && state.editorChapter.status === "ready") {
-    startEditorBackgroundSyncSession(render);
+  try {
+    await openTranslateChapterFlow(render, chapterId, editorChapterLoadOperations());
+    if (state.screen === "translate" && state.editorChapter?.chapterId === chapterId && state.editorChapter.status === "ready") {
+      startEditorBackgroundSyncSession(render);
+    }
+  } finally {
+    hideNavigationLoadingModal(navigationLoadingToken);
+    render();
   }
 }
 

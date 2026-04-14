@@ -34,86 +34,109 @@ import {
   persistEditorChapterSelections,
 } from "./translate-flow.js";
 import { syncAndStopEditorBackgroundSyncSession } from "./editor-background-sync.js";
+import {
+  hideNavigationLoadingModal,
+  showNavigationLoadingModal,
+} from "./navigation-loading.js";
 import { clearNoticeBadge, clearScopedSyncBadge, showNoticeBadge } from "./status-feedback.js";
 
 export async function handleNavigation(navTarget, render) {
   const previousScreen = state.screen;
+  const showTranslateLeaveLoading = previousScreen === "translate" && navTarget !== "translate";
+  const navigationLoadingToken = showTranslateLeaveLoading
+    ? showNavigationLoadingModal("Saving and syncing...", "Please wait before leaving the editor.")
+    : null;
+  let navigationRendered = false;
 
-  if (!(await guardLeavingTranslateEditor({
-    currentScreen: state.screen,
-    nextScreen: navTarget,
-    render,
-    flushDirtyEditorRows,
-    showBlockedNotice: (message) => showNoticeBadge(message, render),
-  }))) {
-    return;
-  }
-
-  if (state.screen === "translate" && navTarget !== "translate") {
-    void persistEditorChapterSelections(render);
-    await syncAndStopEditorBackgroundSyncSession(render);
-  }
-  if (state.screen === "glossaryEditor" && navTarget !== "glossaryEditor") {
-    await syncAndStopGlossaryBackgroundSyncSession(render);
-  }
-
-  if (navTarget === "start") {
-    void clearStoredAuthSession();
-    resetSessionState();
-  } else {
-    resetPageSync();
-    if (navTarget !== "projects") {
-      resetProjectsPageSync();
-    }
-  }
-
-  if (previousScreen === "projects" && navTarget !== "projects") {
-    clearNoticeBadge();
-    clearScopedSyncBadge("projects", render);
-  }
-
-  const preserveVisibleGlossaries =
-    navTarget === "glossaries"
-    && previousScreen === "glossaryEditor"
-    && state.glossaries.length > 0;
-
-  if (navTarget === "glossaries" && state.selectedTeamId) {
-    primeGlossariesLoadingState(state.selectedTeamId, {
-      preserveVisibleData: preserveVisibleGlossaries,
-    });
-  }
-  if (navTarget === "glossaryEditor" && state.selectedGlossaryId) {
-    primeSelectedGlossaryEditorLoadingState();
-  }
-
-  state.screen = navTarget;
-  render();
-
-  if (navTarget === "projects" && state.selectedTeamId) {
-    void waitForNextPaint().then(() => loadTeamProjects(render, state.selectedTeamId));
-  }
-  if (navTarget === "teams") {
-    void waitForNextPaint().then(() => loadUserTeams(render));
-  }
-  if (navTarget === "users" && state.selectedTeamId) {
-    primeUsersForTeam(state.selectedTeamId);
+  if (navigationLoadingToken !== null) {
     render();
-    void waitForNextPaint().then(() => loadTeamUsers(render, state.selectedTeamId));
   }
-  if (navTarget === "glossaries" && state.selectedTeamId) {
-    void waitForNextPaint().then(() =>
-      loadTeamGlossaries(render, state.selectedTeamId, {
-        preserveVisibleData: preserveVisibleGlossaries,
-      })
-    );
-  }
-  if (navTarget === "glossaryEditor" && state.selectedGlossaryId) {
-    void waitForNextPaint().then(async () => {
-      await loadSelectedGlossaryEditorData(render);
-      if (state.screen === "glossaryEditor" && state.glossaryEditor?.status === "ready") {
-        startGlossaryBackgroundSyncSession(render);
+
+  try {
+    if (!(await guardLeavingTranslateEditor({
+      currentScreen: state.screen,
+      nextScreen: navTarget,
+      render,
+      flushDirtyEditorRows,
+      showBlockedNotice: (message) => showNoticeBadge(message, render),
+    }))) {
+      return;
+    }
+
+    if (state.screen === "translate" && navTarget !== "translate") {
+      void persistEditorChapterSelections(render);
+      await syncAndStopEditorBackgroundSyncSession(render);
+    }
+    if (state.screen === "glossaryEditor" && navTarget !== "glossaryEditor") {
+      await syncAndStopGlossaryBackgroundSyncSession(render);
+    }
+
+    if (navTarget === "start") {
+      void clearStoredAuthSession();
+      resetSessionState();
+    } else {
+      resetPageSync();
+      if (navTarget !== "projects") {
+        resetProjectsPageSync();
       }
-    });
+    }
+
+    if (previousScreen === "projects" && navTarget !== "projects") {
+      clearNoticeBadge();
+      clearScopedSyncBadge("projects", render);
+    }
+
+    const preserveVisibleGlossaries =
+      navTarget === "glossaries"
+      && previousScreen === "glossaryEditor"
+      && state.glossaries.length > 0;
+
+    if (navTarget === "glossaries" && state.selectedTeamId) {
+      primeGlossariesLoadingState(state.selectedTeamId, {
+        preserveVisibleData: preserveVisibleGlossaries,
+      });
+    }
+    if (navTarget === "glossaryEditor" && state.selectedGlossaryId) {
+      primeSelectedGlossaryEditorLoadingState();
+    }
+
+    if (navigationLoadingToken !== null) {
+      hideNavigationLoadingModal(navigationLoadingToken);
+    }
+    state.screen = navTarget;
+    render();
+    navigationRendered = true;
+
+    if (navTarget === "projects" && state.selectedTeamId) {
+      void waitForNextPaint().then(() => loadTeamProjects(render, state.selectedTeamId));
+    }
+    if (navTarget === "teams") {
+      void waitForNextPaint().then(() => loadUserTeams(render));
+    }
+    if (navTarget === "users" && state.selectedTeamId) {
+      primeUsersForTeam(state.selectedTeamId);
+      render();
+      void waitForNextPaint().then(() => loadTeamUsers(render, state.selectedTeamId));
+    }
+    if (navTarget === "glossaries" && state.selectedTeamId) {
+      void waitForNextPaint().then(() =>
+        loadTeamGlossaries(render, state.selectedTeamId, {
+          preserveVisibleData: preserveVisibleGlossaries,
+        })
+      );
+    }
+    if (navTarget === "glossaryEditor" && state.selectedGlossaryId) {
+      void waitForNextPaint().then(async () => {
+        await loadSelectedGlossaryEditorData(render);
+        if (state.screen === "glossaryEditor" && state.glossaryEditor?.status === "ready") {
+          startGlossaryBackgroundSyncSession(render);
+        }
+      });
+    }
+  } finally {
+    if (!navigationRendered && navigationLoadingToken !== null && hideNavigationLoadingModal(navigationLoadingToken)) {
+      render();
+    }
   }
 }
 

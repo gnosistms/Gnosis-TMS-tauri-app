@@ -48,6 +48,7 @@ import { renderGithubAppTestScreen } from "./screens/github-app-test.js";
 import { renderConnectionFailureModal } from "./screens/connection-failure-modal.js";
 import { renderGlossariesScreen } from "./screens/glossaries.js";
 import { renderGlossaryEditorScreen } from "./screens/glossary-editor.js";
+import { renderNavigationLoadingModal } from "./screens/navigation-loading-modal.js";
 import { renderProjectsScreen } from "./screens/projects.js";
 import { renderStartScreen } from "./screens/start.js";
 import { renderTeamsScreen } from "./screens/teams/index.js";
@@ -235,7 +236,7 @@ function renderWithOptions(options = {}) {
   const focusSnapshot = captureFocusedInputState();
   const scrollSnapshot = captureRenderScrollSnapshot(previousScreen);
   const renderScreen = screenRenderers[state.screen] ?? screenRenderers.start;
-  app.innerHTML = renderScreen() + renderConnectionFailureModal(state);
+  app.innerHTML = renderScreen() + renderNavigationLoadingModal(state) + renderConnectionFailureModal(state);
   syncGlossaryVariantTextareaHeights(app);
   if (app.firstElementChild instanceof HTMLElement) {
     app.firstElementChild.dataset.screen = state.screen;
