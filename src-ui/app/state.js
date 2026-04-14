@@ -48,6 +48,7 @@ export const state = {
   projectDiscovery: createProjectDiscoveryState(),
   glossaryDiscovery: createGlossaryDiscoveryState(),
   projectsPage: createResourcePageState(),
+  projectsSearch: createProjectsSearchState(),
   glossariesPage: createResourcePageState(),
   projectImport: createProjectImportState(),
   projectRepoSyncByProjectId: {},
@@ -147,6 +148,22 @@ export function createAppUpdateState() {
 
 export function createProjectsPageSyncState() {
   return createSyncState();
+}
+
+export function createProjectsSearchState() {
+  return {
+    query: "",
+    status: "idle",
+    error: "",
+    results: [],
+    resultsById: {},
+    total: 0,
+    hasMore: false,
+    nextOffset: 0,
+    loadingMore: false,
+    indexStatus: "idle",
+    requestId: 0,
+  };
 }
 
 export function createProjectDiscoveryState() {
@@ -541,6 +558,10 @@ export function resetProjectPermanentDeletion() {
   state.projectPermanentDeletion = createProjectPermanentDeletionState();
 }
 
+export function resetProjectsSearch() {
+  state.projectsSearch = createProjectsSearchState();
+}
+
 export function resetGlossaryTermEditor() {
   state.glossaryTermEditor = createGlossaryTermEditorState();
 }
@@ -584,6 +605,7 @@ export function resetSessionState() {
   state.orgDiscovery = { status: "idle", error: "" };
   state.projectDiscovery = createProjectDiscoveryState();
   state.glossaryDiscovery = createGlossaryDiscoveryState();
+  state.projectsSearch = createProjectsSearchState();
   state.projectImport = createProjectImportState();
   state.projectRepoSyncByProjectId = {};
   state.editorChapter = createEditorChapterState();
@@ -614,6 +636,7 @@ export function resetSessionState() {
   resetChapterRename();
   resetChapterPermanentDeletion();
   resetProjectPermanentDeletion();
+  resetProjectsSearch();
   resetGlossaryCreation();
   resetGlossaryRename();
   resetGlossaryPermanentDeletion();

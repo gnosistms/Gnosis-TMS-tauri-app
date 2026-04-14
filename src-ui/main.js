@@ -102,6 +102,7 @@ function captureFocusedInputState() {
     "[data-glossary-rename-input]",
     "[data-glossary-permanent-delete-input]",
     "[data-glossary-term-search-input]",
+    "[data-project-search-input]",
     "[data-editor-search-input]",
     "[data-editor-replace-input]",
     "[data-editor-comment-draft]",

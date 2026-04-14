@@ -5,6 +5,7 @@ import {
   primeGlossariesLoadingState,
 } from "../glossary-flow.js";
 import { loadTeamProjects } from "../project-flow.js";
+import { resetProjectSearchState } from "../project-search-flow.js";
 import { loadTeamUsers, primeUsersForTeam } from "../team-members-flow.js";
 import { actionSuffix } from "../action-helpers.js";
 import { waitForNextPaint } from "../runtime.js";
@@ -14,6 +15,7 @@ export function createNavigationActions(render) {
   return async function handleNavigationAction(action) {
     const openTeamId = actionSuffix(action, "open-team:");
     if (openTeamId !== null) {
+      resetProjectSearchState();
       state.selectedTeamId = openTeamId;
       state.screen = "projects";
       render();

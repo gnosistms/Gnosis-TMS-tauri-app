@@ -9,10 +9,12 @@ import {
   renderInlineStateBox,
   renderSelectPillControl,
   renderStateCard,
+  secondaryButton,
   sectionSeparator,
   textAction,
 } from "../lib/ui.js";
 import { formatErrorForDisplay } from "../app/error-display.js";
+import { projectsSearchModeIsActive } from "../app/project-search-state.js";
 import { renderProjectCreationModal } from "./project-creation-modal.js";
 import { renderChapterPermanentDeletionModal } from "./chapter-permanent-deletion-modal.js";
 import { renderChapterRenameModal } from "./chapter-rename-modal.js";
@@ -331,6 +333,88 @@ function renderDeletedProjectsSection(state) {
   `;
 }
 
+function renderProjectSearchResult(result) {
+  const matchCount = Number.isFinite(result?.matchCount) ? result.matchCount : 0;
+  return `
+    <article class="card project-search-result">
+      <div class="project-search-result__header">
+        <p class="project-search-result__path">
+          ${escapeHtml(result?.projectTitle ?? "Project")}
+          <span class="project-search-result__separator">›</span>
+          ${escapeHtml(result?.chapterTitle ?? "File")}
+          <span class="project-search-result__separator">›</span>
+          ${escapeHtml(result?.languageName ?? result?.languageCode ?? "")}
+        </p>
+        ${matchCount > 0 ? `<span class="project-search-result__meta">${escapeHtml(`${matchCount} match${matchCount === 1 ? "" : "es"}`)}</span>` : ""}
+      </div>
+      <p class="project-search-result__snippet">${escapeHtml(result?.snippet ?? "")}</p>
+      <div class="project-search-result__footer">
+        ${textAction("Open", `open-project-search-result:${result?.resultId ?? ""}`)}
+      </div>
+    </article>
+  `;
+}
+
+function renderProjectSearchResults(state) {
+  const search = state.projectsSearch ?? {};
+  const resultCount = Number.isFinite(search.total) ? search.total : 0;
+  const header = `
+    <div class="project-search-results__toolbar">
+      <div class="project-search-results__summary">
+        <h2 class="project-search-results__title">Search results</h2>
+        <p class="project-search-results__count">${escapeHtml(`${resultCount} result${resultCount === 1 ? "" : "s"}`)}</p>
+      </div>
+      ${secondaryButton("Clear", "clear-project-search", { compact: true })}
+    </div>
+  `;
+
+  if (search.status === "searching") {
+    return (
+      header +
+      renderStateCard({
+        eyebrow: "SEARCHING",
+        title: "Searching projects...",
+        subtitle: "",
+      })
+    );
+  }
+
+  if (search.status === "error") {
+    return (
+      header +
+      renderStateCard({
+        eyebrow: "SEARCH FAILED",
+        title: "Could not search local project files.",
+        subtitle: formatErrorForDisplay(search.error || "Unknown error."),
+        tone: "error",
+      })
+    );
+  }
+
+  if ((search.results ?? []).length === 0) {
+    return (
+      header +
+      renderStateCard({
+        eyebrow: "NO RESULTS",
+        title: "No matches found.",
+        subtitle: "",
+      })
+    );
+  }
+
+  return `
+    ${header}
+    <section class="stack project-search-results">
+      ${(search.results ?? []).map((result) => renderProjectSearchResult(result)).join("")}
+      ${
+        search.hasMore
+          ? `<div class="project-search-results__more">${secondaryButton(search.loadingMore ? "Loading..." : "Load more", "load-more-project-search-results", { disabled: search.loadingMore === true })}</div>`
+          : ""
+      }
+    </section>
+  `;
+}
+
 export function renderProjectsScreen(state) {
   const selectedTeam = state.teams.find((team) => team.id === state.selectedTeamId) ?? state.teams[0];
   const canManageProjects = selectedTeam?.canManageProjects === true;
@@ -347,6 +431,7 @@ export function renderProjectsScreen(state) {
       : "";
   const projectsSyncBadgeText = getScopedSyncBadgeText("projects");
   const isProjectsSyncing = state.projectsPageSync?.status === "syncing";
+  const searchModeActive = projectsSearchModeIsActive(state);
   const glossaryChangesDisabled =
     pageWritesDisabled
     || discovery.status === "loading"
@@ -410,10 +495,24 @@ export function renderProjectsScreen(state) {
     <section class="stack">
       ${recoveryMarkup}
       ${glossaryWarningMarkup}
-      ${projectsBody}
-      ${renderDeletedProjectsSection(state)}
+      ${searchModeActive ? renderProjectSearchResults(state) : projectsBody}
+      ${searchModeActive ? "" : renderDeletedProjectsSection(state)}
     </section>
   `;
+
+  const searchQuery = state.projectsSearch?.query ?? "";
+  const searchField = createSearchField({
+    placeholder: "Search",
+    value: searchQuery,
+    inputAttributes: {
+      "data-project-search-input": true,
+      "aria-label": "Search all project files",
+    },
+    endAdornment:
+      String(searchQuery).trim().length > 0
+        ? secondaryButton("Clear", "clear-project-search", { compact: true })
+        : "",
+  });
 
   return (
     pageShell({
@@ -421,7 +520,7 @@ export function renderProjectsScreen(state) {
     subtitle: selectedTeam?.name ?? "Team",
     titleAction: buildPageRefreshAction(state, state.projectsPageSync),
     navButtons: buildSectionNav("projects"),
-    leftTools: createSearchField("Search"),
+    leftTools: searchField,
     tools: [
       canCreateProjects
         ? primaryButton("+ New Project", "open-new-project", { disabled: offlineMode || pageWritesDisabled })

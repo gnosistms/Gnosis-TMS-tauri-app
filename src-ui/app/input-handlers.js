@@ -7,6 +7,7 @@ import {
   updateProjectPermanentDeletionConfirmation,
   updateProjectRenameName,
 } from "./project-flow.js";
+import { updateProjectSearchQuery } from "./project-search-flow.js";
 import {
   updateChapterPermanentDeletionConfirmation,
   updateChapterGlossaryLinks,
@@ -100,6 +101,16 @@ function handleProjectRenameInput(event) {
   }
 
   updateProjectRenameName(input.value);
+  return true;
+}
+
+function handleProjectSearchInput(event, render) {
+  const input = event.target.closest("[data-project-search-input]");
+  if (!input) {
+    return false;
+  }
+
+  updateProjectSearchQuery(render, input.value);
   return true;
 }
 
@@ -415,6 +426,7 @@ const inputHandlers = [
   handleTeamRenameInput,
   handleTeamPermanentDeleteInput,
   handleProjectRenameInput,
+  handleProjectSearchInput,
   handleChapterRenameInput,
   handleChapterPermanentDeleteInput,
   handleInviteUserInput,

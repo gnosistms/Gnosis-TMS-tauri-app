@@ -12,6 +12,7 @@ mod github_app_test;
 mod insecure_github_app_config;
 mod local_repo_sync_state;
 mod project_import;
+mod project_search;
 mod project_repo_paths;
 mod project_repo_sync;
 mod repo_sync_shared;
@@ -84,6 +85,7 @@ use crate::{
     update_gtms_chapter_glossary_links, update_gtms_chapter_language_selection, update_gtms_editor_row_field_flag,
     update_gtms_editor_row_fields, update_gtms_editor_row_fields_batch,
   },
+  project_search::search_projects,
   project_repo_sync::{
     inspect_gtms_project_editor_repo_sync_state,
     list_project_repo_sync_states,
@@ -319,6 +321,7 @@ pub fn run() {
       insert_gtms_editor_row_after,
       load_gtms_editor_field_history,
       load_gtms_editor_row_comments,
+      search_projects,
       rename_gtms_chapter,
       soft_delete_gtms_chapter,
       restore_gtms_chapter,

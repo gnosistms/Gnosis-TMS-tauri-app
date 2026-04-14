@@ -1,5 +1,10 @@
 import { state } from "../state.js";
 import {
+  clearProjectSearch,
+  loadMoreProjectSearchResults,
+  openProjectSearchResult,
+} from "../project-search-flow.js";
+import {
   cancelProjectCreation,
   cancelProjectPermanentDeletion,
   cancelProjectRename,
@@ -37,10 +42,16 @@ export function createProjectActions(render) {
     "cancel-project-rename": () => cancelProjectRename(render),
     "cancel-chapter-permanent-deletion": () => cancelChapterPermanentDeletion(render),
     "cancel-chapter-rename": () => cancelChapterRename(render),
+    "clear-project-search": () => clearProjectSearch(render),
+    "load-more-project-search-results": () => loadMoreProjectSearchResults(render),
     "toggle-deleted-projects": () => toggleDeletedProjects(render),
   };
 
   const prefixHandlers = [
+    {
+      prefix: "open-project-search-result:",
+      handler: async (resultId) => openProjectSearchResult(render, resultId),
+    },
     {
       prefix: "toggle-project:",
       handler: (projectId) => {

@@ -954,6 +954,76 @@ a {
   color: var(--link-hover);
 }
 
+.project-search-results__toolbar {
+  align-items: center;
+  display: flex;
+  gap: 16px;
+  justify-content: space-between;
+}
+
+.project-search-results__summary {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.project-search-results__title,
+.project-search-results__count,
+.project-search-result__path,
+.project-search-result__snippet {
+  margin: 0;
+}
+
+.project-search-results__title {
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.project-search-results__count,
+.project-search-result__meta {
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.project-search-results {
+  gap: 12px;
+}
+
+.project-search-result {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.project-search-result__header,
+.project-search-result__footer {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+}
+
+.project-search-result__path {
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.project-search-result__separator {
+  margin: 0 6px;
+}
+
+.project-search-result__snippet {
+  color: var(--text);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.project-search-results__more {
+  display: flex;
+  justify-content: center;
+}
+
 .card,
 .table-card {
   border: 1px solid var(--surface-border);
