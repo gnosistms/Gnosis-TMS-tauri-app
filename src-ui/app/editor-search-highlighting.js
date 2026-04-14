@@ -109,21 +109,3 @@ export function buildEditorRowSearchHighlights(
 
   return highlights;
 }
-
-export function mergeEditorTextHighlightMaps(primaryMap, fallbackMap) {
-  const merged = new Map();
-
-  if (fallbackMap instanceof Map) {
-    for (const [key, value] of fallbackMap.entries()) {
-      merged.set(key, value);
-    }
-  }
-
-  if (primaryMap instanceof Map) {
-    for (const [key, value] of primaryMap.entries()) {
-      merged.set(key, value);
-    }
-  }
-
-  return merged;
-}

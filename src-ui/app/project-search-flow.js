@@ -1,9 +1,12 @@
 import { selectedProjectsTeam } from "./project-chapter-flow.js";
 import { indexProjectSearchResults } from "./project-search-state.js";
 import { invoke, waitForNextPaint } from "./runtime.js";
-import { queueTranslateRowAnchor, restoreTranslateRowAnchor } from "./scroll-state.js";
 import { createProjectsSearchState, state } from "./state.js";
-import { openTranslateChapter, setActiveEditorField } from "./translate-flow.js";
+import {
+  openTranslateChapter,
+  setActiveEditorField,
+  updateEditorSearchFilterQuery as updateTranslateEditorSearchFilterQuery,
+} from "./translate-flow.js";
 
 const PROJECT_SEARCH_DEBOUNCE_MS = 200;
 const PROJECT_SEARCH_PAGE_SIZE = 50;
@@ -11,6 +14,7 @@ const MIN_PROJECT_SEARCH_QUERY_LENGTH = 2;
 
 let pendingProjectSearchTimeout = null;
 let activeProjectSearchVersion = 0;
+const pendingProjectSearchIndexRefreshes = new Map();
 
 function clearPendingProjectSearchTimeout() {
   if (pendingProjectSearchTimeout) {
@@ -48,6 +52,22 @@ async function runProjectSearch(render, query, offset, searchVersion, appendResu
   render();
 
   try {
+    const pendingIndexRefresh = pendingProjectSearchIndexRefreshes.get(selectedTeam.installationId);
+    if (pendingIndexRefresh) {
+      try {
+        await pendingIndexRefresh;
+      } catch {
+        // Fall back to whatever index is currently available.
+      }
+      if (
+        searchVersion !== activeProjectSearchVersion
+        || state.projectsSearch.query.trim() !== query
+        || selectedProjectsTeam()?.installationId !== selectedTeam.installationId
+      ) {
+        return;
+      }
+    }
+
     const response = await invoke("search_projects", {
       input: {
         installationId: selectedTeam.installationId,
@@ -97,6 +117,61 @@ async function runProjectSearch(render, query, offset, searchVersion, appendResu
     };
     render();
   }
+}
+
+export function refreshProjectSearchIndex(render, teamId = state.selectedTeamId) {
+  const selectedTeam = state.teams.find((team) => team.id === teamId) ?? null;
+  if (!selectedTeam?.installationId) {
+    return Promise.resolve(null);
+  }
+
+  const installationId = selectedTeam.installationId;
+  const pendingRefresh = pendingProjectSearchIndexRefreshes.get(installationId);
+  if (pendingRefresh) {
+    return pendingRefresh;
+  }
+
+  if (selectedProjectsTeam()?.installationId === installationId) {
+    state.projectsSearch = {
+      ...state.projectsSearch,
+      indexStatus: "refreshing",
+    };
+    render?.();
+  }
+
+  const refreshPromise = invoke("refresh_project_search_index", {
+    input: {
+      installationId,
+    },
+  })
+    .then((response) => {
+      if (selectedProjectsTeam()?.installationId === installationId) {
+        state.projectsSearch = {
+          ...state.projectsSearch,
+          indexStatus: typeof response?.indexStatus === "string" ? response.indexStatus : "ready",
+        };
+        render?.();
+      }
+      return response;
+    })
+    .catch((error) => {
+      if (selectedProjectsTeam()?.installationId === installationId) {
+        state.projectsSearch = {
+          ...state.projectsSearch,
+          indexStatus: "error",
+        };
+        render?.();
+      }
+      throw error;
+    })
+    .finally(() => {
+      if (pendingProjectSearchIndexRefreshes.get(installationId) === refreshPromise) {
+        pendingProjectSearchIndexRefreshes.delete(installationId);
+      }
+    });
+
+  pendingProjectSearchIndexRefreshes.set(installationId, refreshPromise);
+  return refreshPromise;
 }
 
 export function updateProjectSearchQuery(render, query) {
@@ -171,18 +246,12 @@ export async function openProjectSearchResult(render, resultId) {
   if (!result?.chapterId || !result?.rowId || !result?.languageCode) {
     return;
   }
-
-  const anchor = {
-    type: "field",
-    rowId: result.rowId,
-    languageCode: result.languageCode,
-    offsetTop: 0,
-  };
-
-  queueTranslateRowAnchor(anchor);
+  const searchQuery = typeof state.projectsSearch?.query === "string"
+    ? state.projectsSearch.query
+    : "";
   await openTranslateChapter(render, result.chapterId);
-  await setActiveEditorField(render, result.rowId, result.languageCode);
+  updateTranslateEditorSearchFilterQuery(render, searchQuery);
   render();
   await waitForNextPaint();
-  restoreTranslateRowAnchor(anchor);
+  await setActiveEditorField(render, result.rowId, result.languageCode);
 }

@@ -6,7 +6,7 @@ import {
 import { coerceEditorFontSizePx } from "./state.js";
 import { canPermanentlyDeleteProjectFiles } from "./resource-capabilities.js";
 import { findChapterContextById, selectedProjectsTeam } from "./project-context.js";
-import { buildEditorFilterResult } from "./editor-filters.js";
+import { buildEditorFilterResult, editorChapterFiltersAreActive } from "./editor-filters.js";
 import { normalizeEditorReplaceState } from "./editor-replace.js";
 
 let cachedEditorRowsRef = null;
@@ -130,6 +130,7 @@ function buildEditorReplaceViewModel(editorChapter, editorFilters) {
 
 function buildEditorDisplayItems(contentRows, editorChapter, team, editorReplace) {
   const rows = Array.isArray(contentRows) ? contentRows : [];
+  const showContextAction = editorChapterFiltersAreActive(editorChapter?.filters);
   const expandedDeletedRowGroupIds =
     editorChapter?.expandedDeletedRowGroupIds instanceof Set
       ? editorChapter.expandedDeletedRowGroupIds
@@ -172,6 +173,7 @@ function buildEditorDisplayItems(contentRows, editorChapter, team, editorReplace
       canSoftDelete: row.lifecycleState === "active" && canEditRows,
       canRestore: row.lifecycleState === "deleted" && canRestoreRows,
       canPermanentDelete: row.lifecycleState === "deleted" && canPermanentlyDeleteRows,
+      showContextAction: row.lifecycleState === "active" && showContextAction,
       canReplaceSelect: row.lifecycleState === "active" && editorReplace?.isEnabled === true,
       replaceSelected: selectedReplaceRowIds.has(row.id),
       replaceSelectionDisabled: editorReplace?.status === "saving",

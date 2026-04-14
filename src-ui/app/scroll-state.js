@@ -141,6 +141,36 @@ export function restoreTranslateRowAnchor(snapshot) {
   return true;
 }
 
+export function centerTranslateRowInView(rowId) {
+  if (typeof rowId !== "string" || !rowId.trim()) {
+    pendingTranslateAnchor = null;
+    return false;
+  }
+
+  const container = document.querySelector(".translate-main-scroll");
+  if (!(container instanceof HTMLElement)) {
+    pendingTranslateAnchor = null;
+    return false;
+  }
+
+  let row = document.querySelector(`[data-editor-row-card][data-row-id="${CSS.escape(rowId)}"]`);
+  if (!(row instanceof HTMLElement)) {
+    row = document.querySelector(`[data-editor-deleted-group][data-row-id="${CSS.escape(rowId)}"]`);
+  }
+  if (!(row instanceof HTMLElement)) {
+    pendingTranslateAnchor = null;
+    return false;
+  }
+
+  const containerRect = container.getBoundingClientRect();
+  const rowRect = row.getBoundingClientRect();
+  const currentOffsetTop = rowRect.top - containerRect.top;
+  const desiredOffsetTop = Math.max(0, (container.clientHeight - rowRect.height) / 2);
+  container.scrollTop += currentOffsetTop - desiredOffsetTop;
+  pendingTranslateAnchor = null;
+  return true;
+}
+
 export function pendingTranslateAnchorRowId() {
   return typeof pendingTranslateAnchor?.rowId === "string" && pendingTranslateAnchor.rowId
     ? pendingTranslateAnchor.rowId

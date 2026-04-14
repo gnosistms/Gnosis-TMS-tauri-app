@@ -14,6 +14,7 @@ import {
   textAction,
 } from "../lib/ui.js";
 import { formatErrorForDisplay } from "../app/error-display.js";
+import { buildProjectSearchSnippetMarkup } from "../app/project-search-highlighting.js";
 import { projectsSearchModeIsActiveForState, projectsSearchResultCountLabel } from "../app/project-search-state.js";
 import { renderProjectCreationModal } from "./project-creation-modal.js";
 import { renderChapterPermanentDeletionModal } from "./chapter-permanent-deletion-modal.js";
@@ -333,9 +334,10 @@ function renderDeletedProjectsSection(state) {
   `;
 }
 
-function renderProjectSearchResult(result) {
+function renderProjectSearchResult(result, searchQuery) {
   const matchCount = Number.isFinite(result?.matchCount) ? result.matchCount : 0;
   const snippetLanguageCode = typeof result?.languageCode === "string" ? result.languageCode.trim() : "";
+  const snippetMarkup = buildProjectSearchSnippetMarkup(result?.snippet ?? "", searchQuery, snippetLanguageCode);
   return `
     <article class="card project-search-result">
       <div class="project-search-result__header">
@@ -348,7 +350,7 @@ function renderProjectSearchResult(result) {
         </p>
         ${matchCount > 0 ? `<span class="project-search-result__meta">${escapeHtml(`${matchCount} match${matchCount === 1 ? "" : "es"}`)}</span>` : ""}
       </div>
-      <p class="project-search-result__snippet"${snippetLanguageCode ? ` lang="${escapeHtml(snippetLanguageCode)}"` : ""} dir="auto">${escapeHtml(result?.snippet ?? "")}</p>
+      <p class="project-search-result__snippet"${snippetLanguageCode ? ` lang="${escapeHtml(snippetLanguageCode)}"` : ""} dir="auto">${snippetMarkup}</p>
       <div class="project-search-result__footer">
         ${textAction("Open", `open-project-search-result:${result?.resultId ?? ""}`)}
       </div>
@@ -364,7 +366,7 @@ function renderProjectSearchResults(state) {
         <h2 class="project-search-results__title">Search results</h2>
         <p class="project-search-results__count">${escapeHtml(projectsSearchResultCountLabel(search))}</p>
       </div>
-      ${secondaryButton("Clear", "clear-project-search", { compact: true })}
+      ${secondaryButton("Clear", "clear-project-search", { className: "project-search-results__clear-button" })}
     </div>
   `;
 
@@ -420,7 +422,7 @@ function renderProjectSearchResults(state) {
   return `
     ${header}
     <section class="stack project-search-results">
-      ${(search.results ?? []).map((result) => renderProjectSearchResult(result)).join("")}
+      ${(search.results ?? []).map((result) => renderProjectSearchResult(result, search.query ?? "")).join("")}
       ${
         search.hasMore
           ? `<div class="project-search-results__more">${secondaryButton(search.loadingMore ? "Loading..." : "Load more", "load-more-project-search-results", { disabled: search.loadingMore === true })}</div>`
@@ -523,10 +525,6 @@ export function renderProjectsScreen(state) {
       "data-project-search-input": true,
       "aria-label": "Search all project files",
     },
-    endAdornment:
-      String(searchQuery).trim().length > 0
-        ? secondaryButton("Clear", "clear-project-search", { compact: true })
-        : "",
   });
 
   return (

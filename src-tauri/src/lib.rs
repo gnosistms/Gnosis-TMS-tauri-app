@@ -83,7 +83,7 @@ use crate::{
         inspect_gtms_project_editor_repo_sync_state, list_project_repo_sync_states,
         reconcile_project_repo_sync_states, sync_gtms_project_editor_repo,
     },
-    project_search::search_projects,
+    project_search::{refresh_project_search_index, search_projects},
     state::{AuthState, ProjectRepoSyncStore},
     team_metadata_local::{
         delete_local_gnosis_glossary_metadata_record, delete_local_gnosis_project_metadata_record,
@@ -322,6 +322,7 @@ pub fn run() {
             insert_gtms_editor_row_after,
             load_gtms_editor_field_history,
             load_gtms_editor_row_comments,
+            refresh_project_search_index,
             search_projects,
             rename_gtms_chapter,
             soft_delete_gtms_chapter,

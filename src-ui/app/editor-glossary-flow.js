@@ -2,7 +2,6 @@ import {
   buildEditorGlossaryModel,
   buildEditorRowGlossaryHighlights,
 } from "./editor-glossary-highlighting.js";
-import { mergeEditorTextHighlightMaps } from "./editor-search-highlighting.js";
 import { buildEditorRowSearchHighlightMap } from "./editor-search-flow.js";
 import { findEditorRowById } from "./editor-utils.js";
 import { invoke } from "./runtime.js";
@@ -193,32 +192,55 @@ function readCachedEditorRowGlossaryHighlights(row, chapterState = state.editorC
   return editorGlossaryHighlightCache.get(cacheKey) ?? null;
 }
 
-function applyEditorTextHighlightMapToRowCard(rowCard, highlightMap) {
+function renderableHighlightHtml(highlight) {
+  const highlightHtml = typeof highlight?.html === "string" ? highlight.html : "";
+  return highlight?.hasMatches === true && highlightHtml.length > 0 ? highlightHtml : "";
+}
+
+function applyEditorTextHighlightLayersToRowCard(
+  rowCard,
+  searchHighlightMap = new Map(),
+  glossaryHighlightMap = new Map(),
+) {
   rowCard.querySelectorAll("[data-editor-glossary-field-stack]").forEach((stack) => {
     if (!(stack instanceof HTMLElement)) {
       return;
     }
 
     const languageCode = stack.dataset.languageCode ?? "";
-    const highlight = highlightMap.get(languageCode) ?? null;
-    const highlightHtml = typeof highlight?.html === "string" ? highlight.html : "";
-    const hasRenderableHighlight = highlight?.hasMatches === true && highlightHtml.length > 0;
-    const highlightKind = highlight?.kind === "search" ? "search" : "glossary";
+    const glossaryHighlight = glossaryHighlightMap instanceof Map
+      ? (glossaryHighlightMap.get(languageCode) ?? null)
+      : null;
+    const searchHighlight = searchHighlightMap instanceof Map
+      ? (searchHighlightMap.get(languageCode) ?? null)
+      : null;
+    const glossaryHighlightHtml = renderableHighlightHtml(glossaryHighlight);
+    const searchHighlightHtml = renderableHighlightHtml(searchHighlight);
+    const hasGlossaryHighlight = glossaryHighlightHtml.length > 0;
+    const hasSearchHighlight = searchHighlightHtml.length > 0;
+    const hasRenderableHighlight = hasGlossaryHighlight || hasSearchHighlight;
+
     stack.classList.toggle(
       "translation-language-panel__field-stack--highlighted",
       hasRenderableHighlight,
     );
     stack.classList.toggle(
       "translation-language-panel__field-stack--glossary",
-      hasRenderableHighlight && highlightKind === "glossary",
+      hasGlossaryHighlight,
     );
     stack.classList.toggle(
       "translation-language-panel__field-stack--search",
-      hasRenderableHighlight && highlightKind === "search",
+      hasSearchHighlight,
     );
-    const layer = stack.querySelector("[data-editor-glossary-highlight]");
-    if (layer instanceof HTMLElement) {
-      layer.innerHTML = hasRenderableHighlight ? highlightHtml : "";
+
+    const glossaryLayer = stack.querySelector("[data-editor-glossary-highlight]");
+    if (glossaryLayer instanceof HTMLElement) {
+      glossaryLayer.innerHTML = glossaryHighlightHtml;
+    }
+
+    const searchLayer = stack.querySelector("[data-editor-search-highlight]");
+    if (searchLayer instanceof HTMLElement) {
+      searchLayer.innerHTML = searchHighlightHtml;
     }
   });
 }
@@ -236,8 +258,7 @@ function syncEditorGlossaryHighlightRowCard(rowCard, chapterState = state.editor
 
   const glossaryHighlightMap = buildCachedEditorRowGlossaryHighlights(row, chapterState);
   const searchHighlightMap = buildEditorRowSearchHighlightMap(row, chapterState);
-  const highlightMap = mergeEditorTextHighlightMaps(searchHighlightMap, glossaryHighlightMap);
-  applyEditorTextHighlightMapToRowCard(rowCard, highlightMap);
+  applyEditorTextHighlightLayersToRowCard(rowCard, searchHighlightMap, glossaryHighlightMap);
 }
 
 function syncMountedEditorGlossaryHighlightRows(
@@ -284,8 +305,7 @@ function syncMountedEditorGlossaryHighlightRows(
       ? buildCachedEditorRowGlossaryHighlights(row, chapterState)
       : readCachedEditorRowGlossaryHighlights(row, chapterState);
     const searchHighlightMap = buildEditorRowSearchHighlightMap(row, chapterState);
-    const highlightMap = mergeEditorTextHighlightMaps(searchHighlightMap, glossaryHighlightMap);
-    applyEditorTextHighlightMapToRowCard(rowCard, highlightMap);
+    applyEditorTextHighlightLayersToRowCard(rowCard, searchHighlightMap, glossaryHighlightMap);
   });
 }
 

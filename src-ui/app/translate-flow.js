@@ -24,6 +24,7 @@ import {
 } from "./editor-glossary-flow.js";
 import {
   replaceSelectedEditorRows as replaceSelectedEditorRowsFlow,
+  showEditorRowInContext as showEditorRowInContextFlow,
   selectAllEditorReplaceRows as selectAllEditorReplaceRowsFlow,
   toggleEditorReplaceEnabled as toggleEditorReplaceEnabledFlow,
   updateEditorRowFilterMode as updateEditorRowFilterModeFlow,
@@ -395,6 +396,10 @@ export function updateEditorSearchFilterQuery(render, nextValue) {
 
 export function updateEditorRowFilterMode(render, nextValue) {
   updateEditorRowFilterModeFlow(render, nextValue);
+}
+
+export async function showEditorRowInContext(render, rowId) {
+  await showEditorRowInContextFlow(render, rowId);
 }
 
 export function toggleEditorSearchFilterCaseSensitive(render, enabled) {

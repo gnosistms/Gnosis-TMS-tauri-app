@@ -12,6 +12,7 @@ import {
   selectedMatchingEditorReplaceRowIds,
   updateEditorReplaceState,
 } from "./editor-replace.js";
+import { buildEditorShowRowInContextChapterState } from "./editor-show-context.js";
 import {
   buildVisibleEditorLanguageCodeSet,
   cloneRowFields,
@@ -21,7 +22,12 @@ import { findChapterContextById, selectedProjectsTeam } from "./project-context.
 import { invoke, waitForNextPaint } from "./runtime.js";
 import { state } from "./state.js";
 import { showNoticeBadge } from "./status-feedback.js";
-import { captureTranslateRowAnchor, restoreTranslateRowAnchor } from "./scroll-state.js";
+import {
+  captureTranslateRowAnchor,
+  centerTranslateRowInView,
+  queueTranslateRowAnchor,
+  restoreTranslateRowAnchor,
+} from "./scroll-state.js";
 
 function normalizeEditorChapterFilters(filters) {
   return normalizeEditorChapterFilterState(filters);
@@ -177,6 +183,31 @@ export function updateEditorRowFilterMode(render, nextValue) {
   void waitForNextPaint().then(() => {
     scrollTranslateMainToTop();
   });
+}
+
+export async function showEditorRowInContext(render, rowId) {
+  if (!rowId || !state.editorChapter?.chapterId) {
+    return;
+  }
+
+  queueTranslateRowAnchor({
+    rowId,
+    type: "row",
+    offsetTop: 0,
+  });
+  state.editorChapter = buildEditorShowRowInContextChapterState(state.editorChapter);
+  render?.();
+
+  await waitForNextPaint();
+  const centered = centerTranslateRowInView(rowId);
+  if (!centered) {
+    await waitForNextPaint();
+    centerTranslateRowInView(rowId);
+    return;
+  }
+
+  await waitForNextPaint();
+  centerTranslateRowInView(rowId);
 }
 
 export function toggleEditorReplaceEnabled(render, enabled, anchorTarget = null) {

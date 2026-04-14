@@ -4,7 +4,6 @@ import assert from "node:assert/strict";
 import {
   buildEditorRowSearchHighlights,
   buildEditorSearchHighlightMarkup,
-  mergeEditorTextHighlightMaps,
 } from "./editor-search-highlighting.js";
 
 test("buildEditorSearchHighlightMarkup wraps matching segments", () => {
@@ -50,17 +49,4 @@ test("buildEditorRowSearchHighlights respects case-sensitive search", () => {
   );
 
   assert.equal(highlights.size, 0);
-});
-
-test("mergeEditorTextHighlightMaps prefers primary entries by language", () => {
-  const merged = mergeEditorTextHighlightMaps(
-    new Map([["es", { kind: "search", html: "search", hasMatches: true }]]),
-    new Map([
-      ["es", { kind: "glossary", html: "glossary", hasMatches: true }],
-      ["vi", { kind: "glossary", html: "fallback", hasMatches: true }],
-    ]),
-  );
-
-  assert.equal(merged.get("es")?.html, "search");
-  assert.equal(merged.get("vi")?.html, "fallback");
 });

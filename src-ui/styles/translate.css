@@ -363,6 +363,11 @@
   gap: 12px;
 }
 
+.translation-row__context {
+  display: flex;
+  justify-content: flex-end;
+}
+
 .translation-row__actions {
   position: absolute;
   top: 0;
@@ -589,11 +594,24 @@
   display: none;
   pointer-events: none;
   position: relative;
+}
+
+.translation-language-panel__search-highlight {
   z-index: 1;
 }
 
-.translation-language-panel__field-stack--highlighted .translation-language-panel__field-highlight {
+.translation-language-panel__glossary-highlight {
+  z-index: 2;
+}
+
+.translation-language-panel__field-stack--search .translation-language-panel__search-highlight,
+.translation-language-panel__field-stack--glossary .translation-language-panel__glossary-highlight {
   display: block;
+}
+
+.translation-language-panel__field-stack--search.translation-language-panel__field-stack--glossary .translation-language-panel__search-highlight {
+  color: transparent;
+  -webkit-text-fill-color: transparent;
 }
 
 .translation-language-panel__field {

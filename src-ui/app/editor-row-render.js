@@ -118,6 +118,18 @@ function renderEditorRowConflictActions(row) {
   return row.hasConflict ? "" : "";
 }
 
+function renderEditorRowContextAction(row) {
+  if (row?.showContextAction !== true) {
+    return "";
+  }
+
+  return `
+    <div class="translation-row__context">
+      ${textAction("Show in context", `show-editor-row-in-context:${row.id}`)}
+    </div>
+  `;
+}
+
 function renderConflictResolutionField(row, language) {
   return `
     <button
@@ -166,7 +178,13 @@ function renderEditorLanguageField(row, language) {
       data-language-code="${escapeHtml(language.code)}"
     >
       <div
-        class="translation-language-panel__field-highlight"
+        class="translation-language-panel__field-highlight translation-language-panel__search-highlight"
+        data-editor-search-highlight
+        lang="${escapeHtml(language.code)}"
+        aria-hidden="true"
+      ></div>
+      <div
+        class="translation-language-panel__field-highlight translation-language-panel__glossary-highlight"
         data-editor-glossary-highlight
         lang="${escapeHtml(language.code)}"
         aria-hidden="true"
@@ -299,6 +317,7 @@ export function renderTranslationContentRow(
               })
               .join("")}
             </div>
+            ${renderEditorRowContextAction(row)}
           </div>
         </article>
       </div>

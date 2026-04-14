@@ -21,6 +21,7 @@ import {
 import {
   loadTeamProjects as runLoadTeamProjects,
 } from "./project-discovery-flow.js";
+import { refreshProjectSearchIndex } from "./project-search-flow.js";
 import {
   repairLocalRepoBinding,
   upsertProjectMetadataRecord,
@@ -309,6 +310,7 @@ function setProjectsPageProgress(render, text) {
 
 export async function loadTeamProjects(render, teamId = state.selectedTeamId) {
   state.projectsPage.isRefreshing = true;
+  void refreshProjectSearchIndex(render, teamId).catch(() => {});
   render?.();
   try {
     return await runLoadTeamProjects(render, teamId, {

@@ -24,6 +24,7 @@ import {
   restoreEditorRow,
   saveActiveEditorRowComment,
   selectAllEditorReplaceRows,
+  showEditorRowInContext,
   softDeleteEditorRow,
   switchEditorSidebarTab,
   toggleEditorSearchFilterCaseSensitive,
@@ -196,6 +197,12 @@ export function createTranslateActions(render) {
     const restoreRowId = actionSuffix(action, "restore-editor-row:");
     if (restoreRowId !== null) {
       await restoreEditorRow(render, restoreRowId);
+      return true;
+    }
+
+    const showInContextRowId = actionSuffix(action, "show-editor-row-in-context:");
+    if (showInContextRowId !== null) {
+      await showEditorRowInContext(render, showInContextRowId);
       return true;
     }
 

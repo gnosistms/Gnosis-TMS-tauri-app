@@ -12,7 +12,8 @@ use sha2::{Digest, Sha256};
 use tauri::AppHandle;
 
 use crate::{
-    local_repo_sync_state::read_local_repo_sync_state, repo_sync_shared::git_output,
+    local_repo_sync_state::read_local_repo_sync_state,
+    repo_sync_shared::{git_output, read_current_head_oid},
     storage_paths::installation_data_dir,
 };
 
@@ -32,6 +33,12 @@ pub(crate) struct SearchProjectsInput {
     offset: Option<usize>,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct RefreshProjectSearchIndexInput {
+    installation_id: i64,
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct SearchProjectsResponse {
@@ -42,6 +49,16 @@ pub(crate) struct SearchProjectsResponse {
     total_capped: bool,
     query_too_short: bool,
     minimum_query_length: usize,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct RefreshProjectSearchIndexResponse {
+    repo_count: usize,
+    updated_repo_count: usize,
+    full_reindex_count: usize,
+    dirty_chapter_count: usize,
+    index_status: String,
 }
 
 #[derive(Clone, Serialize)]
@@ -70,6 +87,14 @@ struct RepoRecord {
     repo_name: String,
     project_title: String,
     repo_path: PathBuf,
+    head_sha: String,
+}
+
+#[derive(Clone)]
+struct IndexedRepoState {
+    project_id: String,
+    repo_name: String,
+    project_title: String,
     head_sha: String,
 }
 
@@ -108,6 +133,132 @@ struct SearchScore {
     length_penalty: f64,
 }
 
+#[derive(Default)]
+struct ProjectSearchIndexRefreshStats {
+    repo_count: usize,
+    updated_repo_count: usize,
+    full_reindex_count: usize,
+    dirty_chapter_count: usize,
+}
+
+#[derive(Default)]
+struct RepoRefreshPlan {
+    project_metadata_changed: bool,
+    touched_chapter_dirs: HashSet<String>,
+    requires_full_reindex: bool,
+}
+
+struct SearchDocumentInserter<'conn> {
+    connection: &'conn Connection,
+    insert_document: rusqlite::Statement<'conn>,
+    insert_token: rusqlite::Statement<'conn>,
+    insert_bigram: rusqlite::Statement<'conn>,
+    insert_trigram: rusqlite::Statement<'conn>,
+}
+
+impl<'conn> SearchDocumentInserter<'conn> {
+    fn new(connection: &'conn Connection) -> Result<Self, String> {
+        let insert_document = connection
+            .prepare(
+                "INSERT INTO search_documents (
+                   result_id, repo_key, project_id, repo_name, project_title, chapter_dir, chapter_id, chapter_title, row_id, row_order_key, language_code, language_name, plain_text, search_text, trigram_count, text_hash, updated_at_unix
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
+            )
+            .map_err(|error| format!("Could not prepare project search document insert: {error}"))?;
+        let insert_token = connection
+            .prepare("INSERT OR IGNORE INTO search_document_tokens (doc_id, token) VALUES (?1, ?2)")
+            .map_err(|error| format!("Could not prepare project search token insert: {error}"))?;
+        let insert_bigram = connection
+            .prepare(
+                "INSERT OR IGNORE INTO search_document_bigrams (doc_id, bigram) VALUES (?1, ?2)",
+            )
+            .map_err(|error| format!("Could not prepare project search bigram insert: {error}"))?;
+        let insert_trigram = connection
+            .prepare(
+                "INSERT OR IGNORE INTO search_document_trigrams (doc_id, trigram) VALUES (?1, ?2)",
+            )
+            .map_err(|error| format!("Could not prepare project search trigram insert: {error}"))?;
+        Ok(Self {
+            connection,
+            insert_document,
+            insert_token,
+            insert_bigram,
+            insert_trigram,
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn insert_field_document(
+        &mut self,
+        repo: &RepoRecord,
+        chapter_dir: &str,
+        chapter_id: &str,
+        chapter_title: &str,
+        row_id: &str,
+        row_order_key: &str,
+        language_code: &str,
+        language_name: &str,
+        plain_text: &str,
+    ) -> Result<(), String> {
+        let trimmed_plain_text = plain_text.trim();
+        if trimmed_plain_text.is_empty() {
+            return Ok(());
+        }
+
+        let search_text = normalize_search_text(trimmed_plain_text);
+        if search_text.is_empty() {
+            return Ok(());
+        }
+
+        let result_id = format!(
+            "{}:{}:{}:{}",
+            repo.repo_key, chapter_id, row_id, language_code
+        );
+        let trigrams = collect_unique_trigrams(&search_text);
+        let trigram_count = trigrams.len();
+        let updated_at_unix = current_unix_timestamp();
+        let text_hash = hash_text(trimmed_plain_text);
+        self.insert_document
+            .execute(params![
+                result_id,
+                repo.repo_key,
+                repo.project_id,
+                repo.repo_name,
+                repo.project_title,
+                chapter_dir,
+                chapter_id,
+                chapter_title,
+                row_id,
+                row_order_key,
+                language_code,
+                language_name,
+                trimmed_plain_text,
+                search_text,
+                trigram_count as i64,
+                text_hash,
+                updated_at_unix as i64,
+            ])
+            .map_err(|error| format!("Could not insert a project search document: {error}"))?;
+        let doc_id = self.connection.last_insert_rowid();
+        for token in collect_unique_tokens(trimmed_plain_text) {
+            self.insert_token
+                .execute(params![doc_id, token])
+                .map_err(|error| format!("Could not insert a project search token: {error}"))?;
+        }
+        for bigram in collect_unique_bigrams(&search_text) {
+            self.insert_bigram
+                .execute(params![doc_id, bigram])
+                .map_err(|error| format!("Could not insert a project search bigram: {error}"))?;
+        }
+        for trigram in trigrams {
+            self.insert_trigram
+                .execute(params![doc_id, trigram])
+                .map_err(|error| format!("Could not insert a project search trigram: {error}"))?;
+        }
+        Ok(())
+    }
+}
+
 #[tauri::command]
 pub(crate) async fn search_projects(
     app: AppHandle,
@@ -116,6 +267,33 @@ pub(crate) async fn search_projects(
     tauri::async_runtime::spawn_blocking(move || search_projects_sync(&app, input))
         .await
         .map_err(|error| format!("The projects search worker failed: {error}"))?
+}
+
+#[tauri::command]
+pub(crate) async fn refresh_project_search_index(
+    app: AppHandle,
+    input: RefreshProjectSearchIndexInput,
+) -> Result<RefreshProjectSearchIndexResponse, String> {
+    tauri::async_runtime::spawn_blocking(move || refresh_project_search_index_sync(&app, input))
+        .await
+        .map_err(|error| format!("The projects search indexing worker failed: {error}"))?
+}
+
+fn refresh_project_search_index_sync(
+    app: &AppHandle,
+    input: RefreshProjectSearchIndexInput,
+) -> Result<RefreshProjectSearchIndexResponse, String> {
+    let db_path = project_search_db_path(app, input.installation_id)?;
+    let mut connection = open_project_search_db(&db_path)?;
+    ensure_project_search_schema(&connection)?;
+    let stats = refresh_project_index_current(app, input.installation_id, &mut connection)?;
+    Ok(RefreshProjectSearchIndexResponse {
+        repo_count: stats.repo_count,
+        updated_repo_count: stats.updated_repo_count,
+        full_reindex_count: stats.full_reindex_count,
+        dirty_chapter_count: stats.dirty_chapter_count,
+        index_status: "ready".to_string(),
+    })
 }
 
 fn search_projects_sync(
@@ -138,9 +316,8 @@ fn search_projects_sync(
     }
 
     let db_path = project_search_db_path(app, input.installation_id)?;
-    let mut connection = open_project_search_db(&db_path)?;
+    let connection = open_project_search_db(&db_path)?;
     ensure_project_search_schema(&connection)?;
-    ensure_project_index_current(app, input.installation_id, &mut connection)?;
 
     let use_bigram_index = query_character_count == MIN_SEARCH_QUERY_LENGTH;
     let query_tokens = if use_bigram_index {
@@ -333,11 +510,11 @@ fn search_projects_sync(
     })
 }
 
-fn ensure_project_index_current(
+fn refresh_project_index_current(
     app: &AppHandle,
     installation_id: i64,
     connection: &mut Connection,
-) -> Result<(), String> {
+) -> Result<ProjectSearchIndexRefreshStats, String> {
     let repo_root = installation_data_dir(app, installation_id)?.join("projects");
     fs::create_dir_all(&repo_root).map_err(|error| {
         format!(
@@ -347,36 +524,61 @@ fn ensure_project_index_current(
     })?;
 
     let repos = discover_project_repos(&repo_root)?;
-    let mut indexed_repo_heads = HashMap::<String, String>::new();
-    {
-        let mut statement = connection
-            .prepare("SELECT repo_key, head_sha FROM indexed_repos")
-            .map_err(|error| format!("Could not prepare indexed repo scan: {error}"))?;
-        let rows = statement
-            .query_map([], |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-            })
-            .map_err(|error| format!("Could not load indexed repo state: {error}"))?;
-        for row in rows {
-            let (repo_key, head_sha) =
-                row.map_err(|error| format!("Could not decode indexed repo state: {error}"))?;
-            indexed_repo_heads.insert(repo_key, head_sha);
-        }
-    }
-
+    let indexed_repos = load_indexed_repo_states(connection)?;
     let active_repo_keys = repos
         .iter()
         .map(|repo| repo.repo_key.clone())
         .collect::<HashSet<_>>();
+    let mut stats = ProjectSearchIndexRefreshStats {
+        repo_count: repos.len(),
+        ..ProjectSearchIndexRefreshStats::default()
+    };
+
     for repo in &repos {
-        let current_head = indexed_repo_heads.get(&repo.repo_key);
-        if current_head == Some(&repo.head_sha) {
+        let indexed_state = indexed_repos.get(&repo.repo_key);
+        let metadata_changed = indexed_state
+            .map(|state| {
+                state.project_id != repo.project_id
+                    || state.repo_name != repo.repo_name
+                    || state.project_title != repo.project_title
+            })
+            .unwrap_or(false);
+
+        if indexed_state.is_none() {
+            reindex_repo(connection, repo)?;
+            stats.updated_repo_count += 1;
+            stats.full_reindex_count += 1;
             continue;
         }
-        reindex_repo(connection, repo)?;
+
+        let plan = plan_repo_refresh(repo, indexed_state)?;
+        let head_changed = indexed_state
+            .map(|state| state.head_sha != repo.head_sha)
+            .unwrap_or(true);
+        let needs_update = head_changed
+            || metadata_changed
+            || plan.project_metadata_changed
+            || !plan.touched_chapter_dirs.is_empty();
+        if !needs_update {
+            continue;
+        }
+
+        stats.updated_repo_count += 1;
+        stats.dirty_chapter_count += plan.touched_chapter_dirs.len();
+
+        if plan.requires_full_reindex {
+            reindex_repo(connection, repo)?;
+            stats.full_reindex_count += 1;
+            continue;
+        }
+
+        if apply_incremental_repo_refresh(connection, repo, &plan, metadata_changed).is_err() {
+            reindex_repo(connection, repo)?;
+            stats.full_reindex_count += 1;
+        }
     }
 
-    let missing_repo_keys = indexed_repo_heads
+    let missing_repo_keys = indexed_repos
         .keys()
         .filter(|repo_key| !active_repo_keys.contains(*repo_key))
         .cloned()
@@ -385,7 +587,7 @@ fn ensure_project_index_current(
         remove_repo_from_index(connection, &repo_key)?;
     }
 
-    Ok(())
+    Ok(stats)
 }
 
 fn discover_project_repos(repo_root: &Path) -> Result<Vec<RepoRecord>, String> {
@@ -446,8 +648,7 @@ fn discover_project_repos(repo_root: &Path) -> Result<Vec<RepoRecord>, String> {
         let repo_key = project_id.clone();
         let project_title =
             read_project_title(&project_json_path)?.unwrap_or_else(|| repo_name.clone());
-        let head_sha =
-            git_output(&repo_path, &["rev-parse", "--verify", "HEAD"], None).unwrap_or_default();
+        let head_sha = read_current_head_oid(&repo_path).unwrap_or_default();
         repos.push(RepoRecord {
             repo_key,
             project_id,
@@ -461,205 +662,364 @@ fn discover_project_repos(repo_root: &Path) -> Result<Vec<RepoRecord>, String> {
     Ok(repos)
 }
 
+fn load_indexed_repo_states(
+    connection: &Connection,
+) -> Result<HashMap<String, IndexedRepoState>, String> {
+    let mut indexed_repos = HashMap::<String, IndexedRepoState>::new();
+    let mut statement = connection
+        .prepare(
+            "SELECT repo_key, project_id, repo_name, project_title, head_sha FROM indexed_repos",
+        )
+        .map_err(|error| format!("Could not prepare indexed repo scan: {error}"))?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                IndexedRepoState {
+                    project_id: row.get(1)?,
+                    repo_name: row.get(2)?,
+                    project_title: row.get(3)?,
+                    head_sha: row.get(4)?,
+                },
+            ))
+        })
+        .map_err(|error| format!("Could not load indexed repo state: {error}"))?;
+    for row in rows {
+        let (repo_key, state) =
+            row.map_err(|error| format!("Could not decode indexed repo state: {error}"))?;
+        indexed_repos.insert(repo_key, state);
+    }
+    Ok(indexed_repos)
+}
+
+fn plan_repo_refresh(
+    repo: &RepoRecord,
+    indexed_state: Option<&IndexedRepoState>,
+) -> Result<RepoRefreshPlan, String> {
+    let mut plan = RepoRefreshPlan::default();
+    let Some(indexed_state) = indexed_state else {
+        plan.requires_full_reindex = true;
+        return Ok(plan);
+    };
+
+    let indexed_head = indexed_state.head_sha.trim();
+    let current_head = repo.head_sha.trim();
+    if indexed_head.is_empty() || current_head.is_empty() {
+        plan.requires_full_reindex = true;
+        return Ok(plan);
+    }
+
+    if indexed_head != current_head {
+        let diff_range = format!("{indexed_head}..{current_head}");
+        match git_output(
+            &repo.repo_path,
+            &[
+                "diff",
+                "--name-status",
+                "--find-renames",
+                &diff_range,
+                "--",
+                "project.json",
+                "chapters",
+            ],
+            None,
+        ) {
+            Ok(output) => append_diff_name_status_changes(&mut plan, &output)?,
+            Err(_) => {
+                plan.requires_full_reindex = true;
+                return Ok(plan);
+            }
+        }
+    }
+
+    match git_output(
+        &repo.repo_path,
+        &[
+            "status",
+            "--porcelain=v1",
+            "--untracked-files=all",
+            "--",
+            "project.json",
+            "chapters",
+        ],
+        None,
+    ) {
+        Ok(output) => append_status_porcelain_changes(&mut plan, &output)?,
+        Err(_) => {
+            plan.requires_full_reindex = true;
+        }
+    }
+
+    Ok(plan)
+}
+
+fn apply_incremental_repo_refresh(
+    connection: &mut Connection,
+    repo: &RepoRecord,
+    plan: &RepoRefreshPlan,
+    metadata_changed: bool,
+) -> Result<(), String> {
+    let transaction = connection.transaction().map_err(|error| {
+        format!("Could not start project search incremental transaction: {error}")
+    })?;
+
+    if metadata_changed || plan.project_metadata_changed {
+        update_repo_document_metadata_tx(&transaction, repo)?;
+    }
+
+    let mut touched_chapter_dirs = plan
+        .touched_chapter_dirs
+        .iter()
+        .cloned()
+        .collect::<Vec<_>>();
+    touched_chapter_dirs.sort();
+    for chapter_dir in &touched_chapter_dirs {
+        remove_chapter_from_index_tx(&transaction, &repo.repo_key, chapter_dir)?;
+    }
+
+    let mut inserter = SearchDocumentInserter::new(&transaction)?;
+    for chapter_dir in &touched_chapter_dirs {
+        index_chapter_dir_from_disk(repo, chapter_dir, &mut inserter)?;
+    }
+
+    upsert_indexed_repo_state_tx(&transaction, repo)?;
+    drop(inserter);
+    transaction.commit().map_err(|error| {
+        format!("Could not commit the project search incremental transaction: {error}")
+    })?;
+    Ok(())
+}
+
 fn reindex_repo(connection: &mut Connection, repo: &RepoRecord) -> Result<(), String> {
     let transaction = connection
         .transaction()
         .map_err(|error| format!("Could not start project search reindex transaction: {error}"))?;
 
     remove_repo_from_index_tx(&transaction, &repo.repo_key)?;
-
-    let mut insert_document = transaction
-    .prepare(
-      "INSERT INTO search_documents (
-         result_id, repo_key, project_id, repo_name, project_title, chapter_id, chapter_title, row_id, row_order_key, language_code, language_name, plain_text, search_text, trigram_count, text_hash, updated_at_unix
-       ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
-    )
-    .map_err(|error| format!("Could not prepare project search document insert: {error}"))?;
-    let mut insert_token = transaction
-        .prepare("INSERT OR IGNORE INTO search_document_tokens (doc_id, token) VALUES (?1, ?2)")
-        .map_err(|error| format!("Could not prepare project search token insert: {error}"))?;
-    let mut insert_bigram = transaction
-        .prepare("INSERT OR IGNORE INTO search_document_bigrams (doc_id, bigram) VALUES (?1, ?2)")
-        .map_err(|error| format!("Could not prepare project search bigram insert: {error}"))?;
-    let mut insert_trigram = transaction
-        .prepare("INSERT OR IGNORE INTO search_document_trigrams (doc_id, trigram) VALUES (?1, ?2)")
-        .map_err(|error| format!("Could not prepare project search trigram insert: {error}"))?;
-
-    let chapters_root = repo.repo_path.join("chapters");
-    if chapters_root.exists() {
-        for entry in fs::read_dir(&chapters_root).map_err(|error| {
-            format!(
-                "Could not read chapter folders for '{}': {error}",
-                repo.repo_path.display()
-            )
-        })? {
-            let entry =
-                entry.map_err(|error| format!("Could not read a chapter folder entry: {error}"))?;
-            let chapter_path = entry.path();
-            if !chapter_path.is_dir() {
-                continue;
-            }
-
-            let chapter_json_path = chapter_path.join("chapter.json");
-            if !chapter_json_path.exists() {
-                continue;
-            }
-            let chapter_value = read_json_value(&chapter_json_path, "chapter.json")?;
-            if lifecycle_state(&chapter_value) == "deleted" {
-                continue;
-            }
-
-            let chapter_id = read_required_string(&chapter_value, "chapter_id", "chapter.json")?;
-            let chapter_title =
-                read_optional_string(&chapter_value, "title").unwrap_or_else(|| "File".to_string());
-            let language_names = read_language_name_map(&chapter_value);
-            let rows_root = chapter_path.join("rows");
-            if !rows_root.exists() {
-                continue;
-            }
-
-            for row_entry in fs::read_dir(&rows_root).map_err(|error| {
-                format!(
-                    "Could not read row files for '{}': {error}",
-                    rows_root.display()
-                )
-            })? {
-                let row_entry = row_entry
-                    .map_err(|error| format!("Could not read a row file entry: {error}"))?;
-                let row_path = row_entry.path();
-                if !row_path.is_file() {
-                    continue;
-                }
-                let row_value = read_json_value(&row_path, "row file")?;
-                if lifecycle_state(&row_value) == "deleted" {
-                    continue;
-                }
-                let row_id = read_required_string(&row_value, "row_id", "row file")?;
-                let row_order_key = row_value
-                    .get("structure")
-                    .and_then(Value::as_object)
-                    .and_then(|structure| structure.get("order_key"))
-                    .and_then(Value::as_str)
-                    .unwrap_or("")
-                    .to_string();
-                let Some(fields) = row_value.get("fields").and_then(Value::as_object) else {
-                    continue;
-                };
-                for (language_code, field_value) in fields {
-                    let plain_text = field_value
-                        .get("plain_text")
-                        .and_then(Value::as_str)
-                        .unwrap_or("")
-                        .trim()
-                        .to_string();
-                    if plain_text.is_empty() {
-                        continue;
-                    }
-                    let search_text = normalize_search_text(&plain_text);
-                    if search_text.is_empty() {
-                        continue;
-                    }
-
-                    let result_id = format!(
-                        "{}:{}:{}:{}",
-                        repo.repo_key, chapter_id, row_id, language_code
-                    );
-                    let language_name = language_names
-                        .get(language_code)
-                        .cloned()
-                        .unwrap_or_else(|| language_code.to_uppercase());
-                    let trigrams = collect_unique_trigrams(&search_text);
-                    let trigram_count = trigrams.len();
-                    let updated_at_unix = current_unix_timestamp();
-                    let text_hash = hash_text(&plain_text);
-                    insert_document
-                        .execute(params![
-                            result_id,
-                            repo.repo_key,
-                            repo.project_id,
-                            repo.repo_name,
-                            repo.project_title,
-                            chapter_id,
-                            chapter_title,
-                            row_id,
-                            row_order_key,
-                            language_code,
-                            language_name,
-                            plain_text,
-                            search_text,
-                            trigram_count as i64,
-                            text_hash,
-                            updated_at_unix as i64,
-                        ])
-                        .map_err(|error| {
-                            format!("Could not insert a project search document: {error}")
-                        })?;
-                    let doc_id = transaction.last_insert_rowid();
-                    for token in collect_unique_tokens(
-                        field_value
-                            .get("plain_text")
-                            .and_then(Value::as_str)
-                            .unwrap_or("")
-                            .trim(),
-                    ) {
-                        insert_token
-                            .execute(params![doc_id, token])
-                            .map_err(|error| {
-                                format!("Could not insert a project search token: {error}")
-                            })?;
-                    }
-                    for bigram in collect_unique_bigrams(&search_text) {
-                        insert_bigram
-                            .execute(params![doc_id, bigram])
-                            .map_err(|error| {
-                                format!("Could not insert a project search bigram: {error}")
-                            })?;
-                    }
-                    for trigram in trigrams {
-                        insert_trigram
-                            .execute(params![doc_id, trigram])
-                            .map_err(|error| {
-                                format!("Could not insert a project search trigram: {error}")
-                            })?;
-                    }
-                }
-            }
-        }
-    }
-
-    transaction
-    .execute(
-      "INSERT INTO indexed_repos (repo_key, project_id, repo_name, project_title, head_sha, last_indexed_at)
-       VALUES (?1, ?2, ?3, ?4, ?5, ?6)
-       ON CONFLICT(repo_key) DO UPDATE SET
-         project_id = excluded.project_id,
-         repo_name = excluded.repo_name,
-         project_title = excluded.project_title,
-         head_sha = excluded.head_sha,
-         last_indexed_at = excluded.last_indexed_at",
-      params![
-        repo.repo_key,
-        repo.project_id,
-        repo.repo_name,
-        repo.project_title,
-        repo.head_sha,
-        current_unix_timestamp() as i64,
-      ],
-    )
-    .map_err(|error| format!("Could not update indexed repo state: {error}"))?;
-
-    drop(insert_trigram);
-    drop(insert_bigram);
-    drop(insert_token);
-    drop(insert_document);
+    let mut inserter = SearchDocumentInserter::new(&transaction)?;
+    index_all_repo_chapters(repo, &mut inserter)?;
+    upsert_indexed_repo_state_tx(&transaction, repo)?;
+    drop(inserter);
     transaction.commit().map_err(|error| {
         format!("Could not commit the project search reindex transaction: {error}")
     })?;
     Ok(())
 }
 
+fn index_all_repo_chapters(
+    repo: &RepoRecord,
+    inserter: &mut SearchDocumentInserter<'_>,
+) -> Result<(), String> {
+    let chapters_root = repo.repo_path.join("chapters");
+    if !chapters_root.exists() {
+        return Ok(());
+    }
+
+    for entry in fs::read_dir(&chapters_root).map_err(|error| {
+        format!(
+            "Could not read chapter folders for '{}': {error}",
+            repo.repo_path.display()
+        )
+    })? {
+        let entry =
+            entry.map_err(|error| format!("Could not read a chapter folder entry: {error}"))?;
+        let chapter_path = entry.path();
+        if !chapter_path.is_dir() {
+            continue;
+        }
+        let chapter_dir = entry.file_name().to_string_lossy().trim().to_string();
+        if chapter_dir.is_empty() {
+            continue;
+        }
+        index_chapter_path(repo, &chapter_dir, &chapter_path, inserter)?;
+    }
+
+    Ok(())
+}
+
+fn index_chapter_dir_from_disk(
+    repo: &RepoRecord,
+    chapter_dir: &str,
+    inserter: &mut SearchDocumentInserter<'_>,
+) -> Result<(), String> {
+    let chapter_path = repo.repo_path.join("chapters").join(chapter_dir);
+    if !chapter_path.is_dir() {
+        return Ok(());
+    }
+
+    index_chapter_path(repo, chapter_dir, &chapter_path, inserter)
+}
+
+fn index_chapter_path(
+    repo: &RepoRecord,
+    chapter_dir: &str,
+    chapter_path: &Path,
+    inserter: &mut SearchDocumentInserter<'_>,
+) -> Result<(), String> {
+    let chapter_json_path = chapter_path.join("chapter.json");
+    if !chapter_json_path.exists() {
+        return Ok(());
+    }
+
+    let chapter_value = read_json_value(&chapter_json_path, "chapter.json")?;
+    if lifecycle_state(&chapter_value) == "deleted" {
+        return Ok(());
+    }
+
+    let chapter_id = read_required_string(&chapter_value, "chapter_id", "chapter.json")?;
+    let chapter_title =
+        read_optional_string(&chapter_value, "title").unwrap_or_else(|| "File".to_string());
+    let language_names = read_language_name_map(&chapter_value);
+    let rows_root = chapter_path.join("rows");
+    if !rows_root.exists() {
+        return Ok(());
+    }
+
+    for row_entry in fs::read_dir(&rows_root).map_err(|error| {
+        format!(
+            "Could not read row files for '{}': {error}",
+            rows_root.display()
+        )
+    })? {
+        let row_entry =
+            row_entry.map_err(|error| format!("Could not read a row file entry: {error}"))?;
+        let row_path = row_entry.path();
+        if !row_path.is_file() {
+            continue;
+        }
+
+        let row_value = read_json_value(&row_path, "row file")?;
+        if lifecycle_state(&row_value) == "deleted" {
+            continue;
+        }
+
+        let row_id = read_required_string(&row_value, "row_id", "row file")?;
+        let row_order_key = row_value
+            .get("structure")
+            .and_then(Value::as_object)
+            .and_then(|structure| structure.get("order_key"))
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        let Some(fields) = row_value.get("fields").and_then(Value::as_object) else {
+            continue;
+        };
+
+        for (language_code, field_value) in fields {
+            let plain_text = field_value
+                .get("plain_text")
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            let language_name = language_names
+                .get(language_code)
+                .cloned()
+                .unwrap_or_else(|| language_code.to_uppercase());
+            inserter.insert_field_document(
+                repo,
+                chapter_dir,
+                &chapter_id,
+                &chapter_title,
+                &row_id,
+                &row_order_key,
+                language_code,
+                &language_name,
+                plain_text,
+            )?;
+        }
+    }
+
+    Ok(())
+}
+
+fn upsert_indexed_repo_state_tx(connection: &Connection, repo: &RepoRecord) -> Result<(), String> {
+    connection
+        .execute(
+            "INSERT INTO indexed_repos (repo_key, project_id, repo_name, project_title, head_sha, last_indexed_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+             ON CONFLICT(repo_key) DO UPDATE SET
+               project_id = excluded.project_id,
+               repo_name = excluded.repo_name,
+               project_title = excluded.project_title,
+               head_sha = excluded.head_sha,
+               last_indexed_at = excluded.last_indexed_at",
+            params![
+                repo.repo_key,
+                repo.project_id,
+                repo.repo_name,
+                repo.project_title,
+                repo.head_sha,
+                current_unix_timestamp() as i64,
+            ],
+        )
+        .map_err(|error| format!("Could not update indexed repo state: {error}"))?;
+    Ok(())
+}
+
+fn update_repo_document_metadata_tx(
+    connection: &Connection,
+    repo: &RepoRecord,
+) -> Result<(), String> {
+    connection
+        .execute(
+            "UPDATE search_documents
+             SET project_id = ?1,
+                 repo_name = ?2,
+                 project_title = ?3
+             WHERE repo_key = ?4",
+            params![
+                repo.project_id,
+                repo.repo_name,
+                repo.project_title,
+                repo.repo_key
+            ],
+        )
+        .map_err(|error| format!("Could not update project search metadata: {error}"))?;
+    Ok(())
+}
+
 fn remove_repo_from_index(connection: &Connection, repo_key: &str) -> Result<(), String> {
     remove_repo_from_index_tx(connection, repo_key)
+}
+
+fn remove_chapter_from_index_tx(
+    connection: &Connection,
+    repo_key: &str,
+    chapter_dir: &str,
+) -> Result<(), String> {
+    connection
+        .execute(
+            "DELETE FROM search_document_tokens
+             WHERE doc_id IN (
+               SELECT doc_id FROM search_documents WHERE repo_key = ?1 AND chapter_dir = ?2
+             )",
+            params![repo_key, chapter_dir],
+        )
+        .map_err(|error| format!("Could not remove stale project search tokens: {error}"))?;
+    connection
+        .execute(
+            "DELETE FROM search_document_bigrams
+             WHERE doc_id IN (
+               SELECT doc_id FROM search_documents WHERE repo_key = ?1 AND chapter_dir = ?2
+             )",
+            params![repo_key, chapter_dir],
+        )
+        .map_err(|error| format!("Could not remove stale project search bigrams: {error}"))?;
+    connection
+        .execute(
+            "DELETE FROM search_document_trigrams
+             WHERE doc_id IN (
+               SELECT doc_id FROM search_documents WHERE repo_key = ?1 AND chapter_dir = ?2
+             )",
+            params![repo_key, chapter_dir],
+        )
+        .map_err(|error| format!("Could not remove stale project search trigrams: {error}"))?;
+    connection
+        .execute(
+            "DELETE FROM search_documents WHERE repo_key = ?1 AND chapter_dir = ?2",
+            params![repo_key, chapter_dir],
+        )
+        .map_err(|error| format!("Could not remove stale project search documents: {error}"))?;
+    Ok(())
 }
 
 fn remove_repo_from_index_tx(connection: &Connection, repo_key: &str) -> Result<(), String> {
@@ -742,6 +1102,7 @@ fn ensure_project_search_schema(connection: &Connection) -> Result<(), String> {
          project_id TEXT NOT NULL,
          repo_name TEXT NOT NULL,
          project_title TEXT NOT NULL,
+         chapter_dir TEXT NOT NULL DEFAULT '',
          chapter_id TEXT NOT NULL,
          chapter_title TEXT NOT NULL,
          row_id TEXT NOT NULL,
@@ -782,7 +1143,144 @@ fn ensure_project_search_schema(connection: &Connection) -> Result<(), String> {
        CREATE INDEX IF NOT EXISTS search_document_trigrams_trigram_idx
          ON search_document_trigrams(trigram);",
         )
-        .map_err(|error| format!("Could not initialize the project search schema: {error}"))
+        .map_err(|error| format!("Could not initialize the project search schema: {error}"))?;
+
+    if !table_has_column(connection, "search_documents", "chapter_dir")? {
+        connection
+            .execute(
+                "ALTER TABLE search_documents ADD COLUMN chapter_dir TEXT NOT NULL DEFAULT ''",
+                [],
+            )
+            .map_err(|error| format!("Could not migrate the project search schema: {error}"))?;
+        clear_project_search_index_tables(connection)?;
+    }
+
+    connection
+        .execute_batch(
+            "CREATE INDEX IF NOT EXISTS search_documents_repo_chapter_dir_idx
+               ON search_documents(repo_key, chapter_dir);",
+        )
+        .map_err(|error| format!("Could not finalize the project search schema: {error}"))?;
+    Ok(())
+}
+
+fn table_has_column(
+    connection: &Connection,
+    table_name: &str,
+    column_name: &str,
+) -> Result<bool, String> {
+    let pragma = format!("PRAGMA table_info({table_name})");
+    let mut statement = connection
+        .prepare(&pragma)
+        .map_err(|error| format!("Could not inspect the project search schema: {error}"))?;
+    let rows = statement
+        .query_map([], |row| row.get::<_, String>(1))
+        .map_err(|error| format!("Could not read the project search schema: {error}"))?;
+    for row in rows {
+        let current_column =
+            row.map_err(|error| format!("Could not decode the project search schema: {error}"))?;
+        if current_column == column_name {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn clear_project_search_index_tables(connection: &Connection) -> Result<(), String> {
+    connection
+        .execute_batch(
+            "DELETE FROM search_document_tokens;
+             DELETE FROM search_document_bigrams;
+             DELETE FROM search_document_trigrams;
+             DELETE FROM search_documents;
+             DELETE FROM indexed_repos;",
+        )
+        .map_err(|error| {
+            format!("Could not reset the project search index after migration: {error}")
+        })
+}
+
+fn append_diff_name_status_changes(plan: &mut RepoRefreshPlan, output: &str) -> Result<(), String> {
+    for line in output
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+    {
+        let columns = line.split('\t').collect::<Vec<_>>();
+        if columns.is_empty() {
+            continue;
+        }
+
+        let status = columns[0];
+        let is_rename_or_copy = matches!(status.chars().next(), Some('R' | 'C'));
+        if is_rename_or_copy {
+            if columns.len() < 3 {
+                return Err(format!(
+                    "Could not parse a project search rename diff row: '{line}'"
+                ));
+            }
+            record_repo_relative_path_change(plan, columns[1]);
+            record_repo_relative_path_change(plan, columns[2]);
+            continue;
+        }
+
+        if columns.len() < 2 {
+            return Err(format!(
+                "Could not parse a project search diff row: '{line}'"
+            ));
+        }
+        record_repo_relative_path_change(plan, columns[1]);
+    }
+
+    Ok(())
+}
+
+fn append_status_porcelain_changes(plan: &mut RepoRefreshPlan, output: &str) -> Result<(), String> {
+    for line in output.lines().filter(|line| !line.trim().is_empty()) {
+        if line.len() < 4 {
+            return Err(format!(
+                "Could not parse a project search git status row: '{line}'"
+            ));
+        }
+        let path_value = line[3..].trim();
+        if path_value.is_empty() {
+            continue;
+        }
+
+        if let Some((left, right)) = path_value.split_once(" -> ") {
+            record_repo_relative_path_change(plan, left);
+            record_repo_relative_path_change(plan, right);
+            continue;
+        }
+
+        record_repo_relative_path_change(plan, path_value);
+    }
+
+    Ok(())
+}
+
+fn record_repo_relative_path_change(plan: &mut RepoRefreshPlan, path: &str) {
+    let normalized_path = path.trim().replace('\\', "/");
+    if normalized_path.is_empty() {
+        return;
+    }
+    if normalized_path == "project.json" {
+        plan.project_metadata_changed = true;
+        return;
+    }
+    if let Some(chapter_dir) = extract_chapter_dir_from_repo_path(&normalized_path) {
+        plan.touched_chapter_dirs.insert(chapter_dir);
+    }
+}
+
+fn extract_chapter_dir_from_repo_path(path: &str) -> Option<String> {
+    let mut segments = path.split('/');
+    match (segments.next(), segments.next()) {
+        (Some("chapters"), Some(chapter_dir)) if !chapter_dir.trim().is_empty() => {
+            Some(chapter_dir.trim().to_string())
+        }
+        _ => None,
+    }
 }
 
 fn normalize_search_text(value: &str) -> String {
@@ -1080,9 +1578,10 @@ impl<T> OptionalRow<T> for rusqlite::Result<T> {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_plain_text_snippet, collect_unique_bigrams, collect_unique_trigrams,
-        compute_search_score, normalize_search_text, score_to_number, CandidateDocument,
-        IndexedDocument,
+        append_diff_name_status_changes, append_status_porcelain_changes, build_plain_text_snippet,
+        collect_unique_bigrams, collect_unique_trigrams, compute_search_score,
+        extract_chapter_dir_from_repo_path, normalize_search_text, score_to_number,
+        CandidateDocument, IndexedDocument, RepoRefreshPlan,
     };
 
     fn candidate(
@@ -1164,5 +1663,55 @@ mod tests {
         let snippet = build_plain_text_snippet(&"a".repeat(200));
         assert!(snippet.ends_with("..."));
         assert!(snippet.len() < 160);
+    }
+
+    #[test]
+    fn append_diff_name_status_changes_tracks_project_metadata_and_renamed_chapters() {
+        let mut plan = RepoRefreshPlan::default();
+        append_diff_name_status_changes(
+            &mut plan,
+            "M\tproject.json\nR100\tchapters/old-file/chapter.json\tchapters/new-file/chapter.json\nM\tchapters/new-file/rows/row-1.json\n",
+        )
+        .unwrap();
+
+        assert!(plan.project_metadata_changed);
+        let mut chapter_dirs = plan.touched_chapter_dirs.into_iter().collect::<Vec<_>>();
+        chapter_dirs.sort();
+        assert_eq!(
+            chapter_dirs,
+            vec!["new-file".to_string(), "old-file".to_string()]
+        );
+    }
+
+    #[test]
+    fn append_status_porcelain_changes_tracks_dirty_and_untracked_chapters() {
+        let mut plan = RepoRefreshPlan::default();
+        append_status_porcelain_changes(
+            &mut plan,
+            " M chapters/ch-1/rows/row-1.json\n?? chapters/ch-2/chapter.json\nR  chapters/ch-old/rows/row-9.json -> chapters/ch-new/rows/row-9.json\n",
+        )
+        .unwrap();
+
+        let mut chapter_dirs = plan.touched_chapter_dirs.into_iter().collect::<Vec<_>>();
+        chapter_dirs.sort();
+        assert_eq!(
+            chapter_dirs,
+            vec![
+                "ch-1".to_string(),
+                "ch-2".to_string(),
+                "ch-new".to_string(),
+                "ch-old".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn extract_chapter_dir_from_repo_path_reads_repo_relative_chapter_dirs() {
+        assert_eq!(
+            extract_chapter_dir_from_repo_path("chapters/file-1/rows/row-1.json"),
+            Some("file-1".to_string())
+        );
+        assert_eq!(extract_chapter_dir_from_repo_path("project.json"), None);
+        assert_eq!(extract_chapter_dir_from_repo_path("notes/readme.md"), None);
     }
 }
