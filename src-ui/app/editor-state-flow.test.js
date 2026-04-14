@@ -56,6 +56,7 @@ test("applyEditorUiState preserves same-chapter editor UI state when the active 
     replaceUndoModal: { isOpen: true, commitSha: "abc123", status: "idle", error: "" },
     activeRowId: "row-1",
     activeLanguageCode: "en",
+    reviewExpandedSectionKeys: new Set(),
     history: previousHistory,
   };
 
@@ -72,6 +73,7 @@ test("applyEditorUiState preserves same-chapter editor UI state when the active 
   assert.deepEqual([...result.dirtyRowIds], ["row-1"]);
   assert.equal(result.activeRowId, "row-1");
   assert.equal(result.activeLanguageCode, "en");
+  assert.deepEqual([...result.reviewExpandedSectionKeys], []);
   assert.equal(result.history.entries.length, 1);
   assert.equal(result.history.entries[0].commitSha, "abc123");
   assert.deepEqual([...result.history.expandedGroupKeys], ["group-a"]);

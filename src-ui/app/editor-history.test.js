@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import {
   buildEditorHistoryViewModel,
   editorHistoryEntryMatchesSection,
+  findEditorHistoryPreviousEntry,
   historyEntryCanUndoReplace,
   reconcileExpandedEditorHistoryGroupKeys,
 } from "./editor-history.js";
@@ -119,4 +120,30 @@ test("only editor-replace history entries expose undo replace", () => {
   assert.equal(historyEntryCanUndoReplace(historyEntry({ commitSha: "c1", operationType: "editor-replace" })), true);
   assert.equal(historyEntryCanUndoReplace(historyEntry({ commitSha: "c2", operationType: "editor-update" })), false);
   assert.equal(historyEntryCanUndoReplace(historyEntry({ commitSha: "c3", operationType: "restore" })), false);
+});
+
+test("findEditorHistoryPreviousEntry returns the previous saved version for the current section", () => {
+  const entries = [
+    historyEntry({ commitSha: "c3", plainText: "Current" }),
+    historyEntry({ commitSha: "c2", plainText: "Previous" }),
+    historyEntry({ commitSha: "c1", operationType: "import", plainText: "Initial" }),
+  ];
+
+  assert.equal(
+    findEditorHistoryPreviousEntry(entries, {
+      text: "Current",
+      reviewed: false,
+      pleaseCheck: false,
+    })?.commitSha,
+    "c2",
+  );
+
+  assert.equal(
+    findEditorHistoryPreviousEntry(entries, {
+      text: "Unsaved change",
+      reviewed: false,
+      pleaseCheck: false,
+    })?.commitSha,
+    "c3",
+  );
 });

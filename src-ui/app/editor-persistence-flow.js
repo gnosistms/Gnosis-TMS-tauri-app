@@ -1,5 +1,6 @@
 import {
   cloneDirtyRowIds,
+  reviewTabLanguageToOpenAfterSave,
   resolveDirtyTrackedEditorRowIds,
   rowHasFieldChanges,
   rowHasPersistedChanges,
@@ -346,6 +347,12 @@ async function persistEditorRow(render, rowId, operations = {}, options = {}) {
       }
 
       const fieldsToPersist = cloneRowFields(row.fields);
+      const reviewLanguageToOpen = reviewTabLanguageToOpenAfterSave(
+        editorChapter,
+        rowId,
+        row,
+        fieldsToPersist,
+      );
       updateEditorChapterRow(rowId, (currentRow) => applyEditorRowPersistRequested(currentRow));
       render?.({ scope: "translate-sidebar" });
 
@@ -408,6 +415,22 @@ async function persistEditorRow(render, rowId, operations = {}, options = {}) {
               ? payload.sourceWordCounts
               : state.editorChapter.sourceWordCounts,
         };
+        if (
+          reviewLanguageToOpen
+          && state.editorChapter.activeRowId === rowId
+          && state.editorChapter.activeLanguageCode === reviewLanguageToOpen
+        ) {
+          const reviewExpandedSectionKeys =
+            state.editorChapter.reviewExpandedSectionKeys instanceof Set
+              ? new Set(state.editorChapter.reviewExpandedSectionKeys)
+              : new Set();
+          reviewExpandedSectionKeys.add("last-update");
+          state.editorChapter = {
+            ...state.editorChapter,
+            sidebarTab: "review",
+            reviewExpandedSectionKeys,
+          };
+        }
         reconcileDirtyTrackedEditorRows([rowId]);
         applyEditorSelectionsToProjectState(state.editorChapter);
         render?.({ scope: "translate-sidebar" });

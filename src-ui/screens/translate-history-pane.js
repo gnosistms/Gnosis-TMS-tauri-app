@@ -59,7 +59,7 @@ function buildHistoryDiffSegments(previousText, currentText) {
     });
 }
 
-function renderHistoryContent(entry, previousEntry) {
+export function renderHistoryContent(entry, previousEntry) {
   const currentText = String(entry?.plainText ?? "");
   if (!previousEntry) {
     return escapeHtml(currentText);

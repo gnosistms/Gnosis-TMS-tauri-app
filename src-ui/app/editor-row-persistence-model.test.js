@@ -4,9 +4,11 @@ import assert from "node:assert/strict";
 import {
   reconcileDirtyRowIds,
   resolveDirtyTrackedEditorRowIds,
+  reviewTabLanguageToOpenAfterSave,
   rowHasPersistedChanges,
   rowNeedsDirtyTracking,
 } from "./editor-row-persistence-model.js";
+import { createEditorChapterState } from "./state.js";
 
 function row(rowId, overrides = {}) {
   return {
@@ -83,4 +85,92 @@ test("saving rows remain dirty-tracked while the save is in flight", () => {
   );
 
   assert.deepEqual([...nextDirtyRowIds], ["row-a"]);
+});
+
+test("reviewTabLanguageToOpenAfterSave opens review for a newly saved non-source translation", () => {
+  const chapterState = {
+    ...createEditorChapterState(),
+    chapterId: "chapter-1",
+    activeRowId: "row-a",
+    activeLanguageCode: "vi",
+    selectedSourceLanguageCode: "es",
+  };
+  const currentRow = row("row-a", {
+    fields: { es: "Hola", vi: "" },
+    persistedFields: { es: "Hola", vi: "" },
+  });
+
+  assert.equal(
+    reviewTabLanguageToOpenAfterSave(chapterState, "row-a", currentRow, {
+      es: "Hola",
+      vi: "Xin chao",
+    }),
+    "vi",
+  );
+});
+
+test("reviewTabLanguageToOpenAfterSave stays off for source-language saves", () => {
+  const chapterState = {
+    ...createEditorChapterState(),
+    chapterId: "chapter-1",
+    activeRowId: "row-a",
+    activeLanguageCode: "es",
+    selectedSourceLanguageCode: "es",
+  };
+  const currentRow = row("row-a", {
+    fields: { es: "", vi: "" },
+    persistedFields: { es: "", vi: "" },
+  });
+
+  assert.equal(
+    reviewTabLanguageToOpenAfterSave(chapterState, "row-a", currentRow, {
+      es: "Hola",
+      vi: "",
+    }),
+    null,
+  );
+});
+
+test("reviewTabLanguageToOpenAfterSave stays off when editing an existing translation", () => {
+  const chapterState = {
+    ...createEditorChapterState(),
+    chapterId: "chapter-1",
+    activeRowId: "row-a",
+    activeLanguageCode: "vi",
+    selectedSourceLanguageCode: "es",
+  };
+  const currentRow = row("row-a", {
+    fields: { es: "Hola", vi: "Xin chao" },
+    persistedFields: { es: "Hola", vi: "Xin chao" },
+  });
+
+  assert.equal(
+    reviewTabLanguageToOpenAfterSave(chapterState, "row-a", currentRow, {
+      es: "Hola",
+      vi: "Xin chao ban",
+    }),
+    null,
+  );
+});
+
+test("reviewTabLanguageToOpenAfterSave stays off when the saved row is not active", () => {
+  const chapterState = {
+    ...createEditorChapterState(),
+    chapterId: "chapter-1",
+    activeRowId: "row-b",
+    activeLanguageCode: "vi",
+    selectedSourceLanguageCode: "es",
+  };
+  const currentRow = row("row-a", {
+    fields: { es: "Hola", vi: "" },
+    persistedFields: { es: "Hola", vi: "" },
+  });
+
+  assert.equal(
+    reviewTabLanguageToOpenAfterSave(chapterState, "row-a", currentRow, {
+      es: "Hola",
+      vi: "Xin chao",
+    }),
+    null,
+  );
 });

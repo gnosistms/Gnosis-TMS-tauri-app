@@ -17,6 +17,7 @@ import {
   currentEditorCommentsForRow,
   currentEditorCommentsRequestMatches,
 } from "./editor-comments-state.js";
+import { normalizeEditorSidebarTab } from "./editor-comments.js";
 import { findChapterContextById, selectedProjectsTeam } from "./project-context.js";
 import {
   loadStoredEditorCommentSeenRevisions,
@@ -192,7 +193,7 @@ export function switchEditorSidebarTab(render, tab, operations = {}) {
     return;
   }
 
-  const normalizedTab = tab === "comments" || tab === "duplicates" ? tab : "history";
+  const normalizedTab = normalizeEditorSidebarTab(tab);
   state.editorChapter = applyEditorSidebarTab(state.editorChapter, normalizedTab);
 
   if (normalizedTab === "comments" && state.editorChapter.activeRowId) {
@@ -218,7 +219,10 @@ export function switchEditorSidebarTab(render, tab, operations = {}) {
     return;
   }
 
-  if (normalizedTab === "history" && typeof operations?.loadActiveEditorFieldHistory === "function") {
+  if (
+    (normalizedTab === "history" || normalizedTab === "review")
+    && typeof operations?.loadActiveEditorFieldHistory === "function"
+  ) {
     operations.loadActiveEditorFieldHistory(render);
     return;
   }

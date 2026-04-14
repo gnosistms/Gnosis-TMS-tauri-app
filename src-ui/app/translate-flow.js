@@ -204,6 +204,28 @@ export function toggleEditorHistoryGroupExpanded(groupKey) {
   toggleEditorHistoryGroupExpandedFlow(groupKey);
 }
 
+export function toggleEditorReviewSectionExpanded(sectionKey) {
+  if (!sectionKey || !state.editorChapter?.chapterId) {
+    return;
+  }
+
+  const reviewExpandedSectionKeys =
+    state.editorChapter.reviewExpandedSectionKeys instanceof Set
+      ? new Set(state.editorChapter.reviewExpandedSectionKeys)
+      : new Set(["last-update"]);
+
+  if (reviewExpandedSectionKeys.has(sectionKey)) {
+    reviewExpandedSectionKeys.delete(sectionKey);
+  } else {
+    reviewExpandedSectionKeys.add(sectionKey);
+  }
+
+  state.editorChapter = {
+    ...state.editorChapter,
+    reviewExpandedSectionKeys,
+  };
+}
+
 export function openEditorRowComments(render, rowId, languageCode) {
   openEditorRowCommentsFlow(render, rowId, languageCode);
 }

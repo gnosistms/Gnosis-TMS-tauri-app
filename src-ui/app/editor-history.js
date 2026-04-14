@@ -180,6 +180,20 @@ export function editorHistoryEntryMatchesSection(entry, section) {
   );
 }
 
+export function findEditorHistoryPreviousEntry(entries, section) {
+  const normalizedEntries = Array.isArray(entries) ? entries : [];
+  if (!section || normalizedEntries.length === 0) {
+    return null;
+  }
+
+  const currentEntryIndex = normalizedEntries.findIndex((entry) => editorHistoryEntryMatchesSection(entry, section));
+  if (currentEntryIndex >= 0) {
+    return normalizedEntries[currentEntryIndex + 1] ?? null;
+  }
+
+  return normalizedEntries[0] ?? null;
+}
+
 export function buildEditorHistoryViewModel(entries, expandedGroupKeys) {
   const compressedEntries = compressHistoryEntries(Array.isArray(entries) ? entries : []);
   const groups = buildHistoryGroups(compressedEntries);

@@ -6,6 +6,7 @@ import {
   editorCommentDraftCanSave,
   editorRowHasUnreadComments,
   normalizeEditorCommentSeenRevisions,
+  normalizeEditorSidebarTab,
 } from "./editor-comments.js";
 import {
   applyEditorCommentSaveSucceeded,
@@ -141,4 +142,9 @@ test("editorCommentDraftCanSave requires non-empty trimmed text and no write in 
   assert.equal(editorCommentDraftCanSave("Needs review", "saving"), false);
   assert.equal(editorCommentDraftCanSave("Needs review", "deleting"), false);
   assert.equal(editorCommentDraftCanSave("Needs review", "ready"), true);
+});
+
+test("normalizeEditorSidebarTab keeps review and falls back unknown tabs to history", () => {
+  assert.equal(normalizeEditorSidebarTab("review"), "review");
+  assert.equal(normalizeEditorSidebarTab("something-else"), "history");
 });

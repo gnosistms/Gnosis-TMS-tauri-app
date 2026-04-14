@@ -270,6 +270,7 @@ export function createEditorChapterState() {
     activeRowId: null,
     activeLanguageCode: null,
     sidebarTab: "history",
+    reviewExpandedSectionKeys: new Set(["last-update"]),
     commentSeenRevisions: {},
     comments: createEditorCommentsState(),
     dirtyRowIds: new Set(),

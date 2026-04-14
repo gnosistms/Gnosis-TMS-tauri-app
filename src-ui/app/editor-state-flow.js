@@ -41,6 +41,12 @@ function cloneExpandedDeletedRowGroupIds(expandedDeletedRowGroupIds) {
     : new Set();
 }
 
+function cloneExpandedReviewSectionKeys(expandedSectionKeys) {
+  return expandedSectionKeys instanceof Set
+    ? new Set(expandedSectionKeys)
+    : new Set(["last-update"]);
+}
+
 export function applyEditorUiState(nextEditorChapter, previousEditorChapter = state.editorChapter) {
   const isSameChapter = previousEditorChapter?.chapterId === nextEditorChapter?.chapterId;
   const activeRowId =
@@ -112,7 +118,10 @@ export function applyEditorUiState(nextEditorChapter, previousEditorChapter = st
       hasEditorRow(nextEditorChapter, activeRowId) && hasEditorLanguage(nextEditorChapter, activeLanguageCode)
         ? activeLanguageCode
         : null,
-    sidebarTab: sidebarTab === "comments" || sidebarTab === "duplicates" ? sidebarTab : "history",
+    sidebarTab: sidebarTab === "comments" || sidebarTab === "review" || sidebarTab === "duplicates" ? sidebarTab : "history",
+    reviewExpandedSectionKeys: isSameChapter
+      ? cloneExpandedReviewSectionKeys(previousEditorChapter?.reviewExpandedSectionKeys)
+      : new Set(["last-update"]),
     commentSeenRevisions:
       isSameChapter && previousEditorChapter?.commentSeenRevisions && typeof previousEditorChapter.commentSeenRevisions === "object"
         ? previousEditorChapter.commentSeenRevisions

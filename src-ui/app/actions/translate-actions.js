@@ -31,6 +31,7 @@ import {
   toggleDeletedEditorRowGroup,
   toggleEditorRowFieldMarker,
   toggleEditorHistoryGroupExpanded,
+  toggleEditorReviewSectionExpanded,
   toggleEditorLanguageCollapsed,
 } from "../translate-flow.js";
 
@@ -151,6 +152,13 @@ export function createTranslateActions(render) {
     const historyGroupKey = actionSuffix(action, "toggle-editor-history-group:");
     if (historyGroupKey !== null) {
       toggleEditorHistoryGroupExpanded(historyGroupKey);
+      render();
+      return true;
+    }
+
+    const reviewSectionKey = actionSuffix(action, "toggle-editor-review-section:");
+    if (reviewSectionKey !== null) {
+      toggleEditorReviewSectionExpanded(reviewSectionKey);
       render();
       return true;
     }

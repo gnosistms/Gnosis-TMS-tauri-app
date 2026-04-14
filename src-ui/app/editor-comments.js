@@ -1,4 +1,4 @@
-export const EDITOR_SIDEBAR_TABS = new Set(["history", "comments", "duplicates"]);
+export const EDITOR_SIDEBAR_TABS = new Set(["history", "comments", "review", "duplicates"]);
 
 export function normalizeEditorSidebarTab(tab) {
   return EDITOR_SIDEBAR_TABS.has(tab) ? tab : "history";

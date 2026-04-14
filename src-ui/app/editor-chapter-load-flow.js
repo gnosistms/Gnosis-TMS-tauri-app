@@ -193,6 +193,8 @@ export async function loadSelectedChapterEditorData(render, options = {}, operat
     render?.();
     if (state.editorChapter.sidebarTab === "comments" && state.editorChapter.activeRowId) {
       loadActiveEditorRowComments(render);
+    } else if (state.editorChapter.sidebarTab === "duplicates") {
+      return;
     } else if (hasActiveEditorField(state.editorChapter)) {
       operations.loadActiveEditorFieldHistory(render);
     }
