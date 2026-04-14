@@ -6,5 +6,5 @@
 // development or staging.
 
 pub(crate) const INSECURE_GITHUB_APP_BROKER_BASE_URL: &str =
-  "https://gnosis-github-app-broker-8bfus.ondigitalocean.app";
+    "https://gnosis-github-app-broker-8bfus.ondigitalocean.app";
 pub(crate) const INSECURE_GITHUB_APP_BROKER_TOKEN: &str = "";
