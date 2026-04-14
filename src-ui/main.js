@@ -35,6 +35,7 @@ import {
 } from "./app/editor-location.js";
 import { captureRenderScrollSnapshot, restoreRenderScrollSnapshot } from "./app/scroll-state.js";
 import { hydratePersistentAppState, state } from "./app/state.js";
+import { noteGlossaryBackgroundSyncScrollActivity } from "./app/glossary-background-sync.js";
 import {
   flushDirtyEditorRows,
   noteEditorBackgroundSyncScrollActivity,
@@ -306,6 +307,10 @@ app.addEventListener("beforeinput", (event) => {
 }, true);
 
 app.addEventListener("scroll", (event) => {
+  if (state.screen === "glossaryEditor") {
+    noteGlossaryBackgroundSyncScrollActivity();
+  }
+
   const container = event.target instanceof Element ? event.target.closest(".translate-main-scroll") : null;
   if (!(container instanceof HTMLElement)) {
     return;

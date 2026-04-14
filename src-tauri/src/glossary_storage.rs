@@ -82,6 +82,15 @@ pub(crate) struct LoadGlossaryEditorDataInput {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub(crate) struct LoadGlossaryTermInput {
+  installation_id: i64,
+  repo_name: String,
+  glossary_id: Option<String>,
+  term_id: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct InitializeGlossaryRepoInput {
   installation_id: i64,
   repo_name: String,
@@ -223,6 +232,13 @@ pub(crate) struct LoadGlossaryEditorDataResponse {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
+pub(crate) struct LoadGlossaryTermResponse {
+  term_id: String,
+  term: Option<GlossaryTermEditorRecord>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct UpsertGlossaryTermResponse {
   glossary_id: String,
   term_count: usize,
@@ -255,6 +271,16 @@ pub(crate) async fn load_gtms_glossary_editor_data(
   tauri::async_runtime::spawn_blocking(move || load_gtms_glossary_editor_data_sync(&app, input))
     .await
     .map_err(|error| format!("The glossary load worker failed: {error}"))?
+}
+
+#[tauri::command]
+pub(crate) async fn load_gtms_glossary_term(
+  app: AppHandle,
+  input: LoadGlossaryTermInput,
+) -> Result<LoadGlossaryTermResponse, String> {
+  tauri::async_runtime::spawn_blocking(move || load_gtms_glossary_term_sync(&app, input))
+    .await
+    .map_err(|error| format!("The glossary term load worker failed: {error}"))?
 }
 
 #[tauri::command]
@@ -438,6 +464,34 @@ fn load_gtms_glossary_editor_data_sync(
     lifecycle_state: glossary_file.lifecycle.state,
     term_count: active_terms.len(),
     terms: active_terms,
+  })
+}
+
+fn load_gtms_glossary_term_sync(
+  app: &AppHandle,
+  input: LoadGlossaryTermInput,
+) -> Result<LoadGlossaryTermResponse, String> {
+  let repo_path = glossary_repo_path(
+    app,
+    input.installation_id,
+    input.glossary_id.as_deref(),
+    Some(&input.repo_name),
+  )?;
+  let term_path = repo_path.join("terms").join(format!("{}.json", input.term_id));
+  let term = if term_path.exists() {
+    let term_file: StoredGlossaryTermFile = read_json_file(&term_path, "glossary term")?;
+    if term_file.lifecycle.state == "active" {
+      Some(map_term_record(term_file))
+    } else {
+      None
+    }
+  } else {
+    None
+  };
+
+  Ok(LoadGlossaryTermResponse {
+    term_id: input.term_id,
+    term,
   })
 }
 

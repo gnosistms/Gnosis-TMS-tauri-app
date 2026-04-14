@@ -571,7 +571,7 @@ pub(super) fn load_gtms_chapter_editor_data_sync(
     source_word_counts,
     selected_source_language_code,
     selected_target_language_code,
-    chapter_base_commit_sha: git_output(&repo_path, &["rev-parse", "--verify", "HEAD"], None).ok(),
+    chapter_base_commit_sha: git_output(&repo_path, &["rev-parse", "--verify", "HEAD"]).ok(),
     rows: rows
       .into_iter()
       .map(editor_row_from_stored_row_file)
@@ -603,7 +603,7 @@ pub(super) fn load_gtms_editor_row_sync(
   Ok(LoadEditorRowResponse {
     row_id: input.row_id,
     row,
-    chapter_base_commit_sha: git_output(&repo_path, &["rev-parse", "--verify", "HEAD"], None).ok(),
+    chapter_base_commit_sha: git_output(&repo_path, &["rev-parse", "--verify", "HEAD"]).ok(),
   })
 }
 
@@ -2316,9 +2316,12 @@ fn sanitize_chapter_languages(languages: &[ChapterLanguage]) -> Vec<ChapterLangu
 }
 
 fn editor_row_from_stored_row_file(row: StoredRowFile) -> Result<EditorRow, String> {
+  let revision_token = row_revision_token(&row)?;
+  let fields = row_plain_text_map(&row);
+
   Ok(EditorRow {
     row_id: row.row_id,
-    revision_token: row_revision_token(&row)?,
+    revision_token,
     external_id: row.external_id,
     description: row.guidance.as_ref().and_then(|guidance| guidance.description.clone()),
     context: row.guidance.as_ref().and_then(|guidance| guidance.context.clone()),
@@ -2328,7 +2331,7 @@ fn editor_row_from_stored_row_file(row: StoredRowFile) -> Result<EditorRow, Stri
     review_state: row.status.review_state,
     lifecycle_state: row.lifecycle.state,
     order_key: row.structure.order_key,
-    fields: row_plain_text_map(&row),
+    fields,
     field_states: row
       .fields
       .into_iter()

@@ -3,6 +3,10 @@ import { beginPageSync, completePageSync, failPageSync } from "./page-sync.js";
 import { createGlossaryEditorState, state } from "./state.js";
 import { showNoticeBadge } from "./status-feedback.js";
 import {
+  startGlossaryBackgroundSyncSession,
+  syncAndStopGlossaryBackgroundSyncSession,
+} from "./glossary-background-sync.js";
+import {
   applyGlossaryEditorPayload,
   canManageGlossaries,
   selectedGlossary,
@@ -37,6 +41,10 @@ function resolveGlossaryForEditor(glossaryId = state.selectedGlossaryId, preferr
     return {
       id: requestedGlossaryId,
       repoName: state.glossaryEditor.repoName,
+      repoId: Number.isFinite(state.glossaryEditor.repoId) ? state.glossaryEditor.repoId : null,
+      fullName: state.glossaryEditor.fullName ?? "",
+      defaultBranchName: state.glossaryEditor.defaultBranchName ?? "main",
+      defaultBranchHeadOid: state.glossaryEditor.defaultBranchHeadOid ?? null,
       title: state.glossaryEditor.title,
       sourceLanguage: state.glossaryEditor.sourceLanguage,
       targetLanguage: state.glossaryEditor.targetLanguage,
@@ -69,6 +77,10 @@ export function primeSelectedGlossaryEditorLoadingState(options = {}) {
     error: "",
     glossaryId,
     repoName: glossary.repoName,
+    repoId: Number.isFinite(glossary.repoId) ? glossary.repoId : null,
+    fullName: glossary.fullName ?? "",
+    defaultBranchName: glossary.defaultBranchName ?? "main",
+    defaultBranchHeadOid: glossary.defaultBranchHeadOid ?? null,
     title: glossary.title,
     sourceLanguage: glossary.sourceLanguage,
     targetLanguage: glossary.targetLanguage,
@@ -111,6 +123,10 @@ export async function loadSelectedGlossaryEditorData(render, options = {}) {
       error: "",
       glossaryId: glossary.id,
       repoName: glossary.repoName,
+      repoId: Number.isFinite(glossary.repoId) ? glossary.repoId : null,
+      fullName: glossary.fullName ?? state.glossaryEditor.fullName ?? "",
+      defaultBranchName: glossary.defaultBranchName ?? state.glossaryEditor.defaultBranchName ?? "main",
+      defaultBranchHeadOid: glossary.defaultBranchHeadOid ?? state.glossaryEditor.defaultBranchHeadOid ?? null,
       title: glossary.title,
       sourceLanguage: glossary.sourceLanguage,
       targetLanguage: glossary.targetLanguage,
@@ -124,6 +140,10 @@ export async function loadSelectedGlossaryEditorData(render, options = {}) {
       error: "",
       glossaryId,
       repoName: glossary.repoName,
+      repoId: Number.isFinite(glossary.repoId) ? glossary.repoId : null,
+      fullName: glossary.fullName ?? state.glossaryEditor.fullName ?? "",
+      defaultBranchName: glossary.defaultBranchName ?? state.glossaryEditor.defaultBranchName ?? "main",
+      defaultBranchHeadOid: glossary.defaultBranchHeadOid ?? state.glossaryEditor.defaultBranchHeadOid ?? null,
       title: glossary.title,
       sourceLanguage: glossary.sourceLanguage,
       targetLanguage: glossary.targetLanguage,
@@ -161,6 +181,14 @@ export async function loadSelectedGlossaryEditorData(render, options = {}) {
 }
 
 export async function openGlossaryEditor(render, glossaryId, options = {}) {
+  if (
+    state.screen === "glossaryEditor"
+    && state.glossaryEditor?.glossaryId
+    && state.glossaryEditor.glossaryId !== glossaryId
+  ) {
+    await syncAndStopGlossaryBackgroundSyncSession(render);
+  }
+
   state.selectedGlossaryId = glossaryId;
   state.screen = "glossaryEditor";
   primeSelectedGlossaryEditorLoadingState({
@@ -172,6 +200,13 @@ export async function openGlossaryEditor(render, glossaryId, options = {}) {
     glossaryId,
     preferredGlossary: options.preferredGlossary ?? null,
   });
+  if (
+    state.screen === "glossaryEditor"
+    && state.glossaryEditor?.glossaryId === glossaryId
+    && state.glossaryEditor.status === "ready"
+  ) {
+    startGlossaryBackgroundSyncSession(render);
+  }
 }
 
 export function updateGlossaryTermSearchQuery(render, value) {

@@ -143,17 +143,46 @@ export function normalizeGlossaryTerm(term) {
     footnote: typeof term.footnote === "string" ? term.footnote : "",
     untranslated: term.untranslated === true,
     lifecycleState: isDeletedLifecycleState ? "deleted" : "active",
+    freshness: "fresh",
+    remotelyDeleted: false,
   };
 }
 
 export function applyGlossaryEditorPayload(payload) {
+  const existingSummary =
+    selectedGlossary()
+    ?? state.glossaries.find((glossary) =>
+      glossary?.id === payload?.glossaryId
+      || glossary?.repoName === (state.glossaryEditor?.repoName || selectedGlossaryRepoName())
+    )
+    ?? null;
+  const repoName = state.glossaryEditor?.repoName || existingSummary?.repoName || selectedGlossaryRepoName();
+  const repoId =
+    Number.isFinite(state.glossaryEditor?.repoId)
+      ? state.glossaryEditor.repoId
+      : Number.isFinite(existingSummary?.repoId)
+        ? existingSummary.repoId
+        : null;
+  const fullName = state.glossaryEditor?.fullName || existingSummary?.fullName || "";
+  const defaultBranchName =
+    state.glossaryEditor?.defaultBranchName
+    || existingSummary?.defaultBranchName
+    || "main";
+  const defaultBranchHeadOid =
+    state.glossaryEditor?.defaultBranchHeadOid
+    ?? existingSummary?.defaultBranchHeadOid
+    ?? null;
   const normalizedTerms = (Array.isArray(payload?.terms) ? payload.terms : [])
     .map(normalizeGlossaryTerm)
     .filter(Boolean);
 
   const summary = normalizeGlossarySummary({
     glossaryId: payload?.glossaryId,
-    repoName: state.glossaryEditor?.repoName || selectedGlossaryRepoName(),
+    repoName,
+    repoId,
+    fullName,
+    defaultBranchName,
+    defaultBranchHeadOid,
     title: payload?.title,
     sourceLanguage: payload?.sourceLanguage ?? null,
     targetLanguage: payload?.targetLanguage ?? null,
@@ -165,7 +194,11 @@ export function applyGlossaryEditorPayload(payload) {
     status: "ready",
     error: "",
     glossaryId: payload.glossaryId,
-    repoName: selectedGlossaryRepoName(),
+    repoName,
+    repoId,
+    fullName,
+    defaultBranchName,
+    defaultBranchHeadOid,
     title: payload.title ?? "",
     lifecycleState:
       payload.lifecycleState === "deleted" || payload.lifecycleState === "softDeleted"

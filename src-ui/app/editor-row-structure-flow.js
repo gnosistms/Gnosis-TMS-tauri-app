@@ -328,6 +328,3 @@ export async function confirmEditorRowPermanentDeletion(render, operations = {})
     showNoticeBadge(message || "The row could not be permanently deleted.", render);
   }
 }
-  if (!(await ensureEditorRowReadyForWrite(render, modal.rowId, { structural: true }))) {
-    return;
-  }

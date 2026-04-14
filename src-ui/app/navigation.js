@@ -16,6 +16,11 @@ import {
   primeGlossariesLoadingState,
   primeSelectedGlossaryEditorLoadingState,
 } from "./glossary-flow.js";
+import {
+  maybeStartGlossaryBackgroundSync,
+  startGlossaryBackgroundSyncSession,
+  syncAndStopGlossaryBackgroundSyncSession,
+} from "./glossary-background-sync.js";
 import { loadTeamProjects } from "./project-flow.js";
 import { loadUserTeams } from "./team-setup-flow.js";
 import { loadTeamUsers, primeUsersForTeam } from "./team-members-flow.js";
@@ -47,6 +52,9 @@ export async function handleNavigation(navTarget, render) {
   if (state.screen === "translate" && navTarget !== "translate") {
     void persistEditorChapterSelections(render);
     await syncAndStopEditorBackgroundSyncSession(render);
+  }
+  if (state.screen === "glossaryEditor" && navTarget !== "glossaryEditor") {
+    await syncAndStopGlossaryBackgroundSyncSession(render);
   }
 
   if (navTarget === "start") {
@@ -100,7 +108,12 @@ export async function handleNavigation(navTarget, render) {
     );
   }
   if (navTarget === "glossaryEditor" && state.selectedGlossaryId) {
-    void waitForNextPaint().then(() => loadSelectedGlossaryEditorData(render));
+    void waitForNextPaint().then(async () => {
+      await loadSelectedGlossaryEditorData(render);
+      if (state.screen === "glossaryEditor" && state.glossaryEditor?.status === "ready") {
+        startGlossaryBackgroundSyncSession(render);
+      }
+    });
   }
 }
 
@@ -130,6 +143,7 @@ export async function refreshCurrentScreen(render) {
   }
 
   if (screen === "glossaryEditor") {
+    await maybeStartGlossaryBackgroundSync(render, { force: true });
     await loadSelectedGlossaryEditorData(render, { preserveVisibleData: true });
     return;
   }

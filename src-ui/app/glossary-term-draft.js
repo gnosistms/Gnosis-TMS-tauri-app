@@ -1,5 +1,6 @@
 import { invoke } from "./runtime.js";
 import { resetGlossaryTermEditor, state } from "./state.js";
+import { maybeStartGlossaryBackgroundSync } from "./glossary-background-sync.js";
 import { loadSelectedGlossaryEditorData } from "./glossary-editor-flow.js";
 import { showNoticeBadge } from "./status-feedback.js";
 import {
@@ -17,6 +18,7 @@ import {
   getGlossarySyncIssueMessage,
   syncSingleGlossaryForTeam,
 } from "./glossary-repo-flow.js";
+import { ensureGlossaryTermReadyForEdit } from "./glossary-term-sync.js";
 
 const SOURCE_TERM_DUPLICATE_WARNING =
   "The terms highlighted in red below are redundant with other parts of this glossary. Please remove them before saving.";
@@ -127,39 +129,44 @@ function shouldRefreshGlossaryTermDuplicateFeedback() {
   );
 }
 
-export function openGlossaryTermEditor(render, termId = null) {
+export async function openGlossaryTermEditor(render, termId = null) {
   const team = selectedTeam();
   const glossary = selectedGlossary();
   if (!canManageGlossaries()) {
     showNoticeBadge("You do not have permission to edit glossary terms in this team.", render);
     return;
   }
-  void ensureGlossaryNotTombstoned(render, team, glossary).then((blocked) => {
-    if (blocked) {
-      return;
-    }
+  if (await ensureGlossaryNotTombstoned(render, team, glossary)) {
+    return;
+  }
 
-    const term = termId
-      ? state.glossaryEditor.terms.find((item) => item.termId === termId) ?? null
-      : null;
+  if (termId) {
+    await maybeStartGlossaryBackgroundSync(render, { force: true });
+  }
 
-    state.glossaryTermEditor = {
-      ...state.glossaryTermEditor,
-      isOpen: true,
-      status: "idle",
-      error: "",
-      glossaryId: state.glossaryEditor.glossaryId,
-      termId: term?.termId ?? null,
-      sourceTerms: normalizeEditableTerms(term?.sourceTerms ?? []),
-      targetTerms: normalizeEditableTerms(term?.targetTerms ?? []),
-      sourceTermDuplicateWarning: "",
-      redundantSourceVariantIndices: [],
-      notesToTranslators: term?.notesToTranslators ?? "",
-      footnote: term?.footnote ?? "",
-      untranslated: term?.untranslated === true,
-    };
-    render();
-  });
+  const term = termId
+    ? await ensureGlossaryTermReadyForEdit(render, termId)
+    : null;
+  if (termId && !term) {
+    return;
+  }
+
+  state.glossaryTermEditor = {
+    ...state.glossaryTermEditor,
+    isOpen: true,
+    status: "idle",
+    error: "",
+    glossaryId: state.glossaryEditor.glossaryId,
+    termId: term?.termId ?? null,
+    sourceTerms: normalizeEditableTerms(term?.sourceTerms ?? []),
+    targetTerms: normalizeEditableTerms(term?.targetTerms ?? []),
+    sourceTermDuplicateWarning: "",
+    redundantSourceVariantIndices: [],
+    notesToTranslators: term?.notesToTranslators ?? "",
+    footnote: term?.footnote ?? "",
+    untranslated: term?.untranslated === true,
+  };
+  render();
 }
 
 export function cancelGlossaryTermEditor(render) {
@@ -278,23 +285,32 @@ export async function submitGlossaryTermEditor(render) {
   }
 
   const targetTerms = sanitizeEditableTargetTerms(draft.targetTerms);
+  const draftSnapshot = {
+    termId: draft.termId || null,
+    sourceTerms: [...sourceTerms],
+    targetTerms: [...targetTerms],
+    notesToTranslators: draft.notesToTranslators,
+    footnote: draft.footnote,
+    untranslated: draft.untranslated === true,
+  };
 
   state.glossaryTermEditor.status = "loading";
   state.glossaryTermEditor.error = "";
   render();
 
   try {
+    await maybeStartGlossaryBackgroundSync(render, { force: true });
     await invoke("upsert_gtms_glossary_term", {
       input: {
         installationId: team.installationId,
         glossaryId: glossary?.id ?? null,
         repoName,
-        termId: draft.termId || null,
-        sourceTerms,
-        targetTerms,
-        notesToTranslators: draft.notesToTranslators,
-        footnote: draft.footnote,
-        untranslated: draft.untranslated === true,
+        termId: draftSnapshot.termId,
+        sourceTerms: draftSnapshot.sourceTerms,
+        targetTerms: draftSnapshot.targetTerms,
+        notesToTranslators: draftSnapshot.notesToTranslators,
+        footnote: draftSnapshot.footnote,
+        untranslated: draftSnapshot.untranslated,
       },
     });
     const syncIssue = getGlossarySyncIssueMessage(

@@ -32,6 +32,15 @@ function row(overrides = {}) {
   };
 }
 
+function persistedPayload(overrides = {}) {
+  return {
+    rowId: "row-1",
+    fields: { es: "dos" },
+    fieldStates: { es: { reviewed: false, pleaseCheck: false } },
+    ...overrides,
+  };
+}
+
 test("applyEditorRowFieldValue marks a changed row dirty", () => {
   const updatedRow = applyEditorRowFieldValue(row(), "es", "dos");
 
@@ -113,7 +122,7 @@ test("applyEditorRowPersistReset returns a row to idle", () => {
 test("applyEditorRowPersistSucceeded updates persisted fields and stays idle when text matches", () => {
   const updatedRow = applyEditorRowPersistSucceeded(
     row({ fields: { es: "dos" }, saveStatus: "saving" }),
-    { es: "dos" },
+    persistedPayload(),
   );
 
   assert.deepEqual(updatedRow.persistedFields, { es: "dos" });
@@ -123,7 +132,7 @@ test("applyEditorRowPersistSucceeded updates persisted fields and stays idle whe
 test("applyEditorRowPersistSucceeded stays dirty when the row changed again during save", () => {
   const updatedRow = applyEditorRowPersistSucceeded(
     row({ fields: { es: "tres" }, saveStatus: "saving" }),
-    { es: "dos" },
+    persistedPayload(),
   );
 
   assert.deepEqual(updatedRow.persistedFields, { es: "dos" });

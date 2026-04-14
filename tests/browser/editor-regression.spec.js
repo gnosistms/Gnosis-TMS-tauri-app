@@ -105,6 +105,29 @@ async function installMockTauri(page) {
       return rowCommentsByChapterId.get(chapterId)?.get(rowId) ?? null;
     }
 
+    function buildRowPayload(chapterId, rowId) {
+      const fixture = fixtureByChapterId.get(chapterId);
+      const fixtureRow = Array.isArray(fixture?.rows)
+        ? fixture.rows.find((row) => row?.rowId === rowId) ?? null
+        : null;
+      const fields = findRowFields(chapterId, rowId);
+      const fieldStates = findFieldStates(chapterId, rowId);
+      const comments = findRowComments(chapterId, rowId);
+      if (!fixtureRow || !fields || !fieldStates) {
+        return null;
+      }
+
+      return {
+        rowId,
+        orderKey: typeof fixtureRow.orderKey === "string" ? fixtureRow.orderKey : "",
+        lifecycleState: fixtureRow.lifecycleState === "deleted" ? "deleted" : "active",
+        commentCount: Array.isArray(comments?.comments) ? comments.comments.length : 0,
+        commentsRevision: Number.isInteger(comments?.commentsRevision) ? comments.commentsRevision : 0,
+        fields: clone(fields),
+        fieldStates: clone(fieldStates),
+      };
+    }
+
     async function invoke(command, payload = {}) {
       invocationLog.push({
         command,
@@ -221,6 +244,7 @@ async function installMockTauri(page) {
         rowFieldsByChapterId.get(input.chapterId).set(input.rowId, nextFields);
         pushHistoryEntries(input.chapterId, input.rowId, nextFields, storedFieldStates, "editor-update", "Update row");
         return {
+          row: buildRowPayload(input.chapterId, input.rowId),
           sourceWordCounts: {},
         };
       }
@@ -553,14 +577,14 @@ test.describe("editor regressions", () => {
     const searchInput = page.locator("[data-editor-search-input]");
     await searchInput.fill("0001");
     await expect(page.locator(".translation-results-banner__text")).toHaveText(
-      "Search result: 1 matching row",
+      "Showing 1 matching row",
     );
     await expect(page.locator("[data-editor-row-card]")).toHaveCount(1);
 
     await searchInput.fill("zzz-not-found");
     await expect(page.locator(".translation-results-banner")).toHaveCount(0);
     await expect(page.locator(".card--translation .card__body")).toContainText(
-      "No rows match the current search.",
+      "No rows match the current filters.",
     );
   });
 

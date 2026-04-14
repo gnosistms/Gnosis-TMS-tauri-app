@@ -36,6 +36,18 @@ pub(crate) struct GlossaryRepoSyncInput {
   pub(crate) glossaries: Vec<GlossaryRepoSyncDescriptor>,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct GlossaryEditorRepoSyncInput {
+  pub(crate) installation_id: i64,
+  pub(crate) glossary_id: Option<String>,
+  pub(crate) repo_name: String,
+  pub(crate) full_name: String,
+  pub(crate) repo_id: Option<i64>,
+  pub(crate) default_branch_name: Option<String>,
+  pub(crate) default_branch_head_oid: Option<String>,
+}
+
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct GlossaryRepoSyncSnapshot {
@@ -45,6 +57,16 @@ pub(crate) struct GlossaryRepoSyncSnapshot {
   pub(crate) remote_head_oid: Option<String>,
   pub(crate) status: String,
   pub(crate) message: Option<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct GlossaryEditorRepoSyncResponse {
+  pub(crate) old_head_sha: Option<String>,
+  pub(crate) new_head_sha: Option<String>,
+  pub(crate) changed_term_ids: Vec<String>,
+  pub(crate) inserted_term_ids: Vec<String>,
+  pub(crate) deleted_term_ids: Vec<String>,
 }
 
 const GLOSSARY_REPO_SYNC_STATUS_NOT_CLONED: &str = "notCloned";
@@ -62,6 +84,17 @@ pub(crate) async fn sync_gtms_glossary_repos(
   tauri::async_runtime::spawn_blocking(move || sync_gtms_glossary_repos_sync(&app, input, &session_token))
     .await
     .map_err(|error| format!("The glossary repo sync task failed: {error}"))?
+}
+
+#[tauri::command]
+pub(crate) async fn sync_gtms_glossary_editor_repo(
+  app: AppHandle,
+  input: GlossaryEditorRepoSyncInput,
+  session_token: String,
+) -> Result<GlossaryEditorRepoSyncResponse, String> {
+  tauri::async_runtime::spawn_blocking(move || sync_gtms_glossary_editor_repo_sync(&app, input, &session_token))
+    .await
+    .map_err(|error| format!("The glossary editor repo sync task failed: {error}"))?
 }
 
 fn sync_gtms_glossary_repos_sync(
@@ -135,6 +168,138 @@ fn sync_gtms_glossary_repos_sync(
   }
 
   Ok(snapshots)
+}
+
+fn sync_gtms_glossary_editor_repo_sync(
+  app: &AppHandle,
+  input: GlossaryEditorRepoSyncInput,
+  session_token: &str,
+) -> Result<GlossaryEditorRepoSyncResponse, String> {
+  let glossary = GlossaryRepoSyncDescriptor {
+    glossary_id: input.glossary_id.clone(),
+    repo_name: input.repo_name.clone(),
+    full_name: input.full_name.clone(),
+    repo_id: input.repo_id,
+    default_branch_name: input.default_branch_name.clone(),
+    default_branch_head_oid: input.default_branch_head_oid.clone(),
+  };
+  let repo_path = resolve_or_desired_glossary_git_repo_path(
+    app,
+    input.installation_id,
+    input.glossary_id.as_deref(),
+    &input.repo_name,
+  )?;
+  let old_head_sha = read_current_head_oid(&repo_path);
+  let git_status = git_output(&repo_path, &["status", "--porcelain"], None)?;
+  if !git_status.trim().is_empty() {
+    return Err("Local repo has uncommitted changes.".to_string());
+  }
+
+  let git_transport_token = load_git_transport_token(input.installation_id, session_token)?;
+  let new_head_sha = sync_glossary_repo(
+    &glossary,
+    &repo_path,
+    input.default_branch_head_oid.as_deref().unwrap_or_default(),
+    &git_transport_token,
+  )?;
+  let glossary_terms_path = repo_path.join("terms");
+  let glossary_terms_relative_path = glossary_terms_path
+    .strip_prefix(&repo_path)
+    .map_err(|error| format!("Could not resolve the glossary terms path for git: {error}"))?
+    .to_string_lossy()
+    .to_string();
+  let (changed_term_ids, inserted_term_ids, deleted_term_ids) =
+    match (old_head_sha.as_deref(), new_head_sha.as_deref()) {
+      (Some(old_head), Some(new_head)) if old_head != new_head => {
+        glossary_term_changes_between_commits(&repo_path, &glossary_terms_relative_path, old_head, new_head)?
+      }
+      _ => (Vec::new(), Vec::new(), Vec::new()),
+    };
+
+  Ok(GlossaryEditorRepoSyncResponse {
+    old_head_sha,
+    new_head_sha,
+    changed_term_ids,
+    inserted_term_ids,
+    deleted_term_ids,
+  })
+}
+
+fn glossary_term_changes_between_commits(
+  repo_path: &Path,
+  glossary_terms_relative_path: &str,
+  old_head_sha: &str,
+  new_head_sha: &str,
+) -> Result<(Vec<String>, Vec<String>, Vec<String>), String> {
+  let diff_output = git_output(
+    repo_path,
+    &["diff", "--name-status", old_head_sha, new_head_sha, "--", glossary_terms_relative_path],
+    None,
+  )?;
+  let mut changed_term_ids = Vec::new();
+  let mut inserted_term_ids = Vec::new();
+  let mut deleted_term_ids = Vec::new();
+
+  for line in diff_output.lines() {
+    let trimmed = line.trim();
+    if trimmed.is_empty() {
+      continue;
+    }
+
+    let mut parts = trimmed.split('\t');
+    let status = parts.next().unwrap_or_default().trim();
+    match status.chars().next() {
+      Some('A') => {
+        if let Some(term_id) = parts.next().and_then(term_id_from_repo_relative_path) {
+          inserted_term_ids.push(term_id);
+        }
+      }
+      Some('D') => {
+        if let Some(term_id) = parts.next().and_then(term_id_from_repo_relative_path) {
+          deleted_term_ids.push(term_id);
+        }
+      }
+      Some('R') => {
+        let before_path = parts.next().unwrap_or_default();
+        let after_path = parts.next().unwrap_or_default();
+        if let Some(term_id) = term_id_from_repo_relative_path(before_path) {
+          deleted_term_ids.push(term_id);
+        }
+        if let Some(term_id) = term_id_from_repo_relative_path(after_path) {
+          inserted_term_ids.push(term_id);
+        }
+      }
+      Some(_) => {
+        if let Some(term_id) = parts.next().and_then(term_id_from_repo_relative_path) {
+          changed_term_ids.push(term_id);
+        }
+      }
+      None => {}
+    }
+  }
+
+  changed_term_ids.sort();
+  changed_term_ids.dedup();
+  inserted_term_ids.sort();
+  inserted_term_ids.dedup();
+  deleted_term_ids.sort();
+  deleted_term_ids.dedup();
+
+  Ok((changed_term_ids, inserted_term_ids, deleted_term_ids))
+}
+
+fn term_id_from_repo_relative_path(path: &str) -> Option<String> {
+  let normalized = path.trim();
+  if !normalized.ends_with(".json") {
+    return None;
+  }
+
+  Path::new(normalized)
+    .file_stem()
+    .and_then(|value| value.to_str())
+    .map(str::trim)
+    .filter(|value| !value.is_empty())
+    .map(str::to_string)
 }
 
 fn inspect_glossary_repo_state(
