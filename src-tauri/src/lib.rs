@@ -1,3 +1,5 @@
+mod ai;
+mod ai_secret_storage;
 mod broker;
 mod broker_auth;
 mod broker_auth_storage;
@@ -29,6 +31,15 @@ use tauri::menu::{Menu, MenuItemBuilder, PredefinedMenuItem, Submenu, SubmenuBui
 use tauri::{Emitter, Manager};
 
 use crate::{
+    ai::{
+        run_ai_review as run_ai_review_task,
+        types::{AiProviderId, AiReviewRequest, AiReviewResponse},
+    },
+    ai_secret_storage::{
+        clear_ai_provider_secret as clear_ai_provider_secret_value,
+        load_ai_provider_secret as load_ai_provider_secret_value,
+        save_ai_provider_secret as save_ai_provider_secret_value,
+    },
     broker_auth::{begin_broker_auth, inspect_broker_auth_session, refresh_broker_auth_session},
     broker_auth_storage::{
         clear_broker_auth_session, load_broker_auth_session, save_broker_auth_session,
@@ -117,6 +128,39 @@ fn check_internet_connection() -> bool {
         .send()
         .map(|response| response.status().is_success() || response.status().is_redirection())
         .unwrap_or(false)
+}
+
+#[tauri::command]
+fn load_ai_provider_secret(
+    app: tauri::AppHandle,
+    provider_id: AiProviderId,
+) -> Result<Option<String>, String> {
+    load_ai_provider_secret_value(&app, provider_id)
+}
+
+#[tauri::command]
+fn save_ai_provider_secret(
+    app: tauri::AppHandle,
+    provider_id: AiProviderId,
+    api_key: String,
+) -> Result<(), String> {
+    save_ai_provider_secret_value(&app, provider_id, &api_key)
+}
+
+#[tauri::command]
+fn clear_ai_provider_secret(
+    app: tauri::AppHandle,
+    provider_id: AiProviderId,
+) -> Result<(), String> {
+    clear_ai_provider_secret_value(&app, provider_id)
+}
+
+#[tauri::command]
+fn run_ai_review(
+    app: tauri::AppHandle,
+    request: AiReviewRequest,
+) -> Result<AiReviewResponse, String> {
+    run_ai_review_task(&app, request)
 }
 
 const SYNC_WITH_SERVER_MENU_ID: &str = "sync-with-server";
@@ -248,6 +292,14 @@ pub fn run() {
         })
         .manage(ProjectRepoSyncStore::default())
         .manage(PendingUpdate(Mutex::new(None)))
+        .plugin(
+            tauri_plugin_stronghold::Builder::new(|password| {
+                use sha2::{Digest, Sha256};
+
+                Sha256::digest(password.as_bytes()).to_vec()
+            })
+            .build(),
+        )
         .plugin(store::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(
@@ -277,6 +329,10 @@ pub fn run() {
             load_broker_auth_session,
             save_broker_auth_session,
             clear_broker_auth_session,
+            load_ai_provider_secret,
+            save_ai_provider_secret,
+            clear_ai_provider_secret,
+            run_ai_review,
             create_team_setup_draft,
             begin_github_app_install,
             begin_github_app_test_install,

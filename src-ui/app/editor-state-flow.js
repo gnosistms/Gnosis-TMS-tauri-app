@@ -1,4 +1,5 @@
 import { saveStoredProjectsForTeam } from "./project-cache.js";
+import { currentEditorAiReviewForSelection } from "./editor-ai-review-state.js";
 import { pruneEditorCommentSeenRevisionsForRows } from "./editor-comments-state.js";
 import { currentEditorHistoryForSelection } from "./editor-history-state.js";
 import { compactDirtyRowIds, reconcileDirtyTrackedEditorRows } from "./editor-dirty-row-state.js";
@@ -17,6 +18,7 @@ import {
   createEditorChapterGlossaryState,
   createEditorCommentsState,
   createEditorConflictResolutionModalState,
+  createEditorAiReviewState,
   createEditorReplaceUndoModalState,
   createEditorReplaceState,
   createEditorHistoryState,
@@ -44,7 +46,7 @@ function cloneExpandedDeletedRowGroupIds(expandedDeletedRowGroupIds) {
 function cloneExpandedReviewSectionKeys(expandedSectionKeys) {
   return expandedSectionKeys instanceof Set
     ? new Set(expandedSectionKeys)
-    : new Set(["last-update"]);
+    : new Set(["last-update", "ai-review"]);
 }
 
 export function applyEditorUiState(nextEditorChapter, previousEditorChapter = state.editorChapter) {
@@ -56,6 +58,11 @@ export function applyEditorUiState(nextEditorChapter, previousEditorChapter = st
       ? previousEditorChapter.activeLanguageCode
       : null;
   const history = currentEditorHistoryForSelection(
+    previousEditorChapter,
+    activeRowId,
+    activeLanguageCode,
+  );
+  const aiReview = currentEditorAiReviewForSelection(
     previousEditorChapter,
     activeRowId,
     activeLanguageCode,
@@ -121,7 +128,11 @@ export function applyEditorUiState(nextEditorChapter, previousEditorChapter = st
     sidebarTab: sidebarTab === "comments" || sidebarTab === "review" || sidebarTab === "duplicates" ? sidebarTab : "history",
     reviewExpandedSectionKeys: isSameChapter
       ? cloneExpandedReviewSectionKeys(previousEditorChapter?.reviewExpandedSectionKeys)
-      : new Set(["last-update"]),
+      : new Set(["last-update", "ai-review"]),
+    aiReview:
+      hasEditorRow(nextEditorChapter, activeRowId) && hasEditorLanguage(nextEditorChapter, activeLanguageCode)
+        ? aiReview
+        : createEditorAiReviewState(),
     commentSeenRevisions:
       isSameChapter && previousEditorChapter?.commentSeenRevisions && typeof previousEditorChapter.commentSeenRevisions === "object"
         ? previousEditorChapter.commentSeenRevisions

@@ -1,3 +1,4 @@
+import { updateAiProviderSecretDraft } from "./ai-settings-flow.js";
 import { state } from "./state.js";
 import { syncAutoSizeTextarea, syncEditorRowTextareaHeight } from "./autosize.js";
 import { syncEditorVirtualizationRowLayout } from "./editor-virtualization.js";
@@ -377,6 +378,13 @@ function handleEditorRowFieldInput(event, render) {
     syncEditorVirtualizationRowLayout,
     syncEditorGlossaryHighlightRowDom,
   });
+  if (
+    state.editorChapter?.sidebarTab === "review"
+    && state.editorChapter?.activeRowId === (input.dataset.rowId ?? "")
+    && state.editorChapter?.activeLanguageCode === (input.dataset.languageCode ?? "")
+  ) {
+    render?.({ scope: "translate-sidebar" });
+  }
   return true;
 }
 
@@ -420,6 +428,16 @@ function handleChapterGlossarySelectInput(event, render) {
   return true;
 }
 
+function handleAiKeyInput(event) {
+  const input = event.target.closest("[data-ai-key-input]");
+  if (!input) {
+    return false;
+  }
+
+  updateAiProviderSecretDraft(input.value);
+  return true;
+}
+
 const inputHandlers = [
   handleProjectCreationInput,
   handleProjectPermanentDeleteInput,
@@ -451,6 +469,7 @@ const inputHandlers = [
   handleEditorCommentDraftInput,
   handleEditorConflictResolutionInput,
   handleChapterGlossarySelectInput,
+  handleAiKeyInput,
 ];
 
 export function handleInputEvent(event, render) {

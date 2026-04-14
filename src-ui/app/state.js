@@ -54,6 +54,7 @@ export const state = {
   projectRepoSyncByProjectId: {},
   glossaryRepoSyncByRepoName: {},
   editorChapter: createEditorChapterState(),
+  aiSettings: createAiSettingsState(),
   targetLanguageManager: createTargetLanguageManagerState(),
   glossaryEditor: createGlossaryEditorState(),
   userDiscovery: {
@@ -83,6 +84,7 @@ export const state = {
   glossaryRename: createGlossaryRenameState(),
   glossaryPermanentDeletion: createGlossaryPermanentDeletionState(),
   glossaryTermEditor: createGlossaryTermEditorState(),
+  aiReviewMissingKeyModal: createAiReviewMissingKeyModalState(),
   showDeletedProjects: false,
   showDeletedTeams: false,
   showDeletedGlossaries: false,
@@ -270,7 +272,8 @@ export function createEditorChapterState() {
     activeRowId: null,
     activeLanguageCode: null,
     sidebarTab: "history",
-    reviewExpandedSectionKeys: new Set(["last-update"]),
+    reviewExpandedSectionKeys: new Set(["last-update", "ai-review"]),
+    aiReview: createEditorAiReviewState(),
     commentSeenRevisions: {},
     comments: createEditorCommentsState(),
     dirtyRowIds: new Set(),
@@ -285,6 +288,33 @@ export function createEditorChapterState() {
     rowPermanentDeletionModal: createEditorRowPermanentDeletionModalState(),
     rows: [],
   };
+}
+
+export function createEditorAiReviewState() {
+  return {
+    status: "idle",
+    error: "",
+    rowId: null,
+    languageCode: null,
+    requestKey: null,
+    sourceText: "",
+    suggestedText: "",
+  };
+}
+
+export function createAiSettingsState() {
+  return {
+    status: "idle",
+    error: "",
+    providerId: "openai",
+    apiKey: "",
+    hasLoaded: false,
+    returnScreen: "teams",
+  };
+}
+
+export function createAiReviewMissingKeyModalState() {
+  return createEntityModalState();
 }
 
 export function createEditorChapterFilterState() {
@@ -613,6 +643,7 @@ export function resetSessionState() {
   state.projectImport = createProjectImportState();
   state.projectRepoSyncByProjectId = {};
   state.editorChapter = createEditorChapterState();
+  state.aiSettings = createAiSettingsState();
   state.selectedChapterId = null;
   state.targetLanguageManager = createTargetLanguageManagerState();
   state.glossaryEditor = createGlossaryEditorState();
@@ -645,6 +676,7 @@ export function resetSessionState() {
   resetGlossaryRename();
   resetGlossaryPermanentDeletion();
   resetGlossaryTermEditor();
+  state.aiReviewMissingKeyModal = createAiReviewMissingKeyModalState();
   state.showDeletedProjects = false;
   state.showDeletedTeams = false;
   state.showDeletedGlossaries = false;

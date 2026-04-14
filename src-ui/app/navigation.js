@@ -1,4 +1,5 @@
 import { clearStoredAuthSession } from "./auth-storage.js";
+import { loadAiProviderSecret, openAiKeyPage } from "./ai-settings-flow.js";
 import {
   resetPageSync,
   beginPageSync,
@@ -33,7 +34,10 @@ import {
   loadSelectedChapterEditorData,
   persistEditorChapterSelections,
 } from "./translate-flow.js";
-import { syncAndStopEditorBackgroundSyncSession } from "./editor-background-sync.js";
+import {
+  startEditorBackgroundSyncSession,
+  syncAndStopEditorBackgroundSyncSession,
+} from "./editor-background-sync.js";
 import {
   hideNavigationLoadingModal,
   showNavigationLoadingModal,
@@ -100,6 +104,15 @@ export async function handleNavigation(navTarget, render) {
       primeSelectedGlossaryEditorLoadingState();
     }
 
+    if (navTarget === "aiKey") {
+      if (navigationLoadingToken !== null) {
+        hideNavigationLoadingModal(navigationLoadingToken);
+      }
+      openAiKeyPage(render, { returnScreen: previousScreen });
+      navigationRendered = true;
+      return;
+    }
+
     if (navigationLoadingToken !== null) {
       hideNavigationLoadingModal(navigationLoadingToken);
     }
@@ -130,6 +143,14 @@ export async function handleNavigation(navTarget, render) {
         await loadSelectedGlossaryEditorData(render);
         if (state.screen === "glossaryEditor" && state.glossaryEditor?.status === "ready") {
           startGlossaryBackgroundSyncSession(render);
+        }
+      });
+    }
+    if (navTarget === "translate" && state.selectedChapterId) {
+      void waitForNextPaint().then(async () => {
+        await loadSelectedChapterEditorData(render, { preserveVisibleRows: true });
+        if (state.screen === "translate" && state.editorChapter?.status === "ready") {
+          startEditorBackgroundSyncSession(render);
         }
       });
     }
@@ -192,6 +213,12 @@ export async function refreshCurrentScreen(render) {
 
     if (screen === "githubAppTest") {
       await loadGithubAppTestConfig(render);
+      await completePageSync(render);
+      return;
+    }
+
+    if (screen === "aiKey") {
+      await loadAiProviderSecret(render);
       await completePageSync(render);
       return;
     }

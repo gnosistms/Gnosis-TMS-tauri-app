@@ -215,7 +215,10 @@ export function sectionSeparator({ label, action, isOpen = false }) {
 }
 
 const sectionNavConfig = {
-  teams: [{ label: "Logout", target: "start" }],
+  teams: [
+    { label: "AI Key", target: "aiKey" },
+    { label: "Logout", target: "start" },
+  ],
   projects: [
     { label: "Teams", target: "teams", isBack: true },
     { label: "Members", target: "users" },

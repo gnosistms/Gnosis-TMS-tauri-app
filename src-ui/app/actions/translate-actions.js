@@ -17,7 +17,9 @@ import {
   openEditorRowComments,
   openEditorRowPermanentDeletionModal,
   openInsertEditorRowModal,
+  applyEditorAiReview,
   replaceSelectedEditorRows,
+  runEditorAiReview,
   saveEditorConflictResolution,
   resolveEditorRowConflict,
   restoreEditorFieldHistory,
@@ -103,6 +105,16 @@ export function createTranslateActions(render) {
 
     if (action === "save-editor-comment") {
       await saveActiveEditorRowComment(render);
+      return true;
+    }
+
+    if (action === "review-editor-text-now") {
+      await runEditorAiReview(render);
+      return true;
+    }
+
+    if (action === "apply-editor-ai-review") {
+      await applyEditorAiReview(render);
       return true;
     }
 

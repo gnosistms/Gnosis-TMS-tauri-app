@@ -50,6 +50,7 @@ import { renderGlossariesScreen } from "./screens/glossaries.js";
 import { renderGlossaryEditorScreen } from "./screens/glossary-editor.js";
 import { renderNavigationLoadingModal } from "./screens/navigation-loading-modal.js";
 import { renderProjectsScreen } from "./screens/projects.js";
+import { renderAiKeyScreen } from "./screens/ai-key.js";
 import { renderStartScreen } from "./screens/start.js";
 import { renderTeamsScreen } from "./screens/teams/index.js";
 import { renderTranslateEditorBody, renderTranslateScreen, renderTranslateSidebar } from "./screens/translate.js";
@@ -58,6 +59,7 @@ import { renderUsersScreen } from "./screens/users.js";
 const screenRenderers = {
   githubAppTest: () => renderGithubAppTestScreen(state),
   start: () => renderStartScreen(state),
+  aiKey: () => renderAiKeyScreen(state),
   teams: () => renderTeamsScreen(state),
   projects: () => renderProjectsScreen(state),
   users: () => renderUsersScreen(state),
@@ -69,6 +71,7 @@ const screenRenderers = {
 const titles = {
   githubAppTest: "GitHub App Auth Test - Gnosis TMS",
   start: "Gnosis TMS",
+  aiKey: "AI Key - Gnosis TMS",
   teams: "Translation Teams - Gnosis TMS",
   projects: "Projects - Gnosis TMS",
   users: "Members - Gnosis TMS",
@@ -106,6 +109,7 @@ function captureFocusedInputState() {
     "[data-editor-search-input]",
     "[data-editor-replace-input]",
     "[data-editor-comment-draft]",
+    "[data-ai-key-input]",
   ];
 
   const selector =

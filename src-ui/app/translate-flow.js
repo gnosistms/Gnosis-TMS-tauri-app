@@ -23,6 +23,10 @@ import {
   syncVisibleEditorGlossaryHighlightRows as syncVisibleEditorGlossaryHighlightRowsFlow,
 } from "./editor-glossary-flow.js";
 import {
+  applyEditorAiReview as applyEditorAiReviewFlow,
+  runEditorAiReview as runEditorAiReviewFlow,
+} from "./editor-ai-review-flow.js";
+import {
   replaceSelectedEditorRows as replaceSelectedEditorRowsFlow,
   showEditorRowInContext as showEditorRowInContextFlow,
   selectAllEditorReplaceRows as selectAllEditorReplaceRowsFlow,
@@ -212,7 +216,7 @@ export function toggleEditorReviewSectionExpanded(sectionKey) {
   const reviewExpandedSectionKeys =
     state.editorChapter.reviewExpandedSectionKeys instanceof Set
       ? new Set(state.editorChapter.reviewExpandedSectionKeys)
-      : new Set(["last-update"]);
+      : new Set(["last-update", "ai-review"]);
 
   if (reviewExpandedSectionKeys.has(sectionKey)) {
     reviewExpandedSectionKeys.delete(sectionKey);
@@ -224,6 +228,17 @@ export function toggleEditorReviewSectionExpanded(sectionKey) {
     ...state.editorChapter,
     reviewExpandedSectionKeys,
   };
+}
+
+export async function runEditorAiReview(render) {
+  await runEditorAiReviewFlow(render);
+}
+
+export async function applyEditorAiReview(render) {
+  await applyEditorAiReviewFlow(render, {
+    updateEditorRowFieldValue,
+    persistEditorRowOnBlur,
+  });
 }
 
 export function openEditorRowComments(render, rowId, languageCode) {

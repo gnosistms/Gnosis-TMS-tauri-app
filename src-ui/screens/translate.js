@@ -12,6 +12,7 @@ import { renderEditorRowInsertModal } from "./editor-row-insert-modal.js";
 import { renderEditorRowPermanentDeletionModal } from "./editor-row-permanent-deletion-modal.js";
 import { renderEditorConflictResolutionModal } from "./editor-conflict-resolution-modal.js";
 import { renderEditorReplaceUndoModal } from "./editor-replace-undo-modal.js";
+import { renderAiReviewMissingKeyModal } from "./ai-review-missing-key-modal.js";
 import { renderTargetLanguageManagerModal } from "./target-language-manager-modal.js";
 import { renderTranslateSidebar as renderTranslateEditorSidebar } from "./translate-sidebar.js";
 import {
@@ -198,5 +199,6 @@ export function renderTranslateScreen(state) {
     + renderEditorRowInsertModal(state)
     + renderEditorRowPermanentDeletionModal(state)
     + renderEditorConflictResolutionModal(state)
-    + renderEditorReplaceUndoModal(state);
+    + renderEditorReplaceUndoModal(state)
+    + renderAiReviewMissingKeyModal(state);
 }
