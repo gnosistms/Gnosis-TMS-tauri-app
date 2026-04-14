@@ -31,6 +31,7 @@ import {
   syncEditorGlossaryHighlightRowDom,
   toggleEditorReplaceEnabled,
   toggleEditorReplaceRowSelected,
+  updateEditorConflictResolutionFinalText,
   updateEditorFontSize,
   updateEditorCommentDraft,
   updateEditorReplaceQuery,
@@ -380,6 +381,16 @@ function handleEditorCommentDraftInput(event, render) {
   return true;
 }
 
+function handleEditorConflictResolutionInput(event) {
+  const input = event.target.closest("[data-editor-conflict-final-input]");
+  if (!input) {
+    return false;
+  }
+
+  updateEditorConflictResolutionFinalText(input.value);
+  return true;
+}
+
 function handleChapterGlossarySelectInput(event, render) {
   if (event.type !== "change") {
     return false;
@@ -426,6 +437,7 @@ const inputHandlers = [
   handleEditorReplaceRowSelectionInput,
   handleEditorRowFieldInput,
   handleEditorCommentDraftInput,
+  handleEditorConflictResolutionInput,
   handleChapterGlossarySelectInput,
 ];
 

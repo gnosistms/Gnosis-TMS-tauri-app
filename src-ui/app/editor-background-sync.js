@@ -96,16 +96,18 @@ async function inspectPendingLocalCommitCount() {
 
 async function runEditorBackgroundSync(render, options = {}) {
   if (!sessionMatchesCurrentEditor()) {
-    return false;
+    return null;
   }
 
   const input = activeEditorSyncInput();
   if (!input) {
-    return false;
+    return null;
   }
 
-  if (await flushDirtyEditorRowsFlow(render, persistenceOperations()) === false) {
-    return false;
+  if (options.skipDirtyFlush !== true) {
+    if (await flushDirtyEditorRowsFlow(render, persistenceOperations()) === false) {
+      return null;
+    }
   }
 
   setEditorBackgroundSyncState("syncing", "");
@@ -119,7 +121,7 @@ async function runEditorBackgroundSync(render, options = {}) {
     });
 
     if (!sessionMatchesCurrentEditor()) {
-      return false;
+      return null;
     }
 
     editorBackgroundSyncSession.lastSyncedHeadSha =
@@ -129,7 +131,7 @@ async function runEditorBackgroundSync(render, options = {}) {
     markEditorRowsStale(payload);
     setEditorBackgroundSyncState("idle", "");
     render?.({ scope: "translate-body" });
-    return true;
+    return payload ?? null;
   } catch (error) {
     if (sessionMatchesCurrentEditor()) {
       const message = error instanceof Error ? error.message : String(error);
@@ -137,7 +139,7 @@ async function runEditorBackgroundSync(render, options = {}) {
       render?.({ scope: "translate-body" });
       showNoticeBadge(message || "Background sync failed.", render, 2400);
     }
-    return false;
+    return null;
   } finally {
     clearScopedSyncBadge("translate", render);
   }
@@ -173,6 +175,37 @@ export async function maybeStartEditorBackgroundSync(render, options = {}) {
   }
 
   const syncPromise = runEditorBackgroundSync(render, options);
+  editorBackgroundSyncSession.pendingSync = syncPromise;
+  try {
+    return await syncPromise;
+  } finally {
+    editorBackgroundSyncSession.pendingSync = null;
+  }
+}
+
+export async function syncEditorBackgroundNow(render, options = {}) {
+  if (!sessionMatchesCurrentEditor()) {
+    return null;
+  }
+
+  if (options.afterLocalCommit === true) {
+    while (editorBackgroundSyncSession.pendingSync) {
+      await editorBackgroundSyncSession.pendingSync;
+      if (!sessionMatchesCurrentEditor()) {
+        return null;
+      }
+    }
+  } else if (editorBackgroundSyncSession.pendingSync) {
+    return editorBackgroundSyncSession.pendingSync;
+  }
+
+  if (editorBackgroundSyncSession.pendingSync) {
+    return editorBackgroundSyncSession.pendingSync;
+  }
+
+  const syncPromise = runEditorBackgroundSync(render, {
+    skipDirtyFlush: options.skipDirtyFlush === true,
+  });
   editorBackgroundSyncSession.pendingSync = syncPromise;
   try {
     return await syncPromise;

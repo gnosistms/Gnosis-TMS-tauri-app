@@ -2,6 +2,7 @@ import { actionSuffix } from "../action-helpers.js";
 import { waitForNextPaint } from "../runtime.js";
 import { captureTranslateRowAnchor, restoreTranslateRowAnchor } from "../scroll-state.js";
 import {
+  cancelEditorConflictResolutionModal,
   cancelEditorReplaceUndoModal,
   cancelEditorRowPermanentDeletionModal,
   cancelInsertEditorRowModal,
@@ -9,12 +10,15 @@ import {
   confirmEditorRowPermanentDeletion,
   confirmInsertEditorRow,
   closeTargetLanguageManager,
+  copyEditorConflictResolutionVersion,
   deleteActiveEditorRowComment,
+  openEditorConflictResolutionModal,
   openEditorReplaceUndoModal,
   openEditorRowComments,
   openEditorRowPermanentDeletionModal,
   openInsertEditorRowModal,
   replaceSelectedEditorRows,
+  saveEditorConflictResolution,
   resolveEditorRowConflict,
   restoreEditorFieldHistory,
   restoreEditorRow,
@@ -55,6 +59,11 @@ export function createTranslateActions(render) {
       return true;
     }
 
+    if (action === "cancel-editor-conflict-resolution") {
+      cancelEditorConflictResolutionModal(render);
+      return true;
+    }
+
     if (action === "confirm-insert-editor-row-before") {
       await confirmInsertEditorRow(render, "before");
       return true;
@@ -72,6 +81,11 @@ export function createTranslateActions(render) {
 
     if (action === "confirm-editor-replace-undo") {
       await confirmEditorReplaceUndo(render);
+      return true;
+    }
+
+    if (action === "save-editor-conflict-resolution") {
+      await saveEditorConflictResolution(render);
       return true;
     }
 
@@ -159,6 +173,12 @@ export function createTranslateActions(render) {
       return true;
     }
 
+    const copyConflictSide = actionSuffix(action, "copy-editor-conflict-version:");
+    if (copyConflictSide !== null) {
+      await copyEditorConflictResolutionVersion(render, copyConflictSide);
+      return true;
+    }
+
     const insertRowId = actionSuffix(action, "open-insert-editor-row:");
     if (insertRowId !== null) {
       openInsertEditorRowModal(insertRowId);
@@ -190,6 +210,13 @@ export function createTranslateActions(render) {
     if (conflictAction !== null) {
       const [rowId, resolution] = conflictAction.split(":");
       await resolveEditorRowConflict(render, rowId, resolution);
+      return true;
+    }
+
+    const conflictModalAction = actionSuffix(action, "open-editor-conflict-resolution:");
+    if (conflictModalAction !== null) {
+      const [rowId, languageCode] = conflictModalAction.split(":");
+      openEditorConflictResolutionModal(render, rowId, languageCode);
       return true;
     }
 

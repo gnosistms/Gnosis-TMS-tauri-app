@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  applyEditorConflictResolutionSavedLocally,
   applyEditorRowFieldValue,
   applyEditorRowMarkerSaved,
   applyEditorRowMarkerSaveFailed,
@@ -144,4 +145,34 @@ test("applyEditorRowPersistFailed stores an error status", () => {
 
   assert.equal(updatedRow.saveStatus, "error");
   assert.equal(updatedRow.saveError, "save failed");
+});
+
+test("applyEditorConflictResolutionSavedLocally keeps the GitHub version until sync finishes", () => {
+  const updatedRow = applyEditorConflictResolutionSavedLocally(
+    row({
+      fields: { es: "local draft" },
+      persistedFields: { es: "remote old" },
+      conflictState: {
+        remoteRow: {
+          rowId: "row-1",
+          fields: { es: "remote old" },
+          fieldStates: { es: { reviewed: false, pleaseCheck: false } },
+        },
+        remoteVersion: {
+          authorName: "The Octocat",
+          committedAt: "2026-04-14T00:00:00Z",
+          commitSha: "abcdef12",
+        },
+      },
+    }),
+    persistedPayload({ fields: { es: "resolved local" } }),
+    { es: "resolved local" },
+  );
+
+  assert.deepEqual(updatedRow.fields, { es: "resolved local" });
+  assert.deepEqual(updatedRow.persistedFields, { es: "resolved local" });
+  assert.equal(updatedRow.saveStatus, "conflict");
+  assert.equal(updatedRow.freshness, "conflict");
+  assert.deepEqual(updatedRow.conflictState.remoteRow.fields, { es: "remote old" });
+  assert.equal(updatedRow.conflictState.remoteVersion.authorName, "The Octocat");
 });

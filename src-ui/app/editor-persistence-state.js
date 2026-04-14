@@ -6,6 +6,35 @@ import {
 } from "./editor-utils.js";
 import { normalizeEditorRow } from "./editor-state-flow.js";
 
+function normalizeConflictRemoteVersion(remoteVersion) {
+  if (!remoteVersion || typeof remoteVersion !== "object") {
+    return null;
+  }
+
+  const authorName =
+    typeof remoteVersion.authorName === "string" && remoteVersion.authorName.trim()
+      ? remoteVersion.authorName
+      : "";
+  const committedAt =
+    typeof remoteVersion.committedAt === "string" && remoteVersion.committedAt.trim()
+      ? remoteVersion.committedAt
+      : "";
+  const commitSha =
+    typeof remoteVersion.commitSha === "string" && remoteVersion.commitSha.trim()
+      ? remoteVersion.commitSha
+      : "";
+
+  if (!authorName && !committedAt && !commitSha) {
+    return null;
+  }
+
+  return {
+    authorName,
+    committedAt,
+    commitSha,
+  };
+}
+
 export function applyEditorRowFieldValue(row, languageCode, nextValue) {
   if (!row || !languageCode) {
     return row;
@@ -173,13 +202,24 @@ export function applyEditorRowPersistFailed(row, message = "") {
   };
 }
 
-export function applyEditorRowConflictDetected(row, payload = {}) {
+export function applyEditorRowConflictDetected(row, payload = {}, options = {}) {
   if (!row) {
     return row;
   }
 
+  const nextFields = cloneRowFields(options?.localFields ?? row.fields);
+  const remoteVersion =
+    normalizeConflictRemoteVersion(
+      payload?.conflictRemoteVersion
+      ?? payload?.remoteVersion
+      ?? options?.remoteVersion
+      ?? row?.conflictState?.remoteVersion
+      ?? null,
+    );
+
   return {
     ...row,
+    fields: nextFields,
     freshness: "conflict",
     saveStatus: "conflict",
     saveError: "Translation text changed on disk.",
@@ -187,6 +227,7 @@ export function applyEditorRowConflictDetected(row, payload = {}) {
     conflictState: {
       baseFields: cloneRowFields(payload?.baseFields),
       remoteRow: payload?.row ? normalizeEditorRow(payload.row) : null,
+      remoteVersion,
     },
   };
 }
@@ -199,5 +240,69 @@ export function applyEditorRowConflictResolvedWithRemote(row) {
   return {
     ...normalizeEditorRow(row.conflictState.remoteRow),
     conflictState: null,
+  };
+}
+
+export function applyEditorConflictResolutionSavedLocally(row, payloadRow, nextLocalFields, options = {}) {
+  if (!row || !payloadRow) {
+    return row;
+  }
+
+  const persistedRow = normalizeEditorRow(payloadRow);
+  const localFields = cloneRowFields(nextLocalFields);
+
+  return {
+    ...persistedRow,
+    fields: localFields,
+    baseFields: cloneRowFields(persistedRow.fields),
+    persistedFields: cloneRowFields(persistedRow.fields),
+    saveStatus: "conflict",
+    freshness: "conflict",
+    saveError: "",
+    remotelyDeleted: false,
+    conflictState: {
+      baseFields: cloneRowFields(persistedRow.fields),
+      remoteRow: row?.conflictState?.remoteRow ? normalizeEditorRow(row.conflictState.remoteRow) : null,
+      remoteVersion: normalizeConflictRemoteVersion(options?.remoteVersion ?? row?.conflictState?.remoteVersion ?? null),
+    },
+  };
+}
+
+export function applyEditorRowConflictSaveSucceeded(row, payloadRow, nextLocalFields, options = {}) {
+  if (!row || !payloadRow) {
+    return row;
+  }
+
+  const remoteRow = normalizeEditorRow(payloadRow);
+  const localFields = cloneRowFields(nextLocalFields);
+  const mergedCodes = new Set([...Object.keys(localFields), ...Object.keys(remoteRow.fields)]);
+  const hasRemainingConflict = [...mergedCodes].some((code) => (localFields?.[code] ?? "") !== (remoteRow.fields?.[code] ?? ""));
+
+  if (!hasRemainingConflict) {
+    return {
+      ...remoteRow,
+      fields: localFields,
+      baseFields: cloneRowFields(remoteRow.fields),
+      persistedFields: cloneRowFields(remoteRow.fields),
+      saveStatus: "idle",
+      freshness: "fresh",
+      conflictState: null,
+    };
+  }
+
+  return {
+    ...remoteRow,
+    fields: localFields,
+    baseFields: cloneRowFields(remoteRow.fields),
+    persistedFields: cloneRowFields(remoteRow.fields),
+    saveStatus: "conflict",
+    freshness: "conflict",
+    saveError: "Translation text changed on disk.",
+    remotelyDeleted: false,
+    conflictState: {
+      baseFields: cloneRowFields(remoteRow.fields),
+      remoteRow,
+      remoteVersion: normalizeConflictRemoteVersion(options?.remoteVersion ?? row?.conflictState?.remoteVersion ?? null),
+    },
   };
 }

@@ -1,4 +1,11 @@
 import {
+  cancelEditorConflictResolutionModal as cancelEditorConflictResolutionModalFlow,
+  copyEditorConflictResolutionVersion as copyEditorConflictResolutionVersionFlow,
+  openEditorConflictResolutionModal as openEditorConflictResolutionModalFlow,
+  saveEditorConflictResolution as saveEditorConflictResolutionFlow,
+  updateEditorConflictResolutionFinalText as updateEditorConflictResolutionFinalTextFlow,
+} from "./editor-conflict-resolution-flow.js";
+import {
   deleteActiveEditorRowComment as deleteActiveEditorRowCommentFlow,
   loadActiveEditorRowComments as loadActiveEditorRowCommentsFlow,
   openEditorRowComments as openEditorRowCommentsFlow,
@@ -73,6 +80,7 @@ import { saveStoredEditorFontSizePx } from "./editor-preferences.js";
 import { ensureEditorRowReadyForActivation } from "./editor-row-sync-flow.js";
 import {
   noteEditorBackgroundSyncScrollActivity as noteEditorBackgroundSyncScrollActivityFlow,
+  syncEditorBackgroundNow as syncEditorBackgroundNowFlow,
   startEditorBackgroundSyncSession,
   syncAndStopEditorBackgroundSyncSession,
 } from "./editor-background-sync.js";
@@ -193,6 +201,34 @@ export function toggleEditorHistoryGroupExpanded(groupKey) {
 
 export function openEditorRowComments(render, rowId, languageCode) {
   openEditorRowCommentsFlow(render, rowId, languageCode);
+}
+
+export function openEditorConflictResolutionModal(render, rowId, languageCode) {
+  openEditorConflictResolutionModalFlow(render, rowId, languageCode, {
+    loadActiveEditorFieldHistory,
+  });
+}
+
+export function cancelEditorConflictResolutionModal(render) {
+  cancelEditorConflictResolutionModalFlow(render);
+}
+
+export function updateEditorConflictResolutionFinalText(nextValue) {
+  updateEditorConflictResolutionFinalTextFlow(nextValue);
+}
+
+export async function copyEditorConflictResolutionVersion(render, side) {
+  await copyEditorConflictResolutionVersionFlow(render, side);
+}
+
+export async function saveEditorConflictResolution(render) {
+  await saveEditorConflictResolutionFlow(render, {
+    updateEditorChapterRow,
+    applyEditorSelectionsToProjectState,
+    reconcileDirtyTrackedEditorRows,
+    loadActiveEditorFieldHistory,
+    syncEditorBackgroundNow: syncEditorBackgroundNowFlow,
+  });
 }
 
 export function switchEditorSidebarTab(render, tab) {

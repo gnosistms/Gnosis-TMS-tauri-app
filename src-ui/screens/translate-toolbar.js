@@ -60,10 +60,15 @@ function renderFontSizeSelect(fontSizePx) {
 
 function renderFilterSelect(editorFilters) {
   const selectedMode = editorFilters?.filters?.rowFilterMode ?? EDITOR_ROW_FILTER_MODE_SHOW_ALL;
+  const isConflictLocked = editorFilters?.isConflictLocked === true;
   return renderSelectPillControl({
     className: "select-pill--toolbar",
     label: "Filter:",
     value: labelForEditorRowFilterMode(selectedMode),
+    tooltip: isConflictLocked
+      ? "You must resolve the conflicts before changing this setting."
+      : "",
+    disabled: isConflictLocked,
     selectAttributes: {
       "data-editor-filter-select": true,
       "aria-label": "Editor filter",
@@ -183,6 +188,21 @@ export function renderEditorFilterBanner(editorFilters) {
       <div class="translation-results-banner__gutter" aria-hidden="true"></div>
       <div class="translation-results-banner__card">
         <p class="translation-results-banner__text">${escapeHtml(label)}</p>
+      </div>
+    </div>
+  `;
+}
+
+export function renderEditorConflictBanner(editorFilters) {
+  if (editorFilters?.isConflictLocked !== true) {
+    return "";
+  }
+
+  return `
+    <div class="translation-results-banner" aria-live="assertive">
+      <div class="translation-results-banner__gutter" aria-hidden="true"></div>
+      <div class="translation-results-banner__card translation-results-banner__card--error">
+        <p class="translation-results-banner__text translation-results-banner__text--error">The following translations have conflicts between the local version and the version saved on GitHub. You must resolve the conflicts before editing other translations.</p>
       </div>
     </div>
   `;

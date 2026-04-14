@@ -10,10 +10,12 @@ import { getNoticeBadgeText } from "../app/status-feedback.js";
 import { MANAGE_TARGET_LANGUAGES_OPTION_VALUE } from "../app/translate-flow.js";
 import { renderEditorRowInsertModal } from "./editor-row-insert-modal.js";
 import { renderEditorRowPermanentDeletionModal } from "./editor-row-permanent-deletion-modal.js";
+import { renderEditorConflictResolutionModal } from "./editor-conflict-resolution-modal.js";
 import { renderEditorReplaceUndoModal } from "./editor-replace-undo-modal.js";
 import { renderTargetLanguageManagerModal } from "./target-language-manager-modal.js";
 import { renderTranslateSidebar as renderTranslateEditorSidebar } from "./translate-sidebar.js";
 import {
+  renderEditorConflictBanner,
   renderEditorFilterBanner,
   renderEditorSyncBanner,
   renderTranslateModeControl,
@@ -131,6 +133,7 @@ function renderTranslateEditorBodyFromFrame(frame) {
     <section class="translate-layout" style="--translation-editor-font-size: ${escapeHtml(String(editorFontSizePx))}px;">
       <div class="translate-main-scroll">
         <div class="translate-main${editorReplace?.isEnabled ? " translate-main--replace-mode" : ""}">
+          ${renderEditorConflictBanner(editorFilters)}
           ${renderEditorFilterBanner(editorFilters)}
           ${renderEditorSyncBanner(editorChapter)}
           ${translateBody}
@@ -194,5 +197,6 @@ export function renderTranslateScreen(state) {
   }) + renderTargetLanguageManagerModal(state)
     + renderEditorRowInsertModal(state)
     + renderEditorRowPermanentDeletionModal(state)
+    + renderEditorConflictResolutionModal(state)
     + renderEditorReplaceUndoModal(state);
 }

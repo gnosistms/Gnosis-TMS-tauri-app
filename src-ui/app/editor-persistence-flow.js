@@ -3,12 +3,17 @@ import {
   resolveDirtyTrackedEditorRowIds,
   rowHasFieldChanges,
   rowHasPersistedChanges,
+  rowFieldsEqual,
 } from "./editor-row-persistence-model.js";
 import {
   dirtyTrackedEditorRowIds,
   markEditorRowDirty,
   reconcileDirtyTrackedEditorRows,
 } from "./editor-dirty-row-state.js";
+import {
+  EDITOR_ROW_FILTER_MODE_HAS_CONFLICT,
+  normalizeEditorChapterFilterState,
+} from "./editor-filters.js";
 import { loadActiveEditorFieldHistory } from "./editor-history-flow.js";
 import {
   applyEditorRowConflictDetected,
@@ -39,6 +44,25 @@ import {
 
 const pendingEditorRowPersistByRowId = new Map();
 const pendingEditorDirtyRowScanFrameByRowId = new Map();
+
+function lockConflictFilter() {
+  if (!state.editorChapter?.chapterId) {
+    return;
+  }
+
+  const currentFilters = normalizeEditorChapterFilterState(state.editorChapter.filters);
+  if (currentFilters.rowFilterMode === EDITOR_ROW_FILTER_MODE_HAS_CONFLICT) {
+    return;
+  }
+
+  state.editorChapter = {
+    ...state.editorChapter,
+    filters: {
+      ...currentFilters,
+      rowFilterMode: EDITOR_ROW_FILTER_MODE_HAS_CONFLICT,
+    },
+  };
+}
 
 function cancelScheduledDirtyRowScan(rowId) {
   const pendingScan = pendingEditorDirtyRowScanFrameByRowId.get(rowId);
@@ -346,12 +370,22 @@ async function persistEditorRow(render, rowId, operations = {}, options = {}) {
         }
 
         if (payload?.status === "conflict") {
+          if (rowFieldsEqual(fieldsToPersist, payload?.row?.fields)) {
+            updateEditorChapterRow(
+              rowId,
+              (currentRow) => applyEditorRowPersistSucceeded(currentRow, payload?.row),
+            );
+            reconcileDirtyTrackedEditorRows([rowId]);
+            render?.();
+            return;
+          }
+
           updateEditorChapterRow(
             rowId,
             (currentRow) => applyEditorRowConflictDetected(currentRow, payload),
           );
-          render?.({ scope: "translate-body" });
-          render?.({ scope: "translate-sidebar" });
+          lockConflictFilter();
+          render?.();
           showNoticeBadge("Translation text changed on disk. Choose which version to keep.", render, 2400);
           return;
         }

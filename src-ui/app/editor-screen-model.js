@@ -1,4 +1,8 @@
 import { buildEditorCommentsButtonState, normalizeEditorSidebarTab } from "./editor-comments.js";
+import {
+  conflictedLanguageCodesForRow,
+  rowHasUnresolvedEditorConflict,
+} from "./editor-conflicts.js";
 import { coerceEditorFontSizePx } from "./state.js";
 import { canPermanentlyDeleteProjectFiles } from "./resource-capabilities.js";
 import { findChapterContextById, selectedProjectsTeam } from "./project-context.js";
@@ -55,6 +59,10 @@ function buildLiveTranslationRows(editorChapter, languages) {
   }
 
   const liveRows = editorRows.map((row) => {
+    const hasConflict = rowHasUnresolvedEditorConflict(row);
+    const conflictLanguageCodes = hasConflict
+      ? conflictedLanguageCodesForRow(row, languageOptions)
+      : new Set();
     return {
       ...row,
       kind: "row",
@@ -69,15 +77,18 @@ function buildLiveTranslationRows(editorChapter, languages) {
       saveError: row.saveError || "",
       freshness: typeof row?.freshness === "string" ? row.freshness : "fresh",
       remotelyDeleted: row?.remotelyDeleted === true,
-      hasConflict: row?.freshness === "conflict",
+      hasConflict,
       isStale: row?.freshness === "stale" || row?.freshness === "staleDirty",
       conflictState: row?.conflictState ?? null,
+      conflictLanguageCodes: [...conflictLanguageCodes],
       sections: languageOptions.map((language) => ({
         code: language.code,
         name: language.name,
         text: row.fields?.[language.code] ?? "",
         reviewed: row.fieldStates?.[language.code]?.reviewed === true,
         pleaseCheck: row.fieldStates?.[language.code]?.pleaseCheck === true,
+        hasConflict: conflictLanguageCodes.has(language.code),
+        conflictDisabled: hasConflict && !conflictLanguageCodes.has(language.code),
         markerSaveState:
           row.markerSaveState?.languageCode === language.code
             ? row.markerSaveState

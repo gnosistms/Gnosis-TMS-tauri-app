@@ -115,13 +115,71 @@ function renderEditorRowSyncBadges(row) {
 }
 
 function renderEditorRowConflictActions(row) {
-  if (!row.hasConflict) {
-    return "";
+  return row.hasConflict ? "" : "";
+}
+
+function renderConflictResolutionField(row, language) {
+  return `
+    <button
+      class="translation-language-panel__field-static translation-language-panel__field-static--conflict"
+      type="button"
+      data-action="open-editor-conflict-resolution:${escapeHtml(row.id)}:${escapeHtml(language.code)}"
+      data-row-id="${escapeHtml(row.id)}"
+      data-language-code="${escapeHtml(language.code)}"
+    >
+      <span
+        class="translation-language-panel__field-static-text"
+        lang="${escapeHtml(language.code)}"
+      >${escapeHtml(language.text)}</span>
+    </button>
+  `;
+}
+
+function renderDisabledConflictField(language) {
+  return `
+    <div
+      class="translation-language-panel__field-static translation-language-panel__field-static--disabled"
+      ${tooltipAttributes(
+        "This language does not have a conflict. Please edit the languages marked with red text before editing this.",
+      )}
+    >
+      <span
+        class="translation-language-panel__field-static-text"
+        lang="${escapeHtml(language.code)}"
+      >${escapeHtml(language.text)}</span>
+    </div>
+  `;
+}
+
+function renderEditorLanguageField(row, language) {
+  if (row.hasConflict) {
+    return language.hasConflict
+      ? renderConflictResolutionField(row, language)
+      : renderDisabledConflictField(language);
   }
 
   return `
-    ${textAction("Keep mine", `resolve-editor-row-conflict:${row.id}:keep-local`)}
-    ${textAction("Use remote", `resolve-editor-row-conflict:${row.id}:use-remote`)}
+    <div
+      class="translation-language-panel__field-stack"
+      data-editor-glossary-field-stack
+      data-row-id="${escapeHtml(row.id)}"
+      data-language-code="${escapeHtml(language.code)}"
+    >
+      <div
+        class="translation-language-panel__field-highlight"
+        data-editor-glossary-highlight
+        lang="${escapeHtml(language.code)}"
+        aria-hidden="true"
+      ></div>
+      <textarea
+        class="translation-language-panel__field"
+        data-editor-row-field
+        data-row-id="${escapeHtml(row.id)}"
+        data-language-code="${escapeHtml(language.code)}"
+        lang="${escapeHtml(language.code)}"
+        spellcheck="false"
+      >${escapeHtml(language.text)}</textarea>
+    </div>
   `;
 }
 
@@ -223,7 +281,7 @@ export function renderTranslationContentRow(
                         ${tooltipAttributes(isCollapsed ? "Show this language" : "Hide this language")}
                       >
                         ${renderCollapseChevron(!isCollapsed, "translation-language-panel__chevron")}
-                        <span class="translation-language-panel__label">${escapeHtml(language.name)}</span>
+                        <span class="translation-language-panel__label${language.hasConflict ? " translation-language-panel__label--conflict" : ""}">${escapeHtml(language.name)}</span>
                       </button>
                       <div class="translation-language-panel__actions">
                         ${renderCommentsMarkerButton(row.id, language)}
@@ -234,29 +292,7 @@ export function renderTranslationContentRow(
                     ${
                       isCollapsed
                         ? ""
-                        : `
-                          <div
-                            class="translation-language-panel__field-stack"
-                            data-editor-glossary-field-stack
-                            data-row-id="${escapeHtml(row.id)}"
-                            data-language-code="${escapeHtml(language.code)}"
-                          >
-                            <div
-                              class="translation-language-panel__field-highlight"
-                              data-editor-glossary-highlight
-                              lang="${escapeHtml(language.code)}"
-                              aria-hidden="true"
-                            ></div>
-                            <textarea
-                              class="translation-language-panel__field"
-                              data-editor-row-field
-                              data-row-id="${escapeHtml(row.id)}"
-                              data-language-code="${escapeHtml(language.code)}"
-                              lang="${escapeHtml(language.code)}"
-                              spellcheck="false"
-                            >${escapeHtml(language.text)}</textarea>
-                          </div>
-                        `
+                        : renderEditorLanguageField(row, language)
                     }
                   </section>
                 `;

@@ -16,6 +16,7 @@ import {
   createEditorChapterFilterState,
   createEditorChapterGlossaryState,
   createEditorCommentsState,
+  createEditorConflictResolutionModalState,
   createEditorReplaceUndoModalState,
   createEditorReplaceState,
   createEditorHistoryState,
@@ -93,6 +94,16 @@ export function applyEditorUiState(nextEditorChapter, previousEditorChapter = st
           ...previousEditorChapter.replaceUndoModal,
         }
         : createEditorReplaceUndoModalState(),
+    conflictResolutionModal:
+      isSameChapter
+        && previousEditorChapter?.conflictResolutionModal?.isOpen === true
+        && hasEditorRow(nextEditorChapter, previousEditorChapter.conflictResolutionModal.rowId)
+        && hasEditorLanguage(nextEditorChapter, previousEditorChapter.conflictResolutionModal.languageCode)
+        ? {
+          ...createEditorConflictResolutionModalState(),
+          ...previousEditorChapter.conflictResolutionModal,
+        }
+        : createEditorConflictResolutionModalState(),
     activeRowId:
       hasEditorRow(nextEditorChapter, activeRowId) && hasEditorLanguage(nextEditorChapter, activeLanguageCode)
         ? activeRowId

@@ -1,4 +1,5 @@
 import { editorRowHasUnreadComments } from "./editor-comments.js";
+import { rowHasUnresolvedEditorConflict } from "./editor-conflicts.js";
 
 export const EDITOR_ROW_FILTER_MODE_SHOW_ALL = "show-all";
 export const EDITOR_ROW_FILTER_MODE_REVIEWED = "reviewed";
@@ -130,7 +131,8 @@ function findRowSection(row, languageCode) {
 function rowHasUnresolvedTextConflict(row, targetLanguageCode) {
   const targetSection = findRowSection(row, targetLanguageCode);
   if (
-    targetSection?.hasTextConflict === true
+    targetSection?.hasConflict === true
+    || targetSection?.hasTextConflict === true
     || targetSection?.textConflict?.isUnresolved === true
     || targetSection?.textConflict?.status === "unresolved"
     || targetSection?.textConflictState === "unresolved"
@@ -140,7 +142,9 @@ function rowHasUnresolvedTextConflict(row, targetLanguageCode) {
   }
 
   return (
-    row?.hasTextConflict === true
+    rowHasUnresolvedEditorConflict(row)
+    || row?.hasConflict === true
+    || row?.hasTextConflict === true
     || row?.textConflict?.isUnresolved === true
     || row?.textConflict?.status === "unresolved"
     || row?.textConflictState === "unresolved"
@@ -223,15 +227,30 @@ export function buildEditorFilterResult({
 }) {
   const normalizedFilters = normalizeEditorChapterFilterState(filters);
   const visibleLanguageCodes = buildVisibleLanguageCodeSet(languages, collapsedLanguageCodes);
-  const hasSearchFilter = normalizedFilters.searchQuery.trim().length > 0;
-  const hasRowFilter = normalizedFilters.rowFilterMode !== EDITOR_ROW_FILTER_MODE_SHOW_ALL;
-  const hasActiveFilters = hasSearchFilter || hasRowFilter;
   const rowList = Array.isArray(rows) ? rows : [];
+  const conflictRowCount = rowList.filter((row) =>
+    row
+    && row.kind !== "deleted-group"
+    && row.lifecycleState !== "deleted"
+    && rowHasUnresolvedTextConflict(row, targetLanguageCode)
+  ).length;
+  const isConflictLocked = conflictRowCount > 0;
+  const effectiveFilters = isConflictLocked
+    ? {
+      ...normalizedFilters,
+      rowFilterMode: EDITOR_ROW_FILTER_MODE_HAS_CONFLICT,
+    }
+    : normalizedFilters;
+  const hasSearchFilter = effectiveFilters.searchQuery.trim().length > 0;
+  const hasRowFilter = effectiveFilters.rowFilterMode !== EDITOR_ROW_FILTER_MODE_SHOW_ALL;
+  const hasActiveFilters = hasSearchFilter || hasRowFilter;
 
   if (!hasActiveFilters) {
     return {
-      filters: normalizedFilters,
+      filters: effectiveFilters,
       hasActiveFilters,
+      isConflictLocked,
+      conflictRowCount,
       filteredRows: rowList,
       visibleLanguageCodes,
       searchResults: [],
@@ -249,7 +268,7 @@ export function buildEditorFilterResult({
       continue;
     }
 
-    if (!rowMatchesFilterMode(row, normalizedFilters.rowFilterMode, targetLanguageCode, commentSeenRevisions)) {
+    if (!rowMatchesFilterMode(row, effectiveFilters.rowFilterMode, targetLanguageCode, commentSeenRevisions)) {
       continue;
     }
 
@@ -260,9 +279,9 @@ export function buildEditorFilterResult({
 
     const searchMatches = buildRowSearchMatches(
       row,
-      normalizedFilters.searchQuery,
+      effectiveFilters.searchQuery,
       visibleLanguageCodes,
-      normalizedFilters.caseSensitive,
+      effectiveFilters.caseSensitive,
     );
     if (!searchMatches.matched) {
       continue;
@@ -276,8 +295,10 @@ export function buildEditorFilterResult({
   }
 
   return {
-    filters: normalizedFilters,
+    filters: effectiveFilters,
     hasActiveFilters,
+    isConflictLocked,
+    conflictRowCount,
     filteredRows,
     visibleLanguageCodes,
     searchResults,

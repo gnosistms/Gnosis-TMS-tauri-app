@@ -909,6 +909,48 @@
   box-shadow: 0 9px 18px rgba(214, 128, 12, 0.2);
 }
 
+.modal-card--editor-conflict {
+  width: min(1120px, 100%);
+}
+
+.editor-conflict-modal__versions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 18px;
+}
+
+.editor-conflict-modal__column {
+  display: grid;
+  gap: 10px;
+}
+
+.editor-conflict-modal__version-label {
+  margin: 0;
+  color: var(--text);
+  font-size: 0.95rem;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.editor-conflict-modal__version-text {
+  min-height: 220px;
+  resize: none;
+  background: rgba(255, 251, 246, 0.82);
+}
+
+.editor-conflict-modal__version-actions {
+  display: flex;
+  justify-content: flex-start;
+}
+
+.editor-conflict-modal__final-field {
+  gap: 10px;
+}
+
+.editor-conflict-modal__final-input {
+  min-height: 190px;
+}
+
 @media (max-width: 980px) {
   .modal-card--glossary-term {
     width: min(760px, 100%);
@@ -916,6 +958,10 @@
 
   .glossary-term-modal__lanes,
   .glossary-term-modal__details-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .editor-conflict-modal__versions {
     grid-template-columns: minmax(0, 1fr);
   }
 }

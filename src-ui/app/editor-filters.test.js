@@ -24,6 +24,9 @@ function row(rowId, fields, lifecycleState = "active", options = {}) {
     id: rowId,
     rowId,
     lifecycleState,
+    hasConflict: options.hasConflict === true,
+    freshness: typeof options.freshness === "string" ? options.freshness : "fresh",
+    saveStatus: typeof options.saveStatus === "string" ? options.saveStatus : "idle",
     commentCount: Number.isInteger(options.commentCount) ? options.commentCount : 0,
     commentsRevision: Number.isInteger(options.commentsRevision) ? options.commentsRevision : 0,
     hasTextConflict: options.hasTextConflict === true,
@@ -194,7 +197,8 @@ test("conflict filter only matches unresolved text conflicts", () => {
     rows: [
       row("row-1", { es: "uno" }, "active", { hasTextConflict: true }),
       row("row-2", { es: "dos" }, "active", { textConflictState: "unresolved" }),
-      row("row-3", { es: "tres" }, "active", { textConflictState: "resolved" }),
+      row("row-3", { es: "tres" }, "active", { freshness: "conflict" }),
+      row("row-4", { es: "cuatro" }, "active", { textConflictState: "resolved" }),
     ],
     languages: [language("es")],
     collapsedLanguageCodes: new Set(),
@@ -202,7 +206,25 @@ test("conflict filter only matches unresolved text conflicts", () => {
     filters: { rowFilterMode: EDITOR_ROW_FILTER_MODE_HAS_CONFLICT },
   });
 
-  assert.deepEqual(result.filteredRows.map((item) => item.id), ["row-1", "row-2"]);
+  assert.deepEqual(result.filteredRows.map((item) => item.id), ["row-1", "row-2", "row-3"]);
+});
+
+test("unresolved editor conflicts force the filter to has conflict", () => {
+  const result = buildEditorFilterResult({
+    rows: [
+      row("row-1", { es: "uno" }, "active", { freshness: "conflict" }),
+      row("row-2", { es: "dos" }),
+    ],
+    languages: [language("es")],
+    collapsedLanguageCodes: new Set(),
+    targetLanguageCode: "es",
+    filters: { rowFilterMode: "show-all" },
+  });
+
+  assert.equal(result.isConflictLocked, true);
+  assert.equal(result.conflictRowCount, 1);
+  assert.equal(result.filters.rowFilterMode, EDITOR_ROW_FILTER_MODE_HAS_CONFLICT);
+  assert.deepEqual(result.filteredRows.map((item) => item.id), ["row-1"]);
 });
 
 test("search and dropdown filters compose", () => {

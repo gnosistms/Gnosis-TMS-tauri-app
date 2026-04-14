@@ -313,6 +313,7 @@ pub(crate) struct LoadEditorRowResponse {
   row_id: String,
   row: Option<EditorRow>,
   chapter_base_commit_sha: Option<String>,
+  row_version: Option<EditorRowVersionMetadata>,
 }
 
 #[derive(Deserialize)]
@@ -407,6 +408,15 @@ pub(crate) struct SaveEditorRowWithConcurrencyResponse {
   row: Option<EditorRow>,
   source_word_counts: BTreeMap<String, usize>,
   base_fields: BTreeMap<String, String>,
+  conflict_remote_version: Option<EditorRowVersionMetadata>,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct EditorRowVersionMetadata {
+  commit_sha: String,
+  author_name: String,
+  committed_at: String,
 }
 
 #[derive(Deserialize)]
@@ -594,8 +604,18 @@ pub(super) fn load_gtms_editor_row_sync(
 
   let chapter_path = find_chapter_path_by_id(&repo_path.join("chapters"), &input.chapter_id)?;
   let row_json_path = chapter_path.join("rows").join(format!("{}.json", input.row_id));
+  let relative_row_json = if row_json_path.exists() {
+    Some(repo_relative_path(&repo_path, &row_json_path)?)
+  } else {
+    None
+  };
   let row = if row_json_path.exists() {
     Some(editor_row_from_stored_row_file(read_json_file(&row_json_path, "row file")?)?)
+  } else {
+    None
+  };
+  let row_version = if let Some(relative_row_json) = relative_row_json.as_deref() {
+    load_latest_row_version_metadata(&repo_path, relative_row_json)?
   } else {
     None
   };
@@ -604,6 +624,7 @@ pub(super) fn load_gtms_editor_row_sync(
     row_id: input.row_id,
     row,
     chapter_base_commit_sha: git_output(&repo_path, &["rev-parse", "--verify", "HEAD"]).ok(),
+    row_version,
   })
 }
 
@@ -1163,6 +1184,7 @@ pub(super) fn update_gtms_editor_row_fields_sync(
   let chapter_json_path = chapter_path.join("chapter.json");
   let chapter_file: StoredChapterFile = read_json_file(&chapter_json_path, "chapter.json")?;
   let row_json_path = chapter_path.join("rows").join(format!("{}.json", input.row_id));
+  let relative_row_json = repo_relative_path(&repo_path, &row_json_path)?;
   let languages = sanitize_chapter_languages(&chapter_file.languages);
   let source_word_counts = if chapter_file.source_word_counts.is_empty() {
     let rows = load_editor_rows(&chapter_path.join("rows"))?;
@@ -1177,6 +1199,7 @@ pub(super) fn update_gtms_editor_row_fields_sync(
       row: None,
       source_word_counts,
       base_fields: input.base_fields,
+      conflict_remote_version: None,
     });
   }
 
@@ -1191,6 +1214,7 @@ pub(super) fn update_gtms_editor_row_fields_sync(
       row: Some(editor_row_from_stored_row_file(original_row_file)?),
       source_word_counts,
       base_fields: input.base_fields,
+      conflict_remote_version: None,
     });
   }
 
@@ -1201,6 +1225,7 @@ pub(super) fn update_gtms_editor_row_fields_sync(
       row: Some(editor_row_from_stored_row_file(original_row_file)?),
       source_word_counts,
       base_fields: input.base_fields,
+      conflict_remote_version: load_latest_row_version_metadata(&repo_path, &relative_row_json)?,
     });
   }
 
@@ -1225,7 +1250,6 @@ pub(super) fn update_gtms_editor_row_fields_sync(
     write_text_file(&row_json_path, &updated_row_text)?;
     write_chapter_source_word_counts(&chapter_json_path, &next_source_word_counts)?;
 
-    let relative_row_json = repo_relative_path(&repo_path, &row_json_path)?;
     let relative_chapter_json = repo_relative_path(&repo_path, &chapter_json_path)?;
     git_output(&repo_path, &["add", &relative_row_json, &relative_chapter_json])?;
     git_commit_as_signed_in_user_with_metadata(
@@ -1247,6 +1271,7 @@ pub(super) fn update_gtms_editor_row_fields_sync(
     row: Some(editor_row_from_stored_row_file(next_row)?),
     source_word_counts: next_source_word_counts,
     base_fields: input.base_fields,
+    conflict_remote_version: None,
   })
 }
 
@@ -2283,6 +2308,20 @@ fn load_historical_row_field_values_batch(
   }
 
   Ok(values)
+}
+
+fn load_latest_row_version_metadata(
+  repo_path: &Path,
+  relative_row_json: &str,
+) -> Result<Option<EditorRowVersionMetadata>, String> {
+  Ok(load_git_history_for_path(repo_path, relative_row_json)?
+    .into_iter()
+    .next()
+    .map(|commit| EditorRowVersionMetadata {
+      commit_sha: commit.commit_sha,
+      author_name: commit.author_name,
+      committed_at: commit.committed_at,
+    }))
 }
 
 fn short_commit_sha(commit_sha: &str) -> String {
