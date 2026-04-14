@@ -993,6 +993,7 @@ a {
   display: flex;
   flex-direction: column;
   gap: 10px;
+  padding: 16px 18px;
 }
 
 .project-search-result__header,
@@ -1014,9 +1015,51 @@ a {
 
 .project-search-result__snippet {
   color: var(--text);
+  font-family: var(--font-serif);
+  font-size: 20pt;
   line-height: 1.5;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.project-search-result__snippet:lang(ja) {
+  font-family: var(--font-serif-ja);
+}
+
+.project-search-result__snippet:lang(zh-Hans),
+.project-search-result__snippet:lang(zh-CN),
+.project-search-result__snippet:lang(zh-SG) {
+  font-family: var(--font-serif-zh-hans);
+}
+
+.project-search-result__snippet:lang(zh-Hant),
+.project-search-result__snippet:lang(zh-TW),
+.project-search-result__snippet:lang(zh-HK),
+.project-search-result__snippet:lang(zh-MO) {
+  font-family: var(--font-serif-zh-hant);
+}
+
+.project-search-result__snippet:lang(fa),
+.project-search-result__snippet:lang(ar) {
+  font-family: var(--font-serif-fa);
+}
+
+.project-search-result__snippet:lang(ko) {
+  font-family: var(--font-serif-ko);
+}
+
+.project-search-result__snippet:lang(ja),
+.project-search-result__snippet:lang(zh-Hans),
+.project-search-result__snippet:lang(zh-CN),
+.project-search-result__snippet:lang(zh-SG),
+.project-search-result__snippet:lang(zh-Hant),
+.project-search-result__snippet:lang(zh-TW),
+.project-search-result__snippet:lang(zh-HK),
+.project-search-result__snippet:lang(zh-MO),
+.project-search-result__snippet:lang(ko),
+.project-search-result__snippet:lang(fa),
+.project-search-result__snippet:lang(ar) {
+  font-weight: var(--editor-non-latin-serif-weight);
 }
 
 .project-search-results__more {

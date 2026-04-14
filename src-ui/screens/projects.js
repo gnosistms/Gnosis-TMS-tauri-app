@@ -335,6 +335,7 @@ function renderDeletedProjectsSection(state) {
 
 function renderProjectSearchResult(result) {
   const matchCount = Number.isFinite(result?.matchCount) ? result.matchCount : 0;
+  const snippetLanguageCode = typeof result?.languageCode === "string" ? result.languageCode.trim() : "";
   return `
     <article class="card project-search-result">
       <div class="project-search-result__header">
@@ -347,7 +348,7 @@ function renderProjectSearchResult(result) {
         </p>
         ${matchCount > 0 ? `<span class="project-search-result__meta">${escapeHtml(`${matchCount} match${matchCount === 1 ? "" : "es"}`)}</span>` : ""}
       </div>
-      <p class="project-search-result__snippet">${escapeHtml(result?.snippet ?? "")}</p>
+      <p class="project-search-result__snippet"${snippetLanguageCode ? ` lang="${escapeHtml(snippetLanguageCode)}"` : ""} dir="auto">${escapeHtml(result?.snippet ?? "")}</p>
       <div class="project-search-result__footer">
         ${textAction("Open", `open-project-search-result:${result?.resultId ?? ""}`)}
       </div>

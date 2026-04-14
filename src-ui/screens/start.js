@@ -31,7 +31,7 @@ export function renderStartScreen(state) {
   const buttonLabel = isBusy
     ? "Waiting for GitHub..."
     : "Log in with GitHub";
-  const heroTitle = isResolvingStartupAuth ? "Connecting to GitHub" : "Gnosis TMS";
+  const heroTitle = "Gnosis TMS";
   const heroSubtitle = isResolvingStartupAuth
     ? "Please wait while we log you in."
     : `Sign in with your GitHub account. If you don't have one yet, you
