@@ -7,6 +7,7 @@ import { openTranslateChapter, setActiveEditorField } from "./translate-flow.js"
 
 const PROJECT_SEARCH_DEBOUNCE_MS = 200;
 const PROJECT_SEARCH_PAGE_SIZE = 50;
+const MIN_PROJECT_SEARCH_QUERY_LENGTH = 2;
 
 let pendingProjectSearchTimeout = null;
 let activeProjectSearchVersion = 0;
@@ -66,15 +67,21 @@ async function runProjectSearch(render, query, offset, searchVersion, appendResu
 
     state.projectsSearch = {
       ...state.projectsSearch,
-      status: "ready",
+      status: response?.queryTooShort === true ? "too-short" : "ready",
       error: "",
       loadingMore: false,
       results: nextResults,
       resultsById: indexProjectSearchResults(nextResults),
       total: Number.isFinite(response?.total) ? response.total : nextResults.length,
+      totalCapped: response?.totalCapped === true,
       hasMore: response?.hasMore === true,
       nextOffset: nextResults.length,
       indexStatus: typeof response?.indexStatus === "string" ? response.indexStatus : "ready",
+      queryTooShort: response?.queryTooShort === true,
+      minimumQueryLength:
+        Number.isFinite(response?.minimumQueryLength) && response.minimumQueryLength > 0
+          ? response.minimumQueryLength
+          : MIN_PROJECT_SEARCH_QUERY_LENGTH,
     };
     render();
   } catch (error) {
@@ -105,6 +112,18 @@ export function updateProjectSearchQuery(render, query) {
   const normalizedQuery = String(query ?? "").trim();
   if (!normalizedQuery) {
     setProjectSearchIdle("");
+    render();
+    return;
+  }
+
+  if (Array.from(normalizedQuery).length < MIN_PROJECT_SEARCH_QUERY_LENGTH) {
+    state.projectsSearch = {
+      ...createProjectsSearchState(),
+      query,
+      status: "too-short",
+      queryTooShort: true,
+      minimumQueryLength: MIN_PROJECT_SEARCH_QUERY_LENGTH,
+    };
     render();
     return;
   }

@@ -14,7 +14,7 @@ import {
   textAction,
 } from "../lib/ui.js";
 import { formatErrorForDisplay } from "../app/error-display.js";
-import { projectsSearchModeIsActive } from "../app/project-search-state.js";
+import { projectsSearchModeIsActiveForState, projectsSearchResultCountLabel } from "../app/project-search-state.js";
 import { renderProjectCreationModal } from "./project-creation-modal.js";
 import { renderChapterPermanentDeletionModal } from "./chapter-permanent-deletion-modal.js";
 import { renderChapterRenameModal } from "./chapter-rename-modal.js";
@@ -357,12 +357,11 @@ function renderProjectSearchResult(result) {
 
 function renderProjectSearchResults(state) {
   const search = state.projectsSearch ?? {};
-  const resultCount = Number.isFinite(search.total) ? search.total : 0;
   const header = `
     <div class="project-search-results__toolbar">
       <div class="project-search-results__summary">
         <h2 class="project-search-results__title">Search results</h2>
-        <p class="project-search-results__count">${escapeHtml(`${resultCount} result${resultCount === 1 ? "" : "s"}`)}</p>
+        <p class="project-search-results__count">${escapeHtml(projectsSearchResultCountLabel(search))}</p>
       </div>
       ${secondaryButton("Clear", "clear-project-search", { compact: true })}
     </div>
@@ -387,6 +386,21 @@ function renderProjectSearchResults(state) {
         title: "Could not search local project files.",
         subtitle: formatErrorForDisplay(search.error || "Unknown error."),
         tone: "error",
+      })
+    );
+  }
+
+  if (search.status === "too-short") {
+    const minimumLength =
+      Number.isFinite(search.minimumQueryLength) && search.minimumQueryLength > 0
+        ? search.minimumQueryLength
+        : 2;
+    return (
+      header +
+      renderStateCard({
+        eyebrow: "KEEP TYPING",
+        title: `Type at least ${minimumLength} characters.`,
+        subtitle: "",
       })
     );
   }
@@ -431,7 +445,7 @@ export function renderProjectsScreen(state) {
       : "";
   const projectsSyncBadgeText = getScopedSyncBadgeText("projects");
   const isProjectsSyncing = state.projectsPageSync?.status === "syncing";
-  const searchModeActive = projectsSearchModeIsActive(state);
+  const searchModeActive = projectsSearchModeIsActiveForState(state);
   const glossaryChangesDisabled =
     pageWritesDisabled
     || discovery.status === "loading"

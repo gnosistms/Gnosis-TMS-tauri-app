@@ -158,11 +158,14 @@ export function createProjectsSearchState() {
     results: [],
     resultsById: {},
     total: 0,
+    totalCapped: false,
     hasMore: false,
     nextOffset: 0,
     loadingMore: false,
     indexStatus: "idle",
     requestId: 0,
+    queryTooShort: false,
+    minimumQueryLength: 2,
   };
 }
 

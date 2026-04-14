@@ -19,6 +19,7 @@ use crate::{
 const DEFAULT_SEARCH_LIMIT: usize = 50;
 const MAX_SEARCH_LIMIT: usize = 200;
 const MAX_CANDIDATES: usize = 500;
+const MIN_SEARCH_QUERY_LENGTH: usize = 2;
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -38,6 +39,9 @@ pub(crate) struct SearchProjectsResponse {
     total: usize,
     has_more: bool,
     index_status: String,
+    total_capped: bool,
+    query_too_short: bool,
+    minimum_query_length: usize,
 }
 
 #[derive(Clone, Serialize)]
@@ -90,14 +94,15 @@ struct IndexedDocument {
 struct CandidateDocument {
     document: IndexedDocument,
     token_hits: usize,
-    trigram_hits: usize,
+    ngram_hits: usize,
+    document_ngram_count: usize,
 }
 
 #[derive(Clone, Copy)]
 struct SearchScore {
     exact_phrase: bool,
     token_coverage: f64,
-    trigram_dice: f64,
+    ngram_dice: f64,
     ordered_tokens: bool,
     prefix_bonus: bool,
     length_penalty: f64,
@@ -117,19 +122,19 @@ fn search_projects_sync(
     app: &AppHandle,
     input: SearchProjectsInput,
 ) -> Result<SearchProjectsResponse, String> {
+    if input.query.trim().is_empty() {
+        return Ok(empty_search_response(false, false));
+    }
+
     let normalized_query = normalize_search_text(&input.query);
+    let query_character_count = normalized_query.chars().count();
     let limit = input
         .limit
         .unwrap_or(DEFAULT_SEARCH_LIMIT)
         .clamp(1, MAX_SEARCH_LIMIT);
     let offset = input.offset.unwrap_or(0);
-    if normalized_query.is_empty() {
-        return Ok(SearchProjectsResponse {
-            results: Vec::new(),
-            total: 0,
-            has_more: false,
-            index_status: "ready".to_string(),
-        });
+    if query_character_count < MIN_SEARCH_QUERY_LENGTH {
+        return Ok(empty_search_response(true, false));
     }
 
     let db_path = project_search_db_path(app, input.installation_id)?;
@@ -137,9 +142,18 @@ fn search_projects_sync(
     ensure_project_search_schema(&connection)?;
     ensure_project_index_current(app, input.installation_id, &mut connection)?;
 
-    let query_tokens = collect_unique_tokens(&normalized_query);
-    let query_trigrams = collect_unique_trigrams(&normalized_query);
-    let query_trigram_count = query_trigrams.len();
+    let use_bigram_index = query_character_count == MIN_SEARCH_QUERY_LENGTH;
+    let query_tokens = if use_bigram_index {
+        Vec::new()
+    } else {
+        collect_unique_tokens(&normalized_query)
+    };
+    let query_ngrams = if use_bigram_index {
+        collect_unique_bigrams(&normalized_query)
+    } else {
+        collect_unique_trigrams(&normalized_query)
+    };
+    let query_ngram_count = query_ngrams.len();
     let query_token_count = query_tokens.len();
 
     let mut token_hits_by_doc_id = HashMap::<i64, usize>::new();
@@ -160,20 +174,40 @@ fn search_projects_sync(
         }
     }
 
-    let mut trigram_hits_by_doc_id = HashMap::<i64, usize>::new();
-    if !query_trigrams.is_empty() {
-        let mut statement = connection
-            .prepare("SELECT doc_id FROM search_document_trigrams WHERE trigram = ?1")
-            .map_err(|error| format!("Could not prepare project search trigram query: {error}"))?;
-        for trigram in &query_trigrams {
+    let mut ngram_hits_by_doc_id = HashMap::<i64, usize>::new();
+    if !query_ngrams.is_empty() {
+        let mut statement = if use_bigram_index {
+            connection
+                .prepare("SELECT doc_id FROM search_document_bigrams WHERE bigram = ?1")
+                .map_err(|error| {
+                    format!("Could not prepare project search bigram query: {error}")
+                })?
+        } else {
+            connection
+                .prepare("SELECT doc_id FROM search_document_trigrams WHERE trigram = ?1")
+                .map_err(|error| {
+                    format!("Could not prepare project search trigram query: {error}")
+                })?
+        };
+        for ngram in &query_ngrams {
             let rows = statement
-                .query_map([trigram.as_str()], |row| row.get::<_, i64>(0))
-                .map_err(|error| format!("Could not run project search trigram query: {error}"))?;
+                .query_map([ngram.as_str()], |row| row.get::<_, i64>(0))
+                .map_err(|error| {
+                    if use_bigram_index {
+                        format!("Could not run project search bigram query: {error}")
+                    } else {
+                        format!("Could not run project search trigram query: {error}")
+                    }
+                })?;
             for row in rows {
                 let doc_id = row.map_err(|error| {
-                    format!("Could not decode a project search trigram hit: {error}")
+                    if use_bigram_index {
+                        format!("Could not decode a project search bigram hit: {error}")
+                    } else {
+                        format!("Could not decode a project search trigram hit: {error}")
+                    }
                 })?;
-                *trigram_hits_by_doc_id.entry(doc_id).or_insert(0) += 1;
+                *ngram_hits_by_doc_id.entry(doc_id).or_insert(0) += 1;
             }
         }
     }
@@ -182,28 +216,17 @@ fn search_projects_sync(
     for (doc_id, count) in &token_hits_by_doc_id {
         *preliminary_candidates.entry(*doc_id).or_insert(0) += count.saturating_mul(100);
     }
-    for (doc_id, count) in &trigram_hits_by_doc_id {
+    for (doc_id, count) in &ngram_hits_by_doc_id {
         *preliminary_candidates.entry(*doc_id).or_insert(0) += count.saturating_mul(10);
     }
 
     if preliminary_candidates.is_empty() {
-        let like_pattern = format!("%{normalized_query}%");
-        let mut statement = connection
-            .prepare("SELECT doc_id FROM search_documents WHERE search_text LIKE ?1 LIMIT 200")
-            .map_err(|error| format!("Could not prepare fallback project search query: {error}"))?;
-        let rows = statement
-            .query_map([like_pattern], |row| row.get::<_, i64>(0))
-            .map_err(|error| format!("Could not run fallback project search query: {error}"))?;
-        for row in rows {
-            let doc_id = row.map_err(|error| {
-                format!("Could not decode a fallback project search hit: {error}")
-            })?;
-            preliminary_candidates.insert(doc_id, 1);
-        }
+        return Ok(empty_search_response(false, false));
     }
 
     let mut candidate_ids = preliminary_candidates.into_iter().collect::<Vec<_>>();
     candidate_ids.sort_by(|left, right| right.1.cmp(&left.1).then_with(|| left.0.cmp(&right.0)));
+    let total_capped = candidate_ids.len() > MAX_CANDIDATES;
     candidate_ids.truncate(MAX_CANDIDATES);
 
     let mut by_id_statement = connection
@@ -244,16 +267,21 @@ fn search_projects_sync(
 
         let candidate = CandidateDocument {
             token_hits: *token_hits_by_doc_id.get(&doc_id).unwrap_or(&0),
-            trigram_hits: *trigram_hits_by_doc_id.get(&doc_id).unwrap_or(&0),
+            ngram_hits: *ngram_hits_by_doc_id.get(&doc_id).unwrap_or(&0),
+            document_ngram_count: if use_bigram_index {
+                collect_unique_bigrams(&document.search_text).len()
+            } else {
+                document.trigram_count
+            },
             document,
         };
         let score = compute_search_score(
             &candidate,
             &normalized_query,
             query_token_count,
-            query_trigram_count,
+            query_ngram_count,
         );
-        if score.exact_phrase || score.token_coverage > 0.0 || score.trigram_dice > 0.0 {
+        if score.exact_phrase || score.token_coverage > 0.0 || score.ngram_dice > 0.0 {
             ranked_results.push(ProjectSearchResult {
                 result_id: candidate.document.result_id.clone(),
                 project_id: candidate.document.project_id.clone(),
@@ -284,7 +312,11 @@ fn search_projects_sync(
             .then_with(|| left.language_name.cmp(&right.language_name))
     });
 
-    let total = ranked_results.len();
+    let total = if total_capped {
+        MAX_CANDIDATES
+    } else {
+        ranked_results.len()
+    };
     let results = ranked_results
         .into_iter()
         .skip(offset)
@@ -295,6 +327,9 @@ fn search_projects_sync(
         results,
         total,
         index_status: "ready".to_string(),
+        total_capped,
+        query_too_short: false,
+        minimum_query_length: MIN_SEARCH_QUERY_LENGTH,
     })
 }
 
@@ -443,6 +478,9 @@ fn reindex_repo(connection: &mut Connection, repo: &RepoRecord) -> Result<(), St
     let mut insert_token = transaction
         .prepare("INSERT OR IGNORE INTO search_document_tokens (doc_id, token) VALUES (?1, ?2)")
         .map_err(|error| format!("Could not prepare project search token insert: {error}"))?;
+    let mut insert_bigram = transaction
+        .prepare("INSERT OR IGNORE INTO search_document_bigrams (doc_id, bigram) VALUES (?1, ?2)")
+        .map_err(|error| format!("Could not prepare project search bigram insert: {error}"))?;
     let mut insert_trigram = transaction
         .prepare("INSERT OR IGNORE INTO search_document_trigrams (doc_id, trigram) VALUES (?1, ?2)")
         .map_err(|error| format!("Could not prepare project search trigram insert: {error}"))?;
@@ -570,6 +608,13 @@ fn reindex_repo(connection: &mut Connection, repo: &RepoRecord) -> Result<(), St
                                 format!("Could not insert a project search token: {error}")
                             })?;
                     }
+                    for bigram in collect_unique_bigrams(&search_text) {
+                        insert_bigram
+                            .execute(params![doc_id, bigram])
+                            .map_err(|error| {
+                                format!("Could not insert a project search bigram: {error}")
+                            })?;
+                    }
                     for trigram in trigrams {
                         insert_trigram
                             .execute(params![doc_id, trigram])
@@ -604,6 +649,7 @@ fn reindex_repo(connection: &mut Connection, repo: &RepoRecord) -> Result<(), St
     .map_err(|error| format!("Could not update indexed repo state: {error}"))?;
 
     drop(insert_trigram);
+    drop(insert_bigram);
     drop(insert_token);
     drop(insert_document);
     transaction.commit().map_err(|error| {
@@ -624,6 +670,13 @@ fn remove_repo_from_index_tx(connection: &Connection, repo_key: &str) -> Result<
             [repo_key],
         )
         .map_err(|error| format!("Could not remove stale project search tokens: {error}"))?;
+    connection
+        .execute(
+            "DELETE FROM search_document_bigrams
+       WHERE doc_id IN (SELECT doc_id FROM search_documents WHERE repo_key = ?1)",
+            [repo_key],
+        )
+        .map_err(|error| format!("Could not remove stale project search bigrams: {error}"))?;
     connection
         .execute(
             "DELETE FROM search_document_trigrams
@@ -714,6 +767,13 @@ fn ensure_project_search_schema(connection: &Connection) -> Result<(), String> {
        );
        CREATE INDEX IF NOT EXISTS search_document_tokens_token_idx
          ON search_document_tokens(token);
+       CREATE TABLE IF NOT EXISTS search_document_bigrams (
+         doc_id INTEGER NOT NULL,
+         bigram TEXT NOT NULL,
+         PRIMARY KEY (doc_id, bigram)
+       );
+       CREATE INDEX IF NOT EXISTS search_document_bigrams_bigram_idx
+         ON search_document_bigrams(bigram);
        CREATE TABLE IF NOT EXISTS search_document_trigrams (
          doc_id INTEGER NOT NULL,
          trigram TEXT NOT NULL,
@@ -767,29 +827,37 @@ fn collect_unique_tokens(value: &str) -> Vec<String> {
     tokens
 }
 
+fn collect_unique_bigrams(value: &str) -> Vec<String> {
+    collect_unique_ngrams(value, 2)
+}
+
 fn collect_unique_trigrams(value: &str) -> Vec<String> {
+    collect_unique_ngrams(value, 3)
+}
+
+fn collect_unique_ngrams(value: &str, size: usize) -> Vec<String> {
     let normalized = normalize_search_text(value);
     let characters = normalized.chars().collect::<Vec<_>>();
-    if characters.len() < 3 {
+    if size < 2 || characters.len() < size {
         return Vec::new();
     }
 
     let mut seen = HashSet::new();
-    let mut trigrams = Vec::new();
-    for index in 0..=characters.len() - 3 {
-        let trigram = characters[index..index + 3].iter().collect::<String>();
-        if seen.insert(trigram.clone()) {
-            trigrams.push(trigram);
+    let mut ngrams = Vec::new();
+    for index in 0..=characters.len() - size {
+        let ngram = characters[index..index + size].iter().collect::<String>();
+        if seen.insert(ngram.clone()) {
+            ngrams.push(ngram);
         }
     }
-    trigrams
+    ngrams
 }
 
 fn compute_search_score(
     candidate: &CandidateDocument,
     normalized_query: &str,
     query_token_count: usize,
-    query_trigram_count: usize,
+    query_ngram_count: usize,
 ) -> SearchScore {
     let exact_phrase = candidate.document.search_text.contains(normalized_query);
     let token_coverage = if query_token_count == 0 {
@@ -797,11 +865,11 @@ fn compute_search_score(
     } else {
         candidate.token_hits as f64 / query_token_count as f64
     };
-    let trigram_dice = if query_trigram_count == 0 || candidate.document.trigram_count == 0 {
+    let ngram_dice = if query_ngram_count == 0 || candidate.document_ngram_count == 0 {
         0.0
     } else {
-        (2.0 * candidate.trigram_hits as f64)
-            / (query_trigram_count + candidate.document.trigram_count) as f64
+        (2.0 * candidate.ngram_hits as f64)
+            / (query_ngram_count + candidate.document_ngram_count) as f64
     };
     let ordered_tokens = query_token_count > 0
         && tokens_appear_in_order(
@@ -822,7 +890,7 @@ fn compute_search_score(
     SearchScore {
         exact_phrase,
         token_coverage,
-        trigram_dice,
+        ngram_dice,
         ordered_tokens,
         prefix_bonus,
         length_penalty,
@@ -832,7 +900,7 @@ fn compute_search_score(
 fn score_to_number(score: SearchScore) -> f64 {
     (if score.exact_phrase { 1000.0 } else { 0.0 })
         + (250.0 * score.token_coverage)
-        + (180.0 * score.trigram_dice)
+        + (180.0 * score.ngram_dice)
         + (if score.ordered_tokens { 60.0 } else { 0.0 })
         + (if score.prefix_bonus { 25.0 } else { 0.0 })
         - (15.0 * score.length_penalty)
@@ -863,7 +931,19 @@ fn resolve_match_count(candidate: &CandidateDocument, normalized_query: &str) ->
     if exact_matches > 0 {
         return exact_matches;
     }
-    candidate.token_hits.max(candidate.trigram_hits).max(1)
+    candidate.token_hits.max(candidate.ngram_hits).max(1)
+}
+
+fn empty_search_response(query_too_short: bool, total_capped: bool) -> SearchProjectsResponse {
+    SearchProjectsResponse {
+        results: Vec::new(),
+        total: 0,
+        has_more: false,
+        index_status: "ready".to_string(),
+        total_capped,
+        query_too_short,
+        minimum_query_length: MIN_SEARCH_QUERY_LENGTH,
+    }
 }
 
 fn count_exact_substrings(document: &str, needle: &str) -> usize {
@@ -1000,19 +1080,21 @@ impl<T> OptionalRow<T> for rusqlite::Result<T> {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_plain_text_snippet, collect_unique_trigrams, compute_search_score,
-        normalize_search_text, score_to_number, CandidateDocument, IndexedDocument,
+        build_plain_text_snippet, collect_unique_bigrams, collect_unique_trigrams,
+        compute_search_score, normalize_search_text, score_to_number, CandidateDocument,
+        IndexedDocument,
     };
 
     fn candidate(
         document_text: &str,
         token_hits: usize,
-        trigram_hits: usize,
-        trigram_count: usize,
+        ngram_hits: usize,
+        document_ngram_count: usize,
     ) -> CandidateDocument {
         CandidateDocument {
             token_hits,
-            trigram_hits,
+            ngram_hits,
+            document_ngram_count,
             document: IndexedDocument {
                 result_id: "result-1".to_string(),
                 project_id: "project-1".to_string(),
@@ -1026,7 +1108,7 @@ mod tests {
                 language_name: "English".to_string(),
                 plain_text: document_text.to_string(),
                 search_text: normalize_search_text(document_text),
-                trigram_count,
+                trigram_count: document_ngram_count,
             },
         }
     }
@@ -1034,6 +1116,19 @@ mod tests {
     #[test]
     fn normalize_search_text_collapses_punctuation_and_spacing() {
         assert_eq!(normalize_search_text("  Hello,\nWorld!  "), "hello world");
+    }
+
+    #[test]
+    fn collect_unique_bigrams_returns_stable_unique_values() {
+        assert_eq!(
+            collect_unique_bigrams("hello"),
+            vec![
+                "he".to_string(),
+                "el".to_string(),
+                "ll".to_string(),
+                "lo".to_string()
+            ]
+        );
     }
 
     #[test]
