@@ -162,6 +162,8 @@ export function createAppUpdateState() {
     version: null,
     currentVersion: null,
     body: null,
+    promptVisible: false,
+    dismissedVersion: null,
   };
 }
 

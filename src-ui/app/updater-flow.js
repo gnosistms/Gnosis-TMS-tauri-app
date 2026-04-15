@@ -14,12 +14,25 @@ function upToDateMessage(currentVersion) {
   return currentVersion ? `Gnosis TMS ${currentVersion} is up to date` : "Gnosis TMS is up to date";
 }
 
+function shouldShowUpdatePrompt(update, options, dismissedVersion) {
+  if (update.available !== true || options.prompt === false) {
+    return false;
+  }
+
+  if (options.forcePrompt === true || options.silent !== true) {
+    return true;
+  }
+
+  return update.version !== dismissedVersion;
+}
+
 export async function checkForAppUpdate(render, options = {}) {
   if (!updatesSupported()) {
     return;
   }
 
   const silent = options.silent === true;
+  const dismissedVersion = state.appUpdate.dismissedVersion ?? null;
   state.appUpdate.status = "checking";
   if (!silent) {
     state.appUpdate.error = "";
@@ -28,13 +41,20 @@ export async function checkForAppUpdate(render, options = {}) {
 
   try {
     const update = await invoke("check_for_app_update");
+    const promptVisible = shouldShowUpdatePrompt(update, options, dismissedVersion);
+    const version = update.version ?? null;
     state.appUpdate = {
       status: update.available ? "available" : "idle",
       error: "",
       available: update.available === true,
-      version: update.version ?? null,
+      version,
       currentVersion: update.currentVersion ?? null,
       body: update.body ?? null,
+      promptVisible,
+      dismissedVersion:
+        update.available === true && version === dismissedVersion && promptVisible !== true
+          ? dismissedVersion
+          : null,
     };
     render();
 
@@ -51,8 +71,14 @@ export async function checkForAppUpdate(render, options = {}) {
 }
 
 export async function installAppUpdate(render) {
+  if (!updatesSupported()) {
+    return;
+  }
+
   state.appUpdate.status = "installing";
   state.appUpdate.error = "";
+  state.appUpdate.promptVisible = true;
+  state.appUpdate.dismissedVersion = null;
   render();
 
   try {
@@ -62,6 +88,14 @@ export async function installAppUpdate(render) {
   } catch (error) {
     state.appUpdate.status = "available";
     state.appUpdate.error = error?.message ?? String(error);
+    state.appUpdate.promptVisible = true;
     render();
   }
+}
+
+export function dismissAppUpdatePrompt(render) {
+  state.appUpdate.promptVisible = false;
+  state.appUpdate.error = "";
+  state.appUpdate.dismissedVersion = state.appUpdate.version ?? null;
+  render();
 }

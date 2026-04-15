@@ -45,6 +45,7 @@ import {
 } from "./app/translate-flow.js";
 import { checkForAppUpdate } from "./app/updater-flow.js";
 import { renderGithubAppTestScreen } from "./screens/github-app-test.js";
+import { renderAppUpdateModal } from "./screens/app-update-modal.js";
 import { renderConnectionFailureModal } from "./screens/connection-failure-modal.js";
 import { renderGlossariesScreen } from "./screens/glossaries.js";
 import { renderGlossaryEditorScreen } from "./screens/glossary-editor.js";
@@ -244,7 +245,11 @@ function renderWithOptions(options = {}) {
   const focusSnapshot = captureFocusedInputState();
   const scrollSnapshot = captureRenderScrollSnapshot(previousScreen);
   const renderScreen = screenRenderers[state.screen] ?? screenRenderers.start;
-  app.innerHTML = renderScreen() + renderNavigationLoadingModal(state) + renderConnectionFailureModal(state);
+  app.innerHTML =
+    renderScreen()
+    + renderAppUpdateModal(state)
+    + renderNavigationLoadingModal(state)
+    + renderConnectionFailureModal(state);
   syncGlossaryVariantTextareaHeights(app);
   if (app.firstElementChild instanceof HTMLElement) {
     app.firstElementChild.dataset.screen = state.screen;

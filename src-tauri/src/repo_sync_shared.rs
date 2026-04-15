@@ -6,8 +6,11 @@ use std::{
     sync::OnceLock,
 };
 
+use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
 
 #[cfg(target_os = "macos")]
 use flate2::read::GzDecoder;
@@ -27,6 +30,8 @@ static RESOLVED_GIT_EXECUTABLE: OnceLock<PathBuf> = OnceLock::new();
 static APP_GIT_HOME_DIR: OnceLock<PathBuf> = OnceLock::new();
 static APP_GIT_XDG_CONFIG_HOME: OnceLock<PathBuf> = OnceLock::new();
 static APP_GIT_GLOBAL_CONFIG: OnceLock<PathBuf> = OnceLock::new();
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -35,24 +40,16 @@ struct GitTransportTokenResponse {
 }
 
 pub(crate) struct GitTransportAuth {
-    askpass_path: PathBuf,
-    username: String,
-    password: String,
+    http_extra_header: String,
 }
 
 impl GitTransportAuth {
     pub(crate) fn from_token(token: &str) -> Result<Self, String> {
+        let credentials = format!("x-access-token:{token}");
+        let encoded_credentials = BASE64_STANDARD.encode(credentials.as_bytes());
         Ok(Self {
-            askpass_path: write_git_askpass_script()?,
-            username: "x-access-token".to_string(),
-            password: token.to_string(),
+            http_extra_header: format!("AUTHORIZATION: basic {encoded_credentials}"),
         })
-    }
-}
-
-impl Drop for GitTransportAuth {
-    fn drop(&mut self) {
-        let _ = fs::remove_file(&self.askpass_path);
     }
 }
 
@@ -146,10 +143,10 @@ pub(crate) fn git_output(
     let mut command = git_command();
     if let Some(auth) = auth {
         command
-            .env("GIT_ASKPASS", &auth.askpass_path)
             .env("GIT_TERMINAL_PROMPT", "0")
-            .env("GTMS_GIT_USERNAME", &auth.username)
-            .env("GTMS_GIT_PASSWORD", &auth.password);
+            .env("GIT_CONFIG_COUNT", "1")
+            .env("GIT_CONFIG_KEY_0", "http.extraHeader")
+            .env("GIT_CONFIG_VALUE_0", &auth.http_extra_header);
     }
 
     let output = command
@@ -205,43 +202,6 @@ pub(crate) fn abort_rebase_after_failed_pull(repo_path: &Path, pull_error: Strin
             format!("{pull_error} An automatic 'git rebase --abort' also failed: {abort_error}")
         }
     }
-}
-
-fn write_git_askpass_script() -> Result<PathBuf, String> {
-    let extension = if cfg!(windows) { "cmd" } else { "sh" };
-    let script_path = env::temp_dir().join(format!(
-        "gnosis-tms-repo-sync-git-askpass-{}.{}",
-        Uuid::now_v7(),
-        extension
-    ));
-    let script_contents = if cfg!(windows) {
-        "@echo off\r\nset PROMPT=%~1\r\necho %PROMPT% | findstr /I \"Username\" >nul\r\nif not errorlevel 1 (\r\n  <nul set /p =%GTMS_GIT_USERNAME%\r\n) else (\r\n  <nul set /p =%GTMS_GIT_PASSWORD%\r\n)\r\n"
-    } else {
-        "#!/bin/sh\ncase \"$1\" in\n  *Username*) printf '%s' \"$GTMS_GIT_USERNAME\" ;;\n  *) printf '%s' \"$GTMS_GIT_PASSWORD\" ;;\nesac\n"
-    };
-
-    fs::write(&script_path, script_contents).map_err(|error| {
-        format!(
-            "Could not create the temporary git credential helper '{}': {error}",
-            script_path.display()
-        )
-    })?;
-
-    #[cfg(unix)]
-    {
-        let mut permissions = fs::metadata(&script_path)
-            .map_err(|error| format!("Could not inspect '{}': {error}", script_path.display()))?
-            .permissions();
-        permissions.set_mode(0o700);
-        fs::set_permissions(&script_path, permissions).map_err(|error| {
-            format!(
-                "Could not mark '{}' executable: {error}",
-                script_path.display()
-            )
-        })?;
-    }
-
-    Ok(script_path)
 }
 
 fn repo_has_rebase_in_progress(repo_path: &Path) -> bool {
@@ -319,6 +279,8 @@ fn configure_git_isolation(command: &mut Command) {
 
 #[cfg(windows)]
 fn configure_windows_git_command(command: &mut Command, executable: &Path) {
+    command.creation_flags(CREATE_NO_WINDOW);
+
     let Some(root) = git_root_from_executable(executable) else {
         return;
     };
@@ -671,4 +633,18 @@ fn prepare_app_git_environment(app_config_dir: &Path) -> Result<AppGitEnvironmen
         xdg_config_home,
         global_config,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::GitTransportAuth;
+
+    #[test]
+    fn git_transport_auth_uses_basic_auth_header_with_app_token_identity() {
+        let auth = GitTransportAuth::from_token("token-123").expect("build auth header");
+        assert_eq!(
+            auth.http_extra_header,
+            "AUTHORIZATION: basic eC1hY2Nlc3MtdG9rZW46dG9rZW4tMTIz"
+        );
+    }
 }
