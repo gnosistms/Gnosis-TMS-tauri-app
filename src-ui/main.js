@@ -41,6 +41,7 @@ import {
 import {
   captureRenderScrollSnapshot,
   captureVisibleTranslateLocation,
+  queueTranslateRowAnchor,
   resolveTranslateRowAnchor,
   restoreRenderScrollSnapshot,
   restoreTranslateRowAnchor,
@@ -216,6 +217,9 @@ function renderTranslateBodyOnly() {
     resolveTranslateRowAnchor(document.activeElement)
     || captureVisibleTranslateLocation();
   body.innerHTML = renderTranslateEditorBody(state);
+  if (translateAnchor?.rowId) {
+    queueTranslateRowAnchor(translateAnchor);
+  }
   queuePendingEditorLocationRestore(state);
   initializeEditorVirtualization(app, state);
   const restoredPendingLocation = restorePendingEditorLocation(state);

@@ -221,7 +221,9 @@ export function initializeEditorVirtualization(root, appState) {
       return;
     }
 
-    const anchorSnapshot = options?.anchorSnapshot?.rowId ? options.anchorSnapshot : null;
+    const anchorSnapshot = options?.anchorSnapshot?.rowId
+      ? options.anchorSnapshot
+      : (pendingTranslateAnchorRowId() ? null : captureEditorLayoutAnchor(root));
     const reason = typeof options?.reason === "string" ? options.reason : "";
     if (anchorSnapshot) {
       queueTranslateRowAnchor(anchorSnapshot);
@@ -319,6 +321,12 @@ export function initializeEditorVirtualization(root, appState) {
 
     if (anchorSnapshot) {
       restoreTranslateRowAnchor(anchorSnapshot);
+      logEditorScrollDebug("virtualization-anchor-restored", {
+        reason: reason || "render",
+        rowAnchorId: anchorSnapshot.rowId ?? "",
+        scrollTop: scrollContainer.scrollTop,
+        rangeKey: currentRangeKey,
+      });
     }
   };
 
