@@ -27,6 +27,7 @@ import {
   applyEditorAiReview as applyEditorAiReviewFlow,
   runEditorAiReview as runEditorAiReviewFlow,
 } from "./editor-ai-review-flow.js";
+import { runEditorAiTranslate as runEditorAiTranslateFlow } from "./editor-ai-translate-flow.js";
 import {
   replaceSelectedEditorRows as replaceSelectedEditorRowsFlow,
   showEditorRowInContext as showEditorRowInContextFlow,
@@ -255,6 +256,13 @@ export function toggleEditorReviewSectionExpanded(sectionKey) {
 
 export async function runEditorAiReview(render) {
   await runEditorAiReviewFlow(render);
+}
+
+export async function runEditorAiTranslate(render, actionId) {
+  await runEditorAiTranslateFlow(render, actionId, {
+    updateEditorRowFieldValue,
+    persistEditorRowOnBlur,
+  });
 }
 
 export async function applyEditorAiReview(render) {

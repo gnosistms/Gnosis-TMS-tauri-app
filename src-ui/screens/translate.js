@@ -106,6 +106,7 @@ function buildTranslateScreenFrame(state) {
     languages,
     sourceCode,
     targetCode,
+    actionConfig: state.aiSettings.actionConfig,
     contentRows,
     editorFilters,
     editorReplace,
@@ -123,6 +124,9 @@ function renderTranslateEditorBodyFromFrame(frame) {
   const {
     editorChapter,
     languages,
+    sourceCode,
+    targetCode,
+    actionConfig,
     contentRows,
     editorFilters,
     editorReplace,
@@ -141,7 +145,15 @@ function renderTranslateEditorBodyFromFrame(frame) {
         </div>
       </div>
       <div class="translate-sidebar-scroll">
-        ${renderTranslateEditorSidebar(editorChapter, contentRows, languages, authSession)}
+        ${renderTranslateEditorSidebar(
+          editorChapter,
+          contentRows,
+          languages,
+          sourceCode,
+          targetCode,
+          actionConfig,
+          authSession,
+        )}
       </div>
     </section>
   `;
@@ -152,8 +164,23 @@ export function renderTranslateEditorBody(state) {
 }
 
 export function renderTranslateSidebar(state) {
-  const { editorChapter, contentRows, languages, authSession } = buildTranslateScreenFrame(state);
-  return renderTranslateEditorSidebar(editorChapter, contentRows, languages, authSession);
+  const {
+    editorChapter,
+    contentRows,
+    languages,
+    sourceCode,
+    targetCode,
+    authSession,
+  } = buildTranslateScreenFrame(state);
+  return renderTranslateEditorSidebar(
+    editorChapter,
+    contentRows,
+    languages,
+    sourceCode,
+    targetCode,
+    state.aiSettings.actionConfig,
+    authSession,
+  );
 }
 
 export function renderTranslateScreen(state) {

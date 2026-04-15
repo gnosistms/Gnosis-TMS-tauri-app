@@ -1,5 +1,6 @@
 import { saveStoredProjectsForTeam } from "./project-cache.js";
 import { currentEditorAiReviewForSelection } from "./editor-ai-review-state.js";
+import { normalizeEditorAiTranslateState } from "./editor-ai-translate-state.js";
 import { normalizeEditorSidebarTab } from "./editor-comments.js";
 import { pruneEditorCommentSeenRevisionsForRows } from "./editor-comments-state.js";
 import { currentEditorHistoryForSelection } from "./editor-history-state.js";
@@ -20,6 +21,8 @@ import {
   createEditorCommentsState,
   createEditorConflictResolutionModalState,
   createEditorAiReviewState,
+  createEditorAiTranslateActionState,
+  createEditorAiTranslateState,
   createEditorReplaceUndoModalState,
   createEditorReplaceState,
   createEditorHistoryState,
@@ -48,6 +51,29 @@ function cloneExpandedReviewSectionKeys(expandedSectionKeys) {
   return expandedSectionKeys instanceof Set
     ? new Set(expandedSectionKeys)
     : new Set(["last-update", "ai-review"]);
+}
+
+function preserveEditorAiTranslateState(nextEditorChapter, previousEditorChapter, isSameChapter) {
+  if (!isSameChapter) {
+    return createEditorAiTranslateState();
+  }
+
+  const previousAiTranslate = normalizeEditorAiTranslateState(previousEditorChapter?.aiTranslate);
+  const nextAiTranslate = createEditorAiTranslateState();
+
+  for (const [actionId, actionState] of Object.entries(previousAiTranslate)) {
+    if (
+      hasEditorRow(nextEditorChapter, actionState.rowId)
+      && hasEditorLanguage(nextEditorChapter, actionState.sourceLanguageCode)
+      && hasEditorLanguage(nextEditorChapter, actionState.targetLanguageCode)
+    ) {
+      nextAiTranslate[actionId] = actionState;
+    } else {
+      nextAiTranslate[actionId] = createEditorAiTranslateActionState();
+    }
+  }
+
+  return nextAiTranslate;
 }
 
 export function applyEditorUiState(nextEditorChapter, previousEditorChapter = state.editorChapter) {
@@ -134,6 +160,11 @@ export function applyEditorUiState(nextEditorChapter, previousEditorChapter = st
       hasEditorRow(nextEditorChapter, activeRowId) && hasEditorLanguage(nextEditorChapter, activeLanguageCode)
         ? aiReview
         : createEditorAiReviewState(),
+    aiTranslate: preserveEditorAiTranslateState(
+      nextEditorChapter,
+      previousEditorChapter,
+      isSameChapter,
+    ),
     commentSeenRevisions:
       isSameChapter && previousEditorChapter?.commentSeenRevisions && typeof previousEditorChapter.commentSeenRevisions === "object"
         ? previousEditorChapter.commentSeenRevisions
@@ -338,6 +369,7 @@ export function removeEditorChapterRow(rowId) {
   }
 
   const rows = state.editorChapter.rows.filter((row) => row?.rowId !== rowId);
+  const aiTranslate = normalizeEditorAiTranslateState(state.editorChapter.aiTranslate);
   state.editorChapter = {
     ...state.editorChapter,
     rows,
@@ -346,6 +378,12 @@ export function removeEditorChapterRow(rowId) {
     activeLanguageCode: state.editorChapter.activeRowId === rowId ? null : state.editorChapter.activeLanguageCode,
     comments: state.editorChapter.activeRowId === rowId ? createEditorCommentsState() : state.editorChapter.comments,
     history: state.editorChapter.activeRowId === rowId ? createEditorHistoryState() : state.editorChapter.history,
+    aiTranslate: Object.fromEntries(
+      Object.entries(aiTranslate).map(([actionId, actionState]) => [
+        actionId,
+        actionState.rowId === rowId ? createEditorAiTranslateActionState() : actionState,
+      ]),
+    ),
   };
 }
 

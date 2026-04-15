@@ -3,6 +3,7 @@ import {
   expandedDeletedRowGroupIdsAfterRestore,
   expandedDeletedRowGroupIdsAfterSoftDelete,
 } from "./editor-deleted-rows.js";
+import { normalizeStoredAiActionPreferences } from "./ai-action-config.js";
 import { createEditorChapterState, createEditorHistoryState } from "./state.js";
 
 const DEFAULT_LANGUAGES = [
@@ -209,6 +210,13 @@ export function applyEditorRegressionFixture(appState, options = {}) {
     hasLocalData: true,
     isEnabled: false,
     reconnecting: false,
+  };
+  appState.aiSettings = {
+    ...appState.aiSettings,
+    actionConfig: {
+      ...appState.aiSettings.actionConfig,
+      ...normalizeStoredAiActionPreferences(options.aiActionConfig),
+    },
   };
   appState.editorChapter = editorChapter;
 

@@ -4,7 +4,6 @@ import {
   closeAiModelErrorModal,
   closeAiReviewMissingKeyModal,
   openAiKeyPage,
-  resolveAiReviewProviderAndModel,
   saveAiProviderSecret,
   selectAiProvider,
 } from "../ai-settings-flow.js";
@@ -31,8 +30,11 @@ export function createAiActions(render) {
     },
     "dismiss-ai-settings-about": () => dismissAiSettingsAboutModal(render),
     "enter-ai-key": () => {
+      const providerId =
+        typeof state.aiReviewMissingKeyModal?.providerId === "string"
+          ? state.aiReviewMissingKeyModal.providerId
+          : state.aiSettings.providerId;
       closeAiReviewMissingKeyModal();
-      const { providerId } = resolveAiReviewProviderAndModel();
       openAiKeyPage(render, {
         returnScreen: state.screen,
         providerId,

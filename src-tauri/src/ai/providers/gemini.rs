@@ -6,8 +6,7 @@ use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 
 use crate::ai::{
-    build_review_prompt,
-    types::{AiProviderModel, AiReviewRequest, AiReviewResponse},
+    types::{AiPromptRequest, AiPromptResponse, AiProviderModel},
 };
 
 const GEMINI_MODELS_API_URL: &str = "https://generativelanguage.googleapis.com/v1beta/models";
@@ -173,10 +172,10 @@ pub(crate) fn list_models(api_key: &str) -> Result<Vec<AiProviderModel>, String>
     Ok(models)
 }
 
-pub(crate) fn run_review(
-    request: &AiReviewRequest,
+pub(crate) fn run_prompt(
+    request: &AiPromptRequest,
     api_key: &str,
-) -> Result<AiReviewResponse, String> {
+) -> Result<AiPromptResponse, String> {
     let normalized_key = api_key.trim();
     if normalized_key.is_empty() {
         return Err("No Gemini API key is saved yet.".to_string());
@@ -184,24 +183,24 @@ pub(crate) fn run_review(
 
     let model_id = request.model_id.trim();
     if model_id.is_empty() {
-        return Err("Select a Gemini model before running Review.".to_string());
+        return Err("Select a Gemini model before running this AI request.".to_string());
     }
 
     let client = reqwest::blocking::Client::builder()
         .timeout(Duration::from_secs(45))
         .build()
-        .map_err(|error| format!("Could not start the Gemini review request: {error}"))?;
-    let prompt = build_review_prompt(request);
-    let (status, body) = send_generate_content_request(&client, normalized_key, model_id, &prompt)
-        .map_err(|error| format!("Could not complete the Gemini review request: {error}"))?;
+        .map_err(|error| format!("Could not start the Gemini request: {error}"))?;
+    let (status, body) =
+        send_generate_content_request(&client, normalized_key, model_id, &request.prompt)
+            .map_err(|error| format!("Could not complete the Gemini request: {error}"))?;
 
     if !status.is_success() {
         return Err(normalize_http_error(status, &body));
     }
 
     let payload: GeminiGenerateContentResponse = serde_json::from_str(&body)
-        .map_err(|_| "Gemini returned a malformed review response.".to_string())?;
-    let suggested_text = payload
+        .map_err(|_| "Gemini returned a malformed response.".to_string())?;
+    let text = payload
         .candidates
         .into_iter()
         .filter_map(|candidate| candidate.content)
@@ -209,11 +208,11 @@ pub(crate) fn run_review(
         .map(|part| part.text)
         .collect::<String>();
 
-    if suggested_text.trim().is_empty() {
-        return Err("Gemini returned an empty review response.".to_string());
+    if text.trim().is_empty() {
+        return Err("Gemini returned an empty response.".to_string());
     }
 
-    Ok(AiReviewResponse { suggested_text })
+    Ok(AiPromptResponse { text })
 }
 
 pub(crate) fn probe_model(model_id: &str, api_key: &str) -> Result<(), String> {

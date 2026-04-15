@@ -4,7 +4,8 @@ import {
   normalizeAiProviderId,
 } from "./ai-provider-config.js";
 
-export const AI_ACTION_IDS = ["translate1", "translate2", "review", "discuss"];
+export const AI_TRANSLATE_ACTION_IDS = ["translate1", "translate2"];
+export const AI_ACTION_IDS = [...AI_TRANSLATE_ACTION_IDS, "review", "discuss"];
 
 export const AI_ACTION_LABELS = {
   translate1: "Translate 1",
@@ -12,6 +13,7 @@ export const AI_ACTION_LABELS = {
   review: "Review",
   discuss: "Discuss",
 };
+const UNIFIED_TRANSLATE_ACTION_LABEL = "Translate";
 
 const DEFAULT_PROVIDER_ID = DEFAULT_AI_PROVIDER_ID;
 const DEFAULT_MODEL_ID_BY_PROVIDER = {
@@ -255,11 +257,30 @@ export function extractAiActionPreferences(config) {
 
 export function resolveEffectiveAiActionSelection(config, actionId) {
   const normalizedConfig = normalizeStoredAiActionPreferences(config);
+  return resolveEffectiveAiActionSelectionForNormalizedConfig(normalizedConfig, actionId);
+}
+
+function resolveEffectiveAiActionSelectionForNormalizedConfig(normalizedConfig, actionId) {
   if (!normalizedConfig.detailedConfiguration) {
     return normalizedConfig.unified;
   }
 
   return normalizedConfig.actions[actionId] ?? normalizedConfig.unified;
+}
+
+export function resolveVisibleAiTranslateActions(config) {
+  const normalizedConfig = normalizeStoredAiActionPreferences(config);
+  const visibleActionIds = normalizedConfig.detailedConfiguration
+    ? AI_TRANSLATE_ACTION_IDS
+    : [AI_TRANSLATE_ACTION_IDS[0]];
+
+  return visibleActionIds.map((actionId) => ({
+    actionId,
+    label: normalizedConfig.detailedConfiguration
+      ? AI_ACTION_LABELS[actionId] ?? UNIFIED_TRANSLATE_ACTION_LABEL
+      : UNIFIED_TRANSLATE_ACTION_LABEL,
+    selection: resolveEffectiveAiActionSelectionForNormalizedConfig(normalizedConfig, actionId),
+  }));
 }
 
 export function selectionUsesSavedProvider(selection, savedProviderIds = []) {

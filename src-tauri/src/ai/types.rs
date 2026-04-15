@@ -49,6 +49,34 @@ pub struct AiReviewResponse {
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+pub struct AiTranslationRequest {
+    pub provider_id: AiProviderId,
+    pub model_id: String,
+    pub text: String,
+    pub source_language: String,
+    pub target_language: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AiTranslationResponse {
+    pub translated_text: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AiPromptRequest {
+    pub provider_id: AiProviderId,
+    pub model_id: String,
+    pub prompt: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AiPromptResponse {
+    pub text: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub struct AiProviderModel {
     pub id: String,
     pub label: String,

@@ -1,4 +1,12 @@
 import {
+  resolveVisibleAiTranslateActions,
+} from "../app/ai-action-config.js";
+import {
+  getAiProviderActionLabel,
+  getAiProviderIconUrl,
+} from "../app/ai-provider-config.js";
+import { resolveVisibleEditorAiTranslateAction } from "../app/editor-ai-translate-state.js";
+import {
   escapeHtml,
   loadingPrimaryButton,
   primaryButton,
@@ -27,10 +35,131 @@ function renderSidebarTab(label, tab, activeTab) {
   `;
 }
 
-function renderTranslatePane() {
+function renderTranslateActionButton(buttonModel, isAnyActionRunning) {
+  const disabled =
+    buttonModel.isLoading
+    || isAnyActionRunning
+    || buttonModel.isDisabled;
+  const disabledAttributes = disabled ? ' disabled aria-disabled="true"' : "";
+
   return `
-    <div class="history-empty">
-      <p>Translation tools are not available yet.</p>
+    <button
+      class="button button--secondary translate-ai-action-button${buttonModel.isLoading ? " button--loading" : ""}"
+      type="button"
+      data-action="run-editor-ai-translate:${escapeHtml(buttonModel.actionId)}"
+      ${disabledAttributes}
+    >
+      ${
+        buttonModel.isLoading
+          ? '<span class="button__spinner" aria-hidden="true"></span>'
+          : ""
+      }
+      <span class="translate-ai-action-button__icon-shell" aria-hidden="true">
+        <img
+          class="translate-ai-action-button__icon"
+          src="${escapeHtml(buttonModel.iconUrl)}"
+          alt=""
+        />
+      </span>
+      <span class="translate-ai-action-button__copy">
+        <span class="translate-ai-action-button__label">
+          ${escapeHtml(buttonModel.isLoading ? "Translating..." : buttonModel.label)}
+        </span>
+        <span class="translate-ai-action-button__model">${escapeHtml(buttonModel.modelLabel)}</span>
+      </span>
+    </button>
+  `;
+}
+
+function renderTranslatePane(editorChapter, rows, languages, sourceCode, targetCode, actionConfig) {
+  const activeRow = rows.find((row) => row.id === editorChapter?.activeRowId) ?? null;
+  const sourceLanguage = languages.find((language) => language.code === sourceCode) ?? null;
+  const targetLanguage = languages.find((language) => language.code === targetCode) ?? null;
+  const sourceSection =
+    activeRow?.sections?.find((section) => section.code === sourceLanguage?.code) ?? null;
+  const targetSection =
+    activeRow?.sections?.find((section) => section.code === targetLanguage?.code) ?? null;
+
+  if (!activeRow) {
+    return `
+      <div class="history-empty">
+        <p>Select a translation row to translate with AI.</p>
+      </div>
+    `;
+  }
+
+  if (!sourceLanguage || !targetLanguage || !sourceSection || !targetSection) {
+    return `
+      <div class="history-empty">
+        <p>Select both the source and target language before translating.</p>
+      </div>
+    `;
+  }
+
+  const translateActions = resolveVisibleAiTranslateActions(actionConfig);
+  const visibleActions = translateActions.map((translateAction) =>
+    resolveVisibleEditorAiTranslateAction(
+      editorChapter,
+      translateAction.actionId,
+      activeRow.id,
+      sourceLanguage.code,
+      targetLanguage.code,
+      sourceSection.text,
+    ));
+  const isAnyActionRunning = visibleActions.some((action) => action.isLoading);
+  const canTranslate =
+    sourceLanguage.code !== targetLanguage.code && sourceSection.text.trim().length > 0;
+  const disabledMessage =
+    sourceLanguage.code === targetLanguage.code
+      ? "Choose different source and target languages before translating."
+      : sourceSection.text.trim().length === 0
+        ? "There is no source text to translate yet."
+        : "";
+  const buttonsMarkup = translateActions.map((translateAction, index) => {
+    const selection = translateAction.selection;
+    const providerId = selection.providerId;
+    const modelId = typeof selection.modelId === "string" ? selection.modelId.trim() : "";
+    const visibleAction = visibleActions[index];
+    return renderTranslateActionButton(
+      {
+        actionId: translateAction.actionId,
+        label: translateAction.label,
+        iconUrl: getAiProviderIconUrl(providerId),
+        isLoading: visibleAction.isLoading,
+        isDisabled: !canTranslate || !modelId,
+        modelLabel: modelId
+          ? `${getAiProviderActionLabel(providerId)} · ${modelId}`
+          : `${getAiProviderActionLabel(providerId)} · Select a model in AI Settings`,
+      },
+      isAnyActionRunning,
+    );
+  }).join("");
+  const errorMarkup = visibleActions
+    .map((action, index) => ({ action, translateAction: translateActions[index] }))
+    .filter(({ action }) => action.showError)
+    .map(({ action, translateAction }) =>
+      renderInlineStateBox({
+        tone: "error",
+        message: `${translateAction.label}: ${action.error}`,
+      }))
+    .join("");
+
+  return `
+    <div class="translate-ai-tools">
+      <p class="translate-ai-tools__summary">
+        ${escapeHtml(sourceLanguage.name ?? sourceLanguage.code)} to ${escapeHtml(targetLanguage.name ?? targetLanguage.code)}
+      </p>
+      <div class="translate-ai-tools__actions${translateActions.length === 1 ? " translate-ai-tools__actions--single" : ""}">
+        ${buttonsMarkup}
+      </div>
+      ${
+        disabledMessage
+          ? renderInlineStateBox({
+            message: disabledMessage,
+          })
+          : ""
+      }
+      ${errorMarkup}
     </div>
   `;
 }
@@ -212,10 +341,18 @@ function renderReviewPane(editorChapter, rows, languages) {
   `;
 }
 
-export function renderTranslateSidebar(editorChapter, rows, languages, session) {
+export function renderTranslateSidebar(
+  editorChapter,
+  rows,
+  languages,
+  sourceCode,
+  targetCode,
+  actionConfig,
+  session,
+) {
   const activeTab = normalizeEditorSidebarTab(editorChapter?.sidebarTab);
   const body = activeTab === "translate"
-    ? renderTranslatePane()
+    ? renderTranslatePane(editorChapter, rows, languages, sourceCode, targetCode, actionConfig)
     : activeTab === "comments"
     ? renderCommentsPane(editorChapter, rows, session)
     : activeTab === "review"

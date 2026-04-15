@@ -4,8 +4,7 @@ use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 
 use crate::ai::{
-    build_review_prompt,
-    types::{AiProviderModel, AiReviewRequest, AiReviewResponse},
+    types::{AiPromptRequest, AiPromptResponse, AiProviderModel},
 };
 
 const CLAUDE_API_VERSION: &str = "2023-06-01";
@@ -116,10 +115,10 @@ pub(crate) fn list_models(api_key: &str) -> Result<Vec<AiProviderModel>, String>
     Ok(models)
 }
 
-pub(crate) fn run_review(
-    request: &AiReviewRequest,
+pub(crate) fn run_prompt(
+    request: &AiPromptRequest,
     api_key: &str,
-) -> Result<AiReviewResponse, String> {
+) -> Result<AiPromptResponse, String> {
     let normalized_key = api_key.trim();
     if normalized_key.is_empty() {
         return Err("No Claude API key is saved yet.".to_string());
@@ -127,14 +126,13 @@ pub(crate) fn run_review(
 
     let model_id = request.model_id.trim();
     if model_id.is_empty() {
-        return Err("Select a Claude model before running Review.".to_string());
+        return Err("Select a Claude model before running this AI request.".to_string());
     }
 
     let client = reqwest::blocking::Client::builder()
         .timeout(Duration::from_secs(45))
         .build()
-        .map_err(|error| format!("Could not start the Claude review request: {error}"))?;
-    let prompt = build_review_prompt(request);
+        .map_err(|error| format!("Could not start the Claude request: {error}"))?;
 
     let response = client
         .post(CLAUDE_MESSAGES_API_URL)
@@ -146,7 +144,7 @@ pub(crate) fn run_review(
             max_tokens: 1024,
             messages: vec![ClaudeMessage {
                 role: "user",
-                content: &prompt,
+                content: &request.prompt,
             }],
         })
         .send()
@@ -155,26 +153,26 @@ pub(crate) fn run_review(
     let status = response.status();
     let body = response
         .text()
-        .map_err(|error| format!("Could not read the Claude review response: {error}"))?;
+        .map_err(|error| format!("Could not read the Claude response: {error}"))?;
 
     if !status.is_success() {
         return Err(normalize_http_error(status, &body));
     }
 
     let payload: ClaudeMessagesResponse = serde_json::from_str(&body)
-        .map_err(|_| "Claude returned a malformed review response.".to_string())?;
-    let suggested_text = payload
+        .map_err(|_| "Claude returned a malformed response.".to_string())?;
+    let text = payload
         .content
         .into_iter()
         .filter(|block| block.kind == "text")
         .map(|block| block.text)
         .collect::<String>();
 
-    if suggested_text.trim().is_empty() {
-        return Err("Claude returned an empty review response.".to_string());
+    if text.trim().is_empty() {
+        return Err("Claude returned an empty response.".to_string());
     }
 
-    Ok(AiReviewResponse { suggested_text })
+    Ok(AiPromptResponse { text })
 }
 
 pub(crate) fn probe_model(model_id: &str, api_key: &str) -> Result<(), String> {

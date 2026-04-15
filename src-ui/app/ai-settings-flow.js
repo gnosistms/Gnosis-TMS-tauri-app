@@ -674,19 +674,31 @@ export async function updateAiActionModel(render, scopeId, nextModelId) {
   }
 }
 
-export function resolveAiReviewProviderAndModel() {
-  const selection = resolveEffectiveAiActionSelection(actionConfigState(), "review");
+export function resolveAiActionProviderAndModel(actionId) {
+  const resolvedActionId =
+    typeof actionId === "string" && actionId.trim() ? actionId.trim() : "review";
+  const selection = resolveEffectiveAiActionSelection(actionConfigState(), resolvedActionId);
   return {
     providerId: normalizeAiProviderId(selection.providerId),
     modelId: typeof selection.modelId === "string" ? selection.modelId.trim() : "",
   };
 }
 
-export function openAiReviewMissingKeyModal() {
+export function resolveAiReviewProviderAndModel() {
+  return resolveAiActionProviderAndModel("review");
+}
+
+export function openAiMissingKeyModal(providerId) {
   state.aiReviewMissingKeyModal = {
     ...createAiReviewMissingKeyModalState(),
     isOpen: true,
+    providerId: normalizeAiProviderId(providerId),
   };
+}
+
+export function openAiReviewMissingKeyModal() {
+  const { providerId } = resolveAiReviewProviderAndModel();
+  openAiMissingKeyModal(providerId);
 }
 
 export function closeAiReviewMissingKeyModal() {

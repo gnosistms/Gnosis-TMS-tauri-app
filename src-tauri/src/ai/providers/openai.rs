@@ -4,12 +4,12 @@ use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 
 use crate::ai::{
-    build_review_prompt,
-    types::{AiProviderModel, AiReviewRequest, AiReviewResponse},
+    types::{AiPromptRequest, AiPromptResponse, AiProviderModel, AiReviewResponse},
 };
 
 const OPENAI_RESPONSES_API_URL: &str = "https://api.openai.com/v1/responses";
 const OPENAI_MODELS_API_URL: &str = "https://api.openai.com/v1/models";
+const OPENAI_PROBE_MAX_OUTPUT_TOKENS: u32 = 16;
 
 #[derive(Debug, Serialize)]
 struct OpenAiResponsesRequest<'a> {
@@ -185,15 +185,7 @@ pub(crate) fn probe_model(model_id: &str, api_key: &str) -> Result<(), String> {
         .header("Authorization", format!("Bearer {normalized_key}"))
         .header("Content-Type", "application/json")
         .header("User-Agent", "gnosis-tms")
-        .json(&OpenAiResponsesRequest {
-            model: normalized_model_id,
-            input: "Reply with OK.".to_string(),
-            store: false,
-            max_output_tokens: Some(1),
-            text: OpenAiTextConfig {
-                format: OpenAiTextFormat { kind: "text" },
-            },
-        })
+        .json(&build_probe_request(normalized_model_id))
         .send()
         .map_err(normalize_transport_error)?;
     let status = response.status();
@@ -208,10 +200,22 @@ pub(crate) fn probe_model(model_id: &str, api_key: &str) -> Result<(), String> {
     Ok(())
 }
 
-pub(crate) fn run_review(
-    request: &AiReviewRequest,
+fn build_probe_request(model_id: &str) -> OpenAiResponsesRequest<'_> {
+    OpenAiResponsesRequest {
+        model: model_id,
+        input: "Reply with OK.".to_string(),
+        store: false,
+        max_output_tokens: Some(OPENAI_PROBE_MAX_OUTPUT_TOKENS),
+        text: OpenAiTextConfig {
+            format: OpenAiTextFormat { kind: "text" },
+        },
+    }
+}
+
+pub(crate) fn run_prompt(
+    request: &AiPromptRequest,
     api_key: &str,
-) -> Result<AiReviewResponse, String> {
+) -> Result<AiPromptResponse, String> {
     let normalized_key = api_key.trim();
     if normalized_key.is_empty() {
         return Err("No OpenAI API key is saved yet.".to_string());
@@ -220,7 +224,7 @@ pub(crate) fn run_review(
     let client = reqwest::blocking::Client::builder()
         .timeout(Duration::from_secs(45))
         .build()
-        .map_err(|error| format!("Could not start the AI review request: {error}"))?;
+        .map_err(|error| format!("Could not start the OpenAI request: {error}"))?;
 
     let response = client
         .post(OPENAI_RESPONSES_API_URL)
@@ -229,7 +233,7 @@ pub(crate) fn run_review(
         .header("User-Agent", "gnosis-tms")
         .json(&OpenAiResponsesRequest {
             model: request.model_id.trim(),
-            input: build_review_prompt(request),
+            input: request.prompt.clone(),
             store: false,
             max_output_tokens: None,
             text: OpenAiTextConfig {
@@ -242,25 +246,31 @@ pub(crate) fn run_review(
     let status = response.status();
     let body = response
         .text()
-        .map_err(|error| format!("Could not read the AI review response: {error}"))?;
+        .map_err(|error| format!("Could not read the OpenAI response: {error}"))?;
 
     if !status.is_success() {
         return Err(normalize_http_error(status, &body));
     }
 
-    normalize_review_response(&body)
+    let text = normalize_text_response(
+        &body,
+        "OpenAI returned a malformed response.",
+        "OpenAI returned an empty response.",
+    )?;
+
+    Ok(AiPromptResponse { text })
 }
 
 fn normalize_transport_error(error: reqwest::Error) -> String {
     if error.is_timeout() {
-        return "The AI review request timed out. Try again.".to_string();
+        return "The OpenAI request timed out. Try again.".to_string();
     }
     if error.is_connect() {
         return "The app could not reach OpenAI. Check your internet connection and try again."
             .to_string();
     }
 
-    "The app could not complete the AI review request. Try again.".to_string()
+    "The app could not complete the OpenAI request. Try again.".to_string()
 }
 
 fn model_supports_text_review(model_id: &str) -> bool {
@@ -347,8 +357,8 @@ fn normalize_http_error(status: StatusCode, body: &str) -> String {
             "OpenAI rate limited this request. Wait a moment and try again.".to_string()
         }
         StatusCode::BAD_REQUEST => extract_api_error_message(body)
-            .map(|message| format!("OpenAI rejected the AI review request: {message}"))
-            .unwrap_or_else(|| "OpenAI rejected the AI review request.".to_string()),
+            .map(|message| format!("OpenAI rejected the request: {message}"))
+            .unwrap_or_else(|| "OpenAI rejected the request.".to_string()),
         _ if status.is_server_error() => {
             "OpenAI is temporarily unavailable. Try again in a moment.".to_string()
         }
@@ -372,15 +382,31 @@ fn extract_probe_error_message(status: StatusCode, body: &str, provider_name: &s
     })
 }
 
+fn normalize_text_response(
+    body: &str,
+    malformed_message: &str,
+    empty_message: &str,
+) -> Result<String, String> {
+    let payload: OpenAiResponsesCreateResponse =
+        serde_json::from_str(body).map_err(|_| malformed_message.to_string())?;
+    extract_suggested_text(payload, empty_message)
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn normalize_review_response(body: &str) -> Result<AiReviewResponse, String> {
-    let payload: OpenAiResponsesCreateResponse = serde_json::from_str(body)
-        .map_err(|_| "OpenAI returned a malformed AI review response.".to_string())?;
-    let suggested_text = extract_suggested_text(payload)?;
+    let suggested_text = normalize_text_response(
+        body,
+        "OpenAI returned a malformed AI review response.",
+        "OpenAI returned an empty AI review response.",
+    )?;
 
     Ok(AiReviewResponse { suggested_text })
 }
 
-fn extract_suggested_text(payload: OpenAiResponsesCreateResponse) -> Result<String, String> {
+fn extract_suggested_text(
+    payload: OpenAiResponsesCreateResponse,
+    empty_message: &str,
+) -> Result<String, String> {
     let direct_text = payload.output_text;
     if !direct_text.trim().is_empty() {
         return Ok(direct_text);
@@ -395,7 +421,7 @@ fn extract_suggested_text(payload: OpenAiResponsesCreateResponse) -> Result<Stri
         .collect::<String>();
 
     if fallback_text.trim().is_empty() {
-        return Err("OpenAI returned an empty AI review response.".to_string());
+        return Err(empty_message.to_string());
     }
 
     Ok(fallback_text)
@@ -403,7 +429,10 @@ fn extract_suggested_text(payload: OpenAiResponsesCreateResponse) -> Result<Stri
 
 #[cfg(test)]
 mod tests {
-    use super::{normalize_review_response, shortlist_recommended_models};
+    use super::{
+        build_probe_request, normalize_review_response, shortlist_recommended_models,
+        OPENAI_PROBE_MAX_OUTPUT_TOKENS,
+    };
     use crate::ai::types::AiProviderModel;
 
     #[test]
@@ -447,6 +476,16 @@ mod tests {
         let error = normalize_review_response(body).unwrap_err();
 
         assert_eq!(error, "OpenAI returned an empty AI review response.");
+    }
+
+    #[test]
+    fn openai_probe_request_uses_responses_minimum_output_tokens() {
+        let payload = serde_json::to_value(build_probe_request("gpt-5.4")).unwrap();
+
+        assert_eq!(
+            payload.get("max_output_tokens").and_then(serde_json::Value::as_u64),
+            Some(OPENAI_PROBE_MAX_OUTPUT_TOKENS as u64)
+        );
     }
 
     #[test]

@@ -530,6 +530,44 @@ async function setTranslateScrollTop(page, top) {
 }
 
 test.describe("editor regressions", () => {
+  test("mounting the editor fixture renders one translate action in unified AI settings mode", async ({ page }) => {
+    await mountEditorFixture(page, { rowCount: 6 });
+
+    await page.locator('[data-action="switch-editor-sidebar-tab:translate"]').click();
+    await expect(page.locator(".translate-ai-action-button")).toHaveCount(1);
+    await expect(page.locator(".translate-ai-action-button")).toContainText("Translate");
+    await expect(page.locator(".translate-sidebar")).not.toContainText("Translate 2");
+    await expect(page.locator(".translate-sidebar")).toContainText("Spanish to Vietnamese");
+  });
+
+  test("mounting the editor fixture renders two translate actions in detailed AI settings mode", async ({ page }) => {
+    await mountEditorFixture(page, {
+      rowCount: 6,
+      aiActionConfig: {
+        detailedConfiguration: true,
+        unified: {
+          providerId: "openai",
+          modelId: "gpt-5.4",
+        },
+        actions: {
+          translate1: {
+            providerId: "openai",
+            modelId: "gpt-5.4",
+          },
+          translate2: {
+            providerId: "gemini",
+            modelId: "gemini-2.5-flash",
+          },
+        },
+      },
+    });
+
+    await page.locator('[data-action="switch-editor-sidebar-tab:translate"]').click();
+    await expect(page.locator(".translate-ai-action-button")).toHaveCount(2);
+    await expect(page.locator(".translate-sidebar")).toContainText("Translate 1");
+    await expect(page.locator(".translate-sidebar")).toContainText("Translate 2");
+  });
+
   test("search input keeps focus while typing", async ({ page }) => {
     await mountEditorFixture(page, { rowCount: 60 });
 

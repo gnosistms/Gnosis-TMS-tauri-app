@@ -115,6 +115,7 @@ const {
   applyEditorAiReview,
   runEditorAiReview,
 } = await import("./editor-ai-review-flow.js");
+const { runEditorAiTranslate } = await import("./editor-ai-translate-flow.js");
 const {
   dismissAiSettingsAboutModal,
   loadAiSettingsPage,
@@ -136,6 +137,7 @@ const {
 } = await import("./ai-settings-preferences.js");
 const { pickPreferredAiModelId } = await import("./ai-action-config.js");
 const { resolveVisibleEditorAiReview } = await import("./editor-ai-review-state.js");
+const { resolveVisibleEditorAiTranslateAction } = await import("./editor-ai-translate-state.js");
 
 function installTranslateFixture() {
   resetSessionState();
@@ -149,6 +151,8 @@ function installTranslateFixture() {
       { code: "es", name: "Spanish" },
       { code: "vi", name: "Vietnamese" },
     ],
+    selectedSourceLanguageCode: "es",
+    selectedTargetLanguageCode: "vi",
     activeRowId: "row-1",
     activeLanguageCode: "vi",
     rows: normalizeEditorRows([{
@@ -236,6 +240,106 @@ test("runEditorAiReview uses the configured provider and model", async () => {
 
   assert.equal(state.editorChapter.aiReview.status, "ready");
   assert.equal(state.editorChapter.aiReview.suggestedText, "Texto revisado");
+});
+
+test("runEditorAiTranslate uses the configured translate action and persists into the target field", async () => {
+  installTranslateFixture();
+  state.aiSettings = {
+    ...state.aiSettings,
+    actionConfig: {
+      ...state.aiSettings.actionConfig,
+      detailedConfiguration: true,
+      unified: {
+        providerId: "gemini",
+        modelId: "gemini-2.0-flash",
+      },
+      actions: {
+        ...state.aiSettings.actionConfig.actions,
+        translate1: {
+          providerId: "openai",
+          modelId: "gpt-5.4-mini",
+        },
+      },
+    },
+  };
+
+  let persistCount = 0;
+  invokeHandler = async (command, payload = {}) => {
+    if (command === "load_ai_provider_secret") {
+      assert.equal(payload.providerId, "openai");
+      return "oa-key";
+    }
+    if (command === "run_ai_translation") {
+      assert.deepEqual(payload, {
+        request: {
+          providerId: "openai",
+          modelId: "gpt-5.4-mini",
+          text: "Hola",
+          sourceLanguage: "Spanish",
+          targetLanguage: "Vietnamese",
+        },
+      });
+      return {
+        translatedText: "Xin chao",
+      };
+    }
+
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  await runEditorAiTranslate(() => {}, "translate1", {
+    updateEditorRowFieldValue(rowId, languageCode, nextValue) {
+      const row = state.editorChapter.rows.find((entry) => entry.rowId === rowId);
+      row.fields[languageCode] = nextValue;
+      row.saveStatus = "dirty";
+    },
+    async persistEditorRowOnBlur(_render, rowId) {
+      persistCount += 1;
+      const row = state.editorChapter.rows.find((entry) => entry.rowId === rowId);
+      row.persistedFields = { ...row.fields };
+      row.saveStatus = "idle";
+    },
+  });
+
+  assert.equal(persistCount, 1);
+  assert.equal(state.editorChapter.rows[0].fields.vi, "Xin chao");
+  assert.equal(state.editorChapter.rows[0].persistedFields.vi, "Xin chao");
+  assert.equal(state.editorChapter.aiTranslate.translate1.status, "idle");
+});
+
+test("runEditorAiTranslate opens the missing-key modal for the translate action provider", async () => {
+  installTranslateFixture();
+  state.aiSettings = {
+    ...state.aiSettings,
+    actionConfig: {
+      ...state.aiSettings.actionConfig,
+      detailedConfiguration: true,
+      actions: {
+        ...state.aiSettings.actionConfig.actions,
+        translate2: {
+          providerId: "deepseek",
+          modelId: "deepseek-chat",
+        },
+      },
+    },
+  };
+
+  invokeHandler = async (command, payload = {}) => {
+    if (command === "load_ai_provider_secret") {
+      assert.equal(payload.providerId, "deepseek");
+      return null;
+    }
+
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  await runEditorAiTranslate(() => {}, "translate2", {
+    updateEditorRowFieldValue() {},
+    async persistEditorRowOnBlur() {},
+  });
+
+  assert.equal(state.aiReviewMissingKeyModal.isOpen, true);
+  assert.equal(state.aiReviewMissingKeyModal.providerId, "deepseek");
 });
 
 test("applyEditorAiReview updates the editor row and clears the suggestion after save", async () => {
@@ -633,4 +737,33 @@ test("AI review visibility suppresses stale suggestions and same-chapter UI keep
   assert.deepEqual([...nextState.reviewExpandedSectionKeys], ["ai-review"]);
   assert.equal(nextState.aiReview.status, "ready");
   assert.equal(nextState.aiReview.suggestedText, "Texto revisado");
+});
+
+test("AI translate visibility suppresses stale errors for changed source text", () => {
+  const visible = resolveVisibleEditorAiTranslateAction(
+    {
+      ...createEditorChapterState(),
+      chapterId: "chapter-1",
+      aiTranslate: {
+        ...createEditorChapterState().aiTranslate,
+        translate1: {
+          status: "error",
+          error: "Boom",
+          rowId: "row-1",
+          sourceLanguageCode: "es",
+          targetLanguageCode: "vi",
+          requestKey: "req-1",
+          sourceText: "Hola",
+        },
+      },
+    },
+    "translate1",
+    "row-1",
+    "es",
+    "vi",
+    "Texto cambiado",
+  );
+
+  assert.equal(visible.showError, false);
+  assert.equal(visible.isStale, true);
 });

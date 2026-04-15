@@ -3,7 +3,7 @@ pub mod deepseek;
 pub mod gemini;
 pub mod openai;
 
-use crate::ai::types::{AiProviderId, AiProviderModel, AiReviewRequest, AiReviewResponse};
+use crate::ai::types::{AiPromptRequest, AiPromptResponse, AiProviderId, AiProviderModel};
 
 pub(crate) fn list_models(
     provider_id: AiProviderId,
@@ -17,15 +17,15 @@ pub(crate) fn list_models(
     }
 }
 
-pub(crate) fn run_review(
-    request: &AiReviewRequest,
+pub(crate) fn run_prompt(
+    request: &AiPromptRequest,
     api_key: &str,
-) -> Result<AiReviewResponse, String> {
+) -> Result<AiPromptResponse, String> {
     match request.provider_id {
-        AiProviderId::OpenAi => openai::run_review(request, api_key),
-        AiProviderId::Gemini => gemini::run_review(request, api_key),
-        AiProviderId::Claude => claude::run_review(request, api_key),
-        AiProviderId::DeepSeek => deepseek::run_review(request, api_key),
+        AiProviderId::OpenAi => openai::run_prompt(request, api_key),
+        AiProviderId::Gemini => gemini::run_prompt(request, api_key),
+        AiProviderId::Claude => claude::run_prompt(request, api_key),
+        AiProviderId::DeepSeek => deepseek::run_prompt(request, api_key),
     }
 }
 

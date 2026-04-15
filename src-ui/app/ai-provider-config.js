@@ -2,6 +2,13 @@ export const DEFAULT_AI_PROVIDER_ID = "gemini";
 
 export const AI_PROVIDER_IDS = ["gemini", "openai", "claude", "deepseek"];
 
+const AI_PROVIDER_ICON_URLS = {
+  gemini: new URL("../assets/ai-providers/gemini.svg", import.meta.url).href,
+  openai: new URL("../assets/ai-providers/openai.png", import.meta.url).href,
+  claude: new URL("../assets/ai-providers/claude.png", import.meta.url).href,
+  deepseek: new URL("../assets/ai-providers/deepseek.ico", import.meta.url).href,
+};
+
 const AI_PROVIDER_CONFIG = {
   openai: {
     id: "openai",
@@ -45,7 +52,7 @@ const AI_PROVIDER_CONFIG = {
   deepseek: {
     id: "deepseek",
     label: "DeepSeek",
-    actionLabel: "Deepseek",
+    actionLabel: "DeepSeek",
     keyTitle: "Enter your DeepSeek key",
     keySupportingLabel: "DeepSeek",
     keyInstructionLabel: "DeepSeek",
@@ -71,4 +78,8 @@ export function getAiProviderSavedMessage(providerId) {
 
 export function getAiProviderActionLabel(providerId) {
   return getAiProviderConfig(providerId).actionLabel;
+}
+
+export function getAiProviderIconUrl(providerId) {
+  return AI_PROVIDER_ICON_URLS[normalizeAiProviderId(providerId)];
 }

@@ -3,7 +3,10 @@ import {
   splitStoredTeamRecords,
   loadStoredTeamPendingMutations,
 } from "./team-storage.js";
-import { createAiActionConfigurationState } from "./ai-action-config.js";
+import {
+  AI_TRANSLATE_ACTION_IDS,
+  createAiActionConfigurationState,
+} from "./ai-action-config.js";
 import { DEFAULT_AI_PROVIDER_ID } from "./ai-provider-config.js";
 import { loadStoredAiActionPreferences } from "./ai-action-preferences.js";
 import { loadStoredEditorFontSizePx } from "./editor-preferences.js";
@@ -288,6 +291,7 @@ export function createEditorChapterState() {
     sidebarTab: "review",
     reviewExpandedSectionKeys: new Set(["last-update", "ai-review"]),
     aiReview: createEditorAiReviewState(),
+    aiTranslate: createEditorAiTranslateState(),
     commentSeenRevisions: {},
     comments: createEditorCommentsState(),
     dirtyRowIds: new Set(),
@@ -316,6 +320,24 @@ export function createEditorAiReviewState() {
   };
 }
 
+export function createEditorAiTranslateActionState() {
+  return {
+    status: "idle",
+    error: "",
+    rowId: null,
+    sourceLanguageCode: null,
+    targetLanguageCode: null,
+    requestKey: null,
+    sourceText: "",
+  };
+}
+
+export function createEditorAiTranslateState() {
+  return Object.fromEntries(
+    AI_TRANSLATE_ACTION_IDS.map((actionId) => [actionId, createEditorAiTranslateActionState()]),
+  );
+}
+
 export function createAiSettingsState() {
   return {
     status: "idle",
@@ -333,7 +355,9 @@ export function createAiSettingsState() {
 }
 
 export function createAiReviewMissingKeyModalState() {
-  return createEntityModalState();
+  return createEntityModalState({
+    providerId: null,
+  });
 }
 
 export function createAiSettingsAboutModalState() {

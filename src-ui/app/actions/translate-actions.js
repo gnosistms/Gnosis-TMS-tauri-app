@@ -19,6 +19,7 @@ import {
   openInsertEditorRowModal,
   applyEditorAiReview,
   replaceSelectedEditorRows,
+  runEditorAiTranslate,
   runEditorAiReview,
   saveEditorConflictResolution,
   resolveEditorRowConflict,
@@ -110,6 +111,16 @@ export function createTranslateActions(render) {
 
     if (action === "review-editor-text-now") {
       await runEditorAiReview(render);
+      return true;
+    }
+
+    if (action === "run-editor-ai-translate:translate1") {
+      await runEditorAiTranslate(render, "translate1");
+      return true;
+    }
+
+    if (action === "run-editor-ai-translate:translate2") {
+      await runEditorAiTranslate(render, "translate2");
       return true;
     }
 
