@@ -31,7 +31,7 @@
     "createUpdaterArtifacts": true,
     "resources": {
       "resources/windows/git/": "git/windows/",
-      "resources/macos/git/": "git/macos/"
+      "resources/macos/": "git/macos/"
     },
     "macOS": {
       "dmg": {

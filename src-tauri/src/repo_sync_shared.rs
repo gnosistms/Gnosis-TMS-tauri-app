@@ -9,7 +9,15 @@ use std::{
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 
+#[cfg(target_os = "macos")]
+use flate2::read::GzDecoder;
 use serde::Deserialize;
+#[cfg(target_os = "macos")]
+use sha2::{Digest, Sha256};
+#[cfg(target_os = "macos")]
+use std::fs::File;
+#[cfg(target_os = "macos")]
+use tar::Archive;
 use tauri::{AppHandle, Manager, Runtime};
 use uuid::Uuid;
 
@@ -49,7 +57,8 @@ impl Drop for GitTransportAuth {
 }
 
 pub(crate) fn initialize_git_runtime<R: Runtime>(app: &AppHandle<R>) {
-    if let Ok(app_config_dir) = app.path().app_config_dir() {
+    let app_config_dir = app.path().app_config_dir().ok();
+    if let Some(app_config_dir) = app_config_dir.as_deref() {
         if let Ok(environment) = prepare_app_git_environment(&app_config_dir) {
             let _ = APP_GIT_HOME_DIR.set(environment.home_dir);
             let _ = APP_GIT_XDG_CONFIG_HOME.set(environment.xdg_config_home);
@@ -68,8 +77,12 @@ pub(crate) fn initialize_git_runtime<R: Runtime>(app: &AppHandle<R>) {
     #[cfg(target_os = "macos")]
     {
         let resource_dir = app.path().resource_dir().ok();
-        if let Some(path) = discover_macos_git_executable(resource_dir.as_deref()) {
-            let _ = RESOLVED_GIT_EXECUTABLE.set(path);
+        if let Some(app_config_dir) = app_config_dir.as_deref() {
+            if let Ok(Some(path)) =
+                prepare_macos_git_runtime(resource_dir.as_deref(), app_config_dir)
+            {
+                let _ = RESOLVED_GIT_EXECUTABLE.set(path);
+            }
         }
     }
 }
@@ -460,15 +473,154 @@ fn discover_windows_github_desktop_git(base_dir: &Path) -> Option<PathBuf> {
 }
 
 #[cfg(target_os = "macos")]
-fn discover_macos_git_executable(resource_dir: Option<&Path>) -> Option<PathBuf> {
-    let resource_dir = resource_dir?;
-    let git_path = resource_dir
+fn prepare_macos_git_runtime(
+    resource_dir: Option<&Path>,
+    app_config_dir: &Path,
+) -> Result<Option<PathBuf>, String> {
+    let Some(resource_dir) = resource_dir else {
+        return Ok(None);
+    };
+    let archive_path = resource_dir
         .join("git")
         .join("macos")
-        .join("libexec")
-        .join("git-core")
-        .join("git");
-    git_path.is_file().then_some(git_path)
+        .join("git-runtime.tar.gz");
+    if !archive_path.is_file() {
+        return Ok(None);
+    }
+
+    let archive_bytes = fs::read(&archive_path).map_err(|error| {
+        format!(
+            "Could not read the bundled macOS Git runtime archive '{}': {error}",
+            archive_path.display()
+        )
+    })?;
+    let archive_hash = format!("{:x}", Sha256::digest(&archive_bytes));
+    let runtime_root = app_config_dir.join("git").join("macos-runtime");
+    let extracted_root = runtime_root.join(&archive_hash);
+    let executable = extracted_root.join("libexec").join("git-core").join("git");
+    if executable.is_file() {
+        prune_stale_macos_git_runtimes(&runtime_root, &extracted_root);
+        return Ok(Some(executable));
+    }
+
+    fs::create_dir_all(&runtime_root).map_err(|error| {
+        format!(
+            "Could not create the macOS Git runtime directory '{}': {error}",
+            runtime_root.display()
+        )
+    })?;
+
+    let staging_root = runtime_root.join(format!(".extract-{}", Uuid::now_v7()));
+    if staging_root.exists() {
+        fs::remove_dir_all(&staging_root).map_err(|error| {
+            format!(
+                "Could not clear the temporary macOS Git runtime directory '{}': {error}",
+                staging_root.display()
+            )
+        })?;
+    }
+    fs::create_dir_all(&staging_root).map_err(|error| {
+        format!(
+            "Could not create the temporary macOS Git runtime directory '{}': {error}",
+            staging_root.display()
+        )
+    })?;
+
+    let unpack_result = extract_macos_git_runtime_archive(&archive_path, &staging_root);
+    if let Err(error) = unpack_result {
+        let _ = fs::remove_dir_all(&staging_root);
+        return Err(error);
+    }
+
+    let staged_executable = staging_root.join("libexec").join("git-core").join("git");
+    if !staged_executable.is_file() {
+        let _ = fs::remove_dir_all(&staging_root);
+        return Err(format!(
+            "The bundled macOS Git runtime archive '{}' did not contain 'libexec/git-core/git'.",
+            archive_path.display()
+        ));
+    }
+
+    let mut permissions = fs::metadata(&staged_executable)
+        .map_err(|error| {
+            format!(
+                "Could not inspect the extracted macOS Git executable '{}': {error}",
+                staged_executable.display()
+            )
+        })?
+        .permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&staged_executable, permissions).map_err(|error| {
+        format!(
+            "Could not mark the extracted macOS Git executable '{}' executable: {error}",
+            staged_executable.display()
+        )
+    })?;
+
+    if extracted_root.exists() {
+        fs::remove_dir_all(&extracted_root).map_err(|error| {
+            format!(
+                "Could not replace the existing macOS Git runtime '{}': {error}",
+                extracted_root.display()
+            )
+        })?;
+    }
+
+    match fs::rename(&staging_root, &extracted_root) {
+        Ok(()) => {}
+        Err(_error) if executable.is_file() => {
+            let _ = fs::remove_dir_all(&staging_root);
+            return Ok(Some(executable));
+        }
+        Err(error) => {
+            let _ = fs::remove_dir_all(&staging_root);
+            return Err(format!(
+                "Could not finalize the macOS Git runtime '{}': {error}",
+                extracted_root.display()
+            ));
+        }
+    }
+
+    prune_stale_macos_git_runtimes(&runtime_root, &extracted_root);
+    Ok(Some(executable))
+}
+
+#[cfg(target_os = "macos")]
+fn extract_macos_git_runtime_archive(archive_path: &Path, target_dir: &Path) -> Result<(), String> {
+    let archive_file = File::open(archive_path).map_err(|error| {
+        format!(
+            "Could not open the bundled macOS Git runtime archive '{}': {error}",
+            archive_path.display()
+        )
+    })?;
+    let decoder = GzDecoder::new(archive_file);
+    let mut archive = Archive::new(decoder);
+    archive.unpack(target_dir).map_err(|error| {
+        format!(
+            "Could not extract the bundled macOS Git runtime archive '{}' into '{}': {error}",
+            archive_path.display(),
+            target_dir.display()
+        )
+    })
+}
+
+#[cfg(target_os = "macos")]
+fn prune_stale_macos_git_runtimes(runtime_root: &Path, active_root: &Path) {
+    let Ok(entries) = fs::read_dir(runtime_root) else {
+        return;
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path == active_root {
+            continue;
+        }
+        let _ = if path.is_dir() {
+            fs::remove_dir_all(path)
+        } else {
+            fs::remove_file(path)
+        };
+    }
 }
 
 struct AppGitEnvironment {
