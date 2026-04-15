@@ -106,13 +106,18 @@ jobs:
           GIT_ROOT="src-tauri/resources/macos"
           STAGING_ROOT="$RUNNER_TEMP/git-runtime"
           ARCHIVE_PATH="$GIT_ROOT/git-runtime.tar.gz"
-          GIT_EXEC_PATH="$(git --exec-path)"
-          GIT_PREFIX="$(cd "$GIT_EXEC_PATH/../.." && pwd)"
-          GIT_SHARE_PATH="$GIT_PREFIX/share/git-core"
+          SYSTEM_GIT="$(xcrun --find git)"
+          GIT_EXEC_PATH="$("$SYSTEM_GIT" --exec-path)"
+          GIT_USR_ROOT="$(cd "$GIT_EXEC_PATH/../.." && pwd)"
+          GIT_SHARE_PATH="$GIT_USR_ROOT/share/git-core"
           rm -rf "$STAGING_ROOT"
           rm -f "$ARCHIVE_PATH"
-          mkdir -p "$STAGING_ROOT/libexec" "$STAGING_ROOT/share" "$GIT_ROOT"
-          cp -R "$GIT_PREFIX/bin" "$STAGING_ROOT/"
+          mkdir -p "$STAGING_ROOT/bin" "$STAGING_ROOT/libexec" "$STAGING_ROOT/share" "$GIT_ROOT"
+          for executable_name in git git-shell scalar; do
+            if [[ -f "$GIT_USR_ROOT/bin/$executable_name" ]]; then
+              cp "$GIT_USR_ROOT/bin/$executable_name" "$STAGING_ROOT/bin/"
+            fi
+          done
           cp -R "$GIT_EXEC_PATH" "$STAGING_ROOT/libexec/"
           cp -R "$GIT_SHARE_PATH" "$STAGING_ROOT/share/"
           find "$STAGING_ROOT/bin" "$STAGING_ROOT/libexec/git-core" -type f -print0 | while IFS= read -r -d '' executable; do
