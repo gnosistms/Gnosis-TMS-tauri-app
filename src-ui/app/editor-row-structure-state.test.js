@@ -22,6 +22,9 @@ function row(rowId, lifecycleState = "active", fields = {}) {
     persistedFieldStates: {},
     saveStatus: "idle",
     saveError: "",
+    freshness: "fresh",
+    remotelyDeleted: false,
+    conflictState: null,
     markerSaveState: {
       status: "idle",
       languageCode: null,
@@ -107,7 +110,17 @@ test("applySoftDeletedEditorRowState clears the active field and anchors to a cl
       languageCode: "en",
       entries: [{ commitSha: "abc123" }],
     },
-    rows: [row("row-1"), row("row-2"), row("row-3")],
+    rows: [
+      row("row-1"),
+      {
+        ...row("row-2"),
+        freshness: "stale",
+        remotelyDeleted: true,
+        saveStatus: "error",
+        saveError: "outdated",
+      },
+      row("row-3"),
+    ],
     expandedDeletedRowGroupIds: new Set(),
   };
 
@@ -120,6 +133,10 @@ test("applySoftDeletedEditorRowState clears the active field and anchors to a cl
   );
 
   assert.equal(result.chapterState.rows[1].lifecycleState, "deleted");
+  assert.equal(result.chapterState.rows[1].freshness, "fresh");
+  assert.equal(result.chapterState.rows[1].remotelyDeleted, false);
+  assert.equal(result.chapterState.rows[1].saveStatus, "idle");
+  assert.equal(result.chapterState.rows[1].saveError, "");
   assert.equal(result.chapterState.activeRowId, null);
   assert.equal(result.chapterState.activeLanguageCode, null);
   assert.equal(result.chapterState.history.status, "idle");
@@ -137,14 +154,41 @@ test("applyRestoredEditorRowState keeps remaining deleted groups open after a re
   const chapterState = {
     ...createEditorChapterState(),
     chapterId: "chapter-1",
-    rows: [row("row-1", "deleted"), row("row-2", "deleted"), row("row-3", "deleted")],
+    rows: [
+      row("row-1", "deleted"),
+      {
+        ...row("row-2", "deleted"),
+        freshness: "stale",
+        remotelyDeleted: true,
+        saveStatus: "error",
+        saveError: "outdated",
+      },
+      row("row-3", "deleted"),
+    ],
     expandedDeletedRowGroupIds: new Set(["row-1:row-2:row-3"]),
   };
 
-  const nextState = applyRestoredEditorRowState(chapterState, "row-2", "active");
+  const result = applyRestoredEditorRowState(
+    chapterState,
+    "row-2",
+    "active",
+    null,
+    { offsetTop: 120 },
+  );
+  const nextState = result.chapterState;
 
   assert.deepEqual(nextState.rows.map((entry) => entry.lifecycleState), ["deleted", "active", "deleted"]);
+  assert.equal(nextState.rows[1].freshness, "fresh");
+  assert.equal(nextState.rows[1].remotelyDeleted, false);
+  assert.equal(nextState.rows[1].saveStatus, "idle");
+  assert.equal(nextState.rows[1].saveError, "");
   assert.deepEqual([...nextState.expandedDeletedRowGroupIds].sort(), ["row-1", "row-3"]);
+  assert.deepEqual(result.anchorSnapshot, {
+    type: "row",
+    rowId: "row-2",
+    languageCode: null,
+    offsetTop: 120,
+  });
 });
 
 test("applyPermanentlyDeletedEditorRowState removes the row, clears dirty tracking, and closes the modal", () => {
@@ -170,7 +214,13 @@ test("applyPermanentlyDeletedEditorRowState removes the row, clears dirty tracki
     },
   };
 
-  const nextState = applyPermanentlyDeletedEditorRowState(chapterState, "row-2", { en: 7 });
+  const result = applyPermanentlyDeletedEditorRowState(
+    chapterState,
+    "row-2",
+    { en: 7 },
+    { offsetTop: 96 },
+  );
+  const nextState = result.chapterState;
 
   assert.deepEqual(nextState.rows.map((entry) => entry.rowId), ["row-1", "row-3"]);
   assert.deepEqual([...nextState.dirtyRowIds], []);
@@ -180,4 +230,10 @@ test("applyPermanentlyDeletedEditorRowState removes the row, clears dirty tracki
   assert.equal(nextState.history.status, "idle");
   assert.equal(nextState.rowPermanentDeletionModal.isOpen, false);
   assert.deepEqual(nextState.sourceWordCounts, { en: 7 });
+  assert.deepEqual(result.anchorSnapshot, {
+    type: "row",
+    rowId: "row-3",
+    languageCode: null,
+    offsetTop: 96,
+  });
 });

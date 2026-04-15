@@ -1081,6 +1081,39 @@ test("applyEditorAiReview updates the editor row and clears the suggestion after
   );
 });
 
+test("applyEditorAiReview does nothing when the suggestion matches the current translation", async () => {
+  installTranslateFixture();
+  state.editorChapter = {
+    ...state.editorChapter,
+    aiReview: {
+      status: "ready",
+      error: "",
+      rowId: "row-1",
+      languageCode: "vi",
+      requestKey: "req-1",
+      sourceText: "Texto original",
+      suggestedText: "Texto original",
+    },
+  };
+
+  let updateCount = 0;
+  let persistCount = 0;
+
+  await applyEditorAiReview(() => {}, {
+    updateEditorRowFieldValue() {
+      updateCount += 1;
+    },
+    async persistEditorRowOnBlur() {
+      persistCount += 1;
+    },
+  });
+
+  assert.equal(updateCount, 0);
+  assert.equal(persistCount, 0);
+  assert.equal(state.editorChapter.rows[0].fields.vi, "Texto original");
+  assert.equal(state.editorChapter.aiReview.status, "ready");
+});
+
 test("AI key load and save flows populate and persist aiSettings state", async () => {
   resetSessionState();
   state.screen = "aiKey";
@@ -1269,7 +1302,7 @@ test("AI action preferences round-trip through persistent storage", () => {
   );
 });
 
-test("updateAiActionModel probes the selected Gemini model and opens the rate-limit warning modal on failure", async () => {
+test("updateAiActionModel redirects Gemini Pro selections to the newest flash model and opens the rate-limit warning modal on failure", async () => {
   resetSessionState();
   state.aiSettings = {
     ...state.aiSettings,
@@ -1278,7 +1311,7 @@ test("updateAiActionModel probes the selected Gemini model and opens the rate-li
       savedProviderIds: ["gemini"],
       unified: {
         providerId: "gemini",
-        modelId: "gemini-3-flash-preview",
+        modelId: "gemini-2.5-flash",
       },
       modelOptionsByProvider: {
         ...state.aiSettings.actionConfig.modelOptionsByProvider,
@@ -1286,7 +1319,9 @@ test("updateAiActionModel probes the selected Gemini model and opens the rate-li
           status: "ready",
           error: "",
           options: [
+            { id: "gemini-2.5-pro", label: "gemini-2.5-pro" },
             { id: "gemini-3-pro-preview", label: "gemini-3-pro-preview" },
+            { id: "gemini-2.5-flash", label: "gemini-2.5-flash" },
             { id: "gemini-3-flash-preview", label: "gemini-3-flash-preview" },
           ],
           hasLoaded: true,
@@ -1300,7 +1335,7 @@ test("updateAiActionModel probes the selected Gemini model and opens the rate-li
       assert.deepEqual(payload, {
         request: {
           providerId: "gemini",
-          modelId: "gemini-3-pro-preview",
+          modelId: "gemini-3-flash-preview",
         },
       });
       throw new Error("Resource has been exhausted (e.g. check quota).");
@@ -1311,7 +1346,7 @@ test("updateAiActionModel probes the selected Gemini model and opens the rate-li
 
   await updateAiActionModel(() => {}, "unified", "gemini-3-pro-preview");
 
-  assert.equal(state.aiSettings.actionConfig.unified.modelId, "gemini-3-pro-preview");
+  assert.equal(state.aiSettings.actionConfig.unified.modelId, "gemini-3-flash-preview");
   assert.equal(state.aiSettings.modelErrorModal.isOpen, true);
   assert.equal(
     state.aiSettings.modelErrorModal.banner,
@@ -1359,10 +1394,13 @@ test("pickPreferredAiModelId prefers general OpenAI models and maps old pro sele
   );
 });
 
-test("pickPreferredAiModelId keeps Gemini selections in the same family and defaults to Pro", () => {
+test("pickPreferredAiModelId keeps Gemini selections on the newest non-Pro family models", () => {
   const options = [
+    { id: "gemini-2.5-pro", label: "gemini-2.5-pro" },
     { id: "gemini-3-pro-preview", label: "gemini-3-pro-preview" },
+    { id: "gemini-2.5-flash", label: "gemini-2.5-flash" },
     { id: "gemini-3-flash-preview", label: "gemini-3-flash-preview" },
+    { id: "gemini-2.5-flash-lite", label: "gemini-2.5-flash-lite" },
     {
       id: "gemini-2.5-flash-lite-preview-09-2025",
       label: "gemini-2.5-flash-lite-preview-09-2025",
@@ -1371,15 +1409,19 @@ test("pickPreferredAiModelId keeps Gemini selections in the same family and defa
 
   assert.equal(
     pickPreferredAiModelId("gemini", options, "gemini-2.5-pro"),
-    "gemini-3-pro-preview",
+    "gemini-3-flash-preview",
   );
   assert.equal(
     pickPreferredAiModelId("gemini", options, "gemini-2.5-flash-lite"),
     "gemini-2.5-flash-lite-preview-09-2025",
   );
   assert.equal(
+    pickPreferredAiModelId("gemini", options, "gemini-3-flash-preview"),
+    "gemini-3-flash-preview",
+  );
+  assert.equal(
     pickPreferredAiModelId("gemini", options),
-    "gemini-3-pro-preview",
+    "gemini-3-flash-preview",
   );
 });
 
@@ -1434,6 +1476,32 @@ test("AI review visibility suppresses stale suggestions and same-chapter UI keep
   assert.deepEqual([...nextState.reviewExpandedSectionKeys], ["ai-review"]);
   assert.equal(nextState.aiReview.status, "ready");
   assert.equal(nextState.aiReview.suggestedText, "Texto revisado");
+});
+
+test("AI review visibility treats unchanged suggestions as looks good instead of actionable", () => {
+  const visible = resolveVisibleEditorAiReview(
+    {
+      ...createEditorChapterState(),
+      chapterId: "chapter-1",
+      aiReview: {
+        status: "ready",
+        error: "",
+        rowId: "row-1",
+        languageCode: "vi",
+        requestKey: "req-1",
+        sourceText: "Texto original",
+        suggestedText: "Texto original",
+      },
+    },
+    "row-1",
+    "vi",
+    "Texto original",
+  );
+
+  assert.equal(visible.isStale, false);
+  assert.equal(visible.showSuggestion, false);
+  assert.equal(visible.showLooksGoodMessage, true);
+  assert.equal(visible.showReviewNow, false);
 });
 
 test("AI translate visibility suppresses stale errors for changed source text", () => {

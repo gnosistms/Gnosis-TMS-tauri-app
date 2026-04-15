@@ -18,12 +18,12 @@ pub(crate) fn build_review_prompt(request: &AiReviewRequest) -> String {
     let language_code = request.language_code.trim();
     if language_code.is_empty() {
         format!(
-            "Check spelling and grammar on the following text. Output only your suggested revised version of the text. Do not explain what you changed and why.\n\nText to review:\n{}",
+            "Check spelling and grammar on the following text. Output only your suggested revised version of the text. Do not explain what you changed and why. If the text to review is already correct, do not change anything.\n\nText to review:\n{}",
             request.text
         )
     } else {
         format!(
-            "Check spelling and grammar on the following text. Output only your suggested revised version of the text. Do not explain what you changed and why.\n\nLanguage code: {language_code}\n\nText to review:\n{}",
+            "Check spelling and grammar on the following text. Output only your suggested revised version of the text. Do not explain what you changed and why. If the text to review is already correct, do not change anything.\n\nLanguage code: {language_code}\n\nText to review:\n{}",
             request.text
         )
     }

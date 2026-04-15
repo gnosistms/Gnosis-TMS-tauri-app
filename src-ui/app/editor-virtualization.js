@@ -1,5 +1,6 @@
 import { syncEditorRowTextareaHeights } from "./autosize.js";
 import { logEditorScrollDebug } from "./editor-scroll-debug.js";
+import { isWindowsPlatform } from "./runtime.js";
 import {
   captureVisibleTranslateLocation,
   pendingTranslateAnchorRowId,
@@ -14,7 +15,7 @@ import {
   EDITOR_VIRTUALIZATION_SCROLL_REASON,
   EDITOR_VIRTUALIZATION_MIN_ROWS,
   nextScheduledEditorRenderReason,
-  shouldDeferMeasuredWindowReconcile,
+  shouldMeasureVisibleRowHeightsDuringRender,
 } from "./editor-virtualization-shared.js";
 import { buildEditorScreenViewModel } from "./editor-screen-model.js";
 import { renderTranslationContentRowsRange } from "./editor-row-render.js";
@@ -146,8 +147,8 @@ export function syncEditorVirtualizationRowLayout(source) {
   activeController?.syncRowLayout?.(source);
 }
 
-export function refreshEditorVirtualizationLayout() {
-  activeController?.refreshLayout?.();
+export function refreshEditorVirtualizationLayout(anchorSnapshot = null) {
+  activeController?.refreshLayout?.(anchorSnapshot ?? null);
 }
 
 export function invalidateEditorVirtualizationLayout(chapterId = "") {
@@ -217,6 +218,7 @@ export function initializeEditorVirtualization(root, appState) {
       initialModel.editorFontSizePx,
     )
     : null;
+  const shouldAvoidScrollHeightMeasurement = isWindowsPlatform();
   let currentRangeKey = "";
   let animationFrameId = 0;
   let scheduledRenderReason = "";
@@ -299,56 +301,53 @@ export function initializeEditorVirtualization(root, appState) {
     restoreFocusedEditorField(root, focusSnapshot);
     glossarySync.restoreMounted(itemsContainer, model.editorChapter);
 
-    const heightsChanged = measureVisibleRowHeights(itemsContainer, rowHeightCache);
+    const heightsChanged = shouldMeasureVisibleRowHeightsDuringRender(
+      reason,
+      shouldAvoidScrollHeightMeasurement,
+    )
+      ? measureVisibleRowHeights(itemsContainer, rowHeightCache)
+      : false;
     if (heightsChanged) {
       logEditorScrollDebug("virtualization-visible-height-change", {
         reason,
         rangeKey: currentRangeKey,
         scrollTop: scrollContainer.scrollTop,
       });
-      if (shouldDeferMeasuredWindowReconcile(reason, anchorSnapshot)) {
-        logEditorScrollDebug("virtualization-height-change-deferred", {
+      const measuredHeights = buildEditorRowHeights(
+        model.contentRows,
+        rowHeightCache,
+        model.collapsedLanguageCodes,
+        model.editorFontSizePx,
+      );
+      const measuredWindow = calculateEditorVirtualWindow(
+        measuredHeights,
+        scrollContainer.scrollTop,
+        scrollContainer.clientHeight,
+        pinnedRowIndex,
+      );
+      const measuredRangeKey = `${measuredWindow.startIndex}:${measuredWindow.endIndex}`;
+      updateSpacerHeight(topSpacer, measuredWindow.topSpacerHeight);
+      updateSpacerHeight(bottomSpacer, measuredWindow.bottomSpacerHeight);
+      if (measuredRangeKey !== currentRangeKey) {
+        currentRangeKey = measuredRangeKey;
+        logEditorScrollDebug("virtualization-range-adjusted", {
           reason,
-          rangeKey: currentRangeKey,
+          rangeKey: measuredRangeKey,
           scrollTop: scrollContainer.scrollTop,
+          topSpacerHeight: measuredWindow.topSpacerHeight,
+          bottomSpacerHeight: measuredWindow.bottomSpacerHeight,
         });
-      } else {
-        const measuredHeights = buildEditorRowHeights(
+        renderWindowRange(
+          itemsContainer,
           model.contentRows,
-          rowHeightCache,
           model.collapsedLanguageCodes,
-          model.editorFontSizePx,
+          measuredWindow.startIndex,
+          measuredWindow.endIndex,
+          model.editorReplace,
         );
-        const measuredWindow = calculateEditorVirtualWindow(
-          measuredHeights,
-          scrollContainer.scrollTop,
-          scrollContainer.clientHeight,
-          pinnedRowIndex,
-        );
-        const measuredRangeKey = `${measuredWindow.startIndex}:${measuredWindow.endIndex}`;
-        updateSpacerHeight(topSpacer, measuredWindow.topSpacerHeight);
-        updateSpacerHeight(bottomSpacer, measuredWindow.bottomSpacerHeight);
-        if (measuredRangeKey !== currentRangeKey) {
-          currentRangeKey = measuredRangeKey;
-          logEditorScrollDebug("virtualization-range-adjusted", {
-            reason,
-            rangeKey: measuredRangeKey,
-            scrollTop: scrollContainer.scrollTop,
-            topSpacerHeight: measuredWindow.topSpacerHeight,
-            bottomSpacerHeight: measuredWindow.bottomSpacerHeight,
-          });
-          renderWindowRange(
-            itemsContainer,
-            model.contentRows,
-            model.collapsedLanguageCodes,
-            measuredWindow.startIndex,
-            measuredWindow.endIndex,
-            model.editorReplace,
-          );
-          restoreFocusedEditorField(root, focusSnapshot);
-          glossarySync.restoreMounted(itemsContainer, model.editorChapter);
-          measureVisibleRowHeights(itemsContainer, rowHeightCache);
-        }
+        restoreFocusedEditorField(root, focusSnapshot);
+        glossarySync.restoreMounted(itemsContainer, model.editorChapter);
+        measureVisibleRowHeights(itemsContainer, rowHeightCache);
       }
     }
 
@@ -413,7 +412,7 @@ export function initializeEditorVirtualization(root, appState) {
     scheduleRender("row-layout");
   };
 
-  const refreshLayout = () => {
+  const refreshLayout = (anchorSnapshot = null) => {
     if (!shouldVirtualize) {
       return;
     }
@@ -425,7 +424,10 @@ export function initializeEditorVirtualization(root, appState) {
 
     currentRangeKey = "";
     renderWindow(true, {
-      anchorSnapshot: captureEditorLayoutAnchor(root),
+      anchorSnapshot:
+        anchorSnapshot?.rowId
+          ? anchorSnapshot
+          : captureEditorLayoutAnchor(root),
       reason: "refresh-layout",
     });
   };

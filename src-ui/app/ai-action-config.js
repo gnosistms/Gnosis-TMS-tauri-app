@@ -18,7 +18,7 @@ const UNIFIED_TRANSLATE_ACTION_LABEL = "Translate";
 const DEFAULT_PROVIDER_ID = DEFAULT_AI_PROVIDER_ID;
 const DEFAULT_MODEL_ID_BY_PROVIDER = {
   openai: "gpt-5.4",
-  gemini: "gemini-2.5-pro",
+  gemini: "gemini-3-flash-preview",
 };
 
 function isPlainObject(value) {
@@ -174,6 +174,22 @@ function pickLatestGeminiModelIdByFamily(options, family) {
   return bestOptionId;
 }
 
+function resolveGeminiFallbackFamily(modelId) {
+  const family = parseGeminiModelVersion(modelId)?.family ?? "";
+  return family === "flash" || family === "flash-lite" ? family : "";
+}
+
+function pickFirstGeminiNonProModelId(options) {
+  for (const option of Array.isArray(options) ? options : []) {
+    const optionId = typeof option?.id === "string" ? option.id.trim() : "";
+    const parsedVersion = parseGeminiModelVersion(optionId);
+    if (parsedVersion && parsedVersion.family !== "pro") {
+      return optionId;
+    }
+  }
+  return "";
+}
+
 export function createAiActionSelection(providerId = DEFAULT_PROVIDER_ID, modelId = "") {
   const normalizedProviderId = normalizeAiProviderId(providerId);
   const normalizedModelId =
@@ -326,17 +342,22 @@ export function coerceAiActionPreferencesToSavedProviders(config, savedProviderI
 }
 
 export function pickPreferredAiModelId(providerId, options = [], fallbackModelId = "") {
+  const normalizedProviderId = normalizeAiProviderId(providerId);
   const normalizedFallback =
     typeof fallbackModelId === "string" && fallbackModelId.trim()
       ? fallbackModelId.trim()
       : "";
   const normalizedOptions = Array.isArray(options) ? options : [];
 
-  if (normalizedFallback && normalizedOptions.some((option) => option?.id === normalizedFallback)) {
+  if (
+    normalizedProviderId !== "gemini"
+    && normalizedFallback
+    && normalizedOptions.some((option) => option?.id === normalizedFallback)
+  ) {
     return normalizedFallback;
   }
 
-  if (normalizeAiProviderId(providerId) === "openai") {
+  if (normalizedProviderId === "openai") {
     const fallbackKind = resolveOpenAiFallbackKind(normalizedFallback);
     if (fallbackKind) {
       const latestMatchingFamily = pickLatestOpenAiModelIdByKind(
@@ -348,8 +369,8 @@ export function pickPreferredAiModelId(providerId, options = [], fallbackModelId
       }
     }
   }
-  if (normalizeAiProviderId(providerId) === "gemini") {
-    const fallbackFamily = parseGeminiModelVersion(normalizedFallback)?.family ?? "";
+  if (normalizedProviderId === "gemini") {
+    const fallbackFamily = resolveGeminiFallbackFamily(normalizedFallback);
     if (fallbackFamily) {
       const latestMatchingFamily = pickLatestGeminiModelIdByFamily(
         normalizedOptions,
@@ -361,12 +382,12 @@ export function pickPreferredAiModelId(providerId, options = [], fallbackModelId
     }
   }
 
-  const defaultModelId = DEFAULT_MODEL_ID_BY_PROVIDER[normalizeAiProviderId(providerId)] ?? "";
+  const defaultModelId = DEFAULT_MODEL_ID_BY_PROVIDER[normalizedProviderId] ?? "";
   if (defaultModelId && normalizedOptions.some((option) => option?.id === defaultModelId)) {
     return defaultModelId;
   }
 
-  if (normalizeAiProviderId(providerId) === "openai") {
+  if (normalizedProviderId === "openai") {
     const latestGeneralModelId = pickLatestOpenAiModelIdByKind(normalizedOptions, "general");
     if (latestGeneralModelId) {
       return latestGeneralModelId;
@@ -376,12 +397,11 @@ export function pickPreferredAiModelId(providerId, options = [], fallbackModelId
       return latestMiniModelId;
     }
   }
-  if (normalizeAiProviderId(providerId) === "gemini") {
-    const latestProModelId = pickLatestGeminiModelIdByFamily(normalizedOptions, "pro");
-    if (latestProModelId) {
-      return latestProModelId;
-    }
-    const latestFlashModelId = pickLatestGeminiModelIdByFamily(normalizedOptions, "flash");
+  if (normalizedProviderId === "gemini") {
+    const latestFlashModelId = pickLatestGeminiModelIdByFamily(
+      normalizedOptions,
+      "flash",
+    );
     if (latestFlashModelId) {
       return latestFlashModelId;
     }
@@ -392,6 +412,15 @@ export function pickPreferredAiModelId(providerId, options = [], fallbackModelId
     if (latestFlashLiteModelId) {
       return latestFlashLiteModelId;
     }
+
+    const firstNonProModelId = pickFirstGeminiNonProModelId(normalizedOptions);
+    if (firstNonProModelId) {
+      return firstNonProModelId;
+    }
+  }
+
+  if (normalizedProviderId === "gemini") {
+    return "";
   }
 
   return typeof normalizedOptions[0]?.id === "string" ? normalizedOptions[0].id : "";

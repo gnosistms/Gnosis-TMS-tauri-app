@@ -13,8 +13,13 @@ import {
   resolveAiReviewProviderAndModel,
 } from "./ai-settings-flow.js";
 import { rowHasFieldChanges } from "./editor-row-persistence-model.js";
+import {
+  captureTranslateAnchorForRow,
+  queueTranslateRowAnchor,
+  restoreTranslateRowAnchor,
+} from "./scroll-state.js";
 import { findEditorRowById, hasActiveEditorField } from "./editor-utils.js";
-import { invoke } from "./runtime.js";
+import { invoke, waitForNextPaint } from "./runtime.js";
 import { state } from "./state.js";
 
 function createAiReviewRequestKey(chapterId, rowId, languageCode) {
@@ -210,12 +215,24 @@ export async function applyEditorAiReview(render, operations = {}) {
   state.editorChapter = applyEditorAiReviewApplying(state.editorChapter);
   render?.({ scope: "translate-sidebar" });
 
+  const reviewAnchorSnapshot = captureTranslateAnchorForRow(
+    context.rowId,
+    context.languageCode,
+  );
+  if (reviewAnchorSnapshot?.rowId) {
+    queueTranslateRowAnchor(reviewAnchorSnapshot);
+  }
   updateEditorRowFieldValue(
     context.rowId,
     context.languageCode,
     visibleAiReview.suggestedText,
   );
   render?.({ scope: "translate-body" });
+  if (reviewAnchorSnapshot?.rowId) {
+    void waitForNextPaint().then(() => {
+      restoreTranslateRowAnchor(reviewAnchorSnapshot);
+    });
+  }
 
   await persistEditorRowOnBlur(render, context.rowId);
 

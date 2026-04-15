@@ -42,6 +42,7 @@ import {
   captureRenderScrollSnapshot,
   captureVisibleTranslateLocation,
   queueTranslateRowAnchor,
+  readPendingTranslateAnchor,
   resolveTranslateRowAnchor,
   restoreRenderScrollSnapshot,
   restoreTranslateRowAnchor,
@@ -205,6 +206,23 @@ function render(options = {}) {
   return renderWithOptions(options);
 }
 
+function resolveTranslateRenderAnchor() {
+  const pendingAnchor = readPendingTranslateAnchor();
+  if (pendingAnchor?.rowId) {
+    return {
+      anchor: pendingAnchor,
+      hadPendingAnchor: true,
+    };
+  }
+
+  return {
+    anchor:
+      resolveTranslateRowAnchor(document.activeElement)
+      || captureVisibleTranslateLocation(),
+    hadPendingAnchor: false,
+  };
+}
+
 function renderTranslateBodyOnly() {
   const body = app.querySelector(".page-body.page-body--editor");
   if (!(body instanceof HTMLElement)) {
@@ -213,11 +231,9 @@ function renderTranslateBodyOnly() {
   }
 
   const focusSnapshot = captureFocusedInputState();
-  const translateAnchor =
-    resolveTranslateRowAnchor(document.activeElement)
-    || captureVisibleTranslateLocation();
+  const { anchor: translateAnchor, hadPendingAnchor } = resolveTranslateRenderAnchor();
   body.innerHTML = renderTranslateEditorBody(state);
-  if (translateAnchor?.rowId) {
+  if (!hadPendingAnchor && translateAnchor?.rowId) {
     queueTranslateRowAnchor(translateAnchor);
   }
   queuePendingEditorLocationRestore(state);
@@ -269,6 +285,10 @@ function renderWithOptions(options = {}) {
   const previousScreen = app.firstElementChild?.getAttribute("data-screen") ?? null;
   prepareEditorLocationBeforeRender(previousScreen, state);
   const focusSnapshot = captureFocusedInputState();
+  const { anchor: translateAnchor, hadPendingAnchor } =
+    previousScreen === "translate" && state.screen === "translate"
+      ? resolveTranslateRenderAnchor()
+      : { anchor: null, hadPendingAnchor: false };
   const scrollSnapshot = captureRenderScrollSnapshot(previousScreen);
   const renderScreen = screenRenderers[state.screen] ?? screenRenderers.start;
   app.innerHTML =
@@ -281,9 +301,15 @@ function renderWithOptions(options = {}) {
     app.firstElementChild.dataset.screen = state.screen;
   }
   restoreRenderScrollSnapshot(previousScreen, state.screen, scrollSnapshot);
+  if (!hadPendingAnchor && translateAnchor?.rowId) {
+    queueTranslateRowAnchor(translateAnchor);
+  }
   queuePendingEditorLocationRestore(state);
   initializeEditorVirtualization(app, state);
-  restorePendingEditorLocation(state);
+  const restoredPendingLocation = restorePendingEditorLocation(state);
+  if (!restoredPendingLocation && translateAnchor?.rowId) {
+    restoreTranslateRowAnchor(translateAnchor);
+  }
   const restoredFocus = restoreFocusedInputState(focusSnapshot);
   if (focusSnapshot?.kind === "editor-row-field" && !restoredFocus && focusSnapshot.rowId) {
     scheduleDirtyEditorRowScan(render, focusSnapshot.rowId);

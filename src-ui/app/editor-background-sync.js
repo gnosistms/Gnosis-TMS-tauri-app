@@ -214,6 +214,18 @@ export async function syncEditorBackgroundNow(render, options = {}) {
   }
 }
 
+export function noteEditorBackgroundSyncHead(headSha) {
+  const normalizedHeadSha =
+    typeof headSha === "string" && headSha.trim()
+      ? headSha.trim()
+      : "";
+  if (!normalizedHeadSha || !sessionMatchesCurrentEditor()) {
+    return;
+  }
+
+  editorBackgroundSyncSession.lastSyncedHeadSha = normalizedHeadSha;
+}
+
 export function noteEditorBackgroundSyncScrollActivity() {
   if (!sessionMatchesCurrentEditor()) {
     return;

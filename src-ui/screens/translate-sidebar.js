@@ -232,6 +232,8 @@ function renderReviewPane(editorChapter, rows, languages) {
     ? "Reviewing..."
     : aiReview.status === "applying"
       ? "Applying..."
+      : aiReview.showLooksGoodMessage
+        ? "Looks good!"
       : aiReview.showSuggestion
         ? "Suggestion"
         : aiReview.status === "error"
@@ -341,6 +343,10 @@ function renderReviewPane(editorChapter, rows, languages) {
                           <p class="history-item__meta">Compared with the current text</p>
                         </div>
                       `
+                      : aiReview.showLooksGoodMessage
+                        ? `
+                          <p class="history-item__content" lang="${escapeHtml(activeLanguage.code)}">Your translation looks good!</p>
+                        `
                       : `
                         ${aiReviewMessage}
                         <div class="history-item__footer">

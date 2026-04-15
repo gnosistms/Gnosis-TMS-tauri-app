@@ -2,9 +2,13 @@ let lockedScreen = null;
 let lockedSnapshot = null;
 let pendingTranslateAnchor = null;
 
+function isHtmlElement(value) {
+  return typeof HTMLElement === "function" && value instanceof HTMLElement;
+}
+
 function captureElementScroll(selector) {
   const element = document.querySelector(selector);
-  if (!(element instanceof HTMLElement)) {
+  if (!isHtmlElement(element)) {
     return null;
   }
 
@@ -20,7 +24,7 @@ function restoreElementScroll(selector, snapshot) {
   }
 
   const element = document.querySelector(selector);
-  if (!(element instanceof HTMLElement)) {
+  if (!isHtmlElement(element)) {
     return;
   }
 
@@ -40,6 +44,90 @@ function restoreTranslateScrollState(snapshot) {
   restoreElementScroll(".translate-sidebar-scroll", snapshot.sidebar);
 }
 
+function buildTranslateAnchorSnapshotForElement(container, element, type, languageCode = "") {
+  if (!isHtmlElement(container) || !isHtmlElement(element)) {
+    return null;
+  }
+
+  const containerRect = container.getBoundingClientRect();
+  const elementRect = element.getBoundingClientRect();
+  return {
+    type,
+    rowId: element.dataset.rowId ?? "",
+    languageCode: languageCode || "",
+    offsetTop: elementRect.top - containerRect.top,
+  };
+}
+
+function resolveTranslateAnchorSelector(rowId, languageCode = null) {
+  const normalizedRowId =
+    typeof rowId === "string" && rowId.trim()
+      ? rowId.trim()
+      : "";
+  if (!normalizedRowId) {
+    return null;
+  }
+
+  const normalizedLanguageCode =
+    typeof languageCode === "string" && languageCode.trim()
+      ? languageCode.trim()
+      : "";
+  return {
+    rowId: normalizedRowId,
+    languageCode: normalizedLanguageCode,
+  };
+}
+
+export function captureTranslateAnchorForRow(rowId, languageCode = null) {
+  const selector = resolveTranslateAnchorSelector(rowId, languageCode);
+  const container = document.querySelector(".translate-main-scroll");
+  if (!selector || !isHtmlElement(container)) {
+    return null;
+  }
+
+  if (selector.languageCode) {
+    const field = document.querySelector(
+      `[data-editor-row-field][data-row-id="${CSS.escape(selector.rowId)}"][data-language-code="${CSS.escape(selector.languageCode)}"]`,
+    );
+    if (isHtmlElement(field)) {
+      return buildTranslateAnchorSnapshotForElement(
+        container,
+        field,
+        "field",
+        selector.languageCode,
+      );
+    }
+
+    const toggle = document.querySelector(
+      `[data-editor-language-toggle][data-row-id="${CSS.escape(selector.rowId)}"][data-language-code="${CSS.escape(selector.languageCode)}"]`,
+    );
+    if (isHtmlElement(toggle)) {
+      return buildTranslateAnchorSnapshotForElement(
+        container,
+        toggle,
+        "language-toggle",
+        selector.languageCode,
+      );
+    }
+  }
+
+  const row = document.querySelector(
+    `[data-editor-row-card][data-row-id="${CSS.escape(selector.rowId)}"]`,
+  );
+  if (isHtmlElement(row)) {
+    return buildTranslateAnchorSnapshotForElement(container, row, "row");
+  }
+
+  const deletedGroup = document.querySelector(
+    `[data-editor-deleted-group][data-row-id="${CSS.escape(selector.rowId)}"]`,
+  );
+  if (isHtmlElement(deletedGroup)) {
+    return buildTranslateAnchorSnapshotForElement(container, deletedGroup, "deleted-group");
+  }
+
+  return null;
+}
+
 export function captureTranslateRowAnchor(target = null) {
   const source = target instanceof Element ? target : document.activeElement;
   const snapshot = resolveTranslateRowAnchor(source);
@@ -50,13 +138,13 @@ export function captureTranslateRowAnchor(target = null) {
 export function resolveTranslateRowAnchor(target = null) {
   const source = target instanceof Element ? target : document.activeElement;
   const container = document.querySelector(".translate-main-scroll");
-  if (!(container instanceof HTMLElement) || !(source instanceof Element)) {
+  if (!isHtmlElement(container) || !(source instanceof Element)) {
     return null;
   }
 
   const containerRect = container.getBoundingClientRect();
   const toggle = source.closest("[data-editor-language-toggle]");
-  if (toggle instanceof HTMLElement) {
+  if (isHtmlElement(toggle)) {
     const toggleRect = toggle.getBoundingClientRect();
     return {
       type: "language-toggle",
@@ -67,7 +155,7 @@ export function resolveTranslateRowAnchor(target = null) {
   }
 
   const field = source.closest("[data-editor-row-field]");
-  if (field instanceof HTMLElement) {
+  if (isHtmlElement(field)) {
     const fieldRect = field.getBoundingClientRect();
     return {
       type: "field",
@@ -78,7 +166,7 @@ export function resolveTranslateRowAnchor(target = null) {
   }
 
   const row = source.closest("[data-editor-row-card]");
-  if (row instanceof HTMLElement) {
+  if (isHtmlElement(row)) {
     const rowRect = row.getBoundingClientRect();
     return {
       type: "row",
@@ -89,7 +177,7 @@ export function resolveTranslateRowAnchor(target = null) {
   }
 
   const deletedGroup = source.closest("[data-editor-deleted-group]");
-  if (deletedGroup instanceof HTMLElement) {
+  if (isHtmlElement(deletedGroup)) {
     const deletedGroupRect = deletedGroup.getBoundingClientRect();
     return {
       type: "deleted-group",
@@ -109,7 +197,7 @@ export function restoreTranslateRowAnchor(snapshot) {
   }
 
   const container = document.querySelector(".translate-main-scroll");
-  if (!(container instanceof HTMLElement)) {
+  if (!isHtmlElement(container)) {
     return false;
   }
 
@@ -126,11 +214,11 @@ export function restoreTranslateRowAnchor(snapshot) {
     anchor = document.querySelector(`[data-editor-deleted-group][data-row-id="${CSS.escape(snapshot.rowId)}"]`);
   }
 
-  if (!(anchor instanceof HTMLElement)) {
+  if (!isHtmlElement(anchor)) {
     anchor = document.querySelector(`[data-editor-row-card][data-row-id="${CSS.escape(snapshot.rowId)}"]`);
   }
 
-  if (!(anchor instanceof HTMLElement)) {
+  if (!isHtmlElement(anchor)) {
     pendingTranslateAnchor = null;
     return false;
   }
@@ -156,16 +244,16 @@ export function centerTranslateRowInView(rowId) {
   }
 
   const container = document.querySelector(".translate-main-scroll");
-  if (!(container instanceof HTMLElement)) {
+  if (!isHtmlElement(container)) {
     pendingTranslateAnchor = null;
     return false;
   }
 
   let row = document.querySelector(`[data-editor-row-card][data-row-id="${CSS.escape(rowId)}"]`);
-  if (!(row instanceof HTMLElement)) {
+  if (!isHtmlElement(row)) {
     row = document.querySelector(`[data-editor-deleted-group][data-row-id="${CSS.escape(rowId)}"]`);
   }
-  if (!(row instanceof HTMLElement)) {
+  if (!isHtmlElement(row)) {
     pendingTranslateAnchor = null;
     return false;
   }
@@ -189,6 +277,14 @@ export function pendingTranslateAnchorRowId() {
   return typeof pendingTranslateAnchor?.rowId === "string" && pendingTranslateAnchor.rowId
     ? pendingTranslateAnchor.rowId
     : "";
+}
+
+export function readPendingTranslateAnchor() {
+  return pendingTranslateAnchor
+    ? {
+      ...pendingTranslateAnchor,
+    }
+    : null;
 }
 
 export function queueTranslateRowAnchor(snapshot) {
@@ -218,13 +314,13 @@ export function queueTranslateRowAnchor(snapshot) {
 
 export function captureVisibleTranslateLocation() {
   const container = document.querySelector(".translate-main-scroll");
-  if (!(container instanceof HTMLElement)) {
+  if (!isHtmlElement(container)) {
     return null;
   }
 
   const containerRect = container.getBoundingClientRect();
   const panels = [...document.querySelectorAll("[data-editor-language-panel]")].filter(
-    (element) => element instanceof HTMLElement,
+    (element) => isHtmlElement(element),
   );
   const visiblePanels = panels
     .map((element) => ({ element, rect: element.getBoundingClientRect() }))
@@ -232,7 +328,7 @@ export function captureVisibleTranslateLocation() {
     .sort((left, right) => left.rect.top - right.rect.top);
 
   const panelCandidate = visiblePanels.find(({ rect }) => rect.bottom > containerRect.top) ?? visiblePanels[0] ?? null;
-  if (panelCandidate?.element instanceof HTMLElement) {
+  if (isHtmlElement(panelCandidate?.element)) {
     return {
       rowId: panelCandidate.element.dataset.rowId ?? "",
       languageCode: panelCandidate.element.dataset.languageCode ?? null,
@@ -241,14 +337,14 @@ export function captureVisibleTranslateLocation() {
   }
 
   const rows = [...document.querySelectorAll("[data-editor-row-card]")].filter(
-    (element) => element instanceof HTMLElement,
+    (element) => isHtmlElement(element),
   );
   const visibleRows = rows
     .map((element) => ({ element, rect: element.getBoundingClientRect() }))
     .filter(({ rect }) => rect.bottom > containerRect.top && rect.top < containerRect.bottom)
     .sort((left, right) => left.rect.top - right.rect.top);
   const rowCandidate = visibleRows.find(({ rect }) => rect.bottom > containerRect.top) ?? visibleRows[0] ?? null;
-  if (rowCandidate?.element instanceof HTMLElement) {
+  if (isHtmlElement(rowCandidate?.element)) {
     return {
       rowId: rowCandidate.element.dataset.rowId ?? "",
       languageCode: null,

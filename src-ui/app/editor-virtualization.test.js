@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 
 const {
   nextScheduledEditorRenderReason,
-  shouldDeferMeasuredWindowReconcile,
+  shouldMeasureVisibleRowHeightsDuringRender,
 } = await import("./editor-virtualization-shared.js");
 
 test("nextScheduledEditorRenderReason upgrades a queued scroll render to a layout render", () => {
@@ -17,8 +17,12 @@ test("nextScheduledEditorRenderReason keeps an existing layout render when scrol
   assert.equal(nextScheduledEditorRenderReason("resize", "scroll"), "resize");
 });
 
-test("shouldDeferMeasuredWindowReconcile only defers unanchored scroll renders", () => {
-  assert.equal(shouldDeferMeasuredWindowReconcile("scroll", null), true);
-  assert.equal(shouldDeferMeasuredWindowReconcile("scroll", { rowId: "row-1" }), false);
-  assert.equal(shouldDeferMeasuredWindowReconcile("row-layout", null), false);
+test("shouldMeasureVisibleRowHeightsDuringRender skips scroll renders and keeps layout renders measured", () => {
+  assert.equal(shouldMeasureVisibleRowHeightsDuringRender("scroll", true), false);
+  assert.equal(shouldMeasureVisibleRowHeightsDuringRender("row-layout", true), true);
+  assert.equal(shouldMeasureVisibleRowHeightsDuringRender("resize", true), true);
+});
+
+test("shouldMeasureVisibleRowHeightsDuringRender keeps scroll measurement enabled outside Windows mode", () => {
+  assert.equal(shouldMeasureVisibleRowHeightsDuringRender("scroll", false), true);
 });

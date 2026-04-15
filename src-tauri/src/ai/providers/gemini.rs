@@ -299,14 +299,10 @@ fn model_id_for_model(model: &GeminiModelEntry) -> String {
 }
 
 fn shortlist_recommended_models(models: &[AiProviderModel]) -> Vec<AiProviderModel> {
-    let best_pro = latest_gemini_model_for_family(models, GeminiModelFamily::Pro);
     let best_flash = latest_gemini_model_for_family(models, GeminiModelFamily::Flash);
     let best_flash_lite = latest_gemini_model_for_family(models, GeminiModelFamily::FlashLite);
 
     let mut shortlisted = Vec::new();
-    if let Some(model) = best_pro {
-        shortlisted.push(model);
-    }
     if let Some(model) = best_flash {
         shortlisted.push(model);
     }
@@ -468,7 +464,7 @@ mod tests {
     use reqwest::StatusCode;
 
     #[test]
-    fn shortlist_recommended_models_keeps_latest_pro_flash_and_flash_lite() {
+    fn shortlist_recommended_models_keeps_latest_flash_and_flash_lite_without_pro() {
         let models = vec![
             AiProviderModel {
                 id: "gemini-2.5-pro".to_string(),
@@ -503,16 +499,12 @@ mod tests {
 
         assert_eq!(
             shortlisted,
-            vec![
-                "gemini-3-pro-preview",
-                "gemini-3-flash-preview",
-                "gemini-2.5-flash-lite-preview-09-2025",
-            ]
+            vec!["gemini-3-flash-preview", "gemini-2.5-flash-lite-preview-09-2025"]
         );
     }
 
     #[test]
-    fn shortlist_recommended_models_prefers_dated_preview_over_stable_within_same_family() {
+    fn shortlist_recommended_models_prefers_newest_preview_within_same_family() {
         let models = vec![
             AiProviderModel {
                 id: "gemini-2.5-flash".to_string(),

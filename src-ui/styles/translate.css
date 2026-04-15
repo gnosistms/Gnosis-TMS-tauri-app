@@ -171,6 +171,68 @@
   scrollbar-gutter: stable;
 }
 
+.app-platform--windows .translate-main-scroll,
+.app-platform--windows .translate-sidebar-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(164, 112, 41, 0.32) transparent;
+}
+
+.app-platform--mac .translate-main-scroll::-webkit-scrollbar-track,
+.app-platform--mac .translate-sidebar-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.app-platform--mac .translate-main-scroll::-webkit-scrollbar-thumb,
+.app-platform--mac .translate-sidebar-scroll::-webkit-scrollbar-thumb {
+  min-height: 32px;
+  border: 3px solid transparent;
+  border-radius: 999px;
+  background: rgba(164, 112, 41, 0.28);
+  background-clip: padding-box;
+}
+
+.app-platform--mac .translate-main-scroll:hover::-webkit-scrollbar-thumb,
+.app-platform--mac .translate-sidebar-scroll:hover::-webkit-scrollbar-thumb {
+  background: rgba(164, 112, 41, 0.36);
+  background-clip: padding-box;
+}
+
+.app-platform--mac .translate-main-scroll::-webkit-scrollbar-thumb:active,
+.app-platform--mac .translate-sidebar-scroll::-webkit-scrollbar-thumb:active {
+  background: rgba(164, 112, 41, 0.44);
+  background-clip: padding-box;
+}
+
+.app-platform--windows .translate-main-scroll::-webkit-scrollbar,
+.app-platform--windows .translate-sidebar-scroll::-webkit-scrollbar {
+  width: 12px;
+}
+
+.app-platform--windows .translate-main-scroll::-webkit-scrollbar-track,
+.app-platform--windows .translate-sidebar-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.app-platform--windows .translate-main-scroll::-webkit-scrollbar-thumb,
+.app-platform--windows .translate-sidebar-scroll::-webkit-scrollbar-thumb {
+  border: 3px solid transparent;
+  border-radius: 999px;
+  background: rgba(164, 112, 41, 0.28);
+  background-clip: padding-box;
+}
+
+.app-platform--windows .translate-main-scroll:hover::-webkit-scrollbar-thumb,
+.app-platform--windows .translate-sidebar-scroll:hover::-webkit-scrollbar-thumb {
+  background: rgba(164, 112, 41, 0.38);
+  background-clip: padding-box;
+}
+
+.app-platform--windows .translate-main-scroll::-webkit-scrollbar-thumb:active,
+.app-platform--windows .translate-sidebar-scroll::-webkit-scrollbar-thumb:active {
+  background: rgba(164, 112, 41, 0.48);
+  background-clip: padding-box;
+}
+
 .page-body--editor .card,
 .page-body--editor .table-card {
   background:

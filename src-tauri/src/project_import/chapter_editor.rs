@@ -207,6 +207,7 @@ pub(crate) struct UpdateEditorRowLifecycleResponse {
     row_id: String,
     lifecycle_state: String,
     source_word_counts: BTreeMap<String, usize>,
+    chapter_base_commit_sha: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -1030,6 +1031,7 @@ pub(super) fn update_gtms_editor_row_lifecycle_sync(
             row_id: input.row_id,
             lifecycle_state: next_state.to_string(),
             source_word_counts: load_source_word_counts(&chapter_path.join("rows"), &languages)?,
+            chapter_base_commit_sha: git_output(&repo_path, &["rev-parse", "--verify", "HEAD"]).ok(),
         });
     }
 
@@ -1084,6 +1086,7 @@ pub(super) fn update_gtms_editor_row_lifecycle_sync(
         row_id: input.row_id,
         lifecycle_state: next_state.to_string(),
         source_word_counts,
+        chapter_base_commit_sha: git_output(&repo_path, &["rev-parse", "--verify", "HEAD"]).ok(),
     })
 }
 
@@ -1147,6 +1150,7 @@ pub(super) fn permanently_delete_gtms_editor_row_sync(
         row_id: input.row_id,
         lifecycle_state: "deleted".to_string(),
         source_word_counts,
+        chapter_base_commit_sha: git_output(&repo_path, &["rev-parse", "--verify", "HEAD"]).ok(),
     })
 }
 

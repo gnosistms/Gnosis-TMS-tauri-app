@@ -48,14 +48,21 @@ export function waitForNextPaint() {
 }
 
 export async function initializeWindowPresentation() {
-  if (!isMacPlatform()) {
-    document.documentElement.classList.remove("app-window--mac-fullscreen");
+  const documentElement = document.documentElement;
+  const isMac = isMacPlatform();
+  const isWindows = isWindowsPlatform();
+
+  documentElement.classList.toggle("app-platform--mac", isMac);
+  documentElement.classList.toggle("app-platform--windows", isWindows);
+
+  if (!isMac) {
+    documentElement.classList.remove("app-window--mac-fullscreen");
     return;
   }
 
   const syncPresentation = async () => {
     const isFullscreen = await readIsFullscreen();
-    document.documentElement.classList.toggle("app-window--mac-fullscreen", isFullscreen);
+    documentElement.classList.toggle("app-window--mac-fullscreen", isFullscreen);
   };
 
   await syncPresentation();
@@ -159,12 +166,20 @@ async function refreshBrokerSession(sessionToken) {
   }
 }
 
-function isMacPlatform() {
-  const platform =
+function platformName() {
+  return (
     navigator.userAgentData?.platform
     ?? navigator.platform
-    ?? "";
-  return /mac/i.test(platform);
+    ?? ""
+  );
+}
+
+export function isMacPlatform() {
+  return /mac/i.test(platformName());
+}
+
+export function isWindowsPlatform() {
+  return /win/i.test(platformName());
 }
 
 async function readIsFullscreen() {

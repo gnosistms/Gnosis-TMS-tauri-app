@@ -635,7 +635,13 @@ export async function updateAiActionModel(render, scopeId, nextModelId) {
   const currentActionConfig = actionConfigState();
   const currentSelection = readAiActionSelection(currentActionConfig, scopeId);
   const providerId = normalizeAiProviderId(currentSelection.providerId);
-  const modelId = typeof nextModelId === "string" ? nextModelId.trim() : "";
+  const requestedModelId = typeof nextModelId === "string" ? nextModelId.trim() : "";
+  const providerModelsState =
+    currentActionConfig.modelOptionsByProvider[providerId] ?? createAiProviderModelsState();
+  const modelId =
+    providerModelsState.status === "ready"
+      ? pickPreferredAiModelId(providerId, providerModelsState.options, requestedModelId)
+      : requestedModelId;
   const modelValidationRequestId = state.aiSettings.modelValidationRequestId + 1;
   const nextSelection = {
     ...currentSelection,

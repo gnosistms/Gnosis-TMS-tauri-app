@@ -72,12 +72,35 @@ function installScrollFixture({ containerTop = 100, anchorTop = 140, scrollTop =
       },
     },
   );
+  const field = new FakeHTMLElement(
+    {
+      top: anchorTop + 12,
+      bottom: anchorTop + 52,
+      left: 0,
+      right: 600,
+      width: 600,
+      height: 40,
+    },
+    {
+      dataset: {
+        rowId: "row-1",
+        languageCode: "en",
+      },
+    },
+  );
   selectors.set(".translate-main-scroll", container);
   selectors.set('[data-editor-row-card][data-row-id="row-1"]', row);
+  selectors.set(
+    '[data-editor-row-field][data-row-id="row-1"][data-language-code="en"]',
+    field,
+  );
   return { container };
 }
 
 const {
+  captureTranslateAnchorForRow,
+  readPendingTranslateAnchor,
+  queueTranslateRowAnchor,
   restoreTranslateRowAnchor,
 } = await import("./scroll-state.js");
 
@@ -103,4 +126,38 @@ test("restoreTranslateRowAnchor updates scrollTop when the row offset changed", 
 
   assert.equal(restored, true);
   assert.equal(container.scrollTop, 80);
+});
+
+test("readPendingTranslateAnchor returns a copy of the queued anchor", () => {
+  queueTranslateRowAnchor({
+    rowId: "row-1",
+    offsetTop: 12,
+    type: "row",
+  });
+
+  const snapshot = readPendingTranslateAnchor();
+  assert.deepEqual(snapshot, {
+    rowId: "row-1",
+    languageCode: null,
+    offsetTop: 12,
+    type: "row",
+  });
+
+  snapshot.rowId = "mutated";
+  assert.equal(readPendingTranslateAnchor().rowId, "row-1");
+
+  queueTranslateRowAnchor(null);
+});
+
+test("captureTranslateAnchorForRow prefers the requested field when a language is provided", () => {
+  installScrollFixture();
+
+  const snapshot = captureTranslateAnchorForRow("row-1", "en");
+
+  assert.deepEqual(snapshot, {
+    type: "field",
+    rowId: "row-1",
+    languageCode: "en",
+    offsetTop: 52,
+  });
 });

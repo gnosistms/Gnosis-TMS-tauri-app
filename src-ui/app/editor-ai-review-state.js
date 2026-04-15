@@ -1,5 +1,9 @@
 import { createEditorAiReviewState } from "./state.js";
 
+function normalizeEditorAiReviewComparisonText(value) {
+  return typeof value === "string" ? value.replace(/\r\n/g, "\n") : String(value ?? "");
+}
+
 export function normalizeEditorAiReviewState(aiReview) {
   return {
     ...createEditorAiReviewState(),
@@ -141,20 +145,27 @@ export function clearEditorAiReview(chapterState) {
 
 export function resolveVisibleEditorAiReview(chapterState, rowId, languageCode, currentText) {
   const aiReview = currentEditorAiReviewForSelection(chapterState, rowId, languageCode);
-  const normalizedCurrentText =
-    typeof currentText === "string" ? currentText : String(currentText ?? "");
+  const normalizedCurrentText = normalizeEditorAiReviewComparisonText(currentText);
   const hasSuggestion =
     (aiReview.status === "ready" || aiReview.status === "applying")
     && aiReview.suggestedText.trim().length > 0;
   const isStale = hasSuggestion && aiReview.sourceText !== normalizedCurrentText;
-  const showSuggestion = hasSuggestion && !isStale;
+  const suggestedTextMatchesCurrentText =
+    hasSuggestion
+    && !isStale
+    && normalizeEditorAiReviewComparisonText(aiReview.suggestedText) === normalizedCurrentText;
+  const showSuggestion = hasSuggestion && !isStale && !suggestedTextMatchesCurrentText;
 
   return {
     ...aiReview,
     hasSuggestion,
     isStale,
+    showLooksGoodMessage: suggestedTextMatchesCurrentText,
     showSuggestion,
     showReviewNow:
-      aiReview.status !== "loading" && (aiReview.status !== "applying") && !showSuggestion,
+      aiReview.status !== "loading"
+      && aiReview.status !== "applying"
+      && !showSuggestion
+      && !suggestedTextMatchesCurrentText,
   };
 }

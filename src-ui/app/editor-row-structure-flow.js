@@ -12,18 +12,27 @@ import {
 import { findChapterContextById, selectedProjectsTeam } from "./project-context.js";
 import { invoke } from "./runtime.js";
 import {
+  captureTranslateAnchorForRow,
+} from "./scroll-state.js";
+import {
   state,
 } from "./state.js";
 import { showNoticeBadge } from "./status-feedback.js";
 import { canPermanentlyDeleteProjectFiles } from "./resource-capabilities.js";
-import { findEditorRowById } from "./editor-utils.js";
 import { ensureEditorRowReadyForWrite } from "./editor-row-sync-flow.js";
+import { noteEditorBackgroundSyncHead } from "./editor-background-sync.js";
 
 function hasRowStructureOperations(operations) {
   return (
     typeof operations?.applyStructuralEditorChange === "function"
     && typeof operations?.applyEditorSelectionsToProjectState === "function"
   );
+}
+
+function nextChapterBaseCommitSha(chapterState, payload = null) {
+  return typeof payload?.chapterBaseCommitSha === "string" && payload.chapterBaseCommitSha.trim()
+    ? payload.chapterBaseCommitSha.trim()
+    : chapterState?.chapterBaseCommitSha ?? null;
 }
 
 export function openInsertEditorRowModal(rowId) {
@@ -184,13 +193,17 @@ export async function softDeleteEditorRow(render, rowId, triggerAnchorSnapshot =
       payload?.sourceWordCounts,
       triggerAnchorSnapshot,
     );
+    const chapterBaseCommitSha = nextChapterBaseCommitSha(state.editorChapter, payload);
     operations.applyStructuralEditorChange(render, () => {
-      state.editorChapter = result.chapterState;
+      state.editorChapter = {
+        ...result.chapterState,
+        chapterBaseCommitSha,
+      };
       operations.applyEditorSelectionsToProjectState(state.editorChapter);
     }, {
       anchorSnapshot: result.anchorSnapshot,
     });
-    showNoticeBadge("Row deleted.", render);
+    noteEditorBackgroundSyncHead(chapterBaseCommitSha);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     showNoticeBadge(message || "The row could not be deleted.", render);
@@ -210,6 +223,8 @@ export async function restoreEditorRow(render, rowId, operations = {}) {
   if (!(await ensureEditorRowReadyForWrite(render, rowId, { structural: true }))) {
     return;
   }
+
+  const triggerAnchorSnapshot = captureTranslateAnchorForRow(rowId);
 
   const team = selectedProjectsTeam();
   const context = findChapterContextById(editorChapter.chapterId);
@@ -232,15 +247,24 @@ export async function restoreEditorRow(render, rowId, operations = {}) {
       return;
     }
 
+    const result = applyRestoredEditorRowState(
+      state.editorChapter,
+      rowId,
+      payload?.lifecycleState ?? "active",
+      payload?.sourceWordCounts,
+      triggerAnchorSnapshot,
+    );
+    const chapterBaseCommitSha = nextChapterBaseCommitSha(state.editorChapter, payload);
     operations.applyStructuralEditorChange(render, () => {
-      state.editorChapter = applyRestoredEditorRowState(
-        state.editorChapter,
-        rowId,
-        payload?.lifecycleState ?? "active",
-        payload?.sourceWordCounts,
-      );
+      state.editorChapter = {
+        ...result.chapterState,
+        chapterBaseCommitSha,
+      };
       operations.applyEditorSelectionsToProjectState(state.editorChapter);
+    }, {
+      anchorSnapshot: result.anchorSnapshot,
     });
+    noteEditorBackgroundSyncHead(chapterBaseCommitSha);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     showNoticeBadge(message || "The row could not be restored.", render);
@@ -289,6 +313,8 @@ export async function confirmEditorRowPermanentDeletion(render, operations = {})
   };
   render?.();
 
+  const triggerAnchorSnapshot = captureTranslateAnchorForRow(modal.rowId);
+
   try {
     const payload = await invoke("permanently_delete_gtms_editor_row", {
       input: {
@@ -304,14 +330,23 @@ export async function confirmEditorRowPermanentDeletion(render, operations = {})
       return;
     }
 
+    const result = applyPermanentlyDeletedEditorRowState(
+      state.editorChapter,
+      modal.rowId,
+      payload?.sourceWordCounts,
+      triggerAnchorSnapshot,
+    );
+    const chapterBaseCommitSha = nextChapterBaseCommitSha(state.editorChapter, payload);
     operations.applyStructuralEditorChange(render, () => {
-      state.editorChapter = applyPermanentlyDeletedEditorRowState(
-        state.editorChapter,
-        modal.rowId,
-        payload?.sourceWordCounts,
-      );
+      state.editorChapter = {
+        ...result.chapterState,
+        chapterBaseCommitSha,
+      };
       operations.applyEditorSelectionsToProjectState(state.editorChapter);
+    }, {
+      anchorSnapshot: result.anchorSnapshot,
     });
+    noteEditorBackgroundSyncHead(chapterBaseCommitSha);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     if (state.editorChapter?.chapterId === editorChapter.chapterId) {

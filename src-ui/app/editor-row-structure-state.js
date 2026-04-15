@@ -1,5 +1,6 @@
 import {
   deletedRowGroupIdAfterSoftDelete,
+  deletedRowGroupIdFromRange,
   expandedDeletedRowGroupIdsAfterPermanentDelete,
   expandedDeletedRowGroupIdsAfterRestore,
   expandedDeletedRowGroupIdsAfterSoftDelete,
@@ -57,19 +58,136 @@ function insertEditorRow(rows, nextRow, anchorRowId, insertBefore = true) {
   return nextRows;
 }
 
+function normalizeLocalLifecycleRow(row, lifecycleState) {
+  if (!row) {
+    return row;
+  }
+
+  return {
+    ...row,
+    lifecycleState,
+    freshness: "fresh",
+    remotelyDeleted: false,
+    saveStatus: "idle",
+    saveError: "",
+    conflictState: null,
+  };
+}
+
 function rowsWithLifecycleState(rows, rowId, lifecycleState) {
   return (Array.isArray(rows) ? rows : []).map((row) =>
     row?.rowId === rowId
-      ? {
-        ...row,
-        lifecycleState,
-      }
+      ? normalizeLocalLifecycleRow(row, lifecycleState)
       : row
   );
 }
 
 function rowsWithoutRowId(rows, rowId) {
   return (Array.isArray(rows) ? rows : []).filter((row) => row?.rowId !== rowId);
+}
+
+function resolveAnchorOffsetTop(triggerAnchorSnapshot, fallback = 80) {
+  const nextOffsetTop = Number(triggerAnchorSnapshot?.offsetTop);
+  return Number.isFinite(nextOffsetTop) ? nextOffsetTop : fallback;
+}
+
+function deletedRowGroupBounds(rows, rowId) {
+  const items = Array.isArray(rows) ? rows : [];
+  const rowIndex = items.findIndex((row) => row?.rowId === rowId);
+  if (rowIndex < 0 || items[rowIndex]?.lifecycleState !== "deleted") {
+    return null;
+  }
+
+  let startIndex = rowIndex;
+  let endIndex = rowIndex;
+  while (startIndex > 0 && items[startIndex - 1]?.lifecycleState === "deleted") {
+    startIndex -= 1;
+  }
+  while (endIndex + 1 < items.length && items[endIndex + 1]?.lifecycleState === "deleted") {
+    endIndex += 1;
+  }
+
+  return { startIndex, endIndex };
+}
+
+function buildVisibleAnchorSnapshot(rows, rowId, expandedDeletedRowGroupIds, offsetTop) {
+  if (!rowId) {
+    return null;
+  }
+
+  const items = Array.isArray(rows) ? rows : [];
+  const targetRow = items.find((row) => row?.rowId === rowId);
+  if (!targetRow) {
+    return null;
+  }
+
+  if (targetRow.lifecycleState !== "deleted") {
+    return {
+      type: "row",
+      rowId,
+      languageCode: null,
+      offsetTop,
+    };
+  }
+
+  const bounds = deletedRowGroupBounds(items, rowId);
+  if (!bounds) {
+    return {
+      type: "row",
+      rowId,
+      languageCode: null,
+      offsetTop,
+    };
+  }
+
+  const groupId = deletedRowGroupIdFromRange(items, bounds.startIndex, bounds.endIndex);
+  if (!groupId) {
+    return {
+      type: "row",
+      rowId,
+      languageCode: null,
+      offsetTop,
+    };
+  }
+
+  const normalizedExpandedDeletedRowGroupIds =
+    expandedDeletedRowGroupIds instanceof Set
+      ? expandedDeletedRowGroupIds
+      : new Set();
+  if (normalizedExpandedDeletedRowGroupIds.has(groupId)) {
+    return {
+      type: "row",
+      rowId,
+      languageCode: null,
+      offsetTop,
+    };
+  }
+
+  return {
+    type: "deleted-group",
+    rowId: `deleted-group:${groupId}`,
+    languageCode: null,
+    offsetTop,
+  };
+}
+
+function nearestSurvivingAnchorRowId(previousRows, nextRows, rowId) {
+  const previousItems = Array.isArray(previousRows) ? previousRows : [];
+  const nextItems = Array.isArray(nextRows) ? nextRows : [];
+  const previousRowIndex = previousItems.findIndex((row) => row?.rowId === rowId);
+  if (previousRowIndex < 0) {
+    return nextItems[0]?.rowId ?? null;
+  }
+
+  if (previousRowIndex < nextItems.length && nextItems[previousRowIndex]?.rowId) {
+    return nextItems[previousRowIndex].rowId;
+  }
+
+  if (previousRowIndex > 0 && nextItems[previousRowIndex - 1]?.rowId) {
+    return nextItems[previousRowIndex - 1].rowId;
+  }
+
+  return nextItems[0]?.rowId ?? null;
 }
 
 export function toggleDeletedEditorRowGroupState(chapterState, groupId) {
@@ -184,22 +302,22 @@ export function applySoftDeletedEditorRowState(
   const nextDeletedGroupId = deletedRowGroupIdAfterSoftDelete(previousRows, rowId);
   const nextDeletedGroupIsOpen =
     typeof nextDeletedGroupId === "string" && expandedDeletedRowGroupIds.has(nextDeletedGroupId);
-  const offsetTop = Number.isFinite(Number(triggerAnchorSnapshot?.offsetTop))
-    ? Number(triggerAnchorSnapshot.offsetTop)
-    : 80;
-  const anchorSnapshot = nextDeletedGroupId && !nextDeletedGroupIsOpen
-    ? {
-      type: "deleted-group",
-      rowId: `deleted-group:${nextDeletedGroupId}`,
-      languageCode: null,
-      offsetTop,
-    }
-    : {
-      type: "row",
-      rowId,
-      languageCode: null,
-      offsetTop,
-    };
+  const offsetTop = resolveAnchorOffsetTop(triggerAnchorSnapshot);
+  const anchorSnapshot =
+    buildVisibleAnchorSnapshot(rows, rowId, expandedDeletedRowGroupIds, offsetTop)
+    ?? (nextDeletedGroupId && !nextDeletedGroupIsOpen
+      ? {
+        type: "deleted-group",
+        rowId: `deleted-group:${nextDeletedGroupId}`,
+        languageCode: null,
+        offsetTop,
+      }
+      : {
+        type: "row",
+        rowId,
+        languageCode: null,
+        offsetTop,
+      });
 
   return {
     chapterState: {
@@ -217,9 +335,13 @@ export function applyRestoredEditorRowState(
   rowId,
   lifecycleState = "active",
   sourceWordCounts = null,
+  triggerAnchorSnapshot = null,
 ) {
   if (!chapterState?.chapterId || !rowId) {
-    return chapterState;
+    return {
+      chapterState,
+      anchorSnapshot: null,
+    };
   }
 
   const previousRows = Array.isArray(chapterState.rows) ? chapterState.rows : [];
@@ -230,18 +352,35 @@ export function applyRestoredEditorRowState(
     chapterState.expandedDeletedRowGroupIds,
     rows,
   );
+  const offsetTop = resolveAnchorOffsetTop(triggerAnchorSnapshot);
 
   return {
-    ...chapterState,
-    rows,
-    expandedDeletedRowGroupIds,
-    sourceWordCounts: resolveSourceWordCounts(chapterState, sourceWordCounts),
+    chapterState: {
+      ...chapterState,
+      rows,
+      expandedDeletedRowGroupIds,
+      sourceWordCounts: resolveSourceWordCounts(chapterState, sourceWordCounts),
+    },
+    anchorSnapshot: buildVisibleAnchorSnapshot(
+      rows,
+      rowId,
+      expandedDeletedRowGroupIds,
+      offsetTop,
+    ),
   };
 }
 
-export function applyPermanentlyDeletedEditorRowState(chapterState, rowId, sourceWordCounts = null) {
+export function applyPermanentlyDeletedEditorRowState(
+  chapterState,
+  rowId,
+  sourceWordCounts = null,
+  triggerAnchorSnapshot = null,
+) {
   if (!chapterState?.chapterId || !rowId) {
-    return chapterState;
+    return {
+      chapterState,
+      anchorSnapshot: null,
+    };
   }
 
   const previousRows = Array.isArray(chapterState.rows) ? chapterState.rows : [];
@@ -253,13 +392,23 @@ export function applyPermanentlyDeletedEditorRowState(chapterState, rowId, sourc
     rows,
   );
   const nextChapterState = withClearedActiveFieldForRow(chapterState, rowId);
+  const offsetTop = resolveAnchorOffsetTop(triggerAnchorSnapshot);
+  const anchorRowId = nearestSurvivingAnchorRowId(previousRows, rows, rowId);
 
   return {
-    ...nextChapterState,
-    rows,
-    dirtyRowIds: compactDirtyRowIds(rows, chapterState.dirtyRowIds),
-    expandedDeletedRowGroupIds,
-    sourceWordCounts: resolveSourceWordCounts(chapterState, sourceWordCounts),
-    rowPermanentDeletionModal: createEditorRowPermanentDeletionModalState(),
+    chapterState: {
+      ...nextChapterState,
+      rows,
+      dirtyRowIds: compactDirtyRowIds(rows, chapterState.dirtyRowIds),
+      expandedDeletedRowGroupIds,
+      sourceWordCounts: resolveSourceWordCounts(chapterState, sourceWordCounts),
+      rowPermanentDeletionModal: createEditorRowPermanentDeletionModalState(),
+    },
+    anchorSnapshot: buildVisibleAnchorSnapshot(
+      rows,
+      anchorRowId,
+      expandedDeletedRowGroupIds,
+      offsetTop,
+    ),
   };
 }

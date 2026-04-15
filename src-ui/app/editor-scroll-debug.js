@@ -2,7 +2,9 @@ import { invoke } from "./runtime.js";
 
 const EDITOR_SCROLL_DEBUG_BATCH_SIZE = 24;
 const EDITOR_SCROLL_DEBUG_FLUSH_DELAY_MS = 800;
-const EDITOR_SCROLL_DEBUG_PATH_HINT = "%AppData%\\com.gnosis.tms\\logs\\editor-scroll-debug.jsonl";
+const WINDOWS_EDITOR_SCROLL_DEBUG_PATH_HINT = "%AppData%\\com.gnosis.tms\\logs\\editor-scroll-debug.jsonl";
+const MACOS_EDITOR_SCROLL_DEBUG_PATH_HINT =
+  "~/Library/Application Support/com.gnosis.tms/logs/editor-scroll-debug.jsonl";
 
 let queuedLines = [];
 let flushTimerId = 0;
@@ -17,7 +19,7 @@ function platformName() {
 }
 
 function shouldLogEditorScrollDebug() {
-  return typeof invoke === "function" && /win/i.test(platformName());
+  return typeof invoke === "function" && /win|mac/i.test(platformName());
 }
 
 function normalizeDebugValue(value, depth = 0) {
@@ -72,7 +74,9 @@ function scheduleEditorScrollDebugFlush() {
 }
 
 export function editorScrollDebugPathHint() {
-  return EDITOR_SCROLL_DEBUG_PATH_HINT;
+  return /mac/i.test(platformName())
+    ? MACOS_EDITOR_SCROLL_DEBUG_PATH_HINT
+    : WINDOWS_EDITOR_SCROLL_DEBUG_PATH_HINT;
 }
 
 export function logEditorScrollDebug(event, detail = {}) {
