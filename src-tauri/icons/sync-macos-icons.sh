@@ -18,6 +18,13 @@ fi
 
 mkdir -p "$MACOS_DIR"
 
+has_python_pillow() {
+  python3 - <<'PY' >/dev/null 2>&1
+from PIL import Image
+PY
+}
+
+if has_python_pillow; then
 python3 - <<'PY' "$SOURCE_ICON" "$PADDED_PNG" "$TARGET_SIZE" "$ART_SIZE"
 from pathlib import Path
 from PIL import Image
@@ -35,6 +42,13 @@ offset = ((target_size - art_size) // 2, (target_size - art_size) // 2)
 canvas.alpha_composite(resized, offset)
 canvas.save(target_path)
 PY
+elif [[ -f "$PADDED_PNG" ]]; then
+  echo "Python Pillow is not installed; reusing committed padded macOS icon:"
+  echo "  $PADDED_PNG"
+else
+  echo "Python Pillow is not installed and padded macOS icon is missing: $PADDED_PNG" >&2
+  exit 1
+fi
 
 TMP_DIR="$(mktemp -d)"
 cleanup() {
