@@ -4,12 +4,30 @@ use serde::{Deserialize, Serialize};
 pub enum AiProviderId {
     #[serde(rename = "openai")]
     OpenAi,
+    #[serde(rename = "gemini")]
+    Gemini,
+    #[serde(rename = "claude")]
+    Claude,
+    #[serde(rename = "deepseek")]
+    DeepSeek,
 }
 
 impl AiProviderId {
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::OpenAi => "openai",
+            Self::Gemini => "gemini",
+            Self::Claude => "claude",
+            Self::DeepSeek => "deepseek",
+        }
+    }
+
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            Self::OpenAi => "OpenAI",
+            Self::Gemini => "Gemini",
+            Self::Claude => "Claude",
+            Self::DeepSeek => "DeepSeek",
         }
     }
 }
@@ -18,6 +36,7 @@ impl AiProviderId {
 #[serde(rename_all = "camelCase")]
 pub struct AiReviewRequest {
     pub provider_id: AiProviderId,
+    pub model_id: String,
     pub text: String,
     pub language_code: String,
 }
@@ -26,4 +45,18 @@ pub struct AiReviewRequest {
 #[serde(rename_all = "camelCase")]
 pub struct AiReviewResponse {
     pub suggested_text: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AiProviderModel {
+    pub id: String,
+    pub label: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AiModelProbeRequest {
+    pub provider_id: AiProviderId,
+    pub model_id: String,
 }

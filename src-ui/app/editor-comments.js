@@ -1,7 +1,16 @@
-export const EDITOR_SIDEBAR_TABS = new Set(["history", "comments", "review", "duplicates"]);
+export const EDITOR_SIDEBAR_TABS = new Set(["translate", "history", "comments", "review"]);
 
 export function normalizeEditorSidebarTab(tab) {
-  return EDITOR_SIDEBAR_TABS.has(tab) ? tab : "history";
+  return EDITOR_SIDEBAR_TABS.has(tab) ? tab : "review";
+}
+
+export function resolveEditorSidebarTabForField(currentTab, row, languageCode) {
+  const normalizedCurrentTab = normalizeEditorSidebarTab(currentTab);
+  const text =
+    typeof row?.fields?.[languageCode] === "string"
+      ? row.fields[languageCode]
+      : String(row?.fields?.[languageCode] ?? "");
+  return text.trim().length === 0 ? "translate" : normalizedCurrentTab;
 }
 
 export function normalizeEditorCommentSeenRevisions(seenRevisions) {

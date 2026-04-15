@@ -100,6 +100,12 @@
   color: var(--message-warning-text);
 }
 
+.message-box--success {
+  background: var(--message-success-bg);
+  border-color: var(--message-success-border);
+  color: var(--message-success-text);
+}
+
 .modal__error,
 .message-box--scroll {
   overflow-x: auto;

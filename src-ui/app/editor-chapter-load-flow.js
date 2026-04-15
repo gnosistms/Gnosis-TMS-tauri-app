@@ -168,7 +168,7 @@ export async function loadSelectedChapterEditorData(render, options = {}, operat
     glossary: nextGlossaryState,
     activeRowId: preserveVisibleRows ? state.editorChapter.activeRowId : null,
     activeLanguageCode: preserveVisibleRows ? state.editorChapter.activeLanguageCode : null,
-    sidebarTab: preserveVisibleRows ? state.editorChapter.sidebarTab : "history",
+    sidebarTab: preserveVisibleRows ? state.editorChapter.sidebarTab : "review",
     commentSeenRevisions: preserveVisibleRows ? state.editorChapter.commentSeenRevisions : {},
     comments: preserveVisibleRows ? state.editorChapter.comments : createEditorCommentsState(),
     history: preserveVisibleRows ? state.editorChapter.history : createEditorHistoryState(),
@@ -193,7 +193,7 @@ export async function loadSelectedChapterEditorData(render, options = {}, operat
     render?.();
     if (state.editorChapter.sidebarTab === "comments" && state.editorChapter.activeRowId) {
       loadActiveEditorRowComments(render);
-    } else if (state.editorChapter.sidebarTab === "duplicates") {
+    } else if (state.editorChapter.sidebarTab === "translate") {
       return;
     } else if (hasActiveEditorField(state.editorChapter)) {
       operations.loadActiveEditorFieldHistory(render);

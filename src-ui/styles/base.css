@@ -42,6 +42,9 @@
   --message-warning-bg: rgba(255, 242, 204, 0.92);
   --message-warning-border: rgba(201, 122, 18, 0.26);
   --message-warning-text: #8b5a17;
+  --message-success-bg: rgba(232, 245, 236, 0.94);
+  --message-success-border: rgba(55, 122, 73, 0.24);
+  --message-success-text: #2f6b41;
   --danger: #d6563c;
   --danger-strong: #bf3f26;
   --danger-text: #fff7f2;

@@ -116,10 +116,25 @@ const {
   runEditorAiReview,
 } = await import("./editor-ai-review-flow.js");
 const {
+  dismissAiSettingsAboutModal,
+  loadAiSettingsPage,
+  explainAiModelProbeError,
   loadAiProviderSecret,
   saveAiProviderSecret,
+  selectAiProvider,
+  updateAiSettingsAboutModalDontShowAgain,
+  updateAiActionModel,
   updateAiProviderSecretDraft,
 } = await import("./ai-settings-flow.js");
+const {
+  loadStoredAiActionPreferences,
+  saveStoredAiActionPreferences,
+} = await import("./ai-action-preferences.js");
+const {
+  clearStoredAiSettingsAboutDismissed,
+  loadStoredAiSettingsAboutDismissed,
+} = await import("./ai-settings-preferences.js");
+const { pickPreferredAiModelId } = await import("./ai-action-config.js");
 const { resolveVisibleEditorAiReview } = await import("./editor-ai-review-state.js");
 
 function installTranslateFixture() {
@@ -151,6 +166,7 @@ test.afterEach(() => {
   invokeHandler = async () => null;
   invokeLog.length = 0;
   localStorageState.clear();
+  clearStoredAiSettingsAboutDismissed();
   resetSessionState();
 });
 
@@ -171,6 +187,55 @@ test("runEditorAiReview opens the missing-key modal when no saved key exists", a
     invokeLog.map((entry) => entry.command),
     ["load_ai_provider_secret"],
   );
+});
+
+test("runEditorAiReview uses the configured provider and model", async () => {
+  installTranslateFixture();
+  state.aiSettings = {
+    ...state.aiSettings,
+    actionConfig: {
+      ...state.aiSettings.actionConfig,
+      detailedConfiguration: true,
+      unified: {
+        providerId: "openai",
+        modelId: "gpt-5.4-mini",
+      },
+      actions: {
+        ...state.aiSettings.actionConfig.actions,
+        review: {
+          providerId: "gemini",
+          modelId: "gemini-2.0-flash",
+        },
+      },
+    },
+  };
+
+  invokeHandler = async (command, payload = {}) => {
+    if (command === "load_ai_provider_secret") {
+      assert.equal(payload.providerId, "gemini");
+      return "gm-key";
+    }
+    if (command === "run_ai_review") {
+      assert.deepEqual(payload, {
+        request: {
+          providerId: "gemini",
+          modelId: "gemini-2.0-flash",
+          text: "Texto original",
+          languageCode: "vi",
+        },
+      });
+      return {
+        suggestedText: "Texto revisado",
+      };
+    }
+
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  await runEditorAiReview(() => {});
+
+  assert.equal(state.editorChapter.aiReview.status, "ready");
+  assert.equal(state.editorChapter.aiReview.suggestedText, "Texto revisado");
 });
 
 test("applyEditorAiReview updates the editor row and clears the suggestion after save", async () => {
@@ -227,6 +292,9 @@ test("AI key load and save flows populate and persist aiSettings state", async (
     if (command === "load_ai_provider_secret") {
       return "sk-existing";
     }
+    if (command === "list_ai_provider_models") {
+      return [{ id: "gpt-5.4-mini", label: "gpt-5.4-mini" }];
+    }
     if (command === "save_ai_provider_secret") {
       savedPayload = payload;
       return null;
@@ -244,11 +312,274 @@ test("AI key load and save flows populate and persist aiSettings state", async (
   await saveAiProviderSecret(() => {});
 
   assert.deepEqual(savedPayload, {
-    providerId: "openai",
+    providerId: "gemini",
     apiKey: "  sk-updated  ",
   });
   assert.equal(state.aiSettings.status, "ready");
   assert.equal(state.aiSettings.apiKey, "sk-updated");
+  assert.equal(state.aiSettings.successMessage, "Gemini key saved.");
+
+  updateAiProviderSecretDraft("sk-next");
+  assert.equal(state.aiSettings.successMessage, "");
+});
+
+test("AI key provider selection loads and saves keys independently by provider", async () => {
+  resetSessionState();
+  state.screen = "aiKey";
+
+  const storedKeys = {
+    openai: "sk-openai",
+    gemini: "gm-existing",
+    claude: null,
+    deepseek: "ds-existing",
+  };
+
+  invokeHandler = async (command, payload = {}) => {
+    if (command === "load_ai_provider_secret") {
+      return storedKeys[payload.providerId] ?? null;
+    }
+    if (command === "list_ai_provider_models") {
+      return [{ id: "gpt-5.4-mini", label: "gpt-5.4-mini" }];
+    }
+    if (command === "save_ai_provider_secret") {
+      storedKeys[payload.providerId] = String(payload.apiKey ?? "").trim() || null;
+      return null;
+    }
+
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  await loadAiProviderSecret(() => {});
+  assert.equal(state.aiSettings.providerId, "gemini");
+  assert.equal(state.aiSettings.apiKey, "gm-existing");
+
+  await selectAiProvider(() => {}, "openai");
+  assert.equal(state.aiSettings.providerId, "openai");
+  assert.equal(state.aiSettings.apiKey, "sk-openai");
+
+  await selectAiProvider(() => {}, "gemini");
+  assert.equal(state.aiSettings.providerId, "gemini");
+  assert.equal(state.aiSettings.apiKey, "gm-existing");
+
+  updateAiProviderSecretDraft("  gm-updated  ");
+  await saveAiProviderSecret(() => {});
+
+  assert.equal(storedKeys.gemini, "gm-updated");
+  assert.equal(storedKeys.openai, "sk-openai");
+  assert.equal(state.aiSettings.successMessage, "Gemini key saved.");
+
+  await selectAiProvider(() => {}, "openai");
+  assert.equal(state.aiSettings.providerId, "openai");
+  assert.equal(state.aiSettings.apiKey, "sk-openai");
+
+  assert.deepEqual(
+    invokeLog
+      .filter((entry) => entry.command === "save_ai_provider_secret")
+      .map((entry) => entry.payload),
+    [{
+      providerId: "gemini",
+      apiKey: "  gm-updated  ",
+    }],
+  );
+});
+
+test("AI Settings shows the about modal by default and can persist dismissal", async () => {
+  resetSessionState();
+  state.screen = "aiKey";
+
+  invokeHandler = async (command) => {
+    if (command === "load_ai_provider_secret") {
+      return null;
+    }
+
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  await loadAiSettingsPage(() => {});
+  assert.equal(state.aiSettings.aboutModal.isOpen, true);
+  assert.equal(state.aiSettings.aboutModal.dontShowAgain, false);
+
+  updateAiSettingsAboutModalDontShowAgain(true);
+  assert.equal(state.aiSettings.aboutModal.dontShowAgain, true);
+
+  dismissAiSettingsAboutModal(() => {});
+  assert.equal(state.aiSettings.aboutModal.isOpen, false);
+  assert.equal(loadStoredAiSettingsAboutDismissed(), true);
+
+  await loadAiSettingsPage(() => {});
+  assert.equal(state.aiSettings.aboutModal.isOpen, false);
+});
+
+test("AI action preferences round-trip through persistent storage", () => {
+  saveStoredAiActionPreferences({
+    detailedConfiguration: true,
+    unified: {
+      providerId: "openai",
+      modelId: "gpt-5.4-mini",
+    },
+    actions: {
+      translate1: {
+        providerId: "openai",
+        modelId: "gpt-5.4-mini",
+      },
+      translate2: {
+        providerId: "gemini",
+        modelId: "gemini-2.0-flash",
+      },
+      review: {
+        providerId: "claude",
+        modelId: "claude-sonnet-4-20250514",
+      },
+      discuss: {
+        providerId: "deepseek",
+        modelId: "deepseek-chat",
+      },
+    },
+  }, "tester");
+
+  assert.deepEqual(
+    loadStoredAiActionPreferences("tester"),
+    {
+      detailedConfiguration: true,
+      unified: {
+        providerId: "openai",
+        modelId: "gpt-5.4-mini",
+      },
+      actions: {
+        translate1: {
+          providerId: "openai",
+          modelId: "gpt-5.4-mini",
+        },
+        translate2: {
+          providerId: "gemini",
+          modelId: "gemini-2.0-flash",
+        },
+        review: {
+          providerId: "claude",
+          modelId: "claude-sonnet-4-20250514",
+        },
+        discuss: {
+          providerId: "deepseek",
+          modelId: "deepseek-chat",
+        },
+      },
+    },
+  );
+});
+
+test("updateAiActionModel probes the selected Gemini model and opens the rate-limit warning modal on failure", async () => {
+  resetSessionState();
+  state.aiSettings = {
+    ...state.aiSettings,
+    actionConfig: {
+      ...state.aiSettings.actionConfig,
+      savedProviderIds: ["gemini"],
+      unified: {
+        providerId: "gemini",
+        modelId: "gemini-3-flash-preview",
+      },
+      modelOptionsByProvider: {
+        ...state.aiSettings.actionConfig.modelOptionsByProvider,
+        gemini: {
+          status: "ready",
+          error: "",
+          options: [
+            { id: "gemini-3-pro-preview", label: "gemini-3-pro-preview" },
+            { id: "gemini-3-flash-preview", label: "gemini-3-flash-preview" },
+          ],
+          hasLoaded: true,
+        },
+      },
+    },
+  };
+
+  invokeHandler = async (command, payload = {}) => {
+    if (command === "probe_ai_provider_model") {
+      assert.deepEqual(payload, {
+        request: {
+          providerId: "gemini",
+          modelId: "gemini-3-pro-preview",
+        },
+      });
+      throw new Error("Resource has been exhausted (e.g. check quota).");
+    }
+
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  await updateAiActionModel(() => {}, "unified", "gemini-3-pro-preview");
+
+  assert.equal(state.aiSettings.actionConfig.unified.modelId, "gemini-3-pro-preview");
+  assert.equal(state.aiSettings.modelErrorModal.isOpen, true);
+  assert.equal(
+    state.aiSettings.modelErrorModal.banner,
+    "Resource has been exhausted (e.g. check quota).",
+  );
+  assert.equal(
+    state.aiSettings.modelErrorModal.message,
+    "A rate limit on Gemini indicates that either you have not set up billing for your Google AI account or you have set up billing but you used up all the tokens that your usage plan allows in a given time period.",
+  );
+});
+
+test("explainAiModelProbeError falls back to the generic copy for unrecognized errors", () => {
+  assert.equal(
+    explainAiModelProbeError("openai", "Something weird happened."),
+    "Please try selecting a different model.",
+  );
+});
+
+test("pickPreferredAiModelId rolls OpenAI selections forward within the same family", () => {
+  const options = [
+    { id: "gpt-5.5", label: "gpt-5.5" },
+    { id: "gpt-5.5-pro", label: "gpt-5.5-pro" },
+    { id: "gpt-5.5-mini", label: "gpt-5.5-mini" },
+    { id: "gpt-5.5-nano", label: "gpt-5.5-nano" },
+  ];
+
+  assert.equal(
+    pickPreferredAiModelId("openai", options, "gpt-5.4"),
+    "gpt-5.5",
+  );
+  assert.equal(
+    pickPreferredAiModelId("openai", options, "gpt-5.4-pro"),
+    "gpt-5.5-pro",
+  );
+  assert.equal(
+    pickPreferredAiModelId("openai", options, "gpt-5.4-mini"),
+    "gpt-5.5-mini",
+  );
+  assert.equal(
+    pickPreferredAiModelId("openai", options, "gpt-5.4-nano"),
+    "gpt-5.5-nano",
+  );
+  assert.equal(
+    pickPreferredAiModelId("openai", options),
+    "gpt-5.5-mini",
+  );
+});
+
+test("pickPreferredAiModelId keeps Gemini selections in the same family and defaults to Flash", () => {
+  const options = [
+    { id: "gemini-3-pro-preview", label: "gemini-3-pro-preview" },
+    { id: "gemini-3-flash-preview", label: "gemini-3-flash-preview" },
+    {
+      id: "gemini-2.5-flash-lite-preview-09-2025",
+      label: "gemini-2.5-flash-lite-preview-09-2025",
+    },
+  ];
+
+  assert.equal(
+    pickPreferredAiModelId("gemini", options, "gemini-2.5-pro"),
+    "gemini-3-pro-preview",
+  );
+  assert.equal(
+    pickPreferredAiModelId("gemini", options, "gemini-2.5-flash-lite"),
+    "gemini-2.5-flash-lite-preview-09-2025",
+  );
+  assert.equal(
+    pickPreferredAiModelId("gemini", options),
+    "gemini-3-flash-preview",
+  );
 });
 
 test("AI review visibility suppresses stale suggestions and same-chapter UI keeps ai review state", () => {

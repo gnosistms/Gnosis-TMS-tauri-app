@@ -71,7 +71,7 @@ const screenRenderers = {
 const titles = {
   githubAppTest: "GitHub App Auth Test - Gnosis TMS",
   start: "Gnosis TMS",
-  aiKey: "AI Key - Gnosis TMS",
+  aiKey: "AI Settings - Gnosis TMS",
   teams: "Translation Teams - Gnosis TMS",
   projects: "Projects - Gnosis TMS",
   users: "Members - Gnosis TMS",
@@ -110,6 +110,9 @@ function captureFocusedInputState() {
     "[data-editor-replace-input]",
     "[data-editor-comment-draft]",
     "[data-ai-key-input]",
+    "[data-ai-settings-detailed-toggle]",
+    "[data-ai-settings-provider-select]",
+    "[data-ai-settings-model-select]",
   ];
 
   const selector =

@@ -13,6 +13,7 @@ import {
   switchEditorSidebarTab as switchEditorSidebarTabFlow,
   updateEditorCommentDraft as updateEditorCommentDraftFlow,
 } from "./editor-comments-flow.js";
+import { resolveEditorSidebarTabForField } from "./editor-comments.js";
 import {
   loadSelectedChapterEditorData as loadSelectedChapterEditorDataFlow,
   openTranslateChapter as openTranslateChapterFlow,
@@ -83,6 +84,7 @@ import { applyStructuralEditorChange } from "./editor-structural-change-flow.js"
 import { waitForNextPaint } from "./runtime.js";
 import { saveStoredEditorFontSizePx } from "./editor-preferences.js";
 import { ensureEditorRowReadyForActivation } from "./editor-row-sync-flow.js";
+import { findEditorRowById } from "./editor-utils.js";
 import {
   noteEditorBackgroundSyncScrollActivity as noteEditorBackgroundSyncScrollActivityFlow,
   syncEditorBackgroundNow as syncEditorBackgroundNowFlow,
@@ -150,17 +152,35 @@ export async function setActiveEditorField(render, rowId, languageCode, options 
     return;
   }
 
+  const previousSidebarTab = state.editorChapter.sidebarTab;
+  const row = findEditorRowById(rowId, state.editorChapter);
+  const nextSidebarTab = resolveEditorSidebarTabForField(
+    previousSidebarTab,
+    row,
+    languageCode,
+  );
+  const isSameSelection =
+    state.editorChapter.activeRowId === rowId
+    && state.editorChapter.activeLanguageCode === languageCode;
+  if (isSameSelection && previousSidebarTab === nextSidebarTab) {
+    return;
+  }
+
   state.editorChapter = {
     ...state.editorChapter,
     activeRowId: rowId,
     activeLanguageCode: languageCode,
+    sidebarTab: nextSidebarTab,
   };
   if (state.editorChapter.sidebarTab === "comments") {
     openEditorRowCommentsFlow(render, rowId, languageCode);
     return;
   }
-  if (state.editorChapter.sidebarTab === "duplicates") {
-    render?.();
+  if (state.editorChapter.sidebarTab === "translate") {
+    if (previousSidebarTab === "comments") {
+      render?.({ scope: "translate-body" });
+    }
+    render?.({ scope: "translate-sidebar" });
     return;
   }
 

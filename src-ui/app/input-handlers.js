@@ -1,4 +1,10 @@
-import { updateAiProviderSecretDraft } from "./ai-settings-flow.js";
+import {
+  updateAiSettingsAboutModalDontShowAgain,
+  updateAiActionDetailedConfiguration,
+  updateAiActionModel,
+  updateAiActionProvider,
+  updateAiProviderSecretDraft,
+} from "./ai-settings-flow.js";
 import { state } from "./state.js";
 import { syncAutoSizeTextarea, syncEditorRowTextareaHeight } from "./autosize.js";
 import { syncEditorVirtualizationRowLayout } from "./editor-virtualization.js";
@@ -438,6 +444,54 @@ function handleAiKeyInput(event) {
   return true;
 }
 
+function handleAiDetailedConfigurationInput(event, render) {
+  const input = event.target.closest("[data-ai-settings-detailed-toggle]");
+  if (!(input instanceof HTMLInputElement) || input.type !== "checkbox") {
+    return false;
+  }
+
+  updateAiActionDetailedConfiguration(render, input.checked);
+  return true;
+}
+
+function handleAiSettingsAboutModalInput(event) {
+  const input = event.target.closest("[data-ai-settings-about-dismiss-toggle]");
+  if (!(input instanceof HTMLInputElement) || input.type !== "checkbox") {
+    return false;
+  }
+
+  updateAiSettingsAboutModalDontShowAgain(input.checked);
+  return true;
+}
+
+function handleAiActionProviderInput(event, render) {
+  if (event.type !== "change") {
+    return false;
+  }
+
+  const input = event.target.closest("[data-ai-settings-provider-select]");
+  if (!(input instanceof HTMLSelectElement)) {
+    return false;
+  }
+
+  updateAiActionProvider(render, input.dataset.aiSettingsScope ?? "", input.value);
+  return true;
+}
+
+function handleAiActionModelInput(event, render) {
+  if (event.type !== "change") {
+    return false;
+  }
+
+  const input = event.target.closest("[data-ai-settings-model-select]");
+  if (!(input instanceof HTMLSelectElement)) {
+    return false;
+  }
+
+  void updateAiActionModel(render, input.dataset.aiSettingsScope ?? "", input.value);
+  return true;
+}
+
 const inputHandlers = [
   handleProjectCreationInput,
   handleProjectPermanentDeleteInput,
@@ -470,6 +524,10 @@ const inputHandlers = [
   handleEditorConflictResolutionInput,
   handleChapterGlossarySelectInput,
   handleAiKeyInput,
+  handleAiDetailedConfigurationInput,
+  handleAiSettingsAboutModalInput,
+  handleAiActionProviderInput,
+  handleAiActionModelInput,
 ];
 
 export function handleInputEvent(event, render) {

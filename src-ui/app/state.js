@@ -3,6 +3,9 @@ import {
   splitStoredTeamRecords,
   loadStoredTeamPendingMutations,
 } from "./team-storage.js";
+import { createAiActionConfigurationState } from "./ai-action-config.js";
+import { DEFAULT_AI_PROVIDER_ID } from "./ai-provider-config.js";
+import { loadStoredAiActionPreferences } from "./ai-action-preferences.js";
 import { loadStoredEditorFontSizePx } from "./editor-preferences.js";
 import { createResourcePageState } from "./resource-page-controller.js";
 import { createSyncState } from "./sync-state.js";
@@ -93,6 +96,7 @@ export const state = {
 export function hydratePersistentAppState() {
   hydrateStoredTeamState();
   hydrateStoredEditorPreferences();
+  hydrateStoredAiSettingsPreferences();
 }
 
 function isOrganizationTeamRecord(team) {
@@ -115,6 +119,16 @@ export function hydrateStoredEditorPreferences() {
   state.editorChapter = {
     ...state.editorChapter,
     fontSizePx: coerceEditorFontSizePx(loadStoredEditorFontSizePx()),
+  };
+}
+
+export function hydrateStoredAiSettingsPreferences() {
+  state.aiSettings = {
+    ...state.aiSettings,
+    actionConfig: {
+      ...state.aiSettings.actionConfig,
+      ...loadStoredAiActionPreferences(),
+    },
   };
 }
 
@@ -271,7 +285,7 @@ export function createEditorChapterState() {
     glossary: createEditorChapterGlossaryState(),
     activeRowId: null,
     activeLanguageCode: null,
-    sidebarTab: "history",
+    sidebarTab: "review",
     reviewExpandedSectionKeys: new Set(["last-update", "ai-review"]),
     aiReview: createEditorAiReviewState(),
     commentSeenRevisions: {},
@@ -306,15 +320,33 @@ export function createAiSettingsState() {
   return {
     status: "idle",
     error: "",
-    providerId: "openai",
+    successMessage: "",
+    providerId: DEFAULT_AI_PROVIDER_ID,
     apiKey: "",
     hasLoaded: false,
     returnScreen: "teams",
+    modelValidationRequestId: 0,
+    aboutModal: createAiSettingsAboutModalState(),
+    modelErrorModal: createAiModelErrorModalState(),
+    actionConfig: createAiActionConfigurationState(),
   };
 }
 
 export function createAiReviewMissingKeyModalState() {
   return createEntityModalState();
+}
+
+export function createAiSettingsAboutModalState() {
+  return createEntityModalState({
+    dontShowAgain: false,
+  });
+}
+
+export function createAiModelErrorModalState() {
+  return createEntityModalState({
+    banner: "",
+    message: "",
+  });
 }
 
 export function createEditorChapterFilterState() {

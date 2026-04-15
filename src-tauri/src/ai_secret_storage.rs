@@ -1,14 +1,14 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use iota_stronghold::Client;
+use iota_stronghold::{engine::snapshot::try_set_encrypt_work_factor, Client};
 use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Manager};
 use tauri_plugin_stronghold::stronghold::Stronghold;
 
 use crate::ai::types::AiProviderId;
 
-const AI_SECRET_SNAPSHOT_FILENAME: &str = "ai-provider-secrets.hold";
+const AI_SECRET_SNAPSHOT_FILENAME: &str = "ai-provider-secrets-v2.hold";
 const AI_SECRET_CLIENT_ID: &[u8] = b"ai-provider-secrets";
 
 pub(crate) fn load_ai_provider_secret(
@@ -54,6 +54,9 @@ fn stronghold_password(snapshot_path: &Path) -> Vec<u8> {
 }
 
 fn open_stronghold(snapshot_path: &Path) -> Result<Stronghold, String> {
+    try_set_encrypt_work_factor(0).map_err(|error| {
+        format!("Could not configure the encrypted AI key store work factor: {error}")
+    })?;
     Stronghold::new(snapshot_path, stronghold_password(snapshot_path))
         .map_err(|error| format!("Could not open the encrypted AI key store: {error}"))
 }
@@ -142,7 +145,10 @@ fn clear_ai_provider_secret_at_path(
 mod tests {
     use std::path::PathBuf;
 
-    use super::{provider_secret_key, stronghold_password};
+    use super::{
+        clear_ai_provider_secret_at_path, load_ai_provider_secret_at_path, provider_secret_key,
+        save_ai_provider_secret_at_path, stronghold_password,
+    };
     use crate::ai::types::AiProviderId;
 
     #[test]
@@ -161,5 +167,67 @@ mod tests {
             provider_secret_key(AiProviderId::OpenAi),
             "ai-provider/openai/api-key"
         );
+        assert_eq!(
+            provider_secret_key(AiProviderId::Gemini),
+            "ai-provider/gemini/api-key"
+        );
+    }
+
+    #[test]
+    fn stronghold_round_trips_ai_provider_secrets() {
+        let temp_dir = std::env::temp_dir().join(format!(
+            "gnosis-tms-ai-secret-storage-{}",
+            uuid::Uuid::now_v7()
+        ));
+        let snapshot_path = temp_dir.join("ai-provider-secrets.hold");
+
+        std::fs::create_dir_all(&temp_dir).unwrap();
+
+        save_ai_provider_secret_at_path(&snapshot_path, AiProviderId::OpenAi, "sk-test-123")
+            .unwrap();
+        let loaded_secret =
+            load_ai_provider_secret_at_path(&snapshot_path, AiProviderId::OpenAi).unwrap();
+        assert_eq!(loaded_secret.as_deref(), Some("sk-test-123"));
+
+        clear_ai_provider_secret_at_path(&snapshot_path, AiProviderId::OpenAi).unwrap();
+        let cleared_secret =
+            load_ai_provider_secret_at_path(&snapshot_path, AiProviderId::OpenAi).unwrap();
+        assert_eq!(cleared_secret, None);
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn stronghold_keeps_multiple_provider_secrets_at_once() {
+        let temp_dir = std::env::temp_dir().join(format!(
+            "gnosis-tms-ai-secret-storage-multi-{}",
+            uuid::Uuid::now_v7()
+        ));
+        let snapshot_path = temp_dir.join("ai-provider-secrets.hold");
+
+        std::fs::create_dir_all(&temp_dir).unwrap();
+
+        save_ai_provider_secret_at_path(&snapshot_path, AiProviderId::OpenAi, "sk-openai").unwrap();
+        save_ai_provider_secret_at_path(&snapshot_path, AiProviderId::Gemini, "gm-gemini").unwrap();
+
+        let openai_secret =
+            load_ai_provider_secret_at_path(&snapshot_path, AiProviderId::OpenAi).unwrap();
+        let gemini_secret =
+            load_ai_provider_secret_at_path(&snapshot_path, AiProviderId::Gemini).unwrap();
+
+        assert_eq!(openai_secret.as_deref(), Some("sk-openai"));
+        assert_eq!(gemini_secret.as_deref(), Some("gm-gemini"));
+
+        clear_ai_provider_secret_at_path(&snapshot_path, AiProviderId::Gemini).unwrap();
+
+        let openai_secret_after_clear =
+            load_ai_provider_secret_at_path(&snapshot_path, AiProviderId::OpenAi).unwrap();
+        let gemini_secret_after_clear =
+            load_ai_provider_secret_at_path(&snapshot_path, AiProviderId::Gemini).unwrap();
+
+        assert_eq!(openai_secret_after_clear.as_deref(), Some("sk-openai"));
+        assert_eq!(gemini_secret_after_clear, None);
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
     }
 }

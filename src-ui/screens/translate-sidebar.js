@@ -27,19 +27,10 @@ function renderSidebarTab(label, tab, activeTab) {
   `;
 }
 
-function renderDuplicatesPane(editorChapter, rows) {
-  const activeRow = rows.find((row) => row.id === editorChapter?.activeRowId) ?? null;
-  if (!activeRow) {
-    return `
-      <div class="history-empty">
-        <p>Select a translation to view duplicates.</p>
-      </div>
-    `;
-  }
-
+function renderTranslatePane() {
   return `
     <div class="history-empty">
-      <p>No duplicates for this row.</p>
+      <p>Translation tools are not available yet.</p>
     </div>
   `;
 }
@@ -223,22 +214,22 @@ function renderReviewPane(editorChapter, rows, languages) {
 
 export function renderTranslateSidebar(editorChapter, rows, languages, session) {
   const activeTab = normalizeEditorSidebarTab(editorChapter?.sidebarTab);
-  const body = activeTab === "comments"
+  const body = activeTab === "translate"
+    ? renderTranslatePane()
+    : activeTab === "comments"
     ? renderCommentsPane(editorChapter, rows, session)
     : activeTab === "review"
       ? renderReviewPane(editorChapter, rows, languages)
-    : activeTab === "duplicates"
-      ? renderDuplicatesPane(editorChapter, rows)
       : renderHistoryPane(editorChapter, rows, languages);
 
   return `
     <aside class="translate-sidebar card card--history">
       <div class="card__body">
         <div class="history-tabs">
+          ${renderSidebarTab("Translate", "translate", activeTab)}
           ${renderSidebarTab("Review", "review", activeTab)}
           ${renderSidebarTab("History", "history", activeTab)}
           ${renderSidebarTab("Comments", "comments", activeTab)}
-          ${renderSidebarTab("Duplicates", "duplicates", activeTab)}
         </div>
         ${body}
       </div>

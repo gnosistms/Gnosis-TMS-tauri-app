@@ -3,16 +3,21 @@ use std::time::Duration;
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 
-use crate::ai::types::{AiReviewRequest, AiReviewResponse};
+use crate::ai::{
+    build_review_prompt,
+    types::{AiProviderModel, AiReviewRequest, AiReviewResponse},
+};
 
 const OPENAI_RESPONSES_API_URL: &str = "https://api.openai.com/v1/responses";
-const OPENAI_REVIEW_MODEL: &str = "gpt-5.4-mini";
+const OPENAI_MODELS_API_URL: &str = "https://api.openai.com/v1/models";
 
 #[derive(Debug, Serialize)]
 struct OpenAiResponsesRequest<'a> {
     model: &'a str,
     input: String,
     store: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    max_output_tokens: Option<u32>,
     text: OpenAiTextConfig<'a>,
 }
 
@@ -33,6 +38,18 @@ struct OpenAiResponsesCreateResponse {
     output_text: String,
     #[serde(default)]
     output: Vec<OpenAiOutputItem>,
+}
+
+#[derive(Debug, Deserialize)]
+struct OpenAiModelsListResponse {
+    #[serde(default)]
+    data: Vec<OpenAiModelEntry>,
+}
+
+#[derive(Debug, Deserialize)]
+struct OpenAiModelEntry {
+    #[serde(default)]
+    id: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -60,6 +77,137 @@ struct OpenAiErrorBody {
     message: String,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct OpenAiModelVersion {
+    major: u32,
+    minor: Option<u32>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum OpenAiModelFamily {
+    General,
+    Pro,
+    Mini,
+    Nano,
+}
+
+impl OpenAiModelFamily {
+    fn ordered() -> [Self; 4] {
+        [Self::General, Self::Pro, Self::Mini, Self::Nano]
+    }
+
+    fn suffix(self) -> Option<&'static str> {
+        match self {
+            Self::General => None,
+            Self::Pro => Some("-pro"),
+            Self::Mini => Some("-mini"),
+            Self::Nano => Some("-nano"),
+        }
+    }
+}
+
+pub(crate) fn list_models(api_key: &str) -> Result<Vec<AiProviderModel>, String> {
+    let normalized_key = api_key.trim();
+    if normalized_key.is_empty() {
+        return Err("No OpenAI API key is saved yet.".to_string());
+    }
+
+    let client = reqwest::blocking::Client::builder()
+        .timeout(Duration::from_secs(20))
+        .build()
+        .map_err(|error| format!("Could not start the OpenAI models request: {error}"))?;
+
+    let response = client
+        .get(OPENAI_MODELS_API_URL)
+        .header("Authorization", format!("Bearer {normalized_key}"))
+        .header("User-Agent", "gnosis-tms")
+        .send()
+        .map_err(normalize_transport_error)?;
+    let status = response.status();
+    let body = response
+        .text()
+        .map_err(|error| format!("Could not read the OpenAI models response: {error}"))?;
+
+    if !status.is_success() {
+        return Err(normalize_http_error(status, &body));
+    }
+
+    let payload: OpenAiModelsListResponse = serde_json::from_str(&body)
+        .map_err(|_| "OpenAI returned a malformed models response.".to_string())?;
+    let mut models = payload
+        .data
+        .into_iter()
+        .filter_map(|model| {
+            let id = model.id.trim().to_string();
+            if id.is_empty() || !model_supports_text_review(&id) {
+                return None;
+            }
+            Some(AiProviderModel {
+                label: id.clone(),
+                id,
+            })
+        })
+        .collect::<Vec<_>>();
+    models.sort_by(|left, right| left.label.cmp(&right.label));
+    models.dedup_by(|left, right| left.id == right.id);
+    let recommended_models = shortlist_recommended_models(&models);
+    let models = if recommended_models.is_empty() {
+        models
+    } else {
+        recommended_models
+    };
+
+    if models.is_empty() {
+        return Err("OpenAI did not return any compatible text models for this API key.".to_string());
+    }
+
+    Ok(models)
+}
+
+pub(crate) fn probe_model(model_id: &str, api_key: &str) -> Result<(), String> {
+    let normalized_key = api_key.trim();
+    if normalized_key.is_empty() {
+        return Err("No OpenAI API key is saved yet.".to_string());
+    }
+
+    let normalized_model_id = model_id.trim();
+    if normalized_model_id.is_empty() {
+        return Err("Select an OpenAI model before testing it.".to_string());
+    }
+
+    let client = reqwest::blocking::Client::builder()
+        .timeout(Duration::from_secs(30))
+        .build()
+        .map_err(|error| format!("Could not start the OpenAI model test request: {error}"))?;
+
+    let response = client
+        .post(OPENAI_RESPONSES_API_URL)
+        .header("Authorization", format!("Bearer {normalized_key}"))
+        .header("Content-Type", "application/json")
+        .header("User-Agent", "gnosis-tms")
+        .json(&OpenAiResponsesRequest {
+            model: normalized_model_id,
+            input: "Reply with OK.".to_string(),
+            store: false,
+            max_output_tokens: Some(1),
+            text: OpenAiTextConfig {
+                format: OpenAiTextFormat { kind: "text" },
+            },
+        })
+        .send()
+        .map_err(normalize_transport_error)?;
+    let status = response.status();
+    let body = response
+        .text()
+        .map_err(|error| format!("Could not read the OpenAI model test response: {error}"))?;
+
+    if !status.is_success() {
+        return Err(extract_probe_error_message(status, &body, "OpenAI"));
+    }
+
+    Ok(())
+}
+
 pub(crate) fn run_review(
     request: &AiReviewRequest,
     api_key: &str,
@@ -80,9 +228,10 @@ pub(crate) fn run_review(
         .header("Content-Type", "application/json")
         .header("User-Agent", "gnosis-tms")
         .json(&OpenAiResponsesRequest {
-            model: OPENAI_REVIEW_MODEL,
+            model: request.model_id.trim(),
             input: build_review_prompt(request),
             store: false,
+            max_output_tokens: None,
             text: OpenAiTextConfig {
                 format: OpenAiTextFormat { kind: "text" },
             },
@@ -102,21 +251,6 @@ pub(crate) fn run_review(
     normalize_review_response(&body)
 }
 
-fn build_review_prompt(request: &AiReviewRequest) -> String {
-    let language_code = request.language_code.trim();
-    if language_code.is_empty() {
-        format!(
-            "Check spelling and grammar on the following text. Output only your suggested revised version of the text. Do not explain what you changed and why.\n\nText to review:\n{}",
-            request.text
-        )
-    } else {
-        format!(
-            "Check spelling and grammar on the following text. Output only your suggested revised version of the text. Do not explain what you changed and why.\n\nLanguage code: {language_code}\n\nText to review:\n{}",
-            request.text
-        )
-    }
-}
-
 fn normalize_transport_error(error: reqwest::Error) -> String {
     if error.is_timeout() {
         return "The AI review request timed out. Try again.".to_string();
@@ -129,10 +263,84 @@ fn normalize_transport_error(error: reqwest::Error) -> String {
     "The app could not complete the AI review request. Try again.".to_string()
 }
 
+fn model_supports_text_review(model_id: &str) -> bool {
+    let normalized = model_id.trim().to_lowercase();
+    !normalized.is_empty()
+        && ![
+            "embedding",
+            "moderation",
+            "whisper",
+            "tts",
+            "transcribe",
+            "gpt-image",
+            "dall-e",
+            "realtime",
+            "omni-moderation",
+            "search",
+        ]
+        .iter()
+        .any(|blocked| normalized.contains(blocked))
+}
+
+fn shortlist_recommended_models(models: &[AiProviderModel]) -> Vec<AiProviderModel> {
+    OpenAiModelFamily::ordered()
+        .into_iter()
+        .filter_map(|family| latest_openai_model_for_family(models, family))
+        .collect()
+}
+
+fn latest_openai_model_for_family(
+    models: &[AiProviderModel],
+    family: OpenAiModelFamily,
+) -> Option<AiProviderModel> {
+    models
+        .iter()
+        .filter_map(|model| {
+            parse_openai_model_version_for_family(&model.id, family).map(|version| (version, model))
+        })
+        .max_by_key(|(version, _model)| *version)
+        .map(|(_version, model)| model.clone())
+}
+
+fn parse_openai_model_version_for_family(
+    model_id: &str,
+    family: OpenAiModelFamily,
+) -> Option<OpenAiModelVersion> {
+    let normalized_model_id = model_id.trim().strip_prefix("gpt-")?;
+    let version_text = match family.suffix() {
+        Some(suffix) => normalized_model_id.strip_suffix(suffix)?,
+        None => normalized_model_id,
+    };
+    if version_text.contains('-') {
+        return None;
+    }
+
+    parse_openai_model_version(version_text)
+}
+
+fn parse_openai_model_version(version_text: &str) -> Option<OpenAiModelVersion> {
+    let trimmed = version_text.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let mut parts = trimmed.split('.');
+    let major = parts.next()?.parse::<u32>().ok()?;
+    let minor = match parts.next() {
+        Some(value) => Some(value.parse::<u32>().ok()?),
+        None => None,
+    };
+    if parts.next().is_some() {
+        return None;
+    }
+
+    Some(OpenAiModelVersion { major, minor })
+}
+
 fn normalize_http_error(status: StatusCode, body: &str) -> String {
     match status {
         StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => {
-            "The saved OpenAI API key was rejected. Update it on the AI Key page and try again."
+            "The saved OpenAI API key was rejected. Update it in AI Settings and try again."
                 .to_string()
         }
         StatusCode::TOO_MANY_REQUESTS => {
@@ -156,6 +364,12 @@ fn extract_api_error_message(body: &str) -> Option<String> {
         .and_then(|payload| payload.error)
         .map(|error| error.message.trim().to_string())
         .filter(|message| !message.is_empty())
+}
+
+fn extract_probe_error_message(status: StatusCode, body: &str, provider_name: &str) -> String {
+    extract_api_error_message(body).unwrap_or_else(|| {
+        format!("{provider_name} returned {status} while testing the selected model.")
+    })
 }
 
 pub(crate) fn normalize_review_response(body: &str) -> Result<AiReviewResponse, String> {
@@ -189,7 +403,8 @@ fn extract_suggested_text(payload: OpenAiResponsesCreateResponse) -> Result<Stri
 
 #[cfg(test)]
 mod tests {
-    use super::normalize_review_response;
+    use super::{normalize_review_response, shortlist_recommended_models};
+    use crate::ai::types::AiProviderModel;
 
     #[test]
     fn normalize_review_response_prefers_top_level_output_text() {
@@ -232,5 +447,105 @@ mod tests {
         let error = normalize_review_response(body).unwrap_err();
 
         assert_eq!(error, "OpenAI returned an empty AI review response.");
+    }
+
+    #[test]
+    fn shortlist_recommended_models_keeps_only_latest_model_per_family() {
+        let models = vec![
+            AiProviderModel {
+                id: "gpt-5".to_string(),
+                label: "gpt-5".to_string(),
+            },
+            AiProviderModel {
+                id: "gpt-5.2-pro".to_string(),
+                label: "gpt-5.2-pro".to_string(),
+            },
+            AiProviderModel {
+                id: "gpt-5.3-mini".to_string(),
+                label: "gpt-5.3-mini".to_string(),
+            },
+            AiProviderModel {
+                id: "gpt-5.1-nano".to_string(),
+                label: "gpt-5.1-nano".to_string(),
+            },
+            AiProviderModel {
+                id: "gpt-5.4".to_string(),
+                label: "gpt-5.4".to_string(),
+            },
+            AiProviderModel {
+                id: "gpt-5.4-pro".to_string(),
+                label: "gpt-5.4-pro".to_string(),
+            },
+            AiProviderModel {
+                id: "gpt-5.4-mini".to_string(),
+                label: "gpt-5.4-mini".to_string(),
+            },
+            AiProviderModel {
+                id: "gpt-5.4-nano".to_string(),
+                label: "gpt-5.4-nano".to_string(),
+            },
+            AiProviderModel {
+                id: "gpt-5.4-2026-01-15".to_string(),
+                label: "gpt-5.4-2026-01-15".to_string(),
+            },
+            AiProviderModel {
+                id: "gpt-5.4-mini-2026-01-15".to_string(),
+                label: "gpt-5.4-mini-2026-01-15".to_string(),
+            },
+        ];
+
+        let recommended = shortlist_recommended_models(&models);
+        let ids = recommended
+            .into_iter()
+            .map(|model| model.id)
+            .collect::<Vec<_>>();
+
+        assert_eq!(ids, vec!["gpt-5.4", "gpt-5.4-pro", "gpt-5.4-mini", "gpt-5.4-nano"]);
+    }
+
+    #[test]
+    fn shortlist_recommended_models_prefers_newer_major_family_when_present() {
+        let models = vec![
+            AiProviderModel {
+                id: "gpt-5.5".to_string(),
+                label: "gpt-5.5".to_string(),
+            },
+            AiProviderModel {
+                id: "gpt-5.5-mini".to_string(),
+                label: "gpt-5.5-mini".to_string(),
+            },
+            AiProviderModel {
+                id: "gpt-5.5-pro".to_string(),
+                label: "gpt-5.5-pro".to_string(),
+            },
+            AiProviderModel {
+                id: "gpt-5.5-nano".to_string(),
+                label: "gpt-5.5-nano".to_string(),
+            },
+            AiProviderModel {
+                id: "gpt-6".to_string(),
+                label: "gpt-6".to_string(),
+            },
+            AiProviderModel {
+                id: "gpt-6-pro".to_string(),
+                label: "gpt-6-pro".to_string(),
+            },
+            AiProviderModel {
+                id: "gpt-6-mini".to_string(),
+                label: "gpt-6-mini".to_string(),
+            },
+            AiProviderModel {
+                id: "gpt-6-nano".to_string(),
+                label: "gpt-6-nano".to_string(),
+            },
+        ];
+
+        let recommended = shortlist_recommended_models(&models);
+        let ids = recommended
+            .into_iter()
+            .map(|model| model.id)
+            .collect::<Vec<_>>();
+
+        assert_eq!(ids, vec!["gpt-6", "gpt-6-pro", "gpt-6-mini", "gpt-6-nano"]);
     }
 }

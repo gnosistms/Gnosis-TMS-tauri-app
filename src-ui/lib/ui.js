@@ -216,7 +216,7 @@ export function sectionSeparator({ label, action, isOpen = false }) {
 
 const sectionNavConfig = {
   teams: [
-    { label: "AI Key", target: "aiKey" },
+    { label: "AI Settings", target: "aiKey" },
     { label: "Logout", target: "start" },
   ],
   projects: [
@@ -288,7 +288,12 @@ export function renderInlineStateBox({
     return "";
   }
 
-  const toneClass = tone === "error" ? "message-box--error" : "message-box--warning";
+  const toneClass =
+    tone === "error"
+      ? "message-box--error"
+      : tone === "success"
+        ? "message-box--success"
+        : "message-box--warning";
   const classes = ["message-box", toneClass, className].filter(Boolean).join(" ");
 
   return `

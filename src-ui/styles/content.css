@@ -33,11 +33,13 @@
 .ai-key-page {
   min-height: calc(100vh - var(--header-height) - 76px);
   display: grid;
-  align-items: center;
+  grid-template-columns: minmax(0, 620px) minmax(0, 620px);
+  justify-content: center;
+  align-items: start;
+  gap: 24px;
 }
 
 .ai-key-card-shell {
-  justify-self: center;
   width: min(620px, 100%);
 }
 
@@ -45,9 +47,108 @@
   gap: 16px;
 }
 
+.ai-actions-card-shell {
+  width: min(620px, 100%);
+}
+
+.ai-actions-card {
+  gap: 16px;
+}
+
+.ai-key-provider-control {
+  display: grid;
+  gap: 10px;
+}
+
+.ai-key-provider-control .segmented-control {
+  width: 100%;
+  display: flex;
+  flex-wrap: wrap;
+}
+
+.ai-key-provider-control .segmented-control__button {
+  flex: 1 1 120px;
+  min-width: 0;
+}
+
 .ai-key-card .text-action {
   font-size: inherit;
   font-weight: 700;
+}
+
+.ai-actions-stack {
+  display: grid;
+  gap: 14px;
+}
+
+.ai-model-error-modal__banner {
+  min-width: 0;
+  overflow-x: hidden;
+  overflow-y: visible;
+  white-space: normal;
+}
+
+.ai-model-error-modal__banner .message-box__text {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.ai-about-modal__message {
+  white-space: normal;
+}
+
+.ai-about-modal__actions {
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+}
+
+.ai-about-modal__actions .field__checkbox {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.ai-actions-section {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid rgba(164, 112, 41, 0.16);
+  border-radius: var(--radius-ui);
+  background: rgba(255, 251, 246, 0.72);
+}
+
+.ai-actions-section__title {
+  margin: 0;
+  font-size: 1.1rem;
+  line-height: 1.2;
+}
+
+.ai-actions-section__fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.ai-actions-section .field__select {
+  min-height: 32.4px;
+  height: 32.4px;
+}
+
+@media (max-width: 1200px) {
+  .ai-key-page {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 720px) {
+  .ai-about-modal__actions {
+    justify-content: flex-start;
+  }
+
+  .ai-actions-section__fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 .stack {

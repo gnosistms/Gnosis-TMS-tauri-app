@@ -1,5 +1,6 @@
 import { saveStoredProjectsForTeam } from "./project-cache.js";
 import { currentEditorAiReviewForSelection } from "./editor-ai-review-state.js";
+import { normalizeEditorSidebarTab } from "./editor-comments.js";
 import { pruneEditorCommentSeenRevisionsForRows } from "./editor-comments-state.js";
 import { currentEditorHistoryForSelection } from "./editor-history-state.js";
 import { compactDirtyRowIds, reconcileDirtyTrackedEditorRows } from "./editor-dirty-row-state.js";
@@ -70,7 +71,7 @@ export function applyEditorUiState(nextEditorChapter, previousEditorChapter = st
   const sidebarTab =
     typeof previousEditorChapter?.sidebarTab === "string"
       ? previousEditorChapter.sidebarTab
-      : "history";
+      : "review";
 
   return pruneEditorCommentSeenRevisionsForRows({
     ...nextEditorChapter,
@@ -125,7 +126,7 @@ export function applyEditorUiState(nextEditorChapter, previousEditorChapter = st
       hasEditorRow(nextEditorChapter, activeRowId) && hasEditorLanguage(nextEditorChapter, activeLanguageCode)
         ? activeLanguageCode
         : null,
-    sidebarTab: sidebarTab === "comments" || sidebarTab === "review" || sidebarTab === "duplicates" ? sidebarTab : "history",
+    sidebarTab: normalizeEditorSidebarTab(sidebarTab),
     reviewExpandedSectionKeys: isSameChapter
       ? cloneExpandedReviewSectionKeys(previousEditorChapter?.reviewExpandedSectionKeys)
       : new Set(["last-update", "ai-review"]),

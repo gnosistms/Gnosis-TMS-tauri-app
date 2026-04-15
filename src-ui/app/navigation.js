@@ -1,5 +1,5 @@
 import { clearStoredAuthSession } from "./auth-storage.js";
-import { loadAiProviderSecret, openAiKeyPage } from "./ai-settings-flow.js";
+import { loadAiSettingsPage, openAiKeyPage } from "./ai-settings-flow.js";
 import {
   resetPageSync,
   beginPageSync,
@@ -218,7 +218,7 @@ export async function refreshCurrentScreen(render) {
     }
 
     if (screen === "aiKey") {
-      await loadAiProviderSecret(render);
+      await loadAiSettingsPage(render);
       await completePageSync(render);
       return;
     }

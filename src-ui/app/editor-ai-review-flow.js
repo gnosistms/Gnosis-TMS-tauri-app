@@ -8,7 +8,10 @@ import {
   normalizeEditorAiReviewState,
   resolveVisibleEditorAiReview,
 } from "./editor-ai-review-state.js";
-import { openAiReviewMissingKeyModal } from "./ai-settings-flow.js";
+import {
+  openAiReviewMissingKeyModal,
+  resolveAiReviewProviderAndModel,
+} from "./ai-settings-flow.js";
 import { rowHasFieldChanges } from "./editor-row-persistence-model.js";
 import { findEditorRowById, hasActiveEditorField } from "./editor-utils.js";
 import { invoke } from "./runtime.js";
@@ -25,7 +28,7 @@ function createAiReviewRequestKey(chapterId, rowId, languageCode) {
 function errorMeansMissingAiKey(message) {
   const normalizedMessage = String(message ?? "").trim().toLowerCase();
   return (
-    normalizedMessage.includes("no openai api key is saved yet")
+    normalizedMessage.includes("api key is saved yet")
     || normalizedMessage.includes("save one first")
   );
 }
@@ -73,7 +76,7 @@ export async function runEditorAiReview(render) {
     return;
   }
 
-  const providerId = state.aiSettings?.providerId === "openai" ? "openai" : "openai";
+  const { providerId, modelId } = resolveAiReviewProviderAndModel();
 
   try {
     const savedKey = await invoke("load_ai_provider_secret", { providerId });
@@ -118,6 +121,7 @@ export async function runEditorAiReview(render) {
     const payload = await invoke("run_ai_review", {
       request: {
         providerId,
+        modelId,
         text: context.text,
         languageCode: context.languageCode,
       },

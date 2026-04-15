@@ -32,8 +32,12 @@ use tauri::{Emitter, Manager};
 
 use crate::{
     ai::{
+        load_ai_provider_models as load_ai_provider_models_task,
+        probe_ai_model as probe_ai_model_task,
         run_ai_review as run_ai_review_task,
-        types::{AiProviderId, AiReviewRequest, AiReviewResponse},
+        types::{
+            AiModelProbeRequest, AiProviderId, AiProviderModel, AiReviewRequest, AiReviewResponse,
+        },
     },
     ai_secret_storage::{
         clear_ai_provider_secret as clear_ai_provider_secret_value,
@@ -131,36 +135,66 @@ fn check_internet_connection() -> bool {
 }
 
 #[tauri::command]
-fn load_ai_provider_secret(
+async fn load_ai_provider_secret(
     app: tauri::AppHandle,
     provider_id: AiProviderId,
 ) -> Result<Option<String>, String> {
-    load_ai_provider_secret_value(&app, provider_id)
+    tauri::async_runtime::spawn_blocking(move || load_ai_provider_secret_value(&app, provider_id))
+        .await
+        .map_err(|error| format!("The AI key load worker failed: {error}"))?
 }
 
 #[tauri::command]
-fn save_ai_provider_secret(
+async fn save_ai_provider_secret(
     app: tauri::AppHandle,
     provider_id: AiProviderId,
     api_key: String,
 ) -> Result<(), String> {
-    save_ai_provider_secret_value(&app, provider_id, &api_key)
+    tauri::async_runtime::spawn_blocking(move || {
+        save_ai_provider_secret_value(&app, provider_id, &api_key)
+    })
+    .await
+    .map_err(|error| format!("The AI key save worker failed: {error}"))?
 }
 
 #[tauri::command]
-fn clear_ai_provider_secret(
+async fn list_ai_provider_models(
+    app: tauri::AppHandle,
+    provider_id: AiProviderId,
+) -> Result<Vec<AiProviderModel>, String> {
+    tauri::async_runtime::spawn_blocking(move || load_ai_provider_models_task(&app, provider_id))
+        .await
+        .map_err(|error| format!("The AI models worker failed: {error}"))?
+}
+
+#[tauri::command]
+async fn clear_ai_provider_secret(
     app: tauri::AppHandle,
     provider_id: AiProviderId,
 ) -> Result<(), String> {
-    clear_ai_provider_secret_value(&app, provider_id)
+    tauri::async_runtime::spawn_blocking(move || clear_ai_provider_secret_value(&app, provider_id))
+        .await
+        .map_err(|error| format!("The AI key clear worker failed: {error}"))?
 }
 
 #[tauri::command]
-fn run_ai_review(
+async fn run_ai_review(
     app: tauri::AppHandle,
     request: AiReviewRequest,
 ) -> Result<AiReviewResponse, String> {
-    run_ai_review_task(&app, request)
+    tauri::async_runtime::spawn_blocking(move || run_ai_review_task(&app, request))
+        .await
+        .map_err(|error| format!("The AI review worker failed: {error}"))?
+}
+
+#[tauri::command]
+async fn probe_ai_provider_model(
+    app: tauri::AppHandle,
+    request: AiModelProbeRequest,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || probe_ai_model_task(&app, request))
+        .await
+        .map_err(|error| format!("The AI model probe worker failed: {error}"))?
 }
 
 const SYNC_WITH_SERVER_MENU_ID: &str = "sync-with-server";
@@ -331,8 +365,10 @@ pub fn run() {
             clear_broker_auth_session,
             load_ai_provider_secret,
             save_ai_provider_secret,
+            list_ai_provider_models,
             clear_ai_provider_secret,
             run_ai_review,
+            probe_ai_provider_model,
             create_team_setup_draft,
             begin_github_app_install,
             begin_github_app_test_install,
