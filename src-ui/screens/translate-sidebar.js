@@ -2,7 +2,6 @@ import {
   resolveVisibleAiTranslateActions,
 } from "../app/ai-action-config.js";
 import {
-  getAiProviderActionLabel,
   getAiProviderIconUrl,
 } from "../app/ai-provider-config.js";
 import { resolveVisibleEditorAiTranslateAction } from "../app/editor-ai-translate-state.js";
@@ -141,7 +140,6 @@ function renderTranslatePane(editorChapter, rows, languages, sourceCode, targetC
     const providerId = selection.providerId;
     const modelId = typeof selection.modelId === "string" ? selection.modelId.trim() : "";
     const visibleAction = visibleActions[index];
-    const providerLabel = getAiProviderActionLabel(providerId);
     const visibleModelLabel = modelId || "Select a model in AI Settings";
     return {
       actionId: translateAction.actionId,
@@ -150,7 +148,7 @@ function renderTranslatePane(editorChapter, rows, languages, sourceCode, targetC
       isLoading: visibleAction.isLoading,
       isDisabled: !canTranslate || !modelId,
       modelLabel: visibleModelLabel,
-      tooltip: `Translate the ${sourceLanguage.name ?? sourceLanguage.code} to ${targetLanguage.name ?? targetLanguage.code} using ${providerLabel} - ${visibleModelLabel}`,
+      tooltip: `Translate ${sourceLanguage.name ?? sourceLanguage.code} to ${targetLanguage.name ?? targetLanguage.code} using ${visibleModelLabel}`,
       showError: visibleAction.showError,
       error: visibleAction.error,
     };
