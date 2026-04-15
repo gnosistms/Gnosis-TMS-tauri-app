@@ -135,8 +135,9 @@
   padding: 0 14px;
 }
 
-.toolbar-search .search-field {
-  flex: 1 1 220px;
+.page-header--editor .toolbar-search .search-field {
+  flex: 0 1 300px;
+  max-width: 300px;
 }
 
 .toolbar-search > * {

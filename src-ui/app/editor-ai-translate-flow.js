@@ -11,6 +11,7 @@ import {
   currentEditorAiTranslateRequestMatches,
 } from "./editor-ai-translate-state.js";
 import { resolveEditorAiTranslateLanguages } from "./editor-ai-translate-target.js";
+import { buildEditorAiTranslationGlossaryHints } from "./editor-glossary-highlighting.js";
 import { invoke } from "./runtime.js";
 import { showNoticeBadge } from "./status-feedback.js";
 import { findEditorRowById } from "./editor-utils.js";
@@ -72,6 +73,12 @@ function activeEditorTranslateContext(chapterState = state.editorChapter) {
         ? targetLanguage.name.trim()
         : targetLanguageCode,
     sourceText: row.fields?.[sourceLanguageCode] ?? "",
+    glossaryHints: buildEditorAiTranslationGlossaryHints(
+      row.fields?.[sourceLanguageCode] ?? "",
+      sourceLanguageCode,
+      targetLanguageCode,
+      chapterState.glossary?.matcherModel ?? null,
+    ),
   };
 }
 
@@ -198,6 +205,9 @@ export async function runEditorAiTranslate(render, actionId, operations = {}) {
         text: context.sourceText,
         sourceLanguage: context.sourceLanguageLabel,
         targetLanguage: context.targetLanguageLabel,
+        ...(Array.isArray(context.glossaryHints) && context.glossaryHints.length > 0
+          ? { glossaryHints: context.glossaryHints }
+          : {}),
       },
     });
 

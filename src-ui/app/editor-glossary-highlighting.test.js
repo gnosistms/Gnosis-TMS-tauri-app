@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  buildEditorAiTranslationGlossaryHints,
   buildEditorGlossaryModel,
   buildEditorRowGlossaryHighlights,
   findLongestGlossaryMatches,
@@ -182,4 +183,54 @@ test("target highlights include a structured tooltip payload with source variant
   assert.deepEqual(payload.variants, ["gnostica", "gnostico"]);
   assert.deepEqual(payload.translatorNotes, ["Lien quan den Gnosis"]);
   assert.deepEqual(payload.footnotes, ["Chu thich bo sung"]);
+});
+
+test("translation glossary hints use the matched source term, ordered target variants, and notes only", () => {
+  const model = buildEditorGlossaryModel(glossaryPayload({
+    terms: [
+      {
+        termId: "t1",
+        sourceTerms: ["gnostica", "gnostico"],
+        targetTerms: ["hoc tro gnosis", "cua gnosis"],
+        notesToTranslators: "Lien quan den Gnosis",
+        footnote: "Chu thich bo sung",
+      },
+    ],
+  }));
+
+  const hints = buildEditorAiTranslationGlossaryHints(
+    "La gnostica habla.",
+    "es",
+    "vi",
+    model,
+  );
+
+  assert.deepEqual(hints, [{
+    sourceTerm: "gnostica",
+    targetVariants: ["hoc tro gnosis", "cua gnosis"],
+    notes: ["Lien quan den Gnosis"],
+  }]);
+  assert.equal("footnotes" in hints[0], false);
+});
+
+test("translation glossary hints are omitted when the translation target does not match the glossary target", () => {
+  const model = buildEditorGlossaryModel(glossaryPayload({
+    terms: [
+      {
+        termId: "t1",
+        sourceTerms: ["gnostica"],
+        targetTerms: ["hoc tro gnosis"],
+        notesToTranslators: "Lien quan den Gnosis",
+      },
+    ],
+  }));
+
+  const hints = buildEditorAiTranslationGlossaryHints(
+    "La gnostica habla.",
+    "es",
+    "fr",
+    model,
+  );
+
+  assert.deepEqual(hints, []);
 });

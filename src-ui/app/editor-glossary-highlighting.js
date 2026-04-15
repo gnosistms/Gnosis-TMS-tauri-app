@@ -61,6 +61,24 @@ function sanitizeTermList(values) {
     .filter(Boolean);
 }
 
+function appendOrderedUniqueTerms(orderedTerms, uniqueTerms, incomingValues) {
+  for (const value of sanitizeTermList(incomingValues)) {
+    if (uniqueTerms.has(value)) {
+      continue;
+    }
+    uniqueTerms.add(value);
+    orderedTerms.push(value);
+  }
+}
+
+function orderedCandidateValues(candidate, orderedKey, setKey) {
+  if (Array.isArray(candidate?.[orderedKey])) {
+    return sanitizeTermList(candidate[orderedKey]);
+  }
+
+  return sanitizeTermList(Array.from(candidate?.[setKey] || []));
+}
+
 function glossaryDetailFields(term) {
   return {
     translatorNotes:
@@ -92,28 +110,52 @@ function buildLanguageGlossaryMatcher(entries, matchLanguage) {
       const key = tokens.join(" ");
       const existingCandidate = termMap.get(key);
       if (existingCandidate) {
-        for (const sourceTerm of entry.sourceTerms || []) {
-          existingCandidate.sourceTerms.add(sourceTerm);
-        }
-        for (const targetTerm of entry.targetTerms || []) {
-          existingCandidate.targetTerms.add(targetTerm);
-        }
-        for (const note of entry.translatorNotes || []) {
-          existingCandidate.translatorNotes.add(note);
-        }
-        for (const footnote of entry.footnotes || []) {
-          existingCandidate.footnotes.add(footnote);
-        }
+        appendOrderedUniqueTerms(
+          existingCandidate.sourceTermsOrdered,
+          existingCandidate.sourceTerms,
+          entry.sourceTerms,
+        );
+        appendOrderedUniqueTerms(
+          existingCandidate.targetTermsOrdered,
+          existingCandidate.targetTerms,
+          entry.targetTerms,
+        );
+        appendOrderedUniqueTerms(
+          existingCandidate.translatorNotesOrdered,
+          existingCandidate.translatorNotes,
+          entry.translatorNotes,
+        );
+        appendOrderedUniqueTerms(
+          existingCandidate.footnotesOrdered,
+          existingCandidate.footnotes,
+          entry.footnotes,
+        );
         continue;
       }
 
       const firstToken = tokens[0];
+      const sourceTermsOrdered = [];
+      const sourceTerms = new Set();
+      appendOrderedUniqueTerms(sourceTermsOrdered, sourceTerms, entry.sourceTerms);
+      const targetTermsOrdered = [];
+      const targetTerms = new Set();
+      appendOrderedUniqueTerms(targetTermsOrdered, targetTerms, entry.targetTerms);
+      const translatorNotesOrdered = [];
+      const translatorNotes = new Set();
+      appendOrderedUniqueTerms(translatorNotesOrdered, translatorNotes, entry.translatorNotes);
+      const footnotesOrdered = [];
+      const footnotes = new Set();
+      appendOrderedUniqueTerms(footnotesOrdered, footnotes, entry.footnotes);
       const candidate = {
         tokens,
-        sourceTerms: new Set(entry.sourceTerms || []),
-        targetTerms: new Set(entry.targetTerms || []),
-        translatorNotes: new Set(entry.translatorNotes || []),
-        footnotes: new Set(entry.footnotes || []),
+        sourceTerms,
+        sourceTermsOrdered,
+        targetTerms,
+        targetTermsOrdered,
+        translatorNotes,
+        translatorNotesOrdered,
+        footnotes,
+        footnotesOrdered,
         characterLength: String(matchTerm ?? "").length,
         matchLanguage,
       };
@@ -283,10 +325,14 @@ export function findLongestGlossaryMatches(text, matcher) {
 }
 
 function buildGlossaryTooltipText(candidate, glossaryModel) {
-  const sourceTerms = Array.from(candidate?.sourceTerms || []);
-  const targetTerms = Array.from(candidate?.targetTerms || []);
-  const translatorNotes = Array.from(candidate?.translatorNotes || []);
-  const footnotes = Array.from(candidate?.footnotes || []);
+  const sourceTerms = orderedCandidateValues(candidate, "sourceTermsOrdered", "sourceTerms");
+  const targetTerms = orderedCandidateValues(candidate, "targetTermsOrdered", "targetTerms");
+  const translatorNotes = orderedCandidateValues(
+    candidate,
+    "translatorNotesOrdered",
+    "translatorNotes",
+  );
+  const footnotes = orderedCandidateValues(candidate, "footnotesOrdered", "footnotes");
   const parts = [];
 
   if (sourceTerms.length > 0) {
@@ -314,11 +360,15 @@ function buildStructuredGlossaryTooltipPayload(candidate, hoveredTerm, glossaryM
     return null;
   }
 
-  const variants = sanitizeTermList(
-    Array.from(isSourceMatch ? candidate?.targetTerms || [] : candidate?.sourceTerms || []),
+  const variants = isSourceMatch
+    ? orderedCandidateValues(candidate, "targetTermsOrdered", "targetTerms")
+    : orderedCandidateValues(candidate, "sourceTermsOrdered", "sourceTerms");
+  const translatorNotes = orderedCandidateValues(
+    candidate,
+    "translatorNotesOrdered",
+    "translatorNotes",
   );
-  const translatorNotes = sanitizeTermList(Array.from(candidate?.translatorNotes || []));
-  const footnotes = sanitizeTermList(Array.from(candidate?.footnotes || []));
+  const footnotes = orderedCandidateValues(candidate, "footnotesOrdered", "footnotes");
   if (!title && variants.length === 0 && translatorNotes.length === 0 && footnotes.length === 0) {
     return null;
   }
@@ -443,11 +493,15 @@ function buildRowTargetMatcher(sections, glossaryModel) {
   }
 
   const targetEntries = matchedCandidates.map((candidate) => ({
-    sourceTerms: Array.from(candidate.sourceTerms || []),
-    targetTerms: Array.from(candidate.targetTerms || []),
-    translatorNotes: Array.from(candidate.translatorNotes || []),
-    footnotes: Array.from(candidate.footnotes || []),
-    matchTerms: Array.from(candidate.targetTerms || []),
+    sourceTerms: orderedCandidateValues(candidate, "sourceTermsOrdered", "sourceTerms"),
+    targetTerms: orderedCandidateValues(candidate, "targetTermsOrdered", "targetTerms"),
+    translatorNotes: orderedCandidateValues(
+      candidate,
+      "translatorNotesOrdered",
+      "translatorNotes",
+    ),
+    footnotes: orderedCandidateValues(candidate, "footnotesOrdered", "footnotes"),
+    matchTerms: orderedCandidateValues(candidate, "targetTermsOrdered", "targetTerms"),
   }));
 
   return buildLanguageGlossaryMatcher(targetEntries, glossaryModel.targetLanguage.code);
@@ -479,7 +533,7 @@ function textContainsGlossaryTerm(text, term, languageCode) {
 }
 
 function sourceCandidateHasTargetMatch(candidate, targetTexts, glossaryModel) {
-  const targetTerms = Array.from(candidate?.targetTerms || []);
+  const targetTerms = orderedCandidateValues(candidate, "targetTermsOrdered", "targetTerms");
   if (!glossaryModel?.targetLanguage?.code || targetTexts.length === 0 || targetTerms.length === 0) {
     return false;
   }
@@ -540,4 +594,62 @@ export function buildEditorRowGlossaryHighlights(sections, glossaryModel) {
   }
 
   return highlights;
+}
+
+function buildMatchedGlossarySegment(tokens, match) {
+  return (Array.isArray(tokens) ? tokens : [])
+    .slice(match?.startTokenIndex ?? 0, (match?.endTokenIndex ?? -1) + 1)
+    .map((token) => token?.value ?? "")
+    .join("")
+    .trim();
+}
+
+export function buildEditorAiTranslationGlossaryHints(
+  sourceText,
+  sourceLanguageCode,
+  targetLanguageCode,
+  glossaryModel,
+) {
+  if (
+    !glossaryModel?.sourceMatcher
+    || sourceLanguageCode !== glossaryModel?.sourceLanguage?.code
+    || targetLanguageCode !== glossaryModel?.targetLanguage?.code
+  ) {
+    return [];
+  }
+
+  const result = findLongestGlossaryMatches(sourceText, glossaryModel.sourceMatcher);
+  const hints = [];
+  const seen = new Set();
+
+  for (const match of result.matches || []) {
+    const sourceTerm = buildMatchedGlossarySegment(result.tokens, match);
+    const targetVariants = orderedCandidateValues(
+      match?.candidate,
+      "targetTermsOrdered",
+      "targetTerms",
+    );
+    const notes = orderedCandidateValues(
+      match?.candidate,
+      "translatorNotesOrdered",
+      "translatorNotes",
+    );
+    if (!sourceTerm || (targetVariants.length === 0 && notes.length === 0)) {
+      continue;
+    }
+
+    const dedupeKey = normalizeGlossaryToken(sourceTerm, sourceLanguageCode);
+    if (seen.has(dedupeKey)) {
+      continue;
+    }
+
+    seen.add(dedupeKey);
+    hints.push({
+      sourceTerm,
+      targetVariants,
+      notes,
+    });
+  }
+
+  return hints;
 }

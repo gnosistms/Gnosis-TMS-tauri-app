@@ -136,6 +136,7 @@ const {
   loadStoredAiSettingsAboutDismissed,
 } = await import("./ai-settings-preferences.js");
 const { pickPreferredAiModelId } = await import("./ai-action-config.js");
+const { buildEditorGlossaryModel } = await import("./editor-glossary-highlighting.js");
 const { resolveVisibleEditorAiReview } = await import("./editor-ai-review-state.js");
 const { resolveVisibleEditorAiTranslateAction } = await import("./editor-ai-translate-state.js");
 
@@ -385,6 +386,100 @@ test("runEditorAiTranslate uses the active alternate language as the translation
   assert.equal(state.editorChapter.rows[0].persistedFields.fr, "Bonjour");
   assert.equal(state.editorChapter.rows[0].fields.vi, "Texto original");
   assert.equal(state.editorChapter.aiTranslate.translate1.status, "idle");
+});
+
+test("runEditorAiTranslate sends glossary hints for matched source-language terms", async () => {
+  installTranslateFixture({
+    fields: {
+      es: "La gnostica habla.",
+      vi: "",
+    },
+  });
+  const glossary = {
+    status: "ready",
+    error: "",
+    glossaryId: "glossary-1",
+    repoName: "glossary-1",
+    title: "Glossary",
+    sourceLanguage: {
+      code: "es",
+      name: "Spanish",
+    },
+    targetLanguage: {
+      code: "vi",
+      name: "Vietnamese",
+    },
+    terms: [{
+      termId: "t1",
+      sourceTerms: ["gnostica", "gnostico"],
+      targetTerms: ["hoc tro gnosis", "cua gnosis"],
+      notesToTranslators: "Lien quan den Gnosis",
+      footnote: "Chu thich bo sung",
+    }],
+    matcherModel: null,
+  };
+  glossary.matcherModel = buildEditorGlossaryModel(glossary);
+  state.editorChapter = {
+    ...state.editorChapter,
+    glossary,
+  };
+  state.aiSettings = {
+    ...state.aiSettings,
+    actionConfig: {
+      ...state.aiSettings.actionConfig,
+      detailedConfiguration: true,
+      actions: {
+        ...state.aiSettings.actionConfig.actions,
+        translate1: {
+          providerId: "openai",
+          modelId: "gpt-5.4-mini",
+        },
+      },
+    },
+  };
+
+  invokeHandler = async (command, payload = {}) => {
+    if (command === "load_ai_provider_secret") {
+      assert.equal(payload.providerId, "openai");
+      return "oa-key";
+    }
+    if (command === "run_ai_translation") {
+      assert.deepEqual(payload, {
+        request: {
+          providerId: "openai",
+          modelId: "gpt-5.4-mini",
+          text: "La gnostica habla.",
+          sourceLanguage: "Spanish",
+          targetLanguage: "Vietnamese",
+          glossaryHints: [{
+            sourceTerm: "gnostica",
+            targetVariants: ["hoc tro gnosis", "cua gnosis"],
+            notes: ["Lien quan den Gnosis"],
+          }],
+        },
+      });
+      return {
+        translatedText: "Ban dich",
+      };
+    }
+
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  await runEditorAiTranslate(() => {}, "translate1", {
+    updateEditorRowFieldValue(rowId, languageCode, nextValue) {
+      const row = state.editorChapter.rows.find((entry) => entry.rowId === rowId);
+      row.fields[languageCode] = nextValue;
+      row.saveStatus = "dirty";
+    },
+    async persistEditorRowOnBlur(_render, rowId) {
+      const row = state.editorChapter.rows.find((entry) => entry.rowId === rowId);
+      row.persistedFields = { ...row.fields };
+      row.saveStatus = "idle";
+    },
+  });
+
+  assert.equal(state.editorChapter.rows[0].fields.vi, "Ban dich");
 });
 
 test("runEditorAiTranslate opens the missing-key modal for the translate action provider", async () => {

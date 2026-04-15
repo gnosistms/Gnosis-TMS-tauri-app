@@ -4,7 +4,7 @@ export const AI_PROVIDER_IDS = ["gemini", "openai", "claude", "deepseek"];
 
 const AI_PROVIDER_ICON_URLS = {
   gemini: new URL("../assets/ai-providers/gemini.svg", import.meta.url).href,
-  openai: new URL("../assets/ai-providers/openai.png", import.meta.url).href,
+  openai: new URL("../assets/ai-providers/openai.svg", import.meta.url).href,
   claude: new URL("../assets/ai-providers/claude.png", import.meta.url).href,
   deepseek: new URL("../assets/ai-providers/deepseek.ico", import.meta.url).href,
 };
