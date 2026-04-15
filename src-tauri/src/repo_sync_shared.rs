@@ -371,7 +371,12 @@ fn configure_macos_git_command(command: &mut Command, executable: &Path) {
         command.env("GIT_TEMPLATE_DIR", template_dir);
     }
 
-    let mut search_paths = vec![exec_path.to_path_buf()];
+    let mut search_paths = Vec::new();
+    let git_bin_dir = root.join("bin");
+    if git_bin_dir.exists() {
+        search_paths.push(git_bin_dir);
+    }
+    search_paths.push(exec_path.to_path_buf());
     if let Some(existing_path) = env::var_os("PATH") {
         search_paths.extend(env::split_paths(&existing_path));
     }
