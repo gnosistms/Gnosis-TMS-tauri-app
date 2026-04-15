@@ -110,6 +110,7 @@ pub(crate) struct GithubProjectMetadataRecord {
     pub(crate) created_by: Option<String>,
     pub(crate) updated_by: Option<String>,
     pub(crate) deleted_by: Option<String>,
+    #[serde(default)]
     pub(crate) chapter_count: usize,
 }
 
@@ -136,6 +137,7 @@ pub(crate) struct GithubGlossaryMetadataRecord {
     pub(crate) deleted_by: Option<String>,
     pub(crate) source_language: Option<TeamMetadataLanguageInput>,
     pub(crate) target_language: Option<TeamMetadataLanguageInput>,
+    #[serde(default)]
     pub(crate) term_count: usize,
 }
 

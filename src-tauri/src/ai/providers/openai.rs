@@ -153,7 +153,9 @@ pub(crate) fn list_models(api_key: &str) -> Result<Vec<AiProviderModel>, String>
     };
 
     if models.is_empty() {
-        return Err("OpenAI did not return any compatible text models for this API key.".to_string());
+        return Err(
+            "OpenAI did not return any compatible text models for this API key.".to_string(),
+        );
     }
 
     Ok(models)
@@ -214,8 +216,8 @@ pub(crate) fn run_prompt(
         return Err("No OpenAI API key is saved yet.".to_string());
     }
 
-    let client =
-        shared_http_client().map_err(|error| format!("Could not start the OpenAI request: {error}"))?;
+    let client = shared_http_client()
+        .map_err(|error| format!("Could not start the OpenAI request: {error}"))?;
 
     let response = client
         .post(OPENAI_RESPONSES_API_URL)
@@ -479,7 +481,9 @@ mod tests {
         let payload = serde_json::to_value(build_probe_request("gpt-5.4")).unwrap();
 
         assert_eq!(
-            payload.get("max_output_tokens").and_then(serde_json::Value::as_u64),
+            payload
+                .get("max_output_tokens")
+                .and_then(serde_json::Value::as_u64),
             Some(OPENAI_PROBE_MAX_OUTPUT_TOKENS as u64)
         );
     }

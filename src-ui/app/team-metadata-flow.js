@@ -323,7 +323,6 @@ export async function upsertProjectMetadataRecord(team, record, options = {}) {
             typeof record.deletedAt === "string" && record.deletedAt.trim()
               ? record.deletedAt.trim()
               : null,
-          chapterCount: Number.isFinite(record.chapterCount) ? record.chapterCount : null,
         },
         sessionToken: requireBrokerSession(),
       }),
@@ -381,7 +380,6 @@ export async function upsertGlossaryMetadataRecord(team, record, options = {}) {
               : null,
           sourceLanguage: metadataLanguagePayload(record.sourceLanguage),
           targetLanguage: metadataLanguagePayload(record.targetLanguage),
-          termCount: Number.isFinite(record.termCount) ? record.termCount : null,
         },
         sessionToken: requireBrokerSession(),
       }),

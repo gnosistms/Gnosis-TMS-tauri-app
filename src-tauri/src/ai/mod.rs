@@ -58,7 +58,8 @@ pub(crate) fn build_translation_prompt(request: &AiTranslationRequest) -> String
 }
 
 fn format_translation_glossary_hints(hints: &[AiTranslationGlossaryHint]) -> String {
-    hints.iter()
+    hints
+        .iter()
         .filter_map(|hint| {
             let source_term = hint.source_term.trim();
             let target_variants = hint
@@ -152,7 +153,10 @@ fn glossary_token_regex() -> &'static Regex {
 }
 
 fn normalize_glossary_token(token: &str) -> String {
-    token.chars().flat_map(|character| character.to_lowercase()).collect()
+    token
+        .chars()
+        .flat_map(|character| character.to_lowercase())
+        .collect()
 }
 
 fn sanitize_term_list(values: &[String]) -> Vec<String> {
@@ -166,7 +170,10 @@ fn sanitize_term_list(values: &[String]) -> Vec<String> {
 
 fn append_unique_term_values(values: &mut Vec<String>, incoming_values: &[String]) {
     for incoming_value in incoming_values {
-        if values.iter().any(|existing_value| existing_value == incoming_value) {
+        if values
+            .iter()
+            .any(|existing_value| existing_value == incoming_value)
+        {
             continue;
         }
         values.push(incoming_value.clone());
@@ -210,7 +217,10 @@ fn build_glossary_match_candidates(
                 if source_term.len() > existing_candidate.match_term.len() {
                     existing_candidate.match_term = source_term;
                 }
-                append_unique_term_values(&mut existing_candidate.target_variants, &target_variants);
+                append_unique_term_values(
+                    &mut existing_candidate.target_variants,
+                    &target_variants,
+                );
                 append_unique_term_values(&mut existing_candidate.notes, &notes);
                 continue;
             }
@@ -264,11 +274,16 @@ fn clamp_to_char_boundary_right(text: &str, mut index: usize) -> usize {
 }
 
 fn build_glossary_match_context(text: &str, start: usize, end: usize) -> String {
-    let context_start = clamp_to_char_boundary_left(text, start.saturating_sub(GLOSSARY_CONTEXT_RADIUS_BYTES));
-    let context_end = clamp_to_char_boundary_right(text, (end + GLOSSARY_CONTEXT_RADIUS_BYTES).min(text.len()));
+    let context_start =
+        clamp_to_char_boundary_left(text, start.saturating_sub(GLOSSARY_CONTEXT_RADIUS_BYTES));
+    let context_end =
+        clamp_to_char_boundary_right(text, (end + GLOSSARY_CONTEXT_RADIUS_BYTES).min(text.len()));
     let prefix = if context_start > 0 { "..." } else { "" };
     let suffix = if context_end < text.len() { "..." } else { "" };
-    format!("{prefix}{}{suffix}", text[context_start..context_end].trim())
+    format!(
+        "{prefix}{}{suffix}",
+        text[context_start..context_end].trim()
+    )
 }
 
 fn find_matched_glossary_terms(
@@ -294,11 +309,14 @@ fn find_matched_glossary_terms(
                     continue;
                 }
 
-                let is_match = candidate
-                    .tokens
-                    .iter()
-                    .enumerate()
-                    .all(|(candidate_index, token)| words[word_index + candidate_index].normalized == *token);
+                let is_match =
+                    candidate
+                        .tokens
+                        .iter()
+                        .enumerate()
+                        .all(|(candidate_index, token)| {
+                            words[word_index + candidate_index].normalized == *token
+                        });
                 if is_match {
                     matched_candidate = Some(candidate.clone());
                     break;
@@ -318,7 +336,11 @@ fn find_matched_glossary_terms(
         if seen_surface_terms.insert(dedupe_key) {
             matched_terms.push(PreparedGlossaryMatch {
                 glossary_source_term,
-                glossary_source_context: build_glossary_match_context(glossary_source_text, start, end),
+                glossary_source_context: build_glossary_match_context(
+                    glossary_source_text,
+                    start,
+                    end,
+                ),
                 target_variants: candidate.target_variants,
                 notes: candidate.notes,
             });
@@ -389,8 +411,9 @@ fn parse_glossary_alignment_batch_response(
 ) -> Result<GlossaryAlignmentBatchResponse, String> {
     let json_text = extract_json_object(response_text)
         .ok_or_else(|| "The glossary alignment response did not contain JSON.".to_string())?;
-    serde_json::from_str(json_text)
-        .map_err(|_| "The glossary alignment response did not match the expected JSON shape.".to_string())
+    serde_json::from_str(json_text).map_err(|_| {
+        "The glossary alignment response did not match the expected JSON shape.".to_string()
+    })
 }
 
 fn build_pivot_translation_request(
@@ -591,10 +614,7 @@ pub(crate) fn run_ai_translation(
     })
 }
 
-pub(crate) fn probe_ai_model(
-    app: &AppHandle,
-    request: AiModelProbeRequest,
-) -> Result<(), String> {
+pub(crate) fn probe_ai_model(app: &AppHandle, request: AiModelProbeRequest) -> Result<(), String> {
     if request.model_id.trim().is_empty() {
         return Err(format!(
             "Select a {} model on the AI Settings page first.",
@@ -642,10 +662,7 @@ mod tests {
             target_language: "Vietnamese".to_string(),
             glossary_hints: vec![AiTranslationGlossaryHint {
                 source_term: "gnostica".to_string(),
-                target_variants: vec![
-                    "hoc tro gnosis".to_string(),
-                    "cua gnosis".to_string(),
-                ],
+                target_variants: vec!["hoc tro gnosis".to_string(), "cua gnosis".to_string()],
                 notes: vec!["Lien quan den Gnosis".to_string()],
             }],
         });
@@ -681,10 +698,7 @@ mod tests {
         assert_eq!(matches[0].glossary_source_term, "camara interior");
         assert_eq!(
             matches[0].target_variants,
-            vec![
-                "buong noi tam".to_string(),
-                "phong ben trong".to_string(),
-            ]
+            vec!["buong noi tam".to_string(), "phong ben trong".to_string(),]
         );
         assert_eq!(
             matches[0].notes,

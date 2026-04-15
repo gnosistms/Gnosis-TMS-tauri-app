@@ -258,7 +258,6 @@ Example:
     }
   ],
   "settings": {
-    "default_preview_language": "vi",
     "linked_glossaries": {
       "glossary_1": {
         "glossary_id": "2ec8d9e8-52e2-4c84-bb56-a7765e0cb5de",
@@ -404,7 +403,6 @@ Example:
           }
         ]
       },
-      "html_preview": "<p>Texto de ejemplo.</p>",
       "notes_html": "",
       "attachments": [],
       "passthrough_value": null
@@ -425,7 +423,6 @@ Example:
           }
         ]
       },
-      "html_preview": "<p>Example text.</p>",
       "notes_html": "",
       "attachments": [],
       "passthrough_value": null
@@ -446,7 +443,6 @@ Example:
           }
         ]
       },
-      "html_preview": "<p>Van ban vi du.</p>",
       "notes_html": "",
       "attachments": [],
       "passthrough_value": null
@@ -698,7 +694,6 @@ Example:
         "value_kind": "text",
         "plain_text": "1 file",
         "rich_text": null,
-        "html_preview": null,
         "notes_html": "",
         "attachments": [],
         "passthrough_value": null
@@ -727,7 +722,6 @@ Each language field object should support:
 - `value_kind`
 - `plain_text`
 - `rich_text`
-- `html_preview`
 - `notes_html`
 - `attachments`
 - `passthrough_value`
@@ -738,7 +732,6 @@ Recommended v1 simplification:
 - `value_kind` always exists and defaults to `text`
 - `plain_text` always exists, even if empty
 - `rich_text` may be null for formats that are truly plain text
-- `html_preview` is optional derived data, not the sole canonical representation
 - `notes_html` always exists, even if empty
 - `attachments` always exists, even if empty
 - `passthrough_value` exists for non-text or mixed-type source formats
@@ -808,7 +801,7 @@ Suggested run marks:
 - `highlight`
 - `line_break`
 
-`html_preview` may be stored as a convenience for preview/export, but it should be derived from `rich_text` where possible.
+Preview HTML should be derived locally from the stored text content when needed.
 
 This design is required so formats such as DOCX, HTML, IDML, PPTX, and subtitle markup can preserve translator-visible formatting boundaries.
 
@@ -1269,7 +1262,7 @@ For the first real implementation:
 - row identity: UUIDv7
 - one row per file
 - display order: per-row `structure.order_key`
-- rich text: structured blocks/runs with optional derived `html_preview`
+- rich text: structured blocks/runs
 - attachments: structured field metadata
 - first-class translator guidance: `guidance`
 - row review state: built in

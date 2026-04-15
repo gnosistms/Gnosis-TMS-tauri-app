@@ -339,6 +339,83 @@ fn read_glossary_id_from_repo(repo_path: &Path) -> Option<String> {
         .map(str::to_string)
 }
 
+#[derive(Deserialize)]
+struct StoredGlossaryTermLifecycle {
+    state: String,
+}
+
+#[derive(Deserialize)]
+struct StoredGlossaryTermRecord {
+    lifecycle: StoredGlossaryTermLifecycle,
+}
+
+fn local_project_chapter_count(repo_path: &Path) -> Result<usize, String> {
+    let chapters_root = repo_path.join("chapters");
+    if !chapters_root.exists() {
+        return Ok(0);
+    }
+
+    let mut chapter_count = 0usize;
+    for entry in fs::read_dir(&chapters_root).map_err(|error| {
+        format!(
+            "Could not read the local project chapters folder '{}': {error}",
+            chapters_root.display()
+        )
+    })? {
+        let entry =
+            entry.map_err(|error| format!("Could not read a local chapter entry: {error}"))?;
+        let chapter_path = entry.path();
+        if chapter_path.is_dir() && chapter_path.join("chapter.json").exists() {
+            chapter_count += 1;
+        }
+    }
+
+    Ok(chapter_count)
+}
+
+fn local_glossary_term_count(repo_path: &Path) -> Result<usize, String> {
+    let terms_root = repo_path.join("terms");
+    if !terms_root.exists() {
+        return Ok(0);
+    }
+
+    let mut term_count = 0usize;
+    for entry in fs::read_dir(&terms_root).map_err(|error| {
+        format!(
+            "Could not read the local glossary terms folder '{}': {error}",
+            terms_root.display()
+        )
+    })? {
+        let entry = entry
+            .map_err(|error| format!("Could not read a local glossary term entry: {error}"))?;
+        let term_path = entry.path();
+        if !term_path.is_file()
+            || term_path.extension().and_then(|value| value.to_str()) != Some("json")
+        {
+            continue;
+        }
+
+        let contents = fs::read_to_string(&term_path).map_err(|error| {
+            format!(
+                "Could not read the local glossary term file '{}': {error}",
+                term_path.display()
+            )
+        })?;
+        let record =
+            serde_json::from_str::<StoredGlossaryTermRecord>(&contents).map_err(|error| {
+                format!(
+                    "Could not parse the local glossary term file '{}': {error}",
+                    term_path.display()
+                )
+            })?;
+        if record.lifecycle.state == "active" {
+            term_count += 1;
+        }
+    }
+
+    Ok(term_count)
+}
+
 fn unique_project_record_for_repo_name<'a>(
     records: &'a [GithubProjectMetadataRecord],
     repo_name: &str,
@@ -1094,15 +1171,7 @@ fn build_project_record_value(
         "deletedBy".to_string(),
         record.get("deletedBy").cloned().unwrap_or(Value::Null),
     );
-    record.insert(
-        "chapterCount".to_string(),
-        input.chapter_count.map(Value::from).unwrap_or_else(|| {
-            record
-                .get("chapterCount")
-                .cloned()
-                .unwrap_or(Value::from(0))
-        }),
-    );
+    record.remove("chapterCount");
 
     Ok(Value::Object(record))
 }
@@ -1264,13 +1333,7 @@ fn build_glossary_record_value(
         "targetLanguage".to_string(),
         serde_json::to_value(&input.target_language).unwrap_or(Value::Null),
     );
-    record.insert(
-        "termCount".to_string(),
-        input
-            .term_count
-            .map(Value::from)
-            .unwrap_or_else(|| record.get("termCount").cloned().unwrap_or(Value::from(0))),
-    );
+    record.remove("termCount");
 
     Ok(Value::Object(record))
 }
@@ -1464,7 +1527,16 @@ pub(crate) async fn list_local_gnosis_project_metadata_records(
 ) -> Result<Vec<GithubProjectMetadataRecord>, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let repo_path = require_local_metadata_repo(&app, installation_id)?;
-        list_local_metadata_records::<GithubProjectMetadataRecord>(&repo_path, "project")
+        let mut records =
+            list_local_metadata_records::<GithubProjectMetadataRecord>(&repo_path, "project")?;
+        for record in &mut records {
+            record.chapter_count = find_project_repo_for_record(&app, installation_id, record)
+                .ok()
+                .flatten()
+                .and_then(|repo_path| local_project_chapter_count(&repo_path).ok())
+                .unwrap_or(0);
+        }
+        Ok(records)
     })
     .await
     .map_err(|error| format!("Could not run the local project metadata listing task: {error}"))?
@@ -1477,7 +1549,16 @@ pub(crate) async fn list_local_gnosis_glossary_metadata_records(
 ) -> Result<Vec<GithubGlossaryMetadataRecord>, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let repo_path = require_local_metadata_repo(&app, installation_id)?;
-        list_local_metadata_records::<GithubGlossaryMetadataRecord>(&repo_path, "glossary")
+        let mut records =
+            list_local_metadata_records::<GithubGlossaryMetadataRecord>(&repo_path, "glossary")?;
+        for record in &mut records {
+            record.term_count = find_glossary_repo_for_record(&app, installation_id, record)
+                .ok()
+                .flatten()
+                .and_then(|repo_path| local_glossary_term_count(&repo_path).ok())
+                .unwrap_or(0);
+        }
+        Ok(records)
     })
     .await
     .map_err(|error| format!("Could not run the local glossary metadata listing task: {error}"))?

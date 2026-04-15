@@ -407,8 +407,6 @@ struct StoredChapterFile {
     #[serde(default)]
     languages: Vec<ChapterLanguage>,
     #[serde(default)]
-    source_word_counts: BTreeMap<String, usize>,
-    #[serde(default)]
     settings: Option<StoredChapterSettings>,
 }
 
@@ -446,7 +444,6 @@ struct StoredChapterSettings {
     linked_glossaries: Option<StoredChapterLinkedGlossaries>,
     default_source_language: Option<String>,
     default_target_language: Option<String>,
-    default_preview_language: Option<String>,
 }
 
 #[derive(Clone, Deserialize, Default)]
@@ -544,7 +541,7 @@ pub(super) fn load_gtms_chapter_editor_data_sync(
         read_json_file(&chapter_path.join("chapter.json"), "chapter.json")?;
     let rows = load_editor_rows(&chapter_path.join("rows"))?;
     let languages = sanitize_chapter_languages(&chapter_file.languages);
-    let source_word_counts = resolve_source_word_counts(&chapter_file, Some(&rows), &languages);
+    let source_word_counts = build_source_word_counts_from_stored_rows(&rows, &languages);
     let selected_source_language_code = preferred_source_language_code(&chapter_file, &languages);
     let selected_target_language_code = preferred_target_language_code(
         &chapter_file,
@@ -676,7 +673,7 @@ pub(super) fn insert_gtms_editor_row_sync(
 
     Ok(InsertEditorRowResponse {
         row: editor_row_from_stored_row_file(inserted_row_file)?,
-        source_word_counts: resolve_source_word_counts(&chapter_file, Some(&rows), &languages),
+        source_word_counts: build_source_word_counts_from_stored_rows(&rows, &languages),
     })
 }
 
@@ -880,11 +877,7 @@ pub(super) fn update_gtms_chapter_language_selection_sync(
     let target_changed = settings_object
         .get("default_target_language")
         .and_then(Value::as_str)
-        != Some(input.target_language_code.as_str())
-        || settings_object
-            .get("default_preview_language")
-            .and_then(Value::as_str)
-            != Some(input.target_language_code.as_str());
+        != Some(input.target_language_code.as_str());
 
     if source_changed || target_changed {
         settings_object.insert(
@@ -895,10 +888,7 @@ pub(super) fn update_gtms_chapter_language_selection_sync(
             "default_target_language".to_string(),
             Value::String(input.target_language_code.clone()),
         );
-        settings_object.insert(
-            "default_preview_language".to_string(),
-            Value::String(input.target_language_code.clone()),
-        );
+        settings_object.remove("default_preview_language");
         write_json_pretty(&chapter_json_path, &chapter_value)?;
 
         let relative_chapter_json = repo_relative_path(&repo_path, &chapter_json_path)?;
@@ -996,8 +986,8 @@ pub(super) fn update_gtms_editor_row_lifecycle_sync(
     ensure_valid_git_repo(&repo_path, "The local project repo is missing or invalid.")?;
 
     let chapter_path = find_chapter_path_by_id(&repo_path.join("chapters"), &input.chapter_id)?;
-    let chapter_json_path = chapter_path.join("chapter.json");
-    let chapter_file: StoredChapterFile = read_json_file(&chapter_json_path, "chapter.json")?;
+    let chapter_file: StoredChapterFile =
+        read_json_file(&chapter_path.join("chapter.json"), "chapter.json")?;
     let languages = sanitize_chapter_languages(&chapter_file.languages);
     let row_json_path = chapter_path
         .join("rows")
@@ -1039,15 +1029,7 @@ pub(super) fn update_gtms_editor_row_lifecycle_sync(
         return Ok(UpdateEditorRowLifecycleResponse {
             row_id: input.row_id,
             lifecycle_state: next_state.to_string(),
-            source_word_counts: if chapter_file.source_word_counts.is_empty() {
-                resolve_source_word_counts(
-                    &chapter_file,
-                    Some(&load_editor_rows(&chapter_path.join("rows"))?),
-                    &languages,
-                )
-            } else {
-                resolve_source_word_counts(&chapter_file, None, &languages)
-            },
+            source_word_counts: load_source_word_counts(&chapter_path.join("rows"), &languages)?,
         });
     }
 
@@ -1059,15 +1041,8 @@ pub(super) fn update_gtms_editor_row_lifecycle_sync(
                 row_json_path.display()
             )
         })?;
-    let existing_source_word_counts = if chapter_file.source_word_counts.is_empty() {
-        resolve_source_word_counts(
-            &chapter_file,
-            Some(&load_editor_rows(&chapter_path.join("rows"))?),
-            &languages,
-        )
-    } else {
-        resolve_source_word_counts(&chapter_file, None, &languages)
-    };
+    let existing_source_word_counts =
+        load_source_word_counts(&chapter_path.join("rows"), &languages)?;
     let source_word_counts = apply_source_word_count_delta(
         &existing_source_word_counts,
         &original_row_file,
@@ -1082,24 +1057,19 @@ pub(super) fn update_gtms_editor_row_lifecycle_sync(
     })?;
     let updated_row_text = format!("{updated_row_json}\n");
     write_text_file(&row_json_path, &updated_row_text)?;
-    write_chapter_source_word_counts(&chapter_json_path, &source_word_counts)?;
 
     let relative_row_json = repo_relative_path(&repo_path, &row_json_path)?;
-    let relative_chapter_json = repo_relative_path(&repo_path, &chapter_json_path)?;
     let commit_message = if next_state == "deleted" {
         format!("Delete row {}", input.row_id)
     } else {
         format!("Restore row {}", input.row_id)
     };
-    git_output(
-        &repo_path,
-        &["add", &relative_row_json, &relative_chapter_json],
-    )?;
+    git_output(&repo_path, &["add", &relative_row_json])?;
     git_commit_as_signed_in_user_with_metadata(
         app,
         &repo_path,
         &commit_message,
-        &[&relative_row_json, &relative_chapter_json],
+        &[&relative_row_json],
         CommitMetadata {
             operation: Some(if next_state == "deleted" {
                 "delete"
@@ -1131,8 +1101,8 @@ pub(super) fn permanently_delete_gtms_editor_row_sync(
     ensure_valid_git_repo(&repo_path, "The local project repo is missing or invalid.")?;
 
     let chapter_path = find_chapter_path_by_id(&repo_path.join("chapters"), &input.chapter_id)?;
-    let chapter_json_path = chapter_path.join("chapter.json");
-    let chapter_file: StoredChapterFile = read_json_file(&chapter_json_path, "chapter.json")?;
+    let chapter_file: StoredChapterFile =
+        read_json_file(&chapter_path.join("chapter.json"), "chapter.json")?;
     let languages = sanitize_chapter_languages(&chapter_file.languages);
     let row_json_path = chapter_path
         .join("rows")
@@ -1142,15 +1112,8 @@ pub(super) fn permanently_delete_gtms_editor_row_sync(
         return Err("Only soft-deleted rows can be permanently deleted.".to_string());
     }
 
-    let existing_source_word_counts = if chapter_file.source_word_counts.is_empty() {
-        resolve_source_word_counts(
-            &chapter_file,
-            Some(&load_editor_rows(&chapter_path.join("rows"))?),
-            &languages,
-        )
-    } else {
-        resolve_source_word_counts(&chapter_file, None, &languages)
-    };
+    let existing_source_word_counts =
+        load_source_word_counts(&chapter_path.join("rows"), &languages)?;
     let source_word_counts = apply_source_word_count_delta(
         &existing_source_word_counts,
         &row_file,
@@ -1163,20 +1126,17 @@ pub(super) fn permanently_delete_gtms_editor_row_sync(
             row_json_path.display()
         )
     })?;
-    write_chapter_source_word_counts(&chapter_json_path, &source_word_counts)?;
 
     let relative_row_json = repo_relative_path(&repo_path, &row_json_path)?;
-    let relative_chapter_json = repo_relative_path(&repo_path, &chapter_json_path)?;
     git_output(
         &repo_path,
         &["rm", "--cached", "--ignore-unmatch", &relative_row_json],
     )?;
-    git_output(&repo_path, &["add", &relative_chapter_json])?;
     git_commit_as_signed_in_user_with_metadata(
         app,
         &repo_path,
         &format!("Delete row {} permanently", input.row_id),
-        &[&relative_row_json, &relative_chapter_json],
+        &[&relative_row_json],
         CommitMetadata {
             operation: Some("permanent-delete"),
             status_note: None,
@@ -1204,19 +1164,14 @@ pub(super) fn update_gtms_editor_row_fields_sync(
     ensure_valid_git_repo(&repo_path, "The local project repo is missing or invalid.")?;
 
     let chapter_path = find_chapter_path_by_id(&repo_path.join("chapters"), &input.chapter_id)?;
-    let chapter_json_path = chapter_path.join("chapter.json");
-    let chapter_file: StoredChapterFile = read_json_file(&chapter_json_path, "chapter.json")?;
+    let chapter_file: StoredChapterFile =
+        read_json_file(&chapter_path.join("chapter.json"), "chapter.json")?;
     let row_json_path = chapter_path
         .join("rows")
         .join(format!("{}.json", input.row_id));
     let relative_row_json = repo_relative_path(&repo_path, &row_json_path)?;
     let languages = sanitize_chapter_languages(&chapter_file.languages);
-    let source_word_counts = if chapter_file.source_word_counts.is_empty() {
-        let rows = load_editor_rows(&chapter_path.join("rows"))?;
-        resolve_source_word_counts(&chapter_file, Some(&rows), &languages)
-    } else {
-        resolve_source_word_counts(&chapter_file, None, &languages)
-    };
+    let source_word_counts = load_source_word_counts(&chapter_path.join("rows"), &languages)?;
     if !row_json_path.exists() {
         return Ok(SaveEditorRowWithConcurrencyResponse {
             row_id: input.row_id,
@@ -1298,18 +1253,12 @@ pub(super) fn update_gtms_editor_row_fields_sync(
             &languages,
         );
         write_text_file(&row_json_path, &updated_row_text)?;
-        write_chapter_source_word_counts(&chapter_json_path, &next_source_word_counts)?;
-
-        let relative_chapter_json = repo_relative_path(&repo_path, &chapter_json_path)?;
-        git_output(
-            &repo_path,
-            &["add", &relative_row_json, &relative_chapter_json],
-        )?;
+        git_output(&repo_path, &["add", &relative_row_json])?;
         git_commit_as_signed_in_user_with_metadata(
             app,
             &repo_path,
             &format!("Update row {}", input.row_id),
-            &[&relative_row_json, &relative_chapter_json],
+            &[&relative_row_json],
             CommitMetadata {
                 operation: Some("editor-update"),
                 status_note: None,
@@ -1342,15 +1291,10 @@ pub(super) fn update_gtms_editor_row_fields_batch_sync(
     ensure_valid_git_repo(&repo_path, "The local project repo is missing or invalid.")?;
 
     let chapter_path = find_chapter_path_by_id(&repo_path.join("chapters"), &input.chapter_id)?;
-    let chapter_json_path = chapter_path.join("chapter.json");
-    let chapter_file: StoredChapterFile = read_json_file(&chapter_json_path, "chapter.json")?;
+    let chapter_file: StoredChapterFile =
+        read_json_file(&chapter_path.join("chapter.json"), "chapter.json")?;
     let languages = sanitize_chapter_languages(&chapter_file.languages);
-    let mut source_word_counts = if chapter_file.source_word_counts.is_empty() {
-        let rows = load_editor_rows(&chapter_path.join("rows"))?;
-        resolve_source_word_counts(&chapter_file, Some(&rows), &languages)
-    } else {
-        resolve_source_word_counts(&chapter_file, None, &languages)
-    };
+    let mut source_word_counts = load_source_word_counts(&chapter_path.join("rows"), &languages)?;
     let mut rows_by_id = BTreeMap::new();
     for row in input.rows {
         let row_id = row.row_id.trim().to_string();
@@ -1423,17 +1367,13 @@ pub(super) fn update_gtms_editor_row_fields_batch_sync(
     }
 
     if !changed_row_ids.is_empty() {
-        write_chapter_source_word_counts(&chapter_json_path, &source_word_counts)?;
-        let relative_chapter_json = repo_relative_path(&repo_path, &chapter_json_path)?;
         let mut add_args = vec!["add"];
         for path in &relative_row_paths {
             add_args.push(path.as_str());
         }
-        add_args.push(relative_chapter_json.as_str());
         git_output(&repo_path, &add_args)?;
 
-        let mut commit_paths: Vec<&str> = relative_row_paths.iter().map(String::as_str).collect();
-        commit_paths.push(relative_chapter_json.as_str());
+        let commit_paths: Vec<&str> = relative_row_paths.iter().map(String::as_str).collect();
         let commit_message = input.commit_message.trim();
         let operation = input.operation.trim();
         let commit_output = git_commit_as_signed_in_user_with_metadata(
@@ -1529,8 +1469,8 @@ pub(super) fn restore_gtms_editor_field_from_history_sync(
     ensure_valid_git_repo(&repo_path, "The local project repo is missing or invalid.")?;
 
     let chapter_path = find_chapter_path_by_id(&repo_path.join("chapters"), &input.chapter_id)?;
-    let chapter_json_path = chapter_path.join("chapter.json");
-    let chapter_file: StoredChapterFile = read_json_file(&chapter_json_path, "chapter.json")?;
+    let chapter_file: StoredChapterFile =
+        read_json_file(&chapter_path.join("chapter.json"), "chapter.json")?;
     let row_json_path = chapter_path
         .join("rows")
         .join(format!("{}.json", input.row_id));
@@ -1597,12 +1537,19 @@ pub(super) fn restore_gtms_editor_field_from_history_sync(
         "plain_text".to_string(),
         Value::String(historical_plain_text.clone()),
     );
-    field_object.insert(
-        "html_preview".to_string(),
-        html_preview(&historical_plain_text)
-            .map(Value::String)
-            .unwrap_or(Value::Null),
-    );
+    let field_changed = original_row_file
+        .fields
+        .get(&input.language_code)
+        .map(|field| {
+            field.plain_text != historical_plain_text
+                || field.editor_flags.reviewed != historical_field_value.editor_flags.reviewed
+                || field.editor_flags.please_check
+                    != historical_field_value.editor_flags.please_check
+        })
+        .unwrap_or(true);
+    if field_changed {
+        field_object.remove("html_preview");
+    }
     set_editor_field_flags(field_object, &historical_field_value.editor_flags);
 
     let updated_row_json = serde_json::to_string_pretty(&row_value).map_err(|error| {
@@ -1613,12 +1560,7 @@ pub(super) fn restore_gtms_editor_field_from_history_sync(
     })?;
     let updated_row_text = format!("{updated_row_json}\n");
     let languages = sanitize_chapter_languages(&chapter_file.languages);
-    let mut source_word_counts = if chapter_file.source_word_counts.is_empty() {
-        let rows = load_editor_rows(&chapter_path.join("rows"))?;
-        resolve_source_word_counts(&chapter_file, Some(&rows), &languages)
-    } else {
-        resolve_source_word_counts(&chapter_file, None, &languages)
-    };
+    let mut source_word_counts = load_source_word_counts(&chapter_path.join("rows"), &languages)?;
     if updated_row_text != original_row_text {
         let updated_row_file: StoredRowFile =
             serde_json::from_value(row_value.clone()).map_err(|error| {
@@ -1634,14 +1576,9 @@ pub(super) fn restore_gtms_editor_field_from_history_sync(
             &languages,
         );
         write_text_file(&row_json_path, &updated_row_text)?;
-        write_chapter_source_word_counts(&chapter_json_path, &source_word_counts)?;
 
         let short_commit = short_commit_sha(&input.commit_sha);
-        let relative_chapter_json = repo_relative_path(&repo_path, &chapter_json_path)?;
-        git_output(
-            &repo_path,
-            &["add", &relative_row_json, &relative_chapter_json],
-        )?;
+        git_output(&repo_path, &["add", &relative_row_json])?;
         git_commit_as_signed_in_user_with_metadata(
             app,
             &repo_path,
@@ -1649,7 +1586,7 @@ pub(super) fn restore_gtms_editor_field_from_history_sync(
                 "Restore row {} {} from {}",
                 input.row_id, input.language_code, short_commit
             ),
-            &[&relative_row_json, &relative_chapter_json],
+            &[&relative_row_json],
             CommitMetadata {
                 operation: Some("restore"),
                 status_note: None,
@@ -1681,8 +1618,8 @@ pub(super) fn reverse_gtms_editor_batch_replace_commit_sync(
     ensure_valid_git_repo(&repo_path, "The local project repo is missing or invalid.")?;
 
     let chapter_path = find_chapter_path_by_id(&repo_path.join("chapters"), &input.chapter_id)?;
-    let chapter_json_path = chapter_path.join("chapter.json");
-    let chapter_file: StoredChapterFile = read_json_file(&chapter_json_path, "chapter.json")?;
+    let chapter_file: StoredChapterFile =
+        read_json_file(&chapter_path.join("chapter.json"), "chapter.json")?;
     let languages = sanitize_chapter_languages(&chapter_file.languages);
     let selected_operation = load_git_commit_operation_type(&repo_path, &input.commit_sha)?;
     if selected_operation.as_deref() != Some("editor-replace") {
@@ -1759,12 +1696,7 @@ pub(super) fn reverse_gtms_editor_batch_replace_commit_sync(
     }
 
     if updated_rows.is_empty() {
-        let source_word_counts = if chapter_file.source_word_counts.is_empty() {
-            let rows = load_editor_rows(&chapter_path.join("rows"))?;
-            resolve_source_word_counts(&chapter_file, Some(&rows), &languages)
-        } else {
-            resolve_source_word_counts(&chapter_file, None, &languages)
-        };
+        let source_word_counts = load_source_word_counts(&chapter_path.join("rows"), &languages)?;
         return Ok(ReverseEditorBatchReplaceCommitResponse {
             updated_rows,
             skipped_row_ids,
@@ -1774,19 +1706,15 @@ pub(super) fn reverse_gtms_editor_batch_replace_commit_sync(
     }
 
     let rows = load_editor_rows(&chapter_path.join("rows"))?;
-    let source_word_counts = resolve_source_word_counts(&chapter_file, Some(&rows), &languages);
-    write_chapter_source_word_counts(&chapter_json_path, &source_word_counts)?;
+    let source_word_counts = build_source_word_counts_from_stored_rows(&rows, &languages);
 
-    let relative_chapter_json = repo_relative_path(&repo_path, &chapter_json_path)?;
     let mut add_args = vec!["add"];
     for path in &relative_paths_to_add {
         add_args.push(path.as_str());
     }
-    add_args.push(relative_chapter_json.as_str());
     git_output(&repo_path, &add_args)?;
 
-    let mut commit_paths: Vec<&str> = relative_paths_to_add.iter().map(String::as_str).collect();
-    commit_paths.push(relative_chapter_json.as_str());
+    let commit_paths: Vec<&str> = relative_paths_to_add.iter().map(String::as_str).collect();
     let commit_output = git_commit_as_signed_in_user_with_metadata(
         app,
         &repo_path,
@@ -1880,12 +1808,8 @@ fn load_project_chapter_summaries(repo_path: &Path) -> Result<Vec<ProjectChapter
 
         let chapter_file: StoredChapterFile = read_json_file(&chapter_json_path, "chapter.json")?;
         let languages = sanitize_chapter_languages(&chapter_file.languages);
-        let source_word_counts = if chapter_file.source_word_counts.is_empty() {
-            let rows = load_editor_rows(&path.join("rows"))?;
-            resolve_source_word_counts(&chapter_file, Some(&rows), &languages)
-        } else {
-            resolve_source_word_counts(&chapter_file, None, &languages)
-        };
+        let rows = load_editor_rows(&path.join("rows"))?;
+        let source_word_counts = build_source_word_counts_from_stored_rows(&rows, &languages);
         let selected_source_language_code =
             preferred_source_language_code(&chapter_file, &languages);
         let selected_target_language_code = preferred_target_language_code(
@@ -2193,13 +2117,6 @@ fn ensure_editor_field_object_defaults(
     field_object
         .entry("plain_text".to_string())
         .or_insert_with(|| Value::String(plain_text.clone()));
-    field_object
-        .entry("html_preview".to_string())
-        .or_insert_with(|| {
-            html_preview(&plain_text)
-                .map(Value::String)
-                .unwrap_or(Value::Null)
-        });
 
     let editor_flags_value = field_object
         .entry("editor_flags".to_string())
@@ -2244,15 +2161,17 @@ fn apply_editor_plain_text_updates(
         let field_object = field_value
             .as_object_mut()
             .ok_or_else(|| "A row field is not a JSON object.".to_string())?;
+        let previous_plain_text = field_object
+            .get("plain_text")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
         ensure_editor_field_object_defaults(field_object)?;
         field_object.insert("value_kind".to_string(), Value::String("text".to_string()));
         field_object.insert("plain_text".to_string(), Value::String(plain_text.clone()));
-        field_object.insert(
-            "html_preview".to_string(),
-            html_preview(plain_text)
-                .map(Value::String)
-                .unwrap_or(Value::Null),
-        );
+        if previous_plain_text != *plain_text {
+            field_object.remove("html_preview");
+        }
     }
 
     Ok(())
@@ -2294,6 +2213,9 @@ fn apply_editor_field_flag_update(
         .get("please_check")
         .and_then(Value::as_bool)
         .unwrap_or(false);
+    if changed {
+        field_object.remove("html_preview");
+    }
 
     Ok((reviewed, please_check, changed))
 }
@@ -2626,10 +2548,11 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        apply_editor_field_flag_update, apply_editor_plain_text_updates,
+        active_lifecycle_state, apply_editor_field_flag_update, apply_editor_plain_text_updates,
         build_editor_field_history_entries, create_inserted_editor_row, create_inserted_row_file,
         editor_row_from_stored_row_file, filter_commit_row_paths_for_chapter,
-        parse_git_commit_message, GitCommitMetadata, StoredChapterFile, StoredFieldEditorFlags,
+        parse_git_commit_message, preferred_target_language_code, ChapterLanguage,
+        GitCommitMetadata, StoredChapterFile, StoredChapterSettings, StoredFieldEditorFlags,
         StoredFieldValue, StoredRowFile,
     };
 
@@ -2688,7 +2611,7 @@ mod tests {
     }
 
     #[test]
-    fn apply_editor_plain_text_updates_changes_requested_field_and_preview() {
+    fn apply_editor_plain_text_updates_changes_requested_field_and_clears_preview_cache() {
         let mut row_value = json!({
           "fields": {
             "es": {
@@ -2721,10 +2644,7 @@ mod tests {
         .expect("plain text update should succeed");
 
         assert_eq!(row_value["fields"]["es"]["plain_text"], json!("dos"));
-        assert_eq!(
-            row_value["fields"]["es"]["html_preview"],
-            json!("<p>dos</p>")
-        );
+        assert!(row_value["fields"]["es"].get("html_preview").is_none());
         assert_eq!(row_value["fields"]["en"]["plain_text"], json!("one"));
     }
 
@@ -2790,6 +2710,7 @@ mod tests {
             row_value["fields"]["es"]["editor_flags"]["please_check"],
             json!(true)
         );
+        assert!(row_value["fields"]["es"].get("html_preview").is_none());
     }
 
     #[test]
@@ -2880,7 +2801,6 @@ mod tests {
             lifecycle: super::active_lifecycle_state(),
             source_files: Vec::new(),
             languages: Vec::new(),
-            source_word_counts: Default::default(),
             settings: None,
         };
         let row_value = create_inserted_row_file("row-1", "0001", &chapter, &[]);
@@ -2941,6 +2861,43 @@ mod tests {
         assert_eq!(entries[1].commit_sha, "c2");
         assert_eq!(entries[1].operation_type.as_deref(), Some("insert"));
         assert_eq!(entries[1].plain_text, "");
+    }
+
+    #[test]
+    fn preferred_target_language_code_uses_default_target_language() {
+        let languages = vec![
+            ChapterLanguage {
+                code: "es".to_string(),
+                name: "Spanish".to_string(),
+                role: "source".to_string(),
+            },
+            ChapterLanguage {
+                code: "en".to_string(),
+                name: "English".to_string(),
+                role: "reference".to_string(),
+            },
+            ChapterLanguage {
+                code: "vi".to_string(),
+                name: "Vietnamese".to_string(),
+                role: "target".to_string(),
+            },
+        ];
+        let chapter = StoredChapterFile {
+            chapter_id: "chapter-1".to_string(),
+            title: "Chapter".to_string(),
+            lifecycle: active_lifecycle_state(),
+            source_files: Vec::new(),
+            languages: languages.clone(),
+            settings: Some(StoredChapterSettings {
+                linked_glossaries: None,
+                default_source_language: Some("es".to_string()),
+                default_target_language: Some("en".to_string()),
+            }),
+        };
+
+        let selected_target = preferred_target_language_code(&chapter, &languages, Some("es"));
+
+        assert_eq!(selected_target.as_deref(), Some("en"));
     }
 }
 
@@ -3015,34 +2972,12 @@ fn build_source_word_counts_from_stored_rows(
     counts
 }
 
-fn resolve_source_word_counts(
-    chapter_file: &StoredChapterFile,
-    rows: Option<&[StoredRowFile]>,
+fn load_source_word_counts(
+    rows_path: &Path,
     languages: &[ChapterLanguage],
-) -> BTreeMap<String, usize> {
-    if !chapter_file.source_word_counts.is_empty() {
-        return languages
-            .iter()
-            .map(|language| {
-                (
-                    language.code.clone(),
-                    chapter_file
-                        .source_word_counts
-                        .get(&language.code)
-                        .copied()
-                        .unwrap_or(0),
-                )
-            })
-            .collect();
-    }
-
-    rows.map(|stored_rows| build_source_word_counts_from_stored_rows(stored_rows, languages))
-        .unwrap_or_else(|| {
-            languages
-                .iter()
-                .map(|language| (language.code.clone(), 0usize))
-                .collect()
-        })
+) -> Result<BTreeMap<String, usize>, String> {
+    let rows = load_editor_rows(rows_path)?;
+    Ok(build_source_word_counts_from_stored_rows(&rows, languages))
 }
 
 fn apply_source_word_count_delta(
@@ -3137,7 +3072,6 @@ fn create_inserted_row_file(
                   "value_kind": "text",
                   "plain_text": "",
                   "rich_text": Value::Null,
-                  "html_preview": Value::Null,
                   "notes_html": "",
                   "attachments": [],
                   "passthrough_value": Value::Null,
@@ -3235,7 +3169,6 @@ fn create_inserted_editor_row(
                     lifecycle: active_lifecycle_state(),
                     source_files: Vec::new(),
                     languages: languages.to_vec(),
-                    source_word_counts: BTreeMap::new(),
                     settings: None,
                 },
                 languages,
@@ -3260,22 +3193,6 @@ fn empty_deleted_row_stub(row: &StoredRowFile) -> StoredRowFile {
     let mut stub = row.clone();
     stub.fields.clear();
     stub
-}
-
-fn write_chapter_source_word_counts(
-    chapter_json_path: &Path,
-    source_word_counts: &BTreeMap<String, usize>,
-) -> Result<(), String> {
-    let mut chapter_value: Value = read_json_file(chapter_json_path, "chapter.json")?;
-    let chapter_object = chapter_value
-        .as_object_mut()
-        .ok_or_else(|| "The chapter.json file is not a JSON object.".to_string())?;
-    chapter_object.insert(
-        "source_word_counts".to_string(),
-        serde_json::to_value(source_word_counts)
-            .map_err(|error| format!("Could not serialize chapter source word counts: {error}"))?,
-    );
-    write_json_pretty(chapter_json_path, &chapter_value)
 }
 
 fn preferred_source_language_code(
@@ -3317,12 +3234,7 @@ fn preferred_target_language_code(
     chapter_file
         .settings
         .as_ref()
-        .and_then(|settings| {
-            settings
-                .default_target_language
-                .clone()
-                .or_else(|| settings.default_preview_language.clone())
-        })
+        .and_then(|settings| settings.default_target_language.clone())
         .filter(|code| languages.iter().any(|language| language.code == *code))
         .or_else(|| {
             languages
@@ -3344,21 +3256,4 @@ fn count_words(value: &str) -> usize {
         .split_whitespace()
         .filter(|segment| !segment.is_empty())
         .count()
-}
-
-fn html_preview(plain_text: &str) -> Option<String> {
-    if plain_text.is_empty() {
-        return None;
-    }
-
-    Some(format!("<p>{}</p>", escape_html(plain_text)))
-}
-
-fn escape_html(value: &str) -> String {
-    value
-        .replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
-        .replace('\'', "&#39;")
 }

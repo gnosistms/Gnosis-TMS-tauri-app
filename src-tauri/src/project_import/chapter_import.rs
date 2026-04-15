@@ -104,7 +104,6 @@ struct ChapterFile {
     source_files: Vec<SourceFile>,
     package_assets: Vec<Value>,
     languages: Vec<ChapterLanguage>,
-    source_word_counts: BTreeMap<String, usize>,
     #[serde(default)]
     settings: ChapterSettings,
 }
@@ -155,8 +154,6 @@ struct ChapterSettings {
     default_source_language: Option<String>,
     #[serde(default)]
     default_target_language: Option<String>,
-    #[serde(default)]
-    default_preview_language: Option<String>,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize)]
@@ -242,7 +239,6 @@ struct FieldValue {
     value_kind: &'static str,
     plain_text: String,
     rich_text: Option<Value>,
-    html_preview: Option<String>,
     notes_html: String,
     attachments: Vec<Value>,
     passthrough_value: Option<Value>,
@@ -313,7 +309,7 @@ pub(super) fn import_xlsx_to_gtms_sync(
         .languages
         .first()
         .map(|language| language.code.clone());
-    let selected_target_language_code = chapter_file.settings.default_preview_language.clone();
+    let selected_target_language_code = chapter_file.settings.default_target_language.clone();
 
     Ok(ImportXlsxResponse {
         chapter_id: chapter_id.to_string(),
@@ -501,7 +497,6 @@ fn build_chapter_file(
                 role: language.role.to_string(),
             })
             .collect(),
-        source_word_counts: build_source_word_counts_from_import(parsed),
         settings: ChapterSettings {
             linked_glossaries: None,
             default_source_language: parsed
@@ -509,10 +504,6 @@ fn build_chapter_file(
                 .first()
                 .map(|language| language.code.clone()),
             default_target_language: parsed
-                .languages
-                .last()
-                .map(|language| language.code.clone()),
-            default_preview_language: parsed
                 .languages
                 .last()
                 .map(|language| language.code.clone()),
@@ -574,9 +565,8 @@ fn build_row_file(
             language.code.clone(),
             FieldValue {
                 value_kind: "text",
-                plain_text: plain_text.clone(),
+                plain_text,
                 rich_text: None,
-                html_preview: html_preview(&plain_text),
                 notes_html: String::new(),
                 attachments: Vec::new(),
                 passthrough_value: None,
@@ -865,23 +855,6 @@ fn cell_to_trimmed_string(cell: &Data) -> String {
         _ => cell.to_string(),
     };
     text.trim().to_string()
-}
-
-fn html_preview(plain_text: &str) -> Option<String> {
-    if plain_text.is_empty() {
-        return None;
-    }
-
-    Some(format!("<p>{}</p>", escape_html(plain_text)))
-}
-
-fn escape_html(value: &str) -> String {
-    value
-        .replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
-        .replace('\'', "&#39;")
 }
 
 fn build_source_word_counts_from_import(parsed: &ParsedWorkbook) -> BTreeMap<String, usize> {

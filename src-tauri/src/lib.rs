@@ -34,8 +34,7 @@ use crate::{
     ai::{
         load_ai_provider_models as load_ai_provider_models_task,
         prepare_ai_translated_glossary as prepare_ai_translated_glossary_task,
-        probe_ai_model as probe_ai_model_task,
-        run_ai_review as run_ai_review_task,
+        probe_ai_model as probe_ai_model_task, run_ai_review as run_ai_review_task,
         run_ai_translation as run_ai_translation_task,
         types::{
             AiModelProbeRequest, AiProviderId, AiProviderModel, AiReviewRequest, AiReviewResponse,

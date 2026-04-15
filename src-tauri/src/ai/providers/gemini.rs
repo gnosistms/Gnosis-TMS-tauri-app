@@ -118,9 +118,7 @@ pub(crate) fn list_models(api_key: &str) -> Result<Vec<AiProviderModel>, String>
             request = request.query(&[("pageToken", next_page_token.as_str())]);
         }
 
-        let response = request
-            .send()
-            .map_err(normalize_transport_error)?;
+        let response = request.send().map_err(normalize_transport_error)?;
         let status = response.status();
         let body = response
             .text()
@@ -147,7 +145,9 @@ pub(crate) fn list_models(api_key: &str) -> Result<Vec<AiProviderModel>, String>
             } else {
                 format!("{} ({})", model.display_name.trim(), id)
             };
-            models_by_id.entry(id.clone()).or_insert(AiProviderModel { id, label });
+            models_by_id
+                .entry(id.clone())
+                .or_insert(AiProviderModel { id, label });
         }
 
         if payload.next_page_token.trim().is_empty() {
@@ -165,7 +165,9 @@ pub(crate) fn list_models(api_key: &str) -> Result<Vec<AiProviderModel>, String>
     };
 
     if models.is_empty() {
-        return Err("Gemini did not return any text generation models for this API key.".to_string());
+        return Err(
+            "Gemini did not return any text generation models for this API key.".to_string(),
+        );
     }
 
     Ok(models)
@@ -185,8 +187,8 @@ pub(crate) fn run_prompt(
         return Err("Select a Gemini model before running this AI request.".to_string());
     }
 
-    let client =
-        shared_http_client().map_err(|error| format!("Could not start the Gemini request: {error}"))?;
+    let client = shared_http_client()
+        .map_err(|error| format!("Could not start the Gemini request: {error}"))?;
     let (status, body) =
         send_generate_content_request(&client, normalized_key, model_id, &request.prompt)
             .map_err(|error| format!("Could not complete the Gemini request: {error}"))?;
@@ -225,9 +227,13 @@ pub(crate) fn probe_model(model_id: &str, api_key: &str) -> Result<(), String> {
 
     let client = shared_http_client()
         .map_err(|error| format!("Could not start the Gemini model test request: {error}"))?;
-    let (status, body) =
-        send_generate_content_request(&client, normalized_key, normalized_model_id, "Reply with OK.")
-            .map_err(|error| format!("Could not complete the Gemini model test request: {error}"))?;
+    let (status, body) = send_generate_content_request(
+        &client,
+        normalized_key,
+        normalized_model_id,
+        "Reply with OK.",
+    )
+    .map_err(|error| format!("Could not complete the Gemini model test request: {error}"))?;
 
     if !status.is_success() {
         return Err(extract_probe_error_message(status, &body, "Gemini"));
@@ -368,11 +374,7 @@ fn parse_gemini_model_version(model_id: &str) -> Option<(GeminiModelFamily, Gemi
     let (preview_rank, preview_month, preview_year) = match preview_segments {
         [] => (0, 0, 0),
         ["preview"] => (1, 0, 0),
-        ["preview", month, year] => (
-            2,
-            month.parse::<u32>().ok()?,
-            year.parse::<u32>().ok()?,
-        ),
+        ["preview", month, year] => (2, month.parse::<u32>().ok()?, year.parse::<u32>().ok()?),
         _ => return None,
     };
 
@@ -414,10 +416,14 @@ fn normalize_http_error(status: StatusCode, body: &str) -> String {
             .unwrap_or_else(|| "Gemini had an internal error. Try again in a moment.".to_string()),
         StatusCode::SERVICE_UNAVAILABLE => extract_api_error_message(body)
             .map(|message| format!("Gemini is temporarily unavailable: {message}"))
-            .unwrap_or_else(|| "Gemini is temporarily unavailable. Try again in a moment.".to_string()),
+            .unwrap_or_else(|| {
+                "Gemini is temporarily unavailable. Try again in a moment.".to_string()
+            }),
         _ if status.is_server_error() => extract_api_error_message(body)
             .map(|message| format!("Gemini is temporarily unavailable: {message}"))
-            .unwrap_or_else(|| "Gemini is temporarily unavailable. Try again in a moment.".to_string()),
+            .unwrap_or_else(|| {
+                "Gemini is temporarily unavailable. Try again in a moment.".to_string()
+            }),
         _ => extract_api_error_message(body)
             .map(|message| format!("Gemini returned an error: {message}"))
             .unwrap_or_else(|| "Gemini returned an unexpected error.".to_string()),
@@ -425,7 +431,10 @@ fn normalize_http_error(status: StatusCode, body: &str) -> String {
 }
 
 fn should_retry_request(status: StatusCode) -> bool {
-    matches!(status, StatusCode::INTERNAL_SERVER_ERROR | StatusCode::SERVICE_UNAVAILABLE)
+    matches!(
+        status,
+        StatusCode::INTERNAL_SERVER_ERROR | StatusCode::SERVICE_UNAVAILABLE
+    )
 }
 
 fn retry_delay_for_attempt(attempt: usize) -> Duration {

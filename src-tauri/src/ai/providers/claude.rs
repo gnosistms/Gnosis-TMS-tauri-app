@@ -126,8 +126,8 @@ pub(crate) fn run_prompt(
         return Err("Select a Claude model before running this AI request.".to_string());
     }
 
-    let client =
-        shared_http_client().map_err(|error| format!("Could not start the Claude request: {error}"))?;
+    let client = shared_http_client()
+        .map_err(|error| format!("Could not start the Claude request: {error}"))?;
 
     let response = client
         .post(CLAUDE_MESSAGES_API_URL)

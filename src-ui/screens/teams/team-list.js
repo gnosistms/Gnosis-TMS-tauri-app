@@ -125,7 +125,7 @@ export function renderTeamsList(activeTeams, deletedTeams = [], showDeletedTeams
         <div class="card__body">
           <p class="card__eyebrow">TEAMS LIST</p>
           <h2 class="card__title card__title--small">No teams found.</h2>
-          <p class="card__subtitle">Click "+ New Team" to create a team.</p>
+          <p class="card__subtitle">Ask a team owner to invite your to join a team or Click "+ New Team" to create a team.</p>
         </div>
       </article>
     `
