@@ -683,7 +683,12 @@ export async function loadRepoBackedGlossariesForTeam(team, options = {}) {
             remoteRepos,
             { metadataLoaded, remoteLoaded, repairLoaded, repairIssues },
           )
-        : mergeRepoBackedGlossarySummaries(refreshedLocalSummaries, remoteRepos),
+        : mergeMetadataBackedGlossarySummaries(
+            refreshedLocalSummaries,
+            [],
+            remoteRepos,
+            { metadataLoaded: false, remoteLoaded, repairLoaded, repairIssues: [] },
+          ),
     remoteRepos: syncTargets,
     syncSnapshots,
     syncIssue,

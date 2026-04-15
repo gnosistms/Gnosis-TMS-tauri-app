@@ -107,6 +107,28 @@ function metadataBackedGlossaryRepo(record) {
   });
 }
 
+function remoteGlossaryToVisibleSummary(remoteGlossary) {
+  const normalizedRemote = normalizeRemoteGlossaryRepo(remoteGlossary);
+  if (!normalizedRemote) {
+    return null;
+  }
+
+  return normalizeGlossarySummary({
+    glossaryId: normalizedRemote.nodeId || normalizedRemote.fullName || normalizedRemote.name,
+    repoName: normalizedRemote.name,
+    title: normalizedRemote.name,
+    lifecycleState: "active",
+    remoteState: "linked",
+    recordState: "live",
+    fullName: normalizedRemote.fullName,
+    htmlUrl: normalizedRemote.htmlUrl,
+    defaultBranchName: normalizedRemote.defaultBranchName,
+    defaultBranchHeadOid: normalizedRemote.defaultBranchHeadOid,
+    repoId: normalizedRemote.repoId,
+    nodeId: normalizedRemote.nodeId,
+  });
+}
+
 function findMatchingLocalGlossary(record, localById, localByRepoName) {
   const byId = localById.get(record.id);
   if (byId) {
@@ -312,6 +334,24 @@ export function mergeMetadataBackedGlossarySummaries(
       repairIssueType: repairIssue?.issueType ?? "",
       repairIssueMessage: repairIssue?.message ?? "",
     }));
+  }
+
+  if (!metadataLoaded) {
+    for (const remoteGlossary of normalizedRemotes) {
+      const visibleGlossary = remoteGlossaryToVisibleSummary(remoteGlossary);
+      if (!visibleGlossary) {
+        continue;
+      }
+      if (
+        matchedLocalIds.has(visibleGlossary.id)
+        || matchedLocalRepoNames.has(visibleGlossary.repoName)
+        || merged.some((glossary) =>
+          glossary.id === visibleGlossary.id || glossary.repoName === visibleGlossary.repoName)
+      ) {
+        continue;
+      }
+      merged.push(visibleGlossary);
+    }
   }
 
   return sortGlossaries(merged);

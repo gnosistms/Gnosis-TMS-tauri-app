@@ -1,11 +1,12 @@
 use std::{
     fs,
     path::{Path, PathBuf},
-    process::Command,
     time::{SystemTime, UNIX_EPOCH},
 };
 
 use serde::{Deserialize, Serialize};
+
+use crate::repo_sync_shared::{format_git_spawn_error, git_command};
 
 const LOCAL_REPO_SYNC_STATE_FILE_NAME: &str = "gnosis-sync-state.json";
 
@@ -149,14 +150,15 @@ fn local_repo_sync_state_path(repo_path: &Path) -> Result<PathBuf, String> {
 }
 
 fn resolve_git_dir(repo_path: &Path) -> Result<PathBuf, String> {
-    let output = Command::new("git")
+    let output = git_command()
         .args(["rev-parse", "--git-dir"])
         .current_dir(repo_path)
         .output()
         .map_err(|error| {
             format!(
-                "Could not inspect the git directory for '{}': {error}",
-                repo_path.display()
+                "Could not inspect the git directory for '{}': {}",
+                repo_path.display(),
+                format_git_spawn_error(&["rev-parse", "--git-dir"], &error)
             )
         })?;
 

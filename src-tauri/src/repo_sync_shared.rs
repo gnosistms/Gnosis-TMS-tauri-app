@@ -1,16 +1,24 @@
 use std::{
     env, fs,
+    io::ErrorKind,
     path::{Path, PathBuf},
     process::Command,
+    sync::OnceLock,
 };
 
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 
 use serde::Deserialize;
+use tauri::{AppHandle, Manager, Runtime};
 use uuid::Uuid;
 
 use crate::{broker::broker_get_json_with_session, github::github_client};
+
+static RESOLVED_GIT_EXECUTABLE: OnceLock<PathBuf> = OnceLock::new();
+static APP_GIT_HOME_DIR: OnceLock<PathBuf> = OnceLock::new();
+static APP_GIT_XDG_CONFIG_HOME: OnceLock<PathBuf> = OnceLock::new();
+static APP_GIT_GLOBAL_CONFIG: OnceLock<PathBuf> = OnceLock::new();
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -40,12 +48,89 @@ impl Drop for GitTransportAuth {
     }
 }
 
+pub(crate) fn initialize_git_runtime<R: Runtime>(app: &AppHandle<R>) {
+    if let Ok(app_config_dir) = app.path().app_config_dir() {
+        if let Ok(environment) = prepare_app_git_environment(&app_config_dir) {
+            let _ = APP_GIT_HOME_DIR.set(environment.home_dir);
+            let _ = APP_GIT_XDG_CONFIG_HOME.set(environment.xdg_config_home);
+            let _ = APP_GIT_GLOBAL_CONFIG.set(environment.global_config);
+        }
+    }
+
+    #[cfg(windows)]
+    {
+        let resource_dir = app.path().resource_dir().ok();
+        if let Some(path) = discover_windows_git_executable(resource_dir.as_deref()) {
+            let _ = RESOLVED_GIT_EXECUTABLE.set(path);
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        let resource_dir = app.path().resource_dir().ok();
+        if let Some(path) = discover_macos_git_executable(resource_dir.as_deref()) {
+            let _ = RESOLVED_GIT_EXECUTABLE.set(path);
+        }
+    }
+}
+
+pub(crate) fn git_command() -> Command {
+    if let Some(executable) = RESOLVED_GIT_EXECUTABLE.get() {
+        let mut command = Command::new(executable);
+        configure_git_command(&mut command, executable);
+        return command;
+    }
+
+    #[cfg(windows)]
+    {
+        let executable = resolved_windows_git_executable();
+        let mut command = Command::new(&executable);
+        configure_git_command(&mut command, &executable);
+        return command;
+    }
+
+    #[cfg(not(windows))]
+    {
+        Command::new("git")
+    }
+}
+
+pub(crate) fn format_git_spawn_error(args: &[&str], error: &std::io::Error) -> String {
+    if error.kind() == ErrorKind::NotFound {
+        #[cfg(windows)]
+        {
+            return format!(
+                "Could not run git {}: Git runtime not found. Reinstall Gnosis TMS or install Git for Windows.",
+                args.join(" ")
+            );
+        }
+
+        #[cfg(target_os = "macos")]
+        {
+            return format!(
+                "Could not run git {}: Git runtime not found. Reinstall Gnosis TMS or install Git.",
+                args.join(" ")
+            );
+        }
+
+        #[cfg(all(not(windows), not(target_os = "macos")))]
+        {
+            return format!(
+                "Could not run git {}: Git is not installed or not on PATH.",
+                args.join(" ")
+            );
+        }
+    }
+
+    format!("Could not run git {}: {error}", args.join(" "))
+}
+
 pub(crate) fn git_output(
     repo_path: &Path,
     args: &[&str],
     auth: Option<&GitTransportAuth>,
 ) -> Result<String, String> {
-    let mut command = Command::new("git");
+    let mut command = git_command();
     if let Some(auth) = auth {
         command
             .env("GIT_ASKPASS", &auth.askpass_path)
@@ -58,7 +143,7 @@ pub(crate) fn git_output(
         .args(args)
         .current_dir(repo_path)
         .output()
-        .map_err(|error| format!("Could not run git {}: {error}", args.join(" ")))?;
+        .map_err(|error| format_git_spawn_error(args, &error))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
@@ -175,4 +260,258 @@ fn resolve_git_path(repo_path: &Path, git_path: &str) -> PathBuf {
     } else {
         repo_path.join(path)
     }
+}
+
+#[cfg(windows)]
+fn resolved_windows_git_executable() -> PathBuf {
+    if let Some(path) = RESOLVED_GIT_EXECUTABLE.get() {
+        return path.clone();
+    }
+
+    if let Some(path) = discover_windows_git_executable(None) {
+        let _ = RESOLVED_GIT_EXECUTABLE.set(path.clone());
+        return path;
+    }
+
+    PathBuf::from("git")
+}
+
+fn configure_git_command(command: &mut Command, executable: &Path) {
+    configure_git_isolation(command);
+
+    #[cfg(windows)]
+    configure_windows_git_command(command, executable);
+
+    #[cfg(target_os = "macos")]
+    configure_macos_git_command(command, executable);
+}
+
+fn configure_git_isolation(command: &mut Command) {
+    if let Some(home_dir) = APP_GIT_HOME_DIR.get() {
+        command.env("HOME", home_dir);
+    }
+    if let Some(xdg_config_home) = APP_GIT_XDG_CONFIG_HOME.get() {
+        command.env("XDG_CONFIG_HOME", xdg_config_home);
+    }
+    if let Some(global_config) = APP_GIT_GLOBAL_CONFIG.get() {
+        command.env("GIT_CONFIG_GLOBAL", global_config);
+    }
+
+    command
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .env("GCM_INTERACTIVE", "Never")
+        .env_remove("SSH_ASKPASS")
+        .env_remove("GIT_ASKPASS");
+}
+
+#[cfg(windows)]
+fn configure_windows_git_command(command: &mut Command, executable: &Path) {
+    let Some(root) = git_root_from_executable(executable) else {
+        return;
+    };
+
+    let mut search_paths = Vec::new();
+    for candidate in [
+        root.join("cmd"),
+        root.join("bin"),
+        root.join("mingw64").join("bin"),
+        root.join("usr").join("bin"),
+    ] {
+        if candidate.exists() {
+            search_paths.push(candidate);
+        }
+    }
+
+    if search_paths.is_empty() {
+        return;
+    }
+
+    if let Some(existing_path) = env::var_os("PATH") {
+        search_paths.extend(env::split_paths(&existing_path));
+    }
+
+    if let Ok(joined_path) = env::join_paths(search_paths) {
+        command.env("PATH", joined_path);
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn configure_macos_git_command(command: &mut Command, executable: &Path) {
+    let Some(exec_path) = executable.parent() else {
+        return;
+    };
+    let Some(libexec_dir) = exec_path.parent() else {
+        return;
+    };
+    let Some(root) = libexec_dir.parent() else {
+        return;
+    };
+    if exec_path.file_name().and_then(|value| value.to_str()) != Some("git-core")
+        || libexec_dir.file_name().and_then(|value| value.to_str()) != Some("libexec")
+    {
+        return;
+    }
+
+    command.env("GIT_EXEC_PATH", exec_path);
+    let template_dir = root.join("share").join("git-core").join("templates");
+    if template_dir.exists() {
+        command.env("GIT_TEMPLATE_DIR", template_dir);
+    }
+
+    let mut search_paths = vec![exec_path.to_path_buf()];
+    if let Some(existing_path) = env::var_os("PATH") {
+        search_paths.extend(env::split_paths(&existing_path));
+    }
+    if let Ok(joined_path) = env::join_paths(search_paths) {
+        command.env("PATH", joined_path);
+    }
+}
+
+#[cfg(windows)]
+fn git_root_from_executable(executable: &Path) -> Option<PathBuf> {
+    let parent = executable.parent()?;
+    let parent_name = parent.file_name()?.to_string_lossy().to_ascii_lowercase();
+    if parent_name == "cmd" || parent_name == "bin" {
+        return parent.parent().map(PathBuf::from);
+    }
+    None
+}
+
+#[cfg(windows)]
+fn discover_windows_git_executable(resource_dir: Option<&Path>) -> Option<PathBuf> {
+    let mut candidates = Vec::new();
+
+    if let Some(value) = env::var_os("GTMS_GIT_EXECUTABLE") {
+        candidates.push(PathBuf::from(value));
+    }
+
+    if let Some(resource_dir) = resource_dir {
+        candidates.extend(windows_git_paths_for_root(
+            &resource_dir.join("git").join("windows"),
+        ));
+    }
+
+    if let Some(local_app_data) = env::var_os("LOCALAPPDATA").map(PathBuf::from) {
+        candidates.extend(windows_git_paths_for_root(
+            &local_app_data.join("Programs").join("Git"),
+        ));
+        if let Some(github_desktop_git) =
+            discover_windows_github_desktop_git(&local_app_data.join("GitHubDesktop"))
+        {
+            candidates.push(github_desktop_git);
+        }
+    }
+
+    if let Some(program_files) = env::var_os("ProgramFiles").map(PathBuf::from) {
+        candidates.extend(windows_git_paths_for_root(&program_files.join("Git")));
+    }
+
+    if let Some(program_files_x86) = env::var_os("ProgramFiles(x86)").map(PathBuf::from) {
+        candidates.extend(windows_git_paths_for_root(&program_files_x86.join("Git")));
+    }
+
+    if let Some(user_profile) = env::var_os("USERPROFILE").map(PathBuf::from) {
+        candidates.extend(windows_git_paths_for_root(
+            &user_profile
+                .join("scoop")
+                .join("apps")
+                .join("git")
+                .join("current"),
+        ));
+    }
+
+    candidates.into_iter().find(|path| path.is_file())
+}
+
+#[cfg(windows)]
+fn windows_git_paths_for_root(root: &Path) -> Vec<PathBuf> {
+    vec![
+        root.join("cmd").join("git.exe"),
+        root.join("bin").join("git.exe"),
+    ]
+}
+
+#[cfg(windows)]
+fn discover_windows_github_desktop_git(base_dir: &Path) -> Option<PathBuf> {
+    let entries = fs::read_dir(base_dir).ok()?;
+    let mut candidates = entries
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.path())
+        .filter(|path| path.is_dir())
+        .filter(|path| {
+            path.file_name()
+                .and_then(|value| value.to_str())
+                .map(|value| value.starts_with("app-"))
+                .unwrap_or(false)
+        })
+        .collect::<Vec<_>>();
+    candidates.sort();
+    candidates.reverse();
+
+    candidates.into_iter().find_map(|path| {
+        let git_path = path
+            .join("resources")
+            .join("app")
+            .join("git")
+            .join("cmd")
+            .join("git.exe");
+        git_path.is_file().then_some(git_path)
+    })
+}
+
+#[cfg(target_os = "macos")]
+fn discover_macos_git_executable(resource_dir: Option<&Path>) -> Option<PathBuf> {
+    let resource_dir = resource_dir?;
+    let git_path = resource_dir
+        .join("git")
+        .join("macos")
+        .join("libexec")
+        .join("git-core")
+        .join("git");
+    git_path.is_file().then_some(git_path)
+}
+
+struct AppGitEnvironment {
+    home_dir: PathBuf,
+    xdg_config_home: PathBuf,
+    global_config: PathBuf,
+}
+
+fn prepare_app_git_environment(app_config_dir: &Path) -> Result<AppGitEnvironment, String> {
+    let git_root = app_config_dir.join("git");
+    let home_dir = git_root.join("home");
+    let xdg_config_home = git_root.join("xdg");
+    let global_config = git_root.join("config");
+
+    fs::create_dir_all(&home_dir).map_err(|error| {
+        format!(
+            "Could not create the app Git home directory '{}': {error}",
+            home_dir.display()
+        )
+    })?;
+    fs::create_dir_all(&xdg_config_home).map_err(|error| {
+        format!(
+            "Could not create the app Git XDG config directory '{}': {error}",
+            xdg_config_home.display()
+        )
+    })?;
+
+    if !global_config.exists() {
+        fs::write(
+            &global_config,
+            "[init]\n\tdefaultBranch = main\n[credential]\n\thelper =\n",
+        )
+        .map_err(|error| {
+            format!(
+                "Could not create the app Git config '{}': {error}",
+                global_config.display()
+            )
+        })?;
+    }
+
+    Ok(AppGitEnvironment {
+        home_dir,
+        xdg_config_home,
+        global_config,
+    })
 }

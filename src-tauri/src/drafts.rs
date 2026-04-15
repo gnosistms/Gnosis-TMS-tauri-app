@@ -1,9 +1,12 @@
-use std::{env, fs, path::PathBuf, process::Command};
+use std::{env, fs, path::PathBuf};
 
 use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
 
-use crate::git_commit::git_commit_as_signed_in_user;
+use crate::{
+    git_commit::git_commit_as_signed_in_user,
+    repo_sync_shared::{format_git_spawn_error, git_command},
+};
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -91,11 +94,11 @@ fn repository_root() -> Result<PathBuf, String> {
 }
 
 fn git_in_repo(repo_root: &PathBuf, args: &[&str]) -> Result<(), String> {
-    let output = Command::new("git")
+    let output = git_command()
         .args(args)
         .current_dir(repo_root)
         .output()
-        .map_err(|error| format!("Could not run git: {error}"))?;
+        .map_err(|error| format_git_spawn_error(args, &error))?;
 
     if output.status.success() {
         return Ok(());
@@ -110,11 +113,11 @@ fn git_in_repo(repo_root: &PathBuf, args: &[&str]) -> Result<(), String> {
 }
 
 fn git_output(repo_root: &PathBuf, args: &[&str]) -> Result<String, String> {
-    let output = Command::new("git")
+    let output = git_command()
         .args(args)
         .current_dir(repo_root)
         .output()
-        .map_err(|error| format!("Could not run git: {error}"))?;
+        .map_err(|error| format_git_spawn_error(args, &error))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();

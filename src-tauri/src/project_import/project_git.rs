@@ -2,7 +2,7 @@ use std::{
     fs,
     io::Write,
     path::{Path, PathBuf},
-    process::{Command, Stdio},
+    process::Stdio,
 };
 
 use serde::de::DeserializeOwned;
@@ -10,7 +10,10 @@ use serde::Serialize;
 use serde_json::Value;
 use tauri::AppHandle;
 
-use crate::storage_paths::local_project_repo_root;
+use crate::{
+    repo_sync_shared::{format_git_spawn_error, git_command},
+    storage_paths::local_project_repo_root,
+};
 
 const GTMS_GITATTRIBUTES: &str = "*.json text eol=lf\nassets/** binary\n";
 
@@ -49,11 +52,11 @@ pub(super) fn ensure_clean_git_repo(repo_path: &Path, dirty_message: &str) -> Re
 }
 
 pub(super) fn git_output(repo_path: &Path, args: &[&str]) -> Result<String, String> {
-    let output = Command::new("git")
+    let output = git_command()
         .args(args)
         .current_dir(repo_path)
         .output()
-        .map_err(|error| format!("Could not run git {}: {error}", args.join(" ")))?;
+        .map_err(|error| format_git_spawn_error(args, &error))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
@@ -76,14 +79,14 @@ pub(super) fn git_output_with_stdin(
     args: &[&str],
     stdin_contents: &str,
 ) -> Result<Vec<u8>, String> {
-    let mut child = Command::new("git")
+    let mut child = git_command()
         .args(args)
         .current_dir(repo_path)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .map_err(|error| format!("Could not run git {}: {error}", args.join(" ")))?;
+        .map_err(|error| format_git_spawn_error(args, &error))?;
 
     {
         let stdin = child

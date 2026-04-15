@@ -1,8 +1,11 @@
-use std::{path::Path, process::Command};
+use std::path::Path;
 
 use tauri::AppHandle;
 
-use crate::broker_auth_storage::load_broker_auth_session;
+use crate::{
+    broker_auth_storage::load_broker_auth_session,
+    repo_sync_shared::{format_git_spawn_error, git_command},
+};
 
 pub(crate) struct GitCommitMetadata<'a> {
     pub(crate) operation: Option<&'a str>,
@@ -59,7 +62,7 @@ pub(crate) fn git_commit_as_signed_in_user_with_metadata(
     metadata: GitCommitMetadata<'_>,
 ) -> Result<String, String> {
     let author = signed_in_git_author(app)?;
-    let mut command = Command::new("git");
+    let mut command = git_command();
     command
         .arg("commit")
         .arg("-m")
@@ -96,7 +99,7 @@ pub(crate) fn git_commit_as_signed_in_user_with_metadata(
 
     let output = command
         .output()
-        .map_err(|error| format!("Could not run git commit: {error}"))?;
+        .map_err(|error| format_git_spawn_error(&["commit"], &error))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();

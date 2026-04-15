@@ -77,6 +77,42 @@ jobs:
       - name: Install frontend dependencies
         run: npm install
 
+      - name: Bundle Windows Git runtime
+        if: matrix.platform == 'windows-latest'
+        shell: pwsh
+        run: |
+          $gitRoot = "src-tauri/resources/windows/git"
+          if (Test-Path $gitRoot) {
+            Get-ChildItem -Force $gitRoot | Remove-Item -Recurse -Force
+          }
+          New-Item -ItemType Directory -Force -Path $gitRoot | Out-Null
+
+          $release = Invoke-RestMethod -Headers @{ "User-Agent" = "gnosis-tms-release" } -Uri "https://api.github.com/repos/git-for-windows/git/releases/latest"
+          $asset = $release.assets | Where-Object {
+            $_.name -match '^MinGit-.*-64-bit\.zip$' -and $_.name -notmatch 'busybox'
+          } | Select-Object -First 1
+          if (-not $asset) {
+            throw "Could not find the latest MinGit 64-bit release asset."
+          }
+
+          $archivePath = Join-Path $env:RUNNER_TEMP $asset.name
+          Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $archivePath
+          Expand-Archive -Path $archivePath -DestinationPath $gitRoot -Force
+
+      - name: Bundle macOS Git runtime
+        if: matrix.platform == 'macos-latest'
+        shell: bash
+        run: |
+          GIT_ROOT="src-tauri/resources/macos/git"
+          GIT_EXEC_PATH="$(git --exec-path)"
+          GIT_PREFIX="$(cd "$GIT_EXEC_PATH/../.." && pwd)"
+          GIT_SHARE_PATH="$GIT_PREFIX/share/git-core"
+
+          rm -rf "$GIT_ROOT"
+          mkdir -p "$GIT_ROOT/libexec" "$GIT_ROOT/share"
+          cp -R "$GIT_EXEC_PATH" "$GIT_ROOT/libexec/"
+          cp -R "$GIT_SHARE_PATH" "$GIT_ROOT/share/"
+
       - name: Sync generated icon assets
         run: npm run icons:sync
 

@@ -2,7 +2,6 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
     path::{Path, PathBuf},
-    process::Command,
     sync::OnceLock,
 };
 
@@ -17,6 +16,7 @@ use crate::{
     local_repo_sync_state::{
         read_local_repo_sync_state, upsert_local_repo_sync_state, LocalRepoSyncStateUpdate,
     },
+    repo_sync_shared::{format_git_spawn_error, git_command},
     storage_paths::local_glossary_repo_root,
 };
 
@@ -1793,11 +1793,11 @@ fn ensure_gitattributes(path: &Path) -> Result<(), String> {
 }
 
 fn git_output(repo_path: &Path, args: &[&str]) -> Result<String, String> {
-    let output = Command::new("git")
+    let output = git_command()
         .args(args)
         .current_dir(repo_path)
         .output()
-        .map_err(|error| format!("Could not run git {}: {error}", args.join(" ")))?;
+        .map_err(|error| format_git_spawn_error(args, &error))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();

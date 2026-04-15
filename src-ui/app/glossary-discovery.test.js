@@ -57,6 +57,31 @@ test("glossary discovery surfaces unregisteredLocal when metadata is missing", (
   assert.equal(merged[0].resolutionState, "unregisteredLocal");
 });
 
+test("glossary discovery falls back to remote repos when metadata could not be loaded", () => {
+  const merged = mergeMetadataBackedGlossarySummaries(
+    [],
+    [],
+    [
+      {
+        repoId: 84,
+        nodeId: "R_kgDOGlossary84",
+        name: "glossary-2",
+        fullName: "team/glossary-2",
+        defaultBranchName: "main",
+      },
+    ],
+    {
+      metadataLoaded: false,
+      remoteLoaded: true,
+    },
+  );
+
+  assert.equal(merged.length, 1);
+  assert.equal(merged[0].repoName, "glossary-2");
+  assert.equal(merged[0].title, "glossary-2");
+  assert.equal(merged[0].remoteState, "linked");
+});
+
 test("glossary discovery surfaces repair issues from local repo scans", () => {
   const merged = mergeMetadataBackedGlossarySummaries(
     [],

@@ -102,6 +102,7 @@ use crate::{
         reconcile_project_repo_sync_states, sync_gtms_project_editor_repo,
     },
     project_search::{refresh_project_search_index, search_projects},
+    repo_sync_shared::initialize_git_runtime,
     state::{AuthState, ProjectRepoSyncStore},
     team_metadata_local::{
         delete_local_gnosis_glossary_metadata_record, delete_local_gnosis_project_metadata_record,
@@ -495,6 +496,7 @@ pub fn run() {
         .setup(|app| {
             let menu = build_app_menu(&app.handle())?;
             let _ = app.set_menu(menu)?;
+            initialize_git_runtime(&app.handle());
 
             #[cfg(target_os = "macos")]
             for label in ["main"] {
