@@ -1,6 +1,6 @@
 [package]
 name = "gnosis-tms"
-version = "0.1.18"
+version = "0.1.19"
 description = "Gnosis TMS"
 authors = ["you"]
 edition = "2021"

@@ -2,6 +2,29 @@ export const EDITOR_ROW_GAP_PX = 24;
 export const EDITOR_VIRTUALIZATION_MIN_ROWS = 25;
 export const EDITOR_VIRTUALIZATION_OVERSCAN_PX = 100;
 export const EDITOR_VIRTUALIZATION_INITIAL_VIEWPORT_PX = 900;
+export const EDITOR_VIRTUALIZATION_SCROLL_REASON = "scroll";
+
+export function nextScheduledEditorRenderReason(currentReason, nextReason) {
+  const normalizedCurrent = typeof currentReason === "string" ? currentReason : "";
+  const normalizedNext = typeof nextReason === "string" ? nextReason : "";
+
+  if (!normalizedCurrent) {
+    return normalizedNext;
+  }
+  if (!normalizedNext) {
+    return normalizedCurrent;
+  }
+
+  if (normalizedCurrent === EDITOR_VIRTUALIZATION_SCROLL_REASON && normalizedNext !== EDITOR_VIRTUALIZATION_SCROLL_REASON) {
+    return normalizedNext;
+  }
+
+  return normalizedCurrent;
+}
+
+export function shouldDeferMeasuredWindowReconcile(reason, anchorSnapshot = null) {
+  return reason === EDITOR_VIRTUALIZATION_SCROLL_REASON && !anchorSnapshot?.rowId;
+}
 
 function clampIndex(index, count) {
   if (count <= 0) {

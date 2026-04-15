@@ -138,7 +138,13 @@ export function restoreTranslateRowAnchor(snapshot) {
   const containerRect = container.getBoundingClientRect();
   const anchorRect = anchor.getBoundingClientRect();
   const currentOffsetTop = anchorRect.top - containerRect.top;
-  container.scrollTop += currentOffsetTop - snapshot.offsetTop;
+  const scrollDelta = currentOffsetTop - snapshot.offsetTop;
+  if (!Number.isFinite(scrollDelta) || Math.abs(scrollDelta) < 1) {
+    pendingTranslateAnchor = null;
+    return false;
+  }
+
+  container.scrollTop += scrollDelta;
   pendingTranslateAnchor = null;
   return true;
 }
@@ -168,7 +174,13 @@ export function centerTranslateRowInView(rowId) {
   const rowRect = row.getBoundingClientRect();
   const currentOffsetTop = rowRect.top - containerRect.top;
   const desiredOffsetTop = Math.max(0, (container.clientHeight - rowRect.height) / 2);
-  container.scrollTop += currentOffsetTop - desiredOffsetTop;
+  const scrollDelta = currentOffsetTop - desiredOffsetTop;
+  if (!Number.isFinite(scrollDelta) || Math.abs(scrollDelta) < 1) {
+    pendingTranslateAnchor = null;
+    return false;
+  }
+
+  container.scrollTop += scrollDelta;
   pendingTranslateAnchor = null;
   return true;
 }
