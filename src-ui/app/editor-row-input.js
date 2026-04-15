@@ -19,6 +19,6 @@ export function applyEditorRowFieldInput({
   }
 
   syncEditorRowTextareaHeight(input);
-  syncEditorVirtualizationRowLayout(input);
   syncEditorGlossaryHighlightRowDom(rowId);
+  syncEditorVirtualizationRowLayout(input);
 }

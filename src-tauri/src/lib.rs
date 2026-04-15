@@ -25,6 +25,8 @@ mod team_metadata_local;
 mod updater;
 mod window;
 
+use std::fs::{self, OpenOptions};
+use std::io::Write;
 use std::sync::Mutex;
 use std::time::Duration;
 use tauri::menu::{Menu, MenuItemBuilder, PredefinedMenuItem, Submenu, SubmenuBuilder};
@@ -225,6 +227,64 @@ const SYNC_WITH_SERVER_MENU_ID: &str = "sync-with-server";
 const SYNC_WITH_SERVER_EVENT: &str = "sync-with-server";
 const CHECK_FOR_UPDATES_MENU_ID: &str = "check-for-updates";
 const CHECK_FOR_UPDATES_EVENT: &str = "check-for-updates";
+const EDITOR_SCROLL_DEBUG_LOG_FILE: &str = "editor-scroll-debug.jsonl";
+const EDITOR_SCROLL_DEBUG_LOG_DIR: &str = "logs";
+const EDITOR_SCROLL_DEBUG_LOG_MAX_BYTES: u64 = 512 * 1024;
+
+fn append_editor_scroll_debug_log_blocking<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    lines: Vec<String>,
+) -> Result<(), String> {
+    if lines.is_empty() {
+        return Ok(());
+    }
+
+    let app_data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|error| format!("Could not resolve the app data directory: {error}"))?;
+    let log_dir = app_data_dir.join(EDITOR_SCROLL_DEBUG_LOG_DIR);
+    fs::create_dir_all(&log_dir)
+        .map_err(|error| format!("Could not create the editor debug log directory: {error}"))?;
+
+    let log_path = log_dir.join(EDITOR_SCROLL_DEBUG_LOG_FILE);
+    let rotated_log_path = log_dir.join(format!("{EDITOR_SCROLL_DEBUG_LOG_FILE}.1"));
+    if fs::metadata(&log_path)
+        .map(|metadata| metadata.len() > EDITOR_SCROLL_DEBUG_LOG_MAX_BYTES)
+        .unwrap_or(false)
+    {
+        let _ = fs::remove_file(&rotated_log_path);
+        let _ = fs::rename(&log_path, &rotated_log_path);
+    }
+
+    let mut file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path)
+        .map_err(|error| format!("Could not open the editor debug log file: {error}"))?;
+
+    for line in lines {
+        let trimmed = line.trim_end_matches(['\r', '\n']);
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        writeln!(file, "{trimmed}")
+            .map_err(|error| format!("Could not append to the editor debug log file: {error}"))?;
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+async fn append_editor_scroll_debug_log(
+    app: tauri::AppHandle,
+    lines: Vec<String>,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || append_editor_scroll_debug_log_blocking(&app, lines))
+        .await
+        .map_err(|error| format!("The editor debug log worker failed: {error}"))?
+}
 
 fn build_app_menu<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result<Menu<R>> {
     let sync_shortcut = if cfg!(target_os = "macos") {
@@ -379,6 +439,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             ping,
             check_internet_connection,
+            append_editor_scroll_debug_log,
             check_for_app_update,
             install_app_update,
             begin_broker_auth,

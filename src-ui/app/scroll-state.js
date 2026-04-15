@@ -42,6 +42,13 @@ function restoreTranslateScrollState(snapshot) {
 
 export function captureTranslateRowAnchor(target = null) {
   const source = target instanceof Element ? target : document.activeElement;
+  const snapshot = resolveTranslateRowAnchor(source);
+  pendingTranslateAnchor = snapshot;
+  return snapshot;
+}
+
+export function resolveTranslateRowAnchor(target = null) {
+  const source = target instanceof Element ? target : document.activeElement;
   const container = document.querySelector(".translate-main-scroll");
   if (!(container instanceof HTMLElement) || !(source instanceof Element)) {
     return null;
@@ -51,52 +58,47 @@ export function captureTranslateRowAnchor(target = null) {
   const toggle = source.closest("[data-editor-language-toggle]");
   if (toggle instanceof HTMLElement) {
     const toggleRect = toggle.getBoundingClientRect();
-    pendingTranslateAnchor = {
+    return {
       type: "language-toggle",
       rowId: toggle.dataset.rowId ?? "",
       languageCode: toggle.dataset.languageCode ?? "",
       offsetTop: toggleRect.top - containerRect.top,
     };
-    return pendingTranslateAnchor;
   }
 
   const field = source.closest("[data-editor-row-field]");
   if (field instanceof HTMLElement) {
     const fieldRect = field.getBoundingClientRect();
-    pendingTranslateAnchor = {
+    return {
       type: "field",
       rowId: field.dataset.rowId ?? "",
       languageCode: field.dataset.languageCode ?? "",
       offsetTop: fieldRect.top - containerRect.top,
     };
-    return pendingTranslateAnchor;
   }
 
   const row = source.closest("[data-editor-row-card]");
   if (row instanceof HTMLElement) {
     const rowRect = row.getBoundingClientRect();
-    pendingTranslateAnchor = {
+    return {
       type: "row",
       rowId: row.dataset.rowId ?? "",
       languageCode: "",
       offsetTop: rowRect.top - containerRect.top,
     };
-    return pendingTranslateAnchor;
   }
 
   const deletedGroup = source.closest("[data-editor-deleted-group]");
   if (deletedGroup instanceof HTMLElement) {
     const deletedGroupRect = deletedGroup.getBoundingClientRect();
-    pendingTranslateAnchor = {
+    return {
       type: "deleted-group",
       rowId: deletedGroup.dataset.rowId ?? "",
       languageCode: "",
       offsetTop: deletedGroupRect.top - containerRect.top,
     };
-    return pendingTranslateAnchor;
   }
 
-  pendingTranslateAnchor = null;
   return null;
 }
 

@@ -15,6 +15,11 @@ import { initializeConnectivity } from "./app/offline-connectivity.js";
 import { initializePersistentStorage } from "./app/persistent-store.js";
 import { app, initializeWindowPresentation } from "./app/runtime.js";
 import {
+  editorScrollDebugPathHint,
+  flushEditorScrollDebugLog,
+  logEditorScrollDebug,
+} from "./app/editor-scroll-debug.js";
+import {
   syncEditorCommentDraftTextareaHeights,
   syncEditorRowTextareaHeight,
   syncEditorRowTextareaHeights,
@@ -33,7 +38,13 @@ import {
   restorePendingEditorLocation,
   scheduleEditorLocationSave,
 } from "./app/editor-location.js";
-import { captureRenderScrollSnapshot, restoreRenderScrollSnapshot } from "./app/scroll-state.js";
+import {
+  captureRenderScrollSnapshot,
+  captureVisibleTranslateLocation,
+  resolveTranslateRowAnchor,
+  restoreRenderScrollSnapshot,
+  restoreTranslateRowAnchor,
+} from "./app/scroll-state.js";
 import { hydratePersistentAppState, state } from "./app/state.js";
 import { noteGlossaryBackgroundSyncScrollActivity } from "./app/glossary-background-sync.js";
 import {
@@ -201,12 +212,23 @@ function renderTranslateBodyOnly() {
   }
 
   const focusSnapshot = captureFocusedInputState();
-  const scrollSnapshot = captureRenderScrollSnapshot("translate");
+  const translateAnchor =
+    resolveTranslateRowAnchor(document.activeElement)
+    || captureVisibleTranslateLocation();
   body.innerHTML = renderTranslateEditorBody(state);
-  restoreRenderScrollSnapshot("translate", "translate", scrollSnapshot);
   queuePendingEditorLocationRestore(state);
   initializeEditorVirtualization(app, state);
-  restorePendingEditorLocation(state);
+  const restoredPendingLocation = restorePendingEditorLocation(state);
+  let restoredAnchor = false;
+  if (!restoredPendingLocation && translateAnchor?.rowId) {
+    restoredAnchor = restoreTranslateRowAnchor(translateAnchor);
+  }
+  logEditorScrollDebug("translate-body-rerender", {
+    focusedRowId: focusSnapshot?.rowId ?? "",
+    anchorRowId: translateAnchor?.rowId ?? "",
+    restoredPendingLocation,
+    restoredAnchor,
+  });
   const restoredFocus = restoreFocusedInputState(focusSnapshot);
   if (focusSnapshot?.kind === "editor-row-field" && !restoredFocus && focusSnapshot.rowId) {
     scheduleDirtyEditorRowScan(render, focusSnapshot.rowId);
@@ -353,6 +375,12 @@ window.__gnosisDebug = {
     state.auth.status = "idle";
     state.auth.message = "";
     render();
+  },
+  editorScrollDebugPathHint() {
+    return editorScrollDebugPathHint();
+  },
+  flushEditorScrollDebugLog() {
+    return flushEditorScrollDebugLog();
   },
   async mountEditorFixture(options = {}) {
     await bootstrapPromise.catch(() => undefined);

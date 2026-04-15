@@ -678,7 +678,9 @@
 .translation-language-panel__field-highlight {
   display: none;
   pointer-events: none;
-  position: relative;
+  position: absolute;
+  inset: 0;
+  box-sizing: border-box;
 }
 
 .translation-language-panel__search-highlight {
@@ -806,16 +808,10 @@
 }
 
 .translation-language-panel__field-stack:focus-within {
-  margin-top: 4.8px;
   border-color: rgba(236, 134, 9, 0.52);
   border-radius: var(--radius-ui);
   box-shadow: 0 0 0 4px rgba(243, 156, 24, 0.12);
   background: rgba(255, 251, 246, 0.96);
-}
-
-.translation-language-panel__field-stack:focus-within .translation-language-panel__field-highlight,
-.translation-language-panel__field-stack:focus-within .translation-language-panel__field {
-  padding: 14px 16px;
 }
 
 .translation-language-panel__field:focus {

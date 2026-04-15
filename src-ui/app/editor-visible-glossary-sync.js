@@ -6,9 +6,11 @@ import {
 
 const EDITOR_GLOSSARY_SCROLL_DEBOUNCE_MS = 100;
 
-export function createEditorVisibleGlossarySync(root, scrollContainer, appState) {
+export function createEditorVisibleGlossarySync(root, scrollContainer, appState, options = {}) {
   let glossaryHighlightTimeoutId = 0;
   let glossaryHighlightFrameId = 0;
+  const afterVisibleSync =
+    typeof options.afterVisibleSync === "function" ? options.afterVisibleSync : null;
 
   const schedule = () => {
     if (glossaryHighlightTimeoutId) {
@@ -25,6 +27,7 @@ export function createEditorVisibleGlossarySync(root, scrollContainer, appState)
         glossaryHighlightFrameId = 0;
         const model = buildEditorScreenViewModel(appState);
         syncVisibleEditorGlossaryHighlightRows(root, scrollContainer, model.editorChapter);
+        afterVisibleSync?.(model.editorChapter);
       });
     }, EDITOR_GLOSSARY_SCROLL_DEBOUNCE_MS);
   };

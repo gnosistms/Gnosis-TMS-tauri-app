@@ -139,7 +139,7 @@ export function queuePendingEditorLocationRestore(appState) {
 
 export function restorePendingEditorLocation(appState) {
   if (pendingRestoreSnapshot?.chapterId !== currentEditorChapterId(appState)) {
-    return;
+    return false;
   }
 
   const restored = restoreTranslateRowAnchor(pendingRestoreSnapshot);
@@ -149,6 +149,7 @@ export function restorePendingEditorLocation(appState) {
 
   restoredChapterId = pendingRestoreSnapshot.chapterId;
   pendingRestoreSnapshot = null;
+  return restored;
 }
 
 export function scheduleEditorLocationSave(appState) {

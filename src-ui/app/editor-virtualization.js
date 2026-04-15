@@ -1,5 +1,12 @@
 import { syncEditorRowTextareaHeights } from "./autosize.js";
-import { pendingTranslateAnchorRowId } from "./scroll-state.js";
+import { logEditorScrollDebug } from "./editor-scroll-debug.js";
+import {
+  captureVisibleTranslateLocation,
+  pendingTranslateAnchorRowId,
+  queueTranslateRowAnchor,
+  resolveTranslateRowAnchor,
+  restoreTranslateRowAnchor,
+} from "./scroll-state.js";
 import { createEditorVisibleGlossarySync } from "./editor-visible-glossary-sync.js";
 import {
   buildEditorRowHeights,
@@ -123,6 +130,15 @@ function pinnedFocusedRowId(root, scrollContainer) {
   return isNearViewport ? (rowCard.dataset.rowId ?? "") : "";
 }
 
+function captureEditorLayoutAnchor(root) {
+  const activeAnchor = resolveTranslateRowAnchor(root.ownerDocument?.activeElement ?? null);
+  if (activeAnchor?.rowId) {
+    return activeAnchor;
+  }
+
+  return captureVisibleTranslateLocation();
+}
+
 export function syncEditorVirtualizationRowLayout(source) {
   activeController?.syncRowLayout?.(source);
 }
@@ -200,11 +216,15 @@ export function initializeEditorVirtualization(root, appState) {
     : null;
   let currentRangeKey = "";
   let animationFrameId = 0;
-  const glossarySync = createEditorVisibleGlossarySync(root, scrollContainer, appState);
-
-  const renderWindow = (force = false) => {
+  const renderWindow = (force = false, options = {}) => {
     if (!shouldVirtualize || !(itemsContainer instanceof HTMLElement)) {
       return;
+    }
+
+    const anchorSnapshot = options?.anchorSnapshot?.rowId ? options.anchorSnapshot : null;
+    const reason = typeof options?.reason === "string" ? options.reason : "";
+    if (anchorSnapshot) {
+      queueTranslateRowAnchor(anchorSnapshot);
     }
 
     const model = buildEditorScreenViewModel(appState);
@@ -233,6 +253,9 @@ export function initializeEditorVirtualization(root, appState) {
     updateSpacerHeight(bottomSpacer, windowState.bottomSpacerHeight);
 
     if (!force && nextRangeKey === currentRangeKey) {
+      if (anchorSnapshot) {
+        restoreTranslateRowAnchor(anchorSnapshot);
+      }
       return;
     }
 
@@ -251,6 +274,11 @@ export function initializeEditorVirtualization(root, appState) {
 
     const heightsChanged = measureVisibleRowHeights(itemsContainer, rowHeightCache);
     if (heightsChanged) {
+      logEditorScrollDebug("virtualization-visible-height-change", {
+        reason: reason || "render",
+        rangeKey: currentRangeKey,
+        scrollTop: scrollContainer.scrollTop,
+      });
       const measuredHeights = buildEditorRowHeights(
         model.contentRows,
         rowHeightCache,
@@ -268,6 +296,13 @@ export function initializeEditorVirtualization(root, appState) {
       updateSpacerHeight(bottomSpacer, measuredWindow.bottomSpacerHeight);
       if (measuredRangeKey !== currentRangeKey) {
         currentRangeKey = measuredRangeKey;
+        logEditorScrollDebug("virtualization-range-adjusted", {
+          reason: reason || "render",
+          rangeKey: measuredRangeKey,
+          scrollTop: scrollContainer.scrollTop,
+          topSpacerHeight: measuredWindow.topSpacerHeight,
+          bottomSpacerHeight: measuredWindow.bottomSpacerHeight,
+        });
         renderWindowRange(
           itemsContainer,
           model.contentRows,
@@ -281,7 +316,40 @@ export function initializeEditorVirtualization(root, appState) {
         measureVisibleRowHeights(itemsContainer, rowHeightCache);
       }
     }
+
+    if (anchorSnapshot) {
+      restoreTranslateRowAnchor(anchorSnapshot);
+    }
   };
+
+  const reconcileVisibleLayoutChanges = (reason) => {
+    if (!shouldVirtualize || !(itemsContainer instanceof HTMLElement) || !(rowHeightCache instanceof Map)) {
+      return;
+    }
+
+    const anchorSnapshot = captureEditorLayoutAnchor(root);
+    const heightsChanged = measureVisibleRowHeights(itemsContainer, rowHeightCache);
+    if (!heightsChanged) {
+      return;
+    }
+
+    logEditorScrollDebug("virtualization-external-height-change", {
+      reason,
+      rowAnchorId: anchorSnapshot?.rowId ?? "",
+      scrollTop: scrollContainer.scrollTop,
+      rangeKey: currentRangeKey,
+    });
+    renderWindow(false, {
+      anchorSnapshot,
+      reason,
+    });
+  };
+
+  const glossarySync = createEditorVisibleGlossarySync(root, scrollContainer, appState, {
+    afterVisibleSync() {
+      reconcileVisibleLayoutChanges("glossary-visible-sync");
+    },
+  });
 
   const scheduleRender = () => {
     if (animationFrameId) {
@@ -318,7 +386,10 @@ export function initializeEditorVirtualization(root, appState) {
     }
 
     currentRangeKey = "";
-    renderWindow(true);
+    renderWindow(true, {
+      anchorSnapshot: captureEditorLayoutAnchor(root),
+      reason: "refresh-layout",
+    });
   };
 
   const handleResize = () => {
