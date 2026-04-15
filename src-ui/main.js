@@ -206,7 +206,8 @@ function render(options = {}) {
   return renderWithOptions(options);
 }
 
-function resolveTranslateRenderAnchor() {
+function resolveTranslateRenderAnchor(options = {}) {
+  const includeVisibleFallback = options?.includeVisibleFallback !== false;
   const pendingAnchor = readPendingTranslateAnchor();
   if (pendingAnchor?.rowId) {
     return {
@@ -216,9 +217,8 @@ function resolveTranslateRenderAnchor() {
   }
 
   return {
-    anchor:
-      resolveTranslateRowAnchor(document.activeElement)
-      || captureVisibleTranslateLocation(),
+    anchor: resolveTranslateRowAnchor(document.activeElement)
+      || (includeVisibleFallback ? captureVisibleTranslateLocation() : null),
     hadPendingAnchor: false,
   };
 }
@@ -231,8 +231,12 @@ function renderTranslateBodyOnly() {
   }
 
   const focusSnapshot = captureFocusedInputState();
-  const { anchor: translateAnchor, hadPendingAnchor } = resolveTranslateRenderAnchor();
+  const scrollSnapshot = captureRenderScrollSnapshot("translate");
+  const { anchor: translateAnchor, hadPendingAnchor } = resolveTranslateRenderAnchor({
+    includeVisibleFallback: false,
+  });
   body.innerHTML = renderTranslateEditorBody(state);
+  restoreRenderScrollSnapshot("translate", "translate", scrollSnapshot);
   if (!hadPendingAnchor && translateAnchor?.rowId) {
     queueTranslateRowAnchor(translateAnchor);
   }
@@ -248,6 +252,7 @@ function renderTranslateBodyOnly() {
     anchorRowId: translateAnchor?.rowId ?? "",
     restoredPendingLocation,
     restoredAnchor,
+    usedVisibleFallback: false,
   });
   const restoredFocus = restoreFocusedInputState(focusSnapshot);
   if (focusSnapshot?.kind === "editor-row-field" && !restoredFocus && focusSnapshot.rowId) {
