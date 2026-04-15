@@ -8,18 +8,22 @@ use std::time::Duration;
 
 use crate::ai::types::{AiPromptRequest, AiPromptResponse, AiProviderId, AiProviderModel};
 
-static SHARED_HTTP_CLIENT: OnceLock<Result<reqwest::blocking::Client, String>> = OnceLock::new();
+static SHARED_HTTP_CLIENT: OnceLock<reqwest::blocking::Client> = OnceLock::new();
 
 pub(crate) fn shared_http_client() -> Result<&'static reqwest::blocking::Client, String> {
+    if let Some(client) = SHARED_HTTP_CLIENT.get() {
+        return Ok(client);
+    }
+
+    let client = reqwest::blocking::Client::builder()
+        .timeout(Duration::from_secs(45))
+        .build()
+        .map_err(|error| format!("Could not start the AI HTTP client: {error}"))?;
+    let _ = SHARED_HTTP_CLIENT.set(client);
+
     SHARED_HTTP_CLIENT
-        .get_or_init(|| {
-            reqwest::blocking::Client::builder()
-                .timeout(Duration::from_secs(45))
-                .build()
-                .map_err(|error| format!("Could not start the AI HTTP client: {error}"))
-        })
-        .as_ref()
-        .map_err(|error| error.clone())
+        .get()
+        .ok_or_else(|| "Could not access the shared AI HTTP client.".to_string())
 }
 
 pub(crate) fn list_models(

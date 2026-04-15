@@ -8,6 +8,14 @@ function sanitizeStringList(values) {
     .filter(Boolean);
 }
 
+function readEditorRowFieldText(row, fieldKey, languageCode) {
+  if (!languageCode) {
+    return "";
+  }
+
+  return sanitizeString(row?.[fieldKey]?.[languageCode]);
+}
+
 export function createEditorDerivedGlossaryEntryState() {
   return {
     status: "idle",
@@ -27,6 +35,45 @@ export function createEditorDerivedGlossaryEntryState() {
 
 function normalizeGlossarySourceTextOrigin(origin) {
   return origin === "row" || origin === "generated" ? origin : null;
+}
+
+export function resolveEditorDerivedGlossarySourceText(
+  row,
+  translationSourceLanguageCode,
+  glossarySourceLanguageCode,
+) {
+  const glossarySourceText = readEditorRowFieldText(row, "fields", glossarySourceLanguageCode);
+  if (!glossarySourceText.trim()) {
+    return {
+      glossarySourceText: "",
+      glossarySourceTextOrigin: "generated",
+    };
+  }
+
+  const translationSourceText = readEditorRowFieldText(row, "fields", translationSourceLanguageCode);
+  const persistedTranslationSourceText = readEditorRowFieldText(
+    row,
+    "persistedFields",
+    translationSourceLanguageCode,
+  );
+  const persistedGlossarySourceText = readEditorRowFieldText(
+    row,
+    "persistedFields",
+    glossarySourceLanguageCode,
+  );
+  const translationSourceChanged = translationSourceText !== persistedTranslationSourceText;
+  const glossarySourceChanged = glossarySourceText !== persistedGlossarySourceText;
+  if (translationSourceChanged && !glossarySourceChanged) {
+    return {
+      glossarySourceText: "",
+      glossarySourceTextOrigin: "generated",
+    };
+  }
+
+  return {
+    glossarySourceText,
+    glossarySourceTextOrigin: "row",
+  };
 }
 
 export function buildEditorDerivedGlossaryContext(context = {}) {

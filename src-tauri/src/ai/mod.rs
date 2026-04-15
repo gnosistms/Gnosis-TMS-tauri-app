@@ -164,6 +164,15 @@ fn sanitize_term_list(values: &[String]) -> Vec<String> {
         .collect()
 }
 
+fn append_unique_term_values(values: &mut Vec<String>, incoming_values: &[String]) {
+    for incoming_value in incoming_values {
+        if values.iter().any(|existing_value| existing_value == incoming_value) {
+            continue;
+        }
+        values.push(incoming_value.clone());
+    }
+}
+
 fn tokenize_glossary_term(term: &str) -> Vec<String> {
     glossary_token_regex()
         .find_iter(term)
@@ -185,7 +194,7 @@ fn tokenize_text_words(text: &str) -> Vec<TokenizedWord> {
 fn build_glossary_match_candidates(
     glossary_terms: &[AiTranslatedGlossaryTermInput],
 ) -> HashMap<String, Vec<PreparedGlossaryCandidate>> {
-    let mut candidates_by_first_token = HashMap::<String, Vec<PreparedGlossaryCandidate>>::new();
+    let mut merged_candidates_by_key = HashMap::<String, PreparedGlossaryCandidate>::new();
 
     for term in glossary_terms {
         let target_variants = sanitize_term_list(&term.target_variants);
@@ -196,16 +205,35 @@ fn build_glossary_match_candidates(
                 continue;
             }
 
-            candidates_by_first_token
-                .entry(tokens[0].clone())
-                .or_default()
-                .push(PreparedGlossaryCandidate {
+            let candidate_key = tokens.join(" ");
+            if let Some(existing_candidate) = merged_candidates_by_key.get_mut(&candidate_key) {
+                if source_term.len() > existing_candidate.match_term.len() {
+                    existing_candidate.match_term = source_term;
+                }
+                append_unique_term_values(&mut existing_candidate.target_variants, &target_variants);
+                append_unique_term_values(&mut existing_candidate.notes, &notes);
+                continue;
+            }
+
+            merged_candidates_by_key.insert(
+                candidate_key,
+                PreparedGlossaryCandidate {
                     match_term: source_term,
                     tokens,
                     target_variants: target_variants.clone(),
                     notes: notes.clone(),
-                });
+                },
+            );
         }
+    }
+
+    let mut candidates_by_first_token = HashMap::<String, Vec<PreparedGlossaryCandidate>>::new();
+
+    for candidate in merged_candidates_by_key.into_values() {
+        candidates_by_first_token
+            .entry(candidate.tokens[0].clone())
+            .or_default()
+            .push(candidate);
     }
 
     for candidates in candidates_by_first_token.values_mut() {
@@ -581,8 +609,11 @@ pub(crate) fn probe_ai_model(
 
 #[cfg(test)]
 mod tests {
-    use super::build_translation_prompt;
-    use crate::ai::types::{AiProviderId, AiTranslationGlossaryHint, AiTranslationRequest};
+    use super::{build_translation_prompt, find_matched_glossary_terms};
+    use crate::ai::types::{
+        AiProviderId, AiTranslatedGlossaryTermInput, AiTranslationGlossaryHint,
+        AiTranslationRequest,
+    };
 
     #[test]
     fn build_translation_prompt_keeps_plain_prompt_when_no_glossary_hints_are_present() {
@@ -626,5 +657,38 @@ mod tests {
         assert!(prompt.contains("  targetVariants: \"hoc tro gnosis\", \"cua gnosis\""));
         assert!(prompt.contains("  notes: \"Lien quan den Gnosis\""));
         assert!(prompt.contains("Source text:\nLa gnostica habla."));
+    }
+
+    #[test]
+    fn matched_glossary_terms_merge_duplicate_source_terms() {
+        let matches = find_matched_glossary_terms(
+            "La camara interior brilla.",
+            &[
+                AiTranslatedGlossaryTermInput {
+                    glossary_source_terms: vec!["camara interior".to_string()],
+                    target_variants: vec!["buong noi tam".to_string()],
+                    notes: vec!["Nota 1".to_string()],
+                },
+                AiTranslatedGlossaryTermInput {
+                    glossary_source_terms: vec!["camara interior".to_string()],
+                    target_variants: vec!["phong ben trong".to_string()],
+                    notes: vec!["Nota 2".to_string()],
+                },
+            ],
+        );
+
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].glossary_source_term, "camara interior");
+        assert_eq!(
+            matches[0].target_variants,
+            vec![
+                "buong noi tam".to_string(),
+                "phong ben trong".to_string(),
+            ]
+        );
+        assert_eq!(
+            matches[0].notes,
+            vec!["Nota 1".to_string(), "Nota 2".to_string()]
+        );
     }
 }

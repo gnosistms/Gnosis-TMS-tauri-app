@@ -6,6 +6,7 @@ import {
 import {
   buildEditorDerivedGlossaryContext,
   buildEditorGlossaryRevisionKey,
+  resolveEditorDerivedGlossarySourceText,
   resolveEditorDerivedGlossaryEntry,
 } from "./editor-derived-glossary-state.js";
 import { resolveEditorAiTranslateLanguages } from "./editor-ai-translate-target.js";
@@ -149,6 +150,14 @@ function buildEditorRowGlossaryHighlightCacheKey(row, chapterState = state.edito
   }
 
   const translateLanguages = resolveEditorAiTranslateLanguages(chapterState);
+  const {
+    glossarySourceText,
+    glossarySourceTextOrigin,
+  } = resolveEditorDerivedGlossarySourceText(
+    row,
+    translateLanguages.sourceLanguageCode,
+    glossaryModel?.sourceLanguage?.code ?? null,
+  );
   const derivedGlossaryEntry = resolveEditorDerivedGlossaryEntry(
     chapterState,
     rowId,
@@ -157,7 +166,8 @@ function buildEditorRowGlossaryHighlightCacheKey(row, chapterState = state.edito
       glossarySourceLanguageCode: glossaryModel?.sourceLanguage?.code ?? null,
       targetLanguageCode: translateLanguages.targetLanguageCode,
       translationSourceText: row?.fields?.[translateLanguages.sourceLanguageCode] ?? "",
-      glossarySourceText: row?.fields?.[glossaryModel?.sourceLanguage?.code] ?? "",
+      glossarySourceText,
+      glossarySourceTextOrigin,
       glossaryRevisionKey: buildEditorGlossaryRevisionKey(chapterState?.glossary),
     }),
   );
@@ -213,6 +223,14 @@ function buildCachedEditorRowGlossaryHighlights(row, chapterState = state.editor
   }
 
   const translateLanguages = resolveEditorAiTranslateLanguages(chapterState);
+  const {
+    glossarySourceText,
+    glossarySourceTextOrigin,
+  } = resolveEditorDerivedGlossarySourceText(
+    row,
+    translateLanguages.sourceLanguageCode,
+    glossaryModel?.sourceLanguage?.code ?? null,
+  );
   const derivedGlossaryEntry = resolveEditorDerivedGlossaryEntry(
     chapterState,
     row?.rowId ?? "",
@@ -221,7 +239,8 @@ function buildCachedEditorRowGlossaryHighlights(row, chapterState = state.editor
       glossarySourceLanguageCode: glossaryModel?.sourceLanguage?.code ?? null,
       targetLanguageCode: translateLanguages.targetLanguageCode,
       translationSourceText: row?.fields?.[translateLanguages.sourceLanguageCode] ?? "",
-      glossarySourceText: row?.fields?.[glossaryModel?.sourceLanguage?.code] ?? "",
+      glossarySourceText,
+      glossarySourceTextOrigin,
       glossaryRevisionKey: buildEditorGlossaryRevisionKey(chapterState?.glossary),
     }),
   );

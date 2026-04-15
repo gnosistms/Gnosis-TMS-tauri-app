@@ -15,6 +15,7 @@ import {
   applyEditorDerivedGlossaryEntry,
   buildEditorDerivedGlossaryContext,
   buildEditorGlossaryRevisionKey,
+  resolveEditorDerivedGlossarySourceText,
   resolveEditorDerivedGlossaryEntry,
 } from "./editor-derived-glossary-state.js";
 import {
@@ -170,13 +171,21 @@ function resolveGlossaryUsage(context) {
     };
   }
 
-  const glossarySourceText = context.row?.fields?.[glossarySourceLanguageCode] ?? "";
+  const {
+    glossarySourceText,
+    glossarySourceTextOrigin,
+  } = resolveEditorDerivedGlossarySourceText(
+    context.row,
+    context.sourceLanguageCode,
+    glossarySourceLanguageCode,
+  );
   const derivedContext = buildEditorDerivedGlossaryContext({
     translationSourceLanguageCode: context.sourceLanguageCode,
     glossarySourceLanguageCode,
     targetLanguageCode: context.targetLanguageCode,
     translationSourceText: context.sourceText,
     glossarySourceText,
+    glossarySourceTextOrigin,
     glossaryRevisionKey: buildEditorGlossaryRevisionKey(glossaryState),
   });
   const cachedDerivedEntry = resolveEditorDerivedGlossaryEntry(
@@ -356,8 +365,12 @@ export async function runEditorAiTranslate(render, actionId, operations = {}) {
   render?.();
 
   let glossaryUsage = { kind: "none" };
+  let retainedDerivedEntry = null;
   try {
     glossaryUsage = resolveGlossaryUsage(context);
+    retainedDerivedEntry = glossaryUsage.kind === "derived"
+      ? (glossaryUsage.cachedDerivedEntry ?? null)
+      : null;
     let glossaryHints = Array.isArray(glossaryUsage.glossaryHints)
       ? glossaryUsage.glossaryHints
       : [];
@@ -425,6 +438,7 @@ export async function runEditorAiTranslate(render, actionId, operations = {}) {
           context.rowId,
           derivedEntry,
         );
+        retainedDerivedEntry = derivedEntry;
         render?.({ scope: "translate-body" });
       }
 
@@ -519,7 +533,7 @@ export async function runEditorAiTranslate(render, actionId, operations = {}) {
       return;
     }
 
-    if (glossaryUsage.kind === "derived") {
+    if (glossaryUsage.kind === "derived" && !retainedDerivedEntry) {
       state.editorChapter = applyEditorDerivedGlossaryEntry(
         state.editorChapter,
         context.rowId,
