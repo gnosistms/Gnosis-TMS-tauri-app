@@ -68,7 +68,7 @@ function editorRowWriteBlockedMessage(options = {}) {
 
 export function markEditorRowsStale(syncResult = {}) {
   if (!state.editorChapter?.chapterId || !Array.isArray(state.editorChapter.rows)) {
-    return;
+    return false;
   }
 
   const changedRowIds = new Set(
@@ -78,6 +78,8 @@ export function markEditorRowsStale(syncResult = {}) {
     (Array.isArray(syncResult.deletedRowIds) ? syncResult.deletedRowIds : []).filter(Boolean),
   );
   const hasDeferredStructuralChanges = (Array.isArray(syncResult.insertedRowIds) ? syncResult.insertedRowIds : []).length > 0;
+  const nextDeferredStructuralChanges = state.editorChapter.deferredStructuralChanges || hasDeferredStructuralChanges;
+  let visibleStateChanged = nextDeferredStructuralChanges !== state.editorChapter.deferredStructuralChanges;
 
   state.editorChapter = {
     ...state.editorChapter,
@@ -85,7 +87,7 @@ export function markEditorRowsStale(syncResult = {}) {
       typeof syncResult?.newHeadSha === "string" && syncResult.newHeadSha.trim()
         ? syncResult.newHeadSha
         : state.editorChapter.chapterBaseCommitSha,
-    deferredStructuralChanges: state.editorChapter.deferredStructuralChanges || hasDeferredStructuralChanges,
+    deferredStructuralChanges: nextDeferredStructuralChanges,
     rows: state.editorChapter.rows.map((row) => {
       if (!row?.rowId) {
         return row;
@@ -97,19 +99,32 @@ export function markEditorRowsStale(syncResult = {}) {
       }
 
       if (row.freshness === "conflict") {
+        const nextRemotelyDeleted = row.remotelyDeleted || deletedRowIds.has(row.rowId);
+        if (nextRemotelyDeleted !== row.remotelyDeleted) {
+          visibleStateChanged = true;
+        }
         return {
           ...row,
-          remotelyDeleted: row.remotelyDeleted || deletedRowIds.has(row.rowId),
+          remotelyDeleted: nextRemotelyDeleted,
         };
       }
 
+      const nextFreshness = rowHasPersistedChanges(row) ? "staleDirty" : "stale";
+      const nextRemotelyDeleted = row.remotelyDeleted || deletedRowIds.has(row.rowId);
+      if (nextFreshness === row.freshness && nextRemotelyDeleted === row.remotelyDeleted) {
+        return row;
+      }
+
+      visibleStateChanged = true;
       return {
         ...row,
-        freshness: rowHasPersistedChanges(row) ? "staleDirty" : "stale",
-        remotelyDeleted: row.remotelyDeleted || deletedRowIds.has(row.rowId),
+        freshness: nextFreshness,
+        remotelyDeleted: nextRemotelyDeleted,
       };
     }),
   };
+
+  return visibleStateChanged;
 }
 
 export async function reloadEditorRowFromDisk(render, rowId, options = {}) {

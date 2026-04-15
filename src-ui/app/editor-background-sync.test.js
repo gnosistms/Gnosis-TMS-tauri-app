@@ -132,6 +132,15 @@ function deferred() {
   return { promise, resolve, reject };
 }
 
+function createRenderRecorder() {
+  const calls = [];
+  const render = (options = undefined) => {
+    calls.push(cloneValue(options));
+  };
+  render.calls = calls;
+  return render;
+}
+
 function installEditorFixture() {
   resetSessionState();
   state.auth.session = {
@@ -237,4 +246,80 @@ test("syncEditorBackgroundNow reruns after an older in-flight sync when a new lo
       .map((entry) => entry.payload.sessionToken),
     ["session-token", "session-token"],
   );
+});
+
+test("background sync does not rerender the editor body when sync starts or finishes without visible changes", async () => {
+  installEditorFixture();
+  state.editorChapter.rows = [{
+    rowId: "row-1",
+    freshness: "fresh",
+    remotelyDeleted: false,
+    fields: { es: "hola", en: "hello" },
+    persistedFields: { es: "hola", en: "hello" },
+    fieldStates: { es: { reviewed: false, pleaseCheck: false }, en: { reviewed: false, pleaseCheck: false } },
+    persistedFieldStates: { es: { reviewed: false, pleaseCheck: false }, en: { reviewed: false, pleaseCheck: false } },
+  }];
+
+  const syncRequest = deferred();
+  invokeHandler = async (command) => {
+    if (command === "sync_gtms_project_editor_repo") {
+      return syncRequest.promise;
+    }
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  const render = createRenderRecorder();
+  startEditorBackgroundSyncSession(render);
+  await Promise.resolve();
+
+  assert.deepEqual(render.calls, []);
+
+  const pendingSync = syncEditorBackgroundNow(render, { skipDirtyFlush: true });
+  syncRequest.resolve({
+    changedRowIds: [],
+    deletedRowIds: [],
+    insertedRowIds: [],
+    newHeadSha: "head-2",
+  });
+  await pendingSync;
+
+  assert.deepEqual(render.calls, []);
+  assert.equal(state.editorChapter.chapterBaseCommitSha, "head-2");
+});
+
+test("background sync rerenders the editor body when row freshness changes", async () => {
+  installEditorFixture();
+  state.editorChapter.rows = [{
+    rowId: "row-1",
+    freshness: "fresh",
+    remotelyDeleted: false,
+    fields: { es: "hola", en: "hello" },
+    persistedFields: { es: "hola", en: "hello" },
+    fieldStates: { es: { reviewed: false, pleaseCheck: false }, en: { reviewed: false, pleaseCheck: false } },
+    persistedFieldStates: { es: { reviewed: false, pleaseCheck: false }, en: { reviewed: false, pleaseCheck: false } },
+  }];
+
+  const syncRequest = deferred();
+  invokeHandler = async (command) => {
+    if (command === "sync_gtms_project_editor_repo") {
+      return syncRequest.promise;
+    }
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  const render = createRenderRecorder();
+  startEditorBackgroundSyncSession(render);
+  await Promise.resolve();
+
+  const pendingSync = syncEditorBackgroundNow(render, { skipDirtyFlush: true });
+  syncRequest.resolve({
+    changedRowIds: ["row-1"],
+    deletedRowIds: [],
+    insertedRowIds: [],
+    newHeadSha: "head-2",
+  });
+  await pendingSync;
+
+  assert.deepEqual(render.calls, [{ scope: "translate-body" }]);
+  assert.equal(state.editorChapter.rows[0]?.freshness, "stale");
 });

@@ -117,7 +117,9 @@ const {
 } = await import("./editor-ai-review-flow.js");
 const { runEditorAiTranslate } = await import("./editor-ai-translate-flow.js");
 const {
+  aiActionControlsAreBusy,
   dismissAiSettingsAboutModal,
+  getAiActionControlsBusyMessage,
   loadAiSettingsPage,
   explainAiModelProbeError,
   loadAiProviderSecret,
@@ -125,6 +127,7 @@ const {
   selectAiProvider,
   updateAiSettingsAboutModalDontShowAgain,
   updateAiActionModel,
+  updateAiActionProvider,
   updateAiProviderSecretDraft,
 } = await import("./ai-settings-flow.js");
 const {
@@ -1128,7 +1131,14 @@ test("AI key load and save flows populate and persist aiSettings state", async (
       return "sk-existing";
     }
     if (command === "list_ai_provider_models") {
-      return [{ id: "gpt-5.4-mini", label: "gpt-5.4-mini" }];
+      return [
+        { id: "gemini-3-pro-preview", label: "gemini-3-pro-preview" },
+        { id: "gemini-3-flash-preview", label: "gemini-3-flash-preview" },
+        {
+          id: "gemini-2.5-flash-lite-preview-09-2025",
+          label: "gemini-2.5-flash-lite-preview-09-2025",
+        },
+      ];
     }
     if (command === "save_ai_provider_secret") {
       savedPayload = payload;
@@ -1153,6 +1163,16 @@ test("AI key load and save flows populate and persist aiSettings state", async (
   assert.equal(state.aiSettings.status, "ready");
   assert.equal(state.aiSettings.apiKey, "sk-updated");
   assert.equal(state.aiSettings.successMessage, "Gemini key saved.");
+  assert.deepEqual(
+    state.aiSettings.actionConfig.modelOptionsByProvider.gemini.options,
+    [
+      { id: "gemini-3-flash-preview", label: "gemini-3-flash-preview" },
+      {
+        id: "gemini-2.5-flash-lite-preview-09-2025",
+        label: "gemini-2.5-flash-lite-preview-09-2025",
+      },
+    ],
+  );
 
   updateAiProviderSecretDraft("sk-next");
   assert.equal(state.aiSettings.successMessage, "");
@@ -1356,6 +1376,124 @@ test("updateAiActionModel redirects Gemini Pro selections to the newest flash mo
     state.aiSettings.modelErrorModal.message,
     "A rate limit on Gemini indicates that either you have not set up billing for your Google AI account or you have set up billing but you used up all the tokens that your usage plan allows in a given time period.",
   );
+});
+
+test("AI action controls stay disabled with a badge while model validation is running", async () => {
+  resetSessionState();
+  state.screen = "aiKey";
+  state.aiSettings = {
+    ...state.aiSettings,
+    actionConfig: {
+      ...state.aiSettings.actionConfig,
+      savedProviderIds: ["openai", "gemini"],
+      unified: {
+        providerId: "openai",
+        modelId: "gpt-5.4",
+      },
+      modelOptionsByProvider: {
+        ...state.aiSettings.actionConfig.modelOptionsByProvider,
+        openai: {
+          status: "ready",
+          error: "",
+          options: [{ id: "gpt-5.4", label: "gpt-5.4" }],
+          hasLoaded: true,
+        },
+        gemini: {
+          status: "ready",
+          error: "",
+          options: [{ id: "gemini-3-flash-preview", label: "gemini-3-flash-preview" }],
+          hasLoaded: true,
+        },
+      },
+    },
+  };
+
+  let resolveProbe = null;
+  invokeHandler = async (command) => {
+    if (command === "probe_ai_provider_model") {
+      return new Promise((resolve) => {
+        resolveProbe = resolve;
+      });
+    }
+
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  const validationPromise = updateAiActionModel(() => {}, "unified", "gpt-5.4");
+  assert.equal(state.aiSettings.modelValidationStatus, "loading");
+  assert.equal(aiActionControlsAreBusy(state.aiSettings), true);
+  assert.equal(
+    getAiActionControlsBusyMessage(state.aiSettings),
+    "Checking the selected OpenAI model...",
+  );
+
+  updateAiActionProvider(() => {}, "unified", "gemini");
+  assert.equal(state.aiSettings.actionConfig.unified.providerId, "openai");
+
+  resolveProbe?.(null);
+  await validationPromise;
+
+  updateAiActionProvider(() => {}, "unified", "gemini");
+  assert.equal(state.aiSettings.actionConfig.unified.providerId, "gemini");
+});
+
+test("AI action controls stay disabled with a badge while provider models are loading", async () => {
+  resetSessionState();
+  state.screen = "aiKey";
+  state.aiSettings = {
+    ...state.aiSettings,
+    actionConfig: {
+      ...state.aiSettings.actionConfig,
+      savedProviderIds: ["openai", "gemini"],
+      unified: {
+        providerId: "openai",
+        modelId: "gpt-5.4",
+      },
+      modelOptionsByProvider: {
+        ...state.aiSettings.actionConfig.modelOptionsByProvider,
+        openai: {
+          status: "ready",
+          error: "",
+          options: [{ id: "gpt-5.4", label: "gpt-5.4" }],
+          hasLoaded: true,
+        },
+        gemini: {
+          status: "idle",
+          error: "",
+          options: [],
+          hasLoaded: false,
+        },
+      },
+    },
+  };
+
+  let modelsPromise = null;
+  let resolveModels = null;
+  invokeHandler = (command) => {
+    if (command === "list_ai_provider_models") {
+      modelsPromise = new Promise((resolve) => {
+        resolveModels = resolve;
+      });
+      return modelsPromise;
+    }
+
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  updateAiActionProvider(() => {}, "unified", "gemini");
+
+  assert.deepEqual(state.aiSettings.actionMenuLoadingProviderIds, ["gemini"]);
+  assert.equal(aiActionControlsAreBusy(state.aiSettings), true);
+  assert.equal(
+    getAiActionControlsBusyMessage(state.aiSettings),
+    "Loading Gemini models...",
+  );
+
+  resolveModels?.([{ id: "gemini-3-flash-preview", label: "gemini-3-flash-preview" }]);
+  await modelsPromise;
+  await Promise.resolve();
+
+  assert.equal(state.aiSettings.actionMenuLoadingProviderIds.length, 0);
 });
 
 test("explainAiModelProbeError falls back to the generic copy for unrecognized errors", () => {

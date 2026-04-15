@@ -84,6 +84,10 @@ function parseGeminiModelVersion(modelId) {
   };
 }
 
+export function isGeminiProModelId(modelId) {
+  return parseGeminiModelVersion(modelId)?.family === "pro";
+}
+
 function compareParsedModelVersions(left, right) {
   if (!left && !right) {
     return 0;
@@ -183,7 +187,7 @@ function pickFirstGeminiNonProModelId(options) {
   for (const option of Array.isArray(options) ? options : []) {
     const optionId = typeof option?.id === "string" ? option.id.trim() : "";
     const parsedVersion = parseGeminiModelVersion(optionId);
-    if (parsedVersion && parsedVersion.family !== "pro") {
+    if (parsedVersion && !isGeminiProModelId(optionId)) {
       return optionId;
     }
   }

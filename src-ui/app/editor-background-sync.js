@@ -8,7 +8,7 @@ import {
 import { findChapterContextById, selectedProjectsTeam } from "./project-context.js";
 import { invoke } from "./runtime.js";
 import { state } from "./state.js";
-import { clearScopedSyncBadge, showNoticeBadge, showScopedSyncBadge } from "./status-feedback.js";
+import { showNoticeBadge } from "./status-feedback.js";
 
 const EDITOR_SYNC_IDLE_MS = 10_000;
 const EDITOR_SYNC_LOCAL_COMMIT_THRESHOLD = 5;
@@ -110,9 +110,10 @@ async function runEditorBackgroundSync(render, options = {}) {
     }
   }
 
+  const previousSyncStatus = state.editorChapter?.backgroundSyncStatus ?? "";
+  const previousSyncError = state.editorChapter?.backgroundSyncError ?? "";
+  const hadVisibleErrorBanner = previousSyncStatus === "error" && Boolean(previousSyncError);
   setEditorBackgroundSyncState("syncing", "");
-  showScopedSyncBadge("translate", "Syncing file...", render);
-  render?.({ scope: "translate-body" });
 
   try {
     const payload = await invoke("sync_gtms_project_editor_repo", {
@@ -128,20 +129,22 @@ async function runEditorBackgroundSync(render, options = {}) {
       payload?.newHeadSha
       ?? payload?.oldHeadSha
       ?? editorBackgroundSyncSession.lastSyncedHeadSha;
-    markEditorRowsStale(payload);
+    const visibleChangesApplied = markEditorRowsStale(payload);
     setEditorBackgroundSyncState("idle", "");
-    render?.({ scope: "translate-body" });
+    if (visibleChangesApplied || hadVisibleErrorBanner) {
+      render?.({ scope: "translate-body" });
+    }
     return payload ?? null;
   } catch (error) {
     if (sessionMatchesCurrentEditor()) {
       const message = error instanceof Error ? error.message : String(error);
       setEditorBackgroundSyncState("error", message);
-      render?.({ scope: "translate-body" });
+      if (!hadVisibleErrorBanner || previousSyncError !== message) {
+        render?.({ scope: "translate-body" });
+      }
       showNoticeBadge(message || "Background sync failed.", render, 2400);
     }
     return null;
-  } finally {
-    clearScopedSyncBadge("translate", render);
   }
 }
 
@@ -237,7 +240,6 @@ export function noteEditorBackgroundSyncScrollActivity() {
 export function startEditorBackgroundSyncSession(render) {
   const key = currentSessionKey();
   clearBackgroundSyncInterval();
-  clearScopedSyncBadge("translate", render);
   editorBackgroundSyncSession.key = key;
   editorBackgroundSyncSession.lastScrollAt = performance.now();
   editorBackgroundSyncSession.pendingSync = null;
@@ -262,7 +264,6 @@ export async function syncAndStopEditorBackgroundSyncSession(render) {
   }
 
   clearBackgroundSyncInterval();
-  clearScopedSyncBadge("translate", render);
   editorBackgroundSyncSession.key = "";
   editorBackgroundSyncSession.lastScrollAt = 0;
   editorBackgroundSyncSession.lastSyncedHeadSha = null;

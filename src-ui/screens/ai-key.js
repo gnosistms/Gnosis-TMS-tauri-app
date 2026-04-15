@@ -10,6 +10,10 @@ import {
 } from "../lib/ui.js";
 import { AI_ACTION_IDS, AI_ACTION_LABELS } from "../app/ai-action-config.js";
 import {
+  aiActionControlsAreBusy,
+  getAiActionControlsBusyMessage,
+} from "../app/ai-settings-flow.js";
+import {
   AI_PROVIDER_IDS,
   getAiProviderActionLabel,
   getAiProviderConfig,
@@ -159,13 +163,14 @@ function renderModelSelectOptions(actionConfig, providerId, selectedModelId) {
     .join("");
 }
 
-function renderActionSelectorFields(actionConfig, scopeId, title) {
+function renderActionSelectorFields(actionConfig, scopeId, title, controlsBusy = false) {
   const selection = scopeId === "unified"
     ? actionConfig.unified
     : actionConfig.actions[scopeId];
   const modelsState = actionConfig.modelOptionsByProvider[selection.providerId];
   const providerDisabled =
-    actionConfig.availableProvidersStatus === "loading"
+    controlsBusy
+    || actionConfig.availableProvidersStatus === "loading"
     || actionConfig.savedProviderIds.length === 0;
   const modelDisabled =
     providerDisabled
@@ -213,6 +218,7 @@ function renderActionSelectorFields(actionConfig, scopeId, title) {
 
 function renderAiActionsPanel(state) {
   const actionConfig = state.aiSettings.actionConfig;
+  const controlsBusy = aiActionControlsAreBusy(state.aiSettings);
   const statusMarkup = actionConfig.availableProvidersStatus === "error"
     ? renderInlineStateBox({
         tone: "error",
@@ -230,9 +236,9 @@ function renderAiActionsPanel(state) {
 
   const sectionsMarkup = actionConfig.detailedConfiguration
     ? AI_ACTION_IDS.map((actionId) =>
-      renderActionSelectorFields(actionConfig, actionId, AI_ACTION_LABELS[actionId]))
+      renderActionSelectorFields(actionConfig, actionId, AI_ACTION_LABELS[actionId], controlsBusy))
       .join("")
-    : renderActionSelectorFields(actionConfig, "unified", "All actions");
+    : renderActionSelectorFields(actionConfig, "unified", "All actions", controlsBusy);
 
   return `
     <article class="card modal-card modal-card--compact ai-actions-card-shell">
@@ -244,6 +250,7 @@ function renderAiActionsPanel(state) {
             type="checkbox"
             data-ai-settings-detailed-toggle
             ${actionConfig.detailedConfiguration ? "checked" : ""}
+            ${controlsBusy ? "disabled" : ""}
           />
           <span>Detailed configuration</span>
         </label>
@@ -337,12 +344,13 @@ export function renderAiKeyScreen(state) {
     tone: "success",
     message: aiSettings.successMessage,
   });
+  const noticeText = getNoticeBadgeText() || getAiActionControlsBusyMessage(aiSettings);
 
   return pageShell({
     title: "AI Settings",
     titleAction: buildPageRefreshAction(state),
     navButtons: [renderAiKeyBackButton(aiSettings.returnScreen)],
-    noticeText: getNoticeBadgeText(),
+    noticeText,
     offlineMode: state.offline?.isEnabled === true,
     offlineReconnectState: state.offline?.reconnecting === true,
     bodyClass: "page-body--ai-key",

@@ -156,7 +156,10 @@ pub(crate) fn list_models(api_key: &str) -> Result<Vec<AiProviderModel>, String>
         next_page_token = payload.next_page_token;
     }
 
-    let models = models_by_id.into_values().collect::<Vec<_>>();
+    let models = models_by_id
+        .into_values()
+        .filter(|model| !gemini_model_is_pro(&model.id))
+        .collect::<Vec<_>>();
     let shortlisted_models = shortlist_recommended_models(&models);
     let models = if shortlisted_models.is_empty() {
         models
@@ -313,6 +316,13 @@ fn shortlist_recommended_models(models: &[AiProviderModel]) -> Vec<AiProviderMod
     shortlisted
 }
 
+fn gemini_model_is_pro(model_id: &str) -> bool {
+    matches!(
+        parse_gemini_model_version(model_id),
+        Some((GeminiModelFamily::Pro, _version))
+    )
+}
+
 fn latest_gemini_model_for_family(
     models: &[AiProviderModel],
     family: GeminiModelFamily,
@@ -459,7 +469,10 @@ fn extract_api_error_message(body: &str) -> Option<String> {
 mod tests {
     use std::time::Duration;
 
-    use super::{normalize_http_error, retry_delay_for_attempt, shortlist_recommended_models};
+    use super::{
+        gemini_model_is_pro, normalize_http_error, retry_delay_for_attempt,
+        shortlist_recommended_models,
+    };
     use crate::ai::types::AiProviderModel;
     use reqwest::StatusCode;
 
@@ -522,6 +535,13 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert_eq!(shortlisted, vec!["gemini-2.5-flash-preview-09-2025"]);
+    }
+
+    #[test]
+    fn gemini_model_is_pro_only_matches_pro_models() {
+        assert!(gemini_model_is_pro("gemini-3-pro-preview"));
+        assert!(!gemini_model_is_pro("gemini-3-flash-preview"));
+        assert!(!gemini_model_is_pro("gemini-2.5-flash-lite-preview-09-2025"));
     }
 
     #[test]

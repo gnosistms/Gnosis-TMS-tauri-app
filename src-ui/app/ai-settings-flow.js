@@ -5,6 +5,7 @@ import {
   coerceAiActionPreferencesToSavedProviders,
   createAiProviderModelsState,
   extractAiActionPreferences,
+  isGeminiProModelId,
   pickPreferredAiModelId,
   resolveEffectiveAiActionSelection,
 } from "./ai-action-config.js";
@@ -15,6 +16,7 @@ import {
 } from "./ai-settings-preferences.js";
 import {
   AI_PROVIDER_IDS,
+  getAiProviderActionLabel,
   getAiProviderSavedMessage,
   normalizeAiProviderId,
 } from "./ai-provider-config.js";
@@ -47,8 +49,76 @@ function resetAiModelValidationState(options = {}) {
       options.bumpRequestId === true
         ? state.aiSettings.modelValidationRequestId + 1
         : state.aiSettings.modelValidationRequestId,
+    modelValidationStatus: "idle",
+    modelValidationProviderId: "",
     modelErrorModal: createAiModelErrorModalState(),
   };
+}
+
+function normalizeAiActionMenuLoadingProviderIds(providerIds) {
+  const normalizedProviderIds = [];
+  for (const providerId of Array.isArray(providerIds) ? providerIds : []) {
+    const normalizedProviderId = normalizeAiProviderId(providerId);
+    if (!normalizedProviderIds.includes(normalizedProviderId)) {
+      normalizedProviderIds.push(normalizedProviderId);
+    }
+  }
+  return normalizedProviderIds;
+}
+
+function updateAiActionMenuLoadingProviderIds(providerId, isLoading) {
+  const normalizedProviderId = normalizeAiProviderId(providerId);
+  const currentProviderIds = normalizeAiActionMenuLoadingProviderIds(
+    state.aiSettings.actionMenuLoadingProviderIds,
+  );
+  const nextProviderIds = isLoading
+    ? currentProviderIds.includes(normalizedProviderId)
+      ? currentProviderIds
+      : [...currentProviderIds, normalizedProviderId]
+    : currentProviderIds.filter((currentProviderId) => currentProviderId !== normalizedProviderId);
+
+  if (
+    nextProviderIds.length === currentProviderIds.length
+    && nextProviderIds.every((currentProviderId, index) => currentProviderId === currentProviderIds[index])
+  ) {
+    return;
+  }
+
+  state.aiSettings = {
+    ...state.aiSettings,
+    actionMenuLoadingProviderIds: nextProviderIds,
+  };
+}
+
+export function aiActionControlsAreBusy(aiSettings = state.aiSettings) {
+  const actionConfig = aiSettings?.actionConfig ?? actionConfigState();
+  return (
+    actionConfig.availableProvidersStatus === "loading"
+    || aiSettings?.modelValidationStatus === "loading"
+    || normalizeAiActionMenuLoadingProviderIds(aiSettings?.actionMenuLoadingProviderIds).length > 0
+  );
+}
+
+export function getAiActionControlsBusyMessage(aiSettings = state.aiSettings) {
+  if (aiSettings?.modelValidationStatus === "loading") {
+    return `Checking the selected ${getAiProviderActionLabel(aiSettings.modelValidationProviderId)} model...`;
+  }
+
+  const loadingProviderIds = normalizeAiActionMenuLoadingProviderIds(
+    aiSettings?.actionMenuLoadingProviderIds,
+  );
+  if (loadingProviderIds.length === 1) {
+    return `Loading ${getAiProviderActionLabel(loadingProviderIds[0])} models...`;
+  }
+  if (loadingProviderIds.length > 1) {
+    return "Loading AI models...";
+  }
+
+  if (aiSettings?.actionConfig?.availableProvidersStatus === "loading") {
+    return "Loading saved AI providers...";
+  }
+
+  return "";
 }
 
 function createAiSettingsAboutModalStateForDisplay() {
@@ -182,13 +252,17 @@ function visibleAiActionScopeIds(actionConfig) {
   return actionConfig.detailedConfiguration ? AI_ACTION_IDS : ["unified"];
 }
 
-function normalizeAiModelOptions(options) {
+function normalizeAiModelOptions(providerId, options) {
   const seenIds = new Set();
   const normalizedOptions = [];
+  const normalizedProviderId = normalizeAiProviderId(providerId);
 
   for (const option of Array.isArray(options) ? options : []) {
     const id = typeof option?.id === "string" ? option.id.trim() : "";
     if (!id || seenIds.has(id)) {
+      continue;
+    }
+    if (normalizedProviderId === "gemini" && isGeminiProModelId(id)) {
       continue;
     }
     seenIds.add(id);
@@ -261,6 +335,7 @@ async function ensureAiProviderModelsLoaded(render, providerId, options = {}) {
   let actionConfig = actionConfigState();
 
   if (!actionConfig.savedProviderIds.includes(normalizedProviderId)) {
+    updateAiActionMenuLoadingProviderIds(normalizedProviderId, false);
     return [];
   }
 
@@ -272,12 +347,15 @@ async function ensureAiProviderModelsLoaded(render, providerId, options = {}) {
     && currentModelsState.hasLoaded
     && currentModelsState.options.length > 0
   ) {
+    updateAiActionMenuLoadingProviderIds(normalizedProviderId, false);
     return currentModelsState.options;
   }
   if (currentModelsState.status === "loading") {
+    updateAiActionMenuLoadingProviderIds(normalizedProviderId, true);
     return currentModelsState.options;
   }
 
+  updateAiActionMenuLoadingProviderIds(normalizedProviderId, true);
   actionConfig = {
     ...actionConfig,
     modelOptionsByProvider: {
@@ -296,7 +374,7 @@ async function ensureAiProviderModelsLoaded(render, providerId, options = {}) {
     const optionsPayload = await invoke("list_ai_provider_models", {
       providerId: normalizedProviderId,
     });
-    const normalizedOptions = normalizeAiModelOptions(optionsPayload);
+    const normalizedOptions = normalizeAiModelOptions(normalizedProviderId, optionsPayload);
 
     let nextActionConfig = actionConfigState();
     nextActionConfig = syncAiActionModelSelectionsForProvider(
@@ -335,6 +413,9 @@ async function ensureAiProviderModelsLoaded(render, providerId, options = {}) {
     });
     render?.();
     return [];
+  } finally {
+    updateAiActionMenuLoadingProviderIds(normalizedProviderId, false);
+    render?.();
   }
 }
 
@@ -566,6 +647,9 @@ export async function saveAiProviderSecret(render) {
 }
 
 export function updateAiActionDetailedConfiguration(render, nextValue) {
+  if (aiActionControlsAreBusy()) {
+    return;
+  }
   resetAiModelValidationState({ bumpRequestId: true });
   const nextDetailedConfiguration = nextValue === true;
   const currentActionConfig = actionConfigState();
@@ -600,6 +684,9 @@ export function updateAiActionDetailedConfiguration(render, nextValue) {
 }
 
 export function updateAiActionProvider(render, scopeId, nextProviderId) {
+  if (aiActionControlsAreBusy()) {
+    return;
+  }
   resetAiModelValidationState({ bumpRequestId: true });
   const providerId = normalizeAiProviderId(nextProviderId);
   const currentActionConfig = actionConfigState();
@@ -632,6 +719,9 @@ export function updateAiActionProvider(render, scopeId, nextProviderId) {
 }
 
 export async function updateAiActionModel(render, scopeId, nextModelId) {
+  if (aiActionControlsAreBusy()) {
+    return;
+  }
   const currentActionConfig = actionConfigState();
   const currentSelection = readAiActionSelection(currentActionConfig, scopeId);
   const providerId = normalizeAiProviderId(currentSelection.providerId);
@@ -651,6 +741,8 @@ export async function updateAiActionModel(render, scopeId, nextModelId) {
   state.aiSettings = {
     ...state.aiSettings,
     modelValidationRequestId,
+    modelValidationStatus: modelId ? "loading" : "idle",
+    modelValidationProviderId: modelId ? providerId : "",
     modelErrorModal: createAiModelErrorModalState(),
   };
   replaceAiActionConfig(
@@ -676,6 +768,17 @@ export async function updateAiActionModel(render, scopeId, nextModelId) {
     }
 
     openAiModelErrorModal(providerId, normalizeAiProbeErrorMessage(error));
+    render?.();
+  } finally {
+    if (state.aiSettings.modelValidationRequestId !== modelValidationRequestId) {
+      return;
+    }
+
+    state.aiSettings = {
+      ...state.aiSettings,
+      modelValidationStatus: "idle",
+      modelValidationProviderId: "",
+    };
     render?.();
   }
 }
