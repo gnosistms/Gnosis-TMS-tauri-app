@@ -39,7 +39,7 @@ pub(crate) fn build_translation_prompt(request: &AiTranslationRequest) -> String
     };
 
     format!(
-        "Translate {source_label} to {target_label}: {}",
+        "Translate {source_label} to {target_label}, outputting only the translation: {}",
         request.text
     )
 }

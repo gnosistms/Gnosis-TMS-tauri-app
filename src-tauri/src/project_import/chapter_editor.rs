@@ -179,13 +179,6 @@ pub(crate) struct UpdateEditorRowLifecycleInput {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct UpdateEditorRowFieldsResponse {
-    row_id: String,
-    source_word_counts: BTreeMap<String, usize>,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
 pub(crate) struct UpdateEditorRowFieldsBatchResponse {
     row_ids: Vec<String>,
     source_word_counts: BTreeMap<String, usize>,
@@ -3207,6 +3200,7 @@ fn create_inserted_row_file(
     })
 }
 
+#[cfg(test)]
 fn create_inserted_editor_row(
     row_id: &str,
     order_key: &str,
