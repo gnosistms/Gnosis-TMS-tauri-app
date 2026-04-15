@@ -632,10 +632,9 @@ test("explainAiModelProbeError falls back to the generic copy for unrecognized e
   );
 });
 
-test("pickPreferredAiModelId rolls OpenAI selections forward within the same family", () => {
+test("pickPreferredAiModelId prefers general OpenAI models and maps old pro selections to general", () => {
   const options = [
     { id: "gpt-5.5", label: "gpt-5.5" },
-    { id: "gpt-5.5-pro", label: "gpt-5.5-pro" },
     { id: "gpt-5.5-mini", label: "gpt-5.5-mini" },
     { id: "gpt-5.5-nano", label: "gpt-5.5-nano" },
   ];
@@ -646,7 +645,7 @@ test("pickPreferredAiModelId rolls OpenAI selections forward within the same fam
   );
   assert.equal(
     pickPreferredAiModelId("openai", options, "gpt-5.4-pro"),
-    "gpt-5.5-pro",
+    "gpt-5.5",
   );
   assert.equal(
     pickPreferredAiModelId("openai", options, "gpt-5.4-mini"),
@@ -658,11 +657,11 @@ test("pickPreferredAiModelId rolls OpenAI selections forward within the same fam
   );
   assert.equal(
     pickPreferredAiModelId("openai", options),
-    "gpt-5.5-mini",
+    "gpt-5.5",
   );
 });
 
-test("pickPreferredAiModelId keeps Gemini selections in the same family and defaults to Flash", () => {
+test("pickPreferredAiModelId keeps Gemini selections in the same family and defaults to Pro", () => {
   const options = [
     { id: "gemini-3-pro-preview", label: "gemini-3-pro-preview" },
     { id: "gemini-3-flash-preview", label: "gemini-3-flash-preview" },
@@ -682,7 +681,7 @@ test("pickPreferredAiModelId keeps Gemini selections in the same family and defa
   );
   assert.equal(
     pickPreferredAiModelId("gemini", options),
-    "gemini-3-flash-preview",
+    "gemini-3-pro-preview",
   );
 });
 

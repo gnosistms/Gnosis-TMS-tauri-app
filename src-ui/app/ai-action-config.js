@@ -17,7 +17,8 @@ const UNIFIED_TRANSLATE_ACTION_LABEL = "Translate";
 
 const DEFAULT_PROVIDER_ID = DEFAULT_AI_PROVIDER_ID;
 const DEFAULT_MODEL_ID_BY_PROVIDER = {
-  openai: "gpt-5.4-mini",
+  openai: "gpt-5.4",
+  gemini: "gemini-2.5-pro",
 };
 
 function isPlainObject(value) {
@@ -141,6 +142,17 @@ function pickLatestOpenAiModelIdByKind(options, kind) {
   }
 
   return bestOptionId;
+}
+
+function resolveOpenAiFallbackKind(modelId) {
+  const normalizedModelId =
+    typeof modelId === "string" && modelId.trim() ? modelId.trim() : "";
+  return (
+    parseOpenAiModelVersion(normalizedModelId, "general")?.family
+    ?? parseOpenAiModelVersion(normalizedModelId, "mini")?.family
+    ?? parseOpenAiModelVersion(normalizedModelId, "nano")?.family
+    ?? (parseOpenAiModelVersion(normalizedModelId, "pro") ? "general" : "")
+  );
 }
 
 function pickLatestGeminiModelIdByFamily(options, family) {
@@ -325,12 +337,7 @@ export function pickPreferredAiModelId(providerId, options = [], fallbackModelId
   }
 
   if (normalizeAiProviderId(providerId) === "openai") {
-    const fallbackKind =
-      parseOpenAiModelVersion(normalizedFallback, "general")?.family
-      ?? parseOpenAiModelVersion(normalizedFallback, "pro")?.family
-      ?? parseOpenAiModelVersion(normalizedFallback, "mini")?.family
-      ?? parseOpenAiModelVersion(normalizedFallback, "nano")?.family
-      ?? "";
+    const fallbackKind = resolveOpenAiFallbackKind(normalizedFallback);
     if (fallbackKind) {
       const latestMatchingFamily = pickLatestOpenAiModelIdByKind(
         normalizedOptions,
@@ -360,19 +367,23 @@ export function pickPreferredAiModelId(providerId, options = [], fallbackModelId
   }
 
   if (normalizeAiProviderId(providerId) === "openai") {
+    const latestGeneralModelId = pickLatestOpenAiModelIdByKind(normalizedOptions, "general");
+    if (latestGeneralModelId) {
+      return latestGeneralModelId;
+    }
     const latestMiniModelId = pickLatestOpenAiModelIdByKind(normalizedOptions, "mini");
     if (latestMiniModelId) {
       return latestMiniModelId;
     }
   }
   if (normalizeAiProviderId(providerId) === "gemini") {
-    const latestFlashModelId = pickLatestGeminiModelIdByFamily(normalizedOptions, "flash");
-    if (latestFlashModelId) {
-      return latestFlashModelId;
-    }
     const latestProModelId = pickLatestGeminiModelIdByFamily(normalizedOptions, "pro");
     if (latestProModelId) {
       return latestProModelId;
+    }
+    const latestFlashModelId = pickLatestGeminiModelIdByFamily(normalizedOptions, "flash");
+    if (latestFlashModelId) {
+      return latestFlashModelId;
     }
     const latestFlashLiteModelId = pickLatestGeminiModelIdByFamily(
       normalizedOptions,

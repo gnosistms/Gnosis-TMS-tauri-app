@@ -86,20 +86,18 @@ struct OpenAiModelVersion {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum OpenAiModelFamily {
     General,
-    Pro,
     Mini,
     Nano,
 }
 
 impl OpenAiModelFamily {
-    fn ordered() -> [Self; 4] {
-        [Self::General, Self::Pro, Self::Mini, Self::Nano]
+    fn recommended_ordered() -> [Self; 3] {
+        [Self::General, Self::Mini, Self::Nano]
     }
 
     fn suffix(self) -> Option<&'static str> {
         match self {
             Self::General => None,
-            Self::Pro => Some("-pro"),
             Self::Mini => Some("-mini"),
             Self::Nano => Some("-nano"),
         }
@@ -276,6 +274,7 @@ fn normalize_transport_error(error: reqwest::Error) -> String {
 fn model_supports_text_review(model_id: &str) -> bool {
     let normalized = model_id.trim().to_lowercase();
     !normalized.is_empty()
+        && !is_hidden_gpt_pro_model(&normalized)
         && ![
             "embedding",
             "moderation",
@@ -292,8 +291,12 @@ fn model_supports_text_review(model_id: &str) -> bool {
         .any(|blocked| normalized.contains(blocked))
 }
 
+fn is_hidden_gpt_pro_model(model_id: &str) -> bool {
+    model_id.starts_with("gpt-") && model_id.ends_with("-pro")
+}
+
 fn shortlist_recommended_models(models: &[AiProviderModel]) -> Vec<AiProviderModel> {
-    OpenAiModelFamily::ordered()
+    OpenAiModelFamily::recommended_ordered()
         .into_iter()
         .filter_map(|family| latest_openai_model_for_family(models, family))
         .collect()
@@ -430,8 +433,8 @@ fn extract_suggested_text(
 #[cfg(test)]
 mod tests {
     use super::{
-        build_probe_request, normalize_review_response, shortlist_recommended_models,
-        OPENAI_PROBE_MAX_OUTPUT_TOKENS,
+        build_probe_request, is_hidden_gpt_pro_model, normalize_review_response,
+        shortlist_recommended_models, OPENAI_PROBE_MAX_OUTPUT_TOKENS,
     };
     use crate::ai::types::AiProviderModel;
 
@@ -539,7 +542,7 @@ mod tests {
             .map(|model| model.id)
             .collect::<Vec<_>>();
 
-        assert_eq!(ids, vec!["gpt-5.4", "gpt-5.4-pro", "gpt-5.4-mini", "gpt-5.4-nano"]);
+        assert_eq!(ids, vec!["gpt-5.4", "gpt-5.4-mini", "gpt-5.4-nano"]);
     }
 
     #[test]
@@ -585,6 +588,13 @@ mod tests {
             .map(|model| model.id)
             .collect::<Vec<_>>();
 
-        assert_eq!(ids, vec!["gpt-6", "gpt-6-pro", "gpt-6-mini", "gpt-6-nano"]);
+        assert_eq!(ids, vec!["gpt-6", "gpt-6-mini", "gpt-6-nano"]);
+    }
+
+    #[test]
+    fn hidden_gpt_pro_models_are_excluded_from_picker() {
+        assert!(is_hidden_gpt_pro_model("gpt-5.4-pro"));
+        assert!(!is_hidden_gpt_pro_model("gpt-5.4"));
+        assert!(!is_hidden_gpt_pro_model("o3-pro"));
     }
 }

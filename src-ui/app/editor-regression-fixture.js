@@ -176,6 +176,17 @@ export function applyEditorRegressionFixture(appState, options = {}) {
     },
     activeRowId: rows[0]?.rowId ?? null,
     activeLanguageCode: targetCode,
+    aiTranslate: Object.fromEntries(
+      Object.entries(createEditorChapterState().aiTranslate).map(([actionId, actionState]) => [
+        actionId,
+        {
+          ...actionState,
+          ...(options?.aiTranslate && typeof options.aiTranslate === "object"
+            ? options.aiTranslate[actionId]
+            : null),
+        },
+      ]),
+    ),
     rows,
   };
 

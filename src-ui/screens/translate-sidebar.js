@@ -41,30 +41,33 @@ function renderTranslateActionButton(buttonModel, isAnyActionRunning) {
     || isAnyActionRunning
     || buttonModel.isDisabled;
   const disabledAttributes = disabled ? ' disabled aria-disabled="true"' : "";
+  const accessibleLabel = buttonModel.isLoading
+    ? `Translating with ${buttonModel.label}: ${buttonModel.modelLabel}`
+    : `${buttonModel.label}: ${buttonModel.modelLabel}`;
 
   return `
     <button
       class="button button--secondary translate-ai-action-button${buttonModel.isLoading ? " button--loading" : ""}"
       type="button"
       data-action="run-editor-ai-translate:${escapeHtml(buttonModel.actionId)}"
+      aria-label="${escapeHtml(accessibleLabel)}"
+      aria-busy="${buttonModel.isLoading ? "true" : "false"}"
       ${disabledAttributes}
     >
-      ${
-        buttonModel.isLoading
-          ? '<span class="button__spinner" aria-hidden="true"></span>'
-          : ""
-      }
       <span class="translate-ai-action-button__icon-shell" aria-hidden="true">
-        <img
-          class="translate-ai-action-button__icon"
-          src="${escapeHtml(buttonModel.iconUrl)}"
-          alt=""
-        />
+        ${
+          buttonModel.isLoading
+            ? '<span class="translate-ai-action-button__spinner button__spinner" aria-hidden="true"></span>'
+            : `
+              <img
+                class="translate-ai-action-button__icon"
+                src="${escapeHtml(buttonModel.iconUrl)}"
+                alt=""
+              />
+            `
+        }
       </span>
       <span class="translate-ai-action-button__copy">
-        <span class="translate-ai-action-button__label">
-          ${escapeHtml(buttonModel.isLoading ? "Translating..." : buttonModel.label)}
-        </span>
         <span class="translate-ai-action-button__model">${escapeHtml(buttonModel.modelLabel)}</span>
       </span>
     </button>
@@ -115,32 +118,33 @@ function renderTranslatePane(editorChapter, rows, languages, sourceCode, targetC
       : sourceSection.text.trim().length === 0
         ? "There is no source text to translate yet."
         : "";
-  const buttonsMarkup = translateActions.map((translateAction, index) => {
+  const buttonModels = translateActions.map((translateAction, index) => {
     const selection = translateAction.selection;
     const providerId = selection.providerId;
     const modelId = typeof selection.modelId === "string" ? selection.modelId.trim() : "";
     const visibleAction = visibleActions[index];
-    return renderTranslateActionButton(
-      {
-        actionId: translateAction.actionId,
-        label: translateAction.label,
-        iconUrl: getAiProviderIconUrl(providerId),
-        isLoading: visibleAction.isLoading,
-        isDisabled: !canTranslate || !modelId,
-        modelLabel: modelId
-          ? `${getAiProviderActionLabel(providerId)} · ${modelId}`
-          : `${getAiProviderActionLabel(providerId)} · Select a model in AI Settings`,
-      },
-      isAnyActionRunning,
-    );
-  }).join("");
-  const errorMarkup = visibleActions
-    .map((action, index) => ({ action, translateAction: translateActions[index] }))
-    .filter(({ action }) => action.showError)
-    .map(({ action, translateAction }) =>
+    return {
+      actionId: translateAction.actionId,
+      label: translateAction.label,
+      iconUrl: getAiProviderIconUrl(providerId),
+      isLoading: visibleAction.isLoading,
+      isDisabled: !canTranslate || !modelId,
+      modelLabel: modelId
+        ? `${getAiProviderActionLabel(providerId)} · ${modelId}`
+        : `${getAiProviderActionLabel(providerId)} · Select a model in AI Settings`,
+      showError: visibleAction.showError,
+      error: visibleAction.error,
+    };
+  });
+  const buttonsMarkup = buttonModels
+    .map((buttonModel) => renderTranslateActionButton(buttonModel, isAnyActionRunning))
+    .join("");
+  const errorMarkup = buttonModels
+    .filter((buttonModel) => buttonModel.showError)
+    .map((buttonModel) =>
       renderInlineStateBox({
         tone: "error",
-        message: `${translateAction.label}: ${action.error}`,
+        message: `${buttonModel.modelLabel}: ${buttonModel.error}`,
       }))
     .join("");
 

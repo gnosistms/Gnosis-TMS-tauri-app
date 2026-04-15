@@ -535,9 +535,39 @@ test.describe("editor regressions", () => {
 
     await page.locator('[data-action="switch-editor-sidebar-tab:translate"]').click();
     await expect(page.locator(".translate-ai-action-button")).toHaveCount(1);
-    await expect(page.locator(".translate-ai-action-button")).toContainText("Translate");
-    await expect(page.locator(".translate-sidebar")).not.toContainText("Translate 2");
+    await expect(page.locator(".translate-ai-action-button__model")).toHaveCount(1);
+    await expect(page.locator(".translate-ai-action-button__model")).not.toHaveText("");
+    await expect(page.locator(".translate-ai-action-button")).not.toContainText("Translate 1");
+    await expect(page.locator(".translate-ai-action-button")).not.toContainText("Translate 2");
     await expect(page.locator(".translate-sidebar")).toContainText("Spanish to Vietnamese");
+  });
+
+  test("translate action shows a spinner while translation is running", async ({ page }) => {
+    await mountEditorFixture(page, {
+      rowCount: 6,
+      aiActionConfig: {
+        detailedConfiguration: false,
+        unified: {
+          providerId: "openai",
+          modelId: "gpt-5.4",
+        },
+      },
+      aiTranslate: {
+        translate1: {
+          status: "loading",
+          rowId: "fixture-row-0001",
+          sourceLanguageCode: "es",
+          targetLanguageCode: "vi",
+          requestKey: "req-translate-1",
+          sourceText: "alpha 0001 source text",
+        },
+      },
+    });
+
+    await page.locator('[data-action="switch-editor-sidebar-tab:translate"]').click();
+    const loadingButton = page.locator('[data-action="run-editor-ai-translate:translate1"]');
+    await expect(loadingButton).toHaveAttribute("aria-busy", "true");
+    await expect(loadingButton.locator(".translate-ai-action-button__spinner")).toBeVisible();
   });
 
   test("mounting the editor fixture renders two translate actions in detailed AI settings mode", async ({ page }) => {
@@ -564,8 +594,8 @@ test.describe("editor regressions", () => {
 
     await page.locator('[data-action="switch-editor-sidebar-tab:translate"]').click();
     await expect(page.locator(".translate-ai-action-button")).toHaveCount(2);
-    await expect(page.locator(".translate-sidebar")).toContainText("Translate 1");
-    await expect(page.locator(".translate-sidebar")).toContainText("Translate 2");
+    await expect(page.locator(".translate-ai-action-button__model").nth(0)).toHaveText("OpenAI · gpt-5.4");
+    await expect(page.locator(".translate-ai-action-button__model").nth(1)).toHaveText("Gemini · gemini-2.5-flash");
   });
 
   test("search input keeps focus while typing", async ({ page }) => {
