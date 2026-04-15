@@ -1,7 +1,14 @@
 import {
   buildEditorGlossaryModel,
   buildEditorRowGlossaryHighlights,
+  buildEditorRowSourceGlossaryHighlights,
 } from "./editor-glossary-highlighting.js";
+import {
+  buildEditorDerivedGlossaryContext,
+  buildEditorGlossaryRevisionKey,
+  resolveEditorDerivedGlossaryEntry,
+} from "./editor-derived-glossary-state.js";
+import { resolveEditorAiTranslateLanguages } from "./editor-ai-translate-target.js";
 import { buildEditorRowSearchHighlightMap } from "./editor-search-flow.js";
 import { findEditorRowById } from "./editor-utils.js";
 import { invoke } from "./runtime.js";
@@ -126,17 +133,43 @@ function synchronizeEditorGlossaryHighlightCache(chapterState = state.editorChap
 }
 
 function buildEditorRowGlossaryHighlightCacheKey(row, chapterState = state.editorChapter) {
-  const glossaryModel = chapterState?.glossary?.matcherModel ?? null;
   const rowId = typeof row?.rowId === "string" && row.rowId.trim() ? row.rowId.trim() : "";
-  if (!rowId || !glossaryModel?.sourceLanguage?.code) {
+  if (!rowId) {
     return "";
   }
 
-  const sourceCode = glossaryModel.sourceLanguage.code;
-  const targetCode = glossaryModel.targetLanguage?.code ?? "";
-  const sourceText = String(row?.fields?.[sourceCode] ?? "");
-  const targetText = targetCode ? String(row?.fields?.[targetCode] ?? "") : "";
-  return `${rowId}::${sourceCode}:${sourceText}::${targetCode}:${targetText}`;
+  const glossaryModel = chapterState?.glossary?.matcherModel ?? null;
+  let directSegment = "";
+  if (glossaryModel?.sourceLanguage?.code) {
+    const sourceCode = glossaryModel.sourceLanguage.code;
+    const targetCode = glossaryModel.targetLanguage?.code ?? "";
+    const sourceText = String(row?.fields?.[sourceCode] ?? "");
+    const targetText = targetCode ? String(row?.fields?.[targetCode] ?? "") : "";
+    directSegment = `::direct:${sourceCode}:${sourceText}::${targetCode}:${targetText}`;
+  }
+
+  const translateLanguages = resolveEditorAiTranslateLanguages(chapterState);
+  const derivedGlossaryEntry = resolveEditorDerivedGlossaryEntry(
+    chapterState,
+    rowId,
+    buildEditorDerivedGlossaryContext({
+      translationSourceLanguageCode: translateLanguages.sourceLanguageCode,
+      glossarySourceLanguageCode: glossaryModel?.sourceLanguage?.code ?? null,
+      targetLanguageCode: translateLanguages.targetLanguageCode,
+      translationSourceText: row?.fields?.[translateLanguages.sourceLanguageCode] ?? "",
+      glossarySourceText: row?.fields?.[glossaryModel?.sourceLanguage?.code] ?? "",
+      glossaryRevisionKey: buildEditorGlossaryRevisionKey(chapterState?.glossary),
+    }),
+  );
+  const derivedSegment = derivedGlossaryEntry
+    ? `::derived:${derivedGlossaryEntry.requestKey ?? ""}:${derivedGlossaryEntry.translationSourceLanguageCode ?? ""}:${derivedGlossaryEntry.targetLanguageCode ?? ""}`
+    : "";
+
+  if (!directSegment && !derivedSegment) {
+    return "";
+  }
+
+  return `${rowId}${directSegment}${derivedSegment}`;
 }
 
 function cacheEditorGlossaryHighlightResult(cacheKey, highlightMap) {
@@ -159,30 +192,54 @@ function buildCachedEditorRowGlossaryHighlights(row, chapterState = state.editor
   synchronizeEditorGlossaryHighlightCache(chapterState);
 
   const glossaryModel = chapterState?.glossary?.matcherModel ?? null;
-  if (!glossaryModel) {
+  const cacheKey = buildEditorRowGlossaryHighlightCacheKey(row, chapterState);
+  if (!glossaryModel && !cacheKey) {
     return new Map();
   }
 
-  const cacheKey = buildEditorRowGlossaryHighlightCacheKey(row, chapterState);
   if (cacheKey && editorGlossaryHighlightCache.has(cacheKey)) {
     return editorGlossaryHighlightCache.get(cacheKey);
   }
 
-  const highlightMap = buildEditorRowGlossaryHighlights(
-    buildEditorRowSections(row, chapterState),
-    glossaryModel,
+  const sections = buildEditorRowSections(row, chapterState);
+  const highlightMap = new Map();
+  if (glossaryModel) {
+    for (const [languageCode, nextHighlight] of buildEditorRowGlossaryHighlights(
+      sections,
+      glossaryModel,
+    )) {
+      highlightMap.set(languageCode, nextHighlight);
+    }
+  }
+
+  const translateLanguages = resolveEditorAiTranslateLanguages(chapterState);
+  const derivedGlossaryEntry = resolveEditorDerivedGlossaryEntry(
+    chapterState,
+    row?.rowId ?? "",
+    buildEditorDerivedGlossaryContext({
+      translationSourceLanguageCode: translateLanguages.sourceLanguageCode,
+      glossarySourceLanguageCode: glossaryModel?.sourceLanguage?.code ?? null,
+      targetLanguageCode: translateLanguages.targetLanguageCode,
+      translationSourceText: row?.fields?.[translateLanguages.sourceLanguageCode] ?? "",
+      glossarySourceText: row?.fields?.[glossaryModel?.sourceLanguage?.code] ?? "",
+      glossaryRevisionKey: buildEditorGlossaryRevisionKey(chapterState?.glossary),
+    }),
   );
+  if (derivedGlossaryEntry?.matcherModel) {
+    for (const [languageCode, nextHighlight] of buildEditorRowSourceGlossaryHighlights(
+      sections,
+      derivedGlossaryEntry.matcherModel,
+    )) {
+      highlightMap.set(languageCode, nextHighlight);
+    }
+  }
+
   cacheEditorGlossaryHighlightResult(cacheKey, highlightMap);
   return highlightMap;
 }
 
 function readCachedEditorRowGlossaryHighlights(row, chapterState = state.editorChapter) {
   synchronizeEditorGlossaryHighlightCache(chapterState);
-
-  const glossaryModel = chapterState?.glossary?.matcherModel ?? null;
-  if (!glossaryModel) {
-    return null;
-  }
 
   const cacheKey = buildEditorRowGlossaryHighlightCacheKey(row, chapterState);
   if (!cacheKey || !editorGlossaryHighlightCache.has(cacheKey)) {

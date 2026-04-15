@@ -33,11 +33,13 @@ use tauri::{Emitter, Manager};
 use crate::{
     ai::{
         load_ai_provider_models as load_ai_provider_models_task,
+        prepare_ai_translated_glossary as prepare_ai_translated_glossary_task,
         probe_ai_model as probe_ai_model_task,
         run_ai_review as run_ai_review_task,
         run_ai_translation as run_ai_translation_task,
         types::{
             AiModelProbeRequest, AiProviderId, AiProviderModel, AiReviewRequest, AiReviewResponse,
+            AiTranslatedGlossaryPreparationRequest, AiTranslatedGlossaryPreparationResponse,
             AiTranslationRequest, AiTranslationResponse,
         },
     },
@@ -197,6 +199,16 @@ async fn run_ai_translation(
     tauri::async_runtime::spawn_blocking(move || run_ai_translation_task(&app, request))
         .await
         .map_err(|error| format!("The AI translation worker failed: {error}"))?
+}
+
+#[tauri::command]
+async fn prepare_editor_ai_translated_glossary(
+    app: tauri::AppHandle,
+    request: AiTranslatedGlossaryPreparationRequest,
+) -> Result<AiTranslatedGlossaryPreparationResponse, String> {
+    tauri::async_runtime::spawn_blocking(move || prepare_ai_translated_glossary_task(&app, request))
+        .await
+        .map_err(|error| format!("The translated glossary worker failed: {error}"))?
 }
 
 #[tauri::command]
@@ -380,6 +392,7 @@ pub fn run() {
             list_ai_provider_models,
             clear_ai_provider_secret,
             run_ai_review,
+            prepare_editor_ai_translated_glossary,
             run_ai_translation,
             probe_ai_provider_model,
             create_team_setup_draft,

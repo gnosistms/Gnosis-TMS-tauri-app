@@ -286,6 +286,7 @@ export function createEditorChapterState() {
     filters: createEditorChapterFilterState(),
     replace: createEditorReplaceState(),
     glossary: createEditorChapterGlossaryState(),
+    derivedGlossariesByRowId: {},
     activeRowId: null,
     activeLanguageCode: null,
     sidebarTab: "review",

@@ -104,6 +104,59 @@ test("buildEditorScreenViewModel shows translating placeholder in the active tar
   }
 });
 
+test("buildEditorScreenViewModel shows glossary preparation placeholder while a derived glossary is loading", () => {
+  const snapshot = snapshotSharedState();
+
+  try {
+    const fixture = applyEditorRegressionFixture(state, {
+      rowCount: 1,
+      languages: [
+        { code: "en", name: "English", role: "source" },
+        { code: "es", name: "Spanish" },
+        { code: "vi", name: "Vietnamese", role: "target" },
+      ],
+      aiTranslate: {
+        translate1: {
+          status: "loading",
+          rowId: "fixture-row-0001",
+          sourceLanguageCode: "en",
+          targetLanguageCode: "vi",
+          requestKey: "request-prepare-1",
+          sourceText: "alpha 0001 en text",
+        },
+      },
+    });
+    state.editorChapter = {
+      ...state.editorChapter,
+      derivedGlossariesByRowId: {
+        "fixture-row-0001": {
+          status: "loading",
+          error: "",
+          requestKey: "request-prepare-1",
+          translationSourceLanguageCode: "en",
+          glossarySourceLanguageCode: "es",
+          targetLanguageCode: "vi",
+          translationSourceText: "alpha 0001 en text",
+          glossarySourceText: "",
+          glossarySourceTextOrigin: "generated",
+          glossaryRevisionKey: "rev-1",
+          entries: [],
+          matcherModel: null,
+        },
+      },
+    };
+
+    const viewModel = buildEditorScreenViewModel(state);
+    const firstRow = viewModel.contentRows.find((row) => row?.id === fixture.firstRowId);
+    const targetSection = firstRow?.sections.find((section) => section.code === fixture.targetCode);
+
+    assert.equal(targetSection?.text, "Preparing glossary...");
+    assert.equal(targetSection?.isAiTranslating, true);
+  } finally {
+    restoreSharedState(snapshot);
+  }
+});
+
 test("buildEditorScreenViewModel marks the translated alternate language field while loading", () => {
   const snapshot = snapshotSharedState();
 

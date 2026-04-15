@@ -790,6 +790,7 @@ a {
 }
 
 .editor-glossary-info-card__title,
+.editor-glossary-info-card__origin,
 .editor-glossary-info-card__variants,
 .editor-glossary-info-card__comment {
   margin: 0;
@@ -806,6 +807,14 @@ a {
   margin-top: 14.4px;
   color: var(--link);
   font-size: 16.1px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.editor-glossary-info-card__origin {
+  margin-top: 10px;
+  color: rgba(74, 45, 19, 0.64);
+  font-size: 14px;
   font-weight: 600;
   line-height: 1.35;
 }

@@ -4,6 +4,7 @@ import {
   rowHasUnresolvedEditorConflict,
 } from "./editor-conflicts.js";
 import { normalizeEditorAiTranslateState } from "./editor-ai-translate-state.js";
+import { normalizeEditorDerivedGlossariesByRowId } from "./editor-derived-glossary-state.js";
 import { coerceEditorFontSizePx } from "./state.js";
 import { canPermanentlyDeleteProjectFiles } from "./resource-capabilities.js";
 import { findChapterContextById, selectedProjectsTeam } from "./project-context.js";
@@ -13,6 +14,7 @@ import { normalizeEditorReplaceState } from "./editor-replace.js";
 let cachedEditorRowsRef = null;
 let cachedEditorLanguagesRef = null;
 let cachedLiveTranslationRows = [];
+const AI_TRANSLATE_PREPARING_TEXT = "Preparing glossary...";
 const AI_TRANSLATE_LOADING_TEXT = "Translating...";
 
 function createEditorAiTranslateLoadingKey(rowId, languageCode) {
@@ -109,16 +111,19 @@ function buildLiveTranslationRows(editorChapter, languages) {
   return liveRows;
 }
 
-function resolveActiveEditorAiTranslateLoadingKeys(editorChapter, rows, sourceCode) {
-  const loadingKeys = new Set();
+function resolveActiveEditorAiTranslateLoadingTexts(editorChapter, rows, sourceCode) {
+  const loadingTexts = new Map();
   if (!sourceCode) {
-    return loadingKeys;
+    return loadingTexts;
   }
 
   const rowById = new Map(
     (Array.isArray(rows) ? rows : [])
       .filter((row) => row?.rowId)
       .map((row) => [row.rowId, row]),
+  );
+  const derivedGlossariesByRowId = normalizeEditorDerivedGlossariesByRowId(
+    editorChapter?.derivedGlossariesByRowId,
   );
   for (const actionState of Object.values(normalizeEditorAiTranslateState(editorChapter?.aiTranslate))) {
     if (
@@ -143,10 +148,18 @@ function resolveActiveEditorAiTranslateLoadingKeys(editorChapter, rows, sourceCo
       continue;
     }
 
-    loadingKeys.add(createEditorAiTranslateLoadingKey(actionState.rowId, actionState.targetLanguageCode));
+    const derivedEntry = derivedGlossariesByRowId[actionState.rowId];
+    const loadingText =
+      derivedEntry?.status === "loading" && derivedEntry.requestKey === actionState.requestKey
+        ? AI_TRANSLATE_PREPARING_TEXT
+        : AI_TRANSLATE_LOADING_TEXT;
+    loadingTexts.set(
+      createEditorAiTranslateLoadingKey(actionState.rowId, actionState.targetLanguageCode),
+      loadingText,
+    );
   }
 
-  return loadingKeys;
+  return loadingTexts;
 }
 
 function buildEditorReplaceViewModel(editorChapter, editorFilters) {
@@ -244,7 +257,7 @@ export function buildEditorScreenViewModel(appState) {
   const languages = chapterLanguageOptions(chapter, editorChapter);
   const { sourceCode, targetCode } = resolveSelectedLanguageCodes(languages, chapter, editorChapter);
   const rawRows = buildLiveTranslationRows(editorChapter, languages);
-  const activeAiTranslateLoadingKeys = resolveActiveEditorAiTranslateLoadingKeys(
+  const activeAiTranslateLoadingTexts = resolveActiveEditorAiTranslateLoadingTexts(
     editorChapter,
     rawRows,
     sourceCode,
@@ -279,14 +292,15 @@ export function buildEditorScreenViewModel(appState) {
     return {
       ...row,
       sections: (Array.isArray(row.sections) ? row.sections : []).map((section) => {
-        const isAiTranslating = activeAiTranslateLoadingKeys.has(
+        const aiTranslateLoadingText = activeAiTranslateLoadingTexts.get(
           createEditorAiTranslateLoadingKey(row.rowId, section.code),
         );
+        const isAiTranslating = typeof aiTranslateLoadingText === "string";
         return {
           ...section,
           text:
             isAiTranslating
-              ? AI_TRANSLATE_LOADING_TEXT
+              ? aiTranslateLoadingText
               : section.text,
           ...buildEditorCommentsButtonState({
             row,

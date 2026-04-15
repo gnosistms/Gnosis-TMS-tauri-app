@@ -6,6 +6,7 @@ use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 
 use crate::ai::{
+    providers::shared_http_client,
     types::{AiPromptRequest, AiPromptResponse, AiProviderModel},
 };
 
@@ -103,9 +104,7 @@ pub(crate) fn list_models(api_key: &str) -> Result<Vec<AiProviderModel>, String>
         return Err("No Gemini API key is saved yet.".to_string());
     }
 
-    let client = reqwest::blocking::Client::builder()
-        .timeout(Duration::from_secs(20))
-        .build()
+    let client = shared_http_client()
         .map_err(|error| format!("Could not start the Gemini models request: {error}"))?;
 
     let mut models_by_id = BTreeMap::new();
@@ -186,10 +185,8 @@ pub(crate) fn run_prompt(
         return Err("Select a Gemini model before running this AI request.".to_string());
     }
 
-    let client = reqwest::blocking::Client::builder()
-        .timeout(Duration::from_secs(45))
-        .build()
-        .map_err(|error| format!("Could not start the Gemini request: {error}"))?;
+    let client =
+        shared_http_client().map_err(|error| format!("Could not start the Gemini request: {error}"))?;
     let (status, body) =
         send_generate_content_request(&client, normalized_key, model_id, &request.prompt)
             .map_err(|error| format!("Could not complete the Gemini request: {error}"))?;
@@ -226,9 +223,7 @@ pub(crate) fn probe_model(model_id: &str, api_key: &str) -> Result<(), String> {
         return Err("Select a Gemini model before testing it.".to_string());
     }
 
-    let client = reqwest::blocking::Client::builder()
-        .timeout(Duration::from_secs(30))
-        .build()
+    let client = shared_http_client()
         .map_err(|error| format!("Could not start the Gemini model test request: {error}"))?;
     let (status, body) =
         send_generate_content_request(&client, normalized_key, normalized_model_id, "Reply with OK.")

@@ -182,7 +182,16 @@ function glossaryTooltipPayload(mark) {
     const footnotes = Array.isArray(payload.footnotes)
       ? payload.footnotes.map((value) => String(value ?? "").trim()).filter(Boolean)
       : [];
-    if (!title && variants.length === 0 && translatorNotes.length === 0 && footnotes.length === 0) {
+    const originTerms = Array.isArray(payload.originTerms)
+      ? payload.originTerms.map((value) => String(value ?? "").trim()).filter(Boolean)
+      : [];
+    if (
+      !title
+      && variants.length === 0
+      && translatorNotes.length === 0
+      && footnotes.length === 0
+      && originTerms.length === 0
+    ) {
       return null;
     }
 
@@ -192,6 +201,7 @@ function glossaryTooltipPayload(mark) {
       variants,
       translatorNotes,
       footnotes,
+      originTerms,
     };
   } catch {
     return null;
@@ -214,6 +224,14 @@ function renderStructuredGlossaryTooltipBody(body, payload) {
     variants.className = "editor-glossary-info-card__variants";
     variants.textContent = payload.variants.join(", ");
     body.append(variants);
+  }
+
+  const originTerms = Array.isArray(payload.originTerms) ? payload.originTerms : [];
+  if (originTerms.length > 0) {
+    const origin = document.createElement("p");
+    origin.className = "editor-glossary-info-card__origin";
+    origin.textContent = `Glossary source: ${originTerms.join(", ")}`;
+    body.append(origin);
   }
 
   const translatorNotes = Array.isArray(payload.translatorNotes) ? payload.translatorNotes : [];

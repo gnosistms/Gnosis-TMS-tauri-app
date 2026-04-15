@@ -59,6 +59,51 @@ pub struct AiTranslationGlossaryHint {
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+pub struct AiTranslatedGlossaryTermInput {
+    #[serde(default)]
+    pub glossary_source_terms: Vec<String>,
+    #[serde(default)]
+    pub target_variants: Vec<String>,
+    #[serde(default)]
+    pub notes: Vec<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AiTranslatedGlossaryEntry {
+    pub source_term: String,
+    pub glossary_source_term: String,
+    #[serde(default)]
+    pub target_variants: Vec<String>,
+    #[serde(default)]
+    pub notes: Vec<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AiTranslatedGlossaryPreparationRequest {
+    pub provider_id: AiProviderId,
+    pub model_id: String,
+    pub translation_source_text: String,
+    pub translation_source_language: String,
+    pub glossary_source_language: String,
+    pub target_language: String,
+    #[serde(default)]
+    pub glossary_source_text: String,
+    #[serde(default)]
+    pub glossary_terms: Vec<AiTranslatedGlossaryTermInput>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AiTranslatedGlossaryPreparationResponse {
+    pub glossary_source_text: String,
+    #[serde(default)]
+    pub entries: Vec<AiTranslatedGlossaryEntry>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub struct AiTranslationRequest {
     pub provider_id: AiProviderId,
     pub model_id: String,

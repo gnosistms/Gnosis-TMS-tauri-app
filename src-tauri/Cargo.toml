@@ -33,3 +33,4 @@ quick-xml = "0.31"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 rusqlite = { version = "0.32", features = ["bundled"] }
 zeroize = "1"
+regex = "1"

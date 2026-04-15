@@ -5,6 +5,7 @@ import { normalizeEditorSidebarTab } from "./editor-comments.js";
 import { pruneEditorCommentSeenRevisionsForRows } from "./editor-comments-state.js";
 import { currentEditorHistoryForSelection } from "./editor-history-state.js";
 import { compactDirtyRowIds, reconcileDirtyTrackedEditorRows } from "./editor-dirty-row-state.js";
+import { normalizeEditorDerivedGlossariesByRowId } from "./editor-derived-glossary-state.js";
 import { normalizeEditorChapterFilterState } from "./editor-filters.js";
 import { normalizeEditorReplaceState } from "./editor-replace.js";
 import {
@@ -76,6 +77,28 @@ function preserveEditorAiTranslateState(nextEditorChapter, previousEditorChapter
   return nextAiTranslate;
 }
 
+function preserveEditorDerivedGlossariesByRowId(
+  nextEditorChapter,
+  previousEditorChapter,
+  isSameChapter,
+) {
+  if (!isSameChapter) {
+    return {};
+  }
+
+  const previousDerivedGlossariesByRowId = normalizeEditorDerivedGlossariesByRowId(
+    previousEditorChapter?.derivedGlossariesByRowId,
+  );
+  return Object.fromEntries(
+    Object.entries(previousDerivedGlossariesByRowId).filter(([rowId, entry]) =>
+      hasEditorRow(nextEditorChapter, rowId)
+      && hasEditorLanguage(nextEditorChapter, entry.translationSourceLanguageCode)
+      && hasEditorLanguage(nextEditorChapter, entry.glossarySourceLanguageCode)
+      && hasEditorLanguage(nextEditorChapter, entry.targetLanguageCode)
+    ),
+  );
+}
+
 export function applyEditorUiState(nextEditorChapter, previousEditorChapter = state.editorChapter) {
   const isSameChapter = previousEditorChapter?.chapterId === nextEditorChapter?.chapterId;
   const activeRowId =
@@ -114,6 +137,11 @@ export function applyEditorUiState(nextEditorChapter, previousEditorChapter = st
       : createEditorReplaceState(),
     expandedDeletedRowGroupIds: cloneExpandedDeletedRowGroupIds(previousEditorChapter?.expandedDeletedRowGroupIds),
     glossary: nextEditorChapter?.glossary ?? previousEditorChapter?.glossary ?? createEditorChapterGlossaryState(),
+    derivedGlossariesByRowId: preserveEditorDerivedGlossariesByRowId(
+      nextEditorChapter,
+      previousEditorChapter,
+      isSameChapter,
+    ),
     insertRowModal:
       previousEditorChapter?.insertRowModal?.isOpen === true
         && hasEditorRow(nextEditorChapter, previousEditorChapter.insertRowModal.rowId)
@@ -370,9 +398,14 @@ export function removeEditorChapterRow(rowId) {
 
   const rows = state.editorChapter.rows.filter((row) => row?.rowId !== rowId);
   const aiTranslate = normalizeEditorAiTranslateState(state.editorChapter.aiTranslate);
+  const derivedGlossariesByRowId = normalizeEditorDerivedGlossariesByRowId(
+    state.editorChapter.derivedGlossariesByRowId,
+  );
+  delete derivedGlossariesByRowId[rowId];
   state.editorChapter = {
     ...state.editorChapter,
     rows,
+    derivedGlossariesByRowId,
     dirtyRowIds: compactDirtyRowIds(rows, state.editorChapter.dirtyRowIds),
     activeRowId: state.editorChapter.activeRowId === rowId ? null : state.editorChapter.activeRowId,
     activeLanguageCode: state.editorChapter.activeRowId === rowId ? null : state.editorChapter.activeLanguageCode,

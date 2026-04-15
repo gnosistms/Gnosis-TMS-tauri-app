@@ -166,6 +166,9 @@ export async function loadSelectedChapterEditorData(render, options = {}, operat
       ? normalizeEditorChapterFilters(state.editorChapter.filters)
       : createEditorChapterFilterState(),
     glossary: nextGlossaryState,
+    derivedGlossariesByRowId: preserveVisibleRows
+      ? state.editorChapter.derivedGlossariesByRowId
+      : {},
     activeRowId: preserveVisibleRows ? state.editorChapter.activeRowId : null,
     activeLanguageCode: preserveVisibleRows ? state.editorChapter.activeLanguageCode : null,
     sidebarTab: preserveVisibleRows ? state.editorChapter.sidebarTab : "review",

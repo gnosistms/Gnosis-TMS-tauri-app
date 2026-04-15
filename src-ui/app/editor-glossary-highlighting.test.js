@@ -3,8 +3,10 @@ import assert from "node:assert/strict";
 
 import {
   buildEditorAiTranslationGlossaryHints,
+  buildEditorDerivedGlossaryModel,
   buildEditorGlossaryModel,
   buildEditorRowGlossaryHighlights,
+  buildEditorRowSourceGlossaryHighlights,
   findLongestGlossaryMatches,
 } from "./editor-glossary-highlighting.js";
 
@@ -183,6 +185,48 @@ test("target highlights include a structured tooltip payload with source variant
   assert.deepEqual(payload.variants, ["gnostica", "gnostico"]);
   assert.deepEqual(payload.translatorNotes, ["Lien quan den Gnosis"]);
   assert.deepEqual(payload.footnotes, ["Chu thich bo sung"]);
+});
+
+test("derived source highlights include glossary provenance in the structured tooltip payload", () => {
+  const model = buildEditorDerivedGlossaryModel({
+    sourceLanguage: {
+      code: "en",
+      name: "English",
+    },
+    targetLanguage: {
+      code: "vi",
+      name: "Vietnamese",
+    },
+    entries: [{
+      sourceTerm: "inner chamber",
+      glossarySourceTerm: "camara interior",
+      targetVariants: ["buong noi tam"],
+      notes: ["Dung thuat ngu cua glossary"],
+    }],
+  });
+
+  const highlights = buildEditorRowSourceGlossaryHighlights([
+    {
+      code: "en",
+      text: "The inner chamber glows.",
+    },
+  ], model);
+
+  const sourceHtml = highlights.get("en")?.html ?? "";
+  const payloadMatch = sourceHtml.match(/data-editor-glossary-tooltip-payload="([^"]+)"/);
+  assert.ok(payloadMatch);
+
+  const payloadJson = payloadMatch[1]
+    .replaceAll("&quot;", "\"")
+    .replaceAll("&#39;", "'")
+    .replaceAll("&amp;", "&");
+  const payload = JSON.parse(payloadJson);
+
+  assert.equal(payload.kind, "source");
+  assert.equal(payload.title, "inner chamber");
+  assert.deepEqual(payload.variants, ["buong noi tam"]);
+  assert.deepEqual(payload.translatorNotes, ["Dung thuat ngu cua glossary"]);
+  assert.deepEqual(payload.originTerms, ["camara interior"]);
 });
 
 test("translation glossary hints use the matched source term, ordered target variants, and notes only", () => {

@@ -130,6 +130,11 @@ function buildLanguageGlossaryMatcher(entries, matchLanguage) {
           existingCandidate.footnotes,
           entry.footnotes,
         );
+        appendOrderedUniqueTerms(
+          existingCandidate.originTermsOrdered,
+          existingCandidate.originTerms,
+          entry.originTerms,
+        );
         continue;
       }
 
@@ -146,6 +151,9 @@ function buildLanguageGlossaryMatcher(entries, matchLanguage) {
       const footnotesOrdered = [];
       const footnotes = new Set();
       appendOrderedUniqueTerms(footnotesOrdered, footnotes, entry.footnotes);
+      const originTermsOrdered = [];
+      const originTerms = new Set();
+      appendOrderedUniqueTerms(originTermsOrdered, originTerms, entry.originTerms);
       const candidate = {
         tokens,
         sourceTerms,
@@ -156,6 +164,8 @@ function buildLanguageGlossaryMatcher(entries, matchLanguage) {
         translatorNotesOrdered,
         footnotes,
         footnotesOrdered,
+        originTerms,
+        originTermsOrdered,
         characterLength: String(matchTerm ?? "").length,
         matchLanguage,
       };
@@ -181,21 +191,48 @@ function buildLanguageGlossaryMatcher(entries, matchLanguage) {
   };
 }
 
-export function buildEditorGlossaryModel(glossary) {
-  const sourceLanguageCode = resolveLanguageCode(glossary?.sourceLanguage);
-  const targetLanguageCode = resolveLanguageCode(glossary?.targetLanguage);
+function buildEditorGlossaryModelFromEntrySets({
+  glossaryId = null,
+  repoName = "",
+  title = "",
+  sourceLanguage,
+  targetLanguage,
+  sourceEntries = [],
+  targetEntries = [],
+}) {
+  const sourceLanguageCode = resolveLanguageCode(sourceLanguage);
+  const targetLanguageCode = resolveLanguageCode(targetLanguage);
   if (!sourceLanguageCode || !targetLanguageCode) {
     return null;
   }
 
-  const sourceLanguage = {
+  const normalizedSourceLanguage = {
     code: sourceLanguageCode,
-    name: resolveLanguageName(glossary?.sourceLanguage, sourceLanguageCode),
+    name: resolveLanguageName(sourceLanguage, sourceLanguageCode),
   };
-  const targetLanguage = {
+  const normalizedTargetLanguage = {
     code: targetLanguageCode,
-    name: resolveLanguageName(glossary?.targetLanguage, targetLanguageCode),
+    name: resolveLanguageName(targetLanguage, targetLanguageCode),
   };
+  const sourceMatcher = buildLanguageGlossaryMatcher(sourceEntries, normalizedSourceLanguage.code);
+  const targetMatcher = buildLanguageGlossaryMatcher(targetEntries, normalizedTargetLanguage.code);
+
+  if (!sourceMatcher && !targetMatcher) {
+    return null;
+  }
+
+  return {
+    glossaryId: typeof glossaryId === "string" ? glossaryId : null,
+    repoName: typeof repoName === "string" ? repoName : "",
+    title: typeof title === "string" ? title : "",
+    sourceLanguage: normalizedSourceLanguage,
+    targetLanguage: normalizedTargetLanguage,
+    sourceMatcher,
+    targetMatcher,
+  };
+}
+
+export function buildEditorGlossaryModel(glossary) {
   const activeTerms = (Array.isArray(glossary?.terms) ? glossary.terms : [])
     .filter((term) => term?.lifecycleState !== "deleted");
 
@@ -220,22 +257,55 @@ export function buildEditorGlossaryModel(glossary) {
     };
   });
 
-  const sourceMatcher = buildLanguageGlossaryMatcher(sourceEntries, sourceLanguage.code);
-  const targetMatcher = buildLanguageGlossaryMatcher(targetEntries, targetLanguage.code);
+  return buildEditorGlossaryModelFromEntrySets({
+    glossaryId: glossary?.glossaryId,
+    repoName: glossary?.repoName,
+    title: glossary?.title,
+    sourceLanguage: glossary?.sourceLanguage,
+    targetLanguage: glossary?.targetLanguage,
+    sourceEntries,
+    targetEntries,
+  });
+}
 
-  if (!sourceMatcher && !targetMatcher) {
-    return null;
-  }
+export function buildEditorDerivedGlossaryModel({
+  sourceLanguage,
+  targetLanguage,
+  entries = [],
+  glossaryId = null,
+  repoName = "",
+  title = "",
+}) {
+  const normalizedEntries = (Array.isArray(entries) ? entries : [])
+    .map((entry) => ({
+      sourceTerm: String(entry?.sourceTerm ?? "").trim(),
+      glossarySourceTerm: String(entry?.glossarySourceTerm ?? "").trim(),
+      targetVariants: sanitizeTermList(entry?.targetVariants),
+      notes: sanitizeTermList(entry?.notes),
+    }))
+    .filter((entry) =>
+      entry.sourceTerm
+      && (entry.glossarySourceTerm || entry.targetVariants.length > 0 || entry.notes.length > 0)
+    );
 
-  return {
-    glossaryId: typeof glossary?.glossaryId === "string" ? glossary.glossaryId : null,
-    repoName: typeof glossary?.repoName === "string" ? glossary.repoName : "",
-    title: typeof glossary?.title === "string" ? glossary.title : "",
+  const sourceEntries = normalizedEntries.map((entry) => ({
+    sourceTerms: [entry.sourceTerm],
+    targetTerms: entry.targetVariants,
+    translatorNotes: entry.notes,
+    footnotes: [],
+    originTerms: entry.glossarySourceTerm ? [entry.glossarySourceTerm] : [],
+    matchTerms: [entry.sourceTerm],
+  }));
+
+  return buildEditorGlossaryModelFromEntrySets({
+    glossaryId,
+    repoName,
+    title,
     sourceLanguage,
     targetLanguage,
-    sourceMatcher,
-    targetMatcher,
-  };
+    sourceEntries,
+    targetEntries: [],
+  });
 }
 
 function tokenizeTextForHighlighting(text, languageCode) {
@@ -333,6 +403,7 @@ function buildGlossaryTooltipText(candidate, glossaryModel) {
     "translatorNotes",
   );
   const footnotes = orderedCandidateValues(candidate, "footnotesOrdered", "footnotes");
+  const originTerms = orderedCandidateValues(candidate, "originTermsOrdered", "originTerms");
   const parts = [];
 
   if (sourceTerms.length > 0) {
@@ -347,6 +418,9 @@ function buildGlossaryTooltipText(candidate, glossaryModel) {
   }
   if (footnotes.length > 0) {
     parts.push(footnotes.join(" | "));
+  }
+  if (originTerms.length > 0) {
+    parts.push(`Glossary source: ${originTerms.join(", ")}`);
   }
 
   return parts.join(" | ");
@@ -369,7 +443,14 @@ function buildStructuredGlossaryTooltipPayload(candidate, hoveredTerm, glossaryM
     "translatorNotes",
   );
   const footnotes = orderedCandidateValues(candidate, "footnotesOrdered", "footnotes");
-  if (!title && variants.length === 0 && translatorNotes.length === 0 && footnotes.length === 0) {
+  const originTerms = orderedCandidateValues(candidate, "originTermsOrdered", "originTerms");
+  if (
+    !title
+    && variants.length === 0
+    && translatorNotes.length === 0
+    && footnotes.length === 0
+    && originTerms.length === 0
+  ) {
     return null;
   }
 
@@ -379,6 +460,7 @@ function buildStructuredGlossaryTooltipPayload(candidate, hoveredTerm, glossaryM
     variants,
     translatorNotes,
     footnotes,
+    originTerms,
   };
 }
 
@@ -590,6 +672,31 @@ export function buildEditorRowGlossaryHighlights(sections, glossaryModel) {
       if (highlight.hasMatches) {
         highlights.set(section.code, highlight);
       }
+    }
+  }
+
+  return highlights;
+}
+
+export function buildEditorRowSourceGlossaryHighlights(sections, glossaryModel) {
+  const highlights = new Map();
+  if (!glossaryModel?.sourceMatcher) {
+    return highlights;
+  }
+
+  for (const section of Array.isArray(sections) ? sections : []) {
+    if (section?.code !== glossaryModel?.sourceLanguage?.code) {
+      continue;
+    }
+
+    const highlight = buildHighlightMarkup(
+      section.text ?? "",
+      glossaryModel.sourceMatcher,
+      glossaryModel,
+      null,
+    );
+    if (highlight.hasMatches) {
+      highlights.set(section.code, highlight);
     }
   }
 

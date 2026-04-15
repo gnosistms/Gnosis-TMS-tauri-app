@@ -1,9 +1,8 @@
-use std::time::Duration;
-
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 
 use crate::ai::{
+    providers::shared_http_client,
     types::{AiPromptRequest, AiPromptResponse, AiProviderModel},
 };
 
@@ -69,9 +68,7 @@ pub(crate) fn list_models(api_key: &str) -> Result<Vec<AiProviderModel>, String>
         return Err("No Claude API key is saved yet.".to_string());
     }
 
-    let client = reqwest::blocking::Client::builder()
-        .timeout(Duration::from_secs(20))
-        .build()
+    let client = shared_http_client()
         .map_err(|error| format!("Could not start the Claude models request: {error}"))?;
 
     let response = client
@@ -129,10 +126,8 @@ pub(crate) fn run_prompt(
         return Err("Select a Claude model before running this AI request.".to_string());
     }
 
-    let client = reqwest::blocking::Client::builder()
-        .timeout(Duration::from_secs(45))
-        .build()
-        .map_err(|error| format!("Could not start the Claude request: {error}"))?;
+    let client =
+        shared_http_client().map_err(|error| format!("Could not start the Claude request: {error}"))?;
 
     let response = client
         .post(CLAUDE_MESSAGES_API_URL)
@@ -186,9 +181,7 @@ pub(crate) fn probe_model(model_id: &str, api_key: &str) -> Result<(), String> {
         return Err("Select a Claude model before testing it.".to_string());
     }
 
-    let client = reqwest::blocking::Client::builder()
-        .timeout(Duration::from_secs(30))
-        .build()
+    let client = shared_http_client()
         .map_err(|error| format!("Could not start the Claude model test request: {error}"))?;
 
     let response = client

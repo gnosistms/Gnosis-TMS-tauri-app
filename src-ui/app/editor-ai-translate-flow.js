@@ -11,7 +11,16 @@ import {
   currentEditorAiTranslateRequestMatches,
 } from "./editor-ai-translate-state.js";
 import { resolveEditorAiTranslateLanguages } from "./editor-ai-translate-target.js";
-import { buildEditorAiTranslationGlossaryHints } from "./editor-glossary-highlighting.js";
+import {
+  applyEditorDerivedGlossaryEntry,
+  buildEditorDerivedGlossaryContext,
+  buildEditorGlossaryRevisionKey,
+  resolveEditorDerivedGlossaryEntry,
+} from "./editor-derived-glossary-state.js";
+import {
+  buildEditorAiTranslationGlossaryHints,
+  buildEditorDerivedGlossaryModel,
+} from "./editor-glossary-highlighting.js";
 import { invoke } from "./runtime.js";
 import { showNoticeBadge } from "./status-feedback.js";
 import { findEditorRowById } from "./editor-utils.js";
@@ -39,6 +48,157 @@ function errorMeansMissingAiKey(message) {
   );
 }
 
+function resolveLanguageCode(language) {
+  if (typeof language === "string" && language.trim()) {
+    return language.trim();
+  }
+
+  if (language && typeof language === "object") {
+    const code = typeof language.code === "string" ? language.code.trim() : "";
+    if (code) {
+      return code;
+    }
+  }
+
+  return "";
+}
+
+function resolveLanguageLabel(language, fallbackCode = "") {
+  if (language && typeof language === "object") {
+    const name = typeof language.name === "string" ? language.name.trim() : "";
+    if (name) {
+      return name;
+    }
+  }
+
+  return fallbackCode || "";
+}
+
+function sanitizeTermList(values) {
+  return (Array.isArray(values) ? values : [])
+    .map((value) => String(value ?? "").trim())
+    .filter(Boolean);
+}
+
+function buildDerivedGlossaryTermInputs(glossaryState) {
+  return (Array.isArray(glossaryState?.terms) ? glossaryState.terms : [])
+    .filter((term) => term?.lifecycleState !== "deleted")
+    .map((term) => ({
+      glossarySourceTerms: sanitizeTermList(term?.sourceTerms),
+      targetVariants: sanitizeTermList(term?.targetTerms),
+      notes:
+        typeof term?.notesToTranslators === "string" && term.notesToTranslators.trim()
+          ? [term.notesToTranslators.trim()]
+          : [],
+    }))
+    .filter((term) => term.glossarySourceTerms.length > 0);
+}
+
+function buildDerivedGlossaryState({
+  glossaryState,
+  sourceLanguage,
+  targetLanguage,
+  requestKey,
+  derivedContext,
+  payload = {},
+}) {
+  const entries = Array.isArray(payload?.entries) ? payload.entries : [];
+  return {
+    status: "ready",
+    error: "",
+    requestKey,
+    ...derivedContext,
+    glossarySourceText:
+      typeof payload?.glossarySourceText === "string"
+        ? payload.glossarySourceText
+        : derivedContext.glossarySourceText,
+    entries,
+    matcherModel: buildEditorDerivedGlossaryModel({
+      sourceLanguage,
+      targetLanguage,
+      entries,
+      glossaryId: glossaryState?.glossaryId ?? null,
+      repoName: glossaryState?.repoName ?? "",
+      title: glossaryState?.title ?? "",
+    }),
+  };
+}
+
+function latestEditorTranslateSourceTextMatches(context) {
+  const latestRow = findEditorRowById(context.rowId, state.editorChapter);
+  return (latestRow?.fields?.[context.sourceLanguageCode] ?? "") === context.sourceText;
+}
+
+function resolveGlossaryUsage(context) {
+  const glossaryState = context.chapterState?.glossary ?? null;
+  const glossaryModel = glossaryState?.matcherModel ?? null;
+  const glossarySourceLanguageCode = resolveLanguageCode(
+    glossaryState?.sourceLanguage ?? glossaryModel?.sourceLanguage,
+  );
+  const glossaryTargetLanguageCode = resolveLanguageCode(
+    glossaryState?.targetLanguage ?? glossaryModel?.targetLanguage,
+  );
+
+  if (
+    !glossarySourceLanguageCode
+    || !glossaryTargetLanguageCode
+    || glossaryTargetLanguageCode !== context.targetLanguageCode
+  ) {
+    return {
+      kind: "none",
+      glossaryHints: [],
+    };
+  }
+
+  if (glossarySourceLanguageCode === context.sourceLanguageCode) {
+    return {
+      kind: "direct",
+      glossaryHints: buildEditorAiTranslationGlossaryHints(
+        context.sourceText,
+        context.sourceLanguageCode,
+        context.targetLanguageCode,
+        glossaryModel,
+      ),
+    };
+  }
+
+  const glossaryTerms = buildDerivedGlossaryTermInputs(glossaryState);
+  if (glossaryTerms.length === 0) {
+    return {
+      kind: "none",
+      glossaryHints: [],
+    };
+  }
+
+  const glossarySourceText = context.row?.fields?.[glossarySourceLanguageCode] ?? "";
+  const derivedContext = buildEditorDerivedGlossaryContext({
+    translationSourceLanguageCode: context.sourceLanguageCode,
+    glossarySourceLanguageCode,
+    targetLanguageCode: context.targetLanguageCode,
+    translationSourceText: context.sourceText,
+    glossarySourceText,
+    glossaryRevisionKey: buildEditorGlossaryRevisionKey(glossaryState),
+  });
+  const cachedDerivedEntry = resolveEditorDerivedGlossaryEntry(
+    context.chapterState,
+    context.rowId,
+    derivedContext,
+  );
+
+  return {
+    kind: "derived",
+    glossaryState,
+    glossaryTerms,
+    glossarySourceLanguageCode,
+    glossarySourceLanguageLabel: resolveLanguageLabel(
+      glossaryState?.sourceLanguage ?? glossaryModel?.sourceLanguage,
+      glossarySourceLanguageCode,
+    ),
+    derivedContext,
+    cachedDerivedEntry,
+  };
+}
+
 function activeEditorTranslateContext(chapterState = state.editorChapter) {
   if (!chapterState?.chapterId || !chapterState?.activeRowId) {
     return null;
@@ -60,10 +220,14 @@ function activeEditorTranslateContext(chapterState = state.editorChapter) {
   }
 
   return {
+    chapterState,
+    row,
     chapterId: chapterState.chapterId,
     rowId: chapterState.activeRowId,
     sourceLanguageCode,
     targetLanguageCode,
+    sourceLanguage,
+    targetLanguage,
     sourceLanguageLabel:
       typeof sourceLanguage?.name === "string" && sourceLanguage.name.trim()
         ? sourceLanguage.name.trim()
@@ -73,12 +237,6 @@ function activeEditorTranslateContext(chapterState = state.editorChapter) {
         ? targetLanguage.name.trim()
         : targetLanguageCode,
     sourceText: row.fields?.[sourceLanguageCode] ?? "",
-    glossaryHints: buildEditorAiTranslationGlossaryHints(
-      row.fields?.[sourceLanguageCode] ?? "",
-      sourceLanguageCode,
-      targetLanguageCode,
-      chapterState.glossary?.matcherModel ?? null,
-    ),
   };
 }
 
@@ -197,7 +355,87 @@ export async function runEditorAiTranslate(render, actionId, operations = {}) {
   );
   render?.();
 
+  let glossaryUsage = { kind: "none" };
   try {
+    glossaryUsage = resolveGlossaryUsage(context);
+    let glossaryHints = Array.isArray(glossaryUsage.glossaryHints)
+      ? glossaryUsage.glossaryHints
+      : [];
+
+    if (glossaryUsage.kind === "derived") {
+      let derivedEntry = glossaryUsage.cachedDerivedEntry;
+      if (!derivedEntry) {
+        state.editorChapter = applyEditorDerivedGlossaryEntry(
+          state.editorChapter,
+          context.rowId,
+          {
+            status: "loading",
+            error: "",
+            requestKey,
+            ...glossaryUsage.derivedContext,
+            entries: [],
+            matcherModel: null,
+          },
+        );
+        render?.({ scope: "translate-body" });
+
+        const payload = await invoke("prepare_editor_ai_translated_glossary", {
+          request: {
+            providerId,
+            modelId,
+            translationSourceText: context.sourceText,
+            translationSourceLanguage: context.sourceLanguageLabel,
+            glossarySourceLanguage: glossaryUsage.glossarySourceLanguageLabel,
+            targetLanguage: context.targetLanguageLabel,
+            glossarySourceText: glossaryUsage.derivedContext.glossarySourceText,
+            glossaryTerms: glossaryUsage.glossaryTerms,
+          },
+        });
+
+        if (
+          !currentEditorAiTranslateRequestMatches(
+            state.editorChapter,
+            context.chapterId,
+            actionId,
+            context.rowId,
+            context.sourceLanguageCode,
+            context.targetLanguageCode,
+            requestKey,
+          )
+        ) {
+          return;
+        }
+
+        if (!latestEditorTranslateSourceTextMatches(context)) {
+          state.editorChapter = clearEditorAiTranslateAction(state.editorChapter, actionId);
+          render?.();
+          return;
+        }
+
+        derivedEntry = buildDerivedGlossaryState({
+          glossaryState: glossaryUsage.glossaryState,
+          sourceLanguage: context.sourceLanguage,
+          targetLanguage: context.targetLanguage,
+          requestKey,
+          derivedContext: glossaryUsage.derivedContext,
+          payload,
+        });
+        state.editorChapter = applyEditorDerivedGlossaryEntry(
+          state.editorChapter,
+          context.rowId,
+          derivedEntry,
+        );
+        render?.({ scope: "translate-body" });
+      }
+
+      glossaryHints = buildEditorAiTranslationGlossaryHints(
+        context.sourceText,
+        context.sourceLanguageCode,
+        context.targetLanguageCode,
+        derivedEntry?.matcherModel ?? null,
+      );
+    }
+
     const payload = await invoke("run_ai_translation", {
       request: {
         providerId,
@@ -205,8 +443,8 @@ export async function runEditorAiTranslate(render, actionId, operations = {}) {
         text: context.sourceText,
         sourceLanguage: context.sourceLanguageLabel,
         targetLanguage: context.targetLanguageLabel,
-        ...(Array.isArray(context.glossaryHints) && context.glossaryHints.length > 0
-          ? { glossaryHints: context.glossaryHints }
+        ...(Array.isArray(glossaryHints) && glossaryHints.length > 0
+          ? { glossaryHints }
           : {}),
       },
     });
@@ -279,6 +517,21 @@ export async function runEditorAiTranslate(render, actionId, operations = {}) {
       )
     ) {
       return;
+    }
+
+    if (glossaryUsage.kind === "derived") {
+      state.editorChapter = applyEditorDerivedGlossaryEntry(
+        state.editorChapter,
+        context.rowId,
+        {
+          status: "error",
+          error: message,
+          requestKey,
+          ...glossaryUsage.derivedContext,
+          entries: [],
+          matcherModel: null,
+        },
+      );
     }
 
     state.editorChapter = applyEditorAiTranslateActionFailed(

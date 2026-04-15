@@ -1,9 +1,8 @@
-use std::time::Duration;
-
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 
 use crate::ai::{
+    providers::shared_http_client,
     types::{AiPromptRequest, AiPromptResponse, AiProviderModel, AiReviewResponse},
 };
 
@@ -110,9 +109,7 @@ pub(crate) fn list_models(api_key: &str) -> Result<Vec<AiProviderModel>, String>
         return Err("No OpenAI API key is saved yet.".to_string());
     }
 
-    let client = reqwest::blocking::Client::builder()
-        .timeout(Duration::from_secs(20))
-        .build()
+    let client = shared_http_client()
         .map_err(|error| format!("Could not start the OpenAI models request: {error}"))?;
 
     let response = client
@@ -173,9 +170,7 @@ pub(crate) fn probe_model(model_id: &str, api_key: &str) -> Result<(), String> {
         return Err("Select an OpenAI model before testing it.".to_string());
     }
 
-    let client = reqwest::blocking::Client::builder()
-        .timeout(Duration::from_secs(30))
-        .build()
+    let client = shared_http_client()
         .map_err(|error| format!("Could not start the OpenAI model test request: {error}"))?;
 
     let response = client
@@ -219,10 +214,8 @@ pub(crate) fn run_prompt(
         return Err("No OpenAI API key is saved yet.".to_string());
     }
 
-    let client = reqwest::blocking::Client::builder()
-        .timeout(Duration::from_secs(45))
-        .build()
-        .map_err(|error| format!("Could not start the OpenAI request: {error}"))?;
+    let client =
+        shared_http_client().map_err(|error| format!("Could not start the OpenAI request: {error}"))?;
 
     let response = client
         .post(OPENAI_RESPONSES_API_URL)
