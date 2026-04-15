@@ -24,7 +24,10 @@ use tar::Archive;
 use tauri::{AppHandle, Manager, Runtime};
 use uuid::Uuid;
 
-use crate::{broker::broker_get_json_with_session, github::github_client};
+use crate::{
+    broker::broker_get_json_with_session, broker_auth_storage::load_broker_auth_session,
+    github::github_client,
+};
 
 static RESOLVED_GIT_EXECUTABLE: OnceLock<PathBuf> = OnceLock::new();
 static APP_GIT_HOME_DIR: OnceLock<PathBuf> = OnceLock::new();
@@ -191,6 +194,17 @@ pub(crate) fn load_git_transport_token(
     Ok(response.token)
 }
 
+pub(crate) fn ensure_repo_local_git_identity(
+    app: &AppHandle,
+    repo_path: &Path,
+) -> Result<(), String> {
+    let identity = signed_in_git_identity(app)?;
+    set_local_git_config_if_needed(repo_path, "user.name", &identity.name)?;
+    set_local_git_config_if_needed(repo_path, "user.email", &identity.email)?;
+    set_local_git_config_if_needed(repo_path, "user.useConfigOnly", "true")?;
+    Ok(())
+}
+
 pub(crate) fn abort_rebase_after_failed_pull(repo_path: &Path, pull_error: String) -> String {
     if !repo_has_rebase_in_progress(repo_path) {
         return pull_error;
@@ -202,6 +216,38 @@ pub(crate) fn abort_rebase_after_failed_pull(repo_path: &Path, pull_error: Strin
             format!("{pull_error} An automatic 'git rebase --abort' also failed: {abort_error}")
         }
     }
+}
+
+struct SignedInGitIdentity {
+    name: String,
+    email: String,
+}
+
+fn signed_in_git_identity(app: &AppHandle) -> Result<SignedInGitIdentity, String> {
+    let session = load_broker_auth_session(app.clone())?
+        .ok_or_else(|| "Sign in with GitHub before syncing local repos.".to_string())?;
+    let login = session.login.trim().to_lowercase();
+    if login.is_empty() {
+        return Err("The saved GitHub session is missing a login.".to_string());
+    }
+
+    Ok(SignedInGitIdentity {
+        name: login.clone(),
+        email: format!("{login}@users.noreply.github.com"),
+    })
+}
+
+fn set_local_git_config_if_needed(repo_path: &Path, key: &str, value: &str) -> Result<(), String> {
+    let current_value = git_output(repo_path, &["config", "--local", "--get", key], None)
+        .ok()
+        .map(|text| text.trim().to_string())
+        .unwrap_or_default();
+    if current_value == value {
+        return Ok(());
+    }
+
+    git_output(repo_path, &["config", "--local", key, value], None)?;
+    Ok(())
 }
 
 fn repo_has_rebase_in_progress(repo_path: &Path) -> bool {

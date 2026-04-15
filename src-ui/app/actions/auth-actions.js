@@ -3,11 +3,12 @@ import { closeConnectionFailureModal } from "../connection-failure.js";
 import { refreshCurrentScreen } from "../navigation.js";
 import { enableOfflineMode, reconnectOnlineMode } from "../offline-connectivity.js";
 import { loadUserTeams } from "../team-setup-flow.js";
+import { checkForAppUpdate } from "../updater-flow.js";
 
 export function createAuthActions(render) {
   return {
     "login-with-github": () => startGithubLogin(render),
-    "check-for-updates": () => refreshCurrentScreen(render),
+    "check-for-updates": () => checkForAppUpdate(render, { silent: false }),
     "refresh-page": () => refreshCurrentScreen(render),
     "work-offline": () => enableOfflineMode(render),
     "dismiss-connection-failure": () => closeConnectionFailureModal(render),

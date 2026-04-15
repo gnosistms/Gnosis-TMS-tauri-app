@@ -4,7 +4,7 @@ use tauri::AppHandle;
 
 use crate::{
     broker_auth_storage::load_broker_auth_session,
-    repo_sync_shared::{format_git_spawn_error, git_command},
+    repo_sync_shared::{ensure_repo_local_git_identity, format_git_spawn_error, git_command},
 };
 
 pub(crate) struct GitCommitMetadata<'a> {
@@ -62,6 +62,7 @@ pub(crate) fn git_commit_as_signed_in_user_with_metadata(
     metadata: GitCommitMetadata<'_>,
 ) -> Result<String, String> {
     let author = signed_in_git_author(app)?;
+    ensure_repo_local_git_identity(app, repo_path)?;
     let mut command = git_command();
     command
         .arg("commit")

@@ -1031,7 +1031,8 @@ pub(super) fn update_gtms_editor_row_lifecycle_sync(
             row_id: input.row_id,
             lifecycle_state: next_state.to_string(),
             source_word_counts: load_source_word_counts(&chapter_path.join("rows"), &languages)?,
-            chapter_base_commit_sha: git_output(&repo_path, &["rev-parse", "--verify", "HEAD"]).ok(),
+            chapter_base_commit_sha: git_output(&repo_path, &["rev-parse", "--verify", "HEAD"])
+                .ok(),
         });
     }
 

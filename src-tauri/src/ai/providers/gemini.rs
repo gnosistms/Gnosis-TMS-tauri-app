@@ -512,7 +512,10 @@ mod tests {
 
         assert_eq!(
             shortlisted,
-            vec!["gemini-3-flash-preview", "gemini-2.5-flash-lite-preview-09-2025"]
+            vec![
+                "gemini-3-flash-preview",
+                "gemini-2.5-flash-lite-preview-09-2025"
+            ]
         );
     }
 
@@ -541,7 +544,9 @@ mod tests {
     fn gemini_model_is_pro_only_matches_pro_models() {
         assert!(gemini_model_is_pro("gemini-3-pro-preview"));
         assert!(!gemini_model_is_pro("gemini-3-flash-preview"));
-        assert!(!gemini_model_is_pro("gemini-2.5-flash-lite-preview-09-2025"));
+        assert!(!gemini_model_is_pro(
+            "gemini-2.5-flash-lite-preview-09-2025"
+        ));
     }
 
     #[test]

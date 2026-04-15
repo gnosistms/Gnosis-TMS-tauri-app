@@ -16,8 +16,8 @@ use crate::{
     },
     project_repo_paths::resolve_or_desired_project_git_repo_path,
     repo_sync_shared::{
-        abort_rebase_after_failed_pull, git_output, load_git_transport_token,
-        read_current_head_oid, GitTransportAuth,
+        abort_rebase_after_failed_pull, ensure_repo_local_git_identity, git_output,
+        load_git_transport_token, read_current_head_oid, GitTransportAuth,
     },
 };
 
@@ -223,6 +223,7 @@ fn reconcile_project_repo_sync_states_sync(
             };
             save_sync_snapshot(&store, &key, syncing_snapshot.clone());
             spawn_project_repo_sync_job(
+                app.clone(),
                 store.clone(),
                 key,
                 project.clone(),
@@ -296,6 +297,7 @@ fn sync_gtms_project_editor_repo_sync(
 
     let git_transport_token = load_git_transport_token(input.installation_id, session_token)?;
     let new_head_sha = sync_project_repo(
+        app,
         &project,
         &repo_path,
         input.default_branch_head_oid.as_deref().unwrap_or_default(),
@@ -369,6 +371,7 @@ fn inspect_gtms_project_editor_repo_sync_state_sync(
 }
 
 fn spawn_project_repo_sync_job(
+    app: AppHandle,
     store: Arc<Mutex<BTreeMap<String, ProjectRepoSyncSnapshot>>>,
     key: String,
     project: ProjectRepoSyncDescriptor,
@@ -378,6 +381,7 @@ fn spawn_project_repo_sync_job(
 ) {
     tauri::async_runtime::spawn_blocking(move || {
         let sync_result = sync_project_repo(
+            &app,
             &project,
             &repo_path,
             remote_head_oid.as_deref().unwrap_or_default(),
@@ -616,16 +620,24 @@ fn inspect_project_repo_state(
 }
 
 fn sync_project_repo(
+    app: &AppHandle,
     project: &ProjectRepoSyncDescriptor,
     repo_path: &Path,
     remote_head_oid: &str,
     git_transport_token: &str,
 ) -> Result<Option<String>, String> {
     if !repo_path.exists() {
-        return clone_project_repo(project, repo_path, remote_head_oid, git_transport_token);
+        return clone_project_repo(
+            app,
+            project,
+            repo_path,
+            remote_head_oid,
+            git_transport_token,
+        );
     }
 
     ensure_project_origin_remote(project, repo_path)?;
+    ensure_repo_local_git_identity(app, repo_path)?;
 
     let branch_name = project
         .default_branch_name
@@ -730,6 +742,7 @@ fn ensure_project_origin_remote(
 }
 
 fn clone_project_repo(
+    app: &AppHandle,
     project: &ProjectRepoSyncDescriptor,
     repo_path: &Path,
     remote_head_oid: &str,
@@ -758,6 +771,7 @@ fn clone_project_repo(
     clone_args.push(repo_path_string.as_str());
 
     git_output(repo_parent, &clone_args, Some(&git_transport_auth))?;
+    ensure_repo_local_git_identity(app, repo_path)?;
 
     if remote_head_oid.trim().is_empty() {
         let branch_name = project

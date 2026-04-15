@@ -281,9 +281,11 @@ async fn append_editor_scroll_debug_log(
     app: tauri::AppHandle,
     lines: Vec<String>,
 ) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || append_editor_scroll_debug_log_blocking(&app, lines))
-        .await
-        .map_err(|error| format!("The editor debug log worker failed: {error}"))?
+    tauri::async_runtime::spawn_blocking(move || {
+        append_editor_scroll_debug_log_blocking(&app, lines)
+    })
+    .await
+    .map_err(|error| format!("The editor debug log worker failed: {error}"))?
 }
 
 fn build_app_menu<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result<Menu<R>> {

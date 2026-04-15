@@ -8,8 +8,8 @@ use crate::{
         read_local_repo_sync_state, upsert_local_repo_sync_state, LocalRepoSyncStateUpdate,
     },
     repo_sync_shared::{
-        abort_rebase_after_failed_pull, git_output, load_git_transport_token,
-        read_current_head_oid, GitTransportAuth,
+        abort_rebase_after_failed_pull, ensure_repo_local_git_identity, git_output,
+        load_git_transport_token, read_current_head_oid, GitTransportAuth,
     },
     storage_paths::local_glossary_repo_root,
 };
@@ -145,6 +145,7 @@ fn sync_gtms_glossary_repos_sync(
             GLOSSARY_REPO_SYNC_STATUS_NOT_CLONED | GLOSSARY_REPO_SYNC_STATUS_OUT_OF_SYNC
         ) {
             let sync_result = sync_glossary_repo(
+                app,
                 &glossary,
                 &repo_path,
                 inspected.remote_head_oid.as_deref().unwrap_or_default(),
@@ -202,6 +203,7 @@ fn sync_gtms_glossary_editor_repo_sync(
 
     let git_transport_token = load_git_transport_token(input.installation_id, session_token)?;
     let new_head_sha = sync_glossary_repo(
+        app,
         &glossary,
         &repo_path,
         input.default_branch_head_oid.as_deref().unwrap_or_default(),
@@ -478,16 +480,24 @@ fn resolve_or_desired_glossary_git_repo_path(
 }
 
 fn sync_glossary_repo(
+    app: &AppHandle,
     glossary: &GlossaryRepoSyncDescriptor,
     repo_path: &Path,
     remote_head_oid: &str,
     git_transport_token: &str,
 ) -> Result<Option<String>, String> {
     if !repo_path.exists() {
-        return clone_glossary_repo(glossary, repo_path, remote_head_oid, git_transport_token);
+        return clone_glossary_repo(
+            app,
+            glossary,
+            repo_path,
+            remote_head_oid,
+            git_transport_token,
+        );
     }
 
     ensure_glossary_origin_remote(glossary, repo_path)?;
+    ensure_repo_local_git_identity(app, repo_path)?;
 
     let branch_name = glossary
         .default_branch_name
@@ -556,6 +566,7 @@ fn ensure_glossary_origin_remote(
 }
 
 fn clone_glossary_repo(
+    app: &AppHandle,
     glossary: &GlossaryRepoSyncDescriptor,
     repo_path: &Path,
     remote_head_oid: &str,
@@ -583,6 +594,7 @@ fn clone_glossary_repo(
     let repo_path_string = repo_path.display().to_string();
     clone_args.push(repo_path_string.as_str());
     git_output(repo_parent, &clone_args, Some(&git_transport_auth))?;
+    ensure_repo_local_git_identity(app, repo_path)?;
 
     if remote_head_oid.trim().is_empty() {
         let branch_name = glossary

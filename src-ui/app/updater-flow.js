@@ -14,6 +14,10 @@ function upToDateMessage(currentVersion) {
   return currentVersion ? `Gnosis TMS ${currentVersion} is up to date` : "Gnosis TMS is up to date";
 }
 
+function checkingForUpdatesMessage() {
+  return "Checking for updates...";
+}
+
 function shouldShowUpdatePrompt(update, options, dismissedVersion) {
   if (update.available !== true || options.prompt === false) {
     return false;
@@ -36,6 +40,7 @@ export async function checkForAppUpdate(render, options = {}) {
   state.appUpdate.status = "checking";
   if (!silent) {
     state.appUpdate.error = "";
+    showNoticeBadge(checkingForUpdatesMessage(), render, null);
     render();
   }
 
@@ -67,6 +72,9 @@ export async function checkForAppUpdate(render, options = {}) {
     state.appUpdate.status = "error";
     state.appUpdate.error = error?.message ?? String(error);
     render();
+    if (!silent) {
+      showNoticeBadge(state.appUpdate.error || "Could not check for updates.", render, 3200);
+    }
   }
 }
 

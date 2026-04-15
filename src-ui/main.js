@@ -213,13 +213,24 @@ function resolveTranslateRenderAnchor(options = {}) {
     return {
       anchor: pendingAnchor,
       hadPendingAnchor: true,
+      usedVisibleFallback: false,
     };
   }
 
+  const activeAnchor = resolveTranslateRowAnchor(document.activeElement);
+  if (activeAnchor?.rowId) {
+    return {
+      anchor: activeAnchor,
+      hadPendingAnchor: false,
+      usedVisibleFallback: false,
+    };
+  }
+
+  const visibleAnchor = includeVisibleFallback ? captureVisibleTranslateLocation() : null;
   return {
-    anchor: resolveTranslateRowAnchor(document.activeElement)
-      || (includeVisibleFallback ? captureVisibleTranslateLocation() : null),
+    anchor: visibleAnchor,
     hadPendingAnchor: false,
+    usedVisibleFallback: Boolean(visibleAnchor?.rowId),
   };
 }
 
@@ -232,7 +243,11 @@ function renderTranslateBodyOnly() {
 
   const focusSnapshot = captureFocusedInputState();
   const scrollSnapshot = captureRenderScrollSnapshot("translate");
-  const { anchor: translateAnchor, hadPendingAnchor } = resolveTranslateRenderAnchor({
+  const {
+    anchor: translateAnchor,
+    hadPendingAnchor,
+    usedVisibleFallback,
+  } = resolveTranslateRenderAnchor({
     includeVisibleFallback: false,
   });
   body.innerHTML = renderTranslateEditorBody(state);
@@ -252,7 +267,7 @@ function renderTranslateBodyOnly() {
     anchorRowId: translateAnchor?.rowId ?? "",
     restoredPendingLocation,
     restoredAnchor,
-    usedVisibleFallback: false,
+    usedVisibleFallback,
   });
   const restoredFocus = restoreFocusedInputState(focusSnapshot);
   if (focusSnapshot?.kind === "editor-row-field" && !restoredFocus && focusSnapshot.rowId) {
@@ -290,10 +305,14 @@ function renderWithOptions(options = {}) {
   const previousScreen = app.firstElementChild?.getAttribute("data-screen") ?? null;
   prepareEditorLocationBeforeRender(previousScreen, state);
   const focusSnapshot = captureFocusedInputState();
-  const { anchor: translateAnchor, hadPendingAnchor } =
+  const {
+    anchor: translateAnchor,
+    hadPendingAnchor,
+    usedVisibleFallback,
+  } =
     previousScreen === "translate" && state.screen === "translate"
-      ? resolveTranslateRenderAnchor()
-      : { anchor: null, hadPendingAnchor: false };
+      ? resolveTranslateRenderAnchor({ includeVisibleFallback: false })
+      : { anchor: null, hadPendingAnchor: false, usedVisibleFallback: false };
   const scrollSnapshot = captureRenderScrollSnapshot(previousScreen);
   const renderScreen = screenRenderers[state.screen] ?? screenRenderers.start;
   app.innerHTML =
@@ -312,8 +331,18 @@ function renderWithOptions(options = {}) {
   queuePendingEditorLocationRestore(state);
   initializeEditorVirtualization(app, state);
   const restoredPendingLocation = restorePendingEditorLocation(state);
+  let restoredAnchor = false;
   if (!restoredPendingLocation && translateAnchor?.rowId) {
-    restoreTranslateRowAnchor(translateAnchor);
+    restoredAnchor = restoreTranslateRowAnchor(translateAnchor);
+  }
+  if (previousScreen === "translate" && state.screen === "translate") {
+    logEditorScrollDebug("translate-full-rerender", {
+      focusedRowId: focusSnapshot?.rowId ?? "",
+      anchorRowId: translateAnchor?.rowId ?? "",
+      restoredPendingLocation,
+      restoredAnchor,
+      usedVisibleFallback,
+    });
   }
   const restoredFocus = restoreFocusedInputState(focusSnapshot);
   if (focusSnapshot?.kind === "editor-row-field" && !restoredFocus && focusSnapshot.rowId) {
