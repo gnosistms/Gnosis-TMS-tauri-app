@@ -184,6 +184,9 @@ export async function setActiveEditorField(render, rowId, languageCode, options 
     return;
   }
 
+  if (previousSidebarTab === "comments") {
+    render?.({ scope: "translate-body" });
+  }
   loadActiveEditorFieldHistoryFlow(render);
 }
 

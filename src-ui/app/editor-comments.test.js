@@ -153,7 +153,7 @@ test("normalizeEditorSidebarTab keeps known tabs and falls back unknown tabs to 
   assert.equal(normalizeEditorSidebarTab("something-else"), "review");
 });
 
-test("resolveEditorSidebarTabForField sends empty fields to translate", () => {
+test("resolveEditorSidebarTabForField sends empty fields to translate and keeps the current tab for filled fields", () => {
   assert.equal(
     resolveEditorSidebarTabForField("review", {
       fields: {
@@ -163,11 +163,19 @@ test("resolveEditorSidebarTabForField sends empty fields to translate", () => {
     "translate",
   );
   assert.equal(
-    resolveEditorSidebarTabForField("review", {
+    resolveEditorSidebarTabForField("translate", {
       fields: {
         vi: "Xin chao",
       },
     }, "vi"),
-    "review",
+    "translate",
+  );
+  assert.equal(
+    resolveEditorSidebarTabForField("comments", {
+      fields: {
+        vi: "Xin chao",
+      },
+    }, "vi"),
+    "comments",
   );
 });
