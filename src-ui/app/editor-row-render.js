@@ -172,6 +172,11 @@ function renderEditorLanguageField(row, language) {
       : renderDisabledConflictField(language);
   }
 
+  const fieldClassName = `translation-language-panel__field${language.isAiTranslating ? " translation-language-panel__field--loading" : ""}`;
+  const loadingAttributes = language.isAiTranslating
+    ? ' readonly aria-busy="true"'
+    : "";
+
   return `
     <div
       class="translation-language-panel__field-stack"
@@ -192,12 +197,13 @@ function renderEditorLanguageField(row, language) {
         aria-hidden="true"
       ></div>
       <textarea
-        class="translation-language-panel__field"
+        class="${fieldClassName}"
         data-editor-row-field
         data-row-id="${escapeHtml(row.id)}"
         data-language-code="${escapeHtml(language.code)}"
         lang="${escapeHtml(language.code)}"
         spellcheck="false"
+        ${loadingAttributes}
       >${escapeHtml(language.text)}</textarea>
     </div>
   `;

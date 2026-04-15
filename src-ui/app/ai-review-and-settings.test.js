@@ -139,7 +139,21 @@ const { pickPreferredAiModelId } = await import("./ai-action-config.js");
 const { resolveVisibleEditorAiReview } = await import("./editor-ai-review-state.js");
 const { resolveVisibleEditorAiTranslateAction } = await import("./editor-ai-translate-state.js");
 
-function installTranslateFixture() {
+function installTranslateFixture(options = {}) {
+  const languages = Array.isArray(options.languages) && options.languages.length > 0
+    ? options.languages
+    : [
+      { code: "es", name: "Spanish" },
+      { code: "vi", name: "Vietnamese" },
+    ];
+  const selectedSourceLanguageCode = options.selectedSourceLanguageCode ?? "es";
+  const selectedTargetLanguageCode = options.selectedTargetLanguageCode ?? "vi";
+  const activeLanguageCode = options.activeLanguageCode ?? selectedTargetLanguageCode;
+  const fields = {
+    es: "Hola",
+    vi: "Texto original",
+    ...(options.fields && typeof options.fields === "object" ? options.fields : {}),
+  };
   resetSessionState();
   state.screen = "translate";
   state.selectedChapterId = "chapter-1";
@@ -147,20 +161,14 @@ function installTranslateFixture() {
     ...createEditorChapterState(),
     status: "ready",
     chapterId: "chapter-1",
-    languages: [
-      { code: "es", name: "Spanish" },
-      { code: "vi", name: "Vietnamese" },
-    ],
-    selectedSourceLanguageCode: "es",
-    selectedTargetLanguageCode: "vi",
+    languages,
+    selectedSourceLanguageCode,
+    selectedTargetLanguageCode,
     activeRowId: "row-1",
-    activeLanguageCode: "vi",
+    activeLanguageCode,
     rows: normalizeEditorRows([{
       rowId: "row-1",
-      fields: {
-        es: "Hola",
-        vi: "Texto original",
-      },
+      fields,
       fieldStates: {},
     }]),
   };
@@ -304,6 +312,78 @@ test("runEditorAiTranslate uses the configured translate action and persists int
   assert.equal(persistCount, 1);
   assert.equal(state.editorChapter.rows[0].fields.vi, "Xin chao");
   assert.equal(state.editorChapter.rows[0].persistedFields.vi, "Xin chao");
+  assert.equal(state.editorChapter.aiTranslate.translate1.status, "idle");
+});
+
+test("runEditorAiTranslate uses the active alternate language as the translation target", async () => {
+  installTranslateFixture({
+    languages: [
+      { code: "es", name: "Spanish" },
+      { code: "vi", name: "Vietnamese" },
+      { code: "fr", name: "French" },
+    ],
+    activeLanguageCode: "fr",
+    fields: {
+      fr: "Texte original",
+    },
+  });
+  state.aiSettings = {
+    ...state.aiSettings,
+    actionConfig: {
+      ...state.aiSettings.actionConfig,
+      detailedConfiguration: true,
+      actions: {
+        ...state.aiSettings.actionConfig.actions,
+        translate1: {
+          providerId: "openai",
+          modelId: "gpt-5.4-mini",
+        },
+      },
+    },
+  };
+
+  let persistCount = 0;
+  invokeHandler = async (command, payload = {}) => {
+    if (command === "load_ai_provider_secret") {
+      assert.equal(payload.providerId, "openai");
+      return "oa-key";
+    }
+    if (command === "run_ai_translation") {
+      assert.deepEqual(payload, {
+        request: {
+          providerId: "openai",
+          modelId: "gpt-5.4-mini",
+          text: "Hola",
+          sourceLanguage: "Spanish",
+          targetLanguage: "French",
+        },
+      });
+      return {
+        translatedText: "Bonjour",
+      };
+    }
+
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  await runEditorAiTranslate(() => {}, "translate1", {
+    updateEditorRowFieldValue(rowId, languageCode, nextValue) {
+      const row = state.editorChapter.rows.find((entry) => entry.rowId === rowId);
+      row.fields[languageCode] = nextValue;
+      row.saveStatus = "dirty";
+    },
+    async persistEditorRowOnBlur(_render, rowId) {
+      persistCount += 1;
+      const row = state.editorChapter.rows.find((entry) => entry.rowId === rowId);
+      row.persistedFields = { ...row.fields };
+      row.saveStatus = "idle";
+    },
+  });
+
+  assert.equal(persistCount, 1);
+  assert.equal(state.editorChapter.rows[0].fields.fr, "Bonjour");
+  assert.equal(state.editorChapter.rows[0].persistedFields.fr, "Bonjour");
+  assert.equal(state.editorChapter.rows[0].fields.vi, "Texto original");
   assert.equal(state.editorChapter.aiTranslate.translate1.status, "idle");
 });
 

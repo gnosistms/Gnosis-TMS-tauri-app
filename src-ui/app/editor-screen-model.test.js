@@ -72,3 +72,71 @@ test("buildEditorScreenViewModel exposes showContextAction only when user filter
     restoreSharedState(snapshot);
   }
 });
+
+test("buildEditorScreenViewModel shows translating placeholder in the active target section while ai translation is loading", () => {
+  const snapshot = snapshotSharedState();
+
+  try {
+    const fixture = applyEditorRegressionFixture(state, {
+      rowCount: 1,
+      aiTranslate: {
+        translate1: {
+          status: "loading",
+          rowId: "fixture-row-0001",
+          sourceLanguageCode: "es",
+          targetLanguageCode: "vi",
+          requestKey: "request-1",
+          sourceText: "alpha 0001 source text",
+        },
+      },
+    });
+
+    const viewModel = buildEditorScreenViewModel(state);
+    const firstRow = viewModel.contentRows.find((row) => row?.id === fixture.firstRowId);
+    const sourceSection = firstRow?.sections.find((section) => section.code === fixture.sourceCode);
+    const targetSection = firstRow?.sections.find((section) => section.code === fixture.targetCode);
+
+    assert.equal(sourceSection?.text, "alpha 0001 source text");
+    assert.equal(targetSection?.text, "Translating...");
+    assert.equal(targetSection?.isAiTranslating, true);
+  } finally {
+    restoreSharedState(snapshot);
+  }
+});
+
+test("buildEditorScreenViewModel marks the translated alternate language field while loading", () => {
+  const snapshot = snapshotSharedState();
+
+  try {
+    applyEditorRegressionFixture(state, {
+      rowCount: 1,
+      languages: [
+        { code: "es", name: "Spanish", role: "source" },
+        { code: "vi", name: "Vietnamese", role: "target" },
+        { code: "fr", name: "French" },
+      ],
+      aiTranslate: {
+        translate1: {
+          status: "loading",
+          rowId: "fixture-row-0001",
+          sourceLanguageCode: "es",
+          targetLanguageCode: "fr",
+          requestKey: "request-2",
+          sourceText: "alpha 0001 source text",
+        },
+      },
+    });
+
+    const viewModel = buildEditorScreenViewModel(state);
+    const firstRow = viewModel.contentRows.find((row) => row?.id === "fixture-row-0001");
+    const defaultTargetSection = firstRow?.sections.find((section) => section.code === "vi");
+    const alternateTargetSection = firstRow?.sections.find((section) => section.code === "fr");
+
+    assert.equal(defaultTargetSection?.text, "alpha 0001 target text");
+    assert.equal(defaultTargetSection?.isAiTranslating, false);
+    assert.equal(alternateTargetSection?.text, "Translating...");
+    assert.equal(alternateTargetSection?.isAiTranslating, true);
+  } finally {
+    restoreSharedState(snapshot);
+  }
+});

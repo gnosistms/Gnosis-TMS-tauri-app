@@ -3,7 +3,6 @@ import {
   openAiMissingKeyModal,
   resolveAiActionProviderAndModel,
 } from "./ai-settings-flow.js";
-import { normalizeLanguageSelections } from "./editor-selection-flow.js";
 import {
   applyEditorAiTranslateActionApplying,
   applyEditorAiTranslateActionFailed,
@@ -11,6 +10,7 @@ import {
   clearEditorAiTranslateAction,
   currentEditorAiTranslateRequestMatches,
 } from "./editor-ai-translate-state.js";
+import { resolveEditorAiTranslateLanguages } from "./editor-ai-translate-target.js";
 import { invoke } from "./runtime.js";
 import { showNoticeBadge } from "./status-feedback.js";
 import { findEditorRowById } from "./editor-utils.js";
@@ -43,26 +43,20 @@ function activeEditorTranslateContext(chapterState = state.editorChapter) {
     return null;
   }
 
-  const languages = Array.isArray(chapterState.languages) ? chapterState.languages : [];
-  if (languages.length === 0) {
-    return null;
-  }
-
   const row = findEditorRowById(chapterState.activeRowId, chapterState);
   if (!row) {
     return null;
   }
 
   const {
-    selectedSourceLanguageCode: sourceLanguageCode,
-    selectedTargetLanguageCode: targetLanguageCode,
-  } = normalizeLanguageSelections(
-    languages,
-    chapterState.selectedSourceLanguageCode,
-    chapterState.selectedTargetLanguageCode,
-  );
-  const sourceLanguage = languages.find((language) => language.code === sourceLanguageCode) ?? null;
-  const targetLanguage = languages.find((language) => language.code === targetLanguageCode) ?? null;
+    sourceLanguageCode,
+    targetLanguageCode,
+    sourceLanguage,
+    targetLanguage,
+  } = resolveEditorAiTranslateLanguages(chapterState);
+  if (!sourceLanguage || !targetLanguage) {
+    return null;
+  }
 
   return {
     chapterId: chapterState.chapterId,
@@ -135,7 +129,7 @@ export async function runEditorAiTranslate(render, actionId, operations = {}) {
       render,
       actionId,
       context,
-      "Choose different source and target languages before translating.",
+      "Choose a language other than the source language before translating.",
     );
     return;
   }
@@ -194,7 +188,7 @@ export async function runEditorAiTranslate(render, actionId, operations = {}) {
     requestKey,
     context.sourceText,
   );
-  render?.({ scope: "translate-sidebar" });
+  render?.();
 
   try {
     const payload = await invoke("run_ai_translation", {
@@ -224,7 +218,7 @@ export async function runEditorAiTranslate(render, actionId, operations = {}) {
     const latestRow = findEditorRowById(context.rowId, state.editorChapter);
     if ((latestRow?.fields?.[context.sourceLanguageCode] ?? "") !== context.sourceText) {
       state.editorChapter = clearEditorAiTranslateAction(state.editorChapter, actionId);
-      render?.({ scope: "translate-sidebar" });
+      render?.();
       return;
     }
 
@@ -287,6 +281,6 @@ export async function runEditorAiTranslate(render, actionId, operations = {}) {
       context.sourceText,
       message,
     );
-    render?.({ scope: "translate-sidebar" });
+    render?.();
   }
 }

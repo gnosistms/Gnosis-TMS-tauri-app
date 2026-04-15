@@ -134,6 +134,11 @@ async function installMockTauri(page) {
         payload: clone(payload),
       });
 
+      const overrideHandler = globalThis.__gnosisMockTauriHandlers?.[command];
+      if (typeof overrideHandler === "function") {
+        return await overrideHandler(clone(payload));
+      }
+
       if (
         command === "load_broker_auth_session"
         || command === "save_broker_auth_session"
@@ -539,7 +544,6 @@ test.describe("editor regressions", () => {
     await expect(page.locator(".translate-ai-action-button__model")).not.toHaveText("");
     await expect(page.locator(".translate-ai-action-button")).not.toContainText("Translate 1");
     await expect(page.locator(".translate-ai-action-button")).not.toContainText("Translate 2");
-    await expect(page.locator(".translate-sidebar")).toContainText("Spanish to Vietnamese");
   });
 
   test("translate action shows a spinner while translation is running", async ({ page }) => {
@@ -568,6 +572,92 @@ test.describe("editor regressions", () => {
     const loadingButton = page.locator('[data-action="run-editor-ai-translate:translate1"]');
     await expect(loadingButton).toHaveAttribute("aria-busy", "true");
     await expect(loadingButton.locator(".translate-ai-action-button__spinner")).toBeVisible();
+    await expect(
+      page.locator('[data-editor-row-field][data-row-id="fixture-row-0001"][data-language-code="vi"]'),
+    ).toHaveValue("Translating...");
+  });
+
+  test("translate action marks an alternate target language field while it is running", async ({ page }) => {
+    await mountEditorFixture(page, {
+      rowCount: 1,
+      languages: [
+        { code: "es", name: "Spanish", role: "source" },
+        { code: "vi", name: "Vietnamese", role: "target" },
+        { code: "fr", name: "French" },
+      ],
+      aiActionConfig: {
+        detailedConfiguration: false,
+        unified: {
+          providerId: "openai",
+          modelId: "gpt-5.4",
+        },
+      },
+      aiTranslate: {
+        translate1: {
+          status: "loading",
+          rowId: "fixture-row-0001",
+          sourceLanguageCode: "es",
+          targetLanguageCode: "fr",
+          requestKey: "req-translate-2",
+          sourceText: "alpha 0001 source text",
+        },
+      },
+    });
+
+    await expect(
+      page.locator('[data-editor-row-field][data-row-id="fixture-row-0001"][data-language-code="vi"]'),
+    ).toHaveValue("alpha 0001 target text");
+    await expect(
+      page.locator('[data-editor-row-field][data-row-id="fixture-row-0001"][data-language-code="fr"]'),
+    ).toHaveValue("Translating...");
+  });
+
+  test("clicking translate shows translating placeholder in the target field until the result returns", async ({ page }) => {
+    await page.addInitScript(() => {
+      let releaseTranslation = () => {};
+      const translationGate = new Promise((resolve) => {
+        releaseTranslation = resolve;
+      });
+
+      globalThis.__releaseMockTranslation = releaseTranslation;
+      globalThis.__gnosisMockTauriHandlers = {
+        load_ai_provider_secret() {
+          return "openai-key";
+        },
+        async run_ai_translation() {
+          await translationGate;
+          return {
+            translatedText: "Da xong",
+          };
+        },
+      };
+    });
+
+    await mountEditorFixture(page, {
+      rowCount: 6,
+      aiActionConfig: {
+        detailedConfiguration: false,
+        unified: {
+          providerId: "openai",
+          modelId: "gpt-5.4",
+        },
+      },
+    }, { mockTauri: true });
+
+    await page.locator('[data-action="switch-editor-sidebar-tab:translate"]').click();
+    await page.locator('[data-action="run-editor-ai-translate:translate1"]').click();
+
+    const translateButton = page.locator('[data-action="run-editor-ai-translate:translate1"]');
+    await expect(translateButton).toHaveAttribute("aria-busy", "true");
+
+    const targetField = page.locator('[data-editor-row-field][data-row-id="fixture-row-0001"][data-language-code="vi"]');
+    await expect(targetField).toHaveValue("Translating...");
+
+    await page.evaluate(() => {
+      window.__releaseMockTranslation?.();
+    });
+
+    await expect(targetField).toHaveValue("Da xong");
   });
 
   test("mounting the editor fixture renders two translate actions in detailed AI settings mode", async ({ page }) => {
@@ -593,9 +683,76 @@ test.describe("editor regressions", () => {
     });
 
     await page.locator('[data-action="switch-editor-sidebar-tab:translate"]').click();
-    await expect(page.locator(".translate-ai-action-button")).toHaveCount(2);
-    await expect(page.locator(".translate-ai-action-button__model").nth(0)).toHaveText("OpenAI · gpt-5.4");
-    await expect(page.locator(".translate-ai-action-button__model").nth(1)).toHaveText("Gemini · gemini-2.5-flash");
+    const buttons = page.locator(".translate-ai-action-button");
+    await expect(buttons).toHaveCount(2);
+    await expect(page.locator(".translate-ai-action-button__model").nth(0)).toHaveText("gpt-5.4");
+    await expect(page.locator(".translate-ai-action-button__model").nth(1)).toHaveText("gemini-2.5-flash");
+    await expect(buttons.nth(0)).toHaveAttribute(
+      "data-tooltip",
+      "Translate the Spanish to Vietnamese using OpenAI - gpt-5.4",
+    );
+    await expect(buttons.nth(1)).toHaveAttribute(
+      "data-tooltip",
+      "Translate the Spanish to Vietnamese using Gemini - gemini-2.5-flash",
+    );
+
+    const buttonHeights = await buttons.evaluateAll((elements) =>
+      elements.map((element) => Math.round(element.getBoundingClientRect().height))
+    );
+    expect(buttonHeights[0]).toBe(buttonHeights[1]);
+    expect(buttonHeights[0]).toBeLessThan(90);
+  });
+
+  test("translate tab disables actions when the source language is selected", async ({ page }) => {
+    await mountEditorFixture(page, { rowCount: 1 });
+
+    await page.locator('[data-editor-row-field][data-row-id="fixture-row-0001"][data-language-code="es"]').click();
+    await page.locator('[data-action="switch-editor-sidebar-tab:translate"]').click();
+
+    const translateButton = page.locator('[data-action="run-editor-ai-translate:translate1"]');
+    await expect(translateButton).toBeDisabled();
+    await expect(page.locator(".translate-ai-tools .message-box")).toContainText(
+      "Choose a language other than the source language before translating.",
+    );
+  });
+
+  test("translate tab shows an alternate target label and tooltip for the active language", async ({ page }) => {
+    await mountEditorFixture(page, {
+      rowCount: 1,
+      languages: [
+        { code: "es", name: "Spanish", role: "source" },
+        { code: "vi", name: "Vietnamese", role: "target" },
+        { code: "fr", name: "French" },
+      ],
+      aiActionConfig: {
+        detailedConfiguration: true,
+        actions: {
+          translate1: {
+            providerId: "openai",
+            modelId: "gpt-5.4",
+          },
+          translate2: {
+            providerId: "gemini",
+            modelId: "gemini-2.5-flash",
+          },
+        },
+      },
+    });
+
+    await page.locator('[data-editor-row-field][data-row-id="fixture-row-0001"][data-language-code="fr"]').click();
+    await page.locator('[data-action="switch-editor-sidebar-tab:translate"]').click();
+
+    await expect(page.locator(".translate-ai-tools__language-flow")).toContainText("Spanish");
+    await expect(page.locator(".translate-ai-tools__language-flow")).toContainText("French");
+    await expect(page.locator(".translate-ai-tools__language-arrow")).toHaveCount(1);
+    await expect(page.locator(".translate-ai-action-button").nth(0)).toHaveAttribute(
+      "data-tooltip",
+      "Translate the Spanish to French using OpenAI - gpt-5.4",
+    );
+    await expect(page.locator(".translate-ai-action-button").nth(1)).toHaveAttribute(
+      "data-tooltip",
+      "Translate the Spanish to French using Gemini - gemini-2.5-flash",
+    );
   });
 
   test("search input keeps focus while typing", async ({ page }) => {

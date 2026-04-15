@@ -3,6 +3,7 @@ import {
   conflictedLanguageCodesForRow,
   rowHasUnresolvedEditorConflict,
 } from "./editor-conflicts.js";
+import { normalizeEditorAiTranslateState } from "./editor-ai-translate-state.js";
 import { coerceEditorFontSizePx } from "./state.js";
 import { canPermanentlyDeleteProjectFiles } from "./resource-capabilities.js";
 import { findChapterContextById, selectedProjectsTeam } from "./project-context.js";
@@ -12,6 +13,11 @@ import { normalizeEditorReplaceState } from "./editor-replace.js";
 let cachedEditorRowsRef = null;
 let cachedEditorLanguagesRef = null;
 let cachedLiveTranslationRows = [];
+const AI_TRANSLATE_LOADING_TEXT = "Translating...";
+
+function createEditorAiTranslateLoadingKey(rowId, languageCode) {
+  return `${rowId}:${languageCode}`;
+}
 
 function chapterLanguageOptions(chapter, editorChapter) {
   if (Array.isArray(editorChapter?.languages) && editorChapter.languages.length > 0) {
@@ -101,6 +107,46 @@ function buildLiveTranslationRows(editorChapter, languages) {
   cachedEditorLanguagesRef = languageOptions;
   cachedLiveTranslationRows = liveRows;
   return liveRows;
+}
+
+function resolveActiveEditorAiTranslateLoadingKeys(editorChapter, rows, sourceCode) {
+  const loadingKeys = new Set();
+  if (!sourceCode) {
+    return loadingKeys;
+  }
+
+  const rowById = new Map(
+    (Array.isArray(rows) ? rows : [])
+      .filter((row) => row?.rowId)
+      .map((row) => [row.rowId, row]),
+  );
+  for (const actionState of Object.values(normalizeEditorAiTranslateState(editorChapter?.aiTranslate))) {
+    if (
+      actionState.status !== "loading"
+      || !actionState.rowId
+      || !actionState.targetLanguageCode
+      || actionState.sourceLanguageCode !== sourceCode
+    ) {
+      continue;
+    }
+
+    const row = rowById.get(actionState.rowId);
+    if (!row) {
+      continue;
+    }
+
+    const currentSourceText =
+      typeof row?.fields?.[sourceCode] === "string"
+        ? row.fields[sourceCode]
+        : String(row?.fields?.[sourceCode] ?? "");
+    if (actionState.sourceText !== currentSourceText) {
+      continue;
+    }
+
+    loadingKeys.add(createEditorAiTranslateLoadingKey(actionState.rowId, actionState.targetLanguageCode));
+  }
+
+  return loadingKeys;
 }
 
 function buildEditorReplaceViewModel(editorChapter, editorFilters) {
@@ -198,6 +244,11 @@ export function buildEditorScreenViewModel(appState) {
   const languages = chapterLanguageOptions(chapter, editorChapter);
   const { sourceCode, targetCode } = resolveSelectedLanguageCodes(languages, chapter, editorChapter);
   const rawRows = buildLiveTranslationRows(editorChapter, languages);
+  const activeAiTranslateLoadingKeys = resolveActiveEditorAiTranslateLoadingKeys(
+    editorChapter,
+    rawRows,
+    sourceCode,
+  );
   const collapsedLanguageCodes =
     editorChapter?.collapsedLanguageCodes instanceof Set
       ? editorChapter.collapsedLanguageCodes
@@ -227,19 +278,29 @@ export function buildEditorScreenViewModel(appState) {
 
     return {
       ...row,
-      sections: (Array.isArray(row.sections) ? row.sections : []).map((section) => ({
-        ...section,
-        ...buildEditorCommentsButtonState({
-          row,
-          languageCode: section.code,
-          targetLanguageCode: targetCode,
-          seenRevisions: commentSeenRevisions,
-        }),
-        isSelectedCommentsRow:
-          normalizeEditorSidebarTab(editorChapter?.sidebarTab) === "comments"
-          && editorChapter?.activeRowId === row.rowId
-          && editorChapter?.activeLanguageCode === section.code,
-      })),
+      sections: (Array.isArray(row.sections) ? row.sections : []).map((section) => {
+        const isAiTranslating = activeAiTranslateLoadingKeys.has(
+          createEditorAiTranslateLoadingKey(row.rowId, section.code),
+        );
+        return {
+          ...section,
+          text:
+            isAiTranslating
+              ? AI_TRANSLATE_LOADING_TEXT
+              : section.text,
+          ...buildEditorCommentsButtonState({
+            row,
+            languageCode: section.code,
+            targetLanguageCode: targetCode,
+            seenRevisions: commentSeenRevisions,
+          }),
+          isAiTranslating,
+          isSelectedCommentsRow:
+            normalizeEditorSidebarTab(editorChapter?.sidebarTab) === "comments"
+            && editorChapter?.activeRowId === row.rowId
+            && editorChapter?.activeLanguageCode === section.code,
+        };
+      }),
     };
   });
   const editorFontSizePx = coerceEditorFontSizePx(editorChapter?.fontSizePx);

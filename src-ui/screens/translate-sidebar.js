@@ -11,6 +11,7 @@ import {
   loadingPrimaryButton,
   primaryButton,
   renderCollapseChevron,
+  renderFlowArrowIcon,
   renderInlineStateBox,
   secondaryButton,
   tooltipAttributes,
@@ -18,6 +19,7 @@ import {
 import { resolveVisibleEditorAiReview } from "../app/editor-ai-review-state.js";
 import { normalizeEditorSidebarTab } from "../app/editor-comments.js";
 import { findEditorHistoryPreviousEntry } from "../app/editor-history.js";
+import { resolveEditorAiTranslateLanguages } from "../app/editor-ai-translate-target.js";
 import { renderCommentsPane } from "./translate-comments-pane.js";
 import { renderHistoryContent, renderHistoryPane } from "./translate-history-pane.js";
 
@@ -41,17 +43,15 @@ function renderTranslateActionButton(buttonModel, isAnyActionRunning) {
     || isAnyActionRunning
     || buttonModel.isDisabled;
   const disabledAttributes = disabled ? ' disabled aria-disabled="true"' : "";
-  const accessibleLabel = buttonModel.isLoading
-    ? `Translating with ${buttonModel.label}: ${buttonModel.modelLabel}`
-    : `${buttonModel.label}: ${buttonModel.modelLabel}`;
 
   return `
     <button
       class="button button--secondary translate-ai-action-button${buttonModel.isLoading ? " button--loading" : ""}"
       type="button"
       data-action="run-editor-ai-translate:${escapeHtml(buttonModel.actionId)}"
-      aria-label="${escapeHtml(accessibleLabel)}"
+      aria-label="${escapeHtml(buttonModel.tooltip)}"
       aria-busy="${buttonModel.isLoading ? "true" : "false"}"
+      ${tooltipAttributes(buttonModel.tooltip, { align: "start", side: "bottom" })}
       ${disabledAttributes}
     >
       <span class="translate-ai-action-button__icon-shell" aria-hidden="true">
@@ -76,8 +76,16 @@ function renderTranslateActionButton(buttonModel, isAnyActionRunning) {
 
 function renderTranslatePane(editorChapter, rows, languages, sourceCode, targetCode, actionConfig) {
   const activeRow = rows.find((row) => row.id === editorChapter?.activeRowId) ?? null;
-  const sourceLanguage = languages.find((language) => language.code === sourceCode) ?? null;
-  const targetLanguage = languages.find((language) => language.code === targetCode) ?? null;
+  const translateLanguages = resolveEditorAiTranslateLanguages(editorChapter);
+  const sourceLanguage =
+    translateLanguages.sourceLanguage
+    ?? languages.find((language) => language.code === sourceCode)
+    ?? null;
+  const toolbarTargetLanguage =
+    translateLanguages.toolbarTargetLanguage
+    ?? languages.find((language) => language.code === targetCode)
+    ?? null;
+  const targetLanguage = translateLanguages.targetLanguage ?? toolbarTargetLanguage;
   const sourceSection =
     activeRow?.sections?.find((section) => section.code === sourceLanguage?.code) ?? null;
   const targetSection =
@@ -114,24 +122,35 @@ function renderTranslatePane(editorChapter, rows, languages, sourceCode, targetC
     sourceLanguage.code !== targetLanguage.code && sourceSection.text.trim().length > 0;
   const disabledMessage =
     sourceLanguage.code === targetLanguage.code
-      ? "Choose different source and target languages before translating."
+      ? "Choose a language other than the source language before translating."
       : sourceSection.text.trim().length === 0
         ? "There is no source text to translate yet."
         : "";
+  const alternateTargetMarkup =
+    translateLanguages.usesAlternateTarget
+      ? `
+        <p class="translate-ai-tools__language-flow">
+          <span>${escapeHtml(sourceLanguage.name ?? sourceLanguage.code)}</span>
+          ${renderFlowArrowIcon("translate-ai-tools__language-arrow")}
+          <span>${escapeHtml(targetLanguage.name ?? targetLanguage.code)}</span>
+        </p>
+      `
+      : "";
   const buttonModels = translateActions.map((translateAction, index) => {
     const selection = translateAction.selection;
     const providerId = selection.providerId;
     const modelId = typeof selection.modelId === "string" ? selection.modelId.trim() : "";
     const visibleAction = visibleActions[index];
+    const providerLabel = getAiProviderActionLabel(providerId);
+    const visibleModelLabel = modelId || "Select a model in AI Settings";
     return {
       actionId: translateAction.actionId,
       label: translateAction.label,
       iconUrl: getAiProviderIconUrl(providerId),
       isLoading: visibleAction.isLoading,
       isDisabled: !canTranslate || !modelId,
-      modelLabel: modelId
-        ? `${getAiProviderActionLabel(providerId)} · ${modelId}`
-        : `${getAiProviderActionLabel(providerId)} · Select a model in AI Settings`,
+      modelLabel: visibleModelLabel,
+      tooltip: `Translate the ${sourceLanguage.name ?? sourceLanguage.code} to ${targetLanguage.name ?? targetLanguage.code} using ${providerLabel} - ${visibleModelLabel}`,
       showError: visibleAction.showError,
       error: visibleAction.error,
     };
@@ -150,9 +169,7 @@ function renderTranslatePane(editorChapter, rows, languages, sourceCode, targetC
 
   return `
     <div class="translate-ai-tools">
-      <p class="translate-ai-tools__summary">
-        ${escapeHtml(sourceLanguage.name ?? sourceLanguage.code)} to ${escapeHtml(targetLanguage.name ?? targetLanguage.code)}
-      </p>
+      ${alternateTargetMarkup}
       <div class="translate-ai-tools__actions${translateActions.length === 1 ? " translate-ai-tools__actions--single" : ""}">
         ${buttonsMarkup}
       </div>
