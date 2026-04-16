@@ -264,6 +264,9 @@ Notes:
 - Keep the canonical durable record small.
 - Do not require per-member ciphertext entries in git for the first implementation.
 - Member-specific re-wraps can be returned by the broker on demand and cached locally.
+- If clearing the last configured provider leaves no active secrets, delete `ai/secrets.json`
+  instead of committing an all-null file. The broker can return `providers: {}` for that
+  empty state, and the desktop should normalize missing providers as unset.
 
 This keeps the repo stable when new members join and avoids churn for every member acquisition.
 
