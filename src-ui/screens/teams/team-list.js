@@ -47,6 +47,7 @@ function renderTeamCard(team, options = {}) {
     textAction("Projects", `open-team:${team.id}`),
     textAction("Glossaries", `open-team-glossaries:${team.id}`),
     textAction("Members", `open-team-users:${team.id}`, { disabled: offlineMode }),
+    ...(team.canDelete ? [textAction("AI Settings", `open-team-ai-settings:${team.id}`)] : []),
     ...(team.canDelete ? [textAction("Rename", `rename-team:${team.id}`, { disabled: offlineMode })] : []),
     textAction(
       team.canDelete ? "Delete" : "Leave",

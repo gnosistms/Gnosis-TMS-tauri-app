@@ -21,20 +21,21 @@ mod repo_sync_shared;
 mod state;
 mod storage_paths;
 mod store;
+mod team_ai;
 mod team_metadata_local;
 mod updater;
 mod window;
 
+#[cfg(target_os = "macos")]
+use crate::constants::MAIN_WINDOW_BACKGROUND;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::sync::Mutex;
 use std::time::Duration;
-use tauri::menu::{Menu, MenuItemBuilder, PredefinedMenuItem, Submenu};
 #[cfg(target_os = "macos")]
 use tauri::menu::SubmenuBuilder;
+use tauri::menu::{Menu, MenuItemBuilder, PredefinedMenuItem, Submenu};
 use tauri::{Emitter, Manager};
-#[cfg(target_os = "macos")]
-use crate::constants::MAIN_WINDOW_BACKGROUND;
 
 use crate::{
     ai::{
@@ -109,6 +110,12 @@ use crate::{
     project_search::{refresh_project_search_index, search_projects},
     repo_sync_shared::initialize_git_runtime,
     state::{AuthState, ProjectRepoSyncStore},
+    team_ai::{
+        clear_team_ai_provider_cache, issue_team_ai_provider_secret,
+        load_team_ai_broker_public_key, load_team_ai_member_keypair, load_team_ai_provider_cache,
+        load_team_ai_secrets_metadata, load_team_ai_settings, save_team_ai_member_keypair,
+        save_team_ai_provider_cache, save_team_ai_provider_secret, save_team_ai_settings,
+    },
     team_metadata_local::{
         delete_local_gnosis_glossary_metadata_record, delete_local_gnosis_project_metadata_record,
         ensure_local_team_metadata_repo, inspect_and_migrate_local_repo_bindings,
@@ -147,10 +154,13 @@ fn check_internet_connection() -> bool {
 async fn load_ai_provider_secret(
     app: tauri::AppHandle,
     provider_id: AiProviderId,
+    installation_id: Option<i64>,
 ) -> Result<Option<String>, String> {
-    tauri::async_runtime::spawn_blocking(move || load_ai_provider_secret_value(&app, provider_id))
-        .await
-        .map_err(|error| format!("The AI key load worker failed: {error}"))?
+    tauri::async_runtime::spawn_blocking(move || {
+        load_ai_provider_secret_value(&app, provider_id, installation_id)
+    })
+    .await
+    .map_err(|error| format!("The AI key load worker failed: {error}"))?
 }
 
 #[tauri::command]
@@ -158,9 +168,10 @@ async fn save_ai_provider_secret(
     app: tauri::AppHandle,
     provider_id: AiProviderId,
     api_key: String,
+    installation_id: Option<i64>,
 ) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
-        save_ai_provider_secret_value(&app, provider_id, &api_key)
+        save_ai_provider_secret_value(&app, provider_id, &api_key, installation_id)
     })
     .await
     .map_err(|error| format!("The AI key save worker failed: {error}"))?
@@ -170,20 +181,26 @@ async fn save_ai_provider_secret(
 async fn list_ai_provider_models(
     app: tauri::AppHandle,
     provider_id: AiProviderId,
+    installation_id: Option<i64>,
 ) -> Result<Vec<AiProviderModel>, String> {
-    tauri::async_runtime::spawn_blocking(move || load_ai_provider_models_task(&app, provider_id))
-        .await
-        .map_err(|error| format!("The AI models worker failed: {error}"))?
+    tauri::async_runtime::spawn_blocking(move || {
+        load_ai_provider_models_task(&app, provider_id, installation_id)
+    })
+    .await
+    .map_err(|error| format!("The AI models worker failed: {error}"))?
 }
 
 #[tauri::command]
 async fn clear_ai_provider_secret(
     app: tauri::AppHandle,
     provider_id: AiProviderId,
+    installation_id: Option<i64>,
 ) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || clear_ai_provider_secret_value(&app, provider_id))
-        .await
-        .map_err(|error| format!("The AI key clear worker failed: {error}"))?
+    tauri::async_runtime::spawn_blocking(move || {
+        clear_ai_provider_secret_value(&app, provider_id, installation_id)
+    })
+    .await
+    .map_err(|error| format!("The AI key clear worker failed: {error}"))?
 }
 
 #[tauri::command]
@@ -458,6 +475,17 @@ pub fn run() {
             save_ai_provider_secret,
             list_ai_provider_models,
             clear_ai_provider_secret,
+            load_team_ai_broker_public_key,
+            load_team_ai_settings,
+            save_team_ai_settings,
+            load_team_ai_secrets_metadata,
+            save_team_ai_provider_secret,
+            issue_team_ai_provider_secret,
+            load_team_ai_member_keypair,
+            save_team_ai_member_keypair,
+            load_team_ai_provider_cache,
+            save_team_ai_provider_cache,
+            clear_team_ai_provider_cache,
             run_ai_review,
             prepare_editor_ai_translated_glossary,
             run_ai_translation,

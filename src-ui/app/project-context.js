@@ -4,6 +4,11 @@ export function selectedProjectsTeam() {
   return state.teams.find((team) => team.id === state.selectedTeamId) ?? null;
 }
 
+export function selectedProjectsTeamInstallationId() {
+  const installationId = selectedProjectsTeam()?.installationId;
+  return Number.isFinite(installationId) ? installationId : null;
+}
+
 export function findChapterContext(chapterId) {
   for (const project of [...state.projects, ...state.deletedProjects]) {
     const chapter = Array.isArray(project?.chapters)

@@ -216,24 +216,33 @@ export function sectionSeparator({ label, action, isOpen = false }) {
 
 const sectionNavConfig = {
   teams: [
-    { label: "AI Settings", target: "aiKey" },
     { label: "Logout", target: "start" },
   ],
   projects: [
     { label: "Teams", target: "teams", isBack: true },
     { label: "Members", target: "users" },
     { label: "Glossaries", target: "glossaries" },
+    { label: "AI Settings", target: "aiKey", ownerOnly: true },
     { label: "Logout", target: "start" },
   ],
   users: [
     { label: "Teams", target: "teams", isBack: true },
     { label: "Projects", target: "projects" },
     { label: "Glossaries", target: "glossaries" },
+    { label: "AI Settings", target: "aiKey", ownerOnly: true },
     { label: "Logout", target: "start" },
   ],
   glossaries: [
     { label: "Teams", target: "teams", isBack: true },
     { label: "Projects", target: "projects" },
+    { label: "Members", target: "users" },
+    { label: "AI Settings", target: "aiKey", ownerOnly: true },
+    { label: "Logout", target: "start" },
+  ],
+  aiKey: [
+    { label: "Teams", target: "teams" },
+    { label: "Projects", target: "projects" },
+    { label: "Glossaries", target: "glossaries" },
     { label: "Members", target: "users" },
     { label: "Logout", target: "start" },
   ],
@@ -247,10 +256,13 @@ const sectionNavConfig = {
   ],
 };
 
-export function buildSectionNav(screen) {
-  return (sectionNavConfig[screen] ?? []).map(({ label, target, isBack }) =>
-    navButton(label, target, false, { isBack }),
-  );
+export function buildSectionNav(screen, options = {}) {
+  const includeAiSettings = options.includeAiSettings === true;
+  return (sectionNavConfig[screen] ?? [])
+    .filter((item) => !item.ownerOnly || includeAiSettings)
+    .map(({ label, target, isBack }) =>
+      navButton(label, target, false, { isBack }),
+    );
 }
 
 export function renderStateCard({ eyebrow = "", title = "", subtitle = "", tone = "" }) {

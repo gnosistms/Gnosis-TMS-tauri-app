@@ -39,6 +39,8 @@ pub struct AiReviewRequest {
     pub model_id: String,
     pub text: String,
     pub language_code: String,
+    #[serde(default)]
+    pub installation_id: Option<i64>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -92,6 +94,8 @@ pub struct AiTranslatedGlossaryPreparationRequest {
     pub glossary_source_text: String,
     #[serde(default)]
     pub glossary_terms: Vec<AiTranslatedGlossaryTermInput>,
+    #[serde(default)]
+    pub installation_id: Option<i64>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -112,6 +116,8 @@ pub struct AiTranslationRequest {
     pub target_language: String,
     #[serde(default)]
     pub glossary_hints: Vec<AiTranslationGlossaryHint>,
+    #[serde(default)]
+    pub installation_id: Option<i64>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -144,4 +150,6 @@ pub struct AiProviderModel {
 pub struct AiModelProbeRequest {
     pub provider_id: AiProviderId,
     pub model_id: String,
+    #[serde(default)]
+    pub installation_id: Option<i64>,
 }

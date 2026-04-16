@@ -21,6 +21,7 @@ import {
 import {
   shouldShowDeletedGlossaryPermanentDelete,
   shouldShowGlossaryCreationControls,
+  canManageTeamAiSettings,
 } from "../app/resource-capabilities.js";
 import { areResourcePageWritesDisabled } from "../app/resource-page-controller.js";
 import { glossaryArchiveDownloadUrl } from "../app/glossary-repo-flow.js";
@@ -150,6 +151,7 @@ export function renderGlossariesScreen(state) {
   const canCreate = shouldShowGlossaryCreationControls(selectedTeam);
   const canManage = canManageGlossaries(selectedTeam);
   const canPermanentlyDelete = shouldShowDeletedGlossaryPermanentDelete(selectedTeam);
+  const canManageAiSettings = canManageTeamAiSettings(selectedTeam);
   const offlineMode = state.offline?.isEnabled === true;
   const pageWritesDisabled = areResourcePageWritesDisabled(state.glossariesPage);
   const discovery = state.glossaryDiscovery ?? { status: "idle", error: "", brokerWarning: "" };
@@ -231,7 +233,7 @@ export function renderGlossariesScreen(state) {
       title: "Glossaries",
       subtitle: selectedTeam?.name ?? "Team",
       titleAction: buildPageRefreshAction(state),
-      navButtons: buildSectionNav("glossaries"),
+      navButtons: buildSectionNav("glossaries", { includeAiSettings: canManageAiSettings }),
       tools: canCreate
         ? `${textAction("Import", "import-glossary", { disabled: offlineMode || pageWritesDisabled })} ${primaryButton("+ New Glossary", "open-new-glossary", { disabled: offlineMode || pageWritesDisabled })}`
         : "",

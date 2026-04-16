@@ -134,6 +134,12 @@ const {
   loadStoredAiActionPreferences,
   saveStoredAiActionPreferences,
 } = await import("./ai-action-preferences.js");
+const { saveSelectedTeamAiProviderSecret } = await import("./team-ai-flow.js");
+const {
+  decryptTeamAiWrappedKey,
+  encryptTeamAiPlaintext,
+  generateTeamAiMemberKeypair,
+} = await import("./team-ai-crypto.js");
 const {
   clearStoredAiSettingsAboutDismissed,
   loadStoredAiSettingsAboutDismissed,
@@ -178,6 +184,28 @@ function installTranslateFixture(options = {}) {
       fields,
       fieldStates: {},
     }]),
+  };
+}
+
+function installSelectedTeam(options = {}) {
+  state.selectedTeamId = options.teamId ?? "team-1";
+  state.teams = [{
+    id: options.teamId ?? "team-1",
+    name: options.teamName ?? "Team One",
+    githubOrg: options.githubOrg ?? "team-one",
+    installationId: options.installationId ?? 42,
+    canDelete: options.canDelete === true,
+    canManageProjects: true,
+    accountType: "Organization",
+  }];
+  state.auth = {
+    ...state.auth,
+    session: {
+      sessionToken: options.sessionToken ?? "broker-session",
+      login: options.login ?? "tester",
+      name: null,
+      avatarUrl: null,
+    },
   };
 }
 
@@ -1043,6 +1071,173 @@ test("runEditorAiTranslate opens the missing-key modal for the translate action 
   assert.equal(state.aiReviewMissingKeyModal.providerId, "deepseek");
 });
 
+test("runEditorAiTranslate issues and caches a shared team key before translating", async () => {
+  installTranslateFixture();
+  installSelectedTeam({ canDelete: false });
+  state.aiSettings = {
+    ...state.aiSettings,
+    actionConfig: {
+      ...state.aiSettings.actionConfig,
+      detailedConfiguration: true,
+      actions: {
+        ...state.aiSettings.actionConfig.actions,
+        translate1: {
+          providerId: "openai",
+          modelId: "gpt-5.4-mini",
+        },
+      },
+    },
+  };
+
+  const memberKeypair = await generateTeamAiMemberKeypair();
+  const issuedWrappedKey = await encryptTeamAiPlaintext("sk-shared-issued", memberKeypair.publicKeyPem);
+  let persistCount = 0;
+
+  invokeHandler = async (command, payload = {}) => {
+    if (command === "load_ai_provider_secret") {
+      assert.equal(payload.installationId, 42);
+      return null;
+    }
+    if (command === "load_team_ai_settings") {
+      return null;
+    }
+    if (command === "load_team_ai_secrets_metadata") {
+      return {
+        schemaVersion: 1,
+        updatedAt: null,
+        updatedBy: "owner",
+        providers: {
+          openai: {
+            configured: true,
+            keyVersion: 7,
+            algorithm: "rsa-oaep-sha256-v1",
+          },
+          gemini: null,
+          claude: null,
+          deepseek: null,
+        },
+      };
+    }
+    if (command === "load_team_ai_provider_cache") {
+      return {
+        apiKey: null,
+        keyVersion: null,
+      };
+    }
+    if (command === "load_team_ai_member_keypair") {
+      return memberKeypair;
+    }
+    if (command === "issue_team_ai_provider_secret") {
+      assert.equal(payload.providerId, "openai");
+      assert.equal(payload.installationId, 42);
+      assert.equal(payload.orgLogin, "team-one");
+      return {
+        providerId: "openai",
+        keyVersion: 7,
+        wrappedKey: issuedWrappedKey,
+      };
+    }
+    if (command === "save_team_ai_provider_cache") {
+      assert.deepEqual(payload, {
+        installationId: 42,
+        providerId: "openai",
+        apiKey: "sk-shared-issued",
+        keyVersion: 7,
+      });
+      return null;
+    }
+    if (command === "run_ai_translation") {
+      assert.deepEqual(payload, {
+        request: {
+          providerId: "openai",
+          modelId: "gpt-5.4-mini",
+          text: "Hola",
+          sourceLanguage: "Spanish",
+          targetLanguage: "Vietnamese",
+          installationId: 42,
+        },
+      });
+      return {
+        translatedText: "Xin chao tu team",
+      };
+    }
+
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  await runEditorAiTranslate(() => {}, "translate1", {
+    updateEditorRowFieldValue(rowId, languageCode, nextValue) {
+      const row = state.editorChapter.rows.find((entry) => entry.rowId === rowId);
+      row.fields[languageCode] = nextValue;
+      row.saveStatus = "dirty";
+    },
+    async persistEditorRowOnBlur(_render, rowId) {
+      persistCount += 1;
+      const row = state.editorChapter.rows.find((entry) => entry.rowId === rowId);
+      row.persistedFields = { ...row.fields };
+      row.saveStatus = "idle";
+    },
+  });
+
+  assert.equal(persistCount, 1);
+  assert.equal(state.editorChapter.rows[0].fields.vi, "Xin chao tu team");
+  assert.equal(state.aiReviewMissingKeyModal.isOpen, false);
+});
+
+test("runEditorAiTranslate tells members to contact the owner when no shared team key exists", async () => {
+  installTranslateFixture();
+  installSelectedTeam({ canDelete: false, teamName: "Shared Team" });
+  state.aiSettings = {
+    ...state.aiSettings,
+    actionConfig: {
+      ...state.aiSettings.actionConfig,
+      detailedConfiguration: true,
+      actions: {
+        ...state.aiSettings.actionConfig.actions,
+        translate2: {
+          providerId: "deepseek",
+          modelId: "deepseek-chat",
+        },
+      },
+    },
+  };
+
+  invokeHandler = async (command, payload = {}) => {
+    if (command === "load_ai_provider_secret") {
+      assert.equal(payload.installationId, 42);
+      return null;
+    }
+    if (command === "load_team_ai_settings") {
+      return null;
+    }
+    if (command === "load_team_ai_secrets_metadata") {
+      return {
+        schemaVersion: 1,
+        updatedAt: null,
+        updatedBy: "owner",
+        providers: {
+          openai: null,
+          gemini: null,
+          claude: null,
+          deepseek: null,
+        },
+      };
+    }
+
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  await runEditorAiTranslate(() => {}, "translate2", {
+    updateEditorRowFieldValue() {},
+    async persistEditorRowOnBlur() {},
+  });
+
+  assert.equal(state.aiReviewMissingKeyModal.isOpen, true);
+  assert.equal(state.aiReviewMissingKeyModal.providerId, "deepseek");
+  assert.equal(state.aiReviewMissingKeyModal.reason, "member_missing");
+  assert.equal(state.aiReviewMissingKeyModal.teamName, "Shared Team");
+});
+
 test("applyEditorAiReview updates the editor row and clears the suggestion after save", async () => {
   installTranslateFixture();
   state.editorChapter = {
@@ -1115,6 +1310,68 @@ test("applyEditorAiReview does nothing when the suggestion matches the current t
   assert.equal(persistCount, 0);
   assert.equal(state.editorChapter.rows[0].fields.vi, "Texto original");
   assert.equal(state.editorChapter.aiReview.status, "ready");
+});
+
+test("saveSelectedTeamAiProviderSecret wraps a shared key for the broker and caches the current version", async () => {
+  resetSessionState();
+  installSelectedTeam({ canDelete: true });
+
+  const brokerKeypair = await generateTeamAiMemberKeypair();
+  let savedWrappedKey = null;
+
+  invokeHandler = async (command, payload = {}) => {
+    if (command === "load_team_ai_broker_public_key") {
+      return {
+        algorithm: "rsa-oaep-sha256-v1",
+        publicKeyPem: brokerKeypair.publicKeyPem,
+      };
+    }
+    if (command === "save_team_ai_provider_secret") {
+      savedWrappedKey = payload.wrappedKey;
+      assert.equal(payload.installationId, 42);
+      assert.equal(payload.orgLogin, "team-one");
+      assert.equal(payload.providerId, "openai");
+      assert.equal(payload.clear, false);
+      return {
+        schemaVersion: 1,
+        updatedAt: null,
+        updatedBy: "tester",
+        providers: {
+          openai: {
+            configured: true,
+            keyVersion: 4,
+            algorithm: "rsa-oaep-sha256-v1",
+          },
+          gemini: null,
+          claude: null,
+          deepseek: null,
+        },
+      };
+    }
+    if (command === "save_team_ai_provider_cache") {
+      assert.deepEqual(payload, {
+        installationId: 42,
+        providerId: "openai",
+        apiKey: "sk-team-shared",
+        keyVersion: 4,
+      });
+      return null;
+    }
+
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  const secrets = await saveSelectedTeamAiProviderSecret(
+    () => {},
+    "openai",
+    "  sk-team-shared  ",
+  );
+
+  assert.equal(
+    await decryptTeamAiWrappedKey(savedWrappedKey, brokerKeypair.privateKeyPem),
+    "sk-team-shared",
+  );
+  assert.equal(secrets.providers.openai.keyVersion, 4);
 });
 
 test("AI key load and save flows populate and persist aiSettings state", async () => {
@@ -1319,6 +1576,35 @@ test("AI action preferences round-trip through persistent storage", () => {
         },
       },
     },
+  );
+});
+
+test("AI action preferences are scoped per team installation", () => {
+  saveStoredAiActionPreferences({
+    detailedConfiguration: false,
+    unified: {
+      providerId: "openai",
+      modelId: "gpt-5.4-mini",
+    },
+    actions: {},
+  }, "tester", 101);
+
+  saveStoredAiActionPreferences({
+    detailedConfiguration: false,
+    unified: {
+      providerId: "gemini",
+      modelId: "gemini-2.5-flash",
+    },
+    actions: {},
+  }, "tester", 202);
+
+  assert.equal(
+    loadStoredAiActionPreferences("tester", 101).unified.providerId,
+    "openai",
+  );
+  assert.equal(
+    loadStoredAiActionPreferences("tester", 202).unified.providerId,
+    "gemini",
   );
 });
 

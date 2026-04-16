@@ -3,6 +3,7 @@ import {
   openAiMissingKeyModal,
   resolveAiActionProviderAndModel,
 } from "./ai-settings-flow.js";
+import { ensureSelectedTeamAiProviderReady } from "./team-ai-flow.js";
 import {
   applyEditorAiTranslateActionApplying,
   applyEditorAiTranslateActionFailed,
@@ -22,6 +23,7 @@ import {
   buildEditorAiTranslationGlossaryHints,
   buildEditorDerivedGlossaryModel,
 } from "./editor-glossary-highlighting.js";
+import { selectedProjectsTeamInstallationId } from "./project-context.js";
 import { invoke } from "./runtime.js";
 import { showNoticeBadge } from "./status-feedback.js";
 import { findEditorRowById } from "./editor-utils.js";
@@ -39,6 +41,16 @@ function createAiTranslateRequestKey(
       ? globalThis.crypto.randomUUID()
       : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
   return `${chapterId}:${rowId}:${sourceLanguageCode}:${targetLanguageCode}:${actionId}:${uniqueSuffix}`;
+}
+
+function maybeInstallationPayload() {
+  const installationId = selectedProjectsTeamInstallationId();
+  return installationId === null ? {} : { installationId };
+}
+
+function withSelectedInstallation(request = {}) {
+  const installationId = selectedProjectsTeamInstallationId();
+  return installationId === null ? request : { ...request, installationId };
 }
 
 function errorMeansMissingAiKey(message) {
@@ -330,8 +342,8 @@ export async function runEditorAiTranslate(render, actionId, operations = {}) {
   }
 
   try {
-    const savedKey = await invoke("load_ai_provider_secret", { providerId });
-    if (typeof savedKey !== "string" || !savedKey.trim()) {
+    const ensureKeyResult = await ensureSelectedTeamAiProviderReady(render, providerId);
+    if (!ensureKeyResult?.ok) {
       openAiMissingKeyModal(providerId);
       render?.();
       return;
@@ -393,7 +405,7 @@ export async function runEditorAiTranslate(render, actionId, operations = {}) {
         render?.({ scope: "translate-body" });
 
         const payload = await invoke("prepare_editor_ai_translated_glossary", {
-          request: {
+          request: withSelectedInstallation({
             providerId,
             modelId,
             translationSourceText: context.sourceText,
@@ -402,7 +414,7 @@ export async function runEditorAiTranslate(render, actionId, operations = {}) {
             targetLanguage: context.targetLanguageLabel,
             glossarySourceText: glossaryUsage.derivedContext.glossarySourceText,
             glossaryTerms: glossaryUsage.glossaryTerms,
-          },
+          }),
         });
 
         if (
@@ -451,7 +463,7 @@ export async function runEditorAiTranslate(render, actionId, operations = {}) {
     }
 
     const payload = await invoke("run_ai_translation", {
-      request: {
+      request: withSelectedInstallation({
         providerId,
         modelId,
         text: context.sourceText,
@@ -460,7 +472,7 @@ export async function runEditorAiTranslate(render, actionId, operations = {}) {
         ...(Array.isArray(glossaryHints) && glossaryHints.length > 0
           ? { glossaryHints }
           : {}),
-      },
+      }),
     });
 
     if (

@@ -29,6 +29,7 @@ import { resolveChapterSourceWordCount } from "../app/translate-flow.js";
 import { deriveProjectResolution } from "../app/resource-resolution.js";
 import {
   canPermanentlyDeleteProjectFiles,
+  canManageTeamAiSettings,
   shouldShowDeletedProjectPermanentDelete,
   shouldShowNewProjectButton,
 } from "../app/resource-capabilities.js";
@@ -437,6 +438,7 @@ export function renderProjectsScreen(state) {
   const canManageProjects = selectedTeam?.canManageProjects === true;
   const canCreateProjects = shouldShowNewProjectButton(selectedTeam);
   const canPermanentlyDeleteFiles = canPermanentlyDeleteProjectFiles(selectedTeam);
+  const canManageAiSettings = canManageTeamAiSettings(selectedTeam);
   const offlineMode = state.offline?.isEnabled === true;
   const pageWritesDisabled = areResourcePageWritesDisabled(state.projectsPage);
   const importInProgress = state.projectImport?.status === "importing";
@@ -532,7 +534,7 @@ export function renderProjectsScreen(state) {
     title: "Projects",
     subtitle: selectedTeam?.name ?? "Team",
     titleAction: buildPageRefreshAction(state, state.projectsPageSync),
-    navButtons: buildSectionNav("projects"),
+    navButtons: buildSectionNav("projects", { includeAiSettings: canManageAiSettings }),
     leftTools: searchField,
     tools: [
       canCreateProjects

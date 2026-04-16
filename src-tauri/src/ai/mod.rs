@@ -426,11 +426,16 @@ fn build_pivot_translation_request(
         source_language: request.translation_source_language.clone(),
         target_language: request.glossary_source_language.clone(),
         glossary_hints: vec![],
+        installation_id: request.installation_id,
     }
 }
 
-fn load_ai_provider_api_key(app: &AppHandle, provider_id: AiProviderId) -> Result<String, String> {
-    load_ai_provider_secret(app, provider_id)?.ok_or_else(|| {
+fn load_ai_provider_api_key(
+    app: &AppHandle,
+    provider_id: AiProviderId,
+    installation_id: Option<i64>,
+) -> Result<String, String> {
+    load_ai_provider_secret(app, provider_id, installation_id)?.ok_or_else(|| {
         format!(
             "No {} API key is saved yet. Open the AI Settings page and save one first.",
             provider_id.display_name()
@@ -441,8 +446,9 @@ fn load_ai_provider_api_key(app: &AppHandle, provider_id: AiProviderId) -> Resul
 pub(crate) fn load_ai_provider_models(
     app: &AppHandle,
     provider_id: AiProviderId,
+    installation_id: Option<i64>,
 ) -> Result<Vec<AiProviderModel>, String> {
-    let api_key = load_ai_provider_api_key(app, provider_id)?;
+    let api_key = load_ai_provider_api_key(app, provider_id, installation_id)?;
 
     providers::list_models(provider_id, &api_key)
 }
@@ -461,7 +467,7 @@ pub(crate) fn run_ai_review(
         ));
     }
 
-    let api_key = load_ai_provider_api_key(app, request.provider_id)?;
+    let api_key = load_ai_provider_api_key(app, request.provider_id, request.installation_id)?;
 
     let response = providers::run_prompt(
         &AiPromptRequest {
@@ -491,7 +497,7 @@ pub(crate) fn prepare_ai_translated_glossary(
         ));
     }
 
-    let api_key = load_ai_provider_api_key(app, request.provider_id)?;
+    let api_key = load_ai_provider_api_key(app, request.provider_id, request.installation_id)?;
     let glossary_terms = request
         .glossary_terms
         .iter()
@@ -598,7 +604,7 @@ pub(crate) fn run_ai_translation(
         ));
     }
 
-    let api_key = load_ai_provider_api_key(app, request.provider_id)?;
+    let api_key = load_ai_provider_api_key(app, request.provider_id, request.installation_id)?;
 
     let response = providers::run_prompt(
         &AiPromptRequest {
@@ -622,7 +628,7 @@ pub(crate) fn probe_ai_model(app: &AppHandle, request: AiModelProbeRequest) -> R
         ));
     }
 
-    let api_key = load_ai_provider_api_key(app, request.provider_id)?;
+    let api_key = load_ai_provider_api_key(app, request.provider_id, request.installation_id)?;
 
     providers::probe_model(request.provider_id, request.model_id.trim(), &api_key)
 }
@@ -644,6 +650,7 @@ mod tests {
             source_language: "Spanish".to_string(),
             target_language: "Vietnamese".to_string(),
             glossary_hints: vec![],
+            installation_id: None,
         });
 
         assert_eq!(
@@ -665,6 +672,7 @@ mod tests {
                 target_variants: vec!["hoc tro gnosis".to_string(), "cua gnosis".to_string()],
                 notes: vec!["Lien quan den Gnosis".to_string()],
             }],
+            installation_id: None,
         });
 
         assert!(prompt.contains(

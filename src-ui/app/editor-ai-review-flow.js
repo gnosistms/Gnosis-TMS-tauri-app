@@ -12,6 +12,7 @@ import {
   openAiReviewMissingKeyModal,
   resolveAiReviewProviderAndModel,
 } from "./ai-settings-flow.js";
+import { ensureSelectedTeamAiProviderReady } from "./team-ai-flow.js";
 import { rowHasFieldChanges } from "./editor-row-persistence-model.js";
 import {
   captureTranslateAnchorForRow,
@@ -19,6 +20,7 @@ import {
   restoreTranslateRowAnchor,
 } from "./scroll-state.js";
 import { findEditorRowById, hasActiveEditorField } from "./editor-utils.js";
+import { selectedProjectsTeamInstallationId } from "./project-context.js";
 import { invoke, waitForNextPaint } from "./runtime.js";
 import { state } from "./state.js";
 
@@ -36,6 +38,16 @@ function errorMeansMissingAiKey(message) {
     normalizedMessage.includes("api key is saved yet")
     || normalizedMessage.includes("save one first")
   );
+}
+
+function maybeInstallationPayload() {
+  const installationId = selectedProjectsTeamInstallationId();
+  return installationId === null ? {} : { installationId };
+}
+
+function withSelectedInstallation(request = {}) {
+  const installationId = selectedProjectsTeamInstallationId();
+  return installationId === null ? request : { ...request, installationId };
 }
 
 function activeEditorReviewContext(chapterState = state.editorChapter) {
@@ -84,8 +96,8 @@ export async function runEditorAiReview(render) {
   const { providerId, modelId } = resolveAiReviewProviderAndModel();
 
   try {
-    const savedKey = await invoke("load_ai_provider_secret", { providerId });
-    if (typeof savedKey !== "string" || !savedKey.trim()) {
+    const ensureKeyResult = await ensureSelectedTeamAiProviderReady(render, providerId);
+    if (!ensureKeyResult?.ok) {
       openAiReviewMissingKeyModal();
       render?.();
       return;
@@ -124,12 +136,12 @@ export async function runEditorAiReview(render) {
 
   try {
     const payload = await invoke("run_ai_review", {
-      request: {
+      request: withSelectedInstallation({
         providerId,
         modelId,
         text: context.text,
         languageCode: context.languageCode,
-      },
+      }),
     });
 
     if (

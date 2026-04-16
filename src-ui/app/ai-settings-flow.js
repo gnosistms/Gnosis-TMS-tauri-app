@@ -1,4 +1,5 @@
 import { invoke } from "./runtime.js";
+import { selectedProjectsTeamInstallationId } from "./project-context.js";
 import { showNoticeBadge } from "./status-feedback.js";
 import {
   AI_ACTION_IDS,
@@ -6,6 +7,7 @@ import {
   createAiProviderModelsState,
   extractAiActionPreferences,
   isGeminiProModelId,
+  normalizeStoredAiActionPreferences,
   pickPreferredAiModelId,
   resolveEffectiveAiActionSelection,
 } from "./ai-action-config.js";
@@ -21,6 +23,14 @@ import {
   normalizeAiProviderId,
 } from "./ai-provider-config.js";
 import {
+  ensureSelectedTeamAiProviderReady,
+  loadSelectedTeamAiSavedProviderIds,
+  loadSelectedTeamAiState,
+  persistSelectedTeamAiActionPreferences,
+  saveSelectedTeamAiProviderSecret,
+  selectedTeamAiAllowsEditing,
+} from "./team-ai-flow.js";
+import {
   createAiSettingsAboutModalState,
   createAiModelErrorModalState,
   createAiReviewMissingKeyModalState,
@@ -31,8 +41,33 @@ function actionConfigState() {
   return state.aiSettings.actionConfig;
 }
 
+function teamSharedState() {
+  return state.aiSettings.teamShared;
+}
+
+function selectedAiInstallationId() {
+  return selectedProjectsTeamInstallationId();
+}
+
+function maybeInstallationPayload() {
+  const installationId = selectedAiInstallationId();
+  return installationId === null ? {} : { installationId };
+}
+
+function withSelectedInstallation(request = {}) {
+  const installationId = selectedAiInstallationId();
+  return installationId === null ? request : { ...request, installationId };
+}
+
 function persistAiActionPreferences() {
   saveStoredAiActionPreferences(extractAiActionPreferences(actionConfigState()));
+}
+
+function persistSharedAiActionPreferences(render) {
+  void persistSelectedTeamAiActionPreferences(
+    render,
+    extractAiActionPreferences(actionConfigState()),
+  );
 }
 
 function replaceAiActionConfig(nextActionConfig) {
@@ -93,13 +128,23 @@ function updateAiActionMenuLoadingProviderIds(providerId, isLoading) {
 export function aiActionControlsAreBusy(aiSettings = state.aiSettings) {
   const actionConfig = aiSettings?.actionConfig ?? actionConfigState();
   return (
-    actionConfig.availableProvidersStatus === "loading"
+    aiSettings?.teamShared?.status === "loading"
+    || aiSettings?.teamShared?.settingsSaveStatus === "saving"
+    || actionConfig.availableProvidersStatus === "loading"
     || aiSettings?.modelValidationStatus === "loading"
     || normalizeAiActionMenuLoadingProviderIds(aiSettings?.actionMenuLoadingProviderIds).length > 0
   );
 }
 
 export function getAiActionControlsBusyMessage(aiSettings = state.aiSettings) {
+  if (aiSettings?.teamShared?.status === "loading") {
+    return "Loading team AI settings...";
+  }
+
+  if (aiSettings?.teamShared?.settingsSaveStatus === "saving") {
+    return "Saving team AI settings...";
+  }
+
   if (aiSettings?.modelValidationStatus === "loading") {
     return `Checking the selected ${getAiProviderActionLabel(aiSettings.modelValidationProviderId)} model...`;
   }
@@ -138,6 +183,24 @@ function normalizeAiProbeErrorMessage(error) {
   }
 
   return String(error ?? "").trim();
+}
+
+function applyAiActionPreferences(nextPreferences) {
+  const normalizedPreferences = normalizeStoredAiActionPreferences(nextPreferences);
+  replaceAiActionConfig({
+    ...actionConfigState(),
+    ...normalizedPreferences,
+  });
+}
+
+function missingTeamAiProviderMessage(providerId, reason, teamName = "") {
+  const label = getAiProviderActionLabel(providerId);
+  if (reason === "member_missing") {
+    const teamLabel = teamName ? ` for ${teamName}` : "";
+    return `Ask the team owner to configure a shared ${label} key${teamLabel} before using this AI action.`;
+  }
+
+  return `No ${label} API key is saved yet. Open the AI Settings page and save one first.`;
 }
 
 function aiProbeErrorLooksRateLimited(message) {
@@ -371,8 +434,31 @@ async function ensureAiProviderModelsLoaded(render, providerId, options = {}) {
   render?.();
 
   try {
+    const ensureProviderResult = await ensureSelectedTeamAiProviderReady(render, normalizedProviderId);
+    if (!ensureProviderResult?.ok) {
+      replaceAiActionConfig({
+        ...actionConfigState(),
+        modelOptionsByProvider: {
+          ...actionConfigState().modelOptionsByProvider,
+          [normalizedProviderId]: {
+            status: "error",
+            error: missingTeamAiProviderMessage(
+              normalizedProviderId,
+              ensureProviderResult?.reason,
+              ensureProviderResult?.teamName,
+            ),
+            options: [],
+            hasLoaded: true,
+          },
+        },
+      });
+      render?.();
+      return [];
+    }
+
     const optionsPayload = await invoke("list_ai_provider_models", {
       providerId: normalizedProviderId,
+      ...maybeInstallationPayload(),
     });
     const normalizedOptions = normalizeAiModelOptions(normalizedProviderId, optionsPayload);
 
@@ -449,13 +535,22 @@ export async function refreshAiSavedProviders(render, options = {}) {
   }
 
   try {
-    const providerStatuses = await Promise.all(
-      AI_PROVIDER_IDS.map(async (providerId) => {
-        const apiKey = await invoke("load_ai_provider_secret", { providerId });
-        return typeof apiKey === "string" && apiKey.trim() ? providerId : null;
-      }),
-    );
-    const savedProviderIds = providerStatuses.filter(Boolean);
+    const savedProviderIds = selectedAiInstallationId() !== null && state.auth.session?.sessionToken
+      ? await loadSelectedTeamAiSavedProviderIds(render, {
+          suppressLoadingState: true,
+          force: options.forceTeamState === true,
+        })
+      : (
+        await Promise.all(
+          AI_PROVIDER_IDS.map(async (providerId) => {
+            const apiKey = await invoke("load_ai_provider_secret", {
+              providerId,
+              ...maybeInstallationPayload(),
+            });
+            return typeof apiKey === "string" && apiKey.trim() ? providerId : null;
+          }),
+        )
+      ).filter(Boolean);
 
     let nextActionConfig = coerceActionConfigToSavedProviders(
       actionConfigState(),
@@ -487,6 +582,16 @@ export async function loadAiSettingsPage(render, options = {}) {
     aboutModal: createAiSettingsAboutModalStateForDisplay(),
   };
   const providerId = normalizeAiProviderId(options.providerId ?? state.aiSettings.providerId);
+  if (selectedAiInstallationId() !== null && state.auth.session?.sessionToken) {
+    try {
+      const teamShared = await loadSelectedTeamAiState(render);
+      if (teamShared?.settings?.actionPreferences) {
+        applyAiActionPreferences(teamShared.settings.actionPreferences);
+      }
+    } catch {
+      // Leave the existing page state in place so the screen can render the broker error inline.
+    }
+  }
   await Promise.all([
     loadAiProviderSecret(render, { providerId }),
     refreshAiSavedProviders(render),
@@ -535,7 +640,10 @@ export async function loadAiProviderSecret(render, options = {}) {
   render?.();
 
   try {
-    const apiKey = await invoke("load_ai_provider_secret", { providerId });
+    const apiKey = await invoke("load_ai_provider_secret", {
+      providerId,
+      ...maybeInstallationPayload(),
+    });
     state.aiSettings = {
       ...state.aiSettings,
       status: "ready",
@@ -589,7 +697,9 @@ export async function selectAiProvider(render, nextProviderId) {
 export async function saveAiProviderSecret(render) {
   const providerId = normalizeAiProviderId(state.aiSettings.providerId);
   const apiKey = typeof state.aiSettings.apiKey === "string" ? state.aiSettings.apiKey : "";
-  const successMessage = getAiProviderSavedMessage(providerId);
+  const successMessage = apiKey.trim()
+    ? getAiProviderSavedMessage(providerId)
+    : `${getAiProviderActionLabel(providerId)} key removed.`;
 
   state.aiSettings = {
     ...state.aiSettings,
@@ -603,10 +713,15 @@ export async function saveAiProviderSecret(render) {
   render?.();
 
   try {
-    await invoke("save_ai_provider_secret", {
-      providerId,
-      apiKey,
-    });
+    if (selectedAiInstallationId() !== null && state.auth.session?.sessionToken) {
+      await saveSelectedTeamAiProviderSecret(render, providerId, apiKey);
+    } else {
+      await invoke("save_ai_provider_secret", {
+        providerId,
+        apiKey,
+        ...maybeInstallationPayload(),
+      });
+    }
 
     state.aiSettings = {
       ...state.aiSettings,
@@ -630,7 +745,10 @@ export async function saveAiProviderSecret(render) {
 
     if (state.screen === "aiKey") {
       invalidateAiProviderModels(providerId);
-      await refreshAiSavedProviders(render, { suppressLoadingState: true });
+      await refreshAiSavedProviders(render, {
+        suppressLoadingState: true,
+        forceTeamState: true,
+      });
     }
   } catch (error) {
     state.aiSettings = {
@@ -679,6 +797,7 @@ export function updateAiActionDetailedConfiguration(render, nextValue) {
 
   replaceAiActionConfig(nextActionConfig);
   persistAiActionPreferences();
+  persistSharedAiActionPreferences(render);
   render?.();
   void ensureVisibleAiProviderModelsLoaded(render);
 }
@@ -714,6 +833,7 @@ export function updateAiActionProvider(render, scopeId, nextProviderId) {
   );
   replaceAiActionConfig(nextActionConfig);
   persistAiActionPreferences();
+  persistSharedAiActionPreferences(render);
   render?.();
   void ensureAiProviderModelsLoaded(render, providerId);
 }
@@ -749,6 +869,7 @@ export async function updateAiActionModel(render, scopeId, nextModelId) {
     replaceAiActionSelection(currentActionConfig, scopeId, nextSelection),
   );
   persistAiActionPreferences();
+  persistSharedAiActionPreferences(render);
   render?.();
 
   if (!modelId) {
@@ -757,10 +878,10 @@ export async function updateAiActionModel(render, scopeId, nextModelId) {
 
   try {
     await invoke("probe_ai_provider_model", {
-      request: {
+      request: withSelectedInstallation({
         providerId,
         modelId,
-      },
+      }),
     });
   } catch (error) {
     if (state.aiSettings.modelValidationRequestId !== modelValidationRequestId) {
@@ -798,10 +919,14 @@ export function resolveAiReviewProviderAndModel() {
 }
 
 export function openAiMissingKeyModal(providerId) {
+  const isOwner = selectedAiInstallationId() === null || selectedTeamAiAllowsEditing();
+  const teamName = state.teams.find((team) => team.id === state.selectedTeamId)?.name ?? "";
   state.aiReviewMissingKeyModal = {
     ...createAiReviewMissingKeyModalState(),
     isOpen: true,
     providerId: normalizeAiProviderId(providerId),
+    reason: isOwner ? "owner_missing" : "member_missing",
+    teamName,
   };
 }
 

@@ -6,6 +6,10 @@ export function canPermanentlyDeleteRepoResources(team) {
   return team?.canDelete === true;
 }
 
+export function canManageTeamAiSettings(team) {
+  return team?.canDelete === true;
+}
+
 export function shouldShowNewProjectButton(team) {
   return canCreateRepoResources(team);
 }

@@ -4,6 +4,7 @@ import {
   openGlossaryEditor,
   primeGlossariesLoadingState,
 } from "../glossary-flow.js";
+import { openAiKeyPage } from "../ai-settings-flow.js";
 import { loadTeamProjects } from "../project-flow.js";
 import { resetProjectSearchState } from "../project-search-flow.js";
 import { loadTeamUsers, primeUsersForTeam } from "../team-members-flow.js";
@@ -40,6 +41,13 @@ export function createNavigationActions(render) {
       primeGlossariesLoadingState(state.selectedTeamId);
       render();
       void loadTeamGlossaries(render, state.selectedTeamId);
+      return true;
+    }
+
+    const openTeamAiSettingsId = actionSuffix(action, "open-team-ai-settings:");
+    if (openTeamAiSettingsId !== null) {
+      state.selectedTeamId = openTeamAiSettingsId;
+      openAiKeyPage(render, { returnScreen: "teams" });
       return true;
     }
 

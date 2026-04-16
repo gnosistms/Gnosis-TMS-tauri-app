@@ -356,6 +356,7 @@ export function createAiSettingsState() {
     actionMenuLoadingProviderIds: [],
     aboutModal: createAiSettingsAboutModalState(),
     modelErrorModal: createAiModelErrorModalState(),
+    teamShared: createTeamAiSharedState(),
     actionConfig: createAiActionConfigurationState(),
   };
 }
@@ -363,7 +364,22 @@ export function createAiSettingsState() {
 export function createAiReviewMissingKeyModalState() {
   return createEntityModalState({
     providerId: null,
+    reason: "owner_missing",
+    teamName: "",
   });
+}
+
+export function createTeamAiSharedState() {
+  return {
+    teamId: null,
+    status: "idle",
+    error: "",
+    isOwner: false,
+    settings: null,
+    secrets: null,
+    settingsSaveStatus: "idle",
+    settingsSaveError: "",
+  };
 }
 
 export function createAiSettingsAboutModalState() {

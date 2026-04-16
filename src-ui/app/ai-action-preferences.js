@@ -4,6 +4,7 @@ import {
   extractAiActionPreferences,
   normalizeStoredAiActionPreferences,
 } from "./ai-action-config.js";
+import { state } from "./state.js";
 
 const AI_ACTION_SETTINGS_STORAGE_KEY = "gnosis-tms-ai-action-settings";
 
@@ -11,18 +12,44 @@ function normalizeStorageLogin(login) {
   return typeof login === "string" && login.trim() ? login.trim().toLowerCase() : null;
 }
 
-function scopedAiActionSettingsKey(login = getActiveStorageLogin()) {
+function normalizeInstallationId(installationId) {
+  return Number.isFinite(installationId) ? Number(installationId) : null;
+}
+
+function selectedTeamInstallationId() {
+  return normalizeInstallationId(
+    state.teams.find((team) => team.id === state.selectedTeamId)?.installationId,
+  );
+}
+
+function scopedAiActionSettingsKey(login = getActiveStorageLogin(), installationId = selectedTeamInstallationId()) {
   const normalizedLogin = normalizeStorageLogin(login);
   return normalizedLogin ? `${AI_ACTION_SETTINGS_STORAGE_KEY}:${normalizedLogin}` : null;
 }
 
-export function loadStoredAiActionPreferences(login = getActiveStorageLogin()) {
-  const key = scopedAiActionSettingsKey(login);
+function scopedTeamAiActionSettingsKey(
+  login = getActiveStorageLogin(),
+  installationId = selectedTeamInstallationId(),
+) {
+  const normalizedLogin = normalizeStorageLogin(login);
+  const normalizedInstallationId = normalizeInstallationId(installationId);
+  return normalizedLogin && normalizedInstallationId !== null
+    ? `${AI_ACTION_SETTINGS_STORAGE_KEY}:${normalizedLogin}:team:${normalizedInstallationId}`
+    : null;
+}
+
+export function loadStoredAiActionPreferences(
+  login = getActiveStorageLogin(),
+  installationId = selectedTeamInstallationId(),
+) {
+  const teamKey = scopedTeamAiActionSettingsKey(login, installationId);
+  const key = teamKey ?? scopedAiActionSettingsKey(login, installationId);
   if (!key) {
     return normalizeStoredAiActionPreferences(null);
   }
 
-  const rawValue = readPersistentValue(key, null);
+  const rawValue = readPersistentValue(key, null)
+    ?? (teamKey ? readPersistentValue(scopedAiActionSettingsKey(login, installationId), null) : null);
   if (rawValue === null || rawValue === undefined) {
     return normalizeStoredAiActionPreferences(null);
   }
@@ -34,8 +61,14 @@ export function loadStoredAiActionPreferences(login = getActiveStorageLogin()) {
   return normalizedValue;
 }
 
-export function saveStoredAiActionPreferences(config, login = getActiveStorageLogin()) {
-  const key = scopedAiActionSettingsKey(login);
+export function saveStoredAiActionPreferences(
+  config,
+  login = getActiveStorageLogin(),
+  installationId = selectedTeamInstallationId(),
+) {
+  const key =
+    scopedTeamAiActionSettingsKey(login, installationId)
+    ?? scopedAiActionSettingsKey(login, installationId);
   if (!key) {
     return;
   }
@@ -44,8 +77,12 @@ export function saveStoredAiActionPreferences(config, login = getActiveStorageLo
   writePersistentValue(key, normalizedValue);
 }
 
-export function clearStoredAiActionPreferences(login = getActiveStorageLogin()) {
-  const key = scopedAiActionSettingsKey(login);
+export function clearStoredAiActionPreferences(
+  login = getActiveStorageLogin(),
+  installationId = selectedTeamInstallationId(),
+) {
+  const teamKey = scopedTeamAiActionSettingsKey(login, installationId);
+  const key = teamKey ?? scopedAiActionSettingsKey(login, installationId);
   if (!key) {
     return;
   }

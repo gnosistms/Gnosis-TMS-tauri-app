@@ -71,6 +71,23 @@ pub(crate) fn broker_post_json_with_session<T: DeserializeOwned>(
     parse_json_response(response)
 }
 
+pub(crate) fn broker_put_json_with_session<T: DeserializeOwned>(
+    client: &Client,
+    path: &str,
+    body: &serde_json::Value,
+    session_token: &str,
+) -> Result<T, String> {
+    let response = client
+        .put(broker_path_url(path)?)
+        .header("Accept", "application/json")
+        .bearer_auth(session_token)
+        .json(body)
+        .send()
+        .map_err(|error| format!("Could not reach the GitHub App broker: {error}"))?;
+
+    parse_json_response(response)
+}
+
 pub(crate) fn broker_post_no_content_with_session(
     client: &Client,
     path: &str,

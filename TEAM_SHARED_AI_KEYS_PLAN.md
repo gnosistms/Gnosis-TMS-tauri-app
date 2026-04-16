@@ -159,6 +159,56 @@ Suggested local cache shape:
 
 If a user belongs to three teams, they should end up with three distinct sets of cached team AI data.
 
+## AI Settings entry points and navigation
+
+AI Settings is now a per-team setting, not a global teams-page action.
+
+UI requirements:
+
+- Remove the global `AI Settings` button from the Teams page header.
+- Add an `AI Settings` action to each team card on the Teams page.
+- Team card action order must be:
+  - `Projects`
+  - `Glossaries`
+  - `Members`
+  - `AI Settings`
+  - `Rename`
+  - `Delete`
+- Only team owners should see the `AI Settings` action on a team card.
+- Non-owners should not see an `AI Settings` action on team cards.
+
+Section navigation requirements:
+
+- Projects page:
+  - `Teams`
+  - `Members`
+  - `Glossaries`
+  - `AI Settings`
+  - `Logout`
+- Members page:
+  - `Teams`
+  - `Projects`
+  - `Glossaries`
+  - `AI Settings`
+  - `Logout`
+- Glossaries page:
+  - `Teams`
+  - `Projects`
+  - `Members`
+  - `AI Settings`
+  - `Logout`
+- AI Settings page:
+  - `Teams`
+  - `Projects`
+  - `Glossaries`
+  - `Members`
+  - `Logout`
+
+Visibility rule:
+
+- On Projects, Members, and Glossaries pages, only team owners should see the `AI Settings` navigation button.
+- On the AI Settings page itself, the section navigation should follow the fixed order above.
+
 ## File format proposal
 
 ### `ai/settings.json`

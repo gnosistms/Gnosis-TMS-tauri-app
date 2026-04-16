@@ -8,6 +8,7 @@ import {
   textAction,
 } from "../lib/ui.js";
 import { formatErrorForDisplay } from "../app/error-display.js";
+import { canManageTeamAiSettings } from "../app/resource-capabilities.js";
 import { getNoticeBadgeText } from "../app/status-feedback.js";
 import { renderInviteUserModal } from "./invite-user-modal.js";
 import { renderTeamMemberRemoveModal } from "./team-member-remove-modal.js";
@@ -62,6 +63,7 @@ export function renderUsersScreen(state) {
   const canInviteUsers = selectedTeam?.canManageMembers === true && !state.offline?.isEnabled;
   const canManageMembers = selectedTeam?.canManageMembers === true && !state.offline?.isEnabled;
   const canLeaveTeam = selectedTeam?.canLeave === true && selectedTeam?.canDelete !== true && !state.offline?.isEnabled;
+  const canManageAiSettings = canManageTeamAiSettings(selectedTeam);
 
   const emptyState = renderStateCard({
     eyebrow: "NO MEMBERS FOUND",
@@ -96,7 +98,7 @@ export function renderUsersScreen(state) {
       title: "Members",
       subtitle: selectedTeam?.name ?? "Team",
       titleAction: buildPageRefreshAction(state),
-      navButtons: buildSectionNav("users"),
+      navButtons: buildSectionNav("users", { includeAiSettings: canManageAiSettings }),
       tools: `${primaryButton("+ Invite People", "open-invite-user", { disabled: !canInviteUsers })}`,
       pageSync: state.pageSync,
       noticeText: getNoticeBadgeText(),
