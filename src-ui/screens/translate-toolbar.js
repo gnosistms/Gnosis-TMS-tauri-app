@@ -259,7 +259,7 @@ export function renderTranslateToolbar({
           ${renderEditorReplaceControls(editorReplace)}
         </div>
         <div class="toolbar-meta">
-          ${textAction("Unreview All", "noop")}
+          ${textAction("Unreview All", "open-editor-unreview-all")}
         </div>
       </div>
     </div>

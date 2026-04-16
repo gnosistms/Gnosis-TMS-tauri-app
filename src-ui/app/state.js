@@ -304,6 +304,7 @@ export function createEditorChapterState() {
     backgroundSyncError: "",
     replaceUndoModal: createEditorReplaceUndoModalState(),
     conflictResolutionModal: createEditorConflictResolutionModalState(),
+    unreviewAllModal: createEditorUnreviewAllModalState(),
     expandedDeletedRowGroupIds: new Set(),
     insertRowModal: createEditorInsertRowModalState(),
     rowPermanentDeletionModal: createEditorRowPermanentDeletionModalState(),
@@ -428,6 +429,12 @@ export function createEditorRowPermanentDeletionModalState() {
 export function createEditorReplaceUndoModalState() {
   return createEntityModalState({
     commitSha: null,
+  });
+}
+
+export function createEditorUnreviewAllModalState() {
+  return createEntityModalState({
+    languageCode: null,
   });
 }
 

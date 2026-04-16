@@ -159,6 +159,16 @@ pub(crate) struct UpdateEditorRowFieldFlagInput {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub(crate) struct ClearEditorReviewedMarkersInput {
+    installation_id: i64,
+    repo_name: String,
+    project_id: Option<String>,
+    chapter_id: String,
+    language_code: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct InsertEditorRowInput {
     installation_id: i64,
     repo_name: String,
@@ -192,6 +202,13 @@ pub(crate) struct UpdateEditorRowFieldFlagResponse {
     language_code: String,
     reviewed: bool,
     please_check: bool,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ClearEditorReviewedMarkersResponse {
+    row_ids: Vec<String>,
+    language_code: String,
 }
 
 #[derive(Serialize)]
@@ -1915,6 +1932,87 @@ pub(super) fn update_gtms_editor_row_field_flag_sync(
         language_code: input.language_code,
         reviewed,
         please_check,
+    })
+}
+
+pub(super) fn clear_gtms_editor_reviewed_markers_sync(
+    app: &AppHandle,
+    input: ClearEditorReviewedMarkersInput,
+) -> Result<ClearEditorReviewedMarkersResponse, String> {
+    let repo_path = resolve_project_git_repo_path(
+        app,
+        input.installation_id,
+        input.project_id.as_deref(),
+        Some(&input.repo_name),
+    )?;
+    ensure_repo_exists(&repo_path, "The local project repo is not available yet.")?;
+    ensure_valid_git_repo(&repo_path, "The local project repo is missing or invalid.")?;
+
+    let chapter_path = find_chapter_path_by_id(&repo_path.join("chapters"), &input.chapter_id)?;
+    let rows_path = chapter_path.join("rows");
+    let mut changed_row_ids = Vec::new();
+    let mut relative_row_paths = Vec::new();
+
+    for stored_row in load_editor_rows(&rows_path)? {
+        let row_id = stored_row.row_id.trim().to_string();
+        if row_id.is_empty() {
+            continue;
+        }
+
+        let row_json_path = rows_path.join(format!("{row_id}.json"));
+        let original_row_text = fs::read_to_string(&row_json_path).map_err(|error| {
+            format!(
+                "Could not read row file '{}': {error}",
+                row_json_path.display()
+            )
+        })?;
+        let mut row_value: Value = serde_json::from_str(&original_row_text).map_err(|error| {
+            format!(
+                "Could not parse row file '{}': {error}",
+                row_json_path.display()
+            )
+        })?;
+        let (_, _, changed) =
+            apply_editor_field_flag_update(&mut row_value, &input.language_code, "reviewed", false)?;
+        if !changed {
+            continue;
+        }
+
+        let updated_row_json = serde_json::to_string_pretty(&row_value).map_err(|error| {
+            format!(
+                "Could not serialize row file '{}': {error}",
+                row_json_path.display()
+            )
+        })?;
+        let updated_row_text = format!("{updated_row_json}\n");
+        write_text_file(&row_json_path, &updated_row_text)?;
+        relative_row_paths.push(repo_relative_path(&repo_path, &row_json_path)?);
+        changed_row_ids.push(row_id);
+    }
+
+    if !changed_row_ids.is_empty() {
+        let mut add_args = vec!["add"];
+        for path in &relative_row_paths {
+            add_args.push(path.as_str());
+        }
+        git_output(&repo_path, &add_args)?;
+
+        let commit_paths: Vec<&str> = relative_row_paths.iter().map(String::as_str).collect();
+        git_commit_as_signed_in_user_with_metadata(
+            app,
+            &repo_path,
+            &format!("Mark all {} translations unreviewed", input.language_code),
+            &commit_paths,
+            CommitMetadata {
+                operation: Some("field-status"),
+                status_note: Some("Marked all unreviewed"),
+            },
+        )?;
+    }
+
+    Ok(ClearEditorReviewedMarkersResponse {
+        row_ids: changed_row_ids,
+        language_code: input.language_code,
     })
 }
 

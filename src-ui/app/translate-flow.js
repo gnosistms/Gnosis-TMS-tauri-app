@@ -45,7 +45,10 @@ import {
   updateEditorTargetLanguage as updateEditorTargetLanguageFlow,
 } from "./editor-selection-flow.js";
 import {
+  cancelEditorUnreviewAllModal as cancelEditorUnreviewAllModalFlow,
+  confirmEditorUnreviewAll as confirmEditorUnreviewAllFlow,
   flushDirtyEditorRows as flushDirtyEditorRowsFlow,
+  openEditorUnreviewAllModal as openEditorUnreviewAllModalFlow,
   persistEditorRowOnBlur as persistEditorRowOnBlurFlow,
   resolveEditorRowConflict as resolveEditorRowConflictFlow,
   scheduleDirtyEditorRowScan as scheduleDirtyEditorRowScanFlow,
@@ -450,6 +453,18 @@ export async function restoreEditorRow(render, rowId) {
 
 export async function confirmEditorRowPermanentDeletion(render) {
   await confirmEditorRowPermanentDeletionFlow(render, editorRowStructureOperations());
+}
+
+export function openEditorUnreviewAllModal(render) {
+  openEditorUnreviewAllModalFlow(render);
+}
+
+export function cancelEditorUnreviewAllModal(render) {
+  cancelEditorUnreviewAllModalFlow(render);
+}
+
+export async function confirmEditorUnreviewAll(render) {
+  await confirmEditorUnreviewAllFlow(render, editorPersistenceOperations());
 }
 
 export function updateEditorRowFieldValue(rowId, languageCode, nextValue) {

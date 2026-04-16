@@ -8,14 +8,16 @@ use tauri::AppHandle;
 
 use self::{
     chapter_editor::{
-        initialize_gtms_project_repo_sync, insert_gtms_editor_row_sync,
-        list_local_gtms_project_files_sync, load_gtms_chapter_editor_data_sync,
-        load_gtms_editor_field_history_sync, load_gtms_editor_row_sync,
-        permanently_delete_gtms_editor_row_sync, purge_local_gtms_project_repo_sync,
-        restore_gtms_editor_field_from_history_sync, reverse_gtms_editor_batch_replace_commit_sync,
-        update_gtms_chapter_glossary_links_sync, update_gtms_chapter_language_selection_sync,
-        update_gtms_editor_row_field_flag_sync, update_gtms_editor_row_fields_batch_sync,
-        update_gtms_editor_row_fields_sync, update_gtms_editor_row_lifecycle_sync,
+        clear_gtms_editor_reviewed_markers_sync, initialize_gtms_project_repo_sync,
+        insert_gtms_editor_row_sync, list_local_gtms_project_files_sync,
+        load_gtms_chapter_editor_data_sync, load_gtms_editor_field_history_sync,
+        load_gtms_editor_row_sync, permanently_delete_gtms_editor_row_sync,
+        purge_local_gtms_project_repo_sync, restore_gtms_editor_field_from_history_sync,
+        reverse_gtms_editor_batch_replace_commit_sync, update_gtms_chapter_glossary_links_sync,
+        update_gtms_chapter_language_selection_sync, update_gtms_editor_row_field_flag_sync,
+        update_gtms_editor_row_fields_batch_sync, update_gtms_editor_row_fields_sync,
+        update_gtms_editor_row_lifecycle_sync, ClearEditorReviewedMarkersInput,
+        ClearEditorReviewedMarkersResponse,
         InitializeProjectRepoInput, InitializeProjectRepoResponse, InsertEditorRowInput,
         InsertEditorRowResponse, ListLocalProjectFilesInput, LoadChapterEditorInput,
         LoadChapterEditorResponse, LoadEditorFieldHistoryInput, LoadEditorFieldHistoryResponse,
@@ -180,6 +182,18 @@ pub(crate) async fn update_gtms_editor_row_field_flag(
     })
     .await
     .map_err(|error| format!("The row flag update worker failed: {error}"))?
+}
+
+#[tauri::command]
+pub(crate) async fn clear_gtms_editor_reviewed_markers(
+    app: AppHandle,
+    input: ClearEditorReviewedMarkersInput,
+) -> Result<ClearEditorReviewedMarkersResponse, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        clear_gtms_editor_reviewed_markers_sync(&app, input)
+    })
+    .await
+    .map_err(|error| format!("The reviewed marker batch update worker failed: {error}"))?
 }
 
 #[tauri::command]

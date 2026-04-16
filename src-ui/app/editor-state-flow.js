@@ -28,6 +28,7 @@ import {
   createEditorReplaceState,
   createEditorHistoryState,
   createEditorInsertRowModalState,
+  createEditorUnreviewAllModalState,
   createEditorRowPermanentDeletionModalState,
   state,
 } from "./state.js";
@@ -162,6 +163,15 @@ export function applyEditorUiState(nextEditorChapter, previousEditorChapter = st
           ...previousEditorChapter.replaceUndoModal,
         }
         : createEditorReplaceUndoModalState(),
+    unreviewAllModal:
+      isSameChapter
+        && previousEditorChapter?.unreviewAllModal?.isOpen === true
+        && hasEditorLanguage(nextEditorChapter, previousEditorChapter.unreviewAllModal.languageCode)
+        ? {
+          ...createEditorUnreviewAllModalState(),
+          ...previousEditorChapter.unreviewAllModal,
+        }
+        : createEditorUnreviewAllModalState(),
     conflictResolutionModal:
       isSameChapter
         && previousEditorChapter?.conflictResolutionModal?.isOpen === true

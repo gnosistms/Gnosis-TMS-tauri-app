@@ -3,9 +3,11 @@ import { waitForNextPaint } from "../runtime.js";
 import { captureTranslateRowAnchor, restoreTranslateRowAnchor } from "../scroll-state.js";
 import {
   cancelEditorConflictResolutionModal,
+  cancelEditorUnreviewAllModal,
   cancelEditorReplaceUndoModal,
   cancelEditorRowPermanentDeletionModal,
   cancelInsertEditorRowModal,
+  confirmEditorUnreviewAll,
   confirmEditorReplaceUndo,
   confirmEditorRowPermanentDeletion,
   confirmInsertEditorRow,
@@ -13,6 +15,7 @@ import {
   copyEditorConflictResolutionVersion,
   deleteActiveEditorRowComment,
   openEditorConflictResolutionModal,
+  openEditorUnreviewAllModal,
   openEditorReplaceUndoModal,
   openEditorRowComments,
   openEditorRowPermanentDeletionModal,
@@ -64,6 +67,11 @@ export function createTranslateActions(render) {
       return true;
     }
 
+    if (action === "cancel-editor-unreview-all") {
+      cancelEditorUnreviewAllModal(render);
+      return true;
+    }
+
     if (action === "cancel-editor-conflict-resolution") {
       cancelEditorConflictResolutionModal(render);
       return true;
@@ -86,6 +94,11 @@ export function createTranslateActions(render) {
 
     if (action === "confirm-editor-replace-undo") {
       await confirmEditorReplaceUndo(render);
+      return true;
+    }
+
+    if (action === "confirm-editor-unreview-all") {
+      await confirmEditorUnreviewAll(render);
       return true;
     }
 
@@ -156,6 +169,11 @@ export function createTranslateActions(render) {
       const rowId = button?.dataset.rowId ?? null;
       const languageCode = button?.dataset.languageCode ?? null;
       openEditorRowComments(render, rowId, languageCode);
+      return true;
+    }
+
+    if (action === "open-editor-unreview-all") {
+      openEditorUnreviewAllModal(render);
       return true;
     }
 

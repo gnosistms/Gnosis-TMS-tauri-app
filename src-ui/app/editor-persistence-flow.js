@@ -29,6 +29,11 @@ import {
   applyEditorRowPersistReset,
   applyEditorRowPersistSucceeded,
 } from "./editor-persistence-state.js";
+import {
+  applyEditorChapterRowsUnreviewed,
+  cancelEditorUnreviewAllModalState,
+  openEditorUnreviewAllModalState,
+} from "./editor-review-state.js";
 import { findChapterContextById, selectedProjectsTeam } from "./project-context.js";
 import { invoke } from "./runtime.js";
 import { state } from "./state.js";
@@ -79,6 +84,47 @@ function cancelScheduledDirtyRowScan(rowId) {
   }
 
   pendingEditorDirtyRowScanFrameByRowId.delete(rowId);
+}
+
+function updateUnreviewAllModalError(message = "", render) {
+  if (!state.editorChapter?.chapterId || !state.editorChapter?.unreviewAllModal?.isOpen) {
+    return;
+  }
+
+  state.editorChapter = {
+    ...state.editorChapter,
+    unreviewAllModal: {
+      ...state.editorChapter.unreviewAllModal,
+      status: "idle",
+      error: message,
+    },
+  };
+  render?.();
+}
+
+function chapterHasPendingEditorWrites(chapterState = state.editorChapter) {
+  return (Array.isArray(chapterState?.rows) ? chapterState.rows : []).some((row) =>
+    row?.saveStatus === "saving"
+    || row?.markerSaveState?.status === "saving"
+    || rowHasPersistedChanges(row)
+  );
+}
+
+function chapterNeedsRefreshBeforeMarkerBatchUpdate(chapterState = state.editorChapter) {
+  if (chapterState?.deferredStructuralChanges === true) {
+    return true;
+  }
+
+  return (Array.isArray(chapterState?.rows) ? chapterState.rows : []).some((row) =>
+    row?.freshness === "stale"
+    || row?.freshness === "staleDirty"
+    || row?.freshness === "conflict"
+    || row?.remotelyDeleted === true
+  );
+}
+
+function formatUnreviewAllCount(count) {
+  return count === 1 ? "1 row" : `${count} rows`;
 }
 
 export function scheduleDirtyEditorRowScan(render, rowId, operations = {}) {
@@ -259,6 +305,121 @@ export async function toggleEditorRowFieldMarker(
       render?.();
     }
     showNoticeBadge(message || "The review marker could not be saved.", render);
+  }
+}
+
+export function openEditorUnreviewAllModal(render) {
+  const chapterState = state.editorChapter;
+  const languageCode =
+    typeof chapterState?.selectedTargetLanguageCode === "string"
+      ? chapterState.selectedTargetLanguageCode.trim()
+      : "";
+  if (!chapterState?.chapterId || !languageCode) {
+    return;
+  }
+
+  state.editorChapter = openEditorUnreviewAllModalState(chapterState, languageCode);
+  render?.();
+}
+
+export function cancelEditorUnreviewAllModal(render) {
+  if (!state.editorChapter?.chapterId) {
+    return;
+  }
+
+  state.editorChapter = cancelEditorUnreviewAllModalState(state.editorChapter);
+  render?.();
+}
+
+export async function confirmEditorUnreviewAll(render, operations = {}) {
+  const editorChapter = state.editorChapter;
+  const modal = editorChapter?.unreviewAllModal;
+  const languageCode =
+    typeof modal?.languageCode === "string" ? modal.languageCode.trim() : "";
+  if (!editorChapter?.chapterId || !modal?.isOpen || modal.status === "loading" || !languageCode) {
+    return;
+  }
+
+  await flushDirtyEditorRows(render, operations);
+  if (state.editorChapter?.chapterId !== editorChapter.chapterId) {
+    return;
+  }
+
+  if (chapterHasPendingEditorWrites(state.editorChapter)) {
+    updateUnreviewAllModalError(
+      "Save all row text before marking every translation unreviewed.",
+      render,
+    );
+    return;
+  }
+
+  if (chapterNeedsRefreshBeforeMarkerBatchUpdate(state.editorChapter)) {
+    updateUnreviewAllModalError(
+      "Refresh or resolve the file before marking every translation unreviewed.",
+      render,
+    );
+    return;
+  }
+
+  const team = selectedProjectsTeam();
+  const context = findChapterContextById(editorChapter.chapterId);
+  if (!Number.isFinite(team?.installationId) || !context?.project?.name) {
+    return;
+  }
+
+  state.editorChapter = {
+    ...state.editorChapter,
+    unreviewAllModal: {
+      ...state.editorChapter.unreviewAllModal,
+      status: "loading",
+      error: "",
+    },
+  };
+  render?.();
+
+  try {
+    const payload = await invoke("clear_gtms_editor_reviewed_markers", {
+      input: {
+        installationId: team.installationId,
+        projectId: context.project.id,
+        repoName: context.project.name,
+        chapterId: editorChapter.chapterId,
+        languageCode,
+      },
+    });
+
+    if (state.editorChapter?.chapterId !== editorChapter.chapterId) {
+      return;
+    }
+
+    const changedRowIds = Array.isArray(payload?.rowIds) ? payload.rowIds.filter(Boolean) : [];
+    const activeRowId = state.editorChapter.activeRowId;
+    const activeLanguageCode = state.editorChapter.activeLanguageCode;
+    state.editorChapter = applyEditorChapterRowsUnreviewed(
+      state.editorChapter,
+      languageCode,
+      changedRowIds,
+    );
+    reconcileDirtyTrackedEditorRows(changedRowIds);
+    render?.();
+
+    if (
+      changedRowIds.includes(activeRowId)
+      && activeLanguageCode === languageCode
+    ) {
+      loadActiveEditorFieldHistory(render);
+    }
+
+    showNoticeBadge(
+      changedRowIds.length > 0
+        ? `Marked ${formatUnreviewAllCount(changedRowIds.length)} unreviewed.`
+        : "All translations are already unreviewed.",
+      render,
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    updateUnreviewAllModalError(message, render);
+    showNoticeBadge(message || "The reviewed markers could not be cleared.", render);
   }
 }
 
