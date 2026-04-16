@@ -524,6 +524,12 @@ async function readTranslateScrollTop(page) {
   });
 }
 
+async function countGlossaryMarksForRow(page, rowId) {
+  return await page.locator(
+    `[data-editor-row-card][data-row-id="${rowId}"] [data-editor-glossary-mark]`,
+  ).count();
+}
+
 async function setTranslateScrollTop(page, top) {
   await page.evaluate((nextTop) => {
     const container = document.querySelector(".translate-main-scroll");
@@ -532,6 +538,18 @@ async function setTranslateScrollTop(page, top) {
       container.dispatchEvent(new Event("scroll"));
     }
   }, top);
+}
+
+async function openPlatformEditorFixture(page, platform) {
+  await page.addInitScript(() => {
+    try {
+      globalThis.localStorage?.clear();
+    } catch {
+      // Ignore local-storage access restrictions in the browser harness.
+    }
+  });
+  await page.goto(`/?platform=${platform}&fixture=editor&rows=200`);
+  await expect(page.locator("[data-editor-search-input]")).toBeVisible();
 }
 
 test.describe("editor regressions", () => {
@@ -850,6 +868,81 @@ test.describe("editor regressions", () => {
     }).toEqual(["fixture-row-0004:fixture-row-0005"]);
   });
 
+  test("fixture row actions work without a backend for insert, restore, and permanent delete", async ({ page }) => {
+    await mountEditorFixture(page, { rowCount: 12 });
+
+    await page.locator('[data-action="open-insert-editor-row:fixture-row-0004"]').click();
+    await expect(page.locator('[data-action="confirm-insert-editor-row-after"]')).toBeVisible();
+    await page.locator('[data-action="confirm-insert-editor-row-after"]').click();
+    await expect(page.locator('[data-editor-row-card][data-row-id="fixture-row-0013"]')).toBeVisible();
+
+    await page.locator('[data-action="soft-delete-editor-row:fixture-row-0004"]').click();
+    await expect(page.locator("[data-editor-deleted-group]")).toHaveCount(1);
+
+    await page.locator(".translation-deleted-group .section-separator").click();
+    await expect(page.locator('[data-action="restore-editor-row:fixture-row-0004"]')).toBeVisible();
+    await page.locator('[data-action="restore-editor-row:fixture-row-0004"]').click();
+    await expect(page.locator('[data-editor-row-card][data-row-id="fixture-row-0004"]')).toBeVisible();
+
+    await page.locator('[data-action="soft-delete-editor-row:fixture-row-0004"]').click();
+    await page.locator(".translation-deleted-group .section-separator").click();
+    await page.locator('[data-action="open-editor-row-permanent-delete:fixture-row-0004"]').click();
+    await expect(page.locator('[data-action="confirm-editor-row-permanent-delete"]')).toBeVisible();
+    await page.locator('[data-action="confirm-editor-row-permanent-delete"]').click();
+
+    await expect(page.locator('[data-editor-row-card][data-row-id="fixture-row-0004"]')).toHaveCount(0);
+    await expect(page.locator("[data-editor-deleted-group]")).toHaveCount(0);
+  });
+
+  test("Windows fixture glossary highlights render and survive a long scroll", async ({ page }) => {
+    await mountEditorFixture(page, { rowCount: 80, glossary: true }, { path: "/?platform=windows" });
+
+    await expect.poll(async () => {
+      return await countGlossaryMarksForRow(page, "fixture-row-0001");
+    }).toBe(2);
+
+    await setTranslateScrollTop(page, 9000);
+    await expect(page.locator('[data-editor-row-card][data-row-id="fixture-row-0030"]')).toBeVisible();
+
+    await expect.poll(async () => {
+      return await countGlossaryMarksForRow(page, "fixture-row-0030");
+    }).toBe(2);
+  });
+
+  test("Windows fixture glossary highlights survive delete show hide and restore", async ({ page }) => {
+    await mountEditorFixture(page, { rowCount: 80, glossary: true }, { path: "/?platform=windows" });
+
+    const rowId = "fixture-row-0030";
+    const rowCard = page.locator(`[data-editor-row-card][data-row-id="${rowId}"]`);
+    const deletedGroupToggle = page.locator(".translation-deleted-group .section-separator");
+
+    await setTranslateScrollTop(page, 9000);
+    await expect(rowCard).toBeVisible();
+
+    await expect.poll(async () => {
+      return await countGlossaryMarksForRow(page, rowId);
+    }).toBe(2);
+
+    await page.locator(`[data-action="soft-delete-editor-row:${rowId}"]`).click();
+    await expect(rowCard).toHaveCount(0);
+
+    await deletedGroupToggle.click();
+    await expect(rowCard).toBeVisible();
+    await expect.poll(async () => {
+      return await countGlossaryMarksForRow(page, rowId);
+    }).toBe(2);
+
+    await deletedGroupToggle.click();
+    await expect(rowCard).toHaveCount(0);
+
+    await deletedGroupToggle.click();
+    await page.locator(`[data-action="restore-editor-row:${rowId}"]`).click();
+    await expect(rowCard).toBeVisible();
+    await expect.poll(async () => {
+      return await countGlossaryMarksForRow(page, rowId);
+    }).toBe(2);
+  });
+
   test("selecting a replace row under virtualization keeps the main scroll position stable", async ({ page }) => {
     await mountEditorFixture(page, { rowCount: 80 });
 
@@ -902,89 +995,88 @@ test.describe("editor regressions", () => {
     }).toBeGreaterThan(0);
   });
 
-  test("scrolling in Windows mode does not continue running away after wheel input stops", async ({ page }) => {
-    await page.addInitScript(() => {
-      try {
-        globalThis.localStorage?.clear();
-      } catch {
-        // Ignore local-storage access restrictions in the browser harness.
-      }
+  for (const { label, platform } of [
+    { label: "Windows", platform: "windows" },
+    { label: "Mac", platform: "mac" },
+  ]) {
+    test(`scrolling in ${label} mode does not continue running away after wheel input stops`, async ({ page }) => {
+      await openPlatformEditorFixture(page, platform);
+
+      await setTranslateScrollTop(page, 34000);
+
+      await expect.poll(async () => {
+        return await readTranslateScrollTop(page);
+      }).toBeGreaterThan(33000);
+
+      await page.waitForTimeout(150);
+      const afterScrollInput = await readTranslateScrollTop(page);
+
+      await page.waitForTimeout(400);
+      const laterScrollTop = await readTranslateScrollTop(page);
+
+      expect(laterScrollTop - afterScrollInput).toBeLessThan(400);
+      expect(laterScrollTop).toBeLessThan(40000);
     });
-    await page.goto("/?platform=windows&fixture=editor&rows=200");
-    await expect(page.locator("[data-editor-search-input]")).toBeVisible();
 
-    await setTranslateScrollTop(page, 34000);
+    test(`a shallow ${label}-mode scroll does not jump backward after deferred layout`, async ({ page }) => {
+      await openPlatformEditorFixture(page, platform);
 
-    await expect.poll(async () => {
-      return await readTranslateScrollTop(page);
-    }).toBeGreaterThan(33000);
+      await setTranslateScrollTop(page, 850);
 
-    await page.waitForTimeout(150);
-    const afterScrollInput = await readTranslateScrollTop(page);
+      await expect.poll(async () => {
+        return await readTranslateScrollTop(page);
+      }).toBeGreaterThan(700);
 
-    await page.waitForTimeout(400);
-    const laterScrollTop = await readTranslateScrollTop(page);
+      await page.waitForTimeout(150);
+      const afterScrollInput = await readTranslateScrollTop(page);
 
-    expect(laterScrollTop - afterScrollInput).toBeLessThan(400);
-    expect(laterScrollTop).toBeLessThan(40000);
-  });
+      await page.waitForTimeout(450);
+      const laterScrollTop = await readTranslateScrollTop(page);
 
-  test("a shallow Windows-mode scroll does not jump backward after deferred layout", async ({ page }) => {
-    await page.addInitScript(() => {
-      try {
-        globalThis.localStorage?.clear();
-      } catch {
-        // Ignore local-storage access restrictions in the browser harness.
-      }
+      expect(Math.abs(laterScrollTop - afterScrollInput)).toBeLessThan(80);
     });
-    await page.goto("/?platform=windows&fixture=editor&rows=200");
-    await expect(page.locator("[data-editor-search-input]")).toBeVisible();
 
-    await setTranslateScrollTop(page, 850);
+    test(`a second shallow ${label}-mode scroll does not reuse a stale deferred anchor`, async ({ page }) => {
+      await openPlatformEditorFixture(page, platform);
 
-    await expect.poll(async () => {
-      return await readTranslateScrollTop(page);
-    }).toBeGreaterThan(700);
+      await setTranslateScrollTop(page, 850);
+      await expect.poll(async () => {
+        return await readTranslateScrollTop(page);
+      }).toBeGreaterThan(700);
+      await page.waitForTimeout(500);
 
-    await page.waitForTimeout(150);
-    const afterScrollInput = await readTranslateScrollTop(page);
+      await setTranslateScrollTop(page, 2920);
+      await expect.poll(async () => {
+        return await readTranslateScrollTop(page);
+      }).toBeGreaterThan(2800);
 
-    await page.waitForTimeout(450);
-    const laterScrollTop = await readTranslateScrollTop(page);
+      await page.waitForTimeout(150);
+      const afterSecondScrollInput = await readTranslateScrollTop(page);
 
-    expect(Math.abs(laterScrollTop - afterScrollInput)).toBeLessThan(80);
-  });
+      await page.waitForTimeout(450);
+      const laterScrollTop = await readTranslateScrollTop(page);
 
-  test("a second shallow Windows-mode scroll does not reuse a stale deferred anchor", async ({ page }) => {
-    await page.addInitScript(() => {
-      try {
-        globalThis.localStorage?.clear();
-      } catch {
-        // Ignore local-storage access restrictions in the browser harness.
-      }
+      expect(Math.abs(laterScrollTop - afterSecondScrollInput)).toBeLessThan(80);
     });
-    await page.goto("/?platform=windows&fixture=editor&rows=200");
-    await expect(page.locator("[data-editor-search-input]")).toBeVisible();
 
-    await setTranslateScrollTop(page, 850);
-    await expect.poll(async () => {
-      return await readTranslateScrollTop(page);
-    }).toBeGreaterThan(700);
-    await page.waitForTimeout(500);
+    test(`a longer ${label}-mode scroll does not jump backward after deferred layout`, async ({ page }) => {
+      await openPlatformEditorFixture(page, platform);
 
-    await setTranslateScrollTop(page, 2920);
-    await expect.poll(async () => {
-      return await readTranslateScrollTop(page);
-    }).toBeGreaterThan(2800);
+      await setTranslateScrollTop(page, 6730);
 
-    await page.waitForTimeout(150);
-    const afterSecondScrollInput = await readTranslateScrollTop(page);
+      await expect.poll(async () => {
+        return await readTranslateScrollTop(page);
+      }).toBeGreaterThan(6500);
 
-    await page.waitForTimeout(450);
-    const laterScrollTop = await readTranslateScrollTop(page);
+      await page.waitForTimeout(150);
+      const afterScrollInput = await readTranslateScrollTop(page);
 
-    expect(Math.abs(laterScrollTop - afterSecondScrollInput)).toBeLessThan(80);
-  });
+      await page.waitForTimeout(450);
+      const laterScrollTop = await readTranslateScrollTop(page);
+
+      expect(Math.abs(laterScrollTop - afterScrollInput)).toBeLessThan(120);
+    });
+  }
 
   test("typing in one row then flushing dirty rows persists the row through the backend", async ({ page }) => {
     await mountEditorFixture(page, { rowCount: 40 }, { mockTauri: true });

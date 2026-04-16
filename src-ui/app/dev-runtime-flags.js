@@ -24,6 +24,11 @@ function parsePositiveInteger(value, fallback) {
   return Number.isInteger(normalizedValue) && normalizedValue > 0 ? normalizedValue : fallback;
 }
 
+function parseBooleanFlag(value) {
+  const normalizedValue = typeof value === "string" ? value.trim().toLowerCase() : "";
+  return normalizedValue === "1" || normalizedValue === "true" || normalizedValue === "yes";
+}
+
 function normalizeEditorFixture(value) {
   const normalizedValue = typeof value === "string" ? value.trim().toLowerCase() : "";
   if (normalizedValue === "editor") {
@@ -61,6 +66,7 @@ export function readDevRuntimeFlags(options = {}) {
               params.get("rows") ?? params.get("rowCount"),
               200,
             ),
+            glossary: parseBooleanFlag(params.get("glossary")),
           }
         : null,
   };

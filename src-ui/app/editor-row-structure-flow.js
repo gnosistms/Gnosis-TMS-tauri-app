@@ -9,6 +9,10 @@ import {
   openInsertEditorRowModalState,
   toggleDeletedEditorRowGroupState,
 } from "./editor-row-structure-state.js";
+import {
+  createEditorRegressionInsertedRow,
+  isEditorRegressionFixtureState,
+} from "./editor-regression-fixture.js";
 import { findChapterContextById, selectedProjectsTeam } from "./project-context.js";
 import { invoke } from "./runtime.js";
 import {
@@ -72,6 +76,32 @@ export async function confirmInsertEditorRow(render, position, operations = {}) 
     return;
   }
   if (position !== "before" && position !== "after") {
+    return;
+  }
+
+  if (isEditorRegressionFixtureState(state)) {
+    const nextRow = createEditorRegressionInsertedRow(editorChapter);
+    if (!nextRow?.rowId) {
+      return;
+    }
+
+    operations.applyStructuralEditorChange(render, () => {
+      state.editorChapter = applyInsertedEditorRowState(
+        state.editorChapter,
+        nextRow,
+        modal.rowId,
+        position === "before",
+      );
+      operations.applyEditorSelectionsToProjectState(state.editorChapter);
+    }, {
+      anchorSnapshot: {
+        type: "row",
+        rowId: nextRow.rowId,
+        languageCode: null,
+        offsetTop: 80,
+      },
+      reloadHistory: true,
+    });
     return;
   }
 
@@ -159,6 +189,23 @@ export async function softDeleteEditorRow(render, rowId, triggerAnchorSnapshot =
     return;
   }
 
+  if (isEditorRegressionFixtureState(state)) {
+    const result = applySoftDeletedEditorRowState(
+      state.editorChapter,
+      rowId,
+      "deleted",
+      null,
+      triggerAnchorSnapshot,
+    );
+    operations.applyStructuralEditorChange(render, () => {
+      state.editorChapter = result.chapterState;
+      operations.applyEditorSelectionsToProjectState(state.editorChapter);
+    }, {
+      anchorSnapshot: result.anchorSnapshot,
+    });
+    return;
+  }
+
   const row = await ensureEditorRowReadyForWrite(render, rowId, { structural: true });
   if (!row || row.saveStatus !== "idle" || row.markerSaveState?.status === "saving") {
     showNoticeBadge("Save the current row before deleting it.", render);
@@ -217,6 +264,24 @@ export async function restoreEditorRow(render, rowId, operations = {}) {
 
   const editorChapter = state.editorChapter;
   if (!editorChapter?.chapterId || !rowId) {
+    return;
+  }
+
+  if (isEditorRegressionFixtureState(state)) {
+    const triggerAnchorSnapshot = captureTranslateAnchorForRow(rowId);
+    const result = applyRestoredEditorRowState(
+      state.editorChapter,
+      rowId,
+      "active",
+      null,
+      triggerAnchorSnapshot,
+    );
+    operations.applyStructuralEditorChange(render, () => {
+      state.editorChapter = result.chapterState;
+      operations.applyEditorSelectionsToProjectState(state.editorChapter);
+    }, {
+      anchorSnapshot: result.anchorSnapshot,
+    });
     return;
   }
 
@@ -279,6 +344,23 @@ export async function confirmEditorRowPermanentDeletion(render, operations = {})
   const editorChapter = state.editorChapter;
   const modal = editorChapter?.rowPermanentDeletionModal;
   if (!editorChapter?.chapterId || !modal?.isOpen || !modal.rowId) {
+    return;
+  }
+
+  if (isEditorRegressionFixtureState(state)) {
+    const triggerAnchorSnapshot = captureTranslateAnchorForRow(modal.rowId);
+    const result = applyPermanentlyDeletedEditorRowState(
+      state.editorChapter,
+      modal.rowId,
+      null,
+      triggerAnchorSnapshot,
+    );
+    operations.applyStructuralEditorChange(render, () => {
+      state.editorChapter = result.chapterState;
+      operations.applyEditorSelectionsToProjectState(state.editorChapter);
+    }, {
+      anchorSnapshot: result.anchorSnapshot,
+    });
     return;
   }
 

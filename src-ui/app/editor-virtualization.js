@@ -1,9 +1,11 @@
 import { syncEditorRowTextareaHeights } from "./autosize.js";
 import { logEditorScrollDebug } from "./editor-scroll-debug.js";
-import { isWindowsPlatform } from "./runtime.js";
+import {
+  EDITOR_RECONCILES_GLOSSARY_VISIBLE_LAYOUT,
+  EDITOR_USES_DEFERRED_SCROLL_RECONCILE,
+} from "./editor-scroll-policy.js";
 import {
   captureVisibleTranslateLocation,
-  captureVisibleTranslateRowLocation,
   pendingTranslateAnchorRowId,
   queueTranslateRowAnchor,
   resolveTranslateRowAnchor,
@@ -274,8 +276,8 @@ export function initializeEditorVirtualization(root, appState) {
       initialModel.editorFontSizePx,
     )
     : null;
-  const shouldDeferScrollWindowReconcile = isWindowsPlatform();
-  const shouldReconcileGlossaryVisibleLayout = !isWindowsPlatform();
+  const shouldDeferScrollReconcile = EDITOR_USES_DEFERRED_SCROLL_RECONCILE;
+  const shouldReconcileGlossaryVisibleLayout = EDITOR_RECONCILES_GLOSSARY_VISIBLE_LAYOUT;
   let currentRangeKey = "";
   let animationFrameId = 0;
   const deferredRowHeightCache = new Map();
@@ -293,6 +295,18 @@ export function initializeEditorVirtualization(root, appState) {
       suppressedScrollResetFrameId = 0;
       suppressedScrollEvents = 0;
     });
+  };
+  const commitDeferredRowHeights = (reason = "deferred-scroll-layout") => {
+    const deferredHeightCount = deferredRowHeightCache.size;
+    const committedDeferredHeights = commitStagedRowHeights(rowHeightCache, deferredRowHeightCache);
+    logEditorScrollDebug("virtualization-deferred-heights-committed", {
+      committedDeferredHeights,
+      deferredHeightCount,
+      reason,
+      scrollTop: scrollContainer.scrollTop,
+      rangeKey: currentRangeKey,
+    });
+    return committedDeferredHeights;
   };
   const restoreAnchorSnapshot = (anchorSnapshot, reason) => {
     if (!anchorSnapshot?.rowId) {
@@ -330,14 +344,7 @@ export function initializeEditorVirtualization(root, appState) {
 
     if (reason === "deferred-scroll-layout") {
       armSuppressedScrollEvent();
-      const deferredHeightCount = deferredRowHeightCache.size;
-      const committedDeferredHeights = commitStagedRowHeights(rowHeightCache, deferredRowHeightCache);
-      logEditorScrollDebug("virtualization-deferred-heights-committed", {
-        committedDeferredHeights,
-        deferredHeightCount,
-        scrollTop: scrollContainer.scrollTop,
-        rangeKey: currentRangeKey,
-      });
+      commitDeferredRowHeights(reason);
     }
 
     const model = buildEditorScreenViewModel(appState);
@@ -396,7 +403,7 @@ export function initializeEditorVirtualization(root, appState) {
     const shouldStageMeasuredWindowReconcile = shouldDeferMeasuredWindowReconcile(
       reason,
       anchorSnapshot,
-      shouldDeferScrollWindowReconcile,
+      shouldDeferScrollReconcile,
     );
     const heightsChanged = measureVisibleRowHeights(
       itemsContainer,
@@ -499,17 +506,12 @@ export function initializeEditorVirtualization(root, appState) {
     afterVisibleSync() {
       if (hasDeferredMeasuredWindowReconcile) {
         hasDeferredMeasuredWindowReconcile = false;
-        const anchorSnapshot = captureVisibleTranslateRowLocation() ?? captureEditorLayoutAnchor(root);
         logEditorScrollDebug("virtualization-height-change-reconciled", {
           reason: "deferred-scroll-layout",
-          rowAnchorId: anchorSnapshot?.rowId ?? "",
           scrollTop: scrollContainer.scrollTop,
           rangeKey: currentRangeKey,
         });
-        renderWindow(false, {
-          anchorSnapshot,
-          reason: "deferred-scroll-layout",
-        });
+        commitDeferredRowHeights("deferred-scroll-layout");
         return;
       }
 

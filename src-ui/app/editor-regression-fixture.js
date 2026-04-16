@@ -4,11 +4,27 @@ import {
   expandedDeletedRowGroupIdsAfterSoftDelete,
 } from "./editor-deleted-rows.js";
 import { normalizeStoredAiActionPreferences } from "./ai-action-config.js";
-import { createEditorChapterState, createEditorHistoryState } from "./state.js";
+import { buildEditorGlossaryModel } from "./editor-glossary-highlighting.js";
+import {
+  createEditorChapterGlossaryState,
+  createEditorChapterState,
+  createEditorHistoryState,
+} from "./state.js";
 
+const FIXTURE_MODE = "editor-regression";
 const DEFAULT_LANGUAGES = [
   { code: "es", name: "Spanish", role: "source" },
   { code: "vi", name: "Vietnamese", role: "target" },
+];
+const DEFAULT_GLOSSARY_TERMS = [
+  {
+    termId: "fixture-term-alpha",
+    lifecycleState: "active",
+    sourceTerms: ["alpha"],
+    targetTerms: ["alpha"],
+    notesToTranslators: "",
+    footnote: "",
+  },
 ];
 
 function normalizePositiveInteger(value, fallback) {
@@ -18,6 +34,122 @@ function normalizePositiveInteger(value, fallback) {
 
 function padFixtureIndex(index) {
   return String(index).padStart(4, "0");
+}
+
+function normalizeFixtureTermList(values) {
+  return (Array.isArray(values) ? values : [])
+    .map((value) => String(value ?? "").trim())
+    .filter(Boolean);
+}
+
+function normalizeFixtureGlossaryTerm(term, index) {
+  if (typeof term === "string" && term.trim()) {
+    return {
+      termId: `fixture-term-${padFixtureIndex(index + 1)}`,
+      lifecycleState: "active",
+      sourceTerms: [term.trim()],
+      targetTerms: [term.trim()],
+      notesToTranslators: "",
+      footnote: "",
+    };
+  }
+
+  if (!term || typeof term !== "object") {
+    return null;
+  }
+
+  const sourceTerms = normalizeFixtureTermList(
+    Array.isArray(term.sourceTerms)
+      ? term.sourceTerms
+      : (typeof term.sourceTerm === "string" ? [term.sourceTerm] : []),
+  );
+  const targetTerms = normalizeFixtureTermList(
+    Array.isArray(term.targetTerms)
+      ? term.targetTerms
+      : (typeof term.targetTerm === "string" ? [term.targetTerm] : sourceTerms),
+  );
+  if (sourceTerms.length === 0 && targetTerms.length === 0) {
+    return null;
+  }
+
+  const termId =
+    typeof term.termId === "string" && term.termId.trim()
+      ? term.termId.trim()
+      : `fixture-term-${padFixtureIndex(index + 1)}`;
+
+  return {
+    termId,
+    lifecycleState: term.lifecycleState === "deleted" ? "deleted" : "active",
+    sourceTerms,
+    targetTerms,
+    notesToTranslators:
+      typeof term.notesToTranslators === "string" ? term.notesToTranslators : "",
+    footnote: typeof term.footnote === "string" ? term.footnote : "",
+  };
+}
+
+function buildFixtureGlossary(languages, options = {}) {
+  const glossaryTerms =
+    options?.glossary === true
+      ? DEFAULT_GLOSSARY_TERMS
+      : (Array.isArray(options?.glossaryTerms) ? options.glossaryTerms : []);
+  const normalizedTerms = glossaryTerms
+    .map((term, index) => normalizeFixtureGlossaryTerm(term, index))
+    .filter(Boolean);
+  if (normalizedTerms.length === 0) {
+    return {
+      linkedGlossary: null,
+      glossaryState: createEditorChapterGlossaryState(),
+      glossaryList: [],
+    };
+  }
+
+  const sourceLanguage = languages.find((language) => language.role === "source") ?? languages[0] ?? null;
+  const targetLanguage =
+    languages.find((language) => language.role === "target" && language.code !== sourceLanguage?.code)
+    ?? languages.find((language) => language.code !== sourceLanguage?.code)
+    ?? sourceLanguage;
+  const linkedGlossary = {
+    glossaryId: "fixture-glossary",
+    repoName: "fixture/fixture-glossary",
+  };
+  const glossaryState = {
+    ...createEditorChapterGlossaryState(),
+    status: "ready",
+    glossaryId: linkedGlossary.glossaryId,
+    repoName: linkedGlossary.repoName,
+    title: "Fixture Glossary",
+    sourceLanguage: sourceLanguage
+      ? {
+          code: sourceLanguage.code,
+          name: sourceLanguage.name,
+        }
+      : null,
+    targetLanguage: targetLanguage
+      ? {
+          code: targetLanguage.code,
+          name: targetLanguage.name,
+        }
+      : null,
+    terms: normalizedTerms,
+  };
+  glossaryState.matcherModel = buildEditorGlossaryModel(glossaryState);
+
+  return {
+    linkedGlossary,
+    glossaryState,
+    glossaryList: [
+      {
+        id: linkedGlossary.glossaryId,
+        glossaryId: linkedGlossary.glossaryId,
+        repoName: linkedGlossary.repoName,
+        title: glossaryState.title,
+        lifecycleState: "active",
+        sourceLanguage: glossaryState.sourceLanguage,
+        targetLanguage: glossaryState.targetLanguage,
+      },
+    ],
+  };
 }
 
 function createFixtureRow(index, languages, options = {}) {
@@ -84,6 +216,40 @@ function rowsWithFixtureLifecycleState(rows, rowId, lifecycleState) {
   );
 }
 
+function nextFixtureRowIndex(rows) {
+  const items = Array.isArray(rows) ? rows : [];
+  let maxIndex = 0;
+
+  for (const row of items) {
+    const match = /^fixture-row-(\d+)$/.exec(String(row?.rowId ?? ""));
+    if (!match) {
+      continue;
+    }
+
+    const nextIndex = Number.parseInt(match[1], 10);
+    if (Number.isInteger(nextIndex) && nextIndex > maxIndex) {
+      maxIndex = nextIndex;
+    }
+  }
+
+  return maxIndex + 1;
+}
+
+export function isEditorRegressionFixtureState(appState) {
+  return appState?.editorChapter?.fixtureMode === FIXTURE_MODE;
+}
+
+export function createEditorRegressionInsertedRow(chapterState) {
+  if (!chapterState?.chapterId) {
+    return null;
+  }
+
+  const languages = Array.isArray(chapterState.languages) && chapterState.languages.length > 0
+    ? chapterState.languages
+    : DEFAULT_LANGUAGES;
+  return createFixtureRow(nextFixtureRowIndex(chapterState.rows), languages);
+}
+
 function notifyMockTauriFixture(payload) {
   const mockTauri = globalThis?.__gnosisMockTauri;
   if (!mockTauri || typeof mockTauri.mountEditorFixture !== "function") {
@@ -118,6 +284,7 @@ export function applyEditorRegressionFixture(appState, options = {}) {
     ? options.fileTitle.trim()
     : "Editor Regression Fixture";
   const rows = Array.from({ length: rowCount }, (_, index) => createFixtureRow(index + 1, languages, options));
+  const fixtureGlossary = buildFixtureGlossary(languages, options);
   const chapter = {
     id: chapterId,
     name: fileTitle,
@@ -127,7 +294,7 @@ export function applyEditorRegressionFixture(appState, options = {}) {
     sourceWordCount: rowCount * 3,
     selectedSourceLanguageCode: sourceCode,
     selectedTargetLanguageCode: targetCode,
-    linkedGlossary: null,
+    linkedGlossary: fixtureGlossary.linkedGlossary,
   };
   const project = {
     id: projectId,
@@ -146,6 +313,7 @@ export function applyEditorRegressionFixture(appState, options = {}) {
   };
   const editorChapter = {
     ...createEditorChapterState(),
+    fixtureMode: FIXTURE_MODE,
     status: "idle",
     error: "",
     projectId,
@@ -187,6 +355,7 @@ export function applyEditorRegressionFixture(appState, options = {}) {
         },
       ]),
     ),
+    glossary: fixtureGlossary.glossaryState,
     rows,
   };
 
@@ -198,7 +367,7 @@ export function applyEditorRegressionFixture(appState, options = {}) {
   appState.deletedTeams = [];
   appState.projects = [project];
   appState.deletedProjects = [];
-  appState.glossaries = [];
+  appState.glossaries = fixtureGlossary.glossaryList;
   appState.users = [];
   appState.expandedProjects = new Set([projectId]);
   appState.expandedDeletedFiles = new Set();

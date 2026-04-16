@@ -20,12 +20,13 @@ test("readDevRuntimeFlags parses a Windows editor fixture URL", () => {
   assert.deepEqual(
     readDevRuntimeFlags({
       isDev: true,
-      search: "?platform=windows&fixture=editor&rows=320",
+      search: "?platform=windows&fixture=editor&rows=320&glossary=1",
     }),
     {
       platformOverride: "windows",
       editorFixture: {
         rowCount: 320,
+        glossary: true,
       },
     },
   );
@@ -41,6 +42,7 @@ test("readDevRuntimeFlags normalizes aliases and falls back on invalid row count
       platformOverride: "mac",
       editorFixture: {
         rowCount: 200,
+        glossary: false,
       },
     },
   );
