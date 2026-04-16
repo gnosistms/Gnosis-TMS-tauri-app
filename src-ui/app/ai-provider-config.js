@@ -1,6 +1,6 @@
-export const DEFAULT_AI_PROVIDER_ID = "gemini";
+export const DEFAULT_AI_PROVIDER_ID = "openai";
 
-export const AI_PROVIDER_IDS = ["gemini", "openai", "claude", "deepseek"];
+export const AI_PROVIDER_IDS = ["openai", "claude", "deepseek", "gemini"];
 
 const AI_PROVIDER_ICON_URLS = {
   gemini: new URL("../assets/ai-providers/gemini.svg", import.meta.url).href,

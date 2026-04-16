@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 
 const cloneValue = (value) => {
   if (value === undefined) {
@@ -119,6 +120,7 @@ const { runEditorAiTranslate } = await import("./editor-ai-translate-flow.js");
 const {
   aiActionControlsAreBusy,
   dismissAiSettingsAboutModal,
+  ensureSharedAiActionConfigurationLoaded,
   getAiActionControlsBusyMessage,
   loadAiSettingsPage,
   explainAiModelProbeError,
@@ -150,6 +152,10 @@ const {
   loadStoredAiSettingsAboutDismissed,
 } = await import("./ai-settings-preferences.js");
 const { pickPreferredAiModelId } = await import("./ai-action-config.js");
+const {
+  AI_PROVIDER_IDS,
+  DEFAULT_AI_PROVIDER_ID,
+} = await import("./ai-provider-config.js");
 const {
   buildEditorDerivedGlossaryModel,
   buildEditorGlossaryModel,
@@ -1682,12 +1688,8 @@ test("AI key load and save flows populate and persist aiSettings state", async (
     }
     if (command === "list_ai_provider_models") {
       return [
-        { id: "gemini-3-pro-preview", label: "gemini-3-pro-preview" },
-        { id: "gemini-3-flash-preview", label: "gemini-3-flash-preview" },
-        {
-          id: "gemini-2.5-flash-lite-preview-09-2025",
-          label: "gemini-2.5-flash-lite-preview-09-2025",
-        },
+        { id: "gpt-5.4", label: "gpt-5.4" },
+        { id: "gpt-5.4-mini", label: "gpt-5.4-mini" },
       ];
     }
     if (command === "save_ai_provider_secret") {
@@ -1707,20 +1709,17 @@ test("AI key load and save flows populate and persist aiSettings state", async (
   await saveAiProviderSecret(() => {});
 
   assert.deepEqual(savedPayload, {
-    providerId: "gemini",
+    providerId: "openai",
     apiKey: "  sk-updated  ",
   });
   assert.equal(state.aiSettings.status, "ready");
   assert.equal(state.aiSettings.apiKey, "sk-updated");
-  assert.equal(state.aiSettings.successMessage, "Gemini key saved.");
+  assert.equal(state.aiSettings.successMessage, "OpenAI key saved.");
   assert.deepEqual(
-    state.aiSettings.actionConfig.modelOptionsByProvider.gemini.options,
+    state.aiSettings.actionConfig.modelOptionsByProvider.openai.options,
     [
-      { id: "gemini-3-flash-preview", label: "gemini-3-flash-preview" },
-      {
-        id: "gemini-2.5-flash-lite-preview-09-2025",
-        label: "gemini-2.5-flash-lite-preview-09-2025",
-      },
+      { id: "gpt-5.4", label: "gpt-5.4" },
+      { id: "gpt-5.4-mini", label: "gpt-5.4-mini" },
     ],
   );
 
@@ -1755,10 +1754,6 @@ test("AI key provider selection loads and saves keys independently by provider",
   };
 
   await loadAiProviderSecret(() => {});
-  assert.equal(state.aiSettings.providerId, "gemini");
-  assert.equal(state.aiSettings.apiKey, "gm-existing");
-
-  await selectAiProvider(() => {}, "openai");
   assert.equal(state.aiSettings.providerId, "openai");
   assert.equal(state.aiSettings.apiKey, "sk-openai");
 
@@ -1786,6 +1781,254 @@ test("AI key provider selection loads and saves keys independently by provider",
       apiKey: "  gm-updated  ",
     }],
   );
+});
+
+test("AI Settings defaults to OpenAI, lists Gemini last, and recommends OpenAI", () => {
+  resetSessionState();
+  assert.equal(DEFAULT_AI_PROVIDER_ID, "openai");
+  assert.deepEqual(AI_PROVIDER_IDS, ["openai", "claude", "deepseek", "gemini"]);
+  assert.equal(state.aiSettings.providerId, "openai");
+  assert.match(
+    readFileSync(new URL("../screens/ai-key.js", import.meta.url), "utf8"),
+    /recommend OpenAI/i,
+  );
+});
+
+test("saveAiProviderSecret initializes shared team action preferences for the saved provider", async () => {
+  resetSessionState();
+  installSelectedTeam({ canDelete: true });
+  state.screen = "aiKey";
+
+  const brokerKeypair = await generateTeamAiMemberKeypair();
+  let cachedTeamApiKey = null;
+  const savedTeamSettingsPayloads = [];
+
+  invokeHandler = async (command, payload = {}) => {
+    if (command === "load_team_ai_broker_public_key") {
+      return {
+        algorithm: "rsa-oaep-sha256-v1",
+        publicKeyPem: brokerKeypair.publicKeyPem,
+      };
+    }
+    if (command === "save_team_ai_provider_secret") {
+      return {
+        schemaVersion: 1,
+        updatedAt: null,
+        updatedBy: "owner",
+        providers: {
+          openai: {
+            configured: true,
+            keyVersion: 4,
+            algorithm: "rsa-oaep-sha256-v1",
+          },
+          gemini: null,
+          claude: null,
+          deepseek: null,
+        },
+      };
+    }
+    if (command === "save_team_ai_provider_cache") {
+      cachedTeamApiKey = payload.apiKey;
+      return null;
+    }
+    if (command === "load_team_ai_settings") {
+      return null;
+    }
+    if (command === "load_team_ai_secrets_metadata") {
+      return {
+        schemaVersion: 1,
+        updatedAt: null,
+        updatedBy: "owner",
+        providers: {
+          openai: {
+            configured: true,
+            keyVersion: 4,
+            algorithm: "rsa-oaep-sha256-v1",
+          },
+          gemini: null,
+          claude: null,
+          deepseek: null,
+        },
+      };
+    }
+    if (command === "load_ai_provider_secret") {
+      assert.equal(payload.installationId, 42);
+      return cachedTeamApiKey;
+    }
+    if (command === "load_team_ai_provider_cache") {
+      return {
+        apiKey: cachedTeamApiKey,
+        keyVersion: 4,
+      };
+    }
+    if (command === "list_ai_provider_models") {
+      return [
+        { id: "gpt-5.4", label: "gpt-5.4" },
+        { id: "gpt-5.4-mini", label: "gpt-5.4-mini" },
+      ];
+    }
+    if (command === "save_team_ai_settings") {
+      savedTeamSettingsPayloads.push(payload);
+      return {
+        schemaVersion: 1,
+        updatedAt: "2026-04-16T12:00:00.000Z",
+        updatedBy: "owner",
+        actionPreferences: payload.actionPreferences,
+      };
+    }
+
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  updateAiProviderSecretDraft("  sk-team-openai  ");
+  await saveAiProviderSecret(() => {});
+  await Promise.resolve();
+  await Promise.resolve();
+
+  assert.equal(state.aiSettings.providerId, "openai");
+  assert.equal(state.aiSettings.successMessage, "OpenAI key saved.");
+  assert.ok(savedTeamSettingsPayloads.length >= 1);
+  assert.equal(savedTeamSettingsPayloads[0].actionPreferences.unified.providerId, "openai");
+  assert.equal(savedTeamSettingsPayloads[0].actionPreferences.unified.modelId, "gpt-5.4");
+});
+
+test("ensureSharedAiActionConfigurationLoaded applies the saved team action preferences", async () => {
+  resetSessionState();
+  installSelectedTeam({ canDelete: false });
+  state.aiSettings = {
+    ...state.aiSettings,
+    actionConfig: {
+      ...state.aiSettings.actionConfig,
+      unified: {
+        providerId: "gemini",
+        modelId: "gemini-3-flash-preview",
+      },
+    },
+  };
+
+  invokeHandler = async (command) => {
+    if (command === "load_team_ai_settings") {
+      return {
+        schemaVersion: 1,
+        updatedAt: "2026-04-16T12:00:00.000Z",
+        updatedBy: "owner",
+        actionPreferences: {
+          detailedConfiguration: false,
+          unified: {
+            providerId: "openai",
+            modelId: "gpt-5.4-mini",
+          },
+          actions: {},
+        },
+      };
+    }
+    if (command === "load_team_ai_secrets_metadata") {
+      return {
+        schemaVersion: 1,
+        updatedAt: "2026-04-16T12:00:00.000Z",
+        updatedBy: "owner",
+        providers: {
+          openai: {
+            configured: true,
+            keyVersion: 5,
+            algorithm: "rsa-oaep-sha256-v1",
+          },
+          gemini: null,
+          claude: null,
+          deepseek: null,
+        },
+      };
+    }
+
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  await ensureSharedAiActionConfigurationLoaded(() => {});
+
+  assert.equal(state.aiSettings.actionConfig.unified.providerId, "openai");
+  assert.equal(state.aiSettings.actionConfig.unified.modelId, "gpt-5.4-mini");
+});
+
+test("runEditorAiReview loads shared team action preferences before choosing the provider", async () => {
+  installTranslateFixture();
+  installSelectedTeam({ canDelete: false });
+  state.aiSettings = {
+    ...state.aiSettings,
+    actionConfig: {
+      ...state.aiSettings.actionConfig,
+      unified: {
+        providerId: "gemini",
+        modelId: "gemini-3-flash-preview",
+      },
+    },
+  };
+
+  invokeHandler = async (command, payload = {}) => {
+    if (command === "load_team_ai_settings") {
+      return {
+        schemaVersion: 1,
+        updatedAt: "2026-04-16T12:00:00.000Z",
+        updatedBy: "owner",
+        actionPreferences: {
+          detailedConfiguration: false,
+          unified: {
+            providerId: "openai",
+            modelId: "gpt-5.4-mini",
+          },
+          actions: {},
+        },
+      };
+    }
+    if (command === "load_team_ai_secrets_metadata") {
+      return {
+        schemaVersion: 1,
+        updatedAt: "2026-04-16T12:00:00.000Z",
+        updatedBy: "owner",
+        providers: {
+          openai: {
+            configured: true,
+            keyVersion: 5,
+            algorithm: "rsa-oaep-sha256-v1",
+          },
+          gemini: null,
+          claude: null,
+          deepseek: null,
+        },
+      };
+    }
+    if (command === "load_ai_provider_secret") {
+      assert.equal(payload.installationId, 42);
+      return null;
+    }
+    if (command === "load_team_ai_provider_cache") {
+      return {
+        apiKey: "sk-shared-openai",
+        keyVersion: 5,
+      };
+    }
+    if (command === "run_ai_review") {
+      assert.deepEqual(payload, {
+        request: {
+          providerId: "openai",
+          modelId: "gpt-5.4-mini",
+          text: "Texto original",
+          languageCode: "vi",
+          installationId: 42,
+        },
+      });
+      return {
+        suggestedText: "Texto revisado",
+      };
+    }
+
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  await runEditorAiReview(() => {});
+
+  assert.equal(state.aiSettings.actionConfig.unified.providerId, "openai");
+  assert.equal(state.aiSettings.actionConfig.unified.modelId, "gpt-5.4-mini");
+  assert.equal(state.editorChapter.aiReview.status, "ready");
 });
 
 test("AI Settings shows the about modal by default and can persist dismissal", async () => {

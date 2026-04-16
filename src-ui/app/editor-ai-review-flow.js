@@ -9,6 +9,7 @@ import {
   resolveVisibleEditorAiReview,
 } from "./editor-ai-review-state.js";
 import {
+  ensureSharedAiActionConfigurationLoaded,
   openAiReviewMissingKeyModal,
   resolveAiReviewProviderAndModel,
 } from "./ai-settings-flow.js";
@@ -91,6 +92,13 @@ export async function runEditorAiReview(render) {
     );
     render?.({ scope: "translate-sidebar" });
     return;
+  }
+
+  try {
+    await ensureSharedAiActionConfigurationLoaded(render);
+  } catch {
+    // Keep the current local selection and let the downstream key/model checks
+    // surface the actionable error.
   }
 
   const { providerId, modelId } = resolveAiReviewProviderAndModel();

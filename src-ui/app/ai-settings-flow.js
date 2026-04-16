@@ -1,6 +1,6 @@
 import { invoke } from "./runtime.js";
 import { selectedProjectsTeamInstallationId } from "./project-context.js";
-import { showNoticeBadge } from "./status-feedback.js";
+import { clearNoticeBadge, showNoticeBadge } from "./status-feedback.js";
 import {
   AI_ACTION_IDS,
   coerceAiActionPreferencesToSavedProviders,
@@ -19,6 +19,7 @@ import {
 import {
   AI_PROVIDER_IDS,
   getAiProviderActionLabel,
+  getAiProviderConfig,
   getAiProviderSavedMessage,
   normalizeAiProviderId,
 } from "./ai-provider-config.js";
@@ -191,6 +192,38 @@ function applyAiActionPreferences(nextPreferences) {
     ...actionConfigState(),
     ...normalizedPreferences,
   });
+}
+
+function normalizeAiActionPreferencesSnapshot(value) {
+  return JSON.stringify(normalizeStoredAiActionPreferences(value));
+}
+
+function persistSharedAiActionPreferencesIfNeeded(render, actionConfig = actionConfigState()) {
+  if (!selectedTeamAiAllowsEditing()) {
+    return;
+  }
+
+  const nextActionPreferences = extractAiActionPreferences(actionConfig);
+  const currentSharedActionPreferences = teamSharedState()?.settings?.actionPreferences ?? null;
+  if (
+    currentSharedActionPreferences
+    && (
+      normalizeAiActionPreferencesSnapshot(currentSharedActionPreferences)
+      === normalizeAiActionPreferencesSnapshot(nextActionPreferences)
+    )
+  ) {
+    return;
+  }
+
+  void persistSelectedTeamAiActionPreferences(render, nextActionPreferences);
+}
+
+function getAiKeyWorkingBadgeText(providerId) {
+  return `This ${getAiProviderConfig(providerId).label} key is working`;
+}
+
+function getAiKeyNotWorkingBadgeText(providerId) {
+  return `This ${getAiProviderConfig(providerId).label} key is not working`;
 }
 
 function missingTeamAiProviderMessage(providerId, reason, teamName = "") {
@@ -482,6 +515,7 @@ async function ensureAiProviderModelsLoaded(render, providerId, options = {}) {
     };
     replaceAiActionConfig(nextActionConfig);
     persistAiActionPreferences();
+    persistSharedAiActionPreferencesIfNeeded(render, nextActionConfig);
     render?.();
     return normalizedOptions;
   } catch (error) {
@@ -564,6 +598,7 @@ export async function refreshAiSavedProviders(render, options = {}) {
     };
     replaceAiActionConfig(nextActionConfig);
     persistAiActionPreferences();
+    persistSharedAiActionPreferencesIfNeeded(render, nextActionConfig);
     render?.();
     await ensureVisibleAiProviderModelsLoaded(render);
   } catch (error) {
@@ -574,6 +609,31 @@ export async function refreshAiSavedProviders(render, options = {}) {
     });
     render?.();
   }
+}
+
+export async function ensureSharedAiActionConfigurationLoaded(render) {
+  if (selectedAiInstallationId() === null || !state.auth.session?.sessionToken) {
+    return;
+  }
+
+  const teamShared = await loadSelectedTeamAiState(render, {
+    suppressLoadingState: true,
+  });
+  const sharedActionPreferences = teamShared?.settings?.actionPreferences ?? null;
+  if (sharedActionPreferences) {
+    if (
+      normalizeAiActionPreferencesSnapshot(actionConfigState())
+      !== normalizeAiActionPreferencesSnapshot(sharedActionPreferences)
+    ) {
+      applyAiActionPreferences(sharedActionPreferences);
+      render?.();
+    }
+    return;
+  }
+
+  await refreshAiSavedProviders(render, {
+    suppressLoadingState: true,
+  });
 }
 
 export async function loadAiSettingsPage(render, options = {}) {
@@ -697,10 +757,12 @@ export async function selectAiProvider(render, nextProviderId) {
 export async function saveAiProviderSecret(render) {
   const providerId = normalizeAiProviderId(state.aiSettings.providerId);
   const apiKey = typeof state.aiSettings.apiKey === "string" ? state.aiSettings.apiKey : "";
+  const normalizedApiKey = apiKey.trim();
   const successMessage = apiKey.trim()
     ? getAiProviderSavedMessage(providerId)
     : `${getAiProviderActionLabel(providerId)} key removed.`;
 
+  clearNoticeBadge();
   state.aiSettings = {
     ...state.aiSettings,
     status: "saving",
@@ -723,16 +785,54 @@ export async function saveAiProviderSecret(render) {
       });
     }
 
-    state.aiSettings = {
-      ...state.aiSettings,
-      status: "ready",
-      error: "",
-      successMessage,
-      providerId,
-      apiKey: apiKey.trim(),
-      hasLoaded: true,
-    };
-    showNoticeBadge(successMessage, render);
+    if (!normalizedApiKey) {
+      state.aiSettings = {
+        ...state.aiSettings,
+        status: "ready",
+        error: "",
+        successMessage,
+        providerId,
+        apiKey: "",
+        hasLoaded: true,
+      };
+      showNoticeBadge(successMessage, render);
+    } else {
+      showNoticeBadge("Checking key...", render, null);
+      invalidateAiProviderModels(providerId);
+      await refreshAiSavedProviders(render, {
+        suppressLoadingState: true,
+        forceTeamState: true,
+      });
+      await ensureAiProviderModelsLoaded(render, providerId, { force: true });
+
+      const providerModelsState =
+        actionConfigState().modelOptionsByProvider[providerId] ?? createAiProviderModelsState();
+      if (providerModelsState.status === "error") {
+        state.aiSettings = {
+          ...state.aiSettings,
+          status: "error",
+          error: providerModelsState.error,
+          successMessage: "",
+          providerId,
+          apiKey: normalizedApiKey,
+          hasLoaded: true,
+        };
+        showNoticeBadge(getAiKeyNotWorkingBadgeText(providerId), render);
+        render?.();
+        return;
+      }
+
+      state.aiSettings = {
+        ...state.aiSettings,
+        status: "ready",
+        error: "",
+        successMessage,
+        providerId,
+        apiKey: normalizedApiKey,
+        hasLoaded: true,
+      };
+      showNoticeBadge(getAiKeyWorkingBadgeText(providerId), render);
+    }
 
     const shouldReturnToTranslate =
       state.aiSettings.returnScreen === "translate" && Boolean(state.selectedChapterId);
@@ -743,7 +843,7 @@ export async function saveAiProviderSecret(render) {
       return;
     }
 
-    if (state.screen === "aiKey") {
+    if (!normalizedApiKey && state.screen === "aiKey") {
       invalidateAiProviderModels(providerId);
       await refreshAiSavedProviders(render, {
         suppressLoadingState: true,

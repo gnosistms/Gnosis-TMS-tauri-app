@@ -345,7 +345,7 @@ function renderAiSettingsAboutModal(state) {
           <p class="card__eyebrow">ABOUT AI</p>
           <h2 class="modal__title">How to chose the right AI model</h2>
           <p class="modal__supporting ai-about-modal__message">
-            When chosing an AI provider, the challenge is finding a model that is capable enough to do the job well while minimizing cost. At the time of this writing (April 2006), we recommend Gemini. However, all providers have models that are capable of doing the job well.<br><br>In addition to chosing between OpenAI, Gemini, Claude, and DeepSeek, you must also choose which model to apply to which tasks. You can chose one model for all tasks, or assign different models for each one. This is also a matter of optimizing cost. Make sure you monitor the cost in your first few days using a new model because some are very expensive, while others are very affordable.
+            When chosing an AI provider, the challenge is finding a model that is capable enough to do the job well while minimizing cost. At the time of this writing (April 2006), we recommend OpenAI. However, all providers have models that are capable of doing the job well.<br><br>In addition to chosing between OpenAI, Gemini, Claude, and DeepSeek, you must also choose which model to apply to which tasks. You can chose one model for all tasks, or assign different models for each one. This is also a matter of optimizing cost. Make sure you monitor the cost in your first few days using a new model because some are very expensive, while others are very affordable.
           </p>
           <div class="modal__actions ai-about-modal__actions">
             <label class="field__checkbox">

@@ -1,5 +1,6 @@
 import { AI_ACTION_LABELS, AI_TRANSLATE_ACTION_IDS } from "./ai-action-config.js";
 import {
+  ensureSharedAiActionConfigurationLoaded,
   openAiMissingKeyModal,
   resolveAiActionProviderAndModel,
 } from "./ai-settings-flow.js";
@@ -328,6 +329,13 @@ export async function runEditorAiTranslate(render, actionId, operations = {}) {
       "There is no source text to translate yet.",
     );
     return;
+  }
+
+  try {
+    await ensureSharedAiActionConfigurationLoaded(render);
+  } catch {
+    // Keep the current local selection and let the downstream key/model checks
+    // surface the actionable error.
   }
 
   const { providerId, modelId } = resolveAiActionProviderAndModel(actionId);
