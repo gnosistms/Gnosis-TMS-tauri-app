@@ -22,6 +22,7 @@ use std::fs::File;
 #[cfg(target_os = "macos")]
 use tar::Archive;
 use tauri::{AppHandle, Manager, Runtime};
+#[cfg(target_os = "macos")]
 use uuid::Uuid;
 
 use crate::{

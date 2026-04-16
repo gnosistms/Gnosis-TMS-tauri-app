@@ -29,8 +29,12 @@ use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::sync::Mutex;
 use std::time::Duration;
-use tauri::menu::{Menu, MenuItemBuilder, PredefinedMenuItem, Submenu, SubmenuBuilder};
+use tauri::menu::{Menu, MenuItemBuilder, PredefinedMenuItem, Submenu};
+#[cfg(target_os = "macos")]
+use tauri::menu::SubmenuBuilder;
 use tauri::{Emitter, Manager};
+#[cfg(target_os = "macos")]
+use crate::constants::MAIN_WINDOW_BACKGROUND;
 
 use crate::{
     ai::{
@@ -54,7 +58,6 @@ use crate::{
         clear_broker_auth_session, load_broker_auth_session, save_broker_auth_session,
     },
     callbacks::spawn_callback_server,
-    constants::MAIN_WINDOW_BACKGROUND,
     drafts::create_team_setup_draft,
     github::{
         add_organization_admin_for_installation, begin_github_app_install,
@@ -300,6 +303,7 @@ fn build_app_menu<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result
     let check_for_updates_item =
         MenuItemBuilder::with_id(CHECK_FOR_UPDATES_MENU_ID, "Check for Updates...").build(app)?;
 
+    #[cfg(target_os = "macos")]
     let file_menu = SubmenuBuilder::new(app, "File")
         .item(&sync_item)
         .separator()

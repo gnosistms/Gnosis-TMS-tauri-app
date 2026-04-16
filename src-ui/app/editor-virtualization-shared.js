@@ -22,15 +22,14 @@ export function nextScheduledEditorRenderReason(currentReason, nextReason) {
   return normalizedCurrent;
 }
 
-export function shouldMeasureVisibleRowHeightsDuringRender(
+export function shouldDeferMeasuredWindowReconcile(
   reason,
-  shouldAvoidScrollHeightMeasurement = false,
+  anchorSnapshot = null,
+  shouldDeferScrollWindowReconcile = false,
 ) {
-  if (!shouldAvoidScrollHeightMeasurement) {
-    return true;
-  }
-
-  return reason !== EDITOR_VIRTUALIZATION_SCROLL_REASON;
+  return shouldDeferScrollWindowReconcile
+    && reason === EDITOR_VIRTUALIZATION_SCROLL_REASON
+    && !anchorSnapshot?.rowId;
 }
 
 function clampIndex(index, count) {
