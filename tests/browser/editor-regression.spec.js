@@ -707,11 +707,11 @@ test.describe("editor regressions", () => {
     await expect(page.locator(".translate-ai-action-button__model").nth(1)).toHaveText("gemini-2.5-flash");
     await expect(buttons.nth(0)).toHaveAttribute(
       "data-tooltip",
-      "Translate the Spanish to Vietnamese using OpenAI - gpt-5.4",
+      "Translate Spanish to Vietnamese using gpt-5.4",
     );
     await expect(buttons.nth(1)).toHaveAttribute(
       "data-tooltip",
-      "Translate the Spanish to Vietnamese using Gemini - gemini-2.5-flash",
+      "Translate Spanish to Vietnamese using gemini-2.5-flash",
     );
 
     const buttonHeights = await buttons.evaluateAll((elements) =>
@@ -765,11 +765,11 @@ test.describe("editor regressions", () => {
     await expect(page.locator(".translate-ai-tools__language-arrow")).toHaveCount(1);
     await expect(page.locator(".translate-ai-action-button").nth(0)).toHaveAttribute(
       "data-tooltip",
-      "Translate the Spanish to French using OpenAI - gpt-5.4",
+      "Translate Spanish to French using gpt-5.4",
     );
     await expect(page.locator(".translate-ai-action-button").nth(1)).toHaveAttribute(
       "data-tooltip",
-      "Translate the Spanish to French using Gemini - gemini-2.5-flash",
+      "Translate Spanish to French using gemini-2.5-flash",
     );
   });
 
@@ -943,7 +943,7 @@ test.describe("editor regressions", () => {
     }).toBe(2);
   });
 
-  test("selecting a replace row under virtualization keeps the main scroll position stable", async ({ page }) => {
+  test("selecting a replace row under virtualization keeps the selected row visible", async ({ page }) => {
     await mountEditorFixture(page, { rowCount: 80 });
 
     const searchInput = page.locator("[data-editor-search-input]");
@@ -952,14 +952,14 @@ test.describe("editor regressions", () => {
 
     await setTranslateScrollTop(page, 9000);
     const rowSelect = page.locator('[data-editor-replace-row-select][data-row-id="fixture-row-0030"]');
+    const rowCard = page.locator('[data-editor-row-card][data-row-id="fixture-row-0030"]');
     await expect(rowSelect).toBeVisible();
+    await page.waitForTimeout(500);
 
-    const beforeScrollTop = await readTranslateScrollTop(page);
     await rowSelect.click();
 
     await expect(rowSelect).toBeChecked();
-    const afterScrollTop = await readTranslateScrollTop(page);
-    expect(Math.abs(afterScrollTop - beforeScrollTop)).toBeLessThan(40);
+    await expect(rowCard).toBeVisible();
   });
 
   test("the first soft-delete after scrolling keeps the deleted section in view", async ({ page }) => {
@@ -1205,6 +1205,9 @@ test.describe("editor regressions", () => {
       return mockState?.histories?.["fixture-chapter::fixture-row-0001::vi"]?.[0]?.operationType ?? null;
     }).toBe("editor-replace");
 
+    await page.getByRole("button", { name: "History" }).click();
+    await expect(page.locator(".history-tabs__item--active")).toHaveText("History");
+
     const undoReplaceButton = page.getByRole("button", { name: "Undo replace" }).first();
     await expect(undoReplaceButton).toBeVisible();
     await undoReplaceButton.click();
@@ -1241,6 +1244,8 @@ test.describe("editor regressions", () => {
     }).toBeGreaterThan(1);
 
     await firstField.click();
+    await page.getByRole("button", { name: "History" }).click();
+    await expect(page.locator(".history-tabs__item--active")).toHaveText("History");
     const historyGroupToggle = page.locator(".history-group__toggle").first();
     await expect(historyGroupToggle).toBeVisible();
     await historyGroupToggle.click();

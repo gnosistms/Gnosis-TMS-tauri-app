@@ -70,7 +70,12 @@ import { renderProjectsScreen } from "./screens/projects.js";
 import { renderAiKeyScreen } from "./screens/ai-key.js";
 import { renderStartScreen } from "./screens/start.js";
 import { renderTeamsScreen } from "./screens/teams/index.js";
-import { renderTranslateEditorBody, renderTranslateScreen, renderTranslateSidebar } from "./screens/translate.js";
+import {
+  renderTranslateEditorBody,
+  renderTranslateHeaderDetail,
+  renderTranslateScreen,
+  renderTranslateSidebar,
+} from "./screens/translate.js";
 import { renderUsersScreen } from "./screens/users.js";
 
 const screenRenderers = {
@@ -294,9 +299,26 @@ function renderTranslateSidebarOnly() {
   restoreFocusedInputState(focusSnapshot);
 }
 
+function renderTranslateHeaderOnly() {
+  const headerDetail = app.querySelector(".page-header__detail");
+  if (!(headerDetail instanceof HTMLElement)) {
+    renderWithOptions();
+    return;
+  }
+
+  const focusSnapshot = captureFocusedInputState();
+  headerDetail.innerHTML = renderTranslateHeaderDetail(state);
+  restoreFocusedInputState(focusSnapshot);
+}
+
 function renderWithOptions(options = {}) {
   if (options?.scope === "translate-body" && state.screen === "translate") {
     renderTranslateBodyOnly();
+    return;
+  }
+
+  if (options?.scope === "translate-header" && state.screen === "translate") {
+    renderTranslateHeaderOnly();
     return;
   }
 

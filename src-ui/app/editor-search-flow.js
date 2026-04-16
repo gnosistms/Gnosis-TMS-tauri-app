@@ -23,6 +23,8 @@ import { invoke, waitForNextPaint } from "./runtime.js";
 import { state } from "./state.js";
 import { showNoticeBadge } from "./status-feedback.js";
 import {
+  consumePrimedTranslateInteractionAnchor,
+  consumePrimedTranslateMainScrollTop,
   captureTranslateRowAnchor,
   centerTranslateRowInView,
   queueTranslateRowAnchor,
@@ -91,6 +93,11 @@ function scrollTranslateMainToTop() {
   }
 
   container.scrollTop = 0;
+}
+
+function renderEditorReplaceSelection(render) {
+  render?.({ scope: "translate-header" });
+  render?.({ scope: "translate-body" });
 }
 
 export function updateEditorSearchFilterQuery(render, nextValue) {
@@ -249,7 +256,10 @@ export function toggleEditorReplaceRowSelected(render, rowId, selected, anchorTa
     return;
   }
 
-  const scrollAnchor = captureTranslateRowAnchor(anchorTarget);
+  const scrollAnchor =
+    consumePrimedTranslateInteractionAnchor(rowId)
+    ?? captureTranslateRowAnchor(anchorTarget);
+  const scrollTop = consumePrimedTranslateMainScrollTop();
 
   const matchingRowIds = new Set(
     currentMatchingEditorReplaceRowIds(
@@ -276,10 +286,26 @@ export function toggleEditorReplaceRowSelected(render, rowId, selected, anchorTa
       error: "",
     };
   });
-  render?.();
-  if (scrollAnchor) {
-    void waitForNextPaint().then(() => restoreTranslateRowAnchor(scrollAnchor));
-  }
+  render?.({ scope: "translate-header" });
+  const restoreSelectionViewport = () => {
+    if (Number.isFinite(scrollTop)) {
+      const container = document.querySelector(".translate-main-scroll");
+      if (container instanceof HTMLElement) {
+        container.scrollTop = scrollTop;
+      }
+    }
+
+    if (scrollAnchor) {
+      restoreTranslateRowAnchor(scrollAnchor);
+    }
+  };
+  restoreSelectionViewport();
+  void waitForNextPaint().then(() => {
+    restoreSelectionViewport();
+    void waitForNextPaint().then(() => {
+      restoreSelectionViewport();
+    });
+  });
 }
 
 export function selectAllEditorReplaceRows(render) {
@@ -298,7 +324,7 @@ export function selectAllEditorReplaceRows(render) {
     status: "idle",
     error: "",
   }));
-  render?.();
+  renderEditorReplaceSelection(render);
 }
 
 export async function replaceSelectedEditorRows(render, operations = {}) {

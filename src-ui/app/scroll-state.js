@@ -1,6 +1,8 @@
 let lockedScreen = null;
 let lockedSnapshot = null;
 let pendingTranslateAnchor = null;
+let primedTranslateInteractionAnchor = null;
+let primedTranslateMainScrollTop = null;
 
 function isHtmlElement(value) {
   return typeof HTMLElement === "function" && value instanceof HTMLElement;
@@ -37,6 +39,11 @@ function captureTranslateScrollState() {
     main: captureElementScroll(".translate-main-scroll"),
     sidebar: captureElementScroll(".translate-sidebar-scroll"),
   };
+}
+
+function readTranslateMainScrollTop() {
+  const container = document.querySelector(".translate-main-scroll");
+  return isHtmlElement(container) ? container.scrollTop : null;
 }
 
 function restoreTranslateScrollState(snapshot) {
@@ -133,6 +140,39 @@ export function captureTranslateRowAnchor(target = null) {
   const snapshot = resolveTranslateRowAnchor(source);
   pendingTranslateAnchor = snapshot;
   return snapshot;
+}
+
+export function primeTranslateInteractionAnchor(target = null) {
+  const snapshot = resolveTranslateRowAnchor(target);
+  primedTranslateInteractionAnchor = snapshot;
+  return snapshot;
+}
+
+export function primeTranslateMainScrollTop() {
+  primedTranslateMainScrollTop = readTranslateMainScrollTop();
+  return primedTranslateMainScrollTop;
+}
+
+export function consumePrimedTranslateMainScrollTop() {
+  const scrollTop = primedTranslateMainScrollTop;
+  primedTranslateMainScrollTop = null;
+  return Number.isFinite(scrollTop) ? scrollTop : null;
+}
+
+export function consumePrimedTranslateInteractionAnchor(expectedRowId = "") {
+  const snapshot = primedTranslateInteractionAnchor;
+  primedTranslateInteractionAnchor = null;
+  if (!snapshot?.rowId) {
+    return null;
+  }
+
+  if (expectedRowId && snapshot.rowId !== expectedRowId) {
+    return null;
+  }
+
+  return {
+    ...snapshot,
+  };
 }
 
 export function resolveTranslateRowAnchor(target = null) {

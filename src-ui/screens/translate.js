@@ -163,6 +163,31 @@ export function renderTranslateEditorBody(state) {
   return renderTranslateEditorBodyFromFrame(buildTranslateScreenFrame(state));
 }
 
+export function renderTranslateHeaderDetail(state) {
+  const {
+    languages,
+    sourceCode,
+    targetCode,
+    editorFilters,
+    editorReplace,
+    editorFontSizePx,
+  } = buildTranslateScreenFrame(state);
+  const targetLanguageManageOption = [{
+    value: MANAGE_TARGET_LANGUAGES_OPTION_VALUE,
+    label: "Add / Remove",
+  }];
+
+  return renderTranslateToolbar({
+    languages,
+    sourceCode,
+    targetCode,
+    editorFilters,
+    editorReplace,
+    editorFontSizePx,
+    targetLanguageExtraOptions: targetLanguageManageOption,
+  });
+}
+
 export function renderTranslateSidebar(state) {
   const {
     editorChapter,
@@ -185,20 +210,7 @@ export function renderTranslateSidebar(state) {
 
 export function renderTranslateScreen(state) {
   const frame = buildTranslateScreenFrame(state);
-  const {
-    languages,
-    sourceCode,
-    targetCode,
-    editorFilters,
-    editorReplace,
-    editorFontSizePx,
-    titleText,
-    displayTitle,
-  } = frame;
-  const targetLanguageManageOption = [{
-    value: MANAGE_TARGET_LANGUAGES_OPTION_VALUE,
-    label: "Add / Remove",
-  }];
+  const { titleText, displayTitle } = frame;
 
   return pageShell({
     title: displayTitle,
@@ -208,15 +220,7 @@ export function renderTranslateScreen(state) {
     titleAction: buildPageRefreshAction(state),
     navButtons: buildSectionNav("translate"),
     tools: renderTranslateModeControl(),
-    headerBody: renderTranslateToolbar({
-      languages,
-      sourceCode,
-      targetCode,
-      editorFilters,
-      editorReplace,
-      editorFontSizePx,
-      targetLanguageExtraOptions: targetLanguageManageOption,
-    }),
+    headerBody: renderTranslateHeaderDetail(state),
     pageSync: state.pageSync,
     noticeText: getNoticeBadgeText(),
     offlineMode: state.offline?.isEnabled === true,

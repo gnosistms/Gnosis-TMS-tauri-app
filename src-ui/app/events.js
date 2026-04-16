@@ -3,6 +3,7 @@ import { handleNavigation, refreshCurrentScreen } from "./navigation.js";
 import { createActionDispatcher } from "./action-dispatcher.js";
 import { checkForAppUpdate } from "./updater-flow.js";
 import { isMacPlatform, listen } from "./runtime.js";
+import { primeTranslateInteractionAnchor, primeTranslateMainScrollTop } from "./scroll-state.js";
 
 const SYNC_WITH_SERVER_EVENT = "sync-with-server";
 const CHECK_FOR_UPDATES_EVENT = "check-for-updates";
@@ -720,6 +721,13 @@ export function registerAppEvents(render) {
 
   document.addEventListener("pointerdown", (event) => {
     if (!(event instanceof PointerEvent) || event.button !== 0) {
+      return;
+    }
+
+    if (event.target instanceof Element && event.target.closest("[data-editor-replace-row-select]")) {
+      primeTranslateInteractionAnchor(event.target);
+      primeTranslateMainScrollTop();
+      event.preventDefault();
       return;
     }
 
