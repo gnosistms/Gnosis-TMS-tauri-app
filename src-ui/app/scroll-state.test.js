@@ -30,19 +30,21 @@ globalThis.CSS = {
 };
 
 let selectors = new Map();
+let selectorLists = new Map();
 
 globalThis.document = {
   activeElement: null,
   querySelector(selector) {
     return selectors.get(selector) ?? null;
   },
-  querySelectorAll() {
-    return [];
+  querySelectorAll(selector) {
+    return selectorLists.get(selector) ?? [];
   },
 };
 
 function installScrollFixture({ containerTop = 100, anchorTop = 140, scrollTop = 50 } = {}) {
   selectors = new Map();
+  selectorLists = new Map();
   const container = new FakeHTMLElement(
     {
       top: containerTop,
@@ -94,10 +96,13 @@ function installScrollFixture({ containerTop = 100, anchorTop = 140, scrollTop =
     '[data-editor-row-field][data-row-id="row-1"][data-language-code="en"]',
     field,
   );
+  selectorLists.set("[data-editor-row-card]", [row]);
+  selectorLists.set("[data-editor-deleted-group]", []);
   return { container };
 }
 
 const {
+  captureVisibleTranslateRowLocation,
   captureTranslateAnchorForRow,
   readPendingTranslateAnchor,
   queueTranslateRowAnchor,
@@ -159,5 +164,18 @@ test("captureTranslateAnchorForRow prefers the requested field when a language i
     rowId: "row-1",
     languageCode: "en",
     offsetTop: 52,
+  });
+});
+
+test("captureVisibleTranslateRowLocation anchors to the first visible row card", () => {
+  installScrollFixture();
+
+  const snapshot = captureVisibleTranslateRowLocation();
+
+  assert.deepEqual(snapshot, {
+    type: "row",
+    rowId: "row-1",
+    languageCode: null,
+    offsetTop: 40,
   });
 });

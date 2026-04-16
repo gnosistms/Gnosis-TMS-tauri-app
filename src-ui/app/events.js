@@ -2,7 +2,7 @@ import { handleInputEvent } from "./input-handlers.js";
 import { handleNavigation, refreshCurrentScreen } from "./navigation.js";
 import { createActionDispatcher } from "./action-dispatcher.js";
 import { checkForAppUpdate } from "./updater-flow.js";
-import { listen } from "./runtime.js";
+import { isMacPlatform, listen } from "./runtime.js";
 
 const SYNC_WITH_SERVER_EVENT = "sync-with-server";
 const CHECK_FOR_UPDATES_EVENT = "check-for-updates";
@@ -28,7 +28,7 @@ function shouldTriggerSyncShortcut(event) {
   }
 
   const key = typeof event.key === "string" ? event.key.toLowerCase() : "";
-  if (navigator.platform.includes("Mac")) {
+  if (isMacPlatform()) {
     return event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey && key === "s";
   }
 
@@ -63,7 +63,7 @@ function shouldFocusEditorSearch(event) {
     return false;
   }
 
-  if (navigator.platform.includes("Mac")) {
+  if (isMacPlatform()) {
     return event.metaKey && !event.ctrlKey;
   }
 

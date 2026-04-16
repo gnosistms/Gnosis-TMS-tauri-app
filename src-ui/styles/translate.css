@@ -177,6 +177,10 @@
   scrollbar-color: rgba(164, 112, 41, 0.32) transparent;
 }
 
+.app-platform--windows .translate-main-scroll {
+  overflow-anchor: none;
+}
+
 .app-platform--mac .translate-main-scroll::-webkit-scrollbar-track,
 .app-platform--mac .translate-sidebar-scroll::-webkit-scrollbar-track {
   background: transparent;
@@ -302,6 +306,7 @@
 
 .translate-virtual-list {
   display: block;
+  overflow-anchor: none;
 }
 
 .translate-virtual-list__items {

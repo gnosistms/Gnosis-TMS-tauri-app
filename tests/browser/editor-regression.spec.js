@@ -486,7 +486,7 @@ async function mountEditorFixture(page, options = {}, setup = {}) {
     }
   });
 
-  await page.goto("/");
+  await page.goto(setup.path ?? "/");
   await page.waitForFunction(() => typeof window.__gnosisDebug?.mountEditorFixture === "function");
   await page.evaluate(async (fixtureOptions) => {
     await window.__gnosisDebug.waitForBootstrap();
@@ -900,6 +900,90 @@ test.describe("editor regressions", () => {
         return document.querySelectorAll("[data-editor-row-card]").length;
       });
     }).toBeGreaterThan(0);
+  });
+
+  test("scrolling in Windows mode does not continue running away after wheel input stops", async ({ page }) => {
+    await page.addInitScript(() => {
+      try {
+        globalThis.localStorage?.clear();
+      } catch {
+        // Ignore local-storage access restrictions in the browser harness.
+      }
+    });
+    await page.goto("/?platform=windows&fixture=editor&rows=200");
+    await expect(page.locator("[data-editor-search-input]")).toBeVisible();
+
+    await setTranslateScrollTop(page, 34000);
+
+    await expect.poll(async () => {
+      return await readTranslateScrollTop(page);
+    }).toBeGreaterThan(33000);
+
+    await page.waitForTimeout(150);
+    const afterScrollInput = await readTranslateScrollTop(page);
+
+    await page.waitForTimeout(400);
+    const laterScrollTop = await readTranslateScrollTop(page);
+
+    expect(laterScrollTop - afterScrollInput).toBeLessThan(400);
+    expect(laterScrollTop).toBeLessThan(40000);
+  });
+
+  test("a shallow Windows-mode scroll does not jump backward after deferred layout", async ({ page }) => {
+    await page.addInitScript(() => {
+      try {
+        globalThis.localStorage?.clear();
+      } catch {
+        // Ignore local-storage access restrictions in the browser harness.
+      }
+    });
+    await page.goto("/?platform=windows&fixture=editor&rows=200");
+    await expect(page.locator("[data-editor-search-input]")).toBeVisible();
+
+    await setTranslateScrollTop(page, 850);
+
+    await expect.poll(async () => {
+      return await readTranslateScrollTop(page);
+    }).toBeGreaterThan(700);
+
+    await page.waitForTimeout(150);
+    const afterScrollInput = await readTranslateScrollTop(page);
+
+    await page.waitForTimeout(450);
+    const laterScrollTop = await readTranslateScrollTop(page);
+
+    expect(Math.abs(laterScrollTop - afterScrollInput)).toBeLessThan(80);
+  });
+
+  test("a second shallow Windows-mode scroll does not reuse a stale deferred anchor", async ({ page }) => {
+    await page.addInitScript(() => {
+      try {
+        globalThis.localStorage?.clear();
+      } catch {
+        // Ignore local-storage access restrictions in the browser harness.
+      }
+    });
+    await page.goto("/?platform=windows&fixture=editor&rows=200");
+    await expect(page.locator("[data-editor-search-input]")).toBeVisible();
+
+    await setTranslateScrollTop(page, 850);
+    await expect.poll(async () => {
+      return await readTranslateScrollTop(page);
+    }).toBeGreaterThan(700);
+    await page.waitForTimeout(500);
+
+    await setTranslateScrollTop(page, 2920);
+    await expect.poll(async () => {
+      return await readTranslateScrollTop(page);
+    }).toBeGreaterThan(2800);
+
+    await page.waitForTimeout(150);
+    const afterSecondScrollInput = await readTranslateScrollTop(page);
+
+    await page.waitForTimeout(450);
+    const laterScrollTop = await readTranslateScrollTop(page);
+
+    expect(Math.abs(laterScrollTop - afterSecondScrollInput)).toBeLessThan(80);
   });
 
   test("typing in one row then flushing dirty rows persists the row through the backend", async ({ page }) => {

@@ -355,6 +355,53 @@ export function captureVisibleTranslateLocation() {
   return null;
 }
 
+export function captureVisibleTranslateRowLocation() {
+  const container = document.querySelector(".translate-main-scroll");
+  if (!isHtmlElement(container)) {
+    return null;
+  }
+
+  const containerRect = container.getBoundingClientRect();
+  const rows = [...document.querySelectorAll("[data-editor-row-card]")].filter(
+    (element) => isHtmlElement(element),
+  );
+  const visibleRows = rows
+    .map((element) => ({ element, rect: element.getBoundingClientRect() }))
+    .filter(({ rect }) => rect.bottom > containerRect.top && rect.top < containerRect.bottom)
+    .sort((left, right) => left.rect.top - right.rect.top);
+  const rowCandidate = visibleRows.find(({ rect }) => rect.bottom > containerRect.top) ?? visibleRows[0] ?? null;
+  if (isHtmlElement(rowCandidate?.element)) {
+    return {
+      rowId: rowCandidate.element.dataset.rowId ?? "",
+      languageCode: null,
+      offsetTop: Math.max(0, rowCandidate.rect.top - containerRect.top),
+      type: "row",
+    };
+  }
+
+  const deletedGroups = [...document.querySelectorAll("[data-editor-deleted-group]")].filter(
+    (element) => isHtmlElement(element),
+  );
+  const visibleDeletedGroups = deletedGroups
+    .map((element) => ({ element, rect: element.getBoundingClientRect() }))
+    .filter(({ rect }) => rect.bottom > containerRect.top && rect.top < containerRect.bottom)
+    .sort((left, right) => left.rect.top - right.rect.top);
+  const deletedGroupCandidate =
+    visibleDeletedGroups.find(({ rect }) => rect.bottom > containerRect.top)
+    ?? visibleDeletedGroups[0]
+    ?? null;
+  if (isHtmlElement(deletedGroupCandidate?.element)) {
+    return {
+      rowId: deletedGroupCandidate.element.dataset.rowId ?? "",
+      languageCode: null,
+      offsetTop: Math.max(0, deletedGroupCandidate.rect.top - containerRect.top),
+      type: "deleted-group",
+    };
+  }
+
+  return null;
+}
+
 export function captureRenderScrollSnapshot(screen) {
   if (screen === "translate") {
     return lockedScreen === screen && lockedSnapshot

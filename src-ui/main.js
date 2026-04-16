@@ -15,9 +15,11 @@ import { initializeConnectivity } from "./app/offline-connectivity.js";
 import { initializePersistentStorage } from "./app/persistent-store.js";
 import { app, initializeWindowPresentation } from "./app/runtime.js";
 import {
+  clearEditorScrollDebugEntries,
   editorScrollDebugPathHint,
   flushEditorScrollDebugLog,
   logEditorScrollDebug,
+  readEditorScrollDebugEntries,
 } from "./app/editor-scroll-debug.js";
 import {
   syncEditorCommentDraftTextareaHeights,
@@ -31,6 +33,7 @@ import {
   applyEditorRegressionSoftDelete,
   readEditorRegressionSnapshot,
 } from "./app/editor-regression-fixture.js";
+import { readDevRuntimeFlags } from "./app/dev-runtime-flags.js";
 import {
   persistCurrentEditorLocation,
   prepareEditorLocationBeforeRender,
@@ -446,6 +449,13 @@ window.__gnosisDebug = {
   flushEditorScrollDebugLog() {
     return flushEditorScrollDebugLog();
   },
+  readEditorScrollDebugEntries() {
+    return readEditorScrollDebugEntries();
+  },
+  clearEditorScrollDebugEntries() {
+    clearEditorScrollDebugEntries();
+    return [];
+  },
   async mountEditorFixture(options = {}) {
     await bootstrapPromise.catch(() => undefined);
     const summary = applyEditorRegressionFixture(state, options);
@@ -486,9 +496,15 @@ async function bootstrap() {
   await initializePersistentStorage();
   hydratePersistentAppState();
   await initializeWindowPresentation();
-  const storedBrokerSession = await prepareStoredBrokerSessionRestore();
-
   registerAppEvents(render);
+  const devRuntimeFlags = readDevRuntimeFlags();
+  if (devRuntimeFlags.editorFixture) {
+    applyEditorRegressionFixture(state, devRuntimeFlags.editorFixture);
+    render();
+    return;
+  }
+
+  const storedBrokerSession = await prepareStoredBrokerSessionRestore();
   void registerBrokerAuthListener(render, loadUserTeams);
   void registerGithubAppInstallListener(render, setGithubAppInstallation);
   void registerGithubAppTestListener(render);

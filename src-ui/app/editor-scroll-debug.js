@@ -1,25 +1,23 @@
-import { invoke } from "./runtime.js";
+import { invoke, isMacPlatform, isWindowsPlatform } from "./runtime.js";
 
 const EDITOR_SCROLL_DEBUG_BATCH_SIZE = 24;
 const EDITOR_SCROLL_DEBUG_FLUSH_DELAY_MS = 800;
+const EDITOR_SCROLL_DEBUG_MEMORY_LIMIT = 400;
 const WINDOWS_EDITOR_SCROLL_DEBUG_PATH_HINT = "%AppData%\\com.gnosis.tms\\logs\\editor-scroll-debug.jsonl";
 const MACOS_EDITOR_SCROLL_DEBUG_PATH_HINT =
   "~/Library/Application Support/com.gnosis.tms/logs/editor-scroll-debug.jsonl";
 
 let queuedLines = [];
+let memoryEntries = [];
 let flushTimerId = 0;
 let activeFlushPromise = null;
 
-function platformName() {
-  if (typeof navigator !== "object") {
-    return "";
-  }
-
-  return navigator.userAgentData?.platform ?? navigator.platform ?? "";
+function shouldLogEditorScrollDebug() {
+  return typeof invoke === "function" && (isWindowsPlatform() || isMacPlatform());
 }
 
-function shouldLogEditorScrollDebug() {
-  return typeof invoke === "function" && /win|mac/i.test(platformName());
+function shouldCaptureEditorScrollDebug() {
+  return isWindowsPlatform() || isMacPlatform();
 }
 
 function normalizeDebugValue(value, depth = 0) {
@@ -62,6 +60,13 @@ function normalizeDebugValue(value, depth = 0) {
   return String(value);
 }
 
+function pushMemoryEntry(entry) {
+  memoryEntries.push(entry);
+  if (memoryEntries.length > EDITOR_SCROLL_DEBUG_MEMORY_LIMIT) {
+    memoryEntries.splice(0, memoryEntries.length - EDITOR_SCROLL_DEBUG_MEMORY_LIMIT);
+  }
+}
+
 function scheduleEditorScrollDebugFlush() {
   if (flushTimerId || queuedLines.length === 0) {
     return;
@@ -74,21 +79,28 @@ function scheduleEditorScrollDebugFlush() {
 }
 
 export function editorScrollDebugPathHint() {
-  return /mac/i.test(platformName())
+  return isMacPlatform()
     ? MACOS_EDITOR_SCROLL_DEBUG_PATH_HINT
     : WINDOWS_EDITOR_SCROLL_DEBUG_PATH_HINT;
 }
 
 export function logEditorScrollDebug(event, detail = {}) {
-  if (!shouldLogEditorScrollDebug() || typeof event !== "string" || !event.trim()) {
+  if (!shouldCaptureEditorScrollDebug() || typeof event !== "string" || !event.trim()) {
     return;
   }
 
-  queuedLines.push(JSON.stringify({
+  const entry = {
     ts: new Date().toISOString(),
     event: event.trim(),
     detail: normalizeDebugValue(detail),
-  }));
+  };
+  pushMemoryEntry(entry);
+
+  if (!shouldLogEditorScrollDebug()) {
+    return;
+  }
+
+  queuedLines.push(JSON.stringify(entry));
 
   if (queuedLines.length >= EDITOR_SCROLL_DEBUG_BATCH_SIZE) {
     void flushEditorScrollDebugLog();
@@ -132,6 +144,25 @@ export async function flushEditorScrollDebugLog() {
   })();
 
   return activeFlushPromise;
+}
+
+export function readEditorScrollDebugEntries() {
+  return memoryEntries.map((entry) => ({
+    ...entry,
+    detail:
+      entry?.detail && typeof entry.detail === "object"
+        ? { ...entry.detail }
+        : entry.detail,
+  }));
+}
+
+export function clearEditorScrollDebugEntries() {
+  memoryEntries = [];
+  queuedLines = [];
+  if (flushTimerId) {
+    window.clearTimeout(flushTimerId);
+    flushTimerId = 0;
+  }
 }
 
 if (typeof window === "object") {

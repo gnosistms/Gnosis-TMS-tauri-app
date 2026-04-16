@@ -3,6 +3,7 @@ import { logEditorScrollDebug } from "./editor-scroll-debug.js";
 import { isWindowsPlatform } from "./runtime.js";
 import {
   captureVisibleTranslateLocation,
+  captureVisibleTranslateRowLocation,
   pendingTranslateAnchorRowId,
   queueTranslateRowAnchor,
   resolveTranslateRowAnchor,
@@ -79,8 +80,12 @@ function getRowHeightCache(chapterId, collapsedLanguageCodes, fontSizePx) {
   return rowHeightCacheByLayoutKey.get(cacheKey);
 }
 
-function measureRowCardHeight(rowCard, rowHeightCache) {
-  if (!(rowCard instanceof HTMLElement) || !(rowHeightCache instanceof Map)) {
+function measureRowCardHeight(rowCard, rowHeightCache, stagedRowHeights = null) {
+  if (
+    !(rowCard instanceof HTMLElement)
+    || !(rowHeightCache instanceof Map)
+    || (stagedRowHeights !== null && !(stagedRowHeights instanceof Map))
+  ) {
     return false;
   }
 
@@ -94,22 +99,49 @@ function measureRowCardHeight(rowCard, rowHeightCache) {
     return false;
   }
 
-  if (rowHeightCache.get(rowId) === nextHeight) {
+  const currentHeight =
+    stagedRowHeights?.get(rowId)
+    ?? rowHeightCache.get(rowId);
+  if (currentHeight === nextHeight) {
     return false;
+  }
+
+  if (stagedRowHeights instanceof Map) {
+    stagedRowHeights.set(rowId, nextHeight);
+    return true;
   }
 
   rowHeightCache.set(rowId, nextHeight);
   return true;
 }
 
-function measureVisibleRowHeights(itemsContainer, rowHeightCache) {
+function measureVisibleRowHeights(itemsContainer, rowHeightCache, stagedRowHeights = null) {
   let changed = false;
   itemsContainer.querySelectorAll("[data-editor-row-card]").forEach((element) => {
-    if (measureRowCardHeight(element, rowHeightCache)) {
+    if (measureRowCardHeight(element, rowHeightCache, stagedRowHeights)) {
       changed = true;
     }
   });
 
+  return changed;
+}
+
+function commitStagedRowHeights(rowHeightCache, stagedRowHeights) {
+  if (!(rowHeightCache instanceof Map) || !(stagedRowHeights instanceof Map) || stagedRowHeights.size === 0) {
+    return false;
+  }
+
+  let changed = false;
+  for (const [rowId, nextHeight] of stagedRowHeights.entries()) {
+    if (rowHeightCache.get(rowId) === nextHeight) {
+      continue;
+    }
+
+    rowHeightCache.set(rowId, nextHeight);
+    changed = true;
+  }
+
+  stagedRowHeights.clear();
   return changed;
 }
 
@@ -168,6 +200,30 @@ function updateSpacerHeight(spacer, height) {
   spacer.style.height = `${Math.max(0, Math.round(height))}px`;
 }
 
+function rangeStartIndex(rangeKey) {
+  if (typeof rangeKey !== "string" || !rangeKey.trim()) {
+    return -1;
+  }
+
+  const [startToken] = rangeKey.split(":");
+  const startIndex = Number.parseInt(startToken, 10);
+  return Number.isInteger(startIndex) ? startIndex : -1;
+}
+
+function shouldRestoreAnchorForRender(reason, previousRangeKey, nextRangeKey) {
+  if (reason !== "deferred-scroll-layout") {
+    return true;
+  }
+
+  const previousStartIndex = rangeStartIndex(previousRangeKey);
+  const nextStartIndex = rangeStartIndex(nextRangeKey);
+  if (previousStartIndex < 0 || nextStartIndex < 0) {
+    return false;
+  }
+
+  return previousStartIndex !== nextStartIndex;
+}
+
 function renderWindowRange(
   itemsContainer,
   rows,
@@ -222,9 +278,22 @@ export function initializeEditorVirtualization(root, appState) {
   const shouldReconcileGlossaryVisibleLayout = !isWindowsPlatform();
   let currentRangeKey = "";
   let animationFrameId = 0;
+  const deferredRowHeightCache = new Map();
+  let suppressedScrollResetFrameId = 0;
+  let suppressedScrollEvents = 0;
   let scheduledRenderReason = "";
   let suppressNextScrollRender = false;
   let hasDeferredMeasuredWindowReconcile = false;
+  const armSuppressedScrollEvent = () => {
+    suppressedScrollEvents = Math.max(suppressedScrollEvents, 1);
+    if (suppressedScrollResetFrameId) {
+      window.cancelAnimationFrame(suppressedScrollResetFrameId);
+    }
+    suppressedScrollResetFrameId = window.requestAnimationFrame(() => {
+      suppressedScrollResetFrameId = 0;
+      suppressedScrollEvents = 0;
+    });
+  };
   const restoreAnchorSnapshot = (anchorSnapshot, reason) => {
     if (!anchorSnapshot?.rowId) {
       return false;
@@ -247,6 +316,7 @@ export function initializeEditorVirtualization(root, appState) {
       return;
     }
 
+    const previousRangeKey = currentRangeKey;
     const anchorSnapshot = options?.anchorSnapshot?.rowId
       ? options.anchorSnapshot
       : null;
@@ -256,6 +326,18 @@ export function initializeEditorVirtualization(root, appState) {
         : "render";
     if (anchorSnapshot) {
       queueTranslateRowAnchor(anchorSnapshot);
+    }
+
+    if (reason === "deferred-scroll-layout") {
+      armSuppressedScrollEvent();
+      const deferredHeightCount = deferredRowHeightCache.size;
+      const committedDeferredHeights = commitStagedRowHeights(rowHeightCache, deferredRowHeightCache);
+      logEditorScrollDebug("virtualization-deferred-heights-committed", {
+        committedDeferredHeights,
+        deferredHeightCount,
+        scrollTop: scrollContainer.scrollTop,
+        rangeKey: currentRangeKey,
+      });
     }
 
     const model = buildEditorScreenViewModel(appState);
@@ -284,8 +366,16 @@ export function initializeEditorVirtualization(root, appState) {
     updateSpacerHeight(bottomSpacer, windowState.bottomSpacerHeight);
 
     if (!force && nextRangeKey === currentRangeKey) {
-      if (anchorSnapshot) {
+      if (anchorSnapshot && shouldRestoreAnchorForRender(reason, previousRangeKey, nextRangeKey)) {
         restoreAnchorSnapshot(anchorSnapshot, reason);
+      } else if (anchorSnapshot && reason === "deferred-scroll-layout") {
+        queueTranslateRowAnchor(null);
+        logEditorScrollDebug("virtualization-anchor-restore-skipped", {
+          reason,
+          previousRangeKey,
+          nextRangeKey,
+          scrollTop: scrollContainer.scrollTop,
+        });
       }
       return;
     }
@@ -303,23 +393,30 @@ export function initializeEditorVirtualization(root, appState) {
     restoreFocusedEditorField(root, focusSnapshot);
     glossarySync.restoreMounted(itemsContainer, model.editorChapter);
 
-    const heightsChanged = measureVisibleRowHeights(itemsContainer, rowHeightCache);
+    const shouldStageMeasuredWindowReconcile = shouldDeferMeasuredWindowReconcile(
+      reason,
+      anchorSnapshot,
+      shouldDeferScrollWindowReconcile,
+    );
+    const heightsChanged = measureVisibleRowHeights(
+      itemsContainer,
+      rowHeightCache,
+      shouldStageMeasuredWindowReconcile ? deferredRowHeightCache : null,
+    );
     if (heightsChanged) {
       logEditorScrollDebug("virtualization-visible-height-change", {
         reason,
         rangeKey: currentRangeKey,
         scrollTop: scrollContainer.scrollTop,
+        staged: shouldStageMeasuredWindowReconcile,
       });
-      if (shouldDeferMeasuredWindowReconcile(
-        reason,
-        anchorSnapshot,
-        shouldDeferScrollWindowReconcile,
-      )) {
+      if (shouldStageMeasuredWindowReconcile) {
         hasDeferredMeasuredWindowReconcile = true;
         logEditorScrollDebug("virtualization-height-change-deferred", {
           reason,
           rangeKey: currentRangeKey,
           scrollTop: scrollContainer.scrollTop,
+          deferredHeightCount: deferredRowHeightCache.size,
         });
       } else {
         hasDeferredMeasuredWindowReconcile = false;
@@ -362,8 +459,16 @@ export function initializeEditorVirtualization(root, appState) {
       }
     }
 
-    if (anchorSnapshot) {
+    if (anchorSnapshot && shouldRestoreAnchorForRender(reason, previousRangeKey, currentRangeKey)) {
       restoreAnchorSnapshot(anchorSnapshot, reason);
+    } else if (anchorSnapshot && reason === "deferred-scroll-layout") {
+      queueTranslateRowAnchor(null);
+      logEditorScrollDebug("virtualization-anchor-restore-skipped", {
+        reason,
+        previousRangeKey,
+        nextRangeKey: currentRangeKey,
+        scrollTop: scrollContainer.scrollTop,
+      });
     }
   };
 
@@ -394,12 +499,17 @@ export function initializeEditorVirtualization(root, appState) {
     afterVisibleSync() {
       if (hasDeferredMeasuredWindowReconcile) {
         hasDeferredMeasuredWindowReconcile = false;
+        const anchorSnapshot = captureVisibleTranslateRowLocation() ?? captureEditorLayoutAnchor(root);
         logEditorScrollDebug("virtualization-height-change-reconciled", {
           reason: "deferred-scroll-layout",
+          rowAnchorId: anchorSnapshot?.rowId ?? "",
           scrollTop: scrollContainer.scrollTop,
           rangeKey: currentRangeKey,
         });
-        renderWindow(false, { reason: "deferred-scroll-layout" });
+        renderWindow(false, {
+          anchorSnapshot,
+          reason: "deferred-scroll-layout",
+        });
         return;
       }
 
@@ -416,16 +526,29 @@ export function initializeEditorVirtualization(root, appState) {
   });
 
   const scheduleRender = (reason = "render") => {
-    scheduledRenderReason = nextScheduledEditorRenderReason(scheduledRenderReason, reason);
+    const nextReason = nextScheduledEditorRenderReason(scheduledRenderReason, reason);
+    logEditorScrollDebug("virtualization-render-scheduled", {
+      requestedReason: reason,
+      scheduledReason: nextReason,
+      animationFramePending: animationFrameId !== 0,
+      scrollTop: scrollContainer.scrollTop,
+      rangeKey: currentRangeKey,
+    });
+    scheduledRenderReason = nextReason;
     if (animationFrameId) {
       return;
     }
 
     animationFrameId = window.requestAnimationFrame(() => {
-      const nextReason = scheduledRenderReason || "render";
+      const nextFrameReason = scheduledRenderReason || "render";
       scheduledRenderReason = "";
       animationFrameId = 0;
-      renderWindow(false, { reason: nextReason });
+      logEditorScrollDebug("virtualization-render-frame", {
+        reason: nextFrameReason,
+        scrollTop: scrollContainer.scrollTop,
+        rangeKey: currentRangeKey,
+      });
+      renderWindow(false, { reason: nextFrameReason });
     });
   };
 
@@ -473,8 +596,20 @@ export function initializeEditorVirtualization(root, appState) {
   };
 
   const handleScroll = () => {
+    logEditorScrollDebug("virtualization-scroll-event", {
+      scrollTop: scrollContainer.scrollTop,
+      rangeKey: currentRangeKey,
+      suppressNextScrollRender,
+      suppressedScrollEvents,
+      pendingAnchorRowId: pendingTranslateAnchorRowId(),
+    });
     if (suppressNextScrollRender) {
       suppressNextScrollRender = false;
+      glossarySync.schedule();
+      return;
+    }
+    if (suppressedScrollEvents > 0) {
+      suppressedScrollEvents -= 1;
       glossarySync.schedule();
       return;
     }
@@ -495,6 +630,10 @@ export function initializeEditorVirtualization(root, appState) {
       if (animationFrameId) {
         window.cancelAnimationFrame(animationFrameId);
       }
+      if (suppressedScrollResetFrameId) {
+        window.cancelAnimationFrame(suppressedScrollResetFrameId);
+      }
+      deferredRowHeightCache.clear();
       glossarySync.destroy();
       scrollContainer.removeEventListener("scroll", handleScroll);
       window.removeEventListener("resize", handleResize);

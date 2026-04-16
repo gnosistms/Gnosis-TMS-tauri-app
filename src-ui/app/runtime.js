@@ -1,4 +1,5 @@
 import { state } from "./state.js";
+import { readDevRuntimeFlags } from "./dev-runtime-flags.js";
 
 export const app = document.querySelector("#app");
 
@@ -167,6 +168,15 @@ async function refreshBrokerSession(sessionToken) {
 }
 
 function platformName() {
+  const platformOverride = readDevRuntimeFlags().platformOverride;
+  if (platformOverride === "windows") {
+    return "Windows";
+  }
+
+  if (platformOverride === "mac") {
+    return "Mac";
+  }
+
   return (
     navigator.userAgentData?.platform
     ?? navigator.platform

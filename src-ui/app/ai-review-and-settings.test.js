@@ -134,7 +134,12 @@ const {
   loadStoredAiActionPreferences,
   saveStoredAiActionPreferences,
 } = await import("./ai-action-preferences.js");
-const { saveSelectedTeamAiProviderSecret } = await import("./team-ai-flow.js");
+const {
+  createTeamAiSharedState,
+  ensureSelectedTeamAiProviderReady,
+  loadSelectedTeamAiState,
+  saveSelectedTeamAiProviderSecret,
+} = await import("./team-ai-flow.js");
 const {
   decryptTeamAiWrappedKey,
   encryptTeamAiPlaintext,
@@ -1372,6 +1377,206 @@ test("saveSelectedTeamAiProviderSecret wraps a shared key for the broker and cac
     "sk-team-shared",
   );
   assert.equal(secrets.providers.openai.keyVersion, 4);
+});
+
+test("loadSelectedTeamAiState falls back to the stored team snapshot when the broker is unavailable", async () => {
+  resetSessionState();
+  installSelectedTeam({ canDelete: false });
+
+  invokeHandler = async (command) => {
+    if (command === "load_team_ai_settings") {
+      return {
+        schemaVersion: 1,
+        updatedAt: "2026-04-16T12:00:00.000Z",
+        updatedBy: "owner",
+        actionPreferences: {
+          detailedConfiguration: false,
+          unified: {
+            providerId: "openai",
+            modelId: "gpt-5.4-mini",
+          },
+          actions: {},
+        },
+      };
+    }
+    if (command === "load_team_ai_secrets_metadata") {
+      return {
+        schemaVersion: 1,
+        updatedAt: "2026-04-16T12:00:00.000Z",
+        updatedBy: "owner",
+        providers: {
+          openai: {
+            configured: true,
+            keyVersion: 5,
+            algorithm: "rsa-oaep-sha256-v1",
+          },
+          gemini: null,
+          claude: null,
+          deepseek: null,
+        },
+      };
+    }
+
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  await loadSelectedTeamAiState(() => {});
+
+  state.aiSettings = {
+    ...state.aiSettings,
+    teamShared: createTeamAiSharedState(),
+  };
+  invokeHandler = async (command) => {
+    if (command === "load_team_ai_settings" || command === "load_team_ai_secrets_metadata") {
+      throw new Error("Could not reach the GitHub App broker.");
+    }
+
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  const teamShared = await loadSelectedTeamAiState(() => {}, { force: true });
+
+  assert.equal(teamShared.status, "ready");
+  assert.equal(
+    teamShared.error,
+    "Could not reach the GitHub App broker. Using the last known team AI settings.",
+  );
+  assert.equal(teamShared.settings.actionPreferences.unified.providerId, "openai");
+  assert.equal(teamShared.secrets.providers.openai.keyVersion, 5);
+});
+
+test("ensureSelectedTeamAiProviderReady reports a clear issue error when the broker is unavailable and no cached team key exists", async () => {
+  resetSessionState();
+  installSelectedTeam({ canDelete: false });
+
+  invokeHandler = async (command) => {
+    if (command === "load_team_ai_settings") {
+      return null;
+    }
+    if (command === "load_team_ai_secrets_metadata") {
+      return {
+        schemaVersion: 1,
+        updatedAt: null,
+        updatedBy: "owner",
+        providers: {
+          openai: {
+            configured: true,
+            keyVersion: 7,
+            algorithm: "rsa-oaep-sha256-v1",
+          },
+          gemini: null,
+          claude: null,
+          deepseek: null,
+        },
+      };
+    }
+
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  await loadSelectedTeamAiState(() => {});
+
+  const memberKeypair = await generateTeamAiMemberKeypair();
+  state.aiSettings = {
+    ...state.aiSettings,
+    teamShared: createTeamAiSharedState(),
+  };
+  invokeHandler = async (command, payload = {}) => {
+    if (command === "load_ai_provider_secret") {
+      assert.equal(payload.installationId, 42);
+      return null;
+    }
+    if (command === "load_team_ai_settings" || command === "load_team_ai_secrets_metadata") {
+      throw new Error("Could not reach the GitHub App broker.");
+    }
+    if (command === "load_team_ai_provider_cache") {
+      return {
+        apiKey: null,
+        keyVersion: null,
+      };
+    }
+    if (command === "load_team_ai_member_keypair") {
+      return memberKeypair;
+    }
+    if (command === "issue_team_ai_provider_secret") {
+      throw new Error("Could not reach the GitHub App broker.");
+    }
+
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  await assert.rejects(
+    () => ensureSelectedTeamAiProviderReady(() => {}, "openai"),
+    /team ai key could not be issued right now/i,
+  );
+});
+
+test("ensureSelectedTeamAiProviderReady clears team AI caches when team access is lost", async () => {
+  resetSessionState();
+  installSelectedTeam({ canDelete: false });
+
+  const memberKeypair = await generateTeamAiMemberKeypair();
+  const clearedProviderIds = [];
+
+  invokeHandler = async (command, payload = {}) => {
+    if (command === "load_ai_provider_secret") {
+      assert.equal(payload.installationId, 42);
+      return null;
+    }
+    if (command === "load_team_ai_settings") {
+      return null;
+    }
+    if (command === "load_team_ai_secrets_metadata") {
+      return {
+        schemaVersion: 1,
+        updatedAt: null,
+        updatedBy: "owner",
+        providers: {
+          openai: {
+            configured: true,
+            keyVersion: 7,
+            algorithm: "rsa-oaep-sha256-v1",
+          },
+          gemini: null,
+          claude: null,
+          deepseek: null,
+        },
+      };
+    }
+    if (command === "load_team_ai_provider_cache") {
+      return {
+        apiKey: null,
+        keyVersion: null,
+      };
+    }
+    if (command === "load_team_ai_member_keypair") {
+      return memberKeypair;
+    }
+    if (command === "issue_team_ai_provider_secret") {
+      throw Object.assign(new Error("You no longer have access to this team."), {
+        status: 403,
+      });
+    }
+    if (command === "clear_team_ai_provider_cache") {
+      clearedProviderIds.push(payload.providerId);
+      assert.equal(payload.installationId, 42);
+      return null;
+    }
+
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  await assert.rejects(
+    () => ensureSelectedTeamAiProviderReady(() => {}, "openai"),
+    /no longer have access to this team/i,
+  );
+
+  assert.deepEqual(
+    [...clearedProviderIds].sort(),
+    ["claude", "deepseek", "gemini", "openai"],
+  );
+  assert.equal(state.aiSettings.teamShared.status, "error");
+  assert.match(state.aiSettings.teamShared.error, /no longer have access to this team/i);
 });
 
 test("AI key load and save flows populate and persist aiSettings state", async () => {
