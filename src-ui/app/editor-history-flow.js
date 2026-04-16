@@ -29,6 +29,12 @@ import {
 } from "./editor-utils.js";
 import { ensureEditorRowReadyForWrite } from "./editor-row-sync-flow.js";
 
+function nextChapterBaseCommitSha(payload, chapterState = state.editorChapter) {
+  return typeof payload?.chapterBaseCommitSha === "string" && payload.chapterBaseCommitSha.trim()
+    ? payload.chapterBaseCommitSha.trim()
+    : chapterState?.chapterBaseCommitSha ?? null;
+}
+
 async function fetchEditorFieldHistory(render, requestKey) {
   const editorChapter = state.editorChapter;
   if (!editorChapter?.chapterId || !editorChapter.activeRowId || !editorChapter.activeLanguageCode) {
@@ -220,6 +226,7 @@ export async function restoreEditorFieldHistory(render, commitSha, operations = 
           payload?.sourceWordCounts && typeof payload.sourceWordCounts === "object"
             ? payload.sourceWordCounts
             : state.editorChapter.sourceWordCounts,
+        chapterBaseCommitSha: nextChapterBaseCommitSha(payload, state.editorChapter),
       });
       reconcileDirtyTrackedEditorRows([editorChapter.activeRowId]);
       applyEditorSelectionsToProjectState(state.editorChapter);
@@ -294,7 +301,16 @@ export async function confirmEditorReplaceUndo(render, operations = {}) {
       const updatedRows = Array.isArray(payload?.updatedRows) ? payload.updatedRows : [];
       const skippedRowCount = Array.isArray(payload?.skippedRowIds) ? payload.skippedRowIds.length : 0;
       if (updatedRows.length > 0) {
-        markEditorRowsPersisted(updatedRows, payload?.sourceWordCounts);
+        markEditorRowsPersisted(
+          updatedRows,
+          payload?.sourceWordCounts,
+          nextChapterBaseCommitSha(payload, state.editorChapter),
+        );
+      } else {
+        state.editorChapter = {
+          ...state.editorChapter,
+          chapterBaseCommitSha: nextChapterBaseCommitSha(payload, state.editorChapter),
+        };
       }
       state.editorChapter = cancelEditorReplaceUndoModalState(state.editorChapter);
       render?.();

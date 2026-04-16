@@ -84,6 +84,12 @@ function closeConflictResolutionModalState() {
   };
 }
 
+function nextChapterBaseCommitSha(payload, chapterState = state.editorChapter) {
+  return typeof payload?.chapterBaseCommitSha === "string" && payload.chapterBaseCommitSha.trim()
+    ? payload.chapterBaseCommitSha.trim()
+    : chapterState?.chapterBaseCommitSha ?? null;
+}
+
 function activeEditorMutationInput(rowId) {
   const team = selectedProjectsTeam();
   const context = findChapterContextById(state.editorChapter?.chapterId);
@@ -305,6 +311,7 @@ export async function saveEditorConflictResolution(render, operations = {}) {
       payload?.sourceWordCounts && typeof payload.sourceWordCounts === "object"
         ? payload.sourceWordCounts
         : state.editorChapter.sourceWordCounts,
+    chapterBaseCommitSha: nextChapterBaseCommitSha(payload, state.editorChapter),
   };
   if (typeof operations.applyEditorSelectionsToProjectState === "function") {
     operations.applyEditorSelectionsToProjectState(state.editorChapter);

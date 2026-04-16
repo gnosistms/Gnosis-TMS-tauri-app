@@ -71,6 +71,12 @@ function markRowCommentsSeen(rowId, commentsRevision) {
   return true;
 }
 
+function nextChapterBaseCommitSha(payload, chapterState = state.editorChapter) {
+  return typeof payload?.chapterBaseCommitSha === "string" && payload.chapterBaseCommitSha.trim()
+    ? payload.chapterBaseCommitSha.trim()
+    : chapterState?.chapterBaseCommitSha ?? null;
+}
+
 async function fetchEditorRowComments(render, requestKey) {
   const editorChapter = state.editorChapter;
   if (!editorChapter?.chapterId || !editorChapter.activeRowId) {
@@ -278,7 +284,10 @@ export async function saveActiveEditorRowComment(render) {
       return;
     }
 
-    state.editorChapter = applyEditorCommentSaveSucceeded(state.editorChapter, rowId, payload);
+    state.editorChapter = {
+      ...applyEditorCommentSaveSucceeded(state.editorChapter, rowId, payload),
+      chapterBaseCommitSha: nextChapterBaseCommitSha(payload, state.editorChapter),
+    };
     markRowCommentsSeen(rowId, payload?.commentsRevision ?? 0);
     renderEditorCommentsSidebarAndBody(render);
   } catch (error) {
@@ -323,7 +332,10 @@ export async function deleteActiveEditorRowComment(render, commentId) {
       return;
     }
 
-    state.editorChapter = applyEditorCommentDeleteSucceeded(state.editorChapter, rowId, payload);
+    state.editorChapter = {
+      ...applyEditorCommentDeleteSucceeded(state.editorChapter, rowId, payload),
+      chapterBaseCommitSha: nextChapterBaseCommitSha(payload, state.editorChapter),
+    };
     markRowCommentsSeen(rowId, payload?.commentsRevision ?? 0);
     renderEditorCommentsSidebarAndBody(render);
   } catch (error) {

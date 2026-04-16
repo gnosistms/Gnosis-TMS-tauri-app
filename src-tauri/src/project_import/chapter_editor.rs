@@ -193,6 +193,7 @@ pub(crate) struct UpdateEditorRowFieldsBatchResponse {
     row_ids: Vec<String>,
     source_word_counts: BTreeMap<String, usize>,
     commit_sha: Option<String>,
+    chapter_base_commit_sha: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -202,6 +203,7 @@ pub(crate) struct UpdateEditorRowFieldFlagResponse {
     language_code: String,
     reviewed: bool,
     please_check: bool,
+    chapter_base_commit_sha: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -209,6 +211,7 @@ pub(crate) struct UpdateEditorRowFieldFlagResponse {
 pub(crate) struct ClearEditorReviewedMarkersResponse {
     row_ids: Vec<String>,
     language_code: String,
+    chapter_base_commit_sha: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -216,6 +219,7 @@ pub(crate) struct ClearEditorReviewedMarkersResponse {
 pub(crate) struct InsertEditorRowResponse {
     row: EditorRow,
     source_word_counts: BTreeMap<String, usize>,
+    chapter_base_commit_sha: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -300,6 +304,7 @@ pub(crate) struct RestoreEditorFieldHistoryResponse {
     reviewed: bool,
     please_check: bool,
     source_word_counts: BTreeMap<String, usize>,
+    chapter_base_commit_sha: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -328,6 +333,7 @@ pub(crate) struct ReverseEditorBatchReplaceCommitResponse {
     skipped_row_ids: Vec<String>,
     source_word_counts: BTreeMap<String, usize>,
     commit_sha: Option<String>,
+    chapter_base_commit_sha: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -404,6 +410,7 @@ pub(crate) struct SaveEditorRowWithConcurrencyResponse {
     source_word_counts: BTreeMap<String, usize>,
     base_fields: BTreeMap<String, String>,
     conflict_remote_version: Option<EditorRowVersionMetadata>,
+    chapter_base_commit_sha: Option<String>,
 }
 
 #[derive(Clone, Serialize)]
@@ -692,6 +699,7 @@ pub(super) fn insert_gtms_editor_row_sync(
     Ok(InsertEditorRowResponse {
         row: editor_row_from_stored_row_file(inserted_row_file)?,
         source_word_counts: build_source_word_counts_from_stored_rows(&rows, &languages),
+        chapter_base_commit_sha: current_repo_head_sha(&repo_path),
     })
 }
 
@@ -1202,6 +1210,7 @@ pub(super) fn update_gtms_editor_row_fields_sync(
             source_word_counts,
             base_fields: input.base_fields,
             conflict_remote_version: None,
+            chapter_base_commit_sha: current_repo_head_sha(&repo_path),
         });
     }
 
@@ -1226,6 +1235,7 @@ pub(super) fn update_gtms_editor_row_fields_sync(
             source_word_counts,
             base_fields: input.base_fields,
             conflict_remote_version: None,
+            chapter_base_commit_sha: current_repo_head_sha(&repo_path),
         });
     }
 
@@ -1240,6 +1250,7 @@ pub(super) fn update_gtms_editor_row_fields_sync(
                 &repo_path,
                 &relative_row_json,
             )?,
+            chapter_base_commit_sha: current_repo_head_sha(&repo_path),
         });
     }
 
@@ -1296,6 +1307,7 @@ pub(super) fn update_gtms_editor_row_fields_sync(
         source_word_counts: next_source_word_counts,
         base_fields: input.base_fields,
         conflict_remote_version: None,
+        chapter_base_commit_sha: current_repo_head_sha(&repo_path),
     })
 }
 
@@ -1426,6 +1438,7 @@ pub(super) fn update_gtms_editor_row_fields_batch_sync(
             row_ids: changed_row_ids,
             source_word_counts,
             commit_sha,
+            chapter_base_commit_sha: current_repo_head_sha(&repo_path),
         });
     }
 
@@ -1433,6 +1446,7 @@ pub(super) fn update_gtms_editor_row_fields_batch_sync(
         row_ids: changed_row_ids,
         source_word_counts,
         commit_sha: None,
+        chapter_base_commit_sha: current_repo_head_sha(&repo_path),
     })
 }
 
@@ -1623,6 +1637,7 @@ pub(super) fn restore_gtms_editor_field_from_history_sync(
         reviewed: historical_field_value.editor_flags.reviewed,
         please_check: historical_field_value.editor_flags.please_check,
         source_word_counts,
+        chapter_base_commit_sha: current_repo_head_sha(&repo_path),
     })
 }
 
@@ -1724,6 +1739,7 @@ pub(super) fn reverse_gtms_editor_batch_replace_commit_sync(
             skipped_row_ids,
             source_word_counts,
             commit_sha: None,
+            chapter_base_commit_sha: current_repo_head_sha(&repo_path),
         });
     }
 
@@ -1766,6 +1782,7 @@ pub(super) fn reverse_gtms_editor_batch_replace_commit_sync(
         skipped_row_ids,
         source_word_counts,
         commit_sha,
+        chapter_base_commit_sha: current_repo_head_sha(&repo_path),
     })
 }
 
@@ -1774,6 +1791,10 @@ fn compare_stored_rows(left: &StoredRowFile, right: &StoredRowFile) -> Ordering 
         .order_key
         .cmp(&right.structure.order_key)
         .then_with(|| left.row_id.cmp(&right.row_id))
+}
+
+fn current_repo_head_sha(repo_path: &Path) -> Option<String> {
+    git_output(repo_path, &["rev-parse", "--verify", "HEAD"]).ok()
 }
 
 fn load_editor_rows(rows_path: &Path) -> Result<Vec<StoredRowFile>, String> {
@@ -1932,6 +1953,7 @@ pub(super) fn update_gtms_editor_row_field_flag_sync(
         language_code: input.language_code,
         reviewed,
         please_check,
+        chapter_base_commit_sha: current_repo_head_sha(&repo_path),
     })
 }
 
@@ -2013,6 +2035,7 @@ pub(super) fn clear_gtms_editor_reviewed_markers_sync(
     Ok(ClearEditorReviewedMarkersResponse {
         row_ids: changed_row_ids,
         language_code: input.language_code,
+        chapter_base_commit_sha: current_repo_head_sha(&repo_path),
     })
 }
 

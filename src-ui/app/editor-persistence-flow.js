@@ -127,6 +127,12 @@ function formatUnreviewAllCount(count) {
   return count === 1 ? "1 row" : `${count} rows`;
 }
 
+function nextChapterBaseCommitSha(payload, chapterState = state.editorChapter) {
+  return typeof payload?.chapterBaseCommitSha === "string" && payload.chapterBaseCommitSha.trim()
+    ? payload.chapterBaseCommitSha.trim()
+    : chapterState?.chapterBaseCommitSha ?? null;
+}
+
 export function scheduleDirtyEditorRowScan(render, rowId, operations = {}) {
   if (!rowId || typeof window === "undefined") {
     return;
@@ -287,6 +293,10 @@ export async function toggleEditorRowFieldMarker(
         rowId,
         (currentRow) => applyEditorRowMarkerSaved(currentRow, languageCode, payload),
       );
+      state.editorChapter = {
+        ...state.editorChapter,
+        chapterBaseCommitSha: nextChapterBaseCommitSha(payload, state.editorChapter),
+      };
       reconcileDirtyTrackedEditorRows([rowId]);
       render?.();
 
@@ -395,11 +405,14 @@ export async function confirmEditorUnreviewAll(render, operations = {}) {
     const changedRowIds = Array.isArray(payload?.rowIds) ? payload.rowIds.filter(Boolean) : [];
     const activeRowId = state.editorChapter.activeRowId;
     const activeLanguageCode = state.editorChapter.activeLanguageCode;
-    state.editorChapter = applyEditorChapterRowsUnreviewed(
-      state.editorChapter,
-      languageCode,
-      changedRowIds,
-    );
+    state.editorChapter = {
+      ...applyEditorChapterRowsUnreviewed(
+        state.editorChapter,
+        languageCode,
+        changedRowIds,
+      ),
+      chapterBaseCommitSha: nextChapterBaseCommitSha(payload, state.editorChapter),
+    };
     reconcileDirtyTrackedEditorRows(changedRowIds);
     render?.();
 
@@ -575,6 +588,7 @@ async function persistEditorRow(render, rowId, operations = {}, options = {}) {
             payload?.sourceWordCounts && typeof payload.sourceWordCounts === "object"
               ? payload.sourceWordCounts
               : state.editorChapter.sourceWordCounts,
+          chapterBaseCommitSha: nextChapterBaseCommitSha(payload, state.editorChapter),
         };
         if (
           reviewLanguageToOpen

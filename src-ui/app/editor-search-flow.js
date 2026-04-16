@@ -35,6 +35,12 @@ function normalizeEditorChapterFilters(filters) {
   return normalizeEditorChapterFilterState(filters);
 }
 
+function nextChapterBaseCommitSha(payload, chapterState = state.editorChapter) {
+  return typeof payload?.chapterBaseCommitSha === "string" && payload.chapterBaseCommitSha.trim()
+    ? payload.chapterBaseCommitSha.trim()
+    : chapterState?.chapterBaseCommitSha ?? null;
+}
+
 function hasEditorSearchOperations(operations) {
   return (
     typeof operations?.markEditorRowsPersisted === "function"
@@ -421,7 +427,11 @@ export async function replaceSelectedEditorRows(render, operations = {}) {
       });
 
       if (state.editorChapter?.chapterId === editorChapter.chapterId) {
-        operations.markEditorRowsPersisted(resetRows, resetPayload?.sourceWordCounts);
+        operations.markEditorRowsPersisted(
+          resetRows,
+          resetPayload?.sourceWordCounts,
+          nextChapterBaseCommitSha(resetPayload, state.editorChapter),
+        );
       }
     }
 
@@ -436,7 +446,11 @@ export async function replaceSelectedEditorRows(render, operations = {}) {
     });
 
     if (state.editorChapter?.chapterId === editorChapter.chapterId) {
-      operations.markEditorRowsPersisted(replacePlan.updatedRows, payload?.sourceWordCounts);
+      operations.markEditorRowsPersisted(
+        replacePlan.updatedRows,
+        payload?.sourceWordCounts,
+        nextChapterBaseCommitSha(payload, state.editorChapter),
+      );
       updateEditorReplaceState(state, (currentState) => ({
         ...currentState,
         status: "idle",

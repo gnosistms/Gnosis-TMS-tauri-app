@@ -24,7 +24,6 @@ import {
 import { showNoticeBadge } from "./status-feedback.js";
 import { canPermanentlyDeleteProjectFiles } from "./resource-capabilities.js";
 import { ensureEditorRowReadyForWrite } from "./editor-row-sync-flow.js";
-import { noteEditorBackgroundSyncHead } from "./editor-background-sync.js";
 
 function hasRowStructureOperations(operations) {
   return (
@@ -148,15 +147,19 @@ export async function confirmInsertEditorRow(render, position, operations = {}) 
         offsetTop: 80,
       }
       : null;
+    const chapterBaseCommitSha = nextChapterBaseCommitSha(state.editorChapter, payload);
 
     operations.applyStructuralEditorChange(render, () => {
-      state.editorChapter = applyInsertedEditorRowState(
-        state.editorChapter,
-        payload?.row,
-        modal.rowId,
-        position === "before",
-        payload?.sourceWordCounts,
-      );
+      state.editorChapter = {
+        ...applyInsertedEditorRowState(
+          state.editorChapter,
+          payload?.row,
+          modal.rowId,
+          position === "before",
+          payload?.sourceWordCounts,
+        ),
+        chapterBaseCommitSha,
+      };
       operations.applyEditorSelectionsToProjectState(state.editorChapter);
     }, {
       anchorSnapshot: insertAnchorSnapshot,
@@ -250,7 +253,6 @@ export async function softDeleteEditorRow(render, rowId, triggerAnchorSnapshot =
     }, {
       anchorSnapshot: result.anchorSnapshot,
     });
-    noteEditorBackgroundSyncHead(chapterBaseCommitSha);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     showNoticeBadge(message || "The row could not be deleted.", render);
@@ -329,7 +331,6 @@ export async function restoreEditorRow(render, rowId, operations = {}) {
     }, {
       anchorSnapshot: result.anchorSnapshot,
     });
-    noteEditorBackgroundSyncHead(chapterBaseCommitSha);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     showNoticeBadge(message || "The row could not be restored.", render);
@@ -428,7 +429,6 @@ export async function confirmEditorRowPermanentDeletion(render, operations = {})
     }, {
       anchorSnapshot: result.anchorSnapshot,
     });
-    noteEditorBackgroundSyncHead(chapterBaseCommitSha);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     if (state.editorChapter?.chapterId === editorChapter.chapterId) {

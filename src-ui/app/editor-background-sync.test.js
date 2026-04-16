@@ -323,3 +323,47 @@ test("background sync rerenders the editor body when row freshness changes", asy
   assert.deepEqual(render.calls, [{ scope: "translate-body" }]);
   assert.equal(state.editorChapter.rows[0]?.freshness, "stale");
 });
+
+test("background sync ignores stale row updates from an obsolete sync base", async () => {
+  installEditorFixture();
+  state.editorChapter.rows = [{
+    rowId: "row-1",
+    freshness: "fresh",
+    remotelyDeleted: false,
+    fields: { es: "hola", en: "hello" },
+    persistedFields: { es: "hola", en: "hello" },
+    fieldStates: { es: { reviewed: false, pleaseCheck: false }, en: { reviewed: false, pleaseCheck: false } },
+    persistedFieldStates: { es: { reviewed: false, pleaseCheck: false }, en: { reviewed: false, pleaseCheck: false } },
+  }];
+
+  const syncRequest = deferred();
+  invokeHandler = async (command) => {
+    if (command === "sync_gtms_project_editor_repo") {
+      return syncRequest.promise;
+    }
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  const render = createRenderRecorder();
+  startEditorBackgroundSyncSession(render);
+  await Promise.resolve();
+
+  state.editorChapter = {
+    ...state.editorChapter,
+    chapterBaseCommitSha: "head-2",
+  };
+
+  const pendingSync = syncEditorBackgroundNow(render, { skipDirtyFlush: true });
+  syncRequest.resolve({
+    oldHeadSha: "head-1",
+    changedRowIds: ["row-1"],
+    deletedRowIds: [],
+    insertedRowIds: [],
+    newHeadSha: "head-2",
+  });
+  await pendingSync;
+
+  assert.deepEqual(render.calls, []);
+  assert.equal(state.editorChapter.rows[0]?.freshness, "fresh");
+  assert.equal(state.editorChapter.chapterBaseCommitSha, "head-2");
+});

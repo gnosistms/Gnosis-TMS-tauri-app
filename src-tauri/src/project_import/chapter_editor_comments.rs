@@ -15,6 +15,10 @@ use super::project_git::{
     repo_relative_path, write_text_file,
 };
 
+fn current_repo_head_sha(repo_path: &std::path::Path) -> Option<String> {
+    git_output(repo_path, &["rev-parse", "--verify", "HEAD"]).ok()
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct LoadEditorRowCommentsInput {
@@ -63,6 +67,7 @@ pub(crate) struct SaveEditorRowCommentResponse {
     comments_revision: u64,
     comment_count: usize,
     comments: Vec<EditorRowComment>,
+    chapter_base_commit_sha: Option<String>,
 }
 
 #[derive(Clone, Serialize)]
@@ -72,6 +77,7 @@ pub(crate) struct DeleteEditorRowCommentResponse {
     comments_revision: u64,
     comment_count: usize,
     comments: Vec<EditorRowComment>,
+    chapter_base_commit_sha: Option<String>,
 }
 
 #[derive(Clone, Serialize)]
@@ -197,6 +203,7 @@ pub(super) fn save_gtms_editor_row_comment_sync(
         comments_revision,
         comment_count: updated_row_file.editor_comments.len(),
         comments: sort_editor_row_comments(updated_row_file.editor_comments),
+        chapter_base_commit_sha: current_repo_head_sha(&repo_path),
     })
 }
 
@@ -266,6 +273,7 @@ pub(super) fn delete_gtms_editor_row_comment_sync(
         comments_revision,
         comment_count: updated_row_file.editor_comments.len(),
         comments: sort_editor_row_comments(updated_row_file.editor_comments),
+        chapter_base_commit_sha: current_repo_head_sha(&repo_path),
     })
 }
 

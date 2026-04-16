@@ -21,6 +21,18 @@ const editorBackgroundSyncSession = {
   pendingSync: null,
 };
 
+function normalizeHeadSha(headSha) {
+  return typeof headSha === "string" && headSha.trim()
+    ? headSha.trim()
+    : null;
+}
+
+function syncResultMatchesCurrentChapterHead(syncResult, chapterState = state.editorChapter) {
+  const currentHeadSha = normalizeHeadSha(chapterState?.chapterBaseCommitSha);
+  const oldHeadSha = normalizeHeadSha(syncResult?.oldHeadSha);
+  return !currentHeadSha || !oldHeadSha || currentHeadSha === oldHeadSha;
+}
+
 function currentSessionKey() {
   if (state.screen !== "translate" || !state.editorChapter?.chapterId) {
     return "";
@@ -125,10 +137,12 @@ async function runEditorBackgroundSync(render, options = {}) {
       return null;
     }
 
-    editorBackgroundSyncSession.lastSyncedHeadSha =
-      payload?.newHeadSha
-      ?? payload?.oldHeadSha
-      ?? editorBackgroundSyncSession.lastSyncedHeadSha;
+    if (syncResultMatchesCurrentChapterHead(payload)) {
+      editorBackgroundSyncSession.lastSyncedHeadSha =
+        normalizeHeadSha(payload?.newHeadSha)
+        ?? normalizeHeadSha(payload?.oldHeadSha)
+        ?? editorBackgroundSyncSession.lastSyncedHeadSha;
+    }
     const visibleChangesApplied = markEditorRowsStale(payload);
     setEditorBackgroundSyncState("idle", "");
     if (visibleChangesApplied || hadVisibleErrorBanner) {

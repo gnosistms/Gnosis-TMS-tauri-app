@@ -12,6 +12,12 @@ import { findEditorRowById } from "./editor-utils.js";
 
 const pendingEditorRowReloads = new Map();
 
+function normalizeHeadSha(headSha) {
+  return typeof headSha === "string" && headSha.trim()
+    ? headSha.trim()
+    : null;
+}
+
 function clearActiveEditorSelectionForRow(rowId) {
   if (state.editorChapter?.activeRowId !== rowId) {
     return;
@@ -71,6 +77,12 @@ export function markEditorRowsStale(syncResult = {}) {
     return false;
   }
 
+  const currentHeadSha = normalizeHeadSha(state.editorChapter.chapterBaseCommitSha);
+  const oldHeadSha = normalizeHeadSha(syncResult?.oldHeadSha);
+  if (currentHeadSha && oldHeadSha && currentHeadSha !== oldHeadSha) {
+    return false;
+  }
+
   const changedRowIds = new Set(
     (Array.isArray(syncResult.changedRowIds) ? syncResult.changedRowIds : []).filter(Boolean),
   );
@@ -85,7 +97,7 @@ export function markEditorRowsStale(syncResult = {}) {
     ...state.editorChapter,
     chapterBaseCommitSha:
       typeof syncResult?.newHeadSha === "string" && syncResult.newHeadSha.trim()
-        ? syncResult.newHeadSha
+        ? syncResult.newHeadSha.trim()
         : state.editorChapter.chapterBaseCommitSha,
     deferredStructuralChanges: nextDeferredStructuralChanges,
     rows: state.editorChapter.rows.map((row) => {

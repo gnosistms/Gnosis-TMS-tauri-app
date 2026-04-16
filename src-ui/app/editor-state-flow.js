@@ -443,7 +443,7 @@ export function rowsWithEditorRowLifecycleState(rows, rowId, lifecycleState) {
   );
 }
 
-export function markEditorRowsPersisted(rowUpdates, sourceWordCounts = null) {
+export function markEditorRowsPersisted(rowUpdates, sourceWordCounts = null, chapterBaseCommitSha = null) {
   const updatesByRowId = new Map(
     (Array.isArray(rowUpdates) ? rowUpdates : []).map((row) => [row.rowId, cloneRowFields(row.fields)]),
   );
@@ -453,6 +453,10 @@ export function markEditorRowsPersisted(rowUpdates, sourceWordCounts = null) {
 
   state.editorChapter = {
     ...state.editorChapter,
+    chapterBaseCommitSha:
+      typeof chapterBaseCommitSha === "string" && chapterBaseCommitSha.trim()
+        ? chapterBaseCommitSha.trim()
+        : state.editorChapter.chapterBaseCommitSha,
     rows: state.editorChapter.rows.map((row) => {
       if (!updatesByRowId.has(row.rowId)) {
         return row;
