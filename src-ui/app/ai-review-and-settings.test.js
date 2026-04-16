@@ -1379,6 +1379,94 @@ test("saveSelectedTeamAiProviderSecret wraps a shared key for the broker and cac
   assert.equal(secrets.providers.openai.keyVersion, 4);
 });
 
+test("saveSelectedTeamAiProviderSecret clears broker and local shared keys when the owner saves an empty value", async () => {
+  resetSessionState();
+  installSelectedTeam({ canDelete: true });
+  state.aiSettings = {
+    ...state.aiSettings,
+    teamShared: {
+      ...createTeamAiSharedState(),
+      teamId: "team-1",
+      status: "ready",
+      isOwner: true,
+      secrets: {
+        schemaVersion: 1,
+        updatedAt: "2026-04-16T12:00:00.000Z",
+        updatedBy: "owner",
+        providers: {
+          openai: {
+            configured: true,
+            keyVersion: 4,
+            algorithm: "rsa-oaep-sha256-v1",
+          },
+          gemini: null,
+          claude: null,
+          deepseek: null,
+        },
+      },
+    },
+  };
+
+  invokeHandler = async (command, payload = {}) => {
+    if (command === "save_team_ai_provider_secret") {
+      assert.deepEqual(payload, {
+        installationId: 42,
+        orgLogin: "team-one",
+        providerId: "openai",
+        wrappedKey: null,
+        clear: true,
+        sessionToken: "broker-session",
+      });
+      return {
+        schemaVersion: 1,
+        updatedAt: null,
+        updatedBy: null,
+        providers: {},
+      };
+    }
+    if (command === "clear_team_ai_provider_cache") {
+      assert.deepEqual(payload, {
+        installationId: 42,
+        providerId: "openai",
+      });
+      return null;
+    }
+    if (command === "clear_ai_provider_secret") {
+      assert.deepEqual(payload, {
+        installationId: 42,
+        providerId: "openai",
+      });
+      return null;
+    }
+
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  const secrets = await saveSelectedTeamAiProviderSecret(
+    () => {},
+    "openai",
+    "   ",
+  );
+
+  assert.deepEqual(
+    invokeLog.map((entry) => entry.command),
+    [
+      "save_team_ai_provider_secret",
+      "clear_team_ai_provider_cache",
+      "clear_ai_provider_secret",
+    ],
+  );
+  assert.equal(state.aiSettings.teamShared.status, "ready");
+  assert.equal(state.aiSettings.teamShared.isOwner, true);
+  assert.equal(state.aiSettings.teamShared.secrets.providers.openai, null);
+  assert.deepEqual(secrets.providers, {
+    openai: null,
+    gemini: null,
+    claude: null,
+    deepseek: null,
+  });
+});
+
 test("loadSelectedTeamAiState falls back to the stored team snapshot when the broker is unavailable", async () => {
   resetSessionState();
   installSelectedTeam({ canDelete: false });
