@@ -219,6 +219,7 @@ export function initializeEditorVirtualization(root, appState) {
     )
     : null;
   const shouldAvoidScrollHeightMeasurement = isWindowsPlatform();
+  const shouldReconcileGlossaryVisibleLayout = !isWindowsPlatform();
   let currentRangeKey = "";
   let animationFrameId = 0;
   let scheduledRenderReason = "";
@@ -381,6 +382,14 @@ export function initializeEditorVirtualization(root, appState) {
 
   const glossarySync = createEditorVisibleGlossarySync(root, scrollContainer, appState, {
     afterVisibleSync() {
+      if (!shouldReconcileGlossaryVisibleLayout) {
+        logEditorScrollDebug("glossary-visible-sync-layout-skipped", {
+          scrollTop: scrollContainer.scrollTop,
+          rangeKey: currentRangeKey,
+        });
+        return;
+      }
+
       reconcileVisibleLayoutChanges("glossary-visible-sync");
     },
   });
