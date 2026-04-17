@@ -36,9 +36,9 @@ import {
   toggleEditorSearchFilterCaseSensitive,
   toggleDeletedEditorRowGroup,
   toggleEditorRowFieldMarker,
-  updateEditorRowTextStyle,
   toggleEditorHistoryGroupExpanded,
   toggleEditorReviewSectionExpanded,
+  updateEditorRowTextStyle,
   toggleEditorLanguageCollapsed,
 } from "../translate-flow.js";
 
@@ -178,14 +178,13 @@ export function createTranslateActions(render) {
       return true;
     }
 
-    const nextTextStyle = actionSuffix(action, "set-editor-row-text-style:");
-    if (nextTextStyle !== null) {
+    if (action === "set-editor-row-text-style") {
       const button = event?.target instanceof Element
         ? event.target.closest("[data-row-id][data-text-style]")
         : null;
       const rowId = button?.dataset.rowId ?? null;
-      updateEditorRowTextStyle(rowId, button?.dataset.textStyle ?? nextTextStyle);
-      render?.({ scope: "translate-body" });
+      const textStyle = button?.dataset.textStyle ?? null;
+      await updateEditorRowTextStyle(render, rowId, textStyle);
       return true;
     }
 

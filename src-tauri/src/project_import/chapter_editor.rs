@@ -124,10 +124,6 @@ pub(crate) struct UpdateEditorRowFieldsInput {
     fields: BTreeMap<String, String>,
     #[serde(default)]
     base_fields: BTreeMap<String, String>,
-    #[serde(default)]
-    text_style: Option<String>,
-    #[serde(default)]
-    base_text_style: Option<String>,
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -160,6 +156,17 @@ pub(crate) struct UpdateEditorRowFieldFlagInput {
     language_code: String,
     flag: String,
     enabled: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct UpdateEditorRowTextStyleInput {
+    installation_id: i64,
+    repo_name: String,
+    project_id: Option<String>,
+    chapter_id: String,
+    row_id: String,
+    text_style: String,
 }
 
 #[derive(Deserialize)]
@@ -208,6 +215,14 @@ pub(crate) struct UpdateEditorRowFieldFlagResponse {
     language_code: String,
     reviewed: bool,
     please_check: bool,
+    chapter_base_commit_sha: Option<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct UpdateEditorRowTextStyleResponse {
+    row_id: String,
+    text_style: String,
     chapter_base_commit_sha: Option<String>,
 }
 
@@ -415,7 +430,6 @@ pub(crate) struct SaveEditorRowWithConcurrencyResponse {
     row: Option<EditorRow>,
     source_word_counts: BTreeMap<String, usize>,
     base_fields: BTreeMap<String, String>,
-    base_text_style: String,
     conflict_remote_version: Option<EditorRowVersionMetadata>,
     chapter_base_commit_sha: Option<String>,
 }
@@ -1211,8 +1225,6 @@ pub(super) fn update_gtms_editor_row_fields_sync(
     let relative_row_json = repo_relative_path(&repo_path, &row_json_path)?;
     let languages = sanitize_chapter_languages(&chapter_file.languages);
     let source_word_counts = load_source_word_counts(&chapter_path.join("rows"), &languages)?;
-    let input_base_text_style = normalize_editor_text_style_value(input.base_text_style.as_deref());
-    let input_text_style = normalize_editor_text_style_value(input.text_style.as_deref());
     if !row_json_path.exists() {
         return Ok(SaveEditorRowWithConcurrencyResponse {
             row_id: input.row_id,
@@ -1220,7 +1232,6 @@ pub(super) fn update_gtms_editor_row_fields_sync(
             row: None,
             source_word_counts,
             base_fields: input.base_fields,
-            base_text_style: input_base_text_style,
             conflict_remote_version: None,
             chapter_base_commit_sha: current_repo_head_sha(&repo_path),
         });
@@ -1246,22 +1257,18 @@ pub(super) fn update_gtms_editor_row_fields_sync(
             row: Some(editor_row_from_stored_row_file(original_row_file)?),
             source_word_counts,
             base_fields: input.base_fields,
-            base_text_style: input_base_text_style,
             conflict_remote_version: None,
             chapter_base_commit_sha: current_repo_head_sha(&repo_path),
         });
     }
 
-    if row_plain_text_map(&original_row_file) != input.base_fields
-        || row_text_style(&original_row_file) != input_base_text_style
-    {
+    if row_plain_text_map(&original_row_file) != input.base_fields {
         return Ok(SaveEditorRowWithConcurrencyResponse {
             row_id: input.row_id,
             status: "conflict".to_string(),
             row: Some(editor_row_from_stored_row_file(original_row_file)?),
             source_word_counts,
             base_fields: input.base_fields,
-            base_text_style: input_base_text_style,
             conflict_remote_version: load_latest_row_version_metadata(
                 &repo_path,
                 &relative_row_json,
@@ -1277,7 +1284,6 @@ pub(super) fn update_gtms_editor_row_fields_sync(
         )
     })?;
     apply_editor_plain_text_updates(&mut row_value, &input.fields)?;
-    apply_editor_text_style_update(&mut row_value, &input_text_style)?;
 
     let updated_row_json = serde_json::to_string_pretty(&row_value).map_err(|error| {
         format!(
@@ -1323,7 +1329,6 @@ pub(super) fn update_gtms_editor_row_fields_sync(
         row: Some(editor_row_from_stored_row_file(next_row)?),
         source_word_counts: next_source_word_counts,
         base_fields: input.base_fields,
-        base_text_style: input_base_text_style,
         conflict_remote_version: None,
         chapter_base_commit_sha: current_repo_head_sha(&repo_path),
     })
@@ -1975,6 +1980,68 @@ pub(super) fn update_gtms_editor_row_field_flag_sync(
     })
 }
 
+pub(super) fn update_gtms_editor_row_text_style_sync(
+    app: &AppHandle,
+    input: UpdateEditorRowTextStyleInput,
+) -> Result<UpdateEditorRowTextStyleResponse, String> {
+    let repo_path = resolve_project_git_repo_path(
+        app,
+        input.installation_id,
+        input.project_id.as_deref(),
+        Some(&input.repo_name),
+    )?;
+    ensure_repo_exists(&repo_path, "The local project repo is not available yet.")?;
+    ensure_valid_git_repo(&repo_path, "The local project repo is missing or invalid.")?;
+
+    let chapter_path = find_chapter_path_by_id(&repo_path.join("chapters"), &input.chapter_id)?;
+    let row_json_path = chapter_path
+        .join("rows")
+        .join(format!("{}.json", input.row_id));
+    let original_row_text = fs::read_to_string(&row_json_path).map_err(|error| {
+        format!(
+            "Could not read row file '{}': {error}",
+            row_json_path.display()
+        )
+    })?;
+    let mut row_value: Value = serde_json::from_str(&original_row_text).map_err(|error| {
+        format!(
+            "Could not parse row file '{}': {error}",
+            row_json_path.display()
+        )
+    })?;
+    let (text_style, changed) = apply_editor_text_style_update(&mut row_value, &input.text_style)?;
+
+    if changed {
+        let updated_row_json = serde_json::to_string_pretty(&row_value).map_err(|error| {
+            format!(
+                "Could not serialize row file '{}': {error}",
+                row_json_path.display()
+            )
+        })?;
+        let updated_row_text = format!("{updated_row_json}\n");
+        write_text_file(&row_json_path, &updated_row_text)?;
+
+        let relative_row_json = repo_relative_path(&repo_path, &row_json_path)?;
+        git_output(&repo_path, &["add", &relative_row_json])?;
+        git_commit_as_signed_in_user_with_metadata(
+            app,
+            &repo_path,
+            &format!("Update row {} text style", input.row_id),
+            &[&relative_row_json],
+            CommitMetadata {
+                operation: Some("text-style"),
+                status_note: None,
+            },
+        )?;
+    }
+
+    Ok(UpdateEditorRowTextStyleResponse {
+        row_id: input.row_id,
+        text_style,
+        chapter_base_commit_sha: current_repo_head_sha(&repo_path),
+    })
+}
+
 pub(super) fn clear_gtms_editor_reviewed_markers_sync(
     app: &AppHandle,
     input: ClearEditorReviewedMarkersInput,
@@ -2012,8 +2079,12 @@ pub(super) fn clear_gtms_editor_reviewed_markers_sync(
                 row_json_path.display()
             )
         })?;
-        let (_, _, changed) =
-            apply_editor_field_flag_update(&mut row_value, &input.language_code, "reviewed", false)?;
+        let (_, _, changed) = apply_editor_field_flag_update(
+            &mut row_value,
+            &input.language_code,
+            "reviewed",
+            false,
+        )?;
         if !changed {
             continue;
         }
@@ -2280,11 +2351,10 @@ fn ensure_editor_field_object_defaults(
 
 fn normalize_editor_text_style_value(value: Option<&str>) -> String {
     match value.unwrap_or_default().trim() {
-        "heading1" => "heading1".to_string(),
-        "heading2" => "heading2".to_string(),
-        "quote" => "quote".to_string(),
-        "numbered-list" => "numbered-list".to_string(),
-        "bullet-list" => "bullet-list".to_string(),
+        "h1" | "heading1" => "heading1".to_string(),
+        "h2" | "heading2" => "heading2".to_string(),
+        "q" | "quote" => "quote".to_string(),
+        "i" | "indented" => "indented".to_string(),
         _ => DEFAULT_EDITOR_TEXT_STYLE.to_string(),
     }
 }
@@ -2349,26 +2419,28 @@ fn apply_editor_plain_text_updates(
     Ok(())
 }
 
-fn apply_editor_text_style_update(row_value: &mut Value, text_style: &str) -> Result<bool, String> {
+fn apply_editor_text_style_update(
+    row_value: &mut Value,
+    text_style: &str,
+) -> Result<(String, bool), String> {
     let normalized_text_style = normalize_editor_text_style_value(Some(text_style));
     let row_object = row_object_mut(row_value)?;
-    let previous_text_style = normalize_editor_text_style_value(
-        row_object.get("text_style").and_then(Value::as_str),
-    );
-    if previous_text_style == normalized_text_style {
-        return Ok(false);
+    let previous_text_style =
+        normalize_editor_text_style_value(row_object.get("text_style").and_then(Value::as_str));
+    let changed = previous_text_style != normalized_text_style;
+    if changed {
+        row_object.insert(
+            "text_style".to_string(),
+            Value::String(normalized_text_style.clone()),
+        );
+        let fields_object = row_object
+            .get_mut("fields")
+            .and_then(Value::as_object_mut)
+            .ok_or_else(|| "The row fields are not a JSON object.".to_string())?;
+        clear_editor_html_preview_cache(fields_object)?;
     }
 
-    row_object.insert(
-        "text_style".to_string(),
-        Value::String(normalized_text_style),
-    );
-    let fields_object = row_object
-        .get_mut("fields")
-        .and_then(Value::as_object_mut)
-        .ok_or_else(|| "The row fields are not a JSON object.".to_string())?;
-    clear_editor_html_preview_cache(fields_object)?;
-    Ok(true)
+    Ok((normalized_text_style, changed))
 }
 
 fn apply_editor_field_flag_update(
@@ -2752,9 +2824,9 @@ mod tests {
         apply_editor_text_style_update, build_editor_field_history_entries,
         create_inserted_editor_row, create_inserted_row_file, editor_row_from_stored_row_file,
         filter_commit_row_paths_for_chapter, parse_git_commit_message,
-        preferred_target_language_code, ChapterLanguage, DEFAULT_EDITOR_TEXT_STYLE,
-        GitCommitMetadata, StoredChapterFile, StoredChapterSettings, StoredFieldEditorFlags,
-        StoredFieldValue, StoredRowFile,
+        preferred_target_language_code, row_text_style, ChapterLanguage, GitCommitMetadata,
+        StoredChapterFile, StoredChapterSettings, StoredFieldEditorFlags, StoredFieldValue,
+        StoredRowFile, DEFAULT_EDITOR_TEXT_STYLE,
     };
 
     fn history_commit(commit_sha: &str, operation_type: Option<&str>) -> GitCommitMetadata {
@@ -2906,10 +2978,11 @@ mod tests {
           }
         });
 
-        let changed = apply_editor_text_style_update(&mut row_value, "heading1")
+        let (text_style, changed) = apply_editor_text_style_update(&mut row_value, "heading1")
             .expect("text style update should succeed");
 
         assert!(changed);
+        assert_eq!(text_style, "heading1");
         assert_eq!(row_value["text_style"], json!("heading1"));
         assert!(row_value["fields"]["es"].get("html_preview").is_none());
         assert!(row_value["fields"]["en"].get("html_preview").is_none());
@@ -2993,6 +3066,7 @@ mod tests {
 
         assert_eq!(row.editor_comments_revision, 0);
         assert!(row.editor_comments.is_empty());
+        assert_eq!(row_text_style(&row), DEFAULT_EDITOR_TEXT_STYLE);
     }
 
     #[test]
@@ -3027,6 +3101,7 @@ mod tests {
         let editor_row = editor_row_from_stored_row_file(row).expect("editor row should build");
         assert_eq!(editor_row.comment_count, 1);
         assert_eq!(editor_row.comments_revision, 7);
+        assert_eq!(editor_row.text_style, DEFAULT_EDITOR_TEXT_STYLE);
     }
 
     #[test]
@@ -3356,7 +3431,6 @@ fn create_inserted_row_file(
         "source_sheet": "",
         "source_row_number": 0,
       },
-      "text_style": DEFAULT_EDITOR_TEXT_STYLE,
       "format_state": {
         "translatable": true,
         "character_limit": Value::Null,
@@ -3368,6 +3442,7 @@ fn create_inserted_row_file(
       "variants": [],
       "editor_comments_revision": 0,
       "editor_comments": [],
+      "text_style": DEFAULT_EDITOR_TEXT_STYLE,
       "fields": fields,
       "format_metadata": {},
     })

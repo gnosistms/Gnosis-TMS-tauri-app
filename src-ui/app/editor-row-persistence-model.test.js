@@ -5,7 +5,6 @@ import {
   reconcileDirtyRowIds,
   resolveDirtyTrackedEditorRowIds,
   reviewTabLanguageToOpenAfterSave,
-  rowHasContentChanges,
   rowHasPersistedChanges,
   rowNeedsDirtyTracking,
 } from "./editor-row-persistence-model.js";
@@ -14,14 +13,13 @@ import { createEditorChapterState } from "./state.js";
 function row(rowId, overrides = {}) {
   return {
     rowId,
-    textStyle: "paragraph",
-    persistedTextStyle: "paragraph",
     fields: { es: "uno" },
     persistedFields: { es: "uno" },
     fieldStates: { es: { reviewed: false, pleaseCheck: false } },
     persistedFieldStates: { es: { reviewed: false, pleaseCheck: false } },
     saveStatus: "idle",
     markerSaveState: { status: "idle", languageCode: null, kind: null, error: "" },
+    textStyleSaveState: { status: "idle", error: "" },
     ...overrides,
   };
 }
@@ -74,25 +72,6 @@ test("marker-only pending work stays dirty until persistence catches up", () => 
   assert.deepEqual([...nextDirtyRowIds], ["row-a"]);
 });
 
-test("text-style-only pending work stays dirty until persistence catches up", () => {
-  const pendingStyleRow = row("row-a", {
-    textStyle: "heading1",
-    persistedTextStyle: "paragraph",
-  });
-
-  assert.equal(rowHasContentChanges(pendingStyleRow), true);
-  assert.equal(rowHasPersistedChanges(pendingStyleRow), true);
-  assert.equal(rowNeedsDirtyTracking(pendingStyleRow), true);
-
-  const nextDirtyRowIds = reconcileDirtyRowIds(
-    [pendingStyleRow],
-    new Set(["row-a"]),
-    ["row-a"],
-  );
-
-  assert.deepEqual([...nextDirtyRowIds], ["row-a"]);
-});
-
 test("saving rows remain dirty-tracked while the save is in flight", () => {
   const savingRow = row("row-a", {
     saveStatus: "saving",
@@ -107,6 +86,14 @@ test("saving rows remain dirty-tracked while the save is in flight", () => {
   );
 
   assert.deepEqual([...nextDirtyRowIds], ["row-a"]);
+});
+
+test("row text style saves keep the row dirty-tracked while saving", () => {
+  const styleSavingRow = row("row-a", {
+    textStyleSaveState: { status: "saving", error: "" },
+  });
+
+  assert.equal(rowNeedsDirtyTracking(styleSavingRow), true);
 });
 
 test("reviewTabLanguageToOpenAfterSave opens review for a newly saved non-source translation", () => {

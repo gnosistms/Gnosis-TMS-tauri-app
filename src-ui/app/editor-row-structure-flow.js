@@ -210,7 +210,7 @@ export async function softDeleteEditorRow(render, rowId, triggerAnchorSnapshot =
   }
 
   const row = await ensureEditorRowReadyForWrite(render, rowId, { structural: true });
-  if (!row || row.saveStatus !== "idle" || row.markerSaveState?.status === "saving") {
+  if (!row || row.saveStatus !== "idle" || row.markerSaveState?.status === "saving" || row.textStyleSaveState?.status === "saving") {
     showNoticeBadge("Save the current row before deleting it.", render);
     return;
   }

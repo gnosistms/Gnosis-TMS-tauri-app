@@ -139,7 +139,9 @@ export function toggleEditorHistoryGroupExpanded(groupKey) {
 
 export function hasPendingEditorRowWrites(chapterState = state.editorChapter) {
   return (Array.isArray(chapterState?.rows) ? chapterState.rows : []).some((row) =>
-    row?.saveStatus !== "idle" || row?.markerSaveState?.status === "saving"
+    row?.saveStatus !== "idle"
+    || row?.markerSaveState?.status === "saving"
+    || row?.textStyleSaveState?.status === "saving"
   );
 }
 
@@ -183,7 +185,7 @@ export async function restoreEditorFieldHistory(render, commitSha, operations = 
   }
 
   const row = await ensureEditorRowReadyForWrite(render, editorChapter.activeRowId);
-  if (!row || row.saveStatus !== "idle" || row.markerSaveState?.status === "saving") {
+  if (!row || row.saveStatus !== "idle" || row.markerSaveState?.status === "saving" || row.textStyleSaveState?.status === "saving") {
     showNoticeBadge("Save the current row before restoring history.", render);
     return;
   }

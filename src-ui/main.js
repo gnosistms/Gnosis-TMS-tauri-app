@@ -5,7 +5,10 @@ import {
   restoreStoredBrokerSession,
 } from "./app/auth-flow.js";
 import { registerAppEvents } from "./app/events.js";
-import { initializeEditorVirtualization } from "./app/editor-virtualization.js";
+import {
+  initializeEditorVirtualization,
+  syncEditorVirtualizationRowLayout,
+} from "./app/editor-virtualization.js";
 import {
   loadGithubAppTestConfig,
   registerGithubAppTestListener,
@@ -388,6 +391,7 @@ app.addEventListener("focusin", (event) => {
   const languageCode = input.dataset.languageCode ?? "";
   void setActiveEditorField(render, rowId, languageCode, { input });
   syncEditorRowTextareaHeight(input);
+  requestAnimationFrame(() => syncEditorVirtualizationRowLayout(input));
   requestAnimationFrame(() => {
     const activeElement = document.activeElement;
     if (
@@ -405,7 +409,7 @@ app.addEventListener("focusin", (event) => {
 
 app.addEventListener("mousedown", (event) => {
   const button = event.target instanceof Element
-    ? event.target.closest("[data-editor-text-style-button]")
+    ? event.target.closest("[data-editor-row-text-style-button]")
     : null;
   if (!button) {
     return;
@@ -420,7 +424,10 @@ app.addEventListener("focusout", (event) => {
     return;
   }
 
-  requestAnimationFrame(() => syncEditorRowTextareaHeight(input));
+  requestAnimationFrame(() => {
+    syncEditorRowTextareaHeight(input);
+    syncEditorVirtualizationRowLayout(input);
+  });
   scheduleDirtyEditorRowScan(render, input.dataset.rowId);
 });
 

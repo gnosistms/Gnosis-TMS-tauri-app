@@ -11,7 +11,6 @@ import {
 } from "./editor-derived-glossary-state.js";
 import { resolveEditorAiTranslateLanguages } from "./editor-ai-translate-target.js";
 import { buildEditorRowSearchHighlightMap } from "./editor-search-flow.js";
-import { buildEditorTextStyleMarkup } from "./editor-text-style.js";
 import { findEditorRowById } from "./editor-utils.js";
 import { invoke } from "./runtime.js";
 import { createEditorChapterGlossaryState, state } from "./state.js";
@@ -276,7 +275,6 @@ function renderableHighlightHtml(highlight) {
 
 function applyEditorTextHighlightLayersToRowCard(
   rowCard,
-  textStyle,
   searchHighlightMap = new Map(),
   glossaryHighlightMap = new Map(),
 ) {
@@ -292,14 +290,8 @@ function applyEditorTextHighlightLayersToRowCard(
     const searchHighlight = searchHighlightMap instanceof Map
       ? (searchHighlightMap.get(languageCode) ?? null)
       : null;
-    const rawGlossaryHighlightHtml = renderableHighlightHtml(glossaryHighlight);
-    const rawSearchHighlightHtml = renderableHighlightHtml(searchHighlight);
-    const glossaryHighlightHtml = rawGlossaryHighlightHtml
-      ? buildEditorTextStyleMarkup(textStyle, rawGlossaryHighlightHtml)
-      : "";
-    const searchHighlightHtml = rawSearchHighlightHtml
-      ? buildEditorTextStyleMarkup(textStyle, rawSearchHighlightHtml)
-      : "";
+    const glossaryHighlightHtml = renderableHighlightHtml(glossaryHighlight);
+    const searchHighlightHtml = renderableHighlightHtml(searchHighlight);
     const hasGlossaryHighlight = glossaryHighlightHtml.length > 0;
     const hasSearchHighlight = searchHighlightHtml.length > 0;
     const hasRenderableHighlight = hasGlossaryHighlight || hasSearchHighlight;
@@ -342,7 +334,7 @@ function syncEditorGlossaryHighlightRowCard(rowCard, chapterState = state.editor
 
   const glossaryHighlightMap = buildCachedEditorRowGlossaryHighlights(row, chapterState);
   const searchHighlightMap = buildEditorRowSearchHighlightMap(row, chapterState);
-  applyEditorTextHighlightLayersToRowCard(rowCard, row.textStyle, searchHighlightMap, glossaryHighlightMap);
+  applyEditorTextHighlightLayersToRowCard(rowCard, searchHighlightMap, glossaryHighlightMap);
 }
 
 function syncMountedEditorGlossaryHighlightRows(
@@ -389,7 +381,7 @@ function syncMountedEditorGlossaryHighlightRows(
       ? buildCachedEditorRowGlossaryHighlights(row, chapterState)
       : readCachedEditorRowGlossaryHighlights(row, chapterState);
     const searchHighlightMap = buildEditorRowSearchHighlightMap(row, chapterState);
-    applyEditorTextHighlightLayersToRowCard(rowCard, row.textStyle, searchHighlightMap, glossaryHighlightMap);
+    applyEditorTextHighlightLayersToRowCard(rowCard, searchHighlightMap, glossaryHighlightMap);
   });
 }
 

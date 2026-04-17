@@ -103,6 +103,7 @@ use crate::{
         soft_delete_gtms_chapter, soft_delete_gtms_editor_row, update_gtms_chapter_glossary_links,
         update_gtms_chapter_language_selection, update_gtms_editor_row_field_flag,
         update_gtms_editor_row_fields, update_gtms_editor_row_fields_batch,
+        update_gtms_editor_row_text_style,
     },
     project_repo_sync::{
         inspect_gtms_project_editor_repo_sync_state, list_project_repo_sync_states,
@@ -552,6 +553,7 @@ pub fn run() {
             save_gtms_editor_row_comment,
             delete_gtms_editor_row_comment,
             update_gtms_editor_row_field_flag,
+            update_gtms_editor_row_text_style,
             clear_gtms_editor_reviewed_markers,
             update_gtms_editor_row_fields,
             update_gtms_editor_row_fields_batch,

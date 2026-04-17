@@ -8,7 +8,7 @@ import { compactDirtyRowIds, reconcileDirtyTrackedEditorRows } from "./editor-di
 import { normalizeEditorDerivedGlossariesByRowId } from "./editor-derived-glossary-state.js";
 import { normalizeEditorChapterFilterState } from "./editor-filters.js";
 import { normalizeEditorReplaceState } from "./editor-replace.js";
-import { normalizeEditorTextStyle } from "./editor-text-style.js";
+import { normalizeEditorRowTextStyle } from "./editor-row-text-style.js";
 import {
   cloneRowFields,
   cloneRowFieldStates,
@@ -248,7 +248,7 @@ export function applyEditorUiState(nextEditorChapter, previousEditorChapter = st
 export function normalizeEditorRow(row) {
   const fields = cloneRowFields(row?.fields);
   const fieldStates = cloneRowFieldStates(row?.fieldStates);
-  const textStyle = normalizeEditorTextStyle(row?.textStyle);
+  const textStyle = normalizeEditorRowTextStyle(row?.textStyle);
   return {
     ...row,
     lifecycleState: row?.lifecycleState === "deleted" ? "deleted" : "active",
@@ -261,8 +261,6 @@ export function normalizeEditorRow(row) {
     commentsRevision:
       Number.isInteger(row?.commentsRevision) && row.commentsRevision >= 0 ? row.commentsRevision : 0,
     textStyle,
-    baseTextStyle: textStyle,
-    persistedTextStyle: textStyle,
     fields,
     baseFields: cloneRowFields(fields),
     persistedFields: cloneRowFields(fields),
@@ -277,6 +275,10 @@ export function normalizeEditorRow(row) {
       status: "idle",
       languageCode: null,
       kind: null,
+      error: "",
+    },
+    textStyleSaveState: {
+      status: "idle",
       error: "",
     },
   };

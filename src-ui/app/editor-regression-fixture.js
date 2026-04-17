@@ -191,8 +191,6 @@ function createFixtureRow(index, languages, options = {}) {
     commentsRevision,
     editorComments,
     textStyle: "paragraph",
-    baseTextStyle: "paragraph",
-    persistedTextStyle: "paragraph",
     fields,
     persistedFields: { ...fields },
     fieldStates,
@@ -203,6 +201,10 @@ function createFixtureRow(index, languages, options = {}) {
       status: "idle",
       languageCode: null,
       kind: null,
+      error: "",
+    },
+    textStyleSaveState: {
+      status: "idle",
       error: "",
     },
   };

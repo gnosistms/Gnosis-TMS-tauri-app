@@ -1,5 +1,5 @@
-import { rowFieldsEqual, rowTextStylesEqual } from "./editor-row-persistence-model.js";
-import { normalizeEditorTextStyle } from "./editor-text-style.js";
+import { rowFieldsEqual } from "./editor-row-persistence-model.js";
+import { normalizeEditorRowTextStyle } from "./editor-row-text-style.js";
 import {
   cloneRowFields,
   cloneRowFieldStates,
@@ -36,13 +36,6 @@ function normalizeConflictRemoteVersion(remoteVersion) {
   };
 }
 
-function rowContentMatchesPersisted(row, fields, textStyle) {
-  return (
-    rowFieldsEqual(fields, row?.persistedFields)
-    && rowTextStylesEqual(textStyle, row?.persistedTextStyle)
-  );
-}
-
 export function applyEditorRowFieldValue(row, languageCode, nextValue) {
   if (!row || !languageCode) {
     return row;
@@ -52,14 +45,12 @@ export function applyEditorRowFieldValue(row, languageCode, nextValue) {
     ...cloneRowFields(row.fields),
     [languageCode]: nextValue,
   };
-  const nextTextStyle = normalizeEditorTextStyle(row.textStyle);
-  const contentMatchesPersisted = rowContentMatchesPersisted(row, fields, nextTextStyle);
   const nextSaveStatus =
     row.saveStatus === "saving"
       ? "dirty"
       : row.saveStatus === "conflict"
         ? "conflict"
-      : contentMatchesPersisted
+      : rowFieldsEqual(fields, row.persistedFields)
         ? "idle"
         : "dirty";
 
@@ -71,39 +62,7 @@ export function applyEditorRowFieldValue(row, languageCode, nextValue) {
         ? "conflict"
         : row.freshness === "stale" || row.freshness === "staleDirty"
           ? "staleDirty"
-          : contentMatchesPersisted
-            ? "fresh"
-            : "dirty",
-    saveStatus: nextSaveStatus,
-    saveError: "",
-  };
-}
-
-export function applyEditorRowTextStyle(row, nextTextStyle) {
-  if (!row) {
-    return row;
-  }
-
-  const normalizedTextStyle = normalizeEditorTextStyle(nextTextStyle);
-  const contentMatchesPersisted = rowContentMatchesPersisted(row, row.fields, normalizedTextStyle);
-  const nextSaveStatus =
-    row.saveStatus === "saving"
-      ? "dirty"
-      : row.saveStatus === "conflict"
-        ? "conflict"
-        : contentMatchesPersisted
-          ? "idle"
-          : "dirty";
-
-  return {
-    ...row,
-    textStyle: normalizedTextStyle,
-    freshness:
-      row.freshness === "conflict"
-        ? "conflict"
-        : row.freshness === "stale" || row.freshness === "staleDirty"
-          ? "staleDirty"
-          : contentMatchesPersisted
+          : rowFieldsEqual(fields, row.persistedFields)
             ? "fresh"
             : "dirty",
     saveStatus: nextSaveStatus,
@@ -180,6 +139,51 @@ export function applyEditorRowMarkerSaveFailed(row, languageCode, previousFieldS
   };
 }
 
+export function applyEditorRowTextStyleSaving(row, nextTextStyle) {
+  if (!row) {
+    return row;
+  }
+
+  return {
+    ...row,
+    textStyle: normalizeEditorRowTextStyle(nextTextStyle),
+    textStyleSaveState: {
+      status: "saving",
+      error: "",
+    },
+  };
+}
+
+export function applyEditorRowTextStyleSaved(row, textStyle) {
+  if (!row) {
+    return row;
+  }
+
+  return {
+    ...row,
+    textStyle: normalizeEditorRowTextStyle(textStyle),
+    textStyleSaveState: {
+      status: "idle",
+      error: "",
+    },
+  };
+}
+
+export function applyEditorRowTextStyleSaveFailed(row, previousTextStyle, message = "") {
+  if (!row) {
+    return row;
+  }
+
+  return {
+    ...row,
+    textStyle: normalizeEditorRowTextStyle(previousTextStyle),
+    textStyleSaveState: {
+      status: "idle",
+      error: message,
+    },
+  };
+}
+
 export function applyEditorRowPersistRequested(row) {
   if (!row) {
     return row;
@@ -221,14 +225,11 @@ export function applyEditorRowPersistSucceeded(row, payloadRow) {
   }
 
   const normalizedRow = normalizeEditorRow(payloadRow);
-  const fieldsChangedDuringSave = !rowFieldsEqual(row.fields, normalizedRow.fields);
-  const textStyleChangedDuringSave = !rowTextStylesEqual(row.textStyle, normalizedRow.textStyle);
-  const rowChangedDuringSave = fieldsChangedDuringSave || textStyleChangedDuringSave;
+  const rowChangedDuringSave = !rowFieldsEqual(row.fields, normalizedRow.fields);
 
   return {
     ...normalizedRow,
-    fields: fieldsChangedDuringSave ? cloneRowFields(row.fields) : normalizedRow.fields,
-    textStyle: textStyleChangedDuringSave ? normalizeEditorTextStyle(row.textStyle) : normalizedRow.textStyle,
+    fields: rowChangedDuringSave ? cloneRowFields(row.fields) : normalizedRow.fields,
     saveStatus: rowChangedDuringSave ? "dirty" : "idle",
     freshness: rowChangedDuringSave ? "dirty" : "fresh",
     conflictState: null,
@@ -253,7 +254,6 @@ export function applyEditorRowConflictDetected(row, payload = {}, options = {}) 
   }
 
   const nextFields = cloneRowFields(options?.localFields ?? row.fields);
-  const nextTextStyle = normalizeEditorTextStyle(options?.localTextStyle ?? row.textStyle);
   const remoteVersion =
     normalizeConflictRemoteVersion(
       payload?.conflictRemoteVersion
@@ -266,14 +266,12 @@ export function applyEditorRowConflictDetected(row, payload = {}, options = {}) 
   return {
     ...row,
     fields: nextFields,
-    textStyle: nextTextStyle,
     freshness: "conflict",
     saveStatus: "conflict",
     saveError: "Translation text changed on disk.",
     remotelyDeleted: false,
     conflictState: {
       baseFields: cloneRowFields(payload?.baseFields),
-      baseTextStyle: normalizeEditorTextStyle(payload?.baseTextStyle),
       remoteRow: payload?.row ? normalizeEditorRow(payload.row) : null,
       remoteVersion,
     },
@@ -310,7 +308,6 @@ export function applyEditorConflictResolutionSavedLocally(row, payloadRow, nextL
     remotelyDeleted: false,
     conflictState: {
       baseFields: cloneRowFields(persistedRow.fields),
-      baseTextStyle: normalizeEditorTextStyle(persistedRow.textStyle),
       remoteRow: row?.conflictState?.remoteRow ? normalizeEditorRow(row.conflictState.remoteRow) : null,
       remoteVersion: normalizeConflictRemoteVersion(options?.remoteVersion ?? row?.conflictState?.remoteVersion ?? null),
     },
@@ -350,7 +347,6 @@ export function applyEditorRowConflictSaveSucceeded(row, payloadRow, nextLocalFi
     remotelyDeleted: false,
     conflictState: {
       baseFields: cloneRowFields(remoteRow.fields),
-      baseTextStyle: normalizeEditorTextStyle(remoteRow.textStyle),
       remoteRow,
       remoteVersion: normalizeConflictRemoteVersion(options?.remoteVersion ?? row?.conflictState?.remoteVersion ?? null),
     },

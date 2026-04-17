@@ -16,8 +16,8 @@ use self::{
         reverse_gtms_editor_batch_replace_commit_sync, update_gtms_chapter_glossary_links_sync,
         update_gtms_chapter_language_selection_sync, update_gtms_editor_row_field_flag_sync,
         update_gtms_editor_row_fields_batch_sync, update_gtms_editor_row_fields_sync,
-        update_gtms_editor_row_lifecycle_sync, ClearEditorReviewedMarkersInput,
-        ClearEditorReviewedMarkersResponse,
+        update_gtms_editor_row_lifecycle_sync, update_gtms_editor_row_text_style_sync,
+        ClearEditorReviewedMarkersInput, ClearEditorReviewedMarkersResponse,
         InitializeProjectRepoInput, InitializeProjectRepoResponse, InsertEditorRowInput,
         InsertEditorRowResponse, ListLocalProjectFilesInput, LoadChapterEditorInput,
         LoadChapterEditorResponse, LoadEditorFieldHistoryInput, LoadEditorFieldHistoryResponse,
@@ -30,7 +30,8 @@ use self::{
         UpdateEditorRowFieldFlagInput, UpdateEditorRowFieldFlagResponse,
         UpdateEditorRowFieldsBatchInput, UpdateEditorRowFieldsBatchResponse,
         UpdateEditorRowFieldsInput, UpdateEditorRowLifecycleInput,
-        UpdateEditorRowLifecycleResponse,
+        UpdateEditorRowLifecycleResponse, UpdateEditorRowTextStyleInput,
+        UpdateEditorRowTextStyleResponse,
     },
     chapter_editor_comments::{
         delete_gtms_editor_row_comment_sync, load_gtms_editor_row_comments_sync,
@@ -182,6 +183,18 @@ pub(crate) async fn update_gtms_editor_row_field_flag(
     })
     .await
     .map_err(|error| format!("The row flag update worker failed: {error}"))?
+}
+
+#[tauri::command]
+pub(crate) async fn update_gtms_editor_row_text_style(
+    app: AppHandle,
+    input: UpdateEditorRowTextStyleInput,
+) -> Result<UpdateEditorRowTextStyleResponse, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        update_gtms_editor_row_text_style_sync(&app, input)
+    })
+    .await
+    .map_err(|error| format!("The row text style worker failed: {error}"))?
 }
 
 #[tauri::command]

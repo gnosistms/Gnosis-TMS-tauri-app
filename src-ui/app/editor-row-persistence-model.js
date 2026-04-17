@@ -1,5 +1,3 @@
-import { normalizeEditorTextStyle } from "./editor-text-style.js";
-
 function normalizeFieldState(fieldState) {
   return {
     reviewed: fieldState?.reviewed === true,
@@ -40,30 +38,19 @@ export function rowFieldStatesEqual(left, right) {
   });
 }
 
-export function rowTextStylesEqual(left, right) {
-  return normalizeEditorTextStyle(left) === normalizeEditorTextStyle(right);
-}
-
 export function rowHasFieldChanges(row) {
   return !rowFieldsEqual(row?.fields, row?.persistedFields);
 }
 
-export function rowHasTextStyleChanges(row) {
-  return !rowTextStylesEqual(row?.textStyle, row?.persistedTextStyle);
-}
-
-export function rowHasContentChanges(row) {
-  return rowHasFieldChanges(row) || rowHasTextStyleChanges(row);
-}
-
 export function rowHasPersistedChanges(row) {
-  return rowHasContentChanges(row) || !rowFieldStatesEqual(row?.fieldStates, row?.persistedFieldStates);
+  return rowHasFieldChanges(row) || !rowFieldStatesEqual(row?.fieldStates, row?.persistedFieldStates);
 }
 
 export function rowNeedsDirtyTracking(row) {
   return rowHasPersistedChanges(row)
     || row?.saveStatus === "saving"
-    || row?.markerSaveState?.status === "saving";
+    || row?.markerSaveState?.status === "saving"
+    || row?.textStyleSaveState?.status === "saving";
 }
 
 function normalizedTextValue(value) {

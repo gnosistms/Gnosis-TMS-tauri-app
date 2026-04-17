@@ -366,7 +366,11 @@ export async function replaceSelectedEditorRows(render, operations = {}) {
   const selectedRows = selectedRowIds
     .map((rowId) => findEditorRowById(rowId, editorChapter))
     .filter(Boolean);
-  if (selectedRows.some((row) => row.saveStatus === "saving" || row.markerSaveState?.status === "saving")) {
+  if (selectedRows.some((row) =>
+    row.saveStatus === "saving"
+    || row.markerSaveState?.status === "saving"
+    || row.textStyleSaveState?.status === "saving"
+  )) {
     showNoticeBadge("Wait for the selected rows to finish saving before replacing.", render);
     return;
   }

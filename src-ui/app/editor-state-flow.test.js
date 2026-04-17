@@ -128,6 +128,7 @@ test("normalizeEditorRows clones row data and initializes persistence metadata",
     rowId: "row-1",
     orderKey: "001",
     lifecycleState: "unexpected",
+    textStyle: "heading2",
     fields: { en: "hello" },
     fieldStates: { en: { reviewed: true, pleaseCheck: false } },
   }];
@@ -142,8 +143,10 @@ test("normalizeEditorRows clones row data and initializes persistence metadata",
   assert.equal(result[0].fieldStates.en.reviewed, true);
   assert.equal(result[0].persistedFieldStates.en.reviewed, true);
   assert.equal(result[0].lifecycleState, "active");
+  assert.equal(result[0].textStyle, "heading2");
   assert.equal(result[0].saveStatus, "idle");
   assert.equal(result[0].markerSaveState.status, "idle");
+  assert.equal(result[0].textStyleSaveState.status, "idle");
 });
 
 test("markEditorRowsPersisted updates persisted fields and clears reconciled dirty row ids", () => {

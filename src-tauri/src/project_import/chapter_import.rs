@@ -17,7 +17,6 @@ use super::project_git::{
 const GTMS_FORMAT: &str = "gtms";
 const GTMS_FORMAT_VERSION: u32 = 1;
 const ORDER_KEY_SPACING: u128 = 1u128 << 104;
-const DEFAULT_EDITOR_TEXT_STYLE: &str = "paragraph";
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -182,7 +181,6 @@ struct RowFile {
     status: RowStatus,
     structure: RowStructure,
     origin: RowOrigin,
-    text_style: &'static str,
     format_state: FormatState,
     placeholders: Vec<Value>,
     variants: Vec<Value>,
@@ -609,7 +607,6 @@ fn build_row_file(
             source_sheet: parsed.worksheet_name.clone(),
             source_row_number: imported_row.source_row_number,
         },
-        text_style: DEFAULT_EDITOR_TEXT_STYLE,
         format_state: FormatState {
             translatable: true,
             character_limit: None,

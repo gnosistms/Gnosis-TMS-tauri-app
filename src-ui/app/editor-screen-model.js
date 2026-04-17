@@ -10,7 +10,6 @@ import { canPermanentlyDeleteProjectFiles } from "./resource-capabilities.js";
 import { findChapterContextById, selectedProjectsTeam } from "./project-context.js";
 import { buildEditorFilterResult, editorChapterFiltersAreActive } from "./editor-filters.js";
 import { normalizeEditorReplaceState } from "./editor-replace.js";
-import { normalizeEditorTextStyle } from "./editor-text-style.js";
 
 let cachedEditorRowsRef = null;
 let cachedEditorLanguagesRef = null;
@@ -90,7 +89,6 @@ function buildLiveTranslationRows(editorChapter, languages) {
       isStale: row?.freshness === "stale" || row?.freshness === "staleDirty",
       conflictState: row?.conflictState ?? null,
       conflictLanguageCodes: [...conflictLanguageCodes],
-      textStyle: normalizeEditorTextStyle(row?.textStyle),
       sections: languageOptions.map((language) => ({
         code: language.code,
         name: language.name,
@@ -300,7 +298,6 @@ export function buildEditorScreenViewModel(appState) {
         const isAiTranslating = typeof aiTranslateLoadingText === "string";
         return {
           ...section,
-          textStyle: row.textStyle,
           text:
             isAiTranslating
               ? aiTranslateLoadingText
@@ -315,9 +312,6 @@ export function buildEditorScreenViewModel(appState) {
           isSelectedCommentsRow:
             normalizeEditorSidebarTab(editorChapter?.sidebarTab) === "comments"
             && editorChapter?.activeRowId === row.rowId
-            && editorChapter?.activeLanguageCode === section.code,
-          isActiveField:
-            editorChapter?.activeRowId === row.rowId
             && editorChapter?.activeLanguageCode === section.code,
         };
       }),

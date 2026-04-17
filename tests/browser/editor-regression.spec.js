@@ -7,7 +7,7 @@ async function installMockTauri(page) {
     let commitCounter = 0;
     const fixtureByChapterId = new Map();
     const rowFieldsByChapterId = new Map();
-    const rowTextStyleByChapterId = new Map();
+    const rowTextStylesByChapterId = new Map();
     const fieldStatesByChapterId = new Map();
     const rowCommentsByChapterId = new Map();
     const rowLatestCommitByChapterId = new Map();
@@ -73,7 +73,7 @@ async function installMockTauri(page) {
         chapterId,
         new Map(rows.map((row) => [row.rowId, clone(row.fields ?? {})])),
       );
-      rowTextStyleByChapterId.set(
+      rowTextStylesByChapterId.set(
         chapterId,
         new Map(rows.map((row) => [row.rowId, String(row.textStyle ?? "paragraph")])),
       );
@@ -107,7 +107,7 @@ async function installMockTauri(page) {
     }
 
     function findRowTextStyle(chapterId, rowId) {
-      return rowTextStyleByChapterId.get(chapterId)?.get(rowId) ?? "paragraph";
+      return rowTextStylesByChapterId.get(chapterId)?.get(rowId) ?? "paragraph";
     }
 
     function findRowComments(chapterId, rowId) {
@@ -251,18 +251,31 @@ async function installMockTauri(page) {
         const input = payload?.input ?? {};
         const nextFields = clone(input.fields ?? {});
         const storedFields = findRowFields(input.chapterId, input.rowId);
-        const chapterTextStyles = rowTextStyleByChapterId.get(input.chapterId);
         const storedFieldStates = findFieldStates(input.chapterId, input.rowId);
-        if (!storedFields || !storedFieldStates || !chapterTextStyles) {
+        if (!storedFields || !storedFieldStates) {
           throw new Error(`Unknown editor row: ${input.rowId}`);
         }
 
         rowFieldsByChapterId.get(input.chapterId).set(input.rowId, nextFields);
-        chapterTextStyles.set(input.rowId, String(input.textStyle ?? "paragraph"));
         pushHistoryEntries(input.chapterId, input.rowId, nextFields, storedFieldStates, "editor-update", "Update row");
         return {
           row: buildRowPayload(input.chapterId, input.rowId),
           sourceWordCounts: {},
+        };
+      }
+
+      if (command === "update_gtms_editor_row_text_style") {
+        const input = payload?.input ?? {};
+        const chapterTextStyles = rowTextStylesByChapterId.get(input.chapterId);
+        if (!chapterTextStyles || !findRowFields(input.chapterId, input.rowId)) {
+          throw new Error(`Unknown editor row style target: ${input.rowId}`);
+        }
+
+        const nextTextStyle = String(input.textStyle ?? "paragraph");
+        chapterTextStyles.set(input.rowId, nextTextStyle);
+        return {
+          rowId: input.rowId,
+          textStyle: nextTextStyle,
         };
       }
 
@@ -465,7 +478,7 @@ async function installMockTauri(page) {
         return {
           invocations: clone(invocationLog),
           textStyles: Object.fromEntries(
-            [...rowTextStyleByChapterId.entries()].map(([chapterId, stylesByRowId]) => [
+            [...rowTextStylesByChapterId.entries()].map(([chapterId, stylesByRowId]) => [
               chapterId,
               Object.fromEntries(stylesByRowId.entries()),
             ]),
@@ -1127,32 +1140,42 @@ test.describe("editor regressions", () => {
     }).toBe(true);
   });
 
-  test("changing a row text style persists it for the whole row", async ({ page }) => {
+  test("row text style buttons show on focus, update the whole row, and hide on blur", async ({ page }) => {
     await mountEditorFixture(page, { rowCount: 40 }, { mockTauri: true });
 
-    const firstField = page.locator(
+    const targetField = page.locator(
       '[data-editor-row-field][data-row-id="fixture-row-0001"][data-language-code="vi"]',
     );
     const headingButton = page.locator(
-      '[data-editor-text-style-button][data-row-id="fixture-row-0001"][data-text-style="heading1"]',
+      '[data-editor-row-text-style-button][data-row-id="fixture-row-0001"][data-language-code="vi"][data-text-style="heading1"]',
     );
+    const searchInput = page.locator("[data-editor-search-input]");
 
-    await firstField.click();
+    await expect(headingButton).toBeHidden();
+    await targetField.click();
     await expect(headingButton).toBeVisible();
+
     await headingButton.click();
 
     await expect.poll(async () => {
       return await page.locator(
         '[data-editor-glossary-field-stack][data-row-id="fixture-row-0001"][data-language-code="vi"]',
-      ).getAttribute("data-text-style");
+      ).getAttribute("data-row-text-style");
     }).toBe("heading1");
 
-    await flushDirtyRows(page);
+    await expect.poll(async () => {
+      return await page.locator(
+        '[data-editor-glossary-field-stack][data-row-id="fixture-row-0001"][data-language-code="es"]',
+      ).getAttribute("data-row-text-style");
+    }).toBe("heading1");
 
     await expect.poll(async () => {
       const mockState = await readMockTauriState(page);
       return mockState?.textStyles?.["fixture-chapter"]?.["fixture-row-0001"] ?? null;
     }).toBe("heading1");
+
+    await searchInput.click();
+    await expect(headingButton).toBeHidden();
   });
 
   test("typing in one row then focusing another row persists without losing the target field", async ({ page }) => {

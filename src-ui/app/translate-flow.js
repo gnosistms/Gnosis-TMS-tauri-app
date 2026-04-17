@@ -474,9 +474,10 @@ export function updateEditorRowFieldValue(rowId, languageCode, nextValue) {
   });
 }
 
-export function updateEditorRowTextStyle(rowId, nextTextStyle) {
-  updateEditorRowTextStyleFlow(rowId, nextTextStyle, {
+export async function updateEditorRowTextStyle(render, rowId, nextTextStyle) {
+  await updateEditorRowTextStyleFlow(render, rowId, nextTextStyle, {
     updateEditorChapterRow,
+    applyEditorSelectionsToProjectState,
   });
 }
 
