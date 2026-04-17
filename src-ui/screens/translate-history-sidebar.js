@@ -76,6 +76,7 @@ export function renderHistorySidebar(editorChapter, rows, languages) {
     ? {
         ...activeSection,
         footnote: activeSection?.footnote ?? "",
+        image: activeSection?.image ?? null,
         textStyle: activeRow?.textStyle ?? "paragraph",
       }
     : null;

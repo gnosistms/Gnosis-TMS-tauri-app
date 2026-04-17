@@ -40,6 +40,20 @@ export function openExternalUrl(url) {
   window.open(url, "_blank", "noopener,noreferrer");
 }
 
+export function convertLocalFileSrc(filePath) {
+  const normalizedPath = typeof filePath === "string" ? filePath.trim() : "";
+  if (!normalizedPath) {
+    return "";
+  }
+
+  const convertFileSrc = window.__TAURI_INTERNALS__?.convertFileSrc;
+  if (typeof convertFileSrc === "function") {
+    return convertFileSrc(normalizedPath, "asset");
+  }
+
+  return normalizedPath;
+}
+
 export function waitForNextPaint() {
   return new Promise((resolve) => {
     window.requestAnimationFrame(() => {

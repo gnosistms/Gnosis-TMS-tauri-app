@@ -292,6 +292,9 @@ export function createEditorChapterState() {
     activeRowId: null,
     activeLanguageCode: null,
     footnoteEditor: createEditorFootnoteEditorState(),
+    imageEditor: createEditorImageEditorState(),
+    imageInvalidFileModal: createEditorImageInvalidFileModalState(),
+    imagePreviewOverlay: createEditorImagePreviewOverlayState(),
     sidebarTab: "review",
     reviewExpandedSectionKeys: new Set(["last-update", "ai-review"]),
     aiReview: createEditorAiReviewState(),
@@ -317,6 +320,30 @@ export function createEditorFootnoteEditorState() {
   return {
     rowId: null,
     languageCode: null,
+  };
+}
+
+export function createEditorImageEditorState() {
+  return {
+    rowId: null,
+    languageCode: null,
+    mode: null,
+    urlDraft: "",
+    invalidUrl: false,
+    status: "idle",
+  };
+}
+
+export function createEditorImageInvalidFileModalState() {
+  return createEntityModalState();
+}
+
+export function createEditorImagePreviewOverlayState() {
+  return {
+    isOpen: false,
+    rowId: null,
+    languageCode: null,
+    src: "",
   };
 }
 
@@ -453,6 +480,9 @@ export function createEditorConflictResolutionModalState() {
     localText: "",
     remoteText: "",
     finalText: "",
+    localFootnote: "",
+    remoteFootnote: "",
+    finalFootnote: "",
     remoteVersion: null,
   });
 }

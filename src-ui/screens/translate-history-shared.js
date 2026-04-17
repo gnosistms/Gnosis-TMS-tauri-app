@@ -1,5 +1,6 @@
 import { editorRowTextStyleLabel, normalizeEditorRowTextStyle } from "../app/editor-row-text-style.js";
 import { renderTranslationMarkerIcon } from "../app/editor-row-render.js";
+import { editorFieldImageMetadataText } from "../app/editor-images.js";
 import { escapeHtml } from "../lib/ui.js";
 import {
   diff_match_patch,
@@ -66,6 +67,10 @@ function renderHistoryDiffText(previousText, currentText) {
     .join("");
 }
 
+function historyTextHasVisibleContent(value) {
+  return String(value ?? "").trim().length > 0;
+}
+
 export function renderHistoryContent(entry, previousEntry) {
   return renderHistoryDiffText(previousEntry?.plainText, entry?.plainText);
 }
@@ -84,6 +89,12 @@ export function renderHistoryEntryContent(entry, previousEntry, languageCode) {
       className: "history-item__content history-item__content--footnote",
       alwaysRender: false,
     },
+    {
+      currentText: editorFieldImageMetadataText(entry?.image),
+      previousText: editorFieldImageMetadataText(previousEntry?.image),
+      className: "history-item__content history-item__content--image",
+      alwaysRender: false,
+    },
   ];
 
   return `
@@ -91,8 +102,8 @@ export function renderHistoryEntryContent(entry, previousEntry, languageCode) {
       ${historyBlocks
         .filter((block) =>
           block.alwaysRender
-          || String(block.currentText ?? "").length > 0
-          || String(block.previousText ?? "").length > 0,
+          || historyTextHasVisibleContent(block.currentText)
+          || historyTextHasVisibleContent(block.previousText),
         )
         .map((block) =>
           `<p class="${block.className}" lang="${escapeHtml(languageCode ?? "")}">${renderHistoryDiffText(block.previousText, block.currentText)}</p>`,

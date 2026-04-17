@@ -101,9 +101,7 @@ pub(crate) fn git_commit_as_signed_in_user_with_metadata(
         .map(str::trim)
         .filter(|value| !value.is_empty())
     {
-        command
-            .arg("-m")
-            .arg(format!("GTMS-AI-Model: {ai_model}"));
+        command.arg("-m").arg(format!("GTMS-AI-Model: {ai_model}"));
     }
 
     if !paths.is_empty() {

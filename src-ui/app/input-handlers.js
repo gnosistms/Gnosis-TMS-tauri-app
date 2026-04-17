@@ -37,6 +37,8 @@ import {
   MANAGE_TARGET_LANGUAGES_OPTION_VALUE,
   openTargetLanguageManager,
   syncEditorGlossaryHighlightRowDom,
+  updateEditorConflictResolutionFinalFootnote,
+  updateEditorImageUrlDraft,
   toggleEditorReplaceEnabled,
   toggleEditorReplaceRowSelected,
   updateEditorConflictResolutionFinalText,
@@ -406,7 +408,23 @@ function handleEditorCommentDraftInput(event, render) {
   return true;
 }
 
+function handleEditorImageUrlInput(event) {
+  const input = event.target.closest("[data-editor-image-url-input]");
+  if (!input) {
+    return false;
+  }
+
+  updateEditorImageUrlDraft(input.value);
+  return true;
+}
+
 function handleEditorConflictResolutionInput(event) {
+  const footnoteInput = event.target.closest("[data-editor-conflict-final-footnote-input]");
+  if (footnoteInput) {
+    updateEditorConflictResolutionFinalFootnote(footnoteInput.value);
+    return true;
+  }
+
   const input = event.target.closest("[data-editor-conflict-final-input]");
   if (!input) {
     return false;
@@ -521,6 +539,7 @@ const inputHandlers = [
   handleEditorReplaceRowSelectionInput,
   handleEditorRowFieldInput,
   handleEditorCommentDraftInput,
+  handleEditorImageUrlInput,
   handleEditorConflictResolutionInput,
   handleChapterGlossarySelectInput,
   handleAiKeyInput,

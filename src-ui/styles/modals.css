@@ -963,6 +963,11 @@
   gap: 10px;
 }
 
+.editor-conflict-modal__version-stack {
+  display: grid;
+  gap: 10px;
+}
+
 .editor-conflict-modal__version-label {
   margin: 0;
   color: var(--text);
@@ -971,10 +976,23 @@
   line-height: 1.4;
 }
 
+.editor-conflict-modal__version-text,
+.editor-conflict-modal__final-input {
+  font-family: var(--font-serif);
+  font-size: var(--translation-editor-font-size, 14px);
+  line-height: 1.5;
+}
+
 .editor-conflict-modal__version-text {
   min-height: 220px;
   resize: none;
   background: rgba(255, 251, 246, 0.82);
+}
+
+.editor-conflict-modal__version-text--footnote,
+.editor-conflict-modal__final-input--footnote {
+  min-height: 104px;
+  font-style: italic;
 }
 
 .editor-conflict-modal__version-actions {
@@ -984,6 +1002,10 @@
 
 .editor-conflict-modal__final-field {
   gap: 10px;
+}
+
+.editor-conflict-modal__final-field + .editor-conflict-modal__final-field {
+  margin-top: 10px;
 }
 
 .editor-conflict-modal__final-input {

@@ -56,12 +56,27 @@ export function estimateEditorRowHeight(
     .filter((section) => !collapsedLanguageCodes.has(section.code))
     .filter((section) => section?.hasVisibleFootnote === true)
     .length;
+  const expandedImages = sections
+    .filter((section) => !collapsedLanguageCodes.has(section.code))
+    .filter((section) => section?.image)
+    .length;
+  const expandedImageEditors = sections
+    .filter((section) => !collapsedLanguageCodes.has(section.code))
+    .filter((section) => section?.isImageUrlEditorOpen === true || section?.isImageUploadEditorOpen === true)
+    .length;
+  const expandedInvalidImageBanners = sections
+    .filter((section) => !collapsedLanguageCodes.has(section.code))
+    .filter((section) => section?.showInvalidImageUrl === true)
+    .length;
   const lineHeight = Math.max(fontSizePx * 1.5, 32);
 
   return Math.ceil(
     44
     + expandedSections * Math.max(118, lineHeight + 78)
     + expandedFootnotes * Math.max(56, lineHeight + 18)
+    + expandedImages * 126
+    + expandedImageEditors * 92
+    + expandedInvalidImageBanners * 64
     + collapsedSections * 34
     + Math.max(0, sections.length - 1) * 16,
   );

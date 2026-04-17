@@ -1,5 +1,14 @@
-use std::{cmp::Ordering, collections::BTreeMap, fmt::Write as _, fs, path::Path, str};
+use std::{
+    cmp::Ordering,
+    collections::BTreeMap,
+    fmt::Write as _,
+    fs,
+    path::{Path, PathBuf},
+    str,
+};
 
+use base64::Engine as _;
+use quick_xml::{events::Event as XmlEvent, Reader as XmlReader};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -179,6 +188,58 @@ pub(crate) struct UpdateEditorRowTextStyleInput {
     text_style: String,
 }
 
+#[derive(Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct EditorFieldImageInput {
+    kind: String,
+    #[serde(default)]
+    url: String,
+    #[serde(default)]
+    path: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SaveEditorLanguageImageUrlInput {
+    installation_id: i64,
+    repo_name: String,
+    project_id: Option<String>,
+    chapter_id: String,
+    row_id: String,
+    language_code: String,
+    url: String,
+    #[serde(default)]
+    base_image: Option<EditorFieldImageInput>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct UploadEditorLanguageImageInput {
+    installation_id: i64,
+    repo_name: String,
+    project_id: Option<String>,
+    chapter_id: String,
+    row_id: String,
+    language_code: String,
+    filename: String,
+    data_base64: String,
+    #[serde(default)]
+    base_image: Option<EditorFieldImageInput>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct RemoveEditorLanguageImageInput {
+    installation_id: i64,
+    repo_name: String,
+    project_id: Option<String>,
+    chapter_id: String,
+    row_id: String,
+    language_code: String,
+    #[serde(default)]
+    base_image: Option<EditorFieldImageInput>,
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ClearEditorReviewedMarkersInput {
@@ -233,6 +294,16 @@ pub(crate) struct UpdateEditorRowFieldFlagResponse {
 pub(crate) struct UpdateEditorRowTextStyleResponse {
     row_id: String,
     text_style: String,
+    chapter_base_commit_sha: Option<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SaveEditorLanguageImageResponse {
+    row_id: String,
+    language_code: String,
+    status: String,
+    row: Option<EditorRow>,
     chapter_base_commit_sha: Option<String>,
 }
 
@@ -311,6 +382,7 @@ pub(crate) struct EditorFieldHistoryEntry {
     ai_model: Option<String>,
     plain_text: String,
     footnote: String,
+    image: Option<EditorFieldImage>,
     text_style: String,
     reviewed: bool,
     please_check: bool,
@@ -335,6 +407,7 @@ pub(crate) struct RestoreEditorFieldHistoryResponse {
     language_code: String,
     plain_text: String,
     footnote: String,
+    image: Option<EditorFieldImage>,
     text_style: String,
     reviewed: bool,
     please_check: bool,
@@ -401,6 +474,7 @@ struct EditorRow {
     text_style: String,
     fields: BTreeMap<String, String>,
     footnotes: BTreeMap<String, String>,
+    images: BTreeMap<String, EditorFieldImage>,
     field_states: BTreeMap<String, EditorFieldState>,
 }
 
@@ -409,6 +483,30 @@ struct EditorRow {
 struct EditorFieldState {
     reviewed: bool,
     please_check: bool,
+}
+
+#[derive(Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+struct StoredFieldImage {
+    kind: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    path: Option<String>,
+}
+
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+struct EditorFieldImage {
+    kind: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    file_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    file_name: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -570,6 +668,8 @@ struct StoredFieldValue {
     #[serde(default)]
     footnote: String,
     #[serde(default)]
+    image: Option<StoredFieldImage>,
+    #[serde(default)]
     editor_flags: StoredFieldEditorFlags,
 }
 
@@ -627,7 +727,7 @@ pub(super) fn load_gtms_chapter_editor_data_sync(
         chapter_base_commit_sha: git_output(&repo_path, &["rev-parse", "--verify", "HEAD"]).ok(),
         rows: rows
             .into_iter()
-            .map(editor_row_from_stored_row_file)
+            .map(|row| editor_row_from_stored_row_file(&repo_path, row))
             .collect::<Result<Vec<_>, _>>()?,
     })
 }
@@ -655,10 +755,10 @@ pub(super) fn load_gtms_editor_row_sync(
         None
     };
     let row = if row_json_path.exists() {
-        Some(editor_row_from_stored_row_file(read_json_file(
-            &row_json_path,
-            "row file",
-        )?)?)
+        Some(editor_row_from_stored_row_file(
+            &repo_path,
+            read_json_file(&row_json_path, "row file")?,
+        )?)
     } else {
         None
     };
@@ -741,7 +841,7 @@ pub(super) fn insert_gtms_editor_row_sync(
         .map_err(|error| format!("Could not decode inserted row '{}': {error}", row_id))?;
 
     Ok(InsertEditorRowResponse {
-        row: editor_row_from_stored_row_file(inserted_row_file)?,
+        row: editor_row_from_stored_row_file(&repo_path, inserted_row_file)?,
         source_word_counts: build_source_word_counts_from_stored_rows(&rows, &languages),
         chapter_base_commit_sha: current_repo_head_sha(&repo_path),
     })
@@ -1194,23 +1294,35 @@ pub(super) fn permanently_delete_gtms_editor_row_sync(
         &empty_deleted_row_stub(&row_file),
         &languages,
     );
+    let uploaded_image_paths = row_uploaded_image_relative_paths(&row_file);
     fs::remove_file(&row_json_path).map_err(|error| {
         format!(
             "Could not remove the deleted row from disk at '{}': {error}",
             row_json_path.display()
         )
     })?;
+    for relative_path in &uploaded_image_paths {
+        let absolute_path = repo_path.join(relative_path);
+        let _ = fs::remove_file(&absolute_path);
+        git_output(
+            &repo_path,
+            &["rm", "--cached", "--ignore-unmatch", relative_path],
+        )?;
+    }
 
     let relative_row_json = repo_relative_path(&repo_path, &row_json_path)?;
     git_output(
         &repo_path,
         &["rm", "--cached", "--ignore-unmatch", &relative_row_json],
     )?;
+    let mut commit_paths = vec![relative_row_json.clone()];
+    commit_paths.extend(uploaded_image_paths);
+    let commit_path_refs: Vec<&str> = commit_paths.iter().map(String::as_str).collect();
     git_commit_as_signed_in_user_with_metadata(
         app,
         &repo_path,
         &format!("Delete row {} permanently", input.row_id),
-        &[&relative_row_json],
+        &commit_path_refs,
         CommitMetadata {
             operation: Some("permanent-delete"),
             status_note: None,
@@ -1278,7 +1390,10 @@ pub(super) fn update_gtms_editor_row_fields_sync(
         return Ok(SaveEditorRowWithConcurrencyResponse {
             row_id: input.row_id,
             status: "deleted".to_string(),
-            row: Some(editor_row_from_stored_row_file(original_row_file)?),
+            row: Some(editor_row_from_stored_row_file(
+                &repo_path,
+                original_row_file,
+            )?),
             source_word_counts,
             base_fields: input.base_fields,
             base_footnotes: input.base_footnotes,
@@ -1293,7 +1408,10 @@ pub(super) fn update_gtms_editor_row_fields_sync(
         return Ok(SaveEditorRowWithConcurrencyResponse {
             row_id: input.row_id,
             status: "conflict".to_string(),
-            row: Some(editor_row_from_stored_row_file(original_row_file)?),
+            row: Some(editor_row_from_stored_row_file(
+                &repo_path,
+                original_row_file,
+            )?),
             source_word_counts,
             base_fields: input.base_fields,
             base_footnotes: input.base_footnotes,
@@ -1360,7 +1478,7 @@ pub(super) fn update_gtms_editor_row_fields_sync(
     Ok(SaveEditorRowWithConcurrencyResponse {
         row_id: input.row_id,
         status: "saved".to_string(),
-        row: Some(editor_row_from_stored_row_file(next_row)?),
+        row: Some(editor_row_from_stored_row_file(&repo_path, next_row)?),
         source_word_counts: next_source_word_counts,
         base_fields: input.base_fields,
         base_footnotes: input.base_footnotes,
@@ -1545,7 +1663,7 @@ pub(super) fn load_gtms_editor_field_history_sync(
         &commits,
         &input.language_code,
     )?;
-    let entries = build_editor_field_history_entries(commits, historical_field_values);
+    let entries = build_editor_field_history_entries(&repo_path, commits, historical_field_values);
 
     Ok(LoadEditorFieldHistoryResponse {
         row_id: input.row_id,
@@ -1594,7 +1712,10 @@ pub(super) fn restore_gtms_editor_field_from_history_sync(
         )
     })?;
     let historical_plain_text = historical_field_value.field_value.plain_text.clone();
-    let historical_footnote = historical_field_value.field_value.footnote.clone();
+    let historical_footnote =
+        normalize_editor_footnote_value(&historical_field_value.field_value.footnote);
+    let historical_image =
+        normalize_editor_field_image_value(&historical_field_value.field_value.image);
     let historical_text_style = historical_field_value.text_style.clone();
 
     let original_row_text = fs::read_to_string(&row_json_path).map_err(|error| {
@@ -1610,6 +1731,7 @@ pub(super) fn restore_gtms_editor_field_from_history_sync(
                 row_json_path.display()
             )
         })?;
+    let current_image = row_language_stored_image(&original_row_file, &input.language_code);
     let mut row_value: Value = serde_json::from_str(&original_row_text).map_err(|error| {
         format!(
             "Could not parse row file '{}': {error}",
@@ -1643,6 +1765,11 @@ pub(super) fn restore_gtms_editor_field_from_history_sync(
         "footnote".to_string(),
         Value::String(historical_footnote.clone()),
     );
+    field_object.insert(
+        "image".to_string(),
+        serde_json::to_value(historical_image.clone())
+            .map_err(|error| format!("Could not serialize the restored image metadata: {error}"))?,
+    );
     let field_changed = original_row_file
         .fields
         .get(&input.language_code)
@@ -1657,7 +1784,10 @@ pub(super) fn restore_gtms_editor_field_from_history_sync(
     if field_changed {
         field_object.remove("html_preview");
     }
-    set_editor_field_flags(field_object, &historical_field_value.field_value.editor_flags);
+    set_editor_field_flags(
+        field_object,
+        &historical_field_value.field_value.editor_flags,
+    );
 
     let updated_row_json = serde_json::to_string_pretty(&row_value).map_err(|error| {
         format!(
@@ -1668,7 +1798,45 @@ pub(super) fn restore_gtms_editor_field_from_history_sync(
     let updated_row_text = format!("{updated_row_json}\n");
     let languages = sanitize_chapter_languages(&chapter_file.languages);
     let mut source_word_counts = load_source_word_counts(&chapter_path.join("rows"), &languages)?;
-    if updated_row_text != original_row_text {
+    let historical_uploaded_path = historical_image
+        .as_ref()
+        .filter(|image| image.kind == "upload")
+        .and_then(|image| image.path.clone());
+    let current_uploaded_path = current_image
+        .as_ref()
+        .filter(|image| image.kind == "upload")
+        .and_then(|image| image.path.clone());
+    let mut added_asset_paths = Vec::new();
+    let mut removed_asset_paths = Vec::new();
+    let mut rollback_snapshots = Vec::new();
+    let mut historical_asset_update: Option<(String, Vec<u8>)> = None;
+
+    push_repo_file_snapshot(&mut rollback_snapshots, &repo_path, &relative_row_json)?;
+
+    if let Some(relative_path) = historical_uploaded_path.as_deref() {
+        let historical_bytes =
+            load_historical_blob_bytes(&repo_path, &input.commit_sha, relative_path)?;
+        let absolute_path = repo_path.join(relative_path);
+        if !file_bytes_equal(&absolute_path, &historical_bytes) {
+            push_repo_file_snapshot(&mut rollback_snapshots, &repo_path, relative_path)?;
+            historical_asset_update = Some((relative_path.to_string(), historical_bytes));
+            added_asset_paths.push(relative_path.to_string());
+        }
+    }
+
+    let removed_uploaded_path = current_uploaded_path
+        .as_deref()
+        .filter(|path| Some(*path) != historical_uploaded_path.as_deref())
+        .map(str::to_string);
+    if let Some(relative_path) = removed_uploaded_path.as_deref() {
+        push_repo_file_snapshot(&mut rollback_snapshots, &repo_path, relative_path)?;
+        removed_asset_paths.push(relative_path.to_string());
+    }
+
+    if updated_row_text != original_row_text
+        || !added_asset_paths.is_empty()
+        || !removed_asset_paths.is_empty()
+    {
         let updated_row_file: StoredRowFile =
             serde_json::from_value(row_value.clone()).map_err(|error| {
                 format!(
@@ -1682,24 +1850,59 @@ pub(super) fn restore_gtms_editor_field_from_history_sync(
             &updated_row_file,
             &languages,
         );
-        write_text_file(&row_json_path, &updated_row_text)?;
-
         let short_commit = short_commit_sha(&input.commit_sha);
-        git_output(&repo_path, &["add", &relative_row_json])?;
-        git_commit_as_signed_in_user_with_metadata(
-            app,
-            &repo_path,
-            &format!(
-                "Restore row {} {} from {}",
-                input.row_id, input.language_code, short_commit
-            ),
-            &[&relative_row_json],
-            CommitMetadata {
-                operation: Some("restore"),
-                status_note: None,
-                ai_model: None,
-            },
-        )?;
+        with_repo_file_rollback(&repo_path, &rollback_snapshots, || {
+            if let Some((relative_path, historical_bytes)) = historical_asset_update.as_ref() {
+                let absolute_path = repo_path.join(relative_path);
+                write_binary_file(&absolute_path, historical_bytes)?;
+            }
+
+            if let Some(relative_path) = removed_uploaded_path.as_deref() {
+                let absolute_path = repo_path.join(relative_path);
+                let _ = fs::remove_file(&absolute_path);
+                git_output(
+                    &repo_path,
+                    &["rm", "--cached", "--ignore-unmatch", relative_path],
+                )?;
+            }
+
+            if updated_row_text != original_row_text {
+                write_text_file(&row_json_path, &updated_row_text)?;
+            }
+
+            let mut add_args = vec!["add"];
+            if updated_row_text != original_row_text {
+                add_args.push(relative_row_json.as_str());
+            }
+            for path in &added_asset_paths {
+                add_args.push(path.as_str());
+            }
+            if add_args.len() > 1 {
+                git_output(&repo_path, &add_args)?;
+            }
+            let mut commit_paths = Vec::new();
+            if updated_row_text != original_row_text {
+                commit_paths.push(relative_row_json.clone());
+            }
+            commit_paths.extend(added_asset_paths.clone());
+            commit_paths.extend(removed_asset_paths.clone());
+            let commit_path_refs: Vec<&str> = commit_paths.iter().map(String::as_str).collect();
+            git_commit_as_signed_in_user_with_metadata(
+                app,
+                &repo_path,
+                &format!(
+                    "Restore row {} {} from {}",
+                    input.row_id, input.language_code, short_commit
+                ),
+                &commit_path_refs,
+                CommitMetadata {
+                    operation: Some("restore"),
+                    status_note: None,
+                    ai_model: None,
+                },
+            )?;
+            Ok(())
+        })?;
     }
 
     Ok(RestoreEditorFieldHistoryResponse {
@@ -1707,6 +1910,10 @@ pub(super) fn restore_gtms_editor_field_from_history_sync(
         language_code: input.language_code,
         plain_text: historical_plain_text,
         footnote: historical_footnote,
+        image: editor_field_image_from_stored(
+            &repo_path,
+            &historical_field_value.field_value.image,
+        ),
         text_style: historical_text_style,
         reviewed: historical_field_value.field_value.editor_flags.reviewed,
         please_check: historical_field_value.field_value.editor_flags.please_check,
@@ -1841,11 +2048,11 @@ pub(super) fn reverse_gtms_editor_batch_replace_commit_sync(
             }
         ),
         &commit_paths,
-            CommitMetadata {
-                operation: Some("editor-replace"),
-                status_note: None,
-                ai_model: None,
-            },
+        CommitMetadata {
+            operation: Some("editor-replace"),
+            status_note: None,
+            ai_model: None,
+        },
     )?;
     let commit_sha = if commit_output.is_empty() {
         None
@@ -2097,6 +2304,483 @@ pub(super) fn update_gtms_editor_row_text_style_sync(
     })
 }
 
+pub(super) fn save_gtms_editor_language_image_url_sync(
+    app: &AppHandle,
+    input: SaveEditorLanguageImageUrlInput,
+) -> Result<SaveEditorLanguageImageResponse, String> {
+    let repo_path = resolve_project_git_repo_path(
+        app,
+        input.installation_id,
+        input.project_id.as_deref(),
+        Some(&input.repo_name),
+    )?;
+    ensure_repo_exists(&repo_path, "The local project repo is not available yet.")?;
+    ensure_valid_git_repo(&repo_path, "The local project repo is missing or invalid.")?;
+
+    let chapter_path = find_chapter_path_by_id(&repo_path.join("chapters"), &input.chapter_id)?;
+    let row_json_path = chapter_path
+        .join("rows")
+        .join(format!("{}.json", input.row_id));
+    if !row_json_path.exists() {
+        return Ok(SaveEditorLanguageImageResponse {
+            row_id: input.row_id,
+            language_code: input.language_code,
+            status: "deleted".to_string(),
+            row: None,
+            chapter_base_commit_sha: current_repo_head_sha(&repo_path),
+        });
+    }
+
+    let relative_row_json = repo_relative_path(&repo_path, &row_json_path)?;
+    let original_row_text = fs::read_to_string(&row_json_path).map_err(|error| {
+        format!(
+            "Could not read row file '{}': {error}",
+            row_json_path.display()
+        )
+    })?;
+    let original_row_file: StoredRowFile =
+        serde_json::from_str(&original_row_text).map_err(|error| {
+            format!(
+                "Could not parse row file '{}': {error}",
+                row_json_path.display()
+            )
+        })?;
+    if original_row_file.lifecycle.state == "deleted" {
+        return Ok(SaveEditorLanguageImageResponse {
+            row_id: input.row_id,
+            language_code: input.language_code,
+            status: "deleted".to_string(),
+            row: Some(editor_row_from_stored_row_file(
+                &repo_path,
+                original_row_file,
+            )?),
+            chapter_base_commit_sha: current_repo_head_sha(&repo_path),
+        });
+    }
+
+    let current_image = row_language_stored_image(&original_row_file, &input.language_code);
+    let base_image = normalize_editor_field_image_input(input.base_image.as_ref());
+    if current_image != base_image {
+        return Ok(SaveEditorLanguageImageResponse {
+            row_id: input.row_id,
+            language_code: input.language_code,
+            status: "conflict".to_string(),
+            row: Some(editor_row_from_stored_row_file(
+                &repo_path,
+                original_row_file,
+            )?),
+            chapter_base_commit_sha: current_repo_head_sha(&repo_path),
+        });
+    }
+
+    let next_image = Some(StoredFieldImage {
+        kind: "url".to_string(),
+        url: Some(validate_editor_image_url(&input.url)?),
+        path: None,
+    });
+    let replaced_uploaded_path = current_image
+        .as_ref()
+        .filter(|image| image.kind == "upload")
+        .and_then(|image| image.path.clone());
+    let mut row_value: Value = serde_json::from_str(&original_row_text).map_err(|error| {
+        format!(
+            "Could not parse row file '{}': {error}",
+            row_json_path.display()
+        )
+    })?;
+    apply_editor_field_image_update(&mut row_value, &input.language_code, next_image)?;
+
+    let updated_row_json = serde_json::to_string_pretty(&row_value).map_err(|error| {
+        format!(
+            "Could not serialize row file '{}': {error}",
+            row_json_path.display()
+        )
+    })?;
+    let updated_row_text = format!("{updated_row_json}\n");
+    let row_changed = updated_row_text != original_row_text;
+    let mut rollback_snapshots = Vec::new();
+
+    push_repo_file_snapshot(&mut rollback_snapshots, &repo_path, &relative_row_json)?;
+    if let Some(relative_path) = replaced_uploaded_path.as_deref() {
+        push_repo_file_snapshot(&mut rollback_snapshots, &repo_path, relative_path)?;
+    }
+
+    let next_row = with_repo_file_rollback(&repo_path, &rollback_snapshots, || {
+        let mut next_row = original_row_file.clone();
+        let mut paths_to_commit = vec![relative_row_json.clone()];
+
+        if row_changed {
+            write_text_file(&row_json_path, &updated_row_text)?;
+            next_row = serde_json::from_value(row_value.clone()).map_err(|error| {
+                format!(
+                    "Could not decode updated row '{}': {error}",
+                    row_json_path.display()
+                )
+            })?;
+        }
+
+        if let Some(relative_path) = replaced_uploaded_path.as_deref() {
+            let absolute_path = repo_path.join(relative_path);
+            let _ = fs::remove_file(&absolute_path);
+            git_output(
+                &repo_path,
+                &["rm", "--cached", "--ignore-unmatch", relative_path],
+            )?;
+            paths_to_commit.push(relative_path.to_string());
+        }
+
+        if row_changed {
+            git_output(&repo_path, &["add", &relative_row_json])?;
+        }
+
+        if row_changed || paths_to_commit.len() > 1 {
+            let commit_paths: Vec<&str> = paths_to_commit.iter().map(String::as_str).collect();
+            git_commit_as_signed_in_user_with_metadata(
+                app,
+                &repo_path,
+                &format!("Update row {} {} image", input.row_id, input.language_code),
+                &commit_paths,
+                CommitMetadata {
+                    operation: Some("editor-update"),
+                    status_note: None,
+                    ai_model: None,
+                },
+            )?;
+        }
+
+        Ok(next_row)
+    })?;
+
+    Ok(SaveEditorLanguageImageResponse {
+        row_id: input.row_id,
+        language_code: input.language_code,
+        status: "saved".to_string(),
+        row: Some(editor_row_from_stored_row_file(&repo_path, next_row)?),
+        chapter_base_commit_sha: current_repo_head_sha(&repo_path),
+    })
+}
+
+pub(super) fn upload_gtms_editor_language_image_sync(
+    app: &AppHandle,
+    input: UploadEditorLanguageImageInput,
+) -> Result<SaveEditorLanguageImageResponse, String> {
+    let repo_path = resolve_project_git_repo_path(
+        app,
+        input.installation_id,
+        input.project_id.as_deref(),
+        Some(&input.repo_name),
+    )?;
+    ensure_repo_exists(&repo_path, "The local project repo is not available yet.")?;
+    ensure_valid_git_repo(&repo_path, "The local project repo is missing or invalid.")?;
+
+    let chapter_path = find_chapter_path_by_id(&repo_path.join("chapters"), &input.chapter_id)?;
+    let row_json_path = chapter_path
+        .join("rows")
+        .join(format!("{}.json", input.row_id));
+    if !row_json_path.exists() {
+        return Ok(SaveEditorLanguageImageResponse {
+            row_id: input.row_id,
+            language_code: input.language_code,
+            status: "deleted".to_string(),
+            row: None,
+            chapter_base_commit_sha: current_repo_head_sha(&repo_path),
+        });
+    }
+
+    let relative_row_json = repo_relative_path(&repo_path, &row_json_path)?;
+    let original_row_text = fs::read_to_string(&row_json_path).map_err(|error| {
+        format!(
+            "Could not read row file '{}': {error}",
+            row_json_path.display()
+        )
+    })?;
+    let original_row_file: StoredRowFile =
+        serde_json::from_str(&original_row_text).map_err(|error| {
+            format!(
+                "Could not parse row file '{}': {error}",
+                row_json_path.display()
+            )
+        })?;
+    if original_row_file.lifecycle.state == "deleted" {
+        return Ok(SaveEditorLanguageImageResponse {
+            row_id: input.row_id,
+            language_code: input.language_code,
+            status: "deleted".to_string(),
+            row: Some(editor_row_from_stored_row_file(
+                &repo_path,
+                original_row_file,
+            )?),
+            chapter_base_commit_sha: current_repo_head_sha(&repo_path),
+        });
+    }
+
+    let current_image = row_language_stored_image(&original_row_file, &input.language_code);
+    let base_image = normalize_editor_field_image_input(input.base_image.as_ref());
+    if current_image != base_image {
+        return Ok(SaveEditorLanguageImageResponse {
+            row_id: input.row_id,
+            language_code: input.language_code,
+            status: "conflict".to_string(),
+            row: Some(editor_row_from_stored_row_file(
+                &repo_path,
+                original_row_file,
+            )?),
+            chapter_base_commit_sha: current_repo_head_sha(&repo_path),
+        });
+    }
+
+    let bytes = decode_uploaded_image_bytes(&input.data_base64)?;
+    let extension = validated_uploaded_image_extension(&input.filename, &bytes)?;
+    let relative_image_path = relative_uploaded_image_path(
+        &input.chapter_id,
+        &input.row_id,
+        &input.language_code,
+        extension,
+    );
+    let absolute_image_path = repo_path.join(&relative_image_path);
+    let next_image = Some(StoredFieldImage {
+        kind: "upload".to_string(),
+        url: None,
+        path: Some(relative_image_path.clone()),
+    });
+    let replaced_uploaded_path = current_image
+        .as_ref()
+        .filter(|image| image.kind == "upload")
+        .and_then(|image| image.path.clone())
+        .filter(|path| path != &relative_image_path);
+    let mut row_value: Value = serde_json::from_str(&original_row_text).map_err(|error| {
+        format!(
+            "Could not parse row file '{}': {error}",
+            row_json_path.display()
+        )
+    })?;
+    apply_editor_field_image_update(&mut row_value, &input.language_code, next_image)?;
+
+    let updated_row_json = serde_json::to_string_pretty(&row_value).map_err(|error| {
+        format!(
+            "Could not serialize row file '{}': {error}",
+            row_json_path.display()
+        )
+    })?;
+    let updated_row_text = format!("{updated_row_json}\n");
+    let mut rollback_snapshots = Vec::new();
+
+    push_repo_file_snapshot(&mut rollback_snapshots, &repo_path, &relative_row_json)?;
+    push_repo_file_snapshot(&mut rollback_snapshots, &repo_path, &relative_image_path)?;
+    if let Some(relative_path) = replaced_uploaded_path.as_deref() {
+        push_repo_file_snapshot(&mut rollback_snapshots, &repo_path, relative_path)?;
+    }
+
+    let next_row = with_repo_file_rollback(&repo_path, &rollback_snapshots, || {
+        write_binary_file(&absolute_image_path, &bytes)?;
+        write_text_file(&row_json_path, &updated_row_text)?;
+        let next_row: StoredRowFile =
+            serde_json::from_value(row_value.clone()).map_err(|error| {
+                format!(
+                    "Could not decode updated row '{}': {error}",
+                    row_json_path.display()
+                )
+            })?;
+
+        if let Some(relative_path) = replaced_uploaded_path.as_deref() {
+            let absolute_path = repo_path.join(relative_path);
+            let _ = fs::remove_file(&absolute_path);
+            git_output(
+                &repo_path,
+                &["rm", "--cached", "--ignore-unmatch", relative_path],
+            )?;
+        }
+
+        git_output(
+            &repo_path,
+            &["add", &relative_row_json, &relative_image_path],
+        )?;
+        let mut commit_paths = vec![relative_row_json.clone(), relative_image_path.clone()];
+        if let Some(relative_path) = replaced_uploaded_path.as_deref() {
+            commit_paths.push(relative_path.to_string());
+        }
+        let commit_path_refs: Vec<&str> = commit_paths.iter().map(String::as_str).collect();
+        git_commit_as_signed_in_user_with_metadata(
+            app,
+            &repo_path,
+            &format!("Update row {} {} image", input.row_id, input.language_code),
+            &commit_path_refs,
+            CommitMetadata {
+                operation: Some("editor-update"),
+                status_note: None,
+                ai_model: None,
+            },
+        )?;
+
+        Ok(next_row)
+    })?;
+
+    Ok(SaveEditorLanguageImageResponse {
+        row_id: input.row_id,
+        language_code: input.language_code,
+        status: "saved".to_string(),
+        row: Some(editor_row_from_stored_row_file(&repo_path, next_row)?),
+        chapter_base_commit_sha: current_repo_head_sha(&repo_path),
+    })
+}
+
+pub(super) fn remove_gtms_editor_language_image_sync(
+    app: &AppHandle,
+    input: RemoveEditorLanguageImageInput,
+) -> Result<SaveEditorLanguageImageResponse, String> {
+    let repo_path = resolve_project_git_repo_path(
+        app,
+        input.installation_id,
+        input.project_id.as_deref(),
+        Some(&input.repo_name),
+    )?;
+    ensure_repo_exists(&repo_path, "The local project repo is not available yet.")?;
+    ensure_valid_git_repo(&repo_path, "The local project repo is missing or invalid.")?;
+
+    let chapter_path = find_chapter_path_by_id(&repo_path.join("chapters"), &input.chapter_id)?;
+    let row_json_path = chapter_path
+        .join("rows")
+        .join(format!("{}.json", input.row_id));
+    if !row_json_path.exists() {
+        return Ok(SaveEditorLanguageImageResponse {
+            row_id: input.row_id,
+            language_code: input.language_code,
+            status: "deleted".to_string(),
+            row: None,
+            chapter_base_commit_sha: current_repo_head_sha(&repo_path),
+        });
+    }
+
+    let relative_row_json = repo_relative_path(&repo_path, &row_json_path)?;
+    let original_row_text = fs::read_to_string(&row_json_path).map_err(|error| {
+        format!(
+            "Could not read row file '{}': {error}",
+            row_json_path.display()
+        )
+    })?;
+    let original_row_file: StoredRowFile =
+        serde_json::from_str(&original_row_text).map_err(|error| {
+            format!(
+                "Could not parse row file '{}': {error}",
+                row_json_path.display()
+            )
+        })?;
+    if original_row_file.lifecycle.state == "deleted" {
+        return Ok(SaveEditorLanguageImageResponse {
+            row_id: input.row_id,
+            language_code: input.language_code,
+            status: "deleted".to_string(),
+            row: Some(editor_row_from_stored_row_file(
+                &repo_path,
+                original_row_file,
+            )?),
+            chapter_base_commit_sha: current_repo_head_sha(&repo_path),
+        });
+    }
+
+    let current_image = row_language_stored_image(&original_row_file, &input.language_code);
+    let base_image = normalize_editor_field_image_input(input.base_image.as_ref());
+    if current_image != base_image {
+        return Ok(SaveEditorLanguageImageResponse {
+            row_id: input.row_id,
+            language_code: input.language_code,
+            status: "conflict".to_string(),
+            row: Some(editor_row_from_stored_row_file(
+                &repo_path,
+                original_row_file,
+            )?),
+            chapter_base_commit_sha: current_repo_head_sha(&repo_path),
+        });
+    }
+
+    let removed_uploaded_path = current_image
+        .as_ref()
+        .filter(|image| image.kind == "upload")
+        .and_then(|image| image.path.clone());
+    if current_image.is_none() {
+        return Ok(SaveEditorLanguageImageResponse {
+            row_id: input.row_id,
+            language_code: input.language_code,
+            status: "saved".to_string(),
+            row: Some(editor_row_from_stored_row_file(
+                &repo_path,
+                original_row_file,
+            )?),
+            chapter_base_commit_sha: current_repo_head_sha(&repo_path),
+        });
+    }
+
+    let mut row_value: Value = serde_json::from_str(&original_row_text).map_err(|error| {
+        format!(
+            "Could not parse row file '{}': {error}",
+            row_json_path.display()
+        )
+    })?;
+    apply_editor_field_image_update(&mut row_value, &input.language_code, None)?;
+
+    let updated_row_json = serde_json::to_string_pretty(&row_value).map_err(|error| {
+        format!(
+            "Could not serialize row file '{}': {error}",
+            row_json_path.display()
+        )
+    })?;
+    let updated_row_text = format!("{updated_row_json}\n");
+    let mut rollback_snapshots = Vec::new();
+
+    push_repo_file_snapshot(&mut rollback_snapshots, &repo_path, &relative_row_json)?;
+    if let Some(relative_path) = removed_uploaded_path.as_deref() {
+        push_repo_file_snapshot(&mut rollback_snapshots, &repo_path, relative_path)?;
+    }
+
+    let next_row = with_repo_file_rollback(&repo_path, &rollback_snapshots, || {
+        write_text_file(&row_json_path, &updated_row_text)?;
+        let next_row: StoredRowFile =
+            serde_json::from_value(row_value.clone()).map_err(|error| {
+                format!(
+                    "Could not decode updated row '{}': {error}",
+                    row_json_path.display()
+                )
+            })?;
+
+        if let Some(relative_path) = removed_uploaded_path.as_deref() {
+            let absolute_path = repo_path.join(relative_path);
+            let _ = fs::remove_file(&absolute_path);
+            git_output(
+                &repo_path,
+                &["rm", "--cached", "--ignore-unmatch", relative_path],
+            )?;
+        }
+
+        git_output(&repo_path, &["add", &relative_row_json])?;
+        let mut commit_paths = vec![relative_row_json.clone()];
+        if let Some(relative_path) = removed_uploaded_path.as_deref() {
+            commit_paths.push(relative_path.to_string());
+        }
+        let commit_path_refs: Vec<&str> = commit_paths.iter().map(String::as_str).collect();
+        git_commit_as_signed_in_user_with_metadata(
+            app,
+            &repo_path,
+            &format!("Update row {} {} image", input.row_id, input.language_code),
+            &commit_path_refs,
+            CommitMetadata {
+                operation: Some("editor-update"),
+                status_note: None,
+                ai_model: None,
+            },
+        )?;
+
+        Ok(next_row)
+    })?;
+
+    Ok(SaveEditorLanguageImageResponse {
+        row_id: input.row_id,
+        language_code: input.language_code,
+        status: "saved".to_string(),
+        row: Some(editor_row_from_stored_row_file(&repo_path, next_row)?),
+        chapter_base_commit_sha: current_repo_head_sha(&repo_path),
+    })
+}
+
 pub(super) fn clear_gtms_editor_reviewed_markers_sync(
     app: &AppHandle,
     input: ClearEditorReviewedMarkersInput,
@@ -2230,7 +2914,9 @@ fn load_git_history_for_path(
         .collect()
 }
 
-fn parse_git_commit_message(message: &str) -> (String, Option<String>, Option<String>, Option<String>) {
+fn parse_git_commit_message(
+    message: &str,
+) -> (String, Option<String>, Option<String>, Option<String>) {
     let trimmed_message = message.trim();
     if trimmed_message.is_empty() {
         return (String::new(), None, None, None);
@@ -2321,6 +3007,368 @@ fn row_plain_text_fields(row: &StoredRowFile) -> BTreeMap<String, String> {
         .iter()
         .map(|(code, field)| (code.clone(), field.plain_text.clone()))
         .collect()
+}
+
+fn row_language_stored_image(row: &StoredRowFile, language_code: &str) -> Option<StoredFieldImage> {
+    row.fields
+        .get(language_code)
+        .and_then(|field| normalize_editor_field_image_value(&field.image))
+}
+
+fn row_uploaded_image_relative_paths(row: &StoredRowFile) -> Vec<String> {
+    row.fields
+        .values()
+        .filter_map(|field| normalize_editor_field_image_value(&field.image))
+        .filter_map(|image| {
+            if image.kind == "upload" {
+                image.path
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+fn normalize_uploaded_image_extension(extension: &str) -> Option<&'static str> {
+    match extension
+        .trim()
+        .trim_start_matches('.')
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "jpg" | "jpeg" => Some("jpg"),
+        "png" | "apng" => Some("png"),
+        "gif" => Some("gif"),
+        "svg" => Some("svg"),
+        "webp" => Some("webp"),
+        "avif" => Some("avif"),
+        "bmp" => Some("bmp"),
+        "ico" => Some("ico"),
+        _ => None,
+    }
+}
+
+fn svg_document_root_is_svg(bytes: &[u8]) -> bool {
+    let mut reader = XmlReader::from_reader(bytes);
+    reader.trim_text(true);
+    let mut buffer = Vec::new();
+
+    loop {
+        match reader.read_event_into(&mut buffer) {
+            Ok(XmlEvent::Start(event)) | Ok(XmlEvent::Empty(event)) => {
+                return event.name().as_ref() == b"svg";
+            }
+            Ok(XmlEvent::Decl(_))
+            | Ok(XmlEvent::DocType(_))
+            | Ok(XmlEvent::Comment(_))
+            | Ok(XmlEvent::PI(_))
+            | Ok(XmlEvent::Text(_))
+            | Ok(XmlEvent::CData(_)) => {
+                buffer.clear();
+                continue;
+            }
+            Ok(XmlEvent::Eof) | Err(_) => return false,
+            _ => {
+                buffer.clear();
+            }
+        }
+    }
+}
+
+fn detected_uploaded_image_extension(bytes: &[u8]) -> Option<&'static str> {
+    if bytes.starts_with(&[0xFF, 0xD8, 0xFF]) {
+        return Some("jpg");
+    }
+    if bytes.starts_with(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]) {
+        return Some("png");
+    }
+    if bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a") {
+        return Some("gif");
+    }
+    if bytes.len() >= 12 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
+        return Some("webp");
+    }
+    if bytes.starts_with(b"BM") {
+        return Some("bmp");
+    }
+    if bytes.starts_with(&[0x00, 0x00, 0x01, 0x00]) {
+        return Some("ico");
+    }
+    if bytes.len() >= 12 && &bytes[4..8] == b"ftyp" {
+        if bytes
+            .windows(4)
+            .any(|window| window == b"avif" || window == b"avis")
+        {
+            return Some("avif");
+        }
+    }
+    if svg_document_root_is_svg(bytes) {
+        return Some("svg");
+    }
+
+    None
+}
+
+fn validated_uploaded_image_extension(
+    filename: &str,
+    bytes: &[u8],
+) -> Result<&'static str, String> {
+    let detected_extension = detected_uploaded_image_extension(bytes)
+        .ok_or_else(|| "The uploaded file is not a valid supported image.".to_string())?;
+    let filename_extension = Path::new(filename)
+        .extension()
+        .and_then(|value| value.to_str())
+        .and_then(normalize_uploaded_image_extension);
+
+    if let Some(filename_extension) = filename_extension {
+        if filename_extension != detected_extension {
+            return Err(
+                "The uploaded file extension does not match its image contents.".to_string(),
+            );
+        }
+    }
+
+    Ok(detected_extension)
+}
+
+fn decode_uploaded_image_bytes(data_base64: &str) -> Result<Vec<u8>, String> {
+    let normalized_data = data_base64.trim();
+    if normalized_data.is_empty() {
+        return Err("The uploaded image data is empty.".to_string());
+    }
+
+    base64::engine::general_purpose::STANDARD
+        .decode(normalized_data)
+        .map_err(|error| format!("Could not decode the uploaded image data: {error}"))
+}
+
+fn validate_editor_image_url(value: &str) -> Result<String, String> {
+    let normalized_url = value.trim();
+    if normalized_url.is_empty() {
+        return Err("Enter an image URL.".to_string());
+    }
+
+    let parsed_url = url::Url::parse(normalized_url)
+        .map_err(|error| format!("The image URL is invalid: {error}"))?;
+    match parsed_url.scheme() {
+        "http" | "https" => Ok(normalized_url.to_string()),
+        _ => Err("Only http:// and https:// image URLs are supported.".to_string()),
+    }
+}
+
+fn write_binary_file(path: &Path, bytes: &[u8]) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|error| format!("Could not create '{}': {error}", parent.display()))?;
+    }
+
+    fs::write(path, bytes).map_err(|error| format!("Could not write '{}': {error}", path.display()))
+}
+
+#[derive(Clone)]
+struct RepoFileSnapshot {
+    relative_path: String,
+    absolute_path: PathBuf,
+    original_bytes: Option<Vec<u8>>,
+}
+
+fn capture_repo_file_snapshot(
+    repo_path: &Path,
+    relative_path: &str,
+) -> Result<RepoFileSnapshot, String> {
+    let absolute_path = repo_path.join(relative_path);
+    let original_bytes = match fs::read(&absolute_path) {
+        Ok(bytes) => Some(bytes),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => {
+            return Err(format!(
+                "Could not read '{}': {error}",
+                absolute_path.display()
+            ));
+        }
+    };
+
+    Ok(RepoFileSnapshot {
+        relative_path: relative_path.to_string(),
+        absolute_path,
+        original_bytes,
+    })
+}
+
+fn push_repo_file_snapshot(
+    snapshots: &mut Vec<RepoFileSnapshot>,
+    repo_path: &Path,
+    relative_path: &str,
+) -> Result<(), String> {
+    if snapshots
+        .iter()
+        .any(|snapshot| snapshot.relative_path == relative_path)
+    {
+        return Ok(());
+    }
+
+    snapshots.push(capture_repo_file_snapshot(repo_path, relative_path)?);
+    Ok(())
+}
+
+fn restore_repo_file_snapshot_on_disk(snapshot: &RepoFileSnapshot) -> Result<(), String> {
+    if let Some(original_bytes) = snapshot.original_bytes.as_deref() {
+        write_binary_file(&snapshot.absolute_path, original_bytes)?;
+        return Ok(());
+    }
+
+    match fs::remove_file(&snapshot.absolute_path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(format!(
+            "Could not remove '{}': {error}",
+            snapshot.absolute_path.display()
+        )),
+    }
+}
+
+fn sync_repo_file_snapshot_to_index(
+    repo_path: &Path,
+    snapshot: &RepoFileSnapshot,
+) -> Result<(), String> {
+    if snapshot.original_bytes.is_some() {
+        git_output(repo_path, &["add", &snapshot.relative_path])?;
+    } else {
+        git_output(
+            repo_path,
+            &[
+                "rm",
+                "--cached",
+                "--ignore-unmatch",
+                &snapshot.relative_path,
+            ],
+        )?;
+    }
+    Ok(())
+}
+
+fn rollback_repo_file_snapshots(
+    repo_path: &Path,
+    snapshots: &[RepoFileSnapshot],
+) -> Result<(), String> {
+    let mut errors = Vec::new();
+
+    for snapshot in snapshots.iter().rev() {
+        if let Err(error) = restore_repo_file_snapshot_on_disk(snapshot) {
+            errors.push(error);
+            continue;
+        }
+        if let Err(error) = sync_repo_file_snapshot_to_index(repo_path, snapshot) {
+            errors.push(error);
+        }
+    }
+
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors.join(" "))
+    }
+}
+
+fn with_repo_file_rollback<T, F>(
+    repo_path: &Path,
+    snapshots: &[RepoFileSnapshot],
+    operation: F,
+) -> Result<T, String>
+where
+    F: FnOnce() -> Result<T, String>,
+{
+    match operation() {
+        Ok(value) => Ok(value),
+        Err(error) => match rollback_repo_file_snapshots(repo_path, snapshots) {
+            Ok(()) => Err(error),
+            Err(rollback_error) => Err(format!("{error} Rollback failed: {rollback_error}")),
+        },
+    }
+}
+
+fn relative_uploaded_image_path(
+    chapter_id: &str,
+    row_id: &str,
+    language_code: &str,
+    extension: &str,
+) -> String {
+    format!(
+        "chapters/{chapter_id}/images/row-{row_id}-{language_code}-{}.{}",
+        uuid::Uuid::now_v7(),
+        extension
+    )
+}
+
+fn file_bytes_equal(path: &Path, bytes: &[u8]) -> bool {
+    fs::read(path)
+        .map(|existing| existing == bytes)
+        .unwrap_or(false)
+}
+
+fn load_historical_blob_bytes(
+    repo_path: &Path,
+    commit_sha: &str,
+    relative_path: &str,
+) -> Result<Vec<u8>, String> {
+    let request = format!("{commit_sha}:{relative_path}\n");
+    let output = git_output_with_stdin(repo_path, &["cat-file", "--batch"], &request)?;
+    let Some(header_end) = output.iter().position(|byte| *byte == b'\n') else {
+        return Err(format!(
+            "Could not parse the historical blob header for '{}'.",
+            relative_path
+        ));
+    };
+    let header = str::from_utf8(&output[..header_end]).map_err(|error| {
+        format!(
+            "Could not decode the historical blob header for '{}': {error}",
+            relative_path
+        )
+    })?;
+    if header.ends_with(" missing") {
+        return Err(format!(
+            "Could not find the historical file '{}' at commit '{}'.",
+            relative_path, commit_sha
+        ));
+    }
+
+    let mut header_parts = header.split_whitespace();
+    let _object_name = header_parts.next().unwrap_or_default();
+    let object_type = header_parts.next().unwrap_or_default();
+    let object_size = header_parts
+        .next()
+        .ok_or_else(|| {
+            format!(
+                "Could not parse the historical blob size for '{}'.",
+                relative_path
+            )
+        })?
+        .parse::<usize>()
+        .map_err(|error| {
+            format!(
+                "Could not decode the historical blob size for '{}': {error}",
+                relative_path
+            )
+        })?;
+    if object_type != "blob" {
+        return Err(format!(
+            "Expected a blob for historical file '{}', found '{}'.",
+            relative_path, object_type
+        ));
+    }
+
+    let body_start = header_end + 1;
+    let body_end = body_start
+        .checked_add(object_size)
+        .ok_or_else(|| format!("Historical blob size overflow for '{}'.", relative_path))?;
+    if body_end > output.len() {
+        return Err(format!(
+            "The historical blob output was truncated for '{}'.",
+            relative_path
+        ));
+    }
+
+    Ok(output[body_start..body_end].to_vec())
 }
 
 fn ensure_text_has_trailing_newline(text: &str) -> String {
@@ -2442,6 +3490,102 @@ fn normalize_editor_text_style_value(value: Option<&str>) -> String {
     }
 }
 
+fn normalize_editor_footnote_value(value: &str) -> String {
+    if value.trim().is_empty() {
+        String::new()
+    } else {
+        value.to_string()
+    }
+}
+
+fn normalize_editor_field_image_kind(value: &str) -> Option<&'static str> {
+    match value.trim() {
+        "url" => Some("url"),
+        "upload" => Some("upload"),
+        _ => None,
+    }
+}
+
+fn normalize_editor_field_image_parts(
+    kind: &str,
+    url: Option<&str>,
+    path: Option<&str>,
+) -> Option<StoredFieldImage> {
+    match normalize_editor_field_image_kind(kind)? {
+        "url" => {
+            let normalized_url = url.unwrap_or_default().trim();
+            if normalized_url.is_empty() {
+                return None;
+            }
+
+            Some(StoredFieldImage {
+                kind: "url".to_string(),
+                url: Some(normalized_url.to_string()),
+                path: None,
+            })
+        }
+        "upload" => {
+            let normalized_path = path.unwrap_or_default().trim();
+            if normalized_path.is_empty() {
+                return None;
+            }
+
+            Some(StoredFieldImage {
+                kind: "upload".to_string(),
+                url: None,
+                path: Some(normalized_path.to_string()),
+            })
+        }
+        _ => None,
+    }
+}
+
+fn normalize_editor_field_image_value(
+    value: &Option<StoredFieldImage>,
+) -> Option<StoredFieldImage> {
+    value.as_ref().and_then(|image| {
+        normalize_editor_field_image_parts(&image.kind, image.url.as_deref(), image.path.as_deref())
+    })
+}
+
+fn normalize_editor_field_image_input(
+    value: Option<&EditorFieldImageInput>,
+) -> Option<StoredFieldImage> {
+    value.and_then(|image| {
+        normalize_editor_field_image_parts(&image.kind, Some(&image.url), Some(&image.path))
+    })
+}
+
+fn editor_field_image_from_stored(
+    repo_path: &Path,
+    value: &Option<StoredFieldImage>,
+) -> Option<EditorFieldImage> {
+    let image = normalize_editor_field_image_value(value)?;
+    let file_name = image
+        .path
+        .as_deref()
+        .and_then(editor_uploaded_image_file_name_from_relative_path);
+    let file_path = image
+        .path
+        .as_deref()
+        .map(|relative_path| repo_path.join(relative_path).to_string_lossy().to_string());
+
+    Some(EditorFieldImage {
+        kind: image.kind,
+        url: image.url,
+        path: image.path,
+        file_path,
+        file_name,
+    })
+}
+
+fn editor_uploaded_image_file_name_from_relative_path(relative_path: &str) -> Option<String> {
+    Path::new(relative_path)
+        .file_name()
+        .and_then(|value| value.to_str())
+        .map(ToOwned::to_owned)
+}
+
 fn row_object_mut(row_value: &mut Value) -> Result<&mut serde_json::Map<String, Value>, String> {
     row_value
         .as_object_mut()
@@ -2516,8 +3660,33 @@ fn apply_editor_footnote_updates(
             .as_object_mut()
             .ok_or_else(|| "A row field is not a JSON object.".to_string())?;
         ensure_editor_field_object_defaults(field_object)?;
-        field_object.insert("footnote".to_string(), Value::String(footnote.clone()));
+        field_object.insert(
+            "footnote".to_string(),
+            Value::String(normalize_editor_footnote_value(footnote)),
+        );
     }
+
+    Ok(())
+}
+
+fn apply_editor_field_image_update(
+    row_value: &mut Value,
+    language_code: &str,
+    image: Option<StoredFieldImage>,
+) -> Result<(), String> {
+    let fields_object = row_fields_object_mut(row_value)?;
+    let field_value = fields_object
+        .entry(language_code.to_string())
+        .or_insert_with(|| json!({}));
+    let field_object = field_value
+        .as_object_mut()
+        .ok_or_else(|| "A row field is not a JSON object.".to_string())?;
+    ensure_editor_field_object_defaults(field_object)?;
+    field_object.insert(
+        "image".to_string(),
+        serde_json::to_value(image)
+            .map_err(|error| format!("Could not serialize the row image metadata: {error}"))?,
+    );
 
     Ok(())
 }
@@ -2614,6 +3783,7 @@ fn set_editor_field_flags(
 struct HistoricalFieldSignature {
     plain_text: String,
     footnote: String,
+    image: Option<StoredFieldImage>,
     text_style: String,
     reviewed: bool,
     please_check: bool,
@@ -2629,7 +3799,8 @@ impl HistoricalFieldSignature {
     fn from_version(version: &HistoricalFieldVersion) -> Self {
         Self {
             plain_text: version.field_value.plain_text.clone(),
-            footnote: version.field_value.footnote.clone(),
+            footnote: normalize_editor_footnote_value(&version.field_value.footnote),
+            image: normalize_editor_field_image_value(&version.field_value.image),
             text_style: version.text_style.clone(),
             reviewed: version.field_value.editor_flags.reviewed,
             please_check: version.field_value.editor_flags.please_check,
@@ -2638,6 +3809,7 @@ impl HistoricalFieldSignature {
 }
 
 fn build_editor_field_history_entries(
+    repo_path: &Path,
     commits: Vec<GitCommitMetadata>,
     historical_field_versions: Vec<Option<HistoricalFieldVersion>>,
 ) -> Vec<EditorFieldHistoryEntry> {
@@ -2654,7 +3826,8 @@ fn build_editor_field_history_entries(
             continue;
         };
         let plain_text = field_version.field_value.plain_text.clone();
-        let footnote = field_version.field_value.footnote.clone();
+        let footnote = normalize_editor_footnote_value(&field_version.field_value.footnote);
+        let image = editor_field_image_from_stored(repo_path, &field_version.field_value.image);
         let text_style = field_version.text_style.clone();
         let field_signature = HistoricalFieldSignature::from_version(&field_version);
         let is_baseline_entry = baseline_index == Some(index);
@@ -2674,6 +3847,7 @@ fn build_editor_field_history_entries(
             ai_model: commit.ai_model,
             plain_text,
             footnote,
+            image,
             text_style,
             reviewed: field_version.field_value.editor_flags.reviewed,
             please_check: field_version.field_value.editor_flags.please_check,
@@ -2883,10 +4057,14 @@ fn sanitize_chapter_languages(languages: &[ChapterLanguage]) -> Vec<ChapterLangu
     sanitized
 }
 
-fn editor_row_from_stored_row_file(row: StoredRowFile) -> Result<EditorRow, String> {
+fn editor_row_from_stored_row_file(
+    repo_path: &Path,
+    row: StoredRowFile,
+) -> Result<EditorRow, String> {
     let revision_token = row_revision_token(&row)?;
     let fields = row_plain_text_map(&row);
     let footnotes = row_footnote_map(&row);
+    let images = row_image_map(repo_path, &row);
     let text_style = row_text_style(&row);
 
     Ok(EditorRow {
@@ -2910,6 +4088,7 @@ fn editor_row_from_stored_row_file(row: StoredRowFile) -> Result<EditorRow, Stri
         text_style,
         fields,
         footnotes,
+        images,
         field_states: row
             .fields
             .into_iter()
@@ -2936,7 +4115,22 @@ fn row_plain_text_map(row: &StoredRowFile) -> BTreeMap<String, String> {
 fn row_footnote_map(row: &StoredRowFile) -> BTreeMap<String, String> {
     row.fields
         .iter()
-        .map(|(code, value)| (code.clone(), value.footnote.clone()))
+        .map(|(code, value)| {
+            (
+                code.clone(),
+                normalize_editor_footnote_value(&value.footnote),
+            )
+        })
+        .collect()
+}
+
+fn row_image_map(repo_path: &Path, row: &StoredRowFile) -> BTreeMap<String, EditorFieldImage> {
+    row.fields
+        .iter()
+        .filter_map(|(code, value)| {
+            editor_field_image_from_stored(repo_path, &value.image)
+                .map(|image| (code.clone(), image))
+        })
         .collect()
 }
 
@@ -2960,16 +4154,20 @@ fn row_revision_token(row: &StoredRowFile) -> Result<String, String> {
 
 #[cfg(test)]
 mod tests {
+    use std::{fs, path::Path};
+
     use serde_json::json;
 
     use super::{
-        active_lifecycle_state, apply_editor_field_flag_update, apply_editor_plain_text_updates,
-        apply_editor_text_style_update, build_editor_field_history_entries,
-        create_inserted_editor_row, create_inserted_row_file, editor_row_from_stored_row_file,
+        active_lifecycle_state, apply_editor_field_flag_update, apply_editor_footnote_updates,
+        apply_editor_plain_text_updates, apply_editor_text_style_update,
+        build_editor_field_history_entries, capture_repo_file_snapshot, create_inserted_editor_row,
+        create_inserted_row_file, editor_row_from_stored_row_file,
         filter_commit_row_paths_for_chapter, parse_git_commit_message,
-        preferred_target_language_code, row_text_style, ChapterLanguage, GitCommitMetadata,
-        HistoricalFieldVersion, StoredChapterFile, StoredChapterSettings,
-        StoredFieldEditorFlags, StoredFieldValue, StoredRowFile, DEFAULT_EDITOR_TEXT_STYLE,
+        preferred_target_language_code, restore_repo_file_snapshot_on_disk, row_text_style,
+        write_binary_file, ChapterLanguage, GitCommitMetadata, HistoricalFieldVersion,
+        StoredChapterFile, StoredChapterSettings, StoredFieldEditorFlags, StoredFieldValue,
+        StoredRowFile, DEFAULT_EDITOR_TEXT_STYLE,
     };
 
     fn history_commit(commit_sha: &str, operation_type: Option<&str>) -> GitCommitMetadata {
@@ -2988,6 +4186,7 @@ mod tests {
         StoredFieldValue {
             plain_text: plain_text.to_string(),
             footnote: String::new(),
+            image: None,
             editor_flags: StoredFieldEditorFlags {
                 reviewed,
                 please_check,
@@ -3005,6 +4204,12 @@ mod tests {
             field_value: history_field(plain_text, reviewed, please_check),
             text_style: text_style.to_string(),
         }
+    }
+
+    fn temp_test_dir(name: &str) -> std::path::PathBuf {
+        let path = std::env::temp_dir().join(format!("gnosis-tms-{name}-{}", uuid::Uuid::now_v7()));
+        fs::create_dir_all(&path).expect("temp dir should be created");
+        path
     }
 
     #[test]
@@ -3122,6 +4327,33 @@ mod tests {
             serde_json::to_string_pretty(&row_value).unwrap(),
             original_serialized
         );
+    }
+
+    #[test]
+    fn apply_editor_footnote_updates_normalizes_whitespace_only_values() {
+        let mut row_value = json!({
+          "fields": {
+            "es": {
+              "value_kind": "text",
+              "plain_text": "uno",
+              "footnote": "existing",
+              "editor_flags": {
+                "reviewed": false,
+                "please_check": false
+              }
+            }
+          }
+        });
+
+        apply_editor_footnote_updates(
+            &mut row_value,
+            &[(String::from("es"), String::from("   \n\t  "))]
+                .into_iter()
+                .collect(),
+        )
+        .expect("footnote update should succeed");
+
+        assert_eq!(row_value["fields"]["es"]["footnote"], json!(""));
     }
 
     #[test]
@@ -3270,10 +4502,36 @@ mod tests {
         }))
         .expect("row should deserialize");
 
-        let editor_row = editor_row_from_stored_row_file(row).expect("editor row should build");
+        let editor_row =
+            editor_row_from_stored_row_file(Path::new("."), row).expect("editor row should build");
         assert_eq!(editor_row.comment_count, 1);
         assert_eq!(editor_row.comments_revision, 7);
         assert_eq!(editor_row.text_style, DEFAULT_EDITOR_TEXT_STYLE);
+    }
+
+    #[test]
+    fn editor_row_from_stored_row_file_normalizes_whitespace_only_footnotes() {
+        let row: StoredRowFile = serde_json::from_value(json!({
+          "row_id": "row-1",
+          "structure": { "order_key": "0001" },
+          "status": { "review_state": "unreviewed" },
+          "origin": { "source_row_number": 1 },
+          "fields": {
+            "es": {
+              "plain_text": "uno",
+              "footnote": "   ",
+              "editor_flags": {
+                "reviewed": false,
+                "please_check": false
+              }
+            }
+          }
+        }))
+        .expect("row should deserialize");
+
+        let editor_row =
+            editor_row_from_stored_row_file(Path::new("."), row).expect("editor row should build");
+        assert_eq!(editor_row.footnotes.get("es").map(String::as_str), Some(""));
     }
 
     #[test]
@@ -3305,15 +4563,31 @@ mod tests {
     #[test]
     fn build_editor_field_history_entries_keeps_oldest_import_baseline_when_field_is_unchanged() {
         let entries = build_editor_field_history_entries(
+            Path::new("."),
             vec![
                 history_commit("c3", Some("editor-update")),
                 history_commit("c2", Some("editor-update")),
                 history_commit("c1", Some("import")),
             ],
             vec![
-                Some(history_version("Hello", DEFAULT_EDITOR_TEXT_STYLE, false, false)),
-                Some(history_version("Hello", DEFAULT_EDITOR_TEXT_STYLE, false, false)),
-                Some(history_version("Hello", DEFAULT_EDITOR_TEXT_STYLE, false, false)),
+                Some(history_version(
+                    "Hello",
+                    DEFAULT_EDITOR_TEXT_STYLE,
+                    false,
+                    false,
+                )),
+                Some(history_version(
+                    "Hello",
+                    DEFAULT_EDITOR_TEXT_STYLE,
+                    false,
+                    false,
+                )),
+                Some(history_version(
+                    "Hello",
+                    DEFAULT_EDITOR_TEXT_STYLE,
+                    false,
+                    false,
+                )),
             ],
         );
 
@@ -3330,6 +4604,7 @@ mod tests {
     #[test]
     fn build_editor_field_history_entries_uses_oldest_present_field_as_the_baseline() {
         let entries = build_editor_field_history_entries(
+            Path::new("."),
             vec![
                 history_commit("c3", Some("editor-update")),
                 history_commit("c2", Some("insert")),
@@ -3360,6 +4635,7 @@ mod tests {
     #[test]
     fn build_editor_field_history_entries_keeps_style_only_changes() {
         let entries = build_editor_field_history_entries(
+            Path::new("."),
             vec![
                 history_commit("c2", Some("text-style")),
                 history_commit("c1", Some("import")),
@@ -3385,6 +4661,7 @@ mod tests {
     #[test]
     fn build_editor_field_history_entries_keeps_footnote_only_changes() {
         let entries = build_editor_field_history_entries(
+            Path::new("."),
             vec![
                 history_commit("c2", Some("editor-update")),
                 history_commit("c1", Some("import")),
@@ -3394,6 +4671,7 @@ mod tests {
                     field_value: StoredFieldValue {
                         plain_text: "Hello".to_string(),
                         footnote: "Note".to_string(),
+                        image: None,
                         editor_flags: StoredFieldEditorFlags::default(),
                     },
                     text_style: DEFAULT_EDITOR_TEXT_STYLE.to_string(),
@@ -3402,6 +4680,7 @@ mod tests {
                     field_value: StoredFieldValue {
                         plain_text: "Hello".to_string(),
                         footnote: String::new(),
+                        image: None,
                         editor_flags: StoredFieldEditorFlags::default(),
                     },
                     text_style: DEFAULT_EDITOR_TEXT_STYLE.to_string(),
@@ -3414,6 +4693,44 @@ mod tests {
         assert_eq!(entries[0].footnote, "Note");
         assert_eq!(entries[1].commit_sha, "c1");
         assert_eq!(entries[1].footnote, "");
+    }
+
+    #[test]
+    fn restore_repo_file_snapshot_on_disk_restores_original_bytes() {
+        let repo_path = temp_test_dir("snapshot-restores-bytes");
+        let relative_path = "chapters/chapter-1/images/row-1-vi.png";
+        let absolute_path = repo_path.join(relative_path);
+
+        write_binary_file(&absolute_path, b"original").expect("original file should be written");
+        let snapshot = capture_repo_file_snapshot(&repo_path, relative_path)
+            .expect("snapshot should be captured");
+
+        write_binary_file(&absolute_path, b"changed").expect("changed file should be written");
+        restore_repo_file_snapshot_on_disk(&snapshot).expect("snapshot should restore bytes");
+
+        assert_eq!(
+            fs::read(&absolute_path).expect("file should exist"),
+            b"original"
+        );
+
+        let _ = fs::remove_dir_all(&repo_path);
+    }
+
+    #[test]
+    fn restore_repo_file_snapshot_on_disk_removes_new_files_when_they_were_originally_missing() {
+        let repo_path = temp_test_dir("snapshot-removes-new-file");
+        let relative_path = "chapters/chapter-1/images/row-1-vi.png";
+        let absolute_path = repo_path.join(relative_path);
+
+        let snapshot = capture_repo_file_snapshot(&repo_path, relative_path)
+            .expect("snapshot should be captured");
+
+        write_binary_file(&absolute_path, b"created").expect("new file should be written");
+        restore_repo_file_snapshot_on_disk(&snapshot).expect("snapshot should remove new file");
+
+        assert!(!absolute_path.exists(), "new file should be removed");
+
+        let _ = fs::remove_dir_all(&repo_path);
     }
 
     #[test]
@@ -3746,6 +5063,7 @@ fn create_inserted_editor_row(
         text_style: DEFAULT_EDITOR_TEXT_STYLE.to_string(),
         fields,
         footnotes,
+        images: BTreeMap::new(),
         field_states,
     })
 }

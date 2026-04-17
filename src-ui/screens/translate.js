@@ -12,6 +12,8 @@ import { renderEditorRowInsertModal } from "./editor-row-insert-modal.js";
 import { renderEditorRowPermanentDeletionModal } from "./editor-row-permanent-deletion-modal.js";
 import { renderEditorUnreviewAllModal } from "./editor-unreview-all-modal.js";
 import { renderEditorConflictResolutionModal } from "./editor-conflict-resolution-modal.js";
+import { renderEditorImageInvalidFileModal } from "./editor-image-invalid-file-modal.js";
+import { renderEditorImagePreviewOverlay } from "./editor-image-preview-overlay.js";
 import { renderEditorReplaceUndoModal } from "./editor-replace-undo-modal.js";
 import { renderAiReviewMissingKeyModal } from "./ai-review-missing-key-modal.js";
 import { renderTargetLanguageManagerModal } from "./target-language-manager-modal.js";
@@ -232,6 +234,8 @@ export function renderTranslateScreen(state) {
     + renderEditorRowPermanentDeletionModal(state)
     + renderEditorUnreviewAllModal(state)
     + renderEditorConflictResolutionModal(state)
+    + renderEditorImageInvalidFileModal(state)
+    + renderEditorImagePreviewOverlay(state)
     + renderEditorReplaceUndoModal(state)
     + renderAiReviewMissingKeyModal(state);
 }

@@ -1,10 +1,13 @@
 import {
   escapeHtml,
+  renderInlineStateBox,
   renderCollapseChevron,
   sectionSeparator,
   textAction,
   tooltipAttributes,
 } from "../lib/ui.js";
+import { editorFieldImageMetadataText } from "./editor-images.js";
+import { convertLocalFileSrc } from "./runtime.js";
 import {
   buildEditorRowHeights,
   calculateEditorVirtualWindow,
@@ -140,6 +143,52 @@ function renderRowTextStyleButtons(row, language) {
   const selectedTextStyle = normalizeEditorRowTextStyle(row?.textStyle);
   const isSaving = row?.textStyleSaveState?.status === "saving";
   const showAddFootnoteButton = language.showAddFootnoteButton === true;
+  const secondaryButtons = [];
+
+  if (showAddFootnoteButton) {
+    secondaryButtons.push(`
+      <button
+        class="translation-row-text-style-button translation-row-text-style-button--footnote"
+        type="button"
+        data-action="open-editor-footnote"
+        data-editor-footnote-button
+        data-row-id="${escapeHtml(row.id)}"
+        data-language-code="${escapeHtml(language.code)}"
+        ${tooltipAttributes("Add footnote", { side: "top" })}
+      >
+        <span class="translation-row-text-style-button__label" aria-hidden="true">*</span>
+      </button>
+    `);
+  }
+
+  if (language.showAddImageButtons === true) {
+    secondaryButtons.push(`
+      <button
+        class="translation-row-text-style-button translation-row-text-style-button--image"
+        type="button"
+        data-action="open-editor-image-url"
+        data-editor-image-button
+        data-row-id="${escapeHtml(row.id)}"
+        data-language-code="${escapeHtml(language.code)}"
+        ${tooltipAttributes("Add image by link", { side: "top" })}
+      >
+        <span class="translation-row-text-style-button__label">img url</span>
+      </button>
+    `);
+    secondaryButtons.push(`
+      <button
+        class="translation-row-text-style-button translation-row-text-style-button--image"
+        type="button"
+        data-action="open-editor-image-upload"
+        data-editor-image-button
+        data-row-id="${escapeHtml(row.id)}"
+        data-language-code="${escapeHtml(language.code)}"
+        ${tooltipAttributes("Upload image", { side: "top" })}
+      >
+        <span class="translation-row-text-style-button__label">img ↑</span>
+      </button>
+    `);
+  }
 
   return `
     <div class="translation-row-text-style-actions">
@@ -163,23 +212,126 @@ function renderRowTextStyleButtons(row, language) {
         `).join("")}
       </div>
       ${
-        showAddFootnoteButton
+        secondaryButtons.length > 0
           ? `
             <span class="translation-row-text-style-actions__separator" aria-hidden="true"></span>
-            <button
-              class="translation-row-text-style-button translation-row-text-style-button--footnote"
-              type="button"
-              data-action="open-editor-footnote"
-              data-editor-footnote-button
-              data-row-id="${escapeHtml(row.id)}"
-              data-language-code="${escapeHtml(language.code)}"
-              ${tooltipAttributes("Add footnote", { side: "top" })}
-            >
-              <span class="translation-row-text-style-button__label" aria-hidden="true">*</span>
-            </button>
+            <div class="translation-row-text-style-actions__group translation-row-text-style-actions__group--secondary">
+              ${secondaryButtons.join("")}
+            </div>
           `
           : ""
       }
+    </div>
+  `;
+}
+
+function editorLanguageImageSrc(image) {
+  if (!image) {
+    return "";
+  }
+
+  if (image.kind === "url") {
+    return image.url ?? "";
+  }
+
+  if (image.kind === "upload") {
+    return convertLocalFileSrc(image.filePath ?? "");
+  }
+
+  return "";
+}
+
+function renderEditorLanguageImage(row, language) {
+  if (!language.hasVisibleImage) {
+    return "";
+  }
+
+  if (language.showInvalidImageUrl === true) {
+    return `
+      <div class="translation-language-panel__image-shell">
+        ${renderInlineStateBox({
+          tone: "error",
+          message: "Invalid image URL",
+        })}
+      </div>
+    `;
+  }
+
+  if (language.isImageUrlEditorOpen === true) {
+    return `
+      <div
+        class="translation-language-panel__field-stack translation-language-panel__field-stack--image-url"
+        data-row-id="${escapeHtml(row.id)}"
+        data-language-code="${escapeHtml(language.code)}"
+      >
+        <input
+          class="translation-language-panel__field translation-language-panel__image-url-input"
+          type="text"
+          data-editor-image-url-input
+          data-row-id="${escapeHtml(row.id)}"
+          data-language-code="${escapeHtml(language.code)}"
+          spellcheck="false"
+          placeholder="paste image url here"
+          value="${escapeHtml(language.imageUrlDraft ?? "")}"
+        />
+      </div>
+    `;
+  }
+
+  if (language.isImageUploadEditorOpen === true) {
+    return `
+      <div class="translation-language-panel__image-shell">
+        <button
+          class="translation-language-panel__image-upload"
+          type="button"
+          data-editor-image-upload-dropzone
+          data-row-id="${escapeHtml(row.id)}"
+          data-language-code="${escapeHtml(language.code)}"
+        >
+          <span>Drag and drop an image file or click to select.</span>
+        </button>
+      </div>
+    `;
+  }
+
+  const image = language.image;
+  const imageSrc = editorLanguageImageSrc(image);
+  if (!image || !imageSrc) {
+    return "";
+  }
+
+  const imageLabel = editorFieldImageMetadataText(image);
+  return `
+    <div class="translation-language-panel__image-shell">
+      <div class="translation-language-panel__image-row">
+        <button
+          class="translation-language-panel__image-preview"
+          type="button"
+          data-action="open-editor-image-preview"
+          data-row-id="${escapeHtml(row.id)}"
+          data-language-code="${escapeHtml(language.code)}"
+          ${tooltipAttributes(imageLabel || "Preview image", { side: "top" })}
+        >
+          <img
+            class="translation-language-panel__image"
+            data-editor-language-image-preview-img
+            src="${escapeHtml(imageSrc)}"
+            alt=""
+            loading="lazy"
+          />
+        </button>
+        <button
+          class="translation-language-panel__image-remove"
+          type="button"
+          data-action="remove-editor-language-image"
+          data-editor-language-image-remove-button
+          data-row-id="${escapeHtml(row.id)}"
+          data-language-code="${escapeHtml(language.code)}"
+          ${tooltipAttributes("Remove image", { side: "top" })}
+        >
+          <span aria-hidden="true">x</span>
+        </button>
+      </div>
     </div>
   `;
 }
@@ -268,7 +420,12 @@ function renderEditorLanguageField(row, language) {
     : "";
 
   return `
-    <div class="translation-language-panel__editor${language.isActive ? " translation-language-panel__editor--active" : ""}">
+    <div
+      class="translation-language-panel__editor${language.isActive ? " translation-language-panel__editor--active" : ""}"
+      data-editor-language-cluster
+      data-row-id="${escapeHtml(row.id)}"
+      data-language-code="${escapeHtml(language.code)}"
+    >
       <div
         class="translation-language-panel__field-stack"
         data-editor-glossary-field-stack
@@ -299,6 +456,7 @@ function renderEditorLanguageField(row, language) {
         >${escapeHtml(language.text)}</textarea>
       </div>
       ${language.hasVisibleFootnote ? renderEditorFootnoteField(row, language) : ""}
+      ${renderEditorLanguageImage(row, language)}
       ${renderRowTextStyleButtons(row, language)}
     </div>
   `;

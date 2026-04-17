@@ -201,6 +201,7 @@ function renderReviewPane(editorChapter, rows, languages) {
     ? {
         ...activeSection,
         footnote: activeSection?.footnote ?? "",
+        image: activeSection?.image ?? null,
         textStyle: activeRow?.textStyle ?? "paragraph",
       }
     : null;
@@ -216,6 +217,7 @@ function renderReviewPane(editorChapter, rows, languages) {
   const currentEntry = {
     plainText: activeSection?.text ?? "",
     footnote: activeSection?.footnote ?? "",
+    image: activeSection?.image ?? null,
     reviewed: activeSection?.reviewed === true,
     pleaseCheck: activeSection?.pleaseCheck === true,
     textStyle: activeRow?.textStyle ?? "paragraph",

@@ -12,6 +12,7 @@ import { normalizeEditorRowTextStyle } from "./editor-row-text-style.js";
 import {
   cloneRowFields,
   cloneRowFieldStates,
+  cloneRowImages,
   hasEditorLanguage,
   hasEditorRow,
 } from "./editor-utils.js";
@@ -26,6 +27,9 @@ import {
   createEditorAiTranslateActionState,
   createEditorAiTranslateState,
   createEditorFootnoteEditorState,
+  createEditorImageEditorState,
+  createEditorImageInvalidFileModalState,
+  createEditorImagePreviewOverlayState,
   createEditorReplaceUndoModalState,
   createEditorReplaceState,
   createEditorHistoryState,
@@ -193,6 +197,9 @@ export function applyEditorUiState(nextEditorChapter, previousEditorChapter = st
         ? activeLanguageCode
         : null,
     footnoteEditor: createEditorFootnoteEditorState(),
+    imageEditor: createEditorImageEditorState(),
+    imageInvalidFileModal: createEditorImageInvalidFileModalState(),
+    imagePreviewOverlay: createEditorImagePreviewOverlayState(),
     sidebarTab: normalizeEditorSidebarTab(sidebarTab),
     reviewExpandedSectionKeys: isSameChapter
       ? cloneExpandedReviewSectionKeys(previousEditorChapter?.reviewExpandedSectionKeys)
@@ -250,6 +257,7 @@ export function applyEditorUiState(nextEditorChapter, previousEditorChapter = st
 export function normalizeEditorRow(row) {
   const fields = cloneRowFields(row?.fields);
   const footnotes = cloneRowFields(row?.footnotes);
+  const images = cloneRowImages(row?.images);
   const fieldStates = cloneRowFieldStates(row?.fieldStates);
   const textStyle = normalizeEditorRowTextStyle(row?.textStyle);
   return {
@@ -266,10 +274,13 @@ export function normalizeEditorRow(row) {
     textStyle,
     fields,
     footnotes,
+    images,
     baseFields: cloneRowFields(fields),
     baseFootnotes: cloneRowFields(footnotes),
+    baseImages: cloneRowImages(images),
     persistedFields: cloneRowFields(fields),
     persistedFootnotes: cloneRowFields(footnotes),
+    persistedImages: cloneRowImages(images),
     fieldStates,
     persistedFieldStates: cloneRowFieldStates(fieldStates),
     freshness: "fresh",
@@ -463,6 +474,7 @@ export function markEditorRowsPersisted(rowUpdates, sourceWordCounts = null, cha
       {
         fields: cloneRowFields(row.fields),
         footnotes: cloneRowFields(row.footnotes),
+        images: cloneRowImages(row.images),
       },
     ]),
   );
@@ -484,12 +496,15 @@ export function markEditorRowsPersisted(rowUpdates, sourceWordCounts = null, cha
       const update = updatesByRowId.get(row.rowId);
       const fields = update?.fields ?? cloneRowFields(row.fields);
       const footnotes = update?.footnotes ?? cloneRowFields(row.footnotes);
+      const images = update?.images ?? cloneRowImages(row.images);
       return {
         ...row,
         fields,
         footnotes,
+        images,
         persistedFields: cloneRowFields(fields),
         persistedFootnotes: cloneRowFields(footnotes),
+        persistedImages: cloneRowImages(images),
         saveStatus: "idle",
         saveError: "",
       };

@@ -1,4 +1,5 @@
 import { normalizeEditorRowTextStyle } from "./editor-row-text-style.js";
+import { editorFieldImageEqual } from "./editor-images.js";
 
 function formatAiHistoryModelLabel(modelId) {
   const normalizedModelId = String(modelId ?? "").trim();
@@ -84,6 +85,10 @@ function isMarkerStateChangeOnly(previousEntry, currentEntry) {
     normalizeEditorRowTextStyle(previousEntry?.textStyle)
     !== normalizeEditorRowTextStyle(currentEntry?.textStyle)
   ) {
+    return false;
+  }
+
+  if (!editorFieldImageEqual(previousEntry?.image, currentEntry?.image)) {
     return false;
   }
 
@@ -221,6 +226,7 @@ export function editorHistoryEntryMatchesSection(entry, section) {
   return (
     String(entry.plainText ?? "") === String(section.text ?? "")
     && String(entry.footnote ?? "") === String(section.footnote ?? "")
+    && editorFieldImageEqual(entry.image, section.image)
     && (entry.reviewed === true) === (section.reviewed === true)
     && (entry.pleaseCheck === true) === (section.pleaseCheck === true)
     && normalizeEditorRowTextStyle(entry.textStyle) === normalizeEditorRowTextStyle(section.textStyle)

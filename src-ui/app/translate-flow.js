@@ -1,8 +1,23 @@
 import {
+  closeEditorImageInvalidFileModal as closeEditorImageInvalidFileModalFlow,
+  closeEditorImagePreview as closeEditorImagePreviewFlow,
+  collapseEmptyEditorImageEditor as collapseEmptyEditorImageEditorFlow,
+  handleDroppedEditorImageFile as handleDroppedEditorImageFileFlow,
+  openEditorImagePreview as openEditorImagePreviewFlow,
+  openEditorImageUpload as openEditorImageUploadFlow,
+  openEditorImageUploadPicker as openEditorImageUploadPickerFlow,
+  openEditorImageUrl as openEditorImageUrlFlow,
+  persistEditorImageUrlOnBlur as persistEditorImageUrlOnBlurFlow,
+  removeEditorLanguageImage as removeEditorLanguageImageFlow,
+  submitEditorImageUrl as submitEditorImageUrlFlow,
+  updateEditorImageUrlDraft as updateEditorImageUrlDraftFlow,
+} from "./editor-image-flow.js";
+import {
   cancelEditorConflictResolutionModal as cancelEditorConflictResolutionModalFlow,
   copyEditorConflictResolutionVersion as copyEditorConflictResolutionVersionFlow,
   openEditorConflictResolutionModal as openEditorConflictResolutionModalFlow,
   saveEditorConflictResolution as saveEditorConflictResolutionFlow,
+  updateEditorConflictResolutionFinalFootnote as updateEditorConflictResolutionFinalFootnoteFlow,
   updateEditorConflictResolutionFinalText as updateEditorConflictResolutionFinalTextFlow,
 } from "./editor-conflict-resolution-flow.js";
 import {
@@ -296,6 +311,10 @@ export function updateEditorConflictResolutionFinalText(nextValue) {
   updateEditorConflictResolutionFinalTextFlow(nextValue);
 }
 
+export function updateEditorConflictResolutionFinalFootnote(nextValue) {
+  updateEditorConflictResolutionFinalFootnoteFlow(nextValue);
+}
+
 export async function copyEditorConflictResolutionVersion(render, side) {
   await copyEditorConflictResolutionVersionFlow(render, side);
 }
@@ -482,6 +501,69 @@ export function openEditorFootnote(render, rowId, languageCode) {
 
 export function collapseEmptyEditorFootnote(render, rowId, languageCode) {
   collapseEmptyEditorFootnoteFlow(render, rowId, languageCode);
+}
+
+export function openEditorImageUrl(render, rowId, languageCode) {
+  openEditorImageUrlFlow(render, rowId, languageCode);
+}
+
+export function updateEditorImageUrlDraft(nextValue) {
+  updateEditorImageUrlDraftFlow(nextValue);
+}
+
+export async function persistEditorImageUrlOnBlur(render, rowId, languageCode) {
+  await persistEditorImageUrlOnBlurFlow(render, rowId, languageCode, {
+    updateEditorChapterRow,
+    loadActiveEditorFieldHistory,
+  });
+}
+
+export async function submitEditorImageUrl(render, rowId, languageCode) {
+  await submitEditorImageUrlFlow(render, rowId, languageCode, {
+    updateEditorChapterRow,
+    loadActiveEditorFieldHistory,
+  });
+}
+
+export function openEditorImageUpload(render, rowId, languageCode) {
+  openEditorImageUploadFlow(render, rowId, languageCode);
+}
+
+export async function openEditorImageUploadPicker(render, rowId, languageCode) {
+  await openEditorImageUploadPickerFlow(render, rowId, languageCode, {
+    updateEditorChapterRow,
+    loadActiveEditorFieldHistory,
+  });
+}
+
+export async function handleDroppedEditorImageFile(render, rowId, languageCode, file) {
+  await handleDroppedEditorImageFileFlow(render, rowId, languageCode, file, {
+    updateEditorChapterRow,
+    loadActiveEditorFieldHistory,
+  });
+}
+
+export function collapseEmptyEditorImageEditor(render, rowId, languageCode) {
+  collapseEmptyEditorImageEditorFlow(render, rowId, languageCode);
+}
+
+export async function removeEditorLanguageImage(render, rowId, languageCode) {
+  await removeEditorLanguageImageFlow(render, rowId, languageCode, {
+    updateEditorChapterRow,
+    loadActiveEditorFieldHistory,
+  });
+}
+
+export function openEditorImagePreview(render, rowId, languageCode) {
+  openEditorImagePreviewFlow(render, rowId, languageCode);
+}
+
+export function closeEditorImagePreview(render) {
+  closeEditorImagePreviewFlow(render);
+}
+
+export function closeEditorImageInvalidFileModal(render) {
+  closeEditorImageInvalidFileModalFlow(render);
 }
 
 export async function updateEditorRowTextStyle(render, rowId, nextTextStyle) {

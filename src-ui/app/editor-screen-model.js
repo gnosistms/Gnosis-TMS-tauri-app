@@ -11,7 +11,9 @@ import { findChapterContextById, selectedProjectsTeam } from "./project-context.
 import { buildEditorFilterResult, editorChapterFiltersAreActive } from "./editor-filters.js";
 import { normalizeEditorReplaceState } from "./editor-replace.js";
 import {
+  editorImageEditorMatches,
   editorFootnoteEditorMatches,
+  editorLanguageImage,
   editorLanguageFootnoteIsVisible,
   editorLanguageFootnoteText,
 } from "./editor-utils.js";
@@ -22,6 +24,10 @@ let cachedActiveRowId = null;
 let cachedActiveLanguageCode = null;
 let cachedFootnoteEditorRowId = null;
 let cachedFootnoteEditorLanguageCode = null;
+let cachedImageEditorRowId = null;
+let cachedImageEditorLanguageCode = null;
+let cachedImageEditorMode = null;
+let cachedImageEditorInvalidUrl = false;
 let cachedLiveTranslationRows = [];
 const AI_TRANSLATE_PREPARING_TEXT = "Preparing glossary...";
 const AI_TRANSLATE_LOADING_TEXT = "Translating...";
@@ -71,6 +77,10 @@ function buildLiveTranslationRows(editorChapter, languages) {
     cachedActiveLanguageCode = editorChapter?.activeLanguageCode ?? null;
     cachedFootnoteEditorRowId = editorChapter?.footnoteEditor?.rowId ?? null;
     cachedFootnoteEditorLanguageCode = editorChapter?.footnoteEditor?.languageCode ?? null;
+    cachedImageEditorRowId = editorChapter?.imageEditor?.rowId ?? null;
+    cachedImageEditorLanguageCode = editorChapter?.imageEditor?.languageCode ?? null;
+    cachedImageEditorMode = editorChapter?.imageEditor?.mode ?? null;
+    cachedImageEditorInvalidUrl = editorChapter?.imageEditor?.invalidUrl === true;
     cachedLiveTranslationRows = [];
     return [];
   }
@@ -82,6 +92,10 @@ function buildLiveTranslationRows(editorChapter, languages) {
     && (editorChapter?.activeLanguageCode ?? null) === cachedActiveLanguageCode
     && (editorChapter?.footnoteEditor?.rowId ?? null) === cachedFootnoteEditorRowId
     && (editorChapter?.footnoteEditor?.languageCode ?? null) === cachedFootnoteEditorLanguageCode
+    && (editorChapter?.imageEditor?.rowId ?? null) === cachedImageEditorRowId
+    && (editorChapter?.imageEditor?.languageCode ?? null) === cachedImageEditorLanguageCode
+    && (editorChapter?.imageEditor?.mode ?? null) === cachedImageEditorMode
+    && (editorChapter?.imageEditor?.invalidUrl === true) === cachedImageEditorInvalidUrl
   ) {
     return cachedLiveTranslationRows;
   }
@@ -109,28 +123,68 @@ function buildLiveTranslationRows(editorChapter, languages) {
       isStale: row?.freshness === "stale" || row?.freshness === "staleDirty",
       conflictState: row?.conflictState ?? null,
       conflictLanguageCodes: [...conflictLanguageCodes],
-      sections: languageOptions.map((language) => ({
-        code: language.code,
-        name: language.name,
-        text: row.fields?.[language.code] ?? "",
-        footnote: editorLanguageFootnoteText(row, language.code),
-        hasVisibleFootnote: editorLanguageFootnoteIsVisible(row, language.code, editorChapter),
-        isFootnoteEditorOpen: editorFootnoteEditorMatches(editorChapter, row.rowId, language.code),
-        showAddFootnoteButton:
-          editorLanguageFootnoteText(row, language.code).trim().length === 0
-          && !editorFootnoteEditorMatches(editorChapter, row.rowId, language.code),
-        isActive:
-          editorChapter?.activeRowId === row.rowId
-          && editorChapter?.activeLanguageCode === language.code,
-        reviewed: row.fieldStates?.[language.code]?.reviewed === true,
-        pleaseCheck: row.fieldStates?.[language.code]?.pleaseCheck === true,
-        hasConflict: conflictLanguageCodes.has(language.code),
-        conflictDisabled: hasConflict && !conflictLanguageCodes.has(language.code),
-        markerSaveState:
-          row.markerSaveState?.languageCode === language.code
-            ? row.markerSaveState
-            : { status: "idle", languageCode: null, kind: null, error: "" },
-      })),
+      sections: languageOptions.map((language) => {
+        const image = editorLanguageImage(row, language.code);
+        const isImageUrlEditorOpen = editorImageEditorMatches(
+          editorChapter,
+          row.rowId,
+          language.code,
+          "url",
+        ) && editorChapter?.imageEditor?.status !== "submitting";
+        const isImageUploadEditorOpen = editorImageEditorMatches(
+          editorChapter,
+          row.rowId,
+          language.code,
+          "upload",
+        );
+        const isImageUrlSubmitting =
+          editorImageEditorMatches(editorChapter, row.rowId, language.code, "url")
+          && editorChapter?.imageEditor?.status === "submitting";
+        const showInvalidImageUrl =
+          editorImageEditorMatches(editorChapter, row.rowId, language.code)
+          && editorChapter?.imageEditor?.invalidUrl === true;
+        const hasSavedImage = Boolean(image);
+        return {
+          code: language.code,
+          name: language.name,
+          text: row.fields?.[language.code] ?? "",
+          footnote: editorLanguageFootnoteText(row, language.code),
+          image,
+          hasVisibleFootnote: editorLanguageFootnoteIsVisible(row, language.code, editorChapter),
+          hasVisibleImage:
+            hasSavedImage
+            || isImageUrlEditorOpen
+            || isImageUploadEditorOpen
+            || showInvalidImageUrl,
+          isFootnoteEditorOpen: editorFootnoteEditorMatches(editorChapter, row.rowId, language.code),
+          isImageUrlEditorOpen,
+          isImageUploadEditorOpen,
+          showInvalidImageUrl,
+          imageUrlDraft:
+            isImageUrlEditorOpen || showInvalidImageUrl
+              ? String(editorChapter?.imageEditor?.urlDraft ?? "")
+              : "",
+          showAddFootnoteButton:
+            editorLanguageFootnoteText(row, language.code).trim().length === 0
+            && !editorFootnoteEditorMatches(editorChapter, row.rowId, language.code),
+          showAddImageButtons:
+            !hasSavedImage
+            && !isImageUrlEditorOpen
+            && !isImageUploadEditorOpen
+            && !isImageUrlSubmitting,
+          isActive:
+            editorChapter?.activeRowId === row.rowId
+            && editorChapter?.activeLanguageCode === language.code,
+          reviewed: row.fieldStates?.[language.code]?.reviewed === true,
+          pleaseCheck: row.fieldStates?.[language.code]?.pleaseCheck === true,
+          hasConflict: conflictLanguageCodes.has(language.code),
+          conflictDisabled: hasConflict && !conflictLanguageCodes.has(language.code),
+          markerSaveState:
+            row.markerSaveState?.languageCode === language.code
+              ? row.markerSaveState
+              : { status: "idle", languageCode: null, kind: null, error: "" },
+        };
+      }),
     };
   });
 
@@ -140,6 +194,10 @@ function buildLiveTranslationRows(editorChapter, languages) {
   cachedActiveLanguageCode = editorChapter?.activeLanguageCode ?? null;
   cachedFootnoteEditorRowId = editorChapter?.footnoteEditor?.rowId ?? null;
   cachedFootnoteEditorLanguageCode = editorChapter?.footnoteEditor?.languageCode ?? null;
+  cachedImageEditorRowId = editorChapter?.imageEditor?.rowId ?? null;
+  cachedImageEditorLanguageCode = editorChapter?.imageEditor?.languageCode ?? null;
+  cachedImageEditorMode = editorChapter?.imageEditor?.mode ?? null;
+  cachedImageEditorInvalidUrl = editorChapter?.imageEditor?.invalidUrl === true;
   cachedLiveTranslationRows = liveRows;
   return liveRows;
 }

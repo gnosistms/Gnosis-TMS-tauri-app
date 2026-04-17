@@ -1,3 +1,5 @@
+import { rowImagesEqual } from "./editor-images.js";
+
 function normalizeFieldState(fieldState) {
   return {
     reviewed: fieldState?.reviewed === true,
@@ -30,8 +32,14 @@ export function rowTextContentEqual(
   leftFootnotes,
   rightFields,
   rightFootnotes,
+  leftImages = {},
+  rightImages = {},
 ) {
-  return rowFieldsEqual(leftFields, rightFields) && rowFootnotesEqual(leftFootnotes, rightFootnotes);
+  return (
+    rowFieldsEqual(leftFields, rightFields)
+    && rowFootnotesEqual(leftFootnotes, rightFootnotes)
+    && rowImagesEqual(leftImages, rightImages)
+  );
 }
 
 export function rowFieldStatesEqual(left, right) {
@@ -57,6 +65,8 @@ export function rowHasFieldChanges(row) {
     row?.footnotes,
     row?.persistedFields,
     row?.persistedFootnotes,
+    row?.images,
+    row?.persistedImages,
   );
 }
 

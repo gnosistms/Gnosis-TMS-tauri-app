@@ -228,3 +228,66 @@ test("buildEditorScreenViewModel rebuilds section footnote visibility when the f
     restoreSharedState(snapshot);
   }
 });
+
+test("buildEditorScreenViewModel hides add-image buttons while an image editor is open", () => {
+  const snapshot = snapshotSharedState();
+
+  try {
+    applyEditorRegressionFixture(state, {
+      rowCount: 1,
+    });
+
+    state.editorChapter = {
+      ...state.editorChapter,
+      imageEditor: {
+        rowId: "fixture-row-0001",
+        languageCode: "vi",
+        mode: "upload",
+        urlDraft: "",
+        invalidUrl: false,
+        status: "idle",
+      },
+    };
+
+    const viewModel = buildEditorScreenViewModel(state);
+    const firstRow = viewModel.contentRows.find((row) => row?.id === "fixture-row-0001");
+    const targetSection = firstRow?.sections.find((section) => section.code === "vi");
+
+    assert.equal(targetSection?.isImageUploadEditorOpen, true);
+    assert.equal(targetSection?.hasVisibleImage, true);
+    assert.equal(targetSection?.showAddImageButtons, false);
+  } finally {
+    restoreSharedState(snapshot);
+  }
+});
+
+test("buildEditorScreenViewModel keeps add-image buttons visible for invalid-url recovery", () => {
+  const snapshot = snapshotSharedState();
+
+  try {
+    applyEditorRegressionFixture(state, {
+      rowCount: 1,
+    });
+
+    state.editorChapter = {
+      ...state.editorChapter,
+      imageEditor: {
+        rowId: "fixture-row-0001",
+        languageCode: "vi",
+        mode: null,
+        urlDraft: "https://example.com/bad.png",
+        invalidUrl: true,
+        status: "idle",
+      },
+    };
+
+    const viewModel = buildEditorScreenViewModel(state);
+    const firstRow = viewModel.contentRows.find((row) => row?.id === "fixture-row-0001");
+    const targetSection = firstRow?.sections.find((section) => section.code === "vi");
+
+    assert.equal(targetSection?.showInvalidImageUrl, true);
+    assert.equal(targetSection?.showAddImageButtons, true);
+  } finally {
+    restoreSharedState(snapshot);
+  }
+});

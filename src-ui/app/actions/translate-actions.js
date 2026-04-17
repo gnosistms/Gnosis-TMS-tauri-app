@@ -13,8 +13,14 @@ import {
   confirmInsertEditorRow,
   openEditorFootnote,
   closeTargetLanguageManager,
+  closeEditorImageInvalidFileModal,
+  closeEditorImagePreview,
   copyEditorConflictResolutionVersion,
   deleteActiveEditorRowComment,
+  openEditorImagePreview,
+  openEditorImageUpload,
+  openEditorImageUploadPicker,
+  openEditorImageUrl,
   openEditorConflictResolutionModal,
   openEditorUnreviewAllModal,
   openEditorReplaceUndoModal,
@@ -23,6 +29,7 @@ import {
   openInsertEditorRowModal,
   applyEditorAiReview,
   replaceSelectedEditorRows,
+  removeEditorLanguageImage,
   runEditorAiTranslate,
   runEditorAiReview,
   saveEditorConflictResolution,
@@ -196,6 +203,56 @@ export function createTranslateActions(render) {
       const rowId = button?.dataset.rowId ?? null;
       const languageCode = button?.dataset.languageCode ?? null;
       openEditorFootnote(render, rowId, languageCode);
+      return true;
+    }
+
+    if (action === "open-editor-image-url") {
+      const button = event?.target instanceof Element
+        ? event.target.closest("[data-row-id][data-language-code]")
+        : null;
+      openEditorImageUrl(render, button?.dataset.rowId ?? null, button?.dataset.languageCode ?? null);
+      return true;
+    }
+
+    if (action === "open-editor-image-upload") {
+      const button = event?.target instanceof Element
+        ? event.target.closest("[data-row-id][data-language-code]")
+        : null;
+      openEditorImageUpload(render, button?.dataset.rowId ?? null, button?.dataset.languageCode ?? null);
+      return true;
+    }
+
+    if (action === "open-editor-image-upload-picker") {
+      const button = event?.target instanceof Element
+        ? event.target.closest("[data-row-id][data-language-code]")
+        : null;
+      await openEditorImageUploadPicker(render, button?.dataset.rowId ?? null, button?.dataset.languageCode ?? null);
+      return true;
+    }
+
+    if (action === "remove-editor-language-image") {
+      const button = event?.target instanceof Element
+        ? event.target.closest("[data-row-id][data-language-code]")
+        : null;
+      await removeEditorLanguageImage(render, button?.dataset.rowId ?? null, button?.dataset.languageCode ?? null);
+      return true;
+    }
+
+    if (action === "open-editor-image-preview") {
+      const button = event?.target instanceof Element
+        ? event.target.closest("[data-row-id][data-language-code]")
+        : null;
+      openEditorImagePreview(render, button?.dataset.rowId ?? null, button?.dataset.languageCode ?? null);
+      return true;
+    }
+
+    if (action === "close-editor-image-preview") {
+      closeEditorImagePreview(render);
+      return true;
+    }
+
+    if (action === "close-editor-image-invalid-file-modal") {
+      closeEditorImageInvalidFileModal(render);
       return true;
     }
 

@@ -82,23 +82,25 @@ export function buildEditorBatchReplaceUpdates({
       const matches = findEditorSearchMatches(currentText, searchQuery, languageCode, {
         caseSensitive,
       });
-      if (matches.length === 0) {
-        continue;
-      }
-
-      matched = true;
-      const nextText = applyEditorSearchReplace(currentText, searchQuery, replaceText, languageCode, {
-        caseSensitive,
-      });
-      if (nextText !== currentText) {
-        nextFields[languageCode] = nextText;
-        changed = true;
-      }
-
       const currentFootnote = normalizeString(currentFootnotes[languageCode] ?? "");
       const footnoteMatches = findEditorSearchMatches(currentFootnote, searchQuery, languageCode, {
         caseSensitive,
       });
+      if (matches.length === 0 && footnoteMatches.length === 0) {
+        continue;
+      }
+
+      if (matches.length > 0) {
+        matched = true;
+        const nextText = applyEditorSearchReplace(currentText, searchQuery, replaceText, languageCode, {
+          caseSensitive,
+        });
+        if (nextText !== currentText) {
+          nextFields[languageCode] = nextText;
+          changed = true;
+        }
+      }
+
       if (footnoteMatches.length > 0) {
         matched = true;
         const nextFootnote = applyEditorSearchReplace(

@@ -1643,9 +1643,8 @@ mod tests {
     use super::{
         append_diff_name_status_changes, append_status_porcelain_changes, build_plain_text_snippet,
         collect_unique_bigrams, collect_unique_trigrams, compute_search_score,
-        extract_chapter_dir_from_repo_path, normalize_search_text,
-        row_search_documents_from_value, score_to_number, CandidateDocument, IndexedDocument,
-        RepoRefreshPlan,
+        extract_chapter_dir_from_repo_path, normalize_search_text, row_search_documents_from_value,
+        score_to_number, CandidateDocument, IndexedDocument, RepoRefreshPlan,
     };
 
     fn candidate(

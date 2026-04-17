@@ -22,6 +22,12 @@ import {
 } from "./state.js";
 import { showNoticeBadge } from "./status-feedback.js";
 import { cloneRowFields, findEditorRowById } from "./editor-utils.js";
+import {
+  buildEditorConflictResolutionModalState,
+  buildEditorConflictResolutionSaveState,
+  buildEditorConflictResolutionVersionCopyText,
+  normalizeEditorConflictResolutionValue,
+} from "./editor-conflict-resolution-model.js";
 
 function lockConflictFilter() {
   if (!state.editorChapter?.chapterId) {
@@ -58,22 +64,6 @@ function resetConflictFilterIfClear() {
       ...currentFilters,
       rowFilterMode: EDITOR_ROW_FILTER_MODE_SHOW_ALL,
     },
-  };
-}
-
-function buildConflictResolutionModalState(row, languageCode) {
-  const localText = row?.fields?.[languageCode] ?? "";
-  const remoteText = row?.conflictState?.remoteRow?.fields?.[languageCode] ?? "";
-
-  return {
-    ...createEditorConflictResolutionModalState(),
-    isOpen: true,
-    rowId: row?.rowId ?? null,
-    languageCode,
-    localText,
-    remoteText,
-    finalText: remoteText,
-    remoteVersion: row?.conflictState?.remoteVersion ?? null,
   };
 }
 
@@ -130,7 +120,7 @@ export function openEditorConflictResolutionModal(render, rowId, languageCode, o
     ...state.editorChapter,
     activeRowId: rowId,
     activeLanguageCode: languageCode,
-    conflictResolutionModal: buildConflictResolutionModalState(row, languageCode),
+    conflictResolutionModal: buildEditorConflictResolutionModalState(row, languageCode),
   };
   render?.();
   if (typeof operations.loadActiveEditorFieldHistory === "function") {
@@ -148,6 +138,14 @@ export function cancelEditorConflictResolutionModal(render) {
 }
 
 export function updateEditorConflictResolutionFinalText(nextValue) {
+  updateEditorConflictResolutionModalValue("finalText", nextValue);
+}
+
+export function updateEditorConflictResolutionFinalFootnote(nextValue) {
+  updateEditorConflictResolutionModalValue("finalFootnote", nextValue);
+}
+
+function updateEditorConflictResolutionModalValue(fieldName, nextValue) {
   if (!state.editorChapter?.conflictResolutionModal?.isOpen) {
     return;
   }
@@ -156,7 +154,7 @@ export function updateEditorConflictResolutionFinalText(nextValue) {
     ...state.editorChapter,
     conflictResolutionModal: {
       ...state.editorChapter.conflictResolutionModal,
-      finalText: typeof nextValue === "string" ? nextValue : String(nextValue ?? ""),
+      [fieldName]: normalizeEditorConflictResolutionValue(nextValue),
     },
   };
 }
@@ -167,7 +165,7 @@ export async function copyEditorConflictResolutionVersion(render, side) {
     return;
   }
 
-  const text = side === "local" ? modal.localText : side === "remote" ? modal.remoteText : "";
+  const text = buildEditorConflictResolutionVersionCopyText(modal, side);
   if (!text) {
     return;
   }
@@ -201,21 +199,14 @@ export async function saveEditorConflictResolution(render, operations = {}) {
     return;
   }
 
-  const remoteFields = cloneRowFields(row.conflictState.remoteRow.fields);
-  const remoteFootnotes = cloneRowFields(row.conflictState.remoteRow.footnotes);
-  const nextLocalFields = {
-    ...cloneRowFields(row.fields),
-    [languageCode]: typeof modal.finalText === "string" ? modal.finalText : String(modal.finalText ?? ""),
-  };
-  const nextLocalFootnotes = cloneRowFields(row.footnotes);
-  const fieldsToPersist = {
-    ...remoteFields,
-    [languageCode]: nextLocalFields[languageCode],
-  };
-  const footnotesToPersist = {
-    ...remoteFootnotes,
-    [languageCode]: nextLocalFootnotes[languageCode] ?? "",
-  };
+  const {
+    remoteFields,
+    remoteFootnotes,
+    nextLocalFields,
+    nextLocalFootnotes,
+    fieldsToPersist,
+    footnotesToPersist,
+  } = buildEditorConflictResolutionSaveState(row, languageCode, modal);
 
   state.editorChapter = {
     ...state.editorChapter,
@@ -281,7 +272,7 @@ export async function saveEditorConflictResolution(render, operations = {}) {
       lockConflictFilter();
       state.editorChapter = {
         ...state.editorChapter,
-        conflictResolutionModal: buildConflictResolutionModalState(
+        conflictResolutionModal: buildEditorConflictResolutionModalState(
           updatedRow ?? findEditorRowById(rowId, state.editorChapter),
           languageCode,
         ),
@@ -446,7 +437,7 @@ export async function saveEditorConflictResolution(render, operations = {}) {
   ) {
     state.editorChapter = {
       ...state.editorChapter,
-      conflictResolutionModal: buildConflictResolutionModalState(finalRow, languageCode),
+      conflictResolutionModal: buildEditorConflictResolutionModalState(finalRow, languageCode),
     };
     render?.();
     return;

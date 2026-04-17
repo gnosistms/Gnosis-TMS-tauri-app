@@ -1,5 +1,6 @@
 import { escapeHtml, loadingPrimaryButton, secondaryButton } from "../lib/ui.js";
 import { formatErrorForDisplay } from "../app/error-display.js";
+import { editorConflictResolutionShowsFootnotes } from "../app/editor-conflict-resolution-model.js";
 
 function formatConflictTimestamp(value) {
   const text = String(value ?? "").trim();
@@ -32,6 +33,9 @@ export function renderEditorConflictResolutionModal(state) {
   }
 
   const isSubmitting = modal.status === "loading";
+  const showFootnotes = editorConflictResolutionShowsFootnotes(modal);
+  const autofocusFootnote =
+    showFootnotes && String(modal.localText ?? "") === String(modal.remoteText ?? "");
   const errorMarkup = modal.error
     ? `<p class="modal__error">${escapeHtml(formatErrorForDisplay(modal.error))}</p>`
     : "";
@@ -53,6 +57,17 @@ export function renderEditorConflictResolutionModal(state) {
     isLoading: isSubmitting,
   });
 
+  const renderVersionStack = (text, footnote) => `
+    <div class="editor-conflict-modal__version-stack">
+      <textarea class="field__textarea editor-conflict-modal__version-text" readonly>${escapeHtml(text)}</textarea>
+      ${
+        showFootnotes
+          ? `<textarea class="field__textarea editor-conflict-modal__version-text editor-conflict-modal__version-text--footnote" readonly>${escapeHtml(footnote)}</textarea>`
+          : ""
+      }
+    </div>
+  `;
+
   return `
     <div class="modal-backdrop">
       <section class="card modal-card modal-card--editor-conflict">
@@ -62,14 +77,14 @@ export function renderEditorConflictResolutionModal(state) {
           <div class="editor-conflict-modal__versions">
             <section class="editor-conflict-modal__column">
               <p class="editor-conflict-modal__version-label">Your version</p>
-              <textarea class="field__textarea editor-conflict-modal__version-text" readonly>${escapeHtml(modal.localText)}</textarea>
+              ${renderVersionStack(modal.localText, modal.localFootnote)}
               <div class="editor-conflict-modal__version-actions">
                 ${localCopyButton}
               </div>
             </section>
             <section class="editor-conflict-modal__column">
               <p class="editor-conflict-modal__version-label">${escapeHtml(remoteVersionLabel(modal.remoteVersion))}</p>
-              <textarea class="field__textarea editor-conflict-modal__version-text" readonly>${escapeHtml(modal.remoteText)}</textarea>
+              ${renderVersionStack(modal.remoteText, modal.remoteFootnote)}
               <div class="editor-conflict-modal__version-actions">
                 ${remoteCopyButton}
               </div>
@@ -80,10 +95,26 @@ export function renderEditorConflictResolutionModal(state) {
             <textarea
               class="field__textarea editor-conflict-modal__final-input"
               data-editor-conflict-final-input
-              autofocus
+              ${autofocusFootnote ? "" : "autofocus"}
               ${isSubmitting ? "disabled" : ""}
             >${escapeHtml(modal.finalText)}</textarea>
           </label>
+          ${
+            showFootnotes
+              ? `
+                <label class="field editor-conflict-modal__final-field editor-conflict-modal__final-field--footnote">
+                  <span class="field__label">Final footnote</span>
+                  <textarea
+                    class="field__textarea editor-conflict-modal__final-input editor-conflict-modal__final-input--footnote"
+                    data-editor-conflict-final-footnote-input
+                    placeholder="Enter footnote text here."
+                    ${autofocusFootnote ? "autofocus" : ""}
+                    ${isSubmitting ? "disabled" : ""}
+                  >${escapeHtml(modal.finalFootnote)}</textarea>
+                </label>
+              `
+              : ""
+          }
           ${errorMarkup}
           <div class="modal__actions">
             ${cancelButton}

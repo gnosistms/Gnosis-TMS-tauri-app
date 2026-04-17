@@ -3,6 +3,7 @@ import { normalizeEditorRowTextStyle } from "./editor-row-text-style.js";
 import {
   cloneRowFields,
   cloneRowFieldStates,
+  cloneRowImages,
   normalizeEditorContentKind,
   normalizeFieldState,
 } from "./editor-utils.js";
@@ -55,7 +56,14 @@ export function applyEditorRowFieldValue(row, languageCode, nextValue, contentKi
       ? "dirty"
       : row.saveStatus === "conflict"
         ? "conflict"
-      : rowTextContentEqual(fields, footnotes, row.persistedFields, row.persistedFootnotes)
+      : rowTextContentEqual(
+          fields,
+          footnotes,
+          row.persistedFields,
+          row.persistedFootnotes,
+          row.images,
+          row.persistedImages,
+        )
         ? "idle"
         : "dirty";
 
@@ -68,7 +76,14 @@ export function applyEditorRowFieldValue(row, languageCode, nextValue, contentKi
         ? "conflict"
         : row.freshness === "stale" || row.freshness === "staleDirty"
           ? "staleDirty"
-          : rowTextContentEqual(fields, footnotes, row.persistedFields, row.persistedFootnotes)
+          : rowTextContentEqual(
+              fields,
+              footnotes,
+              row.persistedFields,
+              row.persistedFootnotes,
+              row.images,
+              row.persistedImages,
+            )
             ? "fresh"
             : "dirty",
     saveStatus: nextSaveStatus,
@@ -245,6 +260,41 @@ export function applyEditorRowPersistSucceeded(row, payloadRow) {
     saveStatus: rowChangedDuringSave ? "dirty" : "idle",
     freshness: rowChangedDuringSave ? "dirty" : "fresh",
     conflictState: null,
+  };
+}
+
+export function applyEditorRowImageSaved(row, payloadRow) {
+  if (!row || !payloadRow) {
+    return row;
+  }
+
+  const normalizedRow = normalizeEditorRow(payloadRow);
+  const textChangedLocally = !rowTextContentEqual(
+    row.fields,
+    row.footnotes,
+    row.persistedFields,
+    row.persistedFootnotes,
+  );
+  if (!textChangedLocally) {
+    return {
+      ...normalizedRow,
+      conflictState: row?.conflictState ?? null,
+    };
+  }
+
+  return {
+    ...normalizedRow,
+    fields: cloneRowFields(row.fields),
+    footnotes: cloneRowFields(row.footnotes),
+    saveStatus: row.saveStatus === "idle" ? "dirty" : row.saveStatus,
+    saveError: row.saveStatus === "idle" ? "" : row.saveError,
+    freshness:
+      row.freshness === "stale" || row.freshness === "staleDirty"
+        ? "staleDirty"
+        : row.freshness === "fresh"
+          ? "dirty"
+          : row.freshness,
+    conflictState: row?.conflictState ?? null,
   };
 }
 

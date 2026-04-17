@@ -1,3 +1,8 @@
+import {
+  cloneRowImages,
+  normalizeEditorFieldImage,
+} from "./editor-images.js";
+
 export function cloneRowFields(fields) {
   return Object.fromEntries(
     Object.entries(fields && typeof fields === "object" ? fields : {}).map(([code, value]) => [
@@ -27,6 +32,8 @@ export function cloneRowFieldStates(fieldStates) {
   );
 }
 
+export { cloneRowImages, normalizeEditorFieldImage };
+
 export function hasEditorRow(chapterState, rowId) {
   return Array.isArray(chapterState?.rows)
     && chapterState.rows.some((row) => row?.rowId === rowId);
@@ -53,6 +60,38 @@ export function editorFootnoteEditorMatches(chapterState, rowId, languageCode) {
   );
 }
 
+export function editorImageEditorMatches(chapterState, rowId, languageCode, mode = null) {
+  if (
+    chapterState?.imageEditor?.rowId !== rowId
+    || chapterState?.imageEditor?.languageCode !== languageCode
+  ) {
+    return false;
+  }
+
+  return mode ? chapterState?.imageEditor?.mode === mode : true;
+}
+
+export function editorImageEditorCanCollapse(editorState) {
+  if (!editorState || typeof editorState !== "object") {
+    return true;
+  }
+
+  if (
+    editorState.status === "saving"
+    || editorState.status === "submitting"
+    || editorState.status === "picking"
+    || editorState.invalidUrl === true
+  ) {
+    return false;
+  }
+
+  if (editorState.mode === "url" && String(editorState.urlDraft ?? "").trim()) {
+    return false;
+  }
+
+  return true;
+}
+
 export function editorLanguageFootnoteText(row, languageCode) {
   return typeof row?.footnotes?.[languageCode] === "string"
     ? row.footnotes[languageCode]
@@ -64,6 +103,10 @@ export function editorLanguageFootnoteIsVisible(row, languageCode, chapterState)
     editorLanguageFootnoteText(row, languageCode).trim().length > 0
     || editorFootnoteEditorMatches(chapterState, row?.rowId ?? "", languageCode)
   );
+}
+
+export function editorLanguageImage(row, languageCode) {
+  return normalizeEditorFieldImage(row?.images?.[languageCode]);
 }
 
 export function buildEditorFieldSelector(rowId, languageCode, contentKind = "field") {

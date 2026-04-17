@@ -2,7 +2,9 @@ import { historyEntryCanUndoReplace, reconcileExpandedEditorHistoryGroupKeys } f
 import {
   cloneRowFields,
   cloneRowFieldStates,
+  cloneRowImages,
   normalizeFieldState,
+  normalizeEditorFieldImage,
 } from "./editor-utils.js";
 import {
   createEditorHistoryState,
@@ -312,6 +314,7 @@ export function applyEditorRowHistoryRestored(row, languageCode, payload) {
 
   const nextValue = payload?.plainText ?? "";
   const nextFootnote = payload?.footnote ?? "";
+  const nextImage = normalizeEditorFieldImage(payload?.image);
   const nextTextStyle =
     typeof payload?.textStyle === "string" && payload.textStyle.trim()
       ? payload.textStyle
@@ -320,6 +323,15 @@ export function applyEditorRowHistoryRestored(row, languageCode, payload) {
     reviewed: payload?.reviewed,
     pleaseCheck: payload?.pleaseCheck,
   });
+  const nextImages = cloneRowImages(row.images);
+  const nextPersistedImages = cloneRowImages(row.persistedImages);
+  if (nextImage) {
+    nextImages[languageCode] = nextImage;
+    nextPersistedImages[languageCode] = nextImage;
+  } else {
+    delete nextImages[languageCode];
+    delete nextPersistedImages[languageCode];
+  }
 
   return {
     ...row,
@@ -332,6 +344,7 @@ export function applyEditorRowHistoryRestored(row, languageCode, payload) {
       ...cloneRowFields(row.footnotes),
       [languageCode]: nextFootnote,
     },
+    images: nextImages,
     fieldStates: {
       ...cloneRowFieldStates(row.fieldStates),
       [languageCode]: nextFieldState,
@@ -344,6 +357,7 @@ export function applyEditorRowHistoryRestored(row, languageCode, payload) {
       ...cloneRowFields(row.persistedFootnotes),
       [languageCode]: nextFootnote,
     },
+    persistedImages: nextPersistedImages,
     persistedFieldStates: {
       ...cloneRowFieldStates(row.persistedFieldStates),
       [languageCode]: nextFieldState,
