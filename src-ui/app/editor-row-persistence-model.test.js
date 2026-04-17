@@ -5,6 +5,7 @@ import {
   reconcileDirtyRowIds,
   resolveDirtyTrackedEditorRowIds,
   reviewTabLanguageToOpenAfterSave,
+  rowHasContentChanges,
   rowHasPersistedChanges,
   rowNeedsDirtyTracking,
 } from "./editor-row-persistence-model.js";
@@ -13,6 +14,8 @@ import { createEditorChapterState } from "./state.js";
 function row(rowId, overrides = {}) {
   return {
     rowId,
+    textStyle: "paragraph",
+    persistedTextStyle: "paragraph",
     fields: { es: "uno" },
     persistedFields: { es: "uno" },
     fieldStates: { es: { reviewed: false, pleaseCheck: false } },
@@ -64,6 +67,25 @@ test("marker-only pending work stays dirty until persistence catches up", () => 
 
   const nextDirtyRowIds = reconcileDirtyRowIds(
     [pendingMarkerRow],
+    new Set(["row-a"]),
+    ["row-a"],
+  );
+
+  assert.deepEqual([...nextDirtyRowIds], ["row-a"]);
+});
+
+test("text-style-only pending work stays dirty until persistence catches up", () => {
+  const pendingStyleRow = row("row-a", {
+    textStyle: "heading1",
+    persistedTextStyle: "paragraph",
+  });
+
+  assert.equal(rowHasContentChanges(pendingStyleRow), true);
+  assert.equal(rowHasPersistedChanges(pendingStyleRow), true);
+  assert.equal(rowNeedsDirtyTracking(pendingStyleRow), true);
+
+  const nextDirtyRowIds = reconcileDirtyRowIds(
+    [pendingStyleRow],
     new Set(["row-a"]),
     ["row-a"],
   );

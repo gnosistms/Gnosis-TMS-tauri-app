@@ -11,6 +11,12 @@ import {
   EDITOR_VIRTUALIZATION_INITIAL_VIEWPORT_PX,
   EDITOR_VIRTUALIZATION_MIN_ROWS,
 } from "./editor-virtualization-shared.js";
+import {
+  buildEditorTextStylePlainTextMarkup,
+  editorTextStyleModifierClass,
+  editorTextStyleUsesPreviewLayer,
+  EDITOR_TEXT_STYLE_OPTIONS,
+} from "./editor-text-style.js";
 
 export function renderTranslationMarkerIcon(kind) {
   if (kind === "comments") {
@@ -97,6 +103,42 @@ function renderCommentsMarkerButton(rowId, language) {
   `;
 }
 
+function renderTextStyleButton(rowId, currentTextStyle, option) {
+  const isSelected = currentTextStyle === option.value;
+
+  return `
+    <button
+      class="translation-text-style-button${isSelected ? " is-selected" : ""}"
+      type="button"
+      role="radio"
+      data-editor-text-style-button
+      data-action="set-editor-row-text-style:${escapeHtml(option.value)}"
+      data-row-id="${escapeHtml(rowId)}"
+      data-text-style="${escapeHtml(option.value)}"
+      aria-checked="${isSelected ? "true" : "false"}"
+      ${tooltipAttributes(option.tooltip, { align: "start", side: "bottom" })}
+    >
+      <span class="translation-text-style-button__label">${escapeHtml(option.shortLabel)}</span>
+    </button>
+  `;
+}
+
+function renderTextStyleButtons(row, language) {
+  if (language.isActiveField !== true) {
+    return "";
+  }
+
+  return `
+    <div
+      class="translation-text-style-actions"
+      role="radiogroup"
+      aria-label="Text style"
+    >
+      ${EDITOR_TEXT_STYLE_OPTIONS.map((option) => renderTextStyleButton(row.id, row.textStyle, option)).join("")}
+    </div>
+  `;
+}
+
 function renderEditorRowSyncBadges(row) {
   const badges = [];
   if (row.hasConflict) {
@@ -135,32 +177,32 @@ function renderEditorRowContextAction(row) {
 function renderConflictResolutionField(row, language) {
   return `
     <button
-      class="translation-language-panel__field-static translation-language-panel__field-static--conflict"
+      class="translation-language-panel__field-static translation-language-panel__field-static--conflict${editorTextStyleUsesPreviewLayer(row.textStyle) ? " translation-language-panel__field-static--styled" : ""}"
       type="button"
       data-action="open-editor-conflict-resolution:${escapeHtml(row.id)}:${escapeHtml(language.code)}"
       data-row-id="${escapeHtml(row.id)}"
       data-language-code="${escapeHtml(language.code)}"
     >
-      <span
+      <div
         class="translation-language-panel__field-static-text"
         lang="${escapeHtml(language.code)}"
-      >${escapeHtml(language.text)}</span>
+      >${buildEditorTextStylePlainTextMarkup(row.textStyle, language.text)}</div>
     </button>
   `;
 }
 
-function renderDisabledConflictField(language) {
+function renderDisabledConflictField(row, language) {
   return `
     <div
-      class="translation-language-panel__field-static translation-language-panel__field-static--disabled"
+      class="translation-language-panel__field-static translation-language-panel__field-static--disabled${editorTextStyleUsesPreviewLayer(row.textStyle) ? " translation-language-panel__field-static--styled" : ""}"
       ${tooltipAttributes(
         "This language does not have a conflict. Please edit the languages marked with red text before editing this.",
       )}
     >
-      <span
+      <div
         class="translation-language-panel__field-static-text"
         lang="${escapeHtml(language.code)}"
-      >${escapeHtml(language.text)}</span>
+      >${buildEditorTextStylePlainTextMarkup(row.textStyle, language.text)}</div>
     </div>
   `;
 }
@@ -169,21 +211,37 @@ function renderEditorLanguageField(row, language) {
   if (row.hasConflict) {
     return language.hasConflict
       ? renderConflictResolutionField(row, language)
-      : renderDisabledConflictField(language);
+      : renderDisabledConflictField(row, language);
   }
 
   const fieldClassName = `translation-language-panel__field${language.isAiTranslating ? " translation-language-panel__field--loading" : ""}`;
   const loadingAttributes = language.isAiTranslating
     ? ' readonly aria-busy="true"'
     : "";
+  const fieldStackClassName = [
+    "translation-language-panel__field-stack",
+    editorTextStyleModifierClass(row.textStyle),
+    editorTextStyleUsesPreviewLayer(row.textStyle)
+      ? "translation-language-panel__field-stack--style-preview"
+      : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
 
   return `
     <div
-      class="translation-language-panel__field-stack"
+      class="${fieldStackClassName}"
       data-editor-glossary-field-stack
       data-row-id="${escapeHtml(row.id)}"
       data-language-code="${escapeHtml(language.code)}"
+      data-text-style="${escapeHtml(row.textStyle)}"
     >
+      <div
+        class="translation-language-panel__field-highlight translation-language-panel__style-preview"
+        data-editor-text-style-preview
+        lang="${escapeHtml(language.code)}"
+        aria-hidden="true"
+      >${buildEditorTextStylePlainTextMarkup(row.textStyle, language.text)}</div>
       <div
         class="translation-language-panel__field-highlight translation-language-panel__search-highlight"
         data-editor-search-highlight
@@ -205,6 +263,7 @@ function renderEditorLanguageField(row, language) {
         spellcheck="false"
         ${loadingAttributes}
       >${escapeHtml(language.text)}</textarea>
+      ${renderTextStyleButtons(row, language)}
     </div>
   `;
 }

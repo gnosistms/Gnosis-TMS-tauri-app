@@ -403,6 +403,17 @@ app.addEventListener("focusin", (event) => {
   });
 });
 
+app.addEventListener("mousedown", (event) => {
+  const button = event.target instanceof Element
+    ? event.target.closest("[data-editor-text-style-button]")
+    : null;
+  if (!button) {
+    return;
+  }
+
+  event.preventDefault();
+});
+
 app.addEventListener("focusout", (event) => {
   const input = event.target.closest?.("[data-editor-row-field]");
   if (!(input instanceof HTMLTextAreaElement)) {

@@ -54,6 +54,7 @@ import {
   scheduleDirtyEditorRowScan as scheduleDirtyEditorRowScanFlow,
   toggleEditorRowFieldMarker as toggleEditorRowFieldMarkerFlow,
   updateEditorRowFieldValue as updateEditorRowFieldValueFlow,
+  updateEditorRowTextStyle as updateEditorRowTextStyleFlow,
 } from "./editor-persistence-flow.js";
 import { reconcileDirtyTrackedEditorRows } from "./editor-dirty-row-state.js";
 import {
@@ -469,6 +470,12 @@ export async function confirmEditorUnreviewAll(render) {
 
 export function updateEditorRowFieldValue(rowId, languageCode, nextValue) {
   updateEditorRowFieldValueFlow(rowId, languageCode, nextValue, {
+    updateEditorChapterRow,
+  });
+}
+
+export function updateEditorRowTextStyle(rowId, nextTextStyle) {
+  updateEditorRowTextStyleFlow(rowId, nextTextStyle, {
     updateEditorChapterRow,
   });
 }

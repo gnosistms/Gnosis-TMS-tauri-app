@@ -1,8 +1,7 @@
 import {
-  cloneDirtyRowIds,
+  rowHasContentChanges,
   reviewTabLanguageToOpenAfterSave,
   resolveDirtyTrackedEditorRowIds,
-  rowHasFieldChanges,
   rowHasPersistedChanges,
   rowFieldsEqual,
 } from "./editor-row-persistence-model.js";
@@ -28,6 +27,7 @@ import {
   applyEditorRowPersistRequested,
   applyEditorRowPersistReset,
   applyEditorRowPersistSucceeded,
+  applyEditorRowTextStyle,
 } from "./editor-persistence-state.js";
 import {
   applyEditorChapterRowsUnreviewed,
@@ -43,6 +43,7 @@ import {
   findEditorRowById,
   normalizeFieldState,
 } from "./editor-utils.js";
+import { normalizeEditorTextStyle } from "./editor-text-style.js";
 import {
   ensureEditorRowReadyForWrite,
   reloadEditorRowFromDisk,
@@ -189,7 +190,7 @@ export async function flushDirtyEditorRows(render, operations = {}, options = {}
       continue;
     }
 
-    if (!rowHasFieldChanges(row)) {
+    if (!rowHasContentChanges(row)) {
       continue;
     }
 
@@ -210,6 +211,21 @@ export function updateEditorRowFieldValue(rowId, languageCode, nextValue, operat
   }
 
   updateEditorChapterRow(rowId, (row) => applyEditorRowFieldValue(row, languageCode, nextValue));
+  markEditorRowDirty(rowId);
+}
+
+export function updateEditorRowTextStyle(rowId, nextTextStyle, operations = {}) {
+  const { updateEditorChapterRow } = operations;
+  if (!rowId || typeof updateEditorChapterRow !== "function") {
+    return;
+  }
+
+  const row = findEditorRowById(rowId, state.editorChapter);
+  if (!row || normalizeEditorTextStyle(row.textStyle) === normalizeEditorTextStyle(nextTextStyle)) {
+    return;
+  }
+
+  updateEditorChapterRow(rowId, (row) => applyEditorRowTextStyle(row, nextTextStyle));
   markEditorRowDirty(rowId);
 }
 
@@ -465,6 +481,7 @@ export async function resolveEditorRowConflict(render, rowId, resolution, operat
 
   await persistEditorRow(render, rowId, operations, {
     baseFieldsOverride: row.conflictState?.remoteRow?.fields ?? null,
+    baseTextStyleOverride: row.conflictState?.remoteRow?.textStyle ?? null,
   });
 }
 
@@ -505,7 +522,7 @@ async function persistEditorRow(render, rowId, operations = {}, options = {}) {
         return;
       }
 
-      if (!rowHasFieldChanges(row)) {
+      if (!rowHasContentChanges(row)) {
         if (row.saveStatus !== "idle" || row.saveError) {
           updateEditorChapterRow(rowId, (currentRow) => applyEditorRowPersistReset(currentRow));
           render?.({ scope: "translate-sidebar" });
@@ -521,6 +538,7 @@ async function persistEditorRow(render, rowId, operations = {}, options = {}) {
       }
 
       const fieldsToPersist = cloneRowFields(row.fields);
+      const textStyleToPersist = row.textStyle;
       const reviewLanguageToOpen = reviewTabLanguageToOpenAfterSave(
         editorChapter,
         rowId,
@@ -539,10 +557,15 @@ async function persistEditorRow(render, rowId, operations = {}, options = {}) {
             chapterId: editorChapter.chapterId,
             rowId,
             fields: fieldsToPersist,
+            textStyle: textStyleToPersist,
             baseFields:
               options?.baseFieldsOverride && typeof options.baseFieldsOverride === "object"
                 ? cloneRowFields(options.baseFieldsOverride)
                 : cloneRowFields(row.baseFields),
+            baseTextStyle:
+              typeof options?.baseTextStyleOverride === "string"
+                ? options.baseTextStyleOverride
+                : row.baseTextStyle,
           },
         });
 
@@ -551,7 +574,10 @@ async function persistEditorRow(render, rowId, operations = {}, options = {}) {
         }
 
         if (payload?.status === "conflict") {
-          if (rowFieldsEqual(fieldsToPersist, payload?.row?.fields)) {
+          if (
+            rowFieldsEqual(fieldsToPersist, payload?.row?.fields)
+            && normalizeEditorTextStyle(row.textStyle) === normalizeEditorTextStyle(payload?.row?.textStyle)
+          ) {
             updateEditorChapterRow(
               rowId,
               (currentRow) => applyEditorRowPersistSucceeded(currentRow, payload?.row),
@@ -563,7 +589,9 @@ async function persistEditorRow(render, rowId, operations = {}, options = {}) {
 
           updateEditorChapterRow(
             rowId,
-            (currentRow) => applyEditorRowConflictDetected(currentRow, payload),
+            (currentRow) => applyEditorRowConflictDetected(currentRow, payload, {
+              localTextStyle: textStyleToPersist,
+            }),
           );
           lockConflictFilter();
           render?.();

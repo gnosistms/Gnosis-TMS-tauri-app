@@ -21,6 +21,7 @@ use super::{
 };
 
 const ORDER_KEY_SPACING: u128 = 1u128 << 104;
+const DEFAULT_EDITOR_TEXT_STYLE: &str = "paragraph";
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -123,6 +124,10 @@ pub(crate) struct UpdateEditorRowFieldsInput {
     fields: BTreeMap<String, String>,
     #[serde(default)]
     base_fields: BTreeMap<String, String>,
+    #[serde(default)]
+    text_style: Option<String>,
+    #[serde(default)]
+    base_text_style: Option<String>,
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -363,6 +368,7 @@ struct EditorRow {
     review_state: String,
     lifecycle_state: String,
     order_key: String,
+    text_style: String,
     fields: BTreeMap<String, String>,
     field_states: BTreeMap<String, EditorFieldState>,
 }
@@ -409,6 +415,7 @@ pub(crate) struct SaveEditorRowWithConcurrencyResponse {
     row: Option<EditorRow>,
     source_word_counts: BTreeMap<String, usize>,
     base_fields: BTreeMap<String, String>,
+    base_text_style: String,
     conflict_remote_version: Option<EditorRowVersionMetadata>,
     chapter_base_commit_sha: Option<String>,
 }
@@ -499,6 +506,8 @@ struct StoredRowFile {
     editor_comments_revision: u64,
     #[serde(default)]
     editor_comments: Vec<StoredEditorComment>,
+    #[serde(default)]
+    text_style: Option<String>,
     fields: BTreeMap<String, StoredFieldValue>,
 }
 
@@ -1202,6 +1211,8 @@ pub(super) fn update_gtms_editor_row_fields_sync(
     let relative_row_json = repo_relative_path(&repo_path, &row_json_path)?;
     let languages = sanitize_chapter_languages(&chapter_file.languages);
     let source_word_counts = load_source_word_counts(&chapter_path.join("rows"), &languages)?;
+    let input_base_text_style = normalize_editor_text_style_value(input.base_text_style.as_deref());
+    let input_text_style = normalize_editor_text_style_value(input.text_style.as_deref());
     if !row_json_path.exists() {
         return Ok(SaveEditorRowWithConcurrencyResponse {
             row_id: input.row_id,
@@ -1209,6 +1220,7 @@ pub(super) fn update_gtms_editor_row_fields_sync(
             row: None,
             source_word_counts,
             base_fields: input.base_fields,
+            base_text_style: input_base_text_style,
             conflict_remote_version: None,
             chapter_base_commit_sha: current_repo_head_sha(&repo_path),
         });
@@ -1234,18 +1246,22 @@ pub(super) fn update_gtms_editor_row_fields_sync(
             row: Some(editor_row_from_stored_row_file(original_row_file)?),
             source_word_counts,
             base_fields: input.base_fields,
+            base_text_style: input_base_text_style,
             conflict_remote_version: None,
             chapter_base_commit_sha: current_repo_head_sha(&repo_path),
         });
     }
 
-    if row_plain_text_map(&original_row_file) != input.base_fields {
+    if row_plain_text_map(&original_row_file) != input.base_fields
+        || row_text_style(&original_row_file) != input_base_text_style
+    {
         return Ok(SaveEditorRowWithConcurrencyResponse {
             row_id: input.row_id,
             status: "conflict".to_string(),
             row: Some(editor_row_from_stored_row_file(original_row_file)?),
             source_word_counts,
             base_fields: input.base_fields,
+            base_text_style: input_base_text_style,
             conflict_remote_version: load_latest_row_version_metadata(
                 &repo_path,
                 &relative_row_json,
@@ -1261,6 +1277,7 @@ pub(super) fn update_gtms_editor_row_fields_sync(
         )
     })?;
     apply_editor_plain_text_updates(&mut row_value, &input.fields)?;
+    apply_editor_text_style_update(&mut row_value, &input_text_style)?;
 
     let updated_row_json = serde_json::to_string_pretty(&row_value).map_err(|error| {
         format!(
@@ -1306,6 +1323,7 @@ pub(super) fn update_gtms_editor_row_fields_sync(
         row: Some(editor_row_from_stored_row_file(next_row)?),
         source_word_counts: next_source_word_counts,
         base_fields: input.base_fields,
+        base_text_style: input_base_text_style,
         conflict_remote_version: None,
         chapter_base_commit_sha: current_repo_head_sha(&repo_path),
     })
@@ -2260,18 +2278,46 @@ fn ensure_editor_field_object_defaults(
     Ok(())
 }
 
+fn normalize_editor_text_style_value(value: Option<&str>) -> String {
+    match value.unwrap_or_default().trim() {
+        "heading1" => "heading1".to_string(),
+        "heading2" => "heading2".to_string(),
+        "quote" => "quote".to_string(),
+        "numbered-list" => "numbered-list".to_string(),
+        "bullet-list" => "bullet-list".to_string(),
+        _ => DEFAULT_EDITOR_TEXT_STYLE.to_string(),
+    }
+}
+
+fn row_object_mut(row_value: &mut Value) -> Result<&mut serde_json::Map<String, Value>, String> {
+    row_value
+        .as_object_mut()
+        .ok_or_else(|| "The row file is not a JSON object.".to_string())
+}
+
 fn row_fields_object_mut(
     row_value: &mut Value,
 ) -> Result<&mut serde_json::Map<String, Value>, String> {
-    let row_object = row_value
-        .as_object_mut()
-        .ok_or_else(|| "The row file is not a JSON object.".to_string())?;
+    let row_object = row_object_mut(row_value)?;
     let fields_value = row_object
         .entry("fields".to_string())
         .or_insert_with(|| json!({}));
     fields_value
         .as_object_mut()
         .ok_or_else(|| "The row fields are not a JSON object.".to_string())
+}
+
+fn clear_editor_html_preview_cache(
+    fields_object: &mut serde_json::Map<String, Value>,
+) -> Result<(), String> {
+    for field_value in fields_object.values_mut() {
+        let field_object = field_value
+            .as_object_mut()
+            .ok_or_else(|| "A row field is not a JSON object.".to_string())?;
+        field_object.remove("html_preview");
+    }
+
+    Ok(())
 }
 
 fn apply_editor_plain_text_updates(
@@ -2301,6 +2347,28 @@ fn apply_editor_plain_text_updates(
     }
 
     Ok(())
+}
+
+fn apply_editor_text_style_update(row_value: &mut Value, text_style: &str) -> Result<bool, String> {
+    let normalized_text_style = normalize_editor_text_style_value(Some(text_style));
+    let row_object = row_object_mut(row_value)?;
+    let previous_text_style = normalize_editor_text_style_value(
+        row_object.get("text_style").and_then(Value::as_str),
+    );
+    if previous_text_style == normalized_text_style {
+        return Ok(false);
+    }
+
+    row_object.insert(
+        "text_style".to_string(),
+        Value::String(normalized_text_style),
+    );
+    let fields_object = row_object
+        .get_mut("fields")
+        .and_then(Value::as_object_mut)
+        .ok_or_else(|| "The row fields are not a JSON object.".to_string())?;
+    clear_editor_html_preview_cache(fields_object)?;
+    Ok(true)
 }
 
 fn apply_editor_field_flag_update(
@@ -2612,6 +2680,7 @@ fn sanitize_chapter_languages(languages: &[ChapterLanguage]) -> Vec<ChapterLangu
 fn editor_row_from_stored_row_file(row: StoredRowFile) -> Result<EditorRow, String> {
     let revision_token = row_revision_token(&row)?;
     let fields = row_plain_text_map(&row);
+    let text_style = row_text_style(&row);
 
     Ok(EditorRow {
         row_id: row.row_id,
@@ -2631,6 +2700,7 @@ fn editor_row_from_stored_row_file(row: StoredRowFile) -> Result<EditorRow, Stri
         review_state: row.status.review_state,
         lifecycle_state: row.lifecycle.state,
         order_key: row.structure.order_key,
+        text_style,
         fields,
         field_states: row
             .fields
@@ -2655,6 +2725,10 @@ fn row_plain_text_map(row: &StoredRowFile) -> BTreeMap<String, String> {
         .collect()
 }
 
+fn row_text_style(row: &StoredRowFile) -> String {
+    normalize_editor_text_style_value(row.text_style.as_deref())
+}
+
 fn row_revision_token(row: &StoredRowFile) -> Result<String, String> {
     let row_json = serde_json::to_string_pretty(row)
         .map_err(|error| format!("Could not serialize the row revision token: {error}"))?;
@@ -2675,9 +2749,10 @@ mod tests {
 
     use super::{
         active_lifecycle_state, apply_editor_field_flag_update, apply_editor_plain_text_updates,
-        build_editor_field_history_entries, create_inserted_editor_row, create_inserted_row_file,
-        editor_row_from_stored_row_file, filter_commit_row_paths_for_chapter,
-        parse_git_commit_message, preferred_target_language_code, ChapterLanguage,
+        apply_editor_text_style_update, build_editor_field_history_entries,
+        create_inserted_editor_row, create_inserted_row_file, editor_row_from_stored_row_file,
+        filter_commit_row_paths_for_chapter, parse_git_commit_message,
+        preferred_target_language_code, ChapterLanguage, DEFAULT_EDITOR_TEXT_STYLE,
         GitCommitMetadata, StoredChapterFile, StoredChapterSettings, StoredFieldEditorFlags,
         StoredFieldValue, StoredRowFile,
     };
@@ -2803,6 +2878,41 @@ mod tests {
             serde_json::to_string_pretty(&row_value).unwrap(),
             original_serialized
         );
+    }
+
+    #[test]
+    fn apply_editor_text_style_update_updates_style_and_clears_cached_previews() {
+        let mut row_value = json!({
+          "text_style": "paragraph",
+          "fields": {
+            "es": {
+              "value_kind": "text",
+              "plain_text": "uno",
+              "html_preview": "<p>uno</p>",
+              "editor_flags": {
+                "reviewed": false,
+                "please_check": false
+              }
+            },
+            "en": {
+              "value_kind": "text",
+              "plain_text": "one",
+              "html_preview": "<p>one</p>",
+              "editor_flags": {
+                "reviewed": false,
+                "please_check": false
+              }
+            }
+          }
+        });
+
+        let changed = apply_editor_text_style_update(&mut row_value, "heading1")
+            .expect("text style update should succeed");
+
+        assert!(changed);
+        assert_eq!(row_value["text_style"], json!("heading1"));
+        assert!(row_value["fields"]["es"].get("html_preview").is_none());
+        assert!(row_value["fields"]["en"].get("html_preview").is_none());
     }
 
     #[test]
@@ -2933,6 +3043,7 @@ mod tests {
 
         assert_eq!(row_value["editor_comments_revision"], json!(0));
         assert_eq!(row_value["editor_comments"], json!([]));
+        assert_eq!(row_value["text_style"], json!(DEFAULT_EDITOR_TEXT_STYLE));
     }
 
     #[test]
@@ -2941,6 +3052,7 @@ mod tests {
 
         assert_eq!(row.comment_count, 0);
         assert_eq!(row.comments_revision, 0);
+        assert_eq!(row.text_style, DEFAULT_EDITOR_TEXT_STYLE);
     }
 
     #[test]
@@ -3244,6 +3356,7 @@ fn create_inserted_row_file(
         "source_sheet": "",
         "source_row_number": 0,
       },
+      "text_style": DEFAULT_EDITOR_TEXT_STYLE,
       "format_state": {
         "translatable": true,
         "character_limit": Value::Null,
@@ -3310,6 +3423,7 @@ fn create_inserted_editor_row(
         review_state: "unreviewed".to_string(),
         lifecycle_state: "active".to_string(),
         order_key: order_key.to_string(),
+        text_style: DEFAULT_EDITOR_TEXT_STYLE.to_string(),
         fields,
         field_states,
     })
