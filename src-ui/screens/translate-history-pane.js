@@ -11,7 +11,7 @@ import {
 } from "../app/editor-history.js";
 import {
   formatHistoryTimestamp,
-  renderHistoryContent,
+  renderHistoryEntryContent,
   renderHistoryNote,
 } from "./translate-history-shared.js";
 
@@ -54,7 +54,7 @@ function renderHistoryEntry(entry, previousEntry, activeLanguage, activeSection,
 
   return `
     <article class="history-item">
-      <p class="history-item__content" lang="${escapeHtml(activeLanguage.code)}">${renderHistoryContent(entry, previousEntry)}</p>
+      ${renderHistoryEntryContent(entry, previousEntry, activeLanguage.code)}
       ${renderHistoryNote(entry, previousEntry)}
       <div class="history-item__footer">
         <div class="history-item__actions">

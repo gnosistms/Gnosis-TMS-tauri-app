@@ -620,10 +620,10 @@ async function flushDirtyRows(page) {
   });
 }
 
-async function readEditorFieldMetrics(page, rowId, languageCode) {
-  return await page.evaluate(({ rowId: targetRowId, languageCode: targetLanguageCode }) => {
+async function readEditorFieldMetrics(page, rowId, languageCode, contentKind = "field") {
+  return await page.evaluate(({ rowId: targetRowId, languageCode: targetLanguageCode, contentKind: targetContentKind }) => {
     const field = document.querySelector(
-      `[data-editor-row-field][data-row-id="${targetRowId}"][data-language-code="${targetLanguageCode}"]:not([data-content-kind])`,
+      `[data-editor-row-field][data-row-id="${targetRowId}"][data-language-code="${targetLanguageCode}"]${targetContentKind === "footnote" ? '[data-content-kind="footnote"]' : ":not([data-content-kind])"}`,
     );
     if (!(field instanceof HTMLTextAreaElement)) {
       return null;
@@ -636,7 +636,7 @@ async function readEditorFieldMetrics(page, rowId, languageCode) {
       fontStyle: styles.fontStyle,
       paddingLeftPx: Number.parseFloat(styles.paddingLeft),
     };
-  }, { rowId, languageCode });
+  }, { rowId, languageCode, contentKind });
 }
 
 async function softDeleteFixtureRow(page, rowId) {
@@ -1373,6 +1373,62 @@ test.describe("editor regressions", () => {
     await expect(historyStyleNote.locator(".history-diff__insert")).toHaveText("H1");
   });
 
+  test("review last update shows both style and footnote notes for the latest grouped change", async ({ page }) => {
+    await mountEditorFixture(page, { rowCount: 40 }, { mockTauri: true });
+
+    const targetField = page.locator(
+      '[data-editor-row-field][data-row-id="fixture-row-0001"][data-language-code="vi"]:not([data-content-kind])',
+    );
+    const nextRowField = page.locator(
+      '[data-editor-row-field][data-row-id="fixture-row-0002"][data-language-code="vi"]:not([data-content-kind])',
+    );
+    const heading1Button = page.locator(
+      '[data-editor-row-text-style-button][data-row-id="fixture-row-0001"][data-language-code="vi"][data-text-style="heading1"]',
+    );
+    const footnoteButton = page.locator(
+      '[data-editor-footnote-button][data-row-id="fixture-row-0001"][data-language-code="vi"]',
+    );
+
+    await targetField.click();
+    await heading1Button.click();
+    await footnoteButton.evaluate((button) => button.click());
+
+    const footnoteField = page.locator(
+      '[data-editor-row-field][data-row-id="fixture-row-0001"][data-language-code="vi"][data-content-kind="footnote"]',
+    );
+    await expect(footnoteField).toBeVisible();
+    await page.keyboard.type("Grouped footnote");
+    await nextRowField.click();
+
+    await expect.poll(async () => {
+      const mockState = await readMockTauriState(page);
+      return mockState?.histories?.["fixture-chapter::fixture-row-0001::vi"]?.[0]?.footnote ?? null;
+    }).toBe("Grouped footnote");
+
+    await targetField.click();
+
+    const reviewLastUpdateGroup = page.locator(".history-group").first();
+    const reviewStyleNote = reviewLastUpdateGroup.locator(".history-item__style-note");
+    const reviewFootnoteContent = reviewLastUpdateGroup.locator(".history-item__content--footnote");
+
+    await expect(reviewStyleNote).toContainText("Style change");
+    await expect(reviewStyleNote.locator(".history-diff__delete")).toHaveText("P");
+    await expect(reviewStyleNote.locator(".history-diff__insert")).toHaveText("H1");
+    await expect(reviewFootnoteContent).toContainText("Grouped footnote");
+    await expect(reviewFootnoteContent).toHaveCSS("font-style", "italic");
+
+    await page.getByRole("button", { name: "History" }).click();
+    await expect(page.locator(".history-tabs__item--active")).toHaveText("History");
+
+    const historyStyleNote = page.locator(".history-item__style-note").first();
+    const historyFootnoteContent = page.locator(".history-item__content--footnote").first();
+    await expect(historyStyleNote).toContainText("Style change");
+    await expect(historyStyleNote.locator(".history-diff__delete")).toHaveText("P");
+    await expect(historyStyleNote.locator(".history-diff__insert")).toHaveText("H1");
+    await expect(historyFootnoteContent).toContainText("Grouped footnote");
+    await expect(historyFootnoteContent).toHaveCSS("font-style", "italic");
+  });
+
   test("row text styles update editor typography and return to paragraph styling", async ({ page }) => {
     await mountEditorFixture(page, { rowCount: 40 }, { mockTauri: true });
 
@@ -1438,6 +1494,61 @@ test.describe("editor regressions", () => {
     expect(resetMetrics.fontStyle).toBe(paragraphMetrics.fontStyle);
     expect(resetMetrics.paddingLeftPx).toBeCloseTo(paragraphMetrics.paddingLeftPx, 3);
     expect(resetMetrics.fontSizePx).toBeCloseTo(paragraphMetrics.fontSizePx, 3);
+  });
+
+  test("footnotes keep fixed styling while row text styles change, and the add button matches the style buttons", async ({ page }) => {
+    await mountEditorFixture(page, { rowCount: 40 }, { mockTauri: true });
+
+    const targetField = page.locator(
+      '[data-editor-row-field][data-row-id="fixture-row-0001"][data-language-code="vi"]:not([data-content-kind])',
+    );
+    const footnoteButton = page.locator(
+      '[data-editor-footnote-button][data-row-id="fixture-row-0001"][data-language-code="vi"]',
+    );
+    const heading1Button = page.locator(
+      '[data-editor-row-text-style-button][data-row-id="fixture-row-0001"][data-language-code="vi"][data-text-style="heading1"]',
+    );
+    const quoteButton = page.locator(
+      '[data-editor-row-text-style-button][data-row-id="fixture-row-0001"][data-language-code="vi"][data-text-style="quote"]',
+    );
+
+    await targetField.click();
+    await expect(footnoteButton).toBeVisible();
+    await expect(footnoteButton).toHaveClass(/translation-row-text-style-button--footnote/);
+
+    const paragraphMetrics = await readEditorFieldMetrics(page, "fixture-row-0001", "vi");
+    expect(paragraphMetrics).not.toBeNull();
+
+    await footnoteButton.evaluate((button) => button.click());
+    const footnoteField = page.locator(
+      '[data-editor-row-field][data-row-id="fixture-row-0001"][data-language-code="vi"][data-content-kind="footnote"]',
+    );
+    await expect(footnoteField).toBeVisible();
+    await page.keyboard.type("Fixed footnote");
+
+    const baselineFootnoteMetrics = await readEditorFieldMetrics(page, "fixture-row-0001", "vi", "footnote");
+    expect(baselineFootnoteMetrics).not.toBeNull();
+    expect(baselineFootnoteMetrics.fontStyle).toBe("italic");
+
+    await heading1Button.click();
+    await expect.poll(async () => {
+      return (await readEditorFieldMetrics(page, "fixture-row-0001", "vi"))?.fontSizePx ?? 0;
+    }).toBeGreaterThan(paragraphMetrics.fontSizePx);
+
+    const headingFootnoteMetrics = await readEditorFieldMetrics(page, "fixture-row-0001", "vi", "footnote");
+    expect(headingFootnoteMetrics.fontStyle).toBe("italic");
+    expect(headingFootnoteMetrics.fontSizePx).toBeCloseTo(baselineFootnoteMetrics.fontSizePx, 3);
+    expect(headingFootnoteMetrics.paddingLeftPx).toBeCloseTo(baselineFootnoteMetrics.paddingLeftPx, 3);
+
+    await quoteButton.click();
+    await expect.poll(async () => {
+      return (await readEditorFieldMetrics(page, "fixture-row-0001", "vi"))?.paddingLeftPx ?? 0;
+    }).toBeGreaterThan(paragraphMetrics.paddingLeftPx);
+
+    const quoteFootnoteMetrics = await readEditorFieldMetrics(page, "fixture-row-0001", "vi", "footnote");
+    expect(quoteFootnoteMetrics.fontStyle).toBe("italic");
+    expect(quoteFootnoteMetrics.fontSizePx).toBeCloseTo(baselineFootnoteMetrics.fontSizePx, 3);
+    expect(quoteFootnoteMetrics.paddingLeftPx).toBeCloseTo(baselineFootnoteMetrics.paddingLeftPx, 3);
   });
 
   test("row text style buttons behave like radios and survive later text saves", async ({ page }) => {
@@ -1660,6 +1771,9 @@ test.describe("editor regressions", () => {
     const inactiveSourcePanel = page.locator(
       '[data-editor-language-panel][data-row-id="fixture-row-0001"][data-language-code="es"]',
     );
+    const activeTargetPanel = page.locator(
+      '[data-editor-language-panel][data-row-id="fixture-row-0001"][data-language-code="vi"]',
+    );
     const footnoteButton = page.locator(
       '[data-editor-footnote-button][data-row-id="fixture-row-0001"][data-language-code="vi"]',
     );
@@ -1667,11 +1781,9 @@ test.describe("editor regressions", () => {
     await activeTargetField.click();
     await expect(footnoteButton).toBeVisible();
     await expect(
-      page.locator(
-        '[data-editor-row-card][data-row-id="fixture-row-0001"] .translation-row-text-style-actions__separator',
-      ).first(),
+      activeTargetPanel.locator('.translation-row-text-style-actions__separator'),
     ).toBeVisible();
-    await expect(inactiveSourcePanel.locator('[data-editor-footnote-button]')).toHaveCount(0);
+    await expect(inactiveSourcePanel.locator('[data-editor-footnote-button]')).toBeHidden();
     await expect(
       inactiveSourcePanel.locator('[data-editor-row-field][data-content-kind="footnote"]'),
     ).toHaveCount(0);
@@ -1720,15 +1832,81 @@ test.describe("editor regressions", () => {
     await expect(footnoteField).toHaveValue("Saved footnote text");
 
     await activeTargetField.click();
-    const reviewFootnoteNote = page.locator(".history-item__note--footnote").first();
-    await expect(reviewFootnoteNote).toContainText("Footnote");
-    await expect(reviewFootnoteNote).toContainText("Saved footnote text");
+    const reviewFootnoteContent = page.locator(".history-item__content--footnote").first();
+    await expect(reviewFootnoteContent).toContainText("Saved footnote text");
+    await expect(reviewFootnoteContent).toHaveCSS("font-style", "italic");
 
     await page.getByRole("button", { name: "History" }).click();
     await expect(page.locator(".history-tabs__item--active")).toHaveText("History");
-    const historyFootnoteNote = page.locator(".history-item__note--footnote").first();
-    await expect(historyFootnoteNote).toContainText("Footnote");
-    await expect(historyFootnoteNote).toContainText("Saved footnote text");
+    const historyFootnoteContent = page.locator(".history-item__content--footnote").first();
+    await expect(historyFootnoteContent).toContainText("Saved footnote text");
+    await expect(historyFootnoteContent).toHaveCSS("font-style", "italic");
+  });
+
+  test("footnote controls hide on blur even if row activation finishes later", async ({ page }) => {
+    await page.addInitScript(() => {
+      let releaseRowLoad = () => {};
+      const rowLoadGate = new Promise((resolve) => {
+        releaseRowLoad = resolve;
+      });
+
+      globalThis.__releaseMockRowLoad = releaseRowLoad;
+      globalThis.__gnosisMockTauriHandlers = {
+        async load_gtms_editor_row(payload) {
+          await rowLoadGate;
+          const input = payload?.input ?? {};
+          return {
+            row: {
+              rowId: input.rowId,
+              orderKey: "00001",
+              lifecycleState: "active",
+              commentCount: 0,
+              commentsRevision: 0,
+              textStyle: "paragraph",
+              fields: {
+                es: "alpha 0001 source text",
+                vi: "alpha 0001 target text",
+              },
+              footnotes: {
+                es: "",
+                vi: "",
+              },
+              fieldStates: {
+                es: { reviewed: false, pleaseCheck: false },
+                vi: { reviewed: false, pleaseCheck: false },
+              },
+            },
+          };
+        },
+      };
+    });
+
+    await mountEditorFixture(page, { rowCount: 18 }, { mockTauri: true });
+    await page.evaluate(() => {
+      window.__gnosisDebug.setEditorRowSyncState("fixture-row-0001", {
+        freshness: "stale",
+      });
+    });
+
+    const targetField = page.locator(
+      '[data-editor-row-field][data-row-id="fixture-row-0001"][data-language-code="vi"]:not([data-content-kind])',
+    );
+    const searchInput = page.locator("[data-editor-search-input]");
+    const footnoteButton = page.locator(
+      '[data-editor-footnote-button][data-row-id="fixture-row-0001"][data-language-code="vi"]',
+    );
+
+    await targetField.click();
+    await expect(footnoteButton).toBeVisible();
+
+    await searchInput.click();
+    await expect(footnoteButton).toBeHidden();
+
+    await page.evaluate(() => {
+      window.__releaseMockRowLoad?.();
+    });
+
+    await expect(footnoteButton).toBeHidden();
   });
 
   test("comments marker appears only on the target-language panel", async ({ page }) => {

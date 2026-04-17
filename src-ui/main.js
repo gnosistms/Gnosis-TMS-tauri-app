@@ -589,6 +589,27 @@ window.__gnosisDebug = {
     toggleEditorReplaceEnabled(render, enabled === true);
     return readEditorRegressionSnapshot(state);
   },
+  setEditorRowSyncState(rowId, updates = {}) {
+    if (!rowId || !state.editorChapter?.chapterId || !Array.isArray(state.editorChapter.rows)) {
+      return readEditorRegressionSnapshot(state);
+    }
+
+    state.editorChapter = {
+      ...state.editorChapter,
+      rows: state.editorChapter.rows.map((row) => {
+        if (!row || row.rowId !== rowId) {
+          return row;
+        }
+
+        return {
+          ...row,
+          ...(typeof updates?.freshness === "string" ? { freshness: updates.freshness } : {}),
+          ...(typeof updates?.remotelyDeleted === "boolean" ? { remotelyDeleted: updates.remotelyDeleted } : {}),
+        };
+      }),
+    };
+    return readEditorRegressionSnapshot(state);
+  },
 };
 
 async function bootstrap() {

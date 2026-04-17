@@ -17,11 +17,15 @@ import {
 } from "../lib/ui.js";
 import { resolveVisibleEditorAiReview } from "../app/editor-ai-review-state.js";
 import { normalizeEditorSidebarTab } from "../app/editor-comments.js";
-import { findEditorHistoryPreviousEntry } from "../app/editor-history.js";
+import { findEditorHistoryPreviousVisibleEntry } from "../app/editor-history.js";
 import { resolveEditorAiTranslateLanguages } from "../app/editor-ai-translate-target.js";
 import { renderCommentsPane } from "./translate-comments-pane.js";
 import { renderHistoryPane } from "./translate-history-pane.js";
-import { renderHistoryContent, renderHistoryNote } from "./translate-history-shared.js";
+import {
+  renderHistoryContent,
+  renderHistoryEntryContent,
+  renderHistoryNote,
+} from "./translate-history-shared.js";
 
 function renderSidebarTab(label, tab, activeTab) {
   const isActive = tab === activeTab;
@@ -208,7 +212,7 @@ function renderReviewPane(editorChapter, rows, languages) {
           error: "",
           entries: [],
   };
-  const previousEntry = findEditorHistoryPreviousEntry(history.entries, activeHistorySection);
+  const previousEntry = findEditorHistoryPreviousVisibleEntry(history.entries, activeHistorySection);
   const currentEntry = {
     plainText: activeSection?.text ?? "",
     footnote: activeSection?.footnote ?? "",
@@ -309,7 +313,7 @@ function renderReviewPane(editorChapter, rows, languages) {
             ? `
               <div class="history-group__entries">
                 <article class="history-item">
-                  <p class="history-item__content" lang="${escapeHtml(activeLanguage.code)}">${renderHistoryContent(currentEntry, previousEntry)}</p>
+                  ${renderHistoryEntryContent(currentEntry, previousEntry, activeLanguage.code)}
                   ${renderHistoryNote(currentEntry, previousEntry, { includeMarkers: false })}
                   ${
                     history.status === "loading"

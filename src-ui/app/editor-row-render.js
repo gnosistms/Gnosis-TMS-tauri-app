@@ -167,7 +167,7 @@ function renderRowTextStyleButtons(row, language) {
           ? `
             <span class="translation-row-text-style-actions__separator" aria-hidden="true"></span>
             <button
-              class="translation-marker-button translation-marker-button--footnote"
+              class="translation-row-text-style-button translation-row-text-style-button--footnote"
               type="button"
               data-action="open-editor-footnote"
               data-editor-footnote-button
@@ -175,7 +175,7 @@ function renderRowTextStyleButtons(row, language) {
               data-language-code="${escapeHtml(language.code)}"
               ${tooltipAttributes("Add footnote", { side: "top" })}
             >
-              <span class="translation-marker-button__label" aria-hidden="true">*</span>
+              <span class="translation-row-text-style-button__label" aria-hidden="true">*</span>
             </button>
           `
           : ""
@@ -219,7 +219,7 @@ function renderDisabledConflictField(language, textStyle) {
   `;
 }
 
-function renderEditorFootnoteField(row, language, textStyle) {
+function renderEditorFootnoteField(row, language) {
   return `
     <div
       class="translation-language-panel__field-stack translation-language-panel__field-stack--footnote"
@@ -227,7 +227,6 @@ function renderEditorFootnoteField(row, language, textStyle) {
       data-row-id="${escapeHtml(row.id)}"
       data-language-code="${escapeHtml(language.code)}"
       data-content-kind="footnote"
-      data-row-text-style="${escapeHtml(textStyle)}"
     >
       <div
         class="translation-language-panel__field-highlight translation-language-panel__search-highlight"
@@ -299,7 +298,7 @@ function renderEditorLanguageField(row, language) {
           ${loadingAttributes}
         >${escapeHtml(language.text)}</textarea>
       </div>
-      ${language.hasVisibleFootnote ? renderEditorFootnoteField(row, language, textStyle) : ""}
+      ${language.hasVisibleFootnote ? renderEditorFootnoteField(row, language) : ""}
       ${renderRowTextStyleButtons(row, language)}
     </div>
   `;

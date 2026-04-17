@@ -5,6 +5,7 @@ import {
   buildEditorHistoryViewModel,
   editorHistoryEntryMatchesSection,
   findEditorHistoryPreviousEntry,
+  findEditorHistoryPreviousVisibleEntry,
   historyEntryCanUndoReplace,
   reconcileExpandedEditorHistoryGroupKeys,
 } from "./editor-history.js";
@@ -243,6 +244,25 @@ test("findEditorHistoryPreviousEntry treats style-only changes as distinct saved
     findEditorHistoryPreviousEntry(entries, {
       text: "text",
       footnote: "",
+      textStyle: "heading1",
+      reviewed: false,
+      pleaseCheck: false,
+    })?.commitSha,
+    "c1",
+  );
+});
+
+test("findEditorHistoryPreviousVisibleEntry compares review last update against the prior visible revision", () => {
+  const entries = [
+    historyEntry({ commitSha: "c3", plainText: "Hello", footnote: "Note", textStyle: "heading1" }),
+    historyEntry({ commitSha: "c2", plainText: "Hello", footnote: "", textStyle: "heading1" }),
+    historyEntry({ commitSha: "c1", operationType: "import", plainText: "Hello", footnote: "", textStyle: "paragraph" }),
+  ];
+
+  assert.equal(
+    findEditorHistoryPreviousVisibleEntry(entries, {
+      text: "Hello",
+      footnote: "Note",
       textStyle: "heading1",
       reviewed: false,
       pleaseCheck: false,

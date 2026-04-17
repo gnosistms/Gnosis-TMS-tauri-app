@@ -117,9 +117,7 @@ function buildLiveTranslationRows(editorChapter, languages) {
         hasVisibleFootnote: editorLanguageFootnoteIsVisible(row, language.code, editorChapter),
         isFootnoteEditorOpen: editorFootnoteEditorMatches(editorChapter, row.rowId, language.code),
         showAddFootnoteButton:
-          editorChapter?.activeRowId === row.rowId
-          && editorChapter?.activeLanguageCode === language.code
-          && editorLanguageFootnoteText(row, language.code).trim().length === 0
+          editorLanguageFootnoteText(row, language.code).trim().length === 0
           && !editorFootnoteEditorMatches(editorChapter, row.rowId, language.code),
         isActive:
           editorChapter?.activeRowId === row.rowId

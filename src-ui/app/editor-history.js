@@ -241,6 +241,22 @@ export function findEditorHistoryPreviousEntry(entries, section) {
   return normalizedEntries[0] ?? null;
 }
 
+export function findEditorHistoryPreviousVisibleEntry(entries, section) {
+  const normalizedEntries = Array.isArray(entries) ? entries : [];
+  if (!section || normalizedEntries.length === 0) {
+    return null;
+  }
+
+  const historyView = buildEditorHistoryViewModel(normalizedEntries, new Set());
+  const matchingVisibleEntry =
+    historyView.visibleEntries.find((entry) => editorHistoryEntryMatchesSection(entry, section)) ?? null;
+  if (matchingVisibleEntry) {
+    return historyView.olderVisibleEntryByCommitSha.get(matchingVisibleEntry.commitSha) ?? null;
+  }
+
+  return findEditorHistoryPreviousEntry(normalizedEntries, section);
+}
+
 export function buildEditorHistoryViewModel(entries, expandedGroupKeys) {
   const compressedEntries = compressHistoryEntries(Array.isArray(entries) ? entries : []);
   const groups = buildHistoryGroups(compressedEntries);

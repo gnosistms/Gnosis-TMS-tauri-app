@@ -50,13 +50,12 @@ function buildHistoryDiffSegments(previousText, currentText) {
     });
 }
 
-export function renderHistoryContent(entry, previousEntry) {
-  const currentText = String(entry?.plainText ?? "");
-  if (!previousEntry) {
-    return escapeHtml(currentText);
+function renderHistoryDiffText(previousText, currentText) {
+  if (previousText === undefined || previousText === null) {
+    return escapeHtml(String(currentText ?? ""));
   }
 
-  return buildHistoryDiffSegments(previousEntry.plainText, currentText)
+  return buildHistoryDiffSegments(previousText, currentText)
     .map((segment) => {
       if (segment.type === "equal") {
         return escapeHtml(segment.text);
@@ -65,6 +64,42 @@ export function renderHistoryContent(entry, previousEntry) {
       return `<span class="history-diff__${segment.type}">${escapeHtml(segment.text)}</span>`;
     })
     .join("");
+}
+
+export function renderHistoryContent(entry, previousEntry) {
+  return renderHistoryDiffText(previousEntry?.plainText, entry?.plainText);
+}
+
+export function renderHistoryEntryContent(entry, previousEntry, languageCode) {
+  const historyBlocks = [
+    {
+      currentText: entry?.plainText,
+      previousText: previousEntry?.plainText,
+      className: "history-item__content",
+      alwaysRender: true,
+    },
+    {
+      currentText: entry?.footnote,
+      previousText: previousEntry?.footnote,
+      className: "history-item__content history-item__content--footnote",
+      alwaysRender: false,
+    },
+  ];
+
+  return `
+    <div class="history-item__content-stack">
+      ${historyBlocks
+        .filter((block) =>
+          block.alwaysRender
+          || String(block.currentText ?? "").length > 0
+          || String(block.previousText ?? "").length > 0,
+        )
+        .map((block) =>
+          `<p class="${block.className}" lang="${escapeHtml(languageCode ?? "")}">${renderHistoryDiffText(block.previousText, block.currentText)}</p>`,
+        )
+        .join("")}
+    </div>
+  `;
 }
 
 function buildHistoryMarkerNoteActions(entry, previousEntry) {
@@ -158,39 +193,9 @@ function renderHistoryStyleNote(styleChange) {
   `;
 }
 
-function buildHistoryFootnoteChange(entry, previousEntry) {
-  const previousFootnote = String(previousEntry?.footnote ?? "");
-  const nextFootnote = String(entry?.footnote ?? "");
-  if (previousFootnote === nextFootnote) {
-    return null;
-  }
-
-  return buildHistoryDiffSegments(previousFootnote, nextFootnote);
-}
-
-function renderHistoryFootnoteNote(footnoteChange) {
-  if (!Array.isArray(footnoteChange) || footnoteChange.length === 0) {
-    return "";
-  }
-
-  return `
-    <p class="history-item__note history-item__note--footnote">
-      <span class="history-item__footnote-note-label">Footnote</span>
-      ${footnoteChange.map((segment) => {
-        if (segment.type === "equal") {
-          return escapeHtml(segment.text);
-        }
-
-        return `<span class="history-diff__${segment.type}">${escapeHtml(segment.text)}</span>`;
-      }).join("")}
-    </p>
-  `;
-}
-
 export function renderHistoryNote(entry, previousEntry, options = {}) {
   const includeMarkers = options.includeMarkers !== false;
   const includeStyle = options.includeStyle !== false;
-  const includeFootnote = options.includeFootnote !== false;
   const markerActions = includeMarkers
     ? (
       Array.isArray(entry?.markerNoteActions) && entry.markerNoteActions.length > 0
@@ -199,8 +204,6 @@ export function renderHistoryNote(entry, previousEntry, options = {}) {
     )
     : [];
   const styleChange = includeStyle ? buildHistoryStyleChange(entry, previousEntry) : null;
-  const footnoteChange = includeFootnote ? buildHistoryFootnoteChange(entry, previousEntry) : null;
-  const footnoteNote = renderHistoryFootnoteNote(footnoteChange);
 
   if (markerActions.length > 0 || styleChange) {
     return `
@@ -208,7 +211,7 @@ export function renderHistoryNote(entry, previousEntry, options = {}) {
         ${markerActions.map((action) => renderHistoryMarkerNoteAction(action)).join("")}
         ${renderHistoryStyleNote(styleChange)}
       </p>
-    ` + footnoteNote;
+    `;
   }
 
   const fallbackMarkerActions = includeMarkers
@@ -219,11 +222,11 @@ export function renderHistoryNote(entry, previousEntry, options = {}) {
       <p class="history-item__note history-item__note--markers">
         ${fallbackMarkerActions.map((action) => renderHistoryMarkerNoteAction(action)).join("")}
       </p>
-    ` + footnoteNote;
+    `;
   }
 
   const statusNote = entry?.statusNote
     ? `<p class="history-item__note">${escapeHtml(entry.statusNote)}</p>`
     : "";
-  return statusNote + footnoteNote;
+  return statusNote;
 }
