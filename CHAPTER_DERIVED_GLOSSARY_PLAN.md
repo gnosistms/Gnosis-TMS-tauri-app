@@ -1,4 +1,18 @@
-# Chapter Derived Glossary Plan
+# Chapter Derived Glossary Plan (Cancelled)
+
+## Status
+
+Cancelled. We will not implement this plan.
+
+## Cancellation Note
+
+The core problem is trust.
+
+We can generate a derived glossary, but we cannot know whether we can trust it for a given translation context without running the derivation prompt for that specific translation and checking whether the derived terms differ from what is already stored.
+
+That means the derivation step still has to be repeated at translation time in order to validate the cached result. Because of that, a derived glossary does not actually save the work it was meant to save. It adds complexity and bookkeeping, but it does not remove the need to re-derive the glossary terms when doing automated translation.
+
+For that reason, this plan is cancelled.
 
 ## Goal
 
