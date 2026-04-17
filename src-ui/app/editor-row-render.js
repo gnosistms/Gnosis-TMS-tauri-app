@@ -212,34 +212,36 @@ function renderEditorLanguageField(row, language) {
     : "";
 
   return `
-    <div
-      class="translation-language-panel__field-stack"
-      data-editor-glossary-field-stack
-      data-row-id="${escapeHtml(row.id)}"
-      data-language-code="${escapeHtml(language.code)}"
-      data-row-text-style="${escapeHtml(textStyle)}"
-    >
+    <div class="translation-language-panel__editor">
       <div
-        class="translation-language-panel__field-highlight translation-language-panel__search-highlight"
-        data-editor-search-highlight
-        lang="${escapeHtml(language.code)}"
-        aria-hidden="true"
-      ></div>
-      <div
-        class="translation-language-panel__field-highlight translation-language-panel__glossary-highlight"
-        data-editor-glossary-highlight
-        lang="${escapeHtml(language.code)}"
-        aria-hidden="true"
-      ></div>
-      <textarea
-        class="${fieldClassName}"
-        data-editor-row-field
+        class="translation-language-panel__field-stack"
+        data-editor-glossary-field-stack
         data-row-id="${escapeHtml(row.id)}"
         data-language-code="${escapeHtml(language.code)}"
-        lang="${escapeHtml(language.code)}"
-        spellcheck="false"
-        ${loadingAttributes}
-      >${escapeHtml(language.text)}</textarea>
+        data-row-text-style="${escapeHtml(textStyle)}"
+      >
+        <div
+          class="translation-language-panel__field-highlight translation-language-panel__search-highlight"
+          data-editor-search-highlight
+          lang="${escapeHtml(language.code)}"
+          aria-hidden="true"
+        ></div>
+        <div
+          class="translation-language-panel__field-highlight translation-language-panel__glossary-highlight"
+          data-editor-glossary-highlight
+          lang="${escapeHtml(language.code)}"
+          aria-hidden="true"
+        ></div>
+        <textarea
+          class="${fieldClassName}"
+          data-editor-row-field
+          data-row-id="${escapeHtml(row.id)}"
+          data-language-code="${escapeHtml(language.code)}"
+          lang="${escapeHtml(language.code)}"
+          spellcheck="false"
+          ${loadingAttributes}
+        >${escapeHtml(language.text)}</textarea>
+      </div>
       ${renderRowTextStyleButtons(row, language)}
     </div>
   `;

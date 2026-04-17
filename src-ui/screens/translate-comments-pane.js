@@ -26,12 +26,15 @@ function canDeleteComment(comment, session) {
   return Boolean(commentAuthorLogin) && commentAuthorLogin === sessionLogin;
 }
 
-function renderCommentEntry(comment, commentsState, session) {
+function renderCommentEntry(comment, commentsState, session, commentWriteBlocked) {
   const isDeleting =
     commentsState?.status === "deleting" && commentsState?.deletingCommentId === comment?.commentId;
   const deleteAction = canDeleteComment(comment, session)
     ? textAction(isDeleting ? "Deleting..." : "Delete", `delete-editor-comment:${comment.commentId}`, {
-      disabled: commentsState?.status === "deleting" || commentsState?.status === "saving",
+      disabled:
+        commentsState?.status === "deleting"
+        || commentsState?.status === "saving"
+        || commentWriteBlocked,
     })
     : "";
 
@@ -63,7 +66,6 @@ export function renderCommentsPane(editorChapter, rows, session) {
           entries: [],
         };
   const draft = typeof commentsState?.draft === "string" ? commentsState.draft : "";
-  const canSaveComment = editorCommentDraftCanSave(draft, commentsState.status);
 
   if (!activeRow) {
     return `
@@ -72,6 +74,12 @@ export function renderCommentsPane(editorChapter, rows, session) {
       </div>
     `;
   }
+
+  const commentWriteBlocked =
+    activeRow?.saveStatus !== "idle"
+    || activeRow?.markerSaveState?.status === "saving"
+    || activeRow?.textStyleSaveState?.status === "saving";
+  const canSaveComment = editorCommentDraftCanSave(draft, commentsState.status) && !commentWriteBlocked;
 
   const commentsBody = commentsState.status === "error"
     ? `
@@ -88,7 +96,9 @@ export function renderCommentsPane(editorChapter, rows, session) {
       : Array.isArray(commentsState.entries) && commentsState.entries.length > 0
         ? `
           <div class="history-stack">
-            ${commentsState.entries.map((comment) => renderCommentEntry(comment, commentsState, session)).join("")}
+            ${commentsState.entries
+              .map((comment) => renderCommentEntry(comment, commentsState, session, commentWriteBlocked))
+              .join("")}
           </div>
         `
         : `

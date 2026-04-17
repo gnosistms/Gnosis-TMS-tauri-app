@@ -28,6 +28,7 @@ import { invoke } from "./runtime.js";
 import { state } from "./state.js";
 import { showNoticeBadge } from "./status-feedback.js";
 import { findEditorRowById, hasEditorLanguage, hasEditorRow } from "./editor-utils.js";
+import { ensureEditorRowReadyForWrite } from "./editor-row-sync-flow.js";
 
 function renderEditorCommentsSidebar(render) {
   render?.({ scope: "translate-sidebar" });
@@ -75,6 +76,24 @@ function nextChapterBaseCommitSha(payload, chapterState = state.editorChapter) {
   return typeof payload?.chapterBaseCommitSha === "string" && payload.chapterBaseCommitSha.trim()
     ? payload.chapterBaseCommitSha.trim()
     : chapterState?.chapterBaseCommitSha ?? null;
+}
+
+async function ensureEditorRowReadyForCommentWrite(render, rowId) {
+  const row = await ensureEditorRowReadyForWrite(render, rowId);
+  if (!row) {
+    return null;
+  }
+
+  if (
+    row.saveStatus !== "idle"
+    || row.markerSaveState?.status === "saving"
+    || row.textStyleSaveState?.status === "saving"
+  ) {
+    showNoticeBadge("Finish saving the current row before changing comments.", render);
+    return null;
+  }
+
+  return row;
 }
 
 async function fetchEditorRowComments(render, requestKey) {
@@ -259,6 +278,10 @@ export async function saveActiveEditorRowComment(render) {
     return;
   }
 
+  if (!(await ensureEditorRowReadyForCommentWrite(render, rowId))) {
+    return;
+  }
+
   const team = selectedProjectsTeam();
   const context = findChapterContextById(editorChapter.chapterId);
   if (!Number.isFinite(team?.installationId) || !context?.project?.name) {
@@ -304,6 +327,10 @@ export async function deleteActiveEditorRowComment(render, commentId) {
   const editorChapter = state.editorChapter;
   const rowId = editorChapter?.activeRowId;
   if (!editorChapter?.chapterId || !rowId || !commentId) {
+    return;
+  }
+
+  if (!(await ensureEditorRowReadyForCommentWrite(render, rowId))) {
     return;
   }
 

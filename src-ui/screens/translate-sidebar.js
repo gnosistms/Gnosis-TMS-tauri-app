@@ -20,7 +20,8 @@ import { normalizeEditorSidebarTab } from "../app/editor-comments.js";
 import { findEditorHistoryPreviousEntry } from "../app/editor-history.js";
 import { resolveEditorAiTranslateLanguages } from "../app/editor-ai-translate-target.js";
 import { renderCommentsPane } from "./translate-comments-pane.js";
-import { renderHistoryContent, renderHistoryPane } from "./translate-history-pane.js";
+import { renderHistoryPane } from "./translate-history-pane.js";
+import { renderHistoryContent, renderHistoryNote } from "./translate-history-shared.js";
 
 function renderSidebarTab(label, tab, activeTab) {
   const isActive = tab === activeTab;
@@ -191,8 +192,13 @@ function renderReviewPane(editorChapter, rows, languages) {
   const activeRow = rows.find((row) => row.id === editorChapter?.activeRowId) ?? null;
   const activeLanguage =
     languages.find((language) => language.code === editorChapter?.activeLanguageCode) ?? null;
-  const activeSection =
-    activeRow?.sections?.find((section) => section.code === activeLanguage?.code) ?? null;
+  const activeSection = activeRow?.sections?.find((section) => section.code === activeLanguage?.code) ?? null;
+  const activeHistorySection = activeSection
+    ? {
+        ...activeSection,
+        textStyle: activeRow?.textStyle ?? "paragraph",
+      }
+    : null;
   const history =
     editorChapter?.history && typeof editorChapter.history === "object"
       ? editorChapter.history
@@ -201,9 +207,12 @@ function renderReviewPane(editorChapter, rows, languages) {
           error: "",
           entries: [],
   };
-  const previousEntry = findEditorHistoryPreviousEntry(history.entries, activeSection);
+  const previousEntry = findEditorHistoryPreviousEntry(history.entries, activeHistorySection);
   const currentEntry = {
     plainText: activeSection?.text ?? "",
+    reviewed: activeSection?.reviewed === true,
+    pleaseCheck: activeSection?.pleaseCheck === true,
+    textStyle: activeRow?.textStyle ?? "paragraph",
   };
   const isLastUpdateExpanded = expandedSectionKeys.has("last-update");
   const isAiReviewExpanded = expandedSectionKeys.has("ai-review");
@@ -299,6 +308,7 @@ function renderReviewPane(editorChapter, rows, languages) {
               <div class="history-group__entries">
                 <article class="history-item">
                   <p class="history-item__content" lang="${escapeHtml(activeLanguage.code)}">${renderHistoryContent(currentEntry, previousEntry)}</p>
+                  ${renderHistoryNote(currentEntry, previousEntry, { includeMarkers: false })}
                   ${
                     history.status === "loading"
                       ? '<p class="history-item__meta">Loading previous version...</p>'

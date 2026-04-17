@@ -521,9 +521,7 @@ export async function replaceSelectedEditorRows(render) {
 }
 
 export async function toggleEditorRowFieldMarker(render, rowId, languageCode, kind) {
-  await toggleEditorRowFieldMarkerFlow(render, rowId, languageCode, kind, {
-    updateEditorChapterRow,
-  });
+  await toggleEditorRowFieldMarkerFlow(render, rowId, languageCode, kind, editorPersistenceOperations());
 }
 
 export function toggleEditorLanguageCollapsed(languageCode) {
@@ -548,8 +546,8 @@ export function toggleEditorLanguageCollapsed(languageCode) {
   };
 }
 
-export async function persistEditorRowOnBlur(render, rowId) {
-  await persistEditorRowOnBlurFlow(render, rowId, editorPersistenceOperations());
+export async function persistEditorRowOnBlur(render, rowId, options = {}) {
+  await persistEditorRowOnBlurFlow(render, rowId, editorPersistenceOperations(), options);
 }
 
 export async function resolveEditorRowConflict(render, rowId, resolution) {

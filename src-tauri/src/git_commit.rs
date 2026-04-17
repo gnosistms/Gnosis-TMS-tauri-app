@@ -10,6 +10,7 @@ use crate::{
 pub(crate) struct GitCommitMetadata<'a> {
     pub(crate) operation: Option<&'a str>,
     pub(crate) status_note: Option<&'a str>,
+    pub(crate) ai_model: Option<&'a str>,
 }
 
 fn is_nothing_to_commit(detail: &str) -> bool {
@@ -50,6 +51,7 @@ pub(crate) fn git_commit_as_signed_in_user(
         GitCommitMetadata {
             operation: None,
             status_note: None,
+            ai_model: None,
         },
     )
 }
@@ -92,6 +94,16 @@ pub(crate) fn git_commit_as_signed_in_user_with_metadata(
         command
             .arg("-m")
             .arg(format!("GTMS-Status-Note: {status_note}"));
+    }
+
+    if let Some(ai_model) = metadata
+        .ai_model
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        command
+            .arg("-m")
+            .arg(format!("GTMS-AI-Model: {ai_model}"));
     }
 
     if !paths.is_empty() {

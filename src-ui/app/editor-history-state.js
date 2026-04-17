@@ -311,6 +311,10 @@ export function applyEditorRowHistoryRestored(row, languageCode, payload) {
   }
 
   const nextValue = payload?.plainText ?? "";
+  const nextTextStyle =
+    typeof payload?.textStyle === "string" && payload.textStyle.trim()
+      ? payload.textStyle
+      : row.textStyle;
   const nextFieldState = normalizeFieldState({
     reviewed: payload?.reviewed,
     pleaseCheck: payload?.pleaseCheck,
@@ -318,6 +322,7 @@ export function applyEditorRowHistoryRestored(row, languageCode, payload) {
 
   return {
     ...row,
+    textStyle: nextTextStyle,
     fields: {
       ...cloneRowFields(row.fields),
       [languageCode]: nextValue,

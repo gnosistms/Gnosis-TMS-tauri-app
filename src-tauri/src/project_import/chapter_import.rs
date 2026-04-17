@@ -301,6 +301,7 @@ pub(super) fn import_xlsx_to_gtms_sync(
         GitCommitMetadata {
             operation: Some("import"),
             status_note: None,
+            ai_model: None,
         },
     )?;
 

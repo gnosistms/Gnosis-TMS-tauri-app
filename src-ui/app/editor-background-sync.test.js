@@ -367,3 +367,38 @@ test("background sync ignores stale row updates from an obsolete sync base", asy
   assert.equal(state.editorChapter.rows[0]?.freshness, "fresh");
   assert.equal(state.editorChapter.chapterBaseCommitSha, "head-2");
 });
+
+test("background sync skips skipDirtyFlush requests while row writes are still pending", async () => {
+  installEditorFixture();
+  const render = createRenderRecorder();
+  startEditorBackgroundSyncSession(render);
+  await Promise.resolve();
+  invokeLog.length = 0;
+
+  state.editorChapter.rows = [{
+    rowId: "row-1",
+    freshness: "fresh",
+    remotelyDeleted: false,
+    saveStatus: "idle",
+    saveError: "",
+    textStyle: "heading1",
+    textStyleSaveState: { status: "saving", error: "" },
+    markerSaveState: { status: "idle", error: "", languageCode: null, kind: null },
+    fields: { es: "hola", en: "hello" },
+    persistedFields: { es: "hola", en: "hello" },
+    fieldStates: { es: { reviewed: false, pleaseCheck: false }, en: { reviewed: false, pleaseCheck: false } },
+    persistedFieldStates: { es: { reviewed: false, pleaseCheck: false }, en: { reviewed: false, pleaseCheck: false } },
+  }];
+
+  invokeHandler = async (command) => {
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  const payload = await syncEditorBackgroundNow(render, { skipDirtyFlush: true });
+
+  assert.equal(payload, null);
+  assert.deepEqual(
+    invokeLog.filter((entry) => entry.command === "sync_gtms_project_editor_repo"),
+    [],
+  );
+});

@@ -522,7 +522,12 @@ export async function runEditorAiTranslate(render, actionId, operations = {}) {
     );
     render?.({ scope: "translate-body" });
 
-    await persistEditorRowOnBlur(render, context.rowId);
+    await persistEditorRowOnBlur(render, context.rowId, {
+      commitMetadata: {
+        operation: "ai-translation",
+        aiModel: modelId,
+      },
+    });
 
     if (state.editorChapter?.chapterId !== context.chapterId) {
       return;

@@ -7,7 +7,6 @@ import {
   rowFieldsEqual,
 } from "./editor-row-persistence-model.js";
 import {
-  dirtyTrackedEditorRowIds,
   markEditorRowDirty,
   reconcileDirtyTrackedEditorRows,
 } from "./editor-dirty-row-state.js";
@@ -54,6 +53,45 @@ import {
 
 const pendingEditorRowPersistByRowId = new Map();
 const pendingEditorDirtyRowScanFrameByRowId = new Map();
+const pendingEditorRowCommitMetadataByRowId = new Map();
+
+function normalizePendingEditorCommitMetadata(commitMetadata) {
+  if (!commitMetadata || typeof commitMetadata !== "object") {
+    return null;
+  }
+
+  const operation =
+    typeof commitMetadata.operation === "string" ? commitMetadata.operation.trim() : "";
+  const aiModel =
+    typeof commitMetadata.aiModel === "string" ? commitMetadata.aiModel.trim() : "";
+  if (!operation && !aiModel) {
+    return null;
+  }
+
+  return {
+    operation,
+    aiModel,
+  };
+}
+
+function queuePendingEditorCommitMetadata(rowId, commitMetadata) {
+  const normalizedCommitMetadata = normalizePendingEditorCommitMetadata(commitMetadata);
+  if (!rowId || !normalizedCommitMetadata) {
+    return;
+  }
+
+  pendingEditorRowCommitMetadataByRowId.set(rowId, normalizedCommitMetadata);
+}
+
+function takePendingEditorCommitMetadata(rowId) {
+  if (!rowId) {
+    return null;
+  }
+
+  const commitMetadata = pendingEditorRowCommitMetadataByRowId.get(rowId) ?? null;
+  pendingEditorRowCommitMetadataByRowId.delete(rowId);
+  return commitMetadata;
+}
 
 function lockConflictFilter() {
   if (!state.editorChapter?.chapterId) {
@@ -107,11 +145,38 @@ function updateUnreviewAllModalError(message = "", render) {
 }
 
 function chapterHasPendingEditorWrites(chapterState = state.editorChapter) {
-  return (Array.isArray(chapterState?.rows) ? chapterState.rows : []).some((row) =>
+  return hasPendingEditorWrites(chapterState);
+}
+
+function rowHasPendingCommentWrite(rowId, chapterState = state.editorChapter) {
+  if (!rowId || !chapterState?.chapterId) {
+    return false;
+  }
+
+  const comments = chapterState.comments;
+  const commentsRowId = typeof comments?.rowId === "string" ? comments.rowId : "";
+  return commentsRowId === rowId && (comments?.status === "saving" || comments?.status === "deleting");
+}
+
+function scopedEditorRows(chapterState = state.editorChapter, options = {}) {
+  const rowIdFilter = Array.isArray(options?.rowIds)
+    ? new Set(options.rowIds.filter(Boolean))
+    : null;
+  const excludeRowId = typeof options?.excludeRowId === "string" ? options.excludeRowId : "";
+
+  return (Array.isArray(chapterState?.rows) ? chapterState.rows : []).filter((row) => {
+    const rowId = row?.rowId;
+    return Boolean(rowId) && rowId !== excludeRowId && (!rowIdFilter || rowIdFilter.has(rowId));
+  });
+}
+
+export function hasPendingEditorWrites(chapterState = state.editorChapter, options = {}) {
+  return scopedEditorRows(chapterState, options).some((row) =>
     row?.saveStatus === "saving"
     || row?.markerSaveState?.status === "saving"
     || row?.textStyleSaveState?.status === "saving"
     || rowHasPersistedChanges(row)
+    || rowHasPendingCommentWrite(row?.rowId, chapterState)
   );
 }
 
@@ -181,7 +246,7 @@ export async function flushDirtyEditorRows(render, operations = {}, options = {}
     excludeRowId: typeof options?.excludeRowId === "string" ? options.excludeRowId : "",
   });
   if (candidateRowIds.length === 0) {
-    return true;
+    return !hasPendingEditorWrites(state.editorChapter, options);
   }
 
   for (const rowId of candidateRowIds) {
@@ -204,10 +269,7 @@ export async function flushDirtyEditorRows(render, operations = {}, options = {}
   }
 
   reconcileDirtyTrackedEditorRows(candidateRowIds);
-  return dirtyTrackedEditorRowIds(state.editorChapter, candidateRowIds).every((rowId) => {
-    const row = findEditorRowById(rowId, state.editorChapter);
-    return !row || !rowHasPersistedChanges(row);
-  });
+  return !hasPendingEditorWrites(state.editorChapter, options);
 }
 
 export function updateEditorRowFieldValue(rowId, languageCode, nextValue, operations = {}) {
@@ -232,9 +294,17 @@ export async function updateEditorRowTextStyle(render, rowId, nextTextStyle, ope
   }
 
   const normalizedTextStyle = normalizeEditorRowTextStyle(nextTextStyle);
-  const row = await ensureEditorRowReadyForWrite(render, rowId);
+  let row = await ensureEditorRowReadyForWrite(render, rowId);
   if (!row) {
     return;
+  }
+
+  if (row.saveStatus !== "idle") {
+    await persistEditorRowOnBlur(render, rowId, operations);
+    row = await ensureEditorRowReadyForWrite(render, rowId);
+    if (!row || row.saveStatus !== "idle") {
+      return;
+    }
   }
 
   const previousTextStyle = normalizeEditorRowTextStyle(row.textStyle);
@@ -242,12 +312,12 @@ export async function updateEditorRowTextStyle(render, rowId, nextTextStyle, ope
     return;
   }
 
-  if (row.saveStatus !== "idle") {
-    showNoticeBadge("Save the row text before updating its style.", render);
+  if (row.markerSaveState?.status === "saving" || row.textStyleSaveState?.status === "saving") {
     return;
   }
 
-  if (row.markerSaveState?.status === "saving" || row.textStyleSaveState?.status === "saving") {
+  if (rowHasPendingCommentWrite(rowId, editorChapter)) {
+    showNoticeBadge("Finish saving comments before updating the row style.", render);
     return;
   }
 
@@ -261,6 +331,7 @@ export async function updateEditorRowTextStyle(render, rowId, nextTextStyle, ope
     rowId,
     (currentRow) => applyEditorRowTextStyleSaving(currentRow, normalizedTextStyle),
   );
+  markEditorRowDirty(rowId);
   render?.({ scope: "translate-body" });
 
   try {
@@ -284,7 +355,12 @@ export async function updateEditorRowTextStyle(render, rowId, nextTextStyle, ope
         ...state.editorChapter,
         chapterBaseCommitSha: nextChapterBaseCommitSha(payload, state.editorChapter),
       };
+      reconcileDirtyTrackedEditorRows([rowId]);
       render?.({ scope: "translate-body" });
+
+      if (state.editorChapter.activeRowId === rowId) {
+        loadActiveEditorFieldHistory(render);
+      }
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -293,6 +369,7 @@ export async function updateEditorRowTextStyle(render, rowId, nextTextStyle, ope
         rowId,
         (currentRow) => applyEditorRowTextStyleSaveFailed(currentRow, previousTextStyle, message),
       );
+      reconcileDirtyTrackedEditorRows([rowId]);
       render?.({ scope: "translate-body" });
     }
     showNoticeBadge(message || "The row style could not be saved.", render);
@@ -325,6 +402,27 @@ export async function toggleEditorRowFieldMarker(
     return;
   }
 
+  const activeRowId =
+    typeof state.editorChapter.activeRowId === "string" ? state.editorChapter.activeRowId : "";
+  if (activeRowId && activeRowId !== rowId) {
+    const activeRow = findEditorRowById(activeRowId, state.editorChapter);
+    if (rowHasFieldChanges(activeRow)) {
+      await persistEditorRowOnBlur(render, activeRowId, operations);
+      if (state.editorChapter?.chapterId !== editorChapter.chapterId) {
+        return;
+      }
+    }
+  }
+
+  if (!(await flushDirtyEditorRows(render, operations, { excludeRowId: rowId }))) {
+    showNoticeBadge("Finish saving the current row before updating review markers.", render);
+    return;
+  }
+
+  if (state.editorChapter?.chapterId !== editorChapter.chapterId) {
+    return;
+  }
+
   const row = await ensureEditorRowReadyForWrite(render, rowId);
   if (!row) {
     return;
@@ -336,6 +434,16 @@ export async function toggleEditorRowFieldMarker(
   }
 
   if (row.markerSaveState?.status === "saving") {
+    return;
+  }
+
+  if (row.textStyleSaveState?.status === "saving") {
+    showNoticeBadge("Finish saving the row style before updating review markers.", render);
+    return;
+  }
+
+  if (rowHasPendingCommentWrite(rowId, editorChapter)) {
+    showNoticeBadge("Finish saving comments before updating review markers.", render);
     return;
   }
 
@@ -526,8 +634,8 @@ export async function confirmEditorUnreviewAll(render, operations = {}) {
   }
 }
 
-export async function persistEditorRowOnBlur(render, rowId, operations = {}) {
-  await persistEditorRow(render, rowId, operations);
+export async function persistEditorRowOnBlur(render, rowId, operations = {}, options = {}) {
+  await persistEditorRow(render, rowId, operations, options);
 }
 
 export async function resolveEditorRowConflict(render, rowId, resolution, operations = {}) {
@@ -574,6 +682,7 @@ async function persistEditorRow(render, rowId, operations = {}, options = {}) {
 
   const existingPersist = pendingEditorRowPersistByRowId.get(rowId);
   if (existingPersist) {
+    queuePendingEditorCommitMetadata(rowId, options?.commitMetadata);
     const row = findEditorRowById(rowId, state.editorChapter);
     if (row?.saveStatus === "saving") {
       updateEditorChapterRow(rowId, (currentRow) => applyEditorRowPersistQueuedWhileSaving(currentRow));
@@ -582,6 +691,7 @@ async function persistEditorRow(render, rowId, operations = {}, options = {}) {
     return;
   }
 
+  let nextCommitMetadata = normalizePendingEditorCommitMetadata(options?.commitMetadata);
   const persistPromise = (async () => {
     while (state.editorChapter?.chapterId) {
       const editorChapter = state.editorChapter;
@@ -600,6 +710,7 @@ async function persistEditorRow(render, rowId, operations = {}, options = {}) {
       }
 
       if (!rowHasFieldChanges(row)) {
+        pendingEditorRowCommitMetadataByRowId.delete(rowId);
         if (row.saveStatus !== "idle" || row.saveError) {
           updateEditorChapterRow(rowId, (currentRow) => applyEditorRowPersistReset(currentRow));
           render?.({ scope: "translate-sidebar" });
@@ -613,6 +724,9 @@ async function persistEditorRow(render, rowId, operations = {}, options = {}) {
       if (!Number.isFinite(team?.installationId) || !context?.project?.name) {
         return;
       }
+
+      const commitMetadata = nextCommitMetadata ?? takePendingEditorCommitMetadata(rowId);
+      nextCommitMetadata = null;
 
       const fieldsToPersist = cloneRowFields(row.fields);
       const reviewLanguageToOpen = reviewTabLanguageToOpenAfterSave(
@@ -637,6 +751,8 @@ async function persistEditorRow(render, rowId, operations = {}, options = {}) {
               options?.baseFieldsOverride && typeof options.baseFieldsOverride === "object"
                 ? cloneRowFields(options.baseFieldsOverride)
                 : cloneRowFields(row.baseFields),
+            ...(commitMetadata?.operation ? { operation: commitMetadata.operation } : {}),
+            ...(commitMetadata?.aiModel ? { aiModel: commitMetadata.aiModel } : {}),
           },
         });
 

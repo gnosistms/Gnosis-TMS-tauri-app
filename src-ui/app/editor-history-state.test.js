@@ -27,6 +27,7 @@ function historyEntry({
   authorName = "gnosistms",
   operationType = "editor-update",
   plainText = "text",
+  textStyle = "paragraph",
   reviewed = false,
   pleaseCheck = false,
 } = {}) {
@@ -37,6 +38,7 @@ function historyEntry({
     message: "Update row",
     operationType,
     plainText,
+    textStyle,
     reviewed,
     pleaseCheck,
   };
@@ -68,6 +70,7 @@ function chapter(overrides = {}) {
 function row(overrides = {}) {
   return {
     rowId: "row-1",
+    textStyle: "paragraph",
     fields: { es: "nuevo" },
     persistedFields: { es: "viejo" },
     fieldStates: { es: { reviewed: false, pleaseCheck: false } },
@@ -215,10 +218,12 @@ test("applyEditorHistoryRestoreFailed returns the history panel to ready state",
 test("applyEditorRowHistoryRestored updates current and persisted field values together", () => {
   const updatedRow = applyEditorRowHistoryRestored(row(), "es", {
     plainText: "restored text",
+    textStyle: "heading1",
     reviewed: true,
     pleaseCheck: true,
   });
 
+  assert.equal(updatedRow.textStyle, "heading1");
   assert.equal(updatedRow.fields.es, "restored text");
   assert.equal(updatedRow.persistedFields.es, "restored text");
   assert.deepEqual(updatedRow.fieldStates.es, { reviewed: true, pleaseCheck: true });

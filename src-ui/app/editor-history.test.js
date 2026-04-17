@@ -13,7 +13,9 @@ function historyEntry({
   commitSha,
   authorName = "gnosistms",
   operationType = "editor-update",
+  aiModel = null,
   plainText = "text",
+  textStyle = "paragraph",
   reviewed = false,
   pleaseCheck = false,
   statusNote = null,
@@ -25,7 +27,9 @@ function historyEntry({
     message: "Update row",
     operationType,
     statusNote,
+    aiModel,
     plainText,
+    textStyle,
     reviewed,
     pleaseCheck,
   };
@@ -63,10 +67,11 @@ test("marker-only runs collapse to the final net state within a same-author grou
   assert.equal(collapsedModel.groups[0].entries[1].commitSha, "c1");
 });
 
-test("current-entry matching requires text and marker state equality", () => {
+test("current-entry matching requires text, marker state, and style equality", () => {
   const entry = historyEntry({
     commitSha: "c1",
     plainText: "Hello",
+    textStyle: "heading2",
     reviewed: true,
     pleaseCheck: false,
   });
@@ -74,6 +79,7 @@ test("current-entry matching requires text and marker state equality", () => {
   assert.equal(
     editorHistoryEntryMatchesSection(entry, {
       text: "Hello",
+      textStyle: "heading2",
       reviewed: true,
       pleaseCheck: false,
     }),
@@ -82,11 +88,42 @@ test("current-entry matching requires text and marker state equality", () => {
   assert.equal(
     editorHistoryEntryMatchesSection(entry, {
       text: "Hello",
+      textStyle: "paragraph",
       reviewed: false,
       pleaseCheck: false,
     }),
     false,
   );
+});
+
+test("style-only history updates stay visible instead of collapsing as marker-only changes", () => {
+  const model = buildEditorHistoryViewModel([
+    historyEntry({ commitSha: "c3", textStyle: "paragraph" }),
+    historyEntry({ commitSha: "c2", textStyle: "heading1" }),
+    historyEntry({ commitSha: "c1", operationType: "import", textStyle: "paragraph" }),
+  ], new Set(["c1"]));
+
+  assert.equal(model.groups.length, 2);
+  assert.equal(model.groups[0].entries.length, 2);
+  assert.equal(model.groups[0].entries[0].commitSha, "c3");
+  assert.equal(model.groups[0].entries[1].commitSha, "c2");
+  assert.equal(model.groups[1].entries[0].commitSha, "c1");
+});
+
+test("AI translation history groups use the model and author as the effective author label", () => {
+  const model = buildEditorHistoryViewModel([
+    historyEntry({ commitSha: "c4", authorName: "sirhans", operationType: "ai-translation", aiModel: "gpt-5.4" }),
+    historyEntry({ commitSha: "c3", authorName: "sirhans", operationType: "ai-translation", aiModel: "gpt-5.4" }),
+    historyEntry({ commitSha: "c2", authorName: "sirhans", operationType: "editor-update" }),
+    historyEntry({ commitSha: "c1", operationType: "import" }),
+  ], new Set());
+
+  assert.equal(model.groups.length, 3);
+  assert.equal(model.groups[0].authorName, "GPT 5.4 - sirhans");
+  assert.equal(model.groups[0].entries.length, 2);
+  assert.equal(model.groups[1].authorName, "sirhans");
+  assert.equal(model.groups[1].entries.length, 1);
+  assert.equal(model.groups[2].authorName, "Import file");
 });
 
 test("expanded history groups stay expanded when new entries are added to the same author run", () => {
@@ -132,6 +169,7 @@ test("findEditorHistoryPreviousEntry returns the previous saved version for the 
   assert.equal(
     findEditorHistoryPreviousEntry(entries, {
       text: "Current",
+      textStyle: "paragraph",
       reviewed: false,
       pleaseCheck: false,
     })?.commitSha,
@@ -141,9 +179,27 @@ test("findEditorHistoryPreviousEntry returns the previous saved version for the 
   assert.equal(
     findEditorHistoryPreviousEntry(entries, {
       text: "Unsaved change",
+      textStyle: "paragraph",
       reviewed: false,
       pleaseCheck: false,
     })?.commitSha,
     "c3",
+  );
+});
+
+test("findEditorHistoryPreviousEntry treats style-only changes as distinct saved versions", () => {
+  const entries = [
+    historyEntry({ commitSha: "c2", textStyle: "heading1" }),
+    historyEntry({ commitSha: "c1", operationType: "import", textStyle: "paragraph" }),
+  ];
+
+  assert.equal(
+    findEditorHistoryPreviousEntry(entries, {
+      text: "text",
+      textStyle: "heading1",
+      reviewed: false,
+      pleaseCheck: false,
+    })?.commitSha,
+    "c1",
   );
 });

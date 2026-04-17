@@ -60,6 +60,7 @@ import {
   noteEditorBackgroundSyncScrollActivity,
   scheduleDirtyEditorRowScan,
   setActiveEditorField,
+  toggleEditorRowFieldMarker,
   toggleEditorReplaceEnabled,
 } from "./app/translate-flow.js";
 import { checkForAppUpdate } from "./app/updater-flow.js";
@@ -410,12 +411,45 @@ app.addEventListener("focusin", (event) => {
 app.addEventListener("mousedown", (event) => {
   const button = event.target instanceof Element
     ? event.target.closest("[data-editor-row-text-style-button]")
+  : null;
+  if (!button) {
+    return;
+  }
+
+  event.preventDefault();
+});
+
+app.addEventListener("pointerdown", (event) => {
+  if (!(event instanceof PointerEvent) || event.button !== 0) {
+    return;
+  }
+
+  const button = event.target instanceof Element
+    ? event.target.closest('[data-action="toggle-editor-reviewed"], [data-action="toggle-editor-please-check"]')
+    : null;
+  if (!(button instanceof HTMLButtonElement)) {
+    return;
+  }
+
+  event.preventDefault();
+  event.stopPropagation();
+
+  const rowId = button.dataset.rowId ?? "";
+  const languageCode = button.dataset.languageCode ?? "";
+  const kind = button.dataset.action === "toggle-editor-reviewed" ? "reviewed" : "please-check";
+  void toggleEditorRowFieldMarker(render, rowId, languageCode, kind);
+});
+
+app.addEventListener("click", (event) => {
+  const button = event.target instanceof Element
+    ? event.target.closest('[data-action="toggle-editor-reviewed"], [data-action="toggle-editor-please-check"]')
     : null;
   if (!button) {
     return;
   }
 
   event.preventDefault();
+  event.stopPropagation();
 });
 
 app.addEventListener("focusout", (event) => {

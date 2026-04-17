@@ -318,6 +318,7 @@ test("runEditorAiTranslate uses the configured translate action and persists int
   };
 
   let persistCount = 0;
+  let persistedCommitMetadata = null;
   invokeHandler = async (command, payload = {}) => {
     if (command === "load_ai_provider_secret") {
       assert.equal(payload.providerId, "openai");
@@ -349,6 +350,7 @@ test("runEditorAiTranslate uses the configured translate action and persists int
     },
     async persistEditorRowOnBlur(_render, rowId) {
       persistCount += 1;
+      persistedCommitMetadata = arguments[2]?.commitMetadata ?? null;
       const row = state.editorChapter.rows.find((entry) => entry.rowId === rowId);
       row.persistedFields = { ...row.fields };
       row.saveStatus = "idle";
@@ -356,6 +358,10 @@ test("runEditorAiTranslate uses the configured translate action and persists int
   });
 
   assert.equal(persistCount, 1);
+  assert.deepEqual(persistedCommitMetadata, {
+    operation: "ai-translation",
+    aiModel: "gpt-5.4-mini",
+  });
   assert.equal(state.editorChapter.rows[0].fields.vi, "Xin chao");
   assert.equal(state.editorChapter.rows[0].persistedFields.vi, "Xin chao");
   assert.equal(state.editorChapter.aiTranslate.translate1.status, "idle");

@@ -1377,6 +1377,7 @@ fn commit_local_metadata_change(
         GitCommitMetadata {
             operation: Some(operation),
             status_note: Some("local-team-metadata"),
+            ai_model: None,
         },
     )?;
     Ok(true)

@@ -1,9 +1,43 @@
+import { normalizeEditorRowTextStyle } from "./editor-row-text-style.js";
+
+function formatAiHistoryModelLabel(modelId) {
+  const normalizedModelId = String(modelId ?? "").trim();
+  if (!normalizedModelId) {
+    return "";
+  }
+
+  return normalizedModelId
+    .split(/[-_]+/)
+    .filter(Boolean)
+    .map((part) => {
+      if (/^\d+(?:\.\d+)*$/.test(part)) {
+        return part;
+      }
+
+      switch (part.toLowerCase()) {
+        case "gpt":
+          return "GPT";
+        case "gemini":
+          return "Gemini";
+        case "claude":
+          return "Claude";
+        case "deepseek":
+          return "DeepSeek";
+        default:
+          return `${part.charAt(0).toUpperCase()}${part.slice(1)}`;
+      }
+    })
+    .join(" ");
+}
+
 function historyAuthorLabel(entry) {
   if (String(entry?.operationType ?? "").trim().toLowerCase() === "import") {
     return "Import file";
   }
 
-  return String(entry?.authorName ?? "").trim() || "Unknown author";
+  const authorName = String(entry?.authorName ?? "").trim() || "Unknown author";
+  const aiModelLabel = formatAiHistoryModelLabel(entry?.aiModel);
+  return aiModelLabel ? `${aiModelLabel} - ${authorName}` : authorName;
 }
 
 function isImportHistoryEntry(entry) {
@@ -39,6 +73,13 @@ function isMarkerStateChangeOnly(previousEntry, currentEntry) {
   }
 
   if (String(previousEntry?.plainText ?? "") !== String(currentEntry?.plainText ?? "")) {
+    return false;
+  }
+
+  if (
+    normalizeEditorRowTextStyle(previousEntry?.textStyle)
+    !== normalizeEditorRowTextStyle(currentEntry?.textStyle)
+  ) {
     return false;
   }
 
@@ -177,6 +218,7 @@ export function editorHistoryEntryMatchesSection(entry, section) {
     String(entry.plainText ?? "") === String(section.text ?? "")
     && (entry.reviewed === true) === (section.reviewed === true)
     && (entry.pleaseCheck === true) === (section.pleaseCheck === true)
+    && normalizeEditorRowTextStyle(entry.textStyle) === normalizeEditorRowTextStyle(section.textStyle)
   );
 }
 

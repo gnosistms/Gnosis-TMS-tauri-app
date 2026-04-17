@@ -124,6 +124,10 @@ pub(crate) struct UpdateEditorRowFieldsInput {
     fields: BTreeMap<String, String>,
     #[serde(default)]
     base_fields: BTreeMap<String, String>,
+    #[serde(default)]
+    operation: String,
+    #[serde(default)]
+    ai_model: String,
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -298,7 +302,9 @@ pub(crate) struct EditorFieldHistoryEntry {
     message: String,
     operation_type: Option<String>,
     status_note: Option<String>,
+    ai_model: Option<String>,
     plain_text: String,
+    text_style: String,
     reviewed: bool,
     please_check: bool,
 }
@@ -321,6 +327,7 @@ pub(crate) struct RestoreEditorFieldHistoryResponse {
     row_id: String,
     language_code: String,
     plain_text: String,
+    text_style: String,
     reviewed: bool,
     please_check: bool,
     source_word_counts: BTreeMap<String, usize>,
@@ -569,6 +576,7 @@ struct GitCommitMetadata {
     message: String,
     operation_type: Option<String>,
     status_note: Option<String>,
+    ai_model: Option<String>,
 }
 
 pub(super) fn load_gtms_chapter_editor_data_sync(
@@ -713,6 +721,7 @@ pub(super) fn insert_gtms_editor_row_sync(
         CommitMetadata {
             operation: Some("insert"),
             status_note: None,
+            ai_model: None,
         },
     )?;
 
@@ -1128,6 +1137,7 @@ pub(super) fn update_gtms_editor_row_lifecycle_sync(
                 "restore"
             }),
             status_note: None,
+            ai_model: None,
         },
     )?;
 
@@ -1192,6 +1202,7 @@ pub(super) fn permanently_delete_gtms_editor_row_sync(
         CommitMetadata {
             operation: Some("permanent-delete"),
             status_note: None,
+            ai_model: None,
         },
     )?;
 
@@ -1316,8 +1327,13 @@ pub(super) fn update_gtms_editor_row_fields_sync(
             &format!("Update row {}", input.row_id),
             &[&relative_row_json],
             CommitMetadata {
-                operation: Some("editor-update"),
+                operation: Some(if input.operation.trim().is_empty() {
+                    "editor-update"
+                } else {
+                    input.operation.trim()
+                }),
                 status_note: None,
+                ai_model: Some(input.ai_model.trim()).filter(|value| !value.is_empty()),
             },
         )?;
         next_row = updated_row_file;
@@ -1449,6 +1465,7 @@ pub(super) fn update_gtms_editor_row_fields_batch_sync(
                     Some(operation)
                 },
                 status_note: None,
+                ai_model: None,
             },
         )?;
         let commit_sha = if commit_output.is_empty() {
@@ -1553,7 +1570,8 @@ pub(super) fn restore_gtms_editor_field_from_history_sync(
             input.language_code
         )
     })?;
-    let historical_plain_text = historical_field_value.plain_text.clone();
+    let historical_plain_text = historical_field_value.field_value.plain_text.clone();
+    let historical_text_style = historical_field_value.text_style.clone();
 
     let original_row_text = fs::read_to_string(&row_json_path).map_err(|error| {
         format!(
@@ -1574,6 +1592,7 @@ pub(super) fn restore_gtms_editor_field_from_history_sync(
             row_json_path.display()
         )
     })?;
+    let _ = apply_editor_text_style_update(&mut row_value, &historical_text_style)?;
     let row_object = row_value
         .as_object_mut()
         .ok_or_else(|| "The row file is not a JSON object.".to_string())?;
@@ -1601,15 +1620,16 @@ pub(super) fn restore_gtms_editor_field_from_history_sync(
         .get(&input.language_code)
         .map(|field| {
             field.plain_text != historical_plain_text
-                || field.editor_flags.reviewed != historical_field_value.editor_flags.reviewed
+                || field.editor_flags.reviewed
+                    != historical_field_value.field_value.editor_flags.reviewed
                 || field.editor_flags.please_check
-                    != historical_field_value.editor_flags.please_check
+                    != historical_field_value.field_value.editor_flags.please_check
         })
         .unwrap_or(true);
     if field_changed {
         field_object.remove("html_preview");
     }
-    set_editor_field_flags(field_object, &historical_field_value.editor_flags);
+    set_editor_field_flags(field_object, &historical_field_value.field_value.editor_flags);
 
     let updated_row_json = serde_json::to_string_pretty(&row_value).map_err(|error| {
         format!(
@@ -1649,6 +1669,7 @@ pub(super) fn restore_gtms_editor_field_from_history_sync(
             CommitMetadata {
                 operation: Some("restore"),
                 status_note: None,
+                ai_model: None,
             },
         )?;
     }
@@ -1657,8 +1678,9 @@ pub(super) fn restore_gtms_editor_field_from_history_sync(
         row_id: input.row_id,
         language_code: input.language_code,
         plain_text: historical_plain_text,
-        reviewed: historical_field_value.editor_flags.reviewed,
-        please_check: historical_field_value.editor_flags.please_check,
+        text_style: historical_text_style,
+        reviewed: historical_field_value.field_value.editor_flags.reviewed,
+        please_check: historical_field_value.field_value.editor_flags.please_check,
         source_word_counts,
         chapter_base_commit_sha: current_repo_head_sha(&repo_path),
     })
@@ -1789,10 +1811,11 @@ pub(super) fn reverse_gtms_editor_batch_replace_commit_sync(
             }
         ),
         &commit_paths,
-        CommitMetadata {
-            operation: Some("editor-replace"),
-            status_note: None,
-        },
+            CommitMetadata {
+                operation: Some("editor-replace"),
+                status_note: None,
+                ai_model: None,
+            },
     )?;
     let commit_sha = if commit_output.is_empty() {
         None
@@ -1967,6 +1990,7 @@ pub(super) fn update_gtms_editor_row_field_flag_sync(
             CommitMetadata {
                 operation: Some("field-status"),
                 status_note: Some(status_note),
+                ai_model: None,
             },
         )?;
     }
@@ -2031,6 +2055,7 @@ pub(super) fn update_gtms_editor_row_text_style_sync(
             CommitMetadata {
                 operation: Some("text-style"),
                 status_note: None,
+                ai_model: None,
             },
         )?;
     }
@@ -2117,6 +2142,7 @@ pub(super) fn clear_gtms_editor_reviewed_markers_sync(
             CommitMetadata {
                 operation: Some("field-status"),
                 status_note: Some("Marked all unreviewed"),
+                ai_model: None,
             },
         )?;
     }
@@ -2158,7 +2184,8 @@ fn load_git_history_for_path(
             let author_name = parts.next().unwrap_or_default().trim();
             let committed_at = parts.next().unwrap_or_default().trim();
             let full_message = parts.next().unwrap_or_default();
-            let (message, operation_type, status_note) = parse_git_commit_message(full_message);
+            let (message, operation_type, status_note, ai_model) =
+                parse_git_commit_message(full_message);
 
             Ok(GitCommitMetadata {
                 commit_sha: commit_sha.to_string(),
@@ -2167,15 +2194,16 @@ fn load_git_history_for_path(
                 message,
                 operation_type,
                 status_note,
+                ai_model,
             })
         })
         .collect()
 }
 
-fn parse_git_commit_message(message: &str) -> (String, Option<String>, Option<String>) {
+fn parse_git_commit_message(message: &str) -> (String, Option<String>, Option<String>, Option<String>) {
     let trimmed_message = message.trim();
     if trimmed_message.is_empty() {
-        return (String::new(), None, None);
+        return (String::new(), None, None, None);
     }
 
     let subject = trimmed_message
@@ -2191,7 +2219,10 @@ fn parse_git_commit_message(message: &str) -> (String, Option<String>, Option<St
     let status_note = trimmed_message
         .lines()
         .find_map(parse_gtms_status_note_trailer);
-    (subject, operation_type, status_note)
+    let ai_model = trimmed_message
+        .lines()
+        .find_map(parse_gtms_ai_model_trailer);
+    (subject, operation_type, status_note, ai_model)
 }
 
 fn parse_gtms_operation_trailer(line: &str) -> Option<String> {
@@ -2219,6 +2250,20 @@ fn parse_gtms_status_note_trailer(line: &str) -> Option<String> {
         None
     } else {
         Some(note.to_string())
+    }
+}
+
+fn parse_gtms_ai_model_trailer(line: &str) -> Option<String> {
+    let (name, value) = line.split_once(':')?;
+    if !name.trim().eq_ignore_ascii_case("GTMS-AI-Model") {
+        return None;
+    }
+
+    let ai_model = value.trim();
+    if ai_model.is_empty() {
+        None
+    } else {
+        Some(ai_model.to_string())
     }
 }
 
@@ -2261,7 +2306,7 @@ fn load_git_commit_operation_type(
     commit_sha: &str,
 ) -> Result<Option<String>, String> {
     let full_message = git_output(repo_path, &["show", "-s", "--format=%B", commit_sha])?;
-    let (_, operation_type, _) = parse_git_commit_message(&full_message);
+    let (_, operation_type, _, _) = parse_git_commit_message(&full_message);
     Ok(operation_type)
 }
 
@@ -2510,38 +2555,47 @@ fn set_editor_field_flags(
 #[derive(Clone, PartialEq, Eq)]
 struct HistoricalFieldSignature {
     plain_text: String,
+    text_style: String,
     reviewed: bool,
     please_check: bool,
 }
 
+#[derive(Clone)]
+struct HistoricalFieldVersion {
+    field_value: StoredFieldValue,
+    text_style: String,
+}
+
 impl HistoricalFieldSignature {
-    fn from_field_value(field: &StoredFieldValue) -> Self {
+    fn from_version(version: &HistoricalFieldVersion) -> Self {
         Self {
-            plain_text: field.plain_text.clone(),
-            reviewed: field.editor_flags.reviewed,
-            please_check: field.editor_flags.please_check,
+            plain_text: version.field_value.plain_text.clone(),
+            text_style: version.text_style.clone(),
+            reviewed: version.field_value.editor_flags.reviewed,
+            please_check: version.field_value.editor_flags.please_check,
         }
     }
 }
 
 fn build_editor_field_history_entries(
     commits: Vec<GitCommitMetadata>,
-    historical_field_values: Vec<Option<StoredFieldValue>>,
+    historical_field_versions: Vec<Option<HistoricalFieldVersion>>,
 ) -> Vec<EditorFieldHistoryEntry> {
-    let baseline_index = historical_field_values.iter().rposition(Option::is_some);
+    let baseline_index = historical_field_versions.iter().rposition(Option::is_some);
     let mut entries = Vec::new();
     let mut last_recorded_field_signature: Option<HistoricalFieldSignature> = None;
 
-    for (index, (commit, historical_field_value)) in commits
+    for (index, (commit, historical_field_version)) in commits
         .into_iter()
-        .zip(historical_field_values.into_iter())
+        .zip(historical_field_versions.into_iter())
         .enumerate()
     {
-        let Some(field_value) = historical_field_value else {
+        let Some(field_version) = historical_field_version else {
             continue;
         };
-        let plain_text = field_value.plain_text.clone();
-        let field_signature = HistoricalFieldSignature::from_field_value(&field_value);
+        let plain_text = field_version.field_value.plain_text.clone();
+        let text_style = field_version.text_style.clone();
+        let field_signature = HistoricalFieldSignature::from_version(&field_version);
         let is_baseline_entry = baseline_index == Some(index);
 
         if !is_baseline_entry && last_recorded_field_signature.as_ref() == Some(&field_signature) {
@@ -2556,9 +2610,11 @@ fn build_editor_field_history_entries(
             message: commit.message,
             operation_type: commit.operation_type,
             status_note: commit.status_note,
+            ai_model: commit.ai_model,
             plain_text,
-            reviewed: field_value.editor_flags.reviewed,
-            please_check: field_value.editor_flags.please_check,
+            text_style,
+            reviewed: field_version.field_value.editor_flags.reviewed,
+            please_check: field_version.field_value.editor_flags.please_check,
         });
     }
 
@@ -2570,7 +2626,7 @@ fn load_historical_row_field_value(
     relative_row_json: &str,
     commit_sha: &str,
     language_code: &str,
-) -> Result<Option<StoredFieldValue>, String> {
+) -> Result<Option<HistoricalFieldVersion>, String> {
     let row_text = git_output(
         repo_path,
         &["show", &format!("{commit_sha}:{relative_row_json}")],
@@ -2582,7 +2638,14 @@ fn load_historical_row_field_value(
         )
     })?;
 
-    Ok(row_file.fields.get(language_code).cloned())
+    Ok(row_file
+        .fields
+        .get(language_code)
+        .cloned()
+        .map(|field_value| HistoricalFieldVersion {
+            field_value,
+            text_style: row_text_style(&row_file),
+        }))
 }
 
 fn load_historical_row_field_values_batch(
@@ -2590,7 +2653,7 @@ fn load_historical_row_field_values_batch(
     relative_row_json: &str,
     commits: &[GitCommitMetadata],
     language_code: &str,
-) -> Result<Vec<Option<StoredFieldValue>>, String> {
+) -> Result<Vec<Option<HistoricalFieldVersion>>, String> {
     if commits.is_empty() {
         return Ok(Vec::new());
     }
@@ -2684,7 +2747,16 @@ fn load_historical_row_field_values_batch(
                 relative_row_json, commit.commit_sha
             )
         })?;
-        values.push(row_file.fields.get(language_code).cloned());
+        values.push(
+            row_file
+                .fields
+                .get(language_code)
+                .cloned()
+                .map(|field_value| HistoricalFieldVersion {
+                    field_value,
+                    text_style: row_text_style(&row_file),
+                }),
+        );
     }
 
     Ok(values)
@@ -2825,8 +2897,8 @@ mod tests {
         create_inserted_editor_row, create_inserted_row_file, editor_row_from_stored_row_file,
         filter_commit_row_paths_for_chapter, parse_git_commit_message,
         preferred_target_language_code, row_text_style, ChapterLanguage, GitCommitMetadata,
-        StoredChapterFile, StoredChapterSettings, StoredFieldEditorFlags, StoredFieldValue,
-        StoredRowFile, DEFAULT_EDITOR_TEXT_STYLE,
+        HistoricalFieldVersion, StoredChapterFile, StoredChapterSettings,
+        StoredFieldEditorFlags, StoredFieldValue, StoredRowFile, DEFAULT_EDITOR_TEXT_STYLE,
     };
 
     fn history_commit(commit_sha: &str, operation_type: Option<&str>) -> GitCommitMetadata {
@@ -2837,6 +2909,7 @@ mod tests {
             message: format!("Commit {commit_sha}"),
             operation_type: operation_type.map(str::to_string),
             status_note: None,
+            ai_model: None,
         }
     }
 
@@ -2850,15 +2923,40 @@ mod tests {
         }
     }
 
+    fn history_version(
+        plain_text: &str,
+        text_style: &str,
+        reviewed: bool,
+        please_check: bool,
+    ) -> HistoricalFieldVersion {
+        HistoricalFieldVersion {
+            field_value: history_field(plain_text, reviewed, please_check),
+            text_style: text_style.to_string(),
+        }
+    }
+
     #[test]
     fn parse_git_commit_message_reads_editor_replace_operation_trailer() {
-        let (subject, operation_type, status_note) = parse_git_commit_message(
+        let (subject, operation_type, status_note, ai_model) = parse_git_commit_message(
             "Undo batch replace in 3 rows\n\nGTMS-Operation: editor-replace\n",
         );
 
         assert_eq!(subject, "Undo batch replace in 3 rows");
         assert_eq!(operation_type.as_deref(), Some("editor-replace"));
         assert_eq!(status_note, None);
+        assert_eq!(ai_model, None);
+    }
+
+    #[test]
+    fn parse_git_commit_message_reads_ai_model_trailer() {
+        let (subject, operation_type, status_note, ai_model) = parse_git_commit_message(
+            "Update row row-1\n\nGTMS-Operation: ai-translation\nGTMS-AI-Model: gpt-5.4\n",
+        );
+
+        assert_eq!(subject, "Update row row-1");
+        assert_eq!(operation_type.as_deref(), Some("ai-translation"));
+        assert_eq!(status_note, None);
+        assert_eq!(ai_model.as_deref(), Some("gpt-5.4"));
     }
 
     #[test]
@@ -3139,18 +3237,20 @@ mod tests {
                 history_commit("c1", Some("import")),
             ],
             vec![
-                Some(history_field("Hello", false, false)),
-                Some(history_field("Hello", false, false)),
-                Some(history_field("Hello", false, false)),
+                Some(history_version("Hello", DEFAULT_EDITOR_TEXT_STYLE, false, false)),
+                Some(history_version("Hello", DEFAULT_EDITOR_TEXT_STYLE, false, false)),
+                Some(history_version("Hello", DEFAULT_EDITOR_TEXT_STYLE, false, false)),
             ],
         );
 
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0].commit_sha, "c3");
         assert_eq!(entries[0].operation_type.as_deref(), Some("editor-update"));
+        assert_eq!(entries[0].text_style, DEFAULT_EDITOR_TEXT_STYLE);
         assert_eq!(entries[1].commit_sha, "c1");
         assert_eq!(entries[1].operation_type.as_deref(), Some("import"));
         assert_eq!(entries[1].plain_text, "Hello");
+        assert_eq!(entries[1].text_style, DEFAULT_EDITOR_TEXT_STYLE);
     }
 
     #[test]
@@ -3162,8 +3262,13 @@ mod tests {
                 history_commit("c1", Some("import")),
             ],
             vec![
-                Some(history_field("Translated", false, false)),
-                Some(history_field("", false, false)),
+                Some(history_version(
+                    "Translated",
+                    DEFAULT_EDITOR_TEXT_STYLE,
+                    false,
+                    false,
+                )),
+                Some(history_version("", DEFAULT_EDITOR_TEXT_STYLE, false, false)),
                 None,
             ],
         );
@@ -3171,9 +3276,36 @@ mod tests {
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0].commit_sha, "c3");
         assert_eq!(entries[0].plain_text, "Translated");
+        assert_eq!(entries[0].text_style, DEFAULT_EDITOR_TEXT_STYLE);
         assert_eq!(entries[1].commit_sha, "c2");
         assert_eq!(entries[1].operation_type.as_deref(), Some("insert"));
         assert_eq!(entries[1].plain_text, "");
+        assert_eq!(entries[1].text_style, DEFAULT_EDITOR_TEXT_STYLE);
+    }
+
+    #[test]
+    fn build_editor_field_history_entries_keeps_style_only_changes() {
+        let entries = build_editor_field_history_entries(
+            vec![
+                history_commit("c2", Some("text-style")),
+                history_commit("c1", Some("import")),
+            ],
+            vec![
+                Some(history_version("Hello", "heading1", false, false)),
+                Some(history_version(
+                    "Hello",
+                    DEFAULT_EDITOR_TEXT_STYLE,
+                    false,
+                    false,
+                )),
+            ],
+        );
+
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].commit_sha, "c2");
+        assert_eq!(entries[0].text_style, "heading1");
+        assert_eq!(entries[1].commit_sha, "c1");
+        assert_eq!(entries[1].text_style, DEFAULT_EDITOR_TEXT_STYLE);
     }
 
     #[test]

@@ -1,5 +1,8 @@
 import { requireBrokerSession } from "./auth-flow.js";
-import { flushDirtyEditorRows as flushDirtyEditorRowsFlow } from "./editor-persistence-flow.js";
+import {
+  flushDirtyEditorRows as flushDirtyEditorRowsFlow,
+  hasPendingEditorWrites as hasPendingEditorWritesFlow,
+} from "./editor-persistence-flow.js";
 import { markEditorRowsStale } from "./editor-row-sync-flow.js";
 import {
   applyEditorSelectionsToProjectState,
@@ -120,6 +123,10 @@ async function runEditorBackgroundSync(render, options = {}) {
     if (await flushDirtyEditorRowsFlow(render, persistenceOperations()) === false) {
       return null;
     }
+  }
+
+  if (hasPendingEditorWritesFlow()) {
+    return null;
   }
 
   const previousSyncStatus = state.editorChapter?.backgroundSyncStatus ?? "";

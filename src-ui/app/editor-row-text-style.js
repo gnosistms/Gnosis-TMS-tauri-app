@@ -32,6 +32,14 @@ export const EDITOR_ROW_TEXT_STYLE_OPTIONS = [
   },
 ];
 
+export function editorRowTextStyleLabel(value) {
+  const normalizedValue = normalizeEditorRowTextStyle(value);
+  return (
+    EDITOR_ROW_TEXT_STYLE_OPTIONS.find((option) => option.value === normalizedValue)?.label
+    ?? "P"
+  );
+}
+
 export function normalizeEditorRowTextStyle(value) {
   switch (String(value ?? "").trim()) {
     case "h1":

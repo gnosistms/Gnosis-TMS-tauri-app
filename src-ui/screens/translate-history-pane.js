@@ -5,163 +5,15 @@ import {
   tooltipAttributes,
 } from "../lib/ui.js";
 import {
-  diff_match_patch,
-  DIFF_DELETE,
-  DIFF_INSERT,
-} from "../lib/vendor/diff-match-patch.js";
-import {
   buildEditorHistoryViewModel,
   editorHistoryEntryMatchesSection,
   historyEntryCanUndoReplace,
 } from "../app/editor-history.js";
-import { renderTranslationMarkerIcon } from "../app/editor-row-render.js";
-
-const historyDiffEngine = new diff_match_patch();
-
-function formatHistoryTimestamp(value) {
-  if (!value) {
-    return "";
-  }
-
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return String(value);
-  }
-
-  return new Intl.DateTimeFormat(undefined, {
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(date);
-}
-
-function buildHistoryDiffSegments(previousText, currentText) {
-  const diffs = historyDiffEngine.diff_main(String(previousText ?? ""), String(currentText ?? ""), false);
-  historyDiffEngine.diff_cleanupSemantic(diffs);
-  historyDiffEngine.diff_cleanupSemanticLossless(diffs);
-
-  return diffs
-    .filter((diff) => Boolean(diff?.[1]))
-    .map((diff) => {
-      const operation = diff?.[0];
-      const text = diff?.[1] ?? "";
-      return {
-        type:
-          operation === DIFF_INSERT
-            ? "insert"
-            : operation === DIFF_DELETE
-              ? "delete"
-              : "equal",
-        text,
-      };
-    });
-}
-
-export function renderHistoryContent(entry, previousEntry) {
-  const currentText = String(entry?.plainText ?? "");
-  if (!previousEntry) {
-    return escapeHtml(currentText);
-  }
-
-  return buildHistoryDiffSegments(previousEntry.plainText, currentText)
-    .map((segment) => {
-      if (segment.type === "equal") {
-        return escapeHtml(segment.text);
-      }
-
-      return `<span class="history-diff__${segment.type}">${escapeHtml(segment.text)}</span>`;
-    })
-    .join("");
-}
-
-function buildHistoryMarkerNoteActions(entry, previousEntry) {
-  if (!entry || !previousEntry) {
-    return [];
-  }
-
-  const actions = [];
-  if ((previousEntry.reviewed === true) !== (entry.reviewed === true)) {
-    actions.push({
-      kind: "reviewed",
-      enabled: entry.reviewed === true,
-    });
-  }
-  if ((previousEntry.pleaseCheck === true) !== (entry.pleaseCheck === true)) {
-    actions.push({
-      kind: "please-check",
-      enabled: entry.pleaseCheck === true,
-    });
-  }
-
-  return actions;
-}
-
-function renderHistoryMarkerNoteAction(action) {
-  const title =
-    action.kind === "reviewed"
-      ? action.enabled
-        ? "Marked reviewed"
-        : "Removed reviewed"
-      : action.enabled
-        ? 'Marked "Please check"'
-        : 'Removed "Please check"';
-  const icon = `
-    <span
-      class="history-item__marker-note-icon history-item__marker-note-icon--${action.kind}${action.enabled ? "" : " history-item__marker-note-icon--removed"}"
-      aria-hidden="true"
-    >
-      ${renderTranslationMarkerIcon(action.kind)}
-    </span>
-  `;
-
-  return `<span class="history-item__marker-note" title="${escapeHtml(title)}">${icon}</span>`;
-}
-
-function buildHistoryMarkerNoteActionsFromStatusNote(statusNote) {
-  switch (String(statusNote ?? "").trim()) {
-    case "Marked reviewed":
-      return [{ kind: "reviewed", enabled: true }];
-    case "Marked unreviewed":
-    case "Removed reviewed":
-      return [{ kind: "reviewed", enabled: false }];
-    case 'Marked "Please check"':
-      return [{ kind: "please-check", enabled: true }];
-    case 'Removed "Please check"':
-      return [{ kind: "please-check", enabled: false }];
-    default:
-      return [];
-  }
-}
-
-function renderHistoryNote(entry, previousEntry) {
-  const markerActions = (
-    Array.isArray(entry?.markerNoteActions) && entry.markerNoteActions.length > 0
-      ? entry.markerNoteActions
-      : buildHistoryMarkerNoteActions(entry, previousEntry)
-  );
-  if (markerActions.length > 0) {
-    return `
-      <p class="history-item__note history-item__note--markers">
-        ${markerActions.map((action) => renderHistoryMarkerNoteAction(action)).join("")}
-      </p>
-    `;
-  }
-
-  const fallbackMarkerActions = buildHistoryMarkerNoteActionsFromStatusNote(entry?.statusNote);
-  if (fallbackMarkerActions.length > 0) {
-    return `
-      <p class="history-item__note history-item__note--markers">
-        ${fallbackMarkerActions.map((action) => renderHistoryMarkerNoteAction(action)).join("")}
-      </p>
-    `;
-  }
-
-  return entry?.statusNote
-    ? `<p class="history-item__note">${escapeHtml(entry.statusNote)}</p>`
-    : "";
-}
+import {
+  formatHistoryTimestamp,
+  renderHistoryContent,
+  renderHistoryNote,
+} from "./translate-history-shared.js";
 
 function renderHistoryEntry(entry, previousEntry, activeLanguage, activeSection, canRestore, history, replaceUndoModal) {
   const isCurrentValue = editorHistoryEntryMatchesSection(entry, activeSection);
@@ -219,8 +71,13 @@ export function renderHistoryPane(editorChapter, rows, languages) {
   const activeRow = rows.find((row) => row.id === editorChapter?.activeRowId) ?? null;
   const activeLanguage =
     languages.find((language) => language.code === editorChapter?.activeLanguageCode) ?? null;
-  const activeSection =
-    activeRow?.sections?.find((section) => section.code === activeLanguage?.code) ?? null;
+  const activeSection = activeRow?.sections?.find((section) => section.code === activeLanguage?.code) ?? null;
+  const activeHistorySection = activeSection
+    ? {
+        ...activeSection,
+        textStyle: activeRow?.textStyle ?? "paragraph",
+      }
+    : null;
   const history =
     editorChapter?.history && typeof editorChapter.history === "object"
       ? editorChapter.history
@@ -241,7 +98,9 @@ export function renderHistoryPane(editorChapter, rows, languages) {
         };
   const expandedGroupKeys = history.expandedGroupKeys instanceof Set ? history.expandedGroupKeys : new Set();
   const canRestore =
-    activeRow?.saveStatus === "idle" && activeSection?.markerSaveState?.status !== "saving";
+    activeRow?.saveStatus === "idle"
+    && activeSection?.markerSaveState?.status !== "saving"
+    && activeRow?.textStyleSaveState?.status !== "saving";
   const historyView = buildEditorHistoryViewModel(history.entries, expandedGroupKeys);
   const historyGroups = historyView.groups;
   const olderVisibleEntryByCommitSha = historyView.olderVisibleEntryByCommitSha;
@@ -301,7 +160,7 @@ export function renderHistoryPane(editorChapter, rows, languages) {
                                 entry,
                                 olderVisibleEntryByCommitSha.get(entry.commitSha) ?? null,
                                 activeLanguage,
-                                activeSection,
+                                activeHistorySection,
                                 canRestore,
                                 history,
                                 replaceUndoModal,
