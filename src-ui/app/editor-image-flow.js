@@ -180,12 +180,31 @@ async function validateImageUrlLoadable(url) {
   await loadImageBySource(url);
 }
 
-async function validateUploadedImageFile(file) {
-  if (!(file instanceof File)) {
+function readableUploadLike(value) {
+  return value && typeof value === "object" && typeof value.arrayBuffer === "function";
+}
+
+function uploadLikeFileName(value, fallback = "image") {
+  const name = typeof value?.name === "string" ? value.name.trim() : "";
+  return name || fallback;
+}
+
+async function coerceUploadBlob(value) {
+  if (!readableUploadLike(value)) {
     throw new Error("Invalid file");
   }
 
-  const objectUrl = URL.createObjectURL(file);
+  const bytes = await value.arrayBuffer();
+  const type = typeof value?.type === "string" ? value.type : "";
+  return new Blob([bytes], { type });
+}
+
+async function validateUploadedImageFile(fileBlob) {
+  if (!(fileBlob instanceof Blob)) {
+    throw new Error("Invalid file");
+  }
+
+  const objectUrl = URL.createObjectURL(fileBlob);
   try {
     await loadImageBySource(objectUrl);
   } finally {
@@ -486,6 +505,25 @@ async function saveUploadedEditorImage(render, rowId, languageCode, file, operat
     return;
   }
 
+  let fileBlob;
+  let fileName;
+  try {
+    fileBlob = await coerceUploadBlob(file);
+    fileName = uploadLikeFileName(file);
+  } catch {
+    if (state.editorChapter?.chapterId) {
+      setImageEditorState({
+        rowId,
+        languageCode,
+        mode: "upload",
+        status: "idle",
+      });
+      setImageInvalidFileModal(true);
+      render?.({ scope: "translate-body" });
+    }
+    return;
+  }
+
   const chapterAtRequest = state.editorChapter.chapterId;
   setImageEditorState({
     rowId,
@@ -496,7 +534,7 @@ async function saveUploadedEditorImage(render, rowId, languageCode, file, operat
   render?.({ scope: "translate-body" });
 
   try {
-    await validateUploadedImageFile(file);
+    await validateUploadedImageFile(fileBlob);
   } catch {
     if (state.editorChapter?.chapterId === chapterAtRequest) {
       setImageEditorState({
@@ -539,7 +577,7 @@ async function saveUploadedEditorImage(render, rowId, languageCode, file, operat
   }
 
   try {
-    const dataBase64 = await fileToBase64Data(file);
+    const dataBase64 = await fileToBase64Data(fileBlob);
     const payload = await invoke("upload_gtms_editor_language_image", {
       input: {
         installationId: team.installationId,
@@ -548,7 +586,7 @@ async function saveUploadedEditorImage(render, rowId, languageCode, file, operat
         chapterId: state.editorChapter.chapterId,
         rowId,
         languageCode,
-        filename: file.name ?? "image",
+        filename: fileName,
         dataBase64,
         baseImage: imagePayloadValue(currentImage(rowId, languageCode)),
       },
@@ -619,7 +657,7 @@ export async function openEditorImageUploadPicker(render, rowId, languageCode, o
 }
 
 export async function handleDroppedEditorImageFile(render, rowId, languageCode, file, operations = {}) {
-  if (!(file instanceof File) || !imageEditorMatches(state.editorChapter, rowId, languageCode, "upload")) {
+  if (!file || !imageEditorMatches(state.editorChapter, rowId, languageCode, "upload")) {
     return;
   }
 

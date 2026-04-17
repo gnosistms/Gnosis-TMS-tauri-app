@@ -7,7 +7,6 @@ import {
   collapseEmptyEditorImageEditor,
   flushDirtyEditorRows,
   handleDroppedEditorImageFile,
-  openEditorImageUploadPicker,
   persistEditorImageUrlOnBlur,
   scheduleDirtyEditorRowScan,
   setActiveEditorField,
@@ -31,6 +30,30 @@ function activeElementIsInEditorLanguageCluster(rowId, languageCode) {
     && cluster.dataset.rowId === rowId
     && cluster.dataset.languageCode === languageCode
   );
+}
+
+function droppedEditorImageFile(dataTransfer) {
+  const directFile = dataTransfer?.files?.[0];
+  if (directFile) {
+    return directFile;
+  }
+
+  if (!dataTransfer?.items) {
+    return null;
+  }
+
+  for (const item of Array.from(dataTransfer.items)) {
+    if (item?.kind !== "file" || typeof item.getAsFile !== "function") {
+      continue;
+    }
+
+    const file = item.getAsFile();
+    if (file) {
+      return file;
+    }
+  }
+
+  return null;
 }
 
 export function registerTranslateEditorDomEvents(app, render) {
@@ -80,11 +103,6 @@ export function registerTranslateEditorDomEvents(app, render) {
     const uploadDropzone = closestEventTarget(event.target, "[data-editor-image-upload-dropzone]");
     if (uploadDropzone instanceof HTMLButtonElement) {
       event.preventDefault();
-      void openEditorImageUploadPicker(
-        render,
-        uploadDropzone.dataset.rowId ?? "",
-        uploadDropzone.dataset.languageCode ?? "",
-      );
       return;
     }
 
@@ -166,26 +184,6 @@ export function registerTranslateEditorDomEvents(app, render) {
       return;
     }
 
-    const uploadDropzone = closestEventTarget(event.target, "[data-editor-image-upload-dropzone]");
-    if (uploadDropzone instanceof HTMLButtonElement) {
-      const key = typeof event.key === "string" ? event.key.toLowerCase() : "";
-      if (
-        (key === "enter" || key === " ")
-        && !event.shiftKey
-        && !event.metaKey
-        && !event.ctrlKey
-        && !event.altKey
-      ) {
-        event.preventDefault();
-        void openEditorImageUploadPicker(
-          render,
-          uploadDropzone.dataset.rowId ?? "",
-          uploadDropzone.dataset.languageCode ?? "",
-        );
-      }
-      return;
-    }
-
     const input = closestEventTarget(event.target, "[data-editor-image-url-input]");
     if (!(input instanceof HTMLInputElement)) {
       return;
@@ -213,6 +211,9 @@ export function registerTranslateEditorDomEvents(app, render) {
     }
 
     event.preventDefault();
+    if (event.dataTransfer) {
+      event.dataTransfer.dropEffect = "copy";
+    }
   });
 
   app.addEventListener("drop", (event) => {
@@ -222,7 +223,7 @@ export function registerTranslateEditorDomEvents(app, render) {
     }
 
     event.preventDefault();
-    const file = event.dataTransfer?.files?.[0] ?? null;
+    const file = droppedEditorImageFile(event.dataTransfer);
     if (!file) {
       return;
     }

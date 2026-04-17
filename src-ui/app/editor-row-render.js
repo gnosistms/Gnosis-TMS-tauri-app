@@ -284,6 +284,7 @@ function renderEditorLanguageImage(row, language) {
         <button
           class="translation-language-panel__image-upload"
           type="button"
+          data-action="open-editor-image-upload-picker"
           data-editor-image-upload-dropzone
           data-row-id="${escapeHtml(row.id)}"
           data-language-code="${escapeHtml(language.code)}"
