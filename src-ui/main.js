@@ -7,7 +7,6 @@ import {
 import { registerAppEvents } from "./app/events.js";
 import {
   initializeEditorVirtualization,
-  syncEditorVirtualizationRowLayout,
 } from "./app/editor-virtualization.js";
 import {
   loadGithubAppTestConfig,
@@ -26,7 +25,6 @@ import {
 } from "./app/editor-scroll-debug.js";
 import {
   syncEditorCommentDraftTextareaHeights,
-  syncEditorRowTextareaHeight,
   syncEditorRowTextareaHeights,
   syncGlossaryVariantTextareaHeights,
 } from "./app/autosize.js";
@@ -57,19 +55,12 @@ import {
 import { hydratePersistentAppState, state } from "./app/state.js";
 import { noteGlossaryBackgroundSyncScrollActivity } from "./app/glossary-background-sync.js";
 import {
-  collapseEmptyEditorFootnote,
-  collapseEmptyEditorImageEditor,
   flushDirtyEditorRows,
-  handleDroppedEditorImageFile,
   noteEditorBackgroundSyncScrollActivity,
-  openEditorImageUploadPicker,
-  persistEditorImageUrlOnBlur,
   scheduleDirtyEditorRowScan,
-  setActiveEditorField,
-  submitEditorImageUrl,
-  toggleEditorRowFieldMarker,
   toggleEditorReplaceEnabled,
 } from "./app/translate-flow.js";
+import { registerTranslateEditorDomEvents } from "./app/translate-editor-dom-events.js";
 import { checkForAppUpdate } from "./app/updater-flow.js";
 import { renderGithubAppTestScreen } from "./screens/github-app-test.js";
 import { renderAppUpdateModal } from "./screens/app-update-modal.js";
@@ -227,24 +218,6 @@ function restoreFocusedInputState(focusSnapshot) {
   }
 
   return true;
-}
-
-function activeElementIsInEditorLanguageCluster(rowId, languageCode) {
-  if (!rowId || !languageCode) {
-    return false;
-  }
-
-  const activeElement = document.activeElement;
-  if (!(activeElement instanceof Element)) {
-    return false;
-  }
-
-  const cluster = activeElement.closest("[data-editor-language-cluster]");
-  return (
-    cluster instanceof HTMLElement
-    && cluster.dataset.rowId === rowId
-    && cluster.dataset.languageCode === languageCode
-  );
 }
 
 function render(options = {}) {
@@ -415,242 +388,6 @@ function renderWithOptions(options = {}) {
   document.title = titles[state.screen] ?? "Gnosis TMS";
 }
 
-app.addEventListener("focusin", (event) => {
-  const input = event.target.closest?.("[data-editor-row-field]");
-  if (!(input instanceof HTMLTextAreaElement)) {
-    return;
-  }
-
-  const rowId = input.dataset.rowId ?? "";
-  const languageCode = input.dataset.languageCode ?? "";
-  void setActiveEditorField(render, rowId, languageCode, { input });
-  syncEditorRowTextareaHeight(input);
-  requestAnimationFrame(() => syncEditorVirtualizationRowLayout(input));
-  requestAnimationFrame(() => {
-    const activeElement = document.activeElement;
-    if (
-      !(activeElement instanceof HTMLTextAreaElement)
-      || !activeElement.matches("[data-editor-row-field]")
-      || activeElement.dataset.rowId !== rowId
-      || activeElement.dataset.languageCode !== languageCode
-    ) {
-      return;
-    }
-
-    void flushDirtyEditorRows(render, { excludeRowId: rowId });
-  });
-});
-
-app.addEventListener("mousedown", (event) => {
-  const button = event.target instanceof Element
-    ? event.target.closest(
-      "[data-editor-row-text-style-button], [data-editor-footnote-button], [data-editor-image-button], [data-editor-image-upload-dropzone], [data-editor-language-image-remove-button]",
-    )
-  : null;
-  if (!button) {
-    return;
-  }
-
-  event.preventDefault();
-});
-
-app.addEventListener("pointerdown", (event) => {
-  if (!(event instanceof PointerEvent) || event.button !== 0) {
-    return;
-  }
-
-  const uploadDropzone = event.target instanceof Element
-    ? event.target.closest("[data-editor-image-upload-dropzone]")
-    : null;
-  if (uploadDropzone instanceof HTMLButtonElement) {
-    event.preventDefault();
-    void openEditorImageUploadPicker(
-      render,
-      uploadDropzone.dataset.rowId ?? "",
-      uploadDropzone.dataset.languageCode ?? "",
-    );
-    return;
-  }
-
-  const button = event.target instanceof Element
-    ? event.target.closest('[data-action="toggle-editor-reviewed"], [data-action="toggle-editor-please-check"]')
-    : null;
-  if (!(button instanceof HTMLButtonElement)) {
-    return;
-  }
-
-  event.preventDefault();
-  event.stopPropagation();
-
-  const rowId = button.dataset.rowId ?? "";
-  const languageCode = button.dataset.languageCode ?? "";
-  const kind = button.dataset.action === "toggle-editor-reviewed" ? "reviewed" : "please-check";
-  void toggleEditorRowFieldMarker(render, rowId, languageCode, kind);
-});
-
-app.addEventListener("click", (event) => {
-  const button = event.target instanceof Element
-    ? event.target.closest('[data-action="toggle-editor-reviewed"], [data-action="toggle-editor-please-check"]')
-    : null;
-  if (!button) {
-    return;
-  }
-
-  event.preventDefault();
-  event.stopPropagation();
-});
-
-app.addEventListener("focusout", (event) => {
-  const target = event.target instanceof Element ? event.target : null;
-  const textarea = target?.closest?.("[data-editor-row-field]");
-  const imageUrlInput = target?.closest?.("[data-editor-image-url-input]");
-  const imageUploadDropzone = target?.closest?.("[data-editor-image-upload-dropzone]");
-  const control = textarea ?? imageUrlInput ?? imageUploadDropzone;
-  if (!(control instanceof HTMLElement)) {
-    return;
-  }
-
-  const rowId = control.dataset.rowId ?? "";
-  const languageCode = control.dataset.languageCode ?? "";
-  if (textarea instanceof HTMLTextAreaElement) {
-    requestAnimationFrame(() => {
-      syncEditorRowTextareaHeight(textarea);
-      syncEditorVirtualizationRowLayout(textarea);
-    });
-  }
-  requestAnimationFrame(() => {
-    if (imageUploadDropzone instanceof HTMLElement && !document.hasFocus()) {
-      return;
-    }
-
-    if (activeElementIsInEditorLanguageCluster(rowId, languageCode)) {
-      return;
-    }
-
-    collapseEmptyEditorFootnote(render, rowId, languageCode);
-    collapseEmptyEditorImageEditor(render, rowId, languageCode);
-    void persistEditorImageUrlOnBlur(render, rowId, languageCode);
-  });
-  if (textarea instanceof HTMLTextAreaElement) {
-    scheduleDirtyEditorRowScan(render, rowId);
-  }
-});
-
-app.addEventListener("keydown", (event) => {
-  if (
-    event.defaultPrevented
-    || event.repeat
-    || event.isComposing
-  ) {
-    return;
-  }
-
-  const uploadDropzone = event.target instanceof Element
-    ? event.target.closest("[data-editor-image-upload-dropzone]")
-    : null;
-  if (uploadDropzone instanceof HTMLButtonElement) {
-    const key = typeof event.key === "string" ? event.key.toLowerCase() : "";
-    if (
-      (key === "enter" || key === " ")
-      && !event.shiftKey
-      && !event.metaKey
-      && !event.ctrlKey
-      && !event.altKey
-    ) {
-      event.preventDefault();
-      void openEditorImageUploadPicker(
-        render,
-        uploadDropzone.dataset.rowId ?? "",
-        uploadDropzone.dataset.languageCode ?? "",
-      );
-    }
-    return;
-  }
-
-  const input = event.target instanceof Element
-    ? event.target.closest("[data-editor-image-url-input]")
-    : null;
-  if (!(input instanceof HTMLInputElement)) {
-    return;
-  }
-
-  const key = typeof event.key === "string" ? event.key.toLowerCase() : "";
-  if (
-    key !== "enter"
-    || !event.shiftKey
-    || event.metaKey
-    || event.ctrlKey
-    || event.altKey
-  ) {
-    return;
-  }
-
-  event.preventDefault();
-  void submitEditorImageUrl(render, input.dataset.rowId ?? "", input.dataset.languageCode ?? "");
-});
-
-app.addEventListener("dragover", (event) => {
-  const dropzone = event.target instanceof Element
-    ? event.target.closest("[data-editor-image-upload-dropzone]")
-    : null;
-  if (!dropzone) {
-    return;
-  }
-
-  event.preventDefault();
-});
-
-app.addEventListener("drop", (event) => {
-  const dropzone = event.target instanceof Element
-    ? event.target.closest("[data-editor-image-upload-dropzone]")
-    : null;
-  if (!(dropzone instanceof HTMLElement)) {
-    return;
-  }
-
-  event.preventDefault();
-  const file = event.dataTransfer?.files?.[0] ?? null;
-  if (!file) {
-    return;
-  }
-
-  void handleDroppedEditorImageFile(
-    render,
-    dropzone.dataset.rowId ?? "",
-    dropzone.dataset.languageCode ?? "",
-    file,
-  );
-});
-
-app.addEventListener("load", (event) => {
-  const image = event.target instanceof Element
-    ? event.target.closest("[data-editor-language-image-preview-img]")
-    : null;
-  if (!(image instanceof HTMLImageElement)) {
-    return;
-  }
-
-  syncEditorVirtualizationRowLayout(image);
-}, true);
-
-app.addEventListener("beforeinput", (event) => {
-  const input = event.target.closest?.("[data-editor-row-field]");
-  if (!(input instanceof HTMLTextAreaElement)) {
-    return;
-  }
-
-  const row = state.editorChapter?.rows?.find?.((candidate) => candidate?.rowId === input.dataset.rowId) ?? null;
-  if (!row || (row.freshness !== "stale" && row.remotelyDeleted !== true)) {
-    return;
-  }
-
-  event.preventDefault();
-  void setActiveEditorField(render, input.dataset.rowId ?? "", input.dataset.languageCode ?? "", {
-    input,
-    suppressNotice: true,
-  });
-}, true);
-
 app.addEventListener("scroll", (event) => {
   if (state.screen === "glossaryEditor") {
     noteGlossaryBackgroundSyncScrollActivity();
@@ -760,6 +497,7 @@ async function bootstrap() {
   hydratePersistentAppState();
   await initializeWindowPresentation();
   registerAppEvents(render);
+  registerTranslateEditorDomEvents(app, render);
   const devRuntimeFlags = readDevRuntimeFlags();
   if (devRuntimeFlags.editorFixture) {
     applyEditorRegressionFixture(state, devRuntimeFlags.editorFixture);
