@@ -311,6 +311,7 @@ export function applyEditorRowHistoryRestored(row, languageCode, payload) {
   }
 
   const nextValue = payload?.plainText ?? "";
+  const nextFootnote = payload?.footnote ?? "";
   const nextTextStyle =
     typeof payload?.textStyle === "string" && payload.textStyle.trim()
       ? payload.textStyle
@@ -327,6 +328,10 @@ export function applyEditorRowHistoryRestored(row, languageCode, payload) {
       ...cloneRowFields(row.fields),
       [languageCode]: nextValue,
     },
+    footnotes: {
+      ...cloneRowFields(row.footnotes),
+      [languageCode]: nextFootnote,
+    },
     fieldStates: {
       ...cloneRowFieldStates(row.fieldStates),
       [languageCode]: nextFieldState,
@@ -334,6 +339,10 @@ export function applyEditorRowHistoryRestored(row, languageCode, payload) {
     persistedFields: {
       ...cloneRowFields(row.persistedFields),
       [languageCode]: nextValue,
+    },
+    persistedFootnotes: {
+      ...cloneRowFields(row.persistedFootnotes),
+      [languageCode]: nextFootnote,
     },
     persistedFieldStates: {
       ...cloneRowFieldStates(row.persistedFieldStates),

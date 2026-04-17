@@ -1,8 +1,9 @@
-import { rowFieldsEqual } from "./editor-row-persistence-model.js";
+import { rowTextContentEqual } from "./editor-row-persistence-model.js";
 import { normalizeEditorRowTextStyle } from "./editor-row-text-style.js";
 import {
   cloneRowFields,
   cloneRowFieldStates,
+  normalizeEditorContentKind,
   normalizeFieldState,
 } from "./editor-utils.js";
 import { normalizeEditorRow } from "./editor-state-flow.js";
@@ -36,33 +37,38 @@ function normalizeConflictRemoteVersion(remoteVersion) {
   };
 }
 
-export function applyEditorRowFieldValue(row, languageCode, nextValue) {
+export function applyEditorRowFieldValue(row, languageCode, nextValue, contentKind = "field") {
   if (!row || !languageCode) {
     return row;
   }
 
-  const fields = {
-    ...cloneRowFields(row.fields),
-    [languageCode]: nextValue,
-  };
+  const normalizedContentKind = normalizeEditorContentKind(contentKind);
+  const fields = cloneRowFields(row.fields);
+  const footnotes = cloneRowFields(row.footnotes);
+  if (normalizedContentKind === "footnote") {
+    footnotes[languageCode] = nextValue;
+  } else {
+    fields[languageCode] = nextValue;
+  }
   const nextSaveStatus =
     row.saveStatus === "saving"
       ? "dirty"
       : row.saveStatus === "conflict"
         ? "conflict"
-      : rowFieldsEqual(fields, row.persistedFields)
+      : rowTextContentEqual(fields, footnotes, row.persistedFields, row.persistedFootnotes)
         ? "idle"
         : "dirty";
 
   return {
     ...row,
     fields,
+    footnotes,
     freshness:
       row.freshness === "conflict"
         ? "conflict"
         : row.freshness === "stale" || row.freshness === "staleDirty"
           ? "staleDirty"
-          : rowFieldsEqual(fields, row.persistedFields)
+          : rowTextContentEqual(fields, footnotes, row.persistedFields, row.persistedFootnotes)
             ? "fresh"
             : "dirty",
     saveStatus: nextSaveStatus,
@@ -225,11 +231,17 @@ export function applyEditorRowPersistSucceeded(row, payloadRow) {
   }
 
   const normalizedRow = normalizeEditorRow(payloadRow);
-  const rowChangedDuringSave = !rowFieldsEqual(row.fields, normalizedRow.fields);
+  const rowChangedDuringSave = !rowTextContentEqual(
+    row.fields,
+    row.footnotes,
+    normalizedRow.fields,
+    normalizedRow.footnotes,
+  );
 
   return {
     ...normalizedRow,
     fields: rowChangedDuringSave ? cloneRowFields(row.fields) : normalizedRow.fields,
+    footnotes: rowChangedDuringSave ? cloneRowFields(row.footnotes) : normalizedRow.footnotes,
     saveStatus: rowChangedDuringSave ? "dirty" : "idle",
     freshness: rowChangedDuringSave ? "dirty" : "fresh",
     conflictState: null,
@@ -254,6 +266,7 @@ export function applyEditorRowConflictDetected(row, payload = {}, options = {}) 
   }
 
   const nextFields = cloneRowFields(options?.localFields ?? row.fields);
+  const nextFootnotes = cloneRowFields(options?.localFootnotes ?? row.footnotes);
   const remoteVersion =
     normalizeConflictRemoteVersion(
       payload?.conflictRemoteVersion
@@ -266,12 +279,14 @@ export function applyEditorRowConflictDetected(row, payload = {}, options = {}) 
   return {
     ...row,
     fields: nextFields,
+    footnotes: nextFootnotes,
     freshness: "conflict",
     saveStatus: "conflict",
     saveError: "Translation text changed on disk.",
     remotelyDeleted: false,
     conflictState: {
       baseFields: cloneRowFields(payload?.baseFields),
+      baseFootnotes: cloneRowFields(payload?.baseFootnotes),
       remoteRow: payload?.row ? normalizeEditorRow(payload.row) : null,
       remoteVersion,
     },
@@ -289,47 +304,72 @@ export function applyEditorRowConflictResolvedWithRemote(row) {
   };
 }
 
-export function applyEditorConflictResolutionSavedLocally(row, payloadRow, nextLocalFields, options = {}) {
+export function applyEditorConflictResolutionSavedLocally(
+  row,
+  payloadRow,
+  nextLocalFields,
+  nextLocalFootnotes,
+  options = {},
+) {
   if (!row || !payloadRow) {
     return row;
   }
 
   const persistedRow = normalizeEditorRow(payloadRow);
   const localFields = cloneRowFields(nextLocalFields);
+  const localFootnotes = cloneRowFields(nextLocalFootnotes);
 
   return {
     ...persistedRow,
     fields: localFields,
+    footnotes: localFootnotes,
     baseFields: cloneRowFields(persistedRow.fields),
+    baseFootnotes: cloneRowFields(persistedRow.footnotes),
     persistedFields: cloneRowFields(persistedRow.fields),
+    persistedFootnotes: cloneRowFields(persistedRow.footnotes),
     saveStatus: "conflict",
     freshness: "conflict",
     saveError: "",
     remotelyDeleted: false,
     conflictState: {
       baseFields: cloneRowFields(persistedRow.fields),
+      baseFootnotes: cloneRowFields(persistedRow.footnotes),
       remoteRow: row?.conflictState?.remoteRow ? normalizeEditorRow(row.conflictState.remoteRow) : null,
       remoteVersion: normalizeConflictRemoteVersion(options?.remoteVersion ?? row?.conflictState?.remoteVersion ?? null),
     },
   };
 }
 
-export function applyEditorRowConflictSaveSucceeded(row, payloadRow, nextLocalFields, options = {}) {
+export function applyEditorRowConflictSaveSucceeded(
+  row,
+  payloadRow,
+  nextLocalFields,
+  nextLocalFootnotes,
+  options = {},
+) {
   if (!row || !payloadRow) {
     return row;
   }
 
   const remoteRow = normalizeEditorRow(payloadRow);
   const localFields = cloneRowFields(nextLocalFields);
-  const mergedCodes = new Set([...Object.keys(localFields), ...Object.keys(remoteRow.fields)]);
-  const hasRemainingConflict = [...mergedCodes].some((code) => (localFields?.[code] ?? "") !== (remoteRow.fields?.[code] ?? ""));
+  const localFootnotes = cloneRowFields(nextLocalFootnotes);
+  const hasRemainingConflict = !rowTextContentEqual(
+    localFields,
+    localFootnotes,
+    remoteRow.fields,
+    remoteRow.footnotes,
+  );
 
   if (!hasRemainingConflict) {
     return {
       ...remoteRow,
       fields: localFields,
+      footnotes: localFootnotes,
       baseFields: cloneRowFields(remoteRow.fields),
+      baseFootnotes: cloneRowFields(remoteRow.footnotes),
       persistedFields: cloneRowFields(remoteRow.fields),
+      persistedFootnotes: cloneRowFields(remoteRow.footnotes),
       saveStatus: "idle",
       freshness: "fresh",
       conflictState: null,
@@ -339,14 +379,18 @@ export function applyEditorRowConflictSaveSucceeded(row, payloadRow, nextLocalFi
   return {
     ...remoteRow,
     fields: localFields,
+    footnotes: localFootnotes,
     baseFields: cloneRowFields(remoteRow.fields),
+    baseFootnotes: cloneRowFields(remoteRow.footnotes),
     persistedFields: cloneRowFields(remoteRow.fields),
+    persistedFootnotes: cloneRowFields(remoteRow.footnotes),
     saveStatus: "conflict",
     freshness: "conflict",
     saveError: "Translation text changed on disk.",
     remotelyDeleted: false,
     conflictState: {
       baseFields: cloneRowFields(remoteRow.fields),
+      baseFootnotes: cloneRowFields(remoteRow.footnotes),
       remoteRow,
       remoteVersion: normalizeConflictRemoteVersion(options?.remoteVersion ?? row?.conflictState?.remoteVersion ?? null),
     },

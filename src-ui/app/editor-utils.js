@@ -7,6 +7,10 @@ export function cloneRowFields(fields) {
   );
 }
 
+export function normalizeEditorContentKind(value) {
+  return value === "footnote" ? "footnote" : "field";
+}
+
 export function normalizeFieldState(fieldState) {
   return {
     reviewed: fieldState?.reviewed === true,
@@ -40,6 +44,34 @@ export function hasActiveEditorField(chapterState) {
 
 export function findEditorRowById(rowId, chapterState) {
   return chapterState?.rows?.find((row) => row?.rowId === rowId) ?? null;
+}
+
+export function editorFootnoteEditorMatches(chapterState, rowId, languageCode) {
+  return (
+    chapterState?.footnoteEditor?.rowId === rowId
+    && chapterState?.footnoteEditor?.languageCode === languageCode
+  );
+}
+
+export function editorLanguageFootnoteText(row, languageCode) {
+  return typeof row?.footnotes?.[languageCode] === "string"
+    ? row.footnotes[languageCode]
+    : String(row?.footnotes?.[languageCode] ?? "");
+}
+
+export function editorLanguageFootnoteIsVisible(row, languageCode, chapterState) {
+  return (
+    editorLanguageFootnoteText(row, languageCode).trim().length > 0
+    || editorFootnoteEditorMatches(chapterState, row?.rowId ?? "", languageCode)
+  );
+}
+
+export function buildEditorFieldSelector(rowId, languageCode, contentKind = "field") {
+  const rowIdPart = String(rowId ?? "");
+  const languageCodePart = String(languageCode ?? "");
+  const kind = normalizeEditorContentKind(contentKind);
+  const kindSelector = kind === "footnote" ? '[data-content-kind="footnote"]' : ":not([data-content-kind])";
+  return `[data-editor-row-field][data-row-id="${CSS.escape(rowIdPart)}"][data-language-code="${CSS.escape(languageCodePart)}"]${kindSelector}`;
 }
 
 export function buildVisibleEditorLanguageCodeSet(chapterState) {

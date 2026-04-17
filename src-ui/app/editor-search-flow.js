@@ -16,6 +16,8 @@ import { buildEditorShowRowInContextChapterState } from "./editor-show-context.j
 import {
   buildVisibleEditorLanguageCodeSet,
   cloneRowFields,
+  editorLanguageFootnoteIsVisible,
+  editorLanguageFootnoteText,
   findEditorRowById,
 } from "./editor-utils.js";
 import { findChapterContextById, selectedProjectsTeam } from "./project-context.js";
@@ -71,10 +73,23 @@ async function commitEditorRowFieldsBatch({
 }
 
 function buildEditorRowSections(row, chapterState = state.editorChapter) {
-  return (Array.isArray(chapterState?.languages) ? chapterState.languages : []).map((language) => ({
-    code: language.code,
-    text: row?.fields?.[language.code] ?? "",
-  }));
+  const sections = [];
+  for (const language of Array.isArray(chapterState?.languages) ? chapterState.languages : []) {
+    sections.push({
+      code: language.code,
+      text: row?.fields?.[language.code] ?? "",
+      contentKind: "field",
+    });
+    if (editorLanguageFootnoteIsVisible(row, language.code, chapterState)) {
+      sections.push({
+        code: language.code,
+        text: editorLanguageFootnoteText(row, language.code),
+        contentKind: "footnote",
+      });
+    }
+  }
+
+  return sections;
 }
 
 export function buildEditorRowSearchHighlightMap(row, chapterState = state.editorChapter) {
@@ -399,10 +414,11 @@ export async function replaceSelectedEditorRows(render, operations = {}) {
   const affectedRowIds = new Set(replacePlan.updatedRowIds);
   const resetRows = selectedRows
     .filter((row) => affectedRowIds.has(row.rowId))
-    .filter((row) => !rowFieldsEqual(row.fields, row.persistedFields))
+    .filter((row) => !rowFieldsEqual(row.fields, row.persistedFields) || !rowFieldsEqual(row.footnotes, row.persistedFootnotes))
     .map((row) => ({
       rowId: row.rowId,
       fields: cloneRowFields(row.fields),
+      footnotes: cloneRowFields(row.footnotes),
     }));
 
   const team = selectedProjectsTeam();

@@ -44,6 +44,10 @@ function resolveLanguageCode(language) {
     : "";
 }
 
+function normalizeEditorSearchContentKind(value) {
+  return value === "footnote" ? "footnote" : "field";
+}
+
 function normalizeCollapsedLanguageCodes(collapsedLanguageCodes) {
   return collapsedLanguageCodes instanceof Set
     ? new Set([...collapsedLanguageCodes].filter(Boolean))
@@ -73,12 +77,12 @@ export function labelForEditorRowFilterMode(mode) {
   return EDITOR_ROW_FILTER_OPTIONS.find((option) => option.value === mode)?.label ?? "Show all";
 }
 
-export function buildEditorSearchResultKey(rowId, languageCode, start, end) {
+export function buildEditorSearchResultKey(rowId, languageCode, start, end, contentKind = "field") {
   if (!rowId || !languageCode || !Number.isInteger(start) || !Number.isInteger(end)) {
     return "";
   }
 
-  return `${rowId}:${languageCode}:${start}:${end}`;
+  return `${rowId}:${languageCode}:${normalizeEditorSearchContentKind(contentKind)}:${start}:${end}`;
 }
 
 export function findEditorSearchMatches(text, query, languageCode = "", options = {}) {
@@ -191,23 +195,41 @@ function buildRowSearchMatches(row, searchQuery, visibleLanguageCodes, caseSensi
       continue;
     }
 
-    const matches = findEditorSearchMatches(section?.text ?? "", searchQuery, languageCode, {
-      caseSensitive,
-    });
-    if (matches.length === 0) {
-      continue;
+    const contentSections = [
+      {
+        contentKind: "field",
+        text: String(section?.text ?? ""),
+      },
+    ];
+    const footnote = String(section?.footnote ?? "");
+    if (section?.hasVisibleFootnote === true || footnote.trim().length > 0) {
+      contentSections.push({
+        contentKind: "footnote",
+        text: footnote,
+      });
     }
 
-    const normalizedMatches = matches.map((match) => ({
-      key: buildEditorSearchResultKey(row.id, languageCode, match.start, match.end),
-      rowId: row.id,
-      languageCode,
-      start: match.start,
-      end: match.end,
-      text: String(section?.text ?? "").slice(match.start, match.end),
-    }));
-    matchesByLanguage.set(languageCode, normalizedMatches);
-    results.push(...normalizedMatches);
+    for (const contentSection of contentSections) {
+      const contentKind = normalizeEditorSearchContentKind(contentSection.contentKind);
+      const matches = findEditorSearchMatches(contentSection.text, searchQuery, languageCode, {
+        caseSensitive,
+      });
+      if (matches.length === 0) {
+        continue;
+      }
+
+      const normalizedMatches = matches.map((match) => ({
+        key: buildEditorSearchResultKey(row.id, languageCode, match.start, match.end, contentKind),
+        rowId: row.id,
+        languageCode,
+        contentKind,
+        start: match.start,
+        end: match.end,
+        text: contentSection.text.slice(match.start, match.end),
+      }));
+      matchesByLanguage.set(`${languageCode}:${contentKind}`, normalizedMatches);
+      results.push(...normalizedMatches);
+    }
   }
 
   return {

@@ -45,15 +45,17 @@ import {
   updateEditorTargetLanguage as updateEditorTargetLanguageFlow,
 } from "./editor-selection-flow.js";
 import {
+  collapseEmptyEditorFootnote as collapseEmptyEditorFootnoteFlow,
   cancelEditorUnreviewAllModal as cancelEditorUnreviewAllModalFlow,
   confirmEditorUnreviewAll as confirmEditorUnreviewAllFlow,
   flushDirtyEditorRows as flushDirtyEditorRowsFlow,
+  openEditorFootnote as openEditorFootnoteFlow,
   openEditorUnreviewAllModal as openEditorUnreviewAllModalFlow,
   persistEditorRowOnBlur as persistEditorRowOnBlurFlow,
   resolveEditorRowConflict as resolveEditorRowConflictFlow,
   scheduleDirtyEditorRowScan as scheduleDirtyEditorRowScanFlow,
   toggleEditorRowFieldMarker as toggleEditorRowFieldMarkerFlow,
-  updateEditorRowFieldValue as updateEditorRowFieldValueFlow,
+  updateEditorRowFieldValueForContentKind as updateEditorRowFieldValueFlow,
   updateEditorRowTextStyle as updateEditorRowTextStyleFlow,
 } from "./editor-persistence-flow.js";
 import { reconcileDirtyTrackedEditorRows } from "./editor-dirty-row-state.js";
@@ -468,10 +470,18 @@ export async function confirmEditorUnreviewAll(render) {
   await confirmEditorUnreviewAllFlow(render, editorPersistenceOperations());
 }
 
-export function updateEditorRowFieldValue(rowId, languageCode, nextValue) {
-  updateEditorRowFieldValueFlow(rowId, languageCode, nextValue, {
+export function updateEditorRowFieldValue(rowId, languageCode, nextValue, contentKind = "field") {
+  updateEditorRowFieldValueFlow(rowId, languageCode, nextValue, contentKind, {
     updateEditorChapterRow,
   });
+}
+
+export function openEditorFootnote(render, rowId, languageCode) {
+  openEditorFootnoteFlow(render, rowId, languageCode);
+}
+
+export function collapseEmptyEditorFootnote(render, rowId, languageCode) {
+  collapseEmptyEditorFootnoteFlow(render, rowId, languageCode);
 }
 
 export async function updateEditorRowTextStyle(render, rowId, nextTextStyle) {

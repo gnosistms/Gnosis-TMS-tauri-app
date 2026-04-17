@@ -76,6 +76,10 @@ function isMarkerStateChangeOnly(previousEntry, currentEntry) {
     return false;
   }
 
+  if (String(previousEntry?.footnote ?? "") !== String(currentEntry?.footnote ?? "")) {
+    return false;
+  }
+
   if (
     normalizeEditorRowTextStyle(previousEntry?.textStyle)
     !== normalizeEditorRowTextStyle(currentEntry?.textStyle)
@@ -216,6 +220,7 @@ export function editorHistoryEntryMatchesSection(entry, section) {
 
   return (
     String(entry.plainText ?? "") === String(section.text ?? "")
+    && String(entry.footnote ?? "") === String(section.footnote ?? "")
     && (entry.reviewed === true) === (section.reviewed === true)
     && (entry.pleaseCheck === true) === (section.pleaseCheck === true)
     && normalizeEditorRowTextStyle(entry.textStyle) === normalizeEditorRowTextStyle(section.textStyle)

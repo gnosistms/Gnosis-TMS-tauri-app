@@ -196,6 +196,7 @@ function renderReviewPane(editorChapter, rows, languages) {
   const activeHistorySection = activeSection
     ? {
         ...activeSection,
+        footnote: activeSection?.footnote ?? "",
         textStyle: activeRow?.textStyle ?? "paragraph",
       }
     : null;
@@ -210,6 +211,7 @@ function renderReviewPane(editorChapter, rows, languages) {
   const previousEntry = findEditorHistoryPreviousEntry(history.entries, activeHistorySection);
   const currentEntry = {
     plainText: activeSection?.text ?? "",
+    footnote: activeSection?.footnote ?? "",
     reviewed: activeSection?.reviewed === true,
     pleaseCheck: activeSection?.pleaseCheck === true,
     textStyle: activeRow?.textStyle ?? "paragraph",

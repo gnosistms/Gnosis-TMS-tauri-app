@@ -1,3 +1,5 @@
+import { buildEditorFieldSelector } from "./editor-utils.js";
+
 let lockedScreen = null;
 let lockedSnapshot = null;
 let pendingTranslateAnchor = null;
@@ -58,10 +60,15 @@ function buildTranslateAnchorSnapshotForElement(container, element, type, langua
 
   const containerRect = container.getBoundingClientRect();
   const elementRect = element.getBoundingClientRect();
+  const contentKind =
+    type === "field" && element.dataset.contentKind === "footnote"
+      ? "footnote"
+      : null;
   return {
     type,
     rowId: element.dataset.rowId ?? "",
     languageCode: languageCode || "",
+    ...(contentKind ? { contentKind } : {}),
     offsetTop: elementRect.top - containerRect.top,
   };
 }
@@ -93,9 +100,7 @@ export function captureTranslateAnchorForRow(rowId, languageCode = null) {
   }
 
   if (selector.languageCode) {
-    const field = document.querySelector(
-      `[data-editor-row-field][data-row-id="${CSS.escape(selector.rowId)}"][data-language-code="${CSS.escape(selector.languageCode)}"]`,
-    );
+    const field = document.querySelector(buildEditorFieldSelector(selector.rowId, selector.languageCode));
     if (isHtmlElement(field)) {
       return buildTranslateAnchorSnapshotForElement(
         container,
@@ -197,10 +202,12 @@ export function resolveTranslateRowAnchor(target = null) {
   const field = source.closest("[data-editor-row-field]");
   if (isHtmlElement(field)) {
     const fieldRect = field.getBoundingClientRect();
+    const contentKind = field.dataset.contentKind === "footnote" ? "footnote" : null;
     return {
       type: "field",
       rowId: field.dataset.rowId ?? "",
       languageCode: field.dataset.languageCode ?? "",
+      ...(contentKind ? { contentKind } : {}),
       offsetTop: fieldRect.top - containerRect.top,
     };
   }
@@ -248,7 +255,7 @@ export function restoreTranslateRowAnchor(snapshot) {
     );
   } else if (snapshot.type === "field" && snapshot.languageCode) {
     anchor = document.querySelector(
-      `[data-editor-row-field][data-row-id="${CSS.escape(snapshot.rowId)}"][data-language-code="${CSS.escape(snapshot.languageCode)}"]`,
+      buildEditorFieldSelector(snapshot.rowId, snapshot.languageCode, snapshot.contentKind),
     );
   } else if (snapshot.type === "deleted-group") {
     anchor = document.querySelector(`[data-editor-deleted-group][data-row-id="${CSS.escape(snapshot.rowId)}"]`);
@@ -333,22 +340,29 @@ export function queueTranslateRowAnchor(snapshot) {
     return;
   }
 
+  const type =
+    snapshot.type === "field"
+    || snapshot.type === "row"
+    || snapshot.type === "deleted-group"
+    || snapshot.type === "language-toggle"
+      ? snapshot.type
+      : "language-toggle";
+  const contentKind =
+    type === "field" && snapshot.contentKind === "footnote"
+      ? "footnote"
+      : null;
+
   pendingTranslateAnchor = {
     rowId: snapshot.rowId.trim(),
     languageCode:
       typeof snapshot.languageCode === "string" && snapshot.languageCode.trim()
         ? snapshot.languageCode.trim()
         : null,
+    ...(contentKind ? { contentKind } : {}),
     offsetTop: Number.isFinite(Number(snapshot.offsetTop)) && Number(snapshot.offsetTop) >= 0
       ? Number(snapshot.offsetTop)
       : 0,
-    type:
-      snapshot.type === "field"
-      || snapshot.type === "row"
-      || snapshot.type === "deleted-group"
-      || snapshot.type === "language-toggle"
-        ? snapshot.type
-        : "language-toggle",
+    type,
   };
 }
 

@@ -71,9 +71,11 @@ export function buildEditorBatchReplaceUpdates({
     }
 
     const currentFields = cloneRowFields(row.fields);
+    const currentFootnotes = cloneRowFields(row.footnotes);
     let matched = false;
     let changed = false;
     const nextFields = cloneRowFields(currentFields);
+    const nextFootnotes = cloneRowFields(currentFootnotes);
 
     for (const languageCode of visibleCodes) {
       const currentText = normalizeString(currentFields[languageCode] ?? "");
@@ -92,6 +94,25 @@ export function buildEditorBatchReplaceUpdates({
         nextFields[languageCode] = nextText;
         changed = true;
       }
+
+      const currentFootnote = normalizeString(currentFootnotes[languageCode] ?? "");
+      const footnoteMatches = findEditorSearchMatches(currentFootnote, searchQuery, languageCode, {
+        caseSensitive,
+      });
+      if (footnoteMatches.length > 0) {
+        matched = true;
+        const nextFootnote = applyEditorSearchReplace(
+          currentFootnote,
+          searchQuery,
+          replaceText,
+          languageCode,
+          { caseSensitive },
+        );
+        if (nextFootnote !== currentFootnote) {
+          nextFootnotes[languageCode] = nextFootnote;
+          changed = true;
+        }
+      }
     }
 
     if (matched) {
@@ -102,6 +123,7 @@ export function buildEditorBatchReplaceUpdates({
       updatedRows.push({
         rowId,
         fields: nextFields,
+        footnotes: nextFootnotes,
       });
     }
   }

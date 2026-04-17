@@ -7,6 +7,7 @@ async function installMockTauri(page) {
     let commitCounter = 0;
     const fixtureByChapterId = new Map();
     const rowFieldsByChapterId = new Map();
+    const rowFootnotesByChapterId = new Map();
     const rowTextStylesByChapterId = new Map();
     const fieldStatesByChapterId = new Map();
     const rowCommentsByChapterId = new Map();
@@ -32,7 +33,14 @@ async function installMockTauri(page) {
       return historyEntriesByKey.get(key);
     }
 
-    function pushHistoryEntriesWithCommit(chapterId, rowId, fields, fieldStates, commitInfo = {}) {
+    function pushHistoryEntriesWithCommit(
+      chapterId,
+      rowId,
+      fields,
+      footnotes,
+      fieldStates,
+      commitInfo = {},
+    ) {
       const commitSha = commitInfo?.commitSha ?? nextCommitSha();
       const committedAt = commitInfo?.committedAt ?? nextCommittedAt();
       const textStyle = findRowTextStyle(chapterId, rowId);
@@ -48,6 +56,10 @@ async function installMockTauri(page) {
           statusNote: null,
           aiModel: commitInfo?.aiModel ?? null,
           plainText: typeof plainText === "string" ? plainText : String(plainText ?? ""),
+          footnote:
+            typeof footnotes?.[languageCode] === "string"
+              ? footnotes[languageCode]
+              : String(footnotes?.[languageCode] ?? ""),
           textStyle,
           reviewed: state.reviewed === true,
           pleaseCheck: state.pleaseCheck === true,
@@ -57,8 +69,8 @@ async function installMockTauri(page) {
       return commitSha;
     }
 
-    function pushHistoryEntries(chapterId, rowId, fields, fieldStates, operationType, message) {
-      return pushHistoryEntriesWithCommit(chapterId, rowId, fields, fieldStates, {
+    function pushHistoryEntries(chapterId, rowId, fields, footnotes, fieldStates, operationType, message) {
+      return pushHistoryEntriesWithCommit(chapterId, rowId, fields, footnotes, fieldStates, {
         operationType,
         message,
       });
@@ -75,6 +87,10 @@ async function installMockTauri(page) {
       rowFieldsByChapterId.set(
         chapterId,
         new Map(rows.map((row) => [row.rowId, clone(row.fields ?? {})])),
+      );
+      rowFootnotesByChapterId.set(
+        chapterId,
+        new Map(rows.map((row) => [row.rowId, clone(row.footnotes ?? {})])),
       );
       rowTextStylesByChapterId.set(
         chapterId,
@@ -97,7 +113,15 @@ async function installMockTauri(page) {
         for (const languageCode of Object.keys(row.fields ?? {})) {
           historyEntriesByKey.set(historyKey(chapterId, row.rowId, languageCode), []);
         }
-        pushHistoryEntries(chapterId, row.rowId, row.fields ?? {}, row.fieldStates ?? {}, "import", "Import row");
+        pushHistoryEntries(
+          chapterId,
+          row.rowId,
+          row.fields ?? {},
+          row.footnotes ?? {},
+          row.fieldStates ?? {},
+          "import",
+          "Import row",
+        );
       }
     }
 
@@ -107,6 +131,10 @@ async function installMockTauri(page) {
 
     function findFieldStates(chapterId, rowId) {
       return fieldStatesByChapterId.get(chapterId)?.get(rowId) ?? null;
+    }
+
+    function findRowFootnotes(chapterId, rowId) {
+      return rowFootnotesByChapterId.get(chapterId)?.get(rowId) ?? null;
     }
 
     function findRowTextStyle(chapterId, rowId) {
@@ -123,9 +151,10 @@ async function installMockTauri(page) {
         ? fixture.rows.find((row) => row?.rowId === rowId) ?? null
         : null;
       const fields = findRowFields(chapterId, rowId);
+      const footnotes = findRowFootnotes(chapterId, rowId);
       const fieldStates = findFieldStates(chapterId, rowId);
       const comments = findRowComments(chapterId, rowId);
-      if (!fixtureRow || !fields || !fieldStates) {
+      if (!fixtureRow || !fields || !footnotes || !fieldStates) {
         return null;
       }
 
@@ -137,6 +166,7 @@ async function installMockTauri(page) {
         commentsRevision: Number.isInteger(comments?.commentsRevision) ? comments.commentsRevision : 0,
         textStyle: findRowTextStyle(chapterId, rowId),
         fields: clone(fields),
+        footnotes: clone(footnotes),
         fieldStates: clone(fieldStates),
       };
     }
@@ -254,13 +284,16 @@ async function installMockTauri(page) {
         const input = payload?.input ?? {};
         const nextFields = clone(input.fields ?? {});
         const storedFields = findRowFields(input.chapterId, input.rowId);
+        const storedFootnotes = findRowFootnotes(input.chapterId, input.rowId);
         const storedFieldStates = findFieldStates(input.chapterId, input.rowId);
-        if (!storedFields || !storedFieldStates) {
+        if (!storedFields || !storedFootnotes || !storedFieldStates) {
           throw new Error(`Unknown editor row: ${input.rowId}`);
         }
+        const nextFootnotes = clone(input.footnotes ?? storedFootnotes);
 
         rowFieldsByChapterId.get(input.chapterId).set(input.rowId, nextFields);
-        pushHistoryEntriesWithCommit(input.chapterId, input.rowId, nextFields, storedFieldStates, {
+        rowFootnotesByChapterId.get(input.chapterId).set(input.rowId, nextFootnotes);
+        pushHistoryEntriesWithCommit(input.chapterId, input.rowId, nextFields, nextFootnotes, storedFieldStates, {
           operationType: input.operation ?? "editor-update",
           message: "Update row",
           aiModel: input.aiModel ?? null,
@@ -275,8 +308,9 @@ async function installMockTauri(page) {
         const input = payload?.input ?? {};
         const chapterTextStyles = rowTextStylesByChapterId.get(input.chapterId);
         const storedFields = findRowFields(input.chapterId, input.rowId);
+        const storedFootnotes = findRowFootnotes(input.chapterId, input.rowId);
         const storedFieldStates = findFieldStates(input.chapterId, input.rowId);
-        if (!chapterTextStyles || !storedFields || !storedFieldStates) {
+        if (!chapterTextStyles || !storedFields || !storedFootnotes || !storedFieldStates) {
           throw new Error(`Unknown editor row style target: ${input.rowId}`);
         }
 
@@ -286,6 +320,7 @@ async function installMockTauri(page) {
           input.chapterId,
           input.rowId,
           storedFields,
+          storedFootnotes,
           storedFieldStates,
           "text-style",
           "Update row text style",
@@ -299,9 +334,10 @@ async function installMockTauri(page) {
       if (command === "update_gtms_editor_row_fields_batch") {
         const input = payload?.input ?? {};
         const chapterRows = rowFieldsByChapterId.get(input.chapterId);
+        const chapterFootnotes = rowFootnotesByChapterId.get(input.chapterId);
         const chapterFieldStates = fieldStatesByChapterId.get(input.chapterId);
         const rows = Array.isArray(input.rows) ? clone(input.rows) : [];
-        if (!chapterRows || !chapterFieldStates) {
+        if (!chapterRows || !chapterFootnotes || !chapterFieldStates) {
           throw new Error(`Unknown editor chapter: ${input.chapterId}`);
         }
 
@@ -311,20 +347,24 @@ async function installMockTauri(page) {
 
         for (const rowUpdate of rows) {
           const storedFields = chapterRows.get(rowUpdate.rowId);
+          const storedFootnotes = chapterFootnotes.get(rowUpdate.rowId);
           const storedFieldStates = chapterFieldStates.get(rowUpdate.rowId);
-          if (!storedFields || !storedFieldStates) {
+          if (!storedFields || !storedFootnotes || !storedFieldStates) {
             throw new Error(`Unknown editor row in batch: ${rowUpdate.rowId}`);
           }
 
           snapshotRows.push({
             rowId: rowUpdate.rowId,
             fields: clone(storedFields),
+            footnotes: clone(storedFootnotes),
             fieldStates: clone(storedFieldStates),
           });
 
           const nextFields = clone(rowUpdate.fields ?? {});
+          const nextFootnotes = clone(rowUpdate.footnotes ?? storedFootnotes);
           chapterRows.set(rowUpdate.rowId, nextFields);
-          pushHistoryEntriesWithCommit(input.chapterId, rowUpdate.rowId, nextFields, storedFieldStates, {
+          chapterFootnotes.set(rowUpdate.rowId, nextFootnotes);
+          pushHistoryEntriesWithCommit(input.chapterId, rowUpdate.rowId, nextFields, nextFootnotes, storedFieldStates, {
             commitSha,
             committedAt,
             operationType: input.operation ?? "editor-update",
@@ -347,9 +387,10 @@ async function installMockTauri(page) {
       if (command === "update_gtms_editor_row_field_flag") {
         const input = payload?.input ?? {};
         const storedFields = findRowFields(input.chapterId, input.rowId);
+        const storedFootnotes = findRowFootnotes(input.chapterId, input.rowId);
         const storedFieldStates = findFieldStates(input.chapterId, input.rowId);
         const previousState = storedFieldStates?.[input.languageCode] ?? null;
-        if (!storedFields || !storedFieldStates || !previousState) {
+        if (!storedFields || !storedFootnotes || !storedFieldStates || !previousState) {
           throw new Error(`Unknown editor row field flag target: ${input.rowId}/${input.languageCode}`);
         }
 
@@ -364,6 +405,7 @@ async function installMockTauri(page) {
           input.chapterId,
           input.rowId,
           storedFields,
+          storedFootnotes,
           storedFieldStates,
           "editor-update",
           "Update row marker",
@@ -378,9 +420,17 @@ async function installMockTauri(page) {
         const input = payload?.input ?? {};
         const snapshot = batchReplaceSnapshotsByCommitSha.get(input.commitSha);
         const chapterRows = rowFieldsByChapterId.get(input.chapterId);
+        const chapterFootnotes = rowFootnotesByChapterId.get(input.chapterId);
         const chapterFieldStates = fieldStatesByChapterId.get(input.chapterId);
         const latestRowCommits = rowLatestCommitByChapterId.get(input.chapterId);
-        if (!snapshot || snapshot.chapterId !== input.chapterId || !chapterRows || !chapterFieldStates || !latestRowCommits) {
+        if (
+          !snapshot
+          || snapshot.chapterId !== input.chapterId
+          || !chapterRows
+          || !chapterFootnotes
+          || !chapterFieldStates
+          || !latestRowCommits
+        ) {
           throw new Error("The selected batch replace commit does not exist in the mock backend.");
         }
 
@@ -398,8 +448,9 @@ async function installMockTauri(page) {
           }
 
           const currentFields = chapterRows.get(rowSnapshot.rowId);
+          const currentFootnotes = chapterFootnotes.get(rowSnapshot.rowId);
           const currentFieldStates = chapterFieldStates.get(rowSnapshot.rowId);
-          if (!currentFields || !currentFieldStates) {
+          if (!currentFields || !currentFootnotes || !currentFieldStates) {
             skippedRowIds.push(rowSnapshot.rowId);
             continue;
           }
@@ -407,18 +458,22 @@ async function installMockTauri(page) {
           undoSnapshotRows.push({
             rowId: rowSnapshot.rowId,
             fields: clone(currentFields),
+            footnotes: clone(currentFootnotes),
             fieldStates: clone(currentFieldStates),
           });
 
           const restoredFields = clone(rowSnapshot.fields);
+          const restoredFootnotes = clone(rowSnapshot.footnotes ?? {});
           const restoredFieldStates = clone(rowSnapshot.fieldStates);
           chapterRows.set(rowSnapshot.rowId, restoredFields);
+          chapterFootnotes.set(rowSnapshot.rowId, restoredFootnotes);
           chapterFieldStates.set(rowSnapshot.rowId, restoredFieldStates);
           updatedRows.push({
             rowId: rowSnapshot.rowId,
             fields: restoredFields,
+            footnotes: restoredFootnotes,
           });
-          pushHistoryEntriesWithCommit(input.chapterId, rowSnapshot.rowId, restoredFields, restoredFieldStates, {
+          pushHistoryEntriesWithCommit(input.chapterId, rowSnapshot.rowId, restoredFields, restoredFootnotes, restoredFieldStates, {
             commitSha,
             committedAt,
             operationType: "editor-replace",
@@ -444,14 +499,16 @@ async function installMockTauri(page) {
       if (command === "restore_gtms_editor_field_from_history") {
         const input = payload?.input ?? {};
         const storedFields = findRowFields(input.chapterId, input.rowId);
+        const storedFootnotes = findRowFootnotes(input.chapterId, input.rowId);
         const storedFieldStates = findFieldStates(input.chapterId, input.rowId);
         const entries = historyEntriesByKey.get(historyKey(input.chapterId, input.rowId, input.languageCode)) ?? [];
         const entry = entries.find((candidate) => candidate.commitSha === input.commitSha) ?? null;
-        if (!storedFields || !storedFieldStates || !entry) {
+        if (!storedFields || !storedFootnotes || !storedFieldStates || !entry) {
           throw new Error("Requested history entry not found.");
         }
 
         storedFields[input.languageCode] = entry.plainText;
+        storedFootnotes[input.languageCode] = String(entry.footnote ?? "");
         storedFieldStates[input.languageCode] = {
           reviewed: entry.reviewed === true,
           pleaseCheck: entry.pleaseCheck === true,
@@ -461,12 +518,14 @@ async function installMockTauri(page) {
           input.chapterId,
           input.rowId,
           storedFields,
+          storedFootnotes,
           storedFieldStates,
           "restore",
           "Restore row from history",
         );
         return {
           plainText: entry.plainText,
+          footnote: String(entry.footnote ?? ""),
           textStyle: String(entry.textStyle ?? "paragraph"),
           reviewed: entry.reviewed === true,
           pleaseCheck: entry.pleaseCheck === true,
@@ -500,6 +559,12 @@ async function installMockTauri(page) {
             [...rowTextStylesByChapterId.entries()].map(([chapterId, stylesByRowId]) => [
               chapterId,
               Object.fromEntries(stylesByRowId.entries()),
+            ]),
+          ),
+          footnotes: Object.fromEntries(
+            [...rowFootnotesByChapterId.entries()].map(([chapterId, footnotesByRowId]) => [
+              chapterId,
+              Object.fromEntries(footnotesByRowId.entries()),
             ]),
           ),
           histories: Object.fromEntries(
@@ -558,7 +623,7 @@ async function flushDirtyRows(page) {
 async function readEditorFieldMetrics(page, rowId, languageCode) {
   return await page.evaluate(({ rowId: targetRowId, languageCode: targetLanguageCode }) => {
     const field = document.querySelector(
-      `[data-editor-row-field][data-row-id="${targetRowId}"][data-language-code="${targetLanguageCode}"]`,
+      `[data-editor-row-field][data-row-id="${targetRowId}"][data-language-code="${targetLanguageCode}"]:not([data-content-kind])`,
     );
     if (!(field instanceof HTMLTextAreaElement)) {
       return null;
@@ -1584,6 +1649,86 @@ test.describe("editor regressions", () => {
       const mockState = await readMockTauriState(page);
       return mockState?.histories?.["fixture-chapter::fixture-row-0001::vi"]?.[0]?.operationType ?? null;
     }).toBe("restore");
+  });
+
+  test("footnotes open from the action row, save through row persistence, and stay visible in history", async ({ page }) => {
+    await mountEditorFixture(page, { rowCount: 18 }, { mockTauri: true });
+
+    const activeTargetField = page.locator(
+      '[data-editor-row-field][data-row-id="fixture-row-0001"][data-language-code="vi"]:not([data-content-kind])',
+    );
+    const inactiveSourcePanel = page.locator(
+      '[data-editor-language-panel][data-row-id="fixture-row-0001"][data-language-code="es"]',
+    );
+    const footnoteButton = page.locator(
+      '[data-editor-footnote-button][data-row-id="fixture-row-0001"][data-language-code="vi"]',
+    );
+
+    await activeTargetField.click();
+    await expect(footnoteButton).toBeVisible();
+    await expect(
+      page.locator(
+        '[data-editor-row-card][data-row-id="fixture-row-0001"] .translation-row-text-style-actions__separator',
+      ).first(),
+    ).toBeVisible();
+    await expect(inactiveSourcePanel.locator('[data-editor-footnote-button]')).toHaveCount(0);
+    await expect(
+      inactiveSourcePanel.locator('[data-editor-row-field][data-content-kind="footnote"]'),
+    ).toHaveCount(0);
+
+    await footnoteButton.evaluate((button) => button.click());
+    await expect.poll(async () => {
+      return await page.evaluate(() => window.__gnosisDebug.readEditorState().footnoteEditor);
+    }).toEqual({
+      rowId: "fixture-row-0001",
+      languageCode: "vi",
+    });
+
+    const footnoteField = page.locator(
+      '[data-editor-row-field][data-row-id="fixture-row-0001"][data-language-code="vi"][data-content-kind="footnote"]',
+    );
+    await expect(footnoteField).toBeVisible();
+    await expect(footnoteField).toBeFocused();
+    await expect(footnoteButton).toHaveCount(0);
+    await expect(footnoteField).toHaveCSS("font-style", "italic");
+
+    await page.keyboard.type("Saved footnote text");
+    await expect.poll(async () => {
+      const editorState = await page.evaluate(() => window.__gnosisDebug.readEditorState());
+      return {
+        dirtyRowIds: editorState?.dirtyRowIds ?? [],
+        footnote: editorState?.rowFootnotes?.["fixture-row-0001"]?.vi ?? null,
+      };
+    }).toEqual({
+      dirtyRowIds: ["fixture-row-0001"],
+      footnote: "Saved footnote text",
+    });
+    await page.locator(
+      '[data-editor-row-field][data-row-id="fixture-row-0002"][data-language-code="vi"]',
+    ).click();
+
+    await expect.poll(async () => {
+      const mockState = await readMockTauriState(page);
+      return mockState?.footnotes?.["fixture-chapter"]?.["fixture-row-0001"]?.vi ?? null;
+    }).toBe("Saved footnote text");
+    await expect.poll(async () => {
+      const mockState = await readMockTauriState(page);
+      return mockState?.histories?.["fixture-chapter::fixture-row-0001::vi"]?.[0]?.footnote ?? null;
+    }).toBe("Saved footnote text");
+
+    await expect(footnoteField).toBeVisible();
+    await expect(footnoteField).toHaveValue("Saved footnote text");
+
+    await activeTargetField.click();
+    const reviewFootnoteNote = page.locator(".history-item__note--footnote").first();
+    await expect(reviewFootnoteNote).toContainText("Footnote");
+    await expect(reviewFootnoteNote).toContainText("Saved footnote text");
+
+    await page.getByRole("button", { name: "History" }).click();
+    await expect(page.locator(".history-tabs__item--active")).toHaveText("History");
+    const historyFootnoteNote = page.locator(".history-item__note--footnote").first();
+    await expect(historyFootnoteNote).toContainText("Footnote");
+    await expect(historyFootnoteNote).toContainText("Saved footnote text");
   });
 
   test("comments marker appears only on the target-language panel", async ({ page }) => {

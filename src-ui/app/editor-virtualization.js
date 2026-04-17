@@ -12,6 +12,7 @@ import {
   restoreTranslateRowAnchor,
 } from "./scroll-state.js";
 import { createEditorVisibleGlossarySync } from "./editor-visible-glossary-sync.js";
+import { buildEditorFieldSelector } from "./editor-utils.js";
 import {
   buildEditorRowHeights,
   calculateEditorVirtualWindow,
@@ -36,6 +37,7 @@ function captureFocusedEditorField(root) {
   return {
     rowId: activeElement.dataset.rowId ?? "",
     languageCode: activeElement.dataset.languageCode ?? "",
+    contentKind: activeElement.dataset.contentKind === "footnote" ? "footnote" : "field",
     selectionStart: activeElement.selectionStart,
     selectionEnd: activeElement.selectionEnd,
     selectionDirection: activeElement.selectionDirection ?? "none",
@@ -47,8 +49,11 @@ function restoreFocusedEditorField(root, snapshot) {
     return;
   }
 
-  const selector =
-    `[data-editor-row-field][data-row-id="${CSS.escape(snapshot.rowId)}"][data-language-code="${CSS.escape(snapshot.languageCode)}"]`;
+  const selector = buildEditorFieldSelector(
+    snapshot.rowId,
+    snapshot.languageCode,
+    snapshot.contentKind,
+  );
   const nextField = root.querySelector(selector);
   if (!(nextField instanceof HTMLTextAreaElement)) {
     return;

@@ -37,6 +37,7 @@ import {
   readEditorRegressionSnapshot,
 } from "./app/editor-regression-fixture.js";
 import { readDevRuntimeFlags } from "./app/dev-runtime-flags.js";
+import { buildEditorFieldSelector } from "./app/editor-utils.js";
 import {
   persistCurrentEditorLocation,
   prepareEditorLocationBeforeRender,
@@ -56,6 +57,7 @@ import {
 import { hydratePersistentAppState, state } from "./app/state.js";
 import { noteGlossaryBackgroundSyncScrollActivity } from "./app/glossary-background-sync.js";
 import {
+  collapseEmptyEditorFootnote,
   flushDirtyEditorRows,
   noteEditorBackgroundSyncScrollActivity,
   scheduleDirtyEditorRowScan,
@@ -143,10 +145,14 @@ function captureFocusedInputState() {
 
   const selector =
     activeElement instanceof HTMLTextAreaElement && activeElement.matches("[data-editor-row-field]")
-      ? `[data-editor-row-field][data-row-id="${activeElement.dataset.rowId}"][data-language-code="${activeElement.dataset.languageCode}"]`
+      ? buildEditorFieldSelector(
+        activeElement.dataset.rowId ?? "",
+        activeElement.dataset.languageCode ?? "",
+        activeElement.dataset.contentKind === "footnote" ? "footnote" : "field",
+      )
       : activeElement instanceof HTMLInputElement && activeElement.matches("[data-editor-replace-row-select]")
         ? `[data-editor-replace-row-select][data-row-id="${activeElement.dataset.rowId}"]`
-      : activeElement instanceof HTMLSelectElement && activeElement.matches("[data-chapter-glossary-select]")
+        : activeElement instanceof HTMLSelectElement && activeElement.matches("[data-chapter-glossary-select]")
         ? `[data-chapter-glossary-select][data-chapter-id="${activeElement.dataset.chapterId}"]`
         : supportedSelectors.find((candidate) => activeElement.matches(candidate));
   if (!selector) {
@@ -167,6 +173,10 @@ function captureFocusedInputState() {
       activeElement instanceof HTMLTextAreaElement && activeElement.matches("[data-editor-row-field]")
         ? activeElement.dataset.languageCode ?? ""
         : "",
+    contentKind:
+      activeElement instanceof HTMLTextAreaElement && activeElement.matches("[data-editor-row-field]")
+        ? (activeElement.dataset.contentKind === "footnote" ? "footnote" : "field")
+        : "field",
     selectionStart:
       activeElement instanceof HTMLInputElement || activeElement instanceof HTMLTextAreaElement
         ? activeElement.selectionStart
@@ -410,7 +420,7 @@ app.addEventListener("focusin", (event) => {
 
 app.addEventListener("mousedown", (event) => {
   const button = event.target instanceof Element
-    ? event.target.closest("[data-editor-row-text-style-button]")
+    ? event.target.closest("[data-editor-row-text-style-button], [data-editor-footnote-button]")
   : null;
   if (!button) {
     return;
@@ -458,11 +468,26 @@ app.addEventListener("focusout", (event) => {
     return;
   }
 
+  const rowId = input.dataset.rowId ?? "";
+  const languageCode = input.dataset.languageCode ?? "";
   requestAnimationFrame(() => {
     syncEditorRowTextareaHeight(input);
     syncEditorVirtualizationRowLayout(input);
   });
-  scheduleDirtyEditorRowScan(render, input.dataset.rowId);
+  requestAnimationFrame(() => {
+    const activeElement = document.activeElement;
+    if (
+      activeElement instanceof HTMLTextAreaElement
+      && activeElement.matches("[data-editor-row-field]")
+      && activeElement.dataset.rowId === rowId
+      && activeElement.dataset.languageCode === languageCode
+    ) {
+      return;
+    }
+
+    collapseEmptyEditorFootnote(render, rowId, languageCode);
+  });
+  scheduleDirtyEditorRowScan(render, rowId);
 });
 
 app.addEventListener("beforeinput", (event) => {

@@ -139,26 +139,47 @@ function renderEditorRowContextAction(row) {
 function renderRowTextStyleButtons(row, language) {
   const selectedTextStyle = normalizeEditorRowTextStyle(row?.textStyle);
   const isSaving = row?.textStyleSaveState?.status === "saving";
+  const showAddFootnoteButton = language.showAddFootnoteButton === true;
 
   return `
-    <div class="translation-row-text-style-actions" role="radiogroup" aria-label="Text style">
-      ${EDITOR_ROW_TEXT_STYLE_OPTIONS.map((option) => `
-        <button
-          class="translation-row-text-style-button${selectedTextStyle === option.value ? " is-active" : ""}${isSaving ? " is-saving" : ""}"
-          type="button"
-          role="radio"
-          data-action="set-editor-row-text-style"
-          data-editor-row-text-style-button
-          data-row-id="${escapeHtml(row.id)}"
-          data-language-code="${escapeHtml(language.code)}"
-          data-text-style="${escapeHtml(option.value)}"
-          aria-checked="${selectedTextStyle === option.value ? "true" : "false"}"
-          ${isSaving ? "disabled" : ""}
-          ${tooltipAttributes(option.tooltip, { side: "top" })}
-        >
-          <span class="translation-row-text-style-button__label">${escapeHtml(option.label)}</span>
-        </button>
-      `).join("")}
+    <div class="translation-row-text-style-actions">
+      <div class="translation-row-text-style-actions__group" role="radiogroup" aria-label="Text style">
+        ${EDITOR_ROW_TEXT_STYLE_OPTIONS.map((option) => `
+          <button
+            class="translation-row-text-style-button${selectedTextStyle === option.value ? " is-active" : ""}${isSaving ? " is-saving" : ""}"
+            type="button"
+            role="radio"
+            data-action="set-editor-row-text-style"
+            data-editor-row-text-style-button
+            data-row-id="${escapeHtml(row.id)}"
+            data-language-code="${escapeHtml(language.code)}"
+            data-text-style="${escapeHtml(option.value)}"
+            aria-checked="${selectedTextStyle === option.value ? "true" : "false"}"
+            ${isSaving ? "disabled" : ""}
+            ${tooltipAttributes(option.tooltip, { side: "top" })}
+          >
+            <span class="translation-row-text-style-button__label">${escapeHtml(option.label)}</span>
+          </button>
+        `).join("")}
+      </div>
+      ${
+        showAddFootnoteButton
+          ? `
+            <span class="translation-row-text-style-actions__separator" aria-hidden="true"></span>
+            <button
+              class="translation-marker-button translation-marker-button--footnote"
+              type="button"
+              data-action="open-editor-footnote"
+              data-editor-footnote-button
+              data-row-id="${escapeHtml(row.id)}"
+              data-language-code="${escapeHtml(language.code)}"
+              ${tooltipAttributes("Add footnote", { side: "top" })}
+            >
+              <span class="translation-marker-button__label" aria-hidden="true">*</span>
+            </button>
+          `
+          : ""
+      }
     </div>
   `;
 }
@@ -198,6 +219,42 @@ function renderDisabledConflictField(language, textStyle) {
   `;
 }
 
+function renderEditorFootnoteField(row, language, textStyle) {
+  return `
+    <div
+      class="translation-language-panel__field-stack translation-language-panel__field-stack--footnote"
+      data-editor-glossary-field-stack
+      data-row-id="${escapeHtml(row.id)}"
+      data-language-code="${escapeHtml(language.code)}"
+      data-content-kind="footnote"
+      data-row-text-style="${escapeHtml(textStyle)}"
+    >
+      <div
+        class="translation-language-panel__field-highlight translation-language-panel__search-highlight"
+        data-editor-search-highlight
+        lang="${escapeHtml(language.code)}"
+        aria-hidden="true"
+      ></div>
+      <div
+        class="translation-language-panel__field-highlight translation-language-panel__glossary-highlight"
+        data-editor-glossary-highlight
+        lang="${escapeHtml(language.code)}"
+        aria-hidden="true"
+      ></div>
+      <textarea
+        class="translation-language-panel__field translation-language-panel__field--footnote"
+        data-editor-row-field
+        data-content-kind="footnote"
+        data-row-id="${escapeHtml(row.id)}"
+        data-language-code="${escapeHtml(language.code)}"
+        lang="${escapeHtml(language.code)}"
+        spellcheck="false"
+        placeholder="Enter footnote text here."
+      >${escapeHtml(language.footnote)}</textarea>
+    </div>
+  `;
+}
+
 function renderEditorLanguageField(row, language) {
   const textStyle = normalizeEditorRowTextStyle(row?.textStyle);
   if (row.hasConflict) {
@@ -212,7 +269,7 @@ function renderEditorLanguageField(row, language) {
     : "";
 
   return `
-    <div class="translation-language-panel__editor">
+    <div class="translation-language-panel__editor${language.isActive ? " translation-language-panel__editor--active" : ""}">
       <div
         class="translation-language-panel__field-stack"
         data-editor-glossary-field-stack
@@ -242,6 +299,7 @@ function renderEditorLanguageField(row, language) {
           ${loadingAttributes}
         >${escapeHtml(language.text)}</textarea>
       </div>
+      ${language.hasVisibleFootnote ? renderEditorFootnoteField(row, language, textStyle) : ""}
       ${renderRowTextStyleButtons(row, language)}
     </div>
   `;

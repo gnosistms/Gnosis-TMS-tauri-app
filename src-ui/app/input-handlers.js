@@ -379,7 +379,7 @@ function handleEditorRowFieldInput(event, render) {
     input,
     filters: state.editorChapter?.filters,
     render,
-    updateEditorRowFieldValue,
+    updateEditorRowFieldValueForContentKind: updateEditorRowFieldValue,
     syncEditorRowTextareaHeight,
     syncEditorVirtualizationRowLayout,
     syncEditorGlossaryHighlightRowDom,

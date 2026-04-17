@@ -166,6 +166,7 @@ function createFixtureRow(index, languages, options = {}) {
     ? storedCommentConfig.commentsRevision
     : editorComments.length;
   const fields = {};
+  const footnotes = {};
   const fieldStates = {};
 
   for (const language of languages) {
@@ -181,6 +182,7 @@ function createFixtureRow(index, languages, options = {}) {
       reviewed: false,
       pleaseCheck: false,
     };
+    footnotes[language.code] = "";
   }
 
   return {
@@ -193,6 +195,8 @@ function createFixtureRow(index, languages, options = {}) {
     textStyle: "paragraph",
     fields,
     persistedFields: { ...fields },
+    footnotes,
+    persistedFootnotes: { ...footnotes },
     fieldStates,
     persistedFieldStates: structuredClone(fieldStates),
     saveStatus: "idle",
@@ -512,6 +516,20 @@ export function applyEditorRegressionRestore(appState, rowId) {
 }
 
 export function readEditorRegressionSnapshot(appState) {
+  const rowFootnotes =
+    Array.isArray(appState.editorChapter?.rows)
+      ? Object.fromEntries(
+        appState.editorChapter.rows
+          .filter((row) => typeof row?.rowId === "string" && row.rowId)
+          .map((row) => [
+            row.rowId,
+            row?.footnotes && typeof row.footnotes === "object"
+              ? { ...row.footnotes }
+              : {},
+          ]),
+      )
+      : {};
+
   return {
     screen: appState.screen,
     selectedTeamId: appState.selectedTeamId,
@@ -519,10 +537,18 @@ export function readEditorRegressionSnapshot(appState) {
     selectedChapterId: appState.selectedChapterId,
     activeRowId: appState.editorChapter?.activeRowId ?? null,
     activeLanguageCode: appState.editorChapter?.activeLanguageCode ?? null,
+    footnoteEditor:
+      appState.editorChapter?.footnoteEditor && typeof appState.editorChapter.footnoteEditor === "object"
+        ? {
+            rowId: appState.editorChapter.footnoteEditor.rowId ?? null,
+            languageCode: appState.editorChapter.footnoteEditor.languageCode ?? null,
+          }
+        : null,
     dirtyRowIds:
       appState.editorChapter?.dirtyRowIds instanceof Set
         ? [...appState.editorChapter.dirtyRowIds]
         : [],
+    rowFootnotes,
     expandedDeletedRowGroupIds:
       appState.editorChapter?.expandedDeletedRowGroupIds instanceof Set
         ? [...appState.editorChapter.expandedDeletedRowGroupIds]

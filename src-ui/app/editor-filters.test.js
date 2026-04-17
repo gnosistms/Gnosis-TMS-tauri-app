@@ -35,6 +35,10 @@ function row(rowId, fields, lifecycleState = "active", options = {}) {
       code,
       name: code,
       text,
+      footnote: options.footnotes?.[code] ?? "",
+      hasVisibleFootnote:
+        options.visibleFootnotes?.[code] === true
+        || String(options.footnotes?.[code] ?? "").trim().length > 0,
       reviewed: options.reviewedByLanguage?.[code] === true,
       pleaseCheck: options.pleaseCheckByLanguage?.[code] === true,
     })),
@@ -96,6 +100,36 @@ test("search preserves row ordering and excludes deleted rows by default", () =>
 
   assert.deepEqual(result.filteredRows.map((item) => item.id), ["row-a", "row-d"]);
   assert.equal(result.searchResults.length, 2);
+});
+
+test("search includes visible footnotes and keeps their keys distinct from main text", () => {
+  const result = buildEditorFilterResult({
+    rows: [
+      row(
+        "row-1",
+        { es: "distintos cuerpo" },
+        "active",
+        { footnotes: { es: "distintos nota" } },
+      ),
+    ],
+    languages: [language("es")],
+    collapsedLanguageCodes: new Set(),
+    filters: { searchQuery: "distintos" },
+  });
+
+  assert.deepEqual(result.filteredRows.map((item) => item.id), ["row-1"]);
+  assert.equal(result.searchResults.length, 2);
+  assert.deepEqual(
+    result.searchResults.map((match) => [match.contentKind, match.key]),
+    [
+      ["field", "row-1:es:field:0:9"],
+      ["footnote", "row-1:es:footnote:0:9"],
+    ],
+  );
+  assert.deepEqual(
+    [...(result.searchMatchesByRowId.get("row-1")?.keys() ?? [])],
+    ["es:field", "es:footnote"],
+  );
 });
 
 test("no active filters returns the unfiltered rows", () => {

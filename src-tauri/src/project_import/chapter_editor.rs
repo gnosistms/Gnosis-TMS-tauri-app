@@ -123,7 +123,11 @@ pub(crate) struct UpdateEditorRowFieldsInput {
     row_id: String,
     fields: BTreeMap<String, String>,
     #[serde(default)]
+    footnotes: BTreeMap<String, String>,
+    #[serde(default)]
     base_fields: BTreeMap<String, String>,
+    #[serde(default)]
+    base_footnotes: BTreeMap<String, String>,
     #[serde(default)]
     operation: String,
     #[serde(default)]
@@ -135,6 +139,8 @@ pub(crate) struct UpdateEditorRowFieldsInput {
 pub(crate) struct UpdateEditorRowFieldsBatchRowInput {
     row_id: String,
     fields: BTreeMap<String, String>,
+    #[serde(default)]
+    footnotes: BTreeMap<String, String>,
 }
 
 #[derive(Deserialize)]
@@ -304,6 +310,7 @@ pub(crate) struct EditorFieldHistoryEntry {
     status_note: Option<String>,
     ai_model: Option<String>,
     plain_text: String,
+    footnote: String,
     text_style: String,
     reviewed: bool,
     please_check: bool,
@@ -327,6 +334,7 @@ pub(crate) struct RestoreEditorFieldHistoryResponse {
     row_id: String,
     language_code: String,
     plain_text: String,
+    footnote: String,
     text_style: String,
     reviewed: bool,
     please_check: bool,
@@ -392,6 +400,7 @@ struct EditorRow {
     order_key: String,
     text_style: String,
     fields: BTreeMap<String, String>,
+    footnotes: BTreeMap<String, String>,
     field_states: BTreeMap<String, EditorFieldState>,
 }
 
@@ -437,6 +446,7 @@ pub(crate) struct SaveEditorRowWithConcurrencyResponse {
     row: Option<EditorRow>,
     source_word_counts: BTreeMap<String, usize>,
     base_fields: BTreeMap<String, String>,
+    base_footnotes: BTreeMap<String, String>,
     conflict_remote_version: Option<EditorRowVersionMetadata>,
     chapter_base_commit_sha: Option<String>,
 }
@@ -557,6 +567,8 @@ struct StoredRowOrigin {
 struct StoredFieldValue {
     #[serde(default)]
     plain_text: String,
+    #[serde(default)]
+    footnote: String,
     #[serde(default)]
     editor_flags: StoredFieldEditorFlags,
 }
@@ -1243,6 +1255,7 @@ pub(super) fn update_gtms_editor_row_fields_sync(
             row: None,
             source_word_counts,
             base_fields: input.base_fields,
+            base_footnotes: input.base_footnotes,
             conflict_remote_version: None,
             chapter_base_commit_sha: current_repo_head_sha(&repo_path),
         });
@@ -1268,18 +1281,22 @@ pub(super) fn update_gtms_editor_row_fields_sync(
             row: Some(editor_row_from_stored_row_file(original_row_file)?),
             source_word_counts,
             base_fields: input.base_fields,
+            base_footnotes: input.base_footnotes,
             conflict_remote_version: None,
             chapter_base_commit_sha: current_repo_head_sha(&repo_path),
         });
     }
 
-    if row_plain_text_map(&original_row_file) != input.base_fields {
+    if row_plain_text_map(&original_row_file) != input.base_fields
+        || row_footnote_map(&original_row_file) != input.base_footnotes
+    {
         return Ok(SaveEditorRowWithConcurrencyResponse {
             row_id: input.row_id,
             status: "conflict".to_string(),
             row: Some(editor_row_from_stored_row_file(original_row_file)?),
             source_word_counts,
             base_fields: input.base_fields,
+            base_footnotes: input.base_footnotes,
             conflict_remote_version: load_latest_row_version_metadata(
                 &repo_path,
                 &relative_row_json,
@@ -1295,6 +1312,7 @@ pub(super) fn update_gtms_editor_row_fields_sync(
         )
     })?;
     apply_editor_plain_text_updates(&mut row_value, &input.fields)?;
+    apply_editor_footnote_updates(&mut row_value, &input.footnotes)?;
 
     let updated_row_json = serde_json::to_string_pretty(&row_value).map_err(|error| {
         format!(
@@ -1345,6 +1363,7 @@ pub(super) fn update_gtms_editor_row_fields_sync(
         row: Some(editor_row_from_stored_row_file(next_row)?),
         source_word_counts: next_source_word_counts,
         base_fields: input.base_fields,
+        base_footnotes: input.base_footnotes,
         conflict_remote_version: None,
         chapter_base_commit_sha: current_repo_head_sha(&repo_path),
     })
@@ -1377,17 +1396,20 @@ pub(super) fn update_gtms_editor_row_fields_batch_sync(
 
         rows_by_id.insert(
             row_id,
-            row.fields
-                .into_iter()
-                .map(|(code, plain_text)| (code, plain_text))
-                .collect::<BTreeMap<_, _>>(),
+            UpdateEditorRowFieldsBatchRowInput {
+                row_id: row.row_id,
+                fields: row.fields,
+                footnotes: row.footnotes,
+            },
         );
     }
 
     let mut changed_row_ids = Vec::new();
     let mut relative_row_paths = Vec::new();
 
-    for (row_id, fields) in rows_by_id {
+    for (row_id, batch_row) in rows_by_id {
+        let fields = batch_row.fields;
+        let footnotes = batch_row.footnotes;
         let row_json_path = chapter_path.join("rows").join(format!("{row_id}.json"));
         let original_row_text = fs::read_to_string(&row_json_path).map_err(|error| {
             format!(
@@ -1409,6 +1431,7 @@ pub(super) fn update_gtms_editor_row_fields_batch_sync(
             )
         })?;
         apply_editor_plain_text_updates(&mut row_value, &fields)?;
+        apply_editor_footnote_updates(&mut row_value, &footnotes)?;
 
         let updated_row_json = serde_json::to_string_pretty(&row_value).map_err(|error| {
             format!(
@@ -1571,6 +1594,7 @@ pub(super) fn restore_gtms_editor_field_from_history_sync(
         )
     })?;
     let historical_plain_text = historical_field_value.field_value.plain_text.clone();
+    let historical_footnote = historical_field_value.field_value.footnote.clone();
     let historical_text_style = historical_field_value.text_style.clone();
 
     let original_row_text = fs::read_to_string(&row_json_path).map_err(|error| {
@@ -1614,6 +1638,10 @@ pub(super) fn restore_gtms_editor_field_from_history_sync(
     field_object.insert(
         "plain_text".to_string(),
         Value::String(historical_plain_text.clone()),
+    );
+    field_object.insert(
+        "footnote".to_string(),
+        Value::String(historical_footnote.clone()),
     );
     let field_changed = original_row_file
         .fields
@@ -1678,6 +1706,7 @@ pub(super) fn restore_gtms_editor_field_from_history_sync(
         row_id: input.row_id,
         language_code: input.language_code,
         plain_text: historical_plain_text,
+        footnote: historical_footnote,
         text_style: historical_text_style,
         reviewed: historical_field_value.field_value.editor_flags.reviewed,
         please_check: historical_field_value.field_value.editor_flags.please_check,
@@ -1774,6 +1803,7 @@ pub(super) fn reverse_gtms_editor_batch_replace_commit_sync(
         updated_rows.push(UpdateEditorRowFieldsBatchRowInput {
             row_id,
             fields: row_plain_text_fields(&restored_row_file),
+            footnotes: row_footnote_map(&restored_row_file),
         });
     }
 
@@ -2371,12 +2401,20 @@ fn ensure_editor_field_object_defaults(
         .and_then(Value::as_str)
         .unwrap_or_default()
         .to_string();
+    let footnote = field_object
+        .get("footnote")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
     field_object
         .entry("value_kind".to_string())
         .or_insert_with(|| Value::String("text".to_string()));
     field_object
         .entry("plain_text".to_string())
         .or_insert_with(|| Value::String(plain_text.clone()));
+    field_object
+        .entry("footnote".to_string())
+        .or_insert_with(|| Value::String(footnote));
 
     let editor_flags_value = field_object
         .entry("editor_flags".to_string())
@@ -2459,6 +2497,26 @@ fn apply_editor_plain_text_updates(
         if previous_plain_text != *plain_text {
             field_object.remove("html_preview");
         }
+    }
+
+    Ok(())
+}
+
+fn apply_editor_footnote_updates(
+    row_value: &mut Value,
+    footnotes: &BTreeMap<String, String>,
+) -> Result<(), String> {
+    let fields_object = row_fields_object_mut(row_value)?;
+
+    for (code, footnote) in footnotes {
+        let field_value = fields_object
+            .entry(code.clone())
+            .or_insert_with(|| json!({}));
+        let field_object = field_value
+            .as_object_mut()
+            .ok_or_else(|| "A row field is not a JSON object.".to_string())?;
+        ensure_editor_field_object_defaults(field_object)?;
+        field_object.insert("footnote".to_string(), Value::String(footnote.clone()));
     }
 
     Ok(())
@@ -2555,6 +2613,7 @@ fn set_editor_field_flags(
 #[derive(Clone, PartialEq, Eq)]
 struct HistoricalFieldSignature {
     plain_text: String,
+    footnote: String,
     text_style: String,
     reviewed: bool,
     please_check: bool,
@@ -2570,6 +2629,7 @@ impl HistoricalFieldSignature {
     fn from_version(version: &HistoricalFieldVersion) -> Self {
         Self {
             plain_text: version.field_value.plain_text.clone(),
+            footnote: version.field_value.footnote.clone(),
             text_style: version.text_style.clone(),
             reviewed: version.field_value.editor_flags.reviewed,
             please_check: version.field_value.editor_flags.please_check,
@@ -2594,6 +2654,7 @@ fn build_editor_field_history_entries(
             continue;
         };
         let plain_text = field_version.field_value.plain_text.clone();
+        let footnote = field_version.field_value.footnote.clone();
         let text_style = field_version.text_style.clone();
         let field_signature = HistoricalFieldSignature::from_version(&field_version);
         let is_baseline_entry = baseline_index == Some(index);
@@ -2612,6 +2673,7 @@ fn build_editor_field_history_entries(
             status_note: commit.status_note,
             ai_model: commit.ai_model,
             plain_text,
+            footnote,
             text_style,
             reviewed: field_version.field_value.editor_flags.reviewed,
             please_check: field_version.field_value.editor_flags.please_check,
@@ -2824,6 +2886,7 @@ fn sanitize_chapter_languages(languages: &[ChapterLanguage]) -> Vec<ChapterLangu
 fn editor_row_from_stored_row_file(row: StoredRowFile) -> Result<EditorRow, String> {
     let revision_token = row_revision_token(&row)?;
     let fields = row_plain_text_map(&row);
+    let footnotes = row_footnote_map(&row);
     let text_style = row_text_style(&row);
 
     Ok(EditorRow {
@@ -2846,6 +2909,7 @@ fn editor_row_from_stored_row_file(row: StoredRowFile) -> Result<EditorRow, Stri
         order_key: row.structure.order_key,
         text_style,
         fields,
+        footnotes,
         field_states: row
             .fields
             .into_iter()
@@ -2866,6 +2930,13 @@ fn row_plain_text_map(row: &StoredRowFile) -> BTreeMap<String, String> {
     row.fields
         .iter()
         .map(|(code, value)| (code.clone(), value.plain_text.clone()))
+        .collect()
+}
+
+fn row_footnote_map(row: &StoredRowFile) -> BTreeMap<String, String> {
+    row.fields
+        .iter()
+        .map(|(code, value)| (code.clone(), value.footnote.clone()))
         .collect()
 }
 
@@ -2916,6 +2987,7 @@ mod tests {
     fn history_field(plain_text: &str, reviewed: bool, please_check: bool) -> StoredFieldValue {
         StoredFieldValue {
             plain_text: plain_text.to_string(),
+            footnote: String::new(),
             editor_flags: StoredFieldEditorFlags {
                 reviewed,
                 please_check,
@@ -2988,6 +3060,7 @@ mod tests {
             "es": {
               "value_kind": "text",
               "plain_text": "uno",
+              "footnote": "",
               "html_preview": "<p>uno</p>",
               "editor_flags": {
                 "reviewed": false,
@@ -3026,6 +3099,7 @@ mod tests {
             "es": {
               "value_kind": "text",
               "plain_text": "uno",
+              "footnote": "",
               "html_preview": "<p>uno</p>",
               "editor_flags": {
                 "reviewed": false,
@@ -3309,6 +3383,40 @@ mod tests {
     }
 
     #[test]
+    fn build_editor_field_history_entries_keeps_footnote_only_changes() {
+        let entries = build_editor_field_history_entries(
+            vec![
+                history_commit("c2", Some("editor-update")),
+                history_commit("c1", Some("import")),
+            ],
+            vec![
+                Some(HistoricalFieldVersion {
+                    field_value: StoredFieldValue {
+                        plain_text: "Hello".to_string(),
+                        footnote: "Note".to_string(),
+                        editor_flags: StoredFieldEditorFlags::default(),
+                    },
+                    text_style: DEFAULT_EDITOR_TEXT_STYLE.to_string(),
+                }),
+                Some(HistoricalFieldVersion {
+                    field_value: StoredFieldValue {
+                        plain_text: "Hello".to_string(),
+                        footnote: String::new(),
+                        editor_flags: StoredFieldEditorFlags::default(),
+                    },
+                    text_style: DEFAULT_EDITOR_TEXT_STYLE.to_string(),
+                }),
+            ],
+        );
+
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].commit_sha, "c2");
+        assert_eq!(entries[0].footnote, "Note");
+        assert_eq!(entries[1].commit_sha, "c1");
+        assert_eq!(entries[1].footnote, "");
+    }
+
+    #[test]
     fn preferred_target_language_code_uses_default_target_language() {
         let languages = vec![
             ChapterLanguage {
@@ -3516,6 +3624,7 @@ fn create_inserted_row_file(
                 json!({
                   "value_kind": "text",
                   "plain_text": "",
+                  "footnote": "",
                   "rich_text": Value::Null,
                   "notes_html": "",
                   "attachments": [],
@@ -3590,6 +3699,10 @@ fn create_inserted_editor_row(
         .iter()
         .map(|language| (language.code.clone(), String::new()))
         .collect();
+    let footnotes = languages
+        .iter()
+        .map(|language| (language.code.clone(), String::new()))
+        .collect();
     let field_states = languages
         .iter()
         .map(|language| {
@@ -3632,6 +3745,7 @@ fn create_inserted_editor_row(
         order_key: order_key.to_string(),
         text_style: DEFAULT_EDITOR_TEXT_STYLE.to_string(),
         fields,
+        footnotes,
         field_states,
     })
 }

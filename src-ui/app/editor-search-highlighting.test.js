@@ -32,7 +32,7 @@ test("buildEditorRowSearchHighlights only includes visible languages with matche
   );
 
   assert.equal(highlights.size, 1);
-  assert.match(highlights.get("es")?.html ?? "", /translation-language-panel__search-match/);
+  assert.match(highlights.get("es:field")?.html ?? "", /translation-language-panel__search-match/);
   assert.equal(highlights.has("en"), false);
   assert.equal(highlights.has("vi"), false);
 });
@@ -49,4 +49,19 @@ test("buildEditorRowSearchHighlights respects case-sensitive search", () => {
   );
 
   assert.equal(highlights.size, 0);
+});
+
+test("buildEditorRowSearchHighlights keeps main text and footnote matches separate", () => {
+  const highlights = buildEditorRowSearchHighlights(
+    [
+      { code: "es", text: "distintos caminos", contentKind: "field" },
+      { code: "es", text: "distintos nota", contentKind: "footnote" },
+    ],
+    "distintos",
+    new Set(["es"]),
+  );
+
+  assert.equal(highlights.size, 2);
+  assert.match(highlights.get("es:field")?.html ?? "", /translation-language-panel__search-match/);
+  assert.match(highlights.get("es:footnote")?.html ?? "", /translation-language-panel__search-match/);
 });

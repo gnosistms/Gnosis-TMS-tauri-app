@@ -13,7 +13,7 @@ import {
   applyEditorRowConflictSaveSucceeded,
   applyEditorRowPersistSucceeded,
 } from "./editor-persistence-state.js";
-import { rowFieldsEqual } from "./editor-row-persistence-model.js";
+import { rowTextContentEqual } from "./editor-row-persistence-model.js";
 import { findChapterContextById, selectedProjectsTeam } from "./project-context.js";
 import { invoke } from "./runtime.js";
 import {
@@ -202,13 +202,19 @@ export async function saveEditorConflictResolution(render, operations = {}) {
   }
 
   const remoteFields = cloneRowFields(row.conflictState.remoteRow.fields);
+  const remoteFootnotes = cloneRowFields(row.conflictState.remoteRow.footnotes);
   const nextLocalFields = {
     ...cloneRowFields(row.fields),
     [languageCode]: typeof modal.finalText === "string" ? modal.finalText : String(modal.finalText ?? ""),
   };
+  const nextLocalFootnotes = cloneRowFields(row.footnotes);
   const fieldsToPersist = {
     ...remoteFields,
     [languageCode]: nextLocalFields[languageCode],
+  };
+  const footnotesToPersist = {
+    ...remoteFootnotes,
+    [languageCode]: nextLocalFootnotes[languageCode] ?? "",
   };
 
   state.editorChapter = {
@@ -227,7 +233,9 @@ export async function saveEditorConflictResolution(render, operations = {}) {
       input: {
         ...input,
         fields: fieldsToPersist,
+        footnotes: footnotesToPersist,
         baseFields: remoteFields,
+        baseFootnotes: remoteFootnotes,
       },
     });
   } catch (error) {
@@ -252,7 +260,12 @@ export async function saveEditorConflictResolution(render, operations = {}) {
 
   let savedLocalRowPayload = null;
   if (payload?.status === "conflict") {
-    if (payload?.row && rowFieldsEqual(fieldsToPersist, payload.row.fields)) {
+    if (payload?.row && rowTextContentEqual(
+      fieldsToPersist,
+      footnotesToPersist,
+      payload.row.fields,
+      payload.row.footnotes,
+    )) {
       savedLocalRowPayload = payload.row;
     } else {
       const updatedRow =
@@ -261,6 +274,7 @@ export async function saveEditorConflictResolution(render, operations = {}) {
             rowId,
             (currentRow) => applyEditorRowConflictDetected(currentRow, payload, {
               localFields: nextLocalFields,
+              localFootnotes: nextLocalFootnotes,
             }),
           )
           : null;
@@ -299,6 +313,7 @@ export async function saveEditorConflictResolution(render, operations = {}) {
           currentRow,
           savedLocalRowPayload,
           nextLocalFields,
+          nextLocalFootnotes,
           {
             remoteVersion: currentRow?.conflictState?.remoteVersion ?? modal.remoteVersion ?? null,
           },
@@ -362,7 +377,12 @@ export async function saveEditorConflictResolution(render, operations = {}) {
 
   if (latestRowPayload?.row) {
     const currentRow = findEditorRowById(rowId, state.editorChapter);
-    if (currentRow && !rowFieldsEqual(currentRow.fields, latestRowPayload.row.fields)) {
+    if (currentRow && !rowTextContentEqual(
+      currentRow.fields,
+      currentRow.footnotes,
+      latestRowPayload.row.fields,
+      latestRowPayload.row.footnotes,
+    )) {
       finalRow =
         typeof operations.updateEditorChapterRow === "function"
           ? operations.updateEditorChapterRow(
@@ -370,9 +390,11 @@ export async function saveEditorConflictResolution(render, operations = {}) {
             (candidateRow) => applyEditorRowConflictDetected(candidateRow, {
               row: latestRowPayload.row,
               baseFields: cloneRowFields(latestRowPayload.row.fields),
+              baseFootnotes: cloneRowFields(latestRowPayload.row.footnotes),
               remoteVersion: latestRowPayload.rowVersion ?? null,
             }, {
               localFields: cloneRowFields(currentRow.fields),
+              localFootnotes: cloneRowFields(currentRow.footnotes),
             }),
           )
           : currentRow;
@@ -392,6 +414,7 @@ export async function saveEditorConflictResolution(render, operations = {}) {
         currentRow,
         savedLocalRowPayload,
         nextLocalFields,
+        nextLocalFootnotes,
         {
           remoteVersion: currentRow?.conflictState?.remoteVersion ?? modal.remoteVersion ?? null,
         },

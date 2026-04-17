@@ -24,7 +24,9 @@ export function rowHasUnresolvedEditorConflict(row) {
 
 export function conflictedLanguageCodesForRow(row, languages = []) {
   const remoteFields = row?.conflictState?.remoteRow?.fields;
+  const remoteFootnotes = row?.conflictState?.remoteRow?.footnotes;
   const localFields = row?.fields;
+  const localFootnotes = row?.footnotes;
   if (!remoteFields || typeof remoteFields !== "object" || !localFields || typeof localFields !== "object") {
     return new Set();
   }
@@ -35,7 +37,10 @@ export function conflictedLanguageCodesForRow(row, languages = []) {
     : [...new Set([...Object.keys(localFields), ...Object.keys(remoteFields)].filter(Boolean))];
 
   for (const code of candidateCodes) {
-    if (normalizeConflictText(localFields?.[code]) !== normalizeConflictText(remoteFields?.[code])) {
+    if (
+      normalizeConflictText(localFields?.[code]) !== normalizeConflictText(remoteFields?.[code])
+      || normalizeConflictText(localFootnotes?.[code]) !== normalizeConflictText(remoteFootnotes?.[code])
+    ) {
       codes.add(code);
     }
   }

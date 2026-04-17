@@ -52,11 +52,16 @@ export function estimateEditorRowHeight(
   const sections = Array.isArray(row?.sections) ? row.sections : [];
   const expandedSections = sections.filter((section) => !collapsedLanguageCodes.has(section.code)).length;
   const collapsedSections = sections.length - expandedSections;
+  const expandedFootnotes = sections
+    .filter((section) => !collapsedLanguageCodes.has(section.code))
+    .filter((section) => section?.hasVisibleFootnote === true)
+    .length;
   const lineHeight = Math.max(fontSizePx * 1.5, 32);
 
   return Math.ceil(
     44
     + expandedSections * Math.max(118, lineHeight + 78)
+    + expandedFootnotes * Math.max(56, lineHeight + 18)
     + collapsedSections * 34
     + Math.max(0, sections.length - 1) * 16,
   );

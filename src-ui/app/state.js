@@ -291,6 +291,7 @@ export function createEditorChapterState() {
     derivedGlossariesByRowId: {},
     activeRowId: null,
     activeLanguageCode: null,
+    footnoteEditor: createEditorFootnoteEditorState(),
     sidebarTab: "review",
     reviewExpandedSectionKeys: new Set(["last-update", "ai-review"]),
     aiReview: createEditorAiReviewState(),
@@ -309,6 +310,13 @@ export function createEditorChapterState() {
     insertRowModal: createEditorInsertRowModalState(),
     rowPermanentDeletionModal: createEditorRowPermanentDeletionModalState(),
     rows: [],
+  };
+}
+
+export function createEditorFootnoteEditorState() {
+  return {
+    rowId: null,
+    languageCode: null,
   };
 }
 

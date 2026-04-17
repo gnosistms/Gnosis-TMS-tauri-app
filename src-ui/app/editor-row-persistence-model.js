@@ -21,6 +21,19 @@ export function rowFieldsEqual(left, right) {
   return leftEntries.every(([code, value]) => (right?.[code] ?? "") === value);
 }
 
+export function rowFootnotesEqual(left, right) {
+  return rowFieldsEqual(left, right);
+}
+
+export function rowTextContentEqual(
+  leftFields,
+  leftFootnotes,
+  rightFields,
+  rightFootnotes,
+) {
+  return rowFieldsEqual(leftFields, rightFields) && rowFootnotesEqual(leftFootnotes, rightFootnotes);
+}
+
 export function rowFieldStatesEqual(left, right) {
   const leftEntries = Object.entries(left && typeof left === "object" ? left : {});
   const rightEntries = Object.entries(right && typeof right === "object" ? right : {});
@@ -39,7 +52,12 @@ export function rowFieldStatesEqual(left, right) {
 }
 
 export function rowHasFieldChanges(row) {
-  return !rowFieldsEqual(row?.fields, row?.persistedFields);
+  return !rowTextContentEqual(
+    row?.fields,
+    row?.footnotes,
+    row?.persistedFields,
+    row?.persistedFootnotes,
+  );
 }
 
 export function rowHasPersistedChanges(row) {

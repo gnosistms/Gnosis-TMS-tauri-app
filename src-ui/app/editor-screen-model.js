@@ -10,9 +10,18 @@ import { canPermanentlyDeleteProjectFiles } from "./resource-capabilities.js";
 import { findChapterContextById, selectedProjectsTeam } from "./project-context.js";
 import { buildEditorFilterResult, editorChapterFiltersAreActive } from "./editor-filters.js";
 import { normalizeEditorReplaceState } from "./editor-replace.js";
+import {
+  editorFootnoteEditorMatches,
+  editorLanguageFootnoteIsVisible,
+  editorLanguageFootnoteText,
+} from "./editor-utils.js";
 
 let cachedEditorRowsRef = null;
 let cachedEditorLanguagesRef = null;
+let cachedActiveRowId = null;
+let cachedActiveLanguageCode = null;
+let cachedFootnoteEditorRowId = null;
+let cachedFootnoteEditorLanguageCode = null;
 let cachedLiveTranslationRows = [];
 const AI_TRANSLATE_PREPARING_TEXT = "Preparing glossary...";
 const AI_TRANSLATE_LOADING_TEXT = "Translating...";
@@ -58,11 +67,22 @@ function buildLiveTranslationRows(editorChapter, languages) {
   if (!editorRows || editorRows.length === 0) {
     cachedEditorRowsRef = editorRows;
     cachedEditorLanguagesRef = languageOptions;
+    cachedActiveRowId = editorChapter?.activeRowId ?? null;
+    cachedActiveLanguageCode = editorChapter?.activeLanguageCode ?? null;
+    cachedFootnoteEditorRowId = editorChapter?.footnoteEditor?.rowId ?? null;
+    cachedFootnoteEditorLanguageCode = editorChapter?.footnoteEditor?.languageCode ?? null;
     cachedLiveTranslationRows = [];
     return [];
   }
 
-  if (editorRows === cachedEditorRowsRef && languageOptions === cachedEditorLanguagesRef) {
+  if (
+    editorRows === cachedEditorRowsRef
+    && languageOptions === cachedEditorLanguagesRef
+    && (editorChapter?.activeRowId ?? null) === cachedActiveRowId
+    && (editorChapter?.activeLanguageCode ?? null) === cachedActiveLanguageCode
+    && (editorChapter?.footnoteEditor?.rowId ?? null) === cachedFootnoteEditorRowId
+    && (editorChapter?.footnoteEditor?.languageCode ?? null) === cachedFootnoteEditorLanguageCode
+  ) {
     return cachedLiveTranslationRows;
   }
 
@@ -93,6 +113,17 @@ function buildLiveTranslationRows(editorChapter, languages) {
         code: language.code,
         name: language.name,
         text: row.fields?.[language.code] ?? "",
+        footnote: editorLanguageFootnoteText(row, language.code),
+        hasVisibleFootnote: editorLanguageFootnoteIsVisible(row, language.code, editorChapter),
+        isFootnoteEditorOpen: editorFootnoteEditorMatches(editorChapter, row.rowId, language.code),
+        showAddFootnoteButton:
+          editorChapter?.activeRowId === row.rowId
+          && editorChapter?.activeLanguageCode === language.code
+          && editorLanguageFootnoteText(row, language.code).trim().length === 0
+          && !editorFootnoteEditorMatches(editorChapter, row.rowId, language.code),
+        isActive:
+          editorChapter?.activeRowId === row.rowId
+          && editorChapter?.activeLanguageCode === language.code,
         reviewed: row.fieldStates?.[language.code]?.reviewed === true,
         pleaseCheck: row.fieldStates?.[language.code]?.pleaseCheck === true,
         hasConflict: conflictLanguageCodes.has(language.code),
@@ -107,6 +138,10 @@ function buildLiveTranslationRows(editorChapter, languages) {
 
   cachedEditorRowsRef = editorRows;
   cachedEditorLanguagesRef = languageOptions;
+  cachedActiveRowId = editorChapter?.activeRowId ?? null;
+  cachedActiveLanguageCode = editorChapter?.activeLanguageCode ?? null;
+  cachedFootnoteEditorRowId = editorChapter?.footnoteEditor?.rowId ?? null;
+  cachedFootnoteEditorLanguageCode = editorChapter?.footnoteEditor?.languageCode ?? null;
   cachedLiveTranslationRows = liveRows;
   return liveRows;
 }

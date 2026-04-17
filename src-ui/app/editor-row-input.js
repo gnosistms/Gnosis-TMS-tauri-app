@@ -4,6 +4,7 @@ export function applyEditorRowFieldInput({
   input,
   filters,
   render,
+  updateEditorRowFieldValueForContentKind,
   updateEditorRowFieldValue,
   syncEditorRowTextareaHeight,
   syncEditorVirtualizationRowLayout,
@@ -11,7 +12,14 @@ export function applyEditorRowFieldInput({
 }) {
   const rowId = input?.dataset?.rowId ?? "";
   const languageCode = input?.dataset?.languageCode ?? "";
-  updateEditorRowFieldValue(rowId, languageCode, input?.value ?? "");
+  const contentKind = input?.dataset?.contentKind === "footnote" ? "footnote" : "field";
+  const nextValue = input?.value ?? "";
+
+  if (typeof updateEditorRowFieldValueForContentKind === "function") {
+    updateEditorRowFieldValueForContentKind(rowId, languageCode, nextValue, contentKind);
+  } else if (typeof updateEditorRowFieldValue === "function") {
+    updateEditorRowFieldValue(rowId, languageCode, nextValue);
+  }
 
   if (editorChapterFiltersAreActive(filters)) {
     render({ scope: "translate-body" });

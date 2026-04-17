@@ -4,7 +4,7 @@ import {
   resolveDirtyTrackedEditorRowIds,
   rowHasFieldChanges,
   rowHasPersistedChanges,
-  rowFieldsEqual,
+  rowTextContentEqual,
 } from "./editor-row-persistence-model.js";
 import {
   markEditorRowDirty,
@@ -42,6 +42,7 @@ import { state } from "./state.js";
 import { showNoticeBadge } from "./status-feedback.js";
 import { normalizeEditorRowTextStyle } from "./editor-row-text-style.js";
 import {
+  buildEditorFieldSelector,
   cloneRowFields,
   findEditorRowById,
   normalizeFieldState,
@@ -54,6 +55,7 @@ import {
 const pendingEditorRowPersistByRowId = new Map();
 const pendingEditorDirtyRowScanFrameByRowId = new Map();
 const pendingEditorRowCommitMetadataByRowId = new Map();
+let pendingEditorFootnoteOpenRequest = null;
 
 function normalizePendingEditorCommitMetadata(commitMetadata) {
   if (!commitMetadata || typeof commitMetadata !== "object") {
@@ -273,13 +275,103 @@ export async function flushDirtyEditorRows(render, operations = {}, options = {}
 }
 
 export function updateEditorRowFieldValue(rowId, languageCode, nextValue, operations = {}) {
+  updateEditorRowFieldValueForContentKind(
+    rowId,
+    languageCode,
+    nextValue,
+    "field",
+    operations,
+  );
+}
+
+export function updateEditorRowFieldValueForContentKind(
+  rowId,
+  languageCode,
+  nextValue,
+  contentKind = "field",
+  operations = {},
+) {
   const { updateEditorChapterRow } = operations;
   if (!rowId || !languageCode || typeof updateEditorChapterRow !== "function") {
     return;
   }
 
-  updateEditorChapterRow(rowId, (row) => applyEditorRowFieldValue(row, languageCode, nextValue));
+  updateEditorChapterRow(
+    rowId,
+    (row) => applyEditorRowFieldValue(row, languageCode, nextValue, contentKind),
+  );
   markEditorRowDirty(rowId);
+}
+
+export function openEditorFootnote(render, rowId, languageCode) {
+  if (!rowId || !languageCode || !state.editorChapter?.chapterId) {
+    return;
+  }
+
+  pendingEditorFootnoteOpenRequest = {
+    rowId,
+    languageCode,
+  };
+
+  state.editorChapter = {
+    ...state.editorChapter,
+    footnoteEditor: {
+      rowId,
+      languageCode,
+    },
+  };
+  render?.({ scope: "translate-body" });
+
+  if (typeof window !== "undefined") {
+    window.requestAnimationFrame(() => {
+      const input = document.querySelector(buildEditorFieldSelector(rowId, languageCode, "footnote"));
+      if (input instanceof HTMLTextAreaElement) {
+        input.focus({ preventScroll: true });
+      }
+      if (
+        pendingEditorFootnoteOpenRequest?.rowId === rowId
+        && pendingEditorFootnoteOpenRequest?.languageCode === languageCode
+      ) {
+        pendingEditorFootnoteOpenRequest = null;
+      }
+    });
+  }
+}
+
+export function collapseEmptyEditorFootnote(render, rowId, languageCode) {
+  if (!rowId || !languageCode || !state.editorChapter?.chapterId) {
+    return;
+  }
+
+  if (
+    state.editorChapter.footnoteEditor?.rowId !== rowId
+    || state.editorChapter.footnoteEditor?.languageCode !== languageCode
+  ) {
+    return;
+  }
+  if (
+    pendingEditorFootnoteOpenRequest?.rowId === rowId
+    && pendingEditorFootnoteOpenRequest?.languageCode === languageCode
+  ) {
+    return;
+  }
+
+  const row = findEditorRowById(rowId, state.editorChapter);
+  const footnote = typeof row?.footnotes?.[languageCode] === "string"
+    ? row.footnotes[languageCode]
+    : String(row?.footnotes?.[languageCode] ?? "");
+  if (footnote.trim()) {
+    return;
+  }
+
+  state.editorChapter = {
+    ...state.editorChapter,
+    footnoteEditor: {
+      rowId: null,
+      languageCode: null,
+    },
+  };
+  render?.({ scope: "translate-body" });
 }
 
 export async function updateEditorRowTextStyle(render, rowId, nextTextStyle, operations = {}) {
@@ -663,6 +755,7 @@ export async function resolveEditorRowConflict(render, rowId, resolution, operat
 
   await persistEditorRow(render, rowId, operations, {
     baseFieldsOverride: row.conflictState?.remoteRow?.fields ?? null,
+    baseFootnotesOverride: row.conflictState?.remoteRow?.footnotes ?? null,
   });
 }
 
@@ -695,7 +788,7 @@ async function persistEditorRow(render, rowId, operations = {}, options = {}) {
   const persistPromise = (async () => {
     while (state.editorChapter?.chapterId) {
       const editorChapter = state.editorChapter;
-      const row = options?.baseFieldsOverride
+      const row = options?.baseFieldsOverride || options?.baseFootnotesOverride
         ? findEditorRowById(rowId, state.editorChapter)
         : await ensureEditorRowReadyForWrite(render, rowId, {
           allowStaleDirty: true,
@@ -729,6 +822,7 @@ async function persistEditorRow(render, rowId, operations = {}, options = {}) {
       nextCommitMetadata = null;
 
       const fieldsToPersist = cloneRowFields(row.fields);
+      const footnotesToPersist = cloneRowFields(row.footnotes);
       const reviewLanguageToOpen = reviewTabLanguageToOpenAfterSave(
         editorChapter,
         rowId,
@@ -747,10 +841,15 @@ async function persistEditorRow(render, rowId, operations = {}, options = {}) {
             chapterId: editorChapter.chapterId,
             rowId,
             fields: fieldsToPersist,
+            footnotes: footnotesToPersist,
             baseFields:
               options?.baseFieldsOverride && typeof options.baseFieldsOverride === "object"
                 ? cloneRowFields(options.baseFieldsOverride)
                 : cloneRowFields(row.baseFields),
+            baseFootnotes:
+              options?.baseFootnotesOverride && typeof options.baseFootnotesOverride === "object"
+                ? cloneRowFields(options.baseFootnotesOverride)
+                : cloneRowFields(row.baseFootnotes),
             ...(commitMetadata?.operation ? { operation: commitMetadata.operation } : {}),
             ...(commitMetadata?.aiModel ? { aiModel: commitMetadata.aiModel } : {}),
           },
@@ -761,7 +860,12 @@ async function persistEditorRow(render, rowId, operations = {}, options = {}) {
         }
 
         if (payload?.status === "conflict") {
-          if (rowFieldsEqual(fieldsToPersist, payload?.row?.fields)) {
+          if (rowTextContentEqual(
+            fieldsToPersist,
+            footnotesToPersist,
+            payload?.row?.fields,
+            payload?.row?.footnotes,
+          )) {
             updateEditorChapterRow(
               rowId,
               (currentRow) => applyEditorRowPersistSucceeded(currentRow, payload?.row),
@@ -773,7 +877,10 @@ async function persistEditorRow(render, rowId, operations = {}, options = {}) {
 
           updateEditorChapterRow(
             rowId,
-            (currentRow) => applyEditorRowConflictDetected(currentRow, payload),
+            (currentRow) => applyEditorRowConflictDetected(currentRow, payload, {
+              localFields: fieldsToPersist,
+              localFootnotes: footnotesToPersist,
+            }),
           );
           lockConflictFilter();
           render?.();

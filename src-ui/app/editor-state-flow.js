@@ -25,6 +25,7 @@ import {
   createEditorAiReviewState,
   createEditorAiTranslateActionState,
   createEditorAiTranslateState,
+  createEditorFootnoteEditorState,
   createEditorReplaceUndoModalState,
   createEditorReplaceState,
   createEditorHistoryState,
@@ -191,6 +192,7 @@ export function applyEditorUiState(nextEditorChapter, previousEditorChapter = st
       hasEditorRow(nextEditorChapter, activeRowId) && hasEditorLanguage(nextEditorChapter, activeLanguageCode)
         ? activeLanguageCode
         : null,
+    footnoteEditor: createEditorFootnoteEditorState(),
     sidebarTab: normalizeEditorSidebarTab(sidebarTab),
     reviewExpandedSectionKeys: isSameChapter
       ? cloneExpandedReviewSectionKeys(previousEditorChapter?.reviewExpandedSectionKeys)
@@ -247,6 +249,7 @@ export function applyEditorUiState(nextEditorChapter, previousEditorChapter = st
 
 export function normalizeEditorRow(row) {
   const fields = cloneRowFields(row?.fields);
+  const footnotes = cloneRowFields(row?.footnotes);
   const fieldStates = cloneRowFieldStates(row?.fieldStates);
   const textStyle = normalizeEditorRowTextStyle(row?.textStyle);
   return {
@@ -262,8 +265,11 @@ export function normalizeEditorRow(row) {
       Number.isInteger(row?.commentsRevision) && row.commentsRevision >= 0 ? row.commentsRevision : 0,
     textStyle,
     fields,
+    footnotes,
     baseFields: cloneRowFields(fields),
+    baseFootnotes: cloneRowFields(footnotes),
     persistedFields: cloneRowFields(fields),
+    persistedFootnotes: cloneRowFields(footnotes),
     fieldStates,
     persistedFieldStates: cloneRowFieldStates(fieldStates),
     freshness: "fresh",
@@ -452,7 +458,13 @@ export function rowsWithEditorRowLifecycleState(rows, rowId, lifecycleState) {
 
 export function markEditorRowsPersisted(rowUpdates, sourceWordCounts = null, chapterBaseCommitSha = null) {
   const updatesByRowId = new Map(
-    (Array.isArray(rowUpdates) ? rowUpdates : []).map((row) => [row.rowId, cloneRowFields(row.fields)]),
+    (Array.isArray(rowUpdates) ? rowUpdates : []).map((row) => [
+      row.rowId,
+      {
+        fields: cloneRowFields(row.fields),
+        footnotes: cloneRowFields(row.footnotes),
+      },
+    ]),
   );
   if (updatesByRowId.size === 0 || !state.editorChapter?.chapterId) {
     return;
@@ -469,11 +481,15 @@ export function markEditorRowsPersisted(rowUpdates, sourceWordCounts = null, cha
         return row;
       }
 
-      const fields = updatesByRowId.get(row.rowId);
+      const update = updatesByRowId.get(row.rowId);
+      const fields = update?.fields ?? cloneRowFields(row.fields);
+      const footnotes = update?.footnotes ?? cloneRowFields(row.footnotes);
       return {
         ...row,
         fields,
+        footnotes,
         persistedFields: cloneRowFields(fields),
+        persistedFootnotes: cloneRowFields(footnotes),
         saveStatus: "idle",
         saveError: "",
       };

@@ -11,6 +11,7 @@ import {
   confirmEditorReplaceUndo,
   confirmEditorRowPermanentDeletion,
   confirmInsertEditorRow,
+  openEditorFootnote,
   closeTargetLanguageManager,
   copyEditorConflictResolutionVersion,
   deleteActiveEditorRowComment,
@@ -185,6 +186,16 @@ export function createTranslateActions(render) {
       const rowId = button?.dataset.rowId ?? null;
       const textStyle = button?.dataset.textStyle ?? null;
       await updateEditorRowTextStyle(render, rowId, textStyle);
+      return true;
+    }
+
+    if (action === "open-editor-footnote") {
+      const button = event?.target instanceof Element
+        ? event.target.closest("[data-row-id][data-language-code]")
+        : null;
+      const rowId = button?.dataset.rowId ?? null;
+      const languageCode = button?.dataset.languageCode ?? null;
+      openEditorFootnote(render, rowId, languageCode);
       return true;
     }
 

@@ -193,3 +193,38 @@ test("buildEditorScreenViewModel marks the translated alternate language field w
     restoreSharedState(snapshot);
   }
 });
+
+test("buildEditorScreenViewModel rebuilds section footnote visibility when the footnote editor opens", () => {
+  const snapshot = snapshotSharedState();
+
+  try {
+    applyEditorRegressionFixture(state, {
+      rowCount: 1,
+    });
+
+    let viewModel = buildEditorScreenViewModel(state);
+    let firstRow = viewModel.contentRows.find((row) => row?.id === "fixture-row-0001");
+    let targetSection = firstRow?.sections.find((section) => section.code === "vi");
+
+    assert.equal(targetSection?.hasVisibleFootnote, false);
+    assert.equal(targetSection?.showAddFootnoteButton, true);
+
+    state.editorChapter = {
+      ...state.editorChapter,
+      footnoteEditor: {
+        rowId: "fixture-row-0001",
+        languageCode: "vi",
+      },
+    };
+
+    viewModel = buildEditorScreenViewModel(state);
+    firstRow = viewModel.contentRows.find((row) => row?.id === "fixture-row-0001");
+    targetSection = firstRow?.sections.find((section) => section.code === "vi");
+
+    assert.equal(targetSection?.hasVisibleFootnote, true);
+    assert.equal(targetSection?.isFootnoteEditorOpen, true);
+    assert.equal(targetSection?.showAddFootnoteButton, false);
+  } finally {
+    restoreSharedState(snapshot);
+  }
+});

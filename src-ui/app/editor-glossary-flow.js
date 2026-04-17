@@ -11,6 +11,7 @@ import {
 } from "./editor-derived-glossary-state.js";
 import { resolveEditorAiTranslateLanguages } from "./editor-ai-translate-target.js";
 import { buildEditorRowSearchHighlightMap } from "./editor-search-flow.js";
+import { buildEditorSearchHighlightKey } from "./editor-search-highlighting.js";
 import { findEditorRowById } from "./editor-utils.js";
 import { invoke } from "./runtime.js";
 import { createEditorChapterGlossaryState, state } from "./state.js";
@@ -284,11 +285,12 @@ function applyEditorTextHighlightLayersToRowCard(
     }
 
     const languageCode = stack.dataset.languageCode ?? "";
+    const contentKind = stack.dataset.contentKind === "footnote" ? "footnote" : "field";
     const glossaryHighlight = glossaryHighlightMap instanceof Map
-      ? (glossaryHighlightMap.get(languageCode) ?? null)
+      ? (contentKind === "field" ? (glossaryHighlightMap.get(languageCode) ?? null) : null)
       : null;
     const searchHighlight = searchHighlightMap instanceof Map
-      ? (searchHighlightMap.get(languageCode) ?? null)
+      ? (searchHighlightMap.get(buildEditorSearchHighlightKey(languageCode, contentKind)) ?? null)
       : null;
     const glossaryHighlightHtml = renderableHighlightHtml(glossaryHighlight);
     const searchHighlightHtml = renderableHighlightHtml(searchHighlight);

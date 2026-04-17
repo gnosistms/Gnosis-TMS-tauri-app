@@ -15,6 +15,7 @@ function historyEntry({
   operationType = "editor-update",
   aiModel = null,
   plainText = "text",
+  footnote = "",
   textStyle = "paragraph",
   reviewed = false,
   pleaseCheck = false,
@@ -29,6 +30,7 @@ function historyEntry({
     statusNote,
     aiModel,
     plainText,
+    footnote,
     textStyle,
     reviewed,
     pleaseCheck,
@@ -79,6 +81,7 @@ test("current-entry matching requires text, marker state, and style equality", (
   assert.equal(
     editorHistoryEntryMatchesSection(entry, {
       text: "Hello",
+      footnote: "",
       textStyle: "heading2",
       reviewed: true,
       pleaseCheck: false,
@@ -88,6 +91,36 @@ test("current-entry matching requires text, marker state, and style equality", (
   assert.equal(
     editorHistoryEntryMatchesSection(entry, {
       text: "Hello",
+      footnote: "",
+      textStyle: "paragraph",
+      reviewed: false,
+      pleaseCheck: false,
+    }),
+    false,
+  );
+});
+
+test("current-entry matching also requires footnote equality", () => {
+  const entry = historyEntry({
+    commitSha: "c1",
+    plainText: "Hello",
+    footnote: "Note",
+  });
+
+  assert.equal(
+    editorHistoryEntryMatchesSection(entry, {
+      text: "Hello",
+      footnote: "Note",
+      textStyle: "paragraph",
+      reviewed: false,
+      pleaseCheck: false,
+    }),
+    true,
+  );
+  assert.equal(
+    editorHistoryEntryMatchesSection(entry, {
+      text: "Hello",
+      footnote: "",
       textStyle: "paragraph",
       reviewed: false,
       pleaseCheck: false,
@@ -107,6 +140,17 @@ test("style-only history updates stay visible instead of collapsing as marker-on
   assert.equal(model.groups[0].entries.length, 2);
   assert.equal(model.groups[0].entries[0].commitSha, "c3");
   assert.equal(model.groups[0].entries[1].commitSha, "c2");
+  assert.equal(model.groups[1].entries[0].commitSha, "c1");
+});
+
+test("footnote-only history updates stay visible instead of collapsing as marker-only changes", () => {
+  const model = buildEditorHistoryViewModel([
+    historyEntry({ commitSha: "c2", plainText: "Hello", footnote: "Note" }),
+    historyEntry({ commitSha: "c1", operationType: "import", plainText: "Hello", footnote: "" }),
+  ], new Set(["c1"]));
+
+  assert.equal(model.groups.length, 2);
+  assert.equal(model.groups[0].entries[0].commitSha, "c2");
   assert.equal(model.groups[1].entries[0].commitSha, "c1");
 });
 
@@ -169,6 +213,7 @@ test("findEditorHistoryPreviousEntry returns the previous saved version for the 
   assert.equal(
     findEditorHistoryPreviousEntry(entries, {
       text: "Current",
+      footnote: "",
       textStyle: "paragraph",
       reviewed: false,
       pleaseCheck: false,
@@ -179,6 +224,7 @@ test("findEditorHistoryPreviousEntry returns the previous saved version for the 
   assert.equal(
     findEditorHistoryPreviousEntry(entries, {
       text: "Unsaved change",
+      footnote: "",
       textStyle: "paragraph",
       reviewed: false,
       pleaseCheck: false,
@@ -196,6 +242,7 @@ test("findEditorHistoryPreviousEntry treats style-only changes as distinct saved
   assert.equal(
     findEditorHistoryPreviousEntry(entries, {
       text: "text",
+      footnote: "",
       textStyle: "heading1",
       reviewed: false,
       pleaseCheck: false,

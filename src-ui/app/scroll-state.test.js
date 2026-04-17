@@ -93,7 +93,7 @@ function installScrollFixture({ containerTop = 100, anchorTop = 140, scrollTop =
   selectors.set(".translate-main-scroll", container);
   selectors.set('[data-editor-row-card][data-row-id="row-1"]', row);
   selectors.set(
-    '[data-editor-row-field][data-row-id="row-1"][data-language-code="en"]',
+    '[data-editor-row-field][data-row-id="row-1"][data-language-code="en"]:not([data-content-kind])',
     field,
   );
   selectorLists.set("[data-editor-row-card]", [row]);

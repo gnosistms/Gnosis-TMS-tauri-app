@@ -339,6 +339,7 @@ function renderProjectSearchResult(result, searchQuery) {
   const matchCount = Number.isFinite(result?.matchCount) ? result.matchCount : 0;
   const snippetLanguageCode = typeof result?.languageCode === "string" ? result.languageCode.trim() : "";
   const snippetMarkup = buildProjectSearchSnippetMarkup(result?.snippet ?? "", searchQuery, snippetLanguageCode);
+  const snippetSourceLabel = result?.snippetSource === "footnote" ? "Footnote:" : "";
   return `
     <article class="card project-search-result">
       <div class="project-search-result__header">
@@ -351,7 +352,7 @@ function renderProjectSearchResult(result, searchQuery) {
         </p>
         ${matchCount > 0 ? `<span class="project-search-result__meta">${escapeHtml(`${matchCount} match${matchCount === 1 ? "" : "es"}`)}</span>` : ""}
       </div>
-      <p class="project-search-result__snippet"${snippetLanguageCode ? ` lang="${escapeHtml(snippetLanguageCode)}"` : ""} dir="auto">${snippetMarkup}</p>
+      <p class="project-search-result__snippet"${snippetLanguageCode ? ` lang="${escapeHtml(snippetLanguageCode)}"` : ""} dir="auto">${snippetSourceLabel ? `<span class="project-search-result__snippet-source">${escapeHtml(snippetSourceLabel)}</span> ` : ""}${snippetMarkup}</p>
       <div class="project-search-result__footer">
         ${textAction("Open", `open-project-search-result:${result?.resultId ?? ""}`)}
       </div>

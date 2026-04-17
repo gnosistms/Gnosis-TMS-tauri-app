@@ -1,5 +1,12 @@
 import { findEditorSearchMatches } from "./editor-filters.js";
 
+export function buildEditorSearchHighlightKey(languageCode, contentKind = "field") {
+  const normalizedLanguageCode =
+    typeof languageCode === "string" && languageCode.trim() ? languageCode.trim() : "";
+  const normalizedContentKind = contentKind === "footnote" ? "footnote" : "field";
+  return normalizedLanguageCode ? `${normalizedLanguageCode}:${normalizedContentKind}` : "";
+}
+
 function escapeHtml(value) {
   return String(value ?? "")
     .replaceAll("&", "&amp;")
@@ -96,6 +103,7 @@ export function buildEditorRowSearchHighlights(
     if (!languageCode || (visibleCodes && !visibleCodes.has(languageCode))) {
       continue;
     }
+    const contentKind = section?.contentKind === "footnote" ? "footnote" : "field";
 
     const text = String(section?.text ?? "");
     const matches = findEditorSearchMatches(text, searchQuery, languageCode, {
@@ -103,7 +111,7 @@ export function buildEditorRowSearchHighlights(
     });
     const highlight = buildEditorSearchHighlightMarkup(text, matches);
     if (highlight.hasMatches) {
-      highlights.set(languageCode, highlight);
+      highlights.set(buildEditorSearchHighlightKey(languageCode, contentKind), highlight);
     }
   }
 

@@ -75,6 +75,7 @@ pub(crate) struct ProjectSearchResult {
     row_order_key: String,
     language_code: String,
     language_name: String,
+    snippet_source: String,
     snippet: String,
     match_count: usize,
     exact_phrase: bool,
@@ -111,9 +112,18 @@ struct IndexedDocument {
     row_order_key: String,
     language_code: String,
     language_name: String,
+    snippet_source: String,
     plain_text: String,
     search_text: String,
     trigram_count: usize,
+}
+
+#[derive(Clone)]
+struct RowSearchDocument {
+    language_code: String,
+    language_name: String,
+    snippet_source: String,
+    plain_text: String,
 }
 
 #[derive(Clone)]
@@ -162,8 +172,8 @@ impl<'conn> SearchDocumentInserter<'conn> {
         let insert_document = connection
             .prepare(
                 "INSERT INTO search_documents (
-                   result_id, repo_key, project_id, repo_name, project_title, chapter_dir, chapter_id, chapter_title, row_id, row_order_key, language_code, language_name, plain_text, search_text, trigram_count, text_hash, updated_at_unix
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
+                   result_id, repo_key, project_id, repo_name, project_title, chapter_dir, chapter_id, chapter_title, row_id, row_order_key, language_code, language_name, snippet_source, plain_text, search_text, trigram_count, text_hash, updated_at_unix
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
             )
             .map_err(|error| format!("Could not prepare project search document insert: {error}"))?;
         let insert_token = connection
@@ -199,6 +209,7 @@ impl<'conn> SearchDocumentInserter<'conn> {
         row_order_key: &str,
         language_code: &str,
         language_name: &str,
+        snippet_source: &str,
         plain_text: &str,
     ) -> Result<(), String> {
         let trimmed_plain_text = plain_text.trim();
@@ -212,8 +223,8 @@ impl<'conn> SearchDocumentInserter<'conn> {
         }
 
         let result_id = format!(
-            "{}:{}:{}:{}",
-            repo.repo_key, chapter_id, row_id, language_code
+            "{}:{}:{}:{}:{}",
+            repo.repo_key, chapter_id, row_id, language_code, snippet_source
         );
         let trigrams = collect_unique_trigrams(&search_text);
         let trigram_count = trigrams.len();
@@ -233,6 +244,7 @@ impl<'conn> SearchDocumentInserter<'conn> {
                 row_order_key,
                 language_code,
                 language_name,
+                snippet_source,
                 trimmed_plain_text,
                 search_text,
                 trigram_count as i64,
@@ -409,7 +421,7 @@ fn search_projects_sync(
 
     let mut by_id_statement = connection
     .prepare(
-      "SELECT result_id, project_id, project_title, repo_name, chapter_id, chapter_title, row_id, row_order_key, language_code, language_name, plain_text, search_text, trigram_count
+      "SELECT result_id, project_id, project_title, repo_name, chapter_id, chapter_title, row_id, row_order_key, language_code, language_name, snippet_source, plain_text, search_text, trigram_count
        FROM search_documents
        WHERE doc_id = ?1",
     )
@@ -430,9 +442,10 @@ fn search_projects_sync(
                     row_order_key: row.get(7)?,
                     language_code: row.get(8)?,
                     language_name: row.get(9)?,
-                    plain_text: row.get(10)?,
-                    search_text: row.get(11)?,
-                    trigram_count: row.get::<_, i64>(12)?.max(0) as usize,
+                    snippet_source: row.get(10)?,
+                    plain_text: row.get(11)?,
+                    search_text: row.get(12)?,
+                    trigram_count: row.get::<_, i64>(13)?.max(0) as usize,
                 })
             })
             .optional()
@@ -471,6 +484,7 @@ fn search_projects_sync(
                 row_order_key: candidate.document.row_order_key.clone(),
                 language_code: candidate.document.language_code.clone(),
                 language_name: candidate.document.language_name.clone(),
+                snippet_source: candidate.document.snippet_source.clone(),
                 snippet: build_plain_text_snippet(&candidate.document.plain_text),
                 match_count: resolve_match_count(&candidate, &normalized_query),
                 exact_phrase: score.exact_phrase,
@@ -903,19 +917,7 @@ fn index_chapter_path(
             .and_then(Value::as_str)
             .unwrap_or("")
             .to_string();
-        let Some(fields) = row_value.get("fields").and_then(Value::as_object) else {
-            continue;
-        };
-
-        for (language_code, field_value) in fields {
-            let plain_text = field_value
-                .get("plain_text")
-                .and_then(Value::as_str)
-                .unwrap_or("");
-            let language_name = language_names
-                .get(language_code)
-                .cloned()
-                .unwrap_or_else(|| language_code.to_uppercase());
+        for document in row_search_documents_from_value(&row_value, &language_names) {
             inserter.insert_field_document(
                 repo,
                 chapter_dir,
@@ -923,14 +925,63 @@ fn index_chapter_path(
                 &chapter_title,
                 &row_id,
                 &row_order_key,
-                language_code,
-                &language_name,
-                plain_text,
+                &document.language_code,
+                &document.language_name,
+                &document.snippet_source,
+                &document.plain_text,
             )?;
         }
     }
 
     Ok(())
+}
+
+fn row_search_documents_from_value(
+    row_value: &Value,
+    language_names: &HashMap<String, String>,
+) -> Vec<RowSearchDocument> {
+    let Some(fields) = row_value.get("fields").and_then(Value::as_object) else {
+        return Vec::new();
+    };
+
+    let mut documents = Vec::new();
+    for (language_code, field_value) in fields {
+        let language_name = language_names
+            .get(language_code)
+            .cloned()
+            .unwrap_or_else(|| language_code.to_uppercase());
+        let plain_text = field_value
+            .get("plain_text")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .trim()
+            .to_string();
+        if !plain_text.is_empty() {
+            documents.push(RowSearchDocument {
+                language_code: language_code.clone(),
+                language_name: language_name.clone(),
+                snippet_source: "field".to_string(),
+                plain_text,
+            });
+        }
+
+        let footnote = field_value
+            .get("footnote")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .trim()
+            .to_string();
+        if !footnote.is_empty() {
+            documents.push(RowSearchDocument {
+                language_code: language_code.clone(),
+                language_name,
+                snippet_source: "footnote".to_string(),
+                plain_text: footnote,
+            });
+        }
+    }
+
+    documents
 }
 
 fn upsert_indexed_repo_state_tx(connection: &Connection, repo: &RepoRecord) -> Result<(), String> {
@@ -1111,6 +1162,7 @@ fn ensure_project_search_schema(connection: &Connection) -> Result<(), String> {
          row_order_key TEXT NOT NULL,
          language_code TEXT NOT NULL,
          language_name TEXT NOT NULL,
+         snippet_source TEXT NOT NULL DEFAULT 'field',
          plain_text TEXT NOT NULL,
          search_text TEXT NOT NULL,
          trigram_count INTEGER NOT NULL,
@@ -1151,6 +1203,15 @@ fn ensure_project_search_schema(connection: &Connection) -> Result<(), String> {
         connection
             .execute(
                 "ALTER TABLE search_documents ADD COLUMN chapter_dir TEXT NOT NULL DEFAULT ''",
+                [],
+            )
+            .map_err(|error| format!("Could not migrate the project search schema: {error}"))?;
+        clear_project_search_index_tables(connection)?;
+    }
+    if !table_has_column(connection, "search_documents", "snippet_source")? {
+        connection
+            .execute(
+                "ALTER TABLE search_documents ADD COLUMN snippet_source TEXT NOT NULL DEFAULT 'field'",
                 [],
             )
             .map_err(|error| format!("Could not migrate the project search schema: {error}"))?;
@@ -1582,8 +1643,9 @@ mod tests {
     use super::{
         append_diff_name_status_changes, append_status_porcelain_changes, build_plain_text_snippet,
         collect_unique_bigrams, collect_unique_trigrams, compute_search_score,
-        extract_chapter_dir_from_repo_path, normalize_search_text, score_to_number,
-        CandidateDocument, IndexedDocument, RepoRefreshPlan,
+        extract_chapter_dir_from_repo_path, normalize_search_text,
+        row_search_documents_from_value, score_to_number, CandidateDocument, IndexedDocument,
+        RepoRefreshPlan,
     };
 
     fn candidate(
@@ -1607,6 +1669,7 @@ mod tests {
                 row_order_key: "a0".to_string(),
                 language_code: "en".to_string(),
                 language_name: "English".to_string(),
+                snippet_source: "field".to_string(),
                 plain_text: document_text.to_string(),
                 search_text: normalize_search_text(document_text),
                 trigram_count: document_ngram_count,
@@ -1665,6 +1728,40 @@ mod tests {
         let snippet = build_plain_text_snippet(&"a".repeat(200));
         assert!(snippet.ends_with("..."));
         assert!(snippet.len() < 160);
+    }
+
+    #[test]
+    fn row_search_documents_from_value_indexes_non_empty_footnotes() {
+        let row_value = serde_json::json!({
+            "fields": {
+                "es": {
+                    "plain_text": "Texto principal",
+                    "footnote": "Nota visible"
+                },
+                "en": {
+                    "plain_text": "Reference",
+                    "footnote": "   "
+                }
+            }
+        });
+        let language_names = std::collections::HashMap::from([
+            ("es".to_string(), "Spanish".to_string()),
+            ("en".to_string(), "English".to_string()),
+        ]);
+
+        let documents = row_search_documents_from_value(&row_value, &language_names);
+
+        assert_eq!(documents.len(), 3);
+        assert_eq!(
+            documents
+                .iter()
+                .filter(|document| document.snippet_source == "field")
+                .count(),
+            2
+        );
+        assert!(documents.iter().any(|document| {
+            document.snippet_source == "footnote" && document.plain_text == "Nota visible"
+        }));
     }
 
     #[test]
