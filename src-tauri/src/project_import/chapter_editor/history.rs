@@ -1,6 +1,7 @@
 use super::images::{
     file_bytes_equal, load_historical_blob_bytes, normalize_editor_field_image_value,
-    push_repo_file_snapshot, row_language_stored_image, with_repo_file_rollback, write_binary_file,
+    push_repo_file_snapshot, remove_repo_file_from_disk, row_language_stored_image,
+    with_repo_file_rollback, write_binary_file,
 };
 use super::*;
 
@@ -231,8 +232,7 @@ pub(crate) fn restore_gtms_editor_field_from_history_sync(
             }
 
             if let Some(relative_path) = removed_uploaded_path.as_deref() {
-                let absolute_path = repo_path.join(relative_path);
-                let _ = fs::remove_file(&absolute_path);
+                remove_repo_file_from_disk(&repo_path, relative_path)?;
                 git_output(
                     &repo_path,
                     &["rm", "--cached", "--ignore-unmatch", relative_path],

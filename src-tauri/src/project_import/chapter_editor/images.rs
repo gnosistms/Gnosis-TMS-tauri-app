@@ -116,8 +116,7 @@ pub(crate) fn save_gtms_editor_language_image_url_sync(
         }
 
         if let Some(relative_path) = replaced_uploaded_path.as_deref() {
-            let absolute_path = repo_path.join(relative_path);
-            let _ = fs::remove_file(&absolute_path);
+            remove_repo_file_from_disk(&repo_path, relative_path)?;
             git_output(
                 &repo_path,
                 &["rm", "--cached", "--ignore-unmatch", relative_path],
@@ -231,6 +230,7 @@ pub(crate) fn upload_gtms_editor_language_image_sync(
         &input.chapter_id,
         &input.row_id,
         &input.language_code,
+        &input.filename,
         extension,
     );
     let absolute_image_path = repo_path.join(&relative_image_path);
@@ -279,8 +279,7 @@ pub(crate) fn upload_gtms_editor_language_image_sync(
             })?;
 
         if let Some(relative_path) = replaced_uploaded_path.as_deref() {
-            let absolute_path = repo_path.join(relative_path);
-            let _ = fs::remove_file(&absolute_path);
+            remove_repo_file_from_disk(&repo_path, relative_path)?;
             git_output(
                 &repo_path,
                 &["rm", "--cached", "--ignore-unmatch", relative_path],
@@ -439,8 +438,7 @@ pub(crate) fn remove_gtms_editor_language_image_sync(
             })?;
 
         if let Some(relative_path) = removed_uploaded_path.as_deref() {
-            let absolute_path = repo_path.join(relative_path);
-            let _ = fs::remove_file(&absolute_path);
+            remove_repo_file_from_disk(&repo_path, relative_path)?;
             git_output(
                 &repo_path,
                 &["rm", "--cached", "--ignore-unmatch", relative_path],
@@ -636,6 +634,45 @@ pub(super) fn write_binary_file(path: &Path, bytes: &[u8]) -> Result<(), String>
     fs::write(path, bytes).map_err(|error| format!("Could not write '{}': {error}", path.display()))
 }
 
+fn remove_empty_parent_directories(path: &Path, stop_at: &Path) -> Result<(), String> {
+    let mut current = path.parent();
+    while let Some(parent) = current {
+        if parent == stop_at {
+            break;
+        }
+        match fs::remove_dir(parent) {
+            Ok(()) => current = parent.parent(),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                current = parent.parent();
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::DirectoryNotEmpty => break,
+            Err(error) => {
+                return Err(format!(
+                    "Could not remove empty directory '{}': {error}",
+                    parent.display()
+                ));
+            }
+        }
+    }
+
+    Ok(())
+}
+
+pub(super) fn remove_repo_file_from_disk(
+    repo_path: &Path,
+    relative_path: &str,
+) -> Result<(), String> {
+    let absolute_path = repo_path.join(relative_path);
+    match fs::remove_file(&absolute_path) {
+        Ok(()) => remove_empty_parent_directories(&absolute_path, repo_path),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(format!(
+            "Could not remove '{}': {error}",
+            absolute_path.display()
+        )),
+    }
+}
+
 #[derive(Clone)]
 pub(super) struct RepoFileSnapshot {
     relative_path: String,
@@ -683,6 +720,7 @@ pub(super) fn push_repo_file_snapshot(
 }
 
 pub(super) fn restore_repo_file_snapshot_on_disk(
+    repo_path: &Path,
     snapshot: &RepoFileSnapshot,
 ) -> Result<(), String> {
     if let Some(original_bytes) = snapshot.original_bytes.as_deref() {
@@ -690,14 +728,7 @@ pub(super) fn restore_repo_file_snapshot_on_disk(
         return Ok(());
     }
 
-    match fs::remove_file(&snapshot.absolute_path) {
-        Ok(()) => Ok(()),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(format!(
-            "Could not remove '{}': {error}",
-            snapshot.absolute_path.display()
-        )),
-    }
+    remove_repo_file_from_disk(repo_path, &snapshot.relative_path)
 }
 
 fn sync_repo_file_snapshot_to_index(
@@ -727,7 +758,7 @@ fn rollback_repo_file_snapshots(
     let mut errors = Vec::new();
 
     for snapshot in snapshots.iter().rev() {
-        if let Err(error) = restore_repo_file_snapshot_on_disk(snapshot) {
+        if let Err(error) = restore_repo_file_snapshot_on_disk(repo_path, snapshot) {
             errors.push(error);
             continue;
         }
@@ -764,13 +795,64 @@ fn relative_uploaded_image_path(
     chapter_id: &str,
     row_id: &str,
     language_code: &str,
+    filename: &str,
     extension: &str,
 ) -> String {
-    format!(
-        "chapters/{chapter_id}/images/row-{row_id}-{language_code}-{}.{}",
-        uuid::Uuid::now_v7(),
-        extension
-    )
+    let upload_directory = format!("row-{row_id}-{language_code}-{}", uuid::Uuid::now_v7());
+    let file_name = sanitized_uploaded_image_file_name(filename, extension);
+    format!("chapters/{chapter_id}/images/{upload_directory}/{file_name}")
+}
+
+fn sanitized_uploaded_image_file_name(filename: &str, extension: &str) -> String {
+    let original_name = Path::new(filename)
+        .file_name()
+        .and_then(|value| value.to_str())
+        .map(str::trim)
+        .unwrap_or_default();
+    let matching_extension = Path::new(original_name)
+        .extension()
+        .and_then(|value| value.to_str())
+        .and_then(normalize_uploaded_image_extension);
+
+    if matching_extension == Some(extension) {
+        let sanitized_name = sanitize_uploaded_image_file_name_component(original_name);
+        if !matches!(sanitized_name.as_str(), "" | "." | "..") {
+            return sanitized_name;
+        }
+    }
+
+    let base_name = Path::new(original_name)
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("image");
+    let sanitized_base_name = sanitize_uploaded_image_file_name_component(base_name);
+    let final_base_name = match sanitized_base_name.as_str() {
+        "" | "." | ".." => "image",
+        _ => sanitized_base_name.as_str(),
+    };
+
+    format!("{final_base_name}.{extension}")
+}
+
+fn sanitize_uploaded_image_file_name_component(value: &str) -> String {
+    value
+        .trim()
+        .chars()
+        .map(|character| {
+            if character.is_control()
+                || matches!(
+                    character,
+                    '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*'
+                )
+            {
+                '_'
+            } else {
+                character
+            }
+        })
+        .collect()
 }
 
 pub(super) fn file_bytes_equal(path: &Path, bytes: &[u8]) -> bool {
@@ -969,7 +1051,7 @@ mod tests {
     #[test]
     fn restore_repo_file_snapshot_on_disk_restores_original_bytes() {
         let repo_path = temp_test_dir("snapshot-restores-bytes");
-        let relative_path = "chapters/chapter-1/images/row-1-vi.png";
+        let relative_path = "chapters/chapter-1/images/row-1-vi-upload/example.png";
         let absolute_path = repo_path.join(relative_path);
 
         write_binary_file(&absolute_path, b"original").expect("original file should be written");
@@ -977,7 +1059,8 @@ mod tests {
             .expect("snapshot should be captured");
 
         write_binary_file(&absolute_path, b"changed").expect("changed file should be written");
-        restore_repo_file_snapshot_on_disk(&snapshot).expect("snapshot should restore bytes");
+        restore_repo_file_snapshot_on_disk(&repo_path, &snapshot)
+            .expect("snapshot should restore bytes");
 
         assert_eq!(
             fs::read(&absolute_path).expect("file should exist"),
@@ -990,17 +1073,64 @@ mod tests {
     #[test]
     fn restore_repo_file_snapshot_on_disk_removes_new_files_when_they_were_originally_missing() {
         let repo_path = temp_test_dir("snapshot-removes-new-file");
-        let relative_path = "chapters/chapter-1/images/row-1-vi.png";
+        let relative_path = "chapters/chapter-1/images/row-1-vi-upload/example.png";
         let absolute_path = repo_path.join(relative_path);
 
         let snapshot = capture_repo_file_snapshot(&repo_path, relative_path)
             .expect("snapshot should be captured");
 
         write_binary_file(&absolute_path, b"created").expect("new file should be written");
-        restore_repo_file_snapshot_on_disk(&snapshot).expect("snapshot should remove new file");
+        restore_repo_file_snapshot_on_disk(&repo_path, &snapshot)
+            .expect("snapshot should remove new file");
 
         assert!(!absolute_path.exists(), "new file should be removed");
+        assert!(
+            !absolute_path
+                .parent()
+                .expect("upload directory should exist")
+                .exists(),
+            "empty upload directory should be removed"
+        );
 
         let _ = fs::remove_dir_all(&repo_path);
+    }
+
+    #[test]
+    fn sanitized_uploaded_image_file_name_preserves_matching_original_name() {
+        assert_eq!(
+            sanitized_uploaded_image_file_name(" original photo.PNG ", "png"),
+            "original photo.PNG"
+        );
+    }
+
+    #[test]
+    fn sanitized_uploaded_image_file_name_appends_detected_extension_when_missing() {
+        assert_eq!(
+            sanitized_uploaded_image_file_name("original photo", "png"),
+            "original photo.png"
+        );
+    }
+
+    #[test]
+    fn sanitized_uploaded_image_file_name_strips_directory_parts_and_sanitizes_invalid_chars() {
+        assert_eq!(
+            sanitized_uploaded_image_file_name("../unsafe:photo.png", "png"),
+            "unsafe_photo.png"
+        );
+    }
+
+    #[test]
+    fn relative_uploaded_image_path_keeps_original_file_name_in_upload_directory() {
+        let relative_path =
+            relative_uploaded_image_path("chapter-1", "row-1", "vi", "original photo.png", "png");
+
+        assert!(
+            relative_path.starts_with("chapters/chapter-1/images/row-row-1-vi-"),
+            "unexpected path: {relative_path}"
+        );
+        assert!(
+            relative_path.ends_with("/original photo.png"),
+            "unexpected path: {relative_path}"
+        );
     }
 }

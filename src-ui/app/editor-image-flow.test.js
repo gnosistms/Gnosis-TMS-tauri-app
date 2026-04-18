@@ -326,8 +326,8 @@ test("handleDroppedEditorImageFile applies a saved uploaded image to the editor 
         images: {
           vi: {
             kind: "upload",
-            path: "chapters/chapter-1/images/row-1-vi.png",
-            filePath: "/tmp/row-1-vi.png",
+            path: "chapters/chapter-1/images/row-row-1-vi-upload/row-1-vi.png",
+            filePath: "/tmp/row-row-1-vi-upload/row-1-vi.png",
             fileName: "row-1-vi.png",
           },
         },
@@ -373,8 +373,8 @@ test("handleDroppedEditorImageFile applies a saved uploaded image to the editor 
   assert.deepEqual(state.editorChapter.rows[0].images.vi, {
     kind: "upload",
     url: null,
-    path: "chapters/chapter-1/images/row-1-vi.png",
-    filePath: "/tmp/row-1-vi.png",
+    path: "chapters/chapter-1/images/row-row-1-vi-upload/row-1-vi.png",
+    filePath: "/tmp/row-row-1-vi-upload/row-1-vi.png",
     fileName: "row-1-vi.png",
   });
   assert.ok(render.calls.length >= 2);
@@ -449,8 +449,8 @@ test("handleDroppedEditorImagePath applies a native dropped file to the active u
         images: {
           vi: {
             kind: "upload",
-            path: "chapters/chapter-1/images/row-1-vi.png",
-            filePath: "/tmp/row-1-vi.png",
+            path: "chapters/chapter-1/images/row-row-1-vi-upload/row-1-vi.png",
+            filePath: "/tmp/row-row-1-vi-upload/row-1-vi.png",
             fileName: "row-1-vi.png",
           },
         },
