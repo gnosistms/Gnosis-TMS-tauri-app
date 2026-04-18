@@ -1,18 +1,22 @@
 import { syncEditorRowTextareaHeight } from "./autosize.js";
 import { syncEditorVirtualizationRowLayout } from "./editor-virtualization.js";
 import { closestEventTarget } from "./event-target.js";
+import { listen } from "./runtime.js";
 import { state } from "./state.js";
 import {
   collapseEmptyEditorFootnote,
   collapseEmptyEditorImageEditor,
   flushDirtyEditorRows,
   handleDroppedEditorImageFile,
+  handleDroppedEditorImagePath,
   persistEditorImageUrlOnBlur,
   scheduleDirtyEditorRowScan,
   setActiveEditorField,
   submitEditorImageUrl,
   toggleEditorRowFieldMarker,
 } from "./translate-flow.js";
+
+const TAURI_DRAG_DROP_EVENT = "tauri://drag-drop";
 
 function activeElementIsInEditorLanguageCluster(rowId, languageCode) {
   if (!rowId || !languageCode) {
@@ -57,6 +61,20 @@ function droppedEditorImageFile(dataTransfer) {
 }
 
 export function registerTranslateEditorDomEvents(app, render) {
+  if (typeof listen === "function") {
+    void listen(TAURI_DRAG_DROP_EVENT, (event) => {
+      const droppedPaths = Array.isArray(event?.payload?.paths)
+        ? event.payload.paths
+        : [];
+      const droppedPath = droppedPaths.find((value) => typeof value === "string" && value.trim());
+      if (!droppedPath) {
+        return;
+      }
+
+      void handleDroppedEditorImagePath(render, droppedPath);
+    });
+  }
+
   app.addEventListener("focusin", (event) => {
     const input = closestEventTarget(event.target, "[data-editor-row-field]");
     if (!(input instanceof HTMLTextAreaElement)) {
@@ -206,7 +224,7 @@ export function registerTranslateEditorDomEvents(app, render) {
 
   app.addEventListener("dragover", (event) => {
     const dropzone = closestEventTarget(event.target, "[data-editor-image-upload-dropzone]");
-    if (!dropzone) {
+    if (!(dropzone instanceof HTMLElement)) {
       return;
     }
 

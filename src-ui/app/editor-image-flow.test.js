@@ -97,8 +97,11 @@ const {
 } = await import("./state.js");
 const {
   normalizeEditorRows,
+  updateEditorChapterRow,
 } = await import("./editor-state-flow.js");
 const {
+  handleDroppedEditorImageFile,
+  handleDroppedEditorImagePath,
   submitEditorImageUrl,
 } = await import("./editor-image-flow.js");
 
@@ -241,4 +244,248 @@ test("submitEditorImageUrl closes the input while a non-empty draft is being val
     globalThis.Image = originalImage;
     globalThis.window.setTimeout = originalSetTimeout;
   }
+});
+
+test("handleDroppedEditorImageFile applies a saved uploaded image to the editor row", async () => {
+  installEditorFixture();
+  const render = createRenderSpy();
+  state.editorChapter = {
+    ...state.editorChapter,
+    activeRowId: "row-1",
+    activeLanguageCode: "vi",
+    imageEditor: {
+      rowId: "row-1",
+      languageCode: "vi",
+      mode: "upload",
+      urlDraft: "",
+      invalidUrl: false,
+      status: "idle",
+    },
+  };
+
+  const originalImage = globalThis.Image;
+  const originalFileReader = globalThis.FileReader;
+  const originalSetTimeout = globalThis.window.setTimeout;
+  const originalCreateObjectUrl = globalThis.URL.createObjectURL;
+  const originalRevokeObjectUrl = globalThis.URL.revokeObjectURL;
+
+  globalThis.Image = class {
+    set onload(callback) {
+      this._onload = callback;
+    }
+
+    set onerror(_callback) {}
+
+    set src(_value) {
+      this._onload?.();
+    }
+  };
+
+  globalThis.FileReader = class {
+    constructor() {
+      this.result = null;
+      this.error = null;
+      this.onload = null;
+      this.onerror = null;
+    }
+
+    readAsDataURL(blob) {
+      void blob.arrayBuffer().then((buffer) => {
+        const base64 = Buffer.from(buffer).toString("base64");
+        this.result = `data:${blob.type || "application/octet-stream"};base64,${base64}`;
+        this.onload?.();
+      }).catch((error) => {
+        this.error = error;
+        this.onerror?.();
+      });
+    }
+  };
+  globalThis.window.setTimeout = () => 1;
+  globalThis.URL.createObjectURL = () => "blob:test-image";
+  globalThis.URL.revokeObjectURL = () => {};
+
+  invokeHandler = async (command) => {
+    assert.equal(command, "upload_gtms_editor_language_image");
+    return {
+      status: "saved",
+      rowId: "row-1",
+      languageCode: "vi",
+      chapterBaseCommitSha: "abc123",
+      row: {
+        rowId: "row-1",
+        orderKey: "0001",
+        textStyle: "paragraph",
+        fields: {
+          es: "hola",
+          vi: "",
+        },
+        footnotes: {
+          es: "",
+          vi: "",
+        },
+        images: {
+          vi: {
+            kind: "upload",
+            path: "chapters/chapter-1/images/row-1-vi.png",
+            filePath: "/tmp/row-1-vi.png",
+            fileName: "row-1-vi.png",
+          },
+        },
+        fieldStates: {
+          es: { reviewed: false, pleaseCheck: false },
+          vi: { reviewed: false, pleaseCheck: false },
+        },
+      },
+    };
+  };
+
+  try {
+    await handleDroppedEditorImageFile(
+      render,
+      "row-1",
+      "vi",
+      {
+        name: "row-1-vi.png",
+        type: "image/png",
+        async arrayBuffer() {
+          return Uint8Array.from([137, 80, 78, 71]).buffer;
+        },
+      },
+      { updateEditorChapterRow },
+    );
+  } finally {
+    globalThis.Image = originalImage;
+    globalThis.FileReader = originalFileReader;
+    globalThis.window.setTimeout = originalSetTimeout;
+    globalThis.URL.createObjectURL = originalCreateObjectUrl;
+    globalThis.URL.revokeObjectURL = originalRevokeObjectUrl;
+  }
+
+  assert.deepEqual(state.editorChapter.imageEditor, {
+    rowId: null,
+    languageCode: null,
+    mode: null,
+    urlDraft: "",
+    invalidUrl: false,
+    status: "idle",
+  });
+  assert.equal(state.editorChapter.chapterBaseCommitSha, "abc123");
+  assert.deepEqual(state.editorChapter.rows[0].images.vi, {
+    kind: "upload",
+    url: null,
+    path: "chapters/chapter-1/images/row-1-vi.png",
+    filePath: "/tmp/row-1-vi.png",
+    fileName: "row-1-vi.png",
+  });
+  assert.ok(render.calls.length >= 2);
+  assert.equal(invokeLog.at(-1)?.command, "upload_gtms_editor_language_image");
+});
+
+test("handleDroppedEditorImagePath applies a native dropped file to the active upload editor", async () => {
+  installEditorFixture();
+  const render = createRenderSpy();
+  state.editorChapter = {
+    ...state.editorChapter,
+    activeRowId: "row-1",
+    activeLanguageCode: "vi",
+    imageEditor: {
+      rowId: "row-1",
+      languageCode: "vi",
+      mode: "upload",
+      urlDraft: "",
+      invalidUrl: false,
+      status: "idle",
+    },
+  };
+
+  const originalImage = globalThis.Image;
+  const originalSetTimeout = globalThis.window.setTimeout;
+  const originalCreateObjectUrl = globalThis.URL.createObjectURL;
+  const originalRevokeObjectUrl = globalThis.URL.revokeObjectURL;
+
+  globalThis.Image = class {
+    set onload(callback) {
+      this._onload = callback;
+    }
+
+    set onerror(_callback) {}
+
+    set src(_value) {
+      this._onload?.();
+    }
+  };
+
+  globalThis.window.setTimeout = () => 1;
+  globalThis.URL.createObjectURL = () => "blob:test-image";
+  globalThis.URL.revokeObjectURL = () => {};
+
+  invokeHandler = async (command) => {
+    if (command === "read_local_dropped_file") {
+      return {
+        name: "row-1-vi.png",
+        mimeType: "image/png",
+        dataBase64: Buffer.from(Uint8Array.from([137, 80, 78, 71])).toString("base64"),
+      };
+    }
+
+    assert.equal(command, "upload_gtms_editor_language_image");
+    return {
+      status: "saved",
+      rowId: "row-1",
+      languageCode: "vi",
+      chapterBaseCommitSha: "abc123",
+      row: {
+        rowId: "row-1",
+        orderKey: "0001",
+        textStyle: "paragraph",
+        fields: {
+          es: "hola",
+          vi: "",
+        },
+        footnotes: {
+          es: "",
+          vi: "",
+        },
+        images: {
+          vi: {
+            kind: "upload",
+            path: "chapters/chapter-1/images/row-1-vi.png",
+            filePath: "/tmp/row-1-vi.png",
+            fileName: "row-1-vi.png",
+          },
+        },
+        fieldStates: {
+          es: { reviewed: false, pleaseCheck: false },
+          vi: { reviewed: false, pleaseCheck: false },
+        },
+      },
+    };
+  };
+
+  try {
+    await handleDroppedEditorImagePath(
+      render,
+      "/Users/hans/Desktop/test.png",
+      { updateEditorChapterRow },
+    );
+  } finally {
+    globalThis.Image = originalImage;
+    globalThis.window.setTimeout = originalSetTimeout;
+    globalThis.URL.createObjectURL = originalCreateObjectUrl;
+    globalThis.URL.revokeObjectURL = originalRevokeObjectUrl;
+  }
+
+  assert.deepEqual(state.editorChapter.imageEditor, {
+    rowId: null,
+    languageCode: null,
+    mode: null,
+    urlDraft: "",
+    invalidUrl: false,
+    status: "idle",
+  });
+  assert.equal(state.editorChapter.chapterBaseCommitSha, "abc123");
+  assert.deepEqual(invokeLog.map((entry) => entry.command), [
+    "read_local_dropped_file",
+    "upload_gtms_editor_language_image",
+  ]);
 });

@@ -184,19 +184,50 @@ function readableUploadLike(value) {
   return value && typeof value === "object" && typeof value.arrayBuffer === "function";
 }
 
+function droppedPathUploadLike(value) {
+  return value && typeof value === "object" && typeof value.dataBase64 === "string";
+}
+
 function uploadLikeFileName(value, fallback = "image") {
   const name = typeof value?.name === "string" ? value.name.trim() : "";
   return name || fallback;
 }
 
-async function coerceUploadBlob(value) {
-  if (!readableUploadLike(value)) {
+function decodeBase64ToBytes(dataBase64) {
+  const normalized = typeof dataBase64 === "string" ? dataBase64.trim() : "";
+  if (!normalized) {
     throw new Error("Invalid file");
   }
 
-  const bytes = await value.arrayBuffer();
-  const type = typeof value?.type === "string" ? value.type : "";
-  return new Blob([bytes], { type });
+  if (typeof globalThis.atob === "function") {
+    const binary = globalThis.atob(normalized);
+    const bytes = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index += 1) {
+      bytes[index] = binary.charCodeAt(index);
+    }
+    return bytes;
+  }
+
+  if (typeof Buffer === "function") {
+    return Uint8Array.from(Buffer.from(normalized, "base64"));
+  }
+
+  throw new Error("Base64 decoding is unavailable.");
+}
+
+async function coerceUploadBlob(value) {
+  if (readableUploadLike(value)) {
+    const bytes = await value.arrayBuffer();
+    const type = typeof value?.type === "string" ? value.type : "";
+    return new Blob([bytes], { type });
+  }
+
+  if (droppedPathUploadLike(value)) {
+    const type = typeof value?.type === "string" ? value.type : "";
+    return new Blob([decodeBase64ToBytes(value.dataBase64)], { type });
+  }
+
+  throw new Error("Invalid file");
 }
 
 async function validateUploadedImageFile(fileBlob) {
@@ -213,6 +244,14 @@ async function validateUploadedImageFile(fileBlob) {
 }
 
 function fileToBase64Data(file) {
+  if (droppedPathUploadLike(file)) {
+    const dataBase64 = file.dataBase64.trim();
+    if (!dataBase64) {
+      return Promise.reject(new Error("The file could not be read."));
+    }
+    return Promise.resolve(dataBase64);
+  }
+
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => {
@@ -243,6 +282,7 @@ function closeImagePreviewIfTarget(rowId, languageCode) {
 
 async function applyImageCommandPayload(render, rowId, languageCode, payload, operations = {}, options = {}) {
   const { loadActiveEditorFieldHistory } = operations;
+  const resolvedOptions = options && typeof options === "object" ? options : {};
   if (!state.editorChapter?.chapterId) {
     return;
   }
@@ -273,8 +313,8 @@ async function applyImageCommandPayload(render, rowId, languageCode, payload, op
     loadActiveEditorFieldHistory(render);
   }
 
-  if (options.notice) {
-    showNoticeBadge(options.notice, render);
+  if (resolvedOptions.notice) {
+    showNoticeBadge(resolvedOptions.notice, render);
   }
 }
 
@@ -577,7 +617,7 @@ async function saveUploadedEditorImage(render, rowId, languageCode, file, operat
   }
 
   try {
-    const dataBase64 = await fileToBase64Data(fileBlob);
+    const dataBase64 = await fileToBase64Data(file);
     const payload = await invoke("upload_gtms_editor_language_image", {
       input: {
         installationId: team.installationId,
@@ -662,6 +702,33 @@ export async function handleDroppedEditorImageFile(render, rowId, languageCode, 
   }
 
   await saveUploadedEditorImage(render, rowId, languageCode, file, operations);
+}
+
+export async function handleDroppedEditorImagePath(render, path, operations = {}) {
+  const normalizedPath = typeof path === "string" ? path.trim() : "";
+  const rowId = state.editorChapter?.imageEditor?.rowId ?? "";
+  const languageCode = state.editorChapter?.imageEditor?.languageCode ?? "";
+  if (!normalizedPath || !imageEditorMatches(state.editorChapter, rowId, languageCode, "upload")) {
+    return;
+  }
+
+  try {
+    const file = await invoke("read_local_dropped_file", { path: normalizedPath });
+    await saveUploadedEditorImage(
+      render,
+      rowId,
+      languageCode,
+      {
+        name: typeof file?.name === "string" ? file.name : "",
+        type: typeof file?.mimeType === "string" ? file.mimeType : "",
+        dataBase64: typeof file?.dataBase64 === "string" ? file.dataBase64 : "",
+      },
+      operations,
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    showNoticeBadge(message || "The image could not be uploaded.", render);
+  }
 }
 
 export async function removeEditorLanguageImage(render, rowId, languageCode, operations = {}) {

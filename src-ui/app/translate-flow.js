@@ -3,6 +3,7 @@ import {
   closeEditorImagePreview as closeEditorImagePreviewFlow,
   collapseEmptyEditorImageEditor as collapseEmptyEditorImageEditorFlow,
   handleDroppedEditorImageFile as handleDroppedEditorImageFileFlow,
+  handleDroppedEditorImagePath as handleDroppedEditorImagePathFlow,
   openEditorImagePreview as openEditorImagePreviewFlow,
   openEditorImageUpload as openEditorImageUploadFlow,
   openEditorImageUploadPicker as openEditorImageUploadPickerFlow,
@@ -538,6 +539,13 @@ export async function openEditorImageUploadPicker(render, rowId, languageCode) {
 
 export async function handleDroppedEditorImageFile(render, rowId, languageCode, file) {
   await handleDroppedEditorImageFileFlow(render, rowId, languageCode, file, {
+    updateEditorChapterRow,
+    loadActiveEditorFieldHistory,
+  });
+}
+
+export async function handleDroppedEditorImagePath(render, path) {
+  await handleDroppedEditorImagePathFlow(render, path, {
     updateEditorChapterRow,
     loadActiveEditorFieldHistory,
   });

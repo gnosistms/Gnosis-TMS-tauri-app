@@ -128,6 +128,7 @@ use crate::{
         upsert_local_gnosis_glossary_metadata_record, upsert_local_gnosis_project_metadata_record,
     },
     updater::{check_for_app_update, install_app_update, PendingUpdate},
+    window::read_local_dropped_file,
 };
 
 #[tauri::command]
@@ -465,6 +466,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             ping,
             check_internet_connection,
+            read_local_dropped_file,
             append_editor_scroll_debug_log,
             check_for_app_update,
             install_app_update,
