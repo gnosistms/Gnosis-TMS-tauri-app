@@ -1,6 +1,13 @@
 import { syncEditorRowTextareaHeights } from "./autosize.js";
 import { logEditorScrollDebug } from "./editor-scroll-debug.js";
 import {
+  captureRenderedEditorImageDebugState,
+  installEditorImageDebugWindowApi,
+  logEditorImageDebugDiff,
+  logEditorImageLifecycleEvent,
+  logEditorImageRowHeightChange,
+} from "./editor-image-debug.js";
+import {
   EDITOR_RECONCILES_GLOSSARY_VISIBLE_LAYOUT,
   EDITOR_USES_DEFERRED_SCROLL_RECONCILE,
 } from "./editor-scroll-policy.js";
@@ -112,6 +119,10 @@ function measureRowCardHeight(rowCard, rowHeightCache, stagedRowHeights = null) 
   if (currentHeight === nextHeight) {
     return false;
   }
+
+  logEditorImageRowHeightChange(rowCard, currentHeight, nextHeight, rowHeightCache, {
+    staged: stagedRowHeights instanceof Map,
+  });
 
   if (stagedRowHeights instanceof Map) {
     stagedRowHeights.set(rowId, nextHeight);
@@ -291,6 +302,13 @@ export function initializeEditorVirtualization(root, appState) {
   let scheduledRenderReason = "";
   let suppressNextScrollRender = false;
   let hasDeferredMeasuredWindowReconcile = false;
+  let renderedImageDebugEntries = [];
+  const visibleImageDebugSnapshot = () => ({
+    rangeKey: currentRangeKey,
+    scrollTop: scrollContainer.scrollTop,
+    visibleImages: captureRenderedEditorImageDebugState(itemsContainer, rowHeightCache),
+  });
+  const uninstallImageDebugWindowApi = installEditorImageDebugWindowApi(visibleImageDebugSnapshot);
   const armSuppressedScrollEvent = () => {
     suppressedScrollEvents = Math.max(suppressedScrollEvents, 1);
     if (suppressedScrollResetFrameId) {
@@ -329,6 +347,15 @@ export function initializeEditorVirtualization(root, appState) {
       rangeKey: currentRangeKey,
     });
     return restored;
+  };
+  const syncRenderedImageDebugEntries = (reason) => {
+    const nextEntries = captureRenderedEditorImageDebugState(itemsContainer, rowHeightCache);
+    logEditorImageDebugDiff(renderedImageDebugEntries, nextEntries, {
+      reason,
+      rangeKey: currentRangeKey,
+      scrollTop: scrollContainer.scrollTop,
+    });
+    renderedImageDebugEntries = nextEntries;
   };
   const renderWindow = (force = false, options = {}) => {
     if (!shouldVirtualize || !(itemsContainer instanceof HTMLElement)) {
@@ -404,6 +431,7 @@ export function initializeEditorVirtualization(root, appState) {
     );
     restoreFocusedEditorField(root, focusSnapshot);
     glossarySync.restoreMounted(itemsContainer, model.editorChapter);
+    syncRenderedImageDebugEntries(reason);
 
     const shouldStageMeasuredWindowReconcile = shouldDeferMeasuredWindowReconcile(
       reason,
@@ -466,6 +494,7 @@ export function initializeEditorVirtualization(root, appState) {
           );
           restoreFocusedEditorField(root, focusSnapshot);
           glossarySync.restoreMounted(itemsContainer, model.editorChapter);
+          syncRenderedImageDebugEntries(`${reason}:measured-range-adjusted`);
           measureVisibleRowHeights(itemsContainer, rowHeightCache);
         }
       }
@@ -626,8 +655,32 @@ export function initializeEditorVirtualization(root, appState) {
     }
     glossarySync.schedule();
   };
+  const handleImageLoad = (event) => {
+    const image = event.target;
+    if (!(image instanceof HTMLImageElement) || !image.matches("[data-editor-language-image-preview-img]")) {
+      return;
+    }
+
+    logEditorImageLifecycleEvent("editor-image-load", image, rowHeightCache, {
+      rangeKey: currentRangeKey,
+      scrollTop: scrollContainer.scrollTop,
+    });
+  };
+  const handleImageError = (event) => {
+    const image = event.target;
+    if (!(image instanceof HTMLImageElement) || !image.matches("[data-editor-language-image-preview-img]")) {
+      return;
+    }
+
+    logEditorImageLifecycleEvent("editor-image-error", image, rowHeightCache, {
+      rangeKey: currentRangeKey,
+      scrollTop: scrollContainer.scrollTop,
+    });
+  };
 
   scrollContainer.addEventListener("scroll", handleScroll, { passive: true });
+  root.addEventListener("load", handleImageLoad, true);
+  root.addEventListener("error", handleImageError, true);
   window.addEventListener("resize", handleResize);
 
   activeController = {
@@ -641,8 +694,12 @@ export function initializeEditorVirtualization(root, appState) {
         window.cancelAnimationFrame(suppressedScrollResetFrameId);
       }
       deferredRowHeightCache.clear();
+      renderedImageDebugEntries = [];
+      uninstallImageDebugWindowApi();
       glossarySync.destroy();
       scrollContainer.removeEventListener("scroll", handleScroll);
+      root.removeEventListener("load", handleImageLoad, true);
+      root.removeEventListener("error", handleImageError, true);
       window.removeEventListener("resize", handleResize);
     },
   };

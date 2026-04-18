@@ -316,9 +316,11 @@ function renderEditorLanguageImage(row, language) {
           <img
             class="translation-language-panel__image"
             data-editor-language-image-preview-img
+            data-row-id="${escapeHtml(row.id)}"
+            data-language-code="${escapeHtml(language.code)}"
             src="${escapeHtml(imageSrc)}"
             alt=""
-            loading="lazy"
+            loading="eager"
           />
         </button>
         <button
