@@ -249,6 +249,12 @@ function renderEditorLanguageImageCaption(row, language) {
   if (language.isImageCaptionEditorOpen === true) {
     return `
       <div class="translation-language-panel__image-caption-shell translation-language-panel__image-caption-shell--editing">
+        <div
+          class="translation-language-panel__field-stack translation-language-panel__field-stack--footnote translation-language-panel__field-stack--image-caption"
+          data-row-id="${escapeHtml(row.id)}"
+          data-language-code="${escapeHtml(language.code)}"
+          data-content-kind="image-caption"
+        >
         <textarea
           class="translation-language-panel__field translation-language-panel__image-caption-input"
           data-editor-row-field
@@ -260,44 +266,37 @@ function renderEditorLanguageImageCaption(row, language) {
           spellcheck="false"
           placeholder="Enter image caption"
         >${escapeHtml(language.imageCaption ?? "")}</textarea>
+        </div>
       </div>
     `;
   }
 
-  if (language.showAddImageCaptionButton === true) {
-    return `
-      <div class="translation-language-panel__image-caption-shell">
-        <button
-          class="translation-language-panel__image-caption-button"
-          type="button"
-          data-action="open-editor-image-caption"
-          data-editor-image-caption-button
-          data-row-id="${escapeHtml(row.id)}"
-          data-language-code="${escapeHtml(language.code)}"
-          ${tooltipAttributes("Add image caption", { side: "top" })}
-        >
-          <span>+ Caption</span>
-        </button>
-      </div>
-    `;
-  }
-
-  if (!language.hasVisibleImageCaption) {
+  if (!language.hasVisibleImageCaption && language.showAddImageCaptionButton !== true) {
     return "";
   }
 
   return `
-    <div class="translation-language-panel__image-caption-shell">
+    <div class="translation-language-panel__image-caption-shell translation-language-panel__image-caption-shell--idle">
       <button
-        class="translation-language-panel__image-caption-display"
+        class="translation-language-panel__image-caption-button"
         type="button"
         data-action="open-editor-image-caption"
         data-editor-image-caption-button
         data-row-id="${escapeHtml(row.id)}"
         data-language-code="${escapeHtml(language.code)}"
+        ${tooltipAttributes("Add image caption", { side: "top" })}
       >
-        <span lang="${escapeHtml(language.code)}">${escapeHtml(language.imageCaption ?? "")}</span>
+        <span>+ caption</span>
       </button>
+      ${
+        language.hasVisibleImageCaption
+          ? `
+            <div class="translation-language-panel__image-caption-text" lang="${escapeHtml(language.code)}">
+              ${escapeHtml(language.imageCaption ?? "")}
+            </div>
+          `
+          : ""
+      }
     </div>
   `;
 }

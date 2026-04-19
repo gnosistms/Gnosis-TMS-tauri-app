@@ -193,7 +193,6 @@ function buildLiveTranslationRows(editorChapter, languages) {
             && !isImageUrlSubmitting,
           showAddImageCaptionButton:
             hasSavedImage
-            && imageCaption.trim().length === 0
             && !isImageCaptionEditorOpen,
           isActive:
             editorChapter?.activeRowId === row.rowId
