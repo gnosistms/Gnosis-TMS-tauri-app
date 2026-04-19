@@ -155,6 +155,10 @@ function buildFixtureGlossary(languages, options = {}) {
 function createFixtureRow(index, languages, options = {}) {
   const label = padFixtureIndex(index);
   const rowId = `fixture-row-${label}`;
+  const images =
+    options?.imagesByRowId && typeof options.imagesByRowId === "object"
+      ? structuredClone(options.imagesByRowId[rowId] ?? {})
+      : {};
   const storedCommentConfig =
     options?.commentsByRowId && typeof options.commentsByRowId === "object"
       ? options.commentsByRowId[rowId] ?? null
@@ -197,6 +201,7 @@ function createFixtureRow(index, languages, options = {}) {
     persistedFields: { ...fields },
     footnotes,
     persistedFootnotes: { ...footnotes },
+    images,
     fieldStates,
     persistedFieldStates: structuredClone(fieldStates),
     saveStatus: "idle",

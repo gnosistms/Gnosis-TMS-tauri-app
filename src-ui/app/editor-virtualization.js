@@ -12,7 +12,7 @@ import {
   EDITOR_USES_DEFERRED_SCROLL_RECONCILE,
 } from "./editor-scroll-policy.js";
 import {
-  captureVisibleTranslateLocation,
+  captureVisibleTranslateRowLocation,
   pendingTranslateAnchorRowId,
   queueTranslateRowAnchor,
   resolveTranslateRowAnchor,
@@ -190,7 +190,7 @@ function captureEditorLayoutAnchor(root) {
     return activeAnchor;
   }
 
-  return captureVisibleTranslateLocation();
+  return captureVisibleTranslateRowLocation();
 }
 
 export function syncEditorVirtualizationRowLayout(source) {
@@ -300,6 +300,7 @@ export function initializeEditorVirtualization(root, appState) {
   let suppressedScrollResetFrameId = 0;
   let suppressedScrollEvents = 0;
   let scheduledRenderReason = "";
+  let scheduledRenderAnchorSnapshot = null;
   let suppressNextScrollRender = false;
   let hasDeferredMeasuredWindowReconcile = false;
   let renderedImageDebugEntries = [];
@@ -561,12 +562,16 @@ export function initializeEditorVirtualization(root, appState) {
     },
   });
 
-  const scheduleRender = (reason = "render") => {
+  const scheduleRender = (reason = "render", options = {}) => {
     const nextReason = nextScheduledEditorRenderReason(scheduledRenderReason, reason);
+    if (options?.anchorSnapshot?.rowId) {
+      scheduledRenderAnchorSnapshot = options.anchorSnapshot;
+    }
     logEditorScrollDebug("virtualization-render-scheduled", {
       requestedReason: reason,
       scheduledReason: nextReason,
       animationFramePending: animationFrameId !== 0,
+      rowAnchorId: scheduledRenderAnchorSnapshot?.rowId ?? "",
       scrollTop: scrollContainer.scrollTop,
       rangeKey: currentRangeKey,
     });
@@ -577,14 +582,22 @@ export function initializeEditorVirtualization(root, appState) {
 
     animationFrameId = window.requestAnimationFrame(() => {
       const nextFrameReason = scheduledRenderReason || "render";
+      const nextFrameAnchorSnapshot = scheduledRenderAnchorSnapshot?.rowId
+        ? scheduledRenderAnchorSnapshot
+        : null;
       scheduledRenderReason = "";
+      scheduledRenderAnchorSnapshot = null;
       animationFrameId = 0;
       logEditorScrollDebug("virtualization-render-frame", {
         reason: nextFrameReason,
+        rowAnchorId: nextFrameAnchorSnapshot?.rowId ?? "",
         scrollTop: scrollContainer.scrollTop,
         rangeKey: currentRangeKey,
       });
-      renderWindow(false, { reason: nextFrameReason });
+      renderWindow(false, {
+        reason: nextFrameReason,
+        anchorSnapshot: nextFrameAnchorSnapshot,
+      });
     });
   };
 
@@ -598,7 +611,9 @@ export function initializeEditorVirtualization(root, appState) {
       return;
     }
 
-    scheduleRender("row-layout");
+    scheduleRender("row-layout", {
+      anchorSnapshot: captureEditorLayoutAnchor(root),
+    });
   };
 
   const refreshLayout = (anchorSnapshot = null) => {
@@ -611,6 +626,8 @@ export function initializeEditorVirtualization(root, appState) {
       animationFrameId = 0;
     }
 
+    scheduledRenderReason = "";
+    scheduledRenderAnchorSnapshot = null;
     currentRangeKey = "";
     renderWindow(true, {
       anchorSnapshot:
@@ -693,6 +710,8 @@ export function initializeEditorVirtualization(root, appState) {
       if (suppressedScrollResetFrameId) {
         window.cancelAnimationFrame(suppressedScrollResetFrameId);
       }
+      scheduledRenderReason = "";
+      scheduledRenderAnchorSnapshot = null;
       deferredRowHeightCache.clear();
       renderedImageDebugEntries = [];
       uninstallImageDebugWindowApi();

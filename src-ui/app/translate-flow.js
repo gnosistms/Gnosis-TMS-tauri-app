@@ -2,6 +2,7 @@ import {
   closeEditorImageInvalidFileModal as closeEditorImageInvalidFileModalFlow,
   closeEditorImagePreview as closeEditorImagePreviewFlow,
   collapseEmptyEditorImageEditor as collapseEmptyEditorImageEditorFlow,
+  dismissActiveIdleEditorImageUpload as dismissActiveIdleEditorImageUploadFlow,
   handleDroppedEditorImageFile as handleDroppedEditorImageFileFlow,
   handleDroppedEditorImagePath as handleDroppedEditorImagePathFlow,
   openEditorImagePreview as openEditorImagePreviewFlow,
@@ -553,6 +554,10 @@ export async function handleDroppedEditorImagePath(render, path) {
 
 export function collapseEmptyEditorImageEditor(render, rowId, languageCode) {
   collapseEmptyEditorImageEditorFlow(render, rowId, languageCode);
+}
+
+export function dismissActiveIdleEditorImageUpload(render) {
+  return dismissActiveIdleEditorImageUploadFlow(render);
 }
 
 export async function removeEditorLanguageImage(render, rowId, languageCode) {

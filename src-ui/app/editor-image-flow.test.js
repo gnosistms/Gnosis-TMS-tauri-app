@@ -82,6 +82,8 @@ globalThis.window = {
     return 1;
   },
   clearTimeout() {},
+  addEventListener() {},
+  removeEventListener() {},
   requestAnimationFrame(callback) {
     callback();
     return 1;
@@ -100,6 +102,7 @@ const {
   updateEditorChapterRow,
 } = await import("./editor-state-flow.js");
 const {
+  dismissActiveIdleEditorImageUpload,
   handleDroppedEditorImageFile,
   handleDroppedEditorImagePath,
   submitEditorImageUrl,
@@ -244,6 +247,64 @@ test("submitEditorImageUrl closes the input while a non-empty draft is being val
     globalThis.Image = originalImage;
     globalThis.window.setTimeout = originalSetTimeout;
   }
+});
+
+test("dismissActiveIdleEditorImageUpload clears an idle upload editor back to the pre-open state", () => {
+  installEditorFixture();
+  const render = createRenderSpy();
+  state.editorChapter = {
+    ...state.editorChapter,
+    imageEditor: {
+      rowId: "row-1",
+      languageCode: "vi",
+      mode: "upload",
+      urlDraft: "",
+      invalidUrl: false,
+      status: "idle",
+    },
+  };
+
+  const dismissed = dismissActiveIdleEditorImageUpload(render);
+
+  assert.equal(dismissed, true);
+  assert.deepEqual(state.editorChapter.imageEditor, {
+    rowId: null,
+    languageCode: null,
+    mode: null,
+    urlDraft: "",
+    invalidUrl: false,
+    status: "idle",
+  });
+  assert.deepEqual(render.calls, [[{ scope: "translate-body" }]]);
+});
+
+test("dismissActiveIdleEditorImageUpload keeps active upload work in place", () => {
+  installEditorFixture();
+  const render = createRenderSpy();
+  state.editorChapter = {
+    ...state.editorChapter,
+    imageEditor: {
+      rowId: "row-1",
+      languageCode: "vi",
+      mode: "upload",
+      urlDraft: "",
+      invalidUrl: false,
+      status: "saving",
+    },
+  };
+
+  const dismissed = dismissActiveIdleEditorImageUpload(render);
+
+  assert.equal(dismissed, false);
+  assert.deepEqual(state.editorChapter.imageEditor, {
+    rowId: "row-1",
+    languageCode: "vi",
+    mode: "upload",
+    urlDraft: "",
+    invalidUrl: false,
+    status: "saving",
+  });
+  assert.deepEqual(render.calls, []);
 });
 
 test("handleDroppedEditorImageFile applies a saved uploaded image to the editor row", async () => {

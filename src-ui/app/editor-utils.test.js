@@ -14,6 +14,17 @@ test("editorImageEditorCanCollapse keeps the image editor open while the picker 
   }), false);
 });
 
+test("editorImageEditorCanCollapse keeps an idle upload editor open", () => {
+  assert.equal(editorImageEditorCanCollapse({
+    rowId: "row-1",
+    languageCode: "vi",
+    mode: "upload",
+    status: "idle",
+    invalidUrl: false,
+    urlDraft: "",
+  }), false);
+});
+
 test("editorImageEditorCanCollapse keeps invalid-url and drafted-url states open", () => {
   assert.equal(editorImageEditorCanCollapse({
     rowId: "row-1",
@@ -38,7 +49,7 @@ test("editorImageEditorCanCollapse allows empty idle editors to close", () => {
   assert.equal(editorImageEditorCanCollapse({
     rowId: "row-1",
     languageCode: "vi",
-    mode: "upload",
+    mode: "url",
     status: "idle",
     invalidUrl: false,
     urlDraft: "",

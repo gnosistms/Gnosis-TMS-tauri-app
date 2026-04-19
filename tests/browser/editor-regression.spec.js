@@ -658,6 +658,26 @@ async function readTranslateScrollTop(page) {
   });
 }
 
+async function readTranslateScrollMetrics(page) {
+  return await page.evaluate(() => {
+    const container = document.querySelector(".translate-main-scroll");
+    if (!(container instanceof HTMLElement)) {
+      return {
+        top: 0,
+        maxTop: 0,
+        bottomGap: 0,
+      };
+    }
+
+    const maxTop = Math.max(0, container.scrollHeight - container.clientHeight);
+    return {
+      top: container.scrollTop,
+      maxTop,
+      bottomGap: maxTop - container.scrollTop,
+    };
+  });
+}
+
 async function countGlossaryMarksForRow(page, rowId) {
   return await page.locator(
     `[data-editor-row-card][data-row-id="${rowId}"] [data-editor-glossary-mark]`,
@@ -905,6 +925,114 @@ test.describe("editor regressions", () => {
       "data-tooltip",
       "Translate Spanish to French using gemini-2.5-flash",
     );
+  });
+
+  test("opening the upload image editor at the bottom keeps the last row pinned to the bottom", async ({ page }) => {
+    await mountEditorFixture(page, { rowCount: 80 });
+
+    await page.evaluate(() => {
+      const container = document.querySelector(".translate-main-scroll");
+      if (container instanceof HTMLElement) {
+        container.scrollTop = container.scrollHeight;
+        container.dispatchEvent(new Event("scroll"));
+      }
+    });
+
+    const lastField = page.locator(
+      '[data-editor-row-field][data-row-id="fixture-row-0080"][data-language-code="vi"]',
+    );
+    await expect(lastField).toBeVisible();
+    await lastField.click();
+
+    const beforeMetrics = await readTranslateScrollMetrics(page);
+    expect(beforeMetrics.bottomGap).toBeLessThan(80);
+
+    const uploadButton = page.locator(
+      '[data-action="open-editor-image-upload"][data-row-id="fixture-row-0080"][data-language-code="vi"]',
+    );
+    await expect(uploadButton).toBeVisible();
+    await uploadButton.click();
+
+    const uploadDropzone = page.locator(
+      '[data-editor-image-upload-dropzone][data-row-id="fixture-row-0080"][data-language-code="vi"]',
+    );
+    await expect(uploadDropzone).toBeVisible();
+
+    const afterMetrics = await readTranslateScrollMetrics(page);
+    expect(afterMetrics.bottomGap).toBeLessThanOrEqual(beforeMetrics.bottomGap + 4);
+    expect(afterMetrics.top).toBeGreaterThanOrEqual(beforeMetrics.top - 4);
+  });
+
+  test("opening the upload image editor at the bottom does not jump to an earlier inserted image", async ({ page }) => {
+    await mountEditorFixture(page, {
+      rowCount: 80,
+      imagesByRowId: {
+        "fixture-row-0048": {
+          vi: {
+            kind: "url",
+            url: "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==",
+          },
+        },
+      },
+    });
+
+    await page.evaluate(() => {
+      const container = document.querySelector(".translate-main-scroll");
+      if (container instanceof HTMLElement) {
+        container.scrollTop = container.scrollHeight;
+        container.dispatchEvent(new Event("scroll"));
+      }
+    });
+
+    const lastField = page.locator(
+      '[data-editor-row-field][data-row-id="fixture-row-0080"][data-language-code="vi"]',
+    );
+    await expect(lastField).toBeVisible();
+    await lastField.click();
+
+    const beforeMetrics = await readTranslateScrollMetrics(page);
+    expect(beforeMetrics.bottomGap).toBeLessThan(80);
+
+    await page.locator(
+      '[data-action="open-editor-image-upload"][data-row-id="fixture-row-0080"][data-language-code="vi"]',
+    ).click();
+    await page.waitForTimeout(800);
+
+    const earlierImagePreview = page.locator(
+      '[data-editor-row-card][data-row-id="fixture-row-0048"] [data-editor-language-image-preview-img]',
+    );
+
+    const afterMetrics = await readTranslateScrollMetrics(page);
+    expect(afterMetrics.bottomGap).toBeLessThanOrEqual(beforeMetrics.bottomGap + 12);
+    expect(afterMetrics.top).toBeGreaterThanOrEqual(beforeMetrics.top - 12);
+    await expect(page.locator('[data-editor-row-card][data-row-id="fixture-row-0080"]')).toBeVisible();
+    await expect(earlierImagePreview).not.toBeVisible();
+  });
+
+  test("clicking outside the upload image dropzone closes it and restores the row", async ({ page }) => {
+    await mountEditorFixture(page, { rowCount: 20 });
+
+    const field = page.locator(
+      '[data-editor-row-field][data-row-id="fixture-row-0020"][data-language-code="vi"]',
+    );
+    await expect(field).toBeVisible();
+    await field.click();
+
+    const uploadButton = page.locator(
+      '[data-action="open-editor-image-upload"][data-row-id="fixture-row-0020"][data-language-code="vi"]',
+    );
+    await expect(uploadButton).toBeVisible();
+    await uploadButton.click();
+
+    const uploadDropzone = page.locator(
+      '[data-editor-image-upload-dropzone][data-row-id="fixture-row-0020"][data-language-code="vi"]',
+    );
+    await expect(uploadDropzone).toBeVisible();
+
+    await field.click();
+
+    await expect(uploadDropzone).toBeHidden();
+    await expect(field).toBeFocused();
   });
 
   test("search input keeps focus while typing", async ({ page }) => {

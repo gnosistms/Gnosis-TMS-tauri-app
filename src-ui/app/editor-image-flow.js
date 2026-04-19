@@ -4,7 +4,8 @@ import { findChapterContextById, selectedProjectsTeam } from "./project-context.
 import {
   applyEditorRowImageSaved,
 } from "./editor-persistence-state.js";
-import { invoke, convertLocalFileSrc } from "./runtime.js";
+import { invoke, convertLocalFileSrc, waitForNextPaint } from "./runtime.js";
+import { logEditorScrollDebug } from "./editor-scroll-debug.js";
 import {
   createEditorImageEditorState,
   createEditorImageInvalidFileModalState,
@@ -17,6 +18,7 @@ import { ensureEditorRowReadyForWrite, reloadEditorRowFromDisk } from "./editor-
 
 const IMAGE_FILE_ACCEPT =
   ".jpg,.jpeg,.png,.gif,.svg,.webp,.avif,.bmp,.ico,.apng,image/jpeg,image/png,image/gif,image/svg+xml,image/webp,image/avif,image/bmp,image/x-icon";
+const TRANSLATE_MAIN_BOTTOM_PIN_TOLERANCE_PX = 80;
 
 function nextChapterBaseCommitSha(payload, chapterState = state.editorChapter) {
   return typeof payload?.chapterBaseCommitSha === "string" && payload.chapterBaseCommitSha.trim()
@@ -74,6 +76,12 @@ function focusEditorImageControl(selector, rowId, languageCode) {
   }
 
   window.requestAnimationFrame(() => {
+    logEditorScrollDebug("editor-image-upload-focus-requested", {
+      rowId,
+      languageCode,
+      selector,
+      ...translateMainScrollDebugDetail(rowId, languageCode),
+    });
     if (
       state.editorChapter?.imageEditor?.rowId !== rowId
       || state.editorChapter?.imageEditor?.languageCode !== languageCode
@@ -84,8 +92,98 @@ function focusEditorImageControl(selector, rowId, languageCode) {
     const nextElement = document.querySelector(selector);
     if (nextElement instanceof HTMLElement) {
       nextElement.focus({ preventScroll: true });
+      window.requestAnimationFrame(() => {
+        logEditorScrollDebug("editor-image-upload-focused", {
+          rowId,
+          languageCode,
+          selector,
+          activeMatches:
+            document.activeElement instanceof HTMLElement
+            && document.activeElement === nextElement,
+          ...translateMainScrollDebugDetail(rowId, languageCode),
+        });
+      });
     }
   });
+}
+
+function translateMainScrollElement() {
+  return document.querySelector(".translate-main-scroll");
+}
+
+function translateMainScrollIsAtBottom() {
+  const container = translateMainScrollElement();
+  if (!(container instanceof HTMLElement)) {
+    return false;
+  }
+
+  const bottomGap = container.scrollHeight - container.clientHeight - container.scrollTop;
+  return (
+    Number.isFinite(bottomGap)
+    && bottomGap <= TRANSLATE_MAIN_BOTTOM_PIN_TOLERANCE_PX
+  );
+}
+
+function scrollTranslateMainToBottom() {
+  const container = translateMainScrollElement();
+  if (!(container instanceof HTMLElement)) {
+    return;
+  }
+
+  container.scrollTop = Math.max(0, container.scrollHeight - container.clientHeight);
+}
+
+function translateMainScrollDebugDetail(rowId = "", languageCode = "") {
+  const container = translateMainScrollElement();
+  const detail = {
+    scrollTop: null,
+    scrollHeight: null,
+    clientHeight: null,
+    bottomGap: null,
+    isLastRow: false,
+    rowTop: null,
+    rowBottom: null,
+    panelTop: null,
+    panelBottom: null,
+  };
+  if (!(container instanceof HTMLElement)) {
+    return detail;
+  }
+
+  detail.scrollTop = container.scrollTop;
+  detail.scrollHeight = container.scrollHeight;
+  detail.clientHeight = container.clientHeight;
+  detail.bottomGap = container.scrollHeight - container.clientHeight - container.scrollTop;
+
+  const rowCards = [...document.querySelectorAll("[data-editor-row-card]")]
+    .filter((element) => element instanceof HTMLElement);
+  const lastRowCard = rowCards[rowCards.length - 1] ?? null;
+  detail.isLastRow =
+    lastRowCard instanceof HTMLElement
+    && (lastRowCard.dataset.rowId ?? "") === rowId;
+
+  const containerRect = container.getBoundingClientRect();
+  const rowCard = rowId
+    ? document.querySelector(`[data-editor-row-card][data-row-id="${CSS.escape(rowId)}"]`)
+    : null;
+  if (rowCard instanceof HTMLElement) {
+    const rowRect = rowCard.getBoundingClientRect();
+    detail.rowTop = rowRect.top - containerRect.top;
+    detail.rowBottom = rowRect.bottom - containerRect.top;
+  }
+
+  const panel = rowId && languageCode
+    ? document.querySelector(
+      `[data-editor-language-cluster][data-row-id="${CSS.escape(rowId)}"][data-language-code="${CSS.escape(languageCode)}"]`,
+    )
+    : null;
+  if (panel instanceof HTMLElement) {
+    const panelRect = panel.getBoundingClientRect();
+    detail.panelTop = panelRect.top - containerRect.top;
+    detail.panelBottom = panelRect.bottom - containerRect.top;
+  }
+
+  return detail;
 }
 
 function updateRowForImagePayload(rowId, payloadRow, operations = {}) {
@@ -511,6 +609,15 @@ export function openEditorImageUpload(render, rowId, languageCode) {
     return;
   }
 
+  const shouldPinBottom = translateMainScrollIsAtBottom();
+  logEditorScrollDebug("editor-image-upload-open", {
+    stage: "before-render",
+    rowId,
+    languageCode,
+    shouldPinBottom,
+    bottomTolerancePx: TRANSLATE_MAIN_BOTTOM_PIN_TOLERANCE_PX,
+    ...translateMainScrollDebugDetail(rowId, languageCode),
+  });
   setImageEditorState({
     rowId,
     languageCode,
@@ -520,11 +627,70 @@ export function openEditorImageUpload(render, rowId, languageCode) {
     status: "idle",
   });
   render?.({ scope: "translate-body" });
+  logEditorScrollDebug("editor-image-upload-open", {
+    stage: "after-render",
+    rowId,
+    languageCode,
+    shouldPinBottom,
+    bottomTolerancePx: TRANSLATE_MAIN_BOTTOM_PIN_TOLERANCE_PX,
+    ...translateMainScrollDebugDetail(rowId, languageCode),
+  });
   focusEditorImageControl(
     `[data-editor-image-upload-dropzone][data-row-id="${CSS.escape(rowId)}"][data-language-code="${CSS.escape(languageCode)}"]`,
     rowId,
     languageCode,
   );
+  if (shouldPinBottom) {
+    void waitForNextPaint().then(() => {
+      logEditorScrollDebug("editor-image-upload-open", {
+        stage: "before-bottom-pin",
+        rowId,
+        languageCode,
+        shouldPinBottom,
+        bottomTolerancePx: TRANSLATE_MAIN_BOTTOM_PIN_TOLERANCE_PX,
+        matchesUploadEditor: imageEditorMatches(state.editorChapter, rowId, languageCode, "upload"),
+        ...translateMainScrollDebugDetail(rowId, languageCode),
+      });
+      if (!imageEditorMatches(state.editorChapter, rowId, languageCode, "upload")) {
+        return;
+      }
+
+      scrollTranslateMainToBottom();
+      logEditorScrollDebug("editor-image-upload-open", {
+        stage: "after-bottom-pin",
+        rowId,
+        languageCode,
+        shouldPinBottom,
+        bottomTolerancePx: TRANSLATE_MAIN_BOTTOM_PIN_TOLERANCE_PX,
+        ...translateMainScrollDebugDetail(rowId, languageCode),
+      });
+    });
+  } else {
+    void waitForNextPaint().then(() => {
+      logEditorScrollDebug("editor-image-upload-open", {
+        stage: "after-paint-no-pin",
+        rowId,
+        languageCode,
+        shouldPinBottom,
+        bottomTolerancePx: TRANSLATE_MAIN_BOTTOM_PIN_TOLERANCE_PX,
+        ...translateMainScrollDebugDetail(rowId, languageCode),
+      });
+    });
+  }
+}
+
+export function dismissActiveIdleEditorImageUpload(render) {
+  if (
+    !state.editorChapter?.chapterId
+    || state.editorChapter.imageEditor?.mode !== "upload"
+    || state.editorChapter.imageEditor?.status !== "idle"
+  ) {
+    return false;
+  }
+
+  state.editorChapter = resetImageEditor(state.editorChapter);
+  render?.({ scope: "translate-body" });
+  return true;
 }
 
 export function collapseEmptyEditorImageEditor(render, rowId, languageCode) {

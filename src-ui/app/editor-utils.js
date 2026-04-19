@@ -81,6 +81,7 @@ export function editorImageEditorCanCollapse(editorState) {
     || editorState.status === "submitting"
     || editorState.status === "picking"
     || editorState.invalidUrl === true
+    || editorState.mode === "upload"
   ) {
     return false;
   }

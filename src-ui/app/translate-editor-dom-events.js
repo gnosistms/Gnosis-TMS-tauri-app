@@ -6,6 +6,7 @@ import { state } from "./state.js";
 import {
   collapseEmptyEditorFootnote,
   collapseEmptyEditorImageEditor,
+  dismissActiveIdleEditorImageUpload,
   flushDirtyEditorRows,
   handleDroppedEditorImageFile,
   handleDroppedEditorImagePath,
@@ -60,6 +61,21 @@ function droppedEditorImageFile(dataTransfer) {
   return null;
 }
 
+function refocusEditorRowFieldAfterRender(rowId, languageCode) {
+  if (!rowId || !languageCode) {
+    return;
+  }
+
+  requestAnimationFrame(() => {
+    const nextField = document.querySelector(
+      `[data-editor-row-field][data-row-id="${CSS.escape(rowId)}"][data-language-code="${CSS.escape(languageCode)}"]`,
+    );
+    if (nextField instanceof HTMLTextAreaElement) {
+      nextField.focus({ preventScroll: true });
+    }
+  });
+}
+
 export function registerTranslateEditorDomEvents(app, render) {
   if (typeof listen === "function") {
     void listen(TAURI_DRAG_DROP_EVENT, (event) => {
@@ -104,7 +120,7 @@ export function registerTranslateEditorDomEvents(app, render) {
   app.addEventListener("mousedown", (event) => {
     const button = closestEventTarget(
       event.target,
-      "[data-editor-row-text-style-button], [data-editor-footnote-button], [data-editor-image-button], [data-editor-image-upload-dropzone], [data-editor-language-image-remove-button]",
+      "[data-editor-row-text-style-button], [data-editor-footnote-button], [data-editor-image-button], [data-editor-image-upload-dropzone], [data-editor-language-image-remove-button], [data-action^=\"switch-editor-sidebar-tab:\"]",
     );
     if (!button) {
       return;
@@ -119,6 +135,16 @@ export function registerTranslateEditorDomEvents(app, render) {
     }
 
     const uploadDropzone = closestEventTarget(event.target, "[data-editor-image-upload-dropzone]");
+    const nextTextarea = closestEventTarget(event.target, "[data-editor-row-field]");
+    const dismissedUploadEditor =
+      !(uploadDropzone instanceof HTMLButtonElement)
+      && dismissActiveIdleEditorImageUpload(render);
+    if (dismissedUploadEditor && nextTextarea instanceof HTMLTextAreaElement) {
+      refocusEditorRowFieldAfterRender(
+        nextTextarea.dataset.rowId ?? "",
+        nextTextarea.dataset.languageCode ?? "",
+      );
+    }
     if (uploadDropzone instanceof HTMLButtonElement) {
       event.preventDefault();
       return;
