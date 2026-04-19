@@ -414,11 +414,16 @@ export async function replaceSelectedEditorRows(render, operations = {}) {
   const affectedRowIds = new Set(replacePlan.updatedRowIds);
   const resetRows = selectedRows
     .filter((row) => affectedRowIds.has(row.rowId))
-    .filter((row) => !rowFieldsEqual(row.fields, row.persistedFields) || !rowFieldsEqual(row.footnotes, row.persistedFootnotes))
+    .filter((row) =>
+      !rowFieldsEqual(row.fields, row.persistedFields)
+      || !rowFieldsEqual(row.footnotes, row.persistedFootnotes)
+      || !rowFieldsEqual(row.imageCaptions, row.persistedImageCaptions)
+    )
     .map((row) => ({
       rowId: row.rowId,
       fields: cloneRowFields(row.fields),
       footnotes: cloneRowFields(row.footnotes),
+      imageCaptions: cloneRowFields(row.imageCaptions),
     }));
 
   const team = selectedProjectsTeam();

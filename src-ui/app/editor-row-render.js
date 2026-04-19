@@ -241,6 +241,67 @@ function editorLanguageImageSrc(image) {
   return "";
 }
 
+function renderEditorLanguageImageCaption(row, language) {
+  if (!language.hasVisibleImage) {
+    return "";
+  }
+
+  if (language.isImageCaptionEditorOpen === true) {
+    return `
+      <div class="translation-language-panel__image-caption-shell translation-language-panel__image-caption-shell--editing">
+        <textarea
+          class="translation-language-panel__field translation-language-panel__image-caption-input"
+          data-editor-row-field
+          data-editor-image-caption-input
+          data-content-kind="image-caption"
+          data-row-id="${escapeHtml(row.id)}"
+          data-language-code="${escapeHtml(language.code)}"
+          lang="${escapeHtml(language.code)}"
+          spellcheck="false"
+          placeholder="Enter image caption"
+        >${escapeHtml(language.imageCaption ?? "")}</textarea>
+      </div>
+    `;
+  }
+
+  if (language.showAddImageCaptionButton === true) {
+    return `
+      <div class="translation-language-panel__image-caption-shell">
+        <button
+          class="translation-language-panel__image-caption-button"
+          type="button"
+          data-action="open-editor-image-caption"
+          data-editor-image-caption-button
+          data-row-id="${escapeHtml(row.id)}"
+          data-language-code="${escapeHtml(language.code)}"
+          ${tooltipAttributes("Add image caption", { side: "top" })}
+        >
+          <span>+ Caption</span>
+        </button>
+      </div>
+    `;
+  }
+
+  if (!language.hasVisibleImageCaption) {
+    return "";
+  }
+
+  return `
+    <div class="translation-language-panel__image-caption-shell">
+      <button
+        class="translation-language-panel__image-caption-display"
+        type="button"
+        data-action="open-editor-image-caption"
+        data-editor-image-caption-button
+        data-row-id="${escapeHtml(row.id)}"
+        data-language-code="${escapeHtml(language.code)}"
+      >
+        <span lang="${escapeHtml(language.code)}">${escapeHtml(language.imageCaption ?? "")}</span>
+      </button>
+    </div>
+  `;
+}
+
 function renderEditorLanguageImage(row, language) {
   if (!language.hasVisibleImage) {
     return "";
@@ -323,6 +384,7 @@ function renderEditorLanguageImage(row, language) {
             loading="eager"
           />
         </button>
+        ${renderEditorLanguageImageCaption(row, language)}
         <button
           class="translation-language-panel__image-remove"
           type="button"

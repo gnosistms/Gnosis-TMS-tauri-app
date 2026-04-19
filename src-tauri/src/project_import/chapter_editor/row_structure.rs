@@ -327,6 +327,7 @@ pub(super) fn create_inserted_row_file(
                   "value_kind": "text",
                   "plain_text": "",
                   "footnote": "",
+                  "image_caption": "",
                   "rich_text": Value::Null,
                   "notes_html": "",
                   "attachments": [],
@@ -405,6 +406,10 @@ pub(super) fn create_inserted_editor_row(
         .iter()
         .map(|language| (language.code.clone(), String::new()))
         .collect();
+    let image_captions = languages
+        .iter()
+        .map(|language| (language.code.clone(), String::new()))
+        .collect();
     let field_states = languages
         .iter()
         .map(|language| {
@@ -448,6 +453,7 @@ pub(super) fn create_inserted_editor_row(
         text_style: DEFAULT_EDITOR_TEXT_STYLE.to_string(),
         fields,
         footnotes,
+        image_captions,
         images: BTreeMap::new(),
         field_states,
     })

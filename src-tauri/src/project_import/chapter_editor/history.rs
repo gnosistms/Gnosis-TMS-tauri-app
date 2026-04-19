@@ -88,6 +88,8 @@ pub(crate) fn restore_gtms_editor_field_from_history_sync(
     let historical_plain_text = historical_field_value.field_value.plain_text.clone();
     let historical_footnote =
         normalize_editor_footnote_value(&historical_field_value.field_value.footnote);
+    let historical_image_caption =
+        normalize_editor_image_caption_value(&historical_field_value.field_value.image_caption);
     let historical_image =
         normalize_editor_field_image_value(&historical_field_value.field_value.image);
     let historical_text_style = historical_field_value.text_style.clone();
@@ -138,6 +140,10 @@ pub(crate) fn restore_gtms_editor_field_from_history_sync(
     field_object.insert(
         "footnote".to_string(),
         Value::String(historical_footnote.clone()),
+    );
+    field_object.insert(
+        "image_caption".to_string(),
+        Value::String(historical_image_caption.clone()),
     );
     field_object.insert(
         "image".to_string(),
@@ -283,6 +289,7 @@ pub(crate) fn restore_gtms_editor_field_from_history_sync(
         language_code: input.language_code,
         plain_text: historical_plain_text,
         footnote: historical_footnote,
+        image_caption: historical_image_caption,
         image: editor_field_image_from_stored(
             &repo_path,
             &historical_field_value.field_value.image,
@@ -384,6 +391,7 @@ pub(crate) fn reverse_gtms_editor_batch_replace_commit_sync(
             row_id,
             fields: row_plain_text_fields(&restored_row_file),
             footnotes: row_footnote_map(&restored_row_file),
+            image_captions: row_image_caption_map(&restored_row_file),
         });
     }
 
@@ -657,6 +665,7 @@ fn commit_has_later_changes_for_path(
 struct HistoricalFieldSignature {
     plain_text: String,
     footnote: String,
+    image_caption: String,
     image: Option<StoredFieldImage>,
     text_style: String,
     reviewed: bool,
@@ -674,6 +683,7 @@ impl HistoricalFieldSignature {
         Self {
             plain_text: version.field_value.plain_text.clone(),
             footnote: normalize_editor_footnote_value(&version.field_value.footnote),
+            image_caption: normalize_editor_image_caption_value(&version.field_value.image_caption),
             image: normalize_editor_field_image_value(&version.field_value.image),
             text_style: version.text_style.clone(),
             reviewed: version.field_value.editor_flags.reviewed,
@@ -701,6 +711,8 @@ pub(super) fn build_editor_field_history_entries(
         };
         let plain_text = field_version.field_value.plain_text.clone();
         let footnote = normalize_editor_footnote_value(&field_version.field_value.footnote);
+        let image_caption =
+            normalize_editor_image_caption_value(&field_version.field_value.image_caption);
         let image = editor_field_image_from_stored(repo_path, &field_version.field_value.image);
         let text_style = field_version.text_style.clone();
         let field_signature = HistoricalFieldSignature::from_version(&field_version);
@@ -721,6 +733,7 @@ pub(super) fn build_editor_field_history_entries(
             ai_model: commit.ai_model,
             plain_text,
             footnote,
+            image_caption,
             image,
             text_style,
             reviewed: field_version.field_value.editor_flags.reviewed,
@@ -912,6 +925,7 @@ mod tests {
         StoredFieldValue {
             plain_text: plain_text.to_string(),
             footnote: String::new(),
+            image_caption: String::new(),
             image: None,
             editor_flags: StoredFieldEditorFlags {
                 reviewed,
@@ -1089,6 +1103,7 @@ mod tests {
                     field_value: StoredFieldValue {
                         plain_text: "Hello".to_string(),
                         footnote: "Note".to_string(),
+                        image_caption: String::new(),
                         image: None,
                         editor_flags: StoredFieldEditorFlags::default(),
                     },
@@ -1098,6 +1113,7 @@ mod tests {
                     field_value: StoredFieldValue {
                         plain_text: "Hello".to_string(),
                         footnote: String::new(),
+                        image_caption: String::new(),
                         image: None,
                         editor_flags: StoredFieldEditorFlags::default(),
                     },

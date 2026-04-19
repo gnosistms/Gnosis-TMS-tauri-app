@@ -828,6 +828,90 @@
   gap: 8px;
 }
 
+.translation-language-panel__image-caption-shell {
+  flex: 1 1 0;
+  min-width: 0;
+  align-self: stretch;
+  display: flex;
+  align-items: flex-start;
+}
+
+.translation-language-panel__image-caption-button,
+.translation-language-panel__image-caption-display {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 100%;
+  min-height: 116px;
+  padding: 10px 12px;
+  border: 1px solid rgba(164, 112, 41, 0.18);
+  border-radius: 6px;
+  background: rgba(255, 251, 246, 0.92);
+  color: var(--muted);
+  font-family: var(--font-serif);
+  font-size: var(--translation-editor-font-size, 14px);
+  line-height: 1.5;
+  text-align: left;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.translation-language-panel__image-caption-button {
+  font-family: var(--font-sans);
+  font-size: 0.96rem;
+  line-height: 1.4;
+}
+
+.translation-language-panel__image-caption-display {
+  font-style: italic;
+  color: var(--text);
+}
+
+.translation-language-panel__image-caption-button:hover,
+.translation-language-panel__image-caption-button:focus-visible,
+.translation-language-panel__image-caption-display:hover,
+.translation-language-panel__image-caption-display:focus-visible {
+  border-color: rgba(236, 134, 9, 0.46);
+  background: rgba(255, 247, 238, 0.98);
+  color: var(--link-hover);
+  outline: none;
+}
+
+.translation-language-panel__image-caption-display:hover,
+.translation-language-panel__image-caption-display:focus-visible {
+  color: var(--text);
+}
+
+.translation-language-panel__image-caption-shell--editing {
+  align-items: stretch;
+}
+
+.translation-language-panel__image-caption-input {
+  display: block;
+  width: 100%;
+  min-height: 116px;
+  padding: 10px 12px;
+  border: 1px solid rgba(236, 134, 9, 0.32);
+  border-radius: 6px;
+  background: rgba(255, 251, 246, 0.96);
+  color: var(--text);
+  font-style: italic;
+  box-shadow: 0 0 0 3px rgba(243, 156, 24, 0.08);
+}
+
+.translation-language-panel__image-caption-input:focus {
+  padding: 10px 12px;
+  border-color: rgba(236, 134, 9, 0.46);
+  border-radius: 6px;
+  box-shadow: 0 0 0 3px rgba(243, 156, 24, 0.12);
+  background: rgba(255, 251, 246, 0.98);
+}
+
+.translation-language-panel__image-caption-input::placeholder {
+  color: var(--muted);
+  opacity: 1;
+}
+
 .translation-language-panel__image-preview {
   display: inline-flex;
   align-items: center;

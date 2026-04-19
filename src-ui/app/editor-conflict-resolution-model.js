@@ -14,6 +14,10 @@ export function buildEditorConflictResolutionModalState(row, languageCode) {
   const remoteFootnote = normalizeEditorConflictResolutionValue(
     row?.conflictState?.remoteRow?.footnotes?.[languageCode],
   );
+  const localImageCaption = normalizeEditorConflictResolutionValue(row?.imageCaptions?.[languageCode]);
+  const remoteImageCaption = normalizeEditorConflictResolutionValue(
+    row?.conflictState?.remoteRow?.imageCaptions?.[languageCode],
+  );
 
   return {
     ...createEditorConflictResolutionModalState(),
@@ -26,6 +30,9 @@ export function buildEditorConflictResolutionModalState(row, languageCode) {
     localFootnote,
     remoteFootnote,
     finalFootnote: remoteFootnote,
+    localImageCaption,
+    remoteImageCaption,
+    finalImageCaption: remoteImageCaption,
     remoteVersion: row?.conflictState?.remoteVersion ?? null,
   };
 }
@@ -33,6 +40,7 @@ export function buildEditorConflictResolutionModalState(row, languageCode) {
 export function buildEditorConflictResolutionSaveState(row, languageCode, modal) {
   const remoteFields = cloneRowFields(row?.conflictState?.remoteRow?.fields);
   const remoteFootnotes = cloneRowFields(row?.conflictState?.remoteRow?.footnotes);
+  const remoteImageCaptions = cloneRowFields(row?.conflictState?.remoteRow?.imageCaptions);
   const nextLocalFields = {
     ...cloneRowFields(row?.fields),
     [languageCode]: normalizeEditorConflictResolutionValue(modal?.finalText),
@@ -41,12 +49,18 @@ export function buildEditorConflictResolutionSaveState(row, languageCode, modal)
     ...cloneRowFields(row?.footnotes),
     [languageCode]: normalizeEditorConflictResolutionValue(modal?.finalFootnote),
   };
+  const nextLocalImageCaptions = {
+    ...cloneRowFields(row?.imageCaptions),
+    [languageCode]: normalizeEditorConflictResolutionValue(modal?.finalImageCaption),
+  };
 
   return {
     remoteFields,
     remoteFootnotes,
+    remoteImageCaptions,
     nextLocalFields,
     nextLocalFootnotes,
+    nextLocalImageCaptions,
     fieldsToPersist: {
       ...remoteFields,
       [languageCode]: nextLocalFields[languageCode] ?? "",
@@ -54,6 +68,10 @@ export function buildEditorConflictResolutionSaveState(row, languageCode, modal)
     footnotesToPersist: {
       ...remoteFootnotes,
       [languageCode]: nextLocalFootnotes[languageCode] ?? "",
+    },
+    imageCaptionsToPersist: {
+      ...remoteImageCaptions,
+      [languageCode]: nextLocalImageCaptions[languageCode] ?? "",
     },
   };
 }
@@ -66,11 +84,15 @@ export function buildEditorConflictResolutionVersionCopyText(modal, side) {
   const footnote = normalizeEditorConflictResolutionValue(
     isLocal ? modal?.localFootnote : modal?.remoteFootnote,
   );
-  if (!text && !footnote) {
+  const imageCaption = normalizeEditorConflictResolutionValue(
+    isLocal ? modal?.localImageCaption : modal?.remoteImageCaption,
+  );
+  if (!text && !footnote && !imageCaption) {
     return "";
   }
 
-  return footnote ? `${text}${text ? "\n\n" : ""}${footnote}` : text;
+  const parts = [text, footnote, imageCaption].filter(Boolean);
+  return parts.join("\n\n");
 }
 
 export function editorConflictResolutionShowsFootnotes(modal) {
@@ -81,4 +103,17 @@ export function editorConflictResolutionShowsFootnotes(modal) {
   ].map((value) => normalizeEditorConflictResolutionValue(value));
 
   return footnotes.some((footnote) => footnote.trim().length > 0) || new Set(footnotes).size > 1;
+}
+
+export function editorConflictResolutionShowsImageCaptions(modal) {
+  const imageCaptions = [
+    modal?.localImageCaption,
+    modal?.remoteImageCaption,
+    modal?.finalImageCaption,
+  ].map((value) => normalizeEditorConflictResolutionValue(value));
+
+  return (
+    imageCaptions.some((imageCaption) => imageCaption.trim().length > 0)
+    || new Set(imageCaptions).size > 1
+  );
 }

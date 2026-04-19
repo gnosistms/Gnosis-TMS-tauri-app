@@ -38,7 +38,7 @@ import {
 } from "./editor-review-state.js";
 import { findChapterContextById, selectedProjectsTeam } from "./project-context.js";
 import { invoke } from "./runtime.js";
-import { state } from "./state.js";
+import { createEditorImageCaptionEditorState, state } from "./state.js";
 import { showNoticeBadge } from "./status-feedback.js";
 import { normalizeEditorRowTextStyle } from "./editor-row-text-style.js";
 import {
@@ -56,6 +56,7 @@ const pendingEditorRowPersistByRowId = new Map();
 const pendingEditorDirtyRowScanFrameByRowId = new Map();
 const pendingEditorRowCommitMetadataByRowId = new Map();
 let pendingEditorFootnoteOpenRequest = null;
+let pendingEditorImageCaptionOpenRequest = null;
 
 function normalizePendingEditorCommitMetadata(commitMetadata) {
   if (!commitMetadata || typeof commitMetadata !== "object") {
@@ -338,6 +339,41 @@ export function openEditorFootnote(render, rowId, languageCode) {
   }
 }
 
+export function openEditorImageCaption(render, rowId, languageCode) {
+  if (!rowId || !languageCode || !state.editorChapter?.chapterId) {
+    return;
+  }
+
+  pendingEditorImageCaptionOpenRequest = {
+    rowId,
+    languageCode,
+  };
+
+  state.editorChapter = {
+    ...state.editorChapter,
+    imageCaptionEditor: {
+      rowId,
+      languageCode,
+    },
+  };
+  render?.({ scope: "translate-body" });
+
+  if (typeof window !== "undefined") {
+    window.requestAnimationFrame(() => {
+      const input = document.querySelector(buildEditorFieldSelector(rowId, languageCode, "image-caption"));
+      if (input instanceof HTMLTextAreaElement) {
+        input.focus({ preventScroll: true });
+      }
+      if (
+        pendingEditorImageCaptionOpenRequest?.rowId === rowId
+        && pendingEditorImageCaptionOpenRequest?.languageCode === languageCode
+      ) {
+        pendingEditorImageCaptionOpenRequest = null;
+      }
+    });
+  }
+}
+
 export function collapseEmptyEditorFootnote(render, rowId, languageCode) {
   if (!rowId || !languageCode || !state.editorChapter?.chapterId) {
     return;
@@ -370,6 +406,32 @@ export function collapseEmptyEditorFootnote(render, rowId, languageCode) {
       rowId: null,
       languageCode: null,
     },
+  };
+  render?.({ scope: "translate-body" });
+}
+
+export function collapseEditorImageCaption(render, rowId, languageCode) {
+  if (!rowId || !languageCode || !state.editorChapter?.chapterId) {
+    return;
+  }
+
+  if (
+    state.editorChapter.imageCaptionEditor?.rowId !== rowId
+    || state.editorChapter.imageCaptionEditor?.languageCode !== languageCode
+  ) {
+    return;
+  }
+
+  if (
+    pendingEditorImageCaptionOpenRequest?.rowId === rowId
+    && pendingEditorImageCaptionOpenRequest?.languageCode === languageCode
+  ) {
+    return;
+  }
+
+  state.editorChapter = {
+    ...state.editorChapter,
+    imageCaptionEditor: createEditorImageCaptionEditorState(),
   };
   render?.({ scope: "translate-body" });
 }
@@ -756,6 +818,7 @@ export async function resolveEditorRowConflict(render, rowId, resolution, operat
   await persistEditorRow(render, rowId, operations, {
     baseFieldsOverride: row.conflictState?.remoteRow?.fields ?? null,
     baseFootnotesOverride: row.conflictState?.remoteRow?.footnotes ?? null,
+    baseImageCaptionsOverride: row.conflictState?.remoteRow?.imageCaptions ?? null,
   });
 }
 
@@ -788,7 +851,8 @@ async function persistEditorRow(render, rowId, operations = {}, options = {}) {
   const persistPromise = (async () => {
     while (state.editorChapter?.chapterId) {
       const editorChapter = state.editorChapter;
-      const row = options?.baseFieldsOverride || options?.baseFootnotesOverride
+      const row =
+        options?.baseFieldsOverride || options?.baseFootnotesOverride || options?.baseImageCaptionsOverride
         ? findEditorRowById(rowId, state.editorChapter)
         : await ensureEditorRowReadyForWrite(render, rowId, {
           allowStaleDirty: true,
@@ -823,6 +887,7 @@ async function persistEditorRow(render, rowId, operations = {}, options = {}) {
 
       const fieldsToPersist = cloneRowFields(row.fields);
       const footnotesToPersist = cloneRowFields(row.footnotes);
+      const imageCaptionsToPersist = cloneRowFields(row.imageCaptions);
       const reviewLanguageToOpen = reviewTabLanguageToOpenAfterSave(
         editorChapter,
         rowId,
@@ -842,6 +907,7 @@ async function persistEditorRow(render, rowId, operations = {}, options = {}) {
             rowId,
             fields: fieldsToPersist,
             footnotes: footnotesToPersist,
+            imageCaptions: imageCaptionsToPersist,
             baseFields:
               options?.baseFieldsOverride && typeof options.baseFieldsOverride === "object"
                 ? cloneRowFields(options.baseFieldsOverride)
@@ -850,6 +916,10 @@ async function persistEditorRow(render, rowId, operations = {}, options = {}) {
               options?.baseFootnotesOverride && typeof options.baseFootnotesOverride === "object"
                 ? cloneRowFields(options.baseFootnotesOverride)
                 : cloneRowFields(row.baseFootnotes),
+            baseImageCaptions:
+              options?.baseImageCaptionsOverride && typeof options.baseImageCaptionsOverride === "object"
+                ? cloneRowFields(options.baseImageCaptionsOverride)
+                : cloneRowFields(row.baseImageCaptions),
             ...(commitMetadata?.operation ? { operation: commitMetadata.operation } : {}),
             ...(commitMetadata?.aiModel ? { aiModel: commitMetadata.aiModel } : {}),
           },
@@ -863,8 +933,10 @@ async function persistEditorRow(render, rowId, operations = {}, options = {}) {
           if (rowTextContentEqual(
             fieldsToPersist,
             footnotesToPersist,
+            imageCaptionsToPersist,
             payload?.row?.fields,
             payload?.row?.footnotes,
+            payload?.row?.imageCaptions,
           )) {
             updateEditorChapterRow(
               rowId,
@@ -880,6 +952,7 @@ async function persistEditorRow(render, rowId, operations = {}, options = {}) {
             (currentRow) => applyEditorRowConflictDetected(currentRow, payload, {
               localFields: fieldsToPersist,
               localFootnotes: footnotesToPersist,
+              localImageCaptions: imageCaptionsToPersist,
             }),
           );
           lockConflictFilter();

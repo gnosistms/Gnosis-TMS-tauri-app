@@ -25,8 +25,10 @@ export function rowHasUnresolvedEditorConflict(row) {
 export function conflictedLanguageCodesForRow(row, languages = []) {
   const remoteFields = row?.conflictState?.remoteRow?.fields;
   const remoteFootnotes = row?.conflictState?.remoteRow?.footnotes;
+  const remoteImageCaptions = row?.conflictState?.remoteRow?.imageCaptions;
   const localFields = row?.fields;
   const localFootnotes = row?.footnotes;
+  const localImageCaptions = row?.imageCaptions;
   if (!remoteFields || typeof remoteFields !== "object" || !localFields || typeof localFields !== "object") {
     return new Set();
   }
@@ -40,6 +42,7 @@ export function conflictedLanguageCodesForRow(row, languages = []) {
     if (
       normalizeConflictText(localFields?.[code]) !== normalizeConflictText(remoteFields?.[code])
       || normalizeConflictText(localFootnotes?.[code]) !== normalizeConflictText(remoteFootnotes?.[code])
+      || normalizeConflictText(localImageCaptions?.[code]) !== normalizeConflictText(remoteImageCaptions?.[code])
     ) {
       codes.add(code);
     }

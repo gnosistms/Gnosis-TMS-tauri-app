@@ -38,6 +38,7 @@ import {
   openTargetLanguageManager,
   syncEditorGlossaryHighlightRowDom,
   updateEditorConflictResolutionFinalFootnote,
+  updateEditorConflictResolutionFinalImageCaption,
   updateEditorImageUrlDraft,
   toggleEditorReplaceEnabled,
   toggleEditorReplaceRowSelected,
@@ -419,6 +420,12 @@ function handleEditorImageUrlInput(event) {
 }
 
 function handleEditorConflictResolutionInput(event) {
+  const imageCaptionInput = event.target.closest("[data-editor-conflict-final-image-caption-input]");
+  if (imageCaptionInput) {
+    updateEditorConflictResolutionFinalImageCaption(imageCaptionInput.value);
+    return true;
+  }
+
   const footnoteInput = event.target.closest("[data-editor-conflict-final-footnote-input]");
   if (footnoteInput) {
     updateEditorConflictResolutionFinalFootnote(footnoteInput.value);

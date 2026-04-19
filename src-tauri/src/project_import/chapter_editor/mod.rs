@@ -74,9 +74,10 @@ use self::shared::{
     apply_source_word_count_delta, build_source_word_counts_from_stored_rows,
     clear_editor_html_preview_cache, current_repo_head_sha, editor_row_from_stored_row_file,
     ensure_editor_field_object_defaults, load_editor_rows, load_project_chapter_summaries,
-    load_source_word_counts, normalize_editor_footnote_value, normalize_editor_text_style_value,
-    row_fields_object_mut, row_footnote_map, row_object_mut, row_plain_text_map, row_text_style,
-    sanitize_chapter_languages, set_editor_field_flags,
+    load_source_word_counts, normalize_editor_footnote_value,
+    normalize_editor_image_caption_value, normalize_editor_text_style_value,
+    row_fields_object_mut, row_footnote_map, row_image_caption_map, row_object_mut,
+    row_plain_text_map, row_text_style, sanitize_chapter_languages, set_editor_field_flags,
 };
 
 const ORDER_KEY_SPACING: u128 = 1u128 << 104;
@@ -184,9 +185,13 @@ pub(crate) struct UpdateEditorRowFieldsInput {
     #[serde(default)]
     footnotes: BTreeMap<String, String>,
     #[serde(default)]
+    image_captions: BTreeMap<String, String>,
+    #[serde(default)]
     base_fields: BTreeMap<String, String>,
     #[serde(default)]
     base_footnotes: BTreeMap<String, String>,
+    #[serde(default)]
+    base_image_captions: BTreeMap<String, String>,
     #[serde(default)]
     operation: String,
     #[serde(default)]
@@ -200,6 +205,8 @@ pub(crate) struct UpdateEditorRowFieldsBatchRowInput {
     fields: BTreeMap<String, String>,
     #[serde(default)]
     footnotes: BTreeMap<String, String>,
+    #[serde(default)]
+    image_captions: BTreeMap<String, String>,
 }
 
 #[derive(Deserialize)]
@@ -432,6 +439,7 @@ pub(crate) struct EditorFieldHistoryEntry {
     ai_model: Option<String>,
     plain_text: String,
     footnote: String,
+    image_caption: String,
     image: Option<EditorFieldImage>,
     text_style: String,
     reviewed: bool,
@@ -457,6 +465,7 @@ pub(crate) struct RestoreEditorFieldHistoryResponse {
     language_code: String,
     plain_text: String,
     footnote: String,
+    image_caption: String,
     image: Option<EditorFieldImage>,
     text_style: String,
     reviewed: bool,
@@ -524,6 +533,7 @@ struct EditorRow {
     text_style: String,
     fields: BTreeMap<String, String>,
     footnotes: BTreeMap<String, String>,
+    image_captions: BTreeMap<String, String>,
     images: BTreeMap<String, EditorFieldImage>,
     field_states: BTreeMap<String, EditorFieldState>,
 }
@@ -595,6 +605,7 @@ pub(crate) struct SaveEditorRowWithConcurrencyResponse {
     source_word_counts: BTreeMap<String, usize>,
     base_fields: BTreeMap<String, String>,
     base_footnotes: BTreeMap<String, String>,
+    base_image_captions: BTreeMap<String, String>,
     conflict_remote_version: Option<EditorRowVersionMetadata>,
     chapter_base_commit_sha: Option<String>,
 }
@@ -717,6 +728,8 @@ struct StoredFieldValue {
     plain_text: String,
     #[serde(default)]
     footnote: String,
+    #[serde(default)]
+    image_caption: String,
     #[serde(default)]
     image: Option<StoredFieldImage>,
     #[serde(default)]

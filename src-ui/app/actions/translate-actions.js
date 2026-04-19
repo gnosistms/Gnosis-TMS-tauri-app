@@ -12,6 +12,7 @@ import {
   confirmEditorRowPermanentDeletion,
   confirmInsertEditorRow,
   openEditorFootnote,
+  openEditorImageCaption,
   closeTargetLanguageManager,
   closeEditorImageInvalidFileModal,
   closeEditorImagePreview,
@@ -203,6 +204,16 @@ export function createTranslateActions(render) {
       const rowId = button?.dataset.rowId ?? null;
       const languageCode = button?.dataset.languageCode ?? null;
       openEditorFootnote(render, rowId, languageCode);
+      return true;
+    }
+
+    if (action === "open-editor-image-caption") {
+      const button = event?.target instanceof Element
+        ? event.target.closest("[data-row-id][data-language-code]")
+        : null;
+      const rowId = button?.dataset.rowId ?? null;
+      const languageCode = button?.dataset.languageCode ?? null;
+      openEditorImageCaption(render, rowId, languageCode);
       return true;
     }
 

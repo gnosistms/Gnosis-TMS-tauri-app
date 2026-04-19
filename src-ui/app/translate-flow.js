@@ -20,6 +20,7 @@ import {
   openEditorConflictResolutionModal as openEditorConflictResolutionModalFlow,
   saveEditorConflictResolution as saveEditorConflictResolutionFlow,
   updateEditorConflictResolutionFinalFootnote as updateEditorConflictResolutionFinalFootnoteFlow,
+  updateEditorConflictResolutionFinalImageCaption as updateEditorConflictResolutionFinalImageCaptionFlow,
   updateEditorConflictResolutionFinalText as updateEditorConflictResolutionFinalTextFlow,
 } from "./editor-conflict-resolution-flow.js";
 import {
@@ -63,10 +64,12 @@ import {
 } from "./editor-selection-flow.js";
 import {
   collapseEmptyEditorFootnote as collapseEmptyEditorFootnoteFlow,
+  collapseEditorImageCaption as collapseEditorImageCaptionFlow,
   cancelEditorUnreviewAllModal as cancelEditorUnreviewAllModalFlow,
   confirmEditorUnreviewAll as confirmEditorUnreviewAllFlow,
   flushDirtyEditorRows as flushDirtyEditorRowsFlow,
   openEditorFootnote as openEditorFootnoteFlow,
+  openEditorImageCaption as openEditorImageCaptionFlow,
   openEditorUnreviewAllModal as openEditorUnreviewAllModalFlow,
   persistEditorRowOnBlur as persistEditorRowOnBlurFlow,
   resolveEditorRowConflict as resolveEditorRowConflictFlow,
@@ -317,6 +320,10 @@ export function updateEditorConflictResolutionFinalFootnote(nextValue) {
   updateEditorConflictResolutionFinalFootnoteFlow(nextValue);
 }
 
+export function updateEditorConflictResolutionFinalImageCaption(nextValue) {
+  updateEditorConflictResolutionFinalImageCaptionFlow(nextValue);
+}
+
 export async function copyEditorConflictResolutionVersion(render, side) {
   await copyEditorConflictResolutionVersionFlow(render, side);
 }
@@ -501,8 +508,16 @@ export function openEditorFootnote(render, rowId, languageCode) {
   openEditorFootnoteFlow(render, rowId, languageCode);
 }
 
+export function openEditorImageCaption(render, rowId, languageCode) {
+  openEditorImageCaptionFlow(render, rowId, languageCode);
+}
+
 export function collapseEmptyEditorFootnote(render, rowId, languageCode) {
   collapseEmptyEditorFootnoteFlow(render, rowId, languageCode);
+}
+
+export function collapseEditorImageCaption(render, rowId, languageCode) {
+  collapseEditorImageCaptionFlow(render, rowId, languageCode);
 }
 
 export function openEditorImageUrl(render, rowId, languageCode) {

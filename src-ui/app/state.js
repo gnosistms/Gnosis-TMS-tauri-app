@@ -292,6 +292,7 @@ export function createEditorChapterState() {
     activeRowId: null,
     activeLanguageCode: null,
     footnoteEditor: createEditorFootnoteEditorState(),
+    imageCaptionEditor: createEditorImageCaptionEditorState(),
     imageEditor: createEditorImageEditorState(),
     imageInvalidFileModal: createEditorImageInvalidFileModalState(),
     imagePreviewOverlay: createEditorImagePreviewOverlayState(),
@@ -317,6 +318,13 @@ export function createEditorChapterState() {
 }
 
 export function createEditorFootnoteEditorState() {
+  return {
+    rowId: null,
+    languageCode: null,
+  };
+}
+
+export function createEditorImageCaptionEditorState() {
   return {
     rowId: null,
     languageCode: null,
@@ -483,6 +491,9 @@ export function createEditorConflictResolutionModalState() {
     localFootnote: "",
     remoteFootnote: "",
     finalFootnote: "",
+    localImageCaption: "",
+    remoteImageCaption: "",
+    finalImageCaption: "",
     remoteVersion: null,
   });
 }

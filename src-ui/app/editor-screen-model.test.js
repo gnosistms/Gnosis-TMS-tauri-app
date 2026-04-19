@@ -291,3 +291,47 @@ test("buildEditorScreenViewModel keeps add-image buttons visible for invalid-url
     restoreSharedState(snapshot);
   }
 });
+
+test("buildEditorScreenViewModel shows the image caption button only when an image exists", () => {
+  const snapshot = snapshotSharedState();
+
+  try {
+    applyEditorRegressionFixture(state, {
+      rowCount: 1,
+      imagesByRowId: {
+        "fixture-row-0001": {
+          vi: {
+            kind: "url",
+            url: "https://example.com/image.png",
+          },
+        },
+      },
+    });
+
+    let viewModel = buildEditorScreenViewModel(state);
+    let firstRow = viewModel.contentRows.find((row) => row?.id === "fixture-row-0001");
+    let targetSection = firstRow?.sections.find((section) => section.code === "vi");
+
+    assert.equal(targetSection?.showAddImageCaptionButton, true);
+
+    state.editorChapter = {
+      ...state.editorChapter,
+      rows: state.editorChapter.rows.map((row) => (
+        row.rowId === "fixture-row-0001"
+          ? {
+              ...row,
+              images: {},
+            }
+          : row
+      )),
+    };
+    viewModel = buildEditorScreenViewModel(state);
+    firstRow = viewModel.contentRows.find((row) => row?.id === "fixture-row-0001");
+    targetSection = firstRow?.sections.find((section) => section.code === "vi");
+
+    assert.equal(targetSection?.showAddImageCaptionButton, false);
+    assert.equal(targetSection?.hasVisibleImageCaption, false);
+  } finally {
+    restoreSharedState(snapshot);
+  }
+});

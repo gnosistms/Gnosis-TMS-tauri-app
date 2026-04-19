@@ -76,6 +76,11 @@ export function renderHistoryContent(entry, previousEntry) {
 }
 
 export function renderHistoryEntryContent(entry, previousEntry, languageCode) {
+  const currentImageText = editorFieldImageMetadataText(entry?.image);
+  const previousImageText = editorFieldImageMetadataText(previousEntry?.image);
+  const hasVisibleImage =
+    historyTextHasVisibleContent(currentImageText)
+    || historyTextHasVisibleContent(previousImageText);
   const historyBlocks = [
     {
       currentText: entry?.plainText,
@@ -91,9 +96,16 @@ export function renderHistoryEntryContent(entry, previousEntry, languageCode) {
     },
     {
       currentText: editorFieldImageMetadataText(entry?.image),
-      previousText: editorFieldImageMetadataText(previousEntry?.image),
+      previousText: previousImageText,
       className: "history-item__content history-item__content--image",
       alwaysRender: false,
+    },
+    {
+      currentText: entry?.imageCaption,
+      previousText: previousEntry?.imageCaption,
+      className: "history-item__content history-item__content--footnote",
+      alwaysRender: false,
+      requiresVisibleImage: true,
     },
   ];
 
@@ -101,9 +113,12 @@ export function renderHistoryEntryContent(entry, previousEntry, languageCode) {
     <div class="history-item__content-stack">
       ${historyBlocks
         .filter((block) =>
-          block.alwaysRender
-          || historyTextHasVisibleContent(block.currentText)
-          || historyTextHasVisibleContent(block.previousText),
+          (
+            block.alwaysRender
+            || historyTextHasVisibleContent(block.currentText)
+            || historyTextHasVisibleContent(block.previousText)
+          )
+          && (block.requiresVisibleImage !== true || hasVisibleImage)
         )
         .map((block) =>
           `<p class="${block.className}" lang="${escapeHtml(languageCode ?? "")}">${renderHistoryDiffText(block.previousText, block.currentText)}</p>`,

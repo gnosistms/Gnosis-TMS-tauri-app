@@ -44,7 +44,12 @@ function captureFocusedEditorField(root) {
   return {
     rowId: activeElement.dataset.rowId ?? "",
     languageCode: activeElement.dataset.languageCode ?? "",
-    contentKind: activeElement.dataset.contentKind === "footnote" ? "footnote" : "field",
+    contentKind:
+      activeElement.dataset.contentKind === "footnote"
+        ? "footnote"
+        : activeElement.dataset.contentKind === "image-caption"
+          ? "image-caption"
+          : "field",
     selectionStart: activeElement.selectionStart,
     selectionEnd: activeElement.selectionEnd,
     selectionDirection: activeElement.selectionDirection ?? "none",

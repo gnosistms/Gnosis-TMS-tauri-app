@@ -30,14 +30,17 @@ export function rowFootnotesEqual(left, right) {
 export function rowTextContentEqual(
   leftFields,
   leftFootnotes,
+  leftImageCaptions,
   rightFields,
   rightFootnotes,
+  rightImageCaptions,
   leftImages = {},
   rightImages = {},
 ) {
   return (
     rowFieldsEqual(leftFields, rightFields)
     && rowFootnotesEqual(leftFootnotes, rightFootnotes)
+    && rowFieldsEqual(leftImageCaptions, rightImageCaptions)
     && rowImagesEqual(leftImages, rightImages)
   );
 }
@@ -63,8 +66,10 @@ export function rowHasFieldChanges(row) {
   return !rowTextContentEqual(
     row?.fields,
     row?.footnotes,
+    row?.imageCaptions,
     row?.persistedFields,
     row?.persistedFootnotes,
+    row?.persistedImageCaptions,
     row?.images,
     row?.persistedImages,
   );

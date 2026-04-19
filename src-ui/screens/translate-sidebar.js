@@ -217,6 +217,7 @@ function renderReviewPane(editorChapter, rows, languages) {
   const currentEntry = {
     plainText: activeSection?.text ?? "",
     footnote: activeSection?.footnote ?? "",
+    imageCaption: activeSection?.imageCaption ?? "",
     image: activeSection?.image ?? null,
     reviewed: activeSection?.reviewed === true,
     pleaseCheck: activeSection?.pleaseCheck === true,

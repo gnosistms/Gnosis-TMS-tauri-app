@@ -106,3 +106,30 @@ test("unfiltered editor row input keeps the local autosize and virtualization up
     ["virtualization", input],
   ]);
 });
+
+test("image caption editor input routes through the image-caption content kind", () => {
+  const render = createSpy();
+  const updateEditorRowFieldValueForContentKind = createSpy();
+  const syncEditorRowTextareaHeight = createSpy();
+  const syncEditorVirtualizationRowLayout = createSpy();
+  const syncEditorGlossaryHighlightRowDom = createSpy();
+  const input = createInput();
+  input.dataset.contentKind = "image-caption";
+
+  applyEditorRowFieldInput({
+    input,
+    filters: { searchQuery: "", caseSensitive: false },
+    render,
+    updateEditorRowFieldValueForContentKind,
+    syncEditorRowTextareaHeight,
+    syncEditorVirtualizationRowLayout,
+    syncEditorGlossaryHighlightRowDom,
+  });
+
+  assert.deepEqual(updateEditorRowFieldValueForContentKind.calls, [[
+    "row-1",
+    "es",
+    "nuevo texto",
+    "image-caption",
+  ]]);
+});

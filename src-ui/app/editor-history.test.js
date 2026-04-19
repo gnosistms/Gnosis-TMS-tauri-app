@@ -17,6 +17,7 @@ function historyEntry({
   aiModel = null,
   plainText = "text",
   footnote = "",
+  imageCaption = "",
   textStyle = "paragraph",
   reviewed = false,
   pleaseCheck = false,
@@ -32,6 +33,7 @@ function historyEntry({
     aiModel,
     plainText,
     footnote,
+    imageCaption,
     textStyle,
     reviewed,
     pleaseCheck,
@@ -128,6 +130,48 @@ test("current-entry matching also requires footnote equality", () => {
     }),
     false,
   );
+});
+
+test("current-entry matching also requires image caption equality", () => {
+  const entry = historyEntry({
+    commitSha: "c1",
+    plainText: "Hello",
+    imageCaption: "Figure note",
+  });
+
+  assert.equal(
+    editorHistoryEntryMatchesSection(entry, {
+      text: "Hello",
+      footnote: "",
+      imageCaption: "Figure note",
+      textStyle: "paragraph",
+      reviewed: false,
+      pleaseCheck: false,
+    }),
+    true,
+  );
+  assert.equal(
+    editorHistoryEntryMatchesSection(entry, {
+      text: "Hello",
+      footnote: "",
+      imageCaption: "",
+      textStyle: "paragraph",
+      reviewed: false,
+      pleaseCheck: false,
+    }),
+    false,
+  );
+});
+
+test("image-caption-only history updates stay visible instead of collapsing as marker-only changes", () => {
+  const model = buildEditorHistoryViewModel([
+    historyEntry({ commitSha: "c2", plainText: "Hello", imageCaption: "Figure note" }),
+    historyEntry({ commitSha: "c1", operationType: "import", plainText: "Hello", imageCaption: "" }),
+  ], new Set(["c1"]));
+
+  assert.equal(model.groups.length, 2);
+  assert.equal(model.groups[0].entries[0].commitSha, "c2");
+  assert.equal(model.groups[1].entries[0].commitSha, "c1");
 });
 
 test("style-only history updates stay visible instead of collapsing as marker-only changes", () => {

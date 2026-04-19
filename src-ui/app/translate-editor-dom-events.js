@@ -4,6 +4,7 @@ import { closestEventTarget } from "./event-target.js";
 import { listen } from "./runtime.js";
 import { state } from "./state.js";
 import {
+  collapseEditorImageCaption,
   collapseEmptyEditorFootnote,
   collapseEmptyEditorImageEditor,
   dismissActiveIdleEditorImageUpload,
@@ -120,7 +121,7 @@ export function registerTranslateEditorDomEvents(app, render) {
   app.addEventListener("mousedown", (event) => {
     const button = closestEventTarget(
       event.target,
-      "[data-editor-row-text-style-button], [data-editor-footnote-button], [data-editor-image-button], [data-editor-image-upload-dropzone], [data-editor-language-image-remove-button], [data-action^=\"switch-editor-sidebar-tab:\"]",
+      "[data-editor-row-text-style-button], [data-editor-footnote-button], [data-editor-image-button], [data-editor-image-caption-button], [data-editor-image-upload-dropzone], [data-editor-language-image-remove-button], [data-action^=\"switch-editor-sidebar-tab:\"]",
     );
     if (!button) {
       return;
@@ -195,11 +196,24 @@ export function registerTranslateEditorDomEvents(app, render) {
 
     const rowId = control.dataset.rowId ?? "";
     const languageCode = control.dataset.languageCode ?? "";
+    const contentKind = textarea?.dataset.contentKind ?? "";
     if (textarea instanceof HTMLTextAreaElement) {
       requestAnimationFrame(() => {
         syncEditorRowTextareaHeight(textarea);
         syncEditorVirtualizationRowLayout(textarea);
       });
+    }
+    if (textarea instanceof HTMLTextAreaElement && contentKind === "image-caption") {
+      requestAnimationFrame(() => {
+        if (document.activeElement === textarea) {
+          return;
+        }
+
+        collapseEditorImageCaption(render, rowId, languageCode);
+        void persistEditorRowOnBlur(render, rowId);
+      });
+      scheduleDirtyEditorRowScan(render, rowId);
+      return;
     }
     requestAnimationFrame(() => {
       if (imageUploadDropzone instanceof HTMLElement && !document.hasFocus()) {
@@ -225,6 +239,22 @@ export function registerTranslateEditorDomEvents(app, render) {
       || event.repeat
       || event.isComposing
     ) {
+      return;
+    }
+
+    const captionInput = closestEventTarget(event.target, "[data-editor-image-caption-input]");
+    if (captionInput instanceof HTMLTextAreaElement) {
+      const key = typeof event.key === "string" ? event.key.toLowerCase() : "";
+      if (
+        key === "enter"
+        && event.shiftKey
+        && !event.metaKey
+        && !event.ctrlKey
+        && !event.altKey
+      ) {
+        event.preventDefault();
+        captionInput.blur();
+      }
       return;
     }
 

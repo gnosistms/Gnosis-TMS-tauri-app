@@ -12,8 +12,10 @@ import { buildEditorFilterResult, editorChapterFiltersAreActive } from "./editor
 import { normalizeEditorReplaceState } from "./editor-replace.js";
 import {
   editorImageEditorMatches,
+  editorImageCaptionEditorMatches,
   editorFootnoteEditorMatches,
   editorLanguageImage,
+  editorLanguageImageCaptionText,
   editorLanguageFootnoteIsVisible,
   editorLanguageFootnoteText,
 } from "./editor-utils.js";
@@ -24,6 +26,8 @@ let cachedActiveRowId = null;
 let cachedActiveLanguageCode = null;
 let cachedFootnoteEditorRowId = null;
 let cachedFootnoteEditorLanguageCode = null;
+let cachedImageCaptionEditorRowId = null;
+let cachedImageCaptionEditorLanguageCode = null;
 let cachedImageEditorRowId = null;
 let cachedImageEditorLanguageCode = null;
 let cachedImageEditorMode = null;
@@ -77,6 +81,8 @@ function buildLiveTranslationRows(editorChapter, languages) {
     cachedActiveLanguageCode = editorChapter?.activeLanguageCode ?? null;
     cachedFootnoteEditorRowId = editorChapter?.footnoteEditor?.rowId ?? null;
     cachedFootnoteEditorLanguageCode = editorChapter?.footnoteEditor?.languageCode ?? null;
+    cachedImageCaptionEditorRowId = editorChapter?.imageCaptionEditor?.rowId ?? null;
+    cachedImageCaptionEditorLanguageCode = editorChapter?.imageCaptionEditor?.languageCode ?? null;
     cachedImageEditorRowId = editorChapter?.imageEditor?.rowId ?? null;
     cachedImageEditorLanguageCode = editorChapter?.imageEditor?.languageCode ?? null;
     cachedImageEditorMode = editorChapter?.imageEditor?.mode ?? null;
@@ -92,6 +98,8 @@ function buildLiveTranslationRows(editorChapter, languages) {
     && (editorChapter?.activeLanguageCode ?? null) === cachedActiveLanguageCode
     && (editorChapter?.footnoteEditor?.rowId ?? null) === cachedFootnoteEditorRowId
     && (editorChapter?.footnoteEditor?.languageCode ?? null) === cachedFootnoteEditorLanguageCode
+    && (editorChapter?.imageCaptionEditor?.rowId ?? null) === cachedImageCaptionEditorRowId
+    && (editorChapter?.imageCaptionEditor?.languageCode ?? null) === cachedImageCaptionEditorLanguageCode
     && (editorChapter?.imageEditor?.rowId ?? null) === cachedImageEditorRowId
     && (editorChapter?.imageEditor?.languageCode ?? null) === cachedImageEditorLanguageCode
     && (editorChapter?.imageEditor?.mode ?? null) === cachedImageEditorMode
@@ -144,11 +152,15 @@ function buildLiveTranslationRows(editorChapter, languages) {
           editorImageEditorMatches(editorChapter, row.rowId, language.code)
           && editorChapter?.imageEditor?.invalidUrl === true;
         const hasSavedImage = Boolean(image);
+        const imageCaption = editorLanguageImageCaptionText(row, language.code);
+        const isImageCaptionEditorOpen =
+          hasSavedImage && editorImageCaptionEditorMatches(editorChapter, row.rowId, language.code);
         return {
           code: language.code,
           name: language.name,
           text: row.fields?.[language.code] ?? "",
           footnote: editorLanguageFootnoteText(row, language.code),
+          imageCaption,
           image,
           hasVisibleFootnote: editorLanguageFootnoteIsVisible(row, language.code, editorChapter),
           hasVisibleImage:
@@ -156,7 +168,14 @@ function buildLiveTranslationRows(editorChapter, languages) {
             || isImageUrlEditorOpen
             || isImageUploadEditorOpen
             || showInvalidImageUrl,
+          hasVisibleImageCaption:
+            hasSavedImage
+            && (
+              isImageCaptionEditorOpen
+              || imageCaption.trim().length > 0
+            ),
           isFootnoteEditorOpen: editorFootnoteEditorMatches(editorChapter, row.rowId, language.code),
+          isImageCaptionEditorOpen,
           isImageUrlEditorOpen,
           isImageUploadEditorOpen,
           showInvalidImageUrl,
@@ -172,6 +191,10 @@ function buildLiveTranslationRows(editorChapter, languages) {
             && !isImageUrlEditorOpen
             && !isImageUploadEditorOpen
             && !isImageUrlSubmitting,
+          showAddImageCaptionButton:
+            hasSavedImage
+            && imageCaption.trim().length === 0
+            && !isImageCaptionEditorOpen,
           isActive:
             editorChapter?.activeRowId === row.rowId
             && editorChapter?.activeLanguageCode === language.code,
@@ -194,6 +217,8 @@ function buildLiveTranslationRows(editorChapter, languages) {
   cachedActiveLanguageCode = editorChapter?.activeLanguageCode ?? null;
   cachedFootnoteEditorRowId = editorChapter?.footnoteEditor?.rowId ?? null;
   cachedFootnoteEditorLanguageCode = editorChapter?.footnoteEditor?.languageCode ?? null;
+  cachedImageCaptionEditorRowId = editorChapter?.imageCaptionEditor?.rowId ?? null;
+  cachedImageCaptionEditorLanguageCode = editorChapter?.imageCaptionEditor?.languageCode ?? null;
   cachedImageEditorRowId = editorChapter?.imageEditor?.rowId ?? null;
   cachedImageEditorLanguageCode = editorChapter?.imageEditor?.languageCode ?? null;
   cachedImageEditorMode = editorChapter?.imageEditor?.mode ?? null;

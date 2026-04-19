@@ -171,6 +171,7 @@ function createFixtureRow(index, languages, options = {}) {
     : editorComments.length;
   const fields = {};
   const footnotes = {};
+  const imageCaptions = {};
   const fieldStates = {};
 
   for (const language of languages) {
@@ -187,6 +188,7 @@ function createFixtureRow(index, languages, options = {}) {
       pleaseCheck: false,
     };
     footnotes[language.code] = "";
+    imageCaptions[language.code] = "";
   }
 
   return {
@@ -201,6 +203,8 @@ function createFixtureRow(index, languages, options = {}) {
     persistedFields: { ...fields },
     footnotes,
     persistedFootnotes: { ...footnotes },
+    imageCaptions,
+    persistedImageCaptions: { ...imageCaptions },
     images,
     fieldStates,
     persistedFieldStates: structuredClone(fieldStates),
@@ -534,6 +538,19 @@ export function readEditorRegressionSnapshot(appState) {
           ]),
       )
       : {};
+  const rowImageCaptions =
+    Array.isArray(appState.editorChapter?.rows)
+      ? Object.fromEntries(
+        appState.editorChapter.rows
+          .filter((row) => typeof row?.rowId === "string" && row.rowId)
+          .map((row) => [
+            row.rowId,
+            row?.imageCaptions && typeof row.imageCaptions === "object"
+              ? { ...row.imageCaptions }
+              : {},
+          ]),
+      )
+      : {};
 
   return {
     screen: appState.screen,
@@ -549,11 +566,19 @@ export function readEditorRegressionSnapshot(appState) {
             languageCode: appState.editorChapter.footnoteEditor.languageCode ?? null,
           }
         : null,
+    imageCaptionEditor:
+      appState.editorChapter?.imageCaptionEditor && typeof appState.editorChapter.imageCaptionEditor === "object"
+        ? {
+            rowId: appState.editorChapter.imageCaptionEditor.rowId ?? null,
+            languageCode: appState.editorChapter.imageCaptionEditor.languageCode ?? null,
+          }
+        : null,
     dirtyRowIds:
       appState.editorChapter?.dirtyRowIds instanceof Set
         ? [...appState.editorChapter.dirtyRowIds]
         : [],
     rowFootnotes,
+    rowImageCaptions,
     expandedDeletedRowGroupIds:
       appState.editorChapter?.expandedDeletedRowGroupIds instanceof Set
         ? [...appState.editorChapter.expandedDeletedRowGroupIds]

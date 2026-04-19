@@ -145,6 +145,10 @@ export function updateEditorConflictResolutionFinalFootnote(nextValue) {
   updateEditorConflictResolutionModalValue("finalFootnote", nextValue);
 }
 
+export function updateEditorConflictResolutionFinalImageCaption(nextValue) {
+  updateEditorConflictResolutionModalValue("finalImageCaption", nextValue);
+}
+
 function updateEditorConflictResolutionModalValue(fieldName, nextValue) {
   if (!state.editorChapter?.conflictResolutionModal?.isOpen) {
     return;
@@ -202,10 +206,13 @@ export async function saveEditorConflictResolution(render, operations = {}) {
   const {
     remoteFields,
     remoteFootnotes,
+    remoteImageCaptions,
     nextLocalFields,
     nextLocalFootnotes,
+    nextLocalImageCaptions,
     fieldsToPersist,
     footnotesToPersist,
+    imageCaptionsToPersist,
   } = buildEditorConflictResolutionSaveState(row, languageCode, modal);
 
   state.editorChapter = {
@@ -225,8 +232,10 @@ export async function saveEditorConflictResolution(render, operations = {}) {
         ...input,
         fields: fieldsToPersist,
         footnotes: footnotesToPersist,
+        imageCaptions: imageCaptionsToPersist,
         baseFields: remoteFields,
         baseFootnotes: remoteFootnotes,
+        baseImageCaptions: remoteImageCaptions,
       },
     });
   } catch (error) {
@@ -254,8 +263,10 @@ export async function saveEditorConflictResolution(render, operations = {}) {
     if (payload?.row && rowTextContentEqual(
       fieldsToPersist,
       footnotesToPersist,
+      imageCaptionsToPersist,
       payload.row.fields,
       payload.row.footnotes,
+      payload.row.imageCaptions,
     )) {
       savedLocalRowPayload = payload.row;
     } else {
@@ -266,6 +277,7 @@ export async function saveEditorConflictResolution(render, operations = {}) {
             (currentRow) => applyEditorRowConflictDetected(currentRow, payload, {
               localFields: nextLocalFields,
               localFootnotes: nextLocalFootnotes,
+              localImageCaptions: nextLocalImageCaptions,
             }),
           )
           : null;
@@ -305,6 +317,7 @@ export async function saveEditorConflictResolution(render, operations = {}) {
           savedLocalRowPayload,
           nextLocalFields,
           nextLocalFootnotes,
+          nextLocalImageCaptions,
           {
             remoteVersion: currentRow?.conflictState?.remoteVersion ?? modal.remoteVersion ?? null,
           },
@@ -371,8 +384,10 @@ export async function saveEditorConflictResolution(render, operations = {}) {
     if (currentRow && !rowTextContentEqual(
       currentRow.fields,
       currentRow.footnotes,
+      currentRow.imageCaptions,
       latestRowPayload.row.fields,
       latestRowPayload.row.footnotes,
+      latestRowPayload.row.imageCaptions,
     )) {
       finalRow =
         typeof operations.updateEditorChapterRow === "function"
@@ -382,10 +397,12 @@ export async function saveEditorConflictResolution(render, operations = {}) {
               row: latestRowPayload.row,
               baseFields: cloneRowFields(latestRowPayload.row.fields),
               baseFootnotes: cloneRowFields(latestRowPayload.row.footnotes),
+              baseImageCaptions: cloneRowFields(latestRowPayload.row.imageCaptions),
               remoteVersion: latestRowPayload.rowVersion ?? null,
             }, {
               localFields: cloneRowFields(currentRow.fields),
               localFootnotes: cloneRowFields(currentRow.footnotes),
+              localImageCaptions: cloneRowFields(currentRow.imageCaptions),
             }),
           )
           : currentRow;
@@ -406,6 +423,7 @@ export async function saveEditorConflictResolution(render, operations = {}) {
         savedLocalRowPayload,
         nextLocalFields,
         nextLocalFootnotes,
+        nextLocalImageCaptions,
         {
           remoteVersion: currentRow?.conflictState?.remoteVersion ?? modal.remoteVersion ?? null,
         },

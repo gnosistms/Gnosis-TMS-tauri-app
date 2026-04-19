@@ -314,6 +314,7 @@ export function applyEditorRowHistoryRestored(row, languageCode, payload) {
 
   const nextValue = payload?.plainText ?? "";
   const nextFootnote = payload?.footnote ?? "";
+  const nextImageCaption = payload?.imageCaption ?? "";
   const nextImage = normalizeEditorFieldImage(payload?.image);
   const nextTextStyle =
     typeof payload?.textStyle === "string" && payload.textStyle.trim()
@@ -344,6 +345,10 @@ export function applyEditorRowHistoryRestored(row, languageCode, payload) {
       ...cloneRowFields(row.footnotes),
       [languageCode]: nextFootnote,
     },
+    imageCaptions: {
+      ...cloneRowFields(row.imageCaptions),
+      [languageCode]: nextImageCaption,
+    },
     images: nextImages,
     fieldStates: {
       ...cloneRowFieldStates(row.fieldStates),
@@ -356,6 +361,10 @@ export function applyEditorRowHistoryRestored(row, languageCode, payload) {
     persistedFootnotes: {
       ...cloneRowFields(row.persistedFootnotes),
       [languageCode]: nextFootnote,
+    },
+    persistedImageCaptions: {
+      ...cloneRowFields(row.persistedImageCaptions),
+      [languageCode]: nextImageCaption,
     },
     persistedImages: nextPersistedImages,
     persistedFieldStates: {

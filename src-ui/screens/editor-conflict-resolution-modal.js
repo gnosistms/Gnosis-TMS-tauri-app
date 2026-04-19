@@ -1,6 +1,9 @@
 import { escapeHtml, loadingPrimaryButton, secondaryButton } from "../lib/ui.js";
 import { formatErrorForDisplay } from "../app/error-display.js";
-import { editorConflictResolutionShowsFootnotes } from "../app/editor-conflict-resolution-model.js";
+import {
+  editorConflictResolutionShowsFootnotes,
+  editorConflictResolutionShowsImageCaptions,
+} from "../app/editor-conflict-resolution-model.js";
 
 function formatConflictTimestamp(value) {
   const text = String(value ?? "").trim();
@@ -34,6 +37,7 @@ export function renderEditorConflictResolutionModal(state) {
 
   const isSubmitting = modal.status === "loading";
   const showFootnotes = editorConflictResolutionShowsFootnotes(modal);
+  const showImageCaptions = editorConflictResolutionShowsImageCaptions(modal);
   const autofocusFootnote =
     showFootnotes && String(modal.localText ?? "") === String(modal.remoteText ?? "");
   const errorMarkup = modal.error
@@ -57,12 +61,17 @@ export function renderEditorConflictResolutionModal(state) {
     isLoading: isSubmitting,
   });
 
-  const renderVersionStack = (text, footnote) => `
+  const renderVersionStack = (text, footnote, imageCaption) => `
     <div class="editor-conflict-modal__version-stack">
       <textarea class="field__textarea editor-conflict-modal__version-text" readonly>${escapeHtml(text)}</textarea>
       ${
         showFootnotes
           ? `<textarea class="field__textarea editor-conflict-modal__version-text editor-conflict-modal__version-text--footnote" readonly>${escapeHtml(footnote)}</textarea>`
+          : ""
+      }
+      ${
+        showImageCaptions
+          ? `<textarea class="field__textarea editor-conflict-modal__version-text editor-conflict-modal__version-text--footnote" readonly>${escapeHtml(imageCaption)}</textarea>`
           : ""
       }
     </div>
@@ -77,14 +86,14 @@ export function renderEditorConflictResolutionModal(state) {
           <div class="editor-conflict-modal__versions">
             <section class="editor-conflict-modal__column">
               <p class="editor-conflict-modal__version-label">Your version</p>
-              ${renderVersionStack(modal.localText, modal.localFootnote)}
+              ${renderVersionStack(modal.localText, modal.localFootnote, modal.localImageCaption)}
               <div class="editor-conflict-modal__version-actions">
                 ${localCopyButton}
               </div>
             </section>
             <section class="editor-conflict-modal__column">
               <p class="editor-conflict-modal__version-label">${escapeHtml(remoteVersionLabel(modal.remoteVersion))}</p>
-              ${renderVersionStack(modal.remoteText, modal.remoteFootnote)}
+              ${renderVersionStack(modal.remoteText, modal.remoteFootnote, modal.remoteImageCaption)}
               <div class="editor-conflict-modal__version-actions">
                 ${remoteCopyButton}
               </div>
@@ -111,6 +120,21 @@ export function renderEditorConflictResolutionModal(state) {
                     ${autofocusFootnote ? "autofocus" : ""}
                     ${isSubmitting ? "disabled" : ""}
                   >${escapeHtml(modal.finalFootnote)}</textarea>
+                </label>
+              `
+              : ""
+          }
+          ${
+            showImageCaptions
+              ? `
+                <label class="field editor-conflict-modal__final-field editor-conflict-modal__final-field--footnote">
+                  <span class="field__label">Final image caption</span>
+                  <textarea
+                    class="field__textarea editor-conflict-modal__final-input editor-conflict-modal__final-input--footnote"
+                    data-editor-conflict-final-image-caption-input
+                    placeholder="Enter image caption"
+                    ${isSubmitting ? "disabled" : ""}
+                  >${escapeHtml(modal.finalImageCaption)}</textarea>
                 </label>
               `
               : ""

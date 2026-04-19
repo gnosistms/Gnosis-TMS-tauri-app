@@ -27,6 +27,7 @@ function historyEntry({
   authorName = "gnosistms",
   operationType = "editor-update",
   plainText = "text",
+  imageCaption = "",
   textStyle = "paragraph",
   reviewed = false,
   pleaseCheck = false,
@@ -38,6 +39,7 @@ function historyEntry({
     message: "Update row",
     operationType,
     plainText,
+    imageCaption,
     textStyle,
     reviewed,
     pleaseCheck,
@@ -72,7 +74,9 @@ function row(overrides = {}) {
     rowId: "row-1",
     textStyle: "paragraph",
     fields: { es: "nuevo" },
+    imageCaptions: { es: "" },
     persistedFields: { es: "viejo" },
+    persistedImageCaptions: { es: "" },
     fieldStates: { es: { reviewed: false, pleaseCheck: false } },
     persistedFieldStates: { es: { reviewed: false, pleaseCheck: false } },
     saveStatus: "dirty",
@@ -218,6 +222,7 @@ test("applyEditorHistoryRestoreFailed returns the history panel to ready state",
 test("applyEditorRowHistoryRestored updates current and persisted field values together", () => {
   const updatedRow = applyEditorRowHistoryRestored(row(), "es", {
     plainText: "restored text",
+    imageCaption: "Restored caption",
     textStyle: "heading1",
     reviewed: true,
     pleaseCheck: true,
@@ -226,6 +231,8 @@ test("applyEditorRowHistoryRestored updates current and persisted field values t
   assert.equal(updatedRow.textStyle, "heading1");
   assert.equal(updatedRow.fields.es, "restored text");
   assert.equal(updatedRow.persistedFields.es, "restored text");
+  assert.equal(updatedRow.imageCaptions.es, "Restored caption");
+  assert.equal(updatedRow.persistedImageCaptions.es, "Restored caption");
   assert.deepEqual(updatedRow.fieldStates.es, { reviewed: true, pleaseCheck: true });
   assert.deepEqual(updatedRow.persistedFieldStates.es, { reviewed: true, pleaseCheck: true });
   assert.equal(updatedRow.saveStatus, "idle");

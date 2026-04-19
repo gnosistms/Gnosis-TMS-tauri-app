@@ -103,6 +103,11 @@ pub(super) fn ensure_editor_field_object_defaults(
         .and_then(Value::as_str)
         .unwrap_or_default()
         .to_string();
+    let image_caption = field_object
+        .get("image_caption")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
     field_object
         .entry("value_kind".to_string())
         .or_insert_with(|| Value::String("text".to_string()));
@@ -112,6 +117,9 @@ pub(super) fn ensure_editor_field_object_defaults(
     field_object
         .entry("footnote".to_string())
         .or_insert_with(|| Value::String(footnote));
+    field_object
+        .entry("image_caption".to_string())
+        .or_insert_with(|| Value::String(image_caption));
 
     let editor_flags_value = field_object
         .entry("editor_flags".to_string())
@@ -140,6 +148,14 @@ pub(super) fn normalize_editor_text_style_value(value: Option<&str>) -> String {
 }
 
 pub(super) fn normalize_editor_footnote_value(value: &str) -> String {
+    if value.trim().is_empty() {
+        String::new()
+    } else {
+        value.to_string()
+    }
+}
+
+pub(super) fn normalize_editor_image_caption_value(value: &str) -> String {
     if value.trim().is_empty() {
         String::new()
     } else {
@@ -222,6 +238,7 @@ pub(super) fn editor_row_from_stored_row_file(
     let revision_token = row_revision_token(&row)?;
     let fields = row_plain_text_map(&row);
     let footnotes = row_footnote_map(&row);
+    let image_captions = row_image_caption_map(&row);
     let images = row_image_map(repo_path, &row);
     let text_style = row_text_style(&row);
 
@@ -246,6 +263,7 @@ pub(super) fn editor_row_from_stored_row_file(
         text_style,
         fields,
         footnotes,
+        image_captions,
         images,
         field_states: row
             .fields
@@ -277,6 +295,18 @@ pub(super) fn row_footnote_map(row: &StoredRowFile) -> BTreeMap<String, String> 
             (
                 code.clone(),
                 normalize_editor_footnote_value(&value.footnote),
+            )
+        })
+        .collect()
+}
+
+pub(super) fn row_image_caption_map(row: &StoredRowFile) -> BTreeMap<String, String> {
+    row.fields
+        .iter()
+        .map(|(code, value)| {
+            (
+                code.clone(),
+                normalize_editor_image_caption_value(&value.image_caption),
             )
         })
         .collect()

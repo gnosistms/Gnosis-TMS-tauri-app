@@ -13,7 +13,15 @@ export function cloneRowFields(fields) {
 }
 
 export function normalizeEditorContentKind(value) {
-  return value === "footnote" ? "footnote" : "field";
+  if (value === "footnote") {
+    return "footnote";
+  }
+
+  if (value === "image-caption") {
+    return "image-caption";
+  }
+
+  return "field";
 }
 
 export function normalizeFieldState(fieldState) {
@@ -60,6 +68,13 @@ export function editorFootnoteEditorMatches(chapterState, rowId, languageCode) {
   );
 }
 
+export function editorImageCaptionEditorMatches(chapterState, rowId, languageCode) {
+  return (
+    chapterState?.imageCaptionEditor?.rowId === rowId
+    && chapterState?.imageCaptionEditor?.languageCode === languageCode
+  );
+}
+
 export function editorImageEditorMatches(chapterState, rowId, languageCode, mode = null) {
   if (
     chapterState?.imageEditor?.rowId !== rowId
@@ -99,6 +114,12 @@ export function editorLanguageFootnoteText(row, languageCode) {
     : String(row?.footnotes?.[languageCode] ?? "");
 }
 
+export function editorLanguageImageCaptionText(row, languageCode) {
+  return typeof row?.imageCaptions?.[languageCode] === "string"
+    ? row.imageCaptions[languageCode]
+    : String(row?.imageCaptions?.[languageCode] ?? "");
+}
+
 export function editorLanguageFootnoteIsVisible(row, languageCode, chapterState) {
   return (
     editorLanguageFootnoteText(row, languageCode).trim().length > 0
@@ -114,7 +135,12 @@ export function buildEditorFieldSelector(rowId, languageCode, contentKind = "fie
   const rowIdPart = String(rowId ?? "");
   const languageCodePart = String(languageCode ?? "");
   const kind = normalizeEditorContentKind(contentKind);
-  const kindSelector = kind === "footnote" ? '[data-content-kind="footnote"]' : ":not([data-content-kind])";
+  const kindSelector =
+    kind === "footnote"
+      ? '[data-content-kind="footnote"]'
+      : kind === "image-caption"
+        ? '[data-content-kind="image-caption"]'
+        : ":not([data-content-kind])";
   return `[data-editor-row-field][data-row-id="${CSS.escape(rowIdPart)}"][data-language-code="${CSS.escape(languageCodePart)}"]${kindSelector}`;
 }
 

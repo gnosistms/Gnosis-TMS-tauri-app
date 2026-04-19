@@ -30,6 +30,7 @@ pub(crate) fn update_gtms_editor_row_fields_sync(
             source_word_counts,
             base_fields: input.base_fields,
             base_footnotes: input.base_footnotes,
+            base_image_captions: input.base_image_captions,
             conflict_remote_version: None,
             chapter_base_commit_sha: current_repo_head_sha(&repo_path),
         });
@@ -59,6 +60,7 @@ pub(crate) fn update_gtms_editor_row_fields_sync(
             source_word_counts,
             base_fields: input.base_fields,
             base_footnotes: input.base_footnotes,
+            base_image_captions: input.base_image_captions,
             conflict_remote_version: None,
             chapter_base_commit_sha: current_repo_head_sha(&repo_path),
         });
@@ -66,6 +68,7 @@ pub(crate) fn update_gtms_editor_row_fields_sync(
 
     if row_plain_text_map(&original_row_file) != input.base_fields
         || row_footnote_map(&original_row_file) != input.base_footnotes
+        || row_image_caption_map(&original_row_file) != input.base_image_captions
     {
         return Ok(SaveEditorRowWithConcurrencyResponse {
             row_id: input.row_id,
@@ -77,6 +80,7 @@ pub(crate) fn update_gtms_editor_row_fields_sync(
             source_word_counts,
             base_fields: input.base_fields,
             base_footnotes: input.base_footnotes,
+            base_image_captions: input.base_image_captions,
             conflict_remote_version: load_latest_row_version_metadata(
                 &repo_path,
                 &relative_row_json,
@@ -93,6 +97,7 @@ pub(crate) fn update_gtms_editor_row_fields_sync(
     })?;
     apply_editor_plain_text_updates(&mut row_value, &input.fields)?;
     apply_editor_footnote_updates(&mut row_value, &input.footnotes)?;
+    apply_editor_image_caption_updates(&mut row_value, &input.image_captions)?;
 
     let updated_row_json = serde_json::to_string_pretty(&row_value).map_err(|error| {
         format!(
@@ -144,6 +149,7 @@ pub(crate) fn update_gtms_editor_row_fields_sync(
         source_word_counts: next_source_word_counts,
         base_fields: input.base_fields,
         base_footnotes: input.base_footnotes,
+        base_image_captions: input.base_image_captions,
         conflict_remote_version: None,
         chapter_base_commit_sha: current_repo_head_sha(&repo_path),
     })
@@ -180,6 +186,7 @@ pub(crate) fn update_gtms_editor_row_fields_batch_sync(
                 row_id: row.row_id,
                 fields: row.fields,
                 footnotes: row.footnotes,
+                image_captions: row.image_captions,
             },
         );
     }
@@ -190,6 +197,7 @@ pub(crate) fn update_gtms_editor_row_fields_batch_sync(
     for (row_id, batch_row) in rows_by_id {
         let fields = batch_row.fields;
         let footnotes = batch_row.footnotes;
+        let image_captions = batch_row.image_captions;
         let row_json_path = chapter_path.join("rows").join(format!("{row_id}.json"));
         let original_row_text = fs::read_to_string(&row_json_path).map_err(|error| {
             format!(
@@ -212,6 +220,7 @@ pub(crate) fn update_gtms_editor_row_fields_batch_sync(
         })?;
         apply_editor_plain_text_updates(&mut row_value, &fields)?;
         apply_editor_footnote_updates(&mut row_value, &footnotes)?;
+        apply_editor_image_caption_updates(&mut row_value, &image_captions)?;
 
         let updated_row_json = serde_json::to_string_pretty(&row_value).map_err(|error| {
             format!(
@@ -566,6 +575,28 @@ pub(super) fn apply_editor_footnote_updates(
         field_object.insert(
             "footnote".to_string(),
             Value::String(normalize_editor_footnote_value(footnote)),
+        );
+    }
+
+    Ok(())
+}
+
+pub(super) fn apply_editor_image_caption_updates(
+    row_value: &mut Value,
+    image_captions: &BTreeMap<String, String>,
+) -> Result<(), String> {
+    let fields_object = row_fields_object_mut(row_value)?;
+    for (code, image_caption) in image_captions {
+        let field_value = fields_object
+            .entry(code.clone())
+            .or_insert_with(|| json!({}));
+        let field_object = field_value
+            .as_object_mut()
+            .ok_or_else(|| format!("The row field '{code}' is not a JSON object."))?;
+        ensure_editor_field_object_defaults(field_object)?;
+        field_object.insert(
+            "image_caption".to_string(),
+            Value::String(normalize_editor_image_caption_value(image_caption)),
         );
     }
 

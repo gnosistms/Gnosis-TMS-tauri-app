@@ -81,6 +81,10 @@ function isMarkerStateChangeOnly(previousEntry, currentEntry) {
     return false;
   }
 
+  if (String(previousEntry?.imageCaption ?? "") !== String(currentEntry?.imageCaption ?? "")) {
+    return false;
+  }
+
   if (
     normalizeEditorRowTextStyle(previousEntry?.textStyle)
     !== normalizeEditorRowTextStyle(currentEntry?.textStyle)
@@ -226,6 +230,7 @@ export function editorHistoryEntryMatchesSection(entry, section) {
   return (
     String(entry.plainText ?? "") === String(section.text ?? "")
     && String(entry.footnote ?? "") === String(section.footnote ?? "")
+    && String(entry.imageCaption ?? "") === String(section.imageCaption ?? "")
     && editorFieldImageEqual(entry.image, section.image)
     && (entry.reviewed === true) === (section.reviewed === true)
     && (entry.pleaseCheck === true) === (section.pleaseCheck === true)

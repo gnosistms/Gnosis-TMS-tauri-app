@@ -72,6 +72,7 @@ export function buildEditorBatchReplaceUpdates({
 
     const currentFields = cloneRowFields(row.fields);
     const currentFootnotes = cloneRowFields(row.footnotes);
+    const currentImageCaptions = cloneRowFields(row.imageCaptions);
     let matched = false;
     let changed = false;
     const nextFields = cloneRowFields(currentFields);
@@ -126,6 +127,7 @@ export function buildEditorBatchReplaceUpdates({
         rowId,
         fields: nextFields,
         footnotes: nextFootnotes,
+        imageCaptions: currentImageCaptions,
       });
     }
   }

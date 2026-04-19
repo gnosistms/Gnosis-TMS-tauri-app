@@ -46,8 +46,11 @@ export function applyEditorRowFieldValue(row, languageCode, nextValue, contentKi
   const normalizedContentKind = normalizeEditorContentKind(contentKind);
   const fields = cloneRowFields(row.fields);
   const footnotes = cloneRowFields(row.footnotes);
+  const imageCaptions = cloneRowFields(row.imageCaptions);
   if (normalizedContentKind === "footnote") {
     footnotes[languageCode] = nextValue;
+  } else if (normalizedContentKind === "image-caption") {
+    imageCaptions[languageCode] = nextValue;
   } else {
     fields[languageCode] = nextValue;
   }
@@ -59,8 +62,10 @@ export function applyEditorRowFieldValue(row, languageCode, nextValue, contentKi
       : rowTextContentEqual(
           fields,
           footnotes,
+          imageCaptions,
           row.persistedFields,
           row.persistedFootnotes,
+          row.persistedImageCaptions,
           row.images,
           row.persistedImages,
         )
@@ -71,6 +76,7 @@ export function applyEditorRowFieldValue(row, languageCode, nextValue, contentKi
     ...row,
     fields,
     footnotes,
+    imageCaptions,
     freshness:
       row.freshness === "conflict"
         ? "conflict"
@@ -79,8 +85,10 @@ export function applyEditorRowFieldValue(row, languageCode, nextValue, contentKi
           : rowTextContentEqual(
               fields,
               footnotes,
+              imageCaptions,
               row.persistedFields,
               row.persistedFootnotes,
+              row.persistedImageCaptions,
               row.images,
               row.persistedImages,
             )
@@ -249,14 +257,17 @@ export function applyEditorRowPersistSucceeded(row, payloadRow) {
   const rowChangedDuringSave = !rowTextContentEqual(
     row.fields,
     row.footnotes,
+    row.imageCaptions,
     normalizedRow.fields,
     normalizedRow.footnotes,
+    normalizedRow.imageCaptions,
   );
 
   return {
     ...normalizedRow,
     fields: rowChangedDuringSave ? cloneRowFields(row.fields) : normalizedRow.fields,
     footnotes: rowChangedDuringSave ? cloneRowFields(row.footnotes) : normalizedRow.footnotes,
+    imageCaptions: rowChangedDuringSave ? cloneRowFields(row.imageCaptions) : normalizedRow.imageCaptions,
     saveStatus: rowChangedDuringSave ? "dirty" : "idle",
     freshness: rowChangedDuringSave ? "dirty" : "fresh",
     conflictState: null,
@@ -272,8 +283,10 @@ export function applyEditorRowImageSaved(row, payloadRow) {
   const textChangedLocally = !rowTextContentEqual(
     row.fields,
     row.footnotes,
+    row.imageCaptions,
     row.persistedFields,
     row.persistedFootnotes,
+    row.persistedImageCaptions,
   );
   if (!textChangedLocally) {
     return {
@@ -286,6 +299,7 @@ export function applyEditorRowImageSaved(row, payloadRow) {
     ...normalizedRow,
     fields: cloneRowFields(row.fields),
     footnotes: cloneRowFields(row.footnotes),
+    imageCaptions: cloneRowFields(row.imageCaptions),
     saveStatus: row.saveStatus === "idle" ? "dirty" : row.saveStatus,
     saveError: row.saveStatus === "idle" ? "" : row.saveError,
     freshness:
@@ -317,6 +331,7 @@ export function applyEditorRowConflictDetected(row, payload = {}, options = {}) 
 
   const nextFields = cloneRowFields(options?.localFields ?? row.fields);
   const nextFootnotes = cloneRowFields(options?.localFootnotes ?? row.footnotes);
+  const nextImageCaptions = cloneRowFields(options?.localImageCaptions ?? row.imageCaptions);
   const remoteVersion =
     normalizeConflictRemoteVersion(
       payload?.conflictRemoteVersion
@@ -330,6 +345,7 @@ export function applyEditorRowConflictDetected(row, payload = {}, options = {}) 
     ...row,
     fields: nextFields,
     footnotes: nextFootnotes,
+    imageCaptions: nextImageCaptions,
     freshness: "conflict",
     saveStatus: "conflict",
     saveError: "Translation text changed on disk.",
@@ -337,6 +353,7 @@ export function applyEditorRowConflictDetected(row, payload = {}, options = {}) 
     conflictState: {
       baseFields: cloneRowFields(payload?.baseFields),
       baseFootnotes: cloneRowFields(payload?.baseFootnotes),
+      baseImageCaptions: cloneRowFields(payload?.baseImageCaptions),
       remoteRow: payload?.row ? normalizeEditorRow(payload.row) : null,
       remoteVersion,
     },
@@ -359,6 +376,7 @@ export function applyEditorConflictResolutionSavedLocally(
   payloadRow,
   nextLocalFields,
   nextLocalFootnotes,
+  nextLocalImageCaptions,
   options = {},
 ) {
   if (!row || !payloadRow) {
@@ -368,15 +386,19 @@ export function applyEditorConflictResolutionSavedLocally(
   const persistedRow = normalizeEditorRow(payloadRow);
   const localFields = cloneRowFields(nextLocalFields);
   const localFootnotes = cloneRowFields(nextLocalFootnotes);
+  const localImageCaptions = cloneRowFields(nextLocalImageCaptions);
 
   return {
     ...persistedRow,
     fields: localFields,
     footnotes: localFootnotes,
+    imageCaptions: localImageCaptions,
     baseFields: cloneRowFields(persistedRow.fields),
     baseFootnotes: cloneRowFields(persistedRow.footnotes),
+    baseImageCaptions: cloneRowFields(persistedRow.imageCaptions),
     persistedFields: cloneRowFields(persistedRow.fields),
     persistedFootnotes: cloneRowFields(persistedRow.footnotes),
+    persistedImageCaptions: cloneRowFields(persistedRow.imageCaptions),
     saveStatus: "conflict",
     freshness: "conflict",
     saveError: "",
@@ -384,6 +406,7 @@ export function applyEditorConflictResolutionSavedLocally(
     conflictState: {
       baseFields: cloneRowFields(persistedRow.fields),
       baseFootnotes: cloneRowFields(persistedRow.footnotes),
+      baseImageCaptions: cloneRowFields(persistedRow.imageCaptions),
       remoteRow: row?.conflictState?.remoteRow ? normalizeEditorRow(row.conflictState.remoteRow) : null,
       remoteVersion: normalizeConflictRemoteVersion(options?.remoteVersion ?? row?.conflictState?.remoteVersion ?? null),
     },
@@ -395,6 +418,7 @@ export function applyEditorRowConflictSaveSucceeded(
   payloadRow,
   nextLocalFields,
   nextLocalFootnotes,
+  nextLocalImageCaptions,
   options = {},
 ) {
   if (!row || !payloadRow) {
@@ -404,11 +428,14 @@ export function applyEditorRowConflictSaveSucceeded(
   const remoteRow = normalizeEditorRow(payloadRow);
   const localFields = cloneRowFields(nextLocalFields);
   const localFootnotes = cloneRowFields(nextLocalFootnotes);
+  const localImageCaptions = cloneRowFields(nextLocalImageCaptions);
   const hasRemainingConflict = !rowTextContentEqual(
     localFields,
     localFootnotes,
+    localImageCaptions,
     remoteRow.fields,
     remoteRow.footnotes,
+    remoteRow.imageCaptions,
   );
 
   if (!hasRemainingConflict) {
@@ -416,10 +443,13 @@ export function applyEditorRowConflictSaveSucceeded(
       ...remoteRow,
       fields: localFields,
       footnotes: localFootnotes,
+      imageCaptions: localImageCaptions,
       baseFields: cloneRowFields(remoteRow.fields),
       baseFootnotes: cloneRowFields(remoteRow.footnotes),
+      baseImageCaptions: cloneRowFields(remoteRow.imageCaptions),
       persistedFields: cloneRowFields(remoteRow.fields),
       persistedFootnotes: cloneRowFields(remoteRow.footnotes),
+      persistedImageCaptions: cloneRowFields(remoteRow.imageCaptions),
       saveStatus: "idle",
       freshness: "fresh",
       conflictState: null,
@@ -430,10 +460,13 @@ export function applyEditorRowConflictSaveSucceeded(
     ...remoteRow,
     fields: localFields,
     footnotes: localFootnotes,
+    imageCaptions: localImageCaptions,
     baseFields: cloneRowFields(remoteRow.fields),
     baseFootnotes: cloneRowFields(remoteRow.footnotes),
+    baseImageCaptions: cloneRowFields(remoteRow.imageCaptions),
     persistedFields: cloneRowFields(remoteRow.fields),
     persistedFootnotes: cloneRowFields(remoteRow.footnotes),
+    persistedImageCaptions: cloneRowFields(remoteRow.imageCaptions),
     saveStatus: "conflict",
     freshness: "conflict",
     saveError: "Translation text changed on disk.",
@@ -441,6 +474,7 @@ export function applyEditorRowConflictSaveSucceeded(
     conflictState: {
       baseFields: cloneRowFields(remoteRow.fields),
       baseFootnotes: cloneRowFields(remoteRow.footnotes),
+      baseImageCaptions: cloneRowFields(remoteRow.imageCaptions),
       remoteRow,
       remoteVersion: normalizeConflictRemoteVersion(options?.remoteVersion ?? row?.conflictState?.remoteVersion ?? null),
     },

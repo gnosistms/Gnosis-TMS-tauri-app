@@ -63,7 +63,9 @@ function buildTranslateAnchorSnapshotForElement(container, element, type, langua
   const contentKind =
     type === "field" && element.dataset.contentKind === "footnote"
       ? "footnote"
-      : null;
+      : type === "field" && element.dataset.contentKind === "image-caption"
+        ? "image-caption"
+        : null;
   return {
     type,
     rowId: element.dataset.rowId ?? "",
@@ -202,7 +204,12 @@ export function resolveTranslateRowAnchor(target = null) {
   const field = source.closest("[data-editor-row-field]");
   if (isHtmlElement(field)) {
     const fieldRect = field.getBoundingClientRect();
-    const contentKind = field.dataset.contentKind === "footnote" ? "footnote" : null;
+    const contentKind =
+      field.dataset.contentKind === "footnote"
+        ? "footnote"
+        : field.dataset.contentKind === "image-caption"
+          ? "image-caption"
+          : null;
     return {
       type: "field",
       rowId: field.dataset.rowId ?? "",
@@ -350,7 +357,9 @@ export function queueTranslateRowAnchor(snapshot) {
   const contentKind =
     type === "field" && snapshot.contentKind === "footnote"
       ? "footnote"
-      : null;
+      : type === "field" && snapshot.contentKind === "image-caption"
+        ? "image-caption"
+        : null;
 
   pendingTranslateAnchor = {
     rowId: snapshot.rowId.trim(),

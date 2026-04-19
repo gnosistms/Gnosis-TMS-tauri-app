@@ -27,6 +27,7 @@ import {
   createEditorAiTranslateActionState,
   createEditorAiTranslateState,
   createEditorFootnoteEditorState,
+  createEditorImageCaptionEditorState,
   createEditorImageEditorState,
   createEditorImageInvalidFileModalState,
   createEditorImagePreviewOverlayState,
@@ -197,6 +198,7 @@ export function applyEditorUiState(nextEditorChapter, previousEditorChapter = st
         ? activeLanguageCode
         : null,
     footnoteEditor: createEditorFootnoteEditorState(),
+    imageCaptionEditor: createEditorImageCaptionEditorState(),
     imageEditor: createEditorImageEditorState(),
     imageInvalidFileModal: createEditorImageInvalidFileModalState(),
     imagePreviewOverlay: createEditorImagePreviewOverlayState(),
@@ -257,6 +259,7 @@ export function applyEditorUiState(nextEditorChapter, previousEditorChapter = st
 export function normalizeEditorRow(row) {
   const fields = cloneRowFields(row?.fields);
   const footnotes = cloneRowFields(row?.footnotes);
+  const imageCaptions = cloneRowFields(row?.imageCaptions);
   const images = cloneRowImages(row?.images);
   const fieldStates = cloneRowFieldStates(row?.fieldStates);
   const textStyle = normalizeEditorRowTextStyle(row?.textStyle);
@@ -274,12 +277,15 @@ export function normalizeEditorRow(row) {
     textStyle,
     fields,
     footnotes,
+    imageCaptions,
     images,
     baseFields: cloneRowFields(fields),
     baseFootnotes: cloneRowFields(footnotes),
+    baseImageCaptions: cloneRowFields(imageCaptions),
     baseImages: cloneRowImages(images),
     persistedFields: cloneRowFields(fields),
     persistedFootnotes: cloneRowFields(footnotes),
+    persistedImageCaptions: cloneRowFields(imageCaptions),
     persistedImages: cloneRowImages(images),
     fieldStates,
     persistedFieldStates: cloneRowFieldStates(fieldStates),
@@ -474,7 +480,14 @@ export function markEditorRowsPersisted(rowUpdates, sourceWordCounts = null, cha
       {
         fields: cloneRowFields(row.fields),
         footnotes: cloneRowFields(row.footnotes),
-        images: cloneRowImages(row.images),
+        imageCaptions:
+          row && typeof row === "object" && "imageCaptions" in row
+            ? cloneRowFields(row.imageCaptions)
+            : null,
+        images:
+          row && typeof row === "object" && "images" in row
+            ? cloneRowImages(row.images)
+            : null,
       },
     ]),
   );
@@ -496,14 +509,17 @@ export function markEditorRowsPersisted(rowUpdates, sourceWordCounts = null, cha
       const update = updatesByRowId.get(row.rowId);
       const fields = update?.fields ?? cloneRowFields(row.fields);
       const footnotes = update?.footnotes ?? cloneRowFields(row.footnotes);
+      const imageCaptions = update?.imageCaptions ?? cloneRowFields(row.imageCaptions);
       const images = update?.images ?? cloneRowImages(row.images);
       return {
         ...row,
         fields,
         footnotes,
+        imageCaptions,
         images,
         persistedFields: cloneRowFields(fields),
         persistedFootnotes: cloneRowFields(footnotes),
+        persistedImageCaptions: cloneRowFields(imageCaptions),
         persistedImages: cloneRowImages(images),
         saveStatus: "idle",
         saveError: "",

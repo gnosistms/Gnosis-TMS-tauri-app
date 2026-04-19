@@ -22,7 +22,13 @@ function row(overrides = {}) {
     rowId: "row-1",
     textStyle: "paragraph",
     fields: { es: "uno" },
+    footnotes: { es: "" },
+    imageCaptions: { es: "" },
     persistedFields: { es: "uno" },
+    persistedFootnotes: { es: "" },
+    persistedImageCaptions: { es: "" },
+    images: {},
+    persistedImages: {},
     fieldStates: { es: { reviewed: false, pleaseCheck: false } },
     persistedFieldStates: { es: { reviewed: false, pleaseCheck: false } },
     saveStatus: "idle",
@@ -46,6 +52,9 @@ function persistedPayload(overrides = {}) {
     rowId: "row-1",
     textStyle: "paragraph",
     fields: { es: "dos" },
+    footnotes: { es: "" },
+    imageCaptions: { es: "" },
+    images: {},
     fieldStates: { es: { reviewed: false, pleaseCheck: false } },
     ...overrides,
   };
@@ -205,6 +214,8 @@ test("applyEditorConflictResolutionSavedLocally keeps the GitHub version until s
     }),
     persistedPayload({ fields: { es: "resolved local" } }),
     { es: "resolved local" },
+    { es: "" },
+    { es: "" },
   );
 
   assert.deepEqual(updatedRow.fields, { es: "resolved local" });
