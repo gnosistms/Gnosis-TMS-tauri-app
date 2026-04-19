@@ -95,10 +95,14 @@ export function renderHistoryEntryContent(entry, previousEntry, languageCode) {
       alwaysRender: false,
     },
     {
-      currentText: editorFieldImageMetadataText(entry?.image),
+      currentText: currentImageText,
       previousText: previousImageText,
       className: "history-item__content history-item__content--image",
       alwaysRender: false,
+      render(prefixLabel, diffText, className, currentLanguageCode) {
+        return `<p class="${className}" lang="${escapeHtml(currentLanguageCode ?? "")}"><span class="history-item__image-label">${escapeHtml(prefixLabel)}</span><span class="history-item__image-value">${diffText}</span></p>`;
+      },
+      prefixLabel: "Image:",
     },
     {
       currentText: entry?.imageCaption,
@@ -120,9 +124,14 @@ export function renderHistoryEntryContent(entry, previousEntry, languageCode) {
           )
           && (block.requiresVisibleImage !== true || hasVisibleImage)
         )
-        .map((block) =>
-          `<p class="${block.className}" lang="${escapeHtml(languageCode ?? "")}">${renderHistoryDiffText(block.previousText, block.currentText)}</p>`,
-        )
+        .map((block) => {
+          const diffText = renderHistoryDiffText(block.previousText, block.currentText);
+          if (typeof block.render === "function") {
+            return block.render(block.prefixLabel ?? "", diffText, block.className, languageCode);
+          }
+
+          return `<p class="${block.className}" lang="${escapeHtml(languageCode ?? "")}">${diffText}</p>`;
+        })
         .join("")}
     </div>
   `;

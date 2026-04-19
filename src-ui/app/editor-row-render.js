@@ -295,20 +295,14 @@ function renderEditorLanguageImageCaption(row, language) {
 
   return `
     <div class="translation-language-panel__image-caption-shell translation-language-panel__image-caption-shell--idle translation-language-panel__image-caption-shell--display">
-      <div class="translation-language-panel__field-stack translation-language-panel__field-stack--image-caption translation-language-panel__field-stack--image-caption-display">
-        <button
-          class="translation-language-panel__image-caption-display"
-          type="button"
-          data-action="open-editor-image-caption"
-          data-editor-image-caption-button
-          data-row-id="${escapeHtml(row.id)}"
-          data-language-code="${escapeHtml(language.code)}"
-        >
-          <span class="translation-language-panel__image-caption-text" lang="${escapeHtml(language.code)}">
-            ${escapeHtml(language.imageCaption ?? "")}
-          </span>
-        </button>
-      </div>
+      <button
+        class="translation-language-panel__image-caption-display"
+        type="button"
+        data-action="open-editor-image-caption"
+        data-editor-image-caption-button
+        data-row-id="${escapeHtml(row.id)}"
+        data-language-code="${escapeHtml(language.code)}"
+      ><span class="translation-language-panel__image-caption-text" lang="${escapeHtml(language.code)}">${escapeHtml(language.imageCaption ?? "")}</span></button>
     </div>
   `;
 }

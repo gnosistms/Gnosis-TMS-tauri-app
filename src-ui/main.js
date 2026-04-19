@@ -35,7 +35,10 @@ import {
   readEditorRegressionSnapshot,
 } from "./app/editor-regression-fixture.js";
 import { readDevRuntimeFlags } from "./app/dev-runtime-flags.js";
-import { buildEditorFieldSelector } from "./app/editor-utils.js";
+import {
+  captureFocusedInputState,
+  restoreFocusedInputState,
+} from "./app/focused-input-state.js";
 import {
   persistCurrentEditorLocation,
   prepareEditorLocationBeforeRender,
@@ -105,120 +108,6 @@ const titles = {
 };
 
 let bootstrapPromise = Promise.resolve();
-
-function captureFocusedInputState() {
-  const activeElement = document.activeElement;
-  if (
-    !(activeElement instanceof HTMLInputElement)
-    && !(activeElement instanceof HTMLSelectElement)
-    && !(activeElement instanceof HTMLTextAreaElement)
-  ) {
-    return null;
-  }
-
-  const supportedSelectors = [
-    "[data-team-rename-input]",
-    "[data-project-rename-input]",
-    "[data-project-name-input]",
-    "[data-invite-user-input]",
-    "[data-team-permanent-delete-input]",
-    "[data-project-permanent-delete-input]",
-    "[data-glossary-title-input]",
-    "[data-glossary-source-language-select]",
-    "[data-glossary-target-language-select]",
-    "[data-glossary-rename-input]",
-    "[data-glossary-permanent-delete-input]",
-    "[data-glossary-term-search-input]",
-    "[data-project-search-input]",
-    "[data-editor-search-input]",
-    "[data-editor-replace-input]",
-    "[data-editor-comment-draft]",
-    "[data-ai-key-input]",
-    "[data-ai-settings-detailed-toggle]",
-    "[data-ai-settings-provider-select]",
-    "[data-ai-settings-model-select]",
-  ];
-
-  const selector =
-    activeElement instanceof HTMLTextAreaElement && activeElement.matches("[data-editor-row-field]")
-      ? buildEditorFieldSelector(
-        activeElement.dataset.rowId ?? "",
-        activeElement.dataset.languageCode ?? "",
-        activeElement.dataset.contentKind === "footnote" ? "footnote" : "field",
-      )
-      : activeElement instanceof HTMLInputElement && activeElement.matches("[data-editor-replace-row-select]")
-        ? `[data-editor-replace-row-select][data-row-id="${activeElement.dataset.rowId}"]`
-        : activeElement instanceof HTMLSelectElement && activeElement.matches("[data-chapter-glossary-select]")
-        ? `[data-chapter-glossary-select][data-chapter-id="${activeElement.dataset.chapterId}"]`
-        : supportedSelectors.find((candidate) => activeElement.matches(candidate));
-  if (!selector) {
-    return null;
-  }
-
-  return {
-    kind:
-      activeElement instanceof HTMLTextAreaElement && activeElement.matches("[data-editor-row-field]")
-        ? "editor-row-field"
-        : "generic",
-    selector,
-    rowId:
-      activeElement instanceof HTMLTextAreaElement && activeElement.matches("[data-editor-row-field]")
-        ? activeElement.dataset.rowId ?? ""
-        : "",
-    languageCode:
-      activeElement instanceof HTMLTextAreaElement && activeElement.matches("[data-editor-row-field]")
-        ? activeElement.dataset.languageCode ?? ""
-        : "",
-    contentKind:
-      activeElement instanceof HTMLTextAreaElement && activeElement.matches("[data-editor-row-field]")
-        ? (activeElement.dataset.contentKind === "footnote" ? "footnote" : "field")
-        : "field",
-    selectionStart:
-      activeElement instanceof HTMLInputElement || activeElement instanceof HTMLTextAreaElement
-        ? activeElement.selectionStart
-        : null,
-    selectionEnd:
-      activeElement instanceof HTMLInputElement || activeElement instanceof HTMLTextAreaElement
-        ? activeElement.selectionEnd
-        : null,
-    selectionDirection:
-      activeElement instanceof HTMLInputElement || activeElement instanceof HTMLTextAreaElement
-        ? activeElement.selectionDirection
-        : null,
-  };
-}
-
-function restoreFocusedInputState(focusSnapshot) {
-  if (!focusSnapshot) {
-    return false;
-  }
-
-  const nextInput = document.querySelector(focusSnapshot.selector);
-  if (
-    (!(nextInput instanceof HTMLInputElement)
-      && !(nextInput instanceof HTMLSelectElement)
-      && !(nextInput instanceof HTMLTextAreaElement))
-    || nextInput.disabled
-  ) {
-    return false;
-  }
-
-  nextInput.focus({ preventScroll: true });
-
-  if (
-    (nextInput instanceof HTMLInputElement || nextInput instanceof HTMLTextAreaElement)
-    && typeof focusSnapshot.selectionStart === "number"
-    && typeof focusSnapshot.selectionEnd === "number"
-  ) {
-    nextInput.setSelectionRange(
-      focusSnapshot.selectionStart,
-      focusSnapshot.selectionEnd,
-      focusSnapshot.selectionDirection ?? "none",
-    );
-  }
-
-  return true;
-}
 
 function render(options = {}) {
   return renderWithOptions(options);
