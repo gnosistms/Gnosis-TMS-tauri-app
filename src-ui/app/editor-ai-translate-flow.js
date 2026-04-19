@@ -331,6 +331,24 @@ export async function runEditorAiTranslate(render, actionId, operations = {}) {
     return;
   }
 
+  const requestKey = createAiTranslateRequestKey(
+    context.chapterId,
+    context.rowId,
+    context.sourceLanguageCode,
+    context.targetLanguageCode,
+    actionId,
+  );
+  state.editorChapter = applyEditorAiTranslateActionLoading(
+    state.editorChapter,
+    actionId,
+    context.rowId,
+    context.sourceLanguageCode,
+    context.targetLanguageCode,
+    requestKey,
+    context.sourceText,
+  );
+  render?.();
+
   try {
     await ensureSharedAiActionConfigurationLoaded(render);
   } catch {
@@ -352,6 +370,7 @@ export async function runEditorAiTranslate(render, actionId, operations = {}) {
   try {
     const ensureKeyResult = await ensureSelectedTeamAiProviderReady(render, providerId);
     if (!ensureKeyResult?.ok) {
+      state.editorChapter = clearEditorAiTranslateAction(state.editorChapter, actionId);
       openAiMissingKeyModal(providerId);
       render?.();
       return;
@@ -365,24 +384,6 @@ export async function runEditorAiTranslate(render, actionId, operations = {}) {
     );
     return;
   }
-
-  const requestKey = createAiTranslateRequestKey(
-    context.chapterId,
-    context.rowId,
-    context.sourceLanguageCode,
-    context.targetLanguageCode,
-    actionId,
-  );
-  state.editorChapter = applyEditorAiTranslateActionLoading(
-    state.editorChapter,
-    actionId,
-    context.rowId,
-    context.sourceLanguageCode,
-    context.targetLanguageCode,
-    requestKey,
-    context.sourceText,
-  );
-  render?.();
 
   let glossaryUsage = { kind: "none" };
   let retainedDerivedEntry = null;
@@ -539,6 +540,7 @@ export async function runEditorAiTranslate(render, actionId, operations = {}) {
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     if (errorMeansMissingAiKey(message)) {
+      state.editorChapter = clearEditorAiTranslateAction(state.editorChapter, actionId);
       openAiMissingKeyModal(providerId);
       render?.();
       return;

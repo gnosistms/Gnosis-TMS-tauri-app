@@ -14,6 +14,25 @@ const cloneValue = (value) => {
   return JSON.parse(JSON.stringify(value));
 };
 
+function createDeferred() {
+  let resolve;
+  let reject;
+  const promise = new Promise((nextResolve, nextReject) => {
+    resolve = nextResolve;
+    reject = nextReject;
+  });
+  return { promise, resolve, reject };
+}
+
+function createSpy() {
+  const calls = [];
+  const fn = (...args) => {
+    calls.push(args);
+  };
+  fn.calls = calls;
+  return fn;
+}
+
 const localStorageState = new Map();
 const invokeLog = [];
 let invokeHandler = async () => null;
@@ -365,6 +384,61 @@ test("runEditorAiTranslate uses the configured translate action and persists int
   assert.equal(state.editorChapter.rows[0].fields.vi, "Xin chao");
   assert.equal(state.editorChapter.rows[0].persistedFields.vi, "Xin chao");
   assert.equal(state.editorChapter.aiTranslate.translate1.status, "idle");
+});
+
+test("runEditorAiTranslate enters loading state before provider readiness resolves", async () => {
+  installTranslateFixture();
+  state.aiSettings = {
+    ...state.aiSettings,
+    actionConfig: {
+      ...state.aiSettings.actionConfig,
+      detailedConfiguration: true,
+      actions: {
+        ...state.aiSettings.actionConfig.actions,
+        translate1: {
+          providerId: "openai",
+          modelId: "gpt-5.4-mini",
+        },
+      },
+    },
+  };
+
+  const render = createSpy();
+  const providerReady = createDeferred();
+  invokeHandler = async (command) => {
+    if (command === "load_ai_provider_secret") {
+      return providerReady.promise;
+    }
+    if (command === "run_ai_translation") {
+      return {
+        translatedText: "Xin chao",
+      };
+    }
+
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  const translationPromise = runEditorAiTranslate(render, "translate1", {
+    updateEditorRowFieldValue(rowId, languageCode, nextValue) {
+      const row = state.editorChapter.rows.find((entry) => entry.rowId === rowId);
+      row.fields[languageCode] = nextValue;
+      row.saveStatus = "dirty";
+    },
+    async persistEditorRowOnBlur(_render, rowId) {
+      const row = state.editorChapter.rows.find((entry) => entry.rowId === rowId);
+      row.persistedFields = { ...row.fields };
+      row.saveStatus = "idle";
+    },
+  });
+
+  assert.equal(state.editorChapter.aiTranslate.translate1.status, "loading");
+  assert.equal(render.calls.length > 0, true);
+
+  providerReady.resolve("oa-key");
+  await translationPromise;
+
+  assert.equal(state.editorChapter.aiTranslate.translate1.status, "idle");
+  assert.equal(state.editorChapter.rows[0].persistedFields.vi, "Xin chao");
 });
 
 test("runEditorAiTranslate uses the active alternate language as the translation target", async () => {

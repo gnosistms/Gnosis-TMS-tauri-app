@@ -22,6 +22,7 @@ import { processPendingTeamMutations } from "./actions.js";
 import { classifySyncError } from "../sync-error.js";
 import { handleSyncFailure } from "../sync-recovery.js";
 import { loadTeamProjects } from "../project-flow.js";
+import { consumePendingSingleTeamAutoOpen } from "./auto-open.js";
 
 function isOrganizationInstallation(installation) {
   return String(installation?.accountType ?? "").toLowerCase() === "organization";
@@ -106,8 +107,10 @@ export async function loadUserTeams(render) {
     state.selectedTeamId = resolveNextSelectedTeamId(state.selectedTeamId, state.teams);
     state.orgDiscovery = { status: "ready", error: "" };
     await completePageSync(render);
-    const shouldAutoOpenSingleTeam = state.auth.pendingAutoOpenSingleTeam === true;
-    state.auth.pendingAutoOpenSingleTeam = false;
+    const shouldAutoOpenSingleTeam = consumePendingSingleTeamAutoOpen(
+      state.auth,
+      state.screen,
+    );
     if (shouldAutoOpenSingleTeam && state.teams.length === 1) {
       state.selectedTeamId = state.teams[0].id;
       state.screen = "projects";
