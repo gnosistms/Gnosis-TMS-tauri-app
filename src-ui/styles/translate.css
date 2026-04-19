@@ -864,7 +864,7 @@
 .translation-language-panel__image-caption-text {
   display: block;
   width: 100%;
-  padding: 2px 0 0;
+  padding: 0;
   color: var(--text);
   font-family: var(--font-serif);
   font-size: var(--translation-editor-font-size, 14px);
@@ -883,8 +883,27 @@
   outline: none;
 }
 
-.translation-language-panel__image-caption-shell--idle {
-  padding-top: 2px;
+.translation-language-panel__image-caption-display {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  transition: color 140ms ease;
+}
+
+.translation-language-panel__image-caption-shell--display {
+  align-items: stretch;
+  justify-content: center;
+}
+
+.translation-language-panel__image-caption-display:hover,
+.translation-language-panel__image-caption-display:focus-visible {
+  color: var(--link-hover);
+  outline: none;
 }
 
 .translation-language-panel__image-caption-shell--editing {
@@ -896,6 +915,25 @@
   min-height: 116px;
   --translation-field-padding-left: 12px;
   --translation-field-padding-right: 12px;
+}
+
+.translation-language-panel__field-stack--image-caption-display {
+  display: flex;
+  align-items: center;
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+}
+
+.translation-language-panel__field-stack--image-caption-display:focus-within {
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+}
+
+.translation-language-panel__field-stack--image-caption-display .translation-language-panel__image-caption-display {
+  padding-left: var(--translation-field-padding-left);
+  padding-right: var(--translation-field-padding-right);
 }
 
 .translation-language-panel__image-caption-input {

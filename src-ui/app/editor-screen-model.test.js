@@ -308,6 +308,13 @@ test("buildEditorScreenViewModel shows the image caption button only when an ima
       },
     });
 
+    let viewModel = buildEditorScreenViewModel(state);
+    let firstRow = viewModel.contentRows.find((row) => row?.id === "fixture-row-0001");
+    let targetSection = firstRow?.sections.find((section) => section.code === "vi");
+
+    assert.equal(targetSection?.showAddImageCaptionButton, true);
+    assert.equal(targetSection?.hasVisibleImageCaption, false);
+
     state.editorChapter = {
       ...state.editorChapter,
       rows: state.editorChapter.rows.map((row) => (
@@ -327,11 +334,11 @@ test("buildEditorScreenViewModel shows the image caption button only when an ima
       )),
     };
 
-    let viewModel = buildEditorScreenViewModel(state);
-    let firstRow = viewModel.contentRows.find((row) => row?.id === "fixture-row-0001");
-    let targetSection = firstRow?.sections.find((section) => section.code === "vi");
+    viewModel = buildEditorScreenViewModel(state);
+    firstRow = viewModel.contentRows.find((row) => row?.id === "fixture-row-0001");
+    targetSection = firstRow?.sections.find((section) => section.code === "vi");
 
-    assert.equal(targetSection?.showAddImageCaptionButton, true);
+    assert.equal(targetSection?.showAddImageCaptionButton, false);
     assert.equal(targetSection?.hasVisibleImageCaption, true);
 
     state.editorChapter = {

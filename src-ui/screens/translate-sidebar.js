@@ -17,7 +17,7 @@ import {
 } from "../lib/ui.js";
 import { resolveVisibleEditorAiReview } from "../app/editor-ai-review-state.js";
 import { normalizeEditorSidebarTab } from "../app/editor-comments.js";
-import { findEditorHistoryPreviousVisibleEntry } from "../app/editor-history.js";
+import { findEditorHistoryPreviousCommitEntry } from "../app/editor-history.js";
 import { resolveEditorAiTranslateLanguages } from "../app/editor-ai-translate-target.js";
 import { renderCommentsPane } from "./translate-comments-pane.js";
 import { renderHistoryPane } from "./translate-history-pane.js";
@@ -197,14 +197,6 @@ function renderReviewPane(editorChapter, rows, languages) {
   const activeLanguage =
     languages.find((language) => language.code === editorChapter?.activeLanguageCode) ?? null;
   const activeSection = activeRow?.sections?.find((section) => section.code === activeLanguage?.code) ?? null;
-  const activeHistorySection = activeSection
-    ? {
-        ...activeSection,
-        footnote: activeSection?.footnote ?? "",
-        image: activeSection?.image ?? null,
-        textStyle: activeRow?.textStyle ?? "paragraph",
-      }
-    : null;
   const history =
     editorChapter?.history && typeof editorChapter.history === "object"
       ? editorChapter.history
@@ -213,7 +205,8 @@ function renderReviewPane(editorChapter, rows, languages) {
           error: "",
           entries: [],
   };
-  const previousEntry = findEditorHistoryPreviousVisibleEntry(history.entries, activeHistorySection);
+  const lastCommittedEntry = Array.isArray(history.entries) ? (history.entries[0] ?? null) : null;
+  const previousEntry = findEditorHistoryPreviousCommitEntry(history.entries);
   const currentEntry = {
     plainText: activeSection?.text ?? "",
     footnote: activeSection?.footnote ?? "",
@@ -223,6 +216,7 @@ function renderReviewPane(editorChapter, rows, languages) {
     pleaseCheck: activeSection?.pleaseCheck === true,
     textStyle: activeRow?.textStyle ?? "paragraph",
   };
+  const lastUpdateEntry = lastCommittedEntry ?? currentEntry;
   const isLastUpdateExpanded = expandedSectionKeys.has("last-update");
   const isAiReviewExpanded = expandedSectionKeys.has("ai-review");
   const lastUpdateSummaryTooltip = tooltipAttributes(
@@ -316,15 +310,15 @@ function renderReviewPane(editorChapter, rows, languages) {
             ? `
               <div class="history-group__entries">
                 <article class="history-item">
-                  ${renderHistoryEntryContent(currentEntry, previousEntry, activeLanguage.code)}
-                  ${renderHistoryNote(currentEntry, previousEntry, { includeMarkers: false })}
+                  ${renderHistoryEntryContent(lastUpdateEntry, previousEntry, activeLanguage.code)}
+                  ${renderHistoryNote(lastUpdateEntry, previousEntry, { includeMarkers: false })}
                   ${
                     history.status === "loading"
                       ? '<p class="history-item__meta">Loading previous version...</p>'
                       : history.status === "error"
                         ? `<p class="history-item__note">${escapeHtml(history.error || "Could not load the previous version.")}</p>`
                         : previousEntry
-                          ? '<p class="history-item__meta">Compared with the previous version</p>'
+                          ? '<p class="history-item__meta">Compared with the previous commit</p>'
                           : '<p class="history-item__meta">No previous version</p>'
                   }
                 </article>

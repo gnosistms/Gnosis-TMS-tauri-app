@@ -252,6 +252,11 @@ export function findEditorHistoryPreviousEntry(entries, section) {
   return normalizedEntries[0] ?? null;
 }
 
+export function findEditorHistoryPreviousCommitEntry(entries) {
+  const normalizedEntries = Array.isArray(entries) ? entries : [];
+  return normalizedEntries[1] ?? null;
+}
+
 export function findEditorHistoryPreviousVisibleEntry(entries, section) {
   const normalizedEntries = Array.isArray(entries) ? entries : [];
   if (!section || normalizedEntries.length === 0) {
