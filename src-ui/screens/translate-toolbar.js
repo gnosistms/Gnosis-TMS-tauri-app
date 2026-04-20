@@ -256,29 +256,9 @@ function renderTranslateModeControlForMode(mode = "translate") {
 
 function renderPreviewSearchField(previewSearchState) {
   const normalizedSearchState = normalizeEditorPreviewSearchState(previewSearchState);
-  const hasMatches = normalizedSearchState.totalMatchCount > 0;
-  const hasQuery = normalizedSearchState.query.trim().length > 0;
   return createSearchField({
     placeholder: "Find in preview",
     value: normalizedSearchState.query,
-    endAdornment: `
-      <button
-        type="button"
-        class="search-field__action"
-        data-action="step-editor-preview-search:previous"
-        aria-label="Previous match"
-        ${!hasQuery || !hasMatches ? "disabled" : ""}
-        ${tooltipAttributes("Previous match")}
-      >↑</button>
-      <button
-        type="button"
-        class="search-field__action"
-        data-action="step-editor-preview-search:next"
-        aria-label="Next match"
-        ${!hasQuery || !hasMatches ? "disabled" : ""}
-        ${tooltipAttributes("Next match")}
-      >↓</button>
-    `,
     inputAttributes: {
       "data-preview-search-input": true,
       "aria-label": "Find in preview",
@@ -286,6 +266,36 @@ function renderPreviewSearchField(previewSearchState) {
       spellcheck: "false",
     },
   });
+}
+
+function renderPreviewSearchNavigation(previewSearchState) {
+  const normalizedSearchState = normalizeEditorPreviewSearchState(previewSearchState);
+  const hasMatches = normalizedSearchState.totalMatchCount > 0;
+  const hasQuery = normalizedSearchState.query.trim().length > 0;
+  if (!hasQuery) {
+    return "";
+  }
+
+  return `
+    <div class="preview-search-nav" aria-label="Preview search navigation">
+      <button
+        type="button"
+        class="search-field__action"
+        data-action="step-editor-preview-search:previous"
+        aria-label="Previous match"
+        ${!hasMatches ? "disabled" : ""}
+        ${tooltipAttributes("Previous")}
+      >↑</button>
+      <button
+        type="button"
+        class="search-field__action"
+        data-action="step-editor-preview-search:next"
+        aria-label="Next match"
+        ${!hasMatches ? "disabled" : ""}
+        ${tooltipAttributes("Next")}
+      >↓</button>
+    </div>
+  `;
 }
 
 export function renderTranslateToolbar({
@@ -329,9 +339,16 @@ export function renderPreviewToolbar({
         <div class="toolbar-search toolbar-search--preview">
           ${renderLanguageSelect("Target", "editor-target-language-select", targetCode, languages)}
           ${renderPreviewSearchField(previewSearchState)}
+          ${renderPreviewSearchNavigation(previewSearchState)}
         </div>
         <div class="toolbar-meta toolbar-meta--preview">
-          ${secondaryButton("Copy HTML", "copy-editor-preview-html", { compact: true })}
+          <button
+            type="button"
+            class="select-pill select-pill--toolbar select-pill--preview-action"
+            data-action="copy-editor-preview-html"
+          >
+            <span class="select-pill__value">Copy HTML</span>
+          </button>
         </div>
       </div>
     </div>
