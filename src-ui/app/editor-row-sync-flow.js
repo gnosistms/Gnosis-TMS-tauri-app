@@ -1,7 +1,13 @@
 import { rowHasPersistedChanges } from "./editor-row-persistence-model.js";
 import { findChapterContextById, selectedProjectsTeam } from "./project-context.js";
 import { invoke } from "./runtime.js";
-import { state, createEditorCommentsState, createEditorHistoryState } from "./state.js";
+import {
+  state,
+  createEditorCommentsState,
+  createEditorHistoryState,
+  createEditorMainFieldEditorState,
+  createEditorPendingSelectionState,
+} from "./state.js";
 import { showNoticeBadge } from "./status-feedback.js";
 import {
   normalizeEditorRow,
@@ -27,6 +33,8 @@ function clearActiveEditorSelectionForRow(rowId) {
     ...state.editorChapter,
     activeRowId: null,
     activeLanguageCode: null,
+    mainFieldEditor: createEditorMainFieldEditorState(),
+    pendingSelection: createEditorPendingSelectionState(),
     comments: createEditorCommentsState(),
     history: createEditorHistoryState(),
   };

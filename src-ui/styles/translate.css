@@ -914,6 +914,7 @@
 .translation-language-panel__image-url-input {
   display: block;
   width: 100%;
+  padding-right: 42px;
   color: var(--text);
   font-family: var(--font-sans);
   font-size: 0.96rem;
@@ -949,6 +950,12 @@
 }
 
 .translation-language-panel__image-upload-close {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+}
+
+.translation-language-panel__image-url-close {
   position: absolute;
   top: 8px;
   right: 8px;
@@ -1143,33 +1150,62 @@
 }
 
 .translation-language-panel__field-highlight,
-.translation-language-panel__field {
+.translation-language-panel__field,
+.translation-language-panel__field-static {
   grid-area: 1 / 1;
+  box-sizing: border-box;
   padding: 2px var(--translation-field-padding-right) 8px var(--translation-field-padding-left);
+  color: var(--text);
+  font-family: var(--font-serif);
+  font-size: var(--translation-editor-font-size, 14px);
+  font-style: normal;
+  font-weight: 400;
+  letter-spacing: 0;
+  line-height: 1.5;
+  -webkit-text-fill-color: currentColor;
+  text-align: left;
+  text-indent: 0;
+  text-transform: none;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   word-break: break-word;
+  font-kerning: none;
+  font-variant-ligatures: none;
 }
 
 .translation-language-panel__field-static {
   display: block;
   width: 100%;
-  min-height: 72px;
-  padding: 2px 16px 8px;
+  min-height: 44px;
   border: 1px solid transparent;
   border-radius: 0;
-  background: rgba(255, 251, 246, 0.96);
-  color: var(--text);
-  font-family: var(--font-serif);
-  font-size: var(--translation-editor-font-size, 14px);
-  line-height: 1.5;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  word-break: break-word;
+  background: transparent;
 }
 
 .translation-language-panel__field-static-text {
   display: block;
+}
+
+.translation-language-panel__field-static--editable {
+  appearance: none;
+  -webkit-appearance: none;
+  position: relative;
+  z-index: 0;
+  cursor: text;
+  text-align: left;
+  transition:
+    border-color 140ms ease,
+    box-shadow 140ms ease,
+    background 140ms ease;
+}
+
+.translation-language-panel__field-static--editable:focus-visible {
+  outline: none;
+}
+
+.translation-language-panel__field-static--loading {
+  color: var(--muted);
+  -webkit-text-fill-color: var(--muted);
 }
 
 .translation-language-panel__field-static--conflict {
@@ -1202,25 +1238,24 @@
   pointer-events: none;
   position: absolute;
   inset: 0;
-  box-sizing: border-box;
+  overflow: hidden;
 }
 
 .translation-language-panel__search-highlight {
   z-index: 1;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
 }
 
 .translation-language-panel__glossary-highlight {
   z-index: 2;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
 }
 
 .translation-language-panel__field-stack--search .translation-language-panel__search-highlight,
 .translation-language-panel__field-stack--glossary .translation-language-panel__glossary-highlight {
   display: block;
-}
-
-.translation-language-panel__field-stack--search.translation-language-panel__field-stack--glossary .translation-language-panel__search-highlight {
-  color: transparent;
-  -webkit-text-fill-color: transparent;
 }
 
 .translation-language-panel__field {
@@ -1233,6 +1268,7 @@
   z-index: 0;
   resize: none;
   outline: none;
+  overflow-x: hidden;
   transition:
     border-color 140ms ease,
     box-shadow 140ms ease,
@@ -1252,6 +1288,7 @@
 
 .translation-language-panel__field-highlight:lang(ja),
 .translation-language-panel__field:lang(ja),
+.translation-language-panel__field-static:lang(ja),
 .history-item__content:lang(ja),
 .translate-preview__block:lang(ja),
 .translate-preview__image-caption:lang(ja) {
@@ -1260,10 +1297,13 @@
 
 .translation-language-panel__field-highlight:lang(zh-Hans),
 .translation-language-panel__field:lang(zh-Hans),
+.translation-language-panel__field-static:lang(zh-Hans),
 .translation-language-panel__field-highlight:lang(zh-CN),
 .translation-language-panel__field:lang(zh-CN),
+.translation-language-panel__field-static:lang(zh-CN),
 .translation-language-panel__field-highlight:lang(zh-SG),
 .translation-language-panel__field:lang(zh-SG),
+.translation-language-panel__field-static:lang(zh-SG),
 .history-item__content:lang(zh-Hans),
 .history-item__content:lang(zh-CN),
 .history-item__content:lang(zh-SG),
@@ -1278,12 +1318,16 @@
 
 .translation-language-panel__field-highlight:lang(zh-Hant),
 .translation-language-panel__field:lang(zh-Hant),
+.translation-language-panel__field-static:lang(zh-Hant),
 .translation-language-panel__field-highlight:lang(zh-TW),
 .translation-language-panel__field:lang(zh-TW),
+.translation-language-panel__field-static:lang(zh-TW),
 .translation-language-panel__field-highlight:lang(zh-HK),
 .translation-language-panel__field:lang(zh-HK),
+.translation-language-panel__field-static:lang(zh-HK),
 .translation-language-panel__field-highlight:lang(zh-MO),
 .translation-language-panel__field:lang(zh-MO),
+.translation-language-panel__field-static:lang(zh-MO),
 .history-item__content:lang(zh-Hant),
 .history-item__content:lang(zh-TW),
 .history-item__content:lang(zh-HK),
@@ -1301,8 +1345,10 @@
 
 .translation-language-panel__field-highlight:lang(fa),
 .translation-language-panel__field:lang(fa),
+.translation-language-panel__field-static:lang(fa),
 .translation-language-panel__field-highlight:lang(ar),
 .translation-language-panel__field:lang(ar),
+.translation-language-panel__field-static:lang(ar),
 .history-item__content:lang(fa),
 .history-item__content:lang(ar),
 .translate-preview__block:lang(fa),
@@ -1314,6 +1360,7 @@
 
 .translation-language-panel__field-highlight:lang(ko),
 .translation-language-panel__field:lang(ko),
+.translation-language-panel__field-static:lang(ko),
 .history-item__content:lang(ko),
 .translate-preview__block:lang(ko),
 .translate-preview__image-caption:lang(ko) {
@@ -1322,26 +1369,37 @@
 
 .translation-language-panel__field-highlight:lang(ja),
 .translation-language-panel__field:lang(ja),
+.translation-language-panel__field-static:lang(ja),
 .translation-language-panel__field-highlight:lang(zh-Hans),
 .translation-language-panel__field:lang(zh-Hans),
+.translation-language-panel__field-static:lang(zh-Hans),
 .translation-language-panel__field-highlight:lang(zh-CN),
 .translation-language-panel__field:lang(zh-CN),
+.translation-language-panel__field-static:lang(zh-CN),
 .translation-language-panel__field-highlight:lang(zh-SG),
 .translation-language-panel__field:lang(zh-SG),
+.translation-language-panel__field-static:lang(zh-SG),
 .translation-language-panel__field-highlight:lang(zh-Hant),
 .translation-language-panel__field:lang(zh-Hant),
+.translation-language-panel__field-static:lang(zh-Hant),
 .translation-language-panel__field-highlight:lang(zh-TW),
 .translation-language-panel__field:lang(zh-TW),
+.translation-language-panel__field-static:lang(zh-TW),
 .translation-language-panel__field-highlight:lang(zh-HK),
 .translation-language-panel__field:lang(zh-HK),
+.translation-language-panel__field-static:lang(zh-HK),
 .translation-language-panel__field-highlight:lang(zh-MO),
 .translation-language-panel__field:lang(zh-MO),
+.translation-language-panel__field-static:lang(zh-MO),
 .translation-language-panel__field-highlight:lang(ko),
 .translation-language-panel__field:lang(ko),
+.translation-language-panel__field-static:lang(ko),
 .translation-language-panel__field-highlight:lang(fa),
 .translation-language-panel__field:lang(fa),
+.translation-language-panel__field-static:lang(fa),
 .translation-language-panel__field-highlight:lang(ar),
 .translation-language-panel__field:lang(ar),
+.translation-language-panel__field-static:lang(ar),
 .history-item__content:lang(ja),
 .history-item__content:lang(zh-Hans),
 .history-item__content:lang(zh-CN),
@@ -1413,12 +1471,6 @@
   padding-bottom: 6px;
 }
 
-.translation-language-panel__field-stack--highlighted .translation-language-panel__field {
-  color: transparent;
-  caret-color: var(--text);
-  -webkit-text-fill-color: transparent;
-}
-
 .translation-language-panel__field-stack--highlighted .translation-language-panel__field::selection {
   background: rgba(243, 156, 24, 0.2);
 }
@@ -1444,6 +1496,11 @@
   --translation-field-padding-left: 32px;
 }
 
+.translation-language-panel__field-stack--static[data-row-text-style="quote"],
+.translation-language-panel__field-stack--static[data-row-text-style="indented"] {
+  --translation-field-padding-left: 32px;
+}
+
 .translation-language-panel__field-static[data-row-text-style="quote"],
 .translation-language-panel__field-static[data-row-text-style="indented"] {
   padding-left: 32px;
@@ -1462,25 +1519,60 @@
 }
 
 .translation-language-panel__glossary-mark {
+  display: inline;
   background: transparent;
+  border: 0;
   color: inherit;
+  font: inherit;
+  font-kerning: inherit;
+  font-style: inherit;
+  font-variant-ligatures: inherit;
+  font-weight: inherit;
+  letter-spacing: inherit;
+  line-height: inherit;
+  margin: 0;
   pointer-events: auto;
+  text-align: inherit;
   text-decoration: underline;
   text-decoration-thickness: 0.06em;
   text-decoration-color: var(--text);
+  text-decoration-skip-ink: none;
   text-underline-offset: 0.16em;
+  text-transform: inherit;
+  vertical-align: baseline;
+  white-space: inherit;
+  word-break: inherit;
+  overflow-wrap: inherit;
   cursor: help;
-}
-
-.translation-language-panel__search-match {
-  background: rgba(243, 156, 24, 0.24);
-  color: inherit;
-  border-radius: 2px;
   padding: 0;
 }
 
-.translation-language-panel__glossary-mark.glossary-match-error {
-  color: #d94735;
+.translation-language-panel__search-match {
+  display: inline;
+  background: rgba(243, 156, 24, 0.24);
+  border: 0;
+  color: inherit;
+  font: inherit;
+  font-kerning: inherit;
+  font-style: inherit;
+  font-variant-ligatures: inherit;
+  font-weight: inherit;
+  letter-spacing: inherit;
+  line-height: inherit;
+  margin: 0;
+  border-radius: 2px;
+  text-align: inherit;
+  text-transform: inherit;
+  vertical-align: baseline;
+  white-space: inherit;
+  word-break: inherit;
+  overflow-wrap: inherit;
+  padding: 0;
+}
+
+.translation-language-panel__glossary-highlight .translation-language-panel__glossary-mark.glossary-match-error {
+  color: transparent;
+  -webkit-text-fill-color: transparent;
   text-decoration-color: #d94735;
 }
 

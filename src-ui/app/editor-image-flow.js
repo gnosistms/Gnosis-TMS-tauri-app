@@ -17,7 +17,11 @@ import {
   state,
 } from "./state.js";
 import { showNoticeBadge } from "./status-feedback.js";
-import { editorImageEditorCanCollapse, findEditorRowById } from "./editor-utils.js";
+import {
+  buildEditorFieldSelector,
+  editorImageEditorCanCollapse,
+  findEditorRowById,
+} from "./editor-utils.js";
 import { ensureEditorRowReadyForWrite, reloadEditorRowFromDisk } from "./editor-row-sync-flow.js";
 import {
   captureTranslateViewport,
@@ -111,6 +115,26 @@ function focusEditorImageControl(selector, rowId, languageCode) {
           ...translateMainScrollDebugDetail(rowId, languageCode),
         });
       });
+    }
+  });
+}
+
+function refocusEditorMainField(rowId, languageCode) {
+  if (typeof window === "undefined" || !rowId || !languageCode) {
+    return;
+  }
+
+  window.requestAnimationFrame(() => {
+    if (
+      state.editorChapter?.mainFieldEditor?.rowId !== rowId
+      || state.editorChapter?.mainFieldEditor?.languageCode !== languageCode
+    ) {
+      return;
+    }
+
+    const nextField = document.querySelector(buildEditorFieldSelector(rowId, languageCode));
+    if (nextField instanceof HTMLTextAreaElement) {
+      nextField.focus({ preventScroll: true });
     }
   });
 }
@@ -435,6 +459,8 @@ export function openEditorImageUrl(render, rowId, languageCode) {
   }
 
   const viewportSnapshot = captureTranslateViewport(null, {
+    preferPrimed: true,
+    expectedRowId: rowId,
     fallbackAnchor: currentImageEditorAnchor(rowId, languageCode),
   });
   const existingEditor = imageEditorMatches(state.editorChapter, rowId, languageCode)
@@ -454,6 +480,20 @@ export function openEditorImageUrl(render, rowId, languageCode) {
     rowId,
     languageCode,
   );
+}
+
+export function closeEditorImageUrl(render, rowId, languageCode) {
+  if (!rowId || !languageCode || !imageEditorMatches(state.editorChapter, rowId, languageCode, "url")) {
+    return;
+  }
+
+  const viewportSnapshot = captureTranslateViewport(null, {
+    preferPrimed: true,
+    expectedRowId: rowId,
+    fallbackAnchor: currentImageEditorAnchor(rowId, languageCode),
+  });
+  closeEditorImageInput(render, viewportSnapshot);
+  refocusEditorMainField(rowId, languageCode);
 }
 
 export function updateEditorImageUrlDraft(nextValue) {
@@ -631,6 +671,11 @@ export function openEditorImageUpload(render, rowId, languageCode) {
     return;
   }
 
+  const viewportSnapshot = captureTranslateViewport(null, {
+    preferPrimed: true,
+    expectedRowId: rowId,
+    fallbackAnchor: currentImageEditorAnchor(rowId, languageCode),
+  });
   const shouldPinBottom = translateMainScrollIsAtBottom();
   logEditorScrollDebug("editor-image-upload-open", {
     stage: "before-render",
@@ -648,7 +693,7 @@ export function openEditorImageUpload(render, rowId, languageCode) {
     invalidUrl: false,
     status: "idle",
   });
-  render?.({ scope: "translate-body" });
+  renderTranslateBodyPreservingViewport(render, viewportSnapshot);
   logEditorScrollDebug("editor-image-upload-open", {
     stage: "after-render",
     rowId,

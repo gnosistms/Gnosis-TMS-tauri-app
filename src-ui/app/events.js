@@ -4,6 +4,7 @@ import { createActionDispatcher } from "./action-dispatcher.js";
 import { checkForAppUpdate } from "./updater-flow.js";
 import { isMacPlatform, listen } from "./runtime.js";
 import {
+  captureTranslateAnchorForRow,
   primeTranslateInteractionAnchor,
   primeTranslateMainScrollTop,
 } from "./scroll-state.js";
@@ -91,6 +92,63 @@ function focusEditorSearchInput(selectContents = false) {
   return true;
 }
 
+function glossaryMarkOffsetFromDomPoint(mark, node, offset) {
+  if (!(mark instanceof HTMLElement) || !(node instanceof Node)) {
+    return null;
+  }
+
+  if (!mark.contains(node)) {
+    return null;
+  }
+
+  const textLength = mark.textContent?.length ?? 0;
+  if (textLength <= 0) {
+    return 0;
+  }
+
+  const range = document.createRange();
+  range.selectNodeContents(mark);
+  try {
+    range.setEnd(node, offset);
+  } catch {
+    return null;
+  }
+
+  return Math.max(0, Math.min(textLength, range.toString().length));
+}
+
+function glossaryMarkOffsetFromPoint(mark, clientX, clientY) {
+  if (!(mark instanceof HTMLElement) || typeof document === "undefined") {
+    return null;
+  }
+
+  if (typeof document.caretPositionFromPoint === "function") {
+    const caretPosition = document.caretPositionFromPoint(clientX, clientY);
+    const nextOffset = glossaryMarkOffsetFromDomPoint(
+      mark,
+      caretPosition?.offsetNode ?? null,
+      caretPosition?.offset ?? 0,
+    );
+    if (Number.isInteger(nextOffset)) {
+      return nextOffset;
+    }
+  }
+
+  if (typeof document.caretRangeFromPoint === "function") {
+    const caretRange = document.caretRangeFromPoint(clientX, clientY);
+    const nextOffset = glossaryMarkOffsetFromDomPoint(
+      mark,
+      caretRange?.startContainer ?? null,
+      caretRange?.startOffset ?? 0,
+    );
+    if (Number.isInteger(nextOffset)) {
+      return nextOffset;
+    }
+  }
+
+  return null;
+}
+
 function focusEditorFieldFromGlossaryMark(event) {
   const mark = event.target instanceof Element
     ? event.target.closest("[data-editor-glossary-mark]")
@@ -111,6 +169,12 @@ function focusEditorFieldFromGlossaryMark(event) {
   const start = Number.parseInt(mark.dataset.textStart ?? "", 10);
   const end = Number.parseInt(mark.dataset.textEnd ?? "", 10);
   if (!Number.isInteger(start) || !Number.isInteger(end) || end <= start) {
+    return true;
+  }
+
+  const preciseOffset = glossaryMarkOffsetFromPoint(mark, event.clientX, event.clientY);
+  if (Number.isInteger(preciseOffset)) {
+    field.setSelectionRange(start + preciseOffset, start + preciseOffset, "none");
     return true;
   }
 
@@ -648,6 +712,14 @@ export function registerAppEvents(render) {
 
     if (shouldBlurActiveEditorField(event)) {
       const viewportSnapshot = captureTranslateViewport(event.target);
+      if ((event.target.dataset.contentKind ?? "") === "") {
+        viewportSnapshot.anchor =
+          captureTranslateAnchorForRow(
+            event.target.dataset.rowId ?? "",
+            event.target.dataset.languageCode ?? "",
+            { preferRow: true },
+          ) ?? viewportSnapshot.anchor;
+      }
       event.preventDefault();
       event.target.blur();
       restoreTranslateViewportAfterPaints(viewportSnapshot);

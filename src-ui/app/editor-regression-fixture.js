@@ -9,6 +9,8 @@ import {
   createEditorChapterGlossaryState,
   createEditorChapterState,
   createEditorHistoryState,
+  createEditorMainFieldEditorState,
+  createEditorPendingSelectionState,
 } from "./state.js";
 
 const FIXTURE_MODE = "editor-regression";
@@ -155,6 +157,10 @@ function buildFixtureGlossary(languages, options = {}) {
 function createFixtureRow(index, languages, options = {}) {
   const label = padFixtureIndex(index);
   const rowId = `fixture-row-${label}`;
+  const customFields =
+    options?.fieldsByRowId && typeof options.fieldsByRowId === "object"
+      ? options.fieldsByRowId[rowId] ?? null
+      : null;
   const images =
     options?.imagesByRowId && typeof options.imagesByRowId === "object"
       ? structuredClone(options.imagesByRowId[rowId] ?? {})
@@ -175,7 +181,9 @@ function createFixtureRow(index, languages, options = {}) {
   const fieldStates = {};
 
   for (const language of languages) {
-    if (language.code === "es") {
+    if (customFields && typeof customFields === "object" && typeof customFields[language.code] === "string") {
+      fields[language.code] = customFields[language.code];
+    } else if (language.code === "es") {
       fields[language.code] = `alpha ${label} source text`;
     } else if (language.code === "vi") {
       fields[language.code] = `alpha ${label} target text`;
@@ -473,6 +481,14 @@ export function applyEditorRegressionSoftDelete(appState, rowId) {
     expandedDeletedRowGroupIds,
     activeRowId: editorChapter.activeRowId === rowId ? null : editorChapter.activeRowId,
     activeLanguageCode: editorChapter.activeRowId === rowId ? null : editorChapter.activeLanguageCode,
+    mainFieldEditor:
+      editorChapter.mainFieldEditor?.rowId === rowId
+        ? createEditorMainFieldEditorState()
+        : editorChapter.mainFieldEditor,
+    pendingSelection:
+      editorChapter.pendingSelection?.rowId === rowId
+        ? createEditorPendingSelectionState()
+        : editorChapter.pendingSelection,
     history:
       editorChapter.activeRowId === rowId
         ? createEditorHistoryState()
@@ -559,6 +575,21 @@ export function readEditorRegressionSnapshot(appState) {
     selectedChapterId: appState.selectedChapterId,
     activeRowId: appState.editorChapter?.activeRowId ?? null,
     activeLanguageCode: appState.editorChapter?.activeLanguageCode ?? null,
+    mainFieldEditor:
+      appState.editorChapter?.mainFieldEditor && typeof appState.editorChapter.mainFieldEditor === "object"
+        ? {
+          rowId: appState.editorChapter.mainFieldEditor.rowId ?? null,
+          languageCode: appState.editorChapter.mainFieldEditor.languageCode ?? null,
+        }
+        : null,
+    pendingSelection:
+      appState.editorChapter?.pendingSelection && typeof appState.editorChapter.pendingSelection === "object"
+        ? {
+          rowId: appState.editorChapter.pendingSelection.rowId ?? null,
+          languageCode: appState.editorChapter.pendingSelection.languageCode ?? null,
+          offset: appState.editorChapter.pendingSelection.offset ?? null,
+        }
+        : null,
     footnoteEditor:
       appState.editorChapter?.footnoteEditor && typeof appState.editorChapter.footnoteEditor === "object"
         ? {

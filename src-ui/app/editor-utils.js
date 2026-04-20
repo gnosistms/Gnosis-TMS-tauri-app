@@ -68,6 +68,13 @@ export function editorFootnoteEditorMatches(chapterState, rowId, languageCode) {
   );
 }
 
+export function editorMainFieldEditorMatches(chapterState, rowId, languageCode) {
+  return (
+    chapterState?.mainFieldEditor?.rowId === rowId
+    && chapterState?.mainFieldEditor?.languageCode === languageCode
+  );
+}
+
 export function editorImageCaptionEditorMatches(chapterState, rowId, languageCode) {
   return (
     chapterState?.imageCaptionEditor?.rowId === rowId

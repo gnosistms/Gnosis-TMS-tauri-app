@@ -298,6 +298,8 @@ export function createEditorChapterState() {
     derivedGlossariesByRowId: {},
     activeRowId: null,
     activeLanguageCode: null,
+    mainFieldEditor: createEditorMainFieldEditorState(),
+    pendingSelection: createEditorPendingSelectionState(),
     footnoteEditor: createEditorFootnoteEditorState(),
     imageCaptionEditor: createEditorImageCaptionEditorState(),
     imageEditor: createEditorImageEditorState(),
@@ -340,6 +342,21 @@ export function createEditorFootnoteEditorState() {
   return {
     rowId: null,
     languageCode: null,
+  };
+}
+
+export function createEditorMainFieldEditorState() {
+  return {
+    rowId: null,
+    languageCode: null,
+  };
+}
+
+export function createEditorPendingSelectionState() {
+  return {
+    rowId: null,
+    languageCode: null,
+    offset: null,
   };
 }
 

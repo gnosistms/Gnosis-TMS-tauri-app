@@ -8,6 +8,7 @@ async function installMockTauri(page) {
     const fixtureByChapterId = new Map();
     const rowFieldsByChapterId = new Map();
     const rowFootnotesByChapterId = new Map();
+    const rowImageCaptionsByChapterId = new Map();
     const rowTextStylesByChapterId = new Map();
     const fieldStatesByChapterId = new Map();
     const rowCommentsByChapterId = new Map();
@@ -92,6 +93,10 @@ async function installMockTauri(page) {
         chapterId,
         new Map(rows.map((row) => [row.rowId, clone(row.footnotes ?? {})])),
       );
+      rowImageCaptionsByChapterId.set(
+        chapterId,
+        new Map(rows.map((row) => [row.rowId, clone(row.imageCaptions ?? {})])),
+      );
       rowTextStylesByChapterId.set(
         chapterId,
         new Map(rows.map((row) => [row.rowId, String(row.textStyle ?? "paragraph")])),
@@ -137,6 +142,10 @@ async function installMockTauri(page) {
       return rowFootnotesByChapterId.get(chapterId)?.get(rowId) ?? null;
     }
 
+    function findRowImageCaptions(chapterId, rowId) {
+      return rowImageCaptionsByChapterId.get(chapterId)?.get(rowId) ?? null;
+    }
+
     function findRowTextStyle(chapterId, rowId) {
       return rowTextStylesByChapterId.get(chapterId)?.get(rowId) ?? "paragraph";
     }
@@ -152,9 +161,10 @@ async function installMockTauri(page) {
         : null;
       const fields = findRowFields(chapterId, rowId);
       const footnotes = findRowFootnotes(chapterId, rowId);
+      const imageCaptions = findRowImageCaptions(chapterId, rowId);
       const fieldStates = findFieldStates(chapterId, rowId);
       const comments = findRowComments(chapterId, rowId);
-      if (!fixtureRow || !fields || !footnotes || !fieldStates) {
+      if (!fixtureRow || !fields || !footnotes || !imageCaptions || !fieldStates) {
         return null;
       }
 
@@ -167,6 +177,8 @@ async function installMockTauri(page) {
         textStyle: findRowTextStyle(chapterId, rowId),
         fields: clone(fields),
         footnotes: clone(footnotes),
+        imageCaptions: clone(imageCaptions),
+        images: clone(fixtureRow.images ?? {}),
         fieldStates: clone(fieldStates),
       };
     }
@@ -285,14 +297,17 @@ async function installMockTauri(page) {
         const nextFields = clone(input.fields ?? {});
         const storedFields = findRowFields(input.chapterId, input.rowId);
         const storedFootnotes = findRowFootnotes(input.chapterId, input.rowId);
+        const storedImageCaptions = findRowImageCaptions(input.chapterId, input.rowId);
         const storedFieldStates = findFieldStates(input.chapterId, input.rowId);
-        if (!storedFields || !storedFootnotes || !storedFieldStates) {
+        if (!storedFields || !storedFootnotes || !storedImageCaptions || !storedFieldStates) {
           throw new Error(`Unknown editor row: ${input.rowId}`);
         }
         const nextFootnotes = clone(input.footnotes ?? storedFootnotes);
+        const nextImageCaptions = clone(input.imageCaptions ?? storedImageCaptions);
 
         rowFieldsByChapterId.get(input.chapterId).set(input.rowId, nextFields);
         rowFootnotesByChapterId.get(input.chapterId).set(input.rowId, nextFootnotes);
+        rowImageCaptionsByChapterId.get(input.chapterId).set(input.rowId, nextImageCaptions);
         pushHistoryEntriesWithCommit(input.chapterId, input.rowId, nextFields, nextFootnotes, storedFieldStates, {
           operationType: input.operation ?? "editor-update",
           message: "Update row",
@@ -651,6 +666,12 @@ async function restoreFixtureRow(page, rowId) {
   }, rowId);
 }
 
+async function measureGlossaryAlignment(page, options) {
+  return await page.evaluate(async (input) => {
+    return await window.__gnosisDebug.measureEditorGlossaryAlignment(input);
+  }, options);
+}
+
 async function readTranslateScrollTop(page) {
   return await page.evaluate(() => {
     const container = document.querySelector(".translate-main-scroll");
@@ -684,6 +705,44 @@ async function countGlossaryMarksForRow(page, rowId) {
   ).count();
 }
 
+async function readEditorSelectionStart(page, rowId, languageCode, contentKind = "field") {
+  return await page.evaluate(({ rowId: targetRowId, languageCode: targetLanguageCode, contentKind: targetContentKind }) => {
+    const field = document.querySelector(
+      `[data-editor-row-field][data-row-id="${targetRowId}"][data-language-code="${targetLanguageCode}"]${targetContentKind === "footnote" ? '[data-content-kind="footnote"]' : ":not([data-content-kind])"}`,
+    );
+    return field instanceof HTMLTextAreaElement ? field.selectionStart : null;
+  }, { rowId, languageCode, contentKind });
+}
+
+async function activateMainEditorField(page, rowId, languageCode) {
+  const textarea = page.locator(
+    `[data-editor-row-field][data-row-id="${rowId}"][data-language-code="${languageCode}"]:not([data-content-kind])`,
+  );
+  if (await textarea.count()) {
+    return textarea;
+  }
+
+  const displayField = page.locator(
+    `[data-editor-display-field][data-row-id="${rowId}"][data-language-code="${languageCode}"]`,
+  );
+  await clickLocatorCenter(page, displayField);
+  await expect(textarea).toBeVisible();
+  return textarea;
+}
+
+async function clickLocatorCenter(page, locator) {
+  await locator.scrollIntoViewIfNeeded();
+  await expect(locator).toBeVisible();
+  const box = await locator.boundingBox();
+  expect(box).not.toBeNull();
+  await locator.click({
+    position: {
+      x: box.width / 2,
+      y: box.height / 2,
+    },
+  });
+}
+
 async function setTranslateScrollTop(page, top) {
   await page.evaluate((nextTop) => {
     const container = document.querySelector(".translate-main-scroll");
@@ -692,6 +751,19 @@ async function setTranslateScrollTop(page, top) {
       container.dispatchEvent(new Event("scroll"));
     }
   }, top);
+}
+
+async function scrollTranslateRowNearTop(page, rowId, offset = 120) {
+  await page.evaluate(({ targetRowId, targetOffset }) => {
+    const container = document.querySelector(".translate-main-scroll");
+    const row = document.querySelector(`[data-editor-row-card][data-row-id="${targetRowId}"]`);
+    if (!(container instanceof HTMLElement) || !(row instanceof HTMLElement)) {
+      return;
+    }
+
+    container.scrollTop = Math.max(0, row.offsetTop - targetOffset);
+    container.dispatchEvent(new Event("scroll"));
+  }, { targetRowId: rowId, targetOffset: offset });
 }
 
 async function openPlatformEditorFixture(page, platform) {
@@ -745,8 +817,11 @@ test.describe("editor regressions", () => {
     await expect(loadingButton).toHaveAttribute("aria-busy", "true");
     await expect(loadingButton.locator(".translate-ai-action-button__spinner")).toBeVisible();
     await expect(
-      page.locator('[data-editor-row-field][data-row-id="fixture-row-0001"][data-language-code="vi"]'),
-    ).toHaveValue("Translating...");
+      page.locator('[data-editor-row-field][data-row-id="fixture-row-0001"][data-language-code="vi"]:not([data-content-kind])'),
+    ).toHaveCount(0);
+    await expect(
+      page.locator('[data-editor-language-cluster][data-row-id="fixture-row-0001"][data-language-code="vi"] [data-editor-display-text]'),
+    ).toHaveText("Translating...");
   });
 
   test("translate action marks an alternate target language field while it is running", async ({ page }) => {
@@ -777,11 +852,14 @@ test.describe("editor regressions", () => {
     });
 
     await expect(
-      page.locator('[data-editor-row-field][data-row-id="fixture-row-0001"][data-language-code="vi"]'),
-    ).toHaveValue("alpha 0001 target text");
+      page.locator('[data-editor-language-cluster][data-row-id="fixture-row-0001"][data-language-code="vi"] [data-editor-display-text]'),
+    ).toHaveText("alpha 0001 target text");
     await expect(
-      page.locator('[data-editor-row-field][data-row-id="fixture-row-0001"][data-language-code="fr"]'),
-    ).toHaveValue("Translating...");
+      page.locator('[data-editor-row-field][data-row-id="fixture-row-0001"][data-language-code="fr"]:not([data-content-kind])'),
+    ).toHaveCount(0);
+    await expect(
+      page.locator('[data-editor-language-cluster][data-row-id="fixture-row-0001"][data-language-code="fr"] [data-editor-display-text]'),
+    ).toHaveText("Translating...");
   });
 
   test("clicking translate shows translating placeholder in the target field until the result returns", async ({ page }) => {
@@ -822,14 +900,20 @@ test.describe("editor regressions", () => {
     const translateButton = page.locator('[data-action="run-editor-ai-translate:translate1"]');
     await expect(translateButton).toHaveAttribute("aria-busy", "true");
 
-    const targetField = page.locator('[data-editor-row-field][data-row-id="fixture-row-0001"][data-language-code="vi"]');
-    await expect(targetField).toHaveValue("Translating...");
+    await expect(
+      page.locator('[data-editor-row-field][data-row-id="fixture-row-0001"][data-language-code="vi"]:not([data-content-kind])'),
+    ).toHaveCount(0);
+    await expect(
+      page.locator('[data-editor-language-cluster][data-row-id="fixture-row-0001"][data-language-code="vi"] [data-editor-display-text]'),
+    ).toHaveText("Translating...");
 
     await page.evaluate(() => {
       window.__releaseMockTranslation?.();
     });
 
-    await expect(targetField).toHaveValue("Da xong");
+    await expect(
+      page.locator('[data-editor-language-cluster][data-row-id="fixture-row-0001"][data-language-code="vi"] [data-editor-display-text]'),
+    ).toHaveText("Da xong");
   });
 
   test("mounting the editor fixture renders two translate actions in detailed AI settings mode", async ({ page }) => {
@@ -1171,6 +1255,96 @@ test.describe("editor regressions", () => {
     }).toBe(2);
   });
 
+  test("inactive glossary highlights render in the display text while the search overlay stays transparent", async ({ page }) => {
+    await mountEditorFixture(page, { rowCount: 1, glossary: true }, { path: "/?platform=windows" });
+
+    await expect.poll(async () => {
+      return await countGlossaryMarksForRow(page, "fixture-row-0001");
+    }).toBe(2);
+
+    const styles = await page.evaluate(() => {
+      const field = document.querySelector(
+        '[data-editor-row-card][data-row-id="fixture-row-0001"] [data-editor-display-field][data-language-code="vi"]',
+      );
+      const searchLayer = document.querySelector(
+        '[data-editor-row-card][data-row-id="fixture-row-0001"] [data-editor-search-highlight]',
+      );
+      const mainTextarea = document.querySelector(
+        '[data-editor-row-card][data-row-id="fixture-row-0001"] [data-editor-row-field][data-language-code="vi"]:not([data-content-kind])',
+      );
+      if (!(field instanceof HTMLButtonElement) || !(searchLayer instanceof HTMLElement)) {
+        return null;
+      }
+
+      const fieldStyle = getComputedStyle(field);
+      const searchStyle = getComputedStyle(searchLayer);
+      return {
+        hasMainTextarea: mainTextarea instanceof HTMLTextAreaElement,
+        fieldColor: fieldStyle.color,
+        fieldTextFillColor: fieldStyle.webkitTextFillColor,
+        searchColor: searchStyle.color,
+        searchTextFillColor: searchStyle.webkitTextFillColor,
+      };
+    });
+
+    expect(styles).not.toBeNull();
+    const transparentColorPattern =
+      /^(?:transparent|rgba\(\s*\d+\s*,\s*\d+\s*,\s*\d+\s*,\s*0(?:\.0+)?\s*\))$/i;
+    expect(styles.hasMainTextarea).toBe(false);
+    expect(styles.fieldColor).not.toMatch(transparentColorPattern);
+    expect(styles.fieldTextFillColor).not.toMatch(transparentColorPattern);
+    expect(styles.searchColor).toMatch(transparentColorPattern);
+    expect(styles.searchTextFillColor).toMatch(transparentColorPattern);
+  });
+
+  test("inactive glossary marks inherit the display text shaping controls", async ({ page }) => {
+    await mountEditorFixture(page, { rowCount: 1, glossary: true }, { path: "/?platform=windows" });
+
+    await expect.poll(async () => {
+      return await countGlossaryMarksForRow(page, "fixture-row-0001");
+    }).toBe(2);
+
+    const styles = await page.evaluate(() => {
+      const field = document.querySelector(
+        '[data-editor-row-card][data-row-id="fixture-row-0001"] [data-editor-display-field][data-language-code="vi"]',
+      );
+      const glossaryMark = document.querySelector(
+        '[data-editor-row-card][data-row-id="fixture-row-0001"] [data-editor-glossary-mark]',
+      );
+      if (!(field instanceof HTMLButtonElement) || !(glossaryMark instanceof HTMLElement)) {
+        return null;
+      }
+
+      const fieldStyle = getComputedStyle(field);
+      const markStyle = getComputedStyle(glossaryMark);
+      return {
+        fieldKerning: fieldStyle.fontKerning,
+        markKerning: markStyle.fontKerning,
+        fieldLigatures: fieldStyle.fontVariantLigatures,
+        markLigatures: markStyle.fontVariantLigatures,
+        fieldWhiteSpace: fieldStyle.whiteSpace,
+        markWhiteSpace: markStyle.whiteSpace,
+        fieldWordBreak: fieldStyle.wordBreak,
+        markWordBreak: markStyle.wordBreak,
+        fieldOverflowWrap: fieldStyle.overflowWrap,
+        markOverflowWrap: markStyle.overflowWrap,
+        markVerticalAlign: markStyle.verticalAlign,
+        markSkipInk: markStyle.textDecorationSkipInk,
+      };
+    });
+
+    expect(styles).not.toBeNull();
+    expect(styles.fieldKerning).toBe("none");
+    expect(styles.markKerning).toBe(styles.fieldKerning);
+    expect(styles.fieldLigatures).not.toBe("normal");
+    expect(styles.markLigatures).toBe(styles.fieldLigatures);
+    expect(styles.markWhiteSpace).toBe(styles.fieldWhiteSpace);
+    expect(styles.markWordBreak).toBe(styles.fieldWordBreak);
+    expect(styles.markOverflowWrap).toBe(styles.fieldOverflowWrap);
+    expect(styles.markVerticalAlign).toBe("baseline");
+    expect(styles.markSkipInk).toBe("none");
+  });
+
   test("Windows fixture glossary highlights survive delete show hide and restore", async ({ page }) => {
     await mountEditorFixture(page, { rowCount: 80, glossary: true }, { path: "/?platform=windows" });
 
@@ -1203,6 +1377,157 @@ test.describe("editor regressions", () => {
     await expect.poll(async () => {
       return await countGlossaryMarksForRow(page, rowId);
     }).toBe(2);
+  });
+
+  test("clicking a wrapped glossary mark uses the real caret position inside the wrapped line", async ({ page }) => {
+    await mountEditorFixture(page, {
+      rowCount: 1,
+      glossaryTerms: [
+        {
+          sourceTerms: ["Dios Interior de nosotros desarrolla la conciencia espiritual en los sentidos internos"],
+          targetTerms: ["Thượng Đế Nội Tâm của chúng ta ban phát triển tâm linh cho các giác quan bên trong"],
+        },
+      ],
+      fieldsByRowId: {
+        "fixture-row-0001": {
+          es: "Si contemplas al Dios Interior de nosotros desarrolla la conciencia espiritual en los sentidos internos y permaneces atento.",
+          vi: "Giữ sự tập trung tự nhiên trong tim, bạn sẽ cầu xin Thượng Đế Nội Tâm của chúng ta ban phát triển tâm linh cho các giác quan bên trong để cảm nhận cái siêu việt của vạn vật.",
+        },
+      },
+    }, { path: "/?platform=windows" });
+
+    const rowId = "fixture-row-0001";
+    const languageCode = "vi";
+    const markSelector =
+      `[data-editor-row-card][data-row-id="${rowId}"] [data-editor-display-field][data-language-code="${languageCode}"] [data-editor-glossary-mark]`;
+
+    await expect.poll(async () => {
+      return await page.locator(markSelector).count();
+    }).toBe(1);
+
+    const markGeometry = await page.evaluate((selector) => {
+      const mark = document.querySelector(selector);
+      if (!(mark instanceof HTMLElement)) {
+        return null;
+      }
+
+      const rects = Array.from(mark.getClientRects()).map((rect) => ({
+        left: rect.left,
+        top: rect.top,
+        right: rect.right,
+        bottom: rect.bottom,
+        width: rect.width,
+        height: rect.height,
+      }));
+
+      return {
+        start: Number.parseInt(mark.dataset.textStart ?? "", 10),
+        end: Number.parseInt(mark.dataset.textEnd ?? "", 10),
+        rects,
+      };
+    }, markSelector);
+
+    expect(markGeometry).not.toBeNull();
+    expect(markGeometry.rects.length).toBeGreaterThan(1);
+
+    const clickPoint = {
+      x: markGeometry.rects[1].right - Math.min(12, markGeometry.rects[1].width / 3),
+      y: markGeometry.rects[1].top + (markGeometry.rects[1].height / 2),
+    };
+
+    const expectedSelectionStart = await page.evaluate(({ selector, x, y }) => {
+      const mark = document.querySelector(selector);
+      if (!(mark instanceof HTMLElement)) {
+        return null;
+      }
+
+      const start = Number.parseInt(mark.dataset.textStart ?? "", 10);
+      if (!Number.isInteger(start)) {
+        return null;
+      }
+
+      const offsetFromDomPoint = (node, offset) => {
+        if (!(node instanceof Node) || !mark.contains(node)) {
+          return null;
+        }
+
+        const range = document.createRange();
+        range.selectNodeContents(mark);
+        try {
+          range.setEnd(node, offset);
+        } catch {
+          return null;
+        }
+
+        return range.toString().length;
+      };
+
+      if (typeof document.caretPositionFromPoint === "function") {
+        const caretPosition = document.caretPositionFromPoint(x, y);
+        const offset = offsetFromDomPoint(caretPosition?.offsetNode ?? null, caretPosition?.offset ?? 0);
+        if (Number.isInteger(offset)) {
+          return start + offset;
+        }
+      }
+
+      if (typeof document.caretRangeFromPoint === "function") {
+        const caretRange = document.caretRangeFromPoint(x, y);
+        const offset = offsetFromDomPoint(caretRange?.startContainer ?? null, caretRange?.startOffset ?? 0);
+        if (Number.isInteger(offset)) {
+          return start + offset;
+        }
+      }
+
+      return null;
+    }, { selector: markSelector, ...clickPoint });
+
+    expect(expectedSelectionStart).not.toBeNull();
+
+    await page.mouse.click(clickPoint.x, clickPoint.y);
+
+    await expect.poll(async () => {
+      return await readEditorSelectionStart(page, rowId, languageCode);
+    }).toBe(expectedSelectionStart);
+
+    await expect(page.locator(
+      `[data-editor-row-card][data-row-id="${rowId}"] [data-editor-display-field][data-language-code="${languageCode}"]`,
+    )).toHaveCount(0);
+
+    expect(expectedSelectionStart).toBeLessThan(markGeometry.end);
+  });
+
+  test("glossary alignment probe measures the Vietnamese width-sweep repro fixture", async ({ page }) => {
+    await mountEditorFixture(page, {
+      rowCount: 1,
+      glossaryTerms: [
+        { sourceTerms: ["Word"], targetTerms: ["Ngôi Lời"] },
+        { sourceTerms: ["mysticism"], targetTerms: ["huyền học"] },
+        { sourceTerms: ["Gnosis"], targetTerms: ["Gnosis"] },
+        { sourceTerms: ["speech"], targetTerms: ["lời nói"] },
+        { sourceTerms: ["mantra"], targetTerms: ["Thần chú"] },
+      ],
+      fieldsByRowId: {
+        "fixture-row-0001": {
+          es: "Word mysticism Gnosis speech mantra Word speech.",
+          vi: "Có một sự tương quan giữa trung tâm vận động này và Ngôi Lời. Trong huyền học Gnosis, người ta biết rõ rằng những biến dạng thể chất có nguyên nhân ở sự sử dụng sai Ngôi Lời hay lời nói. Ngôi Lời, như tinh hoa của thân thể, có thể chữa lành bạn hoặc giết chết bạn. Lời nói luôn luôn phải tuôn ra từ trái tim. Thần chú:",
+        },
+      },
+    });
+
+    const result = await measureGlossaryAlignment(page, {
+      rowId: "fixture-row-0001",
+      languageCode: "vi",
+      widths: [520, 560, 600, 640, 680, 720],
+      thresholdPx: 1,
+    });
+
+    expect(result?.ok).toBe(true);
+    expect(result?.widthCount).toBe(6);
+    expect(Array.isArray(result?.measurements)).toBe(true);
+    expect(result.measurements[0]?.markCount).toBeGreaterThan(0);
+    expect(result.measurements.some((measurement) =>
+      measurement?.marks?.some((mark) => mark?.text?.includes("Ngôi Lời"))
+    )).toBe(true);
   });
 
   test("selecting a replace row under virtualization keeps the selected row visible", async ({ page }) => {
@@ -1437,7 +1762,7 @@ test.describe("editor regressions", () => {
       return await page.evaluate(() => window.__gnosisDebug.readEditorState().dirtyRowIds);
     }).toEqual(["fixture-row-0001"]);
 
-    await heading2Button.click();
+    await clickLocatorCenter(page, heading2Button);
 
     await expect.poll(async () => {
       const mockState = await readMockTauriState(page);
@@ -1480,7 +1805,7 @@ test.describe("editor regressions", () => {
     const reviewLastUpdateGroup = page.locator(".history-group").first();
 
     await targetField.click();
-    await heading1Button.click();
+    await clickLocatorCenter(page, heading1Button);
 
     await expect.poll(async () => {
       const mockState = await readMockTauriState(page);
@@ -1560,9 +1885,6 @@ test.describe("editor regressions", () => {
   test("row text styles update editor typography and return to paragraph styling", async ({ page }) => {
     await mountEditorFixture(page, { rowCount: 40 }, { mockTauri: true });
 
-    const targetField = page.locator(
-      '[data-editor-row-field][data-row-id="fixture-row-0001"][data-language-code="vi"]',
-    );
     const paragraphButton = page.locator(
       '[data-editor-row-text-style-button][data-row-id="fixture-row-0001"][data-language-code="vi"][data-text-style="paragraph"]',
     );
@@ -1579,7 +1901,7 @@ test.describe("editor regressions", () => {
       '[data-editor-row-text-style-button][data-row-id="fixture-row-0001"][data-language-code="vi"][data-text-style="indented"]',
     );
 
-    await targetField.click();
+    await activateMainEditorField(page, "fixture-row-0001", "vi");
 
     const paragraphMetrics = await readEditorFieldMetrics(page, "fixture-row-0001", "vi");
     expect(paragraphMetrics).not.toBeNull();
@@ -1598,25 +1920,31 @@ test.describe("editor regressions", () => {
     const heading1Metrics = await readEditorFieldMetrics(page, "fixture-row-0001", "vi");
     expect(Number.parseInt(heading1Metrics.fontWeight, 10)).toBeGreaterThanOrEqual(700);
 
-    await quoteButton.click();
+    await clickLocatorCenter(page, quoteButton);
     await expect.poll(async () => {
       return (await readEditorFieldMetrics(page, "fixture-row-0001", "vi"))?.fontStyle ?? "";
     }).toBe("italic");
     const quoteMetrics = await readEditorFieldMetrics(page, "fixture-row-0001", "vi");
     expect(quoteMetrics.paddingLeftPx).toBeGreaterThan(paragraphMetrics.paddingLeftPx);
 
-    await indentedButton.click();
+    await clickLocatorCenter(page, indentedButton);
     await expect.poll(async () => {
       return (await readEditorFieldMetrics(page, "fixture-row-0001", "vi"))?.fontStyle ?? "";
     }).toBe("normal");
     const indentedMetrics = await readEditorFieldMetrics(page, "fixture-row-0001", "vi");
     expect(indentedMetrics.paddingLeftPx).toBe(quoteMetrics.paddingLeftPx);
 
-    await paragraphButton.click();
+    await clickLocatorCenter(page, paragraphButton);
     await expect.poll(async () => {
-      return await page.locator(
-        '[data-editor-glossary-field-stack][data-row-id="fixture-row-0001"][data-language-code="vi"]',
-      ).getAttribute("data-row-text-style");
+      return await page.evaluate(() => {
+        const activeStack = document.querySelector(
+          '[data-editor-row-card][data-row-id="fixture-row-0001"] .translation-language-panel__field-stack[data-language-code="vi"]',
+        );
+        const displayField = document.querySelector(
+          '[data-editor-row-card][data-row-id="fixture-row-0001"] [data-editor-display-field][data-language-code="vi"]',
+        );
+        return activeStack?.getAttribute("data-row-text-style") ?? displayField?.getAttribute("data-row-text-style") ?? null;
+      });
     }).toBe("paragraph");
     const resetMetrics = await readEditorFieldMetrics(page, "fixture-row-0001", "vi");
     expect(resetMetrics.fontStyle).toBe(paragraphMetrics.fontStyle);
@@ -1627,9 +1955,6 @@ test.describe("editor regressions", () => {
   test("footnotes keep fixed styling while row text styles change, and the add button matches the style buttons", async ({ page }) => {
     await mountEditorFixture(page, { rowCount: 40 }, { mockTauri: true });
 
-    const targetField = page.locator(
-      '[data-editor-row-field][data-row-id="fixture-row-0001"][data-language-code="vi"]:not([data-content-kind])',
-    );
     const footnoteButton = page.locator(
       '[data-editor-footnote-button][data-row-id="fixture-row-0001"][data-language-code="vi"]',
     );
@@ -1640,14 +1965,14 @@ test.describe("editor regressions", () => {
       '[data-editor-row-text-style-button][data-row-id="fixture-row-0001"][data-language-code="vi"][data-text-style="quote"]',
     );
 
-    await targetField.click();
+    await activateMainEditorField(page, "fixture-row-0001", "vi");
     await expect(footnoteButton).toBeVisible();
     await expect(footnoteButton).toHaveClass(/translation-row-text-style-button--footnote/);
 
     const paragraphMetrics = await readEditorFieldMetrics(page, "fixture-row-0001", "vi");
     expect(paragraphMetrics).not.toBeNull();
 
-    await footnoteButton.evaluate((button) => button.click());
+    await clickLocatorCenter(page, footnoteButton);
     const footnoteField = page.locator(
       '[data-editor-row-field][data-row-id="fixture-row-0001"][data-language-code="vi"][data-content-kind="footnote"]',
     );
@@ -1658,7 +1983,7 @@ test.describe("editor regressions", () => {
     expect(baselineFootnoteMetrics).not.toBeNull();
     expect(baselineFootnoteMetrics.fontStyle).toBe("italic");
 
-    await heading1Button.click();
+    await clickLocatorCenter(page, heading1Button);
     await expect.poll(async () => {
       return (await readEditorFieldMetrics(page, "fixture-row-0001", "vi"))?.fontSizePx ?? 0;
     }).toBeGreaterThan(paragraphMetrics.fontSizePx);
@@ -1668,7 +1993,7 @@ test.describe("editor regressions", () => {
     expect(headingFootnoteMetrics.fontSizePx).toBeCloseTo(baselineFootnoteMetrics.fontSizePx, 3);
     expect(headingFootnoteMetrics.paddingLeftPx).toBeCloseTo(baselineFootnoteMetrics.paddingLeftPx, 3);
 
-    await quoteButton.click();
+    await clickLocatorCenter(page, quoteButton);
     await expect.poll(async () => {
       return (await readEditorFieldMetrics(page, "fixture-row-0001", "vi"))?.paddingLeftPx ?? 0;
     }).toBeGreaterThan(paragraphMetrics.paddingLeftPx);
@@ -1682,9 +2007,7 @@ test.describe("editor regressions", () => {
   test("row text style buttons behave like radios and survive later text saves", async ({ page }) => {
     await mountEditorFixture(page, { rowCount: 40 }, { mockTauri: true });
 
-    const targetField = page.locator(
-      '[data-editor-row-field][data-row-id="fixture-row-0001"][data-language-code="vi"]',
-    );
+    const targetField = await activateMainEditorField(page, "fixture-row-0001", "vi");
     const paragraphButton = page.locator(
       '[data-editor-row-text-style-button][data-row-id="fixture-row-0001"][data-language-code="vi"][data-text-style="paragraph"]',
     );
@@ -1697,14 +2020,14 @@ test.describe("editor regressions", () => {
     await expect(paragraphButton).toHaveAttribute("aria-checked", "true");
     await expect(heading2Button).toHaveAttribute("aria-checked", "false");
 
-    await heading2Button.click();
+    await clickLocatorCenter(page, heading2Button);
     await expect(heading2Button).toHaveAttribute("aria-checked", "true");
     await expect(paragraphButton).toHaveAttribute("aria-checked", "false");
     await expect(page.locator(
       '[data-editor-row-text-style-button][data-row-id="fixture-row-0001"][data-language-code="vi"][aria-checked="true"]',
     )).toHaveCount(1);
 
-    await heading2Button.click();
+    await clickLocatorCenter(page, heading2Button);
     await expect(heading2Button).toHaveAttribute("aria-checked", "true");
     await expect.poll(async () => {
       const mockState = await readMockTauriState(page);
@@ -1733,23 +2056,22 @@ test.describe("editor regressions", () => {
     }).toBe("heading2");
 
     await expect.poll(async () => {
-      return await page.locator(
-        '[data-editor-glossary-field-stack][data-row-id="fixture-row-0001"][data-language-code="vi"]',
-      ).getAttribute("data-row-text-style");
+      return await page.evaluate(() => {
+        const activeStack = document.querySelector(
+          '[data-editor-row-card][data-row-id="fixture-row-0001"] .translation-language-panel__field-stack[data-language-code="vi"]',
+        );
+        const displayField = document.querySelector(
+          '[data-editor-row-card][data-row-id="fixture-row-0001"] [data-editor-display-field][data-language-code="vi"]',
+        );
+        return activeStack?.getAttribute("data-row-text-style") ?? displayField?.getAttribute("data-row-text-style") ?? null;
+      });
     }).toBe("heading2");
   });
 
   test("typing in one row then focusing another row persists without losing the target field", async ({ page }) => {
     await mountEditorFixture(page, { rowCount: 40 }, { mockTauri: true });
 
-    const firstField = page.locator(
-      '[data-editor-row-field][data-row-id="fixture-row-0001"][data-language-code="vi"]',
-    );
-    const secondField = page.locator(
-      '[data-editor-row-field][data-row-id="fixture-row-0002"][data-language-code="vi"]',
-    );
-
-    await firstField.click();
+    const firstField = await activateMainEditorField(page, "fixture-row-0001", "vi");
     await firstField.evaluate((element) => {
       element.focus();
       element.selectionStart = element.value.length;
@@ -1757,8 +2079,8 @@ test.describe("editor regressions", () => {
     });
     await page.keyboard.type(" saved");
 
+    const secondField = await activateMainEditorField(page, "fixture-row-0002", "vi");
     await expect(secondField).toBeVisible();
-    await secondField.click();
     await expect(secondField).toBeFocused();
 
     await expect.poll(async () => {
@@ -1806,6 +2128,163 @@ test.describe("editor regressions", () => {
     await expect.poll(async () => {
       return await page.evaluate(() => window.__gnosisDebug.readEditorState().dirtyRowIds);
     }).toEqual([]);
+  });
+
+  test("opening the image url editor keeps the scroll position stable", async ({ page }) => {
+    await mountEditorFixture(page, { rowCount: 18 }, { mockTauri: true });
+
+    const rowId = "fixture-row-0010";
+    const languageCode = "vi";
+    const displayField = page.locator(
+      `[data-editor-display-field][data-row-id="${rowId}"][data-language-code="${languageCode}"]`,
+    );
+    await displayField.scrollIntoViewIfNeeded();
+
+    const activeField = await activateMainEditorField(page, rowId, languageCode);
+    await expect(activeField).toBeVisible();
+
+    const beforeScrollTop = await readTranslateScrollTop(page);
+    const imageUrlButton = page.locator(
+      `[data-action="open-editor-image-url"][data-row-id="${rowId}"][data-language-code="${languageCode}"]`,
+    );
+    await imageUrlButton.click();
+
+    const imageUrlInput = page.locator(
+      `[data-editor-image-url-input][data-row-id="${rowId}"][data-language-code="${languageCode}"]`,
+    );
+    await expect(imageUrlInput).toBeVisible();
+    await expect.poll(async () => {
+      return Math.abs((await readTranslateScrollTop(page)) - beforeScrollTop);
+    }).toBeLessThan(4);
+  });
+
+  test("closing the image url editor clears the draft and restores the pre-open state", async ({ page }) => {
+    await mountEditorFixture(page, { rowCount: 18 }, { mockTauri: true });
+
+    const rowId = "fixture-row-0010";
+    const languageCode = "vi";
+    const displayField = page.locator(
+      `[data-editor-display-field][data-row-id="${rowId}"][data-language-code="${languageCode}"]`,
+    );
+    await displayField.scrollIntoViewIfNeeded();
+
+    const activeField = await activateMainEditorField(page, rowId, languageCode);
+    await expect(activeField).toBeVisible();
+
+    const imageUrlButton = page.locator(
+      `[data-action="open-editor-image-url"][data-row-id="${rowId}"][data-language-code="${languageCode}"]`,
+    );
+    await imageUrlButton.click();
+
+    const imageUrlInput = page.locator(
+      `[data-editor-image-url-input][data-row-id="${rowId}"][data-language-code="${languageCode}"]`,
+    );
+    await expect(imageUrlInput).toBeVisible();
+    await imageUrlInput.fill("https://example.com/test.png");
+
+    const closeButton = page.locator(
+      `[data-editor-image-url-close-button][data-row-id="${rowId}"][data-language-code="${languageCode}"]`,
+    );
+    await closeButton.click();
+
+    await expect(imageUrlInput).toHaveCount(0);
+    await expect(imageUrlButton).toBeVisible();
+
+    await imageUrlButton.click();
+    const reopenedInput = page.locator(
+      `[data-editor-image-url-input][data-row-id="${rowId}"][data-language-code="${languageCode}"]`,
+    );
+    await expect(reopenedInput).toBeVisible();
+    await expect(reopenedInput).toHaveValue("");
+
+    await expect.poll(async () => {
+      const mockState = await readMockTauriState(page);
+      return mockState?.invocations?.some((entry) => entry.command === "save_gtms_editor_language_image_url") ?? false;
+    }).toBe(false);
+  });
+
+  test("opening the image upload editor keeps the scroll position stable", async ({ page }) => {
+    await mountEditorFixture(page, { rowCount: 18 }, { mockTauri: true });
+
+    const rowId = "fixture-row-0010";
+    const languageCode = "vi";
+    const displayField = page.locator(
+      `[data-editor-display-field][data-row-id="${rowId}"][data-language-code="${languageCode}"]`,
+    );
+    await displayField.scrollIntoViewIfNeeded();
+
+    const activeField = await activateMainEditorField(page, rowId, languageCode);
+    await expect(activeField).toBeVisible();
+
+    const beforeScrollTop = await readTranslateScrollTop(page);
+    const imageUploadButton = page.locator(
+      `[data-action="open-editor-image-upload"][data-row-id="${rowId}"][data-language-code="${languageCode}"]`,
+    );
+    await imageUploadButton.click();
+
+    const uploadDropzone = page.locator(
+      `[data-editor-image-upload-dropzone][data-row-id="${rowId}"][data-language-code="${languageCode}"]`,
+    );
+    await expect(uploadDropzone).toBeVisible();
+    await expect.poll(async () => {
+      return Math.abs((await readTranslateScrollTop(page)) - beforeScrollTop);
+    }).toBeLessThan(4);
+  });
+
+  test("clicking away from the active main field keeps the scroll position stable", async ({ page }) => {
+    await mountEditorFixture(page, { rowCount: 18 }, { mockTauri: true });
+
+    const rowId = "fixture-row-0010";
+    const languageCode = "vi";
+    const displayField = page.locator(
+      `[data-editor-display-field][data-row-id="${rowId}"][data-language-code="${languageCode}"]`,
+    );
+    await displayField.scrollIntoViewIfNeeded();
+
+    const activeField = await activateMainEditorField(page, rowId, languageCode);
+    await expect(activeField).toBeVisible();
+    await activeField.evaluate((element) => {
+      element.focus();
+      element.selectionStart = element.value.length;
+      element.selectionEnd = element.value.length;
+    });
+    await page.keyboard.type(" saved");
+
+    const beforeScrollTop = await readTranslateScrollTop(page);
+    await page.locator("[data-editor-search-input]").click();
+
+    await expect(displayField).toBeVisible();
+    await expect.poll(async () => {
+      return Math.abs((await readTranslateScrollTop(page)) - beforeScrollTop);
+    }).toBeLessThan(4);
+  });
+
+  test("saving the active main field with shift-enter keeps the scroll position stable", async ({ page }) => {
+    await mountEditorFixture(page, { rowCount: 18 }, { mockTauri: true });
+
+    const rowId = "fixture-row-0010";
+    const languageCode = "vi";
+    const displayField = page.locator(
+      `[data-editor-display-field][data-row-id="${rowId}"][data-language-code="${languageCode}"]`,
+    );
+    await displayField.scrollIntoViewIfNeeded();
+
+    const activeField = await activateMainEditorField(page, rowId, languageCode);
+    await expect(activeField).toBeVisible();
+    await activeField.evaluate((element) => {
+      element.focus();
+      element.selectionStart = element.value.length;
+      element.selectionEnd = element.value.length;
+    });
+    await page.keyboard.type(" saved");
+
+    const beforeScrollTop = await readTranslateScrollTop(page);
+    await page.keyboard.press("Shift+Enter");
+
+    await expect(displayField).toBeVisible();
+    await expect.poll(async () => {
+      return Math.abs((await readTranslateScrollTop(page)) - beforeScrollTop);
+    }).toBeLessThan(4);
   });
 
   test("replace selected and undo replace round-trip through history", async ({ page }) => {

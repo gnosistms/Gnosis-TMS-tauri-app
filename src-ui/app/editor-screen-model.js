@@ -14,6 +14,7 @@ import {
   editorImageEditorMatches,
   editorImageCaptionEditorMatches,
   editorFootnoteEditorMatches,
+  editorMainFieldEditorMatches,
   editorLanguageImage,
   editorLanguageImageCaptionText,
   editorLanguageFootnoteIsVisible,
@@ -24,6 +25,8 @@ let cachedEditorRowsRef = null;
 let cachedEditorLanguagesRef = null;
 let cachedActiveRowId = null;
 let cachedActiveLanguageCode = null;
+let cachedMainFieldEditorRowId = null;
+let cachedMainFieldEditorLanguageCode = null;
 let cachedFootnoteEditorRowId = null;
 let cachedFootnoteEditorLanguageCode = null;
 let cachedImageCaptionEditorRowId = null;
@@ -79,6 +82,8 @@ function buildLiveTranslationRows(editorChapter, languages) {
     cachedEditorLanguagesRef = languageOptions;
     cachedActiveRowId = editorChapter?.activeRowId ?? null;
     cachedActiveLanguageCode = editorChapter?.activeLanguageCode ?? null;
+    cachedMainFieldEditorRowId = editorChapter?.mainFieldEditor?.rowId ?? null;
+    cachedMainFieldEditorLanguageCode = editorChapter?.mainFieldEditor?.languageCode ?? null;
     cachedFootnoteEditorRowId = editorChapter?.footnoteEditor?.rowId ?? null;
     cachedFootnoteEditorLanguageCode = editorChapter?.footnoteEditor?.languageCode ?? null;
     cachedImageCaptionEditorRowId = editorChapter?.imageCaptionEditor?.rowId ?? null;
@@ -96,6 +101,8 @@ function buildLiveTranslationRows(editorChapter, languages) {
     && languageOptions === cachedEditorLanguagesRef
     && (editorChapter?.activeRowId ?? null) === cachedActiveRowId
     && (editorChapter?.activeLanguageCode ?? null) === cachedActiveLanguageCode
+    && (editorChapter?.mainFieldEditor?.rowId ?? null) === cachedMainFieldEditorRowId
+    && (editorChapter?.mainFieldEditor?.languageCode ?? null) === cachedMainFieldEditorLanguageCode
     && (editorChapter?.footnoteEditor?.rowId ?? null) === cachedFootnoteEditorRowId
     && (editorChapter?.footnoteEditor?.languageCode ?? null) === cachedFootnoteEditorLanguageCode
     && (editorChapter?.imageCaptionEditor?.rowId ?? null) === cachedImageCaptionEditorRowId
@@ -195,6 +202,7 @@ function buildLiveTranslationRows(editorChapter, languages) {
             hasSavedImage
             && imageCaption.trim().length === 0
             && !isImageCaptionEditorOpen,
+          isTextEditorOpen: editorMainFieldEditorMatches(editorChapter, row.rowId, language.code),
           isActive:
             editorChapter?.activeRowId === row.rowId
             && editorChapter?.activeLanguageCode === language.code,
@@ -215,6 +223,8 @@ function buildLiveTranslationRows(editorChapter, languages) {
   cachedEditorLanguagesRef = languageOptions;
   cachedActiveRowId = editorChapter?.activeRowId ?? null;
   cachedActiveLanguageCode = editorChapter?.activeLanguageCode ?? null;
+  cachedMainFieldEditorRowId = editorChapter?.mainFieldEditor?.rowId ?? null;
+  cachedMainFieldEditorLanguageCode = editorChapter?.mainFieldEditor?.languageCode ?? null;
   cachedFootnoteEditorRowId = editorChapter?.footnoteEditor?.rowId ?? null;
   cachedFootnoteEditorLanguageCode = editorChapter?.footnoteEditor?.languageCode ?? null;
   cachedImageCaptionEditorRowId = editorChapter?.imageCaptionEditor?.rowId ?? null;
@@ -418,6 +428,9 @@ export function buildEditorScreenViewModel(appState) {
             isAiTranslating
               ? aiTranslateLoadingText
               : section.text,
+          isTextEditorOpen:
+            section.isTextEditorOpen === true
+            && !isAiTranslating,
           ...buildEditorCommentsButtonState({
             row,
             languageCode: section.code,

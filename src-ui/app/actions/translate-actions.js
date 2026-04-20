@@ -17,6 +17,7 @@ import {
   openEditorFootnote,
   openEditorImageCaption,
   closeTargetLanguageManager,
+  closeEditorImageUrl,
   closeEditorImageInvalidFileModal,
   closeEditorImagePreview,
   copyEditorPreviewHtml,
@@ -231,6 +232,14 @@ export function createTranslateActions(render) {
         ? event.target.closest("[data-row-id][data-language-code]")
         : null;
       openEditorImageUrl(render, button?.dataset.rowId ?? null, button?.dataset.languageCode ?? null);
+      return true;
+    }
+
+    if (action === "close-editor-image-url") {
+      const button = event?.target instanceof Element
+        ? event.target.closest("[data-row-id][data-language-code]")
+        : null;
+      closeEditorImageUrl(render, button?.dataset.rowId ?? null, button?.dataset.languageCode ?? null);
       return true;
     }
 

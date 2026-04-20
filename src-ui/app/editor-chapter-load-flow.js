@@ -18,6 +18,8 @@ import {
   createEditorChapterGlossaryState,
   createEditorCommentsState,
   createEditorHistoryState,
+  createEditorMainFieldEditorState,
+  createEditorPendingSelectionState,
   state,
 } from "./state.js";
 import { clearNoticeBadge, clearScopedSyncBadge, showNoticeBadge } from "./status-feedback.js";
@@ -171,6 +173,8 @@ export async function loadSelectedChapterEditorData(render, options = {}, operat
       : {},
     activeRowId: preserveVisibleRows ? state.editorChapter.activeRowId : null,
     activeLanguageCode: preserveVisibleRows ? state.editorChapter.activeLanguageCode : null,
+    mainFieldEditor: createEditorMainFieldEditorState(),
+    pendingSelection: createEditorPendingSelectionState(),
     sidebarTab: preserveVisibleRows ? state.editorChapter.sidebarTab : "review",
     commentSeenRevisions: preserveVisibleRows ? state.editorChapter.commentSeenRevisions : {},
     comments: preserveVisibleRows ? state.editorChapter.comments : createEditorCommentsState(),
@@ -209,6 +213,8 @@ export async function loadSelectedChapterEditorData(render, options = {}, operat
       error: message,
       activeRowId: null,
       activeLanguageCode: null,
+      mainFieldEditor: createEditorMainFieldEditorState(),
+      pendingSelection: createEditorPendingSelectionState(),
       comments: createEditorCommentsState(),
       history: createEditorHistoryState(),
       rows: [],

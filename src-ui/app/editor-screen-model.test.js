@@ -99,6 +99,7 @@ test("buildEditorScreenViewModel shows translating placeholder in the active tar
     assert.equal(sourceSection?.text, "alpha 0001 source text");
     assert.equal(targetSection?.text, "Translating...");
     assert.equal(targetSection?.isAiTranslating, true);
+    assert.equal(targetSection?.isTextEditorOpen, false);
   } finally {
     restoreSharedState(snapshot);
   }
@@ -152,6 +153,7 @@ test("buildEditorScreenViewModel shows glossary preparation placeholder while a 
 
     assert.equal(targetSection?.text, "Preparing glossary...");
     assert.equal(targetSection?.isAiTranslating, true);
+    assert.equal(targetSection?.isTextEditorOpen, false);
   } finally {
     restoreSharedState(snapshot);
   }
@@ -218,6 +220,7 @@ test("buildEditorScreenViewModel keeps the translating placeholder visible while
 
     assert.equal(targetSection?.text, "Translating...");
     assert.equal(targetSection?.isAiTranslating, true);
+    assert.equal(targetSection?.isTextEditorOpen, false);
   } finally {
     restoreSharedState(snapshot);
   }
@@ -253,6 +256,46 @@ test("buildEditorScreenViewModel rebuilds section footnote visibility when the f
     assert.equal(targetSection?.hasVisibleFootnote, true);
     assert.equal(targetSection?.isFootnoteEditorOpen, true);
     assert.equal(targetSection?.showAddFootnoteButton, false);
+  } finally {
+    restoreSharedState(snapshot);
+  }
+});
+
+test("buildEditorScreenViewModel exposes main-field edit mode separately from the selected row", () => {
+  const snapshot = snapshotSharedState();
+
+  try {
+    applyEditorRegressionFixture(state, {
+      rowCount: 2,
+    });
+
+    state.editorChapter = {
+      ...state.editorChapter,
+      activeRowId: "fixture-row-0001",
+      activeLanguageCode: "vi",
+    };
+
+    let viewModel = buildEditorScreenViewModel(state);
+    let firstRow = viewModel.contentRows.find((row) => row?.id === "fixture-row-0001");
+    let firstTargetSection = firstRow?.sections.find((section) => section.code === "vi");
+
+    assert.equal(firstTargetSection?.isActive, true);
+    assert.equal(firstTargetSection?.isTextEditorOpen, false);
+
+    state.editorChapter = {
+      ...state.editorChapter,
+      mainFieldEditor: {
+        rowId: "fixture-row-0001",
+        languageCode: "vi",
+      },
+    };
+
+    viewModel = buildEditorScreenViewModel(state);
+    firstRow = viewModel.contentRows.find((row) => row?.id === "fixture-row-0001");
+    firstTargetSection = firstRow?.sections.find((section) => section.code === "vi");
+
+    assert.equal(firstTargetSection?.isActive, true);
+    assert.equal(firstTargetSection?.isTextEditorOpen, true);
   } finally {
     restoreSharedState(snapshot);
   }

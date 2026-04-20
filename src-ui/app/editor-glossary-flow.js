@@ -316,6 +316,20 @@ function applyEditorTextHighlightLayersToRowCard(
       glossaryLayer.innerHTML = glossaryHighlightHtml;
     }
 
+    const displayText = stack.querySelector("[data-editor-display-text]");
+    if (displayText instanceof HTMLElement) {
+      const plainText = displayText.textContent ?? "";
+      displayText.innerHTML = glossaryHighlightHtml || renderableHighlightHtml({
+        html: plainText
+          .replaceAll("&", "&amp;")
+          .replaceAll("<", "&lt;")
+          .replaceAll(">", "&gt;")
+          .replaceAll('"', "&quot;")
+          .replaceAll("'", "&#39;"),
+        hasMatches: plainText.length > 0,
+      });
+    }
+
     const searchLayer = stack.querySelector("[data-editor-search-highlight]");
     if (searchLayer instanceof HTMLElement) {
       searchLayer.innerHTML = searchHighlightHtml;

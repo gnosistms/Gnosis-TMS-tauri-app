@@ -167,6 +167,19 @@ test("captureTranslateAnchorForRow prefers the requested field when a language i
   });
 });
 
+test("captureTranslateAnchorForRow can prefer the row card when requested", () => {
+  installScrollFixture();
+
+  const snapshot = captureTranslateAnchorForRow("row-1", "en", { preferRow: true });
+
+  assert.deepEqual(snapshot, {
+    type: "row",
+    rowId: "row-1",
+    languageCode: "",
+    offsetTop: 40,
+  });
+});
+
 test("captureVisibleTranslateRowLocation anchors to the first visible row card", () => {
   installScrollFixture();
 

@@ -94,14 +94,15 @@ function resolveTranslateAnchorSelector(rowId, languageCode = null) {
   };
 }
 
-export function captureTranslateAnchorForRow(rowId, languageCode = null) {
+export function captureTranslateAnchorForRow(rowId, languageCode = null, options = {}) {
   const selector = resolveTranslateAnchorSelector(rowId, languageCode);
   const container = document.querySelector(".translate-main-scroll");
+  const preferRow = options?.preferRow === true;
   if (!selector || !isHtmlElement(container)) {
     return null;
   }
 
-  if (selector.languageCode) {
+  if (selector.languageCode && !preferRow) {
     const field = document.querySelector(buildEditorFieldSelector(selector.rowId, selector.languageCode));
     if (isHtmlElement(field)) {
       return buildTranslateAnchorSnapshotForElement(

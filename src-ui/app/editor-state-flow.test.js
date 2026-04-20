@@ -56,6 +56,10 @@ test("applyEditorUiState preserves same-chapter editor UI state when the active 
     replaceUndoModal: { isOpen: true, commitSha: "abc123", status: "idle", error: "" },
     activeRowId: "row-1",
     activeLanguageCode: "en",
+    mainFieldEditor: {
+      rowId: "row-1",
+      languageCode: "en",
+    },
     mode: "preview",
     previewSearch: {
       query: "alpha",
@@ -80,6 +84,10 @@ test("applyEditorUiState preserves same-chapter editor UI state when the active 
   assert.deepEqual([...result.dirtyRowIds], ["row-1"]);
   assert.equal(result.activeRowId, "row-1");
   assert.equal(result.activeLanguageCode, "en");
+  assert.deepEqual(result.mainFieldEditor, {
+    rowId: "row-1",
+    languageCode: "en",
+  });
   assert.equal(result.mode, "preview");
   assert.deepEqual(result.previewSearch, {
     query: "alpha",
@@ -110,6 +118,10 @@ test("applyEditorUiState clears active field state when the row or language no l
     rowPermanentDeletionModal: { isOpen: true, rowId: "row-1", status: "idle", error: "" },
     activeRowId: "row-1",
     activeLanguageCode: "en",
+    mainFieldEditor: {
+      rowId: "row-1",
+      languageCode: "en",
+    },
     history: {
       ...createEditorHistoryState(),
       rowId: "row-1",
@@ -129,6 +141,10 @@ test("applyEditorUiState clears active field state when the row or language no l
 
   assert.equal(result.activeRowId, null);
   assert.equal(result.activeLanguageCode, null);
+  assert.deepEqual(result.mainFieldEditor, {
+    rowId: null,
+    languageCode: null,
+  });
   assert.equal(result.history.status, "idle");
   assert.deepEqual(result.history.entries, []);
   assert.equal(result.insertRowModal.isOpen, false);

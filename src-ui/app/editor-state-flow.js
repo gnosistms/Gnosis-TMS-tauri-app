@@ -18,6 +18,7 @@ import {
   cloneRowFields,
   cloneRowFieldStates,
   cloneRowImages,
+  editorMainFieldEditorMatches,
   hasEditorLanguage,
   hasEditorRow,
 } from "./editor-utils.js";
@@ -26,6 +27,7 @@ import {
   coerceEditorFontSizePx,
   createEditorChapterFilterState,
   createEditorChapterGlossaryState,
+  createEditorMainFieldEditorState,
   createEditorCommentsState,
   createEditorConflictResolutionModalState,
   createEditorAiReviewState,
@@ -36,6 +38,7 @@ import {
   createEditorImageEditorState,
   createEditorImageInvalidFileModalState,
   createEditorImagePreviewOverlayState,
+  createEditorPendingSelectionState,
   createEditorPreviewSearchState,
   createEditorReplaceUndoModalState,
   createEditorReplaceState,
@@ -221,6 +224,21 @@ export function applyEditorUiState(nextEditorChapter, previousEditorChapter = st
       hasEditorRow(nextEditorChapter, activeRowId) && hasEditorLanguage(nextEditorChapter, activeLanguageCode)
         ? activeLanguageCode
         : null,
+    mainFieldEditor:
+      isSameChapter
+      && editorMainFieldEditorMatches(
+        previousEditorChapter,
+        previousEditorChapter?.mainFieldEditor?.rowId ?? null,
+        previousEditorChapter?.mainFieldEditor?.languageCode ?? null,
+      )
+      && hasEditorRow(nextEditorChapter, previousEditorChapter?.mainFieldEditor?.rowId)
+      && hasEditorLanguage(nextEditorChapter, previousEditorChapter?.mainFieldEditor?.languageCode)
+        ? {
+          rowId: previousEditorChapter.mainFieldEditor.rowId,
+          languageCode: previousEditorChapter.mainFieldEditor.languageCode,
+        }
+        : createEditorMainFieldEditorState(),
+    pendingSelection: createEditorPendingSelectionState(),
     footnoteEditor: createEditorFootnoteEditorState(),
     imageCaptionEditor: createEditorImageCaptionEditorState(),
     imageEditor: createEditorImageEditorState(),
@@ -473,6 +491,14 @@ export function removeEditorChapterRow(rowId) {
     dirtyRowIds: compactDirtyRowIds(rows, state.editorChapter.dirtyRowIds),
     activeRowId: state.editorChapter.activeRowId === rowId ? null : state.editorChapter.activeRowId,
     activeLanguageCode: state.editorChapter.activeRowId === rowId ? null : state.editorChapter.activeLanguageCode,
+    mainFieldEditor:
+      state.editorChapter.mainFieldEditor?.rowId === rowId
+        ? createEditorMainFieldEditorState()
+        : state.editorChapter.mainFieldEditor,
+    pendingSelection:
+      state.editorChapter.pendingSelection?.rowId === rowId
+        ? createEditorPendingSelectionState()
+        : state.editorChapter.pendingSelection,
     comments: state.editorChapter.activeRowId === rowId ? createEditorCommentsState() : state.editorChapter.comments,
     history: state.editorChapter.activeRowId === rowId ? createEditorHistoryState() : state.editorChapter.history,
     aiTranslate: Object.fromEntries(

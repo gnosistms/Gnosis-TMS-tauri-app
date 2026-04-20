@@ -9,6 +9,8 @@ import { compactDirtyRowIds } from "./editor-dirty-row-state.js";
 import { normalizeEditorRows } from "./editor-state-flow.js";
 import { hasEditorRow } from "./editor-utils.js";
 import {
+  createEditorMainFieldEditorState,
+  createEditorPendingSelectionState,
   createEditorCommentsState,
   createEditorHistoryState,
   createEditorInsertRowModalState,
@@ -36,6 +38,8 @@ function withClearedActiveFieldForRow(chapterState, rowId) {
     ...chapterState,
     activeRowId: null,
     activeLanguageCode: null,
+    mainFieldEditor: createEditorMainFieldEditorState(),
+    pendingSelection: createEditorPendingSelectionState(),
     comments: createEditorCommentsState(),
     history: createEditorHistoryState(),
   };

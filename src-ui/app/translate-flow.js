@@ -9,6 +9,7 @@ import {
   openEditorImageUpload as openEditorImageUploadFlow,
   openEditorImageUploadPicker as openEditorImageUploadPickerFlow,
   openEditorImageUrl as openEditorImageUrlFlow,
+  closeEditorImageUrl as closeEditorImageUrlFlow,
   persistEditorImageUrlOnBlur as persistEditorImageUrlOnBlurFlow,
   removeEditorLanguageImage as removeEditorLanguageImageFlow,
   submitEditorImageUrl as submitEditorImageUrlFlow,
@@ -134,11 +135,18 @@ import {
 } from "./navigation-loading.js";
 import {
   captureRenderScrollSnapshot,
+  captureTranslateAnchorForRow,
   lockScreenScrollSnapshot,
   unlockScreenScrollSnapshot,
 } from "./scroll-state.js";
 import {
+  captureTranslateViewport,
+  renderTranslateBodyPreservingViewport,
+} from "./translate-viewport.js";
+import {
   coerceEditorFontSizePx,
+  createEditorMainFieldEditorState,
+  createEditorPendingSelectionState,
   createEditorPreviewSearchState,
   createTargetLanguageManagerState,
   state,
@@ -152,6 +160,36 @@ let previewModeTranslateScrollSnapshot = null;
 
 function currentEditorMode() {
   return normalizeEditorMode(state.editorChapter?.mode);
+}
+
+function editorMainFieldMatches(rowId, languageCode, chapterState = state.editorChapter) {
+  return (
+    chapterState?.mainFieldEditor?.rowId === rowId
+    && chapterState?.mainFieldEditor?.languageCode === languageCode
+  );
+}
+
+function textareaOpensMainField(input) {
+  return (
+    input instanceof HTMLTextAreaElement
+    && (input.dataset.contentKind ?? "") === ""
+  );
+}
+
+function buildEditorPendingSelection(rowId, languageCode, offset) {
+  return {
+    rowId,
+    languageCode,
+    offset,
+  };
+}
+
+function resolveEditorMainFieldViewportSnapshot(rowId, languageCode, options = {}) {
+  return options.viewportSnapshot ?? captureTranslateViewport(options.target ?? null, {
+    preferPrimed: true,
+    expectedRowId: rowId,
+    fallbackAnchor: captureTranslateAnchorForRow(rowId, languageCode),
+  });
 }
 
 function currentPreviewBlocks(chapterState = state.editorChapter) {
@@ -266,6 +304,23 @@ export function loadActiveEditorRowComments(render) {
   loadActiveEditorRowCommentsFlow(render);
 }
 
+export function collapseEditorMainField(render, rowId, languageCode, options = {}) {
+  if (!rowId || !languageCode || !editorMainFieldMatches(rowId, languageCode)) {
+    return;
+  }
+
+  state.editorChapter = {
+    ...state.editorChapter,
+    mainFieldEditor: createEditorMainFieldEditorState(),
+    pendingSelection: createEditorPendingSelectionState(),
+  };
+
+  renderTranslateBodyPreservingViewport(
+    render,
+    resolveEditorMainFieldViewportSnapshot(rowId, languageCode, options),
+  );
+}
+
 export async function setActiveEditorField(render, rowId, languageCode, options = {}) {
   if (!rowId || !languageCode) {
     return;
@@ -282,10 +337,22 @@ export async function setActiveEditorField(render, rowId, languageCode, options 
     row,
     languageCode,
   );
+  const shouldOpenEditor = options.openEditor === true || textareaOpensMainField(options.input);
+  const pendingSelectionOffset =
+    Number.isInteger(options.pendingSelectionOffset) && options.pendingSelectionOffset >= 0
+      ? options.pendingSelectionOffset
+      : null;
+  const wasEditorOpen = editorMainFieldMatches(rowId, languageCode);
   const isSameSelection =
     state.editorChapter.activeRowId === rowId
     && state.editorChapter.activeLanguageCode === languageCode;
-  if (isSameSelection && previousSidebarTab === nextSidebarTab) {
+  const isSameEditorState = !shouldOpenEditor || editorMainFieldMatches(rowId, languageCode);
+  if (
+    isSameSelection
+    && previousSidebarTab === nextSidebarTab
+    && isSameEditorState
+    && pendingSelectionOffset === null
+  ) {
     return;
   }
 
@@ -294,20 +361,40 @@ export async function setActiveEditorField(render, rowId, languageCode, options 
     activeRowId: rowId,
     activeLanguageCode: languageCode,
     sidebarTab: nextSidebarTab,
+    mainFieldEditor:
+      shouldOpenEditor
+        ? {
+          rowId,
+          languageCode,
+        }
+        : state.editorChapter.mainFieldEditor,
+    pendingSelection:
+      shouldOpenEditor && pendingSelectionOffset !== null
+        ? buildEditorPendingSelection(rowId, languageCode, pendingSelectionOffset)
+        : createEditorPendingSelectionState(),
   };
+  const shouldRenderBody =
+    shouldOpenEditor
+    && (!wasEditorOpen || !isSameSelection || pendingSelectionOffset !== null);
+  if (shouldRenderBody) {
+    renderTranslateBodyPreservingViewport(
+      render,
+      resolveEditorMainFieldViewportSnapshot(rowId, languageCode, options),
+    );
+  }
   if (state.editorChapter.sidebarTab === "comments") {
     openEditorRowCommentsFlow(render, rowId, languageCode);
     return;
   }
   if (state.editorChapter.sidebarTab === "translate") {
-    if (previousSidebarTab === "comments") {
+    if (previousSidebarTab === "comments" && !shouldRenderBody) {
       render?.({ scope: "translate-body" });
     }
     render?.({ scope: "translate-sidebar" });
     return;
   }
 
-  if (previousSidebarTab === "comments") {
+  if (previousSidebarTab === "comments" && !shouldRenderBody) {
     render?.({ scope: "translate-body" });
   }
   loadActiveEditorFieldHistoryFlow(render);
@@ -746,6 +833,10 @@ export function collapseEditorImageCaption(render, rowId, languageCode) {
 
 export function openEditorImageUrl(render, rowId, languageCode) {
   openEditorImageUrlFlow(render, rowId, languageCode);
+}
+
+export function closeEditorImageUrl(render, rowId, languageCode) {
+  closeEditorImageUrlFlow(render, rowId, languageCode);
 }
 
 export function updateEditorImageUrlDraft(nextValue) {

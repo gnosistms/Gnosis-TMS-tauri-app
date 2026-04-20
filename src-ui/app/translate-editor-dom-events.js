@@ -2,9 +2,15 @@ import { syncEditorRowTextareaHeight } from "./autosize.js";
 import { syncEditorVirtualizationRowLayout } from "./editor-virtualization.js";
 import { closestEventTarget } from "./event-target.js";
 import { listen } from "./runtime.js";
-import { primeTranslateInteractionAnchor, primeTranslateMainScrollTop } from "./scroll-state.js";
+import {
+  captureTranslateAnchorForRow,
+  primeTranslateInteractionAnchor,
+  primeTranslateMainScrollTop,
+} from "./scroll-state.js";
+import { captureTranslateViewport } from "./translate-viewport.js";
 import { state } from "./state.js";
 import {
+  collapseEditorMainField,
   collapseEditorImageCaption,
   collapseEmptyEditorFootnote,
   collapseEmptyEditorImageEditor,
@@ -79,7 +85,70 @@ function refocusEditorRowFieldAfterRender(rowId, languageCode) {
   });
 }
 
+function activeEditorControlRowId() {
+  const activeElement = document.activeElement;
+  if (!(activeElement instanceof Element)) {
+    return "";
+  }
+
+  const control = activeElement.closest(
+    "[data-editor-row-field], [data-editor-image-url-input], [data-editor-image-upload-dropzone]",
+  );
+  return control instanceof HTMLElement ? (control.dataset.rowId ?? "") : "";
+}
+
+function textOffsetFromDomPoint(container, node, offset) {
+  if (!(container instanceof HTMLElement) || !(node instanceof Node) || !container.contains(node)) {
+    return null;
+  }
+
+  const range = document.createRange();
+  range.selectNodeContents(container);
+  try {
+    range.setEnd(node, offset);
+  } catch {
+    return null;
+  }
+
+  return Math.max(0, Math.min(container.textContent?.length ?? 0, range.toString().length));
+}
+
+function displayFieldOffsetFromPoint(displayField, clientX, clientY) {
+  const displayText = displayField?.querySelector?.("[data-editor-display-text]");
+  if (!(displayField instanceof HTMLElement) || !(displayText instanceof HTMLElement)) {
+    return null;
+  }
+
+  if (typeof document.caretPositionFromPoint === "function") {
+    const caretPosition = document.caretPositionFromPoint(clientX, clientY);
+    const nextOffset = textOffsetFromDomPoint(
+      displayText,
+      caretPosition?.offsetNode ?? null,
+      caretPosition?.offset ?? 0,
+    );
+    if (Number.isInteger(nextOffset)) {
+      return nextOffset;
+    }
+  }
+
+  if (typeof document.caretRangeFromPoint === "function") {
+    const caretRange = document.caretRangeFromPoint(clientX, clientY);
+    const nextOffset = textOffsetFromDomPoint(
+      displayText,
+      caretRange?.startContainer ?? null,
+      caretRange?.startOffset ?? 0,
+    );
+    if (Number.isInteger(nextOffset)) {
+      return nextOffset;
+    }
+  }
+
+  return displayText.textContent?.length ?? 0;
+}
+
 export function registerTranslateEditorDomEvents(app, render) {
+  let pendingImageUrlCloseRequest = null;
+
   if (typeof listen === "function") {
     void listen(TAURI_DRAG_DROP_EVENT, (event) => {
       const droppedPaths = Array.isArray(event?.payload?.paths)
@@ -123,7 +192,7 @@ export function registerTranslateEditorDomEvents(app, render) {
   app.addEventListener("mousedown", (event) => {
     const button = closestEventTarget(
       event.target,
-      "[data-editor-row-text-style-button], [data-editor-footnote-button], [data-editor-image-button], [data-editor-image-caption-button], [data-editor-image-upload-dropzone], [data-editor-image-upload-close-button], [data-editor-language-image-remove-button], [data-action^=\"switch-editor-sidebar-tab:\"], [data-action^=\"run-editor-ai-translate:\"], [data-action=\"review-editor-text-now\"], [data-action=\"apply-editor-ai-review\"], [data-preview-search-nav-button]",
+      "[data-editor-row-text-style-button], [data-editor-footnote-button], [data-editor-image-button], [data-editor-image-caption-button], [data-editor-image-upload-dropzone], [data-editor-image-upload-close-button], [data-editor-image-url-close-button], [data-editor-language-image-remove-button], [data-action^=\"switch-editor-sidebar-tab:\"], [data-action^=\"run-editor-ai-translate:\"], [data-action=\"review-editor-text-now\"], [data-action=\"apply-editor-ai-review\"], [data-preview-search-nav-button]",
     );
     if (!button) {
       return;
@@ -137,12 +206,41 @@ export function registerTranslateEditorDomEvents(app, render) {
       return;
     }
 
+    const displayField = closestEventTarget(event.target, "[data-editor-display-field]");
+    if (displayField instanceof HTMLButtonElement) {
+      const rowId = displayField.dataset.rowId ?? "";
+      const languageCode = displayField.dataset.languageCode ?? "";
+      const previouslyFocusedRowId = activeEditorControlRowId();
+      if (previouslyFocusedRowId && previouslyFocusedRowId !== rowId) {
+        scheduleDirtyEditorRowScan(render, previouslyFocusedRowId);
+      }
+      primeTranslateInteractionAnchor(displayField);
+      primeTranslateMainScrollTop();
+      event.preventDefault();
+      void setActiveEditorField(render, rowId, languageCode, {
+        openEditor: true,
+        pendingSelectionOffset: displayFieldOffsetFromPoint(displayField, event.clientX, event.clientY),
+        target: displayField,
+        viewportSnapshot: captureTranslateViewport(displayField, {
+          preferPrimed: true,
+          expectedRowId: rowId,
+          fallbackAnchor: captureTranslateAnchorForRow(rowId, languageCode),
+        }),
+      });
+      return;
+    }
+
     const editorControlButton = closestEventTarget(
       event.target,
-      "[data-editor-row-text-style-button], [data-editor-footnote-button], [data-editor-image-button], [data-editor-image-caption-button], [data-editor-image-upload-close-button], [data-editor-language-image-remove-button], [data-action^=\"switch-editor-sidebar-tab:\"]",
+      "[data-editor-row-text-style-button], [data-editor-footnote-button], [data-editor-image-button], [data-editor-image-caption-button], [data-editor-image-upload-close-button], [data-editor-image-url-close-button], [data-editor-language-image-remove-button], [data-action^=\"switch-editor-sidebar-tab:\"]",
+    );
+    const imageOpenButton = closestEventTarget(
+      event.target,
+      '[data-action="open-editor-image-url"], [data-action="open-editor-image-upload"]',
     );
     const uploadDropzone = closestEventTarget(event.target, "[data-editor-image-upload-dropzone]");
     const uploadCloseButton = closestEventTarget(event.target, "[data-editor-image-upload-close-button]");
+    const imageUrlCloseButton = closestEventTarget(event.target, "[data-editor-image-url-close-button]");
     const previewSearchNavButton = closestEventTarget(event.target, "[data-preview-search-nav-button]");
     const aiTranslateButton = closestEventTarget(event.target, '[data-action^="run-editor-ai-translate:"]');
     const nextTextarea = closestEventTarget(event.target, "[data-editor-row-field]");
@@ -169,6 +267,15 @@ export function registerTranslateEditorDomEvents(app, render) {
       return;
     }
 
+    if (imageUrlCloseButton instanceof HTMLButtonElement) {
+      pendingImageUrlCloseRequest = {
+        rowId: imageUrlCloseButton.dataset.rowId ?? "",
+        languageCode: imageUrlCloseButton.dataset.languageCode ?? "",
+      };
+      event.preventDefault();
+      return;
+    }
+
     if (previewSearchNavButton instanceof HTMLButtonElement) {
       event.preventDefault();
       return;
@@ -176,6 +283,13 @@ export function registerTranslateEditorDomEvents(app, render) {
 
     if (aiTranslateButton instanceof HTMLButtonElement) {
       primeTranslateInteractionAnchor();
+      primeTranslateMainScrollTop();
+      event.preventDefault();
+      return;
+    }
+
+    if (imageOpenButton instanceof HTMLButtonElement) {
+      primeTranslateInteractionAnchor(imageOpenButton);
       primeTranslateMainScrollTop();
       event.preventDefault();
       return;
@@ -199,6 +313,29 @@ export function registerTranslateEditorDomEvents(app, render) {
   });
 
   app.addEventListener("click", (event) => {
+    const displayField = closestEventTarget(event.target, "[data-editor-display-field]");
+    if (displayField instanceof HTMLButtonElement) {
+      const rowId = displayField.dataset.rowId ?? "";
+      const languageCode = displayField.dataset.languageCode ?? "";
+      if (
+        state.editorChapter?.mainFieldEditor?.rowId === rowId
+        && state.editorChapter?.mainFieldEditor?.languageCode === languageCode
+      ) {
+        return;
+      }
+
+      event.preventDefault();
+      void setActiveEditorField(render, rowId, languageCode, {
+        openEditor: true,
+        pendingSelectionOffset: displayField.textContent?.length ?? 0,
+        target: displayField,
+        viewportSnapshot: captureTranslateViewport(displayField, {
+          fallbackAnchor: captureTranslateAnchorForRow(rowId, languageCode),
+        }),
+      });
+      return;
+    }
+
     const button = closestEventTarget(
       event.target,
       '[data-action="toggle-editor-reviewed"], [data-action="toggle-editor-please-check"]',
@@ -227,6 +364,22 @@ export function registerTranslateEditorDomEvents(app, render) {
     const rowId = control.dataset.rowId ?? "";
     const languageCode = control.dataset.languageCode ?? "";
     const contentKind = textarea?.dataset.contentKind ?? "";
+    if (
+      imageUrlInput instanceof HTMLInputElement
+      && pendingImageUrlCloseRequest?.rowId === rowId
+      && pendingImageUrlCloseRequest?.languageCode === languageCode
+    ) {
+      pendingImageUrlCloseRequest = null;
+      return;
+    }
+    const viewportSnapshot = captureTranslateViewport(control, {
+      fallbackAnchor: captureTranslateAnchorForRow(rowId, languageCode),
+    });
+    if (textarea instanceof HTMLTextAreaElement && contentKind === "") {
+      viewportSnapshot.anchor =
+        captureTranslateAnchorForRow(rowId, languageCode, { preferRow: true })
+        ?? viewportSnapshot.anchor;
+    }
     if (textarea instanceof HTMLTextAreaElement) {
       requestAnimationFrame(() => {
         syncEditorRowTextareaHeight(textarea);
@@ -254,6 +407,7 @@ export function registerTranslateEditorDomEvents(app, render) {
         return;
       }
 
+      collapseEditorMainField(render, rowId, languageCode, { viewportSnapshot });
       collapseEmptyEditorFootnote(render, rowId, languageCode);
       collapseEmptyEditorImageEditor(render, rowId, languageCode);
       void persistEditorImageUrlOnBlur(render, rowId, languageCode);

@@ -23,6 +23,7 @@ import {
   logEditorScrollDebug,
   readEditorScrollDebugEntries,
 } from "./app/editor-scroll-debug.js";
+import { measureEditorGlossaryAlignment } from "./app/editor-glossary-alignment-debug.js";
 import {
   syncEditorCommentDraftTextareaHeights,
   syncEditorRowTextareaHeights,
@@ -40,6 +41,7 @@ import {
   restoreFocusedInputState,
   shouldRestoreFocusedInputStateForScope,
 } from "./app/focused-input-state.js";
+import { buildEditorFieldSelector } from "./app/editor-utils.js";
 import {
   EDITOR_MODE_PREVIEW,
   normalizeEditorMode,
@@ -60,7 +62,11 @@ import {
   restoreRenderScrollSnapshot,
   restoreTranslateRowAnchor,
 } from "./app/scroll-state.js";
-import { hydratePersistentAppState, state } from "./app/state.js";
+import {
+  createEditorPendingSelectionState,
+  hydratePersistentAppState,
+  state,
+} from "./app/state.js";
 import { noteGlossaryBackgroundSyncScrollActivity } from "./app/glossary-background-sync.js";
 import {
   flushDirtyEditorRows,
@@ -138,6 +144,36 @@ function scrollActivePreviewSearchMatchIntoView(root = app) {
   });
 }
 
+function restorePendingEditorSelection(root = app) {
+  const pendingSelection = state.editorChapter?.pendingSelection;
+  const rowId =
+    typeof pendingSelection?.rowId === "string" && pendingSelection.rowId.trim()
+      ? pendingSelection.rowId.trim()
+      : "";
+  const languageCode =
+    typeof pendingSelection?.languageCode === "string" && pendingSelection.languageCode.trim()
+      ? pendingSelection.languageCode.trim()
+      : "";
+  const offset = Number.parseInt(String(pendingSelection?.offset ?? ""), 10);
+  if (!rowId || !languageCode || !Number.isInteger(offset) || offset < 0) {
+    return false;
+  }
+
+  const field = root.querySelector?.(buildEditorFieldSelector(rowId, languageCode));
+  state.editorChapter = {
+    ...state.editorChapter,
+    pendingSelection: createEditorPendingSelectionState(),
+  };
+  if (!(field instanceof HTMLTextAreaElement)) {
+    return false;
+  }
+
+  const boundedOffset = Math.max(0, Math.min(field.value.length, offset));
+  field.focus({ preventScroll: true });
+  field.setSelectionRange(boundedOffset, boundedOffset, "none");
+  return true;
+}
+
 function resolveTranslateRenderAnchor(options = {}) {
   const includeVisibleFallback = options?.includeVisibleFallback !== false;
   const pendingAnchor = readPendingTranslateAnchor();
@@ -206,6 +242,7 @@ function renderTranslateBodyOnly() {
     scheduleDirtyEditorRowScan(render, focusSnapshot.rowId);
   }
   syncEditorRowTextareaHeights(body);
+  restorePendingEditorSelection(body);
   scrollActivePreviewSearchMatchIntoView(body);
 }
 
@@ -309,6 +346,7 @@ function renderWithOptions(options = {}) {
     scheduleDirtyEditorRowScan(render, focusSnapshot.rowId);
   }
   syncEditorRowTextareaHeights(app);
+  restorePendingEditorSelection(app);
   syncEditorCommentDraftTextareaHeights(app);
   scrollActivePreviewSearchMatchIntoView(app);
   document.title = titles[state.screen] ?? "Gnosis TMS";
@@ -360,6 +398,10 @@ window.__gnosisDebug = {
   clearEditorScrollDebugEntries() {
     clearEditorScrollDebugEntries();
     return [];
+  },
+  async measureEditorGlossaryAlignment(options = {}) {
+    await bootstrapPromise.catch(() => undefined);
+    return measureEditorGlossaryAlignment(options);
   },
   async mountEditorFixture(options = {}) {
     await bootstrapPromise.catch(() => undefined);

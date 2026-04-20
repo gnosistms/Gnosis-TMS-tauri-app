@@ -341,6 +341,22 @@ function renderEditorLanguageImage(row, language) {
           placeholder="paste image url here"
           value="${escapeHtml(language.imageUrlDraft ?? "")}"
         />
+        <button
+          class="translation-language-panel__image-remove translation-language-panel__image-url-close"
+          type="button"
+          data-action="close-editor-image-url"
+          data-editor-image-url-close-button
+          data-row-id="${escapeHtml(row.id)}"
+          data-language-code="${escapeHtml(language.code)}"
+          ${tooltipAttributes("Close image URL", { side: "top" })}
+        >
+          <span class="translation-language-panel__image-remove-icon" aria-hidden="true">
+            <svg viewBox="0 0 12 12" focusable="false" aria-hidden="true">
+              <path d="M2 2 10 10" />
+              <path d="M10 2 2 10" />
+            </svg>
+          </span>
+        </button>
       </div>
     `;
   }
@@ -508,15 +524,77 @@ function renderEditorLanguageField(row, language) {
       : renderDisabledConflictField(language, textStyle);
   }
 
+  if (language.isTextEditorOpen !== true) {
+    const editorClassName =
+      `translation-language-panel__editor`
+      + `${language.isImageUrlEditorOpen === true || language.isImageUploadEditorOpen === true ? " translation-language-panel__editor--show-actions" : ""}`;
+    const staticFieldClassName =
+      `translation-language-panel__field-static`
+      + `${language.isAiTranslating ? " translation-language-panel__field-static--loading" : ""}`;
+    const staticFieldMarkup = language.isAiTranslating
+      ? `
+          <div
+            class="${staticFieldClassName}"
+            data-row-id="${escapeHtml(row.id)}"
+            data-language-code="${escapeHtml(language.code)}"
+            data-row-text-style="${escapeHtml(textStyle)}"
+            lang="${escapeHtml(language.code)}"
+            aria-busy="true"
+          ><span
+            class="translation-language-panel__field-static-text"
+            data-editor-display-text
+          >${escapeHtml(language.text)}</span></div>
+        `
+      : `
+          <button
+            class="${staticFieldClassName} translation-language-panel__field-static--editable"
+            type="button"
+            data-editor-display-field
+            data-row-id="${escapeHtml(row.id)}"
+            data-language-code="${escapeHtml(language.code)}"
+            data-row-text-style="${escapeHtml(textStyle)}"
+            lang="${escapeHtml(language.code)}"
+          ><span
+            class="translation-language-panel__field-static-text"
+            data-editor-display-text
+          >${escapeHtml(language.text)}</span></button>
+        `;
+    return `
+      <div
+        class="${editorClassName}"
+        data-editor-language-cluster
+        data-row-id="${escapeHtml(row.id)}"
+        data-language-code="${escapeHtml(language.code)}"
+      >
+        <div
+          class="translation-language-panel__field-stack translation-language-panel__field-stack--static"
+          data-editor-glossary-field-stack
+          data-row-id="${escapeHtml(row.id)}"
+          data-language-code="${escapeHtml(language.code)}"
+          data-row-text-style="${escapeHtml(textStyle)}"
+        >
+          <div
+            class="translation-language-panel__field-highlight translation-language-panel__search-highlight"
+            data-editor-search-highlight
+            lang="${escapeHtml(language.code)}"
+            aria-hidden="true"
+          ></div>
+          ${staticFieldMarkup}
+        </div>
+        ${language.hasVisibleFootnote ? renderEditorFootnoteField(row, language) : ""}
+        ${renderEditorLanguageImage(row, language)}
+        ${renderRowTextStyleButtons(row, language)}
+      </div>
+    `;
+  }
+
   const fieldClassName = `translation-language-panel__field${language.isAiTranslating ? " translation-language-panel__field--loading" : ""}`;
   const loadingAttributes = language.isAiTranslating
     ? ' readonly aria-busy="true"'
     : "";
-  const showHighlightLayers = language.isAiTranslating !== true;
-  const highlightStackAttribute = showHighlightLayers ? " data-editor-glossary-field-stack" : "";
   const editorClassName =
     `translation-language-panel__editor`
-    + `${language.isActive ? " translation-language-panel__editor--active" : ""}`
+    + `${language.isTextEditorOpen ? " translation-language-panel__editor--active" : ""}`
     + `${language.isImageUrlEditorOpen === true || language.isImageUploadEditorOpen === true ? " translation-language-panel__editor--show-actions" : ""}`;
 
   return `
@@ -528,27 +606,10 @@ function renderEditorLanguageField(row, language) {
     >
       <div
         class="translation-language-panel__field-stack"
-        ${highlightStackAttribute}
         data-row-id="${escapeHtml(row.id)}"
         data-language-code="${escapeHtml(language.code)}"
         data-row-text-style="${escapeHtml(textStyle)}"
       >
-        ${showHighlightLayers
-          ? `
-            <div
-              class="translation-language-panel__field-highlight translation-language-panel__search-highlight"
-              data-editor-search-highlight
-              lang="${escapeHtml(language.code)}"
-              aria-hidden="true"
-            ></div>
-            <div
-              class="translation-language-panel__field-highlight translation-language-panel__glossary-highlight"
-              data-editor-glossary-highlight
-              lang="${escapeHtml(language.code)}"
-              aria-hidden="true"
-            ></div>
-          `
-          : ""}
         <textarea
           class="${fieldClassName}"
           data-editor-row-field
