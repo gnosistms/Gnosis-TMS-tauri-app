@@ -1518,7 +1518,7 @@ test.describe("editor regressions", () => {
     expect(styles.markSkipInk).toBe("none");
   });
 
-  test("source glossary mismatch marks render in red and return after leaving edit mode", async ({ page }) => {
+  test("source glossary mismatch marks render in red and stay visible while editing", async ({ page }) => {
     await mountEditorFixture(page, {
       rowCount: 1,
       glossaryTerms: [
@@ -1566,10 +1566,133 @@ test.describe("editor regressions", () => {
 
     const sourceField = await activateMainEditorField(page, rowId, languageCode);
     await expect(sourceField).toBeVisible();
-    await expect(page.locator(markSelector)).toHaveCount(0);
+    const activeMarkSelector =
+      `[data-editor-row-card][data-row-id="${rowId}"] [data-editor-language-cluster][data-language-code="${languageCode}"] [data-editor-glossary-highlight] .translation-language-panel__glossary-mark.glossary-match-error`;
+
+    await expect(page.locator(activeMarkSelector)).toHaveCount(1);
 
     await page.locator("[data-editor-search-input]").click();
     await expect(page.locator(markSelector)).toHaveCount(1);
+  });
+
+  test("ai translation refreshes target glossary underlines after inserting translation text", async ({ page }) => {
+    await page.addInitScript(() => {
+      globalThis.__gnosisMockTauriHandlers = {
+        load_ai_provider_secret() {
+          return "openai-key";
+        },
+        async run_ai_translation() {
+          return {
+            translatedText: "alpha translated by ai",
+          };
+        },
+      };
+    });
+
+    await mountEditorFixture(page, {
+      rowCount: 1,
+      glossary: true,
+      fieldsByRowId: {
+        "fixture-row-0001": {
+          es: "alpha source text",
+          vi: "",
+        },
+      },
+      aiActionConfig: {
+        detailedConfiguration: false,
+        unified: {
+          providerId: "openai",
+          modelId: "gpt-5.4",
+        },
+      },
+    }, { path: "/?platform=windows", mockTauri: true });
+
+    const rowId = "fixture-row-0001";
+    const languageCode = "vi";
+    const targetField = await activateMainEditorField(page, rowId, languageCode);
+    await expect(targetField).toBeVisible();
+
+    await page.evaluate(async () => {
+      await window.__gnosisDebug.runEditorAiTranslate("translate1");
+    });
+
+    const targetDisplayField = page.locator(
+      `[data-editor-display-field][data-row-id="${rowId}"][data-language-code="${languageCode}"]`,
+    );
+    await expect(targetDisplayField).toHaveText("alpha translated by ai");
+
+    const targetMarkSelector =
+      `[data-editor-row-card][data-row-id="${rowId}"] [data-editor-display-field][data-language-code="${languageCode}"] [data-editor-glossary-mark]`;
+    await expect.poll(async () => {
+      return await page.locator(targetMarkSelector).count();
+    }).toBe(1);
+    await expect(page.locator(targetMarkSelector)).toHaveText("alpha");
+  });
+
+  test("history restore refreshes target glossary underlines while the target field stays open", async ({ page }) => {
+    await page.addInitScript(() => {
+      globalThis.__gnosisMockTauriHandlers = {
+        load_gtms_editor_field_history() {
+          return {
+            entries: [{
+              commitSha: "history-alpha",
+              authorName: "Mock Backend",
+              committedAt: "2026-04-13T00:00:00.000Z",
+              message: "Restore glossary version",
+              operationType: "editor-update",
+              statusNote: null,
+              aiModel: null,
+              plainText: "alpha restored from history",
+              footnote: "",
+              textStyle: "paragraph",
+              reviewed: false,
+              pleaseCheck: false,
+            }],
+          };
+        },
+        restore_gtms_editor_field_from_history() {
+          return {
+            plainText: "alpha restored from history",
+            footnote: "",
+            imageCaption: "",
+            image: null,
+            textStyle: "paragraph",
+            reviewed: false,
+            pleaseCheck: false,
+            sourceWordCounts: {},
+          };
+        },
+      };
+    });
+
+    await mountEditorFixture(page, {
+      rowCount: 1,
+      glossary: true,
+      fieldsByRowId: {
+        "fixture-row-0001": {
+          es: "alpha source text",
+          vi: "plain target text",
+        },
+      },
+    }, { path: "/?platform=windows", mockTauri: true });
+
+    const rowId = "fixture-row-0001";
+    const languageCode = "vi";
+    const targetField = await activateMainEditorField(page, rowId, languageCode);
+    await expect(targetField).toHaveValue("plain target text");
+
+    await page.evaluate(async () => {
+      await window.__gnosisDebug.restoreEditorFieldHistory("history-alpha");
+    });
+
+    await expect(targetField).toHaveValue("alpha restored from history");
+
+    const targetMarkSelector =
+      `[data-editor-row-card][data-row-id="${rowId}"] [data-editor-language-cluster][data-language-code="${languageCode}"] [data-editor-glossary-highlight] [data-editor-glossary-mark]`;
+    await expect.poll(async () => {
+      return await page.locator(targetMarkSelector).count();
+    }).toBe(1);
+    await expect(page.locator(targetMarkSelector)).toHaveText("alpha");
   });
 
   test("derived glossary highlights and tooltip payloads appear after ai translation prepares a row glossary", async ({ page }) => {

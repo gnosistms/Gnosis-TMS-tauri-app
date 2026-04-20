@@ -607,6 +607,9 @@ function renderEditorLanguageField(row, language) {
   const loadingAttributes = language.isAiTranslating
     ? ' readonly aria-busy="true"'
     : "";
+  const editingFieldStackClassName =
+    `translation-language-panel__field-stack`
+    + `${glossaryHighlightHtml ? " translation-language-panel__field-stack--glossary" : ""}`;
   const editorClassName =
     `translation-language-panel__editor`
     + `${language.isTextEditorOpen ? " translation-language-panel__editor--active" : ""}`
@@ -620,11 +623,25 @@ function renderEditorLanguageField(row, language) {
       data-language-code="${escapeHtml(language.code)}"
     >
       <div
-        class="translation-language-panel__field-stack"
+        class="${editingFieldStackClassName}"
+        data-editor-glossary-field-stack
         data-row-id="${escapeHtml(row.id)}"
         data-language-code="${escapeHtml(language.code)}"
         data-row-text-style="${escapeHtml(textStyle)}"
+        data-ai-translating="${language.isAiTranslating ? "true" : "false"}"
       >
+        <div
+          class="translation-language-panel__field-highlight translation-language-panel__search-highlight"
+          data-editor-search-highlight
+          lang="${escapeHtml(language.code)}"
+          aria-hidden="true"
+        ></div>
+        <div
+          class="translation-language-panel__field-highlight translation-language-panel__glossary-highlight"
+          data-editor-glossary-highlight
+          lang="${escapeHtml(language.code)}"
+          aria-hidden="true"
+        >${glossaryHighlightHtml}</div>
         <textarea
           class="${fieldClassName}"
           data-editor-row-field
@@ -757,12 +774,9 @@ export function renderTranslationContentRow(
                         ? ""
                         : renderEditorLanguageField(row, {
                           ...language,
-                          glossaryHighlightHtml:
-                            language.isTextEditorOpen === true
-                              ? ""
-                              : renderableEditorGlossaryHighlightHtml(
-                                glossaryHighlightMap.get(language.code) ?? null,
-                              ),
+                          glossaryHighlightHtml: renderableEditorGlossaryHighlightHtml(
+                            glossaryHighlightMap.get(language.code) ?? null,
+                          ),
                         })
                     }
                   </section>

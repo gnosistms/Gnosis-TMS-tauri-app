@@ -71,6 +71,8 @@ import { noteGlossaryBackgroundSyncScrollActivity } from "./app/glossary-backgro
 import {
   flushDirtyEditorRows,
   noteEditorBackgroundSyncScrollActivity,
+  restoreEditorFieldHistory,
+  runEditorAiTranslate,
   scheduleDirtyEditorRowScan,
   toggleEditorReplaceEnabled,
 } from "./app/translate-flow.js";
@@ -435,6 +437,14 @@ window.__gnosisDebug = {
   },
   setEditorReplaceEnabled(enabled) {
     toggleEditorReplaceEnabled(render, enabled === true);
+    return readEditorRegressionSnapshot(state);
+  },
+  async runEditorAiTranslate(actionId = "translate1") {
+    await runEditorAiTranslate(render, actionId);
+    return readEditorRegressionSnapshot(state);
+  },
+  async restoreEditorFieldHistory(commitSha) {
+    await restoreEditorFieldHistory(render, commitSha);
     return readEditorRegressionSnapshot(state);
   },
   setEditorRowSyncState(rowId, updates = {}) {
