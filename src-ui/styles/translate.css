@@ -1570,10 +1570,10 @@
   padding: 0;
 }
 
-.translation-language-panel__glossary-highlight .translation-language-panel__glossary-mark.glossary-match-error {
-  color: transparent;
-  -webkit-text-fill-color: transparent;
-  text-decoration-color: #d94735;
+.translation-language-panel__glossary-mark.glossary-match-error {
+  color: rgba(var(--please-check-accent-rgb), 0.92);
+  -webkit-text-fill-color: rgba(var(--please-check-accent-rgb), 0.92);
+  text-decoration-color: rgba(var(--please-check-accent-rgb), 0.78);
 }
 
 .history-empty {

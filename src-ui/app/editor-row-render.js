@@ -572,6 +572,7 @@ function renderEditorLanguageField(row, language) {
           data-row-id="${escapeHtml(row.id)}"
           data-language-code="${escapeHtml(language.code)}"
           data-row-text-style="${escapeHtml(textStyle)}"
+          data-ai-translating="${language.isAiTranslating ? "true" : "false"}"
         >
           <div
             class="translation-language-panel__field-highlight translation-language-panel__search-highlight"

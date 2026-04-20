@@ -275,17 +275,22 @@ function captureEditorAiTranslateAnchor(context) {
   }
 
   return (
-    captureTranslateAnchorForRow(context.rowId, context.targetLanguageCode)
-    ?? captureTranslateAnchorForRow(context.rowId, context.sourceLanguageCode)
+    captureTranslateAnchorForRow(context.rowId, context.targetLanguageCode, { preferRow: true })
+    ?? captureTranslateAnchorForRow(context.rowId, context.sourceLanguageCode, { preferRow: true })
   );
 }
 
 function captureEditorAiTranslateViewport(context, options = {}) {
-  return captureTranslateViewport(null, {
+  const stableAnchor = captureEditorAiTranslateAnchor(context);
+  const viewportSnapshot = captureTranslateViewport(null, {
     preferPrimed: options.preferPrimed === true,
     expectedRowId: context?.rowId ?? "",
-    fallbackAnchor: captureEditorAiTranslateAnchor(context),
+    fallbackAnchor: stableAnchor,
   });
+  if (stableAnchor?.rowId) {
+    viewportSnapshot.anchor = stableAnchor;
+  }
+  return viewportSnapshot;
 }
 
 function renderEditorAiTranslateBody(render, viewportSnapshot = null) {

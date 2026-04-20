@@ -284,6 +284,7 @@ function applyEditorTextHighlightLayersToRowCard(
       return;
     }
 
+    const isAiTranslating = stack.dataset.aiTranslating === "true";
     const languageCode = stack.dataset.languageCode ?? "";
     const contentKind = stack.dataset.contentKind === "footnote" ? "footnote" : "field";
     const glossaryHighlight = glossaryHighlightMap instanceof Map
@@ -292,8 +293,8 @@ function applyEditorTextHighlightLayersToRowCard(
     const searchHighlight = searchHighlightMap instanceof Map
       ? (searchHighlightMap.get(buildEditorSearchHighlightKey(languageCode, contentKind)) ?? null)
       : null;
-    const glossaryHighlightHtml = renderableHighlightHtml(glossaryHighlight);
-    const searchHighlightHtml = renderableHighlightHtml(searchHighlight);
+    const glossaryHighlightHtml = isAiTranslating ? "" : renderableHighlightHtml(glossaryHighlight);
+    const searchHighlightHtml = isAiTranslating ? "" : renderableHighlightHtml(searchHighlight);
     const hasGlossaryHighlight = glossaryHighlightHtml.length > 0;
     const hasSearchHighlight = searchHighlightHtml.length > 0;
     const hasRenderableHighlight = hasGlossaryHighlight || hasSearchHighlight;

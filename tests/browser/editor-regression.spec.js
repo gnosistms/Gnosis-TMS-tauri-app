@@ -793,6 +793,12 @@ test.describe("editor regressions", () => {
   test("translate action shows a spinner while translation is running", async ({ page }) => {
     await mountEditorFixture(page, {
       rowCount: 6,
+      glossaryTerms: [
+        {
+          sourceTerms: ["alpha 0001 source text"],
+          targetTerms: ["alpha 0001 target text"],
+        },
+      ],
       aiActionConfig: {
         detailedConfiguration: false,
         unified: {
@@ -885,6 +891,12 @@ test.describe("editor regressions", () => {
 
     await mountEditorFixture(page, {
       rowCount: 6,
+      glossaryTerms: [
+        {
+          sourceTerms: ["alpha 0001 source text"],
+          targetTerms: ["alpha 0001 target text"],
+        },
+      ],
       aiActionConfig: {
         detailedConfiguration: false,
         unified: {
@@ -914,6 +926,81 @@ test.describe("editor regressions", () => {
     await expect(
       page.locator('[data-editor-language-cluster][data-row-id="fixture-row-0001"][data-language-code="vi"] [data-editor-display-text]'),
     ).toHaveText("Da xong");
+  });
+
+  test("starting ai translation on an existing translated row keeps the scroll position stable", async ({ page }) => {
+    await page.addInitScript(() => {
+      let releaseTranslation = () => {};
+      const translationGate = new Promise((resolve) => {
+        releaseTranslation = resolve;
+      });
+
+      globalThis.__releaseMockTranslation = releaseTranslation;
+      globalThis.__gnosisMockTauriHandlers = {
+        load_ai_provider_secret() {
+          return "openai-key";
+        },
+        async run_ai_translation() {
+          await translationGate;
+          return {
+            translatedText: "Updated translation",
+          };
+        },
+      };
+    });
+
+    await mountEditorFixture(page, {
+      rowCount: 18,
+      glossaryTerms: [
+        {
+          sourceTerms: ["alpha 0010 source text"],
+          targetTerms: ["alpha 0010 target text"],
+        },
+      ],
+      aiActionConfig: {
+        detailedConfiguration: false,
+        unified: {
+          providerId: "openai",
+          modelId: "gpt-5.4",
+        },
+      },
+    }, { mockTauri: true });
+
+    await page.locator('[data-action="switch-editor-sidebar-tab:translate"]').click();
+
+    const rowId = "fixture-row-0010";
+    const languageCode = "vi";
+    await scrollTranslateRowNearTop(page, rowId);
+    const activeField = await activateMainEditorField(page, rowId, languageCode);
+    await expect(activeField).toBeVisible();
+    await activeField.evaluate((element) => {
+      element.focus();
+      element.selectionStart = element.value.length;
+      element.selectionEnd = element.value.length;
+    });
+
+    const beforeScrollTop = await readTranslateScrollTop(page);
+    const translateButton = page.locator('[data-action="run-editor-ai-translate:translate1"]');
+    await translateButton.click();
+
+    await expect(translateButton).toHaveAttribute("aria-busy", "true");
+    await expect(
+      page.locator(`[data-editor-row-field][data-row-id="${rowId}"][data-language-code="${languageCode}"]:not([data-content-kind])`),
+    ).toHaveCount(0);
+    await expect(
+      page.locator(`[data-editor-language-cluster][data-row-id="${rowId}"][data-language-code="${languageCode}"] [data-editor-display-text]`),
+    ).toHaveText("Translating...");
+    await expect.poll(async () => {
+      return Math.abs((await readTranslateScrollTop(page)) - beforeScrollTop);
+    }).toBeLessThan(4);
+
+    await page.evaluate(() => {
+      window.__releaseMockTranslation?.();
+    });
+
+    await expect(
+      page.locator(`[data-editor-language-cluster][data-row-id="${rowId}"][data-language-code="${languageCode}"] [data-editor-display-text]`),
+    ).toHaveText("Updated translation");
   });
 
   test("mounting the editor fixture renders two translate actions in detailed AI settings mode", async ({ page }) => {
@@ -1343,6 +1430,60 @@ test.describe("editor regressions", () => {
     expect(styles.markOverflowWrap).toBe(styles.fieldOverflowWrap);
     expect(styles.markVerticalAlign).toBe("baseline");
     expect(styles.markSkipInk).toBe("none");
+  });
+
+  test("source glossary mismatch marks render in red and return after leaving edit mode", async ({ page }) => {
+    await mountEditorFixture(page, {
+      rowCount: 1,
+      glossaryTerms: [
+        {
+          sourceTerms: ["meditacion"],
+          targetTerms: ["thien dinh"],
+        },
+      ],
+      fieldsByRowId: {
+        "fixture-row-0001": {
+          es: "Practica de meditacion",
+          vi: "Thuc hanh",
+        },
+      },
+    }, { path: "/?platform=windows" });
+
+    const rowId = "fixture-row-0001";
+    const languageCode = "es";
+    const markSelector =
+      `[data-editor-row-card][data-row-id="${rowId}"] [data-editor-display-field][data-language-code="${languageCode}"] .translation-language-panel__glossary-mark.glossary-match-error`;
+
+    await expect.poll(async () => {
+      return await page.locator(markSelector).count();
+    }).toBe(1);
+
+    const styles = await page.evaluate((selector) => {
+      const mark = document.querySelector(selector);
+      if (!(mark instanceof HTMLElement)) {
+        return null;
+      }
+
+      const markStyle = getComputedStyle(mark);
+      return {
+        color: markStyle.color,
+        textFillColor: markStyle.webkitTextFillColor,
+        textDecorationColor: markStyle.textDecorationColor,
+      };
+    }, markSelector);
+
+    expect(styles).toEqual({
+      color: "rgba(190, 61, 31, 0.92)",
+      textFillColor: "rgba(190, 61, 31, 0.92)",
+      textDecorationColor: "rgba(190, 61, 31, 0.78)",
+    });
+
+    const sourceField = await activateMainEditorField(page, rowId, languageCode);
+    await expect(sourceField).toBeVisible();
+    await expect(page.locator(markSelector)).toHaveCount(0);
+
+    await page.locator("[data-editor-search-input]").click();
+    await expect(page.locator(markSelector)).toHaveCount(1);
   });
 
   test("Windows fixture glossary highlights survive delete show hide and restore", async ({ page }) => {
