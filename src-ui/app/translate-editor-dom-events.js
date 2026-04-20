@@ -287,22 +287,6 @@ export function registerTranslateEditorDomEvents(app, render) {
       return;
     }
 
-    const captionInput = closestEventTarget(event.target, "[data-editor-image-caption-input]");
-    if (captionInput instanceof HTMLTextAreaElement) {
-      const key = typeof event.key === "string" ? event.key.toLowerCase() : "";
-      if (
-        key === "enter"
-        && event.shiftKey
-        && !event.metaKey
-        && !event.ctrlKey
-        && !event.altKey
-      ) {
-        event.preventDefault();
-        captionInput.blur();
-      }
-      return;
-    }
-
     const input = closestEventTarget(event.target, "[data-editor-image-url-input]");
     if (!(input instanceof HTMLInputElement)) {
       return;

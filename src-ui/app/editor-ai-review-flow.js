@@ -15,15 +15,15 @@ import {
 } from "./ai-settings-flow.js";
 import { ensureSelectedTeamAiProviderReady } from "./team-ai-flow.js";
 import { rowHasFieldChanges } from "./editor-row-persistence-model.js";
-import {
-  captureTranslateAnchorForRow,
-  queueTranslateRowAnchor,
-  restoreTranslateRowAnchor,
-} from "./scroll-state.js";
+import { captureTranslateAnchorForRow } from "./scroll-state.js";
 import { findEditorRowById, hasActiveEditorField } from "./editor-utils.js";
 import { selectedProjectsTeamInstallationId } from "./project-context.js";
-import { invoke, waitForNextPaint } from "./runtime.js";
+import { invoke } from "./runtime.js";
 import { state } from "./state.js";
+import {
+  captureTranslateViewport,
+  renderTranslateBodyPreservingViewport,
+} from "./translate-viewport.js";
 
 function createAiReviewRequestKey(chapterId, rowId, languageCode) {
   const uniqueSuffix =
@@ -235,24 +235,18 @@ export async function applyEditorAiReview(render, operations = {}) {
   state.editorChapter = applyEditorAiReviewApplying(state.editorChapter);
   render?.({ scope: "translate-sidebar" });
 
-  const reviewAnchorSnapshot = captureTranslateAnchorForRow(
-    context.rowId,
-    context.languageCode,
-  );
-  if (reviewAnchorSnapshot?.rowId) {
-    queueTranslateRowAnchor(reviewAnchorSnapshot);
-  }
+  const reviewViewportSnapshot = captureTranslateViewport(null, {
+    fallbackAnchor: captureTranslateAnchorForRow(
+      context.rowId,
+      context.languageCode,
+    ),
+  });
   updateEditorRowFieldValue(
     context.rowId,
     context.languageCode,
     visibleAiReview.suggestedText,
   );
-  render?.({ scope: "translate-body" });
-  if (reviewAnchorSnapshot?.rowId) {
-    void waitForNextPaint().then(() => {
-      restoreTranslateRowAnchor(reviewAnchorSnapshot);
-    });
-  }
+  renderTranslateBodyPreservingViewport(render, reviewViewportSnapshot);
 
   await persistEditorRowOnBlur(render, context.rowId);
 

@@ -2,13 +2,15 @@ import { handleInputEvent } from "./input-handlers.js";
 import { handleNavigation, refreshCurrentScreen } from "./navigation.js";
 import { createActionDispatcher } from "./action-dispatcher.js";
 import { checkForAppUpdate } from "./updater-flow.js";
-import { isMacPlatform, listen, waitForNextPaint } from "./runtime.js";
+import { isMacPlatform, listen } from "./runtime.js";
 import {
   primeTranslateInteractionAnchor,
   primeTranslateMainScrollTop,
-  resolveTranslateRowAnchor,
-  restoreTranslateRowAnchor,
 } from "./scroll-state.js";
+import {
+  captureTranslateViewport,
+  restoreTranslateViewportAfterPaints,
+} from "./translate-viewport.js";
 
 const SYNC_WITH_SERVER_EVENT = "sync-with-server";
 const CHECK_FOR_UPDATES_EVENT = "check-for-updates";
@@ -87,32 +89,6 @@ function focusEditorSearchInput(selectContents = false) {
     input.select();
   }
   return true;
-}
-
-function captureTranslateMainScrollTop() {
-  const container = document.querySelector(".translate-main-scroll");
-  return typeof HTMLElement === "function" && container instanceof HTMLElement
-    ? container.scrollTop
-    : null;
-}
-
-function restoreTranslateViewport(viewportSnapshot) {
-  if (!viewportSnapshot) {
-    return;
-  }
-
-  const container = document.querySelector(".translate-main-scroll");
-  if (
-    typeof HTMLElement === "function"
-    && container instanceof HTMLElement
-    && Number.isFinite(viewportSnapshot.scrollTop)
-  ) {
-    container.scrollTop = viewportSnapshot.scrollTop;
-  }
-
-  if (viewportSnapshot.anchor?.rowId) {
-    restoreTranslateRowAnchor(viewportSnapshot.anchor);
-  }
 }
 
 function focusEditorFieldFromGlossaryMark(event) {
@@ -671,19 +647,10 @@ export function registerAppEvents(render) {
     }
 
     if (shouldBlurActiveEditorField(event)) {
-      const viewportSnapshot = {
-        anchor: resolveTranslateRowAnchor(event.target),
-        scrollTop: captureTranslateMainScrollTop(),
-      };
+      const viewportSnapshot = captureTranslateViewport(event.target);
       event.preventDefault();
       event.target.blur();
-      restoreTranslateViewport(viewportSnapshot);
-      void waitForNextPaint().then(() => {
-        restoreTranslateViewport(viewportSnapshot);
-        void waitForNextPaint().then(() => {
-          restoreTranslateViewport(viewportSnapshot);
-        });
-      });
+      restoreTranslateViewportAfterPaints(viewportSnapshot);
       return;
     }
 

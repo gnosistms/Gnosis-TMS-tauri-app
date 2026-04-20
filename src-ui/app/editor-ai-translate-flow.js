@@ -25,17 +25,17 @@ import {
   buildEditorDerivedGlossaryModel,
 } from "./editor-glossary-highlighting.js";
 import {
-  consumePrimedTranslateInteractionAnchor,
-  consumePrimedTranslateMainScrollTop,
   captureTranslateAnchorForRow,
-  queueTranslateRowAnchor,
-  restoreTranslateRowAnchor,
 } from "./scroll-state.js";
 import { selectedProjectsTeamInstallationId } from "./project-context.js";
-import { invoke, waitForNextPaint } from "./runtime.js";
+import { invoke } from "./runtime.js";
 import { showNoticeBadge } from "./status-feedback.js";
 import { findEditorRowById } from "./editor-utils.js";
 import { state } from "./state.js";
+import {
+  captureTranslateViewport,
+  renderTranslateBodyPreservingViewport,
+} from "./translate-viewport.js";
 
 function createAiTranslateRequestKey(
   chapterId,
@@ -280,63 +280,16 @@ function captureEditorAiTranslateAnchor(context) {
   );
 }
 
-function isHtmlElement(value) {
-  return typeof HTMLElement === "function" && value instanceof HTMLElement;
-}
-
-function captureEditorAiTranslateScrollTop() {
-  const container = document.querySelector(".translate-main-scroll");
-  return isHtmlElement(container) ? container.scrollTop : null;
-}
-
 function captureEditorAiTranslateViewport(context, options = {}) {
-  const preferPrimed = options.preferPrimed === true;
-  const primedAnchor = preferPrimed
-    ? consumePrimedTranslateInteractionAnchor(context?.rowId ?? "")
-    : null;
-  const primedScrollTop = preferPrimed ? consumePrimedTranslateMainScrollTop() : null;
-
-  return {
-    anchor:
-      primedAnchor?.rowId
-        ? primedAnchor
-        : captureEditorAiTranslateAnchor(context),
-    scrollTop:
-      Number.isFinite(primedScrollTop)
-        ? primedScrollTop
-        : captureEditorAiTranslateScrollTop(),
-  };
-}
-
-function restoreEditorAiTranslateViewport(viewportSnapshot) {
-  if (!viewportSnapshot) {
-    return;
-  }
-
-  const container = document.querySelector(".translate-main-scroll");
-  if (isHtmlElement(container) && Number.isFinite(viewportSnapshot.scrollTop)) {
-    container.scrollTop = viewportSnapshot.scrollTop;
-  }
-
-  if (viewportSnapshot.anchor?.rowId) {
-    restoreTranslateRowAnchor(viewportSnapshot.anchor);
-  }
+  return captureTranslateViewport(null, {
+    preferPrimed: options.preferPrimed === true,
+    expectedRowId: context?.rowId ?? "",
+    fallbackAnchor: captureEditorAiTranslateAnchor(context),
+  });
 }
 
 function renderEditorAiTranslateBody(render, viewportSnapshot = null) {
-  if (viewportSnapshot?.anchor?.rowId) {
-    queueTranslateRowAnchor(viewportSnapshot.anchor);
-  }
-
-  render?.({ scope: "translate-body" });
-
-  restoreEditorAiTranslateViewport(viewportSnapshot);
-  void waitForNextPaint().then(() => {
-    restoreEditorAiTranslateViewport(viewportSnapshot);
-    void waitForNextPaint().then(() => {
-      restoreEditorAiTranslateViewport(viewportSnapshot);
-    });
-  });
+  renderTranslateBodyPreservingViewport(render, viewportSnapshot);
 }
 
 function createEditorAiTranslateConfigRender(render) {

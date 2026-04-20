@@ -9,7 +9,6 @@ import { logEditorScrollDebug } from "./editor-scroll-debug.js";
 import {
   captureTranslateAnchorForRow,
   captureVisibleTranslateLocation,
-  restoreTranslateRowAnchor,
 } from "./scroll-state.js";
 import {
   createEditorImageEditorState,
@@ -20,6 +19,10 @@ import {
 import { showNoticeBadge } from "./status-feedback.js";
 import { editorImageEditorCanCollapse, findEditorRowById } from "./editor-utils.js";
 import { ensureEditorRowReadyForWrite, reloadEditorRowFromDisk } from "./editor-row-sync-flow.js";
+import {
+  captureTranslateViewport,
+  renderTranslateBodyPreservingViewport,
+} from "./translate-viewport.js";
 
 const IMAGE_FILE_ACCEPT =
   ".jpg,.jpeg,.png,.gif,.svg,.webp,.avif,.bmp,.ico,.apng,image/jpeg,image/png,image/gif,image/svg+xml,image/webp,image/avif,image/bmp,image/x-icon";
@@ -398,7 +401,7 @@ async function applyImageCommandPayload(render, rowId, languageCode, payload, op
   if (payload?.status === "deleted") {
     await reloadEditorRowFromDisk(render, rowId, { suppressNotice: false });
     state.editorChapter = resetImageEditor(state.editorChapter);
-    render?.({ scope: "translate-body" });
+    renderTranslateBodyPreservingViewport(render, resolvedOptions.viewportSnapshot ?? null);
     return;
   }
 
@@ -411,7 +414,7 @@ async function applyImageCommandPayload(render, rowId, languageCode, payload, op
     chapterBaseCommitSha: nextChapterBaseCommitSha(payload, state.editorChapter),
   };
   closeImagePreviewIfTarget(rowId, languageCode);
-  render?.({ scope: "translate-body" });
+  renderTranslateBodyPreservingViewport(render, resolvedOptions.viewportSnapshot ?? null);
 
   if (
     typeof loadActiveEditorFieldHistory === "function"
@@ -431,7 +434,9 @@ export function openEditorImageUrl(render, rowId, languageCode) {
     return;
   }
 
-  const anchorSnapshot = currentImageEditorAnchor(rowId, languageCode);
+  const viewportSnapshot = captureTranslateViewport(null, {
+    fallbackAnchor: currentImageEditorAnchor(rowId, languageCode),
+  });
   const existingEditor = imageEditorMatches(state.editorChapter, rowId, languageCode)
     ? state.editorChapter.imageEditor
     : null;
@@ -443,14 +448,7 @@ export function openEditorImageUrl(render, rowId, languageCode) {
     invalidUrl: false,
     status: "idle",
   });
-  render?.({ scope: "translate-body" });
-  void waitForNextPaint().then(() => {
-    if (!imageEditorMatches(state.editorChapter, rowId, languageCode, "url")) {
-      return;
-    }
-
-    restoreTranslateRowAnchor(anchorSnapshot);
-  });
+  renderTranslateBodyPreservingViewport(render, viewportSnapshot);
   focusEditorImageControl(
     `[data-editor-image-url-input][data-row-id="${CSS.escape(rowId)}"][data-language-code="${CSS.escape(languageCode)}"]`,
     rowId,
@@ -473,13 +471,13 @@ export function updateEditorImageUrlDraft(nextValue) {
   };
 }
 
-function closeEditorImageInput(render) {
+function closeEditorImageInput(render, viewportSnapshot = null) {
   if (!state.editorChapter?.chapterId) {
     return;
   }
 
   state.editorChapter = resetImageEditor(state.editorChapter);
-  render?.({ scope: "translate-body" });
+  renderTranslateBodyPreservingViewport(render, viewportSnapshot);
 }
 
 export async function persistEditorImageUrlOnBlur(render, rowId, languageCode, operations = {}, options = {}) {
@@ -487,11 +485,14 @@ export async function persistEditorImageUrlOnBlur(render, rowId, languageCode, o
     return;
   }
 
+  const viewportSnapshot = captureTranslateViewport(null, {
+    fallbackAnchor: currentImageEditorAnchor(rowId, languageCode),
+  });
   const draft = String(state.editorChapter.imageEditor?.urlDraft ?? "").trim();
   const closeInput = options?.closeInput === true;
   if (!draft) {
     if (closeInput) {
-      closeEditorImageInput(render);
+      closeEditorImageInput(render, viewportSnapshot);
     }
     return;
   }
@@ -512,7 +513,7 @@ export async function persistEditorImageUrlOnBlur(render, rowId, languageCode, o
     invalidUrl: false,
     status: closeInput ? "submitting" : "saving",
   });
-  render?.({ scope: "translate-body" });
+  renderTranslateBodyPreservingViewport(render, viewportSnapshot);
 
   try {
     await validateImageUrlLoadable(draft);
@@ -529,7 +530,7 @@ export async function persistEditorImageUrlOnBlur(render, rowId, languageCode, o
         invalidUrl: true,
         status: "idle",
       });
-      render?.({ scope: "translate-body" });
+      renderTranslateBodyPreservingViewport(render, viewportSnapshot);
     }
     return;
   }
@@ -548,7 +549,7 @@ export async function persistEditorImageUrlOnBlur(render, rowId, languageCode, o
         invalidUrl: false,
         status: "idle",
       });
-      render?.({ scope: "translate-body" });
+      renderTranslateBodyPreservingViewport(render, viewportSnapshot);
     }
     return;
   }
@@ -564,7 +565,7 @@ export async function persistEditorImageUrlOnBlur(render, rowId, languageCode, o
       invalidUrl: false,
       status: "idle",
     });
-    render?.({ scope: "translate-body" });
+    renderTranslateBodyPreservingViewport(render, viewportSnapshot);
     return;
   }
 
@@ -593,8 +594,11 @@ export async function persistEditorImageUrlOnBlur(render, rowId, languageCode, o
       payload,
       operations,
       payload?.status === "conflict"
-        ? { notice: "The image changed on disk. Reloaded the latest version." }
-        : null,
+        ? {
+          notice: "The image changed on disk. Reloaded the latest version.",
+          viewportSnapshot,
+        }
+        : { viewportSnapshot },
     );
   } catch (error) {
     if (
@@ -609,7 +613,7 @@ export async function persistEditorImageUrlOnBlur(render, rowId, languageCode, o
         invalidUrl: false,
         status: "idle",
       });
-      render?.({ scope: "translate-body" });
+      renderTranslateBodyPreservingViewport(render, viewportSnapshot);
     }
     const message = error instanceof Error ? error.message : String(error);
     showNoticeBadge(message || "The image URL could not be saved.", render);
