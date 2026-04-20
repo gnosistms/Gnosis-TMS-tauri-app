@@ -173,6 +173,22 @@ test("serializeEditorPreviewHtml uses semantic tags and repo-relative uploaded i
   assert.doesNotMatch(html, /class=/);
 });
 
+test("serializeEditorPreviewHtml uses centered HTML for centered plain text", () => {
+  const blocks = buildEditorPreviewDocument([{
+    rowId: "row-1",
+    lifecycleState: "active",
+    textStyle: "centered",
+    fields: { vi: "Centered line" },
+    footnotes: {},
+    imageCaptions: {},
+    images: {},
+  }], "vi");
+
+  const html = serializeEditorPreviewHtml(blocks);
+
+  assert.match(html, /<center><p>Centered line<\/p><\/center>/);
+});
+
 test("preview mode constant remains stable", () => {
   assert.equal(EDITOR_MODE_PREVIEW, "preview");
 });

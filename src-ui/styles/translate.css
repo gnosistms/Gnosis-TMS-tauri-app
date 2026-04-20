@@ -148,7 +148,11 @@
 .preview-search-nav {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
+.preview-search-nav__button {
   flex: 0 0 auto;
 }
 
@@ -341,6 +345,10 @@
 
 .translate-preview__block--indented {
   padding-left: 32px;
+}
+
+.translate-preview__block--centered {
+  text-align: center;
 }
 
 .translate-preview__image-block {
@@ -1399,6 +1407,12 @@
 .translation-language-panel__field-stack:not(.translation-language-panel__field-stack--footnote)[data-row-text-style="quote"] .translation-language-panel__field-highlight,
 .translation-language-panel__field-static[data-row-text-style="quote"] {
   font-style: italic;
+}
+
+.translation-language-panel__field-stack:not(.translation-language-panel__field-stack--footnote)[data-row-text-style="centered"] .translation-language-panel__field,
+.translation-language-panel__field-stack:not(.translation-language-panel__field-stack--footnote)[data-row-text-style="centered"] .translation-language-panel__field-highlight,
+.translation-language-panel__field-static[data-row-text-style="centered"] {
+  text-align: center;
 }
 
 .translation-language-panel__glossary-mark {

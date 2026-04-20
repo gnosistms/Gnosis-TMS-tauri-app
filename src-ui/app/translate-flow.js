@@ -185,6 +185,48 @@ function renderPreviewMode(render, options = {}) {
   }
 }
 
+function currentPreviewSearchInputValue() {
+  const input = document.querySelector("[data-preview-search-input]");
+  return input instanceof HTMLInputElement ? input.value : null;
+}
+
+function currentPreviewSearchMatchIndex() {
+  const activeMatch = document.querySelector(
+    ".translate-preview__search-match.is-active[data-preview-search-match-index]",
+  );
+  if (!(activeMatch instanceof HTMLElement)) {
+    return null;
+  }
+
+  const index = Number.parseInt(activeMatch.dataset.previewSearchMatchIndex ?? "", 10);
+  return Number.isInteger(index) && index >= 0 ? index : null;
+}
+
+function focusPreviewSearchInput(selection = null, value = null) {
+  requestAnimationFrame(() => {
+    const input = document.querySelector("[data-preview-search-input]");
+    if (!(input instanceof HTMLInputElement) || input.disabled) {
+      return;
+    }
+
+    if (typeof value === "string" && input.value !== value) {
+      input.value = value;
+    }
+    input.focus({ preventScroll: true });
+    if (
+      selection
+      && typeof selection.selectionStart === "number"
+      && typeof selection.selectionEnd === "number"
+    ) {
+      input.setSelectionRange(
+        selection.selectionStart,
+        selection.selectionEnd,
+        selection.selectionDirection ?? "none",
+      );
+    }
+  });
+}
+
 export function openEditorReplaceUndoModal(commitSha) {
   openEditorReplaceUndoModalFlow(commitSha);
 }
@@ -544,9 +586,32 @@ export function moveEditorPreviewSearch(render, direction = "next") {
     return;
   }
 
+  const activePreviewSearchInput = document.activeElement instanceof HTMLInputElement
+    && document.activeElement.matches("[data-preview-search-input]")
+    ? document.activeElement
+    : null;
+  const selection = activePreviewSearchInput
+    ? {
+      selectionStart: activePreviewSearchInput.selectionStart,
+      selectionEnd: activePreviewSearchInput.selectionEnd,
+      selectionDirection: activePreviewSearchInput.selectionDirection,
+    }
+    : null;
+  const liveQuery = currentPreviewSearchInputValue();
+  const liveMatchIndex = currentPreviewSearchMatchIndex();
+  const currentSearchState = normalizedPreviewSearchState(state.editorChapter.previewSearch);
+  const nextSearchBaseState =
+    (typeof liveQuery === "string" && liveQuery !== currentSearchState.query)
+    || (typeof liveMatchIndex === "number" && liveMatchIndex !== currentSearchState.activeMatchIndex)
+      ? previewSearchStateWithTotal(state.editorChapter, {
+        ...currentSearchState,
+        ...(typeof liveQuery === "string" ? { query: liveQuery } : {}),
+        ...(typeof liveMatchIndex === "number" ? { activeMatchIndex: liveMatchIndex } : {}),
+      })
+      : currentSearchState;
   const nextPreviewSearch = stepEditorPreviewSearchState(
     currentPreviewBlocks(),
-    normalizedPreviewSearchState(state.editorChapter.previewSearch),
+    nextSearchBaseState,
     direction,
   );
   state.editorChapter = {
@@ -554,6 +619,7 @@ export function moveEditorPreviewSearch(render, direction = "next") {
     previewSearch: nextPreviewSearch,
   };
   renderPreviewMode(render);
+  focusPreviewSearchInput(selection, nextPreviewSearch.query);
 }
 
 export async function copyEditorPreviewHtml(render) {

@@ -3,6 +3,7 @@ export const EDITOR_ROW_TEXT_STYLE_HEADING1 = "heading1";
 export const EDITOR_ROW_TEXT_STYLE_HEADING2 = "heading2";
 export const EDITOR_ROW_TEXT_STYLE_QUOTE = "quote";
 export const EDITOR_ROW_TEXT_STYLE_INDENTED = "indented";
+export const EDITOR_ROW_TEXT_STYLE_CENTERED = "centered";
 
 export const EDITOR_ROW_TEXT_STYLE_OPTIONS = [
   {
@@ -30,6 +31,11 @@ export const EDITOR_ROW_TEXT_STYLE_OPTIONS = [
     label: "I",
     tooltip: "Indented text",
   },
+  {
+    value: EDITOR_ROW_TEXT_STYLE_CENTERED,
+    label: "C",
+    tooltip: "Centered text",
+  },
 ];
 
 export function editorRowTextStyleLabel(value) {
@@ -54,6 +60,10 @@ export function normalizeEditorRowTextStyle(value) {
     case "i":
     case EDITOR_ROW_TEXT_STYLE_INDENTED:
       return EDITOR_ROW_TEXT_STYLE_INDENTED;
+    case "c":
+    case "center":
+    case EDITOR_ROW_TEXT_STYLE_CENTERED:
+      return EDITOR_ROW_TEXT_STYLE_CENTERED;
     default:
       return EDITOR_ROW_TEXT_STYLE_PARAGRAPH;
   }

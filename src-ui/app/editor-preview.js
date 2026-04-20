@@ -1,5 +1,6 @@
 import { normalizeEditorFieldImage } from "./editor-images.js";
 import {
+  EDITOR_ROW_TEXT_STYLE_CENTERED,
   EDITOR_ROW_TEXT_STYLE_HEADING1,
   EDITOR_ROW_TEXT_STYLE_HEADING2,
   EDITOR_ROW_TEXT_STYLE_INDENTED,
@@ -255,6 +256,8 @@ function previewTextVariantForStyle(textStyle) {
       return "quote";
     case EDITOR_ROW_TEXT_STYLE_INDENTED:
       return "indented";
+    case EDITOR_ROW_TEXT_STYLE_CENTERED:
+      return "centered";
     default:
       return "paragraph";
   }
@@ -344,6 +347,9 @@ function serializePreviewTextBlock(block) {
   }
   if (normalizedStyle === EDITOR_ROW_TEXT_STYLE_INDENTED) {
     return `<p style="padding-left: 2em;">${serializePreviewText(block.text)}</p>`;
+  }
+  if (normalizedStyle === EDITOR_ROW_TEXT_STYLE_CENTERED) {
+    return `<center><p>${serializePreviewText(block.text)}</p></center>`;
   }
 
   return `<p>${serializePreviewText(block.text)}</p>`;

@@ -280,20 +280,26 @@ function renderPreviewSearchNavigation(previewSearchState) {
     <div class="preview-search-nav" aria-label="Preview search navigation">
       <button
         type="button"
-        class="search-field__action"
+        class="translation-row-text-style-button preview-search-nav__button"
+        data-preview-search-nav-button
         data-action="step-editor-preview-search:previous"
         aria-label="Previous match"
         ${!hasMatches ? "disabled" : ""}
         ${tooltipAttributes("Previous")}
-      >↑</button>
+      >
+        <span class="translation-row-text-style-button__label" aria-hidden="true">↑</span>
+      </button>
       <button
         type="button"
-        class="search-field__action"
+        class="translation-row-text-style-button preview-search-nav__button"
+        data-preview-search-nav-button
         data-action="step-editor-preview-search:next"
         aria-label="Next match"
         ${!hasMatches ? "disabled" : ""}
         ${tooltipAttributes("Next")}
-      >↓</button>
+      >
+        <span class="translation-row-text-style-button__label" aria-hidden="true">↓</span>
+      </button>
     </div>
   `;
 }
@@ -346,6 +352,7 @@ export function renderPreviewToolbar({
             type="button"
             class="select-pill select-pill--toolbar select-pill--preview-action"
             data-action="copy-editor-preview-html"
+            ${tooltipAttributes("Copy the entire document shown below for pasting into other apps.", { align: "end", side: "bottom" })}
           >
             <span class="select-pill__value">Copy HTML</span>
           </button>

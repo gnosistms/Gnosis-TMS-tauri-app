@@ -332,6 +332,10 @@ function handleEditorSearchInput(event, render) {
 }
 
 function handlePreviewSearchInput(event, render) {
+  if (event.type !== "input") {
+    return false;
+  }
+
   const input = event.target.closest("[data-preview-search-input]");
   if (!input) {
     return false;
