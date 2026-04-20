@@ -712,7 +712,8 @@ export function registerAppEvents(render) {
 
     if (shouldBlurActiveEditorField(event)) {
       const viewportSnapshot = captureTranslateViewport(event.target);
-      if ((event.target.dataset.contentKind ?? "") === "") {
+      const contentKind = event.target.dataset.contentKind ?? "";
+      if (contentKind === "" || contentKind === "image-caption") {
         viewportSnapshot.anchor =
           captureTranslateAnchorForRow(
             event.target.dataset.rowId ?? "",

@@ -730,6 +730,22 @@ async function activateMainEditorField(page, rowId, languageCode) {
   return textarea;
 }
 
+async function activateImageCaptionEditor(page, rowId, languageCode) {
+  const textarea = page.locator(
+    `[data-editor-row-field][data-row-id="${rowId}"][data-language-code="${languageCode}"][data-content-kind="image-caption"]`,
+  );
+  if (await textarea.count()) {
+    return textarea;
+  }
+
+  const button = page.locator(
+    `[data-action="open-editor-image-caption"][data-row-id="${rowId}"][data-language-code="${languageCode}"]`,
+  );
+  await clickLocatorCenter(page, button);
+  await expect(textarea).toBeVisible();
+  return textarea;
+}
+
 async function clickLocatorCenter(page, locator) {
   await locator.scrollIntoViewIfNeeded();
   await expect(locator).toBeVisible();
@@ -2672,6 +2688,48 @@ test.describe("editor regressions", () => {
     await page.keyboard.press("Shift+Enter");
 
     await expect(displayField).toBeVisible();
+    await expect.poll(async () => {
+      return Math.abs((await readTranslateScrollTop(page)) - beforeScrollTop);
+    }).toBeLessThan(4);
+  });
+
+  test("saving an image caption with shift-enter keeps the scroll position stable", async ({ page }) => {
+    const rowId = "fixture-row-0010";
+    const languageCode = "vi";
+    await mountEditorFixture(page, {
+      rowCount: 18,
+      imagesByRowId: {
+        [rowId]: {
+          [languageCode]: {
+            kind: "url",
+            url: `https://example.com/${rowId}-${languageCode}.png`,
+          },
+        },
+      },
+    }, { mockTauri: true });
+
+    const displayField = page.locator(
+      `[data-editor-display-field][data-row-id="${rowId}"][data-language-code="${languageCode}"]`,
+    );
+    await displayField.scrollIntoViewIfNeeded();
+
+    const captionField = await activateImageCaptionEditor(page, rowId, languageCode);
+    await expect(captionField).toBeVisible();
+    await captionField.fill("Stable caption");
+    await captionField.evaluate((element) => {
+      element.focus();
+      element.selectionStart = element.value.length;
+      element.selectionEnd = element.value.length;
+    });
+
+    const beforeScrollTop = await readTranslateScrollTop(page);
+    await page.keyboard.press("Shift+Enter");
+
+    await expect(
+      page.locator(
+        `[data-editor-image-caption-button][data-row-id="${rowId}"][data-language-code="${languageCode}"] .translation-language-panel__image-caption-text`,
+      ),
+    ).toHaveText("Stable caption");
     await expect.poll(async () => {
       return Math.abs((await readTranslateScrollTop(page)) - beforeScrollTop);
     }).toBeLessThan(4);
