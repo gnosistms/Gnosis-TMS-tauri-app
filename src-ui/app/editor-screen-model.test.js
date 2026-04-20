@@ -194,6 +194,35 @@ test("buildEditorScreenViewModel marks the translated alternate language field w
   }
 });
 
+test("buildEditorScreenViewModel keeps the translating placeholder visible while ai translation is applying over existing target text", () => {
+  const snapshot = snapshotSharedState();
+
+  try {
+    applyEditorRegressionFixture(state, {
+      rowCount: 1,
+      aiTranslate: {
+        translate1: {
+          status: "applying",
+          rowId: "fixture-row-0001",
+          sourceLanguageCode: "es",
+          targetLanguageCode: "vi",
+          requestKey: "request-applying-1",
+          sourceText: "alpha 0001 source text",
+        },
+      },
+    });
+
+    const viewModel = buildEditorScreenViewModel(state);
+    const firstRow = viewModel.contentRows.find((row) => row?.id === "fixture-row-0001");
+    const targetSection = firstRow?.sections.find((section) => section.code === "vi");
+
+    assert.equal(targetSection?.text, "Translating...");
+    assert.equal(targetSection?.isAiTranslating, true);
+  } finally {
+    restoreSharedState(snapshot);
+  }
+});
+
 test("buildEditorScreenViewModel rebuilds section footnote visibility when the footnote editor opens", () => {
   const snapshot = snapshotSharedState();
 

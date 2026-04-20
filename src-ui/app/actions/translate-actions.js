@@ -1,6 +1,9 @@
 import { actionSuffix } from "../action-helpers.js";
 import { waitForNextPaint } from "../runtime.js";
-import { captureTranslateRowAnchor, restoreTranslateRowAnchor } from "../scroll-state.js";
+import {
+  captureTranslateRowAnchor,
+  restoreTranslateRowAnchor,
+} from "../scroll-state.js";
 import {
   cancelEditorConflictResolutionModal,
   cancelEditorUnreviewAllModal,
@@ -205,6 +208,7 @@ export function createTranslateActions(render) {
       const button = event?.target instanceof Element
         ? event.target.closest("[data-row-id][data-language-code]")
         : null;
+      dismissActiveIdleEditorImageUpload(render);
       const rowId = button?.dataset.rowId ?? null;
       const languageCode = button?.dataset.languageCode ?? null;
       openEditorFootnote(render, rowId, languageCode);
@@ -215,6 +219,7 @@ export function createTranslateActions(render) {
       const button = event?.target instanceof Element
         ? event.target.closest("[data-row-id][data-language-code]")
         : null;
+      dismissActiveIdleEditorImageUpload(render);
       const rowId = button?.dataset.rowId ?? null;
       const languageCode = button?.dataset.languageCode ?? null;
       openEditorImageCaption(render, rowId, languageCode);

@@ -61,6 +61,7 @@ globalThis.document = {
 const {
   captureFocusedInputState,
   restoreFocusedInputState,
+  shouldRestoreFocusedInputStateForScope,
 } = await import("./focused-input-state.js");
 
 function createEditorTextarea({ rowId, languageCode, contentKind = null } = {}) {
@@ -139,4 +140,42 @@ test("restoreFocusedInputState restores focus to the image-caption field instead
     end: 4,
     direction: "backward",
   }]);
+});
+
+test("shouldRestoreFocusedInputStateForScope skips editor-row-field focus restore for sidebar and header renders", () => {
+  const editorFieldSnapshot = {
+    kind: "editor-row-field",
+    selector: '[data-editor-row-field][data-row-id="row-1"][data-language-code="vi"]',
+    rowId: "row-1",
+    languageCode: "vi",
+    contentKind: "field",
+    selectionStart: 0,
+    selectionEnd: 0,
+    selectionDirection: "none",
+  };
+
+  assert.equal(
+    shouldRestoreFocusedInputStateForScope(editorFieldSnapshot, "translate-sidebar"),
+    false,
+  );
+  assert.equal(
+    shouldRestoreFocusedInputStateForScope(editorFieldSnapshot, "translate-header"),
+    false,
+  );
+  assert.equal(
+    shouldRestoreFocusedInputStateForScope(editorFieldSnapshot, "translate-body"),
+    true,
+  );
+  assert.equal(
+    shouldRestoreFocusedInputStateForScope(editorFieldSnapshot, "full"),
+    true,
+  );
+  assert.equal(
+    shouldRestoreFocusedInputStateForScope({
+      kind: "generic",
+      selector: "[data-editor-search-input]",
+    }, "translate-sidebar"),
+    true,
+  );
+  assert.equal(shouldRestoreFocusedInputStateForScope(null, "translate-sidebar"), false);
 });

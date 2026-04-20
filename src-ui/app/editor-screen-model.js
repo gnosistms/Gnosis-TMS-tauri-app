@@ -243,7 +243,7 @@ function resolveActiveEditorAiTranslateLoadingTexts(editorChapter, rows, sourceC
   );
   for (const actionState of Object.values(normalizeEditorAiTranslateState(editorChapter?.aiTranslate))) {
     if (
-      actionState.status !== "loading"
+      (actionState.status !== "loading" && actionState.status !== "applying")
       || !actionState.rowId
       || !actionState.targetLanguageCode
       || actionState.sourceLanguageCode !== sourceCode

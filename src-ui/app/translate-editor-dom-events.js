@@ -2,6 +2,7 @@ import { syncEditorRowTextareaHeight } from "./autosize.js";
 import { syncEditorVirtualizationRowLayout } from "./editor-virtualization.js";
 import { closestEventTarget } from "./event-target.js";
 import { listen } from "./runtime.js";
+import { primeTranslateInteractionAnchor, primeTranslateMainScrollTop } from "./scroll-state.js";
 import { state } from "./state.js";
 import {
   collapseEditorImageCaption,
@@ -122,7 +123,7 @@ export function registerTranslateEditorDomEvents(app, render) {
   app.addEventListener("mousedown", (event) => {
     const button = closestEventTarget(
       event.target,
-      "[data-editor-row-text-style-button], [data-editor-footnote-button], [data-editor-image-button], [data-editor-image-caption-button], [data-editor-image-upload-dropzone], [data-editor-image-upload-close-button], [data-editor-language-image-remove-button], [data-action^=\"switch-editor-sidebar-tab:\"], [data-preview-search-nav-button]",
+      "[data-editor-row-text-style-button], [data-editor-footnote-button], [data-editor-image-button], [data-editor-image-caption-button], [data-editor-image-upload-dropzone], [data-editor-image-upload-close-button], [data-editor-language-image-remove-button], [data-action^=\"switch-editor-sidebar-tab:\"], [data-action^=\"run-editor-ai-translate:\"], [data-action=\"review-editor-text-now\"], [data-action=\"apply-editor-ai-review\"], [data-preview-search-nav-button]",
     );
     if (!button) {
       return;
@@ -136,13 +137,20 @@ export function registerTranslateEditorDomEvents(app, render) {
       return;
     }
 
+    const editorControlButton = closestEventTarget(
+      event.target,
+      "[data-editor-row-text-style-button], [data-editor-footnote-button], [data-editor-image-button], [data-editor-image-caption-button], [data-editor-image-upload-close-button], [data-editor-language-image-remove-button], [data-action^=\"switch-editor-sidebar-tab:\"]",
+    );
     const uploadDropzone = closestEventTarget(event.target, "[data-editor-image-upload-dropzone]");
     const uploadCloseButton = closestEventTarget(event.target, "[data-editor-image-upload-close-button]");
     const previewSearchNavButton = closestEventTarget(event.target, "[data-preview-search-nav-button]");
+    const aiTranslateButton = closestEventTarget(event.target, '[data-action^="run-editor-ai-translate:"]');
     const nextTextarea = closestEventTarget(event.target, "[data-editor-row-field]");
     const dismissedUploadEditor =
-      !(uploadDropzone instanceof HTMLButtonElement)
+      !(editorControlButton instanceof HTMLButtonElement)
+      && !(uploadDropzone instanceof HTMLButtonElement)
       && !(uploadCloseButton instanceof HTMLButtonElement)
+      && !(aiTranslateButton instanceof HTMLButtonElement)
       && !(previewSearchNavButton instanceof HTMLButtonElement)
       && dismissActiveIdleEditorImageUpload(render);
     if (dismissedUploadEditor && nextTextarea instanceof HTMLTextAreaElement) {
@@ -162,6 +170,13 @@ export function registerTranslateEditorDomEvents(app, render) {
     }
 
     if (previewSearchNavButton instanceof HTMLButtonElement) {
+      event.preventDefault();
+      return;
+    }
+
+    if (aiTranslateButton instanceof HTMLButtonElement) {
+      primeTranslateInteractionAnchor();
+      primeTranslateMainScrollTop();
       event.preventDefault();
       return;
     }

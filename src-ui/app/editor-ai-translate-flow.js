@@ -24,8 +24,15 @@ import {
   buildEditorAiTranslationGlossaryHints,
   buildEditorDerivedGlossaryModel,
 } from "./editor-glossary-highlighting.js";
+import {
+  consumePrimedTranslateInteractionAnchor,
+  consumePrimedTranslateMainScrollTop,
+  captureTranslateAnchorForRow,
+  queueTranslateRowAnchor,
+  restoreTranslateRowAnchor,
+} from "./scroll-state.js";
 import { selectedProjectsTeamInstallationId } from "./project-context.js";
-import { invoke } from "./runtime.js";
+import { invoke, waitForNextPaint } from "./runtime.js";
 import { showNoticeBadge } from "./status-feedback.js";
 import { findEditorRowById } from "./editor-utils.js";
 import { state } from "./state.js";
@@ -262,7 +269,96 @@ function activeEditorTranslateContext(chapterState = state.editorChapter) {
   };
 }
 
-function failEditorAiTranslate(render, actionId, context, message) {
+function captureEditorAiTranslateAnchor(context) {
+  if (!context) {
+    return null;
+  }
+
+  return (
+    captureTranslateAnchorForRow(context.rowId, context.targetLanguageCode)
+    ?? captureTranslateAnchorForRow(context.rowId, context.sourceLanguageCode)
+  );
+}
+
+function isHtmlElement(value) {
+  return typeof HTMLElement === "function" && value instanceof HTMLElement;
+}
+
+function captureEditorAiTranslateScrollTop() {
+  const container = document.querySelector(".translate-main-scroll");
+  return isHtmlElement(container) ? container.scrollTop : null;
+}
+
+function captureEditorAiTranslateViewport(context, options = {}) {
+  const preferPrimed = options.preferPrimed === true;
+  const primedAnchor = preferPrimed
+    ? consumePrimedTranslateInteractionAnchor(context?.rowId ?? "")
+    : null;
+  const primedScrollTop = preferPrimed ? consumePrimedTranslateMainScrollTop() : null;
+
+  return {
+    anchor:
+      primedAnchor?.rowId
+        ? primedAnchor
+        : captureEditorAiTranslateAnchor(context),
+    scrollTop:
+      Number.isFinite(primedScrollTop)
+        ? primedScrollTop
+        : captureEditorAiTranslateScrollTop(),
+  };
+}
+
+function restoreEditorAiTranslateViewport(viewportSnapshot) {
+  if (!viewportSnapshot) {
+    return;
+  }
+
+  const container = document.querySelector(".translate-main-scroll");
+  if (isHtmlElement(container) && Number.isFinite(viewportSnapshot.scrollTop)) {
+    container.scrollTop = viewportSnapshot.scrollTop;
+  }
+
+  if (viewportSnapshot.anchor?.rowId) {
+    restoreTranslateRowAnchor(viewportSnapshot.anchor);
+  }
+}
+
+function renderEditorAiTranslateBody(render, viewportSnapshot = null) {
+  if (viewportSnapshot?.anchor?.rowId) {
+    queueTranslateRowAnchor(viewportSnapshot.anchor);
+  }
+
+  render?.({ scope: "translate-body" });
+
+  restoreEditorAiTranslateViewport(viewportSnapshot);
+  void waitForNextPaint().then(() => {
+    restoreEditorAiTranslateViewport(viewportSnapshot);
+    void waitForNextPaint().then(() => {
+      restoreEditorAiTranslateViewport(viewportSnapshot);
+    });
+  });
+}
+
+function createEditorAiTranslateConfigRender(render) {
+  return (options = null) => {
+    if (!render) {
+      return;
+    }
+
+    if (
+      options?.scope === "translate-body"
+      || options?.scope === "translate-header"
+      || options?.scope === "translate-sidebar"
+    ) {
+      render(options);
+      return;
+    }
+
+    render({ scope: "translate-sidebar" });
+  };
+}
+
+function failEditorAiTranslate(render, actionId, context, message, options = {}) {
   const requestKey = createAiTranslateRequestKey(
     context.chapterId,
     context.rowId,
@@ -281,6 +377,9 @@ function failEditorAiTranslate(render, actionId, context, message) {
     message,
   );
   render?.({ scope: "translate-sidebar" });
+  if (options.rerenderBody === true) {
+    renderEditorAiTranslateBody(render, captureEditorAiTranslateViewport(context));
+  }
 }
 
 export async function runEditorAiTranslate(render, actionId, operations = {}) {
@@ -331,6 +430,7 @@ export async function runEditorAiTranslate(render, actionId, operations = {}) {
     return;
   }
 
+  const configRender = createEditorAiTranslateConfigRender(render);
   const requestKey = createAiTranslateRequestKey(
     context.chapterId,
     context.rowId,
@@ -347,10 +447,14 @@ export async function runEditorAiTranslate(render, actionId, operations = {}) {
     requestKey,
     context.sourceText,
   );
-  render?.();
+  const loadingViewportSnapshot = captureEditorAiTranslateViewport(context, {
+    preferPrimed: true,
+  });
+  render?.({ scope: "translate-sidebar" });
+  renderEditorAiTranslateBody(render, loadingViewportSnapshot);
 
   try {
-    await ensureSharedAiActionConfigurationLoaded(render);
+    await ensureSharedAiActionConfigurationLoaded(configRender);
   } catch {
     // Keep the current local selection and let the downstream key/model checks
     // surface the actionable error.
@@ -363,12 +467,13 @@ export async function runEditorAiTranslate(render, actionId, operations = {}) {
       actionId,
       context,
       `Select a model for ${AI_ACTION_LABELS[actionId]} on the AI Settings page first.`,
+      { rerenderBody: true },
     );
     return;
   }
 
   try {
-    const ensureKeyResult = await ensureSelectedTeamAiProviderReady(render, providerId);
+    const ensureKeyResult = await ensureSelectedTeamAiProviderReady(configRender, providerId);
     if (!ensureKeyResult?.ok) {
       state.editorChapter = clearEditorAiTranslateAction(state.editorChapter, actionId);
       openAiMissingKeyModal(providerId);
@@ -381,6 +486,7 @@ export async function runEditorAiTranslate(render, actionId, operations = {}) {
       actionId,
       context,
       error instanceof Error ? error.message : String(error),
+      { rerenderBody: true },
     );
     return;
   }
@@ -411,7 +517,7 @@ export async function runEditorAiTranslate(render, actionId, operations = {}) {
             matcherModel: null,
           },
         );
-        render?.({ scope: "translate-body" });
+        renderEditorAiTranslateBody(render, captureEditorAiTranslateViewport(context));
 
         const payload = await invoke("prepare_editor_ai_translated_glossary", {
           request: withSelectedInstallation({
@@ -442,7 +548,8 @@ export async function runEditorAiTranslate(render, actionId, operations = {}) {
 
         if (!latestEditorTranslateSourceTextMatches(context)) {
           state.editorChapter = clearEditorAiTranslateAction(state.editorChapter, actionId);
-          render?.();
+          render?.({ scope: "translate-sidebar" });
+          renderEditorAiTranslateBody(render, captureEditorAiTranslateViewport(context));
           return;
         }
 
@@ -460,7 +567,7 @@ export async function runEditorAiTranslate(render, actionId, operations = {}) {
           derivedEntry,
         );
         retainedDerivedEntry = derivedEntry;
-        render?.({ scope: "translate-body" });
+        renderEditorAiTranslateBody(render, captureEditorAiTranslateViewport(context));
       }
 
       glossaryHints = buildEditorAiTranslationGlossaryHints(
@@ -501,7 +608,8 @@ export async function runEditorAiTranslate(render, actionId, operations = {}) {
     const latestRow = findEditorRowById(context.rowId, state.editorChapter);
     if ((latestRow?.fields?.[context.sourceLanguageCode] ?? "") !== context.sourceText) {
       state.editorChapter = clearEditorAiTranslateAction(state.editorChapter, actionId);
-      render?.();
+      render?.({ scope: "translate-sidebar" });
+      renderEditorAiTranslateBody(render, captureEditorAiTranslateViewport(context));
       return;
     }
 
@@ -516,12 +624,13 @@ export async function runEditorAiTranslate(render, actionId, operations = {}) {
     );
     render?.({ scope: "translate-sidebar" });
 
+    const applyViewportSnapshot = captureEditorAiTranslateViewport(context);
     updateEditorRowFieldValue(
       context.rowId,
       context.targetLanguageCode,
       typeof payload?.translatedText === "string" ? payload.translatedText : "",
     );
-    render?.({ scope: "translate-body" });
+    renderEditorAiTranslateBody(render, applyViewportSnapshot);
 
     await persistEditorRowOnBlur(render, context.rowId, {
       commitMetadata: {

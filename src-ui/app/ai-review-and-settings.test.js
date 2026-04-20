@@ -441,6 +441,107 @@ test("runEditorAiTranslate enters loading state before provider readiness resolv
   assert.equal(state.editorChapter.rows[0].persistedFields.vi, "Xin chao");
 });
 
+test("runEditorAiTranslate keeps first-run team AI setup renders scoped to the editor panes", async () => {
+  installTranslateFixture();
+  installSelectedTeam({ canDelete: false });
+  state.aiSettings = {
+    ...state.aiSettings,
+    teamShared: createTeamAiSharedState(),
+    actionConfig: {
+      ...state.aiSettings.actionConfig,
+      unified: {
+        providerId: "gemini",
+        modelId: "gemini-3-flash-preview",
+      },
+    },
+  };
+
+  const render = createSpy();
+  const providerCacheReady = createDeferred();
+  invokeHandler = async (command, payload = {}) => {
+    if (command === "load_team_ai_settings") {
+      return {
+        schemaVersion: 1,
+        updatedAt: "2026-04-16T12:00:00.000Z",
+        updatedBy: "owner",
+        actionPreferences: {
+          detailedConfiguration: false,
+          unified: {
+            providerId: "openai",
+            modelId: "gpt-5.4-mini",
+          },
+          actions: {},
+        },
+      };
+    }
+    if (command === "load_team_ai_secrets_metadata") {
+      return {
+        schemaVersion: 1,
+        updatedAt: "2026-04-16T12:00:00.000Z",
+        updatedBy: "owner",
+        providers: {
+          openai: {
+            configured: true,
+            keyVersion: 5,
+            algorithm: "rsa-oaep-sha256-v1",
+          },
+          gemini: null,
+          claude: null,
+          deepseek: null,
+        },
+      };
+    }
+    if (command === "load_ai_provider_secret") {
+      assert.equal(payload.installationId, 42);
+      return null;
+    }
+    if (command === "load_team_ai_provider_cache") {
+      return providerCacheReady.promise;
+    }
+    if (command === "run_ai_translation") {
+      return {
+        translatedText: "Xin chao",
+      };
+    }
+
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  const translationPromise = runEditorAiTranslate(render, "translate1", {
+    updateEditorRowFieldValue(rowId, languageCode, nextValue) {
+      const row = state.editorChapter.rows.find((entry) => entry.rowId === rowId);
+      row.fields[languageCode] = nextValue;
+      row.saveStatus = "dirty";
+    },
+    async persistEditorRowOnBlur(_render, rowId) {
+      const row = state.editorChapter.rows.find((entry) => entry.rowId === rowId);
+      row.persistedFields = { ...row.fields };
+      row.saveStatus = "idle";
+    },
+  });
+
+  await Promise.resolve();
+  await Promise.resolve();
+  await Promise.resolve();
+
+  const startupRenderCalls = render.calls.slice();
+  assert.equal(state.editorChapter.aiTranslate.translate1.status, "loading");
+  assert.equal(startupRenderCalls.length > 0, true);
+  assert.equal(
+    startupRenderCalls.every(([options]) =>
+      options
+      && (options.scope === "translate-sidebar" || options.scope === "translate-body")
+    ),
+    true,
+  );
+
+  providerCacheReady.resolve({
+    apiKey: "sk-shared-openai",
+    keyVersion: 5,
+  });
+  await translationPromise;
+});
+
 test("runEditorAiTranslate uses the active alternate language as the translation target", async () => {
   installTranslateFixture({
     languages: [

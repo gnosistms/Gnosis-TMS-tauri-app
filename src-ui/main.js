@@ -38,6 +38,7 @@ import { readDevRuntimeFlags } from "./app/dev-runtime-flags.js";
 import {
   captureFocusedInputState,
   restoreFocusedInputState,
+  shouldRestoreFocusedInputStateForScope,
 } from "./app/focused-input-state.js";
 import {
   EDITOR_MODE_PREVIEW,
@@ -198,7 +199,9 @@ function renderTranslateBodyOnly() {
     restoredAnchor,
     usedVisibleFallback,
   });
-  const restoredFocus = restoreFocusedInputState(focusSnapshot);
+  const restoredFocus = shouldRestoreFocusedInputStateForScope(focusSnapshot, "translate-body")
+    ? restoreFocusedInputState(focusSnapshot)
+    : false;
   if (focusSnapshot?.kind === "editor-row-field" && !restoredFocus && focusSnapshot.rowId) {
     scheduleDirtyEditorRowScan(render, focusSnapshot.rowId);
   }
@@ -222,7 +225,9 @@ function renderTranslateSidebarOnly() {
   sidebar.innerHTML = renderTranslateSidebar(state);
   sidebar.scrollTop = scrollTop;
   syncEditorCommentDraftTextareaHeights(sidebar);
-  restoreFocusedInputState(focusSnapshot);
+  if (shouldRestoreFocusedInputStateForScope(focusSnapshot, "translate-sidebar")) {
+    restoreFocusedInputState(focusSnapshot);
+  }
 }
 
 function renderTranslateHeaderOnly() {
@@ -234,7 +239,9 @@ function renderTranslateHeaderOnly() {
 
   const focusSnapshot = captureFocusedInputState();
   headerDetail.innerHTML = renderTranslateHeaderDetail(state);
-  restoreFocusedInputState(focusSnapshot);
+  if (shouldRestoreFocusedInputStateForScope(focusSnapshot, "translate-header")) {
+    restoreFocusedInputState(focusSnapshot);
+  }
 }
 
 function renderWithOptions(options = {}) {
@@ -295,7 +302,9 @@ function renderWithOptions(options = {}) {
       usedVisibleFallback,
     });
   }
-  const restoredFocus = restoreFocusedInputState(focusSnapshot);
+  const restoredFocus = shouldRestoreFocusedInputStateForScope(focusSnapshot, "full")
+    ? restoreFocusedInputState(focusSnapshot)
+    : false;
   if (focusSnapshot?.kind === "editor-row-field" && !restoredFocus && focusSnapshot.rowId) {
     scheduleDirtyEditorRowScan(render, focusSnapshot.rowId);
   }

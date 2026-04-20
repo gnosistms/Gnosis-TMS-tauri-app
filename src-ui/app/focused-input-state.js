@@ -121,3 +121,15 @@ export function restoreFocusedInputState(focusSnapshot, doc = document) {
 
   return true;
 }
+
+export function shouldRestoreFocusedInputStateForScope(focusSnapshot, scope = "full") {
+  if (!focusSnapshot) {
+    return false;
+  }
+
+  if (focusSnapshot.kind !== "editor-row-field") {
+    return true;
+  }
+
+  return scope === "translate-body" || scope === "full";
+}

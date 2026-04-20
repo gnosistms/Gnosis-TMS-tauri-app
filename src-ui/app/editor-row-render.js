@@ -512,6 +512,8 @@ function renderEditorLanguageField(row, language) {
   const loadingAttributes = language.isAiTranslating
     ? ' readonly aria-busy="true"'
     : "";
+  const showHighlightLayers = language.isAiTranslating !== true;
+  const highlightStackAttribute = showHighlightLayers ? " data-editor-glossary-field-stack" : "";
   const editorClassName =
     `translation-language-panel__editor`
     + `${language.isActive ? " translation-language-panel__editor--active" : ""}`
@@ -526,23 +528,27 @@ function renderEditorLanguageField(row, language) {
     >
       <div
         class="translation-language-panel__field-stack"
-        data-editor-glossary-field-stack
+        ${highlightStackAttribute}
         data-row-id="${escapeHtml(row.id)}"
         data-language-code="${escapeHtml(language.code)}"
         data-row-text-style="${escapeHtml(textStyle)}"
       >
-        <div
-          class="translation-language-panel__field-highlight translation-language-panel__search-highlight"
-          data-editor-search-highlight
-          lang="${escapeHtml(language.code)}"
-          aria-hidden="true"
-        ></div>
-        <div
-          class="translation-language-panel__field-highlight translation-language-panel__glossary-highlight"
-          data-editor-glossary-highlight
-          lang="${escapeHtml(language.code)}"
-          aria-hidden="true"
-        ></div>
+        ${showHighlightLayers
+          ? `
+            <div
+              class="translation-language-panel__field-highlight translation-language-panel__search-highlight"
+              data-editor-search-highlight
+              lang="${escapeHtml(language.code)}"
+              aria-hidden="true"
+            ></div>
+            <div
+              class="translation-language-panel__field-highlight translation-language-panel__glossary-highlight"
+              data-editor-glossary-highlight
+              lang="${escapeHtml(language.code)}"
+              aria-hidden="true"
+            ></div>
+          `
+          : ""}
         <textarea
           class="${fieldClassName}"
           data-editor-row-field
