@@ -119,17 +119,71 @@ import {
   syncAndStopEditorBackgroundSyncSession,
 } from "./editor-background-sync.js";
 import {
+  buildEditorPreviewDocument,
+  countEditorPreviewSearchMatches,
+  EDITOR_MODE_PREVIEW,
+  EDITOR_MODE_TRANSLATE,
+  normalizeEditorMode,
+  normalizeEditorPreviewSearchState,
+  serializeEditorPreviewHtml,
+  stepEditorPreviewSearchState,
+} from "./editor-preview.js";
+import {
   hideNavigationLoadingModal,
   showNavigationLoadingModal,
 } from "./navigation-loading.js";
 import {
+  captureRenderScrollSnapshot,
+  lockScreenScrollSnapshot,
+  unlockScreenScrollSnapshot,
+} from "./scroll-state.js";
+import {
   coerceEditorFontSizePx,
+  createEditorPreviewSearchState,
   createTargetLanguageManagerState,
   state,
 } from "./state.js";
+import { showNoticeBadge } from "./status-feedback.js";
 
 export const MANAGE_TARGET_LANGUAGES_OPTION_VALUE = "__manage_target_languages__";
 export { resolveChapterSourceWordCount };
+
+let previewModeTranslateScrollSnapshot = null;
+
+function currentEditorMode() {
+  return normalizeEditorMode(state.editorChapter?.mode);
+}
+
+function currentPreviewBlocks(chapterState = state.editorChapter) {
+  return buildEditorPreviewDocument(
+    chapterState?.rows,
+    chapterState?.selectedTargetLanguageCode,
+  );
+}
+
+function normalizedPreviewSearchState(chapterState = state.editorChapter) {
+  return normalizeEditorPreviewSearchState(chapterState?.previewSearch);
+}
+
+function previewSearchStateWithTotal(chapterState = state.editorChapter, overrides = {}) {
+  const nextState = {
+    ...normalizedPreviewSearchState(chapterState),
+    ...overrides,
+  };
+  return {
+    ...nextState,
+    totalMatchCount: countEditorPreviewSearchMatches(currentPreviewBlocks(chapterState), nextState.query),
+  };
+}
+
+function renderPreviewMode(render, options = {}) {
+  if (options.header !== false) {
+    render?.({ scope: "translate-header" });
+  }
+  if (options.body !== false) {
+    render?.({ scope: "translate-body" });
+  }
+}
 
 export function openEditorReplaceUndoModal(commitSha) {
   openEditorReplaceUndoModalFlow(commitSha);
@@ -368,6 +422,12 @@ export async function loadSelectedChapterEditorData(render, options = {}) {
 }
 
 export async function openTranslateChapter(render, chapterId) {
+  previewModeTranslateScrollSnapshot = null;
+  state.editorChapter = {
+    ...state.editorChapter,
+    mode: EDITOR_MODE_TRANSLATE,
+    previewSearch: createEditorPreviewSearchState(),
+  };
   const navigationLoadingToken = showNavigationLoadingModal("Loading file...", "Opening the editor.");
   render();
 
@@ -412,6 +472,16 @@ export function updateEditorTargetLanguage(render, nextCode) {
     applyChapterMetadataToState,
     applyEditorSelectionsToProjectState,
   });
+
+  if (currentEditorMode() !== EDITOR_MODE_PREVIEW) {
+    return;
+  }
+
+  state.editorChapter = {
+    ...state.editorChapter,
+    previewSearch: previewSearchStateWithTotal(),
+  };
+  renderPreviewMode(render);
 }
 
 export function updateEditorFontSize(nextValue) {
@@ -421,6 +491,94 @@ export function updateEditorFontSize(nextValue) {
     fontSizePx,
   };
   saveStoredEditorFontSizePx(fontSizePx);
+}
+
+export function setEditorMode(render, nextMode) {
+  const normalizedMode = normalizeEditorMode(nextMode);
+  const previousMode = currentEditorMode();
+  if (normalizedMode === previousMode) {
+    return;
+  }
+
+  if (previousMode === EDITOR_MODE_TRANSLATE) {
+    previewModeTranslateScrollSnapshot = captureRenderScrollSnapshot("translate");
+  }
+
+  state.editorChapter = {
+    ...state.editorChapter,
+    mode: normalizedMode,
+    previewSearch:
+      normalizedMode === EDITOR_MODE_PREVIEW
+        ? previewSearchStateWithTotal()
+        : normalizedPreviewSearchState(state.editorChapter.previewSearch),
+  };
+
+  if (previousMode === EDITOR_MODE_PREVIEW && normalizedMode === EDITOR_MODE_TRANSLATE && previewModeTranslateScrollSnapshot) {
+    lockScreenScrollSnapshot("translate", previewModeTranslateScrollSnapshot);
+    render?.();
+    void waitForNextPaint().then(() => unlockScreenScrollSnapshot("translate"));
+    return;
+  }
+
+  render?.();
+}
+
+export function updateEditorPreviewSearchQuery(render, nextValue) {
+  if (currentEditorMode() !== EDITOR_MODE_PREVIEW) {
+    return;
+  }
+
+  const query = typeof nextValue === "string" ? nextValue : String(nextValue ?? "");
+  state.editorChapter = {
+    ...state.editorChapter,
+    previewSearch: previewSearchStateWithTotal(state.editorChapter, {
+      query,
+      activeMatchIndex: 0,
+    }),
+  };
+  renderPreviewMode(render);
+}
+
+export function moveEditorPreviewSearch(render, direction = "next") {
+  if (currentEditorMode() !== EDITOR_MODE_PREVIEW) {
+    return;
+  }
+
+  const nextPreviewSearch = stepEditorPreviewSearchState(
+    currentPreviewBlocks(),
+    normalizedPreviewSearchState(state.editorChapter.previewSearch),
+    direction,
+  );
+  state.editorChapter = {
+    ...state.editorChapter,
+    previewSearch: nextPreviewSearch,
+  };
+  renderPreviewMode(render);
+}
+
+export async function copyEditorPreviewHtml(render) {
+  if (currentEditorMode() !== EDITOR_MODE_PREVIEW) {
+    return;
+  }
+
+  const html = serializeEditorPreviewHtml(currentPreviewBlocks());
+  if (!html) {
+    showNoticeBadge("Nothing to copy.", render);
+    return;
+  }
+
+  if (typeof navigator === "undefined" || !navigator.clipboard?.writeText) {
+    showNoticeBadge("Clipboard access is not available.", render, 1800);
+    return;
+  }
+
+  try {
+    await navigator.clipboard.writeText(html);
+    showNoticeBadge("Copied HTML.", render, 1400);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    showNoticeBadge(message || "The HTML could not be copied.", render, 2200);
+  }
 }
 
 export async function restoreEditorFieldHistory(render, commitSha) {

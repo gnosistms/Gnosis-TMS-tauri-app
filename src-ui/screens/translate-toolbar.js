@@ -11,6 +11,7 @@ import {
   EDITOR_ROW_FILTER_OPTIONS,
   labelForEditorRowFilterMode,
 } from "../app/editor-filters.js";
+import { EDITOR_MODE_PREVIEW, normalizeEditorPreviewSearchState } from "../app/editor-preview.js";
 import { EDITOR_FONT_SIZE_OPTIONS } from "../app/state.js";
 
 function renderLanguageSelect(label, dataAttribute, selectedCode, languages, extraOptions = []) {
@@ -227,13 +228,64 @@ export function renderEditorSyncBanner(editorChapter) {
   `).join("");
 }
 
-export function renderTranslateModeControl() {
+export function renderTranslateModeControl(mode = "translate") {
+  return renderTranslateModeControlForMode(mode);
+}
+
+function renderTranslateModeControlForMode(mode = "translate") {
+  const isPreviewMode = mode === EDITOR_MODE_PREVIEW;
   return `
     <div class="segmented-control" role="tablist" aria-label="Editor mode">
-      <button class="segmented-control__button is-active" aria-selected="true">Translate</button>
-      <button class="segmented-control__button" aria-selected="false">Preview</button>
+      <button
+        class="segmented-control__button${isPreviewMode ? "" : " is-active"}"
+        type="button"
+        data-action="set-editor-mode:translate"
+        role="tab"
+        aria-selected="${isPreviewMode ? "false" : "true"}"
+      >Translate</button>
+      <button
+        class="segmented-control__button${isPreviewMode ? " is-active" : ""}"
+        type="button"
+        data-action="set-editor-mode:preview"
+        role="tab"
+        aria-selected="${isPreviewMode ? "true" : "false"}"
+      >Preview</button>
     </div>
   `;
+}
+
+function renderPreviewSearchField(previewSearchState) {
+  const normalizedSearchState = normalizeEditorPreviewSearchState(previewSearchState);
+  const hasMatches = normalizedSearchState.totalMatchCount > 0;
+  const hasQuery = normalizedSearchState.query.trim().length > 0;
+  return createSearchField({
+    placeholder: "Find in preview",
+    value: normalizedSearchState.query,
+    endAdornment: `
+      <button
+        type="button"
+        class="search-field__action"
+        data-action="step-editor-preview-search:previous"
+        aria-label="Previous match"
+        ${!hasQuery || !hasMatches ? "disabled" : ""}
+        ${tooltipAttributes("Previous match")}
+      >↑</button>
+      <button
+        type="button"
+        class="search-field__action"
+        data-action="step-editor-preview-search:next"
+        aria-label="Next match"
+        ${!hasQuery || !hasMatches ? "disabled" : ""}
+        ${tooltipAttributes("Next match")}
+      >↓</button>
+    `,
+    inputAttributes: {
+      "data-preview-search-input": true,
+      "aria-label": "Find in preview",
+      autocomplete: "off",
+      spellcheck: "false",
+    },
+  });
 }
 
 export function renderTranslateToolbar({
@@ -260,6 +312,26 @@ export function renderTranslateToolbar({
         </div>
         <div class="toolbar-meta">
           ${textAction("Unreview All", "open-editor-unreview-all")}
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+export function renderPreviewToolbar({
+  languages,
+  targetCode,
+  previewSearchState,
+}) {
+  return `
+    <div class="translate-toolbar__body translate-toolbar__body--header">
+      <div class="toolbar-row toolbar-row--between">
+        <div class="toolbar-search toolbar-search--preview">
+          ${renderLanguageSelect("Target", "editor-target-language-select", targetCode, languages)}
+          ${renderPreviewSearchField(previewSearchState)}
+        </div>
+        <div class="toolbar-meta toolbar-meta--preview">
+          ${secondaryButton("Copy HTML", "copy-editor-preview-html", { compact: true })}
         </div>
       </div>
     </div>

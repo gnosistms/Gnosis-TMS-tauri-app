@@ -16,8 +16,10 @@ import {
   closeTargetLanguageManager,
   closeEditorImageInvalidFileModal,
   closeEditorImagePreview,
+  copyEditorPreviewHtml,
   copyEditorConflictResolutionVersion,
   deleteActiveEditorRowComment,
+  moveEditorPreviewSearch,
   openEditorImagePreview,
   openEditorImageUpload,
   openEditorImageUploadPicker,
@@ -39,6 +41,7 @@ import {
   restoreEditorRow,
   saveActiveEditorRowComment,
   selectAllEditorReplaceRows,
+  setEditorMode,
   showEditorRowInContext,
   softDeleteEditorRow,
   switchEditorSidebarTab,
@@ -267,6 +270,21 @@ export function createTranslateActions(render) {
       return true;
     }
 
+    if (action === "copy-editor-preview-html") {
+      await copyEditorPreviewHtml(render);
+      return true;
+    }
+
+    if (action === "step-editor-preview-search:previous") {
+      moveEditorPreviewSearch(render, "previous");
+      return true;
+    }
+
+    if (action === "step-editor-preview-search:next") {
+      moveEditorPreviewSearch(render, "next");
+      return true;
+    }
+
     const historyCommitSha = actionSuffix(action, "restore-editor-history:");
     if (historyCommitSha !== null) {
       await restoreEditorFieldHistory(render, historyCommitSha);
@@ -367,16 +385,22 @@ export function createTranslateActions(render) {
     }
 
     const languageCode = actionSuffix(action, "toggle-editor-language:");
-    if (languageCode === null) {
-      return false;
+    if (languageCode !== null) {
+      const scrollAnchor = captureTranslateRowAnchor(event?.target ?? null);
+      toggleEditorLanguageCollapsed(languageCode);
+      render();
+      if (scrollAnchor) {
+        void waitForNextPaint().then(() => restoreTranslateRowAnchor(scrollAnchor));
+      }
+      return true;
     }
 
-    const scrollAnchor = captureTranslateRowAnchor(event?.target ?? null);
-    toggleEditorLanguageCollapsed(languageCode);
-    render();
-    if (scrollAnchor) {
-      void waitForNextPaint().then(() => restoreTranslateRowAnchor(scrollAnchor));
+    const editorMode = actionSuffix(action, "set-editor-mode:");
+    if (editorMode !== null) {
+      setEditorMode(render, editorMode);
+      return true;
     }
-    return true;
+
+    return false;
   };
 }

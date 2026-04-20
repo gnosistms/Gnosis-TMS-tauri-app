@@ -7,6 +7,7 @@ import {
   collapseEditorImageCaption,
   collapseEmptyEditorFootnote,
   collapseEmptyEditorImageEditor,
+  moveEditorPreviewSearch,
   dismissActiveIdleEditorImageUpload,
   flushDirtyEditorRows,
   handleDroppedEditorImageFile,
@@ -239,6 +240,21 @@ export function registerTranslateEditorDomEvents(app, render) {
       || event.repeat
       || event.isComposing
     ) {
+      return;
+    }
+
+    const previewSearchInput = closestEventTarget(event.target, "[data-preview-search-input]");
+    if (previewSearchInput instanceof HTMLInputElement) {
+      const key = typeof event.key === "string" ? event.key.toLowerCase() : "";
+      if (
+        key === "enter"
+        && !event.metaKey
+        && !event.ctrlKey
+        && !event.altKey
+      ) {
+        event.preventDefault();
+        moveEditorPreviewSearch(render, event.shiftKey ? "previous" : "next");
+      }
       return;
     }
 

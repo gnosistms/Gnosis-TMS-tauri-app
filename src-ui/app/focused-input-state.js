@@ -18,6 +18,7 @@ const SUPPORTED_FOCUSED_INPUT_SELECTORS = [
   "[data-glossary-term-search-input]",
   "[data-project-search-input]",
   "[data-editor-search-input]",
+  "[data-preview-search-input]",
   "[data-editor-replace-input]",
   "[data-editor-comment-draft]",
   "[data-ai-key-input]",

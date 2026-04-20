@@ -40,6 +40,10 @@ import {
   restoreFocusedInputState,
 } from "./app/focused-input-state.js";
 import {
+  EDITOR_MODE_PREVIEW,
+  normalizeEditorMode,
+} from "./app/editor-preview.js";
+import {
   persistCurrentEditorLocation,
   prepareEditorLocationBeforeRender,
   queuePendingEditorLocationRestore,
@@ -113,6 +117,26 @@ function render(options = {}) {
   return renderWithOptions(options);
 }
 
+function currentTranslateMode() {
+  return normalizeEditorMode(state.editorChapter?.mode);
+}
+
+function scrollActivePreviewSearchMatchIntoView(root = app) {
+  if (state.screen !== "translate" || currentTranslateMode() !== EDITOR_MODE_PREVIEW) {
+    return;
+  }
+
+  const activeMatch = root.querySelector?.(".translate-preview__search-match.is-active");
+  if (!(activeMatch instanceof HTMLElement)) {
+    return;
+  }
+
+  activeMatch.scrollIntoView({
+    block: "center",
+    inline: "nearest",
+  });
+}
+
 function resolveTranslateRenderAnchor(options = {}) {
   const includeVisibleFallback = options?.includeVisibleFallback !== false;
   const pendingAnchor = readPendingTranslateAnchor();
@@ -181,9 +205,14 @@ function renderTranslateBodyOnly() {
     scheduleDirtyEditorRowScan(render, focusSnapshot.rowId);
   }
   syncEditorRowTextareaHeights(body);
+  scrollActivePreviewSearchMatchIntoView(body);
 }
 
 function renderTranslateSidebarOnly() {
+  if (currentTranslateMode() === EDITOR_MODE_PREVIEW) {
+    return;
+  }
+
   const sidebar = app.querySelector(".translate-sidebar-scroll");
   if (!(sidebar instanceof HTMLElement)) {
     renderWithOptions();
@@ -274,6 +303,7 @@ function renderWithOptions(options = {}) {
   }
   syncEditorRowTextareaHeights(app);
   syncEditorCommentDraftTextareaHeights(app);
+  scrollActivePreviewSearchMatchIntoView(app);
   document.title = titles[state.screen] ?? "Gnosis TMS";
 }
 

@@ -3,6 +3,7 @@ import {
   queueTranslateRowAnchor,
   restoreTranslateRowAnchor,
 } from "./scroll-state.js";
+import { EDITOR_MODE_TRANSLATE, normalizeEditorMode } from "./editor-preview.js";
 import {
   clearStoredEditorLocation,
   loadStoredEditorLocation,
@@ -31,7 +32,10 @@ function loadedEditorChapterId(appState) {
 }
 
 function currentEditorChapterId(appState) {
-  if (appState?.screen !== "translate") {
+  if (
+    appState?.screen !== "translate"
+    || normalizeEditorMode(appState?.editorChapter?.mode) !== EDITOR_MODE_TRANSLATE
+  ) {
     return null;
   }
 

@@ -8,6 +8,11 @@ import {
   createAiActionConfigurationState,
 } from "./ai-action-config.js";
 import { DEFAULT_AI_PROVIDER_ID } from "./ai-provider-config.js";
+import {
+  EDITOR_MODE_TRANSLATE,
+  normalizeEditorMode,
+  normalizeEditorPreviewSearchState,
+} from "./editor-preview.js";
 import { loadStoredAiActionPreferences } from "./ai-action-preferences.js";
 import { loadStoredEditorFontSizePx } from "./editor-preferences.js";
 import { createResourcePageState } from "./resource-page-controller.js";
@@ -283,6 +288,8 @@ export function createEditorChapterState() {
     persistedSourceLanguageCode: null,
     persistedTargetLanguageCode: null,
     selectionPersistStatus: "idle",
+    mode: EDITOR_MODE_TRANSLATE,
+    previewSearch: createEditorPreviewSearchState(),
     fontSizePx: DEFAULT_EDITOR_FONT_SIZE_PX,
     collapsedLanguageCodes: new Set(),
     filters: createEditorChapterFilterState(),
@@ -315,6 +322,18 @@ export function createEditorChapterState() {
     rowPermanentDeletionModal: createEditorRowPermanentDeletionModalState(),
     rows: [],
   };
+}
+
+export function createEditorPreviewSearchState() {
+  return normalizeEditorPreviewSearchState({
+    query: "",
+    activeMatchIndex: 0,
+    totalMatchCount: 0,
+  });
+}
+
+export function coerceEditorMode(value) {
+  return normalizeEditorMode(value);
 }
 
 export function createEditorFootnoteEditorState() {

@@ -18,6 +18,7 @@ function readyTranslateState(chapterId) {
     editorChapter: {
       status: "ready",
       chapterId,
+      mode: "translate",
       rows: [{ rowId: "row-1" }],
     },
   };
@@ -37,6 +38,33 @@ test("queuePendingEditorLocationRestore queues the saved row when restore is ena
   queuePendingEditorLocationRestore(readyTranslateState(chapterId));
 
   assert.equal(pendingTranslateAnchorRowId(), "row-saved");
+
+  queueTranslateRowAnchor(null);
+  setActiveStorageLogin(null);
+});
+
+test("queuePendingEditorLocationRestore ignores preview mode", () => {
+  const login = "editor-location-preview";
+  const chapterId = "chapter-preview";
+  setActiveStorageLogin(login);
+  queueTranslateRowAnchor(null);
+  saveStoredEditorLocation(chapterId, {
+    rowId: "row-saved",
+    languageCode: "en",
+    offsetTop: 12,
+  }, login);
+
+  queuePendingEditorLocationRestore({
+    screen: "translate",
+    editorChapter: {
+      status: "ready",
+      chapterId,
+      mode: "preview",
+      rows: [{ rowId: "row-1" }],
+    },
+  });
+
+  assert.equal(pendingTranslateAnchorRowId(), "");
 
   queueTranslateRowAnchor(null);
   setActiveStorageLogin(null);

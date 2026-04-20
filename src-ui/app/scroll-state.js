@@ -488,9 +488,9 @@ export function restoreRenderScrollSnapshot(previousScreen, nextScreen, snapshot
   restoreElementScroll(".page-body", snapshot);
 }
 
-export function lockScreenScrollSnapshot(screen) {
+export function lockScreenScrollSnapshot(screen, snapshot = null) {
   lockedScreen = screen;
-  lockedSnapshot = captureRenderScrollSnapshot(screen);
+  lockedSnapshot = snapshot ?? captureRenderScrollSnapshot(screen);
 }
 
 export function unlockScreenScrollSnapshot(screen = null) {

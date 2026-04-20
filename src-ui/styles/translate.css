@@ -140,6 +140,11 @@
   max-width: 300px;
 }
 
+.page-header--editor .toolbar-search--preview .search-field {
+  flex: 1 1 360px;
+  max-width: 420px;
+}
+
 .toolbar-search > * {
   min-width: 0;
 }
@@ -259,6 +264,90 @@
   display: grid;
   gap: 24px;
   padding: 18px 8px 44px 16px;
+}
+
+.translate-layout--preview {
+  display: block;
+  min-width: 0;
+}
+
+.translate-main-scroll--preview {
+  padding: 22px 28px 36px;
+}
+
+.translate-preview {
+  width: min(920px, 100%);
+  margin: 0 auto;
+}
+
+.translate-preview__document {
+  display: grid;
+  gap: 1.1em;
+}
+
+.translate-preview__block,
+.translate-preview__image-caption {
+  margin: 0;
+  color: var(--text);
+  font-family: var(--font-serif);
+  font-size: var(--translation-editor-font-size, 14px);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.translate-preview__block--heading1 {
+  font-size: calc(var(--translation-editor-font-size, 14px) * 1.4);
+  font-weight: 700;
+  line-height: 1.3;
+}
+
+.translate-preview__block--heading2 {
+  font-size: calc(var(--translation-editor-font-size, 14px) * 1.18);
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.translate-preview__block--quote {
+  padding-left: 32px;
+  font-style: italic;
+}
+
+.translate-preview__block--indented {
+  padding-left: 32px;
+}
+
+.translate-preview__image-block {
+  display: grid;
+  gap: 10px;
+  justify-items: center;
+  margin: 0.4em 0 0.7em;
+}
+
+.translate-preview__image {
+  display: block;
+  max-width: 100%;
+  max-height: 1000px;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+}
+
+.translate-preview__image-caption {
+  text-align: center;
+  font-style: italic;
+}
+
+.translate-preview__search-match {
+  background: rgba(243, 156, 24, 0.24);
+  color: inherit;
+  border-radius: 2px;
+  padding: 0;
+}
+
+.translate-preview__search-match.is-active {
+  background: rgba(236, 134, 9, 0.38);
 }
 
 .translate-main--replace-mode {
@@ -1088,7 +1177,9 @@
 
 .translation-language-panel__field-highlight:lang(ja),
 .translation-language-panel__field:lang(ja),
-.history-item__content:lang(ja) {
+.history-item__content:lang(ja),
+.translate-preview__block:lang(ja),
+.translate-preview__image-caption:lang(ja) {
   font-family: var(--font-serif-ja);
 }
 
@@ -1100,7 +1191,13 @@
 .translation-language-panel__field:lang(zh-SG),
 .history-item__content:lang(zh-Hans),
 .history-item__content:lang(zh-CN),
-.history-item__content:lang(zh-SG) {
+.history-item__content:lang(zh-SG),
+.translate-preview__block:lang(zh-Hans),
+.translate-preview__block:lang(zh-CN),
+.translate-preview__block:lang(zh-SG),
+.translate-preview__image-caption:lang(zh-Hans),
+.translate-preview__image-caption:lang(zh-CN),
+.translate-preview__image-caption:lang(zh-SG) {
   font-family: var(--font-serif-zh-hans);
 }
 
@@ -1115,7 +1212,15 @@
 .history-item__content:lang(zh-Hant),
 .history-item__content:lang(zh-TW),
 .history-item__content:lang(zh-HK),
-.history-item__content:lang(zh-MO) {
+.history-item__content:lang(zh-MO),
+.translate-preview__block:lang(zh-Hant),
+.translate-preview__block:lang(zh-TW),
+.translate-preview__block:lang(zh-HK),
+.translate-preview__block:lang(zh-MO),
+.translate-preview__image-caption:lang(zh-Hant),
+.translate-preview__image-caption:lang(zh-TW),
+.translate-preview__image-caption:lang(zh-HK),
+.translate-preview__image-caption:lang(zh-MO) {
   font-family: var(--font-serif-zh-hant);
 }
 
@@ -1124,13 +1229,19 @@
 .translation-language-panel__field-highlight:lang(ar),
 .translation-language-panel__field:lang(ar),
 .history-item__content:lang(fa),
-.history-item__content:lang(ar) {
+.history-item__content:lang(ar),
+.translate-preview__block:lang(fa),
+.translate-preview__block:lang(ar),
+.translate-preview__image-caption:lang(fa),
+.translate-preview__image-caption:lang(ar) {
   font-family: var(--font-serif-fa);
 }
 
 .translation-language-panel__field-highlight:lang(ko),
 .translation-language-panel__field:lang(ko),
-.history-item__content:lang(ko) {
+.history-item__content:lang(ko),
+.translate-preview__block:lang(ko),
+.translate-preview__image-caption:lang(ko) {
   font-family: var(--font-serif-ko);
 }
 
@@ -1166,7 +1277,29 @@
 .history-item__content:lang(zh-MO),
 .history-item__content:lang(ko),
 .history-item__content:lang(fa),
-.history-item__content:lang(ar) {
+.history-item__content:lang(ar),
+.translate-preview__block:lang(ja),
+.translate-preview__block:lang(zh-Hans),
+.translate-preview__block:lang(zh-CN),
+.translate-preview__block:lang(zh-SG),
+.translate-preview__block:lang(zh-Hant),
+.translate-preview__block:lang(zh-TW),
+.translate-preview__block:lang(zh-HK),
+.translate-preview__block:lang(zh-MO),
+.translate-preview__block:lang(ko),
+.translate-preview__block:lang(fa),
+.translate-preview__block:lang(ar),
+.translate-preview__image-caption:lang(ja),
+.translate-preview__image-caption:lang(zh-Hans),
+.translate-preview__image-caption:lang(zh-CN),
+.translate-preview__image-caption:lang(zh-SG),
+.translate-preview__image-caption:lang(zh-Hant),
+.translate-preview__image-caption:lang(zh-TW),
+.translate-preview__image-caption:lang(zh-HK),
+.translate-preview__image-caption:lang(zh-MO),
+.translate-preview__image-caption:lang(ko),
+.translate-preview__image-caption:lang(fa),
+.translate-preview__image-caption:lang(ar) {
   font-weight: var(--editor-non-latin-serif-weight);
 }
 

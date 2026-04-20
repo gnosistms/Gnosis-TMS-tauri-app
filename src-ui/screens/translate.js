@@ -4,8 +4,15 @@ import {
   escapeHtml,
   pageShell,
 } from "../lib/ui.js";
+import {
+  buildEditorPreviewDocument,
+  EDITOR_MODE_PREVIEW,
+  normalizeEditorMode,
+  renderEditorPreviewDocumentHtml,
+} from "../app/editor-preview.js";
 import { buildEditorScreenViewModel } from "../app/editor-screen-model.js";
 import { renderTranslationContentRows } from "../app/editor-row-render.js";
+import { convertLocalFileSrc } from "../app/runtime.js";
 import { getNoticeBadgeText } from "../app/status-feedback.js";
 import { MANAGE_TARGET_LANGUAGES_OPTION_VALUE } from "../app/translate-flow.js";
 import { renderEditorRowInsertModal } from "./editor-row-insert-modal.js";
@@ -23,6 +30,7 @@ import {
   renderEditorFilterBanner,
   renderEditorSyncBanner,
   renderTranslateModeControl,
+  renderPreviewToolbar,
   renderTranslateToolbar,
 } from "./translate-toolbar.js";
 
@@ -39,6 +47,28 @@ function middleTruncateTitle(value, maxLength = 34) {
   return `${text.slice(0, startLength)}${ellipsis}${text.slice(text.length - endLength)}`;
 }
 
+function renderTranslateStateCard(message) {
+  return `
+    <article class="card card--translation">
+      <div class="card__body">
+        <p>${escapeHtml(message)}</p>
+      </div>
+    </article>
+  `;
+}
+
+function resolvePreviewImageSrc(image) {
+  if (!image) {
+    return "";
+  }
+
+  if (image.kind === "url") {
+    return image.url ?? "";
+  }
+
+  return convertLocalFileSrc(image.filePath ?? "");
+}
+
 function buildTranslateScreenFrame(state) {
   const {
     chapter,
@@ -53,47 +83,24 @@ function buildTranslateScreenFrame(state) {
     editorFontSizePx,
     sidebarTab,
   } = buildEditorScreenViewModel(state);
+  const mode = normalizeEditorMode(editorChapter?.mode);
   const authSession = state.auth?.session ?? null;
   const titleText = chapter?.name ?? editorChapter?.fileTitle ?? "Translate";
   const displayTitle = middleTruncateTitle(titleText);
 
   let translateBody = "";
   if (editorChapter?.status === "loading") {
-    translateBody = `
-      <article class="card card--translation">
-        <div class="card__body">
-          <p>Loading file...</p>
-        </div>
-      </article>
-    `;
+    translateBody = renderTranslateStateCard("Loading file...");
   } else if (editorChapter?.status === "error") {
-    translateBody = `
-      <article class="card card--translation">
-        <div class="card__body">
-          <p>${escapeHtml(editorChapter.error || "The file could not be loaded.")}</p>
-        </div>
-      </article>
-    `;
+    translateBody = renderTranslateStateCard(editorChapter.error || "The file could not be loaded.");
   } else if (!chapter && !editorChapter?.chapterId) {
-    translateBody = `
-      <article class="card card--translation">
-        <div class="card__body">
-          <p>Could not determine which file to open.</p>
-        </div>
-      </article>
-    `;
+    translateBody = renderTranslateStateCard("Could not determine which file to open.");
   } else if (contentRows.length === 0) {
-    translateBody = `
-      <article class="card card--translation">
-        <div class="card__body">
-          <p>${escapeHtml(
-            editorFilters?.hasActiveFilters
-              ? "No rows match the current filters."
-              : "This file does not contain any translatable rows.",
-          )}</p>
-        </div>
-      </article>
-    `;
+    translateBody = renderTranslateStateCard(
+      editorFilters?.hasActiveFilters
+        ? "No rows match the current filters."
+        : "This file does not contain any translatable rows.",
+    );
   } else {
     translateBody = renderTranslationContentRows(
       contentRows,
@@ -103,9 +110,31 @@ function buildTranslateScreenFrame(state) {
     );
   }
 
+  const previewBlocks =
+    (editorChapter?.status === "ready" || editorChapter?.status === "refreshing")
+      ? buildEditorPreviewDocument(editorChapter.rows, targetCode)
+      : [];
+  const previewRender = renderEditorPreviewDocumentHtml(previewBlocks, {
+    searchState: editorChapter?.previewSearch,
+    resolveImageSrc: resolvePreviewImageSrc,
+  });
+  let previewBody = "";
+  if (editorChapter?.status === "loading") {
+    previewBody = renderTranslateStateCard("Loading file...");
+  } else if (editorChapter?.status === "error") {
+    previewBody = renderTranslateStateCard(editorChapter.error || "The file could not be loaded.");
+  } else if (!chapter && !editorChapter?.chapterId) {
+    previewBody = renderTranslateStateCard("Could not determine which file to open.");
+  } else if (previewBlocks.length === 0) {
+    previewBody = renderTranslateStateCard("This file does not contain any previewable rows.");
+  } else {
+    previewBody = previewRender.html;
+  }
+
   return {
     chapter,
     editorChapter,
+    mode,
     languages,
     sourceCode,
     targetCode,
@@ -120,11 +149,15 @@ function buildTranslateScreenFrame(state) {
     titleText,
     displayTitle,
     translateBody,
+    previewBlocks,
+    previewBody,
+    previewSearchState: previewRender.searchState,
   };
 }
 
 function renderTranslateEditorBodyFromFrame(frame) {
   const {
+    mode,
     editorChapter,
     languages,
     sourceCode,
@@ -136,7 +169,23 @@ function renderTranslateEditorBodyFromFrame(frame) {
     editorFontSizePx,
     translateBody,
     authSession,
+    previewBody,
   } = frame;
+
+  if (mode === EDITOR_MODE_PREVIEW) {
+    return `
+      <section class="translate-layout translate-layout--preview" style="--translation-editor-font-size: ${escapeHtml(String(editorFontSizePx))}px;">
+        <div class="translate-main-scroll translate-main-scroll--preview">
+          <div class="translate-preview">
+            <article class="translate-preview__document" data-editor-preview-document>
+              ${previewBody}
+            </article>
+          </div>
+        </div>
+      </section>
+    `;
+  }
+
   return `
     <section class="translate-layout" style="--translation-editor-font-size: ${escapeHtml(String(editorFontSizePx))}px;">
       <div class="translate-main-scroll">
@@ -167,18 +216,29 @@ export function renderTranslateEditorBody(state) {
 }
 
 export function renderTranslateHeaderDetail(state) {
+  const frame = buildTranslateScreenFrame(state);
   const {
+    mode,
     languages,
     sourceCode,
     targetCode,
     editorFilters,
     editorReplace,
     editorFontSizePx,
-  } = buildTranslateScreenFrame(state);
+    previewSearchState,
+  } = frame;
   const targetLanguageManageOption = [{
     value: MANAGE_TARGET_LANGUAGES_OPTION_VALUE,
     label: "Add / Remove",
   }];
+
+  if (mode === EDITOR_MODE_PREVIEW) {
+    return renderPreviewToolbar({
+      languages,
+      targetCode,
+      previewSearchState,
+    });
+  }
 
   return renderTranslateToolbar({
     languages,
@@ -192,6 +252,11 @@ export function renderTranslateHeaderDetail(state) {
 }
 
 export function renderTranslateSidebar(state) {
+  const frame = buildTranslateScreenFrame(state);
+  if (frame.mode === EDITOR_MODE_PREVIEW) {
+    return "";
+  }
+
   const {
     editorChapter,
     contentRows,
@@ -213,7 +278,7 @@ export function renderTranslateSidebar(state) {
 
 export function renderTranslateScreen(state) {
   const frame = buildTranslateScreenFrame(state);
-  const { titleText, displayTitle } = frame;
+  const { titleText, displayTitle, mode } = frame;
 
   return pageShell({
     title: displayTitle,
@@ -222,7 +287,7 @@ export function renderTranslateScreen(state) {
     bodyClass: "page-body--editor",
     titleAction: buildPageRefreshAction(state),
     navButtons: buildSectionNav("translate"),
-    tools: renderTranslateModeControl(),
+    tools: renderTranslateModeControl(mode),
     headerBody: renderTranslateHeaderDetail(state),
     pageSync: state.pageSync,
     noticeText: getNoticeBadgeText(),

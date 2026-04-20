@@ -56,6 +56,12 @@ test("applyEditorUiState preserves same-chapter editor UI state when the active 
     replaceUndoModal: { isOpen: true, commitSha: "abc123", status: "idle", error: "" },
     activeRowId: "row-1",
     activeLanguageCode: "en",
+    mode: "preview",
+    previewSearch: {
+      query: "alpha",
+      activeMatchIndex: 1,
+      totalMatchCount: 4,
+    },
     sidebarTab: "translate",
     reviewExpandedSectionKeys: new Set(),
     history: previousHistory,
@@ -74,6 +80,12 @@ test("applyEditorUiState preserves same-chapter editor UI state when the active 
   assert.deepEqual([...result.dirtyRowIds], ["row-1"]);
   assert.equal(result.activeRowId, "row-1");
   assert.equal(result.activeLanguageCode, "en");
+  assert.equal(result.mode, "preview");
+  assert.deepEqual(result.previewSearch, {
+    query: "alpha",
+    activeMatchIndex: 1,
+    totalMatchCount: 4,
+  });
   assert.equal(result.sidebarTab, "translate");
   assert.deepEqual([...result.reviewExpandedSectionKeys], []);
   assert.equal(result.history.entries.length, 1);
@@ -121,6 +133,32 @@ test("applyEditorUiState clears active field state when the row or language no l
   assert.deepEqual(result.history.entries, []);
   assert.equal(result.insertRowModal.isOpen, false);
   assert.equal(result.rowPermanentDeletionModal.isOpen, false);
+});
+
+test("applyEditorUiState resets preview mode for a different chapter", () => {
+  const previousEditorChapter = {
+    ...createEditorChapterState(),
+    chapterId: "chapter-1",
+    mode: "preview",
+    previewSearch: {
+      query: "alpha",
+      activeMatchIndex: 2,
+      totalMatchCount: 7,
+    },
+  };
+
+  const result = applyEditorUiState({
+    chapterId: "chapter-2",
+    languages: [{ code: "en" }],
+    rows: [{ rowId: "row-1" }],
+  }, previousEditorChapter);
+
+  assert.equal(result.mode, "translate");
+  assert.deepEqual(result.previewSearch, {
+    query: "",
+    activeMatchIndex: 0,
+    totalMatchCount: 0,
+  });
 });
 
 test("normalizeEditorRows clones row data and initializes persistence metadata", () => {

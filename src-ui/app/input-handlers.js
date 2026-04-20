@@ -40,6 +40,7 @@ import {
   updateEditorConflictResolutionFinalFootnote,
   updateEditorConflictResolutionFinalImageCaption,
   updateEditorImageUrlDraft,
+  updateEditorPreviewSearchQuery,
   toggleEditorReplaceEnabled,
   toggleEditorReplaceRowSelected,
   updateEditorConflictResolutionFinalText,
@@ -330,6 +331,16 @@ function handleEditorSearchInput(event, render) {
   return true;
 }
 
+function handlePreviewSearchInput(event, render) {
+  const input = event.target.closest("[data-preview-search-input]");
+  if (!input) {
+    return false;
+  }
+
+  updateEditorPreviewSearchQuery(render, input.value);
+  return true;
+}
+
 function handleEditorReplaceToggleInput(event, render) {
   if (event.type !== "change") {
     return false;
@@ -541,6 +552,7 @@ const inputHandlers = [
   handleEditorFontSizeInput,
   handleEditorFilterSelectInput,
   handleEditorSearchInput,
+  handlePreviewSearchInput,
   handleEditorReplaceToggleInput,
   handleEditorReplaceInput,
   handleEditorReplaceRowSelectionInput,

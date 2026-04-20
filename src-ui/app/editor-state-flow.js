@@ -7,6 +7,11 @@ import { currentEditorHistoryForSelection } from "./editor-history-state.js";
 import { compactDirtyRowIds, reconcileDirtyTrackedEditorRows } from "./editor-dirty-row-state.js";
 import { normalizeEditorDerivedGlossariesByRowId } from "./editor-derived-glossary-state.js";
 import { normalizeEditorChapterFilterState } from "./editor-filters.js";
+import {
+  EDITOR_MODE_TRANSLATE,
+  normalizeEditorMode,
+  normalizeEditorPreviewSearchState,
+} from "./editor-preview.js";
 import { normalizeEditorReplaceState } from "./editor-replace.js";
 import { normalizeEditorRowTextStyle } from "./editor-row-text-style.js";
 import {
@@ -31,6 +36,7 @@ import {
   createEditorImageEditorState,
   createEditorImageInvalidFileModalState,
   createEditorImagePreviewOverlayState,
+  createEditorPreviewSearchState,
   createEditorReplaceUndoModalState,
   createEditorReplaceState,
   createEditorHistoryState,
@@ -60,6 +66,22 @@ function cloneExpandedReviewSectionKeys(expandedSectionKeys) {
   return expandedSectionKeys instanceof Set
     ? new Set(expandedSectionKeys)
     : new Set(["last-update", "ai-review"]);
+}
+
+function preserveEditorMode(previousEditorChapter, isSameChapter) {
+  if (!isSameChapter) {
+    return EDITOR_MODE_TRANSLATE;
+  }
+
+  return normalizeEditorMode(previousEditorChapter?.mode);
+}
+
+function preserveEditorPreviewSearch(previousEditorChapter, isSameChapter) {
+  if (!isSameChapter) {
+    return createEditorPreviewSearchState();
+  }
+
+  return normalizeEditorPreviewSearchState(previousEditorChapter?.previewSearch);
 }
 
 function preserveEditorAiTranslateState(nextEditorChapter, previousEditorChapter, isSameChapter) {
@@ -132,6 +154,8 @@ export function applyEditorUiState(nextEditorChapter, previousEditorChapter = st
 
   return pruneEditorCommentSeenRevisionsForRows({
     ...nextEditorChapter,
+    mode: preserveEditorMode(previousEditorChapter, isSameChapter),
+    previewSearch: preserveEditorPreviewSearch(previousEditorChapter, isSameChapter),
     fontSizePx: coerceEditorFontSizePx(previousEditorChapter?.fontSizePx),
     collapsedLanguageCodes: cloneCollapsedLanguageCodes(previousEditorChapter?.collapsedLanguageCodes),
     dirtyRowIds: isSameChapter
