@@ -52,6 +52,7 @@ import {
   toggleEditorReviewSectionExpanded,
   updateEditorRowTextStyle,
   toggleEditorLanguageCollapsed,
+  dismissActiveIdleEditorImageUpload,
 } from "../translate-flow.js";
 
 export function createTranslateActions(render) {
@@ -241,6 +242,11 @@ export function createTranslateActions(render) {
         ? event.target.closest("[data-row-id][data-language-code]")
         : null;
       await openEditorImageUploadPicker(render, button?.dataset.rowId ?? null, button?.dataset.languageCode ?? null);
+      return true;
+    }
+
+    if (action === "close-editor-image-upload") {
+      dismissActiveIdleEditorImageUpload(render);
       return true;
     }
 

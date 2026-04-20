@@ -7,6 +7,11 @@ import {
 import { invoke, convertLocalFileSrc, waitForNextPaint } from "./runtime.js";
 import { logEditorScrollDebug } from "./editor-scroll-debug.js";
 import {
+  captureTranslateAnchorForRow,
+  captureVisibleTranslateLocation,
+  restoreTranslateRowAnchor,
+} from "./scroll-state.js";
+import {
   createEditorImageEditorState,
   createEditorImageInvalidFileModalState,
   createEditorImagePreviewOverlayState,
@@ -105,6 +110,11 @@ function focusEditorImageControl(selector, rowId, languageCode) {
       });
     }
   });
+}
+
+function currentImageEditorAnchor(rowId, languageCode) {
+  return captureTranslateAnchorForRow(rowId, languageCode)
+    ?? captureVisibleTranslateLocation();
 }
 
 function translateMainScrollElement() {
@@ -421,6 +431,7 @@ export function openEditorImageUrl(render, rowId, languageCode) {
     return;
   }
 
+  const anchorSnapshot = currentImageEditorAnchor(rowId, languageCode);
   const existingEditor = imageEditorMatches(state.editorChapter, rowId, languageCode)
     ? state.editorChapter.imageEditor
     : null;
@@ -433,6 +444,13 @@ export function openEditorImageUrl(render, rowId, languageCode) {
     status: "idle",
   });
   render?.({ scope: "translate-body" });
+  void waitForNextPaint().then(() => {
+    if (!imageEditorMatches(state.editorChapter, rowId, languageCode, "url")) {
+      return;
+    }
+
+    restoreTranslateRowAnchor(anchorSnapshot);
+  });
   focusEditorImageControl(
     `[data-editor-image-url-input][data-row-id="${CSS.escape(rowId)}"][data-language-code="${CSS.escape(languageCode)}"]`,
     rowId,

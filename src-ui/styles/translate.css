@@ -361,7 +361,7 @@
 .translate-preview__image {
   display: block;
   max-width: 100%;
-  max-height: 1000px;
+  max-height: 700px;
   width: auto;
   height: auto;
   object-fit: contain;
@@ -817,6 +817,14 @@
   background: rgba(164, 112, 41, 0.18);
 }
 
+.translation-row-text-style-actions__hint {
+  margin-left: auto;
+  color: var(--placeholder-text);
+  font-size: 12px;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
 .translation-row-text-style-button {
   appearance: none;
   -webkit-appearance: none;
@@ -934,6 +942,16 @@
   line-height: 1.45;
   text-align: center;
   padding: 14px;
+}
+
+.translation-language-panel__image-upload-shell {
+  position: relative;
+}
+
+.translation-language-panel__image-upload-close {
+  position: absolute;
+  top: 8px;
+  right: 8px;
 }
 
 .translation-language-panel__image-upload:hover,
@@ -1368,6 +1386,10 @@
 }
 
 .translation-language-panel__editor:focus-within .translation-row-text-style-actions {
+  display: flex;
+}
+
+.translation-language-panel__editor--show-actions .translation-row-text-style-actions {
   display: flex;
 }
 

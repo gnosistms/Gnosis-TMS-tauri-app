@@ -322,7 +322,7 @@ function serializePreviewImageHtml(block) {
   const caption = String(block.caption ?? "").trim();
   return [
     '<figure style="margin: 1.5em auto; text-align: center;">',
-    `<img src="${escapeHtml(exportSrc)}" alt="" style="display: block; margin: 0 auto; max-width: 100%; max-height: 1000px; width: auto; height: auto;" />`,
+    `<img src="${escapeHtml(exportSrc)}" alt="" style="display: block; margin: 0 auto; max-width: 100%; max-height: 700px; width: auto; height: auto;" />`,
     caption
       ? `<figcaption style="margin-top: 0.6em; text-align: center;">${serializePreviewText(block.caption)}</figcaption>`
       : "",

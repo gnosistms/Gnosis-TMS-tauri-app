@@ -221,6 +221,7 @@ function renderRowTextStyleButtons(row, language) {
           `
           : ""
       }
+      <span class="translation-row-text-style-actions__hint">Shift + Return to save</span>
     </div>
   `;
 }
@@ -347,16 +348,34 @@ function renderEditorLanguageImage(row, language) {
   if (language.isImageUploadEditorOpen === true) {
     return `
       <div class="translation-language-panel__image-shell">
-        <button
-          class="translation-language-panel__image-upload"
-          type="button"
-          data-action="open-editor-image-upload-picker"
-          data-editor-image-upload-dropzone
-          data-row-id="${escapeHtml(row.id)}"
-          data-language-code="${escapeHtml(language.code)}"
-        >
-          <span>Drag and drop an image file or click to select.</span>
-        </button>
+        <div class="translation-language-panel__image-upload-shell">
+          <button
+            class="translation-language-panel__image-upload"
+            type="button"
+            data-action="open-editor-image-upload-picker"
+            data-editor-image-upload-dropzone
+            data-row-id="${escapeHtml(row.id)}"
+            data-language-code="${escapeHtml(language.code)}"
+          >
+            <span>Drag and drop an image file or click to select.</span>
+          </button>
+          <button
+            class="translation-language-panel__image-remove translation-language-panel__image-upload-close"
+            type="button"
+            data-action="close-editor-image-upload"
+            data-editor-image-upload-close-button
+            data-row-id="${escapeHtml(row.id)}"
+            data-language-code="${escapeHtml(language.code)}"
+            ${tooltipAttributes("Close image upload", { side: "top" })}
+          >
+            <span class="translation-language-panel__image-remove-icon" aria-hidden="true">
+              <svg viewBox="0 0 12 12" focusable="false" aria-hidden="true">
+                <path d="M2 2 10 10" />
+                <path d="M10 2 2 10" />
+              </svg>
+            </span>
+          </button>
+        </div>
       </div>
     `;
   }
@@ -493,10 +512,14 @@ function renderEditorLanguageField(row, language) {
   const loadingAttributes = language.isAiTranslating
     ? ' readonly aria-busy="true"'
     : "";
+  const editorClassName =
+    `translation-language-panel__editor`
+    + `${language.isActive ? " translation-language-panel__editor--active" : ""}`
+    + `${language.isImageUrlEditorOpen === true || language.isImageUploadEditorOpen === true ? " translation-language-panel__editor--show-actions" : ""}`;
 
   return `
     <div
-      class="translation-language-panel__editor${language.isActive ? " translation-language-panel__editor--active" : ""}"
+      class="${editorClassName}"
       data-editor-language-cluster
       data-row-id="${escapeHtml(row.id)}"
       data-language-code="${escapeHtml(language.code)}"

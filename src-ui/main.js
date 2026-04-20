@@ -186,13 +186,11 @@ function renderTranslateBodyOnly() {
   if (!hadPendingAnchor && translateAnchor?.rowId) {
     queueTranslateRowAnchor(translateAnchor);
   }
-  queuePendingEditorLocationRestore(state);
   initializeEditorVirtualization(app, state);
-  const restoredPendingLocation = restorePendingEditorLocation(state);
-  let restoredAnchor = false;
-  if (!restoredPendingLocation && translateAnchor?.rowId) {
-    restoredAnchor = restoreTranslateRowAnchor(translateAnchor);
-  }
+  const restoredPendingLocation = false;
+  const restoredAnchor = translateAnchor?.rowId
+    ? restoreTranslateRowAnchor(translateAnchor)
+    : false;
   logEditorScrollDebug("translate-body-rerender", {
     focusedRowId: focusSnapshot?.rowId ?? "",
     anchorRowId: translateAnchor?.rowId ?? "",

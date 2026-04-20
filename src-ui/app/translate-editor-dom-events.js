@@ -122,7 +122,7 @@ export function registerTranslateEditorDomEvents(app, render) {
   app.addEventListener("mousedown", (event) => {
     const button = closestEventTarget(
       event.target,
-      "[data-editor-row-text-style-button], [data-editor-footnote-button], [data-editor-image-button], [data-editor-image-caption-button], [data-editor-image-upload-dropzone], [data-editor-language-image-remove-button], [data-action^=\"switch-editor-sidebar-tab:\"], [data-preview-search-nav-button]",
+      "[data-editor-row-text-style-button], [data-editor-footnote-button], [data-editor-image-button], [data-editor-image-caption-button], [data-editor-image-upload-dropzone], [data-editor-image-upload-close-button], [data-editor-language-image-remove-button], [data-action^=\"switch-editor-sidebar-tab:\"], [data-preview-search-nav-button]",
     );
     if (!button) {
       return;
@@ -137,10 +137,12 @@ export function registerTranslateEditorDomEvents(app, render) {
     }
 
     const uploadDropzone = closestEventTarget(event.target, "[data-editor-image-upload-dropzone]");
+    const uploadCloseButton = closestEventTarget(event.target, "[data-editor-image-upload-close-button]");
     const previewSearchNavButton = closestEventTarget(event.target, "[data-preview-search-nav-button]");
     const nextTextarea = closestEventTarget(event.target, "[data-editor-row-field]");
     const dismissedUploadEditor =
       !(uploadDropzone instanceof HTMLButtonElement)
+      && !(uploadCloseButton instanceof HTMLButtonElement)
       && !(previewSearchNavButton instanceof HTMLButtonElement)
       && dismissActiveIdleEditorImageUpload(render);
     if (dismissedUploadEditor && nextTextarea instanceof HTMLTextAreaElement) {
@@ -150,6 +152,11 @@ export function registerTranslateEditorDomEvents(app, render) {
       );
     }
     if (uploadDropzone instanceof HTMLButtonElement) {
+      event.preventDefault();
+      return;
+    }
+
+    if (uploadCloseButton instanceof HTMLButtonElement) {
       event.preventDefault();
       return;
     }
