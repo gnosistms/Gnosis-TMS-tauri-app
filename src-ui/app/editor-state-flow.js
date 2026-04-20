@@ -115,15 +115,23 @@ function preserveEditorDerivedGlossariesByRowId(
   previousEditorChapter,
   isSameChapter,
 ) {
-  if (!isSameChapter) {
-    return {};
-  }
-
+  const hasNextDerivedGlossaries =
+    Boolean(nextEditorChapter)
+    && Object.prototype.hasOwnProperty.call(nextEditorChapter, "derivedGlossariesByRowId");
   const previousDerivedGlossariesByRowId = normalizeEditorDerivedGlossariesByRowId(
     previousEditorChapter?.derivedGlossariesByRowId,
   );
+  const nextDerivedGlossariesByRowId = normalizeEditorDerivedGlossariesByRowId(
+    nextEditorChapter?.derivedGlossariesByRowId,
+  );
+  const sourceEntries = !isSameChapter
+    ? nextDerivedGlossariesByRowId
+    : hasNextDerivedGlossaries
+      ? nextDerivedGlossariesByRowId
+      : previousDerivedGlossariesByRowId;
+
   return Object.fromEntries(
-    Object.entries(previousDerivedGlossariesByRowId).filter(([rowId, entry]) =>
+    Object.entries(sourceEntries).filter(([rowId, entry]) =>
       hasEditorRow(nextEditorChapter, rowId)
       && hasEditorLanguage(nextEditorChapter, entry.translationSourceLanguageCode)
       && hasEditorLanguage(nextEditorChapter, entry.glossarySourceLanguageCode)

@@ -16,10 +16,14 @@ import { resolveEditorAiTranslateLanguages } from "./editor-ai-translate-target.
 import {
   applyEditorDerivedGlossaryEntry,
   buildEditorDerivedGlossaryContext,
+  editorDerivedGlossaryIsStale,
   buildEditorGlossaryRevisionKey,
+  removeEditorDerivedGlossaryEntry,
   resolveEditorDerivedGlossarySourceText,
   resolveEditorDerivedGlossaryEntry,
+  resolveReadyEditorDerivedGlossaryEntry,
 } from "./editor-derived-glossary-state.js";
+import { saveStoredEditorDerivedGlossaryEntryForChapter } from "./editor-derived-glossary-cache.js";
 import {
   buildEditorAiTranslationGlossaryHints,
   buildEditorDerivedGlossaryModel,
@@ -27,7 +31,7 @@ import {
 import {
   captureTranslateAnchorForRow,
 } from "./scroll-state.js";
-import { selectedProjectsTeamInstallationId } from "./project-context.js";
+import { selectedProjectsTeam, selectedProjectsTeamInstallationId } from "./project-context.js";
 import { invoke } from "./runtime.js";
 import { showNoticeBadge } from "./status-feedback.js";
 import { findEditorRowById } from "./editor-utils.js";
@@ -209,6 +213,39 @@ function latestEditorTranslateSourceTextMatches(context) {
   return (latestRow?.fields?.[context.sourceLanguageCode] ?? "") === context.sourceText;
 }
 
+function buildCurrentDerivedGlossaryContext(context, glossaryState, glossarySourceLanguageCode) {
+  const currentGlossarySourceText = readRowFieldText(context.row, glossarySourceLanguageCode);
+  return buildEditorDerivedGlossaryContext({
+    translationSourceLanguageCode: context.sourceLanguageCode,
+    glossarySourceLanguageCode,
+    targetLanguageCode: context.targetLanguageCode,
+    translationSourceText: context.sourceText,
+    glossarySourceText: currentGlossarySourceText,
+    glossarySourceTextOrigin: currentGlossarySourceText.trim() ? "row" : "generated",
+    glossaryRevisionKey: buildEditorGlossaryRevisionKey(glossaryState),
+  });
+}
+
+function buildLoadingDerivedGlossaryState(requestKey, derivedContext, retainedDerivedEntry = null) {
+  if (retainedDerivedEntry) {
+    return {
+      ...retainedDerivedEntry,
+      status: "loading",
+      error: "",
+      requestKey,
+    };
+  }
+
+  return {
+    status: "loading",
+    error: "",
+    requestKey,
+    ...derivedContext,
+    entries: [],
+    matcherModel: null,
+  };
+}
+
 function resolveGlossaryUsage(context) {
   const glossaryState = context.chapterState?.glossary ?? null;
   const glossaryModel = glossaryState?.matcherModel ?? null;
@@ -251,26 +288,21 @@ function resolveGlossaryUsage(context) {
   }
 
   const {
-    glossarySourceText,
-    glossarySourceTextOrigin,
+    glossarySourceText: preparationGlossarySourceText,
+    glossarySourceTextOrigin: preparationGlossarySourceTextOrigin,
   } = resolveEditorDerivedGlossarySourceText(
     context.row,
     context.sourceLanguageCode,
     glossarySourceLanguageCode,
   );
-  const derivedContext = buildEditorDerivedGlossaryContext({
-    translationSourceLanguageCode: context.sourceLanguageCode,
+  const derivedContext = buildCurrentDerivedGlossaryContext(
+    context,
+    glossaryState,
     glossarySourceLanguageCode,
-    targetLanguageCode: context.targetLanguageCode,
-    translationSourceText: context.sourceText,
-    glossarySourceText,
-    glossarySourceTextOrigin,
-    glossaryRevisionKey: buildEditorGlossaryRevisionKey(glossaryState),
-  });
-  const cachedDerivedEntry = resolveEditorDerivedGlossaryEntry(
+  );
+  const cachedDerivedEntry = resolveReadyEditorDerivedGlossaryEntry(
     context.chapterState,
     context.rowId,
-    derivedContext,
   );
 
   return {
@@ -283,7 +315,11 @@ function resolveGlossaryUsage(context) {
       glossarySourceLanguageCode,
     ),
     derivedContext,
+    preparationGlossarySourceText,
+    preparationGlossarySourceTextOrigin,
     cachedDerivedEntry,
+    cachedDerivedEntryIsStale:
+      cachedDerivedEntry ? editorDerivedGlossaryIsStale(cachedDerivedEntry, derivedContext) : true,
   };
 }
 
@@ -309,6 +345,7 @@ function activeEditorTranslateContext(chapterState = state.editorChapter) {
 
   return {
     chapterState,
+    projectId: chapterState.projectId,
     row,
     chapterId: chapterState.chapterId,
     rowId: chapterState.activeRowId,
@@ -522,18 +559,15 @@ export async function runEditorAiTranslate(render, actionId, operations = {}) {
 
     if (glossaryUsage.kind === "derived") {
       let derivedEntry = glossaryUsage.cachedDerivedEntry;
-      if (!derivedEntry) {
+      if (!derivedEntry || glossaryUsage.cachedDerivedEntryIsStale) {
         state.editorChapter = applyEditorDerivedGlossaryEntry(
           state.editorChapter,
           context.rowId,
-          {
-            status: "loading",
-            error: "",
+          buildLoadingDerivedGlossaryState(
             requestKey,
-            ...glossaryUsage.derivedContext,
-            entries: [],
-            matcherModel: null,
-          },
+            glossaryUsage.derivedContext,
+            retainedDerivedEntry,
+          ),
         );
         renderEditorAiTranslateBody(render, captureEditorAiTranslateViewport(context));
 
@@ -545,7 +579,7 @@ export async function runEditorAiTranslate(render, actionId, operations = {}) {
             translationSourceLanguage: context.sourceLanguageLabel,
             glossarySourceLanguage: glossaryUsage.glossarySourceLanguageLabel,
             targetLanguage: context.targetLanguageLabel,
-            glossarySourceText: glossaryUsage.derivedContext.glossarySourceText,
+            glossarySourceText: glossaryUsage.preparationGlossarySourceText,
             glossaryTerms: glossaryUsage.glossaryTerms,
           }),
         });
@@ -565,6 +599,19 @@ export async function runEditorAiTranslate(render, actionId, operations = {}) {
         }
 
         if (!latestEditorTranslateSourceTextMatches(context)) {
+          const inFlightDerivedEntry = resolveEditorDerivedGlossaryEntry(
+            state.editorChapter,
+            context.rowId,
+          );
+          if (inFlightDerivedEntry?.requestKey === requestKey) {
+            state.editorChapter = retainedDerivedEntry
+              ? applyEditorDerivedGlossaryEntry(
+                state.editorChapter,
+                context.rowId,
+                retainedDerivedEntry,
+              )
+              : removeEditorDerivedGlossaryEntry(state.editorChapter, context.rowId);
+          }
           state.editorChapter = clearEditorAiTranslateAction(state.editorChapter, actionId);
           render?.({ scope: "translate-sidebar" });
           renderEditorAiTranslateBody(render, captureEditorAiTranslateViewport(context));
@@ -601,6 +648,16 @@ export async function runEditorAiTranslate(render, actionId, operations = {}) {
           context.rowId,
           derivedEntry,
         );
+        const team = selectedProjectsTeam();
+        if (team && context.projectId) {
+          saveStoredEditorDerivedGlossaryEntryForChapter(
+            team,
+            context.projectId,
+            context.chapterId,
+            context.rowId,
+            derivedEntry,
+          );
+        }
         retainedDerivedEntry = derivedEntry;
         renderEditorAiTranslateBody(render, captureEditorAiTranslateViewport(context));
       }
@@ -720,19 +777,35 @@ export async function runEditorAiTranslate(render, actionId, operations = {}) {
       }
     }
 
-    if (glossaryUsage.kind === "derived" && !retainedDerivedEntry) {
-      state.editorChapter = applyEditorDerivedGlossaryEntry(
+    if (glossaryUsage.kind === "derived") {
+      const currentDerivedEntry = resolveEditorDerivedGlossaryEntry(
         state.editorChapter,
         context.rowId,
-        {
-          status: "error",
-          error: message,
-          requestKey,
-          ...glossaryUsage.derivedContext,
-          entries: [],
-          matcherModel: null,
-        },
       );
+      if (
+        retainedDerivedEntry
+        && currentDerivedEntry?.status === "loading"
+        && currentDerivedEntry.requestKey === requestKey
+      ) {
+        state.editorChapter = applyEditorDerivedGlossaryEntry(
+          state.editorChapter,
+          context.rowId,
+          retainedDerivedEntry,
+        );
+      } else if (!retainedDerivedEntry) {
+        state.editorChapter = applyEditorDerivedGlossaryEntry(
+          state.editorChapter,
+          context.rowId,
+          {
+            status: "error",
+            error: message,
+            requestKey,
+            ...glossaryUsage.derivedContext,
+            entries: [],
+            matcherModel: null,
+          },
+        );
+      }
     }
 
     state.editorChapter = applyEditorAiTranslateActionFailed(

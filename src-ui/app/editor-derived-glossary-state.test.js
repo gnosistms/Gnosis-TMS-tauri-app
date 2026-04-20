@@ -3,7 +3,9 @@ import assert from "node:assert/strict";
 
 import {
   buildEditorDerivedGlossaryContext,
+  editorDerivedGlossaryIsStale,
   editorDerivedGlossaryMatchesContext,
+  hydrateEditorDerivedGlossaryEntryState,
   resolveEditorDerivedGlossarySourceText,
 } from "./editor-derived-glossary-state.js";
 
@@ -37,9 +39,10 @@ test("generated derived glossary entries match when the live glossary-source fie
   });
 
   assert.equal(editorDerivedGlossaryMatchesContext(entry, context), true);
+  assert.equal(editorDerivedGlossaryIsStale(entry, context), false);
 });
 
-test("row-sourced derived glossary entries do not match after the glossary-source field becomes empty", () => {
+test("row-sourced derived glossary entries become stale after the glossary-source field becomes empty", () => {
   const entry = readyDerivedEntry({
     glossarySourceTextOrigin: "row",
   });
@@ -53,6 +56,49 @@ test("row-sourced derived glossary entries do not match after the glossary-sourc
   });
 
   assert.equal(editorDerivedGlossaryMatchesContext(entry, context), false);
+  assert.equal(editorDerivedGlossaryIsStale(entry, context), true);
+});
+
+test("derived glossary entries become stale when the translation source text changes", () => {
+  const entry = readyDerivedEntry();
+  const context = buildEditorDerivedGlossaryContext({
+    translationSourceLanguageCode: "en",
+    glossarySourceLanguageCode: "es",
+    targetLanguageCode: "vi",
+    translationSourceText: "The inner chamber now glows brightly.",
+    glossarySourceText: "",
+    glossaryRevisionKey: "rev-1",
+  });
+
+  assert.equal(editorDerivedGlossaryMatchesContext(entry, context), false);
+  assert.equal(editorDerivedGlossaryIsStale(entry, context), true);
+});
+
+test("hydrateEditorDerivedGlossaryEntryState rebuilds the matcher model for a persisted ready entry", () => {
+  const hydratedEntry = hydrateEditorDerivedGlossaryEntryState(
+    readyDerivedEntry({
+      matcherModel: null,
+      entries: [{
+        sourceTerm: "inner chamber",
+        glossarySourceTerm: "camara interior",
+        targetVariants: ["buong noi tam"],
+        notes: ["Dung thuat ngu cua glossary"],
+      }],
+    }),
+    [
+      { code: "en", name: "English" },
+      { code: "es", name: "Spanish" },
+      { code: "vi", name: "Vietnamese" },
+    ],
+    {
+      glossaryId: "glossary-1",
+      repoName: "glossary-1",
+      title: "Glossary",
+    },
+  );
+
+  assert.equal(hydratedEntry.matcherModel?.sourceLanguage?.code, "en");
+  assert.equal(hydratedEntry.matcherModel?.targetLanguage?.code, "vi");
 });
 
 test("resolveEditorDerivedGlossarySourceText regenerates the pivot when the source changed but the glossary-source field did not", () => {

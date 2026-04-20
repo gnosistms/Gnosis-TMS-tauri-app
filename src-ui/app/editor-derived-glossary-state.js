@@ -1,3 +1,5 @@
+import { buildEditorDerivedGlossaryModel } from "./editor-glossary-highlighting.js";
+
 function sanitizeString(value) {
   return typeof value === "string" ? value : String(value ?? "");
 }
@@ -35,6 +37,35 @@ export function createEditorDerivedGlossaryEntryState() {
 
 function normalizeGlossarySourceTextOrigin(origin) {
   return origin === "row" || origin === "generated" ? origin : null;
+}
+
+function normalizeLanguageCode(value) {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function resolveChapterLanguageByCode(languages, languageCode) {
+  const normalizedLanguageCode = normalizeLanguageCode(languageCode);
+  if (!normalizedLanguageCode) {
+    return null;
+  }
+
+  const language = (Array.isArray(languages) ? languages : []).find((entry) =>
+    entry?.code === normalizedLanguageCode
+  );
+  if (!language) {
+    return {
+      code: normalizedLanguageCode,
+      name: normalizedLanguageCode,
+    };
+  }
+
+  return {
+    code: normalizedLanguageCode,
+    name:
+      typeof language?.name === "string" && language.name.trim()
+        ? language.name.trim()
+        : normalizedLanguageCode,
+  };
 }
 
 export function resolveEditorDerivedGlossarySourceText(
@@ -79,16 +110,9 @@ export function resolveEditorDerivedGlossarySourceText(
 export function buildEditorDerivedGlossaryContext(context = {}) {
   const glossarySourceText = sanitizeString(context.glossarySourceText);
   return {
-    translationSourceLanguageCode:
-      typeof context.translationSourceLanguageCode === "string"
-        ? context.translationSourceLanguageCode
-        : null,
-    glossarySourceLanguageCode:
-      typeof context.glossarySourceLanguageCode === "string"
-        ? context.glossarySourceLanguageCode
-        : null,
-    targetLanguageCode:
-      typeof context.targetLanguageCode === "string" ? context.targetLanguageCode : null,
+    translationSourceLanguageCode: normalizeLanguageCode(context.translationSourceLanguageCode),
+    glossarySourceLanguageCode: normalizeLanguageCode(context.glossarySourceLanguageCode),
+    targetLanguageCode: normalizeLanguageCode(context.targetLanguageCode),
     translationSourceText: sanitizeString(context.translationSourceText),
     glossarySourceText,
     glossarySourceTextOrigin: normalizeGlossarySourceTextOrigin(
@@ -108,17 +132,13 @@ export function normalizeEditorDerivedGlossaryEntryState(entry) {
     ...normalized,
     status: typeof normalized.status === "string" ? normalized.status : "idle",
     error: sanitizeString(normalized.error),
-    requestKey: typeof normalized.requestKey === "string" ? normalized.requestKey : null,
-    translationSourceLanguageCode:
-      typeof normalized.translationSourceLanguageCode === "string"
-        ? normalized.translationSourceLanguageCode
+    requestKey:
+      typeof normalized.requestKey === "string" && normalized.requestKey.trim()
+        ? normalized.requestKey
         : null,
-    glossarySourceLanguageCode:
-      typeof normalized.glossarySourceLanguageCode === "string"
-        ? normalized.glossarySourceLanguageCode
-        : null,
-    targetLanguageCode:
-      typeof normalized.targetLanguageCode === "string" ? normalized.targetLanguageCode : null,
+    translationSourceLanguageCode: normalizeLanguageCode(normalized.translationSourceLanguageCode),
+    glossarySourceLanguageCode: normalizeLanguageCode(normalized.glossarySourceLanguageCode),
+    targetLanguageCode: normalizeLanguageCode(normalized.targetLanguageCode),
     translationSourceText: sanitizeString(normalized.translationSourceText),
     glossarySourceText: sanitizeString(normalized.glossarySourceText),
     glossarySourceTextOrigin: normalizeGlossarySourceTextOrigin(
@@ -147,6 +167,60 @@ export function normalizeEditorDerivedGlossariesByRowId(derivedGlossariesByRowId
     Object.entries(derivedGlossariesByRowId)
       .filter(([rowId]) => typeof rowId === "string" && rowId.trim())
       .map(([rowId, entry]) => [rowId, normalizeEditorDerivedGlossaryEntryState(entry)]),
+  );
+}
+
+export function hydrateEditorDerivedGlossaryEntryState(
+  entry,
+  chapterLanguages = [],
+  glossaryState = null,
+) {
+  const normalizedEntry = normalizeEditorDerivedGlossaryEntryState(entry);
+  if (
+    normalizedEntry.status !== "ready"
+    || normalizedEntry.matcherModel
+    || !normalizedEntry.translationSourceLanguageCode
+    || !normalizedEntry.targetLanguageCode
+  ) {
+    return normalizedEntry;
+  }
+
+  const sourceLanguage = resolveChapterLanguageByCode(
+    chapterLanguages,
+    normalizedEntry.translationSourceLanguageCode,
+  );
+  const targetLanguage = resolveChapterLanguageByCode(
+    chapterLanguages,
+    normalizedEntry.targetLanguageCode,
+  );
+  if (!sourceLanguage || !targetLanguage) {
+    return normalizedEntry;
+  }
+
+  return {
+    ...normalizedEntry,
+    matcherModel: buildEditorDerivedGlossaryModel({
+      sourceLanguage,
+      targetLanguage,
+      entries: normalizedEntry.entries,
+      glossaryId: glossaryState?.glossaryId ?? null,
+      repoName: glossaryState?.repoName ?? "",
+      title: glossaryState?.title ?? "",
+    }),
+  };
+}
+
+export function hydrateEditorDerivedGlossariesByRowId(
+  derivedGlossariesByRowId,
+  chapterLanguages = [],
+  glossaryState = null,
+) {
+  return Object.fromEntries(
+    Object.entries(normalizeEditorDerivedGlossariesByRowId(derivedGlossariesByRowId))
+      .map(([rowId, entry]) => [
+        rowId,
+        hydrateEditorDerivedGlossaryEntryState(entry, chapterLanguages, glossaryState),
+      ]),
   );
 }
 
@@ -187,42 +261,52 @@ export function buildEditorGlossaryRevisionKey(glossaryState) {
   });
 }
 
-export function editorDerivedGlossaryMatchesContext(entry, context = {}) {
+export function editorDerivedGlossaryIsStale(entry, context = {}) {
   const normalizedEntry = normalizeEditorDerivedGlossaryEntryState(entry);
   const normalizedContext = buildEditorDerivedGlossaryContext(context);
   if (
-    normalizedContext.glossarySourceTextOrigin === "row"
-      ? (
-          normalizedEntry.glossarySourceTextOrigin !== "row"
-          || normalizedEntry.glossarySourceText !== normalizedContext.glossarySourceText
-        )
-      : normalizedEntry.glossarySourceTextOrigin !== "generated"
+    normalizedEntry.status !== "ready"
+    || !normalizedEntry.translationSourceLanguageCode
+    || !normalizedEntry.targetLanguageCode
   ) {
-    return false;
+    return true;
   }
 
-  return (
-    normalizedEntry.status === "ready"
-    && Boolean(normalizedEntry.translationSourceLanguageCode)
-    && Boolean(normalizedEntry.targetLanguageCode)
-    && normalizedEntry.translationSourceLanguageCode === normalizedContext.translationSourceLanguageCode
-    && normalizedEntry.glossarySourceLanguageCode === normalizedContext.glossarySourceLanguageCode
-    && normalizedEntry.targetLanguageCode === normalizedContext.targetLanguageCode
-    && normalizedEntry.translationSourceText === normalizedContext.translationSourceText
-    && normalizedEntry.glossaryRevisionKey === normalizedContext.glossaryRevisionKey
-  );
+  if (
+    normalizedEntry.translationSourceLanguageCode !== normalizedContext.translationSourceLanguageCode
+    || normalizedEntry.glossarySourceLanguageCode !== normalizedContext.glossarySourceLanguageCode
+    || normalizedEntry.targetLanguageCode !== normalizedContext.targetLanguageCode
+    || normalizedEntry.translationSourceText !== normalizedContext.translationSourceText
+    || normalizedEntry.glossaryRevisionKey !== normalizedContext.glossaryRevisionKey
+  ) {
+    return true;
+  }
+
+  return normalizedContext.glossarySourceTextOrigin === "row"
+    ? normalizedEntry.glossarySourceText !== normalizedContext.glossarySourceText
+    : normalizedEntry.glossarySourceTextOrigin === "row";
 }
 
-export function resolveEditorDerivedGlossaryEntry(chapterState, rowId, context = {}) {
+export function editorDerivedGlossaryMatchesContext(entry, context = {}) {
+  return !editorDerivedGlossaryIsStale(entry, context);
+}
+
+export function resolveEditorDerivedGlossaryEntry(chapterState, rowId) {
   const entriesByRowId = normalizeEditorDerivedGlossariesByRowId(
     chapterState?.derivedGlossariesByRowId,
   );
   const entry = entriesByRowId[rowId];
-  if (!entry) {
-    return null;
-  }
+  return entry ?? null;
+}
 
-  return editorDerivedGlossaryMatchesContext(entry, context) ? entry : null;
+export function resolveReadyEditorDerivedGlossaryEntry(chapterState, rowId) {
+  const entry = resolveEditorDerivedGlossaryEntry(chapterState, rowId);
+  return entry?.status === "ready" ? entry : null;
+}
+
+export function resolveHighlightableEditorDerivedGlossaryEntry(chapterState, rowId) {
+  const entry = resolveEditorDerivedGlossaryEntry(chapterState, rowId);
+  return entry?.matcherModel ? entry : null;
 }
 
 export function applyEditorDerivedGlossaryEntry(chapterState, rowId, nextEntry) {

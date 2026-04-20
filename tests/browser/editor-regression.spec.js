@@ -1652,6 +1652,89 @@ test.describe("editor regressions", () => {
     }).toBe("La camara interior brilla.");
   });
 
+  test("derived glossary source highlights persist after the source text changes until the next ai translation recomputes them", async ({ page }) => {
+    await page.addInitScript(() => {
+      globalThis.__gnosisMockTauriHandlers = {
+        load_ai_provider_secret() {
+          return "openai-key";
+        },
+        prepare_editor_ai_translated_glossary() {
+          return {
+            glossarySourceText: "La camara interior brilla.",
+            entries: [{
+              sourceTerm: "inner chamber",
+              glossarySourceTerm: "camara interior",
+              targetVariants: ["buong noi tam"],
+              notes: ["Dung thuat ngu cua glossary"],
+            }],
+          };
+        },
+        async run_ai_translation() {
+          return {
+            translatedText: "Buong noi tam sang len.",
+          };
+        },
+      };
+    });
+
+    await mountEditorFixture(page, {
+      rowCount: 1,
+      languages: [
+        { code: "en", name: "English", role: "source" },
+        { code: "es", name: "Spanish" },
+        { code: "vi", name: "Vietnamese", role: "target" },
+      ],
+      glossarySourceLanguageCode: "es",
+      glossaryTargetLanguageCode: "vi",
+      fieldsByRowId: {
+        "fixture-row-0001": {
+          en: "The inner chamber glows.",
+          es: "",
+          vi: "",
+        },
+      },
+      glossaryTerms: [
+        {
+          sourceTerms: ["camara interior"],
+          targetTerms: ["buong noi tam"],
+          notesToTranslators: "Dung thuat ngu cua glossary",
+        },
+      ],
+      aiActionConfig: {
+        detailedConfiguration: false,
+        unified: {
+          providerId: "openai",
+          modelId: "gpt-5.4",
+        },
+      },
+    }, { path: "/?platform=windows", mockTauri: true });
+
+    await page.locator('[data-action="switch-editor-sidebar-tab:translate"]').click();
+    await page.locator('[data-action="run-editor-ai-translate:translate1"]').click();
+
+    const sourceMarkSelector =
+      '[data-editor-row-card][data-row-id="fixture-row-0001"] [data-editor-display-field][data-language-code="en"] [data-editor-glossary-mark]';
+
+    await expect.poll(async () => {
+      return await page.locator(sourceMarkSelector).count();
+    }).toBe(1);
+
+    const sourceField = await activateMainEditorField(page, "fixture-row-0001", "en");
+    await sourceField.evaluate((element) => {
+      element.focus();
+      element.selectionStart = element.value.length;
+      element.selectionEnd = element.value.length;
+    });
+    await page.keyboard.type(" brightly");
+
+    await page.locator("[data-editor-search-input]").click();
+
+    await expect.poll(async () => {
+      return await page.locator(sourceMarkSelector).count();
+    }).toBe(1);
+    await expect(page.locator(sourceMarkSelector)).toHaveText("inner chamber");
+  });
+
   test("Windows fixture glossary highlights survive delete show hide and restore", async ({ page }) => {
     await mountEditorFixture(page, { rowCount: 80, glossary: true }, { path: "/?platform=windows" });
 

@@ -3,12 +3,8 @@ import {
   buildEditorRowGlossaryHighlights,
 } from "./editor-glossary-highlighting.js";
 import {
-  buildEditorDerivedGlossaryContext,
-  buildEditorGlossaryRevisionKey,
-  resolveEditorDerivedGlossarySourceText,
-  resolveEditorDerivedGlossaryEntry,
+  resolveHighlightableEditorDerivedGlossaryEntry,
 } from "./editor-derived-glossary-state.js";
-import { resolveEditorAiTranslateLanguages } from "./editor-ai-translate-target.js";
 import { buildEditorRowSearchHighlightMap } from "./editor-search-flow.js";
 import { buildEditorSearchHighlightKey } from "./editor-search-highlighting.js";
 import { findEditorRowById } from "./editor-utils.js";
@@ -149,30 +145,16 @@ function buildEditorRowGlossaryHighlightCacheKey(row, chapterState = state.edito
     directSegment = `::direct:${sourceCode}:${sourceText}::${targetCode}:${targetText}`;
   }
 
-  const translateLanguages = resolveEditorAiTranslateLanguages(chapterState);
-  const {
-    glossarySourceText,
-    glossarySourceTextOrigin,
-  } = resolveEditorDerivedGlossarySourceText(
-    row,
-    translateLanguages.sourceLanguageCode,
-    glossaryModel?.sourceLanguage?.code ?? null,
-  );
-  const derivedGlossaryEntry = resolveEditorDerivedGlossaryEntry(
+  const derivedGlossaryEntry = resolveHighlightableEditorDerivedGlossaryEntry(
     chapterState,
     rowId,
-    buildEditorDerivedGlossaryContext({
-      translationSourceLanguageCode: translateLanguages.sourceLanguageCode,
-      glossarySourceLanguageCode: glossaryModel?.sourceLanguage?.code ?? null,
-      targetLanguageCode: translateLanguages.targetLanguageCode,
-      translationSourceText: row?.fields?.[translateLanguages.sourceLanguageCode] ?? "",
-      glossarySourceText,
-      glossarySourceTextOrigin,
-      glossaryRevisionKey: buildEditorGlossaryRevisionKey(chapterState?.glossary),
-    }),
   );
+  const derivedSourceCode = derivedGlossaryEntry?.matcherModel?.sourceLanguage?.code ?? "";
+  const derivedTargetCode = derivedGlossaryEntry?.matcherModel?.targetLanguage?.code ?? "";
+  const derivedSourceText = derivedSourceCode ? String(row?.fields?.[derivedSourceCode] ?? "") : "";
+  const derivedTargetText = derivedTargetCode ? String(row?.fields?.[derivedTargetCode] ?? "") : "";
   const derivedSegment = derivedGlossaryEntry
-    ? `::derived:${derivedGlossaryEntry.requestKey ?? ""}:${derivedGlossaryEntry.translationSourceLanguageCode ?? ""}:${derivedGlossaryEntry.targetLanguageCode ?? ""}`
+    ? `::derived:${derivedGlossaryEntry.requestKey ?? ""}:${derivedSourceCode}:${derivedSourceText}::${derivedTargetCode}:${derivedTargetText}`
     : "";
 
   if (!directSegment && !derivedSegment) {
@@ -222,27 +204,9 @@ function buildCachedEditorRowGlossaryHighlights(row, chapterState = state.editor
     }
   }
 
-  const translateLanguages = resolveEditorAiTranslateLanguages(chapterState);
-  const {
-    glossarySourceText,
-    glossarySourceTextOrigin,
-  } = resolveEditorDerivedGlossarySourceText(
-    row,
-    translateLanguages.sourceLanguageCode,
-    glossaryModel?.sourceLanguage?.code ?? null,
-  );
-  const derivedGlossaryEntry = resolveEditorDerivedGlossaryEntry(
+  const derivedGlossaryEntry = resolveHighlightableEditorDerivedGlossaryEntry(
     chapterState,
     row?.rowId ?? "",
-    buildEditorDerivedGlossaryContext({
-      translationSourceLanguageCode: translateLanguages.sourceLanguageCode,
-      glossarySourceLanguageCode: glossaryModel?.sourceLanguage?.code ?? null,
-      targetLanguageCode: translateLanguages.targetLanguageCode,
-      translationSourceText: row?.fields?.[translateLanguages.sourceLanguageCode] ?? "",
-      glossarySourceText,
-      glossarySourceTextOrigin,
-      glossaryRevisionKey: buildEditorGlossaryRevisionKey(chapterState?.glossary),
-    }),
   );
   if (derivedGlossaryEntry?.matcherModel) {
     for (const [languageCode, nextHighlight] of buildEditorRowGlossaryHighlights(

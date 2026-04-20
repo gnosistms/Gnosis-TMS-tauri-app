@@ -1,4 +1,6 @@
 import { loadActiveEditorRowComments, loadEditorCommentSeenRevisionsForChapter } from "./editor-comments-flow.js";
+import { loadStoredEditorDerivedGlossariesForChapter, saveStoredEditorDerivedGlossariesForChapter } from "./editor-derived-glossary-cache.js";
+import { hydrateEditorDerivedGlossariesByRowId } from "./editor-derived-glossary-state.js";
 import {
   editorGlossaryStateMatchesLink,
   loadEditorGlossaryState,
@@ -39,7 +41,14 @@ function hasEditorChapterLoadOperations(operations) {
   );
 }
 
-function applyEditorPayloadToState(payload, projectId, existingChapter = {}, glossaryState = null, operations = {}) {
+function applyEditorPayloadToState(
+  payload,
+  projectId,
+  existingChapter = {},
+  glossaryState = null,
+  derivedGlossariesByRowId = {},
+  operations = {},
+) {
   if (!hasEditorChapterLoadOperations(operations)) {
     return;
   }
@@ -73,6 +82,7 @@ function applyEditorPayloadToState(payload, projectId, existingChapter = {}, glo
       (Array.isArray(payload.rows) ? payload.rows : []).map((row) => row?.rowId).filter(Boolean),
     ),
     glossary: glossaryState ?? previousEditorChapter?.glossary ?? createEditorChapterGlossaryState(),
+    derivedGlossariesByRowId,
     deferredStructuralChanges: false,
     backgroundSyncStatus: "idle",
     backgroundSyncError: "",
@@ -196,7 +206,44 @@ export async function loadSelectedChapterEditorData(render, options = {}, operat
       },
     });
     const glossaryState = await glossaryStatePromise;
-    applyEditorPayloadToState(payload, context.project.id, context.chapter, glossaryState, operations);
+    const validRowIds = new Set(
+      (Array.isArray(payload?.rows) ? payload.rows : [])
+        .map((row) => row?.rowId)
+        .filter(Boolean),
+    );
+    const storedDerivedGlossariesByRowId = loadStoredEditorDerivedGlossariesForChapter(
+      team,
+      context.project.id,
+      context.chapter.id,
+    );
+    const filteredStoredDerivedGlossariesByRowId = Object.fromEntries(
+      Object.entries(storedDerivedGlossariesByRowId)
+        .filter(([rowId]) => validRowIds.has(rowId)),
+    );
+    if (
+      Object.keys(filteredStoredDerivedGlossariesByRowId).length
+      !== Object.keys(storedDerivedGlossariesByRowId).length
+    ) {
+      saveStoredEditorDerivedGlossariesForChapter(
+        team,
+        context.project.id,
+        context.chapter.id,
+        filteredStoredDerivedGlossariesByRowId,
+      );
+    }
+    const hydratedDerivedGlossariesByRowId = hydrateEditorDerivedGlossariesByRowId(
+      filteredStoredDerivedGlossariesByRowId,
+      payload?.languages,
+      glossaryState,
+    );
+    applyEditorPayloadToState(
+      payload,
+      context.project.id,
+      context.chapter,
+      glossaryState,
+      hydratedDerivedGlossariesByRowId,
+      operations,
+    );
     render?.();
     if (state.editorChapter.sidebarTab === "comments" && state.editorChapter.activeRowId) {
       loadActiveEditorRowComments(render);
