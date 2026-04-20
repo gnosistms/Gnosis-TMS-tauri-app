@@ -3,6 +3,7 @@ import {
   buildSectionNav,
   createSearchField,
   escapeHtml,
+  navButton,
   pageShell,
   primaryButton,
   renderStateCard,
@@ -12,10 +13,33 @@ import { formatErrorForDisplay } from "../app/error-display.js";
 import { getNoticeBadgeText } from "../app/status-feedback.js";
 import { renderGlossaryTermEditorModal } from "./glossary-term-editor-modal.js";
 import { canManageGlossaries, selectedTeam } from "../app/glossary-shared.js";
+import { findChapterContextById } from "../app/project-context.js";
+
+function shortenChapterNavLabel(value) {
+  const text = String(value ?? "").trim();
+  if (!text) {
+    return "Editor";
+  }
+
+  return text.length > 35 ? `${text.slice(0, 35)}...` : text;
+}
 
 export function renderGlossaryEditorScreen(state) {
   const glossary = state.glossaryEditor;
   const canManageTerms = canManageGlossaries(selectedTeam());
+  const chapterTitle =
+    findChapterContextById(state.selectedChapterId)?.chapter?.name
+    ?? state.editorChapter?.fileTitle
+    ?? "";
+  const navButtons =
+    glossary.navigationSource === "editor"
+      ? [
+          navButton(shortenChapterNavLabel(chapterTitle), "translate", false, {
+            isBack: true,
+            disabled: !state.selectedChapterId,
+          }),
+        ]
+      : buildSectionNav("glossaryEditor");
   const searchQuery = String(glossary.searchQuery ?? "").trim().toLowerCase();
   const visibleTerms = (Array.isArray(glossary.terms) ? glossary.terms : []).filter((term) => {
     if (!searchQuery) {
@@ -97,7 +121,7 @@ export function renderGlossaryEditorScreen(state) {
     pageShell({
       title: glossary.title || "Glossary",
       titleAction: buildPageRefreshAction(state),
-      navButtons: buildSectionNav("glossaryEditor"),
+      navButtons,
       tools: canManageTerms ? `${searchField} ${primaryButton("+ New Term", "open-new-term")}` : searchField,
       pageSync: state.pageSync,
       noticeText: getNoticeBadgeText(),

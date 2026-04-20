@@ -18,6 +18,7 @@ import {
   primeSelectedGlossaryEditorLoadingState,
 } from "./glossary-flow.js";
 import {
+  glossaryBackgroundSyncNeedsExitSync,
   maybeStartGlossaryBackgroundSync,
   startGlossaryBackgroundSyncSession,
   syncAndStopGlossaryBackgroundSyncSession,
@@ -42,13 +43,20 @@ import {
   hideNavigationLoadingModal,
   showNavigationLoadingModal,
 } from "./navigation-loading.js";
+import { resolveNavigationLeaveLoading } from "./navigation-leave-loading.js";
 import { clearNoticeBadge, clearScopedSyncBadge, showNoticeBadge } from "./status-feedback.js";
 
 export async function handleNavigation(navTarget, render) {
   const previousScreen = state.screen;
-  const showTranslateLeaveLoading = previousScreen === "translate" && navTarget !== "translate";
-  const navigationLoadingToken = showTranslateLeaveLoading
-    ? showNavigationLoadingModal("Saving and syncing...", "Please wait before leaving the editor.")
+  const glossaryNeedsExitSync =
+    previousScreen === "glossaryEditor"
+    && navTarget !== "glossaryEditor"
+    && glossaryBackgroundSyncNeedsExitSync();
+  const leaveLoading = resolveNavigationLeaveLoading(previousScreen, navTarget, {
+    glossaryNeedsExitSync,
+  });
+  const navigationLoadingToken = leaveLoading
+    ? showNavigationLoadingModal(leaveLoading.title, leaveLoading.message)
     : null;
   let navigationRendered = false;
 

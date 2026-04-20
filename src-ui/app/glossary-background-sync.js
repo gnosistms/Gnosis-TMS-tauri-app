@@ -12,6 +12,7 @@ const glossaryBackgroundSyncSession = {
   intervalId: 0,
   lastScrollAt: 0,
   pendingSync: null,
+  hasLocalMutations: false,
 };
 
 function currentSessionKey() {
@@ -46,6 +47,7 @@ function ensureGlossarySyncSession(options = {}) {
   if (glossaryBackgroundSyncSession.key !== key) {
     clearGlossaryBackgroundSyncInterval();
     glossaryBackgroundSyncSession.pendingSync = null;
+    glossaryBackgroundSyncSession.hasLocalMutations = false;
   }
 
   glossaryBackgroundSyncSession.key = key;
@@ -166,6 +168,7 @@ export function startGlossaryBackgroundSyncSession(render) {
   glossaryBackgroundSyncSession.key = key;
   glossaryBackgroundSyncSession.lastScrollAt = performance.now();
   glossaryBackgroundSyncSession.pendingSync = null;
+  glossaryBackgroundSyncSession.hasLocalMutations = false;
 
   if (!key) {
     return;
@@ -177,8 +180,24 @@ export function startGlossaryBackgroundSyncSession(render) {
   void maybeStartGlossaryBackgroundSync(render, { force: true });
 }
 
-export async function syncAndStopGlossaryBackgroundSyncSession(render) {
-  if (sessionMatchesCurrentGlossary()) {
+export function markGlossaryBackgroundSyncDirty() {
+  if (!currentSessionKey()) {
+    return;
+  }
+
+  glossaryBackgroundSyncSession.hasLocalMutations = true;
+}
+
+export function glossaryBackgroundSyncNeedsExitSync() {
+  return sessionMatchesCurrentGlossary() && glossaryBackgroundSyncSession.hasLocalMutations === true;
+}
+
+export async function syncAndStopGlossaryBackgroundSyncSession(render, options = {}) {
+  const shouldForceSync =
+    options.force === true
+    || (options.skipDirtyCheck !== true && glossaryBackgroundSyncNeedsExitSync());
+
+  if (shouldForceSync && sessionMatchesCurrentGlossary()) {
     await maybeStartGlossaryBackgroundSync(render, { force: true });
   }
 
@@ -186,4 +205,5 @@ export async function syncAndStopGlossaryBackgroundSyncSession(render) {
   glossaryBackgroundSyncSession.key = "";
   glossaryBackgroundSyncSession.lastScrollAt = 0;
   glossaryBackgroundSyncSession.pendingSync = null;
+  glossaryBackgroundSyncSession.hasLocalMutations = false;
 }

@@ -190,6 +190,8 @@ const {
   applyGlossaryEditorPayload,
 } = await import("./glossary-shared.js");
 const {
+  glossaryBackgroundSyncNeedsExitSync,
+  markGlossaryBackgroundSyncDirty,
   maybeStartGlossaryBackgroundSync,
   startGlossaryBackgroundSyncSession,
   syncAndStopGlossaryBackgroundSyncSession,
@@ -384,6 +386,60 @@ test("glossary background sync skips non-forced sync while the term editor is op
 
   assert.equal(didSync, false);
   assert.equal(syncInvocationCount("sync_gtms_glossary_editor_repo"), 0);
+});
+
+test("glossary exit sync stays inactive when the session has no local edits", async () => {
+  installGlossaryEditorFixture();
+  invokeHandler = async (command) => {
+    if (command === "sync_gtms_glossary_editor_repo") {
+      return {
+        oldHeadSha: "head-1",
+        newHeadSha: "head-1",
+        changedTermIds: [],
+        insertedTermIds: [],
+        deletedTermIds: [],
+      };
+    }
+    return null;
+  };
+
+  startGlossaryBackgroundSyncSession(() => {});
+  await flushAsyncWork();
+  invokeLog.length = 0;
+
+  assert.equal(glossaryBackgroundSyncNeedsExitSync(), false);
+
+  await syncAndStopGlossaryBackgroundSyncSession(() => {});
+
+  assert.equal(syncInvocationCount("sync_gtms_glossary_editor_repo"), 0);
+});
+
+test("glossary exit sync runs after a local glossary edit", async () => {
+  installGlossaryEditorFixture();
+  invokeHandler = async (command) => {
+    if (command === "sync_gtms_glossary_editor_repo") {
+      return {
+        oldHeadSha: "head-1",
+        newHeadSha: "head-1",
+        changedTermIds: [],
+        insertedTermIds: [],
+        deletedTermIds: [],
+      };
+    }
+    return null;
+  };
+
+  startGlossaryBackgroundSyncSession(() => {});
+  await flushAsyncWork();
+  invokeLog.length = 0;
+
+  markGlossaryBackgroundSyncDirty();
+
+  assert.equal(glossaryBackgroundSyncNeedsExitSync(), true);
+
+  await syncAndStopGlossaryBackgroundSyncSession(() => {});
+
+  assert.equal(syncInvocationCount("sync_gtms_glossary_editor_repo"), 1);
 });
 
 test("opening a stale glossary term reloads the latest term from disk before edit", async () => {

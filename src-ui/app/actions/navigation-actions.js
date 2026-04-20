@@ -11,6 +11,7 @@ import { loadTeamUsers, primeUsersForTeam } from "../team-members-flow.js";
 import { actionSuffix } from "../action-helpers.js";
 import { waitForNextPaint } from "../runtime.js";
 import { openTranslateChapter } from "../translate-flow.js";
+import { resolveSelectedChapterGlossary } from "../project-context.js";
 
 export function createNavigationActions(render) {
   return async function handleNavigationAction(action) {
@@ -54,6 +55,19 @@ export function createNavigationActions(render) {
     const openGlossaryId = actionSuffix(action, "open-glossary:");
     if (openGlossaryId !== null) {
       void openGlossaryEditor(render, openGlossaryId);
+      return true;
+    }
+
+    if (action === "open-editor-glossary") {
+      const glossary = resolveSelectedChapterGlossary();
+      if (!glossary?.repoName) {
+        return true;
+      }
+
+      void openGlossaryEditor(render, glossary.id ?? glossary.glossaryId, {
+        navigationSource: "editor",
+        preferredGlossary: glossary,
+      });
       return true;
     }
 

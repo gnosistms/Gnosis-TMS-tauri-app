@@ -25,3 +25,22 @@ export function findChapterContext(chapterId) {
 export function findChapterContextById(chapterId = state.selectedChapterId) {
   return chapterId ? findChapterContext(chapterId) : null;
 }
+
+export function resolveSelectedChapterGlossary(glossaries = state.glossaries) {
+  const link = findChapterContextById()?.chapter?.linkedGlossary ?? null;
+  if (!link) {
+    return null;
+  }
+
+  return (
+    (Array.isArray(glossaries) ? glossaries : []).find(
+      (glossary) => glossary?.id === link.glossaryId || glossary?.repoName === link.repoName,
+    )
+    ?? {
+      id: link.glossaryId,
+      glossaryId: link.glossaryId,
+      repoName: link.repoName,
+      title: "Glossary",
+    }
+  );
+}

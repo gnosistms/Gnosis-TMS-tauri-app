@@ -578,6 +578,7 @@ export function createGlossaryEditorState() {
   return {
     status: "idle",
     error: "",
+    navigationSource: null,
     glossaryId: null,
     repoName: "",
     repoId: null,

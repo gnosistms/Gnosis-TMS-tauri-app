@@ -2,7 +2,9 @@ import { invoke, waitForNextPaint } from "./runtime.js";
 import { beginPageSync, completePageSync, failPageSync } from "./page-sync.js";
 import { createGlossaryEditorState, state } from "./state.js";
 import { showNoticeBadge } from "./status-feedback.js";
+import { resolveGlossaryEditorNavigationSource } from "./glossary-editor-navigation-source.js";
 import {
+  markGlossaryBackgroundSyncDirty,
   startGlossaryBackgroundSyncSession,
   syncAndStopGlossaryBackgroundSyncSession,
 } from "./glossary-background-sync.js";
@@ -60,12 +62,17 @@ export function primeSelectedGlossaryEditorLoadingState(options = {}) {
   const glossaryId = options.glossaryId ?? state.selectedGlossaryId;
   const glossary = resolveGlossaryForEditor(glossaryId, options.preferredGlossary ?? null);
   const preservedSearchQuery = state.glossaryEditor?.searchQuery ?? "";
+  const navigationSource = resolveGlossaryEditorNavigationSource(
+    options,
+    state.glossaryEditor?.navigationSource,
+  );
 
   if (!glossary?.repoName) {
     state.glossaryEditor = {
       ...createGlossaryEditorState(),
       status: "error",
       error: "Could not determine which glossary to open.",
+      navigationSource,
       searchQuery: preservedSearchQuery,
     };
     return;
@@ -75,6 +82,7 @@ export function primeSelectedGlossaryEditorLoadingState(options = {}) {
     ...createGlossaryEditorState(),
     status: "loading",
     error: "",
+    navigationSource,
     glossaryId,
     repoName: glossary.repoName,
     repoId: Number.isFinite(glossary.repoId) ? glossary.repoId : null,
@@ -193,6 +201,7 @@ export async function openGlossaryEditor(render, glossaryId, options = {}) {
   state.screen = "glossaryEditor";
   primeSelectedGlossaryEditorLoadingState({
     glossaryId,
+    navigationSource: options.navigationSource ?? null,
     preferredGlossary: options.preferredGlossary ?? null,
   });
   render();
@@ -245,6 +254,7 @@ export async function deleteGlossaryTerm(render, termId) {
     const syncIssue = getGlossarySyncIssueMessage(
       await syncSingleGlossaryForTeam(team, selectedGlossary()),
     );
+    markGlossaryBackgroundSyncDirty();
     if (syncIssue?.message) {
       showNoticeBadge(syncIssue.message, render);
     }

@@ -1358,6 +1358,76 @@ test.describe("editor regressions", () => {
     }).toBe(2);
   });
 
+  test("glossary marks are present in the initial static row render before deferred sync runs", async ({ page }) => {
+    await page.addInitScript(() => {
+      try {
+        globalThis.localStorage?.clear();
+      } catch {
+        // Ignore local-storage access restrictions in the browser harness.
+      }
+    });
+
+    await page.goto("/?platform=windows");
+    await page.waitForFunction(() => typeof window.__gnosisDebug?.mountEditorFixture === "function");
+    const initialGlossaryMarkCount = await page.evaluate(async () => {
+      await window.__gnosisDebug.waitForBootstrap();
+      await window.__gnosisDebug.mountEditorFixture({
+        rowCount: 1,
+        glossary: true,
+      });
+      return document.querySelectorAll(
+        '[data-editor-row-card][data-row-id="fixture-row-0001"] [data-editor-glossary-mark]',
+      ).length;
+    });
+
+    expect(initialGlossaryMarkCount).toBe(2);
+    await expect(page.locator("[data-editor-search-input]")).toBeVisible();
+  });
+
+  test("editor glossary header action opens the linked glossary and shows editor-first glossary navigation", async ({ page }) => {
+    await page.addInitScript(() => {
+      globalThis.__gnosisMockTauriHandlers = {
+        async load_gtms_glossary_editor_data() {
+          return {
+            glossaryId: "fixture-glossary",
+            title: "Fixture Glossary",
+            sourceLanguage: {
+              code: "es",
+              name: "Spanish",
+            },
+            targetLanguage: {
+              code: "vi",
+              name: "Vietnamese",
+            },
+            termCount: 1,
+            terms: [
+              {
+                termId: "term-1",
+                sourceTerms: ["alpha"],
+                targetTerms: ["alpha"],
+                notesToTranslators: "",
+                footnote: "",
+              },
+            ],
+          };
+        },
+      };
+    });
+
+    await mountEditorFixture(page, { rowCount: 6, glossary: true }, { mockTauri: true });
+
+    const glossaryButton = page.locator('[data-action="open-editor-glossary"]');
+    await expect(glossaryButton).toHaveText("Glossary");
+    await expect(page.locator('[data-nav-target="glossaries"]')).toHaveCount(0);
+
+    await glossaryButton.click();
+
+    await expect(page.locator("h1.page-header__title")).toHaveText("Fixture Glossary");
+    await expect(page.locator('[data-nav-target="translate"]')).toHaveText("Editor Regression Fixture");
+    await expect(page.locator('[data-nav-target="glossaries"]')).toHaveCount(0);
+    await expect(page.locator('[data-nav-target="projects"]')).toHaveCount(0);
+  });
+
   test("inactive glossary highlights render in the display text while the search overlay stays transparent", async ({ page }) => {
     await mountEditorFixture(page, { rowCount: 1, glossary: true }, { path: "/?platform=windows" });
 

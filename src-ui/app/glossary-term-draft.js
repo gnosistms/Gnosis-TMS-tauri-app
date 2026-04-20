@@ -1,6 +1,9 @@
 import { invoke } from "./runtime.js";
 import { resetGlossaryTermEditor, state } from "./state.js";
-import { maybeStartGlossaryBackgroundSync } from "./glossary-background-sync.js";
+import {
+  markGlossaryBackgroundSyncDirty,
+  maybeStartGlossaryBackgroundSync,
+} from "./glossary-background-sync.js";
 import { loadSelectedGlossaryEditorData } from "./glossary-editor-flow.js";
 import { showNoticeBadge } from "./status-feedback.js";
 import {
@@ -316,6 +319,7 @@ export async function submitGlossaryTermEditor(render) {
     const syncIssue = getGlossarySyncIssueMessage(
       await syncSingleGlossaryForTeam(team, selectedGlossary()),
     );
+    markGlossaryBackgroundSyncDirty();
     resetGlossaryTermEditor();
     await loadSelectedGlossaryEditorData(render);
     if (syncIssue?.message) {

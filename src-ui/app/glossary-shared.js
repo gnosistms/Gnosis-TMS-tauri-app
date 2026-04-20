@@ -193,6 +193,7 @@ export function applyGlossaryEditorPayload(payload) {
   state.glossaryEditor = {
     status: "ready",
     error: "",
+    navigationSource: state.glossaryEditor?.navigationSource ?? null,
     glossaryId: payload.glossaryId,
     repoName,
     repoId,

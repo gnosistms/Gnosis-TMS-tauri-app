@@ -1,7 +1,8 @@
 import {
+  actionNavButton,
   buildPageRefreshAction,
-  buildSectionNav,
   escapeHtml,
+  navButton,
   pageShell,
 } from "../lib/ui.js";
 import {
@@ -25,6 +26,7 @@ import { renderEditorReplaceUndoModal } from "./editor-replace-undo-modal.js";
 import { renderAiReviewMissingKeyModal } from "./ai-review-missing-key-modal.js";
 import { renderTargetLanguageManagerModal } from "./target-language-manager-modal.js";
 import { renderTranslateSidebar as renderTranslateEditorSidebar } from "./translate-sidebar.js";
+import { resolveSelectedChapterGlossary } from "../app/project-context.js";
 import {
   renderEditorConflictBanner,
   renderEditorFilterBanner,
@@ -107,6 +109,7 @@ function buildTranslateScreenFrame(state) {
       collapsedLanguageCodes,
       editorFontSizePx,
       editorReplace,
+      editorChapter,
     );
   }
 
@@ -279,6 +282,13 @@ export function renderTranslateSidebar(state) {
 export function renderTranslateScreen(state) {
   const frame = buildTranslateScreenFrame(state);
   const { titleText, displayTitle, mode } = frame;
+  const linkedGlossary = resolveSelectedChapterGlossary(state.glossaries);
+  const navButtons = [
+    navButton("Projects", "projects", false, { isBack: true }),
+    actionNavButton("Glossary", "open-editor-glossary", false, {
+      disabled: !linkedGlossary?.repoName,
+    }),
+  ];
 
   return pageShell({
     title: displayTitle,
@@ -286,7 +296,7 @@ export function renderTranslateScreen(state) {
     headerClass: "page-header--editor",
     bodyClass: "page-body--editor",
     titleAction: buildPageRefreshAction(state),
-    navButtons: buildSectionNav("translate"),
+    navButtons,
     tools: renderTranslateModeControl(mode),
     headerBody: renderTranslateHeaderDetail(state),
     pageSync: state.pageSync,

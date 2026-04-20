@@ -18,6 +18,10 @@ import {
   EDITOR_ROW_TEXT_STYLE_OPTIONS,
   normalizeEditorRowTextStyle,
 } from "./editor-row-text-style.js";
+import {
+  buildCachedEditorRowGlossaryHighlights,
+  renderableEditorGlossaryHighlightHtml,
+} from "./editor-glossary-highlight-cache.js";
 
 export function renderTranslationMarkerIcon(kind) {
   if (kind === "comments") {
@@ -518,6 +522,16 @@ function renderEditorFootnoteField(row, language) {
 
 function renderEditorLanguageField(row, language) {
   const textStyle = normalizeEditorRowTextStyle(row?.textStyle);
+  const glossaryHighlightHtml =
+    language.isAiTranslating === true
+      ? ""
+      : typeof language.glossaryHighlightHtml === "string"
+        ? language.glossaryHighlightHtml
+        : "";
+  const staticFieldTextHtml = glossaryHighlightHtml || escapeHtml(language.text);
+  const fieldStackClassName =
+    `translation-language-panel__field-stack translation-language-panel__field-stack--static`
+    + `${glossaryHighlightHtml ? " translation-language-panel__field-stack--glossary" : ""}`;
   if (row.hasConflict) {
     return language.hasConflict
       ? renderConflictResolutionField(row, language, textStyle)
@@ -543,7 +557,7 @@ function renderEditorLanguageField(row, language) {
           ><span
             class="translation-language-panel__field-static-text"
             data-editor-display-text
-          >${escapeHtml(language.text)}</span></div>
+          >${staticFieldTextHtml}</span></div>
         `
       : `
           <button
@@ -557,7 +571,7 @@ function renderEditorLanguageField(row, language) {
           ><span
             class="translation-language-panel__field-static-text"
             data-editor-display-text
-          >${escapeHtml(language.text)}</span></button>
+          >${staticFieldTextHtml}</span></button>
         `;
     return `
       <div
@@ -567,7 +581,7 @@ function renderEditorLanguageField(row, language) {
         data-language-code="${escapeHtml(language.code)}"
       >
         <div
-          class="translation-language-panel__field-stack translation-language-panel__field-stack--static"
+          class="${fieldStackClassName}"
           data-editor-glossary-field-stack
           data-row-id="${escapeHtml(row.id)}"
           data-language-code="${escapeHtml(language.code)}"
@@ -648,6 +662,7 @@ export function renderTranslationContentRow(
   collapsedLanguageCodes = new Set(),
   rowIndex = null,
   editorReplace = null,
+  chapterState = null,
 ) {
   if (row?.kind === "deleted-group") {
     const rowIndexAttribute = Number.isInteger(rowIndex) ? ` data-row-index="${rowIndex}"` : "";
@@ -663,6 +678,9 @@ export function renderTranslationContentRow(
   }
 
   const orderedSections = orderRowSectionsByCollapsedState(row.sections, collapsedLanguageCodes);
+  const glossaryHighlightMap = row?.kind === "row"
+    ? buildCachedEditorRowGlossaryHighlights(row, chapterState)
+    : new Map();
   const rowIndexAttribute = Number.isInteger(rowIndex) ? ` data-row-index="${rowIndex}"` : "";
   const rowActions = row.lifecycleState === "deleted"
     ? `
@@ -737,7 +755,15 @@ export function renderTranslationContentRow(
                     ${
                       isCollapsed
                         ? ""
-                        : renderEditorLanguageField(row, language)
+                        : renderEditorLanguageField(row, {
+                          ...language,
+                          glossaryHighlightHtml:
+                            language.isTextEditorOpen === true
+                              ? ""
+                              : renderableEditorGlossaryHighlightHtml(
+                                glossaryHighlightMap.get(language.code) ?? null,
+                              ),
+                        })
                     }
                   </section>
                 `;
@@ -758,11 +784,18 @@ export function renderTranslationContentRowsRange(
   startIndex = 0,
   endIndex = rows.length,
   editorReplace = null,
+  chapterState = null,
 ) {
   return rows
     .slice(startIndex, endIndex)
     .map((row, offset) =>
-      renderTranslationContentRow(row, collapsedLanguageCodes, startIndex + offset, editorReplace)
+      renderTranslationContentRow(
+        row,
+        collapsedLanguageCodes,
+        startIndex + offset,
+        editorReplace,
+        chapterState,
+      )
     )
     .join("");
 }
@@ -776,9 +809,17 @@ export function renderTranslationContentRows(
   collapsedLanguageCodes = new Set(),
   editorFontSizePx = 20,
   editorReplace = null,
+  chapterState = null,
 ) {
   if (!shouldVirtualizeEditorRows(rows)) {
-    return renderTranslationContentRowsRange(rows, collapsedLanguageCodes, 0, rows.length, editorReplace);
+    return renderTranslationContentRowsRange(
+      rows,
+      collapsedLanguageCodes,
+      0,
+      rows.length,
+      editorReplace,
+      chapterState,
+    );
   }
 
   const initialRowHeights = buildEditorRowHeights(rows, new Map(), collapsedLanguageCodes, editorFontSizePx);
@@ -802,6 +843,7 @@ export function renderTranslationContentRows(
           initialWindow.startIndex,
           initialWindow.endIndex,
           editorReplace,
+          chapterState,
         )}
       </div>
       <div

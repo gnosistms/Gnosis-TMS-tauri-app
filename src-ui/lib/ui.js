@@ -66,6 +66,23 @@ export function navButton(label, target, isGhost = false, options = {}) {
   }${options.disabled ? " is-disabled" : ""}" data-nav-target="${escapeHtml(target)}"${disabledActionAttributes(options)}>${chevron}<span>${escapeHtml(label)}</span></button>`;
 }
 
+export function actionNavButton(label, action, isGhost = false, options = {}) {
+  const chevron = options.isBack
+    ? `
+      <span class="header-nav__back-chevron" aria-hidden="true">
+        <svg viewBox="0 0 10 18" focusable="false" aria-hidden="true">
+          <path d="M8.5 1.5 2 9l6.5 7.5" />
+        </svg>
+      </span>
+    `
+    : "";
+  return `<button class="header-nav__button${
+    isGhost ? " header-nav__button--ghost" : ""
+  }${
+    options.isBack ? " header-nav__button--back" : ""
+  }${options.disabled ? " is-disabled" : ""}" data-action="${escapeHtml(action)}"${disabledActionAttributes(options)}>${chevron}<span>${escapeHtml(label)}</span></button>`;
+}
+
 export function primaryButton(label, action, options = {}) {
   return `<button class="button button--primary${options.disabled ? " is-disabled" : ""}" data-action="${escapeHtml(
     action,
