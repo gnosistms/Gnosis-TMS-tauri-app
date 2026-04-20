@@ -29,12 +29,12 @@ export const EDITOR_ROW_TEXT_STYLE_OPTIONS = [
   {
     value: EDITOR_ROW_TEXT_STYLE_INDENTED,
     label: "I",
-    tooltip: "Indented text",
+    tooltip: "Indented",
   },
   {
     value: EDITOR_ROW_TEXT_STYLE_CENTERED,
     label: "C",
-    tooltip: "Centered text",
+    tooltip: "Centered",
   },
 ];
 

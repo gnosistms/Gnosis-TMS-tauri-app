@@ -399,7 +399,12 @@ function renderEditorLanguageImage(row, language) {
           data-language-code="${escapeHtml(language.code)}"
           ${tooltipAttributes("Remove image", { side: "top" })}
         >
-          <span aria-hidden="true">x</span>
+          <span class="translation-language-panel__image-remove-icon" aria-hidden="true">
+            <svg viewBox="0 0 12 12" focusable="false" aria-hidden="true">
+              <path d="M2 2 10 10" />
+              <path d="M10 2 2 10" />
+            </svg>
+          </span>
         </button>
       </div>
     </div>

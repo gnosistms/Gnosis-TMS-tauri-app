@@ -1128,6 +1128,32 @@ mod tests {
     }
 
     #[test]
+    fn apply_editor_text_style_update_accepts_centered_style() {
+        let mut row_value = json!({
+          "text_style": "paragraph",
+          "fields": {
+            "es": {
+              "value_kind": "text",
+              "plain_text": "uno",
+              "html_preview": "<p>uno</p>",
+              "editor_flags": {
+                "reviewed": false,
+                "please_check": false
+              }
+            }
+          }
+        });
+
+        let (text_style, changed) = apply_editor_text_style_update(&mut row_value, "centered")
+            .expect("text style update should succeed");
+
+        assert!(changed);
+        assert_eq!(text_style, "centered");
+        assert_eq!(row_value["text_style"], json!("centered"));
+        assert!(row_value["fields"]["es"].get("html_preview").is_none());
+    }
+
+    #[test]
     fn apply_editor_field_flag_update_reports_changes_and_preserves_other_flags() {
         let mut row_value = json!({
           "fields": {

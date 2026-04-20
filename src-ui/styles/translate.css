@@ -918,7 +918,7 @@
 }
 
 .translation-language-panel__image-url-input::placeholder {
-  color: var(--muted);
+  color: var(--placeholder-text);
   opacity: 1;
 }
 
@@ -1047,7 +1047,7 @@
 }
 
 .translation-language-panel__image-caption-input::placeholder {
-  color: var(--muted);
+  color: var(--placeholder-text);
   opacity: 1;
 }
 
@@ -1093,8 +1093,6 @@
   border-radius: 6px;
   background: rgba(255, 251, 246, 0.92);
   color: var(--muted);
-  font-size: 13px;
-  font-weight: 700;
 }
 
 .translation-language-panel__image-remove:hover,
@@ -1103,6 +1101,27 @@
   background: rgba(255, 247, 238, 0.98);
   color: var(--link-hover);
   outline: none;
+}
+
+.translation-language-panel__image-remove-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 12px;
+  height: 12px;
+}
+
+.translation-language-panel__image-remove-icon svg {
+  display: block;
+  width: 12px;
+  height: 12px;
+}
+
+.translation-language-panel__image-remove-icon path {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
 }
 
 .translation-language-panel__field-highlight,
@@ -1200,6 +1219,11 @@
     border-color 140ms ease,
     box-shadow 140ms ease,
     background 140ms ease;
+}
+
+.translation-language-panel__field::placeholder {
+  color: var(--placeholder-text);
+  opacity: 1;
 }
 
 .translation-language-panel__field--loading {
