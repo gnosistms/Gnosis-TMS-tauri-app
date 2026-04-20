@@ -1486,6 +1486,172 @@ test.describe("editor regressions", () => {
     await expect(page.locator(markSelector)).toHaveCount(1);
   });
 
+  test("derived glossary highlights and tooltip payloads appear after ai translation prepares a row glossary", async ({ page }) => {
+    await page.addInitScript(() => {
+      globalThis.__gnosisMockTauriHandlers = {
+        load_ai_provider_secret() {
+          return "openai-key";
+        },
+        prepare_editor_ai_translated_glossary() {
+          return {
+            glossarySourceText: "La camara interior brilla.",
+            entries: [{
+              sourceTerm: "inner chamber",
+              glossarySourceTerm: "camara interior",
+              targetVariants: ["buong noi tam"],
+              notes: ["Dung thuat ngu cua glossary"],
+            }],
+          };
+        },
+        async run_ai_translation() {
+          return {
+            translatedText: "Buong noi tam sang len.",
+          };
+        },
+      };
+    });
+
+    await mountEditorFixture(page, {
+      rowCount: 1,
+      languages: [
+        { code: "en", name: "English", role: "source" },
+        { code: "es", name: "Spanish" },
+        { code: "vi", name: "Vietnamese", role: "target" },
+      ],
+      glossarySourceLanguageCode: "es",
+      glossaryTargetLanguageCode: "vi",
+      fieldsByRowId: {
+        "fixture-row-0001": {
+          en: "The inner chamber glows.",
+          es: "La camara interior brilla.",
+          vi: "",
+        },
+      },
+      glossaryTerms: [
+        {
+          sourceTerms: ["camara interior"],
+          targetTerms: ["buong noi tam"],
+          notesToTranslators: "Dung thuat ngu cua glossary",
+        },
+      ],
+      aiActionConfig: {
+        detailedConfiguration: false,
+        unified: {
+          providerId: "openai",
+          modelId: "gpt-5.4",
+        },
+      },
+    }, { path: "/?platform=windows", mockTauri: true });
+
+    await page.locator('[data-action="switch-editor-sidebar-tab:translate"]').click();
+    await page.locator('[data-action="run-editor-ai-translate:translate1"]').click();
+
+    const sourceMarkSelector =
+      '[data-editor-row-card][data-row-id="fixture-row-0001"] [data-editor-display-field][data-language-code="en"] [data-editor-glossary-mark]';
+
+    await expect.poll(async () => {
+      return await page.locator(sourceMarkSelector).count();
+    }).toBe(1);
+
+    const sourceMark = page.locator(sourceMarkSelector);
+    await expect(sourceMark).toHaveText("inner chamber");
+    await expect(sourceMark).not.toHaveClass(/glossary-match-error/);
+
+    const tooltipPayload = await sourceMark.getAttribute("data-editor-glossary-tooltip-payload");
+    expect(tooltipPayload).not.toBeNull();
+    const payload = JSON.parse(
+      tooltipPayload
+        .replaceAll("&quot;", "\"")
+        .replaceAll("&#39;", "'")
+        .replaceAll("&amp;", "&"),
+    );
+    expect(payload).toEqual({
+      kind: "source",
+      title: "inner chamber",
+      variants: ["buong noi tam"],
+      translatorNotes: ["Dung thuat ngu cua glossary"],
+      footnotes: [],
+      originTerms: ["camara interior"],
+    });
+  });
+
+  test("ai translation writes the prepared pivot text into the glossary-source row field before saving", async ({ page }) => {
+    await page.addInitScript(() => {
+      globalThis.__gnosisMockTauriHandlers = {
+        load_ai_provider_secret() {
+          return "openai-key";
+        },
+        prepare_editor_ai_translated_glossary() {
+          return {
+            glossarySourceText: "La camara interior brilla.",
+            entries: [{
+              sourceTerm: "inner chamber",
+              glossarySourceTerm: "camara interior",
+              targetVariants: ["buong noi tam"],
+              notes: ["Dung thuat ngu cua glossary"],
+            }],
+          };
+        },
+        async run_ai_translation() {
+          return {
+            translatedText: "Buong noi tam sang len.",
+          };
+        },
+      };
+    });
+
+    await mountEditorFixture(page, {
+      rowCount: 1,
+      languages: [
+        { code: "en", name: "English", role: "source" },
+        { code: "es", name: "Spanish" },
+        { code: "vi", name: "Vietnamese", role: "target" },
+      ],
+      glossarySourceLanguageCode: "es",
+      glossaryTargetLanguageCode: "vi",
+      fieldsByRowId: {
+        "fixture-row-0001": {
+          en: "The inner chamber glows.",
+          es: "",
+          vi: "",
+        },
+      },
+      glossaryTerms: [
+        {
+          sourceTerms: ["camara interior"],
+          targetTerms: ["buong noi tam"],
+          notesToTranslators: "Dung thuat ngu cua glossary",
+        },
+      ],
+      aiActionConfig: {
+        detailedConfiguration: false,
+        unified: {
+          providerId: "openai",
+          modelId: "gpt-5.4",
+        },
+      },
+    }, { path: "/?platform=windows", mockTauri: true });
+
+    await page.locator('[data-action="switch-editor-sidebar-tab:translate"]').click();
+    await page.locator('[data-action="run-editor-ai-translate:translate1"]').click();
+
+    await expect.poll(async () => {
+      const mockState = await readMockTauriState(page);
+      const rowSaveInvocation = (mockState?.invocations ?? [])
+        .find((entry) => entry.command === "update_gtms_editor_row_fields");
+      return rowSaveInvocation?.payload?.input?.fields ?? null;
+    }).toEqual({
+      en: "The inner chamber glows.",
+      es: "La camara interior brilla.",
+      vi: "Buong noi tam sang len.",
+    });
+
+    await expect.poll(async () => {
+      const mockState = await readMockTauriState(page);
+      return mockState?.histories?.["fixture-chapter::fixture-row-0001::es"]?.[0]?.plainText ?? null;
+    }).toBe("La camara interior brilla.");
+  });
+
   test("Windows fixture glossary highlights survive delete show hide and restore", async ({ page }) => {
     await mountEditorFixture(page, { rowCount: 80, glossary: true }, { path: "/?platform=windows" });
 

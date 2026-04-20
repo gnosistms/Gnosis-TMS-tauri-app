@@ -1,7 +1,6 @@
 import {
   buildEditorGlossaryModel,
   buildEditorRowGlossaryHighlights,
-  buildEditorRowSourceGlossaryHighlights,
 } from "./editor-glossary-highlighting.js";
 import {
   buildEditorDerivedGlossaryContext,
@@ -246,7 +245,7 @@ function buildCachedEditorRowGlossaryHighlights(row, chapterState = state.editor
     }),
   );
   if (derivedGlossaryEntry?.matcherModel) {
-    for (const [languageCode, nextHighlight] of buildEditorRowSourceGlossaryHighlights(
+    for (const [languageCode, nextHighlight] of buildEditorRowGlossaryHighlights(
       sections,
       derivedGlossaryEntry.matcherModel,
     )) {

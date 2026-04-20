@@ -229,6 +229,54 @@ test("derived source highlights include glossary provenance in the structured to
   assert.deepEqual(payload.originTerms, ["camara interior"]);
 });
 
+test("derived glossary highlights are marked as errors when the expected target variant is missing", () => {
+  const model = buildEditorDerivedGlossaryModel({
+    sourceLanguage: {
+      code: "en",
+      name: "English",
+    },
+    targetLanguage: {
+      code: "vi",
+      name: "Vietnamese",
+    },
+    entries: [{
+      sourceTerm: "inner chamber",
+      glossarySourceTerm: "camara interior",
+      targetVariants: ["buong noi tam"],
+      notes: ["Dung thuat ngu cua glossary"],
+    }],
+  });
+
+  const highlights = buildEditorRowGlossaryHighlights([
+    {
+      code: "en",
+      text: "The inner chamber glows.",
+    },
+    {
+      code: "vi",
+      text: "Anh sang toa ra.",
+    },
+  ], model);
+
+  const sourceHtml = highlights.get("en")?.html ?? "";
+  assert.match(sourceHtml, /glossary-match-error/);
+
+  const payloadMatch = sourceHtml.match(/data-editor-glossary-tooltip-payload="([^"]+)"/);
+  assert.ok(payloadMatch);
+
+  const payloadJson = payloadMatch[1]
+    .replaceAll("&quot;", "\"")
+    .replaceAll("&#39;", "'")
+    .replaceAll("&amp;", "&");
+  const payload = JSON.parse(payloadJson);
+
+  assert.equal(payload.kind, "source");
+  assert.equal(payload.title, "inner chamber");
+  assert.deepEqual(payload.variants, ["buong noi tam"]);
+  assert.deepEqual(payload.translatorNotes, ["Dung thuat ngu cua glossary"]);
+  assert.deepEqual(payload.originTerms, ["camara interior"]);
+});
+
 test("translation glossary hints use the matched source term, ordered target variants, and notes only", () => {
   const model = buildEditorGlossaryModel(glossaryPayload({
     terms: [

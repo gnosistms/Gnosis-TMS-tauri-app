@@ -842,6 +842,10 @@ test("runEditorAiTranslate prepares derived glossary hints when the glossary sou
   );
   assert.equal(state.editorChapter.rows[0].fields.vi, "Buong noi tam sang len.");
   assert.equal(
+    state.editorChapter.rows[0].fields.es,
+    "La camara interior brilla.",
+  );
+  assert.equal(
     state.editorChapter.derivedGlossariesByRowId["row-1"]?.status,
     "ready",
   );
@@ -956,11 +960,15 @@ test("runEditorAiTranslate regenerates the pivot when the source changed but the
 
   assert.equal(
     state.editorChapter.derivedGlossariesByRowId["row-1"]?.glossarySourceTextOrigin,
-    "generated",
+    "row",
+  );
+  assert.equal(
+    state.editorChapter.rows[0].fields.es,
+    "La camara interior ahora brilla mas.",
   );
 });
 
-test("runEditorAiTranslate reuses a generated derived glossary cache entry when the glossary-source field is empty", async () => {
+test("runEditorAiTranslate reuses a promoted derived glossary cache entry after writing the pivot into the row", async () => {
   installTranslateFixture({
     languages: [
       { code: "en", name: "English" },
@@ -1071,7 +1079,15 @@ test("runEditorAiTranslate reuses a generated derived glossary cache entry when 
   assert.equal(translateCount, 2);
   assert.equal(
     state.editorChapter.derivedGlossariesByRowId["row-1"]?.glossarySourceTextOrigin,
-    "generated",
+    "row",
+  );
+  assert.equal(
+    state.editorChapter.rows[0].fields.es,
+    "La camara interior brilla.",
+  );
+  assert.equal(
+    state.editorChapter.rows[0].persistedFields.es,
+    "La camara interior brilla.",
   );
   assert.deepEqual(
     invokeLog.map((entry) => entry.command),
@@ -1225,6 +1241,123 @@ test("runEditorAiTranslate preserves a ready derived glossary cache when final t
   assert.equal(
     state.editorChapter.derivedGlossariesByRowId["row-1"]?.entries?.[0]?.sourceTerm,
     "inner chamber",
+  );
+});
+
+test("runEditorAiTranslate saves the prepared pivot text when final translation fails", async () => {
+  installTranslateFixture({
+    languages: [
+      { code: "en", name: "English" },
+      { code: "es", name: "Spanish" },
+      { code: "vi", name: "Vietnamese" },
+    ],
+    selectedSourceLanguageCode: "en",
+    activeLanguageCode: "vi",
+    fields: {
+      en: "The inner chamber glows.",
+      es: "",
+      vi: "",
+    },
+  });
+  const glossary = {
+    status: "ready",
+    error: "",
+    glossaryId: "glossary-1",
+    repoName: "glossary-1",
+    title: "Glossary",
+    sourceLanguage: {
+      code: "es",
+      name: "Spanish",
+    },
+    targetLanguage: {
+      code: "vi",
+      name: "Vietnamese",
+    },
+    terms: [{
+      termId: "t1",
+      sourceTerms: ["camara interior"],
+      targetTerms: ["buong noi tam"],
+      notesToTranslators: "Dung thuat ngu cua glossary",
+    }],
+    matcherModel: null,
+  };
+  glossary.matcherModel = buildEditorGlossaryModel(glossary);
+  state.editorChapter = {
+    ...state.editorChapter,
+    glossary,
+  };
+  state.aiSettings = {
+    ...state.aiSettings,
+    actionConfig: {
+      ...state.aiSettings.actionConfig,
+      detailedConfiguration: true,
+      actions: {
+        ...state.aiSettings.actionConfig.actions,
+        translate1: {
+          providerId: "openai",
+          modelId: "gpt-5.4-mini",
+        },
+      },
+    },
+  };
+
+  let persistCount = 0;
+  let persistedCommitMetadata = null;
+  invokeHandler = async (command, payload = {}) => {
+    if (command === "load_ai_provider_secret") {
+      return "oa-key";
+    }
+    if (command === "prepare_editor_ai_translated_glossary") {
+      return {
+        glossarySourceText: "La camara interior brilla.",
+        entries: [{
+          sourceTerm: "inner chamber",
+          glossarySourceTerm: "camara interior",
+          targetVariants: ["buong noi tam"],
+          notes: ["Dung thuat ngu cua glossary"],
+        }],
+      };
+    }
+    if (command === "run_ai_translation") {
+      throw new Error("Provider timeout");
+    }
+
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  await runEditorAiTranslate(() => {}, "translate1", {
+    updateEditorRowFieldValue(rowId, languageCode, nextValue) {
+      const row = state.editorChapter.rows.find((entry) => entry.rowId === rowId);
+      row.fields[languageCode] = nextValue;
+      row.saveStatus = "dirty";
+    },
+    async persistEditorRowOnBlur(_render, rowId, options = {}) {
+      persistCount += 1;
+      persistedCommitMetadata = options?.commitMetadata ?? null;
+      const row = state.editorChapter.rows.find((entry) => entry.rowId === rowId);
+      row.persistedFields = { ...row.fields };
+      row.saveStatus = "idle";
+    },
+  });
+
+  assert.deepEqual(
+    invokeLog.map((entry) => entry.command),
+    [
+      "load_ai_provider_secret",
+      "prepare_editor_ai_translated_glossary",
+      "run_ai_translation",
+    ],
+  );
+  assert.equal(state.editorChapter.aiTranslate.translate1.status, "error");
+  assert.equal(persistCount, 1);
+  assert.deepEqual(persistedCommitMetadata, {
+    aiModel: "gpt-5.4-mini",
+  });
+  assert.equal(state.editorChapter.rows[0].fields.es, "La camara interior brilla.");
+  assert.equal(state.editorChapter.rows[0].persistedFields.es, "La camara interior brilla.");
+  assert.equal(
+    state.editorChapter.derivedGlossariesByRowId["row-1"]?.glossarySourceTextOrigin,
+    "row",
   );
 });
 

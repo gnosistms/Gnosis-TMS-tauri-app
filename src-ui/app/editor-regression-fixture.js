@@ -106,9 +106,25 @@ function buildFixtureGlossary(languages, options = {}) {
     };
   }
 
-  const sourceLanguage = languages.find((language) => language.role === "source") ?? languages[0] ?? null;
+  const requestedGlossarySourceLanguageCode =
+    typeof options?.glossarySourceLanguageCode === "string"
+      ? options.glossarySourceLanguageCode.trim()
+      : "";
+  const requestedGlossaryTargetLanguageCode =
+    typeof options?.glossaryTargetLanguageCode === "string"
+      ? options.glossaryTargetLanguageCode.trim()
+      : "";
+  const sourceLanguage =
+    languages.find((language) => language.code === requestedGlossarySourceLanguageCode)
+    ?? languages.find((language) => language.role === "source")
+    ?? languages[0]
+    ?? null;
   const targetLanguage =
-    languages.find((language) => language.role === "target" && language.code !== sourceLanguage?.code)
+    languages.find((language) =>
+      language.code === requestedGlossaryTargetLanguageCode
+      && language.code !== sourceLanguage?.code
+    )
+    ?? languages.find((language) => language.role === "target" && language.code !== sourceLanguage?.code)
     ?? languages.find((language) => language.code !== sourceLanguage?.code)
     ?? sourceLanguage;
   const linkedGlossary = {
