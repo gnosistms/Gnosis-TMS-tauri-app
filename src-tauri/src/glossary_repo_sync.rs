@@ -12,8 +12,9 @@ use crate::{
         remote_ref_requires_newer_app,
     },
     repo_sync_shared::{
-        abort_rebase_after_failed_pull, ensure_repo_local_git_identity, git_output,
-        load_git_transport_token, read_current_head_oid, GitTransportAuth,
+        abort_rebase_after_failed_pull, ensure_repo_local_git_identity,
+        git_error_indicates_missing_remote_ref, git_output, load_git_transport_token,
+        read_current_head_oid, GitTransportAuth,
     },
     storage_paths::local_glossary_repo_root,
 };
@@ -538,6 +539,7 @@ fn sync_glossary_repo(
         .unwrap_or("main");
     let local_head_oid = read_current_head_oid(repo_path);
     let git_transport_auth = GitTransportAuth::from_token(git_transport_token)?;
+    enforce_remote_glossary_app_version(repo_path, glossary, branch_name, &git_transport_auth)?;
 
     if remote_head_oid.trim().is_empty() {
         if local_head_oid.is_some() {
@@ -551,8 +553,6 @@ fn sync_glossary_repo(
         mark_glossary_repo_synced(glossary, repo_path)?;
         return Ok(current_head_oid);
     }
-
-    enforce_remote_glossary_app_version(repo_path, glossary, branch_name, &git_transport_auth)?;
 
     if let Err(error) = git_output(
         repo_path,
@@ -629,23 +629,15 @@ fn clone_glossary_repo(
     clone_args.push(repo_path_string.as_str());
     git_output(repo_parent, &clone_args, Some(&git_transport_auth))?;
     ensure_repo_local_git_identity(app, repo_path)?;
-
-    if !remote_head_oid.trim().is_empty() {
-        let branch_name = glossary
-            .default_branch_name
-            .as_deref()
-            .filter(|value| !value.trim().is_empty())
-            .unwrap_or("main");
-        enforce_remote_glossary_app_version(repo_path, glossary, branch_name, &git_transport_auth)?;
-    }
+    let branch_name = glossary
+        .default_branch_name
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or("main");
+    enforce_remote_glossary_app_version(repo_path, glossary, branch_name, &git_transport_auth)?;
 
     if remote_head_oid.trim().is_empty() {
-        let branch_name = glossary
-            .default_branch_name
-            .as_deref()
-            .filter(|value| !value.trim().is_empty())
-            .unwrap_or("main");
-        let _ = git_output(repo_path, &["checkout", "-B", branch_name], None);
+        let _ = git_output(repo_path, &["checkout", "-B", &branch_name], None);
     }
 
     let current_head_oid = read_current_head_oid(repo_path);
@@ -659,11 +651,15 @@ fn enforce_remote_glossary_app_version(
     branch_name: &str,
     git_transport_auth: &GitTransportAuth,
 ) -> Result<(), String> {
-    git_output(
+    match git_output(
         repo_path,
         &["fetch", "origin", branch_name],
         Some(git_transport_auth),
-    )?;
+    ) {
+        Ok(_) => {}
+        Err(error) if git_error_indicates_missing_remote_ref(&error) => return Ok(()),
+        Err(error) => return Err(error),
+    }
     let remote_tracking_ref = format!("origin/{branch_name}");
     let resource_name = if glossary.repo_name.trim().is_empty() {
         glossary.glossary_id.as_deref().unwrap_or_default().trim()

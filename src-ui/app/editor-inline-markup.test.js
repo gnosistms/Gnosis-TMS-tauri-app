@@ -111,6 +111,32 @@ test("collapsed bold inside a word wraps the whole word", () => {
   assert.equal(result.selectionEnd, "<strong>Alpha".length);
 });
 
+test("collapsed italic inside a word wraps the whole word", () => {
+  const result = toggleInlineMarkupSelection({
+    value: "Alpha beta",
+    selectionStart: "Alpha beta".indexOf("beta") + 1,
+    selectionEnd: "Alpha beta".indexOf("beta") + 1,
+    style: "italic",
+  });
+
+  assert.equal(result.value, "Alpha <em>beta</em>");
+  assert.equal(result.selectionStart, "Alpha <em>".length);
+  assert.equal(result.selectionEnd, "Alpha <em>beta".length);
+});
+
+test("collapsed underline inside a word wraps the whole word", () => {
+  const result = toggleInlineMarkupSelection({
+    value: "Alpha",
+    selectionStart: 2,
+    selectionEnd: 2,
+    style: "underline",
+  });
+
+  assert.equal(result.value, "<u>Alpha</u>");
+  assert.equal(result.selectionStart, "<u>".length);
+  assert.equal(result.selectionEnd, "<u>Alpha".length);
+});
+
 test("collapsed bold outside a word inserts an empty tag pair", () => {
   const result = toggleInlineMarkupSelection({
     value: "Alpha beta",

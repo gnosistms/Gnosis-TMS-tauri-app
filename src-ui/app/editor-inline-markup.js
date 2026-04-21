@@ -557,21 +557,34 @@ function collapsedWordVisibleRange(parsed, rawOffset) {
 function visiblePositionToRawOffset(parsed, visiblePosition, bias = "start") {
   const boundedPosition = Math.max(0, Math.min(parsed.visibleLength, Number.parseInt(visiblePosition ?? "", 10) || 0));
   const segments = collectTextSegments(parsed.nodes);
-  let previousSegment = null;
+  for (let index = 0; index < segments.length; index += 1) {
+    const segment = segments[index];
+    const previousSegment = index > 0 ? segments[index - 1] : null;
+    const nextSegment = index + 1 < segments.length ? segments[index + 1] : null;
 
-  for (const segment of segments) {
     if (boundedPosition < segment.visibleStart) {
       return bias === "end" && previousSegment ? previousSegment.rawEnd : segment.rawStart;
     }
 
-    if (boundedPosition <= segment.visibleEnd) {
+    if (boundedPosition === segment.visibleStart) {
+      return bias === "end" && previousSegment ? previousSegment.rawEnd : segment.rawStart;
+    }
+
+    if (boundedPosition < segment.visibleEnd) {
       return segment.rawStart + Math.max(0, Math.min(segment.text.length, boundedPosition - segment.visibleStart));
     }
 
-    previousSegment = segment;
+    if (boundedPosition === segment.visibleEnd) {
+      if (bias === "start" && nextSegment) {
+        return nextSegment.rawStart;
+      }
+
+      return segment.rawEnd;
+    }
   }
 
-  return previousSegment ? previousSegment.rawEnd : parsed.source.length;
+  const finalSegment = segments[segments.length - 1] ?? null;
+  return finalSegment ? finalSegment.rawEnd : parsed.source.length;
 }
 
 function selectedVisibleSegments(parsed, selectionStart, selectionEnd) {

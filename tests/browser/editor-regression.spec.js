@@ -707,10 +707,70 @@ async function countGlossaryMarksForRow(page, rowId) {
 
 async function readEditorSelectionStart(page, rowId, languageCode, contentKind = "field") {
   return await page.evaluate(({ rowId: targetRowId, languageCode: targetLanguageCode, contentKind: targetContentKind }) => {
+    const contentSelector =
+      targetContentKind === "footnote"
+        ? '[data-content-kind="footnote"]'
+        : targetContentKind === "image-caption"
+          ? '[data-content-kind="image-caption"]'
+          : ":not([data-content-kind])";
     const field = document.querySelector(
-      `[data-editor-row-field][data-row-id="${targetRowId}"][data-language-code="${targetLanguageCode}"]${targetContentKind === "footnote" ? '[data-content-kind="footnote"]' : ":not([data-content-kind])"}`,
+      `[data-editor-row-field][data-row-id="${targetRowId}"][data-language-code="${targetLanguageCode}"]${contentSelector}`,
     );
     return field instanceof HTMLTextAreaElement ? field.selectionStart : null;
+  }, { rowId, languageCode, contentKind });
+}
+
+async function setEditorSelectionRange(
+  page,
+  rowId,
+  languageCode,
+  start,
+  end,
+  contentKind = "field",
+) {
+  await page.evaluate(({
+    rowId: targetRowId,
+    languageCode: targetLanguageCode,
+    contentKind: targetContentKind,
+    start: targetStart,
+    end: targetEnd,
+  }) => {
+    const contentSelector =
+      targetContentKind === "footnote"
+        ? '[data-content-kind="footnote"]'
+        : targetContentKind === "image-caption"
+          ? '[data-content-kind="image-caption"]'
+          : ":not([data-content-kind])";
+    const field = document.querySelector(
+      `[data-editor-row-field][data-row-id="${targetRowId}"][data-language-code="${targetLanguageCode}"]${contentSelector}`,
+    );
+    if (!(field instanceof HTMLTextAreaElement)) {
+      return;
+    }
+
+    field.focus();
+    field.setSelectionRange(targetStart, targetEnd);
+  }, {
+    rowId,
+    languageCode,
+    contentKind,
+    start,
+    end,
+  });
+}
+
+async function readEditorFieldValue(page, rowId, languageCode, contentKind = "field") {
+  return await page.evaluate(({ rowId: targetRowId, languageCode: targetLanguageCode, contentKind: targetContentKind }) => {
+    const contentSelector =
+      targetContentKind === "footnote"
+        ? '[data-content-kind="footnote"]'
+        : targetContentKind === "image-caption"
+          ? '[data-content-kind="image-caption"]'
+          : ":not([data-content-kind])";
+    const field = document.querySelector(
+      `[data-editor-row-field][data-row-id="${targetRowId}"][data-language-code="${targetLanguageCode}"]${contentSelector}`,
+    );
+    return field instanceof HTMLTextAreaElement ? field.value : null;
   }, { rowId, languageCode, contentKind });
 }
 
@@ -2341,6 +2401,7 @@ test.describe("editor regressions", () => {
     const searchInput = page.locator("[data-editor-search-input]");
 
     await expect(headingButton).toBeHidden();
+    await activateMainEditorField(page, "fixture-row-0001", "vi");
     await targetField.click();
     await expect(headingButton).toBeVisible();
 
@@ -2437,6 +2498,7 @@ test.describe("editor regressions", () => {
     );
     const reviewLastUpdateGroup = page.locator(".history-group").first();
 
+    await activateMainEditorField(page, "fixture-row-0001", "vi");
     await targetField.click();
     await clickLocatorCenter(page, heading1Button);
 
@@ -2699,6 +2761,132 @@ test.describe("editor regressions", () => {
         return activeStack?.getAttribute("data-row-text-style") ?? displayField?.getAttribute("data-row-text-style") ?? null;
       });
     }).toBe("heading2");
+  });
+
+  test("inline formatting buttons keep the editor open, target the selected word, and render sanitized markup after blur", async ({ page }) => {
+    await mountEditorFixture(page, { rowCount: 40 }, { mockTauri: true });
+
+    const rowId = "fixture-row-0001";
+    const languageCode = "vi";
+    const targetField = await activateMainEditorField(page, rowId, languageCode);
+    const searchInput = page.locator("[data-editor-search-input]");
+    const boldButton = page.locator(
+      `[data-editor-inline-style-button][data-row-id="${rowId}"][data-language-code="${languageCode}"][data-inline-style="bold"]`,
+    );
+    const italicButton = page.locator(
+      `[data-editor-inline-style-button][data-row-id="${rowId}"][data-language-code="${languageCode}"][data-inline-style="italic"]`,
+    );
+    const underlineButton = page.locator(
+      `[data-editor-inline-style-button][data-row-id="${rowId}"][data-language-code="${languageCode}"][data-inline-style="underline"]`,
+    );
+    const rubyButton = page.locator(
+      `[data-editor-inline-style-button][data-row-id="${rowId}"][data-language-code="${languageCode}"][data-inline-style="ruby"]`,
+    );
+
+    await targetField.fill("alpha beta gamma");
+
+    await setEditorSelectionRange(page, rowId, languageCode, "alpha beta gamma".indexOf("beta") + 1, "alpha beta gamma".indexOf("beta") + 1);
+    await clickLocatorCenter(page, boldButton);
+
+    await expect(targetField).toBeVisible();
+    await expect(targetField).toHaveValue("alpha <strong>beta</strong> gamma");
+    await expect(boldButton).toHaveAttribute("aria-pressed", "true");
+
+    await clickLocatorCenter(page, boldButton);
+    await expect(targetField).toHaveValue("alpha beta gamma");
+    await expect(boldButton).toHaveAttribute("aria-pressed", "false");
+
+    await setEditorSelectionRange(page, rowId, languageCode, 1, 1);
+    await clickLocatorCenter(page, underlineButton);
+    await expect(targetField).toHaveValue("<u>alpha</u> beta gamma");
+    await expect(underlineButton).toHaveAttribute("aria-pressed", "true");
+
+    const gammaIndexAfterUnderline = "<u>alpha</u> beta gamma".indexOf("gamma") + 2;
+    await setEditorSelectionRange(page, rowId, languageCode, gammaIndexAfterUnderline, gammaIndexAfterUnderline);
+    await clickLocatorCenter(page, italicButton);
+    await expect(targetField).toHaveValue("<u>alpha</u> beta <em>gamma</em>");
+    await expect(italicButton).toHaveAttribute("aria-pressed", "true");
+
+    const betaIndexAfterItalic = "<u>alpha</u> beta <em>gamma</em>".indexOf("beta") + 1;
+    await setEditorSelectionRange(page, rowId, languageCode, betaIndexAfterItalic, betaIndexAfterItalic);
+    await clickLocatorCenter(page, rubyButton);
+    await expect(targetField).toHaveValue(
+      "<u>alpha</u> <ruby>beta<rt>ruby text here</rt></ruby> <em>gamma</em>",
+    );
+    await expect(rubyButton).toHaveAttribute("aria-pressed", "true");
+
+    await clickLocatorCenter(page, rubyButton);
+    await expect(targetField).toHaveValue("<u>alpha</u> beta <em>gamma</em>");
+    await expect(rubyButton).toHaveAttribute("aria-pressed", "false");
+
+    await searchInput.click();
+
+    const displayInnerHtml = await page.locator(
+      `[data-editor-display-field][data-row-id="${rowId}"][data-language-code="${languageCode}"] [data-editor-display-text]`,
+    ).evaluate((element) => element.innerHTML);
+    expect(displayInnerHtml).toContain("<u>alpha</u>");
+    expect(displayInnerHtml).toContain("<em>gamma</em>");
+    expect(displayInnerHtml).not.toContain("&lt;");
+  });
+
+  test("inline formatting buttons apply to the active footnote textarea instead of the main field", async ({ page }) => {
+    await mountEditorFixture(page, { rowCount: 40 }, { mockTauri: true });
+
+    const rowId = "fixture-row-0001";
+    const languageCode = "vi";
+    await activateMainEditorField(page, rowId, languageCode);
+
+    const footnoteButton = page.locator(
+      `[data-editor-footnote-button][data-row-id="${rowId}"][data-language-code="${languageCode}"]`,
+    );
+    await clickLocatorCenter(page, footnoteButton);
+
+    const footnoteField = page.locator(
+      `[data-editor-row-field][data-row-id="${rowId}"][data-language-code="${languageCode}"][data-content-kind="footnote"]`,
+    );
+    const italicButton = page.locator(
+      `[data-editor-inline-style-button][data-row-id="${rowId}"][data-language-code="${languageCode}"][data-inline-style="italic"]`,
+    );
+
+    await expect(footnoteField).toBeVisible();
+    await footnoteField.fill("foot note");
+    await setEditorSelectionRange(page, rowId, languageCode, "foot note".indexOf("note") + 1, "foot note".indexOf("note") + 1, "footnote");
+    await clickLocatorCenter(page, italicButton);
+
+    await expect(footnoteField).toHaveValue("foot <em>note</em>");
+    await expect(italicButton).toHaveAttribute("aria-pressed", "true");
+    await expect(await readEditorFieldValue(page, rowId, languageCode)).toBe("alpha 0001 target text");
+  });
+
+  test("inline formatting buttons apply to the active image caption textarea instead of the main field", async ({ page }) => {
+    const rowId = "fixture-row-0010";
+    const languageCode = "vi";
+    await mountEditorFixture(page, {
+      rowCount: 18,
+      imagesByRowId: {
+        [rowId]: {
+          [languageCode]: {
+            kind: "url",
+            url: `https://example.com/${rowId}-${languageCode}.png`,
+          },
+        },
+      },
+    }, { mockTauri: true });
+
+    await activateMainEditorField(page, rowId, languageCode);
+    const captionField = await activateImageCaptionEditor(page, rowId, languageCode);
+    const underlineButton = page.locator(
+      `[data-editor-inline-style-button][data-row-id="${rowId}"][data-language-code="${languageCode}"][data-inline-style="underline"]`,
+    );
+
+    await expect(captionField).toBeVisible();
+    await captionField.fill("caption note");
+    await setEditorSelectionRange(page, rowId, languageCode, "caption note".indexOf("note") + 1, "caption note".indexOf("note") + 1, "image-caption");
+    await clickLocatorCenter(page, underlineButton);
+
+    await expect(captionField).toHaveValue("caption <u>note</u>");
+    await expect(underlineButton).toHaveAttribute("aria-pressed", "true");
+    await expect(await readEditorFieldValue(page, rowId, languageCode)).toBe(`alpha 0010 target text`);
   });
 
   test("typing in one row then focusing another row persists without losing the target field", async ({ page }) => {

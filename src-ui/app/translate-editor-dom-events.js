@@ -397,6 +397,10 @@ export function registerTranslateEditorDomEvents(app, render) {
           return;
         }
 
+        if (activeElementIsInEditorLanguageCluster(rowId, languageCode)) {
+          return;
+        }
+
         collapseEditorImageCaption(render, rowId, languageCode);
         void persistEditorRowOnBlur(render, rowId);
       });

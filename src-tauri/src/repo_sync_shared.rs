@@ -219,6 +219,15 @@ pub(crate) fn abort_rebase_after_failed_pull(repo_path: &Path, pull_error: Strin
     }
 }
 
+pub(crate) fn git_error_indicates_missing_remote_ref(error: &str) -> bool {
+    let normalized = error.trim().to_ascii_lowercase();
+    normalized.contains("couldn't find remote ref")
+        || normalized.contains("could not find remote ref")
+        || normalized.contains("remote branch")
+            && normalized.contains("not found")
+        || normalized.contains("no such remote ref")
+}
+
 struct SignedInGitIdentity {
     name: String,
     email: String,
@@ -684,7 +693,7 @@ fn prepare_app_git_environment(app_config_dir: &Path) -> Result<AppGitEnvironmen
 
 #[cfg(test)]
 mod tests {
-    use super::GitTransportAuth;
+    use super::{git_error_indicates_missing_remote_ref, GitTransportAuth};
 
     #[test]
     fn git_transport_auth_uses_basic_auth_header_with_app_token_identity() {
@@ -693,5 +702,18 @@ mod tests {
             auth.http_extra_header,
             "AUTHORIZATION: basic eC1hY2Nlc3MtdG9rZW46dG9rZW4tMTIz"
         );
+    }
+
+    #[test]
+    fn missing_remote_ref_detection_matches_fetch_and_clone_errors() {
+        assert!(git_error_indicates_missing_remote_ref(
+            "git fetch origin main failed: fatal: couldn't find remote ref main"
+        ));
+        assert!(git_error_indicates_missing_remote_ref(
+            "git fetch origin trunk failed: fatal: Remote branch trunk not found in upstream origin"
+        ));
+        assert!(!git_error_indicates_missing_remote_ref(
+            "git fetch origin main failed: fatal: Authentication failed"
+        ));
     }
 }

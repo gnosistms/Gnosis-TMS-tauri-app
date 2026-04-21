@@ -1,12 +1,12 @@
 {
   "name": "gnosis-tms",
   "private": true,
-  "version": "0.1.35",
+  "version": "0.1.36",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "test": "node --test src-ui/app/*.test.js",
+    "test": "node --test --loader ./src-ui/test/raw-loader.mjs src-ui/app/*.test.js src-ui/screens/*.test.js",
     "test:browser": "playwright test",
     "icons:sync": "bash src-tauri/icons/sync-all-icons.sh",
     "tauri": "tauri",

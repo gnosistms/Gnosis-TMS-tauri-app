@@ -20,8 +20,9 @@ use crate::{
     },
     project_repo_paths::resolve_or_desired_project_git_repo_path,
     repo_sync_shared::{
-        abort_rebase_after_failed_pull, ensure_repo_local_git_identity, git_output,
-        load_git_transport_token, read_current_head_oid, GitTransportAuth,
+        abort_rebase_after_failed_pull, ensure_repo_local_git_identity,
+        git_error_indicates_missing_remote_ref, git_output, load_git_transport_token,
+        read_current_head_oid, GitTransportAuth,
     },
 };
 
@@ -727,6 +728,8 @@ fn sync_project_repo(
     let local_sync_state = read_local_repo_sync_state(repo_path)?;
 
     let git_transport_auth = GitTransportAuth::from_token(git_transport_token)?;
+    enforce_remote_project_app_version(repo_path, project, branch_name, &git_transport_auth)?;
+
     if remote_head_oid.trim().is_empty() {
         if local_head_oid.is_some() {
             git_output(
@@ -739,8 +742,6 @@ fn sync_project_repo(
         mark_project_repo_synced(project, repo_path)?;
         return Ok(current_head_oid);
     }
-
-    enforce_remote_project_app_version(repo_path, project, branch_name, &git_transport_auth)?;
 
     if local_sync_state
         .as_ref()
@@ -997,19 +998,11 @@ fn clone_project_repo(
 
     git_output(repo_parent, &clone_args, Some(&git_transport_auth))?;
     ensure_repo_local_git_identity(app, repo_path)?;
-
-    if !remote_head_oid.trim().is_empty() {
-        let branch_name = project_branch_name(project);
-        enforce_remote_project_app_version(repo_path, project, &branch_name, &git_transport_auth)?;
-    }
+    let branch_name = project_branch_name(project);
+    enforce_remote_project_app_version(repo_path, project, &branch_name, &git_transport_auth)?;
 
     if remote_head_oid.trim().is_empty() {
-        let branch_name = project
-            .default_branch_name
-            .as_deref()
-            .filter(|value| !value.trim().is_empty())
-            .unwrap_or("main");
-        let _ = git_output(repo_path, &["checkout", "-B", branch_name], None);
+        let _ = git_output(repo_path, &["checkout", "-B", &branch_name], None);
     }
 
     let current_head_oid = git_output(repo_path, &["rev-parse", "HEAD"], None).ok();
@@ -1023,11 +1016,15 @@ fn enforce_remote_project_app_version(
     branch_name: &str,
     git_transport_auth: &GitTransportAuth,
 ) -> Result<(), String> {
-    git_output(
+    match git_output(
         repo_path,
         &["fetch", "origin", branch_name],
         Some(git_transport_auth),
-    )?;
+    ) {
+        Ok(_) => {}
+        Err(error) if git_error_indicates_missing_remote_ref(&error) => return Ok(()),
+        Err(error) => return Err(error),
+    }
     let remote_tracking_ref = format!("origin/{branch_name}");
     let resource_name = if project.repo_name.trim().is_empty() {
         project.project_id.trim()
