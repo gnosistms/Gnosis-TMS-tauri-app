@@ -309,6 +309,7 @@ export function createEditorChapterState() {
     reviewExpandedSectionKeys: new Set(["last-update", "ai-review"]),
     aiReview: createEditorAiReviewState(),
     aiTranslate: createEditorAiTranslateState(),
+    assistant: createEditorAssistantState(),
     commentSeenRevisions: {},
     comments: createEditorCommentsState(),
     dirtyRowIds: new Set(),
@@ -419,6 +420,35 @@ export function createEditorAiTranslateState() {
   return Object.fromEntries(
     AI_TRANSLATE_ACTION_IDS.map((actionId) => [actionId, createEditorAiTranslateActionState()]),
   );
+}
+
+export function createEditorAssistantThreadState() {
+  return {
+    rowId: null,
+    targetLanguageCode: null,
+    items: [],
+    providerContinuityByModelKey: {},
+    lastTouchedAt: null,
+  };
+}
+
+export function createEditorAssistantChapterArtifactsState() {
+  return {
+    documentDigestsBySourceLanguage: {},
+  };
+}
+
+export function createEditorAssistantState() {
+  return {
+    status: "idle",
+    error: "",
+    requestKey: null,
+    activeThreadKey: null,
+    applyingItemId: null,
+    composerDraft: "",
+    threadsByKey: {},
+    chapterArtifacts: createEditorAssistantChapterArtifactsState(),
+  };
 }
 
 export function createAiSettingsState() {

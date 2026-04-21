@@ -618,6 +618,7 @@ export async function ensureSharedAiActionConfigurationLoaded(render) {
 
   const teamShared = await loadSelectedTeamAiState(render, {
     suppressLoadingState: true,
+    force: true,
   });
   const sharedActionPreferences = teamShared?.settings?.actionPreferences ?? null;
   if (sharedActionPreferences) {
@@ -644,7 +645,7 @@ export async function loadAiSettingsPage(render, options = {}) {
   const providerId = normalizeAiProviderId(options.providerId ?? state.aiSettings.providerId);
   if (selectedAiInstallationId() !== null && state.auth.session?.sessionToken) {
     try {
-      const teamShared = await loadSelectedTeamAiState(render);
+      const teamShared = await loadSelectedTeamAiState(render, { force: true });
       if (teamShared?.settings?.actionPreferences) {
         applyAiActionPreferences(teamShared.settings.actionPreferences);
       }

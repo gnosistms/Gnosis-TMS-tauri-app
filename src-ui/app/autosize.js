@@ -70,3 +70,9 @@ export function syncEditorCommentDraftTextareaHeights(root = document) {
     .querySelectorAll("[data-editor-comment-draft]")
     .forEach((element) => syncAutoSizeTextarea(element, { minHeight: 88, maxHeight: 220 }));
 }
+
+export function syncEditorAssistantDraftTextareaHeights(root = document) {
+  root
+    .querySelectorAll("[data-editor-assistant-draft]")
+    .forEach((element) => syncAutoSizeTextarea(element, { minHeight: 88, maxHeight: 220 }));
+}

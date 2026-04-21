@@ -145,22 +145,23 @@ test("editorCommentDraftCanSave requires non-empty trimmed text and no write in 
   assert.equal(editorCommentDraftCanSave("Needs review", "ready"), true);
 });
 
-test("normalizeEditorSidebarTab keeps known tabs and falls back unknown tabs to review", () => {
-  assert.equal(normalizeEditorSidebarTab("translate"), "translate");
+test("normalizeEditorSidebarTab keeps known tabs, maps translate to assistant, and falls back unknown tabs to review", () => {
+  assert.equal(normalizeEditorSidebarTab("translate"), "assistant");
+  assert.equal(normalizeEditorSidebarTab("assistant"), "assistant");
   assert.equal(normalizeEditorSidebarTab("history"), "history");
   assert.equal(normalizeEditorSidebarTab("review"), "review");
   assert.equal(normalizeEditorSidebarTab("duplicates"), "review");
   assert.equal(normalizeEditorSidebarTab("something-else"), "review");
 });
 
-test("resolveEditorSidebarTabForField sends empty fields to translate and keeps the current tab for filled fields", () => {
+test("resolveEditorSidebarTabForField sends empty fields to assistant and keeps the current tab for filled fields", () => {
   assert.equal(
     resolveEditorSidebarTabForField("review", {
       fields: {
         vi: "   ",
       },
     }, "vi"),
-    "translate",
+    "assistant",
   );
   assert.equal(
     resolveEditorSidebarTabForField("translate", {
@@ -168,7 +169,7 @@ test("resolveEditorSidebarTabForField sends empty fields to translate and keeps 
         vi: "Xin chao",
       },
     }, "vi"),
-    "translate",
+    "assistant",
   );
   assert.equal(
     resolveEditorSidebarTabForField("comments", {

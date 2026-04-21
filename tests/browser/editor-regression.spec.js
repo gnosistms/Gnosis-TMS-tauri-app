@@ -799,11 +799,45 @@ test.describe("editor regressions", () => {
     await mountEditorFixture(page, { rowCount: 6 });
 
     await page.locator('[data-action="switch-editor-sidebar-tab:translate"]').click();
+    await expect(page.locator(".history-tabs__item")).toContainText(["AI Assistant", "Review", "History", "Comments"]);
     await expect(page.locator(".translate-ai-action-button")).toHaveCount(1);
     await expect(page.locator(".translate-ai-action-button__model")).toHaveCount(1);
     await expect(page.locator(".translate-ai-action-button__model")).not.toHaveText("");
     await expect(page.locator(".translate-ai-action-button")).not.toContainText("Translate 1");
     await expect(page.locator(".translate-ai-action-button")).not.toContainText("Translate 2");
+  });
+
+  test("AI Assistant tab renders persisted transcript items and the chat composer", async ({ page }) => {
+    await mountEditorFixture(page, {
+      rowCount: 1,
+      assistant: {
+        threadsByKey: {
+          "fixture-row-0001::vi": {
+            rowId: "fixture-row-0001",
+            targetLanguageCode: "vi",
+            items: [{
+              id: "assistant-1",
+              type: "assistant-message",
+              createdAt: "2026-04-21T12:00:00.000Z",
+              text: "The source line is describing an inner transformation.",
+              summary: "The source line is describing an inner transformation.",
+              sourceLanguageCode: "es",
+              targetLanguageCode: "vi",
+              details: {
+                providerId: "openai",
+                modelId: "gpt-5.4",
+                sourceText: "alpha 0001 source text",
+              },
+            }],
+          },
+        },
+      },
+    });
+
+    await page.locator('[data-action="switch-editor-sidebar-tab:translate"]').click();
+    await expect(page.locator(".assistant-item")).toContainText("inner transformation");
+    await expect(page.locator("[data-editor-assistant-draft]")).toBeVisible();
+    await expect(page.locator('[data-action="run-editor-ai-assistant"]')).toBeVisible();
   });
 
   test("translate action shows a spinner while translation is running", async ({ page }) => {

@@ -48,6 +48,11 @@ import {
 } from "./editor-ai-review-flow.js";
 import { runEditorAiTranslate as runEditorAiTranslateFlow } from "./editor-ai-translate-flow.js";
 import {
+  applyEditorAssistantDraft as applyEditorAssistantDraftFlow,
+  runEditorAiAssistant as runEditorAiAssistantFlow,
+  updateEditorAssistantComposerDraft as updateEditorAssistantComposerDraftFlow,
+} from "./editor-ai-assistant-flow.js";
+import {
   replaceSelectedEditorRows as replaceSelectedEditorRowsFlow,
   showEditorRowInContext as showEditorRowInContextFlow,
   selectAllEditorReplaceRows as selectAllEditorReplaceRowsFlow,
@@ -386,7 +391,7 @@ export async function setActiveEditorField(render, rowId, languageCode, options 
     openEditorRowCommentsFlow(render, rowId, languageCode);
     return;
   }
-  if (state.editorChapter.sidebarTab === "translate") {
+  if (state.editorChapter.sidebarTab === "assistant") {
     if (previousSidebarTab === "comments" && !shouldRenderBody) {
       render?.({ scope: "translate-body" });
     }
@@ -474,6 +479,17 @@ export async function runEditorAiTranslate(render, actionId) {
   });
 }
 
+export async function runEditorAiAssistant(render) {
+  await runEditorAiAssistantFlow(render);
+}
+
+export async function applyEditorAssistantDraft(render, itemId) {
+  await applyEditorAssistantDraftFlow(render, itemId, {
+    updateEditorRowFieldValue,
+    persistEditorRowOnBlur,
+  });
+}
+
 export async function applyEditorAiReview(render) {
   await applyEditorAiReviewFlow(render, {
     updateEditorRowFieldValue,
@@ -529,6 +545,10 @@ export function switchEditorSidebarTab(render, tab) {
 
 export function updateEditorCommentDraft(nextValue) {
   updateEditorCommentDraftFlow(nextValue);
+}
+
+export function updateEditorAssistantComposerDraft(nextValue) {
+  updateEditorAssistantComposerDraftFlow(nextValue);
 }
 
 export async function saveActiveEditorRowComment(render) {

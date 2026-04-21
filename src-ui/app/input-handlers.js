@@ -46,6 +46,7 @@ import {
   updateEditorConflictResolutionFinalText,
   updateEditorFontSize,
   updateEditorCommentDraft,
+  updateEditorAssistantComposerDraft,
   updateEditorReplaceQuery,
   updateEditorRowFilterMode,
   updateEditorRowFieldValue,
@@ -424,6 +425,18 @@ function handleEditorCommentDraftInput(event, render) {
   return true;
 }
 
+function handleEditorAssistantDraftInput(event, render) {
+  const input = event.target.closest("[data-editor-assistant-draft]");
+  if (!input) {
+    return false;
+  }
+
+  updateEditorAssistantComposerDraft(input.value);
+  syncAutoSizeTextarea(input, { minHeight: 88, maxHeight: 220 });
+  render?.({ scope: "translate-sidebar" });
+  return true;
+}
+
 function handleEditorImageUrlInput(event) {
   const input = event.target.closest("[data-editor-image-url-input]");
   if (!input) {
@@ -562,6 +575,7 @@ const inputHandlers = [
   handleEditorReplaceRowSelectionInput,
   handleEditorRowFieldInput,
   handleEditorCommentDraftInput,
+  handleEditorAssistantDraftInput,
   handleEditorImageUrlInput,
   handleEditorConflictResolutionInput,
   handleChapterGlossarySelectInput,

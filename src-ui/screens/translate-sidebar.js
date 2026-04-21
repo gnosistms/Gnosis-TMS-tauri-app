@@ -2,6 +2,11 @@ import {
   resolveVisibleAiTranslateActions,
 } from "../app/ai-action-config.js";
 import {
+  buildEditorAssistantThreadKey,
+  currentEditorAssistantThread,
+  normalizeEditorAssistantState,
+} from "../app/editor-ai-assistant-state.js";
+import {
   getAiProviderIconUrl,
 } from "../app/ai-provider-config.js";
 import { resolveVisibleEditorAiTranslateAction } from "../app/editor-ai-translate-state.js";
@@ -27,13 +32,13 @@ import {
   renderHistoryNote,
 } from "./translate-history-shared.js";
 
-function renderSidebarTab(label, tab, activeTab) {
+function renderSidebarTab(label, tab, activeTab, actionTab = tab) {
   const isActive = tab === activeTab;
   return `
     <button
       class="history-tabs__item${isActive ? " history-tabs__item--active" : ""}"
       type="button"
-      data-action="switch-editor-sidebar-tab:${escapeHtml(tab)}"
+      data-action="switch-editor-sidebar-tab:${escapeHtml(actionTab)}"
       aria-pressed="${isActive ? "true" : "false"}"
     >
       ${escapeHtml(label)}
@@ -78,7 +83,7 @@ function renderTranslateActionButton(buttonModel, isAnyActionRunning) {
   `;
 }
 
-function renderTranslatePane(editorChapter, rows, languages, sourceCode, targetCode, actionConfig) {
+function renderTranslateTools(editorChapter, rows, languages, sourceCode, targetCode, actionConfig) {
   const activeRow = rows.find((row) => row.id === editorChapter?.activeRowId) ?? null;
   const translateLanguages = resolveEditorAiTranslateLanguages(editorChapter);
   const sourceLanguage =
@@ -184,6 +189,386 @@ function renderTranslatePane(editorChapter, rows, languages, sourceCode, targetC
           : ""
       }
       ${errorMarkup}
+    </div>
+  `;
+}
+
+function renderAssistantGlossaryHints(glossaryHints) {
+  const hints = (Array.isArray(glossaryHints) ? glossaryHints : [])
+    .filter((hint) => typeof hint?.sourceTerm === "string" && hint.sourceTerm.trim())
+    .map((hint) => {
+      const variants = (Array.isArray(hint.targetVariants) ? hint.targetVariants : [])
+        .map((value) => String(value ?? "").trim())
+        .filter(Boolean)
+        .join(", ");
+      const notes = (Array.isArray(hint.notes) ? hint.notes : [])
+        .map((value) => String(value ?? "").trim())
+        .filter(Boolean)
+        .join(" | ");
+      return `
+        <li>
+          <strong>${escapeHtml(hint.sourceTerm)}</strong>
+          ${variants ? ` -> ${escapeHtml(variants)}` : ""}
+          ${notes ? `<div>${escapeHtml(notes)}</div>` : ""}
+        </li>
+      `;
+    })
+    .join("");
+
+  if (!hints) {
+    return "";
+  }
+
+  return `
+    <div class="assistant-item__section">
+      <p class="assistant-item__section-label">Glossary</p>
+      <ul class="assistant-item__list">
+        ${hints}
+      </ul>
+    </div>
+  `;
+}
+
+function renderAssistantContextRows(rows) {
+  const rowMarkup = (Array.isArray(rows) ? rows : [])
+    .map((row) => `
+      <li>
+        <strong>${escapeHtml(row?.rowId ?? "")}</strong>
+        <div>${escapeHtml(row?.sourceText ?? "") || "(empty)"}</div>
+        ${typeof row?.targetText === "string" && row.targetText.trim()
+          ? `<div class="assistant-item__secondary">${escapeHtml(row.targetText)}</div>`
+          : ""}
+      </li>
+    `)
+    .join("");
+
+  if (!rowMarkup) {
+    return "";
+  }
+
+  return `
+    <div class="assistant-item__section">
+      <p class="assistant-item__section-label">Context</p>
+      <ul class="assistant-item__list">
+        ${rowMarkup}
+      </ul>
+    </div>
+  `;
+}
+
+function renderAssistantConcordanceHits(hits) {
+  const hitMarkup = (Array.isArray(hits) ? hits : [])
+    .map((hit) => `
+      <li>
+        <strong>${escapeHtml(hit?.rowId ?? "")}</strong>
+        <div>${escapeHtml(hit?.sourceSnippet ?? "")}</div>
+        ${
+          typeof hit?.targetSnippet === "string" && hit.targetSnippet.trim()
+            ? `<div class="assistant-item__secondary">${escapeHtml(hit.targetSnippet)}</div>`
+            : ""
+        }
+      </li>
+    `)
+    .join("");
+
+  if (!hitMarkup) {
+    return "";
+  }
+
+  return `
+    <div class="assistant-item__section">
+      <p class="assistant-item__section-label">Document Usage</p>
+      <ul class="assistant-item__list">
+        ${hitMarkup}
+      </ul>
+    </div>
+  `;
+}
+
+function renderAssistantPromptDetails(item) {
+  const details = item?.details && typeof item.details === "object" ? item.details : {};
+  const sourceText = typeof details.sourceText === "string" ? details.sourceText.trim() : "";
+  const targetText = typeof details.targetText === "string" ? details.targetText.trim() : "";
+  const promptText = typeof item?.promptText === "string" ? item.promptText.trim() : "";
+  const providerId = typeof details.providerId === "string" ? details.providerId.trim() : "";
+  const modelId = typeof details.modelId === "string" ? details.modelId.trim() : "";
+  const documentDigest = typeof details.documentDigest === "string" ? details.documentDigest.trim() : "";
+  const translatedText = typeof details.translatedText === "string" ? details.translatedText.trim() : "";
+  const appliedText = typeof details.appliedText === "string" ? details.appliedText.trim() : "";
+  const glossarySourceText = typeof details.glossarySourceText === "string" ? details.glossarySourceText.trim() : "";
+  const hasAnyDetails =
+    sourceText
+    || targetText
+    || promptText
+    || providerId
+    || modelId
+    || documentDigest
+    || translatedText
+    || appliedText
+    || glossarySourceText
+    || (Array.isArray(details.rowWindow) && details.rowWindow.length > 0)
+    || (Array.isArray(details.glossaryHints) && details.glossaryHints.length > 0)
+    || (Array.isArray(details.concordanceHits) && details.concordanceHits.length > 0);
+
+  if (!hasAnyDetails) {
+    return "";
+  }
+
+  return `
+    <details class="assistant-item__details">
+      <summary>Details</summary>
+      <div class="assistant-item__details-body">
+        ${
+          providerId || modelId
+            ? `
+              <p class="assistant-item__meta">
+                ${escapeHtml([providerId, modelId].filter(Boolean).join(" / "))}
+              </p>
+            `
+            : ""
+        }
+        ${
+          sourceText
+            ? `
+              <div class="assistant-item__section">
+                <p class="assistant-item__section-label">Source</p>
+                <pre class="assistant-item__pre">${escapeHtml(sourceText)}</pre>
+              </div>
+            `
+            : ""
+        }
+        ${
+          targetText
+            ? `
+              <div class="assistant-item__section">
+                <p class="assistant-item__section-label">Current Target</p>
+                <pre class="assistant-item__pre">${escapeHtml(targetText)}</pre>
+              </div>
+            `
+            : ""
+        }
+        ${
+          glossarySourceText
+            ? `
+              <div class="assistant-item__section">
+                <p class="assistant-item__section-label">Glossary Source</p>
+                <pre class="assistant-item__pre">${escapeHtml(glossarySourceText)}</pre>
+              </div>
+            `
+            : ""
+        }
+        ${documentDigest
+          ? `
+            <div class="assistant-item__section">
+              <p class="assistant-item__section-label">Document Digest</p>
+              <pre class="assistant-item__pre">${escapeHtml(documentDigest)}</pre>
+            </div>
+          `
+          : ""}
+        ${renderAssistantContextRows(details.rowWindow)}
+        ${renderAssistantGlossaryHints(details.glossaryHints)}
+        ${renderAssistantConcordanceHits(details.concordanceHits)}
+        ${
+          translatedText
+            ? `
+              <div class="assistant-item__section">
+                <p class="assistant-item__section-label">Model Output</p>
+                <pre class="assistant-item__pre">${escapeHtml(translatedText)}</pre>
+              </div>
+            `
+            : ""
+        }
+        ${
+          appliedText
+            ? `
+              <div class="assistant-item__section">
+                <p class="assistant-item__section-label">Applied Text</p>
+                <pre class="assistant-item__pre">${escapeHtml(appliedText)}</pre>
+              </div>
+            `
+            : ""
+        }
+        ${
+          promptText
+            ? `
+              <div class="assistant-item__section">
+                <p class="assistant-item__section-label">Prompt</p>
+                <pre class="assistant-item__pre">${escapeHtml(promptText)}</pre>
+              </div>
+            `
+            : ""
+        }
+      </div>
+    </details>
+  `;
+}
+
+function renderAssistantTranscriptItem(item) {
+  const itemType = item?.type ?? "assistant-message";
+  const text = typeof item?.text === "string" ? item.text.trim() : "";
+
+  if (itemType === "tool-event") {
+    return `
+      <article class="assistant-item assistant-item--tool">
+        <p class="assistant-item__tool-text">${escapeHtml(text)}</p>
+      </article>
+    `;
+  }
+
+  if (itemType === "draft-translation") {
+    const applyLabel =
+      item.applyStatus === "applying"
+        ? "Applying..."
+        : item.applyStatus === "applied"
+          ? "Applied"
+          : "Apply";
+    const isDisabled = item.applyStatus === "applying" || item.applyStatus === "applied";
+    return `
+      <article class="assistant-item assistant-item--assistant">
+        <p class="assistant-item__label">Draft Translation</p>
+        ${text ? `<p class="assistant-item__text">${escapeHtml(text)}</p>` : ""}
+        <pre class="assistant-item__draft">${escapeHtml(item.draftTranslationText ?? "")}</pre>
+        ${
+          item.applyError
+            ? renderInlineStateBox({
+              tone: "error",
+              message: item.applyError,
+            })
+            : ""
+        }
+        <div class="assistant-item__actions">
+          ${secondaryButton(applyLabel, `apply-editor-assistant-draft:${item.id}`, {
+            compact: true,
+            disabled: isDisabled,
+            className: "button--replace-toolbar",
+          })}
+        </div>
+        ${renderAssistantPromptDetails(item)}
+      </article>
+    `;
+  }
+
+  if (itemType === "translation-log") {
+    return `
+      <article class="assistant-item assistant-item--assistant">
+        <p class="assistant-item__label">Translate</p>
+        <p class="assistant-item__text">${escapeHtml(text)}</p>
+        ${renderAssistantPromptDetails(item)}
+      </article>
+    `;
+  }
+
+  const itemClass =
+    itemType === "user-message"
+      ? "assistant-item assistant-item--user"
+      : itemType === "apply-result"
+        ? "assistant-item assistant-item--system"
+        : "assistant-item assistant-item--assistant";
+  const label =
+    itemType === "user-message"
+      ? "You"
+      : itemType === "apply-result"
+        ? "Applied"
+        : "AI Assistant";
+
+  return `
+    <article class="${itemClass}">
+      <p class="assistant-item__label">${escapeHtml(label)}</p>
+      <p class="assistant-item__text">${escapeHtml(text)}</p>
+      ${itemType === "assistant-message" ? renderAssistantPromptDetails(item) : ""}
+    </article>
+  `;
+}
+
+function renderAssistantTranscript(editorChapter, rows, languages, sourceCode, targetCode) {
+  const activeRow = rows.find((row) => row.id === editorChapter?.activeRowId) ?? null;
+  const translateLanguages = resolveEditorAiTranslateLanguages(editorChapter);
+  const targetLanguage =
+    translateLanguages.targetLanguage
+    ?? translateLanguages.toolbarTargetLanguage
+    ?? languages.find((language) => language.code === targetCode)
+    ?? null;
+  const threadKey = buildEditorAssistantThreadKey(activeRow?.id ?? null, targetLanguage?.code ?? null);
+  const thread = currentEditorAssistantThread(editorChapter, threadKey);
+  const assistant = normalizeEditorAssistantState(editorChapter?.assistant);
+  const items = Array.isArray(thread?.items) ? thread.items : [];
+
+  if (!activeRow || !targetLanguage) {
+    return `
+      <div class="assistant-empty">
+        <p>Select a translation row to chat with AI about it.</p>
+      </div>
+    `;
+  }
+
+  if (items.length === 0) {
+    return `
+      <div class="assistant-empty">
+        <p>Ask AI Assistant about the active translation, or translate first to create a history entry.</p>
+      </div>
+    `;
+  }
+
+  return `
+    <div class="assistant-transcript">
+      ${assistant.error
+        ? renderInlineStateBox({
+          tone: "error",
+          message: assistant.error,
+        })
+        : ""}
+      ${items.map((item) => renderAssistantTranscriptItem(item)).join("")}
+    </div>
+  `;
+}
+
+function renderAssistantComposer(editorChapter, rows, languages, targetCode) {
+  const activeRow = rows.find((row) => row.id === editorChapter?.activeRowId) ?? null;
+  const translateLanguages = resolveEditorAiTranslateLanguages(editorChapter);
+  const targetLanguage =
+    translateLanguages.targetLanguage
+    ?? translateLanguages.toolbarTargetLanguage
+    ?? languages.find((language) => language.code === targetCode)
+    ?? null;
+  const assistant = normalizeEditorAssistantState(editorChapter?.assistant);
+  const isDisabled = !activeRow || !targetLanguage;
+  const canSend =
+    !isDisabled
+    && assistant.status !== "sending"
+    && assistant.status !== "applying"
+    && assistant.composerDraft.trim().length > 0;
+
+  return `
+    <div class="assistant-composer">
+      <div class="assistant-composer__field-shell">
+        <textarea
+          class="assistant-composer__field"
+          data-editor-assistant-draft
+          placeholder="Ask AI Assistant about this translation..."
+          ${isDisabled ? "disabled" : ""}
+        >${escapeHtml(assistant.composerDraft)}</textarea>
+      </div>
+      <div class="assistant-composer__actions">
+        ${secondaryButton(
+          assistant.status === "sending" ? "Sending..." : "Send",
+          "run-editor-ai-assistant",
+          {
+            compact: true,
+            disabled: !canSend,
+            className: "button--replace-toolbar",
+          },
+        )}
+      </div>
+    </div>
+  `;
+}
+
+function renderAssistantPane(editorChapter, rows, languages, sourceCode, targetCode, actionConfig) {
+  return `
+    <div class="assistant-pane">
+      ${renderTranslateTools(editorChapter, rows, languages, sourceCode, targetCode, actionConfig)}
+      ${renderAssistantTranscript(editorChapter, rows, languages, sourceCode, targetCode)}
+      ${renderAssistantComposer(editorChapter, rows, languages, targetCode)}
     </div>
   `;
 }
@@ -389,8 +774,8 @@ export function renderTranslateSidebar(
   session,
 ) {
   const activeTab = normalizeEditorSidebarTab(editorChapter?.sidebarTab);
-  const body = activeTab === "translate"
-    ? renderTranslatePane(editorChapter, rows, languages, sourceCode, targetCode, actionConfig)
+  const body = activeTab === "assistant"
+    ? renderAssistantPane(editorChapter, rows, languages, sourceCode, targetCode, actionConfig)
     : activeTab === "comments"
     ? renderCommentsPane(editorChapter, rows, session)
     : activeTab === "review"
@@ -401,7 +786,7 @@ export function renderTranslateSidebar(
     <aside class="translate-sidebar card card--history">
       <div class="card__body">
         <div class="history-tabs">
-          ${renderSidebarTab("Translate", "translate", activeTab)}
+          ${renderSidebarTab("AI Assistant", "assistant", activeTab, "translate")}
           ${renderSidebarTab("Review", "review", activeTab)}
           ${renderSidebarTab("History", "history", activeTab)}
           ${renderSidebarTab("Comments", "comments", activeTab)}

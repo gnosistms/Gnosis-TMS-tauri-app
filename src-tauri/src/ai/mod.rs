@@ -7,7 +7,10 @@ use std::sync::OnceLock;
 use tauri::AppHandle;
 
 use crate::ai::types::{
-    AiModelProbeRequest, AiPromptRequest, AiProviderId, AiProviderModel, AiReviewRequest,
+    AiAssistantConcordanceHit, AiAssistantRowLanguageText, AiAssistantRowWindowEntry,
+    AiAssistantTranscriptEntry, AiAssistantTurnKind,
+    AiAssistantTurnRequest, AiAssistantTurnResponse, AiModelProbeRequest, AiPromptRequest,
+    AiProviderContinuationMetadata, AiProviderId, AiProviderModel, AiReviewRequest,
     AiReviewResponse, AiTranslatedGlossaryEntry, AiTranslatedGlossaryPreparationRequest,
     AiTranslatedGlossaryPreparationResponse, AiTranslatedGlossaryTermInput,
     AiTranslationGlossaryHint, AiTranslationRequest, AiTranslationResponse,
@@ -106,8 +109,307 @@ fn format_translation_glossary_hints(hints: &[AiTranslationGlossaryHint]) -> Str
         .join("\n")
 }
 
+fn format_assistant_transcript(entries: &[AiAssistantTranscriptEntry]) -> String {
+    let transcript_entries = entries
+        .iter()
+        .filter_map(|entry| {
+            let role = entry.role.trim();
+            let text = entry.text.trim();
+            if role.is_empty() || text.is_empty() {
+                return None;
+            }
+
+            Some(format!("- {role}: {text}"))
+        })
+        .collect::<Vec<_>>();
+
+    if transcript_entries.is_empty() {
+        "None.".to_string()
+    } else {
+        transcript_entries.join("\n")
+    }
+}
+
+fn format_assistant_alternate_language_texts(values: &[AiAssistantRowLanguageText]) -> String {
+    let lines = values
+        .iter()
+        .filter_map(|value| {
+            let language_code = value.language_code.trim();
+            let language_label = value.language_label.trim();
+            let text = value.text.trim();
+            if language_code.is_empty() || text.is_empty() {
+                return None;
+            }
+
+            let label = if language_label.is_empty() {
+                language_code
+            } else {
+                language_label
+            };
+            Some(format!("- {label} ({language_code}): {text}"))
+        })
+        .collect::<Vec<_>>();
+
+    if lines.is_empty() {
+        "None.".to_string()
+    } else {
+        lines.join("\n")
+    }
+}
+
+fn format_assistant_row_window(values: &[AiAssistantRowWindowEntry]) -> String {
+    let lines = values
+        .iter()
+        .enumerate()
+        .filter_map(|(index, value)| {
+            let source_text = value.source_text.trim();
+            let target_text = value.target_text.trim();
+            if source_text.is_empty() && target_text.is_empty() {
+                return None;
+            }
+
+            let row_label = if value.row_id.trim().is_empty() {
+                format!("row-{}", index + 1)
+            } else {
+                value.row_id.trim().to_string()
+            };
+            Some(format!(
+                "- {row_label}\n  source: {}\n  target: {}",
+                if source_text.is_empty() {
+                    "(empty)"
+                } else {
+                    source_text
+                },
+                if target_text.is_empty() {
+                    "(empty)"
+                } else {
+                    target_text
+                },
+            ))
+        })
+        .collect::<Vec<_>>();
+
+    if lines.is_empty() {
+        "None.".to_string()
+    } else {
+        lines.join("\n")
+    }
+}
+
+fn format_assistant_concordance_hits(values: &[AiAssistantConcordanceHit]) -> String {
+    let lines = values
+        .iter()
+        .filter_map(|value| {
+            let source_snippet = value.source_snippet.trim();
+            let target_snippet = value.target_snippet.trim();
+            if source_snippet.is_empty() && target_snippet.is_empty() {
+                return None;
+            }
+
+            Some(format!(
+                "- row {}:\n  source: {}\n  target: {}",
+                if value.row_id.trim().is_empty() {
+                    "unknown"
+                } else {
+                    value.row_id.trim()
+                },
+                if source_snippet.is_empty() {
+                    "(empty)"
+                } else {
+                    source_snippet
+                },
+                if target_snippet.is_empty() {
+                    "(empty)"
+                } else {
+                    target_snippet
+                },
+            ))
+        })
+        .collect::<Vec<_>>();
+
+    if lines.is_empty() {
+        "None.".to_string()
+    } else {
+        lines.join("\n")
+    }
+}
+
+fn reply_language_instruction(reply_language_hint: &str) -> String {
+    let normalized = reply_language_hint.trim();
+    if normalized.is_empty() {
+        "Reply in the same language as the user's latest message unless they explicitly ask for another reply language.".to_string()
+    } else {
+        format!(
+            "Reply in {normalized} unless the user explicitly asks for another reply language."
+        )
+    }
+}
+
+fn build_assistant_chat_prompt(request: &AiAssistantTurnRequest) -> String {
+    let glossary_hints = format_translation_glossary_hints(&request.glossary_hints);
+    let row = &request.row;
+
+    format!(
+        concat!(
+            "You are an AI assistant inside a translation editor.\n",
+            "Use the supplied row, transcript, glossary, concordance, and document context when relevant.\n",
+            "{}\n",
+            "Be direct and useful. If the answer depends on ambiguity in the source text, say so.\n",
+            "Return JSON only with this shape:\n",
+            "{{\"assistantText\":\"...\",\"draftTranslationText\":null}}\n\n",
+            "User message:\n{}\n\n",
+            "Active row:\n",
+            "- source language: {} ({})\n",
+            "- target language: {} ({})\n",
+            "- source text: {}\n",
+            "- current target text: {}\n\n",
+            "Other row language texts:\n{}\n\n",
+            "Recent transcript:\n{}\n\n",
+            "Row window context:\n{}\n\n",
+            "Glossary hints:\n{}\n\n",
+            "Document digest:\n{}\n\n",
+            "Document revision key:\n{}\n\n",
+            "Concordance hits:\n{}\n"
+        ),
+        reply_language_instruction(&request.reply_language_hint),
+        request.user_message.trim(),
+        row.source_language_label.trim(),
+        row.source_language_code.trim(),
+        row.target_language_label.trim(),
+        row.target_language_code.trim(),
+        row.source_text.trim(),
+        row.target_text.trim(),
+        format_assistant_alternate_language_texts(&row.alternate_language_texts),
+        format_assistant_transcript(&request.transcript),
+        format_assistant_row_window(&request.row_window),
+        if glossary_hints.is_empty() {
+            "None.".to_string()
+        } else {
+            glossary_hints
+        },
+        if request.document_digest.trim().is_empty() {
+            "None.".to_string()
+        } else {
+            request.document_digest.trim().to_string()
+        },
+        request.document_revision_key.trim(),
+        format_assistant_concordance_hits(&request.concordance_hits),
+    )
+}
+
+fn build_assistant_translate_refinement_prompt(request: &AiAssistantTurnRequest) -> String {
+    let glossary_hints = format_translation_glossary_hints(&request.glossary_hints);
+    let row = &request.row;
+
+    format!(
+        concat!(
+            "You are revising or generating a translation inside a translation editor.\n",
+            "Use the user's instruction plus the supplied glossary, transcript, concordance, and document context when relevant.\n",
+            "{}\n",
+            "Return JSON only with this shape:\n",
+            "{{\"assistantText\":\"...\",\"draftTranslationText\":\"...\"}}\n",
+            "assistantText should be a short explanation for the user.\n",
+            "draftTranslationText must contain only the revised translation text, with no labels or commentary.\n\n",
+            "User message:\n{}\n\n",
+            "Active row:\n",
+            "- source language: {} ({})\n",
+            "- target language: {} ({})\n",
+            "- source text: {}\n",
+            "- current target text: {}\n\n",
+            "Other row language texts:\n{}\n\n",
+            "Recent transcript:\n{}\n\n",
+            "Row window context:\n{}\n\n",
+            "Glossary hints:\n{}\n\n",
+            "Document digest:\n{}\n\n",
+            "Document revision key:\n{}\n\n",
+            "Concordance hits:\n{}\n"
+        ),
+        reply_language_instruction(&request.reply_language_hint),
+        request.user_message.trim(),
+        row.source_language_label.trim(),
+        row.source_language_code.trim(),
+        row.target_language_label.trim(),
+        row.target_language_code.trim(),
+        row.source_text.trim(),
+        row.target_text.trim(),
+        format_assistant_alternate_language_texts(&row.alternate_language_texts),
+        format_assistant_transcript(&request.transcript),
+        format_assistant_row_window(&request.row_window),
+        if glossary_hints.is_empty() {
+            "None.".to_string()
+        } else {
+            glossary_hints
+        },
+        if request.document_digest.trim().is_empty() {
+            "None.".to_string()
+        } else {
+            request.document_digest.trim().to_string()
+        },
+        request.document_revision_key.trim(),
+        format_assistant_concordance_hits(&request.concordance_hits),
+    )
+}
+
+fn strip_markdown_code_fence(text: &str) -> &str {
+    let trimmed = text.trim();
+    if !trimmed.starts_with("```") || !trimmed.ends_with("```") {
+        return trimmed;
+    }
+
+    let without_prefix = trimmed
+        .split_once('\n')
+        .map(|(_opening, rest)| rest)
+        .unwrap_or(trimmed);
+    without_prefix
+        .strip_suffix("```")
+        .map(str::trim)
+        .unwrap_or(trimmed)
+}
+
+fn parse_assistant_structured_response(
+    text: &str,
+    kind: AiAssistantTurnKind,
+) -> Result<AiAssistantStructuredResponse, String> {
+    let trimmed = text.trim();
+    let stripped = strip_markdown_code_fence(trimmed);
+    let object_slice = trimmed
+        .find('{')
+        .and_then(|start| trimmed.rfind('}').map(|end| &trimmed[start..=end]));
+
+    for candidate in [trimmed, stripped]
+        .into_iter()
+        .chain(object_slice.into_iter())
+    {
+        if let Ok(parsed) = serde_json::from_str::<AiAssistantStructuredResponse>(candidate) {
+            if parsed.assistant_text.trim().is_empty() {
+                continue;
+            }
+            if kind == AiAssistantTurnKind::TranslateRefinement
+                && parsed
+                    .draft_translation_text
+                    .as_ref()
+                    .map(|value| value.trim().is_empty())
+                    .unwrap_or(true)
+            {
+                continue;
+            }
+            return Ok(parsed);
+        }
+    }
+
+    Err("The AI assistant returned a malformed response.".to_string())
+}
+
 const GLOSSARY_ALIGNMENT_BATCH_SIZE: usize = 8;
 const GLOSSARY_CONTEXT_RADIUS_BYTES: usize = 72;
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AiAssistantStructuredResponse {
+    assistant_text: String,
+    #[serde(default)]
+    draft_translation_text: Option<String>,
+}
 
 #[derive(Clone, Debug)]
 struct PreparedGlossaryCandidate {
@@ -474,6 +776,7 @@ pub(crate) fn run_ai_review(
             provider_id: request.provider_id,
             model_id: request.model_id.clone(),
             prompt: build_review_prompt(&request),
+            previous_response_id: None,
         },
         &api_key,
     )?;
@@ -517,6 +820,7 @@ pub(crate) fn prepare_ai_translated_glossary(
                 provider_id: request.provider_id,
                 model_id: request.model_id.clone(),
                 prompt: build_translation_prompt(&build_pivot_translation_request(&request)),
+                previous_response_id: None,
             },
             &api_key,
         )?
@@ -545,6 +849,7 @@ pub(crate) fn prepare_ai_translated_glossary(
                     &glossary_source_text,
                     matched_term_batch,
                 ),
+                previous_response_id: None,
             },
             &api_key,
         )?;
@@ -605,18 +910,74 @@ pub(crate) fn run_ai_translation(
     }
 
     let api_key = load_ai_provider_api_key(app, request.provider_id, request.installation_id)?;
+    let prompt = build_translation_prompt(&request);
 
     let response = providers::run_prompt(
         &AiPromptRequest {
             provider_id: request.provider_id,
             model_id: request.model_id.clone(),
-            prompt: build_translation_prompt(&request),
+            prompt: prompt.clone(),
+            previous_response_id: None,
         },
         &api_key,
     )?;
 
     Ok(AiTranslationResponse {
         translated_text: response.text,
+        prompt_text: prompt,
+        provider_continuation: Some(AiProviderContinuationMetadata {
+            previous_response_id: None,
+            provider_response_id: response.provider_response_id,
+        }),
+    })
+}
+
+pub(crate) fn run_ai_assistant_turn(
+    app: &AppHandle,
+    request: AiAssistantTurnRequest,
+) -> Result<AiAssistantTurnResponse, String> {
+    if request.user_message.trim().is_empty() {
+        return Err("Write a message before sending it to AI Assistant.".to_string());
+    }
+    if request.model_id.trim().is_empty() {
+        return Err(format!(
+            "Select a {} model on the AI Settings page before using AI Assistant.",
+            request.provider_id.display_name()
+        ));
+    }
+    if request.row.source_text.trim().is_empty() {
+        return Err("There is no source text to discuss yet.".to_string());
+    }
+
+    let api_key = load_ai_provider_api_key(app, request.provider_id, request.installation_id)?;
+    let prompt = match request.kind {
+        AiAssistantTurnKind::Chat => build_assistant_chat_prompt(&request),
+        AiAssistantTurnKind::TranslateRefinement => {
+            build_assistant_translate_refinement_prompt(&request)
+        }
+    };
+    let response = providers::run_prompt(
+        &AiPromptRequest {
+            provider_id: request.provider_id,
+            model_id: request.model_id.clone(),
+            prompt: prompt.clone(),
+            previous_response_id: request
+                .provider_continuation
+                .as_ref()
+                .and_then(|metadata| metadata.previous_response_id.clone()),
+        },
+        &api_key,
+    )?;
+    let structured_response = parse_assistant_structured_response(&response.text, request.kind)?;
+
+    Ok(AiAssistantTurnResponse {
+        assistant_text: structured_response.assistant_text,
+        draft_translation_text: structured_response.draft_translation_text,
+        prompt_text: prompt,
+        provider_continuation: Some(AiProviderContinuationMetadata {
+            previous_response_id: None,
+            provider_response_id: response.provider_response_id,
+        }),
     })
 }
 

@@ -400,6 +400,13 @@ export function applyEditorRegressionFixture(appState, options = {}) {
         },
       ]),
     ),
+    assistant:
+      options?.assistant && typeof options.assistant === "object"
+        ? {
+          ...createEditorChapterState().assistant,
+          ...options.assistant,
+        }
+        : createEditorChapterState().assistant,
     glossary: fixtureGlossary.glossaryState,
     rows,
   };

@@ -35,9 +35,11 @@ import {
   openEditorRowPermanentDeletionModal,
   openInsertEditorRowModal,
   applyEditorAiReview,
+  applyEditorAssistantDraft,
   replaceSelectedEditorRows,
   removeEditorLanguageImage,
   runEditorAiTranslate,
+  runEditorAiAssistant,
   runEditorAiReview,
   saveEditorConflictResolution,
   resolveEditorRowConflict,
@@ -152,6 +154,11 @@ export function createTranslateActions(render) {
 
     if (action === "run-editor-ai-translate:translate2") {
       await runEditorAiTranslate(render, "translate2");
+      return true;
+    }
+
+    if (action === "run-editor-ai-assistant") {
+      await runEditorAiAssistant(render);
       return true;
     }
 
@@ -348,6 +355,12 @@ export function createTranslateActions(render) {
     const commentId = actionSuffix(action, "delete-editor-comment:");
     if (commentId !== null) {
       await deleteActiveEditorRowComment(render, commentId);
+      return true;
+    }
+
+    const assistantDraftId = actionSuffix(action, "apply-editor-assistant-draft:");
+    if (assistantDraftId !== null) {
+      await applyEditorAssistantDraft(render, assistantDraftId);
       return true;
     }
 

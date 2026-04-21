@@ -36,6 +36,7 @@ import { invoke } from "./runtime.js";
 import { showNoticeBadge } from "./status-feedback.js";
 import { findEditorRowById } from "./editor-utils.js";
 import { state } from "./state.js";
+import { logEditorAssistantTranslation } from "./editor-ai-assistant-flow.js";
 import {
   captureTranslateViewport,
   renderTranslateBodyPreservingViewport,
@@ -734,6 +735,26 @@ export async function runEditorAiTranslate(render, actionId, operations = {}) {
     if (state.editorChapter?.chapterId !== context.chapterId) {
       return;
     }
+
+    logEditorAssistantTranslation({
+      rowId: context.rowId,
+      sourceLanguageCode: context.sourceLanguageCode,
+      targetLanguageCode: context.targetLanguageCode,
+      sourceLanguageLabel: context.sourceLanguageLabel,
+      targetLanguageLabel: context.targetLanguageLabel,
+      providerId,
+      modelId,
+      sourceText: context.sourceText,
+      glossarySourceText:
+        glossaryUsage.kind === "derived"
+          ? (retainedDerivedEntry?.glossarySourceText ?? "")
+          : context.sourceText,
+      glossaryHints,
+      promptText: typeof payload?.promptText === "string" ? payload.promptText : "",
+      translatedText: typeof payload?.translatedText === "string" ? payload.translatedText : "",
+      appliedText: typeof payload?.translatedText === "string" ? payload.translatedText : "",
+      summary: `${AI_ACTION_LABELS[actionId]} applied to ${context.targetLanguageLabel}.`,
+    });
 
     state.editorChapter = clearEditorAiTranslateAction(state.editorChapter, actionId);
     render?.({ scope: "translate-sidebar" });

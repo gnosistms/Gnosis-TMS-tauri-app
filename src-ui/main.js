@@ -25,6 +25,7 @@ import {
 } from "./app/editor-scroll-debug.js";
 import { measureEditorGlossaryAlignment } from "./app/editor-glossary-alignment-debug.js";
 import {
+  syncEditorAssistantDraftTextareaHeights,
   syncEditorCommentDraftTextareaHeights,
   syncEditorRowTextareaHeights,
   syncGlossaryVariantTextareaHeights,
@@ -263,6 +264,7 @@ function renderTranslateSidebarOnly() {
   const scrollTop = sidebar.scrollTop;
   sidebar.innerHTML = renderTranslateSidebar(state);
   sidebar.scrollTop = scrollTop;
+  syncEditorAssistantDraftTextareaHeights(sidebar);
   syncEditorCommentDraftTextareaHeights(sidebar);
   if (shouldRestoreFocusedInputStateForScope(focusSnapshot, "translate-sidebar")) {
     restoreFocusedInputState(focusSnapshot);
@@ -349,6 +351,7 @@ function renderWithOptions(options = {}) {
   }
   syncEditorRowTextareaHeights(app);
   restorePendingEditorSelection(app);
+  syncEditorAssistantDraftTextareaHeights(app);
   syncEditorCommentDraftTextareaHeights(app);
   scrollActivePreviewSearchMatchIntoView(app);
   document.title = titles[state.screen] ?? "Gnosis TMS";

@@ -16,6 +16,8 @@ struct OpenAiResponsesRequest<'a> {
     input: String,
     store: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
+    previous_response_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     max_output_tokens: Option<u32>,
     text: OpenAiTextConfig<'a>,
 }
@@ -33,6 +35,8 @@ struct OpenAiTextFormat<'a> {
 
 #[derive(Debug, Deserialize)]
 struct OpenAiResponsesCreateResponse {
+    #[serde(default)]
+    id: String,
     #[serde(default)]
     output_text: String,
     #[serde(default)]
@@ -200,6 +204,7 @@ fn build_probe_request(model_id: &str) -> OpenAiResponsesRequest<'_> {
         model: model_id,
         input: "Reply with OK.".to_string(),
         store: false,
+        previous_response_id: None,
         max_output_tokens: Some(OPENAI_PROBE_MAX_OUTPUT_TOKENS),
         text: OpenAiTextConfig {
             format: OpenAiTextFormat { kind: "text" },
@@ -228,6 +233,7 @@ pub(crate) fn run_prompt(
             model: request.model_id.trim(),
             input: request.prompt.clone(),
             store: false,
+            previous_response_id: request.previous_response_id.clone(),
             max_output_tokens: None,
             text: OpenAiTextConfig {
                 format: OpenAiTextFormat { kind: "text" },
@@ -245,13 +251,19 @@ pub(crate) fn run_prompt(
         return Err(normalize_http_error(status, &body));
     }
 
-    let text = normalize_text_response(
-        &body,
-        "OpenAI returned a malformed response.",
-        "OpenAI returned an empty response.",
-    )?;
+    let payload: OpenAiResponsesCreateResponse =
+        serde_json::from_str(&body).map_err(|_| "OpenAI returned a malformed response.".to_string())?;
+    let provider_response_id = if payload.id.trim().is_empty() {
+        None
+    } else {
+        Some(payload.id.clone())
+    };
+    let text = extract_suggested_text(payload, "OpenAI returned an empty response.")?;
 
-    Ok(AiPromptResponse { text })
+    Ok(AiPromptResponse {
+        text,
+        provider_response_id,
+    })
 }
 
 fn normalize_transport_error(error: reqwest::Error) -> String {

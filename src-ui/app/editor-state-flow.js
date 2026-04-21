@@ -1,5 +1,9 @@
 import { saveStoredProjectsForTeam } from "./project-cache.js";
 import { currentEditorAiReviewForSelection } from "./editor-ai-review-state.js";
+import {
+  buildEditorAssistantThreadKey,
+  normalizeEditorAssistantState,
+} from "./editor-ai-assistant-state.js";
 import { normalizeEditorAiTranslateState } from "./editor-ai-translate-state.js";
 import { normalizeEditorSidebarTab } from "./editor-comments.js";
 import { pruneEditorCommentSeenRevisionsForRows } from "./editor-comments-state.js";
@@ -31,6 +35,7 @@ import {
   createEditorCommentsState,
   createEditorConflictResolutionModalState,
   createEditorAiReviewState,
+  createEditorAssistantState,
   createEditorAiTranslateActionState,
   createEditorAiTranslateState,
   createEditorFootnoteEditorState,
@@ -108,6 +113,31 @@ function preserveEditorAiTranslateState(nextEditorChapter, previousEditorChapter
   }
 
   return nextAiTranslate;
+}
+
+function preserveEditorAssistantState(nextEditorChapter, previousEditorChapter, isSameChapter) {
+  if (!isSameChapter) {
+    return createEditorAssistantState();
+  }
+
+  const previousAssistant = normalizeEditorAssistantState(previousEditorChapter?.assistant);
+  const nextAssistant = createEditorAssistantState();
+
+  nextAssistant.composerDraft = previousAssistant.composerDraft;
+  nextAssistant.activeThreadKey = previousAssistant.activeThreadKey;
+  nextAssistant.threadsByKey = Object.fromEntries(
+    Object.entries(previousAssistant.threadsByKey).filter(([, thread]) =>
+      hasEditorRow(nextEditorChapter, thread.rowId)
+      && hasEditorLanguage(nextEditorChapter, thread.targetLanguageCode),
+    ),
+  );
+  nextAssistant.chapterArtifacts = previousAssistant.chapterArtifacts;
+
+  if (!(nextAssistant.activeThreadKey in nextAssistant.threadsByKey)) {
+    nextAssistant.activeThreadKey = null;
+  }
+
+  return nextAssistant;
 }
 
 function preserveEditorDerivedGlossariesByRowId(
@@ -261,6 +291,11 @@ export function applyEditorUiState(nextEditorChapter, previousEditorChapter = st
         ? aiReview
         : createEditorAiReviewState(),
     aiTranslate: preserveEditorAiTranslateState(
+      nextEditorChapter,
+      previousEditorChapter,
+      isSameChapter,
+    ),
+    assistant: preserveEditorAssistantState(
       nextEditorChapter,
       previousEditorChapter,
       isSameChapter,
@@ -488,10 +523,14 @@ export function removeEditorChapterRow(rowId) {
 
   const rows = state.editorChapter.rows.filter((row) => row?.rowId !== rowId);
   const aiTranslate = normalizeEditorAiTranslateState(state.editorChapter.aiTranslate);
+  const assistant = normalizeEditorAssistantState(state.editorChapter.assistant);
   const derivedGlossariesByRowId = normalizeEditorDerivedGlossariesByRowId(
     state.editorChapter.derivedGlossariesByRowId,
   );
   delete derivedGlossariesByRowId[rowId];
+  const assistantThreadsByKey = Object.fromEntries(
+    Object.entries(assistant.threadsByKey).filter(([, thread]) => thread.rowId !== rowId),
+  );
   state.editorChapter = {
     ...state.editorChapter,
     rows,
@@ -509,6 +548,15 @@ export function removeEditorChapterRow(rowId) {
         : state.editorChapter.pendingSelection,
     comments: state.editorChapter.activeRowId === rowId ? createEditorCommentsState() : state.editorChapter.comments,
     history: state.editorChapter.activeRowId === rowId ? createEditorHistoryState() : state.editorChapter.history,
+    assistant: {
+      ...assistant,
+      activeThreadKey:
+        assistant.activeThreadKey
+        && buildEditorAssistantThreadKey(rowId, state.editorChapter.selectedTargetLanguageCode) === assistant.activeThreadKey
+          ? null
+          : assistant.activeThreadKey,
+      threadsByKey: assistantThreadsByKey,
+    },
     aiTranslate: Object.fromEntries(
       Object.entries(aiTranslate).map(([actionId, actionState]) => [
         actionId,

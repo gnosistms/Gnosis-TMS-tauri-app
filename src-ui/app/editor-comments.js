@@ -1,6 +1,10 @@
-export const EDITOR_SIDEBAR_TABS = new Set(["translate", "history", "comments", "review"]);
+export const EDITOR_SIDEBAR_TABS = new Set(["assistant", "history", "comments", "review"]);
 
 export function normalizeEditorSidebarTab(tab) {
+  if (tab === "translate") {
+    return "assistant";
+  }
+
   return EDITOR_SIDEBAR_TABS.has(tab) ? tab : "review";
 }
 
@@ -10,7 +14,7 @@ export function resolveEditorSidebarTabForField(currentTab, row, languageCode) {
     typeof row?.fields?.[languageCode] === "string"
       ? row.fields[languageCode]
       : String(row?.fields?.[languageCode] ?? "");
-  return text.trim().length === 0 ? "translate" : normalizedCurrentTab;
+  return text.trim().length === 0 ? "assistant" : normalizedCurrentTab;
 }
 
 export function normalizeEditorCommentSeenRevisions(seenRevisions) {

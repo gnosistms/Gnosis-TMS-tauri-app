@@ -94,7 +94,7 @@ test("applyEditorUiState preserves same-chapter editor UI state when the active 
     activeMatchIndex: 1,
     totalMatchCount: 4,
   });
-  assert.equal(result.sidebarTab, "translate");
+  assert.equal(result.sidebarTab, "assistant");
   assert.deepEqual([...result.reviewExpandedSectionKeys], []);
   assert.equal(result.history.entries.length, 1);
   assert.equal(result.history.entries[0].commitSha, "abc123");

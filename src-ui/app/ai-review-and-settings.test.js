@@ -2263,6 +2263,222 @@ test("ensureSharedAiActionConfigurationLoaded applies the saved team action pref
   assert.equal(state.aiSettings.actionConfig.unified.modelId, "gpt-5.4-mini");
 });
 
+test("ensureSharedAiActionConfigurationLoaded refreshes a stale ready team state", async () => {
+  resetSessionState();
+  installSelectedTeam({ canDelete: false });
+  state.aiSettings = {
+    ...state.aiSettings,
+    teamShared: {
+      ...createTeamAiSharedState(),
+      teamId: "team-1",
+      status: "ready",
+      isOwner: false,
+      settings: {
+        schemaVersion: 1,
+        updatedAt: "2026-04-15T12:00:00.000Z",
+        updatedBy: "owner",
+        actionPreferences: {
+          detailedConfiguration: false,
+          unified: {
+            providerId: "gemini",
+            modelId: "gemini-3-flash-preview",
+          },
+          actions: {},
+        },
+      },
+      secrets: {
+        schemaVersion: 1,
+        updatedAt: "2026-04-15T12:00:00.000Z",
+        updatedBy: "owner",
+        providers: {
+          openai: null,
+          gemini: {
+            configured: true,
+            keyVersion: 4,
+            algorithm: "rsa-oaep-sha256-v1",
+          },
+          claude: null,
+          deepseek: null,
+        },
+      },
+    },
+    actionConfig: {
+      ...state.aiSettings.actionConfig,
+      unified: {
+        providerId: "gemini",
+        modelId: "gemini-3-flash-preview",
+      },
+    },
+  };
+
+  let loadSettingsCalls = 0;
+  invokeHandler = async (command) => {
+    if (command === "load_team_ai_settings") {
+      loadSettingsCalls += 1;
+      return {
+        schemaVersion: 1,
+        updatedAt: "2026-04-16T12:00:00.000Z",
+        updatedBy: "owner",
+        actionPreferences: {
+          detailedConfiguration: false,
+          unified: {
+            providerId: "openai",
+            modelId: "gpt-5.4-mini",
+          },
+          actions: {},
+        },
+      };
+    }
+    if (command === "load_team_ai_secrets_metadata") {
+      return {
+        schemaVersion: 1,
+        updatedAt: "2026-04-16T12:00:00.000Z",
+        updatedBy: "owner",
+        providers: {
+          openai: {
+            configured: true,
+            keyVersion: 5,
+            algorithm: "rsa-oaep-sha256-v1",
+          },
+          gemini: null,
+          claude: null,
+          deepseek: null,
+        },
+      };
+    }
+
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  await ensureSharedAiActionConfigurationLoaded(() => {});
+
+  assert.equal(loadSettingsCalls, 1);
+  assert.equal(state.aiSettings.actionConfig.unified.providerId, "openai");
+  assert.equal(state.aiSettings.actionConfig.unified.modelId, "gpt-5.4-mini");
+  assert.equal(state.aiSettings.teamShared.settings.actionPreferences.unified.providerId, "openai");
+});
+
+test("loadAiSettingsPage refreshes a stale ready team state", async () => {
+  resetSessionState();
+  installSelectedTeam({ canDelete: false });
+  state.aiSettings = {
+    ...state.aiSettings,
+    providerId: "gemini",
+    teamShared: {
+      ...createTeamAiSharedState(),
+      teamId: "team-1",
+      status: "ready",
+      isOwner: false,
+      settings: {
+        schemaVersion: 1,
+        updatedAt: "2026-04-15T12:00:00.000Z",
+        updatedBy: "owner",
+        actionPreferences: {
+          detailedConfiguration: false,
+          unified: {
+            providerId: "gemini",
+            modelId: "gemini-3-flash-preview",
+          },
+          actions: {},
+        },
+      },
+      secrets: {
+        schemaVersion: 1,
+        updatedAt: "2026-04-15T12:00:00.000Z",
+        updatedBy: "owner",
+        providers: {
+          openai: null,
+          gemini: {
+            configured: true,
+            keyVersion: 4,
+            algorithm: "rsa-oaep-sha256-v1",
+          },
+          claude: null,
+          deepseek: null,
+        },
+      },
+    },
+    actionConfig: {
+      ...state.aiSettings.actionConfig,
+      unified: {
+        providerId: "gemini",
+        modelId: "gemini-3-flash-preview",
+      },
+      savedProviderIds: ["gemini"],
+      modelOptionsByProvider: {
+        ...state.aiSettings.actionConfig.modelOptionsByProvider,
+        gemini: {
+          status: "ready",
+          error: "",
+          options: [{ id: "gemini-3-flash-preview", label: "gemini-3-flash-preview" }],
+          hasLoaded: true,
+        },
+      },
+    },
+  };
+
+  let loadSettingsCalls = 0;
+  invokeHandler = async (command, payload = {}) => {
+    if (command === "load_team_ai_settings") {
+      loadSettingsCalls += 1;
+      return {
+        schemaVersion: 1,
+        updatedAt: "2026-04-16T12:00:00.000Z",
+        updatedBy: "owner",
+        actionPreferences: {
+          detailedConfiguration: false,
+          unified: {
+            providerId: "openai",
+            modelId: "gpt-5.4-mini",
+          },
+          actions: {},
+        },
+      };
+    }
+    if (command === "load_team_ai_secrets_metadata") {
+      return {
+        schemaVersion: 1,
+        updatedAt: "2026-04-16T12:00:00.000Z",
+        updatedBy: "owner",
+        providers: {
+          openai: {
+            configured: true,
+            keyVersion: 5,
+            algorithm: "rsa-oaep-sha256-v1",
+          },
+          gemini: null,
+          claude: null,
+          deepseek: null,
+        },
+      };
+    }
+    if (command === "load_ai_provider_secret") {
+      assert.equal(payload.installationId, 42);
+      return null;
+    }
+    if (command === "load_team_ai_provider_cache") {
+      return {
+        apiKey: "sk-shared-openai",
+        keyVersion: 5,
+      };
+    }
+    if (command === "list_ai_provider_models") {
+      return [
+        { id: "gpt-5.4-mini", label: "gpt-5.4-mini" },
+      ];
+    }
+
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  await loadAiSettingsPage(() => {});
+
+  assert.equal(loadSettingsCalls, 1);
+  assert.equal(state.aiSettings.actionConfig.unified.providerId, "openai");
+  assert.equal(state.aiSettings.actionConfig.unified.modelId, "gpt-5.4-mini");
+  assert.deepEqual(state.aiSettings.actionConfig.savedProviderIds, ["openai"]);
+});
+
 test("runEditorAiReview loads shared team action preferences before choosing the provider", async () => {
   installTranslateFixture();
   installSelectedTeam({ canDelete: false });

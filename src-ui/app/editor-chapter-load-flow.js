@@ -1,4 +1,5 @@
 import { loadActiveEditorRowComments, loadEditorCommentSeenRevisionsForChapter } from "./editor-comments-flow.js";
+import { loadStoredEditorAssistantChapterData } from "./editor-ai-assistant-cache.js";
 import { loadStoredEditorDerivedGlossariesForChapter, saveStoredEditorDerivedGlossariesForChapter } from "./editor-derived-glossary-cache.js";
 import { hydrateEditorDerivedGlossariesByRowId } from "./editor-derived-glossary-state.js";
 import {
@@ -77,6 +78,7 @@ function applyEditorPayloadToState(
     persistedSourceLanguageCode: selectedSourceLanguageCode,
     persistedTargetLanguageCode: selectedTargetLanguageCode,
     selectionPersistStatus: "idle",
+    assistant: previousEditorChapter?.assistant,
     commentSeenRevisions: loadEditorCommentSeenRevisionsForChapter(
       payload.chapterId,
       (Array.isArray(payload.rows) ? payload.rows : []).map((row) => row?.rowId).filter(Boolean),
@@ -150,6 +152,11 @@ export async function loadSelectedChapterEditorData(render, options = {}, operat
         }
         : createEditorChapterGlossaryState();
   const glossaryStatePromise = loadEditorGlossaryState(team, context.chapter);
+  const storedAssistantChapterData = loadStoredEditorAssistantChapterData(
+    team,
+    context.project.id,
+    context.chapter.id,
+  );
 
   state.selectedProjectId = context.project.id;
   state.editorChapter = {
@@ -186,6 +193,7 @@ export async function loadSelectedChapterEditorData(render, options = {}, operat
     mainFieldEditor: createEditorMainFieldEditorState(),
     pendingSelection: createEditorPendingSelectionState(),
     sidebarTab: preserveVisibleRows ? state.editorChapter.sidebarTab : "review",
+    assistant: preserveVisibleRows ? state.editorChapter.assistant : storedAssistantChapterData,
     commentSeenRevisions: preserveVisibleRows ? state.editorChapter.commentSeenRevisions : {},
     comments: preserveVisibleRows ? state.editorChapter.comments : createEditorCommentsState(),
     history: preserveVisibleRows ? state.editorChapter.history : createEditorHistoryState(),
@@ -247,7 +255,7 @@ export async function loadSelectedChapterEditorData(render, options = {}, operat
     render?.();
     if (state.editorChapter.sidebarTab === "comments" && state.editorChapter.activeRowId) {
       loadActiveEditorRowComments(render);
-    } else if (state.editorChapter.sidebarTab === "translate") {
+    } else if (state.editorChapter.sidebarTab === "assistant") {
       return;
     } else if (hasActiveEditorField(state.editorChapter)) {
       operations.loadActiveEditorFieldHistory(render);
