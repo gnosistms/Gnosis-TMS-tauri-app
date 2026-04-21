@@ -1,4 +1,8 @@
 import { loadActiveEditorRowComments, loadEditorCommentSeenRevisionsForChapter } from "./editor-comments-flow.js";
+import {
+  applyStoredSelectedTeamAiActionPreferences,
+  ensureSharedAiActionConfigurationLoaded,
+} from "./ai-settings-flow.js";
 import { loadStoredEditorAssistantChapterData } from "./editor-ai-assistant-cache.js";
 import { loadStoredEditorDerivedGlossariesForChapter, saveStoredEditorDerivedGlossariesForChapter } from "./editor-derived-glossary-cache.js";
 import { hydrateEditorDerivedGlossariesByRowId } from "./editor-derived-glossary-state.js";
@@ -29,6 +33,25 @@ import { clearNoticeBadge, clearScopedSyncBadge, showNoticeBadge } from "./statu
 
 function normalizeEditorChapterFilters(filters) {
   return normalizeEditorChapterFilterState(filters);
+}
+
+function editorAiActionConfigRender(render) {
+  return (options = {}) => {
+    if (!render) {
+      return;
+    }
+
+    if (
+      options?.scope === "translate-body"
+      || options?.scope === "translate-header"
+      || options?.scope === "translate-sidebar"
+    ) {
+      render(options);
+      return;
+    }
+
+    render({ scope: "translate-sidebar" });
+  };
 }
 
 function hasEditorChapterLoadOperations(operations) {
@@ -140,6 +163,9 @@ export async function loadSelectedChapterEditorData(render, options = {}, operat
     ? state.editorChapter.selectedTargetLanguageCode
     : context.chapter.selectedTargetLanguageCode ?? null;
   const linkedGlossary = normalizeEditorGlossaryLink(context.chapter.linkedGlossary);
+  const aiActionConfigRender = editorAiActionConfigRender(render);
+  applyStoredSelectedTeamAiActionPreferences(aiActionConfigRender);
+  void ensureSharedAiActionConfigurationLoaded(aiActionConfigRender).catch(() => {});
   const nextGlossaryState =
     preserveVisibleRows && editorGlossaryStateMatchesLink(state.editorChapter?.glossary, linkedGlossary)
       ? state.editorChapter.glossary

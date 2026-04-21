@@ -1,4 +1,5 @@
 import {
+  applyStoredSelectedTeamAiActionPreferences,
   ensureSharedAiActionConfigurationLoaded,
   openAiMissingKeyModal,
   resolveAiActionProviderAndModel,
@@ -826,7 +827,14 @@ function responseDetails(intent, context, providerId, modelId, requestPayload) {
 
 async function ensureAssistantProviderReady(render, providerId) {
   const configRender = assistantConfigRender(render);
-  await ensureSharedAiActionConfigurationLoaded(configRender);
+  const usedStoredTeamActionPreferences = applyStoredSelectedTeamAiActionPreferences(configRender);
+  try {
+    await ensureSharedAiActionConfigurationLoaded(configRender);
+  } catch (error) {
+    if (selectedProjectsTeam()?.canDelete !== true && !usedStoredTeamActionPreferences) {
+      throw error;
+    }
+  }
   const ensureKeyResult = await ensureSelectedTeamAiProviderReady(configRender, providerId);
   if (!ensureKeyResult?.ok) {
     openAiMissingKeyModal(providerId);

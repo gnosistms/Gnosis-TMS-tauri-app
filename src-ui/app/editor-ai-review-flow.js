@@ -9,6 +9,7 @@ import {
   resolveVisibleEditorAiReview,
 } from "./editor-ai-review-state.js";
 import {
+  applyStoredSelectedTeamAiActionPreferences,
   ensureSharedAiActionConfigurationLoaded,
   openAiReviewMissingKeyModal,
   resolveAiReviewProviderAndModel,
@@ -17,7 +18,7 @@ import { ensureSelectedTeamAiProviderReady } from "./team-ai-flow.js";
 import { rowHasFieldChanges } from "./editor-row-persistence-model.js";
 import { captureTranslateAnchorForRow } from "./scroll-state.js";
 import { findEditorRowById, hasActiveEditorField } from "./editor-utils.js";
-import { selectedProjectsTeamInstallationId } from "./project-context.js";
+import { selectedProjectsTeam, selectedProjectsTeamInstallationId } from "./project-context.js";
 import { invoke } from "./runtime.js";
 import { state } from "./state.js";
 import {
@@ -94,11 +95,27 @@ export async function runEditorAiReview(render) {
     return;
   }
 
+  const usedStoredTeamActionPreferences = applyStoredSelectedTeamAiActionPreferences(render);
   try {
     await ensureSharedAiActionConfigurationLoaded(render);
-  } catch {
-    // Keep the current local selection and let the downstream key/model checks
-    // surface the actionable error.
+  } catch (error) {
+    if (selectedProjectsTeam()?.canDelete !== true && !usedStoredTeamActionPreferences) {
+      const requestKey = createAiReviewRequestKey(
+        context.chapterId,
+        context.rowId,
+        context.languageCode,
+      );
+      state.editorChapter = applyEditorAiReviewFailed(
+        state.editorChapter,
+        context.rowId,
+        context.languageCode,
+        requestKey,
+        context.text,
+        error instanceof Error ? error.message : String(error),
+      );
+      render?.({ scope: "translate-sidebar" });
+      return;
+    }
   }
 
   const { providerId, modelId } = resolveAiReviewProviderAndModel();

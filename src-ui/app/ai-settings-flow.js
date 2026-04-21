@@ -11,7 +11,10 @@ import {
   pickPreferredAiModelId,
   resolveEffectiveAiActionSelection,
 } from "./ai-action-config.js";
-import { saveStoredAiActionPreferences } from "./ai-action-preferences.js";
+import {
+  loadStoredTeamAiActionPreferences,
+  saveStoredAiActionPreferences,
+} from "./ai-action-preferences.js";
 import {
   loadStoredAiSettingsAboutDismissed,
   saveStoredAiSettingsAboutDismissed,
@@ -196,6 +199,43 @@ function applyAiActionPreferences(nextPreferences) {
 
 function normalizeAiActionPreferencesSnapshot(value) {
   return JSON.stringify(normalizeStoredAiActionPreferences(value));
+}
+
+function applyAiActionPreferencesWithOptionalRender(nextPreferences, render, options = {}) {
+  const normalizedPreferences = normalizeStoredAiActionPreferences(nextPreferences);
+  const changed =
+    normalizeAiActionPreferencesSnapshot(actionConfigState())
+    !== normalizeAiActionPreferencesSnapshot(normalizedPreferences);
+  if (changed) {
+    applyAiActionPreferences(normalizedPreferences);
+  }
+  if (options.persist !== false) {
+    persistAiActionPreferences();
+  }
+  if (changed) {
+    render?.();
+  }
+  return changed;
+}
+
+export function applyStoredSelectedTeamAiActionPreferences(render) {
+  const installationId = selectedAiInstallationId();
+  if (installationId === null) {
+    return false;
+  }
+
+  const storedPreferences = loadStoredTeamAiActionPreferences(undefined, installationId);
+  const hasStoredActionPreferences =
+    normalizeAiActionPreferencesSnapshot(storedPreferences)
+    !== normalizeAiActionPreferencesSnapshot(null);
+  if (!hasStoredActionPreferences) {
+    return false;
+  }
+
+  applyAiActionPreferencesWithOptionalRender(storedPreferences, render, {
+    persist: false,
+  });
+  return true;
 }
 
 function persistSharedAiActionPreferencesIfNeeded(render, actionConfig = actionConfigState()) {
@@ -616,19 +656,14 @@ export async function ensureSharedAiActionConfigurationLoaded(render) {
     return;
   }
 
+  applyStoredSelectedTeamAiActionPreferences(render);
   const teamShared = await loadSelectedTeamAiState(render, {
     suppressLoadingState: true,
     force: true,
   });
   const sharedActionPreferences = teamShared?.settings?.actionPreferences ?? null;
   if (sharedActionPreferences) {
-    if (
-      normalizeAiActionPreferencesSnapshot(actionConfigState())
-      !== normalizeAiActionPreferencesSnapshot(sharedActionPreferences)
-    ) {
-      applyAiActionPreferences(sharedActionPreferences);
-      render?.();
-    }
+    applyAiActionPreferencesWithOptionalRender(sharedActionPreferences, render);
     return;
   }
 
@@ -643,11 +678,15 @@ export async function loadAiSettingsPage(render, options = {}) {
     aboutModal: createAiSettingsAboutModalStateForDisplay(),
   };
   const providerId = normalizeAiProviderId(options.providerId ?? state.aiSettings.providerId);
+  applyStoredSelectedTeamAiActionPreferences(render);
   if (selectedAiInstallationId() !== null && state.auth.session?.sessionToken) {
     try {
       const teamShared = await loadSelectedTeamAiState(render, { force: true });
       if (teamShared?.settings?.actionPreferences) {
-        applyAiActionPreferences(teamShared.settings.actionPreferences);
+        applyAiActionPreferencesWithOptionalRender(
+          teamShared.settings.actionPreferences,
+          render,
+        );
       }
     } catch {
       // Leave the existing page state in place so the screen can render the broker error inline.

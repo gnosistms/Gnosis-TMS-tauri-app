@@ -61,6 +61,27 @@ export function loadStoredAiActionPreferences(
   return normalizedValue;
 }
 
+export function loadStoredTeamAiActionPreferences(
+  login = getActiveStorageLogin(),
+  installationId = selectedTeamInstallationId(),
+) {
+  const key = scopedTeamAiActionSettingsKey(login, installationId);
+  if (!key) {
+    return normalizeStoredAiActionPreferences(null);
+  }
+
+  const rawValue = readPersistentValue(key, null);
+  if (rawValue === null || rawValue === undefined) {
+    return normalizeStoredAiActionPreferences(null);
+  }
+
+  const normalizedValue = normalizeStoredAiActionPreferences(rawValue);
+  if (JSON.stringify(normalizedValue) !== JSON.stringify(rawValue)) {
+    writePersistentValue(key, normalizedValue);
+  }
+  return normalizedValue;
+}
+
 export function saveStoredAiActionPreferences(
   config,
   login = getActiveStorageLogin(),

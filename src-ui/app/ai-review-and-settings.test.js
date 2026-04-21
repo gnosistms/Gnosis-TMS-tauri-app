@@ -137,6 +137,7 @@ const {
 } = await import("./editor-ai-review-flow.js");
 const { runEditorAiTranslate } = await import("./editor-ai-translate-flow.js");
 const {
+  applyStoredSelectedTeamAiActionPreferences,
   aiActionControlsAreBusy,
   dismissAiSettingsAboutModal,
   ensureSharedAiActionConfigurationLoaded,
@@ -152,15 +153,23 @@ const {
   updateAiProviderSecretDraft,
 } = await import("./ai-settings-flow.js");
 const {
+  loadStoredTeamAiActionPreferences,
   loadStoredAiActionPreferences,
   saveStoredAiActionPreferences,
 } = await import("./ai-action-preferences.js");
+const {
+  clearActiveStorageLogin,
+  setActiveStorageLogin,
+} = await import("./team-storage.js");
 const {
   createTeamAiSharedState,
   ensureSelectedTeamAiProviderReady,
   loadSelectedTeamAiState,
   saveSelectedTeamAiProviderSecret,
 } = await import("./team-ai-flow.js");
+const {
+  loadSelectedChapterEditorData: loadSelectedChapterEditorDataFlow,
+} = await import("./editor-chapter-load-flow.js");
 const {
   decryptTeamAiWrappedKey,
   encryptTeamAiPlaintext,
@@ -218,6 +227,7 @@ function installTranslateFixture(options = {}) {
 }
 
 function installSelectedTeam(options = {}) {
+  const login = options.login ?? "tester";
   state.selectedTeamId = options.teamId ?? "team-1";
   state.teams = [{
     id: options.teamId ?? "team-1",
@@ -232,17 +242,19 @@ function installSelectedTeam(options = {}) {
     ...state.auth,
     session: {
       sessionToken: options.sessionToken ?? "broker-session",
-      login: options.login ?? "tester",
+      login,
       name: null,
       avatarUrl: null,
     },
   };
+  setActiveStorageLogin(login);
 }
 
 test.afterEach(() => {
   invokeHandler = async () => null;
   invokeLog.length = 0;
   localStorageState.clear();
+  clearActiveStorageLogin();
   clearStoredAiSettingsAboutDismissed();
   resetSessionState();
 });
@@ -1510,8 +1522,14 @@ test("runEditorAiTranslate issues and caches a shared team key before translatin
 });
 
 test("runEditorAiTranslate tells members to contact the owner when no shared team key exists", async () => {
+  localStorageState.clear();
   installTranslateFixture();
-  installSelectedTeam({ canDelete: false, teamName: "Shared Team" });
+  installSelectedTeam({
+    canDelete: false,
+    teamName: "Shared Team",
+    installationId: 4152,
+    login: "member-missing",
+  });
   state.aiSettings = {
     ...state.aiSettings,
     actionConfig: {
@@ -1529,7 +1547,7 @@ test("runEditorAiTranslate tells members to contact the owner when no shared tea
 
   invokeHandler = async (command, payload = {}) => {
     if (command === "load_ai_provider_secret") {
-      assert.equal(payload.installationId, 42);
+      assert.equal(payload.installationId, 4152);
       return null;
     }
     if (command === "load_team_ai_settings") {
@@ -2358,6 +2376,212 @@ test("ensureSharedAiActionConfigurationLoaded refreshes a stale ready team state
   assert.equal(state.aiSettings.teamShared.settings.actionPreferences.unified.providerId, "openai");
 });
 
+test("ensureSharedAiActionConfigurationLoaded persists the loaded team action preferences", async () => {
+  resetSessionState();
+  installSelectedTeam({ canDelete: false, login: "tester" });
+  state.aiSettings = {
+    ...state.aiSettings,
+    actionConfig: {
+      ...state.aiSettings.actionConfig,
+      unified: {
+        providerId: "gemini",
+        modelId: "gemini-3-flash-preview",
+      },
+    },
+  };
+
+  invokeHandler = async (command) => {
+    if (command === "load_team_ai_settings") {
+      return {
+        schemaVersion: 1,
+        updatedAt: "2026-04-16T12:00:00.000Z",
+        updatedBy: "owner",
+        actionPreferences: {
+          detailedConfiguration: false,
+          unified: {
+            providerId: "openai",
+            modelId: "gpt-5.4-mini",
+          },
+          actions: {},
+        },
+      };
+    }
+    if (command === "load_team_ai_secrets_metadata") {
+      return {
+        schemaVersion: 1,
+        updatedAt: "2026-04-16T12:00:00.000Z",
+        updatedBy: "owner",
+        providers: {
+          openai: {
+            configured: true,
+            keyVersion: 5,
+            algorithm: "rsa-oaep-sha256-v1",
+          },
+          gemini: null,
+          claude: null,
+          deepseek: null,
+        },
+      };
+    }
+
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  await ensureSharedAiActionConfigurationLoaded(() => {});
+
+  const storedTeamPreferences = loadStoredTeamAiActionPreferences("tester", 42);
+  assert.equal(storedTeamPreferences.unified.providerId, "openai");
+  assert.equal(storedTeamPreferences.unified.modelId, "gpt-5.4-mini");
+});
+
+test("applyStoredSelectedTeamAiActionPreferences prefers the team-scoped selection over the generic selection", () => {
+  resetSessionState();
+  installSelectedTeam({ canDelete: false, login: "tester" });
+  saveStoredAiActionPreferences({
+    detailedConfiguration: false,
+    unified: {
+      providerId: "gemini",
+      modelId: "gemini-3-flash-preview",
+    },
+    actions: {},
+  }, "tester", null);
+  saveStoredAiActionPreferences({
+    detailedConfiguration: false,
+    unified: {
+      providerId: "openai",
+      modelId: "gpt-5.4-mini",
+    },
+    actions: {},
+  }, "tester", 42);
+
+  state.aiSettings = {
+    ...state.aiSettings,
+    actionConfig: {
+      ...state.aiSettings.actionConfig,
+      unified: {
+        providerId: "gemini",
+        modelId: "gemini-3-flash-preview",
+      },
+    },
+  };
+
+  const applied = applyStoredSelectedTeamAiActionPreferences(() => {});
+
+  assert.equal(applied, true);
+  assert.equal(state.aiSettings.actionConfig.unified.providerId, "openai");
+  assert.equal(state.aiSettings.actionConfig.unified.modelId, "gpt-5.4-mini");
+});
+
+test("loadSelectedChapterEditorData refreshes shared team action preferences while opening the editor", async () => {
+  resetSessionState();
+  installSelectedTeam({ canDelete: false, login: "tester" });
+  state.screen = "translate";
+  state.selectedProjectId = "project-1";
+  state.selectedChapterId = "chapter-1";
+  state.projects = [{
+    id: "project-1",
+    name: "Project One",
+    chapters: [{
+      id: "chapter-1",
+      name: "Chapter One",
+      selectedSourceLanguageCode: "es",
+      selectedTargetLanguageCode: "vi",
+      languages: [
+        { code: "es", name: "Spanish" },
+        { code: "vi", name: "Vietnamese" },
+      ],
+      linkedGlossary: null,
+    }],
+  }];
+  state.aiSettings = {
+    ...state.aiSettings,
+    actionConfig: {
+      ...state.aiSettings.actionConfig,
+      unified: {
+        providerId: "gemini",
+        modelId: "gemini-3-flash-preview",
+      },
+    },
+  };
+
+  invokeHandler = async (command) => {
+    if (command === "load_gtms_chapter_editor_data") {
+      return {
+        chapterId: "chapter-1",
+        fileTitle: "Chapter One",
+        languages: [
+          { code: "es", name: "Spanish" },
+          { code: "vi", name: "Vietnamese" },
+        ],
+        selectedSourceLanguageCode: "es",
+        selectedTargetLanguageCode: "vi",
+        sourceWordCounts: { es: 1 },
+        rows: [{
+          rowId: "row-1",
+          fields: {
+            es: "Hola",
+            vi: "",
+          },
+          fieldStates: {},
+        }],
+      };
+    }
+    if (command === "load_team_ai_settings") {
+      return {
+        schemaVersion: 1,
+        updatedAt: "2026-04-16T12:00:00.000Z",
+        updatedBy: "owner",
+        actionPreferences: {
+          detailedConfiguration: false,
+          unified: {
+            providerId: "openai",
+            modelId: "gpt-5.4-mini",
+          },
+          actions: {},
+        },
+      };
+    }
+    if (command === "load_team_ai_secrets_metadata") {
+      return {
+        schemaVersion: 1,
+        updatedAt: "2026-04-16T12:00:00.000Z",
+        updatedBy: "owner",
+        providers: {
+          openai: {
+            configured: true,
+            keyVersion: 5,
+            algorithm: "rsa-oaep-sha256-v1",
+          },
+          gemini: null,
+          claude: null,
+          deepseek: null,
+        },
+      };
+    }
+
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  await loadSelectedChapterEditorDataFlow(() => {}, {}, {
+    applyEditorUiState,
+    normalizeEditorRows,
+    applyChapterMetadataToState() {},
+    loadActiveEditorFieldHistory() {},
+    async flushDirtyEditorRows() {
+      return true;
+    },
+    persistEditorChapterSelections() {},
+  });
+  await Promise.resolve();
+
+  assert.equal(state.aiSettings.actionConfig.unified.providerId, "openai");
+  assert.equal(state.aiSettings.actionConfig.unified.modelId, "gpt-5.4-mini");
+  assert.equal(
+    invokeLog.some((entry) => entry.command === "load_team_ai_settings"),
+    true,
+  );
+});
+
 test("loadAiSettingsPage refreshes a stale ready team state", async () => {
   resetSessionState();
   installSelectedTeam({ canDelete: false });
@@ -2559,6 +2783,72 @@ test("runEditorAiReview loads shared team action preferences before choosing the
   assert.equal(state.aiSettings.actionConfig.unified.providerId, "openai");
   assert.equal(state.aiSettings.actionConfig.unified.modelId, "gpt-5.4-mini");
   assert.equal(state.editorChapter.aiReview.status, "ready");
+});
+
+test("runEditorAiTranslate does not silently keep a stale local provider when member shared settings fail to load", async () => {
+  localStorageState.clear();
+  installTranslateFixture();
+  installSelectedTeam({
+    canDelete: false,
+    installationId: 4134,
+    login: "member-shared-error",
+  });
+  state.aiSettings = {
+    ...state.aiSettings,
+    actionConfig: {
+      ...state.aiSettings.actionConfig,
+      unified: {
+        providerId: "gemini",
+        modelId: "gemini-3-flash-preview",
+      },
+    },
+  };
+
+  invokeHandler = async (command) => {
+    if (command === "load_team_ai_settings") {
+      throw new Error("Could not load the team AI settings.");
+    }
+    if (command === "load_team_ai_secrets_metadata") {
+      return {
+        schemaVersion: 1,
+        updatedAt: "2026-04-16T12:00:00.000Z",
+        updatedBy: "owner",
+        providers: {
+          openai: {
+            configured: true,
+            keyVersion: 5,
+            algorithm: "rsa-oaep-sha256-v1",
+          },
+          gemini: null,
+          claude: null,
+          deepseek: null,
+        },
+      };
+    }
+    if (command === "run_ai_translation") {
+      throw new Error("run_ai_translation should not be called");
+    }
+    if (command === "load_ai_provider_secret" || command === "load_team_ai_provider_cache") {
+      throw new Error(`${command} should not be called`);
+    }
+
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  await runEditorAiTranslate(() => {}, "translate1", {
+    updateEditorRowFieldValue() {},
+    async persistEditorRowOnBlur() {},
+  });
+
+  assert.equal(state.editorChapter.aiTranslate.translate1.status, "error");
+  assert.match(
+    state.editorChapter.aiTranslate.translate1.error,
+    /could not load the team ai settings/i,
+  );
+  assert.equal(
+    invokeLog.some((entry) => entry.command === "run_ai_translation"),
+    false,
+  );
 });
 
 test("AI Settings shows the about modal by default and can persist dismissal", async () => {

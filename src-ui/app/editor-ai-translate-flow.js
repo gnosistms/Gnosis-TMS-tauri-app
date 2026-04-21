@@ -1,5 +1,6 @@
 import { AI_ACTION_LABELS, AI_TRANSLATE_ACTION_IDS } from "./ai-action-config.js";
 import {
+  applyStoredSelectedTeamAiActionPreferences,
   ensureSharedAiActionConfigurationLoaded,
   openAiMissingKeyModal,
   resolveAiActionProviderAndModel,
@@ -508,11 +509,20 @@ export async function runEditorAiTranslate(render, actionId, operations = {}) {
   render?.({ scope: "translate-sidebar" });
   renderEditorAiTranslateBody(render, loadingViewportSnapshot);
 
+  const usedStoredTeamActionPreferences = applyStoredSelectedTeamAiActionPreferences(configRender);
   try {
     await ensureSharedAiActionConfigurationLoaded(configRender);
-  } catch {
-    // Keep the current local selection and let the downstream key/model checks
-    // surface the actionable error.
+  } catch (error) {
+    if (selectedProjectsTeam()?.canDelete !== true && !usedStoredTeamActionPreferences) {
+      failEditorAiTranslate(
+        render,
+        actionId,
+        context,
+        error instanceof Error ? error.message : String(error),
+        { rerenderBody: true },
+      );
+      return;
+    }
   }
 
   const { providerId, modelId } = resolveAiActionProviderAndModel(actionId);
