@@ -91,6 +91,7 @@ export function buildCachedEditorRowGlossaryHighlights(row, chapterState = state
   synchronizeEditorGlossaryHighlightCache(chapterState);
 
   const glossaryModel = chapterState?.glossary?.matcherModel ?? null;
+  const directTargetLanguageCode = glossaryModel?.targetLanguage?.code ?? "";
   const cacheKey = buildEditorRowGlossaryHighlightCacheKey(row, chapterState);
   if (!glossaryModel && !cacheKey) {
     return new Map();
@@ -120,6 +121,9 @@ export function buildCachedEditorRowGlossaryHighlights(row, chapterState = state
       sections,
       derivedGlossaryEntry.matcherModel,
     )) {
+      if (languageCode === directTargetLanguageCode && highlightMap.has(languageCode)) {
+        continue;
+      }
       highlightMap.set(languageCode, nextHighlight);
     }
   }

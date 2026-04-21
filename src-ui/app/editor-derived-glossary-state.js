@@ -304,9 +304,56 @@ export function resolveReadyEditorDerivedGlossaryEntry(chapterState, rowId) {
   return entry?.status === "ready" ? entry : null;
 }
 
+function buildCurrentHighlightableDerivedGlossaryContext(chapterState, rowId, entry) {
+  const normalizedEntry = normalizeEditorDerivedGlossaryEntryState(entry);
+  const row = (Array.isArray(chapterState?.rows) ? chapterState.rows : []).find(
+    (candidate) => candidate?.rowId === rowId,
+  );
+  if (
+    !row
+    || !normalizedEntry.translationSourceLanguageCode
+    || !normalizedEntry.glossarySourceLanguageCode
+    || !normalizedEntry.targetLanguageCode
+  ) {
+    return null;
+  }
+
+  const {
+    glossarySourceText,
+    glossarySourceTextOrigin,
+  } = resolveEditorDerivedGlossarySourceText(
+    row,
+    normalizedEntry.translationSourceLanguageCode,
+    normalizedEntry.glossarySourceLanguageCode,
+  );
+
+  return buildEditorDerivedGlossaryContext({
+    translationSourceLanguageCode: normalizedEntry.translationSourceLanguageCode,
+    glossarySourceLanguageCode: normalizedEntry.glossarySourceLanguageCode,
+    targetLanguageCode: normalizedEntry.targetLanguageCode,
+    translationSourceText: readEditorRowFieldText(
+      row,
+      "fields",
+      normalizedEntry.translationSourceLanguageCode,
+    ),
+    glossarySourceText,
+    glossarySourceTextOrigin,
+    glossaryRevisionKey: buildEditorGlossaryRevisionKey(chapterState?.glossary),
+  });
+}
+
 export function resolveHighlightableEditorDerivedGlossaryEntry(chapterState, rowId) {
   const entry = resolveEditorDerivedGlossaryEntry(chapterState, rowId);
-  return entry?.matcherModel ? entry : null;
+  if (!entry?.matcherModel) {
+    return null;
+  }
+
+  const context = buildCurrentHighlightableDerivedGlossaryContext(chapterState, rowId, entry);
+  if (!context || editorDerivedGlossaryIsStale(entry, context)) {
+    return null;
+  }
+
+  return entry;
 }
 
 export function applyEditorDerivedGlossaryEntry(chapterState, rowId, nextEntry) {

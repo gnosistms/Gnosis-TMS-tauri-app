@@ -1,4 +1,5 @@
 name: Release Tauri App
+run-name: Release ${{ github.ref_name }}
 
 on:
   push:
@@ -38,6 +39,68 @@ jobs:
         with:
           node-version: 20
           cache: npm
+
+      - name: Validate release version metadata
+        shell: bash
+        env:
+          GITHUB_REF_TYPE: ${{ github.ref_type }}
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+        run: |
+          node <<'NODE'
+          const fs = require("fs");
+
+          function fail(message) {
+            console.error(message);
+            process.exit(1);
+          }
+
+          function readJsonVersion(filePath) {
+            const data = JSON.parse(fs.readFileSync(filePath, "utf8"));
+            const version = typeof data.version === "string" ? data.version.trim() : "";
+            if (!version) {
+              fail(`Could not read a version from ${filePath}.`);
+            }
+            return version;
+          }
+
+          function readCargoTomlVersion(filePath) {
+            const text = fs.readFileSync(filePath, "utf8");
+            const packageSectionMatch = text.match(/\[package\][\s\S]*?^\s*version\s*=\s*"([^"]+)"/m);
+            const version = packageSectionMatch?.[1]?.trim() ?? "";
+            if (!version) {
+              fail(`Could not read the package version from ${filePath}.`);
+            }
+            return version;
+          }
+
+          const versionsByFile = {
+            "package.json": readJsonVersion("package.json"),
+            "src-tauri/tauri.conf.json": readJsonVersion("src-tauri/tauri.conf.json"),
+            "src-tauri/Cargo.toml": readCargoTomlVersion("src-tauri/Cargo.toml"),
+          };
+
+          const distinctVersions = [...new Set(Object.values(versionsByFile))];
+          if (distinctVersions.length !== 1) {
+            fail(
+              [
+                "Release version mismatch detected.",
+                ...Object.entries(versionsByFile).map(([filePath, version]) => `- ${filePath}: ${version}`),
+              ].join("\n"),
+            );
+          }
+
+          const version = distinctVersions[0];
+          if (process.env.GITHUB_REF_TYPE === "tag") {
+            const expectedTag = `v${version}`;
+            if (process.env.GITHUB_REF_NAME !== expectedTag) {
+              fail(
+                `Release tag ${process.env.GITHUB_REF_NAME} does not match manifest version ${version}. Expected ${expectedTag}.`,
+              );
+            }
+          }
+
+          console.log(`Validated release version ${version}.`);
+          NODE
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable

@@ -330,6 +330,12 @@ fn build_app_menu<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result
     } else {
         "Ctrl+R"
     };
+    let pkg_info = app.package_info();
+    let about_metadata = tauri::menu::AboutMetadata {
+        name: Some(pkg_info.name.clone()),
+        version: Some(pkg_info.version.to_string()),
+        ..Default::default()
+    };
     let sync_item = MenuItemBuilder::with_id(SYNC_WITH_SERVER_MENU_ID, "Sync with Server")
         .accelerator(sync_shortcut)
         .build(app)?;
@@ -386,13 +392,6 @@ fn build_app_menu<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result
 
     #[cfg(target_os = "macos")]
     {
-        let pkg_info = app.package_info();
-        let about_metadata = tauri::menu::AboutMetadata {
-            name: Some(pkg_info.name.clone()),
-            version: Some(pkg_info.version.to_string()),
-            ..Default::default()
-        };
-
         let app_menu = Submenu::with_items(
             app,
             pkg_info.name.clone(),
@@ -435,7 +434,16 @@ fn build_app_menu<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result
 
     #[cfg(not(target_os = "macos"))]
     {
-        let help_menu = Submenu::with_items(app, "Help", true, &[&check_for_updates_item])?;
+        let help_menu = Submenu::with_items(
+            app,
+            "Help",
+            true,
+            &[
+                &PredefinedMenuItem::about(app, Some("About Gnosis TMS"), Some(about_metadata))?,
+                &PredefinedMenuItem::separator(app)?,
+                &check_for_updates_item,
+            ],
+        )?;
         return Menu::with_items(app, &[&file_menu, &edit_menu, &window_menu, &help_menu]);
     }
 }

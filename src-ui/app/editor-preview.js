@@ -1,5 +1,10 @@
 import { normalizeEditorFieldImage } from "./editor-images.js";
 import {
+  extractInlineMarkupVisibleText,
+  renderSanitizedInlineMarkupHtml,
+  renderSanitizedInlineMarkupWithHighlights,
+} from "./editor-inline-markup.js";
+import {
   EDITOR_ROW_TEXT_STYLE_CENTERED,
   EDITOR_ROW_TEXT_STYLE_HEADING1,
   EDITOR_ROW_TEXT_STYLE_HEADING2,
@@ -114,7 +119,7 @@ function countMatchesInText(text, searchQuery) {
     return 0;
   }
 
-  const haystack = previewTextValue(text).toLocaleLowerCase();
+  const haystack = extractInlineMarkupVisibleText(previewTextValue(text)).toLocaleLowerCase();
   if (!haystack) {
     return 0;
   }
@@ -194,43 +199,32 @@ export function stepEditorPreviewSearchState(blocks, searchState, direction = "n
 }
 
 function renderPreviewPlainText(text) {
-  return escapeHtml(previewTextValue(text)).replaceAll("\n", "<br>");
+  return renderSanitizedInlineMarkupHtml(previewTextValue(text)).replaceAll("\n", "<br>");
 }
 
-function renderPreviewHighlightedText(text, searchState, matchCounter) {
+function renderPreviewHighlightedText(text, searchState, matchCounter, languageCode = "") {
   const normalizedState = normalizeEditorPreviewSearchState(searchState);
   const query = previewSearchQuery(normalizedState);
   if (!query) {
     return renderPreviewPlainText(text);
   }
 
-  const rawText = previewTextValue(text);
-  const normalizedQuery = query.toLocaleLowerCase();
-  const normalizedText = rawText.toLocaleLowerCase();
-  if (!normalizedText || !normalizedQuery) {
-    return renderPreviewPlainText(rawText);
-  }
+  const result = renderSanitizedInlineMarkupWithHighlights(
+    previewTextValue(text),
+    query,
+    languageCode,
+    {
+      activeMatchIndex: normalizedState.activeMatchIndex,
+      markRenderer(segmentHtml, range) {
+        const matchIndex = matchCounter.current;
+        matchCounter.current += 1;
+        const isActive = matchIndex === normalizedState.activeMatchIndex;
+        return `<mark class="translate-preview__search-match${isActive ? " is-active" : ""}" data-preview-search-match data-preview-search-match-index="${escapeHtml(String(matchIndex))}">${segmentHtml}</mark>`;
+      },
+    },
+  );
 
-  let cursor = 0;
-  let fromIndex = 0;
-  let html = "";
-  while (fromIndex <= normalizedText.length - normalizedQuery.length) {
-    const nextIndex = normalizedText.indexOf(normalizedQuery, fromIndex);
-    if (nextIndex < 0) {
-      break;
-    }
-
-    html += renderPreviewPlainText(rawText.slice(cursor, nextIndex));
-    const matchIndex = matchCounter.current;
-    matchCounter.current += 1;
-    const isActive = matchIndex === normalizedState.activeMatchIndex;
-    html += `<mark class="translate-preview__search-match${isActive ? " is-active" : ""}" data-preview-search-match data-preview-search-match-index="${escapeHtml(String(matchIndex))}">${renderPreviewPlainText(rawText.slice(nextIndex, nextIndex + query.length))}</mark>`;
-    cursor = nextIndex + query.length;
-    fromIndex = cursor;
-  }
-
-  html += renderPreviewPlainText(rawText.slice(cursor));
-  return html;
+  return result.html;
 }
 
 function previewTextTagForStyle(textStyle) {
@@ -280,13 +274,13 @@ export function renderEditorPreviewDocumentHtml(blocks, options = {}) {
 
         const caption = String(block.caption ?? "").trim();
         const captionHtml = caption
-          ? `<figcaption class="translate-preview__image-caption" lang="${escapeHtml(block.languageCode ?? "")}">${renderPreviewHighlightedText(block.caption, searchState, matchCounter)}</figcaption>`
+          ? `<figcaption class="translate-preview__image-caption" lang="${escapeHtml(block.languageCode ?? "")}">${renderPreviewHighlightedText(block.caption, searchState, matchCounter, block.languageCode)}</figcaption>`
           : "";
         return `<figure class="translate-preview__image-block" data-preview-block="image" data-row-id="${escapeHtml(block.rowId ?? "")}"><img class="translate-preview__image" src="${escapeHtml(imageSrc)}" alt="" loading="eager" />${captionHtml}</figure>`;
       }
 
       if (block?.kind === "footnote") {
-        return `<p class="translate-preview__block translate-preview__block--footnote" data-preview-block="footnote" data-row-id="${escapeHtml(block.rowId ?? "")}" lang="${escapeHtml(block.languageCode ?? "")}"><em>${renderPreviewHighlightedText(block.text, searchState, matchCounter)}</em></p>`;
+        return `<p class="translate-preview__block translate-preview__block--footnote" data-preview-block="footnote" data-row-id="${escapeHtml(block.rowId ?? "")}" lang="${escapeHtml(block.languageCode ?? "")}"><em>${renderPreviewHighlightedText(block.text, searchState, matchCounter, block.languageCode)}</em></p>`;
       }
 
       if (block?.kind !== "text") {
@@ -295,7 +289,7 @@ export function renderEditorPreviewDocumentHtml(blocks, options = {}) {
 
       const tagName = previewTextTagForStyle(block.textStyle);
       const variant = previewTextVariantForStyle(block.textStyle);
-      return `<${tagName} class="translate-preview__block translate-preview__block--${variant}" data-preview-block="${escapeHtml(variant)}" data-row-id="${escapeHtml(block.rowId ?? "")}" lang="${escapeHtml(block.languageCode ?? "")}">${renderPreviewHighlightedText(block.text, searchState, matchCounter)}</${tagName}>`;
+      return `<${tagName} class="translate-preview__block translate-preview__block--${variant}" data-preview-block="${escapeHtml(variant)}" data-row-id="${escapeHtml(block.rowId ?? "")}" lang="${escapeHtml(block.languageCode ?? "")}">${renderPreviewHighlightedText(block.text, searchState, matchCounter, block.languageCode)}</${tagName}>`;
     })
     .filter(Boolean)
     .join("");
@@ -307,7 +301,7 @@ export function renderEditorPreviewDocumentHtml(blocks, options = {}) {
 }
 
 function serializePreviewText(text) {
-  return renderPreviewPlainText(text);
+  return renderSanitizedInlineMarkupHtml(text).replaceAll("\n", "<br>");
 }
 
 function serializePreviewImageHtml(block) {

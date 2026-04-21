@@ -881,6 +881,15 @@
   line-height: 1;
 }
 
+.translation-row-inline-style-button[data-inline-style="italic"] .translation-row-text-style-button__label {
+  font-style: italic;
+}
+
+.translation-row-inline-style-button[data-inline-style="underline"] .translation-row-text-style-button__label {
+  text-decoration: underline;
+  text-decoration-thickness: 1.4px;
+}
+
 .translation-row-text-style-button--footnote .translation-row-text-style-button__label {
   font-size: 14px;
 }
@@ -1718,6 +1727,12 @@
   word-break: break-word;
 }
 
+.history-inline-ruby-annotation {
+  font-size: 0.84em;
+  letter-spacing: 0.01em;
+  opacity: 0.88;
+}
+
 .history-item__content--footnote {
   font-style: italic;
 }
@@ -2130,6 +2145,13 @@
 
 .assistant-composer__field::placeholder {
   color: var(--placeholder-text);
+}
+
+.assistant-composer__hint {
+  margin: -2px 2px 0;
+  color: rgba(111, 83, 39, 0.72);
+  font-size: 0.84rem;
+  line-height: 1.35;
 }
 
 .assistant-composer__actions {

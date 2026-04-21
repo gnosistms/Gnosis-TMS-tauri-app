@@ -163,6 +163,7 @@ export function createAppUpdateState() {
   return {
     status: "idle",
     error: "",
+    message: "",
     available: false,
     version: null,
     currentVersion: null,

@@ -19,9 +19,16 @@ import {
   normalizeEditorRowTextStyle,
 } from "./editor-row-text-style.js";
 import {
+  renderSanitizedInlineMarkupHtml,
+  renderSanitizedInlineMarkupWithEditorHighlightState,
+  rubyButtonConfig,
+} from "./editor-inline-markup.js";
+import {
   buildCachedEditorRowGlossaryHighlights,
   renderableEditorGlossaryHighlightHtml,
 } from "./editor-glossary-highlight-cache.js";
+import { buildEditorRowSearchHighlightMap } from "./editor-search-flow.js";
+import { buildEditorSearchHighlightKey } from "./editor-search-highlighting.js";
 
 export function renderTranslationMarkerIcon(kind) {
   if (kind === "comments") {
@@ -147,7 +154,30 @@ function renderRowTextStyleButtons(row, language) {
   const selectedTextStyle = normalizeEditorRowTextStyle(row?.textStyle);
   const isSaving = row?.textStyleSaveState?.status === "saving";
   const showAddFootnoteButton = language.showAddFootnoteButton === true;
+  const rubyConfig = rubyButtonConfig(language.code);
   const secondaryButtons = [];
+  const inlineButtons = [
+    {
+      style: "bold",
+      label: "b",
+      tooltip: "Bold",
+    },
+    {
+      style: "italic",
+      label: "i",
+      tooltip: "Italic",
+    },
+    {
+      style: "underline",
+      label: "u",
+      tooltip: "Underline",
+    },
+    {
+      style: "ruby",
+      label: rubyConfig.label,
+      tooltip: rubyConfig.tooltip,
+    },
+  ];
 
   if (showAddFootnoteButton) {
     secondaryButtons.push(`
@@ -212,6 +242,24 @@ function renderRowTextStyleButtons(row, language) {
             ${tooltipAttributes(option.tooltip, { side: "top" })}
           >
             <span class="translation-row-text-style-button__label">${escapeHtml(option.label)}</span>
+          </button>
+        `).join("")}
+      </div>
+      <span class="translation-row-text-style-actions__separator" aria-hidden="true"></span>
+      <div class="translation-row-text-style-actions__group translation-row-text-style-actions__group--inline" aria-label="Inline formatting">
+        ${inlineButtons.map((button) => `
+          <button
+            class="translation-row-text-style-button translation-row-inline-style-button"
+            type="button"
+            data-action="toggle-editor-inline-style"
+            data-editor-inline-style-button
+            data-row-id="${escapeHtml(row.id)}"
+            data-language-code="${escapeHtml(language.code)}"
+            data-inline-style="${escapeHtml(button.style)}"
+            aria-pressed="false"
+            ${tooltipAttributes(button.tooltip, { side: "top" })}
+          >
+            <span class="translation-row-text-style-button__label">${escapeHtml(button.label)}</span>
           </button>
         `).join("")}
       </div>
@@ -307,7 +355,7 @@ function renderEditorLanguageImageCaption(row, language) {
         data-editor-image-caption-button
         data-row-id="${escapeHtml(row.id)}"
         data-language-code="${escapeHtml(language.code)}"
-      ><span class="translation-language-panel__image-caption-text" lang="${escapeHtml(language.code)}">${escapeHtml(language.imageCaption ?? "")}</span></button>
+      ><span class="translation-language-panel__image-caption-text" lang="${escapeHtml(language.code)}">${renderSanitizedInlineMarkupHtml(language.imageCaption ?? "")}</span></button>
     </div>
   `;
 }
@@ -463,7 +511,7 @@ function renderConflictResolutionField(row, language, textStyle) {
       <span
         class="translation-language-panel__field-static-text"
         lang="${escapeHtml(language.code)}"
-      >${escapeHtml(language.text)}</span>
+      >${renderSanitizedInlineMarkupHtml(language.text)}</span>
     </button>
   `;
 }
@@ -480,7 +528,7 @@ function renderDisabledConflictField(language, textStyle) {
       <span
         class="translation-language-panel__field-static-text"
         lang="${escapeHtml(language.code)}"
-      >${escapeHtml(language.text)}</span>
+      >${renderSanitizedInlineMarkupHtml(language.text)}</span>
     </div>
   `;
 }
@@ -494,18 +542,6 @@ function renderEditorFootnoteField(row, language) {
       data-language-code="${escapeHtml(language.code)}"
       data-content-kind="footnote"
     >
-      <div
-        class="translation-language-panel__field-highlight translation-language-panel__search-highlight"
-        data-editor-search-highlight
-        lang="${escapeHtml(language.code)}"
-        aria-hidden="true"
-      ></div>
-      <div
-        class="translation-language-panel__field-highlight translation-language-panel__glossary-highlight"
-        data-editor-glossary-highlight
-        lang="${escapeHtml(language.code)}"
-        aria-hidden="true"
-      ></div>
       <textarea
         class="translation-language-panel__field translation-language-panel__field--footnote"
         data-editor-row-field
@@ -528,10 +564,12 @@ function renderEditorLanguageField(row, language) {
       : typeof language.glossaryHighlightHtml === "string"
         ? language.glossaryHighlightHtml
         : "";
-  const staticFieldTextHtml = glossaryHighlightHtml || escapeHtml(language.text);
-  const fieldStackClassName =
-    `translation-language-panel__field-stack translation-language-panel__field-stack--static`
-    + `${glossaryHighlightHtml ? " translation-language-panel__field-stack--glossary" : ""}`;
+  const staticFieldTextHtml = renderSanitizedInlineMarkupWithEditorHighlightState(language.text, {
+    glossaryHighlightHtml,
+    searchRanges: Array.isArray(language.searchHighlightRanges) ? language.searchHighlightRanges : [],
+  });
+  const staticFieldStackClassName =
+    "translation-language-panel__field-stack translation-language-panel__field-stack--static";
   if (row.hasConflict) {
     return language.hasConflict
       ? renderConflictResolutionField(row, language, textStyle)
@@ -580,20 +618,14 @@ function renderEditorLanguageField(row, language) {
         data-row-id="${escapeHtml(row.id)}"
         data-language-code="${escapeHtml(language.code)}"
       >
-        <div
-          class="${fieldStackClassName}"
-          data-editor-glossary-field-stack
-          data-row-id="${escapeHtml(row.id)}"
-          data-language-code="${escapeHtml(language.code)}"
-          data-row-text-style="${escapeHtml(textStyle)}"
-          data-ai-translating="${language.isAiTranslating ? "true" : "false"}"
-        >
-          <div
-            class="translation-language-panel__field-highlight translation-language-panel__search-highlight"
-            data-editor-search-highlight
-            lang="${escapeHtml(language.code)}"
-            aria-hidden="true"
-          ></div>
+      <div
+        class="${staticFieldStackClassName}"
+        data-editor-glossary-field-stack
+        data-row-id="${escapeHtml(row.id)}"
+        data-language-code="${escapeHtml(language.code)}"
+        data-row-text-style="${escapeHtml(textStyle)}"
+        data-ai-translating="${language.isAiTranslating ? "true" : "false"}"
+      >
           ${staticFieldMarkup}
         </div>
         ${language.hasVisibleFootnote ? renderEditorFootnoteField(row, language) : ""}
@@ -607,9 +639,7 @@ function renderEditorLanguageField(row, language) {
   const loadingAttributes = language.isAiTranslating
     ? ' readonly aria-busy="true"'
     : "";
-  const editingFieldStackClassName =
-    `translation-language-panel__field-stack`
-    + `${glossaryHighlightHtml ? " translation-language-panel__field-stack--glossary" : ""}`;
+  const editingFieldStackClassName = "translation-language-panel__field-stack";
   const editorClassName =
     `translation-language-panel__editor`
     + `${language.isTextEditorOpen ? " translation-language-panel__editor--active" : ""}`
@@ -630,18 +660,6 @@ function renderEditorLanguageField(row, language) {
         data-row-text-style="${escapeHtml(textStyle)}"
         data-ai-translating="${language.isAiTranslating ? "true" : "false"}"
       >
-        <div
-          class="translation-language-panel__field-highlight translation-language-panel__search-highlight"
-          data-editor-search-highlight
-          lang="${escapeHtml(language.code)}"
-          aria-hidden="true"
-        ></div>
-        <div
-          class="translation-language-panel__field-highlight translation-language-panel__glossary-highlight"
-          data-editor-glossary-highlight
-          lang="${escapeHtml(language.code)}"
-          aria-hidden="true"
-        >${glossaryHighlightHtml}</div>
         <textarea
           class="${fieldClassName}"
           data-editor-row-field
@@ -697,6 +715,9 @@ export function renderTranslationContentRow(
   const orderedSections = orderRowSectionsByCollapsedState(row.sections, collapsedLanguageCodes);
   const glossaryHighlightMap = row?.kind === "row"
     ? buildCachedEditorRowGlossaryHighlights(row, chapterState)
+    : new Map();
+  const searchHighlightMap = row?.kind === "row"
+    ? buildEditorRowSearchHighlightMap(row, chapterState)
     : new Map();
   const rowIndexAttribute = Number.isInteger(rowIndex) ? ` data-row-index="${rowIndex}"` : "";
   const rowActions = row.lifecycleState === "deleted"
@@ -777,6 +798,9 @@ export function renderTranslationContentRow(
                           glossaryHighlightHtml: renderableEditorGlossaryHighlightHtml(
                             glossaryHighlightMap.get(language.code) ?? null,
                           ),
+                          searchHighlightRanges:
+                            searchHighlightMap.get(buildEditorSearchHighlightKey(language.code, "field"))?.ranges
+                            ?? [],
                         })
                     }
                   </section>

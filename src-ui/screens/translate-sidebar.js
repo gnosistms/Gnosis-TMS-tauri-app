@@ -548,6 +548,7 @@ function renderAssistantComposer(editorChapter, rows, languages, targetCode) {
           ${isDisabled ? "disabled" : ""}
         >${escapeHtml(assistant.composerDraft)}</textarea>
       </div>
+      <p class="assistant-composer__hint">Shift + Return to send</p>
       <div class="assistant-composer__actions">
         ${secondaryButton(
           assistant.status === "sending" ? "Sending..." : "Send",

@@ -96,6 +96,33 @@ test("renderEditorPreviewDocumentHtml highlights visible preview text and tracks
   assert.match(html, /translate-preview__search-match is-active/);
 });
 
+test("preview rendering and serialization preserve supported inline markup", () => {
+  const blocks = buildEditorPreviewDocument([{
+    rowId: "row-1",
+    lifecycleState: "active",
+    textStyle: "paragraph",
+    fields: { ja: "<strong>Alpha</strong> <ruby>漢字<rt>よみ</rt></ruby>" },
+    footnotes: {},
+    imageCaptions: {},
+    images: {},
+  }], "ja");
+
+  const rendered = renderEditorPreviewDocumentHtml(blocks, {
+    searchState: {
+      query: "よみ",
+      activeMatchIndex: 0,
+      totalMatchCount: 0,
+    },
+  });
+  const serialized = serializeEditorPreviewHtml(blocks);
+
+  assert.equal(rendered.searchState.totalMatchCount, 1);
+  assert.match(rendered.html, /<strong>Alpha<\/strong>/);
+  assert.match(rendered.html, /<ruby>漢字<rt><mark class="translate-preview__search-match is-active"/);
+  assert.match(serialized, /<strong>Alpha<\/strong>/);
+  assert.match(serialized, /<ruby>漢字<rt>よみ<\/rt><\/ruby>/);
+});
+
 test("preview search counting and stepping wrap through all matches", () => {
   const blocks = buildEditorPreviewDocument([{
     rowId: "row-1",

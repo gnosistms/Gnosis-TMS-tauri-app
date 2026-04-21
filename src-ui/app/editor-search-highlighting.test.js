@@ -65,3 +65,17 @@ test("buildEditorRowSearchHighlights keeps main text and footnote matches separa
   assert.match(highlights.get("es:field")?.html ?? "", /translation-language-panel__search-match/);
   assert.match(highlights.get("es:footnote")?.html ?? "", /translation-language-panel__search-match/);
 });
+
+test("buildEditorRowSearchHighlights matches visible text inside inline markup", () => {
+  const highlights = buildEditorRowSearchHighlights(
+    [
+      { code: "ja", text: "<strong>漢字</strong><ruby>注<rt>よみ</rt></ruby>" },
+    ],
+    "よみ",
+    new Set(["ja"]),
+  );
+
+  assert.equal(highlights.size, 1);
+  assert.match(highlights.get("ja:field")?.html ?? "", /translation-language-panel__search-match/);
+  assert.match(highlights.get("ja:field")?.html ?? "", /&lt;rt&gt;<mark class="translation-language-panel__search-match">よみ<\/mark>&lt;\/rt&gt;/);
+});

@@ -6,6 +6,7 @@ import {
   editorDerivedGlossaryIsStale,
   editorDerivedGlossaryMatchesContext,
   hydrateEditorDerivedGlossaryEntryState,
+  resolveHighlightableEditorDerivedGlossaryEntry,
   resolveEditorDerivedGlossarySourceText,
 } from "./editor-derived-glossary-state.js";
 
@@ -143,4 +144,45 @@ test("resolveEditorDerivedGlossarySourceText reuses the row text when the glossa
     glossarySourceText: "La camara interior ahora brilla mas.",
     glossarySourceTextOrigin: "row",
   });
+});
+
+test("resolveHighlightableEditorDerivedGlossaryEntry ignores stale entries after a glossary revision change", () => {
+  const entry = readyDerivedEntry({
+    rowId: "row-1",
+  });
+  const chapterState = {
+    glossary: {
+      glossaryId: "glossary-1",
+      repoName: "glossary-1",
+      sourceLanguage: { code: "es", name: "Spanish" },
+      targetLanguage: { code: "vi", name: "Vietnamese" },
+      terms: [
+        {
+          termId: "term-1",
+          sourceTerms: ["camara interior"],
+          targetTerms: ["buong noi tam"],
+        },
+      ],
+    },
+    rows: [
+      {
+        rowId: "row-1",
+        fields: {
+          en: "The inner chamber glows.",
+          es: "La camara interior brilla.",
+          vi: "Buong noi tam dang sang.",
+        },
+        persistedFields: {
+          en: "The inner chamber glows.",
+          es: "La camara interior brilla.",
+          vi: "Buong noi tam dang sang.",
+        },
+      },
+    ],
+    derivedGlossariesByRowId: {
+      "row-1": entry,
+    },
+  };
+
+  assert.equal(resolveHighlightableEditorDerivedGlossaryEntry(chapterState, "row-1"), null);
 });

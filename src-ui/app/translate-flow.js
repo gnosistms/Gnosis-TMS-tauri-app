@@ -47,6 +47,7 @@ import {
   runEditorAiReview as runEditorAiReviewFlow,
 } from "./editor-ai-review-flow.js";
 import { runEditorAiTranslate as runEditorAiTranslateFlow } from "./editor-ai-translate-flow.js";
+import { toggleEditorInlineStyle as toggleEditorInlineStyleFlow } from "./editor-inline-markup-flow.js";
 import {
   applyEditorAssistantDraft as applyEditorAssistantDraftFlow,
   runEditorAiAssistant as runEditorAiAssistantFlow,
@@ -114,6 +115,7 @@ import {
   updateEditorChapterRow,
 } from "./editor-state-flow.js";
 import { applyStructuralEditorChange } from "./editor-structural-change-flow.js";
+import { syncEditorRowTextareaHeight } from "./autosize.js";
 import { waitForNextPaint } from "./runtime.js";
 import { saveStoredEditorFontSizePx } from "./editor-preferences.js";
 import { ensureEditorRowReadyForActivation } from "./editor-row-sync-flow.js";
@@ -144,6 +146,7 @@ import {
   lockScreenScrollSnapshot,
   unlockScreenScrollSnapshot,
 } from "./scroll-state.js";
+import { syncEditorVirtualizationRowLayout } from "./editor-virtualization.js";
 import {
   captureTranslateViewport,
   renderTranslateBodyPreservingViewport,
@@ -832,6 +835,15 @@ export async function confirmEditorUnreviewAll(render) {
 export function updateEditorRowFieldValue(rowId, languageCode, nextValue, contentKind = "field") {
   updateEditorRowFieldValueFlow(rowId, languageCode, nextValue, contentKind, {
     updateEditorChapterRow,
+  });
+}
+
+export function toggleEditorInlineStyle(render, button) {
+  toggleEditorInlineStyleFlow(render, button, {
+    updateEditorRowFieldValueForContentKind: updateEditorRowFieldValue,
+    syncEditorRowTextareaHeight,
+    syncEditorVirtualizationRowLayout,
+    syncEditorGlossaryHighlightRowDom,
   });
 }
 

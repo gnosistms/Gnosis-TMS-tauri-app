@@ -48,9 +48,14 @@ export async function checkForAppUpdate(render, options = {}) {
     const update = await invoke("check_for_app_update");
     const promptVisible = shouldShowUpdatePrompt(update, options, dismissedVersion);
     const version = update.version ?? null;
+    const message =
+      typeof update.message === "string" && update.message.trim()
+        ? update.message.trim()
+        : "";
     state.appUpdate = {
       status: update.available ? "available" : "idle",
       error: "",
+      message,
       available: update.available === true,
       version,
       currentVersion: update.currentVersion ?? null,
@@ -66,11 +71,12 @@ export async function checkForAppUpdate(render, options = {}) {
     if (update.available === true) {
       showNoticeBadge(updateMessage(update.version), render, null);
     } else if (!silent) {
-      showNoticeBadge(upToDateMessage(update.currentVersion), render, 2200);
+      showNoticeBadge(message || upToDateMessage(update.currentVersion), render, 2200);
     }
   } catch (error) {
     state.appUpdate.status = "error";
     state.appUpdate.error = error?.message ?? String(error);
+    state.appUpdate.message = "";
     render();
     if (!silent) {
       showNoticeBadge(state.appUpdate.error || "Could not check for updates.", render, 3200);
@@ -85,6 +91,7 @@ export async function installAppUpdate(render) {
 
   state.appUpdate.status = "installing";
   state.appUpdate.error = "";
+  state.appUpdate.message = "";
   state.appUpdate.promptVisible = true;
   state.appUpdate.dismissedVersion = null;
   render();

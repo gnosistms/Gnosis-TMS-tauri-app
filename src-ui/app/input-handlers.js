@@ -9,6 +9,7 @@ import { state } from "./state.js";
 import { syncAutoSizeTextarea, syncEditorRowTextareaHeight } from "./autosize.js";
 import { syncEditorVirtualizationRowLayout } from "./editor-virtualization.js";
 import { applyEditorRowFieldInput } from "./editor-row-input.js";
+import { syncActiveEditorInlineStyleButtons } from "./editor-inline-markup-flow.js";
 import {
   updateProjectCreationName,
   updateProjectPermanentDeletionConfirmation,
@@ -410,6 +411,7 @@ function handleEditorRowFieldInput(event, render) {
   ) {
     render?.({ scope: "translate-sidebar" });
   }
+  syncActiveEditorInlineStyleButtons();
   return true;
 }
 

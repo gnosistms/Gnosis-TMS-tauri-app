@@ -1,6 +1,10 @@
 import { editorRowTextStyleLabel, normalizeEditorRowTextStyle } from "../app/editor-row-text-style.js";
 import { renderTranslationMarkerIcon } from "../app/editor-row-render.js";
 import { editorFieldImageMetadataText } from "../app/editor-images.js";
+import {
+  extractInlineMarkupHistoryText,
+  renderSanitizedInlineMarkupHistoryHtml,
+} from "../app/editor-inline-markup.js";
 import { escapeHtml } from "../lib/ui.js";
 import {
   diff_match_patch,
@@ -53,10 +57,13 @@ function buildHistoryDiffSegments(previousText, currentText) {
 
 function renderHistoryDiffText(previousText, currentText) {
   if (previousText === undefined || previousText === null) {
-    return escapeHtml(String(currentText ?? ""));
+    return renderSanitizedInlineMarkupHistoryHtml(String(currentText ?? ""));
   }
 
-  return buildHistoryDiffSegments(previousText, currentText)
+  return buildHistoryDiffSegments(
+    extractInlineMarkupHistoryText(previousText),
+    extractInlineMarkupHistoryText(currentText),
+  )
     .map((segment) => {
       if (segment.type === "equal") {
         return escapeHtml(segment.text);

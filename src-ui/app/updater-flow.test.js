@@ -146,8 +146,31 @@ test("manual update checks show immediate checking feedback before the result ar
   await pendingCheck;
 
   assert.equal(state.appUpdate.status, "idle");
+  assert.equal(state.appUpdate.message, "");
   assert.equal(state.statusBadges.left.text, "Gnosis TMS 0.1.22 is up to date");
   assert.ok(renderCount >= 3);
+});
+
+test("manual update checks surface a platform availability message when no compatible update is ready", async () => {
+  invokeHandler = async () => ({
+    available: false,
+    version: null,
+    currentVersion: "0.1.33",
+    body: null,
+    message: "A newer Gnosis TMS release exists, but it is not available for Windows yet.",
+  });
+
+  await checkForAppUpdate(() => {}, { silent: false });
+
+  assert.equal(state.appUpdate.status, "idle");
+  assert.equal(
+    state.appUpdate.message,
+    "A newer Gnosis TMS release exists, but it is not available for Windows yet.",
+  );
+  assert.equal(
+    state.statusBadges.left.text,
+    "A newer Gnosis TMS release exists, but it is not available for Windows yet.",
+  );
 });
 
 test("Later suppresses the same version for silent checks but manual checks reopen it", async () => {

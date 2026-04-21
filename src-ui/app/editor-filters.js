@@ -1,5 +1,6 @@
 import { editorRowHasUnreadComments } from "./editor-comments.js";
 import { rowHasUnresolvedEditorConflict } from "./editor-conflicts.js";
+import { extractInlineMarkupVisibleText } from "./editor-inline-markup.js";
 
 export const EDITOR_ROW_FILTER_MODE_SHOW_ALL = "show-all";
 export const EDITOR_ROW_FILTER_MODE_REVIEWED = "reviewed";
@@ -172,7 +173,7 @@ function rowMatchesFilterMode(row, rowFilterMode, targetLanguageCode, seenRevisi
     case EDITOR_ROW_FILTER_MODE_PLEASE_CHECK:
       return targetSection?.pleaseCheck === true;
     case EDITOR_ROW_FILTER_MODE_TARGET_EMPTY:
-      return Boolean(targetSection) && String(targetSection.text ?? "").trim().length === 0;
+      return Boolean(targetSection) && extractInlineMarkupVisibleText(targetSection.text ?? "").trim().length === 0;
     case EDITOR_ROW_FILTER_MODE_HAS_COMMENTS:
       return Number.parseInt(String(row?.commentCount ?? ""), 10) > 0;
     case EDITOR_ROW_FILTER_MODE_HAS_UNREAD_COMMENTS:
@@ -199,6 +200,7 @@ function buildRowSearchMatches(row, searchQuery, visibleLanguageCodes, caseSensi
       {
         contentKind: "field",
         text: String(section?.text ?? ""),
+        visibleText: extractInlineMarkupVisibleText(section?.text ?? ""),
       },
     ];
     const footnote = String(section?.footnote ?? "");
@@ -206,26 +208,27 @@ function buildRowSearchMatches(row, searchQuery, visibleLanguageCodes, caseSensi
       contentSections.push({
         contentKind: "footnote",
         text: footnote,
+        visibleText: extractInlineMarkupVisibleText(footnote),
       });
     }
 
     for (const contentSection of contentSections) {
       const contentKind = normalizeEditorSearchContentKind(contentSection.contentKind);
-      const matches = findEditorSearchMatches(contentSection.text, searchQuery, languageCode, {
+      const visibleMatches = findEditorSearchMatches(contentSection.visibleText, searchQuery, languageCode, {
         caseSensitive,
       });
-      if (matches.length === 0) {
+      if (visibleMatches.length === 0) {
         continue;
       }
 
-      const normalizedMatches = matches.map((match) => ({
+      const normalizedMatches = visibleMatches.map((match) => ({
         key: buildEditorSearchResultKey(row.id, languageCode, match.start, match.end, contentKind),
         rowId: row.id,
         languageCode,
         contentKind,
         start: match.start,
         end: match.end,
-        text: contentSection.text.slice(match.start, match.end),
+        text: contentSection.visibleText.slice(match.start, match.end),
       }));
       matchesByLanguage.set(`${languageCode}:${contentKind}`, normalizedMatches);
       results.push(...normalizedMatches);

@@ -1,11 +1,4 @@
-import { findEditorSearchMatches } from "./editor-filters.js";
-
-export function buildEditorSearchHighlightKey(languageCode, contentKind = "field") {
-  const normalizedLanguageCode =
-    typeof languageCode === "string" && languageCode.trim() ? languageCode.trim() : "";
-  const normalizedContentKind = contentKind === "footnote" ? "footnote" : "field";
-  return normalizedLanguageCode ? `${normalizedLanguageCode}:${normalizedContentKind}` : "";
-}
+import { buildInlineMarkupSearchHighlightMarkup } from "./editor-inline-markup.js";
 
 function escapeHtml(value) {
   return String(value ?? "")
@@ -16,75 +9,11 @@ function escapeHtml(value) {
     .replaceAll("'", "&#39;");
 }
 
-function normalizeHighlightMatches(matches, textLength) {
-  const normalizedMatches = [];
-  let lastEnd = 0;
-
-  for (const match of Array.isArray(matches) ? matches : []) {
-    const start = Number.parseInt(match?.start ?? "", 10);
-    const end = Number.parseInt(match?.end ?? "", 10);
-    if (!Number.isInteger(start) || !Number.isInteger(end) || end <= start) {
-      continue;
-    }
-
-    const boundedStart = Math.max(lastEnd, Math.min(textLength, start));
-    const boundedEnd = Math.max(boundedStart, Math.min(textLength, end));
-    if (boundedEnd <= boundedStart) {
-      continue;
-    }
-
-    normalizedMatches.push({
-      start: boundedStart,
-      end: boundedEnd,
-    });
-    lastEnd = boundedEnd;
-  }
-
-  return normalizedMatches;
-}
-
-export function buildEditorSearchHighlightMarkup(text, matches) {
-  const sourceText = String(text ?? "");
-  if (!sourceText) {
-    return {
-      kind: "search",
-      html: "",
-      hasMatches: false,
-    };
-  }
-
-  const normalizedMatches = normalizeHighlightMatches(matches, sourceText.length);
-  if (normalizedMatches.length === 0) {
-    return {
-      kind: "search",
-      html: "",
-      hasMatches: false,
-    };
-  }
-
-  const htmlParts = [];
-  let cursor = 0;
-
-  for (const match of normalizedMatches) {
-    if (match.start > cursor) {
-      htmlParts.push(escapeHtml(sourceText.slice(cursor, match.start)));
-    }
-
-    htmlParts.push(
-      `<mark class="translation-language-panel__search-match">${escapeHtml(sourceText.slice(match.start, match.end))}</mark>`,
-    );
-    cursor = match.end;
-  }
-
-  if (cursor < sourceText.length) {
-    htmlParts.push(escapeHtml(sourceText.slice(cursor)));
-  }
-
-  return {
-    kind: "search",
-    html: htmlParts.join(""),
-    hasMatches: true,
-  };
+export function buildEditorSearchHighlightKey(languageCode, contentKind = "field") {
+  const normalizedLanguageCode =
+    typeof languageCode === "string" && languageCode.trim() ? languageCode.trim() : "";
+  const normalizedContentKind = contentKind === "footnote" ? "footnote" : "field";
+  return normalizedLanguageCode ? `${normalizedLanguageCode}:${normalizedContentKind}` : "";
 }
 
 export function buildEditorRowSearchHighlights(
@@ -106,14 +35,54 @@ export function buildEditorRowSearchHighlights(
     const contentKind = section?.contentKind === "footnote" ? "footnote" : "field";
 
     const text = String(section?.text ?? "");
-    const matches = findEditorSearchMatches(text, searchQuery, languageCode, {
+    const highlight = buildInlineMarkupSearchHighlightMarkup(text, searchQuery, languageCode, {
       caseSensitive,
     });
-    const highlight = buildEditorSearchHighlightMarkup(text, matches);
     if (highlight.hasMatches) {
       highlights.set(buildEditorSearchHighlightKey(languageCode, contentKind), highlight);
     }
   }
 
   return highlights;
+}
+
+export function buildEditorSearchHighlightMarkup(text, matches) {
+  const sourceText = String(text ?? "");
+  const normalizedMatches = (Array.isArray(matches) ? matches : [])
+    .map((match) => ({
+      start: Number.parseInt(match?.start ?? "", 10),
+      end: Number.parseInt(match?.end ?? "", 10),
+    }))
+    .filter((match) => Number.isInteger(match.start) && Number.isInteger(match.end) && match.end > match.start)
+    .sort((left, right) => left.start - right.start);
+  if (!sourceText || normalizedMatches.length === 0) {
+    return {
+      kind: "search",
+      html: "",
+      hasMatches: false,
+      ranges: [],
+    };
+  }
+
+  let cursor = 0;
+  let html = "";
+  for (const match of normalizedMatches) {
+    if (match.start > cursor) {
+      html += escapeHtml(sourceText.slice(cursor, match.start));
+    }
+
+    html += `<mark class="translation-language-panel__search-match">${escapeHtml(sourceText.slice(match.start, match.end))}</mark>`;
+    cursor = match.end;
+  }
+
+  if (cursor < sourceText.length) {
+    html += escapeHtml(sourceText.slice(cursor));
+  }
+
+  return {
+    kind: "search",
+    html,
+    hasMatches: true,
+    ranges: normalizedMatches,
+  };
 }

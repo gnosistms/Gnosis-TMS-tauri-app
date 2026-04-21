@@ -14,17 +14,20 @@ import {
   collapseEditorImageCaption,
   collapseEmptyEditorFootnote,
   collapseEmptyEditorImageEditor,
+  persistEditorRowOnBlur,
   moveEditorPreviewSearch,
   dismissActiveIdleEditorImageUpload,
   flushDirtyEditorRows,
   handleDroppedEditorImageFile,
   handleDroppedEditorImagePath,
   persistEditorImageUrlOnBlur,
+  runEditorAiAssistant,
   scheduleDirtyEditorRowScan,
   setActiveEditorField,
   submitEditorImageUrl,
   toggleEditorRowFieldMarker,
 } from "./translate-flow.js";
+import { syncActiveEditorInlineStyleButtons } from "./editor-inline-markup-flow.js";
 
 const TAURI_DRAG_DROP_EVENT = "tauri://drag-drop";
 
@@ -173,6 +176,7 @@ export function registerTranslateEditorDomEvents(app, render) {
     const languageCode = input.dataset.languageCode ?? "";
     void setActiveEditorField(render, rowId, languageCode, { input });
     syncEditorRowTextareaHeight(input);
+    syncActiveEditorInlineStyleButtons();
     requestAnimationFrame(() => syncEditorVirtualizationRowLayout(input));
     requestAnimationFrame(() => {
       const activeElement = document.activeElement;
@@ -192,7 +196,7 @@ export function registerTranslateEditorDomEvents(app, render) {
   app.addEventListener("mousedown", (event) => {
     const button = closestEventTarget(
       event.target,
-      "[data-editor-row-text-style-button], [data-editor-footnote-button], [data-editor-image-button], [data-editor-image-caption-button], [data-editor-image-upload-dropzone], [data-editor-image-upload-close-button], [data-editor-image-url-close-button], [data-editor-language-image-remove-button], [data-action^=\"switch-editor-sidebar-tab:\"], [data-action^=\"run-editor-ai-translate:\"], [data-action=\"review-editor-text-now\"], [data-action=\"apply-editor-ai-review\"], [data-preview-search-nav-button]",
+      "[data-editor-row-text-style-button], [data-editor-inline-style-button], [data-editor-footnote-button], [data-editor-image-button], [data-editor-image-caption-button], [data-editor-image-upload-dropzone], [data-editor-image-upload-close-button], [data-editor-image-url-close-button], [data-editor-language-image-remove-button], [data-action^=\"switch-editor-sidebar-tab:\"], [data-action^=\"run-editor-ai-translate:\"], [data-action=\"review-editor-text-now\"], [data-action=\"apply-editor-ai-review\"], [data-preview-search-nav-button]",
     );
     if (!button) {
       return;
@@ -232,7 +236,7 @@ export function registerTranslateEditorDomEvents(app, render) {
 
     const editorControlButton = closestEventTarget(
       event.target,
-      "[data-editor-row-text-style-button], [data-editor-footnote-button], [data-editor-image-button], [data-editor-image-caption-button], [data-editor-image-upload-close-button], [data-editor-image-url-close-button], [data-editor-language-image-remove-button], [data-action^=\"switch-editor-sidebar-tab:\"]",
+      "[data-editor-row-text-style-button], [data-editor-inline-style-button], [data-editor-footnote-button], [data-editor-image-button], [data-editor-image-caption-button], [data-editor-image-upload-close-button], [data-editor-image-url-close-button], [data-editor-language-image-remove-button], [data-action^=\"switch-editor-sidebar-tab:\"]",
     );
     const imageOpenButton = closestEventTarget(
       event.target,
@@ -384,6 +388,7 @@ export function registerTranslateEditorDomEvents(app, render) {
       requestAnimationFrame(() => {
         syncEditorRowTextareaHeight(textarea);
         syncEditorVirtualizationRowLayout(textarea);
+        syncActiveEditorInlineStyleButtons();
       });
     }
     if (textarea instanceof HTMLTextAreaElement && contentKind === "image-caption") {
@@ -437,6 +442,22 @@ export function registerTranslateEditorDomEvents(app, render) {
       ) {
         event.preventDefault();
         moveEditorPreviewSearch(render, event.shiftKey ? "previous" : "next");
+      }
+      return;
+    }
+
+    const assistantDraftInput = closestEventTarget(event.target, "[data-editor-assistant-draft]");
+    if (assistantDraftInput instanceof HTMLTextAreaElement) {
+      const key = typeof event.key === "string" ? event.key.toLowerCase() : "";
+      if (
+        key === "enter"
+        && event.shiftKey
+        && !event.metaKey
+        && !event.ctrlKey
+        && !event.altKey
+      ) {
+        event.preventDefault();
+        void runEditorAiAssistant(render);
       }
       return;
     }
@@ -519,4 +540,8 @@ export function registerTranslateEditorDomEvents(app, render) {
       suppressNotice: true,
     });
   }, true);
+
+  document.addEventListener("selectionchange", () => {
+    syncActiveEditorInlineStyleButtons(document);
+  });
 }

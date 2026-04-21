@@ -53,6 +53,7 @@ import {
   switchEditorSidebarTab,
   toggleEditorSearchFilterCaseSensitive,
   toggleDeletedEditorRowGroup,
+  toggleEditorInlineStyle,
   toggleEditorRowFieldMarker,
   toggleEditorHistoryGroupExpanded,
   toggleEditorReviewSectionExpanded,
@@ -209,6 +210,14 @@ export function createTranslateActions(render) {
       const rowId = button?.dataset.rowId ?? null;
       const textStyle = button?.dataset.textStyle ?? null;
       await updateEditorRowTextStyle(render, rowId, textStyle);
+      return true;
+    }
+
+    if (action === "toggle-editor-inline-style") {
+      const button = event?.target instanceof Element
+        ? event.target.closest("[data-editor-inline-style-button]")
+        : null;
+      toggleEditorInlineStyle(render, button);
       return true;
     }
 

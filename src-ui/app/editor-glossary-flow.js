@@ -6,6 +6,7 @@ import {
   readCachedEditorRowGlossaryHighlights,
   renderableEditorGlossaryHighlightHtml,
 } from "./editor-glossary-highlight-cache.js";
+import { renderSanitizedInlineMarkupWithEditorHighlightState } from "./editor-inline-markup.js";
 import { findEditorRowById } from "./editor-utils.js";
 import { invoke } from "./runtime.js";
 import { createEditorChapterGlossaryState, state } from "./state.js";
@@ -95,15 +96,6 @@ export async function loadEditorGlossaryState(team, chapter) {
 }
 
 
-function escapeDisplayTextHtml(value) {
-  return String(value ?? "")
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#39;");
-}
-
 function setElementInnerHtmlIfChanged(element, html) {
   if (!(element instanceof HTMLElement)) {
     return;
@@ -119,6 +111,7 @@ function setElementInnerHtmlIfChanged(element, html) {
 
 function applyEditorTextHighlightLayersToRowCard(
   rowCard,
+  row,
   searchHighlightMap = new Map(),
   glossaryHighlightMap = new Map(),
 ) {
@@ -137,38 +130,31 @@ function applyEditorTextHighlightLayersToRowCard(
       ? (searchHighlightMap.get(buildEditorSearchHighlightKey(languageCode, contentKind)) ?? null)
       : null;
     const glossaryHighlightHtml = isAiTranslating ? "" : renderableEditorGlossaryHighlightHtml(glossaryHighlight);
-    const searchHighlightHtml = isAiTranslating ? "" : renderableEditorGlossaryHighlightHtml(searchHighlight);
-    const hasGlossaryHighlight = glossaryHighlightHtml.length > 0;
-    const hasSearchHighlight = searchHighlightHtml.length > 0;
-    const hasRenderableHighlight = hasGlossaryHighlight || hasSearchHighlight;
-
-    stack.classList.toggle(
-      "translation-language-panel__field-stack--highlighted",
-      hasRenderableHighlight,
-    );
-    stack.classList.toggle(
-      "translation-language-panel__field-stack--glossary",
-      hasGlossaryHighlight,
-    );
-    stack.classList.toggle(
-      "translation-language-panel__field-stack--search",
-      hasSearchHighlight,
-    );
+    const searchHighlightRanges = isAiTranslating
+      ? []
+      : (Array.isArray(searchHighlight?.ranges) ? searchHighlight.ranges : []);
+    const displayText = stack.querySelector("[data-editor-display-text]");
+    stack.classList.toggle("translation-language-panel__field-stack--highlighted", false);
+    stack.classList.toggle("translation-language-panel__field-stack--glossary", false);
+    stack.classList.toggle("translation-language-panel__field-stack--search", false);
 
     const glossaryLayer = stack.querySelector("[data-editor-glossary-highlight]");
-    setElementInnerHtmlIfChanged(glossaryLayer, glossaryHighlightHtml);
+    setElementInnerHtmlIfChanged(glossaryLayer, "");
 
-    const displayText = stack.querySelector("[data-editor-display-text]");
     if (displayText instanceof HTMLElement) {
-      const plainText = displayText.textContent ?? "";
-      setElementInnerHtmlIfChanged(
-        displayText,
-        glossaryHighlightHtml || escapeDisplayTextHtml(plainText),
-      );
+      if (!isAiTranslating) {
+        setElementInnerHtmlIfChanged(
+          displayText,
+          renderSanitizedInlineMarkupWithEditorHighlightState(row?.fields?.[languageCode] ?? "", {
+            glossaryHighlightHtml,
+            searchRanges: searchHighlightRanges,
+          }),
+        );
+      }
     }
 
     const searchLayer = stack.querySelector("[data-editor-search-highlight]");
-    setElementInnerHtmlIfChanged(searchLayer, searchHighlightHtml);
+    setElementInnerHtmlIfChanged(searchLayer, "");
   });
 }
 
@@ -185,7 +171,7 @@ function syncEditorGlossaryHighlightRowCard(rowCard, chapterState = state.editor
 
   const glossaryHighlightMap = buildCachedEditorRowGlossaryHighlights(row, chapterState);
   const searchHighlightMap = buildEditorRowSearchHighlightMap(row, chapterState);
-  applyEditorTextHighlightLayersToRowCard(rowCard, searchHighlightMap, glossaryHighlightMap);
+  applyEditorTextHighlightLayersToRowCard(rowCard, row, searchHighlightMap, glossaryHighlightMap);
 }
 
 function syncMountedEditorGlossaryHighlightRows(
@@ -232,7 +218,7 @@ function syncMountedEditorGlossaryHighlightRows(
       ? buildCachedEditorRowGlossaryHighlights(row, chapterState)
       : readCachedEditorRowGlossaryHighlights(row, chapterState);
     const searchHighlightMap = buildEditorRowSearchHighlightMap(row, chapterState);
-    applyEditorTextHighlightLayersToRowCard(rowCard, searchHighlightMap, glossaryHighlightMap);
+    applyEditorTextHighlightLayersToRowCard(rowCard, row, searchHighlightMap, glossaryHighlightMap);
   });
 }
 

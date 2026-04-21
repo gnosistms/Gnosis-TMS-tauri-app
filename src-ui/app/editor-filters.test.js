@@ -132,6 +132,34 @@ test("search includes visible footnotes and keeps their keys distinct from main 
   );
 });
 
+test("search and target-empty filtering use visible text instead of raw inline tags", () => {
+  const searchResult = buildEditorFilterResult({
+    rows: [
+      row("row-1", { es: "<strong>distintos</strong>" }),
+      row("row-2", { es: "<strong></strong>" }),
+    ],
+    languages: [language("es")],
+    collapsedLanguageCodes: new Set(),
+    filters: { searchQuery: "distintos" },
+  });
+
+  assert.deepEqual(searchResult.filteredRows.map((item) => item.id), ["row-1"]);
+  assert.deepEqual(searchResult.searchResults.map((match) => match.text), ["distintos"]);
+
+  const emptyResult = buildEditorFilterResult({
+    rows: [
+      row("row-1", { es: "<strong></strong>" }),
+      row("row-2", { es: "<strong>lleno</strong>" }),
+    ],
+    languages: [language("es")],
+    collapsedLanguageCodes: new Set(),
+    targetLanguageCode: "es",
+    filters: { rowFilterMode: EDITOR_ROW_FILTER_MODE_TARGET_EMPTY },
+  });
+
+  assert.deepEqual(emptyResult.filteredRows.map((item) => item.id), ["row-1"]);
+});
+
 test("no active filters returns the unfiltered rows", () => {
   const rows = [
     row("row-1", { es: "uno" }),
