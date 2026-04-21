@@ -86,6 +86,21 @@ test("unresolved conflict state surfaces a sync warning without blocking content
   assert.match(resolution?.help ?? "", /Automatic sync is paused/i);
 });
 
+test("update required sync state blocks project lifecycle and content actions", () => {
+  const resolution = deriveProjectResolution(
+    { id: "project-1", remoteState: "linked", recordState: "live" },
+    {
+      status: "updateRequired",
+      message: "This repo was saved by Gnosis TMS 0.1.36.",
+    },
+  );
+
+  assert.equal(resolution?.key, "updateRequired");
+  assert.equal(resolution?.blockLifecycleActions, true);
+  assert.equal(resolution?.blockContentActions, true);
+  assert.match(resolution?.help ?? "", /Update Gnosis TMS before continuing/i);
+});
+
 test("linked resources do not surface a top-level resolution banner", () => {
   const projectResolution = deriveProjectResolution({
     id: "project-1",

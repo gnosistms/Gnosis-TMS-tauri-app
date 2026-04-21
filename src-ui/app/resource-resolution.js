@@ -32,6 +32,17 @@ function syncIssueResolution(snapshot, resourceLabel) {
     };
   }
 
+  if (status === "updateRequired") {
+    return {
+      key: "updateRequired",
+      tone: "error",
+      message: message || `A newer version of Gnosis TMS is required before this ${resourceLabel} repo can sync again.`,
+      help: "Update Gnosis TMS before continuing so an older app version does not overwrite newer-format data.",
+      blockLifecycleActions: true,
+      blockContentActions: true,
+    };
+  }
+
   if (status === "syncError" || status === "missingRemoteHead") {
     return {
       key: "syncError",

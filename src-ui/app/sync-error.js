@@ -1,4 +1,5 @@
 const AUTH_REQUIRED_PREFIX = "AUTH_REQUIRED:";
+const APP_UPDATE_REQUIRED_PREFIX = "APP_UPDATE_REQUIRED:";
 
 const CONNECTION_PATTERNS = [
   "failed to fetch",
@@ -35,6 +36,10 @@ export function classifySyncError(error, context = {}) {
   const message = (error?.message ?? String(error ?? "")).trim();
   const normalized = message.toLowerCase();
   const status = Number(error?.status ?? context.status ?? NaN);
+
+  if (message.startsWith(APP_UPDATE_REQUIRED_PREFIX)) {
+    return { type: "app_update_required", message, status };
+  }
 
   if (
     message.startsWith(AUTH_REQUIRED_PREFIX) ||

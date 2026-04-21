@@ -88,6 +88,8 @@ const {
   checkForAppUpdate,
   dismissAppUpdatePrompt,
   installAppUpdate,
+  parseRequiredAppUpdateFromError,
+  requireAppUpdate,
 } = await import("./updater-flow.js");
 
 test.afterEach(() => {
@@ -173,6 +175,40 @@ test("manual update checks surface a platform availability message when no compa
   );
 });
 
+test("parseRequiredAppUpdateFromError reads the encoded payload", () => {
+  assert.deepEqual(
+    parseRequiredAppUpdateFromError(
+      "APP_UPDATE_REQUIRED:{\"requiredVersion\":\"0.1.36\",\"currentVersion\":\"0.1.35\",\"message\":\"Update before syncing.\"}",
+    ),
+    {
+      requiredVersion: "0.1.36",
+      currentVersion: "0.1.35",
+      message: "Update before syncing.",
+    },
+  );
+});
+
+test("requireAppUpdate opens a non-dismissible required update prompt", () => {
+  let renderCount = 0;
+
+  const handled = requireAppUpdate({
+    requiredVersion: "0.1.36",
+    currentVersion: "0.1.35",
+    message: "A newer version is required.",
+  }, () => {
+    renderCount += 1;
+  });
+
+  assert.equal(handled, true);
+  assert.equal(state.appUpdate.required, true);
+  assert.equal(state.appUpdate.available, true);
+  assert.equal(state.appUpdate.promptVisible, true);
+  assert.equal(state.appUpdate.version, "0.1.36");
+  assert.equal(state.appUpdate.currentVersion, "0.1.35");
+  assert.equal(state.appUpdate.message, "A newer version is required.");
+  assert.equal(renderCount, 1);
+});
+
 test("Later suppresses the same version for silent checks but manual checks reopen it", async () => {
   invokeHandler = async () => ({
     available: true,
@@ -194,6 +230,48 @@ test("Later suppresses the same version for silent checks but manual checks reop
   await checkForAppUpdate(() => {}, { silent: false });
   assert.equal(state.appUpdate.promptVisible, true);
   assert.equal(state.appUpdate.dismissedVersion, null);
+});
+
+test("required update prompts cannot be dismissed", () => {
+  state.appUpdate = {
+    ...state.appUpdate,
+    required: true,
+    available: true,
+    version: "0.1.36",
+    currentVersion: "0.1.35",
+    promptVisible: true,
+    dismissedVersion: null,
+  };
+
+  dismissAppUpdatePrompt(() => {});
+
+  assert.equal(state.appUpdate.promptVisible, true);
+  assert.equal(state.appUpdate.dismissedVersion, null);
+});
+
+test("manual update checks do not clear an active required update prompt", async () => {
+  requireAppUpdate({
+    requiredVersion: "0.1.36",
+    currentVersion: "0.1.35",
+    message: "A newer version is required.",
+  }, () => {});
+
+  invokeHandler = async () => ({
+    available: false,
+    version: null,
+    currentVersion: "0.1.35",
+    body: null,
+    message: "",
+  });
+
+  await checkForAppUpdate(() => {}, { silent: false });
+
+  assert.equal(state.appUpdate.required, true);
+  assert.equal(state.appUpdate.available, true);
+  assert.equal(state.appUpdate.promptVisible, true);
+  assert.equal(state.appUpdate.version, "0.1.36");
+  assert.equal(state.appUpdate.currentVersion, "0.1.35");
+  assert.equal(state.appUpdate.message, "A newer version is required.");
 });
 
 test("installing an update keeps the prompt open until restart", async () => {

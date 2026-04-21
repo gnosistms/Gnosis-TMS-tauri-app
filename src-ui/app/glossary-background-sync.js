@@ -4,6 +4,8 @@ import { markGlossaryTermsStale } from "./glossary-term-sync.js";
 import { invoke } from "./runtime.js";
 import { state } from "./state.js";
 import { showNoticeBadge } from "./status-feedback.js";
+import { classifySyncError } from "./sync-error.js";
+import { handleSyncFailure } from "./sync-recovery.js";
 
 const GLOSSARY_SYNC_IDLE_MS = 10_000;
 
@@ -120,7 +122,10 @@ async function runGlossaryBackgroundSync(render) {
   } catch (error) {
     if (sessionMatchesCurrentGlossary()) {
       const message = error instanceof Error ? error.message : String(error);
-      showNoticeBadge(message || "Glossary background sync failed.", render, 2400);
+      const handled = await handleSyncFailure(classifySyncError(error), { render });
+      if (!handled) {
+        showNoticeBadge(message || "Glossary background sync failed.", render, 2400);
+      }
     }
     return false;
   }

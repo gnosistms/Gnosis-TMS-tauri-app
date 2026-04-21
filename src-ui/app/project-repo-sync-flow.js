@@ -9,7 +9,9 @@ import { requireBrokerSession } from "./auth-flow.js";
 import {
   buildProjectRepoSyncInput,
   PROJECT_REPO_SYNC_STATUS_UNRESOLVED_CONFLICT,
+  PROJECT_REPO_SYNC_STATUS_UPDATE_REQUIRED,
 } from "./project-repo-sync-shared.js";
+import { requireAppUpdate } from "./updater-flow.js";
 
 const PROJECT_REPO_SYNC_POLL_DELAY_MS = 1400;
 
@@ -58,6 +60,7 @@ function summarizeSnapshots(snapshots = []) {
       snapshot?.status === "syncError"
       || snapshot?.status === "missingRemoteHead"
       || snapshot?.status === PROJECT_REPO_SYNC_STATUS_UNRESOLVED_CONFLICT
+      || snapshot?.status === PROJECT_REPO_SYNC_STATUS_UPDATE_REQUIRED
     ) {
       summary.issues += 1;
       summary.syncErrors += 1;
@@ -103,6 +106,24 @@ function hasSyncingRepos(snapshots) {
   return (snapshots || []).some((snapshot) => snapshot?.status === "syncing");
 }
 
+function openRequiredAppUpdatePromptFromProjectSnapshots(snapshots, render) {
+  const requiredSnapshot = (Array.isArray(snapshots) ? snapshots : []).find(
+    (snapshot) => snapshot?.status === PROJECT_REPO_SYNC_STATUS_UPDATE_REQUIRED,
+  );
+  if (!requiredSnapshot) {
+    return false;
+  }
+
+  return requireAppUpdate(
+    {
+      requiredVersion: requiredSnapshot.requiredAppVersion ?? null,
+      currentVersion: requiredSnapshot.currentAppVersion ?? null,
+      message: requiredSnapshot.message ?? "",
+    },
+    render,
+  );
+}
+
 export async function reconcileProjectRepoSyncStates(render, team, projects, options = {}) {
   const shouldAbort = typeof options.shouldAbort === "function" ? options.shouldAbort : null;
 
@@ -139,6 +160,7 @@ export async function reconcileProjectRepoSyncStates(render, team, projects, opt
     return Array.isArray(initialSnapshots) ? initialSnapshots : [];
   }
   applyProjectRepoSyncSnapshots(initialSnapshots);
+  openRequiredAppUpdatePromptFromProjectSnapshots(initialSnapshots, render);
   showScopedSyncBadge("projects", syncingBadgeText(initialSnapshots), render);
   render();
 
@@ -153,6 +175,7 @@ export async function reconcileProjectRepoSyncStates(render, team, projects, opt
       return Array.isArray(snapshots) ? snapshots : [];
     }
     applyProjectRepoSyncSnapshots(snapshots);
+    openRequiredAppUpdatePromptFromProjectSnapshots(snapshots, render);
     showScopedSyncBadge("projects", syncingBadgeText(snapshots), render);
     render();
   }
@@ -161,6 +184,7 @@ export async function reconcileProjectRepoSyncStates(render, team, projects, opt
     return Array.isArray(snapshots) ? snapshots : [];
   }
   clearScopedSyncBadge("projects", render);
+  openRequiredAppUpdatePromptFromProjectSnapshots(snapshots, render);
   const issueText = issueNoticeText(snapshots);
   if (issueText) {
     showNoticeBadge(issueText, render, 2400);

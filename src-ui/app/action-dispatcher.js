@@ -12,6 +12,16 @@ import { createTeamActions } from "./actions/team-actions.js";
 import { createTranslateActions } from "./actions/translate-actions.js";
 import { createUserActions } from "./user-actions.js";
 import { actionSuffix } from "./action-helpers.js";
+import { state } from "./state.js";
+
+function updateRequiredAllowsAction(action) {
+  return (
+    action === "install-app-update"
+    || action === "check-for-updates"
+    || action === "dismiss-app-update"
+    || action === "noop"
+  );
+}
 
 export function createActionDispatcher(render) {
   const exactActionMaps = [
@@ -31,6 +41,10 @@ export function createActionDispatcher(render) {
   ];
 
   return async function dispatchAction(action, event) {
+    if (state.appUpdate.required === true && !updateRequiredAllowsAction(action)) {
+      return true;
+    }
+
     if (isOfflineBlockedAction(action)) {
       showOfflineUnsupportedMessage(render);
       return true;

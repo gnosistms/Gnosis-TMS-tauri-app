@@ -5,11 +5,17 @@ import { showNoticeBadge } from "./status-feedback.js";
 import { createProjectDiscoveryState, resetSessionState, state } from "./state.js";
 import { removeStoredTeamRecord, splitStoredTeamRecords } from "./team-storage.js";
 import { applyTeamSnapshotToState, resolveNextSelectedTeamId } from "./team-flow/shared.js";
+import { parseRequiredAppUpdateFromError, requireAppUpdate } from "./updater-flow.js";
 
 export async function handleSyncFailure(
   classification,
   { render, teamId = null, currentResource = false } = {},
 ) {
+  if (classification?.type === "app_update_required") {
+    const requirement = parseRequiredAppUpdateFromError(classification.message);
+    return requireAppUpdate(requirement, render);
+  }
+
   if (classification?.type === "connection_unavailable") {
     const hasConnection = await checkInternetConnection();
     state.offline.checked = true;

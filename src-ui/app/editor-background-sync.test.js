@@ -402,3 +402,28 @@ test("background sync skips skipDirtyFlush requests while row writes are still p
     [],
   );
 });
+
+test("background sync opens a required update prompt when the repo was saved by a newer app", async () => {
+  installEditorFixture();
+
+  invokeHandler = async (command) => {
+    if (command === "sync_gtms_project_editor_repo") {
+      throw new Error(
+        "APP_UPDATE_REQUIRED:{\"requiredVersion\":\"0.1.36\",\"currentVersion\":\"0.1.35\",\"message\":\"Update before syncing this project.\"}",
+      );
+    }
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  startEditorBackgroundSyncSession(() => {});
+  await Promise.resolve();
+
+  await syncEditorBackgroundNow(() => {}, { skipDirtyFlush: true });
+
+  assert.equal(state.editorChapter.backgroundSyncStatus, "error");
+  assert.equal(state.appUpdate.required, true);
+  assert.equal(state.appUpdate.promptVisible, true);
+  assert.equal(state.appUpdate.version, "0.1.36");
+  assert.equal(state.appUpdate.currentVersion, "0.1.35");
+  assert.equal(state.appUpdate.message, "Update before syncing this project.");
+});

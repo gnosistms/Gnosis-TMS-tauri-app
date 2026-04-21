@@ -17,6 +17,7 @@ mod project_import;
 mod project_repo_paths;
 mod project_repo_sync;
 mod project_search;
+mod repo_app_version;
 mod repo_sync_shared;
 mod state;
 mod storage_paths;

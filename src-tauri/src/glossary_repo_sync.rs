@@ -7,6 +7,10 @@ use crate::{
     local_repo_sync_state::{
         read_local_repo_sync_state, upsert_local_repo_sync_state, LocalRepoSyncStateUpdate,
     },
+    repo_app_version::{
+        encode_repo_app_update_requirement, parse_repo_app_update_requirement_error,
+        remote_ref_requires_newer_app,
+    },
     repo_sync_shared::{
         abort_rebase_after_failed_pull, ensure_repo_local_git_identity, git_output,
         load_git_transport_token, read_current_head_oid, GitTransportAuth,
@@ -53,6 +57,8 @@ pub(crate) struct GlossaryRepoSyncSnapshot {
     pub(crate) remote_head_oid: Option<String>,
     pub(crate) status: String,
     pub(crate) message: Option<String>,
+    pub(crate) required_app_version: Option<String>,
+    pub(crate) current_app_version: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -70,6 +76,7 @@ const GLOSSARY_REPO_SYNC_STATUS_DIRTY_LOCAL: &str = "dirtyLocal";
 const GLOSSARY_REPO_SYNC_STATUS_UP_TO_DATE: &str = "upToDate";
 const GLOSSARY_REPO_SYNC_STATUS_OUT_OF_SYNC: &str = "outOfSync";
 const GLOSSARY_REPO_SYNC_STATUS_SYNC_ERROR: &str = "syncError";
+const GLOSSARY_REPO_SYNC_STATUS_UPDATE_REQUIRED: &str = "updateRequired";
 
 #[tauri::command]
 pub(crate) async fn sync_gtms_glossary_repos(
@@ -160,12 +167,10 @@ fn sync_gtms_glossary_repos_sync(
                     remote_head_oid: local_head_oid,
                     status: GLOSSARY_REPO_SYNC_STATUS_UP_TO_DATE.to_string(),
                     message: None,
+                    required_app_version: None,
+                    current_app_version: None,
                 },
-                Err(error) => GlossaryRepoSyncSnapshot {
-                    message: Some(error),
-                    status: GLOSSARY_REPO_SYNC_STATUS_SYNC_ERROR.to_string(),
-                    ..inspect_glossary_repo_state(&glossary, &repo_path)
-                },
+                Err(error) => snapshot_from_glossary_sync_error(&glossary, &repo_path, error),
             });
             continue;
         }
@@ -321,6 +326,31 @@ fn term_id_from_repo_relative_path(path: &str) -> Option<String> {
         .map(str::to_string)
 }
 
+fn snapshot_from_glossary_sync_error(
+    glossary: &GlossaryRepoSyncDescriptor,
+    repo_path: &Path,
+    error: String,
+) -> GlossaryRepoSyncSnapshot {
+    if let Some(requirement) = parse_repo_app_update_requirement_error(&error) {
+        return GlossaryRepoSyncSnapshot {
+            repo_name: glossary.repo_name.clone(),
+            repo_path: repo_path.display().to_string(),
+            local_head_oid: read_current_head_oid(repo_path),
+            remote_head_oid: glossary.default_branch_head_oid.clone(),
+            status: GLOSSARY_REPO_SYNC_STATUS_UPDATE_REQUIRED.to_string(),
+            message: Some(requirement.message),
+            required_app_version: Some(requirement.required_version),
+            current_app_version: Some(requirement.current_version),
+        };
+    }
+
+    GlossaryRepoSyncSnapshot {
+        message: Some(error),
+        status: GLOSSARY_REPO_SYNC_STATUS_SYNC_ERROR.to_string(),
+        ..inspect_glossary_repo_state(glossary, repo_path)
+    }
+}
+
 fn inspect_glossary_repo_state(
     glossary: &GlossaryRepoSyncDescriptor,
     repo_path: &Path,
@@ -332,6 +362,8 @@ fn inspect_glossary_repo_state(
         remote_head_oid: glossary.default_branch_head_oid.clone(),
         status: GLOSSARY_REPO_SYNC_STATUS_NOT_CLONED.to_string(),
         message: None,
+        required_app_version: None,
+        current_app_version: None,
     };
 
     if !repo_path.exists() {
@@ -520,6 +552,8 @@ fn sync_glossary_repo(
         return Ok(current_head_oid);
     }
 
+    enforce_remote_glossary_app_version(repo_path, glossary, branch_name, &git_transport_auth)?;
+
     if let Err(error) = git_output(
         repo_path,
         &["pull", "--rebase", "origin", branch_name],
@@ -596,6 +630,15 @@ fn clone_glossary_repo(
     git_output(repo_parent, &clone_args, Some(&git_transport_auth))?;
     ensure_repo_local_git_identity(app, repo_path)?;
 
+    if !remote_head_oid.trim().is_empty() {
+        let branch_name = glossary
+            .default_branch_name
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or("main");
+        enforce_remote_glossary_app_version(repo_path, glossary, branch_name, &git_transport_auth)?;
+    }
+
     if remote_head_oid.trim().is_empty() {
         let branch_name = glossary
             .default_branch_name
@@ -608,6 +651,31 @@ fn clone_glossary_repo(
     let current_head_oid = read_current_head_oid(repo_path);
     mark_glossary_repo_synced(glossary, repo_path)?;
     Ok(current_head_oid)
+}
+
+fn enforce_remote_glossary_app_version(
+    repo_path: &Path,
+    glossary: &GlossaryRepoSyncDescriptor,
+    branch_name: &str,
+    git_transport_auth: &GitTransportAuth,
+) -> Result<(), String> {
+    git_output(
+        repo_path,
+        &["fetch", "origin", branch_name],
+        Some(git_transport_auth),
+    )?;
+    let remote_tracking_ref = format!("origin/{branch_name}");
+    let resource_name = if glossary.repo_name.trim().is_empty() {
+        glossary.glossary_id.as_deref().unwrap_or_default().trim()
+    } else {
+        glossary.repo_name.trim()
+    };
+    if let Some(requirement) =
+        remote_ref_requires_newer_app(repo_path, &remote_tracking_ref, "glossary", resource_name)?
+    {
+        return Err(encode_repo_app_update_requirement(&requirement));
+    }
+    Ok(())
 }
 
 #[derive(Deserialize)]
@@ -640,4 +708,43 @@ fn mark_glossary_repo_synced(
     )?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        snapshot_from_glossary_sync_error, GlossaryRepoSyncDescriptor,
+        GLOSSARY_REPO_SYNC_STATUS_UPDATE_REQUIRED,
+    };
+    use crate::repo_app_version::{
+        encode_repo_app_update_requirement, RepoAppUpdateRequirement,
+    };
+    use std::path::Path;
+
+    #[test]
+    fn glossary_sync_error_promotes_update_required_payload_to_snapshot_status() {
+        let descriptor = GlossaryRepoSyncDescriptor {
+            glossary_id: Some("glossary-1".to_string()),
+            repo_name: "glossary-repo".to_string(),
+            full_name: "org/glossary-repo".to_string(),
+            repo_id: None,
+            default_branch_name: Some("main".to_string()),
+            default_branch_head_oid: Some("remote-head".to_string()),
+        };
+        let error = encode_repo_app_update_requirement(&RepoAppUpdateRequirement {
+            required_version: "0.1.36".to_string(),
+            current_version: "0.1.35".to_string(),
+            resource_kind: "glossary".to_string(),
+            resource_name: "glossary-repo".to_string(),
+            message: "Update required.".to_string(),
+        });
+
+        let snapshot =
+            snapshot_from_glossary_sync_error(&descriptor, Path::new("/tmp/repo"), error);
+
+        assert_eq!(snapshot.status, GLOSSARY_REPO_SYNC_STATUS_UPDATE_REQUIRED);
+        assert_eq!(snapshot.required_app_version.as_deref(), Some("0.1.36"));
+        assert_eq!(snapshot.current_app_version.as_deref(), Some("0.1.35"));
+        assert_eq!(snapshot.message.as_deref(), Some("Update required."));
+    }
 }

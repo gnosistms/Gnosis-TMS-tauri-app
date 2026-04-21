@@ -14,6 +14,10 @@ use crate::{
     local_repo_sync_state::{
         read_local_repo_sync_state, upsert_local_repo_sync_state, LocalRepoSyncStateUpdate,
     },
+    repo_app_version::{
+        encode_repo_app_update_requirement, parse_repo_app_update_requirement_error,
+        remote_ref_requires_newer_app,
+    },
     project_repo_paths::resolve_or_desired_project_git_repo_path,
     repo_sync_shared::{
         abort_rebase_after_failed_pull, ensure_repo_local_git_identity, git_output,
@@ -29,6 +33,7 @@ const PROJECT_REPO_SYNC_STATUS_OUT_OF_SYNC: &str = "outOfSync";
 const PROJECT_REPO_SYNC_STATUS_SYNCING: &str = "syncing";
 const PROJECT_REPO_SYNC_STATUS_SYNC_ERROR: &str = "syncError";
 const PROJECT_REPO_SYNC_STATUS_UNRESOLVED_CONFLICT: &str = "unresolvedConflict";
+const PROJECT_REPO_SYNC_STATUS_UPDATE_REQUIRED: &str = "updateRequired";
 
 #[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -80,6 +85,8 @@ pub(crate) struct ProjectRepoSyncSnapshot {
     pub(crate) remote_head_oid: Option<String>,
     pub(crate) status: String,
     pub(crate) message: Option<String>,
+    pub(crate) required_app_version: Option<String>,
+    pub(crate) current_app_version: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -240,6 +247,8 @@ fn reconcile_project_repo_sync_states_sync(
             let syncing_snapshot = ProjectRepoSyncSnapshot {
                 status: PROJECT_REPO_SYNC_STATUS_SYNCING.to_string(),
                 message: Some(next_message),
+                required_app_version: None,
+                current_app_version: None,
                 ..inspected_snapshot
             };
             save_sync_snapshot(&store, &key, syncing_snapshot.clone());
@@ -418,26 +427,50 @@ fn spawn_project_repo_sync_job(
                 remote_head_oid: local_head_oid,
                 status: PROJECT_REPO_SYNC_STATUS_UP_TO_DATE.to_string(),
                 message: None,
+                required_app_version: None,
+                current_app_version: None,
             },
             Err(error) => {
-                let inspected_snapshot = inspect_project_repo_state(&project, &repo_path);
-                if inspected_snapshot.status == PROJECT_REPO_SYNC_STATUS_UNRESOLVED_CONFLICT {
-                    ProjectRepoSyncSnapshot {
-                        message: Some(error),
-                        ..inspected_snapshot
-                    }
-                } else {
-                    ProjectRepoSyncSnapshot {
-                        status: PROJECT_REPO_SYNC_STATUS_SYNC_ERROR.to_string(),
-                        message: Some(error),
-                        ..inspected_snapshot
-                    }
-                }
+                snapshot_from_project_sync_error(&project, &repo_path, error)
             }
         };
 
         save_sync_snapshot(&store, &key, next_snapshot);
     });
+}
+
+fn snapshot_from_project_sync_error(
+    project: &ProjectRepoSyncDescriptor,
+    repo_path: &Path,
+    error: String,
+) -> ProjectRepoSyncSnapshot {
+    if let Some(requirement) = parse_repo_app_update_requirement_error(&error) {
+        return ProjectRepoSyncSnapshot {
+            project_id: project.project_id.clone(),
+            repo_name: project.repo_name.clone(),
+            repo_path: repo_path.display().to_string(),
+            local_head_oid: read_current_head_oid(repo_path),
+            remote_head_oid: project.default_branch_head_oid.clone(),
+            status: PROJECT_REPO_SYNC_STATUS_UPDATE_REQUIRED.to_string(),
+            message: Some(requirement.message),
+            required_app_version: Some(requirement.required_version),
+            current_app_version: Some(requirement.current_version),
+        };
+    }
+
+    let inspected_snapshot = inspect_project_repo_state(project, repo_path);
+    if inspected_snapshot.status == PROJECT_REPO_SYNC_STATUS_UNRESOLVED_CONFLICT {
+        ProjectRepoSyncSnapshot {
+            message: Some(error),
+            ..inspected_snapshot
+        }
+    } else {
+        ProjectRepoSyncSnapshot {
+            status: PROJECT_REPO_SYNC_STATUS_SYNC_ERROR.to_string(),
+            message: Some(error),
+            ..inspected_snapshot
+        }
+    }
 }
 
 fn chapter_row_changes_between_commits(
@@ -584,6 +617,8 @@ fn inspect_project_repo_state(
         remote_head_oid: project.default_branch_head_oid.clone(),
         status: PROJECT_REPO_SYNC_STATUS_NOT_CLONED.to_string(),
         message: None,
+        required_app_version: None,
+        current_app_version: None,
     };
 
     if !repo_path.exists() {
@@ -704,6 +739,8 @@ fn sync_project_repo(
         mark_project_repo_synced(project, repo_path)?;
         return Ok(current_head_oid);
     }
+
+    enforce_remote_project_app_version(repo_path, project, branch_name, &git_transport_auth)?;
 
     if local_sync_state
         .as_ref()
@@ -961,6 +998,11 @@ fn clone_project_repo(
     git_output(repo_parent, &clone_args, Some(&git_transport_auth))?;
     ensure_repo_local_git_identity(app, repo_path)?;
 
+    if !remote_head_oid.trim().is_empty() {
+        let branch_name = project_branch_name(project);
+        enforce_remote_project_app_version(repo_path, project, &branch_name, &git_transport_auth)?;
+    }
+
     if remote_head_oid.trim().is_empty() {
         let branch_name = project
             .default_branch_name
@@ -973,6 +1015,31 @@ fn clone_project_repo(
     let current_head_oid = git_output(repo_path, &["rev-parse", "HEAD"], None).ok();
     mark_project_repo_synced(project, repo_path)?;
     Ok(current_head_oid)
+}
+
+fn enforce_remote_project_app_version(
+    repo_path: &Path,
+    project: &ProjectRepoSyncDescriptor,
+    branch_name: &str,
+    git_transport_auth: &GitTransportAuth,
+) -> Result<(), String> {
+    git_output(
+        repo_path,
+        &["fetch", "origin", branch_name],
+        Some(git_transport_auth),
+    )?;
+    let remote_tracking_ref = format!("origin/{branch_name}");
+    let resource_name = if project.repo_name.trim().is_empty() {
+        project.project_id.trim()
+    } else {
+        project.repo_name.trim()
+    };
+    if let Some(requirement) =
+        remote_ref_requires_newer_app(repo_path, &remote_tracking_ref, "project", resource_name)?
+    {
+        return Err(encode_repo_app_update_requirement(&requirement));
+    }
+    Ok(())
 }
 
 fn mark_project_repo_synced(
@@ -1026,8 +1093,13 @@ fn save_sync_snapshot(
 mod tests {
     use super::{
         git_status_porcelain_has_unmerged_entries, project_branch_name,
-        ProjectRepoSyncDescriptor,
+        snapshot_from_project_sync_error, ProjectRepoSyncDescriptor,
+        PROJECT_REPO_SYNC_STATUS_UPDATE_REQUIRED,
     };
+    use crate::repo_app_version::{
+        encode_repo_app_update_requirement, RepoAppUpdateRequirement,
+    };
+    use std::path::Path;
 
     #[test]
     fn git_status_porcelain_has_unmerged_entries_detects_conflicts() {
@@ -1063,5 +1135,31 @@ mod tests {
         };
 
         assert_eq!(project_branch_name(&descriptor), "trunk");
+    }
+
+    #[test]
+    fn project_sync_error_promotes_update_required_payload_to_snapshot_status() {
+        let descriptor = ProjectRepoSyncDescriptor {
+            project_id: "project-1".to_string(),
+            repo_name: "repo-one".to_string(),
+            full_name: "org/repo-one".to_string(),
+            repo_id: None,
+            default_branch_name: Some("main".to_string()),
+            default_branch_head_oid: Some("remote-head".to_string()),
+        };
+        let error = encode_repo_app_update_requirement(&RepoAppUpdateRequirement {
+            required_version: "0.1.36".to_string(),
+            current_version: "0.1.35".to_string(),
+            resource_kind: "project".to_string(),
+            resource_name: "repo-one".to_string(),
+            message: "Update required.".to_string(),
+        });
+
+        let snapshot = snapshot_from_project_sync_error(&descriptor, Path::new("/tmp/repo"), error);
+
+        assert_eq!(snapshot.status, PROJECT_REPO_SYNC_STATUS_UPDATE_REQUIRED);
+        assert_eq!(snapshot.required_app_version.as_deref(), Some("0.1.36"));
+        assert_eq!(snapshot.current_app_version.as_deref(), Some("0.1.35"));
+        assert_eq!(snapshot.message.as_deref(), Some("Update required."));
     }
 }

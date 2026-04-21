@@ -76,16 +76,26 @@ export function renderAppUpdateModal(state) {
       <section class="card modal-card modal-card--compact">
         <div class="card__body modal-card__body">
           <p class="card__eyebrow">APP UPDATE</p>
-          <h2 class="modal__title">Update available</h2>
+          <h2 class="modal__title">${update.required === true ? "Update required" : "Update available"}</h2>
           <p class="modal__supporting">
-            ${escapeHtml(renderVersionMessage(update))}
+            ${escapeHtml(update.required === true ? (update.message || renderVersionMessage(update)) : renderVersionMessage(update))}
           </p>
-          <p class="modal__supporting">
-            Update now to download and install it, or choose Later and keep working.
-          </p>
+          ${
+            update.required === true
+              ? `
+                <p class="modal__supporting">
+                  This repo was saved by a newer version of Gnosis TMS. Update before continuing.
+                </p>
+              `
+              : `
+                <p class="modal__supporting">
+                  Update now to download and install it, or choose Later and keep working.
+                </p>
+              `
+          }
           ${error ? `<p class="modal__supporting">${escapeHtml(error)}</p>` : ""}
           <div class="modal__actions">
-            ${secondaryButton("Later", "dismiss-app-update")}
+            ${update.required === true ? "" : secondaryButton("Later", "dismiss-app-update")}
             ${primaryButton("Update now", "install-app-update")}
           </div>
         </div>

@@ -12,6 +12,8 @@ import { findChapterContextById, selectedProjectsTeam } from "./project-context.
 import { invoke } from "./runtime.js";
 import { state } from "./state.js";
 import { showNoticeBadge } from "./status-feedback.js";
+import { classifySyncError } from "./sync-error.js";
+import { handleSyncFailure } from "./sync-recovery.js";
 
 const EDITOR_SYNC_IDLE_MS = 10_000;
 const EDITOR_SYNC_LOCAL_COMMIT_THRESHOLD = 5;
@@ -163,7 +165,10 @@ async function runEditorBackgroundSync(render, options = {}) {
       if (!hadVisibleErrorBanner || previousSyncError !== message) {
         render?.({ scope: "translate-body" });
       }
-      showNoticeBadge(message || "Background sync failed.", render, 2400);
+      const handled = await handleSyncFailure(classifySyncError(error), { render });
+      if (!handled) {
+        showNoticeBadge(message || "Background sync failed.", render, 2400);
+      }
     }
     return null;
   }

@@ -1,4 +1,5 @@
 export const PROJECT_REPO_SYNC_STATUS_UNRESOLVED_CONFLICT = "unresolvedConflict";
+export const PROJECT_REPO_SYNC_STATUS_UPDATE_REQUIRED = "updateRequired";
 
 export function mapProjectToProjectRepoSyncDescriptor(project) {
   if (

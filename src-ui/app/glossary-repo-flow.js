@@ -7,6 +7,7 @@ import { ensureResourceNotTombstoned } from "./resource-lifecycle-engine.js";
 import { showNoticeBadge } from "./status-feedback.js";
 import { state } from "./state.js";
 import { removeGlossaryFromState } from "./glossary-top-level-state.js";
+import { requireAppUpdate } from "./updater-flow.js";
 import {
   inspectAndMigrateLocalRepoBindings,
   listGlossaryMetadataRecords,
@@ -337,7 +338,9 @@ export function glossaryArchiveDownloadUrl(glossary) {
 export function getGlossarySyncIssueMessage(syncSnapshots) {
   const snapshots = Array.isArray(syncSnapshots) ? syncSnapshots : [];
   const failedSnapshot = snapshots.find((snapshot) =>
-    snapshot?.status === "syncError" || snapshot?.status === "dirtyLocal",
+    snapshot?.status === "syncError"
+    || snapshot?.status === "dirtyLocal"
+    || snapshot?.status === "updateRequired",
   );
   if (!failedSnapshot) {
     return { message: "", snapshots };
@@ -388,7 +391,27 @@ export async function syncGlossaryReposForTeam(team, remoteRepos) {
     sessionToken: requireBrokerSession(),
   });
 
-  return Array.isArray(snapshots) ? snapshots : [];
+  const normalizedSnapshots = Array.isArray(snapshots) ? snapshots : [];
+  openRequiredAppUpdatePromptFromGlossarySnapshots(normalizedSnapshots);
+  return normalizedSnapshots;
+}
+
+function openRequiredAppUpdatePromptFromGlossarySnapshots(snapshots, render = null) {
+  const requiredSnapshot = (Array.isArray(snapshots) ? snapshots : []).find(
+    (snapshot) => snapshot?.status === "updateRequired",
+  );
+  if (!requiredSnapshot) {
+    return false;
+  }
+
+  return requireAppUpdate(
+    {
+      requiredVersion: requiredSnapshot.requiredAppVersion ?? null,
+      currentVersion: requiredSnapshot.currentAppVersion ?? null,
+      message: requiredSnapshot.message ?? "",
+    },
+    render,
+  );
 }
 
 export async function listLocalGlossarySummariesForTeam(team) {

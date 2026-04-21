@@ -792,3 +792,28 @@ test("saving a glossary term sanitizes ruby markup and escapes unsupported inlin
   assert.deepEqual(state.glossaryEditor.terms[0]?.sourceTerms, capturedUpsertInput?.sourceTerms);
   assert.deepEqual(state.glossaryEditor.terms[0]?.targetTerms, capturedUpsertInput?.targetTerms);
 });
+
+test("glossary background sync opens a required update prompt when the repo was saved by a newer app", async () => {
+  installGlossaryEditorFixture();
+
+  invokeHandler = async (command) => {
+    if (command === "sync_gtms_glossary_editor_repo") {
+      throw new Error(
+        "APP_UPDATE_REQUIRED:{\"requiredVersion\":\"0.1.36\",\"currentVersion\":\"0.1.35\",\"message\":\"Update before syncing this glossary.\"}",
+      );
+    }
+    return null;
+  };
+
+  startGlossaryBackgroundSyncSession(() => {});
+  await flushAsyncWork();
+
+  const synced = await maybeStartGlossaryBackgroundSync(() => {}, { force: true });
+
+  assert.equal(synced, false);
+  assert.equal(state.appUpdate.required, true);
+  assert.equal(state.appUpdate.promptVisible, true);
+  assert.equal(state.appUpdate.version, "0.1.36");
+  assert.equal(state.appUpdate.currentVersion, "0.1.35");
+  assert.equal(state.appUpdate.message, "Update before syncing this glossary.");
+});
