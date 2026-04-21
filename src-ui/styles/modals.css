@@ -887,9 +887,10 @@
 }
 
 .term-variant-row__action-button:disabled,
-.term-lane__add-button:disabled {
+.term-lane__add-button:disabled,
+.term-lane__add-button.is-disabled {
   cursor: not-allowed;
-  opacity: 0.42;
+  opacity: 0.72;
   transform: none;
 }
 

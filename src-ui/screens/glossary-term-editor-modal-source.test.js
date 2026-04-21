@@ -16,6 +16,8 @@ test("glossary term editor modal includes one ruby button per lane next to the a
   assert.match(source, /data-action="toggle-glossary-term-inline-style:ruby:\$\{escapeHtml\(side\)\}"/);
   assert.match(source, /data-inline-style="ruby"/);
   assert.match(source, /data-variant-side="\$\{escapeHtml\(side\)\}"/);
+  assert.match(source, /aria-disabled="true"/);
+  assert.match(source, /tabindex="-1"/);
   assert.match(
     source,
     /data-glossary-inline-style-button[\s\S]*?term-lane__add-button[\s\S]*?data-action="add-glossary-term-variant:\$\{escapeHtml\(side\)\}"/,

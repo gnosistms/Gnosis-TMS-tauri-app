@@ -723,7 +723,7 @@ export function registerAppEvents(render) {
     if (glossaryTermModalField instanceof HTMLTextAreaElement) {
       const key = typeof event.key === "string" ? event.key.toLowerCase() : "";
       if (
-        key === "enter"
+        (key === "enter" || key === "return")
         && event.shiftKey
         && !event.metaKey
         && !event.ctrlKey

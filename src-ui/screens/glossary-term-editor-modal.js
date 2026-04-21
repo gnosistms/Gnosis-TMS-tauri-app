@@ -128,9 +128,10 @@ function renderVariantLane(
           data-inline-style="ruby"
           data-variant-side="${escapeHtml(side)}"
           aria-label="${escapeHtml(rubyConfig.tooltip)}"
+          aria-disabled="true"
           aria-pressed="false"
+          tabindex="-1"
           ${tooltipAttributes(rubyConfig.tooltip, tooltipOptions)}
-          disabled
         ><span class="term-lane__inline-style-button-label" aria-hidden="true">${escapeHtml(rubyConfig.label)}</span></button>
         <button
           class="term-lane__add-button"

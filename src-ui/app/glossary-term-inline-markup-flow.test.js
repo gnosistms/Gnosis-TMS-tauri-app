@@ -131,12 +131,16 @@ test("glossary ruby buttons are disabled when no variant textarea is focused", (
 
   syncGlossaryTermInlineStyleButtons(doc);
 
-  assert.equal(sourceButton.disabled, true);
-  assert.equal(targetButton.disabled, true);
+  assert.equal(sourceButton.getAttribute("aria-disabled"), "true");
+  assert.equal(targetButton.getAttribute("aria-disabled"), "true");
+  assert.equal(sourceButton.classList.contains("is-disabled"), true);
+  assert.equal(targetButton.classList.contains("is-disabled"), true);
   assert.equal(sourceButton.classList.contains("is-active"), false);
   assert.equal(targetButton.classList.contains("is-active"), false);
   assert.equal(sourceButton.getAttribute("aria-pressed"), "false");
   assert.equal(targetButton.getAttribute("aria-pressed"), "false");
+  assert.equal(sourceButton.tabIndex, -1);
+  assert.equal(targetButton.tabIndex, -1);
 });
 
 test("glossary ruby buttons enable only for the focused side and light up inside ruby", () => {
@@ -154,10 +158,14 @@ test("glossary ruby buttons enable only for the focused side and light up inside
 
   syncGlossaryTermInlineStyleButtons(doc);
 
-  assert.equal(sourceButton.disabled, false);
-  assert.equal(targetButton.disabled, true);
+  assert.equal(sourceButton.getAttribute("aria-disabled"), "false");
+  assert.equal(targetButton.getAttribute("aria-disabled"), "true");
+  assert.equal(sourceButton.classList.contains("is-disabled"), false);
+  assert.equal(targetButton.classList.contains("is-disabled"), true);
   assert.equal(sourceButton.classList.contains("is-active"), true);
   assert.equal(sourceButton.getAttribute("aria-pressed"), "true");
+  assert.equal(sourceButton.tabIndex, 0);
+  assert.equal(targetButton.tabIndex, -1);
 });
 
 test("glossary ruby button toggles ruby on the focused variant textarea and updates draft state", () => {

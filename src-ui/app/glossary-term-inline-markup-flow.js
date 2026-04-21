@@ -31,9 +31,11 @@ function clearGlossaryInlineStyleButtons(root = document) {
       return;
     }
 
-    button.disabled = true;
+    button.classList.add("is-disabled");
     button.classList.remove("is-active");
+    button.setAttribute("aria-disabled", "true");
     button.setAttribute("aria-pressed", "false");
+    button.tabIndex = -1;
   });
 }
 
@@ -58,9 +60,11 @@ export function syncGlossaryTermInlineStyleButtons(doc = document) {
 
     const isMatchingSide = button.dataset.variantSide === activeSide;
     const isActive = isMatchingSide && selection.activeStyles?.[button.dataset.inlineStyle ?? ""] === true;
-    button.disabled = !isMatchingSide;
+    button.classList.toggle("is-disabled", !isMatchingSide);
     button.classList.toggle("is-active", isActive);
+    button.setAttribute("aria-disabled", isMatchingSide ? "false" : "true");
     button.setAttribute("aria-pressed", isActive ? "true" : "false");
+    button.tabIndex = isMatchingSide ? 0 : -1;
   });
 }
 
@@ -79,6 +83,15 @@ function resolveTargetTextarea(button, doc = document) {
 
 export function toggleGlossaryTermInlineStyle(button, operations = {}) {
   const doc = operations.document ?? document;
+  if (
+    !(button instanceof HTMLElement)
+    || button.getAttribute("aria-disabled") === "true"
+    || button.classList.contains("is-disabled")
+  ) {
+    syncGlossaryTermInlineStyleButtons(doc);
+    return false;
+  }
+
   const textarea = resolveTargetTextarea(button, doc);
   if (!isGlossaryVariantTextarea(textarea) || textarea.disabled || textarea.readOnly) {
     syncGlossaryTermInlineStyleButtons(doc);

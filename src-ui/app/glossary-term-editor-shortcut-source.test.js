@@ -20,6 +20,10 @@ test("glossary term editor shortcut handling submits on Shift + Return", () => {
     true,
   );
   assert.equal(
+    eventsSource.includes('(key === "enter" || key === "return")'),
+    true,
+  );
+  assert.equal(
     eventsSource.includes('void dispatchAction("submit-glossary-term-editor", event);'),
     true,
   );
