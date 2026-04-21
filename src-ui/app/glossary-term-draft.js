@@ -16,6 +16,7 @@ import {
   selectedTeam,
   updateGlossaryTermArray,
 } from "./glossary-shared.js";
+import { extractGlossaryRubyBaseText } from "./glossary-ruby.js";
 import {
   ensureGlossaryNotTombstoned,
   getGlossarySyncIssueMessage,
@@ -25,6 +26,10 @@ import { ensureGlossaryTermReadyForEdit } from "./glossary-term-sync.js";
 
 const SOURCE_TERM_DUPLICATE_WARNING =
   "The terms highlighted in red below are redundant with other parts of this glossary. Please remove them before saving.";
+
+function normalizeSourceTermForDuplicateDetection(value) {
+  return extractGlossaryRubyBaseText(value).trim();
+}
 
 function findRedundantSourceVariantIndices(
   sourceTerms = state.glossaryTermEditor?.sourceTerms,
@@ -41,7 +46,7 @@ function findRedundantSourceVariantIndices(
     }
 
     for (const sourceTerm of Array.isArray(glossaryTerm.sourceTerms) ? glossaryTerm.sourceTerms : []) {
-      const normalized = String(sourceTerm ?? "").trim();
+      const normalized = normalizeSourceTermForDuplicateDetection(sourceTerm);
       if (normalized) {
         existingTerms.add(normalized);
       }
@@ -49,7 +54,7 @@ function findRedundantSourceVariantIndices(
   }
 
   for (const sourceTerm of candidateTerms) {
-    const normalized = String(sourceTerm ?? "").trim();
+    const normalized = normalizeSourceTermForDuplicateDetection(sourceTerm);
     if (!normalized) {
       continue;
     }
@@ -58,7 +63,7 @@ function findRedundantSourceVariantIndices(
   }
 
   return candidateTerms.reduce((indices, sourceTerm, index) => {
-    const normalized = String(sourceTerm ?? "").trim();
+    const normalized = normalizeSourceTermForDuplicateDetection(sourceTerm);
     if (!normalized) {
       return indices;
     }

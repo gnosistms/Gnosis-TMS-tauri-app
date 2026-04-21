@@ -110,7 +110,8 @@ use crate::{
     },
     project_repo_sync::{
         inspect_gtms_project_editor_repo_sync_state, list_project_repo_sync_states,
-        reconcile_project_repo_sync_states, sync_gtms_project_editor_repo,
+        overwrite_conflicted_gtms_project_repos, reconcile_project_repo_sync_states,
+        sync_gtms_project_editor_repo,
     },
     project_search::{refresh_project_search_index, search_projects},
     repo_sync_shared::initialize_git_runtime,
@@ -551,6 +552,7 @@ pub fn run() {
             list_project_repo_sync_states,
             sync_gtms_project_editor_repo,
             inspect_gtms_project_editor_repo_sync_state,
+            overwrite_conflicted_gtms_project_repos,
             initialize_gtms_project_repo,
             import_xlsx_to_gtms,
             list_local_gtms_project_files,

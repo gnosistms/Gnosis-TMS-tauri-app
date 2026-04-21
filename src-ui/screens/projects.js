@@ -27,6 +27,7 @@ import {
 } from "../app/status-feedback.js";
 import { resolveChapterSourceWordCount } from "../app/translate-flow.js";
 import { deriveProjectResolution } from "../app/resource-resolution.js";
+import { listProjectRepoFallbackConflictEntries } from "../app/project-repo-sync-shared.js";
 import {
   canPermanentlyDeleteProjectFiles,
   canManageTeamAiSettings,
@@ -434,6 +435,66 @@ function renderProjectSearchResults(state) {
   `;
 }
 
+function renderProjectRepoConflictRecovery(state, selectedTeam) {
+  const recoveryState = state.projectRepoConflictRecovery ?? {};
+  const entries = listProjectRepoFallbackConflictEntries(
+    state.projects,
+    state.deletedProjects,
+    state.projectRepoSyncByProjectId,
+  );
+  if (entries.length === 0) {
+    return "";
+  }
+
+  const isLoading =
+    recoveryState.teamId === selectedTeam?.id
+    && recoveryState.status === "loading";
+  const errorText =
+    recoveryState.teamId === selectedTeam?.id
+      ? String(recoveryState.error ?? "").trim()
+      : "";
+
+  const overwriteButton = isLoading
+    ? `
+      <button class="button button--error button--loading project-conflict-recovery__button" disabled>
+        <span class="button__spinner" aria-hidden="true"></span>
+        <span>Overwriting...</span>
+      </button>
+    `
+    : `
+      <button
+        class="button button--error project-conflict-recovery__button${state.offline?.isEnabled === true || state.projectsPageSync?.status === "syncing" ? " is-disabled" : ""}"
+        data-action="overwrite-conflicted-project-repos"
+        ${state.offline?.isEnabled === true || state.projectsPageSync?.status === "syncing" ? 'disabled aria-disabled="true" data-offline-blocked="true"' : ""}
+      >Overwrite and resolve</button>
+    `;
+
+  return `
+    <div class="message-box message-box--error project-conflict-recovery">
+      <p class="message-box__text">Gnosis TMS found a project repo conflict that it could not resolve automatically.</p>
+      <div class="project-conflict-recovery__repo-list">
+        ${entries
+          .map(
+            (entry) => `
+              <section class="project-conflict-recovery__repo">
+                <p class="project-conflict-recovery__repo-title">${escapeHtml(entry.title)}</p>
+                <pre class="project-conflict-recovery__git-error">${escapeHtml(
+                  formatErrorForDisplay(entry.snapshot?.message || "Git reported an unresolved conflict."),
+                )}</pre>
+              </section>
+            `,
+          )
+          .join("")}
+      </div>
+      <p class="message-box__text project-conflict-recovery__warning"><strong>We can resolve this problem by overwriting all changes on saved on this computer with the latest data from the server. Unless you have been working for many hours without an internet connection, this is usually quite safe.</strong></p>
+      ${errorText ? `<p class="message-box__text project-conflict-recovery__runtime-error">${escapeHtml(formatErrorForDisplay(errorText))}</p>` : ""}
+      <div class="project-conflict-recovery__actions">
+        ${overwriteButton}
+      </div>
+    </div>
+  `;
+}
+
 export function renderProjectsScreen(state) {
   const selectedTeam = state.teams.find((team) => team.id === state.selectedTeamId) ?? state.teams[0];
   const canManageProjects = selectedTeam?.canManageProjects === true;
@@ -513,6 +574,7 @@ export function renderProjectsScreen(state) {
 
   const body = `
     <section class="stack">
+      ${renderProjectRepoConflictRecovery(state, selectedTeam)}
       ${recoveryMarkup}
       ${glossaryWarningMarkup}
       ${searchModeActive ? renderProjectSearchResults(state) : projectsBody}

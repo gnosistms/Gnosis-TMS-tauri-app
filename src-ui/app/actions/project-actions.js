@@ -12,6 +12,7 @@ import {
   createProjectForSelectedTeam,
   deleteProject,
   openProjectRename,
+  overwriteConflictedProjectRepos,
   permanentlyDeleteProject,
   repairProjectRepoBinding,
   rebuildProjectLocalRepo,
@@ -44,6 +45,7 @@ export function createProjectActions(render) {
     "cancel-chapter-rename": () => cancelChapterRename(render),
     "clear-project-search": () => clearProjectSearch(render),
     "load-more-project-search-results": () => loadMoreProjectSearchResults(render),
+    "overwrite-conflicted-project-repos": () => overwriteConflictedProjectRepos(render),
     "toggle-deleted-projects": () => toggleDeletedProjects(render),
   };
 

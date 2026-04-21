@@ -71,6 +71,21 @@ test("missing local repo repair state points to rebuild action", () => {
   assert.equal(resolution?.action, "rebuild-glossary-repo:glossary-1");
 });
 
+test("unresolved conflict state surfaces a sync warning without blocking content access", () => {
+  const resolution = deriveProjectResolution(
+    { id: "project-1", remoteState: "linked", recordState: "live" },
+    {
+      status: "unresolvedConflict",
+      message: "git status output",
+    },
+  );
+
+  assert.equal(resolution?.key, "unresolvedConflict");
+  assert.equal(resolution?.blockLifecycleActions, false);
+  assert.equal(resolution?.blockContentActions, false);
+  assert.match(resolution?.help ?? "", /Automatic sync is paused/i);
+});
+
 test("linked resources do not surface a top-level resolution banner", () => {
   const projectResolution = deriveProjectResolution({
     id: "project-1",

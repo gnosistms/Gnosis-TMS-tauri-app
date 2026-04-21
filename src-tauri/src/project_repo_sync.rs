@@ -28,6 +28,7 @@ const PROJECT_REPO_SYNC_STATUS_UP_TO_DATE: &str = "upToDate";
 const PROJECT_REPO_SYNC_STATUS_OUT_OF_SYNC: &str = "outOfSync";
 const PROJECT_REPO_SYNC_STATUS_SYNCING: &str = "syncing";
 const PROJECT_REPO_SYNC_STATUS_SYNC_ERROR: &str = "syncError";
+const PROJECT_REPO_SYNC_STATUS_UNRESOLVED_CONFLICT: &str = "unresolvedConflict";
 
 #[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -98,6 +99,13 @@ pub(crate) struct InspectProjectEditorRepoSyncStateResponse {
     pub(crate) commits_since_head: usize,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct OverwriteConflictedProjectReposResponse {
+    pub(crate) resolved_project_ids: Vec<String>,
+    pub(crate) skipped_project_ids: Vec<String>,
+}
+
 #[tauri::command]
 pub(crate) async fn reconcile_project_repo_sync_states(
     app: AppHandle,
@@ -150,6 +158,19 @@ pub(crate) async fn inspect_gtms_project_editor_repo_sync_state(
     })
     .await
     .map_err(|error| format!("The editor repo sync inspection task failed: {error}"))?
+}
+
+#[tauri::command]
+pub(crate) async fn overwrite_conflicted_gtms_project_repos(
+    app: AppHandle,
+    input: ProjectRepoSyncInput,
+    session_token: String,
+) -> Result<OverwriteConflictedProjectReposResponse, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        overwrite_conflicted_gtms_project_repos_sync(&app, input, &session_token)
+    })
+    .await
+    .map_err(|error| format!("The conflicted project repo overwrite task failed: {error}"))?
 }
 
 fn reconcile_project_repo_sync_states_sync(
@@ -398,11 +419,21 @@ fn spawn_project_repo_sync_job(
                 status: PROJECT_REPO_SYNC_STATUS_UP_TO_DATE.to_string(),
                 message: None,
             },
-            Err(error) => ProjectRepoSyncSnapshot {
-                status: PROJECT_REPO_SYNC_STATUS_SYNC_ERROR.to_string(),
-                message: Some(error),
-                ..inspect_project_repo_state(&project, &repo_path)
-            },
+            Err(error) => {
+                let inspected_snapshot = inspect_project_repo_state(&project, &repo_path);
+                if inspected_snapshot.status == PROJECT_REPO_SYNC_STATUS_UNRESOLVED_CONFLICT {
+                    ProjectRepoSyncSnapshot {
+                        message: Some(error),
+                        ..inspected_snapshot
+                    }
+                } else {
+                    ProjectRepoSyncSnapshot {
+                        status: PROJECT_REPO_SYNC_STATUS_SYNC_ERROR.to_string(),
+                        message: Some(error),
+                        ..inspected_snapshot
+                    }
+                }
+            }
         };
 
         save_sync_snapshot(&store, &key, next_snapshot);
@@ -574,8 +605,8 @@ fn inspect_project_repo_state(
         }
     };
 
-    let dirty = match git_output(repo_path, &["status", "--porcelain"], None) {
-        Ok(value) => !value.trim().is_empty(),
+    let git_status_porcelain = match git_output(repo_path, &["status", "--porcelain"], None) {
+        Ok(value) => value,
         Err(error) => {
             return ProjectRepoSyncSnapshot {
                 status: PROJECT_REPO_SYNC_STATUS_SYNC_ERROR.to_string(),
@@ -585,6 +616,19 @@ fn inspect_project_repo_state(
             };
         }
     };
+
+    if let Some(conflict_message) =
+        detect_unresolved_project_repo_conflict(repo_path, &git_status_porcelain)
+    {
+        return ProjectRepoSyncSnapshot {
+            local_head_oid,
+            status: PROJECT_REPO_SYNC_STATUS_UNRESOLVED_CONFLICT.to_string(),
+            message: Some(conflict_message),
+            ..default_snapshot()
+        };
+    }
+
+    let dirty = !git_status_porcelain.trim().is_empty();
 
     if dirty {
         return ProjectRepoSyncSnapshot {
@@ -692,6 +736,75 @@ fn sync_project_repo(
     Ok(current_head_oid)
 }
 
+fn overwrite_conflicted_gtms_project_repos_sync(
+    app: &AppHandle,
+    input: ProjectRepoSyncInput,
+    session_token: &str,
+) -> Result<OverwriteConflictedProjectReposResponse, String> {
+    let git_transport_token = load_git_transport_token(input.installation_id, session_token)?;
+    let git_transport_auth = GitTransportAuth::from_token(&git_transport_token)?;
+    let mut resolved_project_ids = Vec::new();
+    let mut skipped_project_ids = Vec::new();
+
+    for project in input.projects {
+        let repo_path = resolve_or_desired_project_git_repo_path(
+            app,
+            input.installation_id,
+            Some(&project.project_id),
+            &project.repo_name,
+        )?;
+        let snapshot = inspect_project_repo_state(&project, &repo_path);
+        if snapshot.status != PROJECT_REPO_SYNC_STATUS_UNRESOLVED_CONFLICT {
+            skipped_project_ids.push(project.project_id.clone());
+            continue;
+        }
+
+        overwrite_project_repo_with_remote(app, &project, &repo_path, &git_transport_auth)?;
+        mark_project_repo_synced(&project, &repo_path)?;
+        resolved_project_ids.push(project.project_id);
+    }
+
+    Ok(OverwriteConflictedProjectReposResponse {
+        resolved_project_ids,
+        skipped_project_ids,
+    })
+}
+
+fn overwrite_project_repo_with_remote(
+    app: &AppHandle,
+    project: &ProjectRepoSyncDescriptor,
+    repo_path: &Path,
+    git_transport_auth: &GitTransportAuth,
+) -> Result<(), String> {
+    if !repo_path.exists() || git_output(repo_path, &["rev-parse", "--git-dir"], None).is_err() {
+        return Err("Could not find the local project repo to overwrite.".to_string());
+    }
+
+    ensure_project_origin_remote(project, repo_path)?;
+    ensure_repo_local_git_identity(app, repo_path)?;
+    abort_in_progress_git_operations(repo_path);
+
+    let branch_name = project_branch_name(project);
+    let remote_tracking_ref = format!("origin/{branch_name}");
+
+    let _ = git_output(repo_path, &["reset", "--hard"], None);
+    let _ = git_output(repo_path, &["clean", "-fd"], None);
+    git_output(
+        repo_path,
+        &["fetch", "origin", &branch_name],
+        Some(git_transport_auth),
+    )?;
+    git_output(
+        repo_path,
+        &["checkout", "-B", &branch_name, &remote_tracking_ref],
+        None,
+    )?;
+    git_output(repo_path, &["reset", "--hard", &remote_tracking_ref], None)?;
+    git_output(repo_path, &["clean", "-fd"], None)?;
+
+    Ok(())
+}
+
 fn attach_unsynced_local_project_repo_to_remote(
     repo_path: &Path,
     branch_name: &str,
@@ -711,6 +824,81 @@ fn attach_unsynced_local_project_repo_to_remote(
     )?;
 
     Ok(Some(git_output(repo_path, &["rev-parse", "HEAD"], None)?))
+}
+
+fn detect_unresolved_project_repo_conflict(
+    repo_path: &Path,
+    git_status_porcelain: &str,
+) -> Option<String> {
+    let has_unresolved_conflicts = git_status_porcelain_has_unmerged_entries(git_status_porcelain)
+        || repo_has_rebase_in_progress_local(repo_path)
+        || repo_has_git_state_path(repo_path, "MERGE_HEAD")
+        || repo_has_git_state_path(repo_path, "CHERRY_PICK_HEAD")
+        || repo_has_git_state_path(repo_path, "REVERT_HEAD");
+    if !has_unresolved_conflicts {
+        return None;
+    }
+
+    git_output(repo_path, &["status"], None)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .or_else(|| Some("Git reported an unresolved local merge conflict.".to_string()))
+}
+
+fn git_status_porcelain_has_unmerged_entries(git_status_porcelain: &str) -> bool {
+    git_status_porcelain.lines().any(|line| {
+        let prefix = line.chars().take(2).collect::<String>();
+        matches!(
+            prefix.as_str(),
+            "DD" | "AU" | "UD" | "UA" | "DU" | "AA" | "UU"
+        )
+    })
+}
+
+fn repo_has_rebase_in_progress_local(repo_path: &Path) -> bool {
+    repo_has_git_state_path(repo_path, "rebase-apply")
+        || repo_has_git_state_path(repo_path, "rebase-merge")
+}
+
+fn repo_has_git_state_path(repo_path: &Path, git_path: &str) -> bool {
+    git_output(repo_path, &["rev-parse", "--git-path", git_path], None)
+        .ok()
+        .map(|path| resolve_repo_git_path(repo_path, &path).exists())
+        .unwrap_or(false)
+}
+
+fn resolve_repo_git_path(repo_path: &Path, git_path: &str) -> PathBuf {
+    let path = PathBuf::from(git_path);
+    if path.is_absolute() {
+        path
+    } else {
+        repo_path.join(path)
+    }
+}
+
+fn abort_in_progress_git_operations(repo_path: &Path) {
+    if repo_has_rebase_in_progress_local(repo_path) {
+        let _ = git_output(repo_path, &["rebase", "--abort"], None);
+    }
+    if repo_has_git_state_path(repo_path, "MERGE_HEAD") {
+        let _ = git_output(repo_path, &["merge", "--abort"], None);
+    }
+    if repo_has_git_state_path(repo_path, "CHERRY_PICK_HEAD") {
+        let _ = git_output(repo_path, &["cherry-pick", "--abort"], None);
+    }
+    if repo_has_git_state_path(repo_path, "REVERT_HEAD") {
+        let _ = git_output(repo_path, &["revert", "--abort"], None);
+    }
+}
+
+fn project_branch_name(project: &ProjectRepoSyncDescriptor) -> String {
+    project
+        .default_branch_name
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or("main")
+        .to_string()
 }
 
 fn ensure_project_origin_remote(
@@ -831,5 +1019,49 @@ fn save_sync_snapshot(
 ) {
     if let Ok(mut entries) = store.lock() {
         entries.insert(key.to_string(), snapshot);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        git_status_porcelain_has_unmerged_entries, project_branch_name,
+        ProjectRepoSyncDescriptor,
+    };
+
+    #[test]
+    fn git_status_porcelain_has_unmerged_entries_detects_conflicts() {
+        assert!(git_status_porcelain_has_unmerged_entries("UU chapters/file.txt\n"));
+        assert!(git_status_porcelain_has_unmerged_entries("AA rows/1.json\n"));
+        assert!(!git_status_porcelain_has_unmerged_entries(" M chapters/file.txt\n"));
+        assert!(!git_status_porcelain_has_unmerged_entries("?? stray.txt\n"));
+    }
+
+    #[test]
+    fn project_branch_name_falls_back_to_main() {
+        let descriptor = ProjectRepoSyncDescriptor {
+            project_id: "project-1".to_string(),
+            repo_name: "repo-one".to_string(),
+            full_name: "org/repo-one".to_string(),
+            repo_id: None,
+            default_branch_name: None,
+            default_branch_head_oid: None,
+        };
+
+        assert_eq!(project_branch_name(&descriptor), "main");
+    }
+
+    #[test]
+    fn project_branch_name_prefers_configured_branch() {
+        let descriptor = ProjectRepoSyncDescriptor {
+            project_id: "project-1".to_string(),
+            repo_name: "repo-one".to_string(),
+            full_name: "org/repo-one".to_string(),
+            repo_id: None,
+            default_branch_name: Some("trunk".to_string()),
+            default_branch_head_oid: None,
+        };
+
+        assert_eq!(project_branch_name(&descriptor), "trunk");
     }
 }

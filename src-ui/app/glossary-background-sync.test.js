@@ -699,3 +699,96 @@ test("saving a glossary term syncs first and then persists the user's modal draf
   assert.deepEqual(state.glossaryEditor.terms[0]?.targetTerms, ["local target overwrite"]);
   assert.ok(renderCalls.length > 0);
 });
+
+test("saving a glossary term sanitizes ruby markup and escapes unsupported inline formatting", async () => {
+  installGlossaryEditorFixture({
+    terms: [
+      glossaryTerm({
+        termId: "term-1",
+        sourceTerms: ["server source"],
+        targetTerms: ["server target"],
+      }),
+    ],
+  });
+  state.glossaryTermEditor = {
+    ...createGlossaryTermEditorState(),
+    isOpen: true,
+    glossaryId: "glossary-1",
+    termId: "term-1",
+    sourceTerms: ["<ruby>漢字<rt>かんじ</rt></ruby>", "<strong>bold</strong>"],
+    targetTerms: ["<ruby>精神<rt>せいしん</rt></ruby>", "<em>mind</em>"],
+    notesToTranslators: "",
+    footnote: "",
+    untranslated: false,
+  };
+
+  let capturedUpsertInput = null;
+  invokeHandler = async (command, payload) => {
+    switch (command) {
+      case "ensure_local_team_metadata_repo":
+        return null;
+      case "lookup_local_team_metadata_tombstone":
+        return false;
+      case "sync_gtms_glossary_editor_repo":
+        return {
+          oldHeadSha: "head-1",
+          newHeadSha: "head-2",
+          changedTermIds: ["term-1"],
+          insertedTermIds: [],
+          deletedTermIds: [],
+        };
+      case "upsert_gtms_glossary_term":
+        capturedUpsertInput = cloneValue(payload?.input);
+        return {
+          glossaryId: "glossary-1",
+          termCount: 1,
+          term: {
+            termId: "term-1",
+            sourceTerms: capturedUpsertInput.sourceTerms,
+            targetTerms: capturedUpsertInput.targetTerms,
+            notesToTranslators: "",
+            footnote: "",
+            untranslated: false,
+            lifecycleState: "active",
+          },
+        };
+      case "sync_gtms_glossary_repos":
+        return [];
+      case "load_gtms_glossary_editor_data":
+        return {
+          glossaryId: "glossary-1",
+          title: "Fixture Glossary",
+          sourceLanguage: { code: "es", name: "Spanish" },
+          targetLanguage: { code: "fr", name: "French" },
+          lifecycleState: "active",
+          termCount: 1,
+          terms: [
+            {
+              termId: "term-1",
+              sourceTerms: capturedUpsertInput?.sourceTerms ?? [],
+              targetTerms: capturedUpsertInput?.targetTerms ?? [],
+              notesToTranslators: "",
+              footnote: "",
+              untranslated: false,
+              lifecycleState: "active",
+            },
+          ],
+        };
+      default:
+        return null;
+    }
+  };
+
+  await submitGlossaryTermEditor(() => {});
+
+  assert.deepEqual(capturedUpsertInput?.sourceTerms, [
+    "<ruby>漢字<rt>かんじ</rt></ruby>",
+    "&lt;strong&gt;bold&lt;/strong&gt;",
+  ]);
+  assert.deepEqual(capturedUpsertInput?.targetTerms, [
+    "<ruby>精神<rt>せいしん</rt></ruby>",
+    "&lt;em&gt;mind&lt;/em&gt;",
+  ]);
+  assert.deepEqual(state.glossaryEditor.terms[0]?.sourceTerms, capturedUpsertInput?.sourceTerms);
+  assert.deepEqual(state.glossaryEditor.terms[0]?.targetTerms, capturedUpsertInput?.targetTerms);
+});

@@ -3,8 +3,10 @@ import { requireBrokerSession } from "./auth-flow.js";
 import {
   loadStoredProjectsForTeam,
 } from "./project-cache.js";
+import { buildProjectRepoFallbackConflictRecoveryInput } from "./project-repo-sync-shared.js";
 import {
   resetProjectCreation,
+  createProjectRepoConflictRecoveryState,
   resetProjectPermanentDeletion,
   resetProjectRename,
   state,
@@ -589,6 +591,67 @@ export async function rebuildProjectLocalRepo(render, projectId) {
 
   showNoticeBadge("Rebuilding the local project repo from metadata and GitHub...", render, 2200);
   await loadTeamProjects(render, selectedTeam.id);
+}
+
+export async function overwriteConflictedProjectRepos(render) {
+  const selectedTeam = selectedProjectsTeam();
+  if (!selectedTeam?.installationId || typeof selectedTeam?.id !== "string" || !selectedTeam.id.trim()) {
+    return;
+  }
+
+  if (state.offline?.isEnabled === true || state.projectsPageSync?.status === "syncing") {
+    state.projectRepoConflictRecovery = {
+      teamId: selectedTeam.id,
+      status: "idle",
+      error: "Wait for the current refresh to finish before overwriting conflicted repos.",
+    };
+    render();
+    return;
+  }
+
+  const input = buildProjectRepoFallbackConflictRecoveryInput(
+    selectedTeam,
+    state.projects,
+    state.deletedProjects,
+    state.projectRepoSyncByProjectId,
+  );
+  if (!Array.isArray(input.projects) || input.projects.length === 0) {
+    state.projectRepoConflictRecovery = createProjectRepoConflictRecoveryState();
+    showNoticeBadge("No conflicted project repos need fallback recovery.", render, 2600);
+    render();
+    return;
+  }
+
+  state.projectRepoConflictRecovery = {
+    teamId: selectedTeam.id,
+    status: "loading",
+    error: "",
+  };
+  render();
+
+  try {
+    const response = await invoke("overwrite_conflicted_gtms_project_repos", {
+      input,
+      sessionToken: requireBrokerSession(),
+    });
+    const resolvedCount = Array.isArray(response?.resolvedProjectIds)
+      ? response.resolvedProjectIds.length
+      : input.projects.length;
+    state.projectRepoConflictRecovery = createProjectRepoConflictRecoveryState();
+    await loadTeamProjects(render, selectedTeam.id);
+    showNoticeBadge(
+      `Overwrote ${resolvedCount} conflicted project repo${resolvedCount === 1 ? "" : "s"} with the latest data from the server.`,
+      render,
+      3600,
+    );
+  } catch (error) {
+    state.projectRepoConflictRecovery = {
+      teamId: selectedTeam.id,
+      status: "idle",
+      error: error?.message ?? String(error),
+    };
+    render();
+  }
 }
 
 export async function deleteProject(render, projectId) {

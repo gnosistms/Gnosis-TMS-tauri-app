@@ -1,3 +1,13 @@
+import { extractInlineMarkupBaseText, mapInlineMarkupBaseRangesToVisibleRanges } from "./editor-inline-markup.js";
+import {
+  extractGlossaryRubyBaseText,
+  extractGlossaryRubyVisibleText,
+  glossaryRubyHasAnnotation,
+  sanitizeGlossaryRubyMarkup,
+  serializeGlossaryRubyForAiPrompt,
+  targetTextContainsGlossaryVariantExactRuby,
+} from "./glossary-ruby.js";
+
 function resolveLanguageCode(language) {
   if (typeof language === "string" && language.trim()) {
     return language.trim();
@@ -50,7 +60,7 @@ export function normalizeGlossaryToken(token, languageCode = "en") {
 }
 
 export function tokenizeGlossaryTerm(term, languageCode) {
-  return Array.from(String(term ?? "").matchAll(/[\p{L}\p{M}\p{N}]+/gu), (match) =>
+  return Array.from(extractGlossaryRubyBaseText(term).matchAll(/[\p{L}\p{M}\p{N}]+/gu), (match) =>
     normalizeGlossaryToken(match[0], languageCode),
   );
 }
@@ -58,6 +68,18 @@ export function tokenizeGlossaryTerm(term, languageCode) {
 function sanitizeTermList(values) {
   return (Array.isArray(values) ? values : [])
     .map((value) => String(value ?? "").trim())
+    .filter(Boolean);
+}
+
+function sanitizeGlossaryVariantList(values) {
+  return (Array.isArray(values) ? values : [])
+    .map((value) => sanitizeGlossaryRubyMarkup(value).trim())
+    .filter(Boolean);
+}
+
+function glossaryDisplayValues(values) {
+  return (Array.isArray(values) ? values : [])
+    .map((value) => extractGlossaryRubyVisibleText(value).trim())
     .filter(Boolean);
 }
 
@@ -166,7 +188,7 @@ function buildLanguageGlossaryMatcher(entries, matchLanguage) {
         footnotesOrdered,
         originTerms,
         originTermsOrdered,
-        characterLength: String(matchTerm ?? "").length,
+        characterLength: extractGlossaryRubyBaseText(matchTerm).length,
         matchLanguage,
       };
       const candidates = byFirstToken.get(firstToken) || [];
@@ -239,21 +261,21 @@ export function buildEditorGlossaryModel(glossary) {
   const sourceEntries = activeTerms.map((term) => {
     const details = glossaryDetailFields(term);
     return {
-      sourceTerms: sanitizeTermList(term?.sourceTerms),
-      targetTerms: sanitizeTermList(term?.targetTerms),
+      sourceTerms: sanitizeGlossaryVariantList(term?.sourceTerms),
+      targetTerms: sanitizeGlossaryVariantList(term?.targetTerms),
       translatorNotes: details.translatorNotes,
       footnotes: details.footnotes,
-      matchTerms: sanitizeTermList(term?.sourceTerms),
+      matchTerms: sanitizeGlossaryVariantList(term?.sourceTerms),
     };
   });
   const targetEntries = activeTerms.map((term) => {
     const details = glossaryDetailFields(term);
     return {
-      sourceTerms: sanitizeTermList(term?.sourceTerms),
-      targetTerms: sanitizeTermList(term?.targetTerms),
+      sourceTerms: sanitizeGlossaryVariantList(term?.sourceTerms),
+      targetTerms: sanitizeGlossaryVariantList(term?.targetTerms),
       translatorNotes: details.translatorNotes,
       footnotes: details.footnotes,
-      matchTerms: sanitizeTermList(term?.targetTerms),
+      matchTerms: sanitizeGlossaryVariantList(term?.targetTerms),
     };
   });
 
@@ -278,9 +300,9 @@ export function buildEditorDerivedGlossaryModel({
 }) {
   const normalizedEntries = (Array.isArray(entries) ? entries : [])
     .map((entry) => ({
-      sourceTerm: String(entry?.sourceTerm ?? "").trim(),
-      glossarySourceTerm: String(entry?.glossarySourceTerm ?? "").trim(),
-      targetVariants: sanitizeTermList(entry?.targetVariants),
+      sourceTerm: extractGlossaryRubyBaseText(entry?.sourceTerm).trim(),
+      glossarySourceTerm: extractGlossaryRubyBaseText(entry?.glossarySourceTerm).trim(),
+      targetVariants: sanitizeGlossaryVariantList(entry?.targetVariants),
       notes: sanitizeTermList(entry?.notes),
     }))
     .filter((entry) =>
@@ -309,7 +331,7 @@ export function buildEditorDerivedGlossaryModel({
 }
 
 function tokenizeTextForHighlighting(text, languageCode) {
-  const sourceText = String(text ?? "");
+  const sourceText = extractInlineMarkupBaseText(text);
   const tokens = [];
   const wordEntries = [];
   let lastIndex = 0;
@@ -405,13 +427,16 @@ function buildGlossaryTooltipText(candidate, glossaryModel) {
   const footnotes = orderedCandidateValues(candidate, "footnotesOrdered", "footnotes");
   const originTerms = orderedCandidateValues(candidate, "originTermsOrdered", "originTerms");
   const parts = [];
+  const sourceTermDisplay = glossaryDisplayValues(sourceTerms);
+  const targetTermDisplay = glossaryDisplayValues(targetTerms);
+  const originTermDisplay = glossaryDisplayValues(originTerms);
 
-  if (sourceTerms.length > 0) {
-    parts.push(sourceTerms.join(", "));
+  if (sourceTermDisplay.length > 0) {
+    parts.push(sourceTermDisplay.join(", "));
   }
-  if (targetTerms.length > 0) {
+  if (targetTermDisplay.length > 0) {
     const label = glossaryModel?.targetLanguage?.name || glossaryModel?.targetLanguage?.code || "Target";
-    parts.push(`${label}: ${targetTerms.join(", ")}`);
+    parts.push(`${label}: ${targetTermDisplay.join(", ")}`);
   }
   if (translatorNotes.length > 0) {
     parts.push(translatorNotes.join(" | "));
@@ -419,15 +444,35 @@ function buildGlossaryTooltipText(candidate, glossaryModel) {
   if (footnotes.length > 0) {
     parts.push(footnotes.join(" | "));
   }
-  if (originTerms.length > 0) {
-    parts.push(`Glossary source: ${originTerms.join(", ")}`);
+  if (originTermDisplay.length > 0) {
+    parts.push(`Glossary source: ${originTermDisplay.join(", ")}`);
   }
 
   return parts.join(" | ");
 }
 
+function resolveStructuredTooltipTitle(candidate, hoveredTerm, glossaryModel) {
+  const normalizedHoveredTerm = normalizeGlossaryToken(
+    extractGlossaryRubyBaseText(hoveredTerm),
+    candidate?.matchLanguage || glossaryModel?.sourceLanguage?.code || "",
+  );
+  if (!normalizedHoveredTerm) {
+    return String(hoveredTerm ?? "").trim();
+  }
+
+  const orderedValues = candidate?.matchLanguage === glossaryModel?.targetLanguage?.code
+    ? orderedCandidateValues(candidate, "targetTermsOrdered", "targetTerms")
+    : orderedCandidateValues(candidate, "sourceTermsOrdered", "sourceTerms");
+  return orderedValues.find((value) =>
+    normalizeGlossaryToken(
+      extractGlossaryRubyBaseText(value),
+      candidate?.matchLanguage || glossaryModel?.sourceLanguage?.code || "",
+    ) === normalizedHoveredTerm,
+  ) || String(hoveredTerm ?? "").trim();
+}
+
 function buildStructuredGlossaryTooltipPayload(candidate, hoveredTerm, glossaryModel) {
-  const title = String(hoveredTerm ?? "").trim();
+  const title = resolveStructuredTooltipTitle(candidate, hoveredTerm, glossaryModel);
   const isSourceMatch = candidate?.matchLanguage === glossaryModel?.sourceLanguage?.code;
   const isTargetMatch = candidate?.matchLanguage === glossaryModel?.targetLanguage?.code;
   if (!isSourceMatch && !isTargetMatch) {
@@ -466,7 +511,8 @@ function buildStructuredGlossaryTooltipPayload(candidate, hoveredTerm, glossaryM
 
 function buildHighlightMarkup(text, matcher, glossaryModel, resolveMatchState = null) {
   const sourceText = String(text ?? "");
-  const result = findLongestGlossaryMatches(sourceText, matcher);
+  const baseText = extractInlineMarkupBaseText(sourceText);
+  const result = findLongestGlossaryMatches(baseText, matcher);
   if (!result || result.matches.length === 0) {
     return {
       html: "",
@@ -487,8 +533,16 @@ function buildHighlightMarkup(text, matcher, glossaryModel, resolveMatchState = 
         .slice(currentMatch.startTokenIndex, currentMatch.endTokenIndex + 1)
         .map((token) => token.value)
         .join("");
-      const matchStart = characterOffset;
-      const matchEnd = matchStart + segment.length;
+      const baseMatchStart = characterOffset;
+      const baseMatchEnd = baseMatchStart + segment.length;
+      const [visibleRange] = mapInlineMarkupBaseRangesToVisibleRanges(sourceText, [
+        {
+          start: baseMatchStart,
+          end: baseMatchEnd,
+        },
+      ]);
+      const matchStart = visibleRange?.start ?? baseMatchStart;
+      const matchEnd = visibleRange?.end ?? baseMatchEnd;
       const matchState = typeof resolveMatchState === "function"
         ? resolveMatchState(currentMatch.candidate)
         : "normal";
@@ -514,7 +568,7 @@ function buildHighlightMarkup(text, matcher, glossaryModel, resolveMatchState = 
       htmlParts.push(
         `<mark class="${matchClasses.join(" ")}" data-editor-glossary-mark data-text-start="${matchStart}" data-text-end="${matchEnd}"${tooltipAttribute}${tooltipPayloadAttribute}>${escapeHtml(segment)}</mark>`,
       );
-      characterOffset = matchEnd;
+      characterOffset = baseMatchEnd;
       tokenIndex = currentMatch.endTokenIndex + 1;
       matchIndex += 1;
       continue;
@@ -533,7 +587,7 @@ function buildHighlightMarkup(text, matcher, glossaryModel, resolveMatchState = 
 }
 
 function collectMatchedCandidates(text, matcher) {
-  const result = findLongestGlossaryMatches(text, matcher);
+  const result = findLongestGlossaryMatches(extractInlineMarkupBaseText(text), matcher);
   const candidates = [];
   const seen = new Set();
 
@@ -548,7 +602,23 @@ function collectMatchedCandidates(text, matcher) {
   return candidates;
 }
 
-function buildRowTargetMatcher(sections, glossaryModel) {
+function targetTextContainsCandidateVariant(targetText, targetTerm, languageCode) {
+  return glossaryRubyHasAnnotation(targetTerm)
+    ? targetTextContainsGlossaryVariantExactRuby(targetText, targetTerm, languageCode)
+    : textContainsGlossaryTerm(
+        extractInlineMarkupBaseText(targetText),
+        targetTerm,
+        languageCode,
+      );
+}
+
+function targetTextsContainCandidateVariant(targetTexts, targetTerm, languageCode) {
+  return targetTexts.some((targetText) =>
+    targetTextContainsCandidateVariant(targetText, targetTerm, languageCode)
+  );
+}
+
+function buildRowTargetMatcher(sections, glossaryModel, targetTexts) {
   if (!glossaryModel?.sourceMatcher) {
     return null;
   }
@@ -574,17 +644,40 @@ function buildRowTargetMatcher(sections, glossaryModel) {
     return null;
   }
 
-  const targetEntries = matchedCandidates.map((candidate) => ({
-    sourceTerms: orderedCandidateValues(candidate, "sourceTermsOrdered", "sourceTerms"),
-    targetTerms: orderedCandidateValues(candidate, "targetTermsOrdered", "targetTerms"),
-    translatorNotes: orderedCandidateValues(
-      candidate,
-      "translatorNotesOrdered",
-      "translatorNotes",
-    ),
-    footnotes: orderedCandidateValues(candidate, "footnotesOrdered", "footnotes"),
-    matchTerms: orderedCandidateValues(candidate, "targetTermsOrdered", "targetTerms"),
-  }));
+  const targetEntries = matchedCandidates
+    .map((candidate) => {
+      const matchingTargetTerms = orderedCandidateValues(
+        candidate,
+        "targetTermsOrdered",
+        "targetTerms",
+      ).filter((targetTerm) =>
+        targetTextsContainCandidateVariant(
+          targetTexts,
+          targetTerm,
+          glossaryModel.targetLanguage.code,
+        )
+      );
+      if (matchingTargetTerms.length === 0) {
+        return null;
+      }
+
+      return {
+        sourceTerms: orderedCandidateValues(candidate, "sourceTermsOrdered", "sourceTerms"),
+        targetTerms: matchingTargetTerms,
+        translatorNotes: orderedCandidateValues(
+          candidate,
+          "translatorNotesOrdered",
+          "translatorNotes",
+        ),
+        footnotes: orderedCandidateValues(candidate, "footnotesOrdered", "footnotes"),
+        matchTerms: matchingTargetTerms,
+      };
+    })
+    .filter(Boolean);
+
+  if (targetEntries.length === 0) {
+    return null;
+  }
 
   return buildLanguageGlossaryMatcher(targetEntries, glossaryModel.targetLanguage.code);
 }
@@ -622,7 +715,11 @@ function sourceCandidateHasTargetMatch(candidate, targetTexts, glossaryModel) {
 
   return targetTexts.some((targetText) =>
     targetTerms.some((targetTerm) =>
-      textContainsGlossaryTerm(targetText, targetTerm, glossaryModel.targetLanguage.code),
+      targetTextContainsCandidateVariant(
+        targetText,
+        targetTerm,
+        glossaryModel.targetLanguage.code,
+      ),
     ),
   );
 }
@@ -635,7 +732,7 @@ export function buildEditorRowGlossaryHighlights(sections, glossaryModel) {
 
   const normalizedSections = Array.isArray(sections) ? sections : [];
   const targetTexts = rowTargetTexts(normalizedSections, glossaryModel);
-  const targetMatcher = buildRowTargetMatcher(normalizedSections, glossaryModel);
+  const targetMatcher = buildRowTargetMatcher(normalizedSections, glossaryModel, targetTexts);
   const hasTargetColumn = normalizedSections.some(
     (section) => section?.code === glossaryModel.targetLanguage.code,
   );
@@ -735,7 +832,7 @@ export function buildEditorAiTranslationGlossaryHints(
       match?.candidate,
       "targetTermsOrdered",
       "targetTerms",
-    );
+    ).map((value) => serializeGlossaryRubyForAiPrompt(value));
     const notes = orderedCandidateValues(
       match?.candidate,
       "translatorNotesOrdered",

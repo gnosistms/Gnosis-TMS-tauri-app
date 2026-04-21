@@ -63,6 +63,7 @@ export const state = {
   glossariesPage: createResourcePageState(),
   projectImport: createProjectImportState(),
   projectRepoSyncByProjectId: {},
+  projectRepoConflictRecovery: createProjectRepoConflictRecoveryState(),
   glossaryRepoSyncByRepoName: {},
   editorChapter: createEditorChapterState(),
   aiSettings: createAiSettingsState(),
@@ -175,6 +176,14 @@ export function createAppUpdateState() {
 
 export function createProjectsPageSyncState() {
   return createSyncState();
+}
+
+export function createProjectRepoConflictRecoveryState() {
+  return {
+    teamId: null,
+    status: "idle",
+    error: "",
+  };
 }
 
 export function createProjectsSearchState() {
@@ -844,6 +853,7 @@ export function resetSessionState() {
   state.projectsSearch = createProjectsSearchState();
   state.projectImport = createProjectImportState();
   state.projectRepoSyncByProjectId = {};
+  state.projectRepoConflictRecovery = createProjectRepoConflictRecoveryState();
   state.editorChapter = createEditorChapterState();
   state.aiSettings = createAiSettingsState();
   state.selectedChapterId = null;

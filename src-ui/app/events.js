@@ -12,6 +12,11 @@ import {
   captureTranslateViewport,
   restoreTranslateViewportAfterPaints,
 } from "./translate-viewport.js";
+import {
+  renderGlossaryRubyHtml,
+  renderGlossaryRubyTermListHtml,
+} from "./glossary-ruby.js";
+import { syncGlossaryTermInlineStyleButtons } from "./glossary-term-inline-markup-flow.js";
 
 const SYNC_WITH_SERVER_EVENT = "sync-with-server";
 const CHECK_FOR_UPDATES_EVENT = "check-for-updates";
@@ -287,14 +292,14 @@ function renderStructuredGlossaryTooltipBody(body, payload) {
   if (payload.title) {
     const title = document.createElement("p");
     title.className = "editor-glossary-info-card__title";
-    title.textContent = payload.title;
+    title.innerHTML = renderGlossaryRubyHtml(payload.title);
     body.append(title);
   }
 
   if (payload.variants.length > 0) {
     const variants = document.createElement("p");
     variants.className = "editor-glossary-info-card__variants";
-    variants.textContent = payload.variants.join(", ");
+    variants.innerHTML = renderGlossaryRubyTermListHtml(payload.variants);
     body.append(variants);
   }
 
@@ -302,7 +307,7 @@ function renderStructuredGlossaryTooltipBody(body, payload) {
   if (originTerms.length > 0) {
     const origin = document.createElement("p");
     origin.className = "editor-glossary-info-card__origin";
-    origin.textContent = `Glossary source: ${originTerms.join(", ")}`;
+    origin.innerHTML = `Glossary source: ${renderGlossaryRubyTermListHtml(originTerms)}`;
     body.append(origin);
   }
 
@@ -710,6 +715,26 @@ export function registerAppEvents(render) {
       return;
     }
 
+    const glossaryTermModalField = event.target instanceof Element
+      ? event.target.closest(
+        "[data-glossary-term-variant-input], [data-glossary-term-notes-input], [data-glossary-term-footnote-input]",
+      )
+      : null;
+    if (glossaryTermModalField instanceof HTMLTextAreaElement) {
+      const key = typeof event.key === "string" ? event.key.toLowerCase() : "";
+      if (
+        key === "enter"
+        && event.shiftKey
+        && !event.metaKey
+        && !event.ctrlKey
+        && !event.altKey
+      ) {
+        event.preventDefault();
+        void dispatchAction("submit-glossary-term-editor", event);
+        return;
+      }
+    }
+
     if (shouldBlurActiveEditorField(event)) {
       const viewportSnapshot = captureTranslateViewport(event.target);
       const contentKind = event.target.dataset.contentKind ?? "";
@@ -736,7 +761,29 @@ export function registerAppEvents(render) {
   });
 
   document.addEventListener("mousedown", (event) => {
+    if (event.target instanceof Element && event.target.closest("[data-glossary-inline-style-button]")) {
+      event.preventDefault();
+      syncGlossaryTermInlineStyleButtons();
+      return;
+    }
+
     focusEditorFieldFromGlossaryMark(event);
+  });
+
+  document.addEventListener("focusin", () => {
+    window.requestAnimationFrame(() => {
+      syncGlossaryTermInlineStyleButtons();
+    });
+  });
+
+  document.addEventListener("focusout", () => {
+    window.requestAnimationFrame(() => {
+      syncGlossaryTermInlineStyleButtons();
+    });
+  });
+
+  document.addEventListener("selectionchange", () => {
+    syncGlossaryTermInlineStyleButtons();
   });
 
   document.addEventListener("pointerover", (event) => {

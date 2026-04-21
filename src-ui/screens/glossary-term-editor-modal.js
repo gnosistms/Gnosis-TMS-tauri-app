@@ -5,8 +5,17 @@ import {
   tooltipAttributes,
 } from "../lib/ui.js";
 import { formatErrorForDisplay } from "../app/error-display.js";
+import { rubyButtonConfig } from "../app/editor-inline-markup.js";
 
-function renderVariantRow(side, value, index, total, isSubmitting, isRedundant = false) {
+function renderVariantRow(
+  side,
+  languageCode,
+  value,
+  index,
+  total,
+  isSubmitting,
+  isRedundant = false,
+) {
   const removeDisabled = isSubmitting;
   const inputLabel = `${side === "source" ? "Source" : "Target"} variant ${index + 1}`;
   const showRemoveButton = total > 1;
@@ -67,6 +76,7 @@ function renderVariantRow(side, value, index, total, isSubmitting, isRedundant =
           data-glossary-term-variant-input
           data-variant-side="${escapeHtml(side)}"
           data-variant-index="${index}"
+          data-language-code="${escapeHtml(languageCode)}"
           ${isSubmitting ? "disabled" : ""}
         >${escapeHtml(value)}</textarea>
         <div class="term-variant-row__actions">
@@ -81,11 +91,13 @@ function renderVariantRow(side, value, index, total, isSubmitting, isRedundant =
 function renderVariantLane(
   side,
   languageName,
+  languageCode,
   values,
   isSubmitting,
   redundantIndices = new Set(),
 ) {
   const tooltipOptions = side === "target" ? { align: "end" } : {};
+  const rubyConfig = rubyButtonConfig(languageCode);
 
   return `
     <section class="term-lane">
@@ -97,6 +109,7 @@ function renderVariantLane(
           .map((value, index) =>
             renderVariantRow(
               side,
+              languageCode,
               value,
               index,
               values.length,
@@ -107,6 +120,18 @@ function renderVariantLane(
           .join("")}
       </div>
       <div class="term-lane__add-row">
+        <button
+          class="term-lane__add-button term-lane__inline-style-button"
+          type="button"
+          data-action="toggle-glossary-term-inline-style:ruby:${escapeHtml(side)}"
+          data-glossary-inline-style-button
+          data-inline-style="ruby"
+          data-variant-side="${escapeHtml(side)}"
+          aria-label="${escapeHtml(rubyConfig.tooltip)}"
+          aria-pressed="false"
+          ${tooltipAttributes(rubyConfig.tooltip, tooltipOptions)}
+          disabled
+        ><span class="term-lane__inline-style-button-label" aria-hidden="true">${escapeHtml(rubyConfig.label)}</span></button>
         <button
           class="term-lane__add-button"
           type="button"
@@ -128,7 +153,9 @@ export function renderGlossaryTermEditorModal(state) {
 
   const isSubmitting = editor.status === "loading";
   const sourceLanguageName = state.glossaryEditor?.sourceLanguage?.name ?? "Source";
+  const sourceLanguageCode = state.glossaryEditor?.sourceLanguage?.code ?? "";
   const targetLanguageName = state.glossaryEditor?.targetLanguage?.name ?? "Target";
+  const targetLanguageCode = state.glossaryEditor?.targetLanguage?.code ?? "";
   const redundantSourceVariantIndices = new Set(editor.redundantSourceVariantIndices ?? []);
   const duplicateWarningMarkup = `
     <p
@@ -161,11 +188,18 @@ export function renderGlossaryTermEditorModal(state) {
             ${renderVariantLane(
               "source",
               sourceLanguageName,
+              sourceLanguageCode,
               editor.sourceTerms,
               isSubmitting,
               redundantSourceVariantIndices,
             )}
-            ${renderVariantLane("target", targetLanguageName, editor.targetTerms, isSubmitting)}
+            ${renderVariantLane(
+              "target",
+              targetLanguageName,
+              targetLanguageCode,
+              editor.targetTerms,
+              isSubmitting,
+            )}
           </div>
 
           <section class="glossary-term-modal__details">

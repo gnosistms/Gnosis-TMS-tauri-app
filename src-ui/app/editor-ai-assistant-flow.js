@@ -41,6 +41,7 @@ import {
   buildEditorAiTranslationGlossaryHints,
   buildEditorDerivedGlossaryModel,
 } from "./editor-glossary-highlighting.js";
+import { extractGlossaryRubyBaseText } from "./glossary-ruby.js";
 import { saveStoredEditorDerivedGlossaryEntryForChapter } from "./editor-derived-glossary-cache.js";
 import { saveStoredEditorAssistantChapterData } from "./editor-ai-assistant-cache.js";
 
@@ -95,7 +96,9 @@ function buildDerivedGlossaryTermInputs(glossaryState) {
   return (Array.isArray(glossaryState?.terms) ? glossaryState.terms : [])
     .filter((term) => term?.lifecycleState !== "deleted")
     .map((term) => ({
-      glossarySourceTerms: sanitizeTermList(term?.sourceTerms),
+      glossarySourceTerms: sanitizeTermList(term?.sourceTerms)
+        .map((value) => extractGlossaryRubyBaseText(value).trim())
+        .filter(Boolean),
       targetVariants: sanitizeTermList(term?.targetTerms),
       notes:
         typeof term?.notesToTranslators === "string" && term.notesToTranslators.trim()

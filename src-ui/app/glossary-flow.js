@@ -44,3 +44,6 @@ export {
   updateGlossaryTermDraftField,
   updateGlossaryTermVariant,
 } from "./glossary-term-draft.js";
+export {
+  toggleGlossaryTermInlineStyle,
+} from "./glossary-term-inline-markup-flow.js";

@@ -22,6 +22,7 @@ import {
   submitGlossaryCreation,
   submitGlossaryRename,
   submitGlossaryTermEditor,
+  toggleGlossaryTermInlineStyle,
   toggleDeletedGlossaries,
 } from "../glossary-flow.js";
 import { actionSuffix, runWithImmediateLoading } from "../action-helpers.js";
@@ -109,6 +110,17 @@ export function createGlossaryActions(render) {
   ];
 
   return async function handleGlossaryAction(action, event) {
+    const inlineStyleMatch = /^toggle-glossary-term-inline-style:([a-z-]+):(source|target)$/.exec(action);
+    if (inlineStyleMatch) {
+      const button = event?.target instanceof Element
+        ? event.target.closest("[data-glossary-inline-style-button]")
+        : null;
+      if (button instanceof HTMLElement) {
+        toggleGlossaryTermInlineStyle(button);
+      }
+      return true;
+    }
+
     const variantAction = parseVariantAction(action);
     if (variantAction) {
       if (variantAction.type === "add") {

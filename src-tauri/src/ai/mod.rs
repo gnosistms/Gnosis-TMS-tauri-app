@@ -55,7 +55,7 @@ pub(crate) fn build_translation_prompt(request: &AiTranslationRequest) -> String
     }
 
     format!(
-        "Translate {source_label} to {target_label}, outputting only the translation.\n\nGlossary hints:\n- Apply a glossary hint only when its sourceTerm appears in the source text.\n- targetVariants is sorted in order of preference, best first. Use later variants only when grammar or context requires it.\n- Use notes as translation guidance when they are present.\n\n{glossary_hints}\n\nSource text:\n{}",
+        "Translate {source_label} to {target_label}, outputting only the translation.\n\nGlossary hints:\n- Apply a glossary hint only when its sourceTerm appears in the source text.\n- targetVariants is sorted in order of preference, best first. Use later variants only when grammar or context requires it.\n- If a targetVariant uses the notation base[ruby: annotation], preserve that ruby annotation when using the term.\n- Use notes as translation guidance when they are present.\n\n{glossary_hints}\n\nSource text:\n{}",
         request.text
     )
 }
@@ -1060,6 +1060,9 @@ mod tests {
 
         assert!(prompt.contains(
             "targetVariants is sorted in order of preference, best first. Use later variants only when grammar or context requires it."
+        ));
+        assert!(prompt.contains(
+            "If a targetVariant uses the notation base[ruby: annotation], preserve that ruby annotation when using the term."
         ));
         assert!(prompt.contains("- sourceTerm: \"gnostica\""));
         assert!(prompt.contains("  targetVariants: \"hoc tro gnosis\", \"cua gnosis\""));

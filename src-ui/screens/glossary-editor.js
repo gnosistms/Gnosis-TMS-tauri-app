@@ -14,6 +14,10 @@ import { getNoticeBadgeText } from "../app/status-feedback.js";
 import { renderGlossaryTermEditorModal } from "./glossary-term-editor-modal.js";
 import { canManageGlossaries, selectedTeam } from "../app/glossary-shared.js";
 import { findChapterContextById } from "../app/project-context.js";
+import {
+  extractGlossaryRubyVisibleText,
+  renderGlossaryRubyTermListHtml,
+} from "../app/glossary-ruby.js";
 
 function shortenChapterNavLabel(value) {
   const text = String(value ?? "").trim();
@@ -47,8 +51,8 @@ export function renderGlossaryEditorScreen(state) {
     }
 
     return [
-      ...(Array.isArray(term.sourceTerms) ? term.sourceTerms : []),
-      ...(Array.isArray(term.targetTerms) ? term.targetTerms : []),
+      ...(Array.isArray(term.sourceTerms) ? term.sourceTerms.map((value) => extractGlossaryRubyVisibleText(value)) : []),
+      ...(Array.isArray(term.targetTerms) ? term.targetTerms.map((value) => extractGlossaryRubyVisibleText(value)) : []),
       term.notesToTranslators,
       term.footnote,
     ].some((value) => String(value ?? "").toLowerCase().includes(searchQuery));
@@ -60,10 +64,12 @@ export function renderGlossaryEditorScreen(state) {
       "data-glossary-term-search-input": true,
     },
   });
-  const renderTermCell = (termId, text) =>
-    canManageTerms
-      ? `<button class="glossary-term-link" data-action="edit-glossary-term:${termId}">${escapeHtml(text)}</button>`
-      : `<span>${escapeHtml(text)}</span>`;
+  const renderTermCell = (termId, values) => {
+    const html = renderGlossaryRubyTermListHtml(values);
+    return canManageTerms
+      ? `<button class="glossary-term-link" data-action="edit-glossary-term:${termId}">${html}</button>`
+      : `<span>${html}</span>`;
+  };
   const bodyMarkup = glossary.status === "error"
     ? renderStateCard({
       eyebrow: "GLOSSARY LOAD FAILED",
@@ -88,12 +94,12 @@ export function renderGlossaryEditorScreen(state) {
             ${visibleTerms
               .map(
                 (term) => `
-                  <div class="term-grid term-grid--row">
+                  <div class="term-grid term-grid--row${canManageTerms ? " term-grid--row--interactive" : ""}"${canManageTerms ? ` data-action="edit-glossary-term:${term.termId}"` : ""}>
                     <div>
-                      ${renderTermCell(term.termId, (term.sourceTerms ?? []).join(", "))}
+                      ${renderTermCell(term.termId, term.sourceTerms ?? [])}
                     </div>
                     <div>
-                      ${renderTermCell(term.termId, (term.targetTerms ?? []).join(", "))}
+                      ${renderTermCell(term.termId, term.targetTerms ?? [])}
                     </div>
                     <div class="term-grid__actions">
                       ${canManageTerms ? textAction("Edit", `edit-glossary-term:${term.termId}`) : ""}

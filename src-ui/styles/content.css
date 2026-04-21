@@ -262,6 +262,58 @@
   width: min(100%, 760px);
 }
 
+.project-conflict-recovery {
+  display: grid;
+  gap: 14px;
+}
+
+.project-conflict-recovery__repo-list {
+  display: grid;
+  gap: 12px;
+}
+
+.project-conflict-recovery__repo {
+  display: grid;
+  gap: 6px;
+}
+
+.project-conflict-recovery__repo-title {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 700;
+}
+
+.project-conflict-recovery__git-error {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: rgba(255, 246, 243, 0.68);
+  border: 1px solid rgba(165, 64, 36, 0.16);
+  color: inherit;
+  font: inherit;
+  font-size: 0.92rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.project-conflict-recovery__warning {
+  font-weight: 700;
+}
+
+.project-conflict-recovery__runtime-error {
+  color: rgba(133, 40, 18, 0.92);
+}
+
+.project-conflict-recovery__actions {
+  display: flex;
+  justify-content: flex-start;
+}
+
+.project-conflict-recovery__button {
+  min-width: 220px;
+}
+
 .expandable-card__status {
   width: auto;
   margin: 14px 28px 18px;
@@ -616,6 +668,14 @@
 .term-grid--row {
   min-height: 56px;
   border-bottom: 1px solid rgba(164, 112, 41, 0.12);
+}
+
+.term-grid--row--interactive {
+  cursor: pointer;
+}
+
+.term-grid--row--interactive:hover {
+  color: var(--text-hover);
 }
 
 .term-grid__actions {

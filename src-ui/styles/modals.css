@@ -618,7 +618,9 @@
 
 .term-lane__add-row {
   display: flex;
+  align-items: center;
   justify-content: flex-end;
+  gap: 8px;
   margin-top: 8px;
   padding-right: 8px;
 }
@@ -791,6 +793,12 @@
   height: 10px;
 }
 
+.term-lane__inline-style-button-label {
+  font-size: 0.9rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
 .term-lane__add-icon::before,
 .term-lane__add-icon::after {
   content: "";
@@ -827,6 +835,12 @@
   border-color: rgba(184, 118, 42, 0.18);
   background: rgba(255, 244, 227, 0.84);
   transform: none;
+}
+
+.term-lane__inline-style-button.is-active {
+  border-color: rgba(184, 118, 42, 0.28);
+  background: rgba(255, 241, 214, 0.96);
+  color: var(--link);
 }
 
 .term-variant-row.is-dragging {

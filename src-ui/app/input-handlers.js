@@ -10,6 +10,7 @@ import { syncAutoSizeTextarea, syncEditorRowTextareaHeight } from "./autosize.js
 import { syncEditorVirtualizationRowLayout } from "./editor-virtualization.js";
 import { applyEditorRowFieldInput } from "./editor-row-input.js";
 import { syncActiveEditorInlineStyleButtons } from "./editor-inline-markup-flow.js";
+import { syncGlossaryTermInlineStyleButtons } from "./glossary-term-inline-markup-flow.js";
 import {
   updateProjectCreationName,
   updateProjectPermanentDeletionConfirmation,
@@ -241,6 +242,7 @@ function handleGlossaryTermVariantInput(event) {
 
   updateGlossaryTermVariant(side, index, input.value);
   syncAutoSizeTextarea(input, { minHeight: 44, maxHeight: 96 });
+  syncGlossaryTermInlineStyleButtons();
   return true;
 }
 

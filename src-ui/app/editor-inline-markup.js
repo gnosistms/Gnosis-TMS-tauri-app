@@ -251,6 +251,93 @@ function flattenNodesToVisibleText(nodes) {
     .join("");
 }
 
+function flattenNodesToBaseText(nodes, insideRubyAnnotation = false) {
+  return (Array.isArray(nodes) ? nodes : [])
+    .map((node) => {
+      if (!node) {
+        return "";
+      }
+
+      if (node.type === "text") {
+        return insideRubyAnnotation ? "" : node.text;
+      }
+
+      return flattenNodesToBaseText(
+        node.children,
+        insideRubyAnnotation || node.tag === "rt",
+      );
+    })
+    .join("");
+}
+
+function collectBaseTextSegments(
+  nodes,
+  segments = [],
+  state = { baseCursor: 0 },
+  insideRubyAnnotation = false,
+) {
+  for (const node of Array.isArray(nodes) ? nodes : []) {
+    if (!node) {
+      continue;
+    }
+
+    if (node.type === "text") {
+      if (!insideRubyAnnotation && node.text) {
+        const baseStart = state.baseCursor;
+        const baseEnd = baseStart + node.text.length;
+        segments.push({
+          text: node.text,
+          baseStart,
+          baseEnd,
+          visibleStart: node.visibleStart,
+          visibleEnd: node.visibleEnd,
+        });
+        state.baseCursor = baseEnd;
+      }
+      continue;
+    }
+
+    collectBaseTextSegments(
+      node.children,
+      segments,
+      state,
+      insideRubyAnnotation || node.tag === "rt",
+    );
+  }
+
+  return segments;
+}
+
+function basePositionToVisibleOffset(parsed, basePosition, bias = "start") {
+  const segments = collectBaseTextSegments(parsed.nodes);
+  const baseLength = segments[segments.length - 1]?.baseEnd ?? 0;
+  const boundedPosition = Math.max(
+    0,
+    Math.min(baseLength, Number.parseInt(basePosition ?? "", 10) || 0),
+  );
+  let previousSegment = null;
+
+  for (const segment of segments) {
+    if (boundedPosition < segment.baseStart) {
+      return bias === "end" && previousSegment
+        ? previousSegment.visibleEnd
+        : segment.visibleStart;
+    }
+
+    if (boundedPosition < segment.baseEnd) {
+      return segment.visibleStart + Math.max(0, boundedPosition - segment.baseStart);
+    }
+
+    if (boundedPosition === segment.baseEnd) {
+      return bias === "end" ? segment.visibleEnd : segment.visibleStart + segment.text.length;
+    }
+
+    previousSegment = segment;
+  }
+
+  return previousSegment ? previousSegment.visibleEnd : 0;
+}
+
 function splitRubyNodeChildren(children) {
   const baseChildren = [];
   const annotationChildren = [];
@@ -326,6 +413,63 @@ function renderNodesForHistoryHtml(nodes) {
       }
 
       return `<${node.tag}>${renderNodesForHistoryHtml(node.children)}</${node.tag}>`;
+    })
+    .join("");
+}
+
+function serializeNodesWithAllowedTags(source, nodes, allowedTags) {
+  return (Array.isArray(nodes) ? nodes : [])
+    .map((node) => {
+      if (!node) {
+        return "";
+      }
+
+      if (node.type === "text") {
+        return escapeHtml(node.text);
+      }
+
+      if (allowedTags.has(node.tag)) {
+        return `<${node.tag}>${serializeNodesWithAllowedTags(source, node.children, allowedTags)}</${node.tag}>`;
+      }
+
+      const openingTag = node.openStart >= 0 && node.openEnd >= 0
+        ? source.slice(node.openStart, node.openEnd)
+        : "";
+      const closingTag = node.closeStart >= 0 && node.closeEnd >= 0
+        ? source.slice(node.closeStart, node.closeEnd)
+        : "";
+      return (
+        escapeHtml(openingTag)
+        + serializeNodesWithAllowedTags(source, node.children, allowedTags)
+        + escapeHtml(closingTag)
+      );
+    })
+    .join("");
+}
+
+function serializeNodesForRubyNotation(nodes, insideRubyAnnotation = false) {
+  return (Array.isArray(nodes) ? nodes : [])
+    .map((node) => {
+      if (!node) {
+        return "";
+      }
+
+      if (node.type === "text") {
+        return node.text;
+      }
+
+      if (node.tag === "ruby") {
+        const { baseChildren, annotationChildren } = splitRubyNodeChildren(node.children);
+        const baseText = serializeNodesForRubyNotation(baseChildren, false);
+        const annotationText = serializeNodesForRubyNotation(annotationChildren, true).trim();
+        return annotationText ? `${baseText}[ruby: ${annotationText}]` : baseText;
+      }
+
+      if (node.tag === "rt") {
+        return serializeNodesForRubyNotation(node.children, true);
+      }
+
+      return serializeNodesForRubyNotation(node.children, insideRubyAnnotation);
     })
     .join("");
 }
@@ -871,9 +1015,21 @@ export function extractInlineMarkupVisibleText(value) {
   return parseInlineMarkup(value).visibleText;
 }
 
+export function extractInlineMarkupBaseText(value) {
+  return flattenNodesToBaseText(parseInlineMarkup(value).nodes);
+}
+
 export function renderSanitizedInlineMarkupHtml(value) {
   const parsed = parseInlineMarkup(value);
   return serializeNodes(parsed.nodes);
+}
+
+export function renderSanitizedInlineMarkupHtmlWithAllowedTags(value, allowedTags = SUPPORTED_TAGS) {
+  const parsed = parseInlineMarkup(value);
+  const normalizedAllowedTags = new Set(
+    Array.isArray(allowedTags) ? allowedTags : Array.from(allowedTags || []),
+  );
+  return serializeNodesWithAllowedTags(parsed.source, parsed.nodes, normalizedAllowedTags);
 }
 
 export function extractInlineMarkupHistoryText(value) {
@@ -882,6 +1038,27 @@ export function extractInlineMarkupHistoryText(value) {
 
 export function renderSanitizedInlineMarkupHistoryHtml(value) {
   return renderNodesForHistoryHtml(parseInlineMarkup(value).nodes);
+}
+
+export function serializeInlineMarkupRubyNotation(value) {
+  return serializeNodesForRubyNotation(parseInlineMarkup(value).nodes);
+}
+
+export function mapInlineMarkupBaseRangesToVisibleRanges(value, ranges = []) {
+  const parsed = parseInlineMarkup(value);
+  return (Array.isArray(ranges) ? ranges : [])
+    .map((range) => {
+      const start = Math.max(0, Number.parseInt(range?.start ?? "", 10) || 0);
+      const end = Math.max(start, Number.parseInt(range?.end ?? "", 10) || 0);
+      const visibleStart = basePositionToVisibleOffset(parsed, start, "start");
+      const visibleEnd = basePositionToVisibleOffset(parsed, end, "end");
+      return {
+        ...range,
+        start: visibleStart,
+        end: visibleEnd,
+      };
+    })
+    .filter((range) => range.end > range.start);
 }
 
 function normalizeVisibleHighlightRanges(ranges, visibleLength = 0) {

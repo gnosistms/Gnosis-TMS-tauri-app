@@ -3,6 +3,7 @@ import {
   canCreateRepoResources,
   canPermanentlyDeleteRepoResources,
 } from "./resource-capabilities.js";
+import { sanitizeGlossaryRubyMarkup } from "./glossary-ruby.js";
 
 export function selectedTeam(teamId = state.selectedTeamId) {
   return state.teams.find((team) => team.id === teamId) ?? null;
@@ -136,8 +137,12 @@ export function normalizeGlossaryTerm(term) {
 
   return {
     termId,
-    sourceTerms: Array.isArray(term.sourceTerms) ? term.sourceTerms : [],
-    targetTerms: Array.isArray(term.targetTerms) ? term.targetTerms : [],
+    sourceTerms: Array.isArray(term.sourceTerms)
+      ? term.sourceTerms.map((value) => sanitizeGlossaryRubyMarkup(value))
+      : [],
+    targetTerms: Array.isArray(term.targetTerms)
+      ? term.targetTerms.map((value) => sanitizeGlossaryRubyMarkup(value))
+      : [],
     notesToTranslators:
       typeof term.notesToTranslators === "string" ? term.notesToTranslators : "",
     footnote: typeof term.footnote === "string" ? term.footnote : "",
@@ -245,14 +250,14 @@ export function upsertGlossarySummary(glossary) {
 
 export function normalizeEditableTerms(terms) {
   const normalized = (Array.isArray(terms) ? terms : [])
-    .map((term) => (typeof term === "string" ? term : ""));
+    .map((term) => sanitizeGlossaryRubyMarkup(typeof term === "string" ? term : ""));
 
   return normalized.length > 0 ? normalized : [""];
 }
 
 export function sanitizeEditableTerms(terms) {
   return (Array.isArray(terms) ? terms : [])
-    .map((term) => String(term ?? "").trim())
+    .map((term) => sanitizeGlossaryRubyMarkup(term).trim())
     .filter(Boolean);
 }
 
@@ -262,7 +267,7 @@ export function sanitizeEditableTargetTerms(terms) {
   let includedEmptyVariant = false;
 
   for (const term of Array.isArray(terms) ? terms : []) {
-    const trimmed = String(term ?? "").trim();
+    const trimmed = sanitizeGlossaryRubyMarkup(term).trim();
     if (!trimmed) {
       if (!includedEmptyVariant) {
         sanitized.push("");

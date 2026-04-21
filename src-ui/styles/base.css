@@ -859,6 +859,13 @@ a {
   color: var(--danger-text);
 }
 
+.button--error.button--loading:disabled {
+  opacity: 1;
+  background: linear-gradient(180deg, rgba(214, 101, 60, 0.9) 0%, rgba(191, 63, 38, 0.9) 100%);
+  color: var(--danger-text);
+  box-shadow: 0 12px 22px rgba(191, 63, 38, 0.2);
+}
+
 .button--secondary:disabled {
   background: rgba(255, 250, 244, 0.7);
   color: rgba(214, 179, 137, 1.0);
@@ -879,6 +886,10 @@ a {
   border: 2px solid rgba(255, 248, 237, 0.42);
   border-top-color: var(--accent-text);
   animation: button-spin 0.7s linear infinite;
+}
+
+.button--error .button__spinner {
+  border-top-color: var(--danger-text);
 }
 
 @keyframes button-spin {

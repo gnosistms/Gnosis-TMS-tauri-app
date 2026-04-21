@@ -6,37 +6,15 @@ import {
   showScopedSyncBadge,
 } from "./status-feedback.js";
 import { requireBrokerSession } from "./auth-flow.js";
+import {
+  buildProjectRepoSyncInput,
+  PROJECT_REPO_SYNC_STATUS_UNRESOLVED_CONFLICT,
+} from "./project-repo-sync-shared.js";
 
 const PROJECT_REPO_SYNC_POLL_DELAY_MS = 1400;
 
 function delay(ms) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
-}
-
-function buildProjectRepoSyncInput(team, projects) {
-  return {
-    installationId: team.installationId,
-    projects: projects
-      .filter((project) =>
-        typeof project?.id === "string"
-        && project.id.trim()
-        && typeof project?.name === "string"
-        && project.name.trim()
-        && typeof project?.fullName === "string"
-        && project.fullName.trim()
-        && project?.remoteState !== "missing"
-        && project?.remoteState !== "deleted"
-        && project?.recordState !== "tombstone"
-      )
-      .map((project) => ({
-        projectId: project.id,
-        repoName: project.name,
-        fullName: project.fullName,
-        repoId: Number.isFinite(project.repoId) ? project.repoId : null,
-        defaultBranchName: project.defaultBranchName ?? null,
-        defaultBranchHeadOid: project.defaultBranchHeadOid ?? null,
-      })),
-  };
 }
 
 function applyProjectRepoSyncSnapshots(snapshots) {
@@ -76,7 +54,11 @@ function summarizeSnapshots(snapshots = []) {
       continue;
     }
 
-    if (snapshot?.status === "syncError" || snapshot?.status === "missingRemoteHead") {
+    if (
+      snapshot?.status === "syncError"
+      || snapshot?.status === "missingRemoteHead"
+      || snapshot?.status === PROJECT_REPO_SYNC_STATUS_UNRESOLVED_CONFLICT
+    ) {
       summary.issues += 1;
       summary.syncErrors += 1;
     }

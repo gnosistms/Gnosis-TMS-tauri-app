@@ -50,6 +50,29 @@ test("glossary matching prefers the longest source term", () => {
   assert.deepEqual(Array.from(result.matches[0].candidate.sourceTerms), ["sala de meditacion"]);
 });
 
+test("glossary matching uses ruby base text instead of raw markup", () => {
+  const model = buildEditorGlossaryModel(glossaryPayload({
+    terms: [
+      {
+        termId: "t1",
+        sourceTerms: ["<ruby>sala<rt>sa</rt></ruby> de meditacion"],
+        targetTerms: ["phong thien"],
+      },
+    ],
+  }));
+
+  const result = findLongestGlossaryMatches(
+    "La sala de meditacion esta lista.",
+    model.sourceMatcher,
+  );
+
+  assert.equal(result.matches.length, 1);
+  assert.deepEqual(
+    Array.from(result.matches[0].candidate.sourceTerms),
+    ["<ruby>sala<rt>sa</rt></ruby> de meditacion"],
+  );
+});
+
 test("source highlights are marked as errors when the expected target term is missing", () => {
   const model = buildEditorGlossaryModel(glossaryPayload({
     terms: [
@@ -107,6 +130,91 @@ test("target highlights only appear for glossary terms present in the same row s
   assert.match(targetHtml, /huong noi/);
   assert.equal((targetHtml.match(/data-editor-glossary-mark/g) ?? []).length, 1);
   assert.doesNotMatch(targetHtml, /<mark[^>]*>thien dinh<\/mark>/);
+});
+
+test("ruby target variants require exact ruby before the source highlight is satisfied", () => {
+  const model = buildEditorGlossaryModel(glossaryPayload({
+    sourceLanguage: {
+      code: "es",
+      name: "Spanish",
+    },
+    targetLanguage: {
+      code: "en",
+      name: "English",
+    },
+    terms: [
+      {
+        termId: "t1",
+        sourceTerms: ["espiritu"],
+        targetTerms: ["<ruby>mind<rt>maɪnd</rt></ruby>"],
+      },
+    ],
+  }));
+
+  const highlights = buildEditorRowGlossaryHighlights([
+    {
+      code: "es",
+      text: "El espiritu canta.",
+    },
+    {
+      code: "en",
+      text: "mind sings.",
+    },
+  ], model);
+
+  assert.match(highlights.get("es")?.html ?? "", /glossary-match-error/);
+  assert.equal(highlights.has("en"), false);
+});
+
+test("ruby target highlights use the exact ruby variant and tooltip payload when the target follows the glossary", () => {
+  const model = buildEditorGlossaryModel(glossaryPayload({
+    sourceLanguage: {
+      code: "es",
+      name: "Spanish",
+    },
+    targetLanguage: {
+      code: "en",
+      name: "English",
+    },
+    terms: [
+      {
+        termId: "t1",
+        sourceTerms: ["espiritu"],
+        targetTerms: ["<ruby>mind<rt>maɪnd</rt></ruby>"],
+      },
+    ],
+  }));
+
+  const highlights = buildEditorRowGlossaryHighlights([
+    {
+      code: "es",
+      text: "El espiritu canta.",
+    },
+    {
+      code: "en",
+      text: "<ruby>mind<rt>maɪnd</rt></ruby> sings.",
+    },
+  ], model);
+
+  const sourceHtml = highlights.get("es")?.html ?? "";
+  const targetHtml = highlights.get("en")?.html ?? "";
+  assert.doesNotMatch(sourceHtml, /glossary-match-error/);
+  assert.match(targetHtml, /data-editor-glossary-mark/);
+
+  const payloadMatch = targetHtml.match(/data-editor-glossary-tooltip-payload="([^"]+)"/);
+  assert.ok(payloadMatch);
+
+  const payloadJson = payloadMatch[1]
+    .replaceAll("&quot;", "\"")
+    .replaceAll("&lt;", "<")
+    .replaceAll("&gt;", ">")
+    .replaceAll("&#39;", "'")
+    .replaceAll("&amp;", "&");
+  const payload = JSON.parse(payloadJson);
+
+  assert.equal(payload.kind, "target");
+  assert.equal(payload.title, "<ruby>mind<rt>maɪnd</rt></ruby>");
+  assert.deepEqual(payload.variants, ["espiritu"]);
 });
 
 test("source highlights include a structured tooltip payload for source-language hover cards", () => {
@@ -325,4 +433,37 @@ test("translation glossary hints are omitted when the translation target does no
   );
 
   assert.deepEqual(hints, []);
+});
+
+test("translation glossary hints serialize ruby target variants for ai prompts", () => {
+  const model = buildEditorGlossaryModel(glossaryPayload({
+    sourceLanguage: {
+      code: "es",
+      name: "Spanish",
+    },
+    targetLanguage: {
+      code: "ja",
+      name: "Japanese",
+    },
+    terms: [
+      {
+        termId: "t1",
+        sourceTerms: ["espiritu"],
+        targetTerms: ["<ruby>精神<rt>せいしん</rt></ruby>", "魂"],
+      },
+    ],
+  }));
+
+  const hints = buildEditorAiTranslationGlossaryHints(
+    "El espiritu canta.",
+    "es",
+    "ja",
+    model,
+  );
+
+  assert.deepEqual(hints, [{
+    sourceTerm: "espiritu",
+    targetVariants: ["精神[ruby: せいしん]", "魂"],
+    notes: [],
+  }]);
 });
