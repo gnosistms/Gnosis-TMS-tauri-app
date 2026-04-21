@@ -783,7 +783,7 @@ export function renderTranslateSidebar(
       : renderHistoryPane(editorChapter, rows, languages);
 
   return `
-    <aside class="translate-sidebar card card--history">
+    <aside class="translate-sidebar card card--history${activeTab === "assistant" ? " translate-sidebar--assistant" : ""}">
       <div class="card__body">
         <div class="history-tabs">
           ${renderSidebarTab("AI Assistant", "assistant", activeTab, "translate")}

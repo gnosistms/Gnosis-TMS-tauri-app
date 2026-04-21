@@ -444,6 +444,16 @@
   align-self: start;
 }
 
+.translate-sidebar--assistant {
+  height: 100%;
+}
+
+.translate-sidebar--assistant .card__body {
+  height: 100%;
+  min-height: 0;
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
 .translate-ai-tools {
   display: grid;
   gap: 12px;
@@ -1938,13 +1948,20 @@
 
 .assistant-pane {
   display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
   gap: 18px;
+  min-height: 0;
 }
 
 .assistant-transcript {
   display: grid;
   gap: 12px;
   min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  padding-right: 4px;
 }
 
 .assistant-empty {
@@ -2101,8 +2118,8 @@
   border: 0;
   background: transparent;
   color: var(--text);
-  font-family: var(--font-serif);
-  font-size: var(--translation-editor-font-size, 14px);
+  font-family: var(--font-sans);
+  font-size: 1rem;
   line-height: 1.5;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
