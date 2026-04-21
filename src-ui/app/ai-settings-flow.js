@@ -38,6 +38,7 @@ import {
   createAiSettingsAboutModalState,
   createAiModelErrorModalState,
   createAiReviewMissingKeyModalState,
+  createTeamAiSharedState,
   state,
 } from "./state.js";
 
@@ -53,6 +54,29 @@ function selectedAiInstallationId() {
   return selectedProjectsTeamInstallationId();
 }
 
+function captureAiSettingsScope() {
+  return {
+    screen: state.screen,
+    teamId: state.selectedTeamId,
+    installationId: selectedAiInstallationId(),
+  };
+}
+
+function isAiSettingsScopeCurrent(scope) {
+  return (
+    state.screen === scope.screen
+    && state.selectedTeamId === scope.teamId
+    && selectedAiInstallationId() === scope.installationId
+  );
+}
+
+function isAiSettingsProviderScopeCurrent(scope, providerId) {
+  return (
+    isAiSettingsScopeCurrent(scope)
+    && normalizeAiProviderId(state.aiSettings.providerId) === normalizeAiProviderId(providerId)
+  );
+}
+
 function maybeInstallationPayload() {
   const installationId = selectedAiInstallationId();
   return installationId === null ? {} : { installationId };
@@ -65,6 +89,18 @@ function withSelectedInstallation(request = {}) {
 
 function persistAiActionPreferences() {
   saveStoredAiActionPreferences(extractAiActionPreferences(actionConfigState()));
+}
+
+function resetAiActionConfigTransientState(currentActionConfig, options = {}) {
+  return {
+    ...currentActionConfig,
+    availableProvidersStatus: "idle",
+    availableProvidersError: "",
+    savedProviderIds: options.clearSavedProviders === true ? [] : currentActionConfig.savedProviderIds,
+    modelOptionsByProvider: Object.fromEntries(
+      AI_PROVIDER_IDS.map((providerId) => [providerId, createAiProviderModelsState()]),
+    ),
+  };
 }
 
 function persistSharedAiActionPreferences(render) {
@@ -468,6 +504,7 @@ function syncAiActionModelSelectionsForProvider(actionConfig, providerId, option
 
 async function ensureAiProviderModelsLoaded(render, providerId, options = {}) {
   const normalizedProviderId = normalizeAiProviderId(providerId);
+  const scope = captureAiSettingsScope();
   let actionConfig = actionConfigState();
 
   if (!actionConfig.savedProviderIds.includes(normalizedProviderId)) {
@@ -509,6 +546,9 @@ async function ensureAiProviderModelsLoaded(render, providerId, options = {}) {
   try {
     const ensureProviderResult = await ensureSelectedTeamAiProviderReady(render, normalizedProviderId);
     if (!ensureProviderResult?.ok) {
+      if (ensureProviderResult?.reason === "stale" || !isAiSettingsScopeCurrent(scope)) {
+        return [];
+      }
       replaceAiActionConfig({
         ...actionConfigState(),
         modelOptionsByProvider: {
@@ -534,6 +574,9 @@ async function ensureAiProviderModelsLoaded(render, providerId, options = {}) {
       ...maybeInstallationPayload(),
     });
     const normalizedOptions = normalizeAiModelOptions(normalizedProviderId, optionsPayload);
+    if (!isAiSettingsScopeCurrent(scope)) {
+      return [];
+    }
 
     let nextActionConfig = actionConfigState();
     nextActionConfig = syncAiActionModelSelectionsForProvider(
@@ -559,6 +602,9 @@ async function ensureAiProviderModelsLoaded(render, providerId, options = {}) {
     render?.();
     return normalizedOptions;
   } catch (error) {
+    if (!isAiSettingsScopeCurrent(scope)) {
+      return [];
+    }
     replaceAiActionConfig({
       ...actionConfigState(),
       modelOptionsByProvider: {
@@ -574,8 +620,10 @@ async function ensureAiProviderModelsLoaded(render, providerId, options = {}) {
     render?.();
     return [];
   } finally {
-    updateAiActionMenuLoadingProviderIds(normalizedProviderId, false);
-    render?.();
+    if (isAiSettingsScopeCurrent(scope)) {
+      updateAiActionMenuLoadingProviderIds(normalizedProviderId, false);
+      render?.();
+    }
   }
 }
 
@@ -597,6 +645,7 @@ async function ensureVisibleAiProviderModelsLoaded(render) {
 }
 
 export async function refreshAiSavedProviders(render, options = {}) {
+  const scope = captureAiSettingsScope();
   let actionConfig = actionConfigState();
   if (!options.suppressLoadingState) {
     actionConfig = {
@@ -630,6 +679,9 @@ export async function refreshAiSavedProviders(render, options = {}) {
       actionConfigState(),
       savedProviderIds,
     );
+    if (!isAiSettingsScopeCurrent(scope)) {
+      return;
+    }
     nextActionConfig = {
       ...nextActionConfig,
       availableProvidersStatus: "ready",
@@ -642,6 +694,9 @@ export async function refreshAiSavedProviders(render, options = {}) {
     render?.();
     await ensureVisibleAiProviderModelsLoaded(render);
   } catch (error) {
+    if (!isAiSettingsScopeCurrent(scope)) {
+      return;
+    }
     replaceAiActionConfig({
       ...actionConfigState(),
       availableProvidersStatus: "error",
@@ -652,6 +707,7 @@ export async function refreshAiSavedProviders(render, options = {}) {
 }
 
 export async function ensureSharedAiActionConfigurationLoaded(render) {
+  const scope = captureAiSettingsScope();
   if (selectedAiInstallationId() === null || !state.auth.session?.sessionToken) {
     return;
   }
@@ -661,6 +717,9 @@ export async function ensureSharedAiActionConfigurationLoaded(render) {
     suppressLoadingState: true,
     force: true,
   });
+  if (!teamShared || !isAiSettingsScopeCurrent(scope)) {
+    return;
+  }
   const sharedActionPreferences = teamShared?.settings?.actionPreferences ?? null;
   if (sharedActionPreferences) {
     applyAiActionPreferencesWithOptionalRender(sharedActionPreferences, render);
@@ -673,6 +732,7 @@ export async function ensureSharedAiActionConfigurationLoaded(render) {
 }
 
 export async function loadAiSettingsPage(render, options = {}) {
+  const scope = captureAiSettingsScope();
   state.aiSettings = {
     ...state.aiSettings,
     aboutModal: createAiSettingsAboutModalStateForDisplay(),
@@ -682,6 +742,9 @@ export async function loadAiSettingsPage(render, options = {}) {
   if (selectedAiInstallationId() !== null && state.auth.session?.sessionToken) {
     try {
       const teamShared = await loadSelectedTeamAiState(render, { force: true });
+      if (!teamShared || !isAiSettingsScopeCurrent(scope)) {
+        return;
+      }
       if (teamShared?.settings?.actionPreferences) {
         applyAiActionPreferencesWithOptionalRender(
           teamShared.settings.actionPreferences,
@@ -706,6 +769,9 @@ export function openAiKeyPage(render, options = {}) {
         ? state.aiSettings.returnScreen
         : state.screen;
   const providerId = normalizeAiProviderId(options.providerId ?? state.aiSettings.providerId);
+  const switchingTeams =
+    state.aiSettings.teamShared?.teamId !== null
+    && state.aiSettings.teamShared.teamId !== state.selectedTeamId;
 
   state.aiSettings = {
     ...state.aiSettings,
@@ -716,6 +782,18 @@ export function openAiKeyPage(render, options = {}) {
     modelValidationRequestId: state.aiSettings.modelValidationRequestId + 1,
     aboutModal: createAiSettingsAboutModalStateForDisplay(),
     modelErrorModal: createAiModelErrorModalState(),
+    ...(switchingTeams
+      ? {
+          status: "idle",
+          apiKey: "",
+          hasLoaded: false,
+          teamShared: createTeamAiSharedState(),
+          actionMenuLoadingProviderIds: [],
+          actionConfig: resetAiActionConfigTransientState(state.aiSettings.actionConfig, {
+            clearSavedProviders: true,
+          }),
+        }
+      : {}),
   };
   state.aiReviewMissingKeyModal = createAiReviewMissingKeyModalState();
   state.screen = "aiKey";
@@ -726,6 +804,7 @@ export function openAiKeyPage(render, options = {}) {
 export async function loadAiProviderSecret(render, options = {}) {
   const providerId = normalizeAiProviderId(options.providerId ?? state.aiSettings.providerId);
   const shouldClearDraft = providerId !== state.aiSettings.providerId;
+  const scope = captureAiSettingsScope();
 
   state.aiSettings = {
     ...state.aiSettings,
@@ -744,6 +823,9 @@ export async function loadAiProviderSecret(render, options = {}) {
       providerId,
       ...maybeInstallationPayload(),
     });
+    if (!isAiSettingsProviderScopeCurrent(scope, providerId)) {
+      return;
+    }
     state.aiSettings = {
       ...state.aiSettings,
       status: "ready",
@@ -754,6 +836,9 @@ export async function loadAiProviderSecret(render, options = {}) {
       hasLoaded: true,
     };
   } catch (error) {
+    if (!isAiSettingsProviderScopeCurrent(scope, providerId)) {
+      return;
+    }
     state.aiSettings = {
       ...state.aiSettings,
       status: "error",
@@ -798,6 +883,7 @@ export async function saveAiProviderSecret(render) {
   const providerId = normalizeAiProviderId(state.aiSettings.providerId);
   const apiKey = typeof state.aiSettings.apiKey === "string" ? state.aiSettings.apiKey : "";
   const normalizedApiKey = apiKey.trim();
+  const scope = captureAiSettingsScope();
   const successMessage = apiKey.trim()
     ? getAiProviderSavedMessage(providerId)
     : `${getAiProviderActionLabel(providerId)} key removed.`;
@@ -824,6 +910,9 @@ export async function saveAiProviderSecret(render) {
         ...maybeInstallationPayload(),
       });
     }
+    if (!isAiSettingsProviderScopeCurrent(scope, providerId)) {
+      return;
+    }
 
     if (!normalizedApiKey) {
       state.aiSettings = {
@@ -843,7 +932,13 @@ export async function saveAiProviderSecret(render) {
         suppressLoadingState: true,
         forceTeamState: true,
       });
+      if (!isAiSettingsProviderScopeCurrent(scope, providerId)) {
+        return;
+      }
       await ensureAiProviderModelsLoaded(render, providerId, { force: true });
+      if (!isAiSettingsProviderScopeCurrent(scope, providerId)) {
+        return;
+      }
 
       const providerModelsState =
         actionConfigState().modelOptionsByProvider[providerId] ?? createAiProviderModelsState();
@@ -891,6 +986,9 @@ export async function saveAiProviderSecret(render) {
       });
     }
   } catch (error) {
+    if (!isAiSettingsProviderScopeCurrent(scope, providerId)) {
+      return;
+    }
     state.aiSettings = {
       ...state.aiSettings,
       status: "error",

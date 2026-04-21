@@ -165,6 +165,7 @@ const {
   createTeamAiSharedState,
   ensureSelectedTeamAiProviderReady,
   loadSelectedTeamAiState,
+  persistSelectedTeamAiActionPreferences,
   saveSelectedTeamAiProviderSecret,
 } = await import("./team-ai-flow.js");
 const {
@@ -226,10 +227,8 @@ function installTranslateFixture(options = {}) {
   };
 }
 
-function installSelectedTeam(options = {}) {
-  const login = options.login ?? "tester";
-  state.selectedTeamId = options.teamId ?? "team-1";
-  state.teams = [{
+function createTeamRecord(options = {}) {
+  return {
     id: options.teamId ?? "team-1",
     name: options.teamName ?? "Team One",
     githubOrg: options.githubOrg ?? "team-one",
@@ -237,7 +236,13 @@ function installSelectedTeam(options = {}) {
     canDelete: options.canDelete === true,
     canManageProjects: true,
     accountType: "Organization",
-  }];
+  };
+}
+
+function installSelectedTeam(options = {}) {
+  const login = options.login ?? "tester";
+  state.selectedTeamId = options.teamId ?? "team-1";
+  state.teams = [createTeamRecord(options)];
   state.auth = {
     ...state.auth,
     session: {
@@ -1871,6 +1876,114 @@ test("loadSelectedTeamAiState falls back to the stored team snapshot when the br
   assert.equal(teamShared.secrets.providers.openai.keyVersion, 5);
 });
 
+test("loadSelectedTeamAiState ignores stale responses after switching teams", async () => {
+  resetSessionState();
+  state.teams = [
+    createTeamRecord({ teamId: "team-1", teamName: "Team One", githubOrg: "team-one", installationId: 42 }),
+    createTeamRecord({ teamId: "team-2", teamName: "Team Two", githubOrg: "team-two", installationId: 84 }),
+  ];
+  state.selectedTeamId = "team-1";
+  state.auth = {
+    ...state.auth,
+    session: {
+      sessionToken: "broker-session",
+      login: "tester",
+      name: null,
+      avatarUrl: null,
+    },
+  };
+  setActiveStorageLogin("tester");
+
+  const teamOneSettings = createDeferred();
+  const teamOneSecrets = createDeferred();
+  invokeHandler = async (command, payload = {}) => {
+    if (command === "load_team_ai_settings") {
+      if (payload.installationId === 42) {
+        return teamOneSettings.promise;
+      }
+      return {
+        schemaVersion: 1,
+        updatedAt: "2026-04-21T12:00:00.000Z",
+        updatedBy: "owner-2",
+        actionPreferences: {
+          detailedConfiguration: false,
+          unified: {
+            providerId: "openai",
+            modelId: "gpt-5.4-mini",
+          },
+          actions: {},
+        },
+      };
+    }
+    if (command === "load_team_ai_secrets_metadata") {
+      if (payload.installationId === 42) {
+        return teamOneSecrets.promise;
+      }
+      return {
+        schemaVersion: 1,
+        updatedAt: "2026-04-21T12:00:00.000Z",
+        updatedBy: "owner-2",
+        providers: {
+          openai: {
+            configured: true,
+            keyVersion: 8,
+            algorithm: "rsa-oaep-sha256-v1",
+          },
+          gemini: null,
+          claude: null,
+          deepseek: null,
+        },
+      };
+    }
+
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  const staleLoadPromise = loadSelectedTeamAiState(() => {}, { force: true });
+
+  state.selectedTeamId = "team-2";
+  const currentTeamShared = await loadSelectedTeamAiState(() => {}, { force: true });
+
+  teamOneSettings.resolve({
+    schemaVersion: 1,
+    updatedAt: "2026-04-20T12:00:00.000Z",
+    updatedBy: "owner-1",
+    actionPreferences: {
+      detailedConfiguration: false,
+      unified: {
+        providerId: "gemini",
+        modelId: "gemini-3-flash-preview",
+      },
+      actions: {},
+    },
+  });
+  teamOneSecrets.resolve({
+    schemaVersion: 1,
+    updatedAt: "2026-04-20T12:00:00.000Z",
+    updatedBy: "owner-1",
+    providers: {
+      openai: null,
+      gemini: {
+        configured: true,
+        keyVersion: 4,
+        algorithm: "rsa-oaep-sha256-v1",
+      },
+      claude: null,
+      deepseek: null,
+    },
+  });
+
+  const staleResult = await staleLoadPromise;
+
+  assert.equal(staleResult, null);
+  assert.equal(currentTeamShared.teamId, "team-2");
+  assert.equal(state.aiSettings.teamShared.teamId, "team-2");
+  assert.equal(
+    state.aiSettings.teamShared.settings.actionPreferences.unified.providerId,
+    "openai",
+  );
+});
+
 test("ensureSelectedTeamAiProviderReady reports a clear issue error when the broker is unavailable and no cached team key exists", async () => {
   resetSessionState();
   installSelectedTeam({ canDelete: false });
@@ -1934,6 +2047,97 @@ test("ensureSelectedTeamAiProviderReady reports a clear issue error when the bro
   await assert.rejects(
     () => ensureSelectedTeamAiProviderReady(() => {}, "openai"),
     /team ai key could not be issued right now/i,
+  );
+});
+
+test("persistSelectedTeamAiActionPreferences does not overwrite the current team after switching teams", async () => {
+  resetSessionState();
+  state.teams = [
+    createTeamRecord({ teamId: "team-1", teamName: "Team One", githubOrg: "team-one", installationId: 42, canDelete: true }),
+    createTeamRecord({ teamId: "team-2", teamName: "Team Two", githubOrg: "team-two", installationId: 84, canDelete: true }),
+  ];
+  state.selectedTeamId = "team-1";
+  state.auth = {
+    ...state.auth,
+    session: {
+      sessionToken: "broker-session",
+      login: "tester",
+      name: null,
+      avatarUrl: null,
+    },
+  };
+  setActiveStorageLogin("tester");
+
+  const saveSettings = createDeferred();
+  invokeHandler = async (command, payload = {}) => {
+    if (command === "save_team_ai_settings") {
+      if (payload.installationId === 42) {
+        return saveSettings.promise;
+      }
+      throw new Error(`Unexpected installation: ${payload.installationId}`);
+    }
+
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  const savePromise = persistSelectedTeamAiActionPreferences(() => {}, {
+    detailedConfiguration: false,
+    unified: {
+      providerId: "openai",
+      modelId: "gpt-5.4-mini",
+    },
+    actions: {},
+  });
+
+  assert.equal(state.aiSettings.teamShared.teamId, "team-1");
+  assert.equal(state.aiSettings.teamShared.settingsSaveStatus, "saving");
+
+  state.selectedTeamId = "team-2";
+  state.aiSettings = {
+    ...state.aiSettings,
+    teamShared: {
+      ...createTeamAiSharedState(),
+      teamId: "team-2",
+      status: "ready",
+      isOwner: true,
+      settings: {
+        schemaVersion: 1,
+        updatedAt: "2026-04-21T12:00:00.000Z",
+        updatedBy: "owner-2",
+        actionPreferences: {
+          detailedConfiguration: false,
+          unified: {
+            providerId: "gemini",
+            modelId: "gemini-3-flash-preview",
+          },
+          actions: {},
+        },
+      },
+      settingsSaveStatus: "idle",
+      settingsSaveError: "",
+    },
+  };
+
+  saveSettings.resolve({
+    schemaVersion: 1,
+    updatedAt: "2026-04-21T12:30:00.000Z",
+    updatedBy: "owner-1",
+    actionPreferences: {
+      detailedConfiguration: false,
+      unified: {
+        providerId: "openai",
+        modelId: "gpt-5.4-mini",
+      },
+      actions: {},
+    },
+  });
+  await savePromise;
+
+  assert.equal(state.aiSettings.teamShared.teamId, "team-2");
+  assert.equal(state.aiSettings.teamShared.settingsSaveStatus, "idle");
+  assert.equal(
+    state.aiSettings.teamShared.settings.actionPreferences.unified.providerId,
+    "gemini",
   );
 });
 
@@ -2701,6 +2905,51 @@ test("loadAiSettingsPage refreshes a stale ready team state", async () => {
   assert.equal(state.aiSettings.actionConfig.unified.providerId, "openai");
   assert.equal(state.aiSettings.actionConfig.unified.modelId, "gpt-5.4-mini");
   assert.deepEqual(state.aiSettings.actionConfig.savedProviderIds, ["openai"]);
+});
+
+test("loadAiProviderSecret ignores stale responses after switching teams", async () => {
+  resetSessionState();
+  state.screen = "aiKey";
+  state.teams = [
+    createTeamRecord({ teamId: "team-1", teamName: "Team One", githubOrg: "team-one", installationId: 42 }),
+    createTeamRecord({ teamId: "team-2", teamName: "Team Two", githubOrg: "team-two", installationId: 84 }),
+  ];
+  state.selectedTeamId = "team-1";
+  state.auth = {
+    ...state.auth,
+    session: {
+      sessionToken: "broker-session",
+      login: "tester",
+      name: null,
+      avatarUrl: null,
+    },
+  };
+  setActiveStorageLogin("tester");
+
+  const teamOneSecret = createDeferred();
+  invokeHandler = async (command, payload = {}) => {
+    if (command === "load_ai_provider_secret") {
+      if (payload.installationId === 42) {
+        return teamOneSecret.promise;
+      }
+      if (payload.installationId === 84) {
+        return "team-2-secret";
+      }
+    }
+
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  const staleLoadPromise = loadAiProviderSecret(() => {}, { providerId: "openai" });
+
+  state.selectedTeamId = "team-2";
+  await loadAiProviderSecret(() => {}, { providerId: "openai" });
+
+  teamOneSecret.resolve("team-1-secret");
+  await staleLoadPromise;
+
+  assert.equal(state.selectedTeamId, "team-2");
+  assert.equal(state.aiSettings.apiKey, "team-2-secret");
 });
 
 test("runEditorAiReview loads shared team action preferences before choosing the provider", async () => {
