@@ -82,13 +82,21 @@ function editorRowWriteBlockedMessage(options = {}) {
 
 export function markEditorRowsStale(syncResult = {}) {
   if (!state.editorChapter?.chapterId || !Array.isArray(state.editorChapter.rows)) {
-    return false;
+    return {
+      visibleStateChanged: false,
+      stateChangedRowIds: [],
+      deferredStructuralChanged: false,
+    };
   }
 
   const currentHeadSha = normalizeHeadSha(state.editorChapter.chapterBaseCommitSha);
   const oldHeadSha = normalizeHeadSha(syncResult?.oldHeadSha);
   if (currentHeadSha && oldHeadSha && currentHeadSha !== oldHeadSha) {
-    return false;
+    return {
+      visibleStateChanged: false,
+      stateChangedRowIds: [],
+      deferredStructuralChanged: false,
+    };
   }
 
   const changedRowIds = new Set(
@@ -99,7 +107,9 @@ export function markEditorRowsStale(syncResult = {}) {
   );
   const hasDeferredStructuralChanges = (Array.isArray(syncResult.insertedRowIds) ? syncResult.insertedRowIds : []).length > 0;
   const nextDeferredStructuralChanges = state.editorChapter.deferredStructuralChanges || hasDeferredStructuralChanges;
-  let visibleStateChanged = nextDeferredStructuralChanges !== state.editorChapter.deferredStructuralChanges;
+  const deferredStructuralChanged = nextDeferredStructuralChanges !== state.editorChapter.deferredStructuralChanges;
+  let visibleStateChanged = deferredStructuralChanged;
+  const stateChangedRowIds = [];
 
   state.editorChapter = {
     ...state.editorChapter,
@@ -122,6 +132,7 @@ export function markEditorRowsStale(syncResult = {}) {
         const nextRemotelyDeleted = row.remotelyDeleted || deletedRowIds.has(row.rowId);
         if (nextRemotelyDeleted !== row.remotelyDeleted) {
           visibleStateChanged = true;
+          stateChangedRowIds.push(row.rowId);
         }
         return {
           ...row,
@@ -136,6 +147,7 @@ export function markEditorRowsStale(syncResult = {}) {
       }
 
       visibleStateChanged = true;
+      stateChangedRowIds.push(row.rowId);
       return {
         ...row,
         freshness: nextFreshness,
@@ -144,7 +156,11 @@ export function markEditorRowsStale(syncResult = {}) {
     }),
   };
 
-  return visibleStateChanged;
+  return {
+    visibleStateChanged,
+    stateChangedRowIds,
+    deferredStructuralChanged,
+  };
 }
 
 export async function reloadEditorRowFromDisk(render, rowId, options = {}) {
@@ -199,7 +215,14 @@ export async function reloadEditorRowFromDisk(render, rowId, options = {}) {
       }
 
       const updatedRow = applyRowReloadedFromDisk(rowId, payloadRow, payload?.chapterBaseCommitSha ?? null);
-      render?.();
+      render?.({
+        scope: "translate-visible-rows",
+        rowIds: [rowId],
+        reason: "row-reload",
+      });
+      if (state.editorChapter?.activeRowId === rowId) {
+        render?.({ scope: "translate-sidebar" });
+      }
       return updatedRow;
     } catch (error) {
       if (options.suppressNotice !== true) {

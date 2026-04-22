@@ -141,6 +141,59 @@ function createRenderRecorder() {
   return render;
 }
 
+function createEditorRowFixture(overrides = {}) {
+  const fieldStates = {
+    es: { reviewed: false, pleaseCheck: false },
+    en: { reviewed: false, pleaseCheck: false },
+  };
+  return {
+    rowId: "row-1",
+    orderKey: "00001",
+    lifecycleState: "active",
+    freshness: "fresh",
+    remotelyDeleted: false,
+    commentCount: 0,
+    commentsRevision: 0,
+    saveStatus: "idle",
+    saveError: "",
+    textStyle: "paragraph",
+    textStyleSaveState: { status: "idle", error: "" },
+    markerSaveState: { status: "idle", error: "", languageCode: null, kind: null },
+    fields: { es: "hola", en: "hello" },
+    footnotes: { es: "", en: "" },
+    imageCaptions: { es: "", en: "" },
+    images: { es: null, en: null },
+    persistedFields: { es: "hola", en: "hello" },
+    persistedFootnotes: { es: "", en: "" },
+    persistedImageCaptions: { es: "", en: "" },
+    persistedImages: { es: null, en: null },
+    fieldStates: cloneValue(fieldStates),
+    persistedFieldStates: cloneValue(fieldStates),
+    conflictState: null,
+    ...overrides,
+  };
+}
+
+function createRemoteRowPayload(rowId, overrides = {}) {
+  return {
+    rowId,
+    orderKey: "00001",
+    lifecycleState: "active",
+    commentCount: 0,
+    commentsRevision: 0,
+    textStyle: "paragraph",
+    fields: { es: "hola remoto", en: "hello remote" },
+    footnotes: { es: "", en: "" },
+    imageCaptions: { es: "", en: "" },
+    images: { es: null, en: null },
+    fieldStates: {
+      es: { reviewed: false, pleaseCheck: false },
+      en: { reviewed: false, pleaseCheck: false },
+    },
+    ...overrides,
+  };
+}
+
 function installEditorFixture() {
   resetSessionState();
   state.auth.session = {
@@ -250,15 +303,7 @@ test("syncEditorBackgroundNow reruns after an older in-flight sync when a new lo
 
 test("background sync does not rerender the editor body when sync starts or finishes without visible changes", async () => {
   installEditorFixture();
-  state.editorChapter.rows = [{
-    rowId: "row-1",
-    freshness: "fresh",
-    remotelyDeleted: false,
-    fields: { es: "hola", en: "hello" },
-    persistedFields: { es: "hola", en: "hello" },
-    fieldStates: { es: { reviewed: false, pleaseCheck: false }, en: { reviewed: false, pleaseCheck: false } },
-    persistedFieldStates: { es: { reviewed: false, pleaseCheck: false }, en: { reviewed: false, pleaseCheck: false } },
-  }];
+  state.editorChapter.rows = [createEditorRowFixture()];
 
   const syncRequest = deferred();
   invokeHandler = async (command) => {
@@ -287,17 +332,103 @@ test("background sync does not rerender the editor body when sync starts or fini
   assert.equal(state.editorChapter.chapterBaseCommitSha, "head-2");
 });
 
-test("background sync rerenders the editor body when row freshness changes", async () => {
+test("background sync auto-refreshes a safe changed row through the visible-row patch path", async () => {
   installEditorFixture();
-  state.editorChapter.rows = [{
-    rowId: "row-1",
-    freshness: "fresh",
-    remotelyDeleted: false,
-    fields: { es: "hola", en: "hello" },
-    persistedFields: { es: "hola", en: "hello" },
-    fieldStates: { es: { reviewed: false, pleaseCheck: false }, en: { reviewed: false, pleaseCheck: false } },
-    persistedFieldStates: { es: { reviewed: false, pleaseCheck: false }, en: { reviewed: false, pleaseCheck: false } },
-  }];
+  state.editorChapter.rows = [createEditorRowFixture()];
+
+  const syncRequest = deferred();
+  invokeHandler = async (command) => {
+    if (command === "sync_gtms_project_editor_repo") {
+      return syncRequest.promise;
+    }
+    if (command === "load_gtms_editor_row") {
+      return {
+        chapterBaseCommitSha: "head-2",
+        row: createRemoteRowPayload("row-1", {
+          fields: { es: "hola remoto", en: "hello remote updated" },
+        }),
+      };
+    }
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  const render = createRenderRecorder();
+  startEditorBackgroundSyncSession(render);
+  await Promise.resolve();
+
+  const pendingSync = syncEditorBackgroundNow(render, { skipDirtyFlush: true });
+  syncRequest.resolve({
+    changedRowIds: ["row-1"],
+    deletedRowIds: [],
+    insertedRowIds: [],
+    newHeadSha: "head-2",
+  });
+  await pendingSync;
+
+  assert.deepEqual(render.calls, [{
+    scope: "translate-visible-rows",
+    rowIds: ["row-1"],
+    reason: "row-reload",
+  }]);
+  assert.equal(state.editorChapter.rows[0]?.freshness, "fresh");
+  assert.equal(state.editorChapter.rows[0]?.fields?.en, "hello remote updated");
+  assert.deepEqual(
+    invokeLog
+      .filter((entry) => entry.command === "load_gtms_editor_row")
+      .map((entry) => entry.payload.input?.rowId),
+    ["row-1"],
+  );
+});
+
+test("background sync keeps conflicting rows on the conservative path", async () => {
+  installEditorFixture();
+  state.editorChapter.rows = [createEditorRowFixture({
+    freshness: "conflict",
+    saveStatus: "conflict",
+  })];
+
+  const syncRequest = deferred();
+  invokeHandler = async (command) => {
+    if (command === "sync_gtms_project_editor_repo") {
+      return syncRequest.promise;
+    }
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  const render = createRenderRecorder();
+  startEditorBackgroundSyncSession(render);
+  await Promise.resolve();
+
+  const pendingSync = syncEditorBackgroundNow(render, { skipDirtyFlush: true });
+  syncRequest.resolve({
+    changedRowIds: ["row-1"],
+    deletedRowIds: ["row-1"],
+    insertedRowIds: [],
+    newHeadSha: "head-2",
+  });
+  await pendingSync;
+
+  assert.deepEqual(render.calls, [{ scope: "translate-body" }]);
+  assert.equal(state.editorChapter.rows[0]?.freshness, "conflict");
+  assert.equal(state.editorChapter.rows[0]?.remotelyDeleted, true);
+  assert.deepEqual(
+    invokeLog.filter((entry) => entry.command === "load_gtms_editor_row"),
+    [],
+  );
+});
+
+test("background sync keeps the active row on the conservative stale path", async () => {
+  installEditorFixture();
+  state.editorChapter.rows = [createEditorRowFixture()];
+  state.editorChapter = {
+    ...state.editorChapter,
+    activeRowId: "row-1",
+    activeLanguageCode: "en",
+    mainFieldEditor: {
+      rowId: "row-1",
+      languageCode: "en",
+    },
+  };
 
   const syncRequest = deferred();
   invokeHandler = async (command) => {
@@ -322,19 +453,49 @@ test("background sync rerenders the editor body when row freshness changes", asy
 
   assert.deepEqual(render.calls, [{ scope: "translate-body" }]);
   assert.equal(state.editorChapter.rows[0]?.freshness, "stale");
+  assert.deepEqual(
+    invokeLog.filter((entry) => entry.command === "load_gtms_editor_row"),
+    [],
+  );
+});
+
+test("background sync keeps structural changes on the conservative path", async () => {
+  installEditorFixture();
+  state.editorChapter.rows = [createEditorRowFixture()];
+
+  const syncRequest = deferred();
+  invokeHandler = async (command) => {
+    if (command === "sync_gtms_project_editor_repo") {
+      return syncRequest.promise;
+    }
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  const render = createRenderRecorder();
+  startEditorBackgroundSyncSession(render);
+  await Promise.resolve();
+
+  const pendingSync = syncEditorBackgroundNow(render, { skipDirtyFlush: true });
+  syncRequest.resolve({
+    changedRowIds: ["row-1"],
+    deletedRowIds: [],
+    insertedRowIds: ["row-2"],
+    newHeadSha: "head-2",
+  });
+  await pendingSync;
+
+  assert.deepEqual(render.calls, [{ scope: "translate-body" }]);
+  assert.equal(state.editorChapter.rows[0]?.freshness, "stale");
+  assert.equal(state.editorChapter.deferredStructuralChanges, true);
+  assert.deepEqual(
+    invokeLog.filter((entry) => entry.command === "load_gtms_editor_row"),
+    [],
+  );
 });
 
 test("background sync ignores stale row updates from an obsolete sync base", async () => {
   installEditorFixture();
-  state.editorChapter.rows = [{
-    rowId: "row-1",
-    freshness: "fresh",
-    remotelyDeleted: false,
-    fields: { es: "hola", en: "hello" },
-    persistedFields: { es: "hola", en: "hello" },
-    fieldStates: { es: { reviewed: false, pleaseCheck: false }, en: { reviewed: false, pleaseCheck: false } },
-    persistedFieldStates: { es: { reviewed: false, pleaseCheck: false }, en: { reviewed: false, pleaseCheck: false } },
-  }];
+  state.editorChapter.rows = [createEditorRowFixture()];
 
   const syncRequest = deferred();
   invokeHandler = async (command) => {
@@ -366,6 +527,10 @@ test("background sync ignores stale row updates from an obsolete sync base", asy
   assert.deepEqual(render.calls, []);
   assert.equal(state.editorChapter.rows[0]?.freshness, "fresh");
   assert.equal(state.editorChapter.chapterBaseCommitSha, "head-2");
+  assert.deepEqual(
+    invokeLog.filter((entry) => entry.command === "load_gtms_editor_row"),
+    [],
+  );
 });
 
 test("background sync skips skipDirtyFlush requests while row writes are still pending", async () => {

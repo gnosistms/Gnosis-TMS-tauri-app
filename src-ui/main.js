@@ -36,7 +36,7 @@ import {
   applyEditorRegressionSoftDelete,
   readEditorRegressionSnapshot,
 } from "./app/editor-regression-fixture.js";
-import { patchMountedEditorRow } from "./app/editor-row-patch.js";
+import { patchMountedEditorRows } from "./app/editor-row-patch.js";
 import { readDevRuntimeFlags } from "./app/dev-runtime-flags.js";
 import {
   captureFocusedInputState,
@@ -70,6 +70,10 @@ import {
   state,
 } from "./app/state.js";
 import { noteGlossaryBackgroundSyncScrollActivity } from "./app/glossary-background-sync.js";
+import {
+  startEditorBackgroundSyncSession,
+  syncEditorBackgroundNow,
+} from "./app/editor-background-sync.js";
 import {
   flushDirtyEditorRows,
   noteEditorBackgroundSyncScrollActivity,
@@ -360,7 +364,17 @@ function renderTranslateHeaderOnly() {
   }
 }
 
+function renderTranslateVisibleRowsOnly(options = {}) {
+  return patchMountedEditorRows(app, state, options?.rowIds, {
+    reason: options?.reason,
+  });
+}
+
 function renderWithOptions(options = {}) {
+  if (options?.scope === "translate-visible-rows" && state.screen === "translate") {
+    return renderTranslateVisibleRowsOnly(options);
+  }
+
   if (options?.scope === "translate-body" && state.screen === "translate") {
     renderTranslateBodyOnly();
     return;
@@ -496,6 +510,19 @@ window.__gnosisDebug = {
     await flushDirtyEditorRows(render);
     return readEditorRegressionSnapshot(state);
   },
+  async runEditorBackgroundSync(options = {}) {
+    await bootstrapPromise.catch(() => undefined);
+    startEditorBackgroundSyncSession(render);
+    const payload = await syncEditorBackgroundNow(render, {
+      skipDirtyFlush: options?.skipDirtyFlush === true,
+      afterLocalCommit: options?.afterLocalCommit === true,
+    });
+    await waitForNextAnimationFrames(2);
+    return {
+      payload,
+      state: readEditorRegressionSnapshot(state),
+    };
+  },
   softDeleteFixtureRow(rowId) {
     const summary = applyEditorRegressionSoftDelete(state, rowId);
     if (summary) {
@@ -522,7 +549,9 @@ window.__gnosisDebug = {
       };
     }
 
-    const patchSummary = patchMountedEditorRow(app, state, rowId, {
+    const patchSummary = render({
+      scope: "translate-visible-rows",
+      rowIds: [rowId],
       reason: "debug-row-patch",
     });
     await waitForNextAnimationFrames(2);

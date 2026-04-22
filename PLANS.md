@@ -23,9 +23,12 @@ Replace the current stale-badge-only behavior for safe row updates with targeted
 - Structural live insertion/reordering of rows during background sync
 - Replacement of the current conflict-handling model
 - Large UI redesigns or unrelated cleanup
+- Redesign of remote sync cadence/policy (for example, true push/pull every 5 minutes)
 
 ## current problem
 Background sync detects remote changes but currently marks rows stale instead of applying safe row updates directly. This avoids layout bugs but leaves the user with manual refresh behavior. A naive implementation that rerenders the whole editor body every few seconds would likely create scroll jank and risk height-cache errors.
+
+This plan assumes a sync result is already available. The policy for when remote sync runs is a separate concern and can be changed later without changing the row-patch design.
 
 ## target design
 Introduce a narrow virtualization seam that supports row-level patching safely.
@@ -88,7 +91,7 @@ Success criteria:
 
 ### M4: wire background sync to auto-refresh safe rows
 Goal:
-Replace stale-badge-only behavior for safe changed existing rows.
+Replace stale-badge-only behavior for safe changed existing rows once a sync result is available.
 
 Safe rows are:
 - existing rows
@@ -105,13 +108,13 @@ Unsafe rows remain on current behavior:
 - inserted or reordered rows
 
 Deliverables:
-- background sync filters changed rows into safe and unsafe sets
+- sync-result handling filters changed rows into safe and unsafe sets
 - safe rows are reloaded and patched
 - unsafe rows remain stale/conflict
 - structural changes remain deferred
 
 Success criteria:
-- safe remote updates appear automatically
+- safe remote updates appear automatically when a sync result arrives
 - unsafe cases still protect local edits
 - no structural live-update bugs introduced
 

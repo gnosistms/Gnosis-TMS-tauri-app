@@ -1,9 +1,11 @@
 import { requireBrokerSession } from "./auth-flow.js";
+import { rowHasUnresolvedEditorConflict } from "./editor-conflicts.js";
 import {
   flushDirtyEditorRows as flushDirtyEditorRowsFlow,
   hasPendingEditorWrites as hasPendingEditorWritesFlow,
 } from "./editor-persistence-flow.js";
-import { markEditorRowsStale } from "./editor-row-sync-flow.js";
+import { rowHasPersistedChanges } from "./editor-row-persistence-model.js";
+import { markEditorRowsStale, reloadEditorRowFromDisk } from "./editor-row-sync-flow.js";
 import {
   applyEditorSelectionsToProjectState,
   updateEditorChapterRow,
@@ -14,9 +16,11 @@ import { state } from "./state.js";
 import { showNoticeBadge } from "./status-feedback.js";
 import { classifySyncError } from "./sync-error.js";
 import { handleSyncFailure } from "./sync-recovery.js";
+import { findEditorRowById } from "./editor-utils.js";
 
 const EDITOR_SYNC_IDLE_MS = 10_000;
 const EDITOR_SYNC_LOCAL_COMMIT_THRESHOLD = 5;
+const EDITOR_SYNC_AUTO_REFRESH_ROW_LIMIT = 8;
 
 const editorBackgroundSyncSession = {
   key: "",
@@ -95,6 +99,122 @@ function setEditorBackgroundSyncState(status, error = "") {
   };
 }
 
+function normalizeSyncRowIds(rowIds) {
+  if (!Array.isArray(rowIds) || rowIds.length === 0) {
+    return [];
+  }
+
+  const normalizedRowIds = [];
+  const seen = new Set();
+  rowIds.forEach((rowId) => {
+    const normalizedRowId =
+      typeof rowId === "string" && rowId.trim()
+        ? rowId.trim()
+        : "";
+    if (!normalizedRowId || seen.has(normalizedRowId)) {
+      return;
+    }
+
+    seen.add(normalizedRowId);
+    normalizedRowIds.push(normalizedRowId);
+  });
+
+  return normalizedRowIds;
+}
+
+function editorControlOwnsRow(editorState, rowId) {
+  return (
+    editorState
+    && typeof editorState === "object"
+    && editorState.rowId === rowId
+  );
+}
+
+function rowHasProtectedEditorState(rowId, chapterState = state.editorChapter) {
+  if (!rowId || !chapterState?.chapterId) {
+    return false;
+  }
+
+  return (
+    chapterState.activeRowId === rowId
+    || editorControlOwnsRow(chapterState.mainFieldEditor, rowId)
+    || editorControlOwnsRow(chapterState.footnoteEditor, rowId)
+    || editorControlOwnsRow(chapterState.imageCaptionEditor, rowId)
+    || editorControlOwnsRow(chapterState.imageEditor, rowId)
+  );
+}
+
+function rowIsSafeForBackgroundRefresh(rowId, chapterState = state.editorChapter) {
+  if (!rowId || !chapterState?.chapterId) {
+    return false;
+  }
+
+  const row = findEditorRowById(rowId, chapterState);
+  if (!row || row.lifecycleState === "deleted") {
+    return false;
+  }
+
+  if (rowHasProtectedEditorState(rowId, chapterState)) {
+    return false;
+  }
+
+  if (rowHasPersistedChanges(row) || row.freshness === "staleDirty") {
+    return false;
+  }
+
+  if (rowHasUnresolvedEditorConflict(row)) {
+    return false;
+  }
+
+  if (row.remotelyDeleted === true) {
+    return false;
+  }
+
+  return true;
+}
+
+function collectSafeBackgroundRefreshRowIds(syncResult = {}, chapterState = state.editorChapter) {
+  const insertedRowIds = normalizeSyncRowIds(syncResult?.insertedRowIds);
+  if (insertedRowIds.length > 0) {
+    return [];
+  }
+
+  const changedRowIds = normalizeSyncRowIds(syncResult?.changedRowIds);
+  if (changedRowIds.length === 0 || changedRowIds.length > EDITOR_SYNC_AUTO_REFRESH_ROW_LIMIT) {
+    return [];
+  }
+
+  return changedRowIds.filter((rowId) => rowIsSafeForBackgroundRefresh(rowId, chapterState));
+}
+
+async function reloadBackgroundSyncSafeRows(render, rowIds) {
+  const successfulRowIds = [];
+  for (const rowId of normalizeSyncRowIds(rowIds)) {
+    const updatedRow = await reloadEditorRowFromDisk(render, rowId, {
+      suppressNotice: true,
+    });
+    if (updatedRow?.lifecycleState === "active") {
+      successfulRowIds.push(rowId);
+    }
+  }
+
+  return successfulRowIds;
+}
+
+function shouldRerenderBodyAfterSync(markResult, refreshedRowIds = []) {
+  if (!markResult?.visibleStateChanged) {
+    return false;
+  }
+
+  if (markResult.deferredStructuralChanged === true) {
+    return true;
+  }
+
+  const refreshedRowIdSet = new Set(normalizeSyncRowIds(refreshedRowIds));
+  return (Array.isArray(markResult.stateChangedRowIds) ? markResult.stateChangedRowIds : [])
+    .some((rowId) => !refreshedRowIdSet.has(rowId));
+}
+
 async function inspectPendingLocalCommitCount() {
   const input = activeEditorSyncInput();
   if (!input) {
@@ -146,15 +266,29 @@ async function runEditorBackgroundSync(render, options = {}) {
       return null;
     }
 
-    if (syncResultMatchesCurrentChapterHead(payload)) {
+    const matchesCurrentHead = syncResultMatchesCurrentChapterHead(payload);
+    if (matchesCurrentHead) {
       editorBackgroundSyncSession.lastSyncedHeadSha =
         normalizeHeadSha(payload?.newHeadSha)
         ?? normalizeHeadSha(payload?.oldHeadSha)
         ?? editorBackgroundSyncSession.lastSyncedHeadSha;
     }
-    const visibleChangesApplied = markEditorRowsStale(payload);
+
+    if (!matchesCurrentHead) {
+      setEditorBackgroundSyncState("idle", "");
+      if (hadVisibleErrorBanner) {
+        render?.({ scope: "translate-body" });
+      }
+      return payload ?? null;
+    }
+
+    const safeRefreshRowIds = collectSafeBackgroundRefreshRowIds(payload);
+    const markResult = markEditorRowsStale(payload);
+    const refreshedRowIds = safeRefreshRowIds.length > 0
+      ? await reloadBackgroundSyncSafeRows(render, safeRefreshRowIds)
+      : [];
     setEditorBackgroundSyncState("idle", "");
-    if (visibleChangesApplied || hadVisibleErrorBanner) {
+    if (shouldRerenderBodyAfterSync(markResult, refreshedRowIds) || hadVisibleErrorBanner) {
       render?.({ scope: "translate-body" });
     }
     return payload ?? null;

@@ -635,6 +635,123 @@ async function flushDirtyRows(page) {
   });
 }
 
+async function runEditorBackgroundSync(page, options = {}) {
+  return await page.evaluate(async (syncOptions) => {
+    return await window.__gnosisDebug.runEditorBackgroundSync(syncOptions);
+  }, options);
+}
+
+async function installBackgroundSyncMock(page, options = {}) {
+  const {
+    changedRowIds = [],
+    deletedRowIds = [],
+    insertedRowIds = [],
+    rowsById = {},
+    newHeadSha = "mock-sync-head",
+  } = options;
+
+  await page.evaluate(({
+    nextChangedRowIds,
+    nextDeletedRowIds,
+    nextInsertedRowIds,
+    nextRowsById,
+    nextHeadSha,
+  }) => {
+    const existingFixture = globalThis.__gnosisBackgroundSyncFixture ?? {};
+    globalThis.__gnosisBackgroundSyncFixture = {
+      rowsById: {
+        ...(existingFixture.rowsById ?? {}),
+        ...nextRowsById,
+      },
+      changedRowIds: [...nextChangedRowIds],
+      deletedRowIds: [...nextDeletedRowIds],
+      insertedRowIds: [...nextInsertedRowIds],
+      newHeadSha: nextHeadSha,
+    };
+
+    function buildMockEditorRow(rowId, rowPatch = {}, headSha) {
+      const rowNumberToken = String(rowId ?? "").match(/(\d+)$/)?.[1] ?? "";
+      return {
+        chapterBaseCommitSha: headSha,
+        row: {
+          rowId,
+          orderKey: rowPatch.orderKey ?? (rowNumberToken ? rowNumberToken.padStart(5, "0") : "00000"),
+          lifecycleState: rowPatch.lifecycleState ?? "active",
+          commentCount: rowPatch.commentCount ?? 0,
+          commentsRevision: rowPatch.commentsRevision ?? 0,
+          textStyle: rowPatch.textStyle ?? "paragraph",
+          fields: {
+            es: rowPatch.sourceText ?? `source ${rowId}`,
+            vi: rowPatch.targetText ?? `target ${rowId}`,
+          },
+          footnotes: {
+            es: rowPatch.footnoteSourceText ?? "",
+            vi: rowPatch.footnoteTargetText ?? "",
+          },
+          imageCaptions: {
+            es: rowPatch.imageCaptionSourceText ?? "",
+            vi: rowPatch.imageCaptionTargetText ?? "",
+          },
+          images: {
+            es: rowPatch.sourceImage ?? null,
+            vi: rowPatch.targetImage ?? null,
+          },
+          fieldStates: rowPatch.fieldStates ?? {
+            es: { reviewed: false, pleaseCheck: false },
+            vi: { reviewed: false, pleaseCheck: false },
+          },
+        },
+      };
+    }
+
+    globalThis.__gnosisMockTauriHandlers = {
+      ...(globalThis.__gnosisMockTauriHandlers ?? {}),
+      async sync_gtms_project_editor_repo() {
+        const fixture = globalThis.__gnosisBackgroundSyncFixture ?? {};
+        return {
+          changedRowIds: Array.isArray(fixture.changedRowIds) ? [...fixture.changedRowIds] : [],
+          deletedRowIds: Array.isArray(fixture.deletedRowIds) ? [...fixture.deletedRowIds] : [],
+          insertedRowIds: Array.isArray(fixture.insertedRowIds) ? [...fixture.insertedRowIds] : [],
+          newHeadSha:
+            typeof fixture.newHeadSha === "string" && fixture.newHeadSha.trim()
+              ? fixture.newHeadSha.trim()
+              : nextHeadSha,
+        };
+      },
+      async load_gtms_editor_row(payload) {
+        const input = payload?.input ?? {};
+        const rowId = String(input.rowId ?? "");
+        const fixture = globalThis.__gnosisBackgroundSyncFixture ?? {};
+        const headSha =
+          typeof fixture.newHeadSha === "string" && fixture.newHeadSha.trim()
+            ? fixture.newHeadSha.trim()
+            : nextHeadSha;
+        return buildMockEditorRow(
+          rowId,
+          fixture.rowsById?.[rowId] ?? {},
+          headSha,
+        );
+      },
+    };
+  }, {
+    nextChangedRowIds: changedRowIds,
+    nextDeletedRowIds: deletedRowIds,
+    nextInsertedRowIds: insertedRowIds,
+    nextRowsById: rowsById,
+    nextHeadSha: newHeadSha,
+  });
+}
+
+async function readEditorScrollDebugEntries(page) {
+  return await page.evaluate(() => window.__gnosisDebug.readEditorScrollDebugEntries());
+}
+
+function hasTranslateBodyRerender(debugEntries) {
+  return debugEntries.some(
+    (entry) => entry.event === "translate-body-rerender" || entry.event === "translate-full-rerender",
+  );
+}
+
 async function readEditorFieldMetrics(page, rowId, languageCode, contentKind = "field") {
   return await page.evaluate(({ rowId: targetRowId, languageCode: targetLanguageCode, contentKind: targetContentKind }) => {
     const field = document.querySelector(
@@ -735,6 +852,35 @@ async function readMountedRowNodeSnapshot(page) {
   });
 }
 
+async function readTopVisibleRowMetrics(page) {
+  return await page.evaluate(() => {
+    const container = document.querySelector(".translate-main-scroll");
+    if (!(container instanceof HTMLElement)) {
+      return null;
+    }
+
+    const containerRect = container.getBoundingClientRect();
+    const rows = [...document.querySelectorAll("[data-editor-row-card]")]
+      .filter((element) => element instanceof HTMLElement)
+      .map((element) => ({
+        element,
+        rect: element.getBoundingClientRect(),
+      }))
+      .filter(({ rect }) => rect.bottom > containerRect.top && rect.top < containerRect.bottom)
+      .sort((left, right) => left.rect.top - right.rect.top);
+    const rowCandidate = rows.find(({ rect }) => rect.bottom > containerRect.top) ?? rows[0] ?? null;
+    if (!(rowCandidate?.element instanceof HTMLElement)) {
+      return null;
+    }
+
+    return {
+      rowId: rowCandidate.element.dataset.rowId ?? "",
+      rowTop: rowCandidate.rect.top - containerRect.top,
+      rowBottom: rowCandidate.rect.bottom - containerRect.top,
+    };
+  });
+}
+
 async function readVisibleRowGapMetrics(page) {
   return await page.evaluate(() => {
     const container = document.querySelector(".translate-main-scroll");
@@ -821,6 +967,31 @@ async function readRowLayoutMetrics(page, rowId, nextRowId) {
   });
 }
 
+async function readSingleRowLayoutMetrics(page, rowId) {
+  return await page.evaluate(({ targetRowId }) => {
+    const container = document.querySelector(".translate-main-scroll");
+    const rowCard = document.querySelector(`[data-editor-row-card][data-row-id="${targetRowId}"]`);
+    const topSpacer = document.querySelector('[data-editor-virtual-spacer="top"]');
+    const bottomSpacer = document.querySelector('[data-editor-virtual-spacer="bottom"]');
+    if (!(container instanceof HTMLElement) || !(rowCard instanceof HTMLElement)) {
+      return null;
+    }
+
+    const rowRect = rowCard.getBoundingClientRect();
+    return {
+      targetHeight: rowRect.height,
+      targetTop: rowRect.top,
+      targetBottom: rowRect.bottom,
+      scrollHeight: container.scrollHeight,
+      scrollTop: container.scrollTop,
+      topSpacerHeight: topSpacer instanceof HTMLElement ? topSpacer.getBoundingClientRect().height : 0,
+      bottomSpacerHeight: bottomSpacer instanceof HTMLElement ? bottomSpacer.getBoundingClientRect().height : 0,
+    };
+  }, {
+    targetRowId: rowId,
+  });
+}
+
 async function countGlossaryMarksForRow(page, rowId) {
   return await page.locator(
     `[data-editor-row-card][data-row-id="${rowId}"] [data-editor-glossary-mark]`,
@@ -894,6 +1065,24 @@ async function readEditorFieldValue(page, rowId, languageCode, contentKind = "fi
     );
     return field instanceof HTMLTextAreaElement ? field.value : null;
   }, { rowId, languageCode, contentKind });
+}
+
+async function readActiveEditorFieldSnapshot(page) {
+  return await page.evaluate(() => {
+    const activeElement = document.activeElement;
+    if (!(activeElement instanceof HTMLTextAreaElement) || !activeElement.matches("[data-editor-row-field]")) {
+      return null;
+    }
+
+    return {
+      rowId: activeElement.dataset.rowId ?? "",
+      languageCode: activeElement.dataset.languageCode ?? "",
+      contentKind: activeElement.dataset.contentKind ?? "",
+      value: activeElement.value,
+      selectionStart: activeElement.selectionStart,
+      selectionEnd: activeElement.selectionEnd,
+    };
+  });
 }
 
 async function activateMainEditorField(page, rowId, languageCode) {
@@ -2510,6 +2699,424 @@ test.describe("editor regressions", () => {
     expect(afterMetrics.bottomSpacerHeight).toBeGreaterThanOrEqual(0);
   });
 
+  test("reloading a stale visible row patches only that mounted row", async ({ page }) => {
+    const targetRowId = "fixture-row-0030";
+    const languageCode = "vi";
+    const reloadedText = Array.from(
+      { length: 20 },
+      (_, index) => `reload patch segment ${index + 1}`,
+    ).join(" ");
+
+    await page.addInitScript(({ targetRowId: expectedRowId, nextText }) => {
+      globalThis.__gnosisMockTauriHandlers = {
+        ...(globalThis.__gnosisMockTauriHandlers ?? {}),
+        async load_gtms_editor_row(payload) {
+          const input = payload?.input ?? {};
+          const rowId = String(input.rowId ?? "");
+          const rowNumberToken = rowId.match(/(\d+)$/)?.[1] ?? "";
+          return {
+            chapterBaseCommitSha: "mock-reload-commit-0030",
+            row: {
+              rowId,
+              orderKey: rowNumberToken ? rowNumberToken.padStart(5, "0") : "00000",
+              lifecycleState: "active",
+              commentCount: 0,
+              commentsRevision: 0,
+              textStyle: "paragraph",
+              fields: {
+                es: rowId === expectedRowId ? "alpha 0030 source text" : `source ${rowId}`,
+                vi: rowId === expectedRowId ? nextText : `target ${rowId}`,
+              },
+              footnotes: {
+                es: "",
+                vi: "",
+              },
+              imageCaptions: {
+                es: "",
+                vi: "",
+              },
+              images: {
+                es: null,
+                vi: null,
+              },
+              fieldStates: {
+                es: { reviewed: false, pleaseCheck: false },
+                vi: { reviewed: false, pleaseCheck: false },
+              },
+            },
+          };
+        },
+      };
+    }, {
+      targetRowId,
+      nextText: reloadedText,
+    });
+
+    await mountEditorFixture(page, { rowCount: 80 }, { mockTauri: true });
+
+    await setTranslateScrollTop(page, 9000);
+    await scrollTranslateRowNearTop(page, targetRowId, 120);
+
+    const targetDisplayField = page.locator(
+      `[data-editor-display-field][data-row-id="${targetRowId}"][data-language-code="${languageCode}"]`,
+    );
+    const targetField = page.locator(
+      `[data-editor-row-field][data-row-id="${targetRowId}"][data-language-code="${languageCode}"]:not([data-content-kind])`,
+    );
+
+    await expect(targetDisplayField).toBeVisible();
+    await targetDisplayField.click();
+    await expect(targetField).toBeVisible();
+    await expect(targetField).toBeFocused();
+
+    const beforeSnapshot = await readMountedRowNodeSnapshot(page);
+    const beforeNodeIdByRowId = new Map(beforeSnapshot.map((entry) => [entry.rowId, entry.nodeId]));
+
+    await page.evaluate((rowId) => {
+      window.__gnosisDebug.setEditorRowSyncState(rowId, {
+        freshness: "stale",
+      });
+    }, targetRowId);
+
+    await targetField.evaluate((element) => {
+      element.dispatchEvent(new FocusEvent("focusin", {
+        bubbles: true,
+      }));
+    });
+    await expect(targetField).toBeFocused();
+    await expect(targetField).toHaveValue(reloadedText);
+
+    const afterSnapshot = await readMountedRowNodeSnapshot(page);
+    const afterNodeIdByRowId = new Map(afterSnapshot.map((entry) => [entry.rowId, entry.nodeId]));
+
+    expect(afterNodeIdByRowId.get(targetRowId)).toBeTruthy();
+    expect(afterNodeIdByRowId.get(targetRowId)).not.toBe(beforeNodeIdByRowId.get(targetRowId));
+
+    const mockState = await readMockTauriState(page);
+    expect(mockState.invocations.some((entry) => entry.command === "load_gtms_editor_row")).toBe(true);
+
+    const gapMetrics = await readVisibleRowGapMetrics(page);
+    expect(gapMetrics).not.toBeNull();
+    expect(gapMetrics.maxViewportGap).toBeLessThanOrEqual(40);
+  });
+
+  test("background sync patches a safe visible row without rerendering the translate body", async ({ page }) => {
+    const targetRowId = "fixture-row-0030";
+    const updatedText = Array.from(
+      { length: 18 },
+      (_, index) => `background sync visible patch ${index + 1}`,
+    ).join(" ");
+
+    await mountEditorFixture(page, { rowCount: 80 }, { mockTauri: true });
+
+    await installBackgroundSyncMock(page, {
+      changedRowIds: [targetRowId],
+      newHeadSha: "mock-sync-head-visible",
+      rowsById: {
+        [targetRowId]: {
+          sourceText: "alpha 0030 source text",
+          targetText: updatedText,
+        },
+      },
+    });
+
+    await setTranslateScrollTop(page, 9000);
+    await scrollTranslateRowNearTop(page, targetRowId, 120);
+    await expect(page.locator(`[data-editor-row-card][data-row-id="${targetRowId}"]`)).toBeVisible();
+
+    const beforeSnapshot = await readMountedRowNodeSnapshot(page);
+    const beforeNodeIdByRowId = new Map(beforeSnapshot.map((entry) => [entry.rowId, entry.nodeId]));
+
+    await page.evaluate(() => window.__gnosisDebug.clearEditorScrollDebugEntries());
+    await runEditorBackgroundSync(page, {
+      skipDirtyFlush: true,
+      afterLocalCommit: true,
+    });
+
+    await expect(
+      page.locator(
+        `[data-editor-row-card][data-row-id="${targetRowId}"] `
+        + '[data-editor-language-cluster][data-language-code="vi"] [data-editor-display-text]',
+      ),
+    ).toContainText("background sync visible patch 1");
+
+    const afterSnapshot = await readMountedRowNodeSnapshot(page);
+    const afterNodeIdByRowId = new Map(afterSnapshot.map((entry) => [entry.rowId, entry.nodeId]));
+    expect(afterNodeIdByRowId.get(targetRowId)).not.toBe(beforeNodeIdByRowId.get(targetRowId));
+
+    const debugEntries = await readEditorScrollDebugEntries(page);
+    expect(hasTranslateBodyRerender(debugEntries)).toBe(false);
+
+    const gapMetrics = await readVisibleRowGapMetrics(page);
+    expect(gapMetrics).not.toBeNull();
+    expect(gapMetrics.maxViewportGap).toBeLessThanOrEqual(40);
+
+    const mockState = await readMockTauriState(page);
+    expect(mockState.invocations.some((entry) => entry.command === "sync_gtms_project_editor_repo")).toBe(true);
+    expect(mockState.invocations.some((entry) => entry.command === "load_gtms_editor_row" && entry.payload?.input?.rowId === targetRowId)).toBe(true);
+  });
+
+  test("background sync reconciles row height changes for a safe visible row", async ({ page }) => {
+    const targetRowId = "fixture-row-0030";
+    const updatedText = Array.from(
+      { length: 30 },
+      (_, index) => `background sync height patch ${index + 1}`,
+    ).join(" ");
+
+    await mountEditorFixture(page, { rowCount: 80 }, { mockTauri: true });
+    await installBackgroundSyncMock(page, {
+      changedRowIds: [targetRowId],
+      newHeadSha: "mock-sync-head-height",
+      rowsById: {
+        [targetRowId]: {
+          targetText: updatedText,
+        },
+      },
+    });
+
+    await setTranslateScrollTop(page, 9000);
+    await scrollTranslateRowNearTop(page, targetRowId, 60);
+
+    const beforeMetrics = await readSingleRowLayoutMetrics(page, targetRowId);
+    expect(beforeMetrics).not.toBeNull();
+
+    await page.evaluate(() => window.__gnosisDebug.clearEditorScrollDebugEntries());
+    await runEditorBackgroundSync(page, {
+      skipDirtyFlush: true,
+      afterLocalCommit: true,
+    });
+
+    await expect(
+      page.locator(
+        `[data-editor-row-card][data-row-id="${targetRowId}"] `
+        + '[data-editor-language-cluster][data-language-code="vi"] [data-editor-display-text]',
+      ),
+    ).toContainText("background sync height patch 1");
+
+    const afterMetrics = await readSingleRowLayoutMetrics(page, targetRowId);
+    expect(afterMetrics).not.toBeNull();
+
+    const targetHeightDelta = afterMetrics.targetHeight - beforeMetrics.targetHeight;
+    const scrollHeightDelta = afterMetrics.scrollHeight - beforeMetrics.scrollHeight;
+
+    expect(targetHeightDelta).toBeGreaterThan(40);
+    expect(Math.abs(scrollHeightDelta - targetHeightDelta)).toBeLessThanOrEqual(24);
+    expect(afterMetrics.bottomSpacerHeight).toBeGreaterThanOrEqual(0);
+
+    const gapMetrics = await readVisibleRowGapMetrics(page);
+    expect(gapMetrics).not.toBeNull();
+    expect(gapMetrics.maxViewportGap).toBeLessThanOrEqual(40);
+
+    const debugEntries = await readEditorScrollDebugEntries(page);
+    expect(hasTranslateBodyRerender(debugEntries)).toBe(false);
+  });
+
+  test("background sync keeps focus on a different active row while patching a safe visible row", async ({ page }) => {
+    const targetRowId = "fixture-row-0030";
+    const activeRowId = "fixture-row-0031";
+    const updatedText = Array.from(
+      { length: 14 },
+      (_, index) => `background sync focus patch ${index + 1}`,
+    ).join(" ");
+
+    await mountEditorFixture(page, { rowCount: 80 }, { mockTauri: true });
+
+    await installBackgroundSyncMock(page, {
+      changedRowIds: [targetRowId],
+      newHeadSha: "mock-sync-head-focus",
+      rowsById: {
+        [targetRowId]: {
+          sourceText: "alpha 0030 source text",
+          targetText: updatedText,
+        },
+      },
+    });
+
+    await setTranslateScrollTop(page, 9000);
+    await scrollTranslateRowNearTop(page, targetRowId, 120);
+    await expect(page.locator(`[data-editor-row-card][data-row-id="${targetRowId}"]`)).toBeVisible();
+    await expect(page.locator(`[data-editor-row-card][data-row-id="${activeRowId}"]`)).toBeVisible();
+
+    const activeField = await activateMainEditorField(page, activeRowId, "vi");
+    await expect(activeField).toBeVisible();
+    await activeField.evaluate((element) => {
+      element.focus();
+      const targetOffset = Math.max(1, Math.floor(element.value.length / 2));
+      element.setSelectionRange(targetOffset, targetOffset);
+    });
+    await expect(activeField).toBeFocused();
+
+    const beforeFocusSnapshot = await readActiveEditorFieldSnapshot(page);
+    const beforeRowSnapshot = await readMountedRowNodeSnapshot(page);
+    const beforeNodeIdByRowId = new Map(beforeRowSnapshot.map((entry) => [entry.rowId, entry.nodeId]));
+
+    await page.evaluate(() => window.__gnosisDebug.clearEditorScrollDebugEntries());
+    await runEditorBackgroundSync(page, {
+      skipDirtyFlush: true,
+      afterLocalCommit: true,
+    });
+
+    await expect(
+      page.locator(
+        `[data-editor-row-card][data-row-id="${targetRowId}"] `
+        + '[data-editor-language-cluster][data-language-code="vi"] [data-editor-display-text]',
+      ),
+    ).toContainText("background sync focus patch 1");
+    await expect(activeField).toBeFocused();
+
+    const afterFocusSnapshot = await readActiveEditorFieldSnapshot(page);
+    expect(afterFocusSnapshot).not.toBeNull();
+    expect(afterFocusSnapshot?.rowId).toBe(activeRowId);
+    expect(afterFocusSnapshot?.languageCode).toBe("vi");
+    expect(afterFocusSnapshot?.value).toBe(beforeFocusSnapshot?.value);
+    expect(afterFocusSnapshot?.selectionStart).toBe(beforeFocusSnapshot?.selectionStart);
+    expect(afterFocusSnapshot?.selectionEnd).toBe(beforeFocusSnapshot?.selectionEnd);
+
+    const editorState = await page.evaluate(() => window.__gnosisDebug.readEditorState());
+    expect(editorState.activeRowId).toBe(activeRowId);
+    expect(editorState.mainFieldEditor).toEqual({
+      rowId: activeRowId,
+      languageCode: "vi",
+    });
+
+    const afterRowSnapshot = await readMountedRowNodeSnapshot(page);
+    const afterNodeIdByRowId = new Map(afterRowSnapshot.map((entry) => [entry.rowId, entry.nodeId]));
+    expect(afterNodeIdByRowId.get(targetRowId)).not.toBe(beforeNodeIdByRowId.get(targetRowId));
+
+    const debugEntries = await readEditorScrollDebugEntries(page);
+    expect(hasTranslateBodyRerender(debugEntries)).toBe(false);
+  });
+
+  test("background sync updates a safe offscreen row in state without rerendering the translate body", async ({ page }) => {
+    const targetRowId = "fixture-row-0060";
+    const updatedText = Array.from(
+      { length: 16 },
+      (_, index) => `background sync offscreen patch ${index + 1}`,
+    ).join(" ");
+
+    await mountEditorFixture(page, { rowCount: 80 }, { mockTauri: true });
+
+    await installBackgroundSyncMock(page, {
+      changedRowIds: [targetRowId],
+      newHeadSha: "mock-sync-head-offscreen",
+      rowsById: {
+        [targetRowId]: {
+          sourceText: "alpha 0060 source text",
+          targetText: updatedText,
+        },
+      },
+    });
+
+    const targetRow = page.locator(`[data-editor-row-card][data-row-id="${targetRowId}"]`);
+    await expect(targetRow).toHaveCount(0);
+
+    const beforeSnapshot = await readMountedRowNodeSnapshot(page);
+
+    await page.evaluate(() => window.__gnosisDebug.clearEditorScrollDebugEntries());
+    await runEditorBackgroundSync(page, {
+      skipDirtyFlush: true,
+      afterLocalCommit: true,
+    });
+
+    const afterSnapshot = await readMountedRowNodeSnapshot(page);
+    expect(afterSnapshot).toEqual(beforeSnapshot);
+
+    const debugEntries = await readEditorScrollDebugEntries(page);
+    expect(hasTranslateBodyRerender(debugEntries)).toBe(false);
+
+    await page.locator("[data-editor-search-input]").fill("0060");
+    await expect(targetRow).toBeVisible();
+    await expect(
+      page.locator(
+        `[data-editor-row-card][data-row-id="${targetRowId}"] `
+        + '[data-editor-language-cluster][data-language-code="vi"] [data-editor-display-text]',
+      ),
+    ).toContainText("background sync offscreen patch 1");
+
+    const mockState = await readMockTauriState(page);
+    expect(mockState.invocations.some((entry) => entry.command === "sync_gtms_project_editor_repo")).toBe(true);
+    expect(mockState.invocations.some((entry) => entry.command === "load_gtms_editor_row" && entry.payload?.input?.rowId === targetRowId)).toBe(true);
+  });
+
+  test("background sync repeated safe visible row patch cycles keep the viewport gap-free", async ({ page }) => {
+    const targetRowId = "fixture-row-0030";
+    const cycleTexts = [
+      Array.from({ length: 10 }, (_, index) => `background sync cycle one ${index + 1}`).join(" "),
+      Array.from({ length: 30 }, (_, index) => `background sync cycle two ${index + 1}`).join(" "),
+      Array.from({ length: 8 }, (_, index) => `background sync cycle three ${index + 1}`).join(" "),
+      Array.from({ length: 24 }, (_, index) => `background sync cycle four ${index + 1}`).join(" "),
+    ];
+
+    await mountEditorFixture(page, { rowCount: 80 }, { mockTauri: true });
+    await installBackgroundSyncMock(page, {
+      changedRowIds: [targetRowId],
+      newHeadSha: "mock-sync-head-cycle-0",
+      rowsById: {
+        [targetRowId]: {
+          targetText: cycleTexts[0],
+        },
+      },
+    });
+
+    await setTranslateScrollTop(page, 9000);
+    await scrollTranslateRowNearTop(page, targetRowId, 120);
+    await expect(page.locator(`[data-editor-row-card][data-row-id="${targetRowId}"]`)).toBeVisible();
+
+    let previousNodeIdByRowId = new Map(
+      (await readMountedRowNodeSnapshot(page)).map((entry) => [entry.rowId, entry.nodeId]),
+    );
+
+    await page.evaluate(() => window.__gnosisDebug.clearEditorScrollDebugEntries());
+
+    for (const [index, nextText] of cycleTexts.entries()) {
+      await installBackgroundSyncMock(page, {
+        changedRowIds: [targetRowId],
+        newHeadSha: `mock-sync-head-cycle-${index + 1}`,
+        rowsById: {
+          [targetRowId]: {
+            targetText: nextText,
+          },
+        },
+      });
+
+      await runEditorBackgroundSync(page, {
+        skipDirtyFlush: true,
+        afterLocalCommit: true,
+      });
+
+      await expect(
+        page.locator(
+          `[data-editor-row-card][data-row-id="${targetRowId}"] `
+          + '[data-editor-language-cluster][data-language-code="vi"] [data-editor-display-text]',
+        ),
+      ).toContainText(nextText.split(" ").slice(0, 4).join(" "));
+
+      const afterSnapshot = await readMountedRowNodeSnapshot(page);
+      const afterNodeIdByRowId = new Map(afterSnapshot.map((entry) => [entry.rowId, entry.nodeId]));
+      expect(afterNodeIdByRowId.get(targetRowId)).not.toBe(previousNodeIdByRowId.get(targetRowId));
+
+      const gapMetrics = await readVisibleRowGapMetrics(page);
+      expect(gapMetrics).not.toBeNull();
+      expect(gapMetrics.rowCount).toBeGreaterThan(0);
+      expect(gapMetrics.maxViewportGap).toBeLessThanOrEqual(40);
+
+      previousNodeIdByRowId = afterNodeIdByRowId;
+    }
+
+    const debugEntries = await readEditorScrollDebugEntries(page);
+    expect(hasTranslateBodyRerender(debugEntries)).toBe(false);
+
+    const mockState = await readMockTauriState(page);
+    expect(
+      mockState.invocations.filter((entry) => entry.command === "sync_gtms_project_editor_repo").length,
+    ).toBeGreaterThanOrEqual(cycleTexts.length);
+    expect(
+      mockState.invocations.filter(
+        (entry) => entry.command === "load_gtms_editor_row" && entry.payload?.input?.rowId === targetRowId,
+      ).length,
+    ).toBeGreaterThanOrEqual(cycleTexts.length);
+  });
+
   for (const { label, platform } of [
     { label: "Windows", platform: "windows" },
     { label: "Mac", platform: "mac" },
@@ -2544,11 +3151,17 @@ test.describe("editor regressions", () => {
 
       await page.waitForTimeout(150);
       const afterScrollInput = await readTranslateScrollTop(page);
+      const afterScrollRow = await readTopVisibleRowMetrics(page);
 
       await page.waitForTimeout(450);
       const laterScrollTop = await readTranslateScrollTop(page);
+      const laterRow = await readTopVisibleRowMetrics(page);
 
       expect(Math.abs(laterScrollTop - afterScrollInput)).toBeLessThan(80);
+      expect(afterScrollRow).not.toBeNull();
+      expect(laterRow).not.toBeNull();
+      expect(laterRow.rowId).toBe(afterScrollRow.rowId);
+      expect(Math.abs(laterRow.rowTop - afterScrollRow.rowTop)).toBeLessThanOrEqual(24);
     });
 
     test(`a second shallow ${label}-mode scroll does not reuse a stale deferred anchor`, async ({ page }) => {
@@ -2567,11 +3180,17 @@ test.describe("editor regressions", () => {
 
       await page.waitForTimeout(150);
       const afterSecondScrollInput = await readTranslateScrollTop(page);
+      const afterSecondScrollRow = await readTopVisibleRowMetrics(page);
 
       await page.waitForTimeout(450);
       const laterScrollTop = await readTranslateScrollTop(page);
+      const laterRow = await readTopVisibleRowMetrics(page);
 
       expect(Math.abs(laterScrollTop - afterSecondScrollInput)).toBeLessThan(80);
+      expect(afterSecondScrollRow).not.toBeNull();
+      expect(laterRow).not.toBeNull();
+      expect(laterRow.rowId).toBe(afterSecondScrollRow.rowId);
+      expect(Math.abs(laterRow.rowTop - afterSecondScrollRow.rowTop)).toBeLessThanOrEqual(24);
     });
 
     test(`a longer ${label}-mode scroll does not jump backward after deferred layout`, async ({ page }) => {
@@ -2585,11 +3204,17 @@ test.describe("editor regressions", () => {
 
       await page.waitForTimeout(150);
       const afterScrollInput = await readTranslateScrollTop(page);
+      const afterScrollRow = await readTopVisibleRowMetrics(page);
 
       await page.waitForTimeout(450);
       const laterScrollTop = await readTranslateScrollTop(page);
+      const laterRow = await readTopVisibleRowMetrics(page);
 
       expect(Math.abs(laterScrollTop - afterScrollInput)).toBeLessThan(120);
+      expect(afterScrollRow).not.toBeNull();
+      expect(laterRow).not.toBeNull();
+      expect(laterRow.rowId).toBe(afterScrollRow.rowId);
+      expect(Math.abs(laterRow.rowTop - afterScrollRow.rowTop)).toBeLessThanOrEqual(24);
     });
   }
 

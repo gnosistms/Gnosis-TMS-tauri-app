@@ -340,24 +340,22 @@ function updateSpacerHeight(spacer, height) {
   spacer.style.height = `${Math.max(0, Math.round(height))}px`;
 }
 
-function rangeStartIndex(rangeKey) {
-  if (typeof rangeKey !== "string" || !rangeKey.trim()) {
-    return -1;
-  }
-
-  const [startToken] = rangeKey.split(":");
-  const startIndex = Number.parseInt(startToken, 10);
-  return Number.isInteger(startIndex) ? startIndex : -1;
-}
-
 function shouldRestoreAnchorForRender(reason, previousRangeKey, nextRangeKey) {
   if (reason !== "deferred-scroll-layout") {
     return true;
   }
 
-  const previousStartIndex = rangeStartIndex(previousRangeKey);
-  const nextStartIndex = rangeStartIndex(nextRangeKey);
-  if (previousStartIndex < 0 || nextStartIndex < 0) {
+  const [previousStartToken] =
+    typeof previousRangeKey === "string" && previousRangeKey.trim()
+      ? previousRangeKey.split(":")
+      : [];
+  const [nextStartToken] =
+    typeof nextRangeKey === "string" && nextRangeKey.trim()
+      ? nextRangeKey.split(":")
+      : [];
+  const previousStartIndex = Number.parseInt(previousStartToken ?? "", 10);
+  const nextStartIndex = Number.parseInt(nextStartToken ?? "", 10);
+  if (!Number.isInteger(previousStartIndex) || !Number.isInteger(nextStartIndex)) {
     return false;
   }
 
