@@ -4,14 +4,14 @@ import assert from "node:assert/strict";
 const { createGlossaryEditorState, resetSessionState, state } = await import("../app/state.js");
 const { renderGlossaryEditorScreen } = await import("./glossary-editor.js");
 
-function installGlossaryEditorFixture({ searchQuery = "", terms } = {}) {
+function installGlossaryEditorFixture({ searchQuery = "", terms, canManageProjects = true } = {}) {
   resetSessionState();
   state.selectedTeamId = "team-1";
   state.selectedGlossaryId = "glossary-1";
   state.teams = [
     {
       id: "team-1",
-      canManageProjects: true,
+      canManageProjects,
       githubOrg: "fixture-org",
     },
   ];
@@ -47,6 +47,24 @@ test("glossary editor renders clickable term rows with separate delete actions",
   assert.match(html, /term-grid--row term-grid--row--interactive/);
   assert.match(html, /<div class="term-grid term-grid--row[^"]*"[^>]*data-action="edit-glossary-term:term-1"/);
   assert.match(html, /data-action="delete-glossary-term:term-1"/);
+});
+
+test("glossary editor only shows row edit affordances when the selected team can manage projects", () => {
+  installGlossaryEditorFixture({ canManageProjects: false });
+
+  const lockedHtml = renderGlossaryEditorScreen(state);
+
+  assert.doesNotMatch(lockedHtml, /term-grid--row--interactive/);
+  assert.doesNotMatch(lockedHtml, /data-action="edit-glossary-term:term-1"/);
+  assert.doesNotMatch(lockedHtml, /data-action="delete-glossary-term:term-1"/);
+
+  state.teams[0].canManageProjects = true;
+
+  const unlockedHtml = renderGlossaryEditorScreen(state);
+
+  assert.match(unlockedHtml, /term-grid--row term-grid--row--interactive/);
+  assert.match(unlockedHtml, /data-action="edit-glossary-term:term-1"/);
+  assert.match(unlockedHtml, /data-action="delete-glossary-term:term-1"/);
 });
 
 test("glossary editor search matches ruby visible text and renders ruby markup", () => {

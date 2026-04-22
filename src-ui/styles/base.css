@@ -290,6 +290,7 @@ a {
 
 .page-header--editor .page-header__title {
   font-size: var(--page-title-size);
+  line-height: 1.08;
   max-width: min(100%, 44vw);
   overflow: hidden;
   text-overflow: ellipsis;

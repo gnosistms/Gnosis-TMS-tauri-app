@@ -95,16 +95,37 @@ export async function runEditorAiReview(render) {
     return;
   }
 
+  const requestKey = createAiReviewRequestKey(
+    context.chapterId,
+    context.rowId,
+    context.languageCode,
+  );
+  const previousAiReviewState = normalizeEditorAiReviewState(state.editorChapter.aiReview);
+  state.editorChapter = applyEditorAiReviewLoading(
+    state.editorChapter,
+    context.rowId,
+    context.languageCode,
+    requestKey,
+    context.text,
+  );
+  render?.({ scope: "translate-sidebar" });
+
   const usedStoredTeamActionPreferences = applyStoredSelectedTeamAiActionPreferences(render);
   try {
     await ensureSharedAiActionConfigurationLoaded(render);
   } catch (error) {
     if (selectedProjectsTeam()?.canDelete !== true && !usedStoredTeamActionPreferences) {
-      const requestKey = createAiReviewRequestKey(
-        context.chapterId,
-        context.rowId,
-        context.languageCode,
-      );
+      if (
+        !currentEditorAiReviewRequestMatches(
+          state.editorChapter,
+          context.chapterId,
+          context.rowId,
+          context.languageCode,
+          requestKey,
+        )
+      ) {
+        return;
+      }
       state.editorChapter = applyEditorAiReviewFailed(
         state.editorChapter,
         context.rowId,
@@ -124,15 +145,37 @@ export async function runEditorAiReview(render) {
     const ensureKeyResult = await ensureSelectedTeamAiProviderReady(render, providerId);
     if (!ensureKeyResult?.ok) {
       openAiReviewMissingKeyModal();
-      render?.();
+      if (
+        currentEditorAiReviewRequestMatches(
+          state.editorChapter,
+          context.chapterId,
+          context.rowId,
+          context.languageCode,
+          requestKey,
+        )
+      ) {
+        state.editorChapter = {
+          ...state.editorChapter,
+          aiReview: previousAiReviewState,
+        };
+        render?.({ scope: "translate-sidebar" });
+      } else {
+        render?.();
+      }
       return;
     }
   } catch (error) {
-    const requestKey = createAiReviewRequestKey(
-      context.chapterId,
-      context.rowId,
-      context.languageCode,
-    );
+    if (
+      !currentEditorAiReviewRequestMatches(
+        state.editorChapter,
+        context.chapterId,
+        context.rowId,
+        context.languageCode,
+        requestKey,
+      )
+    ) {
+      return;
+    }
     state.editorChapter = applyEditorAiReviewFailed(
       state.editorChapter,
       context.rowId,
@@ -144,20 +187,6 @@ export async function runEditorAiReview(render) {
     render?.({ scope: "translate-sidebar" });
     return;
   }
-
-  const requestKey = createAiReviewRequestKey(
-    context.chapterId,
-    context.rowId,
-    context.languageCode,
-  );
-  state.editorChapter = applyEditorAiReviewLoading(
-    state.editorChapter,
-    context.rowId,
-    context.languageCode,
-    requestKey,
-    context.text,
-  );
-  render?.({ scope: "translate-sidebar" });
 
   try {
     const payload = await invoke("run_ai_review", {
@@ -193,7 +222,23 @@ export async function runEditorAiReview(render) {
     const message = error instanceof Error ? error.message : String(error);
     if (errorMeansMissingAiKey(message)) {
       openAiReviewMissingKeyModal();
-      render?.();
+      if (
+        currentEditorAiReviewRequestMatches(
+          state.editorChapter,
+          context.chapterId,
+          context.rowId,
+          context.languageCode,
+          requestKey,
+        )
+      ) {
+        state.editorChapter = {
+          ...state.editorChapter,
+          aiReview: previousAiReviewState,
+        };
+        render?.({ scope: "translate-sidebar" });
+      } else {
+        render?.();
+      }
       return;
     }
 

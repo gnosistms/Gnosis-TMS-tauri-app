@@ -332,6 +332,36 @@ test("runEditorAiReview uses the configured provider and model", async () => {
   assert.equal(state.editorChapter.aiReview.suggestedText, "Texto revisado");
 });
 
+test("runEditorAiReview enters loading state before provider readiness resolves", async () => {
+  installTranslateFixture();
+
+  const render = createSpy();
+  const providerReady = createDeferred();
+  invokeHandler = async (command) => {
+    if (command === "load_ai_provider_secret") {
+      return providerReady.promise;
+    }
+    if (command === "run_ai_review") {
+      return {
+        suggestedText: "Texto revisado",
+      };
+    }
+
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  const reviewPromise = runEditorAiReview(render);
+
+  assert.equal(state.editorChapter.aiReview.status, "loading");
+  assert.equal(render.calls.length > 0, true);
+
+  providerReady.resolve("oa-key");
+  await reviewPromise;
+
+  assert.equal(state.editorChapter.aiReview.status, "ready");
+  assert.equal(state.editorChapter.aiReview.suggestedText, "Texto revisado");
+});
+
 test("runEditorAiTranslate uses the configured translate action and persists into the target field", async () => {
   installTranslateFixture();
   state.aiSettings = {
