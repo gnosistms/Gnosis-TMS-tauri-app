@@ -99,6 +99,53 @@ function getRowHeightCache(chapterId, collapsedLanguageCodes, fontSizePx) {
   return rowHeightCacheByLayoutKey.get(cacheKey);
 }
 
+function normalizeEditorRowIds(rowIds) {
+  if (!Array.isArray(rowIds) || rowIds.length === 0) {
+    return [];
+  }
+
+  const normalizedRowIds = [];
+  const seen = new Set();
+  rowIds.forEach((rowId) => {
+    const normalizedRowId =
+      typeof rowId === "string" && rowId.trim()
+        ? rowId.trim()
+        : "";
+    if (!normalizedRowId || seen.has(normalizedRowId)) {
+      return;
+    }
+
+    seen.add(normalizedRowId);
+    normalizedRowIds.push(normalizedRowId);
+  });
+
+  return normalizedRowIds;
+}
+
+function clearCachedRowHeights(rowIds, ...caches) {
+  const normalizedRowIds = normalizeEditorRowIds(rowIds);
+  if (normalizedRowIds.length === 0) {
+    return false;
+  }
+
+  let changed = false;
+  caches.forEach((cache) => {
+    if (!(cache instanceof Map)) {
+      return;
+    }
+
+    normalizedRowIds.forEach((rowId) => {
+      changed = cache.delete(rowId) || changed;
+    });
+  });
+
+  return changed;
+}
+
+function isMountedEditorElement(value) {
+  return typeof HTMLElement !== "undefined" && value instanceof HTMLElement;
+}
+
 function measureRowCardHeight(rowCard, rowHeightCache, stagedRowHeights = null) {
   if (
     !(rowCard instanceof HTMLElement)
@@ -138,15 +185,73 @@ function measureRowCardHeight(rowCard, rowHeightCache, stagedRowHeights = null) 
   return true;
 }
 
-function measureVisibleRowHeights(itemsContainer, rowHeightCache, stagedRowHeights = null) {
+function measureRowCards(rowCards, rowHeightCache, stagedRowHeights = null) {
   let changed = false;
-  itemsContainer.querySelectorAll("[data-editor-row-card]").forEach((element) => {
-    if (measureRowCardHeight(element, rowHeightCache, stagedRowHeights)) {
+  rowCards.forEach((rowCard) => {
+    if (measureRowCardHeight(rowCard, rowHeightCache, stagedRowHeights)) {
       changed = true;
     }
   });
 
   return changed;
+}
+
+function measureVisibleRowHeights(itemsContainer, rowHeightCache, stagedRowHeights = null) {
+  return measureRowCards(
+    itemsContainer.querySelectorAll("[data-editor-row-card]"),
+    rowHeightCache,
+    stagedRowHeights,
+  );
+}
+
+function resolveMountedEditorRowCard(itemsContainer, rowId, source = null) {
+  const sourceRowCard =
+    typeof source?.closest === "function"
+      ? source.closest("[data-editor-row-card]")
+      : null;
+  if (
+    isMountedEditorElement(sourceRowCard)
+    && (!rowId || (sourceRowCard.dataset.rowId ?? "") === rowId)
+  ) {
+    return sourceRowCard;
+  }
+
+  if (
+    !isMountedEditorElement(itemsContainer)
+    || typeof rowId !== "string"
+    || !rowId
+    || typeof CSS === "undefined"
+    || typeof CSS.escape !== "function"
+  ) {
+    return null;
+  }
+
+  const rowCard = itemsContainer.querySelector(
+    `[data-editor-row-card][data-row-id="${CSS.escape(rowId)}"]`,
+  );
+  return isMountedEditorElement(rowCard) ? rowCard : null;
+}
+
+function resolveMountedEditorRowCards(itemsContainer, rowIds, source = null) {
+  const normalizedRowIds = normalizeEditorRowIds(rowIds);
+  if (normalizedRowIds.length === 0) {
+    const sourceRowCard = resolveMountedEditorRowCard(itemsContainer, "", source);
+    return sourceRowCard ? [sourceRowCard] : [];
+  }
+
+  const rowCards = [];
+  const seen = new Set();
+  normalizedRowIds.forEach((rowId) => {
+    const rowCard = resolveMountedEditorRowCard(itemsContainer, rowId, source);
+    if (!isMountedEditorElement(rowCard) || seen.has(rowId)) {
+      return;
+    }
+
+    seen.add(rowId);
+    rowCards.push(rowCard);
+  });
+
+  return rowCards;
 }
 
 function commitStagedRowHeights(rowHeightCache, stagedRowHeights) {
@@ -198,8 +303,20 @@ function captureEditorLayoutAnchor(root) {
   return captureVisibleTranslateRowLocation();
 }
 
+export function notifyEditorRowsChanged(rowIds, options = {}) {
+  return activeController?.notifyRowsChanged?.(rowIds, options) ?? false;
+}
+
+export function notifyEditorRowHeightMayHaveChanged(rowId, source = null, options = {}) {
+  return activeController?.notifyRowHeightMayHaveChanged?.(rowId, source, options) ?? false;
+}
+
 export function syncEditorVirtualizationRowLayout(source) {
-  activeController?.syncRowLayout?.(source);
+  const rowCard = resolveMountedEditorRowCard(null, "", source);
+  const rowId = rowCard?.dataset?.rowId ?? "";
+  return notifyEditorRowHeightMayHaveChanged(rowId, source, {
+    reason: "row-layout",
+  });
 }
 
 export function refreshEditorVirtualizationLayout(anchorSnapshot = null) {
@@ -610,18 +727,76 @@ export function initializeEditorVirtualization(root, appState) {
     });
   };
 
-  const syncRowLayout = (source) => {
-    if (!shouldVirtualize || !(source instanceof Element)) {
-      return;
+  const notifyRowHeightMayHaveChanged = (rowId, source = null, options = {}) => {
+    if (!shouldVirtualize) {
+      return false;
     }
 
-    const rowCard = source.closest("[data-editor-row-card]");
-    if (!measureRowCardHeight(rowCard, rowHeightCache)) {
-      return;
+    const normalizedRowId =
+      typeof rowId === "string" && rowId.trim()
+        ? rowId.trim()
+        : "";
+    const rowCard = resolveMountedEditorRowCard(itemsContainer, normalizedRowId, source);
+    const resolvedRowId = rowCard?.dataset?.rowId ?? normalizedRowId;
+    if (resolvedRowId) {
+      clearCachedRowHeights([resolvedRowId], deferredRowHeightCache);
     }
 
-    scheduleRender("row-layout", {
+    if (isMountedEditorElement(rowCard)) {
+      if (!measureRowCardHeight(rowCard, rowHeightCache)) {
+        return false;
+      }
+    } else if (!resolvedRowId || !clearCachedRowHeights([resolvedRowId], rowHeightCache)) {
+      return false;
+    }
+
+    const reason =
+      typeof options?.reason === "string" && options.reason.trim()
+        ? options.reason.trim()
+        : "row-layout";
+    scheduleRender(reason, {
       anchorSnapshot: captureEditorLayoutAnchor(root),
+    });
+    return true;
+  };
+
+  const notifyRowsChanged = (rowIds, options = {}) => {
+    if (!shouldVirtualize) {
+      return false;
+    }
+
+    const normalizedRowIds = normalizeEditorRowIds(rowIds);
+    if (normalizedRowIds.length === 0) {
+      return false;
+    }
+
+    clearCachedRowHeights(
+      normalizedRowIds,
+      rowHeightCache,
+      deferredRowHeightCache,
+    );
+    const mountedRowCards = resolveMountedEditorRowCards(
+      itemsContainer,
+      normalizedRowIds,
+      options?.source ?? null,
+    );
+    measureRowCards(mountedRowCards, rowHeightCache);
+
+    const reason =
+      typeof options?.reason === "string" && options.reason.trim()
+        ? options.reason.trim()
+        : "row-change";
+    scheduleRender(reason, {
+      anchorSnapshot: captureEditorLayoutAnchor(root),
+    });
+    return true;
+  };
+
+  const syncRowLayout = (source) => {
+    const rowCard = resolveMountedEditorRowCard(itemsContainer, "", source);
+    const rowId = rowCard?.dataset?.rowId ?? "";
+    notifyRowHeightMayHaveChanged(rowId, source, {
+      reason: "row-layout",
     });
   };
 
@@ -710,6 +885,8 @@ export function initializeEditorVirtualization(root, appState) {
   window.addEventListener("resize", handleResize);
 
   activeController = {
+    notifyRowsChanged,
+    notifyRowHeightMayHaveChanged,
     syncRowLayout,
     refreshLayout,
     destroy() {
