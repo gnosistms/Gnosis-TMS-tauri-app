@@ -7,6 +7,7 @@ import {
 import { registerAppEvents } from "./app/events.js";
 import {
   initializeEditorVirtualization,
+  notifyEditorRowsChanged,
 } from "./app/editor-virtualization.js";
 import {
   loadGithubAppTestConfig,
@@ -36,6 +37,8 @@ import {
   applyEditorRegressionSoftDelete,
   readEditorRegressionSnapshot,
 } from "./app/editor-regression-fixture.js";
+import { renderTranslationContentRow } from "./app/editor-row-render.js";
+import { buildEditorScreenViewModel } from "./app/editor-screen-model.js";
 import { readDevRuntimeFlags } from "./app/dev-runtime-flags.js";
 import {
   captureFocusedInputState,
@@ -122,6 +125,138 @@ const titles = {
 };
 
 let bootstrapPromise = Promise.resolve();
+
+function waitForNextAnimationFrames(count = 1) {
+  const frameCount = Number.isInteger(count) && count > 0 ? count : 1;
+  return new Promise((resolve) => {
+    let remaining = frameCount;
+    const tick = () => {
+      if (remaining <= 0) {
+        resolve();
+        return;
+      }
+
+      remaining -= 1;
+      window.requestAnimationFrame(tick);
+    };
+    tick();
+  });
+}
+
+function patchFixtureEditorRowState(rowId, updates = {}) {
+  if (!rowId || !state.editorChapter?.chapterId || !Array.isArray(state.editorChapter.rows)) {
+    return false;
+  }
+
+  let rowChanged = false;
+  state.editorChapter = {
+    ...state.editorChapter,
+    rows: state.editorChapter.rows.map((row) => {
+      if (!row || row.rowId !== rowId) {
+        return row;
+      }
+
+      rowChanged = true;
+      const fieldUpdates =
+        updates?.fields && typeof updates.fields === "object"
+          ? updates.fields
+          : null;
+      const nextFields = fieldUpdates
+        ? {
+            ...(row.fields ?? {}),
+            ...fieldUpdates,
+          }
+        : (row.fields ?? {});
+      const nextPersistedFields = fieldUpdates
+        ? {
+            ...(row.persistedFields ?? {}),
+            ...fieldUpdates,
+          }
+        : (row.persistedFields ?? row.fields ?? {});
+
+      return {
+        ...row,
+        ...(fieldUpdates
+          ? {
+              fields: nextFields,
+              persistedFields: nextPersistedFields,
+            }
+          : {}),
+        ...(typeof updates?.textStyle === "string" && updates.textStyle.trim()
+          ? { textStyle: updates.textStyle.trim() }
+          : {}),
+        ...(typeof updates?.freshness === "string" && updates.freshness.trim()
+          ? { freshness: updates.freshness.trim() }
+          : {}),
+        ...(typeof updates?.remotelyDeleted === "boolean"
+          ? { remotelyDeleted: updates.remotelyDeleted }
+          : {}),
+        saveStatus: "idle",
+        saveError: "",
+      };
+    }),
+  };
+
+  return rowChanged;
+}
+
+function patchMountedFixtureEditorRow(root, rowId) {
+  if (!(root instanceof HTMLElement) || !rowId || typeof CSS === "undefined" || typeof CSS.escape !== "function") {
+    return {
+      patchedVisible: false,
+      visibleRowIds: [],
+    };
+  }
+
+  const rowCard = root.querySelector(`[data-editor-row-card][data-row-id="${CSS.escape(rowId)}"]`);
+  if (!(rowCard instanceof HTMLElement)) {
+    return {
+      patchedVisible: false,
+      visibleRowIds: [...root.querySelectorAll("[data-editor-row-card]")]
+        .map((element) => element.dataset.rowId ?? "")
+        .filter(Boolean),
+    };
+  }
+
+  const viewModel = buildEditorScreenViewModel(state);
+  const rowIndex = viewModel.contentRows.findIndex((row) => row?.id === rowId);
+  const viewRow = rowIndex >= 0 ? viewModel.contentRows[rowIndex] : null;
+  if (!viewRow) {
+    return {
+      patchedVisible: false,
+      visibleRowIds: [...root.querySelectorAll("[data-editor-row-card]")]
+        .map((element) => element.dataset.rowId ?? "")
+        .filter(Boolean),
+    };
+  }
+
+  const template = document.createElement("template");
+  template.innerHTML = renderTranslationContentRow(
+    viewRow,
+    viewModel.collapsedLanguageCodes,
+    rowIndex,
+    viewModel.editorReplace,
+    viewModel.editorChapter,
+  ).trim();
+  const nextRowCard = template.content.firstElementChild;
+  if (!(nextRowCard instanceof HTMLElement)) {
+    return {
+      patchedVisible: false,
+      visibleRowIds: [...root.querySelectorAll("[data-editor-row-card]")]
+        .map((element) => element.dataset.rowId ?? "")
+        .filter(Boolean),
+    };
+  }
+
+  rowCard.replaceWith(nextRowCard);
+  syncEditorRowTextareaHeights(nextRowCard);
+  return {
+    patchedVisible: true,
+    visibleRowIds: [...root.querySelectorAll("[data-editor-row-card]")]
+      .map((element) => element.dataset.rowId ?? "")
+      .filter(Boolean),
+  };
+}
 
 function render(options = {}) {
   return renderWithOptions(options);
@@ -437,6 +572,25 @@ window.__gnosisDebug = {
   },
   readEditorState() {
     return readEditorRegressionSnapshot(state);
+  },
+  async patchFixtureRow(rowId, updates = {}) {
+    const rowChanged = patchFixtureEditorRowState(rowId, updates);
+    if (!rowChanged) {
+      return {
+        patchedVisible: false,
+        state: readEditorRegressionSnapshot(state),
+      };
+    }
+
+    const patchSummary = patchMountedFixtureEditorRow(app, rowId);
+    notifyEditorRowsChanged([rowId], {
+      reason: "debug-row-patch",
+    });
+    await waitForNextAnimationFrames(2);
+    return {
+      ...patchSummary,
+      state: readEditorRegressionSnapshot(state),
+    };
   },
   setEditorReplaceEnabled(enabled) {
     toggleEditorReplaceEnabled(render, enabled === true);

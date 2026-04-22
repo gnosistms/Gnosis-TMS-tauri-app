@@ -666,6 +666,15 @@ async function restoreFixtureRow(page, rowId) {
   }, rowId);
 }
 
+async function patchFixtureRow(page, rowId, updates = {}) {
+  return await page.evaluate(async ({ targetRowId, nextUpdates }) => {
+    return await window.__gnosisDebug.patchFixtureRow(targetRowId, nextUpdates);
+  }, {
+    targetRowId: rowId,
+    nextUpdates: updates,
+  });
+}
+
 async function measureGlossaryAlignment(page, options) {
   return await page.evaluate(async (input) => {
     return await window.__gnosisDebug.measureEditorGlossaryAlignment(input);
@@ -696,6 +705,119 @@ async function readTranslateScrollMetrics(page) {
       maxTop,
       bottomGap: maxTop - container.scrollTop,
     };
+  });
+}
+
+async function readMountedRowNodeSnapshot(page) {
+  return await page.evaluate(() => {
+    const itemsContainer = document.querySelector("[data-editor-virtual-items]");
+    const rowCards = itemsContainer?.querySelectorAll?.("[data-editor-row-card]") ?? [];
+    window.__gnosisPlaywrightRowNodeCounter =
+      Number.isInteger(window.__gnosisPlaywrightRowNodeCounter)
+        ? window.__gnosisPlaywrightRowNodeCounter
+        : 0;
+
+    return [...rowCards].map((rowCard) => {
+      if (!(rowCard instanceof HTMLElement)) {
+        return null;
+      }
+
+      if (!rowCard.dataset.playwrightNodeId) {
+        window.__gnosisPlaywrightRowNodeCounter += 1;
+        rowCard.dataset.playwrightNodeId = `row-node-${window.__gnosisPlaywrightRowNodeCounter}`;
+      }
+
+      return {
+        rowId: rowCard.dataset.rowId ?? "",
+        nodeId: rowCard.dataset.playwrightNodeId,
+      };
+    }).filter(Boolean);
+  });
+}
+
+async function readVisibleRowGapMetrics(page) {
+  return await page.evaluate(() => {
+    const container = document.querySelector(".translate-main-scroll");
+    if (!(container instanceof HTMLElement)) {
+      return null;
+    }
+
+    const containerRect = container.getBoundingClientRect();
+    const rows = [...document.querySelectorAll("[data-editor-row-card]")]
+      .map((rowCard) => {
+        if (!(rowCard instanceof HTMLElement)) {
+          return null;
+        }
+
+        const rect = rowCard.getBoundingClientRect();
+        return {
+          rowId: rowCard.dataset.rowId ?? "",
+          top: rect.top,
+          bottom: rect.bottom,
+          height: rect.height,
+        };
+      })
+      .filter((row) => row && row.bottom > containerRect.top && row.top < containerRect.bottom)
+      .sort((left, right) => left.top - right.top);
+    let maxInteriorGap = 0;
+    for (let index = 1; index < rows.length; index += 1) {
+      maxInteriorGap = Math.max(maxInteriorGap, rows[index].top - rows[index - 1].bottom);
+    }
+
+    const topCoverageGap =
+      rows.length > 0
+        ? Math.max(0, rows[0].top - containerRect.top)
+        : containerRect.height;
+    const bottomCoverageGap =
+      rows.length > 0
+        ? Math.max(0, containerRect.bottom - rows[rows.length - 1].bottom)
+        : containerRect.height;
+    const topSpacer = document.querySelector('[data-editor-virtual-spacer="top"]');
+    const bottomSpacer = document.querySelector('[data-editor-virtual-spacer="bottom"]');
+
+    return {
+      rowCount: rows.length,
+      maxInteriorGap,
+      topCoverageGap,
+      bottomCoverageGap,
+      maxViewportGap: Math.max(maxInteriorGap, topCoverageGap, bottomCoverageGap),
+      topSpacerHeight: topSpacer instanceof HTMLElement ? topSpacer.getBoundingClientRect().height : 0,
+      bottomSpacerHeight: bottomSpacer instanceof HTMLElement ? bottomSpacer.getBoundingClientRect().height : 0,
+    };
+  });
+}
+
+async function readRowLayoutMetrics(page, rowId, nextRowId) {
+  return await page.evaluate(({ targetRowId, targetNextRowId }) => {
+    const container = document.querySelector(".translate-main-scroll");
+    const rowCard = document.querySelector(`[data-editor-row-card][data-row-id="${targetRowId}"]`);
+    const nextRowCard = document.querySelector(`[data-editor-row-card][data-row-id="${targetNextRowId}"]`);
+    const topSpacer = document.querySelector('[data-editor-virtual-spacer="top"]');
+    const bottomSpacer = document.querySelector('[data-editor-virtual-spacer="bottom"]');
+    if (
+      !(container instanceof HTMLElement)
+      || !(rowCard instanceof HTMLElement)
+      || !(nextRowCard instanceof HTMLElement)
+    ) {
+      return null;
+    }
+
+    const rowRect = rowCard.getBoundingClientRect();
+    const nextRowRect = nextRowCard.getBoundingClientRect();
+    return {
+      targetHeight: rowRect.height,
+      targetTop: rowRect.top,
+      targetBottom: rowRect.bottom,
+      nextTop: nextRowRect.top,
+      gapAfterTarget: nextRowRect.top - rowRect.bottom,
+      scrollHeight: container.scrollHeight,
+      scrollTop: container.scrollTop,
+      topSpacerHeight: topSpacer instanceof HTMLElement ? topSpacer.getBoundingClientRect().height : 0,
+      bottomSpacerHeight: bottomSpacer instanceof HTMLElement ? bottomSpacer.getBoundingClientRect().height : 0,
+    };
+  }, {
+    targetRowId: rowId,
+    targetNextRowId: nextRowId,
   });
 }
 
@@ -2273,6 +2395,118 @@ test.describe("editor regressions", () => {
         return document.querySelectorAll("[data-editor-row-card]").length;
       });
     }).toBeGreaterThan(0);
+  });
+
+  test("patching a visible row updates only that row card", async ({ page }) => {
+    const targetRowId = "fixture-row-0030";
+    await mountEditorFixture(page, { rowCount: 80 });
+
+    await setTranslateScrollTop(page, 9000);
+    const targetRowCard = page.locator(`[data-editor-row-card][data-row-id="${targetRowId}"]`);
+    await expect(targetRowCard).toBeVisible();
+
+    const beforeSnapshot = await readMountedRowNodeSnapshot(page);
+    const beforeNodeIdByRowId = new Map(beforeSnapshot.map((entry) => [entry.rowId, entry.nodeId]));
+    const patchText = "beta 0030 patched target text";
+
+    const patchResult = await patchFixtureRow(page, targetRowId, {
+      fields: {
+        vi: patchText,
+      },
+    });
+
+    expect(patchResult?.patchedVisible).toBe(true);
+    await expect(
+      page.locator(
+        `[data-editor-row-card][data-row-id="${targetRowId}"] `
+        + '[data-editor-language-cluster][data-language-code="vi"] [data-editor-display-text]',
+      ),
+    ).toContainText(patchText);
+
+    const afterSnapshot = await readMountedRowNodeSnapshot(page);
+    const afterNodeIdByRowId = new Map(afterSnapshot.map((entry) => [entry.rowId, entry.nodeId]));
+
+    expect(afterNodeIdByRowId.get(targetRowId)).toBeTruthy();
+    expect(afterNodeIdByRowId.get(targetRowId)).not.toBe(beforeNodeIdByRowId.get(targetRowId));
+
+    for (const [rowId, nodeId] of beforeNodeIdByRowId.entries()) {
+      if (rowId === targetRowId || !afterNodeIdByRowId.has(rowId)) {
+        continue;
+      }
+
+      expect(afterNodeIdByRowId.get(rowId)).toBe(nodeId);
+    }
+  });
+
+  test("patching a visible row does not leave blank gaps in the viewport", async ({ page }) => {
+    const targetRowId = "fixture-row-0030";
+    const expandedPatchText = Array.from(
+      { length: 36 },
+      (_, index) => `patched height segment ${index + 1}`,
+    ).join(" ");
+    await mountEditorFixture(page, { rowCount: 80 });
+
+    await setTranslateScrollTop(page, 9000);
+    await expect(page.locator(`[data-editor-row-card][data-row-id="${targetRowId}"]`)).toBeVisible();
+    await scrollTranslateRowNearTop(page, targetRowId, 140);
+    await expect(page.locator(`[data-editor-row-card][data-row-id="${targetRowId}"]`)).toBeVisible();
+
+    await patchFixtureRow(page, targetRowId, {
+      fields: {
+        vi: expandedPatchText,
+      },
+    });
+
+    const gapMetrics = await readVisibleRowGapMetrics(page);
+    expect(gapMetrics).not.toBeNull();
+    expect(gapMetrics.rowCount).toBeGreaterThan(0);
+    expect(gapMetrics.maxViewportGap).toBeLessThanOrEqual(40);
+    expect(gapMetrics.topSpacerHeight).toBeGreaterThanOrEqual(0);
+    expect(gapMetrics.bottomSpacerHeight).toBeGreaterThanOrEqual(0);
+  });
+
+  test("patching a visible row reconciles row height changes", async ({ page }) => {
+    const targetRowId = "fixture-row-0030";
+    const nextRowId = "fixture-row-0031";
+    const expandedPatchText = Array.from(
+      { length: 28 },
+      (_, index) => `height reconciliation segment ${index + 1}`,
+    ).join(" ");
+    await mountEditorFixture(page, { rowCount: 80 });
+
+    await setTranslateScrollTop(page, 9000);
+    await expect(page.locator(`[data-editor-row-card][data-row-id="${targetRowId}"]`)).toBeVisible();
+    await scrollTranslateRowNearTop(page, targetRowId, 120);
+    await expect(page.locator(`[data-editor-row-card][data-row-id="${nextRowId}"]`)).toBeVisible();
+
+    const beforeMetrics = await readRowLayoutMetrics(page, targetRowId, nextRowId);
+    expect(beforeMetrics).not.toBeNull();
+
+    await patchFixtureRow(page, targetRowId, {
+      fields: {
+        vi: expandedPatchText,
+      },
+    });
+
+    await expect(
+      page.locator(
+        `[data-editor-row-card][data-row-id="${targetRowId}"] `
+        + '[data-editor-language-cluster][data-language-code="vi"] [data-editor-display-text]',
+      ),
+    ).toContainText("height reconciliation segment 1");
+
+    const afterMetrics = await readRowLayoutMetrics(page, targetRowId, nextRowId);
+    expect(afterMetrics).not.toBeNull();
+
+    const targetHeightDelta = afterMetrics.targetHeight - beforeMetrics.targetHeight;
+    const nextRowTopDelta = afterMetrics.nextTop - beforeMetrics.nextTop;
+    const scrollHeightDelta = afterMetrics.scrollHeight - beforeMetrics.scrollHeight;
+
+    expect(targetHeightDelta).toBeGreaterThan(40);
+    expect(Math.abs(nextRowTopDelta - targetHeightDelta)).toBeLessThanOrEqual(24);
+    expect(Math.abs(scrollHeightDelta - targetHeightDelta)).toBeLessThanOrEqual(24);
+    expect(Math.abs(afterMetrics.gapAfterTarget - beforeMetrics.gapAfterTarget)).toBeLessThanOrEqual(8);
+    expect(afterMetrics.bottomSpacerHeight).toBeGreaterThanOrEqual(0);
   });
 
   for (const { label, platform } of [
