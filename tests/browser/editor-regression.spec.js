@@ -2416,6 +2416,7 @@ test.describe("editor regressions", () => {
     });
 
     expect(patchResult?.patchedVisible).toBe(true);
+    expect(patchResult?.patchedRowIds).toEqual([targetRowId]);
     await expect(
       page.locator(
         `[data-editor-row-card][data-row-id="${targetRowId}"] `

@@ -7,7 +7,6 @@ import {
 import { registerAppEvents } from "./app/events.js";
 import {
   initializeEditorVirtualization,
-  notifyEditorRowsChanged,
 } from "./app/editor-virtualization.js";
 import {
   loadGithubAppTestConfig,
@@ -37,8 +36,7 @@ import {
   applyEditorRegressionSoftDelete,
   readEditorRegressionSnapshot,
 } from "./app/editor-regression-fixture.js";
-import { renderTranslationContentRow } from "./app/editor-row-render.js";
-import { buildEditorScreenViewModel } from "./app/editor-screen-model.js";
+import { patchMountedEditorRow } from "./app/editor-row-patch.js";
 import { readDevRuntimeFlags } from "./app/dev-runtime-flags.js";
 import {
   captureFocusedInputState,
@@ -198,64 +196,6 @@ function patchFixtureEditorRowState(rowId, updates = {}) {
   };
 
   return rowChanged;
-}
-
-function patchMountedFixtureEditorRow(root, rowId) {
-  if (!(root instanceof HTMLElement) || !rowId || typeof CSS === "undefined" || typeof CSS.escape !== "function") {
-    return {
-      patchedVisible: false,
-      visibleRowIds: [],
-    };
-  }
-
-  const rowCard = root.querySelector(`[data-editor-row-card][data-row-id="${CSS.escape(rowId)}"]`);
-  if (!(rowCard instanceof HTMLElement)) {
-    return {
-      patchedVisible: false,
-      visibleRowIds: [...root.querySelectorAll("[data-editor-row-card]")]
-        .map((element) => element.dataset.rowId ?? "")
-        .filter(Boolean),
-    };
-  }
-
-  const viewModel = buildEditorScreenViewModel(state);
-  const rowIndex = viewModel.contentRows.findIndex((row) => row?.id === rowId);
-  const viewRow = rowIndex >= 0 ? viewModel.contentRows[rowIndex] : null;
-  if (!viewRow) {
-    return {
-      patchedVisible: false,
-      visibleRowIds: [...root.querySelectorAll("[data-editor-row-card]")]
-        .map((element) => element.dataset.rowId ?? "")
-        .filter(Boolean),
-    };
-  }
-
-  const template = document.createElement("template");
-  template.innerHTML = renderTranslationContentRow(
-    viewRow,
-    viewModel.collapsedLanguageCodes,
-    rowIndex,
-    viewModel.editorReplace,
-    viewModel.editorChapter,
-  ).trim();
-  const nextRowCard = template.content.firstElementChild;
-  if (!(nextRowCard instanceof HTMLElement)) {
-    return {
-      patchedVisible: false,
-      visibleRowIds: [...root.querySelectorAll("[data-editor-row-card]")]
-        .map((element) => element.dataset.rowId ?? "")
-        .filter(Boolean),
-    };
-  }
-
-  rowCard.replaceWith(nextRowCard);
-  syncEditorRowTextareaHeights(nextRowCard);
-  return {
-    patchedVisible: true,
-    visibleRowIds: [...root.querySelectorAll("[data-editor-row-card]")]
-      .map((element) => element.dataset.rowId ?? "")
-      .filter(Boolean),
-  };
 }
 
 function render(options = {}) {
@@ -582,8 +522,7 @@ window.__gnosisDebug = {
       };
     }
 
-    const patchSummary = patchMountedFixtureEditorRow(app, rowId);
-    notifyEditorRowsChanged([rowId], {
+    const patchSummary = patchMountedEditorRow(app, state, rowId, {
       reason: "debug-row-patch",
     });
     await waitForNextAnimationFrames(2);
