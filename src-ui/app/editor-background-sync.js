@@ -19,7 +19,7 @@ import { handleSyncFailure } from "./sync-recovery.js";
 import { findEditorRowById } from "./editor-utils.js";
 
 const EDITOR_SYNC_IDLE_MS = 10_000;
-const EDITOR_SYNC_LOCAL_COMMIT_THRESHOLD = 5;
+const EDITOR_SYNC_REMOTE_INTERVAL_MS = 180_000;
 const EDITOR_SYNC_AUTO_REFRESH_ROW_LIMIT = 8;
 
 const editorBackgroundSyncSession = {
@@ -187,6 +187,27 @@ function collectSafeBackgroundRefreshRowIds(syncResult = {}, chapterState = stat
   return changedRowIds.filter((rowId) => rowIsSafeForBackgroundRefresh(rowId, chapterState));
 }
 
+function buildBackgroundSyncHandlingSummary(syncResult = {}, chapterState = state.editorChapter) {
+  const changedRowIds = normalizeSyncRowIds(syncResult?.changedRowIds);
+  const deletedRowIds = normalizeSyncRowIds(syncResult?.deletedRowIds);
+  const insertedRowIds = normalizeSyncRowIds(syncResult?.insertedRowIds);
+  const safeRefreshRowIds = collectSafeBackgroundRefreshRowIds(syncResult, chapterState);
+  const safeRefreshRowIdSet = new Set(safeRefreshRowIds);
+  const deferredChangedRowIds = changedRowIds.filter((rowId) => !safeRefreshRowIdSet.has(rowId));
+
+  return {
+    changedRowIds,
+    deletedRowIds,
+    insertedRowIds,
+    safeRefreshRowIds,
+    deferredChangedRowIds,
+    requiresChapterReload:
+      deletedRowIds.length > 0
+      || insertedRowIds.length > 0
+      || deferredChangedRowIds.length > 0,
+  };
+}
+
 async function reloadBackgroundSyncSafeRows(render, rowIds) {
   const successfulRowIds = [];
   for (const rowId of normalizeSyncRowIds(rowIds)) {
@@ -215,40 +236,36 @@ function shouldRerenderBodyAfterSync(markResult, refreshedRowIds = []) {
     .some((rowId) => !refreshedRowIdSet.has(rowId));
 }
 
-async function inspectPendingLocalCommitCount() {
-  const input = activeEditorSyncInput();
-  if (!input) {
-    return { currentHeadSha: null, commitsSinceHead: 0 };
-  }
-
-  return invoke("inspect_gtms_project_editor_repo_sync_state", {
-    input: {
-      installationId: input.installationId,
-      projectId: input.projectId,
-      repoName: input.repoName,
-      sinceHeadSha: editorBackgroundSyncSession.lastSyncedHeadSha,
-    },
-  });
+function createBackgroundSyncResult(overrides = {}) {
+  return {
+    payload: null,
+    matchedCurrentHead: true,
+    refreshedRowIds: [],
+    shouldRerenderBody: false,
+    requiresChapterReload: false,
+    handlingSummary: buildBackgroundSyncHandlingSummary(),
+    ...overrides,
+  };
 }
 
 async function runEditorBackgroundSync(render, options = {}) {
   if (!sessionMatchesCurrentEditor()) {
-    return null;
+    return createBackgroundSyncResult();
   }
 
   const input = activeEditorSyncInput();
   if (!input) {
-    return null;
+    return createBackgroundSyncResult();
   }
 
   if (options.skipDirtyFlush !== true) {
     if (await flushDirtyEditorRowsFlow(render, persistenceOperations()) === false) {
-      return null;
+      return createBackgroundSyncResult();
     }
   }
 
   if (hasPendingEditorWritesFlow()) {
-    return null;
+    return createBackgroundSyncResult();
   }
 
   const previousSyncStatus = state.editorChapter?.backgroundSyncStatus ?? "";
@@ -263,10 +280,11 @@ async function runEditorBackgroundSync(render, options = {}) {
     });
 
     if (!sessionMatchesCurrentEditor()) {
-      return null;
+      return createBackgroundSyncResult();
     }
 
     const matchesCurrentHead = syncResultMatchesCurrentChapterHead(payload);
+    const handlingSummary = buildBackgroundSyncHandlingSummary(payload);
     if (matchesCurrentHead) {
       editorBackgroundSyncSession.lastSyncedHeadSha =
         normalizeHeadSha(payload?.newHeadSha)
@@ -276,22 +294,39 @@ async function runEditorBackgroundSync(render, options = {}) {
 
     if (!matchesCurrentHead) {
       setEditorBackgroundSyncState("idle", "");
-      if (hadVisibleErrorBanner) {
+      if (hadVisibleErrorBanner && options.suppressConservativeRerender !== true) {
         render?.({ scope: "translate-body" });
       }
-      return payload ?? null;
+      return createBackgroundSyncResult({
+        payload: payload ?? null,
+        matchedCurrentHead: false,
+        shouldRerenderBody: hadVisibleErrorBanner,
+        requiresChapterReload: payload !== null,
+        handlingSummary,
+      });
     }
 
-    const safeRefreshRowIds = collectSafeBackgroundRefreshRowIds(payload);
+    const safeRefreshRowIds = handlingSummary.safeRefreshRowIds;
     const markResult = markEditorRowsStale(payload);
     const refreshedRowIds = safeRefreshRowIds.length > 0
       ? await reloadBackgroundSyncSafeRows(render, safeRefreshRowIds)
       : [];
+    const shouldRerenderBody = shouldRerenderBodyAfterSync(markResult, refreshedRowIds) || hadVisibleErrorBanner;
     setEditorBackgroundSyncState("idle", "");
-    if (shouldRerenderBodyAfterSync(markResult, refreshedRowIds) || hadVisibleErrorBanner) {
+    if (
+      shouldRerenderBody
+      && !(options.suppressConservativeRerender === true && handlingSummary.requiresChapterReload)
+    ) {
       render?.({ scope: "translate-body" });
     }
-    return payload ?? null;
+    return createBackgroundSyncResult({
+      payload: payload ?? null,
+      matchedCurrentHead: true,
+      refreshedRowIds,
+      shouldRerenderBody,
+      requiresChapterReload: handlingSummary.requiresChapterReload,
+      handlingSummary,
+    });
   } catch (error) {
     if (sessionMatchesCurrentEditor()) {
       const message = error instanceof Error ? error.message : String(error);
@@ -304,7 +339,7 @@ async function runEditorBackgroundSync(render, options = {}) {
         showNoticeBadge(message || "Background sync failed.", render, 2400);
       }
     }
-    return null;
+    return createBackgroundSyncResult();
   }
 }
 
@@ -314,25 +349,12 @@ export async function maybeStartEditorBackgroundSync(render, options = {}) {
   }
 
   if (editorBackgroundSyncSession.pendingSync) {
-    return editorBackgroundSyncSession.pendingSync;
+    const pendingResult = await editorBackgroundSyncSession.pendingSync;
+    return options.returnSummary === true ? pendingResult : pendingResult.payload;
   }
 
   if (options.force !== true) {
     if (performance.now() - editorBackgroundSyncSession.lastScrollAt < EDITOR_SYNC_IDLE_MS) {
-      return false;
-    }
-
-    const syncState = await inspectPendingLocalCommitCount();
-    if (!sessionMatchesCurrentEditor()) {
-      return false;
-    }
-    if (typeof syncState?.currentHeadSha === "string" && syncState.currentHeadSha.trim()) {
-      state.editorChapter = {
-        ...state.editorChapter,
-        chapterBaseCommitSha: syncState.currentHeadSha,
-      };
-    }
-    if ((syncState?.commitsSinceHead ?? 0) < EDITOR_SYNC_LOCAL_COMMIT_THRESHOLD) {
       return false;
     }
   }
@@ -340,22 +362,23 @@ export async function maybeStartEditorBackgroundSync(render, options = {}) {
   const syncPromise = runEditorBackgroundSync(render, options);
   editorBackgroundSyncSession.pendingSync = syncPromise;
   try {
-    return await syncPromise;
+    const result = await syncPromise;
+    return options.returnSummary === true ? result : result.payload;
   } finally {
     editorBackgroundSyncSession.pendingSync = null;
   }
 }
 
-export async function syncEditorBackgroundNow(render, options = {}) {
+async function syncEditorBackgroundNowInternal(render, options = {}) {
   if (!sessionMatchesCurrentEditor()) {
-    return null;
+    return createBackgroundSyncResult();
   }
 
   if (options.afterLocalCommit === true) {
     while (editorBackgroundSyncSession.pendingSync) {
       await editorBackgroundSyncSession.pendingSync;
       if (!sessionMatchesCurrentEditor()) {
-        return null;
+        return createBackgroundSyncResult();
       }
     }
   } else if (editorBackgroundSyncSession.pendingSync) {
@@ -368,6 +391,7 @@ export async function syncEditorBackgroundNow(render, options = {}) {
 
   const syncPromise = runEditorBackgroundSync(render, {
     skipDirtyFlush: options.skipDirtyFlush === true,
+    suppressConservativeRerender: options.suppressConservativeRerender === true,
   });
   editorBackgroundSyncSession.pendingSync = syncPromise;
   try {
@@ -375,6 +399,15 @@ export async function syncEditorBackgroundNow(render, options = {}) {
   } finally {
     editorBackgroundSyncSession.pendingSync = null;
   }
+}
+
+export async function syncEditorBackgroundNow(render, options = {}) {
+  const result = await syncEditorBackgroundNowInternal(render, options);
+  return result.payload;
+}
+
+export async function syncEditorBackgroundNowWithSummary(render, options = {}) {
+  return syncEditorBackgroundNowInternal(render, options);
 }
 
 export function noteEditorBackgroundSyncHead(headSha) {
@@ -397,16 +430,28 @@ export function noteEditorBackgroundSyncScrollActivity() {
   editorBackgroundSyncSession.lastScrollAt = performance.now();
 }
 
-export function startEditorBackgroundSyncSession(render) {
+export function startEditorBackgroundSyncSession(render, options = {}) {
   const key = currentSessionKey();
+  const currentHeadSha =
+    typeof state.editorChapter?.chapterBaseCommitSha === "string" && state.editorChapter.chapterBaseCommitSha.trim()
+      ? state.editorChapter.chapterBaseCommitSha
+      : null;
+  if (
+    options.forceRestart !== true
+    && key
+    && editorBackgroundSyncSession.key === key
+    && Number.isInteger(editorBackgroundSyncSession.intervalId)
+    && editorBackgroundSyncSession.intervalId !== 0
+  ) {
+    editorBackgroundSyncSession.lastSyncedHeadSha = currentHeadSha;
+    return;
+  }
+
   clearBackgroundSyncInterval();
   editorBackgroundSyncSession.key = key;
   editorBackgroundSyncSession.lastScrollAt = performance.now();
   editorBackgroundSyncSession.pendingSync = null;
-  editorBackgroundSyncSession.lastSyncedHeadSha =
-    typeof state.editorChapter?.chapterBaseCommitSha === "string" && state.editorChapter.chapterBaseCommitSha.trim()
-      ? state.editorChapter.chapterBaseCommitSha
-      : null;
+  editorBackgroundSyncSession.lastSyncedHeadSha = currentHeadSha;
 
   if (!key) {
     return;
@@ -414,8 +459,10 @@ export function startEditorBackgroundSyncSession(render) {
 
   editorBackgroundSyncSession.intervalId = window.setInterval(() => {
     void maybeStartEditorBackgroundSync(render);
-  }, EDITOR_SYNC_IDLE_MS);
-  void maybeStartEditorBackgroundSync(render, { force: true });
+  }, EDITOR_SYNC_REMOTE_INTERVAL_MS);
+  if (options.skipInitialSync !== true) {
+    void maybeStartEditorBackgroundSync(render, { force: true });
+  }
 }
 
 export async function syncAndStopEditorBackgroundSyncSession(render) {

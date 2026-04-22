@@ -55,6 +55,7 @@ import {
   restorePendingEditorLocation,
   scheduleEditorLocationSave,
 } from "./app/editor-location.js";
+import { refreshCurrentScreen as refreshCurrentScreenFlow } from "./app/navigation.js";
 import {
   captureRenderScrollSnapshot,
   captureVisibleTranslateLocation,
@@ -522,6 +523,12 @@ window.__gnosisDebug = {
       payload,
       state: readEditorRegressionSnapshot(state),
     };
+  },
+  async refreshCurrentScreen() {
+    await bootstrapPromise.catch(() => undefined);
+    await refreshCurrentScreenFlow(render);
+    await waitForNextAnimationFrames(2);
+    return readEditorRegressionSnapshot(state);
   },
   softDeleteFixtureRow(rowId) {
     const summary = applyEditorRegressionSoftDelete(state, rowId);

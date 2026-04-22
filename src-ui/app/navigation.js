@@ -37,6 +37,7 @@ import {
 } from "./translate-flow.js";
 import {
   startEditorBackgroundSyncSession,
+  syncEditorBackgroundNowWithSummary,
   syncAndStopEditorBackgroundSyncSession,
 } from "./editor-background-sync.js";
 import {
@@ -232,7 +233,15 @@ export async function refreshCurrentScreen(render) {
     }
 
     if (screen === "translate") {
-      await loadSelectedChapterEditorData(render, { preserveVisibleRows: true });
+      startEditorBackgroundSyncSession(render, { skipInitialSync: true });
+      const syncResult = await syncEditorBackgroundNowWithSummary(render, {
+        skipDirtyFlush: true,
+        afterLocalCommit: true,
+        suppressConservativeRerender: true,
+      });
+      if (syncResult?.requiresChapterReload === true) {
+        await loadSelectedChapterEditorData(render, { preserveVisibleRows: true });
+      }
       await completePageSync(render);
       return;
     }

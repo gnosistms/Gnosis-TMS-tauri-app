@@ -18,6 +18,7 @@ const invokeLog = [];
 let invokeHandler = async () => null;
 let nextTimerId = 1;
 const scheduledIntervals = new Map();
+const scheduledIntervalDelays = new Map();
 
 const fakeApp = {
   addEventListener() {},
@@ -89,14 +90,16 @@ globalThis.window = {
     platform: "MacIntel",
     userAgentData: null,
   },
-  setInterval(callback) {
+  setInterval(callback, delay = 0) {
     const id = nextTimerId;
     nextTimerId += 1;
     scheduledIntervals.set(id, callback);
+    scheduledIntervalDelays.set(id, delay);
     return id;
   },
   clearInterval(id) {
     scheduledIntervals.delete(id);
+    scheduledIntervalDelays.delete(id);
   },
   setTimeout(callback) {
     callback();
@@ -120,6 +123,7 @@ const {
   startEditorBackgroundSyncSession,
   syncAndStopEditorBackgroundSyncSession,
   syncEditorBackgroundNow,
+  syncEditorBackgroundNowWithSummary,
 } = await import("./editor-background-sync.js");
 
 function deferred() {
@@ -239,6 +243,8 @@ test.afterEach(async () => {
   invokeHandler = async () => null;
   invokeLog.length = 0;
   localStorageState.clear();
+  scheduledIntervals.clear();
+  scheduledIntervalDelays.clear();
   await syncAndStopEditorBackgroundSyncSession(() => {});
   resetSessionState();
 });
@@ -332,6 +338,16 @@ test("background sync does not rerender the editor body when sync starts or fini
   assert.equal(state.editorChapter.chapterBaseCommitSha, "head-2");
 });
 
+test("editor background sync session uses a three-minute remote sync interval", async () => {
+  installEditorFixture();
+
+  startEditorBackgroundSyncSession(() => {});
+  await Promise.resolve();
+
+  assert.equal(scheduledIntervalDelays.size, 1);
+  assert.deepEqual([...scheduledIntervalDelays.values()], [180_000]);
+});
+
 test("background sync auto-refreshes a safe changed row through the visible-row patch path", async () => {
   installEditorFixture();
   state.editorChapter.rows = [createEditorRowFixture()];
@@ -378,6 +394,79 @@ test("background sync auto-refreshes a safe changed row through the visible-row 
       .map((entry) => entry.payload.input?.rowId),
     ["row-1"],
   );
+});
+
+test("background sync summary keeps safe visible row updates off the full-refresh path", async () => {
+  installEditorFixture();
+  state.editorChapter.rows = [createEditorRowFixture()];
+
+  const syncRequest = deferred();
+  invokeHandler = async (command) => {
+    if (command === "sync_gtms_project_editor_repo") {
+      return syncRequest.promise;
+    }
+    if (command === "load_gtms_editor_row") {
+      return {
+        chapterBaseCommitSha: "head-2",
+        row: createRemoteRowPayload("row-1"),
+      };
+    }
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  const render = createRenderRecorder();
+  startEditorBackgroundSyncSession(render);
+  await Promise.resolve();
+
+  const pendingSync = syncEditorBackgroundNowWithSummary(render, {
+    skipDirtyFlush: true,
+    suppressConservativeRerender: true,
+  });
+  syncRequest.resolve({
+    changedRowIds: ["row-1"],
+    deletedRowIds: [],
+    insertedRowIds: [],
+    newHeadSha: "head-2",
+  });
+  const syncResult = await pendingSync;
+
+  assert.equal(syncResult.requiresChapterReload, false);
+  assert.deepEqual(syncResult.refreshedRowIds, ["row-1"]);
+});
+
+test("background sync summary flags deferred row changes for a full chapter reload", async () => {
+  installEditorFixture();
+  state.editorChapter.rows = [createEditorRowFixture({
+    freshness: "conflict",
+    saveStatus: "conflict",
+  })];
+
+  const syncRequest = deferred();
+  invokeHandler = async (command) => {
+    if (command === "sync_gtms_project_editor_repo") {
+      return syncRequest.promise;
+    }
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  const render = createRenderRecorder();
+  startEditorBackgroundSyncSession(render);
+  await Promise.resolve();
+
+  const pendingSync = syncEditorBackgroundNowWithSummary(render, {
+    skipDirtyFlush: true,
+    suppressConservativeRerender: true,
+  });
+  syncRequest.resolve({
+    changedRowIds: ["row-1"],
+    deletedRowIds: [],
+    insertedRowIds: [],
+    newHeadSha: "head-2",
+  });
+  const syncResult = await pendingSync;
+
+  assert.equal(syncResult.requiresChapterReload, true);
+  assert.deepEqual(syncResult.refreshedRowIds, []);
 });
 
 test("background sync keeps conflicting rows on the conservative path", async () => {

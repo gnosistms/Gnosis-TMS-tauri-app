@@ -641,6 +641,12 @@ async function runEditorBackgroundSync(page, options = {}) {
   }, options);
 }
 
+async function runEditorRefresh(page) {
+  return await page.evaluate(async () => {
+    return await window.__gnosisDebug.refreshCurrentScreen();
+  });
+}
+
 async function installBackgroundSyncMock(page, options = {}) {
   const {
     changedRowIds = [],
@@ -3115,6 +3121,136 @@ test.describe("editor regressions", () => {
         (entry) => entry.command === "load_gtms_editor_row" && entry.payload?.input?.rowId === targetRowId,
       ).length,
     ).toBeGreaterThanOrEqual(cycleTexts.length);
+  });
+
+  test("refreshing the translate editor syncs a safe visible row without reloading the chapter", async ({ page }) => {
+    const targetRowId = "fixture-row-0030";
+    const updatedText = Array.from(
+      { length: 12 },
+      (_, index) => `refresh visible patch ${index + 1}`,
+    ).join(" ");
+
+    await mountEditorFixture(page, { rowCount: 80 }, { mockTauri: true });
+    await installBackgroundSyncMock(page, {
+      changedRowIds: [targetRowId],
+      newHeadSha: "mock-refresh-head-visible",
+      rowsById: {
+        [targetRowId]: {
+          sourceText: "alpha 0030 source text",
+          targetText: updatedText,
+        },
+      },
+    });
+
+    await setTranslateScrollTop(page, 9000);
+    await scrollTranslateRowNearTop(page, targetRowId, 120);
+    await expect(page.locator(`[data-editor-row-card][data-row-id="${targetRowId}"]`)).toBeVisible();
+
+    await runEditorRefresh(page);
+
+    await expect(
+      page.locator(
+        `[data-editor-row-card][data-row-id="${targetRowId}"] `
+        + '[data-editor-language-cluster][data-language-code="vi"] [data-editor-display-text]',
+      ),
+    ).toContainText("refresh visible patch 1");
+
+    const mockState = await readMockTauriState(page);
+    expect(mockState.invocations.some((entry) => entry.command === "sync_gtms_project_editor_repo")).toBe(true);
+    expect(mockState.invocations.some((entry) => entry.command === "load_gtms_editor_row" && entry.payload?.input?.rowId === targetRowId)).toBe(true);
+    expect(mockState.invocations.some((entry) => entry.command === "load_gtms_chapter_editor_data")).toBe(false);
+  });
+
+  test("refreshing the translate editor reloads the chapter when sync finds structural changes", async ({ page }) => {
+    const insertedRowId = "fixture-row-0081";
+    const insertedText = "refresh structural inserted target text";
+
+    await mountEditorFixture(page, { rowCount: 80 }, { mockTauri: true });
+
+    await page.evaluate(({ nextInsertedRowId, nextInsertedText }) => {
+      function cloneRowForChapterLoad(row) {
+        return {
+          rowId: row.rowId,
+          orderKey: row.orderKey,
+          lifecycleState: row.lifecycleState === "deleted" ? "deleted" : "active",
+          commentCount: Number.isInteger(row.commentCount) ? row.commentCount : 0,
+          commentsRevision: Number.isInteger(row.commentsRevision) ? row.commentsRevision : 0,
+          textStyle: row.textStyle ?? "paragraph",
+          fields: { ...(row.fields ?? {}) },
+          footnotes: { ...(row.footnotes ?? {}) },
+          imageCaptions: { ...(row.imageCaptions ?? {}) },
+          images: { ...(row.images ?? {}) },
+          fieldStates: { ...(row.fieldStates ?? {}) },
+        };
+      }
+
+      globalThis.__gnosisMockTauriHandlers = {
+        ...(globalThis.__gnosisMockTauriHandlers ?? {}),
+        async sync_gtms_project_editor_repo() {
+          return {
+            changedRowIds: [],
+            deletedRowIds: [],
+            insertedRowIds: [nextInsertedRowId],
+            newHeadSha: "mock-refresh-head-structural",
+          };
+        },
+        async load_gtms_chapter_editor_data() {
+          const editorState = window.__gnosisDebug.readEditorState();
+          const rows = Array.isArray(editorState?.rows)
+            ? editorState.rows.map(cloneRowForChapterLoad)
+            : [];
+          rows.push({
+            rowId: nextInsertedRowId,
+            orderKey: "00081",
+            lifecycleState: "active",
+            commentCount: 0,
+            commentsRevision: 0,
+            textStyle: "paragraph",
+            fields: {
+              es: "source fixture row 0081",
+              vi: nextInsertedText,
+            },
+            footnotes: {
+              es: "",
+              vi: "",
+            },
+            imageCaptions: {
+              es: "",
+              vi: "",
+            },
+            images: {
+              es: null,
+              vi: null,
+            },
+            fieldStates: {
+              es: { reviewed: false, pleaseCheck: false },
+              vi: { reviewed: false, pleaseCheck: false },
+            },
+          });
+
+          return {
+            chapterId: editorState.chapterId,
+            chapterBaseCommitSha: "mock-refresh-head-structural",
+            fileTitle: editorState.fileTitle ?? "Fixture Chapter",
+            languages: Array.isArray(editorState.languages) ? editorState.languages : [],
+            sourceWordCounts:
+              editorState.sourceWordCounts && typeof editorState.sourceWordCounts === "object"
+                ? editorState.sourceWordCounts
+                : {},
+            rows,
+          };
+        },
+      };
+    }, {
+      nextInsertedRowId: insertedRowId,
+      nextInsertedText: insertedText,
+    });
+
+    await runEditorRefresh(page);
+
+    const mockState = await readMockTauriState(page);
+    expect(mockState.invocations.some((entry) => entry.command === "sync_gtms_project_editor_repo")).toBe(true);
+    expect(mockState.invocations.some((entry) => entry.command === "load_gtms_chapter_editor_data")).toBe(true);
   });
 
   for (const { label, platform } of [
