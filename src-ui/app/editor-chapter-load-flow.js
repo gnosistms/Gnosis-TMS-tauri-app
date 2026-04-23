@@ -54,12 +54,18 @@ function editorAiActionConfigRender(render) {
   };
 }
 
-function hasEditorChapterLoadOperations(operations) {
+function hasEditorChapterReloadOperations(operations) {
   return (
     typeof operations?.applyEditorUiState === "function"
     && typeof operations?.normalizeEditorRows === "function"
     && typeof operations?.applyChapterMetadataToState === "function"
     && typeof operations?.loadActiveEditorFieldHistory === "function"
+  );
+}
+
+function hasEditorChapterLoadOperations(operations) {
+  return (
+    hasEditorChapterReloadOperations(operations)
     && typeof operations?.flushDirtyEditorRows === "function"
     && typeof operations?.persistEditorChapterSelections === "function"
   );
@@ -73,7 +79,7 @@ function applyEditorPayloadToState(
   derivedGlossariesByRowId = {},
   operations = {},
 ) {
-  if (!hasEditorChapterLoadOperations(operations)) {
+  if (!hasEditorChapterReloadOperations(operations)) {
     return;
   }
 
@@ -124,7 +130,7 @@ function applyEditorPayloadToState(
 }
 
 export async function loadSelectedChapterEditorData(render, options = {}, operations = {}) {
-  if (!hasEditorChapterLoadOperations(operations)) {
+  if (!hasEditorChapterReloadOperations(operations)) {
     return;
   }
 

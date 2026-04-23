@@ -34,9 +34,9 @@ import {
 } from "./editor-comments-flow.js";
 import { resolveEditorSidebarTabForField } from "./editor-comments.js";
 import {
-  loadSelectedChapterEditorData as loadSelectedChapterEditorDataFlow,
   openTranslateChapter as openTranslateChapterFlow,
 } from "./editor-chapter-load-flow.js";
+import { reloadSelectedChapterEditorData } from "./editor-chapter-reload.js";
 import {
   restoreMountedEditorGlossaryHighlightsFromCache as restoreMountedEditorGlossaryHighlightsFromCacheFlow,
   syncEditorGlossaryHighlightRowDom as syncEditorGlossaryHighlightRowDomFlow,
@@ -570,7 +570,7 @@ export async function persistEditorChapterSelections(render) {
 }
 
 export async function loadSelectedChapterEditorData(render, options = {}) {
-  await loadSelectedChapterEditorDataFlow(render, options, editorChapterLoadOperations());
+  await reloadSelectedChapterEditorData(render, options);
 }
 
 export async function openTranslateChapter(render, chapterId) {

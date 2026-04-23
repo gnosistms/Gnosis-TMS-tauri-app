@@ -660,6 +660,16 @@ function renderEditorLanguageField(row, language) {
         data-row-text-style="${escapeHtml(textStyle)}"
         data-ai-translating="${language.isAiTranslating ? "true" : "false"}"
       >
+        <div
+          class="translation-language-panel__field-highlight translation-language-panel__search-highlight"
+          data-editor-search-highlight
+          aria-hidden="true"
+        ></div>
+        <div
+          class="translation-language-panel__field-highlight translation-language-panel__glossary-highlight"
+          data-editor-glossary-highlight
+          aria-hidden="true"
+        ></div>
         <textarea
           class="${fieldClassName}"
           data-editor-row-field

@@ -248,7 +248,7 @@ async function loadGlossaryFlowModule() {
   return glossaryFlowModulePromise;
 }
 
-test("glossary sync keeps active editor textarea free of glossary overlays", async () => {
+test("glossary sync writes glossary overlays into the active editor textarea stack", async () => {
   await withFakeDom(async () => {
     const { syncEditorGlossaryHighlightRowDom } = await loadGlossaryFlowModule();
     const row = buildRow({ isTextEditorOpen: true });
@@ -300,12 +300,12 @@ test("glossary sync keeps active editor textarea free of glossary overlays", asy
 
     syncEditorGlossaryHighlightRowDom("row-1", chapterState, root);
 
-    assert.equal(glossaryLayer.innerHTML, "");
-    assert.equal(stack.classList.contains("translation-language-panel__field-stack--glossary"), false);
+    assert.match(glossaryLayer.innerHTML, /translation-language-panel__glossary-mark/);
+    assert.equal(stack.classList.contains("translation-language-panel__field-stack--glossary"), true);
   });
 });
 
-test("search sync keeps active editor textarea free of search overlays", async () => {
+test("search sync writes search overlays into the active editor textarea stack", async () => {
   await withFakeDom(async () => {
     const { syncEditorGlossaryHighlightRowDom } = await loadGlossaryFlowModule();
     const row = buildRow({ isTextEditorOpen: true });
@@ -357,8 +357,8 @@ test("search sync keeps active editor textarea free of search overlays", async (
 
     syncEditorGlossaryHighlightRowDom("row-1", chapterState, root);
 
-    assert.equal(searchLayer.innerHTML, "");
-    assert.equal(stack.classList.contains("translation-language-panel__field-stack--search"), false);
+    assert.match(searchLayer.innerHTML, /translation-language-panel__search-match/);
+    assert.equal(stack.classList.contains("translation-language-panel__field-stack--search"), true);
   });
 });
 
@@ -413,8 +413,8 @@ test("glossary sync writes direct glossary markup into static display text", asy
     syncEditorGlossaryHighlightRowDom("row-1", chapterState, root);
 
     assert.match(displayText.innerHTML, /translation-language-panel__glossary-mark/);
-    assert.equal(glossaryLayer.innerHTML, "");
-    assert.equal(stack.classList.contains("translation-language-panel__field-stack--glossary"), false);
+    assert.match(glossaryLayer.innerHTML, /translation-language-panel__glossary-mark/);
+    assert.equal(stack.classList.contains("translation-language-panel__field-stack--glossary"), true);
   });
 });
 
@@ -469,8 +469,8 @@ test("search sync writes direct search markup into static display text", async (
     syncEditorGlossaryHighlightRowDom("row-1", chapterState, root);
 
     assert.match(displayText.innerHTML, /translation-language-panel__search-match/);
-    assert.equal(searchLayer.innerHTML, "");
-    assert.equal(stack.classList.contains("translation-language-panel__field-stack--search"), false);
+    assert.match(searchLayer.innerHTML, /translation-language-panel__search-match/);
+    assert.equal(stack.classList.contains("translation-language-panel__field-stack--search"), true);
   });
 });
 

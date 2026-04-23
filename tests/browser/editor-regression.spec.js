@@ -748,6 +748,94 @@ async function installBackgroundSyncMock(page, options = {}) {
   });
 }
 
+async function installLargeBatchBackgroundReloadMock(page, options = {}) {
+  const {
+    changedRowIds = [],
+    rowsById = {},
+    newHeadSha = "mock-sync-head-large-batch",
+    loadDelayMs = 200,
+  } = options;
+
+  await page.evaluate(({
+    nextChangedRowIds,
+    nextRowsById,
+    nextHeadSha,
+    nextLoadDelayMs,
+  }) => {
+    function cloneRowForChapterLoad(row, rowPatch = {}) {
+      return {
+        rowId: row.rowId,
+        orderKey: row.orderKey,
+        lifecycleState: row.lifecycleState === "deleted" ? "deleted" : "active",
+        commentCount: Number.isInteger(row.commentCount) ? row.commentCount : 0,
+        commentsRevision: Number.isInteger(row.commentsRevision) ? row.commentsRevision : 0,
+        textStyle: row.textStyle ?? "paragraph",
+        fields: {
+          ...(row.fields ?? {}),
+          ...(typeof rowPatch.sourceText === "string" ? { es: rowPatch.sourceText } : {}),
+          ...(typeof rowPatch.targetText === "string" ? { vi: rowPatch.targetText } : {}),
+        },
+        footnotes: {
+          ...(row.footnotes ?? {}),
+          ...(typeof rowPatch.footnoteSourceText === "string" ? { es: rowPatch.footnoteSourceText } : {}),
+          ...(typeof rowPatch.footnoteTargetText === "string" ? { vi: rowPatch.footnoteTargetText } : {}),
+        },
+        imageCaptions: {
+          ...(row.imageCaptions ?? {}),
+          ...(typeof rowPatch.imageCaptionSourceText === "string" ? { es: rowPatch.imageCaptionSourceText } : {}),
+          ...(typeof rowPatch.imageCaptionTargetText === "string" ? { vi: rowPatch.imageCaptionTargetText } : {}),
+        },
+        images: {
+          ...(row.images ?? {}),
+          ...(typeof rowPatch.sourceImage !== "undefined" ? { es: rowPatch.sourceImage } : {}),
+          ...(typeof rowPatch.targetImage !== "undefined" ? { vi: rowPatch.targetImage } : {}),
+        },
+        fieldStates: rowPatch.fieldStates ?? { ...(row.fieldStates ?? {}) },
+      };
+    }
+
+    globalThis.__gnosisMockTauriHandlers = {
+      ...(globalThis.__gnosisMockTauriHandlers ?? {}),
+      async sync_gtms_project_editor_repo() {
+        return {
+          changedRowIds: [...nextChangedRowIds],
+          deletedRowIds: [],
+          insertedRowIds: [],
+          newHeadSha: nextHeadSha,
+        };
+      },
+      async load_gtms_chapter_editor_data() {
+        const editorState = window.__gnosisDebug.readEditorState();
+        const rows = Array.isArray(editorState?.rows)
+          ? editorState.rows.map((row) => cloneRowForChapterLoad(
+            row,
+            nextRowsById?.[row.rowId] ?? {},
+          ))
+          : [];
+        if (Number.isFinite(nextLoadDelayMs) && nextLoadDelayMs > 0) {
+          await new Promise((resolve) => window.setTimeout(resolve, nextLoadDelayMs));
+        }
+        return {
+          chapterId: editorState.chapterId,
+          chapterBaseCommitSha: nextHeadSha,
+          fileTitle: editorState.fileTitle ?? "Fixture Chapter",
+          languages: Array.isArray(editorState.languages) ? editorState.languages : [],
+          sourceWordCounts:
+            editorState.sourceWordCounts && typeof editorState.sourceWordCounts === "object"
+              ? editorState.sourceWordCounts
+              : {},
+          rows,
+        };
+      },
+    };
+  }, {
+    nextChangedRowIds: changedRowIds,
+    nextRowsById: rowsById,
+    nextHeadSha: newHeadSha,
+    nextLoadDelayMs: loadDelayMs,
+  });
+}
+
 async function readEditorScrollDebugEntries(page) {
   return await page.evaluate(() => window.__gnosisDebug.readEditorScrollDebugEntries());
 }
@@ -2040,6 +2128,60 @@ test.describe("editor regressions", () => {
     await expect(page.locator(targetMarkSelector)).toHaveText("alpha");
   });
 
+  test("clicking ai translate refreshes target glossary underlines in the real sidebar flow", async ({ page }) => {
+    await page.addInitScript(() => {
+      globalThis.__gnosisMockTauriHandlers = {
+        load_ai_provider_secret() {
+          return "openai-key";
+        },
+        async run_ai_translation() {
+          return {
+            translatedText: "alpha translated by ai",
+          };
+        },
+      };
+    });
+
+    await mountEditorFixture(page, {
+      rowCount: 1,
+      glossary: true,
+      fieldsByRowId: {
+        "fixture-row-0001": {
+          es: "alpha source text",
+          vi: "",
+        },
+      },
+      aiActionConfig: {
+        detailedConfiguration: false,
+        unified: {
+          providerId: "openai",
+          modelId: "gpt-5.4",
+        },
+      },
+    }, { path: "/?platform=windows", mockTauri: true });
+
+    await page.locator('[data-action="switch-editor-sidebar-tab:translate"]').click();
+
+    const rowId = "fixture-row-0001";
+    const languageCode = "vi";
+    const targetField = await activateMainEditorField(page, rowId, languageCode);
+    await expect(targetField).toBeVisible();
+
+    await page.locator('[data-action="run-editor-ai-translate:translate1"]').click();
+
+    const targetDisplayField = page.locator(
+      `[data-editor-display-field][data-row-id="${rowId}"][data-language-code="${languageCode}"]`,
+    );
+    await expect(targetDisplayField).toHaveText("alpha translated by ai");
+
+    const targetMarkSelector =
+      `[data-editor-row-card][data-row-id="${rowId}"] [data-editor-display-field][data-language-code="${languageCode}"] [data-editor-glossary-mark]`;
+    await expect.poll(async () => {
+      return await page.locator(targetMarkSelector).count();
+    }).toBe(1);
+    await expect(page.locator(targetMarkSelector)).toHaveText("alpha");
+  });
+
   test("history restore refreshes target glossary underlines while the target field stays open", async ({ page }) => {
     await page.addInitScript(() => {
       globalThis.__gnosisMockTauriHandlers = {
@@ -2840,6 +2982,10 @@ test.describe("editor regressions", () => {
     });
 
     await expect(
+      page.locator(".modal-backdrop--navigation-loading"),
+    ).toHaveCount(0);
+
+    await expect(
       page.locator(
         `[data-editor-row-card][data-row-id="${targetRowId}"] `
         + '[data-editor-language-cluster][data-language-code="vi"] [data-editor-display-text]',
@@ -3149,6 +3295,10 @@ test.describe("editor regressions", () => {
     await runEditorRefresh(page);
 
     await expect(
+      page.locator(".modal-backdrop--navigation-loading"),
+    ).toHaveCount(0);
+
+    await expect(
       page.locator(
         `[data-editor-row-card][data-row-id="${targetRowId}"] `
         + '[data-editor-language-cluster][data-language-code="vi"] [data-editor-display-text]',
@@ -3161,7 +3311,66 @@ test.describe("editor regressions", () => {
     expect(mockState.invocations.some((entry) => entry.command === "load_gtms_chapter_editor_data")).toBe(false);
   });
 
-  test("refreshing the translate editor reloads the chapter when sync finds structural changes", async ({ page }) => {
+  test("background sync shows a blocking modal and fully reloads the chapter for large stale batches", async ({ page }) => {
+    const targetRowId = "fixture-row-0030";
+    const changedRowIds = Array.from({ length: 12 }, (_, index) => `fixture-row-${String(index + 25).padStart(4, "0")}`);
+    const updatedText = Array.from(
+      { length: 20 },
+      (_, index) => `background sync blocking reload ${index + 1}`,
+    ).join(" ");
+
+    await mountEditorFixture(page, { rowCount: 80 }, { mockTauri: true });
+    await installLargeBatchBackgroundReloadMock(page, {
+      changedRowIds,
+      newHeadSha: "mock-sync-head-large-batch",
+      rowsById: {
+        [targetRowId]: {
+          sourceText: "alpha 0030 source text",
+          targetText: updatedText,
+        },
+      },
+    });
+
+    await setTranslateScrollTop(page, 9000);
+    await scrollTranslateRowNearTop(page, targetRowId, 120);
+    await expect(page.locator(`[data-editor-row-card][data-row-id="${targetRowId}"]`)).toBeVisible();
+
+    const syncPromise = runEditorBackgroundSync(page, {
+      skipDirtyFlush: true,
+      afterLocalCommit: true,
+    });
+
+    await expect(
+      page.locator(".modal-backdrop--navigation-loading .navigation-loading-modal__title"),
+    ).toHaveText("Synchronizing with GitHub");
+
+    await syncPromise;
+
+    await expect(
+      page.locator(".modal-backdrop--navigation-loading"),
+    ).toHaveCount(0);
+    await expect(
+      page.locator(
+        `[data-editor-row-card][data-row-id="${targetRowId}"] `
+        + '[data-editor-language-cluster][data-language-code="vi"] [data-editor-display-text]',
+      ),
+    ).toContainText("background sync blocking reload 1");
+    await expect(
+      page.locator(
+        `[data-editor-row-card][data-row-id="${targetRowId}"] .translation-row-badge--stale`,
+      ),
+    ).toHaveCount(0);
+
+    const gapMetrics = await readVisibleRowGapMetrics(page);
+    expect(gapMetrics).not.toBeNull();
+    expect(gapMetrics.maxViewportGap).toBeLessThanOrEqual(40);
+
+    const mockState = await readMockTauriState(page);
+    expect(mockState.invocations.some((entry) => entry.command === "load_gtms_chapter_editor_data")).toBe(true);
+    expect(mockState.invocations.some((entry) => entry.command === "load_gtms_editor_row")).toBe(false);
+  });
+
+  test("refreshing the translate editor shows a blocking reload when sync finds inserted rows", async ({ page }) => {
     const insertedRowId = "fixture-row-0081";
     const insertedText = "refresh structural inserted target text";
 
@@ -3195,6 +3404,7 @@ test.describe("editor regressions", () => {
           };
         },
         async load_gtms_chapter_editor_data() {
+          await new Promise((resolve) => window.setTimeout(resolve, 200));
           const editorState = window.__gnosisDebug.readEditorState();
           const rows = Array.isArray(editorState?.rows)
             ? editorState.rows.map(cloneRowForChapterLoad)
@@ -3246,11 +3456,72 @@ test.describe("editor regressions", () => {
       nextInsertedText: insertedText,
     });
 
-    await runEditorRefresh(page);
+    const refreshPromise = runEditorRefresh(page);
+
+    await expect(
+      page.locator(".modal-backdrop--navigation-loading .navigation-loading-modal__title"),
+    ).toHaveText("Synchronizing with GitHub");
+
+    await refreshPromise;
+
+    await expect(
+      page.locator(".modal-backdrop--navigation-loading"),
+    ).toHaveCount(0);
 
     const mockState = await readMockTauriState(page);
     expect(mockState.invocations.some((entry) => entry.command === "sync_gtms_project_editor_repo")).toBe(true);
     expect(mockState.invocations.some((entry) => entry.command === "load_gtms_chapter_editor_data")).toBe(true);
+    expect(mockState.invocations.some((entry) => entry.command === "load_gtms_editor_row")).toBe(false);
+  });
+
+  test("refreshing the translate editor performs only one blocking reload for large stale batches", async ({ page }) => {
+    const targetRowId = "fixture-row-0030";
+    const changedRowIds = Array.from({ length: 12 }, (_, index) => `fixture-row-${String(index + 25).padStart(4, "0")}`);
+    const updatedText = Array.from(
+      { length: 16 },
+      (_, index) => `refresh blocking reload ${index + 1}`,
+    ).join(" ");
+
+    await mountEditorFixture(page, { rowCount: 80 }, { mockTauri: true });
+    await installLargeBatchBackgroundReloadMock(page, {
+      changedRowIds,
+      newHeadSha: "mock-refresh-head-large-batch",
+      rowsById: {
+        [targetRowId]: {
+          sourceText: "alpha 0030 source text",
+          targetText: updatedText,
+        },
+      },
+    });
+
+    await setTranslateScrollTop(page, 9000);
+    await scrollTranslateRowNearTop(page, targetRowId, 120);
+
+    const refreshPromise = runEditorRefresh(page);
+
+    await expect(
+      page.locator(".modal-backdrop--navigation-loading .navigation-loading-modal__title"),
+    ).toHaveText("Synchronizing with GitHub");
+
+    await refreshPromise;
+
+    await expect(
+      page.locator(".modal-backdrop--navigation-loading"),
+    ).toHaveCount(0);
+    await expect(
+      page.locator(
+        `[data-editor-row-card][data-row-id="${targetRowId}"] `
+        + '[data-editor-language-cluster][data-language-code="vi"] [data-editor-display-text]',
+      ),
+    ).toContainText("refresh blocking reload 1");
+
+    const gapMetrics = await readVisibleRowGapMetrics(page);
+    expect(gapMetrics).not.toBeNull();
+    expect(gapMetrics.maxViewportGap).toBeLessThanOrEqual(40);
+
+    const mockState = await readMockTauriState(page);
+    expect(mockState.invocations.filter((entry) => entry.command === "load_gtms_chapter_editor_data")).toHaveLength(1);
+    expect(mockState.invocations.some((entry) => entry.command === "load_gtms_editor_row")).toBe(false);
   });
 
   for (const { label, platform } of [

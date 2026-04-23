@@ -567,6 +567,39 @@ export function applyEditorRegressionRestore(appState, rowId) {
 }
 
 export function readEditorRegressionSnapshot(appState) {
+  const rows =
+    Array.isArray(appState.editorChapter?.rows)
+      ? appState.editorChapter.rows
+        .filter((row) => typeof row?.rowId === "string" && row.rowId)
+        .map((row) => ({
+          rowId: row.rowId,
+          orderKey: typeof row.orderKey === "string" ? row.orderKey : "",
+          lifecycleState: row.lifecycleState === "deleted" ? "deleted" : "active",
+          commentCount: Number.isInteger(row.commentCount) ? row.commentCount : 0,
+          commentsRevision: Number.isInteger(row.commentsRevision) ? row.commentsRevision : 0,
+          textStyle: row.textStyle ?? "paragraph",
+          fields:
+            row?.fields && typeof row.fields === "object"
+              ? { ...row.fields }
+              : {},
+          footnotes:
+            row?.footnotes && typeof row.footnotes === "object"
+              ? { ...row.footnotes }
+              : {},
+          imageCaptions:
+            row?.imageCaptions && typeof row.imageCaptions === "object"
+              ? { ...row.imageCaptions }
+              : {},
+          images:
+            row?.images && typeof row.images === "object"
+              ? { ...row.images }
+              : {},
+          fieldStates:
+            row?.fieldStates && typeof row.fieldStates === "object"
+              ? { ...row.fieldStates }
+              : {},
+        }))
+      : [];
   const rowFootnotes =
     Array.isArray(appState.editorChapter?.rows)
       ? Object.fromEntries(
@@ -599,6 +632,17 @@ export function readEditorRegressionSnapshot(appState) {
     selectedTeamId: appState.selectedTeamId,
     selectedProjectId: appState.selectedProjectId,
     selectedChapterId: appState.selectedChapterId,
+    chapterId: appState.editorChapter?.chapterId ?? null,
+    fileTitle: appState.editorChapter?.fileTitle ?? "",
+    languages:
+      Array.isArray(appState.editorChapter?.languages)
+        ? appState.editorChapter.languages.map((language) => ({ ...language }))
+        : [],
+    sourceWordCounts:
+      appState.editorChapter?.sourceWordCounts && typeof appState.editorChapter.sourceWordCounts === "object"
+        ? { ...appState.editorChapter.sourceWordCounts }
+        : {},
+    rows,
     activeRowId: appState.editorChapter?.activeRowId ?? null,
     activeLanguageCode: appState.editorChapter?.activeLanguageCode ?? null,
     mainFieldEditor:

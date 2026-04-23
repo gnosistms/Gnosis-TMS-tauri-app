@@ -6,7 +6,10 @@ import {
   readCachedEditorRowGlossaryHighlights,
   renderableEditorGlossaryHighlightHtml,
 } from "./editor-glossary-highlight-cache.js";
-import { renderSanitizedInlineMarkupWithEditorHighlightState } from "./editor-inline-markup.js";
+import {
+  renderSanitizedInlineMarkupWithEditorHighlightState,
+  renderSanitizedInlineMarkupWithGlossaryHighlightHtml,
+} from "./editor-inline-markup.js";
 import { findEditorRowById } from "./editor-utils.js";
 import { invoke } from "./runtime.js";
 import { createEditorChapterGlossaryState, state } from "./state.js";
@@ -109,6 +112,14 @@ function setElementInnerHtmlIfChanged(element, html) {
   element.innerHTML = nextHtml;
 }
 
+function readEditorHighlightableText(row, languageCode, contentKind = "field") {
+  if (contentKind === "footnote") {
+    return row?.footnotes?.[languageCode] ?? "";
+  }
+
+  return row?.fields?.[languageCode] ?? "";
+}
+
 function applyEditorTextHighlightLayersToRowCard(
   rowCard,
   row,
@@ -130,22 +141,42 @@ function applyEditorTextHighlightLayersToRowCard(
       ? (searchHighlightMap.get(buildEditorSearchHighlightKey(languageCode, contentKind)) ?? null)
       : null;
     const glossaryHighlightHtml = isAiTranslating ? "" : renderableEditorGlossaryHighlightHtml(glossaryHighlight);
+    const searchHighlightHtml =
+      isAiTranslating !== true && typeof searchHighlight?.html === "string"
+        ? searchHighlight.html
+        : "";
     const searchHighlightRanges = isAiTranslating
       ? []
       : (Array.isArray(searchHighlight?.ranges) ? searchHighlight.ranges : []);
+    const highlightableText = readEditorHighlightableText(row, languageCode, contentKind);
     const displayText = stack.querySelector("[data-editor-display-text]");
-    stack.classList.toggle("translation-language-panel__field-stack--highlighted", false);
-    stack.classList.toggle("translation-language-panel__field-stack--glossary", false);
-    stack.classList.toggle("translation-language-panel__field-stack--search", false);
-
     const glossaryLayer = stack.querySelector("[data-editor-glossary-highlight]");
-    setElementInnerHtmlIfChanged(glossaryLayer, "");
+    const searchLayer = stack.querySelector("[data-editor-search-highlight]");
+    const hasLayerGlossary =
+      glossaryLayer instanceof HTMLElement && glossaryHighlightHtml.length > 0;
+    const hasLayerSearch =
+      searchLayer instanceof HTMLElement && searchHighlightHtml.length > 0;
+    stack.classList.toggle(
+      "translation-language-panel__field-stack--highlighted",
+      hasLayerGlossary || hasLayerSearch,
+    );
+    stack.classList.toggle("translation-language-panel__field-stack--glossary", hasLayerGlossary);
+    stack.classList.toggle("translation-language-panel__field-stack--search", hasLayerSearch);
+    setElementInnerHtmlIfChanged(
+      glossaryLayer,
+      hasLayerGlossary
+        ? renderSanitizedInlineMarkupWithGlossaryHighlightHtml(
+          highlightableText,
+          glossaryHighlightHtml,
+        )
+        : "",
+    );
 
     if (displayText instanceof HTMLElement) {
       if (!isAiTranslating) {
         setElementInnerHtmlIfChanged(
           displayText,
-          renderSanitizedInlineMarkupWithEditorHighlightState(row?.fields?.[languageCode] ?? "", {
+          renderSanitizedInlineMarkupWithEditorHighlightState(highlightableText, {
             glossaryHighlightHtml,
             searchRanges: searchHighlightRanges,
           }),
@@ -153,8 +184,7 @@ function applyEditorTextHighlightLayersToRowCard(
       }
     }
 
-    const searchLayer = stack.querySelector("[data-editor-search-highlight]");
-    setElementInnerHtmlIfChanged(searchLayer, "");
+    setElementInnerHtmlIfChanged(searchLayer, hasLayerSearch ? searchHighlightHtml : "");
   });
 }
 

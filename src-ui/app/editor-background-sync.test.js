@@ -198,6 +198,25 @@ function createRemoteRowPayload(rowId, overrides = {}) {
   };
 }
 
+function createRemoteChapterLoadPayload(rows, overrides = {}) {
+  const nextRows = Array.isArray(rows) ? rows : [];
+  return {
+    chapterId: "chapter-1",
+    chapterBaseCommitSha: "head-2",
+    fileTitle: "Chapter 1",
+    languages: [{ code: "es", name: "Spanish" }, { code: "en", name: "English" }],
+    sourceWordCounts: {},
+    rows: nextRows.map((row) => createRemoteRowPayload(row.rowId, {
+      orderKey: row.orderKey,
+      fields: {
+        es: row.fields?.es ?? `hola ${row.rowId}`,
+        en: `reloaded ${row.rowId}`,
+      },
+    })),
+    ...overrides,
+  };
+}
+
 function installEditorFixture() {
   resetSessionState();
   state.auth.session = {
@@ -320,7 +339,7 @@ test("background sync does not rerender the editor body when sync starts or fini
   };
 
   const render = createRenderRecorder();
-  startEditorBackgroundSyncSession(render);
+  startEditorBackgroundSyncSession(render, { skipInitialSync: true });
   await Promise.resolve();
 
   assert.deepEqual(render.calls, []);
@@ -432,6 +451,108 @@ test("background sync summary keeps safe visible row updates off the full-refres
 
   assert.equal(syncResult.requiresChapterReload, false);
   assert.deepEqual(syncResult.refreshedRowIds, ["row-1"]);
+});
+
+test("background sync uses a blocking chapter reload for large stale batches", async () => {
+  installEditorFixture();
+  const rows = Array.from({ length: 9 }, (_, index) => {
+    const rowNumber = index + 1;
+    return createEditorRowFixture({
+      rowId: `row-${rowNumber}`,
+      orderKey: String(rowNumber).padStart(5, "0"),
+      fields: {
+        es: `hola ${rowNumber}`,
+        en: `hello ${rowNumber}`,
+      },
+      persistedFields: {
+        es: `hola ${rowNumber}`,
+        en: `hello ${rowNumber}`,
+      },
+    });
+  });
+  state.editorChapter.rows = rows;
+
+  const syncRequest = deferred();
+  invokeHandler = async (command) => {
+    if (command === "sync_gtms_project_editor_repo") {
+      return syncRequest.promise;
+    }
+    if (command === "load_gtms_chapter_editor_data") {
+      return createRemoteChapterLoadPayload(rows);
+    }
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  const render = createRenderRecorder();
+  startEditorBackgroundSyncSession(render);
+  await Promise.resolve();
+
+  const pendingSync = syncEditorBackgroundNowWithSummary(render, {
+    skipDirtyFlush: true,
+    suppressConservativeRerender: true,
+  });
+  syncRequest.resolve({
+    changedRowIds: rows.map((row) => row.rowId),
+    deletedRowIds: [],
+    insertedRowIds: [],
+    newHeadSha: "head-2",
+  });
+  const syncResult = await pendingSync;
+
+  assert.equal(syncResult.requiresBlockingReload, true);
+  assert.equal(syncResult.performedBlockingReload, true);
+  assert.equal(syncResult.blockingReloadReason, "large-batch");
+  assert.equal(syncResult.requiresChapterReload, true);
+  assert.deepEqual(syncResult.refreshedRowIds, []);
+  assert.equal(state.navigationLoadingModal.isOpen, false);
+  assert.deepEqual(
+    invokeLog.filter((entry) => entry.command === "load_gtms_editor_row"),
+    [],
+  );
+});
+
+test("background sync uses a blocking chapter reload for deleted rows", async () => {
+  installEditorFixture();
+  state.editorChapter.rows = [createEditorRowFixture()];
+
+  const syncRequest = deferred();
+  invokeHandler = async (command) => {
+    if (command === "sync_gtms_project_editor_repo") {
+      return syncRequest.promise;
+    }
+    if (command === "load_gtms_chapter_editor_data") {
+      return createRemoteChapterLoadPayload([]);
+    }
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  const render = createRenderRecorder();
+  startEditorBackgroundSyncSession(render);
+  await Promise.resolve();
+
+  const pendingSync = syncEditorBackgroundNowWithSummary(render, {
+    skipDirtyFlush: true,
+    suppressConservativeRerender: true,
+  });
+  syncRequest.resolve({
+    changedRowIds: ["row-1"],
+    deletedRowIds: ["row-1"],
+    insertedRowIds: [],
+    newHeadSha: "head-2",
+  });
+  const syncResult = await pendingSync;
+
+  assert.equal(syncResult.requiresBlockingReload, true);
+  assert.equal(syncResult.performedBlockingReload, true);
+  assert.equal(syncResult.blockingReloadReason, "deleted-rows");
+  assert.equal(syncResult.requiresChapterReload, true);
+  assert.deepEqual(syncResult.refreshedRowIds, []);
+  assert.equal(state.editorChapter.rows.length, 0);
+  assert.equal(state.navigationLoadingModal.isOpen, false);
+  assert.deepEqual(
+    invokeLog.filter((entry) => entry.command === "load_gtms_editor_row"),
+    [],
+  );
 });
 
 test("background sync summary flags deferred row changes for a full chapter reload", async () => {
@@ -548,14 +669,30 @@ test("background sync keeps the active row on the conservative stale path", asyn
   );
 });
 
-test("background sync keeps structural changes on the conservative path", async () => {
+test("background sync uses a blocking chapter reload for inserted rows", async () => {
   installEditorFixture();
-  state.editorChapter.rows = [createEditorRowFixture()];
+  const existingRow = createEditorRowFixture();
+  const insertedRow = createEditorRowFixture({
+    rowId: "row-2",
+    orderKey: "00002",
+    fields: {
+      es: "hola 2",
+      en: "hello 2",
+    },
+    persistedFields: {
+      es: "hola 2",
+      en: "hello 2",
+    },
+  });
+  state.editorChapter.rows = [existingRow];
 
   const syncRequest = deferred();
   invokeHandler = async (command) => {
     if (command === "sync_gtms_project_editor_repo") {
       return syncRequest.promise;
+    }
+    if (command === "load_gtms_chapter_editor_data") {
+      return createRemoteChapterLoadPayload([existingRow, insertedRow]);
     }
     throw new Error(`Unexpected command: ${command}`);
   };
@@ -564,18 +701,26 @@ test("background sync keeps structural changes on the conservative path", async 
   startEditorBackgroundSyncSession(render);
   await Promise.resolve();
 
-  const pendingSync = syncEditorBackgroundNow(render, { skipDirtyFlush: true });
+  const pendingSync = syncEditorBackgroundNowWithSummary(render, {
+    skipDirtyFlush: true,
+    suppressConservativeRerender: true,
+  });
   syncRequest.resolve({
     changedRowIds: ["row-1"],
     deletedRowIds: [],
     insertedRowIds: ["row-2"],
     newHeadSha: "head-2",
   });
-  await pendingSync;
+  const syncResult = await pendingSync;
 
-  assert.deepEqual(render.calls, [{ scope: "translate-body" }]);
-  assert.equal(state.editorChapter.rows[0]?.freshness, "stale");
-  assert.equal(state.editorChapter.deferredStructuralChanges, true);
+  assert.equal(syncResult.requiresBlockingReload, true);
+  assert.equal(syncResult.performedBlockingReload, true);
+  assert.equal(syncResult.blockingReloadReason, "inserted-rows");
+  assert.equal(syncResult.requiresChapterReload, true);
+  assert.deepEqual(syncResult.refreshedRowIds, []);
+  assert.equal(state.editorChapter.rows.length, 2);
+  assert.equal(state.editorChapter.rows[1]?.rowId, "row-2");
+  assert.equal(state.navigationLoadingModal.isOpen, false);
   assert.deepEqual(
     invokeLog.filter((entry) => entry.command === "load_gtms_editor_row"),
     [],

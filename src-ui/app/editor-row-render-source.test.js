@@ -10,7 +10,7 @@ const editorRowRenderSource = readFileSync(
   "utf8",
 );
 
-test("editor row render templates no longer emit invisible highlight layers", () => {
-  assert.equal(editorRowRenderSource.includes("data-editor-search-highlight"), false);
-  assert.equal(editorRowRenderSource.includes("data-editor-glossary-highlight"), false);
+test("editor row render templates emit highlight layers for open editor fields", () => {
+  assert.equal(editorRowRenderSource.includes("data-editor-search-highlight"), true);
+  assert.equal(editorRowRenderSource.includes("data-editor-glossary-highlight"), true);
 });

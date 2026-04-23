@@ -239,7 +239,10 @@ export async function refreshCurrentScreen(render) {
         afterLocalCommit: true,
         suppressConservativeRerender: true,
       });
-      if (syncResult?.requiresChapterReload === true) {
+      if (
+        syncResult?.requiresChapterReload === true
+        && syncResult?.performedBlockingReload !== true
+      ) {
         await loadSelectedChapterEditorData(render, { preserveVisibleRows: true });
       }
       await completePageSync(render);
