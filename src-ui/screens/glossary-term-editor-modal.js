@@ -190,10 +190,16 @@ export function renderGlossaryTermEditorModal(state) {
   }
 
   const isSubmitting = editor.status === "loading";
+  const cancelButton = secondaryButton("Cancel", "cancel-glossary-term-editor", {
+    disabled: isSubmitting,
+  });
   const sourceLanguageName = state.glossaryEditor?.sourceLanguage?.name ?? "Source";
   const sourceLanguageCode = state.glossaryEditor?.sourceLanguage?.code ?? "";
   const targetLanguageName = state.glossaryEditor?.targetLanguage?.name ?? "Target";
   const targetLanguageCode = state.glossaryEditor?.targetLanguage?.code ?? "";
+  const noticeMarkup = editor.notice
+    ? `<p class="glossary-term-modal__notice" role="alert">${escapeHtml(editor.notice)}</p>`
+    : "";
   const redundantSourceVariantIndices = new Set(editor.redundantSourceVariantIndices ?? []);
   const duplicateWarningMarkup = `
     <p
@@ -211,15 +217,13 @@ export function renderGlossaryTermEditorModal(state) {
     action: "submit-glossary-term-editor",
     isLoading: isSubmitting,
   });
-  const cancelButton = secondaryButton("Cancel", "cancel-glossary-term-editor", {
-    disabled: isSubmitting,
-  });
 
   return `
     <div class="modal-backdrop modal-backdrop--glossary-term">
       <section class="card modal-card modal-card--glossary-term">
         <div class="card__body modal-card__body glossary-term-modal">
           <h2 class="modal__title">${editor.termId ? "Edit Term" : "New Term"}</h2>
+          ${noticeMarkup}
           ${duplicateWarningMarkup}
 
           <div class="glossary-term-modal__lanes">

@@ -197,6 +197,7 @@ const {
   syncAndStopGlossaryBackgroundSyncSession,
 } = await import("./glossary-background-sync.js");
 const {
+  openGlossaryTermEditor,
   submitGlossaryTermEditor,
 } = await import("./glossary-term-draft.js");
 
@@ -500,6 +501,215 @@ test("opening a stale glossary term reloads the latest term from disk before edi
   );
 });
 
+test("opening an existing glossary term uses the local term snapshot immediately", async () => {
+  installGlossaryEditorFixture({
+    terms: [
+      glossaryTerm({
+        termId: "term-1",
+        sourceTerms: ["current source"],
+        targetTerms: ["current target"],
+      }),
+    ],
+  });
+
+  const renderStates = [];
+  invokeHandler = async (command) => {
+    assert.fail(`unexpected command during local glossary term open: ${command}`);
+    return null;
+  };
+
+  await openGlossaryTermEditor(() => {
+    renderStates.push({
+      isOpen: state.glossaryTermEditor.isOpen,
+      status: state.glossaryTermEditor.status,
+      termId: state.glossaryTermEditor.termId,
+      sourceTerms: [...state.glossaryTermEditor.sourceTerms],
+      targetTerms: [...state.glossaryTermEditor.targetTerms],
+    });
+  }, "term-1");
+
+  assert.equal(state.glossaryTermEditor.isOpen, true);
+  assert.equal(state.glossaryTermEditor.status, "idle");
+  assert.equal(state.glossaryTermEditor.termId, "term-1");
+  assert.deepEqual(state.glossaryTermEditor.sourceTerms, ["current source"]);
+  assert.deepEqual(state.glossaryTermEditor.targetTerms, ["current target"]);
+  assert.deepEqual(renderStates, [
+    {
+      isOpen: true,
+      status: "idle",
+      termId: "term-1",
+      sourceTerms: ["current source"],
+      targetTerms: ["current target"],
+    },
+  ]);
+
+  assert.equal(syncInvocationCount("sync_gtms_glossary_editor_repo"), 0);
+  assert.equal(syncInvocationCount("load_gtms_glossary_term"), 0);
+});
+
+test("saving a glossary term with a newer GitHub version reloads the latest term and reopens the modal with a banner", async () => {
+  installGlossaryEditorFixture({
+    terms: [
+      glossaryTerm({
+        termId: "term-1",
+        sourceTerms: ["local source"],
+        targetTerms: ["local target"],
+      }),
+    ],
+  });
+  state.glossaryTermEditor = {
+    ...createGlossaryTermEditorState(),
+    isOpen: true,
+    glossaryId: "glossary-1",
+    termId: "term-1",
+    sourceTerms: ["edited source"],
+    targetTerms: ["edited target"],
+    notesToTranslators: "edited notes",
+    footnote: "edited footnote",
+    untranslated: false,
+  };
+
+  invokeHandler = async (command, payload) => {
+    if (command === "sync_gtms_glossary_editor_repo") {
+      return {
+        oldHeadSha: "head-1",
+        newHeadSha: "head-2",
+        changedTermIds: ["term-1"],
+        insertedTermIds: [],
+        deletedTermIds: [],
+      };
+    }
+    if (command === "load_gtms_glossary_term") {
+      assert.equal(payload?.input?.termId, "term-1");
+      return {
+        termId: "term-1",
+        term: {
+          termId: "term-1",
+          sourceTerms: ["github source"],
+          targetTerms: ["github target"],
+          notesToTranslators: "github notes",
+          footnote: "github footnote",
+          untranslated: false,
+          lifecycleState: "active",
+        },
+      };
+    }
+    if (command === "upsert_gtms_glossary_term") {
+      assert.fail("stale glossary terms should not save before the latest GitHub version loads");
+    }
+    return null;
+  };
+
+  await submitGlossaryTermEditor(() => {});
+
+  assert.equal(state.glossaryTermEditor.isOpen, true);
+  assert.equal(state.glossaryTermEditor.status, "idle");
+  assert.equal(
+    state.glossaryTermEditor.notice,
+    "Error: this glossary term has a more recent version on GitHub. Please redo your edits and save again.",
+  );
+  assert.deepEqual(state.glossaryTermEditor.sourceTerms, ["github source"]);
+  assert.deepEqual(state.glossaryTermEditor.targetTerms, ["github target"]);
+  assert.deepEqual(state.glossaryTermEditor.notesToTranslators, "github notes");
+  assert.deepEqual(state.glossaryTermEditor.footnote, "github footnote");
+});
+
+test("saving a glossary term rolls back the local commit when the later GitHub sync fails", async () => {
+  installGlossaryEditorFixture({
+    terms: [
+      glossaryTerm({
+        termId: "term-1",
+        sourceTerms: ["server source"],
+        targetTerms: ["server target"],
+      }),
+    ],
+  });
+  state.glossaryTermEditor = {
+    ...createGlossaryTermEditorState(),
+    isOpen: true,
+    glossaryId: "glossary-1",
+    termId: "term-1",
+    sourceTerms: ["edited source"],
+    targetTerms: ["edited target"],
+    notesToTranslators: "edited notes",
+    footnote: "edited footnote",
+    untranslated: false,
+  };
+
+  invokeHandler = async (command) => {
+    switch (command) {
+      case "sync_gtms_glossary_editor_repo":
+        return {
+          oldHeadSha: "head-1",
+          newHeadSha: "head-1",
+          changedTermIds: [],
+          insertedTermIds: [],
+          deletedTermIds: [],
+        };
+      case "upsert_gtms_glossary_term":
+        return {
+          glossaryId: "glossary-1",
+          termCount: 1,
+          previousHeadSha: "head-1",
+          term: {
+            termId: "term-1",
+            sourceTerms: ["edited source"],
+            targetTerms: ["edited target"],
+            notesToTranslators: "edited notes",
+            footnote: "edited footnote",
+            untranslated: false,
+            lifecycleState: "active",
+          },
+        };
+      case "sync_gtms_glossary_repos":
+        return [
+          {
+            repoName: "glossary-1",
+            status: "syncError",
+            message: "GitHub sync failed.",
+          },
+        ];
+      case "rollback_gtms_glossary_term_upsert":
+        return null;
+      case "load_gtms_glossary_editor_data":
+        return {
+          glossaryId: "glossary-1",
+          title: "Fixture Glossary",
+          sourceLanguage: { code: "es", name: "Spanish" },
+          targetLanguage: { code: "fr", name: "French" },
+          lifecycleState: "active",
+          termCount: 1,
+          terms: [
+            {
+              termId: "term-1",
+              sourceTerms: ["server source"],
+              targetTerms: ["server target"],
+              notesToTranslators: "",
+              footnote: "",
+              untranslated: false,
+              lifecycleState: "active",
+            },
+          ],
+        };
+      default:
+        return null;
+    }
+  };
+
+  await submitGlossaryTermEditor(() => {});
+
+  const upsertIndex = invokeLog.findIndex((entry) => entry.command === "upsert_gtms_glossary_term");
+  const rollbackIndex = invokeLog.findIndex((entry) => entry.command === "rollback_gtms_glossary_term_upsert");
+  assert.ok(upsertIndex >= 0);
+  assert.ok(rollbackIndex > upsertIndex);
+  assert.equal(state.glossaryTermEditor.isOpen, true);
+  assert.equal(state.glossaryTermEditor.status, "idle");
+  assert.match(state.glossaryTermEditor.error, /GitHub sync failed\./);
+  assert.match(state.glossaryTermEditor.error, /rolled back/i);
+  assert.deepEqual(state.glossaryTermEditor.sourceTerms, ["edited source"]);
+  assert.deepEqual(state.glossaryTermEditor.targetTerms, ["edited target"]);
+});
+
 test("stale glossary term reload ignores responses after switching to another glossary", async () => {
   installGlossaryEditorFixture({
     terms: [
@@ -625,8 +835,8 @@ test("saving a glossary term syncs first and then persists the user's modal draf
       case "sync_gtms_glossary_editor_repo":
         return {
           oldHeadSha: "head-1",
-          newHeadSha: "head-2",
-          changedTermIds: ["term-1"],
+          newHeadSha: "head-1",
+          changedTermIds: [],
           insertedTermIds: [],
           deletedTermIds: [],
         };
@@ -732,8 +942,8 @@ test("saving a glossary term sanitizes ruby markup and escapes unsupported inlin
       case "sync_gtms_glossary_editor_repo":
         return {
           oldHeadSha: "head-1",
-          newHeadSha: "head-2",
-          changedTermIds: ["term-1"],
+          newHeadSha: "head-1",
+          changedTermIds: [],
           insertedTermIds: [],
           deletedTermIds: [],
         };

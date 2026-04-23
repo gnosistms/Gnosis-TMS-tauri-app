@@ -95,3 +95,21 @@ test("glossary term modal renders empty target variants as disabled placeholder 
     /term-variant-row__shell--disabled[\s\S]*data-glossary-term-variant-input/,
   );
 });
+
+test("glossary term modal renders a remote-update notice banner when present", () => {
+  installModalFixture();
+  state.glossaryTermEditor = {
+    ...createGlossaryTermEditorState(),
+    isOpen: true,
+    termId: "term-1",
+    notice:
+      "Error: this glossary term has a more recent version on GitHub. Please redo your edits and save again.",
+  };
+
+  const html = renderGlossaryTermEditorModal(state);
+
+  assert.match(html, /Edit Term/);
+  assert.match(html, /glossary-term-modal__notice/);
+  assert.match(html, /more recent version on GitHub/);
+  assert.match(html, /redo your edits and save again/);
+});

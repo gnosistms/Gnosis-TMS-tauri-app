@@ -742,6 +742,7 @@ export function createGlossaryTermEditorState() {
   return createEntityModalState({
     glossaryId: null,
     termId: null,
+    notice: "",
     sourceTerms: [""],
     targetTerms: [""],
     sourceTermDuplicateWarning: "",

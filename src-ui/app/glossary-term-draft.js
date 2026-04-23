@@ -1,5 +1,9 @@
 import { invoke } from "./runtime.js";
-import { resetGlossaryTermEditor, state } from "./state.js";
+import {
+  createGlossaryTermEditorState,
+  resetGlossaryTermEditor,
+  state,
+} from "./state.js";
 import {
   markGlossaryBackgroundSyncDirty,
   maybeStartGlossaryBackgroundSync,
@@ -24,10 +28,15 @@ import {
   getGlossarySyncIssueMessage,
   syncSingleGlossaryForTeam,
 } from "./glossary-repo-flow.js";
-import { ensureGlossaryTermReadyForEdit } from "./glossary-term-sync.js";
+import {
+  ensureGlossaryTermReadyForEdit,
+  findGlossaryTermById,
+} from "./glossary-term-sync.js";
 
 const SOURCE_TERM_DUPLICATE_WARNING =
   "The terms highlighted in red below are redundant with other parts of this glossary. Please remove them before saving.";
+const GLOSSARY_TERM_REMOTE_UPDATE_NOTICE =
+  "Error: this glossary term has a more recent version on GitHub. Please redo your edits and save again.";
 
 function normalizeSourceTermForDuplicateDetection(value) {
   return extractGlossaryRubyBaseText(value).trim();
@@ -139,6 +148,66 @@ function shouldRefreshGlossaryTermDuplicateFeedback() {
   );
 }
 
+function createGlossaryTermEditorModalState(term = null, overrides = {}) {
+  return {
+    ...createGlossaryTermEditorState(),
+    isOpen: true,
+    status: overrides.status ?? "idle",
+    error: overrides.error ?? "",
+    notice: overrides.notice ?? "",
+    glossaryId: state.glossaryEditor?.glossaryId ?? null,
+    termId: overrides.termId ?? term?.termId ?? null,
+    sourceTerms: normalizeEditableTerms(term?.sourceTerms ?? []),
+    targetTerms: normalizeEditableTargetTerms(term?.targetTerms ?? []),
+    sourceTermDuplicateWarning: "",
+    redundantSourceVariantIndices: [],
+    notesToTranslators: term?.notesToTranslators ?? "",
+    footnote: term?.footnote ?? "",
+    untranslated: term?.untranslated === true,
+  };
+}
+
+async function reopenGlossaryTermEditorWithLatestRemote(render, termId) {
+  const latestTerm = await ensureGlossaryTermReadyForEdit(render, termId, {
+    suppressNotice: true,
+  });
+  if (!latestTerm) {
+    resetGlossaryTermEditor();
+    render();
+    showNoticeBadge("The term was deleted on GitHub.", render);
+    return false;
+  }
+
+  state.glossaryTermEditor = createGlossaryTermEditorModalState(latestTerm, {
+    notice: GLOSSARY_TERM_REMOTE_UPDATE_NOTICE,
+  });
+  render();
+  return true;
+}
+
+async function rollbackGlossaryTermSave(repoInput, previousHeadSha, failureMessage) {
+  if (!previousHeadSha) {
+    return failureMessage;
+  }
+
+  try {
+    await invoke("rollback_gtms_glossary_term_upsert", {
+      input: {
+        installationId: repoInput.installationId,
+        glossaryId: repoInput.glossaryId,
+        repoName: repoInput.repoName,
+        previousHeadSha,
+      },
+    });
+    return `${failureMessage} The local glossary term change was rolled back.`;
+  } catch (rollbackError) {
+    const rollbackMessage = rollbackError instanceof Error
+      ? rollbackError.message
+      : String(rollbackError);
+    return `${failureMessage} Rolling back the local glossary term change also failed: ${rollbackMessage}`;
+  }
+}
+
 export async function openGlossaryTermEditor(render, termId = null) {
   const team = selectedTeam();
   const glossary = selectedGlossary();
@@ -150,32 +219,15 @@ export async function openGlossaryTermEditor(render, termId = null) {
     return;
   }
 
-  if (termId) {
-    await maybeStartGlossaryBackgroundSync(render, { force: true });
-  }
-
   const term = termId
-    ? await ensureGlossaryTermReadyForEdit(render, termId)
+    ? findGlossaryTermById(termId, state.glossaryEditor)
     : null;
   if (termId && !term) {
+    resetGlossaryTermEditor();
     return;
   }
 
-  state.glossaryTermEditor = {
-    ...state.glossaryTermEditor,
-    isOpen: true,
-    status: "idle",
-    error: "",
-    glossaryId: state.glossaryEditor.glossaryId,
-    termId: term?.termId ?? null,
-    sourceTerms: normalizeEditableTerms(term?.sourceTerms ?? []),
-    targetTerms: normalizeEditableTargetTerms(term?.targetTerms ?? []),
-    sourceTermDuplicateWarning: "",
-    redundantSourceVariantIndices: [],
-    notesToTranslators: term?.notesToTranslators ?? "",
-    footnote: term?.footnote ?? "",
-    untranslated: term?.untranslated === true,
-  };
+  state.glossaryTermEditor = createGlossaryTermEditorModalState(term);
   render();
 }
 
@@ -312,18 +364,32 @@ export async function submitGlossaryTermEditor(render) {
     footnote: draft.footnote,
     untranslated: draft.untranslated === true,
   };
+  const repoInput = {
+    installationId: team.installationId,
+    glossaryId: glossary?.id ?? null,
+    repoName,
+  };
 
   state.glossaryTermEditor.status = "loading";
   state.glossaryTermEditor.error = "";
+  state.glossaryTermEditor.notice = "";
   render();
 
+  let previousHeadSha = null;
   try {
     await maybeStartGlossaryBackgroundSync(render, { force: true });
-    await invoke("upsert_gtms_glossary_term", {
+    if (draftSnapshot.termId) {
+      const currentTerm = findGlossaryTermById(draftSnapshot.termId, state.glossaryEditor);
+      if (currentTerm?.freshness === "stale" || currentTerm?.remotelyDeleted === true) {
+        state.glossaryTermEditor.status = "idle";
+        await reopenGlossaryTermEditorWithLatestRemote(render, draftSnapshot.termId);
+        return;
+      }
+    }
+
+    const upsertPayload = await invoke("upsert_gtms_glossary_term", {
       input: {
-        installationId: team.installationId,
-        glossaryId: glossary?.id ?? null,
-        repoName,
+        ...repoInput,
         termId: draftSnapshot.termId,
         sourceTerms: draftSnapshot.sourceTerms,
         targetTerms: draftSnapshot.targetTerms,
@@ -332,18 +398,46 @@ export async function submitGlossaryTermEditor(render) {
         untranslated: draftSnapshot.untranslated,
       },
     });
+    previousHeadSha = upsertPayload?.previousHeadSha ?? null;
     const syncIssue = getGlossarySyncIssueMessage(
       await syncSingleGlossaryForTeam(team, selectedGlossary()),
     );
+    if (syncIssue?.message) {
+      const rollbackMessage = await rollbackGlossaryTermSave(
+        repoInput,
+        previousHeadSha,
+        syncIssue.message,
+      );
+      await loadSelectedGlossaryEditorData(render);
+      state.glossaryTermEditor = createGlossaryTermEditorModalState(draftSnapshot, {
+        error: rollbackMessage,
+        termId: draftSnapshot.termId,
+      });
+      render();
+      return;
+    }
+
     markGlossaryBackgroundSyncDirty();
     resetGlossaryTermEditor();
     await loadSelectedGlossaryEditorData(render);
-    if (syncIssue?.message) {
-      showNoticeBadge(syncIssue.message, render);
-    }
   } catch (error) {
-    state.glossaryTermEditor.status = "idle";
     const errorMessage = error?.message ?? String(error);
+    if (previousHeadSha) {
+      const rollbackMessage = await rollbackGlossaryTermSave(
+        repoInput,
+        previousHeadSha,
+        errorMessage,
+      );
+      await loadSelectedGlossaryEditorData(render);
+      state.glossaryTermEditor = createGlossaryTermEditorModalState(draftSnapshot, {
+        error: rollbackMessage,
+        termId: draftSnapshot.termId,
+      });
+      render();
+      return;
+    }
+
+    state.glossaryTermEditor.status = "idle";
     if (errorMessage === SOURCE_TERM_DUPLICATE_WARNING) {
       if (!refreshGlossaryTermDuplicateFeedback({ activateWarning: true })) {
         state.glossaryTermEditor.error = errorMessage;

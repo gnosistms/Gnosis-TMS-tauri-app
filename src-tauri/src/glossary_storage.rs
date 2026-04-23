@@ -173,6 +173,15 @@ pub(crate) struct UpsertGlossaryTermInput {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub(crate) struct RollbackGlossaryTermUpsertInput {
+    installation_id: i64,
+    repo_name: String,
+    glossary_id: Option<String>,
+    previous_head_sha: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct DeleteGlossaryTermInput {
     installation_id: i64,
     repo_name: String,
@@ -244,6 +253,7 @@ pub(crate) struct LoadGlossaryTermResponse {
 pub(crate) struct UpsertGlossaryTermResponse {
     glossary_id: String,
     term_count: usize,
+    previous_head_sha: Option<String>,
     term: GlossaryTermEditorRecord,
 }
 
@@ -386,6 +396,16 @@ pub(crate) async fn upsert_gtms_glossary_term(
     tauri::async_runtime::spawn_blocking(move || upsert_gtms_glossary_term_sync(&app, input))
         .await
         .map_err(|error| format!("The glossary term worker failed: {error}"))?
+}
+
+#[tauri::command]
+pub(crate) async fn rollback_gtms_glossary_term_upsert(
+    app: AppHandle,
+    input: RollbackGlossaryTermUpsertInput,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || rollback_gtms_glossary_term_upsert_sync(&app, input))
+        .await
+        .map_err(|error| format!("The glossary term rollback worker failed: {error}"))?
 }
 
 #[tauri::command]
@@ -947,6 +967,7 @@ fn upsert_gtms_glossary_term_sync(
     )?;
     let glossary_file = read_glossary_file(&repo_path)?;
     ensure_gitattributes(&repo_path.join(".gitattributes"))?;
+    let previous_head_sha = git_output(&repo_path, &["rev-parse", "HEAD"]).ok();
 
     let trimmed_source_terms = trim_non_empty_term_values(&input.source_terms);
     if trimmed_source_terms.is_empty() {
@@ -1061,6 +1082,7 @@ fn upsert_gtms_glossary_term_sync(
     Ok(UpsertGlossaryTermResponse {
         glossary_id: glossary_file.glossary_id,
         term_count,
+        previous_head_sha,
         term: GlossaryTermEditorRecord {
             term_id,
             source_terms: sanitized_source_terms,
@@ -1071,6 +1093,25 @@ fn upsert_gtms_glossary_term_sync(
             lifecycle_state: "active".to_string(),
         },
     })
+}
+
+fn rollback_gtms_glossary_term_upsert_sync(
+    app: &AppHandle,
+    input: RollbackGlossaryTermUpsertInput,
+) -> Result<(), String> {
+    let repo_path = glossary_repo_path(
+        app,
+        input.installation_id,
+        input.glossary_id.as_deref(),
+        Some(&input.repo_name),
+    )?;
+    let previous_head_sha = input.previous_head_sha.trim();
+    if previous_head_sha.is_empty() {
+        return Err("The previous glossary repo head is missing.".to_string());
+    }
+
+    git_output(&repo_path, &["reset", "--hard", previous_head_sha])?;
+    Ok(())
 }
 
 fn delete_gtms_glossary_term_sync(

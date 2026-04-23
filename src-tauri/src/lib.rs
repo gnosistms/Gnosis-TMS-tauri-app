@@ -91,7 +91,7 @@ use crate::{
         inspect_tmx_glossary_import, list_local_gtms_glossaries, load_gtms_glossary_editor_data,
         load_gtms_glossary_term, prepare_local_gtms_glossary_repo, purge_local_gtms_glossary_repo,
         rename_gtms_glossary, rename_local_gtms_glossary_repo, restore_gtms_glossary,
-        soft_delete_gtms_glossary, upsert_gtms_glossary_term,
+        rollback_gtms_glossary_term_upsert, soft_delete_gtms_glossary, upsert_gtms_glossary_term,
     },
     project_import::{
         clear_gtms_editor_imported_conflict, clear_gtms_editor_reviewed_markers,
@@ -608,6 +608,7 @@ pub fn run() {
             load_gtms_glossary_editor_data,
             load_gtms_glossary_term,
             upsert_gtms_glossary_term,
+            rollback_gtms_glossary_term_upsert,
             delete_gtms_glossary_term,
             permanently_delete_gnosis_glossary_repo,
             list_github_app_test_repositories,
