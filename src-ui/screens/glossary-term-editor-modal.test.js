@@ -7,6 +7,9 @@ const {
   resetSessionState,
   state,
 } = await import("../app/state.js");
+const {
+  GLOSSARY_EMPTY_TARGET_VARIANT_SENTINEL,
+} = await import("../app/glossary-shared.js");
 const { renderGlossaryTermEditorModal } = await import("./glossary-term-editor-modal.js");
 
 function installModalFixture() {
@@ -55,5 +58,40 @@ test("glossary term modal places each ruby button before its add-variant button"
   assert.ok(
     html.indexOf('data-action="toggle-glossary-term-inline-style:ruby:target"')
       < html.indexOf('data-action="add-glossary-term-variant:target"'),
+  );
+});
+
+test("glossary term modal renders the target no-translation button between ruby and add", () => {
+  installModalFixture();
+
+  const html = renderGlossaryTermEditorModal(state);
+
+  assert.ok(
+    html.indexOf('data-action="toggle-glossary-term-inline-style:ruby:target"')
+      < html.indexOf('data-action="add-glossary-term-empty-variant:target"'),
+  );
+  assert.ok(
+    html.indexOf('data-action="add-glossary-term-empty-variant:target"')
+      < html.indexOf('data-action="add-glossary-term-variant:target"'),
+  );
+  assert.match(
+    html,
+    /Add an empty variant to indicated that it&#39;s ok to omit this word from the translation\./,
+  );
+  assert.match(html, />⊘<\/span><\/button>/);
+});
+
+test("glossary term modal renders empty target variants as disabled placeholder rows", () => {
+  installModalFixture();
+  state.glossaryTermEditor.targetTerms = [GLOSSARY_EMPTY_TARGET_VARIANT_SENTINEL];
+
+  const html = renderGlossaryTermEditorModal(state);
+
+  assert.match(html, /term-variant-row__shell--disabled/);
+  assert.match(html, /term-variant-row__input--disabled/);
+  assert.match(html, /\[No translation\]/);
+  assert.doesNotMatch(
+    html,
+    /term-variant-row__shell--disabled[\s\S]*data-glossary-term-variant-input/,
   );
 });

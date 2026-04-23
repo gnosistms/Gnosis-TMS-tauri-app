@@ -1,5 +1,6 @@
 import { state } from "../state.js";
 import {
+  addGlossaryTermEmptyTargetVariant,
   addGlossaryTermVariant,
   cancelGlossaryPermanentDeletion,
   cancelGlossaryRename,
@@ -134,6 +135,12 @@ export function createGlossaryActions(render) {
       ) {
         moveGlossaryTermVariantToIndex(variantAction.side, variantAction.index, variantAction.toIndex);
       }
+      render();
+      return true;
+    }
+
+    if (action === "add-glossary-term-empty-variant:target") {
+      addGlossaryTermEmptyTargetVariant();
       render();
       return true;
     }

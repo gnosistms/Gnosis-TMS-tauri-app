@@ -99,6 +99,32 @@ test("source highlights are marked as errors when the expected target term is mi
   assert.equal(highlights.has("vi"), false);
 });
 
+test("source highlights are not marked as errors when the glossary allows omitting the target term", () => {
+  const model = buildEditorGlossaryModel(glossaryPayload({
+    terms: [
+      {
+        termId: "t1",
+        sourceTerms: ["meditacion"],
+        targetTerms: [""],
+      },
+    ],
+  }));
+
+  const highlights = buildEditorRowGlossaryHighlights([
+    {
+      code: "es",
+      text: "Practica de meditacion",
+    },
+    {
+      code: "vi",
+      text: "Thuc hanh",
+    },
+  ], model);
+
+  assert.doesNotMatch(highlights.get("es")?.html ?? "", /glossary-match-error/);
+  assert.equal(highlights.has("vi"), false);
+});
+
 test("target highlights only appear for glossary terms present in the same row source text", () => {
   const model = buildEditorGlossaryModel(glossaryPayload({
     terms: [
@@ -464,6 +490,84 @@ test("translation glossary hints serialize ruby target variants for ai prompts",
   assert.deepEqual(hints, [{
     sourceTerm: "espiritu",
     targetVariants: ["精神[ruby: せいしん]", "魂"],
+    notes: [],
+  }]);
+});
+
+test("translation glossary hints keep an omission-only instruction when the empty variant is the only target option", () => {
+  const model = buildEditorGlossaryModel(glossaryPayload({
+    terms: [
+      {
+        termId: "t1",
+        sourceTerms: ["mente"],
+        targetTerms: [""],
+      },
+    ],
+  }));
+
+  const hints = buildEditorAiTranslationGlossaryHints(
+    "La mente canta.",
+    "es",
+    "vi",
+    model,
+  );
+
+  assert.deepEqual(hints, [{
+    sourceTerm: "mente",
+    targetVariants: [],
+    noTranslationPosition: "only",
+    notes: [],
+  }]);
+});
+
+test("translation glossary hints mark omission as preferred when the empty variant is first", () => {
+  const model = buildEditorGlossaryModel(glossaryPayload({
+    terms: [
+      {
+        termId: "t1",
+        sourceTerms: ["mente"],
+        targetTerms: ["", "tam", "tri"],
+      },
+    ],
+  }));
+
+  const hints = buildEditorAiTranslationGlossaryHints(
+    "La mente canta.",
+    "es",
+    "vi",
+    model,
+  );
+
+  assert.deepEqual(hints, [{
+    sourceTerm: "mente",
+    targetVariants: ["tam", "tri"],
+    noTranslationPosition: "first",
+    notes: [],
+  }]);
+});
+
+test("translation glossary hints append omission guidance when the empty variant is later", () => {
+  const model = buildEditorGlossaryModel(glossaryPayload({
+    terms: [
+      {
+        termId: "t1",
+        sourceTerms: ["mente"],
+        targetTerms: ["tam", "", "tri"],
+      },
+    ],
+  }));
+
+  const hints = buildEditorAiTranslationGlossaryHints(
+    "La mente canta.",
+    "es",
+    "vi",
+    model,
+  );
+
+  assert.deepEqual(hints, [{
+    sourceTerm: "mente",
+    targetVariants: ["tam", "tri"],
+    noTranslationPosition: "later",
     notes: [],
   }]);
 });

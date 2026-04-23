@@ -77,20 +77,43 @@ fn format_translation_glossary_hints(hints: &[AiTranslationGlossaryHint]) -> Str
                 .map(|value| value.trim())
                 .filter(|value| !value.is_empty())
                 .collect::<Vec<_>>();
-            if source_term.is_empty() || (target_variants.is_empty() && notes.is_empty()) {
+            let no_translation_position = hint.no_translation_position.as_deref().unwrap_or("").trim();
+            if source_term.is_empty()
+                || (target_variants.is_empty()
+                    && notes.is_empty()
+                    && no_translation_position.is_empty())
+            {
                 return None;
             }
 
             let mut lines = vec![format!("- sourceTerm: \"{source_term}\"")];
-            if !target_variants.is_empty() {
+            if no_translation_position == "only" {
                 lines.push(format!(
-                    "  targetVariants: {}",
-                    target_variants
-                        .iter()
-                        .map(|value| format!("\"{value}\""))
-                        .collect::<Vec<_>>()
-                        .join(", ")
+                    "  Leave '{source_term}' out of your translation."
                 ));
+            } else {
+                if no_translation_position == "first" {
+                    lines.push(format!(
+                        "  Usually, the word {source_term} should be left out of the translation, however, if the context calls for it, you may consider one of the following translations:"
+                    ));
+                }
+
+                if !target_variants.is_empty() {
+                    lines.push(format!(
+                        "  targetVariants: {}",
+                        target_variants
+                            .iter()
+                            .map(|value| format!("\"{value}\""))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    ));
+                }
+
+                if no_translation_position == "later" {
+                    lines.push(format!(
+                        "  If it makes the translation smoother or easier to understand, leave '{source_term}' out of the translation."
+                    ));
+                }
             }
             if !notes.is_empty() {
                 lines.push(format!(
@@ -1053,6 +1076,7 @@ mod tests {
             glossary_hints: vec![AiTranslationGlossaryHint {
                 source_term: "gnostica".to_string(),
                 target_variants: vec!["hoc tro gnosis".to_string(), "cua gnosis".to_string()],
+                no_translation_position: None,
                 notes: vec!["Lien quan den Gnosis".to_string()],
             }],
             installation_id: None,
@@ -1068,6 +1092,72 @@ mod tests {
         assert!(prompt.contains("  targetVariants: \"hoc tro gnosis\", \"cua gnosis\""));
         assert!(prompt.contains("  notes: \"Lien quan den Gnosis\""));
         assert!(prompt.contains("Source text:\nLa gnostica habla."));
+    }
+
+    #[test]
+    fn build_translation_prompt_includes_no_translation_only_guidance() {
+        let prompt = build_translation_prompt(&AiTranslationRequest {
+            provider_id: AiProviderId::OpenAi,
+            model_id: "gpt-5.4".to_string(),
+            text: "La mente canta.".to_string(),
+            source_language: "Spanish".to_string(),
+            target_language: "Vietnamese".to_string(),
+            glossary_hints: vec![AiTranslationGlossaryHint {
+                source_term: "mente".to_string(),
+                target_variants: vec![],
+                no_translation_position: Some("only".to_string()),
+                notes: vec![],
+            }],
+            installation_id: None,
+        });
+
+        assert!(prompt.contains("- sourceTerm: \"mente\""));
+        assert!(prompt.contains("  Leave 'mente' out of your translation."));
+        assert!(!prompt.contains("targetVariants:"));
+    }
+
+    #[test]
+    fn build_translation_prompt_includes_no_translation_preface_when_empty_variant_is_first() {
+        let prompt = build_translation_prompt(&AiTranslationRequest {
+            provider_id: AiProviderId::OpenAi,
+            model_id: "gpt-5.4".to_string(),
+            text: "La mente canta.".to_string(),
+            source_language: "Spanish".to_string(),
+            target_language: "Vietnamese".to_string(),
+            glossary_hints: vec![AiTranslationGlossaryHint {
+                source_term: "mente".to_string(),
+                target_variants: vec!["tam".to_string(), "tri".to_string()],
+                no_translation_position: Some("first".to_string()),
+                notes: vec![],
+            }],
+            installation_id: None,
+        });
+
+        assert!(prompt.contains("Usually, the word mente should be left out of the translation, however, if the context calls for it, you may consider one of the following translations:"));
+        assert!(prompt.contains("  targetVariants: \"tam\", \"tri\""));
+    }
+
+    #[test]
+    fn build_translation_prompt_includes_no_translation_fallback_when_empty_variant_is_later() {
+        let prompt = build_translation_prompt(&AiTranslationRequest {
+            provider_id: AiProviderId::OpenAi,
+            model_id: "gpt-5.4".to_string(),
+            text: "La mente canta.".to_string(),
+            source_language: "Spanish".to_string(),
+            target_language: "Vietnamese".to_string(),
+            glossary_hints: vec![AiTranslationGlossaryHint {
+                source_term: "mente".to_string(),
+                target_variants: vec!["tam".to_string(), "tri".to_string()],
+                no_translation_position: Some("later".to_string()),
+                notes: vec![],
+            }],
+            installation_id: None,
+        });
+
+        assert!(prompt.contains("  targetVariants: \"tam\", \"tri\""));
+        assert!(prompt.contains(
+            "  If it makes the translation smoother or easier to understand, leave 'mente' out of the translation."
+        ));
     }
 
     #[test]

@@ -6,6 +6,10 @@ import {
 } from "../lib/ui.js";
 import { formatErrorForDisplay } from "../app/error-display.js";
 import { rubyButtonConfig } from "../app/editor-inline-markup.js";
+import { isGlossaryEmptyTargetVariant } from "../app/glossary-shared.js";
+
+const EMPTY_TARGET_VARIANT_TOOLTIP =
+  "Add an empty variant to indicated that it's ok to omit this word from the translation.";
 
 function renderVariantRow(
   side,
@@ -17,13 +21,20 @@ function renderVariantRow(
   isRedundant = false,
 ) {
   const removeDisabled = isSubmitting;
+  const isNoTranslationVariant =
+    side === "target" && isGlossaryEmptyTargetVariant(value);
   const inputLabel = `${side === "source" ? "Source" : "Target"} variant ${index + 1}`;
   const showRemoveButton = total > 1;
   const dragLabel = "Drag to move more likely variants to the top of the list.";
   const tooltipOptions = side === "target" ? { align: "end" } : {};
   const inputClasses = ["field__input", "term-variant-row__input"];
+  const shellClasses = ["term-variant-row__shell"];
   if (isRedundant) {
     inputClasses.push("term-variant-row__input--redundant");
+  }
+  if (isNoTranslationVariant) {
+    inputClasses.push("term-variant-row__input--disabled");
+    shellClasses.push("term-variant-row__shell--disabled");
   }
   const dragHandleMarkup =
     total > 1
@@ -58,16 +69,16 @@ function renderVariantRow(
           ${removeDisabled ? "disabled" : ""}
         ><span class="term-variant-row__remove-icon" aria-hidden="true"></span></button>
       `
-    : '<span class="term-variant-row__action-spacer" aria-hidden="true"></span>';
-
-  return `
-    <div
-      class="term-variant-row"
-      data-glossary-term-variant-row
-      data-variant-side="${escapeHtml(side)}"
-      data-variant-index="${index}"
-    >
-      <div class="term-variant-row__shell">
+      : '<span class="term-variant-row__action-spacer" aria-hidden="true"></span>';
+  const inputMarkup = isNoTranslationVariant
+    ? `
+        <div
+          class="${inputClasses.join(" ")}"
+          aria-label="${escapeHtml(inputLabel)}"
+          aria-disabled="true"
+        >[No translation]</div>
+      `
+    : `
         <textarea
           class="${inputClasses.join(" ")}"
           aria-label="${escapeHtml(inputLabel)}"
@@ -79,6 +90,17 @@ function renderVariantRow(
           data-language-code="${escapeHtml(languageCode)}"
           ${isSubmitting ? "disabled" : ""}
         >${escapeHtml(value)}</textarea>
+      `;
+
+  return `
+    <div
+      class="term-variant-row"
+      data-glossary-term-variant-row
+      data-variant-side="${escapeHtml(side)}"
+      data-variant-index="${index}"
+    >
+      <div class="${shellClasses.join(" ")}">
+        ${inputMarkup}
         <div class="term-variant-row__actions">
           ${dragHandleMarkup}
           ${removeButtonMarkup}
@@ -98,6 +120,20 @@ function renderVariantLane(
 ) {
   const tooltipOptions = side === "target" ? { align: "end" } : {};
   const rubyConfig = rubyButtonConfig(languageCode);
+  const hasEmptyTargetVariant =
+    side === "target" && values.some((value) => isGlossaryEmptyTargetVariant(value));
+  const emptyVariantButtonMarkup = side === "target"
+    ? `
+        <button
+          class="term-lane__add-button term-lane__add-button--no-translation"
+          type="button"
+          data-action="add-glossary-term-empty-variant:target"
+          aria-label="${escapeHtml(EMPTY_TARGET_VARIANT_TOOLTIP)}"
+          ${tooltipAttributes(EMPTY_TARGET_VARIANT_TOOLTIP, tooltipOptions)}
+          ${isSubmitting || hasEmptyTargetVariant ? "disabled" : ""}
+        ><span class="term-lane__no-translation-icon" aria-hidden="true">⊘</span></button>
+      `
+    : "";
 
   return `
     <section class="term-lane">
@@ -133,6 +169,7 @@ function renderVariantLane(
           tabindex="-1"
           ${tooltipAttributes(rubyConfig.tooltip, tooltipOptions)}
         ><span class="term-lane__inline-style-button-label" aria-hidden="true">${escapeHtml(rubyConfig.label)}</span></button>
+        ${emptyVariantButtonMarkup}
         <button
           class="term-lane__add-button"
           type="button"

@@ -24,6 +24,16 @@ test("glossary term editor modal includes one ruby button per lane next to the a
   );
 });
 
+test("glossary term editor modal includes a target-only empty-variant button between ruby and add", () => {
+  assert.match(source, /EMPTY_TARGET_VARIANT_TOOLTIP/);
+  assert.match(source, /data-action="add-glossary-term-empty-variant:target"/);
+  assert.match(source, /term-lane__no-translation-icon/);
+  assert.match(
+    source,
+    /data-action="toggle-glossary-term-inline-style:ruby:\$\{escapeHtml\(side\)\}"[\s\S]*?emptyVariantButtonMarkup[\s\S]*?data-action="add-glossary-term-variant:\$\{escapeHtml\(side\)\}"/,
+  );
+});
+
 test("glossary term editor modal annotates variant textareas with language codes", () => {
   assert.match(source, /data-language-code="\$\{escapeHtml\(languageCode\)\}"/);
 });

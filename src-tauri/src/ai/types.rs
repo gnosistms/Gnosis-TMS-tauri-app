@@ -56,6 +56,8 @@ pub struct AiTranslationGlossaryHint {
     #[serde(default)]
     pub target_variants: Vec<String>,
     #[serde(default)]
+    pub no_translation_position: Option<String>,
+    #[serde(default)]
     pub notes: Vec<String>,
 }
 

@@ -7,8 +7,10 @@ import {
 import { loadSelectedGlossaryEditorData } from "./glossary-editor-flow.js";
 import { showNoticeBadge } from "./status-feedback.js";
 import {
+  GLOSSARY_EMPTY_TARGET_VARIANT_SENTINEL,
   canManageGlossaries,
   normalizeEditableTerms,
+  normalizeEditableTargetTerms,
   sanitizeEditableTargetTerms,
   sanitizeEditableTerms,
   selectedGlossary,
@@ -167,7 +169,7 @@ export async function openGlossaryTermEditor(render, termId = null) {
     glossaryId: state.glossaryEditor.glossaryId,
     termId: term?.termId ?? null,
     sourceTerms: normalizeEditableTerms(term?.sourceTerms ?? []),
-    targetTerms: normalizeEditableTerms(term?.targetTerms ?? []),
+    targetTerms: normalizeEditableTargetTerms(term?.targetTerms ?? []),
     sourceTermDuplicateWarning: "",
     redundantSourceVariantIndices: [],
     notesToTranslators: term?.notesToTranslators ?? "",
@@ -210,6 +212,15 @@ export function addGlossaryTermVariant(side) {
   if (side === "source" && shouldRefreshGlossaryTermDuplicateFeedback()) {
     refreshGlossaryTermDuplicateFeedback();
   }
+}
+
+export function addGlossaryTermEmptyTargetVariant() {
+  updateGlossaryTermArray("target", (terms) => {
+    if (terms.some((term) => term === GLOSSARY_EMPTY_TARGET_VARIANT_SENTINEL)) {
+      return terms;
+    }
+    return [...terms, GLOSSARY_EMPTY_TARGET_VARIANT_SENTINEL];
+  });
 }
 
 export function removeGlossaryTermVariant(side, index) {

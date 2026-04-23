@@ -35,6 +35,7 @@ export {
   updateGlossaryCreationField,
 } from "./glossary-import-flow.js";
 export {
+  addGlossaryTermEmptyTargetVariant,
   addGlossaryTermVariant,
   cancelGlossaryTermEditor,
   moveGlossaryTermVariantToIndex,

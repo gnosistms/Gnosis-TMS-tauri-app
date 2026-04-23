@@ -83,6 +83,30 @@ function glossaryDisplayValues(values) {
     .filter(Boolean);
 }
 
+function analyzeGlossaryTargetVariants(values) {
+  const sanitizedValues = Array.isArray(values)
+    ? values.map((value) => sanitizeGlossaryRubyMarkup(value).trim())
+    : [];
+  const targetTerms = sanitizedValues.filter(Boolean);
+  const emptyVariantIndex = sanitizedValues.findIndex((value) => !value);
+  if (emptyVariantIndex < 0) {
+    return {
+      targetTerms,
+      noTranslationPosition: null,
+    };
+  }
+
+  return {
+    targetTerms,
+    noTranslationPosition:
+      targetTerms.length === 0
+        ? "only"
+        : emptyVariantIndex === 0
+          ? "first"
+          : "later",
+  };
+}
+
 function appendOrderedUniqueTerms(orderedTerms, uniqueTerms, incomingValues) {
   for (const value of sanitizeTermList(incomingValues)) {
     if (uniqueTerms.has(value)) {
@@ -157,6 +181,9 @@ function buildLanguageGlossaryMatcher(entries, matchLanguage) {
           existingCandidate.originTerms,
           entry.originTerms,
         );
+        if (!existingCandidate.noTranslationPosition && entry.noTranslationPosition) {
+          existingCandidate.noTranslationPosition = entry.noTranslationPosition;
+        }
         continue;
       }
 
@@ -190,6 +217,10 @@ function buildLanguageGlossaryMatcher(entries, matchLanguage) {
         originTermsOrdered,
         characterLength: extractGlossaryRubyBaseText(matchTerm).length,
         matchLanguage,
+        noTranslationPosition:
+          typeof entry.noTranslationPosition === "string" && entry.noTranslationPosition
+            ? entry.noTranslationPosition
+            : null,
       };
       const candidates = byFirstToken.get(firstToken) || [];
       candidates.push(candidate);
@@ -259,23 +290,27 @@ export function buildEditorGlossaryModel(glossary) {
     .filter((term) => term?.lifecycleState !== "deleted");
 
   const sourceEntries = activeTerms.map((term) => {
+    const targetVariantInfo = analyzeGlossaryTargetVariants(term?.targetTerms);
     const details = glossaryDetailFields(term);
     return {
       sourceTerms: sanitizeGlossaryVariantList(term?.sourceTerms),
-      targetTerms: sanitizeGlossaryVariantList(term?.targetTerms),
+      targetTerms: targetVariantInfo.targetTerms,
+      noTranslationPosition: targetVariantInfo.noTranslationPosition,
       translatorNotes: details.translatorNotes,
       footnotes: details.footnotes,
       matchTerms: sanitizeGlossaryVariantList(term?.sourceTerms),
     };
   });
   const targetEntries = activeTerms.map((term) => {
+    const targetVariantInfo = analyzeGlossaryTargetVariants(term?.targetTerms);
     const details = glossaryDetailFields(term);
     return {
       sourceTerms: sanitizeGlossaryVariantList(term?.sourceTerms),
-      targetTerms: sanitizeGlossaryVariantList(term?.targetTerms),
+      targetTerms: targetVariantInfo.targetTerms,
+      noTranslationPosition: targetVariantInfo.noTranslationPosition,
       translatorNotes: details.translatorNotes,
       footnotes: details.footnotes,
-      matchTerms: sanitizeGlossaryVariantList(term?.targetTerms),
+      matchTerms: targetVariantInfo.targetTerms,
     };
   });
 
@@ -299,20 +334,30 @@ export function buildEditorDerivedGlossaryModel({
   title = "",
 }) {
   const normalizedEntries = (Array.isArray(entries) ? entries : [])
-    .map((entry) => ({
-      sourceTerm: extractGlossaryRubyBaseText(entry?.sourceTerm).trim(),
-      glossarySourceTerm: extractGlossaryRubyBaseText(entry?.glossarySourceTerm).trim(),
-      targetVariants: sanitizeGlossaryVariantList(entry?.targetVariants),
-      notes: sanitizeTermList(entry?.notes),
-    }))
+    .map((entry) => {
+      const targetVariantInfo = analyzeGlossaryTargetVariants(entry?.targetVariants);
+      return {
+        sourceTerm: extractGlossaryRubyBaseText(entry?.sourceTerm).trim(),
+        glossarySourceTerm: extractGlossaryRubyBaseText(entry?.glossarySourceTerm).trim(),
+        targetVariants: targetVariantInfo.targetTerms,
+        noTranslationPosition: targetVariantInfo.noTranslationPosition,
+        notes: sanitizeTermList(entry?.notes),
+      };
+    })
     .filter((entry) =>
       entry.sourceTerm
-      && (entry.glossarySourceTerm || entry.targetVariants.length > 0 || entry.notes.length > 0)
+      && (
+        entry.glossarySourceTerm
+        || entry.targetVariants.length > 0
+        || entry.noTranslationPosition
+        || entry.notes.length > 0
+      )
     );
 
   const sourceEntries = normalizedEntries.map((entry) => ({
     sourceTerms: [entry.sourceTerm],
     targetTerms: entry.targetVariants,
+    noTranslationPosition: entry.noTranslationPosition,
     translatorNotes: entry.notes,
     footnotes: [],
     originTerms: entry.glossarySourceTerm ? [entry.glossarySourceTerm] : [],
@@ -708,6 +753,10 @@ function textContainsGlossaryTerm(text, term, languageCode) {
 }
 
 function sourceCandidateHasTargetMatch(candidate, targetTexts, glossaryModel) {
+  if (candidate?.noTranslationPosition) {
+    return true;
+  }
+
   const targetTerms = orderedCandidateValues(candidate, "targetTermsOrdered", "targetTerms");
   if (!glossaryModel?.targetLanguage?.code || targetTexts.length === 0 || targetTerms.length === 0) {
     return false;
@@ -833,12 +882,13 @@ export function buildEditorAiTranslationGlossaryHints(
       "targetTermsOrdered",
       "targetTerms",
     ).map((value) => serializeGlossaryRubyForAiPrompt(value));
+    const noTranslationPosition = match?.candidate?.noTranslationPosition ?? null;
     const notes = orderedCandidateValues(
       match?.candidate,
       "translatorNotesOrdered",
       "translatorNotes",
     );
-    if (!sourceTerm || (targetVariants.length === 0 && notes.length === 0)) {
+    if (!sourceTerm || (targetVariants.length === 0 && notes.length === 0 && !noTranslationPosition)) {
       continue;
     }
 
@@ -848,11 +898,15 @@ export function buildEditorAiTranslationGlossaryHints(
     }
 
     seen.add(dedupeKey);
-    hints.push({
+    const hint = {
       sourceTerm,
       targetVariants,
       notes,
-    });
+    };
+    if (noTranslationPosition) {
+      hint.noTranslationPosition = noTranslationPosition;
+    }
+    hints.push(hint);
   }
 
   return hints;

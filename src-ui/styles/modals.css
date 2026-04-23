@@ -646,6 +646,10 @@
     0 0 0 4px rgba(243, 156, 24, 0.12);
 }
 
+.term-variant-row__shell--disabled {
+  background: rgba(246, 239, 228, 0.92);
+}
+
 .term-variant-row__input {
   min-width: 0;
   min-height: 44px;
@@ -674,6 +678,13 @@
 
 .term-variant-row__input--redundant {
   color: rgba(var(--please-check-accent-rgb), 0.92);
+}
+
+.term-variant-row__input--disabled {
+  display: flex;
+  align-items: center;
+  color: rgba(132, 103, 70, 0.72);
+  cursor: default;
 }
 
 .term-variant-row__drag-handle,
@@ -796,6 +807,11 @@
 .term-lane__inline-style-button-label {
   font-size: 0.9rem;
   font-weight: 700;
+  line-height: 1;
+}
+
+.term-lane__no-translation-icon {
+  font-size: 0.95rem;
   line-height: 1;
 }
 

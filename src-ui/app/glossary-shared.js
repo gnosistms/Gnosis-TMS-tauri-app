@@ -5,6 +5,8 @@ import {
 } from "./resource-capabilities.js";
 import { sanitizeGlossaryRubyMarkup } from "./glossary-ruby.js";
 
+export const GLOSSARY_EMPTY_TARGET_VARIANT_SENTINEL = "__GNOSIS_NO_TRANSLATION_VARIANT__";
+
 export function selectedTeam(teamId = state.selectedTeamId) {
   return state.teams.find((team) => team.id === teamId) ?? null;
 }
@@ -255,6 +257,20 @@ export function normalizeEditableTerms(terms) {
   return normalized.length > 0 ? normalized : [""];
 }
 
+export function isGlossaryEmptyTargetVariant(term) {
+  return String(term ?? "") === GLOSSARY_EMPTY_TARGET_VARIANT_SENTINEL;
+}
+
+export function normalizeEditableTargetTerms(terms) {
+  const normalized = (Array.isArray(terms) ? terms : [])
+    .map((term) => {
+      const sanitized = sanitizeGlossaryRubyMarkup(typeof term === "string" ? term : "");
+      return sanitized.trim() ? sanitized : GLOSSARY_EMPTY_TARGET_VARIANT_SENTINEL;
+    });
+
+  return normalized.length > 0 ? normalized : [""];
+}
+
 export function sanitizeEditableTerms(terms) {
   return (Array.isArray(terms) ? terms : [])
     .map((term) => sanitizeGlossaryRubyMarkup(term).trim())
@@ -267,12 +283,16 @@ export function sanitizeEditableTargetTerms(terms) {
   let includedEmptyVariant = false;
 
   for (const term of Array.isArray(terms) ? terms : []) {
-    const trimmed = sanitizeGlossaryRubyMarkup(term).trim();
-    if (!trimmed) {
+    if (isGlossaryEmptyTargetVariant(term)) {
       if (!includedEmptyVariant) {
         sanitized.push("");
         includedEmptyVariant = true;
       }
+      continue;
+    }
+
+    const trimmed = sanitizeGlossaryRubyMarkup(term).trim();
+    if (!trimmed) {
       continue;
     }
 
