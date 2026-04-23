@@ -248,7 +248,7 @@ async function loadGlossaryFlowModule() {
   return glossaryFlowModulePromise;
 }
 
-test("glossary sync writes glossary overlays into the active editor textarea stack", async () => {
+test("glossary sync suppresses glossary overlays in the active editor textarea stack", async () => {
   await withFakeDom(async () => {
     const { syncEditorGlossaryHighlightRowDom } = await loadGlossaryFlowModule();
     const row = buildRow({ isTextEditorOpen: true });
@@ -300,8 +300,8 @@ test("glossary sync writes glossary overlays into the active editor textarea sta
 
     syncEditorGlossaryHighlightRowDom("row-1", chapterState, root);
 
-    assert.match(glossaryLayer.innerHTML, /translation-language-panel__glossary-mark/);
-    assert.equal(stack.classList.contains("translation-language-panel__field-stack--glossary"), true);
+    assert.equal(glossaryLayer.innerHTML, "");
+    assert.equal(stack.classList.contains("translation-language-panel__field-stack--glossary"), false);
   });
 });
 

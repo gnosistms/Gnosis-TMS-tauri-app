@@ -86,6 +86,21 @@ test("unresolved conflict state surfaces a sync warning without blocking content
   assert.match(resolution?.help ?? "", /Automatic sync is paused/i);
 });
 
+test("imported editor conflicts surface a warning without blocking content access", () => {
+  const resolution = deriveProjectResolution(
+    { id: "project-1", remoteState: "linked", recordState: "live" },
+    {
+      status: "importedEditorConflicts",
+      message: "Rows still need conflict resolution.",
+    },
+  );
+
+  assert.equal(resolution?.key, "importedEditorConflicts");
+  assert.equal(resolution?.blockLifecycleActions, false);
+  assert.equal(resolution?.blockContentActions, false);
+  assert.match(resolution?.help ?? "", /conflict resolution in the editor/i);
+});
+
 test("update required sync state blocks project lifecycle and content actions", () => {
   const resolution = deriveProjectResolution(
     { id: "project-1", remoteState: "linked", recordState: "live" },

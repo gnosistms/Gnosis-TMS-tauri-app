@@ -203,6 +203,37 @@ test("normalizeEditorRows clones row data and initializes persistence metadata",
   assert.equal(result[0].textStyleSaveState.status, "idle");
 });
 
+test("normalizeEditorRows maps imported git conflicts into the existing conflict state shape", () => {
+  const [row] = normalizeEditorRows([{
+    rowId: "row-1",
+    orderKey: "001",
+    fields: { en: "local draft" },
+    footnotes: { en: "" },
+    imageCaptions: { en: "" },
+    images: { en: null },
+    fieldStates: { en: { reviewed: false, pleaseCheck: false } },
+    importedConflict: {
+      conflictKind: "text-conflict",
+      remoteRow: {
+        rowId: "row-1",
+        orderKey: "001",
+        fields: { en: "remote saved" },
+        footnotes: { en: "" },
+        imageCaptions: { en: "" },
+        images: { en: null },
+        fieldStates: { en: { reviewed: false, pleaseCheck: false } },
+      },
+    },
+  }]);
+
+  assert.equal(row.freshness, "conflict");
+  assert.equal(row.saveStatus, "conflict");
+  assert.equal(row.importedConflictKind, "text-conflict");
+  assert.equal(row.fields.en, "local draft");
+  assert.equal(row.conflictState?.remoteRow?.fields?.en, "remote saved");
+  assert.equal(row.conflictState?.remoteVersion, null);
+});
+
 test("markEditorRowsPersisted updates persisted fields and clears reconciled dirty row ids", () => {
   const snapshot = snapshotSharedState();
 

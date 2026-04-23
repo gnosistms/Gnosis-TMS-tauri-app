@@ -14,6 +14,12 @@ use crate::{
     local_repo_sync_state::{
         read_local_repo_sync_state, upsert_local_repo_sync_state, LocalRepoSyncStateUpdate,
     },
+    project_import::{
+        list_imported_editor_conflict_refs, persist_imported_editor_conflict_entries,
+        repo_has_imported_editor_conflicts, resolve_chapter_json_git_conflict_from_stage_texts,
+        resolve_row_git_conflict_from_stage_texts, ImportedEditorConflictRef,
+        PendingImportedEditorConflictEntry, ResolvedEditorConflictAction,
+    },
     repo_app_version::{
         encode_repo_app_update_requirement, parse_repo_app_update_requirement_error,
         remote_ref_requires_newer_app,
@@ -34,6 +40,7 @@ const PROJECT_REPO_SYNC_STATUS_OUT_OF_SYNC: &str = "outOfSync";
 const PROJECT_REPO_SYNC_STATUS_SYNCING: &str = "syncing";
 const PROJECT_REPO_SYNC_STATUS_SYNC_ERROR: &str = "syncError";
 const PROJECT_REPO_SYNC_STATUS_UNRESOLVED_CONFLICT: &str = "unresolvedConflict";
+const PROJECT_REPO_SYNC_STATUS_IMPORTED_EDITOR_CONFLICTS: &str = "importedEditorConflicts";
 const PROJECT_REPO_SYNC_STATUS_UPDATE_REQUIRED: &str = "updateRequired";
 
 #[derive(Clone, Deserialize)]
@@ -95,9 +102,12 @@ pub(crate) struct ProjectRepoSyncSnapshot {
 pub(crate) struct ProjectEditorRepoSyncResponse {
     pub(crate) old_head_sha: Option<String>,
     pub(crate) new_head_sha: Option<String>,
+    pub(crate) repo_sync_status: String,
     pub(crate) changed_row_ids: Vec<String>,
     pub(crate) inserted_row_ids: Vec<String>,
     pub(crate) deleted_row_ids: Vec<String>,
+    pub(crate) imported_conflicts: Vec<ImportedEditorConflictRef>,
+    pub(crate) affected_chapter_ids: Vec<String>,
 }
 
 #[derive(Serialize)]
@@ -112,6 +122,31 @@ pub(crate) struct InspectProjectEditorRepoSyncStateResponse {
 pub(crate) struct OverwriteConflictedProjectReposResponse {
     pub(crate) resolved_project_ids: Vec<String>,
     pub(crate) skipped_project_ids: Vec<String>,
+}
+
+struct ProjectRepoSyncOutcome {
+    current_head_oid: Option<String>,
+    repo_sync_status: String,
+    message: Option<String>,
+    imported_conflicts: Vec<ImportedEditorConflictRef>,
+}
+
+#[derive(Default)]
+struct GitConflictStageSet {
+    base_oid: Option<String>,
+    remote_oid: Option<String>,
+    local_oid: Option<String>,
+}
+
+enum SemanticConflictResolutionPlanEntry {
+    WriteFile {
+        path: String,
+        text: String,
+        imported_conflict: Option<PendingImportedEditorConflictEntry>,
+    },
+    DeleteFile {
+        path: String,
+    },
 }
 
 #[tauri::command]
@@ -327,13 +362,14 @@ fn sync_gtms_project_editor_repo_sync(
     }
 
     let git_transport_token = load_git_transport_token(input.installation_id, session_token)?;
-    let new_head_sha = sync_project_repo(
+    let sync_outcome = sync_project_repo(
         app,
         &project,
         &repo_path,
         input.default_branch_head_oid.as_deref().unwrap_or_default(),
         &git_transport_token,
     )?;
+    let new_head_sha = sync_outcome.current_head_oid.clone();
     let chapter_path = find_editor_chapter_path_by_id(&repo_path, &input.chapter_id)?;
     let chapter_rows_path = chapter_path.join("rows");
     let chapter_rows_relative_path = chapter_rows_path
@@ -357,9 +393,12 @@ fn sync_gtms_project_editor_repo_sync(
     Ok(ProjectEditorRepoSyncResponse {
         old_head_sha,
         new_head_sha,
+        repo_sync_status: sync_outcome.repo_sync_status,
         changed_row_ids,
         inserted_row_ids,
         deleted_row_ids,
+        affected_chapter_ids: imported_conflict_chapter_ids(&sync_outcome.imported_conflicts),
+        imported_conflicts: sync_outcome.imported_conflicts,
     })
 }
 
@@ -420,14 +459,14 @@ fn spawn_project_repo_sync_job(
         );
 
         let next_snapshot = match sync_result {
-            Ok(local_head_oid) => ProjectRepoSyncSnapshot {
+            Ok(outcome) => ProjectRepoSyncSnapshot {
                 project_id: project.project_id.clone(),
                 repo_name: project.repo_name.clone(),
                 repo_path: repo_path.display().to_string(),
-                local_head_oid: local_head_oid.clone(),
-                remote_head_oid: local_head_oid,
-                status: PROJECT_REPO_SYNC_STATUS_UP_TO_DATE.to_string(),
-                message: None,
+                local_head_oid: outcome.current_head_oid.clone(),
+                remote_head_oid: outcome.current_head_oid.clone(),
+                status: outcome.repo_sync_status,
+                message: outcome.message,
                 required_app_version: None,
                 current_app_version: None,
             },
@@ -664,6 +703,18 @@ fn inspect_project_repo_state(
         };
     }
 
+    if repo_has_imported_editor_conflicts(repo_path).unwrap_or(false) {
+        return ProjectRepoSyncSnapshot {
+            local_head_oid,
+            status: PROJECT_REPO_SYNC_STATUS_IMPORTED_EDITOR_CONFLICTS.to_string(),
+            message: Some(
+                "Some editor rows still need conflict resolution before GitHub sync can continue."
+                    .to_string(),
+            ),
+            ..default_snapshot()
+        };
+    }
+
     let dirty = !git_status_porcelain.trim().is_empty();
 
     if dirty {
@@ -705,19 +756,38 @@ fn sync_project_repo(
     repo_path: &Path,
     remote_head_oid: &str,
     git_transport_token: &str,
-) -> Result<Option<String>, String> {
+) -> Result<ProjectRepoSyncOutcome, String> {
     if !repo_path.exists() {
-        return clone_project_repo(
+        let current_head_oid = clone_project_repo(
             app,
             project,
             repo_path,
             remote_head_oid,
             git_transport_token,
         );
+        return current_head_oid.map(|current_head_oid| ProjectRepoSyncOutcome {
+            current_head_oid,
+            repo_sync_status: PROJECT_REPO_SYNC_STATUS_UP_TO_DATE.to_string(),
+            message: None,
+            imported_conflicts: Vec::new(),
+        });
     }
 
     ensure_project_origin_remote(project, repo_path)?;
     ensure_repo_local_git_identity(app, repo_path)?;
+
+    if repo_has_imported_editor_conflicts(repo_path)? {
+        let imported_conflicts = list_imported_editor_conflict_refs(repo_path)?;
+        return Ok(ProjectRepoSyncOutcome {
+            current_head_oid: read_current_head_oid(repo_path),
+            repo_sync_status: PROJECT_REPO_SYNC_STATUS_IMPORTED_EDITOR_CONFLICTS.to_string(),
+            message: Some(
+                "Some editor rows still need conflict resolution before GitHub sync can continue."
+                    .to_string(),
+            ),
+            imported_conflicts,
+        });
+    }
 
     let branch_name = project
         .default_branch_name
@@ -740,7 +810,12 @@ fn sync_project_repo(
         }
         let current_head_oid = git_output(repo_path, &["rev-parse", "HEAD"], None).ok();
         mark_project_repo_synced(project, repo_path)?;
-        return Ok(current_head_oid);
+        return Ok(ProjectRepoSyncOutcome {
+            current_head_oid,
+            repo_sync_status: PROJECT_REPO_SYNC_STATUS_UP_TO_DATE.to_string(),
+            message: None,
+            imported_conflicts: Vec::new(),
+        });
     }
 
     if local_sync_state
@@ -754,16 +829,16 @@ fn sync_project_repo(
             &git_transport_auth,
         )?;
         mark_project_repo_synced(project, repo_path)?;
-        return Ok(current_head_oid);
+        return Ok(ProjectRepoSyncOutcome {
+            current_head_oid,
+            repo_sync_status: PROJECT_REPO_SYNC_STATUS_UP_TO_DATE.to_string(),
+            message: None,
+            imported_conflicts: Vec::new(),
+        });
     }
 
-    if let Err(error) = git_output(
-        repo_path,
-        &["pull", "--rebase", "origin", branch_name],
-        Some(&git_transport_auth),
-    ) {
-        return Err(abort_rebase_after_failed_pull(repo_path, error));
-    }
+    let imported_conflicts =
+        pull_with_semantic_editor_conflict_resolution(repo_path, branch_name, &git_transport_auth)?;
     git_output(
         repo_path,
         &["push", "origin", branch_name],
@@ -771,7 +846,285 @@ fn sync_project_repo(
     )?;
     let current_head_oid = Some(git_output(repo_path, &["rev-parse", "HEAD"], None)?);
     mark_project_repo_synced(project, repo_path)?;
-    Ok(current_head_oid)
+    Ok(ProjectRepoSyncOutcome {
+        current_head_oid,
+        repo_sync_status: if imported_conflicts.is_empty() {
+            PROJECT_REPO_SYNC_STATUS_UP_TO_DATE.to_string()
+        } else {
+            PROJECT_REPO_SYNC_STATUS_IMPORTED_EDITOR_CONFLICTS.to_string()
+        },
+        message: if imported_conflicts.is_empty() {
+            None
+        } else {
+            Some(
+                "Some editor rows still need conflict resolution before GitHub sync can continue."
+                    .to_string(),
+            )
+        },
+        imported_conflicts,
+    })
+}
+
+fn imported_conflict_chapter_ids(
+    imported_conflicts: &[ImportedEditorConflictRef],
+) -> Vec<String> {
+    let mut chapter_ids = imported_conflicts
+        .iter()
+        .map(|entry| entry.chapter_id.clone())
+        .collect::<Vec<_>>();
+    chapter_ids.sort();
+    chapter_ids.dedup();
+    chapter_ids
+}
+
+fn pull_with_semantic_editor_conflict_resolution(
+    repo_path: &Path,
+    branch_name: &str,
+    git_transport_auth: &GitTransportAuth,
+) -> Result<Vec<ImportedEditorConflictRef>, String> {
+    let mut pending_imported_conflicts = BTreeMap::<String, PendingImportedEditorConflictEntry>::new();
+
+    match git_output(
+        repo_path,
+        &["pull", "--rebase", "origin", branch_name],
+        Some(git_transport_auth),
+    ) {
+        Ok(_) => {
+            if pending_imported_conflicts.is_empty() {
+                return Ok(Vec::new());
+            }
+        }
+        Err(error) => {
+            if !repo_has_rebase_in_progress_local(repo_path) {
+                return Err(error);
+            }
+
+            loop {
+                let plan = match build_semantic_conflict_resolution_plan(repo_path) {
+                    Ok(plan) => plan,
+                    Err(plan_error) => {
+                        return Err(abort_rebase_after_failed_pull(repo_path, plan_error));
+                    }
+                };
+
+                if let Err(apply_error) = apply_semantic_conflict_resolution_plan(
+                    repo_path,
+                    plan,
+                    &mut pending_imported_conflicts,
+                ) {
+                    return Err(abort_rebase_after_failed_pull(repo_path, apply_error));
+                }
+
+                match git_output(repo_path, &["rebase", "--continue"], None) {
+                    Ok(_) => {
+                        if !repo_has_rebase_in_progress_local(repo_path) {
+                            break;
+                        }
+                    }
+                    Err(continue_error) => {
+                        if git_error_indicates_empty_rebase_step(&continue_error) {
+                            git_output(repo_path, &["rebase", "--skip"], None)?;
+                            if !repo_has_rebase_in_progress_local(repo_path) {
+                                break;
+                            }
+                            continue;
+                        }
+
+                        if repo_has_rebase_in_progress_local(repo_path) {
+                            continue;
+                        }
+
+                        return Err(continue_error);
+                    }
+                }
+            }
+        }
+    }
+
+    let current_head_oid = read_current_head_oid(repo_path);
+    persist_imported_editor_conflict_entries(
+        repo_path,
+        pending_imported_conflicts.into_values().collect(),
+        current_head_oid.as_deref(),
+    )
+}
+
+fn build_semantic_conflict_resolution_plan(
+    repo_path: &Path,
+) -> Result<Vec<SemanticConflictResolutionPlanEntry>, String> {
+    let stage_sets = load_unmerged_git_stage_sets(repo_path)?;
+    if stage_sets.is_empty() {
+        return Err("Git stopped for a rebase conflict, but no unmerged files were found.".to_string());
+    }
+
+    let mut plan = Vec::with_capacity(stage_sets.len());
+    for (path, stages) in stage_sets {
+        if is_editor_row_conflict_path(&path) {
+            let resolved = resolve_row_git_conflict_from_stage_texts(
+                &path,
+                read_git_stage_text(repo_path, stages.base_oid.as_deref())?.as_deref(),
+                read_git_stage_text(repo_path, stages.remote_oid.as_deref())?.as_deref(),
+                read_git_stage_text(repo_path, stages.local_oid.as_deref())?.as_deref(),
+            )?;
+            match resolved.action {
+                ResolvedEditorConflictAction::Write { text } => {
+                    plan.push(SemanticConflictResolutionPlanEntry::WriteFile {
+                        path,
+                        text,
+                        imported_conflict: resolved.imported_conflict,
+                    });
+                }
+                ResolvedEditorConflictAction::Delete => {
+                    plan.push(SemanticConflictResolutionPlanEntry::DeleteFile { path });
+                }
+            }
+            continue;
+        }
+
+        if is_editor_chapter_metadata_conflict_path(&path) {
+            let merged_text = resolve_chapter_json_git_conflict_from_stage_texts(
+                &path,
+                read_git_stage_text(repo_path, stages.base_oid.as_deref())?.as_deref(),
+                read_git_stage_text(repo_path, stages.remote_oid.as_deref())?.as_deref(),
+                read_git_stage_text(repo_path, stages.local_oid.as_deref())?.as_deref(),
+            )?;
+            plan.push(SemanticConflictResolutionPlanEntry::WriteFile {
+                path,
+                text: merged_text,
+                imported_conflict: None,
+            });
+            continue;
+        }
+
+        return Err(format!(
+            "Could not resolve the current Git rebase stop semantically because '{}' is not a supported editor file.",
+            path
+        ));
+    }
+
+    Ok(plan)
+}
+
+fn apply_semantic_conflict_resolution_plan(
+    repo_path: &Path,
+    plan: Vec<SemanticConflictResolutionPlanEntry>,
+    pending_imported_conflicts: &mut BTreeMap<String, PendingImportedEditorConflictEntry>,
+) -> Result<(), String> {
+    for entry in plan {
+        match entry {
+            SemanticConflictResolutionPlanEntry::WriteFile {
+                path,
+                text,
+                imported_conflict,
+            } => {
+                let absolute_path = repo_path.join(&path);
+                if let Some(parent) = absolute_path.parent() {
+                    fs::create_dir_all(parent).map_err(|error| {
+                        format!(
+                            "Could not create the parent folder for '{}': {error}",
+                            absolute_path.display()
+                        )
+                    })?;
+                }
+                fs::write(&absolute_path, text).map_err(|error| {
+                    format!(
+                        "Could not write the resolved file '{}': {error}",
+                        absolute_path.display()
+                    )
+                })?;
+                git_output(repo_path, &["add", "--", &path], None)?;
+                if let Some(imported_conflict) = imported_conflict {
+                    pending_imported_conflicts.insert(path, imported_conflict);
+                }
+            }
+            SemanticConflictResolutionPlanEntry::DeleteFile { path } => {
+                let absolute_path = repo_path.join(&path);
+                if absolute_path.exists() {
+                    let _ = fs::remove_file(&absolute_path);
+                }
+                git_output(repo_path, &["add", "-u", "--", &path], None)?;
+                pending_imported_conflicts.remove(&path);
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn load_unmerged_git_stage_sets(
+    repo_path: &Path,
+) -> Result<BTreeMap<String, GitConflictStageSet>, String> {
+    let output = git_output(repo_path, &["ls-files", "-u"], None)?;
+    let mut stage_sets = BTreeMap::<String, GitConflictStageSet>::new();
+
+    for line in output.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        let Some((metadata, path)) = trimmed.split_once('\t') else {
+            return Err(format!(
+                "Could not parse the conflicted git index entry: {trimmed}"
+            ));
+        };
+        let mut metadata_parts = metadata.split_whitespace();
+        let _mode = metadata_parts.next();
+        let Some(oid) = metadata_parts.next() else {
+            return Err(format!(
+                "Could not parse the conflicted git object id for '{}'.",
+                path
+            ));
+        };
+        let Some(stage_text) = metadata_parts.next() else {
+            return Err(format!(
+                "Could not parse the conflicted git stage for '{}'.",
+                path
+            ));
+        };
+        let stage = stage_text.parse::<u8>().map_err(|error| {
+            format!("Could not parse the conflicted git stage for '{}': {error}", path)
+        })?;
+        let stage_set = stage_sets.entry(path.to_string()).or_default();
+        match stage {
+            1 => stage_set.base_oid = Some(oid.to_string()),
+            2 => stage_set.remote_oid = Some(oid.to_string()),
+            3 => stage_set.local_oid = Some(oid.to_string()),
+            _ => {}
+        }
+    }
+
+    Ok(stage_sets)
+}
+
+fn read_git_stage_text(
+    repo_path: &Path,
+    oid: Option<&str>,
+) -> Result<Option<String>, String> {
+    let Some(oid) = oid else {
+        return Ok(None);
+    };
+    Ok(Some(git_output(repo_path, &["cat-file", "-p", oid], None)?))
+}
+
+fn is_editor_row_conflict_path(path: &str) -> bool {
+    let normalized = path.trim();
+    normalized.starts_with("chapters/")
+        && normalized.contains("/rows/")
+        && normalized.ends_with(".json")
+}
+
+fn is_editor_chapter_metadata_conflict_path(path: &str) -> bool {
+    let normalized = path.trim();
+    normalized.starts_with("chapters/") && normalized.ends_with("/chapter.json")
+}
+
+fn git_error_indicates_empty_rebase_step(error: &str) -> bool {
+    let normalized = error.to_ascii_lowercase();
+    normalized.contains("previous cherry-pick is now empty")
+        || normalized.contains("the previous cherry-pick is now empty")
+        || normalized.contains("no changes - did you forget to use 'git add'")
+        || normalized.contains("nothing to commit")
 }
 
 fn overwrite_conflicted_gtms_project_repos_sync(

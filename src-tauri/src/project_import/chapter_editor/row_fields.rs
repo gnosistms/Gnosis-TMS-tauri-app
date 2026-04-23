@@ -189,6 +189,8 @@ pub(crate) fn update_gtms_editor_row_fields_sync(
         next_row = updated_row_file;
     }
 
+    let _ = clear_imported_editor_conflict_entry(&repo_path, &input.chapter_id, &input.row_id);
+
     Ok(SaveEditorRowWithConcurrencyResponse {
         row_id: input.row_id,
         status: "saved".to_string(),

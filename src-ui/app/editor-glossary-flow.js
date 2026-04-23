@@ -150,10 +150,14 @@ function applyEditorTextHighlightLayersToRowCard(
       : (Array.isArray(searchHighlight?.ranges) ? searchHighlight.ranges : []);
     const highlightableText = readEditorHighlightableText(row, languageCode, contentKind);
     const displayText = stack.querySelector("[data-editor-display-text]");
+    const suppressGlossaryWhileEditing =
+      contentKind === "field" && !(displayText instanceof HTMLElement);
     const glossaryLayer = stack.querySelector("[data-editor-glossary-highlight]");
     const searchLayer = stack.querySelector("[data-editor-search-highlight]");
+    const effectiveGlossaryHighlightHtml =
+      suppressGlossaryWhileEditing ? "" : glossaryHighlightHtml;
     const hasLayerGlossary =
-      glossaryLayer instanceof HTMLElement && glossaryHighlightHtml.length > 0;
+      glossaryLayer instanceof HTMLElement && effectiveGlossaryHighlightHtml.length > 0;
     const hasLayerSearch =
       searchLayer instanceof HTMLElement && searchHighlightHtml.length > 0;
     stack.classList.toggle(
@@ -167,7 +171,7 @@ function applyEditorTextHighlightLayersToRowCard(
       hasLayerGlossary
         ? renderSanitizedInlineMarkupWithGlossaryHighlightHtml(
           highlightableText,
-          glossaryHighlightHtml,
+          effectiveGlossaryHighlightHtml,
         )
         : "",
     );

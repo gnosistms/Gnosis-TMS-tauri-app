@@ -88,18 +88,30 @@ function mergeImageSlices(baseImages, localImages, remoteImages) {
 
 function mergeFieldStates(baseFieldStates, localFieldStates, remoteFieldStates) {
   const mergedFieldStates = cloneRowFieldStates(remoteFieldStates);
-  let hasUnsupportedConflict = false;
   const candidateCodes = unionKeys(baseFieldStates, localFieldStates, remoteFieldStates);
   const flags = ["reviewed", "pleaseCheck"];
 
   for (const languageCode of candidateCodes) {
+    const baseFieldState = normalizeFieldState(baseFieldStates?.[languageCode]);
+    const localFieldState = normalizeFieldState(localFieldStates?.[languageCode]);
+    const remoteFieldState = normalizeFieldState(remoteFieldStates?.[languageCode]);
     const nextFieldState = normalizeFieldState(mergedFieldStates[languageCode]);
+    const localTouchedAny = flags.some((flag) => localFieldState[flag] !== baseFieldState[flag]);
+    const remoteTouchedAny = flags.some((flag) => remoteFieldState[flag] !== baseFieldState[flag]);
+
     for (const flag of flags) {
-      const baseValue = normalizeFieldState(baseFieldStates?.[languageCode])[flag];
-      const localValue = normalizeFieldState(localFieldStates?.[languageCode])[flag];
-      const remoteValue = normalizeFieldState(remoteFieldStates?.[languageCode])[flag];
+      const baseValue = baseFieldState[flag];
+      const localValue = localFieldState[flag];
+      const remoteValue = remoteFieldState[flag];
       const localChanged = localValue !== baseValue;
       const remoteChanged = remoteValue !== baseValue;
+
+      // When both sides changed marker state for the same language and the
+      // resulting flag values disagree, prefer the safer review posture.
+      if (localTouchedAny && remoteTouchedAny && localValue !== remoteValue) {
+        nextFieldState[flag] = flag === "pleaseCheck";
+        continue;
+      }
 
       if (!localChanged) {
         nextFieldState[flag] = remoteValue;
@@ -110,8 +122,6 @@ function mergeFieldStates(baseFieldStates, localFieldStates, remoteFieldStates) 
         nextFieldState[flag] = localValue;
         continue;
       }
-
-      hasUnsupportedConflict = true;
     }
 
     mergedFieldStates[languageCode] = nextFieldState;
@@ -119,7 +129,7 @@ function mergeFieldStates(baseFieldStates, localFieldStates, remoteFieldStates) 
 
   return {
     mergedFieldStates,
-    hasUnsupportedConflict,
+    hasUnsupportedConflict: false,
   };
 }
 

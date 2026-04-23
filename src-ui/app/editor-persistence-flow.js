@@ -804,6 +804,21 @@ export async function resolveEditorRowConflict(render, rowId, resolution, operat
   }
 
   if (resolution === "use-remote") {
+    if (row.importedConflictKind) {
+      const team = selectedProjectsTeam();
+      const context = findChapterContextById(state.editorChapter?.chapterId);
+      if (Number.isFinite(team?.installationId) && context?.project?.name && context?.chapter?.id) {
+        await invoke("clear_gtms_editor_imported_conflict", {
+          input: {
+            installationId: team.installationId,
+            projectId: context.project.id,
+            repoName: context.project.name,
+            chapterId: context.chapter.id,
+            rowId,
+          },
+        });
+      }
+    }
     updateEditorChapterRow(rowId, (currentRow) => applyEditorRowConflictResolvedWithRemote(currentRow));
     reconcileDirtyTrackedEditorRows([rowId]);
     render?.({ scope: "translate-body" });

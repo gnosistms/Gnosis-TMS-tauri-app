@@ -836,6 +836,138 @@ async function installLargeBatchBackgroundReloadMock(page, options = {}) {
   });
 }
 
+async function installImportedConflictBackgroundReloadMock(page, options = {}) {
+  const {
+    targetRowId,
+    conflictKind = "text-conflict",
+    localRowPatch = {},
+    remoteRowPatch = {},
+    newHeadSha = "mock-sync-head-imported-conflict",
+    loadDelayMs = 200,
+  } = options;
+
+  await page.evaluate(({
+    nextTargetRowId,
+    nextConflictKind,
+    nextLocalRowPatch,
+    nextRemoteRowPatch,
+    nextHeadSha,
+    nextLoadDelayMs,
+  }) => {
+    function cloneRowForChapterLoad(row) {
+      return {
+        rowId: row.rowId,
+        orderKey: row.orderKey,
+        lifecycleState: row.lifecycleState === "deleted" ? "deleted" : "active",
+        commentCount: Number.isInteger(row.commentCount) ? row.commentCount : 0,
+        commentsRevision: Number.isInteger(row.commentsRevision) ? row.commentsRevision : 0,
+        textStyle: row.textStyle ?? "paragraph",
+        fields: { ...(row.fields ?? {}) },
+        footnotes: { ...(row.footnotes ?? {}) },
+        imageCaptions: { ...(row.imageCaptions ?? {}) },
+        images: { ...(row.images ?? {}) },
+        fieldStates: { ...(row.fieldStates ?? {}) },
+      };
+    }
+
+    function applyRowPatch(row, rowPatch = {}) {
+      return {
+        ...cloneRowForChapterLoad(row),
+        fields: {
+          ...(row.fields ?? {}),
+          ...(typeof rowPatch.sourceText === "string" ? { es: rowPatch.sourceText } : {}),
+          ...(typeof rowPatch.targetText === "string" ? { vi: rowPatch.targetText } : {}),
+        },
+        footnotes: {
+          ...(row.footnotes ?? {}),
+          ...(typeof rowPatch.footnoteSourceText === "string" ? { es: rowPatch.footnoteSourceText } : {}),
+          ...(typeof rowPatch.footnoteTargetText === "string" ? { vi: rowPatch.footnoteTargetText } : {}),
+        },
+        imageCaptions: {
+          ...(row.imageCaptions ?? {}),
+          ...(typeof rowPatch.imageCaptionSourceText === "string" ? { es: rowPatch.imageCaptionSourceText } : {}),
+          ...(typeof rowPatch.imageCaptionTargetText === "string" ? { vi: rowPatch.imageCaptionTargetText } : {}),
+        },
+        images: {
+          ...(row.images ?? {}),
+          ...(typeof rowPatch.sourceImage !== "undefined" ? { es: rowPatch.sourceImage } : {}),
+          ...(typeof rowPatch.targetImage !== "undefined" ? { vi: rowPatch.targetImage } : {}),
+        },
+        fieldStates:
+          rowPatch.fieldStates && typeof rowPatch.fieldStates === "object"
+            ? rowPatch.fieldStates
+            : { ...(row.fieldStates ?? {}) },
+      };
+    }
+
+    globalThis.__gnosisMockTauriHandlers = {
+      ...(globalThis.__gnosisMockTauriHandlers ?? {}),
+      async sync_gtms_project_editor_repo() {
+        const editorState = window.__gnosisDebug.readEditorState();
+        const chapterId =
+          typeof editorState?.chapterId === "string" && editorState.chapterId.trim()
+            ? editorState.chapterId.trim()
+            : "fixture-chapter";
+        return {
+          repoSyncStatus: "importedEditorConflicts",
+          affectedChapterIds: [chapterId],
+          importedConflicts: [{
+            chapterId,
+            rowId: nextTargetRowId,
+            rowPath: `chapters/${chapterId}/rows/${nextTargetRowId}.json`,
+            conflictKind: nextConflictKind,
+          }],
+          changedRowIds: [],
+          deletedRowIds: [],
+          insertedRowIds: [],
+          newHeadSha: nextHeadSha,
+        };
+      },
+      async load_gtms_chapter_editor_data() {
+        const editorState = window.__gnosisDebug.readEditorState();
+        const rows = Array.isArray(editorState?.rows)
+          ? editorState.rows.map((row) => {
+            const baseRow = cloneRowForChapterLoad(row);
+            if (row?.rowId !== nextTargetRowId) {
+              return baseRow;
+            }
+
+            return {
+              ...applyRowPatch(baseRow, nextLocalRowPatch),
+              importedConflict: {
+                conflictKind: nextConflictKind,
+                baseRow,
+                remoteRow: applyRowPatch(baseRow, nextRemoteRowPatch),
+              },
+            };
+          })
+          : [];
+        if (Number.isFinite(nextLoadDelayMs) && nextLoadDelayMs > 0) {
+          await new Promise((resolve) => window.setTimeout(resolve, nextLoadDelayMs));
+        }
+        return {
+          chapterId: editorState.chapterId,
+          chapterBaseCommitSha: nextHeadSha,
+          fileTitle: editorState.fileTitle ?? "Fixture Chapter",
+          languages: Array.isArray(editorState.languages) ? editorState.languages : [],
+          sourceWordCounts:
+            editorState.sourceWordCounts && typeof editorState.sourceWordCounts === "object"
+              ? editorState.sourceWordCounts
+              : {},
+          rows,
+        };
+      },
+    };
+  }, {
+    nextTargetRowId: targetRowId,
+    nextConflictKind: conflictKind,
+    nextLocalRowPatch: localRowPatch,
+    nextRemoteRowPatch: remoteRowPatch,
+    nextHeadSha: newHeadSha,
+    nextLoadDelayMs: loadDelayMs,
+  });
+}
+
 async function readEditorScrollDebugEntries(page) {
   return await page.evaluate(() => window.__gnosisDebug.readEditorScrollDebugEntries());
 }
@@ -2017,7 +2149,7 @@ test.describe("editor regressions", () => {
     expect(styles.markSkipInk).toBe("none");
   });
 
-  test("source glossary mismatch marks render in red and stay visible while editing", async ({ page }) => {
+  test("source glossary mismatch marks render in red in static view and disappear while editing", async ({ page }) => {
     await mountEditorFixture(page, {
       rowCount: 1,
       glossaryTerms: [
@@ -2067,11 +2199,54 @@ test.describe("editor regressions", () => {
     await expect(sourceField).toBeVisible();
     const activeMarkSelector =
       `[data-editor-row-card][data-row-id="${rowId}"] [data-editor-language-cluster][data-language-code="${languageCode}"] [data-editor-glossary-highlight] .translation-language-panel__glossary-mark.glossary-match-error`;
-
-    await expect(page.locator(activeMarkSelector)).toHaveCount(1);
+    await expect(page.locator(activeMarkSelector)).toHaveCount(0);
 
     await page.locator("[data-editor-search-input]").click();
     await expect(page.locator(markSelector)).toHaveCount(1);
+  });
+
+  test("static glossary mismatch markup collapses nested underline styling into a single layer", async ({ page }) => {
+    await mountEditorFixture(page, {
+      rowCount: 1,
+      glossaryTerms: [
+        {
+          sourceTerms: ["devoto"],
+          targetTerms: ["devotee"],
+        },
+      ],
+      fieldsByRowId: {
+        "fixture-row-0001": {
+          es: "<u>devoto</u>",
+          vi: "",
+        },
+      },
+    }, { path: "/?platform=windows" });
+
+    const styles = await page.evaluate(() => {
+      const underline = document.querySelector(
+        '[data-editor-row-card][data-row-id="fixture-row-0001"] [data-editor-display-field][data-language-code="es"] u',
+      );
+      const mark = document.querySelector(
+        '[data-editor-row-card][data-row-id="fixture-row-0001"] [data-editor-display-field][data-language-code="es"] .translation-language-panel__glossary-mark.glossary-match-error',
+      );
+      if (!(underline instanceof HTMLElement) || !(mark instanceof HTMLElement)) {
+        return null;
+      }
+
+      const underlineStyle = getComputedStyle(underline);
+      const markStyle = getComputedStyle(mark);
+      return {
+        underlineLine: underlineStyle.textDecorationLine,
+        underlineColor: underlineStyle.textDecorationColor,
+        markLine: markStyle.textDecorationLine,
+        markColor: markStyle.textDecorationColor,
+      };
+    });
+
+    expect(styles).not.toBeNull();
+    expect(styles.underlineLine).toBe("none");
+    expect(styles.markLine).toBe("underline");
+    expect(styles.markColor).toBe("rgba(190, 61, 31, 0.78)");
   });
 
   test("ai translation refreshes target glossary underlines after inserting translation text", async ({ page }) => {
@@ -2182,7 +2357,7 @@ test.describe("editor regressions", () => {
     await expect(page.locator(targetMarkSelector)).toHaveText("alpha");
   });
 
-  test("history restore refreshes target glossary underlines while the target field stays open", async ({ page }) => {
+  test("history restore refreshes target glossary state and renders underlines after the target field closes", async ({ page }) => {
     await page.addInitScript(() => {
       globalThis.__gnosisMockTauriHandlers = {
         load_gtms_editor_field_history() {
@@ -2240,12 +2415,18 @@ test.describe("editor regressions", () => {
 
     await expect(targetField).toHaveValue("alpha restored from history");
 
-    const targetMarkSelector =
+    const activeTargetMarkSelector =
       `[data-editor-row-card][data-row-id="${rowId}"] [data-editor-language-cluster][data-language-code="${languageCode}"] [data-editor-glossary-highlight] [data-editor-glossary-mark]`;
+    await expect(page.locator(activeTargetMarkSelector)).toHaveCount(0);
+
+    await page.locator("[data-editor-search-input]").click();
+
+    const staticTargetMarkSelector =
+      `[data-editor-row-card][data-row-id="${rowId}"] [data-editor-display-field][data-language-code="${languageCode}"] [data-editor-glossary-mark]`;
     await expect.poll(async () => {
-      return await page.locator(targetMarkSelector).count();
+      return await page.locator(staticTargetMarkSelector).count();
     }).toBe(1);
-    await expect(page.locator(targetMarkSelector)).toHaveText("alpha");
+    await expect(page.locator(staticTargetMarkSelector)).toHaveText("alpha");
   });
 
   test("derived glossary highlights and tooltip payloads appear after ai translation prepares a row glossary", async ({ page }) => {
@@ -2648,7 +2829,7 @@ test.describe("editor regressions", () => {
     expect(expectedSelectionStart).toBeLessThan(markGeometry.end);
   });
 
-  test("glossary alignment probe measures the Vietnamese width-sweep repro fixture", async ({ page }) => {
+  test("active editor suppresses glossary underline overlays while preserving textarea language metrics", async ({ page }) => {
     await mountEditorFixture(page, {
       rowCount: 1,
       glossaryTerms: [
@@ -2666,20 +2847,39 @@ test.describe("editor regressions", () => {
       },
     });
 
-    const result = await measureGlossaryAlignment(page, {
-      rowId: "fixture-row-0001",
-      languageCode: "vi",
-      widths: [520, 560, 600, 640, 680, 720],
-      thresholdPx: 1,
+    const activeField = await activateMainEditorField(page, "fixture-row-0001", "vi");
+    await expect(activeField).toBeVisible();
+    await expect(activeField).toBeFocused();
+    await expect(page.locator(
+      '[data-editor-row-card][data-row-id="fixture-row-0001"] [data-editor-glossary-highlight] [data-editor-glossary-mark]',
+    )).toHaveCount(0);
+
+    const layerAttributes = await page.evaluate(() => {
+      const field = document.querySelector(
+        '[data-editor-row-card][data-row-id="fixture-row-0001"] [data-editor-row-field][data-language-code="vi"]:not([data-content-kind])',
+      );
+      const glossaryLayer = document.querySelector(
+        '[data-editor-row-card][data-row-id="fixture-row-0001"] [data-editor-glossary-highlight]',
+      );
+      if (!(field instanceof HTMLTextAreaElement) || !(glossaryLayer instanceof HTMLElement)) {
+        return null;
+      }
+
+      const fieldStyle = getComputedStyle(field);
+      return {
+        fieldLanguage: field.lang,
+        layerLanguage: glossaryLayer.lang,
+        webkitAppearance: fieldStyle.webkitAppearance,
+        appearance: fieldStyle.appearance,
+      };
     });
 
-    expect(result?.ok).toBe(true);
-    expect(result?.widthCount).toBe(6);
-    expect(Array.isArray(result?.measurements)).toBe(true);
-    expect(result.measurements[0]?.markCount).toBeGreaterThan(0);
-    expect(result.measurements.some((measurement) =>
-      measurement?.marks?.some((mark) => mark?.text?.includes("Ngôi Lời"))
-    )).toBe(true);
+    expect(layerAttributes).toEqual({
+      fieldLanguage: "vi",
+      layerLanguage: "vi",
+      webkitAppearance: "none",
+      appearance: "none",
+    });
   });
 
   test("selecting a replace row under virtualization keeps the selected row visible", async ({ page }) => {
@@ -3366,6 +3566,84 @@ test.describe("editor regressions", () => {
     expect(gapMetrics.maxViewportGap).toBeLessThanOrEqual(40);
 
     const mockState = await readMockTauriState(page);
+    expect(mockState.invocations.some((entry) => entry.command === "load_gtms_chapter_editor_data")).toBe(true);
+    expect(mockState.invocations.some((entry) => entry.command === "load_gtms_editor_row")).toBe(false);
+  });
+
+  test("background sync reloads imported Git conflicts into the existing conflict UI", async ({ page }) => {
+    const targetRowId = "fixture-row-0030";
+    const localTargetText = "local imported conflict draft";
+    const remoteTargetText = "remote GitHub conflict version";
+
+    await mountEditorFixture(page, { rowCount: 80 }, { mockTauri: true });
+    await installImportedConflictBackgroundReloadMock(page, {
+      targetRowId,
+      conflictKind: "text-conflict",
+      localRowPatch: {
+        targetText: localTargetText,
+      },
+      remoteRowPatch: {
+        targetText: remoteTargetText,
+      },
+      newHeadSha: "mock-sync-head-imported-conflict",
+    });
+
+    await setTranslateScrollTop(page, 9000);
+    await scrollTranslateRowNearTop(page, targetRowId, 120);
+    const targetRow = page.locator(`[data-editor-row-card][data-row-id="${targetRowId}"]`);
+    await expect(targetRow).toBeVisible();
+
+    const syncPromise = runEditorBackgroundSync(page, {
+      skipDirtyFlush: true,
+      afterLocalCommit: true,
+    });
+
+    await expect(
+      page.locator(".modal-backdrop--navigation-loading .navigation-loading-modal__title"),
+    ).toHaveText("Synchronizing with GitHub");
+
+    await syncPromise;
+
+    await expect(
+      page.locator(".modal-backdrop--navigation-loading"),
+    ).toHaveCount(0);
+    await expect(
+      targetRow.locator(".translation-row-badge--conflict"),
+    ).toHaveText("Conflict");
+    await expect(
+      targetRow.locator(`[data-action="open-editor-conflict-resolution:${targetRowId}:vi"]`),
+    ).toBeVisible();
+    await expect(
+      targetRow.locator(`[data-action="open-editor-conflict-resolution:${targetRowId}:es"]`),
+    ).toHaveCount(0);
+
+    await expect(
+      targetRow.locator(
+        '[data-language-code="vi"] .translation-language-panel__field-static--conflict',
+      ),
+    ).toContainText(localTargetText);
+
+    await targetRow.locator(`[data-action="open-editor-conflict-resolution:${targetRowId}:vi"]`).click();
+
+    await expect(
+      page.locator(".modal-card--editor-conflict .modal__title"),
+    ).toHaveText("Resolve translation conflict");
+    await expect(
+      page.locator(".editor-conflict-modal__column").nth(0),
+    ).toContainText(localTargetText);
+    await expect(
+      page.locator(".editor-conflict-modal__column").nth(1),
+    ).toContainText(remoteTargetText);
+    await expect(
+      page.locator("[data-editor-conflict-final-input]"),
+    ).toHaveValue(remoteTargetText);
+
+    const gapMetrics = await readVisibleRowGapMetrics(page);
+    expect(gapMetrics).not.toBeNull();
+    expect(gapMetrics.maxViewportGap).toBeLessThanOrEqual(48);
+
+    const mockState = await readMockTauriState(page);
+    expect(mockState.invocations.some((entry) => entry.command === "sync_gtms_project_editor_repo")).toBe(true);
     expect(mockState.invocations.some((entry) => entry.command === "load_gtms_chapter_editor_data")).toBe(true);
     expect(mockState.invocations.some((entry) => entry.command === "load_gtms_editor_row")).toBe(false);
   });

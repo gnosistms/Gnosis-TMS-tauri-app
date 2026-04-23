@@ -279,6 +279,7 @@ pub(super) fn editor_row_from_stored_row_file(
                 )
             })
             .collect(),
+        imported_conflict: None,
     })
 }
 

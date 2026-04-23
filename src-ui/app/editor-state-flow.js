@@ -92,6 +92,32 @@ function preserveEditorPreviewSearch(previousEditorChapter, isSameChapter) {
   return normalizeEditorPreviewSearchState(previousEditorChapter?.previewSearch);
 }
 
+function normalizeImportedConflictRemoteRow(row) {
+  if (!row || typeof row !== "object") {
+    return null;
+  }
+
+  return normalizeEditorRow({
+    ...row,
+    importedConflict: null,
+  });
+}
+
+function normalizeImportedConflictPayload(importedConflict) {
+  if (!importedConflict || typeof importedConflict !== "object") {
+    return null;
+  }
+
+  return {
+    conflictKind:
+      typeof importedConflict.conflictKind === "string" && importedConflict.conflictKind.trim()
+        ? importedConflict.conflictKind.trim()
+        : "imported-git-conflict",
+    remoteRow: normalizeImportedConflictRemoteRow(importedConflict.remoteRow),
+    baseRow: normalizeImportedConflictRemoteRow(importedConflict.baseRow),
+  };
+}
+
 function preserveEditorAiTranslateState(nextEditorChapter, previousEditorChapter, isSameChapter) {
   if (!isSameChapter) {
     return createEditorAiTranslateState();
@@ -342,6 +368,7 @@ export function applyEditorUiState(nextEditorChapter, previousEditorChapter = st
 }
 
 export function normalizeEditorRow(row) {
+  const importedConflict = normalizeImportedConflictPayload(row?.importedConflict);
   const fields = cloneRowFields(row?.fields);
   const footnotes = cloneRowFields(row?.footnotes);
   const imageCaptions = cloneRowFields(row?.imageCaptions);
@@ -374,11 +401,20 @@ export function normalizeEditorRow(row) {
     persistedImages: cloneRowImages(images),
     fieldStates,
     persistedFieldStates: cloneRowFieldStates(fieldStates),
-    freshness: "fresh",
+    freshness: importedConflict ? "conflict" : "fresh",
     remotelyDeleted: false,
-    conflictState: null,
-    saveStatus: "idle",
-    saveError: "",
+    conflictState: importedConflict
+      ? {
+        baseFields: cloneRowFields(importedConflict.baseRow?.fields),
+        baseFootnotes: cloneRowFields(importedConflict.baseRow?.footnotes),
+        baseImageCaptions: cloneRowFields(importedConflict.baseRow?.imageCaptions),
+        remoteRow: importedConflict.remoteRow,
+        remoteVersion: null,
+      }
+      : null,
+    saveStatus: importedConflict ? "conflict" : "idle",
+    saveError: importedConflict ? "Translation text changed on GitHub." : "",
+    importedConflictKind: importedConflict?.conflictKind ?? null,
     markerSaveState: {
       status: "idle",
       languageCode: null,

@@ -121,6 +121,8 @@ function renderEditorRowSyncBadges(row) {
     badges.push('<span class="translation-row-badge translation-row-badge--conflict">Conflict</span>');
   } else if (row.remotelyDeleted) {
     badges.push('<span class="translation-row-badge translation-row-badge--deleted">Deleted Remotely</span>');
+  } else if (row.freshness === "stale") {
+    badges.push('<span class="translation-row-badge translation-row-badge--stale">Needs refresh</span>');
   } else if (row.isStale) {
     badges.push('<span class="translation-row-badge translation-row-badge--stale">Stale</span>');
   }
@@ -663,11 +665,13 @@ function renderEditorLanguageField(row, language) {
         <div
           class="translation-language-panel__field-highlight translation-language-panel__search-highlight"
           data-editor-search-highlight
+          lang="${escapeHtml(language.code)}"
           aria-hidden="true"
         ></div>
         <div
           class="translation-language-panel__field-highlight translation-language-panel__glossary-highlight"
           data-editor-glossary-highlight
+          lang="${escapeHtml(language.code)}"
           aria-hidden="true"
         ></div>
         <textarea

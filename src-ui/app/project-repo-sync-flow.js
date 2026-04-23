@@ -8,6 +8,7 @@ import {
 import { requireBrokerSession } from "./auth-flow.js";
 import {
   buildProjectRepoSyncInput,
+  PROJECT_REPO_SYNC_STATUS_IMPORTED_EDITOR_CONFLICTS,
   PROJECT_REPO_SYNC_STATUS_UNRESOLVED_CONFLICT,
   PROJECT_REPO_SYNC_STATUS_UPDATE_REQUIRED,
 } from "./project-repo-sync-shared.js";
@@ -60,6 +61,7 @@ function summarizeSnapshots(snapshots = []) {
       snapshot?.status === "syncError"
       || snapshot?.status === "missingRemoteHead"
       || snapshot?.status === PROJECT_REPO_SYNC_STATUS_UNRESOLVED_CONFLICT
+      || snapshot?.status === PROJECT_REPO_SYNC_STATUS_IMPORTED_EDITOR_CONFLICTS
       || snapshot?.status === PROJECT_REPO_SYNC_STATUS_UPDATE_REQUIRED
     ) {
       summary.issues += 1;

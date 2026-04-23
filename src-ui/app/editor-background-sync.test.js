@@ -575,6 +575,75 @@ test("background sync promotes overlapping staleDirty text changes directly to c
   assert.equal(state.editorChapter.rows[0]?.conflictState?.remoteVersion?.commitSha, "abc12345");
 });
 
+test("background sync resolves simultaneous marker edits to the safer state", async () => {
+  installEditorFixture();
+  state.editorChapter.rows = [createEditorRowFixture({
+    fieldStates: {
+      es: { reviewed: false, pleaseCheck: true },
+      en: { reviewed: false, pleaseCheck: false },
+    },
+    persistedFieldStates: {
+      es: { reviewed: false, pleaseCheck: false },
+      en: { reviewed: false, pleaseCheck: false },
+    },
+    saveStatus: "dirty",
+    freshness: "dirty",
+  })];
+
+  const syncRequest = deferred();
+  invokeHandler = async (command) => {
+    if (command === "sync_gtms_project_editor_repo") {
+      return syncRequest.promise;
+    }
+    if (command === "load_gtms_editor_row") {
+      return {
+        chapterBaseCommitSha: "head-2",
+        rowVersion: {
+          commitSha: "abc12345",
+          authorName: "Remote User",
+          committedAt: "2026-04-23T01:02:03Z",
+        },
+        row: createRemoteRowPayload("row-1", {
+          fieldStates: {
+            es: { reviewed: true, pleaseCheck: false },
+            en: { reviewed: false, pleaseCheck: false },
+          },
+        }),
+      };
+    }
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  const render = createRenderRecorder();
+  startEditorBackgroundSyncSession(render, { skipInitialSync: true });
+  await Promise.resolve();
+
+  const pendingSync = syncEditorBackgroundNowWithSummary(render, {
+    skipDirtyFlush: true,
+    suppressConservativeRerender: true,
+  });
+  syncRequest.resolve({
+    changedRowIds: ["row-1"],
+    deletedRowIds: [],
+    insertedRowIds: [],
+    newHeadSha: "head-2",
+  });
+  const syncResult = await pendingSync;
+
+  assert.equal(syncResult.requiresChapterReload, false);
+  assert.deepEqual(render.calls, [{
+    scope: "translate-visible-rows",
+    rowIds: ["row-1"],
+    reason: "background-sync-dirty-merge",
+  }]);
+  assert.deepEqual(state.editorChapter.rows[0]?.fieldStates?.es, {
+    reviewed: false,
+    pleaseCheck: true,
+  });
+  assert.equal(state.editorChapter.rows[0]?.freshness, "dirty");
+  assert.equal(state.editorChapter.rows[0]?.saveStatus, "idle");
+});
+
 test("background sync uses a blocking chapter reload for large stale batches", async () => {
   installEditorFixture();
   const rows = Array.from({ length: 9 }, (_, index) => {
@@ -627,6 +696,84 @@ test("background sync uses a blocking chapter reload for large stale batches", a
   assert.equal(syncResult.requiresChapterReload, true);
   assert.deepEqual(syncResult.refreshedRowIds, []);
   assert.equal(state.navigationLoadingModal.isOpen, false);
+  assert.deepEqual(
+    invokeLog.filter((entry) => entry.command === "load_gtms_editor_row"),
+    [],
+  );
+});
+
+test("background sync reloads the current chapter when semantic git resolution imports editor conflicts", async () => {
+  installEditorFixture();
+  state.editorChapter.rows = [createEditorRowFixture()];
+
+  const syncRequest = deferred();
+  invokeHandler = async (command) => {
+    if (command === "sync_gtms_project_editor_repo") {
+      return syncRequest.promise;
+    }
+    if (command === "load_gtms_chapter_editor_data") {
+      return {
+        chapterId: "chapter-1",
+        chapterBaseCommitSha: "head-2",
+        fileTitle: "Chapter 1",
+        languages: [{ code: "es", name: "Spanish" }, { code: "en", name: "English" }],
+        sourceWordCounts: {},
+        rows: [{
+          rowId: "row-1",
+          orderKey: "00001",
+          lifecycleState: "active",
+          textStyle: "paragraph",
+          fields: { es: "hola local", en: "hello local" },
+          footnotes: { es: "", en: "" },
+          imageCaptions: { es: "", en: "" },
+          images: { es: null, en: null },
+          fieldStates: {
+            es: { reviewed: false, pleaseCheck: false },
+            en: { reviewed: false, pleaseCheck: false },
+          },
+          importedConflict: {
+            conflictKind: "text-conflict",
+            remoteRow: createRemoteRowPayload("row-1", {
+              fields: { es: "hola remoto", en: "hello remote" },
+            }),
+          },
+        }],
+      };
+    }
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  const render = createRenderRecorder();
+  startEditorBackgroundSyncSession(render);
+  await Promise.resolve();
+
+  const pendingSync = syncEditorBackgroundNowWithSummary(render, {
+    skipDirtyFlush: true,
+    suppressConservativeRerender: true,
+  });
+  syncRequest.resolve({
+    repoSyncStatus: "importedEditorConflicts",
+    affectedChapterIds: ["chapter-1"],
+    importedConflicts: [{
+      chapterId: "chapter-1",
+      rowId: "row-1",
+      rowPath: "chapters/ch-1/rows/row-1.json",
+      conflictKind: "text-conflict",
+    }],
+    changedRowIds: [],
+    deletedRowIds: [],
+    insertedRowIds: [],
+    newHeadSha: "head-2",
+  });
+  const syncResult = await pendingSync;
+
+  assert.equal(syncResult.requiresBlockingReload, true);
+  assert.equal(syncResult.performedBlockingReload, true);
+  assert.equal(syncResult.blockingReloadReason, "imported-editor-conflicts");
+  assert.equal(syncResult.requiresChapterReload, true);
+  assert.equal(state.editorChapter.rows[0]?.freshness, "conflict");
+  assert.equal(state.editorChapter.rows[0]?.importedConflictKind, "text-conflict");
+  assert.equal(state.editorChapter.rows[0]?.conflictState?.remoteRow?.fields?.en, "hello remote");
   assert.deepEqual(
     invokeLog.filter((entry) => entry.command === "load_gtms_editor_row"),
     [],

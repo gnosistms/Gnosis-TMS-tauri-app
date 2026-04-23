@@ -6,8 +6,16 @@ mod project_git;
 
 use tauri::AppHandle;
 
+pub(crate) use self::chapter_editor::{
+    list_imported_editor_conflict_refs, persist_imported_editor_conflict_entries,
+    repo_has_imported_editor_conflicts, resolve_chapter_json_git_conflict_from_stage_texts,
+    resolve_row_git_conflict_from_stage_texts, ImportedEditorConflictRef,
+    PendingImportedEditorConflictEntry, ResolvedEditorConflictAction,
+};
+
 use self::{
     chapter_editor::{
+        clear_gtms_editor_imported_conflict_sync,
         clear_gtms_editor_reviewed_markers_sync, initialize_gtms_project_repo_sync,
         insert_gtms_editor_row_sync, list_local_gtms_project_files_sync,
         load_gtms_chapter_editor_data_sync, load_gtms_editor_field_history_sync,
@@ -19,7 +27,8 @@ use self::{
         update_gtms_editor_row_fields_batch_sync, update_gtms_editor_row_fields_sync,
         update_gtms_editor_row_lifecycle_sync, update_gtms_editor_row_text_style_sync,
         upload_gtms_editor_language_image_sync, ClearEditorReviewedMarkersInput,
-        ClearEditorReviewedMarkersResponse, InitializeProjectRepoInput,
+        ClearEditorReviewedMarkersResponse, ClearImportedEditorConflictInput,
+        InitializeProjectRepoInput,
         InitializeProjectRepoResponse, InsertEditorRowInput, InsertEditorRowResponse,
         ListLocalProjectFilesInput, LoadChapterEditorInput, LoadChapterEditorResponse,
         LoadEditorFieldHistoryInput, LoadEditorFieldHistoryResponse, LoadEditorRowInput,
@@ -142,6 +151,18 @@ pub(crate) async fn load_gtms_editor_row(
     tauri::async_runtime::spawn_blocking(move || load_gtms_editor_row_sync(&app, input))
         .await
         .map_err(|error| format!("The row reload worker failed: {error}"))?
+}
+
+#[tauri::command]
+pub(crate) async fn clear_gtms_editor_imported_conflict(
+    app: AppHandle,
+    input: ClearImportedEditorConflictInput,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        clear_gtms_editor_imported_conflict_sync(&app, input)
+    })
+    .await
+    .map_err(|error| format!("The imported row conflict clear worker failed: {error}"))?
 }
 
 #[tauri::command]

@@ -456,6 +456,7 @@ pub(super) fn create_inserted_editor_row(
         image_captions,
         images: BTreeMap::new(),
         field_states,
+        imported_conflict: None,
     })
 }
 

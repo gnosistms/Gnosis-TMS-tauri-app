@@ -95,7 +95,8 @@ use crate::{
         soft_delete_gtms_glossary, upsert_gtms_glossary_term,
     },
     project_import::{
-        clear_gtms_editor_reviewed_markers, delete_gtms_editor_row_comment, import_xlsx_to_gtms,
+        clear_gtms_editor_imported_conflict, clear_gtms_editor_reviewed_markers,
+        delete_gtms_editor_row_comment, import_xlsx_to_gtms,
         initialize_gtms_project_repo, insert_gtms_editor_row_after, insert_gtms_editor_row_before,
         list_local_gtms_project_files, load_gtms_chapter_editor_data,
         load_gtms_editor_field_history, load_gtms_editor_row, load_gtms_editor_row_comments,
@@ -560,6 +561,7 @@ pub fn run() {
             purge_local_gtms_project_repo,
             load_gtms_chapter_editor_data,
             load_gtms_editor_row,
+            clear_gtms_editor_imported_conflict,
             insert_gtms_editor_row_before,
             insert_gtms_editor_row_after,
             load_gtms_editor_field_history,

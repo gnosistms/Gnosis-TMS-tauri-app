@@ -36,6 +36,7 @@ const EDITOR_SYNC_REMOTE_INTERVAL_MS = 180_000;
 const EDITOR_SYNC_AUTO_REFRESH_ROW_LIMIT = 8;
 const EDITOR_SYNC_BLOCKING_RELOAD_TITLE = "Synchronizing with GitHub";
 const EDITOR_SYNC_BLOCKING_RELOAD_MESSAGE = "Many rows changed, so this file is being reloaded.";
+const PROJECT_REPO_SYNC_STATUS_IMPORTED_EDITOR_CONFLICTS = "importedEditorConflicts";
 
 const editorBackgroundSyncSession = {
   key: "",
@@ -525,11 +526,41 @@ async function runEditorBackgroundSync(render, options = {}) {
     const handlingSummary = buildBackgroundSyncHandlingSummary(payload, state.editorChapter, {
       allowBlockingReload: !hasDirtyRowsRemaining,
     });
+    const repoSyncStatus =
+      typeof payload?.repoSyncStatus === "string" && payload.repoSyncStatus.trim()
+        ? payload.repoSyncStatus.trim()
+        : "";
+    const affectedChapterIds = Array.isArray(payload?.affectedChapterIds)
+      ? payload.affectedChapterIds.filter((chapterId) => typeof chapterId === "string" && chapterId.trim())
+      : [];
+    const currentChapterHasImportedGitConflicts =
+      repoSyncStatus === PROJECT_REPO_SYNC_STATUS_IMPORTED_EDITOR_CONFLICTS
+      && affectedChapterIds.includes(input.chapterId);
     if (matchesCurrentHead) {
       editorBackgroundSyncSession.lastSyncedHeadSha =
         normalizeHeadSha(payload?.newHeadSha)
         ?? normalizeHeadSha(payload?.oldHeadSha)
         ?? editorBackgroundSyncSession.lastSyncedHeadSha;
+    }
+
+    if (repoSyncStatus === PROJECT_REPO_SYNC_STATUS_IMPORTED_EDITOR_CONFLICTS) {
+      const performedBlockingReload = currentChapterHasImportedGitConflicts
+        ? await performBlockingChapterReload(render)
+        : false;
+      setEditorBackgroundSyncState("idle", "");
+      return createBackgroundSyncResult({
+        payload: payload ?? null,
+        matchedCurrentHead: matchesCurrentHead,
+        refreshedRowIds: [],
+        shouldRerenderBody: false,
+        requiresChapterReload: currentChapterHasImportedGitConflicts,
+        requiresBlockingReload: currentChapterHasImportedGitConflicts,
+        performedBlockingReload,
+        blockingReloadReason: currentChapterHasImportedGitConflicts
+          ? "imported-editor-conflicts"
+          : null,
+        handlingSummary,
+      });
     }
 
     if (!matchesCurrentHead) {

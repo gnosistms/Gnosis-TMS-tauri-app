@@ -32,6 +32,17 @@ function syncIssueResolution(snapshot, resourceLabel) {
     };
   }
 
+  if (status === "importedEditorConflicts") {
+    return {
+      key: "importedEditorConflicts",
+      tone: "warning",
+      message: `This ${resourceLabel} repo has imported editor conflicts that must be resolved before GitHub sync can continue.`,
+      help: "The repo itself is clean again, but some rows still need conflict resolution in the editor.",
+      blockLifecycleActions: false,
+      blockContentActions: false,
+    };
+  }
+
   if (status === "updateRequired") {
     return {
       key: "updateRequired",

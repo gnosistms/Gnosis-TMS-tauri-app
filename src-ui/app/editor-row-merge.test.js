@@ -74,7 +74,7 @@ test("mergeDirtyEditorRowWithRemote promotes same-language text overlaps to conf
   assert.deepEqual(result.conflicts, [{ languageCode: "es", contentKind: "field" }]);
 });
 
-test("mergeEditorRowVersions merges field-state flags independently", () => {
+test("mergeEditorRowVersions resolves simultaneous marker edits to the safer state", () => {
   const result = mergeEditorRowVersions({
     baseFields: { es: "hola", en: "hello" },
     baseFootnotes: { es: "", en: "" },
@@ -103,12 +103,46 @@ test("mergeEditorRowVersions merges field-state flags independently", () => {
 
   assert.equal(result.status, "merged");
   assert.deepEqual(result.mergedFieldStates.es, {
-    reviewed: true,
+    reviewed: false,
     pleaseCheck: true,
   });
   assert.deepEqual(result.mergedFields, {
     es: "hola remoto",
     en: "hello local",
+  });
+});
+
+test("mergeEditorRowVersions keeps a remote-only reviewed marker change when local markers are untouched", () => {
+  const result = mergeEditorRowVersions({
+    baseFields: { es: "hola", en: "hello" },
+    baseFootnotes: { es: "", en: "" },
+    baseImageCaptions: { es: "", en: "" },
+    baseImages: {},
+    baseFieldStates: {
+      es: { reviewed: false, pleaseCheck: false },
+      en: { reviewed: false, pleaseCheck: false },
+    },
+    localFields: { es: "hola", en: "hello local" },
+    localFootnotes: { es: "", en: "" },
+    localImageCaptions: { es: "", en: "" },
+    localImages: {},
+    localFieldStates: {
+      es: { reviewed: false, pleaseCheck: false },
+      en: { reviewed: false, pleaseCheck: false },
+    },
+    remoteRow: remoteRowFixture({
+      fields: { es: "hola remoto", en: "hello" },
+      fieldStates: {
+        es: { reviewed: true, pleaseCheck: false },
+        en: { reviewed: false, pleaseCheck: false },
+      },
+    }),
+  });
+
+  assert.equal(result.status, "merged");
+  assert.deepEqual(result.mergedFieldStates.es, {
+    reviewed: true,
+    pleaseCheck: false,
   });
 });
 

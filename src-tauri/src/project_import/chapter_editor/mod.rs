@@ -30,6 +30,7 @@ use super::{
 };
 
 mod chapter_selection;
+mod git_conflicts;
 mod history;
 mod images;
 mod row_fields;
@@ -38,6 +39,12 @@ mod shared;
 
 use self::chapter_selection::{
     linked_chapter_glossary, preferred_source_language_code, preferred_target_language_code,
+};
+pub(crate) use self::git_conflicts::{
+    clear_imported_editor_conflict_entry, list_imported_editor_conflict_refs,
+    persist_imported_editor_conflict_entries, repo_has_imported_editor_conflicts,
+    resolve_chapter_json_git_conflict_from_stage_texts, resolve_row_git_conflict_from_stage_texts,
+    ImportedEditorConflictRef, PendingImportedEditorConflictEntry, ResolvedEditorConflictAction,
 };
 pub(crate) use self::chapter_selection::{
     update_gtms_chapter_glossary_links_sync, update_gtms_chapter_language_selection_sync,
@@ -243,6 +250,16 @@ pub(crate) struct UpdateEditorRowTextStyleInput {
     chapter_id: String,
     row_id: String,
     text_style: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ClearImportedEditorConflictInput {
+    installation_id: i64,
+    repo_name: String,
+    project_id: Option<String>,
+    chapter_id: String,
+    row_id: String,
 }
 
 #[derive(Clone, Deserialize, Serialize, PartialEq, Eq)]
@@ -516,7 +533,7 @@ pub(crate) struct LoadChapterEditorResponse {
     rows: Vec<EditorRow>,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct EditorRow {
     row_id: String,
@@ -536,13 +553,24 @@ struct EditorRow {
     image_captions: BTreeMap<String, String>,
     images: BTreeMap<String, EditorFieldImage>,
     field_states: BTreeMap<String, EditorFieldState>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    imported_conflict: Option<EditorRowImportedConflict>,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct EditorFieldState {
     reviewed: bool,
     please_check: bool,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct EditorRowImportedConflict {
+    conflict_kind: String,
+    remote_row: Box<EditorRow>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    base_row: Option<Box<EditorRow>>,
 }
 
 #[derive(Clone, Deserialize, Serialize, PartialEq, Eq)]
@@ -610,9 +638,9 @@ pub(crate) struct SaveEditorRowWithConcurrencyResponse {
     chapter_base_commit_sha: Option<String>,
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct EditorRowVersionMetadata {
+pub(crate) struct EditorRowVersionMetadata {
     commit_sha: String,
     author_name: String,
     committed_at: String,
@@ -674,7 +702,7 @@ struct StoredChapterLinkedGlossaries {
     glossary: Option<StoredChapterGlossaryLink>,
 }
 
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Deserialize, Serialize, PartialEq, Eq)]
 struct StoredChapterGlossaryLink {
     glossary_id: String,
     repo_name: String,
@@ -788,10 +816,13 @@ pub(super) fn load_gtms_chapter_editor_data_sync(
         selected_source_language_code,
         selected_target_language_code,
         chapter_base_commit_sha: git_output(&repo_path, &["rev-parse", "--verify", "HEAD"]).ok(),
-        rows: rows
-            .into_iter()
-            .map(|row| editor_row_from_stored_row_file(&repo_path, row))
-            .collect::<Result<Vec<_>, _>>()?,
+        rows: git_conflicts::overlay_imported_editor_conflict_rows(
+            &repo_path,
+            &input.chapter_id,
+            rows.into_iter()
+                .map(|row| editor_row_from_stored_row_file(&repo_path, row))
+                .collect::<Result<Vec<_>, _>>()?,
+        )?,
     })
 }
 
@@ -833,10 +864,30 @@ pub(super) fn load_gtms_editor_row_sync(
 
     Ok(LoadEditorRowResponse {
         row_id: input.row_id,
-        row,
+        row: git_conflicts::overlay_imported_editor_conflict_row(
+            &repo_path,
+            &input.chapter_id,
+            row,
+        )?,
         chapter_base_commit_sha: git_output(&repo_path, &["rev-parse", "--verify", "HEAD"]).ok(),
         row_version,
     })
+}
+
+pub(crate) fn clear_gtms_editor_imported_conflict_sync(
+    app: &AppHandle,
+    input: ClearImportedEditorConflictInput,
+) -> Result<(), String> {
+    let repo_path = resolve_project_git_repo_path(
+        app,
+        input.installation_id,
+        input.project_id.as_deref(),
+        Some(&input.repo_name),
+    )?;
+    ensure_repo_exists(&repo_path, "The local project repo is not available yet.")?;
+    ensure_valid_git_repo(&repo_path, "The local project repo is missing or invalid.")?;
+    clear_imported_editor_conflict_entry(&repo_path, &input.chapter_id, &input.row_id)?;
+    Ok(())
 }
 
 pub(super) fn list_local_gtms_project_files_sync(
