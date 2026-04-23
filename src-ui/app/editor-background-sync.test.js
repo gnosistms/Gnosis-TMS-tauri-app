@@ -702,6 +702,51 @@ test("background sync uses a blocking chapter reload for large stale batches", a
   );
 });
 
+test("background sync uses a blocking chapter reload when the chapter language list changes", async () => {
+  installEditorFixture();
+  state.editorChapter.rows = [createEditorRowFixture()];
+
+  const syncRequest = deferred();
+  invokeHandler = async (command) => {
+    if (command === "sync_gtms_project_editor_repo") {
+      return syncRequest.promise;
+    }
+    if (command === "load_gtms_chapter_editor_data") {
+      return createRemoteChapterLoadPayload(state.editorChapter.rows, {
+        languages: [
+          { code: "es", name: "Spanish" },
+          { code: "en", name: "English" },
+          { code: "vi", name: "Vietnamese" },
+        ],
+      });
+    }
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  const render = createRenderRecorder();
+  startEditorBackgroundSyncSession(render);
+  await Promise.resolve();
+
+  const pendingSync = syncEditorBackgroundNowWithSummary(render, {
+    skipDirtyFlush: true,
+    suppressConservativeRerender: true,
+  });
+  syncRequest.resolve({
+    chapterLanguagesChanged: true,
+    changedRowIds: [],
+    deletedRowIds: [],
+    insertedRowIds: [],
+    newHeadSha: "head-2",
+  });
+  const syncResult = await pendingSync;
+
+  assert.equal(syncResult.requiresBlockingReload, true);
+  assert.equal(syncResult.performedBlockingReload, true);
+  assert.equal(syncResult.blockingReloadReason, "chapter-languages");
+  assert.equal(syncResult.requiresChapterReload, true);
+  assert.equal(state.editorChapter.languages.length, 3);
+});
+
 test("background sync reloads the current chapter when semantic git resolution imports editor conflicts", async () => {
   installEditorFixture();
   state.editorChapter.rows = [createEditorRowFixture()];

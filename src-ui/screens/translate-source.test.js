@@ -4,8 +4,9 @@ import { readFileSync } from "node:fs";
 
 const source = readFileSync(new URL("./translate.js", import.meta.url), "utf8");
 
-test("translate header wires the Add / Remove option into both source and target language dropdowns", () => {
-  assert.match(source, /sourceLanguageExtraOptions:\s*targetLanguageManageOption/);
-  assert.match(source, /targetLanguageExtraOptions:\s*targetLanguageManageOption/);
+test("translate header only wires Add / Remove into both language dropdowns for teams that can manage projects", () => {
+  assert.match(source, /selectedProjectsTeam\(\)\?\.canManageProjects === true/);
+  assert.match(source, /sourceLanguageExtraOptions:\s*chapterLanguageManagerOptions/);
+  assert.match(source, /targetLanguageExtraOptions:\s*chapterLanguageManagerOptions/);
   assert.match(source, /label:\s*"Add \/ Remove"/);
 });

@@ -20,11 +20,11 @@ use crate::{
         resolve_row_git_conflict_from_stage_texts, ImportedEditorConflictRef,
         PendingImportedEditorConflictEntry, ResolvedEditorConflictAction,
     },
+    project_repo_paths::resolve_or_desired_project_git_repo_path,
     repo_app_version::{
         encode_repo_app_update_requirement, parse_repo_app_update_requirement_error,
         remote_ref_requires_newer_app,
     },
-    project_repo_paths::resolve_or_desired_project_git_repo_path,
     repo_sync_shared::{
         abort_rebase_after_failed_pull, ensure_repo_local_git_identity,
         git_error_indicates_missing_remote_ref, git_output, load_git_transport_token,
@@ -103,6 +103,7 @@ pub(crate) struct ProjectEditorRepoSyncResponse {
     pub(crate) old_head_sha: Option<String>,
     pub(crate) new_head_sha: Option<String>,
     pub(crate) repo_sync_status: String,
+    pub(crate) chapter_languages_changed: bool,
     pub(crate) changed_row_ids: Vec<String>,
     pub(crate) inserted_row_ids: Vec<String>,
     pub(crate) deleted_row_ids: Vec<String>,
@@ -336,7 +337,7 @@ fn list_project_repo_sync_states_sync(
     Ok(snapshots)
 }
 
-fn sync_gtms_project_editor_repo_sync(
+pub(crate) fn sync_gtms_project_editor_repo_sync(
     app: &AppHandle,
     input: ProjectEditorRepoSyncInput,
     session_token: &str,
@@ -372,9 +373,15 @@ fn sync_gtms_project_editor_repo_sync(
     let new_head_sha = sync_outcome.current_head_oid.clone();
     let chapter_path = find_editor_chapter_path_by_id(&repo_path, &input.chapter_id)?;
     let chapter_rows_path = chapter_path.join("rows");
+    let chapter_json_path = chapter_path.join("chapter.json");
     let chapter_rows_relative_path = chapter_rows_path
         .strip_prefix(&repo_path)
         .map_err(|error| format!("Could not resolve the chapter rows path for git: {error}"))?
+        .to_string_lossy()
+        .to_string();
+    let chapter_json_relative_path = chapter_json_path
+        .strip_prefix(&repo_path)
+        .map_err(|error| format!("Could not resolve the chapter metadata path for git: {error}"))?
         .to_string_lossy()
         .to_string();
     let (changed_row_ids, inserted_row_ids, deleted_row_ids) =
@@ -389,11 +396,23 @@ fn sync_gtms_project_editor_repo_sync(
             }
             _ => (Vec::new(), Vec::new(), Vec::new()),
         };
+    let chapter_languages_changed = match (old_head_sha.as_deref(), new_head_sha.as_deref()) {
+        (Some(old_head), Some(new_head)) if old_head != new_head => {
+            chapter_language_list_changed_between_commits(
+                &repo_path,
+                &chapter_json_relative_path,
+                old_head,
+                new_head,
+            )?
+        }
+        _ => false,
+    };
 
     Ok(ProjectEditorRepoSyncResponse {
         old_head_sha,
         new_head_sha,
         repo_sync_status: sync_outcome.repo_sync_status,
+        chapter_languages_changed,
         changed_row_ids,
         inserted_row_ids,
         deleted_row_ids,
@@ -470,9 +489,7 @@ fn spawn_project_repo_sync_job(
                 required_app_version: None,
                 current_app_version: None,
             },
-            Err(error) => {
-                snapshot_from_project_sync_error(&project, &repo_path, error)
-            }
+            Err(error) => snapshot_from_project_sync_error(&project, &repo_path, error),
         };
 
         save_sync_snapshot(&store, &key, next_snapshot);
@@ -585,6 +602,103 @@ fn chapter_row_changes_between_commits(
     deleted_row_ids.dedup();
 
     Ok((changed_row_ids, inserted_row_ids, deleted_row_ids))
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct ChapterLanguageSnapshot {
+    code: String,
+    name: String,
+    role: String,
+}
+
+fn chapter_language_list_changed_between_commits(
+    repo_path: &Path,
+    chapter_json_relative_path: &str,
+    old_head_sha: &str,
+    new_head_sha: &str,
+) -> Result<bool, String> {
+    let diff_output = git_output(
+        repo_path,
+        &[
+            "diff",
+            "--name-only",
+            old_head_sha,
+            new_head_sha,
+            "--",
+            chapter_json_relative_path,
+        ],
+        None,
+    )?;
+    if diff_output.trim().is_empty() {
+        return Ok(false);
+    }
+
+    let old_text = match git_output(
+        repo_path,
+        &[
+            "show",
+            &format!("{old_head_sha}:{chapter_json_relative_path}"),
+        ],
+        None,
+    ) {
+        Ok(value) => value,
+        Err(_) => return Ok(true),
+    };
+    let new_text = match git_output(
+        repo_path,
+        &[
+            "show",
+            &format!("{new_head_sha}:{chapter_json_relative_path}"),
+        ],
+        None,
+    ) {
+        Ok(value) => value,
+        Err(_) => return Ok(true),
+    };
+
+    Ok(
+        match (
+            chapter_language_list_from_json_text(&old_text),
+            chapter_language_list_from_json_text(&new_text),
+        ) {
+            (Some(old_languages), Some(new_languages)) => old_languages != new_languages,
+            _ => true,
+        },
+    )
+}
+
+fn chapter_language_list_from_json_text(text: &str) -> Option<Vec<ChapterLanguageSnapshot>> {
+    let value: Value = serde_json::from_str(text).ok()?;
+    let languages = value.get("languages")?.as_array()?;
+
+    Some(
+        languages
+            .iter()
+            .filter_map(|language| {
+                let code = language.get("code")?.as_str()?.trim().to_lowercase();
+                if code.is_empty() {
+                    return None;
+                }
+
+                let name = language
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .unwrap_or(code.as_str())
+                    .to_string();
+                let role = language
+                    .get("role")
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .map(str::to_lowercase)
+                    .filter(|value| value == "source" || value == "target")
+                    .unwrap_or_else(|| "target".to_string());
+
+                Some(ChapterLanguageSnapshot { code, name, role })
+            })
+            .collect(),
+    )
 }
 
 fn row_id_from_repo_relative_path(path: &str) -> Option<String> {
@@ -865,9 +979,7 @@ fn sync_project_repo(
     })
 }
 
-fn imported_conflict_chapter_ids(
-    imported_conflicts: &[ImportedEditorConflictRef],
-) -> Vec<String> {
+fn imported_conflict_chapter_ids(imported_conflicts: &[ImportedEditorConflictRef]) -> Vec<String> {
     let mut chapter_ids = imported_conflicts
         .iter()
         .map(|entry| entry.chapter_id.clone())
@@ -882,7 +994,8 @@ fn pull_with_semantic_editor_conflict_resolution(
     branch_name: &str,
     git_transport_auth: &GitTransportAuth,
 ) -> Result<Vec<ImportedEditorConflictRef>, String> {
-    let mut pending_imported_conflicts = BTreeMap::<String, PendingImportedEditorConflictEntry>::new();
+    let mut pending_imported_conflicts =
+        BTreeMap::<String, PendingImportedEditorConflictEntry>::new();
 
     match git_output(
         repo_path,
@@ -954,7 +1067,9 @@ fn build_semantic_conflict_resolution_plan(
 ) -> Result<Vec<SemanticConflictResolutionPlanEntry>, String> {
     let stage_sets = load_unmerged_git_stage_sets(repo_path)?;
     if stage_sets.is_empty() {
-        return Err("Git stopped for a rebase conflict, but no unmerged files were found.".to_string());
+        return Err(
+            "Git stopped for a rebase conflict, but no unmerged files were found.".to_string(),
+        );
     }
 
     let mut plan = Vec::with_capacity(stage_sets.len());
@@ -1083,7 +1198,10 @@ fn load_unmerged_git_stage_sets(
             ));
         };
         let stage = stage_text.parse::<u8>().map_err(|error| {
-            format!("Could not parse the conflicted git stage for '{}': {error}", path)
+            format!(
+                "Could not parse the conflicted git stage for '{}': {error}",
+                path
+            )
         })?;
         let stage_set = stage_sets.entry(path.to_string()).or_default();
         match stage {
@@ -1097,10 +1215,7 @@ fn load_unmerged_git_stage_sets(
     Ok(stage_sets)
 }
 
-fn read_git_stage_text(
-    repo_path: &Path,
-    oid: Option<&str>,
-) -> Result<Option<String>, String> {
+fn read_git_stage_text(repo_path: &Path, oid: Option<&str>) -> Result<Option<String>, String> {
     let Some(oid) = oid else {
         return Ok(None);
     };
@@ -1442,20 +1557,24 @@ fn save_sync_snapshot(
 #[cfg(test)]
 mod tests {
     use super::{
-        git_status_porcelain_has_unmerged_entries, project_branch_name,
-        snapshot_from_project_sync_error, ProjectRepoSyncDescriptor,
+        chapter_language_list_from_json_text, git_status_porcelain_has_unmerged_entries,
+        project_branch_name, snapshot_from_project_sync_error, ProjectRepoSyncDescriptor,
         PROJECT_REPO_SYNC_STATUS_UPDATE_REQUIRED,
     };
-    use crate::repo_app_version::{
-        encode_repo_app_update_requirement, RepoAppUpdateRequirement,
-    };
+    use crate::repo_app_version::{encode_repo_app_update_requirement, RepoAppUpdateRequirement};
     use std::path::Path;
 
     #[test]
     fn git_status_porcelain_has_unmerged_entries_detects_conflicts() {
-        assert!(git_status_porcelain_has_unmerged_entries("UU chapters/file.txt\n"));
-        assert!(git_status_porcelain_has_unmerged_entries("AA rows/1.json\n"));
-        assert!(!git_status_porcelain_has_unmerged_entries(" M chapters/file.txt\n"));
+        assert!(git_status_porcelain_has_unmerged_entries(
+            "UU chapters/file.txt\n"
+        ));
+        assert!(git_status_porcelain_has_unmerged_entries(
+            "AA rows/1.json\n"
+        ));
+        assert!(!git_status_porcelain_has_unmerged_entries(
+            " M chapters/file.txt\n"
+        ));
         assert!(!git_status_porcelain_has_unmerged_entries("?? stray.txt\n"));
     }
 
@@ -1511,5 +1630,35 @@ mod tests {
         assert_eq!(snapshot.required_app_version.as_deref(), Some("0.1.36"));
         assert_eq!(snapshot.current_app_version.as_deref(), Some("0.1.35"));
         assert_eq!(snapshot.message.as_deref(), Some("Update required."));
+    }
+
+    #[test]
+    fn chapter_language_list_parser_normalizes_supported_language_fields() {
+        let languages = chapter_language_list_from_json_text(
+            r#"{
+              "languages": [
+                { "code": " ES ", "name": "Spanish", "role": "source" },
+                { "code": "en", "name": "", "role": "unexpected" }
+              ],
+              "title": "Ignored"
+            }"#,
+        )
+        .expect("chapter languages should parse");
+
+        assert_eq!(languages.len(), 2);
+        assert_eq!(languages[0].code, "es");
+        assert_eq!(languages[0].name, "Spanish");
+        assert_eq!(languages[0].role, "source");
+        assert_eq!(languages[1].code, "en");
+        assert_eq!(languages[1].name, "en");
+        assert_eq!(languages[1].role, "target");
+    }
+
+    #[test]
+    fn chapter_language_list_parser_returns_none_when_languages_are_missing() {
+        assert_eq!(
+            chapter_language_list_from_json_text(r#"{"title":"Chapter 1"}"#),
+            None
+        );
     }
 }

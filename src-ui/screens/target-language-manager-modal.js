@@ -130,7 +130,7 @@ export function renderTargetLanguageManagerModal(state) {
         <div class="card__body modal-card__body glossary-term-modal chapter-language-manager-modal">
           <p class="card__eyebrow">CHAPTER LANGUAGES</p>
           <h2 class="modal__title">Add / Remove Languages</h2>
-          <p class="modal__supporting">This ordered list determines which languages are shown in the editor.</p>
+          <p class="modal__supporting">This list determins which languages are shown and in what order. Translations for deleted languages are saved so that they can be recovered by re-adding the deleted language.</p>
 
           <section class="term-lane">
             <div class="term-lane__rows">

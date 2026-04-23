@@ -40,15 +40,15 @@ mod shared;
 use self::chapter_selection::{
     linked_chapter_glossary, preferred_source_language_code, preferred_target_language_code,
 };
+pub(crate) use self::chapter_selection::{
+    update_gtms_chapter_glossary_links_sync, update_gtms_chapter_language_selection_sync,
+    update_gtms_chapter_languages_sync,
+};
 pub(crate) use self::git_conflicts::{
     clear_imported_editor_conflict_entry, list_imported_editor_conflict_refs,
     persist_imported_editor_conflict_entries, repo_has_imported_editor_conflicts,
     resolve_chapter_json_git_conflict_from_stage_texts, resolve_row_git_conflict_from_stage_texts,
     ImportedEditorConflictRef, PendingImportedEditorConflictEntry, ResolvedEditorConflictAction,
-};
-pub(crate) use self::chapter_selection::{
-    update_gtms_chapter_glossary_links_sync, update_gtms_chapter_language_selection_sync,
-    update_gtms_chapter_languages_sync,
 };
 pub(super) use self::history::{
     load_gtms_editor_field_history_sync, restore_gtms_editor_field_from_history_sync,
@@ -82,10 +82,10 @@ use self::shared::{
     apply_source_word_count_delta, build_source_word_counts_from_stored_rows,
     clear_editor_html_preview_cache, current_repo_head_sha, editor_row_from_stored_row_file,
     ensure_editor_field_object_defaults, load_editor_rows, load_project_chapter_summaries,
-    load_source_word_counts, normalize_editor_footnote_value,
-    normalize_editor_image_caption_value, normalize_editor_text_style_value,
-    row_fields_object_mut, row_footnote_map, row_image_caption_map, row_object_mut,
-    row_plain_text_map, row_text_style, sanitize_chapter_languages, set_editor_field_flags,
+    load_source_word_counts, normalize_editor_footnote_value, normalize_editor_image_caption_value,
+    normalize_editor_text_style_value, row_fields_object_mut, row_footnote_map,
+    row_image_caption_map, row_object_mut, row_plain_text_map, row_text_style,
+    sanitize_chapter_languages, set_editor_field_flags,
 };
 
 const ORDER_KEY_SPACING: u128 = 1u128 << 104;
@@ -163,6 +163,13 @@ pub(crate) struct UpdateChapterLanguagesInput {
     installation_id: i64,
     repo_name: String,
     project_id: Option<String>,
+    full_name: String,
+    #[serde(default)]
+    repo_id: Option<i64>,
+    #[serde(default)]
+    default_branch_name: Option<String>,
+    #[serde(default)]
+    default_branch_head_oid: Option<String>,
     chapter_id: String,
     languages: Vec<ChapterLanguage>,
 }

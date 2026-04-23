@@ -947,8 +947,12 @@
 }
 
 .chapter-language-manager-modal .term-lane__rows {
+  position: relative;
+  z-index: 1;
   max-height: min(52vh, 420px);
   overflow-y: auto;
+  margin-top: -48px;
+  padding-top: 48px;
   padding-right: 6px;
 }
 

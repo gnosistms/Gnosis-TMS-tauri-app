@@ -70,6 +70,7 @@ import {
   updateEditorSourceLanguage as updateEditorSourceLanguageFlow,
   updateEditorTargetLanguage as updateEditorTargetLanguageFlow,
 } from "./editor-selection-flow.js";
+import { requireBrokerSession } from "./auth-flow.js";
 import {
   collapseEmptyEditorFootnote as collapseEmptyEditorFootnoteFlow,
   collapseEditorImageCaption as collapseEditorImageCaptionFlow,
@@ -929,7 +930,12 @@ export async function submitTargetLanguageManager(render) {
 
   const team = selectedProjectsTeam();
   const context = findChapterContextById(modal.chapterId);
-  if (!Number.isFinite(team?.installationId) || !context?.project?.name || !modal.chapterId) {
+  if (
+    !Number.isFinite(team?.installationId)
+    || !context?.project?.name
+    || !context?.project?.fullName
+    || !modal.chapterId
+  ) {
     state.targetLanguageManager = {
       ...modal,
       status: "idle",
@@ -960,6 +966,7 @@ export async function submitTargetLanguageManager(render) {
   render?.();
 
   try {
+    const sessionToken = requireBrokerSession();
     if (!(await flushDirtyEditorRows(render))) {
       state.targetLanguageManager = {
         ...state.targetLanguageManager,
@@ -971,10 +978,15 @@ export async function submitTargetLanguageManager(render) {
     }
 
     const payload = await invoke("update_gtms_chapter_languages", {
+      sessionToken,
       input: {
         installationId: team.installationId,
         projectId: context.project.id,
         repoName: context.project.name,
+        fullName: context.project.fullName,
+        repoId: Number.isFinite(context.project.repoId) ? context.project.repoId : null,
+        defaultBranchName: context.project.defaultBranchName ?? "main",
+        defaultBranchHeadOid: context.project.defaultBranchHeadOid ?? null,
         chapterId: modal.chapterId,
         languages: draftLanguages,
       },

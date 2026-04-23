@@ -1,4 +1,5 @@
 use super::*;
+use crate::project_repo_sync::{sync_gtms_project_editor_repo_sync, ProjectEditorRepoSyncInput};
 
 pub(crate) fn update_gtms_chapter_language_selection_sync(
     app: &AppHandle,
@@ -117,6 +118,7 @@ fn normalize_chapter_language_input(language: &ChapterLanguage) -> Option<Chapte
 pub(crate) fn update_gtms_chapter_languages_sync(
     app: &AppHandle,
     input: UpdateChapterLanguagesInput,
+    session_token: &str,
 ) -> Result<UpdateChapterLanguagesResponse, String> {
     let repo_path = resolve_project_git_repo_path(
         app,
@@ -126,6 +128,25 @@ pub(crate) fn update_gtms_chapter_languages_sync(
     )?;
     ensure_repo_exists(&repo_path, "The local project repo is not available yet.")?;
     ensure_valid_git_repo(&repo_path, "The local project repo is missing or invalid.")?;
+    if !git_output(&repo_path, &["status", "--porcelain"])?
+        .trim()
+        .is_empty()
+    {
+        return Err(
+            "Resolve other local repo changes before changing chapter languages.".to_string(),
+        );
+    }
+    if repo_has_imported_editor_conflicts(&repo_path)? {
+        return Err(
+            "Resolve imported editor conflicts before changing chapter languages.".to_string(),
+        );
+    }
+
+    let previous_head_sha = git_output(&repo_path, &["rev-parse", "HEAD"])?;
+    let project_id = input
+        .project_id
+        .clone()
+        .ok_or_else(|| "Could not determine which project repo to sync.".to_string())?;
 
     let chapter_path = find_chapter_path_by_id(&repo_path.join("chapters"), &input.chapter_id)?;
     let chapter_json_path = chapter_path.join("chapter.json");
@@ -218,13 +239,38 @@ pub(crate) fn update_gtms_chapter_languages_sync(
         write_json_pretty(&chapter_json_path, &chapter_value)?;
 
         let relative_chapter_json = repo_relative_path(&repo_path, &chapter_json_path)?;
-        git_output(&repo_path, &["add", &relative_chapter_json])?;
-        git_commit_as_signed_in_user(
-            app,
-            &repo_path,
-            &format!("Update languages for {}", chapter_title),
-            &[&relative_chapter_json],
-        )?;
+        let update_result = (|| -> Result<(), String> {
+            git_output(&repo_path, &["add", &relative_chapter_json])?;
+            git_commit_as_signed_in_user(
+                app,
+                &repo_path,
+                &format!("Update languages for {}", chapter_title),
+                &[&relative_chapter_json],
+            )?;
+            sync_gtms_project_editor_repo_sync(
+                app,
+                ProjectEditorRepoSyncInput {
+                    installation_id: input.installation_id,
+                    project_id,
+                    repo_name: input.repo_name.clone(),
+                    full_name: input.full_name.clone(),
+                    repo_id: input.repo_id,
+                    default_branch_name: input.default_branch_name.clone(),
+                    default_branch_head_oid: input.default_branch_head_oid.clone(),
+                    chapter_id: input.chapter_id.clone(),
+                },
+                session_token,
+            )?;
+            Ok(())
+        })();
+
+        if let Err(error) = update_result {
+            return Err(rollback_failed_chapter_language_update(
+                &repo_path,
+                &previous_head_sha,
+                error,
+            ));
+        }
     }
 
     Ok(UpdateChapterLanguagesResponse {
@@ -233,6 +279,19 @@ pub(crate) fn update_gtms_chapter_languages_sync(
         selected_source_language_code,
         selected_target_language_code,
     })
+}
+
+fn rollback_failed_chapter_language_update(
+    repo_path: &std::path::Path,
+    previous_head_sha: &str,
+    update_error: String,
+) -> String {
+    match git_output(repo_path, &["reset", "--hard", previous_head_sha]) {
+        Ok(_) => format!("{update_error} The local chapter language change was rolled back."),
+        Err(rollback_error) => format!(
+            "{update_error} Rolling back the local chapter language change also failed: {rollback_error}"
+        ),
+    }
 }
 
 pub(crate) fn update_gtms_chapter_glossary_links_sync(

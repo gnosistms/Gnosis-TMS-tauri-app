@@ -245,12 +245,14 @@ function buildBackgroundSyncHandlingSummary(
   const deletedRowIds = normalizeSyncRowIds(syncResult?.deletedRowIds);
   const insertedRowIds = normalizeSyncRowIds(syncResult?.insertedRowIds);
   const canPerformBlockingReload = options?.allowBlockingReload !== false;
+  const chapterLanguagesChanged = syncResult?.chapterLanguagesChanged === true;
   const deletedRowsAllowBlockingReload =
     canPerformBlockingReload
     && deletedRowIds.length > 0
     && deletedRowIds.every((rowId) => rowIsSafeForBackgroundRefresh(rowId, chapterState));
   const blockingReloadReason =
-    canPerformBlockingReload && insertedRowIds.length > 0 ? "inserted-rows"
+    canPerformBlockingReload && chapterLanguagesChanged ? "chapter-languages"
+      : canPerformBlockingReload && insertedRowIds.length > 0 ? "inserted-rows"
       : deletedRowsAllowBlockingReload ? "deleted-rows"
         : canPerformBlockingReload && changedRowIds.length > EDITOR_SYNC_AUTO_REFRESH_ROW_LIMIT ? "large-batch"
           : null;
@@ -265,12 +267,14 @@ function buildBackgroundSyncHandlingSummary(
     changedRowIds,
     deletedRowIds,
     insertedRowIds,
+    chapterLanguagesChanged,
     safeRefreshRowIds,
     deferredChangedRowIds,
     requiresBlockingReload,
     blockingReloadReason,
     requiresChapterReload:
       requiresBlockingReload
+      || chapterLanguagesChanged
       || deletedRowIds.length > 0
       || insertedRowIds.length > 0
       || deferredChangedRowIds.length > 0,
@@ -288,6 +292,7 @@ function updatedHandlingSummaryWithResolvedDeferredRows(handlingSummary, handled
     deferredChangedRowIds,
     requiresChapterReload:
       handlingSummary.requiresBlockingReload
+      || handlingSummary.chapterLanguagesChanged
       || handlingSummary.deletedRowIds.length > 0
       || handlingSummary.insertedRowIds.length > 0
       || deferredChangedRowIds.length > 0,

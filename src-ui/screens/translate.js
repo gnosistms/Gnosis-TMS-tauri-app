@@ -26,7 +26,7 @@ import { renderEditorReplaceUndoModal } from "./editor-replace-undo-modal.js";
 import { renderAiReviewMissingKeyModal } from "./ai-review-missing-key-modal.js";
 import { renderTargetLanguageManagerModal } from "./target-language-manager-modal.js";
 import { renderTranslateSidebar as renderTranslateEditorSidebar } from "./translate-sidebar.js";
-import { resolveSelectedChapterGlossary } from "../app/project-context.js";
+import { resolveSelectedChapterGlossary, selectedProjectsTeam } from "../app/project-context.js";
 import {
   renderEditorConflictBanner,
   renderEditorFilterBanner,
@@ -234,6 +234,10 @@ export function renderTranslateHeaderDetail(state) {
     value: MANAGE_CHAPTER_LANGUAGES_OPTION_VALUE,
     label: "Add / Remove",
   }];
+  const chapterLanguageManagerOptions =
+    selectedProjectsTeam()?.canManageProjects === true
+      ? targetLanguageManageOption
+      : [];
 
   if (mode === EDITOR_MODE_PREVIEW) {
     return renderPreviewToolbar({
@@ -250,8 +254,8 @@ export function renderTranslateHeaderDetail(state) {
     editorFilters,
     editorReplace,
     editorFontSizePx,
-    sourceLanguageExtraOptions: targetLanguageManageOption,
-    targetLanguageExtraOptions: targetLanguageManageOption,
+    sourceLanguageExtraOptions: chapterLanguageManagerOptions,
+    targetLanguageExtraOptions: chapterLanguageManagerOptions,
   });
 }
 

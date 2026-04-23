@@ -15,37 +15,35 @@ pub(crate) use self::chapter_editor::{
 
 use self::{
     chapter_editor::{
-        clear_gtms_editor_imported_conflict_sync,
-        clear_gtms_editor_reviewed_markers_sync, initialize_gtms_project_repo_sync,
-        insert_gtms_editor_row_sync, list_local_gtms_project_files_sync,
-        load_gtms_chapter_editor_data_sync, load_gtms_editor_field_history_sync,
-        load_gtms_editor_row_sync, permanently_delete_gtms_editor_row_sync,
-        purge_local_gtms_project_repo_sync, remove_gtms_editor_language_image_sync,
-        restore_gtms_editor_field_from_history_sync, reverse_gtms_editor_batch_replace_commit_sync,
-        save_gtms_editor_language_image_url_sync, update_gtms_chapter_glossary_links_sync,
-        update_gtms_chapter_language_selection_sync, update_gtms_chapter_languages_sync,
-        update_gtms_editor_row_field_flag_sync,
+        clear_gtms_editor_imported_conflict_sync, clear_gtms_editor_reviewed_markers_sync,
+        initialize_gtms_project_repo_sync, insert_gtms_editor_row_sync,
+        list_local_gtms_project_files_sync, load_gtms_chapter_editor_data_sync,
+        load_gtms_editor_field_history_sync, load_gtms_editor_row_sync,
+        permanently_delete_gtms_editor_row_sync, purge_local_gtms_project_repo_sync,
+        remove_gtms_editor_language_image_sync, restore_gtms_editor_field_from_history_sync,
+        reverse_gtms_editor_batch_replace_commit_sync, save_gtms_editor_language_image_url_sync,
+        update_gtms_chapter_glossary_links_sync, update_gtms_chapter_language_selection_sync,
+        update_gtms_chapter_languages_sync, update_gtms_editor_row_field_flag_sync,
         update_gtms_editor_row_fields_batch_sync, update_gtms_editor_row_fields_sync,
         update_gtms_editor_row_lifecycle_sync, update_gtms_editor_row_text_style_sync,
         upload_gtms_editor_language_image_sync, ClearEditorReviewedMarkersInput,
         ClearEditorReviewedMarkersResponse, ClearImportedEditorConflictInput,
-        InitializeProjectRepoInput,
-        InitializeProjectRepoResponse, InsertEditorRowInput, InsertEditorRowResponse,
-        ListLocalProjectFilesInput, LoadChapterEditorInput, LoadChapterEditorResponse,
-        LoadEditorFieldHistoryInput, LoadEditorFieldHistoryResponse, LoadEditorRowInput,
-        LoadEditorRowResponse, LocalProjectFilesResponse, PurgeLocalProjectRepoInput,
-        RemoveEditorLanguageImageInput, RestoreEditorFieldHistoryInput,
+        InitializeProjectRepoInput, InitializeProjectRepoResponse, InsertEditorRowInput,
+        InsertEditorRowResponse, ListLocalProjectFilesInput, LoadChapterEditorInput,
+        LoadChapterEditorResponse, LoadEditorFieldHistoryInput, LoadEditorFieldHistoryResponse,
+        LoadEditorRowInput, LoadEditorRowResponse, LocalProjectFilesResponse,
+        PurgeLocalProjectRepoInput, RemoveEditorLanguageImageInput, RestoreEditorFieldHistoryInput,
         RestoreEditorFieldHistoryResponse, ReverseEditorBatchReplaceCommitInput,
         ReverseEditorBatchReplaceCommitResponse, SaveEditorLanguageImageResponse,
         SaveEditorLanguageImageUrlInput, SaveEditorRowWithConcurrencyResponse,
         UpdateChapterGlossaryLinksInput, UpdateChapterGlossaryLinksResponse,
         UpdateChapterLanguageSelectionInput, UpdateChapterLanguageSelectionResponse,
-        UpdateChapterLanguagesInput, UpdateChapterLanguagesResponse,
-        UpdateEditorRowFieldFlagInput, UpdateEditorRowFieldFlagResponse,
-        UpdateEditorRowFieldsBatchInput, UpdateEditorRowFieldsBatchResponse,
-        UpdateEditorRowFieldsInput, UpdateEditorRowLifecycleInput,
-        UpdateEditorRowLifecycleResponse, UpdateEditorRowTextStyleInput,
-        UpdateEditorRowTextStyleResponse, UploadEditorLanguageImageInput,
+        UpdateChapterLanguagesInput, UpdateChapterLanguagesResponse, UpdateEditorRowFieldFlagInput,
+        UpdateEditorRowFieldFlagResponse, UpdateEditorRowFieldsBatchInput,
+        UpdateEditorRowFieldsBatchResponse, UpdateEditorRowFieldsInput,
+        UpdateEditorRowLifecycleInput, UpdateEditorRowLifecycleResponse,
+        UpdateEditorRowTextStyleInput, UpdateEditorRowTextStyleResponse,
+        UploadEditorLanguageImageInput,
     },
     chapter_editor_comments::{
         delete_gtms_editor_row_comment_sync, load_gtms_editor_row_comments_sync,
@@ -127,10 +125,13 @@ pub(crate) async fn update_gtms_chapter_language_selection(
 pub(crate) async fn update_gtms_chapter_languages(
     app: AppHandle,
     input: UpdateChapterLanguagesInput,
+    session_token: String,
 ) -> Result<UpdateChapterLanguagesResponse, String> {
-    tauri::async_runtime::spawn_blocking(move || update_gtms_chapter_languages_sync(&app, input))
-        .await
-        .map_err(|error| format!("The chapter languages worker failed: {error}"))?
+    tauri::async_runtime::spawn_blocking(move || {
+        update_gtms_chapter_languages_sync(&app, input, &session_token)
+    })
+    .await
+    .map_err(|error| format!("The chapter languages worker failed: {error}"))?
 }
 
 #[tauri::command]
