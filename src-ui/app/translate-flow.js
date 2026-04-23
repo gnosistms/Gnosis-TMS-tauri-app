@@ -65,6 +65,7 @@ import {
   updateEditorSearchFilterQuery as updateEditorSearchFilterQueryFlow,
 } from "./editor-search-flow.js";
 import {
+  normalizeLanguageSelections,
   persistEditorChapterSelections as persistEditorChapterSelectionsFlow,
   updateEditorSourceLanguage as updateEditorSourceLanguageFlow,
   updateEditorTargetLanguage as updateEditorTargetLanguageFlow,
@@ -116,7 +117,7 @@ import {
 } from "./editor-state-flow.js";
 import { applyStructuralEditorChange } from "./editor-structural-change-flow.js";
 import { syncEditorRowTextareaHeight } from "./autosize.js";
-import { waitForNextPaint } from "./runtime.js";
+import { invoke, waitForNextPaint } from "./runtime.js";
 import { saveStoredEditorFontSizePx } from "./editor-preferences.js";
 import { ensureEditorRowReadyForActivation } from "./editor-row-sync-flow.js";
 import { findEditorRowById } from "./editor-utils.js";
@@ -159,12 +160,39 @@ import {
   createTargetLanguageManagerState,
   state,
 } from "./state.js";
+import { findChapterContextById, selectedProjectsTeam } from "./project-context.js";
+import { findIsoLanguageOption } from "../lib/language-options.js";
 import { showNoticeBadge } from "./status-feedback.js";
 
-export const MANAGE_TARGET_LANGUAGES_OPTION_VALUE = "__manage_target_languages__";
+export const MANAGE_CHAPTER_LANGUAGES_OPTION_VALUE = "__manage_target_languages__";
+export const MANAGE_TARGET_LANGUAGES_OPTION_VALUE = MANAGE_CHAPTER_LANGUAGES_OPTION_VALUE;
 export { resolveChapterSourceWordCount };
 
 let previewModeTranslateScrollSnapshot = null;
+
+function cloneManagedChapterLanguage(language) {
+  const code = String(language?.code ?? "").trim().toLowerCase();
+  if (!code) {
+    return null;
+  }
+
+  const isoOption = findIsoLanguageOption(code);
+  const name = String(language?.name ?? "").trim() || isoOption?.name || code;
+  const role = String(language?.role ?? "").trim().toLowerCase() === "source"
+    ? "source"
+    : "target";
+  return {
+    code,
+    name,
+    role,
+  };
+}
+
+function managedChapterLanguagesFromEditorState() {
+  return (Array.isArray(state.editorChapter?.languages) ? state.editorChapter.languages : [])
+    .map(cloneManagedChapterLanguage)
+    .filter(Boolean);
+}
 
 function currentEditorMode() {
   return normalizeEditorMode(state.editorChapter?.mode);
@@ -773,15 +801,207 @@ export async function confirmEditorReplaceUndo(render) {
 
 export function openTargetLanguageManager() {
   state.targetLanguageManager = {
-    ...state.targetLanguageManager,
+    ...createTargetLanguageManagerState(),
     isOpen: true,
-    status: "idle",
-    error: "",
+    chapterId: state.editorChapter?.chapterId ?? null,
+    languages: managedChapterLanguagesFromEditorState(),
   };
 }
 
 export function closeTargetLanguageManager() {
   state.targetLanguageManager = createTargetLanguageManagerState();
+}
+
+export function openTargetLanguageManagerPicker() {
+  if (!state.targetLanguageManager?.isOpen) {
+    return;
+  }
+
+  state.targetLanguageManager = {
+    ...state.targetLanguageManager,
+    isPickerOpen: true,
+    error: "",
+  };
+}
+
+export function closeTargetLanguageManagerPicker() {
+  if (!state.targetLanguageManager?.isOpen) {
+    return;
+  }
+
+  state.targetLanguageManager = {
+    ...state.targetLanguageManager,
+    isPickerOpen: false,
+  };
+}
+
+export function addTargetLanguageManagerLanguage(languageCode) {
+  if (!state.targetLanguageManager?.isOpen) {
+    return;
+  }
+
+  const code = String(languageCode ?? "").trim().toLowerCase();
+  if (!code || state.targetLanguageManager.languages.some((language) => language.code === code)) {
+    return;
+  }
+
+  const option = findIsoLanguageOption(code);
+  if (!option) {
+    return;
+  }
+
+  state.targetLanguageManager = {
+    ...state.targetLanguageManager,
+    languages: [
+      ...(Array.isArray(state.targetLanguageManager.languages) ? state.targetLanguageManager.languages : []),
+      {
+        code: option.code,
+        name: option.name,
+        role: "target",
+      },
+    ],
+    isPickerOpen: false,
+    error: "",
+  };
+}
+
+export function removeTargetLanguageManagerLanguage(index) {
+  if (
+    !state.targetLanguageManager?.isOpen
+    || !Number.isInteger(index)
+    || index < 0
+  ) {
+    return;
+  }
+
+  const languages = Array.isArray(state.targetLanguageManager.languages)
+    ? state.targetLanguageManager.languages
+    : [];
+  if (languages.length <= 1 || index >= languages.length) {
+    return;
+  }
+
+  state.targetLanguageManager = {
+    ...state.targetLanguageManager,
+    languages: languages.filter((_, languageIndex) => languageIndex !== index),
+    error: "",
+  };
+}
+
+export function moveTargetLanguageManagerLanguageToIndex(fromIndex, toIndex) {
+  if (
+    !state.targetLanguageManager?.isOpen
+    || !Number.isInteger(fromIndex)
+    || fromIndex < 0
+    || !Number.isInteger(toIndex)
+    || toIndex < 0
+  ) {
+    return;
+  }
+
+  const languages = Array.isArray(state.targetLanguageManager.languages)
+    ? [...state.targetLanguageManager.languages]
+    : [];
+  if (fromIndex >= languages.length) {
+    return;
+  }
+
+  const boundedIndex = Math.min(toIndex, languages.length);
+  const adjustedIndex = boundedIndex > fromIndex ? boundedIndex - 1 : boundedIndex;
+  if (adjustedIndex === fromIndex) {
+    return;
+  }
+
+  const [language] = languages.splice(fromIndex, 1);
+  languages.splice(adjustedIndex, 0, language);
+  state.targetLanguageManager = {
+    ...state.targetLanguageManager,
+    languages,
+    error: "",
+  };
+}
+
+export async function submitTargetLanguageManager(render) {
+  const modal = state.targetLanguageManager;
+  if (!modal?.isOpen || modal.status === "loading") {
+    return;
+  }
+
+  const team = selectedProjectsTeam();
+  const context = findChapterContextById(modal.chapterId);
+  if (!Number.isFinite(team?.installationId) || !context?.project?.name || !modal.chapterId) {
+    state.targetLanguageManager = {
+      ...modal,
+      status: "idle",
+      error: "Could not determine which file to update.",
+    };
+    render?.();
+    return;
+  }
+
+  const draftLanguages = (Array.isArray(modal.languages) ? modal.languages : [])
+    .map(cloneManagedChapterLanguage)
+    .filter(Boolean);
+  if (draftLanguages.length === 0) {
+    state.targetLanguageManager = {
+      ...modal,
+      status: "idle",
+      error: "A file must contain at least one language.",
+    };
+    render?.();
+    return;
+  }
+
+  state.targetLanguageManager = {
+    ...modal,
+    status: "loading",
+    error: "",
+  };
+  render?.();
+
+  try {
+    if (!(await flushDirtyEditorRows(render))) {
+      state.targetLanguageManager = {
+        ...state.targetLanguageManager,
+        status: "idle",
+        error: "Resolve pending editor saves before changing chapter languages.",
+      };
+      render?.();
+      return;
+    }
+
+    const payload = await invoke("update_gtms_chapter_languages", {
+      input: {
+        installationId: team.installationId,
+        projectId: context.project.id,
+        repoName: context.project.name,
+        chapterId: modal.chapterId,
+        languages: draftLanguages,
+      },
+    });
+    const nextSelections = normalizeLanguageSelections(
+      payload.languages,
+      payload.selectedSourceLanguageCode,
+      payload.selectedTargetLanguageCode,
+    );
+    applyChapterMetadataToState(modal.chapterId, {
+      languages: Array.isArray(payload.languages) ? payload.languages : [],
+      selectedSourceLanguageCode: nextSelections.selectedSourceLanguageCode,
+      selectedTargetLanguageCode: nextSelections.selectedTargetLanguageCode,
+    });
+
+    closeTargetLanguageManager();
+    render?.();
+    await reloadSelectedChapterEditorData(render, { preserveVisibleRows: false });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    state.targetLanguageManager = {
+      ...state.targetLanguageManager,
+      status: "idle",
+      error: message || "The chapter languages could not be updated.",
+    };
+    render?.();
+  }
 }
 
 export function openInsertEditorRowModal(rowId) {

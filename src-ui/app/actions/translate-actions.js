@@ -10,13 +10,17 @@ import {
   cancelEditorReplaceUndoModal,
   cancelEditorRowPermanentDeletionModal,
   cancelInsertEditorRowModal,
+  closeTargetLanguageManagerPicker,
   confirmEditorUnreviewAll,
   confirmEditorReplaceUndo,
   confirmEditorRowPermanentDeletion,
   confirmInsertEditorRow,
+  addTargetLanguageManagerLanguage,
+  moveTargetLanguageManagerLanguageToIndex,
   openEditorFootnote,
   openEditorImageCaption,
   closeTargetLanguageManager,
+  openTargetLanguageManagerPicker,
   closeEditorImageUrl,
   closeEditorImageInvalidFileModal,
   closeEditorImagePreview,
@@ -50,6 +54,7 @@ import {
   setEditorMode,
   showEditorRowInContext,
   softDeleteEditorRow,
+  submitTargetLanguageManager,
   switchEditorSidebarTab,
   toggleEditorSearchFilterCaseSensitive,
   toggleDeletedEditorRowGroup,
@@ -60,13 +65,55 @@ import {
   updateEditorRowTextStyle,
   toggleEditorLanguageCollapsed,
   dismissActiveIdleEditorImageUpload,
+  removeTargetLanguageManagerLanguage,
 } from "../translate-flow.js";
 
 export function createTranslateActions(render) {
   return async function handleTranslateAction(action, event) {
+    const moveTargetLanguageMatch = /^move-target-language-manager-language:(\d+):(\d+)$/.exec(action);
+    if (moveTargetLanguageMatch) {
+      moveTargetLanguageManagerLanguageToIndex(
+        Number.parseInt(moveTargetLanguageMatch[1], 10),
+        Number.parseInt(moveTargetLanguageMatch[2], 10),
+      );
+      render();
+      return true;
+    }
+
+    const removeTargetLanguageMatch = /^remove-target-language-manager-language:(\d+)$/.exec(action);
+    if (removeTargetLanguageMatch) {
+      removeTargetLanguageManagerLanguage(Number.parseInt(removeTargetLanguageMatch[1], 10));
+      render();
+      return true;
+    }
+
+    const addTargetLanguageMatch = /^add-target-language-manager-language:([a-z]{2})$/.exec(action);
+    if (addTargetLanguageMatch) {
+      addTargetLanguageManagerLanguage(addTargetLanguageMatch[1]);
+      render();
+      return true;
+    }
+
     if (action === "close-target-language-manager") {
       closeTargetLanguageManager();
       render();
+      return true;
+    }
+
+    if (action === "open-target-language-manager-picker") {
+      openTargetLanguageManagerPicker();
+      render();
+      return true;
+    }
+
+    if (action === "close-target-language-manager-picker") {
+      closeTargetLanguageManagerPicker();
+      render();
+      return true;
+    }
+
+    if (action === "submit-target-language-manager") {
+      await submitTargetLanguageManager(render);
       return true;
     }
 

@@ -36,7 +36,7 @@ import {
   updateGlossaryTermSearchQuery,
 } from "./glossary-flow.js";
 import {
-  MANAGE_TARGET_LANGUAGES_OPTION_VALUE,
+  MANAGE_CHAPTER_LANGUAGES_OPTION_VALUE,
   openTargetLanguageManager,
   syncEditorGlossaryHighlightRowDom,
   updateEditorConflictResolutionFinalFootnote,
@@ -267,9 +267,19 @@ function handleGlossaryTermFootnoteInput(event) {
 }
 
 function handleEditorSourceLanguageInput(event, render) {
+  if (event.type !== "change") {
+    return false;
+  }
+
   const input = event.target.closest("[data-editor-source-language-select]");
   if (!input) {
     return false;
+  }
+
+  if (input.value === MANAGE_CHAPTER_LANGUAGES_OPTION_VALUE) {
+    openTargetLanguageManager();
+    render();
+    return true;
   }
 
   updateEditorSourceLanguage(render, input.value);
@@ -286,7 +296,7 @@ function handleEditorTargetLanguageInput(event, render) {
     return false;
   }
 
-  if (input.value === MANAGE_TARGET_LANGUAGES_OPTION_VALUE) {
+  if (input.value === MANAGE_CHAPTER_LANGUAGES_OPTION_VALUE) {
     openTargetLanguageManager();
     render();
     return true;

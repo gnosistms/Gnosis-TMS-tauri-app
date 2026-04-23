@@ -105,6 +105,78 @@ test("buildEditorScreenViewModel shows translating placeholder in the active tar
   }
 });
 
+test("buildEditorScreenViewModel treats chapter languages as the authoritative rendered language list", () => {
+  const snapshot = snapshotSharedState();
+
+  try {
+    state.screen = "translate";
+    state.projects = [{
+      id: "project-1",
+      name: "project-1",
+      chapters: [{
+        id: "chapter-1",
+        name: "Chapter 1",
+        languages: [
+          { code: "es", name: "Spanish", role: "source" },
+          { code: "en", name: "English", role: "target" },
+        ],
+        selectedSourceLanguageCode: "es",
+        selectedTargetLanguageCode: "en",
+      }],
+    }];
+    state.deletedProjects = [];
+    state.teams = [{ id: "team-1", installationId: 1 }];
+    state.deletedTeams = [];
+    state.selectedTeamId = "team-1";
+    state.selectedProjectId = "project-1";
+    state.selectedChapterId = "chapter-1";
+    state.editorChapter = {
+      ...state.editorChapter,
+      status: "ready",
+      chapterId: "chapter-1",
+      projectId: "project-1",
+      fileTitle: "Chapter 1",
+      languages: [
+        { code: "es", name: "Spanish", role: "source" },
+        { code: "en", name: "English", role: "target" },
+      ],
+      selectedSourceLanguageCode: "es",
+      selectedTargetLanguageCode: "en",
+      rows: [{
+        rowId: "row-1",
+        lifecycleState: "active",
+        orderKey: "a",
+        fields: {
+          es: "texto fuente",
+          fr: "texte cache",
+        },
+        footnotes: {},
+        imageCaptions: {},
+        images: {},
+        fieldStates: {},
+        persistedFields: {
+          es: "texto fuente",
+          fr: "texte cache",
+        },
+        persistedFootnotes: {},
+        persistedImageCaptions: {},
+        persistedImages: {},
+      }],
+    };
+
+    const viewModel = buildEditorScreenViewModel(state);
+    const row = viewModel.contentRows.find((entry) => entry?.kind === "row");
+    const sectionCodes = row?.sections.map((section) => section.code) ?? [];
+    const englishSection = row?.sections.find((section) => section.code === "en");
+
+    assert.deepEqual(sectionCodes, ["es", "en"]);
+    assert.equal(englishSection?.text, "");
+    assert.equal(row?.sections.some((section) => section.code === "fr"), false);
+  } finally {
+    restoreSharedState(snapshot);
+  }
+});
+
 test("buildEditorScreenViewModel shows glossary preparation placeholder while a derived glossary is loading", () => {
   const snapshot = snapshotSharedState();
 

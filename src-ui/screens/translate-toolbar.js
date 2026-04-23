@@ -311,12 +311,13 @@ export function renderTranslateToolbar({
   editorFilters,
   editorReplace,
   editorFontSizePx,
+  sourceLanguageExtraOptions = [],
   targetLanguageExtraOptions = [],
 }) {
   return `
     <div class="translate-toolbar__body translate-toolbar__body--header">
       <div class="toolbar-row">
-        ${renderLanguageSelect("Source", "editor-source-language-select", sourceCode, languages)}
+        ${renderLanguageSelect("Source", "editor-source-language-select", sourceCode, languages, sourceLanguageExtraOptions)}
         ${renderLanguageSelect("Target", "editor-target-language-select", targetCode, languages, targetLanguageExtraOptions)}
         ${renderFontSizeSelect(editorFontSizePx)}
         ${renderFilterSelect(editorFilters)}

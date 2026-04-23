@@ -23,7 +23,8 @@ use self::{
         purge_local_gtms_project_repo_sync, remove_gtms_editor_language_image_sync,
         restore_gtms_editor_field_from_history_sync, reverse_gtms_editor_batch_replace_commit_sync,
         save_gtms_editor_language_image_url_sync, update_gtms_chapter_glossary_links_sync,
-        update_gtms_chapter_language_selection_sync, update_gtms_editor_row_field_flag_sync,
+        update_gtms_chapter_language_selection_sync, update_gtms_chapter_languages_sync,
+        update_gtms_editor_row_field_flag_sync,
         update_gtms_editor_row_fields_batch_sync, update_gtms_editor_row_fields_sync,
         update_gtms_editor_row_lifecycle_sync, update_gtms_editor_row_text_style_sync,
         upload_gtms_editor_language_image_sync, ClearEditorReviewedMarkersInput,
@@ -39,6 +40,7 @@ use self::{
         SaveEditorLanguageImageUrlInput, SaveEditorRowWithConcurrencyResponse,
         UpdateChapterGlossaryLinksInput, UpdateChapterGlossaryLinksResponse,
         UpdateChapterLanguageSelectionInput, UpdateChapterLanguageSelectionResponse,
+        UpdateChapterLanguagesInput, UpdateChapterLanguagesResponse,
         UpdateEditorRowFieldFlagInput, UpdateEditorRowFieldFlagResponse,
         UpdateEditorRowFieldsBatchInput, UpdateEditorRowFieldsBatchResponse,
         UpdateEditorRowFieldsInput, UpdateEditorRowLifecycleInput,
@@ -119,6 +121,16 @@ pub(crate) async fn update_gtms_chapter_language_selection(
     })
     .await
     .map_err(|error| format!("The chapter settings worker failed: {error}"))?
+}
+
+#[tauri::command]
+pub(crate) async fn update_gtms_chapter_languages(
+    app: AppHandle,
+    input: UpdateChapterLanguagesInput,
+) -> Result<UpdateChapterLanguagesResponse, String> {
+    tauri::async_runtime::spawn_blocking(move || update_gtms_chapter_languages_sync(&app, input))
+        .await
+        .map_err(|error| format!("The chapter languages worker failed: {error}"))?
 }
 
 #[tauri::command]

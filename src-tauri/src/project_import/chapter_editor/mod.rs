@@ -48,6 +48,7 @@ pub(crate) use self::git_conflicts::{
 };
 pub(crate) use self::chapter_selection::{
     update_gtms_chapter_glossary_links_sync, update_gtms_chapter_language_selection_sync,
+    update_gtms_chapter_languages_sync,
 };
 pub(super) use self::history::{
     load_gtms_editor_field_history_sync, restore_gtms_editor_field_from_history_sync,
@@ -154,6 +155,25 @@ pub(crate) struct UpdateChapterLanguageSelectionResponse {
     chapter_id: String,
     source_language_code: String,
     target_language_code: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct UpdateChapterLanguagesInput {
+    installation_id: i64,
+    repo_name: String,
+    project_id: Option<String>,
+    chapter_id: String,
+    languages: Vec<ChapterLanguage>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct UpdateChapterLanguagesResponse {
+    chapter_id: String,
+    languages: Vec<ChapterLanguage>,
+    selected_source_language_code: Option<String>,
+    selected_target_language_code: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -617,8 +637,8 @@ pub(super) struct ProjectChapterGlossaryLink {
     repo_name: String,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
-struct ChapterLanguage {
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub(crate) struct ChapterLanguage {
     code: String,
     name: String,
     role: String,

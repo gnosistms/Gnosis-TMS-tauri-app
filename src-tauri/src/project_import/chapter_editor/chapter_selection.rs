@@ -91,6 +91,150 @@ pub(crate) fn update_gtms_chapter_language_selection_sync(
     })
 }
 
+fn normalize_chapter_language_input(language: &ChapterLanguage) -> Option<ChapterLanguage> {
+    let code = language.code.trim().to_lowercase();
+    if code.is_empty() {
+        return None;
+    }
+
+    let name = language.name.trim();
+    let role = language.role.trim().to_lowercase();
+    Some(ChapterLanguage {
+        code,
+        name: if name.is_empty() {
+            language.code.trim().to_string()
+        } else {
+            name.to_string()
+        },
+        role: if role == "source" || role == "target" {
+            role
+        } else {
+            "target".to_string()
+        },
+    })
+}
+
+pub(crate) fn update_gtms_chapter_languages_sync(
+    app: &AppHandle,
+    input: UpdateChapterLanguagesInput,
+) -> Result<UpdateChapterLanguagesResponse, String> {
+    let repo_path = resolve_project_git_repo_path(
+        app,
+        input.installation_id,
+        input.project_id.as_deref(),
+        Some(&input.repo_name),
+    )?;
+    ensure_repo_exists(&repo_path, "The local project repo is not available yet.")?;
+    ensure_valid_git_repo(&repo_path, "The local project repo is missing or invalid.")?;
+
+    let chapter_path = find_chapter_path_by_id(&repo_path.join("chapters"), &input.chapter_id)?;
+    let chapter_json_path = chapter_path.join("chapter.json");
+    let mut chapter_value: Value = read_json_file(&chapter_json_path, "chapter.json")?;
+    let chapter_file: StoredChapterFile = serde_json::from_value(chapter_value.clone())
+        .map_err(|error| format!("The chapter.json file could not be parsed: {error}"))?;
+    let chapter_title = chapter_value
+        .get("title")
+        .and_then(Value::as_str)
+        .unwrap_or("file")
+        .to_string();
+    let previous_languages = sanitize_chapter_languages(&chapter_file.languages);
+
+    let requested_languages = input
+        .languages
+        .iter()
+        .filter_map(normalize_chapter_language_input)
+        .collect::<Vec<_>>();
+    let languages = sanitize_chapter_languages(&requested_languages);
+    if languages.is_empty() {
+        return Err("A file must contain at least one language.".to_string());
+    }
+
+    {
+        let chapter_object = chapter_value
+            .as_object_mut()
+            .ok_or_else(|| "The chapter.json file is not a JSON object.".to_string())?;
+        chapter_object.insert(
+            "languages".to_string(),
+            serde_json::to_value(&languages)
+                .map_err(|error| format!("The languages could not be serialized: {error}"))?,
+        );
+    }
+
+    let updated_chapter_file: StoredChapterFile = serde_json::from_value(chapter_value.clone())
+        .map_err(|error| format!("The updated chapter.json file could not be parsed: {error}"))?;
+    let selected_source_language_code =
+        preferred_source_language_code(&updated_chapter_file, &languages);
+    let selected_target_language_code = preferred_target_language_code(
+        &updated_chapter_file,
+        &languages,
+        selected_source_language_code.as_deref(),
+    );
+
+    let (previous_source_language_code, previous_target_language_code) = {
+        let chapter_object = chapter_value
+            .as_object_mut()
+            .ok_or_else(|| "The chapter.json file is not a JSON object.".to_string())?;
+        let settings_value = chapter_object
+            .entry("settings".to_string())
+            .or_insert_with(|| json!({}));
+        let settings_object = settings_value
+            .as_object_mut()
+            .ok_or_else(|| "The chapter settings are not a JSON object.".to_string())?;
+        let previous_source_language_code = settings_object
+            .get("default_source_language")
+            .and_then(Value::as_str)
+            .map(ToString::to_string);
+        let previous_target_language_code = settings_object
+            .get("default_target_language")
+            .and_then(Value::as_str)
+            .map(ToString::to_string);
+
+        if let Some(source_language_code) = selected_source_language_code.as_ref() {
+            settings_object.insert(
+                "default_source_language".to_string(),
+                Value::String(source_language_code.clone()),
+            );
+        } else {
+            settings_object.remove("default_source_language");
+        }
+
+        if let Some(target_language_code) = selected_target_language_code.as_ref() {
+            settings_object.insert(
+                "default_target_language".to_string(),
+                Value::String(target_language_code.clone()),
+            );
+        } else {
+            settings_object.remove("default_target_language");
+        }
+        settings_object.remove("default_preview_language");
+
+        (previous_source_language_code, previous_target_language_code)
+    };
+
+    if previous_languages != languages
+        || previous_source_language_code != selected_source_language_code
+        || previous_target_language_code != selected_target_language_code
+    {
+        write_json_pretty(&chapter_json_path, &chapter_value)?;
+
+        let relative_chapter_json = repo_relative_path(&repo_path, &chapter_json_path)?;
+        git_output(&repo_path, &["add", &relative_chapter_json])?;
+        git_commit_as_signed_in_user(
+            app,
+            &repo_path,
+            &format!("Update languages for {}", chapter_title),
+            &[&relative_chapter_json],
+        )?;
+    }
+
+    Ok(UpdateChapterLanguagesResponse {
+        chapter_id: input.chapter_id,
+        languages,
+        selected_source_language_code,
+        selected_target_language_code,
+    })
+}
+
 pub(crate) fn update_gtms_chapter_glossary_links_sync(
     app: &AppHandle,
     input: UpdateChapterGlossaryLinksInput,

@@ -637,7 +637,11 @@ export function createGlossaryEditorState() {
 }
 
 export function createTargetLanguageManagerState() {
-  return createEntityModalState();
+  return createEntityModalState({
+    chapterId: null,
+    languages: [],
+    isPickerOpen: false,
+  });
 }
 
 export function createGlossaryDiscoveryState() {

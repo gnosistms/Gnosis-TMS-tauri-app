@@ -15,7 +15,7 @@ import { buildEditorScreenViewModel } from "../app/editor-screen-model.js";
 import { renderTranslationContentRows } from "../app/editor-row-render.js";
 import { convertLocalFileSrc } from "../app/runtime.js";
 import { getNoticeBadgeText } from "../app/status-feedback.js";
-import { MANAGE_TARGET_LANGUAGES_OPTION_VALUE } from "../app/translate-flow.js";
+import { MANAGE_CHAPTER_LANGUAGES_OPTION_VALUE } from "../app/translate-flow.js";
 import { renderEditorRowInsertModal } from "./editor-row-insert-modal.js";
 import { renderEditorRowPermanentDeletionModal } from "./editor-row-permanent-deletion-modal.js";
 import { renderEditorUnreviewAllModal } from "./editor-unreview-all-modal.js";
@@ -231,7 +231,7 @@ export function renderTranslateHeaderDetail(state) {
     previewSearchState,
   } = frame;
   const targetLanguageManageOption = [{
-    value: MANAGE_TARGET_LANGUAGES_OPTION_VALUE,
+    value: MANAGE_CHAPTER_LANGUAGES_OPTION_VALUE,
     label: "Add / Remove",
   }];
 
@@ -250,6 +250,7 @@ export function renderTranslateHeaderDetail(state) {
     editorFilters,
     editorReplace,
     editorFontSizePx,
+    sourceLanguageExtraOptions: targetLanguageManageOption,
     targetLanguageExtraOptions: targetLanguageManageOption,
   });
 }
