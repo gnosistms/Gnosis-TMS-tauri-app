@@ -150,6 +150,10 @@ function createEditorRowFixture(overrides = {}) {
     es: { reviewed: false, pleaseCheck: false },
     en: { reviewed: false, pleaseCheck: false },
   };
+  const fields = cloneValue(overrides.fields ?? { es: "hola", en: "hello" });
+  const footnotes = cloneValue(overrides.footnotes ?? { es: "", en: "" });
+  const imageCaptions = cloneValue(overrides.imageCaptions ?? { es: "", en: "" });
+  const images = cloneValue(overrides.images ?? { es: null, en: null });
   return {
     rowId: "row-1",
     orderKey: "00001",
@@ -163,14 +167,18 @@ function createEditorRowFixture(overrides = {}) {
     textStyle: "paragraph",
     textStyleSaveState: { status: "idle", error: "" },
     markerSaveState: { status: "idle", error: "", languageCode: null, kind: null },
-    fields: { es: "hola", en: "hello" },
-    footnotes: { es: "", en: "" },
-    imageCaptions: { es: "", en: "" },
-    images: { es: null, en: null },
-    persistedFields: { es: "hola", en: "hello" },
-    persistedFootnotes: { es: "", en: "" },
-    persistedImageCaptions: { es: "", en: "" },
-    persistedImages: { es: null, en: null },
+    fields,
+    footnotes,
+    imageCaptions,
+    images,
+    baseFields: cloneValue(overrides.baseFields ?? fields),
+    baseFootnotes: cloneValue(overrides.baseFootnotes ?? footnotes),
+    baseImageCaptions: cloneValue(overrides.baseImageCaptions ?? imageCaptions),
+    baseImages: cloneValue(overrides.baseImages ?? images),
+    persistedFields: cloneValue(overrides.persistedFields ?? fields),
+    persistedFootnotes: cloneValue(overrides.persistedFootnotes ?? footnotes),
+    persistedImageCaptions: cloneValue(overrides.persistedImageCaptions ?? imageCaptions),
+    persistedImages: cloneValue(overrides.persistedImages ?? images),
     fieldStates: cloneValue(fieldStates),
     persistedFieldStates: cloneValue(fieldStates),
     conflictState: null,
@@ -388,7 +396,7 @@ test("background sync auto-refreshes a safe changed row through the visible-row 
   };
 
   const render = createRenderRecorder();
-  startEditorBackgroundSyncSession(render);
+  startEditorBackgroundSyncSession(render, { skipInitialSync: true });
   await Promise.resolve();
 
   const pendingSync = syncEditorBackgroundNow(render, { skipDirtyFlush: true });
@@ -434,7 +442,7 @@ test("background sync summary keeps safe visible row updates off the full-refres
   };
 
   const render = createRenderRecorder();
-  startEditorBackgroundSyncSession(render);
+  startEditorBackgroundSyncSession(render, { skipInitialSync: true });
   await Promise.resolve();
 
   const pendingSync = syncEditorBackgroundNowWithSummary(render, {
@@ -451,6 +459,120 @@ test("background sync summary keeps safe visible row updates off the full-refres
 
   assert.equal(syncResult.requiresChapterReload, false);
   assert.deepEqual(syncResult.refreshedRowIds, ["row-1"]);
+});
+
+test("background sync auto-merges disjoint staleDirty row changes without reloading the chapter", async () => {
+  installEditorFixture();
+  state.editorChapter.rows = [createEditorRowFixture({
+    fields: { es: "hola", en: "hello local" },
+    baseFields: { es: "hola", en: "hello" },
+    persistedFields: { es: "hola", en: "hello" },
+    saveStatus: "dirty",
+    freshness: "dirty",
+  })];
+
+  const syncRequest = deferred();
+  invokeHandler = async (command) => {
+    if (command === "sync_gtms_project_editor_repo") {
+      return syncRequest.promise;
+    }
+    if (command === "load_gtms_editor_row") {
+      return {
+        chapterBaseCommitSha: "head-2",
+        row: createRemoteRowPayload("row-1", {
+          fields: { es: "hola remoto", en: "hello" },
+        }),
+      };
+    }
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  const render = createRenderRecorder();
+  startEditorBackgroundSyncSession(render, { skipInitialSync: true });
+  await Promise.resolve();
+
+  const pendingSync = syncEditorBackgroundNowWithSummary(render, {
+    skipDirtyFlush: true,
+    suppressConservativeRerender: true,
+  });
+  syncRequest.resolve({
+    changedRowIds: ["row-1"],
+    deletedRowIds: [],
+    insertedRowIds: [],
+    newHeadSha: "head-2",
+  });
+  const syncResult = await pendingSync;
+
+  assert.equal(syncResult.requiresChapterReload, false);
+  assert.deepEqual(render.calls, [{
+    scope: "translate-visible-rows",
+    rowIds: ["row-1"],
+    reason: "background-sync-dirty-merge",
+  }]);
+  assert.deepEqual(state.editorChapter.rows[0]?.fields, {
+    es: "hola remoto",
+    en: "hello local",
+  });
+  assert.equal(state.editorChapter.rows[0]?.freshness, "dirty");
+  assert.equal(state.editorChapter.rows[0]?.saveStatus, "dirty");
+});
+
+test("background sync promotes overlapping staleDirty text changes directly to conflict", async () => {
+  installEditorFixture();
+  state.editorChapter.rows = [createEditorRowFixture({
+    fields: { es: "hola local", en: "hello" },
+    baseFields: { es: "hola", en: "hello" },
+    persistedFields: { es: "hola", en: "hello" },
+    saveStatus: "dirty",
+    freshness: "dirty",
+  })];
+
+  const syncRequest = deferred();
+  invokeHandler = async (command) => {
+    if (command === "sync_gtms_project_editor_repo") {
+      return syncRequest.promise;
+    }
+    if (command === "load_gtms_editor_row") {
+      return {
+        chapterBaseCommitSha: "head-2",
+        rowVersion: {
+          commitSha: "abc12345",
+          authorName: "Remote User",
+          committedAt: "2026-04-23T01:02:03Z",
+        },
+        row: createRemoteRowPayload("row-1", {
+          fields: { es: "hola remoto", en: "hello" },
+        }),
+      };
+    }
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  const render = createRenderRecorder();
+  startEditorBackgroundSyncSession(render, { skipInitialSync: true });
+  await Promise.resolve();
+
+  const pendingSync = syncEditorBackgroundNowWithSummary(render, {
+    skipDirtyFlush: true,
+    suppressConservativeRerender: true,
+  });
+  syncRequest.resolve({
+    changedRowIds: ["row-1"],
+    deletedRowIds: [],
+    insertedRowIds: [],
+    newHeadSha: "head-2",
+  });
+  const syncResult = await pendingSync;
+
+  assert.equal(syncResult.requiresChapterReload, false);
+  assert.deepEqual(render.calls, [{
+    scope: "translate-visible-rows",
+    rowIds: ["row-1"],
+    reason: "background-sync-conflict",
+  }]);
+  assert.equal(state.editorChapter.rows[0]?.freshness, "conflict");
+  assert.equal(state.editorChapter.rows[0]?.saveStatus, "conflict");
+  assert.equal(state.editorChapter.rows[0]?.conflictState?.remoteVersion?.commitSha, "abc12345");
 });
 
 test("background sync uses a blocking chapter reload for large stale batches", async () => {

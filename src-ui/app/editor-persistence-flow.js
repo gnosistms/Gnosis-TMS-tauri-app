@@ -940,7 +940,12 @@ async function persistEditorRow(render, rowId, operations = {}, options = {}) {
           )) {
             updateEditorChapterRow(
               rowId,
-              (currentRow) => applyEditorRowPersistSucceeded(currentRow, payload?.row),
+              (currentRow) => applyEditorRowPersistSucceeded(currentRow, payload?.row, {
+                fields: fieldsToPersist,
+                footnotes: footnotesToPersist,
+                imageCaptions: imageCaptionsToPersist,
+                images: row.images,
+              }),
             );
             reconcileDirtyTrackedEditorRows([rowId]);
             render?.();
@@ -969,7 +974,12 @@ async function persistEditorRow(render, rowId, operations = {}, options = {}) {
 
         const updatedRow = updateEditorChapterRow(
           rowId,
-          (currentRow) => applyEditorRowPersistSucceeded(currentRow, payload?.row),
+          (currentRow) => applyEditorRowPersistSucceeded(currentRow, payload?.row, {
+            fields: fieldsToPersist,
+            footnotes: footnotesToPersist,
+            imageCaptions: imageCaptionsToPersist,
+            images: row.images,
+          }),
         );
 
         state.editorChapter = {

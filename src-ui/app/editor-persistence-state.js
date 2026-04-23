@@ -1,4 +1,5 @@
-import { rowTextContentEqual } from "./editor-row-persistence-model.js";
+import { mergeEditorRowVersions } from "./editor-row-merge.js";
+import { rowHasPersistedChanges, rowTextContentEqual } from "./editor-row-persistence-model.js";
 import { normalizeEditorRowTextStyle } from "./editor-row-text-style.js";
 import {
   cloneRowFields,
@@ -248,20 +249,92 @@ export function applyEditorRowPersistReset(row) {
   };
 }
 
-export function applyEditorRowPersistSucceeded(row, payloadRow) {
+function buildMergedRowState(remoteRow, mergeResult) {
+  const mergedRow = {
+    ...remoteRow,
+    fields: cloneRowFields(mergeResult?.mergedFields ?? remoteRow.fields),
+    footnotes: cloneRowFields(mergeResult?.mergedFootnotes ?? remoteRow.footnotes),
+    imageCaptions: cloneRowFields(mergeResult?.mergedImageCaptions ?? remoteRow.imageCaptions),
+    images: cloneRowImages(mergeResult?.mergedImages ?? remoteRow.images),
+    fieldStates: cloneRowFieldStates(mergeResult?.mergedFieldStates ?? remoteRow.fieldStates),
+    baseFields: cloneRowFields(remoteRow.fields),
+    baseFootnotes: cloneRowFields(remoteRow.footnotes),
+    baseImageCaptions: cloneRowFields(remoteRow.imageCaptions),
+    baseImages: cloneRowImages(remoteRow.images),
+    persistedFields: cloneRowFields(remoteRow.fields),
+    persistedFootnotes: cloneRowFields(remoteRow.footnotes),
+    persistedImageCaptions: cloneRowFields(remoteRow.imageCaptions),
+    persistedImages: cloneRowImages(remoteRow.images),
+    persistedFieldStates: cloneRowFieldStates(remoteRow.fieldStates),
+    saveError: "",
+    remotelyDeleted: false,
+    conflictState: null,
+  };
+  const hasUnsavedTextChanges = !rowTextContentEqual(
+    mergedRow.fields,
+    mergedRow.footnotes,
+    mergedRow.imageCaptions,
+    mergedRow.persistedFields,
+    mergedRow.persistedFootnotes,
+    mergedRow.persistedImageCaptions,
+    mergedRow.images,
+    mergedRow.persistedImages,
+  );
+
+  return {
+    ...mergedRow,
+    saveStatus: hasUnsavedTextChanges ? "dirty" : "idle",
+    freshness: rowHasPersistedChanges(mergedRow) ? "dirty" : "fresh",
+  };
+}
+
+export function applyEditorRowMergedWithRemote(row, payloadRow, mergeResult) {
+  if (!row || !payloadRow || mergeResult?.status !== "merged") {
+    return row;
+  }
+
+  const remoteRow = normalizeEditorRow(payloadRow);
+  return buildMergedRowState(remoteRow, mergeResult);
+}
+
+export function applyEditorRowPersistSucceeded(row, payloadRow, persistedSnapshot = null) {
   if (!row || !payloadRow) {
     return row;
   }
 
   const normalizedRow = normalizeEditorRow(payloadRow);
+  const snapshotFields = cloneRowFields(persistedSnapshot?.fields ?? row.fields);
+  const snapshotFootnotes = cloneRowFields(persistedSnapshot?.footnotes ?? row.footnotes);
+  const snapshotImageCaptions = cloneRowFields(persistedSnapshot?.imageCaptions ?? row.imageCaptions);
+  const snapshotImages = cloneRowImages(persistedSnapshot?.images ?? row.images);
   const rowChangedDuringSave = !rowTextContentEqual(
     row.fields,
     row.footnotes,
     row.imageCaptions,
-    normalizedRow.fields,
-    normalizedRow.footnotes,
-    normalizedRow.imageCaptions,
+    snapshotFields,
+    snapshotFootnotes,
+    snapshotImageCaptions,
+    row.images,
+    snapshotImages,
   );
+  if (rowChangedDuringSave) {
+    const mergeResult = mergeEditorRowVersions({
+      baseFields: snapshotFields,
+      baseFootnotes: snapshotFootnotes,
+      baseImageCaptions: snapshotImageCaptions,
+      baseImages: snapshotImages,
+      baseFieldStates: row.persistedFieldStates,
+      localFields: row.fields,
+      localFootnotes: row.footnotes,
+      localImageCaptions: row.imageCaptions,
+      localImages: row.images,
+      localFieldStates: row.fieldStates,
+      remoteRow: normalizedRow,
+    });
+    if (mergeResult.status === "merged") {
+      return buildMergedRowState(normalizedRow, mergeResult);
+    }
+  }
 
   return {
     ...normalizedRow,

@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import {
   applyEditorConflictResolutionSavedLocally,
   applyEditorRowFieldValue,
+  applyEditorRowMergedWithRemote,
   applyEditorRowMarkerSaved,
   applyEditorRowMarkerSaveFailed,
   applyEditorRowMarkerSaving,
@@ -181,9 +182,87 @@ test("applyEditorRowPersistSucceeded stays dirty when the row changed again duri
   const updatedRow = applyEditorRowPersistSucceeded(
     row({ fields: { es: "tres" }, saveStatus: "saving" }),
     persistedPayload(),
+    {
+      fields: { es: "dos" },
+      footnotes: { es: "" },
+      imageCaptions: { es: "" },
+      images: {},
+    },
   );
 
   assert.deepEqual(updatedRow.persistedFields, { es: "dos" });
+  assert.equal(updatedRow.saveStatus, "dirty");
+});
+
+test("applyEditorRowMergedWithRemote keeps local dirty text while adopting remote changes", () => {
+  const updatedRow = applyEditorRowMergedWithRemote(
+    row({
+      fields: { es: "uno", en: "hello local" },
+      footnotes: { es: "", en: "" },
+      imageCaptions: { es: "", en: "" },
+      images: {},
+      baseFields: { es: "uno", en: "hello" },
+      baseFootnotes: { es: "", en: "" },
+      baseImageCaptions: { es: "", en: "" },
+      baseImages: {},
+    }),
+    persistedPayload({
+      fields: { es: "dos remoto", en: "hello" },
+      fieldStates: {
+        es: { reviewed: true, pleaseCheck: false },
+        en: { reviewed: false, pleaseCheck: false },
+      },
+    }),
+    {
+      status: "merged",
+      mergedFields: { es: "dos remoto", en: "hello local" },
+      mergedFootnotes: { es: "", en: "" },
+      mergedImageCaptions: { es: "", en: "" },
+      mergedImages: {},
+      mergedFieldStates: {
+        es: { reviewed: true, pleaseCheck: false },
+        en: { reviewed: false, pleaseCheck: false },
+      },
+    },
+  );
+
+  assert.deepEqual(updatedRow.fields, { es: "dos remoto", en: "hello local" });
+  assert.deepEqual(updatedRow.persistedFields, { es: "dos remoto", en: "hello" });
+  assert.equal(updatedRow.saveStatus, "dirty");
+  assert.equal(updatedRow.freshness, "dirty");
+});
+
+test("applyEditorRowPersistSucceeded merges disjoint remote updates into a row that changed again during save", () => {
+  const updatedRow = applyEditorRowPersistSucceeded(
+    row({
+      fields: { es: "uno", en: "hello local draft 2" },
+      footnotes: { es: "", en: "" },
+      imageCaptions: { es: "", en: "" },
+      images: {},
+      persistedFields: { es: "uno", en: "hello" },
+      persistedFootnotes: { es: "", en: "" },
+      persistedImageCaptions: { es: "", en: "" },
+      persistedImages: {},
+    }),
+    persistedPayload({
+      fields: { es: "dos remoto", en: "hello local draft 1" },
+    }),
+    {
+      fields: { es: "uno", en: "hello local draft 1" },
+      footnotes: { es: "", en: "" },
+      imageCaptions: { es: "", en: "" },
+      images: {},
+    },
+  );
+
+  assert.deepEqual(updatedRow.fields, {
+    es: "dos remoto",
+    en: "hello local draft 2",
+  });
+  assert.deepEqual(updatedRow.persistedFields, {
+    es: "dos remoto",
+    en: "hello local draft 1",
+  });
   assert.equal(updatedRow.saveStatus, "dirty");
 });
 

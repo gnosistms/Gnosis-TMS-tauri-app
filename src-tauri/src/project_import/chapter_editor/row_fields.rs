@@ -1,4 +1,39 @@
+use std::collections::BTreeSet;
+
 use super::*;
+
+fn merge_editor_string_maps(
+    base: &BTreeMap<String, String>,
+    local: &BTreeMap<String, String>,
+    remote: &BTreeMap<String, String>,
+) -> Option<BTreeMap<String, String>> {
+    let keys: BTreeSet<String> = base
+        .keys()
+        .chain(local.keys())
+        .chain(remote.keys())
+        .cloned()
+        .collect();
+    let mut merged = BTreeMap::new();
+
+    for key in keys {
+        let base_value = base.get(&key).cloned().unwrap_or_default();
+        let local_value = local.get(&key).cloned().unwrap_or_default();
+        let remote_value = remote.get(&key).cloned().unwrap_or_default();
+        let local_changed = local_value != base_value;
+        let remote_changed = remote_value != base_value;
+
+        let next_value = if !local_changed {
+            remote_value
+        } else if !remote_changed || local_value == remote_value {
+            local_value
+        } else {
+            return None;
+        };
+        merged.insert(key, next_value);
+    }
+
+    Some(merged)
+}
 
 pub(crate) fn update_gtms_editor_row_fields_sync(
     app: &AppHandle,
@@ -66,10 +101,19 @@ pub(crate) fn update_gtms_editor_row_fields_sync(
         });
     }
 
-    if row_plain_text_map(&original_row_file) != input.base_fields
-        || row_footnote_map(&original_row_file) != input.base_footnotes
-        || row_image_caption_map(&original_row_file) != input.base_image_captions
-    {
+    let current_fields = row_plain_text_map(&original_row_file);
+    let current_footnotes = row_footnote_map(&original_row_file);
+    let current_image_captions = row_image_caption_map(&original_row_file);
+    let merged_fields =
+        merge_editor_string_maps(&input.base_fields, &input.fields, &current_fields);
+    let merged_footnotes =
+        merge_editor_string_maps(&input.base_footnotes, &input.footnotes, &current_footnotes);
+    let merged_image_captions = merge_editor_string_maps(
+        &input.base_image_captions,
+        &input.image_captions,
+        &current_image_captions,
+    );
+    if merged_fields.is_none() || merged_footnotes.is_none() || merged_image_captions.is_none() {
         return Ok(SaveEditorRowWithConcurrencyResponse {
             row_id: input.row_id,
             status: "conflict".to_string(),
@@ -88,6 +132,9 @@ pub(crate) fn update_gtms_editor_row_fields_sync(
             chapter_base_commit_sha: current_repo_head_sha(&repo_path),
         });
     }
+    let merged_fields = merged_fields.unwrap_or_default();
+    let merged_footnotes = merged_footnotes.unwrap_or_default();
+    let merged_image_captions = merged_image_captions.unwrap_or_default();
 
     let mut row_value: Value = serde_json::from_str(&original_row_text).map_err(|error| {
         format!(
@@ -95,9 +142,9 @@ pub(crate) fn update_gtms_editor_row_fields_sync(
             row_json_path.display()
         )
     })?;
-    apply_editor_plain_text_updates(&mut row_value, &input.fields)?;
-    apply_editor_footnote_updates(&mut row_value, &input.footnotes)?;
-    apply_editor_image_caption_updates(&mut row_value, &input.image_captions)?;
+    apply_editor_plain_text_updates(&mut row_value, &merged_fields)?;
+    apply_editor_footnote_updates(&mut row_value, &merged_footnotes)?;
+    apply_editor_image_caption_updates(&mut row_value, &merged_image_captions)?;
 
     let updated_row_json = serde_json::to_string_pretty(&row_value).map_err(|error| {
         format!(
@@ -153,6 +200,57 @@ pub(crate) fn update_gtms_editor_row_fields_sync(
         conflict_remote_version: None,
         chapter_base_commit_sha: current_repo_head_sha(&repo_path),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn map(entries: &[(&str, &str)]) -> BTreeMap<String, String> {
+        entries
+            .iter()
+            .map(|(key, value)| (key.to_string(), value.to_string()))
+            .collect()
+    }
+
+    #[test]
+    fn merge_editor_string_maps_merges_disjoint_language_changes() {
+        let merged = merge_editor_string_maps(
+            &map(&[("es", "hola"), ("en", "hello")]),
+            &map(&[("es", "hola"), ("en", "hello local")]),
+            &map(&[("es", "hola remoto"), ("en", "hello")]),
+        );
+
+        assert_eq!(
+            merged,
+            Some(map(&[("es", "hola remoto"), ("en", "hello local")])),
+        );
+    }
+
+    #[test]
+    fn merge_editor_string_maps_rejects_same_slice_text_conflicts() {
+        let merged = merge_editor_string_maps(
+            &map(&[("es", "hola"), ("en", "hello")]),
+            &map(&[("es", "hola local"), ("en", "hello")]),
+            &map(&[("es", "hola remoto"), ("en", "hello")]),
+        );
+
+        assert_eq!(merged, None);
+    }
+
+    #[test]
+    fn merge_editor_string_maps_accepts_matching_remote_and_local_updates() {
+        let merged = merge_editor_string_maps(
+            &map(&[("es", "hola"), ("en", "hello")]),
+            &map(&[("es", "hola"), ("en", "hello updated")]),
+            &map(&[("es", "hola"), ("en", "hello updated")]),
+        );
+
+        assert_eq!(
+            merged,
+            Some(map(&[("es", "hola"), ("en", "hello updated")])),
+        );
+    }
 }
 
 pub(crate) fn update_gtms_editor_row_fields_batch_sync(
