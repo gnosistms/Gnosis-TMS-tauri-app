@@ -331,7 +331,9 @@ export function renderTranslateToolbar({
           ${textAction("AI Translate all", "open-editor-ai-translate-all", {
             tooltip: "Translate all empty fields in selected languages",
           })}
-          ${textAction("Unreview All", "open-editor-unreview-all")}
+          ${textAction("Unreview All", "open-editor-unreview-all", {
+            tooltip: 'Remove the "reviewed" mark from all rows of the target language.',
+          })}
         </div>
       </div>
     </div>
