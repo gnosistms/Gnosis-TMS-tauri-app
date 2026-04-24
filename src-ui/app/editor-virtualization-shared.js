@@ -1,6 +1,6 @@
 export const EDITOR_ROW_GAP_PX = 24;
 export const EDITOR_VIRTUALIZATION_MIN_ROWS = 25;
-export const EDITOR_VIRTUALIZATION_OVERSCAN_PX = 100;
+export const EDITOR_VIRTUALIZATION_OVERSCAN_PX = 600;
 export const EDITOR_VIRTUALIZATION_INITIAL_VIEWPORT_PX = 900;
 export const EDITOR_VIRTUALIZATION_SCROLL_REASON = "scroll";
 
@@ -30,6 +30,51 @@ export function shouldDeferMeasuredWindowReconcile(
   return shouldDeferScrollWindowReconcile
     && reason === EDITOR_VIRTUALIZATION_SCROLL_REASON
     && !anchorSnapshot?.rowId;
+}
+
+export function hasEditorVirtualWindowCoverageGap({
+  rowCount = 0,
+  startIndex = 0,
+  endIndex = 0,
+  viewportTop = 0,
+  viewportBottom = 0,
+  firstRowTop = 0,
+  lastRowBottom = 0,
+  gapPx = EDITOR_ROW_GAP_PX,
+} = {}) {
+  const safeRowCount =
+    Number.isInteger(rowCount) && rowCount > 0 ? rowCount : 0;
+  if (safeRowCount === 0) {
+    return false;
+  }
+
+  const safeStartIndex =
+    Number.isInteger(startIndex) ? Math.max(0, Math.min(startIndex, safeRowCount)) : 0;
+  const safeEndIndex =
+    Number.isInteger(endIndex) ? Math.max(safeStartIndex, Math.min(endIndex, safeRowCount)) : safeStartIndex;
+  if (safeEndIndex <= safeStartIndex) {
+    return true;
+  }
+
+  if (
+    !Number.isFinite(viewportTop)
+    || !Number.isFinite(viewportBottom)
+    || viewportBottom <= viewportTop
+  ) {
+    return false;
+  }
+
+  if (!Number.isFinite(firstRowTop) || !Number.isFinite(lastRowBottom)) {
+    return true;
+  }
+
+  const tolerance = Math.max(0, Number.isFinite(gapPx) ? gapPx : EDITOR_ROW_GAP_PX) + 1;
+  const hasRowsBefore = safeStartIndex > 0;
+  const hasRowsAfter = safeEndIndex < safeRowCount;
+  return (
+    (hasRowsBefore && firstRowTop > viewportTop + tolerance)
+    || (hasRowsAfter && lastRowBottom < viewportBottom - tolerance)
+  );
 }
 
 function clampIndex(index, count) {

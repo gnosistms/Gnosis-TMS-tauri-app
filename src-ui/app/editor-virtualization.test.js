@@ -2,6 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 const {
+  EDITOR_ROW_GAP_PX,
+  hasEditorVirtualWindowCoverageGap,
   nextScheduledEditorRenderReason,
   shouldDeferMeasuredWindowReconcile,
 } = await import("./editor-virtualization-shared.js");
@@ -25,4 +27,49 @@ test("shouldDeferMeasuredWindowReconcile only defers unanchored scroll renders w
 
 test("shouldDeferMeasuredWindowReconcile stays disabled when deferred scroll reconcile is off", () => {
   assert.equal(shouldDeferMeasuredWindowReconcile("scroll", null, false), false);
+});
+
+test("hasEditorVirtualWindowCoverageGap detects an under-covered viewport before unrendered rows", () => {
+  assert.equal(
+    hasEditorVirtualWindowCoverageGap({
+      rowCount: 20,
+      startIndex: 5,
+      endIndex: 8,
+      viewportTop: 100,
+      viewportBottom: 600,
+      firstRowTop: 80,
+      lastRowBottom: 520,
+    }),
+    true,
+  );
+});
+
+test("hasEditorVirtualWindowCoverageGap allows the normal row gap before the next row", () => {
+  assert.equal(
+    hasEditorVirtualWindowCoverageGap({
+      rowCount: 20,
+      startIndex: 5,
+      endIndex: 8,
+      viewportTop: 100,
+      viewportBottom: 600,
+      firstRowTop: 80,
+      lastRowBottom: 600 - EDITOR_ROW_GAP_PX,
+    }),
+    false,
+  );
+});
+
+test("hasEditorVirtualWindowCoverageGap ignores lower viewport space after the final row", () => {
+  assert.equal(
+    hasEditorVirtualWindowCoverageGap({
+      rowCount: 8,
+      startIndex: 5,
+      endIndex: 8,
+      viewportTop: 100,
+      viewportBottom: 600,
+      firstRowTop: 80,
+      lastRowBottom: 400,
+    }),
+    false,
+  );
 });

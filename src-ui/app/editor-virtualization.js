@@ -25,6 +25,7 @@ import {
   calculateEditorVirtualWindow,
   EDITOR_VIRTUALIZATION_SCROLL_REASON,
   EDITOR_VIRTUALIZATION_MIN_ROWS,
+  hasEditorVirtualWindowCoverageGap,
   nextScheduledEditorRenderReason,
   shouldDeferMeasuredWindowReconcile,
 } from "./editor-virtualization-shared.js";
@@ -340,6 +341,29 @@ function updateSpacerHeight(spacer, height) {
   spacer.style.height = `${Math.max(0, Math.round(height))}px`;
 }
 
+function renderedWindowHasCoverageGap(itemsContainer, scrollContainer, windowState, rowCount) {
+  if (!(itemsContainer instanceof HTMLElement) || !(scrollContainer instanceof HTMLElement)) {
+    return false;
+  }
+
+  const rowCards = itemsContainer.querySelectorAll("[data-editor-row-card]");
+  const firstRowCard = rowCards[0] ?? null;
+  const lastRowCard = rowCards[rowCards.length - 1] ?? null;
+  const scrollRect = scrollContainer.getBoundingClientRect();
+  const firstRect = firstRowCard?.getBoundingClientRect?.() ?? null;
+  const lastRect = lastRowCard?.getBoundingClientRect?.() ?? null;
+
+  return hasEditorVirtualWindowCoverageGap({
+    rowCount,
+    startIndex: windowState?.startIndex,
+    endIndex: windowState?.endIndex,
+    viewportTop: scrollRect.top,
+    viewportBottom: scrollRect.bottom,
+    firstRowTop: firstRect?.top,
+    lastRowBottom: lastRect?.bottom,
+  });
+}
+
 function renderWindowRange(
   itemsContainer,
   rows,
@@ -505,6 +529,58 @@ export function initializeEditorVirtualization(root, appState) {
     updateSpacerHeight(bottomSpacer, windowState.bottomSpacerHeight);
 
     if (!force && nextRangeKey === currentRangeKey) {
+      const hasCoverageGap = renderedWindowHasCoverageGap(
+        itemsContainer,
+        scrollContainer,
+        windowState,
+        model.contentRows.length,
+      );
+      if (hasCoverageGap) {
+        commitDeferredRowHeights("same-range-coverage-gap");
+        measureVisibleRowHeights(itemsContainer, rowHeightCache);
+        const measuredHeights = buildEditorRowHeights(
+          model.contentRows,
+          rowHeightCache,
+          model.collapsedLanguageCodes,
+          model.editorFontSizePx,
+        );
+        const measuredWindow = calculateEditorVirtualWindow(
+          measuredHeights,
+          scrollContainer.scrollTop,
+          scrollContainer.clientHeight + Math.max(scrollContainer.clientHeight, 600),
+          pinnedRowIndex,
+        );
+        const measuredRangeKey = `${measuredWindow.startIndex}:${measuredWindow.endIndex}`;
+        updateSpacerHeight(topSpacer, measuredWindow.topSpacerHeight);
+        updateSpacerHeight(bottomSpacer, measuredWindow.bottomSpacerHeight);
+        logEditorScrollDebug("virtualization-same-range-coverage-gap", {
+          reason,
+          previousRangeKey: currentRangeKey,
+          measuredRangeKey,
+          scrollTop: scrollContainer.scrollTop,
+          startIndex: windowState.startIndex,
+          endIndex: windowState.endIndex,
+          measuredStartIndex: measuredWindow.startIndex,
+          measuredEndIndex: measuredWindow.endIndex,
+        });
+        if (measuredRangeKey !== currentRangeKey) {
+          currentRangeKey = measuredRangeKey;
+          const focusSnapshot = captureFocusedEditorField(root);
+          renderWindowRange(
+            itemsContainer,
+            model.contentRows,
+            model.collapsedLanguageCodes,
+            measuredWindow.startIndex,
+            measuredWindow.endIndex,
+            model.editorReplace,
+            model.editorChapter,
+          );
+          restoreFocusedEditorField(root, focusSnapshot);
+          glossarySync.restoreMounted(itemsContainer, model.editorChapter);
+          syncRenderedImageDebugEntries(`${reason}:same-range-coverage-gap`);
+          measureVisibleRowHeights(itemsContainer, rowHeightCache);
+        }
+      }
       if (anchorSnapshot) {
         restoreAnchorSnapshot(anchorSnapshot, reason);
       }
@@ -531,25 +607,41 @@ export function initializeEditorVirtualization(root, appState) {
       anchorSnapshot,
       shouldDeferScrollReconcile,
     );
+    const hasCoverageGap = renderedWindowHasCoverageGap(
+      itemsContainer,
+      scrollContainer,
+      windowState,
+      model.contentRows.length,
+    );
+    if (hasCoverageGap) {
+      commitDeferredRowHeights("coverage-gap");
+      logEditorScrollDebug("virtualization-coverage-gap", {
+        reason,
+        rangeKey: currentRangeKey,
+        scrollTop: scrollContainer.scrollTop,
+        startIndex: windowState.startIndex,
+        endIndex: windowState.endIndex,
+      });
+    }
     const heightsChanged = measureVisibleRowHeights(
       itemsContainer,
       rowHeightCache,
-      shouldStageMeasuredWindowReconcile ? deferredRowHeightCache : null,
     );
-    if (heightsChanged) {
+    if (heightsChanged || hasCoverageGap) {
       logEditorScrollDebug("virtualization-visible-height-change", {
         reason,
         rangeKey: currentRangeKey,
         scrollTop: scrollContainer.scrollTop,
-        staged: shouldStageMeasuredWindowReconcile,
+        staged: false,
+        coverageGap: hasCoverageGap,
+        deferredWindowReconcile: shouldStageMeasuredWindowReconcile && !hasCoverageGap,
       });
-      if (shouldStageMeasuredWindowReconcile) {
-        hasDeferredMeasuredWindowReconcile = true;
-        logEditorScrollDebug("virtualization-height-change-deferred", {
+      if (shouldStageMeasuredWindowReconcile && !hasCoverageGap) {
+        hasDeferredMeasuredWindowReconcile = false;
+        logEditorScrollDebug("virtualization-height-change-cached", {
           reason,
           rangeKey: currentRangeKey,
           scrollTop: scrollContainer.scrollTop,
-          deferredHeightCount: deferredRowHeightCache.size,
         });
       } else {
         hasDeferredMeasuredWindowReconcile = false;
@@ -562,7 +654,8 @@ export function initializeEditorVirtualization(root, appState) {
         const measuredWindow = calculateEditorVirtualWindow(
           measuredHeights,
           scrollContainer.scrollTop,
-          scrollContainer.clientHeight,
+          scrollContainer.clientHeight
+            + (hasCoverageGap ? Math.max(scrollContainer.clientHeight, 600) : 0),
           pinnedRowIndex,
         );
         const measuredRangeKey = `${measuredWindow.startIndex}:${measuredWindow.endIndex}`;
