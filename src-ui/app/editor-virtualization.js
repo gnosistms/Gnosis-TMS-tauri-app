@@ -340,28 +340,6 @@ function updateSpacerHeight(spacer, height) {
   spacer.style.height = `${Math.max(0, Math.round(height))}px`;
 }
 
-function shouldRestoreAnchorForRender(reason, previousRangeKey, nextRangeKey) {
-  if (reason !== "deferred-scroll-layout") {
-    return true;
-  }
-
-  const [previousStartToken] =
-    typeof previousRangeKey === "string" && previousRangeKey.trim()
-      ? previousRangeKey.split(":")
-      : [];
-  const [nextStartToken] =
-    typeof nextRangeKey === "string" && nextRangeKey.trim()
-      ? nextRangeKey.split(":")
-      : [];
-  const previousStartIndex = Number.parseInt(previousStartToken ?? "", 10);
-  const nextStartIndex = Number.parseInt(nextStartToken ?? "", 10);
-  if (!Number.isInteger(previousStartIndex) || !Number.isInteger(nextStartIndex)) {
-    return false;
-  }
-
-  return previousStartIndex !== nextStartIndex;
-}
-
 function renderWindowRange(
   itemsContainer,
   rows,
@@ -485,7 +463,6 @@ export function initializeEditorVirtualization(root, appState) {
       return;
     }
 
-    const previousRangeKey = currentRangeKey;
     const anchorSnapshot = options?.anchorSnapshot?.rowId
       ? options.anchorSnapshot
       : null;
@@ -528,16 +505,8 @@ export function initializeEditorVirtualization(root, appState) {
     updateSpacerHeight(bottomSpacer, windowState.bottomSpacerHeight);
 
     if (!force && nextRangeKey === currentRangeKey) {
-      if (anchorSnapshot && shouldRestoreAnchorForRender(reason, previousRangeKey, nextRangeKey)) {
+      if (anchorSnapshot) {
         restoreAnchorSnapshot(anchorSnapshot, reason);
-      } else if (anchorSnapshot && reason === "deferred-scroll-layout") {
-        queueTranslateRowAnchor(null);
-        logEditorScrollDebug("virtualization-anchor-restore-skipped", {
-          reason,
-          previousRangeKey,
-          nextRangeKey,
-          scrollTop: scrollContainer.scrollTop,
-        });
       }
       return;
     }
@@ -625,16 +594,8 @@ export function initializeEditorVirtualization(root, appState) {
       }
     }
 
-    if (anchorSnapshot && shouldRestoreAnchorForRender(reason, previousRangeKey, currentRangeKey)) {
+    if (anchorSnapshot) {
       restoreAnchorSnapshot(anchorSnapshot, reason);
-    } else if (anchorSnapshot && reason === "deferred-scroll-layout") {
-      queueTranslateRowAnchor(null);
-      logEditorScrollDebug("virtualization-anchor-restore-skipped", {
-        reason,
-        previousRangeKey,
-        nextRangeKey: currentRangeKey,
-        scrollTop: scrollContainer.scrollTop,
-      });
     }
   };
 
@@ -670,7 +631,10 @@ export function initializeEditorVirtualization(root, appState) {
           scrollTop: scrollContainer.scrollTop,
           rangeKey: currentRangeKey,
         });
-        commitDeferredRowHeights("deferred-scroll-layout");
+        renderWindow(false, {
+          anchorSnapshot: captureEditorLayoutAnchor(root),
+          reason: "deferred-scroll-layout",
+        });
         return;
       }
 

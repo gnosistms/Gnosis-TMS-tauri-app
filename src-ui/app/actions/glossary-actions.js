@@ -2,6 +2,7 @@ import { state } from "../state.js";
 import {
   addGlossaryTermEmptyTargetVariant,
   addGlossaryTermVariant,
+  cancelGlossaryImportModal,
   cancelGlossaryPermanentDeletion,
   cancelGlossaryRename,
   cancelGlossaryCreation,
@@ -23,6 +24,7 @@ import {
   submitGlossaryCreation,
   submitGlossaryRename,
   submitGlossaryTermEditor,
+  selectGlossaryImportFile,
   toggleGlossaryTermInlineStyle,
   toggleDeletedGlossaries,
 } from "../glossary-flow.js";
@@ -57,11 +59,13 @@ function parseVariantAction(action) {
 export function createGlossaryActions(render) {
   const exactActions = {
     "cancel-glossary-permanent-deletion": () => cancelGlossaryPermanentDeletion(render),
+    "cancel-glossary-import": () => cancelGlossaryImportModal(render),
     "cancel-glossary-rename": () => cancelGlossaryRename(render),
     "cancel-glossary-term-editor": () => cancelGlossaryTermEditor(render),
     "cancel-glossary-creation": () => cancelGlossaryCreation(render),
     "open-new-glossary": () => openGlossaryCreation(render),
     "import-glossary": () => importGlossaryFromTmx(render),
+    "select-glossary-import-file": () => selectGlossaryImportFile(render),
     "open-new-term": () => openGlossaryTermEditor(render),
     "toggle-deleted-glossaries": () => toggleDeletedGlossaries(render),
   };

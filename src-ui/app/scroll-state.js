@@ -438,7 +438,7 @@ export function captureVisibleTranslateRowLocation() {
     return {
       rowId: rowCandidate.element.dataset.rowId ?? "",
       languageCode: null,
-      offsetTop: Math.max(0, rowCandidate.rect.top - containerRect.top),
+      offsetTop: rowCandidate.rect.top - containerRect.top,
       type: "row",
     };
   }
@@ -458,7 +458,7 @@ export function captureVisibleTranslateRowLocation() {
     return {
       rowId: deletedGroupCandidate.element.dataset.rowId ?? "",
       languageCode: null,
-      offsetTop: Math.max(0, deletedGroupCandidate.rect.top - containerRect.top),
+      offsetTop: deletedGroupCandidate.rect.top - containerRect.top,
       type: "deleted-group",
     };
   }

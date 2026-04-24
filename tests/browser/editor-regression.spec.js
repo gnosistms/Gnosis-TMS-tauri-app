@@ -1024,6 +1024,29 @@ async function measureGlossaryAlignment(page, options) {
   }, options);
 }
 
+function fixtureRowId(index) {
+  return `fixture-row-${String(index).padStart(4, "0")}`;
+}
+
+function repeatedVirtualizationText(label, count) {
+  return Array.from({ length: count }, (_, index) =>
+    `Segment ${label}.${index + 1} uses alpha glossary text with enough words to wrap across multiple visual lines in the editor fixture.`
+  ).join(" ");
+}
+
+function buildLongVirtualizationFieldsByRowId(rowCount) {
+  const fieldsByRowId = {};
+  for (let index = 1; index <= rowCount; index += 1) {
+    const rowId = fixtureRowId(index);
+    const repeatCount = index % 5 === 0 ? 18 : index % 3 === 0 ? 13 : 8;
+    fieldsByRowId[rowId] = {
+      es: repeatedVirtualizationText(`${rowId}-es`, repeatCount),
+      vi: repeatedVirtualizationText(`${rowId}-vi`, repeatCount + 2),
+    };
+  }
+  return fieldsByRowId;
+}
+
 async function readTranslateScrollTop(page) {
   return await page.evaluate(() => {
     const container = document.querySelector(".translate-main-scroll");
@@ -3800,6 +3823,35 @@ test.describe("editor regressions", () => {
     const mockState = await readMockTauriState(page);
     expect(mockState.invocations.filter((entry) => entry.command === "load_gtms_chapter_editor_data")).toHaveLength(1);
     expect(mockState.invocations.some((entry) => entry.command === "load_gtms_editor_row")).toBe(false);
+  });
+
+  test("first-seen long rows keep the visible anchor stable after deferred height reconciliation", async ({ page }) => {
+    await mountEditorFixture(page, {
+      rowCount: 160,
+      fieldsByRowId: buildLongVirtualizationFieldsByRowId(160),
+    }, { path: "/?platform=windows" });
+
+    await setTranslateScrollTop(page, 950);
+    await page.waitForTimeout(80);
+    await setTranslateScrollTop(page, 3900);
+    await page.waitForTimeout(160);
+
+    await expect.poll(async () => {
+      const entries = await readEditorScrollDebugEntries(page);
+      return entries.filter((entry) => entry.event === "virtualization-deferred-heights-committed").length;
+    }, { timeout: 1500 }).toBeGreaterThan(0);
+
+    const afterCommitRow = await readTopVisibleRowMetrics(page);
+    const afterCommitScrollTop = await readTranslateScrollTop(page);
+    expect(afterCommitRow).not.toBeNull();
+
+    await setTranslateScrollTop(page, afterCommitScrollTop + 1);
+    await page.waitForTimeout(80);
+
+    const afterNudgeRow = await readTopVisibleRowMetrics(page);
+    expect(afterNudgeRow).not.toBeNull();
+    expect(afterNudgeRow.rowId).toBe(afterCommitRow.rowId);
+    expect(Math.abs(afterNudgeRow.rowTop - afterCommitRow.rowTop)).toBeLessThanOrEqual(3);
   });
 
   for (const { label, platform } of [

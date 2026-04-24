@@ -31,6 +31,7 @@
         "height": 820,
         "visible": true,
         "backgroundThrottling": "disabled",
+        "dragDropEnabled": true,
         "resizable": true,
         "backgroundColor": "#FBF2E2",
         "titleBarStyle": "Transparent"

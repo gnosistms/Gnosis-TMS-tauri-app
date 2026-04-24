@@ -971,6 +971,86 @@
   font-size: 1rem;
 }
 
+.modal-card--project-import {
+  width: min(560px, 100%);
+}
+
+.project-import-modal {
+  gap: 12px;
+}
+
+.project-import-modal__error-badge {
+  justify-self: start;
+  max-width: 100%;
+  padding: 8px 12px;
+  border: 1px solid var(--message-error-border);
+  border-radius: 999px;
+  background: var(--message-error-bg);
+  color: var(--message-error-text);
+  font-size: 0.88rem;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.project-import-modal__drop-target {
+  --project-import-drop-target-color: rgba(173, 111, 42, 0.5);
+  --project-import-drop-target-hover-color: rgba(240, 142, 0, 0.82);
+
+  appearance: none;
+  -webkit-appearance: none;
+  display: grid;
+  place-items: center;
+  min-height: 190px;
+  padding: 28px;
+  border: 2px dashed var(--project-import-drop-target-color);
+  border-radius: 28px;
+  background:
+    radial-gradient(circle at 20% 15%, rgba(255, 255, 255, 0.8), transparent 38%),
+    rgba(255, 250, 242, 0.76);
+  color: var(--project-import-drop-target-color);
+  cursor: pointer;
+  font-family: var(--font-sans);
+  font-size: 1.04rem;
+  font-weight: 400;
+  line-height: 1.4;
+  text-align: center;
+  transition:
+    color 140ms ease,
+    border-color 140ms ease,
+    box-shadow 140ms ease,
+    transform 140ms ease,
+    background 140ms ease;
+}
+
+.project-import-modal__drop-target > span:not(.button__spinner) {
+  color: var(--project-import-drop-target-color);
+  font-weight: 400;
+}
+
+.project-import-modal__drop-target:hover:not(:disabled),
+.project-import-modal__drop-target.is-native-drag-over:not(:disabled),
+.project-import-modal__drop-target:focus-visible {
+  --project-import-drop-target-color: var(--project-import-drop-target-hover-color);
+
+  border-color: var(--project-import-drop-target-color);
+  background: rgba(255, 247, 233, 0.95);
+  box-shadow: 0 0 0 4px rgba(240, 142, 0, 0.12);
+  outline: none;
+}
+
+.project-import-modal__drop-target.is-loading {
+  gap: 10px;
+  cursor: wait;
+  opacity: 0.82;
+}
+
+.project-import-modal__hint {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.92rem;
+  line-height: 1.5;
+}
+
 .modal-backdrop--nested-picker {
   background: rgba(250, 242, 228, 0.48);
 }

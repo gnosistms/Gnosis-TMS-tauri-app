@@ -101,11 +101,7 @@ function renderTranslateTools(editorChapter, rows, languages, sourceCode, target
     activeRow?.sections?.find((section) => section.code === targetLanguage?.code) ?? null;
 
   if (!activeRow) {
-    return `
-      <div class="history-empty">
-        <p>Select a translation row to translate with AI.</p>
-      </div>
-    `;
+    return "";
   }
 
   if (!sourceLanguage || !targetLanguage || !sourceSection || !targetSection) {
@@ -496,7 +492,7 @@ function renderAssistantTranscript(editorChapter, rows, languages, sourceCode, t
   if (!activeRow || !targetLanguage) {
     return `
       <div class="assistant-empty">
-        <p>Select a translation row to chat with AI about it.</p>
+        <p>Click on a translation on the left side to use the AI Assistant.</p>
       </div>
     `;
   }
@@ -532,11 +528,6 @@ function renderAssistantComposer(editorChapter, rows, languages, targetCode) {
     ?? null;
   const assistant = normalizeEditorAssistantState(editorChapter?.assistant);
   const isDisabled = !activeRow || !targetLanguage;
-  const canSend =
-    !isDisabled
-    && assistant.status !== "sending"
-    && assistant.status !== "applying"
-    && assistant.composerDraft.trim().length > 0;
 
   return `
     <div class="assistant-composer">
@@ -548,18 +539,7 @@ function renderAssistantComposer(editorChapter, rows, languages, targetCode) {
           ${isDisabled ? "disabled" : ""}
         >${escapeHtml(assistant.composerDraft)}</textarea>
       </div>
-      <p class="assistant-composer__hint">Shift + Return to send</p>
-      <div class="assistant-composer__actions">
-        ${secondaryButton(
-          assistant.status === "sending" ? "Sending..." : "Send",
-          "run-editor-ai-assistant",
-          {
-            compact: true,
-            disabled: !canSend,
-            className: "button--replace-toolbar",
-          },
-        )}
-      </div>
+      <p class="translation-row-text-style-actions__hint assistant-composer__hint">Shift + Return to send</p>
     </div>
   `;
 }

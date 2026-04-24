@@ -13,6 +13,7 @@ import {
 import { formatErrorForDisplay } from "../app/error-display.js";
 import { getNoticeBadgeText } from "../app/status-feedback.js";
 import { renderGlossaryCreationModal } from "./glossary-creation-modal.js";
+import { renderGlossaryImportModal } from "./glossary-import-modal.js";
 import { renderGlossaryPermanentDeletionModal } from "./glossary-permanent-deletion-modal.js";
 import { renderGlossaryRenameModal } from "./glossary-rename-modal.js";
 import {
@@ -244,6 +245,7 @@ export function renderGlossariesScreen(state) {
       body,
     }) +
     renderGlossaryCreationModal(state) +
+    renderGlossaryImportModal(state) +
     renderGlossaryRenameModal(state) +
     renderGlossaryPermanentDeletionModal(state)
   );

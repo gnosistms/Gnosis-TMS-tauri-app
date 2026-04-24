@@ -38,12 +38,72 @@ import { loadTeamGlossaries } from "./glossary-discovery-flow.js";
 import { classifySyncError } from "./sync-error.js";
 import { handleSyncFailure } from "./sync-recovery.js";
 
-function detectGlossaryImportFileType(fileName) {
+export const GLOSSARY_IMPORT_ACCEPT = ".tmx,text/xml,application/xml";
+
+export function detectGlossaryImportFileType(fileName) {
   const normalized = String(fileName || "").trim().toLowerCase();
   if (normalized.endsWith(".tmx")) {
     return "tmx";
   }
   return null;
+}
+
+function readableImportFileLike(value) {
+  return value && typeof value === "object" && typeof value.arrayBuffer === "function";
+}
+
+function droppedPathFileLike(value) {
+  return value && typeof value === "object" && typeof value.dataBase64 === "string";
+}
+
+function importFileName(value, fallback = "file") {
+  const name = typeof value?.name === "string" ? value.name.trim() : "";
+  return name || fallback;
+}
+
+function decodeBase64ToBytes(dataBase64) {
+  const normalized = typeof dataBase64 === "string" ? dataBase64.trim() : "";
+  if (!normalized) {
+    throw new Error("The file could not be read.");
+  }
+
+  if (typeof globalThis.atob === "function") {
+    const binary = globalThis.atob(normalized);
+    return Array.from(binary, (character) => character.charCodeAt(0));
+  }
+
+  if (typeof Buffer === "function") {
+    return Array.from(Buffer.from(normalized, "base64"));
+  }
+
+  throw new Error("Base64 decoding is unavailable.");
+}
+
+async function importFileBytes(file) {
+  if (readableImportFileLike(file)) {
+    return Array.from(new Uint8Array(await file.arrayBuffer()));
+  }
+
+  if (droppedPathFileLike(file)) {
+    return decodeBase64ToBytes(file.dataBase64);
+  }
+
+  throw new Error("The file could not be read.");
+}
+
+function glossaryImportModalState(overrides = {}) {
+  return {
+    ...state.glossaryImport,
+    ...overrides,
+  };
+}
+
+function setGlossaryImportError(render, message) {
+  state.glossaryImport = glossaryImportModalState({
+    status: "error",
+    error: message,
+  });
+  render();
 }
 
 const glossaryPageSyncController = {
@@ -404,42 +464,106 @@ export async function submitGlossaryCreation(render) {
   });
 }
 
-export async function importGlossaryFromTmx(render) {
-  const team = selectedTeam();
+function canOpenGlossaryImport(render, team) {
   if (areResourcePageWritesDisabled(state.glossariesPage)) {
     showNoticeBadge("Wait for the current glossary refresh or write to finish.", render);
-    return;
+    return false;
   }
   if (!Number.isFinite(team?.installationId)) {
     showNoticeBadge("Importing a glossary requires a GitHub App-connected team.", render);
-    return;
+    return false;
   }
 
   if (state.offline?.isEnabled === true) {
     showNoticeBadge("You cannot import glossaries while offline.", render);
-    return;
+    return false;
   }
 
   if (!canCreateGlossaries(team)) {
     showNoticeBadge("You do not have permission to import glossaries in this team.", render);
+    return false;
+  }
+
+  return true;
+}
+
+export function openGlossaryImportModal(render) {
+  if (state.glossaryImport.status === "importing") {
+    return;
+  }
+
+  const team = selectedTeam();
+  if (!canOpenGlossaryImport(render, team)) {
+    return;
+  }
+
+  state.glossaryImport = {
+    ...state.glossaryImport,
+    isOpen: true,
+    status: "idle",
+    error: "",
+  };
+  render();
+}
+
+export function cancelGlossaryImportModal(render) {
+  if (state.glossaryImport.status === "importing") {
+    return;
+  }
+
+  state.glossaryImport = {
+    ...state.glossaryImport,
+    isOpen: false,
+    status: "idle",
+    error: "",
+  };
+  render();
+}
+
+export async function importGlossaryFromTmx(render) {
+  openGlossaryImportModal(render);
+}
+
+export async function selectGlossaryImportFile(render) {
+  if (state.glossaryImport.status === "importing" || !state.glossaryImport.isOpen) {
     return;
   }
 
   const selectedFile = await openLocalFilePicker({
-    accept: ".tmx,text/xml,application/xml",
+    accept: GLOSSARY_IMPORT_ACCEPT,
   });
   if (!selectedFile) {
     return;
   }
 
-  const fileType = detectGlossaryImportFileType(selectedFile.name);
+  await importGlossaryFile(render, selectedFile);
+}
+
+export async function importGlossaryFile(render, selectedFile) {
+  if (state.glossaryImport.status === "importing") {
+    return;
+  }
+
+  const team = selectedTeam();
+  if (!canOpenGlossaryImport(render, team)) {
+    return;
+  }
+
+  const sourceFileName = importFileName(selectedFile);
+  const fileType = detectGlossaryImportFileType(sourceFileName);
   if (fileType !== "tmx") {
-    showNoticeBadge(
-      `Unsupported file type for ${selectedFile.name}. TMX is the only supported glossary import format right now.`,
+    setGlossaryImportError(
       render,
+      `Unsupported file type for ${sourceFileName}. TMX is the only supported glossary import format right now.`,
     );
     return;
   }
+
+  state.glossaryImport = glossaryImportModalState({
+    status: "importing",
+    error: "",
+  });
+  render();
 
   await submitResourcePageWrite({
     pageState: state.glossariesPage,
@@ -452,15 +576,15 @@ export async function importGlossaryFromTmx(render) {
     },
     runMutation: async () => {
       const glossaryId = crypto.randomUUID();
-      const bytes = Array.from(new Uint8Array(await selectedFile.arrayBuffer()));
+      const bytes = await importFileBytes(selectedFile);
       showResourceCreateProgress(render, "Reading TMX file...");
       const importPreview = await invoke("inspect_tmx_glossary_import", {
         input: {
-          fileName: selectedFile.name,
+          fileName: sourceFileName,
           bytes,
         },
       });
-      const repoName = slugifyRepoName(selectedFile.name.replace(/\.[^.]+$/, "").trim());
+      const repoName = slugifyRepoName(sourceFileName.replace(/\.[^.]+$/, "").trim());
       if (!repoName) {
         throw new Error("Could not determine a glossary repo name from this import file.");
       }
@@ -487,7 +611,7 @@ export async function importGlossaryFromTmx(render) {
             installationId: team.installationId,
             repoName: localRepoName,
             glossaryId,
-            fileName: selectedFile.name,
+            fileName: sourceFileName,
             bytes,
           },
         });
@@ -520,7 +644,7 @@ export async function importGlossaryFromTmx(render) {
           termCount: Number.isFinite(glossary.termCount) ? glossary.termCount : 0,
           localRepoName,
           localNameCollisionResolved: remoteCreateResult.collisionResolved,
-          fileName: selectedFile.name,
+          fileName: sourceFileName,
         };
       } catch (error) {
         if (localRepoName || remoteRepo?.name) {
@@ -545,6 +669,12 @@ export async function importGlossaryFromTmx(render) {
     },
     onSuccess: async (result) => {
       clearResourceCreateProgress();
+      state.glossaryImport = {
+        ...state.glossaryImport,
+        isOpen: false,
+        status: "ready",
+        error: "",
+      };
       state.selectedGlossaryId = result.glossaryId;
       const refreshedGlossary = state.glossaries.find((item) => item.id === result.glossaryId) ?? null;
       showNoticeBadge(
@@ -557,10 +687,41 @@ export async function importGlossaryFromTmx(render) {
     },
     onError: async (error) => {
       clearResourceCreateProgress();
+      state.glossaryImport = glossaryImportModalState({
+        status: "error",
+        error: error instanceof Error ? error.message : String(error),
+      });
+      render();
       if (await handleSyncFailure(classifySyncError(error), { render })) {
         return;
       }
       showNoticeBadge(error?.message ?? String(error), render);
     },
   });
+}
+
+export async function handleDroppedGlossaryImportFile(render, file) {
+  if (!state.glossaryImport.isOpen || state.glossaryImport.status === "importing") {
+    return;
+  }
+
+  await importGlossaryFile(render, file);
+}
+
+export async function handleDroppedGlossaryImportPath(render, path) {
+  const normalizedPath = typeof path === "string" ? path.trim() : "";
+  if (!normalizedPath || !state.glossaryImport.isOpen || state.glossaryImport.status === "importing") {
+    return;
+  }
+
+  try {
+    const file = await invoke("read_local_dropped_file", { path: normalizedPath });
+    await importGlossaryFile(render, {
+      name: typeof file?.name === "string" ? file.name : "",
+      type: typeof file?.mimeType === "string" ? file.mimeType : "",
+      dataBase64: typeof file?.dataBase64 === "string" ? file.dataBase64 : "",
+    });
+  } catch (error) {
+    setGlossaryImportError(render, error instanceof Error ? error.message : String(error));
+  }
 }

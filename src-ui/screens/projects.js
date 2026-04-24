@@ -20,6 +20,7 @@ import { renderProjectCreationModal } from "./project-creation-modal.js";
 import { renderChapterPermanentDeletionModal } from "./chapter-permanent-deletion-modal.js";
 import { renderChapterRenameModal } from "./chapter-rename-modal.js";
 import { renderProjectPermanentDeletionModal } from "./project-permanent-deletion-modal.js";
+import { renderProjectImportModal } from "./project-import-modal.js";
 import { renderProjectRenameModal } from "./project-rename-modal.js";
 import {
   getNoticeBadgeText,
@@ -594,29 +595,30 @@ export function renderProjectsScreen(state) {
 
   return (
     pageShell({
-    title: "Projects",
-    subtitle: selectedTeam?.name ?? "Team",
-    titleAction: buildPageRefreshAction(state, state.projectsPageSync),
-    navButtons: buildSectionNav("projects", { includeAiSettings: canManageAiSettings }),
-    leftTools: searchField,
-    tools: [
-      canCreateProjects
-        ? primaryButton("+ New Project", "open-new-project", { disabled: offlineMode || pageWritesDisabled })
-        : "",
-    ]
-      .filter(Boolean)
-      .join(""),
-    pageSync: state.projectsPageSync,
-    syncBadgeText: projectsSyncBadgeText,
-    noticeText: getNoticeBadgeText(),
-    offlineMode,
-    offlineReconnectState: state.offline?.reconnecting === true,
-    body,
+      title: "Projects",
+      subtitle: selectedTeam?.name ?? "Team",
+      titleAction: buildPageRefreshAction(state, state.projectsPageSync),
+      navButtons: buildSectionNav("projects", { includeAiSettings: canManageAiSettings }),
+      leftTools: searchField,
+      tools: [
+        canCreateProjects
+          ? primaryButton("+ New Project", "open-new-project", { disabled: offlineMode || pageWritesDisabled })
+          : "",
+      ]
+        .filter(Boolean)
+        .join(""),
+      pageSync: state.projectsPageSync,
+      syncBadgeText: projectsSyncBadgeText,
+      noticeText: getNoticeBadgeText(),
+      offlineMode,
+      offlineReconnectState: state.offline?.reconnecting === true,
+      body,
     }) +
     renderProjectCreationModal(state) +
     renderChapterPermanentDeletionModal(state) +
     renderChapterRenameModal(state) +
     renderProjectRenameModal(state) +
-    renderProjectPermanentDeletionModal(state)
+    renderProjectPermanentDeletionModal(state) +
+    renderProjectImportModal(state)
   );
 }

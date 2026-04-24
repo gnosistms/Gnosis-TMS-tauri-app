@@ -2,7 +2,7 @@ import { handleInputEvent } from "./input-handlers.js";
 import { handleNavigation } from "./navigation.js";
 import { createActionDispatcher } from "./action-dispatcher.js";
 import { checkForAppUpdate } from "./updater-flow.js";
-import { isMacPlatform, listen } from "./runtime.js";
+import { isMacPlatform, listen, onCurrentWebviewDragDrop } from "./runtime.js";
 import {
   captureTranslateAnchorForRow,
   primeTranslateInteractionAnchor,
@@ -17,9 +17,19 @@ import {
   renderGlossaryRubyTermListHtml,
 } from "./glossary-ruby.js";
 import { syncGlossaryTermInlineStyleButtons } from "./glossary-term-inline-markup-flow.js";
+import {
+  handleDroppedProjectImportFile,
+  handleDroppedProjectImportPath,
+} from "./project-import-flow.js";
+import {
+  handleDroppedGlossaryImportFile,
+  handleDroppedGlossaryImportPath,
+} from "./glossary-import-flow.js";
 
 const SYNC_WITH_SERVER_EVENT = "sync-with-server";
 const CHECK_FOR_UPDATES_EVENT = "check-for-updates";
+const PROJECT_IMPORT_DROPZONE_SELECTOR = "[data-project-import-dropzone]";
+const GLOSSARY_IMPORT_DROPZONE_SELECTOR = "[data-glossary-import-dropzone]";
 let activeGlossaryTermVariantDrag = null;
 let activeTargetLanguageManagerDrag = null;
 let activeGlossaryTooltipMark = null;
@@ -96,6 +106,187 @@ function focusEditorSearchInput(selectContents = false) {
     input.select();
   }
   return true;
+}
+
+function droppedProjectImportFile(dataTransfer) {
+  const directFile = dataTransfer?.files?.[0];
+  if (directFile) {
+    return directFile;
+  }
+
+  if (!dataTransfer?.items) {
+    return null;
+  }
+
+  for (const item of Array.from(dataTransfer.items)) {
+    if (item?.kind !== "file" || typeof item.getAsFile !== "function") {
+      continue;
+    }
+
+    const file = item.getAsFile();
+    if (file) {
+      return file;
+    }
+  }
+
+  return null;
+}
+
+function nativeDropPosition(event) {
+  const position = event?.payload?.position;
+  if (
+    position
+    && typeof position === "object"
+    && Number.isFinite(position.x)
+    && Number.isFinite(position.y)
+  ) {
+    return { x: position.x, y: position.y };
+  }
+
+  return null;
+}
+
+function closestProjectImportDropzoneFromElement(element) {
+  if (!(element instanceof Element)) {
+    return null;
+  }
+
+  const dropzone = element.closest(PROJECT_IMPORT_DROPZONE_SELECTOR);
+  return dropzone instanceof HTMLElement ? dropzone : null;
+}
+
+function closestGlossaryImportDropzoneFromElement(element) {
+  if (!(element instanceof Element)) {
+    return null;
+  }
+
+  const dropzone = element.closest(GLOSSARY_IMPORT_DROPZONE_SELECTOR);
+  return dropzone instanceof HTMLElement ? dropzone : null;
+}
+
+function visibleProjectImportDropzone() {
+  const dropzone = document.querySelector(PROJECT_IMPORT_DROPZONE_SELECTOR);
+  if (!(dropzone instanceof HTMLElement)) {
+    return null;
+  }
+
+  const rect = dropzone.getBoundingClientRect();
+  if (rect.width <= 0 || rect.height <= 0) {
+    return null;
+  }
+
+  return dropzone;
+}
+
+function visibleGlossaryImportDropzone() {
+  const dropzone = document.querySelector(GLOSSARY_IMPORT_DROPZONE_SELECTOR);
+  if (!(dropzone instanceof HTMLElement)) {
+    return null;
+  }
+
+  const rect = dropzone.getBoundingClientRect();
+  if (rect.width <= 0 || rect.height <= 0) {
+    return null;
+  }
+
+  return dropzone;
+}
+
+function setProjectImportDropzoneNativeDragActive(isActive) {
+  const dropzone = visibleProjectImportDropzone();
+  if (!dropzone) {
+    return null;
+  }
+
+  dropzone.classList.toggle("is-native-drag-over", isActive);
+  return dropzone;
+}
+
+function setGlossaryImportDropzoneNativeDragActive(isActive) {
+  const dropzone = visibleGlossaryImportDropzone();
+  if (!dropzone) {
+    return null;
+  }
+
+  dropzone.classList.toggle("is-native-drag-over", isActive);
+  return dropzone;
+}
+
+function pointIsInsideElement(element, x, y) {
+  if (!(element instanceof HTMLElement)) {
+    return false;
+  }
+
+  const rect = element.getBoundingClientRect();
+  return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
+}
+
+function projectImportDropzoneFromNativeDropEvent(event) {
+  const visibleDropzone = visibleProjectImportDropzone();
+  if (!visibleDropzone) {
+    return null;
+  }
+
+  const position = nativeDropPosition(event);
+  if (!position) {
+    return visibleDropzone;
+  }
+
+  const scale = Number.isFinite(window.devicePixelRatio) && window.devicePixelRatio > 0
+    ? window.devicePixelRatio
+    : 1;
+  const points = [
+    [position.x, position.y],
+    [position.x / scale, position.y / scale],
+  ];
+
+  for (const [x, y] of points) {
+    const element = document.elementFromPoint(x, y);
+    const dropzone = closestProjectImportDropzoneFromElement(element);
+    if (dropzone) {
+      return dropzone;
+    }
+
+    if (pointIsInsideElement(visibleDropzone, x, y)) {
+      return visibleDropzone;
+    }
+  }
+
+  return visibleDropzone;
+}
+
+function glossaryImportDropzoneFromNativeDropEvent(event) {
+  const visibleDropzone = visibleGlossaryImportDropzone();
+  if (!visibleDropzone) {
+    return null;
+  }
+
+  const position = nativeDropPosition(event);
+  if (!position) {
+    return visibleDropzone;
+  }
+
+  const scale = Number.isFinite(window.devicePixelRatio) && window.devicePixelRatio > 0
+    ? window.devicePixelRatio
+    : 1;
+  const points = [
+    [position.x, position.y],
+    [position.x / scale, position.y / scale],
+  ];
+
+  for (const [x, y] of points) {
+    const element = document.elementFromPoint(x, y);
+    const dropzone = closestGlossaryImportDropzoneFromElement(element);
+    if (dropzone) {
+      return dropzone;
+    }
+
+    if (pointIsInsideElement(visibleDropzone, x, y)) {
+      return visibleDropzone;
+    }
+  }
+
+  return visibleDropzone;
 }
 
 function glossaryMarkOffsetFromDomPoint(mark, node, offset) {
@@ -904,6 +1095,44 @@ function cancelTargetLanguageManagerDrag() {
 export function registerAppEvents(render) {
   const dispatchAction = createActionDispatcher(render);
 
+  void onCurrentWebviewDragDrop((event) => {
+    const eventType = event?.payload?.type;
+    if (eventType === "enter" || eventType === "over") {
+      setProjectImportDropzoneNativeDragActive(Boolean(projectImportDropzoneFromNativeDropEvent(event)));
+      setGlossaryImportDropzoneNativeDragActive(Boolean(glossaryImportDropzoneFromNativeDropEvent(event)));
+      return;
+    }
+
+    if (eventType === "leave") {
+      setProjectImportDropzoneNativeDragActive(false);
+      setGlossaryImportDropzoneNativeDragActive(false);
+      return;
+    }
+
+    if (eventType !== "drop") {
+      return;
+    }
+
+    setProjectImportDropzoneNativeDragActive(false);
+    setGlossaryImportDropzoneNativeDragActive(false);
+    const droppedPaths = Array.isArray(event?.payload?.paths)
+      ? event.payload.paths
+      : [];
+    const droppedPath = droppedPaths.find((value) => typeof value === "string" && value.trim());
+    if (!droppedPath) {
+      return;
+    }
+
+    if (projectImportDropzoneFromNativeDropEvent(event)) {
+      void handleDroppedProjectImportPath(render, droppedPath);
+      return;
+    }
+
+    if (glossaryImportDropzoneFromNativeDropEvent(event)) {
+      void handleDroppedGlossaryImportPath(render, droppedPath);
+    }
+  });
+
   document.addEventListener("input", (event) => handleInputEvent(event, render));
   document.addEventListener("change", (event) => handleInputEvent(event, render));
   document.addEventListener("keydown", (event) => {
@@ -1045,6 +1274,58 @@ export function registerAppEvents(render) {
     }
 
     await dispatchAction(action, event);
+  });
+
+  document.addEventListener("dragover", (event) => {
+    const target = event.target instanceof Element ? event.target : null;
+    const dropzone =
+      target?.closest(PROJECT_IMPORT_DROPZONE_SELECTOR)
+      ?? target?.closest(GLOSSARY_IMPORT_DROPZONE_SELECTOR);
+    if (!(dropzone instanceof HTMLElement)) {
+      return;
+    }
+
+    event.preventDefault();
+    dropzone.classList.add("is-native-drag-over");
+    if (event.dataTransfer) {
+      event.dataTransfer.dropEffect = "copy";
+    }
+  });
+
+  document.addEventListener("dragleave", (event) => {
+    const target = event.target instanceof Element ? event.target : null;
+    const dropzone =
+      target?.closest(PROJECT_IMPORT_DROPZONE_SELECTOR)
+      ?? target?.closest(GLOSSARY_IMPORT_DROPZONE_SELECTOR);
+    if (!(dropzone instanceof HTMLElement)) {
+      return;
+    }
+
+    dropzone.classList.remove("is-native-drag-over");
+  });
+
+  document.addEventListener("drop", (event) => {
+    const target = event.target instanceof Element ? event.target : null;
+    const projectDropzone = target?.closest(PROJECT_IMPORT_DROPZONE_SELECTOR);
+    const glossaryDropzone = target?.closest(GLOSSARY_IMPORT_DROPZONE_SELECTOR);
+    const dropzone = projectDropzone ?? glossaryDropzone;
+    if (!(dropzone instanceof HTMLElement)) {
+      return;
+    }
+
+    event.preventDefault();
+    dropzone.classList.remove("is-native-drag-over");
+    const file = droppedProjectImportFile(event.dataTransfer);
+    if (!file) {
+      return;
+    }
+
+    if (projectDropzone instanceof HTMLElement) {
+      void handleDroppedProjectImportFile(render, file);
+      return;
+    }
+
+    void handleDroppedGlossaryImportFile(render, file);
   });
 
   document.addEventListener("pointerdown", (event) => {

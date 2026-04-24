@@ -192,3 +192,16 @@ test("captureVisibleTranslateRowLocation anchors to the first visible row card",
     offsetTop: 40,
   });
 });
+
+test("captureVisibleTranslateRowLocation preserves partially scrolled row offsets", () => {
+  installScrollFixture({ containerTop: 100, anchorTop: 72 });
+
+  const snapshot = captureVisibleTranslateRowLocation();
+
+  assert.deepEqual(snapshot, {
+    type: "row",
+    rowId: "row-1",
+    languageCode: null,
+    offsetTop: -28,
+  });
+});

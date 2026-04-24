@@ -1,7 +1,7 @@
 import { syncEditorRowTextareaHeight } from "./autosize.js";
 import { syncEditorVirtualizationRowLayout } from "./editor-virtualization.js";
 import { closestEventTarget } from "./event-target.js";
-import { listen } from "./runtime.js";
+import { onCurrentWebviewDragDrop } from "./runtime.js";
 import {
   captureTranslateAnchorForRow,
   primeTranslateInteractionAnchor,
@@ -29,7 +29,6 @@ import {
 } from "./translate-flow.js";
 import { syncActiveEditorInlineStyleButtons } from "./editor-inline-markup-flow.js";
 
-const TAURI_DRAG_DROP_EVENT = "tauri://drag-drop";
 
 function activeElementIsInEditorLanguageCluster(rowId, languageCode) {
   if (!rowId || !languageCode) {
@@ -152,19 +151,21 @@ function displayFieldOffsetFromPoint(displayField, clientX, clientY) {
 export function registerTranslateEditorDomEvents(app, render) {
   let pendingImageUrlCloseRequest = null;
 
-  if (typeof listen === "function") {
-    void listen(TAURI_DRAG_DROP_EVENT, (event) => {
-      const droppedPaths = Array.isArray(event?.payload?.paths)
-        ? event.payload.paths
-        : [];
-      const droppedPath = droppedPaths.find((value) => typeof value === "string" && value.trim());
-      if (!droppedPath) {
-        return;
-      }
+  void onCurrentWebviewDragDrop((event) => {
+    if (event?.payload?.type !== "drop") {
+      return;
+    }
 
-      void handleDroppedEditorImagePath(render, droppedPath);
-    });
-  }
+    const droppedPaths = Array.isArray(event?.payload?.paths)
+      ? event.payload.paths
+      : [];
+    const droppedPath = droppedPaths.find((value) => typeof value === "string" && value.trim());
+    if (!droppedPath) {
+      return;
+    }
+
+    void handleDroppedEditorImagePath(render, droppedPath);
+  });
 
   app.addEventListener("focusin", (event) => {
     const input = closestEventTarget(event.target, "[data-editor-row-field]");

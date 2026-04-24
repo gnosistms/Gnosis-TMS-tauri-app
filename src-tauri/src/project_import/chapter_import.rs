@@ -17,6 +17,191 @@ use super::project_git::{
 const GTMS_FORMAT: &str = "gtms";
 const GTMS_FORMAT_VERSION: u32 = 1;
 const ORDER_KEY_SPACING: u128 = 1u128 << 104;
+const ISO_639_1_LANGUAGE_OPTIONS: &[(&str, &str)] = &[
+    ("aa", "Afar"),
+    ("ab", "Abkhazian"),
+    ("ae", "Avestan"),
+    ("af", "Afrikaans"),
+    ("ak", "Akan"),
+    ("am", "Amharic"),
+    ("an", "Aragonese"),
+    ("ar", "Arabic"),
+    ("as", "Assamese"),
+    ("av", "Avaric"),
+    ("ay", "Aymara"),
+    ("az", "Azerbaijani"),
+    ("ba", "Bashkir"),
+    ("be", "Belarusian"),
+    ("bg", "Bulgarian"),
+    ("bi", "Bislama"),
+    ("bm", "Bambara"),
+    ("bn", "Bangla"),
+    ("bo", "Tibetan"),
+    ("br", "Breton"),
+    ("bs", "Bosnian"),
+    ("ca", "Catalan"),
+    ("ce", "Chechen"),
+    ("ch", "Chamorro"),
+    ("co", "Corsican"),
+    ("cr", "Cree"),
+    ("cs", "Czech"),
+    ("cu", "Church Slavic"),
+    ("cv", "Chuvash"),
+    ("cy", "Welsh"),
+    ("da", "Danish"),
+    ("de", "German"),
+    ("dv", "Dhivehi"),
+    ("dz", "Dzongkha"),
+    ("ee", "Ewe"),
+    ("el", "Greek"),
+    ("en", "English"),
+    ("eo", "Esperanto"),
+    ("es", "Spanish"),
+    ("et", "Estonian"),
+    ("eu", "Basque"),
+    ("fa", "Persian"),
+    ("ff", "Fula"),
+    ("fi", "Finnish"),
+    ("fj", "Fijian"),
+    ("fo", "Faroese"),
+    ("fr", "French"),
+    ("fy", "Western Frisian"),
+    ("ga", "Irish"),
+    ("gd", "Scottish Gaelic"),
+    ("gl", "Galician"),
+    ("gn", "Guarani"),
+    ("gu", "Gujarati"),
+    ("gv", "Manx"),
+    ("ha", "Hausa"),
+    ("he", "Hebrew"),
+    ("hi", "Hindi"),
+    ("ho", "Hiri Motu"),
+    ("hr", "Croatian"),
+    ("ht", "Haitian Creole"),
+    ("hu", "Hungarian"),
+    ("hy", "Armenian"),
+    ("hz", "Herero"),
+    ("ia", "Interlingua"),
+    ("id", "Indonesian"),
+    ("ie", "Interlingue"),
+    ("ig", "Igbo"),
+    ("ii", "Liangshan Yi"),
+    ("ik", "Inupiaq"),
+    ("io", "Ido"),
+    ("is", "Icelandic"),
+    ("it", "Italian"),
+    ("iu", "Inuktitut"),
+    ("ja", "Japanese"),
+    ("jv", "Javanese"),
+    ("ka", "Georgian"),
+    ("kg", "Kongo"),
+    ("ki", "Kikuyu"),
+    ("kj", "Kuanyama"),
+    ("kk", "Kazakh"),
+    ("kl", "Kalaallisut"),
+    ("km", "Khmer"),
+    ("kn", "Kannada"),
+    ("ko", "Korean"),
+    ("kr", "Kanuri"),
+    ("ks", "Kashmiri"),
+    ("ku", "Kurdish"),
+    ("kv", "Komi"),
+    ("kw", "Cornish"),
+    ("ky", "Kyrgyz"),
+    ("la", "Latin"),
+    ("lb", "Luxembourgish"),
+    ("lg", "Ganda"),
+    ("li", "Limburgish"),
+    ("ln", "Lingala"),
+    ("lo", "Lao"),
+    ("lt", "Lithuanian"),
+    ("lu", "Luba-Katanga"),
+    ("lv", "Latvian"),
+    ("mg", "Malagasy"),
+    ("mh", "Marshallese"),
+    ("mi", "Maori"),
+    ("mk", "Macedonian"),
+    ("ml", "Malayalam"),
+    ("mn", "Mongolian"),
+    ("mr", "Marathi"),
+    ("ms", "Malay"),
+    ("mt", "Maltese"),
+    ("my", "Burmese"),
+    ("na", "Nauru"),
+    ("nb", "Norwegian Bokmal"),
+    ("nd", "North Ndebele"),
+    ("ne", "Nepali"),
+    ("ng", "Ndonga"),
+    ("nl", "Dutch"),
+    ("nn", "Norwegian Nynorsk"),
+    ("no", "Norwegian"),
+    ("nr", "South Ndebele"),
+    ("nv", "Navajo"),
+    ("ny", "Nyanja"),
+    ("oc", "Occitan"),
+    ("oj", "Ojibwa"),
+    ("om", "Oromo"),
+    ("or", "Odia"),
+    ("os", "Ossetic"),
+    ("pa", "Punjabi"),
+    ("pi", "Pali"),
+    ("pl", "Polish"),
+    ("ps", "Pashto"),
+    ("pt", "Portuguese"),
+    ("qu", "Quechua"),
+    ("rm", "Romansh"),
+    ("rn", "Rundi"),
+    ("ro", "Romanian"),
+    ("ru", "Russian"),
+    ("rw", "Kinyarwanda"),
+    ("sa", "Sanskrit"),
+    ("sc", "Sardinian"),
+    ("sd", "Sindhi"),
+    ("se", "North Sami"),
+    ("sg", "Sango"),
+    ("si", "Sinhala"),
+    ("sk", "Slovak"),
+    ("sl", "Slovenian"),
+    ("sm", "Samoan"),
+    ("sn", "Shona"),
+    ("so", "Somali"),
+    ("sq", "Albanian"),
+    ("sr", "Serbian"),
+    ("ss", "Swati"),
+    ("st", "Southern Sotho"),
+    ("su", "Sundanese"),
+    ("sv", "Swedish"),
+    ("sw", "Swahili"),
+    ("ta", "Tamil"),
+    ("te", "Telugu"),
+    ("tg", "Tajik"),
+    ("th", "Thai"),
+    ("ti", "Tigrinya"),
+    ("tk", "Turkmen"),
+    ("tl", "Tagalog"),
+    ("tn", "Tswana"),
+    ("to", "Tongan"),
+    ("tr", "Turkish"),
+    ("ts", "Tsonga"),
+    ("tt", "Tatar"),
+    ("tw", "Twi"),
+    ("ty", "Tahitian"),
+    ("ug", "Uyghur"),
+    ("uk", "Ukrainian"),
+    ("ur", "Urdu"),
+    ("uz", "Uzbek"),
+    ("ve", "Venda"),
+    ("vi", "Vietnamese"),
+    ("vo", "Volapuk"),
+    ("wa", "Walloon"),
+    ("wo", "Wolof"),
+    ("xh", "Xhosa"),
+    ("yi", "Yiddish"),
+    ("yo", "Yoruba"),
+    ("za", "Zhuang"),
+    ("zh", "Chinese"),
+    ("zu", "Zulu"),
+];
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -76,14 +261,9 @@ struct ImportedRow {
     fields: BTreeMap<String, String>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 enum ColumnBinding {
-    ExternalId,
-    Description,
-    Context,
-    Comment { kind: String },
     Language { code: String, name: String },
-    Ignored,
 }
 
 #[derive(Deserialize)]
@@ -358,18 +538,17 @@ fn parse_xlsx_workbook(input: ImportXlsxInput) -> Result<ParsedWorkbook, String>
         .iter()
         .map(cell_to_trimmed_string)
         .collect::<Vec<_>>();
-    let bindings = classify_header_row(&header_blob);
+    let bindings = classify_header_row(&header_blob)?;
     let languages = bindings
         .iter()
-        .filter_map(|binding| match binding {
-            ColumnBinding::Language { code, name } => Some((code.clone(), name.clone())),
-            _ => None,
+        .map(|binding| match binding {
+            ColumnBinding::Language { code, name } => (code.clone(), name.clone()),
         })
         .collect::<Vec<_>>();
 
     if languages.is_empty() {
         return Err(
-      "Could not detect any language columns. Add headers like 'es', 'en', 'English', or 'Vietnamese'."
+      "Could not detect any language columns. Add ISO 639-1 two-letter language codes like 'es', 'en', or 'vi' to the first row."
         .to_string(),
     );
     }
@@ -386,10 +565,10 @@ fn parse_xlsx_workbook(input: ImportXlsxInput) -> Result<ParsedWorkbook, String>
 
     let mut rows = Vec::new();
     for (row_index, row) in range.rows().enumerate().skip(1) {
-        let mut external_id = None;
-        let mut description = None;
-        let mut context = None;
-        let mut comments = Vec::new();
+        let external_id = None;
+        let description = None;
+        let context = None;
+        let comments: Vec<GuidanceComment> = Vec::new();
         let mut fields = BTreeMap::new();
 
         for (column_index, binding) in bindings.iter().enumerate() {
@@ -398,23 +577,9 @@ fn parse_xlsx_workbook(input: ImportXlsxInput) -> Result<ParsedWorkbook, String>
                 .map(cell_to_trimmed_string)
                 .unwrap_or_default();
             match binding {
-                ColumnBinding::ExternalId if !value.is_empty() => external_id = Some(value),
-                ColumnBinding::Description if !value.is_empty() => description = Some(value),
-                ColumnBinding::Context if !value.is_empty() => context = Some(value),
-                ColumnBinding::Comment { kind } if !value.is_empty() => {
-                    comments.push(GuidanceComment {
-                        kind: kind.clone(),
-                        text: value,
-                    })
-                }
                 ColumnBinding::Language { code, .. } => {
                     fields.insert(code.clone(), value);
                 }
-                ColumnBinding::Ignored
-                | ColumnBinding::ExternalId
-                | ColumnBinding::Description
-                | ColumnBinding::Context
-                | ColumnBinding::Comment { .. } => {}
             }
         }
 
@@ -637,146 +802,46 @@ fn order_key_for_position(index: usize, total_rows: usize) -> Result<String, Str
     Ok(format!("{value:032x}"))
 }
 
-fn classify_header_row(headers: &[String]) -> Vec<ColumnBinding> {
+fn classify_header_row(headers: &[String]) -> Result<Vec<ColumnBinding>, String> {
+    if headers.is_empty() {
+        return Err("The workbook is missing a header row.".to_string());
+    }
+
     headers
         .iter()
-        .map(|header| classify_header(header))
-        .collect::<Vec<_>>()
+        .enumerate()
+        .map(|(index, header)| classify_header(header, index))
+        .collect::<Result<Vec<_>, _>>()
 }
 
-fn classify_header(header: &str) -> ColumnBinding {
-    let normalized = normalize_header(header);
-    if normalized.is_empty() {
-        return ColumnBinding::Ignored;
-    }
-
-    match normalized.as_str() {
-        "row" | "row number" | "row id" => return ColumnBinding::Ignored,
-        "key" | "id" | "identifier" | "string key" | "string id" | "resource key" => {
-            return ColumnBinding::ExternalId;
-        }
-        "source label" | "source title" => return ColumnBinding::Description,
-        "description" | "desc" => return ColumnBinding::Description,
-        "context" => return ColumnBinding::Context,
-        "comment" | "comments" | "note" | "notes" => {
-            return ColumnBinding::Comment {
-                kind: "imported".to_string(),
-            };
-        }
-        "developer comment" | "developer note" => {
-            return ColumnBinding::Comment {
-                kind: "developer".to_string(),
-            };
-        }
-        "translator comment" | "translator note" => {
-            return ColumnBinding::Comment {
-                kind: "translator".to_string(),
-            };
-        }
-        _ => {}
-    }
-
-    let code = normalize_language_code(header);
-    let name = language_display_name(header, &code);
-    ColumnBinding::Language { code, name }
+fn classify_header(header: &str, column_index: usize) -> Result<ColumnBinding, String> {
+    let code = normalize_language_code(header).ok_or_else(|| {
+        format!(
+            "Column {} must start with a valid ISO 639-1 two-letter language code.",
+            column_index + 1
+        )
+    })?;
+    let name = language_display_name(&code);
+    Ok(ColumnBinding::Language { code, name })
 }
 
-fn normalize_header(value: &str) -> String {
-    value
-        .trim()
-        .chars()
-        .map(|character| {
-            if character.is_ascii_alphanumeric() {
-                character.to_ascii_lowercase()
-            } else {
-                ' '
-            }
-        })
-        .collect::<String>()
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
+fn normalize_language_code(header: &str) -> Option<String> {
+    let normalized = header.trim().to_ascii_lowercase();
+    if normalized.len() != 2 || !normalized.bytes().all(|byte| byte.is_ascii_alphabetic()) {
+        return None;
+    }
+
+    iso_639_1_language_name(&normalized).map(|_| normalized)
 }
 
-fn normalize_language_code(header: &str) -> String {
-    let trimmed = header.trim();
-    let lowercase = trimmed.to_lowercase();
-    if looks_like_language_code(&lowercase) {
-        return lowercase.replace('_', "-");
-    }
-
-    match normalize_header(trimmed).as_str() {
-        "english" => "en".to_string(),
-        "spanish" => "es".to_string(),
-        "vietnamese" => "vi".to_string(),
-        "french" => "fr".to_string(),
-        "german" => "de".to_string(),
-        "italian" => "it".to_string(),
-        "portuguese" => "pt".to_string(),
-        "brazilian portuguese" => "pt-br".to_string(),
-        "japanese" => "ja".to_string(),
-        "korean" => "ko".to_string(),
-        "chinese" => "zh".to_string(),
-        "traditional chinese" => "zh-hant".to_string(),
-        "simplified chinese" => "zh-hans".to_string(),
-        "thai" => "th".to_string(),
-        "indonesian" => "id".to_string(),
-        "russian" => "ru".to_string(),
-        "arabic" => "ar".to_string(),
-        "hindi" => "hi".to_string(),
-        "turkish" => "tr".to_string(),
-        "polish" => "pl".to_string(),
-        "dutch" => "nl".to_string(),
-        "ukrainian" => "uk".to_string(),
-        _ => slugify(trimmed),
-    }
+fn language_display_name(code: &str) -> String {
+    iso_639_1_language_name(code).unwrap_or(code).to_string()
 }
 
-fn language_display_name(header: &str, code: &str) -> String {
-    let trimmed = header.trim();
-    if !trimmed.is_empty() && !looks_like_language_code(trimmed) {
-        return trimmed.to_string();
-    }
-
-    match code {
-        "en" => "English".to_string(),
-        "es" => "Spanish".to_string(),
-        "vi" => "Vietnamese".to_string(),
-        "fr" => "French".to_string(),
-        "de" => "German".to_string(),
-        "it" => "Italian".to_string(),
-        "pt" => "Portuguese".to_string(),
-        "pt-br" => "Brazilian Portuguese".to_string(),
-        "ja" => "Japanese".to_string(),
-        "ko" => "Korean".to_string(),
-        "zh" => "Chinese".to_string(),
-        "zh-hant" => "Traditional Chinese".to_string(),
-        "zh-hans" => "Simplified Chinese".to_string(),
-        "th" => "Thai".to_string(),
-        "id" => "Indonesian".to_string(),
-        "ru" => "Russian".to_string(),
-        "ar" => "Arabic".to_string(),
-        "hi" => "Hindi".to_string(),
-        "tr" => "Turkish".to_string(),
-        "pl" => "Polish".to_string(),
-        "nl" => "Dutch".to_string(),
-        "uk" => "Ukrainian".to_string(),
-        _ => header.trim().to_string(),
-    }
-}
-
-fn looks_like_language_code(value: &str) -> bool {
-    let bytes = value.as_bytes();
-    if bytes.len() == 2 {
-        return bytes.iter().all(|byte| byte.is_ascii_alphabetic());
-    }
-
-    if bytes.len() == 5 && bytes[2] == b'-' {
-        return bytes[0..2].iter().all(|byte| byte.is_ascii_alphabetic())
-            && bytes[3..5].iter().all(|byte| byte.is_ascii_alphabetic());
-    }
-
-    false
+fn iso_639_1_language_name(code: &str) -> Option<&'static str> {
+    ISO_639_1_LANGUAGE_OPTIONS
+        .iter()
+        .find_map(|(candidate, name)| (*candidate == code).then_some(*name))
 }
 
 fn row_is_empty(
@@ -889,4 +954,42 @@ fn count_words(value: &str) -> usize {
 fn read_project_title(project_json_path: &Path) -> Result<String, String> {
     let project_file: ProjectFile = read_json_file(project_json_path, "project.json")?;
     Ok(project_file.title)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn classify_header_row_accepts_iso_639_1_language_codes() {
+        let bindings = classify_header_row(&["es".to_string(), "EN".to_string(), "vi".to_string()])
+            .expect("valid ISO codes should be accepted");
+
+        let codes = bindings
+            .into_iter()
+            .map(|binding| match binding {
+                ColumnBinding::Language { code, .. } => code,
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(codes, vec!["es", "en", "vi"]);
+    }
+
+    #[test]
+    fn classify_header_row_rejects_language_names() {
+        let error = classify_header_row(&["Spanish".to_string(), "English".to_string()])
+            .expect_err("language names should not pass XLSX import validation");
+
+        assert!(error.contains("Column 1"));
+        assert!(error.contains("ISO 639-1"));
+    }
+
+    #[test]
+    fn classify_header_row_rejects_unknown_two_letter_codes() {
+        let error = classify_header_row(&["es".to_string(), "zz".to_string()])
+            .expect_err("unknown two-letter codes should not pass XLSX import validation");
+
+        assert!(error.contains("Column 2"));
+        assert!(error.contains("ISO 639-1"));
+    }
 }

@@ -62,6 +62,7 @@ export const state = {
   projectsSearch: createProjectsSearchState(),
   glossariesPage: createResourcePageState(),
   projectImport: createProjectImportState(),
+  glossaryImport: createGlossaryImportState(),
   projectRepoSyncByProjectId: {},
   projectRepoConflictRecovery: createProjectRepoConflictRecoveryState(),
   glossaryRepoSyncByRepoName: {},
@@ -278,9 +279,20 @@ export function createProjectCreationState() {
 
 export function createProjectImportState() {
   return {
+    isOpen: false,
+    projectId: null,
+    projectTitle: "",
     status: "idle",
     error: "",
     result: null,
+  };
+}
+
+export function createGlossaryImportState() {
+  return {
+    isOpen: false,
+    status: "idle",
+    error: "",
   };
 }
 
@@ -821,6 +833,10 @@ export function resetGlossaryCreation() {
   state.glossaryCreation = createGlossaryCreationState();
 }
 
+export function resetGlossaryImport() {
+  state.glossaryImport = createGlossaryImportState();
+}
+
 export function resetGlossaryRename() {
   state.glossaryRename = createGlossaryRenameState();
 }
@@ -858,6 +874,7 @@ export function resetSessionState() {
   state.glossaryDiscovery = createGlossaryDiscoveryState();
   state.projectsSearch = createProjectsSearchState();
   state.projectImport = createProjectImportState();
+  state.glossaryImport = createGlossaryImportState();
   state.projectRepoSyncByProjectId = {};
   state.projectRepoConflictRecovery = createProjectRepoConflictRecoveryState();
   state.editorChapter = createEditorChapterState();
@@ -891,6 +908,7 @@ export function resetSessionState() {
   resetProjectPermanentDeletion();
   resetProjectsSearch();
   resetGlossaryCreation();
+  resetGlossaryImport();
   resetGlossaryRename();
   resetGlossaryPermanentDeletion();
   resetGlossaryTermEditor();

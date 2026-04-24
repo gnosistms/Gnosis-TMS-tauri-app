@@ -32,7 +32,11 @@ import {
   submitChapterRename,
   toggleDeletedFiles,
 } from "../project-chapter-flow.js";
-import { addFilesToProject } from "../project-import-flow.js";
+import {
+  addFilesToProject,
+  cancelProjectImportModal,
+  selectProjectImportFile,
+} from "../project-import-flow.js";
 import { actionSuffix, runWithImmediateLoading } from "../action-helpers.js";
 
 export function createProjectActions(render) {
@@ -44,6 +48,8 @@ export function createProjectActions(render) {
     "cancel-chapter-permanent-deletion": () => cancelChapterPermanentDeletion(render),
     "cancel-chapter-rename": () => cancelChapterRename(render),
     "clear-project-search": () => clearProjectSearch(render),
+    "cancel-project-import": () => cancelProjectImportModal(render),
+    "select-project-import-file": () => selectProjectImportFile(render),
     "load-more-project-search-results": () => loadMoreProjectSearchResults(render),
     "overwrite-conflicted-project-repos": () => overwriteConflictedProjectRepos(render),
     "toggle-deleted-projects": () => toggleDeletedProjects(render),

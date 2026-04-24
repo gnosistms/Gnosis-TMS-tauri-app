@@ -8,6 +8,59 @@ const rawInvoke = tauri.core?.invoke?.bind(tauri.core);
 
 export const listen = tauri.event?.listen?.bind(tauri.event);
 
+const TAURI_DRAG_DROP_EVENTS = [
+  ["tauri://drag-enter", "enter"],
+  ["tauri://drag-over", "over"],
+  ["tauri://drag-drop", "drop"],
+  ["tauri://drag-leave", "leave"],
+];
+
+function normalizeTauriDragDropPayload(event, type) {
+  const payload = event?.payload ?? {};
+  return {
+    ...event,
+    payload: {
+      type,
+      paths: Array.isArray(payload.paths) ? payload.paths : [],
+      position: payload.position ?? null,
+    },
+  };
+}
+
+export async function onCurrentWebviewDragDrop(handler) {
+  if (typeof listen === "function") {
+    const unlisteners = await Promise.all(
+      TAURI_DRAG_DROP_EVENTS.map(([eventName, type]) => (
+        listen(eventName, (event) => {
+          handler(normalizeTauriDragDropPayload(event, type));
+        })
+      )),
+    );
+
+    return () => {
+      for (const unlisten of unlisteners) {
+        if (typeof unlisten === "function") {
+          unlisten();
+        }
+      }
+    };
+  }
+
+  const getCurrentWebview = tauri.webview?.getCurrentWebview;
+  if (typeof getCurrentWebview === "function") {
+    try {
+      const currentWebview = getCurrentWebview();
+      if (typeof currentWebview?.onDragDropEvent === "function") {
+        return currentWebview.onDragDropEvent(handler);
+      }
+    } catch {
+      return null;
+    }
+  }
+
+  return null;
+}
+
 let pendingBrokerSessionRefresh = null;
 
 export const invoke = rawInvoke

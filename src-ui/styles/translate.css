@@ -1203,6 +1203,7 @@
 
 .translation-language-panel__field-static-text {
   display: block;
+  font-family: inherit;
 }
 
 .translation-language-panel__field-static--editable {
@@ -1986,6 +1987,9 @@
 
 .assistant-transcript {
   display: grid;
+  grid-row: 2;
+  align-content: start;
+  grid-auto-rows: max-content;
   gap: 12px;
   min-height: 0;
   overflow-y: auto;
@@ -1996,6 +2000,7 @@
 }
 
 .assistant-empty {
+  grid-row: 2;
   padding: 8px 0 2px;
 }
 
@@ -2118,6 +2123,8 @@
 
 .assistant-composer {
   display: grid;
+  grid-row: 3;
+  align-self: end;
   gap: 12px;
   padding-top: 18px;
   border-top: 1px solid rgba(164, 112, 41, 0.12);
@@ -2126,6 +2133,7 @@
 .assistant-composer__field-shell {
   display: grid;
   position: relative;
+  height: 118px;
   border: 1px solid rgba(164, 112, 41, 0.18);
   border-radius: var(--radius-ui);
   background: rgba(255, 251, 246, 0.84);
@@ -2144,7 +2152,8 @@
 .assistant-composer__field {
   grid-area: 1 / 1;
   width: 100%;
-  min-height: 88px;
+  height: 100%;
+  min-height: 0;
   padding: 14px 16px;
   border: 0;
   background: transparent;
@@ -2155,6 +2164,8 @@
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   word-break: break-word;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   resize: none;
   outline: none;
 }
@@ -2164,13 +2175,6 @@
 }
 
 .assistant-composer__hint {
-  margin: -2px 2px 0;
-  color: rgba(111, 83, 39, 0.72);
-  font-size: 0.84rem;
-  line-height: 1.35;
-}
-
-.assistant-composer__actions {
-  display: flex;
-  justify-content: flex-end;
+  justify-self: end;
+  margin: -2px 2px 0 0;
 }

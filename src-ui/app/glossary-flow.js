@@ -28,9 +28,11 @@ export {
   updateGlossaryRenameName,
 } from "./glossary-lifecycle-flow.js";
 export {
+  cancelGlossaryImportModal,
   cancelGlossaryCreation,
   importGlossaryFromTmx,
   openGlossaryCreation,
+  selectGlossaryImportFile,
   submitGlossaryCreation,
   updateGlossaryCreationField,
 } from "./glossary-import-flow.js";
