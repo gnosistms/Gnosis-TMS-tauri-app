@@ -6,12 +6,14 @@ import {
 } from "../scroll-state.js";
 import {
   cancelEditorConflictResolutionModal,
+  cancelEditorAiTranslateAllModal,
   cancelEditorUnreviewAllModal,
   cancelEditorReplaceUndoModal,
   cancelEditorRowPermanentDeletionModal,
   cancelInsertEditorRowModal,
   closeTargetLanguageManagerPicker,
   confirmEditorUnreviewAll,
+  confirmEditorAiTranslateAll,
   confirmEditorReplaceUndo,
   confirmEditorRowPermanentDeletion,
   confirmInsertEditorRow,
@@ -33,6 +35,7 @@ import {
   openEditorImageUploadPicker,
   openEditorImageUrl,
   openEditorConflictResolutionModal,
+  openEditorAiTranslateAllModal,
   openEditorUnreviewAllModal,
   openEditorReplaceUndoModal,
   openEditorRowComments,
@@ -140,6 +143,11 @@ export function createTranslateActions(render) {
       return true;
     }
 
+    if (action === "cancel-editor-ai-translate-all") {
+      cancelEditorAiTranslateAllModal(render);
+      return true;
+    }
+
     if (action === "cancel-editor-conflict-resolution") {
       cancelEditorConflictResolutionModal(render);
       return true;
@@ -167,6 +175,11 @@ export function createTranslateActions(render) {
 
     if (action === "confirm-editor-unreview-all") {
       await confirmEditorUnreviewAll(render);
+      return true;
+    }
+
+    if (action === "confirm-editor-ai-translate-all") {
+      await confirmEditorAiTranslateAll(render);
       return true;
     }
 
@@ -247,6 +260,11 @@ export function createTranslateActions(render) {
 
     if (action === "open-editor-unreview-all") {
       openEditorUnreviewAllModal(render);
+      return true;
+    }
+
+    if (action === "open-editor-ai-translate-all") {
+      openEditorAiTranslateAllModal(render);
       return true;
     }
 

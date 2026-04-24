@@ -328,6 +328,9 @@ export function renderTranslateToolbar({
           ${renderEditorReplaceControls(editorReplace)}
         </div>
         <div class="toolbar-meta">
+          ${textAction("AI Translate all", "open-editor-ai-translate-all", {
+            tooltip: "Translate all empty fields in selected languages",
+          })}
           ${textAction("Unreview All", "open-editor-unreview-all")}
         </div>
       </div>

@@ -332,6 +332,7 @@ export function createEditorChapterState() {
     reviewExpandedSectionKeys: new Set(["last-update", "ai-review"]),
     aiReview: createEditorAiReviewState(),
     aiTranslate: createEditorAiTranslateState(),
+    aiTranslateAllModal: createEditorAiTranslateAllModalState(),
     assistant: createEditorAssistantState(),
     commentSeenRevisions: {},
     comments: createEditorCommentsState(),
@@ -443,6 +444,18 @@ export function createEditorAiTranslateState() {
   return Object.fromEntries(
     AI_TRANSLATE_ACTION_IDS.map((actionId) => [actionId, createEditorAiTranslateActionState()]),
   );
+}
+
+export function createEditorAiTranslateAllModalState() {
+  return {
+    isOpen: false,
+    status: "idle",
+    error: "",
+    selectedLanguageCodes: [],
+    languageProgress: {},
+    translatedCount: 0,
+    totalCount: 0,
+  };
 }
 
 export function createEditorAssistantThreadState() {

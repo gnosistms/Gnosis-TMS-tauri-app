@@ -188,6 +188,7 @@ function syncPreparedDerivedGlossarySourceTextToRow(
   glossaryUsage,
   derivedContext,
   updateEditorRowFieldValue,
+  renderOptions = {},
 ) {
   const glossarySourceLanguageCode = glossaryUsage?.glossarySourceLanguageCode ?? "";
   if (
@@ -209,7 +210,7 @@ function syncPreparedDerivedGlossarySourceTextToRow(
     glossarySourceLanguageCode,
     derivedContext.glossarySourceText,
   );
-  renderEditorAiTranslateBody(render, captureEditorAiTranslateViewport(context));
+  renderEditorAiTranslateRow(render, context, renderOptions);
   return true;
 }
 
@@ -328,22 +329,36 @@ function resolveGlossaryUsage(context) {
   };
 }
 
-function activeEditorTranslateContext(chapterState = state.editorChapter) {
-  if (!chapterState?.chapterId || !chapterState?.activeRowId) {
+export function buildEditorAiTranslateContext(chapterState = state.editorChapter, options = {}) {
+  const rowId =
+    typeof options.rowId === "string" && options.rowId.trim()
+      ? options.rowId.trim()
+      : chapterState?.activeRowId;
+  if (!chapterState?.chapterId || !rowId) {
     return null;
   }
 
-  const row = findEditorRowById(chapterState.activeRowId, chapterState);
+  const row = findEditorRowById(rowId, chapterState);
   if (!row) {
     return null;
   }
 
-  const {
-    sourceLanguageCode,
-    targetLanguageCode,
-    sourceLanguage,
-    targetLanguage,
-  } = resolveEditorAiTranslateLanguages(chapterState);
+  const selectedLanguages = resolveEditorAiTranslateLanguages(chapterState);
+  const sourceLanguageCode =
+    typeof options.sourceLanguageCode === "string" && options.sourceLanguageCode.trim()
+      ? options.sourceLanguageCode.trim()
+      : selectedLanguages.sourceLanguageCode;
+  const targetLanguageCode =
+    typeof options.targetLanguageCode === "string" && options.targetLanguageCode.trim()
+      ? options.targetLanguageCode.trim()
+      : selectedLanguages.targetLanguageCode;
+  const languages = Array.isArray(chapterState.languages) ? chapterState.languages : [];
+  const sourceLanguage =
+    languages.find((language) => language.code === sourceLanguageCode)
+    ?? selectedLanguages.sourceLanguage;
+  const targetLanguage =
+    languages.find((language) => language.code === targetLanguageCode)
+    ?? selectedLanguages.targetLanguage;
   if (!sourceLanguage || !targetLanguage) {
     return null;
   }
@@ -353,7 +368,7 @@ function activeEditorTranslateContext(chapterState = state.editorChapter) {
     projectId: chapterState.projectId,
     row,
     chapterId: chapterState.chapterId,
-    rowId: chapterState.activeRowId,
+    rowId,
     sourceLanguageCode,
     targetLanguageCode,
     sourceLanguage,
@@ -368,6 +383,10 @@ function activeEditorTranslateContext(chapterState = state.editorChapter) {
         : targetLanguageCode,
     sourceText: row.fields?.[sourceLanguageCode] ?? "",
   };
+}
+
+function activeEditorTranslateContext(chapterState = state.editorChapter) {
+  return buildEditorAiTranslateContext(chapterState);
 }
 
 function captureEditorAiTranslateAnchor(context) {
@@ -396,6 +415,24 @@ function captureEditorAiTranslateViewport(context, options = {}) {
 
 function renderEditorAiTranslateBody(render, viewportSnapshot = null) {
   renderTranslateBodyPreservingViewport(render, viewportSnapshot);
+}
+
+function renderEditorAiTranslateRow(render, context, options = {}) {
+  if (options.renderMode === "visible-rows") {
+    render?.({
+      scope: "translate-visible-rows",
+      rowIds: [context.rowId],
+      reason: options.reason ?? "ai-translate",
+    });
+    return;
+  }
+
+  renderEditorAiTranslateBody(
+    render,
+    captureEditorAiTranslateViewport(context, {
+      preferPrimed: options.preferPrimed === true,
+    }),
+  );
 }
 
 function createEditorAiTranslateConfigRender(render) {
@@ -441,7 +478,13 @@ function failEditorAiTranslate(render, actionId, context, message, options = {})
   }
 }
 
-export async function runEditorAiTranslate(render, actionId, operations = {}) {
+export async function runEditorAiTranslateForContext(
+  render,
+  actionId,
+  context,
+  operations = {},
+  options = {},
+) {
   const {
     updateEditorRowFieldValue,
     persistEditorRowOnBlur,
@@ -451,12 +494,11 @@ export async function runEditorAiTranslate(render, actionId, operations = {}) {
     || typeof updateEditorRowFieldValue !== "function"
     || typeof persistEditorRowOnBlur !== "function"
   ) {
-    return;
+    return { ok: false, error: "AI translation is not available." };
   }
 
-  const context = activeEditorTranslateContext();
   if (!context) {
-    return;
+    return { ok: false, error: "Select a translation row before translating." };
   }
 
   if (!context.sourceLanguageCode || !context.targetLanguageCode) {
@@ -466,7 +508,7 @@ export async function runEditorAiTranslate(render, actionId, operations = {}) {
       context,
       "Select both the source and target language before translating.",
     );
-    return;
+    return { ok: false, error: "Select both the source and target language before translating." };
   }
 
   if (context.sourceLanguageCode === context.targetLanguageCode) {
@@ -476,7 +518,7 @@ export async function runEditorAiTranslate(render, actionId, operations = {}) {
       context,
       "Choose a language other than the source language before translating.",
     );
-    return;
+    return { ok: false, error: "Choose a language other than the source language before translating." };
   }
 
   if (!context.sourceText.trim()) {
@@ -486,7 +528,7 @@ export async function runEditorAiTranslate(render, actionId, operations = {}) {
       context,
       "There is no source text to translate yet.",
     );
-    return;
+    return { ok: false, error: "There is no source text to translate yet." };
   }
 
   const configRender = createEditorAiTranslateConfigRender(render);
@@ -496,6 +538,15 @@ export async function runEditorAiTranslate(render, actionId, operations = {}) {
     context.sourceLanguageCode,
     context.targetLanguageCode,
     actionId,
+  );
+  const requestStillMatches = () => currentEditorAiTranslateRequestMatches(
+    state.editorChapter,
+    context.chapterId,
+    actionId,
+    context.rowId,
+    context.sourceLanguageCode,
+    context.targetLanguageCode,
+    requestKey,
   );
   state.editorChapter = applyEditorAiTranslateActionLoading(
     state.editorChapter,
@@ -510,22 +561,36 @@ export async function runEditorAiTranslate(render, actionId, operations = {}) {
     preferPrimed: true,
   });
   render?.({ scope: "translate-sidebar" });
-  renderEditorAiTranslateBody(render, loadingViewportSnapshot);
+  if (options.renderMode === "visible-rows") {
+    renderEditorAiTranslateRow(render, context, {
+      renderMode: "visible-rows",
+      reason: "ai-translate-loading",
+    });
+  } else {
+    renderEditorAiTranslateBody(render, loadingViewportSnapshot);
+  }
 
   const usedStoredTeamActionPreferences = applyStoredSelectedTeamAiActionPreferences(configRender);
   try {
     await ensureSharedAiActionConfigurationLoaded(configRender);
   } catch (error) {
     if (selectedProjectsTeam()?.canDelete !== true && !usedStoredTeamActionPreferences) {
+      if (!requestStillMatches()) {
+        return { ok: false, skipped: true };
+      }
+      const message = error instanceof Error ? error.message : String(error);
       failEditorAiTranslate(
         render,
         actionId,
         context,
-        error instanceof Error ? error.message : String(error),
+        message,
         { rerenderBody: true },
       );
-      return;
+      return { ok: false, error: message };
     }
+  }
+  if (!requestStillMatches()) {
+    return { ok: false, skipped: true };
   }
 
   const { providerId, modelId } = resolveAiActionProviderAndModel(actionId);
@@ -537,26 +602,36 @@ export async function runEditorAiTranslate(render, actionId, operations = {}) {
       `Select a model for ${AI_ACTION_LABELS[actionId]} on the AI Settings page first.`,
       { rerenderBody: true },
     );
-    return;
+    return {
+      ok: false,
+      error: `Select a model for ${AI_ACTION_LABELS[actionId]} on the AI Settings page first.`,
+    };
   }
 
   try {
     const ensureKeyResult = await ensureSelectedTeamAiProviderReady(configRender, providerId);
+    if (!requestStillMatches()) {
+      return { ok: false, skipped: true };
+    }
     if (!ensureKeyResult?.ok) {
       state.editorChapter = clearEditorAiTranslateAction(state.editorChapter, actionId);
       openAiMissingKeyModal(providerId);
       render?.();
-      return;
+      return { ok: false, error: "The AI provider is not ready.", missingKey: true };
     }
   } catch (error) {
+    if (!requestStillMatches()) {
+      return { ok: false, skipped: true };
+    }
+    const message = error instanceof Error ? error.message : String(error);
     failEditorAiTranslate(
       render,
       actionId,
       context,
-      error instanceof Error ? error.message : String(error),
+      message,
       { rerenderBody: true },
     );
-    return;
+    return { ok: false, error: message };
   }
 
   let glossaryUsage = { kind: "none" };
@@ -583,7 +658,10 @@ export async function runEditorAiTranslate(render, actionId, operations = {}) {
             retainedDerivedEntry,
           ),
         );
-        renderEditorAiTranslateBody(render, captureEditorAiTranslateViewport(context));
+        renderEditorAiTranslateRow(render, context, {
+          renderMode: options.renderMode,
+          reason: "ai-translate-derived-glossary-loading",
+        });
 
         const payload = await invoke("prepare_editor_ai_translated_glossary", {
           request: withSelectedInstallation({
@@ -609,7 +687,7 @@ export async function runEditorAiTranslate(render, actionId, operations = {}) {
             requestKey,
           )
         ) {
-          return;
+          return { ok: false, skipped: true };
         }
 
         if (!latestEditorTranslateSourceTextMatches(context)) {
@@ -628,8 +706,11 @@ export async function runEditorAiTranslate(render, actionId, operations = {}) {
           }
           state.editorChapter = clearEditorAiTranslateAction(state.editorChapter, actionId);
           render?.({ scope: "translate-sidebar" });
-          renderEditorAiTranslateBody(render, captureEditorAiTranslateViewport(context));
-          return;
+          renderEditorAiTranslateRow(render, context, {
+            renderMode: options.renderMode,
+            reason: "ai-translate-source-changed",
+          });
+          return { ok: false, skipped: true };
         }
 
         const preparedDerivedContext = resolvePreparedDerivedGlossaryContext(
@@ -642,6 +723,10 @@ export async function runEditorAiTranslate(render, actionId, operations = {}) {
           glossaryUsage,
           preparedDerivedContext,
           updateEditorRowFieldValue,
+          {
+            renderMode: options.renderMode,
+            reason: "ai-translate-derived-glossary-source",
+          },
         );
         preparedDerivedGlossaryNeedsPersist =
           preparedDerivedContext.glossarySourceTextOrigin === "row"
@@ -673,7 +758,10 @@ export async function runEditorAiTranslate(render, actionId, operations = {}) {
           );
         }
         retainedDerivedEntry = derivedEntry;
-        renderEditorAiTranslateBody(render, captureEditorAiTranslateViewport(context));
+        renderEditorAiTranslateRow(render, context, {
+          renderMode: options.renderMode,
+          reason: "ai-translate-derived-glossary-ready",
+        });
       }
 
       glossaryHints = buildEditorAiTranslationGlossaryHints(
@@ -708,15 +796,18 @@ export async function runEditorAiTranslate(render, actionId, operations = {}) {
         requestKey,
       )
     ) {
-      return;
+      return { ok: false, skipped: true };
     }
 
     const latestRow = findEditorRowById(context.rowId, state.editorChapter);
     if ((latestRow?.fields?.[context.sourceLanguageCode] ?? "") !== context.sourceText) {
       state.editorChapter = clearEditorAiTranslateAction(state.editorChapter, actionId);
       render?.({ scope: "translate-sidebar" });
-      renderEditorAiTranslateBody(render, captureEditorAiTranslateViewport(context));
-      return;
+      renderEditorAiTranslateRow(render, context, {
+        renderMode: options.renderMode,
+        reason: "ai-translate-source-changed",
+      });
+      return { ok: false, skipped: true };
     }
 
     state.editorChapter = applyEditorAiTranslateActionApplying(
@@ -730,13 +821,15 @@ export async function runEditorAiTranslate(render, actionId, operations = {}) {
     );
     render?.({ scope: "translate-sidebar" });
 
-    const applyViewportSnapshot = captureEditorAiTranslateViewport(context);
     updateEditorRowFieldValue(
       context.rowId,
       context.targetLanguageCode,
       typeof payload?.translatedText === "string" ? payload.translatedText : "",
     );
-    renderEditorAiTranslateBody(render, applyViewportSnapshot);
+    renderEditorAiTranslateRow(render, context, {
+      renderMode: options.renderMode,
+      reason: "ai-translate-apply",
+    });
 
     await persistEditorRowOnBlur(render, context.rowId, {
       commitMetadata: {
@@ -746,7 +839,7 @@ export async function runEditorAiTranslate(render, actionId, operations = {}) {
     });
 
     if (state.editorChapter?.chapterId !== context.chapterId) {
-      return;
+      return { ok: false, skipped: true };
     }
 
     logEditorAssistantTranslation({
@@ -766,21 +859,23 @@ export async function runEditorAiTranslate(render, actionId, operations = {}) {
       promptText: typeof payload?.promptText === "string" ? payload.promptText : "",
       translatedText: typeof payload?.translatedText === "string" ? payload.translatedText : "",
       appliedText: typeof payload?.translatedText === "string" ? payload.translatedText : "",
+      providerContinuation: payload?.providerContinuation ?? null,
       summary: `${AI_ACTION_LABELS[actionId]} applied to ${context.targetLanguageLabel}.`,
     });
 
     state.editorChapter = clearEditorAiTranslateAction(state.editorChapter, actionId);
     render?.({ scope: "translate-sidebar" });
-    showNoticeBadge(`${AI_ACTION_LABELS[actionId]} inserted.`, render);
+    if (options.showNotice !== false) {
+      showNoticeBadge(`${AI_ACTION_LABELS[actionId]} inserted.`, render);
+    }
+    return {
+      ok: true,
+      translated: true,
+      providerContinuation: payload?.providerContinuation ?? null,
+      translatedText: typeof payload?.translatedText === "string" ? payload.translatedText : "",
+    };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    if (errorMeansMissingAiKey(message)) {
-      state.editorChapter = clearEditorAiTranslateAction(state.editorChapter, actionId);
-      openAiMissingKeyModal(providerId);
-      render?.();
-      return;
-    }
-
     if (
       !currentEditorAiTranslateRequestMatches(
         state.editorChapter,
@@ -792,7 +887,14 @@ export async function runEditorAiTranslate(render, actionId, operations = {}) {
         requestKey,
       )
     ) {
-      return;
+      return { ok: false, skipped: true };
+    }
+
+    if (errorMeansMissingAiKey(message)) {
+      state.editorChapter = clearEditorAiTranslateAction(state.editorChapter, actionId);
+      openAiMissingKeyModal(providerId);
+      render?.();
+      return { ok: false, error: message, missingKey: true };
     }
 
     if (
@@ -853,5 +955,11 @@ export async function runEditorAiTranslate(render, actionId, operations = {}) {
       message,
     );
     render?.();
+    return { ok: false, error: message };
   }
+}
+
+export async function runEditorAiTranslate(render, actionId, operations = {}) {
+  const context = activeEditorTranslateContext();
+  await runEditorAiTranslateForContext(render, actionId, context, operations);
 }

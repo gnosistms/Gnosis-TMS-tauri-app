@@ -1159,5 +1159,14 @@ export function logEditorAssistantTranslation(payload = {}) {
       targetLanguageCode: payload.targetLanguageCode,
     },
   );
+  if (payload.providerContinuation) {
+    const providerModelKey = resolveProviderModelKey(payload.providerId, payload.modelId);
+    state.editorChapter = applyEditorAssistantProviderContinuity(
+      state.editorChapter,
+      threadKey,
+      providerModelKey,
+      payload.providerContinuation,
+    );
+  }
   persistAssistantState();
 }

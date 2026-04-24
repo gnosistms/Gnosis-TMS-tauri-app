@@ -19,6 +19,7 @@ import { MANAGE_CHAPTER_LANGUAGES_OPTION_VALUE } from "../app/translate-flow.js"
 import { renderEditorRowInsertModal } from "./editor-row-insert-modal.js";
 import { renderEditorRowPermanentDeletionModal } from "./editor-row-permanent-deletion-modal.js";
 import { renderEditorUnreviewAllModal } from "./editor-unreview-all-modal.js";
+import { renderEditorAiTranslateAllModal } from "./editor-ai-translate-all-modal.js";
 import { renderEditorConflictResolutionModal } from "./editor-conflict-resolution-modal.js";
 import { renderEditorImageInvalidFileModal } from "./editor-image-invalid-file-modal.js";
 import { renderEditorImagePreviewOverlay } from "./editor-image-preview-overlay.js";
@@ -313,6 +314,7 @@ export function renderTranslateScreen(state) {
     + renderEditorRowInsertModal(state)
     + renderEditorRowPermanentDeletionModal(state)
     + renderEditorUnreviewAllModal(state)
+    + renderEditorAiTranslateAllModal(state)
     + renderEditorConflictResolutionModal(state)
     + renderEditorImageInvalidFileModal(state)
     + renderEditorImagePreviewOverlay(state)

@@ -47,6 +47,12 @@ import {
   runEditorAiReview as runEditorAiReviewFlow,
 } from "./editor-ai-review-flow.js";
 import { runEditorAiTranslate as runEditorAiTranslateFlow } from "./editor-ai-translate-flow.js";
+import {
+  cancelEditorAiTranslateAllModal as cancelEditorAiTranslateAllModalFlow,
+  confirmEditorAiTranslateAll as confirmEditorAiTranslateAllFlow,
+  openEditorAiTranslateAllModal as openEditorAiTranslateAllModalFlow,
+  updateEditorAiTranslateAllLanguageSelection as updateEditorAiTranslateAllLanguageSelectionFlow,
+} from "./editor-ai-translate-all-flow.js";
 import { toggleEditorInlineStyle as toggleEditorInlineStyleFlow } from "./editor-inline-markup-flow.js";
 import {
   applyEditorAssistantDraft as applyEditorAssistantDraftFlow,
@@ -506,6 +512,25 @@ export async function runEditorAiReview(render) {
 
 export async function runEditorAiTranslate(render, actionId) {
   await runEditorAiTranslateFlow(render, actionId, {
+    updateEditorRowFieldValue,
+    persistEditorRowOnBlur,
+  });
+}
+
+export function openEditorAiTranslateAllModal(render) {
+  openEditorAiTranslateAllModalFlow(render);
+}
+
+export function cancelEditorAiTranslateAllModal(render) {
+  cancelEditorAiTranslateAllModalFlow(render);
+}
+
+export function updateEditorAiTranslateAllLanguageSelection(render, languageCode, selected) {
+  updateEditorAiTranslateAllLanguageSelectionFlow(render, languageCode, selected);
+}
+
+export async function confirmEditorAiTranslateAll(render) {
+  await confirmEditorAiTranslateAllFlow(render, {
     updateEditorRowFieldValue,
     persistEditorRowOnBlur,
   });
