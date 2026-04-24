@@ -23,7 +23,7 @@ export function renderGlossaryImportModal(state) {
             ${errorMarkup}
             <button
               type="button"
-              class="project-import-modal__drop-target${isImporting ? " is-loading" : ""}"
+              class="project-import-modal__drop-target glossary-import-modal__drop-target${isImporting ? " is-loading" : ""}"
               data-action="select-glossary-import-file"
               data-glossary-import-dropzone
               ${isImporting ? 'disabled aria-disabled="true"' : ""}

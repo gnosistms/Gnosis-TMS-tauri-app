@@ -1044,6 +1044,10 @@
   opacity: 0.82;
 }
 
+.glossary-import-modal__drop-target {
+  min-height: 133px;
+}
+
 .project-import-modal__hint {
   margin: 0;
   color: var(--muted);

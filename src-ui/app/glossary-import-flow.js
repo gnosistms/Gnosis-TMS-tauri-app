@@ -13,12 +13,15 @@ import {
   createRemoteGlossaryRepoForTeam,
   getGlossarySyncIssueMessage,
   listLocalGlossarySummariesForTeam,
+  listRemoteGlossaryReposForTeam,
   permanentlyDeleteRemoteGlossaryRepoForTeam,
   syncGlossaryReposForTeam,
 } from "./glossary-repo-flow.js";
 import { appendRepoNameSuffix, slugifyRepoName } from "./repo-names.js";
 import {
   deleteGlossaryMetadataRecord,
+  inspectAndMigrateLocalRepoBindings,
+  refreshGlossaryMetadataRecords,
   upsertGlossaryMetadataRecord,
 } from "./team-metadata-flow.js";
 import {
@@ -152,6 +155,162 @@ function linkedGlossaryMetadataRecord(glossary, remoteRepo) {
     targetLanguage: glossary.targetLanguage ?? null,
     termCount: Number.isFinite(glossary.termCount) ? glossary.termCount : 0,
   };
+}
+
+function normalizedText(value) {
+  return typeof value === "string" && value.trim() ? value.trim() : "";
+}
+
+function normalizedLanguageCode(language) {
+  return normalizedText(language?.code).toLowerCase();
+}
+
+function languageMatches(actual, expected) {
+  return normalizedLanguageCode(actual) === normalizedLanguageCode(expected);
+}
+
+function importedGlossarySafetyError(detail) {
+  const error = new Error(`Glossary import did not finish safely. ${detail}`);
+  error.code = "GLOSSARY_IMPORT_UNSAFE";
+  return error;
+}
+
+function findImportedRemoteRepo(remoteRepos, expectedRemoteRepo) {
+  const expectedRepoName = normalizedText(expectedRemoteRepo?.name);
+  const expectedFullName = normalizedText(expectedRemoteRepo?.fullName);
+  const expectedRepoId = Number.isFinite(expectedRemoteRepo?.repoId) ? expectedRemoteRepo.repoId : null;
+
+  return (Array.isArray(remoteRepos) ? remoteRepos : []).find((repo) => {
+    if (expectedRepoId !== null && Number.isFinite(repo?.repoId) && repo.repoId === expectedRepoId) {
+      return true;
+    }
+    if (expectedFullName && normalizedText(repo?.fullName) === expectedFullName) {
+      return true;
+    }
+    return expectedRepoName && normalizedText(repo?.name) === expectedRepoName;
+  }) ?? null;
+}
+
+function repairIssueMatchesImportedGlossary(issue, expected) {
+  if (issue?.kind !== "glossary") {
+    return false;
+  }
+
+  const glossaryId = normalizedText(expected.glossaryId);
+  const repoName = normalizedText(expected.repoName);
+  return (
+    (glossaryId && normalizedText(issue.resourceId) === glossaryId)
+    || (repoName && normalizedText(issue.repoName) === repoName)
+    || (repoName && normalizedText(issue.expectedRepoName) === repoName)
+  );
+}
+
+export async function verifyImportedGlossaryState(team, expected, operations = {}) {
+  const glossaryId = normalizedText(expected?.glossaryId);
+  const repoName = normalizedText(expected?.repoName);
+  const title = normalizedText(expected?.title);
+  if (!glossaryId || !repoName || !title) {
+    throw importedGlossarySafetyError("The imported glossary identity could not be verified.");
+  }
+
+  const listLocal = operations.listLocalGlossarySummariesForTeam ?? listLocalGlossarySummariesForTeam;
+  const listRemote = operations.listRemoteGlossaryReposForTeam ?? listRemoteGlossaryReposForTeam;
+  const refreshMetadata = operations.refreshGlossaryMetadataRecords ?? refreshGlossaryMetadataRecords;
+  const inspectRepairs = operations.inspectAndMigrateLocalRepoBindings ?? inspectAndMigrateLocalRepoBindings;
+
+  const localGlossaries = await listLocal(team);
+  const localGlossary = (Array.isArray(localGlossaries) ? localGlossaries : []).find((glossary) =>
+    normalizedText(glossary?.glossaryId ?? glossary?.id) === glossaryId
+    || normalizedText(glossary?.repoName) === repoName
+  );
+  if (!localGlossary) {
+    throw importedGlossarySafetyError("The local glossary repo could not be found after import.");
+  }
+  if (normalizedText(localGlossary.title) !== title) {
+    throw importedGlossarySafetyError("The local glossary title does not match the imported file.");
+  }
+  if (normalizedText(localGlossary.lifecycleState) && normalizedText(localGlossary.lifecycleState) !== "active") {
+    throw importedGlossarySafetyError("The local glossary repo is not active after import.");
+  }
+  if (!languageMatches(localGlossary.sourceLanguage, expected.sourceLanguage)) {
+    throw importedGlossarySafetyError("The local glossary source language does not match the imported file.");
+  }
+  if (!languageMatches(localGlossary.targetLanguage, expected.targetLanguage)) {
+    throw importedGlossarySafetyError("The local glossary target language does not match the imported file.");
+  }
+  if (
+    Number.isFinite(expected.termCount)
+    && Number.isFinite(localGlossary.termCount)
+    && localGlossary.termCount !== expected.termCount
+  ) {
+    throw importedGlossarySafetyError("The local glossary term count does not match the imported file.");
+  }
+
+  const remoteRepos = await listRemote(team);
+  const remoteRepo = findImportedRemoteRepo(remoteRepos, expected.remoteRepo);
+  if (!remoteRepo) {
+    throw importedGlossarySafetyError("The remote glossary repo could not be found after import.");
+  }
+  if (normalizedText(remoteRepo.name) !== repoName) {
+    throw importedGlossarySafetyError("The remote glossary repo name does not match the imported glossary.");
+  }
+  if (
+    normalizedText(expected.remoteRepo?.fullName)
+    && normalizedText(remoteRepo.fullName)
+    && normalizedText(remoteRepo.fullName) !== normalizedText(expected.remoteRepo.fullName)
+  ) {
+    throw importedGlossarySafetyError("The remote glossary repo full name does not match the imported glossary.");
+  }
+  if (
+    Number.isFinite(expected.remoteRepo?.repoId)
+    && Number.isFinite(remoteRepo.repoId)
+    && remoteRepo.repoId !== expected.remoteRepo.repoId
+  ) {
+    throw importedGlossarySafetyError("The remote glossary repo id does not match the imported glossary.");
+  }
+
+  const metadataRecords = await refreshMetadata(team);
+  const metadataRecord = (Array.isArray(metadataRecords) ? metadataRecords : []).find((record) =>
+    normalizedText(record?.id) === glossaryId
+  );
+  if (!metadataRecord || metadataRecord.recordState !== "live") {
+    throw importedGlossarySafetyError("The team metadata record could not be found after import.");
+  }
+  if (normalizedText(metadataRecord.repoName) !== normalizedText(remoteRepo.name)) {
+    throw importedGlossarySafetyError("The team metadata record points at a different glossary repo.");
+  }
+  if (
+    normalizedText(metadataRecord.fullName)
+    && normalizedText(remoteRepo.fullName)
+    && normalizedText(metadataRecord.fullName) !== normalizedText(remoteRepo.fullName)
+  ) {
+    throw importedGlossarySafetyError("The team metadata record points at a different GitHub repo.");
+  }
+  if (
+    Number.isFinite(metadataRecord.githubRepoId)
+    && Number.isFinite(remoteRepo.repoId)
+    && metadataRecord.githubRepoId !== remoteRepo.repoId
+  ) {
+    throw importedGlossarySafetyError("The team metadata record has a different GitHub repo id.");
+  }
+  if (normalizedText(metadataRecord.title) !== title) {
+    throw importedGlossarySafetyError("The team metadata title does not match the imported file.");
+  }
+  if (!languageMatches(metadataRecord.sourceLanguage, expected.sourceLanguage)) {
+    throw importedGlossarySafetyError("The team metadata source language does not match the imported file.");
+  }
+  if (!languageMatches(metadataRecord.targetLanguage, expected.targetLanguage)) {
+    throw importedGlossarySafetyError("The team metadata target language does not match the imported file.");
+  }
+
+  const repairIssues = (await inspectRepairs(team))?.issues ?? [];
+  const matchingRepairIssue = repairIssues.find((issue) => repairIssueMatchesImportedGlossary(issue, {
+    glossaryId,
+    repoName,
+  }));
+  if (matchingRepairIssue) {
+    throw importedGlossarySafetyError(matchingRepairIssue.message || "The imported glossary still needs local repo repair.");
+  }
 }
 
 async function rollbackStrictGlossaryCreate(team, glossaryId, localRepoName, remoteRepoName = "") {
@@ -638,6 +797,17 @@ export async function importGlossaryFile(render, selectedFile) {
           throw new Error(syncIssue.message);
         }
 
+        showResourceCreateProgress(render, "Verifying glossary import...");
+        await verifyImportedGlossaryState(team, {
+          glossaryId,
+          repoName: remoteRepo.name,
+          remoteRepo,
+          title: glossary.title,
+          sourceLanguage: glossary.sourceLanguage,
+          targetLanguage: glossary.targetLanguage,
+          termCount: Number.isFinite(glossary.termCount) ? glossary.termCount : 0,
+        });
+
         return {
           glossaryId,
           title: glossary.title,
@@ -657,6 +827,9 @@ export async function importGlossaryFile(render, selectedFile) {
               }`,
             );
           }
+        }
+        if (error?.code === "GLOSSARY_IMPORT_UNSAFE") {
+          throw new Error(`${error.message} The partially created glossary was rolled back.`);
         }
         throw error;
       }

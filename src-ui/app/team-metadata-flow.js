@@ -480,6 +480,16 @@ export async function listGlossaryMetadataRecords(team) {
   }
 }
 
+export async function refreshGlossaryMetadataRecords(team) {
+  await syncLocalTeamMetadataRepo(team);
+  const records = await invoke("list_local_gnosis_glossary_metadata_records", {
+    installationId: team.installationId,
+  });
+  return (Array.isArray(records) ? records : [])
+    .map(normalizeGlossaryMetadataRecord)
+    .filter(Boolean);
+}
+
 export async function inspectAndMigrateLocalRepoBindings(team) {
   if (!Number.isFinite(team?.installationId)) {
     return {
