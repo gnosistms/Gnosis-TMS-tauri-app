@@ -846,6 +846,8 @@ export function openTargetLanguageManagerPicker() {
   state.targetLanguageManager = {
     ...state.targetLanguageManager,
     isPickerOpen: true,
+    pickerSelectedLanguageCode: "",
+    pickerScrollTop: 0,
     error: "",
   };
 }
@@ -858,15 +860,68 @@ export function closeTargetLanguageManagerPicker() {
   state.targetLanguageManager = {
     ...state.targetLanguageManager,
     isPickerOpen: false,
+    pickerSelectedLanguageCode: "",
+    pickerScrollTop: 0,
   };
 }
 
-export function addTargetLanguageManagerLanguage(languageCode) {
+function currentTargetLanguageManagerPickerScrollTop() {
+  const list = globalThis.document?.querySelector?.("[data-target-language-manager-picker-list]");
+  return Number.isFinite(list?.scrollTop) ? list.scrollTop : 0;
+}
+
+function restoreTargetLanguageManagerPickerScrollTop(scrollTop) {
+  const restore = () => {
+    const list = globalThis.document?.querySelector?.("[data-target-language-manager-picker-list]");
+    if (list && Number.isFinite(scrollTop)) {
+      list.scrollTop = scrollTop;
+    }
+  };
+
+  if (typeof globalThis.requestAnimationFrame === "function") {
+    globalThis.requestAnimationFrame(restore);
+    return;
+  }
+
+  if (typeof globalThis.setTimeout === "function") {
+    globalThis.setTimeout(restore, 0);
+    return;
+  }
+
+  restore();
+}
+
+export function selectTargetLanguageManagerPickerLanguage(languageCode) {
   if (!state.targetLanguageManager?.isOpen) {
     return;
   }
 
   const code = String(languageCode ?? "").trim().toLowerCase();
+  if (!code || state.targetLanguageManager.languages.some((language) => language.code === code)) {
+    return;
+  }
+
+  const option = findIsoLanguageOption(code);
+  if (!option) {
+    return;
+  }
+
+  const scrollTop = currentTargetLanguageManagerPickerScrollTop();
+  state.targetLanguageManager = {
+    ...state.targetLanguageManager,
+    pickerSelectedLanguageCode: option.code,
+    pickerScrollTop: scrollTop,
+    error: "",
+  };
+  restoreTargetLanguageManagerPickerScrollTop(scrollTop);
+}
+
+export function addTargetLanguageManagerLanguage() {
+  if (!state.targetLanguageManager?.isOpen) {
+    return;
+  }
+
+  const code = String(state.targetLanguageManager.pickerSelectedLanguageCode ?? "").trim().toLowerCase();
   if (!code || state.targetLanguageManager.languages.some((language) => language.code === code)) {
     return;
   }
@@ -887,6 +942,8 @@ export function addTargetLanguageManagerLanguage(languageCode) {
       },
     ],
     isPickerOpen: false,
+    pickerSelectedLanguageCode: "",
+    pickerScrollTop: 0,
     error: "",
   };
 }

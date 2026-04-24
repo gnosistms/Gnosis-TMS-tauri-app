@@ -19,7 +19,6 @@ export function normalizeLanguageSelections(languages, sourceCode, targetCode) {
   const fallbackTarget =
     options.find((language) => language.code !== nextSource && language.role === "target")?.code
     ?? options.find((language) => language.code !== nextSource)?.code
-    ?? nextSource
     ?? null;
   const nextTarget =
     targetCode && codes.has(targetCode) && targetCode !== nextSource ? targetCode : fallbackTarget;

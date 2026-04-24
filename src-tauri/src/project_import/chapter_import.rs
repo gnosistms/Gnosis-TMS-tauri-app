@@ -213,6 +213,17 @@ pub(crate) struct ImportXlsxInput {
     bytes: Vec<u8>,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ImportTxtInput {
+    installation_id: i64,
+    repo_name: String,
+    project_id: Option<String>,
+    file_name: String,
+    bytes: Vec<u8>,
+    source_language_code: String,
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ImportXlsxResponse {
@@ -239,6 +250,7 @@ struct ParsedWorkbook {
     file_title: String,
     worksheet_name: String,
     source_file_name: String,
+    source_format: &'static str,
     header_blob: Vec<String>,
     languages: Vec<ImportedLanguage>,
     rows: Vec<ImportedRow>,
@@ -436,6 +448,21 @@ pub(super) fn import_xlsx_to_gtms_sync(
     input: ImportXlsxInput,
 ) -> Result<ImportXlsxResponse, String> {
     let parsed = parse_xlsx_workbook(input)?;
+    import_parsed_workbook_to_gtms_sync(app, parsed)
+}
+
+pub(super) fn import_txt_to_gtms_sync(
+    app: &AppHandle,
+    input: ImportTxtInput,
+) -> Result<ImportXlsxResponse, String> {
+    let parsed = parse_txt_file(input)?;
+    import_parsed_workbook_to_gtms_sync(app, parsed)
+}
+
+fn import_parsed_workbook_to_gtms_sync(
+    app: &AppHandle,
+    parsed: ParsedWorkbook,
+) -> Result<ImportXlsxResponse, String> {
     let chapter_id = Uuid::now_v7();
     let repo_path = resolve_project_git_repo_path(
         app,
@@ -604,10 +631,103 @@ fn parse_xlsx_workbook(input: ImportXlsxInput) -> Result<ParsedWorkbook, String>
         file_title: humanize_file_stem(&input.file_name),
         worksheet_name: sheet_name,
         source_file_name: input.file_name,
+        source_format: "xlsx",
         header_blob,
         languages,
         rows,
     })
+}
+
+fn parse_txt_file(input: ImportTxtInput) -> Result<ParsedWorkbook, String> {
+    if input.bytes.is_empty() {
+        return Err("The selected file is empty.".to_string());
+    }
+
+    let code = normalize_language_code(&input.source_language_code)
+        .ok_or_else(|| "Select a valid ISO 639-1 source language.".to_string())?;
+    let name = language_display_name(&code);
+    let decoded = decode_text_file(&input.bytes)?;
+    let mut rows = Vec::new();
+
+    for (line_index, line) in decoded.lines().enumerate() {
+        let plain_text = line.trim().to_string();
+        if plain_text.is_empty() {
+            continue;
+        }
+
+        let mut fields = BTreeMap::new();
+        fields.insert(code.clone(), plain_text);
+        rows.push(ImportedRow {
+            external_id: None,
+            description: None,
+            context: None,
+            comments: Vec::new(),
+            source_row_number: line_index + 1,
+            fields,
+        });
+    }
+
+    if rows.is_empty() {
+        return Err("The selected text file does not contain any non-blank lines.".to_string());
+    }
+
+    Ok(ParsedWorkbook {
+        installation_id: input.installation_id,
+        repo_name: input.repo_name,
+        project_id: input.project_id,
+        file_title: humanize_file_stem(&input.file_name),
+        worksheet_name: "Plain text".to_string(),
+        source_file_name: input.file_name,
+        source_format: "txt",
+        header_blob: Vec::new(),
+        languages: vec![ImportedLanguage {
+            code,
+            name,
+            role: "source",
+        }],
+        rows,
+    })
+}
+
+fn decode_text_file(bytes: &[u8]) -> Result<String, String> {
+    const ENCODING_ERROR: &str =
+        "The text file encoding is not supported. Save it as UTF-8 or UTF-16 and try again.";
+
+    if bytes.starts_with(&[0xEF, 0xBB, 0xBF]) {
+        return std::str::from_utf8(&bytes[3..])
+            .map(|value| value.to_string())
+            .map_err(|_| ENCODING_ERROR.to_string());
+    }
+
+    if bytes.starts_with(&[0xFF, 0xFE]) {
+        return decode_utf16_bytes(&bytes[2..], true).map_err(|_| ENCODING_ERROR.to_string());
+    }
+
+    if bytes.starts_with(&[0xFE, 0xFF]) {
+        return decode_utf16_bytes(&bytes[2..], false).map_err(|_| ENCODING_ERROR.to_string());
+    }
+
+    std::str::from_utf8(bytes)
+        .map(|value| value.to_string())
+        .map_err(|_| ENCODING_ERROR.to_string())
+}
+
+fn decode_utf16_bytes(bytes: &[u8], little_endian: bool) -> Result<String, ()> {
+    if bytes.len() % 2 != 0 {
+        return Err(());
+    }
+
+    let units = bytes.chunks_exact(2).map(|chunk| {
+        if little_endian {
+            u16::from_le_bytes([chunk[0], chunk[1]])
+        } else {
+            u16::from_be_bytes([chunk[0], chunk[1]])
+        }
+    });
+
+    std::char::decode_utf16(units)
+        .collect::<Result<String, _>>()
+        .map_err(|_| ())
 }
 
 fn build_chapter_file(
@@ -626,10 +746,12 @@ fn build_chapter_file(
         .map(|language| language.code.clone())
         .collect::<Vec<_>>();
     let mut serialization_hints = BTreeMap::new();
-    serialization_hints.insert(
-        "worksheet".to_string(),
-        Value::String(parsed.worksheet_name.clone()),
-    );
+    if parsed.source_format == "xlsx" {
+        serialization_hints.insert(
+            "worksheet".to_string(),
+            Value::String(parsed.worksheet_name.clone()),
+        );
+    }
 
     ChapterFile {
         format: GTMS_FORMAT,
@@ -641,7 +763,7 @@ fn build_chapter_file(
         lifecycle: active_lifecycle_state(),
         source_files: vec![SourceFile {
             file_id: "source-001".to_string(),
-            format: "xlsx",
+            format: parsed.source_format,
             path_hint: parsed.source_file_name.clone(),
             filename_template: parsed.source_file_name.clone(),
             file_metadata: SourceFileMetadata {
@@ -669,10 +791,11 @@ fn build_chapter_file(
                 .languages
                 .first()
                 .map(|language| language.code.clone()),
-            default_target_language: parsed
-                .languages
-                .last()
-                .map(|language| language.code.clone()),
+            default_target_language: if parsed.languages.len() > 1 {
+                parsed.languages.last().map(|language| language.code.clone())
+            } else {
+                None
+            },
         },
     }
 }
@@ -742,13 +865,22 @@ fn build_row_file(
     }
 
     let mut format_metadata = BTreeMap::new();
-    format_metadata.insert(
-        "xlsx".to_string(),
-        json!({
-          "source_sheet": parsed.worksheet_name.clone(),
-          "source_row_number": imported_row.source_row_number,
-        }),
-    );
+    if parsed.source_format == "xlsx" {
+        format_metadata.insert(
+            "xlsx".to_string(),
+            json!({
+              "source_sheet": parsed.worksheet_name.clone(),
+              "source_row_number": imported_row.source_row_number,
+            }),
+        );
+    } else if parsed.source_format == "txt" {
+        format_metadata.insert(
+            "txt".to_string(),
+            json!({
+              "source_line_number": imported_row.source_row_number,
+            }),
+        );
+    }
 
     Ok(RowFile {
         row_id: row_id.to_string(),
@@ -769,7 +901,7 @@ fn build_row_file(
             group_context: imported_row.context.clone(),
         },
         origin: RowOrigin {
-            source_format: "xlsx",
+            source_format: parsed.source_format,
             source_sheet: parsed.worksheet_name.clone(),
             source_row_number: imported_row.source_row_number,
         },
@@ -960,6 +1092,17 @@ fn read_project_title(project_json_path: &Path) -> Result<String, String> {
 mod tests {
     use super::*;
 
+    fn txt_input(bytes: Vec<u8>, source_language_code: &str) -> ImportTxtInput {
+        ImportTxtInput {
+            installation_id: 1,
+            repo_name: "project-repo".to_string(),
+            project_id: Some("project-1".to_string()),
+            file_name: "chapter.txt".to_string(),
+            bytes,
+            source_language_code: source_language_code.to_string(),
+        }
+    }
+
     #[test]
     fn classify_header_row_accepts_iso_639_1_language_codes() {
         let bindings = classify_header_row(&["es".to_string(), "EN".to_string(), "vi".to_string()])
@@ -991,5 +1134,97 @@ mod tests {
 
         assert!(error.contains("Column 2"));
         assert!(error.contains("ISO 639-1"));
+    }
+
+    #[test]
+    fn parse_txt_file_creates_one_row_per_non_blank_line() {
+        let parsed = parse_txt_file(txt_input(b" first line \n\nsecond line\r\n   \nthird".to_vec(), "en"))
+            .expect("TXT import should parse non-blank lines");
+
+        assert_eq!(parsed.source_format, "txt");
+        assert_eq!(parsed.languages.len(), 1);
+        assert_eq!(parsed.languages[0].code, "en");
+        assert_eq!(parsed.languages[0].role, "source");
+        assert_eq!(parsed.rows.len(), 3);
+        assert_eq!(parsed.rows[0].source_row_number, 1);
+        assert_eq!(parsed.rows[0].fields.get("en").map(String::as_str), Some("first line"));
+        assert_eq!(parsed.rows[1].source_row_number, 3);
+        assert_eq!(parsed.rows[1].fields.get("en").map(String::as_str), Some("second line"));
+        assert_eq!(parsed.rows[2].source_row_number, 5);
+    }
+
+    #[test]
+    fn parse_txt_file_rejects_blank_only_files() {
+        let error = match parse_txt_file(txt_input(b"\n \r\n\t\n".to_vec(), "en")) {
+            Ok(_) => panic!("blank-only TXT should be rejected"),
+            Err(error) => error,
+        };
+
+        assert!(error.contains("non-blank lines"));
+    }
+
+    #[test]
+    fn parse_txt_file_rejects_invalid_source_language() {
+        let error = match parse_txt_file(txt_input(b"hello".to_vec(), "zz")) {
+            Ok(_) => panic!("unknown source language should be rejected"),
+            Err(error) => error,
+        };
+
+        assert!(error.contains("source language"));
+    }
+
+    #[test]
+    fn decode_text_file_accepts_utf8_with_and_without_bom() {
+        assert_eq!(decode_text_file("hola\n世界".as_bytes()).unwrap(), "hola\n世界");
+
+        let mut bytes = vec![0xEF, 0xBB, 0xBF];
+        bytes.extend_from_slice("hola".as_bytes());
+        assert_eq!(decode_text_file(&bytes).unwrap(), "hola");
+    }
+
+    #[test]
+    fn decode_text_file_accepts_utf16_bom() {
+        let text = "hola\n世界";
+        let mut little_endian = vec![0xFF, 0xFE];
+        for unit in text.encode_utf16() {
+            little_endian.extend_from_slice(&unit.to_le_bytes());
+        }
+        assert_eq!(decode_text_file(&little_endian).unwrap(), text);
+
+        let mut big_endian = vec![0xFE, 0xFF];
+        for unit in text.encode_utf16() {
+            big_endian.extend_from_slice(&unit.to_be_bytes());
+        }
+        assert_eq!(decode_text_file(&big_endian).unwrap(), text);
+    }
+
+    #[test]
+    fn decode_text_file_rejects_unsupported_or_invalid_encoding() {
+        let error = decode_text_file(&[0xFF, 0xFE, 0x00])
+            .expect_err("odd-length UTF-16 should be rejected");
+        assert!(error.contains("UTF-8 or UTF-16"));
+
+        let error = decode_text_file(&[0xFF, 0xFF, 0xFF])
+            .expect_err("invalid UTF-8 without a supported BOM should be rejected");
+        assert!(error.contains("UTF-8 or UTF-16"));
+    }
+
+    #[test]
+    fn build_txt_chapter_metadata_has_source_language_without_target() {
+        let parsed = parse_txt_file(txt_input(b"one two\nthree".to_vec(), "en"))
+            .expect("TXT import should parse");
+        let chapter_id = Uuid::now_v7();
+        let chapter = build_chapter_file(&parsed, &chapter_id, "chapter");
+        let row = build_row_file(&parsed, &parsed.rows[0], 0, parsed.rows.len(), "row-1")
+            .expect("row should build");
+        let counts = build_source_word_counts_from_import(&parsed);
+
+        assert_eq!(chapter.source_files[0].format, "txt");
+        assert_eq!(chapter.languages.len(), 1);
+        assert_eq!(chapter.settings.default_source_language.as_deref(), Some("en"));
+        assert_eq!(chapter.settings.default_target_language, None);
+        assert_eq!(row.origin.source_format, "txt");
+        assert!(row.format_metadata.contains_key("txt"));
+        assert_eq!(counts.get("en"), Some(&3));
     }
 }

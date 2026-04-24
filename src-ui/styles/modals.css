@@ -1122,22 +1122,37 @@
 
 .modal-card--language-picker {
   width: min(420px, 100%);
+  max-height: calc(100vh - 56px);
+  overflow: hidden;
 }
 
 .language-picker-modal {
   gap: 12px;
+  display: flex;
+  flex-direction: column;
+  max-height: inherit;
+  min-height: 0;
+}
+
+.language-picker-modal > .card__eyebrow,
+.language-picker-modal > .modal__title,
+.language-picker-modal > .modal__supporting,
+.language-picker-modal > .modal__actions {
+  flex: 0 0 auto;
 }
 
 .language-picker-modal__list {
   display: grid;
-  gap: 8px;
-  max-height: min(54vh, 420px);
+  gap: 4px;
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
   overflow-y: auto;
   padding-right: 4px;
 }
 
 .language-picker-modal__option {
-  min-height: 46px;
+  min-height: 32.2px;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -1156,6 +1171,11 @@
 
 .language-picker-modal__option:hover:not(:disabled) {
   background: rgba(255, 244, 227, 0.84);
+}
+
+.language-picker-modal__option.is-selected {
+  border-color: var(--accent);
+  background: rgba(236, 152, 39, 0.12);
 }
 
 .language-picker-modal__code {

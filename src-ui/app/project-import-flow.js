@@ -16,12 +16,15 @@ import { ensureProjectNotTombstoned, refreshProjectFilesFromDisk } from "./proje
 import { openLocalFilePicker } from "./local-file-picker.js";
 
 export const PROJECT_IMPORT_ACCEPT =
-  ".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+  ".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,.txt,text/plain";
 
 export function detectImportFileType(fileName) {
   const normalized = String(fileName || "").trim().toLowerCase();
   if (normalized.endsWith(".xlsx")) {
     return "xlsx";
+  }
+  if (normalized.endsWith(".txt")) {
+    return "txt";
   }
   return null;
 }
@@ -84,12 +87,38 @@ function setProjectImportError(render, message) {
   render();
 }
 
-function buildImportedFileEntry(result) {
+function currentSourceLanguageScrollTop() {
+  const list = globalThis.document?.querySelector?.("[data-project-import-source-language-list]");
+  return Number.isFinite(list?.scrollTop) ? list.scrollTop : 0;
+}
+
+function restoreSourceLanguageScrollTop(scrollTop) {
+  const restore = () => {
+    const list = globalThis.document?.querySelector?.("[data-project-import-source-language-list]");
+    if (list && Number.isFinite(scrollTop)) {
+      list.scrollTop = scrollTop;
+    }
+  };
+
+  if (typeof globalThis.requestAnimationFrame === "function") {
+    globalThis.requestAnimationFrame(restore);
+    return;
+  }
+
+  if (typeof globalThis.setTimeout === "function") {
+    globalThis.setTimeout(restore, 0);
+    return;
+  }
+
+  restore();
+}
+
+export function buildImportedFileEntry(result) {
   const selectedSourceLanguageCode = result.selectedSourceLanguageCode ?? result.languages?.[0]?.code ?? null;
   const selectedTargetLanguageCode =
     result.selectedTargetLanguageCode
     ?? result.languages?.find((language) => language.code !== selectedSourceLanguageCode)?.code
-    ?? selectedSourceLanguageCode;
+    ?? null;
   const sourceWordCount =
     selectedSourceLanguageCode && result.sourceWordCounts
       ? Number(result.sourceWordCounts[selectedSourceLanguageCode] ?? 0)
@@ -168,6 +197,10 @@ export function openProjectImportModal(render, projectId) {
     projectTitle: targetProject.title ?? targetProject.name ?? "",
     status: "idle",
     error: "",
+    pendingFile: null,
+    pendingFileName: "",
+    selectedSourceLanguageCode: "",
+    sourceLanguageScrollTop: 0,
   };
   render();
 }
@@ -184,6 +217,10 @@ export function cancelProjectImportModal(render) {
     projectTitle: "",
     status: "idle",
     error: "",
+    pendingFile: null,
+    pendingFileName: "",
+    selectedSourceLanguageCode: "",
+    sourceLanguageScrollTop: 0,
   };
   render();
 }
@@ -207,7 +244,39 @@ export async function addFilesToProject(render, projectId) {
   openProjectImportModal(render, projectId);
 }
 
-export async function importProjectFile(render, selectedFile) {
+export function selectProjectImportSourceLanguage(render, languageCode) {
+  if (state.projectImport.status !== "selectingSourceLanguage") {
+    return;
+  }
+
+  const code = String(languageCode ?? "").trim().toLowerCase();
+  const previousCode = String(state.projectImport.selectedSourceLanguageCode ?? "").trim().toLowerCase();
+  const scrollTop = currentSourceLanguageScrollTop();
+  state.projectImport = projectImportModalState({
+    selectedSourceLanguageCode: previousCode === code ? "" : code,
+    sourceLanguageScrollTop: scrollTop,
+    error: "",
+  });
+  render();
+  restoreSourceLanguageScrollTop(scrollTop);
+}
+
+export async function continueProjectImportText(render) {
+  if (state.projectImport.status !== "selectingSourceLanguage" || !state.projectImport.pendingFile) {
+    return;
+  }
+
+  const sourceLanguageCode = String(state.projectImport.selectedSourceLanguageCode ?? "").trim().toLowerCase();
+  if (!sourceLanguageCode) {
+    return;
+  }
+
+  await importProjectFile(render, state.projectImport.pendingFile, {
+    confirmedSourceLanguageCode: sourceLanguageCode,
+  });
+}
+
+async function completeProjectImport(render, selectedFile, fileType, options = {}) {
   if (state.projectImport.status === "importing") {
     return;
   }
@@ -227,13 +296,6 @@ export async function importProjectFile(render, selectedFile) {
   }
 
   const sourceFileName = importFileName(selectedFile);
-  const fileType = detectImportFileType(sourceFileName);
-  if (!fileType) {
-    const errorMessage = `Unsupported file type for ${sourceFileName}. XLSX is the only supported import format right now.`;
-    setProjectImportError(render, errorMessage);
-    return;
-  }
-
   state.projectImport = projectImportModalState({
     status: "importing",
     error: "",
@@ -257,6 +319,18 @@ export async function importProjectFile(render, selectedFile) {
         },
       });
     }
+    if (fileType === "txt") {
+      result = await invoke("import_txt_to_gtms", {
+        input: {
+          installationId: selectedTeam.installationId,
+          projectId: targetProject.id,
+          repoName: targetProject.name,
+          fileName: sourceFileName,
+          bytes,
+          sourceLanguageCode: options.confirmedSourceLanguageCode,
+        },
+      });
+    }
 
     state.projectImport = {
       ...state.projectImport,
@@ -266,6 +340,10 @@ export async function importProjectFile(render, selectedFile) {
       status: "ready",
       error: "",
       result,
+      pendingFile: null,
+      pendingFileName: "",
+      selectedSourceLanguageCode: "",
+      sourceLanguageScrollTop: 0,
     };
     applyImportedFileToProject(selectedTeam, projectId, result);
     render();
@@ -281,12 +359,59 @@ export async function importProjectFile(render, selectedFile) {
     state.projectImport = projectImportModalState({
       status: "error",
       error: error instanceof Error ? error.message : String(error),
+      pendingFile: null,
+      pendingFileName: "",
+      selectedSourceLanguageCode: "",
+      sourceLanguageScrollTop: 0,
     });
     clearScopedSyncBadge("projects", render);
     failProjectsPageSync();
     showNoticeBadge(state.projectImport.error || "The file could not be imported.", render);
     render();
   }
+}
+
+export async function importProjectFile(render, selectedFile, options = {}) {
+  if (state.projectImport.status === "importing") {
+    return;
+  }
+
+  const projectId = state.projectImport.projectId;
+  const selectedTeam = state.teams.find((team) => team.id === state.selectedTeamId);
+  const targetProject =
+    state.projects.find((project) => project.id === projectId) ??
+    state.deletedProjects.find((project) => project.id === projectId);
+  if (!Number.isFinite(selectedTeam?.installationId) || !targetProject) {
+    showNoticeBadge("Could not determine which project to add the file to.", render);
+    return;
+  }
+
+  if (await ensureProjectNotTombstoned(render, selectedTeam, targetProject)) {
+    return;
+  }
+
+  const sourceFileName = importFileName(selectedFile);
+  const fileType = detectImportFileType(sourceFileName);
+  if (!fileType) {
+    const errorMessage = `Unsupported file type for ${sourceFileName}. XLSX and TXT are the supported import formats right now.`;
+    setProjectImportError(render, errorMessage);
+    return;
+  }
+
+  if (fileType === "txt" && !options.confirmedSourceLanguageCode) {
+    state.projectImport = projectImportModalState({
+      status: "selectingSourceLanguage",
+      error: "",
+      pendingFile: selectedFile,
+      pendingFileName: sourceFileName,
+      selectedSourceLanguageCode: "",
+      sourceLanguageScrollTop: 0,
+    });
+    render();
+    return;
+  }
+
+  await completeProjectImport(render, selectedFile, fileType, options);
 }
 
 export async function handleDroppedProjectImportFile(render, file) {

@@ -1,10 +1,56 @@
 import { escapeHtml, primaryButton, secondaryButton } from "../lib/ui.js";
 import { formatErrorForDisplay } from "../app/error-display.js";
+import { isoLanguageOptions } from "../lib/language-options.js";
+
+function renderSourceLanguageOption(language, selectedCode) {
+  const isSelected = language.code === selectedCode;
+  return `
+    <button
+      class="language-picker-modal__option${isSelected ? " is-selected" : ""}"
+      type="button"
+      data-action="select-project-import-source-language:${escapeHtml(language.code)}"
+      aria-pressed="${isSelected ? "true" : "false"}"
+    >
+      <span>${escapeHtml(language.name)}</span>
+      <span class="language-picker-modal__code">${escapeHtml(language.code)}</span>
+    </button>
+  `;
+}
+
+function renderSourceLanguageStep(modal) {
+  const selectedCode = String(modal.selectedSourceLanguageCode ?? "").trim().toLowerCase();
+  const languages = isoLanguageOptions
+    .slice()
+    .sort((left, right) => left.name.localeCompare(right.name));
+
+  return `
+    <div class="modal-backdrop">
+      <section class="card modal-card modal-card--compact modal-card--language-picker">
+        <div class="card__body modal-card__body language-picker-modal">
+          <p class="card__eyebrow">SOURCE LANGUAGE</p>
+          <h2 class="modal__title">What is the language of this file?</h2>
+          <p class="modal__supporting">Select the language of this file from the list below. This will be the source language.</p>
+          <div class="language-picker-modal__list" role="list" data-project-import-source-language-list>
+            ${languages.map((language) => renderSourceLanguageOption(language, selectedCode)).join("")}
+          </div>
+          <div class="modal__actions">
+            ${secondaryButton("Cancel", "cancel-project-import")}
+            ${primaryButton("Continue", "continue-project-import-text", { disabled: !selectedCode })}
+          </div>
+        </div>
+      </section>
+    </div>
+  `;
+}
 
 export function renderProjectImportModal(state) {
   const modal = state.projectImport;
   if (!modal?.isOpen) {
     return "";
+  }
+
+  if (modal.status === "selectingSourceLanguage") {
+    return renderSourceLanguageStep(modal);
   }
 
   const isImporting = modal.status === "importing";
@@ -32,7 +78,7 @@ export function renderProjectImportModal(state) {
               ${isImporting ? '<span class="button__spinner" aria-hidden="true"></span>' : ""}
               <span>Drop a file here or click to open a file selector.</span>
             </button>
-            <p class="project-import-modal__hint">Supported format: .xlsx. The first row must contain valid ISO 639-1 two-letter language codes such as es, en, or vi.</p>
+            <p class="project-import-modal__hint">Supported formats: .xlsx or .txt. For .xlsx files, the first row must contain valid ISO 639-1 two-letter language codes such as es, en, or vi.</p>
           </div>
           <div class="modal__actions">
             ${secondaryButton("Cancel", "cancel-project-import", { disabled: isImporting })}

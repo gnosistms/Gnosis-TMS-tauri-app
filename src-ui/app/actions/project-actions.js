@@ -35,7 +35,9 @@ import {
 import {
   addFilesToProject,
   cancelProjectImportModal,
+  continueProjectImportText,
   selectProjectImportFile,
+  selectProjectImportSourceLanguage,
 } from "../project-import-flow.js";
 import { actionSuffix, runWithImmediateLoading } from "../action-helpers.js";
 
@@ -49,6 +51,7 @@ export function createProjectActions(render) {
     "cancel-chapter-rename": () => cancelChapterRename(render),
     "clear-project-search": () => clearProjectSearch(render),
     "cancel-project-import": () => cancelProjectImportModal(render),
+    "continue-project-import-text": () => continueProjectImportText(render),
     "select-project-import-file": () => selectProjectImportFile(render),
     "load-more-project-search-results": () => loadMoreProjectSearchResults(render),
     "overwrite-conflicted-project-repos": () => overwriteConflictedProjectRepos(render),
@@ -83,6 +86,10 @@ export function createProjectActions(render) {
     {
       prefix: "add-project-files:",
       handler: async (projectId) => addFilesToProject(render, projectId),
+    },
+    {
+      prefix: "select-project-import-source-language:",
+      handler: (languageCode) => selectProjectImportSourceLanguage(render, languageCode),
     },
     {
       prefix: "rename-project:",

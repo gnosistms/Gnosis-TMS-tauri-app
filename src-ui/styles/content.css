@@ -552,6 +552,15 @@
   z-index: 1;
 }
 
+.select-pill--control.is-disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.select-pill--control.is-disabled select {
+  cursor: not-allowed;
+}
+
 .select-pill__label,
 .select-pill__value {
   line-height: 1.2;

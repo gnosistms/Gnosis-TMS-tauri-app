@@ -27,9 +27,11 @@ import {
   createEditorHistoryState,
   createEditorMainFieldEditorState,
   createEditorPendingSelectionState,
+  createTargetLanguageManagerState,
   state,
 } from "./state.js";
 import { clearNoticeBadge, clearScopedSyncBadge, showNoticeBadge } from "./status-feedback.js";
+import { findIsoLanguageOption } from "../lib/language-options.js";
 
 function normalizeEditorChapterFilters(filters) {
   return normalizeEditorChapterFilterState(filters);
@@ -127,6 +129,42 @@ function applyEditorPayloadToState(
     selectedSourceLanguageCode,
     selectedTargetLanguageCode,
   });
+}
+
+function managedChapterLanguagesFromPayload(languages) {
+  return (Array.isArray(languages) ? languages : [])
+    .map((language) => {
+      const code = String(language?.code ?? "").trim().toLowerCase();
+      if (!code) {
+        return null;
+      }
+      const option = findIsoLanguageOption(code);
+      return {
+        code,
+        name: String(language?.name ?? "").trim() || option?.name || code,
+        role: String(language?.role ?? "").trim().toLowerCase() === "source" ? "source" : "target",
+      };
+    })
+    .filter(Boolean);
+}
+
+function openLanguageManagerForSingleLanguageFile(payload, preserveVisibleRows, team) {
+  const languages = managedChapterLanguagesFromPayload(payload?.languages);
+  if (
+    preserveVisibleRows
+    || languages.length !== 1
+    || team?.canManageProjects !== true
+    || state.targetLanguageManager?.isOpen
+  ) {
+    return;
+  }
+
+  state.targetLanguageManager = {
+    ...createTargetLanguageManagerState(),
+    isOpen: true,
+    chapterId: state.editorChapter?.chapterId ?? payload?.chapterId ?? null,
+    languages,
+  };
 }
 
 export async function loadSelectedChapterEditorData(render, options = {}, operations = {}) {
@@ -284,6 +322,7 @@ export async function loadSelectedChapterEditorData(render, options = {}, operat
       hydratedDerivedGlossariesByRowId,
       operations,
     );
+    openLanguageManagerForSingleLanguageFile(payload, preserveVisibleRows, team);
     render?.();
     if (state.editorChapter.sidebarTab === "comments" && state.editorChapter.activeRowId) {
       loadActiveEditorRowComments(render);

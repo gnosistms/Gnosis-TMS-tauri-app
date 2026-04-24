@@ -1,11 +1,27 @@
 import {
   escapeHtml,
   loadingPrimaryButton,
+  primaryButton,
   secondaryButton,
   tooltipAttributes,
 } from "../lib/ui.js";
 import { formatErrorForDisplay } from "../app/error-display.js";
 import { isoLanguageOptions } from "../lib/language-options.js";
+
+function renderPickerLanguageOption(language, selectedCode) {
+  const isSelected = language.code === selectedCode;
+  return `
+    <button
+      class="language-picker-modal__option${isSelected ? " is-selected" : ""}"
+      type="button"
+      data-action="select-target-language-manager-picker-language:${escapeHtml(language.code)}"
+      aria-pressed="${isSelected ? "true" : "false"}"
+    >
+      <span>${escapeHtml(language.name)}</span>
+      <span class="language-picker-modal__code">${escapeHtml(language.code)}</span>
+    </button>
+  `;
+}
 
 function renderManagedLanguageRow(language, index, total, isSubmitting) {
   const code = String(language?.code ?? "").trim().toLowerCase();
@@ -81,6 +97,10 @@ function renderLanguagePickerModal(state) {
     .filter((option) => !existingCodes.has(option.code))
     .slice()
     .sort((left, right) => left.name.localeCompare(right.name));
+  const rawSelectedCode = String(modal.pickerSelectedLanguageCode ?? "").trim().toLowerCase();
+  const selectedCode = availableLanguages.some((language) => language.code === rawSelectedCode)
+    ? rawSelectedCode
+    : "";
 
   return `
     <div class="modal-backdrop modal-backdrop--nested-picker">
@@ -89,22 +109,14 @@ function renderLanguagePickerModal(state) {
           <p class="card__eyebrow">CHAPTER LANGUAGES</p>
           <h2 class="modal__title">Add Language</h2>
           <p class="modal__supporting">Choose a language to add to this file.</p>
-          <div class="language-picker-modal__list" role="list">
+          <div class="language-picker-modal__list" role="list" data-target-language-manager-picker-list>
             ${availableLanguages.length > 0
-              ? availableLanguages.map((language) => `
-                  <button
-                    class="language-picker-modal__option"
-                    type="button"
-                    data-action="add-target-language-manager-language:${escapeHtml(language.code)}"
-                  >
-                    <span>${escapeHtml(language.name)}</span>
-                    <span class="language-picker-modal__code">${escapeHtml(language.code)}</span>
-                  </button>
-                `).join("")
+              ? availableLanguages.map((language) => renderPickerLanguageOption(language, selectedCode)).join("")
               : '<p class="language-picker-modal__empty">All supported languages are already in this file.</p>'}
           </div>
           <div class="modal__actions">
             ${secondaryButton("Cancel", "close-target-language-manager-picker")}
+            ${primaryButton("Add language", "add-target-language-manager-language", { disabled: !selectedCode })}
           </div>
         </div>
       </section>

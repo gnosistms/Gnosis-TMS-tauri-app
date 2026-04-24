@@ -285,6 +285,10 @@ export function createProjectImportState() {
     status: "idle",
     error: "",
     result: null,
+    pendingFile: null,
+    pendingFileName: "",
+    selectedSourceLanguageCode: "",
+    sourceLanguageScrollTop: 0,
   };
 }
 
@@ -666,6 +670,8 @@ export function createTargetLanguageManagerState() {
     chapterId: null,
     languages: [],
     isPickerOpen: false,
+    pickerSelectedLanguageCode: "",
+    pickerScrollTop: 0,
   });
 }
 

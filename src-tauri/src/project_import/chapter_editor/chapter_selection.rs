@@ -431,5 +431,4 @@ pub(super) fn preferred_target_language_code(
                 .find(|language| Some(language.code.as_str()) != selected_source_language_code)
                 .map(|language| language.code.clone())
         })
-        .or_else(|| languages.first().map(|language| language.code.clone()))
 }

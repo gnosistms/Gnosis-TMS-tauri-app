@@ -470,12 +470,16 @@ export function renderSelectPillControl({
   options = [],
 }) {
   const classes = ["select-pill", "select-pill--control", className]
+    .concat(disabled ? ["is-disabled"] : [])
     .filter(Boolean)
     .join(" ");
   const wrapperTooltip = tooltip
     ? tooltipAttributes(tooltip, tooltipOptions)
     : "";
-  const wrapperProps = serializeAttributes(wrapperAttributes);
+  const wrapperProps = serializeAttributes({
+    ...wrapperAttributes,
+    "aria-disabled": disabled ? "true" : false,
+  });
   const attributes = serializeAttributes({
     ...selectAttributes,
     disabled,

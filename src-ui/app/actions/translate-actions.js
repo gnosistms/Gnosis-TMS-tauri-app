@@ -53,6 +53,7 @@ import {
   restoreEditorFieldHistory,
   restoreEditorRow,
   saveActiveEditorRowComment,
+  selectTargetLanguageManagerPickerLanguage,
   selectAllEditorReplaceRows,
   setEditorMode,
   showEditorRowInContext,
@@ -90,9 +91,15 @@ export function createTranslateActions(render) {
       return true;
     }
 
-    const addTargetLanguageMatch = /^add-target-language-manager-language:([a-z]{2})$/.exec(action);
-    if (addTargetLanguageMatch) {
-      addTargetLanguageManagerLanguage(addTargetLanguageMatch[1]);
+    const selectTargetLanguageMatch = /^select-target-language-manager-picker-language:([a-z]{2})$/.exec(action);
+    if (selectTargetLanguageMatch) {
+      selectTargetLanguageManagerPickerLanguage(selectTargetLanguageMatch[1]);
+      render();
+      return true;
+    }
+
+    if (action === "add-target-language-manager-language") {
+      addTargetLanguageManagerLanguage();
       render();
       return true;
     }

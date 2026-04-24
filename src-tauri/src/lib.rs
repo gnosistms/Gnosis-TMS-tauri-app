@@ -95,7 +95,8 @@ use crate::{
     },
     project_import::{
         clear_gtms_editor_imported_conflict, clear_gtms_editor_reviewed_markers,
-        delete_gtms_editor_row_comment, import_xlsx_to_gtms, initialize_gtms_project_repo,
+        delete_gtms_editor_row_comment, import_txt_to_gtms, import_xlsx_to_gtms,
+        initialize_gtms_project_repo,
         insert_gtms_editor_row_after, insert_gtms_editor_row_before, list_local_gtms_project_files,
         load_gtms_chapter_editor_data, load_gtms_editor_field_history, load_gtms_editor_row,
         load_gtms_editor_row_comments, permanently_delete_gtms_chapter,
@@ -556,6 +557,7 @@ pub fn run() {
             overwrite_conflicted_gtms_project_repos,
             initialize_gtms_project_repo,
             import_xlsx_to_gtms,
+            import_txt_to_gtms,
             list_local_gtms_project_files,
             purge_local_gtms_project_repo,
             load_gtms_chapter_editor_data,
