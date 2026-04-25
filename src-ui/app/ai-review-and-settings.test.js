@@ -2180,6 +2180,60 @@ test("persistSelectedTeamAiActionPreferences does not overwrite the current team
   );
 });
 
+test("persistSelectedTeamAiActionPreferences clears the saving state after a successful save", async () => {
+  resetSessionState();
+  state.teams = [
+    createTeamRecord({ teamId: "team-1", teamName: "Team One", githubOrg: "team-one", installationId: 42, canDelete: true }),
+  ];
+  state.selectedTeamId = "team-1";
+  state.auth = {
+    ...state.auth,
+    session: {
+      sessionToken: "broker-session",
+      login: "tester",
+      name: null,
+      avatarUrl: null,
+    },
+  };
+  setActiveStorageLogin("tester");
+  state.aiSettings = {
+    ...state.aiSettings,
+    teamShared: {
+      ...createTeamAiSharedState(),
+      teamId: "team-1",
+      status: "ready",
+      isOwner: true,
+    },
+  };
+
+  invokeHandler = async (command, payload = {}) => {
+    if (command === "save_team_ai_settings") {
+      assert.equal(payload.installationId, 42);
+      return {
+        schemaVersion: 1,
+        updatedAt: "2026-04-25T12:00:00.000Z",
+        updatedBy: "owner-1",
+        actionPreferences: payload.actionPreferences,
+      };
+    }
+
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  await persistSelectedTeamAiActionPreferences(() => {}, {
+    detailedConfiguration: false,
+    unified: {
+      providerId: "openai",
+      modelId: "gpt-5.4-mini",
+    },
+    actions: {},
+  });
+
+  assert.equal(state.aiSettings.teamShared.settingsSaveStatus, "idle");
+  assert.equal(state.aiSettings.teamShared.settingsSaveError, "");
+  assert.equal(aiActionControlsAreBusy(state.aiSettings), false);
+});
+
 test("ensureSelectedTeamAiProviderReady clears team AI caches when team access is lost", async () => {
   resetSessionState();
   installSelectedTeam({ canDelete: false });

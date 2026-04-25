@@ -622,6 +622,8 @@ export async function persistSelectedTeamAiActionPreferences(render, actionPrefe
     const nextTeamShared = {
       ...buildReadyTeamAiState(currentTeamAiSharedState(), context, {
         isOwner: true,
+        settingsSaveStatus: "idle",
+        settingsSaveError: "",
       }),
       settings: normalizeTeamAiSettingsRecord(settingsPayload),
     };
