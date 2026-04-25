@@ -88,7 +88,7 @@ function installBatchImportInvokeHandler({ failFileNames = new Set() } = {}) {
   const calls = [];
   invokeHandler = async (command, payload = {}) => {
     calls.push({ command, payload });
-    if (command === "import_xlsx_to_gtms" || command === "import_txt_to_gtms") {
+    if (command === "import_xlsx_to_gtms" || command === "import_txt_to_gtms" || command === "import_docx_to_gtms") {
       const fileName = payload.input.fileName;
       if (failFileNames.has(fileName)) {
         throw new Error(`Import failed for ${fileName}`);
@@ -106,15 +106,18 @@ function installBatchImportInvokeHandler({ failFileNames = new Set() } = {}) {
   return calls;
 }
 
-test("detectImportFileType supports XLSX and TXT", () => {
+test("detectImportFileType supports XLSX, TXT, and DOCX", () => {
   assert.equal(detectImportFileType("chapter.xlsx"), "xlsx");
   assert.equal(detectImportFileType("chapter.TXT"), "txt");
-  assert.equal(detectImportFileType("chapter.docx"), null);
+  assert.equal(detectImportFileType("chapter.docx"), "docx");
+  assert.equal(detectImportFileType("chapter.pdf"), null);
 });
 
-test("project import accept string includes plain text", () => {
+test("project import accept string includes plain text and DOCX", () => {
   assert.match(PROJECT_IMPORT_ACCEPT, /\.txt/);
   assert.match(PROJECT_IMPORT_ACCEPT, /text\/plain/);
+  assert.match(PROJECT_IMPORT_ACCEPT, /\.docx/);
+  assert.match(PROJECT_IMPORT_ACCEPT, /wordprocessingml\.document/);
 });
 
 test("TXT import selection opens source language step before importing", async () => {
@@ -137,6 +140,28 @@ test("TXT import selection opens source language step before importing", async (
   assert.equal(state.projectImport.status, "selectingSourceLanguage");
   assert.equal(state.projectImport.pendingFileName, "chapter.txt");
   assert.equal(state.projectImport.selectedSourceLanguageCode, "");
+  assert.equal(renderCount, 1);
+});
+
+test("DOCX import selection opens source language step before importing", async () => {
+  resetProjectImportTestState();
+  state.projectImport = {
+    ...state.projectImport,
+    isOpen: true,
+    projectId: "project-1",
+    projectTitle: "Project",
+  };
+  let renderCount = 0;
+
+  await importProjectFile(() => {
+    renderCount += 1;
+  }, {
+    name: "chapter.docx",
+    arrayBuffer: async () => new ArrayBuffer(0),
+  });
+
+  assert.equal(state.projectImport.status, "selectingSourceLanguage");
+  assert.equal(state.projectImport.pendingFileName, "chapter.docx");
   assert.equal(renderCount, 1);
 });
 
@@ -240,7 +265,7 @@ test("batch project import continues after unsupported and failed files", async 
 
   await importProjectFiles(() => {}, [
     importFile("good.xlsx"),
-    importFile("notes.docx"),
+    importFile("notes.pdf"),
     importFile("bad.xlsx"),
     importFile("later.xlsx"),
   ]);
@@ -251,10 +276,10 @@ test("batch project import continues after unsupported and failed files", async 
       .map((call) => call.payload.input.fileName),
     ["good.xlsx", "bad.xlsx", "later.xlsx"],
   );
-  assert.deepEqual(state.projectImport.failedFileNames, ["notes.docx", "bad.xlsx"]);
+  assert.deepEqual(state.projectImport.failedFileNames, ["notes.pdf", "bad.xlsx"]);
 });
 
-test("batch project import asks once for TXT source language and applies it to all TXT files", async () => {
+test("batch project import asks once for text-like source language and applies it to TXT and DOCX files", async () => {
   resetProjectImportTestState();
   state.projectImport = {
     ...state.projectImport,
@@ -269,7 +294,7 @@ test("batch project import asks once for TXT source language and applies it to a
     renderCount += 1;
   }, [
     importFile("one.txt"),
-    importFile("two.txt"),
+    importFile("two.docx"),
   ]);
 
   assert.equal(state.projectImport.status, "selectingSourceLanguage");
@@ -282,9 +307,9 @@ test("batch project import asks once for TXT source language and applies it to a
 
   assert.deepEqual(
     calls
-      .filter((call) => call.command === "import_txt_to_gtms")
-      .map((call) => call.payload.input.sourceLanguageCode),
-    ["ja", "ja"],
+      .filter((call) => call.command === "import_txt_to_gtms" || call.command === "import_docx_to_gtms")
+      .map((call) => [call.command, call.payload.input.sourceLanguageCode]),
+    [["import_txt_to_gtms", "ja"], ["import_docx_to_gtms", "ja"]],
   );
   assert.equal(state.projectImport.isOpen, false);
 });

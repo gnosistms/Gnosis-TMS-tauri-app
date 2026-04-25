@@ -36,3 +36,4 @@ zeroize = "1"
 regex = "1"
 flate2 = "1"
 tar = "0.4"
+zip = { version = "=2.4.2", default-features = false, features = ["deflate-flate2"] }

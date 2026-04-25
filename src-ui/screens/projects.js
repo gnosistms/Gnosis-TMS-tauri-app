@@ -303,7 +303,7 @@ function renderDeletedProjectsSection(state) {
   return `
     ${toggle}
     <section class="stack stack--deleted-projects">
-      <section class="stack">${state.deletedProjects
+      <section class="stack project-card-stack">${state.deletedProjects
         .map((project) =>
           {
             const syncSnapshot = syncSnapshotsByProjectId[project.id] ?? null;
@@ -557,7 +557,7 @@ export function renderProjectsScreen(state) {
         ? errorState
         : state.projects.length === 0
           ? emptyState
-          : `<section class="stack">${state.projects
+          : `<section class="stack project-card-stack">${state.projects
               .map((project) =>
                 renderProjectCard(project, state.expandedProjects.has(project.id), {
                   canManageProjects,

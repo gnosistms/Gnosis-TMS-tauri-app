@@ -1126,8 +1126,6 @@ mod tests {
             }
           }
         });
-        let original_serialized = serde_json::to_string_pretty(&row_value).unwrap();
-
         apply_editor_plain_text_updates(
             &mut row_value,
             &[(String::from("es"), String::from("uno"))]
@@ -1136,9 +1134,10 @@ mod tests {
         )
         .expect("plain text update should succeed");
 
+        assert_eq!(row_value["fields"]["es"]["plain_text"], json!("uno"));
         assert_eq!(
-            serde_json::to_string_pretty(&row_value).unwrap(),
-            original_serialized
+            row_value["fields"]["es"]["html_preview"],
+            json!("<p>uno</p>")
         );
     }
 

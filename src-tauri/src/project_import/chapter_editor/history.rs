@@ -697,9 +697,13 @@ pub(super) fn build_editor_field_history_entries(
     commits: Vec<GitCommitMetadata>,
     historical_field_versions: Vec<Option<HistoricalFieldVersion>>,
 ) -> Vec<EditorFieldHistoryEntry> {
+    let newest_index = historical_field_versions.iter().position(Option::is_some);
     let baseline_index = historical_field_versions.iter().rposition(Option::is_some);
+    let field_signatures: Vec<Option<HistoricalFieldSignature>> = historical_field_versions
+        .iter()
+        .map(|version| version.as_ref().map(HistoricalFieldSignature::from_version))
+        .collect();
     let mut entries = Vec::new();
-    let mut last_recorded_field_signature: Option<HistoricalFieldSignature> = None;
 
     for (index, (commit, historical_field_version)) in commits
         .into_iter()
@@ -716,13 +720,20 @@ pub(super) fn build_editor_field_history_entries(
         let image = editor_field_image_from_stored(repo_path, &field_version.field_value.image);
         let text_style = field_version.text_style.clone();
         let field_signature = HistoricalFieldSignature::from_version(&field_version);
+        let is_newest_entry = newest_index == Some(index);
         let is_baseline_entry = baseline_index == Some(index);
+        let next_older_field_signature = field_signatures
+            .iter()
+            .skip(index + 1)
+            .find_map(Option::as_ref);
 
-        if !is_baseline_entry && last_recorded_field_signature.as_ref() == Some(&field_signature) {
+        if !is_newest_entry
+            && !is_baseline_entry
+            && next_older_field_signature == Some(&field_signature)
+        {
             continue;
         }
 
-        last_recorded_field_signature = Some(field_signature);
         entries.push(EditorFieldHistoryEntry {
             commit_sha: commit.commit_sha,
             author_name: commit.author_name,
@@ -1062,6 +1073,34 @@ mod tests {
         assert_eq!(entries[1].operation_type.as_deref(), Some("insert"));
         assert_eq!(entries[1].plain_text, "");
         assert_eq!(entries[1].text_style, DEFAULT_EDITOR_TEXT_STYLE);
+    }
+
+    #[test]
+    fn build_editor_field_history_entries_skips_unchanged_intermediate_blank_revision() {
+        let entries = build_editor_field_history_entries(
+            Path::new("."),
+            vec![
+                history_commit("c3", Some("ai-translation")),
+                history_commit("c2", Some("ai-translation")),
+                history_commit("c1", Some("import")),
+            ],
+            vec![
+                Some(history_version(
+                    "Xin chao",
+                    DEFAULT_EDITOR_TEXT_STYLE,
+                    false,
+                    false,
+                )),
+                Some(history_version("", DEFAULT_EDITOR_TEXT_STYLE, false, false)),
+                Some(history_version("", DEFAULT_EDITOR_TEXT_STYLE, false, false)),
+            ],
+        );
+
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].commit_sha, "c3");
+        assert_eq!(entries[0].plain_text, "Xin chao");
+        assert_eq!(entries[1].commit_sha, "c1");
+        assert_eq!(entries[1].plain_text, "");
     }
 
     #[test]

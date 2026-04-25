@@ -15,7 +15,7 @@ test("project import modal renders the requested drop target copy", () => {
 
   assert.match(html, /data-project-import-dropzone/);
   assert.match(html, /Drop a file here or click to open a file selector\./);
-  assert.match(html, /Supported formats: \.xlsx or \.txt\./);
+  assert.match(html, /Supported formats: \.xlsx, \.txt, or \.docx\./);
 });
 
 test("project import modal renders validation errors above the drop target", () => {
@@ -36,7 +36,7 @@ test("project import modal renders validation errors above the drop target", () 
   );
 });
 
-test("project import modal renders source language selection step for text files", () => {
+test("project import modal renders source language selection step for text-like files", () => {
   const html = renderProjectImportModal({
     projectImport: {
       isOpen: true,
@@ -66,8 +66,8 @@ test("project import modal renders batch source language copy", () => {
     },
   });
 
-  assert.match(html, /What is the language of these text files\?/);
-  assert.match(html, /Select the language of these text files from the list below\. This will be the source language\./);
+  assert.match(html, /What is the language of these files\?/);
+  assert.match(html, /Select the language of these files from the list below\. This will be the source language\./);
 });
 
 test("project import source language step enables continue after selection", () => {

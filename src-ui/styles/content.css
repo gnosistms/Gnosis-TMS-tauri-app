@@ -160,6 +160,10 @@
   margin-top: 4px;
 }
 
+.project-card-stack {
+  gap: 14.4px;
+}
+
 .list-row {
   display: grid;
   gap: 20px;

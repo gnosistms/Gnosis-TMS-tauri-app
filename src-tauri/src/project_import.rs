@@ -52,8 +52,8 @@ use self::{
         SaveEditorRowCommentInput, SaveEditorRowCommentResponse,
     },
     chapter_import::{
-        import_txt_to_gtms_sync, import_xlsx_to_gtms_sync, ImportTxtInput, ImportXlsxInput,
-        ImportXlsxResponse,
+        import_docx_to_gtms_sync, import_txt_to_gtms_sync, import_xlsx_to_gtms_sync,
+        ImportDocxInput, ImportTxtInput, ImportXlsxInput, ImportXlsxResponse,
     },
     chapter_lifecycle::{
         permanently_delete_gtms_chapter_sync, rename_gtms_chapter_sync,
@@ -90,6 +90,16 @@ pub(crate) async fn import_txt_to_gtms(
     tauri::async_runtime::spawn_blocking(move || import_txt_to_gtms_sync(&app, input))
         .await
         .map_err(|error| format!("The TXT import worker failed: {error}"))?
+}
+
+#[tauri::command]
+pub(crate) async fn import_docx_to_gtms(
+    app: AppHandle,
+    input: ImportDocxInput,
+) -> Result<ImportXlsxResponse, String> {
+    tauri::async_runtime::spawn_blocking(move || import_docx_to_gtms_sync(&app, input))
+        .await
+        .map_err(|error| format!("The DOCX import worker failed: {error}"))?
 }
 
 #[tauri::command]

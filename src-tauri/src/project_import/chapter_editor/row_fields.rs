@@ -16,6 +16,7 @@ fn merge_editor_string_maps(
     let mut merged = BTreeMap::new();
 
     for key in keys {
+        let remote_present = remote.contains_key(&key);
         let base_value = base.get(&key).cloned().unwrap_or_default();
         let local_value = local.get(&key).cloned().unwrap_or_default();
         let remote_value = remote.get(&key).cloned().unwrap_or_default();
@@ -29,6 +30,9 @@ fn merge_editor_string_maps(
         } else {
             return None;
         };
+        if next_value.is_empty() && !local_changed && !remote_changed && !remote_present {
+            continue;
+        }
         merged.insert(key, next_value);
     }
 
@@ -252,6 +256,28 @@ mod tests {
             merged,
             Some(map(&[("es", "hola"), ("en", "hello updated")])),
         );
+    }
+
+    #[test]
+    fn merge_editor_string_maps_does_not_materialize_unchanged_absent_blank_fields() {
+        let merged = merge_editor_string_maps(
+            &map(&[("es", "hola")]),
+            &map(&[("es", "hola"), ("en", "hello"), ("vi", "")]),
+            &map(&[("es", "hola")]),
+        );
+
+        assert_eq!(merged, Some(map(&[("es", "hola"), ("en", "hello")])));
+    }
+
+    #[test]
+    fn merge_editor_string_maps_keeps_intentional_clears() {
+        let merged = merge_editor_string_maps(
+            &map(&[("es", "hola"), ("vi", "xin chao")]),
+            &map(&[("es", "hola"), ("vi", "")]),
+            &map(&[("es", "hola"), ("vi", "xin chao")]),
+        );
+
+        assert_eq!(merged, Some(map(&[("es", "hola"), ("vi", "")])));
     }
 }
 

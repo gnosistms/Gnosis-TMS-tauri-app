@@ -16,7 +16,7 @@ import { ensureProjectNotTombstoned, refreshProjectFilesFromDisk } from "./proje
 import { openLocalFilePicker } from "./local-file-picker.js";
 
 export const PROJECT_IMPORT_ACCEPT =
-  ".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,.txt,text/plain";
+  ".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,.txt,text/plain,.docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document";
 
 export function detectImportFileType(fileName) {
   const normalized = String(fileName || "").trim().toLowerCase();
@@ -26,7 +26,14 @@ export function detectImportFileType(fileName) {
   if (normalized.endsWith(".txt")) {
     return "txt";
   }
+  if (normalized.endsWith(".docx")) {
+    return "docx";
+  }
   return null;
+}
+
+function importFileTypeNeedsSourceLanguage(fileType) {
+  return fileType === "txt" || fileType === "docx";
 }
 
 function readableImportFileLike(value) {
@@ -114,6 +121,39 @@ function projectImportModalState(overrides = {}) {
     ...state.projectImport,
     ...overrides,
   };
+}
+
+function importSummaryNoticeSuffix(result) {
+  const summary = result?.importSummary;
+  if (!summary || typeof summary !== "object") {
+    return "";
+  }
+
+  const details = [];
+  const flattenedListItems = Number(summary.flattenedListItems ?? 0);
+  const flattenedTableRows = Number(summary.flattenedTableRows ?? 0);
+  const importedFootnotes = Number(summary.importedFootnotes ?? 0);
+  const unsupportedCounts =
+    summary.unsupportedContentCounts && typeof summary.unsupportedContentCounts === "object"
+      ? summary.unsupportedContentCounts
+      : {};
+  const unsupportedTotal = Object.values(unsupportedCounts)
+    .reduce((sum, value) => sum + (Number(value) || 0), 0);
+
+  if (flattenedListItems > 0) {
+    details.push(`${flattenedListItems} list ${flattenedListItems === 1 ? "item" : "items"} flattened`);
+  }
+  if (flattenedTableRows > 0) {
+    details.push(`${flattenedTableRows} table ${flattenedTableRows === 1 ? "row" : "rows"} flattened`);
+  }
+  if (importedFootnotes > 0) {
+    details.push(`${importedFootnotes} ${importedFootnotes === 1 ? "footnote" : "footnotes"} preserved`);
+  }
+  if (unsupportedTotal > 0) {
+    details.push(`${unsupportedTotal} unsupported ${unsupportedTotal === 1 ? "item" : "items"} omitted`);
+  }
+
+  return details.length > 0 ? ` ${details.join("; ")}.` : "";
 }
 
 function setProjectImportError(render, message) {
@@ -373,6 +413,19 @@ async function importProjectFileResult(selectedTeam, targetProject, selectedFile
     });
   }
 
+  if (fileType === "docx") {
+    return invoke("import_docx_to_gtms", {
+      input: {
+        installationId: selectedTeam.installationId,
+        projectId: targetProject.id,
+        repoName: targetProject.name,
+        fileName: sourceFileName,
+        bytes,
+        sourceLanguageCode: options.confirmedSourceLanguageCode,
+      },
+    });
+  }
+
   throw new Error(`Unsupported file type for ${sourceFileName}.`);
 }
 
@@ -431,7 +484,7 @@ async function completeProjectImport(render, selectedFile, fileType, options = {
     await refreshProjectFilesFromDisk(render, selectedTeam, [targetProject]);
     await completeProjectsPageSync(render);
     showNoticeBadge(
-      `Imported ${result.unitCount} rows from ${result.sourceFileName} into ${result.projectTitle}`,
+      `Imported ${result.unitCount} rows from ${result.sourceFileName} into ${result.projectTitle}.${importSummaryNoticeSuffix(result)}`,
       render,
     );
   } catch (error) {
@@ -475,12 +528,12 @@ export async function importProjectFile(render, selectedFile, options = {}) {
   const sourceFileName = importFileName(selectedFile);
   const fileType = detectImportFileType(sourceFileName);
   if (!fileType) {
-    const errorMessage = `Unsupported file type for ${sourceFileName}. XLSX and TXT are the supported import formats right now.`;
+    const errorMessage = `Unsupported file type for ${sourceFileName}. XLSX, TXT, and DOCX are the supported import formats right now.`;
     setProjectImportError(render, errorMessage);
     return;
   }
 
-  if (fileType === "txt" && !options.confirmedSourceLanguageCode) {
+  if (importFileTypeNeedsSourceLanguage(fileType) && !options.confirmedSourceLanguageCode) {
     state.projectImport = projectImportModalState({
       status: "selectingSourceLanguage",
       error: "",
@@ -525,7 +578,9 @@ export async function importProjectFiles(render, selectedFiles, options = {}) {
     return;
   }
 
-  const needsSourceLanguage = files.some((file) => detectImportFileType(importFileName(file)) === "txt");
+  const needsSourceLanguage = files.some((file) =>
+    importFileTypeNeedsSourceLanguage(detectImportFileType(importFileName(file)))
+  );
   if (needsSourceLanguage && !options.confirmedSourceLanguageCode) {
     state.projectImport = projectImportModalState({
       status: "selectingSourceLanguage",
@@ -562,7 +617,7 @@ export async function importProjectFiles(render, selectedFiles, options = {}) {
   for (const file of files) {
     const sourceFileName = importFileName(file);
     const fileType = detectImportFileType(sourceFileName);
-    if (!fileType || (fileType === "txt" && !options.confirmedSourceLanguageCode)) {
+    if (!fileType || (importFileTypeNeedsSourceLanguage(fileType) && !options.confirmedSourceLanguageCode)) {
       failedFileNames.push(sourceFileName);
       continue;
     }
