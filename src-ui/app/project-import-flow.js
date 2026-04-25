@@ -42,6 +42,34 @@ function importFileName(value, fallback = "file") {
   return name || fallback;
 }
 
+function droppedPathFileName(path) {
+  const normalizedPath = typeof path === "string" ? path.trim() : "";
+  const name = normalizedPath.split(/[\\/]/).filter(Boolean).pop() ?? "";
+  return name || "file";
+}
+
+function droppedPathImportFile(path) {
+  const normalizedPath = typeof path === "string" ? path.trim() : "";
+  return normalizedPath
+    ? {
+        name: droppedPathFileName(normalizedPath),
+        droppedPath: normalizedPath,
+      }
+    : null;
+}
+
+function droppedPathImportFileLike(value) {
+  return value && typeof value === "object" && typeof value.droppedPath === "string";
+}
+
+function normalizeImportFileList(files) {
+  if (!Array.isArray(files)) {
+    return files ? [files] : [];
+  }
+
+  return files.filter(Boolean);
+}
+
 function decodeBase64ToBytes(dataBase64) {
   const normalized = typeof dataBase64 === "string" ? dataBase64.trim() : "";
   if (!normalized) {
@@ -61,6 +89,15 @@ function decodeBase64ToBytes(dataBase64) {
 }
 
 async function importFileBytes(file) {
+  if (droppedPathImportFileLike(file)) {
+    const droppedFile = await invoke("read_local_dropped_file", { path: file.droppedPath });
+    return importFileBytes({
+      name: typeof droppedFile?.name === "string" ? droppedFile.name : file.name,
+      type: typeof droppedFile?.mimeType === "string" ? droppedFile.mimeType : "",
+      dataBase64: typeof droppedFile?.dataBase64 === "string" ? droppedFile.dataBase64 : "",
+    });
+  }
+
   if (readableImportFileLike(file)) {
     return Array.from(new Uint8Array(await file.arrayBuffer()));
   }
@@ -197,8 +234,11 @@ export function openProjectImportModal(render, projectId) {
     projectTitle: targetProject.title ?? targetProject.name ?? "",
     status: "idle",
     error: "",
+    failedFileNames: [],
     pendingFile: null,
+    pendingFiles: [],
     pendingFileName: "",
+    isBatch: false,
     selectedSourceLanguageCode: "",
     sourceLanguageScrollTop: 0,
   };
@@ -217,11 +257,21 @@ export function cancelProjectImportModal(render) {
     projectTitle: "",
     status: "idle",
     error: "",
+    failedFileNames: [],
     pendingFile: null,
+    pendingFiles: [],
     pendingFileName: "",
+    isBatch: false,
     selectedSourceLanguageCode: "",
     sourceLanguageScrollTop: 0,
   };
+  render();
+}
+
+export function closeProjectImportUploadError(render) {
+  state.projectImport = projectImportModalState({
+    failedFileNames: [],
+  });
   render();
 }
 
@@ -230,14 +280,16 @@ export async function selectProjectImportFile(render) {
     return;
   }
 
-  const selectedFile = await openLocalFilePicker({
+  const selectedFiles = await openLocalFilePicker({
     accept: PROJECT_IMPORT_ACCEPT,
+    multiple: true,
   });
-  if (!selectedFile) {
+  const files = normalizeImportFileList(selectedFiles);
+  if (files.length === 0) {
     return;
   }
 
-  await importProjectFile(render, selectedFile);
+  await importProjectFiles(render, files);
 }
 
 export async function addFilesToProject(render, projectId) {
@@ -262,7 +314,7 @@ export function selectProjectImportSourceLanguage(render, languageCode) {
 }
 
 export async function continueProjectImportText(render) {
-  if (state.projectImport.status !== "selectingSourceLanguage" || !state.projectImport.pendingFile) {
+  if (state.projectImport.status !== "selectingSourceLanguage") {
     return;
   }
 
@@ -271,9 +323,57 @@ export async function continueProjectImportText(render) {
     return;
   }
 
+  if (state.projectImport.isBatch === true) {
+    const pendingFiles = normalizeImportFileList(state.projectImport.pendingFiles);
+    if (pendingFiles.length === 0) {
+      return;
+    }
+
+    await importProjectFiles(render, pendingFiles, {
+      confirmedSourceLanguageCode: sourceLanguageCode,
+    });
+    return;
+  }
+
+  if (!state.projectImport.pendingFile) {
+    return;
+  }
+
   await importProjectFile(render, state.projectImport.pendingFile, {
     confirmedSourceLanguageCode: sourceLanguageCode,
   });
+}
+
+async function importProjectFileResult(selectedTeam, targetProject, selectedFile, fileType, options = {}) {
+  const sourceFileName = importFileName(selectedFile);
+  const bytes = await importFileBytes(selectedFile);
+
+  if (fileType === "xlsx") {
+    return invoke("import_xlsx_to_gtms", {
+      input: {
+        installationId: selectedTeam.installationId,
+        projectId: targetProject.id,
+        repoName: targetProject.name,
+        fileName: sourceFileName,
+        bytes,
+      },
+    });
+  }
+
+  if (fileType === "txt") {
+    return invoke("import_txt_to_gtms", {
+      input: {
+        installationId: selectedTeam.installationId,
+        projectId: targetProject.id,
+        repoName: targetProject.name,
+        fileName: sourceFileName,
+        bytes,
+        sourceLanguageCode: options.confirmedSourceLanguageCode,
+      },
+    });
+  }
+
+  throw new Error(`Unsupported file type for ${sourceFileName}.`);
 }
 
 async function completeProjectImport(render, selectedFile, fileType, options = {}) {
@@ -306,31 +406,7 @@ async function completeProjectImport(render, selectedFile, fileType, options = {
   await waitForNextPaint();
 
   try {
-    const bytes = await importFileBytes(selectedFile);
-    let result;
-    if (fileType === "xlsx") {
-      result = await invoke("import_xlsx_to_gtms", {
-        input: {
-          installationId: selectedTeam.installationId,
-          projectId: targetProject.id,
-          repoName: targetProject.name,
-          fileName: sourceFileName,
-          bytes,
-        },
-      });
-    }
-    if (fileType === "txt") {
-      result = await invoke("import_txt_to_gtms", {
-        input: {
-          installationId: selectedTeam.installationId,
-          projectId: targetProject.id,
-          repoName: targetProject.name,
-          fileName: sourceFileName,
-          bytes,
-          sourceLanguageCode: options.confirmedSourceLanguageCode,
-        },
-      });
-    }
+    const result = await importProjectFileResult(selectedTeam, targetProject, selectedFile, fileType, options);
 
     state.projectImport = {
       ...state.projectImport,
@@ -341,7 +417,10 @@ async function completeProjectImport(render, selectedFile, fileType, options = {
       error: "",
       result,
       pendingFile: null,
+      pendingFiles: [],
       pendingFileName: "",
+      failedFileNames: [],
+      isBatch: false,
       selectedSourceLanguageCode: "",
       sourceLanguageScrollTop: 0,
     };
@@ -360,7 +439,10 @@ async function completeProjectImport(render, selectedFile, fileType, options = {
       status: "error",
       error: error instanceof Error ? error.message : String(error),
       pendingFile: null,
+      pendingFiles: [],
       pendingFileName: "",
+      failedFileNames: [],
+      isBatch: false,
       selectedSourceLanguageCode: "",
       sourceLanguageScrollTop: 0,
     });
@@ -414,12 +496,136 @@ export async function importProjectFile(render, selectedFile, options = {}) {
   await completeProjectImport(render, selectedFile, fileType, options);
 }
 
+export async function importProjectFiles(render, selectedFiles, options = {}) {
+  if (state.projectImport.status === "importing") {
+    return;
+  }
+
+  const files = normalizeImportFileList(selectedFiles);
+  if (files.length === 0) {
+    return;
+  }
+
+  if (files.length === 1) {
+    await importProjectFile(render, files[0], options);
+    return;
+  }
+
+  const projectId = state.projectImport.projectId;
+  const selectedTeam = state.teams.find((team) => team.id === state.selectedTeamId);
+  const targetProject =
+    state.projects.find((project) => project.id === projectId) ??
+    state.deletedProjects.find((project) => project.id === projectId);
+  if (!Number.isFinite(selectedTeam?.installationId) || !targetProject) {
+    showNoticeBadge("Could not determine which project to add the files to.", render);
+    return;
+  }
+
+  if (await ensureProjectNotTombstoned(render, selectedTeam, targetProject)) {
+    return;
+  }
+
+  const needsSourceLanguage = files.some((file) => detectImportFileType(importFileName(file)) === "txt");
+  if (needsSourceLanguage && !options.confirmedSourceLanguageCode) {
+    state.projectImport = projectImportModalState({
+      status: "selectingSourceLanguage",
+      error: "",
+      pendingFile: null,
+      pendingFiles: files,
+      pendingFileName: "",
+      failedFileNames: [],
+      isBatch: true,
+      selectedSourceLanguageCode: "",
+      sourceLanguageScrollTop: 0,
+    });
+    render();
+    return;
+  }
+
+  const failedFileNames = [];
+  const importedResults = [];
+
+  state.projectImport = projectImportModalState({
+    status: "importing",
+    error: "",
+    pendingFile: null,
+    pendingFiles: files,
+    pendingFileName: "",
+    failedFileNames: [],
+    isBatch: true,
+  });
+  beginProjectsPageSync();
+  showScopedSyncBadge("projects", "Adding files...", render);
+  render();
+  await waitForNextPaint();
+
+  for (const file of files) {
+    const sourceFileName = importFileName(file);
+    const fileType = detectImportFileType(sourceFileName);
+    if (!fileType || (fileType === "txt" && !options.confirmedSourceLanguageCode)) {
+      failedFileNames.push(sourceFileName);
+      continue;
+    }
+
+    try {
+      const result = await importProjectFileResult(selectedTeam, targetProject, file, fileType, options);
+      importedResults.push(result);
+      applyImportedFileToProject(selectedTeam, projectId, result);
+    } catch {
+      failedFileNames.push(sourceFileName);
+    }
+  }
+
+  state.projectImport = {
+    ...state.projectImport,
+    isOpen: false,
+    projectId: null,
+    projectTitle: "",
+    status: importedResults.length > 0 ? "ready" : "error",
+    error: "",
+    result: importedResults[importedResults.length - 1] ?? null,
+    pendingFile: null,
+    pendingFiles: [],
+    pendingFileName: "",
+    failedFileNames,
+    isBatch: false,
+    selectedSourceLanguageCode: "",
+    sourceLanguageScrollTop: 0,
+  };
+  render();
+
+  if (importedResults.length > 0) {
+    await waitForNextPaint();
+    await reconcileProjectRepoSyncStates(render, selectedTeam, [targetProject]);
+    await refreshProjectFilesFromDisk(render, selectedTeam, [targetProject]);
+    await completeProjectsPageSync(render);
+    showNoticeBadge(
+      `Imported ${importedResults.length} ${importedResults.length === 1 ? "file" : "files"} into ${targetProject.title ?? targetProject.name}`,
+      render,
+    );
+    return;
+  }
+
+  clearScopedSyncBadge("projects", render);
+  failProjectsPageSync();
+  showNoticeBadge("No files were imported.", render);
+  render();
+}
+
 export async function handleDroppedProjectImportFile(render, file) {
   if (!state.projectImport.isOpen || state.projectImport.status === "importing") {
     return;
   }
 
   await importProjectFile(render, file);
+}
+
+export async function handleDroppedProjectImportFiles(render, files) {
+  if (!state.projectImport.isOpen || state.projectImport.status === "importing") {
+    return;
+  }
+
+  await importProjectFiles(render, files);
 }
 
 export async function handleDroppedProjectImportPath(render, path) {
@@ -438,4 +644,24 @@ export async function handleDroppedProjectImportPath(render, path) {
   } catch (error) {
     setProjectImportError(render, error instanceof Error ? error.message : String(error));
   }
+}
+
+export async function handleDroppedProjectImportPaths(render, paths) {
+  if (!state.projectImport.isOpen || state.projectImport.status === "importing") {
+    return;
+  }
+
+  const files = Array.isArray(paths)
+    ? paths.map(droppedPathImportFile).filter(Boolean)
+    : [];
+  if (files.length === 0) {
+    return;
+  }
+
+  if (files.length === 1) {
+    await handleDroppedProjectImportPath(render, files[0].droppedPath);
+    return;
+  }
+
+  await importProjectFiles(render, files);
 }

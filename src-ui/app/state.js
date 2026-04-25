@@ -287,7 +287,10 @@ export function createProjectImportState() {
     error: "",
     result: null,
     pendingFile: null,
+    pendingFiles: [],
     pendingFileName: "",
+    failedFileNames: [],
+    isBatch: false,
     selectedSourceLanguageCode: "",
     sourceLanguageScrollTop: 0,
   };

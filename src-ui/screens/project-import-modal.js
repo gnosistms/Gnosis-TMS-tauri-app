@@ -19,6 +19,7 @@ function renderSourceLanguageOption(language, selectedCode) {
 
 function renderSourceLanguageStep(modal) {
   const selectedCode = String(modal.selectedSourceLanguageCode ?? "").trim().toLowerCase();
+  const isBatch = modal.isBatch === true;
   const languages = isoLanguageOptions
     .slice()
     .sort((left, right) => left.name.localeCompare(right.name));
@@ -28,8 +29,8 @@ function renderSourceLanguageStep(modal) {
       <section class="card modal-card modal-card--compact modal-card--language-picker">
         <div class="card__body modal-card__body language-picker-modal">
           <p class="card__eyebrow">SOURCE LANGUAGE</p>
-          <h2 class="modal__title">What is the language of this file?</h2>
-          <p class="modal__supporting">Select the language of this file from the list below. This will be the source language.</p>
+          <h2 class="modal__title">What is the language of ${isBatch ? "these text files" : "this file"}?</h2>
+          <p class="modal__supporting">Select the language of ${isBatch ? "these text files" : "this file"} from the list below. This will be the source language.</p>
           <div class="language-picker-modal__list" role="list" data-project-import-source-language-list>
             ${languages.map((language) => renderSourceLanguageOption(language, selectedCode)).join("")}
           </div>
@@ -43,8 +44,40 @@ function renderSourceLanguageStep(modal) {
   `;
 }
 
+function renderProjectImportBatchErrorModal(modal) {
+  const failedFileNames = Array.isArray(modal?.failedFileNames)
+    ? modal.failedFileNames.filter((fileName) => String(fileName ?? "").trim())
+    : [];
+  if (failedFileNames.length === 0) {
+    return "";
+  }
+
+  return `
+    <div class="modal-backdrop">
+      <section class="card modal-card modal-card--compact">
+        <div class="card__body modal-card__body">
+          <p class="card__eyebrow">FILE UPLOAD ERROR</p>
+          <h2 class="modal__title">Some files were not uploaded</h2>
+          <p class="modal__supporting">The following files did not upload successfully:</p>
+          <ul class="modal__list">
+            ${failedFileNames.map((fileName) => `<li>${escapeHtml(fileName)}</li>`).join("")}
+          </ul>
+          <div class="modal__actions">
+            ${primaryButton("Ok", "close-project-import-upload-error")}
+          </div>
+        </div>
+      </section>
+    </div>
+  `;
+}
+
 export function renderProjectImportModal(state) {
   const modal = state.projectImport;
+  const batchErrorMarkup = renderProjectImportBatchErrorModal(modal);
+  if (batchErrorMarkup) {
+    return batchErrorMarkup;
+  }
+
   if (!modal?.isOpen) {
     return "";
   }

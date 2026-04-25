@@ -1,8 +1,9 @@
-export function openLocalFilePicker({ accept = "" } = {}) {
+export function openLocalFilePicker({ accept = "", multiple = false } = {}) {
   return new Promise((resolve) => {
     const input = document.createElement("input");
     input.type = "file";
     input.accept = accept;
+    input.multiple = multiple === true;
     input.style.display = "none";
 
     const cleanup = () => {
@@ -14,7 +15,9 @@ export function openLocalFilePicker({ accept = "" } = {}) {
     };
 
     const handleChange = () => {
-      const file = input.files?.[0] ?? null;
+      const file = multiple === true
+        ? Array.from(input.files ?? [])
+        : input.files?.[0] ?? null;
       cleanup();
       resolve(file);
     };

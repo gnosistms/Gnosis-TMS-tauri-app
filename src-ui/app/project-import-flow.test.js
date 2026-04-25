@@ -1,6 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
+let invokeHandler = async () => null;
+
 globalThis.document = {
   testScrollList: null,
   querySelector() {
@@ -13,23 +15,31 @@ globalThis.document = {
 globalThis.window = {
   __TAURI__: {
     core: {
-      invoke: async () => null,
+      invoke: async (...args) => invokeHandler(...args),
     },
     event: {
       listen: async () => () => {},
     },
   },
   setTimeout(callback) {
+    callback?.();
     return 1;
   },
   clearTimeout() {},
+  requestAnimationFrame(callback) {
+    callback?.();
+    return 1;
+  },
 };
 
 const {
   buildImportedFileEntry,
   cancelProjectImportModal,
+  closeProjectImportUploadError,
+  continueProjectImportText,
   detectImportFileType,
   importProjectFile,
+  importProjectFiles,
   PROJECT_IMPORT_ACCEPT,
   selectProjectImportSourceLanguage,
 } = await import("./project-import-flow.js");
@@ -42,7 +52,58 @@ function resetProjectImportTestState() {
   state.projects = [{ id: "project-1", name: "project-repo", title: "Project" }];
   state.deletedProjects = [];
   state.offline = { isEnabled: false };
+  state.auth = {
+    session: {
+      sessionToken: "session-token",
+    },
+  };
+  state.projectRepoSyncByProjectId = {};
+  state.pendingChapterMutations = [];
+  invokeHandler = async () => null;
   globalThis.document.testScrollList = null;
+}
+
+function importFile(name, content = "content") {
+  return {
+    name,
+    arrayBuffer: async () => new TextEncoder().encode(content).buffer,
+  };
+}
+
+function importedResult(fileName, index = 1) {
+  return {
+    chapterId: `chapter-${index}`,
+    fileTitle: fileName.replace(/\.[^.]+$/, ""),
+    projectTitle: "Project",
+    sourceFileName: fileName,
+    unitCount: 1,
+    languages: [{ code: "en", name: "English", role: "source" }],
+    sourceWordCounts: { en: 1 },
+    selectedSourceLanguageCode: "en",
+    selectedTargetLanguageCode: null,
+  };
+}
+
+function installBatchImportInvokeHandler({ failFileNames = new Set() } = {}) {
+  const calls = [];
+  invokeHandler = async (command, payload = {}) => {
+    calls.push({ command, payload });
+    if (command === "import_xlsx_to_gtms" || command === "import_txt_to_gtms") {
+      const fileName = payload.input.fileName;
+      if (failFileNames.has(fileName)) {
+        throw new Error(`Import failed for ${fileName}`);
+      }
+      return importedResult(fileName, calls.length);
+    }
+    if (command === "reconcile_project_repo_sync_states") {
+      return [];
+    }
+    if (command === "list_local_gtms_project_files") {
+      return [];
+    }
+    throw new Error(`Unexpected command: ${command}`);
+  };
+  return calls;
 }
 
 test("detectImportFileType supports XLSX and TXT", () => {
@@ -137,6 +198,107 @@ test("canceling project import clears pending TXT state", () => {
   assert.equal(state.projectImport.pendingFileName, "");
   assert.equal(state.projectImport.selectedSourceLanguageCode, "");
   assert.equal(state.projectImport.sourceLanguageScrollTop, 0);
+});
+
+test("batch project import imports valid XLSX files and refreshes once", async () => {
+  resetProjectImportTestState();
+  state.projectImport = {
+    ...state.projectImport,
+    isOpen: true,
+    projectId: "project-1",
+    projectTitle: "Project",
+  };
+  const calls = installBatchImportInvokeHandler();
+
+  await importProjectFiles(() => {}, [
+    importFile("one.xlsx"),
+    importFile("two.xlsx"),
+  ]);
+
+  assert.deepEqual(
+    calls
+      .filter((call) => call.command === "import_xlsx_to_gtms")
+      .map((call) => call.payload.input.fileName),
+    ["one.xlsx", "two.xlsx"],
+  );
+  assert.equal(calls.filter((call) => call.command === "list_local_gtms_project_files").length, 1);
+  assert.equal(state.projectImport.failedFileNames.length, 0);
+  assert.equal(state.projectImport.isOpen, false);
+});
+
+test("batch project import continues after unsupported and failed files", async () => {
+  resetProjectImportTestState();
+  state.projectImport = {
+    ...state.projectImport,
+    isOpen: true,
+    projectId: "project-1",
+    projectTitle: "Project",
+  };
+  const calls = installBatchImportInvokeHandler({
+    failFileNames: new Set(["bad.xlsx"]),
+  });
+
+  await importProjectFiles(() => {}, [
+    importFile("good.xlsx"),
+    importFile("notes.docx"),
+    importFile("bad.xlsx"),
+    importFile("later.xlsx"),
+  ]);
+
+  assert.deepEqual(
+    calls
+      .filter((call) => call.command === "import_xlsx_to_gtms")
+      .map((call) => call.payload.input.fileName),
+    ["good.xlsx", "bad.xlsx", "later.xlsx"],
+  );
+  assert.deepEqual(state.projectImport.failedFileNames, ["notes.docx", "bad.xlsx"]);
+});
+
+test("batch project import asks once for TXT source language and applies it to all TXT files", async () => {
+  resetProjectImportTestState();
+  state.projectImport = {
+    ...state.projectImport,
+    isOpen: true,
+    projectId: "project-1",
+    projectTitle: "Project",
+  };
+  const calls = installBatchImportInvokeHandler();
+  let renderCount = 0;
+
+  await importProjectFiles(() => {
+    renderCount += 1;
+  }, [
+    importFile("one.txt"),
+    importFile("two.txt"),
+  ]);
+
+  assert.equal(state.projectImport.status, "selectingSourceLanguage");
+  assert.equal(state.projectImport.isBatch, true);
+  assert.equal(state.projectImport.pendingFiles.length, 2);
+  assert.equal(renderCount, 1);
+
+  state.projectImport.selectedSourceLanguageCode = "ja";
+  await continueProjectImportText(() => {});
+
+  assert.deepEqual(
+    calls
+      .filter((call) => call.command === "import_txt_to_gtms")
+      .map((call) => call.payload.input.sourceLanguageCode),
+    ["ja", "ja"],
+  );
+  assert.equal(state.projectImport.isOpen, false);
+});
+
+test("closing grouped upload error clears failed filenames", () => {
+  resetProjectImportTestState();
+  state.projectImport = {
+    ...state.projectImport,
+    failedFileNames: ["bad.docx"],
+  };
+
+  closeProjectImportUploadError(() => {});
+
+  assert.deepEqual(state.projectImport.failedFileNames, []);
 });
 
 test("imported TXT chapter entry does not fall back to source as target", () => {

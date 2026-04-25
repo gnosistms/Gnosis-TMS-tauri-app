@@ -18,8 +18,8 @@ import {
 } from "./glossary-ruby.js";
 import { syncGlossaryTermInlineStyleButtons } from "./glossary-term-inline-markup-flow.js";
 import {
-  handleDroppedProjectImportFile,
-  handleDroppedProjectImportPath,
+  handleDroppedProjectImportFiles,
+  handleDroppedProjectImportPaths,
 } from "./project-import-flow.js";
 import {
   handleDroppedGlossaryImportFile,
@@ -108,16 +108,17 @@ function focusEditorSearchInput(selectContents = false) {
   return true;
 }
 
-function droppedProjectImportFile(dataTransfer) {
-  const directFile = dataTransfer?.files?.[0];
-  if (directFile) {
-    return directFile;
+function droppedProjectImportFiles(dataTransfer) {
+  const directFiles = Array.from(dataTransfer?.files ?? []).filter(Boolean);
+  if (directFiles.length > 0) {
+    return directFiles;
   }
 
   if (!dataTransfer?.items) {
-    return null;
+    return [];
   }
 
+  const files = [];
   for (const item of Array.from(dataTransfer.items)) {
     if (item?.kind !== "file" || typeof item.getAsFile !== "function") {
       continue;
@@ -125,11 +126,11 @@ function droppedProjectImportFile(dataTransfer) {
 
     const file = item.getAsFile();
     if (file) {
-      return file;
+      files.push(file);
     }
   }
 
-  return null;
+  return files;
 }
 
 function nativeDropPosition(event) {
@@ -1118,16 +1119,17 @@ export function registerAppEvents(render) {
     const droppedPaths = Array.isArray(event?.payload?.paths)
       ? event.payload.paths
       : [];
-    const droppedPath = droppedPaths.find((value) => typeof value === "string" && value.trim());
-    if (!droppedPath) {
+    const importPaths = droppedPaths.filter((value) => typeof value === "string" && value.trim());
+    if (importPaths.length === 0) {
       return;
     }
 
     if (projectImportDropzoneFromNativeDropEvent(event)) {
-      void handleDroppedProjectImportPath(render, droppedPath);
+      void handleDroppedProjectImportPaths(render, importPaths);
       return;
     }
 
+    const droppedPath = importPaths[0];
     if (glossaryImportDropzoneFromNativeDropEvent(event)) {
       void handleDroppedGlossaryImportPath(render, droppedPath);
     }
@@ -1315,16 +1317,17 @@ export function registerAppEvents(render) {
 
     event.preventDefault();
     dropzone.classList.remove("is-native-drag-over");
-    const file = droppedProjectImportFile(event.dataTransfer);
-    if (!file) {
+    const files = droppedProjectImportFiles(event.dataTransfer);
+    if (files.length === 0) {
       return;
     }
 
     if (projectDropzone instanceof HTMLElement) {
-      void handleDroppedProjectImportFile(render, file);
+      void handleDroppedProjectImportFiles(render, files);
       return;
     }
 
+    const file = files[0];
     void handleDroppedGlossaryImportFile(render, file);
   });
 

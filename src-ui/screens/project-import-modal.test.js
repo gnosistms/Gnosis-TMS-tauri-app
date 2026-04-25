@@ -54,6 +54,22 @@ test("project import modal renders source language selection step for text files
   assert.match(html, /data-action="continue-project-import-text" disabled/);
 });
 
+test("project import modal renders batch source language copy", () => {
+  const html = renderProjectImportModal({
+    projectImport: {
+      isOpen: true,
+      projectTitle: "Translation Project",
+      status: "selectingSourceLanguage",
+      error: "",
+      isBatch: true,
+      selectedSourceLanguageCode: "",
+    },
+  });
+
+  assert.match(html, /What is the language of these text files\?/);
+  assert.match(html, /Select the language of these text files from the list below\. This will be the source language\./);
+});
+
 test("project import source language step enables continue after selection", () => {
   const html = renderProjectImportModal({
     projectImport: {
@@ -67,4 +83,20 @@ test("project import source language step enables continue after selection", () 
 
   assert.match(html, /class="language-picker-modal__option is-selected"/);
   assert.doesNotMatch(html, /data-action="continue-project-import-text" disabled/);
+});
+
+test("project import modal renders grouped upload failures", () => {
+  const html = renderProjectImportModal({
+    projectImport: {
+      isOpen: false,
+      failedFileNames: ["bad.docx", "<bad>.xlsx"],
+    },
+  });
+
+  assert.match(html, /FILE UPLOAD ERROR/);
+  assert.match(html, /Some files were not uploaded/);
+  assert.match(html, /The following files did not upload successfully:/);
+  assert.match(html, /bad\.docx/);
+  assert.match(html, /&lt;bad&gt;\.xlsx/);
+  assert.match(html, /data-action="close-project-import-upload-error"/);
 });

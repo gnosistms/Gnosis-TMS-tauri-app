@@ -35,6 +35,7 @@ import {
 import {
   addFilesToProject,
   cancelProjectImportModal,
+  closeProjectImportUploadError,
   continueProjectImportText,
   selectProjectImportFile,
   selectProjectImportSourceLanguage,
@@ -51,6 +52,7 @@ export function createProjectActions(render) {
     "cancel-chapter-rename": () => cancelChapterRename(render),
     "clear-project-search": () => clearProjectSearch(render),
     "cancel-project-import": () => cancelProjectImportModal(render),
+    "close-project-import-upload-error": () => closeProjectImportUploadError(render),
     "continue-project-import-text": () => continueProjectImportText(render),
     "select-project-import-file": () => selectProjectImportFile(render),
     "load-more-project-search-results": () => loadMoreProjectSearchResults(render),

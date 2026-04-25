@@ -35,6 +35,6 @@ test("events route native project import drops to the visible project import dro
   assert.match(source, /return visibleDropzone/);
   assert.match(source, /if \(projectImportDropzoneFromNativeDropEvent\(event\)\) \{/);
   assert.match(source, /if \(glossaryImportDropzoneFromNativeDropEvent\(event\)\) \{/);
-  assert.match(source, /void handleDroppedProjectImportPath\(render, droppedPath\)/);
+  assert.match(source, /void handleDroppedProjectImportPaths\(render, importPaths\)/);
   assert.match(source, /void handleDroppedGlossaryImportPath\(render, droppedPath\)/);
 });

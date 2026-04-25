@@ -9,6 +9,10 @@ use crate::ai::{
 const OPENAI_RESPONSES_API_URL: &str = "https://api.openai.com/v1/responses";
 const OPENAI_MODELS_API_URL: &str = "https://api.openai.com/v1/models";
 const OPENAI_PROBE_MAX_OUTPUT_TOKENS: u32 = 16;
+const MIN_RECOMMENDED_OPENAI_MODEL_VERSION: OpenAiModelVersion = OpenAiModelVersion {
+    major: 5,
+    minor: Some(4),
+};
 
 #[derive(Debug, Serialize)]
 struct OpenAiResponsesRequest<'a> {
@@ -103,6 +107,14 @@ impl OpenAiModelFamily {
             Self::General => None,
             Self::Mini => Some("-mini"),
             Self::Nano => Some("-nano"),
+        }
+    }
+
+    fn picker_rank(self) -> u8 {
+        match self {
+            Self::General => 0,
+            Self::Mini => 1,
+            Self::Nano => 2,
         }
     }
 }
@@ -303,23 +315,37 @@ fn is_hidden_gpt_pro_model(model_id: &str) -> bool {
 }
 
 fn shortlist_recommended_models(models: &[AiProviderModel]) -> Vec<AiProviderModel> {
-    OpenAiModelFamily::recommended_ordered()
+    let mut recommended_models = models
+        .iter()
+        .filter_map(|model| {
+            parse_recommended_openai_model(&model.id)
+                .map(|(version, family)| (version, family, model.clone()))
+        })
+        .filter(|(version, _family, _model)| *version >= MIN_RECOMMENDED_OPENAI_MODEL_VERSION)
+        .collect::<Vec<_>>();
+
+    recommended_models.sort_by(|left, right| {
+        right
+            .0
+            .cmp(&left.0)
+            .then_with(|| left.1.picker_rank().cmp(&right.1.picker_rank()))
+            .then_with(|| left.2.label.cmp(&right.2.label))
+    });
+
+    recommended_models
         .into_iter()
-        .filter_map(|family| latest_openai_model_for_family(models, family))
+        .map(|(_version, _family, model)| model)
         .collect()
 }
 
-fn latest_openai_model_for_family(
-    models: &[AiProviderModel],
-    family: OpenAiModelFamily,
-) -> Option<AiProviderModel> {
-    models
-        .iter()
-        .filter_map(|model| {
-            parse_openai_model_version_for_family(&model.id, family).map(|version| (version, model))
-        })
-        .max_by_key(|(version, _model)| *version)
-        .map(|(_version, model)| model.clone())
+fn parse_recommended_openai_model(
+    model_id: &str,
+) -> Option<(OpenAiModelVersion, OpenAiModelFamily)> {
+    OpenAiModelFamily::recommended_ordered()
+        .into_iter()
+        .find_map(|family| parse_openai_model_version_for_family(model_id, family).map(|version| {
+            (version, family)
+        }))
 }
 
 fn parse_openai_model_version_for_family(
@@ -501,7 +527,7 @@ mod tests {
     }
 
     #[test]
-    fn shortlist_recommended_models_keeps_only_latest_model_per_family() {
+    fn shortlist_recommended_models_keeps_all_picker_models_from_gpt_5_4_upward() {
         let models = vec![
             AiProviderModel {
                 id: "gpt-5".to_string(),
@@ -536,6 +562,18 @@ mod tests {
                 label: "gpt-5.4-nano".to_string(),
             },
             AiProviderModel {
+                id: "gpt-5.5".to_string(),
+                label: "gpt-5.5".to_string(),
+            },
+            AiProviderModel {
+                id: "gpt-5.5-mini".to_string(),
+                label: "gpt-5.5-mini".to_string(),
+            },
+            AiProviderModel {
+                id: "gpt-5.5-nano".to_string(),
+                label: "gpt-5.5-nano".to_string(),
+            },
+            AiProviderModel {
                 id: "gpt-5.4-2026-01-15".to_string(),
                 label: "gpt-5.4-2026-01-15".to_string(),
             },
@@ -551,12 +589,30 @@ mod tests {
             .map(|model| model.id)
             .collect::<Vec<_>>();
 
-        assert_eq!(ids, vec!["gpt-5.4", "gpt-5.4-mini", "gpt-5.4-nano"]);
+        assert_eq!(
+            ids,
+            vec![
+                "gpt-5.5",
+                "gpt-5.5-mini",
+                "gpt-5.5-nano",
+                "gpt-5.4",
+                "gpt-5.4-mini",
+                "gpt-5.4-nano",
+            ]
+        );
     }
 
     #[test]
-    fn shortlist_recommended_models_prefers_newer_major_family_when_present() {
+    fn shortlist_recommended_models_keeps_newer_major_family_alongside_5_x_models() {
         let models = vec![
+            AiProviderModel {
+                id: "gpt-5.4".to_string(),
+                label: "gpt-5.4".to_string(),
+            },
+            AiProviderModel {
+                id: "gpt-5.4-mini".to_string(),
+                label: "gpt-5.4-mini".to_string(),
+            },
             AiProviderModel {
                 id: "gpt-5.5".to_string(),
                 label: "gpt-5.5".to_string(),
@@ -597,7 +653,19 @@ mod tests {
             .map(|model| model.id)
             .collect::<Vec<_>>();
 
-        assert_eq!(ids, vec!["gpt-6", "gpt-6-mini", "gpt-6-nano"]);
+        assert_eq!(
+            ids,
+            vec![
+                "gpt-6",
+                "gpt-6-mini",
+                "gpt-6-nano",
+                "gpt-5.5",
+                "gpt-5.5-mini",
+                "gpt-5.5-nano",
+                "gpt-5.4",
+                "gpt-5.4-mini",
+            ]
+        );
     }
 
     #[test]
