@@ -5,6 +5,7 @@ const {
   EDITOR_ROW_GAP_PX,
   hasEditorVirtualWindowCoverageGap,
   nextScheduledEditorRenderReason,
+  resolveEditorVirtualRangeState,
   shouldDeferMeasuredWindowReconcile,
 } = await import("./editor-virtualization-shared.js");
 
@@ -71,5 +72,37 @@ test("hasEditorVirtualWindowCoverageGap ignores lower viewport space after the f
       lastRowBottom: 400,
     }),
     false,
+  );
+});
+
+test("resolveEditorVirtualRangeState converts virtual items into spacer heights", () => {
+  assert.deepEqual(
+    resolveEditorVirtualRangeState(
+      [
+        { index: 3, start: 300, end: 380 },
+        { index: 4, start: 404, end: 520 },
+      ],
+      1000,
+    ),
+    {
+      startIndex: 3,
+      endIndex: 5,
+      topSpacerHeight: 300,
+      bottomSpacerHeight: 480,
+      rangeKey: "3:5",
+    },
+  );
+});
+
+test("resolveEditorVirtualRangeState handles an empty virtual range", () => {
+  assert.deepEqual(
+    resolveEditorVirtualRangeState([], 240),
+    {
+      startIndex: 0,
+      endIndex: 0,
+      topSpacerHeight: 0,
+      bottomSpacerHeight: 240,
+      rangeKey: "0:0",
+    },
   );
 });

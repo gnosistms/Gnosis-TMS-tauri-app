@@ -9,6 +9,7 @@ import {
 } from "./editor-image-debug.js";
 import {
   EDITOR_RECONCILES_GLOSSARY_VISIBLE_LAYOUT,
+  EDITOR_USES_TANSTACK_VIRTUALIZER,
   EDITOR_USES_DEFERRED_SCROLL_RECONCILE,
 } from "./editor-scroll-policy.js";
 import {
@@ -31,6 +32,7 @@ import {
 } from "./editor-virtualization-shared.js";
 import { buildEditorScreenViewModel } from "./editor-screen-model.js";
 import { renderTranslationContentRowsRange } from "./editor-row-render.js";
+import { createEditorVirtualListController } from "./editor-virtual-list.js";
 
 let activeController = null;
 
@@ -418,6 +420,22 @@ export function initializeEditorVirtualization(root, appState) {
     : null;
   const shouldDeferScrollReconcile = EDITOR_USES_DEFERRED_SCROLL_RECONCILE;
   const shouldReconcileGlossaryVisibleLayout = EDITOR_RECONCILES_GLOSSARY_VISIBLE_LAYOUT;
+  if (EDITOR_USES_TANSTACK_VIRTUALIZER && shouldVirtualize) {
+    const tanstackController = createEditorVirtualListController({
+      root,
+      appState,
+      scrollContainer,
+      itemsContainer,
+      topSpacer,
+      bottomSpacer,
+      rowHeightCache,
+    });
+    if (tanstackController) {
+      activeController = tanstackController;
+      return;
+    }
+  }
+
   let currentRangeKey = "";
   let animationFrameId = 0;
   const deferredRowHeightCache = new Map();

@@ -103,7 +103,13 @@ globalThis.navigator = globalThis.window.navigator;
 
 const { resetSessionState, state } = await import("./state.js");
 const { saveStoredTeamRecords, setActiveStorageLogin } = await import("./team-storage.js");
-const { makeOrganizationAdmin, revokeOrganizationAdmin } = await import("./team-members-flow.js");
+const {
+  confirmTeamMemberOwnerPromotion,
+  makeOrganizationAdmin,
+  openTeamMemberOwnerPromotion,
+  revokeOrganizationAdmin,
+} = await import("./team-members-flow.js");
+const { renderUsersScreen } = await import("../screens/users.js");
 
 function createDeferred() {
   let resolve;
@@ -381,4 +387,241 @@ test("stale admin-role completion does not reload members for a different select
       "list_accessible_github_app_installations",
     ],
   );
+});
+
+test("members screen shows owner promotion only to owners for non-owner users", () => {
+  installFixture({
+    teams: [
+      teamRecord({
+        canDelete: true,
+        canManageMembers: true,
+      }),
+    ],
+    users: [
+      {
+        id: "owner",
+        username: "owner",
+        name: "Owner",
+        role: "Owner",
+        isCurrentUser: true,
+      },
+      {
+        id: "alice",
+        username: "alice",
+        name: "Alice",
+        role: "Translator",
+      },
+    ],
+  });
+
+  const html = renderUsersScreen(state);
+  assert.match(html, /make-admin:alice/);
+  assert.match(html, /open-team-member-owner-promotion:alice/);
+  assert.ok(html.indexOf("make-admin:alice") < html.indexOf("open-team-member-owner-promotion:alice"));
+});
+
+test("members screen hides owner promotion from non-owner admins", () => {
+  installFixture({
+    teams: [
+      teamRecord({
+        canDelete: false,
+        canManageMembers: true,
+      }),
+    ],
+    users: [
+      {
+        id: "owner",
+        username: "owner",
+        name: "Owner",
+        role: "Admin",
+        isCurrentUser: true,
+      },
+      {
+        id: "alice",
+        username: "alice",
+        name: "Alice",
+        role: "Translator",
+      },
+    ],
+  });
+
+  const html = renderUsersScreen(state);
+  assert.doesNotMatch(html, /open-team-member-owner-promotion:alice/);
+});
+
+test("members screen hides remove for other owners", () => {
+  installFixture({
+    teams: [
+      teamRecord({
+        canDelete: true,
+        canManageMembers: true,
+      }),
+    ],
+    users: [
+      {
+        id: "owner",
+        username: "owner",
+        name: "Owner",
+        role: "Owner",
+        isCurrentUser: true,
+      },
+      {
+        id: "alice",
+        username: "alice",
+        name: "Alice",
+        role: "Owner",
+      },
+    ],
+  });
+
+  const html = renderUsersScreen(state);
+  assert.doesNotMatch(html, /open-team-member-removal:alice/);
+});
+
+test("members screen lets owners leave only when another owner exists", () => {
+  installFixture({
+    teams: [
+      teamRecord({
+        canDelete: true,
+        canManageMembers: true,
+      }),
+    ],
+    users: [
+      {
+        id: "owner",
+        username: "owner",
+        name: "Owner",
+        role: "Owner",
+        isCurrentUser: true,
+      },
+    ],
+  });
+
+  assert.doesNotMatch(renderUsersScreen(state), /open-current-team-leave:github-app-installation-42/);
+
+  state.users.push({
+    id: "alice",
+    username: "alice",
+    name: "Alice",
+    role: "Owner",
+  });
+
+  assert.match(renderUsersScreen(state), /open-current-team-leave:github-app-installation-42/);
+});
+
+test("owner promotion confirms through Tauri and reloads teams and members", async () => {
+  installFixture({
+    teams: [
+      teamRecord({
+        canDelete: true,
+        canManageMembers: true,
+        canManageProjects: true,
+      }),
+    ],
+    users: [
+      {
+        id: "owner",
+        username: "owner",
+        name: "Owner",
+        role: "Owner",
+        isCurrentUser: true,
+      },
+      {
+        id: "alice",
+        username: "alice",
+        name: "Alice",
+        role: "Admin",
+      },
+    ],
+  });
+
+  invokeHandler = async (command) => {
+    if (command === "promote_organization_owner_for_installation") {
+      return null;
+    }
+
+    if (command === "list_accessible_github_app_installations") {
+      return [
+        installationInfo({
+          canDelete: true,
+          canManageMembers: true,
+          canManageProjects: true,
+        }),
+      ];
+    }
+
+    if (command === "list_organization_members_for_installation") {
+      return [
+        {
+          login: "owner",
+          name: "Owner",
+          role: "owner",
+        },
+        {
+          login: "alice",
+          name: "Alice",
+          role: "owner",
+        },
+      ];
+    }
+
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  openTeamMemberOwnerPromotion(() => {}, "alice");
+  assert.equal(state.teamMemberOwnerPromotion.isOpen, true);
+
+  await confirmTeamMemberOwnerPromotion(() => {});
+
+  assert.equal(state.teamMemberOwnerPromotion.isOpen, false);
+  assert.equal(state.users.find((user) => user.username === "alice")?.role, "Owner");
+  assert.deepEqual(
+    invokeLog.map((entry) => entry.command),
+    [
+      "promote_organization_owner_for_installation",
+      "list_accessible_github_app_installations",
+      "list_organization_members_for_installation",
+    ],
+  );
+});
+
+test("failed owner promotion leaves modal open with error", async () => {
+  installFixture({
+    teams: [
+      teamRecord({
+        canDelete: true,
+        canManageMembers: true,
+      }),
+    ],
+    users: [
+      {
+        id: "owner",
+        username: "owner",
+        name: "Owner",
+        role: "Owner",
+        isCurrentUser: true,
+      },
+      {
+        id: "alice",
+        username: "alice",
+        name: "Alice",
+        role: "Translator",
+      },
+    ],
+  });
+
+  invokeHandler = async (command) => {
+    if (command === "promote_organization_owner_for_installation") {
+      throw new Error("GitHub rejected the promotion.");
+    }
+
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  openTeamMemberOwnerPromotion(() => {}, "alice");
+  await confirmTeamMemberOwnerPromotion(() => {});
+
+  assert.equal(state.teamMemberOwnerPromotion.isOpen, true);
+  assert.equal(state.teamMemberOwnerPromotion.status, "idle");
+  assert.match(state.teamMemberOwnerPromotion.error, /GitHub rejected/);
 });

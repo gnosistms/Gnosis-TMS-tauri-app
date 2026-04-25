@@ -30,6 +30,7 @@ import {
 import { clearScopedSyncBadge, showScopedSyncBadge } from "../status-feedback.js";
 import { classifySyncError } from "../sync-error.js";
 import { handleSyncFailure } from "../sync-recovery.js";
+import { canCurrentUserLeaveTeam } from "../team-member-permissions.js";
 import { loadUserTeams } from "./sync.js";
 import { normalizedConfirmationValue } from "../resource-entity-modal.js";
 
@@ -41,6 +42,14 @@ function setTeamUiDebug(render, text) {
 
 function clearTeamUiDebug(render) {
   clearScopedSyncBadge("teams", render);
+}
+
+function canLeaveTeamFromCurrentState(team) {
+  if (team?.canDelete === true && state.selectedTeamId !== team.id) {
+    return false;
+  }
+
+  return canCurrentUserLeaveTeam(team, state.users, { offline: state.offline?.isEnabled === true });
 }
 
 function applyOptimisticTeamMutation(render, mutation, debugText) {
@@ -272,6 +281,11 @@ export function openTeamLeave(render, teamId) {
     return;
   }
 
+  if (!canLeaveTeamFromCurrentState(team)) {
+    setTeamUiDebug(render, "This team needs at least two owners before you can leave.");
+    return;
+  }
+
   state.teamLeave = {
     isOpen: true,
     teamId,
@@ -292,6 +306,13 @@ export async function confirmTeamLeave(render) {
   const team = state.teams.find((item) => item.id === leave.teamId);
   if (!team?.installationId) {
     resetTeamLeave();
+    render();
+    return;
+  }
+
+  if (!canLeaveTeamFromCurrentState(team)) {
+    state.teamLeave.status = "idle";
+    state.teamLeave.error = "This team needs at least two owners before you can leave.";
     render();
     return;
   }

@@ -77,6 +77,41 @@ export function hasEditorVirtualWindowCoverageGap({
   );
 }
 
+export function resolveEditorVirtualRangeState(virtualItems, totalSize = 0) {
+  const items = Array.isArray(virtualItems) ? virtualItems : [];
+  if (items.length === 0) {
+    return {
+      startIndex: 0,
+      endIndex: 0,
+      topSpacerHeight: 0,
+      bottomSpacerHeight: Math.max(0, Math.round(totalSize || 0)),
+      rangeKey: "0:0",
+    };
+  }
+
+  const firstItem = items[0];
+  const lastItem = items[items.length - 1];
+  const startIndex = Number.isInteger(firstItem?.index) ? firstItem.index : 0;
+  const endIndex = Number.isInteger(lastItem?.index) ? lastItem.index + 1 : startIndex;
+  const topSpacerHeight =
+    Number.isFinite(firstItem?.start) && firstItem.start > 0
+      ? firstItem.start
+      : 0;
+  const lastItemEnd =
+    Number.isFinite(lastItem?.end) && lastItem.end > 0
+      ? lastItem.end
+      : topSpacerHeight;
+  const bottomSpacerHeight = Math.max(0, (Number.isFinite(totalSize) ? totalSize : 0) - lastItemEnd);
+
+  return {
+    startIndex,
+    endIndex,
+    topSpacerHeight,
+    bottomSpacerHeight,
+    rangeKey: `${startIndex}:${endIndex}`,
+  };
+}
+
 function clampIndex(index, count) {
   if (count <= 0) {
     return 0;

@@ -270,7 +270,13 @@ struct ImportedRow {
     context: Option<String>,
     comments: Vec<GuidanceComment>,
     source_row_number: usize,
-    fields: BTreeMap<String, String>,
+    fields: BTreeMap<String, ImportedField>,
+}
+
+#[derive(Clone, Default)]
+struct ImportedField {
+    plain_text: String,
+    footnote: String,
 }
 
 #[derive(Clone, Debug)]
@@ -430,6 +436,7 @@ struct FormatState {
 struct FieldValue {
     value_kind: &'static str,
     plain_text: String,
+    footnote: String,
     rich_text: Option<Value>,
     notes_html: String,
     attachments: Vec<Value>,
@@ -605,7 +612,7 @@ fn parse_xlsx_workbook(input: ImportXlsxInput) -> Result<ParsedWorkbook, String>
                 .unwrap_or_default();
             match binding {
                 ColumnBinding::Language { code, .. } => {
-                    fields.insert(code.clone(), value);
+                    fields.insert(code.clone(), split_xlsx_cell_text_and_footnote(&value));
                 }
             }
         }
@@ -656,7 +663,13 @@ fn parse_txt_file(input: ImportTxtInput) -> Result<ParsedWorkbook, String> {
         }
 
         let mut fields = BTreeMap::new();
-        fields.insert(code.clone(), plain_text);
+        fields.insert(
+            code.clone(),
+            ImportedField {
+                plain_text,
+                footnote: String::new(),
+            },
+        );
         rows.push(ImportedRow {
             external_id: None,
             description: None,
@@ -792,7 +805,10 @@ fn build_chapter_file(
                 .first()
                 .map(|language| language.code.clone()),
             default_target_language: if parsed.languages.len() > 1 {
-                parsed.languages.last().map(|language| language.code.clone())
+                parsed
+                    .languages
+                    .last()
+                    .map(|language| language.code.clone())
             } else {
                 None
             },
@@ -854,7 +870,8 @@ fn build_row_file(
             language.code.clone(),
             FieldValue {
                 value_kind: "text",
-                plain_text,
+                plain_text: plain_text.plain_text,
+                footnote: plain_text.footnote,
                 rich_text: None,
                 notes_html: String::new(),
                 attachments: Vec::new(),
@@ -981,13 +998,15 @@ fn row_is_empty(
     description: &Option<String>,
     context: &Option<String>,
     comments: &[GuidanceComment],
-    fields: &BTreeMap<String, String>,
+    fields: &BTreeMap<String, ImportedField>,
 ) -> bool {
     external_id.is_none()
         && description.is_none()
         && context.is_none()
         && comments.is_empty()
-        && fields.values().all(|value| value.is_empty())
+        && fields
+            .values()
+            .all(|value| value.plain_text.is_empty() && value.footnote.is_empty())
 }
 
 fn unique_chapter_slug(chapters_root: &Path, base_slug: &str) -> String {
@@ -1055,6 +1074,19 @@ fn cell_to_trimmed_string(cell: &Data) -> String {
     text.trim().to_string()
 }
 
+fn split_xlsx_cell_text_and_footnote(value: &str) -> ImportedField {
+    match value.split_once("***") {
+        Some((plain_text, footnote)) => ImportedField {
+            plain_text: plain_text.trim().to_string(),
+            footnote: footnote.trim().to_string(),
+        },
+        None => ImportedField {
+            plain_text: value.to_string(),
+            footnote: String::new(),
+        },
+    }
+}
+
 fn build_source_word_counts_from_import(parsed: &ParsedWorkbook) -> BTreeMap<String, usize> {
     let mut counts = parsed
         .languages
@@ -1067,7 +1099,7 @@ fn build_source_word_counts_from_import(parsed: &ParsedWorkbook) -> BTreeMap<Str
             let value = row
                 .fields
                 .get(&language.code)
-                .map(String::as_str)
+                .map(|field| field.plain_text.as_str())
                 .unwrap_or("");
             *counts.entry(language.code.clone()).or_default() += count_words(value);
         }
@@ -1138,8 +1170,11 @@ mod tests {
 
     #[test]
     fn parse_txt_file_creates_one_row_per_non_blank_line() {
-        let parsed = parse_txt_file(txt_input(b" first line \n\nsecond line\r\n   \nthird".to_vec(), "en"))
-            .expect("TXT import should parse non-blank lines");
+        let parsed = parse_txt_file(txt_input(
+            b" first line \n\nsecond line\r\n   \nthird".to_vec(),
+            "en",
+        ))
+        .expect("TXT import should parse non-blank lines");
 
         assert_eq!(parsed.source_format, "txt");
         assert_eq!(parsed.languages.len(), 1);
@@ -1147,10 +1182,81 @@ mod tests {
         assert_eq!(parsed.languages[0].role, "source");
         assert_eq!(parsed.rows.len(), 3);
         assert_eq!(parsed.rows[0].source_row_number, 1);
-        assert_eq!(parsed.rows[0].fields.get("en").map(String::as_str), Some("first line"));
+        assert_eq!(
+            parsed.rows[0]
+                .fields
+                .get("en")
+                .map(|field| field.plain_text.as_str()),
+            Some("first line")
+        );
         assert_eq!(parsed.rows[1].source_row_number, 3);
-        assert_eq!(parsed.rows[1].fields.get("en").map(String::as_str), Some("second line"));
+        assert_eq!(
+            parsed.rows[1]
+                .fields
+                .get("en")
+                .map(|field| field.plain_text.as_str()),
+            Some("second line")
+        );
         assert_eq!(parsed.rows[2].source_row_number, 5);
+    }
+
+    #[test]
+    fn split_xlsx_cell_text_and_footnote_extracts_three_star_footnotes() {
+        let field = split_xlsx_cell_text_and_footnote(
+            "主の祈りShu no inori***This is the English version used to translate into Japanese.",
+        );
+
+        assert_eq!(field.plain_text, "主の祈りShu no inori");
+        assert_eq!(
+            field.footnote,
+            "This is the English version used to translate into Japanese."
+        );
+    }
+
+    #[test]
+    fn build_row_file_writes_imported_footnotes() {
+        let mut fields = BTreeMap::new();
+        fields.insert(
+            "ja".to_string(),
+            ImportedField {
+                plain_text: "主の祈りShu no inori".to_string(),
+                footnote: "This is the English version used to translate into Japanese."
+                    .to_string(),
+            },
+        );
+        let parsed = ParsedWorkbook {
+            installation_id: 1,
+            repo_name: "project-repo".to_string(),
+            project_id: Some("project-1".to_string()),
+            file_title: "Chapter".to_string(),
+            worksheet_name: "Sheet1".to_string(),
+            source_file_name: "chapter.xlsx".to_string(),
+            source_format: "xlsx",
+            header_blob: vec!["ja".to_string()],
+            languages: vec![ImportedLanguage {
+                code: "ja".to_string(),
+                name: "Japanese".to_string(),
+                role: "source",
+            }],
+            rows: vec![ImportedRow {
+                external_id: None,
+                description: None,
+                context: None,
+                comments: Vec::new(),
+                source_row_number: 2,
+                fields,
+            }],
+        };
+
+        let row = build_row_file(&parsed, &parsed.rows[0], 0, parsed.rows.len(), "row-1")
+            .expect("row should build");
+        let field = row.fields.get("ja").expect("Japanese field should exist");
+
+        assert_eq!(field.plain_text, "主の祈りShu no inori");
+        assert_eq!(
+            field.footnote,
+            "This is the English version used to translate into Japanese."
+        );
     }
 
     #[test]
@@ -1175,7 +1281,10 @@ mod tests {
 
     #[test]
     fn decode_text_file_accepts_utf8_with_and_without_bom() {
-        assert_eq!(decode_text_file("hola\n世界".as_bytes()).unwrap(), "hola\n世界");
+        assert_eq!(
+            decode_text_file("hola\n世界".as_bytes()).unwrap(),
+            "hola\n世界"
+        );
 
         let mut bytes = vec![0xEF, 0xBB, 0xBF];
         bytes.extend_from_slice("hola".as_bytes());
@@ -1221,7 +1330,10 @@ mod tests {
 
         assert_eq!(chapter.source_files[0].format, "txt");
         assert_eq!(chapter.languages.len(), 1);
-        assert_eq!(chapter.settings.default_source_language.as_deref(), Some("en"));
+        assert_eq!(
+            chapter.settings.default_source_language.as_deref(),
+            Some("en")
+        );
         assert_eq!(chapter.settings.default_target_language, None);
         assert_eq!(row.origin.source_format, "txt");
         assert!(row.format_metadata.contains_key("txt"));

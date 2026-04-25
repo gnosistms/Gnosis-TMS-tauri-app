@@ -192,6 +192,28 @@ pub(crate) async fn revoke_organization_admin_for_installation(
 }
 
 #[tauri::command]
+pub(crate) async fn promote_organization_owner_for_installation(
+    installation_id: i64,
+    org_login: String,
+    username: String,
+    session_token: String,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let client = github_client()?;
+        broker_patch_no_content_with_session(
+            &client,
+            &format!(
+        "/api/github-app/installations/{installation_id}/orgs/{org_login}/owners/{username}"
+      ),
+            None,
+            &session_token,
+        )
+    })
+    .await
+    .map_err(|error| format!("Could not run the organization owner promotion task: {error}"))?
+}
+
+#[tauri::command]
 pub(crate) async fn remove_organization_member_for_installation(
     installation_id: i64,
     org_login: String,

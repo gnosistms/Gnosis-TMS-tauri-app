@@ -10,28 +10,41 @@ import {
 import { formatErrorForDisplay } from "../app/error-display.js";
 import { canManageTeamAiSettings } from "../app/resource-capabilities.js";
 import { getNoticeBadgeText } from "../app/status-feedback.js";
+import {
+  canCurrentUserLeaveTeam,
+  canPromoteOwners,
+  isOwnerRole,
+} from "../app/team-member-permissions.js";
 import { renderInviteUserModal } from "./invite-user-modal.js";
+import { renderTeamMemberOwnerModal } from "./team-member-owner-modal.js";
 import { renderTeamMemberRemoveModal } from "./team-member-remove-modal.js";
 import { renderTeamLeaveModal } from "./teams/leave-modal.js";
 
 function renderUserCard(user, options = {}) {
   const canManageMembers = options.canManageMembers === true;
+  const canPromoteOwner = options.canPromoteOwners === true;
   const canLeaveTeam = options.canLeaveTeam === true;
   const selectedTeamId = options.selectedTeamId ?? "";
   const displayName = user.isCurrentUser ? `${user.name} (me)` : user.name;
   const roleSyncPending = user.roleSyncPending === true;
+  const ownerRole = isOwnerRole(user);
   const actions = user.isCurrentUser
     ? (canLeaveTeam && selectedTeamId
         ? textAction("Leave", `open-current-team-leave:${selectedTeamId}`)
         : "")
-    : (canManageMembers
+    : (canManageMembers || canPromoteOwner
         ? [
-            user.role === "Translator"
+            canManageMembers && user.role === "Translator"
               ? textAction("Make Admin", `make-admin:${user.username}`, { disabled: roleSyncPending })
-              : user.role === "Admin"
+              : canManageMembers && user.role === "Admin"
                 ? textAction("Revoke Admin", `revoke-admin:${user.username}`, { disabled: roleSyncPending })
                 : "",
-            user.role === "Owner"
+            canPromoteOwner && !ownerRole
+              ? textAction("Make owner", `open-team-member-owner-promotion:${user.username}`, {
+                  disabled: roleSyncPending,
+                })
+              : "",
+            ownerRole || !canManageMembers
               ? ""
               : textAction("Remove", `open-team-member-removal:${user.username}`, {
                   disabled: roleSyncPending,
@@ -62,7 +75,10 @@ export function renderUsersScreen(state) {
   const discovery = state.userDiscovery ?? { status: "idle", error: "" };
   const canInviteUsers = selectedTeam?.canManageMembers === true && !state.offline?.isEnabled;
   const canManageMembers = selectedTeam?.canManageMembers === true && !state.offline?.isEnabled;
-  const canLeaveTeam = selectedTeam?.canLeave === true && selectedTeam?.canDelete !== true && !state.offline?.isEnabled;
+  const canPromoteTeamOwners = canPromoteOwners(selectedTeam, { offline: state.offline?.isEnabled === true });
+  const canLeaveTeam = canCurrentUserLeaveTeam(selectedTeam, state.users, {
+    offline: state.offline?.isEnabled === true,
+  });
   const canManageAiSettings = canManageTeamAiSettings(selectedTeam);
 
   const emptyState = renderStateCard({
@@ -89,6 +105,7 @@ export function renderUsersScreen(state) {
             : emptyState
           : `<section class="stack">${state.users.map((user) => renderUserCard(user, {
               canManageMembers,
+              canPromoteOwners: canPromoteTeamOwners,
               canLeaveTeam,
               selectedTeamId: selectedTeam?.id ?? "",
             })).join("")}</section>`;
@@ -105,6 +122,6 @@ export function renderUsersScreen(state) {
       offlineMode: state.offline?.isEnabled === true,
       offlineReconnectState: state.offline?.reconnecting === true,
       body,
-    }) + renderInviteUserModal(state) + renderTeamLeaveModal(state) + renderTeamMemberRemoveModal(state)
+    }) + renderInviteUserModal(state) + renderTeamLeaveModal(state) + renderTeamMemberRemoveModal(state) + renderTeamMemberOwnerModal(state)
   );
 }

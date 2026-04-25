@@ -10,9 +10,12 @@ import {
   submitInviteUser,
 } from "./invite-user-flow.js";
 import {
+  cancelTeamMemberOwnerPromotion,
   cancelTeamMemberRemoval,
+  confirmTeamMemberOwnerPromotion,
   confirmTeamMemberRemoval,
   makeOrganizationAdmin,
+  openTeamMemberOwnerPromotion,
   openTeamMemberRemoval,
   revokeOrganizationAdmin,
 } from "./team-members-flow.js";
@@ -44,6 +47,11 @@ export function createUserActions(render) {
       return true;
     }
 
+    if (action === "cancel-team-member-owner-promotion") {
+      cancelTeamMemberOwnerPromotion(render);
+      return true;
+    }
+
     if (action === "submit-invite-user") {
       await runWithImmediateLoading(event, "Inviting...", () => submitInviteUser(render));
       return true;
@@ -51,6 +59,13 @@ export function createUserActions(render) {
 
     if (action === "confirm-team-member-removal") {
       await runWithImmediateLoading(event, "Removing...", () => confirmTeamMemberRemoval(render));
+      return true;
+    }
+
+    if (action === "confirm-team-member-owner-promotion") {
+      await runWithImmediateLoading(event, "Promoting...", () =>
+        confirmTeamMemberOwnerPromotion(render),
+      );
       return true;
     }
 
@@ -84,6 +99,12 @@ export function createUserActions(render) {
     const removalUsername = actionSuffix(action, "open-team-member-removal:");
     if (removalUsername !== null) {
       openTeamMemberRemoval(render, removalUsername);
+      return true;
+    }
+
+    const ownerPromotionUsername = actionSuffix(action, "open-team-member-owner-promotion:");
+    if (ownerPromotionUsername !== null) {
+      openTeamMemberOwnerPromotion(render, ownerPromotionUsername);
       return true;
     }
 

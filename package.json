@@ -1,7 +1,7 @@
 {
   "name": "gnosis-tms",
   "private": true,
-  "version": "0.2.3",
+  "version": "0.2.4",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -19,6 +19,7 @@
     "vite": "^5.4.19"
   },
   "dependencies": {
+    "@tanstack/virtual-core": "^3.14.0",
     "@tauri-apps/plugin-opener": "^2.5.3"
   }
 }

@@ -3,10 +3,15 @@ import { requireBrokerSession } from "./auth-flow.js";
 import { loadStoredMembersForTeam, saveStoredMembersForTeam } from "./member-cache.js";
 import { beginPageSync, completePageSync, failPageSync } from "./page-sync.js";
 import { showNoticeBadge } from "./status-feedback.js";
-import { resetTeamMemberRemoval, state } from "./state.js";
+import {
+  resetTeamMemberOwnerPromotion,
+  resetTeamMemberRemoval,
+  state,
+} from "./state.js";
 import { classifySyncError } from "./sync-error.js";
 import { handleSyncFailure } from "./sync-recovery.js";
 import { loadUserTeams } from "./team-flow/sync.js";
+import { isOwnerRole } from "./team-member-permissions.js";
 
 function getSelectedTeam(teamId = state.selectedTeamId) {
   return state.teams.find((team) => team.id === teamId);
@@ -150,10 +155,94 @@ export async function revokeOrganizationAdmin(render, username) {
   await updateOrganizationAdminMembership(render, username, false);
 }
 
+export function openTeamMemberOwnerPromotion(render, username) {
+  const selectedTeam = getSelectedTeam();
+  const member = state.users.find((user) => user?.username === username);
+  if (
+    !teamHasInstallation(selectedTeam) ||
+    selectedTeam.canDelete !== true ||
+    !member ||
+    member.isCurrentUser ||
+    isOwnerRole(member)
+  ) {
+    return;
+  }
+
+  state.teamMemberOwnerPromotion = {
+    isOpen: true,
+    status: "idle",
+    error: "",
+    teamId: selectedTeam.id,
+    teamName: selectedTeam.name || selectedTeam.githubOrg,
+    username: member.username,
+    memberName: member.name || member.username,
+  };
+  render();
+}
+
+export function cancelTeamMemberOwnerPromotion(render) {
+  resetTeamMemberOwnerPromotion();
+  render();
+}
+
+export async function confirmTeamMemberOwnerPromotion(render) {
+  const selectedTeam = getSelectedTeam();
+  const promotion = state.teamMemberOwnerPromotion;
+  const username = String(promotion?.username ?? "").trim();
+  if (!teamHasInstallation(selectedTeam) || selectedTeam.id !== promotion?.teamId || !username) {
+    resetTeamMemberOwnerPromotion();
+    render();
+    return;
+  }
+
+  if (selectedTeam.canDelete !== true) {
+    state.teamMemberOwnerPromotion.error = "Only the team owner can promote another owner.";
+    render();
+    return;
+  }
+
+  const member = state.users.find((user) => user?.username === username);
+  if (!member || member.isCurrentUser || isOwnerRole(member)) {
+    resetTeamMemberOwnerPromotion();
+    render();
+    return;
+  }
+
+  const selectedTeamIdAtStart = selectedTeam.id;
+
+  try {
+    state.teamMemberOwnerPromotion.status = "loading";
+    state.teamMemberOwnerPromotion.error = "";
+    render();
+    await waitForNextPaint();
+    await invoke("promote_organization_owner_for_installation", {
+      installationId: selectedTeam.installationId,
+      orgLogin: selectedTeam.githubOrg,
+      username,
+      sessionToken: requireBrokerSession(),
+    });
+
+    await loadUserTeams(render);
+    if (shouldUpdateVisibleUsers(selectedTeamIdAtStart) && getSelectedTeam(selectedTeamIdAtStart)) {
+      await loadTeamUsers(render, selectedTeamIdAtStart);
+    }
+    resetTeamMemberOwnerPromotion();
+    render();
+  } catch (error) {
+    state.teamMemberOwnerPromotion.status = "idle";
+    if (await handleSyncFailure(classifySyncError(error), { render })) {
+      render();
+      return;
+    }
+    state.teamMemberOwnerPromotion.error = error?.message ?? String(error);
+    render();
+  }
+}
+
 export function openTeamMemberRemoval(render, username) {
   const selectedTeam = getSelectedTeam();
   const member = state.users.find((user) => user?.username === username);
-  if (!selectedTeam || !member || member.isCurrentUser || member.role === "Owner") {
+  if (!selectedTeam || !member || member.isCurrentUser || isOwnerRole(member)) {
     return;
   }
 
@@ -191,7 +280,7 @@ export async function confirmTeamMemberRemoval(render) {
   }
 
   const member = state.users.find((user) => user?.username === username);
-  if (!member || member.isCurrentUser || member.role === "Owner") {
+  if (!member || member.isCurrentUser || isOwnerRole(member)) {
     resetTeamMemberRemoval();
     render();
     return;

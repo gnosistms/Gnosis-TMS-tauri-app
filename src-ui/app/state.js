@@ -87,6 +87,7 @@ export const state = {
   teamPermanentDeletion: createTeamPermanentDeletionState(),
   teamLeave: createTeamLeaveState(),
   teamMemberRemoval: createTeamMemberRemovalState(),
+  teamMemberOwnerPromotion: createTeamMemberOwnerPromotionState(),
   projectCreation: createProjectCreationState(),
   inviteUser: createInviteUserState(),
   projectRename: createProjectRenameState(),
@@ -745,6 +746,15 @@ export function createTeamMemberRemovalState() {
   });
 }
 
+export function createTeamMemberOwnerPromotionState() {
+  return createEntityModalState({
+    teamId: null,
+    teamName: "",
+    username: "",
+    memberName: "",
+  });
+}
+
 export function createProjectRenameState() {
   return createEntityModalState({
     projectId: null,
@@ -822,6 +832,10 @@ export function resetTeamLeave() {
 
 export function resetTeamMemberRemoval() {
   state.teamMemberRemoval = createTeamMemberRemovalState();
+}
+
+export function resetTeamMemberOwnerPromotion() {
+  state.teamMemberOwnerPromotion = createTeamMemberOwnerPromotionState();
 }
 
 export function resetProjectRename() {
@@ -919,6 +933,7 @@ export function resetSessionState() {
   resetTeamPermanentDeletion();
   resetTeamLeave();
   resetTeamMemberRemoval();
+  resetTeamMemberOwnerPromotion();
   resetProjectCreation();
   resetInviteUser();
   resetProjectRename();

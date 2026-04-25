@@ -13,10 +13,10 @@ pub(crate) use orgs::{
     inspect_github_app_installation, inspect_team_metadata_repo_for_installation,
     invite_user_to_organization_for_installation, leave_organization_for_installation,
     list_accessible_github_app_installations, list_organization_members_for_installation,
-    purge_local_installation_data, remove_organization_member_for_installation,
-    revoke_organization_admin_for_installation, search_github_users_for_installation,
-    setup_organization_for_installation, update_organization_description_for_installation,
-    update_organization_name_for_installation,
+    promote_organization_owner_for_installation, purge_local_installation_data,
+    remove_organization_member_for_installation, revoke_organization_admin_for_installation,
+    search_github_users_for_installation, setup_organization_for_installation,
+    update_organization_description_for_installation, update_organization_name_for_installation,
 };
 pub(crate) use repos::{
     create_gnosis_glossary_repo, create_gnosis_project_repo,
