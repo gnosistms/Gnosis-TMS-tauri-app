@@ -51,6 +51,39 @@ function normalizeSelectedLanguageCodes(chapterState, languageCodes = []) {
   )];
 }
 
+function resolveLanguageCode(language) {
+  if (typeof language === "string" && language.trim()) {
+    return language.trim();
+  }
+
+  if (language && typeof language === "object") {
+    const code = typeof language.code === "string" ? language.code.trim() : "";
+    if (code) {
+      return code;
+    }
+  }
+
+  return "";
+}
+
+function glossarySourceLanguageCodeForChapter(chapterState) {
+  const glossaryState = chapterState?.glossary ?? null;
+  const glossaryModel = glossaryState?.matcherModel ?? null;
+  return resolveLanguageCode(glossaryState?.sourceLanguage ?? glossaryModel?.sourceLanguage);
+}
+
+function prioritizeGlossarySourceLanguageCode(chapterState, languageCodes) {
+  const glossarySourceLanguageCode = glossarySourceLanguageCodeForChapter(chapterState);
+  if (!glossarySourceLanguageCode || !languageCodes.includes(glossarySourceLanguageCode)) {
+    return languageCodes;
+  }
+
+  return [
+    glossarySourceLanguageCode,
+    ...languageCodes.filter((languageCode) => languageCode !== glossarySourceLanguageCode),
+  ];
+}
+
 function readRowFieldText(row, languageCode) {
   if (!languageCode) {
     return "";
@@ -63,7 +96,10 @@ function readRowFieldText(row, languageCode) {
 
 function buildEditorAiTranslateAllWork(chapterState, selectedLanguageCodes) {
   const sourceLanguageCode = sourceLanguageCodeForChapter(chapterState);
-  const targetLanguageCodes = normalizeSelectedLanguageCodes(chapterState, selectedLanguageCodes);
+  const targetLanguageCodes = prioritizeGlossarySourceLanguageCode(
+    chapterState,
+    normalizeSelectedLanguageCodes(chapterState, selectedLanguageCodes),
+  );
   if (!chapterState?.chapterId || !sourceLanguageCode || targetLanguageCodes.length === 0) {
     return [];
   }
@@ -384,6 +420,7 @@ export const editorAiTranslateAllTestApi = {
   buildEditorAiTranslateAllLanguageProgress,
   getActiveBatchRunId: () => activeBatchRunId,
   incrementEditorAiTranslateAllProgress,
+  prioritizeGlossarySourceLanguageCode,
   resetActiveBatchRunId: () => {
     activeBatchRunId = 0;
   },

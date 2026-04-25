@@ -6,6 +6,7 @@ import {
 } from "../scroll-state.js";
 import {
   cancelEditorConflictResolutionModal,
+  cancelEditorDeriveGlossariesModal,
   cancelEditorAiTranslateAllModal,
   cancelEditorUnreviewAllModal,
   cancelEditorReplaceUndoModal,
@@ -14,6 +15,7 @@ import {
   closeTargetLanguageManagerPicker,
   confirmEditorUnreviewAll,
   confirmEditorAiTranslateAll,
+  confirmEditorDeriveGlossaries,
   confirmEditorReplaceUndo,
   confirmEditorRowPermanentDeletion,
   confirmInsertEditorRow,
@@ -35,6 +37,7 @@ import {
   openEditorImageUploadPicker,
   openEditorImageUrl,
   openEditorConflictResolutionModal,
+  openEditorDeriveGlossariesModal,
   openEditorAiTranslateAllModal,
   openEditorUnreviewAllModal,
   openEditorReplaceUndoModal,
@@ -155,6 +158,11 @@ export function createTranslateActions(render) {
       return true;
     }
 
+    if (action === "cancel-editor-derive-glossaries") {
+      cancelEditorDeriveGlossariesModal(render);
+      return true;
+    }
+
     if (action === "cancel-editor-conflict-resolution") {
       cancelEditorConflictResolutionModal(render);
       return true;
@@ -187,6 +195,11 @@ export function createTranslateActions(render) {
 
     if (action === "confirm-editor-ai-translate-all") {
       await confirmEditorAiTranslateAll(render);
+      return true;
+    }
+
+    if (action === "confirm-editor-derive-glossaries") {
+      await confirmEditorDeriveGlossaries(render);
       return true;
     }
 
@@ -272,6 +285,11 @@ export function createTranslateActions(render) {
 
     if (action === "open-editor-ai-translate-all") {
       openEditorAiTranslateAllModal(render);
+      return true;
+    }
+
+    if (action === "open-editor-derive-glossaries") {
+      openEditorDeriveGlossariesModal(render);
       return true;
     }
 

@@ -132,6 +132,70 @@ test("AI Translate All work includes only empty visible target fields with sourc
   );
 });
 
+test("AI Translate All translates the glossary source language first when it is selected", () => {
+  const chapterState = chapter({
+    languages: [
+      { code: "es", name: "Spanish", role: "source" },
+      { code: "en", name: "English", role: "target" },
+      { code: "ja", name: "Japanese", role: "target" },
+    ],
+    glossary: {
+      sourceLanguage: { code: "en", name: "English" },
+      targetLanguage: { code: "ja", name: "Japanese" },
+      matcherModel: null,
+    },
+    rows: [
+      {
+        rowId: "row-1",
+        lifecycleState: "active",
+        fields: {
+          es: "Hola",
+          en: "",
+          ja: "",
+        },
+      },
+      {
+        rowId: "row-2",
+        lifecycleState: "active",
+        fields: {
+          es: "Adios",
+          en: "",
+          ja: "",
+        },
+      },
+    ],
+  });
+
+  assert.deepEqual(
+    editorAiTranslateAllTestApi.buildEditorAiTranslateAllWork(
+      chapterState,
+      ["ja", "en"],
+    ),
+    [
+      {
+        rowId: "row-1",
+        sourceLanguageCode: "es",
+        targetLanguageCode: "en",
+      },
+      {
+        rowId: "row-1",
+        sourceLanguageCode: "es",
+        targetLanguageCode: "ja",
+      },
+      {
+        rowId: "row-2",
+        sourceLanguageCode: "es",
+        targetLanguageCode: "en",
+      },
+      {
+        rowId: "row-2",
+        sourceLanguageCode: "es",
+        targetLanguageCode: "ja",
+      },
+    ],
+  );
+});
+
 test("stopping AI Translate All clears the active translation and closes the modal", () => {
   resetSessionState();
   editorAiTranslateAllTestApi.resetActiveBatchRunId();

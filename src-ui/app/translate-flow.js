@@ -53,6 +53,11 @@ import {
   openEditorAiTranslateAllModal as openEditorAiTranslateAllModalFlow,
   updateEditorAiTranslateAllLanguageSelection as updateEditorAiTranslateAllLanguageSelectionFlow,
 } from "./editor-ai-translate-all-flow.js";
+import {
+  cancelEditorDeriveGlossariesModal as cancelEditorDeriveGlossariesModalFlow,
+  confirmEditorDeriveGlossaries as confirmEditorDeriveGlossariesFlow,
+  openEditorDeriveGlossariesModal as openEditorDeriveGlossariesModalFlow,
+} from "./editor-derive-glossaries-flow.js";
 import { toggleEditorInlineStyle as toggleEditorInlineStyleFlow } from "./editor-inline-markup-flow.js";
 import {
   applyEditorAssistantDraft as applyEditorAssistantDraftFlow,
@@ -531,6 +536,21 @@ export function updateEditorAiTranslateAllLanguageSelection(render, languageCode
 
 export async function confirmEditorAiTranslateAll(render) {
   await confirmEditorAiTranslateAllFlow(render, {
+    updateEditorRowFieldValue,
+    persistEditorRowOnBlur,
+  });
+}
+
+export function openEditorDeriveGlossariesModal(render) {
+  openEditorDeriveGlossariesModalFlow(render);
+}
+
+export function cancelEditorDeriveGlossariesModal(render) {
+  cancelEditorDeriveGlossariesModalFlow(render);
+}
+
+export async function confirmEditorDeriveGlossaries(render) {
+  await confirmEditorDeriveGlossariesFlow(render, {
     updateEditorRowFieldValue,
     persistEditorRowOnBlur,
   });

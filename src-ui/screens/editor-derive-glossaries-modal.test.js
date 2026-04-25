@@ -1,0 +1,131 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+
+globalThis.document = {
+  querySelector() {
+    return null;
+  },
+  querySelectorAll() {
+    return [];
+  },
+};
+globalThis.window = {
+  __TAURI__: {
+    core: {
+      invoke: async () => null,
+    },
+    event: {
+      listen: async () => () => {},
+    },
+  },
+};
+
+const {
+  buildEditorGlossaryModel,
+} = await import("../app/editor-glossary-highlighting.js");
+const {
+  createEditorChapterState,
+} = await import("../app/state.js");
+const {
+  renderEditorDeriveGlossariesModal,
+} = await import("./editor-derive-glossaries-modal.js");
+const {
+  renderTranslateToolbar,
+} = await import("./translate-toolbar.js");
+
+function glossary() {
+  const payload = {
+    glossaryId: "glossary-1",
+    sourceLanguage: { code: "en", name: "English" },
+    targetLanguage: { code: "vi", name: "Vietnamese" },
+    terms: [
+      {
+        termId: "term-1",
+        lifecycleState: "active",
+        sourceTerms: ["prayer"],
+        targetTerms: ["cau nguyen"],
+      },
+    ],
+  };
+  return {
+    ...payload,
+    matcherModel: buildEditorGlossaryModel(payload),
+  };
+}
+
+function chapter(modalOverrides = {}) {
+  return {
+    ...createEditorChapterState(),
+    chapterId: "chapter-1",
+    selectedSourceLanguageCode: "es",
+    languages: [
+      { code: "es", name: "Spanish", role: "source" },
+      { code: "en", name: "English", role: "target" },
+      { code: "vi", name: "Vietnamese", role: "target" },
+      { code: "ja", name: "Japanese", role: "target" },
+    ],
+    glossary: glossary(),
+    deriveGlossariesModal: {
+      ...createEditorChapterState().deriveGlossariesModal,
+      isOpen: true,
+      selectedLanguageCodes: ["es", "ja"],
+      ...modalOverrides,
+    },
+  };
+}
+
+test("Derive glossaries modal lists derivable language pairs", () => {
+  const html = renderEditorDeriveGlossariesModal({
+    editorChapter: chapter(),
+  });
+
+  assert.match(html, /DERIVE GLOSSARIES/);
+  assert.match(html, /Automatically generate glossaries/);
+  assert.match(html, /English to Vietnamese/);
+  assert.match(html, /Spanish to Vietnamese/);
+  assert.match(html, /Japanese to Vietnamese/);
+  assert.match(html, /data-action="cancel-editor-derive-glossaries"/);
+  assert.match(html, /data-action="confirm-editor-derive-glossaries"/);
+});
+
+test("Derive glossaries modal reuses batch progress classes while loading", () => {
+  const html = renderEditorDeriveGlossariesModal({
+    editorChapter: chapter({
+      status: "loading",
+      completedCount: 1,
+      totalCount: 3,
+      languageProgress: {
+        es: { completedCount: 1, totalCount: 2 },
+        ja: { completedCount: 0, totalCount: 1 },
+      },
+    }),
+  });
+
+  assert.match(html, /1 \/ 3 glossaries completed/);
+  assert.match(html, /ai-translate-all-modal__progress-list/);
+  assert.match(html, /ai-translate-all-modal__progress-row/);
+  assert.match(html, /Spanish/);
+  assert.match(html, /1 \/ 2/);
+  assert.match(html, /Japanese/);
+  assert.match(html, /0 \/ 1/);
+  assert.doesNotMatch(html, /This feature will use the existing glossary/);
+});
+
+test("Translate toolbar renders Derive glossaries before renamed AI translate all when available", () => {
+  const html = renderTranslateToolbar({
+    languages: [
+      { code: "es", name: "Spanish" },
+      { code: "vi", name: "Vietnamese" },
+    ],
+    sourceCode: "es",
+    targetCode: "vi",
+    deriveGlossariesAvailable: true,
+  });
+
+  const deriveIndex = html.indexOf("Derive glossaries");
+  const translateIndex = html.indexOf("AI translate all");
+  assert.equal(deriveIndex > -1, true);
+  assert.equal(translateIndex > -1, true);
+  assert.equal(deriveIndex < translateIndex, true);
+  assert.doesNotMatch(html, /AI Translate all/);
+});

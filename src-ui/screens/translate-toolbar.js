@@ -313,6 +313,7 @@ export function renderTranslateToolbar({
   editorFontSizePx,
   sourceLanguageExtraOptions = [],
   targetLanguageExtraOptions = [],
+  deriveGlossariesAvailable = false,
 }) {
   return `
     <div class="translate-toolbar__body translate-toolbar__body--header">
@@ -328,7 +329,12 @@ export function renderTranslateToolbar({
           ${renderEditorReplaceControls(editorReplace)}
         </div>
         <div class="toolbar-meta">
-          ${textAction("AI Translate all", "open-editor-ai-translate-all", {
+          ${deriveGlossariesAvailable
+            ? textAction("Derive glossaries", "open-editor-derive-glossaries", {
+              tooltip: "Use this to automatically generate glossaries for the languages that don't have a glossary.",
+            })
+            : ""}
+          ${textAction("AI translate all", "open-editor-ai-translate-all", {
             tooltip: "Translate all empty fields in selected languages",
           })}
           ${textAction("Unreview All", "open-editor-unreview-all", {

@@ -20,6 +20,7 @@ import { renderEditorRowInsertModal } from "./editor-row-insert-modal.js";
 import { renderEditorRowPermanentDeletionModal } from "./editor-row-permanent-deletion-modal.js";
 import { renderEditorUnreviewAllModal } from "./editor-unreview-all-modal.js";
 import { renderEditorAiTranslateAllModal } from "./editor-ai-translate-all-modal.js";
+import { renderEditorDeriveGlossariesModal } from "./editor-derive-glossaries-modal.js";
 import { renderEditorConflictResolutionModal } from "./editor-conflict-resolution-modal.js";
 import { renderEditorImageInvalidFileModal } from "./editor-image-invalid-file-modal.js";
 import { renderEditorImagePreviewOverlay } from "./editor-image-preview-overlay.js";
@@ -28,6 +29,7 @@ import { renderAiReviewMissingKeyModal } from "./ai-review-missing-key-modal.js"
 import { renderTargetLanguageManagerModal } from "./target-language-manager-modal.js";
 import { renderTranslateSidebar as renderTranslateEditorSidebar } from "./translate-sidebar.js";
 import { resolveSelectedChapterGlossary, selectedProjectsTeam } from "../app/project-context.js";
+import { resolveEditorDeriveGlossariesConfig } from "../app/editor-derive-glossaries-flow.js";
 import {
   renderEditorConflictBanner,
   renderEditorFilterBanner,
@@ -257,6 +259,7 @@ export function renderTranslateHeaderDetail(state) {
     editorFontSizePx,
     sourceLanguageExtraOptions: chapterLanguageManagerOptions,
     targetLanguageExtraOptions: chapterLanguageManagerOptions,
+    deriveGlossariesAvailable: resolveEditorDeriveGlossariesConfig(frame.editorChapter).canDerive,
   });
 }
 
@@ -314,6 +317,7 @@ export function renderTranslateScreen(state) {
     + renderEditorRowInsertModal(state)
     + renderEditorRowPermanentDeletionModal(state)
     + renderEditorUnreviewAllModal(state)
+    + renderEditorDeriveGlossariesModal(state)
     + renderEditorAiTranslateAllModal(state)
     + renderEditorConflictResolutionModal(state)
     + renderEditorImageInvalidFileModal(state)

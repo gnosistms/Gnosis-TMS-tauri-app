@@ -46,6 +46,49 @@ function escapeHtmlAttribute(value) {
   return escapeHtml(value).replaceAll("'", "&#39;");
 }
 
+const NON_SPACE_DELIMITED_LANGUAGE_CODES = new Set([
+  "zh",
+  "ja",
+  "th",
+  "lo",
+  "km",
+  "my",
+  "bo",
+  "dz",
+]);
+
+function primaryLanguageSubtag(languageCode) {
+  const [primarySubtag = ""] = String(languageCode ?? "")
+    .trim()
+    .toLowerCase()
+    .split(/[-_]/u);
+  return primarySubtag;
+}
+
+function isNonSpaceDelimitedGlossaryLanguage(languageCode) {
+  return NON_SPACE_DELIMITED_LANGUAGE_CODES.has(primaryLanguageSubtag(languageCode));
+}
+
+function textUnitsForGlossaryMatching(text) {
+  const normalizedText = String(text ?? "");
+  try {
+    if (typeof Intl !== "undefined" && typeof Intl.Segmenter === "function") {
+      return Array.from(
+        new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(normalizedText),
+        (segment) => segment.segment,
+      );
+    }
+  } catch {
+    // Fall back to code points when Intl.Segmenter is unavailable or incomplete.
+  }
+
+  return Array.from(normalizedText);
+}
+
+function textUnitCanBeMatched(unit) {
+  return /[\p{L}\p{M}\p{N}]/u.test(unit);
+}
+
 export function normalizeGlossaryToken(token, languageCode = "en") {
   const text = String(token ?? "");
   if (!text) {
@@ -60,7 +103,14 @@ export function normalizeGlossaryToken(token, languageCode = "en") {
 }
 
 export function tokenizeGlossaryTerm(term, languageCode) {
-  return Array.from(extractGlossaryRubyBaseText(term).matchAll(/[\p{L}\p{M}\p{N}]+/gu), (match) =>
+  const baseText = extractGlossaryRubyBaseText(term);
+  if (isNonSpaceDelimitedGlossaryLanguage(languageCode)) {
+    return textUnitsForGlossaryMatching(baseText)
+      .filter(textUnitCanBeMatched)
+      .map((unit) => normalizeGlossaryToken(unit, languageCode));
+  }
+
+  return Array.from(baseText.matchAll(/[\p{L}\p{M}\p{N}]+/gu), (match) =>
     normalizeGlossaryToken(match[0], languageCode),
   );
 }
@@ -377,6 +427,10 @@ export function buildEditorDerivedGlossaryModel({
 
 function tokenizeTextForHighlighting(text, languageCode) {
   const sourceText = extractInlineMarkupBaseText(text);
+  if (isNonSpaceDelimitedGlossaryLanguage(languageCode)) {
+    return tokenizeNonSpaceDelimitedTextForHighlighting(sourceText, languageCode);
+  }
+
   const tokens = [];
   const wordEntries = [];
   let lastIndex = 0;
@@ -408,6 +462,35 @@ function tokenizeTextForHighlighting(text, languageCode) {
     tokens.push({
       type: "text",
       value: sourceText.slice(lastIndex),
+    });
+  }
+
+  return { tokens, wordEntries };
+}
+
+function tokenizeNonSpaceDelimitedTextForHighlighting(sourceText, languageCode) {
+  const tokens = [];
+  const wordEntries = [];
+
+  for (const unit of textUnitsForGlossaryMatching(sourceText)) {
+    const tokenIndex = tokens.length;
+    if (textUnitCanBeMatched(unit)) {
+      const normalized = normalizeGlossaryToken(unit, languageCode);
+      tokens.push({
+        type: "word",
+        value: unit,
+        normalized,
+      });
+      wordEntries.push({
+        tokenIndex,
+        normalized,
+      });
+      continue;
+    }
+
+    tokens.push({
+      type: "text",
+      value: unit,
     });
   }
 

@@ -1,5 +1,9 @@
 import { escapeHtml, loadingPrimaryButton, secondaryButton } from "../lib/ui.js";
 import { formatErrorForDisplay } from "../app/error-display.js";
+import {
+  renderBatchLanguageProgressBars,
+  renderBatchOverallProgress,
+} from "./editor-batch-progress.js";
 
 function visibleTargetLanguages(editorChapter) {
   const languages = Array.isArray(editorChapter?.languages) ? editorChapter.languages : [];
@@ -48,70 +52,18 @@ function renderLanguageCheckboxes(languages, selectedLanguageCodes, disabled) {
   `;
 }
 
-function normalizedProgressEntry(languageProgress, languageCode) {
-  const progress =
-    languageProgress && typeof languageProgress === "object"
-      ? languageProgress[languageCode]
-      : null;
-  const completedCount = Math.max(0, Number.parseInt(String(progress?.completedCount ?? 0), 10) || 0);
-  const totalCount = Math.max(0, Number.parseInt(String(progress?.totalCount ?? 0), 10) || 0);
-  const percent = totalCount > 0
-    ? Math.max(0, Math.min(100, Math.round((completedCount / totalCount) * 100)))
-    : 100;
-  return {
-    completedCount: Math.min(completedCount, totalCount),
-    totalCount,
-    percent,
-  };
-}
-
 function renderLanguageProgressBars(languages, selectedLanguageCodes, languageProgress) {
-  const selected = new Set(Array.isArray(selectedLanguageCodes) ? selectedLanguageCodes : []);
-  const selectedLanguages = languages.filter((language) =>
-    selected.has(String(language?.code ?? "").trim()),
-  );
-  if (selectedLanguages.length === 0) {
-    return '<p class="modal__supporting">There are no selected languages to translate.</p>';
-  }
-
-  return `
-    <div class="ai-translate-all-modal__progress-list">
-      ${selectedLanguages.map((language) => {
-        const code = String(language?.code ?? "").trim();
-        const name = String(language?.name ?? "").trim() || code;
-        const progress = normalizedProgressEntry(languageProgress, code);
-        return `
-          <div class="ai-translate-all-modal__progress-row">
-            <div class="ai-translate-all-modal__progress-label">
-              <span>${escapeHtml(name)}</span>
-              <span>${escapeHtml(String(progress.completedCount))} / ${escapeHtml(String(progress.totalCount))}</span>
-            </div>
-            <div
-              class="ai-translate-all-modal__progress-track"
-              role="progressbar"
-              aria-label="${escapeHtml(`${name} translation progress`)}"
-              aria-valuemin="0"
-              aria-valuemax="${escapeHtml(String(progress.totalCount))}"
-              aria-valuenow="${escapeHtml(String(progress.completedCount))}"
-            >
-              <div class="ai-translate-all-modal__progress-fill" style="width: ${escapeHtml(String(progress.percent))}%;"></div>
-            </div>
-          </div>
-        `;
-      }).join("")}
-    </div>
-  `;
+  return renderBatchLanguageProgressBars({
+    languages,
+    selectedLanguageCodes,
+    languageProgress,
+    emptyMessage: "There are no selected languages to translate.",
+    progressLabel: "translation progress",
+  });
 }
 
 function renderOverallProgress(modal) {
-  const completedCount = Math.max(0, Number.parseInt(String(modal?.translatedCount ?? 0), 10) || 0);
-  const totalCount = Math.max(0, Number.parseInt(String(modal?.totalCount ?? 0), 10) || 0);
-  const translationLabel = totalCount === 1 ? "translation" : "translations";
-  return `
-    <p class="ai-translate-all-modal__progress-summary">
-      ${escapeHtml(String(Math.min(completedCount, totalCount)))} / ${escapeHtml(String(totalCount))} ${escapeHtml(translationLabel)} completed
-    </p>
-  `;
+  return renderBatchOverallProgress(modal, "translation", "translations");
 }
 
 function disabledPrimaryButton(label) {

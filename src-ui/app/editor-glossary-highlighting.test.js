@@ -158,6 +158,99 @@ test("target highlights only appear for glossary terms present in the same row s
   assert.doesNotMatch(targetHtml, /<mark[^>]*>thien dinh<\/mark>/);
 });
 
+test("Japanese target highlights match terms embedded without spaces", () => {
+  const model = buildEditorGlossaryModel(glossaryPayload({
+    targetLanguage: {
+      code: "ja",
+      name: "Japanese",
+    },
+    terms: [
+      {
+        termId: "t1",
+        sourceTerms: ["oracion"],
+        targetTerms: ["祈り"],
+      },
+    ],
+  }));
+
+  const highlights = buildEditorRowGlossaryHighlights([
+    {
+      code: "es",
+      text: "La oracion empieza.",
+    },
+    {
+      code: "ja",
+      text: "主の祈りを唱える。",
+    },
+  ], model);
+
+  const sourceHtml = highlights.get("es")?.html ?? "";
+  const targetHtml = highlights.get("ja")?.html ?? "";
+  assert.doesNotMatch(sourceHtml, /glossary-match-error/);
+  assert.match(targetHtml, /<mark[^>]*>祈り<\/mark>/);
+});
+
+test("Japanese target highlights prefer the longest embedded glossary term", () => {
+  const model = buildEditorGlossaryModel(glossaryPayload({
+    targetLanguage: {
+      code: "ja",
+      name: "Japanese",
+    },
+    terms: [
+      {
+        termId: "t1",
+        sourceTerms: ["canto"],
+        targetTerms: ["祈り"],
+      },
+      {
+        termId: "t2",
+        sourceTerms: ["oracion"],
+        targetTerms: ["主の祈り"],
+      },
+    ],
+  }));
+
+  const highlights = buildEditorRowGlossaryHighlights([
+    {
+      code: "es",
+      text: "El canto y la oracion.",
+    },
+    {
+      code: "ja",
+      text: "主の祈りを唱える。",
+    },
+  ], model);
+
+  const targetHtml = highlights.get("ja")?.html ?? "";
+  assert.match(targetHtml, /<mark[^>]*>主の祈り<\/mark>/);
+  assert.doesNotMatch(targetHtml, /<mark[^>]*>祈り<\/mark>/);
+  assert.equal((targetHtml.match(/data-editor-glossary-mark/g) ?? []).length, 1);
+});
+
+test("space-delimited glossary matching does not match inside longer words", () => {
+  const model = buildEditorGlossaryModel(glossaryPayload({
+    sourceLanguage: {
+      code: "en",
+      name: "English",
+    },
+    targetLanguage: {
+      code: "vi",
+      name: "Vietnamese",
+    },
+    terms: [
+      {
+        termId: "t1",
+        sourceTerms: ["he"],
+        targetTerms: ["anh ay"],
+      },
+    ],
+  }));
+
+  const result = findLongestGlossaryMatches("the theme", model.sourceMatcher);
+
+  assert.equal(result.matches.length, 0);
+});
+
 test("ruby target variants require exact ruby before the source highlight is satisfied", () => {
   const model = buildEditorGlossaryModel(glossaryPayload({
     sourceLanguage: {

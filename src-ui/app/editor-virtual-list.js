@@ -37,7 +37,7 @@ import {
 } from "./scroll-state.js";
 import { logEditorScrollDebug } from "./editor-scroll-debug.js";
 
-const EDITOR_VIRTUALIZER_OVERSCAN_ROWS = 8;
+const EDITOR_VIRTUALIZER_OVERSCAN_ROWS = 20;
 
 function captureFocusedEditorField(root) {
   const activeElement = root.ownerDocument?.activeElement;
