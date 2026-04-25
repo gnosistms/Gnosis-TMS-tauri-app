@@ -223,8 +223,7 @@ pub(crate) fn git_error_indicates_missing_remote_ref(error: &str) -> bool {
     let normalized = error.trim().to_ascii_lowercase();
     normalized.contains("couldn't find remote ref")
         || normalized.contains("could not find remote ref")
-        || normalized.contains("remote branch")
-            && normalized.contains("not found")
+        || normalized.contains("remote branch") && normalized.contains("not found")
         || normalized.contains("no such remote ref")
 }
 

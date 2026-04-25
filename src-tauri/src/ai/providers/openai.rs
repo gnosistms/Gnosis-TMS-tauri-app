@@ -263,8 +263,8 @@ pub(crate) fn run_prompt(
         return Err(normalize_http_error(status, &body));
     }
 
-    let payload: OpenAiResponsesCreateResponse =
-        serde_json::from_str(&body).map_err(|_| "OpenAI returned a malformed response.".to_string())?;
+    let payload: OpenAiResponsesCreateResponse = serde_json::from_str(&body)
+        .map_err(|_| "OpenAI returned a malformed response.".to_string())?;
     let provider_response_id = if payload.id.trim().is_empty() {
         None
     } else {
@@ -343,9 +343,9 @@ fn parse_recommended_openai_model(
 ) -> Option<(OpenAiModelVersion, OpenAiModelFamily)> {
     OpenAiModelFamily::recommended_ordered()
         .into_iter()
-        .find_map(|family| parse_openai_model_version_for_family(model_id, family).map(|version| {
-            (version, family)
-        }))
+        .find_map(|family| {
+            parse_openai_model_version_for_family(model_id, family).map(|version| (version, family))
+        })
 }
 
 fn parse_openai_model_version_for_family(

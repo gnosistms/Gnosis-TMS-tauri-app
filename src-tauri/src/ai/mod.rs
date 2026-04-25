@@ -8,12 +8,12 @@ use tauri::AppHandle;
 
 use crate::ai::types::{
     AiAssistantConcordanceHit, AiAssistantRowLanguageText, AiAssistantRowWindowEntry,
-    AiAssistantTranscriptEntry, AiAssistantTurnKind,
-    AiAssistantTurnRequest, AiAssistantTurnResponse, AiModelProbeRequest, AiPromptRequest,
-    AiProviderContinuationMetadata, AiProviderId, AiProviderModel, AiReviewRequest,
-    AiReviewResponse, AiTranslatedGlossaryEntry, AiTranslatedGlossaryPreparationRequest,
-    AiTranslatedGlossaryPreparationResponse, AiTranslatedGlossaryTermInput,
-    AiTranslationGlossaryHint, AiTranslationRequest, AiTranslationResponse,
+    AiAssistantTranscriptEntry, AiAssistantTurnKind, AiAssistantTurnRequest,
+    AiAssistantTurnResponse, AiModelProbeRequest, AiPromptRequest, AiProviderContinuationMetadata,
+    AiProviderId, AiProviderModel, AiReviewRequest, AiReviewResponse, AiTranslatedGlossaryEntry,
+    AiTranslatedGlossaryPreparationRequest, AiTranslatedGlossaryPreparationResponse,
+    AiTranslatedGlossaryTermInput, AiTranslationGlossaryHint, AiTranslationRequest,
+    AiTranslationResponse,
 };
 use crate::ai_secret_storage::load_ai_provider_secret;
 
@@ -262,9 +262,7 @@ fn reply_language_instruction(reply_language_hint: &str) -> String {
     if normalized.is_empty() {
         "Reply in the same language as the user's latest message unless they explicitly ask for another reply language.".to_string()
     } else {
-        format!(
-            "Reply in {normalized} unless the user explicitly asks for another reply language."
-        )
+        format!("Reply in {normalized} unless the user explicitly asks for another reply language.")
     }
 }
 

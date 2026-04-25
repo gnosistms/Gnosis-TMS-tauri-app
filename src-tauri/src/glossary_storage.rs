@@ -403,9 +403,11 @@ pub(crate) async fn rollback_gtms_glossary_term_upsert(
     app: AppHandle,
     input: RollbackGlossaryTermUpsertInput,
 ) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || rollback_gtms_glossary_term_upsert_sync(&app, input))
-        .await
-        .map_err(|error| format!("The glossary term rollback worker failed: {error}"))?
+    tauri::async_runtime::spawn_blocking(move || {
+        rollback_gtms_glossary_term_upsert_sync(&app, input)
+    })
+    .await
+    .map_err(|error| format!("The glossary term rollback worker failed: {error}"))?
 }
 
 #[tauri::command]

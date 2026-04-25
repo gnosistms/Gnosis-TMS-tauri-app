@@ -3,8 +3,8 @@ use std::path::Path;
 use tauri::AppHandle;
 
 use crate::{
-    repo_app_version::git_commit_app_version_trailer,
     broker_auth_storage::load_broker_auth_session,
+    repo_app_version::git_commit_app_version_trailer,
     repo_sync_shared::{ensure_repo_local_git_identity, format_git_spawn_error, git_command},
 };
 

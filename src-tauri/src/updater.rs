@@ -190,9 +190,11 @@ async fn check_update_at_endpoint(
         .updater_builder()
         .pubkey(UPDATER_PUBLIC_KEY.trim())
         .endpoints(vec![endpoint])
-        .map_err(|error| EndpointCheckError::Configuration(format!(
-            "Could not configure the updater endpoint: {error}"
-        )))?
+        .map_err(|error| {
+            EndpointCheckError::Configuration(format!(
+                "Could not configure the updater endpoint: {error}"
+            ))
+        })?
         .build()
         .map_err(|error| {
             EndpointCheckError::Configuration(format!("Could not initialize the updater: {error}"))
@@ -308,8 +310,8 @@ pub(crate) async fn install_app_update(
 #[cfg(test)]
 mod tests {
     use super::{
-        github_release_latest_json_url, parse_github_release_tags, platform_wait_message,
-        platform_wait_and_lookup_failed_message,
+        github_release_latest_json_url, parse_github_release_tags,
+        platform_wait_and_lookup_failed_message, platform_wait_message,
     };
 
     #[test]

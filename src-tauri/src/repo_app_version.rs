@@ -45,7 +45,8 @@ pub(crate) fn remote_ref_requires_newer_app(
     resource_kind: &str,
     resource_name: &str,
 ) -> Result<Option<RepoAppUpdateRequirement>, String> {
-    let remote_commit_message = git_output(repo_path, &["log", "-1", "--format=%B", remote_ref], None)?;
+    let remote_commit_message =
+        git_output(repo_path, &["log", "-1", "--format=%B", remote_ref], None)?;
     let Some(remote_app_version) = extract_commit_app_version(&remote_commit_message) else {
         return Ok(None);
     };
@@ -75,17 +76,14 @@ pub(crate) fn remote_ref_requires_newer_app(
 }
 
 fn extract_commit_app_version(commit_message: &str) -> Option<String> {
-    commit_message
-        .lines()
-        .rev()
-        .find_map(|line| {
-            let trimmed = line.trim();
-            trimmed
-                .strip_prefix(GTMS_APP_VERSION_TRAILER)
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .map(ToOwned::to_owned)
-        })
+    commit_message.lines().rev().find_map(|line| {
+        let trimmed = line.trim();
+        trimmed
+            .strip_prefix(GTMS_APP_VERSION_TRAILER)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToOwned::to_owned)
+    })
 }
 
 fn compare_app_versions(left: &str, right: &str) -> Ordering {
@@ -144,7 +142,10 @@ mod tests {
         assert_eq!(compare_app_versions("0.1.36", "0.1.35"), Ordering::Greater);
         assert_eq!(compare_app_versions("0.2.0", "0.10.0"), Ordering::Less);
         assert_eq!(compare_app_versions("0.1.35", "0.1.35"), Ordering::Equal);
-        assert_eq!(compare_app_versions("0.1.35-beta.1", "0.1.35"), Ordering::Equal);
+        assert_eq!(
+            compare_app_versions("0.1.35-beta.1", "0.1.35"),
+            Ordering::Equal
+        );
     }
 
     #[test]

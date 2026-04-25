@@ -712,9 +712,7 @@ mod tests {
         snapshot_from_glossary_sync_error, GlossaryRepoSyncDescriptor,
         GLOSSARY_REPO_SYNC_STATUS_UPDATE_REQUIRED,
     };
-    use crate::repo_app_version::{
-        encode_repo_app_update_requirement, RepoAppUpdateRequirement,
-    };
+    use crate::repo_app_version::{encode_repo_app_update_requirement, RepoAppUpdateRequirement};
     use std::path::Path;
 
     #[test]

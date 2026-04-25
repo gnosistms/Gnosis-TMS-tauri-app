@@ -10,8 +10,7 @@ use serde_json::{json, Value};
 
 use super::*;
 
-const IMPORTED_EDITOR_CONFLICT_JOURNAL_FILE: &str =
-    "gnosis-project-editor-imported-conflicts.json";
+const IMPORTED_EDITOR_CONFLICT_JOURNAL_FILE: &str = "gnosis-project-editor-imported-conflicts.json";
 
 #[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -175,7 +174,9 @@ pub(super) fn overlay_imported_editor_conflict_rows(
     }
 
     rows.into_iter()
-        .map(|row| overlay_imported_editor_conflict_row_with_entries(repo_path, row, &imported_conflicts))
+        .map(|row| {
+            overlay_imported_editor_conflict_row_with_entries(repo_path, row, &imported_conflicts)
+        })
         .collect()
 }
 
@@ -357,12 +358,13 @@ fn overlay_imported_editor_conflict_row_with_entries(
         return Ok(row);
     };
 
-    let local_row_file: StoredRowFile = serde_json::from_value(entry.local_row.clone()).map_err(|error| {
-        format!(
-            "Could not parse the imported local row conflict snapshot '{}': {error}",
-            entry.row_path
-        )
-    })?;
+    let local_row_file: StoredRowFile =
+        serde_json::from_value(entry.local_row.clone()).map_err(|error| {
+            format!(
+                "Could not parse the imported local row conflict snapshot '{}': {error}",
+                entry.row_path
+            )
+        })?;
     let base_row = entry
         .base_row
         .clone()
@@ -586,11 +588,8 @@ fn resolve_three_way_row_conflict(
         let remote_footnote = remote_field
             .map(|value| normalize_editor_footnote_value(&value.footnote))
             .unwrap_or_default();
-        let (next_remote_footnote, next_local_footnote, footnote_conflict) = merge_string_slice(
-            &base_footnote,
-            &local_footnote,
-            &remote_footnote,
-        );
+        let (next_remote_footnote, next_local_footnote, footnote_conflict) =
+            merge_string_slice(&base_footnote, &local_footnote, &remote_footnote);
         remote_footnotes.insert(language_code.clone(), next_remote_footnote);
         local_footnotes.insert(language_code.clone(), next_local_footnote);
         if footnote_conflict {
@@ -606,15 +605,12 @@ fn resolve_three_way_row_conflict(
         let remote_image_caption = remote_field
             .map(|value| normalize_editor_image_caption_value(&value.image_caption))
             .unwrap_or_default();
-        let (
-            next_remote_image_caption,
-            next_local_image_caption,
-            image_caption_conflict,
-        ) = merge_string_slice(
-            &base_image_caption,
-            &local_image_caption,
-            &remote_image_caption,
-        );
+        let (next_remote_image_caption, next_local_image_caption, image_caption_conflict) =
+            merge_string_slice(
+                &base_image_caption,
+                &local_image_caption,
+                &remote_image_caption,
+            );
         remote_image_captions.insert(language_code.clone(), next_remote_image_caption);
         local_image_captions.insert(language_code.clone(), next_local_image_caption);
         if image_caption_conflict {
@@ -624,8 +620,11 @@ fn resolve_three_way_row_conflict(
         let base_image = base_field.and_then(|value| value.image.clone());
         let local_image = local_field.and_then(|value| value.image.clone());
         let remote_image = remote_field.and_then(|value| value.image.clone());
-        let (next_remote_image, next_local_image) =
-            merge_image_slice(base_image.clone(), local_image.clone(), remote_image.clone());
+        let (next_remote_image, next_local_image) = merge_image_slice(
+            base_image.clone(),
+            local_image.clone(),
+            remote_image.clone(),
+        );
         remote_images.insert(language_code.clone(), next_remote_image);
         local_images.insert(language_code.clone(), next_local_image);
 
@@ -638,8 +637,7 @@ fn resolve_three_way_row_conflict(
         let remote_flags_value = remote_field
             .map(|value| value.editor_flags.clone())
             .unwrap_or_default();
-        let next_flags =
-            merge_field_flags(&base_flags, &local_flags_value, &remote_flags_value);
+        let next_flags = merge_field_flags(&base_flags, &local_flags_value, &remote_flags_value);
         remote_flags.insert(language_code.clone(), next_flags.clone());
         local_flags.insert(language_code.clone(), next_flags);
     }
@@ -879,9 +877,8 @@ fn apply_image_updates(
         ensure_editor_field_object_defaults(field_object)?;
         field_object.insert(
             "image".to_string(),
-            serde_json::to_value(image).map_err(|error| {
-                format!("Could not serialize the row image metadata: {error}")
-            })?,
+            serde_json::to_value(image)
+                .map_err(|error| format!("Could not serialize the row image metadata: {error}"))?,
         );
     }
     Ok(())
@@ -905,10 +902,7 @@ fn apply_field_state_updates(
             .and_then(Value::as_object_mut)
             .ok_or_else(|| "The row field editor flags are not a JSON object.".to_string())?;
         editor_flags_object.insert("reviewed".to_string(), Value::Bool(flags.reviewed));
-        editor_flags_object.insert(
-            "please_check".to_string(),
-            Value::Bool(flags.please_check),
-        );
+        editor_flags_object.insert("please_check".to_string(), Value::Bool(flags.please_check));
         field_object.remove("html_preview");
     }
     Ok(())
@@ -922,7 +916,10 @@ fn set_row_order_key(row_value: &mut Value, order_key: &str) -> Result<(), Strin
     let structure_object = structure_value
         .as_object_mut()
         .ok_or_else(|| "The row structure is not a JSON object.".to_string())?;
-    structure_object.insert("order_key".to_string(), Value::String(order_key.to_string()));
+    structure_object.insert(
+        "order_key".to_string(),
+        Value::String(order_key.to_string()),
+    );
     Ok(())
 }
 
@@ -934,7 +931,10 @@ fn set_row_lifecycle_state(row_value: &mut Value, lifecycle_state: &str) -> Resu
     let lifecycle_object = lifecycle_value
         .as_object_mut()
         .ok_or_else(|| "The row lifecycle is not a JSON object.".to_string())?;
-    lifecycle_object.insert("state".to_string(), Value::String(lifecycle_state.to_string()));
+    lifecycle_object.insert(
+        "state".to_string(),
+        Value::String(lifecycle_state.to_string()),
+    );
     Ok(())
 }
 
@@ -971,14 +971,20 @@ fn strip_supported_row_merge_keys(value: &mut Value) -> Result<(), String> {
         return Ok(());
     };
 
-    if let Some(structure_object) = row_object.get_mut("structure").and_then(Value::as_object_mut) {
+    if let Some(structure_object) = row_object
+        .get_mut("structure")
+        .and_then(Value::as_object_mut)
+    {
         structure_object.remove("order_key");
         if structure_object.is_empty() {
             row_object.remove("structure");
         }
     }
 
-    if let Some(lifecycle_object) = row_object.get_mut("lifecycle").and_then(Value::as_object_mut) {
+    if let Some(lifecycle_object) = row_object
+        .get_mut("lifecycle")
+        .and_then(Value::as_object_mut)
+    {
         lifecycle_object.remove("state");
         if lifecycle_object.is_empty() {
             row_object.remove("lifecycle");
@@ -999,8 +1005,9 @@ fn strip_supported_row_merge_keys(value: &mut Value) -> Result<(), String> {
                 field_object.remove("image");
                 field_object.remove("html_preview");
                 field_object.remove("value_kind");
-                if let Some(editor_flags_object) =
-                    field_object.get_mut("editor_flags").and_then(Value::as_object_mut)
+                if let Some(editor_flags_object) = field_object
+                    .get_mut("editor_flags")
+                    .and_then(Value::as_object_mut)
                 {
                     editor_flags_object.remove("reviewed");
                     editor_flags_object.remove("please_check");
@@ -1093,7 +1100,9 @@ fn merge_optional_glossary_setting(
         next_value
             .map(|value| serde_json::to_value(value))
             .transpose()
-            .map_err(|error| format!("Could not serialize the chapter glossary setting: {error}"))?,
+            .map_err(|error| {
+                format!("Could not serialize the chapter glossary setting: {error}")
+            })?,
     )
 }
 
@@ -1331,7 +1340,9 @@ mod tests {
                 let remote_row: StoredRowFile =
                     serde_json::from_str(&text).expect("resolved remote row should parse");
                 assert_eq!(
-                    row_plain_text_map(&remote_row).get("en").map(String::as_str),
+                    row_plain_text_map(&remote_row)
+                        .get("en")
+                        .map(String::as_str),
                     Some("remote")
                 );
                 assert_eq!(
@@ -1442,7 +1453,8 @@ mod tests {
             ),
         )
         .expect("chapter should resolve");
-        let merged_value: Value = serde_json::from_str(&merged).expect("merged chapter should parse");
+        let merged_value: Value =
+            serde_json::from_str(&merged).expect("merged chapter should parse");
         assert_eq!(merged_value["title"], json!("Remote"));
     }
 }
