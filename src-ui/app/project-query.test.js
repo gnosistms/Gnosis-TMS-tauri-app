@@ -23,6 +23,7 @@ const {
   createProjectSoftDeleteMutationOptions,
   createProjectsQuerySnapshot,
   invalidateProjectsQueryAfterMutation,
+  preserveProjectLifecyclePatchesInProjectSnapshot,
   preservePendingProjectLifecyclePatches,
   seedProjectsQueryFromCache,
 } = await import("./project-query.js");
@@ -243,6 +244,87 @@ test("refresh snapshots preserve pending project lifecycle patches", () => {
   assert.equal(merged.snapshot.items.find((item) => item.id === "project-1").title, "Optimistic Rename");
   assert.equal(merged.snapshot.deletedItems.find((item) => item.id === "delete-project").pendingMutation, "softDelete");
   assert.equal(merged.snapshot.items.find((item) => item.id === "restore-project").pendingMutation, "restore");
+});
+
+test("refresh snapshots preserve settled local project lifecycle intent until server agrees", () => {
+  const previousSnapshot = createProjectsQuerySnapshot({
+    items: [
+      project({ id: "rename-project", title: "Local Rename", localLifecycleIntent: "rename" }),
+      project({ id: "restore-project", lifecycleState: "active", localLifecycleIntent: "restore" }),
+    ],
+    deletedItems: [
+      project({ id: "delete-project", lifecycleState: "deleted", localLifecycleIntent: "softDelete" }),
+    ],
+  });
+  const staleRefreshSnapshot = createProjectsQuerySnapshot({
+    items: [
+      project({ id: "rename-project", title: "Server Title" }),
+      project({ id: "delete-project", lifecycleState: "active" }),
+    ],
+    deletedItems: [
+      project({ id: "restore-project", lifecycleState: "deleted" }),
+    ],
+  });
+
+  const merged = preservePendingProjectLifecyclePatches(staleRefreshSnapshot, previousSnapshot);
+
+  assert.equal(merged.snapshot.items.find((item) => item.id === "rename-project").title, "Local Rename");
+  assert.equal(merged.snapshot.items.find((item) => item.id === "rename-project").localLifecycleIntent, "rename");
+  assert.equal(merged.snapshot.deletedItems.find((item) => item.id === "delete-project").localLifecycleIntent, "softDelete");
+  assert.equal(merged.snapshot.items.find((item) => item.id === "restore-project").localLifecycleIntent, "restore");
+});
+
+test("direct project refresh snapshots preserve settled local project lifecycle intent", () => {
+  const previousSnapshot = createProjectsQuerySnapshot({
+    items: [
+      project({ id: "rename-project", title: "Local Rename", localLifecycleIntent: "rename" }),
+    ],
+    deletedItems: [
+      project({ id: "delete-project", lifecycleState: "deleted", localLifecycleIntent: "softDelete" }),
+    ],
+  });
+  const staleRefreshSnapshot = {
+    items: [
+      project({ id: "rename-project", title: "Server Title" }),
+      project({ id: "delete-project", lifecycleState: "active" }),
+    ],
+    deletedItems: [],
+  };
+
+  const merged = preserveProjectLifecyclePatchesInProjectSnapshot(staleRefreshSnapshot, previousSnapshot);
+
+  assert.equal(merged.items.length, 1);
+  assert.equal(merged.items[0].title, "Local Rename");
+  assert.equal(merged.items[0].localLifecycleIntent, "rename");
+  assert.equal(merged.deletedItems[0].id, "delete-project");
+  assert.equal(merged.deletedItems[0].localLifecycleIntent, "softDelete");
+});
+
+test("refresh snapshots clear local project lifecycle intent after server state agrees", () => {
+  const previousSnapshot = createProjectsQuerySnapshot({
+    items: [
+      project({ id: "rename-project", title: "Local Rename", localLifecycleIntent: "rename" }),
+      project({ id: "restore-project", lifecycleState: "active", localLifecycleIntent: "restore" }),
+    ],
+    deletedItems: [
+      project({ id: "delete-project", lifecycleState: "deleted", localLifecycleIntent: "softDelete" }),
+    ],
+  });
+  const settledRefreshSnapshot = createProjectsQuerySnapshot({
+    items: [
+      project({ id: "rename-project", title: "Local Rename" }),
+      project({ id: "restore-project", lifecycleState: "active" }),
+    ],
+    deletedItems: [
+      project({ id: "delete-project", lifecycleState: "deleted" }),
+    ],
+  });
+
+  const merged = preservePendingProjectLifecyclePatches(settledRefreshSnapshot, previousSnapshot);
+
+  assert.equal(merged.snapshot.items.find((item) => item.id === "rename-project").localLifecycleIntent, undefined);
+  assert.equal(merged.snapshot.items.find((item) => item.id === "restore-project").localLifecycleIntent, undefined);
+  assert.equal(merged.snapshot.deletedItems.find((item) => item.id === "delete-project").localLifecycleIntent, undefined);
 });
 
 test("project mutation settle invalidates active project query once without explicit fetch", async () => {

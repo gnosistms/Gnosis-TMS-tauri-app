@@ -107,6 +107,29 @@ test("project refresh keeps top-level lifecycle actions enabled and heavy action
       isRefreshing: true,
       writeState: "idle",
     },
+    projects: [{
+      id: "project-1",
+      title: "Project",
+      name: "project-repo",
+      status: "active",
+      chapters: [
+        {
+          id: "chapter-1",
+          name: "Chapter",
+          status: "active",
+          linkedGlossary: null,
+          sourceWordCount: 10,
+        },
+        {
+          id: "deleted-chapter-1",
+          name: "Deleted Chapter",
+          status: "deleted",
+          linkedGlossary: null,
+          sourceWordCount: 10,
+        },
+      ],
+    }],
+    expandedDeletedFiles: new Set(["project-1"]),
     deletedProjects: [{
       id: "deleted-project",
       title: "Deleted Project",
@@ -121,11 +144,13 @@ test("project refresh keeps top-level lifecycle actions enabled and heavy action
   assert.doesNotMatch(actionButtonHtml(html, "rename-project:project-1"), /disabled/);
   assert.doesNotMatch(actionButtonHtml(html, "delete-project:project-1"), /disabled/);
   assert.doesNotMatch(actionButtonHtml(html, "restore-project:deleted-project"), /disabled/);
+  assert.doesNotMatch(actionButtonHtml(html, "rename-file:chapter-1"), /disabled/);
+  assert.doesNotMatch(actionButtonHtml(html, "delete-file:chapter-1"), /disabled/);
+  assert.doesNotMatch(actionButtonHtml(html, "restore-file:deleted-chapter-1"), /disabled/);
 
   assert.match(actionButtonHtml(html, "open-new-project"), /disabled/);
   assert.match(actionButtonHtml(html, "add-project-files:project-1"), /disabled/);
-  assert.match(actionButtonHtml(html, "rename-file:chapter-1"), /disabled/);
-  assert.match(actionButtonHtml(html, "delete-file:chapter-1"), /disabled/);
+  assert.match(actionButtonHtml(html, "delete-deleted-file:deleted-chapter-1"), /disabled/);
   assert.match(actionButtonHtml(html, "delete-deleted-project:deleted-project"), /disabled/);
 });
 
@@ -135,6 +160,29 @@ test("project write in progress disables top-level lifecycle actions", () => {
       isRefreshing: false,
       writeState: "submitting",
     },
+    projects: [{
+      id: "project-1",
+      title: "Project",
+      name: "project-repo",
+      status: "active",
+      chapters: [
+        {
+          id: "chapter-1",
+          name: "Chapter",
+          status: "active",
+          linkedGlossary: null,
+          sourceWordCount: 10,
+        },
+        {
+          id: "deleted-chapter-1",
+          name: "Deleted Chapter",
+          status: "deleted",
+          linkedGlossary: null,
+          sourceWordCount: 10,
+        },
+      ],
+    }],
+    expandedDeletedFiles: new Set(["project-1"]),
     deletedProjects: [{
       id: "deleted-project",
       title: "Deleted Project",
@@ -148,4 +196,7 @@ test("project write in progress disables top-level lifecycle actions", () => {
   assert.match(actionButtonHtml(html, "rename-project:project-1"), /disabled/);
   assert.match(actionButtonHtml(html, "delete-project:project-1"), /disabled/);
   assert.match(actionButtonHtml(html, "restore-project:deleted-project"), /disabled/);
+  assert.match(actionButtonHtml(html, "rename-file:chapter-1"), /disabled/);
+  assert.match(actionButtonHtml(html, "delete-file:chapter-1"), /disabled/);
+  assert.match(actionButtonHtml(html, "restore-file:deleted-chapter-1"), /disabled/);
 });

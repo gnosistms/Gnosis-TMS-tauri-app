@@ -169,6 +169,148 @@ function moveProjectToCollection(queryData, projectId, targetCollection, patch =
   };
 }
 
+function normalizeProjectSnapshotInput(snapshot) {
+  const projectSnapshot = snapshot?.snapshot && typeof snapshot.snapshot === "object"
+    ? snapshot.snapshot
+    : snapshot;
+  return {
+    items: Array.isArray(projectSnapshot?.items) ? projectSnapshot.items : [],
+    deletedItems: Array.isArray(projectSnapshot?.deletedItems) ? projectSnapshot.deletedItems : [],
+  };
+}
+
+function projectLifecycleIntent(project) {
+  if (typeof project?.pendingMutation === "string" && project.pendingMutation.trim()) {
+    return project.pendingMutation.trim();
+  }
+  if (typeof project?.localLifecycleIntent === "string" && project.localLifecycleIntent.trim()) {
+    return project.localLifecycleIntent.trim();
+  }
+  return "";
+}
+
+function moveProjectInPlainSnapshot(snapshot, projectId, targetCollection, patch = {}, fallbackProject = null) {
+  const current = normalizeProjectSnapshotInput(snapshot);
+  const project =
+    [...current.items, ...current.deletedItems].find((item) => item?.id === projectId)
+    ?? fallbackProject;
+  if (!project) {
+    return current;
+  }
+
+  const patchedProject = {
+    ...project,
+    ...patch,
+  };
+  const items = current.items.filter((item) => item?.id !== projectId);
+  const deletedItems = current.deletedItems.filter((item) => item?.id !== projectId);
+
+  if (targetCollection === "deleted") {
+    deletedItems.push(patchedProject);
+  } else {
+    items.push(patchedProject);
+  }
+
+  return { items, deletedItems };
+}
+
+function patchProjectInPlainSnapshot(snapshot, projectId, patch) {
+  const current = normalizeProjectSnapshotInput(snapshot);
+  let changed = false;
+  const patchProject = (project) => {
+    if (project?.id !== projectId) {
+      return project;
+    }
+    changed = true;
+    return {
+      ...project,
+      ...patch,
+    };
+  };
+  const items = current.items.map(patchProject);
+  const deletedItems = current.deletedItems.map(patchProject);
+  return changed ? { items, deletedItems } : current;
+}
+
+function projectLocation(snapshot, projectId) {
+  const current = normalizeProjectSnapshotInput(snapshot);
+  if (current.items.some((item) => item?.id === projectId)) {
+    return "active";
+  }
+  if (current.deletedItems.some((item) => item?.id === projectId)) {
+    return "deleted";
+  }
+  return "";
+}
+
+function projectTitleInSnapshot(snapshot, projectId) {
+  const current = normalizeProjectSnapshotInput(snapshot);
+  return [...current.items, ...current.deletedItems].find((item) => item?.id === projectId)?.title;
+}
+
+export function preserveProjectLifecyclePatchesInProjectSnapshot(nextSnapshot, previousSnapshot) {
+  if (!nextSnapshot || typeof nextSnapshot !== "object") {
+    return nextSnapshot;
+  }
+
+  const previousProjects = [
+    ...normalizeProjectSnapshotInput(previousSnapshot).items,
+    ...normalizeProjectSnapshotInput(previousSnapshot).deletedItems,
+  ];
+  const intentById = new Map(
+    previousProjects
+      .filter((project) => typeof project?.id === "string" && projectLifecycleIntent(project))
+      .map((project) => [project.id, project]),
+  );
+  if (intentById.size === 0) {
+    return normalizeProjectSnapshotInput(nextSnapshot);
+  }
+
+  let nextData = normalizeProjectSnapshotInput(nextSnapshot);
+  for (const previousProject of intentById.values()) {
+    const intent = projectLifecycleIntent(previousProject);
+    const isPending = typeof previousProject?.pendingMutation === "string"
+      && previousProject.pendingMutation.trim();
+
+    if (intent === "softDelete") {
+      if (!isPending && projectLocation(nextData, previousProject.id) === "deleted") {
+        continue;
+      }
+      nextData = moveProjectInPlainSnapshot(nextData, previousProject.id, "deleted", {
+        lifecycleState: previousProject.lifecycleState ?? "deleted",
+        pendingMutation: isPending ? "softDelete" : null,
+        localLifecycleIntent: "softDelete",
+      }, previousProject);
+      continue;
+    }
+
+    if (intent === "restore") {
+      if (!isPending && projectLocation(nextData, previousProject.id) === "active") {
+        continue;
+      }
+      nextData = moveProjectInPlainSnapshot(nextData, previousProject.id, "active", {
+        lifecycleState: previousProject.lifecycleState ?? "active",
+        pendingMutation: isPending ? "restore" : null,
+        localLifecycleIntent: "restore",
+      }, previousProject);
+      continue;
+    }
+
+    if (intent === "rename") {
+      if (!isPending && projectTitleInSnapshot(nextData, previousProject.id) === previousProject.title) {
+        continue;
+      }
+      nextData = patchProjectInPlainSnapshot(nextData, previousProject.id, {
+        title: previousProject.title,
+        pendingMutation: isPending ? "rename" : null,
+        localLifecycleIntent: "rename",
+      });
+    }
+  }
+
+  return nextData;
+}
+
 export function patchProjectQueryData(queryData, projectId, patch) {
   if (!queryData || typeof queryData !== "object") {
     return queryData;
@@ -206,48 +348,14 @@ export function preservePendingProjectLifecyclePatches(nextSnapshot, previousSna
     return nextSnapshot;
   }
 
-  const previousProjects = [
-    ...(Array.isArray(previousSnapshot?.snapshot?.items) ? previousSnapshot.snapshot.items : []),
-    ...(Array.isArray(previousSnapshot?.snapshot?.deletedItems) ? previousSnapshot.snapshot.deletedItems : []),
-  ];
-  const pendingById = new Map(
-    previousProjects
-      .filter((project) =>
-        typeof project?.id === "string"
-        && typeof project?.pendingMutation === "string"
-        && project.pendingMutation.trim()
-      )
-      .map((project) => [project.id, project]),
+  const preservedSnapshot = preserveProjectLifecyclePatchesInProjectSnapshot(
+    nextSnapshot.snapshot,
+    previousSnapshot,
   );
-  if (pendingById.size === 0) {
-    return nextSnapshot;
-  }
-
-  let nextData = nextSnapshot;
-  for (const pendingProject of pendingById.values()) {
-    if (pendingProject.pendingMutation === "softDelete") {
-      nextData = moveProjectToCollection(nextData, pendingProject.id, "deleted", {
-        lifecycleState: pendingProject.lifecycleState,
-        pendingMutation: pendingProject.pendingMutation,
-      });
-      continue;
-    }
-    if (pendingProject.pendingMutation === "restore") {
-      nextData = moveProjectToCollection(nextData, pendingProject.id, "active", {
-        lifecycleState: pendingProject.lifecycleState,
-        pendingMutation: pendingProject.pendingMutation,
-      });
-      continue;
-    }
-    if (pendingProject.pendingMutation === "rename") {
-      nextData = patchProjectQueryData(nextData, pendingProject.id, {
-        title: pendingProject.title,
-        pendingMutation: pendingProject.pendingMutation,
-      });
-    }
-  }
-
-  return nextData;
+  return {
+    ...nextSnapshot,
+    snapshot: preservedSnapshot,
+  };
 }
 
 export function createProjectsQueryOptions(team, options = {}) {
@@ -258,6 +366,16 @@ export function createProjectsQueryOptions(team, options = {}) {
       const result = await loadRepoBackedProjectsForTeam(team, {
         ...options,
         teamId,
+        preserveProjectLifecyclePatches: (snapshot) => {
+          const snapshotWithPagePatches =
+            typeof options.preserveProjectLifecyclePatches === "function"
+              ? options.preserveProjectLifecyclePatches(snapshot)
+              : snapshot;
+          return preserveProjectLifecyclePatchesInProjectSnapshot(
+            snapshotWithPagePatches,
+            queryClient.getQueryData(projectKeys.byTeam(teamId)),
+          );
+        },
       });
       const nextSnapshot = createProjectsQuerySnapshot(result);
       return preservePendingProjectLifecyclePatches(
@@ -446,6 +564,7 @@ export function createProjectRenameMutationOptions({
     settledData: {
       title: nextTitle,
       pendingMutation: null,
+      localLifecycleIntent: "rename",
     },
     commitMutation,
     onOptimisticApplied,
@@ -465,6 +584,7 @@ export function createProjectSoftDeleteMutationOptions(options = {}) {
     settledData: {
       lifecycleState: "deleted",
       pendingMutation: null,
+      localLifecycleIntent: "softDelete",
     },
   });
 }
@@ -480,6 +600,7 @@ export function createProjectRestoreMutationOptions(options = {}) {
     settledData: {
       lifecycleState: "active",
       pendingMutation: null,
+      localLifecycleIntent: "restore",
     },
   });
 }

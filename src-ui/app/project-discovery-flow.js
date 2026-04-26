@@ -359,12 +359,16 @@ export async function refreshProjectFilesFromDisk(render, selectedTeam, projects
     state.pendingChapterMutations,
     options.applyChapterPendingMutation,
   );
-  applyProjectSnapshotToState(nextSnapshot, {
+  const preservedSnapshot =
+    typeof options.preserveProjectLifecyclePatches === "function"
+      ? options.preserveProjectLifecyclePatches(nextSnapshot)
+      : nextSnapshot;
+  applyProjectSnapshotToState(preservedSnapshot, {
     reconcileExpandedDeletedFiles: options.reconcileExpandedDeletedFiles,
   });
   options.persistProjectsForTeam(selectedTeam);
   render();
-  return mergedSnapshot;
+  return preservedSnapshot;
 }
 
 export async function loadTeamProjects(render, teamId = state.selectedTeamId, options = {}) {
@@ -402,7 +406,11 @@ export async function loadTeamProjects(render, teamId = state.selectedTeamId, op
       return;
     }
     state.projectRepoSyncByProjectId = {};
-    applyProjectSnapshotToState(optimisticSnapshot, {
+    const preservedSnapshot =
+      typeof options.preserveProjectLifecyclePatches === "function"
+        ? options.preserveProjectLifecyclePatches(optimisticSnapshot)
+        : optimisticSnapshot;
+    applyProjectSnapshotToState(preservedSnapshot, {
       reconcileExpandedDeletedFiles: options.reconcileExpandedDeletedFiles,
     });
     options.setProjectDiscoveryState(
@@ -415,7 +423,11 @@ export async function loadTeamProjects(render, teamId = state.selectedTeamId, op
   }
 
   if (cachedProjects.exists) {
-    applyProjectSnapshotToState(optimisticSnapshot, {
+    const preservedSnapshot =
+      typeof options.preserveProjectLifecyclePatches === "function"
+        ? options.preserveProjectLifecyclePatches(optimisticSnapshot)
+        : optimisticSnapshot;
+    applyProjectSnapshotToState(preservedSnapshot, {
       reconcileExpandedDeletedFiles: options.reconcileExpandedDeletedFiles,
     });
     options.setProjectDiscoveryState("ready", "", "", "");
@@ -580,7 +592,11 @@ export async function loadTeamProjects(render, teamId = state.selectedTeamId, op
       state.pendingChapterMutations,
       options.applyChapterPendingMutation,
     );
-    applyProjectSnapshotToState(nextSnapshot, {
+    const preservedSnapshot =
+      typeof options.preserveProjectLifecyclePatches === "function"
+        ? options.preserveProjectLifecyclePatches(nextSnapshot)
+        : nextSnapshot;
+    applyProjectSnapshotToState(preservedSnapshot, {
       reconcileExpandedDeletedFiles: options.reconcileExpandedDeletedFiles,
     });
     options.persistProjectsForTeam(selectedTeam);

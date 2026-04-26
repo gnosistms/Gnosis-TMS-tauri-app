@@ -199,8 +199,8 @@ function renderProjectCard(project, expanded, options = {}) {
                       disabled: offlineMode || pageWritesDisabled || glossaryChangesDisabled || !canManageProjects,
                     })}
                     ${textAction("Open", `open-translate:${chapter.id}`)}
-                    ${canManageProjects ? textAction("Rename", `rename-file:${chapter.id}`, { disabled: offlineMode || pageWritesDisabled || disableContentActions }) : ""}
-                    ${canManageProjects ? textAction("Delete", `delete-file:${chapter.id}`, { disabled: offlineMode || pageWritesDisabled || disableContentActions }) : ""}
+                    ${canManageProjects ? textAction("Rename", `rename-file:${chapter.id}`, { disabled: offlineMode || lifecycleActionsDisabled || disableContentActions }) : ""}
+                    ${canManageProjects ? textAction("Delete", `delete-file:${chapter.id}`, { disabled: offlineMode || lifecycleActionsDisabled || disableContentActions }) : ""}
                   </div>
                 </div>
               `;
@@ -229,7 +229,7 @@ function renderProjectCard(project, expanded, options = {}) {
                                   <span class="chapter-table__name">${escapeHtml(chapter.name)}</span>
                                 </div>
                                 <div class="chapter-table__actions">
-                                  ${canManageProjects ? textAction("Restore", `restore-file:${chapter.id}`, { disabled: offlineMode || pageWritesDisabled || disableContentActions }) : ""}
+                                  ${canManageProjects ? textAction("Restore", `restore-file:${chapter.id}`, { disabled: offlineMode || lifecycleActionsDisabled || disableContentActions }) : ""}
                                   ${canManageProjects && canPermanentlyDeleteFiles ? textAction("Delete", `delete-deleted-file:${chapter.id}`, { disabled: offlineMode || pageWritesDisabled || disableContentActions }) : ""}
                                 </div>
                               </div>

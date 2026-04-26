@@ -71,6 +71,7 @@ import {
   dropProjectMutationsForProject,
   ensureProjectNotTombstoned,
   normalizeListedChapter,
+  preserveChapterLifecyclePatchesInProjectSnapshot,
   persistProjectsForTeam,
   projectMatchesMetadataRecord,
   projectMetadataRecordIsTombstone,
@@ -343,6 +344,11 @@ export async function loadTeamProjects(render, teamId = state.selectedTeamId) {
       dropProjectMutationsForProject,
       loadStoredProjectsForTeam,
       normalizeListedChapter,
+      preserveProjectLifecyclePatches: (snapshot) =>
+        preserveChapterLifecyclePatchesInProjectSnapshot(
+          snapshot,
+          { items: state.projects, deletedItems: state.deletedProjects },
+        ),
       persistProjectsForTeam,
       projectMatchesMetadataRecord,
       projectMetadataRecordIsTombstone,

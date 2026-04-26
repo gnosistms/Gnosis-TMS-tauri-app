@@ -25,6 +25,10 @@ import {
 } from "./team-metadata-flow.js";
 import { ensureResourceNotTombstoned } from "./resource-lifecycle-engine.js";
 import { canPermanentlyDeleteProjectFiles } from "./resource-capabilities.js";
+import {
+  areResourcePageWritesDisabled,
+  areResourcePageWriteSubmissionsDisabled,
+} from "./resource-page-controller.js";
 import { normalizedConfirmationValue } from "./resource-entity-modal.js";
 import {
   applyProjectSnapshotToState,
@@ -63,10 +67,34 @@ function setProjectDiscoveryError(render, error) {
   render?.();
 }
 
+function chapterWriteBlockedMessage() {
+  return "Wait for the current projects refresh or write to finish.";
+}
+
+function chapterLifecycleWriteBlockedMessage() {
+  return "Wait for the current project write to finish.";
+}
+
 function ensureChapterMutationAllowed(
   render,
-  { selectedTeam = selectedProjectsTeam(), actionLabel = "modify files", requireDelete = false } = {},
+  {
+    selectedTeam = selectedProjectsTeam(),
+    actionLabel = "modify files",
+    requireDelete = false,
+    allowDuringRefresh = false,
+  } = {},
 ) {
+  const writesDisabled = allowDuringRefresh
+    ? areResourcePageWriteSubmissionsDisabled(state.projectsPage)
+    : areResourcePageWritesDisabled(state.projectsPage);
+  if (writesDisabled) {
+    setProjectDiscoveryError(
+      render,
+      allowDuringRefresh ? chapterLifecycleWriteBlockedMessage() : chapterWriteBlockedMessage(),
+    );
+    return false;
+  }
+
   if (state.offline?.isEnabled === true) {
     setProjectDiscoveryError(render, `You cannot ${actionLabel} while offline.`);
     return false;
@@ -266,6 +294,11 @@ export async function refreshProjectFilesFromDisk(render, selectedTeam, projects
   return runRefreshProjectFilesFromDisk(render, selectedTeam, projects, {
     applyChapterPendingMutation,
     normalizeListedChapter,
+    preserveProjectLifecyclePatches: (snapshot) =>
+      preserveChapterLifecyclePatchesInProjectSnapshot(
+        snapshot,
+        { items: state.projects, deletedItems: state.deletedProjects },
+      ),
     persistProjectsForTeam,
     reconcileExpandedDeletedFiles,
   });
@@ -297,6 +330,7 @@ async function resolveChapterMutationContext(render, chapterId, options = {}) {
     selectedTeam: resolved.selectedTeam,
     actionLabel: options.actionLabel ?? "modify files",
     requireDelete: options.requireDelete === true,
+    allowDuringRefresh: options.allowDuringRefresh === true,
   })) {
     return null;
   }
@@ -349,6 +383,147 @@ function updateChapterInState(chapterId, updater) {
   state.deletedProjects = state.deletedProjects.map(applyToProject);
 }
 
+function normalizeProjectSnapshotInput(snapshot) {
+  const projectSnapshot = snapshot?.snapshot && typeof snapshot.snapshot === "object"
+    ? snapshot.snapshot
+    : snapshot;
+  return {
+    items: Array.isArray(projectSnapshot?.items) ? projectSnapshot.items : [],
+    deletedItems: Array.isArray(projectSnapshot?.deletedItems) ? projectSnapshot.deletedItems : [],
+  };
+}
+
+function chapterLifecycleIntent(chapter) {
+  if (typeof chapter?.pendingMutation === "string" && chapter.pendingMutation.trim()) {
+    return chapter.pendingMutation.trim();
+  }
+  if (typeof chapter?.localLifecycleIntent === "string" && chapter.localLifecycleIntent.trim()) {
+    return chapter.localLifecycleIntent.trim();
+  }
+  return "";
+}
+
+function chapterSnapshotValue(snapshot, projectId, chapterId, key) {
+  const current = normalizeProjectSnapshotInput(snapshot);
+  for (const project of [...current.items, ...current.deletedItems]) {
+    if (project?.id !== projectId || !Array.isArray(project.chapters)) {
+      continue;
+    }
+    const chapter = project.chapters.find((item) => item?.id === chapterId);
+    if (chapter) {
+      return chapter[key];
+    }
+  }
+  return undefined;
+}
+
+function patchChapterInSnapshot(snapshot, projectId, chapterId, patch, fallbackChapter = null) {
+  const current = normalizeProjectSnapshotInput(snapshot);
+  let projectFound = false;
+  let chapterFound = false;
+  const patchProject = (project) => {
+    if (project?.id !== projectId || !Array.isArray(project.chapters)) {
+      return project;
+    }
+
+    projectFound = true;
+    const chapters = project.chapters.map((chapter) => {
+      if (chapter?.id !== chapterId) {
+        return chapter;
+      }
+      chapterFound = true;
+      return {
+        ...chapter,
+        ...patch,
+      };
+    });
+
+    return {
+      ...project,
+      chapters: chapterFound || !fallbackChapter
+        ? chapters
+        : [...chapters, { ...fallbackChapter, ...patch }],
+    };
+  };
+
+  const items = current.items.map(patchProject);
+  const deletedItems = current.deletedItems.map(patchProject);
+  if (!projectFound || chapterFound || !fallbackChapter) {
+    return { items, deletedItems };
+  }
+
+  return { items, deletedItems };
+}
+
+export function preserveChapterLifecyclePatchesInProjectSnapshot(nextSnapshot, previousSnapshot) {
+  if (!nextSnapshot || typeof nextSnapshot !== "object") {
+    return nextSnapshot;
+  }
+
+  const previousProjects = [
+    ...normalizeProjectSnapshotInput(previousSnapshot).items,
+    ...normalizeProjectSnapshotInput(previousSnapshot).deletedItems,
+  ];
+  const pendingChapters = [];
+  for (const project of previousProjects) {
+    if (!project?.id || !Array.isArray(project.chapters)) {
+      continue;
+    }
+    for (const chapter of project.chapters) {
+      const intent = chapterLifecycleIntent(chapter);
+      if (typeof chapter?.id === "string" && intent) {
+        pendingChapters.push({ projectId: project.id, chapter, intent });
+      }
+    }
+  }
+  if (pendingChapters.length === 0) {
+    return normalizeProjectSnapshotInput(nextSnapshot);
+  }
+
+  let nextData = normalizeProjectSnapshotInput(nextSnapshot);
+  for (const pendingChapter of pendingChapters) {
+    const { projectId, chapter, intent } = pendingChapter;
+    const isPending = typeof chapter?.pendingMutation === "string" && chapter.pendingMutation.trim();
+
+    if (intent === "rename") {
+      if (!isPending && chapterSnapshotValue(nextData, projectId, chapter.id, "name") === chapter.name) {
+        continue;
+      }
+      nextData = patchChapterInSnapshot(nextData, projectId, chapter.id, {
+        name: chapter.name,
+        pendingMutation: isPending ? "rename" : null,
+        localLifecycleIntent: "rename",
+      }, chapter);
+      continue;
+    }
+
+    if (intent === "softDelete") {
+      if (!isPending && chapterSnapshotValue(nextData, projectId, chapter.id, "status") === "deleted") {
+        continue;
+      }
+      nextData = patchChapterInSnapshot(nextData, projectId, chapter.id, {
+        status: "deleted",
+        pendingMutation: isPending ? "softDelete" : null,
+        localLifecycleIntent: "softDelete",
+      }, chapter);
+      continue;
+    }
+
+    if (intent === "restore") {
+      if (!isPending && chapterSnapshotValue(nextData, projectId, chapter.id, "status") === "active") {
+        continue;
+      }
+      nextData = patchChapterInSnapshot(nextData, projectId, chapter.id, {
+        status: "active",
+        pendingMutation: isPending ? "restore" : null,
+        localLifecycleIntent: "restore",
+      }, chapter);
+    }
+  }
+
+  return nextData;
+}
+
 function enqueueChapterMutation(selectedTeam, mutation) {
   state.pendingChapterMutations = upsertPendingMutation(state.pendingChapterMutations, mutation);
   persistChapterPendingMutationsForTeam(selectedTeam);
@@ -368,15 +543,20 @@ function startOptimisticChapterMutation({
   optimisticDebugText = "",
   remoteDebugText = "",
   beforeReconcile,
+  markSettledLocalIntent,
   rollback,
   runRemote,
   showFailureNotice = true,
 }) {
   const snapshot = cloneProjectCollections();
+  const refreshWasActive = state.projectsPage?.isRefreshing === true;
 
   state.projectSyncVersion += 1;
+  state.projectsPage.writeState = "submitting";
   applyOptimistic?.();
-  beginProjectsPageSync();
+  if (!refreshWasActive) {
+    beginProjectsPageSync();
+  }
   persistProjectsForTeam(selectedTeam);
   enqueueChapterMutation(selectedTeam, mutation);
   render();
@@ -391,12 +571,17 @@ function startOptimisticChapterMutation({
         setProjectUiDebug(render, remoteDebugText);
       }
       const payload = await runRemote();
+      markSettledLocalIntent?.(payload);
+      persistProjectsForTeam(selectedTeam);
       completeChapterMutation(selectedTeam, mutation.id);
       await beforeReconcile?.(payload);
       await reconcileProjectRepoSyncStates(render, selectedTeam, [context.project]);
       await refreshProjectFilesFromDisk(render, selectedTeam, [context.project]);
       clearProjectUiDebug(render);
-      await completeProjectsPageSync(render);
+      state.projectsPage.writeState = "idle";
+      if (!refreshWasActive) {
+        await completeProjectsPageSync(render);
+      }
       render();
     } catch (error) {
       completeChapterMutation(selectedTeam, mutation.id);
@@ -404,7 +589,10 @@ function startOptimisticChapterMutation({
       await rollback?.(error);
       persistProjectsForTeam(selectedTeam);
       clearProjectUiDebug(render);
-      failProjectsPageSync();
+      state.projectsPage.writeState = "idle";
+      if (!refreshWasActive) {
+        failProjectsPageSync();
+      }
       if (showFailureNotice) {
         showNoticeBadge(error?.message ?? String(error), render);
       }
@@ -513,6 +701,8 @@ export function applyChapterPendingMutation(snapshot, mutation) {
         return {
           ...chapter,
           name: mutation.title,
+          pendingMutation: "rename",
+          localLifecycleIntent: null,
         };
       }
 
@@ -520,6 +710,8 @@ export function applyChapterPendingMutation(snapshot, mutation) {
         return {
           ...chapter,
           status: "deleted",
+          pendingMutation: "softDelete",
+          localLifecycleIntent: null,
         };
       }
 
@@ -527,6 +719,8 @@ export function applyChapterPendingMutation(snapshot, mutation) {
         return {
           ...chapter,
           status: "active",
+          pendingMutation: "restore",
+          localLifecycleIntent: null,
         };
       }
 
@@ -559,6 +753,7 @@ function openChapterModal(render, chapterId, options) {
     selectedTeam: resolved.selectedTeam,
     actionLabel: options.actionLabel,
     requireDelete: options.requireDelete === true,
+    allowDuringRefresh: options.allowDuringRefresh === true,
   })) {
     return;
   }
@@ -583,6 +778,7 @@ export function openChapterRename(render, chapterId) {
   openChapterModal(render, chapterId, {
     missingMessage: "Could not find the selected file.",
     actionLabel: "rename files",
+    allowDuringRefresh: true,
     applyState: (context) => {
       state.chapterRename = {
         isOpen: true,
@@ -655,6 +851,7 @@ export function toggleDeletedFiles(render, projectId) {
 export async function submitChapterRename(render) {
   const resolved = await resolveChapterMutationContext(render, state.chapterRename.chapterId, {
     actionLabel: "rename files",
+    allowDuringRefresh: true,
   });
   const nextTitle = state.chapterRename.chapterName.trim();
 
@@ -689,6 +886,7 @@ export async function submitChapterRename(render) {
       updateChapterInState(context.chapter.id, (chapter) => ({
         ...chapter,
         name: nextTitle,
+        pendingMutation: "rename",
       }));
       if (state.editorChapter?.chapterId === context.chapter.id) {
         state.editorChapter = {
@@ -701,6 +899,20 @@ export async function submitChapterRename(render) {
     remoteDebugText: "Saving file...",
     beforeReconcile: async () => {
       setProjectUiDebug(render, "Background sync started");
+    },
+    markSettledLocalIntent: () => {
+      updateChapterInState(context.chapter.id, (chapter) => ({
+        ...chapter,
+        name: nextTitle,
+        pendingMutation: null,
+        localLifecycleIntent: "rename",
+      }));
+      if (state.editorChapter?.chapterId === context.chapter.id) {
+        state.editorChapter = {
+          ...state.editorChapter,
+          fileTitle: nextTitle,
+        };
+      }
     },
     rollback: async (error) => {
       state.chapterRename = {
@@ -805,6 +1017,7 @@ async function submitSimpleChapterMutation(render, chapterId, options) {
     missingMessage: options.missingMessage,
     actionLabel: options.actionLabel,
     requireDelete: options.requireDelete === true,
+    allowDuringRefresh: options.allowDuringRefresh === true,
   });
   if (!resolved) {
     return;
@@ -820,6 +1033,9 @@ async function submitSimpleChapterMutation(render, chapterId, options) {
     applyOptimistic: () => options.applyOptimistic(mutation),
     optimisticDebugText: options.optimisticDebugText,
     remoteDebugText: options.remoteDebugText ?? "Background sync started",
+    markSettledLocalIntent: options.markSettledLocalIntent
+      ? () => options.markSettledLocalIntent(mutation)
+      : undefined,
     runRemote: async () => invoke(options.command, {
       input: {
         installationId: selectedTeam.installationId,
@@ -834,6 +1050,7 @@ async function submitSimpleChapterMutation(render, chapterId, options) {
 export async function deleteChapter(render, chapterId) {
   await submitSimpleChapterMutation(render, chapterId, {
     actionLabel: "delete files",
+    allowDuringRefresh: true,
     buildMutation: (context) => ({
       id: crypto.randomUUID(),
       type: "softDelete",
@@ -845,6 +1062,16 @@ export async function deleteChapter(render, chapterId) {
       updateChapterInState(chapterId, (chapter) => ({
         ...chapter,
         status: "deleted",
+        pendingMutation: "softDelete",
+      }));
+      reconcileExpandedDeletedFiles();
+    },
+    markSettledLocalIntent: () => {
+      updateChapterInState(chapterId, (chapter) => ({
+        ...chapter,
+        status: "deleted",
+        pendingMutation: null,
+        localLifecycleIntent: "softDelete",
       }));
       reconcileExpandedDeletedFiles();
     },
@@ -857,6 +1084,7 @@ export async function restoreChapter(render, chapterId) {
   await submitSimpleChapterMutation(render, chapterId, {
     missingMessage: "Could not find the selected deleted file.",
     actionLabel: "restore files",
+    allowDuringRefresh: true,
     buildMutation: (context) => ({
       id: crypto.randomUUID(),
       type: "restore",
@@ -868,6 +1096,16 @@ export async function restoreChapter(render, chapterId) {
       updateChapterInState(chapterId, (chapter) => ({
         ...chapter,
         status: "active",
+        pendingMutation: "restore",
+      }));
+      reconcileExpandedDeletedFiles();
+    },
+    markSettledLocalIntent: () => {
+      updateChapterInState(chapterId, (chapter) => ({
+        ...chapter,
+        status: "active",
+        pendingMutation: null,
+        localLifecycleIntent: "restore",
       }));
       reconcileExpandedDeletedFiles();
     },
@@ -903,6 +1141,13 @@ export async function permanentlyDeleteChapter(render, chapterId) {
 export async function confirmChapterPermanentDeletion(render) {
   const selectedTeam = selectedProjectsTeam();
   const context = findChapterContext(state.chapterPermanentDeletion.chapterId);
+
+  if (areResourcePageWritesDisabled(state.projectsPage)) {
+    state.chapterPermanentDeletion.status = "idle";
+    state.chapterPermanentDeletion.error = chapterWriteBlockedMessage();
+    render();
+    return;
+  }
 
   if (!Number.isFinite(selectedTeam?.installationId) || !context?.project || !context?.chapter) {
     state.chapterPermanentDeletion.status = "idle";
