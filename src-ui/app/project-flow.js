@@ -52,6 +52,7 @@ import {
 import { projectKeys, queryClient } from "./query-client.js";
 import {
   applyProjectWriteIntentsToSnapshot,
+  anyProjectMutatingWriteIsActive,
   anyProjectWriteIsActive,
   clearConfirmedProjectWriteIntents,
   projectLifecycleIntentKey,
@@ -407,6 +408,10 @@ function areProjectHeavyWritesDisabled() {
   return areResourcePageWritesDisabled(state.projectsPage) || anyProjectWriteIsActive();
 }
 
+function areProjectCreationWritesDisabled() {
+  return areResourcePageWritesDisabled(state.projectsPage) || anyProjectMutatingWriteIsActive();
+}
+
 function projectLifecycleWriteBlockedMessage() {
   return "Wait for the current project write to finish.";
 }
@@ -437,7 +442,7 @@ function failProjectLifecyclePageSync(syncContext) {
 
 export async function createProjectForSelectedTeam(render) {
   const selectedTeam = selectedProjectsTeam();
-  if (areProjectHeavyWritesDisabled()) {
+  if (areProjectCreationWritesDisabled()) {
     setProjectDiscoveryState("error", "Wait for the current projects refresh or write to finish.");
     render();
     return;
@@ -545,7 +550,7 @@ function moveProjectInVisibleState(project, targetCollection, patch = {}) {
 
 export async function submitProjectCreation(render) {
   const selectedTeam = selectedProjectsTeam();
-  if (areProjectHeavyWritesDisabled()) {
+  if (areProjectCreationWritesDisabled()) {
     state.projectCreation.error = "Wait for the current projects refresh or write to finish.";
     render();
     return;

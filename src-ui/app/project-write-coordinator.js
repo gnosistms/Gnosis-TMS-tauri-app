@@ -246,6 +246,18 @@ export function anyProjectWriteIsActive() {
   return false;
 }
 
+export function anyProjectMutatingWriteIsActive() {
+  for (const intent of intentsByKey.values()) {
+    if (
+      intent.type !== "projectRepoSync"
+      && (intent.status === "pending" || intent.status === "running")
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function patchProject(snapshot, projectId, patch) {
   let changed = false;
   const patchOne = (project) => {

@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 
 const {
   applyProjectWriteIntentsToSnapshot,
+  anyProjectMutatingWriteIsActive,
+  anyProjectWriteIsActive,
   chapterGlossaryIntentKey,
   clearConfirmedProjectWriteIntents,
   getProjectWriteIntent,
@@ -148,6 +150,32 @@ test("one-shot sync intents clear after success", async () => {
   await delay(5);
 
   assert.equal(getProjectWriteIntent(key), null);
+});
+
+test("repo sync intents are active but not mutating writes", async () => {
+  const release = deferred();
+
+  requestProjectWriteIntent({
+    key: projectRepoSyncIntentKey("project-1"),
+    scope: projectRepoWriteScope({ installationId: 1 }, "project-1"),
+    teamId: "team-1",
+    projectId: "project-1",
+    type: "projectRepoSync",
+    value: { requestedAt: 1 },
+  }, {
+    clearOnSuccess: true,
+    run: async () => {
+      await release.promise;
+    },
+  });
+
+  await delay(0);
+
+  assert.equal(anyProjectWriteIsActive(), true);
+  assert.equal(anyProjectMutatingWriteIsActive(), false);
+
+  release.resolve();
+  await delay(5);
 });
 
 test("writes in different scopes can run concurrently", async () => {

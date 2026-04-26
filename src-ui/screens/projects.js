@@ -41,6 +41,7 @@ import {
 } from "../app/resource-page-controller.js";
 import {
   anyProjectWriteIsActive,
+  anyProjectMutatingWriteIsActive,
 } from "../app/project-write-coordinator.js";
 
 function compareFilesByName(left, right) {
@@ -126,6 +127,10 @@ function renderProjectCard(project, expanded, options = {}) {
   const lifecycleActionsDisabled = options.lifecycleActionsDisabled === true;
   const pageWritesDisabled = options.pageWritesDisabled === true;
   const heavyActionsDisabled = options.heavyActionsDisabled === true || pageWritesDisabled;
+  const addFilesWriteDisabled =
+    options.addFilesWriteDisabled === undefined
+      ? heavyActionsDisabled
+      : options.addFilesWriteDisabled === true;
   const glossaryChangesDisabled = options.glossaryChangesDisabled === true;
   const deleteAction = options.deleteAction ?? `delete-project:${project.id}`;
   const disablePermanentDelete = options.disablePermanentDelete === true;
@@ -143,7 +148,7 @@ function renderProjectCard(project, expanded, options = {}) {
         : [
             canManageProjects
               ? textAction("Add files", `add-project-files:${project.id}`, {
-                  disabled: offlineMode || heavyActionsDisabled || addFilesDisabled || localRepoSetupPending || disableContentActions,
+                  disabled: offlineMode || addFilesWriteDisabled || addFilesDisabled || localRepoSetupPending || disableContentActions,
                 })
               : "",
             canManageProjects
@@ -518,6 +523,7 @@ export function renderProjectsScreen(state) {
   const offlineMode = state.offline?.isEnabled === true;
   const pageWritesDisabled = areResourcePageWritesDisabled(state.projectsPage);
   const heavyActionsDisabled = pageWritesDisabled || anyProjectWriteIsActive();
+  const mutatingWriteActionsDisabled = pageWritesDisabled || anyProjectMutatingWriteIsActive();
   const lifecycleActionsDisabled = areResourcePageWriteSubmissionsDisabled(state.projectsPage);
   const importInProgress = state.projectImport?.status === "importing";
   const discovery = state.projectDiscovery ?? { status: "idle", error: "", glossaryWarning: "" };
@@ -575,6 +581,7 @@ export function renderProjectsScreen(state) {
                   offlineMode,
                   pageWritesDisabled,
                   heavyActionsDisabled,
+                  addFilesWriteDisabled: mutatingWriteActionsDisabled,
                   lifecycleActionsDisabled,
                   addFilesDisabled: importInProgress,
                   glossaryChangesDisabled,
@@ -614,7 +621,7 @@ export function renderProjectsScreen(state) {
       leftTools: searchField,
       tools: [
         canCreateProjects
-          ? primaryButton("+ New Project", "open-new-project", { disabled: offlineMode || heavyActionsDisabled })
+          ? primaryButton("+ New Project", "open-new-project", { disabled: offlineMode || mutatingWriteActionsDisabled })
           : "",
       ]
         .filter(Boolean)

@@ -24,6 +24,7 @@ globalThis.window = {
 const { renderProjectsScreen } = await import("./projects.js");
 const {
   chapterGlossaryIntentKey,
+  projectRepoSyncIntentKey,
   projectRepoWriteScope,
   requestProjectWriteIntent,
   resetProjectWriteCoordinator,
@@ -279,4 +280,22 @@ test("coordinator writes keep lifecycle and glossary controls enabled while heav
 
   assert.match(actionButtonHtml(html, "open-new-project"), /disabled/);
   assert.match(actionButtonHtml(html, "add-project-files:project-1"), /disabled/);
+});
+
+test("repo sync intents do not globally disable new project or add files", () => {
+  requestProjectWriteIntent({
+    key: projectRepoSyncIntentKey("project-1"),
+    scope: projectRepoWriteScope({ installationId: 1 }, "project-1"),
+    teamId: "team-1",
+    projectId: "project-1",
+    type: "projectRepoSync",
+    value: { requestedAt: 1 },
+  }, {
+    run: async () => new Promise((resolve) => setTimeout(resolve, 10)),
+  });
+
+  const html = renderProjectsScreen(projectsState());
+
+  assert.doesNotMatch(actionButtonHtml(html, "open-new-project"), /disabled/);
+  assert.doesNotMatch(actionButtonHtml(html, "add-project-files:project-1"), /disabled/);
 });
