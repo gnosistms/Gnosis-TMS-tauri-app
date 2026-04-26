@@ -114,6 +114,35 @@ test("projects glossary selector stays enabled during project refresh", () => {
   assert.doesNotMatch(html, /data-chapter-glossary-select[^>]*disabled/);
 });
 
+test("projects glossary selector keeps local selection and options during project refresh", () => {
+  const html = renderProjectsScreen(projectsState({
+    projectsPage: {
+      isRefreshing: true,
+      writeState: "idle",
+    },
+    projectsPageSync: {
+      status: "syncing",
+    },
+    projects: [{
+      id: "project-1",
+      title: "Project",
+      name: "project-repo",
+      status: "active",
+      chapters: [{
+        id: "chapter-1",
+        name: "Chapter",
+        status: "active",
+        linkedGlossary: { glossaryId: "glossary-1", repoName: "glossary-repo" },
+        sourceWordCount: 10,
+      }],
+    }],
+  }));
+
+  assert.match(html, /select-pill__value">Glossary</);
+  assert.match(html, /<option value="glossary-1" selected>Glossary<\/option>/);
+  assert.doesNotMatch(html, /select-pill__value">no glossary</);
+});
+
 test("projects glossary selector is visibly disabled while project page write submissions are blocked", () => {
   const html = renderProjectsScreen(projectsState({
     projectsPage: {

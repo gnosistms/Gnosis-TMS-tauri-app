@@ -111,6 +111,59 @@ test("project query cache seed applies cached projects with pending mutations", 
   assert.equal(state.projects[0].title, "Pending");
 });
 
+test("project query cache seed preserves glossary options during refresh", () => {
+  resetSessionState();
+  state.selectedTeamId = "team-1";
+  state.projectsPage = createResourcePageState();
+  state.glossaries = [{ id: "glossary-1", title: "Glossary", repoName: "glossary-repo" }];
+  const team = { id: "team-1", installationId: 1 };
+
+  const snapshot = seedProjectsQueryFromCache(team, {
+    loadStoredProjectsForTeam: () => ({
+      exists: true,
+      projects: [project({
+        chapters: [{
+          id: "chapter-1",
+          name: "Chapter",
+          linkedGlossary: { glossaryId: "glossary-1", repoName: "glossary-repo" },
+        }],
+      })],
+      deletedProjects: [],
+    }),
+  });
+
+  assert.equal(snapshot.glossaries[0].title, "Glossary");
+  assert.equal(state.glossaries[0].title, "Glossary");
+  assert.equal(state.projects[0].chapters[0].linkedGlossary.glossaryId, "glossary-1");
+});
+
+test("project query adapter keeps current glossary options while fetch placeholder data is empty", () => {
+  resetSessionState();
+  state.selectedTeamId = "team-1";
+  state.projectsPage = createResourcePageState();
+  state.glossaries = [{ id: "glossary-1", title: "Glossary", repoName: "glossary-repo" }];
+
+  applyProjectsQuerySnapshotToState(createProjectsQuerySnapshot({
+    items: [project()],
+    glossaries: [],
+  }), {
+    teamId: "team-1",
+    isFetching: true,
+  });
+
+  assert.equal(state.glossaries[0].title, "Glossary");
+
+  applyProjectsQuerySnapshotToState(createProjectsQuerySnapshot({
+    items: [project()],
+    glossaries: [],
+  }), {
+    teamId: "team-1",
+    isFetching: false,
+  });
+
+  assert.equal(state.glossaries.length, 0);
+});
+
 test("project rename optimistic patch updates query cache and state immediately", async () => {
   resetSessionState();
   state.selectedTeamId = "team-1";
