@@ -99,6 +99,21 @@ test.afterEach(() => {
   resetProjectWriteCoordinator();
 });
 
+test("project background refresh spins and disables the refresh button", () => {
+  const html = renderProjectsScreen(projectsState({
+    projectsPage: {
+      isRefreshing: true,
+      writeState: "idle",
+    },
+    projectsPageSync: {
+      status: "idle",
+    },
+  }));
+
+  assert.match(actionButtonHtml(html, "refresh-page"), /\bis-spinning\b/);
+  assert.match(actionButtonHtml(html, "refresh-page"), /aria-disabled="true"/);
+});
+
 test("projects glossary selector stays enabled during project refresh", () => {
   const html = renderProjectsScreen(projectsState({
     projectsPage: {

@@ -97,6 +97,8 @@ test("glossary refresh keeps read-only and query-backed lifecycle actions enable
   assert.match(actionButtonHtml(html, "import-glossary"), /disabled/);
   assert.match(actionButtonHtml(html, "open-new-glossary"), /disabled/);
   assert.match(actionButtonHtml(html, "rebuild-glossary-repo:repair-glossary"), /disabled/);
+  assert.match(actionButtonHtml(html, "refresh-page"), /\bis-spinning\b/);
+  assert.match(actionButtonHtml(html, "refresh-page"), /aria-disabled="true"/);
 });
 
 test("glossary write in progress disables lifecycle actions", () => {

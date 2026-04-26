@@ -237,7 +237,9 @@ export function renderGlossariesScreen(state) {
     pageShell({
       title: "Glossaries",
       subtitle: selectedTeam?.name ?? "Team",
-      titleAction: buildPageRefreshAction(state),
+      titleAction: buildPageRefreshAction(state, state.pageSync, "refresh-page", {
+        backgroundRefreshing: state.glossariesPage?.isRefreshing === true,
+      }),
       navButtons: buildSectionNav("glossaries", { includeAiSettings: canManageAiSettings }),
       tools: canCreate
         ? `${textAction("Import", "import-glossary", { disabled: offlineMode || writeActionsDisabled })} ${primaryButton("+ New Glossary", "open-new-glossary", { disabled: offlineMode || writeActionsDisabled })}`

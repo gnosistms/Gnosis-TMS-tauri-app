@@ -210,11 +210,13 @@ export function titleRefreshButton(action, options = {}) {
   `;
 }
 
-export function buildPageRefreshAction(appState, syncState = appState?.pageSync, action = "refresh-page") {
+export function buildPageRefreshAction(appState, syncState = appState?.pageSync, action = "refresh-page", options = {}) {
+  const backgroundRefreshing = options.backgroundRefreshing === true;
+  const spinning = syncState?.status === "syncing" || backgroundRefreshing;
   return titleRefreshButton(action, {
-    spinning: syncState?.status === "syncing",
+    spinning,
     spinStartedAt: syncState?.startedAt,
-    disabled: appState?.offline?.isEnabled === true || syncState?.status === "syncing",
+    disabled: appState?.offline?.isEnabled === true || spinning,
   });
 }
 
