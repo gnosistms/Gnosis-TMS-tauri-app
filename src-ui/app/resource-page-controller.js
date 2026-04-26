@@ -20,6 +20,10 @@ export function areResourcePageWritesDisabled(pageState) {
   return pageState?.isRefreshing === true || pageState?.writeState !== "idle";
 }
 
+export function areResourcePageWriteSubmissionsDisabled(pageState) {
+  return pageState?.writeState !== "idle";
+}
+
 function normalizeData(items) {
   return Array.isArray(items) ? items : [];
 }

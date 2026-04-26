@@ -83,6 +83,11 @@ function projectsState(overrides = {}) {
   };
 }
 
+function actionButtonHtml(html, action) {
+  const escapedAction = action.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return html.match(new RegExp(`<button[^>]*data-action="${escapedAction}"[^>]*>`))?.[0] ?? "";
+}
+
 test("projects glossary selector is visibly disabled while project page writes are blocked", () => {
   const html = renderProjectsScreen(projectsState({
     projectsPage: {
@@ -94,4 +99,53 @@ test("projects glossary selector is visibly disabled while project page writes a
   assert.match(html, /select-pill--chapter-glossary[^"]*\bis-disabled\b/);
   assert.match(html, /aria-disabled="true"/);
   assert.match(html, /data-chapter-glossary-select[^>]*disabled/);
+});
+
+test("project refresh keeps top-level lifecycle actions enabled and heavy actions disabled", () => {
+  const html = renderProjectsScreen(projectsState({
+    projectsPage: {
+      isRefreshing: true,
+      writeState: "idle",
+    },
+    deletedProjects: [{
+      id: "deleted-project",
+      title: "Deleted Project",
+      name: "deleted-project",
+      lifecycleState: "deleted",
+      chapters: [],
+    }],
+    showDeletedProjects: true,
+  }));
+
+  assert.doesNotMatch(actionButtonHtml(html, "toggle-project:project-1"), /disabled/);
+  assert.doesNotMatch(actionButtonHtml(html, "rename-project:project-1"), /disabled/);
+  assert.doesNotMatch(actionButtonHtml(html, "delete-project:project-1"), /disabled/);
+  assert.doesNotMatch(actionButtonHtml(html, "restore-project:deleted-project"), /disabled/);
+
+  assert.match(actionButtonHtml(html, "open-new-project"), /disabled/);
+  assert.match(actionButtonHtml(html, "add-project-files:project-1"), /disabled/);
+  assert.match(actionButtonHtml(html, "rename-file:chapter-1"), /disabled/);
+  assert.match(actionButtonHtml(html, "delete-file:chapter-1"), /disabled/);
+  assert.match(actionButtonHtml(html, "delete-deleted-project:deleted-project"), /disabled/);
+});
+
+test("project write in progress disables top-level lifecycle actions", () => {
+  const html = renderProjectsScreen(projectsState({
+    projectsPage: {
+      isRefreshing: false,
+      writeState: "submitting",
+    },
+    deletedProjects: [{
+      id: "deleted-project",
+      title: "Deleted Project",
+      name: "deleted-project",
+      lifecycleState: "deleted",
+      chapters: [],
+    }],
+    showDeletedProjects: true,
+  }));
+
+  assert.match(actionButtonHtml(html, "rename-project:project-1"), /disabled/);
+  assert.match(actionButtonHtml(html, "delete-project:project-1"), /disabled/);
+  assert.match(actionButtonHtml(html, "restore-project:deleted-project"), /disabled/);
 });

@@ -35,7 +35,10 @@ import {
   shouldShowDeletedProjectPermanentDelete,
   shouldShowNewProjectButton,
 } from "../app/resource-capabilities.js";
-import { areResourcePageWritesDisabled } from "../app/resource-page-controller.js";
+import {
+  areResourcePageWritesDisabled,
+  areResourcePageWriteSubmissionsDisabled,
+} from "../app/resource-page-controller.js";
 
 function compareFilesByName(left, right) {
   const leftName = typeof left?.name === "string" ? left.name.trim() : "";
@@ -117,6 +120,7 @@ function renderProjectCard(project, expanded, options = {}) {
   const resolution = deriveProjectResolution(project, syncSnapshot);
   const disableLifecycleActions = resolution?.blockLifecycleActions === true;
   const disableContentActions = resolution?.blockContentActions === true;
+  const lifecycleActionsDisabled = options.lifecycleActionsDisabled === true;
   const pageWritesDisabled = options.pageWritesDisabled === true;
   const glossaryChangesDisabled = options.glossaryChangesDisabled === true;
   const deleteAction = options.deleteAction ?? `delete-project:${project.id}`;
@@ -140,12 +144,12 @@ function renderProjectCard(project, expanded, options = {}) {
               : "",
             canManageProjects
               ? textAction("Rename", `rename-project:${project.id}`, {
-                  disabled: offlineMode || pageWritesDisabled || disableLifecycleActions,
+                  disabled: offlineMode || lifecycleActionsDisabled || disableLifecycleActions,
                 })
               : "",
             canManageProjects
               ? textAction("Delete", deleteAction, {
-                  disabled: offlineMode || pageWritesDisabled || disableLifecycleActions || disablePermanentDelete,
+                  disabled: offlineMode || lifecycleActionsDisabled || disableLifecycleActions || disablePermanentDelete,
                 })
               : "",
           ].filter(Boolean)
@@ -163,6 +167,7 @@ function renderProjectCard(project, expanded, options = {}) {
         className: "resource-state-box expandable-card__status",
         actionLabel: resolution.actionLabel,
         action: resolution.action,
+        actionDisabled: offlineMode || pageWritesDisabled,
       })
     : "";
 
@@ -288,6 +293,7 @@ function renderDeletedProjectsSection(state) {
   const canPermanentlyDeleteProjects = shouldShowDeletedProjectPermanentDelete(selectedTeam);
   const offlineMode = state.offline?.isEnabled === true;
   const pageWritesDisabled = areResourcePageWritesDisabled(state.projectsPage);
+  const lifecycleActionsDisabled = areResourcePageWriteSubmissionsDisabled(state.projectsPage);
   const syncSnapshotsByProjectId = state.projectRepoSyncByProjectId ?? {};
   const glossaryChangesDisabled =
     pageWritesDisabled
@@ -314,6 +320,7 @@ function renderDeletedProjectsSection(state) {
               isDeleted: true,
               offlineMode,
               pageWritesDisabled,
+              lifecycleActionsDisabled,
               glossaryChangesDisabled,
               syncSnapshot,
               actions:
@@ -321,7 +328,7 @@ function renderDeletedProjectsSection(state) {
                   ? []
                   : canManageDeletedProjects
                     ? [
-                        textAction("Restore", `restore-project:${project.id}`, { disabled: pageWritesDisabled || disableLifecycleActions }),
+                        textAction("Restore", `restore-project:${project.id}`, { disabled: lifecycleActionsDisabled || disableLifecycleActions }),
                         ...(canPermanentlyDeleteProjects
                           ? [textAction("Delete", `delete-deleted-project:${project.id}`, {
                               disabled: pageWritesDisabled || disableLifecycleActions,
@@ -504,6 +511,7 @@ export function renderProjectsScreen(state) {
   const canManageAiSettings = canManageTeamAiSettings(selectedTeam);
   const offlineMode = state.offline?.isEnabled === true;
   const pageWritesDisabled = areResourcePageWritesDisabled(state.projectsPage);
+  const lifecycleActionsDisabled = areResourcePageWriteSubmissionsDisabled(state.projectsPage);
   const importInProgress = state.projectImport?.status === "importing";
   const discovery = state.projectDiscovery ?? { status: "idle", error: "", glossaryWarning: "" };
   const syncSnapshotsByProjectId = state.projectRepoSyncByProjectId ?? {};
@@ -564,6 +572,7 @@ export function renderProjectsScreen(state) {
                   canPermanentlyDeleteFiles,
                   offlineMode,
                   pageWritesDisabled,
+                  lifecycleActionsDisabled,
                   addFilesDisabled: importInProgress,
                   glossaryChangesDisabled,
                   showDeletedFiles: state.expandedDeletedFiles.has(project.id),

@@ -10,6 +10,7 @@ import {
   confirmGlossaryPermanentDeletion,
   deleteGlossary,
   deleteGlossaryTerm,
+  downloadGlossaryAsTmx,
   importGlossaryFromTmx,
   moveGlossaryTermVariantToIndex,
   openGlossaryCreation,
@@ -20,7 +21,6 @@ import {
   rebuildGlossaryLocalRepo,
   removeGlossaryTermVariant,
   restoreGlossary,
-  showGlossaryFeatureNotReady,
   submitGlossaryCreation,
   submitGlossaryRename,
   submitGlossaryTermEditor,
@@ -110,7 +110,8 @@ export function createGlossaryActions(render) {
     },
     {
       prefix: "download-glossary:",
-      handler: () => showGlossaryFeatureNotReady(render, "Glossary download"),
+      handler: async (glossaryId, event) =>
+        runWithImmediateLoading(event, "Exporting...", () => downloadGlossaryAsTmx(render, glossaryId)),
     },
   ];
 

@@ -87,11 +87,12 @@ use crate::{
     },
     glossary_repo_sync::{sync_gtms_glossary_editor_repo, sync_gtms_glossary_repos},
     glossary_storage::{
-        delete_gtms_glossary_term, import_tmx_to_gtms_glossary_repo, initialize_gtms_glossary_repo,
-        inspect_tmx_glossary_import, list_local_gtms_glossaries, load_gtms_glossary_editor_data,
-        load_gtms_glossary_term, prepare_local_gtms_glossary_repo, purge_local_gtms_glossary_repo,
-        rename_gtms_glossary, rename_local_gtms_glossary_repo, restore_gtms_glossary,
-        rollback_gtms_glossary_term_upsert, soft_delete_gtms_glossary, upsert_gtms_glossary_term,
+        delete_gtms_glossary_term, export_gtms_glossary_to_tmx, import_tmx_to_gtms_glossary_repo,
+        initialize_gtms_glossary_repo, inspect_tmx_glossary_import, list_local_gtms_glossaries,
+        load_gtms_glossary_editor_data, load_gtms_glossary_term, prepare_local_gtms_glossary_repo,
+        purge_local_gtms_glossary_repo, rename_gtms_glossary, rename_local_gtms_glossary_repo,
+        restore_gtms_glossary, rollback_gtms_glossary_term_upsert, soft_delete_gtms_glossary,
+        upsert_gtms_glossary_term,
     },
     project_import::{
         clear_gtms_editor_imported_conflict, clear_gtms_editor_reviewed_markers,
@@ -470,6 +471,7 @@ pub fn run() {
         )
         .plugin(store::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .plugin(
             tauri_plugin_updater::Builder::new()
                 .pubkey(include_str!("../updater-public-key.txt").trim())
@@ -604,6 +606,7 @@ pub fn run() {
             initialize_gtms_glossary_repo,
             inspect_tmx_glossary_import,
             import_tmx_to_gtms_glossary_repo,
+            export_gtms_glossary_to_tmx,
             rename_gtms_glossary,
             soft_delete_gtms_glossary,
             restore_gtms_glossary,

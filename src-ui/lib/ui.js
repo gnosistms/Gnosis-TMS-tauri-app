@@ -308,6 +308,7 @@ export function renderInlineStateBox({
   className = "",
   actionLabel = "",
   action = "",
+  actionDisabled = false,
 }) {
   const normalizedMessage = String(message ?? "").trim();
   const normalizedHelp = String(help ?? "").trim();
@@ -331,7 +332,7 @@ export function renderInlineStateBox({
       ${normalizedHelp ? `<p class="message-box__text">${escapeHtml(normalizedHelp)}</p>` : ""}
       ${
         normalizedActionLabel && normalizedAction
-          ? `<div class="message-box__actions">${textAction(normalizedActionLabel, normalizedAction)}</div>`
+          ? `<div class="message-box__actions">${textAction(normalizedActionLabel, normalizedAction, { disabled: actionDisabled })}</div>`
           : ""
       }
     </div>

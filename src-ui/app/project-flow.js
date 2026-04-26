@@ -1,6 +1,7 @@
 import { invoke } from "./runtime.js";
 import { requireBrokerSession } from "./auth-flow.js";
 import {
+  loadStoredChapterPendingMutations,
   loadStoredProjectsForTeam,
 } from "./project-cache.js";
 import { buildProjectRepoFallbackConflictRecoveryInput } from "./project-repo-sync-shared.js";
@@ -20,9 +21,6 @@ import {
   completeProjectsPageSync,
   failProjectsPageSync,
 } from "./page-sync.js";
-import {
-  loadTeamProjects as runLoadTeamProjects,
-} from "./project-discovery-flow.js";
 import { refreshProjectSearchIndex } from "./project-search-flow.js";
 import {
   repairLocalRepoBinding,
@@ -30,7 +28,6 @@ import {
 } from "./team-metadata-flow.js";
 import {
   commitMetadataFirstTopLevelMutation,
-  ensureResourceNotTombstoned,
   guardPermanentDeleteConfirmation,
   guardTopLevelResourceAction,
 } from "./resource-lifecycle-engine.js";
@@ -42,8 +39,18 @@ import {
 } from "./resource-capabilities.js";
 import {
   areResourcePageWritesDisabled,
+  areResourcePageWriteSubmissionsDisabled,
   submitResourcePageWrite,
 } from "./resource-page-controller.js";
+import {
+  createProjectsQueryOptions,
+  ensureProjectsQueryObserver,
+  runProjectRenameMutation,
+  runProjectRestoreMutation,
+  runProjectSoftDeleteMutation,
+  seedProjectsQueryFromCache,
+} from "./project-query.js";
+import { projectKeys, queryClient } from "./query-client.js";
 import {
   cancelEntityModal,
   entityConfirmationMatches,
@@ -311,11 +318,25 @@ function setProjectsPageProgress(render, text) {
 }
 
 export async function loadTeamProjects(render, teamId = state.selectedTeamId) {
+  const selectedTeam = state.teams.find((team) => team.id === teamId);
   state.projectsPage.isRefreshing = true;
+  state.selectedTeamId = teamId ?? state.selectedTeamId;
   void refreshProjectSearchIndex(render, teamId).catch(() => {});
   render?.();
+
+  if (!Number.isFinite(selectedTeam?.installationId)) {
+    state.pendingChapterMutations = [];
+    state.projectRepoSyncByProjectId = {};
+    state.projects = [];
+    state.deletedProjects = [];
+    setProjectDiscoveryState("ready", "", "");
+    state.projectsPage.isRefreshing = false;
+    render?.();
+    return [];
+  }
+
   try {
-    return await runLoadTeamProjects(render, teamId, {
+    const queryOptionsContext = {
       applyChapterPendingMutation,
       clearProjectUiDebug,
       clearSelectedProjectState,
@@ -331,10 +352,63 @@ export async function loadTeamProjects(render, teamId = state.selectedTeamId) {
       setProjectDiscoveryState,
       setProjectUiDebug,
       upsertProjectMetadataRecord,
+      render,
+      teamId: selectedTeam.id,
+    };
+
+    seedProjectsQueryFromCache(selectedTeam, {
+      ...queryOptionsContext,
+      loadStoredProjectsForTeam,
+      loadStoredChapterPendingMutations,
     });
+
+    ensureProjectsQueryObserver(render, selectedTeam, queryOptionsContext);
+    const querySnapshot = await queryClient.fetchQuery(
+      createProjectsQueryOptions(selectedTeam, queryOptionsContext),
+    );
+    queryClient.setQueryData(projectKeys.byTeam(selectedTeam.id), querySnapshot);
+    persistProjectsForTeam(selectedTeam);
+    return [...state.projects, ...state.deletedProjects];
+  } catch (error) {
+    if (String(error?.message ?? error) === "Stale project refresh ignored.") {
+      return [];
+    }
+    throw error;
   } finally {
     state.projectsPage.isRefreshing = false;
     render?.();
+  }
+}
+
+function projectWriteBlockedMessage() {
+  return "Wait for the current projects refresh or write to finish.";
+}
+
+function projectLifecycleWriteBlockedMessage() {
+  return "Wait for the current project write to finish.";
+}
+
+function areProjectLifecycleWritesDisabled() {
+  return areResourcePageWriteSubmissionsDisabled(state.projectsPage);
+}
+
+function beginProjectLifecyclePageSync() {
+  const refreshWasActive = state.projectsPage?.isRefreshing === true;
+  if (!refreshWasActive) {
+    beginProjectsPageSync();
+  }
+  return { refreshWasActive };
+}
+
+async function completeProjectLifecyclePageSync(render, syncContext) {
+  if (!syncContext?.refreshWasActive) {
+    await completeProjectsPageSync(render);
+  }
+}
+
+function failProjectLifecyclePageSync(syncContext) {
+  if (!syncContext?.refreshWasActive) {
+    failProjectsPageSync();
   }
 }
 
@@ -381,8 +455,8 @@ export function cancelProjectCreation(render) {
 export function openProjectRename(render, projectId) {
   const project = state.projects.find((item) => item.id === projectId);
   const selectedTeam = selectedProjectsTeam();
-  if (areResourcePageWritesDisabled(state.projectsPage)) {
-    setProjectDiscoveryState("error", "Wait for the current projects refresh or write to finish.");
+  if (areProjectLifecycleWritesDisabled()) {
+    setProjectDiscoveryState("error", projectLifecycleWriteBlockedMessage());
     render();
     return;
   }
@@ -523,53 +597,57 @@ export async function submitProjectRename(render) {
     render();
     return;
   }
+  if (areProjectLifecycleWritesDisabled()) {
+    state.projectRename.status = "idle";
+    state.projectRename.error = projectLifecycleWriteBlockedMessage();
+    render();
+    return;
+  }
 
   state.projectRename.status = "loading";
   state.projectRename.error = "";
+  state.projectsPage.writeState = "submitting";
+  const syncContext = beginProjectLifecyclePageSync();
+  setProjectsPageProgress(render, "Saving project rename...");
   render();
-  await submitResourcePageWrite({
-    pageState: state.projectsPage,
-    syncController: projectPageSyncController,
-    setProgress: (text) => setProjectsPageProgress(render, text),
-    clearProgress: clearNoticeBadge,
-    render,
-    progressLabels: {
-      submitting: "Saving project rename...",
-      refreshing: "Refreshing project list...",
-    },
-    onBlocked: async () => {
-      state.projectRename.status = "idle";
-      state.projectRename.error = "Wait for the current projects refresh or write to finish.";
-      render();
-    },
-    runMutation: async () => {
-      await commitProjectMutationStrict(selectedTeam, {
-        type: "rename",
-        projectId: project.id,
-        title: nextTitle,
-        previousTitle: project.title ?? project.name,
-      });
-    },
-    refreshOptions: {
-      loadData: async () => reloadProjectsAfterWrite(render, selectedTeam),
-    },
-    onSuccess: async () => {
-      resetProjectRename();
-    },
-    onError: async (error) => {
-      if (await handleSyncFailure(classifySyncError(error), { render })) {
-        return;
-      }
-      state.projectRename.status = "idle";
-      state.projectRename.error = error?.message ?? String(error);
-      render();
-    },
-  });
+
+  try {
+    await runProjectRenameMutation({
+      team: selectedTeam,
+      project,
+      nextTitle,
+      commitMutation: commitProjectMutationStrict,
+      onOptimisticApplied: resetProjectRename,
+      render,
+      reconcileExpandedDeletedFiles,
+    });
+    state.projectsPage.writeState = "idle";
+    resetProjectRename();
+    await completeProjectLifecyclePageSync(render, syncContext);
+    if (!syncContext.refreshWasActive) {
+      clearNoticeBadge();
+    }
+    render();
+  } catch (error) {
+    state.projectsPage.writeState = "idle";
+    failProjectLifecyclePageSync(syncContext);
+    if (await handleSyncFailure(classifySyncError(error), { render })) {
+      return;
+    }
+    state.projectRename.status = "idle";
+    state.projectRename.error = error?.message ?? String(error);
+    render();
+  }
 }
 
 export async function repairProjectRepoBinding(render, projectId) {
   const selectedTeam = selectedProjectsTeam();
   if (!selectedTeam?.installationId || typeof projectId !== "string" || !projectId.trim()) {
+    return;
+  }
+  if (areResourcePageWritesDisabled(state.projectsPage)) {
+    setProjectDiscoveryState("error", projectWriteBlockedMessage());
+    render();
     return;
   }
 
@@ -586,6 +664,11 @@ export async function repairProjectRepoBinding(render, projectId) {
 export async function rebuildProjectLocalRepo(render, projectId) {
   const selectedTeam = selectedProjectsTeam();
   if (!selectedTeam?.installationId || typeof projectId !== "string" || !projectId.trim()) {
+    return;
+  }
+  if (areResourcePageWritesDisabled(state.projectsPage)) {
+    setProjectDiscoveryState("error", projectWriteBlockedMessage());
+    render();
     return;
   }
 
@@ -675,43 +758,43 @@ export async function deleteProject(render, projectId) {
   if (!allowed) {
     return;
   }
+  if (areProjectLifecycleWritesDisabled()) {
+    setProjectDiscoveryState("error", projectLifecycleWriteBlockedMessage());
+    render();
+    return;
+  }
 
-  await submitResourcePageWrite({
-    pageState: state.projectsPage,
-    syncController: projectPageSyncController,
-    setProgress: (text) => setProjectsPageProgress(render, text),
-    clearProgress: clearNoticeBadge,
-    render,
-    progressLabels: {
-      submitting: "Deleting project...",
-      refreshing: "Refreshing project list...",
-    },
-    onBlocked: async () => {
-      setProjectDiscoveryState("error", "Wait for the current projects refresh or write to finish.");
-      render();
-    },
-    runMutation: async () => {
-      await commitProjectMutationStrict(selectedTeam, {
-        type: "softDelete",
-        projectId: project.id,
-      });
-    },
-    refreshOptions: {
-      loadData: async () => reloadProjectsAfterWrite(render, selectedTeam),
-    },
-    onSuccess: async () => {
-      if (state.projects.length === 0 && state.deletedProjects.length > 0) {
-        state.showDeletedProjects = true;
-      }
-    },
-    onError: async (error) => {
-      if (await handleSyncFailure(classifySyncError(error), { render })) {
-        return;
-      }
-      setProjectDiscoveryState("error", error?.message ?? String(error));
-      render();
-    },
-  });
+  state.projectsPage.writeState = "submitting";
+  const syncContext = beginProjectLifecyclePageSync();
+  setProjectsPageProgress(render, "Deleting project...");
+  render();
+
+  try {
+    await runProjectSoftDeleteMutation({
+      team: selectedTeam,
+      project,
+      commitMutation: commitProjectMutationStrict,
+      render,
+      reconcileExpandedDeletedFiles,
+    });
+    state.projectsPage.writeState = "idle";
+    if (state.projects.length === 0 && state.deletedProjects.length > 0) {
+      state.showDeletedProjects = true;
+    }
+    await completeProjectLifecyclePageSync(render, syncContext);
+    if (!syncContext.refreshWasActive) {
+      clearNoticeBadge();
+    }
+    render();
+  } catch (error) {
+    state.projectsPage.writeState = "idle";
+    failProjectLifecyclePageSync(syncContext);
+    if (await handleSyncFailure(classifySyncError(error), { render })) {
+      return;
+    }
+    setProjectDiscoveryState("error", error?.message ?? String(error));
+    render();
+  }
 }
 
 export function toggleDeletedProjects(render) {
@@ -742,38 +825,40 @@ export async function restoreProject(render, projectId) {
   if (!allowed) {
     return;
   }
+  if (areProjectLifecycleWritesDisabled()) {
+    setProjectDiscoveryState("error", projectLifecycleWriteBlockedMessage());
+    render();
+    return;
+  }
 
-  await submitResourcePageWrite({
-    pageState: state.projectsPage,
-    syncController: projectPageSyncController,
-    setProgress: (text) => setProjectsPageProgress(render, text),
-    clearProgress: clearNoticeBadge,
-    render,
-    progressLabels: {
-      submitting: "Restoring project...",
-      refreshing: "Refreshing project list...",
-    },
-    onBlocked: async () => {
-      setProjectDiscoveryState("error", "Wait for the current projects refresh or write to finish.");
-      render();
-    },
-    runMutation: async () => {
-      await commitProjectMutationStrict(selectedTeam, {
-        type: "restore",
-        projectId: project.id,
-      });
-    },
-    refreshOptions: {
-      loadData: async () => reloadProjectsAfterWrite(render, selectedTeam),
-    },
-    onError: async (error) => {
-      if (await handleSyncFailure(classifySyncError(error), { render })) {
-        return;
-      }
-      setProjectDiscoveryState("error", error?.message ?? String(error));
-      render();
-    },
-  });
+  state.projectsPage.writeState = "submitting";
+  const syncContext = beginProjectLifecyclePageSync();
+  setProjectsPageProgress(render, "Restoring project...");
+  render();
+
+  try {
+    await runProjectRestoreMutation({
+      team: selectedTeam,
+      project,
+      commitMutation: commitProjectMutationStrict,
+      render,
+      reconcileExpandedDeletedFiles,
+    });
+    state.projectsPage.writeState = "idle";
+    await completeProjectLifecyclePageSync(render, syncContext);
+    if (!syncContext.refreshWasActive) {
+      clearNoticeBadge();
+    }
+    render();
+  } catch (error) {
+    state.projectsPage.writeState = "idle";
+    failProjectLifecyclePageSync(syncContext);
+    if (await handleSyncFailure(classifySyncError(error), { render })) {
+      return;
+    }
+    setProjectDiscoveryState("error", error?.message ?? String(error));
+    render();
+  }
 }
 
 async function commitProjectMutationStrict(selectedTeam, mutation) {
@@ -841,6 +926,11 @@ async function reloadProjectsAfterWrite(render, selectedTeam, options = {}) {
 export function permanentlyDeleteProject(render, projectId) {
   const project = state.deletedProjects.find((item) => item.id === projectId);
   const selectedTeam = selectedProjectsTeam();
+  if (areResourcePageWritesDisabled(state.projectsPage)) {
+    setProjectDiscoveryState("error", projectWriteBlockedMessage());
+    render();
+    return;
+  }
   void guardTopLevelResourceAction({
     resource: project,
     isExpectedResource: (currentProject) =>
@@ -891,6 +981,12 @@ export async function confirmProjectPermanentDeletion(render) {
   const project = state.deletedProjects.find(
     (item) => item.id === state.projectPermanentDeletion.projectId,
   );
+  if (areResourcePageWritesDisabled(state.projectsPage)) {
+    state.projectPermanentDeletion.status = "idle";
+    state.projectPermanentDeletion.error = projectWriteBlockedMessage();
+    render();
+    return;
+  }
   const allowed = await guardPermanentDeleteConfirmation({
     resource: selectedTeam?.installationId ? project : null,
     modalState: state.projectPermanentDeletion,

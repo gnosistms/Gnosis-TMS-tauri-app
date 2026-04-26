@@ -3,6 +3,7 @@ import { invoke } from "./runtime.js";
 import { saveStoredGlossariesForTeam } from "./glossary-cache.js";
 import { normalizeGlossarySummary, sortGlossaries } from "./glossary-shared.js";
 import { createUniqueRepoWithNumericSuffix } from "./repo-creation.js";
+import { areResourcePageWritesDisabled } from "./resource-page-controller.js";
 import { ensureResourceNotTombstoned } from "./resource-lifecycle-engine.js";
 import { showNoticeBadge } from "./status-feedback.js";
 import { state } from "./state.js";
@@ -777,6 +778,10 @@ export async function repairGlossaryRepoBinding(render, team, glossaryId) {
   if (!Number.isFinite(team?.installationId) || typeof glossaryId !== "string" || !glossaryId.trim()) {
     return;
   }
+  if (areResourcePageWritesDisabled(state.glossariesPage)) {
+    showNoticeBadge("Wait for the current glossary refresh or write to finish.", render);
+    return;
+  }
 
   try {
     await repairLocalRepoBinding(team, "glossary", glossaryId);
@@ -794,6 +799,10 @@ export async function repairGlossaryRepoBinding(render, team, glossaryId) {
 
 export async function rebuildGlossaryLocalRepo(render, team, glossaryId) {
   if (!Number.isFinite(team?.installationId) || typeof glossaryId !== "string" || !glossaryId.trim()) {
+    return;
+  }
+  if (areResourcePageWritesDisabled(state.glossariesPage)) {
+    showNoticeBadge("Wait for the current glossary refresh or write to finish.", render);
     return;
   }
 

@@ -2,6 +2,7 @@ import { requireBrokerSession } from "./auth-flow.js";
 import { invoke } from "./runtime.js";
 
 const METADATA_WRITE_RETRY_DELAYS_MS = [180, 420];
+const teamMetadataWriteQueues = new Map();
 
 function metadataRouteUnavailable(error, resourcePath, methods = ["PATCH", "DELETE"]) {
   const message = String(error?.message ?? error ?? "");
@@ -33,6 +34,42 @@ function delay(ms) {
   return new Promise((resolve) => {
     window.setTimeout(resolve, ms);
   });
+}
+
+function teamMetadataWriteQueueKey(team) {
+  if (Number.isFinite(team?.installationId)) {
+    return `installation:${team.installationId}`;
+  }
+
+  if (typeof team?.id === "string" && team.id.trim()) {
+    return `team:${team.id.trim()}`;
+  }
+
+  if (typeof team?.githubOrg === "string" && team.githubOrg.trim()) {
+    return `org:${team.githubOrg.trim()}`;
+  }
+
+  return "unknown";
+}
+
+export function enqueueTeamMetadataWrite(team, operation) {
+  if (typeof operation !== "function") {
+    throw new Error("Team metadata write queue requires an operation callback.");
+  }
+
+  const queueKey = teamMetadataWriteQueueKey(team);
+  const previousTail = teamMetadataWriteQueues.get(queueKey) ?? Promise.resolve();
+  const run = previousTail.then(() => operation());
+  const nextTail = run.catch(() => null);
+
+  teamMetadataWriteQueues.set(queueKey, nextTail);
+  void nextTail.then(() => {
+    if (teamMetadataWriteQueues.get(queueKey) === nextTail) {
+      teamMetadataWriteQueues.delete(queueKey);
+    }
+  });
+
+  return run;
 }
 
 async function withMetadataWriteRetries(operation) {
@@ -250,45 +287,47 @@ function localMetadataPushConflict(error) {
 }
 
 async function commitLocalMetadataMutation(team, operation, options = {}) {
-  await ensureLocalTeamMetadataRepo(team);
+  return enqueueTeamMetadataWrite(team, async () => {
+    await ensureLocalTeamMetadataRepo(team);
 
-  let syncError = null;
-  try {
-    await syncLocalTeamMetadataRepo(team);
-  } catch (error) {
-    syncError = error;
-  }
+    let syncError = null;
+    try {
+      await syncLocalTeamMetadataRepo(team);
+    } catch (error) {
+      syncError = error;
+    }
 
-  try {
-    const result = await operation();
-    if (result?.commitCreated !== false) {
-      try {
-        await pushLocalTeamMetadataRepo(team);
-      } catch (pushError) {
-        if (options.requirePushSuccess === true) {
-          throw pushError;
+    try {
+      const result = await operation();
+      if (result?.commitCreated !== false) {
+        try {
+          await pushLocalTeamMetadataRepo(team);
+        } catch (pushError) {
+          if (options.requirePushSuccess === true) {
+            throw pushError;
+          }
+          console.warn(
+            localMetadataPushConflict(pushError)
+              ? `team-metadata push conflict after local commit: ${pushError?.message ?? String(pushError)}`
+              : `team-metadata push failed after local commit: ${pushError?.message ?? String(pushError)}`,
+          );
         }
-        console.warn(
-          localMetadataPushConflict(pushError)
-            ? `team-metadata push conflict after local commit: ${pushError?.message ?? String(pushError)}`
-            : `team-metadata push failed after local commit: ${pushError?.message ?? String(pushError)}`,
+      }
+      if (syncError) {
+        console.warn(`Best-effort team-metadata sync failed before local commit: ${syncError?.message ?? String(syncError)}`);
+      }
+      return result;
+    } catch (error) {
+      if (syncError) {
+        throw new Error(
+          `${error?.message ?? String(error)} A best-effort sync of the local team-metadata repo also failed before this write: ${
+            syncError?.message ?? String(syncError)
+          }`,
         );
       }
+      throw error;
     }
-    if (syncError) {
-      console.warn(`Best-effort team-metadata sync failed before local commit: ${syncError?.message ?? String(syncError)}`);
-    }
-    return result;
-  } catch (error) {
-    if (syncError) {
-      throw new Error(
-        `${error?.message ?? String(error)} A best-effort sync of the local team-metadata repo also failed before this write: ${
-          syncError?.message ?? String(syncError)
-        }`,
-      );
-    }
-    throw error;
-  }
+  });
 }
 
 export async function upsertProjectMetadataRecord(team, record, options = {}) {

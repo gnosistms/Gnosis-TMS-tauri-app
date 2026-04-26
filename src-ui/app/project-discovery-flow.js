@@ -686,3 +686,19 @@ export async function loadTeamProjects(render, teamId = state.selectedTeamId, op
     render();
   }
 }
+
+export async function loadRepoBackedProjectsForTeam(selectedTeam, options = {}) {
+  const teamId = selectedTeam?.id ?? state.selectedTeamId;
+  await loadTeamProjects(options.render, teamId, options);
+  if (state.selectedTeamId !== teamId) {
+    throw new Error("Stale project refresh ignored.");
+  }
+  return {
+    items: state.projects,
+    deletedItems: state.deletedProjects,
+    repoSyncByProjectId: state.projectRepoSyncByProjectId,
+    glossaries: state.glossaries,
+    pendingChapterMutations: state.pendingChapterMutations,
+    discovery: state.projectDiscovery,
+  };
+}

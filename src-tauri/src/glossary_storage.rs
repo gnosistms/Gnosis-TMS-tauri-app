@@ -123,6 +123,15 @@ pub(crate) struct InspectTmxGlossaryImportInput {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub(crate) struct ExportTmxGlossaryInput {
+    installation_id: i64,
+    repo_name: String,
+    glossary_id: Option<String>,
+    output_path: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct PrepareLocalGlossaryRepoInput {
     installation_id: i64,
     repo_name: String,
@@ -322,6 +331,16 @@ pub(crate) async fn inspect_tmx_glossary_import(
     tauri::async_runtime::spawn_blocking(move || inspect_tmx_glossary_import_sync(input))
         .await
         .map_err(|error| format!("The glossary import inspection worker failed: {error}"))?
+}
+
+#[tauri::command]
+pub(crate) async fn export_gtms_glossary_to_tmx(
+    app: AppHandle,
+    input: ExportTmxGlossaryInput,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || export_gtms_glossary_to_tmx_sync(&app, input))
+        .await
+        .map_err(|error| format!("The glossary export worker failed: {error}"))?
 }
 
 #[tauri::command]
@@ -728,6 +747,34 @@ fn inspect_tmx_glossary_import_sync(
         target_language: parsed.target_language,
         term_count: parsed.terms.len(),
     })
+}
+
+fn export_gtms_glossary_to_tmx_sync(
+    app: &AppHandle,
+    input: ExportTmxGlossaryInput,
+) -> Result<(), String> {
+    let output_path = PathBuf::from(input.output_path.trim());
+    if output_path.as_os_str().is_empty() {
+        return Err("Choose a file path for the TMX export.".to_string());
+    }
+
+    let repo_path = glossary_repo_path(
+        app,
+        input.installation_id,
+        input.glossary_id.as_deref(),
+        Some(&input.repo_name),
+    )?;
+    let glossary_file = read_glossary_file(&repo_path)?;
+    let terms = load_glossary_terms(&repo_path.join("terms"))?
+        .into_iter()
+        .filter(|term| term.lifecycle.state == "active")
+        .collect::<Vec<_>>();
+    if terms.is_empty() {
+        return Err("This glossary does not contain any active terms to export.".to_string());
+    }
+
+    let contents = serialize_tmx_glossary(&glossary_file, &terms);
+    write_text_file(&output_path, &contents)
 }
 
 fn rename_gtms_glossary_sync(
@@ -1475,17 +1522,26 @@ struct ParsedTmxGlossary {
 
 #[derive(Default)]
 struct ParsedTmxUnit {
+    term_id: Option<String>,
     entries_by_language: BTreeMap<String, Vec<String>>,
     note: String,
+    footnote: String,
+    untranslated: bool,
 }
 
 #[derive(Default)]
 struct WorkingTmxUnit {
+    term_id: Option<String>,
     entries_by_language: BTreeMap<String, Vec<String>>,
     note_fragments: Vec<String>,
+    current_prop_type: Option<String>,
+    current_prop: String,
+    footnote: String,
+    untranslated: bool,
     current_language: Option<String>,
     current_note: String,
     current_segment: String,
+    inside_prop: bool,
     inside_note: bool,
     inside_segment: bool,
 }
@@ -1526,11 +1582,21 @@ fn parse_tmx_glossary(file_name: &str, bytes: &[u8]) -> Result<ParsedTmxGlossary
                     }
                 }
                 b"tu" => {
-                    current_unit = Some(WorkingTmxUnit::default());
+                    current_unit = Some(WorkingTmxUnit {
+                        term_id: read_tmx_language_attr(&reader, &event, b"tuid")?,
+                        ..WorkingTmxUnit::default()
+                    });
                 }
                 b"tuv" => {
                     if let Some(unit) = current_unit.as_mut() {
                         unit.current_language = read_tuv_language(&reader, &event)?;
+                    }
+                }
+                b"prop" => {
+                    if let Some(unit) = current_unit.as_mut() {
+                        unit.inside_prop = true;
+                        unit.current_prop_type = read_tmx_language_attr(&reader, &event, b"type")?;
+                        unit.current_prop.clear();
                     }
                 }
                 b"note" => {
@@ -1564,6 +1630,8 @@ fn parse_tmx_glossary(file_name: &str, bytes: &[u8]) -> Result<ParsedTmxGlossary
                         .into_owned();
                     if unit.inside_note {
                         unit.current_note.push_str(&value);
+                    } else if unit.inside_prop {
+                        unit.current_prop.push_str(&value);
                     } else if unit.inside_segment {
                         unit.current_segment.push_str(&value);
                     }
@@ -1574,6 +1642,8 @@ fn parse_tmx_glossary(file_name: &str, bytes: &[u8]) -> Result<ParsedTmxGlossary
                     let value = String::from_utf8_lossy(text.as_ref()).into_owned();
                     if unit.inside_note {
                         unit.current_note.push_str(&value);
+                    } else if unit.inside_prop {
+                        unit.current_prop.push_str(&value);
                     } else if unit.inside_segment {
                         unit.current_segment.push_str(&value);
                     }
@@ -1583,6 +1653,23 @@ fn parse_tmx_glossary(file_name: &str, bytes: &[u8]) -> Result<ParsedTmxGlossary
                 b"tuv" => {
                     if let Some(unit) = current_unit.as_mut() {
                         unit.current_language = None;
+                    }
+                }
+                b"prop" => {
+                    if let Some(unit) = current_unit.as_mut() {
+                        unit.inside_prop = false;
+                        let value = clean_tmx_text(&unit.current_prop);
+                        match unit.current_prop_type.as_deref() {
+                            Some("x-gnosis-footnote") => {
+                                unit.footnote = value;
+                            }
+                            Some("x-gnosis-untranslated") => {
+                                unit.untranslated = value.eq_ignore_ascii_case("true");
+                            }
+                            _ => {}
+                        }
+                        unit.current_prop_type = None;
+                        unit.current_prop.clear();
                     }
                 }
                 b"note" => {
@@ -1599,13 +1686,11 @@ fn parse_tmx_glossary(file_name: &str, bytes: &[u8]) -> Result<ParsedTmxGlossary
                     if let Some(unit) = current_unit.as_mut() {
                         unit.inside_segment = false;
                         let segment = clean_tmx_text(&unit.current_segment);
-                        if !segment.is_empty() {
-                            if let Some(language) = unit.current_language.clone() {
-                                unit.entries_by_language
-                                    .entry(language)
-                                    .or_default()
-                                    .push(segment);
-                            }
+                        if let Some(language) = unit.current_language.clone() {
+                            unit.entries_by_language
+                                .entry(language)
+                                .or_default()
+                                .push(segment);
                         }
                         unit.current_segment.clear();
                     }
@@ -1613,8 +1698,14 @@ fn parse_tmx_glossary(file_name: &str, bytes: &[u8]) -> Result<ParsedTmxGlossary
                 b"tu" => {
                     if let Some(unit) = current_unit.take() {
                         units.push(ParsedTmxUnit {
+                            term_id: unit
+                                .term_id
+                                .map(|value| value.trim().to_string())
+                                .filter(|value| !value.is_empty()),
                             entries_by_language: unit.entries_by_language,
                             note: unit.note_fragments.join("\n\n"),
+                            footnote: unit.footnote,
+                            untranslated: unit.untranslated,
                         });
                     }
                 }
@@ -1685,12 +1776,12 @@ fn parse_tmx_glossary(file_name: &str, bytes: &[u8]) -> Result<ParsedTmxGlossary
         };
 
         terms.push(StoredGlossaryTermFile {
-            term_id: Uuid::now_v7().to_string(),
+            term_id: unit.term_id.unwrap_or_else(|| Uuid::now_v7().to_string()),
             source_terms,
             target_terms,
             notes_to_translators: clean_tmx_text(&unit.note),
-            footnote: String::new(),
-            untranslated: false,
+            footnote: clean_tmx_text(&unit.footnote),
+            untranslated: unit.untranslated,
             lifecycle: StoredLifecycle {
                 state: "active".to_string(),
             },
@@ -1719,6 +1810,95 @@ fn parse_tmx_glossary(file_name: &str, bytes: &[u8]) -> Result<ParsedTmxGlossary
         },
         terms,
     })
+}
+
+fn serialize_tmx_glossary(
+    glossary: &StoredGlossaryFile,
+    terms: &[StoredGlossaryTermFile],
+) -> String {
+    let source_code = glossary.languages.source.code.trim();
+    let target_code = glossary.languages.target.code.trim();
+    let mut xml = String::new();
+    xml.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
+    xml.push_str("<tmx version=\"1.4\">\n");
+    xml.push_str("  <header creationtool=\"Gnosis TMS\" creationtoolversion=\"");
+    xml.push_str(&escape_xml_attr(env!("CARGO_PKG_VERSION")));
+    xml.push_str("\" segtype=\"phrase\" o-tmf=\"Gnosis TMS\" adminlang=\"en\" srclang=\"");
+    xml.push_str(&escape_xml_attr(source_code));
+    xml.push_str("\" datatype=\"plaintext\">\n");
+    xml.push_str("    <prop type=\"x-gnosis-glossary-title\">");
+    xml.push_str(&escape_xml_text(&glossary.title));
+    xml.push_str("</prop>\n");
+    xml.push_str("  </header>\n");
+    xml.push_str("  <body>\n");
+
+    for term in terms {
+        xml.push_str("    <tu tuid=\"");
+        xml.push_str(&escape_xml_attr(&term.term_id));
+        xml.push_str("\">\n");
+        let notes = clean_tmx_text(&term.notes_to_translators);
+        if !notes.is_empty() {
+            xml.push_str("      <note>");
+            xml.push_str(&escape_xml_text(&notes));
+            xml.push_str("</note>\n");
+        }
+        let footnote = clean_tmx_text(&term.footnote);
+        if !footnote.is_empty() {
+            xml.push_str("      <prop type=\"x-gnosis-footnote\">");
+            xml.push_str(&escape_xml_text(&footnote));
+            xml.push_str("</prop>\n");
+        }
+        if term.untranslated {
+            xml.push_str("      <prop type=\"x-gnosis-untranslated\">true</prop>\n");
+        }
+        for source_term in &term.source_terms {
+            write_tmx_tuv(&mut xml, source_code, source_term);
+        }
+        for target_term in &term.target_terms {
+            write_tmx_tuv(&mut xml, target_code, target_term);
+        }
+        xml.push_str("    </tu>\n");
+    }
+
+    xml.push_str("  </body>\n");
+    xml.push_str("</tmx>\n");
+    xml
+}
+
+fn write_tmx_tuv(xml: &mut String, language_code: &str, segment: &str) {
+    xml.push_str("      <tuv xml:lang=\"");
+    xml.push_str(&escape_xml_attr(language_code));
+    xml.push_str("\"><seg>");
+    xml.push_str(&escape_xml_text(segment));
+    xml.push_str("</seg></tuv>\n");
+}
+
+fn escape_xml_text(value: &str) -> String {
+    let mut escaped = String::with_capacity(value.len());
+    for character in value.chars() {
+        match character {
+            '&' => escaped.push_str("&amp;"),
+            '<' => escaped.push_str("&lt;"),
+            '>' => escaped.push_str("&gt;"),
+            _ => escaped.push(character),
+        }
+    }
+    escaped
+}
+
+fn escape_xml_attr(value: &str) -> String {
+    let mut escaped = String::with_capacity(value.len());
+    for character in value.chars() {
+        match character {
+            '&' => escaped.push_str("&amp;"),
+            '<' => escaped.push_str("&lt;"),
+            '>' => escaped.push_str("&gt;"),
+            '"' => escaped.push_str("&quot;"),
+            '\'' => escaped.push_str("&apos;"),
+            _ => escaped.push(character),
+        }
+    }
+    escaped
 }
 
 fn title_from_import_file_name(file_name: &str) -> String {
@@ -1922,6 +2102,95 @@ mod tests {
         assert!(antitesis
             .notes_to_translators
             .contains("Hãy tham khảo khái niệm"));
+    }
+
+    #[test]
+    fn serializes_and_parses_tmx_glossary_with_gnosis_props() {
+        let glossary = StoredGlossaryFile {
+            glossary_id: "glossary-1".to_string(),
+            title: "Round Trip <Glossary>".to_string(),
+            lifecycle: StoredLifecycle {
+                state: "active".to_string(),
+            },
+            languages: StoredGlossaryLanguages {
+                source: StoredGlossaryLanguage {
+                    code: "es".to_string(),
+                    name: "Spanish".to_string(),
+                },
+                target: StoredGlossaryLanguage {
+                    code: "vi".to_string(),
+                    name: "Vietnamese".to_string(),
+                },
+            },
+        };
+        let term = StoredGlossaryTermFile {
+            term_id: "term-123".to_string(),
+            source_terms: vec![
+                "Alquimia & magia".to_string(),
+                "alquimia <sagrada>".to_string(),
+            ],
+            target_terms: vec![
+                "thuật luyện kim".to_string(),
+                String::new(),
+                "kim đan \"thiêng\"".to_string(),
+            ],
+            notes_to_translators: "Use the canonical term & avoid variants.".to_string(),
+            footnote: "Footnote with <markup> & quotes \"here\".".to_string(),
+            untranslated: true,
+            lifecycle: StoredLifecycle {
+                state: "active".to_string(),
+            },
+        };
+
+        let xml = serialize_tmx_glossary(&glossary, &[term]);
+        assert!(xml.contains("<tu tuid=\"term-123\">"));
+        assert!(xml.contains("<prop type=\"x-gnosis-footnote\">"));
+        assert!(xml.contains("<prop type=\"x-gnosis-untranslated\">true</prop>"));
+
+        let parsed =
+            parse_tmx_glossary("round-trip.tmx", xml.as_bytes()).expect("export should reimport");
+        assert_eq!(parsed.terms.len(), 1);
+        let parsed_term = &parsed.terms[0];
+        assert_eq!(parsed_term.term_id, "term-123");
+        assert_eq!(
+            parsed_term.source_terms,
+            vec!["Alquimia & magia", "alquimia <sagrada>"]
+        );
+        assert_eq!(
+            parsed_term.target_terms,
+            vec!["thuật luyện kim", "", "kim đan \"thiêng\""]
+        );
+        assert_eq!(
+            parsed_term.notes_to_translators,
+            "Use the canonical term & avoid variants."
+        );
+        assert_eq!(
+            parsed_term.footnote,
+            "Footnote with <markup> & quotes \"here\"."
+        );
+        assert!(parsed_term.untranslated);
+    }
+
+    #[test]
+    fn parses_legacy_tmx_without_gnosis_props() {
+        let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<tmx version="1.4">
+  <header creationtool="Fixture" creationtoolversion="1" segtype="phrase" o-tmf="Fixture" adminlang="en" srclang="en" datatype="plaintext"/>
+  <body>
+    <tu>
+      <note>Translator note</note>
+      <tuv xml:lang="en"><seg>mind</seg></tuv>
+      <tuv xml:lang="es"><seg>mente</seg></tuv>
+    </tu>
+  </body>
+</tmx>
+"#;
+
+        let parsed = parse_tmx_glossary("legacy.tmx", xml.as_bytes()).expect("legacy TMX");
+        assert_eq!(parsed.terms.len(), 1);
+        assert_eq!(parsed.terms[0].notes_to_translators, "Translator note");
+        assert_eq!(parsed.terms[0].footnote, "");
+        assert!(!parsed.terms[0].untranslated);
     }
 
     #[test]

@@ -1,4 +1,7 @@
 export {
+  downloadGlossaryAsTmx,
+} from "./glossary-export-flow.js";
+export {
   loadTeamGlossaries,
   primeGlossariesLoadingState,
 } from "./glossary-discovery-flow.js";
@@ -11,7 +14,6 @@ export {
   loadSelectedGlossaryEditorData,
   openGlossaryEditor,
   primeSelectedGlossaryEditorLoadingState,
-  showGlossaryFeatureNotReady,
   updateGlossaryTermSearchQuery,
 } from "./glossary-editor-flow.js";
 export {

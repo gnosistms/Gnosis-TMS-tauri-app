@@ -24,8 +24,10 @@ import {
   shouldShowGlossaryCreationControls,
   canManageTeamAiSettings,
 } from "../app/resource-capabilities.js";
-import { areResourcePageWritesDisabled } from "../app/resource-page-controller.js";
-import { glossaryArchiveDownloadUrl } from "../app/glossary-repo-flow.js";
+import {
+  areResourcePageWritesDisabled,
+  areResourcePageWriteSubmissionsDisabled,
+} from "../app/resource-page-controller.js";
 import { deriveGlossaryResolution } from "../app/resource-resolution.js";
 
 function renderGlossaryLanguageFlow(glossary) {
@@ -43,33 +45,31 @@ function renderGlossaryCard(glossary, options = {}) {
   const canPermanentlyDelete = options.canPermanentlyDelete === true;
   const isDeleted = options.isDeleted === true;
   const offlineMode = options.offlineMode === true;
-  const pageWritesDisabled = options.pageWritesDisabled === true;
+  const lifecycleActionsDisabled = options.lifecycleActionsDisabled === true;
+  const writeActionsDisabled = options.writeActionsDisabled === true;
   const isTombstone = glossary?.recordState === "tombstone";
   const resolution = deriveGlossaryResolution(glossary, options.syncSnapshot);
   const disableLifecycleActions = resolution?.blockLifecycleActions === true;
-  const downloadUrl = glossaryArchiveDownloadUrl(glossary);
   const activeActions = [
     textAction("Open", `open-glossary:${glossary.id}`),
-    downloadUrl
-      ? textAction("Download", `open-external:${downloadUrl}`, {
-          disabled: offlineMode || resolution?.key === "missing",
-        })
-      : textAction("Download", "noop", { disabled: true }),
+    textAction("Download", `download-glossary:${glossary.id}`, {
+      disabled: offlineMode || resolution?.key === "missing",
+    }),
     ...(canManage
         ? [
           textAction("Rename", `rename-glossary:${glossary.id}`, {
-            disabled: offlineMode || pageWritesDisabled || disableLifecycleActions,
+            disabled: offlineMode || lifecycleActionsDisabled || disableLifecycleActions,
           }),
           textAction("Delete", `delete-glossary:${glossary.id}`, {
-            disabled: offlineMode || pageWritesDisabled || disableLifecycleActions,
+            disabled: offlineMode || lifecycleActionsDisabled || disableLifecycleActions,
           }),
         ]
       : []),
   ];
   const deletedActions = [
-    ...(!isTombstone && canManage ? [textAction("Restore", `restore-glossary:${glossary.id}`, { disabled: offlineMode || pageWritesDisabled || disableLifecycleActions })] : []),
+    ...(!isTombstone && canManage ? [textAction("Restore", `restore-glossary:${glossary.id}`, { disabled: offlineMode || lifecycleActionsDisabled || disableLifecycleActions })] : []),
     ...(!isTombstone && canPermanentlyDelete
-      ? [textAction("Delete", `delete-deleted-glossary:${glossary.id}`, { disabled: offlineMode || pageWritesDisabled || disableLifecycleActions })]
+      ? [textAction("Delete", `delete-deleted-glossary:${glossary.id}`, { disabled: offlineMode || writeActionsDisabled || disableLifecycleActions })]
       : []),
   ];
   const resolutionMarkup = resolution
@@ -80,6 +80,7 @@ function renderGlossaryCard(glossary, options = {}) {
         className: "resource-state-box",
         actionLabel: resolution.actionLabel,
         action: resolution.action,
+        actionDisabled: offlineMode || writeActionsDisabled,
       })
     : "";
 
@@ -154,7 +155,8 @@ export function renderGlossariesScreen(state) {
   const canPermanentlyDelete = shouldShowDeletedGlossaryPermanentDelete(selectedTeam);
   const canManageAiSettings = canManageTeamAiSettings(selectedTeam);
   const offlineMode = state.offline?.isEnabled === true;
-  const pageWritesDisabled = areResourcePageWritesDisabled(state.glossariesPage);
+  const lifecycleActionsDisabled = areResourcePageWriteSubmissionsDisabled(state.glossariesPage);
+  const writeActionsDisabled = areResourcePageWritesDisabled(state.glossariesPage);
   const discovery = state.glossaryDiscovery ?? { status: "idle", error: "", brokerWarning: "" };
   const syncSnapshotsByRepoName = state.glossaryRepoSyncByRepoName ?? {};
   const recoveryMessage =
@@ -204,7 +206,8 @@ export function renderGlossariesScreen(state) {
                 canManage,
                 canPermanentlyDelete,
                 offlineMode,
-                pageWritesDisabled,
+                lifecycleActionsDisabled,
+                writeActionsDisabled,
                 syncSnapshot: syncSnapshotsByRepoName[glossary.repoName] ?? null,
               }),
             )
@@ -223,7 +226,8 @@ export function renderGlossariesScreen(state) {
         canManage,
         canPermanentlyDelete,
         offlineMode,
-        pageWritesDisabled,
+        lifecycleActionsDisabled,
+        writeActionsDisabled,
         syncSnapshotsByRepoName,
       })}
     </section>
@@ -236,7 +240,7 @@ export function renderGlossariesScreen(state) {
       titleAction: buildPageRefreshAction(state),
       navButtons: buildSectionNav("glossaries", { includeAiSettings: canManageAiSettings }),
       tools: canCreate
-        ? `${textAction("Import", "import-glossary", { disabled: offlineMode || pageWritesDisabled })} ${primaryButton("+ New Glossary", "open-new-glossary", { disabled: offlineMode || pageWritesDisabled })}`
+        ? `${textAction("Import", "import-glossary", { disabled: offlineMode || writeActionsDisabled })} ${primaryButton("+ New Glossary", "open-new-glossary", { disabled: offlineMode || writeActionsDisabled })}`
         : "",
       pageSync: state.pageSync,
       noticeText: getNoticeBadgeText(),
