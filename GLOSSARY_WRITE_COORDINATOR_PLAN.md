@@ -8,11 +8,11 @@ Bring the Glossaries page up to the same write-orchestration standard as the Pro
 - coalesced repeated user intents where the latest value should win
 - optimistic UI that refresh snapshots cannot temporarily overwrite
 - granular disabled states instead of blocking the whole page
-- a TanStack Pacer-backed queue hidden behind an app-owned coordinator
+- an app-owned coordinator queue matching the Projects page pattern
 
 This plan is for the Glossaries page only. It builds on the existing TanStack Query glossary list work in `GLOSSARY_TANSTACK_QUERY_PLAN.md`.
 
-## Current Flow
+## Baseline Before This Work
 
 Glossary list refresh already goes through TanStack Query:
 
@@ -32,7 +32,7 @@ Those writes still rely on page-level state:
 - `areResourcePageWriteSubmissionsDisabled(state.glossariesPage)`
 - `pendingMutation` fields patched directly into query data
 
-The current implementation preserves pending optimistic patches during query refresh with `preservePendingGlossaryLifecyclePatches(...)`, but it does not yet have a true desired-state queue. Repeated changes to the same glossary are blocked instead of being coalesced, and active writes still produce broader disabled states than necessary.
+Before this coordinator work, the implementation preserved pending optimistic patches during query refresh with `preservePendingGlossaryLifecyclePatches(...)`, but it did not yet have a true desired-state queue. Repeated changes to the same glossary were blocked instead of being coalesced, and active writes produced broader disabled states than necessary.
 
 ## Target Behavior
 
@@ -61,11 +61,13 @@ Keep these on the existing stricter path:
 
 These can be evaluated later, but they are not needed to fix lifecycle queuing and refresh-time interaction.
 
-## Pacer Boundary
+## Queue Boundary
 
-Add `@tanstack/pacer` and use it only inside a new app coordinator.
+Use the same app-owned coordinator pattern that is already implemented for the Projects page.
 
-Do not let screen code, glossary lifecycle flow code, or query adapters depend directly on Pacer APIs. The coordinator should expose small app-owned functions so Pacer can be replaced or upgraded without touching the rest of the app.
+Do not add `@tanstack/pacer` in this rollout. The dependency could not be installed reliably in this environment, and the Projects page is already using a small custom coordinator with the behavior we need: per-scope serialization, same-key coalescing, stale-refresh overlays, and latest-intent-wins semantics.
+
+Keep the coordinator boundary small and app-owned so both Projects and Glossaries can later move their internal queue implementation to Pacer if we find a concrete reason to do that. Pacer should remain an optional implementation detail, not something screen code imports directly.
 
 New file:
 
@@ -92,7 +94,7 @@ export function glossaryRepoSyncIntentKey(repoName);
 export function teamMetadataWriteScope(team);
 ```
 
-Use one Pacer async queue per write scope:
+Use one in-memory async queue per write scope:
 
 ```js
 team-metadata:${installationId}
@@ -109,7 +111,7 @@ Rules:
 - if an intent changes while its write is running, enqueue the same key again
 - confirmation happens only when refreshed or locally reconciled state matches the desired value
 
-If `@tanstack/pacer` cannot be installed because of registry availability, keep this plan blocked at Stage 1 rather than implementing a second custom queue. The app-owned adapter boundary is still required.
+This should closely mirror `src-ui/app/project-write-coordinator.js` so behavior stays consistent across Projects and Glossaries.
 
 ## Intent Model
 
@@ -151,18 +153,16 @@ Values:
 
 `glossary:title` and `glossary:lifecycle` should be separate keys so a rename and lifecycle change on the same glossary can both be represented. They still share the same team-metadata scope, so backend writes remain serialized.
 
-## Stage 1: Add Pacer And Coordinator Skeleton
+## Stage 1: Add Coordinator Skeleton
 
 Files:
 
-- `package.json`
-- `package-lock.json`
 - `src-ui/app/glossary-write-coordinator.js` new
 - `src-ui/app/glossary-write-coordinator.test.js` new
 
 Implement:
 
-- Pacer-backed scoped queues
+- scoped in-memory queues matching the Projects coordinator pattern
 - intent storage and same-key coalescing
 - status selectors
 - subscription notifications
@@ -183,7 +183,7 @@ Verification:
 
 Rollback:
 
-- remove the new coordinator files and Pacer dependency
+- remove the new coordinator files
 
 ## Stage 2: Snapshot Overlay
 
@@ -401,7 +401,7 @@ Use the Tauri dev app and verify:
 
 ## Rollout Order
 
-1. Coordinator skeleton with Pacer and tests.
+1. Coordinator skeleton with tests.
 2. Snapshot overlay with no user-visible behavior change.
 3. Rename through the coordinator.
 4. Soft delete and restore through the coordinator.

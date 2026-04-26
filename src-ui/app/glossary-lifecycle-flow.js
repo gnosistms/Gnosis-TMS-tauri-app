@@ -11,7 +11,7 @@ import {
   canPermanentlyDeleteGlossaries,
   selectedTeam,
 } from "./glossary-shared.js";
-import { clearNoticeBadge, clearScopedSyncBadge, showNoticeBadge, showScopedSyncBadge } from "./status-feedback.js";
+import { clearNoticeBadge, showNoticeBadge } from "./status-feedback.js";
 import {
   ensureGlossaryNotTombstoned,
   permanentlyDeleteRemoteGlossaryRepoForTeam,
@@ -29,33 +29,60 @@ import {
   submitResourcePageWrite,
 } from "./resource-page-controller.js";
 import {
-  runGlossaryRenameMutation,
-  runGlossaryRestoreMutation,
-  runGlossarySoftDeleteMutation,
+  applyGlossariesQuerySnapshotToState,
+  invalidateGlossariesQueryAfterMutation,
+  patchGlossaryQueryData,
 } from "./glossary-query.js";
+import { glossaryKeys, queryClient } from "./query-client.js";
 import { classifySyncError } from "./sync-error.js";
 import { handleSyncFailure } from "./sync-recovery.js";
 import {
-  beginEntityModalSubmit,
   cancelEntityModal,
   entityConfirmationMatches,
   openEntityConfirmationModal,
-  openEntityRenameModal,
-  reopenEntityConfirmationModalWithError,
   updateEntityModalConfirmation,
   updateEntityModalName,
 } from "./resource-entity-modal.js";
-
-function setGlossaryUiDebug(render, text) {
-  showScopedSyncBadge("glossaries", text, render);
-}
-
-function clearGlossaryUiDebug(render) {
-  clearScopedSyncBadge("glossaries", render);
-}
+import { persistGlossariesForTeam } from "./glossary-top-level-state.js";
+import {
+  anyGlossaryMutatingWriteIsActive,
+  glossaryLifecycleIntentKey,
+  glossaryTitleIntentKey,
+  requestGlossaryWriteIntent,
+  teamMetadataWriteScope,
+} from "./glossary-write-coordinator.js";
 
 function glossaryById(glossaryId) {
   return state.glossaries.find((glossary) => glossary.id === glossaryId) ?? null;
+}
+
+function patchGlossaryInVisibleState(glossaryId, patch) {
+  state.glossaries = state.glossaries.map((glossary) =>
+    glossary?.id === glossaryId
+      ? {
+          ...glossary,
+          ...patch,
+        }
+      : glossary,
+  );
+}
+
+function applyGlossaryPatchToQueryAndState(team, glossaryId, patch) {
+  const teamId = team?.id ?? state.selectedTeamId;
+  const queryKey = glossaryKeys.byTeam(teamId);
+  const currentQueryData = queryClient.getQueryData(queryKey);
+  const nextQueryData = patchGlossaryQueryData(currentQueryData, glossaryId, patch);
+
+  if (nextQueryData && nextQueryData !== currentQueryData) {
+    queryClient.setQueryData(queryKey, nextQueryData);
+    applyGlossariesQuerySnapshotToState(nextQueryData, {
+      teamId,
+      isFetching: state.glossariesPage?.isRefreshing === true,
+    });
+    return;
+  }
+
+  patchGlossaryInVisibleState(glossaryId, patch);
 }
 
 const glossaryPageSyncController = {
@@ -195,24 +222,8 @@ function areGlossaryLifecycleWritesDisabled() {
   return areResourcePageWriteSubmissionsDisabled(state.glossariesPage);
 }
 
-function beginGlossaryLifecyclePageSync() {
-  const refreshWasActive = state.glossariesPage?.isRefreshing === true;
-  if (!refreshWasActive) {
-    beginPageSync();
-  }
-  return { refreshWasActive };
-}
-
-async function completeGlossaryLifecyclePageSync(render, syncContext) {
-  if (!syncContext?.refreshWasActive) {
-    await completePageSync(render);
-  }
-}
-
-function failGlossaryLifecyclePageSync(syncContext) {
-  if (!syncContext?.refreshWasActive) {
-    failPageSync();
-  }
+function areGlossaryHeavyWritesDisabled() {
+  return areResourcePageWritesDisabled(state.glossariesPage) || anyGlossaryMutatingWriteIsActive();
 }
 
 export function toggleDeletedGlossaries(render) {
@@ -297,39 +308,59 @@ export async function submitGlossaryRename(render) {
     return;
   }
 
-  state.glossaryRename.status = "loading";
-  state.glossaryRename.error = "";
-  state.glossariesPage.writeState = "submitting";
-  const syncContext = beginGlossaryLifecyclePageSync();
-  setGlossariesPageProgress(render, "Saving glossary rename...");
-  render();
-
-  try {
-    await runGlossaryRenameMutation({
-      team,
-      glossary,
-      nextTitle,
-      commitMutation: commitGlossaryMutationStrict,
-      onOptimisticApplied: resetGlossaryRename,
-      render,
-    });
-    state.glossariesPage.writeState = "idle";
-    resetGlossaryRename();
-    await completeGlossaryLifecyclePageSync(render, syncContext);
-    if (!syncContext.refreshWasActive) {
-      clearNoticeBadge();
-    }
-    render();
-  } catch (error) {
-    state.glossariesPage.writeState = "idle";
-    failGlossaryLifecyclePageSync(syncContext);
-    if (await handleSyncFailure(classifySyncError(error), { render })) {
-      return;
-    }
-    state.glossaryRename.status = "idle";
-    state.glossaryRename.error = error?.message ?? String(error);
-    render();
-  }
+  requestGlossaryWriteIntent({
+    key: glossaryTitleIntentKey(glossary.id),
+    scope: teamMetadataWriteScope(team),
+    teamId: team.id,
+    glossaryId: glossary.id,
+    type: "glossaryTitle",
+    value: {
+      title: nextTitle,
+    },
+    previousValue: {
+      title: glossary.title,
+    },
+  }, {
+    applyOptimistic: (intent) => {
+      applyGlossaryPatchToQueryAndState(team, glossary.id, {
+        title: intent.value.title,
+        pendingMutation: "rename",
+      });
+      persistGlossariesForTeam(team);
+      resetGlossaryRename();
+      render();
+    },
+    run: async (intent) => commitGlossaryMutationStrict(team, {
+      type: "rename",
+      resourceId: glossary.id,
+      glossaryId: glossary.id,
+      title: intent.value.title,
+      previousTitle: glossary.title,
+    }),
+    onSuccess: (intent) => {
+      applyGlossaryPatchToQueryAndState(team, glossary.id, {
+        title: intent.value.title,
+        pendingMutation: null,
+        localLifecycleIntent: "rename",
+      });
+      persistGlossariesForTeam(team);
+      void invalidateGlossariesQueryAfterMutation(team, {
+        teamId: team.id,
+        render,
+        refetchIfInactive: false,
+      });
+    },
+    onError: (error) => {
+      state.glossaryRename = {
+        isOpen: true,
+        glossaryId: glossary.id,
+        glossaryName: nextTitle,
+        status: "idle",
+        error: error?.message ?? String(error),
+      };
+      render();
+    },
+  });
 }
 
 export async function deleteGlossary(render, glossaryId) {
@@ -358,33 +389,52 @@ export async function deleteGlossary(render, glossaryId) {
     return;
   }
 
-  state.glossariesPage.writeState = "submitting";
-  const syncContext = beginGlossaryLifecyclePageSync();
-  setGlossariesPageProgress(render, "Deleting glossary...");
-  render();
-
-  try {
-    await runGlossarySoftDeleteMutation({
-      team,
-      glossary,
-      commitMutation: commitGlossaryMutationStrict,
-      render,
-    });
-    state.glossariesPage.writeState = "idle";
-    await completeGlossaryLifecyclePageSync(render, syncContext);
-    if (!syncContext.refreshWasActive) {
-      clearNoticeBadge();
-    }
-    render();
-  } catch (error) {
-    state.glossariesPage.writeState = "idle";
-    failGlossaryLifecyclePageSync(syncContext);
-    if (await handleSyncFailure(classifySyncError(error), { render })) {
-      return;
-    }
-    showNoticeBadge(error?.message ?? String(error), render);
-    render();
-  }
+  requestGlossaryWriteIntent({
+    key: glossaryLifecycleIntentKey(glossary.id),
+    scope: teamMetadataWriteScope(team),
+    teamId: team.id,
+    glossaryId: glossary.id,
+    type: "glossaryLifecycle",
+    value: {
+      lifecycleState: "deleted",
+      mutationType: "softDelete",
+    },
+    previousValue: {
+      lifecycleState: "active",
+    },
+  }, {
+    applyOptimistic: () => {
+      applyGlossaryPatchToQueryAndState(team, glossary.id, {
+        lifecycleState: "deleted",
+        pendingMutation: "softDelete",
+      });
+      state.showDeletedGlossaries = true;
+      persistGlossariesForTeam(team);
+      render();
+    },
+    run: async () => commitGlossaryMutationStrict(team, {
+      type: "softDelete",
+      resourceId: glossary.id,
+      glossaryId: glossary.id,
+    }),
+    onSuccess: () => {
+      applyGlossaryPatchToQueryAndState(team, glossary.id, {
+        lifecycleState: "deleted",
+        pendingMutation: null,
+        localLifecycleIntent: "softDelete",
+      });
+      persistGlossariesForTeam(team);
+      void invalidateGlossariesQueryAfterMutation(team, {
+        teamId: team.id,
+        render,
+        refetchIfInactive: false,
+      });
+    },
+    onError: (error) => {
+      showNoticeBadge(error?.message ?? String(error), render);
+      render();
+    },
+  });
 }
 
 export async function restoreGlossary(render, glossaryId) {
@@ -413,39 +463,57 @@ export async function restoreGlossary(render, glossaryId) {
     return;
   }
 
-  state.glossariesPage.writeState = "submitting";
-  const syncContext = beginGlossaryLifecyclePageSync();
-  setGlossariesPageProgress(render, "Restoring glossary...");
-  render();
-
-  try {
-    await runGlossaryRestoreMutation({
-      team,
-      glossary,
-      commitMutation: commitGlossaryMutationStrict,
-      render,
-    });
-    state.glossariesPage.writeState = "idle";
-    await completeGlossaryLifecyclePageSync(render, syncContext);
-    if (!syncContext.refreshWasActive) {
-      clearNoticeBadge();
-    }
-    render();
-  } catch (error) {
-    state.glossariesPage.writeState = "idle";
-    failGlossaryLifecyclePageSync(syncContext);
-    if (await handleSyncFailure(classifySyncError(error), { render })) {
-      return;
-    }
-    showNoticeBadge(error?.message ?? String(error), render);
-    render();
-  }
+  requestGlossaryWriteIntent({
+    key: glossaryLifecycleIntentKey(glossary.id),
+    scope: teamMetadataWriteScope(team),
+    teamId: team.id,
+    glossaryId: glossary.id,
+    type: "glossaryLifecycle",
+    value: {
+      lifecycleState: "active",
+      mutationType: "restore",
+    },
+    previousValue: {
+      lifecycleState: "deleted",
+    },
+  }, {
+    applyOptimistic: () => {
+      applyGlossaryPatchToQueryAndState(team, glossary.id, {
+        lifecycleState: "active",
+        pendingMutation: "restore",
+      });
+      persistGlossariesForTeam(team);
+      render();
+    },
+    run: async () => commitGlossaryMutationStrict(team, {
+      type: "restore",
+      resourceId: glossary.id,
+      glossaryId: glossary.id,
+    }),
+    onSuccess: () => {
+      applyGlossaryPatchToQueryAndState(team, glossary.id, {
+        lifecycleState: "active",
+        pendingMutation: null,
+        localLifecycleIntent: "restore",
+      });
+      persistGlossariesForTeam(team);
+      void invalidateGlossariesQueryAfterMutation(team, {
+        teamId: team.id,
+        render,
+        refetchIfInactive: false,
+      });
+    },
+    onError: (error) => {
+      showNoticeBadge(error?.message ?? String(error), render);
+      render();
+    },
+  });
 }
 
 export function openGlossaryPermanentDeletion(render, glossaryId) {
   const glossary = glossaryById(glossaryId);
   const team = selectedTeam();
-  if (areResourcePageWritesDisabled(state.glossariesPage)) {
+  if (areGlossaryHeavyWritesDisabled()) {
     showNoticeBadge(glossaryWriteBlockedMessage(), render);
     return;
   }
@@ -495,7 +563,7 @@ export function cancelGlossaryPermanentDeletion(render) {
 export async function confirmGlossaryPermanentDeletion(render) {
   const team = selectedTeam();
   const glossary = glossaryById(state.glossaryPermanentDeletion.glossaryId);
-  if (areResourcePageWritesDisabled(state.glossariesPage)) {
+  if (areGlossaryHeavyWritesDisabled()) {
     state.glossaryPermanentDeletion.status = "idle";
     state.glossaryPermanentDeletion.error = glossaryWriteBlockedMessage();
     render();

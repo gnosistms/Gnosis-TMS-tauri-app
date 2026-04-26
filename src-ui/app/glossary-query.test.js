@@ -16,13 +16,17 @@ const { resetSessionState, state } = await import("./state.js");
 const {
   applyGlossariesQuerySnapshotToState,
   createGlossariesQuerySnapshot,
-  createGlossaryRenameMutationOptions,
-  createGlossaryRestoreMutationOptions,
-  createGlossarySoftDeleteMutationOptions,
   invalidateGlossariesQueryAfterMutation,
-  preservePendingGlossaryLifecyclePatches,
 } = await import("./glossary-query.js");
 const { glossaryKeys, queryClient } = await import("./query-client.js");
+const {
+  getGlossaryWriteIntent,
+  glossaryLifecycleIntentKey,
+  glossaryTitleIntentKey,
+  requestGlossaryWriteIntent,
+  resetGlossaryWriteCoordinator,
+  teamMetadataWriteScope,
+} = await import("./glossary-write-coordinator.js");
 
 function glossary(overrides = {}) {
   return {
@@ -39,6 +43,7 @@ function glossary(overrides = {}) {
 
 test.afterEach(() => {
   queryClient.clear();
+  resetGlossaryWriteCoordinator();
   resetSessionState();
 });
 
@@ -84,196 +89,80 @@ test("glossary query adapter ignores stale team snapshots", () => {
   assert.equal(state.glossaries[0].title, "Existing");
 });
 
-test("rename optimistic patch updates query cache and state immediately", async () => {
+test("glossary query adapter overlays pending title intents", () => {
   resetSessionState();
   state.selectedTeamId = "team-1";
   state.glossariesPage = createResourcePageState();
-  const team = { id: "team-1", installationId: 1 };
-  const queryKey = glossaryKeys.byTeam(team.id);
-  let optimisticApplied = false;
-  queryClient.setQueryData(
-    queryKey,
-    createGlossariesQuerySnapshot({ glossaries: [glossary()] }),
+
+  requestGlossaryWriteIntent({
+    key: glossaryTitleIntentKey("glossary-1"),
+    scope: teamMetadataWriteScope({ installationId: 1 }),
+    teamId: "team-1",
+    glossaryId: "glossary-1",
+    type: "glossaryTitle",
+    value: { title: "Optimistic Rename" },
+  }, {
+    run: async () => {},
+  });
+
+  applyGlossariesQuerySnapshotToState(
+    createGlossariesQuerySnapshot({ glossaries: [glossary({ title: "Server Title" })] }),
+    { teamId: "team-1" },
   );
 
-  const options = createGlossaryRenameMutationOptions({
-    team,
-    glossary: glossary(),
-    nextTitle: "Renamed Glossary",
-    commitMutation: async () => {},
-    onOptimisticApplied: () => {
-      optimisticApplied = true;
-    },
-  });
-
-  await options.onMutate();
-
-  assert.equal(queryClient.getQueryData(queryKey).glossaries[0].title, "Renamed Glossary");
-  assert.equal(queryClient.getQueryData(queryKey).glossaries[0].pendingMutation, "rename");
-  assert.equal(state.glossaries[0].title, "Renamed Glossary");
-  assert.equal(optimisticApplied, true);
+  assert.equal(state.glossaries[0].title, "Optimistic Rename");
+  assert.equal(state.glossaries[0].pendingMutation, "rename");
 });
 
-test("rename optimistic failure rolls back query cache and state", async () => {
+test("glossary query adapter overlays pending lifecycle intents", () => {
   resetSessionState();
   state.selectedTeamId = "team-1";
   state.glossariesPage = createResourcePageState();
-  const team = { id: "team-1", installationId: 1 };
-  const queryKey = glossaryKeys.byTeam(team.id);
-  const snapshot = createGlossariesQuerySnapshot({ glossaries: [glossary()] });
-  queryClient.setQueryData(queryKey, snapshot);
 
-  const options = createGlossaryRenameMutationOptions({
-    team,
-    glossary: glossary(),
-    nextTitle: "Renamed Glossary",
-    commitMutation: async () => {},
+  requestGlossaryWriteIntent({
+    key: glossaryLifecycleIntentKey("glossary-1"),
+    scope: teamMetadataWriteScope({ installationId: 1 }),
+    teamId: "team-1",
+    glossaryId: "glossary-1",
+    type: "glossaryLifecycle",
+    value: { lifecycleState: "deleted" },
+  }, {
+    run: async () => {},
   });
 
-  const context = await options.onMutate();
-  options.onError(new Error("failed"), undefined, context);
-
-  assert.equal(queryClient.getQueryData(queryKey).glossaries[0].title, "Gnosis ES-VI");
-  assert.equal(state.glossaries[0].title, "Gnosis ES-VI");
-});
-
-test("soft delete optimistic patch moves a glossary to deleted state", async () => {
-  resetSessionState();
-  state.selectedTeamId = "team-1";
-  state.glossariesPage = createResourcePageState();
-  const team = { id: "team-1", installationId: 1 };
-  const queryKey = glossaryKeys.byTeam(team.id);
-  queryClient.setQueryData(
-    queryKey,
-    createGlossariesQuerySnapshot({ glossaries: [glossary()] }),
+  applyGlossariesQuerySnapshotToState(
+    createGlossariesQuerySnapshot({ glossaries: [glossary({ lifecycleState: "active" })] }),
+    { teamId: "team-1" },
   );
 
-  const options = createGlossarySoftDeleteMutationOptions({
-    team,
-    glossary: glossary(),
-    commitMutation: async () => {},
-  });
-
-  await options.onMutate();
-
-  assert.equal(queryClient.getQueryData(queryKey).glossaries[0].lifecycleState, "deleted");
-  assert.equal(queryClient.getQueryData(queryKey).glossaries[0].pendingMutation, "softDelete");
   assert.equal(state.glossaries[0].lifecycleState, "deleted");
+  assert.equal(state.glossaries[0].pendingMutation, "softDelete");
 });
 
-test("restore optimistic patch moves a glossary to active state", async () => {
+test("confirmed glossary snapshots clear matching write intents", () => {
   resetSessionState();
   state.selectedTeamId = "team-1";
   state.glossariesPage = createResourcePageState();
-  const team = { id: "team-1", installationId: 1 };
-  const deletedGlossary = glossary({ lifecycleState: "deleted" });
-  const queryKey = glossaryKeys.byTeam(team.id);
-  queryClient.setQueryData(
-    queryKey,
-    createGlossariesQuerySnapshot({ glossaries: [deletedGlossary] }),
+  const key = glossaryTitleIntentKey("glossary-1");
+
+  requestGlossaryWriteIntent({
+    key,
+    scope: teamMetadataWriteScope({ installationId: 1 }),
+    teamId: "team-1",
+    glossaryId: "glossary-1",
+    type: "glossaryTitle",
+    value: { title: "Confirmed Rename" },
+  }, {
+    run: async () => {},
+  });
+
+  applyGlossariesQuerySnapshotToState(
+    createGlossariesQuerySnapshot({ glossaries: [glossary({ title: "Confirmed Rename" })] }),
+    { teamId: "team-1" },
   );
 
-  const options = createGlossaryRestoreMutationOptions({
-    team,
-    glossary: deletedGlossary,
-    commitMutation: async () => {},
-  });
-
-  await options.onMutate();
-
-  assert.equal(queryClient.getQueryData(queryKey).glossaries[0].lifecycleState, "active");
-  assert.equal(queryClient.getQueryData(queryKey).glossaries[0].pendingMutation, "restore");
-  assert.equal(state.glossaries[0].lifecycleState, "active");
-});
-
-test("soft delete optimistic failure rolls back lifecycle state", async () => {
-  resetSessionState();
-  state.selectedTeamId = "team-1";
-  state.glossariesPage = createResourcePageState();
-  const team = { id: "team-1", installationId: 1 };
-  const queryKey = glossaryKeys.byTeam(team.id);
-  queryClient.setQueryData(
-    queryKey,
-    createGlossariesQuerySnapshot({ glossaries: [glossary()] }),
-  );
-
-  const options = createGlossarySoftDeleteMutationOptions({
-    team,
-    glossary: glossary(),
-    commitMutation: async () => {},
-  });
-
-  const context = await options.onMutate();
-  options.onError(new Error("failed"), undefined, context);
-
-  assert.equal(queryClient.getQueryData(queryKey).glossaries[0].lifecycleState, "active");
-  assert.equal(state.glossaries[0].lifecycleState, "active");
-});
-
-test("rename mutations use the team metadata mutation scope", () => {
-  const options = createGlossaryRenameMutationOptions({
-    team: { id: "team-1", installationId: 42 },
-    glossary: glossary(),
-    nextTitle: "Renamed Glossary",
-    commitMutation: async () => {},
-  });
-
-  assert.deepEqual(options.scope, { id: "team-metadata:42" });
-});
-
-test("delete and restore mutations use the team metadata mutation scope", () => {
-  const team = { id: "team-1", installationId: 42 };
-
-  assert.deepEqual(
-    createGlossarySoftDeleteMutationOptions({
-      team,
-      glossary: glossary(),
-      commitMutation: async () => {},
-    }).scope,
-    { id: "team-metadata:42" },
-  );
-  assert.deepEqual(
-    createGlossaryRestoreMutationOptions({
-      team,
-      glossary: glossary({ lifecycleState: "deleted" }),
-      commitMutation: async () => {},
-    }).scope,
-    { id: "team-metadata:42" },
-  );
-});
-
-test("refresh snapshots preserve pending lifecycle optimistic patches", () => {
-  const previousSnapshot = createGlossariesQuerySnapshot({
-    glossaries: [
-      glossary({
-        title: "Optimistic Rename",
-        pendingMutation: "rename",
-      }),
-      glossary({
-        id: "glossary-2",
-        title: "Deleted Optimistically",
-        lifecycleState: "deleted",
-        pendingMutation: "softDelete",
-      }),
-    ],
-  });
-  const nextSnapshot = createGlossariesQuerySnapshot({
-    glossaries: [
-      glossary({ title: "Server Title" }),
-      glossary({
-        id: "glossary-2",
-        title: "Deleted Optimistically",
-        lifecycleState: "active",
-      }),
-    ],
-  });
-
-  const merged = preservePendingGlossaryLifecyclePatches(nextSnapshot, previousSnapshot);
-
-  assert.equal(merged.glossaries[0].title, "Optimistic Rename");
-  assert.equal(merged.glossaries[0].pendingMutation, "rename");
-  assert.equal(merged.glossaries[1].lifecycleState, "deleted");
-  assert.equal(merged.glossaries[1].pendingMutation, "softDelete");
+  assert.equal(getGlossaryWriteIntent(key), null);
+  assert.equal(state.glossaries[0].title, "Confirmed Rename");
 });
 
 test("mutation settle invalidates active glossary query once without explicit fetch", async () => {

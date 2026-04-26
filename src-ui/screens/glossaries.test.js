@@ -4,8 +4,15 @@ import assert from "node:assert/strict";
 const { createResourcePageState } = await import("../app/resource-page-controller.js");
 const { resetSessionState, state } = await import("../app/state.js");
 const { renderGlossariesScreen } = await import("./glossaries.js");
+const {
+  glossaryTitleIntentKey,
+  requestGlossaryWriteIntent,
+  resetGlossaryWriteCoordinator,
+  teamMetadataWriteScope,
+} = await import("../app/glossary-write-coordinator.js");
 
 test.afterEach(() => {
+  resetGlossaryWriteCoordinator();
   resetSessionState();
 });
 
@@ -132,4 +139,25 @@ test("glossary write in progress disables lifecycle actions", () => {
   assert.match(actionButtonHtml(html, "rename-glossary:glossary-1"), /disabled/);
   assert.match(actionButtonHtml(html, "delete-glossary:glossary-1"), /disabled/);
   assert.match(actionButtonHtml(html, "restore-glossary:deleted-glossary"), /disabled/);
+});
+
+test("coordinator writes keep lifecycle actions enabled while heavy actions stay disabled", () => {
+  setGlossaryScreenState();
+  requestGlossaryWriteIntent({
+    key: glossaryTitleIntentKey("glossary-1"),
+    scope: teamMetadataWriteScope({ installationId: 1 }),
+    teamId: "team-1",
+    glossaryId: "glossary-1",
+    type: "glossaryTitle",
+    value: { title: "Renaming" },
+  }, {
+    run: async () => new Promise((resolve) => setTimeout(resolve, 10)),
+  });
+
+  const html = renderGlossariesScreen(state);
+
+  assert.doesNotMatch(actionButtonHtml(html, "rename-glossary:glossary-1"), /disabled/);
+  assert.doesNotMatch(actionButtonHtml(html, "delete-glossary:glossary-1"), /disabled/);
+  assert.match(actionButtonHtml(html, "import-glossary"), /disabled/);
+  assert.match(actionButtonHtml(html, "open-new-glossary"), /disabled/);
 });

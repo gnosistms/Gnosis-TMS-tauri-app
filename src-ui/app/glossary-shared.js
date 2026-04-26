@@ -119,6 +119,14 @@ export function normalizeGlossarySummary(glossary) {
       typeof glossary.defaultBranchHeadOid === "string" && glossary.defaultBranchHeadOid.trim()
         ? glossary.defaultBranchHeadOid.trim()
         : null,
+    pendingMutation:
+      typeof glossary.pendingMutation === "string" && glossary.pendingMutation.trim()
+        ? glossary.pendingMutation.trim()
+        : null,
+    localLifecycleIntent:
+      typeof glossary.localLifecycleIntent === "string" && glossary.localLifecycleIntent.trim()
+        ? glossary.localLifecycleIntent.trim()
+        : null,
   };
 }
 

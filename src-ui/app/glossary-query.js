@@ -1,6 +1,5 @@
-import { createMutationObserver, glossaryKeys, queryClient, subscribeQueryObserver } from "./query-client.js";
+import { glossaryKeys, queryClient, subscribeQueryObserver } from "./query-client.js";
 import { createGlossaryDiscoveryState, state } from "./state.js";
-import { showNoticeBadge } from "./status-feedback.js";
 import {
   listLocalGlossarySummariesForTeam,
   loadRepoBackedGlossariesForTeam,
@@ -10,6 +9,10 @@ import {
   glossarySnapshotFromList,
   persistGlossariesForTeam,
 } from "./glossary-top-level-state.js";
+import {
+  applyGlossaryWriteIntentsToSnapshot,
+  clearConfirmedGlossaryWriteIntents,
+} from "./glossary-write-coordinator.js";
 
 let activeGlossariesQuerySubscription = null;
 
@@ -47,6 +50,11 @@ export function createGlossariesQuerySnapshot({
   };
 }
 
+function applyGlossaryWriteIntentOverlay(snapshot) {
+  clearConfirmedGlossaryWriteIntents(snapshot);
+  return applyGlossaryWriteIntentsToSnapshot(snapshot);
+}
+
 export function applyGlossariesQuerySnapshotToState(snapshot, {
   teamId = state.selectedTeamId,
   isFetching = false,
@@ -57,7 +65,8 @@ export function applyGlossariesQuerySnapshotToState(snapshot, {
   }
 
   if (snapshot) {
-    applyGlossarySnapshotToState(glossarySnapshotFromList(snapshot.glossaries), {
+    const visibleSnapshot = applyGlossaryWriteIntentOverlay(snapshot);
+    applyGlossarySnapshotToState(glossarySnapshotFromList(visibleSnapshot.glossaries), {
       teamId,
       fallbackToFirstActive,
     });
@@ -101,53 +110,6 @@ export function patchGlossaryQueryData(queryData, glossaryId, patch) {
     : queryData;
 }
 
-export function preservePendingGlossaryLifecyclePatches(nextSnapshot, previousSnapshot) {
-  if (!nextSnapshot || typeof nextSnapshot !== "object") {
-    return nextSnapshot;
-  }
-
-  const pendingById = new Map(
-    (Array.isArray(previousSnapshot?.glossaries) ? previousSnapshot.glossaries : [])
-      .filter((glossary) =>
-        typeof glossary?.id === "string"
-        && typeof glossary?.pendingMutation === "string"
-        && glossary.pendingMutation.trim()
-      )
-      .map((glossary) => [glossary.id, glossary]),
-  );
-  if (pendingById.size === 0) {
-    return nextSnapshot;
-  }
-
-  let changed = false;
-  const glossaries = (Array.isArray(nextSnapshot.glossaries) ? nextSnapshot.glossaries : [])
-    .map((glossary) => {
-      const pendingGlossary = pendingById.get(glossary?.id);
-      if (!pendingGlossary) {
-        return glossary;
-      }
-
-      changed = true;
-      return {
-        ...glossary,
-        ...(pendingGlossary.pendingMutation === "rename"
-          ? { title: pendingGlossary.title }
-          : {}),
-        ...(pendingGlossary.pendingMutation === "softDelete" || pendingGlossary.pendingMutation === "restore"
-          ? { lifecycleState: pendingGlossary.lifecycleState }
-          : {}),
-        pendingMutation: pendingGlossary.pendingMutation,
-      };
-    });
-
-  return changed
-    ? {
-      ...nextSnapshot,
-      glossaries,
-    }
-    : nextSnapshot;
-}
-
 export async function seedGlossariesQueryFromLocal(team, {
   teamId = team?.id,
   render,
@@ -158,10 +120,10 @@ export async function seedGlossariesQueryFromLocal(team, {
     return null;
   }
 
-  const snapshot = createGlossariesQuerySnapshot({
+  const snapshot = applyGlossaryWriteIntentOverlay(createGlossariesQuerySnapshot({
     glossaries: localGlossaries,
     status: "ready",
-  });
+  }));
   queryClient.setQueryData(glossaryKeys.byTeam(teamId), snapshot);
   applyGlossariesQuerySnapshotToState(snapshot, { teamId, isFetching: true });
   if (persist) {
@@ -214,10 +176,7 @@ export function createGlossariesQueryOptions(team, options = {}) {
         recoveryMessage,
         status: "ready",
       });
-      return preservePendingGlossaryLifecyclePatches(
-        nextSnapshot,
-        queryClient.getQueryData(glossaryKeys.byTeam(teamId)),
-      );
+      return applyGlossaryWriteIntentOverlay(nextSnapshot);
     },
   };
 }
@@ -291,138 +250,4 @@ export async function invalidateGlossariesQueryAfterMutation(team, options = {})
       teamId,
     }));
   }
-}
-
-function createGlossaryLifecycleMutationOptions({
-  team,
-  glossary,
-  mutationType,
-  optimisticPatch,
-  settledPatch = {},
-  commitMutation,
-  onOptimisticApplied,
-  render,
-} = {}) {
-  const teamId = team?.id ?? null;
-  const queryKey = glossaryKeys.byTeam(teamId);
-  return {
-    mutationKey: ["glossary", mutationType, glossary?.id ?? null],
-    scope: { id: `team-metadata:${team?.installationId}` },
-    mutationFn: async () => {
-      const mutation = {
-        type: mutationType,
-        resourceId: glossary.id,
-        glossaryId: glossary.id,
-      };
-      if (mutationType === "rename") {
-        mutation.title = optimisticPatch.title;
-        mutation.previousTitle = glossary.title;
-      }
-      await commitMutation(team, mutation);
-    },
-    onMutate: async () => {
-      await queryClient.cancelQueries({ queryKey });
-      const previousQueryData = queryClient.getQueryData(queryKey);
-      const optimisticQueryData = patchGlossaryQueryData(previousQueryData, glossary.id, optimisticPatch);
-      if (optimisticQueryData) {
-        queryClient.setQueryData(queryKey, optimisticQueryData);
-        applyGlossariesQuerySnapshotToState(optimisticQueryData, { teamId, isFetching: false });
-      }
-      onOptimisticApplied?.();
-      render?.();
-      return { previousQueryData };
-    },
-    onError: (error, _variables, context) => {
-      if (context?.previousQueryData) {
-        queryClient.setQueryData(queryKey, context.previousQueryData);
-        applyGlossariesQuerySnapshotToState(context.previousQueryData, { teamId, isFetching: false });
-      }
-      if (typeof render === "function") {
-        showNoticeBadge(error?.message ?? String(error), render);
-      }
-      render?.();
-    },
-    onSuccess: () => {
-      const currentQueryData = queryClient.getQueryData(queryKey);
-      const settledQueryData = patchGlossaryQueryData(currentQueryData, glossary.id, settledPatch);
-      if (settledQueryData) {
-        queryClient.setQueryData(queryKey, settledQueryData);
-        applyGlossariesQuerySnapshotToState(settledQueryData, { teamId, isFetching: false });
-      }
-    },
-    onSettled: async () => {
-      await invalidateGlossariesQueryAfterMutation(team, { teamId, render });
-    },
-  };
-}
-
-export function createGlossaryRenameMutationOptions({
-  team,
-  glossary,
-  nextTitle,
-  commitMutation,
-  onOptimisticApplied,
-  render,
-} = {}) {
-  return createGlossaryLifecycleMutationOptions({
-    team,
-    glossary,
-    mutationType: "rename",
-    optimisticPatch: {
-      title: nextTitle,
-      pendingMutation: "rename",
-    },
-    settledPatch: {
-      title: nextTitle,
-      pendingMutation: null,
-    },
-    commitMutation,
-    onOptimisticApplied,
-    render,
-  });
-}
-
-export function createGlossarySoftDeleteMutationOptions(options = {}) {
-  return createGlossaryLifecycleMutationOptions({
-    ...options,
-    mutationType: "softDelete",
-    optimisticPatch: {
-      lifecycleState: "deleted",
-      pendingMutation: "softDelete",
-    },
-    settledPatch: {
-      lifecycleState: "deleted",
-      pendingMutation: null,
-    },
-  });
-}
-
-export function createGlossaryRestoreMutationOptions(options = {}) {
-  return createGlossaryLifecycleMutationOptions({
-    ...options,
-    mutationType: "restore",
-    optimisticPatch: {
-      lifecycleState: "active",
-      pendingMutation: "restore",
-    },
-    settledPatch: {
-      lifecycleState: "active",
-      pendingMutation: null,
-    },
-  });
-}
-
-export async function runGlossaryRenameMutation(options = {}) {
-  const observer = createMutationObserver(createGlossaryRenameMutationOptions(options));
-  return observer.mutate();
-}
-
-export async function runGlossarySoftDeleteMutation(options = {}) {
-  const observer = createMutationObserver(createGlossarySoftDeleteMutationOptions(options));
-  return observer.mutate();
-}
-
-export async function runGlossaryRestoreMutation(options = {}) {
-  const observer = createMutationObserver(createGlossaryRestoreMutationOptions(options));
-  return observer.mutate();
 }

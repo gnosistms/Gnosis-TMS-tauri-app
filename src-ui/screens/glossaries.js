@@ -29,6 +29,7 @@ import {
   areResourcePageWriteSubmissionsDisabled,
 } from "../app/resource-page-controller.js";
 import { deriveGlossaryResolution } from "../app/resource-resolution.js";
+import { anyGlossaryMutatingWriteIsActive } from "../app/glossary-write-coordinator.js";
 
 function renderGlossaryLanguageFlow(glossary) {
   return `
@@ -156,7 +157,8 @@ export function renderGlossariesScreen(state) {
   const canManageAiSettings = canManageTeamAiSettings(selectedTeam);
   const offlineMode = state.offline?.isEnabled === true;
   const lifecycleActionsDisabled = areResourcePageWriteSubmissionsDisabled(state.glossariesPage);
-  const writeActionsDisabled = areResourcePageWritesDisabled(state.glossariesPage);
+  const writeActionsDisabled =
+    areResourcePageWritesDisabled(state.glossariesPage) || anyGlossaryMutatingWriteIsActive();
   const discovery = state.glossaryDiscovery ?? { status: "idle", error: "", brokerWarning: "" };
   const syncSnapshotsByRepoName = state.glossaryRepoSyncByRepoName ?? {};
   const recoveryMessage =
