@@ -6,6 +6,10 @@ import { applyProjectSnapshotToState } from "./project-top-level-state.js";
 import {
   loadRepoBackedProjectsForTeam,
 } from "./project-discovery-flow.js";
+import {
+  applyProjectWriteIntentsToSnapshot,
+  clearConfirmedProjectWriteIntents,
+} from "./project-write-coordinator.js";
 
 let activeProjectsQuerySubscription = null;
 
@@ -58,14 +62,19 @@ export function applyProjectsQuerySnapshotToState(snapshot, {
   }
 
   if (snapshot) {
-    applyProjectSnapshotToState(snapshot.snapshot, {
+    clearConfirmedProjectWriteIntents(snapshot.snapshot);
+    const visibleProjectSnapshot = applyProjectWriteIntentsToSnapshot(snapshot.snapshot);
+    applyProjectSnapshotToState(visibleProjectSnapshot, {
       reconcileExpandedDeletedFiles,
     });
     state.projectRepoSyncByProjectId =
       snapshot.repoSyncByProjectId && typeof snapshot.repoSyncByProjectId === "object"
         ? snapshot.repoSyncByProjectId
         : {};
-    state.glossaries = Array.isArray(snapshot.glossaries) ? snapshot.glossaries : [];
+    const nextGlossaries = Array.isArray(snapshot.glossaries) ? snapshot.glossaries : [];
+    if (!(isFetching === true && nextGlossaries.length === 0 && state.glossaries.length > 0)) {
+      state.glossaries = nextGlossaries;
+    }
     state.pendingChapterMutations = Array.isArray(snapshot.pendingChapterMutations)
       ? snapshot.pendingChapterMutations
       : [];
@@ -80,6 +89,7 @@ export function seedProjectsQueryFromCache(team, {
   teamId = team?.id,
   loadStoredProjectsForTeam,
   loadStoredChapterPendingMutations,
+  loadStoredGlossariesForTeam,
   applyChapterPendingMutation,
   reconcileExpandedDeletedFiles,
   render,
@@ -97,6 +107,17 @@ export function seedProjectsQueryFromCache(team, {
     typeof loadStoredChapterPendingMutations === "function"
       ? loadStoredChapterPendingMutations(team)
       : [];
+  const currentGlossaries = Array.isArray(state.glossaries) ? state.glossaries : [];
+  const cachedGlossaryResult =
+    currentGlossaries.length === 0 && typeof loadStoredGlossariesForTeam === "function"
+      ? loadStoredGlossariesForTeam(team)
+      : null;
+  const glossaries =
+    currentGlossaries.length > 0
+      ? currentGlossaries
+      : Array.isArray(cachedGlossaryResult?.glossaries)
+        ? cachedGlossaryResult.glossaries
+        : [];
   const optimisticSnapshot =
     typeof applyChapterPendingMutation === "function"
       ? applyPendingMutations(
@@ -114,6 +135,7 @@ export function seedProjectsQueryFromCache(team, {
 
   const snapshot = createProjectsQuerySnapshot({
     ...optimisticSnapshot,
+    glossaries,
     pendingChapterMutations,
     discovery: {
       status: "ready",
@@ -122,6 +144,8 @@ export function seedProjectsQueryFromCache(team, {
       recoveryMessage: "",
     },
   });
+  clearConfirmedProjectWriteIntents(snapshot.snapshot);
+  snapshot.snapshot = applyProjectWriteIntentsToSnapshot(snapshot.snapshot);
   queryClient.setQueryData(projectKeys.byTeam(teamId), snapshot);
   applyProjectsQuerySnapshotToState(snapshot, {
     teamId,
@@ -378,6 +402,8 @@ export function createProjectsQueryOptions(team, options = {}) {
         },
       });
       const nextSnapshot = createProjectsQuerySnapshot(result);
+      clearConfirmedProjectWriteIntents(nextSnapshot.snapshot);
+      nextSnapshot.snapshot = applyProjectWriteIntentsToSnapshot(nextSnapshot.snapshot);
       return preservePendingProjectLifecyclePatches(
         nextSnapshot,
         queryClient.getQueryData(projectKeys.byTeam(teamId)),

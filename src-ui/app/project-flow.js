@@ -4,6 +4,7 @@ import {
   loadStoredChapterPendingMutations,
   loadStoredProjectsForTeam,
 } from "./project-cache.js";
+import { loadStoredGlossariesForTeam } from "./glossary-cache.js";
 import { buildProjectRepoFallbackConflictRecoveryInput } from "./project-repo-sync-shared.js";
 import {
   resetProjectCreation,
@@ -45,12 +46,19 @@ import {
 import {
   createProjectsQueryOptions,
   ensureProjectsQueryObserver,
-  runProjectRenameMutation,
-  runProjectRestoreMutation,
-  runProjectSoftDeleteMutation,
+  invalidateProjectsQueryAfterMutation,
   seedProjectsQueryFromCache,
 } from "./project-query.js";
 import { projectKeys, queryClient } from "./query-client.js";
+import {
+  applyProjectWriteIntentsToSnapshot,
+  anyProjectWriteIsActive,
+  clearConfirmedProjectWriteIntents,
+  projectLifecycleIntentKey,
+  projectTitleIntentKey,
+  requestProjectWriteIntent,
+  teamMetadataWriteScope,
+} from "./project-write-coordinator.js";
 import {
   cancelEntityModal,
   entityConfirmationMatches,
@@ -344,11 +352,15 @@ export async function loadTeamProjects(render, teamId = state.selectedTeamId) {
       dropProjectMutationsForProject,
       loadStoredProjectsForTeam,
       normalizeListedChapter,
-      preserveProjectLifecyclePatches: (snapshot) =>
-        preserveChapterLifecyclePatchesInProjectSnapshot(
-          snapshot,
-          { items: state.projects, deletedItems: state.deletedProjects },
-        ),
+      preserveProjectLifecyclePatches: (snapshot) => {
+        clearConfirmedProjectWriteIntents(snapshot);
+        return applyProjectWriteIntentsToSnapshot(
+          preserveChapterLifecyclePatchesInProjectSnapshot(
+            snapshot,
+            { items: state.projects, deletedItems: state.deletedProjects },
+          ),
+        );
+      },
       persistProjectsForTeam,
       projectMatchesMetadataRecord,
       projectMetadataRecordIsTombstone,
@@ -366,6 +378,7 @@ export async function loadTeamProjects(render, teamId = state.selectedTeamId) {
       ...queryOptionsContext,
       loadStoredProjectsForTeam,
       loadStoredChapterPendingMutations,
+      loadStoredGlossariesForTeam,
     });
 
     ensureProjectsQueryObserver(render, selectedTeam, queryOptionsContext);
@@ -388,6 +401,10 @@ export async function loadTeamProjects(render, teamId = state.selectedTeamId) {
 
 function projectWriteBlockedMessage() {
   return "Wait for the current projects refresh or write to finish.";
+}
+
+function areProjectHeavyWritesDisabled() {
+  return areResourcePageWritesDisabled(state.projectsPage) || anyProjectWriteIsActive();
 }
 
 function projectLifecycleWriteBlockedMessage() {
@@ -420,7 +437,7 @@ function failProjectLifecyclePageSync(syncContext) {
 
 export async function createProjectForSelectedTeam(render) {
   const selectedTeam = selectedProjectsTeam();
-  if (areResourcePageWritesDisabled(state.projectsPage)) {
+  if (areProjectHeavyWritesDisabled()) {
     setProjectDiscoveryState("error", "Wait for the current projects refresh or write to finish.");
     render();
     return;
@@ -498,9 +515,37 @@ export function cancelProjectRename(render) {
   cancelEntityModal(resetProjectRename, render);
 }
 
+function patchProjectInVisibleState(projectId, patch) {
+  const patchProject = (project) => (
+    project?.id === projectId
+      ? { ...project, ...patch }
+      : project
+  );
+  state.projects = state.projects.map(patchProject);
+  state.deletedProjects = state.deletedProjects.map(patchProject);
+}
+
+function moveProjectInVisibleState(project, targetCollection, patch = {}) {
+  if (!project?.id) {
+    return;
+  }
+  const nextProject = {
+    ...project,
+    ...patch,
+  };
+  state.projects = state.projects.filter((item) => item.id !== project.id);
+  state.deletedProjects = state.deletedProjects.filter((item) => item.id !== project.id);
+  if (targetCollection === "deleted") {
+    state.deletedProjects = [...state.deletedProjects, nextProject];
+  } else {
+    state.projects = [...state.projects, nextProject];
+  }
+  reconcileExpandedDeletedFiles();
+}
+
 export async function submitProjectCreation(render) {
   const selectedTeam = selectedProjectsTeam();
-  if (areResourcePageWritesDisabled(state.projectsPage)) {
+  if (areProjectHeavyWritesDisabled()) {
     state.projectCreation.error = "Wait for the current projects refresh or write to finish.";
     render();
     return;
@@ -603,47 +648,60 @@ export async function submitProjectRename(render) {
     render();
     return;
   }
-  if (areProjectLifecycleWritesDisabled()) {
-    state.projectRename.status = "idle";
-    state.projectRename.error = projectLifecycleWriteBlockedMessage();
-    render();
-    return;
-  }
 
-  state.projectRename.status = "loading";
-  state.projectRename.error = "";
-  state.projectsPage.writeState = "submitting";
-  const syncContext = beginProjectLifecyclePageSync();
-  setProjectsPageProgress(render, "Saving project rename...");
-  render();
-
-  try {
-    await runProjectRenameMutation({
-      team: selectedTeam,
-      project,
-      nextTitle,
-      commitMutation: commitProjectMutationStrict,
-      onOptimisticApplied: resetProjectRename,
-      render,
-      reconcileExpandedDeletedFiles,
-    });
-    state.projectsPage.writeState = "idle";
-    resetProjectRename();
-    await completeProjectLifecyclePageSync(render, syncContext);
-    if (!syncContext.refreshWasActive) {
-      clearNoticeBadge();
-    }
-    render();
-  } catch (error) {
-    state.projectsPage.writeState = "idle";
-    failProjectLifecyclePageSync(syncContext);
-    if (await handleSyncFailure(classifySyncError(error), { render })) {
-      return;
-    }
-    state.projectRename.status = "idle";
-    state.projectRename.error = error?.message ?? String(error);
-    render();
-  }
+  requestProjectWriteIntent({
+    key: projectTitleIntentKey(project.id),
+    scope: teamMetadataWriteScope(selectedTeam),
+    teamId: selectedTeam.id,
+    projectId: project.id,
+    type: "projectTitle",
+    value: {
+      title: nextTitle,
+    },
+    previousValue: {
+      title: project.title ?? project.name,
+    },
+  }, {
+    applyOptimistic: (intent) => {
+      patchProjectInVisibleState(project.id, {
+        title: intent.value.title,
+        pendingMutation: "rename",
+      });
+      persistProjectsForTeam(selectedTeam);
+      resetProjectRename();
+      render();
+    },
+    run: async (intent) => commitProjectMutationStrict(selectedTeam, {
+      type: "rename",
+      projectId: project.id,
+      title: intent.value.title,
+      previousTitle: project.title ?? project.name,
+    }),
+    onSuccess: (intent) => {
+      patchProjectInVisibleState(project.id, {
+        title: intent.value.title,
+        pendingMutation: null,
+        localLifecycleIntent: "rename",
+      });
+      persistProjectsForTeam(selectedTeam);
+      void invalidateProjectsQueryAfterMutation(selectedTeam, {
+        teamId: selectedTeam.id,
+        render,
+        reconcileExpandedDeletedFiles,
+        refetchIfInactive: false,
+      });
+    },
+    onError: (error) => {
+      state.projectRename = {
+        isOpen: true,
+        projectId: project.id,
+        projectName: nextTitle,
+        status: "idle",
+        error: error?.message ?? String(error),
+      };
+      render();
+    },
+  });
 }
 
 export async function repairProjectRepoBinding(render, projectId) {
@@ -651,7 +709,7 @@ export async function repairProjectRepoBinding(render, projectId) {
   if (!selectedTeam?.installationId || typeof projectId !== "string" || !projectId.trim()) {
     return;
   }
-  if (areResourcePageWritesDisabled(state.projectsPage)) {
+  if (areProjectHeavyWritesDisabled()) {
     setProjectDiscoveryState("error", projectWriteBlockedMessage());
     render();
     return;
@@ -672,7 +730,7 @@ export async function rebuildProjectLocalRepo(render, projectId) {
   if (!selectedTeam?.installationId || typeof projectId !== "string" || !projectId.trim()) {
     return;
   }
-  if (areResourcePageWritesDisabled(state.projectsPage)) {
+  if (areProjectHeavyWritesDisabled()) {
     setProjectDiscoveryState("error", projectWriteBlockedMessage());
     render();
     return;
@@ -688,7 +746,7 @@ export async function overwriteConflictedProjectRepos(render) {
     return;
   }
 
-  if (state.offline?.isEnabled === true || state.projectsPageSync?.status === "syncing") {
+  if (state.offline?.isEnabled === true || state.projectsPageSync?.status === "syncing" || anyProjectWriteIsActive()) {
     state.projectRepoConflictRecovery = {
       teamId: selectedTeam.id,
       status: "idle",
@@ -764,43 +822,55 @@ export async function deleteProject(render, projectId) {
   if (!allowed) {
     return;
   }
-  if (areProjectLifecycleWritesDisabled()) {
-    setProjectDiscoveryState("error", projectLifecycleWriteBlockedMessage());
-    render();
-    return;
-  }
 
-  state.projectsPage.writeState = "submitting";
-  const syncContext = beginProjectLifecyclePageSync();
-  setProjectsPageProgress(render, "Deleting project...");
-  render();
-
-  try {
-    await runProjectSoftDeleteMutation({
-      team: selectedTeam,
-      project,
-      commitMutation: commitProjectMutationStrict,
-      render,
-      reconcileExpandedDeletedFiles,
-    });
-    state.projectsPage.writeState = "idle";
-    if (state.projects.length === 0 && state.deletedProjects.length > 0) {
-      state.showDeletedProjects = true;
-    }
-    await completeProjectLifecyclePageSync(render, syncContext);
-    if (!syncContext.refreshWasActive) {
-      clearNoticeBadge();
-    }
-    render();
-  } catch (error) {
-    state.projectsPage.writeState = "idle";
-    failProjectLifecyclePageSync(syncContext);
-    if (await handleSyncFailure(classifySyncError(error), { render })) {
-      return;
-    }
-    setProjectDiscoveryState("error", error?.message ?? String(error));
-    render();
-  }
+  requestProjectWriteIntent({
+    key: projectLifecycleIntentKey(project.id),
+    scope: teamMetadataWriteScope(selectedTeam),
+    teamId: selectedTeam.id,
+    projectId: project.id,
+    type: "projectLifecycle",
+    value: {
+      lifecycleState: "deleted",
+      mutationType: "softDelete",
+    },
+    previousValue: {
+      lifecycleState: "active",
+    },
+  }, {
+    applyOptimistic: () => {
+      moveProjectInVisibleState(project, "deleted", {
+        lifecycleState: "deleted",
+        pendingMutation: "softDelete",
+      });
+      if (state.projects.length === 0 && state.deletedProjects.length > 0) {
+        state.showDeletedProjects = true;
+      }
+      persistProjectsForTeam(selectedTeam);
+      render();
+    },
+    run: async () => commitProjectMutationStrict(selectedTeam, {
+      type: "softDelete",
+      projectId: project.id,
+    }),
+    onSuccess: () => {
+      moveProjectInVisibleState(project, "deleted", {
+        lifecycleState: "deleted",
+        pendingMutation: null,
+        localLifecycleIntent: "softDelete",
+      });
+      persistProjectsForTeam(selectedTeam);
+      void invalidateProjectsQueryAfterMutation(selectedTeam, {
+        teamId: selectedTeam.id,
+        render,
+        reconcileExpandedDeletedFiles,
+        refetchIfInactive: false,
+      });
+    },
+    onError: (error) => {
+      setProjectDiscoveryState("error", error?.message ?? String(error));
+      render();
+    },
+  });
 }
 
 export function toggleDeletedProjects(render) {
@@ -831,40 +901,52 @@ export async function restoreProject(render, projectId) {
   if (!allowed) {
     return;
   }
-  if (areProjectLifecycleWritesDisabled()) {
-    setProjectDiscoveryState("error", projectLifecycleWriteBlockedMessage());
-    render();
-    return;
-  }
 
-  state.projectsPage.writeState = "submitting";
-  const syncContext = beginProjectLifecyclePageSync();
-  setProjectsPageProgress(render, "Restoring project...");
-  render();
-
-  try {
-    await runProjectRestoreMutation({
-      team: selectedTeam,
-      project,
-      commitMutation: commitProjectMutationStrict,
-      render,
-      reconcileExpandedDeletedFiles,
-    });
-    state.projectsPage.writeState = "idle";
-    await completeProjectLifecyclePageSync(render, syncContext);
-    if (!syncContext.refreshWasActive) {
-      clearNoticeBadge();
-    }
-    render();
-  } catch (error) {
-    state.projectsPage.writeState = "idle";
-    failProjectLifecyclePageSync(syncContext);
-    if (await handleSyncFailure(classifySyncError(error), { render })) {
-      return;
-    }
-    setProjectDiscoveryState("error", error?.message ?? String(error));
-    render();
-  }
+  requestProjectWriteIntent({
+    key: projectLifecycleIntentKey(project.id),
+    scope: teamMetadataWriteScope(selectedTeam),
+    teamId: selectedTeam.id,
+    projectId: project.id,
+    type: "projectLifecycle",
+    value: {
+      lifecycleState: "active",
+      mutationType: "restore",
+    },
+    previousValue: {
+      lifecycleState: "deleted",
+    },
+  }, {
+    applyOptimistic: () => {
+      moveProjectInVisibleState(project, "active", {
+        lifecycleState: "active",
+        pendingMutation: "restore",
+      });
+      persistProjectsForTeam(selectedTeam);
+      render();
+    },
+    run: async () => commitProjectMutationStrict(selectedTeam, {
+      type: "restore",
+      projectId: project.id,
+    }),
+    onSuccess: () => {
+      moveProjectInVisibleState(project, "active", {
+        lifecycleState: "active",
+        pendingMutation: null,
+        localLifecycleIntent: "restore",
+      });
+      persistProjectsForTeam(selectedTeam);
+      void invalidateProjectsQueryAfterMutation(selectedTeam, {
+        teamId: selectedTeam.id,
+        render,
+        reconcileExpandedDeletedFiles,
+        refetchIfInactive: false,
+      });
+    },
+    onError: (error) => {
+      setProjectDiscoveryState("error", error?.message ?? String(error));
+      render();
+    },
+  });
 }
 
 async function commitProjectMutationStrict(selectedTeam, mutation) {
@@ -932,7 +1014,7 @@ async function reloadProjectsAfterWrite(render, selectedTeam, options = {}) {
 export function permanentlyDeleteProject(render, projectId) {
   const project = state.deletedProjects.find((item) => item.id === projectId);
   const selectedTeam = selectedProjectsTeam();
-  if (areResourcePageWritesDisabled(state.projectsPage)) {
+  if (areProjectHeavyWritesDisabled()) {
     setProjectDiscoveryState("error", projectWriteBlockedMessage());
     render();
     return;
@@ -987,7 +1069,7 @@ export async function confirmProjectPermanentDeletion(render) {
   const project = state.deletedProjects.find(
     (item) => item.id === state.projectPermanentDeletion.projectId,
   );
-  if (areResourcePageWritesDisabled(state.projectsPage)) {
+  if (areProjectHeavyWritesDisabled()) {
     state.projectPermanentDeletion.status = "idle";
     state.projectPermanentDeletion.error = projectWriteBlockedMessage();
     render();

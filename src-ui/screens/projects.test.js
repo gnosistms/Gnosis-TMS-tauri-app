@@ -22,6 +22,12 @@ globalThis.window = {
 };
 
 const { renderProjectsScreen } = await import("./projects.js");
+const {
+  chapterGlossaryIntentKey,
+  projectRepoWriteScope,
+  requestProjectWriteIntent,
+  resetProjectWriteCoordinator,
+} = await import("../app/project-write-coordinator.js");
 
 function projectsState(overrides = {}) {
   return {
@@ -88,11 +94,31 @@ function actionButtonHtml(html, action) {
   return html.match(new RegExp(`<button[^>]*data-action="${escapedAction}"[^>]*>`))?.[0] ?? "";
 }
 
-test("projects glossary selector is visibly disabled while project page writes are blocked", () => {
+test.afterEach(() => {
+  resetProjectWriteCoordinator();
+});
+
+test("projects glossary selector stays enabled during project refresh", () => {
   const html = renderProjectsScreen(projectsState({
     projectsPage: {
       isRefreshing: true,
       writeState: "idle",
+    },
+    projectsPageSync: {
+      status: "syncing",
+    },
+  }));
+
+  assert.match(html, /data-chapter-glossary-select/);
+  assert.doesNotMatch(html, /select-pill--chapter-glossary[^"]*\bis-disabled\b/);
+  assert.doesNotMatch(html, /data-chapter-glossary-select[^>]*disabled/);
+});
+
+test("projects glossary selector is visibly disabled while project page write submissions are blocked", () => {
+  const html = renderProjectsScreen(projectsState({
+    projectsPage: {
+      isRefreshing: false,
+      writeState: "submitting",
     },
   }));
 
@@ -199,4 +225,29 @@ test("project write in progress disables top-level lifecycle actions", () => {
   assert.match(actionButtonHtml(html, "rename-file:chapter-1"), /disabled/);
   assert.match(actionButtonHtml(html, "delete-file:chapter-1"), /disabled/);
   assert.match(actionButtonHtml(html, "restore-file:deleted-chapter-1"), /disabled/);
+});
+
+test("coordinator writes keep lifecycle and glossary controls enabled while heavy actions stay disabled", () => {
+  requestProjectWriteIntent({
+    key: chapterGlossaryIntentKey("project-1", "chapter-1"),
+    scope: projectRepoWriteScope({ installationId: 1 }, "project-1"),
+    teamId: "team-1",
+    projectId: "project-1",
+    chapterId: "chapter-1",
+    type: "chapterGlossary",
+    value: { glossary: { glossaryId: "glossary-1", repoName: "glossary-repo" } },
+  }, {
+    run: async () => new Promise((resolve) => setTimeout(resolve, 10)),
+  });
+
+  const html = renderProjectsScreen(projectsState());
+
+  assert.doesNotMatch(actionButtonHtml(html, "rename-project:project-1"), /disabled/);
+  assert.doesNotMatch(actionButtonHtml(html, "delete-project:project-1"), /disabled/);
+  assert.doesNotMatch(actionButtonHtml(html, "rename-file:chapter-1"), /disabled/);
+  assert.doesNotMatch(actionButtonHtml(html, "delete-file:chapter-1"), /disabled/);
+  assert.doesNotMatch(html, /data-chapter-glossary-select[^>]*disabled/);
+
+  assert.match(actionButtonHtml(html, "open-new-project"), /disabled/);
+  assert.match(actionButtonHtml(html, "add-project-files:project-1"), /disabled/);
 });
