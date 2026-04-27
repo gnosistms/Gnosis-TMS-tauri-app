@@ -27,8 +27,14 @@ function normalizeProject(project) {
     return null;
   }
 
+  const {
+    pendingMutation: _pendingMutation,
+    localLifecycleIntent: _localLifecycleIntent,
+    ...durableProject
+  } = project;
+
   return {
-    ...project,
+    ...durableProject,
     id,
     name,
     title:
