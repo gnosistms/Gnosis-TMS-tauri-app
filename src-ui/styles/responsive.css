@@ -12,6 +12,14 @@
     padding: 24px;
   }
 
+  .start-hero__layout--with-logo {
+    grid-template-columns: 1fr;
+  }
+
+  .start-hero__layout--with-logo .start-hero__logo {
+    justify-self: start;
+  }
+
   .glossary-list,
   .term-grid,
   .chapter-table__row,

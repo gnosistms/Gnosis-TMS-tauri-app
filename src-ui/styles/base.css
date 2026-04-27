@@ -1196,6 +1196,18 @@ a {
   gap: 18px;
 }
 
+.start-hero__layout,
+.start-hero__text {
+  display: grid;
+  gap: 18px;
+}
+
+.start-hero__layout--with-logo {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: clamp(32px, 8vw, 96px);
+}
+
 .card__eyebrow {
   margin: 0;
   color: var(--muted);
@@ -1218,6 +1230,7 @@ a {
   aspect-ratio: 4 / 3;
   color: var(--title-color);
   background: currentColor;
+  justify-self: end;
   -webkit-mask: url("../assets/brand/gnosisvn-caduceus-logo.svg") center / contain no-repeat;
   mask: url("../assets/brand/gnosisvn-caduceus-logo.svg") center / contain no-repeat;
 }

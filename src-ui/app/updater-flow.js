@@ -20,6 +20,11 @@ function checkingForUpdatesMessage() {
   return "Checking for updates...";
 }
 
+function requestedUpdateVersion() {
+  const version = String(state.appUpdate.version ?? "").trim();
+  return version || null;
+}
+
 function normalizeRequiredAppUpdate(requirement) {
   if (!requirement || typeof requirement !== "object") {
     return null;
@@ -182,11 +187,11 @@ export async function installAppUpdate(render) {
   render();
 
   try {
-    await invoke("install_app_update");
+    await invoke("install_app_update", { requestedVersion: requestedUpdateVersion() });
     state.appUpdate.status = "restarting";
     render();
   } catch (error) {
-    state.appUpdate.status = "available";
+    state.appUpdate.status = "installError";
     state.appUpdate.error = error?.message ?? String(error);
     state.appUpdate.promptVisible = true;
     render();

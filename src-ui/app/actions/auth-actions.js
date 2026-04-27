@@ -17,6 +17,9 @@ export function createAuthActions(render) {
       enableOfflineMode(render);
     },
     "reconnect-online": () =>
-      reconnectOnlineMode(render, () => restoreStoredBrokerSession(render, loadUserTeams)),
+      reconnectOnlineMode(
+        render,
+        (options) => restoreStoredBrokerSession(render, loadUserTeams, null, options),
+      ),
   };
 }

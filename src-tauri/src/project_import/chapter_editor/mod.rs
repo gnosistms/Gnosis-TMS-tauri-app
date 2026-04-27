@@ -914,7 +914,8 @@ pub(super) fn load_gtms_editor_row_sync(
             read_json_file(&row_json_path, "row file")?,
         )?;
         if let Some(relative_row_json) = relative_row_json.as_deref() {
-            editor_row.last_update = load_latest_row_version_metadata(&repo_path, relative_row_json)?;
+            editor_row.last_update =
+                load_latest_row_version_metadata(&repo_path, relative_row_json)?;
         }
         Some(editor_row)
     } else {

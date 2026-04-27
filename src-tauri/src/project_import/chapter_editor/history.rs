@@ -939,7 +939,10 @@ pub(super) fn load_latest_row_version_metadata_by_path(
         .collect::<BTreeSet<_>>();
     let mut latest_by_path = BTreeMap::new();
 
-    for record in output.split('\u{1e}').filter(|record| !record.trim().is_empty()) {
+    for record in output
+        .split('\u{1e}')
+        .filter(|record| !record.trim().is_empty())
+    {
         let mut parts = record.splitn(5, '\u{1f}');
         let commit_sha = parts.next().unwrap_or_default().trim();
         if commit_sha.is_empty() {
@@ -951,7 +954,11 @@ pub(super) fn load_latest_row_version_metadata_by_path(
         let changed_paths = parts.next().unwrap_or_default();
         let (_, operation_type, _, ai_model) = parse_git_commit_message(full_message);
 
-        for path in changed_paths.lines().map(str::trim).filter(|path| !path.is_empty()) {
+        for path in changed_paths
+            .lines()
+            .map(str::trim)
+            .filter(|path| !path.is_empty())
+        {
             if requested_paths.contains(path) && !latest_by_path.contains_key(path) {
                 latest_by_path.insert(
                     path.to_string(),

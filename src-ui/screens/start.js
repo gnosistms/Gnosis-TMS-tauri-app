@@ -59,10 +59,14 @@ export function renderStartScreen(state) {
         ${statusMarkup}
         <article class="card card--hero">
           <div class="card__body">
-            <p class="card__eyebrow">PAZ INVERENCIAL!</p>
-            ${renderStartHeroLogo(isResolvingStartupAuth)}
-            <h1 class="card__title">${heroTitle}</h1>
-            <p class="card__subtitle">${heroSubtitle}</p>
+            <div class="start-hero__layout${isResolvingStartupAuth ? " start-hero__layout--with-logo" : ""}">
+              <div class="start-hero__text">
+                <p class="card__eyebrow">PAZ INVERENCIAL!</p>
+                <h1 class="card__title">${heroTitle}</h1>
+                <p class="card__subtitle">${heroSubtitle}</p>
+              </div>
+              ${renderStartHeroLogo(isResolvingStartupAuth)}
+            </div>
             ${
               isResolvingStartupAuth
                 ? ""

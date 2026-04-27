@@ -39,11 +39,14 @@ export async function initializeConnectivity(render, restoreOnlineSession) {
 }
 
 export function enableOfflineMode(render) {
+  const shouldOpenOfflineHome = state.screen === "start";
   state.offline.isEnabled = true;
   state.auth.status = "idle";
   state.auth.message = "";
   state.offline.reconnecting = false;
-  state.screen = "teams";
+  if (shouldOpenOfflineHome) {
+    state.screen = "teams";
+  }
   state.selectedTeamId = state.selectedTeamId ?? state.teams[0]?.id ?? null;
   clearNoticeBadge();
   render();
@@ -73,5 +76,5 @@ export async function reconnectOnlineMode(render, restoreOnlineSession) {
   state.offline.reconnecting = false;
   clearNoticeBadge();
   render();
-  await restoreOnlineSession();
+  await restoreOnlineSession({ preserveCurrentScreen: true });
 }

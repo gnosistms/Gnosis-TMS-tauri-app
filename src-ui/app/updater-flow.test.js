@@ -284,8 +284,9 @@ test("installing an update keeps the prompt open until restart", async () => {
     promptVisible: true,
   };
 
-  invokeHandler = async (command) => {
+  invokeHandler = async (command, payload) => {
     assert.equal(command, "install_app_update");
+    assert.deepEqual(payload, { requestedVersion: "0.1.16" });
     return null;
   };
 
@@ -296,7 +297,26 @@ test("installing an update keeps the prompt open until restart", async () => {
   assert.equal(state.appUpdate.error, "");
 });
 
-test("install failures return to the available state and keep the prompt visible", async () => {
+test("required update install passes the required version to native install", async () => {
+  requireAppUpdate({
+    requiredVersion: "0.1.36",
+    currentVersion: "0.1.35",
+    message: "A newer version is required.",
+  }, () => {});
+
+  invokeHandler = async (command, payload) => {
+    assert.equal(command, "install_app_update");
+    assert.deepEqual(payload, { requestedVersion: "0.1.36" });
+    return null;
+  };
+
+  await installAppUpdate(() => {});
+
+  assert.equal(state.appUpdate.status, "restarting");
+  assert.equal(state.appUpdate.required, true);
+});
+
+test("install failures enter an explicit install error state and keep the prompt visible", async () => {
   state.appUpdate = {
     ...state.appUpdate,
     status: "available",
@@ -312,7 +332,7 @@ test("install failures return to the available state and keep the prompt visible
 
   await installAppUpdate(() => {});
 
-  assert.equal(state.appUpdate.status, "available");
+  assert.equal(state.appUpdate.status, "installError");
   assert.equal(state.appUpdate.promptVisible, true);
   assert.equal(state.appUpdate.error, "Installer failed");
 });

@@ -68,7 +68,11 @@ pub(crate) fn insert_gtms_editor_row_sync(
         .map_err(|error| format!("Could not decode inserted row '{}': {error}", row_id))?;
 
     Ok(InsertEditorRowResponse {
-        row: editor_row_from_stored_row_file_with_update(&repo_path, &chapter_path, inserted_row_file)?,
+        row: editor_row_from_stored_row_file_with_update(
+            &repo_path,
+            &chapter_path,
+            inserted_row_file,
+        )?,
         source_word_counts: build_source_word_counts_from_stored_rows(&rows, &languages),
         chapter_base_commit_sha: current_repo_head_sha(&repo_path),
     })
@@ -457,6 +461,7 @@ pub(super) fn create_inserted_editor_row(
         images: BTreeMap::new(),
         field_states,
         imported_conflict: None,
+        last_update: None,
     })
 }
 

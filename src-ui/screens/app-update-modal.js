@@ -93,7 +93,7 @@ export function renderAppUpdateModal(state) {
                 </p>
               `
           }
-          ${error ? `<p class="modal__supporting">${escapeHtml(error)}</p>` : ""}
+          ${error ? `<p class="modal__error" role="alert">${escapeHtml(error)}</p>` : ""}
           <div class="modal__actions">
             ${update.required === true ? "" : secondaryButton("Later", "dismiss-app-update")}
             ${primaryButton("Update now", "install-app-update")}

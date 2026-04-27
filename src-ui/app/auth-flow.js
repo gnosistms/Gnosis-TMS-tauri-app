@@ -76,7 +76,22 @@ export async function prepareStoredBrokerSessionRestore() {
   return session;
 }
 
-export async function restoreStoredBrokerSession(render, loadUserTeams, storedSession = null) {
+function shouldPreserveCurrentScreen(options = {}) {
+  return options.preserveCurrentScreen === true && state.screen !== "start";
+}
+
+function applyRestoredOnlineScreen(options = {}) {
+  if (!shouldPreserveCurrentScreen(options)) {
+    state.screen = "teams";
+  }
+}
+
+export async function restoreStoredBrokerSession(
+  render,
+  loadUserTeams,
+  storedSession = null,
+  options = {},
+) {
   const session = storedSession ?? await loadStoredAuthSession();
   if (!session) {
     state.auth = {
@@ -96,9 +111,9 @@ export async function restoreStoredBrokerSession(render, loadUserTeams, storedSe
       status: "success",
       message: `Signed in as @${session.login}.`,
       session,
-      pendingAutoOpenSingleTeam: true,
+      pendingAutoOpenSingleTeam: !shouldPreserveCurrentScreen(options),
     };
-    state.screen = "teams";
+    applyRestoredOnlineScreen(options);
     render();
     return;
   }
@@ -127,15 +142,17 @@ export async function restoreStoredBrokerSession(render, loadUserTeams, storedSe
       avatarUrl: profile.avatarUrl ?? null,
     };
     setActiveStorageLogin(verifiedSession.login);
-    hydrateStoredDataForActiveUser();
+    hydrateStoredDataForActiveUser({
+      preserveResourceContext: shouldPreserveCurrentScreen(options),
+    });
     state.auth = {
       status: "success",
       message: `Signed in as @${verifiedSession.login}.`,
       session: verifiedSession,
-      pendingAutoOpenSingleTeam: true,
+      pendingAutoOpenSingleTeam: !shouldPreserveCurrentScreen(options),
     };
     void saveStoredAuthSession(verifiedSession);
-    state.screen = "teams";
+    applyRestoredOnlineScreen(options);
     render();
     void loadUserTeams(render);
   } catch (error) {
@@ -155,31 +172,38 @@ export async function restoreStoredBrokerSession(render, loadUserTeams, storedSe
     }
 
     setActiveStorageLogin(session.login);
-    hydrateStoredDataForActiveUser();
+    hydrateStoredDataForActiveUser({
+      preserveResourceContext: shouldPreserveCurrentScreen(options),
+    });
     state.auth = {
       status: "success",
       message: `Signed in as @${session.login}.`,
       session,
-      pendingAutoOpenSingleTeam: true,
+      pendingAutoOpenSingleTeam: !shouldPreserveCurrentScreen(options),
     };
-    state.screen = "teams";
+    applyRestoredOnlineScreen(options);
     render();
     void loadUserTeams(render);
   }
 }
 
-function hydrateStoredDataForActiveUser() {
-  state.selectedTeamId = null;
-  state.selectedProjectId = null;
-  state.selectedGlossaryId = null;
-  state.selectedChapterId = null;
-  state.expandedProjects = new Set();
-  state.expandedDeletedFiles = new Set();
+function hydrateStoredDataForActiveUser(options = {}) {
+  const preserveResourceContext = options.preserveResourceContext === true;
+  if (!preserveResourceContext) {
+    state.selectedTeamId = null;
+    state.selectedProjectId = null;
+    state.selectedGlossaryId = null;
+    state.selectedChapterId = null;
+    state.expandedProjects = new Set();
+    state.expandedDeletedFiles = new Set();
+  }
   hydrateStoredTeamState();
   hydrateStoredEditorPreferences();
-  state.projects = [];
-  state.deletedProjects = [];
-  state.users = [];
+  if (!preserveResourceContext) {
+    state.projects = [];
+    state.deletedProjects = [];
+    state.users = [];
+  }
 }
 
 export async function registerBrokerAuthListener(render, loadUserTeams) {

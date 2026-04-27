@@ -200,7 +200,11 @@ pub(crate) fn update_gtms_editor_row_fields_sync(
     Ok(SaveEditorRowWithConcurrencyResponse {
         row_id: input.row_id,
         status: "saved".to_string(),
-        row: Some(editor_row_from_stored_row_file_with_update(&repo_path, &chapter_path, next_row)?),
+        row: Some(editor_row_from_stored_row_file_with_update(
+            &repo_path,
+            &chapter_path,
+            next_row,
+        )?),
         source_word_counts: next_source_word_counts,
         base_fields: input.base_fields,
         base_footnotes: input.base_footnotes,

@@ -1,4 +1,4 @@
-use std::{collections::HashSet, sync::Mutex};
+use std::{cmp::Ordering, collections::HashSet, sync::Mutex};
 
 use reqwest::blocking::Client as BlockingClient;
 use reqwest::header::{ACCEPT as REQWEST_ACCEPT, USER_AGENT as REQWEST_USER_AGENT};
@@ -31,6 +31,12 @@ pub(crate) struct UpdateMetadata {
 enum ResolvedUpdate {
     Available(Update),
     Unavailable { message: Option<String> },
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum PendingUpdateDecision {
+    UsePending,
+    ResolveUpdate,
 }
 
 #[derive(Debug)]
@@ -115,6 +121,122 @@ fn platform_wait_and_lookup_failed_message() -> String {
     format!(
         "A newer Gnosis TMS release exists, but it is not available for {platform} yet, and older compatible releases could not be checked."
     )
+}
+
+fn required_platform_wait_message(required_version: &str) -> String {
+    let platform = match std::env::consts::OS {
+        "windows" => "Windows",
+        "macos" => "macOS",
+        "linux" => "Linux",
+        _ => "this platform",
+    };
+    format!(
+        "Gnosis TMS {required_version} is required, but it is not available for {platform} yet."
+    )
+}
+
+fn required_platform_lookup_failed_message(required_version: &str) -> String {
+    let platform = match std::env::consts::OS {
+        "windows" => "Windows",
+        "macos" => "macOS",
+        "linux" => "Linux",
+        _ => "this platform",
+    };
+    format!(
+        "Gnosis TMS {required_version} is required, but compatible {platform} releases could not be checked."
+    )
+}
+
+fn normalize_requested_version(requested_version: Option<String>) -> Option<String> {
+    requested_version.and_then(|version| {
+        let trimmed = version.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(
+                trimmed
+                    .trim_start_matches('v')
+                    .trim_start_matches('V')
+                    .to_string(),
+            )
+        }
+    })
+}
+
+fn parse_stable_version_parts(version: &str) -> Option<Vec<u64>> {
+    let normalized = version
+        .trim()
+        .trim_start_matches('v')
+        .trim_start_matches('V')
+        .split(['-', '+'])
+        .next()
+        .unwrap_or("")
+        .trim();
+    if normalized.is_empty() {
+        return None;
+    }
+
+    normalized
+        .split('.')
+        .map(|part| {
+            if part.is_empty() {
+                return None;
+            }
+            part.parse::<u64>().ok()
+        })
+        .collect()
+}
+
+fn compare_stable_versions(left: &str, right: &str) -> Option<Ordering> {
+    let left_parts = parse_stable_version_parts(left)?;
+    let right_parts = parse_stable_version_parts(right)?;
+    let max_len = left_parts.len().max(right_parts.len());
+
+    for index in 0..max_len {
+        let left_part = left_parts.get(index).copied().unwrap_or(0);
+        let right_part = right_parts.get(index).copied().unwrap_or(0);
+        match left_part.cmp(&right_part) {
+            Ordering::Equal => continue,
+            ordering => return Some(ordering),
+        }
+    }
+
+    Some(Ordering::Equal)
+}
+
+fn version_satisfies_requested(version: &str, requested_version: Option<&str>) -> bool {
+    let Some(requested_version) = requested_version else {
+        return true;
+    };
+    match compare_stable_versions(version, requested_version) {
+        Some(Ordering::Greater | Ordering::Equal) => true,
+        Some(Ordering::Less) => false,
+        None => version.trim() == requested_version.trim(),
+    }
+}
+
+fn release_tag_candidates_for_version(version: &str) -> Vec<String> {
+    let trimmed = version.trim();
+    if trimmed.is_empty() {
+        return Vec::new();
+    }
+    let without_prefix = trimmed.trim_start_matches('v').trim_start_matches('V');
+    let with_prefix = format!("v{without_prefix}");
+    let mut candidates = vec![with_prefix, without_prefix.to_string()];
+    candidates.dedup();
+    candidates
+}
+
+fn pending_update_decision(
+    pending_update_version: Option<&str>,
+    requested_version: Option<&str>,
+) -> PendingUpdateDecision {
+    match pending_update_version {
+        Some(version) if version_satisfies_requested(version, requested_version) => {
+            PendingUpdateDecision::UsePending
+        }
+        _ => PendingUpdateDecision::ResolveUpdate,
+    }
 }
 
 fn github_release_latest_json_url(tag_name: &str) -> Result<Url, String> {
@@ -252,6 +374,98 @@ async fn resolve_latest_compatible_update(app: &AppHandle) -> Result<ResolvedUpd
     })
 }
 
+async fn resolve_requested_compatible_update(
+    app: &AppHandle,
+    requested_version: &str,
+) -> Result<ResolvedUpdate, String> {
+    let mut seen_endpoints = HashSet::new();
+
+    for tag_name in release_tag_candidates_for_version(requested_version) {
+        let endpoint = match github_release_latest_json_url(&tag_name) {
+            Ok(endpoint) => endpoint,
+            Err(_error) => continue,
+        };
+        if !seen_endpoints.insert(endpoint.to_string()) {
+            continue;
+        }
+
+        match check_update_at_endpoint(app, endpoint).await {
+            Ok(Some(update))
+                if version_satisfies_requested(&update.version, Some(requested_version)) =>
+            {
+                return Ok(ResolvedUpdate::Available(update))
+            }
+            Ok(Some(_)) | Ok(None) => {}
+            Err(EndpointCheckError::Updater(error)) if should_skip_fallback_endpoint(&error) => {}
+            Err(error) => return Err(format!("Could not check for updates: {error}")),
+        }
+    }
+
+    let latest_endpoint = Url::parse(GITHUB_LATEST_JSON_URL)
+        .map_err(|error| format!("Could not parse the updater URL: {error}"))?;
+    if seen_endpoints.insert(latest_endpoint.to_string()) {
+        match check_update_at_endpoint(app, latest_endpoint).await {
+            Ok(Some(update))
+                if version_satisfies_requested(&update.version, Some(requested_version)) =>
+            {
+                return Ok(ResolvedUpdate::Available(update))
+            }
+            Ok(Some(_)) | Ok(None) => {}
+            Err(EndpointCheckError::Updater(error)) if is_platform_missing_update_error(&error) => {
+            }
+            Err(error) => return Err(format!("Could not check for updates: {error}")),
+        }
+    }
+
+    let fallback_tags = match fetch_github_release_tags().await {
+        Ok(tags) => tags,
+        Err(_error) => {
+            return Ok(ResolvedUpdate::Unavailable {
+                message: Some(required_platform_lookup_failed_message(requested_version)),
+            })
+        }
+    };
+
+    for tag_name in fallback_tags {
+        if !version_satisfies_requested(&tag_name, Some(requested_version)) {
+            continue;
+        }
+        let endpoint = match github_release_latest_json_url(&tag_name) {
+            Ok(endpoint) => endpoint,
+            Err(_error) => continue,
+        };
+        if !seen_endpoints.insert(endpoint.to_string()) {
+            continue;
+        }
+
+        match check_update_at_endpoint(app, endpoint).await {
+            Ok(Some(update))
+                if version_satisfies_requested(&update.version, Some(requested_version)) =>
+            {
+                return Ok(ResolvedUpdate::Available(update))
+            }
+            Ok(Some(_)) | Ok(None) => {}
+            Err(EndpointCheckError::Updater(error)) if should_skip_fallback_endpoint(&error) => {}
+            Err(error) => return Err(format!("Could not check for updates: {error}")),
+        }
+    }
+
+    Ok(ResolvedUpdate::Unavailable {
+        message: Some(required_platform_wait_message(requested_version)),
+    })
+}
+
+async fn resolve_install_update(
+    app: &AppHandle,
+    requested_version: Option<&str>,
+) -> Result<ResolvedUpdate, String> {
+    if let Some(requested_version) = requested_version {
+        resolve_requested_compatible_update(app, requested_version).await
+    } else {
+        resolve_latest_compatible_update(app).await
+    }
+}
+
 #[tauri::command]
 pub(crate) async fn check_for_app_update(
     app: AppHandle,
@@ -284,18 +498,53 @@ pub(crate) async fn check_for_app_update(
 pub(crate) async fn install_app_update(
     app: AppHandle,
     pending_update: State<'_, PendingUpdate>,
+    requested_version: Option<String>,
 ) -> Result<(), String> {
     if !updates_enabled() {
         return Ok(());
     }
 
-    let Some(update) = pending_update
+    let requested_version = normalize_requested_version(requested_version);
+    let requested_version_ref = requested_version.as_deref();
+    let pending_update = pending_update
         .0
         .lock()
         .map_err(|_| "Could not access the pending update.".to_string())?
-        .take()
-    else {
-        return Err("No update is ready to install.".to_string());
+        .take();
+
+    let update = if let Some(update) = pending_update {
+        if pending_update_decision(Some(&update.version), requested_version_ref)
+            == PendingUpdateDecision::UsePending
+        {
+            update
+        } else {
+            match resolve_install_update(&app, requested_version_ref).await? {
+                ResolvedUpdate::Available(update) => update,
+                ResolvedUpdate::Unavailable { message } => {
+                    return Err(message.unwrap_or_else(|| {
+                        requested_version_ref
+                            .map(required_platform_wait_message)
+                            .unwrap_or_else(|| {
+                                "No compatible update is available yet for this platform."
+                                    .to_string()
+                            })
+                    }))
+                }
+            }
+        }
+    } else {
+        match resolve_install_update(&app, requested_version_ref).await? {
+            ResolvedUpdate::Available(update) => update,
+            ResolvedUpdate::Unavailable { message } => {
+                return Err(message.unwrap_or_else(|| {
+                    requested_version_ref
+                        .map(required_platform_wait_message)
+                        .unwrap_or_else(|| {
+                            "No compatible update is available yet for this platform.".to_string()
+                        })
+                }))
+            }
+        }
     };
 
     update
@@ -310,9 +559,11 @@ pub(crate) async fn install_app_update(
 #[cfg(test)]
 mod tests {
     use super::{
-        github_release_latest_json_url, parse_github_release_tags,
-        platform_wait_and_lookup_failed_message, platform_wait_message,
+        compare_stable_versions, github_release_latest_json_url, parse_github_release_tags,
+        pending_update_decision, platform_wait_and_lookup_failed_message, platform_wait_message,
+        release_tag_candidates_for_version, version_satisfies_requested, PendingUpdateDecision,
     };
+    use std::cmp::Ordering;
 
     #[test]
     fn parse_github_release_tags_filters_drafts_prereleases_and_duplicates() {
@@ -345,5 +596,61 @@ mod tests {
     fn platform_wait_messages_are_non_empty() {
         assert!(!platform_wait_message().trim().is_empty());
         assert!(!platform_wait_and_lookup_failed_message().trim().is_empty());
+    }
+
+    #[test]
+    fn stable_version_compare_handles_multi_digit_segments_and_v_prefixes() {
+        assert_eq!(
+            compare_stable_versions("0.10.0", "0.3.1"),
+            Some(Ordering::Greater)
+        );
+        assert_eq!(
+            compare_stable_versions("v0.3.1", "0.3.1"),
+            Some(Ordering::Equal)
+        );
+        assert_eq!(
+            compare_stable_versions("0.3.0", "0.3.1"),
+            Some(Ordering::Less)
+        );
+    }
+
+    #[test]
+    fn version_satisfies_requested_rejects_older_versions() {
+        assert!(version_satisfies_requested("0.3.1", Some("0.3.0")));
+        assert!(version_satisfies_requested("v0.3.1", Some("0.3.1")));
+        assert!(!version_satisfies_requested("0.2.9", Some("0.3.0")));
+        assert!(version_satisfies_requested("0.2.9", None));
+    }
+
+    #[test]
+    fn release_tag_candidates_prefer_github_v_tags() {
+        assert_eq!(
+            release_tag_candidates_for_version("0.3.1"),
+            vec!["v0.3.1".to_string(), "0.3.1".to_string()],
+        );
+        assert_eq!(
+            release_tag_candidates_for_version("v0.3.1"),
+            vec!["v0.3.1".to_string(), "0.3.1".to_string()],
+        );
+    }
+
+    #[test]
+    fn pending_update_decision_resolves_when_pending_update_is_missing_or_too_old() {
+        assert_eq!(
+            pending_update_decision(None, Some("0.3.1")),
+            PendingUpdateDecision::ResolveUpdate,
+        );
+        assert_eq!(
+            pending_update_decision(Some("0.3.0"), Some("0.3.1")),
+            PendingUpdateDecision::ResolveUpdate,
+        );
+        assert_eq!(
+            pending_update_decision(Some("0.3.1"), Some("0.3.1")),
+            PendingUpdateDecision::UsePending,
+        );
+        assert_eq!(
+            pending_update_decision(Some("0.3.0"), None),
+            PendingUpdateDecision::UsePending,
+        );
     }
 }
