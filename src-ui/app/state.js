@@ -58,6 +58,7 @@ export const state = {
   },
   projectDiscovery: createProjectDiscoveryState(),
   glossaryDiscovery: createGlossaryDiscoveryState(),
+  teamsPage: createResourcePageState(),
   projectsPage: createResourcePageState(),
   membersPage: createResourcePageState(),
   projectsSearch: createProjectsSearchState(),
@@ -922,6 +923,7 @@ export function resetSessionState() {
   state.orgDiscovery = { status: "idle", error: "" };
   state.projectDiscovery = createProjectDiscoveryState();
   state.glossaryDiscovery = createGlossaryDiscoveryState();
+  state.teamsPage = createResourcePageState();
   state.projectsPage = createResourcePageState();
   state.membersPage = createResourcePageState();
   state.glossariesPage = createResourcePageState();

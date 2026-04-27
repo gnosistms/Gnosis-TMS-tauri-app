@@ -33,6 +33,18 @@ import { handleSyncFailure } from "../sync-recovery.js";
 import { canCurrentUserLeaveTeam } from "../team-member-permissions.js";
 import { loadUserTeams } from "./sync.js";
 import { normalizedConfirmationValue } from "../resource-entity-modal.js";
+import {
+  invalidateTeamsQueryAfterMutation,
+  moveTeamQueryData,
+  patchTeamQueryData,
+} from "../team-query.js";
+import { queryClient, teamKeys } from "../query-client.js";
+import {
+  requestTeamWriteIntent,
+  teamLifecycleIntentKey,
+  teamRenameIntentKey,
+  teamWriteScope,
+} from "../team-write-coordinator.js";
 
 const inflightTeamMutationIds = new Set();
 
@@ -42,6 +54,29 @@ function setTeamUiDebug(render, text) {
 
 function clearTeamUiDebug(render) {
   clearScopedSyncBadge("teams", render);
+}
+
+function currentAuthLogin() {
+  const login = state.auth.session?.login;
+  return typeof login === "string" && login.trim() ? login.trim().toLowerCase() : null;
+}
+
+function snapshotTeams() {
+  return {
+    teams: state.teams.map((team) => ({ ...team })),
+    deletedTeams: state.deletedTeams.map((team) => ({ ...team })),
+    selectedTeamId: state.selectedTeamId,
+  };
+}
+
+function restoreTeamSnapshot(snapshot) {
+  state.teams = snapshot.teams.map((team) => ({ ...team }));
+  state.deletedTeams = snapshot.deletedTeams.map((team) => ({ ...team }));
+  state.selectedTeamId = snapshot.selectedTeamId;
+}
+
+function persistVisibleTeamSnapshot() {
+  saveStoredTeamRecords([...state.teams, ...state.deletedTeams]);
 }
 
 function canLeaveTeamFromCurrentState(team) {
@@ -115,38 +150,93 @@ export async function submitTeamRename(render) {
     return;
   }
 
-  try {
-    state.teamRename.status = "loading";
-    state.teamRename.error = "";
-    render();
-    const mutation = {
-      id: crypto.randomUUID(),
-      type: "rename",
+  const previousSnapshot = snapshotTeams();
+  const authLogin = currentAuthLogin();
+  return new Promise((resolve) => {
+    requestTeamWriteIntent({
+      key: teamRenameIntentKey(team.id),
+      scope: teamWriteScope(team),
       teamId: team.id,
-      name: nextName,
-      previousName: team.name || team.githubOrg,
-    };
-    applyOptimisticTeamMutation(render, mutation);
-    persistOptimisticTeamSnapshot();
-    resetTeamRename();
-    render();
-    void processPendingTeamMutations(render);
-  } catch (error) {
-    state.teamRename.status = "idle";
-    if (await handleSyncFailure(classifySyncError(error), { render })) {
-      render();
-      return;
-    }
-    state.teamRename.error = error?.message ?? String(error);
-    render();
-  }
+      type: "teamRename",
+      previousValue: { name: team.name || team.githubOrg },
+      value: { name: nextName },
+    }, {
+      applyOptimistic: () => {
+        state.teamRename.status = "loading";
+        state.teamRename.error = "";
+        const nextSnapshot = applyTeamPendingMutation(
+          { items: state.teams, deletedItems: state.deletedTeams },
+          {
+            id: `rename-${team.id}`,
+            type: "rename",
+            teamId: team.id,
+            name: nextName,
+          },
+        );
+        applyTeamSnapshotToState({
+          items: nextSnapshot.items.map((item) =>
+            item.id === team.id ? { ...item, pendingMutation: "rename", pendingError: "" } : item,
+          ),
+          deletedItems: nextSnapshot.deletedItems,
+        });
+        queryClient.setQueryData(
+          teamKeys.currentUser(authLogin),
+          (queryData) => patchTeamQueryData(queryData, team.id, {
+            name: nextName,
+            pendingMutation: "rename",
+            pendingError: "",
+          }),
+        );
+        persistVisibleTeamSnapshot();
+        resetTeamRename();
+        setTeamUiDebug(render, "Renaming team...");
+        render();
+      },
+      run: async () => {
+        await waitForNextPaint();
+        await invoke("update_organization_name_for_installation", {
+          installationId: team.installationId,
+          orgLogin: team.githubOrg,
+          name: nextName,
+          sessionToken: requireBrokerSession(),
+        });
+      },
+      onSuccess: async () => {
+        try {
+          setTeamUiDebug(render, "Refreshing teams...");
+          await invalidateTeamsQueryAfterMutation({ authLogin, render });
+          clearTeamUiDebug(render);
+        } finally {
+          render();
+          resolve();
+        }
+      },
+      onError: async (error) => {
+        restoreTeamSnapshot(previousSnapshot);
+        persistVisibleTeamSnapshot();
+        clearTeamUiDebug(render);
+        if (await handleSyncFailure(classifySyncError(error), { render })) {
+          render();
+          resolve();
+          return;
+        }
+        state.teamRename = {
+          isOpen: true,
+          teamId: team.id,
+          teamName: nextName,
+          status: "idle",
+          error: error?.message ?? String(error),
+        };
+        render();
+        resolve();
+      },
+    });
+  });
 }
 
 export function deleteTeam(render, teamId) {
-  setTeamUiDebug(render, "Delete clicked");
   const team = state.teams.find((item) => item.id === teamId);
   if (!team) {
-    setTeamUiDebug(render, "Delete aborted: missing team");
     return;
   }
 
@@ -155,43 +245,158 @@ export function deleteTeam(render, teamId) {
     return;
   }
 
-  const mutation = {
-    id: crypto.randomUUID(),
-    type: "softDelete",
+  const previousSnapshot = snapshotTeams();
+  const deletedAt = new Date().toISOString();
+  const authLogin = currentAuthLogin();
+  requestTeamWriteIntent({
+    key: teamLifecycleIntentKey(team.id),
+    scope: teamWriteScope(team),
     teamId: team.id,
-    deletedAt: new Date().toISOString(),
-  };
-  applyOptimisticTeamMutation(render, mutation, "Optimistic delete applied");
-
-  void waitForNextPaint().then(() => {
-    setTeamUiDebug(render, "First paint reached");
-    persistOptimisticTeamSnapshot();
-    setTeamUiDebug(render, "Background sync started");
-    void processPendingTeamMutations(render);
+    type: "teamLifecycle",
+    previousValue: { lifecycleState: "active" },
+    value: { lifecycleState: "deleted", deletedAt },
+  }, {
+    applyOptimistic: () => {
+      const mutation = {
+        id: `soft-delete-${team.id}`,
+        type: "softDelete",
+        teamId: team.id,
+        deletedAt,
+      };
+      const snapshot = applyTeamPendingMutation(
+        { items: state.teams, deletedItems: state.deletedTeams },
+        mutation,
+      );
+      applyTeamSnapshotToState({
+        items: snapshot.items,
+        deletedItems: snapshot.deletedItems.map((item) =>
+          item.id === team.id ? { ...item, pendingMutation: "softDelete", pendingError: "" } : item,
+        ),
+      });
+      state.selectedTeamId = resolveNextSelectedTeamId(state.selectedTeamId, state.teams);
+      queryClient.setQueryData(
+        teamKeys.currentUser(authLogin),
+        (queryData) => moveTeamQueryData(queryData, team.id, "deleted", {
+          description: addDeletedMarkerToDescription(team.description),
+          isDeleted: true,
+          deletedAt,
+          syncState: "deleted",
+          statusLabel: "Removed from active teams",
+          pendingMutation: "softDelete",
+          pendingError: "",
+        }),
+      );
+      persistVisibleTeamSnapshot();
+      setTeamUiDebug(render, "Deleting team...");
+      render();
+    },
+    run: async () => {
+      await waitForNextPaint();
+      await persistTeamDeletedState({ team, isDeleted: true });
+    },
+    onSuccess: async () => {
+      try {
+        setTeamUiDebug(render, "Refreshing teams...");
+        await invalidateTeamsQueryAfterMutation({ authLogin, render });
+        clearTeamUiDebug(render);
+      } finally {
+        render();
+      }
+    },
+    onError: async (error) => {
+      restoreTeamSnapshot(previousSnapshot);
+      persistVisibleTeamSnapshot();
+      clearTeamUiDebug(render);
+      if (await handleSyncFailure(classifySyncError(error), { render })) {
+        render();
+        return;
+      }
+      state.orgDiscovery = {
+        status: "error",
+        error: error?.message ?? String(error),
+      };
+      render();
+    },
   });
 }
 
 export function restoreTeam(render, teamId) {
-  setTeamUiDebug(render, "Restore clicked");
   const team = state.deletedTeams.find((item) => item.id === teamId);
   if (!team) {
-    setTeamUiDebug(render, "Restore aborted: missing team");
     return;
   }
 
-  const mutation = {
-    id: crypto.randomUUID(),
-    type: "restore",
+  const previousSnapshot = snapshotTeams();
+  const authLogin = currentAuthLogin();
+  requestTeamWriteIntent({
+    key: teamLifecycleIntentKey(team.id),
+    scope: teamWriteScope(team),
     teamId: team.id,
-    deletedAt: team.deletedAt ?? new Date().toISOString(),
-  };
-  applyOptimisticTeamMutation(render, mutation, "Optimistic restore applied");
-
-  void waitForNextPaint().then(() => {
-    setTeamUiDebug(render, "First paint reached");
-    persistOptimisticTeamSnapshot();
-    setTeamUiDebug(render, "Background sync started");
-    void processPendingTeamMutations(render);
+    type: "teamLifecycle",
+    previousValue: { lifecycleState: "deleted" },
+    value: { lifecycleState: "active", deletedAt: team.deletedAt ?? new Date().toISOString() },
+  }, {
+    applyOptimistic: () => {
+      const mutation = {
+        id: `restore-${team.id}`,
+        type: "restore",
+        teamId: team.id,
+        deletedAt: team.deletedAt ?? new Date().toISOString(),
+      };
+      const snapshot = applyTeamPendingMutation(
+        { items: state.teams, deletedItems: state.deletedTeams },
+        mutation,
+      );
+      applyTeamSnapshotToState({
+        items: snapshot.items.map((item) =>
+          item.id === team.id ? { ...item, pendingMutation: "restore", pendingError: "" } : item,
+        ),
+        deletedItems: snapshot.deletedItems,
+      });
+      state.selectedTeamId = resolveNextSelectedTeamId(state.selectedTeamId, state.teams);
+      queryClient.setQueryData(
+        teamKeys.currentUser(authLogin),
+        (queryData) => moveTeamQueryData(queryData, team.id, "active", {
+          description: removeDeletedMarkerFromDescription(team.description),
+          isDeleted: false,
+          deletedAt: null,
+          syncState: "active",
+          statusLabel: "",
+          pendingMutation: "restore",
+          pendingError: "",
+        }),
+      );
+      persistVisibleTeamSnapshot();
+      setTeamUiDebug(render, "Restoring team...");
+      render();
+    },
+    run: async () => {
+      await waitForNextPaint();
+      await persistTeamDeletedState({ team, isDeleted: false });
+    },
+    onSuccess: async () => {
+      try {
+        setTeamUiDebug(render, "Refreshing teams...");
+        await invalidateTeamsQueryAfterMutation({ authLogin, render });
+        clearTeamUiDebug(render);
+      } finally {
+        render();
+      }
+    },
+    onError: async (error) => {
+      restoreTeamSnapshot(previousSnapshot);
+      persistVisibleTeamSnapshot();
+      clearTeamUiDebug(render);
+      if (await handleSyncFailure(classifySyncError(error), { render })) {
+        render();
+        return;
+      }
+      state.orgDiscovery = {
+        status: "error",
+        error: error?.message ?? String(error),
+      };
+      render();
+    },
   });
 }
 
@@ -261,6 +466,11 @@ export async function confirmTeamPermanentDeletion(render) {
     const nextStoredTeams = removeStoredTeamRecord(team.id);
     applyStoredTeamRecords(nextStoredTeams);
     state.selectedTeamId = resolveNextSelectedTeamId(state.selectedTeamId, state.teams);
+    await invalidateTeamsQueryAfterMutation({
+      authLogin: currentAuthLogin(),
+      render,
+      refetchIfInactive: false,
+    });
     resetTeamPermanentDeletion();
     render();
   } catch (error) {
@@ -330,6 +540,11 @@ export async function confirmTeamLeave(render) {
     const nextStoredTeams = removeStoredTeamRecord(team.id);
     applyStoredTeamRecords(nextStoredTeams);
     state.selectedTeamId = resolveNextSelectedTeamId(state.selectedTeamId, state.teams);
+    await invalidateTeamsQueryAfterMutation({
+      authLogin: currentAuthLogin(),
+      render,
+      refetchIfInactive: false,
+    });
     resetTeamLeave();
     render();
   } catch (error) {

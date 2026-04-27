@@ -10,7 +10,11 @@ import {
 import { formatErrorForDisplay } from "../app/error-display.js";
 import { canManageTeamAiSettings } from "../app/resource-capabilities.js";
 import { getNoticeBadgeText, getStatusSurfaceItems } from "../app/status-feedback.js";
-import { anyMemberWriteIsActive } from "../app/member-write-coordinator.js";
+import {
+  anyMemberWriteIsActive,
+  getMemberWriteIntent,
+  memberRoleIntentKey,
+} from "../app/member-write-coordinator.js";
 import {
   canCurrentUserLeaveTeam,
   canPromoteOwners,
@@ -29,8 +33,13 @@ function renderUserCard(user, options = {}) {
   const displayName = user.isCurrentUser ? `${user.name} (me)` : user.name;
   const pendingMutation = typeof user.pendingMutation === "string" ? user.pendingMutation : "";
   const roleWritePending = pendingMutation === "makeAdmin" || pendingMutation === "revokeAdmin";
+  const roleWriteIntent = roleWritePending && selectedTeamId
+    ? getMemberWriteIntent(memberRoleIntentKey(selectedTeamId, user.username))
+    : null;
+  const roleWriteAwaitingConfirmation = roleWriteIntent?.status === "pendingConfirmation";
   const roleSyncPending = user.roleSyncPending === true || Boolean(pendingMutation);
   const roleToggleDisabled = roleSyncPending && !roleWritePending;
+  const conflictingActionDisabled = roleSyncPending && !roleWriteAwaitingConfirmation;
   const ownerRole = isOwnerRole(user);
   const displayRole = ownerRole ? "Owner" : user.role === "Admin" ? "Admin" : "Translator";
   const pendingLabel =
@@ -55,13 +64,13 @@ function renderUserCard(user, options = {}) {
                 : "",
             canPromoteOwner && !ownerRole
               ? textAction("Make owner", `open-team-member-owner-promotion:${user.username}`, {
-                  disabled: roleSyncPending,
+                  disabled: conflictingActionDisabled,
                 })
               : "",
             ownerRole || !canManageMembers
               ? ""
               : textAction("Remove", `open-team-member-removal:${user.username}`, {
-                  disabled: roleSyncPending,
+                  disabled: conflictingActionDisabled,
                 }),
           ].filter(Boolean).join("")
         : "")

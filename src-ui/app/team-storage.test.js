@@ -97,3 +97,29 @@ test("saveStoredTeamRecords never persists non-org team records", () => {
   removePersistentValue(storageKey);
   clearActiveStorageLogin();
 });
+
+test("saveStoredTeamRecords strips transient team UI fields", () => {
+  const login = `team-storage-transient-${Date.now()}`;
+  const storageKey = scopedTeamKey(login);
+
+  setActiveStorageLogin(login);
+  saveStoredTeamRecords([
+    organizationTeam({
+      pendingMutation: "restore",
+      pendingError: "Retrying",
+      optimisticClientId: "optimistic-1",
+      localLifecycleIntent: "restore",
+      localRenameIntent: "New name",
+    }),
+  ], login);
+
+  const persistedTeams = readPersistentValue(storageKey, []);
+  assert.equal(Object.hasOwn(persistedTeams[0], "pendingMutation"), false);
+  assert.equal(Object.hasOwn(persistedTeams[0], "pendingError"), false);
+  assert.equal(Object.hasOwn(persistedTeams[0], "optimisticClientId"), false);
+  assert.equal(Object.hasOwn(persistedTeams[0], "localLifecycleIntent"), false);
+  assert.equal(Object.hasOwn(persistedTeams[0], "localRenameIntent"), false);
+
+  removePersistentValue(storageKey);
+  clearActiveStorageLogin();
+});

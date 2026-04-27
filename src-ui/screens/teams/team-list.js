@@ -19,6 +19,11 @@ function renderAccessLabel(team) {
 function renderTeamCard(team, options = {}) {
   const isDeleted = options.isDeleted === true;
   const offlineMode = options.offlineMode === true;
+  const pendingMutation = typeof team.pendingMutation === "string" ? team.pendingMutation : "";
+  const lifecyclePending = pendingMutation === "softDelete" || pendingMutation === "restore";
+  const renamePending = pendingMutation === "rename";
+  const destructivePending = lifecyclePending || pendingMutation === "permanentDelete" || pendingMutation === "leave";
+  const writeBlocked = offlineMode || destructivePending;
   const missingPermissions = Array.isArray(team.missingAppPermissions)
     ? team.missingAppPermissions.join(", ")
     : "";
@@ -43,16 +48,27 @@ function renderTeamCard(team, options = {}) {
         </div>
       `
       : "";
+  const accessLabel = pendingMutation
+    ? `${renderAccessLabel(team)} · ${
+        pendingMutation === "rename"
+          ? "Renaming..."
+          : pendingMutation === "softDelete"
+            ? "Deleting..."
+            : pendingMutation === "restore"
+              ? "Restoring..."
+              : "Updating..."
+      }`
+    : renderAccessLabel(team);
   const actions = options.actions ?? [
     textAction("Projects", `open-team:${team.id}`),
     textAction("Glossaries", `open-team-glossaries:${team.id}`),
     textAction("Members", `open-team-users:${team.id}`, { disabled: offlineMode }),
     ...(team.canDelete ? [textAction("AI Settings", `open-team-ai-settings:${team.id}`)] : []),
-    ...(team.canDelete ? [textAction("Rename", `rename-team:${team.id}`, { disabled: offlineMode })] : []),
+    ...(team.canDelete ? [textAction("Rename", `rename-team:${team.id}`, { disabled: offlineMode || renamePending || destructivePending })] : []),
     textAction(
       team.canDelete ? "Delete" : "Leave",
       `${team.canDelete ? "delete-team" : "leave-team"}:${team.id}`,
-      { disabled: offlineMode },
+      { disabled: writeBlocked },
     ),
   ];
 
@@ -66,7 +82,7 @@ function renderTeamCard(team, options = {}) {
                 ${escapeHtml(team.name)}
               </button>
             </h2>
-            <p class="list-row__meta">@${escapeHtml(team.githubOrg)} · ${escapeHtml(renderAccessLabel(team))}</p>
+            <p class="list-row__meta">@${escapeHtml(team.githubOrg)} · ${escapeHtml(accessLabel)}</p>
           </div>
           <div class="list-row__actions">
             ${actions.join("")}
@@ -106,8 +122,12 @@ function renderDeletedTeamsSection(deletedTeams, isOpen, offlineMode = false) {
               textAction("Members", `open-team-users:${team.id}`, { disabled: offlineMode }),
               ...(team.canDelete === true
                 ? [
-                    textAction("Restore", `restore-team:${team.id}`, { disabled: offlineMode }),
-                    textAction("Delete", `delete-deleted-team:${team.id}`, { disabled: offlineMode }),
+                    textAction("Restore", `restore-team:${team.id}`, {
+                      disabled: offlineMode || team.pendingMutation === "restore" || team.pendingMutation === "softDelete",
+                    }),
+                    textAction("Delete", `delete-deleted-team:${team.id}`, {
+                      disabled: offlineMode || Boolean(team.pendingMutation),
+                    }),
                   ]
                 : []),
             ],

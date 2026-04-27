@@ -30,6 +30,11 @@ export const memberKeys = {
   byTeam: (teamId) => ["members", teamId ?? null],
 };
 
+export const teamKeys = {
+  all: ["teams"],
+  currentUser: (login) => ["teams", login ?? null],
+};
+
 export function subscribeQueryObserver(options, onResult) {
   const observer = new QueryObserver(queryClient, options);
   const unsubscribe = observer.subscribe(onResult);

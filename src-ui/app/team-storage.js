@@ -64,8 +64,17 @@ function normalizeTeamRecord(team) {
     typeof team.accountType === "string" && team.accountType.trim()
       ? team.accountType.trim()
       : null;
+  const {
+    pendingMutation: _pendingMutation,
+    pendingError: _pendingError,
+    optimisticClientId: _optimisticClientId,
+    localLifecycleIntent: _localLifecycleIntent,
+    localRenameIntent: _localRenameIntent,
+    ...persistentTeam
+  } = team;
 
   return {
+    ...persistentTeam,
     id:
       typeof team.id === "string" && team.id.trim()
         ? team.id.trim()

@@ -13,8 +13,9 @@ import { renderSetupModal } from "./setup-modal.js";
 import { renderTeamsList } from "./team-list.js";
 import {
   getNoticeBadgeText,
-  getScopedSyncBadgeText,
+  getStatusSurfaceItems,
 } from "../../app/status-feedback.js";
+import { anyTeamWriteIsActive } from "../../app/team-write-coordinator.js";
 
 export function renderTeamsScreen(state) {
   const offlineMode = state.offline?.isEnabled === true;
@@ -35,14 +36,16 @@ export function renderTeamsScreen(state) {
   return pageShell({
     title: "Translation Teams",
     subtitle,
-    titleAction: buildPageRefreshAction(state),
+    titleAction: buildPageRefreshAction(state, state.pageSync, "refresh-page", {
+      backgroundRefreshing: state.teamsPage?.isRefreshing === true || anyTeamWriteIsActive(),
+    }),
     navButtons: buildSectionNav("teams"),
     tools: [updateAction, primaryButton("+ New Team", "open-new-team", { disabled: offlineMode })]
       .filter(Boolean)
       .join(""),
     pageSync: state.pageSync,
-    syncBadgeText: getScopedSyncBadgeText("teams"),
     noticeText: getNoticeBadgeText(),
+    statusItems: getStatusSurfaceItems("teams"),
     offlineMode,
     offlineReconnectState: state.offline?.reconnecting === true,
     body: `<section class="stack">${renderTeamsList(
