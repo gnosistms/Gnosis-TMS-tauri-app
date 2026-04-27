@@ -617,7 +617,7 @@ export function renderProjectsScreen(state) {
       title: "Projects",
       subtitle: selectedTeam?.name ?? "Team",
       titleAction: buildPageRefreshAction(state, state.projectsPageSync, "refresh-page", {
-        backgroundRefreshing: state.projectsPage?.isRefreshing === true,
+        backgroundRefreshing: state.projectsPage?.isRefreshing === true || anyProjectWriteIsActive(),
       }),
       navButtons: buildSectionNav("projects", { includeAiSettings: canManageAiSettings }),
       leftTools: searchField,

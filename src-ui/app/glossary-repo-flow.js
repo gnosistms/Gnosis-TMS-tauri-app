@@ -1,5 +1,6 @@
 import { requireBrokerSession } from "./auth-flow.js";
 import { invoke } from "./runtime.js";
+import { beginPageSync, completePageSync, failPageSync } from "./page-sync.js";
 import { saveStoredGlossariesForTeam } from "./glossary-cache.js";
 import { normalizeGlossarySummary, sortGlossaries } from "./glossary-shared.js";
 import { createUniqueRepoWithNumericSuffix } from "./repo-creation.js";
@@ -544,6 +545,25 @@ function persistVisibleGlossaries(team) {
   saveStoredGlossariesForTeam(team, state.glossaries);
 }
 
+async function runGlossaryRepoPageSync(render, operation) {
+  state.glossariesPage.isRefreshing = true;
+  beginPageSync();
+  render?.();
+
+  try {
+    const result = await operation();
+    state.glossariesPage.isRefreshing = false;
+    await completePageSync(render);
+    render?.();
+    return result;
+  } catch (error) {
+    state.glossariesPage.isRefreshing = false;
+    failPageSync();
+    render?.();
+    throw error;
+  }
+}
+
 export async function ensureGlossaryNotTombstoned(render, team, glossary, options = {}) {
   return ensureResourceNotTombstoned({
     installationId: team?.installationId,
@@ -784,12 +804,14 @@ export async function repairGlossaryRepoBinding(render, team, glossaryId) {
   }
 
   try {
-    await repairLocalRepoBinding(team, "glossary", glossaryId);
-    showNoticeBadge("The glossary repo binding was repaired.", render, 2200);
-    const result = await loadRepoBackedGlossariesForTeam(team, {
-      offlineMode: state.offline?.isEnabled === true,
+    await runGlossaryRepoPageSync(render, async () => {
+      await repairLocalRepoBinding(team, "glossary", glossaryId);
+      const result = await loadRepoBackedGlossariesForTeam(team, {
+        offlineMode: state.offline?.isEnabled === true,
+      });
+      state.glossaries = result.glossaries;
     });
-    state.glossaries = result.glossaries;
+    showNoticeBadge("The glossary repo binding was repaired.", render, 2200);
     render();
   } catch (error) {
     showNoticeBadge(error?.message ?? String(error), render, 3200);
@@ -807,11 +829,17 @@ export async function rebuildGlossaryLocalRepo(render, team, glossaryId) {
   }
 
   showNoticeBadge("Rebuilding the local glossary repo from metadata and GitHub...", render, 2200);
-  const result = await loadRepoBackedGlossariesForTeam(team, {
-    offlineMode: state.offline?.isEnabled === true,
-  });
-  state.glossaries = result.glossaries;
-  render();
+  try {
+    await runGlossaryRepoPageSync(render, async () => {
+      const result = await loadRepoBackedGlossariesForTeam(team, {
+        offlineMode: state.offline?.isEnabled === true,
+      });
+      state.glossaries = result.glossaries;
+    });
+  } catch (error) {
+    showNoticeBadge(error?.message ?? String(error), render, 3200);
+    render();
+  }
 }
 
 export async function syncSingleGlossaryForTeam(team, glossary) {

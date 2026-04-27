@@ -295,6 +295,8 @@ test("coordinator writes keep lifecycle and glossary controls enabled while heav
 
   assert.match(actionButtonHtml(html, "open-new-project"), /disabled/);
   assert.match(actionButtonHtml(html, "add-project-files:project-1"), /disabled/);
+  assert.match(actionButtonHtml(html, "refresh-page"), /\bis-spinning\b/);
+  assert.match(actionButtonHtml(html, "refresh-page"), /aria-disabled="true"/);
 });
 
 test("repo sync intents do not globally disable new project or add files", () => {
@@ -313,4 +315,6 @@ test("repo sync intents do not globally disable new project or add files", () =>
 
   assert.doesNotMatch(actionButtonHtml(html, "open-new-project"), /disabled/);
   assert.doesNotMatch(actionButtonHtml(html, "add-project-files:project-1"), /disabled/);
+  assert.match(actionButtonHtml(html, "refresh-page"), /\bis-spinning\b/);
+  assert.match(actionButtonHtml(html, "refresh-page"), /aria-disabled="true"/);
 });
