@@ -764,6 +764,7 @@ test("saving a glossary term closes the modal and patches the visible row before
   };
 
   const releaseSync = deferred();
+  const releaseRepoSync = deferred();
   invokeHandler = async (command, payload) => {
     switch (command) {
       case "sync_gtms_glossary_editor_repo":
@@ -790,6 +791,7 @@ test("saving a glossary term closes the modal and patches the visible row before
           },
         };
       case "sync_gtms_glossary_repos":
+        await releaseRepoSync.promise;
         return [];
       default:
         return null;
@@ -802,12 +804,24 @@ test("saving a glossary term closes the modal and patches the visible row before
   assert.equal(state.glossaryTermEditor.isOpen, false);
   assert.deepEqual(state.glossaryEditor.terms[0]?.sourceTerms, ["optimistic source"]);
   assert.equal(state.glossaryEditor.terms[0]?.pendingMutation, "save");
+  assert.equal(state.statusBadges.right.visible, true);
+  assert.equal(state.statusBadges.right.scope, "glossaryEditor");
+  assert.equal(state.statusBadges.right.text, "Checking remote glossary changes...");
   assert.equal(syncInvocationCount("upsert_gtms_glossary_term"), 0);
 
   releaseSync.resolve();
+  await flushAsyncWork();
+
+  assert.equal(syncInvocationCount("upsert_gtms_glossary_term"), 1);
+  assert.equal(state.statusBadges.right.visible, true);
+  assert.equal(state.statusBadges.right.scope, "glossaryEditor");
+  assert.equal(state.statusBadges.right.text, "Syncing glossary repo...");
+
+  releaseRepoSync.resolve();
   await waitForGlossaryTermWrites();
 
   assert.equal(state.glossaryEditor.terms[0]?.pendingMutation, null);
+  assert.equal(state.statusBadges.right.visible, false);
   assert.equal(syncInvocationCount("load_gtms_glossary_editor_data"), 0);
 });
 

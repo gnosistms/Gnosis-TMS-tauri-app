@@ -2,7 +2,21 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 const { createGlossaryEditorState, resetSessionState, state } = await import("../app/state.js");
+const {
+  requestGlossaryTermWriteIntent,
+  resetGlossaryTermWriteCoordinator,
+} = await import("../app/glossary-term-write-coordinator.js");
 const { renderGlossaryEditorScreen } = await import("./glossary-editor.js");
+
+function deferred() {
+  let resolve;
+  let reject;
+  const promise = new Promise((promiseResolve, promiseReject) => {
+    resolve = promiseResolve;
+    reject = promiseReject;
+  });
+  return { promise, resolve, reject };
+}
 
 function installGlossaryEditorFixture({ searchQuery = "", terms, canManageProjects = true } = {}) {
   resetSessionState();
@@ -36,6 +50,7 @@ function installGlossaryEditorFixture({ searchQuery = "", terms, canManageProjec
 }
 
 test.afterEach(() => {
+  resetGlossaryTermWriteCoordinator();
   resetSessionState();
 });
 
@@ -86,4 +101,30 @@ test("glossary editor search matches ruby visible text and renders ruby markup",
   assert.match(html, /<ruby>漢字<rt>かんじ<\/rt><\/ruby>/);
   assert.doesNotMatch(html, /No terms match this search\./);
   assert.doesNotMatch(html, /&lt;ruby&gt;/);
+});
+
+test("glossary editor spins refresh and renders scoped status during term writes", async () => {
+  installGlossaryEditorFixture();
+  state.statusBadges.right = {
+    visible: true,
+    text: "Saving glossary term...",
+    scope: "glossaryEditor",
+  };
+  const releaseWrite = deferred();
+
+  requestGlossaryTermWriteIntent({
+    key: "test-glossary-term-write",
+    scope: "glossary-repo:7:glossary-1",
+    type: "glossaryTermSave",
+  }, {
+    run: () => releaseWrite.promise,
+  });
+
+  const html = renderGlossaryEditorScreen(state);
+
+  assert.match(html, /title-icon-button[^"]*\bis-spinning\b/);
+  assert.match(html, /Saving glossary term\.\.\./);
+
+  releaseWrite.resolve();
+  await Promise.resolve();
 });

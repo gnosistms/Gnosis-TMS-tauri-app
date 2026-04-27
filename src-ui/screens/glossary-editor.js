@@ -10,9 +10,10 @@ import {
   textAction,
 } from "../lib/ui.js";
 import { formatErrorForDisplay } from "../app/error-display.js";
-import { getNoticeBadgeText } from "../app/status-feedback.js";
+import { getNoticeBadgeText, getStatusSurfaceItems } from "../app/status-feedback.js";
 import { renderGlossaryTermEditorModal } from "./glossary-term-editor-modal.js";
 import { canManageGlossaries, selectedTeam } from "../app/glossary-shared.js";
+import { anyGlossaryTermWriteIsActive } from "../app/glossary-term-write-coordinator.js";
 import { findChapterContextById } from "../app/project-context.js";
 import {
   extractGlossaryRubyVisibleText,
@@ -126,11 +127,14 @@ export function renderGlossaryEditorScreen(state) {
   return (
     pageShell({
       title: glossary.title || "Glossary",
-      titleAction: buildPageRefreshAction(state),
+      titleAction: buildPageRefreshAction(state, state.pageSync, "refresh-page", {
+        backgroundRefreshing: anyGlossaryTermWriteIsActive(),
+      }),
       navButtons,
       tools: canManageTerms ? `${searchField} ${primaryButton("+ New Term", "open-new-term")}` : searchField,
       pageSync: state.pageSync,
       noticeText: getNoticeBadgeText(),
+      statusItems: getStatusSurfaceItems("glossaryEditor"),
       offlineMode: state.offline?.isEnabled === true,
       offlineReconnectState: state.offline?.reconnecting === true,
       body,
