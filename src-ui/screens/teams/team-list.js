@@ -20,10 +20,10 @@ function renderTeamCard(team, options = {}) {
   const isDeleted = options.isDeleted === true;
   const offlineMode = options.offlineMode === true;
   const pendingMutation = typeof team.pendingMutation === "string" ? team.pendingMutation : "";
-  const lifecyclePending = pendingMutation === "softDelete" || pendingMutation === "restore";
-  const renamePending = pendingMutation === "rename";
-  const destructivePending = lifecyclePending || pendingMutation === "permanentDelete" || pendingMutation === "leave";
-  const writeBlocked = offlineMode || destructivePending;
+  const destructivePending = pendingMutation === "permanentDelete" || pendingMutation === "leave";
+  const renameBlocked = offlineMode || pendingMutation === "softDelete" || pendingMutation === "restore" || destructivePending;
+  const deleteBlocked = offlineMode || pendingMutation === "softDelete" || destructivePending;
+  const leaveBlocked = offlineMode || pendingMutation === "softDelete" || pendingMutation === "restore" || destructivePending;
   const missingPermissions = Array.isArray(team.missingAppPermissions)
     ? team.missingAppPermissions.join(", ")
     : "";
@@ -64,11 +64,11 @@ function renderTeamCard(team, options = {}) {
     textAction("Glossaries", `open-team-glossaries:${team.id}`),
     textAction("Members", `open-team-users:${team.id}`, { disabled: offlineMode }),
     ...(team.canDelete ? [textAction("AI Settings", `open-team-ai-settings:${team.id}`)] : []),
-    ...(team.canDelete ? [textAction("Rename", `rename-team:${team.id}`, { disabled: offlineMode || renamePending || destructivePending })] : []),
+    ...(team.canDelete ? [textAction("Rename", `rename-team:${team.id}`, { disabled: renameBlocked })] : []),
     textAction(
       team.canDelete ? "Delete" : "Leave",
       `${team.canDelete ? "delete-team" : "leave-team"}:${team.id}`,
-      { disabled: writeBlocked },
+      { disabled: team.canDelete ? deleteBlocked : leaveBlocked },
     ),
   ];
 
@@ -123,7 +123,7 @@ function renderDeletedTeamsSection(deletedTeams, isOpen, offlineMode = false) {
               ...(team.canDelete === true
                 ? [
                     textAction("Restore", `restore-team:${team.id}`, {
-                      disabled: offlineMode || team.pendingMutation === "restore" || team.pendingMutation === "softDelete",
+                      disabled: offlineMode || team.pendingMutation === "restore",
                     }),
                     textAction("Delete", `delete-deleted-team:${team.id}`, {
                       disabled: offlineMode || Boolean(team.pendingMutation),

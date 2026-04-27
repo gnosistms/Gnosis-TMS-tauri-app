@@ -73,7 +73,7 @@ test("teams screen keeps row navigation enabled during background refresh", () =
   assert.doesNotMatch(html, /data-action="rename-team:team-1"[^>]*aria-disabled="true"/);
 });
 
-test("teams screen spins refresh during active team writes and disables only conflicting row actions", async () => {
+test("teams screen spins refresh during active team writes and allows coalescing rename edits", async () => {
   installFixture([
     team({ pendingMutation: "rename" }),
   ]);
@@ -95,6 +95,43 @@ test("teams screen spins refresh during active team writes and disables only con
   assert.match(html, /title-icon-button__icon is-spinning/);
   assert.match(html, /data-action="open-team:team-1"/);
   assert.doesNotMatch(html, /data-action="open-team:team-1"[^>]*aria-disabled="true"/);
-  assert.match(html, /data-action="rename-team:team-1"[^>]*aria-disabled="true"/);
+  assert.match(html, /data-action="rename-team:team-1"/);
+  assert.doesNotMatch(html, /data-action="rename-team:team-1"[^>]*aria-disabled="true"/);
   assert.doesNotMatch(html, /data-action="delete-team:team-1"[^>]*aria-disabled="true"/);
+});
+
+test("teams screen allows deleting a team while restore is still pending", () => {
+  installFixture([
+    team({
+      pendingMutation: "restore",
+      syncState: "active",
+    }),
+  ]);
+
+  const html = renderTeamsScreen(state);
+
+  assert.match(html, /owner access · Restoring\.\.\./);
+  assert.match(html, /data-action="delete-team:team-1"/);
+  assert.doesNotMatch(html, /data-action="delete-team:team-1"[^>]*aria-disabled="true"/);
+  assert.match(html, /data-action="rename-team:team-1"[^>]*aria-disabled="true"/);
+});
+
+test("teams screen allows restoring a team while soft delete is still pending", () => {
+  installFixture([]);
+  state.deletedTeams = [
+    team({
+      isDeleted: true,
+      pendingMutation: "softDelete",
+      syncState: "deleted",
+      statusLabel: "Removed from active teams",
+    }),
+  ];
+  state.showDeletedTeams = true;
+
+  const html = renderTeamsScreen(state);
+
+  assert.match(html, /owner access · Deleting\.\.\./);
+  assert.match(html, /data-action="restore-team:team-1"/);
+  assert.doesNotMatch(html, /data-action="restore-team:team-1"[^>]*aria-disabled="true"/);
+  assert.match(html, /data-action="delete-deleted-team:team-1"[^>]*aria-disabled="true"/);
 });
