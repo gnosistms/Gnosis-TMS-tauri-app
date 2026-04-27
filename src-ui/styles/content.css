@@ -788,6 +788,23 @@
   font-weight: 600;
 }
 
+.team-ui-debug--stack {
+  border-radius: 18px;
+  align-items: stretch;
+  max-width: min(420px, calc(100vw - 56px));
+}
+
+.team-ui-debug__item {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  line-height: 1.3;
+}
+
+.team-ui-debug__item--notice {
+  color: var(--text);
+}
+
 .team-ui-debug__content {
   display: inline-flex;
   align-items: center;

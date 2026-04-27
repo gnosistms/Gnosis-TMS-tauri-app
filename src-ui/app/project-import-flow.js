@@ -7,12 +7,16 @@ import {
 import { saveStoredProjectsForTeam } from "./project-cache.js";
 import { state } from "./state.js";
 import {
-  clearScopedSyncBadge,
   showNoticeBadge,
-  showScopedSyncBadge,
 } from "./status-feedback.js";
 import { reconcileProjectRepoSyncStates } from "./project-repo-sync-flow.js";
-import { ensureProjectNotTombstoned, refreshProjectFilesFromDisk } from "./project-chapter-flow.js";
+import {
+  clearProjectsStatus,
+  ensureProjectNotTombstoned,
+  refreshProjectFilesFromDisk,
+  showProjectsNotice,
+  showProjectsStatus,
+} from "./project-chapter-flow.js";
 import { openLocalFilePicker } from "./local-file-picker.js";
 
 export const PROJECT_IMPORT_ACCEPT =
@@ -454,7 +458,7 @@ async function completeProjectImport(render, selectedFile, fileType, options = {
     error: "",
   });
   beginProjectsPageSync();
-  showScopedSyncBadge("projects", "Adding file...", render);
+  showProjectsStatus(render, "Importing file...");
   render();
   await waitForNextPaint();
 
@@ -480,12 +484,17 @@ async function completeProjectImport(render, selectedFile, fileType, options = {
     applyImportedFileToProject(selectedTeam, projectId, result);
     render();
     await waitForNextPaint();
-    await reconcileProjectRepoSyncStates(render, selectedTeam, [targetProject]);
+    showProjectsStatus(render, "Syncing project repo...");
+    await reconcileProjectRepoSyncStates(render, selectedTeam, [targetProject], {
+      clearStatusOnComplete: false,
+    });
+    showProjectsStatus(render, "Refreshing file list...");
     await refreshProjectFilesFromDisk(render, selectedTeam, [targetProject]);
     await completeProjectsPageSync(render);
-    showNoticeBadge(
-      `Imported ${result.unitCount} rows from ${result.sourceFileName} into ${result.projectTitle}.${importSummaryNoticeSuffix(result)}`,
+    clearProjectsStatus(render);
+    showProjectsNotice(
       render,
+      `Imported ${result.unitCount} rows from ${result.sourceFileName} into ${result.projectTitle}.${importSummaryNoticeSuffix(result)}`,
     );
   } catch (error) {
     state.projectImport = projectImportModalState({
@@ -499,7 +508,7 @@ async function completeProjectImport(render, selectedFile, fileType, options = {
       selectedSourceLanguageCode: "",
       sourceLanguageScrollTop: 0,
     });
-    clearScopedSyncBadge("projects", render);
+    clearProjectsStatus(render);
     failProjectsPageSync();
     showNoticeBadge(state.projectImport.error || "The file could not be imported.", render);
     render();
@@ -610,11 +619,12 @@ export async function importProjectFiles(render, selectedFiles, options = {}) {
     isBatch: true,
   });
   beginProjectsPageSync();
-  showScopedSyncBadge("projects", "Adding files...", render);
+  showProjectsStatus(render, "Importing files...");
   render();
   await waitForNextPaint();
 
-  for (const file of files) {
+  for (const [index, file] of files.entries()) {
+    showProjectsStatus(render, `Importing ${index + 1} of ${files.length}...`);
     const sourceFileName = importFileName(file);
     const fileType = detectImportFileType(sourceFileName);
     if (!fileType || (importFileTypeNeedsSourceLanguage(fileType) && !options.confirmedSourceLanguageCode)) {
@@ -651,17 +661,24 @@ export async function importProjectFiles(render, selectedFiles, options = {}) {
 
   if (importedResults.length > 0) {
     await waitForNextPaint();
-    await reconcileProjectRepoSyncStates(render, selectedTeam, [targetProject]);
+    showProjectsStatus(render, "Syncing project repo...");
+    await reconcileProjectRepoSyncStates(render, selectedTeam, [targetProject], {
+      clearStatusOnComplete: false,
+    });
+    showProjectsStatus(render, "Refreshing file list...");
     await refreshProjectFilesFromDisk(render, selectedTeam, [targetProject]);
     await completeProjectsPageSync(render);
-    showNoticeBadge(
-      `Imported ${importedResults.length} ${importedResults.length === 1 ? "file" : "files"} into ${targetProject.title ?? targetProject.name}`,
+    clearProjectsStatus(render);
+    showProjectsNotice(
       render,
+      failedFileNames.length > 0
+        ? `Imported ${importedResults.length} ${importedResults.length === 1 ? "file" : "files"}. ${failedFileNames.length} ${failedFileNames.length === 1 ? "file" : "files"} failed.`
+        : `Imported ${importedResults.length} ${importedResults.length === 1 ? "file" : "files"} into ${targetProject.title ?? targetProject.name}`,
     );
     return;
   }
 
-  clearScopedSyncBadge("projects", render);
+  clearProjectsStatus(render);
   failProjectsPageSync();
   showNoticeBadge("No files were imported.", render);
   render();

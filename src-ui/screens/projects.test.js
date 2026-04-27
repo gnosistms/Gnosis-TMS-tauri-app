@@ -29,6 +29,7 @@ const {
   requestProjectWriteIntent,
   resetProjectWriteCoordinator,
 } = await import("../app/project-write-coordinator.js");
+const { state: appState, resetSessionState } = await import("../app/state.js");
 
 function projectsState(overrides = {}) {
   return {
@@ -97,6 +98,7 @@ function actionButtonHtml(html, action) {
 
 test.afterEach(() => {
   resetProjectWriteCoordinator();
+  resetSessionState();
 });
 
 test("project background refresh spins and disables the refresh button", () => {
@@ -112,6 +114,26 @@ test("project background refresh spins and disables the refresh button", () => {
 
   assert.match(actionButtonHtml(html, "refresh-page"), /\bis-spinning\b/);
   assert.match(actionButtonHtml(html, "refresh-page"), /aria-disabled="true"/);
+});
+
+test("projects status surface renders background sync and notice lines together", () => {
+  appState.statusBadges = {
+    left: {
+      visible: true,
+      text: "Project renamed.",
+    },
+    right: {
+      visible: true,
+      text: "Refreshing project list...",
+      scope: "projects",
+    },
+  };
+
+  const html = renderProjectsScreen(projectsState());
+
+  assert.match(html, /team-ui-debug--stack/);
+  assert.match(html, /Refreshing project list\.\.\./);
+  assert.match(html, /Project renamed\./);
 });
 
 test("projects glossary selector stays enabled during project refresh", () => {

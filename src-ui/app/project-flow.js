@@ -13,7 +13,7 @@ import {
   resetProjectRename,
   state,
 } from "./state.js";
-import { clearNoticeBadge, showNoticeBadge } from "./status-feedback.js";
+import { showNoticeBadge } from "./status-feedback.js";
 import { classifySyncError } from "./sync-error.js";
 import { handleSyncFailure } from "./sync-recovery.js";
 import { appendRepoNameSuffix, slugifyRepoName } from "./repo-names.js";
@@ -70,9 +70,7 @@ import {
   updateEntityModalName,
 } from "./resource-entity-modal.js";
 import {
-  clearResourceCreateProgress,
   guardResourceCreateStart,
-  showResourceCreateProgress,
 } from "./resource-create-flow.js";
 import {
   applyChapterPendingMutation,
@@ -90,6 +88,9 @@ import {
   removeVisibleProject,
   setProjectUiDebug,
   clearProjectUiDebug,
+  clearProjectsStatus,
+  showProjectsNotice,
+  showProjectsStatus,
   selectedProjectsTeam,
   openChapterRename,
   updateChapterRenameName,
@@ -149,7 +150,7 @@ async function completeProjectCreateSynchronously(selectedTeam, projectTitle, ba
   }
 
   try {
-    showResourceCreateProgress(render, "Creating GitHub repository...");
+    showProjectsStatus(render, "Creating project repo...");
     const usedLocalRepoNames = new Set(
       [...(state.projects ?? []), ...(state.deletedProjects ?? [])]
         .map((project) => String(project?.name ?? "").trim())
@@ -188,7 +189,7 @@ async function completeProjectCreateSynchronously(selectedTeam, projectTitle, ba
       throw new Error("Could not determine an available repo name.");
     }
 
-    showResourceCreateProgress(render, "Initializing local project repo...");
+    showProjectsStatus(render, "Initializing local project...");
     await invoke("initialize_gtms_project_repo", {
       input: {
         installationId: selectedTeam.installationId,
@@ -199,7 +200,7 @@ async function completeProjectCreateSynchronously(selectedTeam, projectTitle, ba
     });
     localRepoInitialized = true;
 
-    showResourceCreateProgress(render, "Saving team metadata...");
+    showProjectsStatus(render, "Saving project metadata...");
     await upsertProjectMetadataRecord(
       selectedTeam,
       {
@@ -324,7 +325,7 @@ const projectPageSyncController = {
 };
 
 function setProjectsPageProgress(render, text) {
-  showNoticeBadge(text, render, null);
+  showProjectsStatus(render, text);
 }
 
 export async function loadTeamProjects(render, teamId = state.selectedTeamId) {
@@ -585,8 +586,12 @@ export async function submitProjectCreation(render) {
     pageState: state.projectsPage,
     syncController: projectPageSyncController,
     setProgress: (text) => setProjectsPageProgress(render, text),
-    clearProgress: clearNoticeBadge,
+    clearProgress: () => clearProjectsStatus(render),
     render,
+    progressLabels: {
+      submitting: "Creating project...",
+      refreshing: "Refreshing project list...",
+    },
     onBlocked: async () => {
       state.projectCreation.status = "idle";
       state.projectCreation.error = "Wait for the current projects refresh or write to finish.";
@@ -596,23 +601,23 @@ export async function submitProjectCreation(render) {
       completeProjectCreateSynchronously(selectedTeam, projectTitle, repoName, render),
     refreshOptions: {
       loadData: async () => {
-        showResourceCreateProgress(render, "Refreshing project list...");
+        showProjectsStatus(render, "Refreshing project list...");
         return reloadProjectsAfterWrite(render, selectedTeam, { suppressRecoveryWarning: true });
       },
     },
     onSuccess: async (result) => {
-      clearResourceCreateProgress();
+      clearProjectsStatus(render);
       resetProjectCreation();
       state.selectedProjectId = result.projectId;
-      showNoticeBadge(
+      showProjectsNotice(
+        render,
         result.collisionResolved
           ? `Created project ${result.title} in repo ${result.repoName} because that repo name was already taken.`
           : `Created project ${result.title}`,
-        render,
       );
     },
     onError: async (error) => {
-      clearResourceCreateProgress();
+      clearProjectsStatus(render);
       if (await handleSyncFailure(classifySyncError(error), { render })) {
         return;
       }
@@ -668,6 +673,7 @@ export async function submitProjectRename(render) {
     },
   }, {
     applyOptimistic: (intent) => {
+      showProjectsStatus(render, "Renaming project...");
       patchProjectInVisibleState(project.id, {
         title: intent.value.title,
         pendingMutation: "rename",
@@ -681,6 +687,12 @@ export async function submitProjectRename(render) {
       projectId: project.id,
       title: intent.value.title,
       previousTitle: project.title ?? project.name,
+    }, {
+      render,
+      statusLabels: {
+        metadata: "Updating project metadata...",
+        local: "Renaming project repo...",
+      },
     }),
     onSuccess: (intent) => {
       patchProjectInVisibleState(project.id, {
@@ -689,14 +701,19 @@ export async function submitProjectRename(render) {
         localLifecycleIntent: "rename",
       });
       persistProjectsForTeam(selectedTeam);
+      showProjectsStatus(render, "Refreshing project list...");
       void invalidateProjectsQueryAfterMutation(selectedTeam, {
         teamId: selectedTeam.id,
         render,
         reconcileExpandedDeletedFiles,
         refetchIfInactive: false,
+      }).finally(() => {
+        clearProjectsStatus(render);
+        showProjectsNotice(render, "Project renamed.");
       });
     },
     onError: (error) => {
+      clearProjectsStatus(render);
       state.projectRename = {
         isOpen: true,
         projectId: project.id,
@@ -721,10 +738,14 @@ export async function repairProjectRepoBinding(render, projectId) {
   }
 
   try {
+    showProjectsStatus(render, "Repairing project repo binding...");
     await repairLocalRepoBinding(selectedTeam, "project", projectId);
-    showNoticeBadge("The project repo binding was repaired.", render, 2200);
+    showProjectsStatus(render, "Refreshing project list...");
     await loadTeamProjects(render, selectedTeam.id);
+    clearProjectsStatus(render);
+    showProjectsNotice(render, "The project repo binding was repaired.", 2200);
   } catch (error) {
+    clearProjectsStatus(render);
     showNoticeBadge(error?.message ?? String(error), render, 3200);
     render();
   }
@@ -741,8 +762,17 @@ export async function rebuildProjectLocalRepo(render, projectId) {
     return;
   }
 
-  showNoticeBadge("Rebuilding the local project repo from metadata and GitHub...", render, 2200);
-  await loadTeamProjects(render, selectedTeam.id);
+  try {
+    showProjectsStatus(render, "Rebuilding local project repo...");
+    showProjectsStatus(render, "Refreshing project list...");
+    await loadTeamProjects(render, selectedTeam.id);
+    clearProjectsStatus(render);
+    showProjectsNotice(render, "Local project repo rebuilt.", 2200);
+  } catch (error) {
+    clearProjectsStatus(render);
+    showNoticeBadge(error?.message ?? String(error), render, 3200);
+    render();
+  }
 }
 
 export async function overwriteConflictedProjectRepos(render) {
@@ -782,6 +812,7 @@ export async function overwriteConflictedProjectRepos(render) {
   render();
 
   try {
+    showProjectsStatus(render, "Overwriting conflicted project repos...");
     const response = await invoke("overwrite_conflicted_gtms_project_repos", {
       input,
       sessionToken: requireBrokerSession(),
@@ -790,13 +821,16 @@ export async function overwriteConflictedProjectRepos(render) {
       ? response.resolvedProjectIds.length
       : input.projects.length;
     state.projectRepoConflictRecovery = createProjectRepoConflictRecoveryState();
+    showProjectsStatus(render, "Refreshing project list...");
     await loadTeamProjects(render, selectedTeam.id);
-    showNoticeBadge(
-      `Overwrote ${resolvedCount} conflicted project repo${resolvedCount === 1 ? "" : "s"} with the latest data from the server.`,
+    clearProjectsStatus(render);
+    showProjectsNotice(
       render,
+      `Overwrote ${resolvedCount} conflicted project repo${resolvedCount === 1 ? "" : "s"} with the latest data from the server.`,
       3600,
     );
   } catch (error) {
+    clearProjectsStatus(render);
     state.projectRepoConflictRecovery = {
       teamId: selectedTeam.id,
       status: "idle",
@@ -843,6 +877,7 @@ export async function deleteProject(render, projectId) {
     },
   }, {
     applyOptimistic: () => {
+      showProjectsStatus(render, "Deleting project...");
       moveProjectInVisibleState(project, "deleted", {
         lifecycleState: "deleted",
         pendingMutation: "softDelete",
@@ -856,6 +891,12 @@ export async function deleteProject(render, projectId) {
     run: async () => commitProjectMutationStrict(selectedTeam, {
       type: "softDelete",
       projectId: project.id,
+    }, {
+      render,
+      statusLabels: {
+        metadata: "Updating project metadata...",
+        local: "Marking project repo deleted...",
+      },
     }),
     onSuccess: () => {
       moveProjectInVisibleState(project, "deleted", {
@@ -864,14 +905,19 @@ export async function deleteProject(render, projectId) {
         localLifecycleIntent: "softDelete",
       });
       persistProjectsForTeam(selectedTeam);
+      showProjectsStatus(render, "Refreshing project list...");
       void invalidateProjectsQueryAfterMutation(selectedTeam, {
         teamId: selectedTeam.id,
         render,
         reconcileExpandedDeletedFiles,
         refetchIfInactive: false,
+      }).finally(() => {
+        clearProjectsStatus(render);
+        showProjectsNotice(render, "Project deleted.");
       });
     },
     onError: (error) => {
+      clearProjectsStatus(render);
       setProjectDiscoveryState("error", error?.message ?? String(error));
       render();
     },
@@ -922,6 +968,7 @@ export async function restoreProject(render, projectId) {
     },
   }, {
     applyOptimistic: () => {
+      showProjectsStatus(render, "Restoring project...");
       moveProjectInVisibleState(project, "active", {
         lifecycleState: "active",
         pendingMutation: "restore",
@@ -932,6 +979,12 @@ export async function restoreProject(render, projectId) {
     run: async () => commitProjectMutationStrict(selectedTeam, {
       type: "restore",
       projectId: project.id,
+    }, {
+      render,
+      statusLabels: {
+        metadata: "Updating project metadata...",
+        local: "Restoring project repo...",
+      },
     }),
     onSuccess: () => {
       moveProjectInVisibleState(project, "active", {
@@ -940,21 +993,26 @@ export async function restoreProject(render, projectId) {
         localLifecycleIntent: "restore",
       });
       persistProjectsForTeam(selectedTeam);
+      showProjectsStatus(render, "Refreshing project list...");
       void invalidateProjectsQueryAfterMutation(selectedTeam, {
         teamId: selectedTeam.id,
         render,
         reconcileExpandedDeletedFiles,
         refetchIfInactive: false,
+      }).finally(() => {
+        clearProjectsStatus(render);
+        showProjectsNotice(render, "Project restored.");
       });
     },
     onError: (error) => {
+      clearProjectsStatus(render);
       setProjectDiscoveryState("error", error?.message ?? String(error));
       render();
     },
   });
 }
 
-async function commitProjectMutationStrict(selectedTeam, mutation) {
+async function commitProjectMutationStrict(selectedTeam, mutation, options = {}) {
   const project =
     state.projects.find((item) => item.id === mutation.projectId) ??
     state.deletedProjects.find((item) => item.id === mutation.projectId);
@@ -967,10 +1025,18 @@ async function commitProjectMutationStrict(selectedTeam, mutation) {
     mutation,
     resource: project,
     resourceLabel: "project",
-    writeMetadata: (record) => upsertProjectMetadataRecord(selectedTeam, record, { requirePushSuccess: true }),
+    writeMetadata: (record) => {
+      if (options.statusLabels?.metadata) {
+        showProjectsStatus(options.render, options.statusLabels.metadata);
+      }
+      return upsertProjectMetadataRecord(selectedTeam, record, { requirePushSuccess: true });
+    },
     buildRecord: (currentProject, overrides = {}) =>
       projectMetadataRecordFromVisibleProject(currentProject, overrides),
     applyLocalMutation: (currentProject, currentMutation) => {
+      if (options.statusLabels?.local) {
+        showProjectsStatus(options.render, options.statusLabels.local);
+      }
       if (currentMutation.type === "rename") {
         return invoke("rename_gnosis_project_repo", {
           input: {
@@ -1117,7 +1183,7 @@ export async function confirmProjectPermanentDeletion(render) {
     pageState: state.projectsPage,
     syncController: projectPageSyncController,
     setProgress: (text) => setProjectsPageProgress(render, text),
-    clearProgress: clearNoticeBadge,
+    clearProgress: () => clearProjectsStatus(render),
     render,
     progressLabels: {
       submitting: "Deleting project permanently...",
@@ -1129,6 +1195,7 @@ export async function confirmProjectPermanentDeletion(render) {
       render();
     },
     runMutation: async () => {
+      showProjectsStatus(render, "Writing project tombstone...");
       await upsertProjectMetadataRecord(selectedTeam, {
         ...projectMetadataRecordFromVisibleProject(project),
         lifecycleState: "softDeleted",
@@ -1136,6 +1203,7 @@ export async function confirmProjectPermanentDeletion(render) {
         recordState: "tombstone",
         deletedAt: new Date().toISOString(),
       }, { requirePushSuccess: true });
+      showProjectsStatus(render, "Removing local project repo...");
       await invoke("purge_local_gtms_project_repo", {
         input: {
           installationId: selectedTeam.installationId,
@@ -1143,6 +1211,7 @@ export async function confirmProjectPermanentDeletion(render) {
           repoName: project.name,
         },
       });
+      showProjectsStatus(render, "Deleting GitHub project repo...");
       await invoke("permanently_delete_gnosis_project_repo", {
         input: {
           installationId: selectedTeam.installationId,
@@ -1160,8 +1229,10 @@ export async function confirmProjectPermanentDeletion(render) {
       if (state.selectedProjectId === project.id) {
         state.selectedProjectId = null;
       }
+      showProjectsNotice(render, "Project permanently deleted.");
     },
     onError: async (error) => {
+      clearProjectsStatus(render);
       if (await handleSyncFailure(classifySyncError(error), { render })) {
         return;
       }

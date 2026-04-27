@@ -61,11 +61,26 @@ export {
 };
 
 export function setProjectUiDebug(render, text) {
-  showScopedSyncBadge("projects", text, render);
+  showProjectsStatus(render, text);
 }
 
 export function clearProjectUiDebug(render) {
+  clearProjectsStatus(render);
+}
+
+export function showProjectsStatus(render, text) {
+  if (typeof text !== "string" || !text.trim()) {
+    return;
+  }
+  showScopedSyncBadge("projects", text, render);
+}
+
+export function clearProjectsStatus(render) {
   clearScopedSyncBadge("projects", render);
+}
+
+export function showProjectsNotice(render, text, durationMs) {
+  showNoticeBadge(text, render, durationMs);
 }
 
 function setProjectDiscoveryError(render, error) {
@@ -327,7 +342,7 @@ function findProjectForRepoSync(projectId) {
   );
 }
 
-function scheduleProjectRepoSyncAfterLocalWrite(render, selectedTeam, project) {
+function scheduleProjectRepoSyncAfterLocalWrite(render, selectedTeam, project, options = {}) {
   if (
     state.offline?.isEnabled === true
     || !Number.isFinite(selectedTeam?.installationId)
@@ -355,15 +370,23 @@ function scheduleProjectRepoSyncAfterLocalWrite(render, selectedTeam, project) {
         return;
       }
       const latestProject = findProjectForRepoSync(projectId) ?? project;
+      showProjectsStatus(render, options.syncText ?? "Syncing project repo...");
       await reconcileProjectRepoSyncStates(render, selectedTeam, [latestProject], {
         shouldAbort: () => state.selectedTeamId !== teamId,
+        clearStatusOnComplete: false,
       });
       if (state.selectedTeamId !== teamId) {
         return;
       }
+      showProjectsStatus(render, options.refreshText ?? "Refreshing file list...");
       await refreshProjectFilesFromDisk(render, selectedTeam, [latestProject]);
+      clearProjectsStatus(render);
+      if (options.successNotice) {
+        showProjectsNotice(render, options.successNotice);
+      }
     },
     onError: (error) => {
+      clearProjectsStatus(render);
       showNoticeBadge(
         `Could not sync project repo: ${error?.message ?? String(error)}`,
         render,
@@ -615,6 +638,8 @@ function startOptimisticChapterMutation({
   markSettledLocalIntent,
   rollback,
   runRemote,
+  refreshText,
+  successNotice,
   showFailureNotice = true,
 }) {
   const snapshot = cloneProjectCollections();
@@ -631,25 +656,31 @@ function startOptimisticChapterMutation({
   render();
 
   if (optimisticDebugText) {
-    setProjectUiDebug(render, optimisticDebugText);
+    showProjectsStatus(render, optimisticDebugText);
   }
 
   void waitForNextPaint().then(async () => {
     try {
       if (remoteDebugText) {
-        setProjectUiDebug(render, remoteDebugText);
+        showProjectsStatus(render, remoteDebugText);
       }
       const payload = await runRemote();
       markSettledLocalIntent?.(payload);
       persistProjectsForTeam(selectedTeam);
       completeChapterMutation(selectedTeam, mutation.id);
       await beforeReconcile?.(payload);
-      await reconcileProjectRepoSyncStates(render, selectedTeam, [context.project]);
+      await reconcileProjectRepoSyncStates(render, selectedTeam, [context.project], {
+        clearStatusOnComplete: false,
+      });
+      showProjectsStatus(render, refreshText ?? "Refreshing file list...");
       await refreshProjectFilesFromDisk(render, selectedTeam, [context.project]);
-      clearProjectUiDebug(render);
+      clearProjectsStatus(render);
       state.projectsPage.writeState = "idle";
       if (!refreshWasActive) {
         await completeProjectsPageSync(render);
+      }
+      if (successNotice) {
+        showProjectsNotice(render, successNotice);
       }
       render();
     } catch (error) {
@@ -657,7 +688,7 @@ function startOptimisticChapterMutation({
       restoreProjectCollections(snapshot);
       await rollback?.(error);
       persistProjectsForTeam(selectedTeam);
-      clearProjectUiDebug(render);
+      clearProjectsStatus(render);
       state.projectsPage.writeState = "idle";
       if (!refreshWasActive) {
         failProjectsPageSync();
@@ -954,6 +985,7 @@ export async function submitChapterRename(render) {
     },
   }, {
     applyOptimistic: (intent) => {
+      showProjectsStatus(render, "Renaming file...");
       updateChapterInState(context.chapter.id, (chapter) => ({
         ...chapter,
         name: intent.value.title,
@@ -991,7 +1023,11 @@ export async function submitChapterRename(render) {
         };
       }
       persistProjectsForTeam(selectedTeam);
-      scheduleProjectRepoSyncAfterLocalWrite(render, selectedTeam, context.project);
+      scheduleProjectRepoSyncAfterLocalWrite(render, selectedTeam, context.project, {
+        syncText: "Syncing project repo...",
+        refreshText: "Refreshing file list...",
+        successNotice: "File renamed.",
+      });
     },
     onError: (error) => {
       state.chapterRename = {
@@ -1038,6 +1074,7 @@ async function persistChapterGlossaryLinks(render, chapterId, nextGlossary) {
     },
   }, {
     applyOptimistic: (intent) => {
+      showProjectsStatus(render, "Updating file glossary...");
       updateChapterInState(chapterId, (chapter) => ({
         ...chapter,
         linkedGlossary: intent.value.glossary,
@@ -1062,9 +1099,14 @@ async function persistChapterGlossaryLinks(render, chapterId, nextGlossary) {
         pendingGlossaryMutation: false,
       }));
       persistProjectsForTeam(selectedTeam);
-      scheduleProjectRepoSyncAfterLocalWrite(render, selectedTeam, context.project);
+      scheduleProjectRepoSyncAfterLocalWrite(render, selectedTeam, context.project, {
+        syncText: "Syncing project repo...",
+        refreshText: "Refreshing file list...",
+        successNotice: "Glossary updated.",
+      });
     },
     onError: (error, intent) => {
+      clearProjectsStatus(render);
       updateChapterInState(chapterId, (chapter) => ({
         ...chapter,
         pendingGlossaryMutation: false,
@@ -1113,7 +1155,7 @@ async function submitSimpleChapterMutation(render, chapterId, options) {
     mutation,
     applyOptimistic: () => options.applyOptimistic(mutation),
     optimisticDebugText: options.optimisticDebugText,
-    remoteDebugText: options.remoteDebugText ?? "Background sync started",
+    remoteDebugText: options.remoteDebugText ?? "Syncing project repo...",
     markSettledLocalIntent: options.markSettledLocalIntent
       ? () => options.markSettledLocalIntent(mutation)
       : undefined,
@@ -1157,7 +1199,7 @@ async function submitCoordinatedChapterLifecycleMutation(render, chapterId, opti
     },
   }, {
     applyOptimistic: (intent) => {
-      setProjectUiDebug(render, options.debugText);
+      showProjectsStatus(render, options.statusText);
       updateChapterInState(chapterId, (chapter) => ({
         ...chapter,
         status: intent.value.status,
@@ -1184,9 +1226,14 @@ async function submitCoordinatedChapterLifecycleMutation(render, chapterId, opti
       }));
       reconcileExpandedDeletedFiles();
       persistProjectsForTeam(selectedTeam);
-      scheduleProjectRepoSyncAfterLocalWrite(render, selectedTeam, context.project);
+      scheduleProjectRepoSyncAfterLocalWrite(render, selectedTeam, context.project, {
+        syncText: "Syncing project repo...",
+        refreshText: "Refreshing file list...",
+        successNotice: options.successNotice,
+      });
     },
     onError: (error) => {
+      clearProjectsStatus(render);
       setProjectDiscoveryError(render, error?.message ?? String(error));
     },
   });
@@ -1196,7 +1243,8 @@ export async function deleteChapter(render, chapterId) {
   await submitCoordinatedChapterLifecycleMutation(render, chapterId, {
     actionLabel: "delete files",
     status: "deleted",
-    debugText: "Delete clicked",
+    statusText: "Deleting file...",
+    successNotice: "File deleted.",
     command: "soft_delete_gtms_chapter",
   });
 }
@@ -1206,7 +1254,8 @@ export async function restoreChapter(render, chapterId) {
     missingMessage: "Could not find the selected deleted file.",
     actionLabel: "restore files",
     status: "active",
-    debugText: "Restore clicked",
+    statusText: "Restoring file...",
+    successNotice: "File restored.",
     command: "restore_gtms_chapter",
   });
 }
@@ -1223,14 +1272,17 @@ export async function permanentlyDeleteChapter(render, chapterId) {
       chapterId,
     }),
     applyOptimistic: (mutation) => {
-      setProjectUiDebug(render, "Permanent delete clicked");
+      showProjectsStatus(render, "Deleting file permanently...");
       const nextSnapshot = applyChapterPendingMutation(
         { items: state.projects, deletedItems: state.deletedProjects },
         mutation,
       );
       applyProjectSnapshotToState(nextSnapshot, { reconcileExpandedDeletedFiles });
     },
-    optimisticDebugText: "Optimistic permanent delete applied",
+    optimisticDebugText: "Deleting file permanently...",
+    remoteDebugText: "Syncing project repo...",
+    refreshText: "Refreshing file list...",
+    successNotice: "File permanently deleted.",
     command: "permanently_delete_gtms_chapter",
   });
 }

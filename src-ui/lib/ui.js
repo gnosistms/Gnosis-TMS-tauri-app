@@ -356,6 +356,20 @@ function renderStatusBadge(text) {
   `;
 }
 
+function renderStatusSurfaceItem(item) {
+  if (!item?.text) {
+    return "";
+  }
+
+  const kind = item.kind === "notice" ? "notice" : "sync";
+  return `
+    <div class="team-ui-debug__item team-ui-debug__item--${kind}">
+      <span class="team-ui-debug__dot" aria-hidden="true"></span>
+      <span>${escapeHtml(item.text)}</span>
+    </div>
+  `;
+}
+
 function renderFloatingSyncBadge(pageSync = { status: "idle" }, syncBadgeText = "") {
   const text =
     syncBadgeText ||
@@ -368,7 +382,18 @@ function renderFloatingSyncBadge(pageSync = { status: "idle" }, syncBadgeText = 
   return renderStatusBadge(text);
 }
 
-function renderFloatingBadge({ pageSync, syncBadgeText, noticeText }) {
+function renderFloatingStatusSurface({ pageSync, syncBadgeText, noticeText, statusItems }) {
+  if (Array.isArray(statusItems) && statusItems.length > 0) {
+    const itemsMarkup = statusItems.map(renderStatusSurfaceItem).join("");
+    if (itemsMarkup) {
+      return `
+        <div class="team-ui-debug team-ui-debug--stack" aria-live="polite">
+          ${itemsMarkup}
+        </div>
+      `;
+    }
+  }
+
   if (noticeText) {
     return renderStatusBadge(noticeText);
   }
@@ -391,6 +416,7 @@ export function pageShell({
   pageSync = { status: "idle" },
   syncBadgeText = "",
   noticeText = "",
+  statusItems = null,
   offlineMode = false,
   offlineReconnectState = false,
 }) {
@@ -428,7 +454,7 @@ export function pageShell({
         ${headerBody ? `<div class="page-header__detail">${headerBody}</div>` : ""}
       </header>
       <main class="page-body${bodyClass ? ` ${escapeHtml(bodyClass)}` : ""}">${body}</main>
-      ${renderFloatingBadge({ pageSync, syncBadgeText, noticeText })}
+      ${renderFloatingStatusSurface({ pageSync, syncBadgeText, noticeText, statusItems })}
     </div>
   `;
 }

@@ -25,6 +25,7 @@ import { renderProjectRenameModal } from "./project-rename-modal.js";
 import {
   getNoticeBadgeText,
   getScopedSyncBadgeText,
+  getStatusSurfaceItems,
 } from "../app/status-feedback.js";
 import { resolveChapterSourceWordCount } from "../app/translate-flow.js";
 import { deriveProjectResolution } from "../app/resource-resolution.js";
@@ -631,6 +632,7 @@ export function renderProjectsScreen(state) {
       pageSync: state.projectsPageSync,
       syncBadgeText: projectsSyncBadgeText,
       noticeText: getNoticeBadgeText(),
+      statusItems: getStatusSurfaceItems("projects"),
       offlineMode,
       offlineReconnectState: state.offline?.reconnecting === true,
       body,

@@ -168,6 +168,7 @@ export async function submitResourcePageWrite(options) {
   pageState.writeState = "submitting";
   pageState.error = "";
   syncController?.begin?.();
+  options?.onMutationStarted?.();
   if (submittingProgressText) {
     setProgress?.(submittingProgressText);
   }
@@ -175,7 +176,9 @@ export async function submitResourcePageWrite(options) {
 
   try {
     const mutationResult = await runMutation();
+    await options?.onMutationFinished?.(mutationResult);
     pageState.writeState = "refreshingAfterWrite";
+    options?.onRefreshStarted?.(mutationResult);
     if (refreshingProgressText) {
       setProgress?.(refreshingProgressText);
     }
@@ -200,6 +203,7 @@ export async function submitResourcePageWrite(options) {
 
     pageState.writeState = "idle";
     await syncController?.complete?.(render);
+    await options?.onRefreshFinished?.(mutationResult);
     clearProgress?.();
     await options?.onSuccess?.(mutationResult);
     render?.();

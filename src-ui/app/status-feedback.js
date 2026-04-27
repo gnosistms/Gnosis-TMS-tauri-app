@@ -11,6 +11,42 @@ export function getScopedSyncBadgeText(scope) {
   return right.visible && right.scope === scope ? right.text : "";
 }
 
+export function getNoticeBadgeItem() {
+  const text = getNoticeBadgeText();
+  return text
+    ? {
+      id: "notice",
+      kind: "notice",
+      text,
+      scope: null,
+    }
+    : null;
+}
+
+export function getScopedSyncBadgeItem(scope = null) {
+  const right = state.statusBadges.right;
+  if (!right.visible || !right.text) {
+    return null;
+  }
+  if (scope !== null && right.scope !== scope) {
+    return null;
+  }
+
+  return {
+    id: right.scope ? `${right.scope}-sync` : "sync",
+    kind: "sync",
+    text: right.text,
+    scope: right.scope ?? null,
+  };
+}
+
+export function getStatusSurfaceItems(scope = null) {
+  return [
+    getScopedSyncBadgeItem(scope),
+    getNoticeBadgeItem(),
+  ].filter(Boolean);
+}
+
 export function showNoticeBadge(text, render, durationMs = 1800) {
   clearNoticeBadge();
   state.statusBadges.left = {

@@ -43,7 +43,7 @@ const {
   PROJECT_IMPORT_ACCEPT,
   selectProjectImportSourceLanguage,
 } = await import("./project-import-flow.js");
-const { createProjectImportState, state } = await import("./state.js");
+const { createProjectImportState, createStatusBadgesState, state } = await import("./state.js");
 
 function resetProjectImportTestState() {
   state.projectImport = createProjectImportState();
@@ -59,6 +59,7 @@ function resetProjectImportTestState() {
   };
   state.projectRepoSyncByProjectId = {};
   state.pendingChapterMutations = [];
+  state.statusBadges = createStatusBadgesState();
   invokeHandler = async () => null;
   globalThis.document.testScrollList = null;
 }
@@ -234,8 +235,14 @@ test("batch project import imports valid XLSX files and refreshes once", async (
     projectTitle: "Project",
   };
   const calls = installBatchImportInvokeHandler();
+  const statusTexts = [];
 
-  await importProjectFiles(() => {}, [
+  await importProjectFiles(() => {
+    const text = state.statusBadges.right.visible ? state.statusBadges.right.text : "";
+    if (text) {
+      statusTexts.push(text);
+    }
+  }, [
     importFile("one.xlsx"),
     importFile("two.xlsx"),
   ]);
@@ -249,6 +256,11 @@ test("batch project import imports valid XLSX files and refreshes once", async (
   assert.equal(calls.filter((call) => call.command === "list_local_gtms_project_files").length, 1);
   assert.equal(state.projectImport.failedFileNames.length, 0);
   assert.equal(state.projectImport.isOpen, false);
+  assert.ok(statusTexts.includes("Importing files..."));
+  assert.ok(statusTexts.includes("Importing 1 of 2..."));
+  assert.ok(statusTexts.includes("Importing 2 of 2..."));
+  assert.ok(statusTexts.includes("Syncing project repo..."));
+  assert.ok(statusTexts.includes("Refreshing file list..."));
 });
 
 test("batch project import continues after unsupported and failed files", async () => {

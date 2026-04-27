@@ -128,6 +128,7 @@ function openRequiredAppUpdatePromptFromProjectSnapshots(snapshots, render) {
 
 export async function reconcileProjectRepoSyncStates(render, team, projects, options = {}) {
   const shouldAbort = typeof options.shouldAbort === "function" ? options.shouldAbort : null;
+  const clearStatusOnComplete = options.clearStatusOnComplete !== false;
 
   if (shouldAbort?.()) {
     return [];
@@ -140,7 +141,9 @@ export async function reconcileProjectRepoSyncStates(render, team, projects, opt
     projects.length === 0
   ) {
     state.projectRepoSyncByProjectId = {};
-    clearScopedSyncBadge("projects", render);
+    if (clearStatusOnComplete) {
+      clearScopedSyncBadge("projects", render);
+    }
     render();
     return;
   }
@@ -148,7 +151,9 @@ export async function reconcileProjectRepoSyncStates(render, team, projects, opt
   const input = buildProjectRepoSyncInput(team, projects);
   if (input.projects.length === 0) {
     state.projectRepoSyncByProjectId = {};
-    clearScopedSyncBadge("projects", render);
+    if (clearStatusOnComplete) {
+      clearScopedSyncBadge("projects", render);
+    }
     render();
     return;
   }
@@ -185,7 +190,9 @@ export async function reconcileProjectRepoSyncStates(render, team, projects, opt
   if (shouldAbort?.()) {
     return Array.isArray(snapshots) ? snapshots : [];
   }
-  clearScopedSyncBadge("projects", render);
+  if (clearStatusOnComplete) {
+    clearScopedSyncBadge("projects", render);
+  }
   openRequiredAppUpdatePromptFromProjectSnapshots(snapshots, render);
   const issueText = issueNoticeText(snapshots);
   if (issueText) {
