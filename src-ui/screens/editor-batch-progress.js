@@ -23,6 +23,7 @@ export function renderBatchLanguageProgressBars({
   languageProgress,
   emptyMessage,
   progressLabel,
+  renderLanguageLabel = null,
 }) {
   const selected = new Set(Array.isArray(selectedLanguageCodes) ? selectedLanguageCodes : []);
   const selectedLanguages = (Array.isArray(languages) ? languages : []).filter((language) =>
@@ -37,11 +38,14 @@ export function renderBatchLanguageProgressBars({
       ${selectedLanguages.map((language) => {
         const code = String(language?.code ?? "").trim();
         const name = String(language?.name ?? "").trim() || code;
+        const labelMarkup = typeof renderLanguageLabel === "function"
+          ? renderLanguageLabel(language)
+          : `<span>${escapeHtml(name)}</span>`;
         const progress = normalizedBatchProgressEntry(languageProgress, code);
         return `
           <div class="ai-translate-all-modal__progress-row">
             <div class="ai-translate-all-modal__progress-label">
-              <span>${escapeHtml(name)}</span>
+              ${labelMarkup}
               <span>${escapeHtml(String(progress.completedCount))} / ${escapeHtml(String(progress.totalCount))}</span>
             </div>
             <div

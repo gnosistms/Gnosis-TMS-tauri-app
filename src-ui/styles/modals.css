@@ -1101,11 +1101,17 @@
 .ai-translate-all-modal__progress-label {
   display: flex;
   justify-content: space-between;
+  align-items: center;
   gap: 16px;
   color: var(--muted);
   font-size: 0.9rem;
   font-weight: 600;
   line-height: 1.35;
+}
+
+.ai-translate-all-modal__language-flow {
+  min-width: 0;
+  gap: 8px;
 }
 
 .ai-translate-all-modal__progress-track {

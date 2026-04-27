@@ -1,4 +1,9 @@
-import { escapeHtml, loadingPrimaryButton, secondaryButton } from "../lib/ui.js";
+import {
+  escapeHtml,
+  loadingPrimaryButton,
+  renderFlowArrowIcon,
+  secondaryButton,
+} from "../lib/ui.js";
 import { formatErrorForDisplay } from "../app/error-display.js";
 import { resolveEditorDeriveGlossariesConfig } from "../app/editor-derive-glossaries-flow.js";
 import {
@@ -27,6 +32,16 @@ function renderLanguagePairs(config) {
         <li>${escapeHtml(languageName(language))} to ${escapeHtml(targetName)}</li>
       `).join("")}
     </ul>
+  `;
+}
+
+function renderDeriveGlossaryProgressLabel(sourceLanguage, targetLanguage) {
+  return `
+    <span class="glossary-card__language-flow ai-translate-all-modal__language-flow">
+      <span>${escapeHtml(languageName(sourceLanguage))}</span>
+      ${renderFlowArrowIcon("glossary-card__language-arrow")}
+      <span>${escapeHtml(languageName(targetLanguage))}</span>
+    </span>
   `;
 }
 
@@ -73,6 +88,8 @@ export function renderEditorDeriveGlossariesModal(state) {
         languageProgress: modal.languageProgress,
         emptyMessage: "There are no selected languages to derive.",
         progressLabel: "glossary derivation progress",
+        renderLanguageLabel: (language) =>
+          renderDeriveGlossaryProgressLabel(language, config.glossaryTargetLanguage),
       })}
     `
     : offlineMode
