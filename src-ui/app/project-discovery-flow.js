@@ -440,8 +440,8 @@ export async function loadTeamProjects(render, teamId = state.selectedTeamId, op
   if (await abortProjectDiscoveryIfStale(render, selectedTeam.id, requestId, syncVersionAtStart)) {
     return;
   }
-  options.setProjectUiDebug(render, "Refreshing projects...");
-  showNoticeBadge("Loading projects from GitHub...", render, null);
+  clearNoticeBadge();
+  options.setProjectUiDebug(render, "Loading projects from GitHub...");
   beginProjectsPageSync();
   render();
 
@@ -552,7 +552,7 @@ export async function loadTeamProjects(render, teamId = state.selectedTeamId, op
       mergedProjects.length > 0 || metadataLoaded || remoteLoaded
         ? mergedProjects
         : [...optimisticSnapshot.items, ...optimisticSnapshot.deletedItems];
-    showNoticeBadge("Refreshing local project data...", render, null);
+    options.setProjectUiDebug(render, "Refreshing local project data...");
     const mappedProjects = nextVisibleProjects.map((project) => ({
       ...project,
       chapters: Array.isArray(project.chapters) ? project.chapters : [],
@@ -618,7 +618,7 @@ export async function loadTeamProjects(render, teamId = state.selectedTeamId, op
     ) {
       return;
     }
-    showNoticeBadge("Rebuilding local project repo state...", render, null);
+    options.setProjectUiDebug(render, "Rebuilding local project repo state...");
     await reconcileProjectRepoSyncStates(render, selectedTeam, mappedProjects, {
       shouldAbort: () => !isProjectDiscoveryCurrent(selectedTeam.id, requestId, syncVersionAtStart),
     });

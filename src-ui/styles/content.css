@@ -801,10 +801,6 @@
   line-height: 1.3;
 }
 
-.team-ui-debug__item--notice {
-  color: var(--text);
-}
-
 .team-ui-debug__content {
   display: inline-flex;
   align-items: center;
