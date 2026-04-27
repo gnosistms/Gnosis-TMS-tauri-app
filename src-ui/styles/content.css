@@ -5,6 +5,8 @@
   margin: 0;
   overflow: auto;
   overscroll-behavior: none;
+  background: var(--app-background);
+  background-image: none;
   padding: 0 0 44px;
 }
 
@@ -153,15 +155,11 @@
 
 .stack {
   display: grid;
-  gap: 24px;
+  gap: 16px;
 }
 
 .stack--deleted-projects {
   margin-top: 4px;
-}
-
-.project-card-stack {
-  gap: 14.4px;
 }
 
 .list-row {

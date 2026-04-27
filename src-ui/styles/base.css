@@ -13,6 +13,7 @@
   --font-serif-fa: "Noto Naskh Arabic Variable", "Noto Sans Arabic Variable", serif;
   --font-serif-ko: "Noto Serif KR Variable", "Batang", "AppleMyungjo", serif;
   --editor-non-latin-serif-weight: 550;
+  --app-background: #f6e3ba;
   --bg-top: #f7ecd5;
   --bg-bottom: #f3e2bf;
   --hero-glow: rgba(241, 191, 83, 0.76);
@@ -67,12 +68,15 @@ body {
   margin: 0;
   min-height: 100%;
   font-family: var(--font-sans);
+  background: var(--app-background);
+  background-image: none;
 }
 
 body {
   min-height: 100vh;
   color: var(--text);
-  background: #f6e3ba;
+  background: var(--app-background);
+  background-image: none;
 }
 
 button,
@@ -124,10 +128,14 @@ a {
 
 #app {
   min-height: 100vh;
+  background: var(--app-background);
+  background-image: none;
 }
 
 .screen {
   min-height: 100vh;
+  background: var(--app-background);
+  background-image: none;
 }
 
 .screen--start {
