@@ -276,6 +276,29 @@ test.afterEach(async () => {
   resetSessionState();
 });
 
+test("editor background sync stays local-only while offline", async () => {
+  installEditorFixture();
+  state.offline = {
+    ...state.offline,
+    isEnabled: true,
+  };
+
+  invokeHandler = async (command) => {
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  const render = createRenderRecorder();
+  startEditorBackgroundSyncSession(render);
+  await Promise.resolve();
+
+  const syncPayload = await syncEditorBackgroundNow(render, { skipDirtyFlush: true });
+
+  assert.equal(syncPayload, null);
+  assert.deepEqual(invokeLog, []);
+  assert.equal(scheduledIntervals.size, 0);
+  assert.equal(state.connectionFailure.isOpen, false);
+});
+
 test("syncEditorBackgroundNow reruns after an older in-flight sync when a new local commit needs confirmation", async () => {
   installEditorFixture();
 

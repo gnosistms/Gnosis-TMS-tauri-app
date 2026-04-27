@@ -496,6 +496,10 @@ async function runEditorBackgroundSync(render, options = {}) {
     return createBackgroundSyncResult();
   }
 
+  if (state.offline?.isEnabled === true) {
+    return createBackgroundSyncResult();
+  }
+
   const input = activeEditorSyncInput();
   if (!input) {
     return createBackgroundSyncResult();
@@ -657,6 +661,10 @@ export async function maybeStartEditorBackgroundSync(render, options = {}) {
     return false;
   }
 
+  if (state.offline?.isEnabled === true) {
+    return options.returnSummary === true ? createBackgroundSyncResult() : false;
+  }
+
   if (editorBackgroundSyncSession.pendingSync) {
     const pendingResult = await editorBackgroundSyncSession.pendingSync;
     return options.returnSummary === true ? pendingResult : pendingResult.payload;
@@ -680,6 +688,10 @@ export async function maybeStartEditorBackgroundSync(render, options = {}) {
 
 async function syncEditorBackgroundNowInternal(render, options = {}) {
   if (!sessionMatchesCurrentEditor()) {
+    return createBackgroundSyncResult();
+  }
+
+  if (state.offline?.isEnabled === true) {
     return createBackgroundSyncResult();
   }
 
@@ -740,6 +752,15 @@ export function noteEditorBackgroundSyncScrollActivity() {
 }
 
 export function startEditorBackgroundSyncSession(render, options = {}) {
+  if (state.offline?.isEnabled === true) {
+    clearBackgroundSyncInterval();
+    editorBackgroundSyncSession.key = "";
+    editorBackgroundSyncSession.lastScrollAt = 0;
+    editorBackgroundSyncSession.pendingSync = null;
+    editorBackgroundSyncSession.lastSyncedHeadSha = null;
+    return;
+  }
+
   const key = currentSessionKey();
   const currentHeadSha =
     typeof state.editorChapter?.chapterBaseCommitSha === "string" && state.editorChapter.chapterBaseCommitSha.trim()

@@ -72,10 +72,7 @@ body {
 body {
   min-height: 100vh;
   color: var(--text);
-  background-image:
-    radial-gradient(circle at top left, var(--hero-glow), transparent 118%),
-    linear-gradient(180deg, var(--bg-top) 0%, var(--bg-bottom) 1120px);
-  background-repeat: no-repeat;
+  background: #f6e3ba;
 }
 
 button,
@@ -155,8 +152,10 @@ a {
 }
 
 .offline-banner {
+  grid-column: 1 / -1;
+  justify-self: center;
   width: min(var(--page-width), 100%);
-  margin: 18px auto 14px;
+  margin: 0 auto;
   min-height: 42px;
   display: flex;
   align-items: center;
@@ -179,7 +178,8 @@ a {
   display: grid;
   grid-template-columns: minmax(340px, 1fr) auto minmax(340px, 1fr);
   align-items: start;
-  gap: 24px;
+  column-gap: 24px;
+  row-gap: 14px;
   position: relative;
   padding: 18px 30px 20px;
   border-bottom: 1px solid rgba(164, 112, 41, 0.12);

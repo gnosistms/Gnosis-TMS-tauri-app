@@ -17,6 +17,10 @@ export async function handleSyncFailure(
   }
 
   if (classification?.type === "connection_unavailable") {
+    if (state.offline?.isEnabled === true) {
+      return true;
+    }
+
     const hasConnection = await checkInternetConnection();
     state.offline.checked = true;
     state.offline.hasConnection = hasConnection;

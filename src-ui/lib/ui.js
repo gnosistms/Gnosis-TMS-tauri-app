@@ -420,25 +420,25 @@ export function pageShell({
   offlineMode = false,
   offlineReconnectState = false,
 }) {
+  const offlineBanner = offlineMode
+    ? `
+        <div class="offline-banner" aria-live="polite">
+          <span>Offline mode</span>
+          <button class="button button--secondary button--compact${offlineReconnectState ? " is-disabled" : ""}" data-action="reconnect-online"${offlineReconnectState ? ' aria-disabled="true"' : ""}>
+            ${
+              offlineReconnectState
+                ? '<span class="button__spinner" aria-hidden="true"></span><span>Reconnect</span>'
+                : "<span>Reconnect</span>"
+            }
+          </button>
+        </div>
+      `
+    : "";
+
   return `
     <div class="screen screen--page">
-      ${
-        offlineMode
-          ? `
-            <div class="offline-banner" aria-live="polite">
-              <span>Offline mode</span>
-              <button class="button button--secondary button--compact${offlineReconnectState ? " is-disabled" : ""}" data-action="reconnect-online"${offlineReconnectState ? ' aria-disabled="true"' : ""}>
-                ${
-                  offlineReconnectState
-                    ? '<span class="button__spinner" aria-hidden="true"></span><span>Reconnect</span>'
-                    : "<span>Reconnect</span>"
-                }
-              </button>
-            </div>
-          `
-          : ""
-      }
       <header class="page-header${headerClass ? ` ${escapeHtml(headerClass)}` : ""}">
+        ${offlineBanner}
         <div class="page-header__left">
           <div class="page-header__nav">${navButtons.join("")}</div>
           ${leftTools ? `<div class="page-header__left-tools">${leftTools}</div>` : ""}

@@ -101,6 +101,21 @@ test.afterEach(() => {
   resetSessionState();
 });
 
+test("offline banner renders inside the page header", () => {
+  const html = renderProjectsScreen(projectsState({
+    offline: {
+      isEnabled: true,
+    },
+  }));
+  const headerStart = html.indexOf('<header class="page-header');
+  const bannerStart = html.indexOf('<div class="offline-banner"');
+  const headerEnd = html.indexOf("</header>", headerStart);
+
+  assert.ok(headerStart >= 0);
+  assert.ok(bannerStart > headerStart);
+  assert.ok(bannerStart < headerEnd);
+});
+
 test("project background refresh spins and disables the refresh button", () => {
   const html = renderProjectsScreen(projectsState({
     projectsPage: {
