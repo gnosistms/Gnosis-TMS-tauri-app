@@ -33,7 +33,7 @@
         "backgroundThrottling": "disabled",
         "dragDropEnabled": true,
         "resizable": true,
-        "backgroundColor": "#F6E3BA",
+        "backgroundColor": "#FBF2E2",
         "titleBarStyle": "Transparent"
       }
     ]

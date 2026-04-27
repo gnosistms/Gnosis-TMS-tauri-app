@@ -13,7 +13,7 @@
   --font-serif-fa: "Noto Naskh Arabic Variable", "Noto Sans Arabic Variable", serif;
   --font-serif-ko: "Noto Serif KR Variable", "Batang", "AppleMyungjo", serif;
   --editor-non-latin-serif-weight: 550;
-  --app-background: #f6e3ba;
+  --app-background: #f9e5b8; /* #f6e3ba; */ 
   --bg-top: #f7ecd5;
   --bg-bottom: #f3e2bf;
   --hero-glow: rgba(241, 191, 83, 0.76);
@@ -21,7 +21,7 @@
   --surface-strong: #fffaf4;
   --surface-rgb-strong: 255, 248, 237;
   --surface-border: rgba(164, 112, 41, 0.16);
-  --surface-shadow: 0 18px 40px rgba(131, 82, 22, 0.14);
+  --surface-shadow: 0 9px 20px rgba(131, 82, 22, 0.07);
   --panel-surface:
     linear-gradient(180deg, rgba(255, 250, 244, 0.68) 0%, rgba(255, 246, 232, 0.27) 100%),
     rgba(255, 251, 246, 0.36);
@@ -49,7 +49,7 @@
   --danger: #d6563c;
   --danger-strong: #bf3f26;
   --danger-text: #fff7f2;
-  --radius-ui: 18px;
+  --radius-ui: 12px;
   --radius-card: var(--radius-ui);
   --radius-control: var(--radius-ui);
   --header-text-inset: 32px;
