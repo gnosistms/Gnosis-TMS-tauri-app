@@ -29,7 +29,10 @@ import {
   areResourcePageWriteSubmissionsDisabled,
 } from "../app/resource-page-controller.js";
 import { deriveGlossaryResolution } from "../app/resource-resolution.js";
-import { anyGlossaryMutatingWriteIsActive } from "../app/glossary-write-coordinator.js";
+import {
+  anyGlossaryMutatingWriteIsActive,
+  anyGlossaryWriteIsActive,
+} from "../app/glossary-write-coordinator.js";
 
 function renderGlossaryLanguageFlow(glossary) {
   return `
@@ -157,6 +160,7 @@ export function renderGlossariesScreen(state) {
   const canManageAiSettings = canManageTeamAiSettings(selectedTeam);
   const offlineMode = state.offline?.isEnabled === true;
   const lifecycleActionsDisabled = areResourcePageWriteSubmissionsDisabled(state.glossariesPage);
+  const coordinatorWriteActive = anyGlossaryWriteIsActive();
   const writeActionsDisabled =
     areResourcePageWritesDisabled(state.glossariesPage) || anyGlossaryMutatingWriteIsActive();
   const discovery = state.glossaryDiscovery ?? { status: "idle", error: "", brokerWarning: "" };
@@ -240,7 +244,7 @@ export function renderGlossariesScreen(state) {
       title: "Glossaries",
       subtitle: selectedTeam?.name ?? "Team",
       titleAction: buildPageRefreshAction(state, state.pageSync, "refresh-page", {
-        backgroundRefreshing: state.glossariesPage?.isRefreshing === true,
+        backgroundRefreshing: state.glossariesPage?.isRefreshing === true || coordinatorWriteActive,
       }),
       navButtons: buildSectionNav("glossaries", { includeAiSettings: canManageAiSettings }),
       tools: canCreate

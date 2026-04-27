@@ -160,4 +160,6 @@ test("coordinator writes keep lifecycle actions enabled while heavy actions stay
   assert.doesNotMatch(actionButtonHtml(html, "delete-glossary:glossary-1"), /disabled/);
   assert.match(actionButtonHtml(html, "import-glossary"), /disabled/);
   assert.match(actionButtonHtml(html, "open-new-glossary"), /disabled/);
+  assert.match(actionButtonHtml(html, "refresh-page"), /\bis-spinning\b/);
+  assert.match(actionButtonHtml(html, "refresh-page"), /aria-disabled="true"/);
 });
