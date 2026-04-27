@@ -262,6 +262,7 @@ pub(super) fn editor_row_from_stored_row_file(
         lifecycle_state: row.lifecycle.state,
         order_key: row.structure.order_key,
         text_style,
+        last_update: None,
         fields,
         footnotes,
         image_captions,
@@ -281,6 +282,34 @@ pub(super) fn editor_row_from_stored_row_file(
             .collect(),
         imported_conflict: None,
     })
+}
+
+pub(super) fn attach_latest_row_update_metadata(
+    repo_path: &Path,
+    chapter_path: &Path,
+    row: &mut EditorRow,
+) -> Result<(), String> {
+    let row_json_path = chapter_path
+        .join("rows")
+        .join(format!("{}.json", row.row_id));
+    if !row_json_path.exists() {
+        row.last_update = None;
+        return Ok(());
+    }
+
+    let relative_row_json = repo_relative_path(repo_path, &row_json_path)?;
+    row.last_update = load_latest_row_version_metadata(repo_path, &relative_row_json)?;
+    Ok(())
+}
+
+pub(super) fn editor_row_from_stored_row_file_with_update(
+    repo_path: &Path,
+    chapter_path: &Path,
+    row: StoredRowFile,
+) -> Result<EditorRow, String> {
+    let mut editor_row = editor_row_from_stored_row_file(repo_path, row)?;
+    attach_latest_row_update_metadata(repo_path, chapter_path, &mut editor_row)?;
+    Ok(editor_row)
 }
 
 pub(super) fn row_plain_text_map(row: &StoredRowFile) -> BTreeMap<String, String> {

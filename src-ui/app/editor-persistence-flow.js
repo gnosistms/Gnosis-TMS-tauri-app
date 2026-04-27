@@ -503,7 +503,7 @@ export async function updateEditorRowTextStyle(render, rowId, nextTextStyle, ope
     if (state.editorChapter?.chapterId === editorChapter.chapterId) {
       updateEditorChapterRow(
         rowId,
-        (currentRow) => applyEditorRowTextStyleSaved(currentRow, payload?.textStyle),
+        (currentRow) => applyEditorRowTextStyleSaved(currentRow, payload),
       );
       state.editorChapter = {
         ...state.editorChapter,

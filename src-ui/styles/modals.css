@@ -20,7 +20,7 @@
   overflow: auto;
   background:
     linear-gradient(180deg, rgba(255, 250, 244, 0.68) 0%, rgba(255, 246, 232, 0.53) 100%),
-    rgba(255, 251, 246, 0.36);
+    rgba(255, 251, 246, 0.66);
 }
 
 .modal-card--compact {

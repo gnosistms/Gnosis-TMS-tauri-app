@@ -46,8 +46,9 @@ pub(crate) fn save_gtms_editor_language_image_url_sync(
             row_id: input.row_id,
             language_code: input.language_code,
             status: "deleted".to_string(),
-            row: Some(editor_row_from_stored_row_file(
+            row: Some(editor_row_from_stored_row_file_with_update(
                 &repo_path,
+                &chapter_path,
                 original_row_file,
             )?),
             chapter_base_commit_sha: current_repo_head_sha(&repo_path),
@@ -61,8 +62,9 @@ pub(crate) fn save_gtms_editor_language_image_url_sync(
             row_id: input.row_id,
             language_code: input.language_code,
             status: "conflict".to_string(),
-            row: Some(editor_row_from_stored_row_file(
+            row: Some(editor_row_from_stored_row_file_with_update(
                 &repo_path,
+                &chapter_path,
                 original_row_file,
             )?),
             chapter_base_commit_sha: current_repo_head_sha(&repo_path),
@@ -150,7 +152,7 @@ pub(crate) fn save_gtms_editor_language_image_url_sync(
         row_id: input.row_id,
         language_code: input.language_code,
         status: "saved".to_string(),
-        row: Some(editor_row_from_stored_row_file(&repo_path, next_row)?),
+        row: Some(editor_row_from_stored_row_file_with_update(&repo_path, &chapter_path, next_row)?),
         chapter_base_commit_sha: current_repo_head_sha(&repo_path),
     })
 }
@@ -201,8 +203,9 @@ pub(crate) fn upload_gtms_editor_language_image_sync(
             row_id: input.row_id,
             language_code: input.language_code,
             status: "deleted".to_string(),
-            row: Some(editor_row_from_stored_row_file(
+            row: Some(editor_row_from_stored_row_file_with_update(
                 &repo_path,
+                &chapter_path,
                 original_row_file,
             )?),
             chapter_base_commit_sha: current_repo_head_sha(&repo_path),
@@ -216,8 +219,9 @@ pub(crate) fn upload_gtms_editor_language_image_sync(
             row_id: input.row_id,
             language_code: input.language_code,
             status: "conflict".to_string(),
-            row: Some(editor_row_from_stored_row_file(
+            row: Some(editor_row_from_stored_row_file_with_update(
                 &repo_path,
+                &chapter_path,
                 original_row_file,
             )?),
             chapter_base_commit_sha: current_repo_head_sha(&repo_path),
@@ -314,7 +318,7 @@ pub(crate) fn upload_gtms_editor_language_image_sync(
         row_id: input.row_id,
         language_code: input.language_code,
         status: "saved".to_string(),
-        row: Some(editor_row_from_stored_row_file(&repo_path, next_row)?),
+        row: Some(editor_row_from_stored_row_file_with_update(&repo_path, &chapter_path, next_row)?),
         chapter_base_commit_sha: current_repo_head_sha(&repo_path),
     })
 }
@@ -365,8 +369,9 @@ pub(crate) fn remove_gtms_editor_language_image_sync(
             row_id: input.row_id,
             language_code: input.language_code,
             status: "deleted".to_string(),
-            row: Some(editor_row_from_stored_row_file(
+            row: Some(editor_row_from_stored_row_file_with_update(
                 &repo_path,
+                &chapter_path,
                 original_row_file,
             )?),
             chapter_base_commit_sha: current_repo_head_sha(&repo_path),
@@ -380,8 +385,9 @@ pub(crate) fn remove_gtms_editor_language_image_sync(
             row_id: input.row_id,
             language_code: input.language_code,
             status: "conflict".to_string(),
-            row: Some(editor_row_from_stored_row_file(
+            row: Some(editor_row_from_stored_row_file_with_update(
                 &repo_path,
+                &chapter_path,
                 original_row_file,
             )?),
             chapter_base_commit_sha: current_repo_head_sha(&repo_path),
@@ -397,8 +403,9 @@ pub(crate) fn remove_gtms_editor_language_image_sync(
             row_id: input.row_id,
             language_code: input.language_code,
             status: "saved".to_string(),
-            row: Some(editor_row_from_stored_row_file(
+            row: Some(editor_row_from_stored_row_file_with_update(
                 &repo_path,
+                &chapter_path,
                 original_row_file,
             )?),
             chapter_base_commit_sha: current_repo_head_sha(&repo_path),
@@ -470,7 +477,7 @@ pub(crate) fn remove_gtms_editor_language_image_sync(
         row_id: input.row_id,
         language_code: input.language_code,
         status: "saved".to_string(),
-        row: Some(editor_row_from_stored_row_file(&repo_path, next_row)?),
+        row: Some(editor_row_from_stored_row_file_with_update(&repo_path, &chapter_path, next_row)?),
         chapter_base_commit_sha: current_repo_head_sha(&repo_path),
     })
 }

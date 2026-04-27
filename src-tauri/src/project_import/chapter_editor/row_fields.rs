@@ -92,8 +92,9 @@ pub(crate) fn update_gtms_editor_row_fields_sync(
         return Ok(SaveEditorRowWithConcurrencyResponse {
             row_id: input.row_id,
             status: "deleted".to_string(),
-            row: Some(editor_row_from_stored_row_file(
+            row: Some(editor_row_from_stored_row_file_with_update(
                 &repo_path,
+                &chapter_path,
                 original_row_file,
             )?),
             source_word_counts,
@@ -121,8 +122,9 @@ pub(crate) fn update_gtms_editor_row_fields_sync(
         return Ok(SaveEditorRowWithConcurrencyResponse {
             row_id: input.row_id,
             status: "conflict".to_string(),
-            row: Some(editor_row_from_stored_row_file(
+            row: Some(editor_row_from_stored_row_file_with_update(
                 &repo_path,
+                &chapter_path,
                 original_row_file,
             )?),
             source_word_counts,
@@ -198,7 +200,7 @@ pub(crate) fn update_gtms_editor_row_fields_sync(
     Ok(SaveEditorRowWithConcurrencyResponse {
         row_id: input.row_id,
         status: "saved".to_string(),
-        row: Some(editor_row_from_stored_row_file(&repo_path, next_row)?),
+        row: Some(editor_row_from_stored_row_file_with_update(&repo_path, &chapter_path, next_row)?),
         source_word_counts: next_source_word_counts,
         base_fields: input.base_fields,
         base_footnotes: input.base_footnotes,
@@ -501,6 +503,10 @@ pub(crate) fn update_gtms_editor_row_field_flag_sync(
         language_code: input.language_code,
         reviewed,
         please_check,
+        last_update: load_latest_row_version_metadata(
+            &repo_path,
+            &repo_relative_path(&repo_path, &row_json_path)?,
+        )?,
         chapter_base_commit_sha: current_repo_head_sha(&repo_path),
     })
 }
@@ -564,6 +570,10 @@ pub(crate) fn update_gtms_editor_row_text_style_sync(
     Ok(UpdateEditorRowTextStyleResponse {
         row_id: input.row_id,
         text_style,
+        last_update: load_latest_row_version_metadata(
+            &repo_path,
+            &repo_relative_path(&repo_path, &row_json_path)?,
+        )?,
         chapter_base_commit_sha: current_repo_head_sha(&repo_path),
     })
 }

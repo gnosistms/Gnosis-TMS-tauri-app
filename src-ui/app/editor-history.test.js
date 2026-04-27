@@ -8,6 +8,7 @@ import {
   findEditorHistoryPreviousCommitEntry,
   findEditorHistoryPreviousVisibleEntry,
   historyEntryCanUndoReplace,
+  historyLastUpdateLabel,
   reconcileExpandedEditorHistoryGroupKeys,
 } from "./editor-history.js";
 
@@ -40,6 +41,15 @@ function historyEntry({
     pleaseCheck,
   };
 }
+
+test("historyLastUpdateLabel labels imports as file import", () => {
+  assert.equal(historyLastUpdateLabel(historyEntry({ commitSha: "c1", operationType: "import" })), "file import");
+  assert.equal(historyLastUpdateLabel(historyEntry({ commitSha: "c2", authorName: "sirhans" })), "sirhans");
+  assert.equal(
+    historyLastUpdateLabel(historyEntry({ commitSha: "c3", authorName: "sirhans", aiModel: "gpt-5.4" })),
+    "GPT 5.4 - sirhans",
+  );
+});
 
 test("marker-only runs that return to the baseline state disappear from grouped history", () => {
   const model = buildEditorHistoryViewModel([

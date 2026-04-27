@@ -541,19 +541,30 @@
 }
 
 .translation-row-shell {
-  position: relative;
-  padding-top: 34px;
+  display: grid;
+  gap: 10px;
 }
 
 .translation-row__badges {
-  position: absolute;
-  top: 0;
-  left: 0;
-  z-index: 1;
   display: inline-flex;
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+.translation-row__toolbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 16px;
+  min-height: 24px;
+  padding: 0 18px 0 20px;
+}
+
+.translation-row__last-update {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .translation-row-badge {
@@ -649,10 +660,6 @@
 }
 
 .translation-row__actions {
-  position: absolute;
-  top: 0;
-  right: 16px;
-  z-index: 1;
   display: flex;
   align-items: center;
   justify-content: flex-end;
@@ -821,10 +828,17 @@
 
 .translation-row-text-style-actions__hint {
   margin-left: auto;
+}
+
+.translation-row-text-style-actions__hint,
+.translation-row__last-update {
   color: var(--placeholder-text);
-  font-size: 12px;
   line-height: 1.2;
   white-space: nowrap;
+}
+
+.translation-row__last-update {
+  font-size: var(--text-action-font-size);
 }
 
 .translation-row-text-style-button {

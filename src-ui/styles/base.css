@@ -26,6 +26,7 @@
     linear-gradient(180deg, rgba(255, 250, 244, 0.68) 0%, rgba(255, 246, 232, 0.27) 100%),
     rgba(255, 251, 246, 0.36);
   --text: #4A2D13;
+  --title-color: var(--text);
   --text-hover: #80591F;
   --muted: #a36e34;
   --placeholder-text: rgba(163, 110, 52, 0.42);
@@ -56,6 +57,7 @@
   --header-height: 104px;
   --page-width: 1480px;
   --page-title-size: 36.75px;
+  --text-action-font-size: 1rem;
   --heading-letter-spacing: -0.015em;
 }
 
@@ -477,7 +479,7 @@ a {
   background: transparent;
   padding: 0;
   color: var(--link);
-  font-size: 1rem;
+  font-size: var(--text-action-font-size);
   font-weight: 600;
   text-decoration: none;
 }
@@ -1205,9 +1207,19 @@ a {
 
 .card__title {
   margin: 0;
+  color: var(--title-color);
   font-size: clamp(2.6rem, 5.2vw, 4.8rem);
   line-height: 0.94;
   letter-spacing: var(--heading-letter-spacing);
+}
+
+.start-hero__logo {
+  width: clamp(112px, 18vw, 176px);
+  aspect-ratio: 4 / 3;
+  color: var(--title-color);
+  background: currentColor;
+  -webkit-mask: url("../assets/brand/gnosisvn-caduceus-logo.svg") center / contain no-repeat;
+  mask: url("../assets/brand/gnosisvn-caduceus-logo.svg") center / contain no-repeat;
 }
 
 .card__title--small {

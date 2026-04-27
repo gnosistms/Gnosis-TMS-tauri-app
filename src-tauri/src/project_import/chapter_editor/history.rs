@@ -907,7 +907,71 @@ pub(super) fn load_latest_row_version_metadata(
             commit_sha: commit.commit_sha,
             author_name: commit.author_name,
             committed_at: commit.committed_at,
+            operation_type: commit.operation_type,
+            ai_model: commit.ai_model,
         }))
+}
+
+pub(super) fn load_latest_row_version_metadata_by_path(
+    repo_path: &Path,
+    relative_row_json_paths: &[String],
+) -> Result<BTreeMap<String, EditorRowVersionMetadata>, String> {
+    if relative_row_json_paths.is_empty() {
+        return Ok(BTreeMap::new());
+    }
+
+    let mut args = vec![
+        "log".to_string(),
+        "--name-only".to_string(),
+        "--format=%x1e%H%x1f%an%x1f%aI%x1f%B%x1f".to_string(),
+        "--".to_string(),
+    ];
+    args.extend(relative_row_json_paths.iter().cloned());
+    let arg_refs = args.iter().map(String::as_str).collect::<Vec<_>>();
+    let output = git_output(repo_path, &arg_refs)?;
+    if output.is_empty() {
+        return Ok(BTreeMap::new());
+    }
+
+    let requested_paths = relative_row_json_paths
+        .iter()
+        .map(String::as_str)
+        .collect::<BTreeSet<_>>();
+    let mut latest_by_path = BTreeMap::new();
+
+    for record in output.split('\u{1e}').filter(|record| !record.trim().is_empty()) {
+        let mut parts = record.splitn(5, '\u{1f}');
+        let commit_sha = parts.next().unwrap_or_default().trim();
+        if commit_sha.is_empty() {
+            continue;
+        }
+        let author_name = parts.next().unwrap_or_default().trim();
+        let committed_at = parts.next().unwrap_or_default().trim();
+        let full_message = parts.next().unwrap_or_default();
+        let changed_paths = parts.next().unwrap_or_default();
+        let (_, operation_type, _, ai_model) = parse_git_commit_message(full_message);
+
+        for path in changed_paths.lines().map(str::trim).filter(|path| !path.is_empty()) {
+            if requested_paths.contains(path) && !latest_by_path.contains_key(path) {
+                latest_by_path.insert(
+                    path.to_string(),
+                    EditorRowVersionMetadata {
+                        commit_sha: commit_sha.to_string(),
+                        author_name: author_name.to_string(),
+                        committed_at: committed_at.to_string(),
+                        operation_type: operation_type.clone(),
+                        ai_model: ai_model.clone(),
+                    },
+                );
+            }
+        }
+
+        if latest_by_path.len() == requested_paths.len() {
+            break;
+        }
+    }
+
+    Ok(latest_by_path)
 }
 
 fn short_commit_sha(commit_sha: &str) -> String {

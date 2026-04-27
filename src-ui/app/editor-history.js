@@ -1,7 +1,7 @@
 import { normalizeEditorRowTextStyle } from "./editor-row-text-style.js";
 import { editorFieldImageEqual } from "./editor-images.js";
 
-function formatAiHistoryModelLabel(modelId) {
+export function formatAiHistoryModelLabel(modelId) {
   const normalizedModelId = String(modelId ?? "").trim();
   if (!normalizedModelId) {
     return "";
@@ -31,7 +31,7 @@ function formatAiHistoryModelLabel(modelId) {
     .join(" ");
 }
 
-function historyAuthorLabel(entry) {
+export function historyAuthorLabel(entry) {
   if (String(entry?.operationType ?? "").trim().toLowerCase() === "import") {
     return "Import file";
   }
@@ -39,6 +39,14 @@ function historyAuthorLabel(entry) {
   const authorName = String(entry?.authorName ?? "").trim() || "Unknown author";
   const aiModelLabel = formatAiHistoryModelLabel(entry?.aiModel);
   return aiModelLabel ? `${aiModelLabel} - ${authorName}` : authorName;
+}
+
+export function historyLastUpdateLabel(entry) {
+  if (String(entry?.operationType ?? "").trim().toLowerCase() === "import") {
+    return "file import";
+  }
+
+  return historyAuthorLabel(entry);
 }
 
 function isImportHistoryEntry(entry) {

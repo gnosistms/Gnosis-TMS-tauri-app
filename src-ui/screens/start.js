@@ -1,5 +1,11 @@
 import { primaryButton } from "../lib/ui.js";
 
+function renderStartHeroLogo(isVisible) {
+  return isVisible
+    ? '<div class="start-hero__logo" aria-hidden="true"></div>'
+    : "";
+}
+
 export function renderStartScreen(state) {
   if (state.offline?.checked && state.offline.hasConnection === false) {
     const offlineAction = state.offline.hasLocalData
@@ -54,6 +60,7 @@ export function renderStartScreen(state) {
         <article class="card card--hero">
           <div class="card__body">
             <p class="card__eyebrow">PAZ INVERENCIAL!</p>
+            ${renderStartHeroLogo(isResolvingStartupAuth)}
             <h1 class="card__title">${heroTitle}</h1>
             <p class="card__subtitle">${heroSubtitle}</p>
             ${

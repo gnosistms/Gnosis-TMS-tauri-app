@@ -132,6 +132,7 @@ export function applyEditorRowMarkerSaved(row, languageCode, payload) {
 
   return {
     ...row,
+    lastUpdate: payload?.lastUpdate ?? row.lastUpdate ?? null,
     fieldStates: {
       ...cloneRowFieldStates(row.fieldStates),
       [languageCode]: nextFieldState,
@@ -184,14 +185,16 @@ export function applyEditorRowTextStyleSaving(row, nextTextStyle) {
   };
 }
 
-export function applyEditorRowTextStyleSaved(row, textStyle) {
+export function applyEditorRowTextStyleSaved(row, payload) {
   if (!row) {
     return row;
   }
+  const textStyle = payload && typeof payload === "object" ? payload.textStyle : payload;
 
   return {
     ...row,
     textStyle: normalizeEditorRowTextStyle(textStyle),
+    lastUpdate: payload?.lastUpdate ?? row.lastUpdate ?? null,
     textStyleSaveState: {
       status: "idle",
       error: "",

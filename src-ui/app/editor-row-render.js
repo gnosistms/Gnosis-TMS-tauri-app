@@ -27,6 +27,7 @@ import {
   buildCachedEditorRowGlossaryHighlights,
   renderableEditorGlossaryHighlightHtml,
 } from "./editor-glossary-highlight-cache.js";
+import { historyLastUpdateLabel } from "./editor-history.js";
 import { buildEditorRowSearchHighlightMap } from "./editor-search-flow.js";
 import { buildEditorSearchHighlightKey } from "./editor-search-highlighting.js";
 
@@ -136,6 +137,19 @@ function renderEditorRowSyncBadges(row) {
 
 function renderEditorRowConflictActions(row) {
   return row.hasConflict ? "" : "";
+}
+
+function renderEditorRowLastUpdate(row) {
+  const lastUpdate = row?.lastUpdate;
+  if (!lastUpdate || typeof lastUpdate !== "object") {
+    return "";
+  }
+
+  return `
+    <div class="translation-row__last-update">
+      Last update: ${escapeHtml(historyLastUpdateLabel(lastUpdate))}
+    </div>
+  `;
 }
 
 function renderEditorRowContextAction(row) {
@@ -767,8 +781,11 @@ export function renderTranslationContentRow(
 
   return `
     <div class="translation-row-shell" data-editor-row-card data-row-id="${escapeHtml(row.id)}"${rowIndexAttribute}>
+      <div class="translation-row__toolbar">
+        ${renderEditorRowLastUpdate(row)}
+        ${rowActions}
+      </div>
       ${renderEditorRowSyncBadges(row)}
-      ${rowActions}
       <div class="translation-row__content">
         ${rowSelection}
         <article class="card card--translation${row.lifecycleState === "deleted" ? " is-deleted" : ""}">

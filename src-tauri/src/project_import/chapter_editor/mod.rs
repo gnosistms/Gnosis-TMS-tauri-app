@@ -1,6 +1,6 @@
 use std::{
     cmp::Ordering,
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     fmt::Write as _,
     fs,
     path::{Path, PathBuf},
@@ -54,7 +54,10 @@ pub(super) use self::history::{
     load_gtms_editor_field_history_sync, restore_gtms_editor_field_from_history_sync,
     reverse_gtms_editor_batch_replace_commit_sync,
 };
-use self::history::{load_latest_row_version_metadata, status_note_for_field_flag};
+use self::history::{
+    load_latest_row_version_metadata, load_latest_row_version_metadata_by_path,
+    status_note_for_field_flag,
+};
 use self::images::{editor_field_image_from_stored, row_uploaded_image_relative_paths};
 pub(super) use self::images::{
     remove_gtms_editor_language_image_sync, save_gtms_editor_language_image_url_sync,
@@ -81,8 +84,9 @@ pub(crate) use self::row_structure::{
 use self::shared::{
     apply_source_word_count_delta, build_source_word_counts_from_stored_rows,
     clear_editor_html_preview_cache, current_repo_head_sha, editor_row_from_stored_row_file,
-    ensure_editor_field_object_defaults, load_editor_rows, load_project_chapter_summaries,
-    load_source_word_counts, normalize_editor_footnote_value, normalize_editor_image_caption_value,
+    editor_row_from_stored_row_file_with_update, ensure_editor_field_object_defaults,
+    load_editor_rows, load_project_chapter_summaries, load_source_word_counts,
+    normalize_editor_footnote_value, normalize_editor_image_caption_value,
     normalize_editor_text_style_value, row_fields_object_mut, row_footnote_map,
     row_image_caption_map, row_object_mut, row_plain_text_map, row_text_style,
     sanitize_chapter_languages, set_editor_field_flags,
@@ -387,6 +391,7 @@ pub(crate) struct UpdateEditorRowFieldFlagResponse {
     language_code: String,
     reviewed: bool,
     please_check: bool,
+    last_update: Option<EditorRowVersionMetadata>,
     chapter_base_commit_sha: Option<String>,
 }
 
@@ -395,6 +400,7 @@ pub(crate) struct UpdateEditorRowFieldFlagResponse {
 pub(crate) struct UpdateEditorRowTextStyleResponse {
     row_id: String,
     text_style: String,
+    last_update: Option<EditorRowVersionMetadata>,
     chapter_base_commit_sha: Option<String>,
 }
 
@@ -575,6 +581,8 @@ struct EditorRow {
     lifecycle_state: String,
     order_key: String,
     text_style: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    last_update: Option<EditorRowVersionMetadata>,
     fields: BTreeMap<String, String>,
     footnotes: BTreeMap<String, String>,
     image_captions: BTreeMap<String, String>,
@@ -671,6 +679,10 @@ pub(crate) struct EditorRowVersionMetadata {
     commit_sha: String,
     author_name: String,
     committed_at: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    operation_type: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    ai_model: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -828,6 +840,20 @@ pub(super) fn load_gtms_chapter_editor_data_sync(
     let rows = load_editor_rows(&chapter_path.join("rows"))?;
     let languages = sanitize_chapter_languages(&chapter_file.languages);
     let source_word_counts = build_source_word_counts_from_stored_rows(&rows, &languages);
+    let row_update_paths_by_id = rows
+        .iter()
+        .map(|row| {
+            let row_json_path = chapter_path
+                .join("rows")
+                .join(format!("{}.json", row.row_id));
+            repo_relative_path(&repo_path, &row_json_path)
+                .map(|relative_path| (row.row_id.clone(), relative_path))
+        })
+        .collect::<Result<BTreeMap<_, _>, _>>()?;
+    let latest_update_by_path = load_latest_row_version_metadata_by_path(
+        &repo_path,
+        &row_update_paths_by_id.values().cloned().collect::<Vec<_>>(),
+    )?;
     let selected_source_language_code = preferred_source_language_code(&chapter_file, &languages);
     let selected_target_language_code = preferred_target_language_code(
         &chapter_file,
@@ -847,7 +873,14 @@ pub(super) fn load_gtms_chapter_editor_data_sync(
             &repo_path,
             &input.chapter_id,
             rows.into_iter()
-                .map(|row| editor_row_from_stored_row_file(&repo_path, row))
+                .map(|row| {
+                    let mut editor_row = editor_row_from_stored_row_file(&repo_path, row)?;
+                    editor_row.last_update = row_update_paths_by_id
+                        .get(&editor_row.row_id)
+                        .and_then(|path| latest_update_by_path.get(path))
+                        .cloned();
+                    Ok::<EditorRow, String>(editor_row)
+                })
                 .collect::<Result<Vec<_>, _>>()?,
         )?,
     })
@@ -876,10 +909,14 @@ pub(super) fn load_gtms_editor_row_sync(
         None
     };
     let row = if row_json_path.exists() {
-        Some(editor_row_from_stored_row_file(
+        let mut editor_row = editor_row_from_stored_row_file(
             &repo_path,
             read_json_file(&row_json_path, "row file")?,
-        )?)
+        )?;
+        if let Some(relative_row_json) = relative_row_json.as_deref() {
+            editor_row.last_update = load_latest_row_version_metadata(&repo_path, relative_row_json)?;
+        }
+        Some(editor_row)
     } else {
         None
     };
