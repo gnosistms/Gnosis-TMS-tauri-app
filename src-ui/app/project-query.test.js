@@ -28,6 +28,16 @@ const {
   seedProjectsQueryFromCache,
 } = await import("./project-query.js");
 const { projectKeys, queryClient } = await import("./query-client.js");
+const {
+  chapterGlossaryIntentKey,
+  chapterLifecycleIntentKey,
+  projectLifecycleIntentKey,
+  projectRepoWriteScope,
+  projectTitleIntentKey,
+  requestProjectWriteIntent,
+  resetProjectWriteCoordinator,
+  teamMetadataWriteScope,
+} = await import("./project-write-coordinator.js");
 
 function project(overrides = {}) {
   return {
@@ -40,8 +50,33 @@ function project(overrides = {}) {
   };
 }
 
+function chapter(overrides = {}) {
+  return {
+    id: "chapter-1",
+    name: "Chapter",
+    status: "active",
+    linkedGlossary: null,
+    ...overrides,
+  };
+}
+
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function deferred() {
+  let resolve;
+  let reject;
+  const promise = new Promise((promiseResolve, promiseReject) => {
+    resolve = promiseResolve;
+    reject = promiseReject;
+  });
+  return { promise, resolve, reject };
+}
+
 test.afterEach(() => {
   queryClient.clear();
+  resetProjectWriteCoordinator();
   resetSessionState();
 });
 
@@ -85,6 +120,132 @@ test("project query adapter ignores stale team snapshots", () => {
 
   assert.equal(applied, false);
   assert.equal(state.projects[0].title, "Existing");
+});
+
+test("project query adapter overlays active project title intents during refresh", async () => {
+  resetSessionState();
+  state.selectedTeamId = "team-1";
+  state.projectsPage = createResourcePageState();
+  const releaseWrite = deferred();
+
+  requestProjectWriteIntent({
+    key: projectTitleIntentKey("project-1"),
+    scope: teamMetadataWriteScope({ installationId: 1 }),
+    teamId: "team-1",
+    projectId: "project-1",
+    type: "projectTitle",
+    value: { title: "Local Rename" },
+  }, {
+    run: async () => {
+      await releaseWrite.promise;
+    },
+  });
+  await delay(0);
+
+  applyProjectsQuerySnapshotToState(
+    createProjectsQuerySnapshot({ items: [project({ title: "Server Title" })] }),
+    { teamId: "team-1", isFetching: true },
+  );
+
+  assert.equal(state.projects[0].title, "Local Rename");
+  assert.equal(state.projects[0].pendingMutation, "rename");
+
+  releaseWrite.resolve();
+  await delay(5);
+});
+
+test("project query adapter overlays active project lifecycle intents during refresh", async () => {
+  resetSessionState();
+  state.selectedTeamId = "team-1";
+  state.projectsPage = createResourcePageState();
+  const releaseWrite = deferred();
+
+  requestProjectWriteIntent({
+    key: projectLifecycleIntentKey("project-1"),
+    scope: teamMetadataWriteScope({ installationId: 1 }),
+    teamId: "team-1",
+    projectId: "project-1",
+    type: "projectLifecycle",
+    value: { lifecycleState: "deleted" },
+  }, {
+    run: async () => {
+      await releaseWrite.promise;
+    },
+  });
+  await delay(0);
+
+  applyProjectsQuerySnapshotToState(
+    createProjectsQuerySnapshot({ items: [project({ lifecycleState: "active" })] }),
+    { teamId: "team-1", isFetching: true },
+  );
+
+  assert.equal(state.projects.length, 0);
+  assert.equal(state.deletedProjects[0].id, "project-1");
+  assert.equal(state.deletedProjects[0].pendingMutation, "softDelete");
+
+  releaseWrite.resolve();
+  await delay(5);
+});
+
+test("project query adapter overlays active chapter lifecycle and glossary intents during refresh", async () => {
+  resetSessionState();
+  state.selectedTeamId = "team-1";
+  state.projectsPage = createResourcePageState();
+  const releaseLifecycleWrite = deferred();
+  const releaseGlossaryWrite = deferred();
+
+  requestProjectWriteIntent({
+    key: chapterLifecycleIntentKey("project-1", "chapter-1"),
+    scope: projectRepoWriteScope({ installationId: 1 }, "project-1"),
+    teamId: "team-1",
+    projectId: "project-1",
+    chapterId: "chapter-1",
+    type: "chapterLifecycle",
+    value: { status: "active" },
+  }, {
+    run: async () => {
+      await releaseLifecycleWrite.promise;
+    },
+  });
+  requestProjectWriteIntent({
+    key: chapterGlossaryIntentKey("project-2", "chapter-2"),
+    scope: projectRepoWriteScope({ installationId: 1 }, "project-2"),
+    teamId: "team-1",
+    projectId: "project-2",
+    chapterId: "chapter-2",
+    type: "chapterGlossary",
+    value: { glossary: { glossaryId: "new", repoName: "new-glossary" } },
+  }, {
+    run: async () => {
+      await releaseGlossaryWrite.promise;
+    },
+  });
+  await delay(0);
+
+  applyProjectsQuerySnapshotToState(
+    createProjectsQuerySnapshot({
+      items: [
+        project({ chapters: [chapter({ status: "deleted" })] }),
+        project({
+          id: "project-2",
+          chapters: [chapter({
+            id: "chapter-2",
+            linkedGlossary: { glossaryId: "old", repoName: "old-glossary" },
+          })],
+        }),
+      ],
+    }),
+    { teamId: "team-1", isFetching: true },
+  );
+
+  assert.equal(state.projects[0].chapters[0].status, "active");
+  assert.equal(state.projects[0].chapters[0].pendingMutation, "restore");
+  assert.equal(state.projects[1].chapters[0].linkedGlossary.glossaryId, "new");
+  assert.equal(state.projects[1].chapters[0].pendingGlossaryMutation, true);
+
+  releaseLifecycleWrite.resolve();
+  releaseGlossaryWrite.resolve();
+  await delay(5);
 });
 
 test("project query cache seed applies cached projects with pending mutations", () => {

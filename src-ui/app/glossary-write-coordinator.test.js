@@ -186,8 +186,9 @@ test("repo sync intents are active but not mutating writes", async () => {
   await delay(5);
 });
 
-test("stale refresh snapshots are overlaid with desired intents and confirmed later", () => {
+test("stale refresh snapshots are overlaid with desired intents and confirmed after write success", async () => {
   const key = glossaryTitleIntentKey("glossary-1");
+  const releaseWrite = deferred();
   requestGlossaryWriteIntent({
     key,
     scope: teamMetadataWriteScope({ installationId: 1 }),
@@ -196,8 +197,11 @@ test("stale refresh snapshots are overlaid with desired intents and confirmed la
     type: "glossaryTitle",
     value: { title: "Desired" },
   }, {
-    run: async () => {},
+    run: async () => {
+      await releaseWrite.promise;
+    },
   });
+  await delay(0);
 
   const staleSnapshot = {
     glossaries: [glossary({ title: "Server" })],
@@ -206,6 +210,12 @@ test("stale refresh snapshots are overlaid with desired intents and confirmed la
 
   assert.equal(overlaid.glossaries[0].title, "Desired");
   assert.equal(overlaid.glossaries[0].pendingMutation, "rename");
+  clearConfirmedGlossaryWriteIntents(overlaid);
+  assert.equal(getGlossaryWriteIntent(key).status, "running");
+
+  releaseWrite.resolve();
+  await delay(5);
+
   clearConfirmedGlossaryWriteIntents(overlaid);
   assert.equal(getGlossaryWriteIntent(key), null);
 });

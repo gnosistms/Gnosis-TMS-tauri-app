@@ -245,5 +245,8 @@ export function applyProjectWriteIntentsToSnapshot(snapshot) {
 
 export function clearConfirmedProjectWriteIntents(snapshot) {
   const normalizedSnapshot = normalizeProjectSnapshot(snapshot);
-  writeIntents.clearIntentsWhere((intent) => intentMatchesSnapshot(intent, normalizedSnapshot));
+  writeIntents.clearIntentsWhere((intent) =>
+    intent.status === "pendingConfirmation"
+    && intentMatchesSnapshot(intent, normalizedSnapshot)
+  );
 }

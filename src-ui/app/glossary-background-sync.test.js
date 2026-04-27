@@ -200,6 +200,10 @@ const {
   openGlossaryTermEditor,
   submitGlossaryTermEditor,
 } = await import("./glossary-term-draft.js");
+const {
+  anyGlossaryTermWriteIsActive,
+  resetGlossaryTermWriteCoordinator,
+} = await import("./glossary-term-write-coordinator.js");
 
 function glossaryTerm(overrides = {}) {
   return {
@@ -272,12 +276,36 @@ function installGlossaryEditorFixture(options = {}) {
 }
 
 async function flushAsyncWork() {
-  await Promise.resolve();
-  await Promise.resolve();
+  for (let index = 0; index < 20; index += 1) {
+    await Promise.resolve();
+  }
+  await new Promise((resolve) => setImmediate(resolve));
+  for (let index = 0; index < 20; index += 1) {
+    await Promise.resolve();
+  }
+}
+
+async function waitForGlossaryTermWrites() {
+  for (let index = 0; index < 20; index += 1) {
+    await flushAsyncWork();
+    if (!anyGlossaryTermWriteIsActive()) {
+      return;
+    }
+  }
 }
 
 function syncInvocationCount(command) {
   return invokeLog.filter((entry) => entry.command === command).length;
+}
+
+function deferred() {
+  let resolve;
+  let reject;
+  const promise = new Promise((promiseResolve, promiseReject) => {
+    resolve = promiseResolve;
+    reject = promiseReject;
+  });
+  return { promise, resolve, reject };
 }
 
 test.beforeEach(async () => {
@@ -289,6 +317,7 @@ test.beforeEach(async () => {
   nextTimerId = 1;
   invokeHandler = async () => null;
   resetSessionState();
+  resetGlossaryTermWriteCoordinator();
   await syncAndStopGlossaryBackgroundSyncSession(() => {});
 });
 
@@ -601,6 +630,7 @@ test("saving a glossary term with a newer GitHub version reloads the latest term
   };
 
   await submitGlossaryTermEditor(() => {});
+  await waitForGlossaryTermWrites();
 
   assert.equal(state.glossaryTermEditor.isOpen, true);
   assert.equal(state.glossaryTermEditor.status, "idle");
@@ -697,6 +727,7 @@ test("saving a glossary term rolls back the local commit when the later GitHub s
   };
 
   await submitGlossaryTermEditor(() => {});
+  await waitForGlossaryTermWrites();
 
   const upsertIndex = invokeLog.findIndex((entry) => entry.command === "upsert_gtms_glossary_term");
   const rollbackIndex = invokeLog.findIndex((entry) => entry.command === "rollback_gtms_glossary_term_upsert");
@@ -708,6 +739,76 @@ test("saving a glossary term rolls back the local commit when the later GitHub s
   assert.match(state.glossaryTermEditor.error, /rolled back/i);
   assert.deepEqual(state.glossaryTermEditor.sourceTerms, ["edited source"]);
   assert.deepEqual(state.glossaryTermEditor.targetTerms, ["edited target"]);
+});
+
+test("saving a glossary term closes the modal and patches the visible row before forced sync finishes", async () => {
+  installGlossaryEditorFixture({
+    terms: [
+      glossaryTerm({
+        termId: "term-1",
+        sourceTerms: ["server source"],
+        targetTerms: ["server target"],
+      }),
+    ],
+  });
+  state.glossaryTermEditor = {
+    ...createGlossaryTermEditorState(),
+    isOpen: true,
+    glossaryId: "glossary-1",
+    termId: "term-1",
+    sourceTerms: ["optimistic source"],
+    targetTerms: ["optimistic target"],
+    notesToTranslators: "",
+    footnote: "",
+    untranslated: false,
+  };
+
+  const releaseSync = deferred();
+  invokeHandler = async (command, payload) => {
+    switch (command) {
+      case "sync_gtms_glossary_editor_repo":
+        await releaseSync.promise;
+        return {
+          oldHeadSha: "head-1",
+          newHeadSha: "head-1",
+          changedTermIds: [],
+          insertedTermIds: [],
+          deletedTermIds: [],
+        };
+      case "upsert_gtms_glossary_term":
+        return {
+          glossaryId: "glossary-1",
+          termCount: 1,
+          term: {
+            termId: "term-1",
+            sourceTerms: payload.input.sourceTerms,
+            targetTerms: payload.input.targetTerms,
+            notesToTranslators: "",
+            footnote: "",
+            untranslated: false,
+            lifecycleState: "active",
+          },
+        };
+      case "sync_gtms_glossary_repos":
+        return [];
+      default:
+        return null;
+    }
+  };
+
+  await submitGlossaryTermEditor(() => {});
+  await flushAsyncWork();
+
+  assert.equal(state.glossaryTermEditor.isOpen, false);
+  assert.deepEqual(state.glossaryEditor.terms[0]?.sourceTerms, ["optimistic source"]);
+  assert.equal(state.glossaryEditor.terms[0]?.pendingMutation, "save");
+  assert.equal(syncInvocationCount("upsert_gtms_glossary_term"), 0);
+
+  releaseSync.resolve();
+  await waitForGlossaryTermWrites();
+
+  assert.equal(state.glossaryEditor.terms[0]?.pendingMutation, null);
+  assert.equal(syncInvocationCount("load_gtms_glossary_editor_data"), 0);
 });
 
 test("stale glossary term reload ignores responses after switching to another glossary", async () => {
@@ -888,12 +989,14 @@ test("saving a glossary term syncs first and then persists the user's modal draf
       termCount: state.glossaryEditor.termCount,
     });
   });
+  await waitForGlossaryTermWrites();
 
   const syncIndex = invokeLog.findIndex((entry) => entry.command === "sync_gtms_glossary_editor_repo");
   const upsertIndex = invokeLog.findIndex((entry) => entry.command === "upsert_gtms_glossary_term");
 
   assert.ok(syncIndex >= 0);
   assert.ok(upsertIndex > syncIndex);
+  assert.equal(syncInvocationCount("load_gtms_glossary_editor_data"), 0);
   assert.deepEqual(capturedUpsertInput, {
     installationId: 7,
     glossaryId: "glossary-1",
@@ -990,6 +1093,7 @@ test("saving a glossary term sanitizes ruby markup and escapes unsupported inlin
   };
 
   await submitGlossaryTermEditor(() => {});
+  await waitForGlossaryTermWrites();
 
   assert.deepEqual(capturedUpsertInput?.sourceTerms, [
     "<ruby>漢字<rt>かんじ</rt></ruby>",

@@ -41,6 +41,10 @@ function glossary(overrides = {}) {
   };
 }
 
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 test.afterEach(() => {
   queryClient.clear();
   resetGlossaryWriteCoordinator();
@@ -139,7 +143,7 @@ test("glossary query adapter overlays pending lifecycle intents", () => {
   assert.equal(state.glossaries[0].pendingMutation, "softDelete");
 });
 
-test("confirmed glossary snapshots clear matching write intents", () => {
+test("confirmed glossary snapshots clear matching write intents after write success", async () => {
   resetSessionState();
   state.selectedTeamId = "team-1";
   state.glossariesPage = createResourcePageState();
@@ -155,6 +159,7 @@ test("confirmed glossary snapshots clear matching write intents", () => {
   }, {
     run: async () => {},
   });
+  await delay(5);
 
   applyGlossariesQuerySnapshotToState(
     createGlossariesQuerySnapshot({ glossaries: [glossary({ title: "Confirmed Rename" })] }),

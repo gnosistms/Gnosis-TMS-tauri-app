@@ -130,5 +130,8 @@ export function applyGlossaryWriteIntentsToSnapshot(snapshot) {
 }
 
 export function clearConfirmedGlossaryWriteIntents(snapshot) {
-  writeIntents.clearIntentsWhere((intent) => intentMatchesSnapshot(intent, snapshot));
+  writeIntents.clearIntentsWhere((intent) =>
+    intent.status === "pendingConfirmation"
+    && intentMatchesSnapshot(intent, snapshot)
+  );
 }
