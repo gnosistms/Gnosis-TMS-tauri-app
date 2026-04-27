@@ -104,11 +104,16 @@ globalThis.navigator = globalThis.window.navigator;
 const { resetSessionState, state } = await import("./state.js");
 const { saveStoredTeamRecords, setActiveStorageLogin } = await import("./team-storage.js");
 const {
+  confirmTeamMemberRemoval,
   confirmTeamMemberOwnerPromotion,
   makeOrganizationAdmin,
+  openTeamMemberRemoval,
   openTeamMemberOwnerPromotion,
   revokeOrganizationAdmin,
 } = await import("./team-members-flow.js");
+const { resetMembersQueryObserver } = await import("./member-query.js");
+const { resetMemberWriteCoordinator } = await import("./member-write-coordinator.js");
+const { queryClient } = await import("./query-client.js");
 const { renderUsersScreen } = await import("../screens/users.js");
 
 function createDeferred() {
@@ -174,6 +179,9 @@ function installFixture(options = {}) {
 }
 
 test.afterEach(() => {
+  resetMembersQueryObserver();
+  resetMemberWriteCoordinator();
+  queryClient.clear();
   invokeHandler = async () => null;
   invokeLog.length = 0;
   localStorageState.clear();
@@ -299,6 +307,57 @@ test("revoke admin refreshes selected team permissions from installation data", 
       "list_organization_members_for_installation",
     ],
   );
+});
+
+test("stale revoke-admin refresh keeps the optimistic translator role until confirmed", async () => {
+  installFixture({
+    teams: [
+      teamRecord({
+        canManageMembers: true,
+        canManageProjects: true,
+      }),
+    ],
+    users: [
+      {
+        id: "alice",
+        username: "alice",
+        name: "Alice",
+        role: "Admin",
+      },
+    ],
+  });
+
+  invokeHandler = async (command) => {
+    if (command === "revoke_organization_admin_for_installation") {
+      return null;
+    }
+
+    if (command === "list_accessible_github_app_installations") {
+      return [
+        installationInfo({
+          canManageMembers: true,
+          canManageProjects: false,
+        }),
+      ];
+    }
+
+    if (command === "list_organization_members_for_installation") {
+      return [
+        {
+          login: "alice",
+          name: "Alice",
+          role: "admin",
+        },
+      ];
+    }
+
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  await revokeOrganizationAdmin(() => {}, "alice");
+
+  assert.equal(state.users[0].role, "Translator");
+  assert.equal(state.users[0].pendingMutation, "revokeAdmin");
 });
 
 test("stale admin-role completion does not reload members for a different selected team", async () => {
@@ -583,6 +642,112 @@ test("owner promotion confirms through Tauri and reloads teams and members", asy
       "list_organization_members_for_installation",
     ],
   );
+});
+
+test("member removal optimistically removes the row and refreshes members", async () => {
+  const removeDeferred = createDeferred();
+  installFixture({
+    teams: [
+      teamRecord({
+        canDelete: true,
+        canManageMembers: true,
+      }),
+    ],
+    users: [
+      {
+        id: "owner",
+        username: "owner",
+        name: "Owner",
+        role: "Owner",
+        isCurrentUser: true,
+      },
+      {
+        id: "alice",
+        username: "alice",
+        name: "Alice",
+        role: "Translator",
+      },
+    ],
+  });
+
+  invokeHandler = async (command) => {
+    if (command === "remove_organization_member_for_installation") {
+      return removeDeferred.promise;
+    }
+
+    if (command === "list_organization_members_for_installation") {
+      return [
+        {
+          login: "owner",
+          name: "Owner",
+          role: "owner",
+        },
+      ];
+    }
+
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  openTeamMemberRemoval(() => {}, "alice");
+  const pending = confirmTeamMemberRemoval(() => {});
+
+  assert.equal(state.teamMemberRemoval.isOpen, false);
+  assert.equal(state.users.some((user) => user.username === "alice"), false);
+  assert.equal(state.statusBadges.right.text, "Removing member...");
+
+  removeDeferred.resolve(null);
+  await pending;
+
+  assert.deepEqual(
+    invokeLog.map((entry) => entry.command),
+    [
+      "remove_organization_member_for_installation",
+      "list_organization_members_for_installation",
+    ],
+  );
+  assert.equal(state.users.some((user) => user.username === "alice"), false);
+});
+
+test("failed member removal rolls back and reopens the confirmation modal", async () => {
+  installFixture({
+    teams: [
+      teamRecord({
+        canDelete: true,
+        canManageMembers: true,
+      }),
+    ],
+    users: [
+      {
+        id: "owner",
+        username: "owner",
+        name: "Owner",
+        role: "Owner",
+        isCurrentUser: true,
+      },
+      {
+        id: "alice",
+        username: "alice",
+        name: "Alice",
+        role: "Translator",
+      },
+    ],
+  });
+
+  invokeHandler = async (command) => {
+    if (command === "remove_organization_member_for_installation") {
+      throw new Error("GitHub rejected the removal.");
+    }
+
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  openTeamMemberRemoval(() => {}, "alice");
+  await confirmTeamMemberRemoval(() => {});
+
+  assert.equal(state.users.some((user) => user.username === "alice"), true);
+  assert.equal(state.teamMemberRemoval.isOpen, true);
+  assert.equal(state.teamMemberRemoval.status, "idle");
+  assert.match(state.teamMemberRemoval.error, /GitHub rejected/);
 });
 
 test("failed owner promotion leaves modal open with error", async () => {

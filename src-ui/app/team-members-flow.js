@@ -2,7 +2,7 @@ import { invoke, waitForNextPaint } from "./runtime.js";
 import { requireBrokerSession } from "./auth-flow.js";
 import { loadStoredMembersForTeam, saveStoredMembersForTeam } from "./member-cache.js";
 import { beginPageSync, completePageSync, failPageSync } from "./page-sync.js";
-import { showNoticeBadge } from "./status-feedback.js";
+import { clearScopedSyncBadge, showNoticeBadge, showScopedSyncBadge } from "./status-feedback.js";
 import {
   resetTeamMemberOwnerPromotion,
   resetTeamMemberRemoval,
@@ -12,6 +12,23 @@ import { classifySyncError } from "./sync-error.js";
 import { handleSyncFailure } from "./sync-recovery.js";
 import { loadUserTeams } from "./team-flow/sync.js";
 import { isOwnerRole } from "./team-member-permissions.js";
+import { buildFallbackMembers } from "./member-shared.js";
+import {
+  createMembersQueryOptions,
+  ensureMembersQueryObserver,
+  invalidateMembersQueryAfterMutation,
+  removeMemberFromQueryData,
+  seedMembersQueryFromCache,
+  patchMemberQueryData,
+} from "./member-query.js";
+import { memberKeys, queryClient } from "./query-client.js";
+import {
+  memberOwnerPromotionIntentKey,
+  memberRemovalIntentKey,
+  memberRoleIntentKey,
+  memberUserWriteScope,
+  requestMemberWriteIntent,
+} from "./member-write-coordinator.js";
 
 function getSelectedTeam(teamId = state.selectedTeamId) {
   return state.teams.find((team) => team.id === teamId);
@@ -38,53 +55,6 @@ function setUsersUnavailable(message) {
   };
 }
 
-function normalizeOrganizationMember(member) {
-  const username = typeof member?.login === "string" && member.login.trim() ? member.login.trim() : "";
-  if (!username) {
-    return null;
-  }
-
-  const currentSession = state.auth.session ?? {};
-  const isCurrentUser = currentSession.login === username;
-  const name =
-    (isCurrentUser && typeof currentSession.name === "string" && currentSession.name.trim()) ||
-    (typeof member?.name === "string" && member.name.trim()) ||
-    username;
-
-  return {
-    id: username,
-    name,
-    username,
-    role:
-      typeof member?.role === "string" && member.role.trim()
-        ? member.role.trim().toLowerCase() === "owner"
-          ? "Owner"
-          : member.role.trim().toLowerCase() === "admin"
-            ? "Admin"
-            : "Translator"
-        : "Translator",
-    avatarUrl: member?.avatarUrl ?? null,
-    htmlUrl: member?.htmlUrl ?? null,
-    isCurrentUser,
-  };
-}
-
-function buildFallbackUsers() {
-  const currentSession = state.auth.session;
-  if (!currentSession?.login) {
-    return [];
-  }
-
-  const currentUser = normalizeOrganizationMember({
-    login: currentSession.login,
-    name: currentSession.name ?? currentSession.login,
-    avatarUrl: currentSession.avatarUrl ?? null,
-    htmlUrl: currentSession.login ? `https://github.com/${currentSession.login}` : null,
-  });
-
-  return currentUser ? [currentUser] : [];
-}
-
 function snapshotUsers(users = []) {
   return users.map((user) => ({ ...user }));
 }
@@ -102,8 +72,9 @@ function updateLocalAdminRole(users = [], username, shouldBeAdmin, options = {})
     return {
       ...user,
       role: nextRole,
-      roleSyncPending,
-    };
+    roleSyncPending,
+    pendingMutation: roleSyncPending ? (shouldBeAdmin ? "makeAdmin" : "revokeAdmin") : null,
+  };
   });
 
   return {
@@ -116,7 +87,21 @@ function shouldUpdateVisibleUsers(teamId) {
   return typeof teamId === "string" && teamId && state.selectedTeamId === teamId;
 }
 
-const inflightAdminMembershipUsernames = new Set();
+export function showMembersStatus(render, text) {
+  const normalizedText = String(text ?? "").trim();
+  if (!normalizedText) {
+    return;
+  }
+  showScopedSyncBadge("members", normalizedText, render);
+}
+
+export function clearMembersStatus(render) {
+  clearScopedSyncBadge("members", render);
+}
+
+export function showMembersNotice(render, text, durationMs) {
+  showNoticeBadge(text, render, durationMs);
+}
 
 function initializeUsersFromCachedState(selectedTeam) {
   if (state.offline.isEnabled) {
@@ -135,7 +120,7 @@ function initializeUsersFromCachedState(selectedTeam) {
     state.users = cachedMembers.members;
     state.userDiscovery = { status: "ready", error: "" };
   } else {
-    state.users = buildFallbackUsers();
+    state.users = buildFallbackMembers();
     state.userDiscovery = { status: "loading", error: "" };
   }
 
@@ -209,34 +194,102 @@ export async function confirmTeamMemberOwnerPromotion(render) {
   }
 
   const selectedTeamIdAtStart = selectedTeam.id;
+  const previousUsers = snapshotUsers(state.users);
 
-  try {
-    state.teamMemberOwnerPromotion.status = "loading";
-    state.teamMemberOwnerPromotion.error = "";
-    render();
-    await waitForNextPaint();
-    await invoke("promote_organization_owner_for_installation", {
-      installationId: selectedTeam.installationId,
-      orgLogin: selectedTeam.githubOrg,
+  return new Promise((resolve) => {
+    requestMemberWriteIntent({
+      key: memberOwnerPromotionIntentKey(selectedTeam.id, username),
+      scope: memberUserWriteScope(selectedTeam, username),
+      teamId: selectedTeam.id,
       username,
-      sessionToken: requireBrokerSession(),
+      type: "memberOwnerPromotion",
+      previousValue: { users: previousUsers, member },
+      value: { username },
+    }, {
+      clearOnSuccess: true,
+      applyOptimistic: () => {
+        beginPageSync();
+        resetTeamMemberOwnerPromotion();
+        const nextUsers = state.users.map((user) =>
+          user?.username === username
+            ? {
+                ...user,
+                role: "Owner",
+                pendingMutation: "promoteOwner",
+                pendingError: "",
+              }
+            : user,
+        );
+        queryClient.setQueryData(
+          memberKeys.byTeam(selectedTeam.id),
+          (queryData) => patchMemberQueryData(queryData, username, {
+            role: "Owner",
+            pendingMutation: "promoteOwner",
+            pendingError: "",
+          }),
+        );
+        persistTeamUsers(selectedTeam, nextUsers);
+        showMembersStatus(render, "Promoting team owner...");
+        render();
+      },
+      run: async () => {
+        await waitForNextPaint();
+        await invoke("promote_organization_owner_for_installation", {
+          installationId: selectedTeam.installationId,
+          orgLogin: selectedTeam.githubOrg,
+          username,
+          sessionToken: requireBrokerSession(),
+        });
+      },
+      onSuccess: async () => {
+        try {
+          showMembersStatus(render, "Refreshing team access...");
+          await loadUserTeams(render);
+          if (shouldUpdateVisibleUsers(selectedTeamIdAtStart) && getSelectedTeam(selectedTeamIdAtStart)) {
+            showMembersStatus(render, "Refreshing member list...");
+            await invalidateMembersQueryAfterMutation(selectedTeam, {
+              teamId: selectedTeamIdAtStart,
+              render,
+            });
+          }
+          clearMembersStatus(render);
+          await completePageSync(render);
+          showMembersNotice(render, "Team owner promoted.");
+        } finally {
+          render();
+          resolve();
+        }
+      },
+      onError: async (error) => {
+        persistTeamUsers(selectedTeam, previousUsers, {
+          updateVisibleState: shouldUpdateVisibleUsers(selectedTeamIdAtStart),
+        });
+        queryClient.setQueryData(memberKeys.byTeam(selectedTeam.id), (queryData) => ({
+          ...(queryData ?? {}),
+          members: previousUsers,
+        }));
+        clearMembersStatus(render);
+        if (await handleSyncFailure(classifySyncError(error), { render })) {
+          failPageSync();
+          render();
+          resolve();
+          return;
+        }
+        failPageSync();
+        state.teamMemberOwnerPromotion = {
+          isOpen: true,
+          status: "idle",
+          error: error?.message ?? String(error),
+          teamId: selectedTeam.id,
+          teamName: selectedTeam.name || selectedTeam.githubOrg,
+          username: member.username,
+          memberName: member.name || member.username,
+        };
+        render();
+        resolve();
+      },
     });
-
-    await loadUserTeams(render);
-    if (shouldUpdateVisibleUsers(selectedTeamIdAtStart) && getSelectedTeam(selectedTeamIdAtStart)) {
-      await loadTeamUsers(render, selectedTeamIdAtStart);
-    }
-    resetTeamMemberOwnerPromotion();
-    render();
-  } catch (error) {
-    state.teamMemberOwnerPromotion.status = "idle";
-    if (await handleSyncFailure(classifySyncError(error), { render })) {
-      render();
-      return;
-    }
-    state.teamMemberOwnerPromotion.error = error?.message ?? String(error);
-    render();
-  }
+  });
 }
 
 export function openTeamMemberRemoval(render, username) {
@@ -286,31 +339,83 @@ export async function confirmTeamMemberRemoval(render) {
     return;
   }
 
-  try {
-    state.teamMemberRemoval.status = "loading";
-    state.teamMemberRemoval.error = "";
-    render();
-    await waitForNextPaint();
-    await invoke("remove_organization_member_for_installation", {
-      installationId: selectedTeam.installationId,
-      orgLogin: selectedTeam.githubOrg,
-      username,
-      sessionToken: requireBrokerSession(),
-    });
+  const previousUsers = snapshotUsers(state.users);
 
-    persistTeamUsers(selectedTeam, state.users.filter((user) => user?.username !== username));
-    resetTeamMemberRemoval();
-    render();
-    await loadTeamUsers(render, selectedTeam.id);
-  } catch (error) {
-    state.teamMemberRemoval.status = "idle";
-    if (await handleSyncFailure(classifySyncError(error), { render })) {
-      render();
-      return;
-    }
-    state.teamMemberRemoval.error = error?.message ?? String(error);
-    render();
-  }
+  return new Promise((resolve) => {
+    requestMemberWriteIntent({
+      key: memberRemovalIntentKey(selectedTeam.id, username),
+      scope: memberUserWriteScope(selectedTeam, username),
+      teamId: selectedTeam.id,
+      username,
+      type: "memberRemoval",
+      previousValue: { users: previousUsers, member },
+      value: { username },
+    }, {
+      clearOnSuccess: true,
+      applyOptimistic: () => {
+        beginPageSync();
+        resetTeamMemberRemoval();
+        const nextUsers = previousUsers.filter((user) => user?.username !== username);
+        queryClient.setQueryData(
+          memberKeys.byTeam(selectedTeam.id),
+          (queryData) => removeMemberFromQueryData(queryData, username),
+        );
+        persistTeamUsers(selectedTeam, nextUsers);
+        showMembersStatus(render, "Removing member...");
+        render();
+      },
+      run: async () => {
+        await waitForNextPaint();
+        await invoke("remove_organization_member_for_installation", {
+          installationId: selectedTeam.installationId,
+          orgLogin: selectedTeam.githubOrg,
+          username,
+          sessionToken: requireBrokerSession(),
+        });
+      },
+      onSuccess: async () => {
+        try {
+          showMembersStatus(render, "Refreshing member list...");
+          await invalidateMembersQueryAfterMutation(selectedTeam, {
+            teamId: selectedTeam.id,
+            render,
+          });
+          clearMembersStatus(render);
+          await completePageSync(render);
+          showMembersNotice(render, "Member removed.");
+        } finally {
+          render();
+          resolve();
+        }
+      },
+      onError: async (error) => {
+        persistTeamUsers(selectedTeam, previousUsers);
+        queryClient.setQueryData(memberKeys.byTeam(selectedTeam.id), (queryData) => ({
+          ...(queryData ?? {}),
+          members: previousUsers,
+        }));
+        clearMembersStatus(render);
+        if (await handleSyncFailure(classifySyncError(error), { render })) {
+          failPageSync();
+          render();
+          resolve();
+          return;
+        }
+        failPageSync();
+        state.teamMemberRemoval = {
+          isOpen: true,
+          status: "idle",
+          error: error?.message ?? String(error),
+          teamId: selectedTeam.id,
+          teamName: selectedTeam.name || selectedTeam.githubOrg,
+          username: member.username,
+          memberName: member.name || member.username,
+        };
+        render();
+        resolve();
+      },
+    });
+  });
 }
 
 async function updateOrganizationAdminMembership(render, username, shouldBeAdmin) {
@@ -319,10 +424,6 @@ async function updateOrganizationAdminMembership(render, username, shouldBeAdmin
     return;
   }
   const selectedTeamIdAtStart = selectedTeam.id;
-
-  if (inflightAdminMembershipUsernames.has(username)) {
-    return;
-  }
 
   if (selectedTeam.canManageMembers !== true) {
     state.userDiscovery = {
@@ -334,89 +435,125 @@ async function updateOrganizationAdminMembership(render, username, shouldBeAdmin
   }
 
   const previousUsers = snapshotUsers(state.users);
-  inflightAdminMembershipUsernames.add(username);
+  const nextRole = shouldBeAdmin ? "Admin" : "Translator";
+  const pendingMutation = shouldBeAdmin ? "makeAdmin" : "revokeAdmin";
 
-  try {
-    const optimisticUsers = updateLocalAdminRole(previousUsers, username, shouldBeAdmin, {
-      pending: true,
-    });
-    beginPageSync();
-    if (optimisticUsers.didUpdate) {
-      persistTeamUsers(selectedTeam, optimisticUsers.users);
-    }
-    state.userDiscovery = { status: "ready", error: "" };
-    render();
-    await waitForNextPaint();
-
-    if (shouldBeAdmin) {
-      await invoke("add_organization_admin_for_installation", {
-        installationId: selectedTeam.installationId,
-        orgLogin: selectedTeam.githubOrg,
+  return new Promise((resolve) => {
+    requestMemberWriteIntent({
+      key: memberRoleIntentKey(selectedTeam.id, username),
+      scope: memberUserWriteScope(selectedTeam, username),
+      teamId: selectedTeam.id,
+      username,
+      type: "memberRole",
+      previousValue: { users: previousUsers },
+      value: {
         username,
-        sessionToken: requireBrokerSession(),
-      });
-    } else {
-      await invoke("revoke_organization_admin_for_installation", {
-        installationId: selectedTeam.installationId,
-        orgLogin: selectedTeam.githubOrg,
-        username,
-        sessionToken: requireBrokerSession(),
-      });
-    }
-
-    if (optimisticUsers.didUpdate) {
-      const committedUsers = updateLocalAdminRole(optimisticUsers.users, username, shouldBeAdmin, {
-        pending: false,
-      });
-      persistTeamUsers(selectedTeam, committedUsers.users, {
-        updateVisibleState: shouldUpdateVisibleUsers(selectedTeamIdAtStart),
-      });
-    }
-
-    await loadUserTeams(render);
-    if (shouldUpdateVisibleUsers(selectedTeamIdAtStart) && getSelectedTeam(selectedTeamIdAtStart)) {
-      await loadTeamUsers(render, selectedTeamIdAtStart);
-    }
-  } catch (error) {
-    persistTeamUsers(selectedTeam, previousUsers, {
-      updateVisibleState: shouldUpdateVisibleUsers(selectedTeamIdAtStart),
-    });
-    if (await handleSyncFailure(classifySyncError(error), { render })) {
-      failPageSync();
-      return;
-    }
-    try {
-      if (shouldUpdateVisibleUsers(selectedTeamIdAtStart) && getSelectedTeam(selectedTeamIdAtStart)) {
-        await loadTeamUsers(render, selectedTeamIdAtStart);
-      }
-      showNoticeBadge(
-        shouldBeAdmin
-          ? `Could not make @${username} an admin.`
-          : `Could not revoke admin access for @${username}.`,
-        render,
-        2600,
-      );
-    } catch (reloadError) {
-      if (
-        await handleSyncFailure(classifySyncError(reloadError), {
-          render,
-          teamId: selectedTeam?.id ?? null,
-          currentResource: true,
-        })
-      ) {
+        role: nextRole,
+      },
+    }, {
+      applyOptimistic: () => {
+        const optimisticUsers = updateLocalAdminRole(previousUsers, username, shouldBeAdmin, {
+          pending: true,
+        });
+        beginPageSync();
+        if (optimisticUsers.didUpdate) {
+          queryClient.setQueryData(
+            memberKeys.byTeam(selectedTeam.id),
+            (queryData) => patchMemberQueryData(queryData, username, {
+              role: nextRole,
+              pendingMutation,
+              pendingError: "",
+              roleSyncPending: true,
+            }),
+          );
+          persistTeamUsers(selectedTeam, optimisticUsers.users);
+        }
+        state.userDiscovery = { status: "ready", error: "" };
+        showMembersStatus(render, "Updating member role...");
+        render();
+      },
+      run: async () => {
+        await waitForNextPaint();
+        if (shouldBeAdmin) {
+          await invoke("add_organization_admin_for_installation", {
+            installationId: selectedTeam.installationId,
+            orgLogin: selectedTeam.githubOrg,
+            username,
+            sessionToken: requireBrokerSession(),
+          });
+        } else {
+          await invoke("revoke_organization_admin_for_installation", {
+            installationId: selectedTeam.installationId,
+            orgLogin: selectedTeam.githubOrg,
+            username,
+            sessionToken: requireBrokerSession(),
+          });
+        }
+      },
+      onSuccess: async () => {
+        try {
+          const optimisticUsers = updateLocalAdminRole(state.users, username, shouldBeAdmin, {
+            pending: true,
+          });
+          persistTeamUsers(selectedTeam, optimisticUsers.users, {
+            updateVisibleState: shouldUpdateVisibleUsers(selectedTeamIdAtStart),
+          });
+          queryClient.setQueryData(
+            memberKeys.byTeam(selectedTeam.id),
+            (queryData) => patchMemberQueryData(queryData, username, {
+              role: nextRole,
+              pendingMutation,
+              pendingError: "",
+              roleSyncPending: true,
+            }),
+          );
+          showMembersStatus(render, "Refreshing team access...");
+          await loadUserTeams(render);
+          if (shouldUpdateVisibleUsers(selectedTeamIdAtStart) && getSelectedTeam(selectedTeamIdAtStart)) {
+            showMembersStatus(render, "Refreshing member list...");
+            await invalidateMembersQueryAfterMutation(selectedTeam, {
+              teamId: selectedTeamIdAtStart,
+              render,
+            });
+          }
+          clearMembersStatus(render);
+          await completePageSync(render);
+          showMembersNotice(render, "Member role updated.");
+        } catch (error) {
+          failPageSync();
+          showNoticeBadge(error?.message ?? String(error), render, 2600);
+        } finally {
+          render();
+          resolve();
+        }
+      },
+      onError: async (error) => {
+        persistTeamUsers(selectedTeam, previousUsers, {
+          updateVisibleState: shouldUpdateVisibleUsers(selectedTeamIdAtStart),
+        });
+        queryClient.setQueryData(memberKeys.byTeam(selectedTeam.id), (queryData) => ({
+          ...(queryData ?? {}),
+          members: previousUsers,
+        }));
+        clearMembersStatus(render);
+        if (await handleSyncFailure(classifySyncError(error), { render })) {
+          failPageSync();
+          resolve();
+          return;
+        }
         failPageSync();
-        return;
-      }
-      state.userDiscovery = {
-        status: "error",
-        error: reloadError?.message ?? String(reloadError),
-      };
-      failPageSync();
-      render();
-    }
-  } finally {
-    inflightAdminMembershipUsernames.delete(username);
-  }
+        showNoticeBadge(
+          shouldBeAdmin
+            ? `Could not make @${username} an admin.`
+            : `Could not revoke admin access for @${username}.`,
+          render,
+          2600,
+        );
+        render();
+        resolve();
+      },
+    });
+  });
 }
 
 export async function loadTeamUsers(render, teamId = state.selectedTeamId) {
@@ -425,6 +562,7 @@ export async function loadTeamUsers(render, teamId = state.selectedTeamId) {
   const shouldSync = teamHasInstallation(selectedTeam) && !state.offline.isEnabled;
   if (shouldSync) {
     beginPageSync();
+    showMembersStatus(render, cachedMembers?.exists ? "Refreshing member list..." : "Loading members...");
   }
   render();
 
@@ -433,16 +571,15 @@ export async function loadTeamUsers(render, teamId = state.selectedTeamId) {
   }
 
   try {
-    const users = await invoke("list_organization_members_for_installation", {
-      installationId: selectedTeam.installationId,
-      orgLogin: selectedTeam.githubOrg,
-      sessionToken: requireBrokerSession(),
-    });
-    persistTeamUsers(
-      selectedTeam,
-      users.map((user) => normalizeOrganizationMember(user)).filter(Boolean),
+    if (cachedMembers?.exists) {
+      seedMembersQueryFromCache(selectedTeam, { teamId, render });
+    }
+    ensureMembersQueryObserver(render, selectedTeam, { teamId, render });
+    const querySnapshot = await queryClient.fetchQuery(
+      createMembersQueryOptions(selectedTeam, { teamId, render }),
     );
-    state.userDiscovery = { status: "ready", error: "" };
+    queryClient.setQueryData(memberKeys.byTeam(teamId), querySnapshot);
+    clearMembersStatus(render);
     await completePageSync(render);
   } catch (error) {
     const errorMessage = error?.message ?? String(error);
@@ -462,6 +599,7 @@ export async function loadTeamUsers(render, teamId = state.selectedTeamId) {
     } else {
       state.userDiscovery = { status: "ready", error: "" };
     }
+    clearMembersStatus(render);
     failPageSync();
     render();
   }

@@ -3,6 +3,8 @@ import { requireBrokerSession } from "./auth-flow.js";
 import { resetInviteUser, state } from "./state.js";
 import { classifySyncError } from "./sync-error.js";
 import { handleSyncFailure } from "./sync-recovery.js";
+import { invalidateMembersQueryAfterMutation } from "./member-query.js";
+import { clearMembersStatus, showMembersNotice, showMembersStatus } from "./team-members-flow.js";
 
 let inviteUserSearchTimeout = null;
 let inviteUserSearchVersion = 0;
@@ -165,6 +167,7 @@ export async function submitInviteUser(render) {
 
   state.inviteUser.status = "loading";
   state.inviteUser.error = "";
+  showMembersStatus(render, "Sending invitation...");
   render();
 
   try {
@@ -185,8 +188,16 @@ export async function submitInviteUser(render) {
 
     state.inviteUser.status = "idle";
     state.inviteUser.step = "success";
+    showMembersStatus(render, "Refreshing member list...");
+    await invalidateMembersQueryAfterMutation(selectedTeam, {
+      teamId: selectedTeam.id,
+      render,
+    });
+    clearMembersStatus(render);
+    showMembersNotice(render, "Invitation sent.");
     render();
   } catch (error) {
+    clearMembersStatus(render);
     if (await handleSyncFailure(classifySyncError(error), { render })) {
       return;
     }

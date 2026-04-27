@@ -9,7 +9,8 @@ import {
 } from "../lib/ui.js";
 import { formatErrorForDisplay } from "../app/error-display.js";
 import { canManageTeamAiSettings } from "../app/resource-capabilities.js";
-import { getNoticeBadgeText } from "../app/status-feedback.js";
+import { getNoticeBadgeText, getStatusSurfaceItems } from "../app/status-feedback.js";
+import { anyMemberWriteIsActive } from "../app/member-write-coordinator.js";
 import {
   canCurrentUserLeaveTeam,
   canPromoteOwners,
@@ -26,18 +27,31 @@ function renderUserCard(user, options = {}) {
   const canLeaveTeam = options.canLeaveTeam === true;
   const selectedTeamId = options.selectedTeamId ?? "";
   const displayName = user.isCurrentUser ? `${user.name} (me)` : user.name;
-  const roleSyncPending = user.roleSyncPending === true;
+  const pendingMutation = typeof user.pendingMutation === "string" ? user.pendingMutation : "";
+  const roleWritePending = pendingMutation === "makeAdmin" || pendingMutation === "revokeAdmin";
+  const roleSyncPending = user.roleSyncPending === true || Boolean(pendingMutation);
+  const roleToggleDisabled = roleSyncPending && !roleWritePending;
   const ownerRole = isOwnerRole(user);
+  const displayRole = ownerRole ? "Owner" : user.role === "Admin" ? "Admin" : "Translator";
+  const pendingLabel =
+    pendingMutation === "promoteOwner"
+      ? "Promoting..."
+      : pendingMutation === "makeAdmin" || pendingMutation === "revokeAdmin" || user.roleSyncPending === true
+        ? "Updating..."
+        : "";
+  const roleMeta = pendingLabel
+    ? `${displayRole} · ${pendingLabel}`
+    : displayRole;
   const actions = user.isCurrentUser
     ? (canLeaveTeam && selectedTeamId
         ? textAction("Leave", `open-current-team-leave:${selectedTeamId}`)
         : "")
     : (canManageMembers || canPromoteOwner
         ? [
-            canManageMembers && user.role === "Translator"
-              ? textAction("Make Admin", `make-admin:${user.username}`, { disabled: roleSyncPending })
-              : canManageMembers && user.role === "Admin"
-                ? textAction("Revoke Admin", `revoke-admin:${user.username}`, { disabled: roleSyncPending })
+            canManageMembers && displayRole === "Translator"
+              ? textAction("Make Admin", `make-admin:${user.username}`, { disabled: roleToggleDisabled })
+              : canManageMembers && displayRole === "Admin"
+                ? textAction("Revoke Admin", `revoke-admin:${user.username}`, { disabled: roleToggleDisabled })
                 : "",
             canPromoteOwner && !ownerRole
               ? textAction("Make owner", `open-team-member-owner-promotion:${user.username}`, {
@@ -59,7 +73,7 @@ function renderUserCard(user, options = {}) {
         <div class="list-row__main">
           <div class="list-row__content">
             <h2 class="list-row__title">${escapeHtml(displayName)}</h2>
-            <p class="list-row__meta">@${escapeHtml(user.username)} · ${escapeHtml(user.role)}</p>
+            <p class="list-row__meta">@${escapeHtml(user.username)} · ${escapeHtml(roleMeta)}</p>
           </div>
           <div class="list-row__actions">
             ${actions}
@@ -114,11 +128,14 @@ export function renderUsersScreen(state) {
     pageShell({
       title: "Members",
       subtitle: selectedTeam?.name ?? "Team",
-      titleAction: buildPageRefreshAction(state),
+      titleAction: buildPageRefreshAction(state, state.pageSync, "refresh-page", {
+        backgroundRefreshing: state.membersPage?.isRefreshing === true || anyMemberWriteIsActive(),
+      }),
       navButtons: buildSectionNav("users", { includeAiSettings: canManageAiSettings }),
       tools: `${primaryButton("+ Invite People", "open-invite-user", { disabled: !canInviteUsers })}`,
       pageSync: state.pageSync,
       noticeText: getNoticeBadgeText(),
+      statusItems: getStatusSurfaceItems("members"),
       offlineMode: state.offline?.isEnabled === true,
       offlineReconnectState: state.offline?.reconnecting === true,
       body,

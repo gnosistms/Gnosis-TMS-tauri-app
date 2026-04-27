@@ -3,6 +3,7 @@ import {
   saveTeamScopedCacheMap,
   teamCacheKey,
 } from "./team-cache.js";
+import { normalizeOrganizationMemberRole } from "./member-shared.js";
 
 const MEMBER_CACHE_STORAGE_KEY = "gnosis-tms-member-cache";
 
@@ -28,18 +29,23 @@ function normalizeMember(member) {
     return null;
   }
 
+  const {
+    pendingMutation: _pendingMutation,
+    pendingError: _pendingError,
+    roleSyncPending: _roleSyncPending,
+    optimisticClientId: _optimisticClientId,
+    ...persistentMember
+  } = member;
+
   return {
-    ...member,
+    ...persistentMember,
     id,
     username,
     name:
       typeof member.name === "string" && member.name.trim()
         ? member.name.trim()
         : username,
-    role:
-      typeof member.role === "string" && member.role.trim()
-        ? member.role.trim()
-        : "Translator",
+    role: normalizeOrganizationMemberRole(member.role),
     avatarUrl:
       typeof member.avatarUrl === "string" && member.avatarUrl.trim()
         ? member.avatarUrl.trim()
