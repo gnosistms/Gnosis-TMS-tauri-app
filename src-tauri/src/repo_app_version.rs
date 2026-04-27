@@ -106,15 +106,14 @@ fn compare_app_versions(left: &str, right: &str) -> Ordering {
 fn parse_version_parts(value: &str) -> Vec<u64> {
     value
         .trim()
+        .trim_start_matches('v')
+        .trim_start_matches('V')
+        .split(['-', '+'])
+        .next()
+        .unwrap_or("")
+        .trim()
         .split('.')
-        .map(|segment| {
-            segment
-                .split_once('-')
-                .map(|(prefix, _)| prefix)
-                .unwrap_or(segment)
-                .parse::<u64>()
-                .unwrap_or(0)
-        })
+        .map(|segment| segment.parse::<u64>().unwrap_or(0))
         .collect()
 }
 
