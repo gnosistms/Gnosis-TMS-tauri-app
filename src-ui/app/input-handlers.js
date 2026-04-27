@@ -278,8 +278,9 @@ function handleEditorSourceLanguageInput(event, render) {
   }
 
   if (input.value === MANAGE_CHAPTER_LANGUAGES_OPTION_VALUE) {
-    openTargetLanguageManager();
-    render();
+    if (openTargetLanguageManager(render)) {
+      render();
+    }
     return true;
   }
 
@@ -298,8 +299,9 @@ function handleEditorTargetLanguageInput(event, render) {
   }
 
   if (input.value === MANAGE_CHAPTER_LANGUAGES_OPTION_VALUE) {
-    openTargetLanguageManager();
-    render();
+    if (openTargetLanguageManager(render)) {
+      render();
+    }
     return true;
   }
 

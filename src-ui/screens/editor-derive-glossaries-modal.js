@@ -38,6 +38,7 @@ export function renderEditorDeriveGlossariesModal(state) {
 
   const config = resolveEditorDeriveGlossariesConfig(state.editorChapter);
   const isSubmitting = modal.status === "loading";
+  const offlineMode = state.offline?.isEnabled === true;
   const errorMarkup = modal.error
     ? `<p class="modal__error">${escapeHtml(formatErrorForDisplay(modal.error))}</p>`
     : "";
@@ -52,7 +53,9 @@ export function renderEditorDeriveGlossariesModal(state) {
       action: "confirm-editor-derive-glossaries",
       isLoading: true,
     })
-    : config.derivableLanguages.length > 0
+    : offlineMode
+      ? disabledPrimaryButton("Continue")
+      : config.derivableLanguages.length > 0
       ? loadingPrimaryButton({
         label: "Continue",
         loadingLabel: "Deriving...",
@@ -72,6 +75,8 @@ export function renderEditorDeriveGlossariesModal(state) {
         progressLabel: "glossary derivation progress",
       })}
     `
+    : offlineMode
+    ? '<p class="modal__supporting">AI actions are unavailable offline.</p>'
     : `
       <p class="modal__supporting">
         You have a glossary for ${escapeHtml(languageName(config.glossarySourceLanguage))} to ${escapeHtml(languageName(config.glossaryTargetLanguage))}. This feature will use the existing glossary to generate glossary information for the following language pairs:

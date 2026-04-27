@@ -845,13 +845,19 @@ export async function confirmEditorReplaceUndo(render) {
   });
 }
 
-export function openTargetLanguageManager() {
+export function openTargetLanguageManager(render = null) {
+  if (state.offline?.isEnabled === true) {
+    showNoticeBadge("This operation is not supported in offline mode", render);
+    return false;
+  }
+
   state.targetLanguageManager = {
     ...createTargetLanguageManagerState(),
     isOpen: true,
     chapterId: state.editorChapter?.chapterId ?? null,
     languages: managedChapterLanguagesFromEditorState(),
   };
+  return true;
 }
 
 export function closeTargetLanguageManager() {
@@ -1027,6 +1033,17 @@ export function moveTargetLanguageManagerLanguageToIndex(fromIndex, toIndex) {
 export async function submitTargetLanguageManager(render) {
   const modal = state.targetLanguageManager;
   if (!modal?.isOpen || modal.status === "loading") {
+    return;
+  }
+
+  if (state.offline?.isEnabled === true) {
+    state.targetLanguageManager = {
+      ...modal,
+      status: "idle",
+      error: "Language changes are unavailable offline.",
+    };
+    showNoticeBadge("This operation is not supported in offline mode", render);
+    render?.();
     return;
   }
 

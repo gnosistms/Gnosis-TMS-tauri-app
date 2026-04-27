@@ -854,6 +854,11 @@ export function updateEditorAssistantComposerDraft(nextValue) {
 }
 
 export async function runEditorAiAssistant(render) {
+  if (state.offline?.isEnabled === true) {
+    showNoticeBadge("This operation is not supported in offline mode", render);
+    return;
+  }
+
   updateActiveAssistantThreadKey();
   const message = normalizeEditorAssistantState(state.editorChapter?.assistant).composerDraft.trim();
   const baseContext = currentAssistantContext();

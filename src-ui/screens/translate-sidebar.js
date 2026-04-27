@@ -83,7 +83,7 @@ function renderTranslateActionButton(buttonModel, isAnyActionRunning) {
   `;
 }
 
-function renderTranslateTools(editorChapter, rows, languages, sourceCode, targetCode, actionConfig) {
+function renderTranslateTools(editorChapter, rows, languages, sourceCode, targetCode, actionConfig, offlineMode = false) {
   const activeRow = rows.find((row) => row.id === editorChapter?.activeRowId) ?? null;
   const translateLanguages = resolveEditorAiTranslateLanguages(editorChapter);
   const sourceLanguage =
@@ -124,9 +124,13 @@ function renderTranslateTools(editorChapter, rows, languages, sourceCode, target
     ));
   const isAnyActionRunning = visibleActions.some((action) => action.isLoading);
   const canTranslate =
-    sourceLanguage.code !== targetLanguage.code && sourceSection.text.trim().length > 0;
+    offlineMode !== true
+    && sourceLanguage.code !== targetLanguage.code
+    && sourceSection.text.trim().length > 0;
   const disabledMessage =
-    sourceLanguage.code === targetLanguage.code
+    offlineMode === true
+      ? "AI actions are unavailable offline."
+      : sourceLanguage.code === targetLanguage.code
       ? "Choose a language other than the source language before translating."
       : sourceSection.text.trim().length === 0
         ? "There is no source text to translate yet."
@@ -154,7 +158,9 @@ function renderTranslateTools(editorChapter, rows, languages, sourceCode, target
       isLoading: visibleAction.isLoading,
       isDisabled: !canTranslate || !modelId,
       modelLabel: visibleModelLabel,
-      tooltip: `Translate ${sourceLanguage.name ?? sourceLanguage.code} to ${targetLanguage.name ?? targetLanguage.code} using ${visibleModelLabel}`,
+      tooltip: offlineMode === true
+        ? "AI actions are unavailable offline."
+        : `Translate ${sourceLanguage.name ?? sourceLanguage.code} to ${targetLanguage.name ?? targetLanguage.code} using ${visibleModelLabel}`,
       showError: visibleAction.showError,
       error: visibleAction.error,
     };
@@ -518,7 +524,7 @@ function renderAssistantTranscript(editorChapter, rows, languages, sourceCode, t
   `;
 }
 
-function renderAssistantComposer(editorChapter, rows, languages, targetCode) {
+function renderAssistantComposer(editorChapter, rows, languages, targetCode, offlineMode = false) {
   const activeRow = rows.find((row) => row.id === editorChapter?.activeRowId) ?? null;
   const translateLanguages = resolveEditorAiTranslateLanguages(editorChapter);
   const targetLanguage =
@@ -527,7 +533,7 @@ function renderAssistantComposer(editorChapter, rows, languages, targetCode) {
     ?? languages.find((language) => language.code === targetCode)
     ?? null;
   const assistant = normalizeEditorAssistantState(editorChapter?.assistant);
-  const isDisabled = !activeRow || !targetLanguage;
+  const isDisabled = offlineMode === true || !activeRow || !targetLanguage;
 
   return `
     <div class="assistant-composer">
@@ -544,17 +550,17 @@ function renderAssistantComposer(editorChapter, rows, languages, targetCode) {
   `;
 }
 
-function renderAssistantPane(editorChapter, rows, languages, sourceCode, targetCode, actionConfig) {
+function renderAssistantPane(editorChapter, rows, languages, sourceCode, targetCode, actionConfig, offlineMode = false) {
   return `
     <div class="assistant-pane">
-      ${renderTranslateTools(editorChapter, rows, languages, sourceCode, targetCode, actionConfig)}
+      ${renderTranslateTools(editorChapter, rows, languages, sourceCode, targetCode, actionConfig, offlineMode)}
       ${renderAssistantTranscript(editorChapter, rows, languages, sourceCode, targetCode)}
-      ${renderAssistantComposer(editorChapter, rows, languages, targetCode)}
+      ${renderAssistantComposer(editorChapter, rows, languages, targetCode, offlineMode)}
     </div>
   `;
 }
 
-function renderReviewPane(editorChapter, rows, languages) {
+function renderReviewPane(editorChapter, rows, languages, offlineMode = false) {
   const expandedSectionKeys =
     editorChapter?.reviewExpandedSectionKeys instanceof Set
       ? editorChapter.reviewExpandedSectionKeys
@@ -606,7 +612,9 @@ function renderReviewPane(editorChapter, rows, languages) {
     isAiReviewExpanded ? "Collapse this review section" : "Expand this review section",
     { align: "start" },
   );
-  const aiReviewMeta = aiReview.status === "loading"
+  const aiReviewMeta = offlineMode === true
+    ? "Offline"
+    : aiReview.status === "loading"
     ? "Reviewing..."
     : aiReview.status === "applying"
       ? "Applying..."
@@ -627,6 +635,10 @@ function renderReviewPane(editorChapter, rows, languages) {
         tone: "error",
         message: aiReview.error,
       })
+    : offlineMode === true
+      ? renderInlineStateBox({
+        message: "AI actions are unavailable offline.",
+      })
       : "";
   const reviewNowButton = aiReview.status === "loading"
     ? loadingPrimaryButton({
@@ -635,7 +647,7 @@ function renderReviewPane(editorChapter, rows, languages) {
       action: "review-editor-text-now",
       isLoading: true,
     })
-    : primaryButton("Review now", "review-editor-text-now");
+    : primaryButton("Review now", "review-editor-text-now", { disabled: offlineMode === true });
   const applyButton = secondaryButton(
     aiReview.status === "applying" ? "Applying..." : "Apply",
     "apply-editor-ai-review",
@@ -753,14 +765,15 @@ export function renderTranslateSidebar(
   targetCode,
   actionConfig,
   session,
+  offlineMode = false,
 ) {
   const activeTab = normalizeEditorSidebarTab(editorChapter?.sidebarTab);
   const body = activeTab === "assistant"
-    ? renderAssistantPane(editorChapter, rows, languages, sourceCode, targetCode, actionConfig)
+    ? renderAssistantPane(editorChapter, rows, languages, sourceCode, targetCode, actionConfig, offlineMode)
     : activeTab === "comments"
     ? renderCommentsPane(editorChapter, rows, session)
     : activeTab === "review"
-      ? renderReviewPane(editorChapter, rows, languages)
+      ? renderReviewPane(editorChapter, rows, languages, offlineMode)
       : renderHistoryPane(editorChapter, rows, languages);
 
   return `

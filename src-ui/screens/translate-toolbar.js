@@ -314,7 +314,11 @@ export function renderTranslateToolbar({
   sourceLanguageExtraOptions = [],
   targetLanguageExtraOptions = [],
   deriveGlossariesAvailable = false,
+  offlineMode = false,
 }) {
+  const offlineAiTooltip = offlineMode
+    ? "AI actions are unavailable offline."
+    : "";
   return `
     <div class="translate-toolbar__body translate-toolbar__body--header">
       <div class="toolbar-row">
@@ -331,11 +335,13 @@ export function renderTranslateToolbar({
         <div class="toolbar-meta">
           ${deriveGlossariesAvailable
             ? textAction("Derive glossaries", "open-editor-derive-glossaries", {
-              tooltip: "Use this to automatically generate glossaries for the languages that don't have a glossary.",
+              tooltip: offlineAiTooltip || "Use this to automatically generate glossaries for the languages that don't have a glossary.",
+              disabled: offlineMode,
             })
             : ""}
           ${textAction("AI translate all", "open-editor-ai-translate-all", {
-            tooltip: "Translate all empty fields in selected languages",
+            tooltip: offlineAiTooltip || "Translate all empty fields in selected languages",
+            disabled: offlineMode,
           })}
           ${textAction("Unreview All", "open-editor-unreview-all", {
             tooltip: 'Remove the "reviewed" mark from all rows of the target language.',

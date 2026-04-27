@@ -26,6 +26,28 @@ test("target language manager modal renders ordered disabled language rows with 
   assert.match(html, /data-action="submit-target-language-manager"/);
 });
 
+test("target language manager disables language changes while offline", () => {
+  const html = renderTargetLanguageManagerModal({
+    offline: { isEnabled: true },
+    targetLanguageManager: {
+      isOpen: true,
+      status: "idle",
+      error: "",
+      chapterId: "chapter-1",
+      isPickerOpen: false,
+      languages: [
+        { code: "es", name: "Spanish", role: "source" },
+        { code: "en", name: "English", role: "target" },
+      ],
+    },
+  });
+
+  assert.match(html, /Language changes are unavailable offline/);
+  assert.match(html, /data-action="open-target-language-manager-picker"[\s\S]*disabled/);
+  assert.match(html, /data-action="submit-target-language-manager"[^>]*disabled/);
+  assert.match(html, /data-action="remove-target-language-manager-language:1"[\s\S]*disabled/);
+});
+
 test("target language manager modal renders a nested picker with only languages not already present", () => {
   const html = renderTargetLanguageManagerModal({
     targetLanguageManager: {

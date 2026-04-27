@@ -8,7 +8,7 @@ import {
 import { formatErrorForDisplay } from "../app/error-display.js";
 import { isoLanguageOptions } from "../lib/language-options.js";
 
-function renderPickerLanguageOption(language, selectedCode) {
+function renderPickerLanguageOption(language, selectedCode, disabled = false) {
   const isSelected = language.code === selectedCode;
   return `
     <button
@@ -16,6 +16,7 @@ function renderPickerLanguageOption(language, selectedCode) {
       type="button"
       data-action="select-target-language-manager-picker-language:${escapeHtml(language.code)}"
       aria-pressed="${isSelected ? "true" : "false"}"
+      ${disabled ? 'disabled aria-disabled="true"' : ""}
     >
       <span>${escapeHtml(language.name)}</span>
       <span class="language-picker-modal__code">${escapeHtml(language.code)}</span>
@@ -101,6 +102,7 @@ function renderLanguagePickerModal(state) {
   const selectedCode = availableLanguages.some((language) => language.code === rawSelectedCode)
     ? rawSelectedCode
     : "";
+  const offlineMode = state.offline?.isEnabled === true;
 
   return `
     <div class="modal-backdrop modal-backdrop--nested-picker">
@@ -111,12 +113,12 @@ function renderLanguagePickerModal(state) {
           <p class="modal__supporting">Choose a language to add to this file.</p>
           <div class="language-picker-modal__list" role="list" data-target-language-manager-picker-list>
             ${availableLanguages.length > 0
-              ? availableLanguages.map((language) => renderPickerLanguageOption(language, selectedCode)).join("")
+              ? availableLanguages.map((language) => renderPickerLanguageOption(language, selectedCode, offlineMode)).join("")
               : '<p class="language-picker-modal__empty">All supported languages are already in this file.</p>'}
           </div>
           <div class="modal__actions">
             ${secondaryButton("Cancel", "close-target-language-manager-picker")}
-            ${primaryButton("Add language", "add-target-language-manager-language", { disabled: !selectedCode })}
+            ${primaryButton("Add language", "add-target-language-manager-language", { disabled: offlineMode || !selectedCode })}
           </div>
         </div>
       </section>
@@ -132,6 +134,8 @@ export function renderTargetLanguageManagerModal(state) {
 
   const languages = Array.isArray(modal.languages) ? modal.languages : [];
   const isSubmitting = modal.status === "loading";
+  const offlineMode = state.offline?.isEnabled === true;
+  const controlsDisabled = isSubmitting || offlineMode;
   const errorMarkup = modal.error
     ? `<p class="modal__error">${escapeHtml(formatErrorForDisplay(modal.error))}</p>`
     : "";
@@ -147,7 +151,7 @@ export function renderTargetLanguageManagerModal(state) {
           <section class="term-lane">
             <div class="term-lane__rows">
               ${languages.map((language, index) =>
-                renderManagedLanguageRow(language, index, languages.length, isSubmitting)).join("")}
+                renderManagedLanguageRow(language, index, languages.length, controlsDisabled)).join("")}
             </div>
             <div class="term-lane__add-row">
               <button
@@ -156,21 +160,24 @@ export function renderTargetLanguageManagerModal(state) {
                 data-action="open-target-language-manager-picker"
                 aria-label="Add a new language"
                 ${tooltipAttributes("Add a new language", { align: "end" })}
-                ${isSubmitting ? "disabled" : ""}
+                ${controlsDisabled ? "disabled" : ""}
               ><span class="term-lane__add-icon" aria-hidden="true"></span></button>
             </div>
           </section>
 
+          ${offlineMode ? '<p class="modal__supporting">Language changes are unavailable offline.</p>' : ""}
           ${errorMarkup}
 
           <div class="modal__actions">
             ${secondaryButton("Cancel", "close-target-language-manager", { disabled: isSubmitting })}
-            ${loadingPrimaryButton({
-              label: "Save",
-              loadingLabel: "Saving...",
-              action: "submit-target-language-manager",
-              isLoading: isSubmitting,
-            })}
+            ${offlineMode
+              ? primaryButton("Save", "submit-target-language-manager", { disabled: true })
+              : loadingPrimaryButton({
+                label: "Save",
+                loadingLabel: "Saving...",
+                action: "submit-target-language-manager",
+                isLoading: isSubmitting,
+              })}
           </div>
         </div>
       </section>

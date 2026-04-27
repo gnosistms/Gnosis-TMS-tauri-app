@@ -21,6 +21,7 @@ import { findEditorRowById, hasActiveEditorField } from "./editor-utils.js";
 import { selectedProjectsTeam, selectedProjectsTeamInstallationId } from "./project-context.js";
 import { invoke } from "./runtime.js";
 import { state } from "./state.js";
+import { showNoticeBadge } from "./status-feedback.js";
 import {
   captureTranslateViewport,
   renderTranslateBodyPreservingViewport,
@@ -72,6 +73,11 @@ function activeEditorReviewContext(chapterState = state.editorChapter) {
 }
 
 export async function runEditorAiReview(render) {
+  if (state.offline?.isEnabled === true) {
+    showNoticeBadge("This operation is not supported in offline mode", render);
+    return;
+  }
+
   const context = activeEditorReviewContext();
   if (!context) {
     return;

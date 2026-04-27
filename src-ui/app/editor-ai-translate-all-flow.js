@@ -187,6 +187,11 @@ export function openEditorAiTranslateAllModal(render) {
     return;
   }
 
+  if (state.offline?.isEnabled === true) {
+    showNoticeBadge("This operation is not supported in offline mode", render);
+    return;
+  }
+
   const selectedLanguageCodes = visibleTargetLanguagesForChapter(state.editorChapter)
     .map((language) => language.code);
   state.editorChapter = {
@@ -259,6 +264,17 @@ export function updateEditorAiTranslateAllLanguageSelection(render, languageCode
 
 export async function confirmEditorAiTranslateAll(render, operations = {}) {
   if (!state.editorChapter?.chapterId) {
+    return;
+  }
+
+  if (state.offline?.isEnabled === true) {
+    applyEditorAiTranslateAllModal({
+      isOpen: true,
+      status: "idle",
+      error: "AI actions are unavailable offline.",
+    });
+    showNoticeBadge("This operation is not supported in offline mode", render);
+    render?.();
     return;
   }
 

@@ -129,3 +129,32 @@ test("Translate toolbar renders Derive glossaries before renamed AI translate al
   assert.equal(deriveIndex < translateIndex, true);
   assert.doesNotMatch(html, /AI Translate all/);
 });
+
+test("Translate toolbar disables online AI batch actions while offline", () => {
+  const html = renderTranslateToolbar({
+    languages: [
+      { code: "es", name: "Spanish" },
+      { code: "vi", name: "Vietnamese" },
+    ],
+    sourceCode: "es",
+    targetCode: "vi",
+    deriveGlossariesAvailable: true,
+    offlineMode: true,
+  });
+
+  assert.match(html, /data-action="open-editor-derive-glossaries"[^>]*disabled/);
+  assert.match(html, /data-action="open-editor-ai-translate-all"[^>]*disabled/);
+  assert.doesNotMatch(html, /data-action="open-editor-unreview-all"[^>]*disabled/);
+  assert.match(html, /AI actions are unavailable offline/);
+});
+
+test("Derive glossaries modal disables confirm while offline", () => {
+  const html = renderEditorDeriveGlossariesModal({
+    offline: { isEnabled: true },
+    editorChapter: chapter(),
+  });
+
+  assert.match(html, /AI actions are unavailable offline/);
+  assert.match(html, /data-action="noop" disabled/);
+  assert.doesNotMatch(html, /data-action="confirm-editor-derive-glossaries"/);
+});

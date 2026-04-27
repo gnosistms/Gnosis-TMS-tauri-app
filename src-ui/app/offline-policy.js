@@ -27,6 +27,15 @@ const OFFLINE_BLOCKED_EXACT_ACTIONS = new Set([
   "refresh-github-app-test-installation",
   "load-github-app-test-repositories",
   "reload-github-app-test-config",
+  "review-editor-text-now",
+  "run-editor-ai-assistant",
+  "open-editor-ai-translate-all",
+  "confirm-editor-ai-translate-all",
+  "open-editor-derive-glossaries",
+  "confirm-editor-derive-glossaries",
+  "submit-target-language-manager",
+  "open-target-language-manager-picker",
+  "add-target-language-manager-language",
 ]);
 
 const OFFLINE_BLOCKED_PREFIXES = [
@@ -47,10 +56,22 @@ const OFFLINE_BLOCKED_PREFIXES = [
   "restore-glossary:",
   "delete-deleted-glossary:",
   "delete-glossary-term:",
+  "run-editor-ai-translate:",
+  "remove-target-language-manager-language:",
+  "move-target-language-manager-language:",
+  "select-target-language-manager-picker-language:",
 ];
 
+export function editorAiActionsAreOfflineBlocked() {
+  return state.offline?.isEnabled === true;
+}
+
+export function editorNetworkActionsAreOfflineBlocked() {
+  return state.offline?.isEnabled === true;
+}
+
 export function isOfflineBlockedAction(action) {
-  if (!state.offline.isEnabled) {
+  if (state.offline?.isEnabled !== true) {
     return false;
   }
 

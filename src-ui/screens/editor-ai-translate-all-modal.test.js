@@ -34,6 +34,31 @@ test("AI Translate All modal renders requested copy and visible target languages
   assert.doesNotMatch(html, /Japanese/);
 });
 
+test("AI Translate All modal disables confirm and language selection while offline", () => {
+  const html = renderEditorAiTranslateAllModal({
+    offline: { isEnabled: true },
+    editorChapter: {
+      ...createEditorChapterState(),
+      chapterId: "chapter-1",
+      selectedSourceLanguageCode: "es",
+      languages: [
+        { code: "es", name: "Spanish", role: "source" },
+        { code: "vi", name: "Vietnamese", role: "target" },
+      ],
+      aiTranslateAllModal: {
+        ...createEditorChapterState().aiTranslateAllModal,
+        isOpen: true,
+        selectedLanguageCodes: ["vi"],
+      },
+    },
+  });
+
+  assert.match(html, /AI actions are unavailable offline/);
+  assert.match(html, /data-editor-ai-translate-all-language[\s\S]*disabled/);
+  assert.match(html, /data-action="noop" disabled/);
+  assert.doesNotMatch(html, /data-action="confirm-editor-ai-translate-all"/);
+});
+
 test("AI Translate All modal shows an enabled Stop button while translating", () => {
   const html = renderEditorAiTranslateAllModal({
     editorChapter: {

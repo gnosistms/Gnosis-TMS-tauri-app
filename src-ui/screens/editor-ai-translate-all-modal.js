@@ -81,6 +81,7 @@ export function renderEditorAiTranslateAllModal(state) {
   }
 
   const isSubmitting = modal.status === "loading";
+  const offlineMode = state.offline?.isEnabled === true;
   const languages = visibleTargetLanguages(state.editorChapter);
   const hasSelection =
     Array.isArray(modal.selectedLanguageCodes)
@@ -101,7 +102,9 @@ export function renderEditorAiTranslateAllModal(state) {
       action: "confirm-editor-ai-translate-all",
       isLoading: true,
     })
-    : hasSelection
+    : offlineMode
+      ? disabledPrimaryButton("Begin translating")
+      : hasSelection
       ? loadingPrimaryButton({
         label: "Begin translating",
         loadingLabel: "Translating...",
@@ -114,10 +117,12 @@ export function renderEditorAiTranslateAllModal(state) {
       ${renderOverallProgress(modal)}
       ${renderLanguageProgressBars(languages, modal.selectedLanguageCodes, modal.languageProgress)}
     `
-    : renderLanguageCheckboxes(languages, modal.selectedLanguageCodes, false);
+    : renderLanguageCheckboxes(languages, modal.selectedLanguageCodes, offlineMode);
   const supportingMarkup = isSubmitting
     ? ""
-    : '<p class="modal__supporting">Select languages below to use AI translation to fill all empty fields for the selected languages. If there are existing translations for the selected language, this will not overwrite them; it only fills empty spaces.</p>';
+    : offlineMode
+      ? '<p class="modal__supporting">AI actions are unavailable offline.</p>'
+      : '<p class="modal__supporting">Select languages below to use AI translation to fill all empty fields for the selected languages. If there are existing translations for the selected language, this will not overwrite them; it only fills empty spaces.</p>';
 
   return `
     <div class="modal-backdrop">

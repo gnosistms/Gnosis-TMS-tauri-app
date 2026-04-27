@@ -151,6 +151,7 @@ function buildTranslateScreenFrame(state) {
     collapsedLanguageCodes,
     editorFontSizePx,
     sidebarTab,
+    offlineMode: state.offline?.isEnabled === true,
     authSession,
     titleText,
     displayTitle,
@@ -176,6 +177,7 @@ function renderTranslateEditorBodyFromFrame(frame) {
     translateBody,
     authSession,
     previewBody,
+    offlineMode,
   } = frame;
 
   if (mode === EDITOR_MODE_PREVIEW) {
@@ -211,6 +213,7 @@ function renderTranslateEditorBodyFromFrame(frame) {
           targetCode,
           actionConfig,
           authSession,
+          offlineMode,
         )}
       </div>
     </section>
@@ -232,13 +235,14 @@ export function renderTranslateHeaderDetail(state) {
     editorReplace,
     editorFontSizePx,
     previewSearchState,
+    offlineMode,
   } = frame;
   const targetLanguageManageOption = [{
     value: MANAGE_CHAPTER_LANGUAGES_OPTION_VALUE,
     label: "Add / Remove",
   }];
   const chapterLanguageManagerOptions =
-    selectedProjectsTeam()?.canManageProjects === true
+    selectedProjectsTeam()?.canManageProjects === true && !offlineMode
       ? targetLanguageManageOption
       : [];
 
@@ -260,6 +264,7 @@ export function renderTranslateHeaderDetail(state) {
     sourceLanguageExtraOptions: chapterLanguageManagerOptions,
     targetLanguageExtraOptions: chapterLanguageManagerOptions,
     deriveGlossariesAvailable: resolveEditorDeriveGlossariesConfig(frame.editorChapter).canDerive,
+    offlineMode,
   });
 }
 
@@ -276,6 +281,7 @@ export function renderTranslateSidebar(state) {
     sourceCode,
     targetCode,
     authSession,
+    offlineMode,
   } = buildTranslateScreenFrame(state);
   return renderTranslateEditorSidebar(
     editorChapter,
@@ -285,6 +291,7 @@ export function renderTranslateSidebar(state) {
     targetCode,
     state.aiSettings.actionConfig,
     authSession,
+    offlineMode,
   );
 }
 

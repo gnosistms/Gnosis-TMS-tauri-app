@@ -214,6 +214,11 @@ export function openEditorDeriveGlossariesModal(render) {
     return;
   }
 
+  if (state.offline?.isEnabled === true) {
+    showNoticeBadge("This operation is not supported in offline mode", render);
+    return;
+  }
+
   const config = resolveEditorDeriveGlossariesConfig(state.editorChapter);
   if (!config.canDerive) {
     return;
@@ -291,6 +296,17 @@ function createConfigRender(render) {
 
 export async function confirmEditorDeriveGlossaries(render, operations = {}) {
   if (!state.editorChapter?.chapterId) {
+    return;
+  }
+
+  if (state.offline?.isEnabled === true) {
+    applyEditorDeriveGlossariesModal({
+      isOpen: true,
+      status: "idle",
+      error: "AI actions are unavailable offline.",
+    });
+    showNoticeBadge("This operation is not supported in offline mode", render);
+    render?.();
     return;
   }
 

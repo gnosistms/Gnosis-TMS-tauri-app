@@ -270,6 +270,12 @@ export async function runEditorAiTranslateForContext(
   operations = {},
   options = {},
 ) {
+  if (state.offline?.isEnabled === true) {
+    const message = "This operation is not supported in offline mode";
+    showNoticeBadge(message, render);
+    return { ok: false, error: message };
+  }
+
   const {
     updateEditorRowFieldValue,
     persistEditorRowOnBlur,

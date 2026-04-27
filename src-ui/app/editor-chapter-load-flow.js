@@ -209,7 +209,9 @@ export async function loadSelectedChapterEditorData(render, options = {}, operat
   const linkedGlossary = normalizeEditorGlossaryLink(context.chapter.linkedGlossary);
   const aiActionConfigRender = editorAiActionConfigRender(render);
   applyStoredSelectedTeamAiActionPreferences(aiActionConfigRender);
-  void ensureSharedAiActionConfigurationLoaded(aiActionConfigRender).catch(() => {});
+  if (state.offline?.isEnabled !== true) {
+    void ensureSharedAiActionConfigurationLoaded(aiActionConfigRender).catch(() => {});
+  }
   const nextGlossaryState =
     preserveVisibleRows && editorGlossaryStateMatchesLink(state.editorChapter?.glossary, linkedGlossary)
       ? state.editorChapter.glossary
