@@ -21,6 +21,7 @@ import { renderChapterPermanentDeletionModal } from "./chapter-permanent-deletio
 import { renderChapterRenameModal } from "./chapter-rename-modal.js";
 import { renderProjectPermanentDeletionModal } from "./project-permanent-deletion-modal.js";
 import { renderProjectImportModal } from "./project-import-modal.js";
+import { renderProjectExportModal } from "./project-export-modal.js";
 import { renderProjectRenameModal } from "./project-rename-modal.js";
 import {
   getNoticeBadgeText,
@@ -208,6 +209,7 @@ function renderProjectCard(project, expanded, options = {}) {
                     ${renderChapterGlossarySelect(chapter, glossaryOptions, {
                       disabled: offlineMode || lifecycleActionsDisabled || glossaryChangesDisabled || !canManageProjects,
                     })}
+                    ${textAction("Export", `export-file:${chapter.id}`, { disabled: localRepoSetupPending || disableContentActions })}
                     ${textAction("Open", `open-translate:${chapter.id}`)}
                     ${canManageProjects ? textAction("Rename", `rename-file:${chapter.id}`, { disabled: offlineMode || lifecycleActionsDisabled || disableContentActions }) : ""}
                     ${canManageProjects ? textAction("Delete", `delete-file:${chapter.id}`, { disabled: offlineMode || lifecycleActionsDisabled || disableContentActions }) : ""}
@@ -642,6 +644,7 @@ export function renderProjectsScreen(state) {
     renderChapterRenameModal(state) +
     renderProjectRenameModal(state) +
     renderProjectPermanentDeletionModal(state) +
-    renderProjectImportModal(state)
+    renderProjectImportModal(state) +
+    renderProjectExportModal(state)
   );
 }

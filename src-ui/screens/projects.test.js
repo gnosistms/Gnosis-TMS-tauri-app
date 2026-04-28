@@ -167,6 +167,20 @@ test("projects glossary selector stays enabled during project refresh", () => {
   assert.doesNotMatch(html, /data-chapter-glossary-select[^>]*disabled/);
 });
 
+test("projects page shows Export before Open on active chapters", () => {
+  const html = renderProjectsScreen(projectsState());
+  const exportButton = actionButtonHtml(html, "export-file:chapter-1");
+  const openButton = actionButtonHtml(html, "open-translate:chapter-1");
+  const exportIndex = html.indexOf('data-action="export-file:chapter-1"');
+  const openButtonIndex = html.indexOf('<button class="text-action" data-action="open-translate:chapter-1"', exportIndex);
+
+  assert.match(html, /data-action="export-file:chapter-1">Export<\/button>/);
+  assert.ok(exportIndex >= 0);
+  assert.ok(openButtonIndex > exportIndex);
+  assert.doesNotMatch(exportButton, /disabled/);
+  assert.doesNotMatch(openButton, /disabled/);
+});
+
 test("projects glossary selector keeps local selection and options during project refresh", () => {
   const html = renderProjectsScreen(projectsState({
     projectsPage: {

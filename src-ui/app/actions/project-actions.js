@@ -40,6 +40,12 @@ import {
   selectProjectImportFile,
   selectProjectImportSourceLanguage,
 } from "../project-import-flow.js";
+import {
+  cancelProjectExport,
+  closeProjectExportUnsupported,
+  openProjectExport,
+  submitProjectExport,
+} from "../project-export-flow.js";
 import { actionSuffix, runWithImmediateLoading } from "../action-helpers.js";
 
 export function createProjectActions(render) {
@@ -52,6 +58,8 @@ export function createProjectActions(render) {
     "cancel-chapter-rename": () => cancelChapterRename(render),
     "clear-project-search": () => clearProjectSearch(render),
     "cancel-project-import": () => cancelProjectImportModal(render),
+    "cancel-project-export": () => cancelProjectExport(render),
+    "close-project-export-unsupported": () => closeProjectExportUnsupported(render),
     "close-project-import-upload-error": () => closeProjectImportUploadError(render),
     "continue-project-import-text": () => continueProjectImportText(render),
     "select-project-import-file": () => selectProjectImportFile(render),
@@ -88,6 +96,10 @@ export function createProjectActions(render) {
     {
       prefix: "add-project-files:",
       handler: async (projectId) => addFilesToProject(render, projectId),
+    },
+    {
+      prefix: "export-file:",
+      handler: (chapterId) => openProjectExport(render, chapterId),
     },
     {
       prefix: "select-project-import-source-language:",
@@ -160,6 +172,10 @@ export function createProjectActions(render) {
     }
     if (action === "submit-project-rename") {
       await runWithImmediateLoading(event, "Saving...", () => submitProjectRename(render));
+      return true;
+    }
+    if (action === "submit-project-export") {
+      await submitProjectExport(render);
       return true;
     }
     if (action === "submit-chapter-rename") {

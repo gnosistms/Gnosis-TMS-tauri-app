@@ -16,23 +16,24 @@ pub(crate) use self::chapter_editor::{
 use self::{
     chapter_editor::{
         clear_gtms_editor_imported_conflict_sync, clear_gtms_editor_reviewed_markers_sync,
-        initialize_gtms_project_repo_sync, insert_gtms_editor_row_sync,
-        list_local_gtms_project_files_sync, load_gtms_chapter_editor_data_sync,
-        load_gtms_editor_field_history_sync, load_gtms_editor_row_sync,
-        permanently_delete_gtms_editor_row_sync, purge_local_gtms_project_repo_sync,
-        remove_gtms_editor_language_image_sync, restore_gtms_editor_field_from_history_sync,
-        reverse_gtms_editor_batch_replace_commit_sync, save_gtms_editor_language_image_url_sync,
-        update_gtms_chapter_glossary_links_sync, update_gtms_chapter_language_selection_sync,
-        update_gtms_chapter_languages_sync, update_gtms_editor_row_field_flag_sync,
-        update_gtms_editor_row_fields_batch_sync, update_gtms_editor_row_fields_sync,
-        update_gtms_editor_row_lifecycle_sync, update_gtms_editor_row_text_style_sync,
-        upload_gtms_editor_language_image_sync, ClearEditorReviewedMarkersInput,
-        ClearEditorReviewedMarkersResponse, ClearImportedEditorConflictInput,
-        InitializeProjectRepoInput, InitializeProjectRepoResponse, InsertEditorRowInput,
-        InsertEditorRowResponse, ListLocalProjectFilesInput, LoadChapterEditorInput,
-        LoadChapterEditorResponse, LoadEditorFieldHistoryInput, LoadEditorFieldHistoryResponse,
-        LoadEditorRowInput, LoadEditorRowResponse, LocalProjectFilesResponse,
-        PurgeLocalProjectRepoInput, RemoveEditorLanguageImageInput, RestoreEditorFieldHistoryInput,
+        export_gtms_chapter_file_sync, initialize_gtms_project_repo_sync,
+        insert_gtms_editor_row_sync, list_local_gtms_project_files_sync,
+        load_gtms_chapter_editor_data_sync, load_gtms_editor_field_history_sync,
+        load_gtms_editor_row_sync, permanently_delete_gtms_editor_row_sync,
+        purge_local_gtms_project_repo_sync, remove_gtms_editor_language_image_sync,
+        restore_gtms_editor_field_from_history_sync, reverse_gtms_editor_batch_replace_commit_sync,
+        save_gtms_editor_language_image_url_sync, update_gtms_chapter_glossary_links_sync,
+        update_gtms_chapter_language_selection_sync, update_gtms_chapter_languages_sync,
+        update_gtms_editor_row_field_flag_sync, update_gtms_editor_row_fields_batch_sync,
+        update_gtms_editor_row_fields_sync, update_gtms_editor_row_lifecycle_sync,
+        update_gtms_editor_row_text_style_sync, upload_gtms_editor_language_image_sync,
+        ClearEditorReviewedMarkersInput, ClearEditorReviewedMarkersResponse,
+        ClearImportedEditorConflictInput, ExportChapterFileInput, InitializeProjectRepoInput,
+        InitializeProjectRepoResponse, InsertEditorRowInput, InsertEditorRowResponse,
+        ListLocalProjectFilesInput, LoadChapterEditorInput, LoadChapterEditorResponse,
+        LoadEditorFieldHistoryInput, LoadEditorFieldHistoryResponse, LoadEditorRowInput,
+        LoadEditorRowResponse, LocalProjectFilesResponse, PurgeLocalProjectRepoInput,
+        RemoveEditorLanguageImageInput, RestoreEditorFieldHistoryInput,
         RestoreEditorFieldHistoryResponse, ReverseEditorBatchReplaceCommitInput,
         ReverseEditorBatchReplaceCommitResponse, SaveEditorLanguageImageResponse,
         SaveEditorLanguageImageUrlInput, SaveEditorRowWithConcurrencyResponse,
@@ -100,6 +101,16 @@ pub(crate) async fn import_docx_to_gtms(
     tauri::async_runtime::spawn_blocking(move || import_docx_to_gtms_sync(&app, input))
         .await
         .map_err(|error| format!("The DOCX import worker failed: {error}"))?
+}
+
+#[tauri::command]
+pub(crate) async fn export_gtms_chapter_file(
+    app: AppHandle,
+    input: ExportChapterFileInput,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || export_gtms_chapter_file_sync(&app, input))
+        .await
+        .map_err(|error| format!("The chapter export worker failed: {error}"))?
 }
 
 #[tauri::command]

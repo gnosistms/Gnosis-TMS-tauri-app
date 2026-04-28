@@ -18,6 +18,10 @@ import {
 } from "./project-flow.js";
 import { updateProjectSearchQuery } from "./project-search-flow.js";
 import {
+  selectProjectExportFormat,
+  selectProjectExportLanguage,
+} from "./project-export-flow.js";
+import {
   updateChapterPermanentDeletionConfirmation,
   updateChapterGlossaryLinks,
   updateChapterRenameName,
@@ -518,6 +522,34 @@ function handleChapterGlossarySelectInput(event, render) {
   return true;
 }
 
+function handleProjectExportFormatInput(event, render) {
+  if (event.type !== "change") {
+    return false;
+  }
+
+  const input = event.target.closest("[data-project-export-format-select]");
+  if (!(input instanceof HTMLSelectElement)) {
+    return false;
+  }
+
+  selectProjectExportFormat(render, input.value);
+  return true;
+}
+
+function handleProjectExportLanguageInput(event, render) {
+  if (event.type !== "change") {
+    return false;
+  }
+
+  const input = event.target.closest("[data-project-export-language-select]");
+  if (!(input instanceof HTMLSelectElement)) {
+    return false;
+  }
+
+  selectProjectExportLanguage(render, input.value);
+  return true;
+}
+
 function handleAiKeyInput(event) {
   const input = event.target.closest("[data-ai-key-input]");
   if (!input) {
@@ -611,6 +643,8 @@ const inputHandlers = [
   handleEditorImageUrlInput,
   handleEditorConflictResolutionInput,
   handleChapterGlossarySelectInput,
+  handleProjectExportFormatInput,
+  handleProjectExportLanguageInput,
   handleAiKeyInput,
   handleAiDetailedConfigurationInput,
   handleAiSettingsAboutModalInput,

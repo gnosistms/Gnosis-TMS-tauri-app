@@ -16,6 +16,8 @@ const SUPPORTED_FOCUSED_INPUT_SELECTORS = [
   "[data-glossary-rename-input]",
   "[data-glossary-permanent-delete-input]",
   "[data-glossary-term-search-input]",
+  "[data-project-export-format-select]",
+  "[data-project-export-language-select]",
   "[data-project-search-input]",
   "[data-editor-search-input]",
   "[data-preview-search-input]",
