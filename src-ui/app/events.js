@@ -30,6 +30,8 @@ const SYNC_WITH_SERVER_EVENT = "sync-with-server";
 const CHECK_FOR_UPDATES_EVENT = "check-for-updates";
 const PROJECT_IMPORT_DROPZONE_SELECTOR = "[data-project-import-dropzone]";
 const GLOSSARY_IMPORT_DROPZONE_SELECTOR = "[data-glossary-import-dropzone]";
+const PROJECT_EXPORT_SELECT_SELECTOR =
+  "[data-project-export-format-select], [data-project-export-language-select]";
 let activeGlossaryTermVariantDrag = null;
 let activeTargetLanguageManagerDrag = null;
 let activeGlossaryTooltipMark = null;
@@ -76,6 +78,34 @@ function shouldBlurActiveEditorField(event) {
 
   const key = typeof event.key === "string" ? event.key.toLowerCase() : "";
   return key === "enter" && event.shiftKey && !event.metaKey && !event.ctrlKey && !event.altKey;
+}
+
+function openProjectExportSelectOnFirstPointer(event) {
+  if (!(event instanceof PointerEvent) || event.button !== 0) {
+    return false;
+  }
+
+  const select =
+    event.target instanceof Element
+      ? event.target.closest(PROJECT_EXPORT_SELECT_SELECTOR)
+      : null;
+  if (!(select instanceof HTMLSelectElement) || select.disabled) {
+    return false;
+  }
+
+  const showPicker = select.showPicker;
+  if (typeof showPicker !== "function") {
+    return false;
+  }
+
+  try {
+    select.focus({ preventScroll: true });
+    showPicker.call(select);
+    event.preventDefault();
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function shouldFocusEditorSearch(event) {
@@ -1333,6 +1363,10 @@ export function registerAppEvents(render) {
 
   document.addEventListener("pointerdown", (event) => {
     if (!(event instanceof PointerEvent) || event.button !== 0) {
+      return;
+    }
+
+    if (openProjectExportSelectOnFirstPointer(event)) {
       return;
     }
 

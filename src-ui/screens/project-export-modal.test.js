@@ -31,7 +31,9 @@ test("project export modal disables Save until a supported format is selected", 
 
   assert.match(html, /Export/);
   assert.match(html, /Select file format/);
+  assert.match(html, /project-export-modal__label">File format<\/span>/);
   assert.match(html, /data-project-export-format-select/);
+  assert.doesNotMatch(html, /select-pill__label">File format/);
   assert.match(html, /data-action="submit-project-export" disabled/);
   assert.doesNotMatch(html, /data-project-export-language-select/);
 });
@@ -40,7 +42,9 @@ test("project export modal shows export language for implemented formats", () =>
   const html = renderProjectExportModal(exportState({ format: "docx" }));
 
   assert.match(html, /Export language/);
+  assert.match(html, /project-export-modal__label">Export language<\/span>/);
   assert.match(html, /data-project-export-language-select/);
+  assert.doesNotMatch(html, /select-pill__label">Export language/);
   assert.match(html, /<option value="en" selected>English \(en\)<\/option>/);
   assert.doesNotMatch(html, /data-action="submit-project-export" disabled/);
 });

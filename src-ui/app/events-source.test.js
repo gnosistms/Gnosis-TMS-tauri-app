@@ -38,3 +38,14 @@ test("events route native project import drops to the visible project import dro
   assert.match(source, /void handleDroppedProjectImportPaths\(render, importPaths\)/);
   assert.match(source, /void handleDroppedGlossaryImportPath\(render, droppedPath\)/);
 });
+
+test("events open project export selects on the first pointer interaction", async () => {
+  const source = await readFile(new URL("./events.js", import.meta.url), "utf8");
+
+  assert.match(source, /PROJECT_EXPORT_SELECT_SELECTOR/);
+  assert.match(source, /function openProjectExportSelectOnFirstPointer\(event\)/);
+  assert.match(source, /event\.target\.closest\(PROJECT_EXPORT_SELECT_SELECTOR\)/);
+  assert.match(source, /showPicker\.call\(select\)/);
+  assert.match(source, /event\.preventDefault\(\)/);
+  assert.match(source, /if \(openProjectExportSelectOnFirstPointer\(event\)\) \{/);
+});

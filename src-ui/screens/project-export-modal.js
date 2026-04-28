@@ -1,7 +1,6 @@
 import {
   escapeHtml,
   primaryButton,
-  renderSelectPillControl,
   secondaryButton,
 } from "../lib/ui.js";
 import { formatErrorForDisplay } from "../app/error-display.js";
@@ -13,12 +12,50 @@ function formatLabel(format) {
   return String(format ?? "").trim().toUpperCase();
 }
 
+function renderExportSelect({
+  label,
+  selectAttributes,
+  options,
+}) {
+  const attributes = Object.entries(selectAttributes ?? {})
+    .map(([key, attributeValue]) => {
+      if (attributeValue === false || attributeValue === null || attributeValue === undefined) {
+        return "";
+      }
+      if (attributeValue === true) {
+        return ` ${escapeHtml(key)}`;
+      }
+      return ` ${escapeHtml(key)}="${escapeHtml(attributeValue)}"`;
+    })
+    .join("");
+
+  return `
+    <label class="project-export-modal__field">
+      <span class="project-export-modal__label">${escapeHtml(label)}</span>
+      <span class="project-export-modal__select-wrap">
+        <select class="project-export-modal__select"${attributes}>
+          ${(options ?? [])
+            .map(
+              (option) => `
+                <option value="${escapeHtml(option?.value ?? "")}" ${option?.selected ? "selected" : ""}>${escapeHtml(option?.label ?? "")}</option>
+              `,
+            )
+            .join("")}
+        </select>
+        <span class="project-export-modal__chevron" aria-hidden="true">
+          <svg viewBox="0 0 12 12" focusable="false" aria-hidden="true">
+            <path d="M3 2 7 6 3 10" />
+          </svg>
+        </span>
+      </span>
+    </label>
+  `;
+}
+
 function renderFormatSelect(modal) {
   const format = String(modal?.format ?? "").trim().toLowerCase();
-  return renderSelectPillControl({
+  return renderExportSelect({
     label: "File format",
-    value: format ? formatLabel(format) : "Select",
-    className: "select-pill--modal",
     selectAttributes: {
       "data-project-export-format-select": true,
       "aria-label": "File format",
@@ -46,15 +83,9 @@ function renderLanguageSelect(modal) {
 
   const languageCode = String(modal?.languageCode ?? "").trim();
   const languages = Array.isArray(modal?.languages) ? modal.languages : [];
-  const selectedLanguage = languages.find((language) => language?.code === languageCode) ?? null;
-  const selectedLabel = selectedLanguage
-    ? `${selectedLanguage.name || selectedLanguage.code} (${selectedLanguage.code})`
-    : "Select";
 
-  return renderSelectPillControl({
+  return renderExportSelect({
     label: "Export language",
-    value: selectedLabel,
-    className: "select-pill--modal",
     selectAttributes: {
       "data-project-export-language-select": true,
       "aria-label": "Export language",

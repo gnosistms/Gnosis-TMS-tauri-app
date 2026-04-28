@@ -1,4 +1,5 @@
 use super::*;
+use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use reqwest::blocking::Client as BlockingClient;
 use std::io::{Cursor, Write};
 use std::time::Duration;
@@ -62,6 +63,8 @@ struct InlineSegment {
 struct DocxImage {
     data: Vec<u8>,
     extension: String,
+    width_px: u32,
+    height_px: u32,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -124,32 +127,14 @@ pub(crate) fn export_gtms_chapter_file_sync(
     }
 
     match format.as_str() {
-        "html" => {
-            ensure_html_uploaded_image_urls(&document)?;
-            fs::write(&output_path, render_html_document(&document))
-                .map_err(|error| format!("Could not write '{}': {error}", output_path.display()))
-        }
+        "html" => fs::write(&output_path, render_html_document(&document)?)
+            .map_err(|error| format!("Could not write '{}': {error}", output_path.display())),
         "txt" => fs::write(&output_path, render_txt_document(&document))
             .map_err(|error| format!("Could not write '{}': {error}", output_path.display())),
         "docx" => fs::write(&output_path, render_docx_document(&document)?)
             .map_err(|error| format!("Could not write '{}': {error}", output_path.display())),
         _ => Err("Unsupported export format.".to_string()),
     }
-}
-
-fn ensure_html_uploaded_image_urls(document: &ExportDocument) -> Result<(), String> {
-    for block in &document.blocks {
-        if let ExportBlock::Image {
-            image: ExportImage::Upload { raw_url: None, .. },
-            ..
-        } = block
-        {
-            return Err(
-                "Could not build a GitHub URL for an uploaded image in this chapter.".to_string(),
-            );
-        }
-    }
-    Ok(())
 }
 
 fn build_export_document(
@@ -359,7 +344,7 @@ fn inline_visible_text(value: &str) -> String {
     output
 }
 
-fn render_html_document(document: &ExportDocument) -> String {
+fn render_html_document(document: &ExportDocument) -> Result<String, String> {
     let mut body = String::new();
     for block in &document.blocks {
         match block {
@@ -395,10 +380,7 @@ fn render_html_document(document: &ExportDocument) -> String {
                 );
             }
             ExportBlock::Image { image, caption } => {
-                let src = match image {
-                    ExportImage::Url(url) => Some(url.as_str()),
-                    ExportImage::Upload { raw_url, .. } => raw_url.as_deref(),
-                };
+                let src = html_image_src(image)?;
                 if let Some(src) = src {
                     let caption_html = if caption.trim().is_empty() {
                         String::new()
@@ -411,19 +393,89 @@ fn render_html_document(document: &ExportDocument) -> String {
                     let _ = writeln!(
                         body,
                         "<figure><img src=\"{}\" alt=\"\" />{caption_html}</figure>",
-                        escape_html(src)
+                        escape_html(&src)
                     );
                 }
             }
         }
     }
 
-    format!(
+    Ok(format!(
         "<!doctype html>\n<html lang=\"{}\">\n<head>\n<meta charset=\"utf-8\">\n<title>{}</title>\n<style>body{{max-width:760px;margin:40px auto;padding:0 24px;font-family:serif;line-height:1.6;color:#2f2117;}}h1{{font-size:2rem;}}h2{{font-size:1.4rem;}}blockquote{{margin:1em 2em;font-style:italic;}}.indented{{padding-left:2em;}}.centered{{text-align:center;}}.footnote{{font-size:.95em;}}figure{{margin:1.5em auto;text-align:center;}}img{{display:block;margin:0 auto;max-width:100%;height:auto;}}figcaption{{margin-top:.6em;text-align:center;}}</style>\n</head>\n<body>\n{}\n</body>\n</html>\n",
         escape_html(&document.language_code),
         escape_html(&document.title),
         body
-    )
+    ))
+}
+
+fn html_image_src(image: &ExportImage) -> Result<Option<String>, String> {
+    match image {
+        ExportImage::Url(url) => Ok(Some(url.clone())),
+        ExportImage::Upload { absolute_path, .. } => {
+            let bytes = fs::read(absolute_path).map_err(|error| {
+                format!(
+                    "Could not read uploaded image '{}': {error}",
+                    absolute_path.display()
+                )
+            })?;
+            let mime_type = html_image_mime_type(absolute_path, &bytes).ok_or_else(|| {
+                format!(
+                    "Could not determine the image type for '{}'.",
+                    absolute_path.display()
+                )
+            })?;
+            Ok(Some(format!(
+                "data:{mime_type};base64,{}",
+                BASE64_STANDARD.encode(bytes)
+            )))
+        }
+    }
+}
+
+fn html_image_mime_type(path: &Path, bytes: &[u8]) -> Option<&'static str> {
+    if bytes.starts_with(&[0xFF, 0xD8, 0xFF]) {
+        return Some("image/jpeg");
+    }
+    if bytes.starts_with(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]) {
+        return Some("image/png");
+    }
+    if bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a") {
+        return Some("image/gif");
+    }
+    if bytes.len() >= 12 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
+        return Some("image/webp");
+    }
+    if bytes.starts_with(b"BM") {
+        return Some("image/bmp");
+    }
+    if bytes.starts_with(&[0x00, 0x00, 0x01, 0x00]) {
+        return Some("image/x-icon");
+    }
+    if bytes.len() >= 12
+        && &bytes[4..8] == b"ftyp"
+        && bytes
+            .windows(4)
+            .any(|window| window == b"avif" || window == b"avis")
+    {
+        return Some("image/avif");
+    }
+
+    match path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .map(|extension| extension.trim().trim_start_matches('.').to_ascii_lowercase())
+        .as_deref()
+    {
+        Some("jpg" | "jpeg") => Some("image/jpeg"),
+        Some("png" | "apng") => Some("image/png"),
+        Some("gif") => Some("image/gif"),
+        Some("svg") => Some("image/svg+xml"),
+        Some("webp") => Some("image/webp"),
+        Some("avif") => Some("image/avif"),
+        Some("bmp") => Some("image/bmp"),
+        Some("ico") => Some("image/x-icon"),
+        _ => None,
+    }
 }
 
 fn render_txt_document(document: &ExportDocument) -> String {
@@ -550,8 +602,8 @@ fn render_docx_document(document: &ExportDocument) -> Result<Vec<u8>, String> {
                         relationships.push(format!(
                             r#"<Relationship Id="{rel_id}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/{file_name}"/>"#
                         ));
+                        body.push_str(&docx_image_paragraph_xml(&rel_id, &image_data));
                         media.push((format!("word/media/{file_name}"), image_data.data));
-                        body.push_str(&docx_image_paragraph_xml(&rel_id));
                     }
                     DocxImageRender::Link(url) => {
                         let rel_id = format!("rId{rel_index}");
@@ -734,9 +786,27 @@ fn docx_run_xml(segment: &InlineSegment) -> String {
     )
 }
 
-fn docx_image_paragraph_xml(rel_id: &str) -> String {
+fn docx_image_paragraph_xml(rel_id: &str, image: &DocxImage) -> String {
+    let (width_emu, height_emu) = docx_image_extent(image);
     format!(
-        r#"<w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:drawing><wp:inline><wp:extent cx="4572000" cy="3429000"/><wp:docPr id="1" name="Picture"/><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic><pic:nvPicPr><pic:cNvPr id="0" name="Picture"/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill><a:blip r:embed="{rel_id}"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="4572000" cy="3429000"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>"#
+        r#"<w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:drawing><wp:inline><wp:extent cx="{width_emu}" cy="{height_emu}"/><wp:docPr id="1" name="Picture"/><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic><pic:nvPicPr><pic:cNvPr id="0" name="Picture"/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill><a:blip r:embed="{rel_id}"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="{width_emu}" cy="{height_emu}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>"#
+    )
+}
+
+fn docx_image_extent(image: &DocxImage) -> (u64, u64) {
+    const EMU_PER_INCH: f64 = 914_400.0;
+    const SOURCE_DPI: f64 = 96.0;
+    const MAX_WIDTH_EMU: f64 = EMU_PER_INCH * 5.0;
+    const MAX_HEIGHT_EMU: f64 = EMU_PER_INCH * 6.0;
+
+    let natural_width = image.width_px.max(1) as f64 / SOURCE_DPI * EMU_PER_INCH;
+    let natural_height = image.height_px.max(1) as f64 / SOURCE_DPI * EMU_PER_INCH;
+    let scale = (MAX_WIDTH_EMU / natural_width)
+        .min(MAX_HEIGHT_EMU / natural_height)
+        .min(1.0);
+    (
+        (natural_width * scale).round().max(1.0) as u64,
+        (natural_height * scale).round().max(1.0) as u64,
     )
 }
 
@@ -770,8 +840,13 @@ fn resolve_docx_image_render(image: &ExportImage) -> DocxImageRender {
 
 fn read_local_docx_image(path: &Path) -> Option<DocxImage> {
     let data = fs::read(path).ok()?;
-    let extension = docx_image_extension(&data)?;
-    Some(DocxImage { data, extension })
+    let (extension, width_px, height_px) = docx_image_info(&data)?;
+    Some(DocxImage {
+        data,
+        extension,
+        width_px,
+        height_px,
+    })
 }
 
 fn download_docx_image(url: &str) -> Option<DocxImage> {
@@ -784,21 +859,94 @@ fn download_docx_image(url: &str) -> Option<DocxImage> {
         return None;
     }
     let data = response.bytes().ok()?.to_vec();
-    let extension = docx_image_extension(&data)?;
-    Some(DocxImage { data, extension })
+    let (extension, width_px, height_px) = docx_image_info(&data)?;
+    Some(DocxImage {
+        data,
+        extension,
+        width_px,
+        height_px,
+    })
 }
 
-fn docx_image_extension(data: &[u8]) -> Option<String> {
+fn docx_image_info(data: &[u8]) -> Option<(String, u32, u32)> {
     if data.starts_with(b"\x89PNG\r\n\x1a\n") {
-        return Some("png".to_string());
+        let (width_px, height_px) = png_dimensions(data)?;
+        return Some(("png".to_string(), width_px, height_px));
     }
     if data.starts_with(&[0xff, 0xd8, 0xff]) {
-        return Some("jpg".to_string());
+        let (width_px, height_px) = jpeg_dimensions(data)?;
+        return Some(("jpg".to_string(), width_px, height_px));
     }
     if data.starts_with(b"GIF87a") || data.starts_with(b"GIF89a") {
-        return Some("gif".to_string());
+        let (width_px, height_px) = gif_dimensions(data)?;
+        return Some(("gif".to_string(), width_px, height_px));
     }
     None
+}
+
+fn png_dimensions(data: &[u8]) -> Option<(u32, u32)> {
+    let width = u32::from_be_bytes(data.get(16..20)?.try_into().ok()?);
+    let height = u32::from_be_bytes(data.get(20..24)?.try_into().ok()?);
+    nonzero_dimensions(width, height)
+}
+
+fn gif_dimensions(data: &[u8]) -> Option<(u32, u32)> {
+    let width = u16::from_le_bytes(data.get(6..8)?.try_into().ok()?) as u32;
+    let height = u16::from_le_bytes(data.get(8..10)?.try_into().ok()?) as u32;
+    nonzero_dimensions(width, height)
+}
+
+fn jpeg_dimensions(data: &[u8]) -> Option<(u32, u32)> {
+    let mut cursor = 2usize;
+    while cursor + 4 <= data.len() {
+        if data[cursor] != 0xff {
+            cursor += 1;
+            continue;
+        }
+        while cursor < data.len() && data[cursor] == 0xff {
+            cursor += 1;
+        }
+        let marker = *data.get(cursor)?;
+        cursor += 1;
+        if marker == 0xd8 || marker == 0xd9 {
+            continue;
+        }
+        if marker == 0xda {
+            break;
+        }
+        let segment_len =
+            u16::from_be_bytes(data.get(cursor..cursor + 2)?.try_into().ok()?) as usize;
+        if segment_len < 2 || cursor + segment_len > data.len() {
+            return None;
+        }
+        if is_jpeg_start_of_frame_marker(marker) {
+            if segment_len < 7 {
+                return None;
+            }
+            let height =
+                u16::from_be_bytes(data.get(cursor + 3..cursor + 5)?.try_into().ok()?) as u32;
+            let width =
+                u16::from_be_bytes(data.get(cursor + 5..cursor + 7)?.try_into().ok()?) as u32;
+            return nonzero_dimensions(width, height);
+        }
+        cursor += segment_len;
+    }
+    None
+}
+
+fn is_jpeg_start_of_frame_marker(marker: u8) -> bool {
+    matches!(
+        marker,
+        0xc0 | 0xc1 | 0xc2 | 0xc3 | 0xc5 | 0xc6 | 0xc7 | 0xc9 | 0xca | 0xcb | 0xcd | 0xce | 0xcf
+    )
+}
+
+fn nonzero_dimensions(width: u32, height: u32) -> Option<(u32, u32)> {
+    if width == 0 || height == 0 {
+        None
+    } else {
+        Some((width, height))
+    }
 }
 
 fn content_types_xml() -> &'static str {
@@ -864,6 +1012,43 @@ mod tests {
         }
     }
 
+    fn png_header(width: u32, height: u32) -> Vec<u8> {
+        let mut data = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR".to_vec();
+        data.extend_from_slice(&width.to_be_bytes());
+        data.extend_from_slice(&height.to_be_bytes());
+        data.extend_from_slice(&[8, 6, 0, 0, 0]);
+        data
+    }
+
+    fn gif_header(width: u16, height: u16) -> Vec<u8> {
+        let mut data = b"GIF89a".to_vec();
+        data.extend_from_slice(&width.to_le_bytes());
+        data.extend_from_slice(&height.to_le_bytes());
+        data
+    }
+
+    fn jpeg_header(width: u16, height: u16) -> Vec<u8> {
+        vec![
+            0xff,
+            0xd8,
+            0xff,
+            0xc0,
+            0x00,
+            0x0b,
+            0x08,
+            (height >> 8) as u8,
+            height as u8,
+            (width >> 8) as u8,
+            width as u8,
+            0x01,
+            0x01,
+            0x11,
+            0x00,
+            0xff,
+            0xd9,
+        ]
+    }
+
     #[test]
     fn txt_export_applies_text_style_rules_and_ignores_images() {
         let output = render_txt_document(&document(vec![
@@ -916,12 +1101,44 @@ mod tests {
                 number: 1,
                 text: "<u>Note</u>".to_string(),
             },
-        ]));
+        ]))
+        .expect("html should render");
 
         assert!(output.contains("<h1><strong>Hello</strong> <ruby>字<rt>zi</rt></ruby></h1>"));
         assert!(output.contains("<figure><img src=\"https://example.com/image.png\""));
         assert!(output.contains("<figcaption><em><em>Caption</em></em></figcaption>"));
         assert!(output.contains("<p class=\"footnote\"><em>[1] <u>Note</u></em></p>"));
+    }
+
+    #[test]
+    fn html_export_embeds_uploaded_images_as_data_urls() {
+        let image_bytes = png_header(12, 8);
+        let image_path = std::env::temp_dir().join(format!(
+            "gnosis-tms-html-export-image-{}-{}.png",
+            std::process::id(),
+            "upload"
+        ));
+        fs::write(&image_path, &image_bytes).expect("image should be written");
+
+        let output = render_html_document(&document(vec![ExportBlock::Image {
+            image: ExportImage::Upload {
+                repo_relative_path: "chapters/ch-1/images/row/image.png".to_string(),
+                raw_url: Some(
+                    "https://raw.githubusercontent.com/org/repo/abc123/chapters/ch-1/images/row/image.png"
+                        .to_string(),
+                ),
+                absolute_path: image_path.clone(),
+            },
+            caption: String::new(),
+        }]))
+        .expect("html should render");
+
+        let _ = fs::remove_file(&image_path);
+        assert!(output.contains(&format!(
+            "src=\"data:image/png;base64,{}\"",
+            BASE64_STANDARD.encode(image_bytes)
+        )));
+        assert!(!output.contains("raw.githubusercontent.com"));
     }
 
     #[test]
@@ -971,7 +1188,38 @@ mod tests {
     }
 
     #[test]
-    fn uploaded_image_html_uses_raw_github_url() {
+    fn docx_image_metadata_reads_dimensions_for_supported_formats() {
+        assert_eq!(
+            docx_image_info(&png_header(320, 160)),
+            Some(("png".to_string(), 320, 160))
+        );
+        assert_eq!(
+            docx_image_info(&gif_header(240, 120)),
+            Some(("gif".to_string(), 240, 120))
+        );
+        assert_eq!(
+            docx_image_info(&jpeg_header(640, 320)),
+            Some(("jpg".to_string(), 640, 320))
+        );
+    }
+
+    #[test]
+    fn docx_image_xml_preserves_aspect_ratio() {
+        let image = DocxImage {
+            data: png_header(2000, 1000),
+            extension: "png".to_string(),
+            width_px: 2000,
+            height_px: 1000,
+        };
+        let xml = docx_image_paragraph_xml("rId1", &image);
+
+        assert!(xml.contains(r#"cx="4572000""#));
+        assert!(xml.contains(r#"cy="2286000""#));
+        assert!(xml.contains(r#"<a:ext cx="4572000" cy="2286000"/>"#));
+    }
+
+    #[test]
+    fn uploaded_image_keeps_raw_github_url_for_docx_fallbacks() {
         let image = export_image(
             Path::new("/repo"),
             &Some(StoredFieldImage {
