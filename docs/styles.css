@@ -97,7 +97,7 @@ a {
 
 .page-logo {
   grid-column: 2;
-  grid-row: 1 / span 6;
+  grid-row: 1 / span 4;
   justify-self: end;
   width: clamp(96px, 14vw, 156px);
   height: clamp(96px, 14vw, 156px);
