@@ -106,7 +106,8 @@ function renderPrimary() {
   }
 
   const assets = classifyAssets(release.assets || []);
-  version.textContent = release.tag_name || release.name || "Latest release";
+  const releaseLabel = release.tag_name || release.name || "";
+  version.textContent = releaseLabel ? `Latest release ${releaseLabel}` : "Latest release";
 
   const links = [];
   if (detection.os === "windows" && assets.windowsMsi) {
@@ -192,7 +193,9 @@ function renderPrimary() {
   }
 
   actions.innerHTML = "";
-  for (const link of links) {
+  const primaryLinks = links.filter((link) => link.primary);
+  const heroLinks = primaryLinks.length ? primaryLinks : links.slice(0, 1);
+  for (const link of heroLinks) {
     const anchor = document.createElement("a");
     anchor.href = link.href;
     anchor.textContent = link.label;
