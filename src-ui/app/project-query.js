@@ -1,5 +1,5 @@
 import { applyPendingMutations } from "./optimistic-collection.js";
-import { createMutationObserver, projectKeys, queryClient, subscribeQueryObserver } from "./query-client.js";
+import { createMutationObserver, glossaryKeys, projectKeys, queryClient, subscribeQueryObserver } from "./query-client.js";
 import { state } from "./state.js";
 import { showNoticeBadge } from "./status-feedback.js";
 import { applyProjectSnapshotToState } from "./project-top-level-state.js";
@@ -107,17 +107,22 @@ export function seedProjectsQueryFromCache(team, {
     typeof loadStoredChapterPendingMutations === "function"
       ? loadStoredChapterPendingMutations(team)
       : [];
-  const currentGlossaries = Array.isArray(state.glossaries) ? state.glossaries : [];
+  const glossaryQueryData = queryClient.getQueryData(glossaryKeys.byTeam(teamId));
+  const queryGlossaries = Array.isArray(glossaryQueryData?.glossaries)
+    ? glossaryQueryData.glossaries
+    : [];
   const cachedGlossaryResult =
-    currentGlossaries.length === 0 && typeof loadStoredGlossariesForTeam === "function"
+    typeof loadStoredGlossariesForTeam === "function"
       ? loadStoredGlossariesForTeam(team)
       : null;
   const glossaries =
-    currentGlossaries.length > 0
-      ? currentGlossaries
+    queryGlossaries.length > 0
+      ? queryGlossaries
       : Array.isArray(cachedGlossaryResult?.glossaries)
         ? cachedGlossaryResult.glossaries
-        : [];
+        : Array.isArray(state.glossaries) && typeof loadStoredGlossariesForTeam !== "function"
+          ? state.glossaries
+          : [];
   const optimisticSnapshot =
     typeof applyChapterPendingMutation === "function"
       ? applyPendingMutations(

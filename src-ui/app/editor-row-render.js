@@ -35,9 +35,17 @@ export function renderTranslationMarkerIcon(kind) {
   if (kind === "comments") {
     return `
       <svg class="translation-marker-button__icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false">
-        <rect x="2.25" y="2.25" width="15.5" height="15.5" rx="4" fill="none" stroke="currentColor" stroke-width="1.8"></rect>
-        <path d="M10 5.9v5.8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"></path>
-        <circle cx="10" cy="14.1" r="1.05" fill="currentColor"></circle>
+        <defs>
+          <mask id="translation-marker-mask-comments">
+            <rect x="0" y="0" width="20" height="20" fill="white"></rect>
+            <path d="M10 5.9v5.8" fill="none" stroke="black" stroke-width="2" stroke-linecap="round"></path>
+            <circle cx="10" cy="14.1" r="1.05" fill="black"></circle>
+          </mask>
+        </defs>
+        <rect class="translation-marker-button__active-fill" x="2.25" y="2.25" width="15.5" height="15.5" rx="4" fill="currentColor" mask="url(#translation-marker-mask-comments)"></rect>
+        <rect class="translation-marker-button__outline" x="2.25" y="2.25" width="15.5" height="15.5" rx="4" fill="none" stroke="currentColor" stroke-width="1.8"></rect>
+        <path class="translation-marker-button__glyph" d="M10 5.9v5.8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"></path>
+        <circle class="translation-marker-button__glyph" cx="10" cy="14.1" r="1.05" fill="currentColor"></circle>
       </svg>
     `;
   }
@@ -45,17 +53,32 @@ export function renderTranslationMarkerIcon(kind) {
   if (kind === "reviewed") {
     return `
       <svg class="translation-marker-button__icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false">
-        <rect x="2.25" y="2.25" width="15.5" height="15.5" rx="4" fill="none" stroke="currentColor" stroke-width="1.8"></rect>
-        <path d="M6.2 10.25 8.8 12.85 13.9 7.7" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"></path>
+        <defs>
+          <mask id="translation-marker-mask-reviewed">
+            <rect x="0" y="0" width="20" height="20" fill="white"></rect>
+            <path d="M6.2 10.25 8.8 12.85 13.9 7.7" fill="none" stroke="black" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"></path>
+          </mask>
+        </defs>
+        <rect class="translation-marker-button__active-fill" x="2.25" y="2.25" width="15.5" height="15.5" rx="4" fill="currentColor" mask="url(#translation-marker-mask-reviewed)"></rect>
+        <rect class="translation-marker-button__outline" x="2.25" y="2.25" width="15.5" height="15.5" rx="4" fill="none" stroke="currentColor" stroke-width="1.8"></rect>
+        <path class="translation-marker-button__glyph" d="M6.2 10.25 8.8 12.85 13.9 7.7" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"></path>
       </svg>
     `;
   }
 
   return `
     <svg class="translation-marker-button__icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false">
-      <rect x="2.25" y="2.25" width="15.5" height="15.5" rx="4" fill="none" stroke="currentColor" stroke-width="1.8"></rect>
-      <path d="M8 7.3a2.15 2.15 0 1 1 3.76 1.4c-.74.78-1.5 1.22-1.5 2.33" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"></path>
-      <circle cx="10" cy="13.9" r="0.95" fill="currentColor"></circle>
+      <defs>
+        <mask id="translation-marker-mask-please-check">
+          <rect x="0" y="0" width="20" height="20" fill="white"></rect>
+          <path d="M8 7.3a2.15 2.15 0 1 1 3.76 1.4c-.74.78-1.5 1.22-1.5 2.33" fill="none" stroke="black" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"></path>
+          <circle cx="10" cy="13.9" r="0.95" fill="black"></circle>
+        </mask>
+      </defs>
+      <rect class="translation-marker-button__active-fill" x="2.25" y="2.25" width="15.5" height="15.5" rx="4" fill="currentColor" mask="url(#translation-marker-mask-please-check)"></rect>
+      <rect class="translation-marker-button__outline" x="2.25" y="2.25" width="15.5" height="15.5" rx="4" fill="none" stroke="currentColor" stroke-width="1.8"></rect>
+      <path class="translation-marker-button__glyph" d="M8 7.3a2.15 2.15 0 1 1 3.76 1.4c-.74.78-1.5 1.22-1.5 2.33" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"></path>
+      <circle class="translation-marker-button__glyph" cx="10" cy="13.9" r="0.95" fill="currentColor"></circle>
     </svg>
   `;
 }

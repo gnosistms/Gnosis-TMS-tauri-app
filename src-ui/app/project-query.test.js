@@ -27,7 +27,7 @@ const {
   preservePendingProjectLifecyclePatches,
   seedProjectsQueryFromCache,
 } = await import("./project-query.js");
-const { projectKeys, queryClient } = await import("./query-client.js");
+const { glossaryKeys, projectKeys, queryClient } = await import("./query-client.js");
 const {
   chapterGlossaryIntentKey,
   chapterLifecycleIntentKey,
@@ -296,6 +296,67 @@ test("project query cache seed preserves glossary options during refresh", () =>
   assert.equal(snapshot.glossaries[0].title, "Glossary");
   assert.equal(state.glossaries[0].title, "Glossary");
   assert.equal(state.projects[0].chapters[0].linkedGlossary.glossaryId, "glossary-1");
+});
+
+test("project query cache seed uses the selected team's cached glossaries over stale visible glossaries", () => {
+  resetSessionState();
+  state.selectedTeamId = "team-2";
+  state.projectsPage = createResourcePageState();
+  state.glossaries = [{ id: "team-1-glossary", title: "Team 1 Glossary", repoName: "team-1-repo" }];
+  const team = { id: "team-2", installationId: 2 };
+
+  const snapshot = seedProjectsQueryFromCache(team, {
+    loadStoredProjectsForTeam: () => ({
+      exists: true,
+      projects: [project({
+        chapters: [{
+          id: "chapter-1",
+          name: "Chapter",
+          linkedGlossary: { glossaryId: "team-2-glossary", repoName: "team-2-repo" },
+        }],
+      })],
+      deletedProjects: [],
+    }),
+    loadStoredGlossariesForTeam: () => ({
+      exists: true,
+      glossaries: [{ id: "team-2-glossary", title: "Team 2 Glossary", repoName: "team-2-repo" }],
+    }),
+  });
+
+  assert.equal(snapshot.glossaries[0].id, "team-2-glossary");
+  assert.equal(state.glossaries[0].title, "Team 2 Glossary");
+  assert.equal(queryClient.getQueryData(projectKeys.byTeam(team.id)).glossaries[0].id, "team-2-glossary");
+});
+
+test("project query cache seed prefers selected team glossary query data over stored glossary cache", () => {
+  resetSessionState();
+  state.selectedTeamId = "team-2";
+  state.projectsPage = createResourcePageState();
+  const team = { id: "team-2", installationId: 2 };
+  queryClient.setQueryData(glossaryKeys.byTeam(team.id), {
+    glossaries: [{ id: "query-glossary", title: "Query Glossary", repoName: "query-repo" }],
+  });
+
+  const snapshot = seedProjectsQueryFromCache(team, {
+    loadStoredProjectsForTeam: () => ({
+      exists: true,
+      projects: [project({
+        chapters: [{
+          id: "chapter-1",
+          name: "Chapter",
+          linkedGlossary: { glossaryId: "query-glossary", repoName: "query-repo" },
+        }],
+      })],
+      deletedProjects: [],
+    }),
+    loadStoredGlossariesForTeam: () => ({
+      exists: true,
+      glossaries: [{ id: "stored-glossary", title: "Stored Glossary", repoName: "stored-repo" }],
+    }),
+  });
+
+  assert.equal(snapshot.glossaries[0].id, "query-glossary");
+  assert.equal(state.glossaries[0].title, "Query Glossary");
 });
 
 test("project query adapter keeps current glossary options while fetch placeholder data is empty", () => {

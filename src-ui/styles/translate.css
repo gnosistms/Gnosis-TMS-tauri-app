@@ -740,7 +740,6 @@
 }
 
 .translation-marker-button {
-  --translation-marker-cutout: #ffffff;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -780,15 +779,20 @@
   color: rgba(32, 101, 215, 0.92);
 }
 
-.translation-marker-button--comments.is-unread::after {
-  content: "";
-  position: absolute;
-  top: 3px;
-  right: 3px;
-  width: 5px;
-  height: 5px;
-  border-radius: 999px;
-  background: rgba(32, 101, 215, 0.92);
+.translation-marker-button__active-fill {
+  display: none;
+}
+
+.translation-marker-button--comments.is-unread .translation-marker-button__active-fill,
+.translation-marker-button--reviewed.is-active .translation-marker-button__active-fill,
+.translation-marker-button--please-check.is-active .translation-marker-button__active-fill {
+  display: block;
+}
+
+.translation-marker-button--comments.is-unread .translation-marker-button__glyph,
+.translation-marker-button--reviewed.is-active .translation-marker-button__glyph,
+.translation-marker-button--please-check.is-active .translation-marker-button__glyph {
+  display: none;
 }
 
 .translation-marker-button__icon {
