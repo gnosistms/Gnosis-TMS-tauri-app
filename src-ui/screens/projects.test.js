@@ -181,6 +181,26 @@ test("projects page shows Export before Open on active chapters", () => {
   assert.doesNotMatch(openButton, /disabled/);
 });
 
+test("projects export stays enabled while project repo is syncing", () => {
+  const html = renderProjectsScreen(projectsState({
+    projectRepoSyncByProjectId: {
+      "project-1": { status: "syncing" },
+    },
+  }));
+
+  assert.doesNotMatch(actionButtonHtml(html, "export-file:chapter-1"), /disabled/);
+});
+
+test("projects export is disabled until the local repo is available", () => {
+  const html = renderProjectsScreen(projectsState({
+    projectRepoSyncByProjectId: {
+      "project-1": { status: "notCloned" },
+    },
+  }));
+
+  assert.match(actionButtonHtml(html, "export-file:chapter-1"), /disabled/);
+});
+
 test("projects glossary selector keeps local selection and options during project refresh", () => {
   const html = renderProjectsScreen(projectsState({
     projectsPage: {

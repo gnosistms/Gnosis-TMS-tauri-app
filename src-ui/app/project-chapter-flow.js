@@ -83,6 +83,29 @@ export function showProjectsNotice(render, text, durationMs) {
   showNoticeBadge(text, render, durationMs);
 }
 
+const GLOSSARY_REPO_SYNC_DEBOUNCE_MS = 2500;
+const deferredProjectRepoSyncs = new Map();
+
+function deferredProjectRepoSyncKey(selectedTeam, project) {
+  const installationId = Number.isFinite(selectedTeam?.installationId)
+    ? String(selectedTeam.installationId)
+    : "unknown";
+  const projectId =
+    typeof project?.id === "string" && project.id.trim()
+      ? project.id.trim()
+      : "unknown";
+  return `${installationId}:${projectId}`;
+}
+
+function clearDeferredProjectRepoSync(selectedTeam, project) {
+  const key = deferredProjectRepoSyncKey(selectedTeam, project);
+  const existing = deferredProjectRepoSyncs.get(key);
+  if (existing?.timerId) {
+    window.clearTimeout(existing.timerId);
+  }
+  deferredProjectRepoSyncs.delete(key);
+}
+
 function setProjectDiscoveryError(render, error) {
   state.projectDiscovery = {
     status: "error",
@@ -343,6 +366,8 @@ function findProjectForRepoSync(projectId) {
 }
 
 function scheduleProjectRepoSyncAfterLocalWrite(render, selectedTeam, project, options = {}) {
+  clearDeferredProjectRepoSync(selectedTeam, project);
+
   if (
     state.offline?.isEnabled === true
     || !Number.isFinite(selectedTeam?.installationId)
@@ -393,6 +418,49 @@ function scheduleProjectRepoSyncAfterLocalWrite(render, selectedTeam, project, o
         3600,
       );
     },
+  });
+}
+
+function scheduleDeferredProjectRepoSyncAfterLocalWrite(
+  render,
+  selectedTeam,
+  project,
+  options = {},
+) {
+  const key = deferredProjectRepoSyncKey(selectedTeam, project);
+  const existing = deferredProjectRepoSyncs.get(key);
+  if (existing?.timerId) {
+    window.clearTimeout(existing.timerId);
+  }
+
+  const delayMs =
+    Number.isFinite(options.delayMs) && options.delayMs >= 0
+      ? options.delayMs
+      : GLOSSARY_REPO_SYNC_DEBOUNCE_MS;
+  const syncOptions = { ...options };
+  delete syncOptions.delayMs;
+
+  const timerId = window.setTimeout(() => {
+    const latest = deferredProjectRepoSyncs.get(key);
+    if (latest?.timerId !== timerId) {
+      return;
+    }
+
+    deferredProjectRepoSyncs.delete(key);
+    scheduleProjectRepoSyncAfterLocalWrite(
+      latest.render,
+      latest.selectedTeam,
+      latest.project,
+      latest.options,
+    );
+  }, delayMs);
+
+  deferredProjectRepoSyncs.set(key, {
+    timerId,
+    render,
+    selectedTeam,
+    project,
+    options: syncOptions,
   });
 }
 
@@ -1099,7 +1167,8 @@ async function persistChapterGlossaryLinks(render, chapterId, nextGlossary) {
         pendingGlossaryMutation: false,
       }));
       persistProjectsForTeam(selectedTeam);
-      scheduleProjectRepoSyncAfterLocalWrite(render, selectedTeam, context.project, {
+      showProjectsStatus(render, "Glossary updated. Syncing shortly...");
+      scheduleDeferredProjectRepoSyncAfterLocalWrite(render, selectedTeam, context.project, {
         syncText: "Syncing project repo...",
         refreshText: "Refreshing file list...",
         successNotice: "Glossary updated.",

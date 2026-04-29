@@ -119,9 +119,10 @@ function renderProjectCard(project, expanded, options = {}) {
   const isTombstone = project?.recordState === "tombstone";
   const syncSnapshot = options.syncSnapshot ?? null;
   const syncStatus = typeof syncSnapshot?.status === "string" ? syncSnapshot.status.trim() : "";
+  const localRepoUnavailable = syncStatus === "notCloned";
   const localRepoSetupPending = (
     syncStatus === "syncing"
-    || syncStatus === "notCloned"
+    || localRepoUnavailable
   );
   const resolution = deriveProjectResolution(project, syncSnapshot);
   const disableLifecycleActions = resolution?.blockLifecycleActions === true;
@@ -209,7 +210,7 @@ function renderProjectCard(project, expanded, options = {}) {
                     ${renderChapterGlossarySelect(chapter, glossaryOptions, {
                       disabled: offlineMode || lifecycleActionsDisabled || glossaryChangesDisabled || !canManageProjects,
                     })}
-                    ${textAction("Export", `export-file:${chapter.id}`, { disabled: localRepoSetupPending || disableContentActions })}
+                    ${textAction("Export", `export-file:${chapter.id}`, { disabled: localRepoUnavailable || disableContentActions })}
                     ${textAction("Open", `open-translate:${chapter.id}`)}
                     ${canManageProjects ? textAction("Rename", `rename-file:${chapter.id}`, { disabled: offlineMode || lifecycleActionsDisabled || disableContentActions }) : ""}
                     ${canManageProjects ? textAction("Delete", `delete-file:${chapter.id}`, { disabled: offlineMode || lifecycleActionsDisabled || disableContentActions }) : ""}

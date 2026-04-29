@@ -1060,6 +1060,7 @@
 
   appearance: none;
   -webkit-appearance: none;
+  position: relative;
   display: grid;
   place-items: center;
   min-height: 133px;
@@ -1104,6 +1105,13 @@
   gap: 10px;
   cursor: wait;
   opacity: 0.82;
+}
+
+.project-import-modal__drop-target.is-loading > .button__spinner {
+  position: absolute;
+  top: calc(50% - 32px);
+  left: 50%;
+  translate: -50% -50%;
 }
 
 .project-import-modal__hint {

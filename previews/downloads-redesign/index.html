@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Gnosis TMS Downloads - Redesign Options</title>
+    <link rel="stylesheet" href="./shared.css" />
+    <style>
+      .chooser {
+        padding: 70px 0;
+      }
+
+      .chooser-grid {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 18px;
+        margin-top: 28px;
+      }
+
+      .choice {
+        min-height: 240px;
+        padding: 22px;
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+        text-decoration: none;
+      }
+
+      .choice span {
+        color: var(--app-muted);
+        line-height: 1.5;
+      }
+
+      @media (max-width: 920px) {
+        .chooser-grid {
+          grid-template-columns: 1fr 1fr;
+        }
+      }
+
+      @media (max-width: 560px) {
+        .chooser-grid {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body class="utility">
+    <main class="container chooser">
+      <span class="page-logo page-logo--small" aria-hidden="true"></span>
+      <p class="eyebrow">Downloads page redesign</p>
+      <h1>Choose a direction</h1>
+      <p class="lede">
+        These are visual previews only. They preserve the same page structure:
+        recommended download, latest version, manual installer choices, and install notes.
+      </p>
+      <div class="chooser-grid">
+        <a class="card choice" href="./option-1-utility.html">
+          <div>
+            <p class="eyebrow">Option 1</p>
+            <h2>App-Like Utility</h2>
+            <span>Quiet, compact, and closest to the desktop app interface.</span>
+          </div>
+          <strong>Open option</strong>
+        </a>
+        <a class="card choice" href="./option-2-premium.html">
+          <div>
+            <p class="eyebrow">Option 2</p>
+            <h2>Premium Software</h2>
+            <span>Large public-facing hero with a polished app-color download card.</span>
+          </div>
+          <strong>Open option</strong>
+        </a>
+        <a class="card choice" href="./option-3-minimal.html">
+          <div>
+            <p class="eyebrow">Option 3</p>
+            <h2>Minimal Technical</h2>
+            <span>Plain, fast, high-trust layout using the same warm app colors.</span>
+          </div>
+          <strong>Open option</strong>
+        </a>
+        <a class="card choice" href="./option-4-editorial.html">
+          <div>
+            <p class="eyebrow">Option 4</p>
+            <h2>Branded Editorial</h2>
+            <span>Warmer and more distinctive while keeping the page clean.</span>
+          </div>
+          <strong>Open option</strong>
+        </a>
+        <a class="card choice" href="./option-5-centered.html">
+          <div>
+            <p class="eyebrow">Option 5</p>
+            <h2>Centered Focus</h2>
+            <span>Simple centered hero with one primary download decision.</span>
+          </div>
+          <strong>Open option</strong>
+        </a>
+        <a class="card choice" href="./option-6-split-simple.html">
+          <div>
+            <p class="eyebrow">Option 6</p>
+            <h2>Split Simple</h2>
+            <span>Text on the left, recommended installer card on the right.</span>
+          </div>
+          <strong>Open option</strong>
+        </a>
+        <a class="card choice" href="./option-7-release.html">
+          <div>
+            <p class="eyebrow">Option 7</p>
+            <h2>Release Focus</h2>
+            <span>Version-forward layout with install choices below.</span>
+          </div>
+          <strong>Open option</strong>
+        </a>
+        <a class="card choice" href="./option-8-sidebar.html">
+          <div>
+            <p class="eyebrow">Option 8</p>
+            <h2>Sidebar Layout</h2>
+            <span>Compact persistent intro beside the download controls.</span>
+          </div>
+          <strong>Open option</strong>
+        </a>
+      </div>
+    </main>
+  </body>
+</html>

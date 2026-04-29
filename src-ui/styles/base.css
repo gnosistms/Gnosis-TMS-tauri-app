@@ -166,18 +166,24 @@ a {
   justify-self: center;
   width: min(var(--page-width), 100%);
   margin: 0 auto;
-  min-height: 42px;
+  min-height: 27px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
-  padding: 8px 14px 8px 18px;
+  gap: 10px;
+  padding: 5px 9px 5px 12px;
   border-radius: var(--radius-ui);
   background: var(--message-warning-bg);
   border: 1px solid var(--message-warning-border);
   color: var(--message-warning-text);
-  font-size: 0.98rem;
+  font-size: 0.9rem;
   font-weight: 700;
+}
+
+.offline-banner .button--compact {
+  min-height: 25px;
+  padding: 0 10px;
+  font-size: 0.82rem;
 }
 
 .page-header {
