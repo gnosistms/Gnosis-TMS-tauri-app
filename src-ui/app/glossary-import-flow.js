@@ -40,6 +40,7 @@ import {
 import { loadTeamGlossaries } from "./glossary-discovery-flow.js";
 import { classifySyncError } from "./sync-error.js";
 import { handleSyncFailure } from "./sync-recovery.js";
+import { makeGlossaryDefaultIfFirst } from "./glossary-default-flow.js";
 
 export const GLOSSARY_IMPORT_ACCEPT = ".tmx,text/xml,application/xml";
 
@@ -602,6 +603,7 @@ export async function submitGlossaryCreation(render) {
       resetGlossaryCreation();
       state.selectedGlossaryId = result.glossaryId;
       const refreshedGlossary = state.glossaries.find((item) => item.id === result.glossaryId) ?? null;
+      makeGlossaryDefaultIfFirst(team, result.glossaryId);
       showNoticeBadge(
         result.localNameCollisionResolved
           ? `Created glossary ${result.title} in local repo ${result.localRepoName} because that name was already used locally.`
@@ -850,6 +852,7 @@ export async function importGlossaryFile(render, selectedFile) {
       };
       state.selectedGlossaryId = result.glossaryId;
       const refreshedGlossary = state.glossaries.find((item) => item.id === result.glossaryId) ?? null;
+      makeGlossaryDefaultIfFirst(team, result.glossaryId);
       showNoticeBadge(
         result.localNameCollisionResolved
           ? `Imported ${result.termCount} terms from ${result.fileName} into ${result.title} in local repo ${result.localRepoName} because that name was already used locally.`

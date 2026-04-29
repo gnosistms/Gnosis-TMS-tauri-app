@@ -51,10 +51,12 @@ export {
 } from "./glossary-term-draft.js";
 export {
   activeDefaultGlossaryIdForTeam,
-  cancelGlossaryDefaultModal,
-  confirmGlossaryDefault,
+  DEFAULT_GLOSSARY_TOOLTIP,
+  defaultGlossaryCandidateAfterDeletion,
   defaultGlossaryForTeam,
-  openGlossaryDefaultModal,
+  makeGlossaryDefault,
+  makeGlossaryDefaultIfFirst,
+  updateDefaultGlossaryAfterDeletion,
 } from "./glossary-default-flow.js";
 export {
   toggleGlossaryTermInlineStyle,

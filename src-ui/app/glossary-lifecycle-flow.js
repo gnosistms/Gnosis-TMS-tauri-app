@@ -51,6 +51,7 @@ import {
   requestGlossaryWriteIntent,
   teamMetadataWriteScope,
 } from "./glossary-write-coordinator.js";
+import { updateDefaultGlossaryAfterDeletion } from "./glossary-default-flow.js";
 
 function glossaryById(glossaryId) {
   return state.glossaries.find((glossary) => glossary.id === glossaryId) ?? null;
@@ -423,6 +424,7 @@ export async function deleteGlossary(render, glossaryId) {
         pendingMutation: null,
         localLifecycleIntent: "softDelete",
       });
+      updateDefaultGlossaryAfterDeletion(team, glossary.id);
       persistGlossariesForTeam(team);
       void invalidateGlossariesQueryAfterMutation(team, {
         teamId: team.id,
@@ -637,6 +639,7 @@ export async function confirmGlossaryPermanentDeletion(render) {
       if (state.selectedGlossaryId === glossary.id) {
         state.selectedGlossaryId = null;
       }
+      updateDefaultGlossaryAfterDeletion(team, glossary.id);
     },
     onError: async (error) => {
       if (await handleSyncFailure(classifySyncError(error), {

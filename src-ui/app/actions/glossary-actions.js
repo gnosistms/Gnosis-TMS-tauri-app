@@ -2,21 +2,19 @@ import { state } from "../state.js";
 import {
   addGlossaryTermEmptyTargetVariant,
   addGlossaryTermVariant,
-  cancelGlossaryDefaultModal,
   cancelGlossaryImportModal,
   cancelGlossaryPermanentDeletion,
   cancelGlossaryRename,
   cancelGlossaryCreation,
   cancelGlossaryTermEditor,
-  confirmGlossaryDefault,
   confirmGlossaryPermanentDeletion,
   deleteGlossary,
   deleteGlossaryTerm,
   downloadGlossaryAsTmx,
   importGlossaryFromTmx,
+  makeGlossaryDefault,
   moveGlossaryTermVariantToIndex,
   openGlossaryCreation,
-  openGlossaryDefaultModal,
   openGlossaryPermanentDeletion,
   openGlossaryRename,
   openGlossaryTermEditor,
@@ -62,7 +60,6 @@ function parseVariantAction(action) {
 export function createGlossaryActions(render) {
   const exactActions = {
     "cancel-glossary-permanent-deletion": () => cancelGlossaryPermanentDeletion(render),
-    "cancel-glossary-default": () => cancelGlossaryDefaultModal(render),
     "cancel-glossary-import": () => cancelGlossaryImportModal(render),
     "cancel-glossary-rename": () => cancelGlossaryRename(render),
     "cancel-glossary-term-editor": () => cancelGlossaryTermEditor(render),
@@ -90,7 +87,7 @@ export function createGlossaryActions(render) {
     },
     {
       prefix: "make-default-glossary:",
-      handler: (glossaryId) => openGlossaryDefaultModal(render, glossaryId),
+      handler: (glossaryId) => makeGlossaryDefault(render, glossaryId),
     },
     {
       prefix: "delete-glossary:",
@@ -173,10 +170,6 @@ export function createGlossaryActions(render) {
     }
     if (action === "submit-glossary-rename") {
       await runWithImmediateLoading(event, "Saving...", () => submitGlossaryRename(render));
-      return true;
-    }
-    if (action === "confirm-glossary-default") {
-      confirmGlossaryDefault(render);
       return true;
     }
     if (action === "confirm-glossary-permanent-deletion") {

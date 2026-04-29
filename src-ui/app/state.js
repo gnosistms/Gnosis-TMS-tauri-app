@@ -99,7 +99,6 @@ export const state = {
   chapterPermanentDeletion: createChapterPermanentDeletionState(),
   glossaryCreation: createGlossaryCreationState(),
   glossaryRename: createGlossaryRenameState(),
-  glossaryDefault: createGlossaryDefaultState(),
   glossaryPermanentDeletion: createGlossaryPermanentDeletionState(),
   glossaryTermEditor: createGlossaryTermEditorState(),
   aiReviewMissingKeyModal: createAiReviewMissingKeyModalState(),
@@ -737,13 +736,6 @@ export function createGlossaryRenameState() {
   });
 }
 
-export function createGlossaryDefaultState() {
-  return createEntityModalState({
-    glossaryId: null,
-    glossaryName: "",
-  });
-}
-
 export function createGlossaryPermanentDeletionState() {
   return createEntityModalState({
     glossaryId: null,
@@ -918,10 +910,6 @@ export function resetGlossaryRename() {
   state.glossaryRename = createGlossaryRenameState();
 }
 
-export function resetGlossaryDefault() {
-  state.glossaryDefault = createGlossaryDefaultState();
-}
-
 export function resetGlossaryPermanentDeletion() {
   state.glossaryPermanentDeletion = createGlossaryPermanentDeletionState();
 }
@@ -997,7 +985,6 @@ export function resetSessionState() {
   resetGlossaryCreation();
   resetGlossaryImport();
   resetGlossaryRename();
-  resetGlossaryDefault();
   resetGlossaryPermanentDeletion();
   resetGlossaryTermEditor();
   state.aiReviewMissingKeyModal = createAiReviewMissingKeyModalState();

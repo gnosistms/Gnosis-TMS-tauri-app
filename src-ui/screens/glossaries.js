@@ -13,14 +13,16 @@ import {
 import { formatErrorForDisplay } from "../app/error-display.js";
 import { getNoticeBadgeText } from "../app/status-feedback.js";
 import { renderGlossaryCreationModal } from "./glossary-creation-modal.js";
-import { renderGlossaryDefaultModal } from "./glossary-default-modal.js";
 import { renderGlossaryImportModal } from "./glossary-import-modal.js";
 import { renderGlossaryPermanentDeletionModal } from "./glossary-permanent-deletion-modal.js";
 import { renderGlossaryRenameModal } from "./glossary-rename-modal.js";
 import {
   canManageGlossaries,
 } from "../app/glossary-shared.js";
-import { activeDefaultGlossaryIdForTeam } from "../app/glossary-default-flow.js";
+import {
+  DEFAULT_GLOSSARY_TOOLTIP,
+  activeDefaultGlossaryIdForTeam,
+} from "../app/glossary-default-flow.js";
 import {
   shouldShowDeletedGlossaryPermanentDelete,
   shouldShowGlossaryCreationControls,
@@ -35,6 +37,9 @@ import {
   anyGlossaryMutatingWriteIsActive,
   anyGlossaryWriteIsActive,
 } from "../app/glossary-write-coordinator.js";
+
+const DEFAULT_GLOSSARY_LABEL_TOOLTIP =
+  "New files uploaded to projects will automatically be assigned to use this glossary.";
 
 function renderGlossaryLanguageFlow(glossary) {
   return `
@@ -63,9 +68,10 @@ function renderGlossaryCard(glossary, options = {}) {
       disabled: offlineMode || resolution?.key === "missing",
     }),
     isDefaultGlossary
-      ? '<span class="text-action-label">Default</span>'
+      ? `<span class="text-action-label" data-tooltip="${escapeHtml(DEFAULT_GLOSSARY_LABEL_TOOLTIP)}">Default</span>`
       : textAction("Make default", `make-default-glossary:${glossary.id}`, {
-          disabled: offlineMode || writeActionsDisabled || disableLifecycleActions,
+          disabled: disableLifecycleActions,
+          tooltip: DEFAULT_GLOSSARY_TOOLTIP,
         }),
     ...(canManage
         ? [
@@ -268,7 +274,6 @@ export function renderGlossariesScreen(state) {
       body,
     }) +
     renderGlossaryCreationModal(state) +
-    renderGlossaryDefaultModal(state) +
     renderGlossaryImportModal(state) +
     renderGlossaryRenameModal(state) +
     renderGlossaryPermanentDeletionModal(state)

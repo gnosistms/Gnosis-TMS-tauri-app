@@ -84,26 +84,12 @@ test("glossary cards render make default action and default label", () => {
   const html = renderGlossariesScreen(state);
 
   assert.match(html, /data-action="make-default-glossary:glossary-1"/);
+  assert.match(html, /data-tooltip="The default glossary is assigned automatically to new files that you upload to projects\."/);
   assert.doesNotMatch(html, /data-action="make-default-glossary:glossary-2"/);
-  assert.match(html, /<span class="text-action-label">Default<\/span>/);
-});
-
-test("glossary default modal renders requested copy", () => {
-  setGlossaryScreenState();
-  state.glossaryDefault = {
-    ...state.glossaryDefault,
-    isOpen: true,
-    glossaryId: "glossary-1",
-    glossaryName: "Gnosis ES-VI",
-  };
-
-  const html = renderGlossariesScreen(state);
-
-  assert.match(html, /MAKE DEFAULT/);
-  assert.match(html, /Make Gnosis ES-VI the default glossary/);
-  assert.match(html, /The default glossary is assigned automatically to new files when you upload them\./);
-  assert.match(html, /data-action="cancel-glossary-default"/);
-  assert.match(html, /data-action="confirm-glossary-default"/);
+  assert.match(
+    html,
+    /<span class="text-action-label" data-tooltip="New files uploaded to projects will automatically be assigned to use this glossary\.">Default<\/span>/,
+  );
 });
 
 test("glossary refresh keeps read-only and query-backed lifecycle actions enabled", () => {
@@ -148,6 +134,7 @@ test("glossary refresh keeps read-only and query-backed lifecycle actions enable
 
   assert.doesNotMatch(actionButtonHtml(html, "open-glossary:glossary-1"), /disabled/);
   assert.doesNotMatch(actionButtonHtml(html, "download-glossary:glossary-1"), /disabled/);
+  assert.doesNotMatch(actionButtonHtml(html, "make-default-glossary:glossary-1"), /disabled/);
   assert.doesNotMatch(actionButtonHtml(html, "toggle-deleted-glossaries"), /disabled/);
 
   assert.doesNotMatch(actionButtonHtml(html, "rename-glossary:glossary-1"), /disabled/);

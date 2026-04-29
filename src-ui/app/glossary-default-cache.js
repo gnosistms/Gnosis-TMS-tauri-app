@@ -41,3 +41,14 @@ export function saveStoredDefaultGlossaryIdForTeam(team, glossaryId) {
   };
   saveTeamScopedCacheMap(GLOSSARY_DEFAULT_STORAGE_KEY, cacheMap);
 }
+
+export function removeStoredDefaultGlossaryIdForTeam(team) {
+  const cacheKey = teamCacheKey(team);
+  if (!cacheKey) {
+    return;
+  }
+
+  const cacheMap = loadTeamScopedCacheMap(GLOSSARY_DEFAULT_STORAGE_KEY);
+  delete cacheMap[cacheKey];
+  saveTeamScopedCacheMap(GLOSSARY_DEFAULT_STORAGE_KEY, cacheMap);
+}

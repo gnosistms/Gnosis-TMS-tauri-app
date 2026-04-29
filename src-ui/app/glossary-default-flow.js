@@ -1,13 +1,40 @@
-import {
-  createGlossaryDefaultState,
-  state,
-} from "./state.js";
+import { state } from "./state.js";
 import {
   loadStoredDefaultGlossaryIdForTeam,
+  removeStoredDefaultGlossaryIdForTeam,
   saveStoredDefaultGlossaryIdForTeam,
 } from "./glossary-default-cache.js";
 import { selectedTeam } from "./glossary-shared.js";
 import { showNoticeBadge } from "./status-feedback.js";
+
+export const DEFAULT_GLOSSARY_TOOLTIP =
+  "The default glossary is assigned automatically to new files that you upload to projects.";
+
+function activeGlossariesExcept(glossaryId = null) {
+  return (Array.isArray(state.glossaries) ? state.glossaries : []).filter((glossary) =>
+    glossary?.lifecycleState !== "deleted" && glossary.id !== glossaryId
+  );
+}
+
+function compareDefaultCandidates(left, right) {
+  const leftTermCount = Number.isFinite(left?.termCount) ? left.termCount : 0;
+  const rightTermCount = Number.isFinite(right?.termCount) ? right.termCount : 0;
+  return (
+    rightTermCount - leftTermCount
+    || String(left?.title ?? "").localeCompare(String(right?.title ?? ""), undefined, {
+      sensitivity: "base",
+      numeric: true,
+    })
+    || String(left?.id ?? "").localeCompare(String(right?.id ?? ""), undefined, {
+      sensitivity: "base",
+      numeric: true,
+    })
+  );
+}
+
+export function defaultGlossaryCandidateAfterDeletion(glossaryId) {
+  return [...activeGlossariesExcept(glossaryId)].sort(compareDefaultCandidates)[0] ?? null;
+}
 
 export function activeDefaultGlossaryIdForTeam(team = selectedTeam()) {
   const defaultGlossaryId = loadStoredDefaultGlossaryIdForTeam(team);
@@ -30,7 +57,7 @@ export function defaultGlossaryForTeam(team = selectedTeam()) {
   return state.glossaries.find((item) => item?.id === defaultGlossaryId) ?? null;
 }
 
-export function openGlossaryDefaultModal(render, glossaryId) {
+export function makeGlossaryDefault(render, glossaryId) {
   const glossary = state.glossaries.find((item) =>
     item?.id === glossaryId && item.lifecycleState !== "deleted"
   );
@@ -39,41 +66,39 @@ export function openGlossaryDefaultModal(render, glossaryId) {
     return;
   }
 
-  state.glossaryDefault = {
-    ...createGlossaryDefaultState(),
-    isOpen: true,
-    glossaryId: glossary.id,
-    glossaryName: glossary.title ?? "",
-  };
-  render();
-}
-
-export function cancelGlossaryDefaultModal(render) {
-  state.glossaryDefault = createGlossaryDefaultState();
-  render();
-}
-
-export function confirmGlossaryDefault(render) {
-  if (!state.glossaryDefault?.isOpen) {
-    return;
-  }
-
   const team = selectedTeam();
-  const glossaryId = state.glossaryDefault.glossaryId;
-  const glossary = state.glossaries.find((item) =>
-    item?.id === glossaryId && item.lifecycleState !== "deleted"
-  );
-  if (!team || !glossary) {
-    state.glossaryDefault = {
-      ...state.glossaryDefault,
-      status: "idle",
-      error: "Could not find the selected glossary.",
-    };
-    render();
+  if (!team) {
+    showNoticeBadge("Could not determine the selected team.", render);
     return;
   }
 
   saveStoredDefaultGlossaryIdForTeam(team, glossary.id);
-  state.glossaryDefault = createGlossaryDefaultState();
   showNoticeBadge(`${glossary.title ?? "Glossary"} is now the default glossary.`, render);
+}
+
+export function makeGlossaryDefaultIfFirst(team, glossaryId) {
+  const activeGlossaries = activeGlossariesExcept();
+  const onlyGlossary = activeGlossaries[0] ?? null;
+  if (activeGlossaries.length !== 1 || onlyGlossary?.id !== glossaryId) {
+    return false;
+  }
+
+  saveStoredDefaultGlossaryIdForTeam(team, glossaryId);
+  return true;
+}
+
+export function updateDefaultGlossaryAfterDeletion(team, deletedGlossaryId) {
+  const currentDefaultGlossaryId = loadStoredDefaultGlossaryIdForTeam(team);
+  if (currentDefaultGlossaryId !== deletedGlossaryId) {
+    return null;
+  }
+
+  const nextDefault = defaultGlossaryCandidateAfterDeletion(deletedGlossaryId);
+  if (!nextDefault) {
+    removeStoredDefaultGlossaryIdForTeam(team);
+    return null;
+  }
+
+  saveStoredDefaultGlossaryIdForTeam(team, nextDefault.id);
+  return nextDefault;
 }
