@@ -44,13 +44,17 @@ const {
   selectProjectImportSourceLanguage,
 } = await import("./project-import-flow.js");
 const { createProjectImportState, createStatusBadgesState, state } = await import("./state.js");
+const { clearActiveStorageLogin, setActiveStorageLogin } = await import("./team-storage.js");
+const { saveStoredDefaultGlossaryIdForTeam } = await import("./glossary-default-cache.js");
 
 function resetProjectImportTestState() {
+  clearActiveStorageLogin();
   state.projectImport = createProjectImportState();
   state.teams = [{ id: "team-1", installationId: 1, canManageProjects: true }];
   state.selectedTeamId = "team-1";
   state.projects = [{ id: "project-1", name: "project-repo", title: "Project" }];
   state.deletedProjects = [];
+  state.glossaries = [];
   state.offline = { isEnabled: false };
   state.auth = {
     session: {
@@ -100,7 +104,14 @@ function installBatchImportInvokeHandler({ failFileNames = new Set() } = {}) {
       return [];
     }
     if (command === "list_local_gtms_project_files") {
-      return [];
+      return (payload.input?.projects ?? []).map((projectInput) => ({
+        projectId: projectInput.projectId,
+        repoName: projectInput.repoName,
+        chapters: state.projects.find((project) => project.id === projectInput.projectId)?.chapters ?? [],
+      }));
+    }
+    if (command === "update_gtms_chapter_glossary_links") {
+      return {};
     }
     throw new Error(`Unexpected command: ${command}`);
   };
@@ -261,6 +272,44 @@ test("batch project import imports valid XLSX files and refreshes once", async (
   assert.ok(statusTexts.includes("Importing 2 of 2..."));
   assert.ok(statusTexts.includes("Syncing project repo..."));
   assert.ok(statusTexts.includes("Refreshing file list..."));
+});
+
+test("project import assigns the default glossary to new files before refresh", async () => {
+  resetProjectImportTestState();
+  setActiveStorageLogin("project-import-default-test");
+  state.projectImport = {
+    ...state.projectImport,
+    isOpen: true,
+    projectId: "project-1",
+    projectTitle: "Project",
+  };
+  state.glossaries = [{
+    id: "glossary-1",
+    repoName: "glossary-repo",
+    title: "Default Glossary",
+    lifecycleState: "active",
+  }];
+  saveStoredDefaultGlossaryIdForTeam(state.teams[0], "glossary-1");
+  const calls = installBatchImportInvokeHandler();
+
+  await importProjectFiles(() => {}, [
+    importFile("one.xlsx"),
+  ]);
+
+  const updateCalls = calls.filter((call) => call.command === "update_gtms_chapter_glossary_links");
+  assert.equal(updateCalls.length, 1);
+  assert.equal(updateCalls[0].payload.input.installationId, 1);
+  assert.equal(updateCalls[0].payload.input.projectId, "project-1");
+  assert.equal(updateCalls[0].payload.input.repoName, "project-repo");
+  assert.equal(updateCalls[0].payload.input.chapterId, state.projects[0].chapters[0].id);
+  assert.deepEqual(updateCalls[0].payload.input.glossary, {
+    glossaryId: "glossary-1",
+    repoName: "glossary-repo",
+  });
+  assert.deepEqual(state.projects[0].chapters[0].linkedGlossary, {
+    glossaryId: "glossary-1",
+    repoName: "glossary-repo",
+  });
 });
 
 test("batch project import continues after unsupported and failed files", async () => {

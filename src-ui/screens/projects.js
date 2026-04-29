@@ -80,13 +80,11 @@ function findGlossaryOptionById(glossaries, glossaryId) {
 function renderChapterGlossarySelect(chapter, glossaries, options = {}) {
   const linkedGlossary = chapter.linkedGlossary;
   const selectedGlossary = findGlossaryOptionById(glossaries, linkedGlossary?.glossaryId);
-  const tooltipText = "Select a glossary";
   const optionList = availableGlossaryOptions(glossaries);
 
   return renderSelectPillControl({
     className: "select-pill--toolbar select-pill--chapter-glossary select-pill--truncate-value",
     value: selectedGlossary?.title ?? "no glossary",
-    tooltip: tooltipText,
     disabled: options.disabled === true,
     wrapperAttributes: {
       "data-stop-row-action": true,
@@ -94,7 +92,7 @@ function renderChapterGlossarySelect(chapter, glossaries, options = {}) {
     selectAttributes: {
       "data-chapter-glossary-select": true,
       "data-chapter-id": chapter.id,
-      "aria-label": tooltipText,
+      "aria-label": "Select a glossary",
     },
     options: [
       {

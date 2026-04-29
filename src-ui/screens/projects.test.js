@@ -167,6 +167,14 @@ test("projects glossary selector stays enabled during project refresh", () => {
   assert.doesNotMatch(html, /data-chapter-glossary-select[^>]*disabled/);
 });
 
+test("projects glossary selector does not render a hover tooltip", () => {
+  const html = renderProjectsScreen(projectsState());
+
+  assert.match(html, /data-chapter-glossary-select/);
+  assert.match(html, /aria-label="Select a glossary"/);
+  assert.doesNotMatch(html, /data-tooltip="Select a glossary"/);
+});
+
 test("projects page shows Export before Open on active chapters", () => {
   const html = renderProjectsScreen(projectsState());
   const exportButton = actionButtonHtml(html, "export-file:chapter-1");

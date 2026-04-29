@@ -490,6 +490,14 @@ a {
   text-decoration: none;
 }
 
+.text-action-label {
+  display: inline-flex;
+  align-items: center;
+  color: var(--muted);
+  font-size: var(--text-action-font-size);
+  font-weight: 600;
+}
+
 .header-nav__button--back {
   gap: 5px;
 }

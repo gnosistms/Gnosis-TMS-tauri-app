@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 
 const { createResourcePageState } = await import("../app/resource-page-controller.js");
 const { resetSessionState, state } = await import("../app/state.js");
+const { saveStoredDefaultGlossaryIdForTeam } = await import("../app/glossary-default-cache.js");
+const { setActiveStorageLogin } = await import("../app/team-storage.js");
 const { renderGlossariesScreen } = await import("./glossaries.js");
 const {
   glossaryTitleIntentKey,
@@ -51,6 +53,57 @@ test("glossary cards render TMX download actions", () => {
 
   assert.match(html, /data-action="download-glossary:glossary-1"/);
   assert.doesNotMatch(html, /open-external:[^"]*archive/);
+});
+
+test("glossary cards render make default action and default label", () => {
+  setGlossaryScreenState({
+    glossaries: [
+      {
+        id: "glossary-1",
+        repoName: "gnosis-es-vi",
+        title: "Gnosis ES-VI",
+        lifecycleState: "active",
+        sourceLanguage: { code: "es", name: "Spanish" },
+        targetLanguage: { code: "vi", name: "Vietnamese" },
+        termCount: 1,
+      },
+      {
+        id: "glossary-2",
+        repoName: "other",
+        title: "Other",
+        lifecycleState: "active",
+        sourceLanguage: { code: "es", name: "Spanish" },
+        targetLanguage: { code: "en", name: "English" },
+        termCount: 1,
+      },
+    ],
+  });
+  setActiveStorageLogin("glossaries-default-render-test");
+  saveStoredDefaultGlossaryIdForTeam(state.teams[0], "glossary-2");
+
+  const html = renderGlossariesScreen(state);
+
+  assert.match(html, /data-action="make-default-glossary:glossary-1"/);
+  assert.doesNotMatch(html, /data-action="make-default-glossary:glossary-2"/);
+  assert.match(html, /<span class="text-action-label">Default<\/span>/);
+});
+
+test("glossary default modal renders requested copy", () => {
+  setGlossaryScreenState();
+  state.glossaryDefault = {
+    ...state.glossaryDefault,
+    isOpen: true,
+    glossaryId: "glossary-1",
+    glossaryName: "Gnosis ES-VI",
+  };
+
+  const html = renderGlossariesScreen(state);
+
+  assert.match(html, /MAKE DEFAULT/);
+  assert.match(html, /Make Gnosis ES-VI the default glossary/);
+  assert.match(html, /The default glossary is assigned automatically to new files when you upload them\./);
+  assert.match(html, /data-action="cancel-glossary-default"/);
+  assert.match(html, /data-action="confirm-glossary-default"/);
 });
 
 test("glossary refresh keeps read-only and query-backed lifecycle actions enabled", () => {

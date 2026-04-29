@@ -36,6 +36,15 @@
   gap: 18px;
 }
 
+.modal__eyebrow {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
 .modal__title {
   margin: 0;
   font-size: clamp(2rem, 3vw, 2.8rem);

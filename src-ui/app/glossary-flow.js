@@ -50,5 +50,12 @@ export {
   updateGlossaryTermVariant,
 } from "./glossary-term-draft.js";
 export {
+  activeDefaultGlossaryIdForTeam,
+  cancelGlossaryDefaultModal,
+  confirmGlossaryDefault,
+  defaultGlossaryForTeam,
+  openGlossaryDefaultModal,
+} from "./glossary-default-flow.js";
+export {
   toggleGlossaryTermInlineStyle,
 } from "./glossary-term-inline-markup-flow.js";

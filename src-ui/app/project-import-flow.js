@@ -9,6 +9,7 @@ import { state } from "./state.js";
 import {
   showNoticeBadge,
 } from "./status-feedback.js";
+import { defaultGlossaryForTeam } from "./glossary-default-flow.js";
 import { reconcileProjectRepoSyncStates } from "./project-repo-sync-flow.js";
 import {
   clearProjectsStatus,
@@ -220,8 +221,55 @@ export function buildImportedFileEntry(result) {
   };
 }
 
-function applyImportedFileToProject(team, projectId, result) {
-  const importedFile = buildImportedFileEntry(result);
+function glossaryLinkFromGlossary(glossary) {
+  if (!glossary?.id || !glossary?.repoName) {
+    return null;
+  }
+
+  return {
+    glossaryId: glossary.id,
+    repoName: glossary.repoName,
+  };
+}
+
+async function assignDefaultGlossaryToImportedFile(selectedTeam, targetProject, result) {
+  const defaultGlossary = defaultGlossaryForTeam(selectedTeam);
+  const linkedGlossary = glossaryLinkFromGlossary(defaultGlossary);
+  if (!linkedGlossary) {
+    return {
+      linkedGlossary: null,
+      error: null,
+    };
+  }
+
+  try {
+    await invoke("update_gtms_chapter_glossary_links", {
+      input: {
+        installationId: selectedTeam.installationId,
+        projectId: targetProject.id,
+        repoName: targetProject.name,
+        chapterId: result.chapterId,
+        glossary: linkedGlossary,
+      },
+    });
+  } catch (error) {
+    return {
+      linkedGlossary: null,
+      error,
+    };
+  }
+
+  return {
+    linkedGlossary,
+    error: null,
+  };
+}
+
+function applyImportedFileToProject(team, projectId, result, linkedGlossary = null) {
+  const importedFile = {
+    ...buildImportedFileEntry(result),
+    linkedGlossary,
+  };
   const mergeImportedFile = (project) => {
     if (!project || project.id !== projectId) {
       return project;
@@ -464,6 +512,7 @@ async function completeProjectImport(render, selectedFile, fileType, options = {
 
   try {
     const result = await importProjectFileResult(selectedTeam, targetProject, selectedFile, fileType, options);
+    const defaultAssignment = await assignDefaultGlossaryToImportedFile(selectedTeam, targetProject, result);
 
     state.projectImport = {
       ...state.projectImport,
@@ -481,7 +530,7 @@ async function completeProjectImport(render, selectedFile, fileType, options = {
       selectedSourceLanguageCode: "",
       sourceLanguageScrollTop: 0,
     };
-    applyImportedFileToProject(selectedTeam, projectId, result);
+    applyImportedFileToProject(selectedTeam, projectId, result, defaultAssignment.linkedGlossary);
     render();
     await waitForNextPaint();
     showProjectsStatus(render, "Syncing project repo...");
@@ -494,7 +543,9 @@ async function completeProjectImport(render, selectedFile, fileType, options = {
     clearProjectsStatus(render);
     showProjectsNotice(
       render,
-      `Imported ${result.unitCount} rows from ${result.sourceFileName} into ${result.projectTitle}.${importSummaryNoticeSuffix(result)}`,
+      `Imported ${result.unitCount} rows from ${result.sourceFileName} into ${result.projectTitle}.${importSummaryNoticeSuffix(result)}${
+        defaultAssignment.error ? " Default glossary could not be assigned." : ""
+      }`,
     );
   } catch (error) {
     state.projectImport = projectImportModalState({
@@ -608,6 +659,7 @@ export async function importProjectFiles(render, selectedFiles, options = {}) {
 
   const failedFileNames = [];
   const importedResults = [];
+  const defaultGlossaryAssignmentFailures = [];
 
   state.projectImport = projectImportModalState({
     status: "importing",
@@ -634,8 +686,12 @@ export async function importProjectFiles(render, selectedFiles, options = {}) {
 
     try {
       const result = await importProjectFileResult(selectedTeam, targetProject, file, fileType, options);
+      const defaultAssignment = await assignDefaultGlossaryToImportedFile(selectedTeam, targetProject, result);
       importedResults.push(result);
-      applyImportedFileToProject(selectedTeam, projectId, result);
+      if (defaultAssignment.error) {
+        defaultGlossaryAssignmentFailures.push(sourceFileName);
+      }
+      applyImportedFileToProject(selectedTeam, projectId, result, defaultAssignment.linkedGlossary);
     } catch {
       failedFileNames.push(sourceFileName);
     }
@@ -673,7 +729,11 @@ export async function importProjectFiles(render, selectedFiles, options = {}) {
       render,
       failedFileNames.length > 0
         ? `Imported ${importedResults.length} ${importedResults.length === 1 ? "file" : "files"}. ${failedFileNames.length} ${failedFileNames.length === 1 ? "file" : "files"} failed.`
-        : `Imported ${importedResults.length} ${importedResults.length === 1 ? "file" : "files"} into ${targetProject.title ?? targetProject.name}`,
+        : `Imported ${importedResults.length} ${importedResults.length === 1 ? "file" : "files"} into ${targetProject.title ?? targetProject.name}${
+            defaultGlossaryAssignmentFailures.length > 0
+              ? `. Default glossary could not be assigned to ${defaultGlossaryAssignmentFailures.length} ${defaultGlossaryAssignmentFailures.length === 1 ? "file" : "files"}`
+              : ""
+          }`,
     );
     return;
   }

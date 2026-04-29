@@ -112,6 +112,7 @@ const {
   revokeOrganizationAdmin,
 } = await import("./team-members-flow.js");
 const { resetMembersQueryObserver } = await import("./member-query.js");
+const { resetTeamsQueryObserver } = await import("./team-query.js");
 const { resetMemberWriteCoordinator } = await import("./member-write-coordinator.js");
 const { queryClient } = await import("./query-client.js");
 const { renderUsersScreen } = await import("../screens/users.js");
@@ -180,6 +181,7 @@ function installFixture(options = {}) {
 
 test.afterEach(() => {
   resetMembersQueryObserver();
+  resetTeamsQueryObserver();
   resetMemberWriteCoordinator();
   queryClient.clear();
   invokeHandler = async () => null;

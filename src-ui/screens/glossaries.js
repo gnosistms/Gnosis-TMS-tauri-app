@@ -13,12 +13,14 @@ import {
 import { formatErrorForDisplay } from "../app/error-display.js";
 import { getNoticeBadgeText } from "../app/status-feedback.js";
 import { renderGlossaryCreationModal } from "./glossary-creation-modal.js";
+import { renderGlossaryDefaultModal } from "./glossary-default-modal.js";
 import { renderGlossaryImportModal } from "./glossary-import-modal.js";
 import { renderGlossaryPermanentDeletionModal } from "./glossary-permanent-deletion-modal.js";
 import { renderGlossaryRenameModal } from "./glossary-rename-modal.js";
 import {
   canManageGlossaries,
 } from "../app/glossary-shared.js";
+import { activeDefaultGlossaryIdForTeam } from "../app/glossary-default-flow.js";
 import {
   shouldShowDeletedGlossaryPermanentDelete,
   shouldShowGlossaryCreationControls,
@@ -51,6 +53,7 @@ function renderGlossaryCard(glossary, options = {}) {
   const offlineMode = options.offlineMode === true;
   const lifecycleActionsDisabled = options.lifecycleActionsDisabled === true;
   const writeActionsDisabled = options.writeActionsDisabled === true;
+  const isDefaultGlossary = options.defaultGlossaryId === glossary.id;
   const isTombstone = glossary?.recordState === "tombstone";
   const resolution = deriveGlossaryResolution(glossary, options.syncSnapshot);
   const disableLifecycleActions = resolution?.blockLifecycleActions === true;
@@ -59,6 +62,11 @@ function renderGlossaryCard(glossary, options = {}) {
     textAction("Download", `download-glossary:${glossary.id}`, {
       disabled: offlineMode || resolution?.key === "missing",
     }),
+    isDefaultGlossary
+      ? '<span class="text-action-label">Default</span>'
+      : textAction("Make default", `make-default-glossary:${glossary.id}`, {
+          disabled: offlineMode || writeActionsDisabled || disableLifecycleActions,
+        }),
     ...(canManage
         ? [
           textAction("Rename", `rename-glossary:${glossary.id}`, {
@@ -165,6 +173,7 @@ export function renderGlossariesScreen(state) {
     areResourcePageWritesDisabled(state.glossariesPage) || anyGlossaryMutatingWriteIsActive();
   const discovery = state.glossaryDiscovery ?? { status: "idle", error: "", brokerWarning: "" };
   const syncSnapshotsByRepoName = state.glossaryRepoSyncByRepoName ?? {};
+  const defaultGlossaryId = activeDefaultGlossaryIdForTeam(selectedTeam);
   const recoveryMessage =
     typeof discovery.recoveryMessage === "string" && discovery.recoveryMessage.trim()
       ? discovery.recoveryMessage.trim()
@@ -214,6 +223,7 @@ export function renderGlossariesScreen(state) {
                 offlineMode,
                 lifecycleActionsDisabled,
                 writeActionsDisabled,
+                defaultGlossaryId,
                 syncSnapshot: syncSnapshotsByRepoName[glossary.repoName] ?? null,
               }),
             )
@@ -234,6 +244,7 @@ export function renderGlossariesScreen(state) {
         offlineMode,
         lifecycleActionsDisabled,
         writeActionsDisabled,
+        defaultGlossaryId,
         syncSnapshotsByRepoName,
       })}
     </section>
@@ -257,6 +268,7 @@ export function renderGlossariesScreen(state) {
       body,
     }) +
     renderGlossaryCreationModal(state) +
+    renderGlossaryDefaultModal(state) +
     renderGlossaryImportModal(state) +
     renderGlossaryRenameModal(state) +
     renderGlossaryPermanentDeletionModal(state)
