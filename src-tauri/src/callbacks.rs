@@ -16,6 +16,85 @@ use crate::{
     window::focus_main_window,
 };
 
+const CALLBACK_PAGE_STYLE: &str = r#":root {
+  color-scheme: light;
+  --app-background: #fbe7b6;
+  --panel: #fffaf4;
+  --text: #4a2d13;
+  --muted: #a36e34;
+  --accent: #f39c18;
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: var(--app-background);
+  background-image: none;
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+main {
+  width: min(100%, 760px);
+  background: rgba(255, 250, 244, 0.96);
+  border: 1px solid rgba(164, 112, 41, 0.16);
+  border-radius: 28px;
+  padding: 40px;
+  box-shadow: 0 9px 20px rgba(131, 82, 22, 0.07);
+}
+.eyebrow {
+  margin: 0 0 12px;
+  color: var(--muted);
+  font-size: 0.95rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+h1 {
+  margin: 0;
+  font-size: clamp(2.25rem, 5vw, 4rem);
+  line-height: 0.95;
+}
+p {
+  margin: 20px 0 0;
+  font-size: 1.15rem;
+  line-height: 1.65;
+}
+.status {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 28px;
+  padding: 14px 18px;
+  border-radius: 999px;
+  background: rgba(236, 152, 39, 0.12);
+  color: var(--muted);
+  font-weight: 700;
+}
+.dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 0 rgba(236, 152, 39, 0.45);
+  animation: pulse 1.4s infinite;
+}
+@keyframes pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(236, 152, 39, 0.45);
+  }
+  70% {
+    box-shadow: 0 0 0 14px rgba(236, 152, 39, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(236, 152, 39, 0);
+  }
+}"#;
+
 #[derive(Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct GithubAppInstallEventPayload {
@@ -80,13 +159,13 @@ fn write_html_response(
     status_text: &str,
 ) {
     let html = format!(
-    "<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>{title}</title><style>:root{{color-scheme:light;--bg:#f7ecd5;--panel:#fffaf4;--text:#3f2610;--muted:#9c6a33;--accent:#ec9827;}}*{{box-sizing:border-box;}}body{{margin:0;min-height:100vh;display:grid;place-items:center;padding:24px;background:radial-gradient(circle at top, rgba(236, 152, 39, 0.24), transparent 42%),linear-gradient(180deg, #f3d389 0%, var(--bg) 100%);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;}}main{{width:min(100%,760px);background:rgba(255,250,244,.96);border:1px solid rgba(164,112,41,.14);border-radius:28px;padding:40px;box-shadow:0 24px 60px rgba(131,82,22,.14);}}.eyebrow{{margin:0 0 12px;color:var(--muted);font-size:.95rem;font-weight:700;letter-spacing:.14em;text-transform:uppercase;}}h1{{margin:0;font-size:clamp(2.25rem,5vw,4rem);line-height:.95;}}p{{margin:20px 0 0;font-size:1.15rem;line-height:1.65;}}.status{{display:inline-flex;align-items:center;gap:12px;margin-top:28px;padding:14px 18px;border-radius:999px;background:rgba(236,152,39,.12);color:var(--muted);font-weight:700;}}.dot{{width:12px;height:12px;border-radius:50%;background:var(--accent);box-shadow:0 0 0 0 rgba(236,152,39,.45);animation:pulse 1.4s infinite;}}@keyframes pulse{{0%{{box-shadow:0 0 0 0 rgba(236,152,39,.45);}}70%{{box-shadow:0 0 0 14px rgba(236,152,39,0);}}100%{{box-shadow:0 0 0 0 rgba(236,152,39,0);}}}}</style></head><body><main><p class=\"eyebrow\">Gnosis TMS</p><h1>{title}</h1><p>{body}</p><div class=\"status\"><span class=\"dot\"></span>{status_text}</div></main></body></html>"
-  );
+        r#"<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>{title}</title><style>{CALLBACK_PAGE_STYLE}</style></head><body><main><p class="eyebrow">Gnosis TMS</p><h1>{title}</h1><p>{body}</p><div class="status"><span class="dot"></span>{status_text}</div></main></body></html>"#
+    );
     let response = format!(
-    "{status_line}\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-    html.len(),
-    html
-  );
+        "{status_line}\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        html.len(),
+        html
+    );
     let _ = stream.write_all(response.as_bytes());
     let _ = stream.flush();
 }

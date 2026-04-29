@@ -22,7 +22,10 @@ import {
 } from "../lib/ui.js";
 import { resolveVisibleEditorAiReview } from "../app/editor-ai-review-state.js";
 import { normalizeEditorSidebarTab } from "../app/editor-comments.js";
-import { findEditorHistoryPreviousCommitEntry } from "../app/editor-history.js";
+import {
+  findEditorHistoryPreviousCommitEntry,
+  historyLastUpdateHeadingLabel,
+} from "../app/editor-history.js";
 import { resolveEditorAiTranslateLanguages } from "../app/editor-ai-translate-target.js";
 import { renderCommentsPane } from "./translate-comments-pane.js";
 import { renderHistoryPane } from "./translate-history-pane.js";
@@ -589,6 +592,7 @@ function renderReviewPane(editorChapter, rows, languages, offlineMode = false) {
     textStyle: activeRow?.textStyle ?? "paragraph",
   };
   const lastUpdateEntry = lastCommittedEntry ?? currentEntry;
+  const lastUpdateHeadingLabel = historyLastUpdateHeadingLabel(lastUpdateEntry);
   const isLastUpdateExpanded = expandedSectionKeys.has("last-update");
   const isAiReviewExpanded = expandedSectionKeys.has("ai-review");
   const lastUpdateSummaryTooltip = tooltipAttributes(
@@ -679,7 +683,7 @@ function renderReviewPane(editorChapter, rows, languages, offlineMode = false) {
         >
           <span class="history-group__summary collapse-affordance"${lastUpdateSummaryTooltip}>
             ${renderCollapseChevron(isLastUpdateExpanded, "history-group__chevron")}
-            <span class="history-group__author">Last update</span>
+            <span class="history-group__author">${escapeHtml(lastUpdateHeadingLabel)}</span>
           </span>
           <span class="history-group__meta">${escapeHtml(summaryMeta)}</span>
         </button>

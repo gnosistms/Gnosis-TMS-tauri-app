@@ -1,9 +1,7 @@
 import { primaryButton } from "../lib/ui.js";
 
-function renderStartHeroLogo(isVisible) {
-  return isVisible
-    ? '<div class="start-hero__logo" aria-hidden="true"></div>'
-    : "";
+function renderStartHeroLogo() {
+  return '<div class="start-hero__logo" aria-hidden="true"></div>';
 }
 
 export function renderStartScreen(state) {
@@ -20,9 +18,14 @@ export function renderStartScreen(state) {
         <div class="start-stack">
           <article class="card card--hero">
             <div class="card__body">
-              <p class="card__eyebrow">GNOSIS TMS</p>
-              <h1 class="card__title">No internet connection</h1>
-              <p class="card__subtitle">${offlineMessage}</p>
+              <div class="start-hero__layout start-hero__layout--with-logo">
+                <div class="start-hero__text">
+                  <p class="card__eyebrow">GNOSIS TMS</p>
+                  <h1 class="card__title">No internet connection</h1>
+                  <p class="card__subtitle">${offlineMessage}</p>
+                </div>
+                ${renderStartHeroLogo()}
+              </div>
               ${offlineAction}
             </div>
           </article>
@@ -59,13 +62,13 @@ export function renderStartScreen(state) {
         ${statusMarkup}
         <article class="card card--hero">
           <div class="card__body">
-            <div class="start-hero__layout${isResolvingStartupAuth ? " start-hero__layout--with-logo" : ""}">
+            <div class="start-hero__layout start-hero__layout--with-logo">
               <div class="start-hero__text">
                 <p class="card__eyebrow">PAZ INVERENCIAL!</p>
                 <h1 class="card__title">${heroTitle}</h1>
                 <p class="card__subtitle">${heroSubtitle}</p>
               </div>
-              ${renderStartHeroLogo(isResolvingStartupAuth)}
+              ${renderStartHeroLogo()}
             </div>
             ${
               isResolvingStartupAuth

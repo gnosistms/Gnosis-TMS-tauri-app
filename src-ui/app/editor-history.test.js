@@ -8,6 +8,7 @@ import {
   findEditorHistoryPreviousCommitEntry,
   findEditorHistoryPreviousVisibleEntry,
   historyEntryCanUndoReplace,
+  historyLastUpdateHeadingLabel,
   historyLastUpdateLabel,
   reconcileExpandedEditorHistoryGroupKeys,
 } from "./editor-history.js";
@@ -49,6 +50,22 @@ test("historyLastUpdateLabel labels imports as file import", () => {
     historyLastUpdateLabel(historyEntry({ commitSha: "c3", authorName: "sirhans", aiModel: "gpt-5.4" })),
     "GPT 5.4 - sirhans",
   );
+});
+
+test("historyLastUpdateHeadingLabel names the latest updater source", () => {
+  assert.equal(
+    historyLastUpdateHeadingLabel(historyEntry({ commitSha: "c1", authorName: "sirhans" })),
+    "Last update - sirhans",
+  );
+  assert.equal(
+    historyLastUpdateHeadingLabel(historyEntry({ commitSha: "c2", authorName: "sirhans", aiModel: "gpt-5.4" })),
+    "Last update - GPT 5.4",
+  );
+  assert.equal(
+    historyLastUpdateHeadingLabel(historyEntry({ commitSha: "c3", operationType: "import" })),
+    "Last update - file import",
+  );
+  assert.equal(historyLastUpdateHeadingLabel({ plainText: "draft" }), "Last update");
 });
 
 test("marker-only runs that return to the baseline state disappear from grouped history", () => {

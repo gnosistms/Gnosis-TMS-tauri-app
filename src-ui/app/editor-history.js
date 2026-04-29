@@ -49,6 +49,24 @@ export function historyLastUpdateLabel(entry) {
   return historyAuthorLabel(entry);
 }
 
+export function historyLastUpdateHeadingLabel(entry) {
+  if (!entry?.commitSha) {
+    return "Last update";
+  }
+
+  if (String(entry?.operationType ?? "").trim().toLowerCase() === "import") {
+    return "Last update - file import";
+  }
+
+  const aiModelLabel = formatAiHistoryModelLabel(entry?.aiModel);
+  if (aiModelLabel) {
+    return `Last update - ${aiModelLabel}`;
+  }
+
+  const authorName = String(entry?.authorName ?? "").trim();
+  return authorName ? `Last update - ${authorName}` : "Last update";
+}
+
 function isImportHistoryEntry(entry) {
   return String(entry?.operationType ?? "").trim().toLowerCase() === "import";
 }
