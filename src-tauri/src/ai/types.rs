@@ -138,12 +138,19 @@ pub struct AiPromptRequest {
     pub model_id: String,
     pub prompt: String,
     pub previous_response_id: Option<String>,
+    pub output_format: AiPromptOutputFormat,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AiPromptResponse {
     pub text: String,
     pub provider_response_id: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AiPromptOutputFormat {
+    Text,
+    AssistantTurnJson,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq, Default)]

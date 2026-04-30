@@ -9,8 +9,8 @@ use tauri::AppHandle;
 use crate::ai::types::{
     AiAssistantConcordanceHit, AiAssistantRowWindowEntry, AiAssistantTranscriptEntry,
     AiAssistantTurnKind, AiAssistantTurnRequest, AiAssistantTurnResponse, AiModelProbeRequest,
-    AiPromptRequest, AiProviderContinuationMetadata, AiProviderId, AiProviderModel,
-    AiReviewRequest, AiReviewResponse, AiTranslatedGlossaryEntry,
+    AiPromptOutputFormat, AiPromptRequest, AiProviderContinuationMetadata, AiProviderId,
+    AiProviderModel, AiReviewRequest, AiReviewResponse, AiTranslatedGlossaryEntry,
     AiTranslatedGlossaryPreparationRequest, AiTranslatedGlossaryPreparationResponse,
     AiTranslatedGlossaryTermInput, AiTranslationGlossaryHint, AiTranslationRequest,
     AiTranslationResponse,
@@ -394,9 +394,20 @@ const GLOSSARY_CONTEXT_RADIUS_BYTES: usize = 72;
 #[derive(Debug, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct AiAssistantStructuredResponse {
+    #[serde(default)]
+    response_kind: Option<AiAssistantResponseKind>,
     assistant_text: String,
     #[serde(default)]
     draft_translation_text: Option<String>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum AiAssistantResponseKind {
+    TranslationDraft,
+    Commentary,
+    Mixed,
+    Error,
 }
 
 #[derive(Clone, Debug)]
@@ -765,6 +776,7 @@ pub(crate) fn run_ai_review(
             model_id: request.model_id.clone(),
             prompt: build_review_prompt(&request),
             previous_response_id: None,
+            output_format: AiPromptOutputFormat::Text,
         },
         &api_key,
     )?;
@@ -809,6 +821,7 @@ pub(crate) fn prepare_ai_translated_glossary(
                 model_id: request.model_id.clone(),
                 prompt: build_translation_prompt(&build_pivot_translation_request(&request)),
                 previous_response_id: None,
+                output_format: AiPromptOutputFormat::Text,
             },
             &api_key,
         )?
@@ -838,6 +851,7 @@ pub(crate) fn prepare_ai_translated_glossary(
                     matched_term_batch,
                 ),
                 previous_response_id: None,
+                output_format: AiPromptOutputFormat::Text,
             },
             &api_key,
         )?;
@@ -906,6 +920,7 @@ pub(crate) fn run_ai_translation(
             model_id: request.model_id.clone(),
             prompt: prompt.clone(),
             previous_response_id: None,
+            output_format: AiPromptOutputFormat::Text,
         },
         &api_key,
     )?;
@@ -954,6 +969,7 @@ pub(crate) fn run_ai_assistant_turn(
             model_id: request.model_id.clone(),
             prompt: prompt.clone(),
             previous_response_id: previous_response_id.clone(),
+            output_format: AiPromptOutputFormat::AssistantTurnJson,
         },
         &api_key,
     ) {
@@ -967,6 +983,7 @@ pub(crate) fn run_ai_assistant_turn(
                     model_id: request.model_id.clone(),
                     prompt: prompt.clone(),
                     previous_response_id: None,
+                    output_format: AiPromptOutputFormat::AssistantTurnJson,
                 },
                 &api_key,
             )?
@@ -974,6 +991,7 @@ pub(crate) fn run_ai_assistant_turn(
         Err(error) => return Err(error),
     };
     let structured_response = parse_assistant_structured_response(&response.text, request.kind)?;
+    let _response_kind = structured_response.response_kind.as_ref();
 
     Ok(AiAssistantTurnResponse {
         assistant_text: structured_response.assistant_text,
@@ -1003,6 +1021,7 @@ pub(crate) fn probe_ai_model(app: &AppHandle, request: AiModelProbeRequest) -> R
 mod tests {
     use super::{
         build_assistant_chat_prompt, build_translation_prompt, find_matched_glossary_terms,
+        parse_assistant_structured_response,
     };
     use crate::ai::types::{
         AiAssistantRowContext, AiAssistantRowWindowEntry, AiAssistantTranscriptEntry,
@@ -1264,6 +1283,55 @@ mod tests {
             "set draftTranslationText to only that translation text and do not repeat it inside assistantText."
         ));
         assert!(prompt.contains("Otherwise set draftTranslationText to null."));
+    }
+
+    #[test]
+    fn assistant_structured_response_accepts_openai_response_kind() {
+        let response = parse_assistant_structured_response(
+            r#"{
+                "responseKind": "translation_draft",
+                "assistantText": "Here is a smoother version.",
+                "draftTranslationText": "Ban dich muot ma hon."
+            }"#,
+            AiAssistantTurnKind::Chat,
+        )
+        .unwrap();
+
+        assert_eq!(response.assistant_text, "Here is a smoother version.");
+        assert_eq!(
+            response.draft_translation_text.as_deref(),
+            Some("Ban dich muot ma hon.")
+        );
+    }
+
+    #[test]
+    fn assistant_structured_response_accepts_legacy_shape_without_response_kind() {
+        let response = parse_assistant_structured_response(
+            r#"{
+                "assistantText": "This row refers to the inner work.",
+                "draftTranslationText": null
+            }"#,
+            AiAssistantTurnKind::Chat,
+        )
+        .unwrap();
+
+        assert_eq!(response.assistant_text, "This row refers to the inner work.");
+        assert_eq!(response.draft_translation_text, None);
+    }
+
+    #[test]
+    fn assistant_translate_refinement_rejects_missing_draft_translation() {
+        let error = parse_assistant_structured_response(
+            r#"{
+                "responseKind": "commentary",
+                "assistantText": "This is already good.",
+                "draftTranslationText": null
+            }"#,
+            AiAssistantTurnKind::TranslateRefinement,
+        )
+        .unwrap_err();
+
+        assert_eq!(error, "The AI assistant returned a malformed response.");
     }
 
     #[test]

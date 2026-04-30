@@ -1,9 +1,13 @@
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
 
 use crate::ai::{
     providers::shared_http_client,
-    types::{AiPromptRequest, AiPromptResponse, AiProviderModel, AiReviewResponse},
+    types::{
+        AiPromptOutputFormat, AiPromptRequest, AiPromptResponse, AiProviderModel,
+        AiReviewResponse,
+    },
 };
 
 const OPENAI_RESPONSES_API_URL: &str = "https://api.openai.com/v1/responses";
@@ -23,18 +27,12 @@ struct OpenAiResponsesRequest<'a> {
     previous_response_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     max_output_tokens: Option<u32>,
-    text: OpenAiTextConfig<'a>,
+    text: OpenAiTextConfig,
 }
 
 #[derive(Debug, Serialize)]
-struct OpenAiTextConfig<'a> {
-    format: OpenAiTextFormat<'a>,
-}
-
-#[derive(Debug, Serialize)]
-struct OpenAiTextFormat<'a> {
-    #[serde(rename = "type")]
-    kind: &'a str,
+struct OpenAiTextConfig {
+    format: Value,
 }
 
 #[derive(Debug, Deserialize)]
@@ -71,6 +69,8 @@ struct OpenAiOutputContent {
     kind: String,
     #[serde(default)]
     text: String,
+    #[serde(default)]
+    refusal: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -219,8 +219,52 @@ fn build_probe_request(model_id: &str) -> OpenAiResponsesRequest<'_> {
         previous_response_id: None,
         max_output_tokens: Some(OPENAI_PROBE_MAX_OUTPUT_TOKENS),
         text: OpenAiTextConfig {
-            format: OpenAiTextFormat { kind: "text" },
+            format: openai_text_format(AiPromptOutputFormat::Text),
         },
+    }
+}
+
+fn build_prompt_request(request: &AiPromptRequest) -> OpenAiResponsesRequest<'_> {
+    OpenAiResponsesRequest {
+        model: request.model_id.trim(),
+        input: request.prompt.clone(),
+        store: false,
+        previous_response_id: request.previous_response_id.clone(),
+        max_output_tokens: None,
+        text: OpenAiTextConfig {
+            format: openai_text_format(request.output_format),
+        },
+    }
+}
+
+fn openai_text_format(output_format: AiPromptOutputFormat) -> Value {
+    match output_format {
+        AiPromptOutputFormat::Text => json!({ "type": "text" }),
+        AiPromptOutputFormat::AssistantTurnJson => json!({
+            "type": "json_schema",
+            "name": "assistant_turn_response",
+            "strict": true,
+            "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["responseKind", "assistantText", "draftTranslationText"],
+                "properties": {
+                    "responseKind": {
+                        "type": "string",
+                        "enum": ["translation_draft", "commentary", "mixed", "error"]
+                    },
+                    "assistantText": {
+                        "type": "string"
+                    },
+                    "draftTranslationText": {
+                        "anyOf": [
+                            { "type": "string" },
+                            { "type": "null" }
+                        ]
+                    }
+                }
+            }
+        }),
     }
 }
 
@@ -241,16 +285,7 @@ pub(crate) fn run_prompt(
         .header("Authorization", format!("Bearer {normalized_key}"))
         .header("Content-Type", "application/json")
         .header("User-Agent", "gnosis-tms")
-        .json(&OpenAiResponsesRequest {
-            model: request.model_id.trim(),
-            input: request.prompt.clone(),
-            store: false,
-            previous_response_id: request.previous_response_id.clone(),
-            max_output_tokens: None,
-            text: OpenAiTextConfig {
-                format: OpenAiTextFormat { kind: "text" },
-            },
-        })
+        .json(&build_prompt_request(request))
         .send()
         .map_err(normalize_transport_error)?;
 
@@ -448,15 +483,27 @@ fn extract_suggested_text(
         return Ok(direct_text);
     }
 
-    let fallback_text = payload
+    let mut refusal_text = String::new();
+    let mut fallback_text = String::new();
+    for content in payload
         .output
         .into_iter()
         .flat_map(|item| item.content.into_iter())
-        .filter(|content| content.kind == "output_text")
-        .map(|content| content.text)
-        .collect::<String>();
+    {
+        match content.kind.as_str() {
+            "output_text" => fallback_text.push_str(&content.text),
+            "refusal" => {
+                refusal_text.push_str(&content.refusal);
+                refusal_text.push_str(&content.text);
+            }
+            _ => {}
+        }
+    }
 
     if fallback_text.trim().is_empty() {
+        if !refusal_text.trim().is_empty() {
+            return Err("OpenAI refused this request.".to_string());
+        }
         return Err(empty_message.to_string());
     }
 
@@ -466,10 +513,12 @@ fn extract_suggested_text(
 #[cfg(test)]
 mod tests {
     use super::{
-        build_probe_request, is_hidden_gpt_pro_model, normalize_review_response,
-        shortlist_recommended_models, OPENAI_PROBE_MAX_OUTPUT_TOKENS,
+        build_probe_request, build_prompt_request, is_hidden_gpt_pro_model,
+        normalize_review_response, shortlist_recommended_models, OPENAI_PROBE_MAX_OUTPUT_TOKENS,
     };
-    use crate::ai::types::AiProviderModel;
+    use crate::ai::types::{
+        AiPromptOutputFormat, AiPromptRequest, AiProviderId, AiProviderModel,
+    };
 
     #[test]
     fn normalize_review_response_prefers_top_level_output_text() {
@@ -515,6 +564,24 @@ mod tests {
     }
 
     #[test]
+    fn normalize_review_response_reports_refusals() {
+        let body = r#"{
+            "output_text": "",
+            "output": [
+                {
+                    "content": [
+                        { "type": "refusal", "refusal": "I can't help with that." }
+                    ]
+                }
+            ]
+        }"#;
+
+        let error = normalize_review_response(body).unwrap_err();
+
+        assert_eq!(error, "OpenAI refused this request.");
+    }
+
+    #[test]
     fn openai_probe_request_uses_responses_minimum_output_tokens() {
         let payload = serde_json::to_value(build_probe_request("gpt-5.4")).unwrap();
 
@@ -523,6 +590,87 @@ mod tests {
                 .get("max_output_tokens")
                 .and_then(serde_json::Value::as_u64),
             Some(OPENAI_PROBE_MAX_OUTPUT_TOKENS as u64)
+        );
+    }
+
+    #[test]
+    fn openai_probe_request_uses_text_output_format() {
+        let payload = serde_json::to_value(build_probe_request("gpt-5.4")).unwrap();
+
+        assert_eq!(
+            payload
+                .pointer("/text/format/type")
+                .and_then(serde_json::Value::as_str),
+            Some("text")
+        );
+    }
+
+    #[test]
+    fn openai_plain_prompt_request_uses_text_output_format() {
+        let request = AiPromptRequest {
+            provider_id: AiProviderId::OpenAi,
+            model_id: "gpt-5.4".to_string(),
+            prompt: "Translate this.".to_string(),
+            previous_response_id: None,
+            output_format: AiPromptOutputFormat::Text,
+        };
+        let payload = serde_json::to_value(build_prompt_request(&request)).unwrap();
+
+        assert_eq!(
+            payload
+                .pointer("/text/format/type")
+                .and_then(serde_json::Value::as_str),
+            Some("text")
+        );
+        assert!(payload.pointer("/text/format/schema").is_none());
+    }
+
+    #[test]
+    fn openai_assistant_prompt_request_uses_strict_json_schema_output_format() {
+        let request = AiPromptRequest {
+            provider_id: AiProviderId::OpenAi,
+            model_id: "gpt-5.4".to_string(),
+            prompt: "Return assistant JSON.".to_string(),
+            previous_response_id: Some("resp_123".to_string()),
+            output_format: AiPromptOutputFormat::AssistantTurnJson,
+        };
+        let payload = serde_json::to_value(build_prompt_request(&request)).unwrap();
+
+        assert_eq!(
+            payload
+                .pointer("/text/format/type")
+                .and_then(serde_json::Value::as_str),
+            Some("json_schema")
+        );
+        assert_eq!(
+            payload
+                .pointer("/text/format/name")
+                .and_then(serde_json::Value::as_str),
+            Some("assistant_turn_response")
+        );
+        assert_eq!(
+            payload
+                .pointer("/text/format/strict")
+                .and_then(serde_json::Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            payload
+                .pointer("/text/format/schema/required")
+                .and_then(serde_json::Value::as_array)
+                .map(|values| {
+                    values
+                        .iter()
+                        .filter_map(serde_json::Value::as_str)
+                        .collect::<Vec<_>>()
+                }),
+            Some(vec!["responseKind", "assistantText", "draftTranslationText"])
+        );
+        assert_eq!(
+            payload
+                .pointer("/previous_response_id")
+                .and_then(serde_json::Value::as_str),
+            Some("resp_123")
         );
     }
 
