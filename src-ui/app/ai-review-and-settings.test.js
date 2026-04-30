@@ -135,7 +135,14 @@ const {
   applyEditorAiReview,
   runEditorAiReview,
 } = await import("./editor-ai-review-flow.js");
-const { runEditorAiTranslate } = await import("./editor-ai-translate-flow.js");
+const {
+  buildEditorAiTranslateContext,
+  runEditorAiTranslate,
+  runEditorAiTranslateForContext,
+} = await import("./editor-ai-translate-flow.js");
+const {
+  runEditorAiAssistant,
+} = await import("./editor-ai-assistant-flow.js");
 const {
   applyStoredSelectedTeamAiActionPreferences,
   aiActionControlsAreBusy,
@@ -225,6 +232,13 @@ function installTranslateFixture(options = {}) {
       fieldStates: {},
     }]),
   };
+}
+
+function latestAssistantDraft(rowId = "row-1", targetLanguageCode = "vi") {
+  const thread = state.editorChapter?.assistant?.threadsByKey?.[`${rowId}::${targetLanguageCode}`];
+  return thread?.items
+    ?.filter((item) => item?.type === "draft-translation")
+    ?.at(-1) ?? null;
 }
 
 function createTeamRecord(options = {}) {
@@ -362,7 +376,7 @@ test("runEditorAiReview enters loading state before provider readiness resolves"
   assert.equal(state.editorChapter.aiReview.suggestedText, "Texto revisado");
 });
 
-test("runEditorAiTranslate uses the configured translate action and persists into the target field", async () => {
+test("runEditorAiTranslate uses the configured translate action and creates an assistant draft", async () => {
   installTranslateFixture();
   state.aiSettings = {
     ...state.aiSettings,
@@ -426,13 +440,14 @@ test("runEditorAiTranslate uses the configured translate action and persists int
     },
   });
 
-  assert.equal(persistCount, 1);
-  assert.deepEqual(persistedCommitMetadata, {
-    operation: "ai-translation",
-    aiModel: "gpt-5.4-mini",
-  });
-  assert.equal(state.editorChapter.rows[0].fields.vi, "Xin chao");
-  assert.equal(state.editorChapter.rows[0].persistedFields.vi, "Xin chao");
+  assert.equal(persistCount, 0);
+  assert.equal(persistedCommitMetadata, null);
+  assert.equal(state.editorChapter.rows[0].fields.vi, "Texto original");
+  assert.notEqual(state.editorChapter.rows[0].persistedFields.vi, "Xin chao");
+  const draft = latestAssistantDraft();
+  assert.equal(draft?.draftTranslationText, "Xin chao");
+  assert.equal(draft?.sourceLanguageCode, "es");
+  assert.equal(draft?.targetLanguageCode, "vi");
   assert.equal(
     state.editorChapter.assistant.threadsByKey["row-1::vi"]
       .providerContinuityByModelKey["openai::gpt-5.4-mini"]
@@ -494,7 +509,8 @@ test("runEditorAiTranslate enters loading state before provider readiness resolv
   await translationPromise;
 
   assert.equal(state.editorChapter.aiTranslate.translate1.status, "idle");
-  assert.equal(state.editorChapter.rows[0].persistedFields.vi, "Xin chao");
+  assert.notEqual(state.editorChapter.rows[0].persistedFields.vi, "Xin chao");
+  assert.equal(latestAssistantDraft()?.draftTranslationText, "Xin chao");
 });
 
 test("runEditorAiTranslate keeps first-run team AI setup renders scoped to the editor panes", async () => {
@@ -663,9 +679,10 @@ test("runEditorAiTranslate uses the active alternate language as the translation
     },
   });
 
-  assert.equal(persistCount, 1);
-  assert.equal(state.editorChapter.rows[0].fields.fr, "Bonjour");
-  assert.equal(state.editorChapter.rows[0].persistedFields.fr, "Bonjour");
+  assert.equal(persistCount, 0);
+  assert.equal(state.editorChapter.rows[0].fields.fr, "Texte original");
+  assert.notEqual(state.editorChapter.rows[0].persistedFields.fr, "Bonjour");
+  assert.equal(latestAssistantDraft("row-1", "fr")?.draftTranslationText, "Bonjour");
   assert.equal(state.editorChapter.rows[0].fields.vi, "Texto original");
   assert.equal(state.editorChapter.aiTranslate.translate1.status, "idle");
 });
@@ -761,7 +778,8 @@ test("runEditorAiTranslate sends glossary hints for matched source-language term
     },
   });
 
-  assert.equal(state.editorChapter.rows[0].fields.vi, "Ban dich");
+  assert.equal(state.editorChapter.rows[0].fields.vi, "");
+  assert.equal(latestAssistantDraft()?.draftTranslationText, "Ban dich");
 });
 
 test("runEditorAiTranslate prepares derived glossary hints when the glossary source language differs", async () => {
@@ -896,7 +914,8 @@ test("runEditorAiTranslate prepares derived glossary hints when the glossary sou
       "run_ai_translation",
     ],
   );
-  assert.equal(state.editorChapter.rows[0].fields.vi, "Buong noi tam sang len.");
+  assert.equal(state.editorChapter.rows[0].fields.vi, "");
+  assert.equal(latestAssistantDraft()?.draftTranslationText, "Buong noi tam sang len.");
   assert.equal(
     state.editorChapter.rows[0].fields.es,
     "La camara interior brilla.",
@@ -911,7 +930,7 @@ test("runEditorAiTranslate prepares derived glossary hints when the glossary sou
   );
 });
 
-test("runEditorAiTranslate regenerates the pivot when the source changed but the glossary-source field stayed stale", async () => {
+test("runEditorAiTranslate regenerates derived glossary hints without saving pivot text for drafts", async () => {
   installTranslateFixture({
     languages: [
       { code: "en", name: "English" },
@@ -1016,15 +1035,136 @@ test("runEditorAiTranslate regenerates the pivot when the source changed but the
 
   assert.equal(
     state.editorChapter.derivedGlossariesByRowId["row-1"]?.glossarySourceTextOrigin,
-    "row",
+    "generated",
   );
   assert.equal(
     state.editorChapter.rows[0].fields.es,
-    "La camara interior ahora brilla mas.",
+    "La camara interior brilla.",
   );
 });
 
-test("runEditorAiTranslate reuses a promoted derived glossary cache entry after writing the pivot into the row", async () => {
+test("runEditorAiTranslateForContext does not overwrite a non-empty glossary-source field in apply mode", async () => {
+  installTranslateFixture({
+    languages: [
+      { code: "en", name: "English" },
+      { code: "es", name: "Spanish" },
+      { code: "vi", name: "Vietnamese" },
+    ],
+    selectedSourceLanguageCode: "en",
+    activeLanguageCode: "vi",
+    fields: {
+      en: "The inner chamber now glows brightly.",
+      es: "La camara interior brilla.",
+      vi: "",
+    },
+  });
+  state.editorChapter.rows[0].persistedFields.en = "The inner chamber glows.";
+  state.editorChapter.rows[0].persistedFields.es = "La camara interior brilla.";
+
+  const glossary = {
+    status: "ready",
+    error: "",
+    glossaryId: "glossary-1",
+    repoName: "glossary-1",
+    title: "Glossary",
+    sourceLanguage: {
+      code: "es",
+      name: "Spanish",
+    },
+    targetLanguage: {
+      code: "vi",
+      name: "Vietnamese",
+    },
+    terms: [{
+      termId: "t1",
+      sourceTerms: ["camara interior"],
+      targetTerms: ["buong noi tam"],
+      notesToTranslators: "Dung thuat ngu cua glossary",
+    }],
+    matcherModel: null,
+  };
+  glossary.matcherModel = buildEditorGlossaryModel(glossary);
+  state.editorChapter = {
+    ...state.editorChapter,
+    glossary,
+  };
+  state.aiSettings = {
+    ...state.aiSettings,
+    actionConfig: {
+      ...state.aiSettings.actionConfig,
+      detailedConfiguration: true,
+      actions: {
+        ...state.aiSettings.actionConfig.actions,
+        translate1: {
+          providerId: "openai",
+          modelId: "gpt-5.4-mini",
+        },
+      },
+    },
+  };
+
+  let persistCount = 0;
+  invokeHandler = async (command, payload = {}) => {
+    if (command === "load_ai_provider_secret") {
+      return "oa-key";
+    }
+    if (command === "prepare_editor_ai_translated_glossary") {
+      assert.equal(payload.request.glossarySourceText, "");
+      return {
+        glossarySourceText: "La camara interior ahora brilla mas.",
+        entries: [{
+          sourceTerm: "inner chamber now",
+          glossarySourceTerm: "camara interior",
+          targetVariants: ["buong noi tam"],
+          notes: ["Dung thuat ngu cua glossary"],
+        }],
+      };
+    }
+    if (command === "run_ai_translation") {
+      assert.deepEqual(payload.request.glossaryHints, [{
+        sourceTerm: "inner chamber now",
+        targetVariants: ["buong noi tam"],
+        notes: ["Dung thuat ngu cua glossary"],
+      }]);
+      return {
+        translatedText: "Buong noi tam nay sang ro hon.",
+      };
+    }
+
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  await runEditorAiTranslateForContext(
+    () => {},
+    "translate1",
+    buildEditorAiTranslateContext(),
+    {
+      updateEditorRowFieldValue(rowId, languageCode, nextValue) {
+        const row = state.editorChapter.rows.find((entry) => entry.rowId === rowId);
+        row.fields[languageCode] = nextValue;
+        row.saveStatus = "dirty";
+      },
+      async persistEditorRowOnBlur(_render, rowId) {
+        persistCount += 1;
+        const row = state.editorChapter.rows.find((entry) => entry.rowId === rowId);
+        row.persistedFields = { ...row.fields };
+        row.saveStatus = "idle";
+      },
+    },
+  );
+
+  assert.equal(persistCount, 1);
+  assert.equal(state.editorChapter.rows[0].fields.vi, "Buong noi tam nay sang ro hon.");
+  assert.equal(state.editorChapter.rows[0].persistedFields.vi, "Buong noi tam nay sang ro hon.");
+  assert.equal(state.editorChapter.rows[0].fields.es, "La camara interior brilla.");
+  assert.equal(state.editorChapter.rows[0].persistedFields.es, "La camara interior brilla.");
+  assert.equal(
+    state.editorChapter.derivedGlossariesByRowId["row-1"]?.glossarySourceTextOrigin,
+    "generated",
+  );
+});
+
+test("runEditorAiTranslate writes an empty glossary-source field before creating draft translations", async () => {
   installTranslateFixture({
     languages: [
       { code: "en", name: "English" },
@@ -1133,6 +1273,7 @@ test("runEditorAiTranslate reuses a promoted derived glossary cache entry after 
 
   assert.equal(prepareCount, 1);
   assert.equal(translateCount, 2);
+  assert.equal(latestAssistantDraft()?.draftTranslationText, "Ban dich 2");
   assert.equal(
     state.editorChapter.derivedGlossariesByRowId["row-1"]?.glossarySourceTextOrigin,
     "row",
@@ -1300,7 +1441,7 @@ test("runEditorAiTranslate preserves a ready derived glossary cache when final t
   );
 });
 
-test("runEditorAiTranslate saves the prepared pivot text when final translation fails", async () => {
+test("runEditorAiTranslate saves prepared glossary-source text when draft translation fails", async () => {
   installTranslateFixture({
     languages: [
       { code: "en", name: "English" },
@@ -1407,6 +1548,7 @@ test("runEditorAiTranslate saves the prepared pivot text when final translation 
   assert.equal(state.editorChapter.aiTranslate.translate1.status, "error");
   assert.equal(persistCount, 1);
   assert.deepEqual(persistedCommitMetadata, {
+    operation: "ai-translation",
     aiModel: "gpt-5.4-mini",
   });
   assert.equal(state.editorChapter.rows[0].fields.es, "La camara interior brilla.");
@@ -1560,8 +1702,9 @@ test("runEditorAiTranslate issues and caches a shared team key before translatin
     },
   });
 
-  assert.equal(persistCount, 1);
-  assert.equal(state.editorChapter.rows[0].fields.vi, "Xin chao tu team");
+  assert.equal(persistCount, 0);
+  assert.equal(state.editorChapter.rows[0].fields.vi, "Texto original");
+  assert.equal(latestAssistantDraft()?.draftTranslationText, "Xin chao tu team");
   assert.equal(state.aiReviewMissingKeyModal.isOpen, false);
 });
 
@@ -1623,6 +1766,61 @@ test("runEditorAiTranslate tells members to contact the owner when no shared tea
   assert.equal(state.aiReviewMissingKeyModal.providerId, "deepseek");
   assert.equal(state.aiReviewMissingKeyModal.reason, "member_missing");
   assert.equal(state.aiReviewMissingKeyModal.teamName, "Shared Team");
+});
+
+test("runEditorAiAssistant renders a draft when a chat response includes draft translation text", async () => {
+  installTranslateFixture({
+    fields: {
+      es: "Su mision es entregar metodos practicos.",
+      vi: "Nhiem vu cua no la trao phuong phap thuc hanh.",
+    },
+  });
+  state.editorChapter = {
+    ...state.editorChapter,
+    assistant: {
+      ...state.editorChapter.assistant,
+      composerDraft: "Please make the translation smoother.",
+    },
+  };
+  state.aiSettings = {
+    ...state.aiSettings,
+    actionConfig: {
+      ...state.aiSettings.actionConfig,
+      detailedConfiguration: true,
+      actions: {
+        ...state.aiSettings.actionConfig.actions,
+        discuss: {
+          providerId: "openai",
+          modelId: "gpt-5.4-mini",
+        },
+      },
+    },
+  };
+
+  invokeHandler = async (command, payload = {}) => {
+    if (command === "load_ai_provider_secret") {
+      assert.equal(payload.providerId, "openai");
+      return "oa-key";
+    }
+    if (command === "run_ai_assistant_turn") {
+      assert.equal(payload.request.kind, "chat");
+      assert.equal(payload.request.userMessage, "Please make the translation smoother.");
+      return {
+        assistantText: "A smoother version:\n\nMot ban dich muot ma hon.",
+        draftTranslationText: "Mot ban dich muot ma hon.",
+        promptText: "prompt text",
+      };
+    }
+
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  await runEditorAiAssistant(() => {});
+
+  const draft = latestAssistantDraft();
+  assert.equal(draft?.text, "A smoother version:");
+  assert.equal(draft?.draftTranslationText, "Mot ban dich muot ma hon.");
+  assert.equal(state.editorChapter.rows[0].fields.vi, "Nhiem vu cua no la trao phuong phap thuc hanh.");
 });
 
 test("applyEditorAiReview updates the editor row and clears the suggestion after save", async () => {

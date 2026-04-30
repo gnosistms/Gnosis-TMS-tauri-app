@@ -200,6 +200,10 @@ pub struct AiAssistantRowContext {
     #[serde(default)]
     pub target_text: String,
     #[serde(default)]
+    pub updated_source_text: Option<String>,
+    #[serde(default)]
+    pub updated_target_text: Option<String>,
+    #[serde(default)]
     pub alternate_language_texts: Vec<AiAssistantRowLanguageText>,
 }
 

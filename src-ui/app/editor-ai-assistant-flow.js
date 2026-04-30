@@ -25,6 +25,7 @@ import {
   applyEditorAssistantItemApplying,
   applyEditorAssistantItemApplyFailed,
   applyEditorAssistantPending,
+  applyEditorAssistantPromptedRowTextSnapshot,
   applyEditorAssistantProviderContinuity,
   applyEditorAssistantThinking,
   clearEditorAssistantPending,
@@ -48,7 +49,21 @@ import { saveStoredEditorAssistantChapterData } from "./editor-ai-assistant-cach
 
 const DEFAULT_ROW_CONTEXT_COUNT = 3;
 const MAX_CONCORDANCE_HITS = 10;
-const MAX_TRANSCRIPT_ITEMS = 12;
+const ASSISTANT_SOURCE_CONTEXT_PREVIOUS_TOKEN_TARGET = 75;
+const ASSISTANT_SOURCE_CONTEXT_NEXT_TOKEN_TARGET = 25;
+
+function estimateAssistantContextTokens(text) {
+  const value = String(text ?? "").trim();
+  if (!value) {
+    return 0;
+  }
+
+  const cjkPattern = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]/gu;
+  const cjkTokenCount = Math.ceil((value.match(cjkPattern) ?? []).length * 1.1);
+  const nonCjkText = value.replace(cjkPattern, "");
+  const latinLikeTokenCount = Math.ceil(nonCjkText.length / 4);
+  return Math.ceil((cjkTokenCount + latinLikeTokenCount) * 1.15);
+}
 
 function renderAssistantSidebar(render) {
   render?.({ scope: "translate-sidebar" });
@@ -340,12 +355,36 @@ function createAssistantMessage(payload, context) {
   };
 }
 
+function removeDraftTextFromAssistantText(assistantText, draftText) {
+  const text = typeof assistantText === "string" ? assistantText.trim() : "";
+  const draft = typeof draftText === "string" ? draftText.trim() : "";
+  if (!text || !draft) {
+    return text;
+  }
+
+  if (text === draft) {
+    return "";
+  }
+
+  if (text.includes(draft)) {
+    return text.replace(draft, "").trim();
+  }
+
+  const escapedDraft = draft.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const whitespaceFlexibleDraft = escapedDraft.replace(/\s+/g, "\\s+");
+  return text.replace(new RegExp(whitespaceFlexibleDraft), "").trim();
+}
+
 function createDraftTranslationMessage(payload, context) {
+  const assistantText = removeDraftTextFromAssistantText(
+    payload.assistantText,
+    payload.draftTranslationText,
+  );
   return {
     id: createEditorAssistantItemId(),
     type: "draft-translation",
     createdAt: new Date().toISOString(),
-    text: payload.assistantText,
+    text: assistantText,
     summary: payload.summary ?? "Draft translation",
     sourceLanguageCode: context?.sourceLanguageCode ?? null,
     targetLanguageCode: context?.targetLanguageCode ?? null,
@@ -353,6 +392,13 @@ function createDraftTranslationMessage(payload, context) {
     draftTranslationText: payload.draftTranslationText ?? "",
     details: payload.details ?? {},
   };
+}
+
+function responseDraftTranslationText(payload) {
+  const draftText = typeof payload?.draftTranslationText === "string"
+    ? payload.draftTranslationText.trim()
+    : "";
+  return draftText;
 }
 
 function createApplyResultMessage(text, context) {
@@ -367,10 +413,11 @@ function createApplyResultMessage(text, context) {
   };
 }
 
-function buildAssistantTranscriptEntries(thread) {
+function buildAssistantTranscriptEntries(thread, options = {}) {
   const items = Array.isArray(thread?.items) ? thread.items : [];
+  const excludedIds = new Set(Array.isArray(options.excludeItemIds) ? options.excludeItemIds : []);
   return items
-    .slice(-MAX_TRANSCRIPT_ITEMS)
+    .filter((item) => !excludedIds.has(item?.id))
     .map((item) => {
       if (item.type === "user-message") {
         return {
@@ -458,13 +505,11 @@ function resolveRowIndex(rows, rowId) {
   return (Array.isArray(rows) ? rows : []).findIndex((row) => row?.rowId === rowId);
 }
 
-function buildAssistantRowWindow(
+function buildAssistantSourceContextWindow(
   chapterState,
   rowId,
   sourceLanguageCode,
   targetLanguageCode,
-  previousCount,
-  includeCurrentRow = true,
 ) {
   const rows = Array.isArray(chapterState?.rows) ? chapterState.rows : [];
   const rowIndex = resolveRowIndex(rows, rowId);
@@ -472,9 +517,39 @@ function buildAssistantRowWindow(
     return [];
   }
 
-  const startIndex = Math.max(0, rowIndex - Math.max(0, previousCount));
-  const endIndex = includeCurrentRow ? rowIndex + 1 : rowIndex;
-  return rows.slice(startIndex, endIndex).map((row) => ({
+  const previousRows = [];
+  let previousTokenCount = 0;
+  for (
+    let index = rowIndex - 1;
+    index >= 0 && previousTokenCount < ASSISTANT_SOURCE_CONTEXT_PREVIOUS_TOKEN_TARGET;
+    index -= 1
+  ) {
+    const row = rows[index];
+    previousRows.unshift(row);
+    previousTokenCount += estimateAssistantContextTokens(
+      readRowFieldText(row, sourceLanguageCode),
+    );
+  }
+
+  const nextRows = [];
+  let nextTokenCount = 0;
+  for (
+    let index = rowIndex + 1;
+    index < rows.length && nextTokenCount < ASSISTANT_SOURCE_CONTEXT_NEXT_TOKEN_TARGET;
+    index += 1
+  ) {
+    const row = rows[index];
+    nextRows.push(row);
+    nextTokenCount += estimateAssistantContextTokens(
+      readRowFieldText(row, sourceLanguageCode),
+    );
+  }
+
+  return [
+    ...previousRows,
+    rows[rowIndex],
+    ...nextRows,
+  ].map((row) => ({
     rowId: row.rowId,
     sourceText: readRowFieldText(row, sourceLanguageCode),
     targetText: readRowFieldText(row, targetLanguageCode),
@@ -566,20 +641,10 @@ function classifyAssistantIntent(message, context) {
   }
 
   if (matches.retranslateWithContext) {
-    const count = Number.parseInt(matches.retranslateWithContext[1] || matches.retranslateWithContext[2] || "", 10);
-    const previousCount = Number.isInteger(count) && count > 0 ? count : DEFAULT_ROW_CONTEXT_COUNT;
     result.kind = "translate_refinement";
-    result.rowWindow = buildAssistantRowWindow(
-      context.chapterState,
-      context.rowId,
-      context.sourceLanguageCode,
-      context.targetLanguageCode,
-      previousCount,
-      true,
-    );
     result.toolEvents.push(
       createToolEvent(
-        `Read ${previousCount} previous rows plus the active row for context.`,
+        `Prepared source context around the active row.`,
       ),
     );
     return result;
@@ -804,6 +869,21 @@ function resolveAssistantProviderContinuation(thread, providerId, modelId) {
   return previousResponseId ? { previousResponseId } : null;
 }
 
+function rowTextUpdatesSinceLastAssistantPrompt(thread, context) {
+  if (thread?.hasPromptedRowTextSnapshot !== true) {
+    return {};
+  }
+
+  return {
+    ...(thread.lastPromptedSourceText !== context.sourceText
+      ? { updatedSourceText: context.sourceText }
+      : {}),
+    ...(thread.lastPromptedTargetText !== context.targetText
+      ? { updatedTargetText: context.targetText }
+      : {}),
+  };
+}
+
 function buildAssistantTurnRequestPayload(
   intent,
   message,
@@ -813,13 +893,16 @@ function buildAssistantTurnRequestPayload(
   modelId,
   glossaryHints,
   documentDigest,
+  options = {},
 ) {
   return withSelectedInstallation({
     providerId,
     modelId,
     kind: intent.kind,
     userMessage: message,
-    transcript: buildAssistantTranscriptEntries(thread),
+    transcript: buildAssistantTranscriptEntries(thread, {
+      excludeItemIds: options.excludeItemIds,
+    }),
     row: {
       rowId: context.rowId,
       sourceLanguageCode: context.sourceLanguageCode,
@@ -828,9 +911,15 @@ function buildAssistantTurnRequestPayload(
       targetLanguageCode: context.targetLanguageCode,
       targetLanguageLabel: context.targetLanguageLabel,
       targetText: context.targetText,
+      ...rowTextUpdatesSinceLastAssistantPrompt(thread, context),
       alternateLanguageTexts: context.alternateLanguageTexts,
     },
-    rowWindow: intent.rowWindow,
+    rowWindow: buildAssistantSourceContextWindow(
+      context.chapterState,
+      context.rowId,
+      context.sourceLanguageCode,
+      context.targetLanguageCode,
+    ),
     glossaryHints,
     documentDigest: documentDigest?.summary ?? "",
     documentRevisionKey: documentDigest?.revisionKey ?? "",
@@ -942,6 +1031,10 @@ export async function runEditorAiAssistant(render) {
     renderAssistantSidebarAtBottom(render);
 
     const intent = classifyAssistantIntent(message, baseContext);
+    const currentRequestItemIds = [
+      userItem.id,
+      ...intent.toolEvents.map((item) => item.id),
+    ];
     if (intent.toolEvents.length > 0) {
       state.editorChapter = appendEditorAssistantItems(
         state.editorChapter,
@@ -999,6 +1092,7 @@ export async function runEditorAiAssistant(render) {
       modelId,
       glossaryResult.glossaryHints,
       documentDigest,
+      { excludeItemIds: currentRequestItemIds },
     );
     const payload = await invoke("run_ai_assistant_turn", {
       request: requestPayload,
@@ -1013,6 +1107,12 @@ export async function runEditorAiAssistant(render) {
       state.editorChapter,
       baseContext.threadKey,
       requestKey,
+    );
+    state.editorChapter = applyEditorAssistantPromptedRowTextSnapshot(
+      state.editorChapter,
+      context.threadKey,
+      requestPayload.row?.sourceText ?? "",
+      requestPayload.row?.targetText ?? "",
     );
 
     if (payload?.providerContinuation) {
@@ -1038,15 +1138,16 @@ export async function runEditorAiAssistant(render) {
     }
 
     const itemDetails = responseDetails(intent, context, providerId, modelId, requestPayload);
+    const draftTranslationText = responseDraftTranslationText(payload);
     state.editorChapter = appendEditorAssistantItems(
       state.editorChapter,
       context.threadKey,
       [
-        intent.kind === "translate_refinement"
+        draftTranslationText
           ? createDraftTranslationMessage({
             assistantText: payload?.assistantText ?? "",
             promptText: payload?.promptText ?? "",
-            draftTranslationText: payload?.draftTranslationText ?? "",
+            draftTranslationText,
             details: itemDetails,
           }, context)
           : createAssistantMessage({
@@ -1196,6 +1297,59 @@ export function logEditorAssistantTranslation(payload = {}) {
         glossaryHints: payload.glossaryHints ?? [],
         translatedText: payload.translatedText ?? "",
         appliedText: payload.appliedText ?? "",
+      },
+    }],
+    {
+      rowId: payload.rowId,
+      targetLanguageCode: payload.targetLanguageCode,
+    },
+  );
+  if (payload.providerContinuation) {
+    const providerModelKey = resolveProviderModelKey(payload.providerId, payload.modelId);
+    state.editorChapter = applyEditorAssistantProviderContinuity(
+      state.editorChapter,
+      threadKey,
+      providerModelKey,
+      payload.providerContinuation,
+    );
+  }
+  persistAssistantState();
+}
+
+export function logEditorAssistantTranslationDraft(payload = {}) {
+  const threadKey = buildEditorAssistantThreadKey(
+    payload.rowId,
+    payload.targetLanguageCode,
+  );
+  if (!threadKey || !state.editorChapter?.chapterId) {
+    return;
+  }
+
+  state.editorChapter = appendEditorAssistantItems(
+    state.editorChapter,
+    threadKey,
+    [{
+      id: createEditorAssistantItemId(),
+      type: "draft-translation",
+      createdAt: new Date().toISOString(),
+      text: payload.assistantText ?? "Review this draft translation, refine it in chat, or apply it to the active row.",
+      summary: payload.summary ?? "Draft translation",
+      sourceLanguageCode: payload.sourceLanguageCode ?? null,
+      targetLanguageCode: payload.targetLanguageCode ?? null,
+      promptText: payload.promptText ?? "",
+      draftTranslationText: payload.draftTranslationText ?? "",
+      details: {
+        kind: "translate_refinement",
+        providerId: payload.providerId ?? "",
+        modelId: payload.modelId ?? "",
+        sourceLanguageCode: payload.sourceLanguageCode ?? "",
+        targetLanguageCode: payload.targetLanguageCode ?? "",
+        sourceLanguageLabel: payload.sourceLanguageLabel ?? "",
+        targetLanguageLabel: payload.targetLanguageLabel ?? "",
+        sourceText: payload.sourceText ?? "",
+        targetText: payload.targetText ?? "",
+        glossarySourceText: payload.glossarySourceText ?? "",
+        glossaryHints: payload.glossaryHints ?? [],
       },
     }],
     {

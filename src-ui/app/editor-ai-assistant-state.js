@@ -90,6 +90,15 @@ export function normalizeEditorAssistantThreadState(thread) {
       normalizeEditorAssistantItem(item),
     ),
     providerContinuityByModelKey: normalizePersistedObject(thread?.providerContinuityByModelKey),
+    lastPromptedSourceText:
+      typeof thread?.lastPromptedSourceText === "string"
+        ? thread.lastPromptedSourceText
+        : "",
+    lastPromptedTargetText:
+      typeof thread?.lastPromptedTargetText === "string"
+        ? thread.lastPromptedTargetText
+        : "",
+    hasPromptedRowTextSnapshot: thread?.hasPromptedRowTextSnapshot === true,
     lastTouchedAt:
       typeof thread?.lastTouchedAt === "string" && thread.lastTouchedAt.trim()
         ? thread.lastTouchedAt.trim()
@@ -404,6 +413,33 @@ export function applyEditorAssistantProviderContinuity(
       ...existingThread.providerContinuityByModelKey,
       [providerModelKey]: normalizePersistedObject(continuity),
     },
+  });
+
+  return replaceAssistantState(chapterState, {
+    ...assistant,
+    threadsByKey: {
+      ...assistant.threadsByKey,
+      [threadKey]: thread,
+    },
+  });
+}
+
+export function applyEditorAssistantPromptedRowTextSnapshot(
+  chapterState,
+  threadKey,
+  sourceText,
+  targetText,
+) {
+  if (!threadKey) {
+    return chapterState;
+  }
+
+  const assistant = normalizeEditorAssistantState(chapterState?.assistant);
+  const existingThread = currentEditorAssistantThread(chapterState, threadKey);
+  const thread = nextThreadState(threadKey, existingThread, {
+    lastPromptedSourceText: typeof sourceText === "string" ? sourceText : "",
+    lastPromptedTargetText: typeof targetText === "string" ? targetText : "",
+    hasPromptedRowTextSnapshot: true,
   });
 
   return replaceAssistantState(chapterState, {

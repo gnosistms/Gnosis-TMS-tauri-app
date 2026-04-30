@@ -86,6 +86,12 @@ function renderTranslateActionButton(buttonModel, isAnyActionRunning) {
   `;
 }
 
+function activeAssistantThreadHasItems(editorChapter, activeRowId, targetLanguageCode) {
+  const threadKey = buildEditorAssistantThreadKey(activeRowId, targetLanguageCode);
+  const thread = currentEditorAssistantThread(editorChapter, threadKey);
+  return Array.isArray(thread?.items) && thread.items.length > 0;
+}
+
 function renderTranslateTools(editorChapter, rows, languages, sourceCode, targetCode, actionConfig, offlineMode = false) {
   const activeRow = rows.find((row) => row.id === editorChapter?.activeRowId) ?? null;
   const translateLanguages = resolveEditorAiTranslateLanguages(editorChapter);
@@ -113,6 +119,10 @@ function renderTranslateTools(editorChapter, rows, languages, sourceCode, target
         <p>Select both the source and target language before translating.</p>
       </div>
     `;
+  }
+
+  if (activeAssistantThreadHasItems(editorChapter, activeRow.id, targetLanguage.code)) {
+    return "";
   }
 
   const translateActions = resolveVisibleAiTranslateActions(actionConfig);
@@ -292,6 +302,7 @@ function renderAssistantConcordanceHits(hits) {
 
 function renderAssistantPromptDetails(item) {
   const details = item?.details && typeof item.details === "object" ? item.details : {};
+  const itemType = typeof item?.type === "string" ? item.type : "";
   const sourceText = typeof details.sourceText === "string" ? details.sourceText.trim() : "";
   const targetText = typeof details.targetText === "string" ? details.targetText.trim() : "";
   const promptText = typeof item?.promptText === "string" ? item.promptText.trim() : "";
@@ -301,19 +312,27 @@ function renderAssistantPromptDetails(item) {
   const translatedText = typeof details.translatedText === "string" ? details.translatedText.trim() : "";
   const appliedText = typeof details.appliedText === "string" ? details.appliedText.trim() : "";
   const glossarySourceText = typeof details.glossarySourceText === "string" ? details.glossarySourceText.trim() : "";
+  const isAssistantTurnDetails =
+    details.kind === "chat" || details.kind === "translate_refinement";
+  const isTranslationLog = itemType === "translation-log";
+  const showContextBreakdown = !isAssistantTurnDetails && !isTranslationLog;
+  const showGlossarySourceText =
+    showContextBreakdown
+    && glossarySourceText
+    && glossarySourceText !== sourceText;
   const hasAnyDetails =
-    sourceText
-    || targetText
+    (showContextBreakdown && sourceText)
+    || (showContextBreakdown && targetText)
     || promptText
     || providerId
     || modelId
-    || documentDigest
-    || translatedText
-    || appliedText
-    || glossarySourceText
-    || (Array.isArray(details.rowWindow) && details.rowWindow.length > 0)
-    || (Array.isArray(details.glossaryHints) && details.glossaryHints.length > 0)
-    || (Array.isArray(details.concordanceHits) && details.concordanceHits.length > 0);
+    || (showContextBreakdown && documentDigest)
+    || (!isTranslationLog && translatedText)
+    || (!isTranslationLog && appliedText)
+    || showGlossarySourceText
+    || (showContextBreakdown && Array.isArray(details.rowWindow) && details.rowWindow.length > 0)
+    || (showContextBreakdown && Array.isArray(details.glossaryHints) && details.glossaryHints.length > 0)
+    || (showContextBreakdown && Array.isArray(details.concordanceHits) && details.concordanceHits.length > 0);
 
   if (!hasAnyDetails) {
     return "";
@@ -333,7 +352,7 @@ function renderAssistantPromptDetails(item) {
             : ""
         }
         ${
-          sourceText
+          showContextBreakdown && sourceText
             ? `
               <div class="assistant-item__section">
                 <p class="assistant-item__section-label">Source</p>
@@ -343,7 +362,7 @@ function renderAssistantPromptDetails(item) {
             : ""
         }
         ${
-          targetText
+          showContextBreakdown && targetText
             ? `
               <div class="assistant-item__section">
                 <p class="assistant-item__section-label">Current Target</p>
@@ -353,7 +372,7 @@ function renderAssistantPromptDetails(item) {
             : ""
         }
         ${
-          glossarySourceText
+          showGlossarySourceText
             ? `
               <div class="assistant-item__section">
                 <p class="assistant-item__section-label">Glossary Source</p>
@@ -362,7 +381,7 @@ function renderAssistantPromptDetails(item) {
             `
             : ""
         }
-        ${documentDigest
+        ${showContextBreakdown && documentDigest
           ? `
             <div class="assistant-item__section">
               <p class="assistant-item__section-label">Document Digest</p>
@@ -370,11 +389,21 @@ function renderAssistantPromptDetails(item) {
             </div>
           `
           : ""}
-        ${renderAssistantContextRows(details.rowWindow)}
-        ${renderAssistantGlossaryHints(details.glossaryHints)}
-        ${renderAssistantConcordanceHits(details.concordanceHits)}
+        ${showContextBreakdown ? renderAssistantContextRows(details.rowWindow) : ""}
+        ${showContextBreakdown ? renderAssistantGlossaryHints(details.glossaryHints) : ""}
+        ${showContextBreakdown ? renderAssistantConcordanceHits(details.concordanceHits) : ""}
         ${
-          translatedText
+          isTranslationLog && promptText
+            ? `
+              <div class="assistant-item__section">
+                <p class="assistant-item__section-label">Prompt</p>
+                <pre class="assistant-item__pre">${escapeHtml(promptText)}</pre>
+              </div>
+            `
+            : ""
+        }
+        ${
+          !isTranslationLog && translatedText
             ? `
               <div class="assistant-item__section">
                 <p class="assistant-item__section-label">Model Output</p>
@@ -384,7 +413,7 @@ function renderAssistantPromptDetails(item) {
             : ""
         }
         ${
-          appliedText
+          !isTranslationLog && appliedText
             ? `
               <div class="assistant-item__section">
                 <p class="assistant-item__section-label">Applied Text</p>
@@ -394,7 +423,7 @@ function renderAssistantPromptDetails(item) {
             : ""
         }
         ${
-          promptText
+          !isTranslationLog && promptText
             ? `
               <div class="assistant-item__section">
                 <p class="assistant-item__section-label">Prompt</p>
@@ -526,7 +555,7 @@ function renderAssistantTranscript(editorChapter, rows, languages, sourceCode, t
   if (items.length === 0 && !statusText) {
     return `
       <div class="assistant-empty">
-        <p>Ask AI Assistant about the active translation, or translate first to create a history entry.</p>
+        <p>Chat with the AI Assistant about the selected translation.</p>
       </div>
     `;
   }

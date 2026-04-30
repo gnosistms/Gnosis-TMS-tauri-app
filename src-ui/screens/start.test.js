@@ -40,3 +40,18 @@ test("start screen renders the hero logo in idle, restoring, and offline states"
     /class="start-hero__logo"/,
   );
 });
+
+test("start screen keeps GitHub login progress in the logo hero", () => {
+  const html = renderStartScreen(startState({
+    auth: {
+      status: "waiting",
+      message: "Finish signing in with GitHub in your browser.",
+      session: null,
+      pendingAutoOpenSingleTeam: false,
+    },
+  }));
+
+  assert.match(html, /class="start-hero__logo"/);
+  assert.match(html, /Finish signing in with GitHub in your browser\./);
+  assert.doesNotMatch(html, /start-message-card--waiting/);
+});

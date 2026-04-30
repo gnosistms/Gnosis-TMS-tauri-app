@@ -505,6 +505,9 @@ export function createEditorAssistantThreadState() {
     targetLanguageCode: null,
     items: [],
     providerContinuityByModelKey: {},
+    lastPromptedSourceText: "",
+    lastPromptedTargetText: "",
+    hasPromptedRowTextSnapshot: false,
     lastTouchedAt: null,
   };
 }

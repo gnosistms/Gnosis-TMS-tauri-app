@@ -66,6 +66,29 @@ test("assistant transcript scrolls to the newest message after prompt and reply 
   );
 });
 
+test("assistant source context uses token-budget expansion", () => {
+  assert.equal(
+    editorAiAssistantFlowSource.includes("ASSISTANT_SOURCE_CONTEXT_PREVIOUS_TOKEN_TARGET = 75"),
+    true,
+  );
+  assert.equal(
+    editorAiAssistantFlowSource.includes("ASSISTANT_SOURCE_CONTEXT_NEXT_TOKEN_TARGET = 25"),
+    true,
+  );
+  assert.equal(
+    editorAiAssistantFlowSource.includes("estimateAssistantContextTokens"),
+    true,
+  );
+  assert.equal(
+    editorAiAssistantFlowSource.includes("previousTokenCount < ASSISTANT_SOURCE_CONTEXT_PREVIOUS_TOKEN_TARGET"),
+    true,
+  );
+  assert.equal(
+    editorAiAssistantFlowSource.includes("nextTokenCount < ASSISTANT_SOURCE_CONTEXT_NEXT_TOKEN_TARGET"),
+    true,
+  );
+});
+
 test("assistant composer uses the shorter prompt box sizing", () => {
   assert.match(translateCssSource, /\.assistant-composer__field-shell\s*{[\s\S]*height: 71px;/);
   assert.equal(

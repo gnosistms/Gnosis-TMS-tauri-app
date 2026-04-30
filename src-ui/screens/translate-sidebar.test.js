@@ -157,6 +157,132 @@ test("assistant transcript renders one transient query status", () => {
   assert.doesNotMatch(repliedHtml, /assistant-transcript__status/);
 });
 
+test("assistant sidebar hides translate buttons after the active thread has history", () => {
+  const html = renderTranslateSidebar(
+    activeEditorChapter({
+      assistant: {
+        status: "idle",
+        activeThreadKey: "row-1::vi",
+        threadsByKey: {
+          "row-1::vi": {
+            rowId: "row-1",
+            targetLanguageCode: "vi",
+            items: [{
+              id: "user-1",
+              type: "user-message",
+              createdAt: "2026-04-30T00:00:00.000Z",
+              text: "Translate this more literally.",
+              summary: "Translate this more literally.",
+              sourceLanguageCode: "es",
+              targetLanguageCode: "vi",
+            }],
+          },
+        },
+      },
+    }),
+    rows,
+    languages,
+    "es",
+    "vi",
+    createAiActionConfigurationState(),
+  );
+
+  assert.doesNotMatch(html, /data-action="run-editor-ai-translate:translate1"/);
+  assert.match(html, /Translate this more literally\./);
+  assert.match(html, /data-editor-assistant-draft/);
+});
+
+test("translation log details show only what was sent to the model", () => {
+  const html = renderTranslateSidebar(
+    activeEditorChapter({
+      assistant: {
+        status: "idle",
+        activeThreadKey: "row-1::vi",
+        threadsByKey: {
+          "row-1::vi": {
+            rowId: "row-1",
+            targetLanguageCode: "vi",
+            items: [{
+              id: "translation-1",
+              type: "translation-log",
+              createdAt: "2026-04-30T00:00:01.000Z",
+              text: "Translate 1 applied to Vietnamese.",
+              summary: "Translate 1 applied to Vietnamese.",
+              sourceLanguageCode: "es",
+              targetLanguageCode: "vi",
+              promptText: "Translate Spanish to Vietnamese: Hola",
+              details: {
+                providerId: "openai",
+                modelId: "gpt-5.5",
+                sourceText: "Hola",
+                glossarySourceText: "Hola",
+                translatedText: "Xin chao",
+                appliedText: "Xin chao",
+              },
+            }],
+          },
+        },
+      },
+    }),
+    rows,
+    languages,
+    "es",
+    "vi",
+    createAiActionConfigurationState(),
+  );
+
+  assert.match(html, /Prompt/);
+  assert.match(html, /Translate Spanish to Vietnamese: Hola/);
+  assert.doesNotMatch(html, /Translation/);
+  assert.doesNotMatch(html, /Model Output/);
+  assert.doesNotMatch(html, /Applied Text/);
+  assert.doesNotMatch(html, /Source/);
+  assert.doesNotMatch(html, /Glossary Source/);
+});
+
+test("translation log details omit distinct glossary source text", () => {
+  const html = renderTranslateSidebar(
+    activeEditorChapter({
+      assistant: {
+        status: "idle",
+        activeThreadKey: "row-1::vi",
+        threadsByKey: {
+          "row-1::vi": {
+            rowId: "row-1",
+            targetLanguageCode: "vi",
+            items: [{
+              id: "translation-1",
+              type: "translation-log",
+              createdAt: "2026-04-30T00:00:01.000Z",
+              text: "Translate 1 applied to Vietnamese.",
+              summary: "Translate 1 applied to Vietnamese.",
+              sourceLanguageCode: "es",
+              targetLanguageCode: "vi",
+              promptText: "Translate Spanish to Vietnamese: Hola",
+              details: {
+                providerId: "openai",
+                modelId: "gpt-5.5",
+                sourceText: "Hola",
+                glossarySourceText: "Hola desde el glosario",
+                translatedText: "Xin chao",
+                appliedText: "Xin chao",
+              },
+            }],
+          },
+        },
+      },
+    }),
+    rows,
+    languages,
+    "es",
+    "vi",
+    createAiActionConfigurationState(),
+  );
+
+  assert.doesNotMatch(html, /Glossary Source/);
+  assert.doesNotMatch(html, /Hola desde el glosario/);
+});
+
 test("review sidebar disables Review now while offline", () => {
   const html = renderTranslateSidebar(
     activeEditorChapter({

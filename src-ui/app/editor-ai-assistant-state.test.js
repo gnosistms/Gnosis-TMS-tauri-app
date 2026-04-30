@@ -6,6 +6,7 @@ import {
   applyEditorAssistantDocumentDigest,
   applyEditorAssistantItemApplied,
   applyEditorAssistantItemApplying,
+  applyEditorAssistantPromptedRowTextSnapshot,
   buildEditorAssistantThreadKey,
   currentEditorAssistantThread,
   normalizeEditorAssistantState,
@@ -82,6 +83,32 @@ test("assistant draft apply lifecycle updates the draft item status", () => {
     currentEditorAssistantThread(chapterState, "row-1::vi").items[0].applyStatus,
     "applied",
   );
+});
+
+test("assistant row text prompt snapshot is stored on the active row-target thread", () => {
+  const chapterState = applyEditorAssistantPromptedRowTextSnapshot(
+    {
+      ...createEditorChapterState(),
+      chapterId: "chapter-1",
+      assistant: normalizeEditorAssistantState({
+        threadsByKey: {
+          "row-1::vi": {
+            rowId: "row-1",
+            targetLanguageCode: "vi",
+            items: [],
+          },
+        },
+      }),
+    },
+    "row-1::vi",
+    "Fuente",
+    "Ban dich",
+  );
+  const thread = currentEditorAssistantThread(chapterState, "row-1::vi");
+
+  assert.equal(thread.hasPromptedRowTextSnapshot, true);
+  assert.equal(thread.lastPromptedSourceText, "Fuente");
+  assert.equal(thread.lastPromptedTargetText, "Ban dich");
 });
 
 test("assistant document digests are stored separately from row threads", () => {

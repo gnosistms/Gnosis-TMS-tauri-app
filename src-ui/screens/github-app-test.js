@@ -168,11 +168,16 @@ export function renderGithubAppTestScreen(state) {
       <section class="stack">
         <article class="card card--hero github-app-test-hero">
           <div class="card__body">
-            <p class="card__eyebrow">Tauri + GitHub App + DigitalOcean</p>
-            <h1 class="card__title">Brokered GitHub App authentication</h1>
-            <p class="card__subtitle">
-              This test harness proves the desktop app can start the GitHub App installation in the browser, receive the installation callback locally, and query GitHub through your DigitalOcean service instead of embedding the app private key in Tauri.
-            </p>
+            <div class="start-hero__layout start-hero__layout--with-logo">
+              <div class="start-hero__text">
+                <p class="card__eyebrow">Tauri + GitHub App + DigitalOcean</p>
+                <h1 class="card__title">Brokered GitHub App authentication</h1>
+                <p class="card__subtitle">
+                  This test harness proves the desktop app can start the GitHub App installation in the browser, receive the installation callback locally, and query GitHub through your DigitalOcean service instead of embedding the app private key in Tauri.
+                </p>
+              </div>
+              <div class="start-hero__logo" aria-hidden="true"></div>
+            </div>
             <div class="hero-actions">
               ${primaryButton("Install GitHub App", installDisabled ? "noop" : "start-github-app-test-install", { disabled: offlineMode || installDisabled })}
               ${secondaryButton("Reload config", "reload-github-app-test-config", { disabled: offlineMode })}

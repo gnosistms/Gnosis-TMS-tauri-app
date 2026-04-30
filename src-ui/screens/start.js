@@ -43,10 +43,13 @@ export function renderStartScreen(state) {
   const heroTitle = "Gnosis TMS";
   const heroSubtitle = isResolvingStartupAuth
     ? "Please wait while we log you in."
+    : isBusy && auth.message
+      ? auth.message
     : `Sign in with your GitHub account. If you don't have one yet, you
               will be invited to create one before signing in.`;
   const statusMarkup = auth.message
     && !isResolvingStartupAuth
+    && !isBusy
     ? `
       <article class="card start-message-card start-message-card--${auth.status ?? "idle"}">
         <div class="card__body">

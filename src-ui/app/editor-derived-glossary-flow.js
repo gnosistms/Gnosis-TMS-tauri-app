@@ -311,6 +311,7 @@ export async function prepareEditorDerivedGlossaryForContext({
   persistEditorRowOnBlur,
   persistGlossarySourceImmediately = false,
   generateMissingGlossarySourceTextWhenMissing = false,
+  syncGlossarySourceTextToRow = true,
   renderDerivedGlossaryState,
   renderOptions = {},
   requestStillCurrent = () => true,
@@ -375,17 +376,28 @@ export async function prepareEditorDerivedGlossaryForContext({
         ? payload.glossarySourceText
         : glossarySourceText,
   };
-  const preparedDerivedContext = resolvePreparedDerivedGlossaryContext(
+  const resolvedPreparedDerivedContext = resolvePreparedDerivedGlossaryContext(
     glossaryUsage,
     preparedPayload,
   );
-  const wrotePreparedGlossarySourceText = syncPreparedDerivedGlossarySourceTextToRow(
-    render,
-    context,
-    glossaryUsage,
-    preparedDerivedContext,
-    updateEditorRowFieldValue,
-  );
+  const preparedDerivedContext = syncGlossarySourceTextToRow
+    ? resolvedPreparedDerivedContext
+    : {
+      ...resolvedPreparedDerivedContext,
+      glossarySourceTextOrigin:
+        glossaryUsage.preparationGlossarySourceTextOrigin === "row"
+          ? "row"
+          : "generated",
+    };
+  const wrotePreparedGlossarySourceText = syncGlossarySourceTextToRow
+    ? syncPreparedDerivedGlossarySourceTextToRow(
+      render,
+      context,
+      glossaryUsage,
+      preparedDerivedContext,
+      updateEditorRowFieldValue,
+    )
+    : false;
   if (wrotePreparedGlossarySourceText) {
     renderDerivedGlossaryState?.("source", renderOptions);
     if (
@@ -405,6 +417,7 @@ export async function prepareEditorDerivedGlossaryForContext({
   }
 
   const preparedDerivedGlossaryNeedsPersist =
+    syncGlossarySourceTextToRow &&
     !persistGlossarySourceImmediately
     && preparedDerivedContext.glossarySourceTextOrigin === "row"
     && (

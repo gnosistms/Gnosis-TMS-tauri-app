@@ -7,10 +7,10 @@ use std::sync::OnceLock;
 use tauri::AppHandle;
 
 use crate::ai::types::{
-    AiAssistantConcordanceHit, AiAssistantRowLanguageText, AiAssistantRowWindowEntry,
-    AiAssistantTranscriptEntry, AiAssistantTurnKind, AiAssistantTurnRequest,
-    AiAssistantTurnResponse, AiModelProbeRequest, AiPromptRequest, AiProviderContinuationMetadata,
-    AiProviderId, AiProviderModel, AiReviewRequest, AiReviewResponse, AiTranslatedGlossaryEntry,
+    AiAssistantConcordanceHit, AiAssistantRowWindowEntry, AiAssistantTranscriptEntry,
+    AiAssistantTurnKind, AiAssistantTurnRequest, AiAssistantTurnResponse, AiModelProbeRequest,
+    AiPromptRequest, AiProviderContinuationMetadata, AiProviderId, AiProviderModel,
+    AiReviewRequest, AiReviewResponse, AiTranslatedGlossaryEntry,
     AiTranslatedGlossaryPreparationRequest, AiTranslatedGlossaryPreparationResponse,
     AiTranslatedGlossaryTermInput, AiTranslationGlossaryHint, AiTranslationRequest,
     AiTranslationResponse,
@@ -133,7 +133,7 @@ fn format_translation_glossary_hints(hints: &[AiTranslationGlossaryHint]) -> Str
 }
 
 fn format_assistant_transcript(entries: &[AiAssistantTranscriptEntry]) -> String {
-    let transcript_entries = entries
+    entries
         .iter()
         .filter_map(|entry| {
             let role = entry.role.trim();
@@ -144,79 +144,138 @@ fn format_assistant_transcript(entries: &[AiAssistantTranscriptEntry]) -> String
 
             Some(format!("- {role}: {text}"))
         })
-        .collect::<Vec<_>>();
+        .collect::<Vec<_>>()
+        .join("\n")
+}
 
-    if transcript_entries.is_empty() {
-        "None.".to_string()
-    } else {
-        transcript_entries.join("\n")
+fn format_language_ref(label: &str, code: &str) -> String {
+    let trimmed_label = label.trim();
+    let trimmed_code = code.trim();
+    match (trimmed_label.is_empty(), trimmed_code.is_empty()) {
+        (true, true) => String::new(),
+        (false, true) => trimmed_label.to_string(),
+        (true, false) => trimmed_code.to_string(),
+        (false, false) => format!("{trimmed_label} ({trimmed_code})"),
     }
 }
 
-fn format_assistant_alternate_language_texts(values: &[AiAssistantRowLanguageText]) -> String {
-    let lines = values
-        .iter()
-        .filter_map(|value| {
-            let language_code = value.language_code.trim();
-            let language_label = value.language_label.trim();
-            let text = value.text.trim();
-            if language_code.is_empty() || text.is_empty() {
-                return None;
-            }
+fn push_prompt_section(sections: &mut Vec<String>, label: &str, value: impl AsRef<str>) {
+    let trimmed = value.as_ref().trim();
+    if trimmed.is_empty() {
+        return;
+    }
 
-            let label = if language_label.is_empty() {
-                language_code
+    sections.push(format!("{label}:\n{trimmed}"));
+}
+
+fn push_optional_prompt_section(sections: &mut Vec<String>, label: &str, value: &Option<String>) {
+    if let Some(value) = value {
+        let trimmed = value.trim();
+        sections.push(format!(
+            "{label}:\n{}",
+            if trimmed.is_empty() { "(empty)" } else { trimmed }
+        ));
+    }
+}
+
+fn format_assistant_source_context(
+    row_window: &[AiAssistantRowWindowEntry],
+    fallback_source_text: &str,
+) -> String {
+    let lines = row_window
+        .iter()
+        .filter_map(|entry| {
+            let source_text = entry.source_text.trim();
+            if source_text.is_empty() {
+                None
             } else {
-                language_label
-            };
-            Some(format!("- {label} ({language_code}): {text}"))
+                Some(source_text.to_string())
+            }
         })
         .collect::<Vec<_>>();
 
     if lines.is_empty() {
-        "None.".to_string()
+        fallback_source_text.trim().to_string()
     } else {
         lines.join("\n")
     }
 }
 
-fn format_assistant_row_window(values: &[AiAssistantRowWindowEntry]) -> String {
-    let lines = values
-        .iter()
-        .enumerate()
-        .filter_map(|(index, value)| {
-            let source_text = value.source_text.trim();
-            let target_text = value.target_text.trim();
-            if source_text.is_empty() && target_text.is_empty() {
-                return None;
-            }
-
-            let row_label = if value.row_id.trim().is_empty() {
-                format!("row-{}", index + 1)
-            } else {
-                value.row_id.trim().to_string()
-            };
-            Some(format!(
-                "- {row_label}\n  source: {}\n  target: {}",
-                if source_text.is_empty() {
-                    "(empty)"
-                } else {
-                    source_text
-                },
-                if target_text.is_empty() {
-                    "(empty)"
-                } else {
-                    target_text
-                },
-            ))
-        })
-        .collect::<Vec<_>>();
-
-    if lines.is_empty() {
-        "None.".to_string()
-    } else {
-        lines.join("\n")
+fn format_assistant_user_action(request: &AiAssistantTurnRequest) -> String {
+    let user_message = request.user_message.trim();
+    if !user_message.is_empty() {
+        return format!("User request:\n{user_message}");
     }
+
+    format!(
+        "Instruction:\nTranslate source_text to target_language, taking into account the source_context and glossary information provided above."
+    )
+}
+
+fn build_assistant_prompt(request: &AiAssistantTurnRequest, draft_response: bool) -> String {
+    let row = &request.row;
+    let glossary_hints = format_translation_glossary_hints(&request.glossary_hints);
+    let source_context = format_assistant_source_context(&request.row_window, &row.source_text);
+    let source_language =
+        format_language_ref(&row.source_language_label, &row.source_language_code);
+    let target_language =
+        format_language_ref(&row.target_language_label, &row.target_language_code);
+    let conversation_history = format_assistant_transcript(&request.transcript);
+
+    let mut sections = Vec::new();
+    sections.push(
+        "You are an AI assistant inside a translation editor.\n\
+Use the supplied source context, current target, glossary, and conversation history when relevant.\n\
+Be direct and useful. If the answer depends on ambiguity in the source text, say so."
+            .to_string(),
+    );
+    sections.push(reply_language_instruction(&request.reply_language_hint));
+    if draft_response {
+        sections.push(
+            "Return JSON only with this shape:\n\
+{\"assistantText\":\"...\",\"draftTranslationText\":\"...\"}\n\
+assistantText should be a short explanation for the user.\n\
+draftTranslationText must contain only the revised translation text, with no labels or commentary.\n\
+Do not repeat draftTranslationText inside assistantText."
+                .to_string(),
+        );
+    } else {
+        sections.push(
+            "Return JSON only with this shape:\n\
+{\"assistantText\":\"...\",\"draftTranslationText\":null}\n\
+If your answer includes a complete proposed or revised target-language translation that the user could apply to the row, set draftTranslationText to only that translation text and do not repeat it inside assistantText. Otherwise set draftTranslationText to null."
+                .to_string(),
+        );
+    }
+
+    push_prompt_section(
+        &mut sections,
+        "source_context",
+        format!(
+            "This is the source text in context, provided to help you understand source_text more clearly:\n{source_context}"
+        ),
+    );
+    push_prompt_section(&mut sections, "source_language", source_language);
+    push_prompt_section(&mut sections, "target_language", target_language);
+    push_prompt_section(&mut sections, "Current target", &row.target_text);
+    push_prompt_section(&mut sections, "Glossary", glossary_hints);
+    push_prompt_section(&mut sections, "Document digest", &request.document_digest);
+    push_prompt_section(
+        &mut sections,
+        "Document revision key",
+        &request.document_revision_key,
+    );
+    let concordance_hits = format_assistant_concordance_hits(&request.concordance_hits);
+    if concordance_hits != "None." {
+        push_prompt_section(&mut sections, "Concordance hits", concordance_hits);
+    }
+    push_prompt_section(&mut sections, "source_text", &row.source_text);
+    push_optional_prompt_section(&mut sections, "updated_source_text", &row.updated_source_text);
+    push_optional_prompt_section(&mut sections, "updated_target_text", &row.updated_target_text);
+    push_prompt_section(&mut sections, "Conversation history", conversation_history);
+    sections.push(format_assistant_user_action(request));
+
+    sections.join("\n\n")
 }
 
 fn format_assistant_concordance_hits(values: &[AiAssistantConcordanceHit]) -> String {
@@ -267,108 +326,11 @@ fn reply_language_instruction(reply_language_hint: &str) -> String {
 }
 
 fn build_assistant_chat_prompt(request: &AiAssistantTurnRequest) -> String {
-    let glossary_hints = format_translation_glossary_hints(&request.glossary_hints);
-    let row = &request.row;
-
-    format!(
-        concat!(
-            "You are an AI assistant inside a translation editor.\n",
-            "Use the supplied row, transcript, glossary, concordance, and document context when relevant.\n",
-            "{}\n",
-            "Be direct and useful. If the answer depends on ambiguity in the source text, say so.\n",
-            "Return JSON only with this shape:\n",
-            "{{\"assistantText\":\"...\",\"draftTranslationText\":null}}\n\n",
-            "User message:\n{}\n\n",
-            "Active row:\n",
-            "- source language: {} ({})\n",
-            "- target language: {} ({})\n",
-            "- source text: {}\n",
-            "- current target text: {}\n\n",
-            "Other row language texts:\n{}\n\n",
-            "Recent transcript:\n{}\n\n",
-            "Row window context:\n{}\n\n",
-            "Glossary hints:\n{}\n\n",
-            "Document digest:\n{}\n\n",
-            "Document revision key:\n{}\n\n",
-            "Concordance hits:\n{}\n"
-        ),
-        reply_language_instruction(&request.reply_language_hint),
-        request.user_message.trim(),
-        row.source_language_label.trim(),
-        row.source_language_code.trim(),
-        row.target_language_label.trim(),
-        row.target_language_code.trim(),
-        row.source_text.trim(),
-        row.target_text.trim(),
-        format_assistant_alternate_language_texts(&row.alternate_language_texts),
-        format_assistant_transcript(&request.transcript),
-        format_assistant_row_window(&request.row_window),
-        if glossary_hints.is_empty() {
-            "None.".to_string()
-        } else {
-            glossary_hints
-        },
-        if request.document_digest.trim().is_empty() {
-            "None.".to_string()
-        } else {
-            request.document_digest.trim().to_string()
-        },
-        request.document_revision_key.trim(),
-        format_assistant_concordance_hits(&request.concordance_hits),
-    )
+    build_assistant_prompt(request, false)
 }
 
 fn build_assistant_translate_refinement_prompt(request: &AiAssistantTurnRequest) -> String {
-    let glossary_hints = format_translation_glossary_hints(&request.glossary_hints);
-    let row = &request.row;
-
-    format!(
-        concat!(
-            "You are revising or generating a translation inside a translation editor.\n",
-            "Use the user's instruction plus the supplied glossary, transcript, concordance, and document context when relevant.\n",
-            "{}\n",
-            "Return JSON only with this shape:\n",
-            "{{\"assistantText\":\"...\",\"draftTranslationText\":\"...\"}}\n",
-            "assistantText should be a short explanation for the user.\n",
-            "draftTranslationText must contain only the revised translation text, with no labels or commentary.\n\n",
-            "User message:\n{}\n\n",
-            "Active row:\n",
-            "- source language: {} ({})\n",
-            "- target language: {} ({})\n",
-            "- source text: {}\n",
-            "- current target text: {}\n\n",
-            "Other row language texts:\n{}\n\n",
-            "Recent transcript:\n{}\n\n",
-            "Row window context:\n{}\n\n",
-            "Glossary hints:\n{}\n\n",
-            "Document digest:\n{}\n\n",
-            "Document revision key:\n{}\n\n",
-            "Concordance hits:\n{}\n"
-        ),
-        reply_language_instruction(&request.reply_language_hint),
-        request.user_message.trim(),
-        row.source_language_label.trim(),
-        row.source_language_code.trim(),
-        row.target_language_label.trim(),
-        row.target_language_code.trim(),
-        row.source_text.trim(),
-        row.target_text.trim(),
-        format_assistant_alternate_language_texts(&row.alternate_language_texts),
-        format_assistant_transcript(&request.transcript),
-        format_assistant_row_window(&request.row_window),
-        if glossary_hints.is_empty() {
-            "None.".to_string()
-        } else {
-            glossary_hints
-        },
-        if request.document_digest.trim().is_empty() {
-            "None.".to_string()
-        } else {
-            request.document_digest.trim().to_string()
-        },
-        request.document_revision_key.trim(),
-        format_assistant_concordance_hits(&request.concordance_hits),
-    )
+    build_assistant_prompt(request, true)
 }
 
 fn strip_markdown_code_fence(text: &str) -> &str {
@@ -1039,10 +1001,13 @@ pub(crate) fn probe_ai_model(app: &AppHandle, request: AiModelProbeRequest) -> R
 
 #[cfg(test)]
 mod tests {
-    use super::{build_translation_prompt, find_matched_glossary_terms};
+    use super::{
+        build_assistant_chat_prompt, build_translation_prompt, find_matched_glossary_terms,
+    };
     use crate::ai::types::{
-        AiProviderId, AiTranslatedGlossaryTermInput, AiTranslationGlossaryHint,
-        AiTranslationRequest,
+        AiAssistantRowContext, AiAssistantRowWindowEntry, AiAssistantTranscriptEntry,
+        AiAssistantTurnKind, AiAssistantTurnRequest, AiProviderId, AiTranslatedGlossaryTermInput,
+        AiTranslationGlossaryHint, AiTranslationRequest,
     };
 
     #[test]
@@ -1186,5 +1151,141 @@ mod tests {
             matches[0].notes,
             vec!["Nota 1".to_string(), "Nota 2".to_string()]
         );
+    }
+
+    fn assistant_request_for_prompt() -> AiAssistantTurnRequest {
+        AiAssistantTurnRequest {
+            provider_id: AiProviderId::OpenAi,
+            model_id: "gpt-5.5".to_string(),
+            kind: AiAssistantTurnKind::Chat,
+            user_message: "Make it more natural.".to_string(),
+            transcript: vec![AiAssistantTranscriptEntry {
+                role: "assistant".to_string(),
+                text: "Earlier answer.".to_string(),
+            }],
+            row: AiAssistantRowContext {
+                row_id: "row-4".to_string(),
+                source_language_code: "es".to_string(),
+                source_language_label: "Spanish".to_string(),
+                source_text: "Fuente actual".to_string(),
+                target_language_code: "vi".to_string(),
+                target_language_label: "Vietnamese".to_string(),
+                target_text: "Ban dich hien tai".to_string(),
+                updated_source_text: None,
+                updated_target_text: None,
+                alternate_language_texts: vec![],
+            },
+            row_window: vec![
+                AiAssistantRowWindowEntry {
+                    row_id: "row-1".to_string(),
+                    source_text: "Linea anterior 3".to_string(),
+                    target_text: String::new(),
+                },
+                AiAssistantRowWindowEntry {
+                    row_id: "row-2".to_string(),
+                    source_text: "Linea anterior 2".to_string(),
+                    target_text: String::new(),
+                },
+                AiAssistantRowWindowEntry {
+                    row_id: "row-3".to_string(),
+                    source_text: "Linea anterior 1".to_string(),
+                    target_text: String::new(),
+                },
+                AiAssistantRowWindowEntry {
+                    row_id: "row-4".to_string(),
+                    source_text: "Fuente actual".to_string(),
+                    target_text: String::new(),
+                },
+                AiAssistantRowWindowEntry {
+                    row_id: "row-5".to_string(),
+                    source_text: "Linea siguiente 1".to_string(),
+                    target_text: String::new(),
+                },
+            ],
+            glossary_hints: vec![AiTranslationGlossaryHint {
+                source_term: "Fuente".to_string(),
+                target_variants: vec!["nguon".to_string()],
+                no_translation_position: None,
+                notes: vec![],
+            }],
+            document_digest: String::new(),
+            document_revision_key: String::new(),
+            concordance_hits: vec![],
+            reply_language_hint: String::new(),
+            installation_id: None,
+            provider_continuation: None,
+        }
+    }
+
+    #[test]
+    fn assistant_prompt_uses_source_context_blob_and_final_source_text() {
+        let prompt = build_assistant_chat_prompt(&assistant_request_for_prompt());
+
+        assert!(prompt.contains(
+            "source_context:\nThis is the source text in context, provided to help you understand source_text more clearly:\nLinea anterior 3\nLinea anterior 2\nLinea anterior 1\nFuente actual\nLinea siguiente 1"
+        ));
+        assert!(
+            prompt.contains(
+                "source_text:\nFuente actual\n\nConversation history:\n- assistant: Earlier answer.\n\nUser request:\nMake it more natural."
+            )
+        );
+        assert!(!prompt.contains("previous_row_1"));
+        assert!(!prompt.contains("Row window context: None."));
+    }
+
+    #[test]
+    fn assistant_prompt_omits_empty_sections_and_uses_single_glossary_section() {
+        let prompt = build_assistant_chat_prompt(&assistant_request_for_prompt());
+
+        assert!(!prompt.contains("Document digest:"));
+        assert!(!prompt.contains("Document revision key:"));
+        assert!(!prompt.contains("Concordance hits:"));
+        assert!(!prompt.contains("None."));
+        assert_eq!(prompt.matches("Glossary:").count(), 1);
+    }
+
+    #[test]
+    fn assistant_prompt_uses_default_instruction_when_user_request_is_empty() {
+        let mut request = assistant_request_for_prompt();
+        request.user_message.clear();
+        let prompt = build_assistant_chat_prompt(&request);
+
+        assert!(prompt.contains(
+            "Instruction:\nTranslate source_text to target_language, taking into account the source_context and glossary information provided above."
+        ));
+        assert!(!prompt.contains("User request:"));
+    }
+
+    #[test]
+    fn assistant_chat_prompt_allows_model_to_return_translation_draft() {
+        let prompt = build_assistant_chat_prompt(&assistant_request_for_prompt());
+
+        assert!(prompt.contains(
+            "set draftTranslationText to only that translation text and do not repeat it inside assistantText."
+        ));
+        assert!(prompt.contains("Otherwise set draftTranslationText to null."));
+    }
+
+    #[test]
+    fn assistant_prompt_includes_updated_row_text_before_conversation_history() {
+        let mut request = assistant_request_for_prompt();
+        request.row.updated_source_text = Some("Fuente actualizada".to_string());
+        request.row.updated_target_text = Some("Ban dich moi".to_string());
+        let prompt = build_assistant_chat_prompt(&request);
+
+        assert!(prompt.contains(
+            "source_text:\nFuente actual\n\nupdated_source_text:\nFuente actualizada\n\nupdated_target_text:\nBan dich moi\n\nConversation history:\n- assistant: Earlier answer.\n\nUser request:\nMake it more natural."
+        ));
+    }
+
+    #[test]
+    fn assistant_prompt_includes_updated_empty_text_when_field_was_cleared() {
+        let mut request = assistant_request_for_prompt();
+        request.row.updated_target_text = Some(String::new());
+        let prompt = build_assistant_chat_prompt(&request);
+
+        assert!(prompt.contains(
+            "source_text:\nFuente actual\n\nupdated_target_text:\n(empty)\n\nConversation history:\n- assistant: Earlier answer."
+        ));
     }
 }

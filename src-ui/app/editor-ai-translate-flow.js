@@ -35,7 +35,10 @@ import { invoke } from "./runtime.js";
 import { showNoticeBadge } from "./status-feedback.js";
 import { findEditorRowById } from "./editor-utils.js";
 import { state } from "./state.js";
-import { logEditorAssistantTranslation } from "./editor-ai-assistant-flow.js";
+import {
+  logEditorAssistantTranslation,
+  logEditorAssistantTranslationDraft,
+} from "./editor-ai-assistant-flow.js";
 import {
   captureTranslateViewport,
   renderTranslateBodyPreservingViewport,
@@ -112,6 +115,17 @@ function resolveGlossaryUsage(context) {
   }
 
   return resolveEditorDerivedGlossaryUsage(context);
+}
+
+function glossarySourceFieldIsEmpty(context, glossaryUsage) {
+  const glossarySourceLanguageCode = glossaryUsage?.glossarySourceLanguageCode ?? "";
+  if (!glossarySourceLanguageCode) {
+    return false;
+  }
+
+  const latestRow = findEditorRowById(context.rowId, state.editorChapter) ?? context.row;
+  const currentValue = latestRow?.fields?.[glossarySourceLanguageCode];
+  return !String(currentValue ?? "").trim();
 }
 
 export function buildEditorAiTranslateContext(chapterState = state.editorChapter, options = {}) {
@@ -440,6 +454,10 @@ export async function runEditorAiTranslateForContext(
     if (glossaryUsage.kind === "derived") {
       let derivedEntry = glossaryUsage.cachedDerivedEntry;
       if (!derivedEntry || glossaryUsage.cachedDerivedEntryIsStale) {
+        const shouldSyncGlossarySourceTextToRow = glossarySourceFieldIsEmpty(
+          context,
+          glossaryUsage,
+        );
         const derivedResult = await prepareEditorDerivedGlossaryForContext({
           render,
           context,
@@ -450,6 +468,9 @@ export async function runEditorAiTranslateForContext(
           retainedDerivedEntry,
           updateEditorRowFieldValue,
           persistEditorRowOnBlur,
+          persistGlossarySourceImmediately:
+            options.applyMode === "draft" && shouldSyncGlossarySourceTextToRow,
+          syncGlossarySourceTextToRow: shouldSyncGlossarySourceTextToRow,
           renderOptions: {
             renderMode: options.renderMode,
           },
@@ -552,6 +573,45 @@ export async function runEditorAiTranslateForContext(
         reason: "ai-translate-source-changed",
       });
       return { ok: false, skipped: true };
+    }
+
+    if (options.applyMode === "draft") {
+      logEditorAssistantTranslationDraft({
+        rowId: context.rowId,
+        sourceLanguageCode: context.sourceLanguageCode,
+        targetLanguageCode: context.targetLanguageCode,
+        sourceLanguageLabel: context.sourceLanguageLabel,
+        targetLanguageLabel: context.targetLanguageLabel,
+        providerId,
+        modelId,
+        sourceText: context.sourceText,
+        targetText: context.targetText,
+        glossarySourceText:
+          glossaryUsage.kind === "derived"
+            ? (retainedDerivedEntry?.glossarySourceText ?? "")
+            : context.sourceText,
+        glossaryHints,
+        promptText: typeof payload?.promptText === "string" ? payload.promptText : "",
+        draftTranslationText: typeof payload?.translatedText === "string" ? payload.translatedText : "",
+        providerContinuation: payload?.providerContinuation ?? null,
+        summary: `${AI_ACTION_LABELS[actionId]} draft for ${context.targetLanguageLabel}.`,
+      });
+      state.editorChapter = clearEditorAiTranslateAction(state.editorChapter, actionId);
+      render?.({ scope: "translate-sidebar" });
+      renderEditorAiTranslateRow(render, context, {
+        renderMode: options.renderMode,
+        reason: "ai-translate-draft",
+      });
+      if (options.showNotice !== false) {
+        showNoticeBadge(`${AI_ACTION_LABELS[actionId]} draft ready.`, render);
+      }
+      return {
+        ok: true,
+        translated: true,
+        drafted: true,
+        providerContinuation: payload?.providerContinuation ?? null,
+        translatedText: typeof payload?.translatedText === "string" ? payload.translatedText : "",
+      };
     }
 
     state.editorChapter = applyEditorAiTranslateActionApplying(
@@ -705,5 +765,7 @@ export async function runEditorAiTranslateForContext(
 
 export async function runEditorAiTranslate(render, actionId, operations = {}) {
   const context = activeEditorTranslateContext();
-  await runEditorAiTranslateForContext(render, actionId, context, operations);
+  return runEditorAiTranslateForContext(render, actionId, context, operations, {
+    applyMode: "draft",
+  });
 }
