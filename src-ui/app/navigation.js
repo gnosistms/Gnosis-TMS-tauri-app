@@ -37,6 +37,7 @@ import {
 } from "./translate-flow.js";
 import {
   startEditorBackgroundSyncSession,
+  stopEditorBackgroundSyncSession,
   syncEditorBackgroundNowWithSummary,
   syncAndStopEditorBackgroundSyncSession,
 } from "./editor-background-sync.js";
@@ -60,6 +61,7 @@ export async function handleNavigation(navTarget, render) {
     ? showNavigationLoadingModal(leaveLoading.title, leaveLoading.message)
     : null;
   let navigationRendered = false;
+  let pendingEditorProjectSync = null;
 
   if (navigationLoadingToken !== null) {
     render();
@@ -78,7 +80,11 @@ export async function handleNavigation(navTarget, render) {
 
     if (state.screen === "translate" && navTarget !== "translate") {
       void persistEditorChapterSelections(render);
-      await syncAndStopEditorBackgroundSyncSession(render);
+      if (navTarget === "projects") {
+        pendingEditorProjectSync = stopEditorBackgroundSyncSession();
+      } else {
+        await syncAndStopEditorBackgroundSyncSession(render);
+      }
     }
     if (state.screen === "glossaryEditor" && navTarget !== "glossaryEditor") {
       await syncAndStopGlossaryBackgroundSyncSession(render);
@@ -130,7 +136,10 @@ export async function handleNavigation(navTarget, render) {
     navigationRendered = true;
 
     if (navTarget === "projects" && state.selectedTeamId) {
-      void waitForNextPaint().then(() => loadTeamProjects(render, state.selectedTeamId));
+      void waitForNextPaint().then(async () => {
+        await pendingEditorProjectSync?.catch(() => null);
+        return loadTeamProjects(render, state.selectedTeamId);
+      });
     }
     if (navTarget === "teams") {
       void waitForNextPaint().then(() => loadUserTeams(render));

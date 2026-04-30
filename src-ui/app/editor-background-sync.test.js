@@ -121,6 +121,7 @@ const {
 } = await import("./state.js");
 const {
   startEditorBackgroundSyncSession,
+  stopEditorBackgroundSyncSession,
   syncAndStopEditorBackgroundSyncSession,
   syncEditorBackgroundNow,
   syncEditorBackgroundNowWithSummary,
@@ -297,6 +298,24 @@ test("editor background sync stays local-only while offline", async () => {
   assert.deepEqual(invokeLog, []);
   assert.equal(scheduledIntervals.size, 0);
   assert.equal(state.connectionFailure.isOpen, false);
+});
+
+test("stopEditorBackgroundSyncSession clears the interval without forcing remote sync", async () => {
+  installEditorFixture();
+
+  invokeHandler = async (command) => {
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  const render = createRenderRecorder();
+  startEditorBackgroundSyncSession(render, { skipInitialSync: true });
+
+  assert.equal(scheduledIntervals.size, 1);
+  const pendingSync = stopEditorBackgroundSyncSession();
+
+  assert.equal(scheduledIntervals.size, 0);
+  assert.equal(pendingSync, null);
+  assert.deepEqual(invokeLog, []);
 });
 
 test("syncEditorBackgroundNow reruns after an older in-flight sync when a new local commit needs confirmation", async () => {

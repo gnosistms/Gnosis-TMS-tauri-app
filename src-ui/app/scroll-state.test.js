@@ -10,14 +10,20 @@ class FakeHTMLElement extends FakeElement {
     this.dataset = options.dataset ?? {};
     this.scrollTop = options.scrollTop ?? 0;
     this.clientHeight = options.clientHeight ?? rect.height ?? 0;
+    this.closestMap = options.closestMap ?? new Map();
+    this.selectorLists = options.selectorLists ?? new Map();
   }
 
   getBoundingClientRect() {
     return this.rect;
   }
 
-  closest() {
-    return null;
+  closest(selector) {
+    return this.closestMap.get(selector) ?? null;
+  }
+
+  querySelectorAll(selector) {
+    return this.selectorLists.get(selector) ?? [];
   }
 }
 
@@ -102,12 +108,88 @@ function installScrollFixture({ containerTop = 100, anchorTop = 140, scrollTop =
 }
 
 const {
+  captureLanguageToggleVisibilityAnchor,
   captureVisibleTranslateRowLocation,
   captureTranslateAnchorForRow,
   readPendingTranslateAnchor,
   queueTranslateRowAnchor,
   restoreTranslateRowAnchor,
 } = await import("./scroll-state.js");
+
+function installLanguageToggleFixture({
+  collapsedLanguageCodes = [],
+  clickedLanguageCode = "en",
+  languageCodes = ["es", "en", "vi"],
+} = {}) {
+  selectors = new Map();
+  selectorLists = new Map();
+  const container = new FakeHTMLElement(
+    {
+      top: 100,
+      bottom: 500,
+      left: 0,
+      right: 600,
+      width: 600,
+      height: 400,
+    },
+    {
+      scrollTop: 50,
+      clientHeight: 400,
+    },
+  );
+  const row = new FakeHTMLElement(
+    {
+      top: 120,
+      bottom: 360,
+      left: 0,
+      right: 600,
+      width: 600,
+      height: 240,
+    },
+    {
+      dataset: {
+        rowId: "row-1",
+      },
+    },
+  );
+  const toggles = languageCodes.map((languageCode, index) => {
+    const toggle = new FakeHTMLElement(
+      {
+        top: 132 + index * 50,
+        bottom: 156 + index * 50,
+        left: 0,
+        right: 600,
+        width: 600,
+        height: 24,
+      },
+      {
+        dataset: {
+          rowId: "row-1",
+          languageCode,
+        },
+      },
+    );
+    toggle.closestMap = new Map([
+      ["[data-editor-language-toggle]", toggle],
+      ["[data-editor-row-card]", row],
+    ]);
+    return toggle;
+  });
+  row.selectorLists = new Map([["[data-editor-language-toggle]", toggles]]);
+  selectors.set(".translate-main-scroll", container);
+  for (const toggle of toggles) {
+    selectors.set(
+      `[data-editor-language-toggle][data-row-id="row-1"][data-language-code="${toggle.dataset.languageCode}"]`,
+      toggle,
+    );
+  }
+  const clickedToggle = toggles.find((toggle) => toggle.dataset.languageCode === clickedLanguageCode) ?? toggles[0];
+
+  return {
+    clickedToggle,
+    collapsedLanguageCodes: new Set(collapsedLanguageCodes),
+  };
+}
 
 test("restoreTranslateRowAnchor skips no-op scroll writes", () => {
   const { container } = installScrollFixture();
@@ -177,6 +259,116 @@ test("captureTranslateAnchorForRow can prefer the row card when requested", () =
     rowId: "row-1",
     languageCode: "",
     offsetTop: 40,
+  });
+});
+
+test("captureLanguageToggleVisibilityAnchor anchors top visible language when hiding a middle language", () => {
+  const { clickedToggle, collapsedLanguageCodes } = installLanguageToggleFixture({
+    clickedLanguageCode: "en",
+  });
+
+  const snapshot = captureLanguageToggleVisibilityAnchor(clickedToggle, collapsedLanguageCodes);
+
+  assert.deepEqual(snapshot, {
+    type: "language-toggle",
+    rowId: "row-1",
+    languageCode: "es",
+    offsetTop: 32,
+  });
+});
+
+test("captureLanguageToggleVisibilityAnchor anchors top visible language when hiding the bottom language", () => {
+  const { clickedToggle, collapsedLanguageCodes } = installLanguageToggleFixture({
+    clickedLanguageCode: "vi",
+  });
+
+  const snapshot = captureLanguageToggleVisibilityAnchor(clickedToggle, collapsedLanguageCodes);
+
+  assert.deepEqual(snapshot, {
+    type: "language-toggle",
+    rowId: "row-1",
+    languageCode: "es",
+    offsetTop: 32,
+  });
+});
+
+test("captureLanguageToggleVisibilityAnchor moves the next visible language to the top position when hiding the top language", () => {
+  const { clickedToggle, collapsedLanguageCodes } = installLanguageToggleFixture({
+    clickedLanguageCode: "es",
+  });
+
+  const snapshot = captureLanguageToggleVisibilityAnchor(clickedToggle, collapsedLanguageCodes);
+
+  assert.deepEqual(snapshot, {
+    type: "language-toggle",
+    rowId: "row-1",
+    languageCode: "en",
+    offsetTop: 32,
+  });
+});
+
+test("captureLanguageToggleVisibilityAnchor anchors the clicked toggle when hiding the only visible language", () => {
+  const { clickedToggle, collapsedLanguageCodes } = installLanguageToggleFixture({
+    clickedLanguageCode: "en",
+    collapsedLanguageCodes: ["es", "vi"],
+  });
+
+  const snapshot = captureLanguageToggleVisibilityAnchor(clickedToggle, collapsedLanguageCodes);
+
+  assert.deepEqual(snapshot, {
+    type: "language-toggle",
+    rowId: "row-1",
+    languageCode: "en",
+    offsetTop: 82,
+  });
+});
+
+test("captureLanguageToggleVisibilityAnchor anchors the top visible language when unhiding a hidden language", () => {
+  const { clickedToggle, collapsedLanguageCodes } = installLanguageToggleFixture({
+    clickedLanguageCode: "vi",
+    collapsedLanguageCodes: ["vi"],
+  });
+
+  const snapshot = captureLanguageToggleVisibilityAnchor(clickedToggle, collapsedLanguageCodes, ["es", "en", "vi"]);
+
+  assert.deepEqual(snapshot, {
+    type: "language-toggle",
+    rowId: "row-1",
+    languageCode: "es",
+    offsetTop: 32,
+  });
+});
+
+test("captureLanguageToggleVisibilityAnchor moves an unhidden first language to the previous top visible position", () => {
+  const { clickedToggle, collapsedLanguageCodes } = installLanguageToggleFixture({
+    clickedLanguageCode: "es",
+    collapsedLanguageCodes: ["es"],
+    languageCodes: ["en", "vi", "es"],
+  });
+
+  const snapshot = captureLanguageToggleVisibilityAnchor(clickedToggle, collapsedLanguageCodes, ["es", "en", "vi"]);
+
+  assert.deepEqual(snapshot, {
+    type: "language-toggle",
+    rowId: "row-1",
+    languageCode: "es",
+    offsetTop: 32,
+  });
+});
+
+test("captureLanguageToggleVisibilityAnchor anchors the clicked toggle when unhiding with no visible languages", () => {
+  const { clickedToggle, collapsedLanguageCodes } = installLanguageToggleFixture({
+    clickedLanguageCode: "vi",
+    collapsedLanguageCodes: ["es", "en", "vi"],
+  });
+
+  const snapshot = captureLanguageToggleVisibilityAnchor(clickedToggle, collapsedLanguageCodes, ["es", "en", "vi"]);
+
+  assert.deepEqual(snapshot, {
+    type: "language-toggle",
+    rowId: "row-1",
+    languageCode: "vi",
+    offsetTop: 132,
   });
 });
 

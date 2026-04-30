@@ -1,5 +1,5 @@
 export function resolveNavigationLeaveLoading(previousScreen, navTarget, options = {}) {
-  if (previousScreen === "translate" && navTarget !== "translate") {
+  if (previousScreen === "translate" && navTarget !== "translate" && navTarget !== "projects") {
     return {
       title: "Saving and syncing...",
       message: "Please wait before leaving the editor.",

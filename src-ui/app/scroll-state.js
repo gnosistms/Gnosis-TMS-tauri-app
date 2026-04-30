@@ -150,6 +150,101 @@ export function captureTranslateRowAnchor(target = null) {
   return snapshot;
 }
 
+function languageOrderIndexByCode(languages = []) {
+  return new Map(
+    (Array.isArray(languages) ? languages : [])
+      .map((language, index) => [
+        typeof language === "string" ? language : language?.code,
+        index,
+      ])
+      .filter(([code]) => typeof code === "string" && code),
+  );
+}
+
+function orderedFirstLanguageCode(languageCodes, orderIndexByCode) {
+  return [...languageCodes]
+    .filter(Boolean)
+    .sort((left, right) => {
+      const leftIndex = orderIndexByCode.has(left) ? orderIndexByCode.get(left) : Number.MAX_SAFE_INTEGER;
+      const rightIndex = orderIndexByCode.has(right) ? orderIndexByCode.get(right) : Number.MAX_SAFE_INTEGER;
+      return leftIndex - rightIndex;
+    })[0] ?? "";
+}
+
+export function captureLanguageToggleVisibilityAnchor(
+  target = null,
+  collapsedLanguageCodes = new Set(),
+  languages = [],
+) {
+  const source = target instanceof Element ? target : document.activeElement;
+  const container = document.querySelector(".translate-main-scroll");
+  const clickedToggle = source instanceof Element
+    ? source.closest("[data-editor-language-toggle]")
+    : null;
+  const row = clickedToggle?.closest?.("[data-editor-row-card]") ?? null;
+  if (!isHtmlElement(container) || !isHtmlElement(clickedToggle) || !isHtmlElement(row)) {
+    return captureTranslateRowAnchor(target);
+  }
+
+  const collapsedCodes = collapsedLanguageCodes instanceof Set
+    ? collapsedLanguageCodes
+    : new Set();
+  const toggles = [...row.querySelectorAll("[data-editor-language-toggle]")]
+    .filter((toggle) => isHtmlElement(toggle));
+  const clickedLanguageCode = clickedToggle.dataset.languageCode ?? "";
+  const clickedIndex = toggles.indexOf(clickedToggle);
+  const clickedIsHidden = collapsedCodes.has(clickedLanguageCode);
+  const visibleToggles = toggles.filter((toggle) =>
+    !collapsedCodes.has(toggle.dataset.languageCode ?? "")
+  );
+
+  let anchorToggle = clickedToggle;
+  let anchorOffsetElement = null;
+  if (clickedIsHidden) {
+    const topVisibleToggle = visibleToggles[0] ?? null;
+    const orderIndexByCode = languageOrderIndexByCode(languages);
+    const firstVisibleAfterUnhide = orderedFirstLanguageCode(
+      [...visibleToggles.map((toggle) => toggle.dataset.languageCode ?? ""), clickedLanguageCode],
+      orderIndexByCode,
+    );
+    if (
+      topVisibleToggle
+      && firstVisibleAfterUnhide
+      && firstVisibleAfterUnhide === clickedLanguageCode
+    ) {
+      anchorToggle = clickedToggle;
+      anchorOffsetElement = topVisibleToggle;
+    } else {
+      anchorToggle = topVisibleToggle ?? clickedToggle;
+    }
+  } else {
+    const topVisibleToggle = visibleToggles[0] ?? null;
+    const topVisibleIndex = topVisibleToggle ? toggles.indexOf(topVisibleToggle) : -1;
+    if (topVisibleToggle && topVisibleIndex >= 0 && topVisibleIndex < clickedIndex) {
+      anchorToggle = topVisibleToggle;
+    } else {
+      anchorToggle =
+        visibleToggles.find((toggle) => toggles.indexOf(toggle) > clickedIndex)
+        ?? clickedToggle;
+      anchorOffsetElement = anchorToggle === clickedToggle ? null : clickedToggle;
+    }
+  }
+
+  const snapshot = buildTranslateAnchorSnapshotForElement(
+    container,
+    anchorToggle,
+    "language-toggle",
+    anchorToggle.dataset.languageCode ?? "",
+  );
+  if (snapshot && isHtmlElement(anchorOffsetElement)) {
+    const containerRect = container.getBoundingClientRect();
+    const offsetRect = anchorOffsetElement.getBoundingClientRect();
+    snapshot.offsetTop = offsetRect.top - containerRect.top;
+  }
+  pendingTranslateAnchor = snapshot;
+  return snapshot;
+}
+
 export function primeTranslateInteractionAnchor(target = null) {
   const snapshot = resolveTranslateRowAnchor(target);
   primedTranslateInteractionAnchor = snapshot;

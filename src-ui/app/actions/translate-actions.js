@@ -1,6 +1,8 @@
 import { actionSuffix } from "../action-helpers.js";
 import { waitForNextPaint } from "../runtime.js";
+import { state } from "../state.js";
 import {
+  captureLanguageToggleVisibilityAnchor,
   captureTranslateRowAnchor,
   restoreTranslateRowAnchor,
 } from "../scroll-state.js";
@@ -518,7 +520,11 @@ export function createTranslateActions(render) {
 
     const languageCode = actionSuffix(action, "toggle-editor-language:");
     if (languageCode !== null) {
-      const scrollAnchor = captureTranslateRowAnchor(event?.target ?? null);
+      const scrollAnchor = captureLanguageToggleVisibilityAnchor(
+        event?.target ?? null,
+        state.editorChapter?.collapsedLanguageCodes,
+        state.editorChapter?.languages,
+      );
       toggleEditorLanguageCollapsed(languageCode);
       render();
       if (scrollAnchor) {

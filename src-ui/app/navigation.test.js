@@ -3,9 +3,13 @@ import assert from "node:assert/strict";
 
 import { resolveNavigationLeaveLoading } from "./navigation-leave-loading.js";
 
-test("resolveNavigationLeaveLoading returns the editor leave modal copy", () => {
+test("resolveNavigationLeaveLoading skips the editor leave modal for projects", () => {
+  assert.equal(resolveNavigationLeaveLoading("translate", "projects"), null);
+});
+
+test("resolveNavigationLeaveLoading returns the editor leave modal copy for non-project exits", () => {
   assert.deepEqual(
-    resolveNavigationLeaveLoading("translate", "projects"),
+    resolveNavigationLeaveLoading("translate", "glossaries"),
     {
       title: "Saving and syncing...",
       message: "Please wait before leaving the editor.",

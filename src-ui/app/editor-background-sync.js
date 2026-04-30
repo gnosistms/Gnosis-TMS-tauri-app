@@ -800,9 +800,15 @@ export async function syncAndStopEditorBackgroundSyncSession(render) {
     await maybeStartEditorBackgroundSync(render, { force: true });
   }
 
+  stopEditorBackgroundSyncSession();
+}
+
+export function stopEditorBackgroundSyncSession() {
+  const pendingSync = editorBackgroundSyncSession.pendingSync;
   clearBackgroundSyncInterval();
   editorBackgroundSyncSession.key = "";
   editorBackgroundSyncSession.lastScrollAt = 0;
   editorBackgroundSyncSession.lastSyncedHeadSha = null;
   editorBackgroundSyncSession.pendingSync = null;
+  return pendingSync;
 }
