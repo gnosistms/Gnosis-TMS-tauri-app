@@ -62,6 +62,7 @@ import { toggleEditorInlineStyle as toggleEditorInlineStyleFlow } from "./editor
 import {
   applyEditorAssistantDraft as applyEditorAssistantDraftFlow,
   runEditorAiAssistant as runEditorAiAssistantFlow,
+  scheduleAssistantTranscriptScrollToBottom,
   updateEditorAssistantComposerDraft as updateEditorAssistantComposerDraftFlow,
 } from "./editor-ai-assistant-flow.js";
 import {
@@ -617,6 +618,7 @@ export async function saveEditorConflictResolution(render) {
 export function switchEditorSidebarTab(render, tab) {
   switchEditorSidebarTabFlow(render, tab, {
     loadActiveEditorFieldHistory,
+    scheduleAssistantTranscriptScrollToBottom,
   });
 }
 

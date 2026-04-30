@@ -7,7 +7,7 @@ import {
 import { ensureSelectedTeamAiProviderReady } from "./team-ai-flow.js";
 import { resolveEditorAiTranslateLanguages } from "./editor-ai-translate-target.js";
 import { selectedProjectsTeam, selectedProjectsTeamInstallationId } from "./project-context.js";
-import { invoke } from "./runtime.js";
+import { invoke, waitForNextPaint } from "./runtime.js";
 import { state } from "./state.js";
 import { findEditorRowById } from "./editor-utils.js";
 import {
@@ -26,6 +26,7 @@ import {
   applyEditorAssistantItemApplyFailed,
   applyEditorAssistantPending,
   applyEditorAssistantProviderContinuity,
+  applyEditorAssistantThinking,
   clearEditorAssistantPending,
 } from "./editor-ai-assistant-state.js";
 import { showNoticeBadge } from "./status-feedback.js";
@@ -51,6 +52,36 @@ const MAX_TRANSCRIPT_ITEMS = 12;
 
 function renderAssistantSidebar(render) {
   render?.({ scope: "translate-sidebar" });
+}
+
+export function scrollAssistantTranscriptToBottom(root = globalThis.document) {
+  const transcript = root?.querySelector?.(".assistant-transcript");
+  if (!transcript || typeof transcript.scrollTop !== "number") {
+    return false;
+  }
+
+  const scrollHeight = Number(transcript.scrollHeight);
+  if (!Number.isFinite(scrollHeight)) {
+    return false;
+  }
+
+  transcript.scrollTop = scrollHeight;
+  return true;
+}
+
+export function scheduleAssistantTranscriptScrollToBottom() {
+  if (!globalThis.document) {
+    return;
+  }
+
+  void waitForNextPaint().then(() => {
+    scrollAssistantTranscriptToBottom();
+  });
+}
+
+function renderAssistantSidebarAtBottom(render) {
+  renderAssistantSidebar(render);
+  scheduleAssistantTranscriptScrollToBottom();
 }
 
 function renderAssistantSidebarAndBody(render) {
@@ -884,7 +915,7 @@ export async function runEditorAiAssistant(render) {
     requestKey,
   );
   persistAssistantState();
-  renderAssistantSidebar(render);
+  renderAssistantSidebarAtBottom(render);
 
   try {
     const { providerId, modelId } = resolveAiActionProviderAndModel("discuss");
@@ -902,6 +933,14 @@ export async function runEditorAiAssistant(render) {
       return;
     }
 
+    state.editorChapter = applyEditorAssistantThinking(
+      state.editorChapter,
+      baseContext.threadKey,
+      requestKey,
+    );
+    persistAssistantState();
+    renderAssistantSidebarAtBottom(render);
+
     const intent = classifyAssistantIntent(message, baseContext);
     if (intent.toolEvents.length > 0) {
       state.editorChapter = appendEditorAssistantItems(
@@ -918,7 +957,7 @@ export async function runEditorAiAssistant(render) {
         },
       );
       persistAssistantState();
-      renderAssistantSidebar(render);
+      renderAssistantSidebarAtBottom(render);
     }
 
     const context = currentAssistantContext(state.editorChapter, {
@@ -1022,7 +1061,7 @@ export async function runEditorAiAssistant(render) {
       },
     );
     persistAssistantState();
-    renderAssistantSidebar(render);
+    renderAssistantSidebarAtBottom(render);
   } catch (error) {
     const messageText = error instanceof Error ? error.message : String(error);
     if (errorMeansMissingAiKey(messageText)) {

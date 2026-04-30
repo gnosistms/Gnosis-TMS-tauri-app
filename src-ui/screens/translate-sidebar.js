@@ -485,6 +485,22 @@ function renderAssistantTranscriptItem(item) {
   `;
 }
 
+function assistantTranscriptStatusText(assistant, threadKey) {
+  if (assistant?.activeThreadKey !== threadKey) {
+    return "";
+  }
+
+  if (assistant.status === "sending") {
+    return "Sending...";
+  }
+
+  if (assistant.status === "thinking") {
+    return "Thinking...";
+  }
+
+  return "";
+}
+
 function renderAssistantTranscript(editorChapter, rows, languages, sourceCode, targetCode) {
   const activeRow = rows.find((row) => row.id === editorChapter?.activeRowId) ?? null;
   const translateLanguages = resolveEditorAiTranslateLanguages(editorChapter);
@@ -497,6 +513,7 @@ function renderAssistantTranscript(editorChapter, rows, languages, sourceCode, t
   const thread = currentEditorAssistantThread(editorChapter, threadKey);
   const assistant = normalizeEditorAssistantState(editorChapter?.assistant);
   const items = Array.isArray(thread?.items) ? thread.items : [];
+  const statusText = assistantTranscriptStatusText(assistant, threadKey);
 
   if (!activeRow || !targetLanguage) {
     return `
@@ -506,7 +523,7 @@ function renderAssistantTranscript(editorChapter, rows, languages, sourceCode, t
     `;
   }
 
-  if (items.length === 0) {
+  if (items.length === 0 && !statusText) {
     return `
       <div class="assistant-empty">
         <p>Ask AI Assistant about the active translation, or translate first to create a history entry.</p>
@@ -523,6 +540,7 @@ function renderAssistantTranscript(editorChapter, rows, languages, sourceCode, t
         })
         : ""}
       ${items.map((item) => renderAssistantTranscriptItem(item)).join("")}
+      ${statusText ? `<p class="assistant-transcript__status">${escapeHtml(statusText)}</p>` : ""}
     </div>
   `;
 }

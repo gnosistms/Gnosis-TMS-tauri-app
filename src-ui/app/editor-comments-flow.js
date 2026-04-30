@@ -253,6 +253,12 @@ export function switchEditorSidebarTab(render, tab, operations = {}) {
   }
 
   renderEditorCommentsSidebar(render);
+  if (
+    normalizedTab === "assistant"
+    && typeof operations?.scheduleAssistantTranscriptScrollToBottom === "function"
+  ) {
+    operations.scheduleAssistantTranscriptScrollToBottom();
+  }
 }
 
 export function updateEditorCommentDraft(nextValue) {

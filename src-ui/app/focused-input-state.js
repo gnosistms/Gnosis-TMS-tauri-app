@@ -6,6 +6,7 @@ import {
 const SUPPORTED_FOCUSED_INPUT_SELECTORS = [
   "[data-team-rename-input]",
   "[data-project-rename-input]",
+  "[data-chapter-rename-input]",
   "[data-project-name-input]",
   "[data-invite-user-input]",
   "[data-team-permanent-delete-input]",

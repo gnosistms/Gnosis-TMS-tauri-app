@@ -16,7 +16,24 @@ class FakeHTMLElement extends FakeElement {
   focus() {}
 }
 
-class FakeHTMLInputElement extends FakeHTMLElement {}
+class FakeHTMLInputElement extends FakeHTMLElement {
+  constructor() {
+    super();
+    this.selectionStart = 0;
+    this.selectionEnd = 0;
+    this.selectionDirection = "none";
+    this.focusCalls = [];
+    this.selectionCalls = [];
+  }
+
+  focus(options = {}) {
+    this.focusCalls.push(options);
+  }
+
+  setSelectionRange(start, end, direction) {
+    this.selectionCalls.push({ start, end, direction });
+  }
+}
 class FakeHTMLSelectElement extends FakeHTMLElement {}
 
 class FakeHTMLTextAreaElement extends FakeHTMLElement {
@@ -139,6 +156,39 @@ test("restoreFocusedInputState restores focus to the image-caption field instead
     start: 1,
     end: 4,
     direction: "backward",
+  }]);
+});
+
+test("chapter rename modal input focus survives full refresh renders", () => {
+  const input = new FakeHTMLInputElement();
+  input.selectionStart = 7;
+  input.selectionEnd = 11;
+  input.selectionDirection = "forward";
+  input.matches = (selector) => selector === "[data-chapter-rename-input]";
+  document.activeElement = input;
+
+  const snapshot = captureFocusedInputState();
+  assert.deepEqual(snapshot, {
+    kind: "generic",
+    selector: "[data-chapter-rename-input]",
+    rowId: "",
+    languageCode: "",
+    contentKind: "field",
+    selectionStart: 7,
+    selectionEnd: 11,
+    selectionDirection: "forward",
+  });
+
+  const nextInput = new FakeHTMLInputElement();
+  selectorMap = new Map([["[data-chapter-rename-input]", nextInput]]);
+
+  assert.equal(shouldRestoreFocusedInputStateForScope(snapshot, "full"), true);
+  assert.equal(restoreFocusedInputState(snapshot), true);
+  assert.deepEqual(nextInput.focusCalls, [{ preventScroll: true }]);
+  assert.deepEqual(nextInput.selectionCalls, [{
+    start: 7,
+    end: 11,
+    direction: "forward",
   }]);
 });
 

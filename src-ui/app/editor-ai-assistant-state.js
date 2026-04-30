@@ -137,7 +137,9 @@ export function normalizeEditorAssistantState(assistant) {
   };
 
   nextAssistant.status =
-    nextAssistant.status === "sending" || nextAssistant.status === "applying"
+    nextAssistant.status === "sending"
+    || nextAssistant.status === "thinking"
+    || nextAssistant.status === "applying"
       ? nextAssistant.status
       : "idle";
   nextAssistant.error = typeof nextAssistant.error === "string" ? nextAssistant.error : "";
@@ -237,6 +239,19 @@ export function applyEditorAssistantPending(chapterState, threadKey, requestKey)
     error: "",
     requestKey,
     activeThreadKey: threadKey,
+  });
+}
+
+export function applyEditorAssistantThinking(chapterState, threadKey, requestKey) {
+  const assistant = normalizeEditorAssistantState(chapterState?.assistant);
+  if (assistant.requestKey !== requestKey || assistant.activeThreadKey !== threadKey) {
+    return chapterState;
+  }
+
+  return replaceAssistantState(chapterState, {
+    ...assistant,
+    status: "thinking",
+    error: "",
   });
 }
 
