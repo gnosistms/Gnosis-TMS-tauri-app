@@ -1368,7 +1368,6 @@ fn map_term_record(term: StoredGlossaryTermFile) -> GlossaryTermEditorRecord {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use std::{fs, process::Command};
