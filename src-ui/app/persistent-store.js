@@ -1,6 +1,5 @@
 const STORE_FILENAME = "app-state.json";
-const MIGRATION_KEY = "__gnosis_persistent_store_migrated_v1";
-const LEGACY_KEY_PREFIX = "gnosis-tms-";
+const BROWSER_STORAGE_KEY_PREFIX = "gnosis-tms-";
 
 let store = null;
 let initialized = false;
@@ -34,11 +33,11 @@ function localStorageKeys() {
   }
 }
 
-function readLegacyLocalStorageEntries() {
+function readBrowserStorageEntries() {
   const entries = {};
 
   for (const key of localStorageKeys()) {
-    if (!key.startsWith(LEGACY_KEY_PREFIX)) {
+    if (!key.startsWith(BROWSER_STORAGE_KEY_PREFIX)) {
       continue;
     }
 
@@ -59,18 +58,6 @@ function readLegacyLocalStorageEntries() {
   return entries;
 }
 
-function clearLegacyLocalStorageEntries() {
-  for (const key of localStorageKeys()) {
-    if (!key.startsWith(LEGACY_KEY_PREFIX)) {
-      continue;
-    }
-
-    try {
-      window.localStorage?.removeItem(key);
-    } catch {}
-  }
-}
-
 async function loadStoreSnapshot(nextStore) {
   const entries = (await nextStore.entries()) ?? [];
   return Object.fromEntries(entries);
@@ -78,14 +65,6 @@ async function loadStoreSnapshot(nextStore) {
 
 function getGlobalStoreLoader() {
   return window.__TAURI__?.store?.load?.bind(window.__TAURI__.store) ?? null;
-}
-
-async function persistMigrationSnapshot(nextStore, snapshot) {
-  const keys = Object.keys(snapshot);
-  for (const key of keys) {
-    await nextStore.set(key, snapshot[key]);
-  }
-  await nextStore.save();
 }
 
 export async function initializePersistentStorage() {
@@ -101,7 +80,7 @@ export async function initializePersistentStorage() {
   initializationPromise = (async () => {
     const loadStore = getGlobalStoreLoader();
     if (!loadStore) {
-      memoryState = readLegacyLocalStorageEntries();
+      memoryState = readBrowserStorageEntries();
       initialized = true;
       return;
     }
@@ -109,25 +88,8 @@ export async function initializePersistentStorage() {
     const nextStore = await loadStore(STORE_FILENAME);
     const persistedState = await loadStoreSnapshot(nextStore);
 
-    if (persistedState[MIGRATION_KEY] === true) {
-      store = nextStore;
-      memoryState = persistedState;
-      initialized = true;
-      return;
-    }
-
-    const legacyEntries = readLegacyLocalStorageEntries();
-    const migratedState = {
-      ...legacyEntries,
-      ...persistedState,
-      [MIGRATION_KEY]: true,
-    };
-
-    await persistMigrationSnapshot(nextStore, migratedState);
-    clearLegacyLocalStorageEntries();
-
     store = nextStore;
-    memoryState = migratedState;
+    memoryState = persistedState;
     initialized = true;
   })();
 

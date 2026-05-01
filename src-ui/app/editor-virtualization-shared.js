@@ -22,61 +22,6 @@ export function nextScheduledEditorRenderReason(currentReason, nextReason) {
   return normalizedCurrent;
 }
 
-export function shouldDeferMeasuredWindowReconcile(
-  reason,
-  anchorSnapshot = null,
-  shouldDeferScrollWindowReconcile = false,
-) {
-  return shouldDeferScrollWindowReconcile
-    && reason === EDITOR_VIRTUALIZATION_SCROLL_REASON
-    && !anchorSnapshot?.rowId;
-}
-
-export function hasEditorVirtualWindowCoverageGap({
-  rowCount = 0,
-  startIndex = 0,
-  endIndex = 0,
-  viewportTop = 0,
-  viewportBottom = 0,
-  firstRowTop = 0,
-  lastRowBottom = 0,
-  gapPx = EDITOR_ROW_GAP_PX,
-} = {}) {
-  const safeRowCount =
-    Number.isInteger(rowCount) && rowCount > 0 ? rowCount : 0;
-  if (safeRowCount === 0) {
-    return false;
-  }
-
-  const safeStartIndex =
-    Number.isInteger(startIndex) ? Math.max(0, Math.min(startIndex, safeRowCount)) : 0;
-  const safeEndIndex =
-    Number.isInteger(endIndex) ? Math.max(safeStartIndex, Math.min(endIndex, safeRowCount)) : safeStartIndex;
-  if (safeEndIndex <= safeStartIndex) {
-    return true;
-  }
-
-  if (
-    !Number.isFinite(viewportTop)
-    || !Number.isFinite(viewportBottom)
-    || viewportBottom <= viewportTop
-  ) {
-    return false;
-  }
-
-  if (!Number.isFinite(firstRowTop) || !Number.isFinite(lastRowBottom)) {
-    return true;
-  }
-
-  const tolerance = Math.max(0, Number.isFinite(gapPx) ? gapPx : EDITOR_ROW_GAP_PX) + 1;
-  const hasRowsBefore = safeStartIndex > 0;
-  const hasRowsAfter = safeEndIndex < safeRowCount;
-  return (
-    (hasRowsBefore && firstRowTop > viewportTop + tolerance)
-    || (hasRowsAfter && lastRowBottom < viewportBottom - tolerance)
-  );
-}
-
 export function resolveEditorVirtualRangeState(virtualItems, totalSize = 0) {
   const items = Array.isArray(virtualItems) ? virtualItems : [];
   if (items.length === 0) {

@@ -3825,7 +3825,7 @@ test.describe("editor regressions", () => {
     expect(mockState.invocations.some((entry) => entry.command === "load_gtms_editor_row")).toBe(false);
   });
 
-  test("first-seen long rows keep the visible anchor stable after deferred height reconciliation", async ({ page }) => {
+  test("first-seen long rows keep the visible anchor stable after virtualized measurement", async ({ page }) => {
     await mountEditorFixture(page, {
       rowCount: 160,
       fieldsByRowId: buildLongVirtualizationFieldsByRowId(160),
@@ -3835,11 +3835,6 @@ test.describe("editor regressions", () => {
     await page.waitForTimeout(80);
     await setTranslateScrollTop(page, 3900);
     await page.waitForTimeout(160);
-
-    await expect.poll(async () => {
-      const entries = await readEditorScrollDebugEntries(page);
-      return entries.filter((entry) => entry.event === "virtualization-deferred-heights-committed").length;
-    }, { timeout: 1500 }).toBeGreaterThan(0);
 
     const afterCommitRow = await readTopVisibleRowMetrics(page);
     const afterCommitScrollTop = await readTranslateScrollTop(page);
@@ -3877,7 +3872,7 @@ test.describe("editor regressions", () => {
       expect(laterScrollTop).toBeLessThan(40000);
     });
 
-    test(`a shallow ${label}-mode scroll does not jump backward after deferred layout`, async ({ page }) => {
+    test(`a shallow ${label}-mode scroll does not jump backward after layout measurement`, async ({ page }) => {
       await openPlatformEditorFixture(page, platform);
 
       await setTranslateScrollTop(page, 850);
@@ -3901,7 +3896,7 @@ test.describe("editor regressions", () => {
       expect(Math.abs(laterRow.rowTop - afterScrollRow.rowTop)).toBeLessThanOrEqual(24);
     });
 
-    test(`a second shallow ${label}-mode scroll does not reuse a stale deferred anchor`, async ({ page }) => {
+    test(`a second shallow ${label}-mode scroll does not reuse a stale layout anchor`, async ({ page }) => {
       await openPlatformEditorFixture(page, platform);
 
       await setTranslateScrollTop(page, 850);
@@ -3930,7 +3925,7 @@ test.describe("editor regressions", () => {
       expect(Math.abs(laterRow.rowTop - afterSecondScrollRow.rowTop)).toBeLessThanOrEqual(24);
     });
 
-    test(`a longer ${label}-mode scroll does not jump backward after deferred layout`, async ({ page }) => {
+    test(`a longer ${label}-mode scroll does not jump backward after layout measurement`, async ({ page }) => {
       await openPlatformEditorFixture(page, platform);
 
       await setTranslateScrollTop(page, 6730);

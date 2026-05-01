@@ -22,26 +22,7 @@ import {
   mergeMetadataBackedGlossarySummaries,
 } from "./glossary-discovery.js";
 
-const GLOSSARY_BROKER_ROUTE_UNAVAILABLE_MESSAGE =
-  "The GitHub App broker does not have glossary repo routes deployed yet. Remote glossary sync and repo actions are unavailable right now.";
-
-function glossaryBrokerRouteUnavailable(error) {
-  const message = String(error?.message ?? error ?? "");
-  return (
-    message.includes("/gnosis-glossaries")
-    && (
-      message.includes("Cannot GET ")
-      || message.includes("Cannot POST ")
-      || message.includes("Cannot DELETE ")
-    )
-  );
-}
-
 function normalizeGlossaryBrokerError(error) {
-  if (glossaryBrokerRouteUnavailable(error)) {
-    return new Error(GLOSSARY_BROKER_ROUTE_UNAVAILABLE_MESSAGE);
-  }
-
   if (error instanceof Error) {
     return error;
   }
@@ -607,53 +588,15 @@ export async function loadRepoBackedGlossariesForTeam(team, options = {}) {
 
   let remoteRepos;
   let remoteLoaded = false;
-  try {
-    remoteRepos = await listRemoteGlossaryReposForTeam(team);
-    remoteLoaded = true;
-    if (metadataLoaded) {
-      const metadataRepaired = await repairGlossaryMetadataFromRemoteRename(team, metadataRecords, remoteRepos);
-      if (metadataRepaired) {
-        metadataRecords = await listGlossaryMetadataRecords(team).catch(() => metadataRecords);
-      }
-      metadataRecords = await finalizeMissingGlossariesForTeam(team, metadataRecords, remoteRepos);
-      localSummaries = await purgeTombstonedGlossariesForTeam(team, localSummaries, metadataRecords);
+  remoteRepos = await listRemoteGlossaryReposForTeam(team);
+  remoteLoaded = true;
+  if (metadataLoaded) {
+    const metadataRepaired = await repairGlossaryMetadataFromRemoteRename(team, metadataRecords, remoteRepos);
+    if (metadataRepaired) {
+      metadataRecords = await listGlossaryMetadataRecords(team).catch(() => metadataRecords);
     }
-  } catch (error) {
-    if (glossaryBrokerRouteUnavailable(error) || error?.message === GLOSSARY_BROKER_ROUTE_UNAVAILABLE_MESSAGE) {
-      if (metadataRecords.length > 0) {
-        const syncRepos = buildMetadataBackedGlossarySyncRepos(metadataRecords, []);
-        const syncSnapshots = syncRepos.length > 0
-          ? await syncGlossaryReposForTeam(team, syncRepos)
-          : [];
-        const refreshedLocalSummaries = await listLocalGlossarySummariesForTeam(team);
-        return {
-          glossaries: mergeMetadataBackedGlossarySummaries(
-            refreshedLocalSummaries,
-            metadataRecords,
-            syncRepos,
-            { metadataLoaded, remoteLoaded: false, repairLoaded, repairIssues },
-          ),
-          remoteRepos: syncRepos,
-          syncSnapshots,
-          syncIssue: getGlossarySyncIssueMessage(syncSnapshots),
-          brokerWarning: "",
-          recoveryMessage:
-            installationRecoveryDetected && !suppressRecoveryWarning
-              ? "Local installation data was missing. Rebuilt glossary repos from GitHub."
-              : "",
-        };
-      }
-
-      return {
-        glossaries: sortGlossaries(localSummaries.map(normalizeGlossarySummary).filter(Boolean)),
-        remoteRepos: [],
-        syncSnapshots: [],
-        syncIssue: "",
-        brokerWarning: GLOSSARY_BROKER_ROUTE_UNAVAILABLE_MESSAGE,
-        recoveryMessage: "",
-      };
-    }
-    throw error;
+    metadataRecords = await finalizeMissingGlossariesForTeam(team, metadataRecords, remoteRepos);
+    localSummaries = await purgeTombstonedGlossariesForTeam(team, localSummaries, metadataRecords);
   }
   const syncTargets = metadataRecords.length > 0
     ? buildMetadataBackedGlossarySyncRepos(metadataRecords, remoteRepos, { remoteLoaded })

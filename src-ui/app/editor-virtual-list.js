@@ -14,9 +14,6 @@ import {
   logEditorImageRowHeightChange,
 } from "./editor-image-debug.js";
 import {
-  EDITOR_RECONCILES_GLOSSARY_VISIBLE_LAYOUT,
-} from "./editor-scroll-policy.js";
-import {
   EDITOR_ROW_GAP_PX,
   EDITOR_VIRTUALIZATION_INITIAL_VIEWPORT_PX,
   EDITOR_VIRTUALIZATION_SCROLL_REASON,
@@ -571,37 +568,13 @@ export function createEditorVirtualListController({
     }
   };
 
-  const reconcileVisibleLayoutChanges = (reason) => {
-    const anchorSnapshot = captureEditorLayoutAnchor(root);
-    const heightsChanged = measureVisibleRowHeights();
-    if (!heightsChanged) {
-      return;
-    }
-
-    logEditorScrollDebug("virtualization-external-height-change", {
-      engine: "tanstack",
-      reason,
-      rowAnchorId: anchorSnapshot?.rowId ?? "",
-      scrollTop: scrollContainer.scrollTop,
-      rangeKey: currentRangeKey,
-    });
-    scheduleRender(reason, {
-      anchorSnapshot,
-    });
-  };
-
   glossarySync = createEditorVisibleGlossarySync(root, scrollContainer, appState, {
     afterVisibleSync() {
-      if (!EDITOR_RECONCILES_GLOSSARY_VISIBLE_LAYOUT) {
-        logEditorScrollDebug("glossary-visible-sync-layout-skipped", {
-          engine: "tanstack",
-          scrollTop: scrollContainer.scrollTop,
-          rangeKey: currentRangeKey,
-        });
-        return;
-      }
-
-      reconcileVisibleLayoutChanges("glossary-visible-sync");
+      logEditorScrollDebug("glossary-visible-sync-layout-skipped", {
+        engine: "tanstack",
+        scrollTop: scrollContainer.scrollTop,
+        rangeKey: currentRangeKey,
+      });
     },
   });
 
