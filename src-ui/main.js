@@ -8,10 +8,6 @@ import { registerAppEvents } from "./app/events.js";
 import {
   initializeEditorVirtualization,
 } from "./app/editor-virtualization.js";
-import {
-  loadGithubAppTestConfig,
-  registerGithubAppTestListener,
-} from "./app/github-app-test-flow.js";
 import { loadUserTeams, setGithubAppInstallation } from "./app/team-setup-flow.js";
 import { initializeConnectivity } from "./app/offline-connectivity.js";
 import { initializePersistentStorage } from "./app/persistent-store.js";
@@ -85,7 +81,6 @@ import {
 } from "./app/translate-flow.js";
 import { registerTranslateEditorDomEvents } from "./app/translate-editor-dom-events.js";
 import { checkForAppUpdate } from "./app/updater-flow.js";
-import { renderGithubAppTestScreen } from "./screens/github-app-test.js";
 import { renderAppUpdateModal } from "./screens/app-update-modal.js";
 import { renderConnectionFailureModal } from "./screens/connection-failure-modal.js";
 import { renderEditorAiTranslateAllModal } from "./screens/editor-ai-translate-all-modal.js";
@@ -106,7 +101,6 @@ import {
 import { renderUsersScreen } from "./screens/users.js";
 
 const screenRenderers = {
-  githubAppTest: () => renderGithubAppTestScreen(state),
   start: () => renderStartScreen(state),
   aiKey: () => renderAiKeyScreen(state),
   teams: () => renderTeamsScreen(state),
@@ -118,7 +112,6 @@ const screenRenderers = {
 };
 
 const titles = {
-  githubAppTest: "GitHub App Auth Test - Gnosis TMS",
   start: "Gnosis TMS",
   aiKey: "AI Settings - Gnosis TMS",
   teams: "Translation Teams - Gnosis TMS",
@@ -666,8 +659,6 @@ async function bootstrap() {
   const storedBrokerSession = await prepareStoredBrokerSessionRestore();
   void registerBrokerAuthListener(render, loadUserTeams);
   void registerGithubAppInstallListener(render, setGithubAppInstallation);
-  void registerGithubAppTestListener(render);
-  void loadGithubAppTestConfig(render);
   void checkForAppUpdate(render, { silent: true });
   render();
   void initializeConnectivity(render, () => restoreStoredBrokerSession(render, loadUserTeams, storedBrokerSession));

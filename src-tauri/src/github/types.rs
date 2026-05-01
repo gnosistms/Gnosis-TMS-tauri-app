@@ -42,17 +42,6 @@ pub(crate) struct GithubAppInstallationInfo {
 
 #[derive(Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct GithubRepository {
-    pub(crate) id: i64,
-    pub(crate) name: String,
-    pub(crate) full_name: String,
-    pub(crate) html_url: Option<String>,
-    pub(crate) private: bool,
-    pub(crate) description: Option<String>,
-}
-
-#[derive(Serialize, Deserialize, Clone)]
-#[serde(rename_all = "camelCase")]
 pub(crate) struct GithubProjectRepo {
     pub(crate) id: String,
     pub(crate) repo_id: i64,

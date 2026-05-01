@@ -7,7 +7,6 @@ mod callbacks;
 mod constants;
 mod git_commit;
 mod github;
-mod github_app_test;
 mod glossary_repo_sync;
 mod glossary_storage;
 mod insecure_github_app_config;
@@ -75,10 +74,6 @@ use crate::{
         revoke_organization_admin_for_installation, search_github_users_for_installation,
         setup_organization_for_installation, update_organization_description_for_installation,
         update_organization_name_for_installation,
-    },
-    github_app_test::{
-        begin_github_app_test_install, get_github_app_test_config,
-        inspect_github_app_test_installation, list_github_app_test_repositories,
     },
     glossary_repo_sync::{sync_gtms_glossary_editor_repo, sync_gtms_glossary_repos},
     glossary_storage::{
@@ -509,8 +504,6 @@ pub fn run() {
             run_ai_assistant_turn,
             probe_ai_provider_model,
             begin_github_app_install,
-            begin_github_app_test_install,
-            get_github_app_test_config,
             create_gnosis_project_repo,
             rename_gnosis_project_repo,
             mark_gnosis_project_repo_deleted,
@@ -531,7 +524,6 @@ pub fn run() {
             delete_local_gnosis_glossary_metadata_record,
             push_local_team_metadata_repo,
             list_accessible_github_app_installations,
-            inspect_github_app_test_installation,
             ensure_gnosis_repo_properties_schema,
             list_gnosis_projects_for_installation,
             reconcile_project_repo_sync_states,
@@ -596,7 +588,6 @@ pub fn run() {
             rollback_gtms_glossary_term_upsert,
             delete_gtms_glossary_term,
             permanently_delete_gnosis_glossary_repo,
-            list_github_app_test_repositories,
             list_organization_members_for_installation,
             search_github_users_for_installation,
             invite_user_to_organization_for_installation,

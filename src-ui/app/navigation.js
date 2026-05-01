@@ -10,7 +10,6 @@ import {
 import { lockScreenScrollSnapshot, unlockScreenScrollSnapshot } from "./scroll-state.js";
 import { state, resetSessionState } from "./state.js";
 import { waitForNextPaint } from "./runtime.js";
-import { loadGithubAppTestConfig } from "./github-app-test-flow.js";
 import {
   loadSelectedGlossaryEditorData,
   loadTeamGlossaries,
@@ -226,12 +225,6 @@ export async function refreshCurrentScreen(render) {
 
     if (screen === "users") {
       await loadTeamUsers(render, state.selectedTeamId);
-      return;
-    }
-
-    if (screen === "githubAppTest") {
-      await loadGithubAppTestConfig(render);
-      await completePageSync(render);
       return;
     }
 

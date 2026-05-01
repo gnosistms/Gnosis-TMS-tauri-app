@@ -22,9 +22,7 @@
 
   .glossary-list,
   .term-grid,
-  .chapter-table__row,
-  .github-app-test-grid__row,
-  .github-app-test-table {
+  .chapter-table__row {
     grid-template-columns: 1fr;
   }
 

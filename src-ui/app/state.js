@@ -51,7 +51,6 @@ export const state = {
   connectionFailure: createConnectionFailureState(),
   navigationLoadingModal: createNavigationLoadingModalState(),
   statusBadges: createStatusBadgesState(),
-  githubAppTest: createGithubAppTestState(),
   orgDiscovery: {
     status: "idle",
     error: "",
@@ -253,18 +252,6 @@ export function createTeamSetupState() {
     invalidInstallationAccountLogin: "",
     invalidInstallationAccountType: "",
     expectedOrganizationName: "",
-  };
-}
-
-export function createGithubAppTestState() {
-  return {
-    configStatus: "idle",
-    status: "idle",
-    message: "",
-    config: null,
-    installationId: null,
-    installation: null,
-    repositories: [],
   };
 }
 
@@ -923,7 +910,6 @@ export function resetSessionState() {
     pendingAutoOpenSingleTeam: false,
   };
   state.appUpdate = createAppUpdateState();
-  state.githubAppTest = createGithubAppTestState();
   state.teams = [];
   state.deletedTeams = [];
   state.selectedTeamId = null;
