@@ -18,6 +18,7 @@ import {
   renderFlowArrowIcon,
   renderInlineStateBox,
   secondaryButton,
+  textAction,
   tooltipAttributes,
 } from "../lib/ui.js";
 import { resolveVisibleEditorAiReview } from "../app/editor-ai-review-state.js";
@@ -437,7 +438,25 @@ function renderAssistantPromptDetails(item) {
   `;
 }
 
-function renderAssistantTranscriptItem(item) {
+function assistantDraftCanShowDiff(item, currentTargetText) {
+  return Boolean(item?.draftTranslationText)
+    && typeof currentTargetText === "string"
+    && currentTargetText.trim().length > 0;
+}
+
+function renderAssistantDraftText(item, currentTargetText) {
+  const draftText = item?.draftTranslationText ?? "";
+  if (assistantDraftCanShowDiff(item, currentTargetText) && item?.draftDiffHidden !== true) {
+    return renderHistoryContent(
+      { plainText: draftText },
+      { plainText: currentTargetText },
+    );
+  }
+
+  return escapeHtml(draftText);
+}
+
+function renderAssistantTranscriptItem(item, currentTargetText = "") {
   const itemType = item?.type ?? "assistant-message";
   const text = typeof item?.text === "string" ? item.text.trim() : "";
 
@@ -450,6 +469,12 @@ function renderAssistantTranscriptItem(item) {
   }
 
   if (itemType === "draft-translation") {
+    const canToggleDiff = assistantDraftCanShowDiff(item, currentTargetText);
+    const isDiffHidden = item.draftDiffHidden === true;
+    const diffToggleLabel = isDiffHidden ? "Show diff" : "Hide diff";
+    const diffToggleTooltip = isDiffHidden
+      ? "Show markings that indicate the differences between this draft and the translation on the left."
+      : "Hide the markings that indicate the differences between this draft and the translation on the left.";
     const applyLabel =
       item.applyStatus === "applying"
         ? "Applying..."
@@ -461,7 +486,7 @@ function renderAssistantTranscriptItem(item) {
       <article class="assistant-item assistant-item--assistant">
         <p class="assistant-item__label">Draft Translation</p>
         ${text ? `<p class="assistant-item__text">${escapeHtml(text)}</p>` : ""}
-        <pre class="assistant-item__draft">${escapeHtml(item.draftTranslationText ?? "")}</pre>
+        <pre class="assistant-item__draft">${renderAssistantDraftText(item, currentTargetText)}</pre>
         ${
           item.applyError
             ? renderInlineStateBox({
@@ -471,11 +496,23 @@ function renderAssistantTranscriptItem(item) {
             : ""
         }
         <div class="assistant-item__actions">
-          ${secondaryButton(applyLabel, `apply-editor-assistant-draft:${item.id}`, {
-            compact: true,
-            disabled: isDisabled,
-            className: "button--replace-toolbar",
-          })}
+          <div class="assistant-item__actions-left">
+            ${
+              canToggleDiff
+                ? textAction(diffToggleLabel, `toggle-editor-assistant-draft-diff:${item.id}`, {
+                  tooltip: diffToggleTooltip,
+                  tooltipOptions: { align: "start" },
+                })
+                : ""
+            }
+          </div>
+          <div class="assistant-item__actions-right">
+            ${secondaryButton(applyLabel, `apply-editor-assistant-draft:${item.id}`, {
+              compact: true,
+              disabled: isDisabled,
+              className: "button--replace-toolbar",
+            })}
+          </div>
         </div>
         ${renderAssistantPromptDetails(item)}
       </article>
@@ -538,6 +575,9 @@ function renderAssistantTranscript(editorChapter, rows, languages, sourceCode, t
     ?? translateLanguages.toolbarTargetLanguage
     ?? languages.find((language) => language.code === targetCode)
     ?? null;
+  const targetSection =
+    activeRow?.sections?.find((section) => section.code === targetLanguage?.code) ?? null;
+  const currentTargetText = typeof targetSection?.text === "string" ? targetSection.text : "";
   const threadKey = buildEditorAssistantThreadKey(activeRow?.id ?? null, targetLanguage?.code ?? null);
   const thread = currentEditorAssistantThread(editorChapter, threadKey);
   const assistant = normalizeEditorAssistantState(editorChapter?.assistant);
@@ -568,7 +608,7 @@ function renderAssistantTranscript(editorChapter, rows, languages, sourceCode, t
           message: assistant.error,
         })
         : ""}
-      ${items.map((item) => renderAssistantTranscriptItem(item)).join("")}
+      ${items.map((item) => renderAssistantTranscriptItem(item, currentTargetText)).join("")}
       ${statusText ? `<p class="assistant-transcript__status">${escapeHtml(statusText)}</p>` : ""}
     </div>
   `;

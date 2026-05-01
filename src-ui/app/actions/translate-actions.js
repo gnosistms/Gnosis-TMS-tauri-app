@@ -68,6 +68,7 @@ import {
   toggleEditorSearchFilterCaseSensitive,
   toggleDeletedEditorRowGroup,
   toggleEditorInlineStyle,
+  toggleEditorAssistantDraftDiff,
   toggleEditorRowFieldMarker,
   toggleEditorHistoryGroupExpanded,
   toggleEditorReviewSectionExpanded,
@@ -462,6 +463,12 @@ export function createTranslateActions(render) {
     const assistantDraftId = actionSuffix(action, "apply-editor-assistant-draft:");
     if (assistantDraftId !== null) {
       await applyEditorAssistantDraft(render, assistantDraftId);
+      return true;
+    }
+
+    const assistantDraftDiffId = actionSuffix(action, "toggle-editor-assistant-draft-diff:");
+    if (assistantDraftDiffId !== null) {
+      toggleEditorAssistantDraftDiff(render, assistantDraftDiffId);
       return true;
     }
 

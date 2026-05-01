@@ -1854,7 +1854,9 @@
 .history-item__content .history-diff__insert,
 .history-item__content .history-diff__delete,
 .history-item__style-note .history-diff__insert,
-.history-item__style-note .history-diff__delete {
+.history-item__style-note .history-diff__delete,
+.assistant-item__draft .history-diff__insert,
+.assistant-item__draft .history-diff__delete {
   font-family: inherit;
   font-weight: inherit;
 }
@@ -2136,7 +2138,19 @@
 
 .assistant-item__actions {
   display: flex;
-  justify-content: flex-end;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.assistant-item__actions-left,
+.assistant-item__actions-right {
+  display: inline-flex;
+  align-items: center;
+}
+
+.assistant-item__actions-right {
+  margin-left: auto;
 }
 
 .assistant-composer {

@@ -114,6 +114,7 @@ test("stored assistant chapter data round-trips per team/project/chapter", () =>
             targetLanguageCode: "vi",
             promptText: "",
             draftTranslationText: "",
+            draftDiffHidden: false,
             applyStatus: "idle",
             applyError: "",
             appliedAt: null,

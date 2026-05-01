@@ -64,6 +64,7 @@ export function normalizeEditorAssistantItem(item) {
         : null,
     promptText: typeof item?.promptText === "string" ? item.promptText : "",
     draftTranslationText: typeof item?.draftTranslationText === "string" ? item.draftTranslationText : "",
+    draftDiffHidden: item?.draftDiffHidden === true,
     applyStatus:
       item?.applyStatus === "applying" || item?.applyStatus === "applied" || item?.applyStatus === "error"
         ? item.applyStatus

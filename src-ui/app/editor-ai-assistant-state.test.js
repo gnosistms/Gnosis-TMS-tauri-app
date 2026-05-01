@@ -10,6 +10,7 @@ import {
   buildEditorAssistantThreadKey,
   currentEditorAssistantThread,
   normalizeEditorAssistantState,
+  updateEditorAssistantItem,
 } from "./editor-ai-assistant-state.js";
 import { createEditorChapterState } from "./state.js";
 
@@ -48,6 +49,42 @@ test("appendEditorAssistantItems stores transcript items on the active row-targe
   assert.equal(result.assistant.threadsByKey["row-1::vi"].targetLanguageCode, "vi");
   assert.equal(result.assistant.threadsByKey["row-1::vi"].items.length, 1);
   assert.equal(result.assistant.threadsByKey["row-1::vi"].items[0].sourceLanguageCode, "es");
+});
+
+test("assistant draft item keeps the diff visibility preference", () => {
+  const chapterState = {
+    ...createEditorChapterState(),
+    chapterId: "chapter-1",
+    assistant: normalizeEditorAssistantState({
+      threadsByKey: {
+        "row-1::vi": {
+          rowId: "row-1",
+          targetLanguageCode: "vi",
+          items: [{
+            id: "draft-1",
+            type: "draft-translation",
+            createdAt: "2026-04-21T12:00:00.000Z",
+            draftTranslationText: "Ban dich moi",
+            draftDiffHidden: true,
+          }],
+        },
+      },
+    }),
+  };
+
+  assert.equal(
+    currentEditorAssistantThread(chapterState, "row-1::vi").items[0].draftDiffHidden,
+    true,
+  );
+
+  const updated = updateEditorAssistantItem(chapterState, "row-1::vi", "draft-1", (item) => ({
+    ...item,
+    draftDiffHidden: false,
+  }));
+  assert.equal(
+    currentEditorAssistantThread(updated, "row-1::vi").items[0].draftDiffHidden,
+    false,
+  );
 });
 
 test("assistant draft apply lifecycle updates the draft item status", () => {

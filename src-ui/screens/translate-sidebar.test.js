@@ -192,6 +192,133 @@ test("assistant sidebar hides translate buttons after the active thread has hist
   assert.match(html, /data-editor-assistant-draft/);
 });
 
+test("assistant draft translation shows a diff when the active target field is non-empty", () => {
+  const html = renderTranslateSidebar(
+    activeEditorChapter({
+      assistant: {
+        status: "idle",
+        activeThreadKey: "row-1::vi",
+        threadsByKey: {
+          "row-1::vi": {
+            rowId: "row-1",
+            targetLanguageCode: "vi",
+            items: [{
+              id: "draft-1",
+              type: "draft-translation",
+              createdAt: "2026-04-30T00:00:00.000Z",
+              text: "Suggested update.",
+              summary: "Suggested update.",
+              sourceLanguageCode: "es",
+              targetLanguageCode: "vi",
+              draftTranslationText: "Xin chao moi",
+            }],
+          },
+        },
+      },
+    }),
+    [{
+      id: "row-1",
+      sections: [
+        { code: "es", text: "Hola" },
+        { code: "vi", text: "Xin chao cu" },
+      ],
+    }],
+    languages,
+    "es",
+    "vi",
+    createAiActionConfigurationState(),
+  );
+
+  assert.match(html, /class="assistant-item__draft"/);
+  assert.match(html, /history-diff__delete/);
+  assert.match(html, /history-diff__insert/);
+  assert.match(html, /data-action="toggle-editor-assistant-draft-diff:draft-1"/);
+  assert.match(html, />Hide diff<\/button>/);
+  assert.match(html, /data-tooltip="Hide the markings that indicate the differences between this draft and the translation on the left\."/);
+  assert.match(html, /cu/);
+  assert.match(html, /moi/);
+});
+
+test("assistant draft translation can render with diff markings hidden", () => {
+  const html = renderTranslateSidebar(
+    activeEditorChapter({
+      assistant: {
+        status: "idle",
+        activeThreadKey: "row-1::vi",
+        threadsByKey: {
+          "row-1::vi": {
+            rowId: "row-1",
+            targetLanguageCode: "vi",
+            items: [{
+              id: "draft-1",
+              type: "draft-translation",
+              createdAt: "2026-04-30T00:00:00.000Z",
+              text: "Suggested update.",
+              summary: "Suggested update.",
+              sourceLanguageCode: "es",
+              targetLanguageCode: "vi",
+              draftTranslationText: "Xin chao moi",
+              draftDiffHidden: true,
+            }],
+          },
+        },
+      },
+    }),
+    [{
+      id: "row-1",
+      sections: [
+        { code: "es", text: "Hola" },
+        { code: "vi", text: "Xin chao cu" },
+      ],
+    }],
+    languages,
+    "es",
+    "vi",
+    createAiActionConfigurationState(),
+  );
+
+  assert.match(html, /<pre class="assistant-item__draft">Xin chao moi<\/pre>/);
+  assert.doesNotMatch(html, /history-diff__/);
+  assert.match(html, />Show diff<\/button>/);
+  assert.match(html, /data-tooltip="Show markings that indicate the differences between this draft and the translation on the left\."/);
+});
+
+test("assistant draft translation renders plain text when the active target field is empty", () => {
+  const html = renderTranslateSidebar(
+    activeEditorChapter({
+      assistant: {
+        status: "idle",
+        activeThreadKey: "row-1::vi",
+        threadsByKey: {
+          "row-1::vi": {
+            rowId: "row-1",
+            targetLanguageCode: "vi",
+            items: [{
+              id: "draft-1",
+              type: "draft-translation",
+              createdAt: "2026-04-30T00:00:00.000Z",
+              text: "Suggested translation.",
+              summary: "Suggested translation.",
+              sourceLanguageCode: "es",
+              targetLanguageCode: "vi",
+              draftTranslationText: "Xin chao",
+            }],
+          },
+        },
+      },
+    }),
+    rows,
+    languages,
+    "es",
+    "vi",
+    createAiActionConfigurationState(),
+  );
+
+  assert.match(html, /<pre class="assistant-item__draft">Xin chao<\/pre>/);
+  assert.doesNotMatch(html, /history-diff__/);
+  assert.doesNotMatch(html, /toggle-editor-assistant-draft-diff/);
+});
+
 test("translation log details show only what was sent to the model", () => {
   const html = renderTranslateSidebar(
     activeEditorChapter({

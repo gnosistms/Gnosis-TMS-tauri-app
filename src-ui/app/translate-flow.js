@@ -63,6 +63,7 @@ import {
   applyEditorAssistantDraft as applyEditorAssistantDraftFlow,
   runEditorAiAssistant as runEditorAiAssistantFlow,
   scheduleAssistantTranscriptScrollToBottom,
+  toggleEditorAssistantDraftDiff as toggleEditorAssistantDraftDiffFlow,
   updateEditorAssistantComposerDraft as updateEditorAssistantComposerDraftFlow,
 } from "./editor-ai-assistant-flow.js";
 import {
@@ -566,6 +567,10 @@ export async function applyEditorAssistantDraft(render, itemId) {
     updateEditorRowFieldValue,
     persistEditorRowOnBlur,
   });
+}
+
+export function toggleEditorAssistantDraftDiff(render, itemId) {
+  toggleEditorAssistantDraftDiffFlow(render, itemId);
 }
 
 export async function applyEditorAiReview(render) {

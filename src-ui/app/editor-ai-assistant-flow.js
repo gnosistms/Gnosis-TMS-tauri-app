@@ -29,6 +29,7 @@ import {
   applyEditorAssistantProviderContinuity,
   applyEditorAssistantThinking,
   clearEditorAssistantPending,
+  updateEditorAssistantItem,
 } from "./editor-ai-assistant-state.js";
 import { showNoticeBadge } from "./status-feedback.js";
 import {
@@ -1264,6 +1265,29 @@ export async function applyEditorAssistantDraft(render, itemId, operations = {})
     persistAssistantState();
     renderAssistantSidebar(render);
   }
+}
+
+export function toggleEditorAssistantDraftDiff(render, itemId) {
+  if (!itemId) {
+    return;
+  }
+
+  const context = currentAssistantContext();
+  if (!context?.threadKey) {
+    return;
+  }
+
+  state.editorChapter = updateEditorAssistantItem(
+    state.editorChapter,
+    context.threadKey,
+    itemId,
+    (item) => ({
+      ...item,
+      draftDiffHidden: item.draftDiffHidden !== true,
+    }),
+  );
+  persistAssistantState();
+  renderAssistantSidebar(render);
 }
 
 export function logEditorAssistantTranslation(payload = {}) {
