@@ -1,8 +1,7 @@
-import { clearStoredAuthSession } from "./auth-storage.js";
 import { openConnectionFailureModal } from "./connection-failure.js";
 import { checkInternetConnection } from "./offline-connectivity.js";
 import { showNoticeBadge } from "./status-feedback.js";
-import { createProjectDiscoveryState, resetSessionState, state } from "./state.js";
+import { createProjectDiscoveryState, state } from "./state.js";
 import { removeStoredTeamRecord, splitStoredTeamRecords } from "./team-storage.js";
 import { applyTeamSnapshotToState, resolveNextSelectedTeamId } from "./team-flow/shared.js";
 import { parseRequiredAppUpdateFromError, requireAppUpdate } from "./updater-flow.js";
@@ -67,15 +66,14 @@ export async function handleSyncFailure(
     return false;
   }
 
-  await clearStoredAuthSession();
-  resetSessionState();
   state.auth = {
+    ...state.auth,
     status: "expired",
     message:
-      "Your GitHub session expired. Please log in with GitHub again to continue.",
-    session: null,
+      "GitHub could not refresh this session. You are still signed in locally; online sync will retry automatically.",
   };
-  state.screen = "start";
-  render?.();
+  if (render) {
+    showNoticeBadge(state.auth.message, render);
+  }
   return true;
 }

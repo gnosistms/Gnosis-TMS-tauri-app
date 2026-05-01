@@ -1,11 +1,9 @@
 import { invoke, listen, openExternalUrl } from "./runtime.js";
 import {
-  clearStoredAuthSession,
   loadStoredAuthSession,
   saveStoredAuthSession,
 } from "./auth-storage.js";
 import {
-  clearActiveStorageLogin,
   setActiveStorageLogin,
 } from "./team-storage.js";
 import { hydrateStoredEditorPreferences, hydrateStoredTeamState, state } from "./state.js";
@@ -156,21 +154,6 @@ export async function restoreStoredBrokerSession(
     render();
     void loadUserTeams(render);
   } catch (error) {
-    const classification = classifySyncError(error);
-    if (classification.type === "auth_invalid") {
-      await clearStoredAuthSession();
-      clearActiveStorageLogin();
-      state.auth = {
-        status: "idle",
-        message: "",
-        session: null,
-        pendingAutoOpenSingleTeam: false,
-      };
-      state.screen = "start";
-      render();
-      return;
-    }
-
     setActiveStorageLogin(session.login);
     hydrateStoredDataForActiveUser({
       preserveResourceContext: shouldPreserveCurrentScreen(options),

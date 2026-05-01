@@ -65,10 +65,15 @@ globalThis.window = {
     callback();
     return 1;
   },
+  setTimeout() {
+    return 1;
+  },
+  clearTimeout() {},
 };
 
 const { restoreStoredBrokerSession } = await import("./auth-flow.js");
 const { enableOfflineMode, reconnectOnlineMode } = await import("./offline-connectivity.js");
+const { handleSyncFailure } = await import("./sync-recovery.js");
 const { resetSessionState, state } = await import("./state.js");
 const { saveStoredTeamRecords, setActiveStorageLogin } = await import("./team-storage.js");
 
@@ -162,4 +167,68 @@ test("restoreStoredBrokerSession preserves editor navigation state when requeste
   assert.deepEqual(state.projects, [{ id: "project-1" }]);
   assert.equal(state.auth.pendingAutoOpenSingleTeam, false);
   assert.equal(loadedTeams, true);
+});
+
+test("restoreStoredBrokerSession keeps the saved login when session inspection expires", async () => {
+  const storedSession = {
+    sessionToken: "session-1",
+    login: "hans",
+  };
+  state.screen = "teams";
+
+  invokeHandler = async (command) => {
+    assert.equal(command, "inspect_broker_auth_session");
+    throw new Error("AUTH_REQUIRED:Your GitHub session expired.");
+  };
+
+  let loadedTeams = false;
+  await restoreStoredBrokerSession(
+    () => {},
+    () => {
+      loadedTeams = true;
+    },
+    storedSession,
+  );
+
+  assert.equal(state.screen, "teams");
+  assert.deepEqual(state.auth.session, {
+    sessionToken: "session-1",
+    login: "hans",
+  });
+  assert.equal(state.auth.status, "success");
+  assert.equal(loadedTeams, true);
+});
+
+test("handleSyncFailure preserves the local session on auth failures", async () => {
+  state.screen = "projects";
+  state.auth = {
+    status: "success",
+    message: "",
+    session: {
+      sessionToken: "session-1",
+      login: "hans",
+    },
+  };
+
+  let renderCount = 0;
+  const handled = await handleSyncFailure(
+    {
+      type: "auth_invalid",
+      message: "AUTH_REQUIRED:Your GitHub session expired.",
+    },
+    {
+      render: () => {
+        renderCount += 1;
+      },
+    },
+  );
+
+  assert.equal(handled, true);
+  assert.equal(state.screen, "projects");
+  assert.deepEqual(state.auth.session, {
+    sessionToken: "session-1",
+    login: "hans",
+  });
+  assert.equal(state.auth.status, "expired");
+  assert.equal(renderCount, 1);
 });
