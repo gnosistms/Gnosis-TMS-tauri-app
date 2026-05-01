@@ -17,10 +17,6 @@ export function compactDirtyRowIds(rows, dirtyRowIds) {
   );
 }
 
-export function dirtyTrackedEditorRowIds(chapterState = state.editorChapter, rowIds = null) {
-  return resolveDirtyTrackedEditorRowIds(chapterState?.dirtyRowIds, { rowIds });
-}
-
 function setEditorDirtyRowIds(dirtyRowIds) {
   if (!state.editorChapter?.chapterId) {
     return;

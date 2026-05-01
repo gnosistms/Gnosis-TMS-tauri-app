@@ -1,9 +1,12 @@
 import { state } from "./state.js";
 import { readDevRuntimeFlags } from "./dev-runtime-flags.js";
 
-export const app = document.querySelector("#app");
+const runtimeDocument = typeof document !== "undefined" ? document : null;
+const runtimeWindow = typeof window !== "undefined" ? window : {};
 
-const tauri = window.__TAURI__ ?? {};
+export const app = runtimeDocument?.querySelector("#app") ?? null;
+
+const tauri = runtimeWindow.__TAURI__ ?? {};
 const rawInvoke = tauri.core?.invoke?.bind(tauri.core);
 
 export const listen = tauri.event?.listen?.bind(tauri.event);

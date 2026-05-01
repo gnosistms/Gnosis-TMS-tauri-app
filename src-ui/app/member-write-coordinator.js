@@ -28,14 +28,6 @@ export function memberOwnerPromotionIntentKey(teamId, username) {
   return `member:owner:${teamId ?? "unknown"}:${username ?? "unknown"}`;
 }
 
-export function memberInviteIntentKey(teamId, login) {
-  return `member:invite:${teamId ?? "unknown"}:${login ?? "unknown"}`;
-}
-
-export function memberWriteScope(team) {
-  return `members:${team?.installationId ?? "unknown"}`;
-}
-
 export function memberUserWriteScope(team, username) {
   return `members:${team?.installationId ?? "unknown"}:${username ?? "unknown"}`;
 }

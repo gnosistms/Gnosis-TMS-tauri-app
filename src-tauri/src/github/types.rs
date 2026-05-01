@@ -84,13 +84,6 @@ pub(crate) struct GithubGlossaryRepo {
 
 #[derive(Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct TeamMetadataRecordListInput {
-    pub(crate) installation_id: i64,
-    pub(crate) org_login: String,
-}
-
-#[derive(Serialize, Deserialize, Clone)]
-#[serde(rename_all = "camelCase")]
 pub(crate) struct GithubProjectMetadataRecord {
     pub(crate) id: String,
     pub(crate) kind: String,

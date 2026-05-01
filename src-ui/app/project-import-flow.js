@@ -744,14 +744,6 @@ export async function importProjectFiles(render, selectedFiles, options = {}) {
   render();
 }
 
-export async function handleDroppedProjectImportFile(render, file) {
-  if (!state.projectImport.isOpen || state.projectImport.status === "importing") {
-    return;
-  }
-
-  await importProjectFile(render, file);
-}
-
 export async function handleDroppedProjectImportFiles(render, files) {
   if (!state.projectImport.isOpen || state.projectImport.status === "importing") {
     return;

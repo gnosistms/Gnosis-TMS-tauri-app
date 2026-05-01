@@ -44,11 +44,6 @@ function persistSeenRevision(chapterId, rowId, commentsRevision) {
   state.editorChapter = applyEditorCommentSeenRevisions(state.editorChapter, seenRevisions);
 }
 
-export function hydrateEditorCommentSeenRevisions(chapterId, rowIds = []) {
-  const seenRevisions = pruneStoredEditorCommentSeenRevisions(chapterId, rowIds);
-  state.editorChapter = applyEditorCommentSeenRevisions(state.editorChapter, seenRevisions);
-}
-
 function markRowCommentsSeen(rowId, commentsRevision) {
   if (!state.editorChapter?.chapterId || !rowId) {
     return false;

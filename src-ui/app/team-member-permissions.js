@@ -2,10 +2,6 @@ export function isOwnerRole(user) {
   return String(user?.role ?? "").trim().toLowerCase() === "owner";
 }
 
-export function isCurrentUserOwner(selectedTeam) {
-  return selectedTeam?.canDelete === true;
-}
-
 export function countOwners(users = []) {
   return users.filter(isOwnerRole).length;
 }

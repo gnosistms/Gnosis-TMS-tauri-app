@@ -107,28 +107,6 @@ export function loadActiveEditorFieldHistory(render) {
   void fetchEditorFieldHistory(render, requestKey);
 }
 
-export function setActiveEditorField(render, rowId, languageCode) {
-  if (!rowId || !languageCode || !hasEditorRow(state.editorChapter, rowId) || !hasEditorLanguage(state.editorChapter, languageCode)) {
-    return;
-  }
-
-  const editorChapter = state.editorChapter;
-  if (
-    editorChapter.activeRowId === rowId
-    && editorChapter.activeLanguageCode === languageCode
-    && (editorChapter.history?.status === "loading" || editorChapter.history?.status === "ready")
-  ) {
-    return;
-  }
-
-  state.editorChapter = {
-    ...editorChapter,
-    activeRowId: rowId,
-    activeLanguageCode: languageCode,
-  };
-  loadActiveEditorFieldHistory(render);
-}
-
 export function toggleEditorHistoryGroupExpanded(groupKey) {
   if (!groupKey || !state.editorChapter?.chapterId) {
     return;
@@ -143,10 +121,6 @@ export function hasPendingEditorRowWrites(chapterState = state.editorChapter) {
     || row?.markerSaveState?.status === "saving"
     || row?.textStyleSaveState?.status === "saving"
   );
-}
-
-export function currentActiveHistoryEntryByCommitSha(commitSha, chapterState = state.editorChapter) {
-  return currentActiveEditorHistoryEntryByCommitSha(chapterState, commitSha);
 }
 
 export function openEditorReplaceUndoModal(commitSha) {

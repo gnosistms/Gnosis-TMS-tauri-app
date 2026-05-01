@@ -74,15 +74,6 @@ pub(crate) struct ProjectEditorRepoSyncInput {
     pub(crate) chapter_id: String,
 }
 
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct InspectProjectEditorRepoSyncStateInput {
-    pub(crate) installation_id: i64,
-    pub(crate) project_id: String,
-    pub(crate) repo_name: String,
-    pub(crate) since_head_sha: Option<String>,
-}
-
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ProjectRepoSyncSnapshot {
@@ -109,13 +100,6 @@ pub(crate) struct ProjectEditorRepoSyncResponse {
     pub(crate) deleted_row_ids: Vec<String>,
     pub(crate) imported_conflicts: Vec<ImportedEditorConflictRef>,
     pub(crate) affected_chapter_ids: Vec<String>,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct InspectProjectEditorRepoSyncStateResponse {
-    pub(crate) current_head_sha: Option<String>,
-    pub(crate) commits_since_head: usize,
 }
 
 #[derive(Serialize)]
@@ -190,18 +174,6 @@ pub(crate) async fn sync_gtms_project_editor_repo(
     })
     .await
     .map_err(|error| format!("The editor repo sync task failed: {error}"))?
-}
-
-#[tauri::command]
-pub(crate) async fn inspect_gtms_project_editor_repo_sync_state(
-    app: AppHandle,
-    input: InspectProjectEditorRepoSyncStateInput,
-) -> Result<InspectProjectEditorRepoSyncStateResponse, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        inspect_gtms_project_editor_repo_sync_state_sync(&app, input)
-    })
-    .await
-    .map_err(|error| format!("The editor repo sync inspection task failed: {error}"))?
 }
 
 #[tauri::command]
@@ -418,44 +390,6 @@ pub(crate) fn sync_gtms_project_editor_repo_sync(
         deleted_row_ids,
         affected_chapter_ids: imported_conflict_chapter_ids(&sync_outcome.imported_conflicts),
         imported_conflicts: sync_outcome.imported_conflicts,
-    })
-}
-
-fn inspect_gtms_project_editor_repo_sync_state_sync(
-    app: &AppHandle,
-    input: InspectProjectEditorRepoSyncStateInput,
-) -> Result<InspectProjectEditorRepoSyncStateResponse, String> {
-    let repo_path = resolve_or_desired_project_git_repo_path(
-        app,
-        input.installation_id,
-        Some(&input.project_id),
-        &input.repo_name,
-    )?;
-    let current_head_sha = read_current_head_oid(&repo_path);
-    let commits_since_head = input
-        .since_head_sha
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(|since_head_sha| {
-            if current_head_sha.as_deref() == Some(since_head_sha) {
-                return Ok(0usize);
-            }
-
-            let revision_range = format!("{since_head_sha}..HEAD");
-            let count_text =
-                git_output(&repo_path, &["rev-list", "--count", &revision_range], None)?;
-            count_text
-                .trim()
-                .parse::<usize>()
-                .map_err(|error| format!("Could not parse the local commit count: {error}"))
-        })
-        .transpose()?
-        .unwrap_or(0);
-
-    Ok(InspectProjectEditorRepoSyncStateResponse {
-        current_head_sha,
-        commits_since_head,
     })
 }
 

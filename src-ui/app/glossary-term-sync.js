@@ -1,4 +1,5 @@
 import { normalizeGlossaryTerm, selectedGlossaryRepoName, selectedTeam } from "./glossary-shared.js";
+import { invoke } from "./runtime.js";
 import { state } from "./state.js";
 import { showNoticeBadge } from "./status-feedback.js";
 
@@ -223,16 +224,6 @@ export function replaceOptimisticGlossaryTerm(clientId, confirmedTerm, options =
   return normalized;
 }
 
-export function markVisibleGlossaryTermPending(termId, mutation) {
-  return updateGlossaryEditorTerm(termId, (term) =>
-    withGlossaryTermUiFields(term, {
-      ...glossaryTermUiFields(term),
-      pendingMutation: mutation,
-      pendingError: "",
-    }),
-  );
-}
-
 export function markVisibleGlossaryTermConfirmed(termId, confirmedTerm, options = {}) {
   const existingTerm = findGlossaryTermById(termId);
   const confirmed = normalizedVisibleGlossaryTerm(confirmedTerm ?? existingTerm);
@@ -321,7 +312,6 @@ export async function loadGlossaryTermFromDisk(render, termId, options = {}) {
     }
 
     try {
-      const { invoke } = await import("./runtime.js");
       const payload = await invoke("load_gtms_glossary_term", {
         input: {
           installationId: team.installationId,

@@ -22,10 +22,6 @@ export function resetProjectWriteCoordinator() {
   writeIntents.reset();
 }
 
-export function subscribeProjectWriteState(listener) {
-  return writeIntents.subscribe(listener);
-}
-
 export function projectTitleIntentKey(projectId) {
   return `project:title:${projectId}`;
 }
@@ -64,18 +60,6 @@ export function requestProjectWriteIntent(intent, operations = {}) {
 
 export function getProjectWriteIntent(key) {
   return writeIntents.getIntent(key);
-}
-
-export function getProjectWriteState(key) {
-  return writeIntents.getState(key);
-}
-
-export function projectWriteIsActive(key) {
-  return writeIntents.isActive(key);
-}
-
-export function projectWriteScopeIsActive(scope) {
-  return writeIntents.scopeIsActive(scope);
 }
 
 export function anyProjectWriteIsActive() {

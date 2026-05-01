@@ -263,7 +263,3 @@ export async function deleteGlossaryTerm(render, termId) {
     showNoticeBadge(error?.message ?? String(error), render);
   }
 }
-
-export function showGlossaryFeatureNotReady(render, label = "This glossary action") {
-  showNoticeBadge(`${label} is not implemented yet.`, render);
-}

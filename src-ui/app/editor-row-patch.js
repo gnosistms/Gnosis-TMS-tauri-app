@@ -209,7 +209,3 @@ export function patchMountedEditorRows(root, appState, rowIds, options = {}) {
     visibleRowIds: readVisibleMountedEditorRowIds(root),
   };
 }
-
-export function patchMountedEditorRow(root, appState, rowId, options = {}) {
-  return patchMountedEditorRows(root, appState, [rowId], options);
-}

@@ -97,16 +97,3 @@ export function saveStoredAiActionPreferences(
   const normalizedValue = extractAiActionPreferences(config);
   writePersistentValue(key, normalizedValue);
 }
-
-export function clearStoredAiActionPreferences(
-  login = getActiveStorageLogin(),
-  installationId = selectedTeamInstallationId(),
-) {
-  const teamKey = scopedTeamAiActionSettingsKey(login, installationId);
-  const key = teamKey ?? scopedAiActionSettingsKey(login, installationId);
-  if (!key) {
-    return;
-  }
-
-  removePersistentValue(key);
-}

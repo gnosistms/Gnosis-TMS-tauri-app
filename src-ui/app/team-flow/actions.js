@@ -46,8 +46,6 @@ import {
   teamWriteScope,
 } from "../team-write-coordinator.js";
 
-const inflightTeamMutationIds = new Set();
-
 function setTeamUiDebug(render, text) {
   showScopedSyncBadge("teams", text, render);
 }
@@ -652,43 +650,4 @@ function rollbackVisibleTeamMutation(mutation) {
   );
   applyTeamSnapshotToState(snapshot);
   state.selectedTeamId = resolveNextSelectedTeamId(state.selectedTeamId, state.teams);
-}
-
-export async function processPendingTeamMutations(render) {
-  const pendingMutations = [...state.pendingTeamMutations];
-
-  for (const mutation of pendingMutations) {
-    if (inflightTeamMutationIds.has(mutation.id)) {
-      continue;
-    }
-
-    inflightTeamMutationIds.add(mutation.id);
-    try {
-      await waitForNextPaint();
-      await commitTeamMutation(mutation);
-      state.pendingTeamMutations = removePendingMutation(state.pendingTeamMutations, mutation.id);
-      saveStoredTeamPendingMutations(state.pendingTeamMutations);
-      saveStoredTeamRecords([...state.teams, ...state.deletedTeams]);
-      setTeamUiDebug(render, `Background sync finished (${mutation.type})`);
-      window.setTimeout(() => clearTeamUiDebug(render), 1200);
-    } catch (error) {
-      inflightTeamMutationIds.delete(mutation.id);
-      clearTeamUiDebug(render);
-      state.pendingTeamMutations = removePendingMutation(state.pendingTeamMutations, mutation.id);
-      saveStoredTeamPendingMutations(state.pendingTeamMutations);
-      rollbackVisibleTeamMutation(mutation);
-      saveStoredTeamRecords([...state.teams, ...state.deletedTeams]);
-      if (await handleSyncFailure(classifySyncError(error), { render })) {
-        return;
-      }
-      setTeamUiDebug(render, `Background sync failed (${mutation.type})`);
-      state.orgDiscovery = {
-        status: "error",
-        error: error?.message ?? String(error),
-      };
-      await loadUserTeams(render);
-      return;
-    }
-    inflightTeamMutationIds.delete(mutation.id);
-  }
 }

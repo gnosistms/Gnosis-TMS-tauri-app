@@ -3,7 +3,6 @@ import { invoke } from "./runtime.js";
 import { beginPageSync, completePageSync, failPageSync } from "./page-sync.js";
 import { saveStoredGlossariesForTeam } from "./glossary-cache.js";
 import { normalizeGlossarySummary, sortGlossaries } from "./glossary-shared.js";
-import { createUniqueRepoWithNumericSuffix } from "./repo-creation.js";
 import { areResourcePageWritesDisabled } from "./resource-page-controller.js";
 import { ensureResourceNotTombstoned } from "./resource-lifecycle-engine.js";
 import { showNoticeBadge } from "./status-feedback.js";
@@ -317,26 +316,6 @@ function countRecoverableGlossaryMetadataRecords(records) {
   ).length;
 }
 
-export function glossaryArchiveDownloadUrl(glossary) {
-  const htmlUrl =
-    typeof glossary?.htmlUrl === "string" && glossary.htmlUrl.trim()
-      ? glossary.htmlUrl.trim()
-      : (
-          typeof glossary?.fullName === "string" && glossary.fullName.trim()
-            ? `https://github.com/${glossary.fullName.trim()}`
-            : ""
-        );
-  if (!htmlUrl) {
-    return "";
-  }
-
-  const branchName =
-    typeof glossary?.defaultBranchName === "string" && glossary.defaultBranchName.trim()
-      ? glossary.defaultBranchName.trim()
-      : "main";
-  return `${htmlUrl}/archive/refs/heads/${encodeURIComponent(branchName)}.zip`;
-}
-
 export function getGlossarySyncIssueMessage(syncSnapshots) {
   const snapshots = Array.isArray(syncSnapshots) ? syncSnapshots : [];
   const failedSnapshot = snapshots.find((snapshot) =>
@@ -426,39 +405,6 @@ export async function listLocalGlossarySummariesForTeam(team) {
   });
 
   return Array.isArray(glossaries) ? glossaries : [];
-}
-
-export function mergeRepoBackedGlossarySummaries(localSummaries, remoteRepos) {
-  const remoteByRepoName = new Map(
-    (Array.isArray(remoteRepos) ? remoteRepos : [])
-      .map(normalizeRemoteGlossaryRepo)
-      .filter(Boolean)
-      .map((repo) => [repo.name, repo]),
-  );
-
-  return sortGlossaries(
-    (Array.isArray(localSummaries) ? localSummaries : [])
-      .map((summary) => {
-        const normalized = normalizeGlossarySummary(summary);
-        if (!normalized) {
-          return null;
-        }
-
-        const remoteRepo = remoteByRepoName.get(normalized.repoName);
-        if (!remoteRepo) {
-          return normalized;
-        }
-
-        return {
-          ...normalized,
-          fullName: remoteRepo.fullName,
-          htmlUrl: remoteRepo.htmlUrl,
-          defaultBranchName: remoteRepo.defaultBranchName,
-          defaultBranchHeadOid: remoteRepo.defaultBranchHeadOid,
-        };
-      })
-      .filter(Boolean),
-  );
 }
 
 function getMissingRemoteGlossaryMessage(localSummaries, remoteRepos) {
@@ -764,19 +710,6 @@ export async function createRemoteGlossaryRepoForTeam(team, repoName) {
     throw new Error("Could not determine the new glossary repo metadata.");
   }
   return remoteRepo;
-}
-
-export async function createUniqueRemoteGlossaryRepoForTeam(team, baseRepoName) {
-  const { result, attemptedRepoName, collisionResolved } =
-    await createUniqueRepoWithNumericSuffix(
-      baseRepoName,
-      (candidateRepoName) => createRemoteGlossaryRepoForTeam(team, candidateRepoName),
-    );
-  return {
-    remoteRepo: result,
-    attemptedRepoName,
-    collisionResolved,
-  };
 }
 
 export async function permanentlyDeleteRemoteGlossaryRepoForTeam(team, repoName) {

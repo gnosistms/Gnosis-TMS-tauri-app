@@ -326,15 +326,6 @@ export function refreshEditorVirtualizationLayout(anchorSnapshot = null) {
   activeController?.refreshLayout?.(anchorSnapshot ?? null);
 }
 
-export function invalidateEditorVirtualizationLayout(chapterId = "") {
-  const normalizedChapterId = typeof chapterId === "string" ? chapterId : "";
-  for (const cacheKey of [...rowHeightCacheByLayoutKey.keys()]) {
-    if (!normalizedChapterId || cacheKey.startsWith(`${normalizedChapterId}::`)) {
-      rowHeightCacheByLayoutKey.get(cacheKey)?.clear();
-    }
-  }
-}
-
 function updateSpacerHeight(spacer, height) {
   if (!(spacer instanceof HTMLElement)) {
     return;

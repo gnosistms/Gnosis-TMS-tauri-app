@@ -388,10 +388,6 @@ export function createEditorPreviewSearchState() {
   });
 }
 
-export function coerceEditorMode(value) {
-  return normalizeEditorMode(value);
-}
-
 export function createEditorFootnoteEditorState() {
   return {
     rowId: null,
@@ -835,10 +831,6 @@ export function createGlossaryTermEditorState() {
 
 export function resetInviteUser() {
   state.inviteUser = createInviteUserState();
-}
-
-export function resetTargetLanguageManager() {
-  state.targetLanguageManager = createTargetLanguageManagerState();
 }
 
 export function createProjectPermanentDeletionState() {

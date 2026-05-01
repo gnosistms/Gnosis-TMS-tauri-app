@@ -635,18 +635,3 @@ export function createProjectRestoreMutationOptions(options = {}) {
     },
   });
 }
-
-export async function runProjectRenameMutation(options = {}) {
-  const observer = createMutationObserver(createProjectRenameMutationOptions(options));
-  return observer.mutate();
-}
-
-export async function runProjectSoftDeleteMutation(options = {}) {
-  const observer = createMutationObserver(createProjectSoftDeleteMutationOptions(options));
-  return observer.mutate();
-}
-
-export async function runProjectRestoreMutation(options = {}) {
-  const observer = createMutationObserver(createProjectRestoreMutationOptions(options));
-  return observer.mutate();
-}

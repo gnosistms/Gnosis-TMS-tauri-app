@@ -5,7 +5,6 @@ mod broker_auth;
 mod broker_auth_storage;
 mod callbacks;
 mod constants;
-mod drafts;
 mod git_commit;
 mod github;
 mod github_app_test;
@@ -61,16 +60,13 @@ use crate::{
         clear_broker_auth_session, load_broker_auth_session, save_broker_auth_session,
     },
     callbacks::spawn_callback_server,
-    drafts::create_team_setup_draft,
     github::{
         add_organization_admin_for_installation, begin_github_app_install,
         create_gnosis_glossary_repo, create_gnosis_project_repo,
-        delete_gnosis_glossary_metadata_record, delete_gnosis_project_metadata_record,
         delete_organization_for_installation, ensure_gnosis_repo_properties_schema,
         inspect_github_app_installation, inspect_team_metadata_repo_for_installation,
         invite_user_to_organization_for_installation, leave_organization_for_installation,
         list_accessible_github_app_installations, list_gnosis_glossaries_for_installation,
-        list_gnosis_glossary_metadata_records, list_gnosis_project_metadata_records,
         list_gnosis_projects_for_installation, list_organization_members_for_installation,
         mark_gnosis_project_repo_deleted, permanently_delete_gnosis_glossary_repo,
         permanently_delete_gnosis_project_repo, promote_organization_owner_for_installation,
@@ -78,8 +74,7 @@ use crate::{
         rename_gnosis_project_repo, restore_gnosis_project_repo,
         revoke_organization_admin_for_installation, search_github_users_for_installation,
         setup_organization_for_installation, update_organization_description_for_installation,
-        update_organization_name_for_installation, upsert_gnosis_glossary_metadata_record,
-        upsert_gnosis_project_metadata_record,
+        update_organization_name_for_installation,
     },
     github_app_test::{
         begin_github_app_test_install, get_github_app_test_config,
@@ -90,9 +85,8 @@ use crate::{
         delete_gtms_glossary_term, export_gtms_glossary_to_tmx, import_tmx_to_gtms_glossary_repo,
         initialize_gtms_glossary_repo, inspect_tmx_glossary_import, list_local_gtms_glossaries,
         load_gtms_glossary_editor_data, load_gtms_glossary_term, prepare_local_gtms_glossary_repo,
-        purge_local_gtms_glossary_repo, rename_gtms_glossary, rename_local_gtms_glossary_repo,
-        restore_gtms_glossary, rollback_gtms_glossary_term_upsert, soft_delete_gtms_glossary,
-        upsert_gtms_glossary_term,
+        purge_local_gtms_glossary_repo, rename_gtms_glossary, restore_gtms_glossary,
+        rollback_gtms_glossary_term_upsert, soft_delete_gtms_glossary, upsert_gtms_glossary_term,
     },
     project_import::{
         clear_gtms_editor_imported_conflict, clear_gtms_editor_reviewed_markers,
@@ -112,9 +106,8 @@ use crate::{
         update_gtms_editor_row_text_style, upload_gtms_editor_language_image,
     },
     project_repo_sync::{
-        inspect_gtms_project_editor_repo_sync_state, list_project_repo_sync_states,
-        overwrite_conflicted_gtms_project_repos, reconcile_project_repo_sync_states,
-        sync_gtms_project_editor_repo,
+        list_project_repo_sync_states, overwrite_conflicted_gtms_project_repos,
+        reconcile_project_repo_sync_states, sync_gtms_project_editor_repo,
     },
     project_search::{refresh_project_search_index, search_projects},
     repo_sync_shared::initialize_git_runtime,
@@ -136,11 +129,6 @@ use crate::{
     updater::{check_for_app_update, install_app_update, PendingUpdate},
     window::read_local_dropped_file,
 };
-
-#[tauri::command]
-fn ping() -> &'static str {
-    "pong"
-}
 
 #[tauri::command]
 fn check_internet_connection() -> bool {
@@ -489,7 +477,6 @@ pub fn run() {
             }
         })
         .invoke_handler(tauri::generate_handler![
-            ping,
             check_internet_connection,
             read_local_dropped_file,
             append_editor_scroll_debug_log,
@@ -521,14 +508,10 @@ pub fn run() {
             run_ai_translation,
             run_ai_assistant_turn,
             probe_ai_provider_model,
-            create_team_setup_draft,
             begin_github_app_install,
             begin_github_app_test_install,
             get_github_app_test_config,
             create_gnosis_project_repo,
-            upsert_gnosis_project_metadata_record,
-            delete_gnosis_project_metadata_record,
-            delete_gnosis_glossary_metadata_record,
             rename_gnosis_project_repo,
             mark_gnosis_project_repo_deleted,
             restore_gnosis_project_repo,
@@ -550,12 +533,10 @@ pub fn run() {
             list_accessible_github_app_installations,
             inspect_github_app_test_installation,
             ensure_gnosis_repo_properties_schema,
-            list_gnosis_project_metadata_records,
             list_gnosis_projects_for_installation,
             reconcile_project_repo_sync_states,
             list_project_repo_sync_states,
             sync_gtms_project_editor_repo,
-            inspect_gtms_project_editor_repo_sync_state,
             overwrite_conflicted_gtms_project_repos,
             initialize_gtms_project_repo,
             import_xlsx_to_gtms,
@@ -596,14 +577,11 @@ pub fn run() {
             update_gtms_editor_row_fields,
             update_gtms_editor_row_fields_batch,
             list_local_gtms_glossaries,
-            list_gnosis_glossary_metadata_records,
             list_gnosis_glossaries_for_installation,
             sync_gtms_glossary_repos,
             sync_gtms_glossary_editor_repo,
             create_gnosis_glossary_repo,
-            upsert_gnosis_glossary_metadata_record,
             prepare_local_gtms_glossary_repo,
-            rename_local_gtms_glossary_repo,
             initialize_gtms_glossary_repo,
             inspect_tmx_glossary_import,
             import_tmx_to_gtms_glossary_repo,

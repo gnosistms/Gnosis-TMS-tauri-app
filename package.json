@@ -8,6 +8,7 @@
     "build": "vite build",
     "test": "node --test --loader ./src-ui/test/raw-loader.mjs src-ui/app/*.test.js src-ui/screens/*.test.js",
     "test:browser": "playwright test",
+    "audit:unused": "knip --no-progress",
     "icons:sync": "bash src-tauri/icons/sync-all-icons.sh",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
@@ -16,11 +17,11 @@
   "devDependencies": {
     "@playwright/test": "^1.59.1",
     "@tauri-apps/cli": "^2.5.0",
+    "knip": "^5.88.1",
     "vite": "^5.4.19"
   },
   "dependencies": {
     "@tanstack/query-core": "^5.100.5",
-    "@tanstack/virtual-core": "^3.14.0",
-    "@tauri-apps/plugin-opener": "^2.5.3"
+    "@tanstack/virtual-core": "^3.14.0"
   }
 }

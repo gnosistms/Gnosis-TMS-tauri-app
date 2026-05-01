@@ -1,0 +1,12 @@
+{
+  "$schema": "https://unpkg.com/knip@5/schema.json",
+  "entry": [
+    "src-ui/app/*.test.js",
+    "src-ui/screens/*.test.js",
+    "docs/app.js"
+  ],
+  "project": [
+    "**/*.{js,mjs}"
+  ],
+  "ignoreExportsUsedInFile": true
+}

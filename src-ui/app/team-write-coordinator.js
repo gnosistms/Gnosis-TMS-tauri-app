@@ -28,14 +28,6 @@ export function teamLifecycleIntentKey(teamId) {
   return `team:lifecycle:${teamId ?? "unknown"}`;
 }
 
-export function teamLeaveIntentKey(teamId) {
-  return `team:leave:${teamId ?? "unknown"}`;
-}
-
-export function teamPermanentDeleteIntentKey(teamId) {
-  return `team:permanent-delete:${teamId ?? "unknown"}`;
-}
-
 export function teamWriteScope(team) {
   return `team:${team?.installationId ?? team?.id ?? "unknown"}`;
 }

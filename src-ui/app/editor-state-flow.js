@@ -532,26 +532,6 @@ export function updateEditorChapterRow(rowId, updater) {
   return updatedRow;
 }
 
-export function insertEditorChapterRow(nextRow, anchorRowId, insertBefore = true) {
-  if (!state.editorChapter?.chapterId || !Array.isArray(state.editorChapter.rows) || !nextRow?.rowId) {
-    return;
-  }
-
-  const normalizedRow = normalizeEditorRows([nextRow])[0];
-  const anchorIndex = state.editorChapter.rows.findIndex((row) => row?.rowId === anchorRowId);
-  const rows = [...state.editorChapter.rows];
-  const insertIndex = anchorIndex < 0
-    ? rows.length
-    : insertBefore
-      ? anchorIndex
-      : anchorIndex + 1;
-  rows.splice(insertIndex, 0, normalizedRow);
-  state.editorChapter = {
-    ...state.editorChapter,
-    rows,
-  };
-}
-
 export function removeEditorChapterRow(rowId) {
   if (!state.editorChapter?.chapterId || !Array.isArray(state.editorChapter.rows)) {
     return;
@@ -600,19 +580,6 @@ export function removeEditorChapterRow(rowId) {
       ]),
     ),
   };
-}
-
-export function rowsWithEditorRowLifecycleState(rows, rowId, lifecycleState) {
-  return normalizeEditorRows(
-    (Array.isArray(rows) ? rows : []).map((row) =>
-      row?.rowId === rowId
-        ? {
-          ...row,
-          lifecycleState,
-        }
-        : row
-    ),
-  );
 }
 
 export function markEditorRowsPersisted(rowUpdates, sourceWordCounts = null, chapterBaseCommitSha = null) {

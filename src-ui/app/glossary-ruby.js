@@ -118,10 +118,6 @@ export function sanitizeGlossaryRubyMarkup(value) {
   return sanitizeGlossaryRubyScalar(value);
 }
 
-export function sanitizeGlossaryRubyTerms(values) {
-  return (Array.isArray(values) ? values : []).map((value) => sanitizeGlossaryRubyScalar(value));
-}
-
 export function extractGlossaryRubyBaseText(value) {
   return decodeGlossaryRubyTextEntities(
     extractInlineMarkupBaseText(sanitizeGlossaryRubyScalar(value)),

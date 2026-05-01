@@ -9,10 +9,6 @@ export function resetGlossaryWriteCoordinator() {
   writeIntents.reset();
 }
 
-export function subscribeGlossaryWriteState(listener) {
-  return writeIntents.subscribe(listener);
-}
-
 export function glossaryTitleIntentKey(glossaryId) {
   return `glossary:title:${glossaryId}`;
 }
@@ -35,18 +31,6 @@ export function requestGlossaryWriteIntent(intent, operations = {}) {
 
 export function getGlossaryWriteIntent(key) {
   return writeIntents.getIntent(key);
-}
-
-export function getGlossaryWriteState(key) {
-  return writeIntents.getState(key);
-}
-
-export function glossaryWriteIsActive(key) {
-  return writeIntents.isActive(key);
-}
-
-export function glossaryWriteScopeIsActive(scope) {
-  return writeIntents.scopeIsActive(scope);
 }
 
 export function anyGlossaryWriteIsActive() {

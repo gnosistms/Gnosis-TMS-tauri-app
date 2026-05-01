@@ -369,22 +369,6 @@ export async function upsertProjectMetadataRecord(team, record, options = {}) {
   );
 }
 
-export async function deleteProjectMetadataRecord(team, projectId, options = {}) {
-  await commitLocalMetadataMutation(
-    team,
-    () =>
-      invoke("delete_local_gnosis_project_metadata_record", {
-        input: {
-          installationId: team.installationId,
-          orgLogin: team.githubOrg,
-          projectId,
-        },
-        sessionToken: requireBrokerSession(),
-      }),
-    options,
-  );
-}
-
 export async function upsertGlossaryMetadataRecord(team, record, options = {}) {
   await commitLocalMetadataMutation(
     team,

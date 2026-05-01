@@ -171,7 +171,3 @@ export function removePersistentValue(key) {
     window.localStorage?.removeItem(key);
   } catch {}
 }
-
-export function listPersistentKeys() {
-  return Object.keys(memoryState);
-}

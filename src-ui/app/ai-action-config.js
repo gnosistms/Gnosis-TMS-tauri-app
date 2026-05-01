@@ -315,10 +315,6 @@ export function resolveVisibleAiTranslateActions(config) {
   }));
 }
 
-export function selectionUsesSavedProvider(selection, savedProviderIds = []) {
-  return savedProviderIds.includes(selection?.providerId);
-}
-
 export function coerceSelectionToSavedProviders(selection, savedProviderIds = []) {
   const normalizedSelection = normalizeAiActionSelection(selection);
   if (savedProviderIds.length === 0 || savedProviderIds.includes(normalizedSelection.providerId)) {

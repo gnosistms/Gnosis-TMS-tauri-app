@@ -159,15 +159,6 @@ pub(crate) struct UpdateGlossaryLifecycleInput {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct RenameLocalGlossaryRepoInput {
-    installation_id: i64,
-    glossary_id: Option<String>,
-    from_repo_name: String,
-    to_repo_name: String,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub(crate) struct UpsertGlossaryTermInput {
     installation_id: i64,
     repo_name: String,
@@ -351,16 +342,6 @@ pub(crate) async fn prepare_local_gtms_glossary_repo(
     tauri::async_runtime::spawn_blocking(move || prepare_local_gtms_glossary_repo_sync(&app, input))
         .await
         .map_err(|error| format!("The local glossary repo worker failed: {error}"))?
-}
-
-#[tauri::command]
-pub(crate) async fn rename_local_gtms_glossary_repo(
-    app: AppHandle,
-    input: RenameLocalGlossaryRepoInput,
-) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || rename_local_gtms_glossary_repo_sync(&app, input))
-        .await
-        .map_err(|error| format!("The local glossary repo rename worker failed: {error}"))?
 }
 
 #[tauri::command]
@@ -949,57 +930,6 @@ fn prepare_local_gtms_glossary_repo_sync(
             }
         }
     }
-
-    Ok(())
-}
-
-fn rename_local_gtms_glossary_repo_sync(
-    app: &AppHandle,
-    input: RenameLocalGlossaryRepoInput,
-) -> Result<(), String> {
-    let from_repo_name = input.from_repo_name.trim();
-    let to_repo_name = input.to_repo_name.trim();
-    if from_repo_name.is_empty() || to_repo_name.is_empty() {
-        return Err("Could not determine which glossary repo to rename.".to_string());
-    }
-
-    if from_repo_name == to_repo_name {
-        return Ok(());
-    }
-
-    let repo_root = local_glossary_repo_root(app, input.installation_id)?;
-    let from_path = find_glossary_repo_path(
-        app,
-        input.installation_id,
-        input.glossary_id.as_deref(),
-        Some(from_repo_name),
-    )?
-    .unwrap_or_else(|| repo_root.join(from_repo_name));
-    let to_path = repo_root.join(to_repo_name);
-
-    if !from_path.exists() {
-        return Err("The local glossary repo is not available yet.".to_string());
-    }
-    if to_path.exists() {
-        return Err("The destination glossary repo folder already exists.".to_string());
-    }
-
-    fs::rename(&from_path, &to_path).map_err(|error| {
-        format!(
-            "Could not rename the local glossary repo '{}' to '{}': {error}",
-            from_path.display(),
-            to_path.display()
-        )
-    })?;
-
-    let _ = upsert_local_repo_sync_state(
-        &to_path,
-        LocalRepoSyncStateUpdate {
-            current_repo_name: Some(to_repo_name.to_string()),
-            kind: Some("glossary".to_string()),
-            ..Default::default()
-        },
-    );
 
     Ok(())
 }

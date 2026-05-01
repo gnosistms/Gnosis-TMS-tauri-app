@@ -275,16 +275,6 @@ export async function flushDirtyEditorRows(render, operations = {}, options = {}
   return !hasPendingEditorWrites(state.editorChapter, options);
 }
 
-export function updateEditorRowFieldValue(rowId, languageCode, nextValue, operations = {}) {
-  updateEditorRowFieldValueForContentKind(
-    rowId,
-    languageCode,
-    nextValue,
-    "field",
-    operations,
-  );
-}
-
 export function updateEditorRowFieldValueForContentKind(
   rowId,
   languageCode,

@@ -261,16 +261,3 @@ export function moveTeamQueryData(queryData, teamId, targetCollection, patch = {
     deletedItems: nextDeletedItems,
   };
 }
-
-export function removeTeamFromQueryData(queryData, teamId) {
-  if (!queryData || typeof queryData !== "object") {
-    return queryData;
-  }
-  return {
-    ...queryData,
-    items: (Array.isArray(queryData.items) ? queryData.items : [])
-      .filter((team) => team?.id !== teamId),
-    deletedItems: (Array.isArray(queryData.deletedItems) ? queryData.deletedItems : [])
-      .filter((team) => team?.id !== teamId),
-  };
-}

@@ -232,27 +232,10 @@ export function removeStoredTeamRecord(teamId, login = getActiveStorageLogin()) 
   return nextTeams;
 }
 
-export function loadStoredGithubAppTeams() {
-  return loadStoredTeamRecords();
-}
-
-export function saveStoredGithubAppTeams(teams) {
-  saveStoredTeamRecords(teams);
-}
-
 export function updateStoredGithubAppTeam(teamId, updates) {
   return updateStoredTeamRecord(teamId, updates);
 }
 
-export function mergeTeams(primaryTeams, secondaryTeams = []) {
-  const mergedTeams = new Map();
-  normalizePersistedTeamRecords([...secondaryTeams, ...primaryTeams]).forEach((team) => {
-    const key = teamIdentityKey(team);
-    const existing = mergedTeams.get(key);
-    mergedTeams.set(key, existing ? { ...existing, ...team } : team);
-  });
-  return [...mergedTeams.values()];
-}
 
 export function loadStoredTeamPendingMutations(login = getActiveStorageLogin()) {
   try {
