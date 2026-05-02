@@ -2,7 +2,10 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
-const source = readFileSync(new URL("./translate-flow.js", import.meta.url), "utf8");
+const source = readFileSync(
+  new URL("./editor-target-language-manager-flow.js", import.meta.url),
+  "utf8",
+);
 
 test("chapter language updates include broker auth and repo sync metadata", () => {
   assert.match(source, /const sessionToken = requireBrokerSession\(\);/);
