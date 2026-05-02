@@ -905,6 +905,16 @@ a {
   box-shadow: none;
 }
 
+.button--secondary.button--loading:disabled {
+  opacity: 1;
+  color: rgba(130, 82, 27, 0.82);
+}
+
+.button--secondary.button--loading .button__spinner {
+  border-color: rgba(164, 112, 41, 0.24);
+  border-top-color: rgba(130, 82, 27, 0.88);
+}
+
 .button__spinner {
   width: 16px;
   height: 16px;

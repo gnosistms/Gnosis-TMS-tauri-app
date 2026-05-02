@@ -527,7 +527,7 @@ export function switchEditorSidebarTab(render, tab) {
   });
 }
 
-export function scheduleAssistantTranscriptScrollToBottomAfterRender() {
+export function scheduleEditorAssistantTranscriptScrollToBottom() {
   scheduleAssistantTranscriptScrollToBottom();
 }
 

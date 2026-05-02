@@ -76,7 +76,6 @@ import {
   noteEditorBackgroundSyncScrollActivity,
   restoreEditorFieldHistory,
   runEditorAiTranslate,
-  scheduleAssistantTranscriptScrollToBottomAfterRender,
   scheduleDirtyEditorRowScan,
   toggleEditorReplaceEnabled,
 } from "./app/translate-flow.js";
@@ -289,6 +288,7 @@ function renderTranslateBodyOnly() {
   }
 
   const focusSnapshot = captureFocusedInputState();
+  const assistantTranscriptScrollTop = captureAssistantTranscriptScrollTop(app);
   const scrollSnapshot = captureRenderScrollSnapshot("translate");
   const {
     anchor: translateAnchor,
@@ -322,6 +322,7 @@ function renderTranslateBodyOnly() {
   }
   syncEditorRowTextareaHeights(body);
   restorePendingEditorSelection(body);
+  restoreAssistantTranscriptScrollTop(assistantTranscriptScrollTop, app);
   scrollActivePreviewSearchMatchIntoView(body);
 }
 
@@ -338,15 +339,36 @@ function renderTranslateSidebarOnly() {
 
   const focusSnapshot = captureFocusedInputState();
   const scrollTop = sidebar.scrollTop;
+  const assistantTranscriptScrollTop = captureAssistantTranscriptScrollTop(sidebar);
   sidebar.innerHTML = renderTranslateSidebar(state);
   sidebar.scrollTop = scrollTop;
   syncEditorAssistantDraftTextareaHeights(sidebar);
   syncEditorCommentDraftTextareaHeights(sidebar);
-  if (state.editorChapter?.sidebarTab === "assistant") {
-    scheduleAssistantTranscriptScrollToBottomAfterRender();
-  }
+  restoreAssistantTranscriptScrollTop(assistantTranscriptScrollTop, sidebar);
   if (shouldRestoreFocusedInputStateForScope(focusSnapshot, "translate-sidebar")) {
     restoreFocusedInputState(focusSnapshot);
+  }
+}
+
+function captureAssistantTranscriptScrollTop(root = app) {
+  const transcript = root?.querySelector?.(".assistant-transcript");
+  return transcript instanceof HTMLElement ? transcript.scrollTop : null;
+}
+
+function restoreAssistantTranscriptScrollTop(scrollTop, root = app) {
+  if (!Number.isFinite(scrollTop)) {
+    return;
+  }
+
+  const transcript = root?.querySelector?.(".assistant-transcript");
+  if (transcript instanceof HTMLElement) {
+    transcript.scrollTop = scrollTop;
+    requestAnimationFrame(() => {
+      const nextTranscript = root?.querySelector?.(".assistant-transcript");
+      if (nextTranscript instanceof HTMLElement) {
+        nextTranscript.scrollTop = scrollTop;
+      }
+    });
   }
 }
 
@@ -449,6 +471,10 @@ function renderWithOptions(options = {}) {
       : { anchor: null, hadPendingAnchor: false, usedVisibleFallback: false };
   const scrollSnapshot = captureRenderScrollSnapshot(previousScreen);
   const renderScreen = screenRenderers[state.screen] ?? screenRenderers.start;
+  const assistantTranscriptScrollTop =
+    previousScreen === "translate" && state.screen === "translate"
+      ? captureAssistantTranscriptScrollTop(app)
+      : null;
   app.innerHTML =
     renderScreen()
     + renderAppUpdateModal(state)
@@ -488,9 +514,7 @@ function renderWithOptions(options = {}) {
   restorePendingEditorSelection(app);
   syncEditorAssistantDraftTextareaHeights(app);
   syncEditorCommentDraftTextareaHeights(app);
-  if (state.screen === "translate" && state.editorChapter?.sidebarTab === "assistant") {
-    scheduleAssistantTranscriptScrollToBottomAfterRender();
-  }
+  restoreAssistantTranscriptScrollTop(assistantTranscriptScrollTop, app);
   scrollActivePreviewSearchMatchIntoView(app);
   document.title = titles[state.screen] ?? "Gnosis TMS";
 }

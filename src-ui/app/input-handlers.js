@@ -49,6 +49,7 @@ import {
   updateEditorPreviewSearchQuery,
   toggleEditorReplaceEnabled,
   toggleEditorReplaceRowSelected,
+  scheduleEditorAssistantTranscriptScrollToBottom,
   updateEditorConflictResolutionFinalText,
   updateEditorFontSize,
   updateEditorCommentDraft,
@@ -454,6 +455,7 @@ function handleEditorAssistantDraftInput(event, render) {
 
   updateEditorAssistantComposerDraft(input.value);
   syncAutoSizeTextarea(input, { minHeight: 71, maxHeight: 213 });
+  scheduleEditorAssistantTranscriptScrollToBottom();
   return true;
 }
 

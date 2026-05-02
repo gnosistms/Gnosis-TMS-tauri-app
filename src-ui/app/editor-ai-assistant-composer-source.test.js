@@ -115,6 +115,7 @@ test("assistant composer input does not rerender the sidebar on every keystroke"
   );
   assert.ok(handlerMatch);
   assert.equal(handlerMatch[0].includes("render?.({ scope: \"translate-sidebar\" });"), false);
+  assert.equal(handlerMatch[0].includes("scheduleEditorAssistantTranscriptScrollToBottom();"), true);
 });
 
 test("opening the assistant tab schedules the transcript to scroll down", () => {
@@ -128,16 +129,25 @@ test("opening the assistant tab schedules the transcript to scroll down", () => 
   );
 });
 
-test("assistant sidebar renders schedule the transcript to scroll down", () => {
+test("assistant sidebar rerenders preserve the transcript scroll position", () => {
   assert.equal(
-    translateFlowSource.includes("export function scheduleAssistantTranscriptScrollToBottomAfterRender()"),
+    mainSource.includes("function captureAssistantTranscriptScrollTop(root = app)"),
     true,
   );
   assert.equal(
-    mainSource.includes("state.editorChapter?.sidebarTab === \"assistant\""),
+    mainSource.includes("function restoreAssistantTranscriptScrollTop(scrollTop, root = app)"),
     true,
   );
-  assert.ok(
-    (mainSource.match(/scheduleAssistantTranscriptScrollToBottomAfterRender\(\);/g) ?? []).length >= 2,
+  assert.equal(
+    mainSource.includes("const assistantTranscriptScrollTop = captureAssistantTranscriptScrollTop(sidebar);"),
+    true,
+  );
+  assert.equal(
+    mainSource.includes("restoreAssistantTranscriptScrollTop(assistantTranscriptScrollTop, sidebar);"),
+    true,
+  );
+  assert.equal(
+    mainSource.includes("scheduleAssistantTranscriptScrollToBottomAfterRender"),
+    false,
   );
 });

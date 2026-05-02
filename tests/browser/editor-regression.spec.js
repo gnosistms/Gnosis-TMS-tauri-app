@@ -1460,6 +1460,128 @@ test.describe("editor regressions", () => {
     await expect(page.locator('[data-action="run-editor-ai-assistant"]')).toBeVisible();
   });
 
+  test("selecting assistant transcript text preserves assistant transcript scroll", async ({ page }) => {
+    const assistantItems = Array.from({ length: 28 }, (_, index) => ({
+      id: `assistant-${index + 1}`,
+      type: "assistant-message",
+      createdAt: `2026-04-21T12:${String(index).padStart(2, "0")}:00.000Z`,
+      text: `Assistant transcript entry ${index + 1}. This is enough text to make the assistant conversation scroll independently.`,
+      summary: `Assistant transcript entry ${index + 1}.`,
+      sourceLanguageCode: "es",
+      targetLanguageCode: "vi",
+      details: {
+        providerId: "openai",
+        modelId: "gpt-5.4",
+        sourceText: "alpha 0001 source text",
+      },
+    }));
+    assistantItems.push({
+      id: "assistant-draft-1",
+      type: "draft-translation",
+      createdAt: "2026-04-21T12:30:00.000Z",
+      text: "Draft translation",
+      draftTranslationText: "Ban dich moi tu AI Assistant.",
+      sourceLanguageCode: "es",
+      targetLanguageCode: "vi",
+      details: {
+        providerId: "openai",
+        modelId: "gpt-5.4",
+        sourceText: "alpha 0001 source text",
+      },
+    });
+
+    await mountEditorFixture(page, {
+      rowCount: 1,
+      assistant: {
+        activeThreadKey: "fixture-row-0001::vi",
+        threadsByKey: {
+          "fixture-row-0001::vi": {
+            rowId: "fixture-row-0001",
+            targetLanguageCode: "vi",
+            items: assistantItems,
+          },
+        },
+      },
+    });
+
+    await page.locator('[data-action="switch-editor-sidebar-tab:translate"]').click();
+    const transcript = page.locator(".assistant-transcript");
+    await expect(transcript).toBeVisible();
+    await page.evaluate(() => {
+      const transcriptElement = document.querySelector(".assistant-transcript");
+      if (transcriptElement instanceof HTMLElement) {
+        transcriptElement.scrollTop = Math.floor(transcriptElement.scrollHeight / 2);
+      }
+    });
+    const beforeScrollTop = await page.evaluate(() => {
+      const transcriptElement = document.querySelector(".assistant-transcript");
+      return transcriptElement instanceof HTMLElement ? transcriptElement.scrollTop : 0;
+    });
+    expect(beforeScrollTop).toBeGreaterThan(0);
+
+    const editorField = await activateMainEditorField(page, "fixture-row-0001", "vi");
+    await editorField.click();
+    await expect.poll(async () => {
+      return await page.evaluate(() => {
+        const transcriptElement = document.querySelector(".assistant-transcript");
+        return transcriptElement instanceof HTMLElement ? transcriptElement.scrollTop : 0;
+      });
+    }).toBe(beforeScrollTop);
+    await page.mouse.move(910, 280);
+    await page.mouse.down();
+    await page.mouse.move(910, 360, { steps: 4 });
+    await page.mouse.up();
+
+    await expect.poll(async () => {
+      return await page.evaluate(() => {
+        const transcriptElement = document.querySelector(".assistant-transcript");
+        return transcriptElement instanceof HTMLElement ? transcriptElement.scrollTop : 0;
+      });
+    }).toBe(beforeScrollTop);
+  });
+
+  test("assistant draft apply writes into the open empty editor field", async ({ page }) => {
+    await mountEditorFixture(page, {
+      rowCount: 1,
+      assistant: {
+        activeThreadKey: "fixture-row-0001::vi",
+        threadsByKey: {
+          "fixture-row-0001::vi": {
+            rowId: "fixture-row-0001",
+            targetLanguageCode: "vi",
+            items: [{
+              id: "assistant-draft-apply-1",
+              type: "draft-translation",
+              createdAt: "2026-04-21T12:30:00.000Z",
+              text: "Draft translation",
+              draftTranslationText: "Ban dich da duoc ap dung.",
+              sourceLanguageCode: "es",
+              targetLanguageCode: "vi",
+              details: {
+                providerId: "openai",
+                modelId: "gpt-5.4",
+                sourceText: "alpha 0001 source text",
+              },
+            }],
+          },
+        },
+      },
+    });
+
+    await page.locator('[data-action="switch-editor-sidebar-tab:translate"]').click();
+    const editorField = await activateMainEditorField(page, "fixture-row-0001", "vi");
+    await editorField.fill("");
+    await expect(editorField).toBeFocused();
+
+    await page.locator('[data-action="apply-editor-assistant-draft:assistant-draft-apply-1"]').click();
+
+    const appliedEditorField = page.locator(
+      '[data-editor-row-field][data-row-id="fixture-row-0001"][data-language-code="vi"]:not([data-content-kind])',
+    );
+    await expect(appliedEditorField).toBeVisible();
+    await expect(appliedEditorField).toHaveValue("Ban dich da duoc ap dung.");
+  });
+
   test("translate action shows a spinner while translation is running", async ({ page }) => {
     await mountEditorFixture(page, {
       rowCount: 6,
