@@ -6,7 +6,7 @@ import path from "node:path";
 
 const currentDir = path.dirname(fileURLToPath(import.meta.url));
 const eventsSource = readFileSync(
-  path.join(currentDir, "events.js"),
+  path.join(currentDir, "events", "keyboard-shortcuts.js"),
   "utf8",
 );
 
