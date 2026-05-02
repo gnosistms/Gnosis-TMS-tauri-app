@@ -456,6 +456,15 @@ function renderAssistantDraftText(item, currentTargetText) {
   return escapeHtml(draftText);
 }
 
+function normalizeAssistantDraftComparisonText(value) {
+  return String(value ?? "").replace(/\r\n?/g, "\n");
+}
+
+function assistantDraftMatchesCurrentTarget(item, currentTargetText) {
+  return normalizeAssistantDraftComparisonText(item?.draftTranslationText)
+    === normalizeAssistantDraftComparisonText(currentTargetText);
+}
+
 function renderAssistantTranscriptItem(item, currentTargetText = "") {
   const itemType = item?.type ?? "assistant-message";
   const text = typeof item?.text === "string" ? item.text.trim() : "";
@@ -471,17 +480,20 @@ function renderAssistantTranscriptItem(item, currentTargetText = "") {
   if (itemType === "draft-translation") {
     const canToggleDiff = assistantDraftCanShowDiff(item, currentTargetText);
     const isDiffHidden = item.draftDiffHidden === true;
+    const isApplying = item.applyStatus === "applying";
+    const isAppliedToCurrentText =
+      item.applyStatus === "applied" && assistantDraftMatchesCurrentTarget(item, currentTargetText);
     const diffToggleLabel = isDiffHidden ? "Show diff" : "Hide diff";
     const diffToggleTooltip = isDiffHidden
       ? "Show markings that indicate the differences between this draft and the translation on the left."
       : "Hide the markings that indicate the differences between this draft and the translation on the left.";
     const applyLabel =
-      item.applyStatus === "applying"
+      isApplying
         ? "Applying..."
-        : item.applyStatus === "applied"
+        : isAppliedToCurrentText
           ? "Applied"
           : "Apply";
-    const isDisabled = item.applyStatus === "applying" || item.applyStatus === "applied";
+    const isDisabled = isApplying || isAppliedToCurrentText;
     return `
       <article class="assistant-item assistant-item--assistant">
         <p class="assistant-item__label">Draft Translation</p>

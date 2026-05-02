@@ -86,30 +86,6 @@ export function rowNeedsDirtyTracking(row) {
     || row?.textStyleSaveState?.status === "saving";
 }
 
-function normalizedTextValue(value) {
-  return typeof value === "string" ? value.trim() : String(value ?? "").trim();
-}
-
-export function reviewTabLanguageToOpenAfterSave(editorChapter, rowId, row, nextFields) {
-  if (!editorChapter?.chapterId || editorChapter.activeRowId !== rowId) {
-    return null;
-  }
-
-  const activeLanguageCode =
-    typeof editorChapter.activeLanguageCode === "string" ? editorChapter.activeLanguageCode : "";
-  if (!activeLanguageCode || activeLanguageCode === editorChapter.selectedSourceLanguageCode) {
-    return null;
-  }
-
-  const previousText = normalizedTextValue(row?.persistedFields?.[activeLanguageCode] ?? "");
-  const nextText = normalizedTextValue(nextFields?.[activeLanguageCode] ?? "");
-  if (previousText || !nextText) {
-    return null;
-  }
-
-  return activeLanguageCode;
-}
-
 export function resolveDirtyTrackedEditorRowIds(dirtyRowIds, options = {}) {
   const trackedRowIds = cloneDirtyRowIds(dirtyRowIds);
   const candidateRowIds = Array.isArray(options?.rowIds)

@@ -319,6 +319,90 @@ test("assistant draft translation renders plain text when the active target fiel
   assert.doesNotMatch(html, /toggle-editor-assistant-draft-diff/);
 });
 
+test("assistant draft apply button stays applied while the current translation matches the draft", () => {
+  const html = renderTranslateSidebar(
+    activeEditorChapter({
+      assistant: {
+        status: "idle",
+        activeThreadKey: "row-1::vi",
+        threadsByKey: {
+          "row-1::vi": {
+            rowId: "row-1",
+            targetLanguageCode: "vi",
+            items: [{
+              id: "draft-1",
+              type: "draft-translation",
+              createdAt: "2026-04-30T00:00:00.000Z",
+              text: "Suggested translation.",
+              summary: "Suggested translation.",
+              sourceLanguageCode: "es",
+              targetLanguageCode: "vi",
+              draftTranslationText: "Xin chao",
+              applyStatus: "applied",
+            }],
+          },
+        },
+      },
+    }),
+    [{
+      id: "row-1",
+      sections: [
+        { code: "es", text: "Hola" },
+        { code: "vi", text: "Xin chao" },
+      ],
+    }],
+    languages,
+    "es",
+    "vi",
+    createAiActionConfigurationState(),
+  );
+
+  assert.match(html, />Applied<\/button>/);
+  assert.match(html, /data-action="apply-editor-assistant-draft:draft-1"[\s\S]*disabled/);
+});
+
+test("assistant draft apply button reactivates after the current translation changes", () => {
+  const html = renderTranslateSidebar(
+    activeEditorChapter({
+      assistant: {
+        status: "idle",
+        activeThreadKey: "row-1::vi",
+        threadsByKey: {
+          "row-1::vi": {
+            rowId: "row-1",
+            targetLanguageCode: "vi",
+            items: [{
+              id: "draft-1",
+              type: "draft-translation",
+              createdAt: "2026-04-30T00:00:00.000Z",
+              text: "Suggested translation.",
+              summary: "Suggested translation.",
+              sourceLanguageCode: "es",
+              targetLanguageCode: "vi",
+              draftTranslationText: "Xin chao",
+              applyStatus: "applied",
+            }],
+          },
+        },
+      },
+    }),
+    [{
+      id: "row-1",
+      sections: [
+        { code: "es", text: "Hola" },
+        { code: "vi", text: "Xin chao moi" },
+      ],
+    }],
+    languages,
+    "es",
+    "vi",
+    createAiActionConfigurationState(),
+  );
+
+  assert.match(html, />Apply<\/button>/);
+  assert.doesNotMatch(html, /data-action="apply-editor-assistant-draft:draft-1"[^>]*disabled/);
+});
+
 test("translation log details show only what was sent to the model", () => {
   const html = renderTranslateSidebar(
     activeEditorChapter({

@@ -651,6 +651,7 @@ window.__gnosisDebug = {
 };
 
 async function bootstrap() {
+  render();
   await initializePersistentStorage();
   hydratePersistentAppState();
   await initializeWindowPresentation();
