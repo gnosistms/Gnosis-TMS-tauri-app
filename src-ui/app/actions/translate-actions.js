@@ -8,6 +8,7 @@ import {
 } from "../scroll-state.js";
 import {
   cancelEditorConflictResolutionModal,
+  cancelEditorClearTranslationsModal,
   cancelEditorDeriveGlossariesModal,
   cancelEditorAiTranslateAllModal,
   cancelEditorUnreviewAllModal,
@@ -17,6 +18,7 @@ import {
   closeTargetLanguageManagerPicker,
   confirmEditorUnreviewAll,
   confirmEditorAiTranslateAll,
+  confirmEditorClearTranslations,
   confirmEditorDeriveGlossaries,
   confirmEditorReplaceUndo,
   confirmEditorRowPermanentDeletion,
@@ -39,6 +41,7 @@ import {
   openEditorImageUploadPicker,
   openEditorImageUrl,
   openEditorConflictResolutionModal,
+  openEditorClearTranslationsModal,
   openEditorDeriveGlossariesModal,
   openEditorAiTranslateAllModal,
   openEditorUnreviewAllModal,
@@ -49,6 +52,7 @@ import {
   applyEditorAiReview,
   applyEditorAssistantDraft,
   replaceSelectedEditorRows,
+  reviewEditorClearTranslations,
   removeEditorLanguageImage,
   runEditorAiTranslate,
   runEditorAiAssistant,
@@ -161,6 +165,11 @@ export function createTranslateActions(render) {
       return true;
     }
 
+    if (action === "cancel-editor-clear-translations") {
+      cancelEditorClearTranslationsModal(render);
+      return true;
+    }
+
     if (action === "cancel-editor-derive-glossaries") {
       cancelEditorDeriveGlossariesModal(render);
       return true;
@@ -198,6 +207,16 @@ export function createTranslateActions(render) {
 
     if (action === "confirm-editor-ai-translate-all") {
       await confirmEditorAiTranslateAll(render);
+      return true;
+    }
+
+    if (action === "review-editor-clear-translations") {
+      reviewEditorClearTranslations(render);
+      return true;
+    }
+
+    if (action === "confirm-editor-clear-translations") {
+      await confirmEditorClearTranslations(render);
       return true;
     }
 
@@ -288,6 +307,11 @@ export function createTranslateActions(render) {
 
     if (action === "open-editor-ai-translate-all") {
       openEditorAiTranslateAllModal(render);
+      return true;
+    }
+
+    if (action === "open-editor-clear-translations") {
+      openEditorClearTranslationsModal(render);
       return true;
     }
 

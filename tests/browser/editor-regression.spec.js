@@ -359,6 +359,7 @@ async function installMockTauri(page) {
         const commitSha = nextCommitSha();
         const committedAt = nextCommittedAt();
         const snapshotRows = [];
+        const changedRowIds = [];
 
         for (const rowUpdate of rows) {
           const storedFields = chapterRows.get(rowUpdate.rowId);
@@ -375,10 +376,17 @@ async function installMockTauri(page) {
             fieldStates: clone(storedFieldStates),
           });
 
-          const nextFields = clone(rowUpdate.fields ?? {});
-          const nextFootnotes = clone(rowUpdate.footnotes ?? storedFootnotes);
+          const nextFields = {
+            ...clone(storedFields),
+            ...clone(rowUpdate.fields ?? {}),
+          };
+          const nextFootnotes = {
+            ...clone(storedFootnotes),
+            ...clone(rowUpdate.footnotes ?? {}),
+          };
           chapterRows.set(rowUpdate.rowId, nextFields);
           chapterFootnotes.set(rowUpdate.rowId, nextFootnotes);
+          changedRowIds.push(rowUpdate.rowId);
           pushHistoryEntriesWithCommit(input.chapterId, rowUpdate.rowId, nextFields, nextFootnotes, storedFieldStates, {
             commitSha,
             committedAt,
@@ -395,7 +403,10 @@ async function installMockTauri(page) {
         }
 
         return {
+          rowIds: changedRowIds,
           sourceWordCounts: {},
+          commitSha,
+          chapterBaseCommitSha: commitSha,
         };
       }
 
@@ -1425,6 +1436,58 @@ test.describe("editor regressions", () => {
     await expect(page.locator(".translate-ai-action-button__model")).not.toHaveText("");
     await expect(page.locator(".translate-ai-action-button")).not.toContainText("Translate 1");
     await expect(page.locator(".translate-ai-action-button")).not.toContainText("Translate 2");
+  });
+
+  test("clear translations button opens two-step modal and clears selected language text", async ({ page }) => {
+    await mountEditorFixture(page, {
+      rowCount: 2,
+      fieldsByRowId: {
+        "fixture-row-0001": {
+          es: "Texto fuente 1",
+          vi: "Ban dich 1",
+          ja: "Nihongo 1",
+        },
+        "fixture-row-0002": {
+          es: "Texto fuente 2",
+          vi: "Ban dich 2",
+          ja: "Nihongo 2",
+        },
+      },
+      languages: [
+        { code: "es", name: "Spanish", role: "source" },
+        { code: "vi", name: "Vietnamese", role: "target" },
+        { code: "ja", name: "Japanese", role: "target" },
+      ],
+    }, { mockTauri: true });
+
+    await page.locator('[data-action="open-editor-clear-translations"]').click();
+    await expect(page.locator(".modal__title")).toHaveText("Clear all translations for selected languages");
+    await expect(page.locator('[data-action="review-editor-clear-translations"]')).toHaveCount(0);
+    await expect(page.locator('[data-action="noop"]', { hasText: "Clear selected" })).toBeVisible();
+
+    await page.locator('[data-editor-clear-translations-language][value="vi"]').check();
+    await expect(page.locator('[data-action="review-editor-clear-translations"]')).toBeVisible();
+    await page.locator('[data-action="review-editor-clear-translations"]').click();
+
+    await expect(page.locator(".modal__title")).toHaveText("Are you sure you want to delete these translations?");
+    await expect(page.locator(".modal__list")).toContainText("Vietnamese");
+    await expect(page.locator(".modal__list")).not.toContainText("Japanese");
+    await page.locator('[data-action="confirm-editor-clear-translations"]').click();
+
+    await expect(page.locator(".modal-backdrop")).toHaveCount(0);
+    const snapshot = await page.evaluate(() => window.__gnosisDebug.readEditorState());
+    const row1 = snapshot.rows.find((row) => row.rowId === "fixture-row-0001");
+    const row2 = snapshot.rows.find((row) => row.rowId === "fixture-row-0002");
+    expect(row1.fields).toMatchObject({
+      es: "Texto fuente 1",
+      vi: "",
+      ja: "Nihongo 1",
+    });
+    expect(row2.fields).toMatchObject({
+      es: "Texto fuente 2",
+      vi: "",
+      ja: "Nihongo 2",
+    });
   });
 
   test("AI Assistant tab renders persisted transcript items and the chat composer", async ({ page }) => {

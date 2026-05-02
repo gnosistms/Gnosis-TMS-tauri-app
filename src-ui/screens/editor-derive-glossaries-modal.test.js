@@ -120,12 +120,17 @@ test("Translate toolbar renders Derive glossaries before renamed AI translate al
     sourceCode: "es",
     targetCode: "vi",
     deriveGlossariesAvailable: true,
+    clearTranslationsAvailable: true,
   });
 
   const deriveIndex = html.indexOf("Derive glossaries");
+  const clearIndex = html.indexOf("Clear translations");
   const translateIndex = html.indexOf("AI translate all");
   assert.equal(deriveIndex > -1, true);
+  assert.equal(clearIndex > -1, true);
   assert.equal(translateIndex > -1, true);
+  assert.equal(deriveIndex < clearIndex, true);
+  assert.equal(clearIndex < translateIndex, true);
   assert.equal(deriveIndex < translateIndex, true);
   assert.doesNotMatch(html, /AI Translate all/);
 });
@@ -139,11 +144,13 @@ test("Translate toolbar disables online AI batch actions while offline", () => {
     sourceCode: "es",
     targetCode: "vi",
     deriveGlossariesAvailable: true,
+    clearTranslationsAvailable: true,
     offlineMode: true,
   });
 
   assert.match(html, /data-action="open-editor-derive-glossaries"[^>]*disabled/);
   assert.match(html, /data-action="open-editor-ai-translate-all"[^>]*disabled/);
+  assert.doesNotMatch(html, /data-action="open-editor-clear-translations"[^>]*disabled/);
   assert.doesNotMatch(html, /data-action="open-editor-unreview-all"[^>]*disabled/);
   assert.match(html, /AI actions are unavailable offline/);
 });

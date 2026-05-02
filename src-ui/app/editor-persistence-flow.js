@@ -37,7 +37,11 @@ import {
 } from "./editor-review-state.js";
 import { findChapterContextById, selectedProjectsTeam } from "./project-context.js";
 import { invoke } from "./runtime.js";
-import { createEditorImageCaptionEditorState, state } from "./state.js";
+import {
+  createEditorClearTranslationsModalState,
+  createEditorImageCaptionEditorState,
+  state,
+} from "./state.js";
 import { showNoticeBadge } from "./status-feedback.js";
 import { normalizeEditorRowTextStyle } from "./editor-row-text-style.js";
 import {
@@ -146,6 +150,22 @@ function updateUnreviewAllModalError(message = "", render) {
   render?.();
 }
 
+function updateClearTranslationsModalError(message = "", render) {
+  if (!state.editorChapter?.chapterId || !state.editorChapter?.clearTranslationsModal?.isOpen) {
+    return;
+  }
+
+  state.editorChapter = {
+    ...state.editorChapter,
+    clearTranslationsModal: {
+      ...state.editorChapter.clearTranslationsModal,
+      status: "idle",
+      error: message,
+    },
+  };
+  render?.();
+}
+
 function chapterHasPendingEditorWrites(chapterState = state.editorChapter) {
   return hasPendingEditorWrites(chapterState);
 }
@@ -199,10 +219,103 @@ function formatUnreviewAllCount(count) {
   return count === 1 ? "1 row" : `${count} rows`;
 }
 
+function formatClearTranslationsCount(count) {
+  return count === 1 ? "1 row" : `${count} rows`;
+}
+
 function nextChapterBaseCommitSha(payload, chapterState = state.editorChapter) {
   return typeof payload?.chapterBaseCommitSha === "string" && payload.chapterBaseCommitSha.trim()
     ? payload.chapterBaseCommitSha.trim()
     : chapterState?.chapterBaseCommitSha ?? null;
+}
+
+function editorChapterLanguageCodes(chapterState = state.editorChapter) {
+  return (Array.isArray(chapterState?.languages) ? chapterState.languages : [])
+    .map((language) => String(language?.code ?? "").trim())
+    .filter(Boolean);
+}
+
+function normalizeClearTranslationsLanguageCodes(chapterState, languageCodes) {
+  const validCodes = new Set(editorChapterLanguageCodes(chapterState));
+  const selectedCodes = Array.isArray(languageCodes) ? languageCodes : [];
+  const normalized = [];
+  const seen = new Set();
+  for (const rawCode of selectedCodes) {
+    const code = String(rawCode ?? "").trim();
+    if (!code || seen.has(code) || !validCodes.has(code)) {
+      continue;
+    }
+    seen.add(code);
+    normalized.push(code);
+  }
+  return normalized;
+}
+
+function clearTranslationsRowsForBatch(chapterState, languageCodes) {
+  const selectedCodes = normalizeClearTranslationsLanguageCodes(chapterState, languageCodes);
+  if (selectedCodes.length === 0) {
+    return [];
+  }
+
+  return (Array.isArray(chapterState?.rows) ? chapterState.rows : []).flatMap((row) => {
+    const rowId = String(row?.rowId ?? "").trim();
+    if (!rowId || row?.lifecycleState === "deleted" || row?.remotelyDeleted === true) {
+      return [];
+    }
+
+    const fields = {};
+    for (const languageCode of selectedCodes) {
+      if (String(row?.fields?.[languageCode] ?? "") !== "") {
+        fields[languageCode] = "";
+      }
+    }
+
+    return Object.keys(fields).length > 0
+      ? [{
+        rowId,
+        fields,
+        footnotes: {},
+        imageCaptions: {},
+      }]
+      : [];
+  });
+}
+
+function applyEditorChapterRowsTranslationsCleared(chapterState, languageCodes, rowIds) {
+  const selectedCodes = normalizeClearTranslationsLanguageCodes(chapterState, languageCodes);
+  const changedRowIds = new Set(Array.isArray(rowIds) ? rowIds.filter(Boolean) : []);
+  if (!chapterState?.chapterId || selectedCodes.length === 0 || changedRowIds.size === 0) {
+    return chapterState;
+  }
+
+  return {
+    ...chapterState,
+    rows: (Array.isArray(chapterState.rows) ? chapterState.rows : []).map((row) => {
+      if (!changedRowIds.has(row?.rowId)) {
+        return row;
+      }
+
+      const fields = cloneRowFields(row.fields);
+      const persistedFields = cloneRowFields(row.persistedFields);
+      const baseFields = cloneRowFields(row.baseFields);
+      for (const languageCode of selectedCodes) {
+        fields[languageCode] = "";
+        persistedFields[languageCode] = "";
+        baseFields[languageCode] = "";
+      }
+
+      return {
+        ...row,
+        fields,
+        persistedFields,
+        baseFields,
+        saveStatus: "idle",
+        saveError: "",
+        freshness: row.freshness === "conflict" ? "conflict" : "fresh",
+        conflictState: row.freshness === "conflict" ? row.conflictState : null,
+      };
+    }),
+  };
 }
 
 function focusedEditorRowId() {
@@ -682,6 +795,89 @@ export function cancelEditorUnreviewAllModal(render) {
   render?.();
 }
 
+export function openEditorClearTranslationsModal(render) {
+  if (!state.editorChapter?.chapterId) {
+    return;
+  }
+
+  state.editorChapter = {
+    ...state.editorChapter,
+    clearTranslationsModal: {
+      ...createEditorClearTranslationsModalState(),
+      isOpen: true,
+    },
+  };
+  render?.();
+}
+
+export function cancelEditorClearTranslationsModal(render) {
+  if (!state.editorChapter?.chapterId) {
+    return;
+  }
+
+  state.editorChapter = {
+    ...state.editorChapter,
+    clearTranslationsModal: createEditorClearTranslationsModalState(),
+  };
+  render?.();
+}
+
+export function updateEditorClearTranslationsLanguageSelection(render, languageCode, selected) {
+  if (!state.editorChapter?.chapterId || !state.editorChapter?.clearTranslationsModal?.isOpen) {
+    return;
+  }
+
+  const currentCodes = normalizeClearTranslationsLanguageCodes(
+    state.editorChapter,
+    state.editorChapter.clearTranslationsModal.selectedLanguageCodes,
+  );
+  const nextCodes = new Set(currentCodes);
+  const code = String(languageCode ?? "").trim();
+  if (selected) {
+    nextCodes.add(code);
+  } else {
+    nextCodes.delete(code);
+  }
+
+  state.editorChapter = {
+    ...state.editorChapter,
+    clearTranslationsModal: {
+      ...state.editorChapter.clearTranslationsModal,
+      selectedLanguageCodes: normalizeClearTranslationsLanguageCodes(
+        state.editorChapter,
+        [...nextCodes],
+      ),
+      error: "",
+    },
+  };
+  render?.();
+}
+
+export function reviewEditorClearTranslations(render) {
+  if (!state.editorChapter?.chapterId || !state.editorChapter?.clearTranslationsModal?.isOpen) {
+    return;
+  }
+
+  const selectedLanguageCodes = normalizeClearTranslationsLanguageCodes(
+    state.editorChapter,
+    state.editorChapter.clearTranslationsModal.selectedLanguageCodes,
+  );
+  if (selectedLanguageCodes.length === 0) {
+    return;
+  }
+
+  state.editorChapter = {
+    ...state.editorChapter,
+    clearTranslationsModal: {
+      ...state.editorChapter.clearTranslationsModal,
+      step: "confirm",
+      selectedLanguageCodes,
+      error: "",
+    },
+  };
+  render?.();
+}
+
 export async function confirmEditorUnreviewAll(render, operations = {}) {
   const editorChapter = state.editorChapter;
   const modal = editorChapter?.unreviewAllModal;
@@ -774,6 +970,124 @@ export async function confirmEditorUnreviewAll(render, operations = {}) {
     const message = error instanceof Error ? error.message : String(error);
     updateUnreviewAllModalError(message, render);
     showNoticeBadge(message || "The reviewed markers could not be cleared.", render);
+  }
+}
+
+export async function confirmEditorClearTranslations(render, operations = {}) {
+  const editorChapter = state.editorChapter;
+  const modal = editorChapter?.clearTranslationsModal;
+  const selectedLanguageCodes = normalizeClearTranslationsLanguageCodes(
+    editorChapter,
+    modal?.selectedLanguageCodes,
+  );
+  if (
+    !editorChapter?.chapterId
+    || !modal?.isOpen
+    || modal.status === "loading"
+    || modal.step !== "confirm"
+    || selectedLanguageCodes.length === 0
+  ) {
+    return;
+  }
+
+  await flushDirtyEditorRows(render, operations);
+  if (state.editorChapter?.chapterId !== editorChapter.chapterId) {
+    return;
+  }
+
+  if (chapterHasPendingEditorWrites(state.editorChapter)) {
+    updateClearTranslationsModalError(
+      "Save all row text before clearing translations.",
+      render,
+    );
+    return;
+  }
+
+  if (chapterNeedsRefreshBeforeMarkerBatchUpdate(state.editorChapter)) {
+    updateClearTranslationsModalError(
+      "Refresh or resolve the file before clearing translations.",
+      render,
+    );
+    return;
+  }
+
+  const rows = clearTranslationsRowsForBatch(state.editorChapter, selectedLanguageCodes);
+  const team = selectedProjectsTeam();
+  const context = findChapterContextById(editorChapter.chapterId);
+  if (!Number.isFinite(team?.installationId) || !context?.project?.name) {
+    return;
+  }
+
+  state.editorChapter = {
+    ...state.editorChapter,
+    clearTranslationsModal: {
+      ...state.editorChapter.clearTranslationsModal,
+      status: "loading",
+      error: "",
+      selectedLanguageCodes,
+    },
+  };
+  render?.();
+
+  try {
+    const payload = rows.length === 0
+      ? {
+        rowIds: [],
+        sourceWordCounts: state.editorChapter?.sourceWordCounts ?? {},
+        chapterBaseCommitSha: state.editorChapter?.chapterBaseCommitSha ?? null,
+      }
+      : await invoke("update_gtms_editor_row_fields_batch", {
+        input: {
+          installationId: team.installationId,
+          projectId: context.project.id,
+          repoName: context.project.name,
+          chapterId: editorChapter.chapterId,
+          rows,
+          commitMessage: `Clear ${selectedLanguageCodes.join(", ")} translations`,
+          operation: "clear-translations",
+        },
+      });
+
+    if (state.editorChapter?.chapterId !== editorChapter.chapterId) {
+      return;
+    }
+
+    const changedRowIds = Array.isArray(payload?.rowIds) ? payload.rowIds.filter(Boolean) : [];
+    const activeRowId = state.editorChapter.activeRowId;
+    const activeLanguageCode = state.editorChapter.activeLanguageCode;
+    state.editorChapter = {
+      ...applyEditorChapterRowsTranslationsCleared(
+        state.editorChapter,
+        selectedLanguageCodes,
+        changedRowIds,
+      ),
+      sourceWordCounts:
+        payload?.sourceWordCounts && typeof payload.sourceWordCounts === "object"
+          ? payload.sourceWordCounts
+          : state.editorChapter.sourceWordCounts,
+      chapterBaseCommitSha: nextChapterBaseCommitSha(payload, state.editorChapter),
+      clearTranslationsModal: createEditorClearTranslationsModalState(),
+    };
+    reconcileDirtyTrackedEditorRows(changedRowIds);
+    render?.();
+
+    if (
+      changedRowIds.includes(activeRowId)
+      && selectedLanguageCodes.includes(activeLanguageCode)
+    ) {
+      loadActiveEditorFieldHistory(render);
+    }
+
+    showNoticeBadge(
+      changedRowIds.length > 0
+        ? `Cleared translations in ${formatClearTranslationsCount(changedRowIds.length)}.`
+        : "Selected translations are already empty.",
+      render,
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    updateClearTranslationsModalError(message, render);
+    showNoticeBadge(message || "The translations could not be cleared.", render);
   }
 }
 

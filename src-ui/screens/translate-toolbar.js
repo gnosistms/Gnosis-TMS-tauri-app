@@ -314,6 +314,7 @@ export function renderTranslateToolbar({
   sourceLanguageExtraOptions = [],
   targetLanguageExtraOptions = [],
   deriveGlossariesAvailable = false,
+  clearTranslationsAvailable = false,
   offlineMode = false,
 }) {
   const offlineAiTooltip = offlineMode
@@ -337,6 +338,11 @@ export function renderTranslateToolbar({
             ? textAction("Derive glossaries", "open-editor-derive-glossaries", {
               tooltip: offlineAiTooltip || "Use this to automatically generate glossaries for the languages that don't have a glossary.",
               disabled: offlineMode,
+            })
+            : ""}
+          ${clearTranslationsAvailable
+            ? textAction("Clear translations", "open-editor-clear-translations", {
+              tooltip: "Clear all translation text for selected languages.",
             })
             : ""}
           ${textAction("AI translate all", "open-editor-ai-translate-all", {

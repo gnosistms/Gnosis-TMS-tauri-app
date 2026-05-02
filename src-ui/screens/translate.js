@@ -20,6 +20,7 @@ import { renderEditorRowInsertModal } from "./editor-row-insert-modal.js";
 import { renderEditorRowPermanentDeletionModal } from "./editor-row-permanent-deletion-modal.js";
 import { renderEditorUnreviewAllModal } from "./editor-unreview-all-modal.js";
 import { renderEditorAiTranslateAllModal } from "./editor-ai-translate-all-modal.js";
+import { renderEditorClearTranslationsModal } from "./editor-clear-translations-modal.js";
 import { renderEditorDeriveGlossariesModal } from "./editor-derive-glossaries-modal.js";
 import { renderEditorConflictResolutionModal } from "./editor-conflict-resolution-modal.js";
 import { renderEditorImageInvalidFileModal } from "./editor-image-invalid-file-modal.js";
@@ -264,6 +265,7 @@ export function renderTranslateHeaderDetail(state) {
     sourceLanguageExtraOptions: chapterLanguageManagerOptions,
     targetLanguageExtraOptions: chapterLanguageManagerOptions,
     deriveGlossariesAvailable: resolveEditorDeriveGlossariesConfig(frame.editorChapter).canDerive,
+    clearTranslationsAvailable: languages.length > 0,
     offlineMode,
   });
 }
@@ -324,6 +326,7 @@ export function renderTranslateScreen(state) {
     + renderEditorRowInsertModal(state)
     + renderEditorRowPermanentDeletionModal(state)
     + renderEditorUnreviewAllModal(state)
+    + renderEditorClearTranslationsModal(state)
     + renderEditorDeriveGlossariesModal(state)
     + renderEditorAiTranslateAllModal(state)
     + renderEditorConflictResolutionModal(state)

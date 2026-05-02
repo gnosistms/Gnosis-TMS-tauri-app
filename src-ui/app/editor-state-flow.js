@@ -31,6 +31,7 @@ import {
   coerceEditorFontSizePx,
   createEditorChapterFilterState,
   createEditorChapterGlossaryState,
+  createEditorClearTranslationsModalState,
   createEditorMainFieldEditorState,
   createEditorCommentsState,
   createEditorConflictResolutionModalState,
@@ -270,6 +271,18 @@ export function applyEditorUiState(nextEditorChapter, previousEditorChapter = st
           ...previousEditorChapter.unreviewAllModal,
         }
         : createEditorUnreviewAllModalState(),
+    clearTranslationsModal:
+      isSameChapter
+        && previousEditorChapter?.clearTranslationsModal?.isOpen === true
+        ? {
+          ...createEditorClearTranslationsModalState(),
+          ...previousEditorChapter.clearTranslationsModal,
+          selectedLanguageCodes: (Array.isArray(previousEditorChapter.clearTranslationsModal.selectedLanguageCodes)
+            ? previousEditorChapter.clearTranslationsModal.selectedLanguageCodes
+            : []
+          ).filter((languageCode) => hasEditorLanguage(nextEditorChapter, languageCode)),
+        }
+        : createEditorClearTranslationsModalState(),
     conflictResolutionModal:
       isSameChapter
         && previousEditorChapter?.conflictResolutionModal?.isOpen === true

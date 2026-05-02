@@ -350,6 +350,7 @@ export function createEditorChapterState() {
     aiReview: createEditorAiReviewState(),
     aiTranslate: createEditorAiTranslateState(),
     aiTranslateAllModal: createEditorAiTranslateAllModalState(),
+    clearTranslationsModal: createEditorClearTranslationsModalState(),
     deriveGlossariesModal: createEditorDeriveGlossariesModalState(),
     assistant: createEditorAssistantState(),
     commentSeenRevisions: {},
@@ -469,6 +470,16 @@ export function createEditorAiTranslateAllModalState() {
     languageProgress: {},
     translatedCount: 0,
     totalCount: 0,
+  };
+}
+
+export function createEditorClearTranslationsModalState() {
+  return {
+    isOpen: false,
+    status: "idle",
+    error: "",
+    step: "select",
+    selectedLanguageCodes: [],
   };
 }
 

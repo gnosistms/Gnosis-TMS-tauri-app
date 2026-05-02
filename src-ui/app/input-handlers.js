@@ -55,6 +55,7 @@ import {
   updateEditorCommentDraft,
   updateEditorAssistantComposerDraft,
   updateEditorAiTranslateAllLanguageSelection,
+  updateEditorClearTranslationsLanguageSelection,
   updateEditorReplaceQuery,
   updateEditorRowFilterMode,
   updateEditorRowFieldValue,
@@ -473,6 +474,20 @@ function handleEditorAiTranslateAllLanguageInput(event, render) {
   return true;
 }
 
+function handleEditorClearTranslationsLanguageInput(event, render) {
+  if (event.type !== "change") {
+    return false;
+  }
+
+  const input = event.target.closest("[data-editor-clear-translations-language]");
+  if (!(input instanceof HTMLInputElement)) {
+    return false;
+  }
+
+  updateEditorClearTranslationsLanguageSelection(render, input.value, input.checked);
+  return true;
+}
+
 function handleEditorImageUrlInput(event) {
   const input = event.target.closest("[data-editor-image-url-input]");
   if (!input) {
@@ -641,6 +656,7 @@ const inputHandlers = [
   handleEditorCommentDraftInput,
   handleEditorAssistantDraftInput,
   handleEditorAiTranslateAllLanguageInput,
+  handleEditorClearTranslationsLanguageInput,
   handleEditorImageUrlInput,
   handleEditorConflictResolutionInput,
   handleChapterGlossarySelectInput,

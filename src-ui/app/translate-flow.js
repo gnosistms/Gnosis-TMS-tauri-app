@@ -85,16 +85,21 @@ import {
 import {
   collapseEmptyEditorFootnote as collapseEmptyEditorFootnoteFlow,
   collapseEditorImageCaption as collapseEditorImageCaptionFlow,
+  cancelEditorClearTranslationsModal as cancelEditorClearTranslationsModalFlow,
   cancelEditorUnreviewAllModal as cancelEditorUnreviewAllModalFlow,
+  confirmEditorClearTranslations as confirmEditorClearTranslationsFlow,
   confirmEditorUnreviewAll as confirmEditorUnreviewAllFlow,
   flushDirtyEditorRows as flushDirtyEditorRowsFlow,
+  openEditorClearTranslationsModal as openEditorClearTranslationsModalFlow,
   openEditorFootnote as openEditorFootnoteFlow,
   openEditorImageCaption as openEditorImageCaptionFlow,
   openEditorUnreviewAllModal as openEditorUnreviewAllModalFlow,
   persistEditorRowOnBlur as persistEditorRowOnBlurFlow,
+  reviewEditorClearTranslations as reviewEditorClearTranslationsFlow,
   resolveEditorRowConflict as resolveEditorRowConflictFlow,
   scheduleDirtyEditorRowScan as scheduleDirtyEditorRowScanFlow,
   toggleEditorRowFieldMarker as toggleEditorRowFieldMarkerFlow,
+  updateEditorClearTranslationsLanguageSelection as updateEditorClearTranslationsLanguageSelectionFlow,
   updateEditorRowFieldValueForContentKind as updateEditorRowFieldValueFlow,
   updateEditorRowTextStyle as updateEditorRowTextStyleFlow,
 } from "./editor-persistence-flow.js";
@@ -441,6 +446,26 @@ export async function confirmEditorAiTranslateAll(render) {
     updateEditorRowFieldValue,
     persistEditorRowOnBlur,
   });
+}
+
+export function openEditorClearTranslationsModal(render) {
+  openEditorClearTranslationsModalFlow(render);
+}
+
+export function cancelEditorClearTranslationsModal(render) {
+  cancelEditorClearTranslationsModalFlow(render);
+}
+
+export function updateEditorClearTranslationsLanguageSelection(render, languageCode, selected) {
+  updateEditorClearTranslationsLanguageSelectionFlow(render, languageCode, selected);
+}
+
+export function reviewEditorClearTranslations(render) {
+  reviewEditorClearTranslationsFlow(render);
+}
+
+export async function confirmEditorClearTranslations(render) {
+  await confirmEditorClearTranslationsFlow(render, editorPersistenceOperations());
 }
 
 export function openEditorDeriveGlossariesModal(render) {
