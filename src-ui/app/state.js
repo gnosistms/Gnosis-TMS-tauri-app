@@ -238,6 +238,8 @@ export function createConnectionFailureState() {
     isOpen: false,
     message: "",
     canGoOffline: false,
+    reconnecting: false,
+    retryAction: null,
   };
 }
 

@@ -2165,7 +2165,7 @@
 .assistant-composer__field-shell {
   display: grid;
   position: relative;
-  height: 71px;
+  min-height: 71px;
   border: 1px solid rgba(164, 112, 41, 0.18);
   border-radius: var(--radius-ui);
   background: rgba(255, 251, 246, 0.84);

@@ -76,6 +76,7 @@ import {
   noteEditorBackgroundSyncScrollActivity,
   restoreEditorFieldHistory,
   runEditorAiTranslate,
+  scheduleAssistantTranscriptScrollToBottomAfterRender,
   scheduleDirtyEditorRowScan,
   toggleEditorReplaceEnabled,
 } from "./app/translate-flow.js";
@@ -341,6 +342,9 @@ function renderTranslateSidebarOnly() {
   sidebar.scrollTop = scrollTop;
   syncEditorAssistantDraftTextareaHeights(sidebar);
   syncEditorCommentDraftTextareaHeights(sidebar);
+  if (state.editorChapter?.sidebarTab === "assistant") {
+    scheduleAssistantTranscriptScrollToBottomAfterRender();
+  }
   if (shouldRestoreFocusedInputStateForScope(focusSnapshot, "translate-sidebar")) {
     restoreFocusedInputState(focusSnapshot);
   }
@@ -484,6 +488,9 @@ function renderWithOptions(options = {}) {
   restorePendingEditorSelection(app);
   syncEditorAssistantDraftTextareaHeights(app);
   syncEditorCommentDraftTextareaHeights(app);
+  if (state.screen === "translate" && state.editorChapter?.sidebarTab === "assistant") {
+    scheduleAssistantTranscriptScrollToBottomAfterRender();
+  }
   scrollActivePreviewSearchMatchIntoView(app);
   document.title = titles[state.screen] ?? "Gnosis TMS";
 }

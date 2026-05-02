@@ -110,13 +110,13 @@ export function renderProjectImportModal(state) {
               ${isImporting ? 'disabled aria-disabled="true"' : ""}
             >
               ${isImporting ? '<span class="button__spinner" aria-hidden="true"></span>' : ""}
-              <span>Drop a file here or click to open a file selector.</span>
+              <span>Drop files here or click to open the file selector.</span>
             </button>
             <p class="project-import-modal__hint">Supported formats: .xlsx, .txt, or .docx. For .xlsx files, the first row must contain valid ISO 639-1 two-letter language codes such as es, en, or vi.</p>
           </div>
           <div class="modal__actions">
             ${secondaryButton("Cancel", "cancel-project-import", { disabled: isImporting })}
-            ${primaryButton(isImporting ? "Uploading..." : "Select File", "select-project-import-file", { disabled: isImporting })}
+            ${primaryButton(isImporting ? "Uploading..." : "Select files", "select-project-import-file", { disabled: isImporting })}
           </div>
         </div>
       </section>

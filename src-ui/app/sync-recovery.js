@@ -8,7 +8,7 @@ import { parseRequiredAppUpdateFromError, requireAppUpdate } from "./updater-flo
 
 export async function handleSyncFailure(
   classification,
-  { render, teamId = null, currentResource = false } = {},
+  { render, teamId = null, currentResource = false, retryAction = null } = {},
 ) {
   if (classification?.type === "app_update_required") {
     const requirement = parseRequiredAppUpdateFromError(classification.message);
@@ -33,7 +33,7 @@ export async function handleSyncFailure(
         : classification.source === "github"
           ? "Could not connect to GitHub."
           : "Could not connect. Try again or work offline.";
-    openConnectionFailureModal(message, render);
+    openConnectionFailureModal(message, render, { retryAction });
     return true;
   }
 

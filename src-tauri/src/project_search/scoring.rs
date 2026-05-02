@@ -2,6 +2,8 @@ use std::collections::HashSet;
 
 use super::{CandidateDocument, SearchProjectsResponse, MIN_SEARCH_QUERY_LENGTH};
 
+pub(super) const PROJECT_SEARCH_SNIPPET_CHAR_LIMIT: usize = 350;
+
 #[derive(Clone, Copy)]
 pub(super) struct SearchScore {
     pub(super) exact_phrase: bool,
@@ -190,17 +192,93 @@ fn count_exact_substrings(document: &str, needle: &str) -> usize {
     count
 }
 
-pub(super) fn build_plain_text_snippet(plain_text: &str) -> String {
+pub(super) fn build_plain_text_snippet(plain_text: &str, normalized_query: &str) -> String {
     let trimmed = plain_text.trim();
-    if trimmed.chars().count() <= 140 {
+    let text_char_count = trimmed.chars().count();
+    if text_char_count <= PROJECT_SEARCH_SNIPPET_CHAR_LIMIT {
         return trimmed.to_string();
     }
 
-    let snippet = trimmed
+    let (match_start, match_end) =
+        resolve_plain_text_match_char_range(trimmed, normalized_query).unwrap_or((0, 0));
+    let match_center = match_start + (match_end.saturating_sub(match_start) / 2);
+    let half_limit = PROJECT_SEARCH_SNIPPET_CHAR_LIMIT / 2;
+    let mut start = match_center.saturating_sub(half_limit);
+    if start + PROJECT_SEARCH_SNIPPET_CHAR_LIMIT > text_char_count {
+        start = text_char_count.saturating_sub(PROJECT_SEARCH_SNIPPET_CHAR_LIMIT);
+    }
+    let end = (start + PROJECT_SEARCH_SNIPPET_CHAR_LIMIT).min(text_char_count);
+
+    let snippet = slice_chars(trimmed, start, end).trim().to_string();
+    let prefix = if start > 0 { "..." } else { "" };
+    let suffix = if end < text_char_count { "..." } else { "" };
+    format!("{prefix}{snippet}{suffix}")
+}
+
+fn resolve_plain_text_match_char_range(
+    plain_text: &str,
+    normalized_query: &str,
+) -> Option<(usize, usize)> {
+    let query = normalized_query.trim();
+    if query.is_empty() {
+        return None;
+    }
+
+    let (normalized_text, char_map) = normalize_search_text_with_char_map(plain_text);
+    let byte_start = normalized_text.find(query)?;
+    let normalized_start = normalized_text[..byte_start].chars().count();
+    let normalized_len = query.chars().count();
+    let source_start = *char_map.get(normalized_start)?;
+    let source_end = char_map
+        .get(normalized_start + normalized_len)
+        .copied()
+        .unwrap_or_else(|| plain_text.chars().count());
+    Some((source_start, source_end.max(source_start + 1)))
+}
+
+fn normalize_search_text_with_char_map(value: &str) -> (String, Vec<usize>) {
+    let mut normalized = String::with_capacity(value.len());
+    let mut char_map = Vec::<usize>::new();
+    let mut previous_was_space = true;
+
+    for (source_char_index, character) in value.chars().enumerate() {
+        if character.is_whitespace() {
+            if !previous_was_space {
+                normalized.push(' ');
+                char_map.push(source_char_index);
+                previous_was_space = true;
+            }
+            continue;
+        }
+
+        if character.is_alphanumeric() {
+            for lower in character.to_lowercase() {
+                normalized.push(lower);
+                char_map.push(source_char_index);
+            }
+            previous_was_space = false;
+            continue;
+        }
+
+        if !previous_was_space {
+            normalized.push(' ');
+            char_map.push(source_char_index);
+            previous_was_space = true;
+        }
+    }
+
+    while normalized.ends_with(' ') {
+        normalized.pop();
+        char_map.pop();
+    }
+
+    (normalized, char_map)
+}
+
+fn slice_chars(value: &str, start: usize, end: usize) -> String {
+    value
         .chars()
-        .take(140)
+        .skip(start)
+        .take(end.saturating_sub(start))
         .collect::<String>()
-        .trim()
-        .to_string();
-    format!("{snippet}...")
 }

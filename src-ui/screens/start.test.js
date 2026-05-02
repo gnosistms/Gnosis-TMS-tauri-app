@@ -23,11 +23,11 @@ function startState(overrides = {}) {
 test("start screen renders the hero logo in idle, restoring, and offline states", () => {
   assert.match(
     renderStartScreen(startState()),
-    /class="start-hero__logo"/,
+    /class="start-hero__logo-image"/,
   );
   assert.match(
     renderStartScreen(startState({ auth: { status: "restoring", message: "" } })),
-    /class="start-hero__logo"/,
+    /class="start-hero__logo-image"/,
   );
   assert.match(
     renderStartScreen(startState({
@@ -37,7 +37,7 @@ test("start screen renders the hero logo in idle, restoring, and offline states"
         hasLocalData: true,
       },
     })),
-    /class="start-hero__logo"/,
+    /class="start-hero__logo-image"/,
   );
 });
 
@@ -51,7 +51,7 @@ test("start screen keeps GitHub login progress in the logo hero", () => {
     },
   }));
 
-  assert.match(html, /class="start-hero__logo"/);
+  assert.match(html, /class="start-hero__logo-image"/);
   assert.match(html, /Finish signing in with GitHub in your browser\./);
   assert.doesNotMatch(html, /start-message-card--waiting/);
 });

@@ -72,13 +72,16 @@ globalThis.window = {
 };
 
 const { restoreStoredBrokerSession } = await import("./auth-flow.js");
+const { reconnectFromConnectionFailure } = await import("./connection-failure.js");
 const { enableOfflineMode, reconnectOnlineMode } = await import("./offline-connectivity.js");
+const { renderConnectionFailureModal } = await import("../screens/connection-failure-modal.js");
 const { handleSyncFailure } = await import("./sync-recovery.js");
 const { resetSessionState, state } = await import("./state.js");
 const { saveStoredTeamRecords, setActiveStorageLogin } = await import("./team-storage.js");
 
 test.afterEach(() => {
   invokeHandler = async () => true;
+  globalThis.navigator.onLine = true;
   localStorageState.clear();
   resetSessionState();
 });
@@ -231,4 +234,108 @@ test("handleSyncFailure preserves the local session on auth failures", async () 
   });
   assert.equal(state.auth.status, "expired");
   assert.equal(renderCount, 1);
+});
+
+test("connection failure modal uses Reconnect instead of Cancel", () => {
+  state.connectionFailure = {
+    isOpen: true,
+    message: "No internet connection.",
+    canGoOffline: true,
+    reconnecting: false,
+    retryAction: null,
+  };
+
+  const html = renderConnectionFailureModal(state);
+
+  assert.match(html, /Reconnect/);
+  assert.doesNotMatch(html, /Cancel/);
+  assert.match(html, /go-offline-from-connection-failure/);
+});
+
+test("connection failure modal shows reconnecting state", () => {
+  state.connectionFailure = {
+    isOpen: true,
+    message: "No internet connection.",
+    canGoOffline: true,
+    reconnecting: true,
+    retryAction: null,
+  };
+
+  const html = renderConnectionFailureModal(state);
+
+  assert.match(html, /button__spinner/);
+  assert.match(html, /aria-busy="true"/);
+  assert.match(html, /data-action="noop"/);
+  assert.match(html, /go-offline-from-connection-failure" disabled/);
+});
+
+test("reconnectFromConnectionFailure stays open when the connection is still unavailable", async () => {
+  globalThis.navigator.onLine = false;
+  invokeHandler = async (command) => {
+    assert.equal(command, "check_internet_connection");
+    return false;
+  };
+  state.connectionFailure = {
+    isOpen: true,
+    message: "Could not connect.",
+    canGoOffline: true,
+    reconnecting: false,
+    retryAction: null,
+  };
+
+  let renderCount = 0;
+  await reconnectFromConnectionFailure(() => {
+    renderCount += 1;
+  });
+
+  assert.equal(state.connectionFailure.isOpen, true);
+  assert.equal(state.connectionFailure.reconnecting, false);
+  assert.equal(state.connectionFailure.message, "No internet connection.");
+  assert.equal(renderCount, 2);
+});
+
+test("reconnectFromConnectionFailure closes after the retry action succeeds", async () => {
+  let retryCount = 0;
+  state.connectionFailure = {
+    isOpen: true,
+    message: "Could not connect.",
+    canGoOffline: true,
+    reconnecting: false,
+    retryAction: async () => {
+      retryCount += 1;
+    },
+  };
+
+  let renderCount = 0;
+  await reconnectFromConnectionFailure(() => {
+    renderCount += 1;
+  });
+
+  assert.equal(retryCount, 1);
+  assert.equal(state.connectionFailure.isOpen, false);
+  assert.equal(renderCount, 2);
+});
+
+test("reconnectFromConnectionFailure keeps the modal open when the retry reopens it", async () => {
+  state.connectionFailure = {
+    isOpen: true,
+    message: "Could not connect.",
+    canGoOffline: true,
+    reconnecting: false,
+    retryAction: async () => {
+      state.connectionFailure = {
+        isOpen: true,
+        message: "Could not connect to GitHub.",
+        canGoOffline: true,
+        reconnecting: false,
+        retryAction: null,
+      };
+    },
+  };
+
+  await reconnectFromConnectionFailure(() => {});
+
+  assert.equal(state.connectionFailure.isOpen, true);
+  assert.equal(state.connectionFailure.reconnecting, false);
+  assert.equal(state.connectionFailure.message, "Could not connect to GitHub.");
 });

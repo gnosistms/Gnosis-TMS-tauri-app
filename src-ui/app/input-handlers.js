@@ -453,8 +453,7 @@ function handleEditorAssistantDraftInput(event, render) {
   }
 
   updateEditorAssistantComposerDraft(input.value);
-  syncAutoSizeTextarea(input, { minHeight: 53, maxHeight: 132 });
-  render?.({ scope: "translate-sidebar" });
+  syncAutoSizeTextarea(input, { minHeight: 71, maxHeight: 213 });
   return true;
 }
 

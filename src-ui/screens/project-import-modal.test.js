@@ -14,7 +14,8 @@ test("project import modal renders the requested drop target copy", () => {
   });
 
   assert.match(html, /data-project-import-dropzone/);
-  assert.match(html, /Drop a file here or click to open a file selector\./);
+  assert.match(html, /Drop files here or click to open the file selector\./);
+  assert.match(html, /Select files/);
   assert.match(html, /Supported formats: \.xlsx, \.txt, or \.docx\./);
 });
 

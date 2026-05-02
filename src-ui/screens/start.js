@@ -1,7 +1,13 @@
+import caduceusLogoSvgSource from "../assets/brand/gnosisvn-caduceus-logo.svg?raw";
 import { primaryButton } from "../lib/ui.js";
 
+const caduceusLogoSvg = caduceusLogoSvgSource
+  .replace(/<\?xml[\s\S]*?\?>\s*/i, "")
+  .replace(/<!DOCTYPE[\s\S]*?>\s*/i, "")
+  .replace("<svg ", '<svg class="start-hero__logo-image" focusable="false" ');
+
 function renderStartHeroLogo() {
-  return '<div class="start-hero__logo" aria-hidden="true"></div>';
+  return `<div class="start-hero__logo" aria-hidden="true">${caduceusLogoSvg}</div>`;
 }
 
 export function renderStartScreen(state) {

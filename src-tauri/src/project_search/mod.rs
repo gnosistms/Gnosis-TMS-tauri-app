@@ -18,6 +18,7 @@ use schema::{ensure_project_search_schema, open_project_search_db, project_searc
 use scoring::{
     build_plain_text_snippet, collect_unique_bigrams, collect_unique_trigrams,
     compute_search_score, normalize_search_text, score_to_number,
+    PROJECT_SEARCH_SNIPPET_CHAR_LIMIT,
 };
 
 #[cfg(test)]
@@ -232,6 +233,7 @@ mod tests {
         collect_unique_bigrams, collect_unique_trigrams, compute_search_score,
         extract_chapter_dir_from_repo_path, normalize_search_text, row_search_documents_from_value,
         score_to_number, CandidateDocument, IndexedDocument, RepoRefreshPlan,
+        PROJECT_SEARCH_SNIPPET_CHAR_LIMIT,
     };
 
     fn candidate(
@@ -311,9 +313,30 @@ mod tests {
 
     #[test]
     fn build_plain_text_snippet_truncates_long_text() {
-        let snippet = build_plain_text_snippet(&"a".repeat(200));
+        let snippet = build_plain_text_snippet(&"a".repeat(400), "");
         assert!(snippet.ends_with("..."));
-        assert!(snippet.len() < 160);
+        assert!(snippet.len() <= PROJECT_SEARCH_SNIPPET_CHAR_LIMIT + 3);
+    }
+
+    #[test]
+    fn build_plain_text_snippet_keeps_short_text_whole() {
+        let text = "a".repeat(PROJECT_SEARCH_SNIPPET_CHAR_LIMIT);
+        assert_eq!(build_plain_text_snippet(&text, "needle"), text);
+    }
+
+    #[test]
+    fn build_plain_text_snippet_centers_long_text_on_search_match() {
+        let text = format!(
+            "{}search term{}",
+            "a".repeat(PROJECT_SEARCH_SNIPPET_CHAR_LIMIT),
+            "b".repeat(PROJECT_SEARCH_SNIPPET_CHAR_LIMIT),
+        );
+        let snippet = build_plain_text_snippet(&text, &normalize_search_text("search term"));
+        assert!(snippet.starts_with("..."));
+        assert!(snippet.ends_with("..."));
+        assert!(snippet.contains("search term"));
+        assert!(snippet.find("search term").unwrap() > 100);
+        assert!(snippet.find("search term").unwrap() < 250);
     }
 
     #[test]

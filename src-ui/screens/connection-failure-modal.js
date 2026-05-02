@@ -5,6 +5,15 @@ export function renderConnectionFailureModal(state) {
   if (!failure?.isOpen) {
     return "";
   }
+  const isReconnecting = failure.reconnecting === true;
+  const reconnectButton = isReconnecting
+    ? `
+      <button class="button button--secondary button--loading" data-action="noop" disabled aria-busy="true">
+        <span class="button__spinner" aria-hidden="true"></span>
+        <span>Reconnect</span>
+      </button>
+    `
+    : secondaryButton("Reconnect", "reconnect-from-connection-failure");
 
   return `
     <div class="modal-backdrop">
@@ -19,9 +28,9 @@ export function renderConnectionFailureModal(state) {
             Would you like to go to offline mode?
           </p>
           <div class="modal__actions">
-            ${secondaryButton("Cancel", "dismiss-connection-failure")}
+            ${reconnectButton}
             ${primaryButton("Go offline", "go-offline-from-connection-failure", {
-              disabled: failure.canGoOffline !== true,
+              disabled: failure.canGoOffline !== true || isReconnecting,
             })}
           </div>
         </div>

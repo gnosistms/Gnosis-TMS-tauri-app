@@ -190,7 +190,10 @@ pub(super) fn search_projects_sync(
                 language_code: candidate.document.language_code.clone(),
                 language_name: candidate.document.language_name.clone(),
                 snippet_source: candidate.document.snippet_source.clone(),
-                snippet: build_plain_text_snippet(&candidate.document.plain_text),
+                snippet: build_plain_text_snippet(
+                    &candidate.document.plain_text,
+                    &normalized_query,
+                ),
                 match_count: resolve_match_count(&candidate, &normalized_query),
                 exact_phrase: score.exact_phrase,
                 score: score_to_number(score),

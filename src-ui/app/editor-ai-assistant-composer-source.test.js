@@ -21,8 +21,16 @@ const inputHandlersSource = readFileSync(
   path.join(currentDir, "input-handlers.js"),
   "utf8",
 );
+const autosizeSource = readFileSync(
+  path.join(currentDir, "autosize.js"),
+  "utf8",
+);
 const translateFlowSource = readFileSync(
   path.join(currentDir, "translate-flow.js"),
+  "utf8",
+);
+const mainSource = readFileSync(
+  path.join(currentDir, "../main.js"),
   "utf8",
 );
 const translateCssSource = readFileSync(
@@ -89,12 +97,24 @@ test("assistant source context uses token-budget expansion", () => {
   );
 });
 
-test("assistant composer uses the shorter prompt box sizing", () => {
-  assert.match(translateCssSource, /\.assistant-composer__field-shell\s*{[\s\S]*height: 71px;/);
+test("assistant composer grows to three times the default prompt box height", () => {
+  assert.match(translateCssSource, /\.assistant-composer__field-shell\s*{[\s\S]*min-height: 71px;/);
   assert.equal(
-    inputHandlersSource.includes("syncAutoSizeTextarea(input, { minHeight: 53, maxHeight: 132 });"),
+    inputHandlersSource.includes("syncAutoSizeTextarea(input, { minHeight: 71, maxHeight: 213 });"),
     true,
   );
+  assert.equal(
+    autosizeSource.includes("syncAutoSizeTextarea(element, { minHeight: 71, maxHeight: 213 })"),
+    true,
+  );
+});
+
+test("assistant composer input does not rerender the sidebar on every keystroke", () => {
+  const handlerMatch = inputHandlersSource.match(
+    /function handleEditorAssistantDraftInput\(event, render\) \{[\s\S]*?\n\}/,
+  );
+  assert.ok(handlerMatch);
+  assert.equal(handlerMatch[0].includes("render?.({ scope: \"translate-sidebar\" });"), false);
 });
 
 test("opening the assistant tab schedules the transcript to scroll down", () => {
@@ -105,5 +125,19 @@ test("opening the assistant tab schedules the transcript to scroll down", () => 
   assert.equal(
     editorAiAssistantFlowSource.includes("export function scheduleAssistantTranscriptScrollToBottom()"),
     true,
+  );
+});
+
+test("assistant sidebar renders schedule the transcript to scroll down", () => {
+  assert.equal(
+    translateFlowSource.includes("export function scheduleAssistantTranscriptScrollToBottomAfterRender()"),
+    true,
+  );
+  assert.equal(
+    mainSource.includes("state.editorChapter?.sidebarTab === \"assistant\""),
+    true,
+  );
+  assert.ok(
+    (mainSource.match(/scheduleAssistantTranscriptScrollToBottomAfterRender\(\);/g) ?? []).length >= 2,
   );
 });
