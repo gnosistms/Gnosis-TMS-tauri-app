@@ -76,6 +76,7 @@ const { reconnectFromConnectionFailure } = await import("./connection-failure.js
 const { enableOfflineMode, reconnectOnlineMode } = await import("./offline-connectivity.js");
 const { renderConnectionFailureModal } = await import("../screens/connection-failure-modal.js");
 const { handleSyncFailure } = await import("./sync-recovery.js");
+const { classifySyncError } = await import("./sync-error.js");
 const { resetSessionState, state } = await import("./state.js");
 const { saveStoredTeamRecords, setActiveStorageLogin } = await import("./team-storage.js");
 
@@ -338,4 +339,50 @@ test("reconnectFromConnectionFailure keeps the modal open when the retry reopens
   assert.equal(state.connectionFailure.isOpen, true);
   assert.equal(state.connectionFailure.reconnecting, false);
   assert.equal(state.connectionFailure.message, "Could not connect to GitHub.");
+});
+
+test("handleSyncFailure shows the Gnosis TMS server message for broker connection failures", async () => {
+  invokeHandler = async (command) => {
+    assert.equal(command, "check_internet_connection");
+    return true;
+  };
+
+  await handleSyncFailure(
+    classifySyncError(new Error("Could not reach the GitHub App broker: error sending request")),
+    { render: () => {} },
+  );
+
+  assert.equal(state.connectionFailure.isOpen, true);
+  assert.equal(state.connectionFailure.message, "Could not connect to Gnosis TMS server.");
+});
+
+test("handleSyncFailure shows the GitHub message for GitHub connection failures", async () => {
+  invokeHandler = async (command) => {
+    assert.equal(command, "check_internet_connection");
+    return true;
+  };
+
+  await handleSyncFailure(
+    classifySyncError(new Error("git fetch failed: Could not resolve host: github.com")),
+    { render: () => {} },
+  );
+
+  assert.equal(state.connectionFailure.isOpen, true);
+  assert.equal(state.connectionFailure.message, "Could not connect to GitHub.");
+});
+
+test("handleSyncFailure shows no-internet copy when connectivity check fails", async () => {
+  globalThis.navigator.onLine = false;
+  invokeHandler = async (command) => {
+    assert.equal(command, "check_internet_connection");
+    return false;
+  };
+
+  await handleSyncFailure(
+    classifySyncError(new Error("Network is unreachable")),
+    { render: () => {} },
+  );
+
+  assert.equal(state.connectionFailure.isOpen, true);
+  assert.equal(state.connectionFailure.message, "No internet connection.");
 });
