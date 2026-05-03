@@ -62,3 +62,26 @@ test("editor footnote collapse preserves the row viewport anchor", async () => {
   assert.match(translateEventsSource, /collapseEmptyEditorFootnote\(render, rowId, languageCode, \{ viewportSnapshot \}\)/);
   assert.match(persistenceSource, /renderTranslateBodyPreservingViewport\(render, options\?\.viewportSnapshot \?\? null\)/);
 });
+
+test("editor image caption open preserves the clicked row viewport", async () => {
+  const actionsSource = await readFile(new URL("./actions/translate-actions.js", import.meta.url), "utf8");
+  const translateFlowSource = await readFile(new URL("./translate-flow.js", import.meta.url), "utf8");
+  const persistenceSource = await readFile(new URL("./editor-persistence-flow.js", import.meta.url), "utf8");
+
+  assert.match(actionsSource, /openEditorImageCaption\(render, rowId, languageCode, \{ target: event\?\.target \?\? null \}\)/);
+  assert.match(translateFlowSource, /openEditorImageCaption\(render, rowId, languageCode, options = \{\}\)/);
+  assert.match(translateFlowSource, /resolveEditorMainFieldViewportSnapshot\(rowId, languageCode, options\)/);
+  assert.match(persistenceSource, /export function openEditorImageCaption\(render, rowId, languageCode, options = \{\}\)/);
+  assert.match(persistenceSource, /renderTranslateBodyPreservingViewport\(render, options\?\.viewportSnapshot \?\? null\)/);
+});
+
+test("editor image URL blur uses the same submit path as Shift Enter", async () => {
+  const translateEventsSource = await readFile(new URL("./translate-editor-dom-events.js", import.meta.url), "utf8");
+
+  assert.match(translateEventsSource, /void submitEditorImageUrl\(render, rowId, languageCode\)/);
+  assert.doesNotMatch(translateEventsSource, /void persistEditorImageUrlOnBlur\(render, rowId, languageCode\)/);
+  assert.match(
+    translateEventsSource,
+    /if \(imageUrlInput instanceof HTMLInputElement\) \{\s*requestAnimationFrame\(\(\) => \{[\s\S]*?void submitEditorImageUrl\(render, rowId, languageCode\);[\s\S]*?\}\);\s*return;\s*\}\s*if \(textarea instanceof HTMLTextAreaElement && contentKind === "image-caption"\)/,
+  );
+});

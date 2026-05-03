@@ -812,12 +812,16 @@ export function toggleEditorInlineStyle(render, button) {
   });
 }
 
-export function openEditorFootnote(render, rowId, languageCode) {
-  openEditorFootnoteFlow(render, rowId, languageCode);
+export function openEditorFootnote(render, rowId, languageCode, options = {}) {
+  openEditorFootnoteFlow(render, rowId, languageCode, {
+    viewportSnapshot: resolveEditorMainFieldViewportSnapshot(rowId, languageCode, options),
+  });
 }
 
-export function openEditorImageCaption(render, rowId, languageCode) {
-  openEditorImageCaptionFlow(render, rowId, languageCode);
+export function openEditorImageCaption(render, rowId, languageCode, options = {}) {
+  openEditorImageCaptionFlow(render, rowId, languageCode, {
+    viewportSnapshot: resolveEditorMainFieldViewportSnapshot(rowId, languageCode, options),
+  });
 }
 
 export function collapseEmptyEditorFootnote(render, rowId, languageCode, options = {}) {

@@ -670,8 +670,10 @@ a {
 
 [data-tooltip]::before {
   bottom: calc(100% + 10px);
+  display: -webkit-box;
   transform: translate(-50%, 4px);
-  max-width: 220px;
+  max-width: min(460px, calc(100vw - 32px));
+  max-height: calc((1.25em * 4) + 16px);
   width: max-content;
   padding: 8px 10px;
   border-radius: 12px;
@@ -683,6 +685,12 @@ a {
   line-height: 1.25;
   text-align: center;
   white-space: normal;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  text-overflow: ellipsis;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
 }
 
 [data-tooltip]::after {

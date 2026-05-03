@@ -1090,7 +1090,7 @@ export function openEditorImagePreview(render, rowId, languageCode) {
       src,
     },
   };
-  render?.();
+  render?.({ scope: "translate-image-preview-overlay" });
 }
 
 export function closeEditorImagePreview(render) {
@@ -1102,7 +1102,7 @@ export function closeEditorImagePreview(render) {
     ...state.editorChapter,
     imagePreviewOverlay: createEditorImagePreviewOverlayState(),
   };
-  render?.();
+  render?.({ scope: "translate-image-preview-overlay" });
 }
 
 export function closeEditorImageInvalidFileModal(render) {

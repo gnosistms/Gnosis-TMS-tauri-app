@@ -1,4 +1,5 @@
 import { syncEditorRowTextareaHeight } from "./autosize.js";
+import { syncEditorImagePreviewFrameWithResult } from "./editor-image-preview-size.js";
 import { syncEditorVirtualizationRowLayout } from "./editor-virtualization.js";
 import { closestEventTarget } from "./event-target.js";
 import { onCurrentWebviewDragDrop } from "./runtime.js";
@@ -20,7 +21,6 @@ import {
   flushDirtyEditorRows,
   handleDroppedEditorImageFile,
   handleDroppedEditorImagePath,
-  persistEditorImageUrlOnBlur,
   runEditorAiAssistant,
   scheduleDirtyEditorRowScan,
   setActiveEditorField,
@@ -395,6 +395,16 @@ export function registerTranslateEditorDomEvents(app, render) {
         syncActiveEditorInlineStyleButtons();
       });
     }
+    if (imageUrlInput instanceof HTMLInputElement) {
+      requestAnimationFrame(() => {
+        if (document.activeElement === imageUrlInput) {
+          return;
+        }
+
+        void submitEditorImageUrl(render, rowId, languageCode);
+      });
+      return;
+    }
     if (textarea instanceof HTMLTextAreaElement && contentKind === "image-caption") {
       requestAnimationFrame(() => {
         if (document.activeElement === textarea) {
@@ -423,7 +433,7 @@ export function registerTranslateEditorDomEvents(app, render) {
       collapseEditorMainField(render, rowId, languageCode, { viewportSnapshot });
       collapseEmptyEditorFootnote(render, rowId, languageCode, { viewportSnapshot });
       collapseEmptyEditorImageEditor(render, rowId, languageCode);
-      void persistEditorImageUrlOnBlur(render, rowId, languageCode);
+      void submitEditorImageUrl(render, rowId, languageCode);
     });
     if (textarea instanceof HTMLTextAreaElement) {
       scheduleDirtyEditorRowScan(render, rowId);
@@ -528,7 +538,7 @@ export function registerTranslateEditorDomEvents(app, render) {
       return;
     }
 
-    syncEditorVirtualizationRowLayout(image);
+    syncEditorImagePreviewFrameWithResult(image);
   }, true);
 
   app.addEventListener("beforeinput", (event) => {

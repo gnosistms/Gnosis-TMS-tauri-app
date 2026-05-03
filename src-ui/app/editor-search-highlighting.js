@@ -12,7 +12,12 @@ function escapeHtml(value) {
 export function buildEditorSearchHighlightKey(languageCode, contentKind = "field") {
   const normalizedLanguageCode =
     typeof languageCode === "string" && languageCode.trim() ? languageCode.trim() : "";
-  const normalizedContentKind = contentKind === "footnote" ? "footnote" : "field";
+  const normalizedContentKind =
+    contentKind === "footnote"
+      ? "footnote"
+      : contentKind === "image-caption"
+        ? "image-caption"
+        : "field";
   return normalizedLanguageCode ? `${normalizedLanguageCode}:${normalizedContentKind}` : "";
 }
 
@@ -32,7 +37,12 @@ export function buildEditorRowSearchHighlights(
     if (!languageCode || (visibleCodes && !visibleCodes.has(languageCode))) {
       continue;
     }
-    const contentKind = section?.contentKind === "footnote" ? "footnote" : "field";
+    const contentKind =
+      section?.contentKind === "footnote"
+        ? "footnote"
+        : section?.contentKind === "image-caption"
+          ? "image-caption"
+          : "field";
 
     const text = String(section?.text ?? "");
     const highlight = buildInlineMarkupSearchHighlightMarkup(text, searchQuery, languageCode, {

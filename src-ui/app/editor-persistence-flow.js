@@ -409,7 +409,7 @@ export function updateEditorRowFieldValueForContentKind(
   markEditorRowDirty(rowId);
 }
 
-export function openEditorFootnote(render, rowId, languageCode) {
+export function openEditorFootnote(render, rowId, languageCode, options = {}) {
   if (!rowId || !languageCode || !state.editorChapter?.chapterId) {
     return;
   }
@@ -426,7 +426,7 @@ export function openEditorFootnote(render, rowId, languageCode) {
       languageCode,
     },
   };
-  render?.({ scope: "translate-body" });
+  renderTranslateBodyPreservingViewport(render, options?.viewportSnapshot ?? null);
 
   if (typeof window !== "undefined") {
     window.requestAnimationFrame(() => {
@@ -444,7 +444,7 @@ export function openEditorFootnote(render, rowId, languageCode) {
   }
 }
 
-export function openEditorImageCaption(render, rowId, languageCode) {
+export function openEditorImageCaption(render, rowId, languageCode, options = {}) {
   if (!rowId || !languageCode || !state.editorChapter?.chapterId) {
     return;
   }
@@ -461,7 +461,7 @@ export function openEditorImageCaption(render, rowId, languageCode) {
       languageCode,
     },
   };
-  render?.({ scope: "translate-body" });
+  renderTranslateBodyPreservingViewport(render, options?.viewportSnapshot ?? null);
 
   if (typeof window !== "undefined") {
     window.requestAnimationFrame(() => {

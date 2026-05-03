@@ -40,9 +40,9 @@ const TOOLBAR_ICONS = {
     </svg>
   `,
   aiReviewAll: `
-    <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
-      <path d="M13.2 5.25H7a3.75 3.75 0 0 0-3.75 3.75v7a3.75 3.75 0 0 0 3.75 3.75h7a3.75 3.75 0 0 0 3.75-3.75v-4.2" />
-      <path d="m7.3 12.55 2.45 2.45 4.8-4.85" />
+    <svg viewBox="0 0 20 20" focusable="false" aria-hidden="true">
+      <rect x="2.25" y="2.25" width="15.5" height="15.5" rx="4" fill="none" stroke="currentColor" stroke-width="1.8"></rect>
+      <path d="M6.2 10.25 8.8 12.85 13.9 7.7" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"></path>
     </svg>
   `,
   unreviewAll: `
@@ -62,9 +62,14 @@ const TOOLBAR_ICONS = {
   `,
 };
 
+function normalizeToolbarIconTooltip(value) {
+  return String(value ?? "").trim().replace(/\.+$/, "");
+}
+
 function renderToolbarIconAction(label, action, icon, options = {}) {
-  const tooltip = options.tooltip
-    ? tooltipAttributes(options.tooltip, options.tooltipOptions)
+  const tooltipText = normalizeToolbarIconTooltip(options.tooltip);
+  const tooltip = tooltipText
+    ? tooltipAttributes(tooltipText, options.tooltipOptions)
     : "";
   const disabledAttributes = options.disabled
     ? ' disabled aria-disabled="true" data-offline-blocked="true"'

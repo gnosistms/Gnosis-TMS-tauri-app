@@ -140,17 +140,29 @@ test("Translate toolbar renders icon actions in the expected order when availabl
   assert.equal(clearIndex < translateIndex, true);
   assert.equal(translateIndex < unreviewIndex, true);
   assert.equal(unreviewIndex < reviewIndex, true);
+  const reviewButtonHtml = html.slice(reviewIndex, html.indexOf("</button>", reviewIndex));
   assert.match(html, /aria-label="Derive glossaries"/);
   assert.match(html, /aria-label="Clear translations"/);
   assert.match(html, /aria-label="AI translate all"/);
   assert.match(html, /aria-label="Unreview all"/);
   assert.match(html, /aria-label="AI Review"/);
+  assert.match(reviewButtonHtml, /<rect x="2\.25" y="2\.25" width="15\.5" height="15\.5" rx="4"/);
+  assert.doesNotMatch(reviewButtonHtml, /M13\.2 5\.25H7a3\.75/);
   assert.match(html, /toolbar-icon-action__icon/);
   assert.doesNotMatch(html, />Derive glossaries</);
   assert.doesNotMatch(html, />Clear translations</);
   assert.doesNotMatch(html, />AI translate all</);
   assert.doesNotMatch(html, />Unreview all</);
   assert.doesNotMatch(html, />AI Review</);
+
+  const toolbarButtonHtml = [...html.matchAll(/<button[\s\S]*?class="toolbar-icon-action[\s\S]*?<\/button>/g)]
+    .map((match) => match[0]);
+  assert.equal(toolbarButtonHtml.length, 5);
+  for (const buttonHtml of toolbarButtonHtml) {
+    const tooltipMatch = /data-tooltip="([^"]+)"/.exec(buttonHtml);
+    assert.ok(tooltipMatch);
+    assert.doesNotMatch(tooltipMatch[1], /\.$/);
+  }
 });
 
 test("Translate toolbar includes image and footnote row filters", () => {

@@ -37,11 +37,18 @@ function row(rowId, fields, lifecycleState = "active", options = {}) {
       code,
       name: code,
       text,
+      searchText: options.searchFields?.[code] ?? text,
       footnote: options.footnotes?.[code] ?? "",
+      searchFootnote: options.searchFootnotes?.[code] ?? options.footnotes?.[code] ?? "",
+      imageCaption: options.imageCaptions?.[code] ?? "",
+      searchImageCaption: options.searchImageCaptions?.[code] ?? options.imageCaptions?.[code] ?? "",
       image: options.images?.[code] ?? null,
       hasVisibleFootnote:
         options.visibleFootnotes?.[code] === true
         || String(options.footnotes?.[code] ?? "").trim().length > 0,
+      hasVisibleImageCaption:
+        options.visibleImageCaptions?.[code] === true
+        || String(options.imageCaptions?.[code] ?? "").trim().length > 0,
       reviewed: options.reviewedByLanguage?.[code] === true,
       pleaseCheck: options.pleaseCheckByLanguage?.[code] === true,
     })),
@@ -132,6 +139,58 @@ test("search includes visible footnotes and keeps their keys distinct from main 
   assert.deepEqual(
     [...(result.searchMatchesByRowId.get("row-1")?.keys() ?? [])],
     ["es:field", "es:footnote"],
+  );
+});
+
+test("search keeps rows matched by persisted footnote text during an unsaved footnote edit", () => {
+  const result = buildEditorFilterResult({
+    rows: [
+      row(
+        "row-1",
+        { es: "sin termino" },
+        "active",
+        {
+          footnotes: { es: "" },
+          searchFootnotes: { es: "distintos nota" },
+          visibleFootnotes: { es: true },
+        },
+      ),
+    ],
+    languages: [language("es")],
+    collapsedLanguageCodes: new Set(),
+    filters: { searchQuery: "distintos" },
+  });
+
+  assert.deepEqual(result.filteredRows.map((item) => item.id), ["row-1"]);
+  assert.deepEqual(
+    result.searchResults.map((match) => [match.contentKind, match.text]),
+    [["footnote", "distintos"]],
+  );
+});
+
+test("search includes visible image captions", () => {
+  const result = buildEditorFilterResult({
+    rows: [
+      row(
+        "row-1",
+        { es: "sin termino" },
+        "active",
+        { imageCaptions: { es: "distintos imagen" } },
+      ),
+    ],
+    languages: [language("es")],
+    collapsedLanguageCodes: new Set(),
+    filters: { searchQuery: "distintos" },
+  });
+
+  assert.deepEqual(result.filteredRows.map((item) => item.id), ["row-1"]);
+  assert.deepEqual(
+    result.searchResults.map((match) => [match.contentKind, match.key]),
+    [["image-caption", "row-1:es:image-caption:0:9"]],
+  );
+  assert.deepEqual(
+    [...(result.searchMatchesByRowId.get("row-1")?.keys() ?? [])],
+    ["es:image-caption"],
   );
 });
 

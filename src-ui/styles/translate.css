@@ -1183,13 +1183,24 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 116px;
-  min-height: 116px;
+  flex: 0 0 auto;
+  position: relative;
+  width: var(--editor-image-preview-width, fit-content);
+  height: var(--editor-image-preview-height, fit-content);
+  min-width: 0;
+  min-height: 0;
   max-width: min(100%, 100%);
   border: 1px solid rgba(164, 112, 41, 0.18);
   border-radius: 6px;
   background: rgba(255, 251, 246, 0.92);
   padding: 8px;
+}
+
+.translation-language-panel__image-preview.is-loading {
+  width: var(--editor-image-preview-width, 178px);
+  height: var(--editor-image-preview-height, 118px);
+  min-width: 96px;
+  min-height: 58px;
 }
 
 .translation-language-panel__image-preview:hover,
@@ -1201,11 +1212,29 @@
 
 .translation-language-panel__image {
   display: block;
+  width: var(--editor-image-preview-content-width, auto);
+  height: var(--editor-image-preview-content-height, auto);
   max-width: 100%;
   max-height: 100px;
-  width: auto;
-  height: auto;
   object-fit: contain;
+}
+
+.translation-language-panel__image-loading-placeholder {
+  position: absolute;
+  inset: 8px;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.25;
+  pointer-events: none;
+  text-align: center;
+}
+
+.translation-language-panel__image-preview.is-loading .translation-language-panel__image-loading-placeholder {
+  display: flex;
 }
 
 .translation-language-panel__image-remove {

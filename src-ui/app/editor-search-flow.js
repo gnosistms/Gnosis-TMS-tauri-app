@@ -87,6 +87,14 @@ function buildEditorRowSections(row, chapterState = state.editorChapter) {
         contentKind: "footnote",
       });
     }
+    const imageCaption = row?.imageCaptions?.[language.code] ?? "";
+    if (String(imageCaption).trim().length > 0) {
+      sections.push({
+        code: language.code,
+        text: imageCaption,
+        contentKind: "image-caption",
+      });
+    }
   }
 
   return sections;

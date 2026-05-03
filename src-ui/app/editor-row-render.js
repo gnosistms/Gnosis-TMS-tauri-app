@@ -6,6 +6,7 @@ import {
   tooltipAttributes,
 } from "../lib/ui.js";
 import { editorFieldImageMetadataText } from "./editor-images.js";
+import { editorImagePreviewFrameSizeForSrc } from "./editor-image-preview-size.js";
 import { convertLocalFileSrc } from "./runtime.js";
 import {
   buildEditorRowHeights,
@@ -332,6 +333,22 @@ function editorLanguageImageSrc(image) {
   return "";
 }
 
+function editorImagePreviewCachedStyle(size) {
+  if (!size) {
+    return "";
+  }
+
+  const frameWidth = Math.max(1, Number.parseInt(String(size.frameWidth), 10) || 0);
+  const frameHeight = Math.max(1, Number.parseInt(String(size.frameHeight), 10) || 0);
+  const contentWidth = Math.max(1, Number.parseInt(String(size.contentWidth), 10) || 0);
+  const contentHeight = Math.max(1, Number.parseInt(String(size.contentHeight), 10) || 0);
+  if (!frameWidth || !frameHeight || !contentWidth || !contentHeight) {
+    return "";
+  }
+
+  return ` style="--editor-image-preview-width: ${escapeHtml(frameWidth)}px; --editor-image-preview-height: ${escapeHtml(frameHeight)}px; --editor-image-preview-content-width: ${escapeHtml(contentWidth)}px; --editor-image-preview-content-height: ${escapeHtml(contentHeight)}px;"`;
+}
+
 function renderEditorLanguageImageCaption(row, language) {
   if (!language.hasVisibleImage) {
     return "";
@@ -517,16 +534,20 @@ function renderEditorLanguageImage(row, language) {
   }
 
   const imageLabel = editorFieldImageMetadataText(image);
+  const cachedPreviewSize = editorImagePreviewFrameSizeForSrc(imageSrc);
+  const isLoading = !cachedPreviewSize;
   return `
     <div class="translation-language-panel__image-shell">
       <div class="translation-language-panel__image-row">
         <button
-          class="translation-language-panel__image-preview"
+          class="translation-language-panel__image-preview${isLoading ? " is-loading" : ""}"
           type="button"
           data-action="open-editor-image-preview"
           data-row-id="${escapeHtml(row.id)}"
           data-language-code="${escapeHtml(language.code)}"
-          ${tooltipAttributes(imageLabel || "Preview image", { side: "top" })}
+          ${isLoading ? 'aria-busy="true"' : ""}
+          ${editorImagePreviewCachedStyle(cachedPreviewSize)}
+          ${tooltipAttributes(imageLabel || "Preview image", { side: "top", align: "start" })}
         >
           <img
             class="translation-language-panel__image"
@@ -538,6 +559,10 @@ function renderEditorLanguageImage(row, language) {
             loading="eager"
             referrerpolicy="no-referrer"
           />
+          <span
+            class="translation-language-panel__image-loading-placeholder"
+            data-editor-image-loading-placeholder
+          >Loading image...</span>
         </button>
         ${renderEditorLanguageImageCaption(row, language)}
         <button

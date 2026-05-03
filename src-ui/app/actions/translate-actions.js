@@ -375,7 +375,7 @@ export function createTranslateActions(render) {
       dismissActiveIdleEditorImageUpload(render);
       const rowId = button?.dataset.rowId ?? null;
       const languageCode = button?.dataset.languageCode ?? null;
-      openEditorFootnote(render, rowId, languageCode);
+      openEditorFootnote(render, rowId, languageCode, { target: event?.target ?? null });
       return true;
     }
 
@@ -386,7 +386,7 @@ export function createTranslateActions(render) {
       dismissActiveIdleEditorImageUpload(render);
       const rowId = button?.dataset.rowId ?? null;
       const languageCode = button?.dataset.languageCode ?? null;
-      openEditorImageCaption(render, rowId, languageCode);
+      openEditorImageCaption(render, rowId, languageCode, { target: event?.target ?? null });
       return true;
     }
 

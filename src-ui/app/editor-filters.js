@@ -50,7 +50,13 @@ function resolveLanguageCode(language) {
 }
 
 function normalizeEditorSearchContentKind(value) {
-  return value === "footnote" ? "footnote" : "field";
+  if (value === "footnote") {
+    return "footnote";
+  }
+  if (value === "image-caption") {
+    return "image-caption";
+  }
+  return "field";
 }
 
 function normalizeCollapsedLanguageCodes(collapsedLanguageCodes) {
@@ -207,16 +213,26 @@ function buildRowSearchMatches(row, searchQuery, visibleLanguageCodes, caseSensi
     const contentSections = [
       {
         contentKind: "field",
-        text: String(section?.text ?? ""),
-        visibleText: extractInlineMarkupVisibleText(section?.text ?? ""),
+        text: String(section?.searchText ?? section?.text ?? ""),
+        visibleText: extractInlineMarkupVisibleText(section?.searchText ?? section?.text ?? ""),
       },
     ];
     const footnote = String(section?.footnote ?? "");
-    if (section?.hasVisibleFootnote === true || footnote.trim().length > 0) {
+    const searchFootnote = String(section?.searchFootnote ?? footnote);
+    if (section?.hasVisibleFootnote === true || searchFootnote.trim().length > 0) {
       contentSections.push({
         contentKind: "footnote",
-        text: footnote,
-        visibleText: extractInlineMarkupVisibleText(footnote),
+        text: searchFootnote,
+        visibleText: extractInlineMarkupVisibleText(searchFootnote),
+      });
+    }
+    const imageCaption = String(section?.imageCaption ?? "");
+    const searchImageCaption = String(section?.searchImageCaption ?? imageCaption);
+    if (section?.hasVisibleImageCaption === true || searchImageCaption.trim().length > 0) {
+      contentSections.push({
+        contentKind: "image-caption",
+        text: searchImageCaption,
+        visibleText: extractInlineMarkupVisibleText(searchImageCaption),
       });
     }
 

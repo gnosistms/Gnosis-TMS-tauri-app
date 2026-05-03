@@ -1,6 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
+import {
+  cacheEditorImagePreviewFrameSizeForTests,
+  clearEditorImagePreviewFrameSizeCacheForTests,
+} from "./editor-image-preview-size.js";
 import { renderTranslationContentRow } from "./editor-row-render.js";
 
 function rowWithSection(section) {
@@ -73,4 +77,59 @@ test("renderTranslationContentRow makes image URL errors reopen the URL editor",
   assert.match(html, /The image URL could not be loaded\./);
   assert.match(html, /data-action="open-editor-image-url"/);
   assert.match(html, /data-editor-image-url-status-button/);
+});
+
+test("renderTranslationContentRow makes image URL preview tooltips hang right", () => {
+  const html = renderTranslationContentRow(rowWithSection({
+    hasVisibleImage: true,
+    image: {
+      kind: "url",
+      url: "https://example.com/path/to/a/long/image-name.webp",
+    },
+    showAddImageCaptionButton: true,
+  }));
+
+  assert.match(html, /data-action="open-editor-image-preview"/);
+  assert.match(html, /data-tooltip-align="start"/);
+});
+
+test("renderTranslationContentRow shows a placeholder while image preview dimensions load", () => {
+  clearEditorImagePreviewFrameSizeCacheForTests();
+  const html = renderTranslationContentRow(rowWithSection({
+    hasVisibleImage: true,
+    image: {
+      kind: "url",
+      url: "https://example.com/path/to/a/large-image.webp",
+    },
+  }));
+
+  assert.match(html, /class="translation-language-panel__image-preview is-loading"/);
+  assert.match(html, /aria-busy="true"/);
+  assert.match(html, /data-editor-image-loading-placeholder/);
+  assert.match(html, /Loading image\.\.\./);
+});
+
+test("renderTranslationContentRow reuses cached image preview dimensions without loading state", () => {
+  const url = "https://example.com/path/to/reused-image.webp";
+  clearEditorImagePreviewFrameSizeCacheForTests();
+  cacheEditorImagePreviewFrameSizeForTests(url, {
+    contentWidth: 33,
+    contentHeight: 100,
+    frameWidth: 51,
+    frameHeight: 118,
+  });
+
+  const html = renderTranslationContentRow(rowWithSection({
+    hasVisibleImage: true,
+    image: {
+      kind: "url",
+      url,
+    },
+  }));
+
+  assert.match(html, /data-action="open-editor-image-preview"/);
+  assert.doesNotMatch(html, /class="translation-language-panel__image-preview is-loading"/);
+  assert.doesNotMatch(html, /aria-busy="true"/);
+  assert.match(html, /--editor-image-preview-width: 51px;/);
+  assert.match(html, /--editor-image-preview-content-height: 100px;/);
 });

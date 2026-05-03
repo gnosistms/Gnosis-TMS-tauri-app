@@ -85,6 +85,7 @@ import { renderAppUpdateModal } from "./screens/app-update-modal.js";
 import { renderConnectionFailureModal } from "./screens/connection-failure-modal.js";
 import { renderEditorAiTranslateAllModal } from "./screens/editor-ai-translate-all-modal.js";
 import { renderEditorDeriveGlossariesModal } from "./screens/editor-derive-glossaries-modal.js";
+import { renderEditorImagePreviewOverlay } from "./screens/editor-image-preview-overlay.js";
 import { renderGlossariesScreen } from "./screens/glossaries.js";
 import { renderGlossaryEditorScreen } from "./screens/glossary-editor.js";
 import { renderNavigationLoadingModal } from "./screens/navigation-loading-modal.js";
@@ -428,6 +429,23 @@ function renderTranslateDeriveGlossariesModalOnly() {
   }
 }
 
+function renderTranslateImagePreviewOverlayOnly() {
+  const html = renderEditorImagePreviewOverlay(state);
+  const overlay = app.querySelector(".editor-image-preview-overlay");
+  if (overlay instanceof HTMLElement) {
+    if (html) {
+      overlay.outerHTML = html;
+    } else {
+      overlay.remove();
+    }
+    return;
+  }
+
+  if (html) {
+    app.insertAdjacentHTML("beforeend", html);
+  }
+}
+
 function renderWithOptions(options = {}) {
   if (options?.scope === "translate-visible-rows" && state.screen === "translate") {
     return renderTranslateVisibleRowsOnly(options);
@@ -455,6 +473,11 @@ function renderWithOptions(options = {}) {
 
   if (options?.scope === "translate-derive-glossaries-modal" && state.screen === "translate") {
     renderTranslateDeriveGlossariesModalOnly();
+    return;
+  }
+
+  if (options?.scope === "translate-image-preview-overlay" && state.screen === "translate") {
+    renderTranslateImagePreviewOverlayOnly();
     return;
   }
 

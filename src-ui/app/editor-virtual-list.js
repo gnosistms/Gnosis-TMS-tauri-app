@@ -14,6 +14,10 @@ import {
   logEditorImageRowHeightChange,
 } from "./editor-image-debug.js";
 import {
+  syncEditorImagePreviewFrameWithResult,
+  takeEditorImagePreviewFrameSyncResult,
+} from "./editor-image-preview-size.js";
+import {
   EDITOR_ROW_GAP_PX,
   EDITOR_VIRTUALIZATION_INITIAL_VIEWPORT_PX,
   EDITOR_VIRTUALIZATION_SCROLL_REASON,
@@ -739,11 +743,19 @@ export function createEditorVirtualListController({
       return;
     }
 
+    const syncResult =
+      takeEditorImagePreviewFrameSyncResult(image)
+      ?? syncEditorImagePreviewFrameWithResult(image);
     logEditorImageLifecycleEvent("editor-image-load", image, rowHeightCache, {
       engine: "tanstack",
       rangeKey: currentRangeKey,
       scrollTop: scrollContainer.scrollTop,
+      imagePreviewSizeChanged: syncResult.sizeChanged === true,
     });
+    if (syncResult.sizeChanged !== true) {
+      return;
+    }
+
     notifyRowHeightMayHaveChanged("", image, {
       reason: "image-load",
     });

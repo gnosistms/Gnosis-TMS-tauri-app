@@ -75,6 +75,17 @@ function resolveSelectedLanguageCodes(languages, chapter, editorChapter) {
   return { sourceCode, targetCode };
 }
 
+function persistedLanguageText(row, fieldName, languageCode, fallback) {
+  const fields = row?.[fieldName];
+  if (fields && Object.prototype.hasOwnProperty.call(fields, languageCode)) {
+    return typeof fields[languageCode] === "string"
+      ? fields[languageCode]
+      : String(fields[languageCode] ?? "");
+  }
+
+  return fallback;
+}
+
 function buildLiveTranslationRows(editorChapter, languages) {
   const editorRows = Array.isArray(editorChapter?.rows) ? editorChapter.rows : null;
   const languageOptions = Array.isArray(languages) ? languages : [];
@@ -168,12 +179,22 @@ function buildLiveTranslationRows(editorChapter, languages) {
         const imageCaption = editorLanguageImageCaptionText(row, language.code);
         const isImageCaptionEditorOpen =
           hasSavedImage && editorImageCaptionEditorMatches(editorChapter, row.rowId, language.code);
+        const text = row.fields?.[language.code] ?? "";
+        const footnote = editorLanguageFootnoteText(row, language.code);
         return {
           code: language.code,
           name: language.name,
-          text: row.fields?.[language.code] ?? "",
-          footnote: editorLanguageFootnoteText(row, language.code),
+          text,
+          searchText: persistedLanguageText(row, "persistedFields", language.code, text),
+          footnote,
+          searchFootnote: persistedLanguageText(row, "persistedFootnotes", language.code, footnote),
           imageCaption,
+          searchImageCaption: persistedLanguageText(
+            row,
+            "persistedImageCaptions",
+            language.code,
+            imageCaption,
+          ),
           image,
           hasVisibleFootnote: editorLanguageFootnoteIsVisible(row, language.code, editorChapter),
           hasVisibleImage:

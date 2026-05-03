@@ -112,6 +112,8 @@ const {
   dismissActiveIdleEditorImageUpload,
   handleDroppedEditorImageFile,
   handleDroppedEditorImagePath,
+  closeEditorImagePreview,
+  openEditorImagePreview,
   openEditorImageUrl,
   submitEditorImageUrl,
   updateEditorImageUrlDraft,
@@ -192,6 +194,66 @@ function createRenderSpy() {
   render.calls = calls;
   return render;
 }
+
+function installFixtureImage(url = "https://example.com/image.png") {
+  state.editorChapter = {
+    ...state.editorChapter,
+    rows: state.editorChapter.rows.map((row) =>
+      row.rowId === "row-1"
+        ? {
+            ...row,
+            images: {
+              ...row.images,
+              vi: {
+                kind: "url",
+                url,
+              },
+            },
+          }
+        : row
+    ),
+  };
+}
+
+test("openEditorImagePreview renders only the overlay so editor scroll stays stable", () => {
+  installEditorFixture();
+  installFixtureImage();
+  const render = createRenderSpy();
+
+  openEditorImagePreview(render, "row-1", "vi");
+
+  assert.deepEqual(state.editorChapter.imagePreviewOverlay, {
+    isOpen: true,
+    rowId: "row-1",
+    languageCode: "vi",
+    src: "https://example.com/image.png",
+  });
+  assert.deepEqual(render.calls, [[{ scope: "translate-image-preview-overlay" }]]);
+});
+
+test("closeEditorImagePreview renders only the overlay so editor scroll stays stable", () => {
+  installEditorFixture();
+  const render = createRenderSpy();
+  state.editorChapter = {
+    ...state.editorChapter,
+    imagePreviewOverlay: {
+      isOpen: true,
+      rowId: "row-1",
+      languageCode: "vi",
+      src: "https://example.com/image.png",
+    },
+  };
+
+  closeEditorImagePreview(render);
+
+  assert.deepEqual(state.editorChapter.imagePreviewOverlay, {
+    isOpen: false,
+    rowId: null,
+    languageCode: null,
+    src: "",
+  });
+  assert.deepEqual(render.calls, [[{ scope: "translate-image-preview-overlay" }]]);
+});
 
 test("submitEditorImageUrl clears an empty draft back to the pre-open state", async () => {
   installEditorFixture();

@@ -51,19 +51,21 @@ test("buildEditorRowSearchHighlights respects case-sensitive search", () => {
   assert.equal(highlights.size, 0);
 });
 
-test("buildEditorRowSearchHighlights keeps main text and footnote matches separate", () => {
+test("buildEditorRowSearchHighlights keeps main text, footnote, and image caption matches separate", () => {
   const highlights = buildEditorRowSearchHighlights(
     [
       { code: "es", text: "distintos caminos", contentKind: "field" },
       { code: "es", text: "distintos nota", contentKind: "footnote" },
+      { code: "es", text: "distintos imagen", contentKind: "image-caption" },
     ],
     "distintos",
     new Set(["es"]),
   );
 
-  assert.equal(highlights.size, 2);
+  assert.equal(highlights.size, 3);
   assert.match(highlights.get("es:field")?.html ?? "", /translation-language-panel__search-match/);
   assert.match(highlights.get("es:footnote")?.html ?? "", /translation-language-panel__search-match/);
+  assert.match(highlights.get("es:image-caption")?.html ?? "", /translation-language-panel__search-match/);
 });
 
 test("buildEditorRowSearchHighlights matches visible text inside inline markup", () => {
