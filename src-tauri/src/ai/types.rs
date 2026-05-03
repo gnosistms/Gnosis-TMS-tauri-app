@@ -40,6 +40,14 @@ pub struct AiReviewRequest {
     pub text: String,
     pub language_code: String,
     #[serde(default)]
+    pub review_mode: Option<String>,
+    #[serde(default)]
+    pub latest_translation: Option<String>,
+    #[serde(default)]
+    pub source_text: Option<String>,
+    #[serde(default)]
+    pub glossary_hints: Vec<AiTranslationGlossaryHint>,
+    #[serde(default)]
     pub installation_id: Option<i64>,
 }
 
@@ -47,6 +55,8 @@ pub struct AiReviewRequest {
 #[serde(rename_all = "camelCase")]
 pub struct AiReviewResponse {
     pub suggested_text: String,
+    #[serde(default)]
+    pub reviewed: Option<bool>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -151,6 +161,7 @@ pub struct AiPromptResponse {
 pub enum AiPromptOutputFormat {
     Text,
     AssistantTurnJson,
+    ReviewJson,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq, Default)]

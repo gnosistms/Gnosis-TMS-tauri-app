@@ -39,10 +39,22 @@ const TOOLBAR_ICONS = {
       <path d="M14 18h6" />
     </svg>
   `,
-  unreviewAll: `
+  aiReviewAll: `
     <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
       <path d="M13.2 5.25H7a3.75 3.75 0 0 0-3.75 3.75v7a3.75 3.75 0 0 0 3.75 3.75h7a3.75 3.75 0 0 0 3.75-3.75v-4.2" />
       <path d="m7.3 12.55 2.45 2.45 4.8-4.85" />
+    </svg>
+  `,
+  unreviewAll: `
+    <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+      <defs>
+        <mask id="toolbar-unreview-all-underlay-mask" maskUnits="userSpaceOnUse">
+          <rect x="0" y="0" width="24" height="24" style="fill: white; stroke: none;" />
+          <circle cx="17.5" cy="6.5" r="5.3" style="fill: black; stroke: none;" />
+        </mask>
+      </defs>
+      <path mask="url(#toolbar-unreview-all-underlay-mask)" d="M13.2 5.25H7a3.75 3.75 0 0 0-3.75 3.75v7a3.75 3.75 0 0 0 3.75 3.75h7a3.75 3.75 0 0 0 3.75-3.75v-4.2" />
+      <path mask="url(#toolbar-unreview-all-underlay-mask)" d="m7.3 12.55 2.45 2.45 4.8-4.85" />
       <circle cx="17.5" cy="6.5" r="5.3" />
       <path d="m15.6 4.6 3.8 3.8" />
       <path d="m19.4 4.6-3.8 3.8" />
@@ -411,6 +423,11 @@ export function renderTranslateToolbar({
           ${renderToolbarIconAction("Unreview all", "open-editor-unreview-all", TOOLBAR_ICONS.unreviewAll, {
             tooltip: 'Remove the "reviewed" mark from all rows of the target language.',
             tooltipOptions: { align: "end" },
+          })}
+          ${renderToolbarIconAction("AI Review", "open-editor-ai-review-all", TOOLBAR_ICONS.aiReviewAll, {
+            tooltip: offlineAiTooltip || "AI review all target language translations",
+            tooltipOptions: { align: "end" },
+            disabled: offlineMode,
           })}
         </div>
       </div>

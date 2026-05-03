@@ -265,6 +265,24 @@ fn openai_text_format(output_format: AiPromptOutputFormat) -> Value {
                 }
             }
         }),
+        AiPromptOutputFormat::ReviewJson => json!({
+            "type": "json_schema",
+            "name": "ai_review_response",
+            "strict": true,
+            "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["suggestedText", "reviewed"],
+                "properties": {
+                    "suggestedText": {
+                        "type": "string"
+                    },
+                    "reviewed": {
+                        "type": "boolean"
+                    }
+                }
+            }
+        }),
     }
 }
 
@@ -471,7 +489,10 @@ pub(crate) fn normalize_review_response(body: &str) -> Result<AiReviewResponse, 
         "OpenAI returned an empty AI review response.",
     )?;
 
-    Ok(AiReviewResponse { suggested_text })
+    Ok(AiReviewResponse {
+        suggested_text,
+        reviewed: None,
+    })
 }
 
 fn extract_suggested_text(

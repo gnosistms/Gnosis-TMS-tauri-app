@@ -23,6 +23,8 @@ test("editor online actions are blocked while offline", () => {
   assert.equal(isOfflineBlockedAction("review-editor-text-now"), true);
   assert.equal(isOfflineBlockedAction("run-editor-ai-assistant"), true);
   assert.equal(isOfflineBlockedAction("run-editor-ai-translate:translate1"), true);
+  assert.equal(isOfflineBlockedAction("open-editor-ai-review-all"), true);
+  assert.equal(isOfflineBlockedAction("confirm-editor-ai-review-all"), true);
   assert.equal(isOfflineBlockedAction("open-editor-ai-translate-all"), true);
   assert.equal(isOfflineBlockedAction("confirm-editor-ai-translate-all"), true);
   assert.equal(isOfflineBlockedAction("open-editor-derive-glossaries"), true);

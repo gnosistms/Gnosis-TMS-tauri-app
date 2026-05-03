@@ -10,6 +10,7 @@ import {
   cancelEditorConflictResolutionModal,
   cancelEditorClearTranslationsModal,
   cancelEditorDeriveGlossariesModal,
+  cancelEditorAiReviewAllModal,
   cancelEditorAiTranslateAllModal,
   cancelEditorUnreviewAllModal,
   cancelEditorReplaceUndoModal,
@@ -20,6 +21,7 @@ import {
   confirmEditorAiTranslateAll,
   confirmEditorClearTranslations,
   confirmEditorDeriveGlossaries,
+  confirmEditorAiReviewAll,
   confirmEditorReplaceUndo,
   confirmEditorRowPermanentDeletion,
   confirmInsertEditorRow,
@@ -43,6 +45,7 @@ import {
   openEditorConflictResolutionModal,
   openEditorClearTranslationsModal,
   openEditorDeriveGlossariesModal,
+  openEditorAiReviewAllModal,
   openEditorAiTranslateAllModal,
   openEditorUnreviewAllModal,
   openEditorReplaceUndoModal,
@@ -50,6 +53,8 @@ import {
   openEditorRowPermanentDeletionModal,
   openInsertEditorRowModal,
   applyEditorAiReview,
+  continueEditorAiReviewAllPreflight,
+  dismissEditorAiReviewAllFilterModal,
   applyEditorAssistantDraft,
   replaceSelectedEditorRows,
   reviewEditorClearTranslations,
@@ -165,6 +170,11 @@ export function createTranslateActions(render) {
       return true;
     }
 
+    if (action === "cancel-editor-ai-review-all") {
+      cancelEditorAiReviewAllModal(render);
+      return true;
+    }
+
     if (action === "cancel-editor-clear-translations") {
       cancelEditorClearTranslationsModal(render);
       return true;
@@ -207,6 +217,21 @@ export function createTranslateActions(render) {
 
     if (action === "confirm-editor-ai-translate-all") {
       await confirmEditorAiTranslateAll(render);
+      return true;
+    }
+
+    if (action === "continue-editor-ai-review-all") {
+      continueEditorAiReviewAllPreflight(render);
+      return true;
+    }
+
+    if (action === "confirm-editor-ai-review-all") {
+      await confirmEditorAiReviewAll(render);
+      return true;
+    }
+
+    if (action === "dismiss-editor-ai-review-all-filter") {
+      dismissEditorAiReviewAllFilterModal(render);
       return true;
     }
 
@@ -307,6 +332,11 @@ export function createTranslateActions(render) {
 
     if (action === "open-editor-ai-translate-all") {
       openEditorAiTranslateAllModal(render);
+      return true;
+    }
+
+    if (action === "open-editor-ai-review-all") {
+      openEditorAiReviewAllModal(render);
       return true;
     }
 

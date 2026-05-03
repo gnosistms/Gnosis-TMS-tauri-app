@@ -348,6 +348,7 @@ export function createEditorChapterState() {
     sidebarTab: "review",
     reviewExpandedSectionKeys: new Set(["last-update", "ai-review"]),
     aiReview: createEditorAiReviewState(),
+    aiReviewAllModal: createEditorAiReviewAllModalState(),
     aiTranslate: createEditorAiTranslateState(),
     aiTranslateAllModal: createEditorAiTranslateAllModalState(),
     clearTranslationsModal: createEditorClearTranslationsModalState(),
@@ -470,6 +471,22 @@ export function createEditorAiTranslateAllModalState() {
     languageProgress: {},
     translatedCount: 0,
     totalCount: 0,
+  };
+}
+
+export function createEditorAiReviewAllModalState() {
+  return {
+    isOpen: false,
+    step: "configure",
+    status: "idle",
+    error: "",
+    reviewMode: "grammar",
+    languageCode: null,
+    reviewedCount: 0,
+    totalTranslationCount: 0,
+    completedCount: 0,
+    totalCount: 0,
+    languageProgress: {},
   };
 }
 

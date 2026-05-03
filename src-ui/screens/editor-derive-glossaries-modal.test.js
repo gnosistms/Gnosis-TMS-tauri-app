@@ -30,6 +30,9 @@ const {
   renderEditorDeriveGlossariesModal,
 } = await import("./editor-derive-glossaries-modal.js");
 const {
+  renderEditorAiReviewAllModal,
+} = await import("./editor-ai-review-all-modal.js");
+const {
   renderTranslateToolbar,
 } = await import("./translate-toolbar.js");
 
@@ -127,22 +130,27 @@ test("Translate toolbar renders icon actions in the expected order when availabl
   const clearIndex = html.indexOf('data-action="open-editor-clear-translations"');
   const translateIndex = html.indexOf('data-action="open-editor-ai-translate-all"');
   const unreviewIndex = html.indexOf('data-action="open-editor-unreview-all"');
+  const reviewIndex = html.indexOf('data-action="open-editor-ai-review-all"');
   assert.equal(deriveIndex > -1, true);
   assert.equal(clearIndex > -1, true);
   assert.equal(translateIndex > -1, true);
   assert.equal(unreviewIndex > -1, true);
+  assert.equal(reviewIndex > -1, true);
   assert.equal(deriveIndex < clearIndex, true);
   assert.equal(clearIndex < translateIndex, true);
   assert.equal(translateIndex < unreviewIndex, true);
+  assert.equal(unreviewIndex < reviewIndex, true);
   assert.match(html, /aria-label="Derive glossaries"/);
   assert.match(html, /aria-label="Clear translations"/);
   assert.match(html, /aria-label="AI translate all"/);
   assert.match(html, /aria-label="Unreview all"/);
+  assert.match(html, /aria-label="AI Review"/);
   assert.match(html, /toolbar-icon-action__icon/);
   assert.doesNotMatch(html, />Derive glossaries</);
   assert.doesNotMatch(html, />Clear translations</);
   assert.doesNotMatch(html, />AI translate all</);
   assert.doesNotMatch(html, />Unreview all</);
+  assert.doesNotMatch(html, />AI Review</);
 });
 
 test("Translate toolbar disables online AI batch actions while offline", () => {
@@ -160,6 +168,7 @@ test("Translate toolbar disables online AI batch actions while offline", () => {
 
   assert.match(html, /data-action="open-editor-derive-glossaries"[^>]*disabled/);
   assert.match(html, /data-action="open-editor-ai-translate-all"[^>]*disabled/);
+  assert.match(html, /data-action="open-editor-ai-review-all"[^>]*disabled/);
   assert.doesNotMatch(html, /data-action="open-editor-clear-translations"[^>]*disabled/);
   assert.doesNotMatch(html, /data-action="open-editor-unreview-all"[^>]*disabled/);
   assert.match(html, /AI actions are unavailable offline/);
@@ -174,4 +183,62 @@ test("Derive glossaries modal disables confirm while offline", () => {
   assert.match(html, /AI actions are unavailable offline/);
   assert.match(html, /data-action="noop" disabled/);
   assert.doesNotMatch(html, /data-action="confirm-editor-derive-glossaries"/);
+});
+
+test("AI Review All configure modal defaults to grammar mode", () => {
+  const html = renderEditorAiReviewAllModal({
+    editorChapter: {
+      ...chapter(),
+      aiReviewAllModal: {
+        ...createEditorChapterState().aiReviewAllModal,
+        isOpen: true,
+        step: "configure",
+        reviewMode: "grammar",
+        languageCode: "vi",
+      },
+    },
+  });
+
+  assert.match(html, /AI Review target language/);
+  assert.match(html, /value="grammar"[\s\S]*checked/);
+  assert.doesNotMatch(html, /value="meaning"[\s\S]*checked[\s\S]*value="grammar"/);
+  assert.match(html, /data-action="confirm-editor-ai-review-all"/);
+});
+
+test("AI Review All preflight modal shows reviewed counts and continue action", () => {
+  const html = renderEditorAiReviewAllModal({
+    editorChapter: {
+      ...chapter(),
+      aiReviewAllModal: {
+        ...createEditorChapterState().aiReviewAllModal,
+        isOpen: true,
+        step: "preflight",
+        languageCode: "vi",
+        reviewedCount: 2,
+        totalTranslationCount: 5,
+      },
+    },
+  });
+
+  assert.match(html, /Some translations are already reviewed/);
+  assert.match(html, /2 translations are already marked reviewed out of 5/);
+  assert.match(html, /data-action="cancel-editor-ai-review-all"/);
+  assert.match(html, /data-action="continue-editor-ai-review-all"/);
+});
+
+test("AI Review All filter modal uses Ok dismissal", () => {
+  const html = renderEditorAiReviewAllModal({
+    editorChapter: {
+      ...chapter(),
+      aiReviewAllModal: {
+        ...createEditorChapterState().aiReviewAllModal,
+        isOpen: true,
+        step: "filter-enabled",
+      },
+    },
+  });
+
+  assert.match(html, /Please check filter enabled/);
+  assert.match(html, /data-action="dismiss-editor-ai-review-all-filter"/);
+  assert.match(html, />Ok</);
 });

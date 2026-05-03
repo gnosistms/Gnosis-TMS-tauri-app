@@ -55,6 +55,7 @@ import {
   updateEditorCommentDraft,
   updateEditorAssistantComposerDraft,
   updateEditorAiTranslateAllLanguageSelection,
+  updateEditorAiReviewAllMode,
   updateEditorClearTranslationsLanguageSelection,
   updateEditorReplaceQuery,
   updateEditorRowFilterMode,
@@ -474,6 +475,20 @@ function handleEditorAiTranslateAllLanguageInput(event, render) {
   return true;
 }
 
+function handleEditorAiReviewAllModeInput(event, render) {
+  if (event.type !== "change") {
+    return false;
+  }
+
+  const input = event.target.closest("[data-editor-ai-review-all-mode]");
+  if (!(input instanceof HTMLInputElement)) {
+    return false;
+  }
+
+  updateEditorAiReviewAllMode(render, input.value);
+  return true;
+}
+
 function handleEditorClearTranslationsLanguageInput(event, render) {
   if (event.type !== "change") {
     return false;
@@ -656,6 +671,7 @@ const inputHandlers = [
   handleEditorCommentDraftInput,
   handleEditorAssistantDraftInput,
   handleEditorAiTranslateAllLanguageInput,
+  handleEditorAiReviewAllModeInput,
   handleEditorClearTranslationsLanguageInput,
   handleEditorImageUrlInput,
   handleEditorConflictResolutionInput,

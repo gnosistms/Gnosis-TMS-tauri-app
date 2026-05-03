@@ -17,7 +17,50 @@ use crate::ai::types::{
 };
 use crate::ai_secret_storage::load_ai_provider_secret;
 
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AiReviewStructuredResponse {
+    #[serde(default)]
+    suggested_text: String,
+    reviewed: bool,
+}
+
+fn normalize_review_mode(request: &AiReviewRequest) -> Option<&str> {
+    match request.review_mode.as_deref().unwrap_or("").trim() {
+        "grammar" => Some("grammar"),
+        "meaning" => Some("meaning"),
+        _ => None,
+    }
+}
+
 pub(crate) fn build_review_prompt(request: &AiReviewRequest) -> String {
+    if let Some(review_mode) = normalize_review_mode(request) {
+        let latest_translation = request
+            .latest_translation
+            .as_deref()
+            .unwrap_or(&request.text)
+            .trim();
+        if review_mode == "meaning" {
+            let glossary_info = format_translation_glossary_hints(&request.glossary_hints);
+            let glossary_info = if glossary_info.trim().is_empty() {
+                "No glossary terms found in the source text.".to_string()
+            } else {
+                glossary_info
+            };
+            return format!(
+                "Return only valid JSON matching this shape: {{\"suggestedText\":\"\",\"reviewed\":true}}.\nIf you find no errors, set suggestedText to an empty string and reviewed to true. If you find errors, set suggestedText to the corrected translation and reviewed to false.\n\nsource_text: {}\n\nglossary_info:\n{}\n\nlatest_translation: {}\n\nReview the translation in latest_translation. If you find no errors, reply with empty translation text and set \"reviewed = true\". If you find errors, output the corrected translation and set reviewed = false.",
+                request.source_text.as_deref().unwrap_or("").trim(),
+                glossary_info,
+                latest_translation,
+            );
+        }
+
+        return format!(
+            "Return only valid JSON matching this shape: {{\"suggestedText\":\"\",\"reviewed\":true}}.\nIf you find no errors, set suggestedText to an empty string and reviewed to true. If you find errors, set suggestedText to the corrected translation and reviewed to false.\n\nReview the spelling and grammar of latest_translation. If you find no errors, reply with empty translation text and set \"reviewed = true\". If you find errors, output the corrected translation and set reviewed = false.\n\nlatest_translation: {}",
+            latest_translation,
+        );
+    }
+
     let language_code = request.language_code.trim();
     if language_code.is_empty() {
         format!(
@@ -30,6 +73,31 @@ pub(crate) fn build_review_prompt(request: &AiReviewRequest) -> String {
             request.text
         )
     }
+}
+
+fn parse_review_structured_response(text: &str) -> Result<AiReviewResponse, String> {
+    let trimmed = text.trim();
+    let stripped = strip_markdown_code_fence(trimmed);
+    let object_slice = trimmed
+        .find('{')
+        .and_then(|start| trimmed.rfind('}').map(|end| &trimmed[start..=end]));
+
+    for candidate in [trimmed, stripped]
+        .into_iter()
+        .chain(object_slice.into_iter())
+    {
+        if let Ok(mut parsed) = serde_json::from_str::<AiReviewStructuredResponse>(candidate) {
+            if parsed.reviewed {
+                parsed.suggested_text.clear();
+            }
+            return Ok(AiReviewResponse {
+                suggested_text: parsed.suggested_text,
+                reviewed: Some(parsed.reviewed),
+            });
+        }
+    }
+
+    Err("The AI review returned a malformed response.".to_string())
 }
 
 pub(crate) fn build_translation_prompt(request: &AiTranslationRequest) -> String {
@@ -758,7 +826,13 @@ pub(crate) fn run_ai_review(
     app: &AppHandle,
     request: AiReviewRequest,
 ) -> Result<AiReviewResponse, String> {
-    if request.text.trim().is_empty() {
+    let structured_review_mode = normalize_review_mode(&request);
+    let text_to_review = request
+        .latest_translation
+        .as_deref()
+        .unwrap_or(&request.text);
+
+    if text_to_review.trim().is_empty() {
         return Err("There is no text to review yet.".to_string());
     }
     if request.model_id.trim().is_empty() {
@@ -776,13 +850,22 @@ pub(crate) fn run_ai_review(
             model_id: request.model_id.clone(),
             prompt: build_review_prompt(&request),
             previous_response_id: None,
-            output_format: AiPromptOutputFormat::Text,
+            output_format: if structured_review_mode.is_some() {
+                AiPromptOutputFormat::ReviewJson
+            } else {
+                AiPromptOutputFormat::Text
+            },
         },
         &api_key,
     )?;
 
+    if structured_review_mode.is_some() {
+        return parse_review_structured_response(&response.text);
+    }
+
     Ok(AiReviewResponse {
         suggested_text: response.text,
+        reviewed: None,
     })
 }
 
@@ -1020,14 +1103,99 @@ pub(crate) fn probe_ai_model(app: &AppHandle, request: AiModelProbeRequest) -> R
 #[cfg(test)]
 mod tests {
     use super::{
-        build_assistant_chat_prompt, build_translation_prompt, find_matched_glossary_terms,
-        parse_assistant_structured_response,
+        build_assistant_chat_prompt, build_review_prompt, build_translation_prompt,
+        find_matched_glossary_terms, parse_assistant_structured_response,
+        parse_review_structured_response,
     };
     use crate::ai::types::{
         AiAssistantRowContext, AiAssistantRowWindowEntry, AiAssistantTranscriptEntry,
-        AiAssistantTurnKind, AiAssistantTurnRequest, AiProviderId, AiTranslatedGlossaryTermInput,
-        AiTranslationGlossaryHint, AiTranslationRequest,
+        AiAssistantTurnKind, AiAssistantTurnRequest, AiProviderId, AiReviewRequest,
+        AiTranslatedGlossaryTermInput, AiTranslationGlossaryHint, AiTranslationRequest,
     };
+
+    fn review_request() -> AiReviewRequest {
+        AiReviewRequest {
+            provider_id: AiProviderId::OpenAi,
+            model_id: "gpt-5.4".to_string(),
+            text: "Ban dich hien tai".to_string(),
+            language_code: "vi".to_string(),
+            review_mode: None,
+            latest_translation: None,
+            source_text: None,
+            glossary_hints: vec![],
+            installation_id: None,
+        }
+    }
+
+    #[test]
+    fn build_review_prompt_keeps_plain_single_row_behavior_without_mode() {
+        let prompt = build_review_prompt(&review_request());
+
+        assert_eq!(
+            prompt,
+            "Check spelling and grammar on the following text. Output only your suggested revised version of the text. Do not explain what you changed and why. If the text to review is already correct, do not change anything.\n\nLanguage code: vi\n\nText to review:\nBan dich hien tai"
+        );
+    }
+
+    #[test]
+    fn build_review_prompt_uses_grammar_structured_prompt() {
+        let mut request = review_request();
+        request.review_mode = Some("grammar".to_string());
+        request.latest_translation = Some("Ban dich hien tai".to_string());
+
+        let prompt = build_review_prompt(&request);
+
+        assert!(prompt.contains("Return only valid JSON"));
+        assert!(prompt.contains("Review the spelling and grammar of latest_translation"));
+        assert!(prompt.contains("latest_translation: Ban dich hien tai"));
+        assert!(!prompt.contains("source_text:"));
+    }
+
+    #[test]
+    fn build_review_prompt_uses_meaning_structured_prompt_with_glossary() {
+        let mut request = review_request();
+        request.review_mode = Some("meaning".to_string());
+        request.source_text = Some("Fuente actual".to_string());
+        request.latest_translation = Some("Ban dich hien tai".to_string());
+        request.glossary_hints = vec![AiTranslationGlossaryHint {
+            source_term: "Fuente".to_string(),
+            target_variants: vec!["nguon".to_string()],
+            no_translation_position: None,
+            notes: vec!["Use the spiritual meaning.".to_string()],
+        }];
+
+        let prompt = build_review_prompt(&request);
+
+        assert!(prompt.contains("source_text: Fuente actual"));
+        assert!(prompt.contains("glossary_info:"));
+        assert!(prompt.contains("sourceTerm: \"Fuente\""));
+        assert!(prompt.contains("targetVariants: \"nguon\""));
+        assert!(prompt.contains("latest_translation: Ban dich hien tai"));
+    }
+
+    #[test]
+    fn parse_review_structured_response_accepts_json_and_clears_clean_text() {
+        let response = parse_review_structured_response(
+            r#"{"suggestedText":"This should be ignored","reviewed":true}"#,
+        )
+        .unwrap();
+
+        assert_eq!(response.suggested_text, "");
+        assert_eq!(response.reviewed, Some(true));
+    }
+
+    #[test]
+    fn parse_review_structured_response_accepts_corrected_json() {
+        let response = parse_review_structured_response(
+            r#"```json
+            {"suggestedText":"Corrected text","reviewed":false}
+            ```"#,
+        )
+        .unwrap();
+
+        assert_eq!(response.suggested_text, "Corrected text");
+        assert_eq!(response.reviewed, Some(false));
+    }
 
     #[test]
     fn build_translation_prompt_keeps_plain_prompt_when_no_glossary_hints_are_present() {

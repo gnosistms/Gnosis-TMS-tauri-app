@@ -71,9 +71,9 @@ use self::row_fields::{
     apply_editor_field_flag_update, apply_editor_footnote_updates, apply_editor_plain_text_updates,
 };
 pub(crate) use self::row_fields::{
-    clear_gtms_editor_reviewed_markers_sync, update_gtms_editor_row_field_flag_sync,
-    update_gtms_editor_row_fields_batch_sync, update_gtms_editor_row_fields_sync,
-    update_gtms_editor_row_text_style_sync,
+    apply_gtms_editor_ai_review_result_sync, clear_gtms_editor_reviewed_markers_sync,
+    update_gtms_editor_row_field_flag_sync, update_gtms_editor_row_fields_batch_sync,
+    update_gtms_editor_row_fields_sync, update_gtms_editor_row_text_style_sync,
 };
 #[cfg(test)]
 use self::row_structure::create_inserted_editor_row;
@@ -276,6 +276,23 @@ pub(crate) struct UpdateEditorRowFieldFlagInput {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub(crate) struct ApplyEditorAiReviewResultInput {
+    installation_id: i64,
+    repo_name: String,
+    project_id: Option<String>,
+    chapter_id: String,
+    row_id: String,
+    language_code: String,
+    #[serde(default)]
+    suggested_text: String,
+    reviewed: bool,
+    please_check: bool,
+    #[serde(default)]
+    ai_model: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct UpdateEditorRowTextStyleInput {
     installation_id: i64,
     repo_name: String,
@@ -391,6 +408,18 @@ pub(crate) struct UpdateEditorRowFieldsBatchResponse {
 pub(crate) struct UpdateEditorRowFieldFlagResponse {
     row_id: String,
     language_code: String,
+    reviewed: bool,
+    please_check: bool,
+    last_update: Option<EditorRowVersionMetadata>,
+    chapter_base_commit_sha: Option<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ApplyEditorAiReviewResultResponse {
+    row_id: String,
+    language_code: String,
+    text: String,
     reviewed: bool,
     please_check: bool,
     last_update: Option<EditorRowVersionMetadata>,

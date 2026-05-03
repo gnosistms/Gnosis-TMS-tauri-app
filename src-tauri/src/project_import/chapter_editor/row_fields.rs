@@ -515,6 +515,122 @@ pub(crate) fn update_gtms_editor_row_field_flag_sync(
     })
 }
 
+pub(crate) fn apply_gtms_editor_ai_review_result_sync(
+    app: &AppHandle,
+    input: ApplyEditorAiReviewResultInput,
+) -> Result<ApplyEditorAiReviewResultResponse, String> {
+    let repo_path = resolve_project_git_repo_path(
+        app,
+        input.installation_id,
+        input.project_id.as_deref(),
+        Some(&input.repo_name),
+    )?;
+    ensure_repo_exists(&repo_path, "The local project repo is not available yet.")?;
+    ensure_valid_git_repo(&repo_path, "The local project repo is missing or invalid.")?;
+
+    let chapter_path = find_chapter_path_by_id(&repo_path.join("chapters"), &input.chapter_id)?;
+    let row_json_path = chapter_path
+        .join("rows")
+        .join(format!("{}.json", input.row_id));
+    let original_row_text = fs::read_to_string(&row_json_path).map_err(|error| {
+        format!(
+            "Could not read row file '{}': {error}",
+            row_json_path.display()
+        )
+    })?;
+    let original_row_file: StoredRowFile =
+        serde_json::from_str(&original_row_text).map_err(|error| {
+            format!(
+                "Could not parse row file '{}': {error}",
+                row_json_path.display()
+            )
+        })?;
+    let mut row_value: Value = serde_json::from_str(&original_row_text).map_err(|error| {
+        format!(
+            "Could not parse row file '{}': {error}",
+            row_json_path.display()
+        )
+    })?;
+
+    if !input.suggested_text.trim().is_empty() {
+        let mut fields = BTreeMap::new();
+        fields.insert(input.language_code.clone(), input.suggested_text.clone());
+        apply_editor_plain_text_updates(&mut row_value, &fields)?;
+    }
+    let (_, _, reviewed_changed) = apply_editor_field_flag_update(
+        &mut row_value,
+        &input.language_code,
+        "reviewed",
+        input.reviewed,
+    )?;
+    let (reviewed, please_check, please_check_changed) = apply_editor_field_flag_update(
+        &mut row_value,
+        &input.language_code,
+        "please-check",
+        input.please_check,
+    )?;
+
+    let updated_row_json = serde_json::to_string_pretty(&row_value).map_err(|error| {
+        format!(
+            "Could not serialize row file '{}': {error}",
+            row_json_path.display()
+        )
+    })?;
+    let updated_row_text = format!("{updated_row_json}\n");
+    let changed =
+        updated_row_text != original_row_text || reviewed_changed || please_check_changed;
+
+    if changed {
+        write_text_file(&row_json_path, &updated_row_text)?;
+        let relative_row_json = repo_relative_path(&repo_path, &row_json_path)?;
+        git_output(&repo_path, &["add", &relative_row_json])?;
+        let ai_model = input.ai_model.trim();
+        git_commit_as_signed_in_user_with_metadata(
+            app,
+            &repo_path,
+            &format!("AI review row {} {}", input.row_id, input.language_code),
+            &[&relative_row_json],
+            CommitMetadata {
+                operation: Some("ai-review"),
+                status_note: None,
+                ai_model: if ai_model.is_empty() {
+                    None
+                } else {
+                    Some(ai_model)
+                },
+            },
+        )?;
+    }
+
+    let updated_row_file: StoredRowFile = if changed {
+        serde_json::from_str(&updated_row_text).map_err(|error| {
+            format!(
+                "Could not parse updated row file '{}': {error}",
+                row_json_path.display()
+            )
+        })?
+    } else {
+        original_row_file
+    };
+    let text = row_plain_text_map(&updated_row_file)
+        .get(&input.language_code)
+        .cloned()
+        .unwrap_or_default();
+
+    Ok(ApplyEditorAiReviewResultResponse {
+        row_id: input.row_id,
+        language_code: input.language_code,
+        text,
+        reviewed,
+        please_check,
+        last_update: load_latest_row_version_metadata(
+            &repo_path,
+            &repo_relative_path(&repo_path, &row_json_path)?,
+        )?,
+        chapter_base_commit_sha: current_repo_head_sha(&repo_path),
+    })
+}
+
 pub(crate) fn update_gtms_editor_row_text_style_sync(
     app: &AppHandle,
     input: UpdateEditorRowTextStyleInput,

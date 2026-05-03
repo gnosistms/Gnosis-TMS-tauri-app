@@ -46,6 +46,14 @@ import {
   applyEditorAiReview as applyEditorAiReviewFlow,
   runEditorAiReview as runEditorAiReviewFlow,
 } from "./editor-ai-review-flow.js";
+import {
+  cancelEditorAiReviewAllModal as cancelEditorAiReviewAllModalFlow,
+  confirmEditorAiReviewAll as confirmEditorAiReviewAllFlow,
+  continueEditorAiReviewAllPreflight as continueEditorAiReviewAllPreflightFlow,
+  dismissEditorAiReviewAllFilterModal as dismissEditorAiReviewAllFilterModalFlow,
+  openEditorAiReviewAllModal as openEditorAiReviewAllModalFlow,
+  updateEditorAiReviewAllMode as updateEditorAiReviewAllModeFlow,
+} from "./editor-ai-review-all-flow.js";
 import { runEditorAiTranslate as runEditorAiTranslateFlow } from "./editor-ai-translate-flow.js";
 import {
   cancelEditorAiTranslateAllModal as cancelEditorAiTranslateAllModalFlow,
@@ -420,6 +428,30 @@ export function toggleEditorReviewSectionExpanded(sectionKey) {
 
 export async function runEditorAiReview(render) {
   await runEditorAiReviewFlow(render);
+}
+
+export function openEditorAiReviewAllModal(render) {
+  openEditorAiReviewAllModalFlow(render);
+}
+
+export function cancelEditorAiReviewAllModal(render) {
+  cancelEditorAiReviewAllModalFlow(render);
+}
+
+export function continueEditorAiReviewAllPreflight(render) {
+  continueEditorAiReviewAllPreflightFlow(render);
+}
+
+export function updateEditorAiReviewAllMode(render, mode) {
+  updateEditorAiReviewAllModeFlow(render, mode);
+}
+
+export function dismissEditorAiReviewAllFilterModal(render) {
+  dismissEditorAiReviewAllFilterModalFlow(render);
+}
+
+export async function confirmEditorAiReviewAll(render) {
+  await confirmEditorAiReviewAllFlow(render, editorPersistenceOperations());
 }
 
 export async function runEditorAiTranslate(render, actionId) {

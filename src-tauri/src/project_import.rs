@@ -15,8 +15,9 @@ pub(crate) use self::chapter_editor::{
 
 use self::{
     chapter_editor::{
-        clear_gtms_editor_imported_conflict_sync, clear_gtms_editor_reviewed_markers_sync,
-        export_gtms_chapter_file_sync, initialize_gtms_project_repo_sync,
+        apply_gtms_editor_ai_review_result_sync, clear_gtms_editor_imported_conflict_sync,
+        clear_gtms_editor_reviewed_markers_sync, export_gtms_chapter_file_sync,
+        initialize_gtms_project_repo_sync,
         insert_gtms_editor_row_sync, list_local_gtms_project_files_sync,
         load_gtms_chapter_editor_data_sync, load_gtms_editor_field_history_sync,
         load_gtms_editor_row_sync, permanently_delete_gtms_editor_row_sync,
@@ -27,6 +28,7 @@ use self::{
         update_gtms_editor_row_field_flag_sync, update_gtms_editor_row_fields_batch_sync,
         update_gtms_editor_row_fields_sync, update_gtms_editor_row_lifecycle_sync,
         update_gtms_editor_row_text_style_sync, upload_gtms_editor_language_image_sync,
+        ApplyEditorAiReviewResultInput, ApplyEditorAiReviewResultResponse,
         ClearEditorReviewedMarkersInput, ClearEditorReviewedMarkersResponse,
         ClearImportedEditorConflictInput, ExportChapterFileInput, InitializeProjectRepoInput,
         InitializeProjectRepoResponse, InsertEditorRowInput, InsertEditorRowResponse,
@@ -314,6 +316,18 @@ pub(crate) async fn clear_gtms_editor_reviewed_markers(
     })
     .await
     .map_err(|error| format!("The reviewed marker batch update worker failed: {error}"))?
+}
+
+#[tauri::command]
+pub(crate) async fn apply_gtms_editor_ai_review_result(
+    app: AppHandle,
+    input: ApplyEditorAiReviewResultInput,
+) -> Result<ApplyEditorAiReviewResultResponse, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        apply_gtms_editor_ai_review_result_sync(&app, input)
+    })
+    .await
+    .map_err(|error| format!("The AI review result worker failed: {error}"))?
 }
 
 #[tauri::command]
