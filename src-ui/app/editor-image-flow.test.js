@@ -60,6 +60,13 @@ globalThis.performance = {
     return 0;
   },
 };
+globalThis.CSS = {
+  escape(value) {
+    return String(value);
+  },
+};
+globalThis.HTMLElement = class {};
+globalThis.HTMLTextAreaElement = class extends globalThis.HTMLElement {};
 globalThis.window = {
   __TAURI__: {
     core: {
@@ -105,7 +112,9 @@ const {
   dismissActiveIdleEditorImageUpload,
   handleDroppedEditorImageFile,
   handleDroppedEditorImagePath,
+  openEditorImageUrl,
   submitEditorImageUrl,
+  updateEditorImageUrlDraft,
 } = await import("./editor-image-flow.js");
 
 function installEditorFixture() {
@@ -169,6 +178,7 @@ function installEditorFixture() {
       mode: "url",
       urlDraft: "",
       invalidUrl: false,
+      urlErrorMessage: "",
       status: "idle",
     },
   };
@@ -195,13 +205,14 @@ test("submitEditorImageUrl clears an empty draft back to the pre-open state", as
     mode: null,
     urlDraft: "",
     invalidUrl: false,
+    urlErrorMessage: "",
     status: "idle",
   });
   assert.deepEqual(render.calls, [[{ scope: "translate-body" }]]);
   assert.equal(invokeLog.length, 0);
 });
 
-test("submitEditorImageUrl closes the input while a non-empty draft is being validated", async () => {
+test("submitEditorImageUrl closes the input while a non-empty draft is being saved", async () => {
   installEditorFixture();
   const render = createRenderSpy();
   state.editorChapter = {
@@ -212,41 +223,170 @@ test("submitEditorImageUrl closes the input while a non-empty draft is being val
       mode: "url",
       urlDraft: "https://example.com/image.png",
       invalidUrl: false,
+      urlErrorMessage: "",
       status: "idle",
     },
   };
 
-  const pendingValidation = new Promise(() => {});
+  invokeHandler = async (command) => {
+    assert.equal(command, "save_gtms_editor_language_image_url");
+    return new Promise(() => {});
+  };
+
+  const submitPromise = submitEditorImageUrl(render, "row-1", "vi");
+  await Promise.resolve();
+  await Promise.resolve();
+
+  assert.equal(state.editorChapter.imageEditor.status, "submitting");
+  assert.equal(state.editorChapter.imageEditor.mode, "url");
+  assert.equal(render.calls.length, 1);
+  assert.equal(invokeLog.at(-1)?.command, "save_gtms_editor_language_image_url");
+
+  submitPromise.catch(() => {});
+});
+
+test("openEditorImageUrl reopens a submitting URL draft for inspection", () => {
+  installEditorFixture();
+  const render = createRenderSpy();
+  state.editorChapter = {
+    ...state.editorChapter,
+    imageEditor: {
+      rowId: "row-1",
+      languageCode: "vi",
+      mode: "url",
+      urlDraft: "https://example.com/image.png",
+      invalidUrl: false,
+      urlErrorMessage: "",
+      status: "submitting",
+    },
+  };
+
+  openEditorImageUrl(render, "row-1", "vi");
+
+  assert.deepEqual(state.editorChapter.imageEditor, {
+    rowId: "row-1",
+    languageCode: "vi",
+    mode: "url",
+    urlDraft: "https://example.com/image.png",
+    invalidUrl: false,
+    urlErrorMessage: "",
+    status: "idle",
+  });
+  assert.equal(render.calls.length, 1);
+});
+
+test("submitEditorImageUrl reports URL syntax errors without calling the image loader", async () => {
+  installEditorFixture();
+  const render = createRenderSpy();
+  state.editorChapter = {
+    ...state.editorChapter,
+    imageEditor: {
+      rowId: "row-1",
+      languageCode: "vi",
+      mode: "url",
+      urlDraft: "notaurl",
+      invalidUrl: false,
+      urlErrorMessage: "",
+      status: "idle",
+    },
+  };
+
   const originalImage = globalThis.Image;
-  const originalSetTimeout = globalThis.window.setTimeout;
   globalThis.Image = class {
-    set onload(callback) {
-      this._onload = callback;
-    }
-
-    set onerror(callback) {
-      this._onerror = callback;
-    }
-
-    set src(_value) {
-      void pendingValidation;
+    constructor() {
+      throw new Error("Image loader should not be used for URL syntax validation.");
     }
   };
-  globalThis.window.setTimeout = () => 1;
 
   try {
-    const submitPromise = submitEditorImageUrl(render, "row-1", "vi");
-    await Promise.resolve();
-
-    assert.equal(state.editorChapter.imageEditor.status, "submitting");
-    assert.equal(state.editorChapter.imageEditor.mode, "url");
-    assert.equal(render.calls.length, 1);
-
-    submitPromise.catch(() => {});
+    await submitEditorImageUrl(render, "row-1", "vi");
   } finally {
     globalThis.Image = originalImage;
-    globalThis.window.setTimeout = originalSetTimeout;
   }
+
+  assert.deepEqual(state.editorChapter.imageEditor, {
+    rowId: "row-1",
+    languageCode: "vi",
+    mode: null,
+    urlDraft: "notaurl",
+    invalidUrl: true,
+    urlErrorMessage: "Enter a valid image URL.",
+    status: "idle",
+  });
+  assert.equal(invokeLog.length, 0);
+});
+
+test("submitEditorImageUrl reports save failures as a clickable image URL error state", async () => {
+  installEditorFixture();
+  const render = createRenderSpy();
+  state.editorChapter = {
+    ...state.editorChapter,
+    imageEditor: {
+      rowId: "row-1",
+      languageCode: "vi",
+      mode: "url",
+      urlDraft: "https://example.com/fail.png",
+      invalidUrl: false,
+      urlErrorMessage: "",
+      status: "idle",
+    },
+  };
+
+  invokeHandler = async () => {
+    throw new Error("Image could not be loaded.");
+  };
+
+  await submitEditorImageUrl(render, "row-1", "vi");
+
+  assert.deepEqual(state.editorChapter.imageEditor, {
+    rowId: "row-1",
+    languageCode: "vi",
+    mode: null,
+    urlDraft: "https://example.com/fail.png",
+    invalidUrl: true,
+    urlErrorMessage: "Image could not be loaded.",
+    status: "idle",
+  });
+});
+
+test("submitEditorImageUrl does not replace a URL editor reopened while the save was pending", async () => {
+  installEditorFixture();
+  const render = createRenderSpy();
+  state.editorChapter = {
+    ...state.editorChapter,
+    imageEditor: {
+      rowId: "row-1",
+      languageCode: "vi",
+      mode: "url",
+      urlDraft: "https://example.com/slow.png",
+      invalidUrl: false,
+      urlErrorMessage: "",
+      status: "idle",
+    },
+  };
+
+  let rejectSave;
+  invokeHandler = async () => new Promise((_resolve, reject) => {
+    rejectSave = reject;
+  });
+
+  const submitPromise = submitEditorImageUrl(render, "row-1", "vi");
+  await Promise.resolve();
+  await Promise.resolve();
+  openEditorImageUrl(render, "row-1", "vi");
+  updateEditorImageUrlDraft("https://example.com/edited.png");
+  rejectSave(new Error("Original image failed."));
+  await submitPromise;
+
+  assert.deepEqual(state.editorChapter.imageEditor, {
+    rowId: "row-1",
+    languageCode: "vi",
+    mode: "url",
+    urlDraft: "https://example.com/edited.png",
+    invalidUrl: false,
+    urlErrorMessage: "",
+    status: "idle",
+  });
 });
 
 test("dismissActiveIdleEditorImageUpload clears an idle upload editor back to the pre-open state", () => {
@@ -260,6 +400,7 @@ test("dismissActiveIdleEditorImageUpload clears an idle upload editor back to th
       mode: "upload",
       urlDraft: "",
       invalidUrl: false,
+      urlErrorMessage: "",
       status: "idle",
     },
   };
@@ -273,6 +414,7 @@ test("dismissActiveIdleEditorImageUpload clears an idle upload editor back to th
     mode: null,
     urlDraft: "",
     invalidUrl: false,
+    urlErrorMessage: "",
     status: "idle",
   });
   assert.deepEqual(render.calls, [[{ scope: "translate-body" }]]);
@@ -289,6 +431,7 @@ test("dismissActiveIdleEditorImageUpload keeps active upload work in place", () 
       mode: "upload",
       urlDraft: "",
       invalidUrl: false,
+      urlErrorMessage: "",
       status: "saving",
     },
   };
@@ -302,6 +445,7 @@ test("dismissActiveIdleEditorImageUpload keeps active upload work in place", () 
     mode: "upload",
     urlDraft: "",
     invalidUrl: false,
+    urlErrorMessage: "",
     status: "saving",
   });
   assert.deepEqual(render.calls, []);
@@ -320,6 +464,7 @@ test("handleDroppedEditorImageFile applies a saved uploaded image to the editor 
       mode: "upload",
       urlDraft: "",
       invalidUrl: false,
+      urlErrorMessage: "",
       status: "idle",
     },
   };
@@ -428,6 +573,7 @@ test("handleDroppedEditorImageFile applies a saved uploaded image to the editor 
     mode: null,
     urlDraft: "",
     invalidUrl: false,
+    urlErrorMessage: "",
     status: "idle",
   });
   assert.equal(state.editorChapter.chapterBaseCommitSha, "abc123");
@@ -455,6 +601,7 @@ test("handleDroppedEditorImagePath applies a native dropped file to the active u
       mode: "upload",
       urlDraft: "",
       invalidUrl: false,
+      urlErrorMessage: "",
       status: "idle",
     },
   };
@@ -542,6 +689,7 @@ test("handleDroppedEditorImagePath applies a native dropped file to the active u
     mode: null,
     urlDraft: "",
     invalidUrl: false,
+    urlErrorMessage: "",
     status: "idle",
   });
   assert.equal(state.editorChapter.chapterBaseCommitSha, "abc123");

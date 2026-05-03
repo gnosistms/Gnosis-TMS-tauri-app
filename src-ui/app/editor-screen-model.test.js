@@ -389,6 +389,7 @@ test("buildEditorScreenViewModel hides add-image buttons while an image editor i
         mode: "upload",
         urlDraft: "",
         invalidUrl: false,
+        urlErrorMessage: "",
         status: "idle",
       },
     };
@@ -421,6 +422,7 @@ test("buildEditorScreenViewModel keeps add-image buttons visible for invalid-url
         mode: null,
         urlDraft: "https://example.com/bad.png",
         invalidUrl: true,
+        urlErrorMessage: "The image URL could not be loaded.",
         status: "idle",
       },
     };
@@ -430,7 +432,42 @@ test("buildEditorScreenViewModel keeps add-image buttons visible for invalid-url
     const targetSection = firstRow?.sections.find((section) => section.code === "vi");
 
     assert.equal(targetSection?.showInvalidImageUrl, true);
+    assert.equal(targetSection?.imageUrlErrorMessage, "The image URL could not be loaded.");
     assert.equal(targetSection?.showAddImageButtons, true);
+  } finally {
+    restoreSharedState(snapshot);
+  }
+});
+
+test("buildEditorScreenViewModel exposes submitting image URLs as visible loading state", () => {
+  const snapshot = snapshotSharedState();
+
+  try {
+    applyEditorRegressionFixture(state, {
+      rowCount: 1,
+    });
+
+    state.editorChapter = {
+      ...state.editorChapter,
+      imageEditor: {
+        rowId: "fixture-row-0001",
+        languageCode: "vi",
+        mode: "url",
+        urlDraft: "https://example.com/loading.png",
+        invalidUrl: false,
+        urlErrorMessage: "",
+        status: "submitting",
+      },
+    };
+
+    const viewModel = buildEditorScreenViewModel(state);
+    const firstRow = viewModel.contentRows.find((row) => row?.id === "fixture-row-0001");
+    const targetSection = firstRow?.sections.find((section) => section.code === "vi");
+
+    assert.equal(targetSection?.hasVisibleImage, true);
+    assert.equal(targetSection?.isImageUrlSubmitting, true);
+    assert.equal(targetSection?.imageUrlDraft, "https://example.com/loading.png");
+    assert.equal(targetSection?.showAddImageButtons, false);
   } finally {
     restoreSharedState(snapshot);
   }

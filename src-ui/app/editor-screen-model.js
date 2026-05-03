@@ -35,6 +35,8 @@ let cachedImageEditorRowId = null;
 let cachedImageEditorLanguageCode = null;
 let cachedImageEditorMode = null;
 let cachedImageEditorInvalidUrl = false;
+let cachedImageEditorUrlErrorMessage = "";
+let cachedImageEditorStatus = null;
 let cachedLiveTranslationRows = [];
 const AI_TRANSLATE_PREPARING_TEXT = "Preparing glossary...";
 const AI_TRANSLATE_LOADING_TEXT = "Translating...";
@@ -92,6 +94,8 @@ function buildLiveTranslationRows(editorChapter, languages) {
     cachedImageEditorLanguageCode = editorChapter?.imageEditor?.languageCode ?? null;
     cachedImageEditorMode = editorChapter?.imageEditor?.mode ?? null;
     cachedImageEditorInvalidUrl = editorChapter?.imageEditor?.invalidUrl === true;
+    cachedImageEditorUrlErrorMessage = String(editorChapter?.imageEditor?.urlErrorMessage ?? "");
+    cachedImageEditorStatus = editorChapter?.imageEditor?.status ?? null;
     cachedLiveTranslationRows = [];
     return [];
   }
@@ -111,6 +115,8 @@ function buildLiveTranslationRows(editorChapter, languages) {
     && (editorChapter?.imageEditor?.languageCode ?? null) === cachedImageEditorLanguageCode
     && (editorChapter?.imageEditor?.mode ?? null) === cachedImageEditorMode
     && (editorChapter?.imageEditor?.invalidUrl === true) === cachedImageEditorInvalidUrl
+    && String(editorChapter?.imageEditor?.urlErrorMessage ?? "") === cachedImageEditorUrlErrorMessage
+    && (editorChapter?.imageEditor?.status ?? null) === cachedImageEditorStatus
   ) {
     return cachedLiveTranslationRows;
   }
@@ -174,6 +180,7 @@ function buildLiveTranslationRows(editorChapter, languages) {
             hasSavedImage
             || isImageUrlEditorOpen
             || isImageUploadEditorOpen
+            || isImageUrlSubmitting
             || showInvalidImageUrl,
           hasVisibleImageCaption:
             hasSavedImage
@@ -184,10 +191,14 @@ function buildLiveTranslationRows(editorChapter, languages) {
           isFootnoteEditorOpen: editorFootnoteEditorMatches(editorChapter, row.rowId, language.code),
           isImageCaptionEditorOpen,
           isImageUrlEditorOpen,
+          isImageUrlSubmitting,
           isImageUploadEditorOpen,
           showInvalidImageUrl,
+          imageUrlErrorMessage: showInvalidImageUrl
+            ? String(editorChapter?.imageEditor?.urlErrorMessage ?? "")
+            : "",
           imageUrlDraft:
-            isImageUrlEditorOpen || showInvalidImageUrl
+            isImageUrlEditorOpen || isImageUrlSubmitting || showInvalidImageUrl
               ? String(editorChapter?.imageEditor?.urlDraft ?? "")
               : "",
           showAddFootnoteButton:
@@ -233,6 +244,8 @@ function buildLiveTranslationRows(editorChapter, languages) {
   cachedImageEditorLanguageCode = editorChapter?.imageEditor?.languageCode ?? null;
   cachedImageEditorMode = editorChapter?.imageEditor?.mode ?? null;
   cachedImageEditorInvalidUrl = editorChapter?.imageEditor?.invalidUrl === true;
+  cachedImageEditorUrlErrorMessage = String(editorChapter?.imageEditor?.urlErrorMessage ?? "");
+  cachedImageEditorStatus = editorChapter?.imageEditor?.status ?? null;
   cachedLiveTranslationRows = liveRows;
   return liveRows;
 }

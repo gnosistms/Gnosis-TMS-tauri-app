@@ -7,6 +7,8 @@ export const EDITOR_ROW_FILTER_MODE_REVIEWED = "reviewed";
 export const EDITOR_ROW_FILTER_MODE_NOT_REVIEWED = "not-reviewed";
 export const EDITOR_ROW_FILTER_MODE_PLEASE_CHECK = "please-check";
 export const EDITOR_ROW_FILTER_MODE_TARGET_EMPTY = "target-empty";
+export const EDITOR_ROW_FILTER_MODE_HAS_IMAGE = "has-image";
+export const EDITOR_ROW_FILTER_MODE_HAS_FOOTNOTE = "has-footnote";
 export const EDITOR_ROW_FILTER_MODE_HAS_COMMENTS = "has-comments";
 export const EDITOR_ROW_FILTER_MODE_HAS_UNREAD_COMMENTS = "has-unread-comments";
 export const EDITOR_ROW_FILTER_MODE_HAS_CONFLICT = "has-conflict";
@@ -17,6 +19,8 @@ export const EDITOR_ROW_FILTER_OPTIONS = [
   { value: EDITOR_ROW_FILTER_MODE_NOT_REVIEWED, label: "Not reviewed" },
   { value: EDITOR_ROW_FILTER_MODE_PLEASE_CHECK, label: "Please check" },
   { value: EDITOR_ROW_FILTER_MODE_TARGET_EMPTY, label: "Target empty" },
+  { value: EDITOR_ROW_FILTER_MODE_HAS_IMAGE, label: "Has image" },
+  { value: EDITOR_ROW_FILTER_MODE_HAS_FOOTNOTE, label: "Has footnote" },
   { value: EDITOR_ROW_FILTER_MODE_HAS_COMMENTS, label: "Has comments" },
   { value: EDITOR_ROW_FILTER_MODE_HAS_UNREAD_COMMENTS, label: "Has unread comments" },
   { value: EDITOR_ROW_FILTER_MODE_HAS_CONFLICT, label: "Has conflict" },
@@ -174,6 +178,10 @@ function rowMatchesFilterMode(row, rowFilterMode, targetLanguageCode, seenRevisi
       return targetSection?.pleaseCheck === true;
     case EDITOR_ROW_FILTER_MODE_TARGET_EMPTY:
       return Boolean(targetSection) && extractInlineMarkupVisibleText(targetSection.text ?? "").trim().length === 0;
+    case EDITOR_ROW_FILTER_MODE_HAS_IMAGE:
+      return Boolean(targetSection?.image);
+    case EDITOR_ROW_FILTER_MODE_HAS_FOOTNOTE:
+      return Boolean(targetSection) && extractInlineMarkupVisibleText(targetSection.footnote ?? "").trim().length > 0;
     case EDITOR_ROW_FILTER_MODE_HAS_COMMENTS:
       return Number.parseInt(String(row?.commentCount ?? ""), 10) > 0;
     case EDITOR_ROW_FILTER_MODE_HAS_UNREAD_COMMENTS:

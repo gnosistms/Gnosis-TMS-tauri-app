@@ -7,6 +7,13 @@ import {
   restoreTranslateViewportAfterPaints,
 } from "../translate-viewport.js";
 
+const PAGE_SEARCH_INPUT_SELECTOR = [
+  "[data-project-search-input]",
+  "[data-glossary-term-search-input]",
+  "[data-editor-search-input]",
+  "[data-preview-search-input]",
+].join(", ");
+
 function shouldTriggerSyncShortcut(event) {
   if (event.defaultPrevented || event.repeat) {
     return false;
@@ -48,7 +55,7 @@ function shouldBlurActiveEditorField(event) {
   return key === "enter" && event.shiftKey && !event.metaKey && !event.ctrlKey && !event.altKey;
 }
 
-function shouldFocusEditorSearch(event) {
+function shouldFocusPageSearch(event) {
   if (event.defaultPrevented || event.repeat || event.isComposing) {
     return false;
   }
@@ -65,8 +72,8 @@ function shouldFocusEditorSearch(event) {
   return event.ctrlKey && !event.metaKey;
 }
 
-function focusEditorSearchInput(selectContents = false) {
-  const input = document.querySelector("[data-editor-search-input]");
+function focusPageSearchInput(selectContents = false) {
+  const input = document.querySelector(PAGE_SEARCH_INPUT_SELECTOR);
   if (!(input instanceof HTMLInputElement)) {
     return false;
   }
@@ -80,8 +87,8 @@ function focusEditorSearchInput(selectContents = false) {
 
 export function registerKeyboardShortcutEvents(dispatchAction) {
   document.addEventListener("keydown", (event) => {
-    if (shouldFocusEditorSearch(event)) {
-      if (focusEditorSearchInput(true)) {
+    if (shouldFocusPageSearch(event)) {
+      if (focusPageSearchInput(true)) {
         event.preventDefault();
       }
       return;
@@ -110,7 +117,7 @@ export function registerKeyboardShortcutEvents(dispatchAction) {
     if (shouldBlurActiveEditorField(event)) {
       const viewportSnapshot = captureTranslateViewport(event.target);
       const contentKind = event.target.dataset.contentKind ?? "";
-      if (contentKind === "" || contentKind === "image-caption") {
+      if (contentKind === "" || contentKind === "footnote" || contentKind === "image-caption") {
         viewportSnapshot.anchor =
           captureTranslateAnchorForRow(
             event.target.dataset.rowId ?? "",

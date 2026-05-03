@@ -999,6 +999,21 @@
   padding: 0 16px 8px;
 }
 
+.translation-language-panel__image-message-button {
+  display: block;
+  width: 100%;
+  border: 0;
+  cursor: pointer;
+  font-family: var(--font-sans);
+  text-align: left;
+}
+
+.translation-language-panel__image-message-button:hover,
+.translation-language-panel__image-message-button:focus-visible {
+  outline: 2px solid rgba(236, 134, 9, 0.34);
+  outline-offset: 2px;
+}
+
 .translation-language-panel__image-url-input {
   display: block;
   width: 100%;

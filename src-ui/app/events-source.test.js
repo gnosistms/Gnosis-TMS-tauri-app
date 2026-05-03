@@ -51,3 +51,14 @@ test("events open project export selects on the first pointer interaction", asyn
   assert.match(source, /event\.preventDefault\(\)/);
   assert.match(source, /if \(openProjectExportSelectOnFirstPointer\(event\)\) \{/);
 });
+
+test("editor footnote collapse preserves the row viewport anchor", async () => {
+  const keyboardSource = await readFile(new URL("./events/keyboard-shortcuts.js", import.meta.url), "utf8");
+  const translateEventsSource = await readFile(new URL("./translate-editor-dom-events.js", import.meta.url), "utf8");
+  const persistenceSource = await readFile(new URL("./editor-persistence-flow.js", import.meta.url), "utf8");
+
+  assert.match(keyboardSource, /contentKind === "" \|\| contentKind === "footnote" \|\| contentKind === "image-caption"/);
+  assert.match(translateEventsSource, /contentKind === "" \|\| contentKind === "footnote"/);
+  assert.match(translateEventsSource, /collapseEmptyEditorFootnote\(render, rowId, languageCode, \{ viewportSnapshot \}\)/);
+  assert.match(persistenceSource, /renderTranslateBodyPreservingViewport\(render, options\?\.viewportSnapshot \?\? null\)/);
+});

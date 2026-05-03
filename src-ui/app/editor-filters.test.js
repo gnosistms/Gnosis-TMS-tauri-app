@@ -4,6 +4,8 @@ import assert from "node:assert/strict";
 import {
   EDITOR_ROW_FILTER_MODE_HAS_COMMENTS,
   EDITOR_ROW_FILTER_MODE_HAS_CONFLICT,
+  EDITOR_ROW_FILTER_MODE_HAS_FOOTNOTE,
+  EDITOR_ROW_FILTER_MODE_HAS_IMAGE,
   EDITOR_ROW_FILTER_MODE_HAS_UNREAD_COMMENTS,
   EDITOR_ROW_FILTER_MODE_NOT_REVIEWED,
   EDITOR_ROW_FILTER_MODE_PLEASE_CHECK,
@@ -36,6 +38,7 @@ function row(rowId, fields, lifecycleState = "active", options = {}) {
       name: code,
       text,
       footnote: options.footnotes?.[code] ?? "",
+      image: options.images?.[code] ?? null,
       hasVisibleFootnote:
         options.visibleFootnotes?.[code] === true
         || String(options.footnotes?.[code] ?? "").trim().length > 0,
@@ -225,6 +228,38 @@ test("please check and target empty filters use the selected target language", (
 
   assert.deepEqual(pleaseCheck.filteredRows.map((item) => item.id), ["row-1"]);
   assert.deepEqual(targetEmpty.filteredRows.map((item) => item.id), ["row-2"]);
+});
+
+test("image and footnote filters use the selected target language", () => {
+  const rows = [
+    row("row-1", { es: "uno", vi: "mot" }, "active", {
+      images: { vi: { kind: "url", url: "https://example.com/vi.png" } },
+      footnotes: { es: "source note" },
+    }),
+    row("row-2", { es: "dos", vi: "hai" }, "active", {
+      images: { es: { kind: "url", url: "https://example.com/es.png" } },
+      footnotes: { vi: "target note" },
+    }),
+    row("row-3", { es: "tres", vi: "ba" }),
+  ];
+
+  const hasImage = buildEditorFilterResult({
+    rows,
+    languages: [language("es"), language("vi")],
+    collapsedLanguageCodes: new Set(),
+    targetLanguageCode: "vi",
+    filters: { rowFilterMode: EDITOR_ROW_FILTER_MODE_HAS_IMAGE },
+  });
+  const hasFootnote = buildEditorFilterResult({
+    rows,
+    languages: [language("es"), language("vi")],
+    collapsedLanguageCodes: new Set(),
+    targetLanguageCode: "vi",
+    filters: { rowFilterMode: EDITOR_ROW_FILTER_MODE_HAS_FOOTNOTE },
+  });
+
+  assert.deepEqual(hasImage.filteredRows.map((item) => item.id), ["row-1"]);
+  assert.deepEqual(hasFootnote.filteredRows.map((item) => item.id), ["row-2"]);
 });
 
 test("comment filters use row comment counts and per-user unread revisions", () => {

@@ -1,6 +1,5 @@
 import {
   escapeHtml,
-  renderInlineStateBox,
   renderCollapseChevron,
   sectionSeparator,
   textAction,
@@ -404,13 +403,37 @@ function renderEditorLanguageImage(row, language) {
     return "";
   }
 
+  if (language.isImageUrlSubmitting === true) {
+    return `
+      <div class="translation-language-panel__image-shell">
+        <button
+          class="translation-language-panel__image-message-button message-box message-box--warning"
+          type="button"
+          data-action="open-editor-image-url"
+          data-editor-image-url-status-button
+          data-row-id="${escapeHtml(row.id)}"
+          data-language-code="${escapeHtml(language.code)}"
+          aria-busy="true"
+        >
+          <span class="message-box__text">Loading image...</span>
+        </button>
+      </div>
+    `;
+  }
+
   if (language.showInvalidImageUrl === true) {
     return `
       <div class="translation-language-panel__image-shell">
-        ${renderInlineStateBox({
-          tone: "error",
-          message: "Invalid image URL",
-        })}
+        <button
+          class="translation-language-panel__image-message-button message-box message-box--error"
+          type="button"
+          data-action="open-editor-image-url"
+          data-editor-image-url-status-button
+          data-row-id="${escapeHtml(row.id)}"
+          data-language-code="${escapeHtml(language.code)}"
+        >
+          <span class="message-box__text">${escapeHtml(language.imageUrlErrorMessage || "The image URL could not be used.")}</span>
+        </button>
       </div>
     `;
   }
@@ -513,6 +536,7 @@ function renderEditorLanguageImage(row, language) {
             src="${escapeHtml(imageSrc)}"
             alt=""
             loading="eager"
+            referrerpolicy="no-referrer"
           />
         </button>
         ${renderEditorLanguageImageCaption(row, language)}

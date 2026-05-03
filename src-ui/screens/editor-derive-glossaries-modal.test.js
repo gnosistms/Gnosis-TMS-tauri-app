@@ -153,6 +153,20 @@ test("Translate toolbar renders icon actions in the expected order when availabl
   assert.doesNotMatch(html, />AI Review</);
 });
 
+test("Translate toolbar includes image and footnote row filters", () => {
+  const html = renderTranslateToolbar({
+    languages: [
+      { code: "es", name: "Spanish" },
+      { code: "vi", name: "Vietnamese" },
+    ],
+    sourceCode: "es",
+    targetCode: "vi",
+  });
+
+  assert.match(html, /<option value="has-image"[^>]*>Has image<\/option>/);
+  assert.match(html, /<option value="has-footnote"[^>]*>Has footnote<\/option>/);
+});
+
 test("Translate toolbar disables online AI batch actions while offline", () => {
   const html = renderTranslateToolbar({
     languages: [

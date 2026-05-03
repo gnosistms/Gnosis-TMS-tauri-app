@@ -54,6 +54,9 @@ import {
   ensureEditorRowReadyForWrite,
   reloadEditorRowFromDisk,
 } from "./editor-row-sync-flow.js";
+import {
+  renderTranslateBodyPreservingViewport,
+} from "./translate-viewport.js";
 
 const pendingEditorRowPersistByRowId = new Map();
 const pendingEditorDirtyRowScanFrameByRowId = new Map();
@@ -476,7 +479,7 @@ export function openEditorImageCaption(render, rowId, languageCode) {
   }
 }
 
-export function collapseEmptyEditorFootnote(render, rowId, languageCode) {
+export function collapseEmptyEditorFootnote(render, rowId, languageCode, options = {}) {
   if (!rowId || !languageCode || !state.editorChapter?.chapterId) {
     return;
   }
@@ -509,7 +512,7 @@ export function collapseEmptyEditorFootnote(render, rowId, languageCode) {
       languageCode: null,
     },
   };
-  render?.({ scope: "translate-body" });
+  renderTranslateBodyPreservingViewport(render, options?.viewportSnapshot ?? null);
 }
 
 export function collapseEditorImageCaption(render, rowId, languageCode) {

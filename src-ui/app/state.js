@@ -415,6 +415,7 @@ export function createEditorImageEditorState() {
     mode: null,
     urlDraft: "",
     invalidUrl: false,
+    urlErrorMessage: "",
     status: "idle",
   };
 }

@@ -295,6 +295,7 @@ function editorImageWriteBlocked(row, render) {
 function loadImageBySource(src) {
   return new Promise((resolve, reject) => {
     const image = new Image();
+    image.referrerPolicy = "no-referrer";
     const timeoutId = window.setTimeout(() => {
       reject(new Error("Image load timed out."));
     }, 12000);
@@ -311,8 +312,19 @@ function loadImageBySource(src) {
   });
 }
 
-async function validateImageUrlLoadable(url) {
-  await loadImageBySource(url);
+function validateImageUrlSyntax(url) {
+  let parsedUrl;
+  try {
+    parsedUrl = new URL(url);
+  } catch {
+    return "Enter a valid image URL.";
+  }
+
+  if (parsedUrl.protocol !== "http:" && parsedUrl.protocol !== "https:") {
+    return "Only http:// and https:// image URLs are supported.";
+  }
+
+  return "";
 }
 
 function readableUploadLike(value) {
@@ -472,6 +484,7 @@ export function openEditorImageUrl(render, rowId, languageCode) {
     mode: "url",
     urlDraft: existingEditor?.urlDraft ?? "",
     invalidUrl: false,
+    urlErrorMessage: "",
     status: "idle",
   });
   renderTranslateBodyPreservingViewport(render, viewportSnapshot);
@@ -507,6 +520,7 @@ export function updateEditorImageUrlDraft(nextValue) {
       ...state.editorChapter.imageEditor,
       urlDraft: String(nextValue ?? ""),
       invalidUrl: false,
+      urlErrorMessage: "",
     },
   };
 }
@@ -551,16 +565,20 @@ export async function persistEditorImageUrlOnBlur(render, rowId, languageCode, o
     mode: "url",
     urlDraft: draft,
     invalidUrl: false,
+    urlErrorMessage: "",
     status: closeInput ? "submitting" : "saving",
   });
   renderTranslateBodyPreservingViewport(render, viewportSnapshot);
 
-  try {
-    await validateImageUrlLoadable(draft);
-  } catch {
+  const urlSyntaxError = validateImageUrlSyntax(draft);
+  if (urlSyntaxError) {
     if (
       state.editorChapter?.chapterId === chapterAtRequest
       && imageEditorMatches(state.editorChapter, rowId, languageCode)
+      && (
+        state.editorChapter?.imageEditor?.status === "submitting"
+        || state.editorChapter?.imageEditor?.status === "saving"
+      )
     ) {
       setImageEditorState({
         rowId,
@@ -568,6 +586,7 @@ export async function persistEditorImageUrlOnBlur(render, rowId, languageCode, o
         mode: null,
         urlDraft: draft,
         invalidUrl: true,
+        urlErrorMessage: urlSyntaxError,
         status: "idle",
       });
       renderTranslateBodyPreservingViewport(render, viewportSnapshot);
@@ -580,6 +599,10 @@ export async function persistEditorImageUrlOnBlur(render, rowId, languageCode, o
     if (
       state.editorChapter?.chapterId === chapterAtRequest
       && imageEditorMatches(state.editorChapter, rowId, languageCode)
+      && (
+        state.editorChapter?.imageEditor?.status === "submitting"
+        || state.editorChapter?.imageEditor?.status === "saving"
+      )
     ) {
       setImageEditorState({
         rowId,
@@ -587,6 +610,7 @@ export async function persistEditorImageUrlOnBlur(render, rowId, languageCode, o
         mode: "url",
         urlDraft: draft,
         invalidUrl: false,
+        urlErrorMessage: "",
         status: "idle",
       });
       renderTranslateBodyPreservingViewport(render, viewportSnapshot);
@@ -603,6 +627,7 @@ export async function persistEditorImageUrlOnBlur(render, rowId, languageCode, o
       mode: "url",
       urlDraft: draft,
       invalidUrl: false,
+      urlErrorMessage: "",
       status: "idle",
     });
     renderTranslateBodyPreservingViewport(render, viewportSnapshot);
@@ -627,6 +652,28 @@ export async function persistEditorImageUrlOnBlur(render, rowId, languageCode, o
       return;
     }
 
+    const currentEditor = state.editorChapter?.imageEditor;
+    const editorWasReopened =
+      imageEditorMatches(state.editorChapter, rowId, languageCode, "url")
+      && currentEditor?.status !== "submitting";
+    if (editorWasReopened && payload?.row) {
+      updateRowForImagePayload(rowId, payload.row, operations);
+      state.editorChapter = {
+        ...state.editorChapter,
+        chapterBaseCommitSha: nextChapterBaseCommitSha(payload, state.editorChapter),
+      };
+      closeImagePreviewIfTarget(rowId, languageCode);
+      renderTranslateBodyPreservingViewport(render, viewportSnapshot);
+      if (
+        typeof operations.loadActiveEditorFieldHistory === "function"
+        && state.editorChapter.activeRowId === rowId
+        && state.editorChapter.activeLanguageCode === languageCode
+      ) {
+        operations.loadActiveEditorFieldHistory(render);
+      }
+      return;
+    }
+
     await applyImageCommandPayload(
       render,
       rowId,
@@ -644,19 +691,23 @@ export async function persistEditorImageUrlOnBlur(render, rowId, languageCode, o
     if (
       state.editorChapter?.chapterId === chapterAtRequest
       && imageEditorMatches(state.editorChapter, rowId, languageCode)
+      && (
+        state.editorChapter?.imageEditor?.status === "submitting"
+        || state.editorChapter?.imageEditor?.status === "saving"
+      )
     ) {
+      const message = error instanceof Error ? error.message : String(error);
       setImageEditorState({
         rowId,
         languageCode,
-        mode: "url",
+        mode: null,
         urlDraft: draft,
-        invalidUrl: false,
+        invalidUrl: true,
+        urlErrorMessage: message || "The image URL could not be saved.",
         status: "idle",
       });
       renderTranslateBodyPreservingViewport(render, viewportSnapshot);
     }
-    const message = error instanceof Error ? error.message : String(error);
-    showNoticeBadge(message || "The image URL could not be saved.", render);
   }
 }
 

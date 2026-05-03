@@ -820,8 +820,8 @@ export function openEditorImageCaption(render, rowId, languageCode) {
   openEditorImageCaptionFlow(render, rowId, languageCode);
 }
 
-export function collapseEmptyEditorFootnote(render, rowId, languageCode) {
-  collapseEmptyEditorFootnoteFlow(render, rowId, languageCode);
+export function collapseEmptyEditorFootnote(render, rowId, languageCode, options = {}) {
+  collapseEmptyEditorFootnoteFlow(render, rowId, languageCode, options);
 }
 
 export function collapseEditorImageCaption(render, rowId, languageCode) {
