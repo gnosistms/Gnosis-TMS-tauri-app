@@ -111,7 +111,7 @@ test("Derive glossaries modal reuses batch progress classes while loading", () =
   assert.doesNotMatch(html, /This feature will use the existing glossary/);
 });
 
-test("Translate toolbar renders Derive glossaries before renamed AI translate all when available", () => {
+test("Translate toolbar renders icon actions in the expected order when available", () => {
   const html = renderTranslateToolbar({
     languages: [
       { code: "es", name: "Spanish" },
@@ -123,16 +123,26 @@ test("Translate toolbar renders Derive glossaries before renamed AI translate al
     clearTranslationsAvailable: true,
   });
 
-  const deriveIndex = html.indexOf("Derive glossaries");
-  const clearIndex = html.indexOf("Clear translations");
-  const translateIndex = html.indexOf("AI translate all");
+  const deriveIndex = html.indexOf('data-action="open-editor-derive-glossaries"');
+  const clearIndex = html.indexOf('data-action="open-editor-clear-translations"');
+  const translateIndex = html.indexOf('data-action="open-editor-ai-translate-all"');
+  const unreviewIndex = html.indexOf('data-action="open-editor-unreview-all"');
   assert.equal(deriveIndex > -1, true);
   assert.equal(clearIndex > -1, true);
   assert.equal(translateIndex > -1, true);
+  assert.equal(unreviewIndex > -1, true);
   assert.equal(deriveIndex < clearIndex, true);
   assert.equal(clearIndex < translateIndex, true);
-  assert.equal(deriveIndex < translateIndex, true);
-  assert.doesNotMatch(html, /AI Translate all/);
+  assert.equal(translateIndex < unreviewIndex, true);
+  assert.match(html, /aria-label="Derive glossaries"/);
+  assert.match(html, /aria-label="Clear translations"/);
+  assert.match(html, /aria-label="AI translate all"/);
+  assert.match(html, /aria-label="Unreview all"/);
+  assert.match(html, /toolbar-icon-action__icon/);
+  assert.doesNotMatch(html, />Derive glossaries</);
+  assert.doesNotMatch(html, />Clear translations</);
+  assert.doesNotMatch(html, />AI translate all</);
+  assert.doesNotMatch(html, />Unreview all</);
 });
 
 test("Translate toolbar disables online AI batch actions while offline", () => {

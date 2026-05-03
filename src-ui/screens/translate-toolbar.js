@@ -3,7 +3,6 @@ import {
   escapeHtml,
   renderSelectPillControl,
   secondaryButton,
-  textAction,
   tooltipAttributes,
 } from "../lib/ui.js";
 import {
@@ -13,6 +12,63 @@ import {
 } from "../app/editor-filters.js";
 import { EDITOR_MODE_PREVIEW, normalizeEditorPreviewSearchState } from "../app/editor-preview.js";
 import { EDITOR_FONT_SIZE_OPTIONS } from "../app/state.js";
+
+const TOOLBAR_ICONS = {
+  deriveGlossaries: `
+    <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+      <path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H19a1 1 0 0 1 1 1v18a1 1 0 0 1-1 1H6.5a1 1 0 0 1 0-5H20" />
+      <path d="m8 13 4-7 4 7" />
+      <path d="M9.1 11h5.7" />
+    </svg>
+  `,
+  clearTranslations: `
+    <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+      <line x1="12" x2="18" y1="12" y2="18" />
+      <line x1="12" x2="18" y1="18" y2="12" />
+      <rect width="14" height="14" x="8" y="8" rx="2" ry="2" />
+      <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />
+    </svg>
+  `,
+  aiTranslateAll: `
+    <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+      <path d="m5 8 6 6" />
+      <path d="m4 14 6-6 2-3" />
+      <path d="M2 5h12" />
+      <path d="M7 2h1" />
+      <path d="m22 22-5-10-5 10" />
+      <path d="M14 18h6" />
+    </svg>
+  `,
+  unreviewAll: `
+    <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+      <path d="M13.2 5.25H7a3.75 3.75 0 0 0-3.75 3.75v7a3.75 3.75 0 0 0 3.75 3.75h7a3.75 3.75 0 0 0 3.75-3.75v-4.2" />
+      <path d="m7.3 12.55 2.45 2.45 4.8-4.85" />
+      <circle cx="17.5" cy="6.5" r="5.3" />
+      <path d="m15.6 4.6 3.8 3.8" />
+      <path d="m19.4 4.6-3.8 3.8" />
+    </svg>
+  `,
+};
+
+function renderToolbarIconAction(label, action, icon, options = {}) {
+  const tooltip = options.tooltip
+    ? tooltipAttributes(options.tooltip, options.tooltipOptions)
+    : "";
+  const disabledAttributes = options.disabled
+    ? ' disabled aria-disabled="true" data-offline-blocked="true"'
+    : "";
+  return `
+    <button
+      class="toolbar-icon-action${options.disabled ? " is-disabled" : ""}"
+      data-action="${escapeHtml(action)}"
+      aria-label="${escapeHtml(label)}"
+      ${tooltip}
+      ${disabledAttributes}
+    >
+      <span class="toolbar-icon-action__icon" aria-hidden="true">${icon}</span>
+    </button>
+  `;
+}
 
 function renderLanguageSelect(label, dataAttribute, selectedCode, languages, extraOptions = []) {
   const selectedLanguage =
@@ -335,22 +391,26 @@ export function renderTranslateToolbar({
         </div>
         <div class="toolbar-meta">
           ${deriveGlossariesAvailable
-            ? textAction("Derive glossaries", "open-editor-derive-glossaries", {
-              tooltip: offlineAiTooltip || "Use this to automatically generate glossaries for the languages that don't have a glossary.",
+            ? renderToolbarIconAction("Derive glossaries", "open-editor-derive-glossaries", TOOLBAR_ICONS.deriveGlossaries, {
+              tooltip: offlineAiTooltip || "Automatically generate glossaries for the languages that don't have a glossary.",
+              tooltipOptions: { align: "end" },
               disabled: offlineMode,
             })
             : ""}
           ${clearTranslationsAvailable
-            ? textAction("Clear translations", "open-editor-clear-translations", {
+            ? renderToolbarIconAction("Clear translations", "open-editor-clear-translations", TOOLBAR_ICONS.clearTranslations, {
               tooltip: "Clear all translation text for selected languages.",
+              tooltipOptions: { align: "end" },
             })
             : ""}
-          ${textAction("AI translate all", "open-editor-ai-translate-all", {
+          ${renderToolbarIconAction("AI translate all", "open-editor-ai-translate-all", TOOLBAR_ICONS.aiTranslateAll, {
             tooltip: offlineAiTooltip || "Translate all empty fields in selected languages",
+            tooltipOptions: { align: "end" },
             disabled: offlineMode,
           })}
-          ${textAction("Unreview All", "open-editor-unreview-all", {
+          ${renderToolbarIconAction("Unreview all", "open-editor-unreview-all", TOOLBAR_ICONS.unreviewAll, {
             tooltip: 'Remove the "reviewed" mark from all rows of the target language.',
+            tooltipOptions: { align: "end" },
           })}
         </div>
       </div>

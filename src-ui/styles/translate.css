@@ -36,13 +36,72 @@
 .toolbar-meta {
   display: flex;
   align-items: center;
-  gap: 14px;
+  gap: 8px;
   color: var(--muted);
   flex-wrap: wrap;
   justify-content: flex-end;
   flex: 0 1 auto;
   min-width: 0;
   margin-left: auto;
+}
+
+.toolbar-icon-action {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--link);
+  cursor: pointer;
+  line-height: 1;
+  padding: 0;
+  transition:
+    border-color 160ms ease,
+    background 160ms ease,
+    box-shadow 160ms ease,
+    color 160ms ease;
+  vertical-align: middle;
+}
+
+.toolbar-icon-action:hover {
+  color: var(--link);
+  background: rgba(255, 244, 227, 0.84);
+  border-color: rgba(184, 118, 42, 0.18);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.65);
+}
+
+.toolbar-icon-action.is-disabled,
+.toolbar-icon-action.is-disabled:hover {
+  color: var(--link-disabled);
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+  opacity: 0.46;
+  cursor: not-allowed;
+}
+
+.toolbar-icon-action__icon,
+.toolbar-icon-action__icon svg {
+  display: block;
+  width: 24px;
+  height: 24px;
+}
+
+.toolbar-icon-action__icon {
+  flex: 0 0 auto;
+  line-height: 0;
+}
+
+.toolbar-icon-action__icon svg {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .replace-toggle {
