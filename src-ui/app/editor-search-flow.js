@@ -1,5 +1,8 @@
 import { buildEditorRowSearchHighlights } from "./editor-search-highlighting.js";
-import { normalizeEditorChapterFilterState } from "./editor-filters.js";
+import {
+  editorChapterFiltersAreActive,
+  normalizeEditorChapterFilterState,
+} from "./editor-filters.js";
 import { rowFieldsEqual } from "./editor-row-persistence-model.js";
 import {
   buildEditorBatchReplaceUpdates,
@@ -27,11 +30,19 @@ import { showNoticeBadge } from "./status-feedback.js";
 import {
   consumePrimedTranslateInteractionAnchor,
   consumePrimedTranslateMainScrollTop,
+  captureVisibleTranslateLocation,
   captureTranslateRowAnchor,
   centerTranslateRowInView,
   queueTranslateRowAnchor,
   restoreTranslateRowAnchor,
 } from "./scroll-state.js";
+import {
+  captureTranslateViewport,
+  restoreTranslateViewportAfterPaints,
+} from "./translate-viewport.js";
+
+let editorFilterRestoreChapterId = null;
+let editorFilterRestoreViewport = null;
 
 function normalizeEditorChapterFilters(filters) {
   return normalizeEditorChapterFilterState(filters);
@@ -124,23 +135,102 @@ function scrollTranslateMainToTop() {
   container.scrollTop = 0;
 }
 
+function currentEditorChapterId() {
+  return typeof state.editorChapter?.chapterId === "string" && state.editorChapter.chapterId.trim()
+    ? state.editorChapter.chapterId.trim()
+    : null;
+}
+
+function captureEditorFilterRestoreViewport(chapterId) {
+  if (!chapterId) {
+    return;
+  }
+
+  editorFilterRestoreChapterId = chapterId;
+  editorFilterRestoreViewport = captureTranslateViewport(null, {
+    fallbackAnchor: captureVisibleTranslateLocation(),
+  });
+}
+
+function clearEditorFilterRestoreViewport(chapterId = null) {
+  if (chapterId && editorFilterRestoreChapterId !== chapterId) {
+    return;
+  }
+
+  editorFilterRestoreChapterId = null;
+  editorFilterRestoreViewport = null;
+}
+
+function consumeEditorFilterRestoreViewport(chapterId) {
+  if (!chapterId || editorFilterRestoreChapterId !== chapterId) {
+    return null;
+  }
+
+  const viewport = editorFilterRestoreViewport;
+  clearEditorFilterRestoreViewport(chapterId);
+  return viewport;
+}
+
+function prepareEditorFilterViewportTransition(previousFilters, nextFilters) {
+  const chapterId = currentEditorChapterId();
+  const wasActive = editorChapterFiltersAreActive(previousFilters);
+  const isActive = editorChapterFiltersAreActive(nextFilters);
+
+  if (!wasActive && isActive) {
+    captureEditorFilterRestoreViewport(chapterId);
+    return {
+      restoreViewport: null,
+      scrollToTop: true,
+    };
+  }
+
+  if (wasActive && !isActive) {
+    return {
+      restoreViewport: consumeEditorFilterRestoreViewport(chapterId),
+      scrollToTop: false,
+    };
+  }
+
+  return {
+    restoreViewport: null,
+    scrollToTop: isActive,
+  };
+}
+
+function renderEditorFilterChange(render, viewportTransition) {
+  render?.();
+  if (viewportTransition?.restoreViewport) {
+    restoreTranslateViewportAfterPaints(viewportTransition.restoreViewport);
+    return;
+  }
+
+  if (viewportTransition?.scrollToTop) {
+    void waitForNextPaint().then(() => {
+      scrollTranslateMainToTop();
+    });
+  }
+}
+
 function renderEditorReplaceSelection(render) {
   render?.({ scope: "translate-header" });
   render?.({ scope: "translate-body" });
 }
 
 export function updateEditorSearchFilterQuery(render, nextValue) {
-  const previousSearchQuery = normalizeEditorChapterFilters(state.editorChapter?.filters).searchQuery;
+  const currentFilters = normalizeEditorChapterFilters(state.editorChapter?.filters);
+  const previousSearchQuery = currentFilters.searchQuery;
   const nextSearchQuery = typeof nextValue === "string" ? nextValue : String(nextValue ?? "");
   const searchChanged = previousSearchQuery !== nextSearchQuery;
   const searchIsActive = nextSearchQuery.trim().length > 0;
+  const nextFilters = {
+    ...currentFilters,
+    searchQuery: nextSearchQuery,
+  };
+  const viewportTransition = prepareEditorFilterViewportTransition(currentFilters, nextFilters);
   const currentReplaceState = normalizeEditorReplaceState(state.editorChapter?.replace);
   state.editorChapter = {
     ...state.editorChapter,
-    filters: {
-      ...normalizeEditorChapterFilters(state.editorChapter?.filters),
-      searchQuery: nextSearchQuery,
-    },
+    filters: nextFilters,
     replace: {
       ...currentReplaceState,
       enabled: searchIsActive ? currentReplaceState.enabled : false,
@@ -149,10 +239,7 @@ export function updateEditorSearchFilterQuery(render, nextValue) {
       error: "",
     },
   };
-  render?.();
-  void waitForNextPaint().then(() => {
-    scrollTranslateMainToTop();
-  });
+  renderEditorFilterChange(render, viewportTransition);
 }
 
 export function toggleEditorSearchFilterCaseSensitive(render, enabled) {
@@ -166,14 +253,16 @@ export function toggleEditorSearchFilterCaseSensitive(render, enabled) {
     return;
   }
 
+  const nextFilters = {
+    ...currentFilters,
+    caseSensitive: nextCaseSensitive,
+  };
+  const viewportTransition = prepareEditorFilterViewportTransition(currentFilters, nextFilters);
   const searchIsActive = currentFilters.searchQuery.trim().length > 0;
   const currentReplaceState = normalizeEditorReplaceState(state.editorChapter?.replace);
   state.editorChapter = {
     ...state.editorChapter,
-    filters: {
-      ...currentFilters,
-      caseSensitive: nextCaseSensitive,
-    },
+    filters: nextFilters,
     replace: {
       ...currentReplaceState,
       enabled: searchIsActive ? currentReplaceState.enabled : false,
@@ -182,10 +271,7 @@ export function toggleEditorSearchFilterCaseSensitive(render, enabled) {
       error: "",
     },
   };
-  render?.();
-  void waitForNextPaint().then(() => {
-    scrollTranslateMainToTop();
-  });
+  renderEditorFilterChange(render, viewportTransition);
 }
 
 export function updateEditorRowFilterMode(render, nextValue) {
@@ -202,6 +288,7 @@ export function updateEditorRowFilterMode(render, nextValue) {
     return;
   }
 
+  const viewportTransition = prepareEditorFilterViewportTransition(currentFilters, nextFilters);
   const searchIsActive = currentFilters.searchQuery.trim().length > 0;
   const currentReplaceState = normalizeEditorReplaceState(state.editorChapter?.replace);
   state.editorChapter = {
@@ -215,10 +302,7 @@ export function updateEditorRowFilterMode(render, nextValue) {
       error: "",
     },
   };
-  render?.();
-  void waitForNextPaint().then(() => {
-    scrollTranslateMainToTop();
-  });
+  renderEditorFilterChange(render, viewportTransition);
 }
 
 export async function showEditorRowInContext(render, rowId) {
@@ -231,6 +315,7 @@ export async function showEditorRowInContext(render, rowId) {
     type: "row",
     offsetTop: 0,
   });
+  clearEditorFilterRestoreViewport(state.editorChapter.chapterId);
   state.editorChapter = buildEditorShowRowInContextChapterState(state.editorChapter);
   render?.();
 
