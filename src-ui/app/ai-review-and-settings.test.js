@@ -1900,7 +1900,7 @@ test("assistant target history classifies import, AI, current user, and other us
   );
 });
 
-test("assistant target history is oldest-first and appends unsaved current user draft", () => {
+test("assistant target history is oldest-first and collapses an unsaved current user draft into the current-user run", () => {
   const history = buildEditorAssistantTargetLanguageHistory(
     [
       {
@@ -1932,11 +1932,100 @@ test("assistant target history is oldest-first and appends unsaved current user 
     [
       [1, "file_import", "file_import", "Imported draft"],
       [2, "ai_model", "GPT 5.4", "AI draft"],
-      [3, "current_user", "current_user", "Human committed draft"],
-      [4, "current_user", "current_user", "Unsaved visible draft"],
+      [3, "current_user", "current_user", "Unsaved visible draft"],
     ],
   );
-  assert.equal(history[3].operationType, "working-draft");
+  assert.equal(history[2].operationType, "working-draft");
+});
+
+test("assistant target history collapses contiguous provenance runs to the last edit", () => {
+  const history = buildEditorAssistantTargetLanguageHistory(
+    [
+      {
+        authorName: "bob",
+        authorEmail: "bob@users.noreply.github.com",
+        operationType: "editor-update",
+        plainText: "Bob edit",
+      },
+      {
+        authorName: "alice",
+        authorEmail: "alice@users.noreply.github.com",
+        operationType: "editor-update",
+        plainText: "Alice second",
+      },
+      {
+        authorName: "alice",
+        authorEmail: "alice@users.noreply.github.com",
+        operationType: "editor-update",
+        plainText: "Alice first",
+      },
+      {
+        authorName: "tester",
+        authorEmail: "tester@users.noreply.github.com",
+        operationType: "editor-update",
+        plainText: "User second after AI",
+      },
+      {
+        authorName: "tester",
+        authorEmail: "tester@users.noreply.github.com",
+        operationType: "editor-update",
+        plainText: "User first after AI",
+      },
+      {
+        authorName: "tester",
+        authorEmail: "tester@users.noreply.github.com",
+        operationType: "ai-review",
+        aiModel: "gpt-5.4",
+        plainText: "AI second",
+      },
+      {
+        authorName: "tester",
+        authorEmail: "tester@users.noreply.github.com",
+        operationType: "ai-translation",
+        aiModel: "gpt-5.4",
+        plainText: "AI first",
+      },
+      {
+        authorName: "tester",
+        authorEmail: "tester@users.noreply.github.com",
+        operationType: "editor-update",
+        plainText: "User second before AI",
+      },
+      {
+        authorName: "tester",
+        authorEmail: "tester@users.noreply.github.com",
+        operationType: "editor-update",
+        plainText: "User first before AI",
+      },
+      {
+        authorName: "tester",
+        authorEmail: "tester@users.noreply.github.com",
+        operationType: "import",
+        plainText: "Imported draft",
+      },
+    ],
+    { targetText: "Bob edit" },
+    "tester",
+  );
+
+  assert.deepEqual(
+    history.map((entry) => [
+      entry.revisionNumber,
+      entry.sourceType,
+      entry.sourceLabel,
+      entry.authorLogin,
+      entry.operationType,
+      entry.text,
+    ]),
+    [
+      [1, "file_import", "file_import", "tester", "import", "Imported draft"],
+      [2, "current_user", "current_user", "tester", "editor-update", "User second before AI"],
+      [3, "ai_model", "GPT 5.4", "tester", "ai-review", "AI second"],
+      [4, "current_user", "current_user", "tester", "editor-update", "User second after AI"],
+      [5, "other_user", "other_user", "alice", "editor-update", "Alice second"],
+      [6, "other_user", "other_user", "bob", "editor-update", "Bob edit"],
+    ],
+  );
 });
 
 test("runEditorAiAssistant renders a draft when a chat response includes draft translation text", async () => {

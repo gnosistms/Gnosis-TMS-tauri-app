@@ -231,6 +231,38 @@ function assistantHistoryEntryText(entry) {
   return String(entry?.plainText ?? entry?.text ?? "");
 }
 
+function assistantHistoryEntryIdentity(entry) {
+  return authorLoginFromAssistantHistoryEntry(entry)
+    || normalizeAssistantHistoryIdentity(entry?.authorEmail)
+    || normalizeAssistantHistoryIdentity(entry?.authorName);
+}
+
+function assistantHistoryCollapseKey(entry, classification) {
+  switch (classification.sourceType) {
+    case ASSISTANT_HISTORY_SOURCE_CURRENT_USER:
+      return ASSISTANT_HISTORY_SOURCE_CURRENT_USER;
+    case ASSISTANT_HISTORY_SOURCE_OTHER_USER:
+      return [
+        ASSISTANT_HISTORY_SOURCE_OTHER_USER,
+        assistantHistoryEntryIdentity(entry) || "unknown",
+      ].join(":");
+    case ASSISTANT_HISTORY_SOURCE_AI_MODEL:
+      return [
+        ASSISTANT_HISTORY_SOURCE_AI_MODEL,
+        normalizeAssistantHistoryIdentity(entry?.aiModel)
+          || normalizeAssistantHistoryIdentity(classification.sourceLabel)
+          || "ai_model",
+      ].join(":");
+    case ASSISTANT_HISTORY_SOURCE_FILE_IMPORT:
+      return ASSISTANT_HISTORY_SOURCE_FILE_IMPORT;
+    default:
+      return [
+        ASSISTANT_HISTORY_SOURCE_UNKNOWN,
+        assistantHistoryEntryIdentity(entry) || "unknown",
+      ].join(":");
+  }
+}
+
 function createAssistantTargetHistoryFallback(context, sourceLabel = "current_editor_text") {
   const text = String(context?.targetText ?? "");
   if (!text.trim()) {
@@ -259,41 +291,12 @@ export function buildEditorAssistantTargetLanguageHistory(entries, context, curr
     return createAssistantTargetHistoryFallback(context);
   }
 
-  const collapsedEntries = [];
-  for (const entry of oldestFirstEntries) {
-    const text = assistantHistoryEntryText(entry);
-    if (
-      collapsedEntries.length === 0
-      || assistantHistoryEntryText(collapsedEntries.at(-1)) !== text
-    ) {
-      collapsedEntries.push(entry);
-    }
-  }
-
-  const history = collapsedEntries.map((entry, index) => {
-    const classification = classifyEditorAssistantTargetHistoryEntry(entry, currentUserLogin);
-    return {
-      revisionNumber: index + 1,
-      ...classification,
-      authorName: String(entry?.authorName ?? "").trim(),
-      authorLogin: authorLoginFromAssistantHistoryEntry(entry),
-      authorEmail: String(entry?.authorEmail ?? "").trim(),
-      operationType: String(entry?.operationType ?? "").trim(),
-      aiModel: String(entry?.aiModel ?? "").trim(),
-      committedAt: String(entry?.committedAt ?? "").trim(),
-      text: assistantHistoryEntryText(entry),
-    };
-  });
-
   const currentText = String(context?.targetText ?? "");
   const latestCommittedText = assistantHistoryEntryText(oldestFirstEntries.at(-1));
+  const entriesWithDraft = [...oldestFirstEntries];
   if (currentText !== latestCommittedText) {
     const currentLogin = normalizeAssistantHistoryIdentity(currentUserLogin);
-    history.push({
-      revisionNumber: history.length + 1,
-      sourceType: ASSISTANT_HISTORY_SOURCE_CURRENT_USER,
-      sourceLabel: "current_user",
-      authorType: ASSISTANT_HISTORY_SOURCE_CURRENT_USER,
+    entriesWithDraft.push({
       authorName: currentLogin,
       authorLogin: currentLogin,
       authorEmail: "",
@@ -304,9 +307,31 @@ export function buildEditorAssistantTargetLanguageHistory(entries, context, curr
     });
   }
 
-  return history.map((entry, index) => ({
-    ...entry,
+  const collapsedEntries = [];
+  for (const entry of entriesWithDraft) {
+    const classification = classifyEditorAssistantTargetHistoryEntry(entry, currentUserLogin);
+    const collapseKey = assistantHistoryCollapseKey(entry, classification);
+    const historyEntry = {
+      collapseKey,
+      ...classification,
+      authorName: String(entry?.authorName ?? "").trim(),
+      authorLogin: authorLoginFromAssistantHistoryEntry(entry),
+      authorEmail: String(entry?.authorEmail ?? "").trim(),
+      operationType: String(entry?.operationType ?? "").trim(),
+      aiModel: String(entry?.aiModel ?? "").trim(),
+      committedAt: String(entry?.committedAt ?? "").trim(),
+      text: assistantHistoryEntryText(entry),
+    };
+    if (collapsedEntries.at(-1)?.collapseKey === collapseKey) {
+      collapsedEntries[collapsedEntries.length - 1] = historyEntry;
+    } else {
+      collapsedEntries.push(historyEntry);
+    }
+  }
+
+  return collapsedEntries.map(({ collapseKey: _collapseKey, ...entry }, index) => ({
     revisionNumber: index + 1,
+    ...entry,
   }));
 }
 
