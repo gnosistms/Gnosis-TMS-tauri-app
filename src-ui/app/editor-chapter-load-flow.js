@@ -31,7 +31,7 @@ import {
   state,
 } from "./state.js";
 import { clearNoticeBadge, clearScopedSyncBadge, showNoticeBadge } from "./status-feedback.js";
-import { findIsoLanguageOption } from "../lib/language-options.js";
+import { findIsoLanguageOption, normalizeSupportedLanguageCode } from "../lib/language-options.js";
 
 function normalizeEditorChapterFilters(filters) {
   return normalizeEditorChapterFilterState(filters);
@@ -134,7 +134,7 @@ function applyEditorPayloadToState(
 function managedChapterLanguagesFromPayload(languages) {
   return (Array.isArray(languages) ? languages : [])
     .map((language) => {
-      const code = String(language?.code ?? "").trim().toLowerCase();
+      const code = normalizeSupportedLanguageCode(language?.code) || String(language?.code ?? "").trim();
       if (!code) {
         return null;
       }

@@ -25,6 +25,11 @@ test("ruby button config localizes labels, tooltips, and placeholders", () => {
     tooltip: "添加读音标注",
     placeholder: "读音",
   });
+  assert.deepEqual(rubyButtonConfig("zh-Hans"), {
+    label: "注",
+    tooltip: "添加读音标注",
+    placeholder: "读音",
+  });
   assert.deepEqual(rubyButtonConfig("ko"), {
     label: "주",
     tooltip: "발음 표기 추가",

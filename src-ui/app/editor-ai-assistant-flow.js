@@ -6,10 +6,15 @@ import {
 } from "./ai-settings-flow.js";
 import { ensureSelectedTeamAiProviderReady } from "./team-ai-flow.js";
 import { resolveEditorAiTranslateLanguages } from "./editor-ai-translate-target.js";
-import { selectedProjectsTeam, selectedProjectsTeamInstallationId } from "./project-context.js";
+import {
+  findChapterContextById,
+  selectedProjectsTeam,
+  selectedProjectsTeamInstallationId,
+} from "./project-context.js";
 import { invoke, waitForNextPaint } from "./runtime.js";
 import { state } from "./state.js";
 import { findEditorRowById } from "./editor-utils.js";
+import { formatAiHistoryModelLabel } from "./editor-history.js";
 import {
   buildEditorAssistantThreadKey,
   createEditorAssistantItemId,
@@ -52,6 +57,11 @@ const DEFAULT_ROW_CONTEXT_COUNT = 3;
 const MAX_CONCORDANCE_HITS = 10;
 const ASSISTANT_SOURCE_CONTEXT_PREVIOUS_TOKEN_TARGET = 75;
 const ASSISTANT_SOURCE_CONTEXT_NEXT_TOKEN_TARGET = 25;
+const ASSISTANT_HISTORY_SOURCE_FILE_IMPORT = "file_import";
+const ASSISTANT_HISTORY_SOURCE_AI_MODEL = "ai_model";
+const ASSISTANT_HISTORY_SOURCE_CURRENT_USER = "current_user";
+const ASSISTANT_HISTORY_SOURCE_OTHER_USER = "other_user";
+const ASSISTANT_HISTORY_SOURCE_UNKNOWN = "unknown";
 
 function estimateAssistantContextTokens(text) {
   const value = String(text ?? "").trim();
@@ -137,6 +147,197 @@ function readRowFieldText(row, languageCode) {
   return typeof row?.fields?.[languageCode] === "string"
     ? row.fields[languageCode]
     : String(row?.fields?.[languageCode] ?? "");
+}
+
+function normalizeAssistantHistoryIdentity(value) {
+  return String(value ?? "").trim().toLowerCase();
+}
+
+export function authorLoginFromAssistantHistoryEntry(entry) {
+  const explicitLogin = normalizeAssistantHistoryIdentity(entry?.authorLogin);
+  if (explicitLogin) {
+    return explicitLogin;
+  }
+
+  const email = normalizeAssistantHistoryIdentity(entry?.authorEmail);
+  const [localPart, domain] = email.split("@");
+  if (!localPart || domain !== "users.noreply.github.com") {
+    return "";
+  }
+
+  return localPart.includes("+")
+    ? localPart.slice(localPart.lastIndexOf("+") + 1).trim()
+    : localPart.trim();
+}
+
+function assistantHistoryAuthorType(entry, currentUserLogin) {
+  const currentLogin = normalizeAssistantHistoryIdentity(currentUserLogin);
+  const authorLogin = authorLoginFromAssistantHistoryEntry(entry);
+  const authorName = normalizeAssistantHistoryIdentity(entry?.authorName);
+  if (currentLogin && (authorLogin === currentLogin || authorName === currentLogin)) {
+    return ASSISTANT_HISTORY_SOURCE_CURRENT_USER;
+  }
+  if (authorLogin || authorName || String(entry?.authorEmail ?? "").trim()) {
+    return ASSISTANT_HISTORY_SOURCE_OTHER_USER;
+  }
+  return ASSISTANT_HISTORY_SOURCE_UNKNOWN;
+}
+
+export function classifyEditorAssistantTargetHistoryEntry(entry, currentUserLogin) {
+  const operationType = normalizeAssistantHistoryIdentity(entry?.operationType);
+  const aiModel = String(entry?.aiModel ?? "").trim();
+  const authorType = assistantHistoryAuthorType(entry, currentUserLogin);
+
+  if (operationType === "import") {
+    return {
+      sourceType: ASSISTANT_HISTORY_SOURCE_FILE_IMPORT,
+      sourceLabel: "file_import",
+      authorType,
+    };
+  }
+
+  if (aiModel || operationType.startsWith("ai-")) {
+    return {
+      sourceType: ASSISTANT_HISTORY_SOURCE_AI_MODEL,
+      sourceLabel: formatAiHistoryModelLabel(aiModel) || aiModel || "ai_model",
+      authorType,
+    };
+  }
+
+  if (authorType === ASSISTANT_HISTORY_SOURCE_CURRENT_USER) {
+    return {
+      sourceType: ASSISTANT_HISTORY_SOURCE_CURRENT_USER,
+      sourceLabel: "current_user",
+      authorType,
+    };
+  }
+
+  if (authorType === ASSISTANT_HISTORY_SOURCE_OTHER_USER) {
+    return {
+      sourceType: ASSISTANT_HISTORY_SOURCE_OTHER_USER,
+      sourceLabel: "other_user",
+      authorType,
+    };
+  }
+
+  return {
+    sourceType: ASSISTANT_HISTORY_SOURCE_UNKNOWN,
+    sourceLabel: "unknown",
+    authorType,
+  };
+}
+
+function assistantHistoryEntryText(entry) {
+  return String(entry?.plainText ?? entry?.text ?? "");
+}
+
+function createAssistantTargetHistoryFallback(context, sourceLabel = "current_editor_text") {
+  const text = String(context?.targetText ?? "");
+  if (!text.trim()) {
+    return [];
+  }
+
+  return [{
+    revisionNumber: 1,
+    sourceType: ASSISTANT_HISTORY_SOURCE_UNKNOWN,
+    sourceLabel,
+    authorType: ASSISTANT_HISTORY_SOURCE_UNKNOWN,
+    authorName: "",
+    authorLogin: "",
+    authorEmail: "",
+    operationType: "",
+    aiModel: "",
+    committedAt: "",
+    text,
+  }];
+}
+
+export function buildEditorAssistantTargetLanguageHistory(entries, context, currentUserLogin) {
+  const newestFirstEntries = Array.isArray(entries) ? entries : [];
+  const oldestFirstEntries = newestFirstEntries.slice().reverse();
+  if (oldestFirstEntries.length === 0) {
+    return createAssistantTargetHistoryFallback(context);
+  }
+
+  const collapsedEntries = [];
+  for (const entry of oldestFirstEntries) {
+    const text = assistantHistoryEntryText(entry);
+    if (
+      collapsedEntries.length === 0
+      || assistantHistoryEntryText(collapsedEntries.at(-1)) !== text
+    ) {
+      collapsedEntries.push(entry);
+    }
+  }
+
+  const history = collapsedEntries.map((entry, index) => {
+    const classification = classifyEditorAssistantTargetHistoryEntry(entry, currentUserLogin);
+    return {
+      revisionNumber: index + 1,
+      ...classification,
+      authorName: String(entry?.authorName ?? "").trim(),
+      authorLogin: authorLoginFromAssistantHistoryEntry(entry),
+      authorEmail: String(entry?.authorEmail ?? "").trim(),
+      operationType: String(entry?.operationType ?? "").trim(),
+      aiModel: String(entry?.aiModel ?? "").trim(),
+      committedAt: String(entry?.committedAt ?? "").trim(),
+      text: assistantHistoryEntryText(entry),
+    };
+  });
+
+  const currentText = String(context?.targetText ?? "");
+  const latestCommittedText = assistantHistoryEntryText(oldestFirstEntries.at(-1));
+  if (currentText !== latestCommittedText) {
+    const currentLogin = normalizeAssistantHistoryIdentity(currentUserLogin);
+    history.push({
+      revisionNumber: history.length + 1,
+      sourceType: ASSISTANT_HISTORY_SOURCE_CURRENT_USER,
+      sourceLabel: "current_user",
+      authorType: ASSISTANT_HISTORY_SOURCE_CURRENT_USER,
+      authorName: currentLogin,
+      authorLogin: currentLogin,
+      authorEmail: "",
+      operationType: "working-draft",
+      aiModel: "",
+      committedAt: "",
+      text: currentText,
+    });
+  }
+
+  return history.map((entry, index) => ({
+    ...entry,
+    revisionNumber: index + 1,
+  }));
+}
+
+async function loadAssistantTargetLanguageHistory(context) {
+  const fallback = createAssistantTargetHistoryFallback(context);
+  const team = selectedProjectsTeam();
+  const chapterContext = findChapterContextById(context?.chapterId);
+  if (!Number.isFinite(team?.installationId) || !chapterContext?.project?.name) {
+    return fallback;
+  }
+
+  try {
+    const payload = await invoke("load_gtms_editor_field_history", {
+      input: {
+        installationId: team.installationId,
+        projectId: chapterContext.project.id,
+        repoName: chapterContext.project.name,
+        chapterId: context.chapterId,
+        rowId: context.rowId,
+        languageCode: context.targetLanguageCode,
+      },
+    });
+
+    return buildEditorAssistantTargetLanguageHistory(
+      payload?.entries,
+      context,
+      state.auth?.session?.login,
+    );
+  } catch {
+    return fallback;
+  }
 }
 
 function buildDerivedGlossaryTermInputs(glossaryState) {
@@ -914,6 +1115,9 @@ function buildAssistantTurnRequestPayload(
       targetText: context.targetText,
       ...rowTextUpdatesSinceLastAssistantPrompt(thread, context),
       alternateLanguageTexts: context.alternateLanguageTexts,
+      targetLanguageHistory: Array.isArray(options.targetLanguageHistory)
+        ? options.targetLanguageHistory
+        : [],
     },
     rowWindow: buildAssistantSourceContextWindow(
       context.chapterState,
@@ -942,6 +1146,7 @@ function responseDetails(intent, context, providerId, modelId, requestPayload) {
     targetLanguageLabel: context.targetLanguageLabel,
     sourceText: context.sourceText,
     targetText: context.targetText,
+    targetLanguageHistory: requestPayload.row?.targetLanguageHistory ?? [],
     rowWindow: requestPayload.rowWindow ?? [],
     glossaryHints: requestPayload.glossaryHints ?? [],
     concordanceHits: requestPayload.concordanceHits ?? [],
@@ -1084,6 +1289,7 @@ export async function runEditorAiAssistant(render) {
           }
           : null;
     const thread = currentEditorAssistantThread(state.editorChapter, context.threadKey);
+    const targetLanguageHistory = await loadAssistantTargetLanguageHistory(context);
     const requestPayload = buildAssistantTurnRequestPayload(
       intent,
       message,
@@ -1093,7 +1299,10 @@ export async function runEditorAiAssistant(render) {
       modelId,
       glossaryResult.glossaryHints,
       documentDigest,
-      { excludeItemIds: currentRequestItemIds },
+      {
+        excludeItemIds: currentRequestItemIds,
+        targetLanguageHistory,
+      },
     );
     const payload = await invoke("run_ai_assistant_turn", {
       request: requestPayload,

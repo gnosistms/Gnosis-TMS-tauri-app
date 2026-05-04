@@ -6,7 +6,7 @@ import {
   tooltipAttributes,
 } from "../lib/ui.js";
 import { formatErrorForDisplay } from "../app/error-display.js";
-import { isoLanguageOptions } from "../lib/language-options.js";
+import { findIsoLanguageOption, isoLanguageOptions } from "../lib/language-options.js";
 
 function renderPickerLanguageOption(language, selectedCode, disabled = false) {
   const isSelected = language.code === selectedCode;
@@ -25,7 +25,7 @@ function renderPickerLanguageOption(language, selectedCode, disabled = false) {
 }
 
 function renderManagedLanguageRow(language, index, total, isSubmitting) {
-  const code = String(language?.code ?? "").trim().toLowerCase();
+  const code = String(language?.code ?? "").trim();
   const name = String(language?.name ?? "").trim() || code;
   const label = `${name} (${code})`;
   const showRemoveButton = total > 1;
@@ -95,10 +95,10 @@ function renderLanguagePickerModal(state) {
       .filter(Boolean),
   );
   const availableLanguages = isoLanguageOptions
-    .filter((option) => !existingCodes.has(option.code))
+    .filter((option) => !existingCodes.has(option.code.toLowerCase()))
     .slice()
     .sort((left, right) => left.name.localeCompare(right.name));
-  const rawSelectedCode = String(modal.pickerSelectedLanguageCode ?? "").trim().toLowerCase();
+  const rawSelectedCode = findIsoLanguageOption(modal.pickerSelectedLanguageCode)?.code ?? "";
   const selectedCode = availableLanguages.some((language) => language.code === rawSelectedCode)
     ? rawSelectedCode
     : "";

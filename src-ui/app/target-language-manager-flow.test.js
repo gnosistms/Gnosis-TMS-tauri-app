@@ -63,3 +63,28 @@ test("target language picker selection preserves scroll and waits for add langua
     ["en", "vi"],
   );
 });
+
+test("target language picker canonicalizes Chinese script codes", () => {
+  languageList.scrollTop = 0;
+  state.targetLanguageManager = {
+    ...createTargetLanguageManagerState(),
+    isOpen: true,
+    isPickerOpen: true,
+    chapterId: "chapter-1",
+    languages: [
+      { code: "en", name: "English", role: "source" },
+    ],
+  };
+
+  selectTargetLanguageManagerPickerLanguage("zh-hans");
+
+  assert.equal(state.targetLanguageManager.pickerSelectedLanguageCode, "zh-Hans");
+
+  addTargetLanguageManagerLanguage();
+
+  assert.deepEqual(state.targetLanguageManager.languages.at(-1), {
+    code: "zh-Hans",
+    name: "Chinese (Simplified)",
+    role: "target",
+  });
+});

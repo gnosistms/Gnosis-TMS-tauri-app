@@ -141,6 +141,9 @@ const {
   runEditorAiTranslateForContext,
 } = await import("./editor-ai-translate-flow.js");
 const {
+  authorLoginFromAssistantHistoryEntry,
+  buildEditorAssistantTargetLanguageHistory,
+  classifyEditorAssistantTargetHistoryEntry,
   runEditorAiAssistant,
 } = await import("./editor-ai-assistant-flow.js");
 const {
@@ -374,6 +377,80 @@ test("runEditorAiReview enters loading state before provider readiness resolves"
 
   assert.equal(state.editorChapter.aiReview.status, "ready");
   assert.equal(state.editorChapter.aiReview.suggestedText, "Texto revisado");
+});
+
+test("runEditorAiReview completes when the user selects a different row before the response returns", async () => {
+  installTranslateFixture();
+  state.editorChapter = {
+    ...state.editorChapter,
+    rows: normalizeEditorRows([
+      {
+        rowId: "row-1",
+        fields: {
+          es: "Hola",
+          vi: "Texto original",
+        },
+        fieldStates: {},
+      },
+      {
+        rowId: "row-2",
+        fields: {
+          es: "Adios",
+          vi: "Otro texto",
+        },
+        fieldStates: {},
+      },
+    ]),
+  };
+
+  const reviewResponse = createDeferred();
+  invokeHandler = async (command) => {
+    if (command === "load_ai_provider_secret") {
+      return "oa-key";
+    }
+    if (command === "run_ai_review") {
+      return reviewResponse.promise;
+    }
+
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  const reviewPromise = runEditorAiReview(() => {});
+
+  assert.equal(state.editorChapter.aiReview.status, "loading");
+  assert.equal(state.editorChapter.aiReview.rowId, "row-1");
+
+  state.editorChapter = {
+    ...state.editorChapter,
+    activeRowId: "row-2",
+    activeLanguageCode: "vi",
+  };
+  reviewResponse.resolve({
+    suggestedText: "Texto revisado",
+  });
+  await reviewPromise;
+
+  assert.equal(state.editorChapter.activeRowId, "row-2");
+  assert.equal(state.editorChapter.aiReview.status, "ready");
+  assert.equal(state.editorChapter.aiReview.rowId, "row-1");
+  assert.equal(state.editorChapter.aiReview.suggestedText, "Texto revisado");
+
+  const visibleForOtherRow = resolveVisibleEditorAiReview(
+    state.editorChapter,
+    "row-2",
+    "vi",
+    "Otro texto",
+  );
+  assert.equal(visibleForOtherRow.status, "idle");
+
+  const visibleForReviewedRow = resolveVisibleEditorAiReview(
+    state.editorChapter,
+    "row-1",
+    "vi",
+    "Texto original",
+  );
+  assert.equal(visibleForReviewedRow.status, "ready");
+  assert.equal(visibleForReviewedRow.showSuggestion, true);
 });
 
 test("runEditorAiTranslate uses the configured translate action and creates an assistant draft", async () => {
@@ -1768,6 +1845,100 @@ test("runEditorAiTranslate tells members to contact the owner when no shared tea
   assert.equal(state.aiReviewMissingKeyModal.teamName, "Shared Team");
 });
 
+test("assistant target history classifies import, AI, current user, and other user revisions", () => {
+  assert.equal(
+    authorLoginFromAssistantHistoryEntry({
+      authorEmail: "12345+octocat@users.noreply.github.com",
+    }),
+    "octocat",
+  );
+
+  assert.deepEqual(
+    classifyEditorAssistantTargetHistoryEntry({
+      operationType: "import",
+      authorName: "tester",
+    }, "tester"),
+    {
+      sourceType: "file_import",
+      sourceLabel: "file_import",
+      authorType: "current_user",
+    },
+  );
+  assert.deepEqual(
+    classifyEditorAssistantTargetHistoryEntry({
+      operationType: "ai-translation",
+      aiModel: "gpt-5.4",
+      authorName: "tester",
+    }, "tester"),
+    {
+      sourceType: "ai_model",
+      sourceLabel: "GPT 5.4",
+      authorType: "current_user",
+    },
+  );
+  assert.deepEqual(
+    classifyEditorAssistantTargetHistoryEntry({
+      operationType: "editor-update",
+      authorEmail: "tester@users.noreply.github.com",
+    }, "tester"),
+    {
+      sourceType: "current_user",
+      sourceLabel: "current_user",
+      authorType: "current_user",
+    },
+  );
+  assert.deepEqual(
+    classifyEditorAssistantTargetHistoryEntry({
+      operationType: "editor-update",
+      authorName: "another-editor",
+    }, "tester"),
+    {
+      sourceType: "other_user",
+      sourceLabel: "other_user",
+      authorType: "other_user",
+    },
+  );
+});
+
+test("assistant target history is oldest-first and appends unsaved current user draft", () => {
+  const history = buildEditorAssistantTargetLanguageHistory(
+    [
+      {
+        authorName: "tester",
+        authorEmail: "tester@users.noreply.github.com",
+        operationType: "editor-update",
+        plainText: "Human committed draft",
+      },
+      {
+        authorName: "tester",
+        authorEmail: "tester@users.noreply.github.com",
+        operationType: "ai-translation",
+        aiModel: "gpt-5.4",
+        plainText: "AI draft",
+      },
+      {
+        authorName: "tester",
+        authorEmail: "tester@users.noreply.github.com",
+        operationType: "import",
+        plainText: "Imported draft",
+      },
+    ],
+    { targetText: "Unsaved visible draft" },
+    "tester",
+  );
+
+  assert.deepEqual(
+    history.map((entry) => [entry.revisionNumber, entry.sourceType, entry.sourceLabel, entry.text]),
+    [
+      [1, "file_import", "file_import", "Imported draft"],
+      [2, "ai_model", "GPT 5.4", "AI draft"],
+      [3, "current_user", "current_user", "Human committed draft"],
+      [4, "current_user", "current_user", "Unsaved visible draft"],
+    ],
+  );
+  assert.equal(history[3].operationType, "working-draft");
+});
+
 test("runEditorAiAssistant renders a draft when a chat response includes draft translation text", async () => {
   installTranslateFixture({
     fields: {
@@ -1821,6 +1992,123 @@ test("runEditorAiAssistant renders a draft when a chat response includes draft t
   assert.equal(draft?.text, "A smoother version:");
   assert.equal(draft?.draftTranslationText, "Mot ban dich muot ma hon.");
   assert.equal(state.editorChapter.rows[0].fields.vi, "Nhiem vu cua no la trao phuong phap thuc hanh.");
+});
+
+test("runEditorAiAssistant sends loaded target-language history with the assistant request", async () => {
+  installTranslateFixture({
+    fields: {
+      es: "Su mision es entregar metodos practicos.",
+      vi: "Human committed draft",
+    },
+  });
+  installSelectedTeam({ canDelete: true, login: "tester" });
+  state.projects = [{
+    id: "project-1",
+    name: "repo-one",
+    chapters: [{ id: "chapter-1" }],
+  }];
+  state.editorChapter = {
+    ...state.editorChapter,
+    assistant: {
+      ...state.editorChapter.assistant,
+      composerDraft: "Explain this translation choice.",
+    },
+  };
+  state.aiSettings = {
+    ...state.aiSettings,
+    actionConfig: {
+      ...state.aiSettings.actionConfig,
+      detailedConfiguration: true,
+      actions: {
+        ...state.aiSettings.actionConfig.actions,
+        discuss: {
+          providerId: "openai",
+          modelId: "gpt-5.4-mini",
+        },
+      },
+    },
+  };
+
+  invokeHandler = async (command, payload = {}) => {
+    if (command === "load_ai_provider_secret") {
+      return "oa-key";
+    }
+    if (command === "load_team_ai_settings") {
+      return null;
+    }
+    if (command === "load_team_ai_secrets_metadata") {
+      return {
+        schemaVersion: 1,
+        updatedAt: null,
+        updatedBy: null,
+        providers: {
+          openai: null,
+          gemini: null,
+          claude: null,
+          deepseek: null,
+        },
+      };
+    }
+    if (command === "load_gtms_editor_field_history") {
+      assert.equal(payload.input.installationId, 42);
+      assert.equal(payload.input.projectId, "project-1");
+      assert.equal(payload.input.repoName, "repo-one");
+      assert.equal(payload.input.rowId, "row-1");
+      assert.equal(payload.input.languageCode, "vi");
+      return {
+        entries: [
+          {
+            authorName: "tester",
+            authorEmail: "tester@users.noreply.github.com",
+            operationType: "editor-update",
+            plainText: "Human committed draft",
+          },
+          {
+            authorName: "tester",
+            authorEmail: "tester@users.noreply.github.com",
+            operationType: "ai-translation",
+            aiModel: "gpt-5.4",
+            plainText: "AI draft",
+          },
+          {
+            authorName: "tester",
+            authorEmail: "tester@users.noreply.github.com",
+            operationType: "import",
+            plainText: "Imported draft",
+          },
+        ],
+      };
+    }
+    if (command === "run_ai_assistant_turn") {
+      assert.deepEqual(
+        payload.request.row.targetLanguageHistory.map((entry) => [
+          entry.sourceType,
+          entry.sourceLabel,
+          entry.authorType,
+          entry.text,
+        ]),
+        [
+          ["file_import", "file_import", "current_user", "Imported draft"],
+          ["ai_model", "GPT 5.4", "current_user", "AI draft"],
+          ["current_user", "current_user", "current_user", "Human committed draft"],
+        ],
+      );
+      return {
+        assistantText: "The human edit changes the tone.",
+        draftTranslationText: null,
+        promptText: "prompt text",
+      };
+    }
+
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  await runEditorAiAssistant(() => {});
+
+  assert.equal(
+    state.editorChapter.assistant.threadsByKey["row-1::vi"].items.at(-1)?.text,
+    "The human edit changes the tone.",
+  );
 });
 
 test("applyEditorAiReview updates the editor row and clears the suggestion after save", async () => {

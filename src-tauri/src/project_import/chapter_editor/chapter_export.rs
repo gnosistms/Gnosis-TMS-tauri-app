@@ -463,7 +463,12 @@ fn html_image_mime_type(path: &Path, bytes: &[u8]) -> Option<&'static str> {
     match path
         .extension()
         .and_then(|extension| extension.to_str())
-        .map(|extension| extension.trim().trim_start_matches('.').to_ascii_lowercase())
+        .map(|extension| {
+            extension
+                .trim()
+                .trim_start_matches('.')
+                .to_ascii_lowercase()
+        })
         .as_deref()
     {
         Some("jpg" | "jpeg") => Some("image/jpeg"),
@@ -1248,9 +1253,28 @@ mod tests {
     #[test]
     fn block_builder_skips_deleted_rows_and_numbers_footnotes() {
         let mut active = row("row-1", "a", "Text", "paragraph");
-        active.fields.get_mut("en").expect("field exists").footnote = "Note".to_string();
+        {
+            let field = active.fields.get_mut("en").expect("field exists");
+            field.footnote = "Note".to_string();
+            field.image_caption = "Active caption".to_string();
+            field.image = Some(StoredFieldImage {
+                kind: "url".to_string(),
+                url: Some("https://example.com/active.png".to_string()),
+                path: None,
+            });
+        }
         let mut deleted = row("row-2", "b", "Deleted", "paragraph");
         deleted.lifecycle.state = "deleted".to_string();
+        {
+            let field = deleted.fields.get_mut("en").expect("field exists");
+            field.footnote = "Deleted note".to_string();
+            field.image_caption = "Deleted caption".to_string();
+            field.image = Some(StoredFieldImage {
+                kind: "url".to_string(),
+                url: Some("https://example.com/deleted.png".to_string()),
+                path: None,
+            });
+        }
         let chapter = StoredChapterFile {
             chapter_id: "chapter-1".to_string(),
             title: "Chapter".to_string(),
@@ -1272,13 +1296,58 @@ mod tests {
             "abc123",
         )
         .expect("document should build");
-        assert_eq!(document.blocks.len(), 2);
+        assert_eq!(document.blocks.len(), 3);
+        assert_eq!(
+            document.blocks[0],
+            ExportBlock::Text {
+                text_style: "paragraph".to_string(),
+                text: "Text".to_string(),
+            }
+        );
         assert_eq!(
             document.blocks[1],
+            ExportBlock::Image {
+                image: ExportImage::Url("https://example.com/active.png".to_string()),
+                caption: "Active caption".to_string(),
+            }
+        );
+        assert_eq!(
+            document.blocks[2],
             ExportBlock::Footnote {
                 number: 1,
                 text: "Note".to_string(),
             }
         );
+
+        let txt = render_txt_document(&document);
+        assert!(txt.contains("Text"));
+        assert!(txt.contains("[1] Note"));
+        assert!(!txt.contains("Deleted"));
+        assert!(!txt.contains("Deleted note"));
+
+        let html = render_html_document(&document).expect("html should render");
+        assert!(html.contains("Text"));
+        assert!(html.contains("https://example.com/active.png"));
+        assert!(html.contains("Active caption"));
+        assert!(html.contains("[1] Note"));
+        assert!(!html.contains("Deleted"));
+        assert!(!html.contains("Deleted note"));
+        assert!(!html.contains("Deleted caption"));
+        assert!(!html.contains("https://example.com/deleted.png"));
+
+        let docx = render_docx_document(&document).expect("docx should render");
+        let mut archive = ZipArchive::new(Cursor::new(docx)).expect("docx should be zip");
+        let mut docx_text = String::new();
+        archive
+            .by_name("word/document.xml")
+            .expect("document exists")
+            .read_to_string(&mut docx_text)
+            .expect("document xml reads");
+        assert!(docx_text.contains(">Text<"));
+        assert!(docx_text.contains(">Active caption<"));
+        assert!(docx_text.contains("Note"));
+        assert!(!docx_text.contains("Deleted"));
+        assert!(!docx_text.contains("Deleted note"));
+        assert!(!docx_text.contains("Deleted caption"));
     }
 }

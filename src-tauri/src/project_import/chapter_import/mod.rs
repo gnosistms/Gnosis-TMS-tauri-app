@@ -380,9 +380,15 @@ mod tests {
     }
 
     #[test]
-    fn classify_header_row_accepts_iso_639_1_language_codes() {
-        let bindings = classify_header_row(&["es".to_string(), "EN".to_string(), "vi".to_string()])
-            .expect("valid ISO codes should be accepted");
+    fn classify_header_row_accepts_supported_language_codes() {
+        let bindings = classify_header_row(&[
+            "es".to_string(),
+            "EN".to_string(),
+            "vi".to_string(),
+            "zh-hans".to_string(),
+            "ZH-HANT".to_string(),
+        ])
+        .expect("valid language codes should be accepted");
 
         let codes = bindings
             .into_iter()
@@ -391,7 +397,7 @@ mod tests {
             })
             .collect::<Vec<_>>();
 
-        assert_eq!(codes, vec!["es", "en", "vi"]);
+        assert_eq!(codes, vec!["es", "en", "vi", "zh-Hans", "zh-Hant"]);
     }
 
     #[test]
@@ -400,7 +406,7 @@ mod tests {
             .expect_err("language names should not pass XLSX import validation");
 
         assert!(error.contains("Column 1"));
-        assert!(error.contains("ISO 639-1"));
+        assert!(error.contains("supported language code"));
     }
 
     #[test]
@@ -409,7 +415,16 @@ mod tests {
             .expect_err("unknown two-letter codes should not pass XLSX import validation");
 
         assert!(error.contains("Column 2"));
-        assert!(error.contains("ISO 639-1"));
+        assert!(error.contains("supported language code"));
+    }
+
+    #[test]
+    fn classify_header_row_rejects_bare_chinese_language_code() {
+        let error = classify_header_row(&["zh".to_string()])
+            .expect_err("bare Chinese should not pass XLSX import validation");
+
+        assert!(error.contains("Column 1"));
+        assert!(error.contains("supported language code"));
     }
 
     #[test]
@@ -442,6 +457,22 @@ mod tests {
             Some("second line")
         );
         assert_eq!(parsed.rows[2].source_row_number, 5);
+    }
+
+    #[test]
+    fn parse_txt_file_canonicalizes_chinese_script_source_language() {
+        let parsed = parse_txt_file(txt_input(b"first line".to_vec(), "zh_hant"))
+            .expect("TXT import should parse Chinese Traditional source language");
+
+        assert_eq!(parsed.languages[0].code, "zh-Hant");
+        assert_eq!(parsed.languages[0].name, "Chinese (Traditional)");
+        assert_eq!(
+            parsed.rows[0]
+                .fields
+                .get("zh-Hant")
+                .map(|field| field.plain_text.as_str()),
+            Some("first line")
+        );
     }
 
     #[test]

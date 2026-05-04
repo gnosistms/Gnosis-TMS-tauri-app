@@ -38,15 +38,20 @@ test("buildEditorPreviewDocument emits target-language text, footnote, and image
   assert.equal(blocks[2].caption, "Image caption alpha");
 });
 
-test("buildEditorPreviewDocument skips deleted rows and keeps non-text blocks when main text is empty", () => {
+test("buildEditorPreviewDocument skips all deleted-row preview content", () => {
   const blocks = buildEditorPreviewDocument([
     {
       rowId: "row-deleted",
       lifecycleState: "deleted",
       fields: { vi: "Deleted text" },
-      footnotes: {},
-      imageCaptions: {},
-      images: {},
+      footnotes: { vi: "Deleted footnote" },
+      imageCaptions: { vi: "Deleted caption" },
+      images: {
+        vi: {
+          kind: "url",
+          url: "https://example.com/deleted.png",
+        },
+      },
     },
     {
       rowId: "row-2",
@@ -54,14 +59,45 @@ test("buildEditorPreviewDocument skips deleted rows and keeps non-text blocks wh
       textStyle: "paragraph",
       fields: { vi: "" },
       footnotes: { vi: "Visible footnote" },
-      imageCaptions: { vi: "" },
-      images: {},
+      imageCaptions: { vi: "Visible caption" },
+      images: {
+        vi: {
+          kind: "url",
+          url: "https://example.com/visible.png",
+        },
+      },
     },
   ], "vi");
 
-  assert.equal(blocks.length, 1);
+  assert.deepEqual(
+    blocks.map((block) => block.kind),
+    ["footnote", "image"],
+  );
   assert.equal(blocks[0].kind, "footnote");
   assert.equal(blocks[0].text, "Visible footnote");
+  assert.equal(blocks[1].kind, "image");
+  assert.equal(blocks[1].caption, "Visible caption");
+  assert.equal(blocks.some((block) => block.rowId === "row-deleted"), false);
+
+  const rendered = renderEditorPreviewDocumentHtml(blocks, {
+    resolveImageSrc: (image) => image?.url ?? "",
+  }).html;
+  assert.match(rendered, /Visible footnote/);
+  assert.match(rendered, /Visible caption/);
+  assert.match(rendered, /visible\.png/);
+  assert.doesNotMatch(rendered, /Deleted text/);
+  assert.doesNotMatch(rendered, /Deleted footnote/);
+  assert.doesNotMatch(rendered, /Deleted caption/);
+  assert.doesNotMatch(rendered, /deleted\.png/);
+
+  const serialized = serializeEditorPreviewHtml(blocks);
+  assert.match(serialized, /Visible footnote/);
+  assert.match(serialized, /Visible caption/);
+  assert.match(serialized, /visible\.png/);
+  assert.doesNotMatch(serialized, /Deleted text/);
+  assert.doesNotMatch(serialized, /Deleted footnote/);
+  assert.doesNotMatch(serialized, /Deleted caption/);
+  assert.doesNotMatch(serialized, /deleted\.png/);
 });
 
 test("renderEditorPreviewDocumentHtml highlights visible preview text and tracks active match", () => {

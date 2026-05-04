@@ -4,13 +4,13 @@ import { findChapterContextById, selectedProjectsTeam } from "./project-context.
 import { invoke } from "./runtime.js";
 import { createTargetLanguageManagerState, state } from "./state.js";
 import { showNoticeBadge } from "./status-feedback.js";
-import { findIsoLanguageOption } from "../lib/language-options.js";
+import { findIsoLanguageOption, normalizeSupportedLanguageCode } from "../lib/language-options.js";
 
 export const MANAGE_CHAPTER_LANGUAGES_OPTION_VALUE = "__manage_target_languages__";
 export const MANAGE_TARGET_LANGUAGES_OPTION_VALUE = MANAGE_CHAPTER_LANGUAGES_OPTION_VALUE;
 
 function cloneManagedChapterLanguage(language) {
-  const code = String(language?.code ?? "").trim().toLowerCase();
+  const code = normalizeSupportedLanguageCode(language?.code) || String(language?.code ?? "").trim();
   if (!code) {
     return null;
   }
@@ -110,7 +110,7 @@ export function selectTargetLanguageManagerPickerLanguage(languageCode) {
     return;
   }
 
-  const code = String(languageCode ?? "").trim().toLowerCase();
+  const code = normalizeSupportedLanguageCode(languageCode);
   if (!code || state.targetLanguageManager.languages.some((language) => language.code === code)) {
     return;
   }
@@ -135,7 +135,7 @@ export function addTargetLanguageManagerLanguage() {
     return;
   }
 
-  const code = String(state.targetLanguageManager.pickerSelectedLanguageCode ?? "").trim().toLowerCase();
+  const code = normalizeSupportedLanguageCode(state.targetLanguageManager.pickerSelectedLanguageCode);
   if (!code || state.targetLanguageManager.languages.some((language) => language.code === code)) {
     return;
   }

@@ -32,11 +32,12 @@ export function currentEditorAiReviewRequestMatches(
   languageCode,
   requestKey,
 ) {
+  const aiReview = normalizeEditorAiReviewState(chapterState?.aiReview);
   return (
     chapterState?.chapterId === chapterId
-    && chapterState.activeRowId === rowId
-    && chapterState.activeLanguageCode === languageCode
-    && chapterState.aiReview?.requestKey === requestKey
+    && aiReview.rowId === rowId
+    && aiReview.languageCode === languageCode
+    && aiReview.requestKey === requestKey
   );
 }
 

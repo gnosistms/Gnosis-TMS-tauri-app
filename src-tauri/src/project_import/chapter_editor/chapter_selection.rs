@@ -28,16 +28,21 @@ pub(crate) fn update_gtms_chapter_language_selection_sync(
         .into_iter()
         .flatten()
         .filter_map(|language| language.get("code").and_then(Value::as_str))
+        .filter_map(normalize_chapter_language_code)
         .collect::<Vec<_>>();
+    let source_language_code = normalize_chapter_language_code(&input.source_language_code)
+        .ok_or_else(|| "The source language code is required.".to_string())?;
+    let target_language_code = normalize_chapter_language_code(&input.target_language_code)
+        .ok_or_else(|| "The target language code is required.".to_string())?;
 
-    if !known_language_codes.contains(&input.source_language_code.as_str()) {
+    if !known_language_codes.contains(&source_language_code) {
         return Err(format!(
             "The source language '{}' is not available in this file.",
             input.source_language_code
         ));
     }
 
-    if !known_language_codes.contains(&input.target_language_code.as_str()) {
+    if !known_language_codes.contains(&target_language_code) {
         return Err(format!(
             "The target language '{}' is not available in this file.",
             input.target_language_code
@@ -57,20 +62,22 @@ pub(crate) fn update_gtms_chapter_language_selection_sync(
     let source_changed = settings_object
         .get("default_source_language")
         .and_then(Value::as_str)
-        != Some(input.source_language_code.as_str());
+        .and_then(normalize_chapter_language_code)
+        != Some(source_language_code.clone());
     let target_changed = settings_object
         .get("default_target_language")
         .and_then(Value::as_str)
-        != Some(input.target_language_code.as_str());
+        .and_then(normalize_chapter_language_code)
+        != Some(target_language_code.clone());
 
     if source_changed || target_changed {
         settings_object.insert(
             "default_source_language".to_string(),
-            Value::String(input.source_language_code.clone()),
+            Value::String(source_language_code.clone()),
         );
         settings_object.insert(
             "default_target_language".to_string(),
-            Value::String(input.target_language_code.clone()),
+            Value::String(target_language_code.clone()),
         );
         settings_object.remove("default_preview_language");
         write_json_pretty(&chapter_json_path, &chapter_value)?;
@@ -87,23 +94,52 @@ pub(crate) fn update_gtms_chapter_language_selection_sync(
 
     Ok(UpdateChapterLanguageSelectionResponse {
         chapter_id: input.chapter_id,
-        source_language_code: input.source_language_code,
-        target_language_code: input.target_language_code,
+        source_language_code,
+        target_language_code,
     })
 }
 
-fn normalize_chapter_language_input(language: &ChapterLanguage) -> Option<ChapterLanguage> {
-    let code = language.code.trim().to_lowercase();
-    if code.is_empty() {
+fn normalize_chapter_language_code(code: &str) -> Option<String> {
+    let trimmed = code.trim();
+    if trimmed.is_empty() {
         return None;
     }
+
+    let normalized = trimmed.replace('_', "-");
+    let mut parts = normalized.split('-');
+    let primary = parts.next()?.to_lowercase();
+    if primary.is_empty() {
+        return None;
+    }
+
+    let mut canonical_parts = vec![primary];
+    for part in parts {
+        if part.len() == 4 && part.bytes().all(|byte| byte.is_ascii_alphabetic()) {
+            let mut chars = part.chars();
+            let first = chars.next()?.to_uppercase().collect::<String>();
+            let rest = chars.as_str().to_lowercase();
+            canonical_parts.push(format!("{first}{rest}"));
+        } else if (part.len() == 2 && part.bytes().all(|byte| byte.is_ascii_alphabetic()))
+            || (part.len() == 3 && part.bytes().all(|byte| byte.is_ascii_digit()))
+        {
+            canonical_parts.push(part.to_uppercase());
+        } else {
+            canonical_parts.push(part.to_lowercase());
+        }
+    }
+
+    Some(canonical_parts.join("-"))
+}
+
+fn normalize_chapter_language_input(language: &ChapterLanguage) -> Option<ChapterLanguage> {
+    let code = normalize_chapter_language_code(&language.code)?;
 
     let name = language.name.trim();
     let role = language.role.trim().to_lowercase();
     Some(ChapterLanguage {
-        code,
+        code: code.clone(),
         name: if name.is_empty() {
-            language.code.trim().to_string()
+            code
         } else {
             name.to_string()
         },

@@ -1,4 +1,4 @@
-const ISO_639_1_LANGUAGE_OPTIONS: &[(&str, &str)] = &[
+const SUPPORTED_LANGUAGE_OPTIONS: &[(&str, &str)] = &[
     ("aa", "Afar"),
     ("ab", "Abkhazian"),
     ("ae", "Avestan"),
@@ -180,25 +180,37 @@ const ISO_639_1_LANGUAGE_OPTIONS: &[(&str, &str)] = &[
     ("yi", "Yiddish"),
     ("yo", "Yoruba"),
     ("za", "Zhuang"),
-    ("zh", "Chinese"),
+    ("zh-Hans", "Chinese (Simplified)"),
+    ("zh-Hant", "Chinese (Traditional)"),
     ("zu", "Zulu"),
 ];
 
 pub(super) fn normalize_language_code(header: &str) -> Option<String> {
-    let normalized = header.trim().to_ascii_lowercase();
-    if normalized.len() != 2 || !normalized.bytes().all(|byte| byte.is_ascii_alphabetic()) {
-        return None;
-    }
-
-    iso_639_1_language_name(&normalized).map(|_| normalized)
+    canonical_language_code(header).map(str::to_string)
 }
 
 pub(super) fn language_display_name(code: &str) -> String {
-    iso_639_1_language_name(code).unwrap_or(code).to_string()
+    supported_language_name(code).unwrap_or(code).to_string()
 }
 
-fn iso_639_1_language_name(code: &str) -> Option<&'static str> {
-    ISO_639_1_LANGUAGE_OPTIONS
+fn canonical_language_code(code: &str) -> Option<&'static str> {
+    let normalized = code.trim().replace('_', "-");
+    if normalized.is_empty() {
+        return None;
+    }
+
+    SUPPORTED_LANGUAGE_OPTIONS
         .iter()
-        .find_map(|(candidate, name)| (*candidate == code).then_some(*name))
+        .find_map(|(candidate, _)| {
+            candidate
+                .eq_ignore_ascii_case(&normalized)
+                .then_some(*candidate)
+        })
+}
+
+fn supported_language_name(code: &str) -> Option<&'static str> {
+    let canonical_code = canonical_language_code(code)?;
+    SUPPORTED_LANGUAGE_OPTIONS
+        .iter()
+        .find_map(|(candidate, name)| (*candidate == canonical_code).then_some(*name))
 }

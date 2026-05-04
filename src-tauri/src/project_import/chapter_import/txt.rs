@@ -12,7 +12,7 @@ pub(super) fn parse_txt_file(input: ImportTxtInput) -> Result<ParsedWorkbook, St
     }
 
     let code = normalize_language_code(&input.source_language_code)
-        .ok_or_else(|| "Select a valid ISO 639-1 source language.".to_string())?;
+        .ok_or_else(|| "Select a supported source language.".to_string())?;
     let name = language_display_name(&code);
     let decoded = decode_text_file(&input.bytes)?;
     let mut rows = Vec::new();

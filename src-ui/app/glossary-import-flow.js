@@ -2,7 +2,7 @@ import { invoke } from "./runtime.js";
 import { resetGlossaryCreation, state } from "./state.js";
 import { clearNoticeBadge, showNoticeBadge } from "./status-feedback.js";
 import { beginPageSync, completePageSync, failPageSync } from "./page-sync.js";
-import { findIsoLanguageOption } from "../lib/language-options.js";
+import { findIsoLanguageOption, normalizeSupportedLanguageCode } from "../lib/language-options.js";
 import { openGlossaryEditor } from "./glossary-editor-flow.js";
 import {
   canCreateGlossaries,
@@ -542,8 +542,8 @@ export async function submitGlossaryCreation(render) {
 
   const title = String(draft.title ?? "").trim();
   const repoName = slugifyRepoName(title);
-  const sourceLanguageCode = String(draft.sourceLanguageCode ?? "").trim().toLowerCase();
-  const targetLanguageCode = String(draft.targetLanguageCode ?? "").trim().toLowerCase();
+  const sourceLanguageCode = normalizeSupportedLanguageCode(draft.sourceLanguageCode);
+  const targetLanguageCode = normalizeSupportedLanguageCode(draft.targetLanguageCode);
   const sourceLanguage = findIsoLanguageOption(sourceLanguageCode);
   const targetLanguage = findIsoLanguageOption(targetLanguageCode);
 

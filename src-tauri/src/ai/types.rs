@@ -202,6 +202,33 @@ pub struct AiAssistantRowLanguageText {
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+pub struct AiAssistantTargetLanguageHistoryEntry {
+    #[serde(default)]
+    pub revision_number: usize,
+    #[serde(default)]
+    pub source_type: String,
+    #[serde(default)]
+    pub source_label: String,
+    #[serde(default)]
+    pub author_type: String,
+    #[serde(default)]
+    pub author_name: String,
+    #[serde(default)]
+    pub author_login: String,
+    #[serde(default)]
+    pub author_email: String,
+    #[serde(default)]
+    pub operation_type: Option<String>,
+    #[serde(default)]
+    pub ai_model: Option<String>,
+    #[serde(default)]
+    pub committed_at: String,
+    #[serde(default)]
+    pub text: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub struct AiAssistantRowContext {
     #[serde(default)]
     pub row_id: String,
@@ -223,6 +250,8 @@ pub struct AiAssistantRowContext {
     pub updated_target_text: Option<String>,
     #[serde(default)]
     pub alternate_language_texts: Vec<AiAssistantRowLanguageText>,
+    #[serde(default)]
+    pub target_language_history: Vec<AiAssistantTargetLanguageHistoryEntry>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]

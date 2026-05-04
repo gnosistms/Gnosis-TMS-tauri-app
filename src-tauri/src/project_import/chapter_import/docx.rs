@@ -51,7 +51,7 @@ pub(super) fn parse_docx_file(input: ImportDocxInput) -> Result<ParsedWorkbook, 
     }
 
     let code = normalize_language_code(&input.source_language_code)
-        .ok_or_else(|| "Select a valid ISO 639-1 source language.".to_string())?;
+        .ok_or_else(|| "Select a supported source language.".to_string())?;
     let name = language_display_name(&code);
     let mut archive = open_docx_archive(input.bytes)?;
     let footnotes = read_docx_footnotes(&mut archive)?;

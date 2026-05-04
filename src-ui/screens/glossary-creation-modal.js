@@ -1,13 +1,14 @@
 import { escapeHtml, loadingPrimaryButton, secondaryButton } from "../lib/ui.js";
 import { formatErrorForDisplay } from "../app/error-display.js";
-import { isoLanguageOptions } from "../lib/language-options.js";
+import { findIsoLanguageOption, isoLanguageOptions } from "../lib/language-options.js";
 
 function renderLanguageOptions(selectedCode) {
+  const canonicalSelectedCode = findIsoLanguageOption(selectedCode)?.code ?? "";
   return [
     `<option value="">Select a language</option>`,
     ...isoLanguageOptions.map(
       (language) => `
-        <option value="${escapeHtml(language.code)}" ${language.code === selectedCode ? "selected" : ""}>
+        <option value="${escapeHtml(language.code)}" ${language.code === canonicalSelectedCode ? "selected" : ""}>
           ${escapeHtml(`${language.name} (${language.code})`)}
         </option>
       `,

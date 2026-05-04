@@ -1,4 +1,4 @@
-const ISO_639_1_LANGUAGE_OPTIONS = [
+const SUPPORTED_LANGUAGE_OPTIONS = [
   ["ab", "Abkhazian"],
   ["aa", "Afar"],
   ["af", "Afrikaans"],
@@ -26,7 +26,8 @@ const ISO_639_1_LANGUAGE_OPTIONS = [
   ["ca", "Catalan"],
   ["ch", "Chamorro"],
   ["ce", "Chechen"],
-  ["zh", "Chinese"],
+  ["zh-Hans", "Chinese (Simplified)"],
+  ["zh-Hant", "Chinese (Traditional)"],
   ["cu", "Church Slavic"],
   ["cv", "Chuvash"],
   ["kw", "Cornish"],
@@ -183,15 +184,19 @@ const ISO_639_1_LANGUAGE_OPTIONS = [
   ["zu", "Zulu"],
 ];
 
-export const isoLanguageOptions = ISO_639_1_LANGUAGE_OPTIONS.map(([code, name]) => ({
+export const isoLanguageOptions = SUPPORTED_LANGUAGE_OPTIONS.map(([code, name]) => ({
   code,
   name,
 }));
 
 const isoLanguageOptionsByCode = new Map(
-  isoLanguageOptions.map((option) => [option.code, option]),
+  isoLanguageOptions.map((option) => [option.code.toLowerCase(), option]),
 );
 
 export function findIsoLanguageOption(code) {
-  return isoLanguageOptionsByCode.get(String(code ?? "").trim().toLowerCase()) ?? null;
+  return isoLanguageOptionsByCode.get(String(code ?? "").trim().replaceAll("_", "-").toLowerCase()) ?? null;
+}
+
+export function normalizeSupportedLanguageCode(code) {
+  return findIsoLanguageOption(code)?.code ?? "";
 }

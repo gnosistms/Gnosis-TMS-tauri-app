@@ -458,7 +458,7 @@ fn load_git_history_for_path(
         repo_path,
         &[
             "log",
-            "--format=%H%x1f%an%x1f%aI%x1f%B%x1e",
+            "--format=%H%x1f%an%x1f%ae%x1f%aI%x1f%B%x1e",
             "--",
             relative_path,
         ],
@@ -478,6 +478,7 @@ fn load_git_history_for_path(
                 .filter(|value| !value.is_empty())
                 .ok_or_else(|| format!("Could not parse git history for '{}'.", relative_path))?;
             let author_name = parts.next().unwrap_or_default().trim();
+            let author_email = parts.next().unwrap_or_default().trim();
             let committed_at = parts.next().unwrap_or_default().trim();
             let full_message = parts.next().unwrap_or_default();
             let (message, operation_type, status_note, ai_model) =
@@ -486,6 +487,8 @@ fn load_git_history_for_path(
             Ok(GitCommitMetadata {
                 commit_sha: commit_sha.to_string(),
                 author_name: author_name.to_string(),
+                author_email: author_email.to_string(),
+                author_login: author_login_from_email(author_email),
                 committed_at: committed_at.to_string(),
                 message,
                 operation_type,
@@ -494,6 +497,23 @@ fn load_git_history_for_path(
             })
         })
         .collect()
+}
+
+fn author_login_from_email(author_email: &str) -> String {
+    let normalized = author_email.trim().to_ascii_lowercase();
+    let Some((local_part, domain)) = normalized.split_once('@') else {
+        return String::new();
+    };
+    if domain != "users.noreply.github.com" {
+        return String::new();
+    }
+
+    local_part
+        .split_once('+')
+        .map(|(_, login)| login)
+        .unwrap_or(local_part)
+        .trim()
+        .to_string()
 }
 
 pub(super) fn parse_git_commit_message(
@@ -737,6 +757,8 @@ pub(super) fn build_editor_field_history_entries(
         entries.push(EditorFieldHistoryEntry {
             commit_sha: commit.commit_sha,
             author_name: commit.author_name,
+            author_email: commit.author_email,
+            author_login: commit.author_login,
             committed_at: commit.committed_at,
             message: commit.message,
             operation_type: commit.operation_type,
@@ -995,6 +1017,8 @@ mod tests {
         GitCommitMetadata {
             commit_sha: commit_sha.to_string(),
             author_name: "Test User".to_string(),
+            author_email: "test-user@example.com".to_string(),
+            author_login: String::new(),
             committed_at: "2026-04-14T00:00:00Z".to_string(),
             message: format!("Commit {commit_sha}"),
             operation_type: operation_type.map(str::to_string),

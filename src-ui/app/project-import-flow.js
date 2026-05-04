@@ -19,6 +19,7 @@ import {
   showProjectsStatus,
 } from "./project-chapter-flow.js";
 import { openLocalFilePicker } from "./local-file-picker.js";
+import { normalizeSupportedLanguageCode } from "../lib/language-options.js";
 
 export const PROJECT_IMPORT_ACCEPT =
   ".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,.txt,text/plain,.docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document";
@@ -393,8 +394,8 @@ export function selectProjectImportSourceLanguage(render, languageCode) {
     return;
   }
 
-  const code = String(languageCode ?? "").trim().toLowerCase();
-  const previousCode = String(state.projectImport.selectedSourceLanguageCode ?? "").trim().toLowerCase();
+  const code = normalizeSupportedLanguageCode(languageCode);
+  const previousCode = normalizeSupportedLanguageCode(state.projectImport.selectedSourceLanguageCode);
   const scrollTop = currentSourceLanguageScrollTop();
   state.projectImport = projectImportModalState({
     selectedSourceLanguageCode: previousCode === code ? "" : code,
@@ -410,7 +411,7 @@ export async function continueProjectImportText(render) {
     return;
   }
 
-  const sourceLanguageCode = String(state.projectImport.selectedSourceLanguageCode ?? "").trim().toLowerCase();
+  const sourceLanguageCode = normalizeSupportedLanguageCode(state.projectImport.selectedSourceLanguageCode);
   if (!sourceLanguageCode) {
     return;
   }

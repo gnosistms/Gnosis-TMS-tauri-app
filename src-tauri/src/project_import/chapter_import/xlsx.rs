@@ -48,7 +48,7 @@ pub(super) fn parse_xlsx_workbook(input: ImportXlsxInput) -> Result<ParsedWorkbo
 
     if languages.is_empty() {
         return Err(
-      "Could not detect any language columns. Add ISO 639-1 two-letter language codes like 'es', 'en', or 'vi' to the first row."
+      "Could not detect any language columns. Add supported language codes like 'es', 'en', 'vi', 'zh-Hans', or 'zh-Hant' to the first row."
         .to_string(),
     );
     }
@@ -129,7 +129,7 @@ pub(super) fn classify_header_row(headers: &[String]) -> Result<Vec<ColumnBindin
 fn classify_header(header: &str, column_index: usize) -> Result<ColumnBinding, String> {
     let code = normalize_language_code(header).ok_or_else(|| {
         format!(
-            "Column {} must start with a valid ISO 639-1 two-letter language code.",
+            "Column {} must start with a supported language code.",
             column_index + 1
         )
     })?;

@@ -7,13 +7,13 @@ use std::sync::OnceLock;
 use tauri::AppHandle;
 
 use crate::ai::types::{
-    AiAssistantConcordanceHit, AiAssistantRowWindowEntry, AiAssistantTranscriptEntry,
-    AiAssistantTurnKind, AiAssistantTurnRequest, AiAssistantTurnResponse, AiModelProbeRequest,
-    AiPromptOutputFormat, AiPromptRequest, AiProviderContinuationMetadata, AiProviderId,
-    AiProviderModel, AiReviewRequest, AiReviewResponse, AiTranslatedGlossaryEntry,
-    AiTranslatedGlossaryPreparationRequest, AiTranslatedGlossaryPreparationResponse,
-    AiTranslatedGlossaryTermInput, AiTranslationGlossaryHint, AiTranslationRequest,
-    AiTranslationResponse,
+    AiAssistantConcordanceHit, AiAssistantRowWindowEntry, AiAssistantTargetLanguageHistoryEntry,
+    AiAssistantTranscriptEntry, AiAssistantTurnKind, AiAssistantTurnRequest,
+    AiAssistantTurnResponse, AiModelProbeRequest, AiPromptOutputFormat, AiPromptRequest,
+    AiProviderContinuationMetadata, AiProviderId, AiProviderModel, AiReviewRequest,
+    AiReviewResponse, AiTranslatedGlossaryEntry, AiTranslatedGlossaryPreparationRequest,
+    AiTranslatedGlossaryPreparationResponse, AiTranslatedGlossaryTermInput,
+    AiTranslationGlossaryHint, AiTranslationRequest, AiTranslationResponse,
 };
 use crate::ai_secret_storage::load_ai_provider_secret;
 
@@ -241,9 +241,118 @@ fn push_optional_prompt_section(sections: &mut Vec<String>, label: &str, value: 
         let trimmed = value.trim();
         sections.push(format!(
             "{label}:\n{}",
-            if trimmed.is_empty() { "(empty)" } else { trimmed }
+            if trimmed.is_empty() {
+                "(empty)"
+            } else {
+                trimmed
+            }
         ));
     }
+}
+
+fn format_assistant_target_language_history(
+    entries: &[AiAssistantTargetLanguageHistoryEntry],
+    fallback_current_target: &str,
+) -> String {
+    let fallback_text = fallback_current_target.trim();
+    let mut normalized_entries = entries
+        .iter()
+        .filter(|entry| {
+            !entry.text.trim().is_empty()
+                || !entry.source_type.trim().is_empty()
+                || !entry.source_label.trim().is_empty()
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+
+    if normalized_entries.is_empty() && !fallback_text.is_empty() {
+        normalized_entries.push(AiAssistantTargetLanguageHistoryEntry {
+            revision_number: 1,
+            source_type: "unknown".to_string(),
+            source_label: "current_editor_text".to_string(),
+            author_type: "unknown".to_string(),
+            author_name: String::new(),
+            author_login: String::new(),
+            author_email: String::new(),
+            operation_type: None,
+            ai_model: None,
+            committed_at: String::new(),
+            text: fallback_text.to_string(),
+        });
+    }
+
+    if normalized_entries.is_empty() {
+        return String::new();
+    }
+
+    let mut lines = vec![
+        "What follows is the edit history of the target-language text, sorted oldest first. The final revision is the current target-language draft in the editor. Use this history as context when it is relevant to the user's request.\n\
+\n\
+Source labels:\n\
+- current_user: the person currently asking you for help. These edits are strong evidence of the user's preferences, terminology choices, style, and intentional translation decisions.\n\
+- other_user: another human editor. These edits may also reflect intentional translation decisions.\n\
+- ai_model: an AI-generated revision. If later human edits changed it, do not casually revert to the earlier AI wording.\n\
+- file_import: text from the original imported file. Its true author is unknown, so treat it as the starting state rather than as authoritative."
+            .to_string(),
+    ];
+
+    for (index, entry) in normalized_entries.iter().enumerate() {
+        let revision_number = if entry.revision_number == 0 {
+            index + 1
+        } else {
+            entry.revision_number
+        };
+        let source_type = entry.source_type.trim();
+        let source_label = entry.source_label.trim();
+        let source = if source_label.is_empty() {
+            if source_type.is_empty() {
+                "unknown"
+            } else {
+                source_type
+            }
+        } else {
+            source_label
+        };
+        let mut metadata = vec![format!("source={source}")];
+        if !source_type.is_empty() && source_type != source {
+            metadata.push(format!("sourceType={source_type}"));
+        }
+        let author_type = entry.author_type.trim();
+        if !author_type.is_empty() && author_type != "unknown" {
+            metadata.push(format!("committedBy={author_type}"));
+        }
+        let author_name = entry.author_name.trim();
+        if !author_name.is_empty() {
+            metadata.push(format!("authorName={author_name}"));
+        }
+        let author_login = entry.author_login.trim();
+        if !author_login.is_empty() {
+            metadata.push(format!("authorLogin={author_login}"));
+        }
+        if let Some(operation_type) = entry.operation_type.as_ref().map(|value| value.trim()) {
+            if !operation_type.is_empty() {
+                metadata.push(format!("operationType={operation_type}"));
+            }
+        }
+        if let Some(ai_model) = entry.ai_model.as_ref().map(|value| value.trim()) {
+            if !ai_model.is_empty() {
+                metadata.push(format!("aiModel={ai_model}"));
+            }
+        }
+        let committed_at = entry.committed_at.trim();
+        if !committed_at.is_empty() {
+            metadata.push(format!("committedAt={committed_at}"));
+        }
+
+        let text = entry.text.trim();
+        lines.push(format!(
+            "{revision_number}. {}\ntext:\n{}",
+            metadata.join(", "),
+            if text.is_empty() { "(empty)" } else { text },
+        ));
+    }
+
+    lines.join("\n\n")
 }
 
 fn format_assistant_source_context(
@@ -293,7 +402,7 @@ fn build_assistant_prompt(request: &AiAssistantTurnRequest, draft_response: bool
     let mut sections = Vec::new();
     sections.push(
         "You are an AI assistant inside a translation editor.\n\
-Use the supplied source context, current target, glossary, and conversation history when relevant.\n\
+Use the supplied source context, target-language history, glossary, and conversation history when relevant.\n\
 Be direct and useful. If the answer depends on ambiguity in the source text, say so."
             .to_string(),
     );
@@ -325,7 +434,11 @@ If your answer includes a complete proposed or revised target-language translati
     );
     push_prompt_section(&mut sections, "source_language", source_language);
     push_prompt_section(&mut sections, "target_language", target_language);
-    push_prompt_section(&mut sections, "Current target", &row.target_text);
+    push_prompt_section(
+        &mut sections,
+        "target_language_history",
+        format_assistant_target_language_history(&row.target_language_history, &row.target_text),
+    );
     push_prompt_section(&mut sections, "Glossary", glossary_hints);
     push_prompt_section(&mut sections, "Document digest", &request.document_digest);
     push_prompt_section(
@@ -338,8 +451,16 @@ If your answer includes a complete proposed or revised target-language translati
         push_prompt_section(&mut sections, "Concordance hits", concordance_hits);
     }
     push_prompt_section(&mut sections, "source_text", &row.source_text);
-    push_optional_prompt_section(&mut sections, "updated_source_text", &row.updated_source_text);
-    push_optional_prompt_section(&mut sections, "updated_target_text", &row.updated_target_text);
+    push_optional_prompt_section(
+        &mut sections,
+        "updated_source_text",
+        &row.updated_source_text,
+    );
+    push_optional_prompt_section(
+        &mut sections,
+        "updated_target_text",
+        &row.updated_target_text,
+    );
     push_prompt_section(&mut sections, "Conversation history", conversation_history);
     sections.push(format_assistant_user_action(request));
 
@@ -1108,9 +1229,10 @@ mod tests {
         parse_review_structured_response,
     };
     use crate::ai::types::{
-        AiAssistantRowContext, AiAssistantRowWindowEntry, AiAssistantTranscriptEntry,
-        AiAssistantTurnKind, AiAssistantTurnRequest, AiProviderId, AiReviewRequest,
-        AiTranslatedGlossaryTermInput, AiTranslationGlossaryHint, AiTranslationRequest,
+        AiAssistantRowContext, AiAssistantRowWindowEntry, AiAssistantTargetLanguageHistoryEntry,
+        AiAssistantTranscriptEntry, AiAssistantTurnKind, AiAssistantTurnRequest, AiProviderId,
+        AiReviewRequest, AiTranslatedGlossaryTermInput, AiTranslationGlossaryHint,
+        AiTranslationRequest,
     };
 
     fn review_request() -> AiReviewRequest {
@@ -1361,6 +1483,7 @@ mod tests {
                 updated_source_text: None,
                 updated_target_text: None,
                 alternate_language_texts: vec![],
+                target_language_history: vec![],
             },
             row_window: vec![
                 AiAssistantRowWindowEntry {
@@ -1444,6 +1567,63 @@ mod tests {
     }
 
     #[test]
+    fn assistant_prompt_uses_target_language_history_instead_of_current_target() {
+        let mut request = assistant_request_for_prompt();
+        request.row.target_language_history = vec![
+            AiAssistantTargetLanguageHistoryEntry {
+                revision_number: 1,
+                source_type: "file_import".to_string(),
+                source_label: "file_import".to_string(),
+                author_type: "current_user".to_string(),
+                author_name: "sirhans".to_string(),
+                author_login: "sirhans".to_string(),
+                author_email: "sirhans@users.noreply.github.com".to_string(),
+                operation_type: Some("import".to_string()),
+                ai_model: None,
+                committed_at: "2026-05-04T00:00:00Z".to_string(),
+                text: "Ban dich nhap".to_string(),
+            },
+            AiAssistantTargetLanguageHistoryEntry {
+                revision_number: 2,
+                source_type: "ai_model".to_string(),
+                source_label: "GPT 5.4".to_string(),
+                author_type: "current_user".to_string(),
+                author_name: "sirhans".to_string(),
+                author_login: "sirhans".to_string(),
+                author_email: "sirhans@users.noreply.github.com".to_string(),
+                operation_type: Some("ai-translation".to_string()),
+                ai_model: Some("gpt-5.4".to_string()),
+                committed_at: "2026-05-04T00:01:00Z".to_string(),
+                text: "Ban dich AI".to_string(),
+            },
+            AiAssistantTargetLanguageHistoryEntry {
+                revision_number: 3,
+                source_type: "current_user".to_string(),
+                source_label: "current_user".to_string(),
+                author_type: "current_user".to_string(),
+                author_name: "sirhans".to_string(),
+                author_login: "sirhans".to_string(),
+                author_email: "sirhans@users.noreply.github.com".to_string(),
+                operation_type: Some("editor-update".to_string()),
+                ai_model: None,
+                committed_at: "2026-05-04T00:02:00Z".to_string(),
+                text: "Ban dich nguoi dung".to_string(),
+            },
+        ];
+        let prompt = build_assistant_chat_prompt(&request);
+
+        assert!(prompt.contains("target_language_history:"));
+        assert!(prompt
+            .contains("The final revision is the current target-language draft in the editor."));
+        assert!(prompt.contains("1. source=file_import, committedBy=current_user"));
+        assert!(prompt.contains("2. source=GPT 5.4, sourceType=ai_model, committedBy=current_user"));
+        assert!(prompt.contains("aiModel=gpt-5.4"));
+        assert!(prompt.contains("3. source=current_user, committedBy=current_user"));
+        assert!(prompt.contains("text:\nBan dich nguoi dung"));
+        assert!(!prompt.contains("Current target:"));
+    }
+
+    #[test]
     fn assistant_chat_prompt_allows_model_to_return_translation_draft() {
         let prompt = build_assistant_chat_prompt(&assistant_request_for_prompt());
 
@@ -1483,7 +1663,10 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(response.assistant_text, "This row refers to the inner work.");
+        assert_eq!(
+            response.assistant_text,
+            "This row refers to the inner work."
+        );
         assert_eq!(response.draft_translation_text, None);
     }
 

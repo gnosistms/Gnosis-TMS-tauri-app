@@ -1,6 +1,6 @@
 import { escapeHtml, primaryButton, secondaryButton } from "../lib/ui.js";
 import { formatErrorForDisplay } from "../app/error-display.js";
-import { isoLanguageOptions } from "../lib/language-options.js";
+import { findIsoLanguageOption, isoLanguageOptions } from "../lib/language-options.js";
 
 function renderSourceLanguageOption(language, selectedCode) {
   const isSelected = language.code === selectedCode;
@@ -18,7 +18,7 @@ function renderSourceLanguageOption(language, selectedCode) {
 }
 
 function renderSourceLanguageStep(modal) {
-  const selectedCode = String(modal.selectedSourceLanguageCode ?? "").trim().toLowerCase();
+  const selectedCode = findIsoLanguageOption(modal.selectedSourceLanguageCode)?.code ?? "";
   const isBatch = modal.isBatch === true;
   const fileLabel = isBatch ? "these files" : "this file";
   const languages = isoLanguageOptions
@@ -112,7 +112,7 @@ export function renderProjectImportModal(state) {
               ${isImporting ? '<span class="button__spinner" aria-hidden="true"></span>' : ""}
               <span>Drop files here or click to open the file selector.</span>
             </button>
-            <p class="project-import-modal__hint">Supported formats: .xlsx, .txt, or .docx. For .xlsx files, the first row must contain valid ISO 639-1 two-letter language codes such as es, en, or vi.</p>
+            <p class="project-import-modal__hint">Supported formats: .xlsx, .txt, or .docx. For .xlsx files, the first row must contain supported language codes such as es, en, vi, zh-Hans, or zh-Hant.</p>
           </div>
           <div class="modal__actions">
             ${secondaryButton("Cancel", "cancel-project-import", { disabled: isImporting })}

@@ -513,6 +513,8 @@ pub(crate) struct LoadEditorFieldHistoryResponse {
 pub(crate) struct EditorFieldHistoryEntry {
     commit_sha: String,
     author_name: String,
+    author_email: String,
+    author_login: String,
     committed_at: String,
     message: String,
     operation_type: Option<String>,
@@ -845,6 +847,8 @@ struct StoredFieldEditorFlags {
 struct GitCommitMetadata {
     commit_sha: String,
     author_name: String,
+    author_email: String,
+    author_login: String,
     committed_at: String,
     message: String,
     operation_type: Option<String>,

@@ -894,7 +894,8 @@
 }
 
 .translation-row-text-style-actions__hint,
-.translation-row__last-update {
+.translation-row__last-update,
+.translation-deleted-group .section-separator__label {
   color: var(--placeholder-text);
   line-height: 1.2;
   white-space: nowrap;
