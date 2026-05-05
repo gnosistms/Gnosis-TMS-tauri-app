@@ -1,3 +1,5 @@
+use crate::project_import::chapter_import::languages::language_display_name;
+
 use super::*;
 
 pub(super) fn current_repo_head_sha(repo_path: &Path) -> Option<String> {
@@ -229,7 +231,88 @@ pub(super) fn sanitize_chapter_languages(languages: &[ChapterLanguage]) -> Vec<C
         sanitized.push(language.clone());
     }
 
+    number_duplicate_language_names(&mut sanitized);
     sanitized
+}
+
+fn sanitized_language_base_code(language: &ChapterLanguage) -> String {
+    language
+        .base_code
+        .as_deref()
+        .map(str::trim)
+        .filter(|code| !code.is_empty())
+        .unwrap_or(language.code.as_str())
+        .to_string()
+}
+
+fn duplicate_language_base_name(languages: &[ChapterLanguage], base_code: &str) -> String {
+    let supported_name = language_display_name(base_code);
+    if !supported_name.eq_ignore_ascii_case(base_code) {
+        return supported_name;
+    }
+
+    languages
+        .iter()
+        .find(|language| sanitized_language_base_code(language).eq_ignore_ascii_case(base_code))
+        .map(|language| {
+            let trimmed_name = language.name.trim();
+            if trimmed_name.is_empty() {
+                base_code.to_string()
+            } else {
+                trimmed_name
+                    .trim_end_matches(|character: char| character.is_ascii_digit())
+                    .trim()
+                    .to_string()
+            }
+        })
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| base_code.to_string())
+}
+
+fn language_has_duplicate_marker(language: &ChapterLanguage, base_code: &str) -> bool {
+    language
+        .base_code
+        .as_deref()
+        .map(str::trim)
+        .filter(|code| !code.is_empty())
+        .is_some()
+        || !language.code.eq_ignore_ascii_case(base_code)
+}
+
+fn number_duplicate_language_names(languages: &mut [ChapterLanguage]) {
+    let mut groups = BTreeMap::<String, Vec<usize>>::new();
+    for (index, language) in languages.iter().enumerate() {
+        let base_code = sanitized_language_base_code(language);
+        if base_code.is_empty() {
+            continue;
+        }
+        groups.entry(base_code).or_default().push(index);
+    }
+
+    for (base_code, indexes) in groups {
+        let base_name = duplicate_language_base_name(languages, &base_code);
+        if indexes.len() == 1 {
+            let language_index = indexes[0];
+            let should_collapse = languages
+                .get(language_index)
+                .map(|language| language_has_duplicate_marker(language, &base_code))
+                .unwrap_or(false);
+            if should_collapse {
+                if let Some(language) = languages.get_mut(language_index) {
+                    language.name = base_name;
+                    language.base_code = Some(base_code.clone());
+                }
+            }
+            continue;
+        }
+
+        for (position, language_index) in indexes.into_iter().enumerate() {
+            if let Some(language) = languages.get_mut(language_index) {
+                language.name = format!("{} {}", base_name, position + 1);
+                language.base_code = Some(base_code.clone());
+            }
+        }
+    }
 }
 
 pub(super) fn editor_row_from_stored_row_file(

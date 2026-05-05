@@ -41,3 +41,30 @@ test("numberDuplicateLanguageGroups treats missing baseCode as code", () => {
   assert.equal(languages[0].name, "Vietnamese 1");
   assert.equal(languages[1].name, "Vietnamese 2");
 });
+
+test("numberDuplicateLanguageGroups collapses singleton duplicate groups to the base display name", () => {
+  assert.deepEqual(numberDuplicateLanguageGroups([
+    { code: "en-x-2", name: "English 2", role: "target", baseCode: "en" },
+  ]), [
+    { code: "en-x-2", name: "English", role: "target", baseCode: "en" },
+  ]);
+});
+
+test("numberDuplicateLanguageGroups keeps custom singleton labels without duplicate metadata", () => {
+  assert.deepEqual(numberDuplicateLanguageGroups([
+    { code: "en", name: "Project English", role: "target" },
+  ]), [
+    { code: "en", name: "Project English", role: "target" },
+  ]);
+});
+
+test("appendDuplicateLanguage renumbers collapsed duplicate groups when a base language is added again", () => {
+  const languages = appendDuplicateLanguage([
+    { code: "en-x-2", name: "English", role: "target", baseCode: "en" },
+  ], "en");
+
+  assert.deepEqual(languages, [
+    { code: "en-x-2", name: "English 1", role: "target", baseCode: "en" },
+    { code: "en", name: "English 2", role: "target", baseCode: "en" },
+  ]);
+});

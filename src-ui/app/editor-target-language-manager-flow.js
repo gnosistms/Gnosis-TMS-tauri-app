@@ -9,6 +9,7 @@ import {
   appendDuplicateLanguage,
   normalizeChapterLanguage,
   normalizeChapterLanguages,
+  numberDuplicateLanguageGroups,
 } from "./editor-language-utils.js";
 
 export const MANAGE_CHAPTER_LANGUAGES_OPTION_VALUE = "__manage_target_languages__";
@@ -162,7 +163,9 @@ export function removeTargetLanguageManagerLanguage(index) {
 
   state.targetLanguageManager = {
     ...state.targetLanguageManager,
-    languages: languages.filter((_, languageIndex) => languageIndex !== index),
+    languages: numberDuplicateLanguageGroups(
+      languages.filter((_, languageIndex) => languageIndex !== index),
+    ),
     error: "",
   };
 }

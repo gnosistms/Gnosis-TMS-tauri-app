@@ -1149,8 +1149,9 @@ mod tests {
         active_lifecycle_state, apply_editor_field_flag_update, apply_editor_footnote_updates,
         apply_editor_plain_text_updates, apply_editor_text_style_update,
         create_inserted_editor_row, create_inserted_row_file, editor_row_from_stored_row_file,
-        preferred_target_language_code, row_text_style, ChapterLanguage, StoredChapterFile,
-        StoredChapterSettings, StoredRowFile, DEFAULT_EDITOR_TEXT_STYLE,
+        preferred_target_language_code, row_text_style, sanitize_chapter_languages,
+        ChapterLanguage, StoredChapterFile, StoredChapterSettings, StoredRowFile,
+        DEFAULT_EDITOR_TEXT_STYLE,
     };
 
     #[test]
@@ -1518,5 +1519,52 @@ mod tests {
         let selected_target = preferred_target_language_code(&chapter, &languages, Some("es"));
 
         assert_eq!(selected_target.as_deref(), Some("en"));
+    }
+
+    #[test]
+    fn sanitize_chapter_languages_renames_existing_supported_duplicate_labels() {
+        let languages = sanitize_chapter_languages(&[
+            ChapterLanguage {
+                code: "en".to_string(),
+                name: "en 1".to_string(),
+                role: "source".to_string(),
+                base_code: Some("en".to_string()),
+            },
+            ChapterLanguage {
+                code: "en-x-2".to_string(),
+                name: "en 2".to_string(),
+                role: "target".to_string(),
+                base_code: Some("en".to_string()),
+            },
+        ]);
+
+        assert_eq!(languages[0].name, "English 1");
+        assert_eq!(languages[1].name, "English 2");
+    }
+
+    #[test]
+    fn sanitize_chapter_languages_collapses_single_supported_duplicate_label() {
+        let languages = sanitize_chapter_languages(&[ChapterLanguage {
+            code: "en-x-2".to_string(),
+            name: "English 2".to_string(),
+            role: "target".to_string(),
+            base_code: Some("en".to_string()),
+        }]);
+
+        assert_eq!(languages[0].name, "English");
+        assert_eq!(languages[0].base_code.as_deref(), Some("en"));
+    }
+
+    #[test]
+    fn sanitize_chapter_languages_keeps_custom_single_language_label() {
+        let languages = sanitize_chapter_languages(&[ChapterLanguage {
+            code: "en".to_string(),
+            name: "Project English".to_string(),
+            role: "target".to_string(),
+            base_code: None,
+        }]);
+
+        assert_eq!(languages[0].name, "Project English");
+        assert_eq!(languages[0].base_code, None);
     }
 }

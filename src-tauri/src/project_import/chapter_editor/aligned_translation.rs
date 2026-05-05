@@ -13,6 +13,7 @@ use crate::{
         load_ai_provider_api_key, providers,
         types::{AiPromptOutputFormat, AiPromptRequest, AiProviderId},
     },
+    project_import::chapter_import::languages::language_display_name,
     storage_paths::installation_data_dir,
 };
 
@@ -309,7 +310,7 @@ pub(crate) fn preflight_aligned_translation_to_gtms_chapter_sync(
         return Err("Choose a translation language different from the source language.".to_string());
     }
     let target_language_code =
-        next_duplicate_language_code(&languages, &target_base_language_code);
+        next_duplicate_language_code(&languages, &context.rows, &target_base_language_code);
     input.target_language_code = target_language_code.clone();
     let target_language_exists = languages
         .iter()
@@ -613,12 +614,24 @@ fn chapter_language_base_code(language: &ChapterLanguage) -> &str {
         .unwrap_or(language.code.as_str())
 }
 
-fn next_duplicate_language_code(languages: &[ChapterLanguage], base_code: &str) -> String {
+fn next_duplicate_language_code(
+    languages: &[ChapterLanguage],
+    rows: &[StoredRowFile],
+    base_code: &str,
+) -> String {
     let base_code = base_code.trim();
-    let used_codes = languages
+    let mut used_codes = languages
         .iter()
         .map(|language| language.code.as_str())
         .collect::<BTreeSet<_>>();
+    for row in rows {
+        for code in row.fields.keys() {
+            let code = code.trim();
+            if !code.is_empty() {
+                used_codes.insert(code);
+            }
+        }
+    }
     if !used_codes.contains(base_code) {
         return base_code.to_string();
     }
@@ -634,6 +647,11 @@ fn next_duplicate_language_code(languages: &[ChapterLanguage], base_code: &str) 
 }
 
 fn duplicate_language_base_name(languages: &[ChapterLanguage], base_code: &str) -> String {
+    let supported_name = language_display_name(base_code);
+    if !supported_name.eq_ignore_ascii_case(base_code) {
+        return supported_name;
+    }
+
     languages
         .iter()
         .find(|language| chapter_language_base_code(language).eq_ignore_ascii_case(base_code))
@@ -2156,5 +2174,91 @@ mod tests {
         append_row_text(&mut rows, "row-1", "one");
         append_row_text(&mut rows, "row-1", "two");
         assert_eq!(rows.get("row-1").map(String::as_str), Some("one\ntwo"));
+    }
+
+    fn stored_row_with_fields(row_id: &str, fields: &[(&str, &str)]) -> StoredRowFile {
+        StoredRowFile {
+            row_id: row_id.to_string(),
+            external_id: None,
+            guidance: None,
+            lifecycle: active_row_lifecycle_state(),
+            structure: StoredRowStructure {
+                order_key: row_id.to_string(),
+            },
+            status: StoredRowStatus {
+                review_state: "unreviewed".to_string(),
+            },
+            origin: StoredRowOrigin {
+                source_row_number: 1,
+            },
+            editor_comments_revision: 0,
+            editor_comments: Vec::new(),
+            text_style: None,
+            fields: fields
+                .iter()
+                .map(|(code, plain_text)| {
+                    (
+                        (*code).to_string(),
+                        StoredFieldValue {
+                            plain_text: (*plain_text).to_string(),
+                            footnote: String::new(),
+                            image_caption: String::new(),
+                            image: None,
+                            editor_flags: StoredFieldEditorFlags::default(),
+                        },
+                    )
+                })
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn next_duplicate_language_code_skips_inactive_row_field_codes() {
+        let languages = vec![ChapterLanguage {
+            code: "es".to_string(),
+            name: "Spanish".to_string(),
+            role: "source".to_string(),
+            base_code: None,
+        }];
+        let rows = vec![stored_row_with_fields("row-1", &[("en", "previous text")])];
+
+        assert_eq!(
+            next_duplicate_language_code(&languages, &rows, "en"),
+            "en-x-2"
+        );
+        assert_eq!(count_existing_translation_rows(&rows, "en-x-2"), 0);
+    }
+
+    #[test]
+    fn next_duplicate_language_code_skips_multiple_inactive_row_field_codes() {
+        let rows = vec![stored_row_with_fields(
+            "row-1",
+            &[("en", "previous text"), ("en-x-2", "previous text")],
+        )];
+
+        assert_eq!(next_duplicate_language_code(&[], &rows, "en"), "en-x-3");
+    }
+
+    #[test]
+    fn number_duplicate_language_group_prefers_supported_display_name() {
+        let mut languages = vec![
+            ChapterLanguage {
+                code: "en".to_string(),
+                name: "en".to_string(),
+                role: "source".to_string(),
+                base_code: None,
+            },
+            ChapterLanguage {
+                code: "en-x-2".to_string(),
+                name: "en".to_string(),
+                role: "target".to_string(),
+                base_code: Some("en".to_string()),
+            },
+        ];
+
+        number_duplicate_language_group(&mut languages, "en");
+
+        assert_eq!(languages[0].name, "English 1");
+        assert_eq!(languages[1].name, "English 2");
     }
 }

@@ -43,6 +43,7 @@ import {
 import {
   cancelProjectAddTranslation,
   continueProjectAddTranslationAfterMismatch,
+  continueProjectAddTranslationLanguage,
   continueProjectAddTranslationWithExistingText,
   openProjectAddTranslation,
   selectProjectAddTranslationLanguage,
@@ -73,6 +74,7 @@ export function createProjectActions(render) {
     "continue-project-import-text": () => continueProjectImportText(render),
     "select-project-import-file": () => selectProjectImportFile(render),
     "submit-project-add-translation-paste": () => submitProjectAddTranslationPaste(render),
+    "continue-project-add-translation-language": () => continueProjectAddTranslationLanguage(render),
     "continue-project-add-translation-existing": () => continueProjectAddTranslationWithExistingText(render),
     "continue-project-add-translation-mismatch": () => continueProjectAddTranslationAfterMismatch(render),
     "load-more-project-search-results": () => loadMoreProjectSearchResults(render),

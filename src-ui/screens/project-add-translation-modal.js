@@ -29,7 +29,7 @@ function renderPasteModal(modal) {
           </div>
           <div class="modal__actions">
             ${secondaryButton("Cancel", "cancel-project-add-translation")}
-            ${primaryButton("Ok", "submit-project-add-translation-paste", { disabled: !value.trim() })}
+            ${primaryButton("Continue", "submit-project-add-translation-paste", { disabled: !value.trim() })}
           </div>
         </div>
       </section>
@@ -65,11 +65,12 @@ function renderLanguageModal(modal) {
           <h2 class="modal__title">What language did you paste?</h2>
           <p class="modal__supporting">Select the language of the pasted translation text.</p>
           ${renderError(modal.error)}
-          <div class="language-picker-modal__list" role="list">
+          <div class="language-picker-modal__list" role="list" data-project-add-translation-language-list>
             ${languages.map((language) => renderLanguageOption(language, selectedCode)).join("")}
           </div>
           <div class="modal__actions">
             ${secondaryButton("Cancel", "cancel-project-add-translation")}
+            ${primaryButton("Continue", "continue-project-add-translation-language", { disabled: !selectedCode })}
           </div>
         </div>
       </section>

@@ -24,6 +24,16 @@ export function languageSemanticLabel(language) {
   return findIsoLanguageOption(baseCode)?.name || languageDisplayName(language) || baseCode;
 }
 
+function duplicateLanguageBaseName(language, baseCode) {
+  return findIsoLanguageOption(baseCode)?.name || languageSemanticLabel(language) || baseCode;
+}
+
+function hasDuplicateLanguageMarker(language, baseCode) {
+  const code = normalizeLanguageColumnCode(language?.code);
+  const explicitBaseCode = normalizeLanguageColumnCode(language?.baseCode);
+  return Boolean(explicitBaseCode || (baseCode && code && baseCode !== code));
+}
+
 export function languageBaseCodesMatch(left, right) {
   const leftBase = languageBaseCode(left).toLowerCase();
   const rightBase = languageBaseCode(right).toLowerCase();
@@ -117,11 +127,18 @@ export function numberDuplicateLanguageGroups(languages = []) {
     const baseCode = languageBaseCode(language);
     const group = groupsByBaseCode.get(baseCode) ?? [];
     if (group.length <= 1) {
+      if (hasDuplicateLanguageMarker(language, baseCode)) {
+        return {
+          ...language,
+          name: duplicateLanguageBaseName(language, baseCode),
+          baseCode,
+        };
+      }
       return language;
     }
 
     const groupIndex = group.findIndex((item) => item.code === language.code) + 1;
-    const semanticName = findIsoLanguageOption(baseCode)?.name || languageSemanticLabel(language) || baseCode;
+    const semanticName = duplicateLanguageBaseName(language, baseCode);
     return {
       ...language,
       name: `${semanticName} ${groupIndex}`,

@@ -37,6 +37,32 @@ function resetProjectAddTranslation() {
   state.projectAddTranslation = createProjectAddTranslationState();
 }
 
+function currentProjectAddTranslationLanguageScrollTop() {
+  const list = globalThis.document?.querySelector?.("[data-project-add-translation-language-list]");
+  return Number.isFinite(list?.scrollTop) ? list.scrollTop : 0;
+}
+
+function restoreProjectAddTranslationLanguageScrollTop(scrollTop) {
+  const restore = () => {
+    const list = globalThis.document?.querySelector?.("[data-project-add-translation-language-list]");
+    if (list && Number.isFinite(scrollTop)) {
+      list.scrollTop = scrollTop;
+    }
+  };
+
+  if (typeof globalThis.requestAnimationFrame === "function") {
+    globalThis.requestAnimationFrame(restore);
+    return;
+  }
+
+  if (typeof globalThis.setTimeout === "function") {
+    globalThis.setTimeout(restore, 0);
+    return;
+  }
+
+  restore();
+}
+
 function currentContext() {
   const modal = state.projectAddTranslation;
   return findChapterContext(modal?.chapterId);
@@ -153,6 +179,7 @@ export async function selectProjectAddTranslationLanguage(render, languageCode) 
     return;
   }
   const targetLanguageCode = normalizeSupportedLanguageCode(languageCode);
+  const scrollTop = currentProjectAddTranslationLanguageScrollTop();
   if (!findIsoLanguageOption(targetLanguageCode)) {
     state.projectAddTranslation = {
       ...modal,
@@ -160,6 +187,7 @@ export async function selectProjectAddTranslationLanguage(render, languageCode) 
       error: "Select a supported language.",
     };
     render();
+    restoreProjectAddTranslationLanguageScrollTop(scrollTop);
     return;
   }
   const context = currentContext();
@@ -172,6 +200,7 @@ export async function selectProjectAddTranslationLanguage(render, languageCode) 
       error: "Choose a translation language different from the source language.",
     };
     render();
+    restoreProjectAddTranslationLanguageScrollTop(scrollTop);
     return;
   }
   state.projectAddTranslation = {
@@ -180,6 +209,23 @@ export async function selectProjectAddTranslationLanguage(render, languageCode) 
     error: "",
   };
   render();
+  restoreProjectAddTranslationLanguageScrollTop(scrollTop);
+}
+
+export async function continueProjectAddTranslationLanguage(render) {
+  const modal = state.projectAddTranslation;
+  if (!modal?.isOpen || modal.step !== "selectLanguage") {
+    return;
+  }
+  if (!normalizeSupportedLanguageCode(modal.targetLanguageCode)) {
+    state.projectAddTranslation = {
+      ...modal,
+      targetLanguageCode: "",
+      error: "Select a language before continuing.",
+    };
+    render();
+    return;
+  }
   await runProjectAddTranslationPreflight(render);
 }
 

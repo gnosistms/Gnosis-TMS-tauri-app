@@ -5,7 +5,7 @@ use serde_json::Value;
 use tauri::AppHandle;
 
 mod docx;
-mod languages;
+pub(crate) mod languages;
 mod txt;
 mod write_gtms;
 mod xlsx;

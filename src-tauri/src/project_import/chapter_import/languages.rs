@@ -189,7 +189,7 @@ pub(super) fn normalize_language_code(header: &str) -> Option<String> {
     canonical_language_code(header).map(str::to_string)
 }
 
-pub(super) fn language_display_name(code: &str) -> String {
+pub(crate) fn language_display_name(code: &str) -> String {
     supported_language_name(code).unwrap_or(code).to_string()
 }
 

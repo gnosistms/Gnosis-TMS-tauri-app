@@ -28,6 +28,7 @@ globalThis.requestAnimationFrame = (callback) => callback();
 const { state, createTargetLanguageManagerState } = await import("./state.js");
 const {
   addTargetLanguageManagerLanguage,
+  removeTargetLanguageManagerLanguage,
   selectTargetLanguageManagerPickerLanguage,
 } = await import("./translate-flow.js");
 
@@ -108,5 +109,23 @@ test("target language manager can add another column for an existing base langua
     { code: "es", name: "Spanish", role: "source" },
     { code: "zh-Hans", name: "Chinese (Simplified) 1", role: "target", baseCode: "zh-Hans" },
     { code: "zh-Hans-x-2", name: "Chinese (Simplified) 2", role: "target", baseCode: "zh-Hans" },
+  ]);
+});
+
+test("target language manager removal collapses singleton duplicate labels immediately", () => {
+  state.targetLanguageManager = {
+    ...createTargetLanguageManagerState(),
+    isOpen: true,
+    chapterId: "chapter-1",
+    languages: [
+      { code: "en", name: "English 1", role: "source", baseCode: "en" },
+      { code: "en-x-2", name: "English 2", role: "target", baseCode: "en" },
+    ],
+  };
+
+  removeTargetLanguageManagerLanguage(0);
+
+  assert.deepEqual(state.targetLanguageManager.languages, [
+    { code: "en-x-2", name: "English", role: "target", baseCode: "en" },
   ]);
 });
