@@ -386,6 +386,34 @@ function normalizeLanguageLabel(language, fallbackCode = "") {
   return name || fallbackCode;
 }
 
+export function buildEditorAssistantAlternateLanguageTexts(
+  row,
+  languages,
+  sourceLanguageCode,
+  targetLanguageCode,
+) {
+  const normalizedSourceLanguageCode =
+    typeof sourceLanguageCode === "string" ? sourceLanguageCode.trim() : "";
+  const normalizedTargetLanguageCode =
+    typeof targetLanguageCode === "string" ? targetLanguageCode.trim() : "";
+
+  return (Array.isArray(languages) ? languages : [])
+    .map((language) => {
+      const languageCode = typeof language?.code === "string" ? language.code.trim() : "";
+      return {
+        languageCode,
+        languageLabel: normalizeLanguageLabel(language, languageCode),
+        text: readRowFieldText(row, languageCode),
+      };
+    })
+    .filter((entry) =>
+      entry.languageCode
+      && entry.text.trim()
+      && entry.languageCode !== normalizedSourceLanguageCode
+      && entry.languageCode !== normalizedTargetLanguageCode
+    );
+}
+
 function buildCurrentDerivedGlossaryContext(context, glossaryState, glossarySourceLanguageCode) {
   const currentGlossarySourceText = readRowFieldText(context.row, glossarySourceLanguageCode);
   return buildEditorDerivedGlossaryContext({
@@ -482,13 +510,12 @@ function currentAssistantContext(chapterState = state.editorChapter, overrides =
     targetLanguageLabel: normalizeLanguageLabel(targetLanguage, targetLanguageCode),
     sourceText,
     targetText,
-    alternateLanguageTexts: languages
-      .map((language) => ({
-        languageCode: language.code,
-        languageLabel: normalizeLanguageLabel(language, language.code),
-        text: readRowFieldText(row, language.code),
-      }))
-      .filter((entry) => entry.text.trim() && entry.languageCode !== sourceLanguageCode && entry.languageCode !== targetLanguageCode),
+    alternateLanguageTexts: buildEditorAssistantAlternateLanguageTexts(
+      row,
+      languages,
+      sourceLanguageCode,
+      targetLanguageCode,
+    ),
   };
 }
 

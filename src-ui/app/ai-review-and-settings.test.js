@@ -142,6 +142,7 @@ const {
 } = await import("./editor-ai-translate-flow.js");
 const {
   authorLoginFromAssistantHistoryEntry,
+  buildEditorAssistantAlternateLanguageTexts,
   buildEditorAssistantTargetLanguageHistory,
   classifyEditorAssistantTargetHistoryEntry,
   runEditorAiAssistant,
@@ -2025,6 +2026,40 @@ test("assistant target history collapses contiguous provenance runs to the last 
       [5, "other_user", "other_user", "alice", "editor-update", "Alice second"],
       [6, "other_user", "other_user", "bob", "editor-update", "Bob edit"],
     ],
+  );
+});
+
+test("assistant alternate language collection uses unique duplicate column codes", () => {
+  const languages = [
+    { code: "es", name: "Spanish", baseCode: "es" },
+    { code: "zh-Hans", name: "Chinese 1", baseCode: "zh-Hans" },
+    { code: "zh-Hans-x-2", name: "Chinese 2", baseCode: "zh-Hans" },
+    { code: "zh-Hans-x-3", name: "Chinese 3", baseCode: "zh-Hans" },
+  ];
+  const row = {
+    fields: {
+      es: "Fuente actual",
+      "zh-Hans": "Chinese first column",
+      "zh-Hans-x-2": "Chinese second column",
+      "zh-Hans-x-3": "",
+    },
+  };
+
+  assert.deepEqual(
+    buildEditorAssistantAlternateLanguageTexts(row, languages, "es", "zh-Hans"),
+    [{
+      languageCode: "zh-Hans-x-2",
+      languageLabel: "Chinese 2",
+      text: "Chinese second column",
+    }],
+  );
+  assert.deepEqual(
+    buildEditorAssistantAlternateLanguageTexts(row, languages, "es", "zh-Hans-x-2"),
+    [{
+      languageCode: "zh-Hans",
+      languageLabel: "Chinese 1",
+      text: "Chinese first column",
+    }],
   );
 });
 

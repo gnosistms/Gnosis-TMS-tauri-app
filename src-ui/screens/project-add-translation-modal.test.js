@@ -105,21 +105,56 @@ test("add translation warning modals render requested actions", () => {
   assert.match(mismatch, /data-action="continue-project-add-translation-mismatch"/);
 });
 
-test("add translation progress modal shows completed total", () => {
+test("add translation progress modal shows full staged progress", () => {
   const html = renderProjectAddTranslationModal({
     projectAddTranslation: {
       isOpen: true,
       step: "aligning",
       progress: {
+        stageId: "row_alignment",
         stageLabel: "Summarizing sections",
         message: "Working",
-        completed: 3,
-        total: 10,
+        completed: 2,
+        total: 4,
+        percent: 50,
       },
       error: "",
     },
   });
 
+  assert.match(html, /Aligning and inserting/);
+  assert.match(html, /Please wait/);
+  assert.match(html, /Preparing text units/);
   assert.match(html, /Summarizing sections/);
-  assert.match(html, /Working 3 \/ 10/);
+  assert.match(html, /Finding section matches/);
+  assert.match(html, /Selecting section corridor/);
+  assert.match(html, /Aligning rows inside matched sections/);
+  assert.match(html, /Resolving conflicts/);
+  assert.match(html, /Splitting combined target rows/);
+  assert.match(html, /Final checks/);
+  assert.match(html, /Applying translation/);
+  assert.match(html, /aria-label="Preparing text units"[\s\S]*aria-valuenow="100"/);
+  assert.match(html, /aria-label="Aligning rows inside matched sections"[\s\S]*aria-valuenow="50"/);
+  assert.match(html, /aria-label="Applying translation"[\s\S]*aria-valuenow="0"/);
+  assert.match(html, /Working 2 \/ 4/);
+});
+
+test("add translation progress modal treats cached preflight as aligned", () => {
+  const html = renderProjectAddTranslationModal({
+    projectAddTranslation: {
+      isOpen: true,
+      step: "applying",
+      progress: {
+        stageId: "preflight",
+        status: "complete",
+        message: "Loaded cached alignment preflight",
+        completed: 1,
+        total: 1,
+      },
+      error: "",
+    },
+  });
+
+  assert.match(html, /aria-label="Final checks"[\s\S]*aria-valuenow="100"/);
+  assert.match(html, /aria-label="Applying translation"[\s\S]*aria-valuenow="0"/);
 });

@@ -7,13 +7,14 @@ use std::sync::OnceLock;
 use tauri::AppHandle;
 
 use crate::ai::types::{
-    AiAssistantConcordanceHit, AiAssistantRowWindowEntry, AiAssistantTargetLanguageHistoryEntry,
-    AiAssistantTranscriptEntry, AiAssistantTurnKind, AiAssistantTurnRequest,
-    AiAssistantTurnResponse, AiModelProbeRequest, AiPromptOutputFormat, AiPromptRequest,
-    AiProviderContinuationMetadata, AiProviderId, AiProviderModel, AiReviewRequest,
-    AiReviewResponse, AiTranslatedGlossaryEntry, AiTranslatedGlossaryPreparationRequest,
-    AiTranslatedGlossaryPreparationResponse, AiTranslatedGlossaryTermInput,
-    AiTranslationGlossaryHint, AiTranslationRequest, AiTranslationResponse,
+    AiAssistantConcordanceHit, AiAssistantRowContext, AiAssistantRowWindowEntry,
+    AiAssistantTargetLanguageHistoryEntry, AiAssistantTranscriptEntry, AiAssistantTurnKind,
+    AiAssistantTurnRequest, AiAssistantTurnResponse, AiModelProbeRequest, AiPromptOutputFormat,
+    AiPromptRequest, AiProviderContinuationMetadata, AiProviderId, AiProviderModel,
+    AiReviewRequest, AiReviewResponse, AiTranslatedGlossaryEntry,
+    AiTranslatedGlossaryPreparationRequest, AiTranslatedGlossaryPreparationResponse,
+    AiTranslatedGlossaryTermInput, AiTranslationGlossaryHint, AiTranslationRequest,
+    AiTranslationResponse,
 };
 use crate::ai_secret_storage::load_ai_provider_secret;
 
@@ -378,6 +379,43 @@ fn format_assistant_source_context(
     }
 }
 
+fn format_assistant_reference_translations(row: &AiAssistantRowContext) -> String {
+    let source_language_code = row.source_language_code.trim();
+    let target_language_code = row.target_language_code.trim();
+    let lines = row
+        .alternate_language_texts
+        .iter()
+        .filter_map(|entry| {
+            let language_code = entry.language_code.trim();
+            let text = entry.text.trim();
+            if text.is_empty()
+                || language_code.is_empty()
+                || language_code == source_language_code
+                || language_code == target_language_code
+            {
+                return None;
+            }
+
+            let language_label = entry.language_label.trim();
+            let label = if language_label.is_empty() {
+                language_code
+            } else {
+                language_label
+            };
+            Some(format!("{label}: {text}"))
+        })
+        .collect::<Vec<_>>();
+
+    if lines.is_empty() {
+        return String::new();
+    }
+
+    format!(
+        "The following is a list of translations into other languages. They may have errors, so do not consider these authoritative unless the user explicitly asks you to consult them. These will be useful in cases where the source is ambiguous and the user asks you to look at what translators of other languages did with the same source text.\n\nReference language translations:\n{}",
+        lines.join("\n")
+    )
+}
+
 fn format_assistant_user_action(request: &AiAssistantTurnRequest) -> String {
     let user_message = request.user_message.trim();
     if !user_message.is_empty() {
@@ -402,7 +440,7 @@ fn build_assistant_prompt(request: &AiAssistantTurnRequest, draft_response: bool
     let mut sections = Vec::new();
     sections.push(
         "You are an AI assistant inside a translation editor.\n\
-Use the supplied source context, target-language history, glossary, and conversation history when relevant.\n\
+Use the supplied source context, target-language history, reference translations, glossary, and conversation history when relevant.\n\
 Be direct and useful. If the answer depends on ambiguity in the source text, say so."
             .to_string(),
     );
@@ -438,6 +476,11 @@ If your answer includes a complete proposed or revised target-language translati
         &mut sections,
         "target_language_history",
         format_assistant_target_language_history(&row.target_language_history, &row.target_text),
+    );
+    push_prompt_section(
+        &mut sections,
+        "reference_translations",
+        format_assistant_reference_translations(row),
     );
     push_prompt_section(&mut sections, "Glossary", glossary_hints);
     push_prompt_section(&mut sections, "Document digest", &request.document_digest);
@@ -1229,10 +1272,10 @@ mod tests {
         parse_review_structured_response,
     };
     use crate::ai::types::{
-        AiAssistantRowContext, AiAssistantRowWindowEntry, AiAssistantTargetLanguageHistoryEntry,
-        AiAssistantTranscriptEntry, AiAssistantTurnKind, AiAssistantTurnRequest, AiProviderId,
-        AiReviewRequest, AiTranslatedGlossaryTermInput, AiTranslationGlossaryHint,
-        AiTranslationRequest,
+        AiAssistantRowContext, AiAssistantRowLanguageText, AiAssistantRowWindowEntry,
+        AiAssistantTargetLanguageHistoryEntry, AiAssistantTranscriptEntry, AiAssistantTurnKind,
+        AiAssistantTurnRequest, AiProviderId, AiReviewRequest, AiTranslatedGlossaryTermInput,
+        AiTranslationGlossaryHint, AiTranslationRequest,
     };
 
     fn review_request() -> AiReviewRequest {
@@ -1621,6 +1664,96 @@ mod tests {
         assert!(prompt.contains("3. source=current_user, committedBy=current_user"));
         assert!(prompt.contains("text:\nBan dich nguoi dung"));
         assert!(!prompt.contains("Current target:"));
+    }
+
+    #[test]
+    fn assistant_prompt_includes_reference_translations_without_history() {
+        let mut request = assistant_request_for_prompt();
+        request.row.alternate_language_texts = vec![
+            AiAssistantRowLanguageText {
+                language_code: "en".to_string(),
+                language_label: "English".to_string(),
+                text: "Current English reference".to_string(),
+            },
+            AiAssistantRowLanguageText {
+                language_code: "it".to_string(),
+                language_label: String::new(),
+                text: "Traduzione italiana".to_string(),
+            },
+            AiAssistantRowLanguageText {
+                language_code: "ru".to_string(),
+                language_label: "Russian".to_string(),
+                text: "   ".to_string(),
+            },
+            AiAssistantRowLanguageText {
+                language_code: "es".to_string(),
+                language_label: "Spanish".to_string(),
+                text: "Do not include source entry".to_string(),
+            },
+            AiAssistantRowLanguageText {
+                language_code: "vi".to_string(),
+                language_label: "Vietnamese".to_string(),
+                text: "Do not include target entry".to_string(),
+            },
+        ];
+        let prompt = build_assistant_chat_prompt(&request);
+
+        assert!(prompt.contains("reference_translations:"));
+        assert!(prompt.contains(
+            "The following is a list of translations into other languages. They may have errors, so do not consider these authoritative unless the user explicitly asks you to consult them."
+        ));
+        assert!(prompt.contains("Reference language translations:\nEnglish: Current English reference\nit: Traduzione italiana"));
+        assert_eq!(
+            prompt.matches("Reference language translations:").count(),
+            1
+        );
+        assert!(!prompt.contains("Do not include source entry"));
+        assert!(!prompt.contains("Do not include target entry"));
+        assert!(!prompt.contains("Russian:"));
+        assert!(!prompt.contains("source=file_import"));
+        assert!(!prompt.contains("committedAt="));
+    }
+
+    #[test]
+    fn assistant_prompt_keeps_duplicate_base_sibling_reference_translations() {
+        let mut request = assistant_request_for_prompt();
+        request.row.target_language_code = "zh-Hans".to_string();
+        request.row.target_language_label = "Chinese 1".to_string();
+        request.row.alternate_language_texts = vec![
+            AiAssistantRowLanguageText {
+                language_code: "zh-Hans".to_string(),
+                language_label: "Chinese 1".to_string(),
+                text: "Do not include selected Chinese 1 target".to_string(),
+            },
+            AiAssistantRowLanguageText {
+                language_code: "zh-Hans-x-2".to_string(),
+                language_label: "Chinese 2".to_string(),
+                text: "Chinese sibling reference".to_string(),
+            },
+        ];
+        let prompt = build_assistant_chat_prompt(&request);
+
+        assert!(prompt.contains("Chinese 2: Chinese sibling reference"));
+        assert!(!prompt.contains("Do not include selected Chinese 1 target"));
+
+        request.row.target_language_code = "zh-Hans-x-2".to_string();
+        request.row.target_language_label = "Chinese 2".to_string();
+        request.row.alternate_language_texts = vec![
+            AiAssistantRowLanguageText {
+                language_code: "zh-Hans".to_string(),
+                language_label: "Chinese 1".to_string(),
+                text: "Chinese first-column reference".to_string(),
+            },
+            AiAssistantRowLanguageText {
+                language_code: "zh-Hans-x-2".to_string(),
+                language_label: "Chinese 2".to_string(),
+                text: "Do not include selected Chinese 2 target".to_string(),
+            },
+        ];
+        let prompt = build_assistant_chat_prompt(&request);
+
+        assert!(prompt.contains("Chinese 1: Chinese first-column reference"));
+        assert!(!prompt.contains("Do not include selected Chinese 2 target"));
     }
 
     #[test]

@@ -91,18 +91,109 @@ function progressLabel(progress) {
   return Number.isFinite(percent) ? `${Math.round(percent)}%` : "";
 }
 
+const ALIGNMENT_PROGRESS_STEPS = [
+  { id: "prepare_units", label: "Preparing text units" },
+  { id: "summarize_sections", label: "Summarizing sections" },
+  { id: "find_section_matches", label: "Finding section matches" },
+  { id: "select_corridor", label: "Selecting section corridor" },
+  { id: "row_alignment", label: "Aligning rows inside matched sections" },
+  { id: "resolve_conflicts", label: "Resolving conflicts" },
+  { id: "split_targets", label: "Splitting combined target rows" },
+  { id: "final_checks", label: "Final checks" },
+  { id: "apply", label: "Applying translation" },
+];
+
+function progressPercent(progress) {
+  const percent = Number(progress?.percent);
+  if (Number.isFinite(percent)) {
+    return Math.max(0, Math.min(100, percent));
+  }
+
+  const completed = Number(progress?.completed);
+  const total = Number(progress?.total);
+  if (Number.isFinite(completed) && Number.isFinite(total) && total > 0) {
+    return Math.max(0, Math.min(100, (completed / total) * 100));
+  }
+
+  return progress?.status === "complete" ? 100 : 0;
+}
+
+function progressStepPercent(step, progress, index, activeIndex) {
+  if (activeIndex < 0) {
+    return 0;
+  }
+  if (index < activeIndex) {
+    return 100;
+  }
+  if (index > activeIndex) {
+    return 0;
+  }
+  if (progress?.status === "complete") {
+    return 100;
+  }
+  if (progress?.status === "warning") {
+    return 100;
+  }
+  return progressPercent(progress);
+}
+
+function renderProgressStep(step, progress, index, activeIndex) {
+  const percent = progressStepPercent(step, progress, index, activeIndex);
+  const roundedPercent = Math.round(percent);
+  const isActive = index === activeIndex && progress?.status !== "complete";
+  const isComplete = percent >= 100;
+  return `
+    <li class="add-translation-progress__step${isActive ? " is-active" : ""}${isComplete ? " is-complete" : ""}">
+      <div class="add-translation-progress__step-header">
+        <span class="add-translation-progress__step-number">${index + 1}</span>
+        <span class="add-translation-progress__step-label">${escapeHtml(step.label)}</span>
+        <span class="add-translation-progress__step-value">${roundedPercent}%</span>
+      </div>
+      <div
+        class="add-translation-progress__bar"
+        role="progressbar"
+        aria-label="${escapeHtml(step.label)}"
+        aria-valuemin="0"
+        aria-valuemax="100"
+        aria-valuenow="${roundedPercent}"
+      >
+        <span class="add-translation-progress__bar-fill" style="width: ${roundedPercent}%"></span>
+      </div>
+    </li>
+  `;
+}
+
+function resolveActiveProgressStepIndex(progress) {
+  const stageId = typeof progress?.stageId === "string" ? progress.stageId : "";
+  const activeIndex = ALIGNMENT_PROGRESS_STEPS.findIndex((step) => step.id === stageId);
+  if (activeIndex >= 0) {
+    return activeIndex;
+  }
+  if (stageId === "preflight") {
+    return progress?.status === "complete"
+      ? ALIGNMENT_PROGRESS_STEPS.findIndex((step) => step.id === "final_checks")
+      : 0;
+  }
+  if (stageId === "mismatch_gate") {
+    return ALIGNMENT_PROGRESS_STEPS.findIndex((step) => step.id === "final_checks");
+  }
+  return -1;
+}
+
 function renderProgressModal(modal) {
   const progress = modal.progress ?? {};
-  const label = progress.stageLabel || (modal.step === "applying" ? "Applying translation" : "Aligning translation");
-  const message = progress.message || "This may take a while.";
-  const count = progressLabel(progress);
+  const activeIndex = resolveActiveProgressStepIndex(progress);
+  const detail = [progress.message, progressLabel(progress)].filter(Boolean).join(" ");
   return `
     <div class="modal-backdrop">
-      <section class="card modal-card modal-card--compact modal-card--navigation-loading" role="status" aria-busy="true">
+      <section class="card modal-card modal-card--compact modal-card--navigation-loading modal-card--add-translation-progress" role="status" aria-busy="true">
         <div class="card__body modal-card__body">
-          <p class="card__eyebrow">${modal.step === "applying" ? "APPLYING" : "ALIGNING"}</p>
-          <h2 class="modal__title">${escapeHtml(label)}</h2>
-          <p class="modal__supporting">${escapeHtml(message)}${count ? ` ${escapeHtml(count)}` : ""}</p>
+          <p class="card__eyebrow">Aligning and inserting</p>
+          <h2 class="modal__title">Please wait</h2>
+          <ol class="add-translation-progress" aria-label="Alignment and insertion progress">
+            ${ALIGNMENT_PROGRESS_STEPS.map((step, index) => renderProgressStep(step, progress, index, activeIndex)).join("")}
+          </ol>
+          ${detail ? `<p class="modal__supporting add-translation-progress__detail">${escapeHtml(detail)}</p>` : ""}
           ${renderError(modal.error)}
         </div>
       </section>
