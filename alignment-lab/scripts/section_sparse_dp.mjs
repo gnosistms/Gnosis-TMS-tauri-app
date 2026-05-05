@@ -1,5 +1,9 @@
 import fs from "node:fs/promises";
-import { hashJson } from "./cache_progress.mjs";
+import {
+  buildContentSignature,
+  hashJson,
+  openAlignmentJob,
+} from "./cache_progress.mjs";
 
 const root = "/Users/hans/Desktop/GnosisTMS/alignment-lab";
 const model = "gpt-5.5";
@@ -29,6 +33,8 @@ function hasFlag(name) {
 const blockSize = Number(argValue("--block-size", "4"));
 const anchorCount = Number(argValue("--anchor-count", "4"));
 const maxExpansionBlocks = Number(argValue("--max-expansion-blocks", "20"));
+const strongOverlapPercent = Number(argValue("--strong-overlap", "70"));
+const jobId = argValue("--job-id", "section-sparse-dp");
 const forceRelabel = hasFlag("--force-relabel");
 
 let cachedApiKey = null;
@@ -60,6 +66,20 @@ if (sourceSummaries.length === 0 || targetSummaries.length === 0) {
 }
 
 const sourceById = new Map(sourceSummaries.map((summary) => [summary.sectionId, summary]));
+const sourceUnits = unitsFromSections(summaryCache.sourceSections ?? []);
+const targetUnits = unitsFromSections(summaryCache.targetSections ?? []);
+
+if (sourceUnits.length === 0 || targetUnits.length === 0) {
+  throw new Error("Summary cache does not contain sourceSections and targetSections with units");
+}
+
+function unitsFromSections(sections) {
+  const byId = new Map();
+  for (const section of sections) {
+    for (const unit of section.units ?? []) byId.set(unit.id, unit);
+  }
+  return [...byId.values()].sort((a, b) => a.id - b.id);
+}
 
 function normalizeText(text) {
   return text.normalize("NFKC");
@@ -138,23 +158,26 @@ function searchBlocksForTarget(targetSummary, continuationSourceId) {
 
   const blocks = [];
   const seen = new Set();
-  function addBlock(reason, ids) {
+  function addBlock(reason, ids, isStartingCenter = false) {
     const key = blockKey(ids);
     if (seen.has(key)) return;
     seen.add(key);
-    blocks.push({ reason, sourceSectionIds: ids });
+    blocks.push({ reason, sourceSectionIds: ids, isStartingCenter });
   }
 
   for (const center of centers) {
-    addBlock(center.reason, blockAround(center.center));
+    addBlock(center.reason, blockAround(center.center), true);
   }
 
   const primaryCenter = centers[0]?.center ?? expected;
+  let staleExpansionSteps = 0;
   for (let step = 1; blocks.length < maxExpansionBlocks; step += 1) {
+    const before = blocks.length;
     addBlock(`expand_forward_${step}`, blockAround(primaryCenter + step * blockSize));
     if (blocks.length >= maxExpansionBlocks) break;
     addBlock(`expand_backward_${step}`, blockAround(primaryCenter - step * blockSize));
-    if (seen.size >= sourceSummaries.length) break;
+    staleExpansionSteps = blocks.length === before ? staleExpansionSteps + 1 : 0;
+    if (staleExpansionSteps >= 2) break;
   }
 
   return {
@@ -183,7 +206,26 @@ function cacheSignature() {
     summaryHash: hashJson(summary.summary ?? ""),
   });
 
+  const baseSignature = buildContentSignature({
+    sourceUnits,
+    targetUnits,
+    sourceLanguage: summaryCache.languages?.source,
+    targetLanguage: summaryCache.languages?.target,
+    chunkSize: summaryCache.chunkSize,
+    stride: summaryCache.stride,
+    models: {
+      summary: summaryCache.model,
+      sectionMatch: model,
+    },
+    promptVersions: {
+      summary: summaryCache.promptVersion,
+      sectionMatch: promptVersion,
+    },
+    dpVersion: "adaptive-sparse-dp-v1",
+  });
+
   return {
+    ...baseSignature,
     model,
     promptVersion,
     summaryCache: {
@@ -202,13 +244,17 @@ function cacheSignature() {
       blockSize,
       anchorCount,
       maxExpansionBlocks,
+      strongOverlapPercent,
     },
   };
 }
 
 function signaturesMatch(cache) {
-  return hashJson(cache?.signature ?? null) === hashJson(cacheSignature());
+  return hashJson(cache?.signature ?? null) === hashJson(signature);
 }
+
+const signature = cacheSignature();
+const job = await openAlignmentJob({ root, jobId, signature });
 
 async function openaiStructured({ name, schema, prompt }) {
   const apiKey = await getApiKey();
@@ -338,7 +384,7 @@ ${JSON.stringify(candidates, null, 2)}`;
 
 let expansionCache = {
   model,
-  signature: cacheSignature(),
+  signature,
   sourceSummaries,
   targetSummaries,
   rows: [],
@@ -387,17 +433,47 @@ async function runAdaptiveSearch() {
   const candidateRows = [];
   const labelRows = [];
   let continuationSourceId = null;
+  let completedTargets = 0;
+  let cachedSearchBlocks = 0;
+
+  await job.emit("find_section_matches", {
+    status: "running",
+    completed: completedTargets,
+    total: targetSummaries.length,
+    cached: cachedSearchBlocks,
+    message: "Starting adaptive section match search",
+  });
 
   for (const targetSummary of targetSummaries) {
     const searchPlan = searchBlocksForTarget(targetSummary, continuationSourceId);
     const rowCache = rowCacheFor(targetSummary.sectionId);
     rowCache.expectedSourceSectionId = searchPlan.expectedSourceSectionId;
     rowCache.startingCenters = searchPlan.startingCenters;
+    const lastStartingBlockIndex = searchPlan.blocks.findLastIndex((block) => block.isStartingCenter);
 
     let finalMatches = [];
     let searchedAll = false;
+    let stopReason = "search_exhausted";
 
-    for (const block of searchPlan.blocks) {
+    function addMatches(matches) {
+      const bySource = new Map(finalMatches.map((match) => [match.sourceSectionId, match]));
+      for (const match of matches) {
+        const current = bySource.get(match.sourceSectionId);
+        if (!current || match.estimatedOverlapPercent > current.estimatedOverlapPercent) {
+          bySource.set(match.sourceSectionId, match);
+        }
+      }
+      finalMatches = [...bySource.values()]
+        .sort((a, b) => b.estimatedOverlapPercent - a.estimatedOverlapPercent || a.sourceSectionId - b.sourceSectionId)
+        .slice(0, 3);
+    }
+
+    function hasStrongMatch() {
+      return finalMatches.some((match) => match.estimatedOverlapPercent >= strongOverlapPercent);
+    }
+
+    for (let blockIndex = 0; blockIndex < searchPlan.blocks.length; blockIndex += 1) {
+      const block = searchPlan.blocks[blockIndex];
       const existing = cachedBlock(rowCache, block.sourceSectionIds);
       let searchResult = existing;
 
@@ -413,15 +489,23 @@ async function runAdaptiveSearch() {
         };
         rowCache.searchBlocks.push(searchResult);
         await saveExpansionCache();
+        await job.apiCall("find_section_matches");
       } else {
         console.error(`Using cached search T${targetSummary.sectionId} ${searchResult.reason}: ${searchResult.sourceSectionIds.map((id) => `S${id}`).join(", ")}`);
+        cachedSearchBlocks += 1;
+        await job.cacheHit("find_section_matches");
       }
 
-      if (searchResult.matches.length > 0) {
-        finalMatches = searchResult.matches;
+      addMatches(searchResult.matches);
+      if (blockIndex > lastStartingBlockIndex && hasStrongMatch()) {
+        stopReason = "strong_match_found";
         break;
       }
-      searchedAll = rowCache.searchBlocks.length >= searchPlan.blocks.length;
+      if (blockIndex >= lastStartingBlockIndex && hasStrongMatch()) {
+        stopReason = "strong_starting_match_found";
+        break;
+      }
+      searchedAll = blockIndex === searchPlan.blocks.length - 1;
     }
 
     candidateRows.push({
@@ -429,7 +513,9 @@ async function runAdaptiveSearch() {
       expectedSourceSectionId: searchPlan.expectedSourceSectionId,
       startingCenters: searchPlan.startingCenters,
       searchedSourceSectionIds: [...new Set(rowCache.searchBlocks.flatMap((block) => block.sourceSectionIds))].sort((a, b) => a - b),
-      stoppedBecause: finalMatches.length > 0 ? "match_found" : searchedAll ? "search_exhausted" : "search_stopped",
+      stoppedBecause: finalMatches.length > 0
+        ? (stopReason === "search_exhausted" ? "weak_matches_after_search_exhausted" : stopReason)
+        : searchedAll ? "search_exhausted" : "search_stopped",
     });
 
     labelRows.push({
@@ -438,7 +524,23 @@ async function runAdaptiveSearch() {
     });
 
     continuationSourceId = bestContinuationSourceId(finalMatches, continuationSourceId);
+    completedTargets += 1;
+    await job.emit("find_section_matches", {
+      status: "running",
+      completed: completedTargets,
+      total: targetSummaries.length,
+      cached: cachedSearchBlocks,
+      message: `Processed target section T${targetSummary.sectionId}`,
+    });
   }
+
+  await job.emit("find_section_matches", {
+    status: "complete",
+    completed: completedTargets,
+    total: targetSummaries.length,
+    cached: cachedSearchBlocks,
+    message: `Completed adaptive section search for ${completedTargets} target sections`,
+  });
 
   return { candidateRows, labelRows };
 }
@@ -447,7 +549,7 @@ const { candidateRows, labelRows } = await runAdaptiveSearch();
 
 const candidateCache = {
   model,
-  signature: cacheSignature(),
+  signature,
   sourceSummaries,
   targetSummaries,
   rows: candidateRows,
@@ -456,7 +558,7 @@ await writeJson(candidatePath, candidateCache);
 
 const labelCache = {
   model,
-  signature: cacheSignature(),
+  signature,
   expansionPath,
   matrix: labelRows,
 };
@@ -576,12 +678,20 @@ function buildSectionCorridor(rows, centerlinePath) {
   });
 }
 
+await job.emit("select_corridor", {
+  status: "running",
+  completed: 0,
+  total: targetSummaries.length,
+  message: "Selecting section corridor with sparse DP",
+});
+
 const dp = runSparseDp(labelRows);
+const sectionCorridor = buildSectionCorridor(labelRows, dp.centerlinePath);
 
 const dpOutput = {
   model,
   promptVersion,
-  signature: cacheSignature(),
+  signature,
   candidatesPath: candidatePath,
   expansionsPath: expansionPath,
   matchesPath: labelPath,
@@ -590,11 +700,19 @@ const dpOutput = {
   candidateRows,
   expansionRows: expansionCache.rows,
   labelRows,
-  sectionCorridor: buildSectionCorridor(labelRows, dp.centerlinePath),
+  sectionCorridor,
   dp,
 };
 
 await writeJson(dpPath, dpOutput);
+const selectedPairs = sectionCorridor.reduce((total, row) => total + row.sourceSectionIds.length, 0);
+const nullRows = sectionCorridor.filter((row) => row.sourceSectionIds.length === 0).length;
+await job.emit("select_corridor", {
+  status: "complete",
+  completed: sectionCorridor.length,
+  total: targetSummaries.length,
+  message: `Selected ${selectedPairs} section pairs with ${nullRows} null target sections`,
+});
 
 function renderHtml(output) {
   const selectedByTarget = new Map(

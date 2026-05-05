@@ -584,24 +584,9 @@ const signature = {
   maxRows,
   corridorHash: hashJson(sectionCorridor),
 };
-const legacySignature = {
-  model,
-  maxRows,
-  chunkSize,
-  stride,
-  sourceHash: sha256(JSON.stringify(sourceUnits)),
-  targetHash: sha256(JSON.stringify(targetUnits)),
-  corridorHash: sha256(JSON.stringify(sectionCorridor)),
-};
 function signatureMatches(cache, stageId) {
   if (!cache?.signature) return false;
-  try {
-    if (stageSignatureHash(cache.signature, stageId) === stageSignatureHash(signature, stageId)) {
-      return true;
-    }
-  } catch {
-  }
-  return JSON.stringify(cache.signature) === JSON.stringify(legacySignature);
+  return stageSignatureHash(cache.signature, stageId) === stageSignatureHash(signature, stageId);
 }
 const job = await openAlignmentJob({ root, jobId, signature });
 
@@ -943,14 +928,20 @@ await job.emit("build_preview", {
   total: sourceUnits.length,
   message: `Wrote ${htmlPath}`,
 });
+const failedChecks = checks.filter((check) => !check.passed);
+const warningChecks = checks.filter((check) => check.warning);
+const finalCheckStatus = failedChecks.length > 0 || warningChecks.length > 0 ? "warning" : "complete";
+const finalCheckMessage = failedChecks.length > 0
+  ? `Final checks failed: ${failedChecks.map((check) => check.name).join(", ")}`
+  : warningChecks.length > 0
+    ? `Final checks passed with warnings: ${warningChecks.map((check) => check.name).join(", ")}`
+    : "Final checks passed";
 await job.emit("final_checks", {
-  status: checks.every((check) => check.passed) ? "complete" : "warning",
+  status: finalCheckStatus,
   completed: checks.length,
   total: checks.length,
-  warningCount: checks.filter((check) => !check.passed).length,
-  message: checks.every((check) => check.passed)
-    ? "Final checks passed"
-    : `Final checks failed: ${checks.filter((check) => !check.passed).map((check) => check.name).join(", ")}`,
+  warningCount: failedChecks.length + warningChecks.length,
+  message: finalCheckMessage,
 });
 
 console.log(`Candidates: ${candidatePath}`);
