@@ -22,6 +22,7 @@ import { renderChapterRenameModal } from "./chapter-rename-modal.js";
 import { renderProjectPermanentDeletionModal } from "./project-permanent-deletion-modal.js";
 import { renderProjectImportModal } from "./project-import-modal.js";
 import { renderProjectExportModal } from "./project-export-modal.js";
+import { renderProjectAddTranslationModal } from "./project-add-translation-modal.js";
 import { renderProjectRenameModal } from "./project-rename-modal.js";
 import {
   getNoticeBadgeText,
@@ -207,6 +208,10 @@ function renderProjectCard(project, expanded, options = {}) {
                   <div class="chapter-table__actions">
                     ${renderChapterGlossarySelect(chapter, glossaryOptions, {
                       disabled: offlineMode || lifecycleActionsDisabled || glossaryChangesDisabled || !canManageProjects,
+                    })}
+                    ${textAction("Add translation", `add-translation-to-file:${chapter.id}`, {
+                      disabled: localRepoUnavailable || disableContentActions,
+                      tooltip: "Add translated text to this file, automatically aligned with the existing text in the file",
                     })}
                     ${textAction("Export", `export-file:${chapter.id}`, { disabled: localRepoUnavailable || disableContentActions })}
                     ${textAction("Open", `open-translate:${chapter.id}`)}
@@ -644,6 +649,7 @@ export function renderProjectsScreen(state) {
     renderProjectRenameModal(state) +
     renderProjectPermanentDeletionModal(state) +
     renderProjectImportModal(state) +
+    renderProjectAddTranslationModal(state) +
     renderProjectExportModal(state)
   );
 }

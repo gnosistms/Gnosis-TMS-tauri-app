@@ -157,11 +157,12 @@ pub struct AiPromptResponse {
     pub provider_response_id: Option<String>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AiPromptOutputFormat {
     Text,
     AssistantTurnJson,
     ReviewJson,
+    JsonSchema { name: String, schema: serde_json::Value },
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq, Default)]

@@ -25,6 +25,7 @@ import {
   startTargetLanguageManagerDrag,
   updateTargetLanguageManagerDrag,
 } from "./events/target-language-drag.js";
+import { registerProjectAddTranslationProgress } from "./project-add-translation-flow.js";
 
 const SYNC_WITH_SERVER_EVENT = "sync-with-server";
 const CHECK_FOR_UPDATES_EVENT = "check-for-updates";
@@ -65,6 +66,7 @@ export function registerAppEvents(render) {
   registerNativeDropEvents(render);
   registerKeyboardShortcutEvents(dispatchAction);
   registerGlossaryTooltipEvents();
+  registerProjectAddTranslationProgress(render);
 
   document.addEventListener("input", (event) => handleInputEvent(event, render));
   document.addEventListener("change", (event) => handleInputEvent(event, render));

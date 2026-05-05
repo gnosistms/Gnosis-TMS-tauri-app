@@ -189,6 +189,21 @@ test("projects page shows Export before Open on active chapters", () => {
   assert.doesNotMatch(openButton, /disabled/);
 });
 
+test("projects page shows Add translation between glossary and Export", () => {
+  const html = renderProjectsScreen(projectsState());
+  const glossaryIndex = html.indexOf("data-chapter-glossary-select");
+  const addTranslationIndex = html.indexOf('data-action="add-translation-to-file:chapter-1"');
+  const exportIndex = html.indexOf('data-action="export-file:chapter-1"');
+
+  assert.ok(glossaryIndex >= 0);
+  assert.ok(addTranslationIndex > glossaryIndex);
+  assert.ok(exportIndex > addTranslationIndex);
+  assert.match(
+    actionButtonHtml(html, "add-translation-to-file:chapter-1"),
+    /data-tooltip="Add translated text to this file, automatically aligned with the existing text in the file"/,
+  );
+});
+
 test("projects export stays enabled while project repo is syncing", () => {
   const html = renderProjectsScreen(projectsState({
     projectRepoSyncByProjectId: {

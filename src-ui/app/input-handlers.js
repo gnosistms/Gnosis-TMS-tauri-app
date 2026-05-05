@@ -21,6 +21,7 @@ import {
   selectProjectExportFormat,
   selectProjectExportLanguage,
 } from "./project-export-flow.js";
+import { updateProjectAddTranslationPaste } from "./project-add-translation-flow.js";
 import {
   updateChapterPermanentDeletionConfirmation,
   updateChapterGlossaryLinks,
@@ -581,6 +582,16 @@ function handleProjectExportLanguageInput(event, render) {
   return true;
 }
 
+function handleProjectAddTranslationInput(event, render) {
+  const input = event.target.closest("[data-project-add-translation-textarea]");
+  if (!input) {
+    return false;
+  }
+
+  updateProjectAddTranslationPaste(render, input.value);
+  return true;
+}
+
 function handleAiKeyInput(event) {
   const input = event.target.closest("[data-ai-key-input]");
   if (!input) {
@@ -678,6 +689,7 @@ const inputHandlers = [
   handleChapterGlossarySelectInput,
   handleProjectExportFormatInput,
   handleProjectExportLanguageInput,
+  handleProjectAddTranslationInput,
   handleAiKeyInput,
   handleAiDetailedConfigurationInput,
   handleAiSettingsAboutModalInput,

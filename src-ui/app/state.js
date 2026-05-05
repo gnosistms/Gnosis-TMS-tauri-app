@@ -64,6 +64,7 @@ export const state = {
   glossariesPage: createResourcePageState(),
   projectImport: createProjectImportState(),
   projectExport: createProjectExportState(),
+  projectAddTranslation: createProjectAddTranslationState(),
   glossaryImport: createGlossaryImportState(),
   projectRepoSyncByProjectId: {},
   projectRepoConflictRecovery: createProjectRepoConflictRecoveryState(),
@@ -302,6 +303,31 @@ export function createProjectExportState() {
     status: "idle",
     error: "",
     unsupportedFormat: "",
+  };
+}
+
+export function createProjectAddTranslationState() {
+  return {
+    isOpen: false,
+    step: "pasteText",
+    chapterId: "",
+    projectId: "",
+    repoName: "",
+    projectFullName: "",
+    chapterName: "",
+    pastedText: "",
+    targetLanguageCode: "",
+    sourceLanguageCode: "",
+    providerId: "",
+    modelId: "",
+    jobId: "",
+    status: "idle",
+    error: "",
+    progress: null,
+    mismatch: null,
+    existingTranslationCount: 0,
+    targetLanguageExists: false,
+    result: null,
   };
 }
 
@@ -960,6 +986,7 @@ export function resetSessionState() {
   state.projectsSearch = createProjectsSearchState();
   state.projectImport = createProjectImportState();
   state.projectExport = createProjectExportState();
+  state.projectAddTranslation = createProjectAddTranslationState();
   state.glossaryImport = createGlossaryImportState();
   state.projectRepoSyncByProjectId = {};
   state.projectRepoConflictRecovery = createProjectRepoConflictRecoveryState();

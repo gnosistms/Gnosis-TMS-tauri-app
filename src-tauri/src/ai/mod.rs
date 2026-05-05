@@ -920,7 +920,7 @@ fn build_pivot_translation_request(
     }
 }
 
-fn load_ai_provider_api_key(
+pub(crate) fn load_ai_provider_api_key(
     app: &AppHandle,
     provider_id: AiProviderId,
     installation_id: Option<i64>,

@@ -232,7 +232,7 @@ fn build_prompt_request(request: &AiPromptRequest) -> OpenAiResponsesRequest<'_>
         previous_response_id: request.previous_response_id.clone(),
         max_output_tokens: None,
         text: OpenAiTextConfig {
-            format: openai_text_format(request.output_format),
+            format: openai_text_format(request.output_format.clone()),
         },
     }
 }
@@ -282,6 +282,12 @@ fn openai_text_format(output_format: AiPromptOutputFormat) -> Value {
                     }
                 }
             }
+        }),
+        AiPromptOutputFormat::JsonSchema { name, schema } => json!({
+            "type": "json_schema",
+            "name": name,
+            "strict": true,
+            "schema": schema
         }),
     }
 }

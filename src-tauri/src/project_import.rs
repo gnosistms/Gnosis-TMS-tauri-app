@@ -16,11 +16,13 @@ pub(crate) use self::chapter_editor::{
 use self::{
     chapter_editor::{
         apply_gtms_editor_ai_review_result_sync, clear_gtms_editor_imported_conflict_sync,
+        apply_aligned_translation_to_gtms_chapter_sync,
         clear_gtms_editor_reviewed_markers_sync, export_gtms_chapter_file_sync,
         initialize_gtms_project_repo_sync,
         insert_gtms_editor_row_sync, list_local_gtms_project_files_sync,
         load_gtms_chapter_editor_data_sync, load_gtms_editor_field_history_sync,
         load_gtms_editor_row_sync, permanently_delete_gtms_editor_row_sync,
+        preflight_aligned_translation_to_gtms_chapter_sync,
         purge_local_gtms_project_repo_sync, remove_gtms_editor_language_image_sync,
         restore_gtms_editor_field_from_history_sync, reverse_gtms_editor_batch_replace_commit_sync,
         save_gtms_editor_language_image_url_sync, update_gtms_chapter_glossary_links_sync,
@@ -29,6 +31,8 @@ use self::{
         update_gtms_editor_row_fields_sync, update_gtms_editor_row_lifecycle_sync,
         update_gtms_editor_row_text_style_sync, upload_gtms_editor_language_image_sync,
         ApplyEditorAiReviewResultInput, ApplyEditorAiReviewResultResponse,
+        AlignedTranslationApplyInput, AlignedTranslationApplyResponse,
+        AlignedTranslationPreflightInput, AlignedTranslationPreflightResponse,
         ClearEditorReviewedMarkersInput, ClearEditorReviewedMarkersResponse,
         ClearImportedEditorConflictInput, ExportChapterFileInput, InitializeProjectRepoInput,
         InitializeProjectRepoResponse, InsertEditorRowInput, InsertEditorRowResponse,
@@ -113,6 +117,30 @@ pub(crate) async fn export_gtms_chapter_file(
     tauri::async_runtime::spawn_blocking(move || export_gtms_chapter_file_sync(&app, input))
         .await
         .map_err(|error| format!("The chapter export worker failed: {error}"))?
+}
+
+#[tauri::command]
+pub(crate) async fn preflight_aligned_translation_to_gtms_chapter(
+    app: AppHandle,
+    input: AlignedTranslationPreflightInput,
+) -> Result<AlignedTranslationPreflightResponse, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        preflight_aligned_translation_to_gtms_chapter_sync(&app, input)
+    })
+    .await
+    .map_err(|error| format!("The aligned translation preflight worker failed: {error}"))?
+}
+
+#[tauri::command]
+pub(crate) async fn apply_aligned_translation_to_gtms_chapter(
+    app: AppHandle,
+    input: AlignedTranslationApplyInput,
+) -> Result<AlignedTranslationApplyResponse, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        apply_aligned_translation_to_gtms_chapter_sync(&app, input)
+    })
+    .await
+    .map_err(|error| format!("The aligned translation apply worker failed: {error}"))?
 }
 
 #[tauri::command]

@@ -31,6 +31,7 @@ use super::{
 
 mod chapter_export;
 mod chapter_selection;
+mod aligned_translation;
 mod git_conflicts;
 mod history;
 mod images;
@@ -39,6 +40,12 @@ mod row_structure;
 mod shared;
 
 pub(crate) use self::chapter_export::{export_gtms_chapter_file_sync, ExportChapterFileInput};
+pub(crate) use self::aligned_translation::{
+    apply_aligned_translation_to_gtms_chapter_sync,
+    preflight_aligned_translation_to_gtms_chapter_sync, AlignedTranslationApplyInput,
+    AlignedTranslationApplyResponse, AlignedTranslationPreflightInput,
+    AlignedTranslationPreflightResponse,
+};
 use self::chapter_selection::{
     linked_chapter_glossary, preferred_source_language_code, preferred_target_language_code,
 };
@@ -718,7 +725,7 @@ pub(crate) struct EditorRowVersionMetadata {
     ai_model: Option<String>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 struct StoredChapterFile {
     chapter_id: String,
     title: String,
@@ -749,26 +756,26 @@ fn active_row_lifecycle_state() -> StoredLifecycleState {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 struct StoredSourceFile {
     #[serde(default)]
     path_hint: String,
     file_metadata: StoredSourceFileMetadata,
 }
 
-#[derive(Deserialize, Default)]
+#[derive(Deserialize, Default, Serialize)]
 struct StoredSourceFileMetadata {
     source_locale: Option<String>,
 }
 
-#[derive(Deserialize, Default)]
+#[derive(Deserialize, Default, Serialize)]
 struct StoredChapterSettings {
     linked_glossaries: Option<StoredChapterLinkedGlossaries>,
     default_source_language: Option<String>,
     default_target_language: Option<String>,
 }
 
-#[derive(Clone, Deserialize, Default)]
+#[derive(Clone, Deserialize, Default, Serialize)]
 struct StoredChapterLinkedGlossaries {
     #[serde(default)]
     glossary: Option<StoredChapterGlossaryLink>,

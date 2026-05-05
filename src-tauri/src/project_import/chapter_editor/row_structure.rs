@@ -316,7 +316,7 @@ fn parse_order_key_hex(value: &str) -> Result<u128, String> {
     u128::from_str_radix(normalized, 16).map_err(|_| "The row order key is invalid.".to_string())
 }
 
-pub(super) fn create_inserted_row_file(
+pub(crate) fn create_inserted_row_file(
     row_id: &str,
     order_key: &str,
     chapter_file: &StoredChapterFile,

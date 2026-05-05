@@ -116,6 +116,10 @@ pub(crate) fn run_prompt(
     request: &AiPromptRequest,
     api_key: &str,
 ) -> Result<AiPromptResponse, String> {
+    if matches!(request.output_format, crate::ai::types::AiPromptOutputFormat::JsonSchema { .. }) {
+        return Err("Strict JSON schema output is only available with OpenAI in this version.".to_string());
+    }
+
     let normalized_key = api_key.trim();
     if normalized_key.is_empty() {
         return Err("No Claude API key is saved yet.".to_string());

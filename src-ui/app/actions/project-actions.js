@@ -41,6 +41,14 @@ import {
   selectProjectImportSourceLanguage,
 } from "../project-import-flow.js";
 import {
+  cancelProjectAddTranslation,
+  continueProjectAddTranslationAfterMismatch,
+  continueProjectAddTranslationWithExistingText,
+  openProjectAddTranslation,
+  selectProjectAddTranslationLanguage,
+  submitProjectAddTranslationPaste,
+} from "../project-add-translation-flow.js";
+import {
   cancelProjectExport,
   closeProjectExportUnsupported,
   openProjectExport,
@@ -59,10 +67,14 @@ export function createProjectActions(render) {
     "clear-project-search": () => clearProjectSearch(render),
     "cancel-project-import": () => cancelProjectImportModal(render),
     "cancel-project-export": () => cancelProjectExport(render),
+    "cancel-project-add-translation": () => cancelProjectAddTranslation(render),
     "close-project-export-unsupported": () => closeProjectExportUnsupported(render),
     "close-project-import-upload-error": () => closeProjectImportUploadError(render),
     "continue-project-import-text": () => continueProjectImportText(render),
     "select-project-import-file": () => selectProjectImportFile(render),
+    "submit-project-add-translation-paste": () => submitProjectAddTranslationPaste(render),
+    "continue-project-add-translation-existing": () => continueProjectAddTranslationWithExistingText(render),
+    "continue-project-add-translation-mismatch": () => continueProjectAddTranslationAfterMismatch(render),
     "load-more-project-search-results": () => loadMoreProjectSearchResults(render),
     "overwrite-conflicted-project-repos": () => overwriteConflictedProjectRepos(render),
     "toggle-deleted-projects": () => toggleDeletedProjects(render),
@@ -100,6 +112,14 @@ export function createProjectActions(render) {
     {
       prefix: "export-file:",
       handler: (chapterId) => openProjectExport(render, chapterId),
+    },
+    {
+      prefix: "add-translation-to-file:",
+      handler: (chapterId) => openProjectAddTranslation(render, chapterId),
+    },
+    {
+      prefix: "select-project-add-translation-language:",
+      handler: (languageCode) => selectProjectAddTranslationLanguage(render, languageCode),
     },
     {
       prefix: "select-project-import-source-language:",
