@@ -237,8 +237,8 @@ function installTranslateFixture(options = {}) {
   };
 }
 
-function latestAssistantDraft(rowId = "row-1", targetLanguageCode = "vi") {
-  const thread = state.editorChapter?.assistant?.threadsByKey?.[`${rowId}::${targetLanguageCode}`];
+function latestAssistantDraft(rowId = "row-1", targetLanguageCode = "vi", sourceLanguageCode = "es") {
+  const thread = state.editorChapter?.assistant?.threadsByKey?.[`${rowId}::${sourceLanguageCode}::${targetLanguageCode}`];
   return thread?.items
     ?.filter((item) => item?.type === "draft-translation")
     ?.at(-1) ?? null;
@@ -526,7 +526,7 @@ test("runEditorAiTranslate uses the configured translate action and creates an a
   assert.equal(draft?.sourceLanguageCode, "es");
   assert.equal(draft?.targetLanguageCode, "vi");
   assert.equal(
-    state.editorChapter.assistant.threadsByKey["row-1::vi"]
+    state.editorChapter.assistant.threadsByKey["row-1::es::vi"]
       .providerContinuityByModelKey["openai::gpt-5.4-mini"]
       .providerResponseId,
     "resp_translate_1",
@@ -992,7 +992,7 @@ test("runEditorAiTranslate prepares derived glossary hints when the glossary sou
     ],
   );
   assert.equal(state.editorChapter.rows[0].fields.vi, "");
-  assert.equal(latestAssistantDraft()?.draftTranslationText, "Buong noi tam sang len.");
+  assert.equal(latestAssistantDraft("row-1", "vi", "en")?.draftTranslationText, "Buong noi tam sang len.");
   assert.equal(
     state.editorChapter.rows[0].fields.es,
     "La camara interior brilla.",
@@ -1350,7 +1350,7 @@ test("runEditorAiTranslate writes an empty glossary-source field before creating
 
   assert.equal(prepareCount, 1);
   assert.equal(translateCount, 2);
-  assert.equal(latestAssistantDraft()?.draftTranslationText, "Ban dich 2");
+  assert.equal(latestAssistantDraft("row-1", "vi", "en")?.draftTranslationText, "Ban dich 2");
   assert.equal(
     state.editorChapter.derivedGlossariesByRowId["row-1"]?.glossarySourceTextOrigin,
     "row",
@@ -2195,7 +2195,7 @@ test("runEditorAiAssistant sends loaded target-language history with the assista
   await runEditorAiAssistant(() => {});
 
   assert.equal(
-    state.editorChapter.assistant.threadsByKey["row-1::vi"].items.at(-1)?.text,
+    state.editorChapter.assistant.threadsByKey["row-1::es::vi"].items.at(-1)?.text,
     "The human edit changes the tone.",
   );
 });

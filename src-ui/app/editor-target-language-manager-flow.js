@@ -5,32 +5,21 @@ import { invoke } from "./runtime.js";
 import { createTargetLanguageManagerState, state } from "./state.js";
 import { showNoticeBadge } from "./status-feedback.js";
 import { findIsoLanguageOption, normalizeSupportedLanguageCode } from "../lib/language-options.js";
+import {
+  appendDuplicateLanguage,
+  normalizeChapterLanguage,
+  normalizeChapterLanguages,
+} from "./editor-language-utils.js";
 
 export const MANAGE_CHAPTER_LANGUAGES_OPTION_VALUE = "__manage_target_languages__";
 export const MANAGE_TARGET_LANGUAGES_OPTION_VALUE = MANAGE_CHAPTER_LANGUAGES_OPTION_VALUE;
 
 function cloneManagedChapterLanguage(language) {
-  const code = normalizeSupportedLanguageCode(language?.code) || String(language?.code ?? "").trim();
-  if (!code) {
-    return null;
-  }
-
-  const isoOption = findIsoLanguageOption(code);
-  const name = String(language?.name ?? "").trim() || isoOption?.name || code;
-  const role = String(language?.role ?? "").trim().toLowerCase() === "source"
-    ? "source"
-    : "target";
-  return {
-    code,
-    name,
-    role,
-  };
+  return normalizeChapterLanguage(language);
 }
 
 function managedChapterLanguagesFromEditorState() {
-  return (Array.isArray(state.editorChapter?.languages) ? state.editorChapter.languages : [])
-    .map(cloneManagedChapterLanguage)
-    .filter(Boolean);
+  return normalizeChapterLanguages(state.editorChapter?.languages);
 }
 
 function currentTargetLanguageManagerPickerScrollTop() {
@@ -111,7 +100,7 @@ export function selectTargetLanguageManagerPickerLanguage(languageCode) {
   }
 
   const code = normalizeSupportedLanguageCode(languageCode);
-  if (!code || state.targetLanguageManager.languages.some((language) => language.code === code)) {
+  if (!code) {
     return;
   }
 
@@ -136,7 +125,7 @@ export function addTargetLanguageManagerLanguage() {
   }
 
   const code = normalizeSupportedLanguageCode(state.targetLanguageManager.pickerSelectedLanguageCode);
-  if (!code || state.targetLanguageManager.languages.some((language) => language.code === code)) {
+  if (!code) {
     return;
   }
 
@@ -147,14 +136,7 @@ export function addTargetLanguageManagerLanguage() {
 
   state.targetLanguageManager = {
     ...state.targetLanguageManager,
-    languages: [
-      ...(Array.isArray(state.targetLanguageManager.languages) ? state.targetLanguageManager.languages : []),
-      {
-        code: option.code,
-        name: option.name,
-        role: "target",
-      },
-    ],
+    languages: appendDuplicateLanguage(state.targetLanguageManager.languages, option.code, "target"),
     isPickerOpen: false,
     pickerSelectedLanguageCode: "",
     pickerScrollTop: 0,

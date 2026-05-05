@@ -6,6 +6,11 @@ import { findChapterContext, selectedProjectsTeam } from "./project-context.js";
 import { showNoticeBadge } from "./status-feedback.js";
 import { createProjectAddTranslationState, state } from "./state.js";
 import {
+  languageBaseCode,
+  languageMatchesBaseCode,
+  normalizeChapterLanguages,
+} from "./editor-language-utils.js";
+import {
   openAiMissingKeyModal,
   resolveAiActionProviderAndModel,
 } from "./ai-settings-flow.js";
@@ -14,16 +19,6 @@ import { ensureSelectedTeamAiProviderReady } from "./team-ai-flow.js";
 export const ALIGNED_TRANSLATION_PROGRESS_EVENT = "aligned-translation-progress";
 
 let progressUnlistenPromise = null;
-
-function normalizeChapterLanguages(languages = []) {
-  return (Array.isArray(languages) ? languages : [])
-    .map((language) => ({
-      code: String(language?.code ?? "").trim(),
-      name: String(language?.name ?? "").trim(),
-      role: String(language?.role ?? "").trim(),
-    }))
-    .filter((language) => language.code);
-}
 
 function selectedSourceLanguageCode(chapter) {
   const languages = normalizeChapterLanguages(chapter?.languages);
@@ -167,6 +162,18 @@ export async function selectProjectAddTranslationLanguage(render, languageCode) 
     render();
     return;
   }
+  const context = currentContext();
+  const sourceLanguage = normalizeChapterLanguages(context?.chapter?.languages)
+    .find((language) => language.code === modal.sourceLanguageCode);
+  if (sourceLanguage && languageMatchesBaseCode(sourceLanguage, targetLanguageCode)) {
+    state.projectAddTranslation = {
+      ...modal,
+      targetLanguageCode: "",
+      error: "Choose a translation language different from the source language.",
+    };
+    render();
+    return;
+  }
   state.projectAddTranslation = {
     ...modal,
     targetLanguageCode,
@@ -205,6 +212,19 @@ async function ensureOpenAiReady(render, providerId) {
 export async function runProjectAddTranslationPreflight(render) {
   const modal = state.projectAddTranslation;
   if (!modal?.isOpen || !modal.targetLanguageCode) {
+    return;
+  }
+  const context = currentContext();
+  const sourceLanguage = normalizeChapterLanguages(context?.chapter?.languages)
+    .find((language) => language.code === modal.sourceLanguageCode);
+  if (sourceLanguage && languageBaseCode(sourceLanguage) === modal.targetLanguageCode) {
+    state.projectAddTranslation = {
+      ...modal,
+      step: "selectLanguage",
+      status: "idle",
+      error: "Choose a translation language different from the source language.",
+    };
+    render();
     return;
   }
 
@@ -267,6 +287,10 @@ export async function runProjectAddTranslationPreflight(render) {
       existingTranslationCount: Number.isFinite(response?.existingTranslationCount)
         ? response.existingTranslationCount
         : 0,
+      targetLanguageCode:
+        typeof response?.targetLanguageCode === "string" && response.targetLanguageCode.trim()
+          ? response.targetLanguageCode.trim()
+          : state.projectAddTranslation.targetLanguageCode,
       targetLanguageExists: response?.targetLanguageExists === true,
       progress: response?.progress ?? state.projectAddTranslation.progress,
       error: "",

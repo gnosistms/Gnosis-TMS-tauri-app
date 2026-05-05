@@ -111,12 +111,12 @@ pub(super) fn build_chapter_file(
     let source_locale = parsed
         .languages
         .first()
-        .map(|language| language.code.clone());
+        .map(|language| language.base_code.clone().unwrap_or_else(|| language.code.clone()));
     let target_locales = parsed
         .languages
         .iter()
         .skip(1)
-        .map(|language| language.code.clone())
+        .map(|language| language.base_code.clone().unwrap_or_else(|| language.code.clone()))
         .collect::<Vec<_>>();
     let mut serialization_hints = BTreeMap::new();
     if parsed.source_format == "xlsx" {
@@ -164,6 +164,7 @@ pub(super) fn build_chapter_file(
                 code: language.code.clone(),
                 name: language.name.clone(),
                 role: language.role.to_string(),
+                base_code: language.base_code.clone(),
             })
             .collect(),
         settings: ChapterSettings {

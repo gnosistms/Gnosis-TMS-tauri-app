@@ -23,6 +23,7 @@ import {
 } from "../lib/ui.js";
 import { resolveVisibleEditorAiReview } from "../app/editor-ai-review-state.js";
 import { normalizeEditorSidebarTab } from "../app/editor-comments.js";
+import { languageBaseCodesMatch } from "../app/editor-language-utils.js";
 import {
   findEditorHistoryPreviousCommitEntry,
   historyLastUpdateHeadingLabel,
@@ -87,8 +88,8 @@ function renderTranslateActionButton(buttonModel, isAnyActionRunning) {
   `;
 }
 
-function activeAssistantThreadHasItems(editorChapter, activeRowId, targetLanguageCode) {
-  const threadKey = buildEditorAssistantThreadKey(activeRowId, targetLanguageCode);
+function activeAssistantThreadHasItems(editorChapter, activeRowId, sourceLanguageCode, targetLanguageCode) {
+  const threadKey = buildEditorAssistantThreadKey(activeRowId, sourceLanguageCode, targetLanguageCode);
   const thread = currentEditorAssistantThread(editorChapter, threadKey);
   return Array.isArray(thread?.items) && thread.items.length > 0;
 }
@@ -122,7 +123,7 @@ function renderTranslateTools(editorChapter, rows, languages, sourceCode, target
     `;
   }
 
-  if (activeAssistantThreadHasItems(editorChapter, activeRow.id, targetLanguage.code)) {
+  if (activeAssistantThreadHasItems(editorChapter, activeRow.id, sourceLanguage.code, targetLanguage.code)) {
     return "";
   }
 
@@ -140,11 +141,12 @@ function renderTranslateTools(editorChapter, rows, languages, sourceCode, target
   const canTranslate =
     offlineMode !== true
     && sourceLanguage.code !== targetLanguage.code
+    && !languageBaseCodesMatch(sourceLanguage, targetLanguage)
     && sourceSection.text.trim().length > 0;
   const disabledMessage =
     offlineMode === true
       ? "AI actions are unavailable offline."
-      : sourceLanguage.code === targetLanguage.code
+      : sourceLanguage.code === targetLanguage.code || languageBaseCodesMatch(sourceLanguage, targetLanguage)
       ? "Choose a language other than the source language before translating."
       : sourceSection.text.trim().length === 0
         ? "There is no source text to translate yet."
@@ -582,6 +584,10 @@ function assistantTranscriptStatusText(assistant, threadKey) {
 function renderAssistantTranscript(editorChapter, rows, languages, sourceCode, targetCode) {
   const activeRow = rows.find((row) => row.id === editorChapter?.activeRowId) ?? null;
   const translateLanguages = resolveEditorAiTranslateLanguages(editorChapter);
+  const sourceLanguage =
+    translateLanguages.sourceLanguage
+    ?? languages.find((language) => language.code === sourceCode)
+    ?? null;
   const targetLanguage =
     translateLanguages.targetLanguage
     ?? translateLanguages.toolbarTargetLanguage
@@ -590,13 +596,17 @@ function renderAssistantTranscript(editorChapter, rows, languages, sourceCode, t
   const targetSection =
     activeRow?.sections?.find((section) => section.code === targetLanguage?.code) ?? null;
   const currentTargetText = typeof targetSection?.text === "string" ? targetSection.text : "";
-  const threadKey = buildEditorAssistantThreadKey(activeRow?.id ?? null, targetLanguage?.code ?? null);
+  const threadKey = buildEditorAssistantThreadKey(
+    activeRow?.id ?? null,
+    sourceLanguage?.code ?? null,
+    targetLanguage?.code ?? null,
+  );
   const thread = currentEditorAssistantThread(editorChapter, threadKey);
   const assistant = normalizeEditorAssistantState(editorChapter?.assistant);
   const items = Array.isArray(thread?.items) ? thread.items : [];
   const statusText = assistantTranscriptStatusText(assistant, threadKey);
 
-  if (!activeRow || !targetLanguage) {
+  if (!activeRow || !sourceLanguage || !targetLanguage) {
     return `
       <div class="assistant-empty">
         <p>Click on a translation on the left side to use the AI Assistant.</p>

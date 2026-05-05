@@ -187,9 +187,24 @@ fn build_export_document(
         }
     }
 
+    let export_language_code = chapter_file
+        .languages
+        .iter()
+        .find(|language| language.code == language_code)
+        .map(|language| {
+            language
+                .base_code
+                .as_deref()
+                .map(str::trim)
+                .filter(|code| !code.is_empty())
+                .unwrap_or(language.code.as_str())
+                .to_string()
+        })
+        .unwrap_or_else(|| language_code.to_string());
+
     Ok(ExportDocument {
         title: chapter_file.title.clone(),
-        language_code: language_code.to_string(),
+        language_code: export_language_code,
         blocks,
     })
 }
@@ -1284,6 +1299,7 @@ mod tests {
                 code: "en".to_string(),
                 name: "English".to_string(),
                 role: "target".to_string(),
+                base_code: None,
             }],
             settings: None,
         };

@@ -25,15 +25,17 @@ export function createEditorAssistantItemId() {
   return createEditorAssistantRequestKey("assistant-item");
 }
 
-export function buildEditorAssistantThreadKey(rowId, targetLanguageCode) {
+export function buildEditorAssistantThreadKey(rowId, sourceLanguageCode, targetLanguageCode) {
   const normalizedRowId = typeof rowId === "string" ? rowId.trim() : "";
+  const normalizedSourceLanguageCode =
+    typeof sourceLanguageCode === "string" ? sourceLanguageCode.trim() : "";
   const normalizedTargetLanguageCode =
     typeof targetLanguageCode === "string" ? targetLanguageCode.trim() : "";
-  if (!normalizedRowId || !normalizedTargetLanguageCode) {
+  if (!normalizedRowId || !normalizedSourceLanguageCode || !normalizedTargetLanguageCode) {
     return null;
   }
 
-  return `${normalizedRowId}::${normalizedTargetLanguageCode}`;
+  return `${normalizedRowId}::${normalizedSourceLanguageCode}::${normalizedTargetLanguageCode}`;
 }
 
 function normalizePersistedObject(value) {
@@ -83,6 +85,10 @@ export function normalizeEditorAssistantThreadState(thread) {
     ...createEditorAssistantThreadState(),
     ...(thread && typeof thread === "object" ? thread : {}),
     rowId: typeof thread?.rowId === "string" && thread.rowId.trim() ? thread.rowId.trim() : null,
+    sourceLanguageCode:
+      typeof thread?.sourceLanguageCode === "string" && thread.sourceLanguageCode.trim()
+        ? thread.sourceLanguageCode.trim()
+        : null,
     targetLanguageCode:
       typeof thread?.targetLanguageCode === "string" && thread.targetLanguageCode.trim()
         ? thread.targetLanguageCode.trim()
@@ -173,6 +179,7 @@ export function normalizeEditorAssistantState(assistant) {
         const normalizedThread = normalizeEditorAssistantThreadState(thread);
         const expectedThreadKey = buildEditorAssistantThreadKey(
           normalizedThread.rowId,
+          normalizedThread.sourceLanguageCode,
           normalizedThread.targetLanguageCode,
         );
         if (!expectedThreadKey || expectedThreadKey !== threadKey) {
@@ -220,6 +227,7 @@ function nextThreadState(threadKey, existingThread, overrides = {}) {
     ...existingThread,
     ...overrides,
     rowId: existingThread?.rowId ?? overrides.rowId ?? null,
+    sourceLanguageCode: existingThread?.sourceLanguageCode ?? overrides.sourceLanguageCode ?? null,
     targetLanguageCode: existingThread?.targetLanguageCode ?? overrides.targetLanguageCode ?? null,
     lastTouchedAt: overrides.lastTouchedAt ?? new Date().toISOString(),
   });
@@ -311,6 +319,7 @@ export function appendEditorAssistantItems(
   ];
   const thread = nextThreadState(threadKey, existingThread, {
     rowId: options.rowId ?? existingThread.rowId,
+    sourceLanguageCode: options.sourceLanguageCode ?? existingThread.sourceLanguageCode,
     targetLanguageCode: options.targetLanguageCode ?? existingThread.targetLanguageCode,
     items: nextItems,
   });

@@ -542,6 +542,7 @@ export function createEditorDeriveGlossariesModalState() {
 export function createEditorAssistantThreadState() {
   return {
     rowId: null,
+    sourceLanguageCode: null,
     targetLanguageCode: null,
     items: [],
     providerContinuityByModelKey: {},

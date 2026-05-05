@@ -66,3 +66,21 @@ test("Clear translations confirmation lists selected languages and renders delet
   assert.doesNotMatch(html, /Spanish/);
   assert.match(html, /data-action="confirm-editor-clear-translations"/);
 });
+
+test("Clear translations modal distinguishes duplicate-base language columns", () => {
+  const html = renderEditorClearTranslationsModal({
+    editorChapter: {
+      ...chapter({
+        step: "confirm",
+        selectedLanguageCodes: ["zh-Hans-x-2"],
+      }),
+      languages: [
+        { code: "zh-Hans", name: "Chinese 1", role: "target", baseCode: "zh-Hans" },
+        { code: "zh-Hans-x-2", name: "Chinese 2", role: "target", baseCode: "zh-Hans" },
+      ],
+    },
+  });
+
+  assert.match(html, /Chinese 2/);
+  assert.doesNotMatch(html, /Chinese 1/);
+});

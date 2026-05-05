@@ -48,7 +48,7 @@ test("target language manager disables language changes while offline", () => {
   assert.match(html, /data-action="remove-target-language-manager-language:1"[\s\S]*disabled/);
 });
 
-test("target language manager modal renders a nested picker with only languages not already present", () => {
+test("target language manager modal renders a nested picker that can add another existing language", () => {
   const html = renderTargetLanguageManagerModal({
     targetLanguageManager: {
       isOpen: true,
@@ -64,7 +64,8 @@ test("target language manager modal renders a nested picker with only languages 
   });
 
   assert.match(html, /<h2 class="modal__title">Add Language<\/h2>/);
-  assert.doesNotMatch(html, /data-action="select-target-language-manager-picker-language:es"/);
+  assert.match(html, /data-action="select-target-language-manager-picker-language:es"/);
+  assert.match(html, /data-action="select-target-language-manager-picker-language:en"/);
   assert.match(html, /data-action="select-target-language-manager-picker-language:vi"/);
   assert.match(html, /data-action="select-target-language-manager-picker-language:zh-Hans"/);
   assert.match(html, /data-action="select-target-language-manager-picker-language:zh-Hant"/);

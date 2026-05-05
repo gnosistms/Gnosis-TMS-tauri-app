@@ -14,10 +14,11 @@ import {
 } from "./editor-ai-assistant-state.js";
 import { createEditorChapterState } from "./state.js";
 
-test("assistant threads are keyed by row and target language", () => {
-  assert.equal(buildEditorAssistantThreadKey("row-1", "vi"), "row-1::vi");
-  assert.equal(buildEditorAssistantThreadKey("", "vi"), null);
-  assert.equal(buildEditorAssistantThreadKey("row-1", ""), null);
+test("assistant threads are keyed by row, source language, and target language", () => {
+  assert.equal(buildEditorAssistantThreadKey("row-1", "es", "vi"), "row-1::es::vi");
+  assert.equal(buildEditorAssistantThreadKey("", "es", "vi"), null);
+  assert.equal(buildEditorAssistantThreadKey("row-1", "", "vi"), null);
+  assert.equal(buildEditorAssistantThreadKey("row-1", "es", ""), null);
 });
 
 test("appendEditorAssistantItems stores transcript items on the active row-target thread", () => {
@@ -28,7 +29,7 @@ test("appendEditorAssistantItems stores transcript items on the active row-targe
 
   const result = appendEditorAssistantItems(
     chapterState,
-    "row-1::vi",
+    "row-1::es::vi",
     [{
       id: "item-1",
       type: "user-message",
@@ -40,15 +41,17 @@ test("appendEditorAssistantItems stores transcript items on the active row-targe
     }],
     {
       rowId: "row-1",
+      sourceLanguageCode: "es",
       targetLanguageCode: "vi",
     },
   );
 
-  assert.equal(result.assistant.activeThreadKey, "row-1::vi");
-  assert.equal(result.assistant.threadsByKey["row-1::vi"].rowId, "row-1");
-  assert.equal(result.assistant.threadsByKey["row-1::vi"].targetLanguageCode, "vi");
-  assert.equal(result.assistant.threadsByKey["row-1::vi"].items.length, 1);
-  assert.equal(result.assistant.threadsByKey["row-1::vi"].items[0].sourceLanguageCode, "es");
+  assert.equal(result.assistant.activeThreadKey, "row-1::es::vi");
+  assert.equal(result.assistant.threadsByKey["row-1::es::vi"].rowId, "row-1");
+  assert.equal(result.assistant.threadsByKey["row-1::es::vi"].sourceLanguageCode, "es");
+  assert.equal(result.assistant.threadsByKey["row-1::es::vi"].targetLanguageCode, "vi");
+  assert.equal(result.assistant.threadsByKey["row-1::es::vi"].items.length, 1);
+  assert.equal(result.assistant.threadsByKey["row-1::es::vi"].items[0].sourceLanguageCode, "es");
 });
 
 test("assistant draft item keeps the diff visibility preference", () => {
@@ -57,8 +60,9 @@ test("assistant draft item keeps the diff visibility preference", () => {
     chapterId: "chapter-1",
     assistant: normalizeEditorAssistantState({
       threadsByKey: {
-        "row-1::vi": {
+        "row-1::es::vi": {
           rowId: "row-1",
+          sourceLanguageCode: "es",
           targetLanguageCode: "vi",
           items: [{
             id: "draft-1",
@@ -73,16 +77,16 @@ test("assistant draft item keeps the diff visibility preference", () => {
   };
 
   assert.equal(
-    currentEditorAssistantThread(chapterState, "row-1::vi").items[0].draftDiffHidden,
+    currentEditorAssistantThread(chapterState, "row-1::es::vi").items[0].draftDiffHidden,
     true,
   );
 
-  const updated = updateEditorAssistantItem(chapterState, "row-1::vi", "draft-1", (item) => ({
+  const updated = updateEditorAssistantItem(chapterState, "row-1::es::vi", "draft-1", (item) => ({
     ...item,
     draftDiffHidden: false,
   }));
   assert.equal(
-    currentEditorAssistantThread(updated, "row-1::vi").items[0].draftDiffHidden,
+    currentEditorAssistantThread(updated, "row-1::es::vi").items[0].draftDiffHidden,
     false,
   );
 });
@@ -93,8 +97,9 @@ test("assistant draft apply lifecycle updates the draft item status", () => {
     chapterId: "chapter-1",
     assistant: normalizeEditorAssistantState({
       threadsByKey: {
-        "row-1::vi": {
+        "row-1::es::vi": {
           rowId: "row-1",
+          sourceLanguageCode: "es",
           targetLanguageCode: "vi",
           items: [{
             id: "draft-1",
@@ -109,15 +114,15 @@ test("assistant draft apply lifecycle updates the draft item status", () => {
     }),
   };
 
-  chapterState = applyEditorAssistantItemApplying(chapterState, "row-1::vi", "draft-1");
+  chapterState = applyEditorAssistantItemApplying(chapterState, "row-1::es::vi", "draft-1");
   assert.equal(
-    currentEditorAssistantThread(chapterState, "row-1::vi").items[0].applyStatus,
+    currentEditorAssistantThread(chapterState, "row-1::es::vi").items[0].applyStatus,
     "applying",
   );
 
-  chapterState = applyEditorAssistantItemApplied(chapterState, "row-1::vi", "draft-1");
+  chapterState = applyEditorAssistantItemApplied(chapterState, "row-1::es::vi", "draft-1");
   assert.equal(
-    currentEditorAssistantThread(chapterState, "row-1::vi").items[0].applyStatus,
+    currentEditorAssistantThread(chapterState, "row-1::es::vi").items[0].applyStatus,
     "applied",
   );
 });
@@ -129,19 +134,20 @@ test("assistant row text prompt snapshot is stored on the active row-target thre
       chapterId: "chapter-1",
       assistant: normalizeEditorAssistantState({
         threadsByKey: {
-          "row-1::vi": {
+          "row-1::es::vi": {
             rowId: "row-1",
+            sourceLanguageCode: "es",
             targetLanguageCode: "vi",
             items: [],
           },
         },
       }),
     },
-    "row-1::vi",
+    "row-1::es::vi",
     "Fuente",
     "Ban dich",
   );
-  const thread = currentEditorAssistantThread(chapterState, "row-1::vi");
+  const thread = currentEditorAssistantThread(chapterState, "row-1::es::vi");
 
   assert.equal(thread.hasPromptedRowTextSnapshot, true);
   assert.equal(thread.lastPromptedSourceText, "Fuente");

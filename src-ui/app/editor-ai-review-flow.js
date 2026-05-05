@@ -21,6 +21,7 @@ import { findEditorRowById, hasActiveEditorField } from "./editor-utils.js";
 import { selectedProjectsTeam, selectedProjectsTeamInstallationId } from "./project-context.js";
 import { invoke } from "./runtime.js";
 import { state } from "./state.js";
+import { languageBaseCode } from "./editor-language-utils.js";
 import { showNoticeBadge } from "./status-feedback.js";
 import {
   captureTranslateViewport,
@@ -64,10 +65,13 @@ function activeEditorReviewContext(chapterState = state.editorChapter) {
   }
 
   const languageCode = chapterState.activeLanguageCode;
+  const language = (Array.isArray(chapterState.languages) ? chapterState.languages : [])
+    .find((item) => item?.code === languageCode) ?? null;
   return {
     chapterId: chapterState.chapterId,
     rowId: chapterState.activeRowId,
     languageCode,
+    language,
     text: row.fields?.[languageCode] ?? "",
   };
 }
@@ -200,7 +204,7 @@ export async function runEditorAiReview(render) {
         providerId,
         modelId,
         text: context.text,
-        languageCode: context.languageCode,
+        languageCode: languageBaseCode(context.language) || context.languageCode,
       }),
     });
 

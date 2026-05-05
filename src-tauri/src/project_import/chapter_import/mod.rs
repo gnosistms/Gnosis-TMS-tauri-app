@@ -99,6 +99,7 @@ struct ImportedLanguage {
     code: String,
     name: String,
     role: &'static str,
+    base_code: Option<String>,
 }
 
 #[derive(Clone)]
@@ -176,6 +177,8 @@ struct ChapterLanguage {
     code: String,
     name: String,
     role: String,
+    #[serde(default, rename = "baseCode", skip_serializing_if = "Option::is_none")]
+    base_code: Option<String>,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize)]
@@ -512,6 +515,7 @@ mod tests {
                 code: "ja".to_string(),
                 name: "Japanese".to_string(),
                 role: "source",
+                base_code: None,
             }],
             rows: vec![ImportedRow {
                 external_id: None,

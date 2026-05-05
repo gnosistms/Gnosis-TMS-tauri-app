@@ -1,5 +1,5 @@
 function normalizedLanguageCode(value) {
-  return typeof value === "string" ? value.trim() : "";
+  return typeof value === "string" ? value.trim().replace(/-x-\d+$/iu, "") : "";
 }
 
 export function isChineseLanguageCode(languageCode) {

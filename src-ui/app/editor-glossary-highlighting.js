@@ -34,6 +34,16 @@ function resolveLanguageName(language, fallbackCode = "") {
   return fallbackCode || "";
 }
 
+function sectionSemanticLanguageCode(section) {
+  const baseCode = typeof section?.baseCode === "string" ? section.baseCode.trim() : "";
+  return baseCode || resolveLanguageCode(section);
+}
+
+function sectionMatchesLanguage(section, languageCode) {
+  return Boolean(languageCode)
+    && (resolveLanguageCode(section) === languageCode || sectionSemanticLanguageCode(section) === languageCode);
+}
+
 function escapeHtml(value) {
   return String(value ?? "")
     .replaceAll("&", "&amp;")
@@ -755,7 +765,7 @@ function buildRowTargetMatcher(sections, glossaryModel, targetTexts) {
   const seen = new Set();
 
   for (const section of Array.isArray(sections) ? sections : []) {
-    if (section?.code !== glossaryModel.sourceLanguage.code) {
+    if (!sectionMatchesLanguage(section, glossaryModel.sourceLanguage.code)) {
       continue;
     }
 
@@ -812,7 +822,7 @@ function buildRowTargetMatcher(sections, glossaryModel, targetTexts) {
 
 function rowTargetTexts(sections, glossaryModel) {
   return (Array.isArray(sections) ? sections : [])
-    .filter((section) => section?.code === glossaryModel?.targetLanguage?.code)
+    .filter((section) => sectionMatchesLanguage(section, glossaryModel?.targetLanguage?.code))
     .map((section) => String(section?.text ?? ""));
 }
 
@@ -866,7 +876,7 @@ export function buildEditorRowGlossaryHighlights(sections, glossaryModel) {
   const targetTexts = rowTargetTexts(normalizedSections, glossaryModel);
   const targetMatcher = buildRowTargetMatcher(normalizedSections, glossaryModel, targetTexts);
   const hasTargetColumn = normalizedSections.some(
-    (section) => section?.code === glossaryModel.targetLanguage.code,
+    (section) => sectionMatchesLanguage(section, glossaryModel.targetLanguage.code),
   );
 
   for (const section of normalizedSections) {
@@ -874,7 +884,7 @@ export function buildEditorRowGlossaryHighlights(sections, glossaryModel) {
       continue;
     }
 
-    if (section.code === glossaryModel.sourceLanguage.code) {
+    if (sectionMatchesLanguage(section, glossaryModel.sourceLanguage.code)) {
       const highlight = buildHighlightMarkup(
         section.text ?? "",
         glossaryModel.sourceMatcher,
@@ -892,7 +902,7 @@ export function buildEditorRowGlossaryHighlights(sections, glossaryModel) {
       continue;
     }
 
-    if (section.code === glossaryModel.targetLanguage.code && targetMatcher) {
+    if (sectionMatchesLanguage(section, glossaryModel.targetLanguage.code) && targetMatcher) {
       const highlight = buildHighlightMarkup(
         section.text ?? "",
         targetMatcher,
@@ -914,7 +924,7 @@ export function buildEditorRowSourceGlossaryHighlights(sections, glossaryModel) 
   }
 
   for (const section of Array.isArray(sections) ? sections : []) {
-    if (section?.code !== glossaryModel?.sourceLanguage?.code) {
+    if (!sectionMatchesLanguage(section, glossaryModel?.sourceLanguage?.code)) {
       continue;
     }
 

@@ -133,6 +133,11 @@ fn normalize_chapter_language_code(code: &str) -> Option<String> {
 
 fn normalize_chapter_language_input(language: &ChapterLanguage) -> Option<ChapterLanguage> {
     let code = normalize_chapter_language_code(&language.code)?;
+    let base_code = language
+        .base_code
+        .as_deref()
+        .and_then(normalize_chapter_language_code)
+        .filter(|base_code| !base_code.is_empty());
 
     let name = language.name.trim();
     let role = language.role.trim().to_lowercase();
@@ -148,6 +153,7 @@ fn normalize_chapter_language_input(language: &ChapterLanguage) -> Option<Chapte
         } else {
             "target".to_string()
         },
+        base_code,
     })
 }
 

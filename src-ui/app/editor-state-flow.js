@@ -581,7 +581,11 @@ export function removeEditorChapterRow(rowId) {
       ...assistant,
       activeThreadKey:
         assistant.activeThreadKey
-        && buildEditorAssistantThreadKey(rowId, state.editorChapter.selectedTargetLanguageCode) === assistant.activeThreadKey
+        && buildEditorAssistantThreadKey(
+          rowId,
+          state.editorChapter.selectedSourceLanguageCode,
+          state.editorChapter.selectedTargetLanguageCode,
+        ) === assistant.activeThreadKey
           ? null
           : assistant.activeThreadKey,
       threadsByKey: assistantThreadsByKey,

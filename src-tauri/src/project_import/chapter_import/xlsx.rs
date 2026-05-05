@@ -10,7 +10,11 @@ use super::{
 
 #[derive(Clone, Debug)]
 pub(super) enum ColumnBinding {
-    Language { code: String, name: String },
+    Language {
+        code: String,
+        name: String,
+        base_code: Option<String>,
+    },
 }
 
 pub(super) fn parse_xlsx_workbook(input: ImportXlsxInput) -> Result<ParsedWorkbook, String> {
@@ -38,11 +42,15 @@ pub(super) fn parse_xlsx_workbook(input: ImportXlsxInput) -> Result<ParsedWorkbo
         .iter()
         .map(cell_to_trimmed_string)
         .collect::<Vec<_>>();
-    let bindings = classify_header_row(&header_blob)?;
+    let bindings = allocate_duplicate_language_columns(classify_header_row(&header_blob)?);
     let languages = bindings
         .iter()
         .map(|binding| match binding {
-            ColumnBinding::Language { code, name } => (code.clone(), name.clone()),
+            ColumnBinding::Language {
+                code,
+                name,
+                base_code,
+            } => (code.clone(), name.clone(), base_code.clone()),
         })
         .collect::<Vec<_>>();
 
@@ -56,10 +64,11 @@ pub(super) fn parse_xlsx_workbook(input: ImportXlsxInput) -> Result<ParsedWorkbo
     let languages = languages
         .into_iter()
         .enumerate()
-        .map(|(index, (code, name))| ImportedLanguage {
+        .map(|(index, (code, name, base_code))| ImportedLanguage {
             code,
             name,
             role: if index == 0 { "source" } else { "target" },
+            base_code,
         })
         .collect::<Vec<_>>();
 
@@ -134,7 +143,54 @@ fn classify_header(header: &str, column_index: usize) -> Result<ColumnBinding, S
         )
     })?;
     let name = language_display_name(&code);
-    Ok(ColumnBinding::Language { code, name })
+    Ok(ColumnBinding::Language {
+        code,
+        name,
+        base_code: None,
+    })
+}
+
+fn allocate_duplicate_language_columns(bindings: Vec<ColumnBinding>) -> Vec<ColumnBinding> {
+    let mut totals = BTreeMap::<String, usize>::new();
+    for binding in bindings.iter() {
+        match binding {
+            ColumnBinding::Language { code, .. } => {
+                *totals.entry(code.clone()).or_default() += 1;
+            }
+        }
+    }
+
+    let mut seen = BTreeMap::<String, usize>::new();
+    bindings
+        .into_iter()
+        .map(|binding| match binding {
+            ColumnBinding::Language { code, name, .. } => {
+                let total = totals.get(&code).copied().unwrap_or(0);
+                if total <= 1 {
+                    return ColumnBinding::Language {
+                        code,
+                        name,
+                        base_code: None,
+                    };
+                }
+
+                let entry = seen.entry(code.clone()).or_default();
+                *entry += 1;
+                let index = *entry;
+                let unique_code = if index == 1 {
+                    code.clone()
+                } else {
+                    format!("{code}-x-{index}")
+                };
+                let base_name = language_display_name(&code);
+                ColumnBinding::Language {
+                    code: unique_code,
+                    name: format!("{base_name} {index}"),
+                    base_code: Some(code),
+                }
+            }
+        })
+        .collect()
 }
 
 fn row_is_empty(
@@ -172,5 +228,50 @@ pub(super) fn split_xlsx_cell_text_and_footnote(value: &str) -> ImportedField {
             plain_text: value.to_string(),
             footnote: String::new(),
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{allocate_duplicate_language_columns, classify_header_row, ColumnBinding};
+
+    #[test]
+    fn allocate_duplicate_language_columns_uses_unique_codes_and_numbered_names() {
+        let bindings = allocate_duplicate_language_columns(
+            classify_header_row(&[
+                "zh-Hans".to_string(),
+                "en".to_string(),
+                "zh-Hans".to_string(),
+            ])
+            .expect("headers should classify"),
+        );
+
+        let languages = bindings
+            .into_iter()
+            .map(|binding| match binding {
+                ColumnBinding::Language {
+                    code,
+                    name,
+                    base_code,
+                } => (code, name, base_code),
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            languages,
+            vec![
+                (
+                    "zh-Hans".to_string(),
+                    "Chinese (Simplified) 1".to_string(),
+                    Some("zh-Hans".to_string()),
+                ),
+                ("en".to_string(), "English".to_string(), None),
+                (
+                    "zh-Hans-x-2".to_string(),
+                    "Chinese (Simplified) 2".to_string(),
+                    Some("zh-Hans".to_string()),
+                ),
+            ],
+        );
     }
 }

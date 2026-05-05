@@ -88,3 +88,25 @@ test("target language picker canonicalizes Chinese script codes", () => {
     role: "target",
   });
 });
+
+test("target language manager can add another column for an existing base language", () => {
+  state.targetLanguageManager = {
+    ...createTargetLanguageManagerState(),
+    isOpen: true,
+    isPickerOpen: true,
+    chapterId: "chapter-1",
+    languages: [
+      { code: "es", name: "Spanish", role: "source" },
+      { code: "zh-Hans", name: "Chinese (Simplified)", role: "target" },
+    ],
+  };
+
+  selectTargetLanguageManagerPickerLanguage("zh-Hans");
+  addTargetLanguageManagerLanguage();
+
+  assert.deepEqual(state.targetLanguageManager.languages, [
+    { code: "es", name: "Spanish", role: "source" },
+    { code: "zh-Hans", name: "Chinese (Simplified) 1", role: "target", baseCode: "zh-Hans" },
+    { code: "zh-Hans-x-2", name: "Chinese (Simplified) 2", role: "target", baseCode: "zh-Hans" },
+  ]);
+});

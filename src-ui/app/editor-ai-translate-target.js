@@ -1,4 +1,5 @@
 import { normalizeLanguageSelections } from "./editor-selection-flow.js";
+import { languageBaseCodesMatch } from "./editor-language-utils.js";
 
 export function resolveEditorAiTranslateLanguages(chapterState) {
   const languages = Array.isArray(chapterState?.languages) ? chapterState.languages : [];
@@ -44,6 +45,10 @@ export function resolveEditorAiTranslateLanguages(chapterState) {
     targetLanguage,
     isSourceSelected:
       Boolean(sourceLanguage?.code) && sourceLanguage.code === activeLanguage?.code,
+    isSameBaseTarget:
+      Boolean(sourceLanguage?.code)
+      && Boolean(targetLanguage?.code)
+      && languageBaseCodesMatch(sourceLanguage, targetLanguage),
     usesAlternateTarget:
       Boolean(sourceLanguage?.code)
       && Boolean(toolbarTargetLanguage?.code)

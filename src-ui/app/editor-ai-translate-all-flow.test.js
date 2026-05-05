@@ -107,6 +107,22 @@ test("AI Translate All target selection excludes source and collapsed languages"
   );
 });
 
+test("AI Translate All target selection excludes duplicate columns with the source base language", () => {
+  const chapterState = chapter({
+    languages: [
+      { code: "es", name: "Spanish 1", role: "source", baseCode: "es" },
+      { code: "es-x-2", name: "Spanish 2", role: "target", baseCode: "es" },
+      { code: "vi", name: "Vietnamese", role: "target" },
+    ],
+  });
+
+  assert.deepEqual(
+    editorAiTranslateAllTestApi.visibleTargetLanguagesForChapter(chapterState)
+      .map((language) => language.code),
+    ["vi"],
+  );
+});
+
 test("AI Translate All work includes only empty visible target fields with source text", () => {
   const chapterState = chapter({
     collapsedLanguageCodes: new Set(["ja"]),

@@ -21,6 +21,7 @@ import { createEditorAiReviewAllModalState, state } from "./state.js";
 import { showNoticeBadge } from "./status-feedback.js";
 import { ensureSelectedTeamAiProviderReady } from "./team-ai-flow.js";
 import { loadActiveEditorFieldHistory } from "./editor-history-flow.js";
+import { languageBaseCode } from "./editor-language-utils.js";
 
 let activeReviewAllRunId = 0;
 
@@ -53,6 +54,12 @@ function selectedTargetLanguageCode(chapterState) {
   return (Array.isArray(chapterState?.languages) ? chapterState.languages : [])
     .find((language) => language?.code && language.code !== sourceCode)?.code
     ?? "";
+}
+
+function languageByCode(chapterState, languageCode) {
+  const code = String(languageCode ?? "").trim();
+  return (Array.isArray(chapterState?.languages) ? chapterState.languages : [])
+    .find((language) => language?.code === code) ?? null;
 }
 
 function reviewableTranslationRows(chapterState, languageCode = selectedTargetLanguageCode(chapterState)) {
@@ -132,17 +139,19 @@ function resolveDirectGlossaryHints(row, sourceLanguageCode, targetLanguageCode)
     String(glossaryState?.sourceLanguage?.code ?? glossaryModel?.sourceLanguage?.code ?? "").trim();
   const glossaryTargetLanguageCode =
     String(glossaryState?.targetLanguage?.code ?? glossaryModel?.targetLanguage?.code ?? "").trim();
+  const sourceLanguage = languageByCode(state.editorChapter, sourceLanguageCode);
+  const targetLanguage = languageByCode(state.editorChapter, targetLanguageCode);
   if (
     !glossaryModel
-    || glossarySourceLanguageCode !== sourceLanguageCode
-    || glossaryTargetLanguageCode !== targetLanguageCode
+    || glossarySourceLanguageCode !== languageBaseCode(sourceLanguage)
+    || glossaryTargetLanguageCode !== languageBaseCode(targetLanguage)
   ) {
     return [];
   }
   return buildEditorAiTranslationGlossaryHints(
     readRowFieldText(row, sourceLanguageCode),
-    sourceLanguageCode,
-    targetLanguageCode,
+    languageBaseCode(sourceLanguage),
+    languageBaseCode(targetLanguage),
     glossaryModel,
   );
 }
@@ -385,6 +394,7 @@ export async function confirmEditorAiReviewAll(render, operations = {}) {
   const reviewMode = normalizeReviewMode(state.editorChapter.aiReviewAllModal?.reviewMode);
   const sourceLanguageCode = selectedSourceLanguageCode(state.editorChapter);
   const targetLanguageCode = counts.languageCode;
+  const targetLanguage = languageByCode(state.editorChapter, targetLanguageCode);
   let completedCount = 0;
   let started = false;
   applyEditorAiReviewAllModal({
@@ -431,7 +441,7 @@ export async function confirmEditorAiReviewAll(render, operations = {}) {
           text: latestTranslation,
           latestTranslation,
           sourceText,
-          languageCode: targetLanguageCode,
+          languageCode: languageBaseCode(targetLanguage) || targetLanguageCode,
           glossaryHints: reviewMode === "meaning"
             ? resolveDirectGlossaryHints(row, sourceLanguageCode, targetLanguageCode)
             : [],

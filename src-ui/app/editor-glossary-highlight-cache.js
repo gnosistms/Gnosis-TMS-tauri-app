@@ -1,5 +1,6 @@
 import { buildEditorRowGlossaryHighlights } from "./editor-glossary-highlighting.js";
 import { resolveHighlightableEditorDerivedGlossaryEntry } from "./editor-derived-glossary-state.js";
+import { languageBaseCode } from "./editor-language-utils.js";
 import { state } from "./state.js";
 
 const EDITOR_GLOSSARY_HIGHLIGHT_CACHE_LIMIT = 400;
@@ -11,6 +12,7 @@ const editorGlossaryHighlightCache = new Map();
 function buildEditorRowSections(row, chapterState = state.editorChapter) {
   return (Array.isArray(chapterState?.languages) ? chapterState.languages : []).map((language) => ({
     code: language.code,
+    baseCode: languageBaseCode(language),
     text: row?.fields?.[language.code] ?? "",
   }));
 }
@@ -47,9 +49,14 @@ function buildEditorRowGlossaryHighlightCacheKey(row, chapterState = state.edito
   if (glossaryModel?.sourceLanguage?.code) {
     const sourceCode = glossaryModel.sourceLanguage.code;
     const targetCode = glossaryModel.targetLanguage?.code ?? "";
-    const sourceText = String(row?.fields?.[sourceCode] ?? "");
-    const targetText = targetCode ? String(row?.fields?.[targetCode] ?? "") : "";
-    directSegment = `::direct:${sourceCode}:${sourceText}::${targetCode}:${targetText}`;
+    const languageTexts = (Array.isArray(chapterState?.languages) ? chapterState.languages : [])
+      .filter((language) => {
+        const baseCode = languageBaseCode(language);
+        return baseCode === sourceCode || baseCode === targetCode;
+      })
+      .map((language) => `${language.code}:${String(row?.fields?.[language.code] ?? "")}`)
+      .join("::");
+    directSegment = `::direct:${sourceCode}:${targetCode}:${languageTexts}`;
   }
 
   const derivedGlossaryEntry = resolveHighlightableEditorDerivedGlossaryEntry(

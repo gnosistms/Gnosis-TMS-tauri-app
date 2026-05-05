@@ -12,6 +12,7 @@ import { extractGlossaryRubyBaseText } from "./glossary-ruby.js";
 import { selectedProjectsTeam, selectedProjectsTeamInstallationId } from "./project-context.js";
 import { invoke } from "./runtime.js";
 import { findEditorRowById } from "./editor-utils.js";
+import { languageBaseCode } from "./editor-language-utils.js";
 import { state } from "./state.js";
 
 export function resolveLanguageCode(language) {
@@ -182,8 +183,8 @@ export function resolveEditorDerivedGlossaryUsage(context, options = {}) {
   if (
     !glossarySourceLanguageCode
     || !glossaryTargetLanguageCode
-    || glossaryTargetLanguageCode !== context.targetLanguageCode
-    || glossarySourceLanguageCode === context.sourceLanguageCode
+    || glossaryTargetLanguageCode !== languageBaseCode(context.targetLanguage)
+    || glossarySourceLanguageCode === languageBaseCode(context.sourceLanguage)
   ) {
     return {
       kind: "none",
@@ -197,7 +198,10 @@ export function resolveEditorDerivedGlossaryUsage(context, options = {}) {
     };
   }
 
-  const currentGlossarySourceText = readRowFieldText(context.row, glossarySourceLanguageCode);
+  const glossarySourceLanguage = (Array.isArray(context.chapterState?.languages) ? context.chapterState.languages : [])
+    .find((language) => languageBaseCode(language) === glossarySourceLanguageCode);
+  const glossarySourceColumnCode = glossarySourceLanguage?.code ?? glossarySourceLanguageCode;
+  const currentGlossarySourceText = readRowFieldText(context.row, glossarySourceColumnCode);
   const {
     glossarySourceText: preparationGlossarySourceText,
     glossarySourceTextOrigin: preparationGlossarySourceTextOrigin,
@@ -209,12 +213,12 @@ export function resolveEditorDerivedGlossaryUsage(context, options = {}) {
     : resolveEditorDerivedGlossarySourceText(
       context.row,
       context.sourceLanguageCode,
-      glossarySourceLanguageCode,
+      glossarySourceColumnCode,
     );
   const derivedContext = buildCurrentDerivedGlossaryContext(
     context,
     glossaryState,
-    glossarySourceLanguageCode,
+    glossarySourceColumnCode,
     {
       glossarySourceText: preparationGlossarySourceText,
       glossarySourceTextOrigin: preparationGlossarySourceTextOrigin,
@@ -229,7 +233,7 @@ export function resolveEditorDerivedGlossaryUsage(context, options = {}) {
     kind: "derived",
     glossaryState,
     glossaryTerms,
-    glossarySourceLanguageCode,
+    glossarySourceLanguageCode: glossarySourceColumnCode,
     glossarySourceLanguageLabel: resolveLanguageLabel(
       glossaryState?.sourceLanguage ?? glossaryModel?.sourceLanguage,
       glossarySourceLanguageCode,

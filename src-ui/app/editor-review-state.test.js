@@ -94,3 +94,25 @@ test("applyEditorChapterRowsUnreviewed clears reviewed flags and preserves pleas
   assert.deepEqual([...nextState.dirtyRowIds], ["row-1"]);
   assert.equal(nextState.unreviewAllModal.isOpen, false);
 });
+
+test("applyEditorChapterRowsUnreviewed only clears the selected duplicate-base column", () => {
+  const chapterState = {
+    ...createEditorChapterState(),
+    chapterId: "chapter-1",
+    languages: [
+      { code: "zh-Hans", name: "Chinese 1", role: "target", baseCode: "zh-Hans" },
+      { code: "zh-Hans-x-2", name: "Chinese 2", role: "target", baseCode: "zh-Hans" },
+    ],
+    rows: [
+      row("row-1", {
+        "zh-Hans": { reviewed: true, pleaseCheck: false },
+        "zh-Hans-x-2": { reviewed: true, pleaseCheck: true },
+      }),
+    ],
+  };
+
+  const nextState = applyEditorChapterRowsUnreviewed(chapterState, "zh-Hans-x-2", ["row-1"]);
+
+  assert.deepEqual(nextState.rows[0].fieldStates["zh-Hans"], { reviewed: true, pleaseCheck: false });
+  assert.deepEqual(nextState.rows[0].fieldStates["zh-Hans-x-2"], { reviewed: false, pleaseCheck: true });
+});

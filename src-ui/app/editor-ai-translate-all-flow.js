@@ -5,6 +5,7 @@ import {
 } from "./editor-ai-translate-flow.js";
 import { clearEditorAiTranslateAction } from "./editor-ai-translate-state.js";
 import { findEditorRowById } from "./editor-utils.js";
+import { languageBaseCode, languageBaseCodesMatch } from "./editor-language-utils.js";
 import { createEditorAiTranslateAllModalState, state } from "./state.js";
 import { showNoticeBadge } from "./status-feedback.js";
 
@@ -28,15 +29,20 @@ function sourceLanguageCodeForChapter(chapterState) {
 
 function visibleTargetLanguagesForChapter(chapterState) {
   const sourceLanguageCode = sourceLanguageCodeForChapter(chapterState);
+  const languages = Array.isArray(chapterState?.languages) ? chapterState.languages : [];
+  const sourceLanguage = languages.find((language) => language?.code === sourceLanguageCode) ?? null;
   const collapsedLanguageCodes =
     chapterState?.collapsedLanguageCodes instanceof Set
       ? chapterState.collapsedLanguageCodes
       : new Set();
 
-  return (Array.isArray(chapterState?.languages) ? chapterState.languages : [])
+  return languages
     .filter((language) => {
       const code = String(language?.code ?? "").trim();
-      return code && code !== sourceLanguageCode && !collapsedLanguageCodes.has(code);
+      return code
+        && code !== sourceLanguageCode
+        && !languageBaseCodesMatch(sourceLanguage, language)
+        && !collapsedLanguageCodes.has(code);
     });
 }
 
@@ -74,13 +80,18 @@ function glossarySourceLanguageCodeForChapter(chapterState) {
 
 function prioritizeGlossarySourceLanguageCode(chapterState, languageCodes) {
   const glossarySourceLanguageCode = glossarySourceLanguageCodeForChapter(chapterState);
-  if (!glossarySourceLanguageCode || !languageCodes.includes(glossarySourceLanguageCode)) {
+  const matchingLanguageCode = (Array.isArray(chapterState?.languages) ? chapterState.languages : [])
+    .find((language) =>
+      languageCodes.includes(language?.code)
+      && languageBaseCode(language) === glossarySourceLanguageCode
+    )?.code;
+  if (!glossarySourceLanguageCode || !matchingLanguageCode) {
     return languageCodes;
   }
 
   return [
-    glossarySourceLanguageCode,
-    ...languageCodes.filter((languageCode) => languageCode !== glossarySourceLanguageCode),
+    matchingLanguageCode,
+    ...languageCodes.filter((languageCode) => languageCode !== matchingLanguageCode),
   ];
 }
 

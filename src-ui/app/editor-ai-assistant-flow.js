@@ -465,7 +465,7 @@ function currentAssistantContext(chapterState = state.editorChapter, overrides =
 
   const sourceText = readRowFieldText(row, sourceLanguageCode);
   const targetText = readRowFieldText(row, targetLanguageCode);
-  const threadKey = buildEditorAssistantThreadKey(row.rowId, targetLanguageCode);
+  const threadKey = buildEditorAssistantThreadKey(row.rowId, sourceLanguageCode, targetLanguageCode);
 
   return {
     chapterState,
@@ -1224,6 +1224,7 @@ export async function runEditorAiAssistant(render) {
     [userItem],
     {
       rowId: baseContext.rowId,
+      sourceLanguageCode: baseContext.sourceLanguageCode,
       targetLanguageCode: baseContext.targetLanguageCode,
     },
   );
@@ -1277,6 +1278,7 @@ export async function runEditorAiAssistant(render) {
         })),
         {
           rowId: baseContext.rowId,
+          sourceLanguageCode: baseContext.sourceLanguageCode,
           targetLanguageCode: baseContext.targetLanguageCode,
         },
       );
@@ -1393,6 +1395,7 @@ export async function runEditorAiAssistant(render) {
       ],
       {
         rowId: context.rowId,
+        sourceLanguageCode: context.sourceLanguageCode,
         targetLanguageCode: context.targetLanguageCode,
       },
     );
@@ -1482,6 +1485,7 @@ export async function applyEditorAssistantDraft(render, itemId, operations = {})
       [createApplyResultMessage("Draft translation applied to the active row.", context)],
       {
         rowId: context.rowId,
+        sourceLanguageCode: context.sourceLanguageCode,
         targetLanguageCode: context.targetLanguageCode,
       },
     );
@@ -1527,6 +1531,7 @@ export function toggleEditorAssistantDraftDiff(render, itemId) {
 export function logEditorAssistantTranslation(payload = {}) {
   const threadKey = buildEditorAssistantThreadKey(
     payload.rowId,
+    payload.sourceLanguageCode,
     payload.targetLanguageCode,
   );
   if (!threadKey || !state.editorChapter?.chapterId) {
@@ -1559,6 +1564,7 @@ export function logEditorAssistantTranslation(payload = {}) {
     }],
     {
       rowId: payload.rowId,
+      sourceLanguageCode: payload.sourceLanguageCode,
       targetLanguageCode: payload.targetLanguageCode,
     },
   );
@@ -1577,6 +1583,7 @@ export function logEditorAssistantTranslation(payload = {}) {
 export function logEditorAssistantTranslationDraft(payload = {}) {
   const threadKey = buildEditorAssistantThreadKey(
     payload.rowId,
+    payload.sourceLanguageCode,
     payload.targetLanguageCode,
   );
   if (!threadKey || !state.editorChapter?.chapterId) {
@@ -1612,6 +1619,7 @@ export function logEditorAssistantTranslationDraft(payload = {}) {
     }],
     {
       rowId: payload.rowId,
+      sourceLanguageCode: payload.sourceLanguageCode,
       targetLanguageCode: payload.targetLanguageCode,
     },
   );

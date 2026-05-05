@@ -60,6 +60,7 @@ pub(super) fn parse_txt_file(input: ImportTxtInput) -> Result<ParsedWorkbook, St
             code,
             name,
             role: "source",
+            base_code: None,
         }],
         rows,
         import_summary: None,

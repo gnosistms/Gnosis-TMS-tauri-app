@@ -13,6 +13,7 @@ import {
   resolveLanguageCode,
   resolveLanguageLabel,
 } from "./editor-derived-glossary-flow.js";
+import { languageBaseCode } from "./editor-language-utils.js";
 import { findEditorRowById } from "./editor-utils.js";
 import { selectedProjectsTeam } from "./project-context.js";
 import {
@@ -53,7 +54,7 @@ function languageByCode(chapterState, languageCode) {
     return null;
   }
   const language = (Array.isArray(chapterState?.languages) ? chapterState.languages : [])
-    .find((candidate) => candidate?.code === code);
+    .find((candidate) => candidate?.code === code || languageBaseCode(candidate) === code);
   if (language) {
     return language;
   }
@@ -64,7 +65,10 @@ export function resolveEditorDeriveGlossariesConfig(chapterState) {
   const languages = Array.isArray(chapterState?.languages) ? chapterState.languages : [];
   const languageCodes = new Set(
     languages
-      .map((language) => String(language?.code ?? "").trim())
+      .flatMap((language) => [
+        String(language?.code ?? "").trim(),
+        languageBaseCode(language),
+      ])
       .filter(Boolean),
   );
   const glossaryState = chapterState?.glossary ?? null;
@@ -81,8 +85,8 @@ export function resolveEditorDeriveGlossariesConfig(chapterState) {
     const code = String(language?.code ?? "").trim();
     return (
       code
-      && code !== glossarySourceLanguageCode
-      && code !== glossaryTargetLanguageCode
+      && languageBaseCode(language) !== glossarySourceLanguageCode
+      && languageBaseCode(language) !== glossaryTargetLanguageCode
     );
   });
 

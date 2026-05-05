@@ -543,6 +543,7 @@ struct ChapterLanguageSnapshot {
     code: String,
     name: String,
     role: String,
+    base_code: Option<String>,
 }
 
 fn chapter_language_list_changed_between_commits(
@@ -628,8 +629,19 @@ fn chapter_language_list_from_json_text(text: &str) -> Option<Vec<ChapterLanguag
                     .map(str::to_lowercase)
                     .filter(|value| value == "source" || value == "target")
                     .unwrap_or_else(|| "target".to_string());
+                let base_code = language
+                    .get("baseCode")
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_lowercase);
 
-                Some(ChapterLanguageSnapshot { code, name, role })
+                Some(ChapterLanguageSnapshot {
+                    code,
+                    name,
+                    role,
+                    base_code,
+                })
             })
             .collect(),
     )

@@ -697,6 +697,8 @@ pub(crate) struct ChapterLanguage {
     code: String,
     name: String,
     role: String,
+    #[serde(default, rename = "baseCode", skip_serializing_if = "Option::is_none")]
+    base_code: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -1485,16 +1487,19 @@ mod tests {
                 code: "es".to_string(),
                 name: "Spanish".to_string(),
                 role: "source".to_string(),
+                base_code: None,
             },
             ChapterLanguage {
                 code: "en".to_string(),
                 name: "English".to_string(),
                 role: "reference".to_string(),
+                base_code: None,
             },
             ChapterLanguage {
                 code: "vi".to_string(),
                 name: "Vietnamese".to_string(),
                 role: "target".to_string(),
+                base_code: None,
             },
         ];
         let chapter = StoredChapterFile {

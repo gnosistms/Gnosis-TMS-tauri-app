@@ -47,6 +47,7 @@ function normalizePersistedAssistantChapterData(value) {
           const normalizedThread = normalizeEditorAssistantThreadState(thread);
           const expectedThreadKey = buildEditorAssistantThreadKey(
             normalizedThread.rowId,
+            normalizedThread.sourceLanguageCode,
             normalizedThread.targetLanguageCode,
           );
           if (!expectedThreadKey || expectedThreadKey !== threadKey) {

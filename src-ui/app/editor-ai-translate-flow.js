@@ -40,6 +40,11 @@ import {
   logEditorAssistantTranslationDraft,
 } from "./editor-ai-assistant-flow.js";
 import {
+  languageBaseCode,
+  languageBaseCodesMatch,
+  languageSemanticLabel,
+} from "./editor-language-utils.js";
+import {
   captureTranslateViewport,
   renderTranslateBodyPreservingViewport,
 } from "./translate-viewport.js";
@@ -94,7 +99,7 @@ function resolveGlossaryUsage(context) {
   if (
     !glossarySourceLanguageCode
     || !glossaryTargetLanguageCode
-    || glossaryTargetLanguageCode !== context.targetLanguageCode
+    || glossaryTargetLanguageCode !== languageBaseCode(context.targetLanguage)
   ) {
     return {
       kind: "none",
@@ -102,13 +107,13 @@ function resolveGlossaryUsage(context) {
     };
   }
 
-  if (glossarySourceLanguageCode === context.sourceLanguageCode) {
+  if (glossarySourceLanguageCode === languageBaseCode(context.sourceLanguage)) {
     return {
       kind: "direct",
       glossaryHints: buildEditorAiTranslationGlossaryHints(
         context.sourceText,
-        context.sourceLanguageCode,
-        context.targetLanguageCode,
+        languageBaseCode(context.sourceLanguage),
+        languageBaseCode(context.targetLanguage),
         glossaryModel,
       ),
     };
@@ -172,14 +177,8 @@ export function buildEditorAiTranslateContext(chapterState = state.editorChapter
     targetLanguageCode,
     sourceLanguage,
     targetLanguage,
-    sourceLanguageLabel:
-      typeof sourceLanguage?.name === "string" && sourceLanguage.name.trim()
-        ? sourceLanguage.name.trim()
-        : sourceLanguageCode,
-    targetLanguageLabel:
-      typeof targetLanguage?.name === "string" && targetLanguage.name.trim()
-        ? targetLanguage.name.trim()
-        : targetLanguageCode,
+    sourceLanguageLabel: languageSemanticLabel(sourceLanguage) || sourceLanguageCode,
+    targetLanguageLabel: languageSemanticLabel(targetLanguage) || targetLanguageCode,
     sourceText: row.fields?.[sourceLanguageCode] ?? "",
   };
 }
@@ -316,7 +315,7 @@ export async function runEditorAiTranslateForContext(
     return { ok: false, error: "Select both the source and target language before translating." };
   }
 
-  if (context.sourceLanguageCode === context.targetLanguageCode) {
+  if (context.sourceLanguageCode === context.targetLanguageCode || languageBaseCodesMatch(context.sourceLanguage, context.targetLanguage)) {
     failEditorAiTranslate(
       render,
       actionId,

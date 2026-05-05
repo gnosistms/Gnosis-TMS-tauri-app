@@ -20,6 +20,7 @@ import {
   editorLanguageFootnoteIsVisible,
   editorLanguageFootnoteText,
 } from "./editor-utils.js";
+import { languageBaseCode } from "./editor-language-utils.js";
 
 let cachedEditorRowsRef = null;
 let cachedEditorLanguagesRef = null;
@@ -183,6 +184,7 @@ function buildLiveTranslationRows(editorChapter, languages) {
         const footnote = editorLanguageFootnoteText(row, language.code);
         return {
           code: language.code,
+          baseCode: languageBaseCode(language),
           name: language.name,
           text,
           searchText: persistedLanguageText(row, "persistedFields", language.code, text),

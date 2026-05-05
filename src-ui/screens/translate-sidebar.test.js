@@ -74,9 +74,10 @@ test("assistant sidebar disables AI translate and composer while offline", () =>
 
 test("assistant transcript renders one transient query status", () => {
   const baseThread = {
-    "row-1::vi": {
+    "row-1::es::vi": {
       rowId: "row-1",
-      targetLanguageCode: "vi",
+      sourceLanguageCode: "es",
+            targetLanguageCode: "vi",
       items: [{
         id: "user-1",
         type: "user-message",
@@ -92,7 +93,7 @@ test("assistant transcript renders one transient query status", () => {
     activeEditorChapter({
       assistant: {
         status: "sending",
-        activeThreadKey: "row-1::vi",
+        activeThreadKey: "row-1::es::vi",
         requestKey: "request-1",
         threadsByKey: baseThread,
       },
@@ -107,7 +108,7 @@ test("assistant transcript renders one transient query status", () => {
     activeEditorChapter({
       assistant: {
         status: "thinking",
-        activeThreadKey: "row-1::vi",
+        activeThreadKey: "row-1::es::vi",
         requestKey: "request-1",
         threadsByKey: baseThread,
       },
@@ -122,12 +123,12 @@ test("assistant transcript renders one transient query status", () => {
     activeEditorChapter({
       assistant: {
         status: "idle",
-        activeThreadKey: "row-1::vi",
+        activeThreadKey: "row-1::es::vi",
         threadsByKey: {
-          "row-1::vi": {
-            ...baseThread["row-1::vi"],
+          "row-1::es::vi": {
+            ...baseThread["row-1::es::vi"],
             items: [
-              ...baseThread["row-1::vi"].items,
+              ...baseThread["row-1::es::vi"].items,
               {
                 id: "assistant-1",
                 type: "assistant-message",
@@ -162,10 +163,11 @@ test("assistant sidebar hides translate buttons after the active thread has hist
     activeEditorChapter({
       assistant: {
         status: "idle",
-        activeThreadKey: "row-1::vi",
+        activeThreadKey: "row-1::es::vi",
         threadsByKey: {
-          "row-1::vi": {
+          "row-1::es::vi": {
             rowId: "row-1",
+            sourceLanguageCode: "es",
             targetLanguageCode: "vi",
             items: [{
               id: "user-1",
@@ -197,10 +199,11 @@ test("assistant draft translation shows a diff when the active target field is n
     activeEditorChapter({
       assistant: {
         status: "idle",
-        activeThreadKey: "row-1::vi",
+        activeThreadKey: "row-1::es::vi",
         threadsByKey: {
-          "row-1::vi": {
+          "row-1::es::vi": {
             rowId: "row-1",
+            sourceLanguageCode: "es",
             targetLanguageCode: "vi",
             items: [{
               id: "draft-1",
@@ -244,10 +247,11 @@ test("assistant draft translation can render with diff markings hidden", () => {
     activeEditorChapter({
       assistant: {
         status: "idle",
-        activeThreadKey: "row-1::vi",
+        activeThreadKey: "row-1::es::vi",
         threadsByKey: {
-          "row-1::vi": {
+          "row-1::es::vi": {
             rowId: "row-1",
+            sourceLanguageCode: "es",
             targetLanguageCode: "vi",
             items: [{
               id: "draft-1",
@@ -288,10 +292,11 @@ test("assistant draft translation renders plain text when the active target fiel
     activeEditorChapter({
       assistant: {
         status: "idle",
-        activeThreadKey: "row-1::vi",
+        activeThreadKey: "row-1::es::vi",
         threadsByKey: {
-          "row-1::vi": {
+          "row-1::es::vi": {
             rowId: "row-1",
+            sourceLanguageCode: "es",
             targetLanguageCode: "vi",
             items: [{
               id: "draft-1",
@@ -324,10 +329,11 @@ test("assistant draft apply button stays applied while the current translation m
     activeEditorChapter({
       assistant: {
         status: "idle",
-        activeThreadKey: "row-1::vi",
+        activeThreadKey: "row-1::es::vi",
         threadsByKey: {
-          "row-1::vi": {
+          "row-1::es::vi": {
             rowId: "row-1",
+            sourceLanguageCode: "es",
             targetLanguageCode: "vi",
             items: [{
               id: "draft-1",
@@ -366,10 +372,11 @@ test("assistant draft apply button reactivates after the current translation cha
     activeEditorChapter({
       assistant: {
         status: "idle",
-        activeThreadKey: "row-1::vi",
+        activeThreadKey: "row-1::es::vi",
         threadsByKey: {
-          "row-1::vi": {
+          "row-1::es::vi": {
             rowId: "row-1",
+            sourceLanguageCode: "es",
             targetLanguageCode: "vi",
             items: [{
               id: "draft-1",
@@ -408,10 +415,11 @@ test("translation log details show only what was sent to the model", () => {
     activeEditorChapter({
       assistant: {
         status: "idle",
-        activeThreadKey: "row-1::vi",
+        activeThreadKey: "row-1::es::vi",
         threadsByKey: {
-          "row-1::vi": {
+          "row-1::es::vi": {
             rowId: "row-1",
+            sourceLanguageCode: "es",
             targetLanguageCode: "vi",
             items: [{
               id: "translation-1",
@@ -456,10 +464,11 @@ test("translation log details omit distinct glossary source text", () => {
     activeEditorChapter({
       assistant: {
         status: "idle",
-        activeThreadKey: "row-1::vi",
+        activeThreadKey: "row-1::es::vi",
         threadsByKey: {
-          "row-1::vi": {
+          "row-1::es::vi": {
             rowId: "row-1",
+            sourceLanguageCode: "es",
             targetLanguageCode: "vi",
             items: [{
               id: "translation-1",

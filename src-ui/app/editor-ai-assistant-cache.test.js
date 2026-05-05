@@ -61,8 +61,9 @@ test("stored assistant chapter data round-trips per team/project/chapter", () =>
     "chapter-1",
     {
       threadsByKey: {
-        "row-1::vi": {
+        "row-1::es::vi": {
           rowId: "row-1",
+          sourceLanguageCode: "es",
           targetLanguageCode: "vi",
           items: [{
             id: "item-1",
@@ -101,8 +102,9 @@ test("stored assistant chapter data round-trips per team/project/chapter", () =>
     loadStoredEditorAssistantChapterData(fixtureTeam, "project-1", "chapter-1"),
     {
       threadsByKey: {
-        "row-1::vi": {
+        "row-1::es::vi": {
           rowId: "row-1",
+          sourceLanguageCode: "es",
           targetLanguageCode: "vi",
           items: [{
             id: "item-1",

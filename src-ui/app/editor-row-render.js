@@ -193,7 +193,7 @@ function renderRowTextStyleButtons(row, language) {
   const selectedTextStyle = normalizeEditorRowTextStyle(row?.textStyle);
   const isSaving = row?.textStyleSaveState?.status === "saving";
   const showAddFootnoteButton = language.showAddFootnoteButton === true;
-  const rubyConfig = rubyButtonConfig(language.code);
+  const rubyConfig = rubyButtonConfig(language.baseCode || language.code);
   const secondaryButtons = [];
   const inlineButtons = [
     {
@@ -370,7 +370,7 @@ function renderEditorLanguageImageCaption(row, language) {
             data-content-kind="image-caption"
             data-row-id="${escapeHtml(row.id)}"
             data-language-code="${escapeHtml(language.code)}"
-            lang="${escapeHtml(language.code)}"
+            lang="${escapeHtml(language.baseCode || language.code)}"
             spellcheck="false"
             placeholder="Enter image caption"
           >${escapeHtml(language.imageCaption ?? "")}</textarea>
@@ -410,7 +410,7 @@ function renderEditorLanguageImageCaption(row, language) {
         data-editor-image-caption-button
         data-row-id="${escapeHtml(row.id)}"
         data-language-code="${escapeHtml(language.code)}"
-      ><span class="translation-language-panel__image-caption-text" lang="${escapeHtml(language.code)}">${renderSanitizedInlineMarkupHtml(language.imageCaption ?? "")}</span></button>
+      ><span class="translation-language-panel__image-caption-text" lang="${escapeHtml(language.baseCode || language.code)}">${renderSanitizedInlineMarkupHtml(language.imageCaption ?? "")}</span></button>
     </div>
   `;
 }
@@ -598,7 +598,7 @@ function renderConflictResolutionField(row, language, textStyle) {
     >
       <span
         class="translation-language-panel__field-static-text"
-        lang="${escapeHtml(language.code)}"
+        lang="${escapeHtml(language.baseCode || language.code)}"
       >${renderSanitizedInlineMarkupHtml(language.text)}</span>
     </button>
   `;
@@ -615,7 +615,7 @@ function renderDisabledConflictField(language, textStyle) {
     >
       <span
         class="translation-language-panel__field-static-text"
-        lang="${escapeHtml(language.code)}"
+        lang="${escapeHtml(language.baseCode || language.code)}"
       >${renderSanitizedInlineMarkupHtml(language.text)}</span>
     </div>
   `;
@@ -636,7 +636,7 @@ function renderEditorFootnoteField(row, language) {
         data-content-kind="footnote"
         data-row-id="${escapeHtml(row.id)}"
         data-language-code="${escapeHtml(language.code)}"
-        lang="${escapeHtml(language.code)}"
+        lang="${escapeHtml(language.baseCode || language.code)}"
         spellcheck="false"
         placeholder="Enter footnote text here."
       >${escapeHtml(language.footnote)}</textarea>
@@ -678,7 +678,7 @@ function renderEditorLanguageField(row, language) {
             data-row-id="${escapeHtml(row.id)}"
             data-language-code="${escapeHtml(language.code)}"
             data-row-text-style="${escapeHtml(textStyle)}"
-            lang="${escapeHtml(language.code)}"
+            lang="${escapeHtml(language.baseCode || language.code)}"
             aria-busy="true"
           ><span
             class="translation-language-panel__field-static-text"
@@ -693,7 +693,7 @@ function renderEditorLanguageField(row, language) {
             data-row-id="${escapeHtml(row.id)}"
             data-language-code="${escapeHtml(language.code)}"
             data-row-text-style="${escapeHtml(textStyle)}"
-            lang="${escapeHtml(language.code)}"
+            lang="${escapeHtml(language.baseCode || language.code)}"
           ><span
             class="translation-language-panel__field-static-text"
             data-editor-display-text
@@ -751,13 +751,13 @@ function renderEditorLanguageField(row, language) {
         <div
           class="translation-language-panel__field-highlight translation-language-panel__search-highlight"
           data-editor-search-highlight
-          lang="${escapeHtml(language.code)}"
+          lang="${escapeHtml(language.baseCode || language.code)}"
           aria-hidden="true"
         ></div>
         <div
           class="translation-language-panel__field-highlight translation-language-panel__glossary-highlight"
           data-editor-glossary-highlight
-          lang="${escapeHtml(language.code)}"
+          lang="${escapeHtml(language.baseCode || language.code)}"
           aria-hidden="true"
         ></div>
         <textarea
@@ -765,7 +765,7 @@ function renderEditorLanguageField(row, language) {
           data-editor-row-field
           data-row-id="${escapeHtml(row.id)}"
           data-language-code="${escapeHtml(language.code)}"
-          lang="${escapeHtml(language.code)}"
+          lang="${escapeHtml(language.baseCode || language.code)}"
           spellcheck="false"
           ${loadingAttributes}
         >${escapeHtml(language.text)}</textarea>

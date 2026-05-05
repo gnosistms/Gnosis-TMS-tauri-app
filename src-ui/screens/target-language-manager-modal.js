@@ -7,6 +7,7 @@ import {
 } from "../lib/ui.js";
 import { formatErrorForDisplay } from "../app/error-display.js";
 import { findIsoLanguageOption, isoLanguageOptions } from "../lib/language-options.js";
+import { languageBaseCode, languageDisplayName } from "../app/editor-language-utils.js";
 
 function renderPickerLanguageOption(language, selectedCode, disabled = false) {
   const isSelected = language.code === selectedCode;
@@ -26,8 +27,11 @@ function renderPickerLanguageOption(language, selectedCode, disabled = false) {
 
 function renderManagedLanguageRow(language, index, total, isSubmitting) {
   const code = String(language?.code ?? "").trim();
-  const name = String(language?.name ?? "").trim() || code;
-  const label = `${name} (${code})`;
+  const name = languageDisplayName(language);
+  const baseCode = languageBaseCode(language);
+  const label = baseCode && baseCode !== code
+    ? `${name} (${baseCode}, ${code})`
+    : `${name} (${code})`;
   const showRemoveButton = total > 1;
   const dragLabel = "Drag to reorder the languages shown in the editor.";
   const tooltipOptions = { align: "end" };
@@ -89,13 +93,7 @@ function renderLanguagePickerModal(state) {
     return "";
   }
 
-  const existingCodes = new Set(
-    (Array.isArray(modal.languages) ? modal.languages : [])
-      .map((language) => String(language?.code ?? "").trim().toLowerCase())
-      .filter(Boolean),
-  );
   const availableLanguages = isoLanguageOptions
-    .filter((option) => !existingCodes.has(option.code.toLowerCase()))
     .slice()
     .sort((left, right) => left.name.localeCompare(right.name));
   const rawSelectedCode = findIsoLanguageOption(modal.pickerSelectedLanguageCode)?.code ?? "";
@@ -114,7 +112,7 @@ function renderLanguagePickerModal(state) {
           <div class="language-picker-modal__list" role="list" data-target-language-manager-picker-list>
             ${availableLanguages.length > 0
               ? availableLanguages.map((language) => renderPickerLanguageOption(language, selectedCode, offlineMode)).join("")
-              : '<p class="language-picker-modal__empty">All supported languages are already in this file.</p>'}
+              : '<p class="language-picker-modal__empty">No supported languages are available.</p>'}
           </div>
           <div class="modal__actions">
             ${secondaryButton("Cancel", "close-target-language-manager-picker")}

@@ -90,6 +90,8 @@ pub(crate) struct AlignedTranslationPreflightResponse {
     status: String,
     source_language_code: String,
     target_language_code: String,
+    #[serde(default)]
+    target_base_language_code: String,
     target_language_exists: bool,
     existing_translation_count: usize,
     mismatch: Option<MismatchMetrics>,
@@ -194,6 +196,8 @@ struct AlignmentJob {
     model_id: String,
     source_language_code: String,
     target_language_code: String,
+    #[serde(default)]
+    target_base_language_code: String,
     target_language_exists: bool,
     existing_translation_count: usize,
     source_units: Vec<AlignmentUnit>,
@@ -276,6 +280,7 @@ pub(crate) fn preflight_aligned_translation_to_gtms_chapter_sync(
     app: &AppHandle,
     input: AlignedTranslationPreflightInput,
 ) -> Result<AlignedTranslationPreflightResponse, String> {
+    let mut input = input;
     if input.provider_id != AiProviderId::OpenAi {
         return Err("Add translation currently requires OpenAI.".to_string());
     }
@@ -291,18 +296,21 @@ pub(crate) fn preflight_aligned_translation_to_gtms_chapter_sync(
         &input.chapter_id,
     )?;
     let source_language_code = input.source_language_code.trim().to_string();
-    let target_language_code = input.target_language_code.trim().to_string();
-    if source_language_code.is_empty() || target_language_code.is_empty() {
+    let target_base_language_code = input.target_language_code.trim().to_string();
+    if source_language_code.is_empty() || target_base_language_code.is_empty() {
         return Err("Select source and translation languages before adding translation.".to_string());
-    }
-    if source_language_code == target_language_code {
-        return Err("Choose a translation language different from the source language.".to_string());
     }
 
     let languages = sanitize_chapter_languages(&context.chapter_file.languages);
-    if !languages.iter().any(|language| language.code == source_language_code) {
+    let Some(source_language) = languages.iter().find(|language| language.code == source_language_code) else {
         return Err("The selected source language is not available in this file.".to_string());
+    };
+    if chapter_language_base_code(source_language).eq_ignore_ascii_case(&target_base_language_code) {
+        return Err("Choose a translation language different from the source language.".to_string());
     }
+    let target_language_code =
+        next_duplicate_language_code(&languages, &target_base_language_code);
+    input.target_language_code = target_language_code.clone();
     let target_language_exists = languages
         .iter()
         .any(|language| language.code == target_language_code);
@@ -380,6 +388,7 @@ pub(crate) fn preflight_aligned_translation_to_gtms_chapter_sync(
         model_id: input.model_id.clone(),
         source_language_code,
         target_language_code,
+        target_base_language_code,
         target_language_exists,
         existing_translation_count,
         source_units,
@@ -593,6 +602,79 @@ fn parse_target_units(text: &str) -> Vec<AlignmentUnit> {
             row_id: None,
         })
         .collect()
+}
+
+fn chapter_language_base_code(language: &ChapterLanguage) -> &str {
+    language
+        .base_code
+        .as_deref()
+        .map(str::trim)
+        .filter(|code| !code.is_empty())
+        .unwrap_or(language.code.as_str())
+}
+
+fn next_duplicate_language_code(languages: &[ChapterLanguage], base_code: &str) -> String {
+    let base_code = base_code.trim();
+    let used_codes = languages
+        .iter()
+        .map(|language| language.code.as_str())
+        .collect::<BTreeSet<_>>();
+    if !used_codes.contains(base_code) {
+        return base_code.to_string();
+    }
+
+    for index in 2..1000 {
+        let candidate = format!("{base_code}-x-{index}");
+        if !used_codes.contains(candidate.as_str()) {
+            return candidate;
+        }
+    }
+
+    format!("{base_code}-x-{}", languages.len() + 1)
+}
+
+fn duplicate_language_base_name(languages: &[ChapterLanguage], base_code: &str) -> String {
+    languages
+        .iter()
+        .find(|language| chapter_language_base_code(language).eq_ignore_ascii_case(base_code))
+        .map(|language| {
+            let trimmed_name = language.name.trim();
+            if trimmed_name.is_empty() {
+                base_code.to_string()
+            } else {
+                trimmed_name
+                    .trim_end_matches(|character: char| character.is_ascii_digit())
+                    .trim()
+                    .to_string()
+            }
+        })
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| base_code.to_string())
+}
+
+fn number_duplicate_language_group(languages: &mut [ChapterLanguage], base_code: &str) {
+    let matching_indexes = languages
+        .iter()
+        .enumerate()
+        .filter_map(|(index, language)| {
+            if chapter_language_base_code(language).eq_ignore_ascii_case(base_code) {
+                Some(index)
+            } else {
+                None
+            }
+        })
+        .collect::<Vec<_>>();
+    if matching_indexes.len() <= 1 {
+        return;
+    }
+
+    let base_name = duplicate_language_base_name(languages, base_code);
+    for (position, language_index) in matching_indexes.into_iter().enumerate() {
+        if let Some(language) = languages.get_mut(language_index) {
+            language.name = format!("{} {}", base_name, position + 1);
+            language.base_code = Some(base_code.to_string());
+        }
+    }
 }
 
 fn build_signature(
@@ -1184,11 +1266,27 @@ fn apply_job_to_chapter(
     let mut languages = sanitize_chapter_languages(&context.chapter_file.languages);
     let target_exists = languages.iter().any(|language| language.code == job.target_language_code);
     if !target_exists {
+        let target_base_language_code = if job.target_base_language_code.trim().is_empty() {
+            job.target_language_code.as_str()
+        } else {
+            job.target_base_language_code.as_str()
+        };
+        let duplicate_group_exists = languages.iter().any(|language| {
+            chapter_language_base_code(language)
+                .eq_ignore_ascii_case(target_base_language_code)
+        });
+        let base_name = duplicate_language_base_name(&languages, target_base_language_code);
         languages.push(ChapterLanguage {
             code: job.target_language_code.clone(),
-            name: job.target_language_code.clone(),
+            name: base_name,
             role: "target".to_string(),
+            base_code: if duplicate_group_exists || job.target_language_code != target_base_language_code {
+                Some(target_base_language_code.to_string())
+            } else {
+                None
+            },
         });
+        number_duplicate_language_group(&mut languages, target_base_language_code);
         context.chapter_file.languages = languages.clone();
     }
 
@@ -1836,6 +1934,7 @@ fn preflight_response(job: &AlignmentJob, progress: AlignmentProgressEvent) -> A
         status: job.status.clone(),
         source_language_code: job.source_language_code.clone(),
         target_language_code: job.target_language_code.clone(),
+        target_base_language_code: job.target_base_language_code.clone(),
         target_language_exists: job.target_language_exists,
         existing_translation_count: job.existing_translation_count,
         mismatch: job.mismatch.clone(),
