@@ -85,3 +85,15 @@ test("editor image URL blur uses the same submit path as Shift Enter", async () 
     /if \(imageUrlInput instanceof HTMLInputElement\) \{\s*requestAnimationFrame\(\(\) => \{[\s\S]*?void submitEditorImageUrl\(render, rowId, languageCode\);[\s\S]*?\}\);\s*return;\s*\}\s*if \(textarea instanceof HTMLTextAreaElement && contentKind === "image-caption"\)/,
   );
 });
+
+test("editor review marker toggles preserve the clicked row viewport", async () => {
+  const actionsSource = await readFile(new URL("./actions/translate-actions.js", import.meta.url), "utf8");
+  const translateEventsSource = await readFile(new URL("./translate-editor-dom-events.js", import.meta.url), "utf8");
+  const translateFlowSource = await readFile(new URL("./translate-flow.js", import.meta.url), "utf8");
+  const persistenceSource = await readFile(new URL("./editor-persistence-flow.js", import.meta.url), "utf8");
+
+  assert.match(translateEventsSource, /toggleEditorRowFieldMarker\(render, rowId, languageCode, kind, \{\s*viewportSnapshot: captureTranslateViewport\(button/);
+  assert.match(actionsSource, /toggleEditorRowFieldMarker\(render, rowId, languageCode, kind, \{\s*target: event\?\.target \?\? null/);
+  assert.match(translateFlowSource, /toggleEditorRowFieldMarkerFlow\([\s\S]*viewportSnapshot: resolveEditorMainFieldViewportSnapshot\(rowId, languageCode, options\)/);
+  assert.match(persistenceSource, /renderTranslateBodyPreservingViewport\(render, viewportSnapshot\)/);
+});

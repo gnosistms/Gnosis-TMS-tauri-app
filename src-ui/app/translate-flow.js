@@ -956,8 +956,17 @@ export async function replaceSelectedEditorRows(render) {
   });
 }
 
-export async function toggleEditorRowFieldMarker(render, rowId, languageCode, kind) {
-  await toggleEditorRowFieldMarkerFlow(render, rowId, languageCode, kind, editorPersistenceOperations());
+export async function toggleEditorRowFieldMarker(render, rowId, languageCode, kind, options = {}) {
+  await toggleEditorRowFieldMarkerFlow(
+    render,
+    rowId,
+    languageCode,
+    kind,
+    editorPersistenceOperations(),
+    {
+      viewportSnapshot: resolveEditorMainFieldViewportSnapshot(rowId, languageCode, options),
+    },
+  );
 }
 
 export function toggleEditorLanguageCollapsed(languageCode) {

@@ -645,6 +645,7 @@ export async function toggleEditorRowFieldMarker(
   languageCode,
   kind,
   operations = {},
+  options = {},
 ) {
   const { updateEditorChapterRow } = operations;
   if (
@@ -724,12 +725,14 @@ export async function toggleEditorRowFieldMarker(
   }
 
   const previousFieldState = currentFieldState;
+  const viewportSnapshot = options?.viewportSnapshot ?? null;
   markEditorRowDirty(rowId);
   updateEditorChapterRow(
     rowId,
     (currentRow) => applyEditorRowMarkerSaving(currentRow, languageCode, kind, nextFieldState),
   );
-  render?.();
+  renderTranslateBodyPreservingViewport(render, viewportSnapshot);
+  render?.({ scope: "translate-sidebar" });
 
   try {
     const payload = await invoke("update_gtms_editor_row_field_flag", {
@@ -755,7 +758,8 @@ export async function toggleEditorRowFieldMarker(
         chapterBaseCommitSha: nextChapterBaseCommitSha(payload, state.editorChapter),
       };
       reconcileDirtyTrackedEditorRows([rowId]);
-      render?.();
+      renderTranslateBodyPreservingViewport(render, viewportSnapshot);
+      render?.({ scope: "translate-sidebar" });
 
       if (state.editorChapter.activeRowId === rowId && state.editorChapter.activeLanguageCode === languageCode) {
         loadActiveEditorFieldHistory(render);
@@ -769,7 +773,8 @@ export async function toggleEditorRowFieldMarker(
         (currentRow) => applyEditorRowMarkerSaveFailed(currentRow, languageCode, previousFieldState, message),
       );
       reconcileDirtyTrackedEditorRows([rowId]);
-      render?.();
+      renderTranslateBodyPreservingViewport(render, viewportSnapshot);
+      render?.({ scope: "translate-sidebar" });
     }
     showNoticeBadge(message || "The review marker could not be saved.", render);
   }

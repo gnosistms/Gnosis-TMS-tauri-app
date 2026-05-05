@@ -311,7 +311,9 @@ export function createTranslateActions(render) {
       const rowId = button?.dataset.rowId ?? null;
       const languageCode = button?.dataset.languageCode ?? null;
       const kind = action === "toggle-editor-reviewed" ? "reviewed" : "please-check";
-      await toggleEditorRowFieldMarker(render, rowId, languageCode, kind);
+      await toggleEditorRowFieldMarker(render, rowId, languageCode, kind, {
+        target: event?.target ?? null,
+      });
       return true;
     }
 

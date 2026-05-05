@@ -314,7 +314,11 @@ export function registerTranslateEditorDomEvents(app, render) {
     const rowId = button.dataset.rowId ?? "";
     const languageCode = button.dataset.languageCode ?? "";
     const kind = button.dataset.action === "toggle-editor-reviewed" ? "reviewed" : "please-check";
-    void toggleEditorRowFieldMarker(render, rowId, languageCode, kind);
+    void toggleEditorRowFieldMarker(render, rowId, languageCode, kind, {
+      viewportSnapshot: captureTranslateViewport(button, {
+        fallbackAnchor: captureTranslateAnchorForRow(rowId, languageCode),
+      }),
+    });
   });
 
   app.addEventListener("click", (event) => {
