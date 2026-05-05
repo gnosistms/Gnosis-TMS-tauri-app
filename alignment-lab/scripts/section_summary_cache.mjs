@@ -29,9 +29,14 @@ const maxSourceSections = Number(argValue("--max-source", "10"));
 const maxTargetSections = Number(argValue("--max-target", "12"));
 const jobId = argValue("--job-id", "section-summary");
 
-const apiKey = (await fs.readFile(apiKeyPath, "utf8")).trim();
-if (!apiKey) {
-  throw new Error(`${apiKeyPath} is empty`);
+let cachedApiKey = null;
+async function getApiKey() {
+  if (cachedApiKey !== null) return cachedApiKey;
+  cachedApiKey = (await fs.readFile(apiKeyPath, "utf8")).trim();
+  if (!cachedApiKey) {
+    throw new Error(`${apiKeyPath} is empty`);
+  }
+  return cachedApiKey;
 }
 
 function parseUnits(text) {
@@ -61,6 +66,7 @@ function makeSections(units, docRole) {
 }
 
 async function openaiStructured({ name, schema, prompt }) {
+  const apiKey = await getApiKey();
   const body = {
     model,
     input: prompt,
@@ -208,6 +214,7 @@ try {
 const output = {
   model,
   promptVersion,
+  signature,
   summaryLanguageMode: "input_language",
   languages: {
     source: sourceLanguage,

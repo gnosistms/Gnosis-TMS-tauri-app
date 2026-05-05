@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import { hashJson } from "./cache_progress.mjs";
 
 const root = "/Users/hans/Desktop/GnosisTMS/alignment-lab";
 const model = "gpt-5.5";
@@ -30,9 +31,14 @@ const anchorCount = Number(argValue("--anchor-count", "4"));
 const maxExpansionBlocks = Number(argValue("--max-expansion-blocks", "20"));
 const forceRelabel = hasFlag("--force-relabel");
 
-const apiKey = (await fs.readFile(apiKeyPath, "utf8")).trim();
-if (!apiKey) {
-  throw new Error(`${apiKeyPath} is empty`);
+let cachedApiKey = null;
+async function getApiKey() {
+  if (cachedApiKey !== null) return cachedApiKey;
+  cachedApiKey = (await fs.readFile(apiKeyPath, "utf8")).trim();
+  if (!cachedApiKey) {
+    throw new Error(`${apiKeyPath} is empty`);
+  }
+  return cachedApiKey;
 }
 
 const summaryCache = JSON.parse(await fs.readFile(summaryCachePath, "utf8"));
@@ -163,14 +169,34 @@ function writeJson(path, value) {
 }
 
 function cacheSignature() {
+  const sectionIdentity = (summary) => ({
+    docRole: summary.docRole,
+    sectionId: summary.sectionId,
+    unitRange: summary.unitRange,
+    language: summary.language,
+    sectionContentHash: summary.sectionContentHash,
+    model: summary.model,
+    promptVersion: summary.promptVersion,
+  });
+  const summaryIdentity = (summary) => ({
+    ...sectionIdentity(summary),
+    summaryHash: hashJson(summary.summary ?? ""),
+  });
+
   return {
+    model,
     promptVersion,
     summaryCache: {
+      signatureHash: hashJson(summaryCache.signature ?? {}),
       promptVersion: summaryCache.promptVersion,
       summaryLanguageMode: summaryCache.summaryLanguageMode,
       languages: summaryCache.languages,
       chunkSize: summaryCache.chunkSize,
       stride: summaryCache.stride,
+      sourceSectionHash: hashJson(sourceSummaries.map(sectionIdentity)),
+      targetSectionHash: hashJson(targetSummaries.map(sectionIdentity)),
+      sourceSummaryHash: hashJson(sourceSummaries.map(summaryIdentity)),
+      targetSummaryHash: hashJson(targetSummaries.map(summaryIdentity)),
     },
     options: {
       blockSize,
@@ -181,10 +207,11 @@ function cacheSignature() {
 }
 
 function signaturesMatch(cache) {
-  return JSON.stringify(cache?.signature) === JSON.stringify(cacheSignature());
+  return hashJson(cache?.signature ?? null) === hashJson(cacheSignature());
 }
 
 async function openaiStructured({ name, schema, prompt }) {
+  const apiKey = await getApiKey();
   const body = {
     model,
     input: prompt,
@@ -554,6 +581,7 @@ const dp = runSparseDp(labelRows);
 const dpOutput = {
   model,
   promptVersion,
+  signature: cacheSignature(),
   candidatesPath: candidatePath,
   expansionsPath: expansionPath,
   matchesPath: labelPath,

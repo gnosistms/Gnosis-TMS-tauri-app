@@ -4,6 +4,7 @@ import {
   hashJson,
   openAlignmentJob,
   sha256,
+  stageSignatureHash,
 } from "./cache_progress.mjs";
 
 const root = "/Users/hans/Desktop/GnosisTMS/alignment-lab";
@@ -34,8 +35,13 @@ const jobId = argValue("--job-id", `row-level-${maxRows}`);
 const forceRows = process.argv.includes("--force-rows");
 const forceConflicts = process.argv.includes("--force-conflicts");
 
-const apiKey = (await fs.readFile(apiKeyPath, "utf8")).trim();
-if (!apiKey) throw new Error(`${apiKeyPath} is empty`);
+let cachedApiKey = null;
+async function getApiKey() {
+  if (cachedApiKey !== null) return cachedApiKey;
+  cachedApiKey = (await fs.readFile(apiKeyPath, "utf8")).trim();
+  if (!cachedApiKey) throw new Error(`${apiKeyPath} is empty`);
+  return cachedApiKey;
+}
 
 function parseUnits(text, limit) {
   return text
@@ -55,6 +61,7 @@ function makeSections(units, docRole) {
       sectionId: sections.length + 1,
       docRole,
       unitRange: [sectionUnits[0].id, sectionUnits.at(-1).id],
+      sectionContentHash: hashJson(sectionUnits.map((unit) => unit.text)),
       units: sectionUnits,
     });
     if (startIndex + chunkSize >= units.length) break;
@@ -125,6 +132,7 @@ const conflictSchema = {
 };
 
 async function openaiStructured({ schemaName, schema, prompt }) {
+  const apiKey = await getApiKey();
   const body = {
     model,
     input: prompt,
@@ -322,7 +330,7 @@ async function resolveConflict({ targetUnit, candidates, sourceUnits, conflictCa
   }
 }
 
-function renderAlignmentHtml({ sourceUnits, targetUnits, alignments, finalChecks, modelId }) {
+function buildPreviewModel({ sourceUnits, targetUnits, alignments }) {
   const targetById = new Map(targetUnits.map((unit) => [unit.id, unit]));
   const targetFirstSource = new Map(
     alignments
@@ -331,51 +339,101 @@ function renderAlignmentHtml({ sourceUnits, targetUnits, alignments, finalChecks
   );
   const targetsBySource = new Map();
   const unaligned = [];
+  const targetOccurrences = new Map();
+  const unresolvedSplitTargetIds = [];
+
+  function makeTargetBlock(alignment, target) {
+    targetOccurrences.set(target.id, (targetOccurrences.get(target.id) ?? 0) + 1);
+    return {
+      targetId: target.id,
+      text: target.text,
+      splitUnresolved: alignment.sourceIds.length > 1,
+    };
+  }
+
   for (const alignment of alignments) {
     const target = targetById.get(alignment.targetId);
     if (!target) continue;
     if (alignment.sourceIds.length === 0) {
-      unaligned.push({ target, slot: inferUnalignedSlot(target.id, targetUnits, targetFirstSource, sourceUnits.length) });
+      targetOccurrences.set(target.id, (targetOccurrences.get(target.id) ?? 0) + 1);
+      unaligned.push({
+        slot: inferUnalignedSlot(target.id, targetUnits, targetFirstSource, sourceUnits.length),
+        targetBlock: { targetId: target.id, text: target.text, splitUnresolved: false },
+      });
       continue;
     }
+    if (alignment.sourceIds.length > 1) unresolvedSplitTargetIds.push(alignment.targetId);
     for (const sourceId of alignment.sourceIds) {
       if (!targetsBySource.has(sourceId)) targetsBySource.set(sourceId, []);
-      targetsBySource.get(sourceId).push(target);
+      targetsBySource.get(sourceId).push(makeTargetBlock(alignment, target));
     }
   }
   const unalignedBySlot = new Map();
   for (const row of unaligned) {
     if (!unalignedBySlot.has(row.slot)) unalignedBySlot.set(row.slot, []);
-    unalignedBySlot.get(row.slot).push(row.target);
-  }
-
-  function renderTargets(targets) {
-    return targets
-      .sort((a, b) => a.id - b.id)
-      .map((target) => `<div class="target-unit"><span class="id">T${target.id}</span>${escapeHtml(target.text)}</div>`)
-      .join("\n");
-  }
-  function renderUnaligned(slot) {
-    return (unalignedBySlot.get(slot) ?? [])
-      .sort((a, b) => a.id - b.id)
-      .map((target) => `<tr><td><span class="empty">No source unit aligned</span></td><td>${renderTargets([target])}</td></tr>`)
-      .join("\n");
+    unalignedBySlot.get(row.slot).push(row.targetBlock);
   }
 
   const rows = [];
-  for (let index = 0; index < sourceUnits.length; index += 1) {
-    rows.push(renderUnaligned(index));
-    const source = sourceUnits[index];
-    const targets = targetsBySource.get(source.id) ?? [];
-    rows.push(`<tr><td><span class="id">S${source.id}</span>${escapeHtml(source.text)}</td><td>${targets.length ? renderTargets(targets) : '<span class="empty">No target unit aligned</span>'}</td></tr>`);
+  const sourceTexts = [];
+  const targetTexts = [];
+
+  function pushRow(row) {
+    rows.push(row);
+    if (row.source) sourceTexts.push(row.source.text);
+    for (const targetBlock of row.targetBlocks) targetTexts.push(targetBlock.text);
   }
-  rows.push(renderUnaligned(sourceUnits.length));
+
+  for (let index = 0; index < sourceUnits.length; index += 1) {
+    for (const targetBlock of (unalignedBySlot.get(index) ?? []).sort((a, b) => a.targetId - b.targetId)) {
+      pushRow({ source: null, targetBlocks: [targetBlock] });
+    }
+    const source = sourceUnits[index];
+    const targetBlocks = (targetsBySource.get(source.id) ?? []).sort((a, b) => a.targetId - b.targetId);
+    pushRow({ source, targetBlocks });
+  }
+  for (const targetBlock of (unalignedBySlot.get(sourceUnits.length) ?? []).sort((a, b) => a.targetId - b.targetId)) {
+    pushRow({ source: null, targetBlocks: [targetBlock] });
+  }
+
+  return {
+    rows,
+    sourceTexts,
+    targetTexts,
+    targetOccurrences,
+    unresolvedSplitTargetIds: [...new Set(unresolvedSplitTargetIds)].sort((a, b) => a - b),
+  };
+}
+
+function renderAlignmentHtml({ previewModel, finalChecks, modelId, sourceCount, targetCount }) {
+  function renderTargetBlocks(targetBlocks) {
+    if (targetBlocks.length === 0) return '<span class="empty">No target unit aligned</span>';
+    return targetBlocks
+      .map((target) => {
+        const warning = target.splitUnresolved
+          ? '<span class="target-warning">Split target unresolved</span>'
+          : "";
+        return `<div class="target-unit"><span class="id">T${target.targetId}</span>${escapeHtml(target.text)}${warning}</div>`;
+      })
+      .join("\n");
+  }
+
+  const rows = previewModel.rows.map((row) => {
+    const sourceCell = row.source
+      ? `<span class="id">S${row.source.id}</span>${escapeHtml(row.source.text)}`
+      : '<span class="empty">No source unit aligned</span>';
+    return `<tr><td>${sourceCell}</td><td>${renderTargetBlocks(row.targetBlocks)}</td></tr>`;
+  });
 
   const failedChecks = finalChecks.filter((check) => !check.passed).map((check) => check.name);
+  const warnings = finalChecks.filter((check) => check.warning && check.details.length > 0);
   const checksHtml =
     failedChecks.length === 0
       ? '<div class="checks">Final checks: passed</div>'
       : `<div class="checks checks-failed">Final checks failed: ${escapeHtml(failedChecks.join(", "))}</div>`;
+  const warningsHtml = warnings.length
+    ? `<div class="checks checks-warning">Warnings: ${escapeHtml(warnings.map((check) => `${check.name} (${check.details.length})`).join(", "))}</div>`
+    : "";
 
   return `<!doctype html>
 <html lang="en">
@@ -390,18 +448,20 @@ h1{font-size:22px;margin:0 0 6px;}
 .meta{color:#5b6472;font-size:13px;margin:0 0 18px;}
 .checks{display:inline-block;margin:0 0 14px;padding:5px 8px;border:1px solid #b8d8c2;background:#eef8f1;color:#176033;font-size:13px;font-weight:700;}
 .checks-failed{border-color:#efb4ac;background:#fff1ef;color:#9d2b1e;}
+.checks-warning{margin-left:8px;border-color:#e7ca80;background:#fff8e6;color:#765200;}
 table{width:100%;border-collapse:collapse;table-layout:fixed;background:#fff;border:1px solid #d7deea;}
 th,td{border-bottom:1px solid #e7ebf2;vertical-align:top;text-align:left;padding:10px 12px;line-height:1.5;white-space:pre-wrap;}
 th{position:sticky;top:0;background:#eef2f7;z-index:1;font-size:13px;}
 .id{display:inline-block;min-width:42px;color:#697386;font-size:12px;font-weight:700;}
 .target-unit+.target-unit{margin-top:8px;}
+.target-warning{display:block;margin-top:4px;color:#9d5d00;font-size:12px;font-weight:700;}
 .empty{color:#9aa3b2;}
 </style>
 </head>
 <body><main>
 <h1>Multi-Chunk Alignment Report</h1>
-<p class="meta">Model: ${escapeHtml(modelId)} &nbsp; Rows: first ${sourceUnits.length} source / ${targetUnits.length} target</p>
-${checksHtml}
+<p class="meta">Model: ${escapeHtml(modelId)} &nbsp; Rows: first ${sourceCount} source / ${targetCount} target</p>
+${checksHtml}${warningsHtml}
 <table><thead><tr><th>Source</th><th>Aligned Target</th></tr></thead><tbody>
 ${rows.join("\n")}
 </tbody></table>
@@ -416,10 +476,14 @@ function inferUnalignedSlot(targetId, targetUnits, targetFirstSource, sourceCoun
   return sourceCount;
 }
 
-function finalChecks(sourceUnits, targetUnits, alignments) {
-  const outputTargetText = alignments
-    .map((alignment) => targetUnits.find((unit) => unit.id === alignment.targetId)?.text ?? "")
-    .join(" ");
+function normalizeIgnoringWhitespace(text) {
+  return text.replace(/\s+/gu, "");
+}
+
+function finalChecks(sourceUnits, targetUnits, previewModel) {
+  const inputSourceText = normalizeIgnoringWhitespace(sourceUnits.map((unit) => unit.text).join(""));
+  const outputSourceText = normalizeIgnoringWhitespace(previewModel.sourceTexts.join(""));
+  const outputTargetText = previewModel.targetTexts.join(" ");
   const missing = [];
   const counts = new Map();
   for (const token of targetUnits.flatMap((unit) => unit.text.split(/\s+/).filter(Boolean))) {
@@ -432,10 +496,54 @@ function finalChecks(sourceUnits, targetUnits, alignments) {
   for (const [token, count] of counts) {
     if ((outputCounts.get(token) ?? 0) < count) missing.push(`${token}: expected ${count}, found ${outputCounts.get(token) ?? 0}`);
   }
+  const duplicateTargetDetails = [...previewModel.targetOccurrences.entries()]
+    .filter(([, count]) => count > 1)
+    .map(([targetId, count]) => `T${targetId}: displayed ${count} times`);
   return [
-    { name: "sourceTextCoverage", passed: true, details: [] },
+    {
+      name: "sourceTextCoverage",
+      passed: inputSourceText === outputSourceText,
+      details: inputSourceText === outputSourceText
+        ? []
+        : [`input chars ${inputSourceText.length}, output chars ${outputSourceText.length}`],
+    },
     { name: "targetWordCoverage", passed: missing.length === 0, details: missing },
+    {
+      name: "duplicatedTargetText",
+      passed: true,
+      warning: duplicateTargetDetails.length > 0,
+      details: duplicateTargetDetails,
+    },
   ];
+}
+
+function validateSparseDpForCurrentInput(sparseDp, sourceSections, targetSections) {
+  const sourceSummaryById = new Map((sparseDp.sourceSummaries ?? []).map((summary) => [summary.sectionId, summary]));
+  const targetSummaryById = new Map((sparseDp.targetSummaries ?? []).map((summary) => [summary.sectionId, summary]));
+  const mismatches = [];
+
+  function validateSection(section, summary, label) {
+    if (!summary) {
+      mismatches.push(`${label}${section.sectionId}: missing from ${sparseDpPath}`);
+      return;
+    }
+    if (summary.unitRange?.[0] !== section.unitRange[0] || summary.unitRange?.[1] !== section.unitRange[1]) {
+      mismatches.push(`${label}${section.sectionId}: unit range changed`);
+    }
+    if (summary.sectionContentHash !== section.sectionContentHash) {
+      mismatches.push(`${label}${section.sectionId}: content hash changed`);
+    }
+  }
+
+  for (const section of sourceSections) validateSection(section, sourceSummaryById.get(section.sectionId), "S");
+  for (const section of targetSections) validateSection(section, targetSummaryById.get(section.sectionId), "T");
+
+  if (mismatches.length > 0) {
+    throw new Error(
+      `Stale section corridor: ${sparseDpPath} does not match the current parsed input. ` +
+      `Regenerate section summaries and sparse DP before row-level alignment. Details: ${mismatches.slice(0, 8).join("; ")}`
+    );
+  }
 }
 
 const sourceRawText = await fs.readFile(sourcePath, "utf8");
@@ -445,6 +553,7 @@ const targetUnits = parseUnits(targetRawText, maxRows);
 const sourceSections = makeSections(sourceUnits, "source");
 const targetSections = makeSections(targetUnits, "target");
 const sparseDp = JSON.parse(await fs.readFile(sparseDpPath, "utf8"));
+validateSparseDpForCurrentInput(sparseDp, sourceSections, targetSections);
 const sectionCorridor = (sparseDp.sectionCorridor ?? []).filter(
   (row) => row.targetSectionId <= targetSections.length
 );
@@ -460,11 +569,15 @@ const signature = {
     models: {
       rowAlignment: model,
       conflictResolver: model,
+      splitTarget: null,
     },
     promptVersions: {
       rowAlignment: "row-align-v1",
       conflictResolver: "row-conflict-v1",
+      splitTarget: "whole-target-fallback-v1",
     },
+    htmlRendererVersion: "alignment-preview-v2",
+    finalCheckVersion: "coverage-checks-v2",
   }),
   chunkSize,
   stride,
@@ -480,11 +593,15 @@ const legacySignature = {
   targetHash: sha256(JSON.stringify(targetUnits)),
   corridorHash: sha256(JSON.stringify(sectionCorridor)),
 };
-function signatureMatches(cache) {
-  return (
-    JSON.stringify(cache?.signature) === JSON.stringify(signature) ||
-    JSON.stringify(cache?.signature) === JSON.stringify(legacySignature)
-  );
+function signatureMatches(cache, stageId) {
+  if (!cache?.signature) return false;
+  try {
+    if (stageSignatureHash(cache.signature, stageId) === stageSignatureHash(signature, stageId)) {
+      return true;
+    }
+  } catch {
+  }
+  return JSON.stringify(cache.signature) === JSON.stringify(legacySignature);
 }
 const job = await openAlignmentJob({ root, jobId, signature });
 
@@ -513,7 +630,7 @@ try {
   candidateCache = JSON.parse(await fs.readFile(candidatePath, "utf8"));
 } catch {
 }
-if (forceRows || !candidateCache || !signatureMatches(candidateCache)) {
+if (forceRows || !candidateCache || !signatureMatches(candidateCache, "row_alignment")) {
   candidateCache = { signature, sectionRuns: [], candidates: [] };
 } else {
   candidateCache.signature = signature;
@@ -651,7 +768,7 @@ await job.emit("row_alignment", {
 let conflictCache = { signature, resolutions: {}, errors: [] };
 try {
   const parsed = JSON.parse(await fs.readFile(conflictsPath, "utf8"));
-  if (!forceConflicts && signatureMatches(parsed)) {
+  if (!forceConflicts && signatureMatches(parsed, "resolve_conflicts")) {
     conflictCache = parsed;
     conflictCache.signature = signature;
   }
@@ -773,7 +890,21 @@ await job.emit("resolve_conflicts", {
   message: `Resolved ${resolvedConflictCount} row-level conflicts`,
 });
 
-const checks = finalChecks(sourceUnits, targetUnits, mergedAlignments);
+const unresolvedSplitTargetIds = mergedAlignments
+  .filter((alignment) => alignment.sourceIds.length > 1)
+  .map((alignment) => alignment.targetId);
+await job.emit("split_targets", {
+  status: unresolvedSplitTargetIds.length === 0 ? "complete" : "warning",
+  completed: 0,
+  total: unresolvedSplitTargetIds.length,
+  warningCount: unresolvedSplitTargetIds.length,
+  message: unresolvedSplitTargetIds.length === 0
+    ? "No combined target rows found"
+    : `Split-target pass is not implemented in the multi-row runner; using whole-target fallback for ${unresolvedSplitTargetIds.length} target rows`,
+});
+
+const previewModel = buildPreviewModel({ sourceUnits, targetUnits, alignments: mergedAlignments });
+const checks = finalChecks(sourceUnits, targetUnits, previewModel);
 const mergedReport = {
   signature,
   sourceUnits,
@@ -783,6 +914,13 @@ const mergedReport = {
   conflictsPath,
   alignments: mergedAlignments,
   mergeRows,
+  splitTargets: {
+    status: unresolvedSplitTargetIds.length === 0 ? "none" : "whole_target_fallback",
+    unresolvedTargetIds: unresolvedSplitTargetIds,
+  },
+  preview: {
+    targetDuplicateWarnings: checks.find((check) => check.name === "duplicatedTargetText")?.details ?? [],
+  },
   finalChecks: checks,
 };
 await fs.writeFile(mergedPath, JSON.stringify(mergedReport, null, 2));
@@ -792,7 +930,13 @@ await job.emit("build_preview", {
   total: sourceUnits.length,
   message: "Rendering combined alignment preview",
 });
-await fs.writeFile(htmlPath, renderAlignmentHtml({ sourceUnits, targetUnits, alignments: mergedAlignments, finalChecks: checks, modelId: model }));
+await fs.writeFile(htmlPath, renderAlignmentHtml({
+  previewModel,
+  finalChecks: checks,
+  modelId: model,
+  sourceCount: sourceUnits.length,
+  targetCount: targetUnits.length,
+}));
 await job.emit("build_preview", {
   status: "complete",
   completed: sourceUnits.length,
