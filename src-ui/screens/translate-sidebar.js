@@ -7,6 +7,7 @@ import {
   normalizeEditorAssistantState,
 } from "../app/editor-ai-assistant-state.js";
 import {
+  getAiProviderActionLabel,
   getAiProviderIconUrl,
 } from "../app/ai-provider-config.js";
 import { resolveVisibleEditorAiTranslateAction } from "../app/editor-ai-translate-state.js";
@@ -82,7 +83,7 @@ function renderTranslateActionButton(buttonModel, isAnyActionRunning) {
         }
       </span>
       <span class="translate-ai-action-button__copy">
-        <span class="translate-ai-action-button__model">${escapeHtml(buttonModel.modelLabel)}</span>
+        <span class="translate-ai-action-button__model">${escapeHtml(buttonModel.buttonLabel)}</span>
       </span>
     </button>
   `;
@@ -127,6 +128,12 @@ function renderTranslateTools(editorChapter, rows, languages, sourceCode, target
     return "";
   }
 
+  const currentTargetText =
+    typeof targetSection.text === "string" ? targetSection.text : String(targetSection.text ?? "");
+  if (currentTargetText.trim().length > 0) {
+    return "";
+  }
+
   const translateActions = resolveVisibleAiTranslateActions(actionConfig);
   const visibleActions = translateActions.map((translateAction) =>
     resolveVisibleEditorAiTranslateAction(
@@ -167,12 +174,13 @@ function renderTranslateTools(editorChapter, rows, languages, sourceCode, target
     const modelId = typeof selection.modelId === "string" ? selection.modelId.trim() : "";
     const visibleAction = visibleActions[index];
     const visibleModelLabel = modelId || "Select a model in AI Settings";
+    const providerLabel = getAiProviderActionLabel(providerId);
     return {
       actionId: translateAction.actionId,
-      label: translateAction.label,
       iconUrl: getAiProviderIconUrl(providerId),
       isLoading: visibleAction.isLoading,
       isDisabled: !canTranslate || !modelId,
+      buttonLabel: `Translate with ${providerLabel}`,
       modelLabel: visibleModelLabel,
       tooltip: offlineMode === true
         ? "AI actions are unavailable offline."
@@ -615,11 +623,7 @@ function renderAssistantTranscript(editorChapter, rows, languages, sourceCode, t
   }
 
   if (items.length === 0 && !statusText) {
-    return `
-      <div class="assistant-empty">
-        <p>Chat with the AI Assistant about the selected translation.</p>
-      </div>
-    `;
+    return "";
   }
 
   return `

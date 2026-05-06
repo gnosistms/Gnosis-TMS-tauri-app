@@ -122,7 +122,9 @@ export function prepareEditorLocationBeforeRender(previousScreen, appState) {
   clearEditorLocationSaveTimer();
 
   if (previousScreen === "translate") {
-    persistEditorLocationForChapter(loadedEditorChapterId(appState));
+    persistEditorLocationForChapter(loadedEditorChapterId(appState), {
+      requireRestored: appState?.screen === "translate",
+    });
   }
 }
 
@@ -174,5 +176,7 @@ export function scheduleEditorLocationSave(appState) {
 }
 
 export function persistCurrentEditorLocation(appState) {
-  persistEditorLocationForChapter(currentEditorChapterId(appState));
+  persistEditorLocationForChapter(currentEditorChapterId(appState), {
+    requireRestored: false,
+  });
 }

@@ -72,6 +72,42 @@ test("assistant sidebar disables AI translate and composer while offline", () =>
   assert.match(html, /data-editor-assistant-draft[\s\S]*disabled/);
 });
 
+test("assistant translate button uses provider label and relies on composer placeholder for empty prompt guidance", () => {
+  const html = renderTranslateSidebar(
+    activeEditorChapter(),
+    rows,
+    languages,
+    "es",
+    "vi",
+    createAiActionConfigurationState(),
+  );
+
+  assert.match(html, />Translate with OpenAI<\/span>/);
+  assert.match(html, /placeholder="Ask AI Assistant about this translation\.\.\."/);
+  assert.doesNotMatch(html, /Chat with the AI Assistant about the selected translation\./);
+});
+
+test("assistant sidebar hides translate buttons when the selected translation is non-empty", () => {
+  const html = renderTranslateSidebar(
+    activeEditorChapter(),
+    [{
+      id: "row-1",
+      sections: [
+        { code: "es", text: "Hola" },
+        { code: "vi", text: "Xin chao" },
+      ],
+    }],
+    languages,
+    "es",
+    "vi",
+    createAiActionConfigurationState(),
+  );
+
+  assert.doesNotMatch(html, /data-action="run-editor-ai-translate:translate1"/);
+  assert.doesNotMatch(html, /Translate with OpenAI/);
+  assert.match(html, /data-editor-assistant-draft/);
+});
+
 test("assistant transcript renders one transient query status", () => {
   const baseThread = {
     "row-1::es::vi": {
