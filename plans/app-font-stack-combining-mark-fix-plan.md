@@ -27,7 +27,7 @@ Use a non-subsetted primary UI WOFF2 font face for Latin-script UI text, and kee
    - Keep script-specific font families in the stack for glyph coverage beyond Inter.
 
 4. Add regression coverage.
-   - Add a source-level test that verifies `Inter App` is defined with full local font files and is first in the sans stacks.
+   - Add a source-level test that verifies `Inter App` is defined with the full local WOFF2 file and is first in the sans stacks.
    - Verify `--font-serif` does not start with a subsetted Noto Serif face.
 
 5. Verify behavior.
