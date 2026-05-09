@@ -126,6 +126,9 @@ export function buildGlossaryTermFromDraft(draftSnapshot, options = {}) {
       termId,
       sourceTerms: Array.isArray(draftSnapshot?.sourceTerms) ? draftSnapshot.sourceTerms : [],
       targetTerms: Array.isArray(draftSnapshot?.targetTerms) ? draftSnapshot.targetTerms : [],
+      targetVariantNotes: Array.isArray(draftSnapshot?.targetVariantNotes)
+        ? draftSnapshot.targetVariantNotes
+        : [],
       notesToTranslators:
         typeof draftSnapshot?.notesToTranslators === "string"
           ? draftSnapshot.notesToTranslators

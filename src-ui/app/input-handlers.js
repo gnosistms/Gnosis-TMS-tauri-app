@@ -39,6 +39,7 @@ import {
   updateGlossaryCreationField,
   updateGlossaryTermDraftField,
   updateGlossaryTermSearchQuery,
+  updateGlossaryTermVariantNote,
 } from "./glossary-flow.js";
 import {
   MANAGE_CHAPTER_LANGUAGES_OPTION_VALUE,
@@ -262,6 +263,22 @@ function handleGlossaryTermNotesInput(event) {
   }
 
   updateGlossaryTermDraftField("notesToTranslators", input.value);
+  return true;
+}
+
+function handleGlossaryTermVariantNoteInput(event) {
+  const input = event.target.closest("[data-glossary-term-variant-note-input]");
+  if (!input) {
+    return false;
+  }
+
+  const index = Number.parseInt(input.dataset.variantIndex ?? "", 10);
+  if (!Number.isInteger(index) || index < 0) {
+    return false;
+  }
+
+  updateGlossaryTermVariantNote(index, input.value);
+  syncAutoSizeTextarea(input, { minHeight: 44, maxHeight: 132 });
   return true;
 }
 
@@ -667,6 +684,7 @@ const inputHandlers = [
   handleGlossaryPermanentDeleteInput,
   handleGlossaryTermSearchInput,
   handleGlossaryTermVariantInput,
+  handleGlossaryTermVariantNoteInput,
   handleGlossaryTermNotesInput,
   handleGlossaryTermFootnoteInput,
   handleEditorSourceLanguageInput,

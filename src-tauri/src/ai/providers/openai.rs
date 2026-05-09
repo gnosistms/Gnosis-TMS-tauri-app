@@ -5,8 +5,7 @@ use serde_json::{json, Value};
 use crate::ai::{
     providers::shared_http_client,
     types::{
-        AiPromptOutputFormat, AiPromptRequest, AiPromptResponse, AiProviderModel,
-        AiReviewResponse,
+        AiPromptOutputFormat, AiPromptRequest, AiPromptResponse, AiProviderModel, AiReviewResponse,
     },
 };
 
@@ -543,9 +542,7 @@ mod tests {
         build_probe_request, build_prompt_request, is_hidden_gpt_pro_model,
         normalize_review_response, shortlist_recommended_models, OPENAI_PROBE_MAX_OUTPUT_TOKENS,
     };
-    use crate::ai::types::{
-        AiPromptOutputFormat, AiPromptRequest, AiProviderId, AiProviderModel,
-    };
+    use crate::ai::types::{AiPromptOutputFormat, AiPromptRequest, AiProviderId, AiProviderModel};
 
     #[test]
     fn normalize_review_response_prefers_top_level_output_text() {
@@ -691,7 +688,11 @@ mod tests {
                         .filter_map(serde_json::Value::as_str)
                         .collect::<Vec<_>>()
                 }),
-            Some(vec!["responseKind", "assistantText", "draftTranslationText"])
+            Some(vec![
+                "responseKind",
+                "assistantText",
+                "draftTranslationText"
+            ])
         );
         assert_eq!(
             payload

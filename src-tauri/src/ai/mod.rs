@@ -13,7 +13,8 @@ use crate::ai::types::{
     AiPromptRequest, AiProviderContinuationMetadata, AiProviderId, AiProviderModel,
     AiReviewRequest, AiReviewResponse, AiTranslatedGlossaryEntry,
     AiTranslatedGlossaryPreparationRequest, AiTranslatedGlossaryPreparationResponse,
-    AiTranslatedGlossaryTermInput, AiTranslationGlossaryHint, AiTranslationRequest,
+    AiTranslatedGlossaryTermInput, AiTranslationGlossaryHint, AiTranslationGlossaryTargetVariant,
+    AiTranslationGlossaryTargetVariantObject, AiTranslationNoTranslationHint, AiTranslationRequest,
     AiTranslationResponse,
 };
 use crate::ai_secret_storage::load_ai_provider_secret;
@@ -124,81 +125,175 @@ pub(crate) fn build_translation_prompt(request: &AiTranslationRequest) -> String
     }
 
     format!(
-        "Translate {source_label} to {target_label}, outputting only the translation.\n\nGlossary hints:\n- Apply a glossary hint only when its sourceTerm appears in the source text.\n- targetVariants is sorted in order of preference, best first. Use later variants only when grammar or context requires it.\n- If a targetVariant uses the notation base[ruby: annotation], preserve that ruby annotation when using the term.\n- Use notes as translation guidance when they are present.\n\n{glossary_hints}\n\nSource text:\n{}",
+        "Translate {source_label} to {target_label}, outputting only the translation.\n\nGlossary hints are compact JSON. Apply a glossary hint only when its sourceTerm appears in the source text. targetVariants contains non-empty target text sorted in order of preference, best first. Use later variants only when grammar or context requires it. noTranslation means this glossary term may be omitted from the translation; noTranslation.position ranks omission against targetVariants: \"only\" means omit the source term because no target text is recommended, \"first\" means omission is preferred and targetVariants are fallbacks, and \"later\" means targetVariants are preferred while omission is allowed when smoother or clearer. If a target variant text uses the notation base[ruby: annotation], preserve that ruby annotation when using the term. Use target variant notes, noTranslation.note, globalNotes, and footnotes as translation guidance when present.\n\n{glossary_hints}\n\nSource text:\n{}",
         request.text
     )
 }
 
 fn format_translation_glossary_hints(hints: &[AiTranslationGlossaryHint]) -> String {
-    hints
+    let values = hints
         .iter()
         .filter_map(|hint| {
             let source_term = hint.source_term.trim();
             let target_variants = hint
                 .target_variants
                 .iter()
+                .filter_map(format_glossary_target_variant_value)
+                .collect::<Vec<_>>();
+            let mut global_notes = hint
+                .global_notes
+                .iter()
                 .map(|value| value.trim())
                 .filter(|value| !value.is_empty())
+                .map(str::to_string)
                 .collect::<Vec<_>>();
-            let notes = hint
+            for note in hint
                 .notes
                 .iter()
                 .map(|value| value.trim())
                 .filter(|value| !value.is_empty())
+            {
+                if !global_notes.iter().any(|value| value == note) {
+                    global_notes.push(note.to_string());
+                }
+            }
+            let footnotes = hint
+                .footnotes
+                .iter()
+                .map(|value| value.trim())
+                .filter(|value| !value.is_empty())
+                .map(str::to_string)
                 .collect::<Vec<_>>();
-            let no_translation_position = hint.no_translation_position.as_deref().unwrap_or("").trim();
+            let no_translation = normalize_no_translation_hint(
+                hint.no_translation.as_ref(),
+                hint.no_translation_position.as_deref(),
+            );
             if source_term.is_empty()
                 || (target_variants.is_empty()
-                    && notes.is_empty()
-                    && no_translation_position.is_empty())
+                    && global_notes.is_empty()
+                    && footnotes.is_empty()
+                    && no_translation.is_none())
             {
                 return None;
             }
 
-            let mut lines = vec![format!("- sourceTerm: \"{source_term}\"")];
-            if no_translation_position == "only" {
-                lines.push(format!(
-                    "  Leave '{source_term}' out of your translation."
-                ));
-            } else {
-                if no_translation_position == "first" {
-                    lines.push(format!(
-                        "  Usually, the word {source_term} should be left out of the translation, however, if the context calls for it, you may consider one of the following translations:"
-                    ));
-                }
-
-                if !target_variants.is_empty() {
-                    lines.push(format!(
-                        "  targetVariants: {}",
-                        target_variants
-                            .iter()
-                            .map(|value| format!("\"{value}\""))
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    ));
-                }
-
-                if no_translation_position == "later" {
-                    lines.push(format!(
-                        "  If it makes the translation smoother or easier to understand, leave '{source_term}' out of the translation."
-                    ));
-                }
+            let mut object = serde_json::Map::new();
+            object.insert(
+                "sourceTerm".to_string(),
+                serde_json::Value::String(source_term.to_string()),
+            );
+            if !target_variants.is_empty() {
+                object.insert(
+                    "targetVariants".to_string(),
+                    serde_json::Value::Array(target_variants),
+                );
             }
-            if !notes.is_empty() {
-                lines.push(format!(
-                    "  notes: {}",
-                    notes
-                        .iter()
-                        .map(|value| format!("\"{value}\""))
-                        .collect::<Vec<_>>()
-                        .join(" | ")
-                ));
+            if !global_notes.is_empty() {
+                object.insert(
+                    "globalNotes".to_string(),
+                    serde_json::Value::Array(
+                        global_notes
+                            .into_iter()
+                            .map(serde_json::Value::String)
+                            .collect(),
+                    ),
+                );
+            }
+            if !footnotes.is_empty() {
+                object.insert(
+                    "footnotes".to_string(),
+                    serde_json::Value::Array(
+                        footnotes
+                            .into_iter()
+                            .map(serde_json::Value::String)
+                            .collect(),
+                    ),
+                );
+            }
+            if let Some(no_translation) = no_translation {
+                object.insert(
+                    "noTranslation".to_string(),
+                    format_no_translation_value(&no_translation),
+                );
             }
 
-            Some(lines.join("\n"))
+            Some(serde_json::Value::Object(object))
         })
-        .collect::<Vec<_>>()
-        .join("\n")
+        .collect::<Vec<_>>();
+
+    if values.is_empty() {
+        String::new()
+    } else {
+        serde_json::Value::Array(values).to_string()
+    }
+}
+
+fn normalize_no_translation_hint(
+    value: Option<&AiTranslationNoTranslationHint>,
+    legacy_position: Option<&str>,
+) -> Option<AiTranslationNoTranslationHint> {
+    let position = value
+        .map(|hint| hint.position.trim())
+        .filter(|position| !position.is_empty())
+        .or_else(|| {
+            legacy_position
+                .map(str::trim)
+                .filter(|position| !position.is_empty())
+        })?;
+    let note = value
+        .map(|hint| hint.note.trim().to_string())
+        .unwrap_or_default();
+    Some(AiTranslationNoTranslationHint {
+        position: position.to_string(),
+        note,
+    })
+}
+
+fn format_no_translation_value(
+    no_translation: &AiTranslationNoTranslationHint,
+) -> serde_json::Value {
+    let mut object = serde_json::Map::new();
+    object.insert(
+        "position".to_string(),
+        serde_json::Value::String(no_translation.position.trim().to_string()),
+    );
+    let note = no_translation.note.trim();
+    if !note.is_empty() {
+        object.insert(
+            "note".to_string(),
+            serde_json::Value::String(note.to_string()),
+        );
+    }
+    serde_json::Value::Object(object)
+}
+
+fn format_glossary_target_variant_value(
+    variant: &AiTranslationGlossaryTargetVariant,
+) -> Option<serde_json::Value> {
+    let (text, note) = match variant {
+        AiTranslationGlossaryTargetVariant::Text(text) => (text.trim(), ""),
+        AiTranslationGlossaryTargetVariant::Object(object) => {
+            (object.text.trim(), object.note.trim())
+        }
+    };
+    if text.is_empty() {
+        return None;
+    }
+
+    let mut object = serde_json::Map::new();
+    if !text.is_empty() {
+        object.insert(
+            "text".to_string(),
+            serde_json::Value::String(text.to_string()),
+        );
+    }
+    if !note.is_empty() {
+        object.insert(
+            "note".to_string(),
+            serde_json::Value::String(note.to_string()),
+        );
+    }
+    Some(serde_json::Value::Object(object))
 }
 
 fn format_assistant_transcript(entries: &[AiAssistantTranscriptEntry]) -> String {
@@ -646,8 +741,10 @@ enum AiAssistantResponseKind {
 struct PreparedGlossaryCandidate {
     match_term: String,
     tokens: Vec<String>,
-    target_variants: Vec<String>,
+    target_variants: Vec<AiTranslationGlossaryTargetVariant>,
+    no_translation: Option<AiTranslationNoTranslationHint>,
     notes: Vec<String>,
+    footnotes: Vec<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -661,8 +758,10 @@ struct TokenizedWord {
 struct PreparedGlossaryMatch {
     glossary_source_term: String,
     glossary_source_context: String,
-    target_variants: Vec<String>,
+    target_variants: Vec<AiTranslationGlossaryTargetVariant>,
+    no_translation: Option<AiTranslationNoTranslationHint>,
     notes: Vec<String>,
+    footnotes: Vec<String>,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -713,6 +812,97 @@ fn append_unique_term_values(values: &mut Vec<String>, incoming_values: &[String
     }
 }
 
+fn sanitize_glossary_target_variants(
+    values: &[AiTranslationGlossaryTargetVariant],
+) -> Vec<AiTranslationGlossaryTargetVariant> {
+    let mut variants = Vec::<AiTranslationGlossaryTargetVariant>::new();
+    let mut seen_text_indexes = HashMap::<String, usize>::new();
+
+    for value in values {
+        let (text, note) = match value {
+            AiTranslationGlossaryTargetVariant::Text(text) => (text.trim(), ""),
+            AiTranslationGlossaryTargetVariant::Object(object) => {
+                (object.text.trim(), object.note.trim())
+            }
+        };
+        if text.is_empty() {
+            continue;
+        }
+
+        if let Some(existing_index) = seen_text_indexes.get(text).copied() {
+            if !note.is_empty() {
+                match &mut variants[existing_index] {
+                    AiTranslationGlossaryTargetVariant::Object(existing) => {
+                        merge_note_text(&mut existing.note, note);
+                    }
+                    AiTranslationGlossaryTargetVariant::Text(existing_text) => {
+                        variants[existing_index] = AiTranslationGlossaryTargetVariant::Object(
+                            AiTranslationGlossaryTargetVariantObject {
+                                text: existing_text.trim().to_string(),
+                                note: note.to_string(),
+                            },
+                        );
+                    }
+                }
+            }
+            continue;
+        }
+
+        seen_text_indexes.insert(text.to_string(), variants.len());
+        if note.is_empty() {
+            variants.push(AiTranslationGlossaryTargetVariant::Text(text.to_string()));
+        } else {
+            variants.push(AiTranslationGlossaryTargetVariant::Object(
+                AiTranslationGlossaryTargetVariantObject {
+                    text: text.to_string(),
+                    note: note.to_string(),
+                },
+            ));
+        }
+    }
+
+    variants
+}
+
+fn append_unique_target_variants(
+    values: &mut Vec<AiTranslationGlossaryTargetVariant>,
+    incoming_values: &[AiTranslationGlossaryTargetVariant],
+) {
+    let mut combined = values.clone();
+    combined.extend_from_slice(incoming_values);
+    *values = sanitize_glossary_target_variants(&combined);
+}
+
+fn merge_note_text(existing: &mut String, incoming: &str) {
+    let incoming = incoming.trim();
+    if incoming.is_empty() {
+        return;
+    }
+    let current = existing.trim();
+    if current.is_empty() {
+        *existing = incoming.to_string();
+        return;
+    }
+    if current.split("\n\n").any(|value| value.trim() == incoming) {
+        return;
+    }
+    *existing = format!("{current}\n\n{incoming}");
+}
+
+fn merge_no_translation_hints(
+    existing: &mut Option<AiTranslationNoTranslationHint>,
+    incoming: Option<AiTranslationNoTranslationHint>,
+) {
+    let Some(incoming) = incoming else {
+        return;
+    };
+
+    match existing {
+        Some(existing) => merge_note_text(&mut existing.note, &incoming.note),
+        None => *existing = Some(incoming),
+    }
+}
+
 fn tokenize_glossary_term(term: &str) -> Vec<String> {
     glossary_token_regex()
         .find_iter(term)
@@ -737,8 +927,11 @@ fn build_glossary_match_candidates(
     let mut merged_candidates_by_key = HashMap::<String, PreparedGlossaryCandidate>::new();
 
     for term in glossary_terms {
-        let target_variants = sanitize_term_list(&term.target_variants);
-        let notes = sanitize_term_list(&term.notes);
+        let target_variants = sanitize_glossary_target_variants(&term.target_variants);
+        let mut notes = sanitize_term_list(&term.global_notes);
+        append_unique_term_values(&mut notes, &sanitize_term_list(&term.notes));
+        let footnotes = sanitize_term_list(&term.footnotes);
+        let no_translation = normalize_no_translation_hint(term.no_translation.as_ref(), None);
         for source_term in sanitize_term_list(&term.glossary_source_terms) {
             let tokens = tokenize_glossary_term(&source_term);
             if tokens.is_empty() {
@@ -750,11 +943,16 @@ fn build_glossary_match_candidates(
                 if source_term.len() > existing_candidate.match_term.len() {
                     existing_candidate.match_term = source_term;
                 }
-                append_unique_term_values(
+                append_unique_target_variants(
                     &mut existing_candidate.target_variants,
                     &target_variants,
                 );
                 append_unique_term_values(&mut existing_candidate.notes, &notes);
+                append_unique_term_values(&mut existing_candidate.footnotes, &footnotes);
+                merge_no_translation_hints(
+                    &mut existing_candidate.no_translation,
+                    no_translation.clone(),
+                );
                 continue;
             }
 
@@ -764,7 +962,9 @@ fn build_glossary_match_candidates(
                     match_term: source_term,
                     tokens,
                     target_variants: target_variants.clone(),
+                    no_translation: no_translation.clone(),
                     notes: notes.clone(),
+                    footnotes: footnotes.clone(),
                 },
             );
         }
@@ -875,7 +1075,9 @@ fn find_matched_glossary_terms(
                     end,
                 ),
                 target_variants: candidate.target_variants,
+                no_translation: candidate.no_translation,
                 notes: candidate.notes,
+                footnotes: candidate.footnotes,
             });
         }
 
@@ -1133,7 +1335,10 @@ pub(crate) fn prepare_ai_translated_glossary(
                 source_term: source_term.to_string(),
                 glossary_source_term: matched_term.glossary_source_term.clone(),
                 target_variants: matched_term.target_variants.clone(),
+                no_translation: matched_term.no_translation.clone(),
                 notes: matched_term.notes.clone(),
+                global_notes: matched_term.notes.clone(),
+                footnotes: matched_term.footnotes.clone(),
             });
         }
     }
@@ -1275,8 +1480,13 @@ mod tests {
         AiAssistantRowContext, AiAssistantRowLanguageText, AiAssistantRowWindowEntry,
         AiAssistantTargetLanguageHistoryEntry, AiAssistantTranscriptEntry, AiAssistantTurnKind,
         AiAssistantTurnRequest, AiProviderId, AiReviewRequest, AiTranslatedGlossaryTermInput,
-        AiTranslationGlossaryHint, AiTranslationRequest,
+        AiTranslationGlossaryHint, AiTranslationGlossaryTargetVariant,
+        AiTranslationNoTranslationHint, AiTranslationRequest,
     };
+
+    fn target_variant(value: &str) -> AiTranslationGlossaryTargetVariant {
+        AiTranslationGlossaryTargetVariant::Text(value.to_string())
+    }
 
     fn review_request() -> AiReviewRequest {
         AiReviewRequest {
@@ -1324,17 +1534,20 @@ mod tests {
         request.latest_translation = Some("Ban dich hien tai".to_string());
         request.glossary_hints = vec![AiTranslationGlossaryHint {
             source_term: "Fuente".to_string(),
-            target_variants: vec!["nguon".to_string()],
+            target_variants: vec![target_variant("nguon")],
             no_translation_position: None,
+            no_translation: None,
             notes: vec!["Use the spiritual meaning.".to_string()],
+            global_notes: vec![],
+            footnotes: vec![],
         }];
 
         let prompt = build_review_prompt(&request);
 
         assert!(prompt.contains("source_text: Fuente actual"));
         assert!(prompt.contains("glossary_info:"));
-        assert!(prompt.contains("sourceTerm: \"Fuente\""));
-        assert!(prompt.contains("targetVariants: \"nguon\""));
+        assert!(prompt.contains(r#""sourceTerm":"Fuente""#));
+        assert!(prompt.contains(r#""targetVariants":[{"text":"nguon"}]"#));
         assert!(prompt.contains("latest_translation: Ban dich hien tai"));
     }
 
@@ -1390,22 +1603,29 @@ mod tests {
             target_language: "Vietnamese".to_string(),
             glossary_hints: vec![AiTranslationGlossaryHint {
                 source_term: "gnostica".to_string(),
-                target_variants: vec!["hoc tro gnosis".to_string(), "cua gnosis".to_string()],
+                target_variants: vec![
+                    target_variant("hoc tro gnosis"),
+                    target_variant("cua gnosis"),
+                ],
                 no_translation_position: None,
+                no_translation: None,
                 notes: vec!["Lien quan den Gnosis".to_string()],
+                global_notes: vec![],
+                footnotes: vec![],
             }],
             installation_id: None,
         });
 
         assert!(prompt.contains(
-            "targetVariants is sorted in order of preference, best first. Use later variants only when grammar or context requires it."
+            "targetVariants contains non-empty target text sorted in order of preference, best first. Use later variants only when grammar or context requires it."
         ));
         assert!(prompt.contains(
-            "If a targetVariant uses the notation base[ruby: annotation], preserve that ruby annotation when using the term."
+            "If a target variant text uses the notation base[ruby: annotation], preserve that ruby annotation when using the term."
         ));
-        assert!(prompt.contains("- sourceTerm: \"gnostica\""));
-        assert!(prompt.contains("  targetVariants: \"hoc tro gnosis\", \"cua gnosis\""));
-        assert!(prompt.contains("  notes: \"Lien quan den Gnosis\""));
+        assert!(prompt.contains(r#""sourceTerm":"gnostica""#));
+        assert!(prompt
+            .contains(r#""targetVariants":[{"text":"hoc tro gnosis"},{"text":"cua gnosis"}]"#));
+        assert!(prompt.contains(r#""globalNotes":["Lien quan den Gnosis"]"#));
         assert!(prompt.contains("Source text:\nLa gnostica habla."));
     }
 
@@ -1421,14 +1641,17 @@ mod tests {
                 source_term: "mente".to_string(),
                 target_variants: vec![],
                 no_translation_position: Some("only".to_string()),
+                no_translation: None,
                 notes: vec![],
+                global_notes: vec![],
+                footnotes: vec![],
             }],
             installation_id: None,
         });
 
-        assert!(prompt.contains("- sourceTerm: \"mente\""));
-        assert!(prompt.contains("  Leave 'mente' out of your translation."));
-        assert!(!prompt.contains("targetVariants:"));
+        assert!(prompt.contains(r#""sourceTerm":"mente""#));
+        assert!(prompt.contains(r#""noTranslation":{"position":"only"}"#));
+        assert!(!prompt.contains(r#""targetVariants""#));
     }
 
     #[test]
@@ -1441,15 +1664,18 @@ mod tests {
             target_language: "Vietnamese".to_string(),
             glossary_hints: vec![AiTranslationGlossaryHint {
                 source_term: "mente".to_string(),
-                target_variants: vec!["tam".to_string(), "tri".to_string()],
+                target_variants: vec![target_variant("tam"), target_variant("tri")],
                 no_translation_position: Some("first".to_string()),
+                no_translation: None,
                 notes: vec![],
+                global_notes: vec![],
+                footnotes: vec![],
             }],
             installation_id: None,
         });
 
-        assert!(prompt.contains("Usually, the word mente should be left out of the translation, however, if the context calls for it, you may consider one of the following translations:"));
-        assert!(prompt.contains("  targetVariants: \"tam\", \"tri\""));
+        assert!(prompt.contains(r#""noTranslation":{"position":"first"}"#));
+        assert!(prompt.contains(r#""targetVariants":[{"text":"tam"},{"text":"tri"}]"#));
     }
 
     #[test]
@@ -1462,17 +1688,47 @@ mod tests {
             target_language: "Vietnamese".to_string(),
             glossary_hints: vec![AiTranslationGlossaryHint {
                 source_term: "mente".to_string(),
-                target_variants: vec!["tam".to_string(), "tri".to_string()],
+                target_variants: vec![target_variant("tam"), target_variant("tri")],
                 no_translation_position: Some("later".to_string()),
+                no_translation: None,
                 notes: vec![],
+                global_notes: vec![],
+                footnotes: vec![],
             }],
             installation_id: None,
         });
 
-        assert!(prompt.contains("  targetVariants: \"tam\", \"tri\""));
-        assert!(prompt.contains(
-            "  If it makes the translation smoother or easier to understand, leave 'mente' out of the translation."
-        ));
+        assert!(prompt.contains(r#""targetVariants":[{"text":"tam"},{"text":"tri"}]"#));
+        assert!(prompt.contains(r#""noTranslation":{"position":"later"}"#));
+    }
+
+    #[test]
+    fn build_translation_prompt_splits_note_only_empty_variant_into_no_translation_note() {
+        let prompt = build_translation_prompt(&AiTranslationRequest {
+            provider_id: AiProviderId::OpenAi,
+            model_id: "gpt-5.4".to_string(),
+            text: "La mente canta.".to_string(),
+            source_language: "Spanish".to_string(),
+            target_language: "Vietnamese".to_string(),
+            glossary_hints: vec![AiTranslationGlossaryHint {
+                source_term: "mente".to_string(),
+                target_variants: vec![],
+                no_translation_position: None,
+                no_translation: Some(AiTranslationNoTranslationHint {
+                    position: "only".to_string(),
+                    note: "Omit when redundant.".to_string(),
+                }),
+                notes: vec![],
+                global_notes: vec![],
+                footnotes: vec![],
+            }],
+            installation_id: None,
+        });
+
+        assert!(
+            prompt.contains(r#""noTranslation":{"note":"Omit when redundant.","position":"only"}"#)
+        );
+        assert!(!prompt.contains(r#""targetVariants":[{"note""#));
     }
 
     #[test]
@@ -1482,13 +1738,19 @@ mod tests {
             &[
                 AiTranslatedGlossaryTermInput {
                     glossary_source_terms: vec!["camara interior".to_string()],
-                    target_variants: vec!["buong noi tam".to_string()],
+                    target_variants: vec![target_variant("buong noi tam")],
+                    no_translation: None,
                     notes: vec!["Nota 1".to_string()],
+                    global_notes: vec![],
+                    footnotes: vec!["Footnote 1".to_string()],
                 },
                 AiTranslatedGlossaryTermInput {
                     glossary_source_terms: vec!["camara interior".to_string()],
-                    target_variants: vec!["phong ben trong".to_string()],
+                    target_variants: vec![target_variant("phong ben trong")],
+                    no_translation: None,
                     notes: vec!["Nota 2".to_string()],
+                    global_notes: vec![],
+                    footnotes: vec!["Footnote 2".to_string()],
                 },
             ],
         );
@@ -1497,11 +1759,18 @@ mod tests {
         assert_eq!(matches[0].glossary_source_term, "camara interior");
         assert_eq!(
             matches[0].target_variants,
-            vec!["buong noi tam".to_string(), "phong ben trong".to_string(),]
+            vec![
+                target_variant("buong noi tam"),
+                target_variant("phong ben trong")
+            ]
         );
         assert_eq!(
             matches[0].notes,
             vec!["Nota 1".to_string(), "Nota 2".to_string()]
+        );
+        assert_eq!(
+            matches[0].footnotes,
+            vec!["Footnote 1".to_string(), "Footnote 2".to_string()]
         );
     }
 
@@ -1557,9 +1826,12 @@ mod tests {
             ],
             glossary_hints: vec![AiTranslationGlossaryHint {
                 source_term: "Fuente".to_string(),
-                target_variants: vec!["nguon".to_string()],
+                target_variants: vec![target_variant("nguon")],
                 no_translation_position: None,
+                no_translation: None,
                 notes: vec![],
+                global_notes: vec![],
+                footnotes: vec![],
             }],
             document_digest: String::new(),
             document_revision_key: String::new(),

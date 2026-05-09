@@ -108,15 +108,22 @@ pub(super) fn build_chapter_file(
     chapter_id: &Uuid,
     chapter_slug: &str,
 ) -> ChapterFile {
-    let source_locale = parsed
-        .languages
-        .first()
-        .map(|language| language.base_code.clone().unwrap_or_else(|| language.code.clone()));
+    let source_locale = parsed.languages.first().map(|language| {
+        language
+            .base_code
+            .clone()
+            .unwrap_or_else(|| language.code.clone())
+    });
     let target_locales = parsed
         .languages
         .iter()
         .skip(1)
-        .map(|language| language.base_code.clone().unwrap_or_else(|| language.code.clone()))
+        .map(|language| {
+            language
+                .base_code
+                .clone()
+                .unwrap_or_else(|| language.code.clone())
+        })
         .collect::<Vec<_>>();
     let mut serialization_hints = BTreeMap::new();
     if parsed.source_format == "xlsx" {

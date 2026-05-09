@@ -6,9 +6,9 @@ use crate::broker::{
 use super::{
     app_auth::github_client,
     types::{
-        CreateGithubGlossaryRepoInput, CreateGithubProjectRepoInput,
-        DeleteGithubGlossaryRepoInput, DeleteGithubProjectRepoInput, GithubGlossaryRepo,
-        GithubProjectRepo, RenameGithubProjectRepoInput,
+        CreateGithubGlossaryRepoInput, CreateGithubProjectRepoInput, DeleteGithubGlossaryRepoInput,
+        DeleteGithubProjectRepoInput, GithubGlossaryRepo, GithubProjectRepo,
+        RenameGithubProjectRepoInput,
     },
 };
 

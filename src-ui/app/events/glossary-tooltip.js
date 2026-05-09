@@ -162,8 +162,23 @@ function glossaryTooltipPayload(mark) {
 
     const title = typeof payload.title === "string" ? payload.title.trim() : "";
     const variants = Array.isArray(payload.variants)
-      ? payload.variants.map((value) => String(value ?? "").trim()).filter(Boolean)
+      ? payload.variants
+        .map((value) => {
+          if (value && typeof value === "object") {
+            return {
+              text: String(value.text ?? "").trim(),
+              note: String(value.note ?? "").trim(),
+            };
+          }
+          return {
+            text: String(value ?? "").trim(),
+            note: "",
+          };
+        })
+        .filter((value) => value.text || value.note)
       : [];
+    const targetVariantNote =
+      typeof payload.targetVariantNote === "string" ? payload.targetVariantNote.trim() : "";
     const translatorNotes = Array.isArray(payload.translatorNotes)
       ? payload.translatorNotes.map((value) => String(value ?? "").trim()).filter(Boolean)
       : [];
@@ -176,6 +191,7 @@ function glossaryTooltipPayload(mark) {
     if (
       !title
       && variants.length === 0
+      && !targetVariantNote
       && translatorNotes.length === 0
       && footnotes.length === 0
       && originTerms.length === 0
@@ -187,6 +203,7 @@ function glossaryTooltipPayload(mark) {
       kind: payload.kind,
       title,
       variants,
+      targetVariantNote,
       translatorNotes,
       footnotes,
       originTerms,
@@ -208,10 +225,36 @@ function renderStructuredGlossaryTooltipBody(body, payload) {
   }
 
   if (payload.variants.length > 0) {
-    const variants = document.createElement("p");
+    const variants = document.createElement("div");
     variants.className = "editor-glossary-info-card__variants";
-    variants.innerHTML = renderGlossaryRubyTermListHtml(payload.variants);
+    const variantItems = payload.variants.map((variant) => {
+      const text = typeof variant === "string" ? variant : variant?.text ?? "";
+      const note = typeof variant === "string" ? "" : variant?.note ?? "";
+      const row = document.createElement("p");
+      row.className = "editor-glossary-info-card__variant";
+      if (text) {
+        const term = document.createElement("span");
+        term.className = "editor-glossary-info-card__variant-term";
+        term.innerHTML = renderGlossaryRubyHtml(text);
+        row.append(term);
+      }
+      if (note) {
+        const noteElement = document.createElement("span");
+        noteElement.className = "editor-glossary-info-card__variant-note";
+        noteElement.textContent = note;
+        row.append(noteElement);
+      }
+      return row;
+    });
+    variants.append(...variantItems);
     body.append(variants);
+  }
+
+  if (payload.kind === "target" && payload.targetVariantNote) {
+    const note = document.createElement("p");
+    note.className = "editor-glossary-info-card__comment";
+    note.textContent = payload.targetVariantNote;
+    body.append(note);
   }
 
   const originTerms = Array.isArray(payload.originTerms) ? payload.originTerms : [];

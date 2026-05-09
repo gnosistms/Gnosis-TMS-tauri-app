@@ -50,6 +50,7 @@ import {
   buildEditorDerivedGlossaryModel,
 } from "./editor-glossary-highlighting.js";
 import { extractGlossaryRubyBaseText } from "./glossary-ruby.js";
+import { buildGlossaryTargetVariantGuidance } from "./glossary-shared.js";
 import { saveStoredEditorDerivedGlossaryEntryForChapter } from "./editor-derived-glossary-cache.js";
 import { saveStoredEditorAssistantChapterData } from "./editor-ai-assistant-cache.js";
 
@@ -368,16 +369,30 @@ async function loadAssistantTargetLanguageHistory(context) {
 function buildDerivedGlossaryTermInputs(glossaryState) {
   return (Array.isArray(glossaryState?.terms) ? glossaryState.terms : [])
     .filter((term) => term?.lifecycleState !== "deleted")
-    .map((term) => ({
-      glossarySourceTerms: sanitizeTermList(term?.sourceTerms)
-        .map((value) => extractGlossaryRubyBaseText(value).trim())
-        .filter(Boolean),
-      targetVariants: sanitizeTermList(term?.targetTerms),
-      notes:
+    .map((term) => {
+      const { targetVariants, noTranslation } = buildGlossaryTargetVariantGuidance(
+        term?.targetTerms,
+        term?.targetVariantNotes,
+      );
+      const globalNotes =
         typeof term?.notesToTranslators === "string" && term.notesToTranslators.trim()
           ? [term.notesToTranslators.trim()]
-          : [],
-    }))
+          : [];
+      const footnotes =
+        typeof term?.footnote === "string" && term.footnote.trim()
+          ? [term.footnote.trim()]
+          : [];
+      return {
+        glossarySourceTerms: sanitizeTermList(term?.sourceTerms)
+          .map((value) => extractGlossaryRubyBaseText(value).trim())
+          .filter(Boolean),
+        targetVariants,
+        ...(noTranslation ? { noTranslation } : {}),
+        notes: globalNotes,
+        globalNotes,
+        footnotes,
+      };
+    })
     .filter((term) => term.glossarySourceTerms.length > 0);
 }
 

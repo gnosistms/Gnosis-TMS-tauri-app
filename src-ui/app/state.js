@@ -866,6 +866,7 @@ export function createGlossaryTermEditorState() {
     notice: "",
     sourceTerms: [""],
     targetTerms: [""],
+    targetVariantNotes: [""],
     sourceTermDuplicateWarning: "",
     redundantSourceVariantIndices: [],
     notesToTranslators: "",

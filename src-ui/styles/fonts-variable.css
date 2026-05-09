@@ -13,3 +13,12 @@
 @import "../assets/fonts-variable/noto-serif-tc/wght.css";
 @import "../assets/fonts-variable/noto-serif-kr/wght.css";
 @import "../assets/fonts-variable/noto-naskh-arabic/wght.css";
+
+/* Primary UI Latin face kept unsliced so combining marks shape with their base glyphs. */
+@font-face {
+  font-family: "Inter App";
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("../assets/fonts/inter/InterVariable.woff2") format("woff2-variations");
+}

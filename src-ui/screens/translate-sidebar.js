@@ -224,10 +224,15 @@ function renderAssistantGlossaryHints(glossaryHints) {
     .filter((hint) => typeof hint?.sourceTerm === "string" && hint.sourceTerm.trim())
     .map((hint) => {
       const variants = (Array.isArray(hint.targetVariants) ? hint.targetVariants : [])
-        .map((value) => String(value ?? "").trim())
+        .map((value) => {
+          if (value && typeof value === "object") {
+            return [value.text, value.note].map((part) => String(part ?? "").trim()).filter(Boolean).join(" - ");
+          }
+          return String(value ?? "").trim();
+        })
         .filter(Boolean)
         .join(", ");
-      const notes = (Array.isArray(hint.notes) ? hint.notes : [])
+      const notes = (Array.isArray(hint.globalNotes) ? hint.globalNotes : hint.notes ?? [])
         .map((value) => String(value ?? "").trim())
         .filter(Boolean)
         .join(" | ");

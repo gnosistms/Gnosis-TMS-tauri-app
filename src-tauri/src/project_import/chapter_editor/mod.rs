@@ -29,9 +29,9 @@ use super::{
     },
 };
 
+mod aligned_translation;
 mod chapter_export;
 mod chapter_selection;
-mod aligned_translation;
 mod git_conflicts;
 mod history;
 mod images;
@@ -39,13 +39,13 @@ mod row_fields;
 mod row_structure;
 mod shared;
 
-pub(crate) use self::chapter_export::{export_gtms_chapter_file_sync, ExportChapterFileInput};
 pub(crate) use self::aligned_translation::{
     apply_aligned_translation_to_gtms_chapter_sync,
     preflight_aligned_translation_to_gtms_chapter_sync, AlignedTranslationApplyInput,
     AlignedTranslationApplyResponse, AlignedTranslationPreflightInput,
     AlignedTranslationPreflightResponse,
 };
+pub(crate) use self::chapter_export::{export_gtms_chapter_file_sync, ExportChapterFileInput};
 use self::chapter_selection::{
     linked_chapter_glossary, preferred_source_language_code, preferred_target_language_code,
 };

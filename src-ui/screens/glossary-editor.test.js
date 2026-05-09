@@ -103,6 +103,27 @@ test("glossary editor search matches ruby visible text and renders ruby markup",
   assert.doesNotMatch(html, /&lt;ruby&gt;/);
 });
 
+test("glossary editor search matches target variant notes", () => {
+  installGlossaryEditorFixture({
+    searchQuery: "spiritual context",
+    terms: [
+      {
+        termId: "term-1",
+        sourceTerms: ["alpha"],
+        targetTerms: ["beta"],
+        targetVariantNotes: ["Use in spiritual contexts."],
+        notesToTranslators: "",
+        footnote: "",
+      },
+    ],
+  });
+
+  const html = renderGlossaryEditorScreen(state);
+
+  assert.match(html, /data-action="edit-glossary-term:term-1"/);
+  assert.doesNotMatch(html, /No terms match this search\./);
+});
+
 test("glossary editor spins refresh and renders scoped status during term writes", async () => {
   installGlossaryEditorFixture();
   state.statusBadges.right = {

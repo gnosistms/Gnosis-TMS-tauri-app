@@ -13,8 +13,9 @@ import {
   GLOSSARY_EMPTY_TARGET_VARIANT_SENTINEL,
   canManageGlossaries,
   normalizeEditableTerms,
+  normalizeEditableTargetVariantNotes,
   normalizeEditableTargetTerms,
-  sanitizeEditableTargetTerms,
+  sanitizeEditableTargetTermPairs,
   sanitizeEditableTerms,
   selectedGlossary,
   selectedGlossaryRepoName,
@@ -161,6 +162,7 @@ function shouldRefreshGlossaryTermDuplicateFeedback() {
 }
 
 function createGlossaryTermEditorModalState(term = null, overrides = {}) {
+  const targetTerms = normalizeEditableTargetTerms(term?.targetTerms ?? []);
   return {
     ...createGlossaryTermEditorState(),
     isOpen: true,
@@ -170,7 +172,11 @@ function createGlossaryTermEditorModalState(term = null, overrides = {}) {
     glossaryId: state.glossaryEditor?.glossaryId ?? null,
     termId: overrides.termId ?? term?.termId ?? null,
     sourceTerms: normalizeEditableTerms(term?.sourceTerms ?? []),
-    targetTerms: normalizeEditableTargetTerms(term?.targetTerms ?? []),
+    targetTerms,
+    targetVariantNotes: normalizeEditableTargetVariantNotes(
+      targetTerms,
+      term?.targetVariantNotes ?? [],
+    ),
     sourceTermDuplicateWarning: "",
     redundantSourceVariantIndices: [],
     notesToTranslators: term?.notesToTranslators ?? "",
@@ -287,6 +293,7 @@ async function runGlossaryTermSaveIntent(render, intent) {
         termId: draftSnapshot.termId,
         sourceTerms: draftSnapshot.sourceTerms,
         targetTerms: draftSnapshot.targetTerms,
+        targetVariantNotes: draftSnapshot.targetVariantNotes,
         notesToTranslators: draftSnapshot.notesToTranslators,
         footnote: draftSnapshot.footnote,
         untranslated: draftSnapshot.untranslated,
@@ -412,7 +419,41 @@ export function updateGlossaryTermVariant(side, index, value) {
   }
 }
 
+export function updateGlossaryTermVariantNote(index, value) {
+  if (!state.glossaryTermEditor?.isOpen || !Number.isInteger(index) || index < 0) {
+    return;
+  }
+
+  const targetTerms = normalizeEditableTerms(state.glossaryTermEditor.targetTerms);
+  const targetVariantNotes = normalizeEditableTargetVariantNotes(
+    targetTerms,
+    state.glossaryTermEditor.targetVariantNotes,
+  );
+  state.glossaryTermEditor.targetVariantNotes = targetTerms.map((_, termIndex) =>
+    termIndex === index ? String(value ?? "") : targetVariantNotes[termIndex] ?? "",
+  );
+  if (state.glossaryTermEditor.error) {
+    state.glossaryTermEditor.error = "";
+  }
+}
+
 export function addGlossaryTermVariant(side) {
+  if (side === "target" && state.glossaryTermEditor?.isOpen) {
+    const targetTerms = normalizeEditableTerms(state.glossaryTermEditor.targetTerms);
+    state.glossaryTermEditor.targetTerms = [...targetTerms, ""];
+    state.glossaryTermEditor.targetVariantNotes = [
+      ...normalizeEditableTargetVariantNotes(
+        targetTerms,
+        state.glossaryTermEditor.targetVariantNotes,
+      ),
+      "",
+    ];
+    if (state.glossaryTermEditor.error) {
+      state.glossaryTermEditor.error = "";
+    }
+    return;
+  }
+
   updateGlossaryTermArray(side, (terms) => [...terms, ""]);
   if (side === "source" && shouldRefreshGlossaryTermDuplicateFeedback()) {
     refreshGlossaryTermDuplicateFeedback();
@@ -420,16 +461,45 @@ export function addGlossaryTermVariant(side) {
 }
 
 export function addGlossaryTermEmptyTargetVariant() {
-  updateGlossaryTermArray("target", (terms) => {
-    if (terms.some((term) => term === GLOSSARY_EMPTY_TARGET_VARIANT_SENTINEL)) {
-      return terms;
-    }
-    return [...terms, GLOSSARY_EMPTY_TARGET_VARIANT_SENTINEL];
-  });
+  if (!state.glossaryTermEditor?.isOpen) {
+    return;
+  }
+
+  const targetTerms = normalizeEditableTerms(state.glossaryTermEditor.targetTerms);
+  if (targetTerms.some((term) => term === GLOSSARY_EMPTY_TARGET_VARIANT_SENTINEL)) {
+    return;
+  }
+  state.glossaryTermEditor.targetTerms = [...targetTerms, GLOSSARY_EMPTY_TARGET_VARIANT_SENTINEL];
+  state.glossaryTermEditor.targetVariantNotes = [
+    ...normalizeEditableTargetVariantNotes(targetTerms, state.glossaryTermEditor.targetVariantNotes),
+    "",
+  ];
+  if (state.glossaryTermEditor.error) {
+    state.glossaryTermEditor.error = "";
+  }
 }
 
 export function removeGlossaryTermVariant(side, index) {
   if (!Number.isInteger(index) || index < 0) {
+    return;
+  }
+
+  if (side === "target" && state.glossaryTermEditor?.isOpen) {
+    const targetTerms = normalizeEditableTerms(state.glossaryTermEditor.targetTerms);
+    const targetVariantNotes = normalizeEditableTargetVariantNotes(
+      targetTerms,
+      state.glossaryTermEditor.targetVariantNotes,
+    );
+    if (targetTerms.length <= 1) {
+      state.glossaryTermEditor.targetTerms = [""];
+      state.glossaryTermEditor.targetVariantNotes = [""];
+    } else {
+      state.glossaryTermEditor.targetTerms = targetTerms.filter((_, termIndex) => termIndex !== index);
+      state.glossaryTermEditor.targetVariantNotes = targetVariantNotes.filter((_, termIndex) => termIndex !== index);
+    }
+    if (state.glossaryTermEditor.error) {
+      state.glossaryTermEditor.error = "";
+    }
     return;
   }
 
@@ -452,6 +522,37 @@ export function moveGlossaryTermVariantToIndex(side, fromIndex, toIndex) {
     || !Number.isInteger(toIndex)
     || toIndex < 0
   ) {
+    return;
+  }
+
+  if (side === "target" && state.glossaryTermEditor?.isOpen) {
+    const targetTerms = normalizeEditableTerms(state.glossaryTermEditor.targetTerms);
+    const targetVariantNotes = normalizeEditableTargetVariantNotes(
+      targetTerms,
+      state.glossaryTermEditor.targetVariantNotes,
+    );
+    if (fromIndex >= targetTerms.length) {
+      return;
+    }
+
+    const boundedIndex = Math.min(toIndex, targetTerms.length);
+    const adjustedIndex = boundedIndex > fromIndex ? boundedIndex - 1 : boundedIndex;
+    if (adjustedIndex === fromIndex) {
+      return;
+    }
+
+    const nextTerms = [...targetTerms];
+    const nextNotes = [...targetVariantNotes];
+    const [movedTerm] = nextTerms.splice(fromIndex, 1);
+    const [movedNote] = nextNotes.splice(fromIndex, 1);
+    const insertionIndex = Math.min(adjustedIndex, nextTerms.length);
+    nextTerms.splice(insertionIndex, 0, movedTerm);
+    nextNotes.splice(insertionIndex, 0, movedNote);
+    state.glossaryTermEditor.targetTerms = nextTerms;
+    state.glossaryTermEditor.targetVariantNotes = nextNotes;
+    if (state.glossaryTermEditor.error) {
+      state.glossaryTermEditor.error = "";
+    }
     return;
   }
 
@@ -508,11 +609,15 @@ export async function submitGlossaryTermEditor(render) {
     return;
   }
 
-  const targetTerms = sanitizeEditableTargetTerms(draft.targetTerms);
+  const { targetTerms, targetVariantNotes } = sanitizeEditableTargetTermPairs(
+    draft.targetTerms,
+    draft.targetVariantNotes,
+  );
   const draftSnapshot = {
     termId: draft.termId || null,
     sourceTerms: [...sourceTerms],
     targetTerms: [...targetTerms],
+    targetVariantNotes: [...targetVariantNotes],
     notesToTranslators: draft.notesToTranslators,
     footnote: draft.footnote,
     untranslated: draft.untranslated === true,

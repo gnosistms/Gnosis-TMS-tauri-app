@@ -1,17 +1,17 @@
 :root {
   color-scheme: light;
-  --font-sans: "Inter Variable", "Noto Sans Variable", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
-  --font-ja: "Noto Sans JP Variable", "Noto Sans Variable", "Inter Variable", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
-  --font-zh-hans: "Noto Sans SC Variable", "Noto Sans Variable", "Inter Variable", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
-  --font-zh-hant: "Noto Sans TC Variable", "Noto Sans Variable", "Inter Variable", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
-  --font-fa: "Noto Sans Arabic Variable", "Noto Sans Variable", "Inter Variable", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
-  --font-ko: "Noto Sans KR Variable", "Noto Sans Variable", "Inter Variable", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
-  --font-serif: "Noto Serif Variable", "Noto Serif SC Variable", "Noto Serif TC Variable", "Iowan Old Style", "Palatino Linotype", "Book Antiqua", Georgia, "Times New Roman", serif;
-  --font-serif-ja: "Noto Serif JP Variable", "Hiragino Mincho ProN", "Yu Mincho", "YuMincho", serif;
-  --font-serif-zh-hans: "Noto Serif SC Variable", "Songti SC", "STSong", serif;
-  --font-serif-zh-hant: "Noto Serif TC Variable", "Songti TC", "PMingLiU", serif;
-  --font-serif-fa: "Noto Naskh Arabic Variable", "Noto Sans Arabic Variable", serif;
-  --font-serif-ko: "Noto Serif KR Variable", "Batang", "AppleMyungjo", serif;
+  --font-sans: "Inter App", "Inter Variable", "Noto Sans Variable", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  --font-ja: "Inter App", "Noto Sans JP Variable", "Noto Sans Variable", "Inter Variable", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  --font-zh-hans: "Inter App", "Noto Sans SC Variable", "Noto Sans Variable", "Inter Variable", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  --font-zh-hant: "Inter App", "Noto Sans TC Variable", "Noto Sans Variable", "Inter Variable", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  --font-fa: "Inter App", "Noto Sans Arabic Variable", "Noto Sans Variable", "Inter Variable", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  --font-ko: "Inter App", "Noto Sans KR Variable", "Noto Sans Variable", "Inter Variable", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  --font-serif: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", Georgia, "Times New Roman", "Noto Serif Variable", "Noto Serif SC Variable", "Noto Serif TC Variable", serif;
+  --font-serif-ja: "Iowan Old Style", "Noto Serif JP Variable", "Hiragino Mincho ProN", "Yu Mincho", "YuMincho", serif;
+  --font-serif-zh-hans: "Iowan Old Style", "Noto Serif SC Variable", "Songti SC", "STSong", serif;
+  --font-serif-zh-hant: "Iowan Old Style", "Noto Serif TC Variable", "Songti TC", "PMingLiU", serif;
+  --font-serif-fa: "Iowan Old Style", "Noto Naskh Arabic Variable", "Noto Sans Arabic Variable", serif;
+  --font-serif-ko: "Iowan Old Style", "Noto Serif KR Variable", "Batang", "AppleMyungjo", serif;
   --editor-non-latin-serif-weight: 550;
   --app-background: #fbe7b6; /* #f6e3ba; */
   --bg-top: #f7ecd5;
@@ -826,6 +826,7 @@ a {
 .editor-glossary-info-card__title,
 .editor-glossary-info-card__origin,
 .editor-glossary-info-card__variants,
+.editor-glossary-info-card__variant,
 .editor-glossary-info-card__comment {
   margin: 0;
 }
@@ -838,11 +839,26 @@ a {
 }
 
 .editor-glossary-info-card__variants {
+  display: grid;
+  gap: 6px;
   margin-top: 14.4px;
   color: var(--link);
   font-size: 16.1px;
   font-weight: 600;
   line-height: 1.35;
+}
+
+.editor-glossary-info-card__variant {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.editor-glossary-info-card__variant-note {
+  color: rgba(74, 45, 19, 0.68);
+  font-size: 0.92em;
+  font-weight: 500;
 }
 
 .editor-glossary-info-card__origin {

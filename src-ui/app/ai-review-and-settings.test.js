@@ -830,8 +830,10 @@ test("runEditorAiTranslate sends glossary hints for matched source-language term
           targetLanguage: "Vietnamese",
           glossaryHints: [{
             sourceTerm: "gnostica",
-            targetVariants: ["hoc tro gnosis", "cua gnosis"],
+            targetVariants: [{ text: "hoc tro gnosis" }, { text: "cua gnosis" }],
+            globalNotes: ["Lien quan den Gnosis"],
             notes: ["Lien quan den Gnosis"],
+            footnotes: ["Chu thich bo sung"],
           }],
         },
       });
@@ -933,8 +935,10 @@ test("runEditorAiTranslate prepares derived glossary hints when the glossary sou
           glossarySourceText: "La camara interior brilla.",
           glossaryTerms: [{
             glossarySourceTerms: ["camara interior"],
-            targetVariants: ["buong noi tam"],
+            targetVariants: [{ text: "buong noi tam" }],
+            globalNotes: ["Dung thuat ngu cua glossary"],
             notes: ["Dung thuat ngu cua glossary"],
+            footnotes: [],
           }],
         },
       });
@@ -943,8 +947,10 @@ test("runEditorAiTranslate prepares derived glossary hints when the glossary sou
         entries: [{
           sourceTerm: "inner chamber",
           glossarySourceTerm: "camara interior",
-          targetVariants: ["buong noi tam"],
+          targetVariants: [{ text: "buong noi tam" }],
+          globalNotes: ["Dung thuat ngu cua glossary"],
           notes: ["Dung thuat ngu cua glossary"],
+          footnotes: [],
         }],
       };
     }
@@ -958,7 +964,8 @@ test("runEditorAiTranslate prepares derived glossary hints when the glossary sou
           targetLanguage: "Vietnamese",
           glossaryHints: [{
             sourceTerm: "inner chamber",
-            targetVariants: ["buong noi tam"],
+            targetVariants: [{ text: "buong noi tam" }],
+            globalNotes: ["Dung thuat ngu cua glossary"],
             notes: ["Dung thuat ngu cua glossary"],
           }],
         },
@@ -1079,7 +1086,7 @@ test("runEditorAiTranslate regenerates derived glossary hints without saving piv
         entries: [{
           sourceTerm: "inner chamber now",
           glossarySourceTerm: "camara interior",
-          targetVariants: ["buong noi tam"],
+          targetVariants: [{ text: "buong noi tam" }],
           notes: ["Dung thuat ngu cua glossary"],
         }],
       };
@@ -1087,7 +1094,8 @@ test("runEditorAiTranslate regenerates derived glossary hints without saving piv
     if (command === "run_ai_translation") {
       assert.deepEqual(payload.request.glossaryHints, [{
         sourceTerm: "inner chamber now",
-        targetVariants: ["buong noi tam"],
+        targetVariants: [{ text: "buong noi tam" }],
+        globalNotes: ["Dung thuat ngu cua glossary"],
         notes: ["Dung thuat ngu cua glossary"],
       }]);
       return {
@@ -1193,7 +1201,7 @@ test("runEditorAiTranslateForContext does not overwrite a non-empty glossary-sou
         entries: [{
           sourceTerm: "inner chamber now",
           glossarySourceTerm: "camara interior",
-          targetVariants: ["buong noi tam"],
+          targetVariants: [{ text: "buong noi tam" }],
           notes: ["Dung thuat ngu cua glossary"],
         }],
       };
@@ -1201,7 +1209,8 @@ test("runEditorAiTranslateForContext does not overwrite a non-empty glossary-sou
     if (command === "run_ai_translation") {
       assert.deepEqual(payload.request.glossaryHints, [{
         sourceTerm: "inner chamber now",
-        targetVariants: ["buong noi tam"],
+        targetVariants: [{ text: "buong noi tam" }],
+        globalNotes: ["Dung thuat ngu cua glossary"],
         notes: ["Dung thuat ngu cua glossary"],
       }]);
       return {
@@ -1313,7 +1322,7 @@ test("runEditorAiTranslate writes an empty glossary-source field before creating
         entries: [{
           sourceTerm: "inner chamber",
           glossarySourceTerm: "camara interior",
-          targetVariants: ["buong noi tam"],
+          targetVariants: [{ text: "buong noi tam" }],
           notes: ["Dung thuat ngu cua glossary"],
         }],
       };
@@ -1322,7 +1331,8 @@ test("runEditorAiTranslate writes an empty glossary-source field before creating
       translateCount += 1;
       assert.deepEqual(payload.request.glossaryHints, [{
         sourceTerm: "inner chamber",
-        targetVariants: ["buong noi tam"],
+        targetVariants: [{ text: "buong noi tam" }],
+        globalNotes: ["Dung thuat ngu cua glossary"],
         notes: ["Dung thuat ngu cua glossary"],
       }]);
       return {
@@ -1443,7 +1453,7 @@ test("runEditorAiTranslate preserves a ready derived glossary cache when final t
         entries: [{
           sourceTerm: "inner chamber",
           glossarySourceTerm: "camara interior",
-          targetVariants: ["buong noi tam"],
+          targetVariants: [{ text: "buong noi tam" }],
           notes: ["Dung thuat ngu cua glossary"],
         }],
         matcherModel: buildEditorDerivedGlossaryModel({
@@ -1461,7 +1471,7 @@ test("runEditorAiTranslate preserves a ready derived glossary cache when final t
           entries: [{
             sourceTerm: "inner chamber",
             glossarySourceTerm: "camara interior",
-            targetVariants: ["buong noi tam"],
+            targetVariants: [{ text: "buong noi tam" }],
             notes: ["Dung thuat ngu cua glossary"],
           }],
         }),
@@ -1490,7 +1500,8 @@ test("runEditorAiTranslate preserves a ready derived glossary cache when final t
     if (command === "run_ai_translation") {
       assert.deepEqual(payload.request.glossaryHints, [{
         sourceTerm: "inner chamber",
-        targetVariants: ["buong noi tam"],
+        targetVariants: [{ text: "buong noi tam" }],
+        globalNotes: ["Dung thuat ngu cua glossary"],
         notes: ["Dung thuat ngu cua glossary"],
       }]);
       throw new Error("Provider timeout");
@@ -1588,7 +1599,7 @@ test("runEditorAiTranslate saves prepared glossary-source text when draft transl
         entries: [{
           sourceTerm: "inner chamber",
           glossarySourceTerm: "camara interior",
-          targetVariants: ["buong noi tam"],
+          targetVariants: [{ text: "buong noi tam" }],
           notes: ["Dung thuat ngu cua glossary"],
         }],
       };

@@ -13,6 +13,7 @@ import { selectedProjectsTeam, selectedProjectsTeamInstallationId } from "./proj
 import { invoke } from "./runtime.js";
 import { findEditorRowById } from "./editor-utils.js";
 import { languageBaseCode } from "./editor-language-utils.js";
+import { buildGlossaryTargetVariantGuidance } from "./glossary-shared.js";
 import { state } from "./state.js";
 
 export function resolveLanguageCode(language) {
@@ -60,16 +61,30 @@ function sanitizeTermList(values) {
 export function buildDerivedGlossaryTermInputs(glossaryState) {
   return (Array.isArray(glossaryState?.terms) ? glossaryState.terms : [])
     .filter((term) => term?.lifecycleState !== "deleted")
-    .map((term) => ({
-      glossarySourceTerms: sanitizeTermList(term?.sourceTerms)
-        .map((value) => extractGlossaryRubyBaseText(value).trim())
-        .filter(Boolean),
-      targetVariants: sanitizeTermList(term?.targetTerms),
-      notes:
+    .map((term) => {
+      const { targetVariants, noTranslation } = buildGlossaryTargetVariantGuidance(
+        term?.targetTerms,
+        term?.targetVariantNotes,
+      );
+      const globalNotes =
         typeof term?.notesToTranslators === "string" && term.notesToTranslators.trim()
           ? [term.notesToTranslators.trim()]
-          : [],
-    }))
+          : [];
+      const footnotes =
+        typeof term?.footnote === "string" && term.footnote.trim()
+          ? [term.footnote.trim()]
+          : [];
+      return {
+        glossarySourceTerms: sanitizeTermList(term?.sourceTerms)
+          .map((value) => extractGlossaryRubyBaseText(value).trim())
+          .filter(Boolean),
+        targetVariants,
+        ...(noTranslation ? { noTranslation } : {}),
+        notes: globalNotes,
+        globalNotes,
+        footnotes,
+      };
+    })
     .filter((term) => term.glossarySourceTerms.length > 0);
 }
 

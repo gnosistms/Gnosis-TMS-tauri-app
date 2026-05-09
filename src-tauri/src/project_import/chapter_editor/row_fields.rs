@@ -577,8 +577,7 @@ pub(crate) fn apply_gtms_editor_ai_review_result_sync(
         )
     })?;
     let updated_row_text = format!("{updated_row_json}\n");
-    let changed =
-        updated_row_text != original_row_text || reviewed_changed || please_check_changed;
+    let changed = updated_row_text != original_row_text || reviewed_changed || please_check_changed;
 
     if changed {
         write_text_file(&row_json_path, &updated_row_text)?;

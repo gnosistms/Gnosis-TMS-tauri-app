@@ -74,6 +74,8 @@ function createGlossaryTermVariantPreview(row) {
 
   const sourceInput = row.querySelector("[data-glossary-term-variant-input]");
   const previewInput = preview.querySelector("[data-glossary-term-variant-input]");
+  const sourceNoteInput = row.querySelector("[data-glossary-term-variant-note-input]");
+  const previewNoteInput = preview.querySelector("[data-glossary-term-variant-note-input]");
   if (sourceInput instanceof HTMLInputElement && previewInput instanceof HTMLInputElement) {
     previewInput.value = sourceInput.value;
   }
@@ -81,15 +83,20 @@ function createGlossaryTermVariantPreview(row) {
     previewInput.value = sourceInput.value;
     previewInput.style.height = sourceInput.style.height;
   }
+  if (sourceNoteInput instanceof HTMLTextAreaElement && previewNoteInput instanceof HTMLTextAreaElement) {
+    previewNoteInput.value = sourceNoteInput.value;
+    previewNoteInput.style.height = sourceNoteInput.style.height;
+  }
 
   preview.classList.remove("is-dragging", "is-drop-before", "is-drop-after");
   preview.classList.add("term-variant-row-preview");
   preview.setAttribute("aria-hidden", "true");
   preview
-    .querySelectorAll("[data-glossary-term-variant-row], [data-glossary-term-variant-input], [data-glossary-term-variant-handle], [data-action]")
+    .querySelectorAll("[data-glossary-term-variant-row], [data-glossary-term-variant-input], [data-glossary-term-variant-note-input], [data-glossary-term-variant-handle], [data-action]")
     .forEach((element) => {
       element.removeAttribute("data-glossary-term-variant-row");
       element.removeAttribute("data-glossary-term-variant-input");
+      element.removeAttribute("data-glossary-term-variant-note-input");
       element.removeAttribute("data-glossary-term-variant-handle");
       element.removeAttribute("data-action");
     });

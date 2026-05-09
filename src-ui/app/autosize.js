@@ -40,8 +40,11 @@ function singleLineTextareaHeight(textarea, fallback = 56) {
 
 export function syncGlossaryVariantTextareaHeights(root = document) {
   root
-    .querySelectorAll("[data-glossary-term-variant-input]")
-    .forEach((element) => syncAutoSizeTextarea(element, { minHeight: 44, maxHeight: 96 }));
+    .querySelectorAll("[data-glossary-term-variant-input], [data-glossary-term-variant-note-input]")
+    .forEach((element) => syncAutoSizeTextarea(element, {
+      minHeight: 44,
+      maxHeight: element.matches("[data-glossary-term-variant-note-input]") ? 132 : 96,
+    }));
 }
 
 export function syncEditorRowTextareaHeight(textarea) {

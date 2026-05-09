@@ -8,7 +8,7 @@ use quick_xml::{events::Event, Reader};
 use uuid::Uuid;
 
 use super::{
-    terms::{sanitize_target_term_values, sanitize_term_values},
+    terms::{sanitize_target_term_pairs, sanitize_term_values},
     GlossaryLanguageInfo, StoredGlossaryFile, StoredGlossaryTermFile, StoredLifecycle,
 };
 
@@ -24,16 +24,22 @@ pub(super) struct ParsedTmxGlossary {
 #[derive(Default)]
 struct ParsedTmxUnit {
     term_id: Option<String>,
-    entries_by_language: BTreeMap<String, Vec<String>>,
+    entries_by_language: BTreeMap<String, Vec<TmxVariantEntry>>,
     note: String,
     footnote: String,
     untranslated: bool,
 }
 
+#[derive(Clone, Default)]
+struct TmxVariantEntry {
+    segment: String,
+    note: String,
+}
+
 #[derive(Default)]
 struct WorkingTmxUnit {
     term_id: Option<String>,
-    entries_by_language: BTreeMap<String, Vec<String>>,
+    entries_by_language: BTreeMap<String, Vec<TmxVariantEntry>>,
     note_fragments: Vec<String>,
     current_prop_type: Option<String>,
     current_prop: String,
@@ -41,7 +47,9 @@ struct WorkingTmxUnit {
     untranslated: bool,
     current_language: Option<String>,
     current_note: String,
+    current_tuv_note_fragments: Vec<String>,
     current_segment: String,
+    current_tuv_segments: Vec<String>,
     inside_prop: bool,
     inside_note: bool,
     inside_segment: bool,
@@ -94,6 +102,8 @@ pub(super) fn parse_tmx_glossary(
                 b"tuv" => {
                     if let Some(unit) = current_unit.as_mut() {
                         unit.current_language = read_tuv_language(&reader, &event)?;
+                        unit.current_tuv_note_fragments.clear();
+                        unit.current_tuv_segments.clear();
                     }
                 }
                 b"prop" => {
@@ -156,7 +166,21 @@ pub(super) fn parse_tmx_glossary(
             Event::End(event) => match event.name().as_ref() {
                 b"tuv" => {
                     if let Some(unit) = current_unit.as_mut() {
+                        if let Some(language) = unit.current_language.clone() {
+                            let note = unit.current_tuv_note_fragments.join("\n\n");
+                            for segment in &unit.current_tuv_segments {
+                                unit.entries_by_language
+                                    .entry(language.clone())
+                                    .or_default()
+                                    .push(TmxVariantEntry {
+                                        segment: segment.clone(),
+                                        note: note.clone(),
+                                    });
+                            }
+                        }
                         unit.current_language = None;
+                        unit.current_tuv_note_fragments.clear();
+                        unit.current_tuv_segments.clear();
                     }
                 }
                 b"prop" => {
@@ -181,7 +205,11 @@ pub(super) fn parse_tmx_glossary(
                         unit.inside_note = false;
                         let note = clean_tmx_text(&unit.current_note);
                         if !note.is_empty() {
-                            unit.note_fragments.push(note);
+                            if unit.current_language.is_some() {
+                                unit.current_tuv_note_fragments.push(note);
+                            } else {
+                                unit.note_fragments.push(note);
+                            }
                         }
                         unit.current_note.clear();
                     }
@@ -190,12 +218,7 @@ pub(super) fn parse_tmx_glossary(
                     if let Some(unit) = current_unit.as_mut() {
                         unit.inside_segment = false;
                         let segment = clean_tmx_text(&unit.current_segment);
-                        if let Some(language) = unit.current_language.clone() {
-                            unit.entries_by_language
-                                .entry(language)
-                                .or_default()
-                                .push(segment);
-                        }
+                        unit.current_tuv_segments.push(segment);
                         unit.current_segment.clear();
                     }
                 }
@@ -262,27 +285,39 @@ pub(super) fn parse_tmx_glossary(
             .entries_by_language
             .get(&source_language_code)
             .cloned()
-            .unwrap_or_default();
+            .unwrap_or_default()
+            .into_iter()
+            .map(|entry| entry.segment)
+            .collect::<Vec<_>>();
         let source_terms = sanitize_term_values(&source_values);
         if source_terms.is_empty() {
             continue;
         }
 
-        let target_values = unit
+        let target_entries = unit
             .entries_by_language
             .get(&target_language_code)
             .cloned()
             .unwrap_or_default();
-        let target_terms = if target_values.is_empty() {
-            vec![String::new()]
+        let (target_terms, target_variant_notes) = if target_entries.is_empty() {
+            (vec![String::new()], vec![String::new()])
         } else {
-            sanitize_target_term_values(&target_values)
+            let target_values = target_entries
+                .iter()
+                .map(|entry| entry.segment.clone())
+                .collect::<Vec<_>>();
+            let target_notes = target_entries
+                .iter()
+                .map(|entry| entry.note.clone())
+                .collect::<Vec<_>>();
+            sanitize_target_term_pairs(&target_values, &target_notes)
         };
 
         terms.push(StoredGlossaryTermFile {
             term_id: unit.term_id.unwrap_or_else(|| Uuid::now_v7().to_string()),
             source_terms,
             target_terms,
+            target_variant_notes,
             notes_to_translators: clean_tmx_text(&unit.note),
             footnote: clean_tmx_text(&unit.footnote),
             untranslated: unit.untranslated,
@@ -356,10 +391,15 @@ pub(super) fn serialize_tmx_glossary(
             xml.push_str("      <prop type=\"x-gnosis-untranslated\">true</prop>\n");
         }
         for source_term in &term.source_terms {
-            write_tmx_tuv(&mut xml, source_code, source_term);
+            write_tmx_tuv(&mut xml, source_code, source_term, None);
         }
-        for target_term in &term.target_terms {
-            write_tmx_tuv(&mut xml, target_code, target_term);
+        for (index, target_term) in term.target_terms.iter().enumerate() {
+            write_tmx_tuv(
+                &mut xml,
+                target_code,
+                target_term,
+                term.target_variant_notes.get(index).map(String::as_str),
+            );
         }
         xml.push_str("    </tu>\n");
     }
@@ -369,10 +409,17 @@ pub(super) fn serialize_tmx_glossary(
     xml
 }
 
-fn write_tmx_tuv(xml: &mut String, language_code: &str, segment: &str) {
+fn write_tmx_tuv(xml: &mut String, language_code: &str, segment: &str, note: Option<&str>) {
     xml.push_str("      <tuv xml:lang=\"");
     xml.push_str(&escape_xml_attr(language_code));
-    xml.push_str("\"><seg>");
+    xml.push_str("\">");
+    let note = note.map(clean_tmx_text).unwrap_or_default();
+    if !note.is_empty() {
+        xml.push_str("<note>");
+        xml.push_str(&escape_xml_text(&note));
+        xml.push_str("</note>");
+    }
+    xml.push_str("<seg>");
     xml.push_str(&escape_xml_text(segment));
     xml.push_str("</seg></tuv>\n");
 }

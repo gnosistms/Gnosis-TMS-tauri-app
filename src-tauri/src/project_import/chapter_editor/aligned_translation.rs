@@ -299,15 +299,23 @@ pub(crate) fn preflight_aligned_translation_to_gtms_chapter_sync(
     let source_language_code = input.source_language_code.trim().to_string();
     let target_base_language_code = input.target_language_code.trim().to_string();
     if source_language_code.is_empty() || target_base_language_code.is_empty() {
-        return Err("Select source and translation languages before adding translation.".to_string());
+        return Err(
+            "Select source and translation languages before adding translation.".to_string(),
+        );
     }
 
     let languages = sanitize_chapter_languages(&context.chapter_file.languages);
-    let Some(source_language) = languages.iter().find(|language| language.code == source_language_code) else {
+    let Some(source_language) = languages
+        .iter()
+        .find(|language| language.code == source_language_code)
+    else {
         return Err("The selected source language is not available in this file.".to_string());
     };
-    if chapter_language_base_code(source_language).eq_ignore_ascii_case(&target_base_language_code) {
-        return Err("Choose a translation language different from the source language.".to_string());
+    if chapter_language_base_code(source_language).eq_ignore_ascii_case(&target_base_language_code)
+    {
+        return Err(
+            "Choose a translation language different from the source language.".to_string(),
+        );
     }
     let target_language_code =
         next_duplicate_language_code(&languages, &context.rows, &target_base_language_code);
@@ -370,7 +378,8 @@ pub(crate) fn preflight_aligned_translation_to_gtms_chapter_sync(
             "Resuming cached alignment preflight",
         );
         emit_progress(app, &progress);
-        let api_key = load_ai_provider_api_key(app, input.provider_id, Some(input.installation_id))?;
+        let api_key =
+            load_ai_provider_api_key(app, input.provider_id, Some(input.installation_id))?;
         return continue_preflight_job(app, &job_path, job, &api_key);
     }
 
@@ -473,7 +482,10 @@ pub(crate) fn apply_aligned_translation_to_gtms_chapter_sync(
     }
     if job.status == "mismatch" {
         if !input.continue_on_mismatch {
-            return Err("The pasted text does not match well enough to apply without confirmation.".to_string());
+            return Err(
+                "The pasted text does not match well enough to apply without confirmation."
+                    .to_string(),
+            );
         }
         let api_key = load_ai_provider_api_key(app, job.provider_id, Some(input.installation_id))?;
         run_remaining_alignment(app, &mut job, &api_key)?;
@@ -538,7 +550,8 @@ fn load_alignment_context(
     repo_name: &str,
     chapter_id: &str,
 ) -> Result<AlignmentContext, String> {
-    let repo_path = resolve_project_git_repo_path(app, installation_id, project_id, Some(repo_name))?;
+    let repo_path =
+        resolve_project_git_repo_path(app, installation_id, project_id, Some(repo_name))?;
     ensure_repo_exists(&repo_path, "The local project repo is not available yet.")?;
     ensure_valid_git_repo(&repo_path, "The local project repo is missing or invalid.")?;
     let chapter_path = find_chapter_path_by_id(&repo_path.join("chapters"), chapter_id)?;
@@ -762,7 +775,10 @@ fn build_sections(units: &[AlignmentUnit]) -> Vec<SectionWindow> {
         sections.push(SectionWindow {
             section_id: sections.len() + 1,
             unit_ids: slice.iter().map(|unit| unit.id).collect(),
-            unit_range: [slice.first().map(|unit| unit.id).unwrap_or(1), slice.last().map(|unit| unit.id).unwrap_or(1)],
+            unit_range: [
+                slice.first().map(|unit| unit.id).unwrap_or(1),
+                slice.last().map(|unit| unit.id).unwrap_or(1),
+            ],
             content_hash: hash_json(&slice.iter().map(|unit| &unit.text_hash).collect::<Vec<_>>()),
         });
         if end == units.len() {
@@ -855,9 +871,19 @@ fn short_text_compatibility(job: &AlignmentJob, api_key: &str) -> Result<bool, S
     Ok(response.matches)
 }
 
-fn summarize_sections(app: &AppHandle, job: &mut AlignmentJob, api_key: &str) -> Result<(), String> {
+fn summarize_sections(
+    app: &AppHandle,
+    job: &mut AlignmentJob,
+    api_key: &str,
+) -> Result<(), String> {
     let total = job.source_sections.len() + job.target_sections.len();
-    for (index, (doc_role, section)) in job.source_sections.iter().map(|s| ("source", s)).chain(job.target_sections.iter().map(|s| ("target", s))).enumerate() {
+    for (index, (doc_role, section)) in job
+        .source_sections
+        .iter()
+        .map(|s| ("source", s))
+        .chain(job.target_sections.iter().map(|s| ("target", s)))
+        .enumerate()
+    {
         if job.summaries.iter().any(|summary| {
             summary.doc_role == doc_role
                 && summary.section_id == section.section_id
@@ -865,17 +891,31 @@ fn summarize_sections(app: &AppHandle, job: &mut AlignmentJob, api_key: &str) ->
         }) {
             continue;
         }
-        emit_progress(app, &progress_event(
-            &job.job_id,
-            "summarize_sections",
-            "Summarizing sections",
-            "running",
-            Some(index),
-            Some(total),
-            "Summarizing section",
-        ));
-        let units = units_for_section(if doc_role == "source" { &job.source_units } else { &job.target_units }, section);
-        let language = if doc_role == "source" { &job.source_language_code } else { &job.target_language_code };
+        emit_progress(
+            app,
+            &progress_event(
+                &job.job_id,
+                "summarize_sections",
+                "Summarizing sections",
+                "running",
+                Some(index),
+                Some(total),
+                "Summarizing section",
+            ),
+        );
+        let units = units_for_section(
+            if doc_role == "source" {
+                &job.source_units
+            } else {
+                &job.target_units
+            },
+            section,
+        );
+        let language = if doc_role == "source" {
+            &job.source_language_code
+        } else {
+            &job.target_language_code
+        };
         let input = json!({
             "docRole": doc_role,
             "sectionId": section.section_id,
@@ -886,8 +926,13 @@ fn summarize_sections(app: &AppHandle, job: &mut AlignmentJob, api_key: &str) ->
             "Summarize this {language} document section in approximately 100 words in {language}. Do not translate the summary to another language.\n\nInput:\n{}",
             serde_json::to_string_pretty(&input).unwrap_or_default()
         );
-        let response: SummaryResponse =
-            run_json_prompt(job, api_key, "same_language_section_summary", summary_schema(), &prompt)?;
+        let response: SummaryResponse = run_json_prompt(
+            job,
+            api_key,
+            "same_language_section_summary",
+            summary_schema(),
+            &prompt,
+        )?;
         job.summaries.push(SectionSummary {
             doc_role: doc_role.to_string(),
             section_id: section.section_id,
@@ -896,34 +941,48 @@ fn summarize_sections(app: &AppHandle, job: &mut AlignmentJob, api_key: &str) ->
             section_content_hash: section.content_hash.clone(),
         });
     }
-    emit_progress(app, &progress_event(
-        &job.job_id,
-        "summarize_sections",
-        "Summarizing sections",
-        "complete",
-        Some(total),
-        Some(total),
-        "Completed section summaries",
-    ));
+    emit_progress(
+        app,
+        &progress_event(
+            &job.job_id,
+            "summarize_sections",
+            "Summarizing sections",
+            "complete",
+            Some(total),
+            Some(total),
+            "Completed section summaries",
+        ),
+    );
     Ok(())
 }
 
-fn find_section_matches(app: &AppHandle, job: &mut AlignmentJob, api_key: &str) -> Result<(), String> {
+fn find_section_matches(
+    app: &AppHandle,
+    job: &mut AlignmentJob,
+    api_key: &str,
+) -> Result<(), String> {
     let source_summaries = summaries_by_role(job, "source");
     let target_summaries = summaries_by_role(job, "target");
     for (index, target) in target_summaries.iter().enumerate() {
-        if job.section_matches.iter().any(|item| item.target_section_id == target.section_id) {
+        if job
+            .section_matches
+            .iter()
+            .any(|item| item.target_section_id == target.section_id)
+        {
             continue;
         }
-        emit_progress(app, &progress_event(
-            &job.job_id,
-            "find_section_matches",
-            "Finding section matches",
-            "running",
-            Some(index),
-            Some(target_summaries.len()),
-            "Comparing section summaries",
-        ));
+        emit_progress(
+            app,
+            &progress_event(
+                &job.job_id,
+                "find_section_matches",
+                "Finding section matches",
+                "running",
+                Some(index),
+                Some(target_summaries.len()),
+                "Comparing section summaries",
+            ),
+        );
         let input = json!({
             "targetSection": target,
             "sourceCandidates": source_summaries,
@@ -932,8 +991,13 @@ fn find_section_matches(app: &AppHandle, job: &mut AlignmentJob, api_key: &str) 
             "A match means the target section and source section contain overlapping rows. Because sections overlap by 50%, each target section typically has about three matches. Return every source candidate with match/no-match and estimated percent overlap. Do not explain.\n\nInput:\n{}",
             serde_json::to_string_pretty(&input).unwrap_or_default()
         );
-        let response: SectionMatchResponse =
-            run_json_prompt(job, api_key, "section_overlap_matches", section_match_schema(), &prompt)?;
+        let response: SectionMatchResponse = run_json_prompt(
+            job,
+            api_key,
+            "section_overlap_matches",
+            section_match_schema(),
+            &prompt,
+        )?;
         for item in response.matches {
             job.section_matches.push(SectionMatch {
                 target_section_id: target.section_id,
@@ -943,27 +1007,35 @@ fn find_section_matches(app: &AppHandle, job: &mut AlignmentJob, api_key: &str) 
             });
         }
     }
-    emit_progress(app, &progress_event(
-        &job.job_id,
-        "find_section_matches",
-        "Finding section matches",
-        "complete",
-        Some(target_summaries.len()),
-        Some(target_summaries.len()),
-        "Completed section matching",
-    ));
+    emit_progress(
+        app,
+        &progress_event(
+            &job.job_id,
+            "find_section_matches",
+            "Finding section matches",
+            "complete",
+            Some(target_summaries.len()),
+            Some(target_summaries.len()),
+            "Completed section matching",
+        ),
+    );
     Ok(())
 }
 
 fn select_corridor(app: &AppHandle, job: &mut AlignmentJob) {
     let mut selected = Vec::new();
     for target_section in &job.target_sections {
-        let mut matches = job.section_matches
+        let mut matches = job
+            .section_matches
             .iter()
             .filter(|item| item.target_section_id == target_section.section_id && item.is_match)
             .cloned()
             .collect::<Vec<_>>();
-        matches.sort_by(|a, b| b.overlap_percent.partial_cmp(&a.overlap_percent).unwrap_or(std::cmp::Ordering::Equal));
+        matches.sort_by(|a, b| {
+            b.overlap_percent
+                .partial_cmp(&a.overlap_percent)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         selected.extend(matches.into_iter().take(3));
     }
     if selected.is_empty() && job.source_sections.len() == 1 && job.target_sections.len() == 1 {
@@ -975,15 +1047,18 @@ fn select_corridor(app: &AppHandle, job: &mut AlignmentJob) {
         });
     }
     job.corridor = selected;
-    emit_progress(app, &progress_event(
-        &job.job_id,
-        "select_corridor",
-        "Selecting section corridor",
-        "complete",
-        Some(job.corridor.len()),
-        Some(job.target_sections.len().max(1)),
-        "Selected section corridor",
-    ));
+    emit_progress(
+        app,
+        &progress_event(
+            &job.job_id,
+            "select_corridor",
+            "Selecting section corridor",
+            "complete",
+            Some(job.corridor.len()),
+            Some(job.target_sections.len().max(1)),
+            "Selected section corridor",
+        ),
+    );
 }
 
 fn align_rows(app: &AppHandle, job: &mut AlignmentJob, api_key: &str) -> Result<(), String> {
@@ -991,41 +1066,63 @@ fn align_rows(app: &AppHandle, job: &mut AlignmentJob, api_key: &str) -> Result<
     let mut candidates: BTreeMap<usize, Vec<Vec<usize>>> = BTreeMap::new();
     let corridor = job.corridor.clone();
     for (index, pair) in corridor.iter().enumerate() {
-        emit_progress(app, &progress_event(
-            &job.job_id,
-            "row_alignment",
-            "Aligning rows inside matched sections",
-            "running",
-            Some(index),
-            Some(total),
-            "Aligning section row pairs",
-        ));
-        let Some(source_section) = job.source_sections.iter().find(|section| section.section_id == pair.source_section_id) else {
+        emit_progress(
+            app,
+            &progress_event(
+                &job.job_id,
+                "row_alignment",
+                "Aligning rows inside matched sections",
+                "running",
+                Some(index),
+                Some(total),
+                "Aligning section row pairs",
+            ),
+        );
+        let Some(source_section) = job
+            .source_sections
+            .iter()
+            .find(|section| section.section_id == pair.source_section_id)
+        else {
             continue;
         };
-        let Some(target_section) = job.target_sections.iter().find(|section| section.section_id == pair.target_section_id) else {
+        let Some(target_section) = job
+            .target_sections
+            .iter()
+            .find(|section| section.section_id == pair.target_section_id)
+        else {
             continue;
         };
         let source_units = units_for_section(&job.source_units, source_section);
         let target_units = units_for_section(&job.target_units, target_section);
         let prompt = build_row_alignment_prompt(&source_units, &target_units)?;
-        let response: AlignmentResponse =
-            run_json_prompt(job, api_key, "row_alignment_response", alignment_schema(), &prompt)?;
+        let response: AlignmentResponse = run_json_prompt(
+            job,
+            api_key,
+            "row_alignment_response",
+            alignment_schema(),
+            &prompt,
+        )?;
         let alignments = validate_alignments(response, &source_units, &target_units)?;
         for alignment in alignments {
-            candidates.entry(alignment.target_id).or_default().push(alignment.source_ids);
+            candidates
+                .entry(alignment.target_id)
+                .or_default()
+                .push(alignment.source_ids);
         }
     }
     job.alignments = resolve_row_candidate_conflicts(app, job, api_key, candidates)?;
-    emit_progress(app, &progress_event(
-        &job.job_id,
-        "row_alignment",
-        "Aligning rows inside matched sections",
-        "complete",
-        Some(total),
-        Some(total),
-        "Completed row alignment",
-    ));
+    emit_progress(
+        app,
+        &progress_event(
+            &job.job_id,
+            "row_alignment",
+            "Aligning rows inside matched sections",
+            "complete",
+            Some(total),
+            Some(total),
+            "Completed row alignment",
+        ),
+    );
     Ok(())
 }
 
@@ -1050,31 +1147,39 @@ fn resolve_row_candidate_conflicts(
             });
             continue;
         }
-        emit_progress(app, &progress_event(
+        emit_progress(
+            app,
+            &progress_event(
+                &job.job_id,
+                "resolve_conflicts",
+                "Resolving conflicts",
+                "running",
+                Some(completed),
+                Some(conflicts.max(1)),
+                "Resolving row alignment conflict",
+            ),
+        );
+        resolved.push(resolve_one_row_conflict(
+            job, api_key, target_id, &distinct,
+        )?);
+        completed += 1;
+    }
+    emit_progress(
+        app,
+        &progress_event(
             &job.job_id,
             "resolve_conflicts",
             "Resolving conflicts",
-            "running",
+            "complete",
             Some(completed),
             Some(conflicts.max(1)),
-            "Resolving row alignment conflict",
-        ));
-        resolved.push(resolve_one_row_conflict(job, api_key, target_id, &distinct)?);
-        completed += 1;
-    }
-    emit_progress(app, &progress_event(
-        &job.job_id,
-        "resolve_conflicts",
-        "Resolving conflicts",
-        "complete",
-        Some(completed),
-        Some(conflicts.max(1)),
-        if conflicts == 0 {
-            "No row alignment conflicts to resolve"
-        } else {
-            "Resolved row alignment conflicts"
-        },
-    ));
+            if conflicts == 0 {
+                "No row alignment conflicts to resolve"
+            } else {
+                "Resolved row alignment conflicts"
+            },
+        ),
+    );
     resolved.sort_by_key(|alignment| alignment.target_id);
     Ok(resolved)
 }
@@ -1108,7 +1213,9 @@ fn resolve_one_row_conflict(
     source_sets: &[Vec<usize>],
 ) -> Result<Alignment, String> {
     let Some(target) = job.target_units.iter().find(|unit| unit.id == target_id) else {
-        return Err(format!("Could not resolve conflict for unknown target unit {target_id}."));
+        return Err(format!(
+            "Could not resolve conflict for unknown target unit {target_id}."
+        ));
     };
     let non_empty_source_ids = source_sets
         .iter()
@@ -1120,7 +1227,13 @@ fn resolve_one_row_conflict(
             source_ids: Vec::new(),
         });
     }
-    let min_source_id = non_empty_source_ids.iter().min().copied().unwrap_or(1).saturating_sub(1).max(1);
+    let min_source_id = non_empty_source_ids
+        .iter()
+        .min()
+        .copied()
+        .unwrap_or(1)
+        .saturating_sub(1)
+        .max(1);
     let max_source_id = non_empty_source_ids
         .iter()
         .max()
@@ -1128,7 +1241,8 @@ fn resolve_one_row_conflict(
         .unwrap_or(1)
         .saturating_add(1)
         .min(job.source_units.len());
-    let candidate_sources = job.source_units
+    let candidate_sources = job
+        .source_units
         .iter()
         .filter(|unit| unit.id >= min_source_id && unit.id <= max_source_id)
         .cloned()
@@ -1143,9 +1257,15 @@ fn resolve_one_row_conflict(
         }))
         .unwrap_or_default()
     );
-    let response: AlignmentResponse =
-        run_json_prompt(job, api_key, "row_conflict_resolution", alignment_schema(), &prompt)?;
-    let mut alignments = validate_alignments(response, &candidate_sources, std::slice::from_ref(target))?;
+    let response: AlignmentResponse = run_json_prompt(
+        job,
+        api_key,
+        "row_conflict_resolution",
+        alignment_schema(),
+        &prompt,
+    )?;
+    let mut alignments =
+        validate_alignments(response, &candidate_sources, std::slice::from_ref(target))?;
     Ok(alignments.pop().unwrap_or(Alignment {
         target_id,
         source_ids: Vec::new(),
@@ -1153,7 +1273,8 @@ fn resolve_one_row_conflict(
 }
 
 fn resolve_missing_alignments(job: &mut AlignmentJob) {
-    let existing = job.alignments
+    let existing = job
+        .alignments
         .iter()
         .map(|alignment| alignment.target_id)
         .collect::<HashSet<_>>();
@@ -1169,11 +1290,18 @@ fn resolve_missing_alignments(job: &mut AlignmentJob) {
 }
 
 fn split_targets(app: &AppHandle, job: &mut AlignmentJob, api_key: &str) -> Result<(), String> {
-    let split_inputs = job.alignments.iter()
+    let split_inputs = job
+        .alignments
+        .iter()
         .filter(|alignment| alignment.source_ids.len() > 1)
         .filter_map(|alignment| {
-            let target = job.target_units.iter().find(|unit| unit.id == alignment.target_id)?;
-            let sources = alignment.source_ids.iter()
+            let target = job
+                .target_units
+                .iter()
+                .find(|unit| unit.id == alignment.target_id)?;
+            let sources = alignment
+                .source_ids
+                .iter()
                 .filter_map(|source_id| job.source_units.iter().find(|unit| unit.id == *source_id))
                 .map(|unit| json!({ "sourceId": unit.id, "sourceText": unit.text }))
                 .collect::<Vec<_>>();
@@ -1185,41 +1313,63 @@ fn split_targets(app: &AppHandle, job: &mut AlignmentJob, api_key: &str) -> Resu
         })
         .collect::<Vec<_>>();
     if split_inputs.is_empty() {
-        emit_progress(app, &progress_event(
-            &job.job_id,
-            "split_targets",
-            "Splitting combined target rows",
-            "complete",
-            Some(0),
-            Some(0),
-            "No combined target rows to split",
-        ));
+        emit_progress(
+            app,
+            &progress_event(
+                &job.job_id,
+                "split_targets",
+                "Splitting combined target rows",
+                "complete",
+                Some(0),
+                Some(0),
+                "No combined target rows to split",
+            ),
+        );
         return Ok(());
     }
     let prompt = format!(
         "Split target-language text units into the exact parts that correspond to each source-language unit. Return only target ids, source ids, and exact target text fragments copied from targetText.\n\nInput:\n{}",
         serde_json::to_string_pretty(&json!({ "splitTargets": split_inputs })).unwrap_or_default()
     );
-    let response: SplitTargetResponse =
-        run_json_prompt(job, api_key, "split_target_response", split_schema(), &prompt)?;
+    let response: SplitTargetResponse = run_json_prompt(
+        job,
+        api_key,
+        "split_target_response",
+        split_schema(),
+        &prompt,
+    )?;
     job.split_targets = validate_split_response(job, response);
-    emit_progress(app, &progress_event(
-        &job.job_id,
-        "split_targets",
-        "Splitting combined target rows",
-        "complete",
-        Some(job.split_targets.len()),
-        Some(split_inputs.len()),
-        "Completed split target pass",
-    ));
+    emit_progress(
+        app,
+        &progress_event(
+            &job.job_id,
+            "split_targets",
+            "Splitting combined target rows",
+            "complete",
+            Some(job.split_targets.len()),
+            Some(split_inputs.len()),
+            "Completed split target pass",
+        ),
+    );
     Ok(())
 }
 
 fn validate_split_response(job: &AlignmentJob, response: SplitTargetResponse) -> Vec<SplitTarget> {
-    let target_by_id = job.target_units.iter().map(|unit| (unit.id, unit)).collect::<HashMap<_, _>>();
-    let allowed: HashMap<usize, HashSet<usize>> = job.alignments.iter()
+    let target_by_id = job
+        .target_units
+        .iter()
+        .map(|unit| (unit.id, unit))
+        .collect::<HashMap<_, _>>();
+    let allowed: HashMap<usize, HashSet<usize>> = job
+        .alignments
+        .iter()
         .filter(|alignment| alignment.source_ids.len() > 1)
-        .map(|alignment| (alignment.target_id, alignment.source_ids.iter().copied().collect()))
+        .map(|alignment| {
+            (
+                alignment.target_id,
+                alignment.source_ids.iter().copied().collect(),
+            )
+        })
         .collect();
     let mut results = Vec::new();
     for item in response.split_targets {
@@ -1232,10 +1382,14 @@ fn validate_split_response(job: &AlignmentJob, response: SplitTargetResponse) ->
         let mut search_start = 0usize;
         let mut fragments = Vec::new();
         for hint in item.fragments {
-            if !allowed_sources.contains(&hint.source_id) || hint.target_text_fragment.trim().is_empty() {
+            if !allowed_sources.contains(&hint.source_id)
+                || hint.target_text_fragment.trim().is_empty()
+            {
                 continue;
             }
-            if let Some((start, end)) = find_fragment_range(&target.text, &hint.target_text_fragment, search_start) {
+            if let Some((start, end)) =
+                find_fragment_range(&target.text, &hint.target_text_fragment, search_start)
+            {
                 fragments.push(SplitFragment {
                     source_id: hint.source_id,
                     range: [start, end],
@@ -1282,7 +1436,9 @@ fn apply_job_to_chapter(
     job: &AlignmentJob,
 ) -> Result<AlignedTranslationApplyResponse, String> {
     let mut languages = sanitize_chapter_languages(&context.chapter_file.languages);
-    let target_exists = languages.iter().any(|language| language.code == job.target_language_code);
+    let target_exists = languages
+        .iter()
+        .any(|language| language.code == job.target_language_code);
     if !target_exists {
         let target_base_language_code = if job.target_base_language_code.trim().is_empty() {
             job.target_language_code.as_str()
@@ -1290,15 +1446,16 @@ fn apply_job_to_chapter(
             job.target_base_language_code.as_str()
         };
         let duplicate_group_exists = languages.iter().any(|language| {
-            chapter_language_base_code(language)
-                .eq_ignore_ascii_case(target_base_language_code)
+            chapter_language_base_code(language).eq_ignore_ascii_case(target_base_language_code)
         });
         let base_name = duplicate_language_base_name(&languages, target_base_language_code);
         languages.push(ChapterLanguage {
             code: job.target_language_code.clone(),
             name: base_name,
             role: "target".to_string(),
-            base_code: if duplicate_group_exists || job.target_language_code != target_base_language_code {
+            base_code: if duplicate_group_exists
+                || job.target_language_code != target_base_language_code
+            {
                 Some(target_base_language_code.to_string())
             } else {
                 None
@@ -1341,8 +1498,17 @@ fn apply_job_to_chapter(
     }
     for target in insertion_plan.inserted_targets {
         let row_id = uuid::Uuid::now_v7().to_string();
-        let mut row_value = create_inserted_row_file(&row_id, &target.order_key, &context.chapter_file, &languages);
-        set_row_plain_text(&mut row_value, &job.target_language_code, &target.target.text)?;
+        let mut row_value = create_inserted_row_file(
+            &row_id,
+            &target.order_key,
+            &context.chapter_file,
+            &languages,
+        );
+        set_row_plain_text(
+            &mut row_value,
+            &job.target_language_code,
+            &target.target.text,
+        )?;
         row_values.insert(row_id.clone(), row_value);
         inserted_rows.push(row_id);
     }
@@ -1351,7 +1517,10 @@ fn apply_job_to_chapter(
     let mut changed_paths = Vec::new();
     if !target_exists {
         write_json_pretty(&context.chapter_json_path, &context.chapter_file)?;
-        changed_paths.push(repo_relative_path(&context.repo_path, &context.chapter_json_path)?);
+        changed_paths.push(repo_relative_path(
+            &context.repo_path,
+            &context.chapter_json_path,
+        )?);
     }
 
     for (row_id, row_value) in row_values {
@@ -1393,7 +1562,10 @@ fn apply_job_to_chapter(
     let commit_sha = if changed_paths.is_empty() {
         None
     } else {
-        Some(git_output(&context.repo_path, &["rev-parse", "--short", "HEAD"])?)
+        Some(git_output(
+            &context.repo_path,
+            &["rev-parse", "--short", "HEAD"],
+        )?)
     };
     Ok(AlignedTranslationApplyResponse {
         job_id: job.job_id.clone(),
@@ -1414,9 +1586,21 @@ struct RowTranslationPlan {
 }
 
 fn build_row_translation_plan(job: &AlignmentJob) -> RowTranslationPlan {
-    let source_by_id = job.source_units.iter().map(|unit| (unit.id, unit)).collect::<HashMap<_, _>>();
-    let target_by_id = job.target_units.iter().map(|unit| (unit.id, unit)).collect::<HashMap<_, _>>();
-    let split_by_target = job.split_targets.iter().map(|split| (split.target_id, split)).collect::<HashMap<_, _>>();
+    let source_by_id = job
+        .source_units
+        .iter()
+        .map(|unit| (unit.id, unit))
+        .collect::<HashMap<_, _>>();
+    let target_by_id = job
+        .target_units
+        .iter()
+        .map(|unit| (unit.id, unit))
+        .collect::<HashMap<_, _>>();
+    let split_by_target = job
+        .split_targets
+        .iter()
+        .map(|split| (split.target_id, split))
+        .collect::<HashMap<_, _>>();
     let mut plan = RowTranslationPlan::default();
     for alignment in &job.alignments {
         let Some(target) = target_by_id.get(&alignment.target_id) else {
@@ -1428,14 +1612,20 @@ fn build_row_translation_plan(job: &AlignmentJob) -> RowTranslationPlan {
         }
         if let Some(split) = split_by_target.get(&alignment.target_id) {
             for fragment in &split.fragments {
-                if let Some(row_id) = source_by_id.get(&fragment.source_id).and_then(|unit| unit.row_id.clone()) {
+                if let Some(row_id) = source_by_id
+                    .get(&fragment.source_id)
+                    .and_then(|unit| unit.row_id.clone())
+                {
                     append_row_text(&mut plan.matched_rows, &row_id, &fragment.text);
                 }
             }
             continue;
         }
         for source_id in &alignment.source_ids {
-            if let Some(row_id) = source_by_id.get(source_id).and_then(|unit| unit.row_id.clone()) {
+            if let Some(row_id) = source_by_id
+                .get(source_id)
+                .and_then(|unit| unit.row_id.clone())
+            {
                 append_row_text(&mut plan.matched_rows, &row_id, &target.text);
             }
         }
@@ -1483,25 +1673,43 @@ fn group_unmatched_targets(
     job: &AlignmentJob,
     unmatched_targets: Vec<AlignmentUnit>,
 ) -> Vec<InsertionGroup> {
-    let target_alignment = job.alignments.iter().map(|alignment| (alignment.target_id, alignment)).collect::<HashMap<_, _>>();
-    let source_by_id = job.source_units.iter().map(|unit| (unit.id, unit)).collect::<HashMap<_, _>>();
-    let mut groups: BTreeMap<(Option<String>, Option<String>), Vec<AlignmentUnit>> = BTreeMap::new();
+    let target_alignment = job
+        .alignments
+        .iter()
+        .map(|alignment| (alignment.target_id, alignment))
+        .collect::<HashMap<_, _>>();
+    let source_by_id = job
+        .source_units
+        .iter()
+        .map(|unit| (unit.id, unit))
+        .collect::<HashMap<_, _>>();
+    let mut groups: BTreeMap<(Option<String>, Option<String>), Vec<AlignmentUnit>> =
+        BTreeMap::new();
     for target in unmatched_targets {
-        let previous = job.alignments.iter()
+        let previous = job
+            .alignments
+            .iter()
             .filter(|alignment| alignment.target_id < target.id && !alignment.source_ids.is_empty())
             .max_by_key(|alignment| alignment.target_id)
             .and_then(|alignment| alignment.source_ids.iter().max().copied())
             .and_then(|source_id| source_by_id.get(&source_id))
             .and_then(|unit| unit.row_id.clone());
-        let next = job.target_units.iter()
+        let next = job
+            .target_units
+            .iter()
             .filter(|candidate| candidate.id > target.id)
-            .find_map(|candidate| target_alignment.get(&candidate.id).filter(|alignment| !alignment.source_ids.is_empty()))
+            .find_map(|candidate| {
+                target_alignment
+                    .get(&candidate.id)
+                    .filter(|alignment| !alignment.source_ids.is_empty())
+            })
             .and_then(|alignment| alignment.source_ids.iter().min().copied())
             .and_then(|source_id| source_by_id.get(&source_id))
             .and_then(|unit| unit.row_id.clone());
         groups.entry((previous, next)).or_default().push(target);
     }
-    groups.into_iter()
+    groups
+        .into_iter()
         .map(|((previous_row_id, next_row_id), targets)| InsertionGroup {
             previous_row_id,
             next_row_id,
@@ -1512,21 +1720,37 @@ fn group_unmatched_targets(
 
 fn verify_source_unchanged(job: &AlignmentJob, context: &AlignmentContext) -> Result<(), String> {
     if context.chapter_base_commit_sha != job.chapter_base_commit_sha {
-        return Err("The file changed while alignment was running. Run Add translation again.".to_string());
+        return Err(
+            "The file changed while alignment was running. Run Add translation again.".to_string(),
+        );
     }
     let current_units = source_units_from_rows(&context.rows, &job.source_language_code);
-    let current = current_units.iter().map(|unit| (&unit.row_id, &unit.text_hash)).collect::<Vec<_>>();
-    let expected = job.source_units.iter().map(|unit| (&unit.row_id, &unit.text_hash)).collect::<Vec<_>>();
+    let current = current_units
+        .iter()
+        .map(|unit| (&unit.row_id, &unit.text_hash))
+        .collect::<Vec<_>>();
+    let expected = job
+        .source_units
+        .iter()
+        .map(|unit| (&unit.row_id, &unit.text_hash))
+        .collect::<Vec<_>>();
     if current != expected {
-        return Err("The file changed while alignment was running. Run Add translation again.".to_string());
+        return Err(
+            "The file changed while alignment was running. Run Add translation again.".to_string(),
+        );
     }
     Ok(())
 }
 
-fn load_row_values(chapter_path: &Path, rows: &[StoredRowFile]) -> Result<BTreeMap<String, Value>, String> {
+fn load_row_values(
+    chapter_path: &Path,
+    rows: &[StoredRowFile],
+) -> Result<BTreeMap<String, Value>, String> {
     let mut values = BTreeMap::new();
     for row in rows {
-        let path = chapter_path.join("rows").join(format!("{}.json", row.row_id));
+        let path = chapter_path
+            .join("rows")
+            .join(format!("{}.json", row.row_id));
         values.insert(row.row_id.clone(), read_json_file(&path, "row file")?);
     }
     Ok(values)
@@ -1574,7 +1798,11 @@ fn row_plain_text_from_value(row_value: &mut Value, language_code: &str) -> Resu
         .to_string())
 }
 
-fn set_row_plain_text(row_value: &mut Value, language_code: &str, text: &str) -> Result<(), String> {
+fn set_row_plain_text(
+    row_value: &mut Value,
+    language_code: &str,
+    text: &str,
+) -> Result<(), String> {
     ensure_language_field(row_value, language_code)?;
     let fields_object = row_fields_object_mut(row_value)?;
     let field_object = fields_object
@@ -1588,7 +1816,12 @@ fn set_row_plain_text(row_value: &mut Value, language_code: &str, text: &str) ->
 
 fn count_existing_translation_rows(rows: &[StoredRowFile], language_code: &str) -> usize {
     rows.iter()
-        .filter(|row| row_plain_text_map(row).get(language_code).map(|text| !text.trim().is_empty()).unwrap_or(false))
+        .filter(|row| {
+            row_plain_text_map(row)
+                .get(language_code)
+                .map(|text| !text.trim().is_empty())
+                .unwrap_or(false)
+        })
         .count()
 }
 
@@ -1606,14 +1839,25 @@ fn build_bulk_insertion_plan(
     let mut needs_rebalance = false;
     for group in groups {
         match allocate_bulk_order_keys(
-            group.previous_row_id.as_deref().and_then(|row_id| order_key_for_row(rows, row_id)),
-            group.next_row_id.as_deref().and_then(|row_id| order_key_for_row(rows, row_id)),
+            group
+                .previous_row_id
+                .as_deref()
+                .and_then(|row_id| order_key_for_row(rows, row_id)),
+            group
+                .next_row_id
+                .as_deref()
+                .and_then(|row_id| order_key_for_row(rows, row_id)),
             group.targets.len(),
         ) {
             Ok(order_keys) => {
-                inserted_targets.extend(group.targets.iter().cloned().zip(order_keys).map(
-                    |(target, order_key)| OrderedTargetUnit { target, order_key },
-                ));
+                inserted_targets.extend(
+                    group
+                        .targets
+                        .iter()
+                        .cloned()
+                        .zip(order_keys)
+                        .map(|(target, order_key)| OrderedTargetUnit { target, order_key }),
+                );
             }
             Err(_) => {
                 needs_rebalance = true;
@@ -1640,8 +1884,14 @@ fn build_rebalanced_bulk_insertion_plan(
     let mut document_end = Vec::new();
     for group in groups {
         match (&group.previous_row_id, &group.next_row_id) {
-            (None, Some(next)) => before.entry(next.clone()).or_default().extend(group.targets.clone()),
-            (Some(previous), _) => after.entry(previous.clone()).or_default().extend(group.targets.clone()),
+            (None, Some(next)) => before
+                .entry(next.clone())
+                .or_default()
+                .extend(group.targets.clone()),
+            (Some(previous), _) => after
+                .entry(previous.clone())
+                .or_default()
+                .extend(group.targets.clone()),
             (None, None) => document_start.extend(group.targets.clone()),
         }
     }
@@ -1715,11 +1965,18 @@ fn set_row_order_key(row_value: &mut Value, order_key: &str) -> Result<(), Strin
     let structure_object = structure_value
         .as_object_mut()
         .ok_or_else(|| "The row structure is not a JSON object.".to_string())?;
-    structure_object.insert("order_key".to_string(), Value::String(order_key.to_string()));
+    structure_object.insert(
+        "order_key".to_string(),
+        Value::String(order_key.to_string()),
+    );
     Ok(())
 }
 
-fn allocate_bulk_order_keys(previous: Option<&str>, next: Option<&str>, count: usize) -> Result<Vec<String>, String> {
+fn allocate_bulk_order_keys(
+    previous: Option<&str>,
+    next: Option<&str>,
+    count: usize,
+) -> Result<Vec<String>, String> {
     if count == 0 {
         return Ok(Vec::new());
     }
@@ -1746,22 +2003,41 @@ fn allocate_bulk_order_keys(previous: Option<&str>, next: Option<&str>, count: u
         (Some(previous_key), None) => {
             for index in 1..=count {
                 let step = ORDER_KEY_SPACING
-                    .checked_mul(u128::try_from(index).map_err(|error| format!("Could not allocate row keys: {error}"))?)
+                    .checked_mul(
+                        u128::try_from(index)
+                            .map_err(|error| format!("Could not allocate row keys: {error}"))?,
+                    )
                     .ok_or_else(|| "There is no space left to insert all rows here.".to_string())?;
-                keys.push(format!("{:032x}", previous_key.checked_add(step).ok_or_else(|| "There is no space left to insert all rows here.".to_string())?));
+                keys.push(format!(
+                    "{:032x}",
+                    previous_key.checked_add(step).ok_or_else(|| {
+                        "There is no space left to insert all rows here.".to_string()
+                    })?
+                ));
             }
         }
         (None, Some(next_key)) => {
             for reverse_index in (1..=count).rev() {
                 let step = ORDER_KEY_SPACING
-                    .checked_mul(u128::try_from(reverse_index).map_err(|error| format!("Could not allocate row keys: {error}"))?)
+                    .checked_mul(
+                        u128::try_from(reverse_index)
+                            .map_err(|error| format!("Could not allocate row keys: {error}"))?,
+                    )
                     .ok_or_else(|| "There is no space left to insert all rows here.".to_string())?;
-                keys.push(format!("{:032x}", next_key.checked_sub(step).ok_or_else(|| "There is no space left to insert all rows here.".to_string())?));
+                keys.push(format!(
+                    "{:032x}",
+                    next_key.checked_sub(step).ok_or_else(|| {
+                        "There is no space left to insert all rows here.".to_string()
+                    })?
+                ));
             }
         }
         (None, None) => {
             for index in 1..=count {
-                keys.push(format!("{:032x}", ORDER_KEY_SPACING * u128::try_from(index).unwrap_or(1)));
+                keys.push(format!(
+                    "{:032x}",
+                    ORDER_KEY_SPACING * u128::try_from(index).unwrap_or(1)
+                ));
             }
         }
     }
@@ -1796,11 +2072,15 @@ fn run_json_prompt<T: for<'de> Deserialize<'de>>(
         },
         api_key,
     )?;
-    serde_json::from_str(&response.text)
-        .map_err(|error| format!("OpenAI returned JSON that did not match the {schema_name} schema: {error}"))
+    serde_json::from_str(&response.text).map_err(|error| {
+        format!("OpenAI returned JSON that did not match the {schema_name} schema: {error}")
+    })
 }
 
-fn build_row_alignment_prompt(source_units: &[AlignmentUnit], target_units: &[AlignmentUnit]) -> Result<String, String> {
+fn build_row_alignment_prompt(
+    source_units: &[AlignmentUnit],
+    target_units: &[AlignmentUnit],
+) -> Result<String, String> {
     let input = json!({
         "sourceUnits": source_units,
         "targetUnits": target_units,
@@ -1816,27 +2096,44 @@ fn validate_alignments(
     source_units: &[AlignmentUnit],
     target_units: &[AlignmentUnit],
 ) -> Result<Vec<Alignment>, String> {
-    let source_ids = source_units.iter().map(|unit| unit.id).collect::<HashSet<_>>();
-    let target_ids = target_units.iter().map(|unit| unit.id).collect::<BTreeSet<_>>();
+    let source_ids = source_units
+        .iter()
+        .map(|unit| unit.id)
+        .collect::<HashSet<_>>();
+    let target_ids = target_units
+        .iter()
+        .map(|unit| unit.id)
+        .collect::<BTreeSet<_>>();
     let mut seen = HashSet::new();
     let mut alignments = Vec::new();
     for alignment in response.alignments {
         if !target_ids.contains(&alignment.target_id) {
-            return Err(format!("GPT returned target id {}, but that target unit is not in the input.", alignment.target_id));
+            return Err(format!(
+                "GPT returned target id {}, but that target unit is not in the input.",
+                alignment.target_id
+            ));
         }
         if !seen.insert(alignment.target_id) {
-            return Err(format!("GPT returned target id {} more than once.", alignment.target_id));
+            return Err(format!(
+                "GPT returned target id {} more than once.",
+                alignment.target_id
+            ));
         }
         for source_id in &alignment.source_ids {
             if !source_ids.contains(source_id) {
-                return Err(format!("GPT aligned target id {} to unknown source id {}.", alignment.target_id, source_id));
+                return Err(format!(
+                    "GPT aligned target id {} to unknown source id {}.",
+                    alignment.target_id, source_id
+                ));
             }
         }
         alignments.push(alignment);
     }
     for target_id in target_ids {
         if !seen.contains(&target_id) {
-            return Err(format!("GPT did not return alignment for target id {target_id}."));
+            return Err(format!(
+                "GPT did not return alignment for target id {target_id}."
+            ));
         }
     }
     alignments.sort_by_key(|alignment| alignment.target_id);
@@ -1845,27 +2142,43 @@ fn validate_alignments(
 
 fn units_for_section(units: &[AlignmentUnit], section: &SectionWindow) -> Vec<AlignmentUnit> {
     let ids = section.unit_ids.iter().copied().collect::<HashSet<_>>();
-    units.iter().filter(|unit| ids.contains(&unit.id)).cloned().collect()
+    units
+        .iter()
+        .filter(|unit| ids.contains(&unit.id))
+        .cloned()
+        .collect()
 }
 
 fn summaries_by_role(job: &AlignmentJob, role: &str) -> Vec<SectionSummary> {
-    job.summaries.iter().filter(|summary| summary.doc_role == role).cloned().collect()
+    job.summaries
+        .iter()
+        .filter(|summary| summary.doc_role == role)
+        .cloned()
+        .collect()
 }
 
 fn mismatch_metrics(job: &AlignmentJob) -> MismatchMetrics {
-    let matched_target = job.section_matches.iter()
+    let matched_target = job
+        .section_matches
+        .iter()
         .filter(|item| item.is_match)
         .map(|item| item.target_section_id)
         .collect::<HashSet<_>>();
-    let matched_source = job.section_matches.iter()
+    let matched_source = job
+        .section_matches
+        .iter()
         .filter(|item| item.is_match)
         .map(|item| item.source_section_id)
         .collect::<HashSet<_>>();
     let total_source = job.source_sections.len().max(1);
     let total_target = job.target_sections.len().max(1);
     MismatchMetrics {
-        source_unmatched_percent: ((total_source - matched_source.len()).max(0) as f64 / total_source as f64) * 100.0,
-        target_unmatched_percent: ((total_target - matched_target.len()).max(0) as f64 / total_target as f64) * 100.0,
+        source_unmatched_percent: ((total_source - matched_source.len()).max(0) as f64
+            / total_source as f64)
+            * 100.0,
+        target_unmatched_percent: ((total_target - matched_target.len()).max(0) as f64
+            / total_target as f64)
+            * 100.0,
         matched_source_sections: matched_source.len(),
         matched_target_sections: matched_target.len(),
         total_source_sections: total_source,
@@ -1881,13 +2194,19 @@ fn rendered_target_texts(job: &AlignmentJob) -> Vec<String> {
         .collect()
 }
 
-fn missing_tokens<'a>(input: impl Iterator<Item = &'a str>, output: impl Iterator<Item = &'a str>) -> Vec<String> {
+fn missing_tokens<'a>(
+    input: impl Iterator<Item = &'a str>,
+    output: impl Iterator<Item = &'a str>,
+) -> Vec<String> {
     let input_counts = token_counts(input);
     let output_counts = token_counts(output);
-    input_counts.into_iter()
+    input_counts
+        .into_iter()
         .filter_map(|(token, count)| {
             let found = output_counts.get(&token).copied().unwrap_or(0);
-            (found < count).then_some(format!("{token:?}: expected at least {count}, found {found}"))
+            (found < count).then_some(format!(
+                "{token:?}: expected at least {count}, found {found}"
+            ))
         })
         .collect()
 }
@@ -1908,7 +2227,10 @@ fn find_fragment_range(text: &str, fragment: &str, start_char: usize) -> Option<
     let found = haystack.find(fragment)?;
     let start_byte = byte_start + found;
     let end_byte = start_byte + fragment.len();
-    Some((byte_to_char_index(text, start_byte), byte_to_char_index(text, end_byte)))
+    Some((
+        byte_to_char_index(text, start_byte),
+        byte_to_char_index(text, end_byte),
+    ))
 }
 
 fn char_to_byte_index(text: &str, char_index: usize) -> Option<usize> {
@@ -1923,10 +2245,17 @@ fn byte_to_char_index(text: &str, byte_index: usize) -> usize {
 }
 
 fn slice_chars(text: &str, start: usize, end: usize) -> String {
-    text.chars().skip(start).take(end.saturating_sub(start)).collect()
+    text.chars()
+        .skip(start)
+        .take(end.saturating_sub(start))
+        .collect()
 }
 
-fn split_covers_target(text: &str, fragments: &[SplitFragment], allowed_sources: &HashSet<usize>) -> bool {
+fn split_covers_target(
+    text: &str,
+    fragments: &[SplitFragment],
+    allowed_sources: &HashSet<usize>,
+) -> bool {
     let mut covered = HashSet::new();
     let mut sources = HashSet::new();
     for fragment in fragments {
@@ -1938,7 +2267,10 @@ fn split_covers_target(text: &str, fragments: &[SplitFragment], allowed_sources:
             covered.insert(index);
         }
     }
-    if !allowed_sources.iter().all(|source_id| sources.contains(source_id)) {
+    if !allowed_sources
+        .iter()
+        .all(|source_id| sources.contains(source_id))
+    {
         return false;
     }
     text.chars()
@@ -1946,7 +2278,10 @@ fn split_covers_target(text: &str, fragments: &[SplitFragment], allowed_sources:
         .all(|(index, character)| character.is_whitespace() || covered.contains(&index))
 }
 
-fn preflight_response(job: &AlignmentJob, progress: AlignmentProgressEvent) -> AlignedTranslationPreflightResponse {
+fn preflight_response(
+    job: &AlignmentJob,
+    progress: AlignmentProgressEvent,
+) -> AlignedTranslationPreflightResponse {
     AlignedTranslationPreflightResponse {
         job_id: job.job_id.clone(),
         status: job.status.clone(),
@@ -1971,7 +2306,9 @@ fn progress_event(
     message: &str,
 ) -> AlignmentProgressEvent {
     let percent = match (completed, total) {
-        (Some(completed), Some(total)) if total > 0 => Some((completed as f64 / total as f64) * 100.0),
+        (Some(completed), Some(total)) if total > 0 => {
+            Some((completed as f64 / total as f64) * 100.0)
+        }
         _ => None,
     };
     AlignmentProgressEvent {

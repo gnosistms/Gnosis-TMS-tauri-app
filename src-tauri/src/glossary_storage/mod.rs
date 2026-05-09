@@ -22,7 +22,7 @@ mod tmx;
 
 use io::{ensure_gitattributes, git_output, read_json_file, write_json_pretty, write_text_file};
 use terms::{
-    has_conflicting_source_terms, has_duplicate_term_values, sanitize_target_term_values,
+    has_conflicting_source_terms, has_duplicate_term_values, sanitize_target_term_pairs,
     trim_non_empty_term_values,
 };
 use tmx::{parse_tmx_glossary, serialize_tmx_glossary};
@@ -63,6 +63,8 @@ struct StoredGlossaryTermFile {
     term_id: String,
     source_terms: Vec<String>,
     target_terms: Vec<String>,
+    #[serde(default)]
+    target_variant_notes: Vec<String>,
     #[serde(default)]
     notes_to_translators: String,
     #[serde(default)]
@@ -170,6 +172,8 @@ pub(crate) struct UpsertGlossaryTermInput {
     term_id: Option<String>,
     source_terms: Vec<String>,
     target_terms: Vec<String>,
+    #[serde(default)]
+    target_variant_notes: Vec<String>,
     notes_to_translators: String,
     footnote: String,
     untranslated: bool,
@@ -227,6 +231,7 @@ pub(crate) struct GlossaryTermEditorRecord {
     term_id: String,
     source_terms: Vec<String>,
     target_terms: Vec<String>,
+    target_variant_notes: Vec<String>,
     notes_to_translators: String,
     footnote: String,
     untranslated: bool,
@@ -969,9 +974,11 @@ fn upsert_gtms_glossary_term_sync(
     }
     let sanitized_source_terms = trimmed_source_terms;
 
-    let mut sanitized_target_terms = sanitize_target_term_values(&input.target_terms);
+    let (mut sanitized_target_terms, mut sanitized_target_variant_notes) =
+        sanitize_target_term_pairs(&input.target_terms, &input.target_variant_notes);
     if input.untranslated && sanitized_target_terms.is_empty() {
         sanitized_target_terms = sanitized_source_terms.clone();
+        sanitized_target_variant_notes = vec![String::new(); sanitized_target_terms.len()];
     }
 
     let term_id = input
@@ -1014,6 +1021,16 @@ fn upsert_gtms_glossary_term_sync(
         "target_terms".to_string(),
         Value::Array(
             sanitized_target_terms
+                .iter()
+                .cloned()
+                .map(Value::String)
+                .collect(),
+        ),
+    );
+    term_object.insert(
+        "target_variant_notes".to_string(),
+        Value::Array(
+            sanitized_target_variant_notes
                 .iter()
                 .cloned()
                 .map(Value::String)
@@ -1070,6 +1087,7 @@ fn upsert_gtms_glossary_term_sync(
             term_id,
             source_terms: sanitized_source_terms,
             target_terms: sanitized_target_terms,
+            target_variant_notes: sanitized_target_variant_notes,
             notes_to_translators: input.notes_to_translators.trim().to_string(),
             footnote: input.footnote.trim().to_string(),
             untranslated: input.untranslated,
@@ -1356,11 +1374,30 @@ fn first_term_label(term: &StoredGlossaryTermFile) -> String {
         .to_lowercase()
 }
 
+fn aligned_target_variant_notes(
+    target_terms: &[String],
+    target_variant_notes: &[String],
+) -> Vec<String> {
+    target_terms
+        .iter()
+        .enumerate()
+        .map(|(index, _)| {
+            target_variant_notes
+                .get(index)
+                .map(|value| value.trim().to_string())
+                .unwrap_or_default()
+        })
+        .collect()
+}
+
 fn map_term_record(term: StoredGlossaryTermFile) -> GlossaryTermEditorRecord {
+    let target_variant_notes =
+        aligned_target_variant_notes(&term.target_terms, &term.target_variant_notes);
     GlossaryTermEditorRecord {
         term_id: term.term_id,
         source_terms: term.source_terms,
         target_terms: term.target_terms,
+        target_variant_notes,
         notes_to_translators: term.notes_to_translators,
         footnote: term.footnote,
         untranslated: term.untranslated,
@@ -1449,6 +1486,11 @@ mod tests {
                 String::new(),
                 "kim đan \"thiêng\"".to_string(),
             ],
+            target_variant_notes: vec![
+                "Use for spiritual practice.".to_string(),
+                "May be omitted in flowing prose.".to_string(),
+                String::new(),
+            ],
             notes_to_translators: "Use the canonical term & avoid variants.".to_string(),
             footnote: "Footnote with <markup> & quotes \"here\".".to_string(),
             untranslated: true,
@@ -1459,6 +1501,7 @@ mod tests {
 
         let xml = serialize_tmx_glossary(&glossary, &[term]);
         assert!(xml.contains("<tu tuid=\"term-123\">"));
+        assert!(xml.contains("<note>Use for spiritual practice.</note><seg>thuật luyện kim</seg>"));
         assert!(xml.contains("<prop type=\"x-gnosis-footnote\">"));
         assert!(xml.contains("<prop type=\"x-gnosis-untranslated\">true</prop>"));
 
@@ -1474,6 +1517,14 @@ mod tests {
         assert_eq!(
             parsed_term.target_terms,
             vec!["thuật luyện kim", "", "kim đan \"thiêng\""]
+        );
+        assert_eq!(
+            parsed_term.target_variant_notes,
+            vec![
+                "Use for spiritual practice.",
+                "May be omitted in flowing prose.",
+                ""
+            ]
         );
         assert_eq!(
             parsed_term.notes_to_translators,
@@ -1504,8 +1555,36 @@ mod tests {
         let parsed = parse_tmx_glossary("legacy.tmx", xml.as_bytes()).expect("legacy TMX");
         assert_eq!(parsed.terms.len(), 1);
         assert_eq!(parsed.terms[0].notes_to_translators, "Translator note");
+        assert_eq!(parsed.terms[0].target_variant_notes, vec![""]);
         assert_eq!(parsed.terms[0].footnote, "");
         assert!(!parsed.terms[0].untranslated);
+    }
+
+    #[test]
+    fn parses_target_tuv_notes_and_ignores_source_tuv_notes() {
+        let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<tmx version="1.4">
+  <header creationtool="Fixture" creationtoolversion="1" segtype="phrase" o-tmf="Fixture" adminlang="en" srclang="en" datatype="plaintext"/>
+  <body>
+    <tu tuid="term-1">
+      <note>Global note</note>
+      <tuv xml:lang="en"><note>Ignore source note</note><seg>mind</seg></tuv>
+      <tuv xml:lang="es"><note>Use in doctrinal contexts</note><seg>mente</seg></tuv>
+      <tuv xml:lang="es"><note>Use in poetic contexts</note><seg>mente</seg></tuv>
+    </tu>
+  </body>
+</tmx>
+"#;
+
+        let parsed =
+            parse_tmx_glossary("target-notes.tmx", xml.as_bytes()).expect("target notes TMX");
+        assert_eq!(parsed.terms.len(), 1);
+        assert_eq!(parsed.terms[0].target_terms, vec!["mente"]);
+        assert_eq!(
+            parsed.terms[0].target_variant_notes,
+            vec!["Use in doctrinal contexts\n\nUse in poetic contexts"]
+        );
+        assert_eq!(parsed.terms[0].notes_to_translators, "Global note");
     }
 
     #[test]

@@ -343,6 +343,7 @@ test("source highlights include a structured tooltip payload for source-language
         termId: "t1",
         sourceTerms: ["gnostica", "gnostico"],
         targetTerms: ["hoc tro gnosis", "cua gnosis"],
+        targetVariantNotes: ["Preferred in doctrinal contexts.", ""],
         notesToTranslators: "Lien quan den Gnosis",
         footnote: "Chu thich bo sung",
       },
@@ -368,7 +369,10 @@ test("source highlights include a structured tooltip payload for source-language
 
   assert.equal(payload.kind, "source");
   assert.equal(payload.title, "gnostica");
-  assert.deepEqual(payload.variants, ["hoc tro gnosis", "cua gnosis"]);
+  assert.deepEqual(payload.variants, [
+    { text: "hoc tro gnosis", note: "Preferred in doctrinal contexts." },
+    { text: "cua gnosis", note: "" },
+  ]);
   assert.deepEqual(payload.translatorNotes, ["Lien quan den Gnosis"]);
   assert.deepEqual(payload.footnotes, ["Chu thich bo sung"]);
 });
@@ -380,6 +384,7 @@ test("target highlights include a structured tooltip payload with source variant
         termId: "t1",
         sourceTerms: ["gnostica", "gnostico"],
         targetTerms: ["hoc tro gnosis", "cua gnosis"],
+        targetVariantNotes: ["Preferred in doctrinal contexts.", ""],
         notesToTranslators: "Lien quan den Gnosis",
         footnote: "Chu thich bo sung",
       },
@@ -409,7 +414,8 @@ test("target highlights include a structured tooltip payload with source variant
 
   assert.equal(payload.kind, "target");
   assert.equal(payload.title, "hoc tro gnosis");
-  assert.deepEqual(payload.variants, ["gnostica", "gnostico"]);
+  assert.deepEqual(payload.variants, ["gnostica"]);
+  assert.equal(payload.targetVariantNote, "Preferred in doctrinal contexts.");
   assert.deepEqual(payload.translatorNotes, ["Lien quan den Gnosis"]);
   assert.deepEqual(payload.footnotes, ["Chu thich bo sung"]);
 });
@@ -451,7 +457,7 @@ test("derived source highlights include glossary provenance in the structured to
 
   assert.equal(payload.kind, "source");
   assert.equal(payload.title, "inner chamber");
-  assert.deepEqual(payload.variants, ["buong noi tam"]);
+  assert.deepEqual(payload.variants, [{ text: "buong noi tam", note: "" }]);
   assert.deepEqual(payload.translatorNotes, ["Dung thuat ngu cua glossary"]);
   assert.deepEqual(payload.originTerms, ["camara interior"]);
 });
@@ -499,7 +505,7 @@ test("derived glossary highlights are marked as errors when the expected target 
 
   assert.equal(payload.kind, "source");
   assert.equal(payload.title, "inner chamber");
-  assert.deepEqual(payload.variants, ["buong noi tam"]);
+  assert.deepEqual(payload.variants, [{ text: "buong noi tam", note: "" }]);
   assert.deepEqual(payload.translatorNotes, ["Dung thuat ngu cua glossary"]);
   assert.deepEqual(payload.originTerms, ["camara interior"]);
 });
@@ -511,6 +517,7 @@ test("translation glossary hints use the matched source term, ordered target var
         termId: "t1",
         sourceTerms: ["gnostica", "gnostico"],
         targetTerms: ["hoc tro gnosis", "cua gnosis"],
+        targetVariantNotes: ["Preferred in doctrinal contexts.", ""],
         notesToTranslators: "Lien quan den Gnosis",
         footnote: "Chu thich bo sung",
       },
@@ -526,10 +533,14 @@ test("translation glossary hints use the matched source term, ordered target var
 
   assert.deepEqual(hints, [{
     sourceTerm: "gnostica",
-    targetVariants: ["hoc tro gnosis", "cua gnosis"],
+    targetVariants: [
+      { text: "hoc tro gnosis", note: "Preferred in doctrinal contexts." },
+      { text: "cua gnosis" },
+    ],
+    globalNotes: ["Lien quan den Gnosis"],
     notes: ["Lien quan den Gnosis"],
+    footnotes: ["Chu thich bo sung"],
   }]);
-  assert.equal("footnotes" in hints[0], false);
 });
 
 test("translation glossary hints are omitted when the translation target does not match the glossary target", () => {
@@ -582,8 +593,7 @@ test("translation glossary hints serialize ruby target variants for ai prompts",
 
   assert.deepEqual(hints, [{
     sourceTerm: "espiritu",
-    targetVariants: ["精神[ruby: せいしん]", "魂"],
-    notes: [],
+    targetVariants: [{ text: "精神[ruby: せいしん]" }, { text: "魂" }],
   }]);
 });
 
@@ -594,6 +604,7 @@ test("translation glossary hints keep an omission-only instruction when the empt
         termId: "t1",
         sourceTerms: ["mente"],
         targetTerms: [""],
+        targetVariantNotes: ["Omit when redundant."],
       },
     ],
   }));
@@ -607,9 +618,10 @@ test("translation glossary hints keep an omission-only instruction when the empt
 
   assert.deepEqual(hints, [{
     sourceTerm: "mente",
-    targetVariants: [],
-    noTranslationPosition: "only",
-    notes: [],
+    noTranslation: {
+      position: "only",
+      note: "Omit when redundant.",
+    },
   }]);
 });
 
@@ -633,9 +645,8 @@ test("translation glossary hints mark omission as preferred when the empty varia
 
   assert.deepEqual(hints, [{
     sourceTerm: "mente",
-    targetVariants: ["tam", "tri"],
-    noTranslationPosition: "first",
-    notes: [],
+    targetVariants: [{ text: "tam" }, { text: "tri" }],
+    noTranslation: { position: "first" },
   }]);
 });
 
@@ -659,8 +670,7 @@ test("translation glossary hints append omission guidance when the empty variant
 
   assert.deepEqual(hints, [{
     sourceTerm: "mente",
-    targetVariants: ["tam", "tri"],
-    noTranslationPosition: "later",
-    notes: [],
+    targetVariants: [{ text: "tam" }, { text: "tri" }],
+    noTranslation: { position: "later" },
   }]);
 });

@@ -25,6 +25,7 @@ function installModalFixture() {
     isOpen: true,
     sourceTerms: ["<ruby>漢字<rt>かんじ</rt></ruby>"],
     targetTerms: ["<ruby>한자<rt>한자</rt></ruby>"],
+    targetVariantNotes: ["Use for annotated Korean."],
   };
 }
 
@@ -84,16 +85,30 @@ test("glossary term modal renders the target no-translation button between ruby 
 test("glossary term modal renders empty target variants as disabled placeholder rows", () => {
   installModalFixture();
   state.glossaryTermEditor.targetTerms = [GLOSSARY_EMPTY_TARGET_VARIANT_SENTINEL];
+  state.glossaryTermEditor.targetVariantNotes = ["May be omitted."];
 
   const html = renderGlossaryTermEditorModal(state);
 
   assert.match(html, /term-variant-row__shell--disabled/);
   assert.match(html, /term-variant-row__input--disabled/);
   assert.match(html, /\[No translation\]/);
+  assert.match(html, /data-glossary-term-variant-note-input/);
+  assert.match(html, /May be omitted\./);
   assert.doesNotMatch(
     html,
     /term-variant-row__shell--disabled[\s\S]*data-glossary-term-variant-input/,
   );
+});
+
+test("glossary term modal labels target notes and global notes", () => {
+  installModalFixture();
+
+  const html = renderGlossaryTermEditorModal(state);
+
+  assert.match(html, /term-lane__title--notes/);
+  assert.match(html, />Notes<\/h3>/);
+  assert.match(html, />Global notes<\/span>/);
+  assert.match(html, /Use for annotated Korean\./);
 });
 
 test("glossary term modal renders a remote-update notice banner when present", () => {

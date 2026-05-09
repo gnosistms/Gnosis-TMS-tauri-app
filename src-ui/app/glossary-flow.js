@@ -48,6 +48,7 @@ export {
   submitGlossaryTermEditor,
   updateGlossaryTermDraftField,
   updateGlossaryTermVariant,
+  updateGlossaryTermVariantNote,
 } from "./glossary-term-draft.js";
 export {
   activeDefaultGlossaryIdForTeam,

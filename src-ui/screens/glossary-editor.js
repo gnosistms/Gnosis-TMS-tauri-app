@@ -54,6 +54,7 @@ export function renderGlossaryEditorScreen(state) {
     return [
       ...(Array.isArray(term.sourceTerms) ? term.sourceTerms.map((value) => extractGlossaryRubyVisibleText(value)) : []),
       ...(Array.isArray(term.targetTerms) ? term.targetTerms.map((value) => extractGlossaryRubyVisibleText(value)) : []),
+      ...(Array.isArray(term.targetVariantNotes) ? term.targetVariantNotes : []),
       term.notesToTranslators,
       term.footnote,
     ].some((value) => String(value ?? "").toLowerCase().includes(searchQuery));

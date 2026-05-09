@@ -15,6 +15,7 @@ function renderVariantRow(
   side,
   languageCode,
   value,
+  note,
   index,
   total,
   isSubmitting,
@@ -91,6 +92,20 @@ function renderVariantRow(
           ${isSubmitting ? "disabled" : ""}
         >${escapeHtml(value)}</textarea>
       `;
+  const noteMarkup = side === "target"
+    ? `
+        <textarea
+          class="field__input term-variant-row__input term-variant-row__note-input"
+          aria-label="Target variant ${index + 1} note"
+          placeholder="Notes..."
+          rows="1"
+          data-glossary-term-variant-note-input
+          data-variant-index="${index}"
+          data-language-code="${escapeHtml(languageCode)}"
+          ${isSubmitting ? "disabled" : ""}
+        >${escapeHtml(note ?? "")}</textarea>
+      `
+    : "";
 
   return `
     <div
@@ -101,6 +116,7 @@ function renderVariantRow(
     >
       <div class="${shellClasses.join(" ")}">
         ${inputMarkup}
+        ${noteMarkup}
         <div class="term-variant-row__actions">
           ${dragHandleMarkup}
           ${removeButtonMarkup}
@@ -115,6 +131,7 @@ function renderVariantLane(
   languageName,
   languageCode,
   values,
+  notes,
   isSubmitting,
   redundantIndices = new Set(),
 ) {
@@ -137,8 +154,9 @@ function renderVariantLane(
 
   return `
     <section class="term-lane">
-      <div class="term-lane__header">
+      <div class="term-lane__header${side === "target" ? " term-lane__header--target" : ""}">
         <h3 class="term-lane__title">${escapeHtml(languageName)}</h3>
+        ${side === "target" ? '<h3 class="term-lane__title term-lane__title--notes">Notes</h3>' : ""}
       </div>
       <div class="term-lane__rows">
         ${values
@@ -147,6 +165,7 @@ function renderVariantLane(
               side,
               languageCode,
               value,
+              Array.isArray(notes) ? notes[index] ?? "" : "",
               index,
               values.length,
               isSubmitting,
@@ -232,6 +251,7 @@ export function renderGlossaryTermEditorModal(state) {
               sourceLanguageName,
               sourceLanguageCode,
               editor.sourceTerms,
+              [],
               isSubmitting,
               redundantSourceVariantIndices,
             )}
@@ -240,6 +260,7 @@ export function renderGlossaryTermEditorModal(state) {
               targetLanguageName,
               targetLanguageCode,
               editor.targetTerms,
+              editor.targetVariantNotes,
               isSubmitting,
             )}
           </div>
@@ -247,7 +268,7 @@ export function renderGlossaryTermEditorModal(state) {
           <section class="glossary-term-modal__details">
             <div class="glossary-term-modal__details-grid">
               <label class="field">
-                <span class="field__label">Notes</span>
+                <span class="field__label">Global notes</span>
                 <textarea class="field__textarea" placeholder="Enter instructions for how this term should be translated here." data-glossary-term-notes-input ${isSubmitting ? "disabled" : ""}>${escapeHtml(editor.notesToTranslators)}</textarea>
               </label>
               <label class="field">

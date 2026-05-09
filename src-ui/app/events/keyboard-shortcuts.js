@@ -96,7 +96,7 @@ export function registerKeyboardShortcutEvents(dispatchAction) {
 
     const glossaryTermModalField = event.target instanceof Element
       ? event.target.closest(
-        "[data-glossary-term-variant-input], [data-glossary-term-notes-input], [data-glossary-term-footnote-input]",
+        "[data-glossary-term-variant-input], [data-glossary-term-variant-note-input], [data-glossary-term-notes-input], [data-glossary-term-footnote-input]",
       )
       : null;
     if (glossaryTermModalField instanceof HTMLTextAreaElement) {

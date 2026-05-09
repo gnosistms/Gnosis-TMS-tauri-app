@@ -10,6 +10,40 @@ function sanitizeStringList(values) {
     .filter(Boolean);
 }
 
+function sanitizeTargetVariantList(values) {
+  return (Array.isArray(values) ? values : [])
+    .map((value) => {
+      if (value && typeof value === "object" && !Array.isArray(value)) {
+        const text = sanitizeString(value.text).trim();
+        const note = sanitizeString(value.note).trim();
+        return text
+          ? {
+              text,
+              ...(note ? { note } : {}),
+            }
+          : null;
+      }
+      const text = sanitizeString(value).trim();
+      return text ? { text } : null;
+    })
+    .filter(Boolean);
+}
+
+function sanitizeNoTranslation(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  const position = sanitizeString(value.position).trim();
+  if (!position) {
+    return null;
+  }
+  const note = sanitizeString(value.note).trim();
+  return {
+    position,
+    ...(note ? { note } : {}),
+  };
+}
+
 function readEditorRowFieldText(row, fieldKey, languageCode) {
   if (!languageCode) {
     return "";
@@ -148,8 +182,11 @@ export function normalizeEditorDerivedGlossaryEntryState(entry) {
     entries: (Array.isArray(normalized.entries) ? normalized.entries : []).map((entryValue) => ({
       sourceTerm: sanitizeString(entryValue?.sourceTerm).trim(),
       glossarySourceTerm: sanitizeString(entryValue?.glossarySourceTerm).trim(),
-      targetVariants: sanitizeStringList(entryValue?.targetVariants),
+      targetVariants: sanitizeTargetVariantList(entryValue?.targetVariants),
+      noTranslation: sanitizeNoTranslation(entryValue?.noTranslation),
       notes: sanitizeStringList(entryValue?.notes),
+      globalNotes: sanitizeStringList(entryValue?.globalNotes),
+      footnotes: sanitizeStringList(entryValue?.footnotes),
     })),
     matcherModel:
       normalized.matcherModel && typeof normalized.matcherModel === "object"

@@ -12,7 +12,7 @@ const eventsSource = readFileSync(
 
 test("glossary term editor shortcut handling submits on Shift + Return", () => {
   assert.equal(
-    eventsSource.includes("[data-glossary-term-variant-input], [data-glossary-term-notes-input], [data-glossary-term-footnote-input]"),
+    eventsSource.includes("[data-glossary-term-variant-input], [data-glossary-term-variant-note-input], [data-glossary-term-notes-input], [data-glossary-term-footnote-input]"),
     true,
   );
   assert.equal(

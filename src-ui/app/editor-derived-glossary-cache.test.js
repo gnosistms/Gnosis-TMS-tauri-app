@@ -101,8 +101,11 @@ test("stored editor derived glossaries round-trip per chapter locally", () => {
         entries: [{
           sourceTerm: "inner chamber",
           glossarySourceTerm: "camara interior",
-          targetVariants: ["buong noi tam"],
+          targetVariants: [{ text: "buong noi tam" }],
+          noTranslation: null,
           notes: ["Dung thuat ngu cua glossary"],
+          globalNotes: [],
+          footnotes: [],
         }],
       },
     },

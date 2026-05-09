@@ -116,8 +116,13 @@ pub(crate) fn run_prompt(
     request: &AiPromptRequest,
     api_key: &str,
 ) -> Result<AiPromptResponse, String> {
-    if matches!(request.output_format, crate::ai::types::AiPromptOutputFormat::JsonSchema { .. }) {
-        return Err("Strict JSON schema output is only available with OpenAI in this version.".to_string());
+    if matches!(
+        request.output_format,
+        crate::ai::types::AiPromptOutputFormat::JsonSchema { .. }
+    ) {
+        return Err(
+            "Strict JSON schema output is only available with OpenAI in this version.".to_string(),
+        );
     }
 
     let normalized_key = api_key.trim();

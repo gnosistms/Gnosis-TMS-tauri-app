@@ -145,14 +145,17 @@ export function normalizeGlossaryTerm(term) {
   const isDeletedLifecycleState =
     term.lifecycleState === "deleted" || term.lifecycleState === "softDeleted";
 
+  const targetTerms = Array.isArray(term.targetTerms)
+    ? term.targetTerms.map((value) => sanitizeGlossaryRubyMarkup(value))
+    : [];
+
   return {
     termId,
     sourceTerms: Array.isArray(term.sourceTerms)
       ? term.sourceTerms.map((value) => sanitizeGlossaryRubyMarkup(value))
       : [],
-    targetTerms: Array.isArray(term.targetTerms)
-      ? term.targetTerms.map((value) => sanitizeGlossaryRubyMarkup(value))
-      : [],
+    targetTerms,
+    targetVariantNotes: alignTargetVariantNotes(targetTerms, term.targetVariantNotes),
     notesToTranslators:
       typeof term.notesToTranslators === "string" ? term.notesToTranslators : "",
     footnote: typeof term.footnote === "string" ? term.footnote : "",
@@ -279,6 +282,16 @@ export function normalizeEditableTargetTerms(terms) {
   return normalized.length > 0 ? normalized : [""];
 }
 
+export function alignTargetVariantNotes(targetTerms, notes) {
+  return (Array.isArray(targetTerms) ? targetTerms : []).map((_, index) =>
+    typeof notes?.[index] === "string" ? notes[index] : ""
+  );
+}
+
+export function normalizeEditableTargetVariantNotes(targetTerms, notes) {
+  return alignTargetVariantNotes(normalizeEditableTargetTerms(targetTerms), notes);
+}
+
 export function sanitizeEditableTerms(terms) {
   return (Array.isArray(terms) ? terms : [])
     .map((term) => sanitizeGlossaryRubyMarkup(term).trim())
@@ -286,33 +299,110 @@ export function sanitizeEditableTerms(terms) {
 }
 
 export function sanitizeEditableTargetTerms(terms) {
+  return sanitizeEditableTargetTermPairs(terms, []).targetTerms;
+}
+
+export function sanitizeEditableTargetTermPairs(terms, notes) {
   const sanitized = [];
-  const seen = new Set();
-  let includedEmptyVariant = false;
+  const sanitizedNotes = [];
+  const seen = new Map();
 
-  for (const term of Array.isArray(terms) ? terms : []) {
-    if (isGlossaryEmptyTargetVariant(term)) {
-      if (!includedEmptyVariant) {
-        sanitized.push("");
-        includedEmptyVariant = true;
-      }
+  for (const [index, term] of (Array.isArray(terms) ? terms : []).entries()) {
+    const trimmed = isGlossaryEmptyTargetVariant(term)
+      ? ""
+      : sanitizeGlossaryRubyMarkup(term).trim();
+    if (!trimmed && !isGlossaryEmptyTargetVariant(term)) {
+      continue;
+    }
+    const note = typeof notes?.[index] === "string" ? notes[index].trim() : "";
+    const existingIndex = seen.get(trimmed);
+    if (existingIndex !== undefined) {
+      sanitizedNotes[existingIndex] = mergeTargetVariantNoteText(
+        sanitizedNotes[existingIndex],
+        note,
+      );
       continue;
     }
 
-    const trimmed = sanitizeGlossaryRubyMarkup(term).trim();
-    if (!trimmed) {
-      continue;
-    }
-
-    if (seen.has(trimmed)) {
-      continue;
-    }
-
-    seen.add(trimmed);
+    seen.set(trimmed, sanitized.length);
     sanitized.push(trimmed);
+    sanitizedNotes.push(note);
   }
 
-  return sanitized;
+  return {
+    targetTerms: sanitized,
+    targetVariantNotes: sanitizedNotes,
+  };
+}
+
+export function mergeTargetVariantNoteText(existing, incoming) {
+  const note = String(incoming ?? "").trim();
+  if (!note) {
+    return existing ?? "";
+  }
+  const current = String(existing ?? "").trim();
+  if (!current) {
+    return note;
+  }
+  if (current.split("\n\n").some((value) => value.trim() === note)) {
+    return current;
+  }
+  return `${current}\n\n${note}`;
+}
+
+export function buildGlossaryTargetVariantGuidance(terms, notes) {
+  const targetVariants = [];
+  const seenTargetVariantIndexes = new Map();
+  let emptyVariantIndex = -1;
+  let noTranslationNote = "";
+
+  for (const [index, term] of (Array.isArray(terms) ? terms : []).entries()) {
+    const text = isGlossaryEmptyTargetVariant(term)
+      ? ""
+      : sanitizeGlossaryRubyMarkup(term).trim();
+    const note = typeof notes?.[index] === "string" ? notes[index].trim() : "";
+
+    if (!text) {
+      if (emptyVariantIndex < 0) {
+        emptyVariantIndex = index;
+      }
+      noTranslationNote = mergeTargetVariantNoteText(noTranslationNote, note);
+      continue;
+    }
+
+    const existingIndex = seenTargetVariantIndexes.get(text);
+    if (existingIndex !== undefined) {
+      targetVariants[existingIndex].note = mergeTargetVariantNoteText(
+        targetVariants[existingIndex].note,
+        note,
+      );
+      continue;
+    }
+
+    seenTargetVariantIndexes.set(text, targetVariants.length);
+    targetVariants.push({
+      text,
+      ...(note ? { note } : {}),
+    });
+  }
+
+  const noTranslationPosition = emptyVariantIndex < 0
+    ? null
+    : targetVariants.length === 0
+      ? "only"
+      : emptyVariantIndex === 0
+        ? "first"
+        : "later";
+
+  return {
+    targetVariants,
+    noTranslation: noTranslationPosition
+      ? {
+          position: noTranslationPosition,
+          ...(noTranslationNote ? { note: noTranslationNote } : {}),
+        }
+      : null,
+  };
 }
 
 export function updateGlossaryTermArray(side, updater) {

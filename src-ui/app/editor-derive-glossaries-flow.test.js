@@ -24,6 +24,7 @@ const {
   editorDeriveGlossariesTestApi,
 } = await import("./editor-derive-glossaries-flow.js");
 const {
+  buildDerivedGlossaryTermInputs,
   prepareEditorDerivedGlossaryForContext,
   resolveEditorDerivedGlossaryUsage,
 } = await import("./editor-derived-glossary-flow.js");
@@ -136,6 +137,37 @@ test("Derive glossaries config requires glossary languages and returns derivable
     config.derivableLanguages.map((language) => language.code),
     ["es", "ja", "fr"],
   );
+});
+
+test("derived glossary term inputs split empty target variants into no-translation guidance", () => {
+  const inputs = buildDerivedGlossaryTermInputs({
+    terms: [
+      {
+        termId: "term-1",
+        lifecycleState: "active",
+        sourceTerms: ["mente"],
+        targetTerms: ["", "tam", "tri"],
+        targetVariantNotes: ["Omit when redundant.", "Preferred.", ""],
+        notesToTranslators: "Use doctrinal sense.",
+        footnote: "Footnote.",
+      },
+    ],
+  });
+
+  assert.deepEqual(inputs, [{
+    glossarySourceTerms: ["mente"],
+    targetVariants: [
+      { text: "tam", note: "Preferred." },
+      { text: "tri" },
+    ],
+    noTranslation: {
+      position: "first",
+      note: "Omit when redundant.",
+    },
+    notes: ["Use doctrinal sense."],
+    globalNotes: ["Use doctrinal sense."],
+    footnotes: ["Footnote."],
+  }]);
 });
 
 test("Derive glossaries work skips deleted rows, missing target/editor source rows, and missing pair source only", () => {

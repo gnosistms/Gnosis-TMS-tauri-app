@@ -64,11 +64,42 @@ pub struct AiReviewResponse {
 pub struct AiTranslationGlossaryHint {
     pub source_term: String,
     #[serde(default)]
-    pub target_variants: Vec<String>,
+    pub target_variants: Vec<AiTranslationGlossaryTargetVariant>,
     #[serde(default)]
     pub no_translation_position: Option<String>,
     #[serde(default)]
+    pub no_translation: Option<AiTranslationNoTranslationHint>,
+    #[serde(default)]
     pub notes: Vec<String>,
+    #[serde(default)]
+    pub global_notes: Vec<String>,
+    #[serde(default)]
+    pub footnotes: Vec<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(untagged)]
+pub enum AiTranslationGlossaryTargetVariant {
+    Text(String),
+    Object(AiTranslationGlossaryTargetVariantObject),
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AiTranslationGlossaryTargetVariantObject {
+    #[serde(default)]
+    pub text: String,
+    #[serde(default)]
+    pub note: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AiTranslationNoTranslationHint {
+    #[serde(default)]
+    pub position: String,
+    #[serde(default)]
+    pub note: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -77,9 +108,15 @@ pub struct AiTranslatedGlossaryTermInput {
     #[serde(default)]
     pub glossary_source_terms: Vec<String>,
     #[serde(default)]
-    pub target_variants: Vec<String>,
+    pub target_variants: Vec<AiTranslationGlossaryTargetVariant>,
+    #[serde(default)]
+    pub no_translation: Option<AiTranslationNoTranslationHint>,
     #[serde(default)]
     pub notes: Vec<String>,
+    #[serde(default)]
+    pub global_notes: Vec<String>,
+    #[serde(default)]
+    pub footnotes: Vec<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -88,9 +125,15 @@ pub struct AiTranslatedGlossaryEntry {
     pub source_term: String,
     pub glossary_source_term: String,
     #[serde(default)]
-    pub target_variants: Vec<String>,
+    pub target_variants: Vec<AiTranslationGlossaryTargetVariant>,
+    #[serde(default)]
+    pub no_translation: Option<AiTranslationNoTranslationHint>,
     #[serde(default)]
     pub notes: Vec<String>,
+    #[serde(default)]
+    pub global_notes: Vec<String>,
+    #[serde(default)]
+    pub footnotes: Vec<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -162,7 +205,10 @@ pub enum AiPromptOutputFormat {
     Text,
     AssistantTurnJson,
     ReviewJson,
-    JsonSchema { name: String, schema: serde_json::Value },
+    JsonSchema {
+        name: String,
+        schema: serde_json::Value,
+    },
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq, Default)]
