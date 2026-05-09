@@ -377,6 +377,44 @@ test("source highlights include a structured tooltip payload for source-language
   assert.deepEqual(payload.footnotes, ["Chu thich bo sung"]);
 });
 
+test("source hover payload includes no-translation notes for empty target variants", () => {
+  const model = buildEditorGlossaryModel(glossaryPayload({
+    terms: [
+      {
+        termId: "t1",
+        sourceTerms: ["mente"],
+        targetTerms: [""],
+        targetVariantNotes: ["Omit when redundant."],
+      },
+    ],
+  }));
+
+  const highlights = buildEditorRowGlossaryHighlights([
+    {
+      code: "es",
+      text: "La mente canta.",
+    },
+  ], model);
+
+  const sourceHtml = highlights.get("es")?.html ?? "";
+  const payloadMatch = sourceHtml.match(/data-editor-glossary-tooltip-payload="([^"]+)"/);
+  assert.ok(payloadMatch);
+
+  const payloadJson = payloadMatch[1]
+    .replaceAll("&quot;", "\"")
+    .replaceAll("&#39;", "'")
+    .replaceAll("&amp;", "&");
+  const payload = JSON.parse(payloadJson);
+
+  assert.equal(payload.kind, "source");
+  assert.equal(payload.title, "mente");
+  assert.deepEqual(payload.variants, []);
+  assert.deepEqual(payload.noTranslation, {
+    position: "only",
+    note: "Omit when redundant.",
+  });
+});
+
 test("target highlights include a structured tooltip payload with source variants", () => {
   const model = buildEditorGlossaryModel(glossaryPayload({
     terms: [

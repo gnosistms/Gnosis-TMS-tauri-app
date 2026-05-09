@@ -311,10 +311,10 @@ export function sanitizeEditableTargetTermPairs(terms, notes) {
     const trimmed = isGlossaryEmptyTargetVariant(term)
       ? ""
       : sanitizeGlossaryRubyMarkup(term).trim();
-    if (!trimmed && !isGlossaryEmptyTargetVariant(term)) {
+    const note = typeof notes?.[index] === "string" ? notes[index].trim() : "";
+    if (!trimmed && !isGlossaryEmptyTargetVariant(term) && !note) {
       continue;
     }
-    const note = typeof notes?.[index] === "string" ? notes[index].trim() : "";
     const existingIndex = seen.get(trimmed);
     if (existingIndex !== undefined) {
       sanitizedNotes[existingIndex] = mergeTargetVariantNoteText(

@@ -54,3 +54,15 @@ test("target pair sanitizing merges duplicate notes and keeps empty variant note
     targetVariantNotes: ["First\n\nSecond", "Omit when redundant."],
   });
 });
+
+test("target pair sanitizing keeps a raw blank row when it has a note", () => {
+  const result = sanitizeEditableTargetTermPairs(
+    ["alpha", ""],
+    ["", "Omit when redundant."],
+  );
+
+  assert.deepEqual(result, {
+    targetTerms: ["alpha", ""],
+    targetVariantNotes: ["", "Omit when redundant."],
+  });
+});

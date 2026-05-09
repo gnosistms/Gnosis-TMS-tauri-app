@@ -824,6 +824,7 @@ function buildStructuredGlossaryTooltipPayload(candidate, hoveredTerm, glossaryM
   const variants = isSourceMatch
     ? orderedCandidateTargetVariants(candidate)
     : orderedCandidateValues(candidate, "sourceTermsOrdered", "sourceTerms");
+  const noTranslation = isSourceMatch ? candidateNoTranslation(candidate) : null;
   const matchedTargetVariant = isTargetMatch
     ? orderedCandidateTargetVariants(candidate).find((variant) =>
       normalizeGlossaryToken(
@@ -845,6 +846,7 @@ function buildStructuredGlossaryTooltipPayload(candidate, hoveredTerm, glossaryM
   if (
     !title
     && variants.length === 0
+    && !noTranslation
     && translatorNotes.length === 0
     && footnotes.length === 0
     && originTerms.length === 0
@@ -856,6 +858,7 @@ function buildStructuredGlossaryTooltipPayload(candidate, hoveredTerm, glossaryM
     kind: isSourceMatch ? "source" : "target",
     title,
     variants,
+    ...(noTranslation ? { noTranslation } : {}),
     targetVariantNote: matchedTargetVariant?.note ?? "",
     translatorNotes,
     footnotes,

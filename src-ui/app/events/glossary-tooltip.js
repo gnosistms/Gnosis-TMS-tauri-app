@@ -179,6 +179,17 @@ function glossaryTooltipPayload(mark) {
       : [];
     const targetVariantNote =
       typeof payload.targetVariantNote === "string" ? payload.targetVariantNote.trim() : "";
+    const rawNoTranslation =
+      payload.noTranslation && typeof payload.noTranslation === "object"
+        ? {
+            position: String(payload.noTranslation.position ?? "").trim(),
+            note: String(payload.noTranslation.note ?? "").trim(),
+          }
+        : null;
+    const noTranslation =
+      rawNoTranslation && (rawNoTranslation.position || rawNoTranslation.note)
+        ? rawNoTranslation
+        : null;
     const translatorNotes = Array.isArray(payload.translatorNotes)
       ? payload.translatorNotes.map((value) => String(value ?? "").trim()).filter(Boolean)
       : [];
@@ -191,6 +202,7 @@ function glossaryTooltipPayload(mark) {
     if (
       !title
       && variants.length === 0
+      && !noTranslation
       && !targetVariantNote
       && translatorNotes.length === 0
       && footnotes.length === 0
@@ -203,6 +215,7 @@ function glossaryTooltipPayload(mark) {
       kind: payload.kind,
       title,
       variants,
+      noTranslation,
       targetVariantNote,
       translatorNotes,
       footnotes,
@@ -224,10 +237,18 @@ function renderStructuredGlossaryTooltipBody(body, payload) {
     body.append(title);
   }
 
-  if (payload.variants.length > 0) {
+  const displayVariants = [...payload.variants];
+  if (payload.kind === "source" && payload.noTranslation) {
+    displayVariants.push({
+      text: "No translation",
+      note: payload.noTranslation.note ?? "",
+    });
+  }
+
+  if (displayVariants.length > 0) {
     const variants = document.createElement("div");
     variants.className = "editor-glossary-info-card__variants";
-    const variantItems = payload.variants.map((variant) => {
+    const variantItems = displayVariants.map((variant) => {
       const text = typeof variant === "string" ? variant : variant?.text ?? "";
       const note = typeof variant === "string" ? "" : variant?.note ?? "";
       const row = document.createElement("p");
