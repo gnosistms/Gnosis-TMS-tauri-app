@@ -19,9 +19,15 @@ import { rowHasFieldChanges } from "./editor-row-persistence-model.js";
 import { captureTranslateAnchorForRow } from "./scroll-state.js";
 import { findEditorRowById, hasActiveEditorField } from "./editor-utils.js";
 import { selectedProjectsTeam, selectedProjectsTeamInstallationId } from "./project-context.js";
+import {
+  buildEditorAiReviewRequest,
+  editorReviewLanguageByCode,
+  normalizeEditorAiReviewMode,
+  readEditorReviewRowFieldText,
+  selectedEditorReviewSourceLanguageCode,
+} from "./editor-ai-review-request.js";
 import { invoke } from "./runtime.js";
 import { state } from "./state.js";
-import { languageBaseCode } from "./editor-language-utils.js";
 import { showNoticeBadge } from "./status-feedback.js";
 import {
   captureTranslateViewport,
@@ -65,18 +71,19 @@ function activeEditorReviewContext(chapterState = state.editorChapter) {
   }
 
   const languageCode = chapterState.activeLanguageCode;
-  const language = (Array.isArray(chapterState.languages) ? chapterState.languages : [])
-    .find((item) => item?.code === languageCode) ?? null;
+  const sourceLanguageCode = selectedEditorReviewSourceLanguageCode(chapterState);
   return {
     chapterId: chapterState.chapterId,
     rowId: chapterState.activeRowId,
+    row,
+    sourceLanguageCode,
     languageCode,
-    language,
-    text: row.fields?.[languageCode] ?? "",
+    language: editorReviewLanguageByCode(chapterState, languageCode),
+    text: readEditorReviewRowFieldText(row, languageCode),
   };
 }
 
-export async function runEditorAiReview(render) {
+export async function runEditorAiReview(render, reviewMode = "grammar") {
   if (state.offline?.isEnabled === true) {
     showNoticeBadge("This operation is not supported in offline mode", render);
     return;
@@ -105,6 +112,7 @@ export async function runEditorAiReview(render) {
     return;
   }
 
+  const normalizedReviewMode = normalizeEditorAiReviewMode(reviewMode);
   const requestKey = createAiReviewRequestKey(
     context.chapterId,
     context.rowId,
@@ -117,6 +125,7 @@ export async function runEditorAiReview(render) {
     context.languageCode,
     requestKey,
     context.text,
+    normalizedReviewMode,
   );
   render?.({ scope: "translate-sidebar" });
 
@@ -201,10 +210,15 @@ export async function runEditorAiReview(render) {
   try {
     const payload = await invoke("run_ai_review", {
       request: withSelectedInstallation({
-        providerId,
-        modelId,
-        text: context.text,
-        languageCode: languageBaseCode(context.language) || context.languageCode,
+        ...buildEditorAiReviewRequest({
+          chapterState: state.editorChapter,
+          row: context.row,
+          providerId,
+          modelId,
+          reviewMode: normalizedReviewMode,
+          sourceLanguageCode: context.sourceLanguageCode,
+          targetLanguageCode: context.languageCode,
+        }),
       }),
     });
 
@@ -227,6 +241,9 @@ export async function runEditorAiReview(render) {
       requestKey,
       context.text,
       payload?.suggestedText ?? "",
+      payload?.promptText ?? "",
+      normalizedReviewMode,
+      typeof payload?.reviewed === "boolean" ? payload.reviewed : null,
     );
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

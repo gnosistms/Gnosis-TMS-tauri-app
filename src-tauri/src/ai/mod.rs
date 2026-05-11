@@ -95,6 +95,7 @@ fn parse_review_structured_response(text: &str) -> Result<AiReviewResponse, Stri
             return Ok(AiReviewResponse {
                 suggested_text: parsed.suggested_text,
                 reviewed: Some(parsed.reviewed),
+                prompt_text: String::new(),
             });
         }
     }
@@ -1210,11 +1211,12 @@ pub(crate) fn run_ai_review(
 
     let api_key = load_ai_provider_api_key(app, request.provider_id, request.installation_id)?;
 
+    let prompt = build_review_prompt(&request);
     let response = providers::run_prompt(
         &AiPromptRequest {
             provider_id: request.provider_id,
             model_id: request.model_id.clone(),
-            prompt: build_review_prompt(&request),
+            prompt: prompt.clone(),
             previous_response_id: None,
             output_format: if structured_review_mode.is_some() {
                 AiPromptOutputFormat::ReviewJson
@@ -1226,12 +1228,15 @@ pub(crate) fn run_ai_review(
     )?;
 
     if structured_review_mode.is_some() {
-        return parse_review_structured_response(&response.text);
+        let mut parsed = parse_review_structured_response(&response.text)?;
+        parsed.prompt_text = prompt;
+        return Ok(parsed);
     }
 
     Ok(AiReviewResponse {
         suggested_text: response.text,
         reviewed: None,
+        prompt_text: prompt,
     })
 }
 

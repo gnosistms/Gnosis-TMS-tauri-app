@@ -468,6 +468,9 @@ export function createEditorAiReviewState() {
     requestKey: null,
     sourceText: "",
     suggestedText: "",
+    promptText: "",
+    reviewMode: "grammar",
+    reviewed: null,
   };
 }
 

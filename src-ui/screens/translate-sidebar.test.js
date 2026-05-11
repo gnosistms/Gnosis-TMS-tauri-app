@@ -539,7 +539,7 @@ test("translation log details omit distinct glossary source text", () => {
   assert.doesNotMatch(html, /Hola desde el glosario/);
 });
 
-test("review sidebar disables Review now while offline", () => {
+test("review sidebar disables review mode buttons while offline", () => {
   const html = renderTranslateSidebar(
     activeEditorChapter({
       sidebarTab: "review",
@@ -554,7 +554,34 @@ test("review sidebar disables Review now while offline", () => {
   );
 
   assert.match(html, /AI actions are unavailable offline/);
-  assert.match(html, /data-action="review-editor-text-now"[^>]*disabled/);
+  assert.match(html, /data-action="review-editor-text-now:grammar"[^>]*disabled/);
+  assert.match(html, /data-action="review-editor-text-now:meaning"[^>]*disabled/);
+});
+
+test("review sidebar renders grammar and translation review actions with tooltips", () => {
+  const html = renderTranslateSidebar(
+    activeEditorChapter({
+      sidebarTab: "review",
+    }),
+    [{
+      id: "row-1",
+      sections: [
+        { code: "es", text: "Hola" },
+        { code: "vi", text: "Xin chau" },
+      ],
+    }],
+    languages,
+    "es",
+    "vi",
+    createAiActionConfigurationState(),
+  );
+
+  assert.match(html, /data-action="review-editor-text-now:grammar"/);
+  assert.match(html, />Spelling and grammar<\/span>/);
+  assert.match(html, /Check only for spelling and grammar errors\./);
+  assert.match(html, /data-action="review-editor-text-now:meaning"/);
+  assert.match(html, />Translation<\/span>/);
+  assert.match(html, /Check to see if the translation is correct in addition to checking spelling and grammar\./);
 });
 
 test("review sidebar keeps existing AI review suggestions locally applicable offline", () => {
@@ -580,4 +607,35 @@ test("review sidebar keeps existing AI review suggestions locally applicable off
 
   assert.match(html, /data-action="apply-editor-ai-review"/);
   assert.doesNotMatch(html, /data-action="apply-editor-ai-review"[^>]*disabled/);
+});
+
+test("review sidebar renders AI review prompt details when available", () => {
+  const html = renderTranslateSidebar(
+    activeEditorChapter({
+      sidebarTab: "review",
+      aiReview: {
+        rowId: "row-1",
+        languageCode: "vi",
+        status: "ready",
+        sourceText: "Xin chau",
+        suggestedText: "Xin chao",
+        promptText: "Check spelling and grammar on Xin chau",
+      },
+    }),
+    [{
+      id: "row-1",
+      sections: [
+        { code: "es", text: "Hola" },
+        { code: "vi", text: "Xin chau" },
+      ],
+    }],
+    languages,
+    "es",
+    "vi",
+    createAiActionConfigurationState(),
+  );
+
+  assert.match(html, /<summary>Show prompt<\/summary>/);
+  assert.match(html, /assistant-item__details/);
+  assert.match(html, /Check spelling and grammar on Xin chau/);
 });

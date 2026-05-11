@@ -497,6 +497,7 @@ pub(crate) fn normalize_review_response(body: &str) -> Result<AiReviewResponse, 
     Ok(AiReviewResponse {
         suggested_text,
         reviewed: None,
+        prompt_text: String::new(),
     })
 }
 

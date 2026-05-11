@@ -25,6 +25,7 @@ globalThis.window = {
 };
 
 const {
+  confirmEditorAiReviewAll,
   editorAiReviewAllTestApi,
   openEditorAiReviewAllModal,
   updateEditorAiReviewAllMode,
@@ -40,7 +41,9 @@ function row(rowId, fields, fieldStates = {}, lifecycleState = "active") {
     rowId,
     lifecycleState,
     fields,
+    persistedFields: { ...fields },
     fieldStates,
+    persistedFieldStates: { ...fieldStates },
   };
 }
 
@@ -115,4 +118,41 @@ test("AI Review All mode update is exclusive and normalizes unknown values", () 
 
   updateEditorAiReviewAllMode(() => {}, "anything");
   assert.equal(state.editorChapter.aiReviewAllModal.reviewMode, "grammar");
+});
+
+test("AI Review All enters preparing review state before startup checks finish", async () => {
+  resetSessionState();
+  state.editorChapter = chapter({
+    aiReviewAllModal: {
+      ...createEditorChapterState().aiReviewAllModal,
+      isOpen: true,
+      step: "configure",
+      reviewMode: "meaning",
+    },
+    rows: [
+      { ...row("row-1", { es: "Uno", vi: "Mot" }, { vi: { reviewed: false, pleaseCheck: false } }), freshness: "stale" },
+      row("row-2", { es: "Dos", vi: "Hai" }, { vi: { reviewed: false, pleaseCheck: false } }),
+    ],
+  });
+  let renderCount = 0;
+
+  const run = confirmEditorAiReviewAll(() => {
+    renderCount += 1;
+  });
+
+  assert.equal(state.editorChapter.aiReviewAllModal.step, "reviewing");
+  assert.equal(state.editorChapter.aiReviewAllModal.status, "preparing");
+  assert.equal(state.editorChapter.aiReviewAllModal.reviewMode, "meaning");
+  assert.equal(state.editorChapter.aiReviewAllModal.completedCount, 0);
+  assert.equal(state.editorChapter.aiReviewAllModal.totalCount, 2);
+  assert.deepEqual(state.editorChapter.aiReviewAllModal.languageProgress, {
+    vi: { completedCount: 0, totalCount: 2 },
+  });
+  assert.equal(renderCount, 1);
+
+  await run;
+
+  assert.equal(state.editorChapter.aiReviewAllModal.step, "configure");
+  assert.equal(state.editorChapter.aiReviewAllModal.status, "idle");
+  assert.equal(state.editorChapter.aiReviewAllModal.error, "Refresh or resolve the file before running AI Review.");
 });

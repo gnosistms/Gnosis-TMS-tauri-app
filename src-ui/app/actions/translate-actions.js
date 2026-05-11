@@ -270,8 +270,14 @@ export function createTranslateActions(render) {
       return true;
     }
 
+    const reviewEditorTextNowMode = actionSuffix(action, "review-editor-text-now:");
+    if (reviewEditorTextNowMode !== null) {
+      await runEditorAiReview(render, reviewEditorTextNowMode);
+      return true;
+    }
+
     if (action === "review-editor-text-now") {
-      await runEditorAiReview(render);
+      await runEditorAiReview(render, "grammar");
       return true;
     }
 

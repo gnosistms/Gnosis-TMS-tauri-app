@@ -13,6 +13,9 @@ export function normalizeEditorAiReviewState(aiReview) {
     requestKey: typeof aiReview?.requestKey === "string" ? aiReview.requestKey : null,
     sourceText: typeof aiReview?.sourceText === "string" ? aiReview.sourceText : "",
     suggestedText: typeof aiReview?.suggestedText === "string" ? aiReview.suggestedText : "",
+    promptText: typeof aiReview?.promptText === "string" ? aiReview.promptText : "",
+    reviewMode: aiReview?.reviewMode === "meaning" ? "meaning" : "grammar",
+    reviewed: typeof aiReview?.reviewed === "boolean" ? aiReview.reviewed : null,
   };
 }
 
@@ -47,6 +50,7 @@ export function applyEditorAiReviewLoading(
   languageCode,
   requestKey,
   sourceText,
+  reviewMode = "grammar",
 ) {
   if (!chapterState?.chapterId || !rowId || !languageCode) {
     return chapterState;
@@ -61,6 +65,7 @@ export function applyEditorAiReviewLoading(
       languageCode,
       requestKey,
       sourceText: typeof sourceText === "string" ? sourceText : "",
+      reviewMode: reviewMode === "meaning" ? "meaning" : "grammar",
     },
   };
 }
@@ -72,6 +77,9 @@ export function applyEditorAiReviewLoaded(
   requestKey,
   sourceText,
   suggestedText,
+  promptText = "",
+  reviewMode = "grammar",
+  reviewed = null,
 ) {
   if (!chapterState?.chapterId || !rowId || !languageCode) {
     return chapterState;
@@ -87,6 +95,9 @@ export function applyEditorAiReviewLoaded(
       requestKey,
       sourceText: typeof sourceText === "string" ? sourceText : "",
       suggestedText: typeof suggestedText === "string" ? suggestedText : "",
+      promptText: typeof promptText === "string" ? promptText : "",
+      reviewMode: reviewMode === "meaning" ? "meaning" : "grammar",
+      reviewed: typeof reviewed === "boolean" ? reviewed : null,
     },
   };
 }
@@ -155,18 +166,23 @@ export function resolveVisibleEditorAiReview(chapterState, rowId, languageCode, 
     hasSuggestion
     && !isStale
     && normalizeEditorAiReviewComparisonText(aiReview.suggestedText) === normalizedCurrentText;
+  const reviewedLooksGood =
+    aiReview.status === "ready"
+    && aiReview.reviewed === true
+    && aiReview.sourceText === normalizedCurrentText;
   const showSuggestion = hasSuggestion && !isStale && !suggestedTextMatchesCurrentText;
 
   return {
     ...aiReview,
     hasSuggestion,
     isStale,
-    showLooksGoodMessage: suggestedTextMatchesCurrentText,
+    showLooksGoodMessage: suggestedTextMatchesCurrentText || reviewedLooksGood,
     showSuggestion,
     showReviewNow:
       aiReview.status !== "loading"
       && aiReview.status !== "applying"
       && !showSuggestion
-      && !suggestedTextMatchesCurrentText,
+      && !suggestedTextMatchesCurrentText
+      && !reviewedLooksGood,
   };
 }

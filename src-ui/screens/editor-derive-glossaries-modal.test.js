@@ -252,6 +252,31 @@ test("AI Review All preflight modal shows reviewed counts and continue action", 
   assert.match(html, /data-action="continue-editor-ai-review-all"/);
 });
 
+test("AI Review All reviewing modal shows preparing state while startup runs", () => {
+  const html = renderEditorAiReviewAllModal({
+    editorChapter: {
+      ...chapter(),
+      aiReviewAllModal: {
+        ...createEditorChapterState().aiReviewAllModal,
+        isOpen: true,
+        step: "reviewing",
+        status: "preparing",
+        languageCode: "vi",
+        completedCount: 0,
+        totalCount: 2,
+        languageProgress: {
+          vi: { completedCount: 0, totalCount: 2 },
+        },
+      },
+    },
+  });
+
+  assert.match(html, /Preparing review/);
+  assert.match(html, /0 \/ 2 translations completed/);
+  assert.match(html, />Preparing\.\.\.</);
+  assert.match(html, /data-action="cancel-editor-ai-review-all"[^>]*disabled/);
+});
+
 test("AI Review All filter modal uses Ok dismissal", () => {
   const html = renderEditorAiReviewAllModal({
     editorChapter: {

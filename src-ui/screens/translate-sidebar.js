@@ -13,8 +13,6 @@ import {
 import { resolveVisibleEditorAiTranslateAction } from "../app/editor-ai-translate-state.js";
 import {
   escapeHtml,
-  loadingPrimaryButton,
-  primaryButton,
   renderCollapseChevron,
   renderFlowArrowIcon,
   renderInlineStateBox,
@@ -453,6 +451,48 @@ function renderAssistantPromptDetails(item) {
   `;
 }
 
+function renderAiReviewPromptDetails(aiReview) {
+  const promptText = typeof aiReview?.promptText === "string" ? aiReview.promptText.trim() : "";
+  if (!promptText) {
+    return "";
+  }
+
+  return `
+    <details class="assistant-item__details">
+      <summary>Show prompt</summary>
+      <div class="assistant-item__details-body">
+        <div class="assistant-item__section">
+          <p class="assistant-item__section-label">Prompt</p>
+          <pre class="assistant-item__pre">${escapeHtml(promptText)}</pre>
+        </div>
+      </div>
+    </details>
+  `;
+}
+
+function renderAiReviewModeButton({ label, action, tooltip, isLoading = false, disabled = false }) {
+  const tooltipMarkup = tooltipAttributes(tooltip, { align: "start" });
+  if (isLoading) {
+    return `
+      <button class="button button--primary button--loading" data-action="noop" disabled${tooltipMarkup}>
+        <span class="button__spinner" aria-hidden="true"></span>
+        <span>Checking...</span>
+      </button>
+    `;
+  }
+
+  return `
+    <button
+      class="button button--primary${disabled ? " is-disabled" : ""}"
+      data-action="${escapeHtml(action)}"
+      ${disabled ? 'disabled aria-disabled="true"' : ""}
+      ${tooltipMarkup}
+    >
+      <span>${escapeHtml(label)}</span>
+    </button>
+  `;
+}
+
 function assistantDraftCanShowDiff(item, currentTargetText) {
   return Boolean(item?.draftTranslationText)
     && typeof currentTargetText === "string"
@@ -762,14 +802,22 @@ function renderReviewPane(editorChapter, rows, languages, offlineMode = false) {
         message: "AI actions are unavailable offline.",
       })
       : "";
-  const reviewNowButton = aiReview.status === "loading"
-    ? loadingPrimaryButton({
-      label: "Review now",
-      loadingLabel: "Reviewing...",
-      action: "review-editor-text-now",
-      isLoading: true,
-    })
-    : primaryButton("Review now", "review-editor-text-now", { disabled: offlineMode === true });
+  const reviewModeButtons = `
+    ${renderAiReviewModeButton({
+      label: "Spelling and grammar",
+      action: "review-editor-text-now:grammar",
+      tooltip: "Check only for spelling and grammar errors.",
+      isLoading: aiReview.status === "loading" && aiReview.reviewMode !== "meaning",
+      disabled: offlineMode === true || aiReview.status === "loading",
+    })}
+    ${renderAiReviewModeButton({
+      label: "Translation",
+      action: "review-editor-text-now:meaning",
+      tooltip: "Check to see if the translation is correct in addition to checking spelling and grammar.",
+      isLoading: aiReview.status === "loading" && aiReview.reviewMode === "meaning",
+      disabled: offlineMode === true || aiReview.status === "loading",
+    })}
+  `;
   const applyButton = secondaryButton(
     aiReview.status === "applying" ? "Applying..." : "Apply",
     "apply-editor-ai-review",
@@ -855,16 +903,19 @@ function renderReviewPane(editorChapter, rows, languages, offlineMode = false) {
                           </div>
                           <p class="history-item__meta">Compared with the current text</p>
                         </div>
+                        ${renderAiReviewPromptDetails(aiReview)}
                       `
                       : aiReview.showLooksGoodMessage
                         ? `
                           <p class="history-item__content" lang="${escapeHtml(activeLanguage.code)}">Your translation looks good!</p>
+                          ${renderAiReviewPromptDetails(aiReview)}
                         `
                       : `
                         ${aiReviewMessage}
+                        ${renderAiReviewPromptDetails(aiReview)}
                         <div class="history-item__footer">
                           <div class="history-item__actions">
-                            ${reviewNowButton}
+                            ${reviewModeButtons}
                           </div>
                         </div>
                       `

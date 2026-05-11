@@ -80,7 +80,7 @@ function renderPreflightModal(modal) {
 
 function renderConfigureModal(state, modal) {
   const offlineMode = state.offline?.isEnabled === true;
-  const disabled = modal.status === "loading" || offlineMode;
+  const disabled = modal.status === "loading" || modal.status === "preparing" || offlineMode;
   const confirmButton = offlineMode
     ? `
       <button class="button button--primary is-disabled" data-action="noop" disabled aria-disabled="true">
@@ -118,12 +118,13 @@ function renderConfigureModal(state, modal) {
 
 function renderReviewingModal(state, modal) {
   const language = languageForCode(state.editorChapter, modal.languageCode);
+  const isPreparing = modal.status === "preparing";
   return `
     <div class="modal-backdrop">
       <section class="card modal-card modal-card--compact modal-card--ai-translate-all">
         <div class="card__body modal-card__body ai-translate-all-modal">
           <p class="card__eyebrow">AI REVIEW</p>
-          <h2 class="modal__title">Reviewing translations</h2>
+          <h2 class="modal__title">${isPreparing ? "Preparing review" : "Reviewing translations"}</h2>
           ${renderBatchOverallProgress(modal, "translation", "translations")}
           ${renderBatchLanguageProgressBars({
             languages: [language],
@@ -134,10 +135,10 @@ function renderReviewingModal(state, modal) {
           })}
           ${renderError(modal)}
           <div class="modal__actions">
-            ${secondaryButton("Stop", "cancel-editor-ai-review-all")}
+            ${secondaryButton("Stop", "cancel-editor-ai-review-all", { disabled: isPreparing })}
             ${loadingPrimaryButton({
               label: "Begin review",
-              loadingLabel: "Reviewing...",
+              loadingLabel: isPreparing ? "Preparing..." : "Reviewing...",
               action: "confirm-editor-ai-review-all",
               isLoading: true,
             })}

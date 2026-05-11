@@ -57,6 +57,8 @@ pub struct AiReviewResponse {
     pub suggested_text: String,
     #[serde(default)]
     pub reviewed: Option<bool>,
+    #[serde(default)]
+    pub prompt_text: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]

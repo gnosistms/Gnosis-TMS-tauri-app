@@ -8,11 +8,18 @@ import {
   EDITOR_ROW_FILTER_MODE_PLEASE_CHECK,
   normalizeEditorChapterFilterState,
 } from "./editor-filters.js";
-import { buildEditorAiTranslationGlossaryHints } from "./editor-glossary-highlighting.js";
 import {
   flushDirtyEditorRows,
   hasPendingEditorWrites,
 } from "./editor-persistence-flow.js";
+import {
+  buildEditorAiReviewRequest,
+  editorReviewLanguageByCode,
+  normalizeEditorAiReviewMode,
+  readEditorReviewRowFieldText,
+  selectedEditorReviewSourceLanguageCode,
+  selectedEditorReviewTargetLanguageCode,
+} from "./editor-ai-review-request.js";
 import { cloneRowFields, cloneRowFieldStates, findEditorRowById, normalizeFieldState } from "./editor-utils.js";
 import { reconcileDirtyTrackedEditorRows } from "./editor-dirty-row-state.js";
 import { findChapterContextById, selectedProjectsTeam } from "./project-context.js";
@@ -21,48 +28,10 @@ import { createEditorAiReviewAllModalState, state } from "./state.js";
 import { showNoticeBadge } from "./status-feedback.js";
 import { ensureSelectedTeamAiProviderReady } from "./team-ai-flow.js";
 import { loadActiveEditorFieldHistory } from "./editor-history-flow.js";
-import { languageBaseCode } from "./editor-language-utils.js";
 
 let activeReviewAllRunId = 0;
 
-function readRowFieldText(row, languageCode) {
-  if (!languageCode) {
-    return "";
-  }
-  return typeof row?.fields?.[languageCode] === "string"
-    ? row.fields[languageCode]
-    : String(row?.fields?.[languageCode] ?? "");
-}
-
-function selectedSourceLanguageCode(chapterState) {
-  const selectedCode = String(chapterState?.selectedSourceLanguageCode ?? "").trim();
-  if (selectedCode) {
-    return selectedCode;
-  }
-  return (Array.isArray(chapterState?.languages) ? chapterState.languages : [])
-    .find((language) => language?.role === "source")?.code
-    ?? chapterState?.languages?.[0]?.code
-    ?? "";
-}
-
-function selectedTargetLanguageCode(chapterState) {
-  const selectedCode = String(chapterState?.selectedTargetLanguageCode ?? "").trim();
-  if (selectedCode) {
-    return selectedCode;
-  }
-  const sourceCode = selectedSourceLanguageCode(chapterState);
-  return (Array.isArray(chapterState?.languages) ? chapterState.languages : [])
-    .find((language) => language?.code && language.code !== sourceCode)?.code
-    ?? "";
-}
-
-function languageByCode(chapterState, languageCode) {
-  const code = String(languageCode ?? "").trim();
-  return (Array.isArray(chapterState?.languages) ? chapterState.languages : [])
-    .find((language) => language?.code === code) ?? null;
-}
-
-function reviewableTranslationRows(chapterState, languageCode = selectedTargetLanguageCode(chapterState)) {
+function reviewableTranslationRows(chapterState, languageCode = selectedEditorReviewTargetLanguageCode(chapterState)) {
   const code = String(languageCode ?? "").trim();
   if (!code) {
     return [];
@@ -70,19 +39,19 @@ function reviewableTranslationRows(chapterState, languageCode = selectedTargetLa
   return (Array.isArray(chapterState?.rows) ? chapterState.rows : []).filter((row) =>
     row?.rowId
     && row.lifecycleState !== "deleted"
-    && readRowFieldText(row, code).trim()
+    && readEditorReviewRowFieldText(row, code).trim()
   );
 }
 
 function buildEditorAiReviewAllWork(chapterState) {
-  const languageCode = selectedTargetLanguageCode(chapterState);
+  const languageCode = selectedEditorReviewTargetLanguageCode(chapterState);
   return reviewableTranslationRows(chapterState, languageCode)
     .filter((row) => row.fieldStates?.[languageCode]?.reviewed !== true)
     .map((row) => ({ rowId: row.rowId, languageCode }));
 }
 
 function buildEditorAiReviewAllCounts(chapterState) {
-  const languageCode = selectedTargetLanguageCode(chapterState);
+  const languageCode = selectedEditorReviewTargetLanguageCode(chapterState);
   const translations = reviewableTranslationRows(chapterState, languageCode);
   const reviewedCount = translations.filter((row) => row.fieldStates?.[languageCode]?.reviewed === true).length;
   return {
@@ -100,6 +69,18 @@ function buildLanguageProgress(languageCode, totalCount, completedCount = 0) {
       totalCount,
     },
   };
+}
+
+function isAiReviewAllBusy(modal) {
+  return modal?.status === "loading" || modal?.status === "preparing";
+}
+
+function isActiveAiReviewAllRun(runId, chapterId) {
+  return (
+    activeReviewAllRunId === runId
+    && state.editorChapter?.chapterId === chapterId
+    && state.editorChapter?.aiReviewAllModal?.step === "reviewing"
+  );
 }
 
 function applyEditorAiReviewAllModal(updates) {
@@ -125,34 +106,6 @@ function chapterNeedsRefreshBeforeReview(chapterState = state.editorChapter) {
     || row?.freshness === "staleDirty"
     || row?.freshness === "conflict"
     || row?.remotelyDeleted === true
-  );
-}
-
-function normalizeReviewMode(value) {
-  return value === "meaning" ? "meaning" : "grammar";
-}
-
-function resolveDirectGlossaryHints(row, sourceLanguageCode, targetLanguageCode) {
-  const glossaryState = state.editorChapter?.glossary ?? null;
-  const glossaryModel = glossaryState?.matcherModel ?? null;
-  const glossarySourceLanguageCode =
-    String(glossaryState?.sourceLanguage?.code ?? glossaryModel?.sourceLanguage?.code ?? "").trim();
-  const glossaryTargetLanguageCode =
-    String(glossaryState?.targetLanguage?.code ?? glossaryModel?.targetLanguage?.code ?? "").trim();
-  const sourceLanguage = languageByCode(state.editorChapter, sourceLanguageCode);
-  const targetLanguage = languageByCode(state.editorChapter, targetLanguageCode);
-  if (
-    !glossaryModel
-    || glossarySourceLanguageCode !== languageBaseCode(sourceLanguage)
-    || glossaryTargetLanguageCode !== languageBaseCode(targetLanguage)
-  ) {
-    return [];
-  }
-  return buildEditorAiTranslationGlossaryHints(
-    readRowFieldText(row, sourceLanguageCode),
-    languageBaseCode(sourceLanguage),
-    languageBaseCode(targetLanguage),
-    glossaryModel,
   );
 }
 
@@ -237,7 +190,7 @@ export function openEditorAiReviewAllModal(render) {
 }
 
 export function continueEditorAiReviewAllPreflight(render) {
-  if (!state.editorChapter?.chapterId || state.editorChapter.aiReviewAllModal?.status === "loading") {
+  if (!state.editorChapter?.chapterId || isAiReviewAllBusy(state.editorChapter.aiReviewAllModal)) {
     return;
   }
   applyEditorAiReviewAllModal({
@@ -277,7 +230,7 @@ export function updateEditorAiReviewAllMode(render, mode) {
     return;
   }
   applyEditorAiReviewAllModal({
-    reviewMode: normalizeReviewMode(mode),
+    reviewMode: normalizeEditorAiReviewMode(mode),
     error: "",
   });
   render?.();
@@ -313,7 +266,7 @@ async function ensureAiReviewAllProviderReady(render) {
 
 export async function confirmEditorAiReviewAll(render, operations = {}) {
   const editorChapter = state.editorChapter;
-  if (!editorChapter?.chapterId || editorChapter.aiReviewAllModal?.status === "loading") {
+  if (!editorChapter?.chapterId || isAiReviewAllBusy(editorChapter.aiReviewAllModal)) {
     return;
   }
   if (state.offline?.isEnabled === true) {
@@ -323,8 +276,28 @@ export async function confirmEditorAiReviewAll(render, operations = {}) {
     return;
   }
 
+  const runId = activeReviewAllRunId + 1;
+  activeReviewAllRunId = runId;
+  const initialCounts = buildEditorAiReviewAllCounts(editorChapter);
+  const initialWork = buildEditorAiReviewAllWork(editorChapter);
+  const initialReviewMode = normalizeEditorAiReviewMode(editorChapter.aiReviewAllModal?.reviewMode);
+  applyEditorAiReviewAllModal({
+    isOpen: true,
+    step: "reviewing",
+    status: "preparing",
+    error: "",
+    reviewMode: initialReviewMode,
+    languageCode: initialCounts.languageCode,
+    reviewedCount: initialCounts.reviewedCount,
+    totalTranslationCount: initialCounts.totalTranslationCount,
+    completedCount: 0,
+    totalCount: initialWork.length,
+    languageProgress: buildLanguageProgress(initialCounts.languageCode, initialWork.length, 0),
+  });
+  render?.();
+
   await flushDirtyEditorRows(render, operations);
-  if (state.editorChapter?.chapterId !== editorChapter.chapterId) {
+  if (!isActiveAiReviewAllRun(runId, editorChapter.chapterId)) {
     return;
   }
   if (hasPendingEditorWrites(state.editorChapter)) {
@@ -368,6 +341,9 @@ export async function confirmEditorAiReviewAll(render, operations = {}) {
   try {
     ({ providerId, modelId } = await ensureAiReviewAllProviderReady(render));
   } catch (error) {
+    if (!isActiveAiReviewAllRun(runId, editorChapter.chapterId)) {
+      return;
+    }
     applyEditorAiReviewAllModal({
       step: "configure",
       status: "idle",
@@ -379,6 +355,9 @@ export async function confirmEditorAiReviewAll(render, operations = {}) {
 
   const team = selectedProjectsTeam();
   const context = findChapterContextById(editorChapter.chapterId);
+  if (!isActiveAiReviewAllRun(runId, editorChapter.chapterId)) {
+    return;
+  }
   if (!Number.isFinite(team?.installationId) || !context?.project?.name) {
     applyEditorAiReviewAllModal({
       step: "configure",
@@ -389,12 +368,9 @@ export async function confirmEditorAiReviewAll(render, operations = {}) {
     return;
   }
 
-  const runId = activeReviewAllRunId + 1;
-  activeReviewAllRunId = runId;
-  const reviewMode = normalizeReviewMode(state.editorChapter.aiReviewAllModal?.reviewMode);
-  const sourceLanguageCode = selectedSourceLanguageCode(state.editorChapter);
+  const reviewMode = normalizeEditorAiReviewMode(state.editorChapter.aiReviewAllModal?.reviewMode);
+  const sourceLanguageCode = selectedEditorReviewSourceLanguageCode(state.editorChapter);
   const targetLanguageCode = counts.languageCode;
-  const targetLanguage = languageByCode(state.editorChapter, targetLanguageCode);
   let completedCount = 0;
   let started = false;
   applyEditorAiReviewAllModal({
@@ -426,27 +402,23 @@ export async function confirmEditorAiReviewAll(render, operations = {}) {
       }
 
       const row = findEditorRowById(item.rowId, state.editorChapter);
-      const latestTranslation = readRowFieldText(row, targetLanguageCode);
+      const latestTranslation = readEditorReviewRowFieldText(row, targetLanguageCode);
       if (!row || !latestTranslation.trim() || row.fieldStates?.[targetLanguageCode]?.reviewed === true) {
         continue;
       }
 
       started = true;
-      const sourceText = readRowFieldText(row, sourceLanguageCode);
       const reviewPayload = await invoke("run_ai_review", {
-        request: {
+        request: buildEditorAiReviewRequest({
+          chapterState: state.editorChapter,
+          row,
           providerId,
           modelId,
           reviewMode,
-          text: latestTranslation,
-          latestTranslation,
-          sourceText,
-          languageCode: languageBaseCode(targetLanguage) || targetLanguageCode,
-          glossaryHints: reviewMode === "meaning"
-            ? resolveDirectGlossaryHints(row, sourceLanguageCode, targetLanguageCode)
-            : [],
+          sourceLanguageCode,
+          targetLanguageCode,
           installationId: team.installationId,
-        },
+        }),
       });
       if (
         activeReviewAllRunId !== runId

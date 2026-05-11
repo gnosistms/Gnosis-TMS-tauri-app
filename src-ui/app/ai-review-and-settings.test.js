@@ -332,12 +332,17 @@ test("runEditorAiReview uses the configured provider and model", async () => {
         request: {
           providerId: "gemini",
           modelId: "gemini-2.0-flash",
+          reviewMode: "grammar",
           text: "Texto original",
+          latestTranslation: "Texto original",
+          sourceText: "Hola",
           languageCode: "vi",
+          glossaryHints: [],
         },
       });
       return {
         suggestedText: "Texto revisado",
+        promptText: "Review prompt for Texto original",
       };
     }
 
@@ -348,6 +353,76 @@ test("runEditorAiReview uses the configured provider and model", async () => {
 
   assert.equal(state.editorChapter.aiReview.status, "ready");
   assert.equal(state.editorChapter.aiReview.suggestedText, "Texto revisado");
+  assert.equal(state.editorChapter.aiReview.promptText, "Review prompt for Texto original");
+});
+
+test("runEditorAiReview translation mode uses the same review request shape as Review All", async () => {
+  installTranslateFixture({
+    fields: {
+      es: "La gnostica habla.",
+      vi: "Ban dich hien tai",
+    },
+  });
+  const glossary = {
+    status: "ready",
+    error: "",
+    glossaryId: "glossary-1",
+    repoName: "glossary-1",
+    title: "Glossary",
+    sourceLanguage: {
+      code: "es",
+      name: "Spanish",
+    },
+    targetLanguage: {
+      code: "vi",
+      name: "Vietnamese",
+    },
+    terms: [{
+      termId: "t1",
+      sourceTerms: ["gnostica"],
+      targetTerms: ["hoc tro gnosis"],
+      notesToTranslators: "Use the spiritual meaning.",
+    }],
+    matcherModel: null,
+  };
+  glossary.matcherModel = buildEditorGlossaryModel(glossary);
+  state.editorChapter = {
+    ...state.editorChapter,
+    glossary,
+  };
+
+  let reviewPayload = null;
+  invokeHandler = async (command, payload = {}) => {
+    if (command === "load_ai_provider_secret") {
+      return "oa-key";
+    }
+    if (command === "run_ai_review") {
+      reviewPayload = payload;
+      return {
+        suggestedText: "",
+        reviewed: true,
+        promptText: "translation review prompt",
+      };
+    }
+
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  await runEditorAiReview(() => {}, "meaning");
+
+  assert.equal(reviewPayload.request.providerId, "openai");
+  assert.equal(reviewPayload.request.modelId, "gpt-5.4");
+  assert.equal(reviewPayload.request.reviewMode, "meaning");
+  assert.equal(reviewPayload.request.text, "Ban dich hien tai");
+  assert.equal(reviewPayload.request.latestTranslation, "Ban dich hien tai");
+  assert.equal(reviewPayload.request.sourceText, "La gnostica habla.");
+  assert.equal(reviewPayload.request.languageCode, "vi");
+  assert.equal(reviewPayload.request.glossaryHints.length, 1);
+  assert.equal(reviewPayload.request.glossaryHints[0].sourceTerm, "gnostica");
+  assert.equal(state.editorChapter.aiReview.status, "ready");
+  assert.equal(state.editorChapter.aiReview.reviewMode, "meaning");
+  assert.equal(state.editorChapter.aiReview.reviewed, true);
+  assert.equal(state.editorChapter.aiReview.promptText, "translation review prompt");
 });
 
 test("runEditorAiReview enters loading state before provider readiness resolves", async () => {
@@ -3728,8 +3803,12 @@ test("runEditorAiReview loads shared team action preferences before choosing the
         request: {
           providerId: "openai",
           modelId: "gpt-5.4-mini",
+          reviewMode: "grammar",
           text: "Texto original",
+          latestTranslation: "Texto original",
+          sourceText: "Hola",
           languageCode: "vi",
+          glossaryHints: [],
           installationId: 42,
         },
       });

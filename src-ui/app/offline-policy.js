@@ -54,6 +54,7 @@ const OFFLINE_BLOCKED_PREFIXES = [
   "restore-glossary:",
   "delete-deleted-glossary:",
   "delete-glossary-term:",
+  "review-editor-text-now:",
   "run-editor-ai-translate:",
   "remove-target-language-manager-language:",
   "move-target-language-manager-language:",
