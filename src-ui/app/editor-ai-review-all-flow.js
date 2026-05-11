@@ -20,6 +20,7 @@ import {
   selectedEditorReviewSourceLanguageCode,
   selectedEditorReviewTargetLanguageCode,
 } from "./editor-ai-review-request.js";
+import { loadAssistantTargetLanguageHistory } from "./editor-ai-assistant-flow.js";
 import { cloneRowFields, cloneRowFieldStates, findEditorRowById, normalizeFieldState } from "./editor-utils.js";
 import { reconcileDirtyTrackedEditorRows } from "./editor-dirty-row-state.js";
 import { findChapterContextById, selectedProjectsTeam } from "./project-context.js";
@@ -408,6 +409,22 @@ export async function confirmEditorAiReviewAll(render, operations = {}) {
       }
 
       started = true;
+      const targetLanguageHistory = reviewMode === "meaning"
+        ? await loadAssistantTargetLanguageHistory({
+          chapterId: editorChapter.chapterId,
+          rowId: item.rowId,
+          targetLanguageCode,
+          targetText: latestTranslation,
+        })
+        : [];
+      if (
+        activeReviewAllRunId !== runId
+        || state.editorChapter?.aiReviewAllModal?.step !== "reviewing"
+      ) {
+        enablePleaseCheckFilterAndShowModal();
+        render?.();
+        return;
+      }
       const reviewPayload = await invoke("run_ai_review", {
         request: buildEditorAiReviewRequest({
           chapterState: state.editorChapter,
@@ -417,6 +434,7 @@ export async function confirmEditorAiReviewAll(render, operations = {}) {
           reviewMode,
           sourceLanguageCode,
           targetLanguageCode,
+          targetLanguageHistory,
           installationId: team.installationId,
         }),
       });

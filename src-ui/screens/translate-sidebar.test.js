@@ -576,12 +576,46 @@ test("review sidebar renders grammar and translation review actions with tooltip
     createAiActionConfigurationState(),
   );
 
-  assert.match(html, /data-action="review-editor-text-now:grammar"/);
-  assert.match(html, />Spelling and grammar<\/span>/);
-  assert.match(html, /Check only for spelling and grammar errors\./);
   assert.match(html, /data-action="review-editor-text-now:meaning"/);
-  assert.match(html, />Translation<\/span>/);
+  assert.match(html, />Full review<\/span>/);
   assert.match(html, /Check to see if the translation is correct in addition to checking spelling and grammar\./);
+  assert.match(html, /data-action="review-editor-text-now:grammar"/);
+  assert.match(html, />Spelling and grammar only<\/span>/);
+  assert.match(html, /Check only for spelling and grammar errors\./);
+  assert.ok(
+    html.indexOf('data-action="review-editor-text-now:meaning"')
+      < html.indexOf('data-action="review-editor-text-now:grammar"'),
+  );
+});
+
+test("review sidebar shows the loading spinner on the active full review button", () => {
+  const html = renderTranslateSidebar(
+    activeEditorChapter({
+      sidebarTab: "review",
+      aiReview: {
+        rowId: "row-1",
+        languageCode: "vi",
+        status: "loading",
+        sourceText: "Xin chao",
+        reviewMode: "meaning",
+      },
+    }),
+    [{
+      id: "row-1",
+      sections: [
+        { code: "es", text: "Hola" },
+        { code: "vi", text: "Xin chao" },
+      ],
+    }],
+    languages,
+    "es",
+    "vi",
+    createAiActionConfigurationState(),
+  );
+
+  assert.match(html, /Full review\.\.\./);
+  assert.match(html, /button--loading/);
+  assert.doesNotMatch(html, />Spelling and grammar only<\/span>/);
 });
 
 test("review sidebar keeps existing AI review suggestions locally applicable offline", () => {
@@ -638,4 +672,107 @@ test("review sidebar renders AI review prompt details when available", () => {
   assert.match(html, /<summary>Show prompt<\/summary>/);
   assert.match(html, /assistant-item__details/);
   assert.match(html, /Check spelling and grammar on Xin chau/);
+});
+
+test("review sidebar keeps full review available after clean grammar-only review", () => {
+  const html = renderTranslateSidebar(
+    activeEditorChapter({
+      sidebarTab: "review",
+      aiReview: {
+        rowId: "row-1",
+        languageCode: "vi",
+        status: "ready",
+        sourceText: "Xin chao",
+        suggestedText: "",
+        promptText: "Review latest_translation only for spelling and grammar errors.",
+        reviewMode: "grammar",
+        reviewed: true,
+      },
+    }),
+    [{
+      id: "row-1",
+      sections: [
+        { code: "es", text: "Hola" },
+        { code: "vi", text: "Xin chao" },
+      ],
+    }],
+    languages,
+    "es",
+    "vi",
+    createAiActionConfigurationState(),
+  );
+
+  assert.match(html, /Spelling and grammar look good!/);
+  assert.match(html, /<summary>Show prompt<\/summary>/);
+  assert.match(html, /data-action="review-editor-text-now:meaning"/);
+  assert.match(html, />Full review<\/span>/);
+  assert.doesNotMatch(html, /data-action="review-editor-text-now:grammar"/);
+  assert.doesNotMatch(html, />Spelling and grammar only<\/span>/);
+});
+
+test("review sidebar hides review buttons after clean full review", () => {
+  const html = renderTranslateSidebar(
+    activeEditorChapter({
+      sidebarTab: "review",
+      aiReview: {
+        rowId: "row-1",
+        languageCode: "vi",
+        status: "ready",
+        sourceText: "Xin chao",
+        suggestedText: "",
+        promptText: "Review latest_translation for translation accuracy, spelling, and grammar.",
+        reviewMode: "meaning",
+        reviewed: true,
+      },
+    }),
+    [{
+      id: "row-1",
+      sections: [
+        { code: "es", text: "Hola" },
+        { code: "vi", text: "Xin chao" },
+      ],
+    }],
+    languages,
+    "es",
+    "vi",
+    createAiActionConfigurationState(),
+  );
+
+  assert.match(html, /Your translation looks good!/);
+  assert.match(html, /<summary>Show prompt<\/summary>/);
+  assert.doesNotMatch(html, /data-action="review-editor-text-now:meaning"/);
+  assert.doesNotMatch(html, /data-action="review-editor-text-now:grammar"/);
+});
+
+test("review sidebar reopens both review actions when a clean review is stale", () => {
+  const html = renderTranslateSidebar(
+    activeEditorChapter({
+      sidebarTab: "review",
+      aiReview: {
+        rowId: "row-1",
+        languageCode: "vi",
+        status: "ready",
+        sourceText: "Xin chao",
+        suggestedText: "",
+        promptText: "Review latest_translation for translation accuracy, spelling, and grammar.",
+        reviewMode: "meaning",
+        reviewed: true,
+      },
+    }),
+    [{
+      id: "row-1",
+      sections: [
+        { code: "es", text: "Hola" },
+        { code: "vi", text: "Xin chao da sua" },
+      ],
+    }],
+    languages,
+    "es",
+    "vi",
+    createAiActionConfigurationState(),
+  );
+
+  assert.match(html, /The text changed since the last AI review\./);
+  assert.match(html, /data-action="review-editor-text-now:meaning"/);
+  assert.match(html, /data-action="review-editor-text-now:grammar"/);
 });

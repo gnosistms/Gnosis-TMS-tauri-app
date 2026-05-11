@@ -46,7 +46,21 @@ pub struct AiReviewRequest {
     #[serde(default)]
     pub source_text: Option<String>,
     #[serde(default)]
+    pub source_language_code: String,
+    #[serde(default)]
+    pub target_language_code: String,
+    #[serde(default)]
+    pub source_language: String,
+    #[serde(default)]
+    pub target_language: String,
+    #[serde(default)]
     pub glossary_hints: Vec<AiTranslationGlossaryHint>,
+    #[serde(default)]
+    pub alternate_language_texts: Vec<AiAssistantRowLanguageText>,
+    #[serde(default)]
+    pub target_language_history: Vec<AiAssistantTargetLanguageHistoryEntry>,
+    #[serde(default)]
+    pub row_window: Vec<AiAssistantRowWindowEntry>,
     #[serde(default)]
     pub installation_id: Option<i64>,
 }

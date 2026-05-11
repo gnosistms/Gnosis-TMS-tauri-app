@@ -336,8 +336,15 @@ test("runEditorAiReview uses the configured provider and model", async () => {
           text: "Texto original",
           latestTranslation: "Texto original",
           sourceText: "Hola",
+          sourceLanguageCode: "es",
+          targetLanguageCode: "vi",
+          sourceLanguage: "Spanish",
+          targetLanguage: "Vietnamese",
           languageCode: "vi",
           glossaryHints: [],
+          alternateLanguageTexts: [],
+          rowWindow: [],
+          targetLanguageHistory: [],
         },
       });
       return {
@@ -416,9 +423,31 @@ test("runEditorAiReview translation mode uses the same review request shape as R
   assert.equal(reviewPayload.request.text, "Ban dich hien tai");
   assert.equal(reviewPayload.request.latestTranslation, "Ban dich hien tai");
   assert.equal(reviewPayload.request.sourceText, "La gnostica habla.");
+  assert.equal(reviewPayload.request.sourceLanguageCode, "es");
+  assert.equal(reviewPayload.request.targetLanguageCode, "vi");
+  assert.equal(reviewPayload.request.sourceLanguage, "Spanish");
+  assert.equal(reviewPayload.request.targetLanguage, "Vietnamese");
   assert.equal(reviewPayload.request.languageCode, "vi");
   assert.equal(reviewPayload.request.glossaryHints.length, 1);
   assert.equal(reviewPayload.request.glossaryHints[0].sourceTerm, "gnostica");
+  assert.deepEqual(reviewPayload.request.rowWindow, [{
+    rowId: "row-1",
+    sourceText: "La gnostica habla.",
+    targetText: "Ban dich hien tai",
+  }]);
+  assert.deepEqual(reviewPayload.request.targetLanguageHistory, [{
+    revisionNumber: 1,
+    sourceType: "unknown",
+    sourceLabel: "current_editor_text",
+    authorType: "unknown",
+    authorName: "",
+    authorLogin: "",
+    authorEmail: "",
+    operationType: "",
+    aiModel: "",
+    committedAt: "",
+    text: "Ban dich hien tai",
+  }]);
   assert.equal(state.editorChapter.aiReview.status, "ready");
   assert.equal(state.editorChapter.aiReview.reviewMode, "meaning");
   assert.equal(state.editorChapter.aiReview.reviewed, true);
@@ -3807,8 +3836,15 @@ test("runEditorAiReview loads shared team action preferences before choosing the
           text: "Texto original",
           latestTranslation: "Texto original",
           sourceText: "Hola",
+          sourceLanguageCode: "es",
+          targetLanguageCode: "vi",
+          sourceLanguage: "Spanish",
+          targetLanguage: "Vietnamese",
           languageCode: "vi",
           glossaryHints: [],
+          alternateLanguageTexts: [],
+          rowWindow: [],
+          targetLanguageHistory: [],
           installationId: 42,
         },
       });
@@ -4323,7 +4359,97 @@ test("AI review visibility treats unchanged suggestions as looks good instead of
   assert.equal(visible.isStale, false);
   assert.equal(visible.showSuggestion, false);
   assert.equal(visible.showLooksGoodMessage, true);
-  assert.equal(visible.showReviewNow, false);
+  assert.equal(visible.grammarReviewPassed, true);
+  assert.equal(visible.fullReviewPassed, false);
+  assert.equal(visible.showFullReviewButton, true);
+  assert.equal(visible.showGrammarReviewButton, false);
+  assert.equal(visible.showReviewNow, true);
+});
+
+test("AI review visibility scopes clean grammar and full review results separately", () => {
+  const grammarVisible = resolveVisibleEditorAiReview(
+    {
+      ...createEditorChapterState(),
+      chapterId: "chapter-1",
+      aiReview: {
+        status: "ready",
+        error: "",
+        rowId: "row-1",
+        languageCode: "vi",
+        requestKey: "req-1",
+        sourceText: "Texto original",
+        suggestedText: "",
+        reviewMode: "grammar",
+        reviewed: true,
+      },
+    },
+    "row-1",
+    "vi",
+    "Texto original",
+  );
+
+  assert.equal(grammarVisible.showLooksGoodMessage, true);
+  assert.equal(grammarVisible.grammarReviewPassed, true);
+  assert.equal(grammarVisible.fullReviewPassed, false);
+  assert.equal(grammarVisible.showFullReviewButton, true);
+  assert.equal(grammarVisible.showGrammarReviewButton, false);
+
+  const fullVisible = resolveVisibleEditorAiReview(
+    {
+      ...createEditorChapterState(),
+      chapterId: "chapter-1",
+      aiReview: {
+        status: "ready",
+        error: "",
+        rowId: "row-1",
+        languageCode: "vi",
+        requestKey: "req-2",
+        sourceText: "Texto original",
+        suggestedText: "",
+        reviewMode: "meaning",
+        reviewed: true,
+      },
+    },
+    "row-1",
+    "vi",
+    "Texto original",
+  );
+
+  assert.equal(fullVisible.showLooksGoodMessage, true);
+  assert.equal(fullVisible.grammarReviewPassed, false);
+  assert.equal(fullVisible.fullReviewPassed, true);
+  assert.equal(fullVisible.showFullReviewButton, false);
+  assert.equal(fullVisible.showGrammarReviewButton, false);
+  assert.equal(fullVisible.showReviewNow, false);
+});
+
+test("AI review visibility invalidates clean review results after text changes", () => {
+  const visible = resolveVisibleEditorAiReview(
+    {
+      ...createEditorChapterState(),
+      chapterId: "chapter-1",
+      aiReview: {
+        status: "ready",
+        error: "",
+        rowId: "row-1",
+        languageCode: "vi",
+        requestKey: "req-1",
+        sourceText: "Texto original",
+        suggestedText: "",
+        reviewMode: "meaning",
+        reviewed: true,
+      },
+    },
+    "row-1",
+    "vi",
+    "Texto cambiado",
+  );
+
+  assert.equal(visible.isStale, true);
+  assert.equal(visible.showLooksGoodMessage, false);
+  assert.equal(visible.fullReviewPassed, false);
+  assert.equal(visible.showFullReviewButton, true);
+  assert.equal(visible.showGrammarReviewButton, true);
 });
 
 test("AI translate visibility suppresses stale errors for changed source text", () => {

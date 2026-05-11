@@ -336,7 +336,7 @@ export function buildEditorAssistantTargetLanguageHistory(entries, context, curr
   }));
 }
 
-async function loadAssistantTargetLanguageHistory(context) {
+export async function loadAssistantTargetLanguageHistory(context) {
   const fallback = createAssistantTargetHistoryFallback(context);
   const team = selectedProjectsTeam();
   const chapterContext = findChapterContextById(context?.chapterId);

@@ -158,10 +158,16 @@ export function clearEditorAiReview(chapterState) {
 export function resolveVisibleEditorAiReview(chapterState, rowId, languageCode, currentText) {
   const aiReview = currentEditorAiReviewForSelection(chapterState, rowId, languageCode);
   const normalizedCurrentText = normalizeEditorAiReviewComparisonText(currentText);
+  const reviewResultMatchesCurrentText = aiReview.sourceText === normalizedCurrentText;
   const hasSuggestion =
     (aiReview.status === "ready" || aiReview.status === "applying")
     && aiReview.suggestedText.trim().length > 0;
-  const isStale = hasSuggestion && aiReview.sourceText !== normalizedCurrentText;
+  const hasReviewResult =
+    hasSuggestion
+    || aiReview.reviewed === true
+    || aiReview.reviewed === false
+    || aiReview.status === "error";
+  const isStale = hasReviewResult && !reviewResultMatchesCurrentText;
   const suggestedTextMatchesCurrentText =
     hasSuggestion
     && !isStale
@@ -169,20 +175,29 @@ export function resolveVisibleEditorAiReview(chapterState, rowId, languageCode, 
   const reviewedLooksGood =
     aiReview.status === "ready"
     && aiReview.reviewed === true
-    && aiReview.sourceText === normalizedCurrentText;
+    && reviewResultMatchesCurrentText;
+  const reviewPassed =
+    aiReview.status === "ready"
+    && (reviewedLooksGood || suggestedTextMatchesCurrentText);
+  const grammarReviewPassed = reviewPassed && aiReview.reviewMode !== "meaning";
+  const fullReviewPassed = reviewPassed && aiReview.reviewMode === "meaning";
   const showSuggestion = hasSuggestion && !isStale && !suggestedTextMatchesCurrentText;
+  const isBusy = aiReview.status === "loading" || aiReview.status === "applying";
+  const canReview = !isBusy && !showSuggestion;
+  const showFullReviewButton = canReview && !fullReviewPassed;
+  const showGrammarReviewButton = canReview && !grammarReviewPassed && !fullReviewPassed;
 
   return {
     ...aiReview,
     hasSuggestion,
     isStale,
+    grammarReviewPassed,
+    fullReviewPassed,
     showLooksGoodMessage: suggestedTextMatchesCurrentText || reviewedLooksGood,
     showSuggestion,
+    showFullReviewButton,
+    showGrammarReviewButton,
     showReviewNow:
-      aiReview.status !== "loading"
-      && aiReview.status !== "applying"
-      && !showSuggestion
-      && !suggestedTextMatchesCurrentText
-      && !reviewedLooksGood,
+      showFullReviewButton || showGrammarReviewButton,
   };
 }

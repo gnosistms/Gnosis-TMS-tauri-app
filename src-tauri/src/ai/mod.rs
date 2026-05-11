@@ -49,16 +49,66 @@ pub(crate) fn build_review_prompt(request: &AiReviewRequest) -> String {
             } else {
                 glossary_info
             };
-            return format!(
-                "Return only valid JSON matching this shape: {{\"suggestedText\":\"\",\"reviewed\":true}}.\nIf you find no errors, set suggestedText to an empty string and reviewed to true. If you find errors, set suggestedText to the corrected translation and reviewed to false.\n\nsource_text: {}\n\nglossary_info:\n{}\n\nlatest_translation: {}\n\nReview the translation in latest_translation. If you find no errors, reply with empty translation text and set \"reviewed = true\". If you find errors, output the corrected translation and set reviewed = false.",
-                request.source_text.as_deref().unwrap_or("").trim(),
-                glossary_info,
-                latest_translation,
+            let source_text = request.source_text.as_deref().unwrap_or("").trim();
+            let row = AiAssistantRowContext {
+                row_id: String::new(),
+                source_language_code: request.source_language_code.clone(),
+                source_language_label: request.source_language.clone(),
+                source_text: source_text.to_string(),
+                target_language_code: if request.target_language_code.trim().is_empty() {
+                    request.language_code.clone()
+                } else {
+                    request.target_language_code.clone()
+                },
+                target_language_label: request.target_language.clone(),
+                target_text: latest_translation.to_string(),
+                updated_source_text: None,
+                updated_target_text: None,
+                alternate_language_texts: request.alternate_language_texts.clone(),
+                target_language_history: request.target_language_history.clone(),
+            };
+            let source_context = format_assistant_source_context(&request.row_window, source_text);
+            let source_language =
+                format_language_ref(&request.source_language, &request.source_language_code);
+            let target_language = format_language_ref(
+                &request.target_language,
+                if request.target_language_code.trim().is_empty() {
+                    &request.language_code
+                } else {
+                    &request.target_language_code
+                },
             );
+            let target_language_history =
+                format_assistant_target_language_history(&row.target_language_history, latest_translation);
+            let reference_translations = format_assistant_reference_translations(&row);
+            let mut sections = Vec::new();
+            sections.push(
+                "Return only valid JSON matching this shape: {\"suggestedText\":\"\",\"reviewed\":true}.\nIf you find no errors, set suggestedText to an empty string and reviewed to true. If you find errors, set suggestedText to the corrected translation and reviewed to false."
+                    .to_string(),
+            );
+            sections.push(
+                "Review latest_translation for translation accuracy, spelling, and grammar. Use source_context, source_text, target_language_history, reference_translations, and glossary_info when relevant."
+                    .to_string(),
+            );
+            push_prompt_section(
+                &mut sections,
+                "source_context",
+                format!(
+                    "This is the source text in context, provided to help you understand source_text more clearly:\n{source_context}"
+                ),
+            );
+            push_prompt_section(&mut sections, "source_language", source_language);
+            push_prompt_section(&mut sections, "target_language", target_language);
+            push_prompt_section(&mut sections, "target_language_history", target_language_history);
+            push_prompt_section(&mut sections, "reference_translations", reference_translations);
+            push_prompt_section(&mut sections, "glossary_info", glossary_info);
+            push_prompt_section(&mut sections, "source_text", source_text);
+            push_prompt_section(&mut sections, "latest_translation", latest_translation);
+            return sections.join("\n\n");
         }
 
         return format!(
-            "Return only valid JSON matching this shape: {{\"suggestedText\":\"\",\"reviewed\":true}}.\nIf you find no errors, set suggestedText to an empty string and reviewed to true. If you find errors, set suggestedText to the corrected translation and reviewed to false.\n\nReview the spelling and grammar of latest_translation. If you find no errors, reply with empty translation text and set \"reviewed = true\". If you find errors, output the corrected translation and set reviewed = false.\n\nlatest_translation: {}",
+            "Return only valid JSON matching this shape: {{\"suggestedText\":\"\",\"reviewed\":true}}.\nIf you find no errors, set suggestedText to an empty string and reviewed to true. If you find errors, set suggestedText to the corrected translation and reviewed to false.\n\nReview latest_translation only for spelling and grammar errors.\n\nlatest_translation: {}",
             latest_translation,
         );
     }
@@ -1502,7 +1552,14 @@ mod tests {
             review_mode: None,
             latest_translation: None,
             source_text: None,
+            source_language_code: String::new(),
+            target_language_code: String::new(),
+            source_language: String::new(),
+            target_language: String::new(),
             glossary_hints: vec![],
+            alternate_language_texts: vec![],
+            target_language_history: vec![],
+            row_window: vec![],
             installation_id: None,
         }
     }
@@ -1526,9 +1583,11 @@ mod tests {
         let prompt = build_review_prompt(&request);
 
         assert!(prompt.contains("Return only valid JSON"));
-        assert!(prompt.contains("Review the spelling and grammar of latest_translation"));
+        assert!(prompt.contains("Review latest_translation only for spelling and grammar errors."));
         assert!(prompt.contains("latest_translation: Ban dich hien tai"));
         assert!(!prompt.contains("source_text:"));
+        assert_eq!(prompt.matches("If you find no errors").count(), 1);
+        assert_eq!(prompt.matches("If you find errors").count(), 1);
     }
 
     #[test]
@@ -1536,7 +1595,41 @@ mod tests {
         let mut request = review_request();
         request.review_mode = Some("meaning".to_string());
         request.source_text = Some("Fuente actual".to_string());
+        request.source_language_code = "es".to_string();
+        request.target_language_code = "vi".to_string();
+        request.source_language = "Spanish".to_string();
+        request.target_language = "Vietnamese".to_string();
         request.latest_translation = Some("Ban dich hien tai".to_string());
+        request.alternate_language_texts = vec![AiAssistantRowLanguageText {
+            language_code: "en".to_string(),
+            language_label: "English".to_string(),
+            text: "Current English reference".to_string(),
+        }];
+        request.target_language_history = vec![AiAssistantTargetLanguageHistoryEntry {
+            revision_number: 1,
+            source_type: "file_import".to_string(),
+            source_label: "file_import".to_string(),
+            author_type: "unknown".to_string(),
+            author_name: String::new(),
+            author_login: String::new(),
+            author_email: String::new(),
+            operation_type: Some("editor-update".to_string()),
+            ai_model: None,
+            committed_at: "2026-05-11T10:00:00Z".to_string(),
+            text: "Ban dich cu".to_string(),
+        }];
+        request.row_window = vec![
+            AiAssistantRowWindowEntry {
+                row_id: "row-0".to_string(),
+                source_text: "Fuente anterior".to_string(),
+                target_text: "Ban dich truoc".to_string(),
+            },
+            AiAssistantRowWindowEntry {
+                row_id: "row-1".to_string(),
+                source_text: "Fuente actual".to_string(),
+                target_text: "Ban dich hien tai".to_string(),
+            },
+        ];
         request.glossary_hints = vec![AiTranslationGlossaryHint {
             source_term: "Fuente".to_string(),
             target_variants: vec![target_variant("nguon")],
@@ -1549,11 +1642,22 @@ mod tests {
 
         let prompt = build_review_prompt(&request);
 
-        assert!(prompt.contains("source_text: Fuente actual"));
+        assert!(prompt.contains("source_context:"));
+        assert!(prompt.contains("Fuente anterior\nFuente actual"));
+        assert!(prompt.contains("source_language:\nSpanish (es)"));
+        assert!(prompt.contains("target_language:\nVietnamese (vi)"));
+        assert!(prompt.contains("target_language_history:"));
+        assert!(prompt.contains("file_import"));
+        assert!(prompt.contains("reference_translations:"));
+        assert!(prompt.contains("English: Current English reference"));
+        assert!(prompt.contains("source_text:\nFuente actual"));
         assert!(prompt.contains("glossary_info:"));
+        assert!(prompt.contains("Review latest_translation for translation accuracy, spelling, and grammar."));
         assert!(prompt.contains(r#""sourceTerm":"Fuente""#));
         assert!(prompt.contains(r#""targetVariants":[{"text":"nguon"}]"#));
-        assert!(prompt.contains("latest_translation: Ban dich hien tai"));
+        assert!(prompt.contains("latest_translation:\nBan dich hien tai"));
+        assert_eq!(prompt.matches("If you find no errors").count(), 1);
+        assert_eq!(prompt.matches("If you find errors").count(), 1);
     }
 
     #[test]

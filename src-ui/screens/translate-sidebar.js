@@ -476,7 +476,7 @@ function renderAiReviewModeButton({ label, action, tooltip, isLoading = false, d
     return `
       <button class="button button--primary button--loading" data-action="noop" disabled${tooltipMarkup}>
         <span class="button__spinner" aria-hidden="true"></span>
-        <span>Checking...</span>
+        <span>${escapeHtml(label)}...</span>
       </button>
     `;
   }
@@ -781,7 +781,9 @@ function renderReviewPane(editorChapter, rows, languages, offlineMode = false) {
     : aiReview.status === "applying"
       ? "Applying..."
       : aiReview.showLooksGoodMessage
-        ? "Looks good!"
+        ? aiReview.fullReviewPassed
+          ? "Looks good!"
+          : "Grammar okay"
       : aiReview.showSuggestion
         ? "Suggestion"
         : aiReview.status === "error"
@@ -802,22 +804,41 @@ function renderReviewPane(editorChapter, rows, languages, offlineMode = false) {
         message: "AI actions are unavailable offline.",
       })
       : "";
+  const showFullReviewButton = aiReview.status === "loading"
+    ? aiReview.reviewMode === "meaning"
+    : aiReview.showFullReviewButton;
+  const showGrammarReviewButton = aiReview.status === "loading"
+    ? aiReview.reviewMode !== "meaning"
+    : aiReview.showGrammarReviewButton;
   const reviewModeButtons = `
-    ${renderAiReviewModeButton({
-      label: "Spelling and grammar",
-      action: "review-editor-text-now:grammar",
-      tooltip: "Check only for spelling and grammar errors.",
-      isLoading: aiReview.status === "loading" && aiReview.reviewMode !== "meaning",
-      disabled: offlineMode === true || aiReview.status === "loading",
-    })}
-    ${renderAiReviewModeButton({
-      label: "Translation",
-      action: "review-editor-text-now:meaning",
-      tooltip: "Check to see if the translation is correct in addition to checking spelling and grammar.",
-      isLoading: aiReview.status === "loading" && aiReview.reviewMode === "meaning",
-      disabled: offlineMode === true || aiReview.status === "loading",
-    })}
+    ${showFullReviewButton
+      ? renderAiReviewModeButton({
+        label: "Full review",
+        action: "review-editor-text-now:meaning",
+        tooltip: "Check to see if the translation is correct in addition to checking spelling and grammar.",
+        isLoading: aiReview.status === "loading" && aiReview.reviewMode === "meaning",
+        disabled: offlineMode === true || aiReview.status === "loading",
+      })
+      : ""}
+    ${showGrammarReviewButton
+      ? renderAiReviewModeButton({
+        label: "Spelling and grammar only",
+        action: "review-editor-text-now:grammar",
+        tooltip: "Check only for spelling and grammar errors.",
+        isLoading: aiReview.status === "loading" && aiReview.reviewMode !== "meaning",
+        disabled: offlineMode === true || aiReview.status === "loading",
+      })
+      : ""}
   `;
+  const reviewModeButtonsFooter = reviewModeButtons.trim()
+    ? `
+      <div class="history-item__footer">
+        <div class="history-item__actions">
+          ${reviewModeButtons}
+        </div>
+      </div>
+    `
+    : "";
   const applyButton = secondaryButton(
     aiReview.status === "applying" ? "Applying..." : "Apply",
     "apply-editor-ai-review",
@@ -907,17 +928,14 @@ function renderReviewPane(editorChapter, rows, languages, offlineMode = false) {
                       `
                       : aiReview.showLooksGoodMessage
                         ? `
-                          <p class="history-item__content" lang="${escapeHtml(activeLanguage.code)}">Your translation looks good!</p>
+                          <p class="history-item__content" lang="${escapeHtml(activeLanguage.code)}">${escapeHtml(aiReview.fullReviewPassed ? "Your translation looks good!" : "Spelling and grammar look good!")}</p>
                           ${renderAiReviewPromptDetails(aiReview)}
+                          ${reviewModeButtonsFooter}
                         `
                       : `
                         ${aiReviewMessage}
                         ${renderAiReviewPromptDetails(aiReview)}
-                        <div class="history-item__footer">
-                          <div class="history-item__actions">
-                            ${reviewModeButtons}
-                          </div>
-                        </div>
+                        ${reviewModeButtonsFooter}
                       `
                   }
                 </article>

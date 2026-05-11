@@ -26,6 +26,7 @@ import {
   readEditorReviewRowFieldText,
   selectedEditorReviewSourceLanguageCode,
 } from "./editor-ai-review-request.js";
+import { loadAssistantTargetLanguageHistory } from "./editor-ai-assistant-flow.js";
 import { invoke } from "./runtime.js";
 import { state } from "./state.js";
 import { showNoticeBadge } from "./status-feedback.js";
@@ -208,6 +209,25 @@ export async function runEditorAiReview(render, reviewMode = "grammar") {
   }
 
   try {
+    const targetLanguageHistory = normalizedReviewMode === "meaning"
+      ? await loadAssistantTargetLanguageHistory({
+        chapterId: context.chapterId,
+        rowId: context.rowId,
+        targetLanguageCode: context.languageCode,
+        targetText: context.text,
+      })
+      : [];
+    if (
+      !currentEditorAiReviewRequestMatches(
+        state.editorChapter,
+        context.chapterId,
+        context.rowId,
+        context.languageCode,
+        requestKey,
+      )
+    ) {
+      return;
+    }
     const payload = await invoke("run_ai_review", {
       request: withSelectedInstallation({
         ...buildEditorAiReviewRequest({
@@ -218,6 +238,7 @@ export async function runEditorAiReview(render, reviewMode = "grammar") {
           reviewMode: normalizedReviewMode,
           sourceLanguageCode: context.sourceLanguageCode,
           targetLanguageCode: context.languageCode,
+          targetLanguageHistory,
         }),
       }),
     });
