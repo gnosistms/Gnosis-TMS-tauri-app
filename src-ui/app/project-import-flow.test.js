@@ -41,6 +41,7 @@ const {
   importProjectFile,
   importProjectFiles,
   PROJECT_IMPORT_ACCEPT,
+  selectProjectImportInputMode,
   selectProjectImportSourceLanguage,
 } = await import("./project-import-flow.js");
 const { createProjectImportState, createStatusBadgesState, state } = await import("./state.js");
@@ -222,6 +223,7 @@ test("canceling project import clears pending TXT state", () => {
   state.projectImport = {
     ...state.projectImport,
     isOpen: true,
+    inputMode: "pasteText",
     status: "selectingSourceLanguage",
     pendingFile: { name: "chapter.txt" },
     pendingFileName: "chapter.txt",
@@ -231,10 +233,49 @@ test("canceling project import clears pending TXT state", () => {
   cancelProjectImportModal(() => {});
 
   assert.equal(state.projectImport.isOpen, false);
+  assert.equal(state.projectImport.inputMode, "upload");
   assert.equal(state.projectImport.pendingFile, null);
   assert.equal(state.projectImport.pendingFileName, "");
   assert.equal(state.projectImport.selectedSourceLanguageCode, "");
   assert.equal(state.projectImport.sourceLanguageScrollTop, 0);
+});
+
+test("project import input mode selection updates mode and clears stale errors", () => {
+  resetProjectImportTestState();
+  state.projectImport = {
+    ...state.projectImport,
+    isOpen: true,
+    inputMode: "upload",
+    status: "error",
+    error: "Unsupported file type.",
+  };
+  let renderCount = 0;
+
+  selectProjectImportInputMode(() => {
+    renderCount += 1;
+  }, "pasteLink");
+
+  assert.equal(state.projectImport.inputMode, "pasteLink");
+  assert.equal(state.projectImport.error, "");
+  assert.equal(renderCount, 1);
+});
+
+test("project import input mode selection ignores changes while importing", () => {
+  resetProjectImportTestState();
+  state.projectImport = {
+    ...state.projectImport,
+    isOpen: true,
+    inputMode: "upload",
+    status: "importing",
+  };
+  let renderCount = 0;
+
+  selectProjectImportInputMode(() => {
+    renderCount += 1;
+  }, "pasteText");
+
+  assert.equal(state.projectImport.inputMode, "upload");
+  assert.equal(renderCount, 0);
 });
 
 test("batch project import imports valid XLSX files and refreshes once", async () => {

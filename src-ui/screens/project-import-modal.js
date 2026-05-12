@@ -72,6 +72,63 @@ function renderProjectImportBatchErrorModal(modal) {
   `;
 }
 
+function normalizeProjectImportInputMode(value) {
+  const mode = String(value ?? "").trim();
+  return mode === "pasteLink" || mode === "pasteText" ? mode : "upload";
+}
+
+function renderProjectImportModeButton(mode, label, selectedMode, disabled) {
+  const isActive = mode === selectedMode;
+  return `
+    <button
+      type="button"
+      class="segmented-control__button${isActive ? " is-active" : ""}"
+      data-action="select-project-import-input-mode:${escapeHtml(mode)}"
+      aria-pressed="${isActive ? "true" : "false"}"
+      ${disabled ? 'disabled aria-disabled="true"' : ""}
+    >
+      ${escapeHtml(label)}
+    </button>
+  `;
+}
+
+function renderProjectImportModeControl(selectedMode, disabled) {
+  return `
+    <div class="segmented-control project-import-modal__mode-control" role="group" aria-label="Add file method">
+      ${renderProjectImportModeButton("upload", "Upload", selectedMode, disabled)}
+      ${renderProjectImportModeButton("pasteLink", "Paste link", selectedMode, disabled)}
+      ${renderProjectImportModeButton("pasteText", "Paste text", selectedMode, disabled)}
+    </div>
+  `;
+}
+
+function renderProjectImportUploadPanel(isImporting) {
+  return `
+    <button
+      type="button"
+      class="project-import-modal__drop-target${isImporting ? " is-loading" : ""}"
+      data-action="select-project-import-file"
+      data-project-import-dropzone
+      ${isImporting ? 'disabled aria-disabled="true"' : ""}
+    >
+      ${isImporting ? '<span class="button__spinner" aria-hidden="true"></span>' : ""}
+      <span>Drop files here or click to open the file selector.</span>
+    </button>
+    <p class="project-import-modal__hint">Supported formats: .xlsx, .txt, or .docx. For .xlsx files, the first row must contain supported language codes such as es, en, vi, zh-Hans, or zh-Hant.</p>
+  `;
+}
+
+function renderProjectImportComingSoonPanel(mode) {
+  const message = mode === "pasteLink"
+    ? "Importing from Google Docs, Google spreadsheets, or HTML links is coming soon."
+    : "Importing pasted text from a text area is coming soon.";
+  return `
+    <div class="project-import-modal__coming-soon" role="status">
+      <p>${escapeHtml(message)}</p>
+    </div>
+  `;
+}
+
 export function renderProjectImportModal(state) {
   const modal = state.projectImport;
   const batchErrorMarkup = renderProjectImportBatchErrorModal(modal);
@@ -89,34 +146,31 @@ export function renderProjectImportModal(state) {
 
   const isImporting = modal.status === "importing";
   const projectTitle = String(modal.projectTitle ?? "").trim() || "this project";
+  const inputMode = normalizeProjectImportInputMode(modal.inputMode);
+  const isUploadMode = inputMode === "upload";
   const errorMarkup = modal.error
     ? `<div class="project-import-modal__error-badge" role="alert">${escapeHtml(formatErrorForDisplay(modal.error))}</div>`
     : "";
+  const primaryLabel = isUploadMode
+    ? (isImporting ? "Uploading..." : "Select files")
+    : "Continue";
+  const primaryAction = isUploadMode ? "select-project-import-file" : "noop";
 
   return `
     <div class="modal-backdrop">
       <section class="card modal-card modal-card--compact modal-card--project-import">
         <div class="card__body modal-card__body">
           <p class="card__eyebrow">ADD FILE</p>
-          <h2 class="modal__title">Upload a file</h2>
-          <p class="modal__supporting">Add a supported file to ${escapeHtml(projectTitle)}.</p>
+          <h2 class="modal__title">Add file</h2>
+          <p class="modal__supporting">Choose how to add content to ${escapeHtml(projectTitle)}.</p>
           <div class="modal__form project-import-modal">
             ${errorMarkup}
-            <button
-              type="button"
-              class="project-import-modal__drop-target${isImporting ? " is-loading" : ""}"
-              data-action="select-project-import-file"
-              data-project-import-dropzone
-              ${isImporting ? 'disabled aria-disabled="true"' : ""}
-            >
-              ${isImporting ? '<span class="button__spinner" aria-hidden="true"></span>' : ""}
-              <span>Drop files here or click to open the file selector.</span>
-            </button>
-            <p class="project-import-modal__hint">Supported formats: .xlsx, .txt, or .docx. For .xlsx files, the first row must contain supported language codes such as es, en, vi, zh-Hans, or zh-Hant.</p>
+            ${renderProjectImportModeControl(inputMode, isImporting)}
+            ${isUploadMode ? renderProjectImportUploadPanel(isImporting) : renderProjectImportComingSoonPanel(inputMode)}
           </div>
-          <div class="modal__actions">
+          <div class="modal__actions project-import-modal__actions">
             ${secondaryButton("Cancel", "cancel-project-import", { disabled: isImporting })}
-            ${primaryButton(isImporting ? "Uploading..." : "Select files", "select-project-import-file", { disabled: isImporting })}
+            ${primaryButton(primaryLabel, primaryAction, { disabled: isImporting || !isUploadMode })}
           </div>
         </div>
       </section>

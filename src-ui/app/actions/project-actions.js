@@ -37,6 +37,7 @@ import {
   cancelProjectImportModal,
   closeProjectImportUploadError,
   continueProjectImportText,
+  selectProjectImportInputMode,
   selectProjectImportFile,
   selectProjectImportSourceLanguage,
 } from "../project-import-flow.js";
@@ -83,6 +84,10 @@ export function createProjectActions(render) {
   };
 
   const prefixHandlers = [
+    {
+      prefix: "select-project-import-input-mode:",
+      handler: (mode) => selectProjectImportInputMode(render, mode),
+    },
     {
       prefix: "open-project-search-result:",
       handler: async (resultId) => openProjectSearchResult(render, resultId),

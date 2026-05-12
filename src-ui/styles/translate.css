@@ -1039,7 +1039,7 @@
   width: 100%;
   min-height: 88px;
   border: 1px dashed rgba(164, 112, 41, 0.32);
-  border-radius: 6px;
+  border-radius: var(--radius-card);
   background: rgba(255, 251, 246, 0.92);
   color: rgba(63, 38, 16, 0.8);
   font-family: var(--font-sans);

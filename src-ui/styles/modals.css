@@ -1157,6 +1157,17 @@
   gap: 12px;
 }
 
+.project-import-modal__mode-control {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  width: 100%;
+}
+
+.project-import-modal__mode-control .segmented-control__button {
+  min-width: 0;
+  padding-inline: 12px;
+}
+
 .project-import-modal__error-badge {
   justify-self: start;
   max-width: 100%;
@@ -1182,7 +1193,7 @@
   min-height: 133px;
   padding: 28px;
   border: 2px dashed var(--project-import-drop-target-color);
-  border-radius: 28px;
+  border-radius: var(--radius-card);
   background:
     radial-gradient(circle at 20% 15%, rgba(255, 255, 255, 0.8), transparent 38%),
     rgba(255, 250, 242, 0.76);
@@ -1235,6 +1246,28 @@
   color: var(--muted);
   font-size: 0.92rem;
   line-height: 1.5;
+}
+
+.project-import-modal__coming-soon {
+  display: grid;
+  place-items: center;
+  min-height: 133px;
+  padding: 28px;
+  border: 1px dashed rgba(164, 112, 41, 0.26);
+  border-radius: var(--radius-card);
+  background: rgba(255, 251, 246, 0.84);
+  color: var(--muted);
+  text-align: center;
+}
+
+.project-import-modal__coming-soon p {
+  margin: 0;
+  line-height: 1.5;
+}
+
+.project-import-modal__actions {
+  padding-top: 0;
+  border-top: 0;
 }
 
 .modal__list {

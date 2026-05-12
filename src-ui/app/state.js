@@ -276,6 +276,7 @@ export function createProjectImportState() {
     isOpen: false,
     projectId: null,
     projectTitle: "",
+    inputMode: "upload",
     status: "idle",
     error: "",
     result: null,

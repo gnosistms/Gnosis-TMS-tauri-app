@@ -13,10 +13,53 @@ test("project import modal renders the requested drop target copy", () => {
     },
   });
 
+  assert.match(html, /<h2 class="modal__title">Add file<\/h2>/);
+  assert.match(html, /Choose how to add content to Translation Project\./);
+  assert.match(html, /data-action="select-project-import-input-mode:upload"[\s\S]*Upload/);
+  assert.match(html, /data-action="select-project-import-input-mode:pasteLink"[\s\S]*Paste link/);
+  assert.match(html, /data-action="select-project-import-input-mode:pasteText"[\s\S]*Paste text/);
   assert.match(html, /data-project-import-dropzone/);
   assert.match(html, /Drop files here or click to open the file selector\./);
   assert.match(html, /Select files/);
   assert.match(html, /Supported formats: \.xlsx, \.txt, or \.docx\./);
+});
+
+test("project import modal renders paste link coming soon state", () => {
+  const html = renderProjectImportModal({
+    projectImport: {
+      isOpen: true,
+      projectTitle: "Translation Project",
+      inputMode: "pasteLink",
+      status: "idle",
+      error: "",
+    },
+  });
+
+  assert.match(html, /class="segmented-control__button is-active"[\s\S]*data-action="select-project-import-input-mode:pasteLink"/);
+  assert.match(html, /Importing from Google Docs, Google spreadsheets, or HTML links is coming soon\./);
+  assert.match(html, /Continue/);
+  assert.match(html, /data-action="noop" disabled/);
+  assert.doesNotMatch(html, /data-project-import-dropzone/);
+  assert.doesNotMatch(html, /Select files/);
+});
+
+test("project import modal renders paste text coming soon state", () => {
+  const html = renderProjectImportModal({
+    projectImport: {
+      isOpen: true,
+      projectTitle: "Translation Project",
+      inputMode: "pasteText",
+      status: "idle",
+      error: "",
+    },
+  });
+
+  assert.match(html, /class="segmented-control__button is-active"[\s\S]*data-action="select-project-import-input-mode:pasteText"/);
+  assert.match(html, /Importing pasted text from a text area is coming soon\./);
+  assert.match(html, /Continue/);
+  assert.match(html, /data-action="noop" disabled/);
+  assert.doesNotMatch(html, /data-project-import-dropzone/);
+  assert.doesNotMatch(html, /Select files/);
 });
 
 test("project import modal renders validation errors above the drop target", () => {

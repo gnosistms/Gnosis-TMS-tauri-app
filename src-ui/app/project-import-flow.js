@@ -129,6 +129,11 @@ function projectImportModalState(overrides = {}) {
   };
 }
 
+function normalizeProjectImportInputMode(value) {
+  const mode = String(value ?? "").trim();
+  return mode === "pasteLink" || mode === "pasteText" ? mode : "upload";
+}
+
 function importSummaryNoticeSuffix(result) {
   const summary = result?.importSummary;
   if (!summary || typeof summary !== "object") {
@@ -325,6 +330,7 @@ export function openProjectImportModal(render, projectId) {
     isOpen: true,
     projectId: targetProject.id,
     projectTitle: targetProject.title ?? targetProject.name ?? "",
+    inputMode: "upload",
     status: "idle",
     error: "",
     failedFileNames: [],
@@ -348,6 +354,7 @@ export function cancelProjectImportModal(render) {
     isOpen: false,
     projectId: null,
     projectTitle: "",
+    inputMode: "upload",
     status: "idle",
     error: "",
     failedFileNames: [],
@@ -364,6 +371,18 @@ export function cancelProjectImportModal(render) {
 export function closeProjectImportUploadError(render) {
   state.projectImport = projectImportModalState({
     failedFileNames: [],
+  });
+  render();
+}
+
+export function selectProjectImportInputMode(render, mode) {
+  if (state.projectImport.status === "importing" || !state.projectImport.isOpen) {
+    return;
+  }
+
+  state.projectImport = projectImportModalState({
+    inputMode: normalizeProjectImportInputMode(mode),
+    error: "",
   });
   render();
 }
