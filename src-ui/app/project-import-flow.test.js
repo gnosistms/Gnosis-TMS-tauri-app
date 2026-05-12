@@ -41,8 +41,11 @@ const {
   importProjectFile,
   importProjectFiles,
   PROJECT_IMPORT_ACCEPT,
+  retryProjectImportLink,
   selectProjectImportInputMode,
   selectProjectImportSourceLanguage,
+  submitProjectImportLink,
+  updateProjectImportLinkUrl,
 } = await import("./project-import-flow.js");
 const { createProjectImportState, createStatusBadgesState, state } = await import("./state.js");
 const { clearActiveStorageLogin, setActiveStorageLogin } = await import("./team-storage.js");
@@ -94,7 +97,7 @@ function installBatchImportInvokeHandler({ failFileNames = new Set() } = {}) {
   const calls = [];
   invokeHandler = async (command, payload = {}) => {
     calls.push({ command, payload });
-    if (command === "import_xlsx_to_gtms" || command === "import_txt_to_gtms" || command === "import_docx_to_gtms") {
+    if (command === "import_xlsx_to_gtms" || command === "import_txt_to_gtms" || command === "import_docx_to_gtms" || command === "import_html_to_gtms") {
       const fileName = payload.input.fileName;
       if (failFileNames.has(fileName)) {
         throw new Error(`Import failed for ${fileName}`);
@@ -123,6 +126,7 @@ test("detectImportFileType supports XLSX, TXT, and DOCX", () => {
   assert.equal(detectImportFileType("chapter.xlsx"), "xlsx");
   assert.equal(detectImportFileType("chapter.TXT"), "txt");
   assert.equal(detectImportFileType("chapter.docx"), "docx");
+  assert.equal(detectImportFileType("chapter.html"), "html");
   assert.equal(detectImportFileType("chapter.pdf"), null);
 });
 
@@ -175,6 +179,28 @@ test("DOCX import selection opens source language step before importing", async 
 
   assert.equal(state.projectImport.status, "selectingSourceLanguage");
   assert.equal(state.projectImport.pendingFileName, "chapter.docx");
+  assert.equal(renderCount, 1);
+});
+
+test("HTML import selection opens source language step before importing", async () => {
+  resetProjectImportTestState();
+  state.projectImport = {
+    ...state.projectImport,
+    isOpen: true,
+    projectId: "project-1",
+    projectTitle: "Project",
+  };
+  let renderCount = 0;
+
+  await importProjectFile(() => {
+    renderCount += 1;
+  }, {
+    name: "article.html",
+    arrayBuffer: async () => new ArrayBuffer(0),
+  });
+
+  assert.equal(state.projectImport.status, "selectingSourceLanguage");
+  assert.equal(state.projectImport.pendingFileName, "article.html");
   assert.equal(renderCount, 1);
 });
 
@@ -276,6 +302,184 @@ test("project import input mode selection ignores changes while importing", () =
 
   assert.equal(state.projectImport.inputMode, "upload");
   assert.equal(renderCount, 0);
+});
+
+test("project import input mode selection ignores changes while resolving a link", () => {
+  resetProjectImportTestState();
+  state.projectImport = {
+    ...state.projectImport,
+    isOpen: true,
+    inputMode: "pasteLink",
+    linkUrl: "https://example.com/article",
+    status: "resolvingLink",
+  };
+  let renderCount = 0;
+
+  selectProjectImportInputMode(() => {
+    renderCount += 1;
+  }, "upload");
+
+  assert.equal(state.projectImport.inputMode, "pasteLink");
+  assert.equal(state.projectImport.linkUrl, "https://example.com/article");
+  assert.equal(renderCount, 0);
+});
+
+test("project import link input updates the paste link URL", () => {
+  resetProjectImportTestState();
+  state.projectImport = {
+    ...state.projectImport,
+    isOpen: true,
+    inputMode: "pasteLink",
+  };
+  let renderCount = 0;
+
+  updateProjectImportLinkUrl(() => {
+    renderCount += 1;
+  }, "https://example.com/article");
+
+  assert.equal(state.projectImport.linkUrl, "https://example.com/article");
+  assert.equal(renderCount, 1);
+});
+
+test("project import Google Docs link opens source language selection with DOCX file", async () => {
+  resetProjectImportTestState();
+  state.projectImport = {
+    ...state.projectImport,
+    isOpen: true,
+    inputMode: "pasteLink",
+    projectId: "project-1",
+    projectTitle: "Project",
+    linkUrl: "https://docs.google.com/document/d/doc-id/edit",
+  };
+  const calls = [];
+  invokeHandler = async (command, payload = {}) => {
+    calls.push({ command, payload });
+    if (command === "resolve_project_import_link") {
+      return {
+        fileType: "docx",
+        fileName: "google-doc.docx",
+        dataBase64: "ZGF0YQ==",
+        sourceUrl: payload.input.url,
+      };
+    }
+    throw new Error(`Unexpected command: ${command}`);
+  };
+  let renderCount = 0;
+
+  await submitProjectImportLink(() => {
+    renderCount += 1;
+  });
+
+  assert.deepEqual(
+    calls.map((call) => call.command).filter((command) => command === "resolve_project_import_link"),
+    ["resolve_project_import_link"],
+  );
+  assert.equal(state.projectImport.status, "selectingSourceLanguage");
+  assert.equal(state.projectImport.pendingFileName, "google-doc.docx");
+  assert.equal(state.projectImport.pendingFile.sourceUrl, "https://docs.google.com/document/d/doc-id/edit");
+  assert.ok(renderCount >= 2);
+});
+
+test("project import Google Sheets link imports through XLSX command", async () => {
+  resetProjectImportTestState();
+  state.projectImport = {
+    ...state.projectImport,
+    isOpen: true,
+    inputMode: "pasteLink",
+    projectId: "project-1",
+    projectTitle: "Project",
+    linkUrl: "https://docs.google.com/spreadsheets/d/sheet-id/edit",
+  };
+  const calls = installBatchImportInvokeHandler();
+  invokeHandler = async (command, payload = {}) => {
+    calls.push({ command, payload });
+    if (command === "resolve_project_import_link") {
+      return {
+        fileType: "xlsx",
+        fileName: "google-sheet.xlsx",
+        dataBase64: "ZGF0YQ==",
+        sourceUrl: payload.input.url,
+      };
+    }
+    if (command === "import_xlsx_to_gtms") {
+      return importedResult(payload.input.fileName);
+    }
+    if (command === "reconcile_project_repo_sync_states") {
+      return [];
+    }
+    if (command === "list_local_gtms_project_files") {
+      return [{ projectId: "project-1", repoName: "project-repo", chapters: [] }];
+    }
+    if (command === "update_gtms_chapter_glossary_links") {
+      return {};
+    }
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  await submitProjectImportLink(() => {});
+
+  assert.deepEqual(
+    calls.map((call) => call.command).filter((command) => command === "resolve_project_import_link" || command === "import_xlsx_to_gtms"),
+    ["resolve_project_import_link", "import_xlsx_to_gtms"],
+  );
+  assert.equal(calls.find((call) => call.command === "import_xlsx_to_gtms").payload.input.fileName, "google-sheet.xlsx");
+  assert.equal(state.projectImport.isOpen, false);
+});
+
+test("project import HTML link opens source language selection with HTML file", async () => {
+  resetProjectImportTestState();
+  state.projectImport = {
+    ...state.projectImport,
+    isOpen: true,
+    inputMode: "pasteLink",
+    projectId: "project-1",
+    projectTitle: "Project",
+    linkUrl: "https://example.com/article",
+  };
+  invokeHandler = async (command, payload = {}) => {
+    if (command === "resolve_project_import_link") {
+      return {
+        fileType: "html",
+        fileName: "article.html",
+        dataBase64: "PGh0bWw+PC9odG1sPg==",
+        sourceUrl: payload.input.url,
+      };
+    }
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  await submitProjectImportLink(() => {});
+
+  assert.equal(state.projectImport.status, "selectingSourceLanguage");
+  assert.equal(state.projectImport.pendingFileName, "article.html");
+  assert.equal(state.projectImport.pendingFile.sourceUrl, "https://example.com/article");
+});
+
+test("project import link errors open the matching modal state and retry reuses the link", async () => {
+  resetProjectImportTestState();
+  state.projectImport = {
+    ...state.projectImport,
+    isOpen: true,
+    inputMode: "pasteLink",
+    projectId: "project-1",
+    projectTitle: "Project",
+    linkUrl: "https://docs.google.com/document/d/doc-id/edit",
+  };
+  let attempts = 0;
+  invokeHandler = async (command) => {
+    if (command === "resolve_project_import_link") {
+      attempts += 1;
+      throw new Error("PROJECT_IMPORT_LINK_ACCESS_DENIED:private file");
+    }
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  await submitProjectImportLink(() => {});
+  assert.equal(state.projectImport.linkErrorModal, "accessDenied");
+
+  await retryProjectImportLink(() => {});
+  assert.equal(attempts, 2);
+  assert.equal(state.projectImport.linkUrl, "https://docs.google.com/document/d/doc-id/edit");
 });
 
 test("batch project import imports valid XLSX files and refreshes once", async () => {

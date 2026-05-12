@@ -5,6 +5,7 @@ use serde_json::Value;
 use tauri::AppHandle;
 
 mod docx;
+mod html;
 pub(crate) mod languages;
 mod txt;
 mod write_gtms;
@@ -13,6 +14,7 @@ mod xlsx;
 #[cfg(test)]
 use docx::DOCX_MAX_FILE_BYTES;
 use docx::{parse_docx_file, DocxImportSummary, DocxRowMetadata};
+use html::{parse_html_file, HtmlRowMetadata};
 #[cfg(test)]
 use std::io::Cursor;
 #[cfg(test)]
@@ -57,6 +59,18 @@ pub(crate) struct ImportDocxInput {
     file_name: String,
     bytes: Vec<u8>,
     source_language_code: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ImportHtmlInput {
+    installation_id: i64,
+    repo_name: String,
+    project_id: Option<String>,
+    file_name: String,
+    bytes: Vec<u8>,
+    source_language_code: String,
+    source_url: String,
 }
 
 #[derive(Serialize)]
@@ -112,12 +126,25 @@ struct ImportedRow {
     fields: BTreeMap<String, ImportedField>,
     text_style: Option<String>,
     docx_metadata: Option<DocxRowMetadata>,
+    html_metadata: Option<HtmlRowMetadata>,
 }
 
 #[derive(Clone, Default)]
 struct ImportedField {
     plain_text: String,
     footnote: String,
+    image_caption: String,
+    image: Option<ImportedFieldImage>,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ImportedFieldImage {
+    kind: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    path: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -277,6 +304,9 @@ struct FieldValue {
     value_kind: &'static str,
     plain_text: String,
     footnote: String,
+    image_caption: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    image: Option<ImportedFieldImage>,
     rich_text: Option<Value>,
     notes_html: String,
     attachments: Vec<Value>,
@@ -311,6 +341,14 @@ pub(super) fn import_docx_to_gtms_sync(
     input: ImportDocxInput,
 ) -> Result<ImportXlsxResponse, String> {
     let parsed = parse_docx_file(input)?;
+    import_parsed_workbook_to_gtms_sync(app, parsed)
+}
+
+pub(super) fn import_html_to_gtms_sync(
+    app: &AppHandle,
+    input: ImportHtmlInput,
+) -> Result<ImportXlsxResponse, String> {
+    let parsed = parse_html_file(input)?;
     import_parsed_workbook_to_gtms_sync(app, parsed)
 }
 
@@ -500,6 +538,8 @@ mod tests {
                 plain_text: "主の祈りShu no inori".to_string(),
                 footnote: "This is the English version used to translate into Japanese."
                     .to_string(),
+                image_caption: String::new(),
+                image: None,
             },
         );
         let parsed = ParsedWorkbook {
@@ -526,6 +566,7 @@ mod tests {
                 fields,
                 text_style: None,
                 docx_metadata: None,
+                html_metadata: None,
             }],
             import_summary: None,
         };
@@ -538,6 +579,78 @@ mod tests {
         assert_eq!(
             field.footnote,
             "This is the English version used to translate into Japanese."
+        );
+        assert_eq!(field.image_caption, "");
+        assert!(field.image.is_none());
+    }
+
+    #[test]
+    fn build_row_file_writes_imported_url_images_and_captions() {
+        let mut fields = BTreeMap::new();
+        fields.insert(
+            "en".to_string(),
+            ImportedField {
+                plain_text: String::new(),
+                footnote: String::new(),
+                image_caption: "Plate 12. Temple entrance.".to_string(),
+                image: Some(ImportedFieldImage {
+                    kind: "url".to_string(),
+                    url: Some("https://example.com/images/plate.jpg".to_string()),
+                    path: None,
+                }),
+            },
+        );
+        let parsed = ParsedWorkbook {
+            installation_id: 1,
+            repo_name: "project-repo".to_string(),
+            project_id: Some("project-1".to_string()),
+            file_title: "Article".to_string(),
+            worksheet_name: "HTML".to_string(),
+            source_file_name: "article.html".to_string(),
+            source_format: "html",
+            header_blob: Vec::new(),
+            languages: vec![ImportedLanguage {
+                code: "en".to_string(),
+                name: "English".to_string(),
+                role: "source",
+                base_code: None,
+            }],
+            rows: vec![ImportedRow {
+                external_id: None,
+                description: None,
+                context: None,
+                comments: Vec::new(),
+                source_row_number: 1,
+                fields,
+                text_style: None,
+                docx_metadata: None,
+                html_metadata: Some(HtmlRowMetadata {
+                    source_url: "https://example.com/article".to_string(),
+                    block_kind: "image".to_string(),
+                    block_index: 1,
+                    original_tag: "figure".to_string(),
+                    image_url: Some("https://example.com/images/plate.jpg".to_string()),
+                }),
+            }],
+            import_summary: None,
+        };
+
+        let row = build_row_file(&parsed, &parsed.rows[0], 0, parsed.rows.len(), "row-1")
+            .expect("row should build");
+        let field = row.fields.get("en").expect("English field should exist");
+
+        assert_eq!(field.plain_text, "");
+        assert_eq!(field.image_caption, "Plate 12. Temple entrance.");
+        assert_eq!(
+            field.image.as_ref().and_then(|image| image.url.as_deref()),
+            Some("https://example.com/images/plate.jpg")
+        );
+        assert_eq!(
+            row.format_metadata
+                .get("html")
+                .and_then(|value| value.get("image_url"))
+                .and_then(Value::as_str),
+            Some("https://example.com/images/plate.jpg")
         );
     }
 

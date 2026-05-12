@@ -19,24 +19,27 @@ pub(super) enum ColumnBinding {
 
 pub(super) fn parse_xlsx_workbook(input: ImportXlsxInput) -> Result<ParsedWorkbook, String> {
     if input.bytes.is_empty() {
-        return Err("The selected file is empty.".to_string());
+        return Err("The selected workbook is empty.".to_string());
     }
 
     let mut workbook = open_workbook_auto_from_rs(Cursor::new(input.bytes))
-        .map_err(|error| format!("Could not open the workbook: {error}"))?;
+        .map_err(|_| {
+            "Could not open the workbook. Make sure the Google Sheet can be exported as XLSX and try again."
+                .to_string()
+        })?;
     let sheet_name = workbook
         .sheet_names()
         .first()
         .cloned()
-        .ok_or_else(|| "The workbook does not contain any worksheets.".to_string())?;
+        .ok_or_else(|| "The workbook does not contain any worksheets. Add a sheet with language-code headers in the first row.".to_string())?;
     let range = workbook
         .worksheet_range_at(0)
-        .ok_or_else(|| "The workbook does not contain any worksheets.".to_string())?
-        .map_err(|error| format!("Could not read the first worksheet: {error}"))?;
+        .ok_or_else(|| "The workbook does not contain any worksheets. Add a sheet with language-code headers in the first row.".to_string())?
+        .map_err(|_| "Could not read the first worksheet.".to_string())?;
     let header_row = range
         .rows()
         .next()
-        .ok_or_else(|| "The workbook is missing a header row.".to_string())?;
+        .ok_or_else(|| "The first worksheet is missing a header row. Add supported language codes to row 1, such as es, en, vi, zh-Hans, or zh-Hant.".to_string())?;
 
     let header_blob = header_row
         .iter()
@@ -56,7 +59,7 @@ pub(super) fn parse_xlsx_workbook(input: ImportXlsxInput) -> Result<ParsedWorkbo
 
     if languages.is_empty() {
         return Err(
-      "Could not detect any language columns. Add supported language codes like 'es', 'en', 'vi', 'zh-Hans', or 'zh-Hant' to the first row."
+      "Could not detect any language columns in row 1. Add supported language codes such as es, en, vi, zh-Hans, or zh-Hant."
         .to_string(),
     );
     }
@@ -105,7 +108,15 @@ pub(super) fn parse_xlsx_workbook(input: ImportXlsxInput) -> Result<ParsedWorkbo
             fields,
             text_style: None,
             docx_metadata: None,
+            html_metadata: None,
         });
+    }
+
+    if rows.is_empty() {
+        return Err(
+            "The workbook has valid language headers, but no importable text rows below row 1."
+                .to_string(),
+        );
     }
 
     Ok(ParsedWorkbook {
@@ -125,7 +136,7 @@ pub(super) fn parse_xlsx_workbook(input: ImportXlsxInput) -> Result<ParsedWorkbo
 
 pub(super) fn classify_header_row(headers: &[String]) -> Result<Vec<ColumnBinding>, String> {
     if headers.is_empty() {
-        return Err("The workbook is missing a header row.".to_string());
+        return Err("The first worksheet is missing a header row. Add supported language codes to row 1, such as es, en, vi, zh-Hans, or zh-Hant.".to_string());
     }
 
     headers
@@ -136,10 +147,17 @@ pub(super) fn classify_header_row(headers: &[String]) -> Result<Vec<ColumnBindin
 }
 
 fn classify_header(header: &str, column_index: usize) -> Result<ColumnBinding, String> {
+    if header.trim().is_empty() {
+        return Err(format!(
+            "Column {} in row 1 is blank. Every imported column must start with a supported language code.",
+            column_index + 1
+        ));
+    }
     let code = normalize_language_code(header).ok_or_else(|| {
         format!(
-            "Column {} must start with a supported language code.",
-            column_index + 1
+            "Column {} in row 1 has unsupported language code \"{}\". Use supported codes such as es, en, vi, zh-Hans, or zh-Hant.",
+            column_index + 1,
+            header.trim(),
         )
     })?;
     let name = language_display_name(&code);
@@ -223,10 +241,14 @@ pub(super) fn split_xlsx_cell_text_and_footnote(value: &str) -> ImportedField {
         Some((plain_text, footnote)) => ImportedField {
             plain_text: plain_text.trim().to_string(),
             footnote: footnote.trim().to_string(),
+            image_caption: String::new(),
+            image: None,
         },
         None => ImportedField {
             plain_text: value.to_string(),
             footnote: String::new(),
+            image_caption: String::new(),
+            image: None,
         },
     }
 }

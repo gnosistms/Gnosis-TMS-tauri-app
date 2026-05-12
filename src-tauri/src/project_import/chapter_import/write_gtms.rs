@@ -248,6 +248,8 @@ pub(super) fn build_row_file(
                 value_kind: "text",
                 plain_text: plain_text.plain_text,
                 footnote: plain_text.footnote,
+                image_caption: plain_text.image_caption,
+                image: plain_text.image,
                 rich_text: None,
                 notes_html: String::new(),
                 attachments: Vec::new(),
@@ -286,6 +288,21 @@ pub(super) fn build_row_file(
                   "warning_counts": metadata.warning_counts,
                 }),
             );
+        }
+    } else if parsed.source_format == "html" {
+        if let Some(metadata) = imported_row.html_metadata.as_ref() {
+            let mut html_metadata = json!({
+              "source_url": metadata.source_url,
+              "block_kind": metadata.block_kind,
+              "block_index": metadata.block_index,
+              "original_tag": metadata.original_tag,
+            });
+            if let Some(image_url) = metadata.image_url.as_ref() {
+                if let Some(object) = html_metadata.as_object_mut() {
+                    object.insert("image_url".to_string(), Value::String(image_url.clone()));
+                }
+            }
+            format_metadata.insert("html".to_string(), html_metadata);
         }
     }
 

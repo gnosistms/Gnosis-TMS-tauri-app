@@ -2,6 +2,7 @@ mod chapter_editor;
 mod chapter_editor_comments;
 mod chapter_import;
 mod chapter_lifecycle;
+mod link_import;
 mod project_git;
 
 use tauri::AppHandle;
@@ -58,13 +59,18 @@ use self::{
         SaveEditorRowCommentInput, SaveEditorRowCommentResponse,
     },
     chapter_import::{
-        import_docx_to_gtms_sync, import_txt_to_gtms_sync, import_xlsx_to_gtms_sync,
-        ImportDocxInput, ImportTxtInput, ImportXlsxInput, ImportXlsxResponse,
+        import_docx_to_gtms_sync, import_html_to_gtms_sync, import_txt_to_gtms_sync,
+        import_xlsx_to_gtms_sync, ImportDocxInput, ImportHtmlInput, ImportTxtInput,
+        ImportXlsxInput, ImportXlsxResponse,
     },
     chapter_lifecycle::{
         permanently_delete_gtms_chapter_sync, rename_gtms_chapter_sync,
         update_gtms_chapter_lifecycle_sync, RenameChapterInput, RenameChapterResponse,
         UpdateChapterLifecycleInput, UpdateChapterLifecycleResponse,
+    },
+    link_import::{
+        resolve_project_import_link_sync, ResolveProjectImportLinkInput,
+        ResolveProjectImportLinkResponse,
     },
 };
 
@@ -106,6 +112,25 @@ pub(crate) async fn import_docx_to_gtms(
     tauri::async_runtime::spawn_blocking(move || import_docx_to_gtms_sync(&app, input))
         .await
         .map_err(|error| format!("The DOCX import worker failed: {error}"))?
+}
+
+#[tauri::command]
+pub(crate) async fn import_html_to_gtms(
+    app: AppHandle,
+    input: ImportHtmlInput,
+) -> Result<ImportXlsxResponse, String> {
+    tauri::async_runtime::spawn_blocking(move || import_html_to_gtms_sync(&app, input))
+        .await
+        .map_err(|error| format!("The HTML import worker failed: {error}"))?
+}
+
+#[tauri::command]
+pub(crate) async fn resolve_project_import_link(
+    input: ResolveProjectImportLinkInput,
+) -> Result<ResolveProjectImportLinkResponse, String> {
+    tauri::async_runtime::spawn_blocking(move || resolve_project_import_link_sync(input))
+        .await
+        .map_err(|error| format!("The link import worker failed: {error}"))?
 }
 
 #[tauri::command]

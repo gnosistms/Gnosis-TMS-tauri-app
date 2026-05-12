@@ -72,6 +72,46 @@ function renderProjectImportBatchErrorModal(modal) {
   `;
 }
 
+function renderProjectImportLinkErrorModal(modal) {
+  const errorModal = modal?.linkErrorModal;
+  if (errorModal === "accessDenied") {
+    return `
+      <div class="modal-backdrop">
+        <section class="card modal-card modal-card--compact">
+          <div class="card__body modal-card__body">
+            <p class="card__eyebrow">FILE NOT SHARED PUBLICLY</p>
+            <h2 class="modal__title">Please share this file with everyone</h2>
+            <p class="modal__supporting">Please open this file in your web browser and share it to &quot;Anyone with the link&quot;.</p>
+            <div class="modal__actions">
+              ${secondaryButton("Cancel", "close-project-import-link-error")}
+              ${primaryButton("Retry", "retry-project-import-link")}
+            </div>
+          </div>
+        </section>
+      </div>
+    `;
+  }
+
+  if (errorModal === "invalid") {
+    return `
+      <div class="modal-backdrop">
+        <section class="card modal-card modal-card--compact">
+          <div class="card__body modal-card__body">
+            <p class="card__eyebrow">INVALID LINK</p>
+            <h2 class="modal__title">This link can not be opened</h2>
+            <p class="modal__supporting">This link is not readable. The exact reason is unknown. Note that only Google Docs, Google Sheets, and HTML website links are supported.</p>
+            <div class="modal__actions">
+              ${primaryButton("Cancel", "close-project-import-link-error")}
+            </div>
+          </div>
+        </section>
+      </div>
+    `;
+  }
+
+  return "";
+}
+
 function normalizeProjectImportInputMode(value) {
   const mode = String(value ?? "").trim();
   return mode === "pasteLink" || mode === "pasteText" ? mode : "upload";
@@ -118,6 +158,28 @@ function renderProjectImportUploadPanel(isImporting) {
   `;
 }
 
+function renderProjectImportLinkPanel(modal, disabled) {
+  const value = typeof modal?.linkUrl === "string" ? modal.linkUrl : "";
+  return `
+    <label class="field">
+      <input
+        id="project-import-link-input"
+        class="field__input"
+        type="url"
+        inputmode="url"
+        aria-label="Paste link"
+        autocomplete="off"
+        spellcheck="false"
+        data-project-import-link-input
+        value="${escapeHtml(value)}"
+        placeholder="https://docs.google.com/..."
+        ${disabled ? 'disabled aria-disabled="true"' : ""}
+      />
+      <span class="project-import-modal__hint">Paste link here. Supports Google Docs, Google Sheets, and HTML web pages.</span>
+    </label>
+  `;
+}
+
 function renderProjectImportComingSoonPanel(mode) {
   const message = mode === "pasteLink"
     ? "Importing from Google Docs, Google spreadsheets, or HTML links is coming soon."
@@ -136,6 +198,11 @@ export function renderProjectImportModal(state) {
     return batchErrorMarkup;
   }
 
+  const linkErrorMarkup = renderProjectImportLinkErrorModal(modal);
+  if (linkErrorMarkup) {
+    return linkErrorMarkup;
+  }
+
   if (!modal?.isOpen) {
     return "";
   }
@@ -145,16 +212,27 @@ export function renderProjectImportModal(state) {
   }
 
   const isImporting = modal.status === "importing";
+  const isResolvingLink = modal.status === "resolvingLink";
+  const controlsDisabled = isImporting || isResolvingLink;
   const projectTitle = String(modal.projectTitle ?? "").trim() || "this project";
   const inputMode = normalizeProjectImportInputMode(modal.inputMode);
   const isUploadMode = inputMode === "upload";
+  const isPasteLinkMode = inputMode === "pasteLink";
+  const linkUrl = String(modal.linkUrl ?? "").trim();
   const errorMarkup = modal.error
     ? `<div class="project-import-modal__error-badge" role="alert">${escapeHtml(formatErrorForDisplay(modal.error))}</div>`
     : "";
-  const primaryLabel = isUploadMode
+  const primaryLabel = isPasteLinkMode
+    ? (isResolvingLink ? "Opening..." : "Continue")
+    : isUploadMode
     ? (isImporting ? "Uploading..." : "Select files")
     : "Continue";
-  const primaryAction = isUploadMode ? "select-project-import-file" : "noop";
+  const primaryAction = isPasteLinkMode
+    ? "submit-project-import-link"
+    : isUploadMode ? "select-project-import-file" : "noop";
+  const primaryDisabled = controlsDisabled
+    || (!isUploadMode && !isPasteLinkMode)
+    || (isPasteLinkMode && !linkUrl);
 
   return `
     <div class="modal-backdrop">
@@ -165,12 +243,16 @@ export function renderProjectImportModal(state) {
           <p class="modal__supporting">Choose how to add content to ${escapeHtml(projectTitle)}.</p>
           <div class="modal__form project-import-modal">
             ${errorMarkup}
-            ${renderProjectImportModeControl(inputMode, isImporting)}
-            ${isUploadMode ? renderProjectImportUploadPanel(isImporting) : renderProjectImportComingSoonPanel(inputMode)}
+            ${renderProjectImportModeControl(inputMode, controlsDisabled)}
+            ${isUploadMode
+              ? renderProjectImportUploadPanel(isImporting)
+              : isPasteLinkMode
+                ? renderProjectImportLinkPanel(modal, controlsDisabled)
+                : renderProjectImportComingSoonPanel(inputMode)}
           </div>
           <div class="modal__actions project-import-modal__actions">
-            ${secondaryButton("Cancel", "cancel-project-import", { disabled: isImporting })}
-            ${primaryButton(primaryLabel, primaryAction, { disabled: isImporting || !isUploadMode })}
+            ${secondaryButton("Cancel", "cancel-project-import", { disabled: controlsDisabled })}
+            ${primaryButton(primaryLabel, primaryAction, { disabled: primaryDisabled })}
           </div>
         </div>
       </section>

@@ -23,6 +23,9 @@ import {
 } from "./project-export-flow.js";
 import { updateProjectAddTranslationPaste } from "./project-add-translation-flow.js";
 import {
+  updateProjectImportLinkUrl,
+} from "./project-import-flow.js";
+import {
   updateChapterPermanentDeletionConfirmation,
   updateChapterGlossaryLinks,
   updateChapterRenameName,
@@ -609,6 +612,16 @@ function handleProjectAddTranslationInput(event, render) {
   return true;
 }
 
+function handleProjectImportLinkInput(event, render) {
+  const input = event.target.closest("[data-project-import-link-input]");
+  if (!input) {
+    return false;
+  }
+
+  updateProjectImportLinkUrl(render, input.value);
+  return true;
+}
+
 function handleAiKeyInput(event) {
   const input = event.target.closest("[data-ai-key-input]");
   if (!input) {
@@ -707,6 +720,7 @@ const inputHandlers = [
   handleChapterGlossarySelectInput,
   handleProjectExportFormatInput,
   handleProjectExportLanguageInput,
+  handleProjectImportLinkInput,
   handleProjectAddTranslationInput,
   handleAiKeyInput,
   handleAiDetailedConfigurationInput,

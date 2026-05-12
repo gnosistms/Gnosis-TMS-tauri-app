@@ -35,11 +35,14 @@ import {
 import {
   addFilesToProject,
   cancelProjectImportModal,
+  closeProjectImportLinkError,
   closeProjectImportUploadError,
   continueProjectImportText,
+  retryProjectImportLink,
   selectProjectImportInputMode,
   selectProjectImportFile,
   selectProjectImportSourceLanguage,
+  submitProjectImportLink,
 } from "../project-import-flow.js";
 import {
   cancelProjectAddTranslation,
@@ -70,10 +73,13 @@ export function createProjectActions(render) {
     "cancel-project-import": () => cancelProjectImportModal(render),
     "cancel-project-export": () => cancelProjectExport(render),
     "cancel-project-add-translation": () => cancelProjectAddTranslation(render),
+    "close-project-import-link-error": () => closeProjectImportLinkError(render),
     "close-project-export-unsupported": () => closeProjectExportUnsupported(render),
     "close-project-import-upload-error": () => closeProjectImportUploadError(render),
     "continue-project-import-text": () => continueProjectImportText(render),
+    "retry-project-import-link": () => retryProjectImportLink(render),
     "select-project-import-file": () => selectProjectImportFile(render),
+    "submit-project-import-link": () => submitProjectImportLink(render),
     "submit-project-add-translation-paste": () => submitProjectAddTranslationPaste(render),
     "continue-project-add-translation-language": () => continueProjectAddTranslationLanguage(render),
     "continue-project-add-translation-existing": () => continueProjectAddTranslationWithExistingText(render),

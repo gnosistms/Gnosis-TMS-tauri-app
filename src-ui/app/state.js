@@ -277,6 +277,8 @@ export function createProjectImportState() {
     projectId: null,
     projectTitle: "",
     inputMode: "upload",
+    linkUrl: "",
+    linkErrorModal: null,
     status: "idle",
     error: "",
     result: null,

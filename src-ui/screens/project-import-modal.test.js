@@ -24,23 +24,88 @@ test("project import modal renders the requested drop target copy", () => {
   assert.match(html, /Supported formats: \.xlsx, \.txt, or \.docx\./);
 });
 
-test("project import modal renders paste link coming soon state", () => {
+test("project import modal renders paste link input state", () => {
   const html = renderProjectImportModal({
     projectImport: {
       isOpen: true,
       projectTitle: "Translation Project",
       inputMode: "pasteLink",
+      linkUrl: "",
       status: "idle",
       error: "",
     },
   });
 
   assert.match(html, /class="segmented-control__button is-active"[\s\S]*data-action="select-project-import-input-mode:pasteLink"/);
-  assert.match(html, /Importing from Google Docs, Google spreadsheets, or HTML links is coming soon\./);
+  assert.match(html, /data-project-import-link-input/);
+  assert.match(html, /Paste link here\. Supports Google Docs, Google Sheets, and HTML web pages\./);
   assert.match(html, /Continue/);
-  assert.match(html, /data-action="noop" disabled/);
+  assert.match(html, /data-action="submit-project-import-link" disabled/);
   assert.doesNotMatch(html, /data-project-import-dropzone/);
   assert.doesNotMatch(html, /Select files/);
+});
+
+test("project import modal enables paste link continue after a link is entered", () => {
+  const html = renderProjectImportModal({
+    projectImport: {
+      isOpen: true,
+      projectTitle: "Translation Project",
+      inputMode: "pasteLink",
+      linkUrl: "https://example.com/article",
+      status: "idle",
+      error: "",
+    },
+  });
+
+  assert.match(html, /value="https:\/\/example\.com\/article"/);
+  assert.match(html, /data-action="submit-project-import-link">Continue<\/button>/);
+  assert.doesNotMatch(html, /data-action="submit-project-import-link" disabled/);
+});
+
+test("project import modal disables paste link controls while resolving", () => {
+  const html = renderProjectImportModal({
+    projectImport: {
+      isOpen: true,
+      projectTitle: "Translation Project",
+      inputMode: "pasteLink",
+      linkUrl: "https://example.com/article",
+      status: "resolvingLink",
+      error: "",
+    },
+  });
+
+  assert.match(html, /data-project-import-link-input[\s\S]*disabled/);
+  assert.match(html, /data-action="submit-project-import-link" disabled[\s\S]*Opening\.\.\.<\/button>/);
+  assert.match(html, /data-action="cancel-project-import"[\s\S]*disabled/);
+});
+
+test("project import modal renders Google access denied link error", () => {
+  const html = renderProjectImportModal({
+    projectImport: {
+      isOpen: true,
+      linkErrorModal: "accessDenied",
+    },
+  });
+
+  assert.match(html, /FILE NOT SHARED PUBLICLY/);
+  assert.match(html, /Please share this file with everyone/);
+  assert.match(html, /Anyone with the link/);
+  assert.match(html, /data-action="close-project-import-link-error"[\s\S]*Cancel/);
+  assert.match(html, /data-action="retry-project-import-link"[\s\S]*Retry/);
+});
+
+test("project import modal renders invalid link error", () => {
+  const html = renderProjectImportModal({
+    projectImport: {
+      isOpen: true,
+      linkErrorModal: "invalid",
+    },
+  });
+
+  assert.match(html, /INVALID LINK/);
+  assert.match(html, /This link can not be opened/);
+  assert.match(html, /only Google Docs, Google Sheets, and HTML website links are supported/);
+  assert.match(html, /data-action="close-project-import-link-error"[\s\S]*Cancel/);
 });
 
 test("project import modal renders paste text coming soon state", () => {

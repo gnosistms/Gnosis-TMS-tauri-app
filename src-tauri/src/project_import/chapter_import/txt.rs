@@ -29,6 +29,8 @@ pub(super) fn parse_txt_file(input: ImportTxtInput) -> Result<ParsedWorkbook, St
             ImportedField {
                 plain_text,
                 footnote: String::new(),
+                image_caption: String::new(),
+                image: None,
             },
         );
         rows.push(ImportedRow {
@@ -40,6 +42,7 @@ pub(super) fn parse_txt_file(input: ImportTxtInput) -> Result<ParsedWorkbook, St
             fields,
             text_style: None,
             docx_metadata: None,
+            html_metadata: None,
         });
     }
 

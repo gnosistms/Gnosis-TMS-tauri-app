@@ -71,6 +71,8 @@ pub(super) fn parse_docx_file(input: ImportDocxInput) -> Result<ParsedWorkbook, 
             ImportedField {
                 plain_text: parsed_row.plain_text,
                 footnote: parsed_row.footnote,
+                image_caption: String::new(),
+                image: None,
             },
         );
         rows.push(ImportedRow {
@@ -82,6 +84,7 @@ pub(super) fn parse_docx_file(input: ImportDocxInput) -> Result<ParsedWorkbook, 
             fields,
             text_style: parsed_row.text_style,
             docx_metadata: Some(parsed_row.metadata),
+            html_metadata: None,
         });
     }
 

@@ -35,11 +35,14 @@ export function detectImportFileType(fileName) {
   if (normalized.endsWith(".docx")) {
     return "docx";
   }
+  if (normalized.endsWith(".html") || normalized.endsWith(".htm")) {
+    return "html";
+  }
   return null;
 }
 
 function importFileTypeNeedsSourceLanguage(fileType) {
-  return fileType === "txt" || fileType === "docx";
+  return fileType === "txt" || fileType === "docx" || fileType === "html";
 }
 
 function readableImportFileLike(value) {
@@ -99,6 +102,14 @@ function decodeBase64ToBytes(dataBase64) {
   }
 
   throw new Error("Base64 decoding is unavailable.");
+}
+
+function linkImportErrorKind(error) {
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  if (message.startsWith("PROJECT_IMPORT_LINK_ACCESS_DENIED:")) {
+    return "accessDenied";
+  }
+  return "invalid";
 }
 
 async function importFileBytes(file) {
@@ -331,6 +342,8 @@ export function openProjectImportModal(render, projectId) {
     projectId: targetProject.id,
     projectTitle: targetProject.title ?? targetProject.name ?? "",
     inputMode: "upload",
+    linkUrl: "",
+    linkErrorModal: null,
     status: "idle",
     error: "",
     failedFileNames: [],
@@ -355,6 +368,8 @@ export function cancelProjectImportModal(render) {
     projectId: null,
     projectTitle: "",
     inputMode: "upload",
+    linkUrl: "",
+    linkErrorModal: null,
     status: "idle",
     error: "",
     failedFileNames: [],
@@ -376,15 +391,117 @@ export function closeProjectImportUploadError(render) {
 }
 
 export function selectProjectImportInputMode(render, mode) {
-  if (state.projectImport.status === "importing" || !state.projectImport.isOpen) {
+  if (state.projectImport.status === "importing" || state.projectImport.status === "resolvingLink" || !state.projectImport.isOpen) {
     return;
   }
 
   state.projectImport = projectImportModalState({
     inputMode: normalizeProjectImportInputMode(mode),
     error: "",
+    linkErrorModal: null,
+    ...(normalizeProjectImportInputMode(mode) === "pasteLink" ? {} : { linkUrl: "" }),
   });
   render();
+}
+
+export function updateProjectImportLinkUrl(render, value) {
+  if (!state.projectImport.isOpen || state.projectImport.status === "importing" || state.projectImport.status === "resolvingLink") {
+    return;
+  }
+
+  state.projectImport = projectImportModalState({
+    linkUrl: typeof value === "string" ? value : "",
+    error: "",
+    linkErrorModal: null,
+  });
+  render?.();
+}
+
+export function closeProjectImportLinkError(render) {
+  state.projectImport = projectImportModalState({
+    status: "idle",
+    linkErrorModal: null,
+  });
+  render();
+}
+
+export async function retryProjectImportLink(render) {
+  state.projectImport = projectImportModalState({
+    linkErrorModal: null,
+  });
+  await submitProjectImportLink(render);
+}
+
+export async function submitProjectImportLink(render) {
+  if (!state.projectImport.isOpen || state.projectImport.status === "importing" || state.projectImport.status === "resolvingLink") {
+    return;
+  }
+
+  const url = String(state.projectImport.linkUrl ?? "").trim();
+  if (!url) {
+    return;
+  }
+
+  let parsedUrl = null;
+  try {
+    parsedUrl = new URL(url);
+  } catch {
+    state.projectImport = projectImportModalState({
+      status: "idle",
+      linkErrorModal: "invalid",
+      error: "",
+    });
+    render();
+    return;
+  }
+
+  if (parsedUrl.protocol !== "http:" && parsedUrl.protocol !== "https:") {
+    state.projectImport = projectImportModalState({
+      status: "idle",
+      linkErrorModal: "invalid",
+      error: "",
+    });
+    render();
+    return;
+  }
+
+  state.projectImport = projectImportModalState({
+    status: "resolvingLink",
+    error: "",
+    linkErrorModal: null,
+  });
+  render();
+  await waitForNextPaint();
+
+  try {
+    const resolved = await invoke("resolve_project_import_link", {
+      input: {
+        url,
+      },
+    });
+    const fileName = typeof resolved?.fileName === "string" && resolved.fileName.trim()
+      ? resolved.fileName.trim()
+      : "linked-file";
+    const dataBase64 = typeof resolved?.dataBase64 === "string" ? resolved.dataBase64 : "";
+    const sourceUrl = typeof resolved?.sourceUrl === "string" ? resolved.sourceUrl : url;
+    state.projectImport = projectImportModalState({
+      status: "idle",
+      error: "",
+      linkErrorModal: null,
+    });
+    await importProjectFile(render, {
+      name: fileName,
+      dataBase64,
+      sourceUrl,
+    });
+  } catch (error) {
+    state.projectImport = projectImportModalState({
+      status: "idle",
+      error: "",
+      linkErrorModal: linkImportErrorKind(error),
+    });
+    render();
+  }
 }
 
 export async function selectProjectImportFile(render) {
@@ -494,6 +611,20 @@ async function importProjectFileResult(selectedTeam, targetProject, selectedFile
         fileName: sourceFileName,
         bytes,
         sourceLanguageCode: options.confirmedSourceLanguageCode,
+      },
+    });
+  }
+
+  if (fileType === "html") {
+    return invoke("import_html_to_gtms", {
+      input: {
+        installationId: selectedTeam.installationId,
+        projectId: targetProject.id,
+        repoName: targetProject.name,
+        fileName: sourceFileName,
+        bytes,
+        sourceLanguageCode: options.confirmedSourceLanguageCode,
+        sourceUrl: typeof selectedFile?.sourceUrl === "string" ? selectedFile.sourceUrl : "",
       },
     });
   }
