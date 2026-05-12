@@ -41,7 +41,7 @@ function renderModeOptions(modal, disabled) {
           ${selectedMode === "meaning" ? "checked" : ""}
           ${disabled ? "disabled" : ""}
         />
-        <span>Check meaning against the source text</span>
+        <span>Also check the meaning against the source text</span>
       </label>
     </div>
   `;
@@ -61,7 +61,8 @@ function renderPreflightModal(modal) {
         <div class="card__body modal-card__body ai-translate-all-modal">
           <p class="card__eyebrow">AI REVIEW</p>
           <h2 class="modal__title">Some translations are already reviewed</h2>
-          <p class="modal__supporting">${escapeHtml(String(reviewedCount))} ${escapeHtml(skippedLabel)} already marked reviewed out of ${escapeHtml(String(totalTranslationCount))} non-empty ${escapeHtml(totalLabel)}. AI Review will skip reviewed translations.</p>
+          <p class="modal__supporting">${escapeHtml(String(reviewedCount))} ${escapeHtml(skippedLabel)} already marked reviewed out of ${escapeHtml(String(totalTranslationCount))} non-empty target language ${escapeHtml(totalLabel)}. AI Review will skip reviewed translations.</p>
+          <p class="modal__supporting">If you want to review all of the translations, cancel this review, remove the "reviewed" mark from all the translations, and then restart the AI review. There's a button to remove the reviewed mark from all translations on the right side of the Gnosis TMS toolbar.</p>
           ${renderError(modal)}
           <div class="modal__actions">
             ${secondaryButton("Cancel", "cancel-editor-ai-review-all")}

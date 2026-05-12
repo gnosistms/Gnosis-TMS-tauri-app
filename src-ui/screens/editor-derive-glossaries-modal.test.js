@@ -247,7 +247,14 @@ test("AI Review All preflight modal shows reviewed counts and continue action", 
   });
 
   assert.match(html, /Some translations are already reviewed/);
-  assert.match(html, /2 translations are already marked reviewed out of 5/);
+  assert.match(
+    html,
+    /2 translations are already marked reviewed out of 5 non-empty target language translations/,
+  );
+  assert.match(
+    html,
+    /If you want to review all of the translations, cancel this review, remove the "reviewed" mark from all the translations, and then restart the AI review\. There's a button to remove the reviewed mark from all translations on the right side of the Gnosis TMS toolbar\./,
+  );
   assert.match(html, /data-action="cancel-editor-ai-review-all"/);
   assert.match(html, /data-action="continue-editor-ai-review-all"/);
 });
