@@ -24,6 +24,7 @@ import {
 import { updateProjectAddTranslationPaste } from "./project-add-translation-flow.js";
 import {
   updateProjectImportLinkUrl,
+  updateProjectImportPastedText,
 } from "./project-import-flow.js";
 import {
   updateChapterPermanentDeletionConfirmation,
@@ -622,6 +623,16 @@ function handleProjectImportLinkInput(event, render) {
   return true;
 }
 
+function handleProjectImportPastedTextInput(event, render) {
+  const input = event.target.closest("[data-project-import-paste-textarea]");
+  if (!input) {
+    return false;
+  }
+
+  updateProjectImportPastedText(render, input.value);
+  return true;
+}
+
 function handleAiKeyInput(event) {
   const input = event.target.closest("[data-ai-key-input]");
   if (!input) {
@@ -721,6 +732,7 @@ const inputHandlers = [
   handleProjectExportFormatInput,
   handleProjectExportLanguageInput,
   handleProjectImportLinkInput,
+  handleProjectImportPastedTextInput,
   handleProjectAddTranslationInput,
   handleAiKeyInput,
   handleAiDetailedConfigurationInput,

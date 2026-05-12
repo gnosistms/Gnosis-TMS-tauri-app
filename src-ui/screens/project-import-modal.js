@@ -180,14 +180,19 @@ function renderProjectImportLinkPanel(modal, disabled) {
   `;
 }
 
-function renderProjectImportComingSoonPanel(mode) {
-  const message = mode === "pasteLink"
-    ? "Importing from Google Docs, Google spreadsheets, or HTML links is coming soon."
-    : "Importing pasted text from a text area is coming soon.";
+function renderProjectImportPasteTextPanel(modal, disabled) {
+  const value = typeof modal?.pastedText === "string" ? modal.pastedText : "";
   return `
-    <div class="project-import-modal__coming-soon" role="status">
-      <p>${escapeHtml(message)}</p>
-    </div>
+    <label class="field">
+      <textarea
+        class="field__textarea"
+        rows="10"
+        placeholder="Paste text here."
+        data-project-import-paste-textarea
+        ${disabled ? 'disabled aria-disabled="true"' : ""}
+      >${escapeHtml(value)}</textarea>
+      <span class="project-import-modal__hint">Paste plain text here. You will choose its source language before importing.</span>
+    </label>
   `;
 }
 
@@ -218,7 +223,9 @@ export function renderProjectImportModal(state) {
   const inputMode = normalizeProjectImportInputMode(modal.inputMode);
   const isUploadMode = inputMode === "upload";
   const isPasteLinkMode = inputMode === "pasteLink";
+  const isPasteTextMode = inputMode === "pasteText";
   const linkUrl = String(modal.linkUrl ?? "").trim();
+  const pastedText = String(modal.pastedText ?? "").trim();
   const errorMarkup = modal.error
     ? `<div class="project-import-modal__error-badge" role="alert">${escapeHtml(formatErrorForDisplay(modal.error))}</div>`
     : "";
@@ -226,13 +233,18 @@ export function renderProjectImportModal(state) {
     ? (isResolvingLink ? "Opening..." : "Continue")
     : isUploadMode
     ? (isImporting ? "Uploading..." : "Select files")
+    : isPasteTextMode
+    ? (isImporting ? "Importing..." : "Continue")
     : "Continue";
   const primaryAction = isPasteLinkMode
     ? "submit-project-import-link"
-    : isUploadMode ? "select-project-import-file" : "noop";
+    : isUploadMode
+    ? "select-project-import-file"
+    : isPasteTextMode ? "submit-project-import-pasted-text" : "noop";
   const primaryDisabled = controlsDisabled
-    || (!isUploadMode && !isPasteLinkMode)
-    || (isPasteLinkMode && !linkUrl);
+    || (!isUploadMode && !isPasteLinkMode && !isPasteTextMode)
+    || (isPasteLinkMode && !linkUrl)
+    || (isPasteTextMode && !pastedText);
 
   return `
     <div class="modal-backdrop">
@@ -248,7 +260,7 @@ export function renderProjectImportModal(state) {
               ? renderProjectImportUploadPanel(isImporting)
               : isPasteLinkMode
                 ? renderProjectImportLinkPanel(modal, controlsDisabled)
-                : renderProjectImportComingSoonPanel(inputMode)}
+                : renderProjectImportPasteTextPanel(modal, controlsDisabled)}
           </div>
           <div class="modal__actions project-import-modal__actions">
             ${secondaryButton("Cancel", "cancel-project-import", { disabled: controlsDisabled })}

@@ -108,23 +108,60 @@ test("project import modal renders invalid link error", () => {
   assert.match(html, /data-action="close-project-import-link-error"[\s\S]*Cancel/);
 });
 
-test("project import modal renders paste text coming soon state", () => {
+test("project import modal renders paste text input state", () => {
   const html = renderProjectImportModal({
     projectImport: {
       isOpen: true,
       projectTitle: "Translation Project",
       inputMode: "pasteText",
+      pastedText: "",
       status: "idle",
       error: "",
     },
   });
 
   assert.match(html, /class="segmented-control__button is-active"[\s\S]*data-action="select-project-import-input-mode:pasteText"/);
-  assert.match(html, /Importing pasted text from a text area is coming soon\./);
+  assert.match(html, /class="field__textarea"/);
+  assert.match(html, /data-project-import-paste-textarea/);
+  assert.match(html, /placeholder="Paste text here\."/);
+  assert.match(html, /Paste plain text here\. You will choose its source language before importing\./);
   assert.match(html, /Continue/);
-  assert.match(html, /data-action="noop" disabled/);
+  assert.match(html, /data-action="submit-project-import-pasted-text" disabled/);
   assert.doesNotMatch(html, /data-project-import-dropzone/);
   assert.doesNotMatch(html, /Select files/);
+});
+
+test("project import modal enables paste text continue after text is pasted", () => {
+  const html = renderProjectImportModal({
+    projectImport: {
+      isOpen: true,
+      projectTitle: "Translation Project",
+      inputMode: "pasteText",
+      pastedText: "Line one\nLine two",
+      status: "idle",
+      error: "",
+    },
+  });
+
+  assert.match(html, />Line one\nLine two<\/textarea>/);
+  assert.match(html, /data-action="submit-project-import-pasted-text">Continue<\/button>/);
+  assert.doesNotMatch(html, /data-action="submit-project-import-pasted-text" disabled/);
+});
+
+test("project import modal disables paste text controls while importing", () => {
+  const html = renderProjectImportModal({
+    projectImport: {
+      isOpen: true,
+      projectTitle: "Translation Project",
+      inputMode: "pasteText",
+      pastedText: "Line one",
+      status: "importing",
+      error: "",
+    },
+  });
+
+  assert.match(html, /data-project-import-paste-textarea[\s\S]*disabled/);
+  assert.match(html, /data-action="submit-project-import-pasted-text" disabled[\s\S]*Importing\.\.\.<\/button>/);
 });
 
 test("project import modal renders validation errors above the drop target", () => {

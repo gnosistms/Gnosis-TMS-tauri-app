@@ -104,6 +104,25 @@ function decodeBase64ToBytes(dataBase64) {
   throw new Error("Base64 decoding is unavailable.");
 }
 
+function encodeUtf8TextToBase64(value) {
+  const bytes = new TextEncoder().encode(String(value ?? ""));
+  let binary = "";
+  const chunkSize = 0x8000;
+  for (let index = 0; index < bytes.length; index += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(index, index + chunkSize));
+  }
+
+  if (typeof globalThis.btoa === "function") {
+    return globalThis.btoa(binary);
+  }
+
+  if (typeof Buffer === "function") {
+    return Buffer.from(bytes).toString("base64");
+  }
+
+  throw new Error("Base64 encoding is unavailable.");
+}
+
 function linkImportErrorKind(error) {
   const message = error instanceof Error ? error.message : String(error ?? "");
   if (message.startsWith("PROJECT_IMPORT_LINK_ACCESS_DENIED:")) {
@@ -344,6 +363,7 @@ export function openProjectImportModal(render, projectId) {
     inputMode: "upload",
     linkUrl: "",
     linkErrorModal: null,
+    pastedText: "",
     status: "idle",
     error: "",
     failedFileNames: [],
@@ -370,6 +390,7 @@ export function cancelProjectImportModal(render) {
     inputMode: "upload",
     linkUrl: "",
     linkErrorModal: null,
+    pastedText: "",
     status: "idle",
     error: "",
     failedFileNames: [],
@@ -400,6 +421,7 @@ export function selectProjectImportInputMode(render, mode) {
     error: "",
     linkErrorModal: null,
     ...(normalizeProjectImportInputMode(mode) === "pasteLink" ? {} : { linkUrl: "" }),
+    ...(normalizeProjectImportInputMode(mode) === "pasteText" ? {} : { pastedText: "" }),
   });
   render();
 }
@@ -411,6 +433,19 @@ export function updateProjectImportLinkUrl(render, value) {
 
   state.projectImport = projectImportModalState({
     linkUrl: typeof value === "string" ? value : "",
+    error: "",
+    linkErrorModal: null,
+  });
+  render?.();
+}
+
+export function updateProjectImportPastedText(render, value) {
+  if (!state.projectImport.isOpen || state.projectImport.status === "importing" || state.projectImport.status === "resolvingLink") {
+    return;
+  }
+
+  state.projectImport = projectImportModalState({
+    pastedText: typeof value === "string" ? value : "",
     error: "",
     linkErrorModal: null,
   });
@@ -502,6 +537,28 @@ export async function submitProjectImportLink(render) {
     });
     render();
   }
+}
+
+export async function submitProjectImportPastedText(render) {
+  if (!state.projectImport.isOpen || state.projectImport.status === "importing" || state.projectImport.status === "resolvingLink") {
+    return;
+  }
+
+  const pastedText = String(state.projectImport.pastedText ?? "");
+  if (!pastedText.trim()) {
+    state.projectImport = projectImportModalState({
+      status: "idle",
+      error: "Paste text before continuing.",
+      linkErrorModal: null,
+    });
+    render();
+    return;
+  }
+
+  await importProjectFile(render, {
+    name: "Pasted text.txt",
+    dataBase64: encodeUtf8TextToBase64(pastedText),
+  });
 }
 
 export async function selectProjectImportFile(render) {
@@ -673,6 +730,7 @@ async function completeProjectImport(render, selectedFile, fileType, options = {
       status: "ready",
       error: "",
       result,
+      pastedText: "",
       pendingFile: null,
       pendingFiles: [],
       pendingFileName: "",
@@ -856,6 +914,7 @@ export async function importProjectFiles(render, selectedFiles, options = {}) {
     status: importedResults.length > 0 ? "ready" : "error",
     error: "",
     result: importedResults[importedResults.length - 1] ?? null,
+    pastedText: "",
     pendingFile: null,
     pendingFiles: [],
     pendingFileName: "",

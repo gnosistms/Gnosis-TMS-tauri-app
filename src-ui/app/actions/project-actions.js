@@ -43,6 +43,7 @@ import {
   selectProjectImportFile,
   selectProjectImportSourceLanguage,
   submitProjectImportLink,
+  submitProjectImportPastedText,
 } from "../project-import-flow.js";
 import {
   cancelProjectAddTranslation,
@@ -80,6 +81,7 @@ export function createProjectActions(render) {
     "retry-project-import-link": () => retryProjectImportLink(render),
     "select-project-import-file": () => selectProjectImportFile(render),
     "submit-project-import-link": () => submitProjectImportLink(render),
+    "submit-project-import-pasted-text": () => submitProjectImportPastedText(render),
     "submit-project-add-translation-paste": () => submitProjectAddTranslationPaste(render),
     "continue-project-add-translation-language": () => continueProjectAddTranslationLanguage(render),
     "continue-project-add-translation-existing": () => continueProjectAddTranslationWithExistingText(render),

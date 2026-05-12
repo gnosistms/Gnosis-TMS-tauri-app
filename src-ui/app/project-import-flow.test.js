@@ -45,7 +45,9 @@ const {
   selectProjectImportInputMode,
   selectProjectImportSourceLanguage,
   submitProjectImportLink,
+  submitProjectImportPastedText,
   updateProjectImportLinkUrl,
+  updateProjectImportPastedText,
 } = await import("./project-import-flow.js");
 const { createProjectImportState, createStatusBadgesState, state } = await import("./state.js");
 const { clearActiveStorageLogin, setActiveStorageLogin } = await import("./team-storage.js");
@@ -254,6 +256,7 @@ test("canceling project import clears pending TXT state", () => {
     pendingFile: { name: "chapter.txt" },
     pendingFileName: "chapter.txt",
     selectedSourceLanguageCode: "en",
+    pastedText: "Pasted text",
   };
 
   cancelProjectImportModal(() => {});
@@ -264,6 +267,7 @@ test("canceling project import clears pending TXT state", () => {
   assert.equal(state.projectImport.pendingFileName, "");
   assert.equal(state.projectImport.selectedSourceLanguageCode, "");
   assert.equal(state.projectImport.sourceLanguageScrollTop, 0);
+  assert.equal(state.projectImport.pastedText, "");
 });
 
 test("project import input mode selection updates mode and clears stale errors", () => {
@@ -284,6 +288,21 @@ test("project import input mode selection updates mode and clears stale errors",
   assert.equal(state.projectImport.inputMode, "pasteLink");
   assert.equal(state.projectImport.error, "");
   assert.equal(renderCount, 1);
+});
+
+test("project import input mode selection clears pasted text when switching away", () => {
+  resetProjectImportTestState();
+  state.projectImport = {
+    ...state.projectImport,
+    isOpen: true,
+    inputMode: "pasteText",
+    pastedText: "Existing pasted text",
+  };
+
+  selectProjectImportInputMode(() => {}, "upload");
+
+  assert.equal(state.projectImport.inputMode, "upload");
+  assert.equal(state.projectImport.pastedText, "");
 });
 
 test("project import input mode selection ignores changes while importing", () => {
@@ -339,6 +358,93 @@ test("project import link input updates the paste link URL", () => {
 
   assert.equal(state.projectImport.linkUrl, "https://example.com/article");
   assert.equal(renderCount, 1);
+});
+
+test("project import pasted text input updates the paste text value", () => {
+  resetProjectImportTestState();
+  state.projectImport = {
+    ...state.projectImport,
+    isOpen: true,
+    inputMode: "pasteText",
+  };
+  let renderCount = 0;
+
+  updateProjectImportPastedText(() => {
+    renderCount += 1;
+  }, "Line one\nLine two");
+
+  assert.equal(state.projectImport.pastedText, "Line one\nLine two");
+  assert.equal(renderCount, 1);
+});
+
+test("project import pasted text submit validates non-blank text", async () => {
+  resetProjectImportTestState();
+  state.projectImport = {
+    ...state.projectImport,
+    isOpen: true,
+    inputMode: "pasteText",
+    projectId: "project-1",
+    projectTitle: "Project",
+    pastedText: "  \n  ",
+  };
+  let renderCount = 0;
+
+  await submitProjectImportPastedText(() => {
+    renderCount += 1;
+  });
+
+  assert.equal(state.projectImport.error, "Paste text before continuing.");
+  assert.equal(state.projectImport.status, "idle");
+  assert.equal(renderCount, 1);
+});
+
+test("project import pasted text opens source language selection with synthetic TXT file", async () => {
+  resetProjectImportTestState();
+  state.projectImport = {
+    ...state.projectImport,
+    isOpen: true,
+    inputMode: "pasteText",
+    projectId: "project-1",
+    projectTitle: "Project",
+    pastedText: "Line one\nLine two",
+  };
+  let renderCount = 0;
+
+  await submitProjectImportPastedText(() => {
+    renderCount += 1;
+  });
+
+  assert.equal(state.projectImport.status, "selectingSourceLanguage");
+  assert.equal(state.projectImport.pendingFileName, "Pasted text.txt");
+  assert.equal(typeof state.projectImport.pendingFile.dataBase64, "string");
+  assert.equal(renderCount, 1);
+});
+
+test("project import pasted text continues through TXT import with UTF-8 bytes", async () => {
+  resetProjectImportTestState();
+  state.projectImport = {
+    ...state.projectImport,
+    isOpen: true,
+    inputMode: "pasteText",
+    projectId: "project-1",
+    projectTitle: "Project",
+    pastedText: "Line one\n世界",
+  };
+  const calls = installBatchImportInvokeHandler();
+
+  await submitProjectImportPastedText(() => {});
+  selectProjectImportSourceLanguage(() => {}, "en");
+  await continueProjectImportText(() => {});
+
+  const importCall = calls.find((call) => call.command === "import_txt_to_gtms");
+  assert.equal(importCall.payload.input.fileName, "Pasted text.txt");
+  assert.equal(importCall.payload.input.sourceLanguageCode, "en");
+  assert.equal(
+    new TextDecoder().decode(Uint8Array.from(importCall.payload.input.bytes)),
+    "Line one\n世界",
+  );
+  assert.equal(state.projectImport.isOpen, false);
+  assert.equal(state.projectImport.pastedText, "");
 });
 
 test("project import Google Docs link opens source language selection with DOCX file", async () => {
