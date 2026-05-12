@@ -221,6 +221,7 @@ pub enum AiPromptOutputFormat {
     Text,
     AssistantTurnJson,
     ReviewJson,
+    GlossaryAlignmentJson,
     JsonSchema {
         name: String,
         schema: serde_json::Value,

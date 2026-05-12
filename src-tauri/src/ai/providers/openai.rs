@@ -282,6 +282,37 @@ fn openai_text_format(output_format: AiPromptOutputFormat) -> Value {
                 }
             }
         }),
+        AiPromptOutputFormat::GlossaryAlignmentJson => json!({
+            "type": "json_schema",
+            "name": "glossary_alignment_response",
+            "strict": true,
+            "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["mappings"],
+                "properties": {
+                    "mappings": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "required": ["id", "translationSourceTerm"],
+                            "properties": {
+                                "id": {
+                                    "type": "string"
+                                },
+                                "translationSourceTerm": {
+                                    "anyOf": [
+                                        { "type": "string" },
+                                        { "type": "null" }
+                                    ]
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }),
         AiPromptOutputFormat::JsonSchema { name, schema } => json!({
             "type": "json_schema",
             "name": name,
@@ -700,6 +731,61 @@ mod tests {
                 .pointer("/previous_response_id")
                 .and_then(serde_json::Value::as_str),
             Some("resp_123")
+        );
+    }
+
+    #[test]
+    fn openai_glossary_alignment_prompt_request_uses_strict_json_schema_output_format() {
+        let request = AiPromptRequest {
+            provider_id: AiProviderId::OpenAi,
+            model_id: "gpt-5.4".to_string(),
+            prompt: "Return glossary alignment JSON.".to_string(),
+            previous_response_id: None,
+            output_format: AiPromptOutputFormat::GlossaryAlignmentJson,
+        };
+        let payload = serde_json::to_value(build_prompt_request(&request)).unwrap();
+
+        assert_eq!(
+            payload
+                .pointer("/text/format/type")
+                .and_then(serde_json::Value::as_str),
+            Some("json_schema")
+        );
+        assert_eq!(
+            payload
+                .pointer("/text/format/name")
+                .and_then(serde_json::Value::as_str),
+            Some("glossary_alignment_response")
+        );
+        assert_eq!(
+            payload
+                .pointer("/text/format/strict")
+                .and_then(serde_json::Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            payload
+                .pointer("/text/format/schema/required/0")
+                .and_then(serde_json::Value::as_str),
+            Some("mappings")
+        );
+        assert_eq!(
+            payload
+                .pointer("/text/format/schema/properties/mappings/items/required")
+                .and_then(serde_json::Value::as_array)
+                .map(|values| {
+                    values
+                        .iter()
+                        .filter_map(serde_json::Value::as_str)
+                        .collect::<Vec<_>>()
+                }),
+            Some(vec!["id", "translationSourceTerm"])
+        );
+        assert_eq!(
+            payload
+                .pointer("/text/format/schema/properties/mappings/items/properties/translationSourceTerm/anyOf/1/type")
+                .and_then(serde_json::Value::as_str),
+            Some("null")
         );
     }
 

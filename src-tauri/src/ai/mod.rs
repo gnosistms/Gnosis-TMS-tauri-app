@@ -1214,6 +1214,20 @@ fn build_glossary_alignment_prompt(
     )
 }
 
+fn build_glossary_alignment_prompt_request(
+    request: &AiTranslatedGlossaryPreparationRequest,
+    glossary_source_text: &str,
+    matches: &[PreparedGlossaryMatch],
+) -> AiPromptRequest {
+    AiPromptRequest {
+        provider_id: request.provider_id,
+        model_id: request.model_id.clone(),
+        prompt: build_glossary_alignment_prompt(request, glossary_source_text, matches),
+        previous_response_id: None,
+        output_format: AiPromptOutputFormat::GlossaryAlignmentJson,
+    }
+}
+
 fn extract_json_object(text: &str) -> Option<&str> {
     let trimmed = text.trim();
     if trimmed.starts_with('{') && trimmed.ends_with('}') {
@@ -1393,17 +1407,11 @@ pub(crate) fn prepare_ai_translated_glossary(
     let mut seen_entries = HashSet::<String>::new();
     for matched_term_batch in matched_terms.chunks(GLOSSARY_ALIGNMENT_BATCH_SIZE) {
         let response = providers::run_prompt(
-            &AiPromptRequest {
-                provider_id: request.provider_id,
-                model_id: request.model_id.clone(),
-                prompt: build_glossary_alignment_prompt(
-                    &request,
-                    &glossary_source_text,
-                    matched_term_batch,
-                ),
-                previous_response_id: None,
-                output_format: AiPromptOutputFormat::Text,
-            },
+            &build_glossary_alignment_prompt_request(
+                &request,
+                &glossary_source_text,
+                matched_term_batch,
+            ),
             &api_key,
         )?;
         let parsed_response = parse_glossary_alignment_batch_response(&response.text)?;
@@ -1574,14 +1582,15 @@ pub(crate) fn probe_ai_model(app: &AppHandle, request: AiModelProbeRequest) -> R
 #[cfg(test)]
 mod tests {
     use super::{
-        build_assistant_chat_prompt, build_review_prompt, build_translation_prompt,
-        find_matched_glossary_terms, parse_assistant_structured_response,
-        parse_review_structured_response,
+        build_assistant_chat_prompt, build_glossary_alignment_prompt_request, build_review_prompt,
+        build_translation_prompt, find_matched_glossary_terms, parse_assistant_structured_response,
+        parse_review_structured_response, PreparedGlossaryMatch,
     };
     use crate::ai::types::{
         AiAssistantRowContext, AiAssistantRowLanguageText, AiAssistantRowWindowEntry,
         AiAssistantTargetLanguageHistoryEntry, AiAssistantTranscriptEntry, AiAssistantTurnKind,
-        AiAssistantTurnRequest, AiProviderId, AiReviewRequest, AiTranslatedGlossaryTermInput,
+        AiAssistantTurnRequest, AiPromptOutputFormat, AiProviderId, AiReviewRequest,
+        AiTranslatedGlossaryPreparationRequest, AiTranslatedGlossaryTermInput,
         AiTranslationGlossaryHint, AiTranslationGlossaryTargetVariant,
         AiTranslationNoTranslationHint, AiTranslationRequest,
     };
@@ -1899,6 +1908,46 @@ mod tests {
             prompt.contains(r#""noTranslation":{"note":"Omit when redundant.","position":"only"}"#)
         );
         assert!(!prompt.contains(r#""targetVariants":[{"note""#));
+    }
+
+    #[test]
+    fn glossary_alignment_prompt_request_uses_structured_output() {
+        let request = AiTranslatedGlossaryPreparationRequest {
+            provider_id: AiProviderId::OpenAi,
+            model_id: "gpt-5.4".to_string(),
+            translation_source_text: "La camara interior brilla.".to_string(),
+            translation_source_language: "Spanish".to_string(),
+            glossary_source_language: "English".to_string(),
+            target_language: "Vietnamese".to_string(),
+            glossary_source_text: "The inner chamber shines.".to_string(),
+            glossary_terms: vec![],
+            installation_id: None,
+        };
+        let matches = vec![PreparedGlossaryMatch {
+            glossary_source_term: "inner chamber".to_string(),
+            glossary_source_context: "The inner chamber shines.".to_string(),
+            target_variants: vec![target_variant("buong noi tam")],
+            no_translation: None,
+            notes: vec![],
+            footnotes: vec![],
+        }];
+
+        let prompt_request = build_glossary_alignment_prompt_request(
+            &request,
+            "The inner chamber shines.",
+            &matches,
+        );
+
+        assert_eq!(
+            prompt_request.output_format,
+            AiPromptOutputFormat::GlossaryAlignmentJson
+        );
+        assert!(prompt_request.prompt.contains(
+            r#"{"mappings":[{"id":"0","translationSourceTerm":"exact substring or null"}]}"#
+        ));
+        assert!(prompt_request
+            .prompt
+            .contains("translationSourceTerm must be an exact contiguous substring"));
     }
 
     #[test]
