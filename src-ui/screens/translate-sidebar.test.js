@@ -577,9 +577,11 @@ test("review sidebar renders grammar and translation review actions with tooltip
   );
 
   assert.match(html, /data-action="review-editor-text-now:meaning"/);
+  assert.match(html, /data-ai-review-mode="meaning"/);
   assert.match(html, />Full review<\/span>/);
   assert.match(html, /Check to see if the translation is correct in addition to checking spelling and grammar\./);
   assert.match(html, /data-action="review-editor-text-now:grammar"/);
+  assert.match(html, /data-ai-review-mode="grammar"/);
   assert.match(html, />Spelling and grammar only<\/span>/);
   assert.match(html, /Check only for spelling and grammar errors\./);
   assert.ok(

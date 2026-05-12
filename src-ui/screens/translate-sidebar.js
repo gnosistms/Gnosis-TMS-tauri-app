@@ -470,11 +470,12 @@ function renderAiReviewPromptDetails(aiReview) {
   `;
 }
 
-function renderAiReviewModeButton({ label, action, tooltip, isLoading = false, disabled = false }) {
+function renderAiReviewModeButton({ label, action, reviewMode, tooltip, isLoading = false, disabled = false }) {
   const tooltipMarkup = tooltipAttributes(tooltip, { align: "start" });
+  const reviewModeAttribute = reviewMode ? ` data-ai-review-mode="${escapeHtml(reviewMode)}"` : "";
   if (isLoading) {
     return `
-      <button class="button button--primary button--loading" data-action="noop" disabled${tooltipMarkup}>
+      <button class="button button--primary button--loading" data-action="noop"${reviewModeAttribute} disabled${tooltipMarkup}>
         <span class="button__spinner" aria-hidden="true"></span>
         <span>${escapeHtml(label)}...</span>
       </button>
@@ -485,6 +486,7 @@ function renderAiReviewModeButton({ label, action, tooltip, isLoading = false, d
     <button
       class="button button--primary${disabled ? " is-disabled" : ""}"
       data-action="${escapeHtml(action)}"
+      ${reviewModeAttribute}
       ${disabled ? 'disabled aria-disabled="true"' : ""}
       ${tooltipMarkup}
     >
@@ -815,6 +817,7 @@ function renderReviewPane(editorChapter, rows, languages, offlineMode = false) {
       ? renderAiReviewModeButton({
         label: "Full review",
         action: "review-editor-text-now:meaning",
+        reviewMode: "meaning",
         tooltip: "Check to see if the translation is correct in addition to checking spelling and grammar.",
         isLoading: aiReview.status === "loading" && aiReview.reviewMode === "meaning",
         disabled: offlineMode === true || aiReview.status === "loading",
@@ -824,6 +827,7 @@ function renderReviewPane(editorChapter, rows, languages, offlineMode = false) {
       ? renderAiReviewModeButton({
         label: "Spelling and grammar only",
         action: "review-editor-text-now:grammar",
+        reviewMode: "grammar",
         tooltip: "Check only for spelling and grammar errors.",
         isLoading: aiReview.status === "loading" && aiReview.reviewMode !== "meaning",
         disabled: offlineMode === true || aiReview.status === "loading",

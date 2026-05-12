@@ -121,6 +121,8 @@ globalThis.window = {
     return 1;
   },
   cancelAnimationFrame() {},
+  addEventListener() {},
+  removeEventListener() {},
   open() {},
 };
 globalThis.navigator = globalThis.window.navigator;
@@ -135,6 +137,9 @@ const {
   applyEditorAiReview,
   runEditorAiReview,
 } = await import("./editor-ai-review-flow.js");
+const {
+  runEditorAiReview: runEditorAiReviewFacade,
+} = await import("./translate-flow.js");
 const {
   buildEditorAiTranslateContext,
   runEditorAiTranslate,
@@ -200,6 +205,7 @@ const {
   buildEditorDerivedGlossaryModel,
   buildEditorGlossaryModel,
 } = await import("./editor-glossary-highlighting.js");
+const { normalizeEditorAiReviewMode } = await import("./editor-ai-review-request.js");
 const { resolveVisibleEditorAiReview } = await import("./editor-ai-review-state.js");
 const { resolveVisibleEditorAiTranslateAction } = await import("./editor-ai-translate-state.js");
 
@@ -452,6 +458,44 @@ test("runEditorAiReview translation mode uses the same review request shape as R
   assert.equal(state.editorChapter.aiReview.reviewMode, "meaning");
   assert.equal(state.editorChapter.aiReview.reviewed, true);
   assert.equal(state.editorChapter.aiReview.promptText, "translation review prompt");
+});
+
+test("translate-flow AI review facade preserves the selected review mode", async () => {
+  installTranslateFixture({
+    fields: {
+      es: "Texto fuente",
+      vi: "Ban dich hien tai",
+    },
+  });
+
+  let reviewPayload = null;
+  invokeHandler = async (command, payload = {}) => {
+    if (command === "load_ai_provider_secret") {
+      return "oa-key";
+    }
+    if (command === "run_ai_review") {
+      reviewPayload = payload;
+      return {
+        suggestedText: "",
+        reviewed: true,
+        promptText: "translation review prompt",
+      };
+    }
+
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  await runEditorAiReviewFacade(() => {}, "meaning");
+
+  assert.equal(reviewPayload.request.reviewMode, "meaning");
+  assert.equal(state.editorChapter.aiReview.reviewMode, "meaning");
+});
+
+test("normalizeEditorAiReviewMode accepts trimmed full-review mode values", () => {
+  assert.equal(normalizeEditorAiReviewMode("meaning"), "meaning");
+  assert.equal(normalizeEditorAiReviewMode(" meaning "), "meaning");
+  assert.equal(normalizeEditorAiReviewMode("grammar"), "grammar");
+  assert.equal(normalizeEditorAiReviewMode(""), "grammar");
 });
 
 test("runEditorAiReview enters loading state before provider readiness resolves", async () => {

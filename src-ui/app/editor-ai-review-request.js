@@ -5,7 +5,7 @@ const REVIEW_SOURCE_CONTEXT_PREVIOUS_TOKEN_TARGET = 360;
 const REVIEW_SOURCE_CONTEXT_NEXT_TOKEN_TARGET = 220;
 
 export function normalizeEditorAiReviewMode(value) {
-  return value === "meaning" ? "meaning" : "grammar";
+  return String(value ?? "").trim() === "meaning" ? "meaning" : "grammar";
 }
 
 export function readEditorReviewRowFieldText(row, languageCode) {

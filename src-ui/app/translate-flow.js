@@ -426,8 +426,8 @@ export function toggleEditorReviewSectionExpanded(sectionKey) {
   };
 }
 
-export async function runEditorAiReview(render) {
-  await runEditorAiReviewFlow(render);
+export async function runEditorAiReview(render, reviewMode) {
+  await runEditorAiReviewFlow(render, reviewMode);
 }
 
 export function openEditorAiReviewAllModal(render) {

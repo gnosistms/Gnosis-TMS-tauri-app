@@ -87,6 +87,13 @@ import {
   removeTargetLanguageManagerLanguage,
 } from "../translate-flow.js";
 
+function reviewModeFromEvent(event) {
+  const target = typeof Element !== "undefined" && event?.target instanceof Element
+    ? event.target
+    : null;
+  return target?.closest("[data-ai-review-mode]")?.dataset.aiReviewMode ?? null;
+}
+
 export function createTranslateActions(render) {
   return async function handleTranslateAction(action, event) {
     const moveTargetLanguageMatch = /^move-target-language-manager-language:(\d+):(\d+)$/.exec(action);
@@ -272,12 +279,12 @@ export function createTranslateActions(render) {
 
     const reviewEditorTextNowMode = actionSuffix(action, "review-editor-text-now:");
     if (reviewEditorTextNowMode !== null) {
-      await runEditorAiReview(render, reviewEditorTextNowMode);
+      await runEditorAiReview(render, reviewModeFromEvent(event) ?? reviewEditorTextNowMode);
       return true;
     }
 
     if (action === "review-editor-text-now") {
-      await runEditorAiReview(render, "grammar");
+      await runEditorAiReview(render, reviewModeFromEvent(event) ?? "grammar");
       return true;
     }
 

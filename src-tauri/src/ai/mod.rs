@@ -78,39 +78,62 @@ pub(crate) fn build_review_prompt(request: &AiReviewRequest) -> String {
                     &request.target_language_code
                 },
             );
-            let target_language_history =
-                format_assistant_target_language_history(&row.target_language_history, latest_translation);
+            let target_language_history = format_assistant_target_language_history(
+                &row.target_language_history,
+                latest_translation,
+            );
             let reference_translations = format_assistant_reference_translations(&row);
             let mut sections = Vec::new();
             sections.push(
-                "Return only valid JSON matching this shape: {\"suggestedText\":\"\",\"reviewed\":true}.\nIf you find no errors, set suggestedText to an empty string and reviewed to true. If you find errors, set suggestedText to the corrected translation and reviewed to false."
+                "Return only valid JSON:\n{\"suggestedText\":\"\",\"reviewed\":true}".to_string(),
+            );
+            sections.push(
+                "Task:\nReview latest_translation against source_text for translation accuracy, spelling, and grammar."
                     .to_string(),
             );
             sections.push(
-                "Review latest_translation for translation accuracy, spelling, and grammar. Use source_context, source_text, target_language_history, reference_translations, and glossary_info when relevant."
+                "Decision rule:\n- If no errors: set suggestedText to an empty string and reviewed to true.\n- If errors: set suggestedText to the corrected translation and reviewed to false."
                     .to_string(),
             );
-            push_prompt_section(
-                &mut sections,
-                "source_context",
-                format!(
-                    "This is the source text in context, provided to help you understand source_text more clearly:\n{source_context}"
-                ),
+            sections.push(
+                "Use supporting context when relevant. Do not treat reference translations or edit history as more authoritative than source_text."
+                    .to_string(),
             );
-            push_prompt_section(&mut sections, "source_language", source_language);
-            push_prompt_section(&mut sections, "target_language", target_language);
-            push_prompt_section(&mut sections, "target_language_history", target_language_history);
-            push_prompt_section(&mut sections, "reference_translations", reference_translations);
-            push_prompt_section(&mut sections, "glossary_info", glossary_info);
-            push_prompt_section(&mut sections, "source_text", source_text);
-            push_prompt_section(&mut sections, "latest_translation", latest_translation);
+            sections.push(format!(
+                "<languages>\nsource: {source_language}\ntarget: {target_language}\n</languages>"
+            ));
+            sections.push(format!(
+                "<glossary_info format=\"json\">\n{glossary_info}\n</glossary_info>"
+            ));
+            sections.push(format!(
+                "<target_language_history>\n{target_language_history}\n</target_language_history>"
+            ));
+            sections.push(format!(
+                "<reference_translations>\nThe following translations into other languages may have errors. Use them only as context when source_text is ambiguous.\n\n{reference_translations}\n</reference_translations>"
+            ));
+            sections.push(format!(
+                "<source_context>\nThis is the source text in context, provided to help you understand source_text more clearly:\n\n{source_context}\n</source_context>"
+            ));
+            sections.push(format!(
+                "<review_item>\nThis is the only translation you are reviewing.\n\n<source_text>\n{source_text}\n</source_text>\n\n<latest_translation>\n{latest_translation}\n</latest_translation>\n</review_item>"
+            ));
+            sections.push(
+                "Return only valid JSON:\n{\"suggestedText\":\"\",\"reviewed\":true}".to_string(),
+            );
             return sections.join("\n\n");
         }
 
-        return format!(
-            "Return only valid JSON matching this shape: {{\"suggestedText\":\"\",\"reviewed\":true}}.\nIf you find no errors, set suggestedText to an empty string and reviewed to true. If you find errors, set suggestedText to the corrected translation and reviewed to false.\n\nReview latest_translation only for spelling and grammar errors.\n\nlatest_translation: {}",
-            latest_translation,
-        );
+        let sections = [
+            "Return only valid JSON:\n{\"suggestedText\":\"\",\"reviewed\":true}".to_string(),
+            "Task:\nReview latest_translation only for spelling and grammar errors. Do not review translation accuracy or compare it against source text.".to_string(),
+            "Decision rule:\n- If no errors: set suggestedText to an empty string and reviewed to true.\n- If errors: set suggestedText to the corrected translation and reviewed to false.".to_string(),
+            "Preserve the meaning, terminology, tone, and style unless a change is needed to correct spelling or grammar.".to_string(),
+            format!(
+                "<review_item>\nThis is the only text you are reviewing.\n\n<latest_translation>\n{latest_translation}\n</latest_translation>\n</review_item>"
+            ),
+            "Return only valid JSON:\n{\"suggestedText\":\"\",\"reviewed\":true}".to_string(),
+        ];
+        return sections.join("\n\n");
     }
 
     let language_code = request.language_code.trim();
@@ -167,18 +190,31 @@ pub(crate) fn build_translation_prompt(request: &AiTranslationRequest) -> String
         target_language
     };
     let glossary_hints = format_translation_glossary_hints(&request.glossary_hints);
+    let mut sections = Vec::new();
+    sections.push(format!(
+        "Task:\nTranslate source_text from {source_label} to {target_label}."
+    ));
+    sections.push(
+        "Output rule:\nReturn only the translated text. Do not include labels, commentary, or quotes."
+            .to_string(),
+    );
+    sections.push(format!(
+        "<languages>\nsource: {source_label}\ntarget: {target_label}\n</languages>"
+    ));
 
-    if glossary_hints.is_empty() {
-        return format!(
-            "Translate {source_label} to {target_label}, outputting only the translation: {}",
-            request.text
+    if !glossary_hints.is_empty() {
+        sections.push(
+            "Glossary rules:\nGlossary hints are compact JSON. Apply a glossary hint only when its sourceTerm appears in source_text. targetVariants contains non-empty target text sorted in order of preference, best first. Use later variants only when grammar or context requires it. noTranslation means this glossary term may be omitted from the translation; noTranslation.position ranks omission against targetVariants: \"only\" means omit the source term because no target text is recommended, \"first\" means omission is preferred and targetVariants are fallbacks, and \"later\" means targetVariants are preferred while omission is allowed when smoother or clearer. If a target variant text uses the notation base[ruby: annotation], preserve that ruby annotation when using the term. Use target variant notes, noTranslation.note, globalNotes, and footnotes as translation guidance when present."
+                .to_string(),
         );
+        sections.push(format!(
+            "<glossary_info format=\"json\">\n{glossary_hints}\n</glossary_info>"
+        ));
     }
 
-    format!(
-        "Translate {source_label} to {target_label}, outputting only the translation.\n\nGlossary hints are compact JSON. Apply a glossary hint only when its sourceTerm appears in the source text. targetVariants contains non-empty target text sorted in order of preference, best first. Use later variants only when grammar or context requires it. noTranslation means this glossary term may be omitted from the translation; noTranslation.position ranks omission against targetVariants: \"only\" means omit the source term because no target text is recommended, \"first\" means omission is preferred and targetVariants are fallbacks, and \"later\" means targetVariants are preferred while omission is allowed when smoother or clearer. If a target variant text uses the notation base[ruby: annotation], preserve that ruby annotation when using the term. Use target variant notes, noTranslation.note, globalNotes, and footnotes as translation guidance when present.\n\n{glossary_hints}\n\nSource text:\n{}",
-        request.text
-    )
+    sections.push(format!("<source_text>\n{}\n</source_text>", request.text));
+    sections.push("Return only the translated text.".to_string());
+    sections.join("\n\n")
 }
 
 fn format_translation_glossary_hints(hints: &[AiTranslationGlossaryHint]) -> String {
@@ -374,20 +410,24 @@ fn format_language_ref(label: &str, code: &str) -> String {
     }
 }
 
-fn push_prompt_section(sections: &mut Vec<String>, label: &str, value: impl AsRef<str>) {
+fn push_tagged_prompt_section(sections: &mut Vec<String>, tag: &str, value: impl AsRef<str>) {
     let trimmed = value.as_ref().trim();
     if trimmed.is_empty() {
         return;
     }
 
-    sections.push(format!("{label}:\n{trimmed}"));
+    sections.push(format!("<{tag}>\n{trimmed}\n</{tag}>"));
 }
 
-fn push_optional_prompt_section(sections: &mut Vec<String>, label: &str, value: &Option<String>) {
+fn push_optional_tagged_prompt_section(
+    sections: &mut Vec<String>,
+    tag: &str,
+    value: &Option<String>,
+) {
     if let Some(value) = value {
         let trimmed = value.trim();
         sections.push(format!(
-            "{label}:\n{}",
+            "<{tag}>\n{}\n</{tag}>",
             if trimmed.is_empty() {
                 "(empty)"
             } else {
@@ -565,11 +605,11 @@ fn format_assistant_reference_translations(row: &AiAssistantRowContext) -> Strin
 fn format_assistant_user_action(request: &AiAssistantTurnRequest) -> String {
     let user_message = request.user_message.trim();
     if !user_message.is_empty() {
-        return format!("User request:\n{user_message}");
+        return format!("<user_request>\n{user_message}\n</user_request>");
     }
 
     format!(
-        "Instruction:\nTranslate source_text to target_language, taking into account the source_context and glossary information provided above."
+        "<instruction>\nTranslate source_text to target_language, taking into account the source_context and glossary information provided above.\n</instruction>"
     )
 }
 
@@ -609,48 +649,55 @@ If your answer includes a complete proposed or revised target-language translati
         );
     }
 
-    push_prompt_section(
+    push_tagged_prompt_section(
         &mut sections,
         "source_context",
         format!(
             "This is the source text in context, provided to help you understand source_text more clearly:\n{source_context}"
         ),
     );
-    push_prompt_section(&mut sections, "source_language", source_language);
-    push_prompt_section(&mut sections, "target_language", target_language);
-    push_prompt_section(
+    push_tagged_prompt_section(
+        &mut sections,
+        "languages",
+        format!("source: {source_language}\ntarget: {target_language}"),
+    );
+    push_tagged_prompt_section(
         &mut sections,
         "target_language_history",
         format_assistant_target_language_history(&row.target_language_history, &row.target_text),
     );
-    push_prompt_section(
+    push_tagged_prompt_section(
         &mut sections,
         "reference_translations",
         format_assistant_reference_translations(row),
     );
-    push_prompt_section(&mut sections, "Glossary", glossary_hints);
-    push_prompt_section(&mut sections, "Document digest", &request.document_digest);
-    push_prompt_section(
+    if !glossary_hints.trim().is_empty() {
+        sections.push(format!(
+            "<glossary_info format=\"json\">\n{glossary_hints}\n</glossary_info>"
+        ));
+    }
+    push_tagged_prompt_section(&mut sections, "document_digest", &request.document_digest);
+    push_tagged_prompt_section(
         &mut sections,
-        "Document revision key",
+        "document_revision_key",
         &request.document_revision_key,
     );
     let concordance_hits = format_assistant_concordance_hits(&request.concordance_hits);
     if concordance_hits != "None." {
-        push_prompt_section(&mut sections, "Concordance hits", concordance_hits);
+        push_tagged_prompt_section(&mut sections, "concordance_hits", concordance_hits);
     }
-    push_prompt_section(&mut sections, "source_text", &row.source_text);
-    push_optional_prompt_section(
+    push_tagged_prompt_section(&mut sections, "source_text", &row.source_text);
+    push_optional_tagged_prompt_section(
         &mut sections,
         "updated_source_text",
         &row.updated_source_text,
     );
-    push_optional_prompt_section(
+    push_optional_tagged_prompt_section(
         &mut sections,
         "updated_target_text",
         &row.updated_target_text,
     );
-    push_prompt_section(&mut sections, "Conversation history", conversation_history);
+    push_tagged_prompt_section(&mut sections, "conversation_history", conversation_history);
     sections.push(format_assistant_user_action(request));
 
     sections.join("\n\n")
@@ -1583,11 +1630,19 @@ mod tests {
         let prompt = build_review_prompt(&request);
 
         assert!(prompt.contains("Return only valid JSON"));
-        assert!(prompt.contains("Review latest_translation only for spelling and grammar errors."));
-        assert!(prompt.contains("latest_translation: Ban dich hien tai"));
-        assert!(!prompt.contains("source_text:"));
-        assert_eq!(prompt.matches("If you find no errors").count(), 1);
-        assert_eq!(prompt.matches("If you find errors").count(), 1);
+        assert!(prompt
+            .contains("Task:\nReview latest_translation only for spelling and grammar errors."));
+        assert!(prompt.contains("Do not review translation accuracy"));
+        assert!(prompt.contains("Preserve the meaning, terminology, tone, and style"));
+        assert!(prompt.contains("<review_item>"));
+        assert!(prompt.contains("This is the only text you are reviewing."));
+        assert!(prompt.contains("<latest_translation>\nBan dich hien tai\n</latest_translation>"));
+        assert!(!prompt.contains("source_text"));
+        assert!(
+            prompt.ends_with("Return only valid JSON:\n{\"suggestedText\":\"\",\"reviewed\":true}")
+        );
+        assert_eq!(prompt.matches("If no errors").count(), 1);
+        assert_eq!(prompt.matches("If errors").count(), 1);
     }
 
     #[test]
@@ -1642,22 +1697,27 @@ mod tests {
 
         let prompt = build_review_prompt(&request);
 
-        assert!(prompt.contains("source_context:"));
+        assert!(prompt.contains("<source_context>"));
         assert!(prompt.contains("Fuente anterior\nFuente actual"));
-        assert!(prompt.contains("source_language:\nSpanish (es)"));
-        assert!(prompt.contains("target_language:\nVietnamese (vi)"));
-        assert!(prompt.contains("target_language_history:"));
+        assert!(prompt
+            .contains("<languages>\nsource: Spanish (es)\ntarget: Vietnamese (vi)\n</languages>"));
+        assert!(prompt.contains("<target_language_history>"));
         assert!(prompt.contains("file_import"));
-        assert!(prompt.contains("reference_translations:"));
+        assert!(prompt.contains("<reference_translations>"));
         assert!(prompt.contains("English: Current English reference"));
-        assert!(prompt.contains("source_text:\nFuente actual"));
-        assert!(prompt.contains("glossary_info:"));
-        assert!(prompt.contains("Review latest_translation for translation accuracy, spelling, and grammar."));
+        assert!(prompt.contains("<source_text>\nFuente actual\n</source_text>"));
+        assert!(prompt.contains("<glossary_info format=\"json\">"));
+        assert!(prompt.contains("Review latest_translation against source_text for translation accuracy, spelling, and grammar."));
         assert!(prompt.contains(r#""sourceTerm":"Fuente""#));
         assert!(prompt.contains(r#""targetVariants":[{"text":"nguon"}]"#));
-        assert!(prompt.contains("latest_translation:\nBan dich hien tai"));
-        assert_eq!(prompt.matches("If you find no errors").count(), 1);
-        assert_eq!(prompt.matches("If you find errors").count(), 1);
+        assert!(prompt.contains("<review_item>"));
+        assert!(prompt.contains("This is the only translation you are reviewing."));
+        assert!(prompt.contains("<latest_translation>\nBan dich hien tai\n</latest_translation>"));
+        assert!(
+            prompt.ends_with("Return only valid JSON:\n{\"suggestedText\":\"\",\"reviewed\":true}")
+        );
+        assert_eq!(prompt.matches("If no errors").count(), 1);
+        assert_eq!(prompt.matches("If errors").count(), 1);
     }
 
     #[test]
@@ -1685,7 +1745,7 @@ mod tests {
     }
 
     #[test]
-    fn build_translation_prompt_keeps_plain_prompt_when_no_glossary_hints_are_present() {
+    fn build_translation_prompt_uses_structured_prompt_when_no_glossary_hints_are_present() {
         let prompt = build_translation_prompt(&AiTranslationRequest {
             provider_id: AiProviderId::OpenAi,
             model_id: "gpt-5.4".to_string(),
@@ -1698,7 +1758,7 @@ mod tests {
 
         assert_eq!(
             prompt,
-            "Translate Spanish to Vietnamese, outputting only the translation: Hola"
+            "Task:\nTranslate source_text from Spanish to Vietnamese.\n\nOutput rule:\nReturn only the translated text. Do not include labels, commentary, or quotes.\n\n<languages>\nsource: Spanish\ntarget: Vietnamese\n</languages>\n\n<source_text>\nHola\n</source_text>\n\nReturn only the translated text."
         );
     }
 
@@ -1735,7 +1795,8 @@ mod tests {
         assert!(prompt
             .contains(r#""targetVariants":[{"text":"hoc tro gnosis"},{"text":"cua gnosis"}]"#));
         assert!(prompt.contains(r#""globalNotes":["Lien quan den Gnosis"]"#));
-        assert!(prompt.contains("Source text:\nLa gnostica habla."));
+        assert!(prompt.contains("<glossary_info format=\"json\">"));
+        assert!(prompt.contains("<source_text>\nLa gnostica habla.\n</source_text>"));
     }
 
     #[test]
@@ -1956,11 +2017,11 @@ mod tests {
         let prompt = build_assistant_chat_prompt(&assistant_request_for_prompt());
 
         assert!(prompt.contains(
-            "source_context:\nThis is the source text in context, provided to help you understand source_text more clearly:\nLinea anterior 3\nLinea anterior 2\nLinea anterior 1\nFuente actual\nLinea siguiente 1"
+            "<source_context>\nThis is the source text in context, provided to help you understand source_text more clearly:\nLinea anterior 3\nLinea anterior 2\nLinea anterior 1\nFuente actual\nLinea siguiente 1\n</source_context>"
         ));
         assert!(
             prompt.contains(
-                "source_text:\nFuente actual\n\nConversation history:\n- assistant: Earlier answer.\n\nUser request:\nMake it more natural."
+                "<source_text>\nFuente actual\n</source_text>\n\n<conversation_history>\n- assistant: Earlier answer.\n</conversation_history>\n\n<user_request>\nMake it more natural.\n</user_request>"
             )
         );
         assert!(!prompt.contains("previous_row_1"));
@@ -1971,11 +2032,11 @@ mod tests {
     fn assistant_prompt_omits_empty_sections_and_uses_single_glossary_section() {
         let prompt = build_assistant_chat_prompt(&assistant_request_for_prompt());
 
-        assert!(!prompt.contains("Document digest:"));
-        assert!(!prompt.contains("Document revision key:"));
-        assert!(!prompt.contains("Concordance hits:"));
+        assert!(!prompt.contains("<document_digest>"));
+        assert!(!prompt.contains("<document_revision_key>"));
+        assert!(!prompt.contains("<concordance_hits>"));
         assert!(!prompt.contains("None."));
-        assert_eq!(prompt.matches("Glossary:").count(), 1);
+        assert_eq!(prompt.matches("<glossary_info format=\"json\">").count(), 1);
     }
 
     #[test]
@@ -1985,9 +2046,9 @@ mod tests {
         let prompt = build_assistant_chat_prompt(&request);
 
         assert!(prompt.contains(
-            "Instruction:\nTranslate source_text to target_language, taking into account the source_context and glossary information provided above."
+            "<instruction>\nTranslate source_text to target_language, taking into account the source_context and glossary information provided above.\n</instruction>"
         ));
-        assert!(!prompt.contains("User request:"));
+        assert!(!prompt.contains("<user_request>"));
     }
 
     #[test]
@@ -2036,7 +2097,7 @@ mod tests {
         ];
         let prompt = build_assistant_chat_prompt(&request);
 
-        assert!(prompt.contains("target_language_history:"));
+        assert!(prompt.contains("<target_language_history>"));
         assert!(prompt
             .contains("The final revision is the current target-language draft in the editor."));
         assert!(prompt.contains("1. source=file_import, committedBy=current_user"));
@@ -2079,7 +2140,7 @@ mod tests {
         ];
         let prompt = build_assistant_chat_prompt(&request);
 
-        assert!(prompt.contains("reference_translations:"));
+        assert!(prompt.contains("<reference_translations>"));
         assert!(prompt.contains(
             "The following is a list of translations into other languages. They may have errors, so do not consider these authoritative unless the user explicitly asks you to consult them."
         ));
@@ -2207,7 +2268,7 @@ mod tests {
         let prompt = build_assistant_chat_prompt(&request);
 
         assert!(prompt.contains(
-            "source_text:\nFuente actual\n\nupdated_source_text:\nFuente actualizada\n\nupdated_target_text:\nBan dich moi\n\nConversation history:\n- assistant: Earlier answer.\n\nUser request:\nMake it more natural."
+            "<source_text>\nFuente actual\n</source_text>\n\n<updated_source_text>\nFuente actualizada\n</updated_source_text>\n\n<updated_target_text>\nBan dich moi\n</updated_target_text>\n\n<conversation_history>\n- assistant: Earlier answer.\n</conversation_history>\n\n<user_request>\nMake it more natural.\n</user_request>"
         ));
     }
 
@@ -2218,7 +2279,7 @@ mod tests {
         let prompt = build_assistant_chat_prompt(&request);
 
         assert!(prompt.contains(
-            "source_text:\nFuente actual\n\nupdated_target_text:\n(empty)\n\nConversation history:\n- assistant: Earlier answer."
+            "<source_text>\nFuente actual\n</source_text>\n\n<updated_target_text>\n(empty)\n</updated_target_text>\n\n<conversation_history>\n- assistant: Earlier answer.\n</conversation_history>"
         ));
     }
 }
