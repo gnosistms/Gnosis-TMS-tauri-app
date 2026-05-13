@@ -74,15 +74,22 @@ function renderToolbarIconAction(label, action, icon, options = {}) {
   const disabledAttributes = options.disabled
     ? ' disabled aria-disabled="true" data-offline-blocked="true"'
     : "";
+  const className = [
+    "toolbar-icon-action",
+    options.className,
+    options.disabled ? "is-disabled" : "",
+  ].filter(Boolean).join(" ");
+  const visualLabel = String(options.visualLabel ?? "").trim();
   return `
     <button
-      class="toolbar-icon-action${options.disabled ? " is-disabled" : ""}"
+      class="${escapeHtml(className)}"
       data-action="${escapeHtml(action)}"
       aria-label="${escapeHtml(label)}"
       ${tooltip}
       ${disabledAttributes}
     >
       <span class="toolbar-icon-action__icon" aria-hidden="true">${icon}</span>
+      ${visualLabel ? `<span class="toolbar-icon-action__label">${escapeHtml(visualLabel)}</span>` : ""}
     </button>
   `;
 }
@@ -394,47 +401,56 @@ export function renderTranslateToolbar({
     ? "AI actions are unavailable offline."
     : "";
   return `
-    <div class="translate-toolbar__body translate-toolbar__body--header">
-      <div class="toolbar-row">
-        ${renderLanguageSelect("Source", "editor-source-language-select", sourceCode, languages, sourceLanguageExtraOptions)}
-        ${renderLanguageSelect("Target", "editor-target-language-select", targetCode, languages, targetLanguageExtraOptions)}
-        ${renderFontSizeSelect(editorFontSizePx)}
-        ${renderFilterSelect(editorFilters)}
+    <div class="translate-toolbar__body translate-toolbar__body--header translate-toolbar__body--editor">
+      <div class="toolbar-controls-stack">
+        <div class="toolbar-row toolbar-controls-flow">
+          ${renderLanguageSelect("Source", "editor-source-language-select", sourceCode, languages, sourceLanguageExtraOptions)}
+          ${renderLanguageSelect("Target", "editor-target-language-select", targetCode, languages, targetLanguageExtraOptions)}
+          ${renderFontSizeSelect(editorFontSizePx)}
+          ${renderFilterSelect(editorFilters)}
+          <div class="toolbar-search">
+            ${renderEditorSearchField(editorFilters)}
+            ${renderEditorReplaceControls(editorReplace)}
+          </div>
+        </div>
       </div>
-      <div class="toolbar-row toolbar-row--between">
-        <div class="toolbar-search">
-          ${renderEditorSearchField(editorFilters)}
-          ${renderEditorReplaceControls(editorReplace)}
-        </div>
-        <div class="toolbar-meta">
-          ${deriveGlossariesAvailable
-            ? renderToolbarIconAction("Derive glossaries", "open-editor-derive-glossaries", TOOLBAR_ICONS.deriveGlossaries, {
-              tooltip: offlineAiTooltip || "Automatically generate glossaries for the languages that don't have a glossary.",
-              tooltipOptions: { align: "end" },
-              disabled: offlineMode,
-            })
-            : ""}
-          ${clearTranslationsAvailable
-            ? renderToolbarIconAction("Clear translations", "open-editor-clear-translations", TOOLBAR_ICONS.clearTranslations, {
-              tooltip: "Clear all translation text for selected languages.",
-              tooltipOptions: { align: "end" },
-            })
-            : ""}
-          ${renderToolbarIconAction("AI translate all", "open-editor-ai-translate-all", TOOLBAR_ICONS.aiTranslateAll, {
-            tooltip: offlineAiTooltip || "Translate all empty fields in selected languages",
+      <div class="toolbar-meta toolbar-actions-stack">
+        ${deriveGlossariesAvailable
+          ? renderToolbarIconAction("Derive glossaries", "open-editor-derive-glossaries", TOOLBAR_ICONS.deriveGlossaries, {
+            tooltip: offlineAiTooltip || "Automatically generate glossaries for the languages that don't have a glossary.",
             tooltipOptions: { align: "end" },
             disabled: offlineMode,
-          })}
-          ${renderToolbarIconAction("Unreview all", "open-editor-unreview-all", TOOLBAR_ICONS.unreviewAll, {
-            tooltip: 'Remove the "reviewed" mark from all rows of the target language.',
+            className: "toolbar-icon-action--derive",
+            visualLabel: "Derive Glossaries",
+          })
+          : ""}
+        ${clearTranslationsAvailable
+          ? renderToolbarIconAction("Clear translations", "open-editor-clear-translations", TOOLBAR_ICONS.clearTranslations, {
+            tooltip: "Clear all translation text for selected languages.",
             tooltipOptions: { align: "end" },
-          })}
-          ${renderToolbarIconAction("AI Review", "open-editor-ai-review-all", TOOLBAR_ICONS.aiReviewAll, {
-            tooltip: offlineAiTooltip || "AI review all target language translations",
-            tooltipOptions: { align: "end" },
-            disabled: offlineMode,
-          })}
-        </div>
+            className: "toolbar-icon-action--clear",
+            visualLabel: "Clear Languages",
+          })
+          : ""}
+        ${renderToolbarIconAction("AI translate all", "open-editor-ai-translate-all", TOOLBAR_ICONS.aiTranslateAll, {
+          tooltip: offlineAiTooltip || "Translate all empty fields in selected languages",
+          tooltipOptions: { align: "end" },
+          disabled: offlineMode,
+          className: "toolbar-icon-action--wide",
+          visualLabel: "AI Translate",
+        })}
+        ${renderToolbarIconAction("AI Review", "open-editor-ai-review-all", TOOLBAR_ICONS.aiReviewAll, {
+          tooltip: offlineAiTooltip || "AI review all target language translations",
+          tooltipOptions: { align: "end" },
+          disabled: offlineMode,
+          visualLabel: "AI Review",
+        })}
+        ${renderToolbarIconAction("Unreview all", "open-editor-unreview-all", TOOLBAR_ICONS.unreviewAll, {
+          tooltip: 'Remove the "reviewed" mark from all rows of the target language.',
+          tooltipOptions: { align: "end" },
+          className: "toolbar-icon-action--wide toolbar-icon-action--unreview",
+          visualLabel: "Mark Unreviewed",
+        })}
       </div>
     </div>
   `;

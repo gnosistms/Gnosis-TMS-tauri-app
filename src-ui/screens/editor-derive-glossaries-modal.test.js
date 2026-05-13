@@ -138,8 +138,8 @@ test("Translate toolbar renders icon actions in the expected order when availabl
   assert.equal(reviewIndex > -1, true);
   assert.equal(deriveIndex < clearIndex, true);
   assert.equal(clearIndex < translateIndex, true);
-  assert.equal(translateIndex < unreviewIndex, true);
-  assert.equal(unreviewIndex < reviewIndex, true);
+  assert.equal(translateIndex < reviewIndex, true);
+  assert.equal(reviewIndex < unreviewIndex, true);
   const reviewButtonHtml = html.slice(reviewIndex, html.indexOf("</button>", reviewIndex));
   assert.match(html, /aria-label="Derive glossaries"/);
   assert.match(html, /aria-label="Clear translations"/);
@@ -149,11 +149,13 @@ test("Translate toolbar renders icon actions in the expected order when availabl
   assert.match(reviewButtonHtml, /<rect x="2\.25" y="2\.25" width="15\.5" height="15\.5" rx="4"/);
   assert.doesNotMatch(reviewButtonHtml, /M13\.2 5\.25H7a3\.75/);
   assert.match(html, /toolbar-icon-action__icon/);
-  assert.doesNotMatch(html, />Derive glossaries</);
-  assert.doesNotMatch(html, />Clear translations</);
-  assert.doesNotMatch(html, />AI translate all</);
-  assert.doesNotMatch(html, />Unreview all</);
-  assert.doesNotMatch(html, />AI Review</);
+  assert.match(html, />Derive Glossaries</);
+  assert.match(html, />Clear Languages</);
+  assert.match(html, />AI Translate</);
+  assert.match(html, />AI Review</);
+  assert.match(html, />Mark Unreviewed</);
+  assert.match(html, /toolbar-controls-stack/);
+  assert.match(html, /toolbar-actions-stack/);
 
   const toolbarButtonHtml = [...html.matchAll(/<button[\s\S]*?class="toolbar-icon-action[\s\S]*?<\/button>/g)]
     .map((match) => match[0]);

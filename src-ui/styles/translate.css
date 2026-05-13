@@ -8,6 +8,16 @@
   gap: 8px;
 }
 
+.translate-toolbar__body--editor {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: 42px;
+  gap: 0 42px;
+  width: calc(100% + 36px);
+  margin-left: -18px;
+  margin-right: -18px;
+}
+
 .toolbar-row {
   display: flex;
   align-items: center;
@@ -43,6 +53,65 @@
   flex: 0 1 auto;
   min-width: 0;
   margin-left: auto;
+}
+
+.toolbar-controls-stack {
+  min-width: 0;
+  display: block;
+}
+
+.toolbar-controls-flow {
+  min-width: 0;
+  row-gap: 10px;
+}
+
+.toolbar-controls-stack .toolbar-search {
+  flex: 1 0 100%;
+  width: 100%;
+}
+
+.toolbar-actions-stack {
+  align-self: center;
+  gap: 0;
+  flex-wrap: nowrap;
+  margin-left: 0;
+}
+
+.toolbar-actions-stack .toolbar-icon-action {
+  width: 58px;
+  min-width: 58px;
+  height: 66px;
+  flex-direction: column;
+  gap: 5px;
+  padding: 7px 3px 8px;
+  border-color: transparent;
+  border-radius: 9px;
+  background: transparent;
+}
+
+.toolbar-actions-stack .toolbar-icon-action:hover {
+  background: rgba(255, 244, 227, 0.84);
+  border-color: rgba(184, 118, 42, 0.18);
+}
+
+.toolbar-actions-stack .toolbar-icon-action--wide {
+  width: 70px;
+  min-width: 70px;
+}
+
+.toolbar-actions-stack .toolbar-icon-action--derive {
+  width: 76px;
+  min-width: 76px;
+}
+
+.toolbar-actions-stack .toolbar-icon-action--clear {
+  width: 72px;
+  min-width: 72px;
+}
+
+.toolbar-actions-stack .toolbar-icon-action--unreview {
+  width: 82px;
+  min-width: 82px;
 }
 
 .toolbar-icon-action {
@@ -102,6 +171,24 @@
   stroke-width: 2;
   stroke-linecap: round;
   stroke-linejoin: round;
+}
+
+.toolbar-actions-stack .toolbar-icon-action__icon,
+.toolbar-actions-stack .toolbar-icon-action__icon svg {
+  width: 25px;
+  height: 25px;
+}
+
+.toolbar-icon-action__label {
+  display: block;
+  color: currentColor;
+  font-size: 0.60rem;
+  font-weight: 612;
+  line-height: 1.05;
+  text-align: center;
+  white-space: normal;
+  overflow-wrap: normal;
+  letter-spacing: 0;
 }
 
 .replace-toggle {
@@ -180,6 +267,10 @@
 
 .page-header--editor .segmented-control {
   padding: 3px;
+}
+
+.page-header--editor .page-header__nav {
+  padding-left: 0;
 }
 
 .page-header--editor .segmented-control__button {
