@@ -11,8 +11,8 @@
 .translate-toolbar__body--editor {
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  column-gap: 42px;
-  gap: 0 42px;
+  column-gap: 16px;
+  gap: 0 16px;
   width: calc(100% + 36px);
   margin-left: -18px;
   margin-right: -18px;
