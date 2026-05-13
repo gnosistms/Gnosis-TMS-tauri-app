@@ -25,15 +25,14 @@ test("language sans stacks keep Inter App ahead of subsetted script fonts", () =
   }
 });
 
-test("serif stacks do not start with subsetted Noto Serif webfonts", () => {
-  for (const name of [
-    "font-serif",
-    "font-serif-ja",
-    "font-serif-zh-hans",
-    "font-serif-zh-hant",
-    "font-serif-fa",
-    "font-serif-ko",
-  ]) {
-    assert.doesNotMatch(cssVariable(name), /^"Noto Serif/, `${name} should not start with Noto Serif`);
-  }
+test("editor serif stacks prefer bundled Noto families for consistent shaping", () => {
+  assert.equal(
+    cssVariable("font-serif"),
+    '"Noto Serif Variable", "Noto Serif JP Variable", "Noto Serif SC Variable", "Noto Serif TC Variable", "Noto Serif KR Variable", "Noto Naskh Arabic Variable", serif',
+  );
+  assert.equal(cssVariable("font-serif-ja"), '"Noto Serif JP Variable", serif');
+  assert.equal(cssVariable("font-serif-zh-hans"), '"Noto Serif SC Variable", serif');
+  assert.equal(cssVariable("font-serif-zh-hant"), '"Noto Serif TC Variable", serif');
+  assert.equal(cssVariable("font-serif-fa"), '"Noto Naskh Arabic Variable", serif');
+  assert.equal(cssVariable("font-serif-ko"), '"Noto Serif KR Variable", serif');
 });

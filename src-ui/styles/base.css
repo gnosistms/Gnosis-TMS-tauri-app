@@ -6,12 +6,12 @@
   --font-zh-hant: "Inter App", "Noto Sans TC Variable", "Noto Sans Variable", "Inter Variable", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
   --font-fa: "Inter App", "Noto Sans Arabic Variable", "Noto Sans Variable", "Inter Variable", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
   --font-ko: "Inter App", "Noto Sans KR Variable", "Noto Sans Variable", "Inter Variable", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
-  --font-serif: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", Georgia, "Times New Roman", "Noto Serif Variable", "Noto Serif SC Variable", "Noto Serif TC Variable", serif;
-  --font-serif-ja: "Iowan Old Style", "Noto Serif JP Variable", "Hiragino Mincho ProN", "Yu Mincho", "YuMincho", serif;
-  --font-serif-zh-hans: "Iowan Old Style", "Noto Serif SC Variable", "Songti SC", "STSong", serif;
-  --font-serif-zh-hant: "Iowan Old Style", "Noto Serif TC Variable", "Songti TC", "PMingLiU", serif;
-  --font-serif-fa: "Iowan Old Style", "Noto Naskh Arabic Variable", "Noto Sans Arabic Variable", serif;
-  --font-serif-ko: "Iowan Old Style", "Noto Serif KR Variable", "Batang", "AppleMyungjo", serif;
+  --font-serif: "Noto Serif Variable", "Noto Serif JP Variable", "Noto Serif SC Variable", "Noto Serif TC Variable", "Noto Serif KR Variable", "Noto Naskh Arabic Variable", serif;
+  --font-serif-ja: "Noto Serif JP Variable", serif;
+  --font-serif-zh-hans: "Noto Serif SC Variable", serif;
+  --font-serif-zh-hant: "Noto Serif TC Variable", serif;
+  --font-serif-fa: "Noto Naskh Arabic Variable", serif;
+  --font-serif-ko: "Noto Serif KR Variable", serif;
   --editor-non-latin-serif-weight: 550;
   --app-background: #fbe7b6; /* #f6e3ba; */
   --bg-top: #f7ecd5;
