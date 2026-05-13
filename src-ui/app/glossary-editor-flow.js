@@ -21,6 +21,7 @@ import {
   ensureGlossaryNotTombstoned,
   syncSingleGlossaryForTeam,
 } from "./glossary-repo-flow.js";
+import { refreshCurrentUserTeamAccess } from "./team-query.js";
 
 function resolveGlossaryForEditor(glossaryId = state.selectedGlossaryId, preferredGlossary = null) {
   const selected = selectedGlossary();
@@ -205,6 +206,7 @@ export async function openGlossaryEditor(render, glossaryId, options = {}) {
     preferredGlossary: options.preferredGlossary ?? null,
   });
   render();
+  await refreshCurrentUserTeamAccess({ render });
   await loadSelectedGlossaryEditorData(render, {
     glossaryId,
     preferredGlossary: options.preferredGlossary ?? null,

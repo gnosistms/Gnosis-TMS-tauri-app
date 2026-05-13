@@ -9,7 +9,10 @@ import {
 } from "./shared.js";
 import { classifySyncError } from "../sync-error.js";
 import { handleSyncFailure } from "../sync-recovery.js";
-import { loadTeamProjects } from "../project-flow.js";
+import {
+  loadTeamProjects,
+  primeProjectsLoadingState,
+} from "../project-flow.js";
 import { consumePendingSingleTeamAutoOpen } from "./auto-open.js";
 import {
   createTeamsQueryOptions,
@@ -59,6 +62,7 @@ export async function loadUserTeams(render) {
     if (shouldAutoOpenSingleTeam && state.teams.length === 1) {
       state.selectedTeamId = state.teams[0].id;
       state.screen = "projects";
+      primeProjectsLoadingState(state.selectedTeamId);
       render();
       await loadTeamProjects(render, state.selectedTeamId);
       return;

@@ -4,11 +4,10 @@ import {
   loadStoredChapterPendingMutations,
   loadStoredProjectsForTeam,
 } from "./project-cache.js";
-import { loadStoredGlossariesForTeam } from "./glossary-cache.js";
 import { buildProjectRepoFallbackConflictRecoveryInput } from "./project-repo-sync-shared.js";
 import {
-  resetProjectCreation,
   createProjectRepoConflictRecoveryState,
+  resetProjectCreation,
   resetProjectPermanentDeletion,
   resetProjectRename,
   state,
@@ -22,7 +21,10 @@ import {
   completeProjectsPageSync,
   failProjectsPageSync,
 } from "./page-sync.js";
-import { refreshProjectSearchIndex } from "./project-search-flow.js";
+import {
+  refreshProjectSearchIndex,
+  resetProjectSearchState,
+} from "./project-search-flow.js";
 import {
   repairLocalRepoBinding,
   upsertProjectMetadataRecord,
@@ -45,9 +47,9 @@ import {
 } from "./resource-page-controller.js";
 import {
   createProjectsQueryOptions,
+  createProjectsQuerySnapshot,
   ensureProjectsQueryObserver,
   invalidateProjectsQueryAfterMutation,
-  seedProjectsQueryFromCache,
 } from "./project-query.js";
 import { projectKeys, queryClient } from "./query-client.js";
 import {
@@ -328,10 +330,46 @@ function setProjectsPageProgress(render, text) {
   showProjectsStatus(render, text);
 }
 
+export function primeProjectsLoadingState(teamId = state.selectedTeamId) {
+  if (teamId) {
+    state.selectedTeamId = teamId;
+  }
+  state.projects = [];
+  state.deletedProjects = [];
+  state.projectRepoSyncByProjectId = {};
+  state.projectRepoConflictRecovery = createProjectRepoConflictRecoveryState();
+  state.pendingChapterMutations = [];
+  state.projectDiscovery = {
+    status: "loading",
+    error: "",
+    glossaryWarning: "",
+    recoveryMessage: "",
+  };
+  state.projectsPage.isRefreshing = true;
+  resetProjectSearchState();
+  resetProjectCreation();
+  resetProjectRename();
+  resetProjectPermanentDeletion();
+  queryClient.setQueryData(
+    projectKeys.byTeam(teamId ?? null),
+    createProjectsQuerySnapshot({
+      discovery: {
+        status: "loading",
+        error: "",
+        glossaryWarning: "",
+        recoveryMessage: "",
+      },
+    }),
+  );
+}
+
 export async function loadTeamProjects(render, teamId = state.selectedTeamId) {
   const selectedTeam = state.teams.find((team) => team.id === teamId);
-  state.projectsPage.isRefreshing = true;
-  state.selectedTeamId = teamId ?? state.selectedTeamId;
+  const previousProjectSnapshot = {
+    items: state.projects,
+    deletedItems: state.deletedProjects,
+  };
+  primeProjectsLoadingState(teamId);
   void refreshProjectSearchIndex(render, teamId).catch(() => {});
   render?.();
 
@@ -359,7 +397,7 @@ export async function loadTeamProjects(render, teamId = state.selectedTeamId) {
         return applyProjectWriteIntentsToSnapshot(
           preserveChapterLifecyclePatchesInProjectSnapshot(
             snapshot,
-            { items: state.projects, deletedItems: state.deletedProjects },
+            previousProjectSnapshot,
           ),
         );
       },
@@ -375,13 +413,6 @@ export async function loadTeamProjects(render, teamId = state.selectedTeamId) {
       render,
       teamId: selectedTeam.id,
     };
-
-    seedProjectsQueryFromCache(selectedTeam, {
-      ...queryOptionsContext,
-      loadStoredProjectsForTeam,
-      loadStoredChapterPendingMutations,
-      loadStoredGlossariesForTeam,
-    });
 
     ensureProjectsQueryObserver(render, selectedTeam, queryOptionsContext);
     const querySnapshot = await queryClient.fetchQuery(

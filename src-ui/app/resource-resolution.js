@@ -68,7 +68,14 @@ function syncIssueResolution(snapshot, resourceLabel) {
   return null;
 }
 
-function baseResolution(resource, resourceLabel) {
+function shouldSuppressMissingLocalRepoRepair(resource, options = {}) {
+  return (
+    options.suppressMissingLocalRepoRepair === true
+    && normalizeText(resource?.repairIssueType) === "missingLocalRepo"
+  );
+}
+
+function baseResolution(resource, resourceLabel, options = {}) {
   if (!resource || typeof resource !== "object") {
     return null;
   }
@@ -112,6 +119,9 @@ function baseResolution(resource, resourceLabel) {
 
   if (resolutionState === "repair") {
     const repairIssueType = normalizeText(resource.repairIssueType);
+    if (shouldSuppressMissingLocalRepoRepair(resource, options)) {
+      return null;
+    }
     const repairAction =
       typeof resource?.id === "string" && resource.id.trim()
         ? (
@@ -137,16 +147,16 @@ function baseResolution(resource, resourceLabel) {
   return null;
 }
 
-export function deriveProjectResolution(project, syncSnapshot) {
+export function deriveProjectResolution(project, syncSnapshot, options = {}) {
   return (
-    baseResolution(project, "project")
+    baseResolution(project, "project", options)
     ?? syncIssueResolution(syncSnapshot, "project")
   );
 }
 
-export function deriveGlossaryResolution(glossary, syncSnapshot) {
+export function deriveGlossaryResolution(glossary, syncSnapshot, options = {}) {
   return (
-    baseResolution(glossary, "glossary")
+    baseResolution(glossary, "glossary", options)
     ?? syncIssueResolution(syncSnapshot, "glossary")
   );
 }

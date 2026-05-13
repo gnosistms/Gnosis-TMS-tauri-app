@@ -1,6 +1,9 @@
 import { GITHUB_FREE_ORG_SETUP_URL } from "../constants.js";
 import { handleBrokerAuthExpired, requireBrokerSession } from "../auth-flow.js";
-import { loadTeamProjects } from "../project-flow.js";
+import {
+  loadTeamProjects,
+  primeProjectsLoadingState,
+} from "../project-flow.js";
 import { invoke, openExternalUrl } from "../runtime.js";
 import { clearNoticeBadge, showNoticeBadge } from "../status-feedback.js";
 import { resetTeamSetup, state } from "../state.js";
@@ -157,6 +160,7 @@ export async function finishTeamSetup(render) {
       `github-app-installation-${installation.installationId}`;
     state.selectedTeamId = teamId;
     state.screen = "projects";
+    primeProjectsLoadingState(teamId);
     state.showDeletedTeams = false;
     resetTeamSetup();
     render();

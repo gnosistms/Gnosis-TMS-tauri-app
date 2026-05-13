@@ -6,6 +6,159 @@ import {
   mergeMetadataDiscoveryProjects,
 } from "./project-discovery.js";
 
+let invokeHandler = async () => null;
+
+globalThis.document = globalThis.document ?? {
+  querySelector: () => null,
+  querySelectorAll: () => [],
+};
+globalThis.window = globalThis.window ?? {
+  __TAURI__: {
+    core: {
+      invoke: (command, payload) => invokeHandler(command, payload),
+    },
+  },
+  requestAnimationFrame: (callback) => setTimeout(callback, 0),
+  setTimeout,
+  clearTimeout,
+};
+globalThis.window.__TAURI__ = globalThis.window.__TAURI__ ?? {};
+globalThis.window.__TAURI__.core = {
+  invoke: (command, payload) => invokeHandler(command, payload),
+};
+
+const { resetSessionState, state } = await import("./state.js");
+const {
+  loadTeamProjects: loadDiscoveredTeamProjects,
+} = await import("./project-discovery-flow.js");
+
+function deferred() {
+  let resolve;
+  let reject;
+  const promise = new Promise((promiseResolve, promiseReject) => {
+    resolve = promiseResolve;
+    reject = promiseReject;
+  });
+  return { promise, resolve, reject };
+}
+
+function projectMetadataRecord(overrides = {}) {
+  return {
+    id: "project-1",
+    title: "Local Project",
+    repoName: "project-repo",
+    fullName: "team/project-repo",
+    lifecycleState: "active",
+    remoteState: "linked",
+    recordState: "live",
+    defaultBranch: "main",
+    chapterCount: 1,
+    ...overrides,
+  };
+}
+
+function renderSnapshot() {
+  return {
+    status: state.projectDiscovery.status,
+    projects: state.projects.map((project) => project.title),
+    deletedProjects: state.deletedProjects.map((project) => project.title),
+  };
+}
+
+function setupProjectDiscoveryFlowTest() {
+  resetSessionState();
+  state.screen = "projects";
+  state.selectedTeamId = "team-1";
+  state.teams = [{
+    id: "team-1",
+    name: "Team",
+    githubOrg: "team",
+    installationId: 1,
+  }];
+  state.auth.session = { sessionToken: "token" };
+  state.offline.isEnabled = false;
+}
+
+function projectDiscoveryOptions(overrides = {}) {
+  return {
+    loadStoredProjectsForTeam: () => ({ exists: false, projects: [], deletedProjects: [] }),
+    setProjectDiscoveryState: (status, error = "", glossaryWarning = "", recoveryMessage = "") => {
+      state.projectDiscovery = { status, error, glossaryWarning, recoveryMessage };
+    },
+    setProjectUiDebug: () => {},
+    clearProjectUiDebug: () => {},
+    persistProjectsForTeam: () => {},
+    applyChapterPendingMutation: (snapshot) => snapshot,
+    normalizeListedChapter: (chapter) => chapter,
+    projectMetadataRecordIsTombstone: (record) =>
+      record?.recordState === "tombstone" || record?.remoteState === "deleted",
+    projectMatchesMetadataRecord: (project, record) => project?.id === record?.id,
+    purgeLocalProjectRepo: async () => {},
+    removeVisibleProject: () => {},
+    clearSelectedProjectState: () => {},
+    dropProjectMutationsForProject: () => {},
+    upsertProjectMetadataRecord: async () => {},
+    reconcileExpandedDeletedFiles: () => {},
+    ...overrides,
+  };
+}
+
+function installProjectDiscoveryInvokeMock({
+  localMetadata = [projectMetadataRecord()],
+  remoteMetadata = localMetadata,
+  remoteProjectsPromise = Promise.resolve([]),
+  localProjectFiles = [{
+    projectId: "project-1",
+    repoName: "project-repo",
+    chapters: [{ id: "chapter-1", name: "Chapter", status: "active" }],
+  }],
+  failFirstProjectMetadataRead = false,
+} = {}) {
+  let projectMetadataReads = 0;
+  invokeHandler = async (command) => {
+    if (command === "list_local_gnosis_project_metadata_records") {
+      projectMetadataReads += 1;
+      if (failFirstProjectMetadataRead && projectMetadataReads === 1) {
+        throw new Error("local scan failed");
+      }
+      return projectMetadataReads === 1 ? localMetadata : remoteMetadata;
+    }
+    if (command === "list_local_gtms_project_files") {
+      return localProjectFiles;
+    }
+    if (command === "list_gnosis_projects_for_installation") {
+      return remoteProjectsPromise;
+    }
+    if (command === "sync_local_team_metadata_repo" || command === "ensure_local_team_metadata_repo") {
+      return null;
+    }
+    if (command === "inspect_and_migrate_local_repo_bindings") {
+      return { issues: [], autoRepairedCount: 0 };
+    }
+    if (command === "list_local_gtms_glossaries") {
+      return [];
+    }
+    if (command === "list_local_gnosis_glossary_metadata_records") {
+      return [];
+    }
+    if (command === "list_gnosis_glossaries_for_installation") {
+      return [];
+    }
+    if (command === "sync_gtms_glossary_repos") {
+      return [];
+    }
+    if (command === "reconcile_project_repo_sync_states" || command === "list_project_repo_sync_states") {
+      return [];
+    }
+    return null;
+  };
+}
+
+test.afterEach(() => {
+  invokeHandler = async () => null;
+  resetSessionState();
+});
+
 test("metadata-backed project discovery ignores remote repos that have no metadata record", () => {
   const merged = mergeMetadataDiscoveryProjects({
     metadataRecords: [
@@ -273,4 +426,114 @@ test("project discovery keeps real stray local repos after the repo scan", () =>
   assert.equal(merged[0].id, "project-1");
   assert.equal(merged[0].resolutionState, "repair");
   assert.equal(merged[0].repairIssueType, "strayLocalRepo");
+});
+
+test("project loading renders local metadata and files before remote refresh finishes", async () => {
+  setupProjectDiscoveryFlowTest();
+  const remoteProjects = deferred();
+  installProjectDiscoveryInvokeMock({
+    localMetadata: [projectMetadataRecord({ title: "Local Project" })],
+    remoteMetadata: [projectMetadataRecord({ title: "Remote Project" })],
+    remoteProjectsPromise: remoteProjects.promise,
+  });
+  const renders = [];
+  const loadPromise = loadDiscoveredTeamProjects(
+    () => renders.push(renderSnapshot()),
+    "team-1",
+    projectDiscoveryOptions(),
+  );
+
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.equal(state.projectDiscovery.status, "ready");
+  assert.deepEqual(state.projects.map((project) => project.title), ["Local Project"]);
+  assert.ok(renders.some((snapshot) => snapshot.projects.includes("Local Project")));
+
+  remoteProjects.resolve([{
+    id: "project-1",
+    name: "project-repo",
+    title: "Remote Project",
+    fullName: "team/project-repo",
+    defaultBranchName: "main",
+  }]);
+  await loadPromise;
+
+  assert.deepEqual(state.projects.map((project) => project.title), ["Remote Project"]);
+  assert.ok(renders.some((snapshot) => snapshot.projects.includes("Remote Project")));
+});
+
+test("project loading stays loading when local metadata is empty and remote is pending", async () => {
+  setupProjectDiscoveryFlowTest();
+  const remoteProjects = deferred();
+  installProjectDiscoveryInvokeMock({
+    localMetadata: [],
+    remoteMetadata: [],
+    remoteProjectsPromise: remoteProjects.promise,
+    localProjectFiles: [],
+  });
+  const renders = [];
+  const loadPromise = loadDiscoveredTeamProjects(
+    () => renders.push(renderSnapshot()),
+    "team-1",
+    projectDiscoveryOptions(),
+  );
+
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.equal(state.projectDiscovery.status, "loading");
+  assert.deepEqual(state.projects, []);
+  assert.ok(renders.some((snapshot) => snapshot.status === "loading" && snapshot.projects.length === 0));
+
+  remoteProjects.resolve([]);
+  await loadPromise;
+
+  assert.equal(state.projectDiscovery.status, "ready");
+  assert.deepEqual(state.projects, []);
+});
+
+test("online project loading does not render persistent cache when local scan fails", async () => {
+  setupProjectDiscoveryFlowTest();
+  const remoteProjects = deferred();
+  installProjectDiscoveryInvokeMock({
+    localMetadata: [],
+    remoteMetadata: [projectMetadataRecord({ title: "Remote Project" })],
+    remoteProjectsPromise: remoteProjects.promise,
+    localProjectFiles: [],
+    failFirstProjectMetadataRead: true,
+  });
+  const renders = [];
+  const loadPromise = loadDiscoveredTeamProjects(
+    () => renders.push(renderSnapshot()),
+    "team-1",
+    projectDiscoveryOptions({
+      loadStoredProjectsForTeam: () => ({
+        exists: true,
+        projects: [{
+          id: "cached-project",
+          name: "cached-project",
+          title: "Cached Project",
+          chapters: [],
+        }],
+        deletedProjects: [],
+      }),
+    }),
+  );
+
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.equal(state.projectDiscovery.status, "loading");
+  assert.deepEqual(state.projects, []);
+  assert.ok(!renders.some((snapshot) => snapshot.projects.includes("Cached Project")));
+
+  remoteProjects.resolve([{
+    id: "project-1",
+    name: "project-repo",
+    title: "Remote Project",
+    fullName: "team/project-repo",
+    defaultBranchName: "main",
+  }]);
+  await loadPromise;
+
+  assert.deepEqual(state.projects.map((project) => project.title), ["Remote Project"]);
+  assert.ok(!renders.some((snapshot) => snapshot.projects.includes("Cached Project")));
 });

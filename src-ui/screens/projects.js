@@ -123,7 +123,9 @@ function renderProjectCard(project, expanded, options = {}) {
     syncStatus === "syncing"
     || localRepoUnavailable
   );
-  const resolution = deriveProjectResolution(project, syncSnapshot);
+  const resolution = deriveProjectResolution(project, syncSnapshot, {
+    suppressMissingLocalRepoRepair: options.suppressMissingLocalRepoRepair === true,
+  });
   const disableLifecycleActions = resolution?.blockLifecycleActions === true;
   const disableContentActions = resolution?.blockContentActions === true;
   const lifecycleActionsDisabled = options.lifecycleActionsDisabled === true;
@@ -313,6 +315,11 @@ function renderDeletedProjectsSection(state) {
   const lifecycleActionsDisabled = areResourcePageWriteSubmissionsDisabled(state.projectsPage);
   const syncSnapshotsByProjectId = state.projectRepoSyncByProjectId ?? {};
   const glossaryChangesDisabled = state.projectImport?.status === "importing";
+  const discovery = state.projectDiscovery ?? {};
+  const refreshInProgress =
+    state.projectsPage?.isRefreshing === true
+    || state.projectsPageSync?.status === "syncing"
+    || discovery.status === "loading";
 
   const toggle = renderDeletedProjectsToggle(state);
   if (!state.showDeletedProjects) {
@@ -326,7 +333,9 @@ function renderDeletedProjectsSection(state) {
         .map((project) =>
           {
             const syncSnapshot = syncSnapshotsByProjectId[project.id] ?? null;
-            const resolution = deriveProjectResolution(project, syncSnapshot);
+            const resolution = deriveProjectResolution(project, syncSnapshot, {
+              suppressMissingLocalRepoRepair: refreshInProgress,
+            });
             const disableLifecycleActions = offlineMode || resolution?.blockLifecycleActions === true;
             return renderProjectCard(project, state.expandedProjects.has(project.id), {
               canManageProjects: canManageDeletedProjects,
@@ -337,6 +346,7 @@ function renderDeletedProjectsSection(state) {
               lifecycleActionsDisabled,
               glossaryChangesDisabled,
               syncSnapshot,
+              suppressMissingLocalRepoRepair: refreshInProgress,
               actions:
                 project?.recordState === "tombstone"
                   ? []
@@ -534,6 +544,10 @@ export function renderProjectsScreen(state) {
   const lifecycleActionsDisabled = areResourcePageWriteSubmissionsDisabled(state.projectsPage);
   const importInProgress = state.projectImport?.status === "importing";
   const discovery = state.projectDiscovery ?? { status: "idle", error: "", glossaryWarning: "" };
+  const refreshInProgress =
+    state.projectsPage?.isRefreshing === true
+    || state.projectsPageSync?.status === "syncing"
+    || discovery.status === "loading";
   const syncSnapshotsByProjectId = state.projectRepoSyncByProjectId ?? {};
   const recoveryMessage =
     typeof discovery.recoveryMessage === "string" && discovery.recoveryMessage.trim()
@@ -595,6 +609,7 @@ export function renderProjectsScreen(state) {
                   showDeletedFiles: state.expandedDeletedFiles.has(project.id),
                   glossaries: state.glossaries,
                   syncSnapshot: syncSnapshotsByProjectId[project.id] ?? null,
+                  suppressMissingLocalRepoRepair: refreshInProgress,
                 }),
               )
               .join("")}</section>`;

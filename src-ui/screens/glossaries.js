@@ -60,7 +60,9 @@ function renderGlossaryCard(glossary, options = {}) {
   const writeActionsDisabled = options.writeActionsDisabled === true;
   const isDefaultGlossary = options.defaultGlossaryId === glossary.id;
   const isTombstone = glossary?.recordState === "tombstone";
-  const resolution = deriveGlossaryResolution(glossary, options.syncSnapshot);
+  const resolution = deriveGlossaryResolution(glossary, options.syncSnapshot, {
+    suppressMissingLocalRepoRepair: options.suppressMissingLocalRepoRepair === true,
+  });
   const disableLifecycleActions = resolution?.blockLifecycleActions === true;
   const activeActions = [
     textAction("Open", `open-glossary:${glossary.id}`),
@@ -178,6 +180,10 @@ export function renderGlossariesScreen(state) {
   const writeActionsDisabled =
     areResourcePageWritesDisabled(state.glossariesPage) || anyGlossaryMutatingWriteIsActive();
   const discovery = state.glossaryDiscovery ?? { status: "idle", error: "", brokerWarning: "" };
+  const refreshInProgress =
+    state.glossariesPage?.isRefreshing === true
+    || state.pageSync?.status === "syncing"
+    || discovery.status === "loading";
   const syncSnapshotsByRepoName = state.glossaryRepoSyncByRepoName ?? {};
   const defaultGlossaryId = activeDefaultGlossaryIdForTeam(selectedTeam);
   const recoveryMessage =
@@ -231,6 +237,7 @@ export function renderGlossariesScreen(state) {
                 writeActionsDisabled,
                 defaultGlossaryId,
                 syncSnapshot: syncSnapshotsByRepoName[glossary.repoName] ?? null,
+                suppressMissingLocalRepoRepair: refreshInProgress,
               }),
             )
             .join("")}
@@ -252,6 +259,7 @@ export function renderGlossariesScreen(state) {
         writeActionsDisabled,
         defaultGlossaryId,
         syncSnapshotsByRepoName,
+        suppressMissingLocalRepoRepair: refreshInProgress,
       })}
     </section>
   `;

@@ -67,6 +67,7 @@ const {
   applyTeamsQuerySnapshotToState,
   createTeamsQueryOptions,
   createTeamsQuerySnapshot,
+  refreshCurrentUserTeamAccess,
   resetTeamsQueryObserver,
   seedTeamsQueryFromCache,
 } = await import("./team-query.js");
@@ -204,4 +205,42 @@ test("createTeamsQueryOptions fetches remote installations and updates persisten
   assert.equal(invokeLog.length, 1);
   const stored = readPersistentValue("gnosis-tms-team-records:owner", []);
   assert.equal(stored[0].name, "Team One Remote");
+});
+
+test("refreshCurrentUserTeamAccess updates stale selected team permissions", async () => {
+  installFixture();
+  saveStoredTeamRecords([
+    team({
+      membershipRole: "translator",
+      canDelete: false,
+      canManageMembers: false,
+      canManageProjects: false,
+    }),
+  ]);
+  seedTeamsQueryFromCache({ authLogin: "owner" });
+  assert.equal(state.teams[0].canManageProjects, false);
+  let renderCount = 0;
+  invokeHandler = async () => [
+    installation({
+      membershipRole: "owner",
+      canDelete: true,
+      canManageMembers: true,
+      canManageProjects: true,
+    }),
+  ];
+
+  const applied = await refreshCurrentUserTeamAccess({
+    render: () => {
+      renderCount += 1;
+    },
+  });
+
+  assert.equal(applied, true);
+  assert.equal(state.selectedTeamId, "github-app-installation-42");
+  assert.equal(state.teams[0].membershipRole, "owner");
+  assert.equal(state.teams[0].canDelete, true);
+  assert.equal(state.teams[0].canManageMembers, true);
+  assert.equal(state.teams[0].canManageProjects, true);
+  assert.equal(renderCount, 1);
+  assert.equal(invokeLog.length, 1);
 });

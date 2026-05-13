@@ -131,6 +131,46 @@ test("project background refresh spins and disables the refresh button", () => {
   assert.match(actionButtonHtml(html, "refresh-page"), /aria-disabled="true"/);
 });
 
+test("project refresh hides missing local repo repair warnings while setup is in progress", () => {
+  const html = renderProjectsScreen(projectsState({
+    projectsPage: {
+      isRefreshing: true,
+      writeState: "idle",
+    },
+    projects: [{
+      id: "project-1",
+      title: "Project",
+      name: "project-repo",
+      status: "active",
+      resolutionState: "repair",
+      repairIssueType: "missingLocalRepo",
+      repairIssueMessage: "Team metadata references this project, but its local repo is missing.",
+      chapters: [],
+    }],
+  }));
+
+  assert.doesNotMatch(html, /local repo is missing/i);
+  assert.equal(actionButtonHtml(html, "rebuild-project-repo:project-1"), "");
+});
+
+test("project missing local repo repair warning returns after refresh", () => {
+  const html = renderProjectsScreen(projectsState({
+    projects: [{
+      id: "project-1",
+      title: "Project",
+      name: "project-repo",
+      status: "active",
+      resolutionState: "repair",
+      repairIssueType: "missingLocalRepo",
+      repairIssueMessage: "Team metadata references this project, but its local repo is missing.",
+      chapters: [],
+    }],
+  }));
+
+  assert.match(html, /local repo is missing/i);
+  assert.match(actionButtonHtml(html, "rebuild-project-repo:project-1"), /data-action/);
+});
+
 test("projects status surface renders background sync and notice lines together", () => {
   appState.statusBadges = {
     left: {

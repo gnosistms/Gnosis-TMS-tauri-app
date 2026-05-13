@@ -21,6 +21,7 @@ import {
 } from "./project-discovery.js";
 import {
   inspectAndMigrateLocalRepoBindings,
+  listLocalProjectMetadataRecords,
   listProjectMetadataRecords,
   repairAutoRepairableRepoBindings,
 } from "./team-metadata-flow.js";
@@ -307,6 +308,54 @@ async function loadLocalProjectFileListings(selectedTeam, projects) {
   return Array.isArray(listings) ? listings : [];
 }
 
+export async function loadLocalProjectSnapshotForTeam(selectedTeam, options = {}) {
+  const listLocalMetadata =
+    typeof options.listLocalProjectMetadataRecords === "function"
+      ? options.listLocalProjectMetadataRecords
+      : listLocalProjectMetadataRecords;
+  const loadPendingMutations =
+    typeof options.loadStoredChapterPendingMutations === "function"
+      ? options.loadStoredChapterPendingMutations
+      : loadStoredChapterPendingMutations;
+  const metadataRecords = await listLocalMetadata(selectedTeam);
+  const pendingChapterMutations = loadPendingMutations(selectedTeam);
+  const localProjects = mergeMetadataDiscoveryProjects({
+    metadataRecords,
+    remoteProjects: [],
+    localProjects: [],
+    metadataLoaded: true,
+    remoteLoaded: false,
+    repairLoaded: false,
+    repairIssues: [],
+  });
+  const baseSnapshot = {
+    items: localProjects.filter((project) => project.lifecycleState !== "deleted"),
+    deletedItems: localProjects.filter((project) => project.lifecycleState === "deleted"),
+  };
+  const localFileListings = await loadLocalProjectFileListings(
+    selectedTeam,
+    localProjects.filter((project) =>
+      project?.lifecycleState !== "deleted"
+      && project?.recordState !== "tombstone"
+    ),
+  );
+  const localSnapshot = mergeProjectsWithLocalFiles(
+    baseSnapshot,
+    localFileListings,
+    localProjects,
+    options,
+  );
+
+  return {
+    ...applyPendingMutations(
+      localSnapshot,
+      pendingChapterMutations,
+      options.applyChapterPendingMutation,
+    ),
+    pendingChapterMutations,
+  };
+}
+
 async function loadAvailableGlossariesForTeam(selectedTeam, teamIdAtStart = selectedTeam?.id) {
   if (!Number.isFinite(selectedTeam?.installationId)) {
     if (state.selectedTeamId === teamIdAtStart) {
@@ -388,19 +437,19 @@ export async function loadTeamProjects(render, teamId = state.selectedTeamId, op
     return;
   }
 
-  const cachedProjects = options.loadStoredProjectsForTeam(selectedTeam);
   state.pendingChapterMutations = loadStoredChapterPendingMutations(selectedTeam);
-  const optimisticSnapshot = applyPendingMutations(
-    {
-      items: cachedProjects.projects,
-      deletedItems: cachedProjects.deletedProjects,
-    },
-    state.pendingChapterMutations,
-    options.applyChapterPendingMutation,
-  );
   const glossaryLoadPromise = loadAvailableGlossariesForTeam(selectedTeam, teamId);
 
   if (state.offline.isEnabled) {
+    const cachedProjects = options.loadStoredProjectsForTeam(selectedTeam);
+    const optimisticSnapshot = applyPendingMutations(
+      {
+        items: cachedProjects.projects,
+        deletedItems: cachedProjects.deletedProjects,
+      },
+      state.pendingChapterMutations,
+      options.applyChapterPendingMutation,
+    );
     const glossaryResult = await glossaryLoadPromise;
     if (await abortProjectDiscoveryIfStale(render, selectedTeam?.id ?? teamId, requestId, syncVersionAtStart)) {
       return;
@@ -422,20 +471,40 @@ export async function loadTeamProjects(render, teamId = state.selectedTeamId, op
     return;
   }
 
-  if (cachedProjects.exists) {
+  let renderedLocalProjects = false;
+  let localProjectSnapshot = { items: [], deletedItems: [] };
+  try {
+    const localSnapshot = await loadLocalProjectSnapshotForTeam(selectedTeam, {
+      ...options,
+      loadStoredChapterPendingMutations,
+    });
+    if (await abortProjectDiscoveryIfStale(render, selectedTeam.id, requestId, syncVersionAtStart)) {
+      return;
+    }
+    state.pendingChapterMutations = localSnapshot.pendingChapterMutations;
     const preservedSnapshot =
       typeof options.preserveProjectLifecyclePatches === "function"
-        ? options.preserveProjectLifecyclePatches(optimisticSnapshot)
-        : optimisticSnapshot;
-    applyProjectSnapshotToState(preservedSnapshot, {
+        ? options.preserveProjectLifecyclePatches(localSnapshot)
+        : localSnapshot;
+    localProjectSnapshot = {
+      items: Array.isArray(preservedSnapshot.items) ? preservedSnapshot.items : [],
+      deletedItems: Array.isArray(preservedSnapshot.deletedItems) ? preservedSnapshot.deletedItems : [],
+    };
+    const hasLocalProjects =
+      localProjectSnapshot.items.length > 0 || localProjectSnapshot.deletedItems.length > 0;
+    applyProjectSnapshotToState(localProjectSnapshot, {
       reconcileExpandedDeletedFiles: options.reconcileExpandedDeletedFiles,
     });
-    options.setProjectDiscoveryState("ready", "", "", "");
-  } else {
+    options.setProjectDiscoveryState(hasLocalProjects ? "ready" : "loading", "", "", "");
+    renderedLocalProjects = hasLocalProjects;
+    render();
+  } catch {
+    state.pendingChapterMutations = loadStoredChapterPendingMutations(selectedTeam);
     applyProjectSnapshotToState({ items: [], deletedItems: [] }, {
       reconcileExpandedDeletedFiles: options.reconcileExpandedDeletedFiles,
     });
     options.setProjectDiscoveryState("loading", "", "", "");
+    render();
   }
   if (await abortProjectDiscoveryIfStale(render, selectedTeam.id, requestId, syncVersionAtStart)) {
     return;
@@ -506,15 +575,14 @@ export async function loadTeamProjects(render, teamId = state.selectedTeamId, op
     if (
       projectsResult.status !== "fulfilled"
       && projectMetadataRecords.length === 0
-      && !cachedProjects.exists
-      && optimisticSnapshot.items.length === 0
-      && optimisticSnapshot.deletedItems.length === 0
+      && localProjectSnapshot.items.length === 0
+      && localProjectSnapshot.deletedItems.length === 0
     ) {
       throw projectsResult.reason;
     }
     const discoveredLocalProjects = [
-      ...optimisticSnapshot.items,
-      ...optimisticSnapshot.deletedItems,
+      ...localProjectSnapshot.items,
+      ...localProjectSnapshot.deletedItems,
     ].filter(Boolean);
     await purgeTombstonedProjectsForTeam(
       selectedTeam,
@@ -551,7 +619,7 @@ export async function loadTeamProjects(render, teamId = state.selectedTeamId, op
     const nextVisibleProjects =
       mergedProjects.length > 0 || metadataLoaded || remoteLoaded
         ? mergedProjects
-        : [...optimisticSnapshot.items, ...optimisticSnapshot.deletedItems];
+        : [...localProjectSnapshot.items, ...localProjectSnapshot.deletedItems];
     options.setProjectUiDebug(render, "Refreshing local project data...");
     const mappedProjects = nextVisibleProjects.map((project) => ({
       ...project,
@@ -688,7 +756,7 @@ export async function loadTeamProjects(render, teamId = state.selectedTeamId, op
       return;
     }
 
-    if (!cachedProjects.exists) {
+    if (!renderedLocalProjects) {
       applyProjectSnapshotToState({ items: [], deletedItems: [] }, {
         reconcileExpandedDeletedFiles: options.reconcileExpandedDeletedFiles,
       });

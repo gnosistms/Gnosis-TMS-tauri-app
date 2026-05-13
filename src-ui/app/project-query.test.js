@@ -9,10 +9,14 @@ globalThis.document = globalThis.document ?? {
 };
 globalThis.window = globalThis.window ?? {
   __TAURI__: {},
+  addEventListener: () => {},
+  removeEventListener: () => {},
   requestAnimationFrame: (callback) => setTimeout(callback, 0),
   setTimeout,
   clearTimeout,
 };
+globalThis.window.addEventListener = globalThis.window.addEventListener ?? (() => {});
+globalThis.window.removeEventListener = globalThis.window.removeEventListener ?? (() => {});
 
 const { createResourcePageState } = await import("./resource-page-controller.js");
 const { resetSessionState, state } = await import("./state.js");
@@ -38,6 +42,7 @@ const {
   resetProjectWriteCoordinator,
   teamMetadataWriteScope,
 } = await import("./project-write-coordinator.js");
+const { primeProjectsLoadingState } = await import("./project-flow.js");
 
 function project(overrides = {}) {
   return {
@@ -120,6 +125,37 @@ test("project query adapter ignores stale team snapshots", () => {
 
   assert.equal(applied, false);
   assert.equal(state.projects[0].title, "Existing");
+});
+
+test("project loading prime clears stale visible projects before team render", () => {
+  resetSessionState();
+  state.selectedTeamId = "team-1";
+  state.projects = [project({ id: "team-1-project", title: "Team 1 Project" })];
+  state.deletedProjects = [project({ id: "team-1-deleted", lifecycleState: "deleted" })];
+  state.projectRepoSyncByProjectId = { "team-1-project": { status: "dirtyLocal" } };
+  state.projectsSearch = {
+    query: "old",
+    status: "ready",
+    results: [{ id: "old-result" }],
+    resultsById: { "old-result": {} },
+  };
+  state.projectRepoConflictRecovery = {
+    teamId: "team-1",
+    status: "idle",
+    error: "Old conflict",
+  };
+
+  primeProjectsLoadingState("team-2");
+
+  assert.equal(state.selectedTeamId, "team-2");
+  assert.deepEqual(state.projects, []);
+  assert.deepEqual(state.deletedProjects, []);
+  assert.deepEqual(state.projectRepoSyncByProjectId, {});
+  assert.equal(state.projectRepoConflictRecovery.teamId, null);
+  assert.equal(state.projectsSearch.query, "");
+  assert.deepEqual(state.projectsSearch.results, []);
+  assert.equal(state.projectDiscovery.status, "loading");
+  assert.equal(state.projectsPage.isRefreshing, true);
 });
 
 test("project query adapter overlays active project title intents during refresh", async () => {

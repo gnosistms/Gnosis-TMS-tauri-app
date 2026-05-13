@@ -5,23 +5,37 @@ import {
   primeGlossariesLoadingState,
 } from "../glossary-flow.js";
 import { openAiKeyPage } from "../ai-settings-flow.js";
-import { loadTeamProjects } from "../project-flow.js";
-import { resetProjectSearchState } from "../project-search-flow.js";
+import {
+  loadTeamProjects,
+  primeProjectsLoadingState,
+} from "../project-flow.js";
 import { loadTeamUsers, primeUsersForTeam } from "../team-members-flow.js";
 import { actionSuffix } from "../action-helpers.js";
 import { waitForNextPaint } from "../runtime.js";
 import { openTranslateChapter } from "../translate-flow.js";
 import { resolveSelectedChapterGlossary } from "../project-context.js";
+import { refreshCurrentUserTeamAccess } from "../team-query.js";
+
+async function refreshSelectedTeamAccess(render) {
+  if (!state.selectedTeamId) {
+    return;
+  }
+
+  await refreshCurrentUserTeamAccess({ render });
+}
 
 export function createNavigationActions(render) {
   return async function handleNavigationAction(action) {
     const openTeamId = actionSuffix(action, "open-team:");
     if (openTeamId !== null) {
-      resetProjectSearchState();
       state.selectedTeamId = openTeamId;
       state.screen = "projects";
+      primeProjectsLoadingState(openTeamId);
       render();
-      void loadTeamProjects(render, state.selectedTeamId);
+      void (async () => {
+        await refreshSelectedTeamAccess(render);
+        await loadTeamProjects(render, state.selectedTeamId);
+      })();
       return true;
     }
 
@@ -31,7 +45,10 @@ export function createNavigationActions(render) {
       state.screen = "users";
       primeUsersForTeam(state.selectedTeamId);
       render();
-      void waitForNextPaint().then(() => loadTeamUsers(render, state.selectedTeamId));
+      void waitForNextPaint().then(async () => {
+        await refreshSelectedTeamAccess(render);
+        return loadTeamUsers(render, state.selectedTeamId);
+      });
       return true;
     }
 
@@ -41,7 +58,10 @@ export function createNavigationActions(render) {
       state.screen = "glossaries";
       primeGlossariesLoadingState(state.selectedTeamId);
       render();
-      void loadTeamGlossaries(render, state.selectedTeamId);
+      void (async () => {
+        await refreshSelectedTeamAccess(render);
+        await loadTeamGlossaries(render, state.selectedTeamId);
+      })();
       return true;
     }
 
@@ -77,9 +97,12 @@ export function createNavigationActions(render) {
         preserveVisibleData: state.glossaries.length > 0,
       });
       render();
-      void loadTeamGlossaries(render, state.selectedTeamId, {
-        preserveVisibleData: state.glossaries.length > 0,
-      });
+      void (async () => {
+        await refreshSelectedTeamAccess(render);
+        await loadTeamGlossaries(render, state.selectedTeamId, {
+          preserveVisibleData: state.glossaries.length > 0,
+        });
+      })();
       return true;
     }
 

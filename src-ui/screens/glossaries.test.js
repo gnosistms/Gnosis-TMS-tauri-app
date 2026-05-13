@@ -143,9 +143,35 @@ test("glossary refresh keeps read-only and query-backed lifecycle actions enable
   assert.match(actionButtonHtml(html, "delete-deleted-glossary:deleted-glossary"), /disabled/);
   assert.match(actionButtonHtml(html, "import-glossary"), /disabled/);
   assert.match(actionButtonHtml(html, "open-new-glossary"), /disabled/);
-  assert.match(actionButtonHtml(html, "rebuild-glossary-repo:repair-glossary"), /disabled/);
+  assert.doesNotMatch(html, /Needs local repo rebuild\./);
+  assert.equal(actionButtonHtml(html, "rebuild-glossary-repo:repair-glossary"), "");
   assert.match(actionButtonHtml(html, "refresh-page"), /\bis-spinning\b/);
   assert.match(actionButtonHtml(html, "refresh-page"), /aria-disabled="true"/);
+});
+
+test("glossary missing local repo repair warning returns after refresh", () => {
+  setGlossaryScreenState({
+    glossariesPage: { isRefreshing: false, writeState: "idle" },
+    glossaries: [
+      {
+        id: "repair-glossary",
+        repoName: "repair-repo",
+        title: "Repair Glossary",
+        lifecycleState: "active",
+        resolutionState: "repair",
+        repairIssueType: "missingLocalRepo",
+        repairIssueMessage: "Needs local repo rebuild.",
+        sourceLanguage: { code: "es", name: "Spanish" },
+        targetLanguage: { code: "vi", name: "Vietnamese" },
+        termCount: 1,
+      },
+    ],
+  });
+
+  const html = renderGlossariesScreen(state);
+
+  assert.match(html, /Needs local repo rebuild\./);
+  assert.match(actionButtonHtml(html, "rebuild-glossary-repo:repair-glossary"), /data-action/);
 });
 
 test("glossary write in progress disables lifecycle actions", () => {

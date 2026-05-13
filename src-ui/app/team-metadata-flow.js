@@ -471,6 +471,15 @@ export async function listProjectMetadataRecords(team) {
   }
 }
 
+export async function listLocalProjectMetadataRecords(team) {
+  const records = await invoke("list_local_gnosis_project_metadata_records", {
+    installationId: team.installationId,
+  });
+  return (Array.isArray(records) ? records : [])
+    .map(normalizeProjectMetadataRecord)
+    .filter(Boolean);
+}
+
 export async function listGlossaryMetadataRecords(team) {
   const syncPromise = invoke("sync_local_team_metadata_repo", {
     installationId: team.installationId,

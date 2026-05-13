@@ -216,6 +216,31 @@ export async function invalidateTeamsQueryAfterMutation(options = {}) {
   }
 }
 
+export async function refreshCurrentUserTeamAccess(options = {}) {
+  if (!state.auth.session?.sessionToken || state.offline.isEnabled) {
+    return false;
+  }
+
+  const authLogin = options.authLogin ?? currentAuthLogin();
+  if (!authLogin) {
+    return false;
+  }
+
+  try {
+    const snapshot = await queryClient.fetchQuery(createTeamsQueryOptions({ authLogin }));
+    const applied = applyTeamsQuerySnapshotToState(snapshot, { authLogin, isFetching: false });
+    if (applied) {
+      options.render?.();
+    }
+    return applied;
+  } catch (error) {
+    if (options.throwOnError === true) {
+      throw error;
+    }
+    return false;
+  }
+}
+
 export function patchTeamQueryData(queryData, teamId, patch) {
   if (!queryData || typeof queryData !== "object") {
     return queryData;

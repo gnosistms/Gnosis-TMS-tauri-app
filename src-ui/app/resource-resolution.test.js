@@ -71,6 +71,41 @@ test("missing local repo repair state points to rebuild action", () => {
   assert.equal(resolution?.action, "rebuild-glossary-repo:glossary-1");
 });
 
+test("missing local repo repair state can be hidden during refresh", () => {
+  const resolution = deriveGlossaryResolution(
+    {
+      id: "glossary-1",
+      resolutionState: "repair",
+      remoteState: "linked",
+      recordState: "live",
+      repairIssueType: "missingLocalRepo",
+      repairIssueMessage: "Team metadata references this glossary, but its local repo is missing.",
+    },
+    null,
+    { suppressMissingLocalRepoRepair: true },
+  );
+
+  assert.equal(resolution, null);
+});
+
+test("non-missing-local repair state stays visible during refresh", () => {
+  const resolution = deriveProjectResolution(
+    {
+      id: "project-1",
+      resolutionState: "repair",
+      remoteState: "linked",
+      recordState: "live",
+      repairIssueType: "wrongRemote",
+      repairIssueMessage: "The local repo points at the wrong GitHub repo.",
+    },
+    null,
+    { suppressMissingLocalRepoRepair: true },
+  );
+
+  assert.equal(resolution?.key, "repair");
+  assert.match(resolution?.message ?? "", /wrong GitHub repo/i);
+});
+
 test("unresolved conflict state surfaces a sync warning without blocking content access", () => {
   const resolution = deriveProjectResolution(
     { id: "project-1", remoteState: "linked", recordState: "live" },

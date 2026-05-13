@@ -22,7 +22,10 @@ import {
   startGlossaryBackgroundSyncSession,
   syncAndStopGlossaryBackgroundSyncSession,
 } from "./glossary-background-sync.js";
-import { loadTeamProjects } from "./project-flow.js";
+import {
+  loadTeamProjects,
+  primeProjectsLoadingState,
+} from "./project-flow.js";
 import { loadUserTeams } from "./team-setup-flow.js";
 import { loadTeamUsers, primeUsersForTeam } from "./team-members-flow.js";
 import {
@@ -46,6 +49,15 @@ import {
 } from "./navigation-loading.js";
 import { resolveNavigationLeaveLoading } from "./navigation-leave-loading.js";
 import { clearNoticeBadge, clearScopedSyncBadge, showNoticeBadge } from "./status-feedback.js";
+import { refreshCurrentUserTeamAccess } from "./team-query.js";
+
+async function refreshVisibleTeamAccess(render) {
+  if (!state.selectedTeamId || state.screen === "teams") {
+    return;
+  }
+
+  await refreshCurrentUserTeamAccess({ render });
+}
 
 export async function handleNavigation(navTarget, render) {
   const previousScreen = state.screen;
@@ -131,12 +143,16 @@ export async function handleNavigation(navTarget, render) {
       hideNavigationLoadingModal(navigationLoadingToken);
     }
     state.screen = navTarget;
+    if (navTarget === "projects" && state.selectedTeamId) {
+      primeProjectsLoadingState(state.selectedTeamId);
+    }
     render();
     navigationRendered = true;
 
     if (navTarget === "projects" && state.selectedTeamId) {
       void waitForNextPaint().then(async () => {
         await pendingEditorProjectSync?.catch(() => null);
+        await refreshVisibleTeamAccess(render);
         return loadTeamProjects(render, state.selectedTeamId);
       });
     }
@@ -146,17 +162,22 @@ export async function handleNavigation(navTarget, render) {
     if (navTarget === "users" && state.selectedTeamId) {
       primeUsersForTeam(state.selectedTeamId);
       render();
-      void waitForNextPaint().then(() => loadTeamUsers(render, state.selectedTeamId));
+      void waitForNextPaint().then(async () => {
+        await refreshVisibleTeamAccess(render);
+        return loadTeamUsers(render, state.selectedTeamId);
+      });
     }
     if (navTarget === "glossaries" && state.selectedTeamId) {
-      void waitForNextPaint().then(() =>
-        loadTeamGlossaries(render, state.selectedTeamId, {
+      void waitForNextPaint().then(async () => {
+        await refreshVisibleTeamAccess(render);
+        return loadTeamGlossaries(render, state.selectedTeamId, {
           preserveVisibleData: preserveVisibleGlossaries,
-        })
-      );
+        });
+      });
     }
     if (navTarget === "glossaryEditor" && state.selectedGlossaryId) {
       void waitForNextPaint().then(async () => {
+        await refreshVisibleTeamAccess(render);
         await loadSelectedGlossaryEditorData(render);
         if (state.screen === "glossaryEditor" && state.glossaryEditor?.status === "ready") {
           startGlossaryBackgroundSyncSession(render);
@@ -165,6 +186,7 @@ export async function handleNavigation(navTarget, render) {
     }
     if (navTarget === "translate" && state.selectedChapterId) {
       void waitForNextPaint().then(async () => {
+        await refreshVisibleTeamAccess(render);
         await loadSelectedChapterEditorData(render, { preserveVisibleRows: true });
         if (state.screen === "translate" && state.editorChapter?.status === "ready") {
           startEditorBackgroundSyncSession(render);
@@ -194,16 +216,19 @@ export async function refreshCurrentScreen(render) {
   }
 
   if (screen === "projects") {
+    await refreshVisibleTeamAccess(render);
     await loadTeamProjects(render, state.selectedTeamId);
     return;
   }
 
   if (screen === "glossaries") {
+    await refreshVisibleTeamAccess(render);
     await loadTeamGlossaries(render, state.selectedTeamId, { preserveVisibleData: true });
     return;
   }
 
   if (screen === "glossaryEditor") {
+    await refreshVisibleTeamAccess(render);
     await maybeStartGlossaryBackgroundSync(render, { force: true });
     await loadSelectedGlossaryEditorData(render, { preserveVisibleData: true });
     return;
@@ -224,17 +249,20 @@ export async function refreshCurrentScreen(render) {
     }
 
     if (screen === "users") {
+      await refreshVisibleTeamAccess(render);
       await loadTeamUsers(render, state.selectedTeamId);
       return;
     }
 
     if (screen === "aiKey") {
+      await refreshVisibleTeamAccess(render);
       await loadAiSettingsPage(render);
       await completePageSync(render);
       return;
     }
 
     if (screen === "translate") {
+      await refreshVisibleTeamAccess(render);
       startEditorBackgroundSyncSession(render, { skipInitialSync: true });
       const syncResult = await syncEditorBackgroundNowWithSummary(render, {
         skipDirtyFlush: true,
