@@ -13,9 +13,9 @@
   align-items: center;
   column-gap: 16px;
   gap: 0 16px;
-  width: calc(100% + 36px);
-  margin-left: -18px;
-  margin-right: -18px;
+  width: calc(100% + var(--page-gutter-width));
+  margin-left: var(--page-gutter-negative);
+  margin-right: var(--page-gutter-negative);
 }
 
 .toolbar-row {
@@ -308,7 +308,7 @@
 
 .page-header--editor .toolbar-meta--preview {
   flex: 0 0 auto;
-  margin-right: -18px;
+  margin-right: var(--page-gutter-negative);
 }
 
 .page-header--editor .select-pill--preview-action {

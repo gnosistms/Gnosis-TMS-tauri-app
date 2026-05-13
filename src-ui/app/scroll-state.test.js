@@ -109,6 +109,7 @@ function installScrollFixture({ containerTop = 100, anchorTop = 140, scrollTop =
 
 const {
   captureLanguageToggleVisibilityAnchor,
+  captureVisibleTranslateLocation,
   captureVisibleTranslateRowLocation,
   captureTranslateAnchorForRow,
   readPendingTranslateAnchor,
@@ -396,4 +397,65 @@ test("captureVisibleTranslateRowLocation preserves partially scrolled row offset
     languageCode: null,
     offsetTop: -28,
   });
+});
+
+test("captureVisibleTranslateLocation preserves partially scrolled language panel offsets", () => {
+  installScrollFixture({ containerTop: 100, anchorTop: 72 });
+  const panel = new FakeHTMLElement(
+    {
+      top: 84,
+      bottom: 144,
+      left: 0,
+      right: 600,
+      width: 600,
+      height: 60,
+    },
+    {
+      dataset: {
+        rowId: "row-1",
+        languageCode: "vi",
+      },
+    },
+  );
+  selectorLists.set("[data-editor-language-panel]", [panel]);
+
+  const snapshot = captureVisibleTranslateLocation();
+
+  assert.deepEqual(snapshot, {
+    type: "language-panel",
+    rowId: "row-1",
+    languageCode: "vi",
+    offsetTop: -16,
+  });
+});
+
+test("restoreTranslateRowAnchor restores language panel anchors", () => {
+  const { container } = installScrollFixture();
+  const panel = new FakeHTMLElement(
+    {
+      top: 160,
+      bottom: 220,
+      left: 0,
+      right: 600,
+      width: 600,
+      height: 60,
+    },
+    {
+      dataset: {
+        rowId: "row-1",
+        languageCode: "vi",
+      },
+    },
+  );
+  selectors.set('[data-editor-language-panel][data-row-id="row-1"][data-language-code="vi"]', panel);
+
+  const restored = restoreTranslateRowAnchor({
+    type: "language-panel",
+    rowId: "row-1",
+    languageCode: "vi",
+    offsetTop: -20,
+  });
+
+  assert.equal(restored, true);
+  assert.equal(container.scrollTop, 130);
 });

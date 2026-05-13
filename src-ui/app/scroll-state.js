@@ -43,7 +43,7 @@ function captureTranslateScrollState() {
   };
 }
 
-function readTranslateMainScrollTop() {
+export function readTranslateMainScrollTop() {
   const container = document.querySelector(".translate-main-scroll");
   return isHtmlElement(container) ? container.scrollTop : null;
 }
@@ -356,6 +356,10 @@ export function restoreTranslateRowAnchor(snapshot) {
     anchor = document.querySelector(
       `[data-editor-language-toggle][data-row-id="${CSS.escape(snapshot.rowId)}"][data-language-code="${CSS.escape(snapshot.languageCode)}"]`,
     );
+  } else if (snapshot.type === "language-panel" && snapshot.languageCode) {
+    anchor = document.querySelector(
+      `[data-editor-language-panel][data-row-id="${CSS.escape(snapshot.rowId)}"][data-language-code="${CSS.escape(snapshot.languageCode)}"]`,
+    );
   } else if (snapshot.type === "field" && snapshot.languageCode) {
     anchor = document.querySelector(
       buildEditorFieldSelector(snapshot.rowId, snapshot.languageCode, snapshot.contentKind),
@@ -447,6 +451,7 @@ export function queueTranslateRowAnchor(snapshot) {
     snapshot.type === "field"
     || snapshot.type === "row"
     || snapshot.type === "deleted-group"
+    || snapshot.type === "language-panel"
     || snapshot.type === "language-toggle"
       ? snapshot.type
       : "language-toggle";
@@ -464,7 +469,7 @@ export function queueTranslateRowAnchor(snapshot) {
         ? snapshot.languageCode.trim()
         : null,
     ...(contentKind ? { contentKind } : {}),
-    offsetTop: Number.isFinite(Number(snapshot.offsetTop)) && Number(snapshot.offsetTop) >= 0
+    offsetTop: Number.isFinite(Number(snapshot.offsetTop))
       ? Number(snapshot.offsetTop)
       : 0,
     type,
@@ -489,9 +494,10 @@ export function captureVisibleTranslateLocation() {
   const panelCandidate = visiblePanels.find(({ rect }) => rect.bottom > containerRect.top) ?? visiblePanels[0] ?? null;
   if (isHtmlElement(panelCandidate?.element)) {
     return {
+      type: "language-panel",
       rowId: panelCandidate.element.dataset.rowId ?? "",
       languageCode: panelCandidate.element.dataset.languageCode ?? null,
-      offsetTop: Math.max(0, panelCandidate.rect.top - containerRect.top),
+      offsetTop: panelCandidate.rect.top - containerRect.top,
     };
   }
 
@@ -505,9 +511,10 @@ export function captureVisibleTranslateLocation() {
   const rowCandidate = visibleRows.find(({ rect }) => rect.bottom > containerRect.top) ?? visibleRows[0] ?? null;
   if (isHtmlElement(rowCandidate?.element)) {
     return {
+      type: "row",
       rowId: rowCandidate.element.dataset.rowId ?? "",
       languageCode: null,
-      offsetTop: Math.max(0, rowCandidate.rect.top - containerRect.top),
+      offsetTop: rowCandidate.rect.top - containerRect.top,
     };
   }
 

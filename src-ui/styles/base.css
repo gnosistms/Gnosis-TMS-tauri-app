@@ -53,7 +53,9 @@
   --radius-ui: 12px;
   --radius-card: var(--radius-ui);
   --radius-control: var(--radius-ui);
-  --header-text-inset: 32px;
+  --page-gutter: 16px;
+  --page-gutter-width: calc(var(--page-gutter) + var(--page-gutter));
+  --page-gutter-negative: calc(0px - var(--page-gutter));
   --header-height: 104px;
   --page-width: 1480px;
   --page-title-size: 36.75px;
@@ -197,7 +199,7 @@ a {
   column-gap: 24px;
   row-gap: 14px;
   position: relative;
-  padding: 18px 30px 20px;
+  padding: 18px var(--page-gutter) 20px;
   border-bottom: 1px solid rgba(164, 112, 41, 0.12);
   background: linear-gradient(
     180deg,
@@ -223,7 +225,7 @@ a {
 }
 
 .page-header__nav {
-  padding-left: var(--header-text-inset);
+  padding-left: 0;
 }
 
 .page-header__left-tools {
@@ -264,9 +266,9 @@ a {
   min-height: auto;
   grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
   padding-top: 0;
-  padding-right: 16px;
+  padding-right: var(--page-gutter);
   padding-bottom: 8px;
-  padding-left: 16px;
+  padding-left: var(--page-gutter);
   gap: 3px;
 }
 
@@ -336,7 +338,7 @@ a {
   justify-self: stretch;
   margin-top: 0;
   border-top: 0;
-  padding: 4px 18px 0;
+  padding: 4px var(--page-gutter) 0;
 }
 
 .page-header__title-row {

@@ -1,6 +1,7 @@
 import {
   captureVisibleTranslateLocation,
   queueTranslateRowAnchor,
+  readTranslateMainScrollTop,
   restoreTranslateRowAnchor,
 } from "./scroll-state.js";
 import { EDITOR_MODE_TRANSLATE, normalizeEditorMode } from "./editor-preview.js";
@@ -69,7 +70,30 @@ function persistEditorLocationForChapter(chapterId, { requireRestored = true } =
     return;
   }
 
-  saveStoredEditorLocation(chapterId, location);
+  const scrollTop = readTranslateMainScrollTop();
+  saveStoredEditorLocation(chapterId, {
+    ...location,
+    ...(Number.isFinite(scrollTop) ? { scrollTop } : {}),
+  });
+}
+
+function isHtmlElement(value) {
+  return typeof HTMLElement === "function" && value instanceof HTMLElement;
+}
+
+function restoreEditorLocationSnapshot(snapshot) {
+  let restoredScrollTop = false;
+  const scrollTop = Number(snapshot?.scrollTop);
+  if (Number.isFinite(scrollTop)) {
+    const container = document.querySelector(".translate-main-scroll");
+    if (isHtmlElement(container)) {
+      container.scrollTop = scrollTop;
+      restoredScrollTop = true;
+    }
+  }
+
+  const restoredAnchor = restoreTranslateRowAnchor(snapshot);
+  return restoredScrollTop || restoredAnchor;
 }
 
 function updatePendingEditorLocationRestore(appState) {
@@ -148,7 +172,7 @@ export function restorePendingEditorLocation(appState) {
     return false;
   }
 
-  const restored = restoreTranslateRowAnchor(pendingRestoreSnapshot);
+  const restored = restoreEditorLocationSnapshot(pendingRestoreSnapshot);
   if (!restored) {
     clearStoredEditorLocation(pendingRestoreSnapshot.chapterId);
   }

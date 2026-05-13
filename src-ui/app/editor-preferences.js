@@ -41,11 +41,22 @@ function normalizeStoredEditorLocationEntry(value) {
       ? value.languageCode.trim()
       : null;
   const offsetTop = Number(value.offsetTop);
+  const scrollTop = Number(value.scrollTop);
+  const type =
+    value.type === "field"
+    || value.type === "row"
+    || value.type === "deleted-group"
+    || value.type === "language-panel"
+    || value.type === "language-toggle"
+      ? value.type
+      : null;
 
   return {
+    ...(type ? { type } : {}),
     rowId,
     languageCode,
-    offsetTop: Number.isFinite(offsetTop) && offsetTop >= 0 ? offsetTop : 0,
+    offsetTop: Number.isFinite(offsetTop) ? offsetTop : 0,
+    ...(Number.isFinite(scrollTop) ? { scrollTop } : {}),
   };
 }
 

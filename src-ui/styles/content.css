@@ -21,7 +21,7 @@
 }
 
 .page-body > * {
-  width: min(var(--page-width), calc(100% - 32px));
+  width: min(var(--page-width), calc(100% - var(--page-gutter-width)));
   margin: 18px auto 0;
 }
 

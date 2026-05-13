@@ -24,6 +24,7 @@ class FakeHTMLElement extends FakeElement {
     super();
     this.rect = rect;
     this.dataset = options.dataset ?? {};
+    this.scrollTop = options.scrollTop ?? 0;
   }
 
   getBoundingClientRect() {
@@ -39,19 +40,24 @@ globalThis.CSS = {
   },
 };
 
-function installVisibleEditorLocationFixture() {
-  const container = new FakeHTMLElement({
-    top: 100,
-    bottom: 500,
-    left: 0,
-    right: 600,
-    width: 600,
-    height: 400,
-  });
+function installVisibleEditorLocationFixture({ panelTop = 180, scrollTop = 345 } = {}) {
+  const container = new FakeHTMLElement(
+    {
+      top: 100,
+      bottom: 500,
+      left: 0,
+      right: 600,
+      width: 600,
+      height: 400,
+    },
+    {
+      scrollTop,
+    },
+  );
   const panel = new FakeHTMLElement(
     {
-      top: 180,
-      bottom: 240,
+      top: panelTop,
+      bottom: panelTop + 60,
       left: 0,
       right: 600,
       width: 600,
@@ -175,9 +181,40 @@ test("prepareEditorLocationBeforeRender saves the latest visible location when l
   });
 
   assert.deepEqual(loadStoredEditorLocation(chapterId, login), {
+    type: "language-panel",
     rowId: "row-visible",
     languageCode: "vi",
     offsetTop: 80,
+    scrollTop: 345,
+  });
+
+  clearStoredEditorLocation(chapterId, login);
+  setActiveStorageLogin(null);
+});
+
+test("prepareEditorLocationBeforeRender preserves partially scrolled offsets when leaving the editor", () => {
+  const login = "editor-location-leave-partial";
+  const chapterId = "chapter-leave-partial";
+  setActiveStorageLogin(login);
+  clearStoredEditorLocation(chapterId, login);
+  installVisibleEditorLocationFixture({ panelTop: 72, scrollTop: 456 });
+
+  prepareEditorLocationBeforeRender("translate", {
+    screen: "glossaryEditor",
+    editorChapter: {
+      status: "ready",
+      chapterId,
+      mode: "translate",
+      rows: [{ rowId: "row-visible" }],
+    },
+  });
+
+  assert.deepEqual(loadStoredEditorLocation(chapterId, login), {
+    type: "language-panel",
+    rowId: "row-visible",
+    languageCode: "vi",
+    offsetTop: -28,
+    scrollTop: 456,
   });
 
   clearStoredEditorLocation(chapterId, login);
