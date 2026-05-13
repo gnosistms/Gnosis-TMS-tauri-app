@@ -22,7 +22,7 @@
 
 .page-body > * {
   width: min(var(--page-width), calc(100% - var(--page-gutter-width)));
-  margin: 18px auto 0;
+  margin: var(--page-gutter) auto 0;
 }
 
 .page-body--editor > * {

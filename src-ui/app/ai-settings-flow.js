@@ -1,5 +1,4 @@
 import { invoke } from "./runtime.js";
-import { openTranslateChapter } from "./translate-flow.js";
 import { selectedProjectsTeamInstallationId } from "./project-context.js";
 import { clearNoticeBadge, showNoticeBadge } from "./status-feedback.js";
 import {
@@ -974,6 +973,7 @@ export async function saveAiProviderSecret(render) {
       state.aiSettings.returnScreen === "translate" && Boolean(state.selectedChapterId);
     if (shouldReturnToTranslate) {
       state.aiReviewMissingKeyModal = createAiReviewMissingKeyModalState();
+      const { openTranslateChapter } = await import("./translate-open-chapter-flow.js");
       await openTranslateChapter(render, state.selectedChapterId);
       return;
     }

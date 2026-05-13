@@ -418,7 +418,7 @@
 }
 
 .translate-sidebar-scroll {
-  padding: 18px 16px 18px 8px;
+  padding: var(--page-gutter) var(--page-gutter) var(--page-gutter) var(--page-gutter-half);
 }
 
 .translate-main {
@@ -426,7 +426,7 @@
   --translation-row-select-gap: 0px;
   display: grid;
   gap: 24px;
-  padding: 18px 8px 44px 16px;
+  padding: var(--page-gutter) var(--page-gutter-half) 44px var(--page-gutter);
 }
 
 .translate-layout--preview {
