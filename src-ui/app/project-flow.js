@@ -363,6 +363,15 @@ export function primeProjectsLoadingState(teamId = state.selectedTeamId) {
   );
 }
 
+export function finishProjectsLoadingForTeam(teamId = state.selectedTeamId, render) {
+  if (state.selectedTeamId !== teamId) {
+    return false;
+  }
+  state.projectsPage.isRefreshing = false;
+  render?.();
+  return true;
+}
+
 export async function loadTeamProjects(render, teamId = state.selectedTeamId) {
   const selectedTeam = state.teams.find((team) => team.id === teamId);
   const previousProjectSnapshot = {
@@ -427,8 +436,7 @@ export async function loadTeamProjects(render, teamId = state.selectedTeamId) {
     }
     throw error;
   } finally {
-    state.projectsPage.isRefreshing = false;
-    render?.();
+    finishProjectsLoadingForTeam(selectedTeam?.id ?? teamId, render);
   }
 }
 

@@ -175,15 +175,16 @@ export function renderGlossariesScreen(state) {
   const canPermanentlyDelete = shouldShowDeletedGlossaryPermanentDelete(selectedTeam);
   const canManageAiSettings = canManageTeamAiSettings(selectedTeam);
   const offlineMode = state.offline?.isEnabled === true;
+  const discovery = state.glossaryDiscovery ?? { status: "idle", error: "", brokerWarning: "" };
+  const discoveryLoading = discovery.status === "loading";
   const lifecycleActionsDisabled = areResourcePageWriteSubmissionsDisabled(state.glossariesPage);
   const coordinatorWriteActive = anyGlossaryWriteIsActive();
   const writeActionsDisabled =
-    areResourcePageWritesDisabled(state.glossariesPage) || anyGlossaryMutatingWriteIsActive();
-  const discovery = state.glossaryDiscovery ?? { status: "idle", error: "", brokerWarning: "" };
+    areResourcePageWritesDisabled(state.glossariesPage) || discoveryLoading || anyGlossaryMutatingWriteIsActive();
   const refreshInProgress =
     state.glossariesPage?.isRefreshing === true
     || state.pageSync?.status === "syncing"
-    || discovery.status === "loading";
+    || discoveryLoading;
   const syncSnapshotsByRepoName = state.glossaryRepoSyncByRepoName ?? {};
   const defaultGlossaryId = activeDefaultGlossaryIdForTeam(selectedTeam);
   const recoveryMessage =

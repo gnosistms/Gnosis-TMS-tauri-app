@@ -149,6 +149,25 @@ test("glossary refresh keeps read-only and query-backed lifecycle actions enable
   assert.match(actionButtonHtml(html, "refresh-page"), /aria-disabled="true"/);
 });
 
+test("glossary discovery loading disables heavy write actions even if refresh flag is stale", () => {
+  setGlossaryScreenState({
+    glossariesPage: { isRefreshing: false, writeState: "idle" },
+    glossaries: [],
+  });
+  state.glossaryDiscovery = {
+    status: "loading",
+    error: "",
+    brokerWarning: "",
+    recoveryMessage: "",
+  };
+
+  const html = renderGlossariesScreen(state);
+
+  assert.match(html, /Loading glossaries\.\.\./);
+  assert.match(actionButtonHtml(html, "import-glossary"), /disabled/);
+  assert.match(actionButtonHtml(html, "open-new-glossary"), /disabled/);
+});
+
 test("glossary missing local repo repair warning returns after refresh", () => {
   setGlossaryScreenState({
     glossariesPage: { isRefreshing: false, writeState: "idle" },

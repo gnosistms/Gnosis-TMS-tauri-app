@@ -131,6 +131,25 @@ test("project background refresh spins and disables the refresh button", () => {
   assert.match(actionButtonHtml(html, "refresh-page"), /aria-disabled="true"/);
 });
 
+test("project discovery loading disables project creation even if refresh flag is stale", () => {
+  const html = renderProjectsScreen(projectsState({
+    projects: [],
+    projectDiscovery: {
+      status: "loading",
+      error: "",
+      glossaryWarning: "",
+      recoveryMessage: "",
+    },
+    projectsPage: {
+      isRefreshing: false,
+      writeState: "idle",
+    },
+  }));
+
+  assert.match(html, /Loading projects\.\.\./);
+  assert.match(actionButtonHtml(html, "open-new-project"), /disabled/);
+});
+
 test("project refresh hides missing local repo repair warnings while setup is in progress", () => {
   const html = renderProjectsScreen(projectsState({
     projectsPage: {

@@ -45,11 +45,16 @@ export function primeGlossariesLoadingState(teamId = state.selectedTeamId, optio
 
   state.glossaries = [];
   state.selectedGlossaryId = null;
+  state.glossariesPage.isRefreshing = true;
   state.glossaryDiscovery = {
     ...createGlossaryDiscoveryState(),
     status: "loading",
     recoveryMessage: "",
   };
+}
+
+function isGlossaryLoadCurrent(teamId, syncVersionAtStart) {
+  return state.selectedTeamId === teamId && state.glossarySyncVersion === syncVersionAtStart;
 }
 
 export async function loadTeamGlossaries(
@@ -94,6 +99,9 @@ export async function loadTeamGlossaries(
   showNoticeBadge("Loading glossaries...", render, null);
   render();
   await waitForNextPaint();
+  if (!isGlossaryLoadCurrent(team?.id ?? teamId, syncVersionAtStart)) {
+    return;
+  }
 
   try {
     if (!preserveVisibleData && state.glossaries.length === 0) {
@@ -101,15 +109,14 @@ export async function loadTeamGlossaries(
         teamId: team.id,
         render,
       });
-      if (syncVersionAtStart !== state.glossarySyncVersion) {
-        await completePageSync(render);
-        clearNoticeBadge();
-        state.glossariesPage.isRefreshing = false;
-        render();
+      if (!isGlossaryLoadCurrent(team.id, syncVersionAtStart)) {
         return;
       }
       if (localSnapshot) {
         await waitForNextPaint();
+        if (!isGlossaryLoadCurrent(team.id, syncVersionAtStart)) {
+          return;
+        }
       }
     }
 
@@ -125,11 +132,7 @@ export async function loadTeamGlossaries(
       render,
     });
     const querySnapshot = await queryClient.fetchQuery(queryOptions);
-    if (syncVersionAtStart !== state.glossarySyncVersion) {
-      await completePageSync(render);
-      clearNoticeBadge();
-      state.glossariesPage.isRefreshing = false;
-      render();
+    if (!isGlossaryLoadCurrent(team.id, syncVersionAtStart)) {
       return;
     }
     showNoticeBadge("Refreshing glossary list...", render, null);
@@ -159,11 +162,7 @@ export async function loadTeamGlossaries(
     state.glossariesPage.isRefreshing = false;
     render();
   } catch (error) {
-    if (syncVersionAtStart !== state.glossarySyncVersion) {
-      failPageSync();
-      clearNoticeBadge();
-      state.glossariesPage.isRefreshing = false;
-      render();
+    if (!isGlossaryLoadCurrent(team?.id ?? teamId, syncVersionAtStart)) {
       return;
     }
     if (

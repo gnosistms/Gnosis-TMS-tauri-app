@@ -42,7 +42,10 @@ const {
   resetProjectWriteCoordinator,
   teamMetadataWriteScope,
 } = await import("./project-write-coordinator.js");
-const { primeProjectsLoadingState } = await import("./project-flow.js");
+const {
+  finishProjectsLoadingForTeam,
+  primeProjectsLoadingState,
+} = await import("./project-flow.js");
 
 function project(overrides = {}) {
   return {
@@ -156,6 +159,21 @@ test("project loading prime clears stale visible projects before team render", (
   assert.deepEqual(state.projectsSearch.results, []);
   assert.equal(state.projectDiscovery.status, "loading");
   assert.equal(state.projectsPage.isRefreshing, true);
+});
+
+test("project loading finish ignores stale team completions", () => {
+  resetSessionState();
+  state.selectedTeamId = "team-2";
+  state.projectsPage = createResourcePageState({ isRefreshing: true });
+  let rendered = false;
+
+  const applied = finishProjectsLoadingForTeam("team-1", () => {
+    rendered = true;
+  });
+
+  assert.equal(applied, false);
+  assert.equal(state.projectsPage.isRefreshing, true);
+  assert.equal(rendered, false);
 });
 
 test("project query adapter overlays active project title intents during refresh", async () => {

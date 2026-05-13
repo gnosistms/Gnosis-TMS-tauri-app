@@ -538,16 +538,17 @@ export function renderProjectsScreen(state) {
   const canPermanentlyDeleteFiles = canPermanentlyDeleteProjectFiles(selectedTeam);
   const canManageAiSettings = canManageTeamAiSettings(selectedTeam);
   const offlineMode = state.offline?.isEnabled === true;
-  const pageWritesDisabled = areResourcePageWritesDisabled(state.projectsPage);
+  const discovery = state.projectDiscovery ?? { status: "idle", error: "", glossaryWarning: "" };
+  const discoveryLoading = discovery.status === "loading";
+  const pageWritesDisabled = areResourcePageWritesDisabled(state.projectsPage) || discoveryLoading;
   const heavyActionsDisabled = pageWritesDisabled || anyProjectWriteIsActive();
   const mutatingWriteActionsDisabled = pageWritesDisabled || anyProjectMutatingWriteIsActive();
   const lifecycleActionsDisabled = areResourcePageWriteSubmissionsDisabled(state.projectsPage);
   const importInProgress = state.projectImport?.status === "importing";
-  const discovery = state.projectDiscovery ?? { status: "idle", error: "", glossaryWarning: "" };
   const refreshInProgress =
     state.projectsPage?.isRefreshing === true
     || state.projectsPageSync?.status === "syncing"
-    || discovery.status === "loading";
+    || discoveryLoading;
   const syncSnapshotsByProjectId = state.projectRepoSyncByProjectId ?? {};
   const recoveryMessage =
     typeof discovery.recoveryMessage === "string" && discovery.recoveryMessage.trim()
