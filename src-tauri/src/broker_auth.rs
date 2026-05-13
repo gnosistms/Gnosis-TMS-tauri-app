@@ -39,7 +39,8 @@ pub(crate) fn begin_broker_auth(
     auth_url
         .query_pairs_mut()
         .append_pair("state", &csrf_state)
-        .append_pair("desktop_redirect_uri", &broker_auth_callback_url());
+        .append_pair("desktop_redirect_uri", &broker_auth_callback_url())
+        .append_pair("prompt", "select_account");
 
     let mut pending = state
         .pending_broker_auth
