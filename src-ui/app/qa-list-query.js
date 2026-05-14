@@ -1,26 +1,18 @@
-import { qaListKeys, queryClient, subscribeQueryObserver } from "./query-client.js";
+import { qaListKeys } from "./query-client.js";
 import { loadStoredQaListsForTeam, saveStoredQaListsForTeam } from "./qa-list-cache.js";
 import {
   loadRepoBackedQaListsForTeam,
   listLocalQaListsForTeam,
 } from "./qa-list-repo-flow.js";
 import { normalizeQaList, sortQaLists } from "./qa-list-shared.js";
+import { createRepoResourceQueryController } from "./repo-resource/query-controller.js";
 import { setResourcePageDataOwner, setResourcePageRefreshing } from "./resource-page-controller.js";
 import { createQaListDiscoveryState, state } from "./state.js";
-import { showNoticeBadge } from "./status-feedback.js";
 import { teamCacheKey } from "./team-cache.js";
 import {
   applyQaListWriteIntentsToSnapshot,
   clearConfirmedQaListWriteIntents,
 } from "./qa-list-write-coordinator.js";
-
-let activeQaListsQuerySubscription = null;
-
-export function resetQaListsQueryObserver() {
-  activeQaListsQuerySubscription?.unsubscribe?.();
-  activeQaListsQuerySubscription?.observer?.destroy?.();
-  activeQaListsQuerySubscription = null;
-}
 
 function qaListRepoSyncByRepoName(syncSnapshots = []) {
   return Object.fromEntries(
@@ -162,20 +154,6 @@ export function upsertQaListQueryData(queryData, qaList) {
   };
 }
 
-function removeQaListFromQueryData(queryData, qaListId) {
-  if (!queryData || typeof queryData !== "object") {
-    return queryData;
-  }
-  const qaLists = Array.isArray(queryData.qaLists) ? queryData.qaLists : [];
-  const nextQaLists = qaLists.filter((qaList) => qaList?.id !== qaListId);
-  return nextQaLists.length === qaLists.length
-    ? queryData
-    : {
-      ...queryData,
-      qaLists: nextQaLists,
-    };
-}
-
 function qaListLifecycleIntent(qaList) {
   if (typeof qaList?.pendingMutation === "string" && qaList.pendingMutation.trim()) {
     return qaList.pendingMutation.trim();
@@ -302,174 +280,98 @@ export function preserveQaListLifecyclePatchesInSnapshot(nextSnapshot, previousS
 
 export const preservePendingQaListLifecyclePatches = preserveQaListLifecyclePatchesInSnapshot;
 
-function moveQaListToLifecycle(queryData, qaListId, lifecycleState, patch = {}) {
-  return patchQaListQueryData(queryData, qaListId, {
-    ...patch,
-    lifecycleState,
-  });
+const qaListQueryController = createRepoResourceQueryController({
+  kind: "qaList",
+  collectionField: "qaLists",
+  resourceIdField: "qaListId",
+  queryKeyForTeam: qaListKeys.byTeam,
+  getSelectedTeamId: () => state.selectedTeamId,
+  createSnapshot: createQaListsQuerySnapshot,
+  applySnapshotToState: applyQaListsQuerySnapshotToState,
+  preserveSnapshot: preserveQaListLifecyclePatchesInSnapshot,
+  patchQueryData: patchQaListQueryData,
+  loadCacheEntry: loadStoredQaListsForTeam,
+  cacheEntryItems: (entry) => entry.qaLists,
+  loadLocalItems: listLocalQaListsForTeam,
+  canSeedFromLocal: (team) => Number.isFinite(team?.installationId),
+  localSnapshotInput: () => ({ discovery: { status: "ready" } }),
+  persistSnapshot: (team, snapshot) => saveStoredQaListsForTeam(team, snapshot.qaLists),
+  setRefreshing: (isRefreshing) => setResourcePageRefreshing(state.qaListsPage, isRefreshing),
+  isRefreshing: () => state.qaListsPage?.isRefreshing === true,
+  applyObserverError: (error, { isFetching } = {}) => {
+    state.qaListDiscovery = createQaListDiscoverySnapshot({
+      status: "error",
+      error: error?.message ?? String(error),
+    });
+    setResourcePageRefreshing(state.qaListsPage, isFetching === true);
+  },
+  createLifecycleMutationPayload: ({ resource, mutationType, optimisticData }) => {
+    const mutation = {
+      type: mutationType,
+      qaListId: resource.id,
+    };
+    if (mutationType === "rename") {
+      mutation.title = optimisticData.title;
+      mutation.previousTitle = resource.title;
+    }
+    return mutation;
+  },
+  normalizeMutationResultPatch: (resource, result) =>
+    result && typeof result === "object" ? normalizeQaList({ ...resource, ...result }) : null,
+  loadRemoteSnapshot: async (team) => {
+    const result = await loadRepoBackedQaListsForTeam(team, {
+      offlineMode: state.offline?.isEnabled === true,
+    });
+    const cached = result.qaLists.length > 0 ? null : loadStoredQaListsForTeam(team);
+    const qaLists = result.qaLists.length > 0 || !cached?.exists
+      ? result.qaLists
+      : cached.qaLists;
+
+    return createQaListsQuerySnapshot({
+      qaLists,
+      syncSnapshots: result.syncSnapshots,
+      syncIssue: result.syncIssue,
+      brokerWarning: result.brokerWarning,
+      recoveryMessage: result.recoveryMessage,
+      discovery: { status: "ready" },
+    });
+  },
+});
+
+export function resetQaListsQueryObserver() {
+  qaListQueryController.resetObserver();
 }
 
 export function seedQaListsQueryFromCache(team, {
   teamId = team?.id,
   render,
 } = {}) {
-  const expectedCacheKey = teamCacheKey(team);
-  const cachedQaLists = loadStoredQaListsForTeam(team);
-  if (
-    state.selectedTeamId !== teamId
-    || !cachedQaLists?.exists
-    || cachedQaLists.cacheKey !== expectedCacheKey
-  ) {
-    return null;
-  }
-
-  const queryKey = qaListKeys.byTeam(teamId);
-  const previousQueryData = queryClient.getQueryData(queryKey);
-  const snapshot = preserveQaListLifecyclePatchesInSnapshot(
-    createQaListsQuerySnapshot({
-      qaLists: cachedQaLists.qaLists,
-      discovery: { status: "ready" },
-    }),
-    previousQueryData,
-  );
-  queryClient.setQueryData(queryKey, snapshot);
-  applyQaListsQuerySnapshotToState(snapshot, {
+  return qaListQueryController.seedFromCache(team, {
     teamId,
-    isFetching: true,
-    cacheKey: expectedCacheKey,
-    cacheUpdatedAt: cachedQaLists.updatedAt,
+    render,
   });
-  render?.();
-  return snapshot;
 }
 
 export function createQaListsQueryOptions(team, options = {}) {
-  const teamId = options.teamId ?? team?.id ?? null;
-  return {
-    queryKey: qaListKeys.byTeam(teamId),
-    queryFn: async () => {
-      const result = await loadRepoBackedQaListsForTeam(team, {
-        offlineMode: state.offline?.isEnabled === true,
-      });
-      const cached = result.qaLists.length > 0 ? null : loadStoredQaListsForTeam(team);
-      const qaLists = result.qaLists.length > 0 || !cached?.exists
-        ? result.qaLists
-        : cached.qaLists;
-
-      const nextSnapshot = createQaListsQuerySnapshot({
-        qaLists,
-        syncSnapshots: result.syncSnapshots,
-        syncIssue: result.syncIssue,
-        brokerWarning: result.brokerWarning,
-        recoveryMessage: result.recoveryMessage,
-        discovery: { status: "ready" },
-      });
-      return preserveQaListLifecyclePatchesInSnapshot(
-        nextSnapshot,
-        queryClient.getQueryData(qaListKeys.byTeam(teamId)),
-      );
-    },
-  };
+  return qaListQueryController.createQueryOptions(team, options);
 }
 
 export async function seedQaListsQueryFromLocal(team, {
   teamId = team?.id,
   render,
 } = {}) {
-  if (!Number.isFinite(team?.installationId) || state.selectedTeamId !== teamId) {
-    return null;
-  }
-
-  const localQaLists = await listLocalQaListsForTeam(team);
-  if (!Array.isArray(localQaLists) || localQaLists.length === 0 || state.selectedTeamId !== teamId) {
-    return null;
-  }
-
-  const queryKey = qaListKeys.byTeam(teamId);
-  const snapshot = preserveQaListLifecyclePatchesInSnapshot(
-    createQaListsQuerySnapshot({
-      qaLists: localQaLists,
-      discovery: { status: "ready" },
-    }),
-    queryClient.getQueryData(queryKey),
-  );
-  queryClient.setQueryData(queryKey, snapshot);
-  applyQaListsQuerySnapshotToState(snapshot, {
+  return qaListQueryController.seedFromLocal(team, {
     teamId,
-    isFetching: true,
-    cacheKey: teamCacheKey(team),
+    render,
   });
-  saveStoredQaListsForTeam(team, snapshot.qaLists);
-  render?.();
-  return snapshot;
 }
 
 export function ensureQaListsQueryObserver(render, team, options = {}) {
-  const teamId = options.teamId ?? team?.id ?? null;
-  const queryKey = qaListKeys.byTeam(teamId);
-  const currentKey = JSON.stringify(queryKey);
-  if (activeQaListsQuerySubscription?.key === currentKey) {
-    activeQaListsQuerySubscription.observer?.setOptions?.(
-      createQaListsQueryOptions(team, {
-        ...options,
-        teamId,
-      }),
-    );
-    return activeQaListsQuerySubscription;
-  }
-
-  activeQaListsQuerySubscription?.unsubscribe?.();
-  const subscription = subscribeQueryObserver(
-    createQaListsQueryOptions(team, {
-      ...options,
-      teamId,
-    }),
-    (result) => {
-      if (result.data) {
-        applyQaListsQuerySnapshotToState(result.data, {
-          teamId,
-          isFetching: result.isFetching,
-        });
-      } else if (result.error && state.selectedTeamId === teamId) {
-        state.qaListDiscovery = createQaListDiscoverySnapshot({
-          status: "error",
-          error: result.error?.message ?? String(result.error),
-        });
-        setResourcePageRefreshing(state.qaListsPage, result.isFetching === true);
-      } else if (state.selectedTeamId === teamId) {
-        setResourcePageRefreshing(state.qaListsPage, result.isFetching === true);
-      }
-      render?.();
-    },
-  );
-
-  activeQaListsQuerySubscription = {
-    ...subscription,
-    key: currentKey,
-    teamId,
-  };
-  return activeQaListsQuerySubscription;
+  return qaListQueryController.ensureObserver(render, team, options);
 }
 
 export async function invalidateQaListsQueryAfterMutation(team, options = {}) {
-  const teamId = options.teamId ?? team?.id ?? null;
-  const queryKey = qaListKeys.byTeam(teamId);
-  const query = queryClient.getQueryCache().find({ queryKey });
-  const hasActiveObserver = typeof query?.getObserversCount === "function"
-    ? query.getObserversCount() > 0
-    : false;
-
-  await queryClient.invalidateQueries({
-    queryKey,
-    refetchType: hasActiveObserver ? "active" : "none",
-  });
-
-  if (!hasActiveObserver && options.refetchIfInactive !== false) {
-    await queryClient.fetchQuery(createQaListsQueryOptions(team, {
-      ...options,
-      teamId,
-    }));
-  }
+  await qaListQueryController.invalidateAfterMutation(team, options);
 }
 
 function createQaListLifecycleMutationOptions({
@@ -484,105 +386,18 @@ function createQaListLifecycleMutationOptions({
   onErrorApplied,
   render,
 } = {}) {
-  const teamId = team?.id ?? null;
-  const queryKey = qaListKeys.byTeam(teamId);
-  return {
-    mutationKey: ["qaList", mutationType, qaList?.id ?? null],
-    scope: { id: `team-metadata:${team?.installationId ?? "unknown"}` },
-    mutationFn: async () => {
-      if (typeof commitMutation !== "function") {
-        return null;
-      }
-      const mutation = {
-        type: mutationType,
-        qaListId: qaList.id,
-      };
-      if (mutationType === "rename") {
-        mutation.title = optimisticData.title;
-        mutation.previousTitle = qaList.title;
-      }
-      return commitMutation(team, mutation);
-    },
-    onMutate: async () => {
-      await queryClient.cancelQueries({ queryKey });
-      const previousQueryData = queryClient.getQueryData(queryKey);
-      let optimisticQueryData = previousQueryData;
-      if (mutationType === "softDelete") {
-        optimisticQueryData = moveQaListToLifecycle(previousQueryData, qaList.id, "deleted", optimisticData);
-      } else if (mutationType === "restore") {
-        optimisticQueryData = moveQaListToLifecycle(previousQueryData, qaList.id, "active", optimisticData);
-      } else if (mutationType === "permanentDelete") {
-        optimisticQueryData = removeQaListFromQueryData(previousQueryData, qaList.id);
-      } else {
-        optimisticQueryData = patchQaListQueryData(previousQueryData, qaList.id, optimisticData);
-      }
-      if (optimisticQueryData) {
-        queryClient.setQueryData(queryKey, optimisticQueryData);
-        applyQaListsQuerySnapshotToState(optimisticQueryData, {
-          teamId,
-          isFetching: state.qaListsPage?.isRefreshing === true,
-        });
-      }
-      onOptimisticApplied?.(optimisticQueryData);
-      render?.();
-      return { previousQueryData };
-    },
-    onError: (error, _variables, context) => {
-      if (context?.previousQueryData) {
-        queryClient.setQueryData(queryKey, context.previousQueryData);
-        applyQaListsQuerySnapshotToState(context.previousQueryData, {
-          teamId,
-          isFetching: state.qaListsPage?.isRefreshing === true,
-        });
-      }
-      onErrorApplied?.(error, context);
-      if (typeof render === "function") {
-        showNoticeBadge(error?.message ?? String(error), render);
-      }
-      render?.();
-    },
-    onSuccess: (result) => {
-      const currentQueryData = queryClient.getQueryData(queryKey);
-      const resultPatch = result && typeof result === "object" ? normalizeQaList({ ...qaList, ...result }) : null;
-      let settledQueryData = currentQueryData;
-      if (mutationType === "softDelete") {
-        settledQueryData = moveQaListToLifecycle(currentQueryData, qaList.id, "deleted", {
-          ...settledData,
-          ...(resultPatch ?? {}),
-          lifecycleState: "deleted",
-        });
-      } else if (mutationType === "restore") {
-        settledQueryData = moveQaListToLifecycle(currentQueryData, qaList.id, "active", {
-          ...settledData,
-          ...(resultPatch ?? {}),
-          lifecycleState: "active",
-        });
-      } else if (mutationType === "permanentDelete") {
-        settledQueryData = removeQaListFromQueryData(currentQueryData, qaList.id);
-      } else {
-        settledQueryData = patchQaListQueryData(currentQueryData, qaList.id, {
-          ...settledData,
-          ...(resultPatch ?? {}),
-        });
-      }
-      if (settledQueryData) {
-        queryClient.setQueryData(queryKey, settledQueryData);
-        applyQaListsQuerySnapshotToState(settledQueryData, {
-          teamId,
-          isFetching: state.qaListsPage?.isRefreshing === true,
-        });
-      }
-      onSuccessApplied?.(settledQueryData, result);
-      render?.();
-    },
-    onSettled: async () => {
-      await invalidateQaListsQueryAfterMutation(team, {
-        teamId,
-        render,
-        refetchIfInactive: false,
-      });
-    },
-  };
+  return qaListQueryController.createLifecycleMutationOptions({
+    team,
+    resource: qaList,
+    mutationType,
+    optimisticData,
+    settledData,
+    commitMutation,
+    onOptimisticApplied,
+    onSuccessApplied,
+    onErrorApplied,
+    render,
+  });
 }
 
 export function createQaListRenameMutationOptions({

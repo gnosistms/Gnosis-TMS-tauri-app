@@ -41,6 +41,10 @@ import {
 const DEFAULT_QA_LIST_LABEL_TOOLTIP =
   "New files opened in the editor will automatically use this QA list for this language.";
 
+function hasPendingQaListMutation(qaLists) {
+  return qaLists.some((qaList) => typeof qaList?.pendingMutation === "string" && qaList.pendingMutation.trim());
+}
+
 function renderQaListCard(qaList, options = {}) {
   const canManage = options.canManage === true;
   const canPermanentlyDelete = options.canPermanentlyDelete === true;
@@ -181,12 +185,14 @@ export function renderQaScreen(state) {
   const discoveryLoading = discovery.status === "loading";
   const lifecycleActionsDisabled = areResourcePageWriteSubmissionsDisabled(state.qaListsPage);
   const coordinatorWriteActive = anyQaListWriteIsActive();
+  const queryLifecycleWriteActive = hasPendingQaListMutation(state.qaLists);
   const writeActionsDisabled =
     areResourcePageWritesDisabled(state.qaListsPage) || discoveryLoading || anyQaListMutatingWriteIsActive();
   const refreshInProgress =
     state.qaListsPage?.isRefreshing === true
     || state.pageSync?.status === "syncing"
-    || discoveryLoading;
+    || discoveryLoading
+    || queryLifecycleWriteActive;
   const syncSnapshotsByRepoName = state.qaListRepoSyncByRepoName ?? {};
   const recoveryMessage =
     typeof discovery.recoveryMessage === "string" && discovery.recoveryMessage.trim()

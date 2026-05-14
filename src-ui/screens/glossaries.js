@@ -42,6 +42,10 @@ import {
 const DEFAULT_GLOSSARY_LABEL_TOOLTIP =
   "New files uploaded to projects will automatically be assigned to use this glossary.";
 
+function hasPendingGlossaryMutation(glossaries) {
+  return glossaries.some((glossary) => typeof glossary?.pendingMutation === "string" && glossary.pendingMutation.trim());
+}
+
 function renderGlossaryLanguageFlow(glossary) {
   return `
     <span class="glossary-card__language-flow">
@@ -175,12 +179,14 @@ export function renderGlossariesScreen(state) {
   const discoveryLoading = discovery.status === "loading";
   const lifecycleActionsDisabled = areResourcePageWriteSubmissionsDisabled(state.glossariesPage);
   const coordinatorWriteActive = anyGlossaryWriteIsActive();
+  const queryLifecycleWriteActive = hasPendingGlossaryMutation(state.glossaries);
   const writeActionsDisabled =
     areResourcePageWritesDisabled(state.glossariesPage) || discoveryLoading || anyGlossaryMutatingWriteIsActive();
   const refreshInProgress =
     state.glossariesPage?.isRefreshing === true
     || state.pageSync?.status === "syncing"
-    || discoveryLoading;
+    || discoveryLoading
+    || queryLifecycleWriteActive;
   const syncSnapshotsByRepoName = state.glossaryRepoSyncByRepoName ?? {};
   const defaultGlossaryId = activeDefaultGlossaryIdForTeam(selectedTeam);
   const recoveryMessage =
@@ -266,7 +272,8 @@ export function renderGlossariesScreen(state) {
       title: "Glossaries",
       subtitle: selectedTeam?.name ?? "Team",
       titleAction: buildPageRefreshAction(state, state.pageSync, "refresh-page", {
-        backgroundRefreshing: state.glossariesPage?.isRefreshing === true || coordinatorWriteActive,
+        backgroundRefreshing: state.glossariesPage?.isRefreshing === true || coordinatorWriteActive || queryLifecycleWriteActive,
+        backgroundRefreshStartedAt: state.glossariesPage?.refreshStartedAt,
       }),
       navButtons: buildSectionNav("glossaries", { includeAiSettings: canManageAiSettings }),
       tools: canCreate

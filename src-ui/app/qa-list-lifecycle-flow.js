@@ -279,9 +279,6 @@ export async function deleteQaList(render, qaListId) {
       team,
       qaList,
       commitMutation: commitQaListLifecycleMutation,
-      onOptimisticApplied: () => {
-        state.showDeletedQaLists = true;
-      },
       onSuccessApplied: (queryData) => {
         removeQaListEditorQuery(team, qaList);
         updateDefaultQaListAfterDeletion(team, qaList);

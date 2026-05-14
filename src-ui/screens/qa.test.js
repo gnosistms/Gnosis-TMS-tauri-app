@@ -66,6 +66,26 @@ test("QA list refresh spins and disables the refresh button during background re
   assert.match(actionButtonHtml(html, "refresh-page"), /aria-disabled="true"/);
 });
 
+test("QA list pending lifecycle mutations spin the refresh button", () => {
+  setQaScreenState({
+    qaListsPage: { isRefreshing: false },
+    qaLists: [{
+      id: "qa-list-1",
+      title: "Vietnamese QA",
+      language: { code: "vi", name: "Vietnamese" },
+      lifecycleState: "deleted",
+      pendingMutation: "softDelete",
+      termCount: 1,
+      terms: [],
+    }],
+  });
+
+  const html = renderQaScreen(state);
+
+  assert.match(actionButtonHtml(html, "refresh-page"), /\bis-spinning\b/);
+  assert.match(actionButtonHtml(html, "refresh-page"), /aria-disabled="true"/);
+});
+
 test("QA list discovery loading also spins the refresh button", () => {
   setQaScreenState({
     qaListsPage: { isRefreshing: false },

@@ -316,9 +316,6 @@ export async function deleteGlossary(render, glossaryId) {
       team,
       glossary,
       commitMutation: commitGlossaryMutationStrict,
-      onOptimisticApplied: () => {
-        state.showDeletedGlossaries = true;
-      },
       onSuccessApplied: () => {
         removeGlossaryEditorQuery(team, glossary);
         updateDefaultGlossaryAfterDeletion(team, glossary.id);

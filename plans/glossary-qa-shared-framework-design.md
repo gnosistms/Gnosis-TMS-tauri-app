@@ -373,7 +373,31 @@ export const seedQaListsQueryFromCache = qaListQuery.seedFromCache;
 
 This preserves readable domain imports while removing duplicated workflow code.
 
+## Pre-Implementation Guardrails
+
+Before wiring real Glossary or QA List flows into the shared framework, add fake-resource contract tests for the framework itself. These tests should use a minimal in-memory adapter instead of glossary or QA modules, so they prove the shared controller behavior without depending on current domain implementation details.
+
+Required fake-resource contract tests:
+
+- Cache data is ignored when the team/cache key does not match the selected team.
+- Local load results are ignored when the selected team changes while the load is running.
+- Remote refresh results are ignored when the selected team changes while the refresh is running.
+- Cache seed, local seed, remote refresh, and mutation results all update visible state only through query snapshot application.
+- Active or recently settled write-intent overlays survive a refresh and prevent temporary rename/delete/restore/create reversions.
+- Refresh spinner and first progress badge update synchronously before the long-running refresh work starts.
+- Mutation failure rolls back query data and visible state.
+- Side-effect failure after create/import attempts rollback in reverse order: metadata, local repo, remote repo, then query/visible optimistic state.
+- Optional capabilities can be omitted or set to `null` without breaking shared controllers.
+- Shared controllers branch on capability presence, not resource names such as `glossary` or `qa`.
+
+Implement the framework in vertical slices. The first real slice should be the query/cache controller only. Do not extract lifecycle, create/import/export, or editor behavior until the query/cache controller passes the fake-resource contract tests and works for both Glossaries and QA Lists through thin wrappers.
+
 ## Refactor Order
+
+0. Add the fake-resource shared framework contract test harness.
+   - Use a minimal resource adapter with in-memory cache, query snapshot, repo load, mutation, and rollback hooks.
+   - Make the tests assert controller behavior directly instead of asserting glossary-specific or QA-specific labels.
+   - Keep these tests as permanent regression coverage for future resource types.
 
 1. Extract low-risk helpers.
    - Import byte reading.

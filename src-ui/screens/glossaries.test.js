@@ -164,6 +164,27 @@ test("glossary refresh keeps read-only and query-backed lifecycle actions enable
   assert.match(actionButtonHtml(html, "refresh-page"), /aria-disabled="true"/);
 });
 
+test("glossary pending lifecycle mutations spin the refresh button", () => {
+  setGlossaryScreenState({
+    glossariesPage: { isRefreshing: false, writeState: "idle" },
+    glossaries: [{
+      id: "glossary-1",
+      repoName: "gnosis-es-vi",
+      title: "Gnosis ES-VI",
+      lifecycleState: "deleted",
+      pendingMutation: "softDelete",
+      sourceLanguage: { code: "es", name: "Spanish" },
+      targetLanguage: { code: "vi", name: "Vietnamese" },
+      termCount: 1,
+    }],
+  });
+
+  const html = renderGlossariesScreen(state);
+
+  assert.match(actionButtonHtml(html, "refresh-page"), /\bis-spinning\b/);
+  assert.match(actionButtonHtml(html, "refresh-page"), /aria-disabled="true"/);
+});
+
 test("glossary discovery loading disables heavy write actions even if refresh flag is stale", () => {
   setGlossaryScreenState({
     glossariesPage: { isRefreshing: false, writeState: "idle" },

@@ -1,75 +1,32 @@
-import { removePersistentValue } from "./persistent-store.js";
 import { normalizeGlossarySummary, sortGlossaries } from "./glossary-shared.js";
 import {
-  loadTeamScopedCacheMap,
-  saveTeamScopedCacheMap,
-  teamCacheKey,
-} from "./team-cache.js";
+  loadStoredResourceCollectionForTeam,
+  removeStoredResourceCollectionForTeam,
+  saveStoredResourceCollectionForTeam,
+} from "./repo-resource/cache.js";
 
 const GLOSSARY_CACHE_STORAGE_KEY = "gnosis-tms-glossary-cache";
 
 export function loadStoredGlossariesForTeam(team) {
-  const cacheKey = teamCacheKey(team);
-  if (!cacheKey) {
-    return {
-      exists: false,
-      cacheKey: null,
-      updatedAt: null,
-      glossaries: [],
-    };
-  }
-
-  const cacheMap = loadTeamScopedCacheMap(GLOSSARY_CACHE_STORAGE_KEY);
-  const entry = cacheMap[cacheKey];
-  if (!entry || typeof entry !== "object") {
-    return {
-      exists: false,
-      cacheKey,
-      updatedAt: null,
-      glossaries: [],
-    };
-  }
-
-  return {
-    exists: true,
-    cacheKey,
-    updatedAt:
-      typeof entry.updatedAt === "string" && entry.updatedAt.trim()
-        ? entry.updatedAt.trim()
-        : null,
-    glossaries: sortGlossaries(
-      (Array.isArray(entry.glossaries) ? entry.glossaries : [])
-        .map(normalizeGlossarySummary)
-        .filter(Boolean),
-    ),
-  };
+  return loadStoredResourceCollectionForTeam(team, {
+    storageKey: GLOSSARY_CACHE_STORAGE_KEY,
+    collectionField: "glossaries",
+    normalizeItem: normalizeGlossarySummary,
+    sortItems: sortGlossaries,
+  });
 }
 
 export function saveStoredGlossariesForTeam(team, glossaries = []) {
-  const cacheKey = teamCacheKey(team);
-  if (!cacheKey) {
-    return;
-  }
-
-  const cacheMap = loadTeamScopedCacheMap(GLOSSARY_CACHE_STORAGE_KEY);
-  cacheMap[cacheKey] = {
-    glossaries: sortGlossaries(
-      (Array.isArray(glossaries) ? glossaries : [])
-        .map(normalizeGlossarySummary)
-        .filter(Boolean),
-    ),
-    updatedAt: new Date().toISOString(),
-  };
-  saveTeamScopedCacheMap(GLOSSARY_CACHE_STORAGE_KEY, cacheMap);
+  saveStoredResourceCollectionForTeam(team, glossaries, {
+    storageKey: GLOSSARY_CACHE_STORAGE_KEY,
+    collectionField: "glossaries",
+    normalizeItem: normalizeGlossarySummary,
+    sortItems: sortGlossaries,
+  });
 }
 
 export function removeStoredGlossariesForTeam(team) {
-  const cacheKey = teamCacheKey(team);
-  if (!cacheKey) {
-    return;
-  }
-
-  const cacheMap = loadTeamScopedCacheMap(GLOSSARY_CACHE_STORAGE_KEY);
-  delete cacheMap[cacheKey];
-  saveTeamScopedCacheMap(GLOSSARY_CACHE_STORAGE_KEY, cacheMap);
+  removeStoredResourceCollectionForTeam(team, {
+    storageKey: GLOSSARY_CACHE_STORAGE_KEY,
+  });
 }

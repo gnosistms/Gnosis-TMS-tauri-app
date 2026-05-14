@@ -1,6 +1,7 @@
-import { glossaryKeys, queryClient, subscribeQueryObserver } from "./query-client.js";
+import { glossaryKeys } from "./query-client.js";
 import { createGlossaryDiscoveryState, state } from "./state.js";
-import { showNoticeBadge } from "./status-feedback.js";
+import { createRepoResourceQueryController } from "./repo-resource/query-controller.js";
+import { loadStoredGlossariesForTeam as loadStoredGlossariesFromCache } from "./glossary-cache.js";
 import {
   listLocalGlossarySummariesForTeam,
   loadRepoBackedGlossariesForTeam,
@@ -14,15 +15,6 @@ import {
   applyGlossaryWriteIntentsToSnapshot,
   clearConfirmedGlossaryWriteIntents,
 } from "./glossary-write-coordinator.js";
-import { teamCacheKey } from "./team-cache.js";
-
-let activeGlossariesQuerySubscription = null;
-
-export function resetGlossariesQueryObserver() {
-  activeGlossariesQuerySubscription?.unsubscribe?.();
-  activeGlossariesQuerySubscription?.observer?.destroy?.();
-  activeGlossariesQuerySubscription = null;
-}
 
 function glossaryRepoSyncByRepoName(syncSnapshots = []) {
   return Object.fromEntries(
@@ -130,47 +122,6 @@ function normalizeGlossariesSnapshotInput(snapshot) {
     return snapshot;
   }
   return [];
-}
-
-function moveGlossaryToLifecycle(queryData, glossaryId, lifecycleState, patch = {}) {
-  if (!queryData || typeof queryData !== "object") {
-    return queryData;
-  }
-
-  let changed = false;
-  const glossaries = (Array.isArray(queryData.glossaries) ? queryData.glossaries : [])
-    .map((glossary) => {
-      if (glossary?.id !== glossaryId) {
-        return glossary;
-      }
-      changed = true;
-      return {
-        ...glossary,
-        ...patch,
-        lifecycleState,
-      };
-    });
-
-  return changed
-    ? {
-      ...queryData,
-      glossaries,
-    }
-    : queryData;
-}
-
-function removeGlossaryFromQueryData(queryData, glossaryId) {
-  if (!queryData || typeof queryData !== "object") {
-    return queryData;
-  }
-  const glossaries = Array.isArray(queryData.glossaries) ? queryData.glossaries : [];
-  const nextGlossaries = glossaries.filter((glossary) => glossary?.id !== glossaryId);
-  return nextGlossaries.length === glossaries.length
-    ? queryData
-    : {
-      ...queryData,
-      glossaries: nextGlossaries,
-    };
 }
 
 function glossaryLifecycleIntent(glossary) {
@@ -288,40 +239,103 @@ export function preservePendingGlossaryLifecyclePatches(nextSnapshot, previousSn
   return preserveGlossaryLifecyclePatchesInSnapshot(nextSnapshot, previousSnapshot);
 }
 
+const glossaryQueryController = createRepoResourceQueryController({
+  kind: "glossary",
+  collectionField: "glossaries",
+  resourceIdField: "glossaryId",
+  queryKeyForTeam: glossaryKeys.byTeam,
+  getSelectedTeamId: () => state.selectedTeamId,
+  createSnapshot: createGlossariesQuerySnapshot,
+  applySnapshotToState: applyGlossariesQuerySnapshotToState,
+  applyWriteIntentOverlay: applyGlossaryWriteIntentOverlay,
+  preserveSnapshot: preservePendingGlossaryLifecyclePatches,
+  patchQueryData: patchGlossaryQueryData,
+  loadCacheEntry: loadStoredGlossariesFromCache,
+  cacheEntryItems: (entry) => entry.glossaries,
+  loadLocalItems: listLocalGlossarySummariesForTeam,
+  localSnapshotInput: () => ({ status: "ready" }),
+  persistSnapshot: persistGlossariesForTeam,
+  setRefreshing: (isRefreshing) => {
+    state.glossariesPage.isRefreshing = isRefreshing === true;
+  },
+  isRefreshing: () => state.glossariesPage?.isRefreshing === true,
+  applyObserverError: (error, { isFetching } = {}) => {
+    state.glossaryDiscovery = {
+      ...createGlossaryDiscoveryState(),
+      status: "error",
+      error: error?.message ?? String(error),
+    };
+    state.glossariesPage.isRefreshing = isFetching === true;
+  },
+  createLifecycleMutationPayload: ({ resource, mutationType, optimisticData }) => {
+    const mutation = {
+      type: mutationType,
+      resourceId: resource.id,
+      glossaryId: resource.id,
+    };
+    if (mutationType === "rename") {
+      mutation.title = optimisticData.title;
+      mutation.previousTitle = resource.title;
+    }
+    return mutation;
+  },
+  loadRemoteSnapshot: async (team, options = {}) => {
+    const teamId = options.teamId ?? team?.id ?? null;
+    const {
+      glossaries,
+      syncIssue,
+      brokerWarning,
+      syncSnapshots = [],
+      recoveryMessage = "",
+    } = await loadRepoBackedGlossariesForTeam(team, {
+      offlineMode: state.offline?.isEnabled === true,
+      suppressRecoveryWarning: options.suppressRecoveryWarning === true,
+      onRecoveryDetected: (message) => {
+        if (state.selectedTeamId !== teamId) {
+          return;
+        }
+        state.glossaryDiscovery = {
+          ...createGlossaryDiscoveryState(),
+          status: "loading",
+          recoveryMessage: message,
+        };
+        options.render?.();
+      },
+    });
+
+    let nextGlossaries = Array.isArray(glossaries) ? glossaries : [];
+    if (options.preserveVisibleData === true && nextGlossaries.length === 0) {
+      const localGlossaries = await listLocalGlossarySummariesForTeam(team);
+      if (localGlossaries.length > 0) {
+        nextGlossaries = localGlossaries;
+      }
+    }
+
+    return createGlossariesQuerySnapshot({
+      glossaries: nextGlossaries,
+      syncSnapshots,
+      syncIssue,
+      brokerWarning,
+      recoveryMessage,
+      status: "ready",
+    });
+  },
+});
+
+export function resetGlossariesQueryObserver() {
+  glossaryQueryController.resetObserver();
+}
+
 export function seedGlossariesQueryFromCache(team, {
   teamId = team?.id,
   loadStoredGlossariesForTeam,
   render,
 } = {}) {
-  if (typeof loadStoredGlossariesForTeam !== "function") {
-    return null;
-  }
-
-  const expectedCacheKey = teamCacheKey(team);
-  const cachedGlossaries = loadStoredGlossariesForTeam(team);
-  if (
-    state.selectedTeamId !== teamId
-    || !cachedGlossaries?.exists
-    || cachedGlossaries.cacheKey !== expectedCacheKey
-  ) {
-    return null;
-  }
-
-  const queryKey = glossaryKeys.byTeam(teamId);
-  const previousQueryData = queryClient.getQueryData(queryKey);
-  const snapshot = preservePendingGlossaryLifecyclePatches(applyGlossaryWriteIntentOverlay(createGlossariesQuerySnapshot({
-    glossaries: cachedGlossaries.glossaries,
-    status: "ready",
-  })), previousQueryData);
-  queryClient.setQueryData(queryKey, snapshot);
-  applyGlossariesQuerySnapshotToState(snapshot, {
+  return glossaryQueryController.seedFromCache(team, {
     teamId,
-    isFetching: true,
-    cacheKey: expectedCacheKey,
-    cacheUpdatedAt: cachedGlossaries.updatedAt,
+    loadCacheEntry: loadStoredGlossariesForTeam,
+    render,
   });
-  render?.();
-  return snapshot;
 }
 
 export async function seedGlossariesQueryFromLocal(team, {
@@ -329,232 +343,19 @@ export async function seedGlossariesQueryFromLocal(team, {
   render,
   persist = true,
 } = {}) {
-  const localGlossaries = await listLocalGlossarySummariesForTeam(team);
-  if (!localGlossaries.length || state.selectedTeamId !== teamId) {
-    return null;
-  }
-
-  const queryKey = glossaryKeys.byTeam(teamId);
-  const previousQueryData = queryClient.getQueryData(queryKey);
-  const snapshot = preservePendingGlossaryLifecyclePatches(applyGlossaryWriteIntentOverlay(createGlossariesQuerySnapshot({
-    glossaries: localGlossaries,
-    status: "ready",
-  })), previousQueryData);
-  queryClient.setQueryData(queryKey, snapshot);
-  applyGlossariesQuerySnapshotToState(snapshot, {
+  return glossaryQueryController.seedFromLocal(team, {
     teamId,
-    isFetching: true,
-    cacheKey: teamCacheKey(team),
+    render,
+    persist,
   });
-  if (persist) {
-    persistGlossariesForTeam(team);
-  }
-  render?.();
-  return snapshot;
 }
 
 export function createGlossariesQueryOptions(team, options = {}) {
-  const teamId = options.teamId ?? team?.id ?? null;
-  return {
-    queryKey: glossaryKeys.byTeam(teamId),
-    queryFn: async () => {
-      const {
-        glossaries,
-        syncIssue,
-        brokerWarning,
-        syncSnapshots = [],
-        recoveryMessage = "",
-      } = await loadRepoBackedGlossariesForTeam(team, {
-        offlineMode: state.offline?.isEnabled === true,
-        suppressRecoveryWarning: options.suppressRecoveryWarning === true,
-        onRecoveryDetected: (message) => {
-          if (state.selectedTeamId !== teamId) {
-            return;
-          }
-          state.glossaryDiscovery = {
-            ...createGlossaryDiscoveryState(),
-            status: "loading",
-            recoveryMessage: message,
-          };
-          options.render?.();
-        },
-      });
-
-      let nextGlossaries = Array.isArray(glossaries) ? glossaries : [];
-      if (options.preserveVisibleData === true && nextGlossaries.length === 0) {
-        const localGlossaries = await listLocalGlossarySummariesForTeam(team);
-        if (localGlossaries.length > 0) {
-          nextGlossaries = localGlossaries;
-        }
-      }
-
-      const nextSnapshot = createGlossariesQuerySnapshot({
-        glossaries: nextGlossaries,
-        syncSnapshots,
-        syncIssue,
-        brokerWarning,
-        recoveryMessage,
-        status: "ready",
-      });
-      const previousQueryData = queryClient.getQueryData(glossaryKeys.byTeam(teamId));
-      return preservePendingGlossaryLifecyclePatches(
-        applyGlossaryWriteIntentOverlay(nextSnapshot),
-        previousQueryData,
-      );
-    },
-  };
+  return glossaryQueryController.createQueryOptions(team, options);
 }
 
 export function ensureGlossariesQueryObserver(render, team, options = {}) {
-  const teamId = options.teamId ?? team?.id ?? null;
-  const queryKey = glossaryKeys.byTeam(teamId);
-  const currentKey = JSON.stringify(queryKey);
-  if (activeGlossariesQuerySubscription?.key === currentKey) {
-    activeGlossariesQuerySubscription.observer?.setOptions?.(
-      createGlossariesQueryOptions(team, {
-        ...options,
-        teamId,
-        render,
-      }),
-    );
-    return activeGlossariesQuerySubscription;
-  }
-
-  activeGlossariesQuerySubscription?.unsubscribe?.();
-  const subscription = subscribeQueryObserver(
-    createGlossariesQueryOptions(team, {
-      ...options,
-      teamId,
-      render,
-    }),
-    (result) => {
-      if (result.data) {
-        applyGlossariesQuerySnapshotToState(result.data, {
-          teamId,
-          isFetching: result.isFetching,
-        });
-      } else if (result.error && state.selectedTeamId === teamId) {
-        state.glossaryDiscovery = {
-          ...createGlossaryDiscoveryState(),
-          status: "error",
-          error: result.error?.message ?? String(result.error),
-        };
-        state.glossariesPage.isRefreshing = result.isFetching;
-      } else if (state.selectedTeamId === teamId) {
-        state.glossariesPage.isRefreshing = result.isFetching;
-      }
-      render?.();
-    },
-  );
-
-  activeGlossariesQuerySubscription = {
-    ...subscription,
-    key: currentKey,
-    teamId,
-  };
-  return activeGlossariesQuerySubscription;
-}
-
-function createGlossaryLifecycleMutationOptions({
-  team,
-  glossary,
-  mutationType,
-  optimisticData = {},
-  settledData = {},
-  commitMutation,
-  onOptimisticApplied,
-  onSuccessApplied,
-  onErrorApplied,
-  render,
-} = {}) {
-  const teamId = team?.id ?? null;
-  const queryKey = glossaryKeys.byTeam(teamId);
-  return {
-    mutationKey: ["glossary", mutationType, glossary?.id ?? null],
-    scope: { id: `team-metadata:${team?.installationId ?? "unknown"}` },
-    mutationFn: async () => {
-      if (typeof commitMutation !== "function") {
-        return;
-      }
-      const mutation = {
-        type: mutationType,
-        resourceId: glossary.id,
-        glossaryId: glossary.id,
-      };
-      if (mutationType === "rename") {
-        mutation.title = optimisticData.title;
-        mutation.previousTitle = glossary.title;
-      }
-      await commitMutation(team, mutation);
-    },
-    onMutate: async () => {
-      await queryClient.cancelQueries({ queryKey });
-      const previousQueryData = queryClient.getQueryData(queryKey);
-      let optimisticQueryData = previousQueryData;
-      if (mutationType === "softDelete") {
-        optimisticQueryData = moveGlossaryToLifecycle(previousQueryData, glossary.id, "deleted", optimisticData);
-      } else if (mutationType === "restore") {
-        optimisticQueryData = moveGlossaryToLifecycle(previousQueryData, glossary.id, "active", optimisticData);
-      } else if (mutationType === "permanentDelete") {
-        optimisticQueryData = removeGlossaryFromQueryData(previousQueryData, glossary.id);
-      } else {
-        optimisticQueryData = patchGlossaryQueryData(previousQueryData, glossary.id, optimisticData);
-      }
-      if (optimisticQueryData) {
-        queryClient.setQueryData(queryKey, optimisticQueryData);
-        applyGlossariesQuerySnapshotToState(optimisticQueryData, {
-          teamId,
-          isFetching: state.glossariesPage?.isRefreshing === true,
-        });
-      }
-      onOptimisticApplied?.(optimisticQueryData);
-      render?.();
-      return { previousQueryData };
-    },
-    onError: (error, _variables, context) => {
-      if (context?.previousQueryData) {
-        queryClient.setQueryData(queryKey, context.previousQueryData);
-        applyGlossariesQuerySnapshotToState(context.previousQueryData, {
-          teamId,
-          isFetching: state.glossariesPage?.isRefreshing === true,
-        });
-      }
-      onErrorApplied?.(error, context);
-      if (typeof render === "function") {
-        showNoticeBadge(error?.message ?? String(error), render);
-      }
-      render?.();
-    },
-    onSuccess: () => {
-      const currentQueryData = queryClient.getQueryData(queryKey);
-      let settledQueryData = currentQueryData;
-      if (mutationType === "softDelete") {
-        settledQueryData = moveGlossaryToLifecycle(currentQueryData, glossary.id, "deleted", settledData);
-      } else if (mutationType === "restore") {
-        settledQueryData = moveGlossaryToLifecycle(currentQueryData, glossary.id, "active", settledData);
-      } else if (mutationType === "permanentDelete") {
-        settledQueryData = removeGlossaryFromQueryData(currentQueryData, glossary.id);
-      } else {
-        settledQueryData = patchGlossaryQueryData(currentQueryData, glossary.id, settledData);
-      }
-      if (settledQueryData) {
-        queryClient.setQueryData(queryKey, settledQueryData);
-        applyGlossariesQuerySnapshotToState(settledQueryData, {
-          teamId,
-          isFetching: state.glossariesPage?.isRefreshing === true,
-        });
-      }
-      onSuccessApplied?.(settledQueryData);
-      render?.();
-    },
-    onSettled: async () => {
-      await invalidateGlossariesQueryAfterMutation(team, {
-        teamId,
-        render,
-        refetchIfInactive: false,
-      });
-    },
-  };
+  return glossaryQueryController.ensureObserver(render, team, options);
 }
 
 export function createGlossaryRenameMutationOptions({
@@ -567,9 +368,9 @@ export function createGlossaryRenameMutationOptions({
   onErrorApplied,
   render,
 } = {}) {
-  return createGlossaryLifecycleMutationOptions({
+  return glossaryQueryController.createLifecycleMutationOptions({
     team,
-    glossary,
+    resource: glossary,
     mutationType: "rename",
     optimisticData: {
       title: nextTitle,
@@ -589,8 +390,9 @@ export function createGlossaryRenameMutationOptions({
 }
 
 export function createGlossarySoftDeleteMutationOptions(options = {}) {
-  return createGlossaryLifecycleMutationOptions({
+  return glossaryQueryController.createLifecycleMutationOptions({
     ...options,
+    resource: options.glossary,
     mutationType: "softDelete",
     optimisticData: {
       lifecycleState: "deleted",
@@ -605,8 +407,9 @@ export function createGlossarySoftDeleteMutationOptions(options = {}) {
 }
 
 export function createGlossaryRestoreMutationOptions(options = {}) {
-  return createGlossaryLifecycleMutationOptions({
+  return glossaryQueryController.createLifecycleMutationOptions({
     ...options,
+    resource: options.glossary,
     mutationType: "restore",
     optimisticData: {
       lifecycleState: "active",
@@ -621,29 +424,13 @@ export function createGlossaryRestoreMutationOptions(options = {}) {
 }
 
 export function createGlossaryPermanentDeleteMutationOptions(options = {}) {
-  return createGlossaryLifecycleMutationOptions({
+  return glossaryQueryController.createLifecycleMutationOptions({
     ...options,
+    resource: options.glossary,
     mutationType: "permanentDelete",
   });
 }
 
 export async function invalidateGlossariesQueryAfterMutation(team, options = {}) {
-  const teamId = options.teamId ?? team?.id ?? null;
-  const queryKey = glossaryKeys.byTeam(teamId);
-  const query = queryClient.getQueryCache().find({ queryKey });
-  const hasActiveObserver = typeof query?.getObserversCount === "function"
-    ? query.getObserversCount() > 0
-    : false;
-
-  await queryClient.invalidateQueries({
-    queryKey,
-    refetchType: hasActiveObserver ? "active" : "none",
-  });
-
-  if (!hasActiveObserver && options.refetchIfInactive !== false) {
-    await queryClient.fetchQuery(createGlossariesQueryOptions(team, {
-      ...options,
-      teamId,
-    }));
-  }
+  await glossaryQueryController.invalidateAfterMutation(team, options);
 }
