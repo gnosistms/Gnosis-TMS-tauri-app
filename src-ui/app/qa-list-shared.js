@@ -1,4 +1,8 @@
 import { findIsoLanguageOption } from "../lib/language-options.js";
+import {
+  canCreateRepoResources,
+  canPermanentlyDeleteRepoResources,
+} from "./resource-capabilities.js";
 import { state } from "./state.js";
 
 function normalizeId(value, fallback = "") {
@@ -28,6 +32,14 @@ export function selectedTeam() {
 
 export function canManageQaLists(team = selectedTeam()) {
   return team?.canDelete === true;
+}
+
+export function canCreateQaLists(team = selectedTeam()) {
+  return canCreateRepoResources(team);
+}
+
+export function canPermanentlyDeleteQaLists(team = selectedTeam()) {
+  return canPermanentlyDeleteRepoResources(team);
 }
 
 export function normalizeQaTerm(value) {
@@ -105,6 +117,10 @@ export function sortQaLists(qaLists = []) {
 
 export function selectedQaList() {
   return state.qaLists.find((qaList) => qaList.id === state.selectedQaListId) ?? null;
+}
+
+export function selectedQaListRepoName() {
+  return String(selectedQaList()?.repoName ?? state.qaListEditor?.repoName ?? "").trim();
 }
 
 export function upsertQaList(qaList) {

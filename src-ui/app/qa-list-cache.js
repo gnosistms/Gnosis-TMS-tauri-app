@@ -58,3 +58,14 @@ export function saveStoredQaListsForTeam(team, qaLists = []) {
   };
   saveTeamScopedCacheMap(QA_LIST_CACHE_STORAGE_KEY, cacheMap);
 }
+
+export function removeStoredQaListsForTeam(team) {
+  const cacheKey = teamCacheKey(team);
+  if (!cacheKey) {
+    return;
+  }
+
+  const cacheMap = loadTeamScopedCacheMap(QA_LIST_CACHE_STORAGE_KEY);
+  delete cacheMap[cacheKey];
+  saveTeamScopedCacheMap(QA_LIST_CACHE_STORAGE_KEY, cacheMap);
+}

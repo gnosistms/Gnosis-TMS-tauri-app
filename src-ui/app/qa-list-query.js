@@ -11,6 +11,10 @@ import { setResourcePageDataOwner, setResourcePageRefreshing } from "./resource-
 import { createQaListDiscoveryState, state } from "./state.js";
 import { showNoticeBadge } from "./status-feedback.js";
 import { teamCacheKey } from "./team-cache.js";
+import {
+  applyQaListWriteIntentsToSnapshot,
+  clearConfirmedQaListWriteIntents,
+} from "./qa-list-write-coordinator.js";
 
 let activeQaListsQuerySubscription = null;
 
@@ -96,8 +100,10 @@ export function applyQaListsQuerySnapshotToState(snapshot, {
   }
 
   if (snapshot) {
+    clearConfirmedQaListWriteIntents(snapshot);
+    const visibleSnapshot = applyQaListWriteIntentsToSnapshot(snapshot);
     state.qaLists = sortQaLists(
-      (Array.isArray(snapshot.qaLists) ? snapshot.qaLists : [])
+      (Array.isArray(visibleSnapshot?.qaLists) ? visibleSnapshot.qaLists : [])
         .map(normalizeQaList)
         .filter(Boolean),
     );
@@ -378,6 +384,38 @@ export function createQaListsQueryOptions(team, options = {}) {
       );
     },
   };
+}
+
+export async function seedQaListsQueryFromLocal(team, {
+  teamId = team?.id,
+  render,
+} = {}) {
+  if (!Number.isFinite(team?.installationId) || state.selectedTeamId !== teamId) {
+    return null;
+  }
+
+  const localQaLists = await listLocalQaListsForTeam(team);
+  if (!Array.isArray(localQaLists) || localQaLists.length === 0 || state.selectedTeamId !== teamId) {
+    return null;
+  }
+
+  const queryKey = qaListKeys.byTeam(teamId);
+  const snapshot = preserveQaListLifecyclePatchesInSnapshot(
+    createQaListsQuerySnapshot({
+      qaLists: localQaLists,
+      discovery: { status: "ready" },
+    }),
+    queryClient.getQueryData(queryKey),
+  );
+  queryClient.setQueryData(queryKey, snapshot);
+  applyQaListsQuerySnapshotToState(snapshot, {
+    teamId,
+    isFetching: true,
+    cacheKey: teamCacheKey(team),
+  });
+  saveStoredQaListsForTeam(team, snapshot.qaLists);
+  render?.();
+  return snapshot;
 }
 
 export function ensureQaListsQueryObserver(render, team, options = {}) {

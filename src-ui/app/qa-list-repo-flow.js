@@ -2,6 +2,7 @@ import { requireBrokerSession } from "./auth-flow.js";
 import { appendRepoNameSuffix, slugifyRepoName } from "./repo-names.js";
 import { invoke } from "./runtime.js";
 import { state } from "./state.js";
+import { showNoticeBadge } from "./status-feedback.js";
 
 function ensureInvoke() {
   if (!invoke) {
@@ -175,4 +176,22 @@ export async function deleteRemoteQaListRepo(team, qaList) {
     },
     sessionToken: requireBrokerSession(),
   });
+}
+
+export async function ensureQaListNotTombstoned(render, team, qaList) {
+  if (!Number.isFinite(team?.installationId) || !qaList?.id) {
+    return false;
+  }
+
+  // QA lists do not yet have team metadata tombstone records like glossaries.
+  // Keep the lifecycle API shape aligned so the real tombstone check can be
+  // plugged in when QA list metadata reaches parity.
+  if (qaList.recordState === "tombstone" || qaList.remoteState === "deleted") {
+    state.qaLists = state.qaLists.filter((item) => item?.id !== qaList.id);
+    showNoticeBadge("This QA list has already been permanently deleted.", render);
+    render?.();
+    return true;
+  }
+
+  return false;
 }
