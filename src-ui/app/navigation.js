@@ -359,7 +359,6 @@ export async function refreshCurrentScreen(render) {
     try {
       await refreshVisibleTeamAccess(render);
       await loadSelectedQaListEditorData(render);
-      await completePageSync(render);
     } catch (error) {
       failRefreshButtonFeedback(screen, render);
       throw error;

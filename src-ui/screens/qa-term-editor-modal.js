@@ -33,7 +33,7 @@ export function renderQaTermEditorModal(state) {
             </div>
             <div class="qa-term-modal__fields">
               <textarea
-                class="field__input term-variant-row__input"
+                class="field__textarea"
                 aria-label="QA term text"
                 placeholder="Enter QA term..."
                 rows="3"
@@ -42,7 +42,7 @@ export function renderQaTermEditorModal(state) {
                 ${isSubmitting ? "disabled" : ""}
               >${escapeHtml(editor.text)}</textarea>
               <textarea
-                class="field__input term-variant-row__input term-variant-row__note-input"
+                class="field__textarea"
                 aria-label="QA term notes"
                 placeholder="Notes..."
                 rows="3"

@@ -276,6 +276,7 @@ test("editor QA navigation opens the cached default QA list before editor data l
   assert.equal(state.qaListEditor.status, "loading");
   assert.equal(state.qaListEditor.qaListId, qaList.id);
   assert.equal(state.qaListEditor.title, qaList.title);
+  assert.equal(state.pageSync.status, "syncing");
 
   editorData.resolve({
     qaListId: qaList.id,
@@ -341,6 +342,7 @@ test("opening a QA list editor applies the exact cached snapshot before disk rel
     ],
   });
   await flushAsyncWork();
+  await new Promise((resolve) => setTimeout(resolve, 450));
 
   assert.equal(state.qaListEditor.terms[0]?.termId, "disk-term");
 });
@@ -564,4 +566,135 @@ test("QA term save refuses to overwrite a term that changed during pre-save sync
 
   assert.match(state.qaTermEditor.error, /changed on GitHub/);
   assert.equal(state.qaListEditor.terms[0].text, "remote edit");
+});
+
+test("QA term save refuses duplicate text in the visible QA list", async () => {
+  setupQaTeams();
+  const qaList = repoBackedQaList();
+  state.qaLists = [qaList];
+  state.selectedQaListId = qaList.id;
+  state.screen = "qaListEditor";
+  state.qaListEditor = {
+    status: "ready",
+    qaListId: qaList.id,
+    title: qaList.title,
+    language: qaList.language,
+    terms: qaList.terms,
+  };
+  state.qaTermEditor = {
+    isOpen: true,
+    status: "idle",
+    error: "",
+    qaListId: qaList.id,
+    termId: null,
+    text: "old",
+    notes: "duplicate",
+  };
+
+  invokeHandler = async (command) => {
+    if (
+      command === "sync_gtms_qa_list_repos"
+      || command === "load_gtms_qa_list_editor_data"
+      || command === "upsert_gtms_qa_list_term"
+    ) {
+      assert.fail("duplicate QA terms should be rejected before saving");
+    }
+    return null;
+  };
+
+  await submitQaTermEditor(() => {});
+
+  assert.equal(state.qaTermEditor.isOpen, true);
+  assert.match(state.qaTermEditor.error, /redundant with another QA term in this QA list/);
+  assert.equal(invokeCalls.some((call) => call.command === "upsert_gtms_qa_list_term"), false);
+});
+
+test("QA term save ignores the current term when checking duplicates", async () => {
+  setupQaTeams();
+  const qaList = {
+    ...repoBackedQaList(),
+    repoName: "",
+    fullName: "",
+  };
+  state.qaLists = [qaList];
+  state.selectedQaListId = qaList.id;
+  state.screen = "qaListEditor";
+  state.qaListEditor = {
+    status: "ready",
+    qaListId: qaList.id,
+    title: qaList.title,
+    language: qaList.language,
+    terms: qaList.terms,
+  };
+  state.qaTermEditor = {
+    isOpen: true,
+    status: "idle",
+    error: "",
+    qaListId: qaList.id,
+    termId: "term-1",
+    text: "old",
+    notes: "updated note",
+  };
+
+  await submitQaTermEditor(() => {});
+
+  assert.equal(state.qaTermEditor.isOpen, false);
+  assert.equal(state.qaListEditor.terms[0].text, "old");
+  assert.equal(state.qaListEditor.terms[0].notes, "updated note");
+});
+
+test("QA term save refuses duplicate text found during pre-save sync", async () => {
+  setupQaTeams();
+  const qaList = repoBackedQaList({ terms: [], termCount: 0 });
+  state.qaLists = [qaList];
+  state.selectedQaListId = qaList.id;
+  state.screen = "qaListEditor";
+  state.qaListEditor = {
+    status: "ready",
+    qaListId: qaList.id,
+    title: qaList.title,
+    language: qaList.language,
+    terms: [],
+  };
+  state.qaTermEditor = {
+    isOpen: true,
+    status: "idle",
+    error: "",
+    qaListId: qaList.id,
+    termId: null,
+    text: "<ruby>古い<rt>ふるい</rt></ruby>",
+    notes: "duplicate after sync",
+  };
+
+  invokeHandler = async (command) => {
+    if (command === "sync_gtms_qa_list_repos") {
+      return [{ repoName: qaList.repoName, status: "upToDate" }];
+    }
+    if (command === "load_gtms_qa_list_editor_data") {
+      return {
+        qaListId: qaList.id,
+        title: qaList.title,
+        language: qaList.language,
+        lifecycleState: "active",
+        termCount: 1,
+        terms: [
+          {
+            termId: "term-remote",
+            text: "古い",
+            notes: "already exists",
+          },
+        ],
+      };
+    }
+    if (command === "upsert_gtms_qa_list_term") {
+      assert.fail("duplicate QA terms should not save after pre-save sync");
+    }
+    return null;
+  };
+
+  await submitQaTermEditor(() => {});
+
+  assert.equal(state.qaTermEditor.isOpen, true);
+  assert.match(state.qaTermEditor.error, /redundant with another QA term in this QA list/);
+  assert.equal(state.qaListEditor.terms[0].termId, "term-remote");
 });

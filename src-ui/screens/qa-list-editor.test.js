@@ -52,3 +52,16 @@ test("QA list editor keeps search in left tools and term creation on the right",
   assert.ok(newTermIndex > rightToolsIndex);
   assert.ok(searchIndex < rightToolsIndex);
 });
+
+test("QA list editor spins refresh while page sync is active", () => {
+  installQaListEditorFixture();
+  state.pageSync = {
+    status: "syncing",
+    startedAt: performance.now(),
+  };
+
+  const html = renderQaListEditorScreen(state);
+
+  assert.match(html, /title-icon-button[^"]*\bis-spinning\b/);
+  assert.match(html, /data-action="refresh-page"[^>]*aria-disabled="true"/);
+});

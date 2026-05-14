@@ -45,17 +45,22 @@ import {
   makeQaListDefaultIfFirst,
   updateDefaultQaListAfterDeletion,
 } from "./qa-list-default-flow.js";
-import { invoke } from "./runtime.js";
+import { invoke, waitForNextPaint } from "./runtime.js";
 import { createMutationObserver, qaListKeys, queryClient } from "./query-client.js";
 import { setResourcePageRefreshing } from "./resource-page-controller.js";
+import { beginPageSync, completePageSync, failPageSync } from "./page-sync.js";
 import {
   createQaListEditorQueryOptions,
   getCachedQaListEditorPayload,
   removeQaListEditorQuery,
 } from "./qa-list-editor-query.js";
 import { showNoticeBadge } from "./status-feedback.js";
+import { extractGlossaryRubyBaseText } from "./glossary-ruby.js";
 
 export { makeQaListDefault } from "./qa-list-default-flow.js";
+
+const QA_TERM_DUPLICATE_WARNING =
+  "This QA term is redundant with another QA term in this QA list. Please change it before saving.";
 
 function createId(prefix) {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
@@ -337,6 +342,31 @@ function qaTermRecordsMatch(left, right) {
     && String(left?.notes ?? "") === String(right?.notes ?? "")
     && String(left?.lifecycleState ?? "active") === String(right?.lifecycleState ?? "active")
   );
+}
+
+function normalizeQaTermTextForDuplicateDetection(value) {
+  return extractGlossaryRubyBaseText(value).trim();
+}
+
+function qaTermTextDuplicatesExistingTerm(text, terms, termId = null) {
+  const normalizedText = normalizeQaTermTextForDuplicateDetection(text);
+  if (!normalizedText) {
+    return false;
+  }
+
+  return (Array.isArray(terms) ? terms : []).some((term) =>
+    term
+      && term.lifecycleState !== "deleted"
+      && term.termId !== termId
+      && normalizeQaTermTextForDuplicateDetection(term.text) === normalizedText,
+  );
+}
+
+function qaTermDuplicateErrorState(editor) {
+  return {
+    ...editor,
+    error: QA_TERM_DUPLICATE_WARNING,
+  };
 }
 
 async function loadRepoBackedQaListEditorSnapshot(team, qaList) {
@@ -1032,6 +1062,17 @@ export async function loadSelectedQaListEditorData(render) {
 
   const team = currentTeam();
   const expectedContext = qaListEditorContext(team, qaList);
+  beginPageSync();
+  if (state.qaListEditor?.status !== "ready") {
+    state.qaListEditor = {
+      ...state.qaListEditor,
+      status: "loading",
+      error: "",
+    };
+  }
+  render();
+  await waitForNextPaint();
+
   try {
     if (teamSupportsQaListRepos(team) && qaList.repoName) {
       const descriptor = qaListRepoDescriptor(qaList);
@@ -1050,6 +1091,9 @@ export async function loadSelectedQaListEditorData(render) {
       maybeApplyQaListEditorSnapshot(response, expectedContext, render, {
         showDeferredNotice: true,
       });
+      if (qaListEditorContextMatches(expectedContext)) {
+        await completePageSync(render);
+      }
       return;
     }
 
@@ -1067,7 +1111,9 @@ export async function loadSelectedQaListEditorData(render) {
       terms: qaList.terms ?? [],
       error: "",
     };
+    await completePageSync(render);
   } catch (error) {
+    failPageSync();
     if (!selectedQaListEditorMatches(team, qaList)) {
       return;
     }
@@ -1154,6 +1200,11 @@ export async function submitQaTermEditor(render) {
     render();
     return;
   }
+  if (qaTermTextDuplicatesExistingTerm(text, state.qaListEditor.terms, editor.termId)) {
+    state.qaTermEditor = qaTermDuplicateErrorState(editor);
+    render();
+    return;
+  }
 
   const team = currentTeam();
   const qaList = selectedQaList();
@@ -1185,6 +1236,11 @@ export async function submitQaTermEditor(render) {
           render();
           return;
         }
+      }
+      if (qaTermTextDuplicatesExistingTerm(text, latestQaList.terms, editor.termId)) {
+        state.qaTermEditor = qaTermDuplicateErrorState(editor);
+        render();
+        return;
       }
 
       let response = null;
