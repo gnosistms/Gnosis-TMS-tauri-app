@@ -516,3 +516,45 @@ test("matching refresh snapshots do not clear running chapter glossary unlink in
   clearConfirmedProjectWriteIntents(overlaid);
   assert.equal(getProjectWriteIntent(key), null);
 });
+
+test("settled chapter glossary intents survive stale refreshes until server agrees", async () => {
+  const key = chapterGlossaryIntentKey("project-1", "chapter-1");
+  requestProjectWriteIntent({
+    key,
+    scope: projectRepoWriteScope({ installationId: 1 }, "project-1"),
+    teamId: "team-1",
+    projectId: "project-1",
+    chapterId: "chapter-1",
+    type: "chapterGlossary",
+    value: { glossary: { glossaryId: "b", repoName: "glossary-b" } },
+  }, {
+    run: async () => {},
+  });
+  await delay(5);
+
+  assert.equal(getProjectWriteIntent(key).status, "pendingConfirmation");
+
+  const staleSnapshot = {
+    items: [project({
+      chapters: [chapter({ linkedGlossary: { glossaryId: "a", repoName: "glossary-a" } })],
+    })],
+    deletedItems: [],
+  };
+  clearConfirmedProjectWriteIntents(staleSnapshot);
+  assert.equal(getProjectWriteIntent(key).status, "pendingConfirmation");
+
+  const overlaid = applyProjectWriteIntentsToSnapshot(staleSnapshot);
+  assert.deepEqual(overlaid.items[0].chapters[0].linkedGlossary, {
+    glossaryId: "b",
+    repoName: "glossary-b",
+  });
+  assert.equal(overlaid.items[0].chapters[0].pendingGlossaryMutation, true);
+
+  clearConfirmedProjectWriteIntents({
+    items: [project({
+      chapters: [chapter({ linkedGlossary: { glossaryId: "b", repoName: "glossary-b" } })],
+    })],
+    deletedItems: [],
+  });
+  assert.equal(getProjectWriteIntent(key), null);
+});

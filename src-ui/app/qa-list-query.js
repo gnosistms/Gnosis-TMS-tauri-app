@@ -287,6 +287,18 @@ export function preserveQaListLifecyclePatchesInSnapshot(nextSnapshot, previousS
         pendingMutation: isPending ? "rename" : null,
         localLifecycleIntent: "rename",
       }, previousQaList);
+      continue;
+    }
+
+    if (intent === "create") {
+      if (qaListInSnapshot({ qaLists: nextQaLists }, previousQaList.id)) {
+        continue;
+      }
+      nextQaLists = patchQaListInList(nextQaLists, previousQaList.id, {
+        lifecycleState: "active",
+        pendingMutation: isPending ? "create" : null,
+        localLifecycleIntent: "create",
+      }, previousQaList);
     }
   }
 

@@ -136,6 +136,11 @@ export function renderQaScreen(state) {
   const canManageAiSettings = canManageTeamAiSettings(selectedTeam);
   const offlineMode = state.offline?.isEnabled === true;
   const discovery = state.qaListDiscovery ?? { status: "idle", error: "", recoveryMessage: "" };
+  const discoveryLoading = discovery.status === "loading";
+  const refreshInProgress =
+    state.qaListsPage?.isRefreshing === true
+    || state.pageSync?.status === "syncing"
+    || discoveryLoading;
   const visibleQaLists = state.qaLists.filter((qaList) => qaList.lifecycleState === "active");
   const deletedQaLists = state.qaLists.filter((qaList) => qaList.lifecycleState === "deleted");
   const defaultQaListIdsByLanguage = activeDefaultQaListIdsForTeam(selectedTeam);
@@ -191,7 +196,8 @@ export function renderQaScreen(state) {
       title: "QA Lists",
       subtitle: selectedTeam?.name ?? "Team",
       titleAction: buildPageRefreshAction(state, state.pageSync, "refresh-page", {
-        backgroundRefreshing: false,
+        backgroundRefreshing: refreshInProgress,
+        backgroundRefreshStartedAt: state.qaListsPage?.refreshStartedAt,
       }),
       navButtons: buildSectionNav("qa", { includeAiSettings: canManageAiSettings }),
       tools: canCreate

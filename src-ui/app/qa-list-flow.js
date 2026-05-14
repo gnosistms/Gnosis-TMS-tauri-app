@@ -46,6 +46,7 @@ import {
 } from "./qa-list-default-flow.js";
 import { invoke } from "./runtime.js";
 import { createMutationObserver, qaListKeys, queryClient } from "./query-client.js";
+import { setResourcePageRefreshing } from "./resource-page-controller.js";
 
 export { makeQaListDefault } from "./qa-list-default-flow.js";
 
@@ -107,9 +108,21 @@ function applyQaListsQueryDataForTeam(team, queryData, render, { isFetching = fa
   return queryData;
 }
 
-function upsertQaListForTeam(team, qaList, render) {
+function upsertQaListForTeam(team, qaList, render, options = {}) {
   const currentQueryData = ensureQaListsQueryDataForTeam(team);
-  const nextQueryData = upsertQaListQueryData(currentQueryData, qaList);
+  const existingQaLists = Array.isArray(currentQueryData?.qaLists) ? currentQueryData.qaLists : [];
+  const shouldPreserveCreate =
+    options.preserveCreate === true
+    && !existingQaLists.some((item) => item?.id === qaList?.id);
+  const nextQueryData = upsertQaListQueryData(currentQueryData, {
+    ...qaList,
+    ...(shouldPreserveCreate
+      ? {
+          localLifecycleIntent: "create",
+          pendingMutation: null,
+        }
+      : {}),
+  });
   return applyQaListsQueryDataForTeam(team, nextQueryData, render);
 }
 
@@ -288,6 +301,7 @@ export function primeQaListsLoadingState(teamId, options = {}) {
   const team = state.teams.find((item) => item.id === teamId) ?? currentTeam();
   if (!team) {
     state.qaLists = [];
+    setResourcePageRefreshing(state.qaListsPage, false);
     state.qaListDiscovery = {
       ...createQaListDiscoveryState(),
       status: "ready",
@@ -303,6 +317,7 @@ export function primeQaListsLoadingState(teamId, options = {}) {
   }
 
   if (options.preserveVisibleData === true && state.qaLists.length > 0) {
+    setResourcePageRefreshing(state.qaListsPage, true);
     state.qaListDiscovery = {
       status: "loading",
       error: "",
@@ -312,6 +327,7 @@ export function primeQaListsLoadingState(teamId, options = {}) {
   }
 
   state.qaLists = [];
+  setResourcePageRefreshing(state.qaListsPage, true);
   state.qaListDiscovery = {
     status: "loading",
     error: "",
@@ -323,6 +339,7 @@ export async function loadTeamQaLists(render, teamId) {
   const team = state.teams.find((item) => item.id === teamId) ?? currentTeam();
   if (!team) {
     state.qaLists = [];
+    setResourcePageRefreshing(state.qaListsPage, false);
     state.qaListDiscovery = {
       status: "ready",
       error: "",
@@ -333,6 +350,7 @@ export async function loadTeamQaLists(render, teamId) {
   }
 
   primeQaListsLoadingState(team.id, { preserveVisibleData: true });
+  setResourcePageRefreshing(state.qaListsPage, true);
   render();
 
   try {
@@ -354,6 +372,10 @@ export async function loadTeamQaLists(render, teamId) {
         error: error?.message ?? "Could not load QA lists.",
         recoveryMessage: "",
       };
+    }
+  } finally {
+    if (selectedTeamMatches(team)) {
+      setResourcePageRefreshing(state.qaListsPage, false);
     }
   }
   render();
@@ -437,7 +459,7 @@ export async function submitQaListCreation(render) {
       if (!selectedTeamMatches(team)) {
         throw new Error("The selected team changed before the QA list could be created.");
       }
-      upsertQaListForTeam(team, qaList);
+      upsertQaListForTeam(team, qaList, null, { preserveCreate: true });
       makeQaListDefaultIfFirst(team, qaList);
       saveStoredQaListsForTeam(team, state.qaLists);
     } else {
@@ -451,7 +473,7 @@ export async function submitQaListCreation(render) {
         updatedAt: now,
         terms: [],
       };
-      upsertQaListForTeam(team, qaList);
+      upsertQaListForTeam(team, qaList, null, { preserveCreate: true });
       makeQaListDefaultIfFirst(team, qaList);
       saveStoredQaListsForTeam(team, state.qaLists);
     }
@@ -1267,13 +1289,13 @@ export async function importQaListFromTmx(render) {
         if (!selectedTeamMatches(team)) {
           throw new Error("The selected team changed before the QA list could be imported.");
         }
-        upsertQaListForTeam(team, qaList);
+        upsertQaListForTeam(team, qaList, null, { preserveCreate: true });
         makeQaListDefaultIfFirst(team, qaList);
         saveStoredQaListsForTeam(team, state.qaLists);
       } else {
         const text = await file.text();
         const qaList = parseQaListTmx(text, file.name);
-        upsertQaListForTeam(team, qaList);
+        upsertQaListForTeam(team, qaList, null, { preserveCreate: true });
         makeQaListDefaultIfFirst(team, qaList);
         saveStoredQaListsForTeam(team, state.qaLists);
       }

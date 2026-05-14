@@ -164,3 +164,39 @@ test("refresh snapshots preserve settled local QA list lifecycle intent until se
   assert.equal(merged.qaLists.find((item) => item.id === "delete-qa").localLifecycleIntent, "softDelete");
   assert.equal(merged.qaLists.find((item) => item.id === "restore-qa").localLifecycleIntent, "restore");
 });
+
+test("refresh snapshots preserve locally created QA lists omitted by stale refreshes", () => {
+  const previousSnapshot = createQaListsQuerySnapshot({
+    qaLists: [
+      qaList({ id: "existing-qa", title: "Existing QA" }),
+      qaList({ id: "created-qa", title: "Created QA", localLifecycleIntent: "create" }),
+    ],
+  });
+  const staleRefreshSnapshot = createQaListsQuerySnapshot({
+    qaLists: [
+      qaList({ id: "existing-qa", title: "Existing QA" }),
+    ],
+  });
+
+  const merged = preserveQaListLifecyclePatchesInSnapshot(staleRefreshSnapshot, previousSnapshot);
+
+  assert.equal(merged.qaLists.some((item) => item.id === "created-qa"), true);
+  assert.equal(merged.qaLists.find((item) => item.id === "created-qa").localLifecycleIntent, "create");
+});
+
+test("refresh snapshots clear locally created QA list intent after refresh includes the list", () => {
+  const previousSnapshot = createQaListsQuerySnapshot({
+    qaLists: [
+      qaList({ id: "created-qa", title: "Created QA", localLifecycleIntent: "create" }),
+    ],
+  });
+  const settledRefreshSnapshot = createQaListsQuerySnapshot({
+    qaLists: [
+      qaList({ id: "created-qa", title: "Created QA" }),
+    ],
+  });
+
+  const merged = preserveQaListLifecyclePatchesInSnapshot(settledRefreshSnapshot, previousSnapshot);
+
+  assert.equal(merged.qaLists.find((item) => item.id === "created-qa").localLifecycleIntent, undefined);
+});

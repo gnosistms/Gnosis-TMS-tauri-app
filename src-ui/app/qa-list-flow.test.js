@@ -136,6 +136,35 @@ test("stale QA list page load does not replace the newly selected team's visible
   assert.deepEqual(state.qaLists.map((qaList) => qaList.title), ["Team 2 QA"]);
 });
 
+test("QA list page load marks the page refreshing until the refresh finishes", async () => {
+  setupQaTeams();
+  const remoteStarted = deferred();
+  const remoteRepos = deferred();
+
+  invokeHandler = async (command) => {
+    if (command === "list_gnosis_qa_lists_for_installation") {
+      remoteStarted.resolve();
+      return remoteRepos.promise;
+    }
+    if (command === "list_local_gtms_qa_lists") {
+      return [];
+    }
+    return [];
+  };
+
+  const loadPromise = loadTeamQaLists(() => {}, "team-1");
+  await remoteStarted.promise;
+
+  assert.equal(state.qaListsPage.isRefreshing, true);
+  assert.equal(Number.isFinite(state.qaListsPage.refreshStartedAt), true);
+
+  remoteRepos.resolve([]);
+  await loadPromise;
+
+  assert.equal(state.qaListsPage.isRefreshing, false);
+  assert.equal(state.qaListsPage.refreshStartedAt, null);
+});
+
 test("stale QA list editor load does not overwrite a different selected team", async () => {
   setupQaTeams();
   const qaList = repoBackedQaList();
