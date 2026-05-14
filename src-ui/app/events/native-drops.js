@@ -7,9 +7,14 @@ import {
   handleDroppedGlossaryImportFile,
   handleDroppedGlossaryImportPath,
 } from "../glossary-import-flow.js";
+import {
+  handleDroppedQaListImportFile,
+  handleDroppedQaListImportPath,
+} from "../qa-list-flow.js";
 
 const PROJECT_IMPORT_DROPZONE_SELECTOR = "[data-project-import-dropzone]";
 const GLOSSARY_IMPORT_DROPZONE_SELECTOR = "[data-glossary-import-dropzone]";
+const QA_LIST_IMPORT_DROPZONE_SELECTOR = "[data-qa-list-import-dropzone]";
 
 function droppedProjectImportFiles(dataTransfer) {
   const directFiles = Array.from(dataTransfer?.files ?? []).filter(Boolean);
@@ -68,6 +73,15 @@ function closestGlossaryImportDropzoneFromElement(element) {
   return dropzone instanceof HTMLElement ? dropzone : null;
 }
 
+function closestQaListImportDropzoneFromElement(element) {
+  if (!(element instanceof Element)) {
+    return null;
+  }
+
+  const dropzone = element.closest(QA_LIST_IMPORT_DROPZONE_SELECTOR);
+  return dropzone instanceof HTMLElement ? dropzone : null;
+}
+
 function visibleProjectImportDropzone() {
   const dropzone = document.querySelector(PROJECT_IMPORT_DROPZONE_SELECTOR);
   if (!(dropzone instanceof HTMLElement)) {
@@ -96,6 +110,20 @@ function visibleGlossaryImportDropzone() {
   return dropzone;
 }
 
+function visibleQaListImportDropzone() {
+  const dropzone = document.querySelector(QA_LIST_IMPORT_DROPZONE_SELECTOR);
+  if (!(dropzone instanceof HTMLElement)) {
+    return null;
+  }
+
+  const rect = dropzone.getBoundingClientRect();
+  if (rect.width <= 0 || rect.height <= 0) {
+    return null;
+  }
+
+  return dropzone;
+}
+
 function setProjectImportDropzoneNativeDragActive(isActive) {
   const dropzone = visibleProjectImportDropzone();
   if (!dropzone) {
@@ -108,6 +136,16 @@ function setProjectImportDropzoneNativeDragActive(isActive) {
 
 function setGlossaryImportDropzoneNativeDragActive(isActive) {
   const dropzone = visibleGlossaryImportDropzone();
+  if (!dropzone) {
+    return null;
+  }
+
+  dropzone.classList.toggle("is-native-drag-over", isActive);
+  return dropzone;
+}
+
+function setQaListImportDropzoneNativeDragActive(isActive) {
+  const dropzone = visibleQaListImportDropzone();
   if (!dropzone) {
     return null;
   }
@@ -193,18 +231,54 @@ function glossaryImportDropzoneFromNativeDropEvent(event) {
   return visibleDropzone;
 }
 
+function qaListImportDropzoneFromNativeDropEvent(event) {
+  const visibleDropzone = visibleQaListImportDropzone();
+  if (!visibleDropzone) {
+    return null;
+  }
+
+  const position = nativeDropPosition(event);
+  if (!position) {
+    return visibleDropzone;
+  }
+
+  const scale = Number.isFinite(window.devicePixelRatio) && window.devicePixelRatio > 0
+    ? window.devicePixelRatio
+    : 1;
+  const points = [
+    [position.x, position.y],
+    [position.x / scale, position.y / scale],
+  ];
+
+  for (const [x, y] of points) {
+    const element = document.elementFromPoint(x, y);
+    const dropzone = closestQaListImportDropzoneFromElement(element);
+    if (dropzone) {
+      return dropzone;
+    }
+
+    if (pointIsInsideElement(visibleDropzone, x, y)) {
+      return visibleDropzone;
+    }
+  }
+
+  return visibleDropzone;
+}
+
 export function registerNativeDropEvents(render) {
   void onCurrentWebviewDragDrop((event) => {
     const eventType = event?.payload?.type;
     if (eventType === "enter" || eventType === "over") {
       setProjectImportDropzoneNativeDragActive(Boolean(projectImportDropzoneFromNativeDropEvent(event)));
       setGlossaryImportDropzoneNativeDragActive(Boolean(glossaryImportDropzoneFromNativeDropEvent(event)));
+      setQaListImportDropzoneNativeDragActive(Boolean(qaListImportDropzoneFromNativeDropEvent(event)));
       return;
     }
 
     if (eventType === "leave") {
       setProjectImportDropzoneNativeDragActive(false);
       setGlossaryImportDropzoneNativeDragActive(false);
+      setQaListImportDropzoneNativeDragActive(false);
       return;
     }
 
@@ -214,6 +288,7 @@ export function registerNativeDropEvents(render) {
 
     setProjectImportDropzoneNativeDragActive(false);
     setGlossaryImportDropzoneNativeDragActive(false);
+    setQaListImportDropzoneNativeDragActive(false);
     const droppedPaths = Array.isArray(event?.payload?.paths)
       ? event.payload.paths
       : [];
@@ -230,6 +305,11 @@ export function registerNativeDropEvents(render) {
     const droppedPath = importPaths[0];
     if (glossaryImportDropzoneFromNativeDropEvent(event)) {
       void handleDroppedGlossaryImportPath(render, droppedPath);
+      return;
+    }
+
+    if (qaListImportDropzoneFromNativeDropEvent(event)) {
+      void handleDroppedQaListImportPath(render, droppedPath);
     }
   });
 
@@ -237,7 +317,8 @@ export function registerNativeDropEvents(render) {
     const target = event.target instanceof Element ? event.target : null;
     const dropzone =
       target?.closest(PROJECT_IMPORT_DROPZONE_SELECTOR)
-      ?? target?.closest(GLOSSARY_IMPORT_DROPZONE_SELECTOR);
+      ?? target?.closest(GLOSSARY_IMPORT_DROPZONE_SELECTOR)
+      ?? target?.closest(QA_LIST_IMPORT_DROPZONE_SELECTOR);
     if (!(dropzone instanceof HTMLElement)) {
       return;
     }
@@ -253,7 +334,8 @@ export function registerNativeDropEvents(render) {
     const target = event.target instanceof Element ? event.target : null;
     const dropzone =
       target?.closest(PROJECT_IMPORT_DROPZONE_SELECTOR)
-      ?? target?.closest(GLOSSARY_IMPORT_DROPZONE_SELECTOR);
+      ?? target?.closest(GLOSSARY_IMPORT_DROPZONE_SELECTOR)
+      ?? target?.closest(QA_LIST_IMPORT_DROPZONE_SELECTOR);
     if (!(dropzone instanceof HTMLElement)) {
       return;
     }
@@ -265,7 +347,8 @@ export function registerNativeDropEvents(render) {
     const target = event.target instanceof Element ? event.target : null;
     const projectDropzone = target?.closest(PROJECT_IMPORT_DROPZONE_SELECTOR);
     const glossaryDropzone = target?.closest(GLOSSARY_IMPORT_DROPZONE_SELECTOR);
-    const dropzone = projectDropzone ?? glossaryDropzone;
+    const qaListDropzone = target?.closest(QA_LIST_IMPORT_DROPZONE_SELECTOR);
+    const dropzone = projectDropzone ?? glossaryDropzone ?? qaListDropzone;
     if (!(dropzone instanceof HTMLElement)) {
       return;
     }
@@ -283,6 +366,11 @@ export function registerNativeDropEvents(render) {
     }
 
     const file = files[0];
-    void handleDroppedGlossaryImportFile(render, file);
+    if (glossaryDropzone instanceof HTMLElement) {
+      void handleDroppedGlossaryImportFile(render, file);
+      return;
+    }
+
+    void handleDroppedQaListImportFile(render, file);
   });
 }

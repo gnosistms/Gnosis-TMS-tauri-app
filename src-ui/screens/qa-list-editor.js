@@ -14,6 +14,7 @@ import { formatErrorForDisplay } from "../app/error-display.js";
 import { getNoticeBadgeText, getStatusSurfaceItems } from "../app/status-feedback.js";
 import { renderQaTermEditorModal } from "./qa-term-editor-modal.js";
 import { canManageQaLists, selectedTeam } from "../app/qa-list-shared.js";
+import { anyQaTermWriteIsActive } from "../app/qa-term-write-coordinator.js";
 import {
   extractGlossaryRubyVisibleText,
   renderGlossaryRubyTermListHtml,
@@ -122,7 +123,7 @@ export function renderQaListEditorScreen(state) {
       title: qaList.title || "QA List",
       subtitle: qaList.language?.name ?? "",
       titleAction: buildPageRefreshAction(state, state.pageSync, "refresh-page", {
-        backgroundRefreshing: false,
+        backgroundRefreshing: anyQaTermWriteIsActive(),
       }),
       navButtons,
       leftTools: searchField,

@@ -1,6 +1,7 @@
 import { actionSuffix, runWithImmediateLoading } from "../action-helpers.js";
 import {
   cancelQaListCreation,
+  cancelQaListImportModal,
   cancelQaListPermanentDeletion,
   cancelQaListRename,
   cancelQaTermEditor,
@@ -15,6 +16,7 @@ import {
   openQaListRename,
   openQaTermEditor,
   restoreQaList,
+  selectQaListImportFile,
   submitQaListCreation,
   submitQaListRename,
   submitQaTermEditor,
@@ -27,9 +29,11 @@ export function createQaActions(render) {
     "cancel-qa-list-permanent-deletion": () => cancelQaListPermanentDeletion(render),
     "cancel-qa-list-rename": () => cancelQaListRename(render),
     "cancel-qa-list-creation": () => cancelQaListCreation(render),
+    "cancel-qa-list-import": () => cancelQaListImportModal(render),
     "cancel-qa-term-editor": () => cancelQaTermEditor(render),
     "open-new-qa-list": () => openQaListCreation(render),
     "import-qa-list": () => importQaListFromTmx(render),
+    "select-qa-list-import-file": () => selectQaListImportFile(render),
     "open-new-qa-term": () => openQaTermEditor(render),
     "toggle-deleted-qa-lists": () => toggleDeletedQaLists(render),
   };

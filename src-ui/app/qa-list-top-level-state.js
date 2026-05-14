@@ -7,8 +7,10 @@ import {
 } from "./qa-list-query.js";
 import { syncSingleQaListForTeam, syncQaListReposForTeam, teamSupportsQaListRepos, getQaListSyncIssueMessage } from "./qa-list-repo-flow.js";
 import { qaListKeys, queryClient } from "./query-client.js";
-import { selectedTeam } from "./qa-list-shared.js";
+import { normalizeQaList, selectedTeam, sortQaLists } from "./qa-list-shared.js";
+import { setResourcePageDataOwner } from "./resource-page-controller.js";
 import { state } from "./state.js";
+import { teamCacheKey } from "./team-cache.js";
 
 export function createQaResourceId(prefix) {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
@@ -26,6 +28,82 @@ export function selectedQaListTeamMatches(team) {
       && selected.id === team.id
       && selected.installationId === team.installationId,
   );
+}
+
+export function qaListSnapshotFromList(qaLists = []) {
+  const normalized = sortQaLists(
+    (Array.isArray(qaLists) ? qaLists : [])
+      .map(normalizeQaList)
+      .filter(Boolean),
+  );
+  return {
+    items: normalized.filter((qaList) => qaList.lifecycleState !== "deleted"),
+    deletedItems: normalized.filter((qaList) => qaList.lifecycleState === "deleted"),
+  };
+}
+
+export function applyQaListSnapshotToState(
+  snapshot,
+  {
+    teamId = state.selectedTeamId,
+    fallbackToFirstActive = true,
+    cacheKey,
+    cacheUpdatedAt = null,
+  } = {},
+) {
+  if (state.selectedTeamId !== teamId) {
+    return;
+  }
+
+  const nextQaLists = sortQaLists([
+    ...(Array.isArray(snapshot?.items) ? snapshot.items : []),
+    ...(Array.isArray(snapshot?.deletedItems) ? snapshot.deletedItems : []),
+  ]);
+  const normalizedQaLists = nextQaLists
+    .map(normalizeQaList)
+    .filter(Boolean);
+  state.qaLists = normalizedQaLists;
+  const team = state.teams.find((item) => item?.id === teamId);
+  setResourcePageDataOwner(state.qaListsPage, {
+    teamId,
+    cacheKey: cacheKey ?? teamCacheKey(team),
+    cacheUpdatedAt,
+  });
+  if (
+    fallbackToFirstActive
+    && !normalizedQaLists.some(
+      (qaList) => qaList.lifecycleState !== "deleted" && qaList.id === state.selectedQaListId,
+    )
+  ) {
+    state.selectedQaListId =
+      normalizedQaLists.find((qaList) => qaList.lifecycleState !== "deleted")?.id ?? null;
+  }
+  if (!normalizedQaLists.some((qaList) => qaList.lifecycleState === "deleted")) {
+    state.showDeletedQaLists = false;
+  }
+}
+
+export function persistQaListsForTeam(team) {
+  saveStoredQaListsForTeam(team, state.qaLists);
+}
+
+export function removeQaListFromState(qaListId, repoName) {
+  state.qaLists = (Array.isArray(state.qaLists) ? state.qaLists : []).filter((qaList) =>
+    qaList?.id !== qaListId && qaList?.repoName !== repoName
+  );
+  if (state.selectedQaListId === qaListId) {
+    state.selectedQaListId = null;
+  }
+  if (state.qaListEditor?.qaListId === qaListId || state.qaListEditor?.repoName === repoName) {
+    state.qaListEditor = {
+      ...state.qaListEditor,
+      qaListId: null,
+      repoName: "",
+      status: "idle",
+      error: "",
+      terms: [],
+    };
+  }
 }
 
 export function ensureQaListsQueryDataForTeam(team) {
@@ -79,7 +157,7 @@ export function upsertQaListForTeam(team, qaList, render, options = {}) {
 export function saveCurrentTeamQaLists() {
   const team = currentQaListTeam();
   if (team) {
-    saveStoredQaListsForTeam(team, state.qaLists);
+    persistQaListsForTeam(team);
   }
 }
 

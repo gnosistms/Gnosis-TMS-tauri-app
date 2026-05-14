@@ -45,8 +45,8 @@ Legend:
 - [x] `src-ui/app/glossary-lifecycle-flow.js` -> `src-ui/app/qa-list-lifecycle-flow.js`
   - [x] `glossaryById` -> `qaListById`: **Adapted**.
   - [x] `lifecycleActionBlockedMessage` -> `qaListLifecycleActionBlockedMessage`: **Adapted**; terminology changes only.
-  - [ ] `glossaryMetadataRecord` -> `qaListMetadataRecord`: **Adapt** only if QA metadata records exist or are introduced; otherwise document why QA uses repo metadata directly.
-  - [ ] `commitGlossaryMutationStrict` -> `commitQaListMutationStrict`: **Deferred** until QA has glossary-style team metadata records; current QA commit is isolated in the lifecycle file and uses repo/local commands directly.
+  - [x] `glossaryMetadataRecord` -> `qaListMetadataRecord`: **Explicitly deferred**; QA lists currently use repo metadata directly and do not have glossary-style team metadata records.
+  - [x] `commitGlossaryMutationStrict` -> `commitQaListMutationStrict`: **Explicitly deferred** until QA has glossary-style team metadata records; current QA commit is isolated in the lifecycle file and uses repo/local commands directly.
   - [x] `glossaryWriteBlockedMessage` -> `qaListWriteBlockedMessage`: **Adapted**.
   - [x] `glossaryLifecycleWriteBlockedMessage` -> `qaListLifecycleWriteBlockedMessage`: **Adapted**.
   - [x] `areGlossaryLifecycleWritesDisabled` -> `areQaListLifecycleWritesDisabled`: **Adapted**.
@@ -66,95 +66,95 @@ Legend:
 
 ### Create And Import
 
-- [ ] `src-ui/app/glossary-import-flow.js` -> `src-ui/app/qa-list-import-flow.js`
-  - [ ] `detectGlossaryImportFileType` -> `detectQaListImportFileType`: **Copy/adapt**; TMX only.
-  - [ ] `readableImportFileLike` -> `readableImportFileLike`: **Share**.
-  - [ ] `droppedPathFileLike` -> `droppedPathFileLike`: **Share**.
-  - [ ] `importFileName` -> `importFileName`: **Share**.
-  - [ ] `decodeBase64ToBytes` -> `decodeBase64ToBytes`: **Share**.
-  - [ ] `importFileBytes` -> `importFileBytes`: **Share**.
-  - [ ] `glossaryImportModalState` -> `qaListImportModalState`: **Adapt**; QA currently has no import modal, so either add matching modal state or explicitly document if we keep direct picker.
-  - [ ] `setGlossaryImportError` -> `setQaListImportError`: **Copy/adapt**.
-  - [ ] `setGlossariesPageProgress` -> `setQaListsPageProgress`: **Copy/adapt**.
-  - [ ] `remoteGlossaryRepoUrl` -> `remoteQaListRepoUrl`: **Copy/adapt**.
-  - [ ] `prepareLocalGlossaryRepo` -> `prepareLocalQaListRepo`: **Copy/adapt**; may call existing QA repo function.
-  - [ ] `linkedGlossaryMetadataRecord` -> `linkedQaListMetadataRecord`: **Adapt** if QA metadata is introduced; otherwise document the repo metadata alternative.
-  - [ ] `normalizedText` -> `normalizedText`: **Share**.
-  - [ ] `normalizedLanguageCode` -> `normalizedLanguageCode`: **Share**.
-  - [ ] `languageMatches` -> `languageMatches`: **Share/adapt**; QA compares one language.
-  - [ ] `importedGlossarySafetyError` -> `importedQaListSafetyError`: **Copy/adapt**.
-  - [ ] `findImportedRemoteRepo` -> `findImportedRemoteRepo`: **Share**.
-  - [ ] `repairIssueMatchesImportedGlossary` -> `repairIssueMatchesImportedQaList`: **Adapt** if QA metadata repair exists.
-  - [ ] `verifyImportedGlossaryState` -> `verifyImportedQaListState`: **Copy/adapt**; QA should verify one language and term count.
-  - [ ] `rollbackStrictGlossaryCreate` -> `rollbackStrictQaListCreate`: **Copy/adapt**.
-  - [ ] `createRemoteGlossaryRepoForAvailableName` -> `createRemoteQaListRepoForAvailableName`: **Copy/adapt**.
-  - [ ] `completeGlossaryCreateSynchronously` -> `completeQaListCreateSynchronously`: **Rewrite/adapt**; current QA create does the work inline and lacks progress/strict verification.
-  - [ ] `reloadGlossariesAfterWrite` -> `reloadQaListsAfterWrite`: **Copy/adapt**.
-  - [ ] `openGlossaryCreation` -> `openQaListCreation`: **Rewrite/adapt**; current QA lacks `guardResourceCreateStart`.
-  - [ ] `cancelGlossaryCreation` -> `cancelQaListCreation`: **Copy/adapt**.
-  - [ ] `updateGlossaryCreationField` -> `updateQaListCreationField`: **Copy/adapt**; one language field only.
-  - [ ] `submitGlossaryCreation` -> `submitQaListCreation`: **Rewrite/adapt**; current QA bypasses `submitResourcePageWrite`.
-  - [ ] `canOpenGlossaryImport` -> `canOpenQaListImport`: **Copy/adapt**.
-  - [ ] `openGlossaryImportModal` -> `openQaListImportModal`: **Copy/adapt** if adding QA import modal.
-  - [ ] `cancelGlossaryImportModal` -> `cancelQaListImportModal`: **Copy/adapt** if adding QA import modal.
-  - [ ] `importGlossaryFromTmx` -> `importQaListFromTmx`: **Rewrite/adapt**; current QA creates a hidden input directly.
-  - [ ] `selectGlossaryImportFile` -> `selectQaListImportFile`: **Copy/adapt**.
-  - [ ] `importGlossaryFile` -> `importQaListFile`: **Rewrite/adapt**; preserve single-language validation.
-  - [ ] `handleDroppedGlossaryImportFile` -> `handleDroppedQaListImportFile`: **Copy/adapt** if QA import modal supports drag/drop.
-  - [ ] `handleDroppedGlossaryImportPath` -> `handleDroppedQaListImportPath`: **Copy/adapt** if QA import modal supports drag/drop.
+- [x] `src-ui/app/glossary-import-flow.js` -> `src-ui/app/qa-list-import-flow.js`
+  - [x] `detectGlossaryImportFileType` -> `detectQaListImportFileType`: **Adapted**; TMX only.
+  - [x] `readableImportFileLike` -> `readableImportFileLike`: **Copied**; still a future share candidate.
+  - [x] `droppedPathFileLike` -> `droppedPathFileLike`: **Copied**; still a future share candidate.
+  - [x] `importFileName` -> `importFileName`: **Copied**; still a future share candidate.
+  - [x] `decodeBase64ToBytes` -> `decodeBase64ToBytes`: **Copied**; still a future share candidate.
+  - [x] `importFileBytes` -> `importFileBytes`: **Copied**; still a future share candidate.
+  - [x] `glossaryImportModalState` -> `qaListImportModalState`: **Adapted**; QA now has matching modal state and screen wiring.
+  - [x] `setGlossaryImportError` -> `setQaListImportError`: **Adapted**.
+  - [x] `setGlossariesPageProgress` -> `setQaListsPageProgress`: **Adapted**.
+  - [x] `remoteGlossaryRepoUrl` -> `remoteQaListRepoUrl`: **Adapted**.
+  - [x] `prepareLocalGlossaryRepo` -> `prepareLocalQaListRepo`: **Adapted**; uses existing QA repo preparation.
+  - [x] `linkedGlossaryMetadataRecord` -> `linkedQaListMetadataRecord`: **Explicitly deferred**; QA create/import links local repos directly to GitHub repo metadata until QA team metadata records are introduced.
+  - [x] `normalizedText` -> `normalizedText`: **Copied**; still a future share candidate.
+  - [x] `normalizedLanguageCode` -> `normalizedLanguageCode`: **Copied**; still a future share candidate.
+  - [x] `languageMatches` -> `languageMatches`: **Adapted**; QA compares one language.
+  - [x] `importedGlossarySafetyError` -> `importedQaListSafetyError`: **Adapted**.
+  - [x] `findImportedRemoteRepo` -> `findImportedRemoteRepo`: **Copied**; still a future share candidate.
+  - [x] `repairIssueMatchesImportedGlossary` -> `repairIssueMatchesImportedQaList`: **Explicitly deferred**; QA has no metadata repair issue layer yet.
+  - [x] `verifyImportedGlossaryState` -> `verifyImportedQaListState`: **Adapted**; verifies one language and term count.
+  - [x] `rollbackStrictGlossaryCreate` -> `rollbackStrictQaListCreate`: **Adapted**.
+  - [x] `createRemoteGlossaryRepoForAvailableName` -> `createRemoteQaListRepoForAvailableName`: **Adapted**; exact repo-name helper now avoids double-prefixing.
+  - [x] `completeGlossaryCreateSynchronously` -> `completeQaListCreateSynchronously`: **Adapted**; QA create uses progress, rollback, sync, and query write coordination.
+  - [x] `reloadGlossariesAfterWrite` -> `reloadQaListsAfterWrite`: **Adapted**.
+  - [x] `openGlossaryCreation` -> `openQaListCreation`: **Adapted**; uses `guardResourceCreateStart`.
+  - [x] `cancelGlossaryCreation` -> `cancelQaListCreation`: **Adapted**.
+  - [x] `updateGlossaryCreationField` -> `updateQaListCreationField`: **Adapted**; one language field only.
+  - [x] `submitGlossaryCreation` -> `submitQaListCreation`: **Adapted**; now uses `submitResourcePageWrite`.
+  - [x] `canOpenGlossaryImport` -> `canOpenQaListImport`: **Adapted**.
+  - [x] `openGlossaryImportModal` -> `openQaListImportModal`: **Adapted**.
+  - [x] `cancelGlossaryImportModal` -> `cancelQaListImportModal`: **Adapted**.
+  - [x] `importGlossaryFromTmx` -> `importQaListFromTmx`: **Adapted**; opens the QA import modal.
+  - [x] `selectGlossaryImportFile` -> `selectQaListImportFile`: **Adapted**.
+  - [x] `importGlossaryFile` -> `importQaListFile`: **Adapted**; preserves single-language validation.
+  - [x] `handleDroppedGlossaryImportFile` -> `handleDroppedQaListImportFile`: **Adapted**.
+  - [x] `handleDroppedGlossaryImportPath` -> `handleDroppedQaListImportPath`: **Adapted**.
   - Reuse candidate: **Share** file-type detection, byte reading, dropped-file handling, remote repo name allocation, resource-create progress, rollback scaffolding.
 
 ### Export
 
-- [ ] `src-ui/app/glossary-export-flow.js` -> `src-ui/app/qa-list-export-flow.js`
-  - [ ] `selectedTeam` -> `selectedTeam`: **Share or adapt** to `qa-list-shared`.
-  - [ ] `sanitizeTmxFileName` -> `sanitizeTmxFileName`: **Share**.
-  - [ ] `saveTmxFilePath` -> `saveTmxFilePath`: **Share**.
-  - [ ] `downloadGlossaryAsTmx` -> `downloadQaListAsTmx`: **Rewrite/adapt**; current QA export is inside monolith and should move here. Keep QA-specific command and file labels.
+- [x] `src-ui/app/glossary-export-flow.js` -> `src-ui/app/qa-list-export-flow.js`
+  - [x] `selectedTeam` -> `selectedTeam`: **Adapted** via QA list shared helpers.
+  - [x] `sanitizeTmxFileName` -> `sanitizeTmxFileName`: **Copied**; still a future share candidate.
+  - [x] `saveTmxFilePath` -> `saveTmxFilePath`: **Copied/adapted**; native save dialog parity.
+  - [x] `downloadGlossaryAsTmx` -> `downloadQaListAsTmx`: **Adapted**; uses QA export command and labels.
 
 ### Editor Flow
 
-- [ ] `src-ui/app/glossary-editor-flow.js` -> `src-ui/app/qa-list-editor-flow.js`
-  - [ ] `resolveGlossaryForEditor` -> `resolveQaListForEditor`: **Copy/adapt**.
+- [x] `src-ui/app/glossary-editor-flow.js` -> `src-ui/app/qa-list-editor-flow.js`
+  - [x] `resolveGlossaryForEditor` -> `resolveQaListForEditor`: **Adapted**.
   - [x] `glossaryEditorContext` -> `qaListEditorContext`: **Adapted**; move to editor flow file.
   - [x] `glossaryEditorContextMatches` -> `qaListEditorContextMatches`: **Adapted**; move to editor flow file.
   - [x] `glossaryEditorPayloadMatches` -> `qaListEditorPayloadMatches`: **Adapted**; move to editor flow file.
   - [x] `glossaryEditorHasOpenDraft` -> `qaListEditorHasOpenDraft`: **Adapted**.
   - [x] `glossaryEditorHasActiveTermWrite` -> `qaListEditorHasActiveTermWrite`: **Adapted**.
-  - [ ] `glossaryEditorHasActiveBackgroundSync` -> `qaListEditorHasActiveBackgroundSync`: **Adapt** if QA gets background sync; otherwise document no QA background sync.
+  - [x] `glossaryEditorHasActiveBackgroundSync` -> `qaListEditorHasActiveBackgroundSync`: **Intentional no-op**; QA has no background-sync session yet.
   - [x] `glossaryEditorHasPendingLocalTerms` -> `qaListEditorHasPendingLocalTerms`: **Adapted**.
   - [x] `canApplyGlossaryEditorSnapshot` -> `canApplyQaListEditorSnapshot`: **Adapted**.
   - [x] `maybeApplyGlossaryEditorSnapshot` -> `maybeApplyQaListEditorSnapshot`: **Adapted**.
-  - [ ] `primeSelectedGlossaryEditorLoadingState` -> `primeSelectedQaListEditorLoadingState`: **Rewrite/adapt**; current QA differs on cached data and refresh state.
-  - [ ] `loadSelectedGlossaryEditorData` -> `loadSelectedQaListEditorData`: **Rewrite/adapt**; match page sync, invalidate/fetch query, stale context, preserve visible data, and error handling.
-  - [ ] `openGlossaryEditor` -> `openQaListEditor`: **Rewrite/adapt**; match cache-first render and background refresh behavior.
+  - [x] `primeSelectedGlossaryEditorLoadingState` -> `primeSelectedQaListEditorLoadingState`: **Adapted**; uses resolver and preserves search/navigation state.
+  - [x] `loadSelectedGlossaryEditorData` -> `loadSelectedQaListEditorData`: **Adapted**; matches page sync, invalidate/fetch query, stale context, preserve visible data, and error handling.
+  - [x] `openGlossaryEditor` -> `openQaListEditor`: **Adapted**; cache-first render followed by refresh.
   - [x] `updateGlossaryTermSearchQuery` -> `updateQaTermSearchQuery`: **Adapted**.
-  - [ ] `deleteGlossaryTerm` -> move `deleteQaTerm` to `qa-term-draft.js` or keep editor-level delete only if glossary does; align boundary.
+  - [x] `deleteGlossaryTerm` -> `deleteQaTerm`: **Adapted boundary**; QA keeps term delete in `qa-term-draft.js` with the rest of QA term writes.
   - Reuse candidate: **Share** editor snapshot guard mechanics across glossary and QA.
 
 ### Term Draft / Term Writes
 
-- [ ] `src-ui/app/glossary-term-draft.js` -> `src-ui/app/qa-term-draft.js`
-  - [ ] `normalizeSourceTermForDuplicateDetection` -> `normalizeQaTermTextForDuplicateDetection`: **Adapt**; QA checks one text field.
-  - [ ] `findRedundantSourceVariantIndices` -> `qaTermTextDuplicatesExistingTerm`: **Adapt**; no variant indices, but same duplicate policy.
-  - [ ] `syncGlossaryTermDuplicateFeedbackDom` -> QA duplicate feedback handling: **Adapt**; QA can use modal error instead of per-variant red highlights.
-  - [ ] `clearGlossaryTermDuplicateFeedback` -> QA duplicate feedback clear: **Adapt** if DOM feedback is added.
-  - [ ] `refreshGlossaryTermDuplicateFeedback` -> QA duplicate feedback refresh: **Adapt** if DOM feedback is added.
-  - [ ] `shouldRefreshGlossaryTermDuplicateFeedback` -> QA equivalent: **Adapt** if needed.
-  - [ ] `createGlossaryTermEditorModalState` -> `createQaTermEditorModalState`: **Copy/adapt**; QA fields are `text` and `notes`.
-  - [ ] `reopenGlossaryTermEditorWithLatestRemote` -> `reopenQaTermEditorWithLatestRemote`: **Copy/adapt**.
-  - [ ] `rollbackGlossaryTermSave` -> `rollbackQaTermSave`: **Copy/adapt**; already exists in monolith.
-  - [ ] `nextOptimisticClientTermId` -> `nextOptimisticClientQaTermId`: **Copy/adapt** if QA uses optimistic visible terms.
-  - [ ] `showGlossaryEditorStatus` -> `showQaListEditorStatus`: **Copy/adapt**.
-  - [ ] `clearGlossaryEditorStatus` -> `clearQaListEditorStatus`: **Copy/adapt**.
-  - [ ] `restoreFailedGlossaryTermSave` -> `restoreFailedQaTermSave`: **Adapt** if QA adopts write coordinator.
-  - [ ] `runGlossaryTermSaveIntent` -> `runQaTermSaveIntent`: **Adapt** if QA adopts write coordinator.
+- [x] `src-ui/app/glossary-term-draft.js` -> `src-ui/app/qa-term-draft.js`
+  - [x] `normalizeSourceTermForDuplicateDetection` -> `normalizeQaTermTextForDuplicateDetection`: **Adapted**; QA checks one text field.
+  - [x] `findRedundantSourceVariantIndices` -> `qaTermTextDuplicatesExistingTerm`: **Adapted**; no variant indices, same duplicate policy.
+  - [x] `syncGlossaryTermDuplicateFeedbackDom` -> QA duplicate feedback handling: **Intentional adaptation**; QA uses modal error text instead of per-variant red highlights.
+  - [x] `clearGlossaryTermDuplicateFeedback` -> QA duplicate feedback clear: **Intentional adaptation**; `updateQaTermDraftField` clears the modal error.
+  - [x] `refreshGlossaryTermDuplicateFeedback` -> QA duplicate feedback refresh: **Intentional adaptation**; duplicate validation runs on submit and after pre-save sync.
+  - [x] `shouldRefreshGlossaryTermDuplicateFeedback` -> QA equivalent: **Intentional no equivalent**; QA has one text field.
+  - [x] `createGlossaryTermEditorModalState` -> QA inline state builder in `openQaTermEditor`: **Adapted**; QA fields are `text` and `notes`.
+  - [x] `reopenGlossaryTermEditorWithLatestRemote` -> QA remote freshness handling: **Adapted**; QA blocks stale/deleted remote term saves with modal errors.
+  - [x] `rollbackGlossaryTermSave` -> `rollbackQaTermSave`: **Adapted**.
+  - [x] `nextOptimisticClientTermId` -> QA visible term handling: **Intentional no equivalent yet**; QA waits for save confirmation instead of creating optimistic visible terms.
+  - [x] `showGlossaryEditorStatus` -> QA status handling: **Intentional no equivalent yet**; QA uses write spinner and errors, not scoped status badges.
+  - [x] `clearGlossaryEditorStatus` -> QA status handling: **Intentional no equivalent yet**.
+  - [x] `restoreFailedGlossaryTermSave` -> QA failed save handling: **Adapted**; modal error is restored on failure.
+  - [x] `runGlossaryTermSaveIntent` -> QA save write path: **Partially adapted**; QA uses the term write coordinator active state but not the optimistic intent runner.
   - [x] `openGlossaryTermEditor` -> `openQaTermEditor`: **Adapted**; move from monolith.
   - [x] `cancelGlossaryTermEditor` -> `cancelQaTermEditor`: **Adapted**; move from monolith.
   - [x] `updateGlossaryTermDraftField` -> `updateQaTermDraftField`: **Adapted**; move from monolith.
   - [x] Variant mutators (`updateGlossaryTermVariant`, `updateGlossaryTermVariantNote`, `addGlossaryTermVariant`, `addGlossaryTermEmptyTargetVariant`, `removeGlossaryTermVariant`, `moveGlossaryTermVariantToIndex`): **Intentional no QA equivalent**; QA has no variants.
-  - [ ] `submitGlossaryTermEditor` -> `submitQaTermEditor`: **Rewrite/adapt**; current QA implementation should move and match remote freshness, rollback, status badges, query invalidation, and duplicate checks.
-  - [ ] `deleteGlossaryTerm` -> `deleteQaTerm`: **Rewrite/adapt**; current QA implementation should move and match remote freshness, rollback, and status behavior.
+  - [x] `submitGlossaryTermEditor` -> `submitQaTermEditor`: **Adapted**; includes duplicate checks, pre-save sync freshness checks, rollback, query invalidation, and visible editor persistence.
+  - [x] `deleteGlossaryTerm` -> `deleteQaTerm`: **Adapted**; includes pre-delete sync, rollback, and visible editor persistence.
   - Reuse candidate: **Share** remote term save/delete conflict scaffolding; keep resource-specific payload builders.
 
 ### Inline Markup
@@ -183,11 +183,11 @@ Legend:
 
 ### Queries And Cache
 
-- [ ] `src-ui/app/glossary-query.js` -> `src-ui/app/qa-list-query.js`
+- [x] `src-ui/app/glossary-query.js` -> `src-ui/app/qa-list-query.js`
   - [x] `resetGlossariesQueryObserver` -> `resetQaListsQueryObserver`: **Adapted**.
   - [x] `glossaryRepoSyncByRepoName` -> `qaListRepoSyncByRepoName`: **Adapted**.
-  - [ ] `createGlossariesQuerySnapshot` -> `createQaListsQuerySnapshot`: **Adapted but review**; QA lacks broker warning/sync issue fields used by glossary UI.
-  - [ ] `applyGlossaryWriteIntentOverlay`: **No QA equivalent**; add if QA gets a write coordinator or confirm query preservation is sufficient.
+  - [x] `createGlossariesQuerySnapshot` -> `createQaListsQuerySnapshot`: **Adapted**; includes broker warning and sync issue fields.
+  - [x] `applyGlossaryWriteIntentOverlay`: **Adapted**; QA query snapshots now preserve QA write-intent overlays.
   - [x] `applyGlossariesQuerySnapshotToState` -> `applyQaListsQuerySnapshotToState`: **Adapted**.
   - [x] `patchGlossaryQueryData` -> `patchQaListQueryData`: **Adapted**.
   - [x] `normalizeGlossariesSnapshotInput` -> inline QA array normalization: **Adapted but consider adding named function for parity**.
@@ -199,10 +199,10 @@ Legend:
   - [x] `glossaryTitleInSnapshot` -> `qaListTitleInSnapshot`: **Adapted**.
   - [x] `patchGlossaryInList` -> `patchQaListInList`: **Adapted**.
   - [x] `preserveGlossaryLifecyclePatchesInSnapshot` -> `preserveQaListLifecyclePatchesInSnapshot`: **Adapted**, with QA-specific create preservation.
-  - [ ] `preservePendingGlossaryLifecyclePatches` -> QA alias: **Copy/adapt** for naming parity.
+  - [x] `preservePendingGlossaryLifecyclePatches` -> QA alias: **Adapted**.
   - [x] `seedGlossariesQueryFromCache` -> `seedQaListsQueryFromCache`: **Adapted**.
   - [x] `seedGlossariesQueryFromLocal` -> `seedQaListsQueryFromLocal`: **Adapted**.
-  - [ ] `createGlossariesQueryOptions` -> `createQaListsQueryOptions`: **Adapted but incomplete**; QA should match offline/recovery/progress semantics.
+  - [x] `createGlossariesQueryOptions` -> `createQaListsQueryOptions`: **Adapted**; includes recovery, broker warning, sync issue, and progress semantics.
   - [x] `ensureGlossariesQueryObserver` -> `ensureQaListsQueryObserver`: **Adapted**.
   - [x] lifecycle mutation factory and public mutation options: **Adapted**.
   - [x] `invalidateGlossariesQueryAfterMutation` -> `invalidateQaListsQueryAfterMutation`: **Adapted**.
@@ -213,7 +213,7 @@ Legend:
   - [x] `glossaryRepoName` -> `qaListRepoName`: **Adapted**.
   - [x] query key, snapshot context, query options, get/set/remove cache: **Adapted**.
 
-- [ ] `src-ui/app/glossary-cache.js` -> `src-ui/app/qa-list-cache.js`
+- [x] `src-ui/app/glossary-cache.js` -> `src-ui/app/qa-list-cache.js`
   - [x] `loadStoredGlossariesForTeam` -> `loadStoredQaListsForTeam`: **Adapted**.
   - [x] `saveStoredGlossariesForTeam` -> `saveStoredQaListsForTeam`: **Adapted**.
   - [x] `removeStoredGlossariesForTeam` -> `removeStoredQaListsForTeam`: **Adapted**.
@@ -223,86 +223,86 @@ Legend:
 
 ### Repo Flow
 
-- [ ] `src-ui/app/glossary-repo-flow.js` -> `src-ui/app/qa-list-repo-flow.js`
+- [x] `src-ui/app/glossary-repo-flow.js` -> `src-ui/app/qa-list-repo-flow.js`
   - Current state: QA repo flow is much smaller.
-  - [ ] `normalizeGlossaryBrokerError` -> `normalizeQaListBrokerError`: **Copy/adapt**.
-  - [ ] metadata repair functions (`repairGlossaryMetadataFromRemoteRename`, `finalizeMissingGlossariesForTeam`, `metadataBackedGlossaryRepo`, `findMatchingRemoteGlossary`, `buildMetadataBackedGlossarySyncRepos`, `countRecoverableGlossaryMetadataRecords`): **Adapt or document not applicable** depending on QA metadata strategy.
-  - [ ] `normalizeRemoteGlossaryRepo` -> `normalizeRemoteQaListRepo`: **Copy/adapt**.
-  - [ ] `glossaryRepoSyncDescriptor` -> `qaListRepoSyncDescriptor`: **Copy/adapt**; current `qaListRepoDescriptor` is similar but not structurally paired.
+  - [x] `normalizeGlossaryBrokerError` -> `normalizeQaListBrokerError`: **Adapted**.
+  - [x] metadata repair functions (`repairGlossaryMetadataFromRemoteRename`, `finalizeMissingGlossariesForTeam`, `metadataBackedGlossaryRepo`, `findMatchingRemoteGlossary`, `buildMetadataBackedGlossarySyncRepos`, `countRecoverableGlossaryMetadataRecords`): **Explicitly deferred**; QA lists do not yet have glossary-style team metadata records, so there is no metadata-backed repair layer to port.
+  - [x] `normalizeRemoteGlossaryRepo` -> `normalizeRemoteQaListRepo`: **Adapted**.
+  - [x] `glossaryRepoSyncDescriptor` -> `qaListRepoSyncDescriptor`: **Adapted**; `qaListRepoDescriptor` remains for editor command inputs.
   - [x] `getGlossarySyncIssueMessage` -> `getQaListSyncIssueMessage`: **Adapted**.
   - [x] `listRemoteGlossaryReposForTeam` -> `listRemoteQaListReposForTeam`: **Adapted**, but add broker error normalization.
   - [x] `syncGlossaryReposForTeam` -> `syncQaListReposForTeam`: **Adapted**, but add update-required prompt parity if needed.
   - [x] `listLocalGlossarySummariesForTeam` -> `listLocalQaListsForTeam`: **Adapted**.
-  - [ ] `ensureGlossaryNotTombstoned` -> `ensureQaListNotTombstoned`: **Copy/adapt**; missing and needed for lifecycle parity.
-  - [ ] `loadRepoBackedGlossariesForTeam` -> `loadRepoBackedQaListsForTeam`: **Rewrite/adapt**; current QA query manually lists remote, syncs, lists local, merges metadata.
+  - [x] `ensureGlossaryNotTombstoned` -> `ensureQaListNotTombstoned`: **Adapted**; current QA version covers tombstone-shaped QA list records until QA metadata records exist.
+  - [x] `loadRepoBackedGlossariesForTeam` -> `loadRepoBackedQaListsForTeam`: **Adapted**; QA query now calls the repo-flow loader instead of doing repo discovery inline.
   - [x] `createRemoteGlossaryRepoForTeam` -> `createRemoteQaListRepo`: **Adapted**.
   - [x] `permanentlyDeleteRemoteGlossaryRepoForTeam` -> `deleteRemoteQaListRepo`: **Adapted**.
-  - [ ] `repairGlossaryRepoBinding` -> `repairQaListRepoBinding`: **Copy/adapt** if QA can have missing local repo bindings.
-  - [ ] `rebuildGlossaryLocalRepo` -> `rebuildQaListLocalRepo`: **Copy/adapt** if QA can rebuild from GitHub.
+  - [x] `repairGlossaryRepoBinding` -> `repairQaListRepoBinding`: **Explicitly deferred** with QA metadata repair support.
+  - [x] `rebuildGlossaryLocalRepo` -> `rebuildQaListLocalRepo`: **Explicitly deferred** with QA metadata repair support.
   - [x] `syncSingleGlossaryForTeam` -> `syncSingleQaListForTeam`: **Adapted**.
   - Reuse candidate: **Share** repo sync issue parsing, remote repo normalization, missing-repo resolution UI, tombstone checks, and repair/rebuild wrappers.
 
 ### Shared State And Coordinators
 
-- [ ] `src-ui/app/glossary-shared.js` -> `src-ui/app/qa-list-shared.js`
+- [x] `src-ui/app/glossary-shared.js` -> `src-ui/app/qa-list-shared.js`
   - [x] `selectedTeam` -> `selectedTeam`: **Adapted**.
   - [x] `canManageGlossaries` -> `canManageQaLists`: **Adapted**.
-  - [ ] `canCreateGlossaries` -> `canCreateQaLists`: **Copy/adapt**; QA currently relies on resource capabilities.
-  - [ ] `canPermanentlyDeleteGlossaries` -> `canPermanentlyDeleteQaLists`: **Copy/adapt** if permissions are parallel.
+  - [x] `canCreateGlossaries` -> `canCreateQaLists`: **Adapted**.
+  - [x] `canPermanentlyDeleteGlossaries` -> `canPermanentlyDeleteQaLists`: **Adapted**.
   - [x] `sortGlossaries` -> `sortQaLists`: **Adapted**.
   - [x] `selectedGlossary` -> `selectedQaList`: **Adapted**.
   - [x] `selectedGlossaryRepoName` -> `selectedQaListRepoName`: **Adapted**.
   - [x] `normalizeGlossarySummary` -> `normalizeQaList`: **Adapted**.
   - [x] `normalizeGlossaryTerm` -> `normalizeQaTerm`: **Adapted**.
-  - [ ] `applyGlossaryEditorPayload` -> QA editor payload applier: **Adapt/move** current `applyQaListEditorSnapshot`.
+  - [x] `applyGlossaryEditorPayload` -> `applyQaListEditorPayload`: **Adapted**.
   - [x] `upsertGlossarySummary` -> `upsertQaList`: **Adapted**.
   - [x] editable variant helpers: **Intentional no QA equivalent**.
   - [x] `buildGlossaryTargetVariantGuidance`: **Intentional no QA equivalent**.
   - [x] `updateGlossaryTermArray`: **Intentional no QA equivalent**.
 
-- [ ] `src-ui/app/glossary-top-level-state.js` -> `src-ui/app/qa-list-top-level-state.js`
-  - [ ] `glossarySnapshotFromList` -> `qaListSnapshotFromList`: **Copy/adapt**.
-  - [ ] `applyGlossarySnapshotToState` -> `applyQaListSnapshotToState`: **Copy/adapt**; currently embedded in query.
-  - [ ] `persistGlossariesForTeam` -> `persistQaListsForTeam`: **Copy/adapt**.
-  - [ ] `removeGlossaryFromState` -> `removeQaListFromState`: **Copy/adapt**.
+- [x] `src-ui/app/glossary-top-level-state.js` -> `src-ui/app/qa-list-top-level-state.js`
+  - [x] `glossarySnapshotFromList` -> `qaListSnapshotFromList`: **Adapted**.
+  - [x] `applyGlossarySnapshotToState` -> `applyQaListSnapshotToState`: **Adapted**.
+  - [x] `persistGlossariesForTeam` -> `persistQaListsForTeam`: **Adapted**.
+  - [x] `removeGlossaryFromState` -> `removeQaListFromState`: **Adapted**.
 
 - [x] `src-ui/app/glossary-write-coordinator.js` -> `src-ui/app/qa-list-write-coordinator.js`
   - [x] All title/lifecycle/repo intent key, scope, request/get, active checks, patch/apply/clear functions: **Adapted**; query snapshots now apply the QA write-intent overlay.
 
-- [ ] `src-ui/app/glossary-term-write-coordinator.js` -> `src-ui/app/qa-term-write-coordinator.js`
-  - [ ] All save intent key/scope/request/get/active/reset functions: **Copy/adapt** if QA term writes should match glossary term write behavior.
+- [x] `src-ui/app/glossary-term-write-coordinator.js` -> `src-ui/app/qa-term-write-coordinator.js`
+  - [x] All save intent key/scope/request/get/active/reset functions: **Adapted**.
 
 - [x] `src-ui/app/glossary-term-sync.js` -> `src-ui/app/qa-term-sync.js`
   - [x] `findGlossaryTermById` -> `findQaTermById`: **Adapted**.
   - [x] UI-field preservation helpers: **Adapted** to QA `text`/`notes`.
   - [x] visible term upsert/replace/confirm/fail/remove/stale/reload functions: **Adapted**.
 
-- [ ] `src-ui/app/glossary-background-sync.js` -> `src-ui/app/qa-list-background-sync.js`
-  - [ ] All session, active input, interval, dirty, exit sync, start/stop functions: **Adapt or explicitly defer**. Glossary editor has background sync; QA editor currently does not have a corresponding file.
+- [x] `src-ui/app/glossary-background-sync.js` -> `src-ui/app/qa-list-background-sync.js`
+  - [x] All session, active input, interval, dirty, exit sync, start/stop functions: **Explicitly deferred**. Glossary editor has background sync; QA editor currently uses explicit refresh and term-write guards, with `qaListEditorHasActiveBackgroundSync()` returning false for parity-aware snapshot guards.
 
 - [x] `src-ui/app/glossary-ruby.js`
   - Intentional shared file. QA uses glossary ruby helpers directly. Do not duplicate.
 
 ### Actions
 
-- [ ] `src-ui/app/actions/glossary-actions.js` -> `src-ui/app/actions/qa-actions.js`
+- [x] `src-ui/app/actions/glossary-actions.js` -> `src-ui/app/actions/qa-actions.js`
   - [x] `createGlossaryActions` -> `createQaActions`: **Adapted**.
   - [x] `parseVariantAction`: **Intentional no QA equivalent**.
-  - [ ] Add QA action imports for new split files through `qa-list-flow.js` facade after refactor.
-  - [ ] Add QA import modal/dropped-file actions if we add `qa-list-import-modal.js`.
-  - [ ] Add repair/rebuild QA list actions if QA repo resolution parity is implemented.
+  - [x] Add QA action imports for new split files through `qa-list-flow.js` facade after refactor.
+  - [x] Add QA import modal/dropped-file actions if we add `qa-list-import-modal.js`.
+  - [x] Add repair/rebuild QA list actions if QA repo resolution parity is implemented: **Deferred with metadata repair**, because QA repo repair/rebuild actions require the glossary team-metadata layer.
 
 ## JavaScript Screen Checklist
 
-- [ ] `src-ui/screens/glossaries.js` -> `src-ui/screens/qa.js`
+- [x] `src-ui/screens/glossaries.js` -> `src-ui/screens/qa.js`
   - [x] `renderGlossaryLanguageFlow`: **Intentional QA equivalent is inline language name only**.
-  - [ ] `renderGlossaryCard` -> `renderQaListCard`: **Adapt**, but add lifecycle/write disabled state, repo resolution state, repair/rebuild actions if supported.
+  - [x] `renderGlossaryCard` -> `renderQaListCard`: **Adapted**; includes lifecycle/write disabled state and repo resolution state. Repair/rebuild remains tied to future QA metadata support.
   - [x] `renderDeletedGlossariesSection` -> `renderDeletedQaListsSection`: **Adapted**.
-  - [ ] `renderGlossariesScreen` -> `renderQaScreen`: **Adapt**, but add recovery/broker warning markup, lifecycle/write disabled flags, sync snapshots, and status parity.
+  - [x] `renderGlossariesScreen` -> `renderQaScreen`: **Adapted**; includes recovery/broker warning markup, lifecycle/write disabled flags, sync snapshots, and status parity.
 
-- [ ] `src-ui/screens/glossary-editor.js` -> `src-ui/screens/qa-list-editor.js`
+- [x] `src-ui/screens/glossary-editor.js` -> `src-ui/screens/qa-list-editor.js`
   - [x] `shortenChapterNavLabel` -> `shortenChapterNavLabel`: **Copy/adapt**; could share.
-  - [ ] `renderGlossaryEditorScreen` -> `renderQaListEditorScreen`: **Adapt**, but fix refresh spinner parity (`backgroundRefreshing`) and keep nav behavior aligned.
+  - [x] `renderGlossaryEditorScreen` -> `renderQaListEditorScreen`: **Adapted**; refresh spinner now reflects active QA term writes and nav behavior remains aligned.
   - [x] `visibleTerms` filtering: **Intentional adaptation** for QA text/notes only.
   - [x] `renderTermCell` -> `renderTextCell`: **Intentional adaptation**.
 
@@ -313,15 +313,15 @@ Legend:
 - [x] `src-ui/screens/glossary-rename-modal.js` -> `src-ui/screens/qa-list-rename-modal.js`
   - [x] Render function: **Adapted**.
 
-- [ ] `src-ui/screens/glossary-permanent-deletion-modal.js` -> `src-ui/screens/qa-list-permanent-deletion-modal.js`
-  - [ ] Render function: **Adapt**, but align button loading markup/disabled semantics and copy style.
+- [x] `src-ui/screens/glossary-permanent-deletion-modal.js` -> `src-ui/screens/qa-list-permanent-deletion-modal.js`
+  - [x] Render function: **Adapted**; loading markup, disabled semantics, and copy style aligned.
 
 - [x] `src-ui/screens/glossary-term-editor-modal.js` -> `src-ui/screens/qa-term-editor-modal.js`
   - [x] `renderVariantRow` / `renderVariantLane`: **Intentional no QA equivalent**.
   - [x] `renderGlossaryTermEditorModal` -> `renderQaTermEditorModal`: **Intentional adaptation**; QA text and notes are separate textareas.
 
-- [ ] `src-ui/screens/glossary-import-modal.js` -> `src-ui/screens/qa-list-import-modal.js`
-  - [ ] Missing QA import modal. **Copy/adapt** if we want exact import UX parity.
+- [x] `src-ui/screens/glossary-import-modal.js` -> `src-ui/screens/qa-list-import-modal.js`
+  - [x] QA import modal added and wired to actions plus native/browser drop handling.
 
 ## Rust File-Level Checklist
 
@@ -342,7 +342,7 @@ Rust already has better file-level parity than JS:
 - [x] Repo path helpers: `normalized_optional_identifier`, matcher, finder, repo path, git repo path, desired repo path: **Adapted** one-to-one.
 - [x] JSON/read/build/count/load/map helpers: **Adapted** one-to-one.
 - [x] Tests: fixture-specific glossary tests differ from QA tests intentionally. QA includes multi-language rejection test, which is intentional.
-- [ ] Review function-level internals for drift after JS refactor, but no file split is currently needed.
+- [x] Review function-level internals for drift after JS refactor, but no file split is currently needed.
 
 ### Storage `io.rs`
 
@@ -369,7 +369,7 @@ Rust already has better file-level parity than JS:
 - [x] `serialize_tmx_glossary` -> `serialize_tmx_qa_list`: **Intentional adaptation**.
 - [x] XML escaping helpers: **Share candidate**.
 - [x] title cleanup / clean text / language normalization / language lookup helpers: **Share candidate**.
-- [ ] QA `tmx.rs` includes JS language-map extraction helpers not mirrored in glossary. Decide whether to **Share** language lookup from a common Rust language module.
+- [x] QA `tmx.rs` includes JS language-map extraction helpers not mirrored in glossary. Decision: defer Rust language-helper extraction until a shared Rust storage-helper pass; current parser differences are intentional because QA rejects multi-language TMX.
 
 ### Repo Sync
 
@@ -380,12 +380,12 @@ Rust already has better file-level parity than JS:
 
 ## Tests To Add Or Move
 
-- [ ] Add JS parity tests for QA top-level loading: cache seed, local seed, immediate spinner, page sync badge.
-- [ ] Add JS parity tests for QA lifecycle guards: rename/delete/restore/permanent delete during refresh/write and offline.
-- [ ] Add JS parity tests for QA editor refresh spinner during term writes and editor loading.
-- [ ] Add JS parity tests for QA create/import progress and rollback behavior.
-- [ ] Keep QA-specific tests for single-language TMX rejection and per-language defaults.
-- [ ] Rust tests already cover core QA storage/sync parity; add tests only if shared modules are extracted.
+- [x] Add JS parity tests for QA top-level loading: cache seed, local seed, immediate spinner, page sync badge.
+- [x] Add JS parity tests for QA lifecycle guards: rename/delete/restore/permanent delete during refresh/write and offline.
+- [x] Add JS parity tests for QA editor refresh spinner during term writes and editor loading.
+- [x] Add JS parity tests for QA create/import progress and rollback behavior.
+- [x] Keep QA-specific tests for single-language TMX rejection and per-language defaults.
+- [x] Rust tests already cover core QA storage/sync parity; add tests only if shared modules are extracted.
 
 ## Shared-Code Opportunities
 
@@ -418,8 +418,8 @@ Before duplicating more QA files, prefer these shared abstractions:
 ## Recommended Refactor Order
 
 1. [x] Split `qa-list-flow.js` into facade plus focused files without behavior changes.
-2. [ ] Add missing QA file pairs: discovery, lifecycle, import, export, editor, term draft, top-level state, write coordinators, term sync, optional background sync. Done for discovery/lifecycle/import/export/editor/term draft/top-level state/write coordinator/term sync; background sync remains deferred.
-3. [ ] Port glossary shared controller usage into QA lifecycle/create/import/discovery. Done for lifecycle and discovery; create/import still need the fuller glossary resource-create/import-modal flow.
-4. [ ] Fix screen parity after flow parity: QA card disabled states, repo resolution, import modal, editor spinner.
+2. [x] Add missing QA file pairs: discovery, lifecycle, import, export, editor, term draft, top-level state, write coordinators, term sync, optional background sync. Done for discovery/lifecycle/import/export/editor/term draft/top-level state/write coordinator/term sync; background sync is explicitly deferred because QA has no background-sync session yet.
+3. [x] Port glossary shared controller usage into QA lifecycle/create/import/discovery. Done for lifecycle, discovery, create, and import.
+4. [x] Fix screen parity after flow parity: QA card disabled states, repo resolution, import modal, editor spinner.
 5. Extract shared JS helpers only after the QA files match the glossary shape, so shared abstractions are based on proven matching code.
 6. Review Rust for shared helper extraction after JS parity is stable; Rust already has file-level parity.

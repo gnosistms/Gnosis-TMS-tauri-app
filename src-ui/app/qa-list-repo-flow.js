@@ -1,6 +1,7 @@
 import { requireBrokerSession } from "./auth-flow.js";
 import { appendRepoNameSuffix, slugifyRepoName } from "./repo-names.js";
 import { invoke } from "./runtime.js";
+import { normalizeQaList, sortQaLists } from "./qa-list-shared.js";
 import { state } from "./state.js";
 import { showNoticeBadge } from "./status-feedback.js";
 
@@ -10,11 +11,64 @@ function ensureInvoke() {
   }
 }
 
+function normalizeQaListBrokerError(error) {
+  if (error instanceof Error) {
+    return error;
+  }
+
+  return new Error(String(error ?? "Unknown QA list broker error."));
+}
+
 export function teamSupportsQaListRepos(team) {
   return Boolean(invoke)
     && Number.isFinite(team?.installationId)
     && typeof team?.githubOrg === "string"
     && team.githubOrg.trim();
+}
+
+export function normalizeRemoteQaListRepo(repo) {
+  if (!repo || typeof repo !== "object") {
+    return null;
+  }
+
+  const name =
+    typeof repo.name === "string" && repo.name.trim()
+      ? repo.name.trim()
+      : null;
+  const fullName =
+    typeof repo.fullName === "string" && repo.fullName.trim()
+      ? repo.fullName.trim()
+      : null;
+  if (!name || !fullName) {
+    return null;
+  }
+
+  return {
+    repoId: Number.isFinite(repo.repoId) ? repo.repoId : null,
+    nodeId:
+      typeof repo.nodeId === "string" && repo.nodeId.trim()
+        ? repo.nodeId.trim()
+        : null,
+    name,
+    fullName,
+    htmlUrl:
+      typeof repo.htmlUrl === "string" && repo.htmlUrl.trim()
+        ? repo.htmlUrl.trim()
+        : "",
+    private: repo.private !== false,
+    description:
+      typeof repo.description === "string" && repo.description.trim()
+        ? repo.description.trim()
+        : "",
+    defaultBranchName:
+      typeof repo.defaultBranchName === "string" && repo.defaultBranchName.trim()
+        ? repo.defaultBranchName.trim()
+        : "main",
+    defaultBranchHeadOid:
+      typeof repo.defaultBranchHeadOid === "string" && repo.defaultBranchHeadOid.trim()
+        ? repo.defaultBranchHeadOid.trim()
+        : null,
+  };
 }
 
 export function qaListRepoDescriptor(qaList) {
@@ -29,6 +83,22 @@ export function qaListRepoDescriptor(qaList) {
     repoId: Number.isFinite(qaList.repoId) ? qaList.repoId : null,
     defaultBranchName: qaList.defaultBranchName || "main",
     defaultBranchHeadOid: qaList.defaultBranchHeadOid || null,
+  };
+}
+
+function qaListRepoSyncDescriptor(repo) {
+  return {
+    qaListId:
+      typeof repo?.qaListId === "string" && repo.qaListId.trim()
+        ? repo.qaListId.trim()
+        : typeof repo?.id === "string" && repo.id.trim()
+          ? repo.id.trim()
+          : null,
+    repoName: repo.name,
+    fullName: repo.fullName,
+    repoId: Number.isFinite(repo.repoId) ? repo.repoId : null,
+    defaultBranchName: repo.defaultBranchName || "main",
+    defaultBranchHeadOid: repo.defaultBranchHeadOid || null,
   };
 }
 
@@ -69,50 +139,101 @@ export async function listRemoteQaListReposForTeam(team) {
     return [];
   }
   ensureInvoke();
-  return invoke("list_gnosis_qa_lists_for_installation", {
-    installationId: team.installationId,
-    sessionToken: requireBrokerSession(),
-  });
+  let repos;
+  try {
+    repos = await invoke("list_gnosis_qa_lists_for_installation", {
+      installationId: team.installationId,
+      sessionToken: requireBrokerSession(),
+    });
+  } catch (error) {
+    throw normalizeQaListBrokerError(error);
+  }
+
+  return (Array.isArray(repos) ? repos : [])
+    .map(normalizeRemoteQaListRepo)
+    .filter(Boolean);
 }
 
 export async function syncQaListReposForTeam(team, remoteRepos) {
-  if (!teamSupportsQaListRepos(team) || !Array.isArray(remoteRepos) || remoteRepos.length === 0) {
+  const qaLists = (Array.isArray(remoteRepos) ? remoteRepos : [])
+    .map(normalizeRemoteQaListRepo)
+    .filter(Boolean);
+  if (!teamSupportsQaListRepos(team) || qaLists.length === 0) {
     return [];
   }
   ensureInvoke();
   return invoke("sync_gtms_qa_list_repos", {
     input: {
       installationId: team.installationId,
-      qaLists: remoteRepos.map((repo) => ({
-        qaListId: repo.qaListId ?? repo.id ?? null,
-        repoName: repo.name,
-        fullName: repo.fullName,
-        repoId: Number.isFinite(repo.repoId) ? repo.repoId : null,
-        defaultBranchName: repo.defaultBranchName || "main",
-        defaultBranchHeadOid: repo.defaultBranchHeadOid || null,
-      })),
+      qaLists: qaLists.map(qaListRepoSyncDescriptor),
     },
     sessionToken: requireBrokerSession(),
   });
 }
 
 export async function syncSingleQaListForTeam(team, qaList) {
-  const descriptor = qaListRepoDescriptor(qaList);
-  if (!descriptor) {
+  const repo =
+    qaList && typeof qaList === "object"
+      ? normalizeRemoteQaListRepo({
+          name: qaList.repoName ?? qaList.name,
+          fullName: qaList.fullName,
+          htmlUrl: qaList.htmlUrl,
+          private: qaList.private,
+          description: qaList.description,
+          defaultBranchName: qaList.defaultBranchName,
+          defaultBranchHeadOid: qaList.defaultBranchHeadOid,
+          repoId: qaList.repoId,
+          nodeId: qaList.nodeId,
+        })
+      : null;
+
+  if (!repo) {
     return [];
   }
 
   return syncQaListReposForTeam(team, [{
-    ...descriptor,
-    name: descriptor.repoName,
+    ...repo,
+    qaListId:
+      typeof qaList?.id === "string" && qaList.id.trim()
+        ? qaList.id.trim()
+        : typeof qaList?.qaListId === "string" && qaList.qaListId.trim()
+          ? qaList.qaListId.trim()
+          : null,
   }]);
+}
+
+export async function createRemoteQaListRepoWithName(team, repoName) {
+  if (!teamSupportsQaListRepos(team)) {
+    return null;
+  }
+  ensureInvoke();
+
+  const normalizedRepoName = slugifyRepoName(repoName) || "qa-list";
+  let createdRepo;
+  try {
+    createdRepo = await invoke("create_gnosis_qa_list_repo", {
+      input: {
+        installationId: team.installationId,
+        orgLogin: team.githubOrg,
+        repoName: normalizedRepoName,
+      },
+      sessionToken: requireBrokerSession(),
+    });
+  } catch (error) {
+    throw normalizeQaListBrokerError(error);
+  }
+
+  const remoteRepo = normalizeRemoteQaListRepo(createdRepo);
+  if (!remoteRepo) {
+    throw new Error("Could not determine the new QA list repo metadata.");
+  }
+  return remoteRepo;
 }
 
 export async function createRemoteQaListRepo(team, title) {
   if (!teamSupportsQaListRepos(team)) {
     return null;
   }
-  ensureInvoke();
 
   const baseRepoName = slugifyRepoName(`qa-list-${title}`) || "qa-list";
   const usedRepoNames = new Set(
@@ -128,14 +249,7 @@ export async function createRemoteQaListRepo(team, title) {
     }
 
     try {
-      return await invoke("create_gnosis_qa_list_repo", {
-        input: {
-          installationId: team.installationId,
-          orgLogin: team.githubOrg,
-          repoName,
-        },
-        sessionToken: requireBrokerSession(),
-      });
+      return await createRemoteQaListRepoWithName(team, repoName);
     } catch (error) {
       const message = String(error?.message ?? error ?? "").toLowerCase();
       if (!message.includes("name already exists on this account")) {
@@ -176,6 +290,76 @@ export async function deleteRemoteQaListRepo(team, qaList) {
     },
     sessionToken: requireBrokerSession(),
   });
+}
+
+function mergeQaListRepoMetadata(localQaLists, remoteRepos) {
+  const remoteByName = new Map(
+    (Array.isArray(remoteRepos) ? remoteRepos : [])
+      .map(normalizeRemoteQaListRepo)
+      .filter(Boolean)
+      .map((repo) => [repo.name, repo]),
+  );
+
+  return sortQaLists(
+    (Array.isArray(localQaLists) ? localQaLists : [])
+      .map((qaList) => {
+        const remote = remoteByName.get(qaList.repoName);
+        return normalizeQaList({
+          ...qaList,
+          repoId: remote?.repoId ?? qaList.repoId ?? null,
+          nodeId: remote?.nodeId ?? qaList.nodeId ?? null,
+          fullName: remote?.fullName ?? qaList.fullName ?? null,
+          htmlUrl: remote?.htmlUrl ?? qaList.htmlUrl ?? "",
+          defaultBranchName: remote?.defaultBranchName ?? qaList.defaultBranchName ?? "main",
+          defaultBranchHeadOid: remote?.defaultBranchHeadOid ?? qaList.defaultBranchHeadOid ?? null,
+        });
+      })
+      .filter(Boolean),
+  );
+}
+
+export async function loadRepoBackedQaListsForTeam(team, options = {}) {
+  const offlineMode = options.offlineMode === true;
+  const emptyResult = {
+    qaLists: [],
+    remoteRepos: [],
+    syncSnapshots: [],
+    syncIssue: "",
+    brokerWarning: "",
+    recoveryMessage: "",
+  };
+  if (!Number.isFinite(team?.installationId) || (!teamSupportsQaListRepos(team) && !invoke)) {
+    return emptyResult;
+  }
+
+  let localQaLists = await listLocalQaListsForTeam(team);
+
+  if (offlineMode || !teamSupportsQaListRepos(team)) {
+    return {
+      qaLists: sortQaLists(localQaLists.map(normalizeQaList).filter(Boolean)),
+      remoteRepos: [],
+      syncSnapshots: [],
+      syncIssue: "",
+      brokerWarning: "",
+      recoveryMessage: "",
+    };
+  }
+
+  const remoteRepos = await listRemoteQaListReposForTeam(team);
+  const syncSnapshots = remoteRepos.length > 0
+    ? await syncQaListReposForTeam(team, remoteRepos)
+    : [];
+  localQaLists = await listLocalQaListsForTeam(team);
+  const syncIssue = getQaListSyncIssueMessage(syncSnapshots);
+
+  return {
+    qaLists: mergeQaListRepoMetadata(localQaLists, remoteRepos),
+    remoteRepos,
+    syncSnapshots,
+    syncIssue,
+    brokerWarning: "",
+    recoveryMessage: "",
+  };
 }
 
 export async function ensureQaListNotTombstoned(render, team, qaList) {

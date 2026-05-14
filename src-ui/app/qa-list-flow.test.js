@@ -32,11 +32,18 @@ const {
   loadSelectedQaListEditorData,
   loadTeamQaLists,
   maybeApplyQaListEditorSnapshot,
+  deleteQaList,
+  importQaListFile,
   openQaListEditor,
+  openQaListPermanentDeletion,
+  openQaListRename,
   openEditorQaList,
+  restoreQaList,
   resolveDefaultQaListForLanguage,
+  submitQaListCreation,
   submitQaTermEditor,
 } = await import("./qa-list-flow.js");
+const { getNoticeBadgeText } = await import("./status-feedback.js");
 const { setCachedQaListEditorPayload } = await import("./qa-list-editor-query.js");
 const { resetQaListsQueryObserver } = await import("./qa-list-query.js");
 const { queryClient } = await import("./query-client.js");
@@ -72,12 +79,14 @@ function setupQaTeams() {
       name: "Team 1",
       githubOrg: "team-1",
       installationId: 1,
+      canDelete: true,
     },
     {
       id: "team-2",
       name: "Team 2",
       githubOrg: "team-2",
       installationId: 2,
+      canDelete: true,
     },
   ];
   state.selectedTeamId = "team-1";
@@ -697,4 +706,115 @@ test("QA term save refuses duplicate text found during pre-save sync", async () 
   assert.equal(state.qaTermEditor.isOpen, true);
   assert.match(state.qaTermEditor.error, /redundant with another QA term in this QA list/);
   assert.equal(state.qaListEditor.terms[0].termId, "term-remote");
+});
+
+test("QA list lifecycle actions surface blocked states instead of mutating", async () => {
+  setupQaTeams();
+  state.qaLists = [
+    repoBackedQaList(),
+    repoBackedQaList({
+      id: "deleted-qa-list",
+      title: "Deleted Vietnamese QA",
+      lifecycleState: "deleted",
+      repoName: "qa-list-deleted",
+      fullName: "team-1/qa-list-deleted",
+    }),
+  ];
+
+  state.offline.isEnabled = true;
+  openQaListRename(() => {}, "qa-list-1");
+  assert.equal(state.qaListRename.isOpen, false);
+  assert.match(getNoticeBadgeText(), /offline/i);
+
+  await deleteQaList(() => {}, "qa-list-1");
+  assert.equal(invokeCalls.length, 0);
+  assert.match(getNoticeBadgeText(), /offline/i);
+
+  await restoreQaList(() => {}, "deleted-qa-list");
+  assert.equal(invokeCalls.length, 0);
+  assert.match(getNoticeBadgeText(), /offline/i);
+
+  state.offline.isEnabled = false;
+  state.qaListsPage.isRefreshing = true;
+  openQaListPermanentDeletion(() => {}, "deleted-qa-list");
+  assert.equal(state.qaListPermanentDeletion.isOpen, false);
+  assert.match(getNoticeBadgeText(), /current QA list refresh or write/i);
+});
+
+test("QA list creation rolls back remote and local repos when initialization fails", async () => {
+  setupQaTeams();
+  state.qaListCreation = {
+    isOpen: true,
+    status: "idle",
+    error: "",
+    title: "Vietnamese QA",
+    languageCode: "vi",
+  };
+
+  invokeHandler = async (command) => {
+    if (command === "list_local_gtms_qa_lists") {
+      return [];
+    }
+    if (command === "create_gnosis_qa_list_repo") {
+      return {
+        name: "qa-list-vietnamese-qa",
+        fullName: "team-1/qa-list-vietnamese-qa",
+        defaultBranchName: "main",
+      };
+    }
+    if (command === "initialize_gtms_qa_list_repo") {
+      throw new Error("initialization failed");
+    }
+    return null;
+  };
+
+  await submitQaListCreation(() => {});
+
+  assert.match(state.qaListCreation.error, /initialization failed/);
+  assert.ok(invokeCalls.some((call) => call.command === "create_gnosis_qa_list_repo"));
+  assert.ok(invokeCalls.some((call) => call.command === "prepare_local_gtms_qa_list_repo"));
+  assert.ok(invokeCalls.some((call) => call.command === "permanently_delete_gnosis_qa_list_repo"));
+  assert.ok(invokeCalls.some((call) => call.command === "purge_local_gtms_qa_list_repo"));
+});
+
+test("QA list import rolls back remote and local repos when TMX import fails", async () => {
+  setupQaTeams();
+  const file = {
+    name: "Vietnamese QA.tmx",
+    async arrayBuffer() {
+      return new Uint8Array([60, 116, 109, 120, 47, 62]).buffer;
+    },
+  };
+
+  invokeHandler = async (command) => {
+    if (command === "list_local_gtms_qa_lists") {
+      return [];
+    }
+    if (command === "inspect_tmx_qa_list_import") {
+      return {
+        title: "Vietnamese QA",
+        language: { code: "vi", name: "Vietnamese" },
+        termCount: 1,
+      };
+    }
+    if (command === "create_gnosis_qa_list_repo") {
+      return {
+        name: "qa-list-vietnamese-qa",
+        fullName: "team-1/qa-list-vietnamese-qa",
+        defaultBranchName: "main",
+      };
+    }
+    if (command === "import_tmx_to_gtms_qa_list_repo") {
+      throw new Error("import failed");
+    }
+    return null;
+  };
+
+  await importQaListFile(() => {}, file);
+
+  assert.match(state.qaListImport.error, /import failed/);
+  assert.ok(invokeCalls.some((call) => call.command === "create_gnosis_qa_list_repo"));
+  assert.ok(invokeCalls.some((call) => call.command === "prepare_local_gtms_qa_list_repo"));
+  assert.ok(invokeCalls.some((call) => call.command === "permanently_delete_gnosis_qa_list_repo"));
+  assert.ok(invokeCalls.some((call) => call.command === "purge_local_gtms_qa_list_repo"));
 });

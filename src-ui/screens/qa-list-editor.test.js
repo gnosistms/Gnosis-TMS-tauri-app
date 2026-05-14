@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 const { createQaListEditorState, resetSessionState, state } = await import("../app/state.js");
 const { renderQaListEditorScreen } = await import("./qa-list-editor.js");
+const { beginQaTermWrite, endQaTermWrite, resetQaTermWriteCoordinator } = await import("../app/qa-term-write-coordinator.js");
 
 function installQaListEditorFixture({ canManageProjects = true } = {}) {
   resetSessionState();
@@ -34,6 +35,7 @@ function installQaListEditorFixture({ canManageProjects = true } = {}) {
 }
 
 test.afterEach(() => {
+  resetQaTermWriteCoordinator();
   resetSessionState();
 });
 
@@ -64,4 +66,15 @@ test("QA list editor spins refresh while page sync is active", () => {
 
   assert.match(html, /title-icon-button[^"]*\bis-spinning\b/);
   assert.match(html, /data-action="refresh-page"[^>]*aria-disabled="true"/);
+});
+
+test("QA list editor spins refresh while a QA term write is active", () => {
+  installQaListEditorFixture();
+  beginQaTermWrite();
+
+  const html = renderQaListEditorScreen(state);
+
+  assert.match(html, /title-icon-button[^"]*\bis-spinning\b/);
+  assert.match(html, /data-action="refresh-page"[^>]*aria-disabled="true"/);
+  endQaTermWrite();
 });

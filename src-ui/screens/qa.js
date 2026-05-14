@@ -13,6 +13,7 @@ import {
 import { formatErrorForDisplay } from "../app/error-display.js";
 import { getNoticeBadgeText } from "../app/status-feedback.js";
 import { renderQaListCreationModal } from "./qa-list-creation-modal.js";
+import { renderQaListImportModal } from "./qa-list-import-modal.js";
 import { renderQaListPermanentDeletionModal } from "./qa-list-permanent-deletion-modal.js";
 import { renderQaListRenameModal } from "./qa-list-rename-modal.js";
 import {
@@ -27,6 +28,15 @@ import {
   shouldShowDeletedQaListPermanentDelete,
   shouldShowQaListCreationControls,
 } from "../app/resource-capabilities.js";
+import {
+  areResourcePageWritesDisabled,
+  areResourcePageWriteSubmissionsDisabled,
+} from "../app/resource-page-controller.js";
+import { deriveQaListResolution } from "../app/resource-resolution.js";
+import {
+  anyQaListMutatingWriteIsActive,
+  anyQaListWriteIsActive,
+} from "../app/qa-list-write-coordinator.js";
 
 const DEFAULT_QA_LIST_LABEL_TOOLTIP =
   "New files opened in the editor will automatically use this QA list for this language.";
@@ -36,24 +46,46 @@ function renderQaListCard(qaList, options = {}) {
   const canPermanentlyDelete = options.canPermanentlyDelete === true;
   const isDeleted = options.isDeleted === true;
   const offlineMode = options.offlineMode === true;
+  const lifecycleActionsDisabled = options.lifecycleActionsDisabled === true;
+  const writeActionsDisabled = options.writeActionsDisabled === true;
   const isDefault = options.defaultQaListIdsByLanguage?.[qaList.language?.code] === qaList.id;
+  const isTombstone = qaList?.recordState === "tombstone";
+  const resolution = deriveQaListResolution(qaList, options.syncSnapshot, {
+    suppressMissingLocalRepoRepair: options.suppressMissingLocalRepoRepair === true,
+  });
+  const disableLifecycleActions = resolution?.blockLifecycleActions === true;
   const activeActions = [
-    textAction("Download", `download-qa-list:${qaList.id}`, { disabled: offlineMode }),
+    textAction("Download", `download-qa-list:${qaList.id}`, {
+      disabled: offlineMode || resolution?.key === "missing",
+    }),
     isDefault
       ? `<span class="text-action-label" data-tooltip="${escapeHtml(DEFAULT_QA_LIST_LABEL_TOOLTIP)}">Default</span>`
       : textAction("Make default", `make-default-qa-list:${qaList.id}`, {
+          disabled: disableLifecycleActions,
           tooltip: DEFAULT_QA_LIST_TOOLTIP,
         }),
     ...(canManage
       ? [
-          textAction("Rename", `rename-qa-list:${qaList.id}`, { disabled: offlineMode }),
-          textAction("Delete", `delete-qa-list:${qaList.id}`, { disabled: offlineMode }),
+          textAction("Rename", `rename-qa-list:${qaList.id}`, {
+            disabled: offlineMode || lifecycleActionsDisabled || disableLifecycleActions,
+          }),
+          textAction("Delete", `delete-qa-list:${qaList.id}`, {
+            disabled: offlineMode || lifecycleActionsDisabled || disableLifecycleActions,
+          }),
         ]
       : []),
   ];
   const deletedActions = [
-    ...(canManage ? [textAction("Restore", `restore-qa-list:${qaList.id}`, { disabled: offlineMode })] : []),
-    ...(canPermanentlyDelete ? [textAction("Delete", `delete-deleted-qa-list:${qaList.id}`, { disabled: offlineMode })] : []),
+    ...(!isTombstone && canManage
+      ? [textAction("Restore", `restore-qa-list:${qaList.id}`, {
+          disabled: offlineMode || lifecycleActionsDisabled || disableLifecycleActions,
+        })]
+      : []),
+    ...(!isTombstone && canPermanentlyDelete
+      ? [textAction("Delete", `delete-deleted-qa-list:${qaList.id}`, {
+          disabled: offlineMode || writeActionsDisabled || disableLifecycleActions,
+        })]
+      : []),
   ];
   const termLabel = qaList.termCount === 1 ? "1 QA term" : `${qaList.termCount ?? 0} QA terms`;
   const languageName = qaList.language?.name ?? "Unknown";
@@ -62,6 +94,17 @@ function renderQaListCard(qaList, options = {}) {
         tone: "warning",
         message: "This QA list is deleted.",
         className: "resource-state-box",
+      })
+    : "";
+  const resolutionMarkup = resolution
+    ? renderInlineStateBox({
+        tone: resolution.tone,
+        message: resolution.message,
+        help: resolution.help,
+        className: "resource-state-box",
+        actionLabel: resolution.actionLabel,
+        action: resolution.action,
+        actionDisabled: offlineMode || writeActionsDisabled,
       })
     : "";
 
@@ -80,8 +123,10 @@ function renderQaListCard(qaList, options = {}) {
             <p class="list-row__meta">
               <span>${escapeHtml(languageName)}</span>
               <span>${escapeHtml(termLabel)}</span>
+              ${isDeleted && isTombstone ? ` <span>Permanently deleted</span>` : ""}
             </p>
             ${stateMarkup}
+            ${resolutionMarkup}
           </div>
           <div class="list-row__actions">
             ${(isDeleted ? deletedActions : activeActions).join("")}
@@ -116,6 +161,7 @@ function renderDeletedQaListsSection(qaLists, isOpen, options = {}) {
             renderQaListCard(qaList, {
               ...options,
               isDeleted: true,
+              syncSnapshot: options.syncSnapshotsByRepoName?.[qaList.repoName] ?? null,
             }),
           )
           .join("")}
@@ -133,10 +179,19 @@ export function renderQaScreen(state) {
   const offlineMode = state.offline?.isEnabled === true;
   const discovery = state.qaListDiscovery ?? { status: "idle", error: "", recoveryMessage: "" };
   const discoveryLoading = discovery.status === "loading";
+  const lifecycleActionsDisabled = areResourcePageWriteSubmissionsDisabled(state.qaListsPage);
+  const coordinatorWriteActive = anyQaListWriteIsActive();
+  const writeActionsDisabled =
+    areResourcePageWritesDisabled(state.qaListsPage) || discoveryLoading || anyQaListMutatingWriteIsActive();
   const refreshInProgress =
     state.qaListsPage?.isRefreshing === true
     || state.pageSync?.status === "syncing"
     || discoveryLoading;
+  const syncSnapshotsByRepoName = state.qaListRepoSyncByRepoName ?? {};
+  const recoveryMessage =
+    typeof discovery.recoveryMessage === "string" && discovery.recoveryMessage.trim()
+      ? discovery.recoveryMessage.trim()
+      : "";
   const visibleQaLists = state.qaLists.filter((qaList) => qaList.lifecycleState === "active");
   const deletedQaLists = state.qaLists.filter((qaList) => qaList.lifecycleState === "deleted");
   const defaultQaListIdsByLanguage = activeDefaultQaListIdsForTeam(selectedTeam);
@@ -148,6 +203,7 @@ export function renderQaScreen(state) {
   const loadingState = renderStateCard({
     eyebrow: "LOADING QA LISTS",
     title: "Loading QA lists...",
+    subtitle: recoveryMessage || "",
   });
   const errorState = renderStateCard({
     eyebrow: "QA LIST LOAD FAILED",
@@ -166,7 +222,11 @@ export function renderQaScreen(state) {
                 canManage,
                 canPermanentlyDelete,
                 offlineMode,
+                lifecycleActionsDisabled,
+                writeActionsDisabled,
                 defaultQaListIdsByLanguage,
+                syncSnapshot: syncSnapshotsByRepoName[qaList.repoName] ?? null,
+                suppressMissingLocalRepoRepair: refreshInProgress,
               }),
             )
             .join("")}
@@ -175,14 +235,34 @@ export function renderQaScreen(state) {
       : discovery.status === "ready"
         ? emptyState
         : loadingState;
+  const recoveryMarkup = recoveryMessage
+    ? `
+      <div class="message-box message-box--warning">
+        <p class="message-box__text">${escapeHtml(recoveryMessage)}</p>
+      </div>
+    `
+    : "";
+  const brokerWarningMarkup = discovery.brokerWarning
+    ? `
+      <div class="message-box message-box--warning">
+        <p class="message-box__text">${escapeHtml(discovery.brokerWarning)}</p>
+      </div>
+    `
+    : "";
   const body = `
     <section class="stack">
+      ${recoveryMarkup}
+      ${brokerWarningMarkup}
       ${bodyMarkup}
       ${renderDeletedQaListsSection(deletedQaLists, state.showDeletedQaLists, {
         canManage,
         canPermanentlyDelete,
         offlineMode,
+        lifecycleActionsDisabled,
+        writeActionsDisabled,
         defaultQaListIdsByLanguage,
+        syncSnapshotsByRepoName,
+        suppressMissingLocalRepoRepair: refreshInProgress,
       })}
     </section>
   `;
@@ -192,12 +272,12 @@ export function renderQaScreen(state) {
       title: "QA Lists",
       subtitle: selectedTeam?.name ?? "Team",
       titleAction: buildPageRefreshAction(state, state.pageSync, "refresh-page", {
-        backgroundRefreshing: refreshInProgress,
+        backgroundRefreshing: refreshInProgress || coordinatorWriteActive,
         backgroundRefreshStartedAt: state.qaListsPage?.refreshStartedAt,
       }),
       navButtons: buildSectionNav("qa", { includeAiSettings: canManageAiSettings }),
       tools: canCreate
-        ? `${textAction("Import", "import-qa-list", { disabled: offlineMode })} ${primaryButton("+ New QA List", "open-new-qa-list", { disabled: offlineMode })}`
+        ? `${textAction("Import", "import-qa-list", { disabled: offlineMode || writeActionsDisabled })} ${primaryButton("+ New QA List", "open-new-qa-list", { disabled: offlineMode || writeActionsDisabled })}`
         : "",
       pageSync: state.pageSync,
       noticeText: getNoticeBadgeText(),
@@ -206,6 +286,7 @@ export function renderQaScreen(state) {
       body,
     }) +
     renderQaListCreationModal(state) +
+    renderQaListImportModal(state) +
     renderQaListRenameModal(state) +
     renderQaListPermanentDeletionModal(state)
   );

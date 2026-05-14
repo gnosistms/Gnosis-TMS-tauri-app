@@ -1,10 +1,8 @@
 import { qaListKeys, queryClient, subscribeQueryObserver } from "./query-client.js";
 import { loadStoredQaListsForTeam, saveStoredQaListsForTeam } from "./qa-list-cache.js";
 import {
+  loadRepoBackedQaListsForTeam,
   listLocalQaListsForTeam,
-  listRemoteQaListReposForTeam,
-  syncQaListReposForTeam,
-  teamSupportsQaListRepos,
 } from "./qa-list-repo-flow.js";
 import { normalizeQaList, sortQaLists } from "./qa-list-shared.js";
 import { setResourcePageDataOwner, setResourcePageRefreshing } from "./resource-page-controller.js";
@@ -43,39 +41,20 @@ function createQaListDiscoverySnapshot(discovery = {}) {
         ? discovery.status.trim()
         : "ready",
     error: typeof discovery?.error === "string" ? discovery.error : "",
+    brokerWarning: typeof discovery?.brokerWarning === "string" ? discovery.brokerWarning : "",
     recoveryMessage:
       typeof discovery?.recoveryMessage === "string" ? discovery.recoveryMessage : "",
   };
 }
 
-function mergeQaListRepoMetadata(localQaLists, remoteRepos) {
-  const remoteByName = new Map(
-    (Array.isArray(remoteRepos) ? remoteRepos : [])
-      .filter((repo) => typeof repo?.name === "string" && repo.name.trim())
-      .map((repo) => [repo.name, repo]),
-  );
-
-  return sortQaLists(
-    (Array.isArray(localQaLists) ? localQaLists : [])
-      .map((qaList) => {
-        const remote = remoteByName.get(qaList.repoName);
-        return normalizeQaList({
-          ...qaList,
-          repoId: remote?.repoId ?? qaList.repoId ?? null,
-          nodeId: remote?.nodeId ?? qaList.nodeId ?? null,
-          fullName: remote?.fullName ?? qaList.fullName ?? null,
-          htmlUrl: remote?.htmlUrl ?? qaList.htmlUrl ?? "",
-          defaultBranchName: remote?.defaultBranchName ?? qaList.defaultBranchName ?? "main",
-          defaultBranchHeadOid: remote?.defaultBranchHeadOid ?? qaList.defaultBranchHeadOid ?? null,
-        });
-      })
-      .filter(Boolean),
-  );
-}
-
 export function createQaListsQuerySnapshot({
   qaLists = [],
   syncSnapshots = [],
+  syncIssue = "",
+  brokerWarning = "",
+  recoveryMessage = "",
+  error = "",
+  status = "ready",
   discovery = {},
 } = {}) {
   return {
@@ -85,7 +64,14 @@ export function createQaListsQuerySnapshot({
         .filter(Boolean),
     ),
     repoSyncByRepoName: qaListRepoSyncByRepoName(syncSnapshots),
-    discovery: createQaListDiscoverySnapshot(discovery),
+    syncIssue,
+    discovery: createQaListDiscoverySnapshot({
+      status,
+      brokerWarning,
+      recoveryMessage,
+      error,
+      ...discovery,
+    }),
   };
 }
 
@@ -314,6 +300,8 @@ export function preserveQaListLifecyclePatchesInSnapshot(nextSnapshot, previousS
   };
 }
 
+export const preservePendingQaListLifecyclePatches = preserveQaListLifecyclePatchesInSnapshot;
+
 function moveQaListToLifecycle(queryData, qaListId, lifecycleState, patch = {}) {
   return patchQaListQueryData(queryData, qaListId, {
     ...patch,
@@ -360,22 +348,20 @@ export function createQaListsQueryOptions(team, options = {}) {
   return {
     queryKey: qaListKeys.byTeam(teamId),
     queryFn: async () => {
-      let qaLists = [];
-      let syncSnapshots = [];
-
-      if (teamSupportsQaListRepos(team)) {
-        const remoteRepos = await listRemoteQaListReposForTeam(team);
-        syncSnapshots = await syncQaListReposForTeam(team, remoteRepos);
-        const localQaLists = await listLocalQaListsForTeam(team);
-        qaLists = mergeQaListRepoMetadata(localQaLists, remoteRepos);
-      } else {
-        const cached = loadStoredQaListsForTeam(team);
-        qaLists = cached.exists ? cached.qaLists : [];
-      }
+      const result = await loadRepoBackedQaListsForTeam(team, {
+        offlineMode: state.offline?.isEnabled === true,
+      });
+      const cached = result.qaLists.length > 0 ? null : loadStoredQaListsForTeam(team);
+      const qaLists = result.qaLists.length > 0 || !cached?.exists
+        ? result.qaLists
+        : cached.qaLists;
 
       const nextSnapshot = createQaListsQuerySnapshot({
         qaLists,
-        syncSnapshots,
+        syncSnapshots: result.syncSnapshots,
+        syncIssue: result.syncIssue,
+        brokerWarning: result.brokerWarning,
+        recoveryMessage: result.recoveryMessage,
         discovery: { status: "ready" },
       });
       return preserveQaListLifecyclePatchesInSnapshot(

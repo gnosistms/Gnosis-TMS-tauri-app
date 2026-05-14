@@ -125,9 +125,11 @@ function baseResolution(resource, resourceLabel, options = {}) {
     const repairAction =
       typeof resource?.id === "string" && resource.id.trim()
         ? (
-            repairIssueType === "missingLocalRepo"
-              ? `${resourceLabel === "project" ? "rebuild-project-repo" : "rebuild-glossary-repo"}:${resource.id.trim()}`
-              : `${resourceLabel === "project" ? "repair-project" : "repair-glossary"}:${resource.id.trim()}`
+            options.repairActions === false
+              ? ""
+              : repairIssueType === "missingLocalRepo"
+                ? `${resourceLabel === "project" ? "rebuild-project-repo" : "rebuild-glossary-repo"}:${resource.id.trim()}`
+                : `${resourceLabel === "project" ? "repair-project" : "repair-glossary"}:${resource.id.trim()}`
           )
         : "";
     return {
@@ -158,5 +160,15 @@ export function deriveGlossaryResolution(glossary, syncSnapshot, options = {}) {
   return (
     baseResolution(glossary, "glossary", options)
     ?? syncIssueResolution(syncSnapshot, "glossary")
+  );
+}
+
+export function deriveQaListResolution(qaList, syncSnapshot, options = {}) {
+  return (
+    baseResolution(qaList, "QA list", {
+      ...options,
+      repairActions: false,
+    })
+    ?? syncIssueResolution(syncSnapshot, "QA list")
   );
 }

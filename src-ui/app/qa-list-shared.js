@@ -84,6 +84,11 @@ export function normalizeQaList(value) {
     nodeId: String(value?.nodeId ?? "").trim() || null,
     fullName: String(value?.fullName ?? "").trim() || null,
     htmlUrl: String(value?.htmlUrl ?? "").trim() || "",
+    remoteState: String(value?.remoteState ?? "linked").trim() || "linked",
+    recordState: String(value?.recordState ?? "live").trim() || "live",
+    resolutionState: String(value?.resolutionState ?? "").trim(),
+    repairIssueType: String(value?.repairIssueType ?? "").trim(),
+    repairIssueMessage: String(value?.repairIssueMessage ?? "").trim(),
     defaultBranchName: String(value?.defaultBranchName ?? value?.defaultBranch ?? "main").trim() || "main",
     defaultBranchHeadOid: String(value?.defaultBranchHeadOid ?? "").trim() || null,
     createdAt: String(value?.createdAt ?? "").trim() || new Date().toISOString(),
@@ -121,6 +126,75 @@ export function selectedQaList() {
 
 export function selectedQaListRepoName() {
   return String(selectedQaList()?.repoName ?? state.qaListEditor?.repoName ?? "").trim();
+}
+
+export function applyQaListEditorPayload(payload) {
+  const payloadQaListId = payload?.qaListId ?? payload?.id ?? null;
+  const existingSummary =
+    selectedQaList()
+    ?? state.qaLists.find((qaList) =>
+      qaList?.id === payloadQaListId
+      || qaList?.repoName === (state.qaListEditor?.repoName || selectedQaListRepoName())
+    )
+    ?? null;
+  const repoName = state.qaListEditor?.repoName || existingSummary?.repoName || selectedQaListRepoName();
+  const repoId =
+    Number.isFinite(state.qaListEditor?.repoId)
+      ? state.qaListEditor.repoId
+      : Number.isFinite(existingSummary?.repoId)
+        ? existingSummary.repoId
+        : null;
+  const fullName = state.qaListEditor?.fullName || existingSummary?.fullName || "";
+  const defaultBranchName =
+    state.qaListEditor?.defaultBranchName
+    || existingSummary?.defaultBranchName
+    || "main";
+  const defaultBranchHeadOid =
+    state.qaListEditor?.defaultBranchHeadOid
+    ?? existingSummary?.defaultBranchHeadOid
+    ?? null;
+  const normalizedTerms = (Array.isArray(payload?.terms) ? payload.terms : [])
+    .map(normalizeQaTerm)
+    .filter(Boolean);
+
+  const summary = normalizeQaList({
+    qaListId: payloadQaListId,
+    repoName,
+    repoId,
+    fullName,
+    defaultBranchName,
+    defaultBranchHeadOid,
+    title: payload?.title,
+    language: payload?.language ?? null,
+    lifecycleState: payload?.lifecycleState,
+    termCount: Number.isFinite(payload?.termCount) ? payload.termCount : normalizedTerms.length,
+    terms: normalizedTerms,
+  });
+
+  state.qaListEditor = {
+    status: "ready",
+    error: "",
+    navigationSource: state.qaListEditor?.navigationSource ?? null,
+    qaListId: payloadQaListId,
+    repoName,
+    repoId,
+    fullName,
+    defaultBranchName,
+    defaultBranchHeadOid,
+    title: payload.title ?? "",
+    lifecycleState:
+      payload.lifecycleState === "deleted" || payload.lifecycleState === "softDeleted"
+        ? "deleted"
+        : "active",
+    language: payload.language ?? null,
+    termCount: Number.isFinite(payload.termCount) ? payload.termCount : normalizedTerms.length,
+    searchQuery: state.qaListEditor?.searchQuery ?? "",
+    terms: normalizedTerms,
+  };
+
+  if (summary) {
+    upsertQaList(summary);
+  }
 }
 
 export function upsertQaList(qaList) {

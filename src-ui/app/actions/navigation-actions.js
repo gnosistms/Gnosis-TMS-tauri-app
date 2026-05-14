@@ -93,7 +93,7 @@ export function createNavigationActions(render) {
 
     const openQaListId = actionSuffix(action, "open-qa-list:");
     if (openQaListId !== null) {
-      openQaListEditor(render, openQaListId);
+      void openQaListEditor(render, openQaListId);
       return true;
     }
 

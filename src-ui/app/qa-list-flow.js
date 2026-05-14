@@ -20,8 +20,14 @@ export {
 } from "./qa-list-lifecycle-flow.js";
 export {
   cancelQaListCreation,
+  cancelQaListImportModal,
+  handleDroppedQaListImportFile,
+  handleDroppedQaListImportPath,
   importQaListFromTmx,
+  importQaListFile,
   openQaListCreation,
+  openQaListImportModal,
+  selectQaListImportFile,
   submitQaListCreation,
   updateQaListCreationField,
 } from "./qa-list-import-flow.js";

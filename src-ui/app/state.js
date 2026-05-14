@@ -814,6 +814,7 @@ export function createQaListDiscoveryState() {
   return {
     status: "idle",
     error: "",
+    brokerWarning: "",
     recoveryMessage: "",
   };
 }
