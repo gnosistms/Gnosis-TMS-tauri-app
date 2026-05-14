@@ -63,7 +63,7 @@ test("editor navigation includes QA to the right of Glossary", () => {
 
   assert.match(
     source,
-    /actionNavButton\("Glossary", "open-editor-glossary"[\s\S]*?navButton\("QA", "qa"\)/,
+    /actionNavButton\("Glossary", "open-editor-glossary"[\s\S]*?actionNavButton\("QA", "open-editor-qa"\)/,
   );
 });
 
@@ -72,7 +72,16 @@ test("glossary editor return navigation includes QA", () => {
 
   assert.match(
     source,
-    /navButton\(shortenChapterNavLabel\(chapterTitle\), "translate"[\s\S]*?navButton\("QA", "qa"\)/,
+    /navButton\(shortenChapterNavLabel\(chapterTitle\), "translate"[\s\S]*?actionNavButton\("QA", "open-editor-qa"\)/,
+  );
+});
+
+test("QA list editor return navigation mirrors editor glossary navigation", () => {
+  const source = readFileSync(new URL("../screens/qa-list-editor.js", import.meta.url), "utf8");
+
+  assert.match(
+    source,
+    /qaList\.navigationSource === "editor"[\s\S]*?navButton\(shortenChapterNavLabel\(chapterTitle\), "translate"[\s\S]*?actionNavButton\("Glossary", "open-editor-glossary"/,
   );
 });
 
@@ -94,4 +103,11 @@ test("team card QA action opens the selected team's QA page", () => {
     source,
     /openTeamQaId[\s\S]*?state\.selectedTeamId = openTeamQaId;[\s\S]*?state\.screen = "qa";[\s\S]*?primeQaListsLoadingState\(state\.selectedTeamId\);[\s\S]*?loadTeamQaLists\(render, state\.selectedTeamId\)/,
   );
+});
+
+test("editor QA action opens the editor-origin QA list path", () => {
+  const source = readFileSync(new URL("./actions/navigation-actions.js", import.meta.url), "utf8");
+
+  assert.match(source, /action === "open-editor-qa"/);
+  assert.match(source, /void openEditorQaList\(render\)/);
 });

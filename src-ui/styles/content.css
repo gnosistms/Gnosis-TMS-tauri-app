@@ -205,7 +205,9 @@
 .list-row__title-button:hover,
 .expandable-card__summary-button:hover,
 .chapter-table__name-button:hover,
-.chapter-table__row:hover .chapter-table__name-button {
+.chapter-table__title-wrap--interactive:hover .chapter-table__name-button,
+.chapter-table__row--file:hover .chapter-table__name-button,
+.chapter-table__row--file:hover .chapter-table__meta {
   color: var(--text-hover);
 }
 
@@ -445,10 +447,6 @@
   grid-template-columns: minmax(280px, 1fr) auto;
 }
 
-.chapter-table__row--interactive {
-  cursor: pointer;
-}
-
 .chapter-table__title-wrap {
   display: flex;
   align-items: center;
@@ -456,14 +454,29 @@
   min-width: 0;
 }
 
+.chapter-table__title-wrap--interactive {
+  cursor: pointer;
+}
+
 .chapter-table__name {
+  display: block;
   font-size: 1.12rem;
   font-weight: 600;
+}
+
+.chapter-table__name,
+.chapter-table__name-button {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .chapter-table__name-button {
   border: 0;
   background: transparent;
+  display: block;
   padding: 0;
   color: inherit;
   text-align: left;
@@ -495,9 +508,11 @@
 }
 
 .chapter-table__meta {
+  flex: 0 0 auto;
   color: var(--muted);
   font-size: 0.98rem;
   white-space: nowrap;
+  transition: color 160ms ease;
 }
 
 .glossary-pill,

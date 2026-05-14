@@ -1,0 +1,54 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+
+const { createQaListEditorState, resetSessionState, state } = await import("../app/state.js");
+const { renderQaListEditorScreen } = await import("./qa-list-editor.js");
+
+function installQaListEditorFixture({ canManageProjects = true } = {}) {
+  resetSessionState();
+  state.selectedTeamId = "team-1";
+  state.selectedQaListId = "qa-list-1";
+  state.teams = [
+    {
+      id: "team-1",
+      canManageProjects,
+      canDelete: canManageProjects,
+      githubOrg: "fixture-org",
+    },
+  ];
+  state.qaListEditor = {
+    ...createQaListEditorState(),
+    status: "ready",
+    qaListId: "qa-list-1",
+    title: "Fixture QA List",
+    language: { code: "vi", name: "Vietnamese" },
+    searchQuery: "",
+    terms: [
+      {
+        termId: "term-1",
+        text: "alpha",
+        notes: "beta",
+      },
+    ],
+  };
+}
+
+test.afterEach(() => {
+  resetSessionState();
+});
+
+test("QA list editor keeps search in left tools and term creation on the right", () => {
+  installQaListEditorFixture();
+
+  const html = renderQaListEditorScreen(state);
+  const leftToolsIndex = html.indexOf("page-header__left-tools");
+  const searchIndex = html.indexOf("data-qa-term-search-input");
+  const rightToolsIndex = html.indexOf("page-header__tools");
+  const newTermIndex = html.indexOf('data-action="open-new-qa-term"');
+
+  assert.ok(leftToolsIndex >= 0);
+  assert.ok(searchIndex > leftToolsIndex);
+  assert.ok(rightToolsIndex >= 0);
+  assert.ok(newTermIndex > rightToolsIndex);
+  assert.ok(searchIndex < rightToolsIndex);
+});

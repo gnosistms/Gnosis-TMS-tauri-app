@@ -124,6 +124,22 @@ test("glossary editor search matches target variant notes", () => {
   assert.doesNotMatch(html, /No terms match this search\./);
 });
 
+test("glossary editor keeps search in left tools and term creation on the right", () => {
+  installGlossaryEditorFixture();
+
+  const html = renderGlossaryEditorScreen(state);
+  const leftToolsIndex = html.indexOf("page-header__left-tools");
+  const searchIndex = html.indexOf("data-glossary-term-search-input");
+  const rightToolsIndex = html.indexOf("page-header__tools");
+  const newTermIndex = html.indexOf('data-action="open-new-term"');
+
+  assert.ok(leftToolsIndex >= 0);
+  assert.ok(searchIndex > leftToolsIndex);
+  assert.ok(rightToolsIndex >= 0);
+  assert.ok(newTermIndex > rightToolsIndex);
+  assert.ok(searchIndex < rightToolsIndex);
+});
+
 test("glossary editor spins refresh and renders scoped status during term writes", async () => {
   installGlossaryEditorFixture();
   state.statusBadges.right = {

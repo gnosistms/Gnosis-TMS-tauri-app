@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 
 globalThis.document = {
   querySelector() {
@@ -30,6 +31,11 @@ const {
   resetProjectWriteCoordinator,
 } = await import("../app/project-write-coordinator.js");
 const { state: appState, resetSessionState } = await import("../app/state.js");
+
+function cssRuleBlock(css, selector) {
+  const escapedSelector = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return css.match(new RegExp(`${escapedSelector}\\s*\\{[^}]*\\}`))?.[0] ?? "";
+}
 
 function projectsState(overrides = {}) {
   return {
@@ -268,33 +274,69 @@ test("projects glossary selector does not render a hover tooltip", () => {
   assert.doesNotMatch(html, /data-tooltip="Select a glossary"/);
 });
 
-test("projects page shows Export before Open on active chapters", () => {
+test("projects page opens active chapters from the left title area, not the full row", () => {
   const html = renderProjectsScreen(projectsState());
   const exportButton = actionButtonHtml(html, "export-file:chapter-1");
-  const openButton = actionButtonHtml(html, "open-translate:chapter-1");
   const exportIndex = html.indexOf('data-action="export-file:chapter-1"');
-  const openButtonIndex = html.indexOf('<button class="text-action" data-action="open-translate:chapter-1"', exportIndex);
 
-  assert.match(html, /data-action="export-file:chapter-1">Export<\/button>/);
   assert.ok(exportIndex >= 0);
-  assert.ok(openButtonIndex > exportIndex);
+  assert.match(exportButton, /class="icon-action/);
+  assert.match(exportButton, /aria-label="Export"/);
+  assert.match(exportButton, /data-tooltip="Export"/);
   assert.doesNotMatch(exportButton, /disabled/);
-  assert.doesNotMatch(openButton, /disabled/);
+  assert.match(html, /class="chapter-table__row chapter-table__row--file"/);
+  assert.doesNotMatch(html, /class="chapter-table__row chapter-table__row--file" data-action="open-translate:chapter-1"/);
+  assert.match(html, /class="chapter-table__title-wrap chapter-table__title-wrap--interactive" data-action="open-translate:chapter-1" data-tooltip="Open"/);
+  assert.match(html, /class="chapter-table__name-button" data-action="open-translate:chapter-1"/);
+  assert.doesNotMatch(html, /class="text-action" data-action="open-translate:chapter-1"/);
 });
 
-test("projects page shows Add translation between glossary and Export", () => {
+test("projects page shows chapter icon actions after glossary in requested order", () => {
   const html = renderProjectsScreen(projectsState());
   const glossaryIndex = html.indexOf("data-chapter-glossary-select");
   const addTranslationIndex = html.indexOf('data-action="add-translation-to-file:chapter-1"');
   const exportIndex = html.indexOf('data-action="export-file:chapter-1"');
+  const renameIndex = html.indexOf('data-action="rename-file:chapter-1"');
+  const deleteIndex = html.indexOf('data-action="delete-file:chapter-1"');
 
   assert.ok(glossaryIndex >= 0);
   assert.ok(addTranslationIndex > glossaryIndex);
   assert.ok(exportIndex > addTranslationIndex);
-  assert.match(
-    actionButtonHtml(html, "add-translation-to-file:chapter-1"),
-    /data-tooltip="Add translated text to this file, automatically aligned with the existing text in the file"/,
-  );
+  assert.ok(renameIndex > exportIndex);
+  assert.ok(deleteIndex > renameIndex);
+
+  assert.match(actionButtonHtml(html, "add-translation-to-file:chapter-1"), /class="icon-action/);
+  assert.match(actionButtonHtml(html, "add-translation-to-file:chapter-1"), /aria-label="Add translations"/);
+  assert.match(actionButtonHtml(html, "add-translation-to-file:chapter-1"), /data-tooltip="Add translations"/);
+  assert.match(html, /data-action="export-file:chapter-1"[^>]*>[\s\S]*?icon-action__icon icon-action__icon--rotate-left/);
+  assert.match(actionButtonHtml(html, "rename-file:chapter-1"), /aria-label="Rename"/);
+  assert.match(actionButtonHtml(html, "rename-file:chapter-1"), /data-tooltip="Rename"/);
+  assert.match(actionButtonHtml(html, "delete-file:chapter-1"), /aria-label="Delete"/);
+  assert.match(actionButtonHtml(html, "delete-file:chapter-1"), /data-tooltip="Delete"/);
+  assert.doesNotMatch(html, /data-action="add-translation-to-file:chapter-1"[^>]*>Add translation<\/button>/);
+  assert.doesNotMatch(html, /data-action="export-file:chapter-1"[^>]*>Export<\/button>/);
+  assert.doesNotMatch(html, /data-action="rename-file:chapter-1"[^>]*>Rename<\/button>/);
+  assert.doesNotMatch(html, /data-action="delete-file:chapter-1"[^>]*>Delete<\/button>/);
+});
+
+test("project chapter filenames truncate responsively on one line", () => {
+  const css = readFileSync(new URL("../styles/content.css", import.meta.url), "utf8");
+  const titleWrapBlock = cssRuleBlock(css, ".chapter-table__title-wrap");
+
+  assert.match(titleWrapBlock, /min-width: 0;/);
+  assert.doesNotMatch(titleWrapBlock, /overflow: hidden;/);
+  assert.match(css, /\.chapter-table__name,\s*\.chapter-table__name-button\s*\{[\s\S]*min-width: 0;[\s\S]*overflow: hidden;[\s\S]*text-overflow: ellipsis;[\s\S]*white-space: nowrap;/);
+  assert.match(css, /\.chapter-table__meta\s*\{[\s\S]*flex: 0 0 auto;[\s\S]*white-space: nowrap;/);
+});
+
+test("project open tooltip and cursor are scoped to the title area", () => {
+  const css = readFileSync(new URL("../styles/content.css", import.meta.url), "utf8");
+
+  assert.match(css, /\.chapter-table__title-wrap--interactive\s*\{[\s\S]*cursor: pointer;/);
+  assert.match(css, /\.chapter-table__title-wrap--interactive:hover \.chapter-table__name-button/);
+  assert.match(css, /\.chapter-table__row--file:hover \.chapter-table__name-button/);
+  assert.match(css, /\.chapter-table__row--file:hover \.chapter-table__meta/);
+  assert.doesNotMatch(css, /\.chapter-table__row--interactive\[data-tooltip\]:has/);
 });
 
 test("projects export stays enabled while project repo is syncing", () => {

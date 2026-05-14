@@ -41,6 +41,7 @@ import {
   selectedTeam,
 } from "./qa-list-shared.js";
 import {
+  activeDefaultQaListIdsForTeam,
   makeQaListDefaultIfFirst,
   updateDefaultQaListAfterDeletion,
 } from "./qa-list-default-flow.js";
@@ -781,6 +782,54 @@ export function openQaListEditor(render, qaListId, options = {}) {
   };
   state.screen = "qaListEditor";
   render();
+}
+
+export function resolveDefaultQaListForLanguage(languageCode, team = currentTeam()) {
+  const normalizedLanguageCode = String(languageCode ?? "").trim();
+  if (!normalizedLanguageCode) {
+    return null;
+  }
+
+  const defaultQaListId = activeDefaultQaListIdsForTeam(team)[normalizedLanguageCode];
+  if (!defaultQaListId) {
+    return null;
+  }
+
+  return (state.qaLists ?? []).find((qaList) =>
+    qaList.id === defaultQaListId
+    && qaList.lifecycleState === "active"
+    && qaList.language?.code === normalizedLanguageCode
+  ) ?? null;
+}
+
+export async function openEditorQaList(render, options = {}) {
+  const targetLanguageCode = String(
+    options.languageCode
+    ?? state.editorChapter?.selectedTargetLanguageCode
+    ?? "",
+  ).trim();
+  const team = currentTeam();
+  if (!targetLanguageCode || !team) {
+    return;
+  }
+
+  primeQaListsLoadingState(team.id, { preserveVisibleData: state.qaLists.length > 0 });
+  let qaList = resolveDefaultQaListForLanguage(targetLanguageCode, team);
+  if (!qaList) {
+    await loadTeamQaLists(render, team.id);
+    qaList = resolveDefaultQaListForLanguage(targetLanguageCode, team);
+  }
+
+  if (!qaList) {
+    state.screen = "qa";
+    render();
+    return;
+  }
+
+  openQaListEditor(render, qaList.id, {
+    navigationSource: "editor",
+  });
+  await loadSelectedQaListEditorData(render);
 }
 
 export function primeSelectedQaListEditorLoadingState() {

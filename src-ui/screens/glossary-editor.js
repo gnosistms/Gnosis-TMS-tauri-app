@@ -1,4 +1,5 @@
 import {
+  actionNavButton,
   buildPageRefreshAction,
   buildSectionNav,
   createSearchField,
@@ -43,7 +44,7 @@ export function renderGlossaryEditorScreen(state) {
             isBack: true,
             disabled: !state.selectedChapterId,
           }),
-          navButton("QA", "qa"),
+          actionNavButton("QA", "open-editor-qa"),
         ]
       : buildSectionNav("glossaryEditor");
   const searchQuery = String(glossary.searchQuery ?? "").trim().toLowerCase();
@@ -133,7 +134,8 @@ export function renderGlossaryEditorScreen(state) {
         backgroundRefreshing: anyGlossaryTermWriteIsActive(),
       }),
       navButtons,
-      tools: canManageTerms ? `${searchField} ${primaryButton("+ New Term", "open-new-term")}` : searchField,
+      leftTools: searchField,
+      tools: canManageTerms ? primaryButton("+ New Term", "open-new-term") : "",
       pageSync: state.pageSync,
       noticeText: getNoticeBadgeText(),
       statusItems: getStatusSurfaceItems("glossaryEditor"),

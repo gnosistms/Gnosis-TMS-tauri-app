@@ -1,8 +1,10 @@
 import {
+  actionNavButton,
   buildPageRefreshAction,
   buildSectionNav,
   createSearchField,
   escapeHtml,
+  navButton,
   pageShell,
   primaryButton,
   renderStateCard,
@@ -16,10 +18,37 @@ import {
   extractGlossaryRubyVisibleText,
   renderGlossaryRubyTermListHtml,
 } from "../app/glossary-ruby.js";
+import { findChapterContextById, resolveSelectedChapterGlossary } from "../app/project-context.js";
+
+function shortenChapterNavLabel(value) {
+  const text = String(value ?? "").trim();
+  if (!text) {
+    return "Editor";
+  }
+
+  return text.length > 35 ? `${text.slice(0, 35)}...` : text;
+}
 
 export function renderQaListEditorScreen(state) {
   const qaList = state.qaListEditor;
   const canManageTerms = canManageQaLists(selectedTeam());
+  const chapterTitle =
+    findChapterContextById(state.selectedChapterId)?.chapter?.name
+    ?? state.editorChapter?.fileTitle
+    ?? "";
+  const linkedGlossary = resolveSelectedChapterGlossary(state.glossaries);
+  const navButtons =
+    qaList.navigationSource === "editor"
+      ? [
+          navButton(shortenChapterNavLabel(chapterTitle), "translate", false, {
+            isBack: true,
+            disabled: !state.selectedChapterId,
+          }),
+          actionNavButton("Glossary", "open-editor-glossary", false, {
+            disabled: !linkedGlossary?.repoName,
+          }),
+        ]
+      : buildSectionNav("qaListEditor");
   const searchQuery = String(qaList.searchQuery ?? "").trim().toLowerCase();
   const visibleTerms = (Array.isArray(qaList.terms) ? qaList.terms : []).filter((term) => {
     if (!searchQuery) {
@@ -95,8 +124,9 @@ export function renderQaListEditorScreen(state) {
       titleAction: buildPageRefreshAction(state, state.pageSync, "refresh-page", {
         backgroundRefreshing: false,
       }),
-      navButtons: buildSectionNav("qaListEditor"),
-      tools: canManageTerms ? `${searchField} ${primaryButton("+ New QA Term", "open-new-qa-term")}` : searchField,
+      navButtons,
+      leftTools: searchField,
+      tools: canManageTerms ? primaryButton("+ New QA Term", "open-new-qa-term") : "",
       pageSync: state.pageSync,
       noticeText: getNoticeBadgeText(),
       statusItems: getStatusSurfaceItems("qaListEditor"),

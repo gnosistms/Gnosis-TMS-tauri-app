@@ -6,6 +6,7 @@ import {
 } from "../glossary-flow.js";
 import {
   loadTeamQaLists,
+  openEditorQaList,
   openQaListEditor,
   primeQaListsLoadingState,
 } from "../qa-list-flow.js";
@@ -112,6 +113,11 @@ export function createNavigationActions(render) {
         navigationSource: "editor",
         preferredGlossary: glossary,
       });
+      return true;
+    }
+
+    if (action === "open-editor-qa") {
+      void openEditorQaList(render);
       return true;
     }
 

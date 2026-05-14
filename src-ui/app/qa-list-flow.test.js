@@ -31,6 +31,7 @@ globalThis.window = {
 const {
   loadSelectedQaListEditorData,
   loadTeamQaLists,
+  resolveDefaultQaListForLanguage,
   submitQaTermEditor,
 } = await import("./qa-list-flow.js");
 const { resetQaListsQueryObserver } = await import("./qa-list-query.js");
@@ -97,6 +98,26 @@ test.afterEach(() => {
   invokeHandler = async () => null;
   invokeCalls.length = 0;
   resetSessionState();
+});
+
+test("resolveDefaultQaListForLanguage returns the active default for the target language", () => {
+  setupQaTeams();
+  state.qaLists = [
+    repoBackedQaList({
+      id: "qa-vi",
+      language: { code: "vi", name: "Vietnamese" },
+      lifecycleState: "active",
+    }),
+    repoBackedQaList({
+      id: "qa-ja",
+      language: { code: "ja", name: "Japanese" },
+      lifecycleState: "active",
+    }),
+  ];
+
+  assert.equal(resolveDefaultQaListForLanguage("vi")?.id, "qa-vi");
+  assert.equal(resolveDefaultQaListForLanguage("ja")?.id, "qa-ja");
+  assert.equal(resolveDefaultQaListForLanguage("es"), null);
 });
 
 test("stale QA list page load does not replace the newly selected team's visible data", async () => {

@@ -147,6 +147,20 @@ export function textAction(label, action, options = {}) {
   )}"${tooltip}${disabledActionAttributes(options)}>${escapeHtml(label)}</button>`;
 }
 
+export function iconAction(label, action, iconMarkup, options = {}) {
+  const tooltip = tooltipAttributes(options.tooltip ?? label, options.tooltipOptions);
+  const className = typeof options.className === "string" && options.className.trim()
+    ? ` ${escapeHtml(options.className.trim())}`
+    : "";
+  const iconClassName = typeof options.iconClassName === "string" && options.iconClassName.trim()
+    ? ` ${escapeHtml(options.iconClassName.trim())}`
+    : "";
+
+  return `<button class="icon-action${options.disabled ? " is-disabled" : ""}${className}" data-action="${escapeHtml(
+    action,
+  )}" aria-label="${escapeHtml(label)}"${tooltip}${disabledActionAttributes(options)}><span class="icon-action__icon${iconClassName}" aria-hidden="true">${iconMarkup}</span></button>`;
+}
+
 export function renderChevronIcon(direction = "right", className = "") {
   const directionClass = direction === "down"
     ? "chevron-icon--down"
