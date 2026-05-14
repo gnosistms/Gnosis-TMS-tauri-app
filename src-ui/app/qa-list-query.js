@@ -25,6 +25,38 @@ function qaListRepoSyncByRepoName(syncSnapshots = []) {
   );
 }
 
+function normalizeQaLists(qaLists = []) {
+  return sortQaLists(
+    (Array.isArray(qaLists) ? qaLists : [])
+      .map((qaList) => normalizeQaList(qaList))
+      .filter(Boolean),
+  );
+}
+
+function assertUniqueQaListIds(qaLists = [], context = "QA list query data") {
+  const seen = new Set();
+  for (const qaList of Array.isArray(qaLists) ? qaLists : []) {
+    const id = typeof qaList?.id === "string" ? qaList.id.trim() : "";
+    if (!id) {
+      continue;
+    }
+    if (seen.has(id)) {
+      throw new Error(`Duplicate QA list id "${id}" in ${context}.`);
+    }
+    seen.add(id);
+  }
+}
+
+function validatedQaLists(qaLists = [], context = "QA list query data") {
+  const normalized = normalizeQaLists(qaLists);
+  assertUniqueQaListIds(normalized, context);
+  return normalized;
+}
+
+function assertUniqueQaListSnapshotIds(snapshot, context = "QA list query data") {
+  assertUniqueQaListIds(Array.isArray(snapshot?.qaLists) ? snapshot.qaLists : [], context);
+}
+
 function createQaListDiscoverySnapshot(discovery = {}) {
   return {
     ...createQaListDiscoveryState(),
@@ -50,11 +82,7 @@ export function createQaListsQuerySnapshot({
   discovery = {},
 } = {}) {
   return {
-    qaLists: sortQaLists(
-      (Array.isArray(qaLists) ? qaLists : [])
-        .map(normalizeQaList)
-        .filter(Boolean),
-    ),
+    qaLists: validatedQaLists(qaLists, "QA list query snapshot"),
     repoSyncByRepoName: qaListRepoSyncByRepoName(syncSnapshots),
     syncIssue,
     discovery: createQaListDiscoverySnapshot({
@@ -80,11 +108,7 @@ export function applyQaListsQuerySnapshotToState(snapshot, {
   if (snapshot) {
     clearConfirmedQaListWriteIntents(snapshot);
     const visibleSnapshot = applyQaListWriteIntentsToSnapshot(snapshot);
-    state.qaLists = sortQaLists(
-      (Array.isArray(visibleSnapshot?.qaLists) ? visibleSnapshot.qaLists : [])
-        .map(normalizeQaList)
-        .filter(Boolean),
-    );
+    state.qaLists = validatedQaLists(visibleSnapshot?.qaLists, "QA list state snapshot");
     state.qaListRepoSyncByRepoName =
       snapshot.repoSyncByRepoName && typeof snapshot.repoSyncByRepoName === "object"
         ? snapshot.repoSyncByRepoName
@@ -111,7 +135,9 @@ export function patchQaListQueryData(queryData, qaListId, patch) {
   }
 
   let changed = false;
-  const qaLists = (Array.isArray(queryData.qaLists) ? queryData.qaLists : [])
+  const currentQaLists = Array.isArray(queryData.qaLists) ? queryData.qaLists : [];
+  assertUniqueQaListIds(currentQaLists, "QA list query patch input");
+  const qaLists = currentQaLists
     .map((qaList) => {
       if (qaList?.id !== qaListId) {
         return qaList;
@@ -127,7 +153,7 @@ export function patchQaListQueryData(queryData, qaListId, patch) {
   return changed
     ? {
       ...queryData,
-      qaLists: sortQaLists(qaLists),
+      qaLists: validatedQaLists(qaLists, "QA list query patch result"),
     }
     : queryData;
 }
@@ -141,15 +167,15 @@ export function upsertQaListQueryData(queryData, qaList) {
     return queryData;
   }
   const qaLists = Array.isArray(queryData.qaLists) ? queryData.qaLists : [];
+  assertUniqueQaListIds(qaLists, "QA list query upsert input");
   const exists = qaLists.some((item) => item?.id === normalized.id);
   return {
     ...queryData,
-    qaLists: sortQaLists(
-      (exists
+    qaLists: validatedQaLists(
+      exists
         ? qaLists.map((item) => (item?.id === normalized.id ? normalized : item))
-        : [...qaLists, normalized])
-        .map(normalizeQaList)
-        .filter(Boolean),
+        : [...qaLists, normalized],
+      "QA list query upsert result",
     ),
   };
 }
@@ -183,6 +209,7 @@ function qaListTitleInSnapshot(snapshot, qaListId) {
 
 function patchQaListInList(qaLists, qaListId, patch, fallbackQaList = null) {
   const currentQaLists = Array.isArray(qaLists) ? qaLists : [];
+  assertUniqueQaListIds(currentQaLists, "QA list lifecycle patch input");
   let found = false;
   const patchedQaLists = currentQaLists.map((qaList) => {
     if (qaList?.id !== qaListId) {
@@ -200,7 +227,7 @@ function patchQaListInList(qaLists, qaListId, patch, fallbackQaList = null) {
       ...patch,
     }));
   }
-  return sortQaLists(patchedQaLists.filter(Boolean));
+  return validatedQaLists(patchedQaLists, "QA list lifecycle patch result");
 }
 
 export function preserveQaListLifecyclePatchesInSnapshot(nextSnapshot, previousSnapshot) {
@@ -209,6 +236,7 @@ export function preserveQaListLifecyclePatchesInSnapshot(nextSnapshot, previousS
   }
 
   const previousQaLists = Array.isArray(previousSnapshot?.qaLists) ? previousSnapshot.qaLists : [];
+  assertUniqueQaListIds(previousQaLists, "previous QA list lifecycle snapshot");
   const intentById = new Map(
     previousQaLists
       .filter((qaList) => typeof qaList?.id === "string" && qaListLifecycleIntent(qaList))
@@ -219,6 +247,7 @@ export function preserveQaListLifecyclePatchesInSnapshot(nextSnapshot, previousS
   }
 
   let nextQaLists = Array.isArray(nextSnapshot.qaLists) ? nextSnapshot.qaLists : [];
+  assertUniqueQaListIds(nextQaLists, "next QA list lifecycle snapshot");
   for (const previousQaList of intentById.values()) {
     const intent = qaListLifecycleIntent(previousQaList);
     const isPending = typeof previousQaList?.pendingMutation === "string"
@@ -274,7 +303,7 @@ export function preserveQaListLifecyclePatchesInSnapshot(nextSnapshot, previousS
 
   return {
     ...nextSnapshot,
-    qaLists: nextQaLists,
+    qaLists: validatedQaLists(nextQaLists, "preserved QA list lifecycle snapshot"),
   };
 }
 
@@ -289,6 +318,7 @@ const qaListQueryController = createRepoResourceQueryController({
   createSnapshot: createQaListsQuerySnapshot,
   applySnapshotToState: applyQaListsQuerySnapshotToState,
   preserveSnapshot: preserveQaListLifecyclePatchesInSnapshot,
+  validateSnapshot: assertUniqueQaListSnapshotIds,
   patchQueryData: patchQaListQueryData,
   loadCacheEntry: loadStoredQaListsForTeam,
   cacheEntryItems: (entry) => entry.qaLists,

@@ -12,7 +12,11 @@ import {
   tooltipAttributes,
 } from "../lib/ui.js";
 import { formatErrorForDisplay } from "../app/error-display.js";
-import { getNoticeBadgeText } from "../app/status-feedback.js";
+import {
+  getNoticeBadgeText,
+  getScopedSyncBadgeText,
+  getStatusSurfaceItems,
+} from "../app/status-feedback.js";
 import { renderGlossaryCreationModal } from "./glossary-creation-modal.js";
 import { renderGlossaryImportModal } from "./glossary-import-modal.js";
 import { renderGlossaryPermanentDeletionModal } from "./glossary-permanent-deletion-modal.js";
@@ -272,7 +276,7 @@ export function renderGlossariesScreen(state) {
       title: "Glossaries",
       subtitle: selectedTeam?.name ?? "Team",
       titleAction: buildPageRefreshAction(state, state.pageSync, "refresh-page", {
-        backgroundRefreshing: state.glossariesPage?.isRefreshing === true || coordinatorWriteActive || queryLifecycleWriteActive,
+        backgroundRefreshing: refreshInProgress || coordinatorWriteActive,
         backgroundRefreshStartedAt: state.glossariesPage?.refreshStartedAt,
       }),
       navButtons: buildSectionNav("glossaries", { includeAiSettings: canManageAiSettings }),
@@ -280,7 +284,9 @@ export function renderGlossariesScreen(state) {
         ? `${textAction("Import", "import-glossary", { disabled: offlineMode || writeActionsDisabled })} ${primaryButton("+ New Glossary", "open-new-glossary", { disabled: offlineMode || writeActionsDisabled })}`
         : "",
       pageSync: state.pageSync,
+      syncBadgeText: getScopedSyncBadgeText("glossaries"),
       noticeText: getNoticeBadgeText(),
+      statusItems: getStatusSurfaceItems("glossaries"),
       offlineMode,
       offlineReconnectState: state.offline?.reconnecting === true,
       body,

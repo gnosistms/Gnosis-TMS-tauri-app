@@ -310,12 +310,18 @@ export async function deleteGlossary(render, glossaryId) {
     showNoticeBadge(glossaryLifecycleWriteBlockedMessage(), render);
     return;
   }
+  const keepDeletedSectionOpen =
+    state.showDeletedGlossaries === true
+    && state.glossaries.some((item) => item.lifecycleState === "deleted");
 
   try {
     await createMutationObserver(createGlossarySoftDeleteMutationOptions({
       team,
       glossary,
       commitMutation: commitGlossaryMutationStrict,
+      onOptimisticApplied: () => {
+        state.showDeletedGlossaries = keepDeletedSectionOpen;
+      },
       onSuccessApplied: () => {
         removeGlossaryEditorQuery(team, glossary);
         updateDefaultGlossaryAfterDeletion(team, glossary.id);

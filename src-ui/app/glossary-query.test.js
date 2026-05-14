@@ -84,6 +84,20 @@ test("glossary query adapter maps snapshots into glossary page state", () => {
   assert.equal(state.glossariesPage.visibleTeamId, "team-1");
 });
 
+test("glossary query snapshots reject duplicate summary ids", () => {
+  assert.throws(() => createGlossariesQuerySnapshot({
+    glossaries: [
+      glossary({ id: "duplicate", lifecycleState: "active" }),
+      glossary({
+        id: "duplicate",
+        lifecycleState: "deleted",
+        pendingMutation: "softDelete",
+        localLifecycleIntent: "softDelete",
+      }),
+    ],
+  }), /Duplicate glossary id "duplicate" in glossary query snapshot/);
+});
+
 test("glossary query adapter ignores stale team snapshots", () => {
   resetSessionState();
   state.selectedTeamId = "team-2";
@@ -248,6 +262,66 @@ test("glossary lifecycle mutations patch query cache and state immediately", asy
   assert.equal(queryClient.getQueryData(queryKey).glossaries[0].lifecycleState, "active");
   assert.equal(queryClient.getQueryData(queryKey).glossaries[0].pendingMutation, "restore");
   assert.equal(state.glossaries[0].lifecycleState, "active");
+});
+
+test("older glossary soft delete success does not overwrite a newer restore intent", async () => {
+  resetSessionState();
+  state.selectedTeamId = "team-1";
+  state.glossariesPage = createResourcePageState({ isRefreshing: true });
+  const team = { id: "team-1", installationId: 1 };
+  const queryKey = glossaryKeys.byTeam(team.id);
+  queryClient.setQueryData(queryKey, createGlossariesQuerySnapshot({ glossaries: [glossary()] }));
+
+  const deleteOptions = createGlossarySoftDeleteMutationOptions({
+    team,
+    glossary: glossary(),
+    commitMutation: async () => {},
+  });
+  await deleteOptions.onMutate();
+
+  const restoreOptions = createGlossaryRestoreMutationOptions({
+    team,
+    glossary: glossary({ lifecycleState: "deleted" }),
+    commitMutation: async () => {},
+  });
+  await restoreOptions.onMutate();
+
+  deleteOptions.onSuccess();
+
+  assert.equal(queryClient.getQueryData(queryKey).glossaries[0].lifecycleState, "active");
+  assert.equal(queryClient.getQueryData(queryKey).glossaries[0].pendingMutation, "restore");
+  assert.equal(state.glossaries[0].lifecycleState, "active");
+  assert.equal(state.glossaries[0].pendingMutation, "restore");
+
+  restoreOptions.onSuccess();
+
+  assert.equal(queryClient.getQueryData(queryKey).glossaries[0].lifecycleState, "active");
+  assert.equal(queryClient.getQueryData(queryKey).glossaries[0].pendingMutation, null);
+  assert.equal(queryClient.getQueryData(queryKey).glossaries[0].localLifecycleIntent, "restore");
+});
+
+test("glossary lifecycle mutations reject pre-existing duplicate summaries", async () => {
+  resetSessionState();
+  state.selectedTeamId = "team-1";
+  state.glossariesPage = createResourcePageState();
+  const team = { id: "team-1", installationId: 1 };
+  const queryKey = glossaryKeys.byTeam(team.id);
+  queryClient.setQueryData(queryKey, {
+    ...createGlossariesQuerySnapshot(),
+    glossaries: [
+      glossary({ lifecycleState: "active" }),
+      glossary({ lifecycleState: "deleted" }),
+    ],
+  });
+
+  await assert.rejects(createGlossaryRestoreMutationOptions({
+    team,
+    glossary: glossary({ lifecycleState: "deleted" }),
+    commitMutation: async () => {},
+  }).onMutate(), /Duplicate glossary id "glossary-1" in glossary mutation input/);
+
+  assert.equal(queryClient.getQueryData(queryKey).glossaries.length, 2);
+  assert.equal(state.glossaries.length, 0);
 });
 
 test("glossary rename mutation rolls back query cache and state on failure", async () => {

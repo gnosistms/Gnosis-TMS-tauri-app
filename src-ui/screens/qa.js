@@ -11,7 +11,11 @@ import {
   tooltipAttributes,
 } from "../lib/ui.js";
 import { formatErrorForDisplay } from "../app/error-display.js";
-import { getNoticeBadgeText } from "../app/status-feedback.js";
+import {
+  getNoticeBadgeText,
+  getScopedSyncBadgeText,
+  getStatusSurfaceItems,
+} from "../app/status-feedback.js";
 import { renderQaListCreationModal } from "./qa-list-creation-modal.js";
 import { renderQaListImportModal } from "./qa-list-import-modal.js";
 import { renderQaListPermanentDeletionModal } from "./qa-list-permanent-deletion-modal.js";
@@ -91,15 +95,7 @@ function renderQaListCard(qaList, options = {}) {
         })]
       : []),
   ];
-  const termLabel = qaList.termCount === 1 ? "1 QA term" : `${qaList.termCount ?? 0} QA terms`;
   const languageName = qaList.language?.name ?? "Unknown";
-  const stateMarkup = isDeleted
-    ? renderInlineStateBox({
-        tone: "warning",
-        message: "This QA list is deleted.",
-        className: "resource-state-box",
-      })
-    : "";
   const resolutionMarkup = resolution
     ? renderInlineStateBox({
         tone: resolution.tone,
@@ -126,10 +122,8 @@ function renderQaListCard(qaList, options = {}) {
             </h2>
             <p class="list-row__meta">
               <span>${escapeHtml(languageName)}</span>
-              <span>${escapeHtml(termLabel)}</span>
               ${isDeleted && isTombstone ? ` <span>Permanently deleted</span>` : ""}
             </p>
-            ${stateMarkup}
             ${resolutionMarkup}
           </div>
           <div class="list-row__actions">
@@ -204,7 +198,7 @@ export function renderQaScreen(state) {
   const emptyState = renderStateCard({
     eyebrow: "NO QA LISTS FOUND",
     title: "No QA lists are available yet.",
-    subtitle: "Create or import a QA list to start building quality assurance terms.",
+    subtitle: "Create or import a QA list to start building quality assurance term lists.",
   });
   const loadingState = renderStateCard({
     eyebrow: "LOADING QA LISTS",
@@ -286,7 +280,9 @@ export function renderQaScreen(state) {
         ? `${textAction("Import", "import-qa-list", { disabled: offlineMode || writeActionsDisabled })} ${primaryButton("+ New QA List", "open-new-qa-list", { disabled: offlineMode || writeActionsDisabled })}`
         : "",
       pageSync: state.pageSync,
+      syncBadgeText: getScopedSyncBadgeText("qa"),
       noticeText: getNoticeBadgeText(),
+      statusItems: getStatusSurfaceItems("qa"),
       offlineMode,
       offlineReconnectState: state.offline?.reconnecting === true,
       body,

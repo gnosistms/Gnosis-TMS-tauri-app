@@ -55,6 +55,16 @@ test("QA list cards open from the left content area without an Open button", () 
   assert.doesNotMatch(html, />Open<\/button>/);
 });
 
+test("QA list cards show language metadata without term counts", () => {
+  setQaScreenState();
+
+  const html = renderQaScreen(state);
+
+  assert.match(html, />Vietnamese</);
+  assert.doesNotMatch(html, /1 QA term/);
+  assert.doesNotMatch(html, /QA terms/);
+});
+
 test("QA list refresh spins and disables the refresh button during background refresh", () => {
   setQaScreenState({
     qaListsPage: { isRefreshing: true, refreshStartedAt: 100 },
@@ -84,6 +94,44 @@ test("QA list pending lifecycle mutations spin the refresh button", () => {
 
   assert.match(actionButtonHtml(html, "refresh-page"), /\bis-spinning\b/);
   assert.match(actionButtonHtml(html, "refresh-page"), /aria-disabled="true"/);
+});
+
+test("QA list refresh progress renders a lower-right status badge", () => {
+  setQaScreenState({
+    qaListsPage: { isRefreshing: true, refreshStartedAt: 100 },
+  });
+  state.statusBadges.right = {
+    visible: true,
+    scope: "qa",
+    text: "Refreshing QA lists...",
+  };
+
+  const html = renderQaScreen(state);
+
+  assert.match(html, /team-ui-debug/);
+  assert.match(html, /Refreshing QA lists\.\.\./);
+});
+
+test("deleted QA list cards use deleted card styling without a warning message", () => {
+  setQaScreenState({
+    qaLists: [{
+      id: "deleted-qa-list",
+      title: "Deleted QA",
+      language: { code: "vi", name: "Vietnamese" },
+      lifecycleState: "deleted",
+      termCount: 1,
+      terms: [],
+    }],
+  });
+  state.showDeletedQaLists = true;
+
+  const html = renderQaScreen(state);
+
+  assert.match(html, /card--deleted/);
+  assert.match(actionButtonHtml(html, "restore-qa-list:deleted-qa-list"), /data-action/);
+  assert.match(actionButtonHtml(html, "delete-deleted-qa-list:deleted-qa-list"), /data-action/);
+  assert.doesNotMatch(html, /This QA list is deleted\./);
+  assert.doesNotMatch(html, /resource-state-box/);
 });
 
 test("QA list discovery loading also spins the refresh button", () => {

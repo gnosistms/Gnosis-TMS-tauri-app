@@ -1,7 +1,11 @@
 import { waitForNextPaint } from "./runtime.js";
 import { beginPageSync, completePageSync, failPageSync } from "./page-sync.js";
 import { createQaListDiscoveryState, state } from "./state.js";
-import { showNoticeBadge } from "./status-feedback.js";
+import {
+  clearScopedSyncBadge,
+  showNoticeBadge,
+  showScopedSyncBadge,
+} from "./status-feedback.js";
 import {
   applyQaListsQueryDataForTeam,
   currentQaListTeam,
@@ -13,7 +17,7 @@ import {
   seedQaListsQueryFromCache,
   seedQaListsQueryFromLocal,
 } from "./qa-list-query.js";
-import { qaListKeys, queryClient } from "./query-client.js";
+import { queryClient } from "./query-client.js";
 import { setResourcePageRefreshing } from "./resource-page-controller.js";
 import { teamCacheKey } from "./team-cache.js";
 
@@ -96,10 +100,11 @@ export async function loadTeamQaLists(render, teamId = state.selectedTeamId, opt
   }
 
   beginPageSync();
-  showNoticeBadge("Loading QA lists...", render, null);
+  showScopedSyncBadge("qa", "Loading QA lists...", render);
   render?.();
   await waitForNextPaint();
   if (!isQaListLoadCurrent(team)) {
+    clearScopedSyncBadge("qa", render);
     return;
   }
 
@@ -110,11 +115,13 @@ export async function loadTeamQaLists(render, teamId = state.selectedTeamId, opt
         render,
       });
       if (!isQaListLoadCurrent(team)) {
+        clearScopedSyncBadge("qa", render);
         return;
       }
       if (localSnapshot) {
         await waitForNextPaint();
         if (!isQaListLoadCurrent(team)) {
+          clearScopedSyncBadge("qa", render);
           return;
         }
       }
@@ -126,10 +133,10 @@ export async function loadTeamQaLists(render, teamId = state.selectedTeamId, opt
       preserveVisibleData: preservedVisibleData,
     }));
     if (!isQaListLoadCurrent(team)) {
+      clearScopedSyncBadge("qa", render);
       return;
     }
-    showNoticeBadge("Refreshing QA lists...", render, null);
-    queryClient.setQueryData(qaListKeys.byTeam(team.id), querySnapshot);
+    showScopedSyncBadge("qa", "Refreshing QA lists...", render);
     applyQaListsQueryDataForTeam(team, querySnapshot, null, { isFetching: false });
     await completePageSync(render);
   } catch (error) {
@@ -148,6 +155,7 @@ export async function loadTeamQaLists(render, teamId = state.selectedTeamId, opt
     showNoticeBadge(error?.message ?? String(error), render);
   } finally {
     if (isQaListLoadCurrent(team)) {
+      clearScopedSyncBadge("qa", render);
       setResourcePageRefreshing(state.qaListsPage, false);
     }
   }

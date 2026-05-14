@@ -268,11 +268,13 @@ test("editor QA navigation opens the cached default QA list before editor data l
   };
   state.qaLists = [qaList];
 
+  const editorDataStarted = deferred();
   invokeHandler = async (command) => {
     if (command === "sync_gtms_qa_list_editor_repo") {
       return null;
     }
     if (command === "load_gtms_qa_list_editor_data") {
+      editorDataStarted.resolve();
       return editorData.promise;
     }
     return [];
@@ -286,6 +288,12 @@ test("editor QA navigation opens the cached default QA list before editor data l
   assert.equal(state.qaListEditor.qaListId, qaList.id);
   assert.equal(state.qaListEditor.title, qaList.title);
   assert.equal(state.pageSync.status, "syncing");
+
+  await editorDataStarted.promise;
+  assert.equal(
+    invokeCalls.some((call) => call.command === "sync_gtms_qa_list_editor_repo"),
+    false,
+  );
 
   editorData.resolve({
     qaListId: qaList.id,
@@ -739,6 +747,50 @@ test("QA list lifecycle actions surface blocked states instead of mutating", asy
   openQaListPermanentDeletion(() => {}, "deleted-qa-list");
   assert.equal(state.qaListPermanentDeletion.isOpen, false);
   assert.match(getNoticeBadgeText(), /current QA list refresh or write/i);
+});
+
+test("soft-deleting a QA list does not open a closed deleted QA lists section", async () => {
+  setupQaTeams();
+  state.qaLists = [repoBackedQaList()];
+  state.showDeletedQaLists = false;
+
+  await deleteQaList(() => {}, "qa-list-1");
+  await flushAsyncWork();
+
+  assert.equal(state.qaLists[0].lifecycleState, "deleted");
+  assert.equal(state.showDeletedQaLists, false);
+});
+
+test("soft-deleting a QA list preserves a visible and already-open deleted QA lists section", async () => {
+  setupQaTeams();
+  state.qaLists = [
+    repoBackedQaList(),
+    repoBackedQaList({
+      id: "deleted-qa-list",
+      title: "Deleted QA",
+      repoName: "qa-list-deleted",
+      lifecycleState: "deleted",
+    }),
+  ];
+  state.showDeletedQaLists = true;
+
+  await deleteQaList(() => {}, "qa-list-1");
+  await flushAsyncWork();
+
+  assert.equal(state.qaLists.find((item) => item.id === "qa-list-1").lifecycleState, "deleted");
+  assert.equal(state.showDeletedQaLists, true);
+});
+
+test("soft-deleting a QA list closes a stale open flag when the deleted section is not visible", async () => {
+  setupQaTeams();
+  state.qaLists = [repoBackedQaList()];
+  state.showDeletedQaLists = true;
+
+  await deleteQaList(() => {}, "qa-list-1");
+  await flushAsyncWork();
+
+  assert.equal(state.qaLists[0].lifecycleState, "deleted");
+  assert.equal(state.showDeletedQaLists, false);
 });
 
 test("QA list creation rolls back remote and local repos when initialization fails", async () => {

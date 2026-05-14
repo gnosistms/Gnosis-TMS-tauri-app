@@ -80,13 +80,13 @@ function beginRefreshButtonFeedback(screen, render) {
 
   if (screen === "glossaries") {
     state.glossariesPage.isRefreshing = true;
-    showNoticeBadge("Refreshing glossary list...", render, null);
+    showScopedSyncBadge("glossaries", "Refreshing glossary list...", render);
     return;
   }
 
   if (screen === "qa") {
     setResourcePageRefreshing(state.qaListsPage, true);
-    showNoticeBadge("Refreshing QA lists...", render, null);
+    showScopedSyncBadge("qa", "Refreshing QA lists...", render);
     return;
   }
 
@@ -112,10 +112,10 @@ function failRefreshButtonFeedback(screen, render) {
     clearScopedSyncBadge("projects", null);
   } else if (screen === "glossaries") {
     state.glossariesPage.isRefreshing = false;
-    clearNoticeBadge();
+    clearScopedSyncBadge("glossaries", null);
   } else if (screen === "qa") {
     setResourcePageRefreshing(state.qaListsPage, false);
-    clearNoticeBadge();
+    clearScopedSyncBadge("qa", null);
   } else if (screen === "teams") {
     state.teamsPage.isRefreshing = false;
     clearScopedSyncBadge("teams", null);
@@ -346,7 +346,7 @@ export async function refreshCurrentScreen(render) {
     try {
       await refreshVisibleTeamAccess(render);
       await loadTeamQaLists(render, state.selectedTeamId);
-      clearNoticeBadge();
+      clearScopedSyncBadge("qa", render);
       render();
     } catch (error) {
       failRefreshButtonFeedback(screen, render);

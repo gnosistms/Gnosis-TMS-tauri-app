@@ -1,7 +1,11 @@
 import { waitForNextPaint } from "./runtime.js";
 import { beginPageSync, completePageSync, failPageSync } from "./page-sync.js";
 import { createGlossaryDiscoveryState, state } from "./state.js";
-import { clearNoticeBadge, showNoticeBadge } from "./status-feedback.js";
+import {
+  clearScopedSyncBadge,
+  showNoticeBadge,
+  showScopedSyncBadge,
+} from "./status-feedback.js";
 import { selectedTeam } from "./glossary-shared.js";
 import { loadStoredGlossariesForTeam } from "./glossary-cache.js";
 import {
@@ -118,10 +122,11 @@ export async function loadTeamGlossaries(
   }
 
   beginPageSync();
-  showNoticeBadge("Loading glossaries...", render, null);
+  showScopedSyncBadge("glossaries", "Loading glossaries...", render);
   render();
   await waitForNextPaint();
   if (!isGlossaryLoadCurrent(team?.id ?? teamId, syncVersionAtStart)) {
+    clearScopedSyncBadge("glossaries", render);
     return;
   }
 
@@ -132,11 +137,13 @@ export async function loadTeamGlossaries(
         render,
       });
       if (!isGlossaryLoadCurrent(team.id, syncVersionAtStart)) {
+        clearScopedSyncBadge("glossaries", render);
         return;
       }
       if (localSnapshot) {
         await waitForNextPaint();
         if (!isGlossaryLoadCurrent(team.id, syncVersionAtStart)) {
+          clearScopedSyncBadge("glossaries", render);
           return;
         }
       }
@@ -155,9 +162,10 @@ export async function loadTeamGlossaries(
     });
     const querySnapshot = await queryClient.fetchQuery(queryOptions);
     if (!isGlossaryLoadCurrent(team.id, syncVersionAtStart)) {
+      clearScopedSyncBadge("glossaries", render);
       return;
     }
-    showNoticeBadge("Refreshing glossary list...", render, null);
+    showScopedSyncBadge("glossaries", "Refreshing glossary list...", render);
     queryClient.setQueryData(glossaryKeys.byTeam(team.id), querySnapshot);
     applyGlossariesQuerySnapshotToState(querySnapshot, {
       teamId: team.id,
@@ -178,13 +186,12 @@ export async function loadTeamGlossaries(
       showNoticeBadge(brokerWarning, render);
     }
     await completePageSync(render);
-    if (!syncIssueText && !brokerWarning) {
-      clearNoticeBadge();
-    }
+    clearScopedSyncBadge("glossaries", render);
     state.glossariesPage.isRefreshing = false;
     render();
   } catch (error) {
     if (!isGlossaryLoadCurrent(team?.id ?? teamId, syncVersionAtStart)) {
+      clearScopedSyncBadge("glossaries", render);
       return;
     }
     if (
@@ -195,12 +202,13 @@ export async function loadTeamGlossaries(
       })
     ) {
       failPageSync();
+      clearScopedSyncBadge("glossaries", render);
       state.glossariesPage.isRefreshing = false;
       return;
     }
 
     failPageSync();
-    clearNoticeBadge();
+    clearScopedSyncBadge("glossaries", render);
     state.glossariesPage.isRefreshing = false;
     state.glossaryRepoSyncByRepoName = {};
     const hasVisibleLocalData = state.glossaries.length > 0;

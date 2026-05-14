@@ -24,6 +24,63 @@ function removeResourceFromQueryData(queryData, config, id) {
     };
 }
 
+function resourceInQueryData(queryData, config, id) {
+  return collectionItems(queryData, config.collectionField)
+    .find((item) => resourceId(item, config) === id) ?? null;
+}
+
+function pendingMutationName(mutationType) {
+  if (mutationType === "rename") {
+    return "rename";
+  }
+  if (mutationType === "softDelete") {
+    return "softDelete";
+  }
+  if (mutationType === "restore") {
+    return "restore";
+  }
+  return "";
+}
+
+function normalizedMutationIntent(resource) {
+  const pending =
+    typeof resource?.pendingMutation === "string" ? resource.pendingMutation.trim() : "";
+  if (pending) {
+    return pending;
+  }
+  return typeof resource?.localLifecycleIntent === "string"
+    ? resource.localLifecycleIntent.trim()
+    : "";
+}
+
+function mutationSettledWriteIsSuperseded(queryData, config, id, mutationType, settledPatch = {}) {
+  const expectedIntent = pendingMutationName(mutationType);
+  if (!expectedIntent) {
+    return false;
+  }
+
+  const currentResource = resourceInQueryData(queryData, config, id);
+  if (!currentResource) {
+    return false;
+  }
+
+  const currentIntent = normalizedMutationIntent(currentResource);
+  if (currentIntent && currentIntent !== expectedIntent) {
+    return true;
+  }
+
+  if (
+    mutationType === "rename"
+    && currentIntent === "rename"
+    && Object.prototype.hasOwnProperty.call(settledPatch, "title")
+    && currentResource.title !== settledPatch.title
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
 function createLifecycleMutationPayload(config, {
   team,
   resource,
@@ -67,9 +124,11 @@ export function createRepoResourceQueryController(config) {
     const overlaidSnapshot = config.applyWriteIntentOverlay
       ? config.applyWriteIntentOverlay(snapshot)
       : snapshot;
-    return config.preserveSnapshot
+    const preparedSnapshot = config.preserveSnapshot
       ? config.preserveSnapshot(overlaidSnapshot, previousQueryData)
       : overlaidSnapshot;
+    config.validateSnapshot?.(preparedSnapshot, `${config.kind} prepared query snapshot`);
+    return preparedSnapshot;
   }
 
   function applySnapshot(snapshot, options = {}) {
@@ -288,6 +347,7 @@ export function createRepoResourceQueryController(config) {
       onMutate: async () => {
         await queryClient.cancelQueries({ queryKey });
         const previousQueryData = queryClient.getQueryData(queryKey);
+        config.validateSnapshot?.(previousQueryData, `${config.kind} mutation input`);
         let optimisticQueryData = previousQueryData;
         if (mutationType === "softDelete") {
           optimisticQueryData = patchOrMove(previousQueryData, id, optimisticData, "deleted");
@@ -299,6 +359,7 @@ export function createRepoResourceQueryController(config) {
           optimisticQueryData = config.patchQueryData(previousQueryData, id, optimisticData);
         }
         if (optimisticQueryData) {
+          config.validateSnapshot?.(optimisticQueryData, `${config.kind} optimistic mutation result`);
           queryClient.setQueryData(queryKey, optimisticQueryData);
           applySnapshot(optimisticQueryData, {
             teamId,
@@ -311,6 +372,17 @@ export function createRepoResourceQueryController(config) {
       },
       onError: (error, _variables, context) => {
         if (context?.previousQueryData) {
+          const rollbackSuperseded = mutationSettledWriteIsSuperseded(
+            queryClient.getQueryData(queryKey),
+            config,
+            id,
+            mutationType,
+            settledData,
+          );
+          if (rollbackSuperseded) {
+            render?.();
+            return;
+          }
           queryClient.setQueryData(queryKey, context.previousQueryData);
           applySnapshot(context.previousQueryData, {
             teamId,
@@ -326,28 +398,39 @@ export function createRepoResourceQueryController(config) {
       onSuccess: (result) => {
         const currentQueryData = queryClient.getQueryData(queryKey);
         const resultPatch = config.normalizeMutationResultPatch?.(resource, result);
+        const settledPatch = {
+          ...settledData,
+          ...(resultPatch ?? {}),
+        };
+        const settledWriteSuperseded = mutationSettledWriteIsSuperseded(
+          currentQueryData,
+          config,
+          id,
+          mutationType,
+          settledPatch,
+        );
+        if (settledWriteSuperseded) {
+          render?.();
+          return;
+        }
         let settledQueryData = currentQueryData;
         if (mutationType === "softDelete") {
           settledQueryData = patchOrMove(currentQueryData, id, {
-            ...settledData,
-            ...(resultPatch ?? {}),
+            ...settledPatch,
             lifecycleState: "deleted",
           }, "deleted");
         } else if (mutationType === "restore") {
           settledQueryData = patchOrMove(currentQueryData, id, {
-            ...settledData,
-            ...(resultPatch ?? {}),
+            ...settledPatch,
             lifecycleState: "active",
           }, "active");
         } else if (mutationType === "permanentDelete") {
           settledQueryData = removeResourceFromQueryData(currentQueryData, config, id);
         } else {
-          settledQueryData = config.patchQueryData(currentQueryData, id, {
-            ...settledData,
-            ...(resultPatch ?? {}),
-          });
+          settledQueryData = config.patchQueryData(currentQueryData, id, settledPatch);
         }
         if (settledQueryData) {
+          config.validateSnapshot?.(settledQueryData, `${config.kind} settled mutation result`);
           queryClient.setQueryData(queryKey, settledQueryData);
           applySnapshot(settledQueryData, {
             teamId,

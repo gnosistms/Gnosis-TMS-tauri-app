@@ -185,6 +185,22 @@ test("glossary pending lifecycle mutations spin the refresh button", () => {
   assert.match(actionButtonHtml(html, "refresh-page"), /aria-disabled="true"/);
 });
 
+test("glossary refresh progress renders a lower-right status badge", () => {
+  setGlossaryScreenState({
+    glossariesPage: { isRefreshing: true, refreshStartedAt: 100 },
+  });
+  state.statusBadges.right = {
+    visible: true,
+    scope: "glossaries",
+    text: "Refreshing glossary list...",
+  };
+
+  const html = renderGlossariesScreen(state);
+
+  assert.match(html, /team-ui-debug/);
+  assert.match(html, /Refreshing glossary list\.\.\./);
+});
+
 test("glossary discovery loading disables heavy write actions even if refresh flag is stale", () => {
   setGlossaryScreenState({
     glossariesPage: { isRefreshing: false, writeState: "idle" },
@@ -202,6 +218,8 @@ test("glossary discovery loading disables heavy write actions even if refresh fl
   assert.match(html, /Loading glossaries\.\.\./);
   assert.match(actionButtonHtml(html, "import-glossary"), /disabled/);
   assert.match(actionButtonHtml(html, "open-new-glossary"), /disabled/);
+  assert.match(actionButtonHtml(html, "refresh-page"), /\bis-spinning\b/);
+  assert.match(actionButtonHtml(html, "refresh-page"), /aria-disabled="true"/);
 });
 
 test("glossary missing local repo repair warning returns after refresh", () => {

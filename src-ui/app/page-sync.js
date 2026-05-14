@@ -62,6 +62,7 @@ export function createPageSyncController({
         setState(createSyncState());
         render?.();
       }, upToDateDurationMs);
+      resetTimer?.unref?.();
     },
 
     fail() {

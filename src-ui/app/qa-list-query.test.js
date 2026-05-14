@@ -19,6 +19,7 @@ const {
   createQaListsQuerySnapshot,
   preserveQaListLifecyclePatchesInSnapshot,
 } = await import("./qa-list-query.js");
+const { applyQaListsQueryDataForTeam } = await import("./qa-list-top-level-state.js");
 const { qaListKeys, queryClient } = await import("./query-client.js");
 
 function qaList(overrides = {}) {
@@ -53,6 +54,20 @@ test("QA list query adapter maps snapshots into QA list page state", () => {
   assert.equal(state.qaLists[0].title, "Vietnamese QA");
   assert.equal(state.qaListsPage.isRefreshing, true);
   assert.equal(state.qaListsPage.visibleTeamId, "team-1");
+});
+
+test("QA list query snapshots reject duplicate summary ids", () => {
+  assert.throws(() => createQaListsQuerySnapshot({
+    qaLists: [
+      qaList({ id: "duplicate", lifecycleState: "active" }),
+      qaList({
+        id: "duplicate",
+        lifecycleState: "deleted",
+        pendingMutation: "softDelete",
+        localLifecycleIntent: "softDelete",
+      }),
+    ],
+  }), /Duplicate QA list id "duplicate" in QA list query snapshot/);
 });
 
 test("QA list query adapter ignores stale team snapshots", () => {
@@ -96,6 +111,155 @@ test("QA list lifecycle mutations patch query cache and state immediately", asyn
   assert.equal(queryClient.getQueryData(queryKey).qaLists[0].lifecycleState, "active");
   assert.equal(queryClient.getQueryData(queryKey).qaLists[0].pendingMutation, "restore");
   assert.equal(state.qaLists[0].lifecycleState, "active");
+});
+
+test("older QA list soft delete success does not overwrite a newer restore intent", async () => {
+  resetSessionState();
+  state.selectedTeamId = "team-1";
+  state.qaListsPage = createResourcePageState({ isRefreshing: true });
+  const team = { id: "team-1", installationId: 1 };
+  const queryKey = qaListKeys.byTeam(team.id);
+  queryClient.setQueryData(queryKey, createQaListsQuerySnapshot({ qaLists: [qaList()] }));
+
+  const deleteOptions = createQaListSoftDeleteMutationOptions({
+    team,
+    qaList: qaList(),
+    commitMutation: async () => {},
+  });
+  await deleteOptions.onMutate();
+
+  const restoreOptions = createQaListRestoreMutationOptions({
+    team,
+    qaList: qaList({ lifecycleState: "deleted" }),
+    commitMutation: async () => {},
+  });
+  await restoreOptions.onMutate();
+
+  deleteOptions.onSuccess();
+
+  assert.equal(queryClient.getQueryData(queryKey).qaLists[0].lifecycleState, "active");
+  assert.equal(queryClient.getQueryData(queryKey).qaLists[0].pendingMutation, "restore");
+  assert.equal(state.qaLists[0].lifecycleState, "active");
+  assert.equal(state.qaLists[0].pendingMutation, "restore");
+
+  restoreOptions.onSuccess();
+
+  assert.equal(queryClient.getQueryData(queryKey).qaLists[0].lifecycleState, "active");
+  assert.equal(queryClient.getQueryData(queryKey).qaLists[0].pendingMutation, null);
+  assert.equal(queryClient.getQueryData(queryKey).qaLists[0].localLifecycleIntent, "restore");
+});
+
+test("QA list direct refresh apply preserves a pending soft delete", () => {
+  resetSessionState();
+  const team = { id: "team-1", installationId: 1 };
+  state.selectedTeamId = team.id;
+  state.teams = [team];
+  state.qaListsPage = createResourcePageState({ isRefreshing: true });
+  const queryKey = qaListKeys.byTeam(team.id);
+  queryClient.setQueryData(queryKey, createQaListsQuerySnapshot({
+    qaLists: [qaList({
+      lifecycleState: "deleted",
+      pendingMutation: "softDelete",
+    })],
+  }));
+
+  const applied = applyQaListsQueryDataForTeam(
+    team,
+    createQaListsQuerySnapshot({ qaLists: [qaList({ lifecycleState: "active" })] }),
+    null,
+    { isFetching: false },
+  );
+
+  assert.equal(applied.qaLists[0].lifecycleState, "deleted");
+  assert.equal(applied.qaLists[0].pendingMutation, "softDelete");
+  assert.equal(queryClient.getQueryData(queryKey).qaLists[0].lifecycleState, "deleted");
+  assert.equal(state.qaLists[0].lifecycleState, "deleted");
+});
+
+test("QA list stale refresh after optimistic soft delete keeps the list deleted", async () => {
+  resetSessionState();
+  const team = { id: "team-1", installationId: 1 };
+  state.selectedTeamId = team.id;
+  state.teams = [team];
+  state.qaListsPage = createResourcePageState({ isRefreshing: true });
+  const queryKey = qaListKeys.byTeam(team.id);
+  queryClient.setQueryData(queryKey, createQaListsQuerySnapshot({ qaLists: [qaList()] }));
+
+  await createQaListSoftDeleteMutationOptions({
+    team,
+    qaList: qaList(),
+    commitMutation: async () => {},
+  }).onMutate();
+
+  const applied = applyQaListsQueryDataForTeam(
+    team,
+    createQaListsQuerySnapshot({ qaLists: [qaList({ lifecycleState: "active" })] }),
+    null,
+    { isFetching: false },
+  );
+
+  assert.equal(applied.qaLists[0].lifecycleState, "deleted");
+  assert.equal(applied.qaLists[0].pendingMutation, "softDelete");
+  assert.equal(queryClient.getQueryData(queryKey).qaLists[0].lifecycleState, "deleted");
+  assert.equal(queryClient.getQueryData(queryKey).qaLists[0].pendingMutation, "softDelete");
+  assert.equal(state.qaLists[0].lifecycleState, "deleted");
+  assert.equal(state.qaLists[0].pendingMutation, "softDelete");
+});
+
+test("QA list stale refresh after settled soft delete keeps the local delete intent", async () => {
+  resetSessionState();
+  const team = { id: "team-1", installationId: 1 };
+  state.selectedTeamId = team.id;
+  state.teams = [team];
+  state.qaListsPage = createResourcePageState({ isRefreshing: true });
+  const queryKey = qaListKeys.byTeam(team.id);
+  queryClient.setQueryData(queryKey, createQaListsQuerySnapshot({ qaLists: [qaList()] }));
+  const deleteOptions = createQaListSoftDeleteMutationOptions({
+    team,
+    qaList: qaList(),
+    commitMutation: async () => {},
+  });
+  await deleteOptions.onMutate();
+  deleteOptions.onSuccess();
+
+  const applied = applyQaListsQueryDataForTeam(
+    team,
+    createQaListsQuerySnapshot({ qaLists: [qaList({ lifecycleState: "active" })] }),
+    null,
+    { isFetching: false },
+  );
+
+  assert.equal(applied.qaLists[0].lifecycleState, "deleted");
+  assert.equal(applied.qaLists[0].pendingMutation, null);
+  assert.equal(applied.qaLists[0].localLifecycleIntent, "softDelete");
+  assert.equal(queryClient.getQueryData(queryKey).qaLists[0].lifecycleState, "deleted");
+  assert.equal(queryClient.getQueryData(queryKey).qaLists[0].localLifecycleIntent, "softDelete");
+  assert.equal(state.qaLists[0].lifecycleState, "deleted");
+  assert.equal(state.qaLists[0].localLifecycleIntent, "softDelete");
+});
+
+test("QA list lifecycle mutations reject pre-existing duplicate summaries", async () => {
+  resetSessionState();
+  state.selectedTeamId = "team-1";
+  state.qaListsPage = createResourcePageState();
+  const team = { id: "team-1", installationId: 1 };
+  const queryKey = qaListKeys.byTeam(team.id);
+  queryClient.setQueryData(queryKey, {
+    ...createQaListsQuerySnapshot(),
+    qaLists: [
+      qaList({ lifecycleState: "active" }),
+      qaList({ lifecycleState: "deleted" }),
+    ],
+  });
+
+  await assert.rejects(createQaListRestoreMutationOptions({
+    team,
+    qaList: qaList({ lifecycleState: "deleted" }),
+    commitMutation: async () => {},
+  }).onMutate(), /Duplicate QA list id "qa-list-1" in qaList mutation input/);
+
+  assert.equal(queryClient.getQueryData(queryKey).qaLists.length, 2);
+  assert.equal(state.qaLists.length, 0);
 });
 
 test("QA list rename mutation rolls back query cache and state on failure", async () => {

@@ -65,9 +65,9 @@ test("refresh feedback is rendered before team access refreshes", async () => {
   assert.match(source, /if \(screen === "projects"\) \{\s*setResourcePageRefreshing\(state\.projectsPage, true\);/);
   assert.match(source, /showScopedSyncBadge\("projects", "Refreshing project list\.\.\.", render\);/);
   assert.match(source, /if \(screen === "glossaries"\) \{\s*state\.glossariesPage\.isRefreshing = true;/);
-  assert.match(source, /showNoticeBadge\("Refreshing glossary list\.\.\.", render, null\);/);
+  assert.match(source, /showScopedSyncBadge\("glossaries", "Refreshing glossary list\.\.\.", render\);/);
   assert.match(source, /if \(screen === "qa"\) \{\s*setResourcePageRefreshing\(state\.qaListsPage, true\);/);
-  assert.match(source, /showNoticeBadge\("Refreshing QA lists\.\.\.", render, null\);/);
+  assert.match(source, /showScopedSyncBadge\("qa", "Refreshing QA lists\.\.\.", render\);/);
   assert.match(source, /if \(screen === "teams"\) \{\s*state\.teamsPage\.isRefreshing = true;/);
   assert.match(source, /showScopedSyncBadge\("teams", "Refreshing teams\.\.\.", render\);/);
   assert.match(source, /if \(screen === "users"\) \{\s*state\.membersPage\.isRefreshing = true;/);

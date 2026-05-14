@@ -3,6 +3,7 @@ import {
   applyQaListsQuerySnapshotToState,
   createQaListsQuerySnapshot,
   persistQaListsQueryDataForTeam,
+  preserveQaListLifecyclePatchesInSnapshot,
   upsertQaListQueryData,
 } from "./qa-list-query.js";
 import { syncSingleQaListForTeam, syncQaListReposForTeam, teamSupportsQaListRepos, getQaListSyncIssueMessage } from "./qa-list-repo-flow.js";
@@ -126,14 +127,19 @@ export function applyQaListsQueryDataForTeam(team, queryData, render, { isFetchi
   if (!team?.id || !queryData) {
     return null;
   }
-  queryClient.setQueryData(qaListKeys.byTeam(team.id), queryData);
-  applyQaListsQuerySnapshotToState(queryData, {
+  const queryKey = qaListKeys.byTeam(team.id);
+  const reconciledQueryData = preserveQaListLifecyclePatchesInSnapshot(
+    queryData,
+    queryClient.getQueryData(queryKey),
+  );
+  queryClient.setQueryData(queryKey, reconciledQueryData);
+  applyQaListsQuerySnapshotToState(reconciledQueryData, {
     teamId: team.id,
     isFetching,
   });
-  persistQaListsQueryDataForTeam(team, queryData);
+  persistQaListsQueryDataForTeam(team, reconciledQueryData);
   render?.();
-  return queryData;
+  return reconciledQueryData;
 }
 
 export function upsertQaListForTeam(team, qaList, render, options = {}) {

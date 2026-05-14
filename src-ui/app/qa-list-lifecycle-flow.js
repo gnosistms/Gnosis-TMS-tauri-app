@@ -272,6 +272,9 @@ export async function deleteQaList(render, qaListId) {
     showNoticeBadge(qaListLifecycleWriteBlockedMessage(), render);
     return;
   }
+  const keepDeletedSectionOpen =
+    state.showDeletedQaLists === true
+    && state.qaLists.some((item) => item.lifecycleState === "deleted");
 
   ensureQaListsQueryDataForTeam(team);
   try {
@@ -279,6 +282,9 @@ export async function deleteQaList(render, qaListId) {
       team,
       qaList,
       commitMutation: commitQaListLifecycleMutation,
+      onOptimisticApplied: () => {
+        state.showDeletedQaLists = keepDeletedSectionOpen;
+      },
       onSuccessApplied: (queryData) => {
         removeQaListEditorQuery(team, qaList);
         updateDefaultQaListAfterDeletion(team, qaList);

@@ -174,6 +174,41 @@ async function loadRepoBackedQaListEditorSnapshot(team, qaList) {
   return normalizeQaList({ ...qaList, ...response });
 }
 
+async function loadQaListEditorPayloadFromDisk(team, qaList) {
+  const queryOptions = createQaListEditorQueryOptions(team, qaList);
+  await queryClient.invalidateQueries({ queryKey: queryOptions.queryKey, exact: true });
+  return queryClient.fetchQuery(queryOptions);
+}
+
+async function syncQaListEditorRepoThenRefresh(render, team, qaList, expectedContext) {
+  if (!teamSupportsQaListRepos(team) || !qaList?.repoName) {
+    return;
+  }
+  const descriptor = qaListRepoDescriptor(qaList);
+  if (!descriptor) {
+    return;
+  }
+
+  try {
+    await invoke("sync_gtms_qa_list_editor_repo", {
+      input: {
+        installationId: team.installationId,
+        ...descriptor,
+      },
+      sessionToken: requireBrokerSession(),
+    });
+    const response = await loadQaListEditorPayloadFromDisk(team, qaList);
+    maybeApplyQaListEditorSnapshot(response, expectedContext, render, {
+      showDeferredNotice: true,
+    });
+  } catch (error) {
+    if (qaListEditorContextMatches(expectedContext)) {
+      showNoticeBadge(error?.message ?? String(error), render);
+      render?.();
+    }
+  }
+}
+
 export function applyQaListEditorSnapshot(team, qaList, normalized) {
   if (!selectedQaListEditorMatches(team, qaList)) {
     return false;
@@ -409,24 +444,13 @@ export async function loadSelectedQaListEditorData(render, options = {}) {
 
   try {
     if (teamSupportsQaListRepos(team) && qaList.repoName) {
-      const descriptor = qaListRepoDescriptor(qaList);
-      if (descriptor) {
-        await invoke("sync_gtms_qa_list_editor_repo", {
-          input: {
-            installationId: team.installationId,
-            ...descriptor,
-          },
-          sessionToken: requireBrokerSession(),
-        });
-      }
-      const queryOptions = createQaListEditorQueryOptions(team, qaList);
-      await queryClient.invalidateQueries({ queryKey: queryOptions.queryKey, exact: true });
-      const response = await queryClient.fetchQuery(queryOptions);
+      const response = await loadQaListEditorPayloadFromDisk(team, qaList);
       maybeApplyQaListEditorSnapshot(response, expectedContext, render, {
         showDeferredNotice: true,
       });
       if (qaListEditorContextMatches(expectedContext)) {
         await completePageSync(render);
+        await syncQaListEditorRepoThenRefresh(render, team, qaList, expectedContext);
       }
       return;
     }
