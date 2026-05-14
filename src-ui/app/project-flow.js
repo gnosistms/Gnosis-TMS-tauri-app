@@ -45,6 +45,7 @@ import {
   areResourcePageWritesDisabled,
   areResourcePageWriteSubmissionsDisabled,
   clearResourcePageDataOwner,
+  setResourcePageRefreshing,
   submitResourcePageWrite,
 } from "./resource-page-controller.js";
 import {
@@ -383,7 +384,7 @@ export function primeProjectsLoadingState(teamId = state.selectedTeamId, options
     glossaryWarning: "",
     recoveryMessage: "",
   };
-  state.projectsPage.isRefreshing = true;
+  setResourcePageRefreshing(state.projectsPage, true);
   resetProjectSearchState();
   resetProjectCreation();
   resetProjectRename();
@@ -425,7 +426,7 @@ export function finishProjectsLoadingForTeam(teamId = state.selectedTeamId, rend
   if (state.selectedTeamId !== teamId) {
     return false;
   }
-  state.projectsPage.isRefreshing = false;
+  setResourcePageRefreshing(state.projectsPage, false);
   render?.();
   return true;
 }
@@ -448,7 +449,7 @@ export async function loadTeamProjects(render, teamId = state.selectedTeamId) {
     state.projects = [];
     state.deletedProjects = [];
     setProjectDiscoveryState("ready", "", "");
-    state.projectsPage.isRefreshing = false;
+    setResourcePageRefreshing(state.projectsPage, false);
     render?.();
     return [];
   }

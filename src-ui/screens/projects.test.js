@@ -131,6 +131,21 @@ test("project background refresh spins and disables the refresh button", () => {
   assert.match(actionButtonHtml(html, "refresh-page"), /aria-disabled="true"/);
 });
 
+test("project background refresh keeps refresh icon animation phase stable across renders", () => {
+  const html = renderProjectsScreen(projectsState({
+    projectsPage: {
+      isRefreshing: true,
+      refreshStartedAt: -1000,
+      writeState: "idle",
+    },
+    projectsPageSync: {
+      status: "idle",
+    },
+  }));
+
+  assert.match(html, /--title-icon-spin-delay: -\d+ms/);
+});
+
 test("project discovery loading disables project creation even if refresh flag is stale", () => {
   const html = renderProjectsScreen(projectsState({
     projects: [],

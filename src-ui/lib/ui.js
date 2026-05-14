@@ -213,9 +213,12 @@ export function titleRefreshButton(action, options = {}) {
 export function buildPageRefreshAction(appState, syncState = appState?.pageSync, action = "refresh-page", options = {}) {
   const backgroundRefreshing = options.backgroundRefreshing === true;
   const spinning = syncState?.status === "syncing" || backgroundRefreshing;
+  const spinStartedAt = Number.isFinite(syncState?.startedAt)
+    ? syncState.startedAt
+    : options.backgroundRefreshStartedAt;
   return titleRefreshButton(action, {
     spinning,
-    spinStartedAt: syncState?.startedAt,
+    spinStartedAt,
     disabled: appState?.offline?.isEnabled === true || spinning,
   });
 }

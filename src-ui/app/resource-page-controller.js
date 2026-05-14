@@ -1,8 +1,12 @@
 export function createResourcePageState(overrides = {}) {
+  const isRefreshing = overrides.isRefreshing === true;
   return {
     cachedData: Array.isArray(overrides.cachedData) ? overrides.cachedData : [],
     visibleData: Array.isArray(overrides.visibleData) ? overrides.visibleData : [],
-    isRefreshing: overrides.isRefreshing === true,
+    isRefreshing,
+    refreshStartedAt: isRefreshing && Number.isFinite(overrides.refreshStartedAt)
+      ? overrides.refreshStartedAt
+      : null,
     writeState:
       overrides.writeState === "submitting" || overrides.writeState === "refreshingAfterWrite"
         ? overrides.writeState
@@ -26,6 +30,31 @@ export function createResourcePageState(overrides = {}) {
     error: typeof overrides.error === "string" ? overrides.error : "",
     notice: typeof overrides.notice === "string" ? overrides.notice : "",
   };
+}
+
+function currentTimeMs() {
+  return typeof globalThis.performance?.now === "function"
+    ? globalThis.performance.now()
+    : Date.now();
+}
+
+export function setResourcePageRefreshing(pageState, isRefreshing, options = {}) {
+  if (!pageState) {
+    return;
+  }
+
+  if (isRefreshing) {
+    if (pageState.isRefreshing !== true || !Number.isFinite(pageState.refreshStartedAt)) {
+      pageState.refreshStartedAt = Number.isFinite(options.startedAt)
+        ? options.startedAt
+        : currentTimeMs();
+    }
+    pageState.isRefreshing = true;
+    return;
+  }
+
+  pageState.isRefreshing = false;
+  pageState.refreshStartedAt = null;
 }
 
 export function setResourcePageDataOwner(pageState, {
@@ -138,14 +167,14 @@ export async function refreshResourcePage(options) {
   if (progressText) {
     setProgress?.(progressText);
   }
-  pageState.isRefreshing = true;
+  setResourcePageRefreshing(pageState, true);
   pageState.error = "";
   render?.();
 
   try {
     const refreshedData = normalizeData(await loadData());
     setPageData(pageState, refreshedData);
-    pageState.isRefreshing = false;
+    setResourcePageRefreshing(pageState, false);
     if (!syncAlreadyActive) {
       await syncController?.complete?.(render);
     }
@@ -153,7 +182,7 @@ export async function refreshResourcePage(options) {
     render?.();
     return refreshedData;
   } catch (error) {
-    pageState.isRefreshing = false;
+    setResourcePageRefreshing(pageState, false);
     pageState.error = error?.message ?? String(error);
     if (!syncAlreadyActive) {
       syncController?.fail?.();

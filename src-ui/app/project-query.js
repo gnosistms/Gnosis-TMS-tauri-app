@@ -10,7 +10,10 @@ import {
   applyProjectWriteIntentsToSnapshot,
   clearConfirmedProjectWriteIntents,
 } from "./project-write-coordinator.js";
-import { setResourcePageDataOwner } from "./resource-page-controller.js";
+import {
+  setResourcePageDataOwner,
+  setResourcePageRefreshing,
+} from "./resource-page-controller.js";
 import { teamCacheKey } from "./team-cache.js";
 
 let activeProjectsQuerySubscription = null;
@@ -115,7 +118,7 @@ export function applyProjectsQuerySnapshotToState(snapshot, {
     state.projectDiscovery = createProjectDiscoverySnapshot(snapshot.discovery);
   }
 
-  state.projectsPage.isRefreshing = isFetching === true;
+  setResourcePageRefreshing(state.projectsPage, isFetching === true);
   return true;
 }
 
@@ -499,9 +502,9 @@ export function ensureProjectsQueryObserver(render, team, options = {}) {
           status: "error",
           error: result.error?.message ?? String(result.error),
         });
-        state.projectsPage.isRefreshing = result.isFetching;
+        setResourcePageRefreshing(state.projectsPage, result.isFetching === true);
       } else if (state.selectedTeamId === teamId) {
-        state.projectsPage.isRefreshing = result.isFetching;
+        setResourcePageRefreshing(state.projectsPage, result.isFetching === true);
       }
       render?.();
     },

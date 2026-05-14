@@ -8,6 +8,7 @@ import {
   loadResourcePageFromCacheThenRefresh,
   refreshResourcePage,
   setResourcePageDataOwner,
+  setResourcePageRefreshing,
   submitResourcePageWrite,
 } from "./resource-page-controller.js";
 
@@ -18,6 +19,7 @@ test("resource page state starts in a non-refreshing non-writing state", () => {
     cachedData: [],
     visibleData: [],
     isRefreshing: false,
+    refreshStartedAt: null,
     writeState: "idle",
     selectedItemId: null,
     visibleTeamId: null,
@@ -27,6 +29,21 @@ test("resource page state starts in a non-refreshing non-writing state", () => {
     notice: "",
   });
   assert.equal(areResourcePageWritesDisabled(pageState), false);
+});
+
+test("resource page refresh timestamp stays stable across repeated refreshing updates", () => {
+  const pageState = createResourcePageState();
+
+  setResourcePageRefreshing(pageState, true, { startedAt: 123 });
+  setResourcePageRefreshing(pageState, true, { startedAt: 456 });
+
+  assert.equal(pageState.isRefreshing, true);
+  assert.equal(pageState.refreshStartedAt, 123);
+
+  setResourcePageRefreshing(pageState, false);
+
+  assert.equal(pageState.isRefreshing, false);
+  assert.equal(pageState.refreshStartedAt, null);
 });
 
 test("resource page state tracks visible data ownership", () => {
