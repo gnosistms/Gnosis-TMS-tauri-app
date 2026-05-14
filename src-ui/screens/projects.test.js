@@ -150,6 +150,25 @@ test("project discovery loading disables project creation even if refresh flag i
   assert.match(actionButtonHtml(html, "open-new-project"), /disabled/);
 });
 
+test("projects page shows cached rows during a background refresh", () => {
+  const html = renderProjectsScreen(projectsState({
+    projectsPage: {
+      isRefreshing: true,
+      writeState: "idle",
+    },
+    projectDiscovery: {
+      status: "ready",
+      error: "",
+      glossaryWarning: "",
+      recoveryMessage: "",
+    },
+  }));
+
+  assert.doesNotMatch(html, /Loading projects\.\.\./);
+  assert.match(html, /Project/);
+  assert.match(actionButtonHtml(html, "refresh-page"), /\bis-spinning\b/);
+});
+
 test("project refresh hides missing local repo repair warnings while setup is in progress", () => {
   const html = renderProjectsScreen(projectsState({
     projectsPage: {

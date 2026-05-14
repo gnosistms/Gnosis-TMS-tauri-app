@@ -3,9 +3,11 @@ import assert from "node:assert/strict";
 
 import {
   areResourcePageWritesDisabled,
+  clearResourcePageDataOwner,
   createResourcePageState,
   loadResourcePageFromCacheThenRefresh,
   refreshResourcePage,
+  setResourcePageDataOwner,
   submitResourcePageWrite,
 } from "./resource-page-controller.js";
 
@@ -18,10 +20,33 @@ test("resource page state starts in a non-refreshing non-writing state", () => {
     isRefreshing: false,
     writeState: "idle",
     selectedItemId: null,
+    visibleTeamId: null,
+    visibleCacheKey: null,
+    cacheUpdatedAt: null,
     error: "",
     notice: "",
   });
   assert.equal(areResourcePageWritesDisabled(pageState), false);
+});
+
+test("resource page state tracks visible data ownership", () => {
+  const pageState = createResourcePageState();
+
+  setResourcePageDataOwner(pageState, {
+    teamId: " team-1 ",
+    cacheKey: " installation:1 ",
+    cacheUpdatedAt: " 2026-05-14T00:00:00.000Z ",
+  });
+
+  assert.equal(pageState.visibleTeamId, "team-1");
+  assert.equal(pageState.visibleCacheKey, "installation:1");
+  assert.equal(pageState.cacheUpdatedAt, "2026-05-14T00:00:00.000Z");
+
+  clearResourcePageDataOwner(pageState);
+
+  assert.equal(pageState.visibleTeamId, null);
+  assert.equal(pageState.visibleCacheKey, null);
+  assert.equal(pageState.cacheUpdatedAt, null);
 });
 
 test("resource page writes are disabled during refresh and during writes", () => {

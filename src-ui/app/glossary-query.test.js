@@ -17,8 +17,10 @@ const {
   applyGlossariesQuerySnapshotToState,
   createGlossariesQuerySnapshot,
   invalidateGlossariesQueryAfterMutation,
+  seedGlossariesQueryFromCache,
 } = await import("./glossary-query.js");
 const { glossaryKeys, queryClient } = await import("./query-client.js");
+const { teamCacheKey } = await import("./team-cache.js");
 const {
   getGlossaryWriteIntent,
   glossaryLifecycleIntentKey,
@@ -74,6 +76,7 @@ test("glossary query adapter maps snapshots into glossary page state", () => {
   assert.equal(state.glossaryDiscovery.status, "ready");
   assert.equal(state.glossaryDiscovery.brokerWarning, "Broker warning");
   assert.equal(state.glossariesPage.isRefreshing, true);
+  assert.equal(state.glossariesPage.visibleTeamId, "team-1");
 });
 
 test("glossary query adapter ignores stale team snapshots", () => {
@@ -91,6 +94,49 @@ test("glossary query adapter ignores stale team snapshots", () => {
   assert.equal(applied, false);
   assert.equal(state.glossaries.length, 1);
   assert.equal(state.glossaries[0].title, "Existing");
+});
+
+test("glossary query cache seed applies only selected-team cache", () => {
+  resetSessionState();
+  const team = { id: "team-1", installationId: 1 };
+  state.selectedTeamId = team.id;
+  state.glossariesPage = createResourcePageState();
+
+  const snapshot = seedGlossariesQueryFromCache(team, {
+    loadStoredGlossariesForTeam: () => ({
+      exists: true,
+      cacheKey: teamCacheKey(team),
+      updatedAt: "2026-05-14T00:00:00.000Z",
+      glossaries: [glossary({ title: "Cached Glossary" })],
+    }),
+  });
+
+  assert.equal(snapshot.glossaries[0].title, "Cached Glossary");
+  assert.equal(queryClient.getQueryData(glossaryKeys.byTeam(team.id)).glossaries[0].title, "Cached Glossary");
+  assert.equal(state.glossaries[0].title, "Cached Glossary");
+  assert.equal(state.glossariesPage.visibleTeamId, team.id);
+  assert.equal(state.glossariesPage.visibleCacheKey, teamCacheKey(team));
+  assert.equal(state.glossariesPage.cacheUpdatedAt, "2026-05-14T00:00:00.000Z");
+});
+
+test("glossary query cache seed ignores mismatched cache keys without mutating state", () => {
+  resetSessionState();
+  const team = { id: "team-1", installationId: 1 };
+  state.selectedTeamId = team.id;
+  state.glossariesPage = createResourcePageState();
+  state.glossaries = [glossary({ title: "Existing" })];
+
+  const snapshot = seedGlossariesQueryFromCache(team, {
+    loadStoredGlossariesForTeam: () => ({
+      exists: true,
+      cacheKey: "installation:other",
+      glossaries: [glossary({ title: "Wrong Cache" })],
+    }),
+  });
+
+  assert.equal(snapshot, null);
+  assert.equal(state.glossaries[0].title, "Existing");
+  assert.equal(queryClient.getQueryData(glossaryKeys.byTeam(team.id)), undefined);
 });
 
 test("glossary query adapter overlays pending title intents", () => {

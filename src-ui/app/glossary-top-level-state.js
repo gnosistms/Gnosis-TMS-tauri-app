@@ -1,6 +1,8 @@
 import { saveStoredGlossariesForTeam } from "./glossary-cache.js";
 import { normalizeGlossarySummary, sortGlossaries } from "./glossary-shared.js";
+import { setResourcePageDataOwner } from "./resource-page-controller.js";
 import { state } from "./state.js";
+import { teamCacheKey } from "./team-cache.js";
 
 export function glossarySnapshotFromList(glossaries = []) {
   const normalized = sortGlossaries(
@@ -16,7 +18,12 @@ export function glossarySnapshotFromList(glossaries = []) {
 
 export function applyGlossarySnapshotToState(
   snapshot,
-  { teamId = state.selectedTeamId, fallbackToFirstActive = true } = {},
+  {
+    teamId = state.selectedTeamId,
+    fallbackToFirstActive = true,
+    cacheKey,
+    cacheUpdatedAt = null,
+  } = {},
 ) {
   if (state.selectedTeamId !== teamId) {
     return;
@@ -30,6 +37,12 @@ export function applyGlossarySnapshotToState(
     .map(normalizeGlossarySummary)
     .filter(Boolean);
   state.glossaries = normalizedGlossaries;
+  const team = state.teams.find((item) => item?.id === teamId);
+  setResourcePageDataOwner(state.glossariesPage, {
+    teamId,
+    cacheKey: cacheKey ?? teamCacheKey(team),
+    cacheUpdatedAt,
+  });
   if (
     fallbackToFirstActive
     && !normalizedGlossaries.some(

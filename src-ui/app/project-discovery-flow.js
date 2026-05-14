@@ -28,6 +28,11 @@ import {
 import {
   applyProjectSnapshotToState,
 } from "./project-top-level-state.js";
+import {
+  clearResourcePageDataOwner,
+  setResourcePageDataOwner,
+} from "./resource-page-controller.js";
+import { teamCacheKey } from "./team-cache.js";
 
 function countRecoverableProjectMetadataRecords(records) {
   return (Array.isArray(records) ? records : []).filter((record) =>
@@ -360,6 +365,7 @@ async function loadAvailableGlossariesForTeam(selectedTeam, teamIdAtStart = sele
   if (!Number.isFinite(selectedTeam?.installationId)) {
     if (state.selectedTeamId === teamIdAtStart) {
       state.glossaries = [];
+      clearResourcePageDataOwner(state.glossariesPage);
     }
     return {
       glossaries: [],
@@ -380,6 +386,10 @@ async function loadAvailableGlossariesForTeam(selectedTeam, teamIdAtStart = sele
 
   if (state.selectedTeamId === teamIdAtStart) {
     state.glossaries = glossaries;
+    setResourcePageDataOwner(state.glossariesPage, {
+      teamId: teamIdAtStart,
+      cacheKey: teamCacheKey(selectedTeam),
+    });
   }
 
   return {

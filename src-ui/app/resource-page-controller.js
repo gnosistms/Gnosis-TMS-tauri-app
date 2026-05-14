@@ -11,9 +11,43 @@ export function createResourcePageState(overrides = {}) {
       typeof overrides.selectedItemId === "string" && overrides.selectedItemId.trim()
         ? overrides.selectedItemId.trim()
         : null,
+    visibleTeamId:
+      typeof overrides.visibleTeamId === "string" && overrides.visibleTeamId.trim()
+        ? overrides.visibleTeamId.trim()
+        : null,
+    visibleCacheKey:
+      typeof overrides.visibleCacheKey === "string" && overrides.visibleCacheKey.trim()
+        ? overrides.visibleCacheKey.trim()
+        : null,
+    cacheUpdatedAt:
+      typeof overrides.cacheUpdatedAt === "string" && overrides.cacheUpdatedAt.trim()
+        ? overrides.cacheUpdatedAt.trim()
+        : null,
     error: typeof overrides.error === "string" ? overrides.error : "",
     notice: typeof overrides.notice === "string" ? overrides.notice : "",
   };
+}
+
+export function setResourcePageDataOwner(pageState, {
+  teamId = null,
+  cacheKey = null,
+  cacheUpdatedAt = null,
+} = {}) {
+  if (!pageState) {
+    return;
+  }
+  pageState.visibleTeamId =
+    typeof teamId === "string" && teamId.trim() ? teamId.trim() : null;
+  pageState.visibleCacheKey =
+    typeof cacheKey === "string" && cacheKey.trim() ? cacheKey.trim() : null;
+  pageState.cacheUpdatedAt =
+    typeof cacheUpdatedAt === "string" && cacheUpdatedAt.trim()
+      ? cacheUpdatedAt.trim()
+      : null;
+}
+
+export function clearResourcePageDataOwner(pageState) {
+  setResourcePageDataOwner(pageState);
 }
 
 export function areResourcePageWritesDisabled(pageState) {

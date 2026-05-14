@@ -132,17 +132,34 @@ export const projectCacheKey = teamCacheKey;
 export function loadStoredProjectsForTeam(team) {
   const cacheKey = projectCacheKey(team);
   if (!cacheKey) {
-    return { exists: false, projects: [], deletedProjects: [] };
+    return {
+      exists: false,
+      cacheKey: null,
+      updatedAt: null,
+      projects: [],
+      deletedProjects: [],
+    };
   }
 
   const cacheMap = loadProjectCacheMap();
   const entry = cacheMap[cacheKey];
   if (!entry || typeof entry !== "object") {
-    return { exists: false, projects: [], deletedProjects: [] };
+    return {
+      exists: false,
+      cacheKey,
+      updatedAt: null,
+      projects: [],
+      deletedProjects: [],
+    };
   }
 
   return {
     exists: true,
+    cacheKey,
+    updatedAt:
+      typeof entry.updatedAt === "string" && entry.updatedAt.trim()
+        ? entry.updatedAt.trim()
+        : null,
     projects: Array.isArray(entry.projects)
       ? entry.projects.map(normalizeProject).filter(Boolean)
       : [],

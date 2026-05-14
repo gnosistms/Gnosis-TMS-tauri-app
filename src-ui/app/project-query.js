@@ -10,8 +10,27 @@ import {
   applyProjectWriteIntentsToSnapshot,
   clearConfirmedProjectWriteIntents,
 } from "./project-write-coordinator.js";
+import { setResourcePageDataOwner } from "./resource-page-controller.js";
+import { teamCacheKey } from "./team-cache.js";
 
 let activeProjectsQuerySubscription = null;
+
+function cacheKeyForTeamId(teamId, cacheKey) {
+  if (typeof cacheKey === "string" && cacheKey.trim()) {
+    return cacheKey.trim();
+  }
+  const team = state.teams.find((item) => item?.id === teamId);
+  return teamCacheKey(team);
+}
+
+function glossariesBelongToTeam(teamId, cacheKey) {
+  if (state.glossariesPage?.visibleTeamId !== teamId) {
+    return false;
+  }
+  return cacheKey
+    ? state.glossariesPage?.visibleCacheKey === cacheKey
+    : true;
+}
 
 function createProjectDiscoverySnapshot(discovery = {}) {
   return {
@@ -55,6 +74,8 @@ export function createProjectsQuerySnapshot({
 export function applyProjectsQuerySnapshotToState(snapshot, {
   teamId = state.selectedTeamId,
   isFetching = false,
+  cacheKey,
+  cacheUpdatedAt = null,
   reconcileExpandedDeletedFiles,
 } = {}) {
   if (state.selectedTeamId !== teamId) {
@@ -62,9 +83,13 @@ export function applyProjectsQuerySnapshotToState(snapshot, {
   }
 
   if (snapshot) {
+    const expectedCacheKey = cacheKeyForTeamId(teamId, cacheKey);
     clearConfirmedProjectWriteIntents(snapshot.snapshot);
     const visibleProjectSnapshot = applyProjectWriteIntentsToSnapshot(snapshot.snapshot);
     applyProjectSnapshotToState(visibleProjectSnapshot, {
+      teamId,
+      cacheKey: expectedCacheKey,
+      cacheUpdatedAt,
       reconcileExpandedDeletedFiles,
     });
     state.projectRepoSyncByProjectId =
@@ -72,8 +97,17 @@ export function applyProjectsQuerySnapshotToState(snapshot, {
         ? snapshot.repoSyncByProjectId
         : {};
     const nextGlossaries = Array.isArray(snapshot.glossaries) ? snapshot.glossaries : [];
-    if (!(isFetching === true && nextGlossaries.length === 0 && state.glossaries.length > 0)) {
+    const preserveCurrentGlossaries =
+      isFetching === true
+      && nextGlossaries.length === 0
+      && state.glossaries.length > 0
+      && glossariesBelongToTeam(teamId, expectedCacheKey);
+    if (!preserveCurrentGlossaries) {
       state.glossaries = nextGlossaries;
+      setResourcePageDataOwner(state.glossariesPage, {
+        teamId,
+        cacheKey: expectedCacheKey,
+      });
     }
     state.pendingChapterMutations = Array.isArray(snapshot.pendingChapterMutations)
       ? snapshot.pendingChapterMutations
@@ -98,8 +132,13 @@ export function seedProjectsQueryFromCache(team, {
     return null;
   }
 
+  const expectedCacheKey = teamCacheKey(team);
   const cachedProjects = loadStoredProjectsForTeam(team);
-  if (!cachedProjects?.exists) {
+  if (
+    state.selectedTeamId !== teamId
+    || !cachedProjects?.exists
+    || cachedProjects.cacheKey !== expectedCacheKey
+  ) {
     return null;
   }
 
@@ -115,12 +154,19 @@ export function seedProjectsQueryFromCache(team, {
     typeof loadStoredGlossariesForTeam === "function"
       ? loadStoredGlossariesForTeam(team)
       : null;
+  const cachedGlossaries =
+    cachedGlossaryResult?.exists && cachedGlossaryResult.cacheKey === expectedCacheKey
+      ? cachedGlossaryResult.glossaries
+      : [];
+  const visibleGlossariesBelongToTeam =
+    state.glossariesPage?.visibleTeamId === teamId
+    && state.glossariesPage?.visibleCacheKey === expectedCacheKey;
   const glossaries =
     queryGlossaries.length > 0
       ? queryGlossaries
-      : Array.isArray(cachedGlossaryResult?.glossaries)
-        ? cachedGlossaryResult.glossaries
-        : Array.isArray(state.glossaries) && typeof loadStoredGlossariesForTeam !== "function"
+      : Array.isArray(cachedGlossaries) && cachedGlossaries.length > 0
+        ? cachedGlossaries
+        : visibleGlossariesBelongToTeam && Array.isArray(state.glossaries)
           ? state.glossaries
           : [];
   const optimisticSnapshot =
@@ -155,6 +201,8 @@ export function seedProjectsQueryFromCache(team, {
   applyProjectsQuerySnapshotToState(snapshot, {
     teamId,
     isFetching: true,
+    cacheKey: expectedCacheKey,
+    cacheUpdatedAt: cachedProjects.updatedAt,
     reconcileExpandedDeletedFiles,
   });
   render?.();

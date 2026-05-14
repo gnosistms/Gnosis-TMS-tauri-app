@@ -3,21 +3,40 @@ import { beginPageSync, completePageSync, failPageSync } from "./page-sync.js";
 import { createGlossaryDiscoveryState, state } from "./state.js";
 import { clearNoticeBadge, showNoticeBadge } from "./status-feedback.js";
 import { selectedTeam } from "./glossary-shared.js";
+import { loadStoredGlossariesForTeam } from "./glossary-cache.js";
 import {
   applyGlossariesQuerySnapshotToState,
   createGlossariesQueryOptions,
   ensureGlossariesQueryObserver,
+  seedGlossariesQueryFromCache,
   seedGlossariesQueryFromLocal,
 } from "./glossary-query.js";
+import {
+  clearResourcePageDataOwner,
+} from "./resource-page-controller.js";
 import { persistGlossariesForTeam } from "./glossary-top-level-state.js";
 import { glossaryKeys, queryClient } from "./query-client.js";
 import { classifySyncError } from "./sync-error.js";
 import { handleSyncFailure } from "./sync-recovery.js";
+import { teamCacheKey } from "./team-cache.js";
+
+function glossariesPageOwnsTeam(team) {
+  const expectedCacheKey = teamCacheKey(team);
+  return Boolean(
+    team?.id
+    && expectedCacheKey
+    && state.glossariesPage?.visibleTeamId === team.id
+    && state.glossariesPage?.visibleCacheKey === expectedCacheKey
+  );
+}
 
 export function primeGlossariesLoadingState(teamId = state.selectedTeamId, options = {}) {
   const team = selectedTeam(teamId);
   state.selectedTeamId = teamId ?? state.selectedTeamId;
-  const preserveVisibleData = options.preserveVisibleData === true;
+  const preserveVisibleData =
+    options.preserveVisibleData === true
+    && glossariesPageOwnsTeam(team)
+    && state.glossaries.length > 0;
   state.glossaryRepoSyncByRepoName = {};
   state.glossariesPage.isRefreshing = false;
   state.glossariesPage.writeState = "idle";
@@ -25,6 +44,7 @@ export function primeGlossariesLoadingState(teamId = state.selectedTeamId, optio
   if (!Number.isFinite(team?.installationId)) {
     state.glossaries = [];
     state.selectedGlossaryId = null;
+    clearResourcePageDataOwner(state.glossariesPage);
     state.glossaryRepoSyncByRepoName = {};
     state.glossaryDiscovery = {
       ...createGlossaryDiscoveryState(),
@@ -34,7 +54,7 @@ export function primeGlossariesLoadingState(teamId = state.selectedTeamId, optio
     return;
   }
 
-  if (preserveVisibleData && state.glossaries.length > 0) {
+  if (preserveVisibleData) {
     state.glossaryDiscovery = {
       ...createGlossaryDiscoveryState(),
       status: "ready",
@@ -45,11 +65,23 @@ export function primeGlossariesLoadingState(teamId = state.selectedTeamId, optio
 
   state.glossaries = [];
   state.selectedGlossaryId = null;
+  clearResourcePageDataOwner(state.glossariesPage);
   state.glossariesPage.isRefreshing = true;
   state.glossaryDiscovery = {
     ...createGlossaryDiscoveryState(),
     status: "loading",
     recoveryMessage: "",
+  };
+  const seededSnapshot =
+    options.seedFromCache === false
+      ? null
+      : seedGlossariesQueryFromCache(team, {
+          teamId: team.id,
+          loadStoredGlossariesForTeam,
+        });
+  return {
+    preservedVisibleData: false,
+    seededFromCache: Boolean(seededSnapshot),
   };
 }
 
@@ -63,10 +95,12 @@ export async function loadTeamGlossaries(
   options = {},
 ) {
   const syncVersionAtStart = state.glossarySyncVersion;
-  const preserveVisibleData = options.preserveVisibleData === true;
+  const requestedPreserveVisibleData = options.preserveVisibleData === true;
   const team = selectedTeam(teamId);
-  state.selectedTeamId = teamId ?? state.selectedTeamId;
-  state.glossaryRepoSyncByRepoName = {};
+  const primeResult = primeGlossariesLoadingState(teamId, {
+    preserveVisibleData: requestedPreserveVisibleData,
+  });
+  const preservedVisibleData = primeResult?.preservedVisibleData === true;
   state.glossariesPage.isRefreshing = true;
   render?.();
 
@@ -83,18 +117,6 @@ export async function loadTeamGlossaries(
     return;
   }
 
-  if (!preserveVisibleData) {
-    if (state.glossaries.length === 0) {
-      state.glossaries = [];
-      state.selectedGlossaryId = null;
-      state.glossaryDiscovery = {
-        ...createGlossaryDiscoveryState(),
-        status: "loading",
-        recoveryMessage: "",
-      };
-    }
-  }
-
   beginPageSync();
   showNoticeBadge("Loading glossaries...", render, null);
   render();
@@ -104,7 +126,7 @@ export async function loadTeamGlossaries(
   }
 
   try {
-    if (!preserveVisibleData && state.glossaries.length === 0) {
+    if (!preservedVisibleData) {
       const localSnapshot = await seedGlossariesQueryFromLocal(team, {
         teamId: team.id,
         render,
@@ -122,12 +144,12 @@ export async function loadTeamGlossaries(
 
     ensureGlossariesQueryObserver(render, team, {
       teamId: team.id,
-      preserveVisibleData,
+      preserveVisibleData: preservedVisibleData,
       suppressRecoveryWarning: options.suppressRecoveryWarning === true,
     });
     const queryOptions = createGlossariesQueryOptions(team, {
       teamId: team.id,
-      preserveVisibleData,
+      preserveVisibleData: preservedVisibleData,
       suppressRecoveryWarning: options.suppressRecoveryWarning === true,
       render,
     });
@@ -182,7 +204,7 @@ export async function loadTeamGlossaries(
     state.glossariesPage.isRefreshing = false;
     state.glossaryRepoSyncByRepoName = {};
     const hasVisibleLocalData = state.glossaries.length > 0;
-    if (!preserveVisibleData && !hasVisibleLocalData && state.glossaryDiscovery?.status !== "ready") {
+    if (!preservedVisibleData && !hasVisibleLocalData && state.glossaryDiscovery?.status !== "ready") {
       state.glossaryDiscovery = {
         ...createGlossaryDiscoveryState(),
         status: "error",

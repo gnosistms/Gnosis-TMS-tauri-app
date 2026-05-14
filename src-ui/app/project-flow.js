@@ -4,6 +4,7 @@ import {
   loadStoredChapterPendingMutations,
   loadStoredProjectsForTeam,
 } from "./project-cache.js";
+import { loadStoredGlossariesForTeam } from "./glossary-cache.js";
 import { buildProjectRepoFallbackConflictRecoveryInput } from "./project-repo-sync-shared.js";
 import {
   createProjectRepoConflictRecoveryState,
@@ -43,6 +44,7 @@ import {
 import {
   areResourcePageWritesDisabled,
   areResourcePageWriteSubmissionsDisabled,
+  clearResourcePageDataOwner,
   submitResourcePageWrite,
 } from "./resource-page-controller.js";
 import {
@@ -50,8 +52,10 @@ import {
   createProjectsQuerySnapshot,
   ensureProjectsQueryObserver,
   invalidateProjectsQueryAfterMutation,
+  seedProjectsQueryFromCache,
 } from "./project-query.js";
 import { projectKeys, queryClient } from "./query-client.js";
+import { teamCacheKey } from "./team-cache.js";
 import {
   applyProjectWriteIntentsToSnapshot,
   anyProjectMutatingWriteIsActive,
@@ -330,17 +334,51 @@ function setProjectsPageProgress(render, text) {
   showProjectsStatus(render, text);
 }
 
-export function primeProjectsLoadingState(teamId = state.selectedTeamId) {
+function projectsPageOwnsTeam(team) {
+  const expectedCacheKey = teamCacheKey(team);
+  return Boolean(
+    team?.id
+    && expectedCacheKey
+    && state.projectsPage?.visibleTeamId === team.id
+    && state.projectsPage?.visibleCacheKey === expectedCacheKey
+  );
+}
+
+function glossariesPageOwnsTeam(team) {
+  const expectedCacheKey = teamCacheKey(team);
+  return Boolean(
+    team?.id
+    && expectedCacheKey
+    && state.glossariesPage?.visibleTeamId === team.id
+    && state.glossariesPage?.visibleCacheKey === expectedCacheKey
+  );
+}
+
+export function primeProjectsLoadingState(teamId = state.selectedTeamId, options = {}) {
   if (teamId) {
     state.selectedTeamId = teamId;
   }
-  state.projects = [];
-  state.deletedProjects = [];
+  const team = options.team ?? state.teams.find((item) => item?.id === teamId);
+  const canPreserveVisibleData =
+    projectsPageOwnsTeam(team)
+    && (state.projects.length > 0 || state.deletedProjects.length > 0);
+
+  if (!canPreserveVisibleData) {
+    state.projects = [];
+    state.deletedProjects = [];
+    clearResourcePageDataOwner(state.projectsPage);
+  }
+  if (!glossariesPageOwnsTeam(team)) {
+    state.glossaries = [];
+    clearResourcePageDataOwner(state.glossariesPage);
+  }
   state.projectRepoSyncByProjectId = {};
   state.projectRepoConflictRecovery = createProjectRepoConflictRecoveryState();
-  state.pendingChapterMutations = [];
+  if (!canPreserveVisibleData) {
+    state.pendingChapterMutations = [];
+  }
   state.projectDiscovery = {
-    status: "loading",
+    status: canPreserveVisibleData ? "ready" : "loading",
     error: "",
     glossaryWarning: "",
     recoveryMessage: "",
@@ -350,6 +388,25 @@ export function primeProjectsLoadingState(teamId = state.selectedTeamId) {
   resetProjectCreation();
   resetProjectRename();
   resetProjectPermanentDeletion();
+  if (canPreserveVisibleData) {
+    return { preservedVisibleData: true, seededFromCache: false };
+  }
+
+  const seededSnapshot =
+    options.seedFromCache === false || !Number.isFinite(team?.installationId)
+      ? null
+      : seedProjectsQueryFromCache(team, {
+          teamId,
+          loadStoredProjectsForTeam,
+          loadStoredChapterPendingMutations,
+          loadStoredGlossariesForTeam,
+          applyChapterPendingMutation,
+          reconcileExpandedDeletedFiles,
+        });
+  if (seededSnapshot) {
+    return { preservedVisibleData: false, seededFromCache: true };
+  }
+
   queryClient.setQueryData(
     projectKeys.byTeam(teamId ?? null),
     createProjectsQuerySnapshot({
@@ -361,6 +418,7 @@ export function primeProjectsLoadingState(teamId = state.selectedTeamId) {
       },
     }),
   );
+  return { preservedVisibleData: false, seededFromCache: false };
 }
 
 export function finishProjectsLoadingForTeam(teamId = state.selectedTeamId, render) {
@@ -374,10 +432,12 @@ export function finishProjectsLoadingForTeam(teamId = state.selectedTeamId, rend
 
 export async function loadTeamProjects(render, teamId = state.selectedTeamId) {
   const selectedTeam = state.teams.find((team) => team.id === teamId);
-  const previousProjectSnapshot = {
-    items: state.projects,
-    deletedItems: state.deletedProjects,
-  };
+  const previousProjectSnapshot = projectsPageOwnsTeam(selectedTeam)
+    ? {
+        items: state.projects,
+        deletedItems: state.deletedProjects,
+      }
+    : { items: [], deletedItems: [] };
   primeProjectsLoadingState(teamId);
   void refreshProjectSearchIndex(render, teamId).catch(() => {});
   render?.();

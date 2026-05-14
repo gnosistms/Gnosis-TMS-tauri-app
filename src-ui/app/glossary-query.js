@@ -13,6 +13,7 @@ import {
   applyGlossaryWriteIntentsToSnapshot,
   clearConfirmedGlossaryWriteIntents,
 } from "./glossary-write-coordinator.js";
+import { teamCacheKey } from "./team-cache.js";
 
 let activeGlossariesQuerySubscription = null;
 
@@ -59,6 +60,8 @@ export function applyGlossariesQuerySnapshotToState(snapshot, {
   teamId = state.selectedTeamId,
   isFetching = false,
   fallbackToFirstActive = true,
+  cacheKey,
+  cacheUpdatedAt = null,
 } = {}) {
   if (state.selectedTeamId !== teamId) {
     return false;
@@ -69,6 +72,8 @@ export function applyGlossariesQuerySnapshotToState(snapshot, {
     applyGlossarySnapshotToState(glossarySnapshotFromList(visibleSnapshot.glossaries), {
       teamId,
       fallbackToFirstActive,
+      cacheKey,
+      cacheUpdatedAt,
     });
     state.glossaryRepoSyncByRepoName =
       snapshot.repoSyncByRepoName && typeof snapshot.repoSyncByRepoName === "object"
@@ -110,6 +115,40 @@ export function patchGlossaryQueryData(queryData, glossaryId, patch) {
     : queryData;
 }
 
+export function seedGlossariesQueryFromCache(team, {
+  teamId = team?.id,
+  loadStoredGlossariesForTeam,
+  render,
+} = {}) {
+  if (typeof loadStoredGlossariesForTeam !== "function") {
+    return null;
+  }
+
+  const expectedCacheKey = teamCacheKey(team);
+  const cachedGlossaries = loadStoredGlossariesForTeam(team);
+  if (
+    state.selectedTeamId !== teamId
+    || !cachedGlossaries?.exists
+    || cachedGlossaries.cacheKey !== expectedCacheKey
+  ) {
+    return null;
+  }
+
+  const snapshot = applyGlossaryWriteIntentOverlay(createGlossariesQuerySnapshot({
+    glossaries: cachedGlossaries.glossaries,
+    status: "ready",
+  }));
+  queryClient.setQueryData(glossaryKeys.byTeam(teamId), snapshot);
+  applyGlossariesQuerySnapshotToState(snapshot, {
+    teamId,
+    isFetching: true,
+    cacheKey: expectedCacheKey,
+    cacheUpdatedAt: cachedGlossaries.updatedAt,
+  });
+  render?.();
+  return snapshot;
+}
+
 export async function seedGlossariesQueryFromLocal(team, {
   teamId = team?.id,
   render,
@@ -125,7 +164,11 @@ export async function seedGlossariesQueryFromLocal(team, {
     status: "ready",
   }));
   queryClient.setQueryData(glossaryKeys.byTeam(teamId), snapshot);
-  applyGlossariesQuerySnapshotToState(snapshot, { teamId, isFetching: true });
+  applyGlossariesQuerySnapshotToState(snapshot, {
+    teamId,
+    isFetching: true,
+    cacheKey: teamCacheKey(team),
+  });
   if (persist) {
     persistGlossariesForTeam(team);
   }

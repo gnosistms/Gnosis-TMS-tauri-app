@@ -55,6 +55,10 @@ test("project cache does not persist top-level lifecycle UI intent fields", () =
   assert.equal(Object.hasOwn(storedProject, "localLifecycleIntent"), false);
   assert.equal(Object.hasOwn(storedDeletedProject, "pendingMutation"), false);
   assert.equal(Object.hasOwn(storedDeletedProject, "localLifecycleIntent"), false);
+
+  const loaded = loadStoredProjectsForTeam(team);
+  assert.equal(loaded.cacheKey, "installation:42");
+  assert.equal(typeof loaded.updatedAt, "string");
 });
 
 test("project cache strips legacy persisted top-level lifecycle UI intent fields on load", () => {
@@ -73,6 +77,8 @@ test("project cache strips legacy persisted top-level lifecycle UI intent fields
   });
 
   const loaded = loadStoredProjectsForTeam(team);
+  assert.equal(loaded.cacheKey, "installation:42");
+  assert.equal(loaded.updatedAt, null);
   assert.equal(loaded.deletedProjects.length, 1);
   assert.equal(Object.hasOwn(loaded.deletedProjects[0], "pendingMutation"), false);
   assert.equal(Object.hasOwn(loaded.deletedProjects[0], "localLifecycleIntent"), false);

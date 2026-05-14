@@ -11,17 +11,32 @@ const GLOSSARY_CACHE_STORAGE_KEY = "gnosis-tms-glossary-cache";
 export function loadStoredGlossariesForTeam(team) {
   const cacheKey = teamCacheKey(team);
   if (!cacheKey) {
-    return { exists: false, glossaries: [] };
+    return {
+      exists: false,
+      cacheKey: null,
+      updatedAt: null,
+      glossaries: [],
+    };
   }
 
   const cacheMap = loadTeamScopedCacheMap(GLOSSARY_CACHE_STORAGE_KEY);
   const entry = cacheMap[cacheKey];
   if (!entry || typeof entry !== "object") {
-    return { exists: false, glossaries: [] };
+    return {
+      exists: false,
+      cacheKey,
+      updatedAt: null,
+      glossaries: [],
+    };
   }
 
   return {
     exists: true,
+    cacheKey,
+    updatedAt:
+      typeof entry.updatedAt === "string" && entry.updatedAt.trim()
+        ? entry.updatedAt.trim()
+        : null,
     glossaries: sortGlossaries(
       (Array.isArray(entry.glossaries) ? entry.glossaries : [])
         .map(normalizeGlossarySummary)

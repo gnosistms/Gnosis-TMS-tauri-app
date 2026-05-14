@@ -1,4 +1,6 @@
 import { state } from "./state.js";
+import { setResourcePageDataOwner } from "./resource-page-controller.js";
+import { teamCacheKey } from "./team-cache.js";
 
 function getProjectSortName(project) {
   if (typeof project?.title === "string" && project.title.trim()) {
@@ -42,6 +44,13 @@ export function applyProjectSnapshotToState(snapshot, options = {}) {
   const sortedSnapshot = sortProjectSnapshot(snapshot);
   state.projects = sortedSnapshot.items;
   state.deletedProjects = sortedSnapshot.deletedItems;
+  const teamId = options.teamId ?? state.selectedTeamId;
+  const team = state.teams.find((item) => item?.id === teamId);
+  setResourcePageDataOwner(state.projectsPage, {
+    teamId,
+    cacheKey: options.cacheKey ?? teamCacheKey(team),
+    cacheUpdatedAt: options.cacheUpdatedAt ?? null,
+  });
   if (sortedSnapshot.deletedItems.length === 0) {
     state.showDeletedProjects = false;
   }

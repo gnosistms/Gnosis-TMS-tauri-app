@@ -32,6 +32,7 @@ const {
   seedProjectsQueryFromCache,
 } = await import("./project-query.js");
 const { glossaryKeys, projectKeys, queryClient } = await import("./query-client.js");
+const { teamCacheKey } = await import("./team-cache.js");
 const {
   chapterGlossaryIntentKey,
   chapterLifecycleIntentKey,
@@ -132,9 +133,17 @@ test("project query adapter ignores stale team snapshots", () => {
 
 test("project loading prime clears stale visible projects before team render", () => {
   resetSessionState();
+  const team1 = { id: "team-1", installationId: 1 };
+  const team2 = { id: "team-2", installationId: 2 };
+  state.teams = [team1, team2];
   state.selectedTeamId = "team-1";
   state.projects = [project({ id: "team-1-project", title: "Team 1 Project" })];
   state.deletedProjects = [project({ id: "team-1-deleted", lifecycleState: "deleted" })];
+  state.glossariesPage = createResourcePageState({
+    visibleTeamId: team1.id,
+    visibleCacheKey: teamCacheKey(team1),
+  });
+  state.glossaries = [{ id: "team-1-glossary", title: "Team 1 Glossary", repoName: "team-1-repo" }];
   state.projectRepoSyncByProjectId = { "team-1-project": { status: "dirtyLocal" } };
   state.projectsSearch = {
     query: "old",
@@ -148,16 +157,38 @@ test("project loading prime clears stale visible projects before team render", (
     error: "Old conflict",
   };
 
-  primeProjectsLoadingState("team-2");
+  primeProjectsLoadingState("team-2", { seedFromCache: false });
 
   assert.equal(state.selectedTeamId, "team-2");
   assert.deepEqual(state.projects, []);
   assert.deepEqual(state.deletedProjects, []);
+  assert.deepEqual(state.glossaries, []);
+  assert.equal(state.glossariesPage.visibleTeamId, null);
+  assert.equal(state.glossariesPage.visibleCacheKey, null);
   assert.deepEqual(state.projectRepoSyncByProjectId, {});
   assert.equal(state.projectRepoConflictRecovery.teamId, null);
   assert.equal(state.projectsSearch.query, "");
   assert.deepEqual(state.projectsSearch.results, []);
   assert.equal(state.projectDiscovery.status, "loading");
+  assert.equal(state.projectsPage.isRefreshing, true);
+});
+
+test("project loading prime preserves selected-team visible projects while refreshing", () => {
+  resetSessionState();
+  const team = { id: "team-1", installationId: 1 };
+  state.teams = [team];
+  state.selectedTeamId = team.id;
+  state.projectsPage = createResourcePageState({
+    visibleTeamId: team.id,
+    visibleCacheKey: teamCacheKey(team),
+  });
+  state.projects = [project({ id: "team-1-project", title: "Team 1 Project" })];
+
+  const result = primeProjectsLoadingState(team.id);
+
+  assert.equal(result.preservedVisibleData, true);
+  assert.equal(state.projects[0].title, "Team 1 Project");
+  assert.equal(state.projectDiscovery.status, "ready");
   assert.equal(state.projectsPage.isRefreshing, true);
 });
 
@@ -311,6 +342,7 @@ test("project query cache seed applies cached projects with pending mutations", 
   const snapshot = seedProjectsQueryFromCache(team, {
     loadStoredProjectsForTeam: () => ({
       exists: true,
+      cacheKey: teamCacheKey(team),
       projects: [project()],
       deletedProjects: [],
     }),
@@ -324,18 +356,46 @@ test("project query cache seed applies cached projects with pending mutations", 
   assert.equal(snapshot.snapshot.items[0].title, "Pending");
   assert.equal(queryClient.getQueryData(projectKeys.byTeam(team.id)).snapshot.items[0].title, "Pending");
   assert.equal(state.projects[0].title, "Pending");
+  assert.equal(state.projectsPage.visibleTeamId, team.id);
+  assert.equal(state.projectsPage.visibleCacheKey, teamCacheKey(team));
+});
+
+test("project query cache seed ignores mismatched cache keys without mutating state", () => {
+  resetSessionState();
+  state.selectedTeamId = "team-1";
+  state.projectsPage = createResourcePageState();
+  state.projects = [project({ id: "existing-project", title: "Existing" })];
+  const team = { id: "team-1", installationId: 1 };
+
+  const snapshot = seedProjectsQueryFromCache(team, {
+    loadStoredProjectsForTeam: () => ({
+      exists: true,
+      cacheKey: "installation:other",
+      projects: [project({ title: "Wrong Cache" })],
+      deletedProjects: [],
+    }),
+  });
+
+  assert.equal(snapshot, null);
+  assert.equal(state.projects[0].title, "Existing");
+  assert.equal(queryClient.getQueryData(projectKeys.byTeam(team.id)), undefined);
 });
 
 test("project query cache seed preserves glossary options during refresh", () => {
   resetSessionState();
   state.selectedTeamId = "team-1";
   state.projectsPage = createResourcePageState();
-  state.glossaries = [{ id: "glossary-1", title: "Glossary", repoName: "glossary-repo" }];
   const team = { id: "team-1", installationId: 1 };
+  state.glossariesPage = createResourcePageState({
+    visibleTeamId: team.id,
+    visibleCacheKey: teamCacheKey(team),
+  });
+  state.glossaries = [{ id: "glossary-1", title: "Glossary", repoName: "glossary-repo" }];
 
   const snapshot = seedProjectsQueryFromCache(team, {
     loadStoredProjectsForTeam: () => ({
       exists: true,
+      cacheKey: teamCacheKey(team),
       projects: [project({
         chapters: [{
           id: "chapter-1",
@@ -362,6 +422,7 @@ test("project query cache seed uses the selected team's cached glossaries over s
   const snapshot = seedProjectsQueryFromCache(team, {
     loadStoredProjectsForTeam: () => ({
       exists: true,
+      cacheKey: teamCacheKey(team),
       projects: [project({
         chapters: [{
           id: "chapter-1",
@@ -373,6 +434,7 @@ test("project query cache seed uses the selected team's cached glossaries over s
     }),
     loadStoredGlossariesForTeam: () => ({
       exists: true,
+      cacheKey: teamCacheKey(team),
       glossaries: [{ id: "team-2-glossary", title: "Team 2 Glossary", repoName: "team-2-repo" }],
     }),
   });
@@ -394,6 +456,7 @@ test("project query cache seed prefers selected team glossary query data over st
   const snapshot = seedProjectsQueryFromCache(team, {
     loadStoredProjectsForTeam: () => ({
       exists: true,
+      cacheKey: teamCacheKey(team),
       projects: [project({
         chapters: [{
           id: "chapter-1",
@@ -405,6 +468,7 @@ test("project query cache seed prefers selected team glossary query data over st
     }),
     loadStoredGlossariesForTeam: () => ({
       exists: true,
+      cacheKey: teamCacheKey(team),
       glossaries: [{ id: "stored-glossary", title: "Stored Glossary", repoName: "stored-repo" }],
     }),
   });
@@ -415,15 +479,21 @@ test("project query cache seed prefers selected team glossary query data over st
 
 test("project query adapter keeps current glossary options while fetch placeholder data is empty", () => {
   resetSessionState();
-  state.selectedTeamId = "team-1";
+  const team = { id: "team-1", installationId: 1 };
+  state.teams = [team];
+  state.selectedTeamId = team.id;
   state.projectsPage = createResourcePageState();
+  state.glossariesPage = createResourcePageState({
+    visibleTeamId: team.id,
+    visibleCacheKey: teamCacheKey(team),
+  });
   state.glossaries = [{ id: "glossary-1", title: "Glossary", repoName: "glossary-repo" }];
 
   applyProjectsQuerySnapshotToState(createProjectsQuerySnapshot({
     items: [project()],
     glossaries: [],
   }), {
-    teamId: "team-1",
+    teamId: team.id,
     isFetching: true,
   });
 
@@ -433,11 +503,38 @@ test("project query adapter keeps current glossary options while fetch placehold
     items: [project()],
     glossaries: [],
   }), {
-    teamId: "team-1",
+    teamId: team.id,
     isFetching: false,
   });
 
   assert.equal(state.glossaries.length, 0);
+});
+
+test("project query adapter clears old-team glossaries for empty selected-team placeholders", () => {
+  resetSessionState();
+  const team1 = { id: "team-1", installationId: 1 };
+  const team2 = { id: "team-2", installationId: 2 };
+  state.teams = [team1, team2];
+  state.selectedTeamId = team2.id;
+  state.projectsPage = createResourcePageState();
+  state.glossariesPage = createResourcePageState({
+    visibleTeamId: team1.id,
+    visibleCacheKey: teamCacheKey(team1),
+  });
+  state.glossaries = [{ id: "team-1-glossary", title: "Team 1 Glossary", repoName: "team-1-repo" }];
+
+  applyProjectsQuerySnapshotToState(createProjectsQuerySnapshot({
+    items: [project({ id: "team-2-project", title: "Team 2 Project" })],
+    glossaries: [],
+  }), {
+    teamId: team2.id,
+    isFetching: true,
+  });
+
+  assert.equal(state.projects[0].title, "Team 2 Project");
+  assert.deepEqual(state.glossaries, []);
+  assert.equal(state.glossariesPage.visibleTeamId, team2.id);
+  assert.equal(state.glossariesPage.visibleCacheKey, teamCacheKey(team2));
 });
 
 test("project rename optimistic patch updates query cache and state immediately", async () => {
