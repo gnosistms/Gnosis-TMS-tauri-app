@@ -61,6 +61,7 @@ function renderTeamCard(team, options = {}) {
     : renderAccessLabel(team);
   const actions = options.actions ?? [
     textAction("Projects", `open-team:${team.id}`),
+    textAction("QA", `open-team-qa:${team.id}`),
     textAction("Glossaries", `open-team-glossaries:${team.id}`),
     textAction("Members", `open-team-users:${team.id}`, { disabled: offlineMode }),
     ...(team.canDelete ? [textAction("AI Settings", `open-team-ai-settings:${team.id}`)] : []),
@@ -118,6 +119,7 @@ function renderDeletedTeamsSection(deletedTeams, isOpen, offlineMode = false) {
             isDeleted: true,
             actions: [
               textAction("Projects", `open-team:${team.id}`),
+              textAction("QA", `open-team-qa:${team.id}`),
               textAction("Glossaries", `open-team-glossaries:${team.id}`),
               textAction("Members", `open-team-users:${team.id}`, { disabled: offlineMode }),
               ...(team.canDelete === true

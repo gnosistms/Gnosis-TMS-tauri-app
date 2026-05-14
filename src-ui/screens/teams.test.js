@@ -73,6 +73,17 @@ test("teams screen keeps row navigation enabled during background refresh", () =
   assert.doesNotMatch(html, /data-action="rename-team:team-1"[^>]*aria-disabled="true"/);
 });
 
+test("teams screen places QA between Projects and Glossaries on team cards", () => {
+  installFixture();
+
+  const html = renderTeamsScreen(state);
+
+  assert.match(
+    html,
+    /data-action="open-team:team-1"[\s\S]*?>Projects<\/button>[\s\S]*data-action="open-team-qa:team-1"[\s\S]*?>QA<\/button>[\s\S]*data-action="open-team-glossaries:team-1"[\s\S]*?>Glossaries<\/button>/,
+  );
+});
+
 test("teams screen spins refresh during active team writes and allows coalescing rename edits", async () => {
   installFixture([
     team({ pendingMutation: "rename" }),

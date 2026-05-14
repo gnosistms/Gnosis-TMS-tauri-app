@@ -85,3 +85,13 @@ test("QA screen is registered as a top-level renderer", () => {
   assert.match(source, /qaListEditor:\s*\(\) => renderQaListEditorScreen\(state\)/);
   assert.match(source, /qaListEditor:\s*"QA List Editor - Gnosis TMS"/);
 });
+
+test("team card QA action opens the selected team's QA page", () => {
+  const source = readFileSync(new URL("./actions/navigation-actions.js", import.meta.url), "utf8");
+
+  assert.match(source, /actionSuffix\(action, "open-team-qa:"\)/);
+  assert.match(
+    source,
+    /openTeamQaId[\s\S]*?state\.selectedTeamId = openTeamQaId;[\s\S]*?state\.screen = "qa";[\s\S]*?primeQaListsLoadingState\(state\.selectedTeamId\);[\s\S]*?loadTeamQaLists\(render, state\.selectedTeamId\)/,
+  );
+});

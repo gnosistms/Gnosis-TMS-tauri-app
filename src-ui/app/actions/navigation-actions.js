@@ -70,6 +70,19 @@ export function createNavigationActions(render) {
       return true;
     }
 
+    const openTeamQaId = actionSuffix(action, "open-team-qa:");
+    if (openTeamQaId !== null) {
+      state.selectedTeamId = openTeamQaId;
+      state.screen = "qa";
+      primeQaListsLoadingState(state.selectedTeamId);
+      render();
+      void (async () => {
+        await refreshSelectedTeamAccess(render);
+        await loadTeamQaLists(render, state.selectedTeamId);
+      })();
+      return true;
+    }
+
     const openTeamAiSettingsId = actionSuffix(action, "open-team-ai-settings:");
     if (openTeamAiSettingsId !== null) {
       state.selectedTeamId = openTeamAiSettingsId;
