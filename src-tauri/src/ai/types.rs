@@ -40,11 +40,19 @@ pub struct AiReviewRequest {
     pub text: String,
     pub language_code: String,
     #[serde(default)]
+    pub footnote: String,
+    #[serde(default)]
+    pub image_caption: String,
+    #[serde(default)]
     pub review_mode: Option<String>,
     #[serde(default)]
     pub latest_translation: Option<String>,
     #[serde(default)]
     pub source_text: Option<String>,
+    #[serde(default)]
+    pub source_footnote: String,
+    #[serde(default)]
+    pub source_image_caption: String,
     #[serde(default)]
     pub source_language_code: String,
     #[serde(default)]
@@ -69,6 +77,10 @@ pub struct AiReviewRequest {
 #[serde(rename_all = "camelCase")]
 pub struct AiReviewResponse {
     pub suggested_text: String,
+    #[serde(default)]
+    pub suggested_footnote: String,
+    #[serde(default)]
+    pub suggested_image_caption: String,
     #[serde(default)]
     pub reviewed: Option<bool>,
     #[serde(default)]
@@ -183,6 +195,14 @@ pub struct AiTranslationRequest {
     pub provider_id: AiProviderId,
     pub model_id: String,
     pub text: String,
+    #[serde(default)]
+    pub source_footnote: String,
+    #[serde(default)]
+    pub source_image_caption: String,
+    #[serde(default)]
+    pub target_footnote: String,
+    #[serde(default)]
+    pub target_image_caption: String,
     pub source_language: String,
     pub target_language: String,
     #[serde(default)]
@@ -195,6 +215,10 @@ pub struct AiTranslationRequest {
 #[serde(rename_all = "camelCase")]
 pub struct AiTranslationResponse {
     pub translated_text: String,
+    #[serde(default)]
+    pub translated_footnote: String,
+    #[serde(default)]
+    pub translated_image_caption: String,
     #[serde(default)]
     pub prompt_text: String,
     #[serde(default)]
@@ -220,6 +244,7 @@ pub struct AiPromptResponse {
 pub enum AiPromptOutputFormat {
     Text,
     AssistantTurnJson,
+    TranslationSectionsJson,
     ReviewJson,
     GlossaryAlignmentJson,
     JsonSchema {

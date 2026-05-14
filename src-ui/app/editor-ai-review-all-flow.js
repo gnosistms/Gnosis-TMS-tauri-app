@@ -17,6 +17,8 @@ import {
   editorReviewLanguageByCode,
   normalizeEditorAiReviewMode,
   readEditorReviewRowFieldText,
+  readEditorReviewRowFootnote,
+  readEditorReviewRowImageCaption,
   selectedEditorReviewSourceLanguageCode,
   selectedEditorReviewTargetLanguageCode,
 } from "./editor-ai-review-request.js";
@@ -40,7 +42,11 @@ function reviewableTranslationRows(chapterState, languageCode = selectedEditorRe
   return (Array.isArray(chapterState?.rows) ? chapterState.rows : []).filter((row) =>
     row?.rowId
     && row.lifecycleState !== "deleted"
-    && readEditorReviewRowFieldText(row, code).trim()
+    && (
+      readEditorReviewRowFieldText(row, code).trim()
+      || readEditorReviewRowFootnote(row, code).trim()
+      || readEditorReviewRowImageCaption(row, code).trim()
+    )
   );
 }
 
@@ -112,16 +118,26 @@ function chapterNeedsRefreshBeforeReview(chapterState = state.editorChapter) {
 
 function applyReviewResultToRow(row, languageCode, payload) {
   const nextText = String(payload?.text ?? row.fields?.[languageCode] ?? "");
+  const nextFootnote = String(payload?.footnote ?? row.footnotes?.[languageCode] ?? "");
+  const nextImageCaption = String(payload?.imageCaption ?? row.imageCaptions?.[languageCode] ?? "");
   const nextFieldState = normalizeFieldState({
     reviewed: payload?.reviewed,
     pleaseCheck: payload?.pleaseCheck,
   });
   const fields = cloneRowFields(row.fields);
   fields[languageCode] = nextText;
+  const footnotes = cloneRowFields(row.footnotes);
+  footnotes[languageCode] = nextFootnote;
+  const imageCaptions = cloneRowFields(row.imageCaptions);
+  imageCaptions[languageCode] = nextImageCaption;
   return {
     ...row,
     fields,
+    footnotes,
+    imageCaptions,
     persistedFields: cloneRowFields(fields),
+    persistedFootnotes: cloneRowFields(footnotes),
+    persistedImageCaptions: cloneRowFields(imageCaptions),
     fieldStates: {
       ...cloneRowFieldStates(row.fieldStates),
       [languageCode]: nextFieldState,
@@ -404,7 +420,13 @@ export async function confirmEditorAiReviewAll(render, operations = {}) {
 
       const row = findEditorRowById(item.rowId, state.editorChapter);
       const latestTranslation = readEditorReviewRowFieldText(row, targetLanguageCode);
-      if (!row || !latestTranslation.trim() || row.fieldStates?.[targetLanguageCode]?.reviewed === true) {
+      const latestFootnote = readEditorReviewRowFootnote(row, targetLanguageCode);
+      const latestImageCaption = readEditorReviewRowImageCaption(row, targetLanguageCode);
+      if (
+        !row
+        || (!latestTranslation.trim() && !latestFootnote.trim() && !latestImageCaption.trim())
+        || row.fieldStates?.[targetLanguageCode]?.reviewed === true
+      ) {
         continue;
       }
 
@@ -449,6 +471,8 @@ export async function confirmEditorAiReviewAll(render, operations = {}) {
 
       const reviewed = reviewPayload?.reviewed === true;
       const suggestedText = reviewed ? "" : String(reviewPayload?.suggestedText ?? "");
+      const suggestedFootnote = reviewed ? "" : String(reviewPayload?.suggestedFootnote ?? "");
+      const suggestedImageCaption = reviewed ? "" : String(reviewPayload?.suggestedImageCaption ?? "");
       const savePayload = await invoke("apply_gtms_editor_ai_review_result", {
         input: {
           installationId: team.installationId,
@@ -458,6 +482,8 @@ export async function confirmEditorAiReviewAll(render, operations = {}) {
           rowId: item.rowId,
           languageCode: targetLanguageCode,
           suggestedText,
+          suggestedFootnote,
+          suggestedImageCaption,
           reviewed,
           pleaseCheck: !reviewed,
           aiModel: modelId,

@@ -224,6 +224,16 @@ function installTranslateFixture(options = {}) {
     vi: "Texto original",
     ...(options.fields && typeof options.fields === "object" ? options.fields : {}),
   };
+  const footnotes = {
+    es: "",
+    vi: "",
+    ...(options.footnotes && typeof options.footnotes === "object" ? options.footnotes : {}),
+  };
+  const imageCaptions = {
+    es: "",
+    vi: "",
+    ...(options.imageCaptions && typeof options.imageCaptions === "object" ? options.imageCaptions : {}),
+  };
   resetSessionState();
   state.screen = "translate";
   state.selectedChapterId = "chapter-1";
@@ -239,6 +249,8 @@ function installTranslateFixture(options = {}) {
     rows: normalizeEditorRows([{
       rowId: "row-1",
       fields,
+      footnotes,
+      imageCaptions,
       fieldStates: {},
     }]),
   };
@@ -341,7 +353,11 @@ test("runEditorAiReview uses the configured provider and model", async () => {
           reviewMode: "grammar",
           text: "Texto original",
           latestTranslation: "Texto original",
+          footnote: "",
+          imageCaption: "",
           sourceText: "Hola",
+          sourceFootnote: "",
+          sourceImageCaption: "",
           sourceLanguageCode: "es",
           targetLanguageCode: "vi",
           sourceLanguage: "Spanish",
@@ -1006,8 +1022,63 @@ test("runEditorAiTranslate sends glossary hints for matched source-language term
     },
   });
 
-  assert.equal(state.editorChapter.rows[0].fields.vi, "");
-  assert.equal(latestAssistantDraft()?.draftTranslationText, "Ban dich");
+  assert.equal(state.editorChapter.rows[0].fields.vi, "Ban dich");
+  assert.equal(latestAssistantDraft(), null);
+});
+
+test("runEditorAiTranslate keeps translated footnotes separate and auto-applies them", async () => {
+  installTranslateFixture({
+    fields: {
+      es: "Hola",
+      vi: "",
+    },
+    footnotes: {
+      es: "Nota fuente",
+      vi: "",
+    },
+  });
+
+  invokeHandler = async (command, payload = {}) => {
+    if (command === "load_ai_provider_secret") {
+      return "oa-key";
+    }
+    if (command === "run_ai_translation") {
+      assert.equal(payload.request.text, "Hola");
+      assert.equal(payload.request.sourceFootnote, "Nota fuente");
+      assert.equal(payload.request.sourceImageCaption, undefined);
+      return {
+        translatedText: "Xin chao",
+        translatedFootnote: "Chu thich dich",
+      };
+    }
+
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  await runEditorAiTranslate(() => {}, "translate1", {
+    updateEditorRowFieldValue(rowId, languageCode, nextValue, contentKind = "field") {
+      const row = state.editorChapter.rows.find((entry) => entry.rowId === rowId);
+      if (contentKind === "footnote") {
+        row.footnotes[languageCode] = nextValue;
+      } else if (contentKind === "image-caption") {
+        row.imageCaptions[languageCode] = nextValue;
+      } else {
+        row.fields[languageCode] = nextValue;
+      }
+      row.saveStatus = "dirty";
+    },
+    async persistEditorRowOnBlur(_render, rowId) {
+      const row = state.editorChapter.rows.find((entry) => entry.rowId === rowId);
+      row.persistedFields = { ...row.fields };
+      row.persistedFootnotes = { ...row.footnotes };
+      row.persistedImageCaptions = { ...row.imageCaptions };
+      row.saveStatus = "idle";
+    },
+  });
+
+  assert.equal(state.editorChapter.rows[0].fields.vi, "Xin chao");
+  assert.equal(state.editorChapter.rows[0].footnotes.vi, "Chu thich dich");
+  assert.equal(latestAssistantDraft(), null);
 });
 
 test("runEditorAiTranslate prepares derived glossary hints when the glossary source language differs", async () => {
@@ -1147,8 +1218,8 @@ test("runEditorAiTranslate prepares derived glossary hints when the glossary sou
       "run_ai_translation",
     ],
   );
-  assert.equal(state.editorChapter.rows[0].fields.vi, "");
-  assert.equal(latestAssistantDraft("row-1", "vi", "en")?.draftTranslationText, "Buong noi tam sang len.");
+  assert.equal(state.editorChapter.rows[0].fields.vi, "Buong noi tam sang len.");
+  assert.equal(latestAssistantDraft("row-1", "vi", "en"), null);
   assert.equal(
     state.editorChapter.rows[0].fields.es,
     "La camara interior brilla.",
@@ -2433,6 +2504,63 @@ test("applyEditorAiReview updates the editor row and clears the suggestion after
     invokeLog.some((entry) => entry.command === "run_ai_review"),
     false,
   );
+});
+
+test("applyEditorAiReview applies footnote and image caption suggestions separately", async () => {
+  installTranslateFixture({
+    footnotes: {
+      vi: "Chu thich cu",
+    },
+    imageCaptions: {
+      vi: "Chu thich anh cu",
+    },
+  });
+  state.editorChapter = {
+    ...state.editorChapter,
+    aiReview: {
+      status: "ready",
+      error: "",
+      rowId: "row-1",
+      languageCode: "vi",
+      requestKey: "req-1",
+      sourceText: "Texto original",
+      sourceFootnote: "Chu thich cu",
+      sourceImageCaption: "Chu thich anh cu",
+      suggestedText: "",
+      suggestedFootnote: "Chu thich moi",
+      suggestedImageCaption: "Chu thich anh moi",
+    },
+  };
+
+  const updates = [];
+  await applyEditorAiReview(() => {}, {
+    updateEditorRowFieldValue(rowId, languageCode, nextValue, contentKind = "field") {
+      updates.push([rowId, languageCode, nextValue, contentKind]);
+      const row = state.editorChapter.rows.find((entry) => entry.rowId === rowId);
+      if (contentKind === "footnote") {
+        row.footnotes[languageCode] = nextValue;
+      } else if (contentKind === "image-caption") {
+        row.imageCaptions[languageCode] = nextValue;
+      } else {
+        row.fields[languageCode] = nextValue;
+      }
+      row.saveStatus = "dirty";
+    },
+    async persistEditorRowOnBlur(_render, rowId) {
+      const row = state.editorChapter.rows.find((entry) => entry.rowId === rowId);
+      row.persistedFootnotes = { ...row.footnotes };
+      row.persistedImageCaptions = { ...row.imageCaptions };
+      row.saveStatus = "idle";
+    },
+  });
+
+  assert.deepEqual(updates, [
+    ["row-1", "vi", "Chu thich moi", "footnote"],
+    ["row-1", "vi", "Chu thich anh moi", "image-caption"],
+  ]);
+  assert.equal(state.editorChapter.rows[0].fields.vi, "Texto original");
+  assert.equal(state.editorChapter.rows[0].footnotes.vi, "Chu thich moi");
+  assert.equal(state.editorChapter.rows[0].imageCaptions.vi, "Chu thich anh moi");
 });
 
 test("applyEditorAiReview does nothing when the suggestion matches the current translation", async () => {
@@ -3879,7 +4007,11 @@ test("runEditorAiReview loads shared team action preferences before choosing the
           reviewMode: "grammar",
           text: "Texto original",
           latestTranslation: "Texto original",
+          footnote: "",
+          imageCaption: "",
           sourceText: "Hola",
+          sourceFootnote: "",
+          sourceImageCaption: "",
           sourceLanguageCode: "es",
           targetLanguageCode: "vi",
           sourceLanguage: "Spanish",

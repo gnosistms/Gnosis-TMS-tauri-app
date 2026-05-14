@@ -17,6 +17,24 @@ export function readEditorReviewRowFieldText(row, languageCode) {
     : String(row?.fields?.[languageCode] ?? "");
 }
 
+export function readEditorReviewRowFootnote(row, languageCode) {
+  if (!languageCode) {
+    return "";
+  }
+  return typeof row?.footnotes?.[languageCode] === "string"
+    ? row.footnotes[languageCode]
+    : String(row?.footnotes?.[languageCode] ?? "");
+}
+
+export function readEditorReviewRowImageCaption(row, languageCode) {
+  if (!languageCode) {
+    return "";
+  }
+  return typeof row?.imageCaptions?.[languageCode] === "string"
+    ? row.imageCaptions[languageCode]
+    : String(row?.imageCaptions?.[languageCode] ?? "");
+}
+
 function estimateReviewContextTokens(value) {
   return Math.ceil(String(value ?? "").length / 4);
 }
@@ -186,7 +204,15 @@ export function buildEditorAiReviewRequest({
     reviewMode: normalizedReviewMode,
     text: latestTranslation,
     latestTranslation,
+    footnote: readEditorReviewRowFootnote(row, targetLanguageCode),
+    imageCaption: readEditorReviewRowImageCaption(row, targetLanguageCode),
     sourceText: readEditorReviewRowFieldText(row, sourceLanguageCode),
+    sourceFootnote: normalizedReviewMode === "meaning"
+      ? readEditorReviewRowFootnote(row, sourceLanguageCode)
+      : "",
+    sourceImageCaption: normalizedReviewMode === "meaning"
+      ? readEditorReviewRowImageCaption(row, sourceLanguageCode)
+      : "",
     sourceLanguageCode,
     targetLanguageCode,
     sourceLanguage: normalizeReviewLanguageLabel(sourceLanguage, sourceLanguageCode),

@@ -148,6 +148,43 @@ test("AI Translate All work includes only empty visible target fields with sourc
   );
 });
 
+test("AI Translate All work includes footnote-only and caption-only rows", () => {
+  const chapterState = chapter();
+  chapterState.rows[1].footnotes = {
+    es: "Nota fuente",
+    vi: "",
+  };
+  chapterState.rows[2].imageCaptions = {
+    es: "Caption source",
+    vi: "",
+    fr: "Caption francaise",
+  };
+
+  assert.deepEqual(
+    editorAiTranslateAllTestApi.buildEditorAiTranslateAllWork(
+      chapterState,
+      ["vi"],
+    ),
+    [
+      {
+        rowId: "row-1",
+        sourceLanguageCode: "es",
+        targetLanguageCode: "vi",
+      },
+      {
+        rowId: "row-2",
+        sourceLanguageCode: "es",
+        targetLanguageCode: "vi",
+      },
+      {
+        rowId: "row-3",
+        sourceLanguageCode: "es",
+        targetLanguageCode: "vi",
+      },
+    ],
+  );
+});
+
 test("AI Translate All translates the glossary source language first when it is selected", () => {
   const chapterState = chapter({
     languages: [

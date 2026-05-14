@@ -1490,7 +1490,11 @@ export async function applyEditorAssistantDraft(render, itemId, operations = {})
 
   const thread = currentEditorAssistantThread(state.editorChapter, context.threadKey);
   const item = thread.items.find((entry) => entry.id === itemId && entry.type === "draft-translation");
-  if (!item?.draftTranslationText) {
+  if (
+    !item?.draftTranslationText
+    && !item?.draftTranslationFootnote
+    && !item?.draftTranslationImageCaption
+  ) {
     return;
   }
 
@@ -1502,11 +1506,29 @@ export async function applyEditorAssistantDraft(render, itemId, operations = {})
   renderAssistantSidebar(render);
 
   try {
-    updateEditorRowFieldValue(
-      context.rowId,
-      context.targetLanguageCode,
-      item.draftTranslationText,
-    );
+    if (item.draftTranslationText) {
+      updateEditorRowFieldValue(
+        context.rowId,
+        context.targetLanguageCode,
+        item.draftTranslationText,
+      );
+    }
+    if (item.draftTranslationFootnote?.trim() && !String(context.row?.footnotes?.[context.targetLanguageCode] ?? "").trim()) {
+      updateEditorRowFieldValue(
+        context.rowId,
+        context.targetLanguageCode,
+        item.draftTranslationFootnote,
+        "footnote",
+      );
+    }
+    if (item.draftTranslationImageCaption?.trim() && !String(context.row?.imageCaptions?.[context.targetLanguageCode] ?? "").trim()) {
+      updateEditorRowFieldValue(
+        context.rowId,
+        context.targetLanguageCode,
+        item.draftTranslationImageCaption,
+        "image-caption",
+      );
+    }
     renderAssistantSidebarAndBody(render);
 
     await persistEditorRowOnBlur(render, context.rowId, {
@@ -1645,6 +1667,8 @@ export function logEditorAssistantTranslationDraft(payload = {}) {
       targetLanguageCode: payload.targetLanguageCode ?? null,
       promptText: payload.promptText ?? "",
       draftTranslationText: payload.draftTranslationText ?? "",
+      draftTranslationFootnote: payload.draftTranslationFootnote ?? "",
+      draftTranslationImageCaption: payload.draftTranslationImageCaption ?? "",
       details: {
         kind: "translate_refinement",
         providerId: payload.providerId ?? "",

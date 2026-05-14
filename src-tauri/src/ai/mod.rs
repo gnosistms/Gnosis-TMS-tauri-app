@@ -24,7 +24,22 @@ use crate::ai_secret_storage::load_ai_provider_secret;
 struct AiReviewStructuredResponse {
     #[serde(default)]
     suggested_text: String,
+    #[serde(default)]
+    suggested_footnote: String,
+    #[serde(default)]
+    suggested_image_caption: String,
     reviewed: bool,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AiTranslationSectionsStructuredResponse {
+    #[serde(default)]
+    translated_text: String,
+    #[serde(default)]
+    translated_footnote: String,
+    #[serde(default)]
+    translated_image_caption: String,
 }
 
 fn normalize_review_mode(request: &AiReviewRequest) -> Option<&str> {
@@ -33,6 +48,53 @@ fn normalize_review_mode(request: &AiReviewRequest) -> Option<&str> {
         "meaning" => Some("meaning"),
         _ => None,
     }
+}
+
+fn review_response_contract() -> &'static str {
+    "Return only valid JSON:\n{\"suggestedText\":\"\",\"suggestedFootnote\":\"\",\"suggestedImageCaption\":\"\",\"reviewed\":true}"
+}
+
+fn format_optional_tagged_section(tag: &str, value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(format!("<{tag}>\n{trimmed}\n</{tag}>"))
+    }
+}
+
+fn format_review_target_sections(
+    latest_translation: &str,
+    footnote: &str,
+    image_caption: &str,
+) -> String {
+    let mut sections = Vec::new();
+    sections.push(format!(
+        "<latest_translation>\n{latest_translation}\n</latest_translation>"
+    ));
+    if let Some(section) = format_optional_tagged_section("latest_footnote", footnote) {
+        sections.push(section);
+    }
+    if let Some(section) = format_optional_tagged_section("latest_image_caption", image_caption) {
+        sections.push(section);
+    }
+    sections.join("\n\n")
+}
+
+fn format_review_source_sections(
+    source_text: &str,
+    source_footnote: &str,
+    source_image_caption: &str,
+) -> String {
+    let mut sections = Vec::new();
+    sections.push(format!("<source_text>\n{source_text}\n</source_text>"));
+    if let Some(section) = format_optional_tagged_section("source_footnote", source_footnote) {
+        sections.push(section);
+    }
+    if let Some(section) = format_optional_tagged_section("source_image_caption", source_image_caption) {
+        sections.push(section);
+    }
+    sections.join("\n\n")
 }
 
 pub(crate) fn build_review_prompt(request: &AiReviewRequest) -> String {
@@ -50,6 +112,16 @@ pub(crate) fn build_review_prompt(request: &AiReviewRequest) -> String {
                 glossary_info
             };
             let source_text = request.source_text.as_deref().unwrap_or("").trim();
+            let source_sections = format_review_source_sections(
+                source_text,
+                &request.source_footnote,
+                &request.source_image_caption,
+            );
+            let target_sections = format_review_target_sections(
+                latest_translation,
+                &request.footnote,
+                &request.image_caption,
+            );
             let row = AiAssistantRowContext {
                 row_id: String::new(),
                 source_language_code: request.source_language_code.clone(),
@@ -84,19 +156,17 @@ pub(crate) fn build_review_prompt(request: &AiReviewRequest) -> String {
             );
             let reference_translations = format_assistant_reference_translations(&row);
             let mut sections = Vec::new();
+            sections.push(review_response_contract().to_string());
             sections.push(
-                "Return only valid JSON:\n{\"suggestedText\":\"\",\"reviewed\":true}".to_string(),
-            );
-            sections.push(
-                "Task:\nReview latest_translation against source_text for translation accuracy, spelling, and grammar."
+                "Task:\nReview the latest target-language sections against the source-language sections for translation accuracy, spelling, and grammar."
                     .to_string(),
             );
             sections.push(
-                "Decision rule:\n- If no errors: set suggestedText to an empty string and reviewed to true.\n- If errors: set suggestedText to the corrected translation and reviewed to false."
+                "Decision rule:\n- If every reviewed section is correct: set all suggested fields to empty strings and reviewed to true.\n- If any section has errors: set reviewed to false and put corrected content only in the matching suggested field. Keep unchanged sections as empty strings."
                     .to_string(),
             );
             sections.push(
-                "Use supporting context when relevant. Do not treat reference translations or edit history as more authoritative than source_text."
+                "Use supporting context when relevant. Do not treat reference translations or edit history as more authoritative than the source-language sections. Keep main text, footnotes, and image captions separate."
                     .to_string(),
             );
             sections.push(format!(
@@ -115,23 +185,26 @@ pub(crate) fn build_review_prompt(request: &AiReviewRequest) -> String {
                 "<source_context>\nThis is the source text in context, provided to help you understand source_text more clearly:\n\n{source_context}\n</source_context>"
             ));
             sections.push(format!(
-                "<review_item>\nThis is the only translation you are reviewing.\n\n<source_text>\n{source_text}\n</source_text>\n\n<latest_translation>\n{latest_translation}\n</latest_translation>\n</review_item>"
+                "<review_item>\nThese are the only sections you are reviewing.\n\n{source_sections}\n\n{target_sections}\n</review_item>"
             ));
-            sections.push(
-                "Return only valid JSON:\n{\"suggestedText\":\"\",\"reviewed\":true}".to_string(),
-            );
+            sections.push(review_response_contract().to_string());
             return sections.join("\n\n");
         }
 
+        let target_sections = format_review_target_sections(
+            latest_translation,
+            &request.footnote,
+            &request.image_caption,
+        );
         let sections = [
-            "Return only valid JSON:\n{\"suggestedText\":\"\",\"reviewed\":true}".to_string(),
-            "Task:\nReview latest_translation only for spelling and grammar errors. Do not review translation accuracy or compare it against source text.".to_string(),
-            "Decision rule:\n- If no errors: set suggestedText to an empty string and reviewed to true.\n- If errors: set suggestedText to the corrected translation and reviewed to false.".to_string(),
-            "Preserve the meaning, terminology, tone, and style unless a change is needed to correct spelling or grammar.".to_string(),
+            review_response_contract().to_string(),
+            "Task:\nReview the target-language sections only for spelling and grammar errors. Do not review translation accuracy or compare them against source text.".to_string(),
+            "Decision rule:\n- If every reviewed section is correct: set all suggested fields to empty strings and reviewed to true.\n- If any section has errors: set reviewed to false and put corrected content only in the matching suggested field. Keep unchanged sections as empty strings.".to_string(),
+            "Preserve the meaning, terminology, tone, and style unless a change is needed to correct spelling or grammar. Keep main text, footnotes, and image captions separate.".to_string(),
             format!(
-                "<review_item>\nThis is the only text you are reviewing.\n\n<latest_translation>\n{latest_translation}\n</latest_translation>\n</review_item>"
+                "<review_item>\nThese are the only sections you are reviewing.\n\n{target_sections}\n</review_item>"
             ),
-            "Return only valid JSON:\n{\"suggestedText\":\"\",\"reviewed\":true}".to_string(),
+            review_response_contract().to_string(),
         ];
         return sections.join("\n\n");
     }
@@ -164,9 +237,13 @@ fn parse_review_structured_response(text: &str) -> Result<AiReviewResponse, Stri
         if let Ok(mut parsed) = serde_json::from_str::<AiReviewStructuredResponse>(candidate) {
             if parsed.reviewed {
                 parsed.suggested_text.clear();
+                parsed.suggested_footnote.clear();
+                parsed.suggested_image_caption.clear();
             }
             return Ok(AiReviewResponse {
                 suggested_text: parsed.suggested_text,
+                suggested_footnote: parsed.suggested_footnote,
+                suggested_image_caption: parsed.suggested_image_caption,
                 reviewed: Some(parsed.reviewed),
                 prompt_text: String::new(),
             });
@@ -174,6 +251,39 @@ fn parse_review_structured_response(text: &str) -> Result<AiReviewResponse, Stri
     }
 
     Err("The AI review returned a malformed response.".to_string())
+}
+
+fn translation_request_has_sections(request: &AiTranslationRequest) -> bool {
+    !request.source_footnote.trim().is_empty() || !request.source_image_caption.trim().is_empty()
+}
+
+fn translation_response_contract() -> &'static str {
+    "Return only valid JSON:\n{\"translatedText\":\"\",\"translatedFootnote\":\"\",\"translatedImageCaption\":\"\"}"
+}
+
+fn parse_translation_sections_response(text: &str) -> Result<AiTranslationResponse, String> {
+    let trimmed = text.trim();
+    let stripped = strip_markdown_code_fence(trimmed);
+    let object_slice = trimmed
+        .find('{')
+        .and_then(|start| trimmed.rfind('}').map(|end| &trimmed[start..=end]));
+
+    for candidate in [trimmed, stripped]
+        .into_iter()
+        .chain(object_slice.into_iter())
+    {
+        if let Ok(parsed) = serde_json::from_str::<AiTranslationSectionsStructuredResponse>(candidate) {
+            return Ok(AiTranslationResponse {
+                translated_text: parsed.translated_text,
+                translated_footnote: parsed.translated_footnote,
+                translated_image_caption: parsed.translated_image_caption,
+                prompt_text: String::new(),
+                provider_continuation: None,
+            });
+        }
+    }
+
+    Err("The AI translation returned a malformed sectioned response.".to_string())
 }
 
 pub(crate) fn build_translation_prompt(request: &AiTranslationRequest) -> String {
@@ -190,14 +300,26 @@ pub(crate) fn build_translation_prompt(request: &AiTranslationRequest) -> String
         target_language
     };
     let glossary_hints = format_translation_glossary_hints(&request.glossary_hints);
+    let sectioned_output = translation_request_has_sections(request);
     let mut sections = Vec::new();
-    sections.push(format!(
-        "Task:\nTranslate source_text from {source_label} to {target_label}."
-    ));
-    sections.push(
-        "Output rule:\nReturn only the translated text. Do not include labels, commentary, or quotes."
-            .to_string(),
-    );
+    if sectioned_output {
+        sections.push(format!(
+            "Task:\nTranslate the source-language sections from {source_label} to {target_label}."
+        ));
+        sections.push(translation_response_contract().to_string());
+        sections.push(
+            "Output rule:\nReturn JSON only. Keep the main text, footnote, and image caption translations in their matching fields. Do not append footnotes or image captions to translatedText."
+                .to_string(),
+        );
+    } else {
+        sections.push(format!(
+            "Task:\nTranslate source_text from {source_label} to {target_label}."
+        ));
+        sections.push(
+            "Output rule:\nReturn only the translated text. Do not include labels, commentary, or quotes."
+                .to_string(),
+        );
+    }
     sections.push(format!(
         "<languages>\nsource: {source_label}\ntarget: {target_label}\n</languages>"
     ));
@@ -213,7 +335,17 @@ pub(crate) fn build_translation_prompt(request: &AiTranslationRequest) -> String
     }
 
     sections.push(format!("<source_text>\n{}\n</source_text>", request.text));
-    sections.push("Return only the translated text.".to_string());
+    if let Some(section) = format_optional_tagged_section("source_footnote", &request.source_footnote) {
+        sections.push(section);
+    }
+    if let Some(section) = format_optional_tagged_section("source_image_caption", &request.source_image_caption) {
+        sections.push(section);
+    }
+    if sectioned_output {
+        sections.push(translation_response_contract().to_string());
+    } else {
+        sections.push("Return only the translated text.".to_string());
+    }
     sections.join("\n\n")
 }
 
@@ -1270,6 +1402,10 @@ fn build_pivot_translation_request(
         provider_id: request.provider_id,
         model_id: request.model_id.clone(),
         text: request.translation_source_text.clone(),
+        source_footnote: String::new(),
+        source_image_caption: String::new(),
+        target_footnote: String::new(),
+        target_image_caption: String::new(),
         source_language: request.translation_source_language.clone(),
         target_language: request.glossary_source_language.clone(),
         glossary_hints: vec![],
@@ -1310,7 +1446,10 @@ pub(crate) fn run_ai_review(
         .as_deref()
         .unwrap_or(&request.text);
 
-    if text_to_review.trim().is_empty() {
+    if text_to_review.trim().is_empty()
+        && request.footnote.trim().is_empty()
+        && request.image_caption.trim().is_empty()
+    {
         return Err("There is no text to review yet.".to_string());
     }
     if request.model_id.trim().is_empty() {
@@ -1346,6 +1485,8 @@ pub(crate) fn run_ai_review(
 
     Ok(AiReviewResponse {
         suggested_text: response.text,
+        suggested_footnote: String::new(),
+        suggested_image_caption: String::new(),
         reviewed: None,
         prompt_text: prompt,
     })
@@ -1463,7 +1604,11 @@ pub(crate) fn run_ai_translation(
     app: &AppHandle,
     request: AiTranslationRequest,
 ) -> Result<AiTranslationResponse, String> {
-    if request.text.trim().is_empty() {
+    let sectioned_output = translation_request_has_sections(&request);
+    if request.text.trim().is_empty()
+        && request.source_footnote.trim().is_empty()
+        && request.source_image_caption.trim().is_empty()
+    {
         return Err("There is no source text to translate yet.".to_string());
     }
     if request.model_id.trim().is_empty() {
@@ -1482,13 +1627,29 @@ pub(crate) fn run_ai_translation(
             model_id: request.model_id.clone(),
             prompt: prompt.clone(),
             previous_response_id: None,
-            output_format: AiPromptOutputFormat::Text,
+            output_format: if sectioned_output {
+                AiPromptOutputFormat::TranslationSectionsJson
+            } else {
+                AiPromptOutputFormat::Text
+            },
         },
         &api_key,
     )?;
 
+    if sectioned_output {
+        let mut parsed = parse_translation_sections_response(&response.text)?;
+        parsed.prompt_text = prompt;
+        parsed.provider_continuation = Some(AiProviderContinuationMetadata {
+            previous_response_id: None,
+            provider_response_id: response.provider_response_id,
+        });
+        return Ok(parsed);
+    }
+
     Ok(AiTranslationResponse {
         translated_text: response.text,
+        translated_footnote: String::new(),
+        translated_image_caption: String::new(),
         prompt_text: prompt,
         provider_continuation: Some(AiProviderContinuationMetadata {
             previous_response_id: None,
@@ -1584,7 +1745,7 @@ mod tests {
     use super::{
         build_assistant_chat_prompt, build_glossary_alignment_prompt_request, build_review_prompt,
         build_translation_prompt, find_matched_glossary_terms, parse_assistant_structured_response,
-        parse_review_structured_response, PreparedGlossaryMatch,
+        parse_review_structured_response, parse_translation_sections_response, PreparedGlossaryMatch,
     };
     use crate::ai::types::{
         AiAssistantRowContext, AiAssistantRowLanguageText, AiAssistantRowWindowEntry,
@@ -1605,9 +1766,13 @@ mod tests {
             model_id: "gpt-5.4".to_string(),
             text: "Ban dich hien tai".to_string(),
             language_code: "vi".to_string(),
+            footnote: String::new(),
+            image_caption: String::new(),
             review_mode: None,
             latest_translation: None,
             source_text: None,
+            source_footnote: String::new(),
+            source_image_caption: String::new(),
             source_language_code: String::new(),
             target_language_code: String::new(),
             source_language: String::new(),
@@ -1640,18 +1805,18 @@ mod tests {
 
         assert!(prompt.contains("Return only valid JSON"));
         assert!(prompt
-            .contains("Task:\nReview latest_translation only for spelling and grammar errors."));
+            .contains("Task:\nReview the target-language sections only for spelling and grammar errors."));
         assert!(prompt.contains("Do not review translation accuracy"));
-        assert!(prompt.contains("Preserve the meaning, terminology, tone, and style"));
+        assert!(prompt.contains("Keep main text, footnotes, and image captions separate."));
         assert!(prompt.contains("<review_item>"));
-        assert!(prompt.contains("This is the only text you are reviewing."));
+        assert!(prompt.contains("These are the only sections you are reviewing."));
         assert!(prompt.contains("<latest_translation>\nBan dich hien tai\n</latest_translation>"));
         assert!(!prompt.contains("source_text"));
         assert!(
-            prompt.ends_with("Return only valid JSON:\n{\"suggestedText\":\"\",\"reviewed\":true}")
+            prompt.ends_with("Return only valid JSON:\n{\"suggestedText\":\"\",\"suggestedFootnote\":\"\",\"suggestedImageCaption\":\"\",\"reviewed\":true}")
         );
-        assert_eq!(prompt.matches("If no errors").count(), 1);
-        assert_eq!(prompt.matches("If errors").count(), 1);
+        assert_eq!(prompt.matches("If every reviewed section is correct").count(), 1);
+        assert_eq!(prompt.matches("If any section has errors").count(), 1);
     }
 
     #[test]
@@ -1716,17 +1881,17 @@ mod tests {
         assert!(prompt.contains("English: Current English reference"));
         assert!(prompt.contains("<source_text>\nFuente actual\n</source_text>"));
         assert!(prompt.contains("<glossary_info format=\"json\">"));
-        assert!(prompt.contains("Review latest_translation against source_text for translation accuracy, spelling, and grammar."));
+        assert!(prompt.contains("Review the latest target-language sections against the source-language sections for translation accuracy, spelling, and grammar."));
         assert!(prompt.contains(r#""sourceTerm":"Fuente""#));
         assert!(prompt.contains(r#""targetVariants":[{"text":"nguon"}]"#));
         assert!(prompt.contains("<review_item>"));
-        assert!(prompt.contains("This is the only translation you are reviewing."));
+        assert!(prompt.contains("These are the only sections you are reviewing."));
         assert!(prompt.contains("<latest_translation>\nBan dich hien tai\n</latest_translation>"));
         assert!(
-            prompt.ends_with("Return only valid JSON:\n{\"suggestedText\":\"\",\"reviewed\":true}")
+            prompt.ends_with("Return only valid JSON:\n{\"suggestedText\":\"\",\"suggestedFootnote\":\"\",\"suggestedImageCaption\":\"\",\"reviewed\":true}")
         );
-        assert_eq!(prompt.matches("If no errors").count(), 1);
-        assert_eq!(prompt.matches("If errors").count(), 1);
+        assert_eq!(prompt.matches("If every reviewed section is correct").count(), 1);
+        assert_eq!(prompt.matches("If any section has errors").count(), 1);
     }
 
     #[test]
@@ -1759,6 +1924,10 @@ mod tests {
             provider_id: AiProviderId::OpenAi,
             model_id: "gpt-5.4".to_string(),
             text: "Hola".to_string(),
+            source_footnote: String::new(),
+            source_image_caption: String::new(),
+            target_footnote: String::new(),
+            target_image_caption: String::new(),
             source_language: "Spanish".to_string(),
             target_language: "Vietnamese".to_string(),
             glossary_hints: vec![],
@@ -1772,11 +1941,51 @@ mod tests {
     }
 
     #[test]
+    fn build_translation_prompt_uses_sectioned_json_when_secondary_text_is_present() {
+        let prompt = build_translation_prompt(&AiTranslationRequest {
+            provider_id: AiProviderId::OpenAi,
+            model_id: "gpt-5.4".to_string(),
+            text: "Hola".to_string(),
+            source_footnote: "Nota fuente".to_string(),
+            source_image_caption: "Caption source".to_string(),
+            target_footnote: String::new(),
+            target_image_caption: String::new(),
+            source_language: "Spanish".to_string(),
+            target_language: "Vietnamese".to_string(),
+            glossary_hints: vec![],
+            installation_id: None,
+        });
+
+        assert!(prompt.contains("\"translatedText\":\"\""));
+        assert!(prompt.contains("\"translatedFootnote\":\"\""));
+        assert!(prompt.contains("\"translatedImageCaption\":\"\""));
+        assert!(prompt.contains("<source_footnote>\nNota fuente\n</source_footnote>"));
+        assert!(prompt.contains("<source_image_caption>\nCaption source\n</source_image_caption>"));
+        assert!(prompt.contains("Do not append footnotes or image captions to translatedText."));
+    }
+
+    #[test]
+    fn parse_translation_sections_response_keeps_sections_separate() {
+        let response = parse_translation_sections_response(
+            r#"{"translatedText":"Xin chao","translatedFootnote":"Chu thich","translatedImageCaption":"Chu thich anh"}"#,
+        )
+        .unwrap();
+
+        assert_eq!(response.translated_text, "Xin chao");
+        assert_eq!(response.translated_footnote, "Chu thich");
+        assert_eq!(response.translated_image_caption, "Chu thich anh");
+    }
+
+    #[test]
     fn build_translation_prompt_includes_glossary_hints_with_preference_guidance() {
         let prompt = build_translation_prompt(&AiTranslationRequest {
             provider_id: AiProviderId::OpenAi,
             model_id: "gpt-5.4".to_string(),
             text: "La gnostica habla.".to_string(),
+            source_footnote: String::new(),
+            source_image_caption: String::new(),
+            target_footnote: String::new(),
+            target_image_caption: String::new(),
             source_language: "Spanish".to_string(),
             target_language: "Vietnamese".to_string(),
             glossary_hints: vec![AiTranslationGlossaryHint {
@@ -1814,6 +2023,10 @@ mod tests {
             provider_id: AiProviderId::OpenAi,
             model_id: "gpt-5.4".to_string(),
             text: "La mente canta.".to_string(),
+            source_footnote: String::new(),
+            source_image_caption: String::new(),
+            target_footnote: String::new(),
+            target_image_caption: String::new(),
             source_language: "Spanish".to_string(),
             target_language: "Vietnamese".to_string(),
             glossary_hints: vec![AiTranslationGlossaryHint {
@@ -1839,6 +2052,10 @@ mod tests {
             provider_id: AiProviderId::OpenAi,
             model_id: "gpt-5.4".to_string(),
             text: "La mente canta.".to_string(),
+            source_footnote: String::new(),
+            source_image_caption: String::new(),
+            target_footnote: String::new(),
+            target_image_caption: String::new(),
             source_language: "Spanish".to_string(),
             target_language: "Vietnamese".to_string(),
             glossary_hints: vec![AiTranslationGlossaryHint {
@@ -1863,6 +2080,10 @@ mod tests {
             provider_id: AiProviderId::OpenAi,
             model_id: "gpt-5.4".to_string(),
             text: "La mente canta.".to_string(),
+            source_footnote: String::new(),
+            source_image_caption: String::new(),
+            target_footnote: String::new(),
+            target_image_caption: String::new(),
             source_language: "Spanish".to_string(),
             target_language: "Vietnamese".to_string(),
             glossary_hints: vec![AiTranslationGlossaryHint {
@@ -1887,6 +2108,10 @@ mod tests {
             provider_id: AiProviderId::OpenAi,
             model_id: "gpt-5.4".to_string(),
             text: "La mente canta.".to_string(),
+            source_footnote: String::new(),
+            source_image_caption: String::new(),
+            target_footnote: String::new(),
+            target_image_caption: String::new(),
             source_language: "Spanish".to_string(),
             target_language: "Vietnamese".to_string(),
             glossary_hints: vec![AiTranslationGlossaryHint {

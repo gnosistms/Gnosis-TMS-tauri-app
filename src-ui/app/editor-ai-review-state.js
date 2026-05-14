@@ -12,7 +12,11 @@ export function normalizeEditorAiReviewState(aiReview) {
     languageCode: typeof aiReview?.languageCode === "string" ? aiReview.languageCode : null,
     requestKey: typeof aiReview?.requestKey === "string" ? aiReview.requestKey : null,
     sourceText: typeof aiReview?.sourceText === "string" ? aiReview.sourceText : "",
+    sourceFootnote: typeof aiReview?.sourceFootnote === "string" ? aiReview.sourceFootnote : "",
+    sourceImageCaption: typeof aiReview?.sourceImageCaption === "string" ? aiReview.sourceImageCaption : "",
     suggestedText: typeof aiReview?.suggestedText === "string" ? aiReview.suggestedText : "",
+    suggestedFootnote: typeof aiReview?.suggestedFootnote === "string" ? aiReview.suggestedFootnote : "",
+    suggestedImageCaption: typeof aiReview?.suggestedImageCaption === "string" ? aiReview.suggestedImageCaption : "",
     promptText: typeof aiReview?.promptText === "string" ? aiReview.promptText : "",
     reviewMode: aiReview?.reviewMode === "meaning" ? "meaning" : "grammar",
     reviewed: typeof aiReview?.reviewed === "boolean" ? aiReview.reviewed : null,
@@ -50,6 +54,8 @@ export function applyEditorAiReviewLoading(
   languageCode,
   requestKey,
   sourceText,
+  sourceFootnote = "",
+  sourceImageCaption = "",
   reviewMode = "grammar",
 ) {
   if (!chapterState?.chapterId || !rowId || !languageCode) {
@@ -65,6 +71,8 @@ export function applyEditorAiReviewLoading(
       languageCode,
       requestKey,
       sourceText: typeof sourceText === "string" ? sourceText : "",
+      sourceFootnote: typeof sourceFootnote === "string" ? sourceFootnote : "",
+      sourceImageCaption: typeof sourceImageCaption === "string" ? sourceImageCaption : "",
       reviewMode: reviewMode === "meaning" ? "meaning" : "grammar",
     },
   };
@@ -76,7 +84,11 @@ export function applyEditorAiReviewLoaded(
   languageCode,
   requestKey,
   sourceText,
+  sourceFootnote = "",
+  sourceImageCaption = "",
   suggestedText,
+  suggestedFootnote = "",
+  suggestedImageCaption = "",
   promptText = "",
   reviewMode = "grammar",
   reviewed = null,
@@ -94,7 +106,11 @@ export function applyEditorAiReviewLoaded(
       languageCode,
       requestKey,
       sourceText: typeof sourceText === "string" ? sourceText : "",
+      sourceFootnote: typeof sourceFootnote === "string" ? sourceFootnote : "",
+      sourceImageCaption: typeof sourceImageCaption === "string" ? sourceImageCaption : "",
       suggestedText: typeof suggestedText === "string" ? suggestedText : "",
+      suggestedFootnote: typeof suggestedFootnote === "string" ? suggestedFootnote : "",
+      suggestedImageCaption: typeof suggestedImageCaption === "string" ? suggestedImageCaption : "",
       promptText: typeof promptText === "string" ? promptText : "",
       reviewMode: reviewMode === "meaning" ? "meaning" : "grammar",
       reviewed: typeof reviewed === "boolean" ? reviewed : null,
@@ -155,13 +171,29 @@ export function clearEditorAiReview(chapterState) {
   };
 }
 
-export function resolveVisibleEditorAiReview(chapterState, rowId, languageCode, currentText) {
+export function resolveVisibleEditorAiReview(
+  chapterState,
+  rowId,
+  languageCode,
+  currentText,
+  currentFootnote = "",
+  currentImageCaption = "",
+) {
   const aiReview = currentEditorAiReviewForSelection(chapterState, rowId, languageCode);
   const normalizedCurrentText = normalizeEditorAiReviewComparisonText(currentText);
-  const reviewResultMatchesCurrentText = aiReview.sourceText === normalizedCurrentText;
+  const normalizedCurrentFootnote = normalizeEditorAiReviewComparisonText(currentFootnote);
+  const normalizedCurrentImageCaption = normalizeEditorAiReviewComparisonText(currentImageCaption);
+  const reviewResultMatchesCurrentText =
+    aiReview.sourceText === normalizedCurrentText
+    && aiReview.sourceFootnote === normalizedCurrentFootnote
+    && aiReview.sourceImageCaption === normalizedCurrentImageCaption;
   const hasSuggestion =
     (aiReview.status === "ready" || aiReview.status === "applying")
-    && aiReview.suggestedText.trim().length > 0;
+    && (
+      aiReview.suggestedText.trim().length > 0
+      || aiReview.suggestedFootnote.trim().length > 0
+      || aiReview.suggestedImageCaption.trim().length > 0
+    );
   const hasReviewResult =
     hasSuggestion
     || aiReview.reviewed === true
@@ -171,7 +203,9 @@ export function resolveVisibleEditorAiReview(chapterState, rowId, languageCode, 
   const suggestedTextMatchesCurrentText =
     hasSuggestion
     && !isStale
-    && normalizeEditorAiReviewComparisonText(aiReview.suggestedText) === normalizedCurrentText;
+    && (!aiReview.suggestedText.trim() || normalizeEditorAiReviewComparisonText(aiReview.suggestedText) === normalizedCurrentText)
+    && (!aiReview.suggestedFootnote.trim() || normalizeEditorAiReviewComparisonText(aiReview.suggestedFootnote) === normalizedCurrentFootnote)
+    && (!aiReview.suggestedImageCaption.trim() || normalizeEditorAiReviewComparisonText(aiReview.suggestedImageCaption) === normalizedCurrentImageCaption);
   const reviewedLooksGood =
     aiReview.status === "ready"
     && aiReview.reviewed === true

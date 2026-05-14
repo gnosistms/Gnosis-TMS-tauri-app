@@ -83,7 +83,65 @@ function errorMeansMissingAiKey(message) {
 
 function latestEditorTranslateSourceTextMatches(context) {
   const latestRow = findEditorRowById(context.rowId, state.editorChapter);
-  return (latestRow?.fields?.[context.sourceLanguageCode] ?? "") === context.sourceText;
+  return (
+    (latestRow?.fields?.[context.sourceLanguageCode] ?? "") === context.sourceText
+    && (latestRow?.footnotes?.[context.sourceLanguageCode] ?? "") === context.sourceFootnote
+    && (latestRow?.imageCaptions?.[context.sourceLanguageCode] ?? "") === context.sourceImageCaption
+  );
+}
+
+function latestEditorTranslateTargetTextIsEmpty(context) {
+  const latestRow = findEditorRowById(context.rowId, state.editorChapter);
+  return !String(latestRow?.fields?.[context.targetLanguageCode] ?? "").trim();
+}
+
+function requestedSourceFootnote(context) {
+  return context?.sourceFootnote?.trim() && !context?.targetFootnote?.trim()
+    ? context.sourceFootnote
+    : "";
+}
+
+function requestedSourceImageCaption(context) {
+  return context?.sourceImageCaption?.trim() && !context?.targetImageCaption?.trim()
+    ? context.sourceImageCaption
+    : "";
+}
+
+function translatedSectionValue(payload, key) {
+  return typeof payload?.[key] === "string" ? payload[key] : "";
+}
+
+function applyEditorAiTranslatePayloadToRow(context, payload, updateEditorRowFieldValue) {
+  const translatedText = translatedSectionValue(payload, "translatedText");
+  const translatedFootnote = translatedSectionValue(payload, "translatedFootnote");
+  const translatedImageCaption = translatedSectionValue(payload, "translatedImageCaption");
+
+  const shouldWriteMainText =
+    !context.targetText?.trim()
+    || (!requestedSourceFootnote(context) && !requestedSourceImageCaption(context));
+  if (shouldWriteMainText) {
+    updateEditorRowFieldValue(
+      context.rowId,
+      context.targetLanguageCode,
+      translatedText,
+    );
+  }
+  if (requestedSourceFootnote(context) && translatedFootnote.trim()) {
+    updateEditorRowFieldValue(
+      context.rowId,
+      context.targetLanguageCode,
+      translatedFootnote,
+      "footnote",
+    );
+  }
+  if (requestedSourceImageCaption(context) && translatedImageCaption.trim()) {
+    updateEditorRowFieldValue(
+      context.rowId,
+      context.targetLanguageCode,
+      translatedImageCaption,
+      "image-caption",
+    );
+  }
 }
 
 function resolveGlossaryUsage(context) {
@@ -180,6 +238,11 @@ export function buildEditorAiTranslateContext(chapterState = state.editorChapter
     sourceLanguageLabel: languageSemanticLabel(sourceLanguage) || sourceLanguageCode,
     targetLanguageLabel: languageSemanticLabel(targetLanguage) || targetLanguageCode,
     sourceText: row.fields?.[sourceLanguageCode] ?? "",
+    sourceFootnote: row.footnotes?.[sourceLanguageCode] ?? "",
+    sourceImageCaption: row.imageCaptions?.[sourceLanguageCode] ?? "",
+    targetText: row.fields?.[targetLanguageCode] ?? "",
+    targetFootnote: row.footnotes?.[targetLanguageCode] ?? "",
+    targetImageCaption: row.imageCaptions?.[targetLanguageCode] ?? "",
   };
 }
 
@@ -325,7 +388,11 @@ export async function runEditorAiTranslateForContext(
     return { ok: false, error: "Choose a language other than the source language before translating." };
   }
 
-  if (!context.sourceText.trim()) {
+  if (
+    !context.sourceText.trim()
+    && !requestedSourceFootnote(context)
+    && !requestedSourceImageCaption(context)
+  ) {
     failEditorAiTranslate(
       render,
       actionId,
@@ -541,6 +608,14 @@ export async function runEditorAiTranslateForContext(
         providerId,
         modelId,
         text: context.sourceText,
+        ...(requestedSourceFootnote(context)
+          ? { sourceFootnote: requestedSourceFootnote(context) }
+          : {}),
+        ...(requestedSourceImageCaption(context)
+          ? { sourceImageCaption: requestedSourceImageCaption(context) }
+          : {}),
+        ...(context.targetFootnote?.trim() ? { targetFootnote: context.targetFootnote } : {}),
+        ...(context.targetImageCaption?.trim() ? { targetImageCaption: context.targetImageCaption } : {}),
         sourceLanguage: context.sourceLanguageLabel,
         targetLanguage: context.targetLanguageLabel,
         ...(Array.isArray(glossaryHints) && glossaryHints.length > 0
@@ -563,8 +638,7 @@ export async function runEditorAiTranslateForContext(
       return { ok: false, skipped: true };
     }
 
-    const latestRow = findEditorRowById(context.rowId, state.editorChapter);
-    if ((latestRow?.fields?.[context.sourceLanguageCode] ?? "") !== context.sourceText) {
+    if (!latestEditorTranslateSourceTextMatches(context)) {
       state.editorChapter = clearEditorAiTranslateAction(state.editorChapter, actionId);
       render?.({ scope: "translate-sidebar" });
       renderEditorAiTranslateRow(render, context, {
@@ -575,6 +649,74 @@ export async function runEditorAiTranslateForContext(
     }
 
     if (options.applyMode === "draft") {
+      if (options.autoApplyDraft === true && latestEditorTranslateTargetTextIsEmpty(context)) {
+        state.editorChapter = applyEditorAiTranslateActionApplying(
+          state.editorChapter,
+          actionId,
+          context.rowId,
+          context.sourceLanguageCode,
+          context.targetLanguageCode,
+          requestKey,
+          context.sourceText,
+        );
+        render?.({ scope: "translate-sidebar" });
+
+        applyEditorAiTranslatePayloadToRow(context, payload, updateEditorRowFieldValue);
+        renderEditorAiTranslateRow(render, context, {
+          renderMode: options.renderMode,
+          reason: "ai-translate-auto-apply",
+        });
+
+        await persistEditorRowOnBlur(render, context.rowId, {
+          commitMetadata: {
+            operation: "ai-translation",
+            aiModel: modelId,
+          },
+        });
+
+        if (state.editorChapter?.chapterId !== context.chapterId) {
+          return { ok: false, skipped: true };
+        }
+
+        logEditorAssistantTranslation({
+          rowId: context.rowId,
+          sourceLanguageCode: context.sourceLanguageCode,
+          targetLanguageCode: context.targetLanguageCode,
+          sourceLanguageLabel: context.sourceLanguageLabel,
+          targetLanguageLabel: context.targetLanguageLabel,
+          providerId,
+          modelId,
+          sourceText: context.sourceText,
+          glossarySourceText:
+            glossaryUsage.kind === "derived"
+              ? (retainedDerivedEntry?.glossarySourceText ?? "")
+              : context.sourceText,
+          glossaryHints,
+          promptText: typeof payload?.promptText === "string" ? payload.promptText : "",
+          translatedText: translatedSectionValue(payload, "translatedText"),
+          translatedFootnote: translatedSectionValue(payload, "translatedFootnote"),
+          translatedImageCaption: translatedSectionValue(payload, "translatedImageCaption"),
+          appliedText: translatedSectionValue(payload, "translatedText"),
+          providerContinuation: payload?.providerContinuation ?? null,
+          summary: `${AI_ACTION_LABELS[actionId]} applied to ${context.targetLanguageLabel}.`,
+        });
+
+        state.editorChapter = clearEditorAiTranslateAction(state.editorChapter, actionId);
+        render?.({ scope: "translate-sidebar" });
+        if (options.showNotice !== false) {
+          showNoticeBadge(`${AI_ACTION_LABELS[actionId]} inserted.`, render);
+        }
+        return {
+          ok: true,
+          translated: true,
+          applied: true,
+          providerContinuation: payload?.providerContinuation ?? null,
+          translatedText: translatedSectionValue(payload, "translatedText"),
+          translatedFootnote: translatedSectionValue(payload, "translatedFootnote"),
+          translatedImageCaption: translatedSectionValue(payload, "translatedImageCaption"),
+        };
+      }
+
       logEditorAssistantTranslationDraft({
         rowId: context.rowId,
         sourceLanguageCode: context.sourceLanguageCode,
@@ -591,7 +733,9 @@ export async function runEditorAiTranslateForContext(
             : context.sourceText,
         glossaryHints,
         promptText: typeof payload?.promptText === "string" ? payload.promptText : "",
-        draftTranslationText: typeof payload?.translatedText === "string" ? payload.translatedText : "",
+        draftTranslationText: translatedSectionValue(payload, "translatedText"),
+        draftTranslationFootnote: translatedSectionValue(payload, "translatedFootnote"),
+        draftTranslationImageCaption: translatedSectionValue(payload, "translatedImageCaption"),
         providerContinuation: payload?.providerContinuation ?? null,
         summary: `${AI_ACTION_LABELS[actionId]} draft for ${context.targetLanguageLabel}.`,
       });
@@ -609,7 +753,9 @@ export async function runEditorAiTranslateForContext(
         translated: true,
         drafted: true,
         providerContinuation: payload?.providerContinuation ?? null,
-        translatedText: typeof payload?.translatedText === "string" ? payload.translatedText : "",
+        translatedText: translatedSectionValue(payload, "translatedText"),
+        translatedFootnote: translatedSectionValue(payload, "translatedFootnote"),
+        translatedImageCaption: translatedSectionValue(payload, "translatedImageCaption"),
       };
     }
 
@@ -624,11 +770,7 @@ export async function runEditorAiTranslateForContext(
     );
     render?.({ scope: "translate-sidebar" });
 
-    updateEditorRowFieldValue(
-      context.rowId,
-      context.targetLanguageCode,
-      typeof payload?.translatedText === "string" ? payload.translatedText : "",
-    );
+    applyEditorAiTranslatePayloadToRow(context, payload, updateEditorRowFieldValue);
     renderEditorAiTranslateRow(render, context, {
       renderMode: options.renderMode,
       reason: "ai-translate-apply",
@@ -660,8 +802,10 @@ export async function runEditorAiTranslateForContext(
           : context.sourceText,
       glossaryHints,
       promptText: typeof payload?.promptText === "string" ? payload.promptText : "",
-      translatedText: typeof payload?.translatedText === "string" ? payload.translatedText : "",
-      appliedText: typeof payload?.translatedText === "string" ? payload.translatedText : "",
+      translatedText: translatedSectionValue(payload, "translatedText"),
+      translatedFootnote: translatedSectionValue(payload, "translatedFootnote"),
+      translatedImageCaption: translatedSectionValue(payload, "translatedImageCaption"),
+      appliedText: translatedSectionValue(payload, "translatedText"),
       providerContinuation: payload?.providerContinuation ?? null,
       summary: `${AI_ACTION_LABELS[actionId]} applied to ${context.targetLanguageLabel}.`,
     });
@@ -675,7 +819,9 @@ export async function runEditorAiTranslateForContext(
       ok: true,
       translated: true,
       providerContinuation: payload?.providerContinuation ?? null,
-      translatedText: typeof payload?.translatedText === "string" ? payload.translatedText : "",
+      translatedText: translatedSectionValue(payload, "translatedText"),
+      translatedFootnote: translatedSectionValue(payload, "translatedFootnote"),
+      translatedImageCaption: translatedSectionValue(payload, "translatedImageCaption"),
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -766,5 +912,6 @@ export async function runEditorAiTranslate(render, actionId, operations = {}) {
   const context = activeEditorTranslateContext();
   return runEditorAiTranslateForContext(render, actionId, context, operations, {
     applyMode: "draft",
+    autoApplyDraft: true,
   });
 }

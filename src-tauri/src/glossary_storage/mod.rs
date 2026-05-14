@@ -1074,10 +1074,7 @@ fn upsert_gtms_glossary_term_sync(
         &[".gitattributes", &relative_term_path],
     )?;
 
-    let term_count = load_glossary_terms(&repo_path.join("terms"))?
-        .into_iter()
-        .filter(|term| term.lifecycle.state == "active")
-        .count();
+    let term_count = count_glossary_term_files(&repo_path.join("terms"))?;
 
     Ok(UpsertGlossaryTermResponse {
         glossary_id: glossary_file.glossary_id,
@@ -1146,10 +1143,7 @@ fn delete_gtms_glossary_term_sync(
         &[&relative_term_path],
     )?;
 
-    let term_count = load_glossary_terms(&repo_path.join("terms"))?
-        .into_iter()
-        .filter(|term| term.lifecycle.state == "active")
-        .count();
+    let term_count = count_glossary_term_files(&repo_path.join("terms"))?;
 
     Ok(DeleteGlossaryTermResponse {
         glossary_id: glossary_file.glossary_id,
@@ -1314,10 +1308,7 @@ fn build_local_glossary_summary(repo_path: &Path) -> Result<LocalGlossarySummary
                 .unwrap_or_default()
                 .to_string()
         });
-    let term_count = load_glossary_terms(&repo_path.join("terms"))?
-        .into_iter()
-        .filter(|term| term.lifecycle.state == "active")
-        .count();
+    let term_count = count_glossary_term_files(&repo_path.join("terms"))?;
 
     Ok(LocalGlossarySummary {
         glossary_id: glossary_file.glossary_id,
@@ -1338,6 +1329,26 @@ fn build_local_glossary_summary(repo_path: &Path) -> Result<LocalGlossarySummary
 
 fn read_glossary_file(repo_path: &Path) -> Result<StoredGlossaryFile, String> {
     read_json_file(&repo_path.join("glossary.json"), "glossary.json")
+}
+
+fn count_glossary_term_files(terms_path: &Path) -> Result<usize, String> {
+    if !terms_path.exists() {
+        return Ok(0);
+    }
+
+    let mut count = 0;
+    for entry in fs::read_dir(terms_path)
+        .map_err(|error| format!("Could not read the glossary terms folder: {error}"))?
+    {
+        let entry =
+            entry.map_err(|error| format!("Could not read a glossary term entry: {error}"))?;
+        let path = entry.path();
+        if path.is_file() && path.extension().and_then(|value| value.to_str()) == Some("json") {
+            count += 1;
+        }
+    }
+
+    Ok(count)
 }
 
 fn load_glossary_terms(terms_path: &Path) -> Result<Vec<StoredGlossaryTermFile>, String> {
@@ -1585,6 +1596,26 @@ mod tests {
             vec!["Use in doctrinal contexts\n\nUse in poetic contexts"]
         );
         assert_eq!(parsed.terms[0].notes_to_translators, "Global note");
+    }
+
+    #[test]
+    fn counts_glossary_term_json_files_without_parsing_them() {
+        let terms_path =
+            std::env::temp_dir().join(format!("gnosis-glossary-terms-{}", Uuid::now_v7()));
+        fs::create_dir_all(&terms_path).expect("create terms dir");
+        fs::write(terms_path.join("active-term.json"), "{not valid json")
+            .expect("write invalid json term");
+        fs::write(terms_path.join("soft-deleted-term.json"), "{}")
+            .expect("write deleted json term");
+        fs::write(terms_path.join("notes.txt"), "{}").expect("write non-json file");
+        fs::create_dir_all(terms_path.join("nested.json")).expect("create json-named dir");
+
+        assert_eq!(
+            count_glossary_term_files(&terms_path).expect("count term files"),
+            2,
+        );
+
+        let _ = fs::remove_dir_all(&terms_path);
     }
 
     #[test]

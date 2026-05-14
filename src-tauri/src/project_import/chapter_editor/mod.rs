@@ -292,6 +292,10 @@ pub(crate) struct ApplyEditorAiReviewResultInput {
     language_code: String,
     #[serde(default)]
     suggested_text: String,
+    #[serde(default)]
+    suggested_footnote: String,
+    #[serde(default)]
+    suggested_image_caption: String,
     reviewed: bool,
     please_check: bool,
     #[serde(default)]
@@ -427,6 +431,8 @@ pub(crate) struct ApplyEditorAiReviewResultResponse {
     row_id: String,
     language_code: String,
     text: String,
+    footnote: String,
+    image_caption: String,
     reviewed: bool,
     please_check: bool,
     last_update: Option<EditorRowVersionMetadata>,

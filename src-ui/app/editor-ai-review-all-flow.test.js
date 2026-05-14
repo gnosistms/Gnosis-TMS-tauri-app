@@ -89,6 +89,39 @@ test("AI Review All work skips reviewed, empty, and deleted translations", () =>
   );
 });
 
+test("AI Review All work includes footnote-only and caption-only rows", () => {
+  const chapterState = chapter();
+  chapterState.rows[2].footnotes = {
+    vi: "Chu thich can review",
+  };
+  chapterState.rows.push({
+    ...row("row-6", { es: "Seis", vi: "" }, { vi: { reviewed: false, pleaseCheck: false } }),
+    imageCaptions: {
+      vi: "Caption needs review",
+    },
+  });
+
+  assert.deepEqual(
+    editorAiReviewAllTestApi.buildEditorAiReviewAllWork(chapterState),
+    [
+      { rowId: "row-1", languageCode: "vi" },
+      { rowId: "row-3", languageCode: "vi" },
+      { rowId: "row-5", languageCode: "vi" },
+      { rowId: "row-6", languageCode: "vi" },
+    ],
+  );
+  assert.deepEqual(
+    editorAiReviewAllTestApi.buildEditorAiReviewAllCounts(chapterState),
+    {
+      languageCode: "vi",
+      reviewedCount: 1,
+      totalTranslationCount: 5,
+      totalCount: 4,
+    },
+  );
+});
+
+
 test("AI Review All opens preflight when reviewed translations exist", () => {
   resetSessionState();
   state.editorChapter = chapter();

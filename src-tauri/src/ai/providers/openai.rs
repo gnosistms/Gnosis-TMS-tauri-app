@@ -264,6 +264,27 @@ fn openai_text_format(output_format: AiPromptOutputFormat) -> Value {
                 }
             }
         }),
+        AiPromptOutputFormat::TranslationSectionsJson => json!({
+            "type": "json_schema",
+            "name": "ai_translation_sections_response",
+            "strict": true,
+            "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["translatedText", "translatedFootnote", "translatedImageCaption"],
+                "properties": {
+                    "translatedText": {
+                        "type": "string"
+                    },
+                    "translatedFootnote": {
+                        "type": "string"
+                    },
+                    "translatedImageCaption": {
+                        "type": "string"
+                    }
+                }
+            }
+        }),
         AiPromptOutputFormat::ReviewJson => json!({
             "type": "json_schema",
             "name": "ai_review_response",
@@ -271,9 +292,15 @@ fn openai_text_format(output_format: AiPromptOutputFormat) -> Value {
             "schema": {
                 "type": "object",
                 "additionalProperties": false,
-                "required": ["suggestedText", "reviewed"],
+                "required": ["suggestedText", "suggestedFootnote", "suggestedImageCaption", "reviewed"],
                 "properties": {
                     "suggestedText": {
+                        "type": "string"
+                    },
+                    "suggestedFootnote": {
+                        "type": "string"
+                    },
+                    "suggestedImageCaption": {
                         "type": "string"
                     },
                     "reviewed": {
@@ -527,6 +554,8 @@ pub(crate) fn normalize_review_response(body: &str) -> Result<AiReviewResponse, 
 
     Ok(AiReviewResponse {
         suggested_text,
+        suggested_footnote: String::new(),
+        suggested_image_caption: String::new(),
         reviewed: None,
         prompt_text: String::new(),
     })

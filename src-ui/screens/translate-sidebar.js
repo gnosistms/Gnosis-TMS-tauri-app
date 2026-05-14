@@ -131,6 +131,10 @@ function renderTranslateTools(editorChapter, rows, languages, sourceCode, target
   if (currentTargetText.trim().length > 0) {
     return "";
   }
+  const sourceHasTranslatableContent =
+    sourceSection.text.trim().length > 0
+    || String(sourceSection.footnote ?? "").trim().length > 0
+    || String(sourceSection.imageCaption ?? "").trim().length > 0;
 
   const translateActions = resolveVisibleAiTranslateActions(actionConfig);
   const visibleActions = translateActions.map((translateAction) =>
@@ -147,13 +151,13 @@ function renderTranslateTools(editorChapter, rows, languages, sourceCode, target
     offlineMode !== true
     && sourceLanguage.code !== targetLanguage.code
     && !languageBaseCodesMatch(sourceLanguage, targetLanguage)
-    && sourceSection.text.trim().length > 0;
+    && sourceHasTranslatableContent;
   const disabledMessage =
     offlineMode === true
       ? "AI actions are unavailable offline."
       : sourceLanguage.code === targetLanguage.code || languageBaseCodesMatch(sourceLanguage, targetLanguage)
       ? "Choose a language other than the source language before translating."
-      : sourceSection.text.trim().length === 0
+      : !sourceHasTranslatableContent
         ? "There is no source text to translate yet."
         : "";
   const alternateTargetMarkup =
@@ -513,6 +517,41 @@ function renderAssistantDraftText(item, currentTargetText) {
   return escapeHtml(draftText);
 }
 
+function renderAssistantDraftSection(label, value) {
+  const text = typeof value === "string" ? value : "";
+  if (!text.trim()) {
+    return "";
+  }
+  return `
+    <div class="assistant-item__draft-section">
+      <p class="assistant-item__meta">${escapeHtml(label)}</p>
+      <pre class="assistant-item__draft">${escapeHtml(text)}</pre>
+    </div>
+  `;
+}
+
+function renderAiReviewSuggestionSections(aiReview, currentEntry, activeLanguage) {
+  const sections = [];
+  if (aiReview.suggestedText?.trim()) {
+    sections.push(`
+      <p class="history-item__content" lang="${escapeHtml(activeLanguage.code)}">${renderHistoryContent({ plainText: aiReview.suggestedText }, currentEntry)}</p>
+    `);
+  }
+  if (aiReview.suggestedFootnote?.trim()) {
+    sections.push(`
+      <p class="history-item__meta">Footnote</p>
+      <p class="history-item__content history-item__content--footnote" lang="${escapeHtml(activeLanguage.code)}">${renderHistoryContent({ plainText: aiReview.suggestedFootnote }, { plainText: currentEntry?.footnote ?? "" })}</p>
+    `);
+  }
+  if (aiReview.suggestedImageCaption?.trim()) {
+    sections.push(`
+      <p class="history-item__meta">Image caption</p>
+      <p class="history-item__content" lang="${escapeHtml(activeLanguage.code)}">${renderHistoryContent({ plainText: aiReview.suggestedImageCaption }, { plainText: currentEntry?.imageCaption ?? "" })}</p>
+    `);
+  }
+  return sections.join("");
+}
+
 function normalizeAssistantDraftComparisonText(value) {
   return String(value ?? "").replace(/\r\n?/g, "\n");
 }
@@ -555,7 +594,13 @@ function renderAssistantTranscriptItem(item, currentTargetText = "") {
       <article class="assistant-item assistant-item--assistant">
         <p class="assistant-item__label">Draft Translation</p>
         ${text ? `<p class="assistant-item__text">${escapeHtml(text)}</p>` : ""}
-        <pre class="assistant-item__draft">${renderAssistantDraftText(item, currentTargetText)}</pre>
+        ${
+          item?.draftTranslationText
+            ? `<pre class="assistant-item__draft">${renderAssistantDraftText(item, currentTargetText)}</pre>`
+            : ""
+        }
+        ${renderAssistantDraftSection("Footnote", item?.draftTranslationFootnote)}
+        ${renderAssistantDraftSection("Image caption", item?.draftTranslationImageCaption)}
         ${
           item.applyError
             ? renderInlineStateBox({
@@ -771,6 +816,8 @@ function renderReviewPane(editorChapter, rows, languages, offlineMode = false) {
     activeRow?.id ?? null,
     activeLanguage?.code ?? null,
     activeSection?.text ?? "",
+    activeSection?.footnote ?? "",
+    activeSection?.imageCaption ?? "",
   );
   const aiReviewSummaryTooltip = tooltipAttributes(
     isAiReviewExpanded ? "Collapse this review section" : "Expand this review section",
@@ -921,7 +968,7 @@ function renderReviewPane(editorChapter, rows, languages, offlineMode = false) {
                   ${
                     aiReview.showSuggestion
                       ? `
-                        <p class="history-item__content" lang="${escapeHtml(activeLanguage.code)}">${renderHistoryContent({ plainText: aiReview.suggestedText }, currentEntry)}</p>
+                        ${renderAiReviewSuggestionSections(aiReview, currentEntry, activeLanguage)}
                         <div class="history-item__footer">
                           <div class="history-item__actions">
                             ${applyButton}

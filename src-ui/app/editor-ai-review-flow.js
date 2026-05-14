@@ -24,6 +24,8 @@ import {
   editorReviewLanguageByCode,
   normalizeEditorAiReviewMode,
   readEditorReviewRowFieldText,
+  readEditorReviewRowFootnote,
+  readEditorReviewRowImageCaption,
   selectedEditorReviewSourceLanguageCode,
 } from "./editor-ai-review-request.js";
 import { loadAssistantTargetLanguageHistory } from "./editor-ai-assistant-flow.js";
@@ -81,6 +83,8 @@ function activeEditorReviewContext(chapterState = state.editorChapter) {
     languageCode,
     language: editorReviewLanguageByCode(chapterState, languageCode),
     text: readEditorReviewRowFieldText(row, languageCode),
+    footnote: readEditorReviewRowFootnote(row, languageCode),
+    imageCaption: readEditorReviewRowImageCaption(row, languageCode),
   };
 }
 
@@ -95,7 +99,7 @@ export async function runEditorAiReview(render, reviewMode = "grammar") {
     return;
   }
 
-  if (!context.text.trim()) {
+  if (!context.text.trim() && !context.footnote.trim() && !context.imageCaption.trim()) {
     const requestKey = createAiReviewRequestKey(
       context.chapterId,
       context.rowId,
@@ -125,8 +129,10 @@ export async function runEditorAiReview(render, reviewMode = "grammar") {
     context.rowId,
     context.languageCode,
     requestKey,
-    context.text,
-    normalizedReviewMode,
+      context.text,
+      context.footnote,
+      context.imageCaption,
+      normalizedReviewMode,
   );
   render?.({ scope: "translate-sidebar" });
 
@@ -261,7 +267,11 @@ export async function runEditorAiReview(render, reviewMode = "grammar") {
       context.languageCode,
       requestKey,
       context.text,
+      context.footnote,
+      context.imageCaption,
       payload?.suggestedText ?? "",
+      payload?.suggestedFootnote ?? "",
+      payload?.suggestedImageCaption ?? "",
       payload?.promptText ?? "",
       normalizedReviewMode,
       typeof payload?.reviewed === "boolean" ? payload.reviewed : null,
@@ -337,6 +347,8 @@ export async function applyEditorAiReview(render, operations = {}) {
     context.rowId,
     context.languageCode,
     context.text,
+    context.footnote,
+    context.imageCaption,
   );
   if (!visibleAiReview.showSuggestion) {
     return;
@@ -351,11 +363,29 @@ export async function applyEditorAiReview(render, operations = {}) {
       context.languageCode,
     ),
   });
-  updateEditorRowFieldValue(
-    context.rowId,
-    context.languageCode,
-    visibleAiReview.suggestedText,
-  );
+  if (visibleAiReview.suggestedText?.trim()) {
+    updateEditorRowFieldValue(
+      context.rowId,
+      context.languageCode,
+      visibleAiReview.suggestedText,
+    );
+  }
+  if (visibleAiReview.suggestedFootnote?.trim()) {
+    updateEditorRowFieldValue(
+      context.rowId,
+      context.languageCode,
+      visibleAiReview.suggestedFootnote,
+      "footnote",
+    );
+  }
+  if (visibleAiReview.suggestedImageCaption?.trim()) {
+    updateEditorRowFieldValue(
+      context.rowId,
+      context.languageCode,
+      visibleAiReview.suggestedImageCaption,
+      "image-caption",
+    );
+  }
   renderTranslateBodyPreservingViewport(render, reviewViewportSnapshot);
 
   await persistEditorRowOnBlur(render, context.rowId);

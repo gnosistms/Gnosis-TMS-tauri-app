@@ -43,6 +43,7 @@ export function renderGlossaryEditorScreen(state) {
             isBack: true,
             disabled: !state.selectedChapterId,
           }),
+          navButton("QA", "qa"),
         ]
       : buildSectionNav("glossaryEditor");
   const searchQuery = String(glossary.searchQuery ?? "").trim().toLowerCase();

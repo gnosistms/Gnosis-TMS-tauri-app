@@ -307,6 +307,7 @@ export function renderTranslateScreen(state) {
     actionNavButton("Glossary", "open-editor-glossary", false, {
       disabled: !linkedGlossary?.repoName,
     }),
+    navButton("QA", "qa"),
   ];
 
   return pageShell({

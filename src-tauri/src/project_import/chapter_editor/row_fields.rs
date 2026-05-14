@@ -557,6 +557,16 @@ pub(crate) fn apply_gtms_editor_ai_review_result_sync(
         fields.insert(input.language_code.clone(), input.suggested_text.clone());
         apply_editor_plain_text_updates(&mut row_value, &fields)?;
     }
+    if !input.suggested_footnote.trim().is_empty() {
+        let mut footnotes = BTreeMap::new();
+        footnotes.insert(input.language_code.clone(), input.suggested_footnote.clone());
+        apply_editor_footnote_updates(&mut row_value, &footnotes)?;
+    }
+    if !input.suggested_image_caption.trim().is_empty() {
+        let mut image_captions = BTreeMap::new();
+        image_captions.insert(input.language_code.clone(), input.suggested_image_caption.clone());
+        apply_editor_image_caption_updates(&mut row_value, &image_captions)?;
+    }
     let (_, _, reviewed_changed) = apply_editor_field_flag_update(
         &mut row_value,
         &input.language_code,
@@ -615,11 +625,21 @@ pub(crate) fn apply_gtms_editor_ai_review_result_sync(
         .get(&input.language_code)
         .cloned()
         .unwrap_or_default();
+    let footnote = row_footnote_map(&updated_row_file)
+        .get(&input.language_code)
+        .cloned()
+        .unwrap_or_default();
+    let image_caption = row_image_caption_map(&updated_row_file)
+        .get(&input.language_code)
+        .cloned()
+        .unwrap_or_default();
 
     Ok(ApplyEditorAiReviewResultResponse {
         row_id: input.row_id,
         language_code: input.language_code,
         text,
+        footnote,
+        image_caption,
         reviewed,
         please_check,
         last_update: load_latest_row_version_metadata(

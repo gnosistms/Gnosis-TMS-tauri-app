@@ -105,6 +105,34 @@ function readRowFieldText(row, languageCode) {
     : String(row?.fields?.[languageCode] ?? "");
 }
 
+function readRowFootnoteText(row, languageCode) {
+  if (!languageCode) {
+    return "";
+  }
+
+  return typeof row?.footnotes?.[languageCode] === "string"
+    ? row.footnotes[languageCode]
+    : String(row?.footnotes?.[languageCode] ?? "");
+}
+
+function readRowImageCaptionText(row, languageCode) {
+  if (!languageCode) {
+    return "";
+  }
+
+  return typeof row?.imageCaptions?.[languageCode] === "string"
+    ? row.imageCaptions[languageCode]
+    : String(row?.imageCaptions?.[languageCode] ?? "");
+}
+
+function rowHasTranslateAllWork(row, sourceLanguageCode, targetLanguageCode) {
+  return (
+    (readRowFieldText(row, sourceLanguageCode).trim() && !readRowFieldText(row, targetLanguageCode).trim())
+    || (readRowFootnoteText(row, sourceLanguageCode).trim() && !readRowFootnoteText(row, targetLanguageCode).trim())
+    || (readRowImageCaptionText(row, sourceLanguageCode).trim() && !readRowImageCaptionText(row, targetLanguageCode).trim())
+  );
+}
+
 function buildEditorAiTranslateAllWork(chapterState, selectedLanguageCodes) {
   const sourceLanguageCode = sourceLanguageCodeForChapter(chapterState);
   const targetLanguageCodes = prioritizeGlossarySourceLanguageCode(
@@ -120,15 +148,18 @@ function buildEditorAiTranslateAllWork(chapterState, selectedLanguageCodes) {
     if (!row?.rowId || row.lifecycleState === "deleted") {
       continue;
     }
-    const sourceText = readRowFieldText(row, sourceLanguageCode);
-    if (!sourceText.trim()) {
+    if (
+      !readRowFieldText(row, sourceLanguageCode).trim()
+      && !readRowFootnoteText(row, sourceLanguageCode).trim()
+      && !readRowImageCaptionText(row, sourceLanguageCode).trim()
+    ) {
       continue;
     }
 
     for (const targetLanguageCode of targetLanguageCodes) {
       if (
         targetLanguageCode === sourceLanguageCode
-        || readRowFieldText(row, targetLanguageCode).trim()
+        || !rowHasTranslateAllWork(row, sourceLanguageCode, targetLanguageCode)
       ) {
         continue;
       }
@@ -347,11 +378,15 @@ export async function confirmEditorAiTranslateAll(render, operations = {}) {
     const row = findEditorRowById(item.rowId, state.editorChapter);
     if (
       !row
-      || !readRowFieldText(row, item.sourceLanguageCode).trim()
+      || (
+        !readRowFieldText(row, item.sourceLanguageCode).trim()
+        && !readRowFootnoteText(row, item.sourceLanguageCode).trim()
+        && !readRowImageCaptionText(row, item.sourceLanguageCode).trim()
+      )
     ) {
       continue;
     }
-    if (readRowFieldText(row, item.targetLanguageCode).trim()) {
+    if (!rowHasTranslateAllWork(row, item.sourceLanguageCode, item.targetLanguageCode)) {
       translatedCount += 1;
       currentLanguageProgress = incrementEditorAiTranslateAllProgress(
         currentLanguageProgress,
