@@ -1,17 +1,15 @@
 import { invoke } from "./runtime.js";
-import { beginPageSync, completePageSync, failPageSync } from "./page-sync.js";
 import {
   resetGlossaryPermanentDeletion,
   resetGlossaryRename,
   state,
 } from "./state.js";
-import { loadTeamGlossaries } from "./glossary-discovery-flow.js";
 import {
   canManageGlossaries,
   canPermanentlyDeleteGlossaries,
   selectedTeam,
 } from "./glossary-shared.js";
-import { clearNoticeBadge, showNoticeBadge } from "./status-feedback.js";
+import { showNoticeBadge } from "./status-feedback.js";
 import {
   ensureGlossaryNotTombstoned,
   permanentlyDeleteRemoteGlossaryRepoForTeam,
@@ -26,16 +24,14 @@ import { openTopLevelRenameModal } from "./resource-top-level-controller.js";
 import {
   areResourcePageWritesDisabled,
   areResourcePageWriteSubmissionsDisabled,
-  submitResourcePageWrite,
 } from "./resource-page-controller.js";
 import {
-  applyGlossariesQuerySnapshotToState,
-  invalidateGlossariesQueryAfterMutation,
-  patchGlossaryQueryData,
+  createGlossaryPermanentDeleteMutationOptions,
+  createGlossaryRenameMutationOptions,
+  createGlossaryRestoreMutationOptions,
+  createGlossarySoftDeleteMutationOptions,
 } from "./glossary-query.js";
-import { glossaryKeys, queryClient } from "./query-client.js";
-import { classifySyncError } from "./sync-error.js";
-import { handleSyncFailure } from "./sync-recovery.js";
+import { createMutationObserver } from "./query-client.js";
 import {
   cancelEntityModal,
   entityConfirmationMatches,
@@ -46,54 +42,11 @@ import {
 import { persistGlossariesForTeam } from "./glossary-top-level-state.js";
 import {
   anyGlossaryMutatingWriteIsActive,
-  glossaryLifecycleIntentKey,
-  glossaryTitleIntentKey,
-  requestGlossaryWriteIntent,
-  teamMetadataWriteScope,
 } from "./glossary-write-coordinator.js";
 import { updateDefaultGlossaryAfterDeletion } from "./glossary-default-flow.js";
 
 function glossaryById(glossaryId) {
   return state.glossaries.find((glossary) => glossary.id === glossaryId) ?? null;
-}
-
-function patchGlossaryInVisibleState(glossaryId, patch) {
-  state.glossaries = state.glossaries.map((glossary) =>
-    glossary?.id === glossaryId
-      ? {
-          ...glossary,
-          ...patch,
-        }
-      : glossary,
-  );
-}
-
-function applyGlossaryPatchToQueryAndState(team, glossaryId, patch) {
-  const teamId = team?.id ?? state.selectedTeamId;
-  const queryKey = glossaryKeys.byTeam(teamId);
-  const currentQueryData = queryClient.getQueryData(queryKey);
-  const nextQueryData = patchGlossaryQueryData(currentQueryData, glossaryId, patch);
-
-  if (nextQueryData && nextQueryData !== currentQueryData) {
-    queryClient.setQueryData(queryKey, nextQueryData);
-    applyGlossariesQuerySnapshotToState(nextQueryData, {
-      teamId,
-      isFetching: state.glossariesPage?.isRefreshing === true,
-    });
-    return;
-  }
-
-  patchGlossaryInVisibleState(glossaryId, patch);
-}
-
-const glossaryPageSyncController = {
-  begin: beginPageSync,
-  complete: completePageSync,
-  fail: failPageSync,
-};
-
-function setGlossariesPageProgress(render, text) {
-  showNoticeBadge(text, render, null);
 }
 
 function lifecycleActionBlockedMessage(team, { actionLabel, requireOwner = false } = {}) {
@@ -206,11 +159,6 @@ async function commitGlossaryMutationStrict(team, mutation) {
   });
 }
 
-async function reloadGlossariesAfterWrite(render, team) {
-  await loadTeamGlossaries(render, team?.id, { preserveVisibleData: false });
-  return state.glossaries;
-}
-
 function glossaryWriteBlockedMessage() {
   return "Wait for the current glossary refresh or write to finish.";
 }
@@ -309,59 +257,30 @@ export async function submitGlossaryRename(render) {
     return;
   }
 
-  requestGlossaryWriteIntent({
-    key: glossaryTitleIntentKey(glossary.id),
-    scope: teamMetadataWriteScope(team),
-    teamId: team.id,
-    glossaryId: glossary.id,
-    type: "glossaryTitle",
-    value: {
-      title: nextTitle,
-    },
-    previousValue: {
-      title: glossary.title,
-    },
-  }, {
-    applyOptimistic: (intent) => {
-      applyGlossaryPatchToQueryAndState(team, glossary.id, {
-        title: intent.value.title,
-        pendingMutation: "rename",
-      });
-      persistGlossariesForTeam(team);
-      resetGlossaryRename();
-      render();
-    },
-    run: async (intent) => commitGlossaryMutationStrict(team, {
-      type: "rename",
-      resourceId: glossary.id,
-      glossaryId: glossary.id,
-      title: intent.value.title,
-      previousTitle: glossary.title,
-    }),
-    onSuccess: (intent) => {
-      applyGlossaryPatchToQueryAndState(team, glossary.id, {
-        title: intent.value.title,
-        pendingMutation: null,
-        localLifecycleIntent: "rename",
-      });
-      persistGlossariesForTeam(team);
-      void invalidateGlossariesQueryAfterMutation(team, {
-        teamId: team.id,
-        render,
-        refetchIfInactive: false,
-      });
-    },
-    onError: (error) => {
-      state.glossaryRename = {
-        isOpen: true,
-        glossaryId: glossary.id,
-        glossaryName: nextTitle,
-        status: "idle",
-        error: error?.message ?? String(error),
-      };
-      render();
-    },
-  });
+  try {
+    await createMutationObserver(createGlossaryRenameMutationOptions({
+      team,
+      glossary,
+      nextTitle,
+      commitMutation: commitGlossaryMutationStrict,
+      onOptimisticApplied: () => {
+        resetGlossaryRename();
+      },
+      onSuccessApplied: () => {
+        persistGlossariesForTeam(team);
+      },
+      onErrorApplied: (error) => {
+        state.glossaryRename = {
+          isOpen: true,
+          glossaryId: glossary.id,
+          glossaryName: nextTitle,
+          status: "idle",
+          error: error?.message ?? String(error),
+        };
+      },
+      render,
+    })).mutate();
+  } catch {}
 }
 
 export async function deleteGlossary(render, glossaryId) {
@@ -390,53 +309,21 @@ export async function deleteGlossary(render, glossaryId) {
     return;
   }
 
-  requestGlossaryWriteIntent({
-    key: glossaryLifecycleIntentKey(glossary.id),
-    scope: teamMetadataWriteScope(team),
-    teamId: team.id,
-    glossaryId: glossary.id,
-    type: "glossaryLifecycle",
-    value: {
-      lifecycleState: "deleted",
-      mutationType: "softDelete",
-    },
-    previousValue: {
-      lifecycleState: "active",
-    },
-  }, {
-    applyOptimistic: () => {
-      applyGlossaryPatchToQueryAndState(team, glossary.id, {
-        lifecycleState: "deleted",
-        pendingMutation: "softDelete",
-      });
-      state.showDeletedGlossaries = true;
-      persistGlossariesForTeam(team);
-      render();
-    },
-    run: async () => commitGlossaryMutationStrict(team, {
-      type: "softDelete",
-      resourceId: glossary.id,
-      glossaryId: glossary.id,
-    }),
-    onSuccess: () => {
-      applyGlossaryPatchToQueryAndState(team, glossary.id, {
-        lifecycleState: "deleted",
-        pendingMutation: null,
-        localLifecycleIntent: "softDelete",
-      });
-      updateDefaultGlossaryAfterDeletion(team, glossary.id);
-      persistGlossariesForTeam(team);
-      void invalidateGlossariesQueryAfterMutation(team, {
-        teamId: team.id,
-        render,
-        refetchIfInactive: false,
-      });
-    },
-    onError: (error) => {
-      showNoticeBadge(error?.message ?? String(error), render);
-      render();
-    },
-  });
+  try {
+    await createMutationObserver(createGlossarySoftDeleteMutationOptions({
+      team,
+      glossary,
+      commitMutation: commitGlossaryMutationStrict,
+      onOptimisticApplied: () => {
+        state.showDeletedGlossaries = true;
+      },
+      onSuccessApplied: () => {
+        updateDefaultGlossaryAfterDeletion(team, glossary.id);
+        persistGlossariesForTeam(team);
+      },
+      render,
+    })).mutate();
+  } catch {}
 }
 
 export async function restoreGlossary(render, glossaryId) {
@@ -465,51 +352,17 @@ export async function restoreGlossary(render, glossaryId) {
     return;
   }
 
-  requestGlossaryWriteIntent({
-    key: glossaryLifecycleIntentKey(glossary.id),
-    scope: teamMetadataWriteScope(team),
-    teamId: team.id,
-    glossaryId: glossary.id,
-    type: "glossaryLifecycle",
-    value: {
-      lifecycleState: "active",
-      mutationType: "restore",
-    },
-    previousValue: {
-      lifecycleState: "deleted",
-    },
-  }, {
-    applyOptimistic: () => {
-      applyGlossaryPatchToQueryAndState(team, glossary.id, {
-        lifecycleState: "active",
-        pendingMutation: "restore",
-      });
-      persistGlossariesForTeam(team);
-      render();
-    },
-    run: async () => commitGlossaryMutationStrict(team, {
-      type: "restore",
-      resourceId: glossary.id,
-      glossaryId: glossary.id,
-    }),
-    onSuccess: () => {
-      applyGlossaryPatchToQueryAndState(team, glossary.id, {
-        lifecycleState: "active",
-        pendingMutation: null,
-        localLifecycleIntent: "restore",
-      });
-      persistGlossariesForTeam(team);
-      void invalidateGlossariesQueryAfterMutation(team, {
-        teamId: team.id,
-        render,
-        refetchIfInactive: false,
-      });
-    },
-    onError: (error) => {
-      showNoticeBadge(error?.message ?? String(error), render);
-      render();
-    },
-  });
+  try {
+    await createMutationObserver(createGlossaryRestoreMutationOptions({
+      team,
+      glossary,
+      commitMutation: commitGlossaryMutationStrict,
+      onSuccessApplied: () => {
+        persistGlossariesForTeam(team);
+      },
+      render,
+    })).mutate();
+  } catch {}
 }
 
 export function openGlossaryPermanentDeletion(render, glossaryId) {
@@ -600,57 +453,45 @@ export async function confirmGlossaryPermanentDeletion(render) {
   state.glossaryPermanentDeletion.error = "";
   render();
 
-  await submitResourcePageWrite({
-    pageState: state.glossariesPage,
-    syncController: glossaryPageSyncController,
-    setProgress: (text) => setGlossariesPageProgress(render, text),
-    clearProgress: clearNoticeBadge,
-    render,
-    progressLabels: {
-      submitting: "Deleting glossary permanently...",
-      refreshing: "Refreshing glossary list...",
-    },
-    onBlocked: async () => {
-      state.glossaryPermanentDeletion.status = "idle";
-      state.glossaryPermanentDeletion.error = glossaryWriteBlockedMessage();
-      render();
-    },
-    runMutation: async () => {
-      await upsertGlossaryMetadataRecord(team, glossaryMetadataRecord(glossary, {
-        lifecycleState: "softDeleted",
-        remoteState: "deleted",
-        recordState: "tombstone",
-        deletedAt: new Date().toISOString(),
-      }), { requirePushSuccess: true });
-      await invoke("purge_local_gtms_glossary_repo", {
-        input: {
-          installationId: team.installationId,
-          glossaryId: glossary.id,
-          repoName: glossary.repoName,
-        },
-      });
-      await permanentlyDeleteRemoteGlossaryRepoForTeam(team, glossary.repoName);
-    },
-    refreshOptions: {
-      loadData: async () => reloadGlossariesAfterWrite(render, team),
-    },
-    onSuccess: async () => {
-      resetGlossaryPermanentDeletion();
-      if (state.selectedGlossaryId === glossary.id) {
-        state.selectedGlossaryId = null;
-      }
-      updateDefaultGlossaryAfterDeletion(team, glossary.id);
-    },
-    onError: async (error) => {
-      if (await handleSyncFailure(classifySyncError(error), {
-        render,
-        teamId: team?.id ?? null,
-        currentResource: true,
-      })) {
-        return;
-      }
-      state.glossaryPermanentDeletion.status = "idle";
-      state.glossaryPermanentDeletion.error = error?.message ?? String(error);
-    },
-  });
+  const deletionState = { ...state.glossaryPermanentDeletion };
+  try {
+    await createMutationObserver(createGlossaryPermanentDeleteMutationOptions({
+      team,
+      glossary,
+      commitMutation: async () => {
+        await upsertGlossaryMetadataRecord(team, glossaryMetadataRecord(glossary, {
+          lifecycleState: "softDeleted",
+          remoteState: "deleted",
+          recordState: "tombstone",
+          deletedAt: new Date().toISOString(),
+        }), { requirePushSuccess: true });
+        await invoke("purge_local_gtms_glossary_repo", {
+          input: {
+            installationId: team.installationId,
+            glossaryId: glossary.id,
+            repoName: glossary.repoName,
+          },
+        });
+        await permanentlyDeleteRemoteGlossaryRepoForTeam(team, glossary.repoName);
+      },
+      onOptimisticApplied: () => {
+        resetGlossaryPermanentDeletion();
+      },
+      onSuccessApplied: () => {
+        if (state.selectedGlossaryId === glossary.id) {
+          state.selectedGlossaryId = null;
+        }
+        updateDefaultGlossaryAfterDeletion(team, glossary.id);
+        persistGlossariesForTeam(team);
+      },
+      onErrorApplied: (error) => {
+        state.glossaryPermanentDeletion = {
+          ...deletionState,
+          status: "idle",
+          error: error?.message ?? String(error),
+        };
+      },
+      render,
+    })).mutate();
+  } catch {}
 }

@@ -33,12 +33,14 @@ export const state = {
   selectedTeamId: null,
   selectedProjectId: null,
   selectedGlossaryId: null,
+  selectedQaListId: null,
   selectedChapterId: null,
   teams: [],
   deletedTeams: [],
   projects: [],
   deletedProjects: [],
   glossaries: [],
+  qaLists: [],
   users: [],
   auth: {
     status: "booting",
@@ -57,15 +59,18 @@ export const state = {
   },
   projectDiscovery: createProjectDiscoveryState(),
   glossaryDiscovery: createGlossaryDiscoveryState(),
+  qaListDiscovery: createQaListDiscoveryState(),
   teamsPage: createResourcePageState(),
   projectsPage: createResourcePageState(),
   membersPage: createResourcePageState(),
   projectsSearch: createProjectsSearchState(),
   glossariesPage: createResourcePageState(),
+  qaListsPage: createResourcePageState(),
   projectImport: createProjectImportState(),
   projectExport: createProjectExportState(),
   projectAddTranslation: createProjectAddTranslationState(),
   glossaryImport: createGlossaryImportState(),
+  qaListImport: createQaListImportState(),
   projectRepoSyncByProjectId: {},
   projectRepoConflictRecovery: createProjectRepoConflictRecoveryState(),
   glossaryRepoSyncByRepoName: {},
@@ -73,6 +78,7 @@ export const state = {
   aiSettings: createAiSettingsState(),
   targetLanguageManager: createTargetLanguageManagerState(),
   glossaryEditor: createGlossaryEditorState(),
+  qaListEditor: createQaListEditorState(),
   userDiscovery: {
     status: "idle",
     error: "",
@@ -98,13 +104,18 @@ export const state = {
   chapterRename: createChapterRenameState(),
   chapterPermanentDeletion: createChapterPermanentDeletionState(),
   glossaryCreation: createGlossaryCreationState(),
+  qaListCreation: createQaListCreationState(),
   glossaryRename: createGlossaryRenameState(),
+  qaListRename: createQaListRenameState(),
   glossaryPermanentDeletion: createGlossaryPermanentDeletionState(),
+  qaListPermanentDeletion: createQaListPermanentDeletionState(),
   glossaryTermEditor: createGlossaryTermEditorState(),
+  qaTermEditor: createQaTermEditorState(),
   aiReviewMissingKeyModal: createAiReviewMissingKeyModalState(),
   showDeletedProjects: false,
   showDeletedTeams: false,
   showDeletedGlossaries: false,
+  showDeletedQaLists: false,
 };
 
 export function hydratePersistentAppState() {
@@ -336,6 +347,14 @@ export function createProjectAddTranslationState() {
 }
 
 export function createGlossaryImportState() {
+  return {
+    isOpen: false,
+    status: "idle",
+    error: "",
+  };
+}
+
+export function createQaListImportState() {
   return {
     isOpen: false,
     status: "idle",
@@ -757,6 +776,21 @@ export function createGlossaryEditorState() {
   };
 }
 
+export function createQaListEditorState() {
+  return {
+    status: "idle",
+    error: "",
+    navigationSource: null,
+    qaListId: null,
+    title: "",
+    lifecycleState: "active",
+    language: null,
+    termCount: 0,
+    searchQuery: "",
+    terms: [],
+  };
+}
+
 export function createTargetLanguageManagerState() {
   return createEntityModalState({
     chapterId: null,
@@ -776,11 +810,26 @@ export function createGlossaryDiscoveryState() {
   };
 }
 
+export function createQaListDiscoveryState() {
+  return {
+    status: "idle",
+    error: "",
+    recoveryMessage: "",
+  };
+}
+
 export function createGlossaryCreationState() {
   return createEntityModalState({
     title: "",
     sourceLanguageCode: "",
     targetLanguageCode: "",
+  });
+}
+
+export function createQaListCreationState() {
+  return createEntityModalState({
+    title: "",
+    languageCode: "",
   });
 }
 
@@ -791,10 +840,25 @@ export function createGlossaryRenameState() {
   });
 }
 
+export function createQaListRenameState() {
+  return createEntityModalState({
+    qaListId: null,
+    qaListName: "",
+  });
+}
+
 export function createGlossaryPermanentDeletionState() {
   return createEntityModalState({
     glossaryId: null,
     glossaryName: "",
+    confirmationText: "",
+  });
+}
+
+export function createQaListPermanentDeletionState() {
+  return createEntityModalState({
+    qaListId: null,
+    qaListName: "",
     confirmationText: "",
   });
 }
@@ -886,6 +950,15 @@ export function createGlossaryTermEditorState() {
   });
 }
 
+export function createQaTermEditorState() {
+  return createEntityModalState({
+    qaListId: null,
+    termId: null,
+    text: "",
+    notes: "",
+  });
+}
+
 export function resetInviteUser() {
   state.inviteUser = createInviteUserState();
 }
@@ -950,20 +1023,40 @@ export function resetGlossaryTermEditor() {
   state.glossaryTermEditor = createGlossaryTermEditorState();
 }
 
+export function resetQaTermEditor() {
+  state.qaTermEditor = createQaTermEditorState();
+}
+
 export function resetGlossaryCreation() {
   state.glossaryCreation = createGlossaryCreationState();
+}
+
+export function resetQaListCreation() {
+  state.qaListCreation = createQaListCreationState();
 }
 
 export function resetGlossaryImport() {
   state.glossaryImport = createGlossaryImportState();
 }
 
+export function resetQaListImport() {
+  state.qaListImport = createQaListImportState();
+}
+
 export function resetGlossaryRename() {
   state.glossaryRename = createGlossaryRenameState();
 }
 
+export function resetQaListRename() {
+  state.qaListRename = createQaListRenameState();
+}
+
 export function resetGlossaryPermanentDeletion() {
   state.glossaryPermanentDeletion = createGlossaryPermanentDeletionState();
+}
+
+export function resetQaListPermanentDeletion() {
+  state.qaListPermanentDeletion = createQaListPermanentDeletionState();
 }
 
 export function resetSessionState() {
@@ -988,19 +1081,24 @@ export function resetSessionState() {
   state.selectedProjectId = null;
   state.glossaries = [];
   state.selectedGlossaryId = null;
+  state.qaLists = [];
+  state.selectedQaListId = null;
   state.users = [];
   state.orgDiscovery = { status: "idle", error: "" };
   state.projectDiscovery = createProjectDiscoveryState();
   state.glossaryDiscovery = createGlossaryDiscoveryState();
+  state.qaListDiscovery = createQaListDiscoveryState();
   state.teamsPage = createResourcePageState();
   state.projectsPage = createResourcePageState();
   state.membersPage = createResourcePageState();
   state.glossariesPage = createResourcePageState();
+  state.qaListsPage = createResourcePageState();
   state.projectsSearch = createProjectsSearchState();
   state.projectImport = createProjectImportState();
   state.projectExport = createProjectExportState();
   state.projectAddTranslation = createProjectAddTranslationState();
   state.glossaryImport = createGlossaryImportState();
+  state.qaListImport = createQaListImportState();
   state.projectRepoSyncByProjectId = {};
   state.projectRepoConflictRecovery = createProjectRepoConflictRecoveryState();
   state.editorChapter = createEditorChapterState();
@@ -1008,6 +1106,7 @@ export function resetSessionState() {
   state.selectedChapterId = null;
   state.targetLanguageManager = createTargetLanguageManagerState();
   state.glossaryEditor = createGlossaryEditorState();
+  state.qaListEditor = createQaListEditorState();
   state.userDiscovery = { status: "idle", error: "" };
   state.teamSyncVersion = 0;
   state.projectSyncVersion = 0;
@@ -1039,10 +1138,16 @@ export function resetSessionState() {
   resetGlossaryRename();
   resetGlossaryPermanentDeletion();
   resetGlossaryTermEditor();
+  resetQaListCreation();
+  resetQaListImport();
+  resetQaListRename();
+  resetQaListPermanentDeletion();
+  resetQaTermEditor();
   state.aiReviewMissingKeyModal = createAiReviewMissingKeyModalState();
   state.showDeletedProjects = false;
   state.showDeletedTeams = false;
   state.showDeletedGlossaries = false;
+  state.showDeletedQaLists = false;
   state.expandedProjects = new Set();
   state.expandedDeletedFiles = new Set();
 }

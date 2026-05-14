@@ -28,6 +28,7 @@ globalThis.window = {
 };
 
 const { queryClient } = await import("./query-client.js");
+const { resetGlossariesQueryObserver } = await import("./glossary-query.js");
 const {
   loadTeamGlossaries,
   primeGlossariesLoadingState,
@@ -68,6 +69,7 @@ function setupGlossaryLoadState() {
 }
 
 test.afterEach(() => {
+  resetGlossariesQueryObserver();
   invokeHandler = async () => null;
   queryClient.clear();
   resetSessionState();

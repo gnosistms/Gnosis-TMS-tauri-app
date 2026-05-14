@@ -19,9 +19,10 @@ pub(crate) use orgs::{
     update_organization_description_for_installation, update_organization_name_for_installation,
 };
 pub(crate) use repos::{
-    create_gnosis_glossary_repo, create_gnosis_project_repo, ensure_gnosis_repo_properties_schema,
-    list_gnosis_glossaries_for_installation, list_gnosis_projects_for_installation,
+    create_gnosis_glossary_repo, create_gnosis_project_repo, create_gnosis_qa_list_repo,
+    ensure_gnosis_repo_properties_schema, list_gnosis_glossaries_for_installation,
+    list_gnosis_projects_for_installation, list_gnosis_qa_lists_for_installation,
     mark_gnosis_project_repo_deleted, permanently_delete_gnosis_glossary_repo,
-    permanently_delete_gnosis_project_repo, rename_gnosis_project_repo,
-    restore_gnosis_project_repo,
+    permanently_delete_gnosis_project_repo, permanently_delete_gnosis_qa_list_repo,
+    rename_gnosis_project_repo, restore_gnosis_project_repo,
 };

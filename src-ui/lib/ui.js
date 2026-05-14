@@ -285,9 +285,15 @@ const sectionNavConfig = {
     { label: "QA", target: "qa" },
     { label: "Projects", target: "projects" },
   ],
+  qaListEditor: [
+    { label: "QA Lists", target: "qa", isBack: true },
+    { label: "Glossaries", target: "glossaries" },
+    { label: "Projects", target: "projects" },
+  ],
   translate: [
     { label: "Projects", target: "projects", isBack: true },
     { label: "Glossaries", target: "glossaries" },
+    { label: "QA", target: "qa" },
   ],
 };
 

@@ -745,6 +745,12 @@
   gap: 18px;
 }
 
+.qa-term-modal__fields {
+  display: grid;
+  grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr);
+  gap: 12px;
+}
+
 .term-lane,
 .glossary-term-modal__details {
   display: grid;
@@ -1533,6 +1539,7 @@
   }
 
   .glossary-term-modal__lanes,
+  .qa-term-modal__fields,
   .glossary-term-modal__details-grid {
     grid-template-columns: minmax(0, 1fr);
   }

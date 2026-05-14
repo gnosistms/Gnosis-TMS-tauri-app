@@ -29,6 +29,13 @@ pub(crate) fn local_glossary_repo_root(
     installation_data_root(app, installation_id, "glossaries", "glossary repo")
 }
 
+pub(crate) fn local_qa_list_repo_root(
+    app: &AppHandle,
+    installation_id: i64,
+) -> Result<PathBuf, String> {
+    installation_data_root(app, installation_id, "qa-lists", "QA list repo")
+}
+
 pub(crate) fn local_team_metadata_repo_path(
     app: &AppHandle,
     installation_id: i64,

@@ -46,6 +46,8 @@ test("shared authenticated navigation places QA after glossary navigation", () =
     "start",
   ]);
   assert.deepEqual(navTargets(buildSectionNav("glossaryEditor")), ["glossaries", "qa", "projects"]);
+  assert.deepEqual(navTargets(buildSectionNav("qaListEditor")), ["qa", "glossaries", "projects"]);
+  assert.deepEqual(navTargets(buildSectionNav("translate")), ["projects", "glossaries", "qa"]);
   assert.deepEqual(navTargets(buildSectionNav("qa", { includeAiSettings: true })), [
     "teams",
     "projects",
@@ -79,5 +81,7 @@ test("QA screen is registered as a top-level renderer", () => {
 
   assert.match(source, /import \{ renderQaScreen \} from "\.\/screens\/qa\.js";/);
   assert.match(source, /qa:\s*\(\) => renderQaScreen\(state\)/);
-  assert.match(source, /qa:\s*"QA - Gnosis TMS"/);
+  assert.match(source, /qa:\s*"QA Lists - Gnosis TMS"/);
+  assert.match(source, /qaListEditor:\s*\(\) => renderQaListEditorScreen\(state\)/);
+  assert.match(source, /qaListEditor:\s*"QA List Editor - Gnosis TMS"/);
 });

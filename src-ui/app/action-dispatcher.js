@@ -7,6 +7,7 @@ import { isOfflineBlockedAction } from "./offline-policy.js";
 import { showOfflineUnsupportedMessage } from "./offline-ui.js";
 import { createProjectActions } from "./actions/project-actions.js";
 import { createGlossaryActions } from "./actions/glossary-actions.js";
+import { createQaActions } from "./actions/qa-actions.js";
 import { createTeamActions } from "./actions/team-actions.js";
 import { createTranslateActions } from "./actions/translate-actions.js";
 import { createUserActions } from "./user-actions.js";
@@ -33,6 +34,7 @@ export function createActionDispatcher(render) {
     createTeamActions(render),
     createProjectActions(render),
     createGlossaryActions(render),
+    createQaActions(render),
     createUserActions(render),
     createTranslateActions(render),
     createNavigationActions(render),

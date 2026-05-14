@@ -20,6 +20,11 @@ export const glossaryKeys = {
   byTeam: (teamId) => ["glossaries", teamId ?? null],
 };
 
+export const qaListKeys = {
+  all: ["qaLists"],
+  byTeam: (teamId) => ["qaLists", teamId ?? null],
+};
+
 export const projectKeys = {
   all: ["projects"],
   byTeam: (teamId) => ["projects", teamId ?? null],

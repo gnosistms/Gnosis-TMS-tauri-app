@@ -18,11 +18,19 @@ export function shouldShowGlossaryCreationControls(team) {
   return canCreateRepoResources(team);
 }
 
+export function shouldShowQaListCreationControls(team) {
+  return canCreateRepoResources(team);
+}
+
 export function shouldShowDeletedProjectPermanentDelete(team) {
   return canPermanentlyDeleteRepoResources(team);
 }
 
 export function shouldShowDeletedGlossaryPermanentDelete(team) {
+  return canPermanentlyDeleteRepoResources(team);
+}
+
+export function shouldShowDeletedQaListPermanentDelete(team) {
   return canPermanentlyDeleteRepoResources(team);
 }
 

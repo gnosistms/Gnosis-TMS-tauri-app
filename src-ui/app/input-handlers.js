@@ -11,6 +11,7 @@ import { syncEditorVirtualizationRowLayout } from "./editor-virtualization.js";
 import { applyEditorRowFieldInput } from "./editor-row-input.js";
 import { syncActiveEditorInlineStyleButtons } from "./editor-inline-markup-flow.js";
 import { syncGlossaryTermInlineStyleButtons } from "./glossary-term-inline-markup-flow.js";
+import { syncQaTermInlineStyleButtons } from "./qa-term-inline-markup-flow.js";
 import {
   updateProjectCreationName,
   updateProjectPermanentDeletionConfirmation,
@@ -45,6 +46,13 @@ import {
   updateGlossaryTermSearchQuery,
   updateGlossaryTermVariantNote,
 } from "./glossary-flow.js";
+import {
+  updateQaListCreationField,
+  updateQaListPermanentDeletionConfirmation,
+  updateQaListRenameName,
+  updateQaTermDraftField,
+  updateQaTermSearchQuery,
+} from "./qa-list-flow.js";
 import {
   MANAGE_CHAPTER_LANGUAGES_OPTION_VALUE,
   openTargetLanguageManager,
@@ -293,6 +301,88 @@ function handleGlossaryTermFootnoteInput(event) {
   }
 
   updateGlossaryTermDraftField("footnote", input.value);
+  return true;
+}
+
+function handleQaListTitleInput(event) {
+  const input = event.target.closest("[data-qa-list-title-input]");
+  if (!input) {
+    return false;
+  }
+
+  updateQaListCreationField("title", input.value);
+  return true;
+}
+
+function handleQaListLanguageInput(event) {
+  if (event.type !== "change") {
+    return false;
+  }
+
+  const input = event.target.closest("[data-qa-list-language-select]");
+  if (!input) {
+    return false;
+  }
+
+  updateQaListCreationField("languageCode", input.value);
+  return true;
+}
+
+function handleQaListRenameInput(event) {
+  const input = event.target.closest("[data-qa-list-rename-input]");
+  if (!input) {
+    return false;
+  }
+
+  updateQaListRenameName(input.value);
+  return true;
+}
+
+function handleQaListPermanentDeleteInput(event) {
+  const input = event.target.closest("[data-qa-list-permanent-delete-input]");
+  if (!input) {
+    return false;
+  }
+
+  updateQaListPermanentDeletionConfirmation(input.value);
+  const deleteButton = document.querySelector("[data-qa-list-permanent-delete-button]");
+  if (deleteButton) {
+    deleteButton.disabled =
+      normalizedConfirmationValue(input.value) !== normalizedConfirmationValue(state.qaListPermanentDeletion.qaListName);
+  }
+  return true;
+}
+
+function handleQaTermSearchInput(event, render) {
+  const input = event.target.closest("[data-qa-term-search-input]");
+  if (!input) {
+    return false;
+  }
+
+  updateQaTermSearchQuery(render, input.value);
+  return true;
+}
+
+function handleQaTermTextInput(event) {
+  const input = event.target.closest("[data-qa-term-text-input]");
+  if (!input) {
+    return false;
+  }
+
+  updateQaTermDraftField("text", input.value);
+  syncAutoSizeTextarea(input, { minHeight: 44, maxHeight: 132 });
+  syncQaTermInlineStyleButtons();
+  return true;
+}
+
+function handleQaTermNotesInput(event) {
+  const input = event.target.closest("[data-qa-term-notes-input]");
+  if (!input) {
+    return false;
+  }
+
+  updateQaTermDraftField("notes", input.value);
+  syncAutoSizeTextarea(input, { minHeight: 44, maxHeight: 132 });
   return true;
 }
 
@@ -711,6 +801,13 @@ const inputHandlers = [
   handleGlossaryTermVariantNoteInput,
   handleGlossaryTermNotesInput,
   handleGlossaryTermFootnoteInput,
+  handleQaListTitleInput,
+  handleQaListLanguageInput,
+  handleQaListRenameInput,
+  handleQaListPermanentDeleteInput,
+  handleQaTermSearchInput,
+  handleQaTermTextInput,
+  handleQaTermNotesInput,
   handleEditorSourceLanguageInput,
   handleEditorTargetLanguageInput,
   handleEditorFontSizeInput,

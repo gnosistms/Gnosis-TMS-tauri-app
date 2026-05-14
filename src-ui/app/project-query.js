@@ -18,6 +18,12 @@ import { teamCacheKey } from "./team-cache.js";
 
 let activeProjectsQuerySubscription = null;
 
+export function resetProjectsQueryObserver() {
+  activeProjectsQuerySubscription?.unsubscribe?.();
+  activeProjectsQuerySubscription?.observer?.destroy?.();
+  activeProjectsQuerySubscription = null;
+}
+
 function cacheKeyForTeamId(teamId, cacheKey) {
   if (typeof cacheKey === "string" && cacheKey.trim()) {
     return cacheKey.trim();
@@ -547,6 +553,7 @@ function createProjectLifecycleMutationOptions({
   settledData = {},
   commitMutation,
   onOptimisticApplied,
+  onSuccessApplied,
   render,
   reconcileExpandedDeletedFiles,
 } = {}) {
@@ -614,6 +621,7 @@ function createProjectLifecycleMutationOptions({
           reconcileExpandedDeletedFiles,
         });
       }
+      onSuccessApplied?.(settledQueryData);
     },
     onSettled: async () => {
       await invalidateProjectsQueryAfterMutation(team, {
@@ -632,6 +640,7 @@ export function createProjectRenameMutationOptions({
   nextTitle,
   commitMutation,
   onOptimisticApplied,
+  onSuccessApplied,
   render,
   reconcileExpandedDeletedFiles,
 } = {}) {
@@ -650,6 +659,7 @@ export function createProjectRenameMutationOptions({
     },
     commitMutation,
     onOptimisticApplied,
+    onSuccessApplied,
     render,
     reconcileExpandedDeletedFiles,
   });

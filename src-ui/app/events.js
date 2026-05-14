@@ -5,6 +5,7 @@ import { checkForAppUpdate } from "./updater-flow.js";
 import { listen } from "./runtime.js";
 import { primeTranslateInteractionAnchor, primeTranslateMainScrollTop } from "./scroll-state.js";
 import { syncGlossaryTermInlineStyleButtons } from "./glossary-term-inline-markup-flow.js";
+import { syncQaTermInlineStyleButtons } from "./qa-term-inline-markup-flow.js";
 import { registerKeyboardShortcutEvents } from "./events/keyboard-shortcuts.js";
 import { registerNativeDropEvents } from "./events/native-drops.js";
 import {
@@ -78,23 +79,32 @@ export function registerAppEvents(render) {
       return;
     }
 
+    if (event.target instanceof Element && event.target.closest("[data-qa-term-inline-style-button]")) {
+      event.preventDefault();
+      syncQaTermInlineStyleButtons();
+      return;
+    }
+
     focusEditorFieldFromGlossaryMark(event);
   });
 
   document.addEventListener("focusin", () => {
     window.requestAnimationFrame(() => {
       syncGlossaryTermInlineStyleButtons();
+      syncQaTermInlineStyleButtons();
     });
   });
 
   document.addEventListener("focusout", () => {
     window.requestAnimationFrame(() => {
       syncGlossaryTermInlineStyleButtons();
+      syncQaTermInlineStyleButtons();
     });
   });
 
   document.addEventListener("selectionchange", () => {
     syncGlossaryTermInlineStyleButtons();
+    syncQaTermInlineStyleButtons();
   });
 
 

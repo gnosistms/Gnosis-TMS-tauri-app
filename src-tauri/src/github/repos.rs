@@ -6,9 +6,9 @@ use crate::broker::{
 use super::{
     app_auth::github_client,
     types::{
-        CreateGithubGlossaryRepoInput, CreateGithubProjectRepoInput, DeleteGithubGlossaryRepoInput,
-        DeleteGithubProjectRepoInput, GithubGlossaryRepo, GithubProjectRepo,
-        RenameGithubProjectRepoInput,
+        CreateGithubGlossaryRepoInput, CreateGithubProjectRepoInput, CreateGithubQaListRepoInput,
+        DeleteGithubGlossaryRepoInput, DeleteGithubProjectRepoInput, DeleteGithubQaListRepoInput,
+        GithubGlossaryRepo, GithubProjectRepo, GithubQaListRepo, RenameGithubProjectRepoInput,
     },
 };
 
@@ -66,6 +66,23 @@ pub(crate) async fn list_gnosis_glossaries_for_installation(
 }
 
 #[tauri::command]
+pub(crate) async fn list_gnosis_qa_lists_for_installation(
+    installation_id: i64,
+    session_token: String,
+) -> Result<Vec<GithubQaListRepo>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let client = github_client()?;
+        broker_get_json_with_session(
+            &client,
+            &format!("/api/github-app/installations/{installation_id}/gnosis-qa-lists"),
+            &session_token,
+        )
+    })
+    .await
+    .map_err(|error| format!("Could not run the QA list listing task: {error}"))?
+}
+
+#[tauri::command]
 pub(crate) async fn create_gnosis_project_repo(
     input: CreateGithubProjectRepoInput,
     session_token: String,
@@ -99,6 +116,24 @@ pub(crate) async fn create_gnosis_glossary_repo(
     })
     .await
     .map_err(|error| format!("Could not run the glossary creation task: {error}"))?
+}
+
+#[tauri::command]
+pub(crate) async fn create_gnosis_qa_list_repo(
+    input: CreateGithubQaListRepoInput,
+    session_token: String,
+) -> Result<GithubQaListRepo, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let client = github_client()?;
+        broker_post_json_with_session(
+            &client,
+            "/api/github-app/gnosis-qa-lists",
+            &serde_json::to_value(&input).map_err(|error| error.to_string())?,
+            &session_token,
+        )
+    })
+    .await
+    .map_err(|error| format!("Could not run the QA list creation task: {error}"))?
 }
 
 #[tauri::command]
@@ -189,4 +224,22 @@ pub(crate) async fn permanently_delete_gnosis_glossary_repo(
     })
     .await
     .map_err(|error| format!("Could not run the permanent glossary deletion task: {error}"))?
+}
+
+#[tauri::command]
+pub(crate) async fn permanently_delete_gnosis_qa_list_repo(
+    input: DeleteGithubQaListRepoInput,
+    session_token: String,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let client = github_client()?;
+        broker_delete_no_content_with_session(
+            &client,
+            "/api/github-app/gnosis-qa-lists",
+            &serde_json::to_value(&input).map_err(|error| error.to_string())?,
+            &session_token,
+        )
+    })
+    .await
+    .map_err(|error| format!("Could not run the permanent QA list deletion task: {error}"))?
 }

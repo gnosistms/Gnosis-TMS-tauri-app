@@ -4,6 +4,11 @@ import {
   openGlossaryEditor,
   primeGlossariesLoadingState,
 } from "../glossary-flow.js";
+import {
+  loadTeamQaLists,
+  openQaListEditor,
+  primeQaListsLoadingState,
+} from "../qa-list-flow.js";
 import { openAiKeyPage } from "../ai-settings-flow.js";
 import {
   loadTeamProjects,
@@ -72,6 +77,12 @@ export function createNavigationActions(render) {
       return true;
     }
 
+    const openQaListId = actionSuffix(action, "open-qa-list:");
+    if (openQaListId !== null) {
+      openQaListEditor(render, openQaListId);
+      return true;
+    }
+
     const openGlossaryId = actionSuffix(action, "open-glossary:");
     if (openGlossaryId !== null) {
       void openGlossaryEditor(render, openGlossaryId);
@@ -102,6 +113,19 @@ export function createNavigationActions(render) {
         await loadTeamGlossaries(render, state.selectedTeamId, {
           preserveVisibleData: state.glossaries.length > 0,
         });
+      })();
+      return true;
+    }
+
+    if (action === "open-qa-lists") {
+      state.screen = "qa";
+      primeQaListsLoadingState(state.selectedTeamId, {
+        preserveVisibleData: state.qaLists.length > 0,
+      });
+      render();
+      void (async () => {
+        await refreshSelectedTeamAccess(render);
+        await loadTeamQaLists(render, state.selectedTeamId);
       })();
       return true;
     }

@@ -17,6 +17,12 @@ import {
   primeSelectedGlossaryEditorLoadingState,
 } from "./glossary-flow.js";
 import {
+  loadSelectedQaListEditorData,
+  loadTeamQaLists,
+  primeQaListsLoadingState,
+  primeSelectedQaListEditorLoadingState,
+} from "./qa-list-flow.js";
+import {
   glossaryBackgroundSyncNeedsExitSync,
   maybeStartGlossaryBackgroundSync,
   startGlossaryBackgroundSyncSession,
@@ -129,6 +135,14 @@ export async function handleNavigation(navTarget, render) {
     if (navTarget === "glossaryEditor" && state.selectedGlossaryId) {
       primeSelectedGlossaryEditorLoadingState();
     }
+    if (navTarget === "qa" && state.selectedTeamId) {
+      primeQaListsLoadingState(state.selectedTeamId, {
+        preserveVisibleData: previousScreen === "qaListEditor" && state.qaLists.length > 0,
+      });
+    }
+    if (navTarget === "qaListEditor" && state.selectedQaListId) {
+      primeSelectedQaListEditorLoadingState();
+    }
 
     if (navTarget === "aiKey") {
       if (navigationLoadingToken !== null) {
@@ -184,6 +198,18 @@ export async function handleNavigation(navTarget, render) {
         }
       });
     }
+    if (navTarget === "qa" && state.selectedTeamId) {
+      void waitForNextPaint().then(async () => {
+        await refreshVisibleTeamAccess(render);
+        return loadTeamQaLists(render, state.selectedTeamId);
+      });
+    }
+    if (navTarget === "qaListEditor" && state.selectedQaListId) {
+      void waitForNextPaint().then(async () => {
+        await refreshVisibleTeamAccess(render);
+        await loadSelectedQaListEditorData(render);
+      });
+    }
     if (navTarget === "translate" && state.selectedChapterId) {
       void waitForNextPaint().then(async () => {
         await refreshVisibleTeamAccess(render);
@@ -231,6 +257,18 @@ export async function refreshCurrentScreen(render) {
     await refreshVisibleTeamAccess(render);
     await maybeStartGlossaryBackgroundSync(render, { force: true });
     await loadSelectedGlossaryEditorData(render, { preserveVisibleData: true });
+    return;
+  }
+
+  if (screen === "qa") {
+    await refreshVisibleTeamAccess(render);
+    await loadTeamQaLists(render, state.selectedTeamId);
+    return;
+  }
+
+  if (screen === "qaListEditor") {
+    await refreshVisibleTeamAccess(render);
+    await loadSelectedQaListEditorData(render);
     return;
   }
 

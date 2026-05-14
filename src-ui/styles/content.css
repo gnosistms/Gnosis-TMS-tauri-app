@@ -658,6 +658,10 @@
   grid-template-columns: minmax(260px, 1fr) minmax(260px, 1fr) 160px;
 }
 
+.term-grid--qa-list {
+  grid-template-columns: minmax(260px, 0.8fr) minmax(260px, 1.2fr) 160px;
+}
+
 .glossary-list--head,
 .term-grid--head {
   min-height: 78px;

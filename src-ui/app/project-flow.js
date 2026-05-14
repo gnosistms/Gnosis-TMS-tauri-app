@@ -3,6 +3,7 @@ import { requireBrokerSession } from "./auth-flow.js";
 import {
   loadStoredChapterPendingMutations,
   loadStoredProjectsForTeam,
+  saveStoredProjectsForTeam,
 } from "./project-cache.js";
 import { loadStoredGlossariesForTeam } from "./glossary-cache.js";
 import { buildProjectRepoFallbackConflictRecoveryInput } from "./project-repo-sync-shared.js";
@@ -49,23 +50,21 @@ import {
   submitResourcePageWrite,
 } from "./resource-page-controller.js";
 import {
+  createProjectRenameMutationOptions,
+  createProjectRestoreMutationOptions,
+  createProjectSoftDeleteMutationOptions,
   createProjectsQueryOptions,
   createProjectsQuerySnapshot,
   ensureProjectsQueryObserver,
-  invalidateProjectsQueryAfterMutation,
   seedProjectsQueryFromCache,
 } from "./project-query.js";
-import { projectKeys, queryClient } from "./query-client.js";
+import { createMutationObserver, projectKeys, queryClient } from "./query-client.js";
 import { teamCacheKey } from "./team-cache.js";
 import {
   applyProjectWriteIntentsToSnapshot,
   anyProjectMutatingWriteIsActive,
   anyProjectWriteIsActive,
   clearConfirmedProjectWriteIntents,
-  projectLifecycleIntentKey,
-  projectTitleIntentKey,
-  requestProjectWriteIntent,
-  teamMetadataWriteScope,
 } from "./project-write-coordinator.js";
 import {
   cancelEntityModal,
@@ -521,24 +520,14 @@ function areProjectLifecycleWritesDisabled() {
   return areResourcePageWriteSubmissionsDisabled(state.projectsPage);
 }
 
-function beginProjectLifecyclePageSync() {
-  const refreshWasActive = state.projectsPage?.isRefreshing === true;
-  if (!refreshWasActive) {
-    beginProjectsPageSync();
+function persistProjectQueryDataForTeam(selectedTeam, queryData) {
+  if (!selectedTeam || !queryData?.snapshot) {
+    return;
   }
-  return { refreshWasActive };
-}
-
-async function completeProjectLifecyclePageSync(render, syncContext) {
-  if (!syncContext?.refreshWasActive) {
-    await completeProjectsPageSync(render);
-  }
-}
-
-function failProjectLifecyclePageSync(syncContext) {
-  if (!syncContext?.refreshWasActive) {
-    failProjectsPageSync();
-  }
+  saveStoredProjectsForTeam(selectedTeam, {
+    projects: Array.isArray(queryData.snapshot.items) ? queryData.snapshot.items : [],
+    deletedProjects: Array.isArray(queryData.snapshot.deletedItems) ? queryData.snapshot.deletedItems : [],
+  });
 }
 
 export async function createProjectForSelectedTeam(render) {
@@ -619,34 +608,6 @@ export function updateProjectRenameName(projectName) {
 
 export function cancelProjectRename(render) {
   cancelEntityModal(resetProjectRename, render);
-}
-
-function patchProjectInVisibleState(projectId, patch) {
-  const patchProject = (project) => (
-    project?.id === projectId
-      ? { ...project, ...patch }
-      : project
-  );
-  state.projects = state.projects.map(patchProject);
-  state.deletedProjects = state.deletedProjects.map(patchProject);
-}
-
-function moveProjectInVisibleState(project, targetCollection, patch = {}) {
-  if (!project?.id) {
-    return;
-  }
-  const nextProject = {
-    ...project,
-    ...patch,
-  };
-  state.projects = state.projects.filter((item) => item.id !== project.id);
-  state.deletedProjects = state.deletedProjects.filter((item) => item.id !== project.id);
-  if (targetCollection === "deleted") {
-    state.deletedProjects = [...state.deletedProjects, nextProject];
-  } else {
-    state.projects = [...state.projects, nextProject];
-  }
-  reconcileExpandedDeletedFiles();
 }
 
 export async function submitProjectCreation(render) {
@@ -759,71 +720,41 @@ export async function submitProjectRename(render) {
     return;
   }
 
-  requestProjectWriteIntent({
-    key: projectTitleIntentKey(project.id),
-    scope: teamMetadataWriteScope(selectedTeam),
-    teamId: selectedTeam.id,
-    projectId: project.id,
-    type: "projectTitle",
-    value: {
-      title: nextTitle,
-    },
-    previousValue: {
-      title: project.title ?? project.name,
-    },
-  }, {
-    applyOptimistic: (intent) => {
-      showProjectsStatus(render, "Renaming project...");
-      patchProjectInVisibleState(project.id, {
-        title: intent.value.title,
-        pendingMutation: "rename",
-      });
-      persistProjectsForTeam(selectedTeam);
-      resetProjectRename();
-      render();
-    },
-    run: async (intent) => commitProjectMutationStrict(selectedTeam, {
-      type: "rename",
-      projectId: project.id,
-      title: intent.value.title,
-      previousTitle: project.title ?? project.name,
-    }, {
-      render,
-      statusLabels: {
-        metadata: "Updating project metadata...",
-        local: "Renaming project repo...",
-      },
-    }),
-    onSuccess: (intent) => {
-      patchProjectInVisibleState(project.id, {
-        title: intent.value.title,
-        pendingMutation: null,
-        localLifecycleIntent: "rename",
-      });
-      persistProjectsForTeam(selectedTeam);
-      showProjectsStatus(render, "Refreshing project list...");
-      void invalidateProjectsQueryAfterMutation(selectedTeam, {
-        teamId: selectedTeam.id,
+  try {
+    await createMutationObserver(createProjectRenameMutationOptions({
+      team: selectedTeam,
+      project,
+      nextTitle,
+      commitMutation: async (team, mutation) => commitProjectMutationStrict(team, mutation, {
         render,
-        reconcileExpandedDeletedFiles,
-        refetchIfInactive: false,
-      }).finally(() => {
+        statusLabels: {
+          metadata: "Updating project metadata...",
+          local: "Renaming project repo...",
+        },
+      }),
+      onOptimisticApplied: () => {
+        showProjectsStatus(render, "Renaming project...");
+        resetProjectRename();
+      },
+      onSuccessApplied: (queryData) => {
+        persistProjectQueryDataForTeam(selectedTeam, queryData);
         clearProjectsStatus(render);
         showProjectsNotice(render, "Project renamed.");
-      });
-    },
-    onError: (error) => {
-      clearProjectsStatus(render);
-      state.projectRename = {
-        isOpen: true,
-        projectId: project.id,
-        projectName: nextTitle,
-        status: "idle",
-        error: error?.message ?? String(error),
-      };
-      render();
-    },
-  });
+      },
+      render,
+      reconcileExpandedDeletedFiles,
+    })).mutate();
+  } catch (error) {
+    clearProjectsStatus(render);
+    state.projectRename = {
+      isOpen: true,
+      projectId: project.id,
+      projectName: nextTitle,
+      status: "idle",
+      error: error?.message ?? String(error),
+    };
+    render();
+  }
 }
 
 export async function repairProjectRepoBinding(render, projectId) {
@@ -962,66 +893,36 @@ export async function deleteProject(render, projectId) {
     return;
   }
 
-  requestProjectWriteIntent({
-    key: projectLifecycleIntentKey(project.id),
-    scope: teamMetadataWriteScope(selectedTeam),
-    teamId: selectedTeam.id,
-    projectId: project.id,
-    type: "projectLifecycle",
-    value: {
-      lifecycleState: "deleted",
-      mutationType: "softDelete",
-    },
-    previousValue: {
-      lifecycleState: "active",
-    },
-  }, {
-    applyOptimistic: () => {
-      showProjectsStatus(render, "Deleting project...");
-      moveProjectInVisibleState(project, "deleted", {
-        lifecycleState: "deleted",
-        pendingMutation: "softDelete",
-      });
-      if (state.projects.length === 0 && state.deletedProjects.length > 0) {
-        state.showDeletedProjects = true;
-      }
-      persistProjectsForTeam(selectedTeam);
-      render();
-    },
-    run: async () => commitProjectMutationStrict(selectedTeam, {
-      type: "softDelete",
-      projectId: project.id,
-    }, {
-      render,
-      statusLabels: {
-        metadata: "Updating project metadata...",
-        local: "Marking project repo deleted...",
-      },
-    }),
-    onSuccess: () => {
-      moveProjectInVisibleState(project, "deleted", {
-        lifecycleState: "deleted",
-        pendingMutation: null,
-        localLifecycleIntent: "softDelete",
-      });
-      persistProjectsForTeam(selectedTeam);
-      showProjectsStatus(render, "Refreshing project list...");
-      void invalidateProjectsQueryAfterMutation(selectedTeam, {
-        teamId: selectedTeam.id,
+  try {
+    await createMutationObserver(createProjectSoftDeleteMutationOptions({
+      team: selectedTeam,
+      project,
+      commitMutation: async (team, mutation) => commitProjectMutationStrict(team, mutation, {
         render,
-        reconcileExpandedDeletedFiles,
-        refetchIfInactive: false,
-      }).finally(() => {
+        statusLabels: {
+          metadata: "Updating project metadata...",
+          local: "Marking project repo deleted...",
+        },
+      }),
+      onOptimisticApplied: () => {
+        showProjectsStatus(render, "Deleting project...");
+        if (state.projects.length === 0 && state.deletedProjects.length > 0) {
+          state.showDeletedProjects = true;
+        }
+      },
+      onSuccessApplied: (queryData) => {
+        persistProjectQueryDataForTeam(selectedTeam, queryData);
         clearProjectsStatus(render);
         showProjectsNotice(render, "Project deleted.");
-      });
-    },
-    onError: (error) => {
-      clearProjectsStatus(render);
-      setProjectDiscoveryState("error", error?.message ?? String(error));
-      render();
-    },
-  });
+      },
+      render,
+      reconcileExpandedDeletedFiles,
+    })).mutate();
+  } catch (error) {
+    clearProjectsStatus(render);
+    setProjectDiscoveryState("error", error?.message ?? String(error));
+    render();
+  }
 }
 
 export function toggleDeletedProjects(render) {
@@ -1053,63 +954,33 @@ export async function restoreProject(render, projectId) {
     return;
   }
 
-  requestProjectWriteIntent({
-    key: projectLifecycleIntentKey(project.id),
-    scope: teamMetadataWriteScope(selectedTeam),
-    teamId: selectedTeam.id,
-    projectId: project.id,
-    type: "projectLifecycle",
-    value: {
-      lifecycleState: "active",
-      mutationType: "restore",
-    },
-    previousValue: {
-      lifecycleState: "deleted",
-    },
-  }, {
-    applyOptimistic: () => {
-      showProjectsStatus(render, "Restoring project...");
-      moveProjectInVisibleState(project, "active", {
-        lifecycleState: "active",
-        pendingMutation: "restore",
-      });
-      persistProjectsForTeam(selectedTeam);
-      render();
-    },
-    run: async () => commitProjectMutationStrict(selectedTeam, {
-      type: "restore",
-      projectId: project.id,
-    }, {
-      render,
-      statusLabels: {
-        metadata: "Updating project metadata...",
-        local: "Restoring project repo...",
-      },
-    }),
-    onSuccess: () => {
-      moveProjectInVisibleState(project, "active", {
-        lifecycleState: "active",
-        pendingMutation: null,
-        localLifecycleIntent: "restore",
-      });
-      persistProjectsForTeam(selectedTeam);
-      showProjectsStatus(render, "Refreshing project list...");
-      void invalidateProjectsQueryAfterMutation(selectedTeam, {
-        teamId: selectedTeam.id,
+  try {
+    await createMutationObserver(createProjectRestoreMutationOptions({
+      team: selectedTeam,
+      project,
+      commitMutation: async (team, mutation) => commitProjectMutationStrict(team, mutation, {
         render,
-        reconcileExpandedDeletedFiles,
-        refetchIfInactive: false,
-      }).finally(() => {
+        statusLabels: {
+          metadata: "Updating project metadata...",
+          local: "Restoring project repo...",
+        },
+      }),
+      onOptimisticApplied: () => {
+        showProjectsStatus(render, "Restoring project...");
+      },
+      onSuccessApplied: (queryData) => {
+        persistProjectQueryDataForTeam(selectedTeam, queryData);
         clearProjectsStatus(render);
         showProjectsNotice(render, "Project restored.");
-      });
-    },
-    onError: (error) => {
-      clearProjectsStatus(render);
-      setProjectDiscoveryState("error", error?.message ?? String(error));
-      render();
-    },
-  });
+      },
+      render,
+      reconcileExpandedDeletedFiles,
+    })).mutate();
+  } catch (error) {
+    clearProjectsStatus(render);
+    setProjectDiscoveryState("error", error?.message ?? String(error));
+    render();
+  }
 }
 
 async function commitProjectMutationStrict(selectedTeam, mutation, options = {}) {
