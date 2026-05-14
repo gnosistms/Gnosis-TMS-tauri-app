@@ -335,7 +335,7 @@ test("project open tooltip and cursor are scoped to the title area", () => {
   assert.match(css, /\.chapter-table__title-wrap--interactive\s*\{[\s\S]*cursor: pointer;/);
   assert.match(css, /\.chapter-table__title-wrap--interactive:hover \.chapter-table__name-button/);
   assert.match(css, /\.chapter-table__row--file:hover \.chapter-table__name-button/);
-  assert.match(css, /\.chapter-table__row--file:hover \.chapter-table__meta/);
+  assert.doesNotMatch(css, /\.chapter-table__row--file:hover \.chapter-table__meta/);
   assert.doesNotMatch(css, /\.chapter-table__row--interactive\[data-tooltip\]:has/);
 });
 

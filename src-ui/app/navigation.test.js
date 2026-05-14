@@ -42,9 +42,34 @@ test("team-scoped screen refreshes update team access before loading page data",
   assert.match(source, /primeProjectsLoadingState/);
   assert.match(source, /if \(navTarget === "projects" && state\.selectedTeamId\) \{\s*primeProjectsLoadingState\(state\.selectedTeamId\);\s*\}\s*render\(\);/);
   assert.match(source, /import \{ refreshCurrentUserTeamAccess \} from "\.\/team-query\.js";/);
-  assert.match(source, /if \(screen === "projects"\) \{\s*await refreshVisibleTeamAccess\(render\);\s*await loadTeamProjects/);
-  assert.match(source, /if \(screen === "glossaries"\) \{\s*await refreshVisibleTeamAccess\(render\);\s*await loadTeamGlossaries/);
-  assert.match(source, /if \(screen === "glossaryEditor"\) \{\s*await refreshVisibleTeamAccess\(render\);\s*await maybeStartGlossaryBackgroundSync/);
-  assert.match(source, /if \(screen === "users"\) \{\s*await refreshVisibleTeamAccess\(render\);\s*await loadTeamUsers/);
-  assert.match(source, /if \(screen === "translate"\) \{\s*await refreshVisibleTeamAccess\(render\);\s*startEditorBackgroundSyncSession/);
+  assert.match(source, /beginRefreshButtonFeedback\(screen, render\);\s*await waitForNextPaint\(\);/);
+  assert.match(source, /if \(screen === "projects"\) \{[\s\S]*?await refreshVisibleTeamAccess\(render\);[\s\S]*?await loadTeamProjects/);
+  assert.match(source, /if \(screen === "glossaries"\) \{[\s\S]*?await refreshVisibleTeamAccess\(render\);[\s\S]*?await loadTeamGlossaries/);
+  assert.match(source, /if \(screen === "glossaryEditor"\) \{[\s\S]*?await refreshVisibleTeamAccess\(render\);[\s\S]*?await maybeStartGlossaryBackgroundSync/);
+  assert.match(source, /if \(screen === "users"\) \{[\s\S]*?await refreshVisibleTeamAccess\(render\);[\s\S]*?await loadTeamUsers/);
+  assert.match(source, /if \(screen === "translate"\) \{[\s\S]*?await refreshVisibleTeamAccess\(render\);[\s\S]*?startEditorBackgroundSyncSession/);
+});
+
+test("refresh feedback is rendered before team access refreshes", async () => {
+  const source = await readFile(new URL("./navigation.js", import.meta.url), "utf8");
+  const refreshBodyStart = source.indexOf("export async function refreshCurrentScreen");
+  const feedbackIndex = source.indexOf("beginRefreshButtonFeedback(screen, render);", refreshBodyStart);
+  const projectsAccessIndex = source.indexOf("await refreshVisibleTeamAccess(render);", source.indexOf('if (screen === "projects")', refreshBodyStart));
+  const glossariesAccessIndex = source.indexOf("await refreshVisibleTeamAccess(render);", source.indexOf('if (screen === "glossaries")', refreshBodyStart));
+  const qaAccessIndex = source.indexOf("await refreshVisibleTeamAccess(render);", source.indexOf('if (screen === "qa")', refreshBodyStart));
+
+  assert.ok(feedbackIndex > -1);
+  assert.ok(projectsAccessIndex > feedbackIndex);
+  assert.ok(glossariesAccessIndex > feedbackIndex);
+  assert.ok(qaAccessIndex > feedbackIndex);
+  assert.match(source, /if \(screen === "projects"\) \{\s*setResourcePageRefreshing\(state\.projectsPage, true\);/);
+  assert.match(source, /showScopedSyncBadge\("projects", "Refreshing project list\.\.\.", render\);/);
+  assert.match(source, /if \(screen === "glossaries"\) \{\s*state\.glossariesPage\.isRefreshing = true;/);
+  assert.match(source, /showNoticeBadge\("Refreshing glossary list\.\.\.", render, null\);/);
+  assert.match(source, /if \(screen === "qa"\) \{\s*setResourcePageRefreshing\(state\.qaListsPage, true\);/);
+  assert.match(source, /showNoticeBadge\("Refreshing QA lists\.\.\.", render, null\);/);
+  assert.match(source, /if \(screen === "teams"\) \{\s*state\.teamsPage\.isRefreshing = true;/);
+  assert.match(source, /showScopedSyncBadge\("teams", "Refreshing teams\.\.\.", render\);/);
+  assert.match(source, /if \(screen === "users"\) \{\s*state\.membersPage\.isRefreshing = true;/);
+  assert.match(source, /showScopedSyncBadge\("members", "Refreshing member list\.\.\.", render\);/);
 });

@@ -46,6 +46,11 @@ function actionButtonHtml(html, action) {
   return html.match(new RegExp(`<button[^>]*data-action="${escapedAction}"[^>]*>`))?.[0] ?? "";
 }
 
+function openContentHtml(html, action) {
+  const escapedAction = action.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return html.match(new RegExp(`<div[^>]*class="list-row__content list-row__content--interactive"[^>]*data-action="${escapedAction}"[^>]*>`))?.[0] ?? "";
+}
+
 test("glossary cards render TMX download actions", () => {
   setGlossaryScreenState();
 
@@ -53,6 +58,16 @@ test("glossary cards render TMX download actions", () => {
 
   assert.match(html, /data-action="download-glossary:glossary-1"/);
   assert.doesNotMatch(html, /open-external:[^"]*archive/);
+});
+
+test("glossary cards open from the left content area without an Open button", () => {
+  setGlossaryScreenState();
+
+  const html = renderGlossariesScreen(state);
+
+  assert.match(openContentHtml(html, "open-glossary:glossary-1"), /data-tooltip="Open"/);
+  assert.equal(actionButtonHtml(html, "open-glossary:glossary-1"), "");
+  assert.doesNotMatch(html, />Open<\/button>/);
 });
 
 test("glossary cards render make default action and default label", () => {
@@ -132,7 +147,7 @@ test("glossary refresh keeps read-only and query-backed lifecycle actions enable
 
   const html = renderGlossariesScreen(state);
 
-  assert.doesNotMatch(actionButtonHtml(html, "open-glossary:glossary-1"), /disabled/);
+  assert.match(openContentHtml(html, "open-glossary:glossary-1"), /data-tooltip="Open"/);
   assert.doesNotMatch(actionButtonHtml(html, "download-glossary:glossary-1"), /disabled/);
   assert.doesNotMatch(actionButtonHtml(html, "make-default-glossary:glossary-1"), /disabled/);
   assert.doesNotMatch(actionButtonHtml(html, "toggle-deleted-glossaries"), /disabled/);

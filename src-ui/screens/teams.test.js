@@ -55,6 +55,16 @@ function delay(ms = 0) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function actionButtonHtml(html, action) {
+  const escapedAction = action.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return html.match(new RegExp(`<button[^>]*data-action="${escapedAction}"[^>]*>`))?.[0] ?? "";
+}
+
+function openContentHtml(html, action) {
+  const escapedAction = action.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return html.match(new RegExp(`<div[^>]*class="list-row__content list-row__content--interactive"[^>]*data-action="${escapedAction}"[^>]*>`))?.[0] ?? "";
+}
+
 test.afterEach(() => {
   resetTeamWriteCoordinator();
   resetSessionState();
@@ -71,6 +81,15 @@ test("teams screen keeps row navigation enabled during background refresh", () =
   assert.doesNotMatch(html, /data-action="open-team:team-1"[^>]*aria-disabled="true"/);
   assert.match(html, /data-action="rename-team:team-1"/);
   assert.doesNotMatch(html, /data-action="rename-team:team-1"[^>]*aria-disabled="true"/);
+});
+
+test("teams screen opens teams from the left content area with an Open tooltip", () => {
+  installFixture();
+
+  const html = renderTeamsScreen(state);
+
+  assert.match(openContentHtml(html, "open-team:team-1"), /data-tooltip="Open"/);
+  assert.match(actionButtonHtml(html, "open-team:team-1"), /class="text-action"/);
 });
 
 test("teams screen places QA between Projects and Glossaries on team cards", () => {

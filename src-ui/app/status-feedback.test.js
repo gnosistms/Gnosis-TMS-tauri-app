@@ -70,3 +70,11 @@ test("clearing one status channel does not clear the other", () => {
   ]);
   assert.equal(state.statusBadges.left.visible, true);
 });
+
+test("scoped sync badges can be cleared without a render callback", () => {
+  showScopedSyncBadge("projects", "Refreshing project list...", () => {});
+
+  clearScopedSyncBadge("projects");
+
+  assert.deepEqual(getStatusSurfaceItems("projects"), []);
+});

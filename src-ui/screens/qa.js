@@ -8,6 +8,7 @@ import {
   renderStateCard,
   sectionSeparator,
   textAction,
+  tooltipAttributes,
 } from "../lib/ui.js";
 import { formatErrorForDisplay } from "../app/error-display.js";
 import { getNoticeBadgeText } from "../app/status-feedback.js";
@@ -37,7 +38,6 @@ function renderQaListCard(qaList, options = {}) {
   const offlineMode = options.offlineMode === true;
   const isDefault = options.defaultQaListIdsByLanguage?.[qaList.language?.code] === qaList.id;
   const activeActions = [
-    textAction("Open", `open-qa-list:${qaList.id}`),
     textAction("Download", `download-qa-list:${qaList.id}`, { disabled: offlineMode }),
     isDefault
       ? `<span class="text-action-label" data-tooltip="${escapeHtml(DEFAULT_QA_LIST_LABEL_TOOLTIP)}">Default</span>`
@@ -69,16 +69,12 @@ function renderQaListCard(qaList, options = {}) {
     <article class="card card--list-row ${isDeleted ? "card--deleted" : ""}">
       <div class="card__body list-row">
         <div class="list-row__main">
-          <div class="list-row__content">
+          <div class="list-row__content${isDeleted ? "" : " list-row__content--interactive"}"${isDeleted ? "" : ` data-action="open-qa-list:${qaList.id}"${tooltipAttributes("Open")}`}>
             <h2 class="list-row__title">
               ${
                 isDeleted
                   ? `<span>${escapeHtml(qaList.title)}</span>`
-                  : `
-                    <button class="list-row__title-button" data-action="open-qa-list:${qaList.id}">
-                      ${escapeHtml(qaList.title)}
-                    </button>
-                  `
+                  : `<span class="list-row__title-button">${escapeHtml(qaList.title)}</span>`
               }
             </h2>
             <p class="list-row__meta">

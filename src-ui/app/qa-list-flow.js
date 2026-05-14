@@ -763,23 +763,10 @@ export function openQaListEditor(render, qaListId, options = {}) {
     return;
   }
 
-  state.selectedQaListId = qaList.id;
-  state.qaListEditor = {
-    ...createQaListEditorState(),
-    status: "ready",
+  applyQaListEditorSummary(qaList, {
     navigationSource: options.navigationSource ?? null,
-    qaListId: qaList.id,
-    title: qaList.title,
-    lifecycleState: qaList.lifecycleState,
-    language: qaList.language,
-    termCount: qaList.termCount,
-    repoName: qaList.repoName,
-    fullName: qaList.fullName,
-    repoId: qaList.repoId,
-    defaultBranchName: qaList.defaultBranchName,
-    defaultBranchHeadOid: qaList.defaultBranchHeadOid,
-    terms: qaList.terms ?? [],
-  };
+    status: "ready",
+  });
   state.screen = "qaListEditor";
   render();
 }
@@ -815,6 +802,27 @@ export async function openEditorQaList(render, options = {}) {
 
   primeQaListsLoadingState(team.id, { preserveVisibleData: state.qaLists.length > 0 });
   let qaList = resolveDefaultQaListForLanguage(targetLanguageCode, team);
+  state.screen = "qaListEditor";
+  let openedQaListEditor = false;
+  if (qaList) {
+    applyQaListEditorSummary(qaList, {
+      navigationSource: "editor",
+      status: "loading",
+      terms: [],
+    });
+    openedQaListEditor = true;
+  } else {
+    state.selectedQaListId = null;
+    state.qaListEditor = {
+      ...createQaListEditorState(),
+      status: "loading",
+      navigationSource: "editor",
+      title: "QA List",
+      language: findIsoLanguageOption(targetLanguageCode),
+    };
+  }
+  render();
+
   if (!qaList) {
     await loadTeamQaLists(render, team.id);
     qaList = resolveDefaultQaListForLanguage(targetLanguageCode, team);
@@ -826,13 +834,55 @@ export async function openEditorQaList(render, options = {}) {
     return;
   }
 
-  openQaListEditor(render, qaList.id, {
-    navigationSource: "editor",
-  });
+  if (!openedQaListEditor) {
+    applyQaListEditorSummary(qaList, {
+      navigationSource: "editor",
+      status: "loading",
+      terms: [],
+    });
+    state.screen = "qaListEditor";
+    render();
+  }
   await loadSelectedQaListEditorData(render);
 }
 
-export function primeSelectedQaListEditorLoadingState() {
+function applyQaListEditorSummary(qaList, options = {}) {
+  const searchQuery =
+    options.preserveSearchQuery === true ? (state.qaListEditor?.searchQuery ?? "") : "";
+  state.selectedQaListId = qaList.id;
+  state.qaListEditor = {
+    ...createQaListEditorState(),
+    status: options.status ?? "ready",
+    error: "",
+    navigationSource: options.navigationSource ?? state.qaListEditor?.navigationSource ?? null,
+    qaListId: qaList.id,
+    title: qaList.title,
+    lifecycleState: qaList.lifecycleState,
+    language: qaList.language,
+    termCount: qaList.termCount,
+    repoName: qaList.repoName,
+    fullName: qaList.fullName,
+    repoId: qaList.repoId,
+    defaultBranchName: qaList.defaultBranchName,
+    defaultBranchHeadOid: qaList.defaultBranchHeadOid,
+    searchQuery,
+    terms: Array.isArray(options.terms) ? options.terms : (qaList.terms ?? []),
+  };
+}
+
+export function primeSelectedQaListEditorLoadingState(options = {}) {
+  const qaListId = options.qaListId ?? state.selectedQaListId;
+  const qaList = (state.qaLists ?? []).find((item) => item.id === qaListId);
+  if (qaList) {
+    applyQaListEditorSummary(qaList, {
+      navigationSource: options.navigationSource ?? state.qaListEditor?.navigationSource ?? null,
+      status: state.qaListEditor?.terms?.length ? "ready" : "loading",
+      terms: state.qaListEditor?.terms?.length ? state.qaListEditor.terms : [],
+      preserveSearchQuery: true,
+    });
+    return;
+  }
+
   state.qaListEditor = {
     ...state.qaListEditor,
     status: state.qaListEditor?.terms?.length ? "ready" : "loading",

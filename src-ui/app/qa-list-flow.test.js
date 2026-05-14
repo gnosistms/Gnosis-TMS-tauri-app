@@ -31,6 +31,7 @@ globalThis.window = {
 const {
   loadSelectedQaListEditorData,
   loadTeamQaLists,
+  openEditorQaList,
   resolveDefaultQaListForLanguage,
   submitQaTermEditor,
 } = await import("./qa-list-flow.js");
@@ -184,6 +185,96 @@ test("QA list page load marks the page refreshing until the refresh finishes", a
 
   assert.equal(state.qaListsPage.isRefreshing, false);
   assert.equal(state.qaListsPage.refreshStartedAt, null);
+});
+
+test("editor QA navigation renders a loading editor before QA list discovery finishes", async () => {
+  setupQaTeams();
+  const remoteRepos = deferred();
+  state.screen = "translate";
+  state.editorChapter = {
+    selectedTargetLanguageCode: "vi",
+    fileTitle: "Chapter 1",
+  };
+
+  invokeHandler = async (command) => {
+    if (command === "list_gnosis_qa_lists_for_installation") {
+      return remoteRepos.promise;
+    }
+    if (command === "list_local_gtms_qa_lists") {
+      return [];
+    }
+    return [];
+  };
+
+  const renderSnapshots = [];
+  const openPromise = openEditorQaList(() => {
+    renderSnapshots.push({
+      screen: state.screen,
+      status: state.qaListEditor.status,
+      navigationSource: state.qaListEditor.navigationSource,
+      languageCode: state.qaListEditor.language?.code,
+    });
+  });
+
+  assert.equal(state.screen, "qaListEditor");
+  assert.equal(state.qaListEditor.status, "loading");
+  assert.equal(state.qaListEditor.navigationSource, "editor");
+  assert.equal(state.qaListEditor.language?.code, "vi");
+  assert.equal(
+    renderSnapshots.some((snapshot) =>
+      snapshot.screen === "qaListEditor"
+      && snapshot.status === "loading"
+      && snapshot.navigationSource === "editor"
+      && snapshot.languageCode === "vi"),
+    true,
+  );
+
+  remoteRepos.resolve([]);
+  await openPromise;
+
+  assert.equal(state.screen, "qa");
+});
+
+test("editor QA navigation opens the cached default QA list before editor data loads", async () => {
+  setupQaTeams();
+  const qaList = repoBackedQaList({ terms: [], termCount: 0 });
+  const editorData = deferred();
+  state.screen = "translate";
+  state.editorChapter = {
+    selectedTargetLanguageCode: "vi",
+    fileTitle: "Chapter 1",
+  };
+  state.qaLists = [qaList];
+
+  invokeHandler = async (command) => {
+    if (command === "sync_gtms_qa_list_editor_repo") {
+      return null;
+    }
+    if (command === "load_gtms_qa_list_editor_data") {
+      return editorData.promise;
+    }
+    return [];
+  };
+
+  const openPromise = openEditorQaList(() => {});
+
+  assert.equal(state.screen, "qaListEditor");
+  assert.equal(state.selectedQaListId, qaList.id);
+  assert.equal(state.qaListEditor.status, "loading");
+  assert.equal(state.qaListEditor.qaListId, qaList.id);
+  assert.equal(state.qaListEditor.title, qaList.title);
+
+  editorData.resolve({
+    qaListId: qaList.id,
+    title: qaList.title,
+    language: qaList.language,
+    lifecycleState: "active",
+    termCount: 0,
+    terms: [],
+  });
+  await openPromise;
+
+  assert.equal(state.qaListEditor.status, "ready");
 });
 
 test("stale QA list editor load does not overwrite a different selected team", async () => {

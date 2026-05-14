@@ -10,6 +10,11 @@ function actionButtonHtml(html, action) {
   return html.match(new RegExp(`<button[^>]*data-action="${escapedAction}"[^>]*>`))?.[0] ?? "";
 }
 
+function openContentHtml(html, action) {
+  const escapedAction = action.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return html.match(new RegExp(`<div[^>]*class="list-row__content list-row__content--interactive"[^>]*data-action="${escapedAction}"[^>]*>`))?.[0] ?? "";
+}
+
 function setQaScreenState(overrides = {}) {
   resetSessionState();
   state.selectedTeamId = "team-1";
@@ -38,6 +43,16 @@ function setQaScreenState(overrides = {}) {
 
 test.afterEach(() => {
   resetSessionState();
+});
+
+test("QA list cards open from the left content area without an Open button", () => {
+  setQaScreenState();
+
+  const html = renderQaScreen(state);
+
+  assert.match(openContentHtml(html, "open-qa-list:qa-list-1"), /data-tooltip="Open"/);
+  assert.equal(actionButtonHtml(html, "open-qa-list:qa-list-1"), "");
+  assert.doesNotMatch(html, />Open<\/button>/);
 });
 
 test("QA list refresh spins and disables the refresh button during background refresh", () => {

@@ -101,5 +101,5 @@ export function clearScopedSyncBadge(scope, render) {
     text: "",
     scope: null,
   };
-  render();
+  render?.();
 }

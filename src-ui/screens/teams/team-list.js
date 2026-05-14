@@ -1,4 +1,4 @@
-import { errorButton, escapeHtml, sectionSeparator, textAction } from "../../lib/ui.js";
+import { errorButton, escapeHtml, sectionSeparator, textAction, tooltipAttributes } from "../../lib/ui.js";
 
 function renderAccessLabel(team) {
   if (team.canDelete) {
@@ -77,11 +77,9 @@ function renderTeamCard(team, options = {}) {
     <article class="card card--list-row ${isDeleted ? "card--deleted" : ""}">
       <div class="card__body list-row">
         <div class="list-row__main">
-          <div class="list-row__content">
+          <div class="list-row__content list-row__content--interactive" data-action="open-team:${team.id}"${tooltipAttributes("Open")}>
             <h2 class="list-row__title">
-              <button class="list-row__title-button" data-action="open-team:${team.id}">
-                ${escapeHtml(team.name)}
-              </button>
+              <span class="list-row__title-button">${escapeHtml(team.name)}</span>
             </h2>
             <p class="list-row__meta">@${escapeHtml(team.githubOrg)} · ${escapeHtml(accessLabel)}</p>
           </div>

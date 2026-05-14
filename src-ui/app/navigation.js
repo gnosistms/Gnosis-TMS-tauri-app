@@ -54,8 +54,14 @@ import {
   showNavigationLoadingModal,
 } from "./navigation-loading.js";
 import { resolveNavigationLeaveLoading } from "./navigation-leave-loading.js";
-import { clearNoticeBadge, clearScopedSyncBadge, showNoticeBadge } from "./status-feedback.js";
+import {
+  clearNoticeBadge,
+  clearScopedSyncBadge,
+  showNoticeBadge,
+  showScopedSyncBadge,
+} from "./status-feedback.js";
 import { refreshCurrentUserTeamAccess } from "./team-query.js";
+import { setResourcePageRefreshing } from "./resource-page-controller.js";
 
 async function refreshVisibleTeamAccess(render) {
   if (!state.selectedTeamId || state.screen === "teams") {
@@ -63,6 +69,63 @@ async function refreshVisibleTeamAccess(render) {
   }
 
   await refreshCurrentUserTeamAccess({ render });
+}
+
+function beginRefreshButtonFeedback(screen, render) {
+  if (screen === "projects") {
+    setResourcePageRefreshing(state.projectsPage, true);
+    showScopedSyncBadge("projects", "Refreshing project list...", render);
+    return;
+  }
+
+  if (screen === "glossaries") {
+    state.glossariesPage.isRefreshing = true;
+    showNoticeBadge("Refreshing glossary list...", render, null);
+    return;
+  }
+
+  if (screen === "qa") {
+    setResourcePageRefreshing(state.qaListsPage, true);
+    showNoticeBadge("Refreshing QA lists...", render, null);
+    return;
+  }
+
+  if (screen === "teams") {
+    state.teamsPage.isRefreshing = true;
+    showScopedSyncBadge("teams", "Refreshing teams...", render);
+    return;
+  }
+
+  if (screen === "users") {
+    state.membersPage.isRefreshing = true;
+    showScopedSyncBadge("members", "Refreshing member list...", render);
+    return;
+  }
+
+  beginPageSync();
+  render();
+}
+
+function failRefreshButtonFeedback(screen, render) {
+  if (screen === "projects") {
+    setResourcePageRefreshing(state.projectsPage, false);
+    clearScopedSyncBadge("projects", null);
+  } else if (screen === "glossaries") {
+    state.glossariesPage.isRefreshing = false;
+    clearNoticeBadge();
+  } else if (screen === "qa") {
+    setResourcePageRefreshing(state.qaListsPage, false);
+    clearNoticeBadge();
+  } else if (screen === "teams") {
+    state.teamsPage.isRefreshing = false;
+    clearScopedSyncBadge("teams", null);
+  } else if (screen === "users") {
+    state.membersPage.isRefreshing = false;
+    clearScopedSyncBadge("members", null);
+  } else {
+    failPageSync();
+  }
+  render();
 }
 
 export async function handleNavigation(navTarget, render) {
@@ -241,34 +304,66 @@ export async function refreshCurrentScreen(render) {
     return;
   }
 
+  beginRefreshButtonFeedback(screen, render);
+  await waitForNextPaint();
+
   if (screen === "projects") {
-    await refreshVisibleTeamAccess(render);
-    await loadTeamProjects(render, state.selectedTeamId);
+    try {
+      await refreshVisibleTeamAccess(render);
+      await loadTeamProjects(render, state.selectedTeamId);
+      clearScopedSyncBadge("projects", render);
+    } catch (error) {
+      failRefreshButtonFeedback(screen, render);
+      throw error;
+    }
     return;
   }
 
   if (screen === "glossaries") {
-    await refreshVisibleTeamAccess(render);
-    await loadTeamGlossaries(render, state.selectedTeamId, { preserveVisibleData: true });
+    try {
+      await refreshVisibleTeamAccess(render);
+      await loadTeamGlossaries(render, state.selectedTeamId, { preserveVisibleData: true });
+    } catch (error) {
+      failRefreshButtonFeedback(screen, render);
+      throw error;
+    }
     return;
   }
 
   if (screen === "glossaryEditor") {
-    await refreshVisibleTeamAccess(render);
-    await maybeStartGlossaryBackgroundSync(render, { force: true });
-    await loadSelectedGlossaryEditorData(render, { preserveVisibleData: true });
+    try {
+      await refreshVisibleTeamAccess(render);
+      await maybeStartGlossaryBackgroundSync(render, { force: true });
+      await loadSelectedGlossaryEditorData(render, { preserveVisibleData: true });
+    } catch (error) {
+      failRefreshButtonFeedback(screen, render);
+      throw error;
+    }
     return;
   }
 
   if (screen === "qa") {
-    await refreshVisibleTeamAccess(render);
-    await loadTeamQaLists(render, state.selectedTeamId);
+    try {
+      await refreshVisibleTeamAccess(render);
+      await loadTeamQaLists(render, state.selectedTeamId);
+      clearNoticeBadge();
+      render();
+    } catch (error) {
+      failRefreshButtonFeedback(screen, render);
+      throw error;
+    }
     return;
   }
 
   if (screen === "qaListEditor") {
-    await refreshVisibleTeamAccess(render);
-    await loadSelectedQaListEditorData(render);
+    try {
+      await refreshVisibleTeamAccess(render);
+      await loadSelectedQaListEditorData(render);
+      await completePageSync(render);
+    } catch (error) {
+      failRefreshButtonFeedback(screen, render);
+      throw error;
+    }
     return;
   }
 
@@ -276,19 +371,17 @@ export async function refreshCurrentScreen(render) {
     lockScreenScrollSnapshot(screen);
   }
 
-  beginPageSync();
-  render();
-  await waitForNextPaint();
-
   try {
     if (screen === "teams") {
       await loadUserTeams(render);
+      clearScopedSyncBadge("teams", render);
       return;
     }
 
     if (screen === "users") {
       await refreshVisibleTeamAccess(render);
       await loadTeamUsers(render, state.selectedTeamId);
+      clearScopedSyncBadge("members", render);
       return;
     }
 
@@ -319,8 +412,7 @@ export async function refreshCurrentScreen(render) {
 
     await completePageSync(render);
   } catch {
-    failPageSync();
-    render();
+    failRefreshButtonFeedback(screen, render);
   } finally {
     if (screen === "translate") {
       unlockScreenScrollSnapshot(screen);

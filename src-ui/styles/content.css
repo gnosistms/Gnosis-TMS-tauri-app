@@ -175,6 +175,15 @@
   gap: 20px;
 }
 
+.list-row__content {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.list-row__content--interactive {
+  cursor: pointer;
+}
+
 .list-row__title {
   margin: 0;
   font-size: 2rem;
@@ -203,11 +212,11 @@
 }
 
 .list-row__title-button:hover,
+.list-row__content--interactive:hover .list-row__title-button,
 .expandable-card__summary-button:hover,
 .chapter-table__name-button:hover,
 .chapter-table__title-wrap--interactive:hover .chapter-table__name-button,
-.chapter-table__row--file:hover .chapter-table__name-button,
-.chapter-table__row--file:hover .chapter-table__meta {
+.chapter-table__row--file:hover .chapter-table__name-button {
   color: var(--text-hover);
 }
 

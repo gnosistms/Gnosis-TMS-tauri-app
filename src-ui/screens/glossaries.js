@@ -9,6 +9,7 @@ import {
   renderStateCard,
   sectionSeparator,
   textAction,
+  tooltipAttributes,
 } from "../lib/ui.js";
 import { formatErrorForDisplay } from "../app/error-display.js";
 import { getNoticeBadgeText } from "../app/status-feedback.js";
@@ -65,7 +66,6 @@ function renderGlossaryCard(glossary, options = {}) {
   });
   const disableLifecycleActions = resolution?.blockLifecycleActions === true;
   const activeActions = [
-    textAction("Open", `open-glossary:${glossary.id}`),
     textAction("Download", `download-glossary:${glossary.id}`, {
       disabled: offlineMode || resolution?.key === "missing",
     }),
@@ -108,16 +108,12 @@ function renderGlossaryCard(glossary, options = {}) {
     <article class="card card--list-row ${isDeleted ? "card--deleted" : ""}">
       <div class="card__body list-row">
         <div class="list-row__main">
-          <div class="list-row__content">
+          <div class="list-row__content${isDeleted ? "" : " list-row__content--interactive"}"${isDeleted ? "" : ` data-action="open-glossary:${glossary.id}"${tooltipAttributes("Open")}`}>
             <h2 class="list-row__title">
               ${
                 isDeleted
                   ? `<span>${escapeHtml(glossary.title)}</span>`
-                  : `
-                    <button class="list-row__title-button" data-action="open-glossary:${glossary.id}">
-                      ${escapeHtml(glossary.title)}
-                    </button>
-                  `
+                  : `<span class="list-row__title-button">${escapeHtml(glossary.title)}</span>`
               }
             </h2>
             <p class="list-row__meta">
