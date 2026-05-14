@@ -48,6 +48,12 @@ import {
 import { invoke } from "./runtime.js";
 import { createMutationObserver, qaListKeys, queryClient } from "./query-client.js";
 import { setResourcePageRefreshing } from "./resource-page-controller.js";
+import {
+  createQaListEditorQueryOptions,
+  getCachedQaListEditorPayload,
+  removeQaListEditorQuery,
+} from "./qa-list-editor-query.js";
+import { showNoticeBadge } from "./status-feedback.js";
 
 export { makeQaListDefault } from "./qa-list-default-flow.js";
 
@@ -77,6 +83,104 @@ function selectedQaListEditorMatches(team, qaList) {
       && state.selectedQaListId === qaList.id
       && state.qaListEditor?.qaListId === qaList.id,
   );
+}
+
+let activeQaListTermWriteCount = 0;
+
+export function qaListTermWriteIsActive() {
+  return activeQaListTermWriteCount > 0;
+}
+
+function qaListEditorContext(team, qaList) {
+  return {
+    teamId: team?.id ?? null,
+    installationId: team?.installationId ?? null,
+    qaListId: qaList?.id ?? qaList?.qaListId ?? null,
+    repoName: qaList?.repoName ?? "",
+    navigationSource: state.qaListEditor?.navigationSource ?? null,
+  };
+}
+
+export function qaListEditorContextMatches(expectedContext) {
+  const team = currentTeam();
+  return Boolean(
+    state.screen === "qaListEditor"
+      && team?.id === expectedContext?.teamId
+      && team?.installationId === expectedContext?.installationId
+      && state.selectedQaListId === expectedContext?.qaListId
+      && state.qaListEditor?.qaListId === expectedContext?.qaListId
+      && state.qaListEditor?.repoName === expectedContext?.repoName,
+  );
+}
+
+export function qaListEditorPayloadMatches(payload, expectedContext) {
+  return Boolean(
+    (payload?.qaListId === expectedContext?.qaListId || payload?.id === expectedContext?.qaListId)
+      && (!payload?.repoName || payload.repoName === expectedContext?.repoName),
+  );
+}
+
+export function qaListEditorHasOpenDraft() {
+  return state.qaTermEditor?.isOpen === true;
+}
+
+export function qaListEditorHasActiveTermWrite() {
+  return qaListTermWriteIsActive();
+}
+
+export function qaListEditorHasPendingLocalTerms() {
+  return (state.qaListEditor?.terms ?? []).some((term) =>
+    term?.pendingMutation === "save"
+      || term?.pendingMutation === "create"
+      || Boolean(term?.optimisticClientId)
+      || Boolean(term?.pendingError),
+  );
+}
+
+export function canApplyQaListEditorSnapshot(expectedContext) {
+  if (!qaListEditorContextMatches(expectedContext)) {
+    return { canApply: false, reason: "stale-context" };
+  }
+  if (qaListEditorHasOpenDraft()) {
+    return { canApply: false, reason: "open-draft" };
+  }
+  if (qaListEditorHasActiveTermWrite()) {
+    return { canApply: false, reason: "active-write" };
+  }
+  if (qaListEditorHasPendingLocalTerms()) {
+    return { canApply: false, reason: "pending-local-terms" };
+  }
+  return { canApply: true, reason: "ready" };
+}
+
+export function maybeApplyQaListEditorSnapshot(payload, expectedContext, render, options = {}) {
+  if (!qaListEditorContextMatches(expectedContext)) {
+    return { applied: false, reason: "stale-context" };
+  }
+  if (!qaListEditorPayloadMatches(payload, expectedContext)) {
+    return { applied: false, reason: "payload-mismatch" };
+  }
+
+  const decision = canApplyQaListEditorSnapshot(expectedContext);
+  if (!decision.canApply) {
+    if (options.showDeferredNotice === true) {
+      showNoticeBadge(
+        "QA list refreshed. Finish the current edit to update the term list.",
+        render,
+        2400,
+      );
+    }
+    return { applied: false, reason: decision.reason };
+  }
+
+  const qaList = selectedQaList();
+  const normalized = normalizeQaList({ ...qaList, ...payload });
+  if (!normalized) {
+    return { applied: false, reason: "invalid-payload" };
+  }
+  applyQaListEditorSnapshot(currentTeam(), qaList, normalized);
+  render?.();
+  return { applied: true, reason: "applied" };
 }
 
 function ensureQaListsQueryDataForTeam(team) {
@@ -236,9 +340,9 @@ function qaTermRecordsMatch(left, right) {
 }
 
 async function loadRepoBackedQaListEditorSnapshot(team, qaList) {
-  const response = await invoke("load_gtms_qa_list_editor_data", {
-    input: repoBackedQaListInput(team, qaList),
-  });
+  const queryOptions = createQaListEditorQueryOptions(team, qaList);
+  await queryClient.invalidateQueries({ queryKey: queryOptions.queryKey, exact: true });
+  const response = await queryClient.fetchQuery(queryOptions);
   return normalizeQaList({ ...qaList, ...response });
 }
 
@@ -572,6 +676,7 @@ export async function submitQaListRename(render) {
         state.qaListRename = createQaListRenameState();
       },
       onSuccessApplied: (queryData) => {
+        removeQaListEditorQuery(team, qaList);
         persistQaListsQueryDataForTeam(team, queryData);
       },
       onErrorApplied: (error) => {
@@ -617,6 +722,7 @@ export async function deleteQaList(render, qaListId) {
         state.showDeletedQaLists = true;
       },
       onSuccessApplied: (queryData) => {
+        removeQaListEditorQuery(team, qaList);
         updateDefaultQaListAfterDeletion(team, qaList);
         persistQaListsQueryDataForTeam(team, queryData);
       },
@@ -654,6 +760,7 @@ export async function restoreQaList(render, qaListId) {
       qaList: restored,
       commitMutation: commitQaListLifecycleMutation,
       onSuccessApplied: (queryData) => {
+        removeQaListEditorQuery(team, restored);
         makeQaListDefaultIfFirst(team, { ...restored, lifecycleState: "active" });
         persistQaListsQueryDataForTeam(team, queryData);
       },
@@ -732,6 +839,7 @@ export async function confirmQaListPermanentDeletion(render) {
         }
       },
       onSuccessApplied: (queryData) => {
+        removeQaListEditorQuery(team, qaList);
         persistQaListsQueryDataForTeam(team, queryData);
         state.qaListPermanentDeletion = createQaListPermanentDeletionState();
       },
@@ -763,12 +871,24 @@ export function openQaListEditor(render, qaListId, options = {}) {
     return;
   }
 
+  const team = currentTeam();
+  const cachedPayload =
+    Number.isFinite(team?.installationId) && qaList?.repoName
+      ? getCachedQaListEditorPayload(team, qaList)
+      : null;
   applyQaListEditorSummary(qaList, {
     navigationSource: options.navigationSource ?? null,
-    status: "ready",
+    status: cachedPayload || !qaList.repoName ? "ready" : "loading",
+    terms: cachedPayload ? [] : undefined,
   });
   state.screen = "qaListEditor";
+  if (cachedPayload) {
+    maybeApplyQaListEditorSnapshot(cachedPayload, qaListEditorContext(team, qaList), null);
+  }
   render();
+  if (qaList.repoName && options.skipRefresh !== true) {
+    void loadSelectedQaListEditorData(render);
+  }
 }
 
 export function resolveDefaultQaListForLanguage(languageCode, team = currentTeam()) {
@@ -805,11 +925,15 @@ export async function openEditorQaList(render, options = {}) {
   state.screen = "qaListEditor";
   let openedQaListEditor = false;
   if (qaList) {
+    const cachedPayload = getCachedQaListEditorPayload(team, qaList);
     applyQaListEditorSummary(qaList, {
       navigationSource: "editor",
-      status: "loading",
-      terms: [],
+      status: cachedPayload ? "ready" : "loading",
+      terms: cachedPayload ? [] : [],
     });
+    if (cachedPayload) {
+      maybeApplyQaListEditorSnapshot(cachedPayload, qaListEditorContext(team, qaList), null);
+    }
     openedQaListEditor = true;
   } else {
     state.selectedQaListId = null;
@@ -835,12 +959,16 @@ export async function openEditorQaList(render, options = {}) {
   }
 
   if (!openedQaListEditor) {
+    const cachedPayload = getCachedQaListEditorPayload(team, qaList);
     applyQaListEditorSummary(qaList, {
       navigationSource: "editor",
-      status: "loading",
-      terms: [],
+      status: cachedPayload ? "ready" : "loading",
+      terms: cachedPayload ? [] : [],
     });
     state.screen = "qaListEditor";
+    if (cachedPayload) {
+      maybeApplyQaListEditorSnapshot(cachedPayload, qaListEditorContext(team, qaList), null);
+    }
     render();
   }
   await loadSelectedQaListEditorData(render);
@@ -903,6 +1031,7 @@ export async function loadSelectedQaListEditorData(render) {
   }
 
   const team = currentTeam();
+  const expectedContext = qaListEditorContext(team, qaList);
   try {
     if (teamSupportsQaListRepos(team) && qaList.repoName) {
       const descriptor = qaListRepoDescriptor(qaList);
@@ -915,10 +1044,12 @@ export async function loadSelectedQaListEditorData(render) {
           sessionToken: requireBrokerSession(),
         });
       }
-      const normalized = await loadRepoBackedQaListEditorSnapshot(team, qaList);
-      if (applyQaListEditorSnapshot(team, qaList, normalized)) {
-        render();
-      }
+      const queryOptions = createQaListEditorQueryOptions(team, qaList);
+      await queryClient.invalidateQueries({ queryKey: queryOptions.queryKey, exact: true });
+      const response = await queryClient.fetchQuery(queryOptions);
+      maybeApplyQaListEditorSnapshot(response, expectedContext, render, {
+        showDeferredNotice: true,
+      });
       return;
     }
 
@@ -1002,6 +1133,7 @@ function persistQaListEditorTerms(terms) {
     updatedAt: now,
   });
   applyQaListsQueryDataForTeam(team, nextQueryData, null);
+  removeQaListEditorQuery(team, state.qaListEditor);
   state.qaListEditor = {
     ...state.qaListEditor,
     terms,
@@ -1025,6 +1157,7 @@ export async function submitQaTermEditor(render) {
 
   const team = currentTeam();
   const qaList = selectedQaList();
+  activeQaListTermWriteCount += 1;
   try {
     if (teamSupportsQaListRepos(team) && qaList?.repoName) {
       const previousTerm = editor.termId
@@ -1105,6 +1238,8 @@ export async function submitQaTermEditor(render) {
       ...editor,
       error: error?.message ?? "Could not save this QA term.",
     };
+  } finally {
+    activeQaListTermWriteCount = Math.max(0, activeQaListTermWriteCount - 1);
   }
   render();
 }
@@ -1112,6 +1247,7 @@ export async function submitQaTermEditor(render) {
 export async function deleteQaTerm(render, termId) {
   const team = currentTeam();
   const qaList = selectedQaList();
+  activeQaListTermWriteCount += 1;
   try {
     if (teamSupportsQaListRepos(team) && qaList?.repoName) {
       await syncAndRefreshQaListEditorSnapshot(team, qaList);
@@ -1151,6 +1287,8 @@ export async function deleteQaTerm(render, termId) {
       status: "error",
       error: error?.message ?? "Could not delete this QA term.",
     };
+  } finally {
+    activeQaListTermWriteCount = Math.max(0, activeQaListTermWriteCount - 1);
   }
   render();
 }

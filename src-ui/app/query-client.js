@@ -25,6 +25,26 @@ export const qaListKeys = {
   byTeam: (teamId) => ["qaLists", teamId ?? null],
 };
 
+export const glossaryEditorKeys = {
+  all: ["glossaryEditor"],
+  byGlossary: (installationId, glossaryId, repoName) => [
+    "glossaryEditor",
+    installationId ?? null,
+    glossaryId ?? null,
+    repoName ?? "",
+  ],
+};
+
+export const qaListEditorKeys = {
+  all: ["qaListEditor"],
+  byQaList: (installationId, qaListId, repoName) => [
+    "qaListEditor",
+    installationId ?? null,
+    qaListId ?? null,
+    repoName ?? "",
+  ],
+};
+
 export const projectKeys = {
   all: ["projects"],
   byTeam: (teamId) => ["projects", teamId ?? null],

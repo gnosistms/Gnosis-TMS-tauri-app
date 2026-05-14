@@ -44,6 +44,7 @@ import {
   anyGlossaryMutatingWriteIsActive,
 } from "./glossary-write-coordinator.js";
 import { updateDefaultGlossaryAfterDeletion } from "./glossary-default-flow.js";
+import { removeGlossaryEditorQuery } from "./glossary-editor-query.js";
 
 function glossaryById(glossaryId) {
   return state.glossaries.find((glossary) => glossary.id === glossaryId) ?? null;
@@ -267,6 +268,7 @@ export async function submitGlossaryRename(render) {
         resetGlossaryRename();
       },
       onSuccessApplied: () => {
+        removeGlossaryEditorQuery(team, glossary);
         persistGlossariesForTeam(team);
       },
       onErrorApplied: (error) => {
@@ -318,6 +320,7 @@ export async function deleteGlossary(render, glossaryId) {
         state.showDeletedGlossaries = true;
       },
       onSuccessApplied: () => {
+        removeGlossaryEditorQuery(team, glossary);
         updateDefaultGlossaryAfterDeletion(team, glossary.id);
         persistGlossariesForTeam(team);
       },
@@ -358,6 +361,7 @@ export async function restoreGlossary(render, glossaryId) {
       glossary,
       commitMutation: commitGlossaryMutationStrict,
       onSuccessApplied: () => {
+        removeGlossaryEditorQuery(team, glossary);
         persistGlossariesForTeam(team);
       },
       render,
@@ -478,6 +482,7 @@ export async function confirmGlossaryPermanentDeletion(render) {
         resetGlossaryPermanentDeletion();
       },
       onSuccessApplied: () => {
+        removeGlossaryEditorQuery(team, glossary);
         if (state.selectedGlossaryId === glossary.id) {
           state.selectedGlossaryId = null;
         }

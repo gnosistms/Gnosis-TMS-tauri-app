@@ -201,9 +201,17 @@ const {
   submitGlossaryTermEditor,
 } = await import("./glossary-term-draft.js");
 const {
+  maybeApplyGlossaryEditorSnapshot,
+  openGlossaryEditor,
+} = await import("./glossary-editor-flow.js");
+const {
+  setCachedGlossaryEditorPayload,
+} = await import("./glossary-editor-query.js");
+const {
   anyGlossaryTermWriteIsActive,
   resetGlossaryTermWriteCoordinator,
 } = await import("./glossary-term-write-coordinator.js");
+const { queryClient } = await import("./query-client.js");
 
 function glossaryTerm(overrides = {}) {
   return {
@@ -317,8 +325,104 @@ test.beforeEach(async () => {
   nextTimerId = 1;
   invokeHandler = async () => null;
   resetSessionState();
+  queryClient.clear();
   resetGlossaryTermWriteCoordinator();
   await syncAndStopGlossaryBackgroundSyncSession(() => {});
+});
+
+test("opening a glossary editor applies the exact cached snapshot before disk reload finishes", async () => {
+  installGlossaryEditorFixture({ terms: [] });
+  state.offline.isEnabled = true;
+  const glossary = state.glossaries[0];
+  setCachedGlossaryEditorPayload(state.teams[0], glossary, {
+    glossaryId: glossary.id,
+    repoName: glossary.repoName,
+    title: glossary.title,
+    sourceLanguage: glossary.sourceLanguage,
+    targetLanguage: glossary.targetLanguage,
+    lifecycleState: "active",
+    termCount: 1,
+    terms: [
+      {
+        termId: "cached-term",
+        sourceTerms: ["cached source"],
+        targetTerms: ["cached target"],
+      },
+    ],
+  });
+  const diskLoad = deferred();
+  invokeHandler = async (command) => {
+    if (command === "load_gtms_glossary_editor_data") {
+      return diskLoad.promise;
+    }
+    if (
+      command === "list_team_metadata_records"
+      || command === "get_current_user_team_access"
+    ) {
+      return [];
+    }
+    return null;
+  };
+
+  const openPromise = openGlossaryEditor(() => {}, glossary.id, { preferredGlossary: glossary });
+
+  assert.equal(state.glossaryEditor.status, "ready");
+  assert.equal(state.glossaryEditor.terms[0]?.termId, "cached-term");
+
+  diskLoad.resolve({
+    glossaryId: glossary.id,
+    repoName: glossary.repoName,
+    title: glossary.title,
+    sourceLanguage: glossary.sourceLanguage,
+    targetLanguage: glossary.targetLanguage,
+    lifecycleState: "active",
+    termCount: 1,
+    terms: [
+      {
+        termId: "disk-term",
+        sourceTerms: ["disk source"],
+        targetTerms: ["disk target"],
+      },
+    ],
+  });
+  await openPromise;
+
+  assert.equal(state.glossaryEditor.terms[0]?.termId, "disk-term");
+});
+
+test("glossary editor snapshot apply leaves visible terms alone while a term draft is open", () => {
+  installGlossaryEditorFixture();
+  state.glossaryTermEditor = {
+    ...createGlossaryTermEditorState(),
+    isOpen: true,
+    glossaryId: "glossary-1",
+  };
+
+  const result = maybeApplyGlossaryEditorSnapshot({
+    glossaryId: "glossary-1",
+    repoName: "glossary-1",
+    title: "Fixture Glossary",
+    sourceLanguage: { code: "es", name: "Spanish" },
+    targetLanguage: { code: "fr", name: "French" },
+    lifecycleState: "active",
+    termCount: 1,
+    terms: [
+      {
+        termId: "remote-term",
+        sourceTerms: ["remote"],
+        targetTerms: ["distant"],
+      },
+    ],
+  }, {
+    teamId: "team-1",
+    installationId: 7,
+    glossaryId: "glossary-1",
+    repoName: "glossary-1",
+  }, () => {}, { showDeferredNotice: true });
+
+  assert.equal(result.applied, false);
+  assert.equal(result.reason, "open-draft");
+  assert.equal(state.glossaryEditor.terms[0]?.termId, "term-1");
 });
 
 test("glossary background sync marks changed terms stale without replacing the snapshot", async () => {

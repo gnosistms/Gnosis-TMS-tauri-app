@@ -42,6 +42,7 @@ import {
   glossaryTermWriteScope,
   requestGlossaryTermWriteIntent,
 } from "./glossary-term-write-coordinator.js";
+import { removeGlossaryEditorQuery } from "./glossary-editor-query.js";
 
 const SOURCE_TERM_DUPLICATE_WARNING =
   "The terms highlighted in red below are redundant with other parts of this glossary. Please remove them before saving.";
@@ -638,6 +639,7 @@ export async function submitGlossaryTermEditor(render) {
     pendingMutation: isCreate ? "create" : "save",
   });
   upsertVisibleGlossaryTerm(optimisticTerm);
+  removeGlossaryEditorQuery(team, glossary);
   resetGlossaryTermEditor();
   render();
 

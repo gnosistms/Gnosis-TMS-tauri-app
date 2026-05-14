@@ -31,10 +31,13 @@ globalThis.window = {
 const {
   loadSelectedQaListEditorData,
   loadTeamQaLists,
+  maybeApplyQaListEditorSnapshot,
+  openQaListEditor,
   openEditorQaList,
   resolveDefaultQaListForLanguage,
   submitQaTermEditor,
 } = await import("./qa-list-flow.js");
+const { setCachedQaListEditorPayload } = await import("./qa-list-editor-query.js");
 const { resetQaListsQueryObserver } = await import("./qa-list-query.js");
 const { queryClient } = await import("./query-client.js");
 const { resetSessionState, state } = await import("./state.js");
@@ -47,6 +50,16 @@ function deferred() {
     reject = promiseReject;
   });
   return { promise, resolve, reject };
+}
+
+async function flushAsyncWork() {
+  for (let index = 0; index < 10; index += 1) {
+    await Promise.resolve();
+  }
+  await new Promise((resolve) => setImmediate(resolve));
+  for (let index = 0; index < 10; index += 1) {
+    await Promise.resolve();
+  }
 }
 
 function setupQaTeams() {
@@ -275,6 +288,109 @@ test("editor QA navigation opens the cached default QA list before editor data l
   await openPromise;
 
   assert.equal(state.qaListEditor.status, "ready");
+});
+
+test("opening a QA list editor applies the exact cached snapshot before disk reload finishes", async () => {
+  setupQaTeams();
+  const qaList = repoBackedQaList({ terms: [], termCount: 0 });
+  state.qaLists = [qaList];
+  setCachedQaListEditorPayload(state.teams[0], qaList, {
+    qaListId: qaList.id,
+    repoName: qaList.repoName,
+    title: qaList.title,
+    language: qaList.language,
+    lifecycleState: "active",
+    termCount: 1,
+    terms: [
+      {
+        termId: "cached-term",
+        text: "cached text",
+        notes: "cached notes",
+      },
+    ],
+  });
+  const diskData = deferred();
+  invokeHandler = async (command) => {
+    if (command === "sync_gtms_qa_list_editor_repo") {
+      return null;
+    }
+    if (command === "load_gtms_qa_list_editor_data") {
+      return diskData.promise;
+    }
+    return null;
+  };
+
+  openQaListEditor(() => {}, qaList.id);
+
+  assert.equal(state.qaListEditor.status, "ready");
+  assert.equal(state.qaListEditor.terms[0]?.termId, "cached-term");
+
+  diskData.resolve({
+    qaListId: qaList.id,
+    repoName: qaList.repoName,
+    title: qaList.title,
+    language: qaList.language,
+    lifecycleState: "active",
+    termCount: 1,
+    terms: [
+      {
+        termId: "disk-term",
+        text: "disk text",
+        notes: "disk notes",
+      },
+    ],
+  });
+  await flushAsyncWork();
+
+  assert.equal(state.qaListEditor.terms[0]?.termId, "disk-term");
+});
+
+test("QA list editor snapshot apply leaves visible terms alone while a QA term draft is open", () => {
+  setupQaTeams();
+  const qaList = repoBackedQaList();
+  state.qaLists = [qaList];
+  state.selectedQaListId = qaList.id;
+  state.screen = "qaListEditor";
+  state.qaListEditor = {
+    status: "ready",
+    qaListId: qaList.id,
+    repoName: qaList.repoName,
+    title: qaList.title,
+    language: qaList.language,
+    terms: qaList.terms,
+  };
+  state.qaTermEditor = {
+    isOpen: true,
+    qaListId: qaList.id,
+    termId: "term-1",
+    text: "draft",
+    notes: "",
+  };
+
+  const result = maybeApplyQaListEditorSnapshot({
+    qaListId: qaList.id,
+    repoName: qaList.repoName,
+    title: qaList.title,
+    language: qaList.language,
+    lifecycleState: "active",
+    termCount: 1,
+    terms: [
+      {
+        termId: "remote-term",
+        text: "remote",
+        notes: "remote notes",
+      },
+    ],
+  }, {
+    teamId: "team-1",
+    installationId: 1,
+    qaListId: qaList.id,
+    repoName: qaList.repoName,
+  }, () => {}, { showDeferredNotice: true });
+
+  assert.equal(result.applied, false);
+  assert.equal(result.reason, "open-draft");
+  assert.equal(state.qaListEditor.terms[0]?.termId, "term-1");
 });
 
 test("stale QA list editor load does not overwrite a different selected team", async () => {

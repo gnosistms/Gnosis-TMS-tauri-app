@@ -197,6 +197,10 @@ export function glossaryBackgroundSyncNeedsExitSync() {
   return sessionMatchesCurrentGlossary() && glossaryBackgroundSyncSession.hasLocalMutations === true;
 }
 
+export function glossaryBackgroundSyncIsActive() {
+  return sessionMatchesCurrentGlossary() && Boolean(glossaryBackgroundSyncSession.pendingSync);
+}
+
 export async function syncAndStopGlossaryBackgroundSyncSession(render, options = {}) {
   const shouldForceSync =
     options.force === true
