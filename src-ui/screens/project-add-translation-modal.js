@@ -65,8 +65,10 @@ function renderLanguageModal(modal) {
           <h2 class="modal__title">What language did you paste?</h2>
           <p class="modal__supporting">Select the language of the pasted translation text.</p>
           ${renderError(modal.error)}
-          <div class="language-picker-modal__list" role="list" data-project-add-translation-language-list>
-            ${languages.map((language) => renderLanguageOption(language, selectedCode)).join("")}
+          <div class="language-picker-modal__list-frame">
+            <div class="language-picker-modal__list" role="list" data-project-add-translation-language-list>
+              ${languages.map((language) => renderLanguageOption(language, selectedCode)).join("")}
+            </div>
           </div>
           <div class="modal__actions">
             ${secondaryButton("Cancel", "cancel-project-add-translation")}

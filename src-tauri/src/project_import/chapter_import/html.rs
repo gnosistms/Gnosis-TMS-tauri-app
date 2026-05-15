@@ -1,5 +1,10 @@
-use std::collections::BTreeMap;
+use std::{
+    collections::{BTreeMap, VecDeque},
+    fs,
+    path::{Path, PathBuf},
+};
 
+use base64::{engine::general_purpose, Engine as _};
 use readabilityrs::{Readability, ReadabilityOptions};
 use scraper::{ElementRef, Html, Selector};
 use url::Url;
@@ -8,8 +13,8 @@ use super::{
     humanize_file_stem,
     languages::{language_display_name, normalize_language_code},
     txt::decode_text_file,
-    ImportHtmlInput, ImportedField, ImportedFieldImage, ImportedLanguage, ImportedRow,
-    ParsedWorkbook,
+    ImportHtmlInput, ImportedField, ImportedFieldImage, ImportedImageUpload, ImportedLanguage,
+    ImportedRow, ParsedWorkbook,
 };
 
 const MIN_READABILITY_TEXT_CHARS: usize = 200;
@@ -35,8 +40,14 @@ struct HtmlBlock {
     text_style: Option<String>,
     block_kind: String,
     original_tag: String,
-    image_url: Option<String>,
+    image: Option<ImportedFieldImage>,
     image_caption: String,
+}
+
+struct HtmlTextAlignmentMarker {
+    text: String,
+    block_kind: String,
+    centered: bool,
 }
 
 pub(super) fn parse_html_file(input: ImportHtmlInput) -> Result<ParsedWorkbook, String> {
@@ -48,8 +59,14 @@ pub(super) fn parse_html_file(input: ImportHtmlInput) -> Result<ParsedWorkbook, 
         .ok_or_else(|| "Select a supported source language.".to_string())?;
     let name = language_display_name(&code);
     let decoded = decode_text_file(&input.bytes)?;
+    let mut original_alignment_markers = html_text_alignment_markers(&decoded)?;
     let article = extract_reader_article(&decoded, &input.source_url)?;
-    let mut blocks = html_blocks_from_fragment(&article.content, &input.source_url)?;
+    let mut blocks = html_blocks_from_fragment(
+        &article.content,
+        &input.source_url,
+        input.source_path.as_deref(),
+        &mut original_alignment_markers,
+    )?;
 
     if let Some(title) = article
         .title
@@ -68,7 +85,7 @@ pub(super) fn parse_html_file(input: ImportHtmlInput) -> Result<ParsedWorkbook, 
                     text_style: Some("heading1".to_string()),
                     block_kind: "heading".to_string(),
                     original_tag: "title".to_string(),
-                    image_url: None,
+                    image: None,
                     image_caption: String::new(),
                 },
             );
@@ -88,13 +105,10 @@ pub(super) fn parse_html_file(input: ImportHtmlInput) -> Result<ParsedWorkbook, 
                 plain_text: block.text,
                 footnote: String::new(),
                 image_caption: block.image_caption,
-                image: block.image_url.as_ref().map(|url| ImportedFieldImage {
-                    kind: "url".to_string(),
-                    url: Some(url.clone()),
-                    path: None,
-                }),
+                image: block.image.clone(),
             },
         );
+        let image_url = block.image.as_ref().and_then(html_field_image_url);
         rows.push(ImportedRow {
             external_id: None,
             description: None,
@@ -109,7 +123,7 @@ pub(super) fn parse_html_file(input: ImportHtmlInput) -> Result<ParsedWorkbook, 
                 block_kind: block.block_kind,
                 block_index: index + 1,
                 original_tag: block.original_tag,
-                image_url: block.image_url,
+                image_url,
             }),
         });
     }
@@ -209,7 +223,12 @@ fn fallback_article(html: &str) -> Result<HtmlArticle, String> {
     .ok_or_else(|| "The selected HTML page does not contain readable article text.".to_string())
 }
 
-fn html_blocks_from_fragment(content: &str, source_url: &str) -> Result<Vec<HtmlBlock>, String> {
+fn html_blocks_from_fragment(
+    content: &str,
+    source_url: &str,
+    source_path: Option<&str>,
+    original_alignment_markers: &mut VecDeque<HtmlTextAlignmentMarker>,
+) -> Result<Vec<HtmlBlock>, String> {
     let fragment = Html::parse_fragment(content);
     let selector = Selector::parse("figure, img, h1, h2, h3, h4, h5, h6, blockquote, p, pre, li")
         .map_err(|_| "Could not prepare HTML reader extraction.".to_string())?;
@@ -222,7 +241,7 @@ fn html_blocks_from_fragment(content: &str, source_url: &str) -> Result<Vec<Html
         }
 
         if tag == "figure" {
-            if let Some(block) = image_block_from_figure(element, source_url)? {
+            if let Some(block) = image_block_from_figure(element, source_url, source_path)? {
                 blocks.push(block);
             }
             continue;
@@ -232,7 +251,7 @@ fn html_blocks_from_fragment(content: &str, source_url: &str) -> Result<Vec<Html
             if has_ancestor_tag(element, "figure") {
                 continue;
             }
-            if let Some(block) = image_block_from_img(element, "img", source_url)? {
+            if let Some(block) = image_block_from_img(element, "img", source_url, source_path)? {
                 blocks.push(block);
             }
             continue;
@@ -251,13 +270,16 @@ fn html_blocks_from_fragment(content: &str, source_url: &str) -> Result<Vec<Html
             continue;
         }
 
-        let (text_style, block_kind) = html_text_style_for_tag(tag);
+        let (_, marker_block_kind) = html_text_style_for_tag(tag);
+        let original_centered =
+            consume_original_center_alignment(original_alignment_markers, &text, marker_block_kind);
+        let (text_style, block_kind) = html_text_style_for_element(element, tag, original_centered);
         blocks.push(HtmlBlock {
             text,
             text_style,
             block_kind: block_kind.to_string(),
             original_tag: tag.to_string(),
-            image_url: None,
+            image: None,
             image_caption: String::new(),
         });
     }
@@ -265,16 +287,66 @@ fn html_blocks_from_fragment(content: &str, source_url: &str) -> Result<Vec<Html
     Ok(blocks)
 }
 
+fn html_text_alignment_markers(html: &str) -> Result<VecDeque<HtmlTextAlignmentMarker>, String> {
+    let document = Html::parse_document(html);
+    let selector = Selector::parse("figure, img, h1, h2, h3, h4, h5, h6, blockquote, p, pre, li")
+        .map_err(|_| "Could not prepare HTML reader extraction.".to_string())?;
+    let mut markers = VecDeque::new();
+
+    for element in document.select(&selector) {
+        let tag = element.value().name();
+        if matches!(tag, "figure" | "img")
+            || should_skip_element(element)
+            || has_block_ancestor(element)
+        {
+            continue;
+        }
+
+        let preserve_breaks = tag == "pre";
+        let mut text = element_text(element, preserve_breaks);
+        if tag == "li" && !text.starts_with("- ") && !text.starts_with("* ") {
+            text = format!("- {text}");
+        }
+        if text.trim().is_empty() {
+            continue;
+        }
+
+        let (_, block_kind) = html_text_style_for_tag(tag);
+        markers.push_back(HtmlTextAlignmentMarker {
+            text,
+            block_kind: block_kind.to_string(),
+            centered: element_is_center_aligned(element),
+        });
+    }
+
+    Ok(markers)
+}
+
+fn consume_original_center_alignment(
+    markers: &mut VecDeque<HtmlTextAlignmentMarker>,
+    text: &str,
+    block_kind: &str,
+) -> Option<bool> {
+    let marker_index = markers
+        .iter()
+        .position(|marker| marker.text == text && marker.block_kind == block_kind)?;
+    markers.remove(marker_index).map(|marker| marker.centered)
+}
+
 fn image_block_from_figure(
     figure: ElementRef<'_>,
     source_url: &str,
+    source_path: Option<&str>,
 ) -> Result<Option<HtmlBlock>, String> {
     let img_selector = Selector::parse("img")
         .map_err(|_| "Could not prepare HTML reader extraction.".to_string())?;
     let caption_selector = Selector::parse("figcaption")
         .map_err(|_| "Could not prepare HTML reader extraction.".to_string())?;
-    let Some(img) = figure.select(&img_selector).find(|image| {
-        !should_skip_image_element(*image) && image_url_from_element(*image, source_url).is_some()
+    let Some((img, image)) = figure.select(&img_selector).find_map(|image| {
+        if should_skip_image_element(image) {
+            return None;
+        }
+        image_from_element(image, source_url, source_path).map(|field_image| (image, field_image))
     }) else {
         return Ok(None);
     };
@@ -284,16 +356,12 @@ fn image_block_from_figure(
         .map(|caption| element_text(caption, false))
         .find(|caption| !caption.is_empty())
         .or_else(|| meaningful_alt_caption(img));
-    let Some(image_url) = image_url_from_element(img, source_url) else {
-        return Ok(None);
-    };
-
     Ok(Some(HtmlBlock {
         text: String::new(),
         text_style: None,
         block_kind: "image".to_string(),
         original_tag: "figure".to_string(),
-        image_url: Some(image_url),
+        image: Some(image),
         image_caption: caption.unwrap_or_default(),
     }))
 }
@@ -302,11 +370,12 @@ fn image_block_from_img(
     img: ElementRef<'_>,
     original_tag: &str,
     source_url: &str,
+    source_path: Option<&str>,
 ) -> Result<Option<HtmlBlock>, String> {
     if should_skip_image_element(img) {
         return Ok(None);
     }
-    let Some(image_url) = image_url_from_element(img, source_url) else {
+    let Some(image) = image_from_element(img, source_url, source_path) else {
         return Ok(None);
     };
 
@@ -315,7 +384,7 @@ fn image_block_from_img(
         text_style: None,
         block_kind: "image".to_string(),
         original_tag: original_tag.to_string(),
-        image_url: Some(image_url),
+        image: Some(image),
         image_caption: meaningful_alt_caption(img).unwrap_or_default(),
     }))
 }
@@ -483,11 +552,66 @@ fn parse_dimension(value: Option<&str>) -> Option<u32> {
     digits.parse::<u32>().ok()
 }
 
-fn image_url_from_element(element: ElementRef<'_>, source_url: &str) -> Option<String> {
+fn image_from_element(
+    element: ElementRef<'_>,
+    source_url: &str,
+    source_path: Option<&str>,
+) -> Option<ImportedFieldImage> {
     let raw = best_srcset_url(element)
         .or_else(|| lazy_image_url(element))
         .or_else(|| element.attr("src").map(str::to_string))?;
-    resolve_image_url(&raw, source_url)
+    resolve_image_source(&raw, source_url, source_path)
+}
+
+fn resolve_image_source(
+    raw_url: &str,
+    source_url: &str,
+    source_path: Option<&str>,
+) -> Option<ImportedFieldImage> {
+    let trimmed = raw_url.trim();
+    if trimmed.is_empty() || trimmed.starts_with("blob:") || trimmed.starts_with("javascript:") {
+        return None;
+    }
+
+    if trimmed.starts_with("data:") {
+        return data_image_field(trimmed);
+    }
+
+    if let Ok(parsed) = Url::parse(trimmed) {
+        if matches!(parsed.scheme(), "http" | "https") {
+            return Some(url_image_field(parsed.to_string()));
+        }
+        if parsed.scheme() == "file" {
+            return local_file_url_image_field(&parsed, source_path);
+        }
+        return None;
+    }
+
+    if let Some(source_path) = source_path {
+        if let Some(image) = local_relative_image_field(trimmed, source_path) {
+            return Some(image);
+        }
+    }
+
+    let base = Url::parse(source_url).ok()?;
+    image_url_with_supported_scheme(base.join(trimmed).ok()?).map(url_image_field)
+}
+
+fn html_field_image_url(image: &ImportedFieldImage) -> Option<String> {
+    if image.kind == "url" {
+        image.url.clone()
+    } else {
+        None
+    }
+}
+
+fn url_image_field(url: String) -> ImportedFieldImage {
+    ImportedFieldImage {
+        kind: "url".to_string(),
+        url: Some(url),
+        path: None,
+        pending_upload: None,
+    }
 }
 
 fn best_srcset_url(element: ElementRef<'_>) -> Option<String> {
@@ -533,29 +657,103 @@ fn lazy_image_url(element: ElementRef<'_>) -> Option<String> {
     .map(str::to_string)
 }
 
-fn resolve_image_url(raw_url: &str, source_url: &str) -> Option<String> {
-    let trimmed = raw_url.trim();
-    if trimmed.is_empty()
-        || trimmed.starts_with("data:")
-        || trimmed.starts_with("blob:")
-        || trimmed.starts_with("javascript:")
-    {
-        return None;
-    }
-
-    if let Ok(parsed) = Url::parse(trimmed) {
-        return image_url_with_supported_scheme(parsed);
-    }
-
-    let base = Url::parse(source_url).ok()?;
-    image_url_with_supported_scheme(base.join(trimmed).ok()?)
-}
-
 fn image_url_with_supported_scheme(url: Url) -> Option<String> {
     if matches!(url.scheme(), "http" | "https") {
         Some(url.to_string())
     } else {
         None
+    }
+}
+
+fn data_image_field(value: &str) -> Option<ImportedFieldImage> {
+    let (metadata, data) = value.split_once(',')?;
+    if !metadata.to_ascii_lowercase().ends_with(";base64") {
+        return None;
+    }
+    let mime_type = metadata
+        .strip_prefix("data:")
+        .unwrap_or("")
+        .split(';')
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_ascii_lowercase();
+    let extension = image_extension_from_mime_type(&mime_type)?;
+    let normalized_data = data.split_whitespace().collect::<String>();
+    let bytes = general_purpose::STANDARD.decode(normalized_data).ok()?;
+    if bytes.is_empty() {
+        return None;
+    }
+    upload_image_field(format!("embedded-image.{extension}"), bytes)
+}
+
+fn local_file_url_image_field(url: &Url, source_path: Option<&str>) -> Option<ImportedFieldImage> {
+    let source_root = source_html_directory(source_path?)?;
+    let path = url.to_file_path().ok()?;
+    local_image_field_from_path(path, &source_root)
+}
+
+fn local_relative_image_field(raw_url: &str, source_path: &str) -> Option<ImportedFieldImage> {
+    let source_root = source_html_directory(source_path)?;
+    let relative_path = strip_local_url_suffix(raw_url);
+    let path = source_root.join(relative_path);
+    local_image_field_from_path(path, &source_root)
+}
+
+fn local_image_field_from_path(path: PathBuf, source_root: &Path) -> Option<ImportedFieldImage> {
+    let root = source_root.canonicalize().ok()?;
+    let image_path = path.canonicalize().ok()?;
+    if !image_path.starts_with(&root) {
+        return None;
+    }
+    let bytes = fs::read(&image_path).ok()?;
+    if bytes.is_empty() {
+        return None;
+    }
+    let filename = image_path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("image")
+        .to_string();
+    upload_image_field(filename, bytes)
+}
+
+fn upload_image_field(filename: String, bytes: Vec<u8>) -> Option<ImportedFieldImage> {
+    Some(ImportedFieldImage {
+        kind: "upload".to_string(),
+        url: None,
+        path: None,
+        pending_upload: Some(ImportedImageUpload { filename, bytes }),
+    })
+}
+
+fn source_html_directory(source_path: &str) -> Option<PathBuf> {
+    let path = Path::new(source_path.trim());
+    path.parent().map(Path::to_path_buf)
+}
+
+fn strip_local_url_suffix(value: &str) -> &str {
+    value
+        .split(['?', '#'])
+        .next()
+        .unwrap_or(value)
+        .trim()
+        .trim_start_matches("./")
+}
+
+fn image_extension_from_mime_type(value: &str) -> Option<&'static str> {
+    match value {
+        "image/jpeg" | "image/jpg" => Some("jpg"),
+        "image/png" | "image/apng" => Some("png"),
+        "image/gif" => Some("gif"),
+        "image/svg+xml" => Some("svg"),
+        "image/webp" => Some("webp"),
+        "image/avif" => Some("avif"),
+        "image/bmp" => Some("bmp"),
+        "image/x-icon" | "image/vnd.microsoft.icon" => Some("ico"),
+        _ => None,
     }
 }
 
@@ -592,6 +790,81 @@ fn html_text_style_for_tag(tag: &str) -> (Option<String>, &'static str) {
         "blockquote" => (Some("quote".to_string()), "quote"),
         _ => (None, "paragraph"),
     }
+}
+
+fn html_text_style_for_element(
+    element: ElementRef<'_>,
+    tag: &str,
+    original_centered: Option<bool>,
+) -> (Option<String>, &'static str) {
+    let (text_style, block_kind) = html_text_style_for_tag(tag);
+    let is_centered = element_is_center_aligned(element) || original_centered.unwrap_or(false);
+    if block_kind != "heading" && is_centered {
+        return (Some("centered".to_string()), block_kind);
+    }
+
+    (text_style, block_kind)
+}
+
+fn element_is_center_aligned(element: ElementRef<'_>) -> bool {
+    if let Some(is_centered) = element_explicit_center_alignment(element) {
+        return is_centered;
+    }
+    if element.value().name().eq_ignore_ascii_case("center") {
+        return true;
+    }
+
+    for node in element.ancestors() {
+        let Some(candidate) = ElementRef::wrap(node) else {
+            continue;
+        };
+        if candidate.id() == element.id() {
+            continue;
+        }
+        if let Some(is_centered) = element_explicit_center_alignment(candidate) {
+            return is_centered;
+        }
+        if candidate.value().name().eq_ignore_ascii_case("center") {
+            return true;
+        }
+    }
+
+    false
+}
+
+fn element_explicit_center_alignment(element: ElementRef<'_>) -> Option<bool> {
+    if let Some(style_alignment) = style_text_align_value(element.attr("style").unwrap_or("")) {
+        return Some(alignment_value_is_center(&style_alignment));
+    }
+    element
+        .attr("align")
+        .map(|value| alignment_value_is_center(value))
+}
+
+fn style_text_align_value(style: &str) -> Option<String> {
+    style.split(';').rev().find_map(|declaration| {
+        let (property, value) = declaration.split_once(':')?;
+        if property.trim().eq_ignore_ascii_case("text-align") {
+            Some(normalize_alignment_value(value))
+        } else {
+            None
+        }
+    })
+}
+
+fn alignment_value_is_center(value: &str) -> bool {
+    matches!(
+        normalize_alignment_value(value).as_str(),
+        "center" | "-webkit-center" | "-moz-center"
+    )
+}
+
+fn normalize_alignment_value(value: &str) -> String {
+    value
+        .trim()
+        .trim_end_matches("!important")
+        .trim()
+        .to_ascii_lowercase()
 }
 
 fn element_text(element: ElementRef<'_>, preserve_breaks: bool) -> String {
@@ -641,6 +914,7 @@ mod tests {
             bytes: html.as_bytes().to_vec(),
             source_language_code: "en".to_string(),
             source_url: "https://example.com/article".to_string(),
+            source_path: None,
         }
     }
 
@@ -675,6 +949,46 @@ mod tests {
             "- List item".to_string(),
         );
         assert!(parsed.rows[0].html_metadata.is_some());
+    }
+
+    #[test]
+    fn html_import_marks_centered_non_heading_text_without_overriding_headings() {
+        let long_text =
+            "This paragraph contains enough article text for reader extraction. ".repeat(12);
+        let input = html_input(&format!(
+            r#"
+            <html>
+              <body>
+                <article>
+                  <h1 style="text-align: center">Centered Heading</h1>
+                  <p style="text-align: center">{long_text}</p>
+                  <div align="center">
+                    <p>Inherited centered paragraph.</p>
+                  </div>
+                  <p style="text-align: left">Left paragraph.</p>
+                </article>
+              </body>
+            </html>
+            "#
+        ));
+
+        let parsed = parse_html_file(input).expect("html should parse");
+        let normalized_long_text = normalize_html_text(&long_text, false);
+        let style_for_text = |text: &str| {
+            parsed
+                .rows
+                .iter()
+                .find(|row| row.fields["en"].plain_text == text)
+                .and_then(|row| row.text_style.as_deref())
+        };
+
+        assert_eq!(style_for_text("Centered Heading"), Some("heading1"));
+        assert_eq!(style_for_text(&normalized_long_text), Some("centered"));
+        assert_eq!(
+            style_for_text("Inherited centered paragraph."),
+            Some("centered")
+        );
+        assert_eq!(style_for_text("Left paragraph."), None);
     }
 
     #[test]
@@ -729,6 +1043,54 @@ mod tests {
                 .and_then(|metadata| metadata.image_url.as_deref()),
             Some("https://example.com/images/plate.jpg")
         );
+    }
+
+    #[test]
+    fn html_import_preserves_base64_data_images_as_pending_uploads() {
+        let long_text =
+            "This paragraph contains enough article text for reader extraction. ".repeat(12);
+        let input = html_input(&format!(
+            r#"
+            <html>
+              <body>
+                <article>
+                  <p>{long_text}</p>
+                  <img
+                    src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII="
+                    width="640"
+                    height="420"
+                    alt="Inline image"
+                  >
+                </article>
+              </body>
+            </html>
+            "#
+        ));
+
+        let parsed = parse_html_file(input).expect("html should parse");
+        let image_field = parsed
+            .rows
+            .iter()
+            .find_map(|row| row.fields.get("en").filter(|field| field.image.is_some()))
+            .expect("image field should be imported");
+        let image = image_field.image.as_ref().expect("image should exist");
+
+        assert_eq!(image.kind, "upload");
+        assert!(image.url.is_none());
+        assert!(image.path.is_none());
+        assert_eq!(image_field.image_caption, "Inline image");
+        assert_eq!(
+            image
+                .pending_upload
+                .as_ref()
+                .map(|upload| upload.filename.as_str()),
+            Some("embedded-image.png")
+        );
+        assert!(image
+            .pending_upload
+            .as_ref()
+            .map(|upload| upload.bytes.starts_with(&[0x89, b'P', b'N', b'G']))
+            .unwrap_or(false));
     }
 
     #[test]

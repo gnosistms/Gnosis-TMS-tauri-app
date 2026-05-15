@@ -18,11 +18,18 @@ import {
   showProjectsNotice,
   showProjectsStatus,
 } from "./project-chapter-flow.js";
+import {
+  chapterImportIntentKey,
+  projectRepoWriteScope,
+  requestProjectWriteIntent,
+} from "./project-write-coordinator.js";
 import { openLocalFilePicker } from "./local-file-picker.js";
 import { normalizeSupportedLanguageCode } from "../lib/language-options.js";
 
 export const PROJECT_IMPORT_ACCEPT =
-  ".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,.txt,text/plain,.docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+  ".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,.txt,text/plain,.docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document,.html,.htm,text/html";
+
+const SUPPORTED_PROJECT_IMPORT_FORMATS_LABEL = "XLSX, TXT, DOCX, and HTML";
 
 export function detectImportFileType(fileName) {
   const normalized = String(fileName || "").trim().toLowerCase();
@@ -70,6 +77,8 @@ function droppedPathImportFile(path) {
     ? {
         name: droppedPathFileName(normalizedPath),
         droppedPath: normalizedPath,
+        sourcePath: normalizedPath,
+        sourceUrl: localPathToFileUrl(normalizedPath),
       }
     : null;
 }
@@ -123,6 +132,15 @@ function encodeUtf8TextToBase64(value) {
   throw new Error("Base64 encoding is unavailable.");
 }
 
+function localPathToFileUrl(path) {
+  const normalizedPath = typeof path === "string" ? path.trim().replace(/\\/g, "/") : "";
+  if (!normalizedPath.startsWith("/")) {
+    return "";
+  }
+
+  return `file://${normalizedPath.split("/").map((part) => encodeURIComponent(part)).join("/")}`;
+}
+
 function linkImportErrorKind(error) {
   const message = error instanceof Error ? error.message : String(error ?? "");
   if (message.startsWith("PROJECT_IMPORT_LINK_ACCESS_DENIED:")) {
@@ -138,6 +156,8 @@ async function importFileBytes(file) {
       name: typeof droppedFile?.name === "string" ? droppedFile.name : file.name,
       type: typeof droppedFile?.mimeType === "string" ? droppedFile.mimeType : "",
       dataBase64: typeof droppedFile?.dataBase64 === "string" ? droppedFile.dataBase64 : "",
+      sourcePath: file.sourcePath,
+      sourceUrl: file.sourceUrl,
     });
   }
 
@@ -306,6 +326,19 @@ function applyImportedFileToProject(team, projectId, result, linkedGlossary = nu
     ...buildImportedFileEntry(result),
     linkedGlossary,
   };
+  requestProjectWriteIntent({
+    key: chapterImportIntentKey(projectId, importedFile.id),
+    scope: projectRepoWriteScope(team, projectId),
+    teamId: team?.id ?? null,
+    projectId,
+    chapterId: importedFile.id,
+    type: "chapterImport",
+    value: {
+      chapter: importedFile,
+    },
+  }, {
+    run: async () => {},
+  });
   const mergeImportedFile = (project) => {
     if (!project || project.id !== projectId) {
       return project;
@@ -682,6 +715,7 @@ async function importProjectFileResult(selectedTeam, targetProject, selectedFile
         bytes,
         sourceLanguageCode: options.confirmedSourceLanguageCode,
         sourceUrl: typeof selectedFile?.sourceUrl === "string" ? selectedFile.sourceUrl : "",
+        sourcePath: typeof selectedFile?.sourcePath === "string" ? selectedFile.sourcePath : null,
       },
     });
   }
@@ -797,7 +831,7 @@ export async function importProjectFile(render, selectedFile, options = {}) {
   const sourceFileName = importFileName(selectedFile);
   const fileType = detectImportFileType(sourceFileName);
   if (!fileType) {
-    const errorMessage = `Unsupported file type for ${sourceFileName}. XLSX, TXT, and DOCX are the supported import formats right now.`;
+    const errorMessage = `Unsupported file type for ${sourceFileName}. ${SUPPORTED_PROJECT_IMPORT_FORMATS_LABEL} are the supported import formats right now.`;
     setProjectImportError(render, errorMessage);
     return;
   }
@@ -974,6 +1008,8 @@ export async function handleDroppedProjectImportPath(render, path) {
       name: typeof file?.name === "string" ? file.name : "",
       type: typeof file?.mimeType === "string" ? file.mimeType : "",
       dataBase64: typeof file?.dataBase64 === "string" ? file.dataBase64 : "",
+      sourcePath: normalizedPath,
+      sourceUrl: localPathToFileUrl(normalizedPath),
     });
   } catch (error) {
     setProjectImportError(render, error instanceof Error ? error.message : String(error));

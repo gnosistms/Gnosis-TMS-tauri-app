@@ -32,8 +32,10 @@ function renderSourceLanguageStep(modal) {
           <p class="card__eyebrow">SOURCE LANGUAGE</p>
           <h2 class="modal__title">What is the language of ${fileLabel}?</h2>
           <p class="modal__supporting">Select the language of ${fileLabel} from the list below. This will be the source language.</p>
-          <div class="language-picker-modal__list" role="list" data-project-import-source-language-list>
-            ${languages.map((language) => renderSourceLanguageOption(language, selectedCode)).join("")}
+          <div class="language-picker-modal__list-frame">
+            <div class="language-picker-modal__list" role="list" data-project-import-source-language-list>
+              ${languages.map((language) => renderSourceLanguageOption(language, selectedCode)).join("")}
+            </div>
           </div>
           <div class="modal__actions">
             ${secondaryButton("Cancel", "cancel-project-import")}
@@ -154,7 +156,7 @@ function renderProjectImportUploadPanel(isImporting) {
       ${isImporting ? '<span class="button__spinner" aria-hidden="true"></span>' : ""}
       <span>Drop files here or click to open the file selector.</span>
     </button>
-    <p class="project-import-modal__hint">Supported formats: .xlsx, .txt, or .docx. For .xlsx files, the first row must contain supported language codes such as es, en, vi, zh-Hans, or zh-Hant.</p>
+    <p class="project-import-modal__hint">Supported formats: .xlsx, .txt, .docx, .html, or .htm. For .xlsx files, the first row must contain supported language codes such as es, en, vi, zh-Hans, or zh-Hant.</p>
   `;
 }
 

@@ -21,7 +21,7 @@ test("project import modal renders the requested drop target copy", () => {
   assert.match(html, /data-project-import-dropzone/);
   assert.match(html, /Drop files here or click to open the file selector\./);
   assert.match(html, /Select files/);
-  assert.match(html, /Supported formats: \.xlsx, \.txt, or \.docx\./);
+  assert.match(html, /Supported formats: \.xlsx, \.txt, \.docx, \.html, or \.htm\./);
 });
 
 test("project import modal renders paste link input state", () => {
@@ -196,6 +196,7 @@ test("project import modal renders source language selection step for text-like 
   assert.match(html, /SOURCE LANGUAGE/);
   assert.match(html, /What is the language of this file\?/);
   assert.match(html, /Select the language of this file from the list below\. This will be the source language\./);
+  assert.match(html, /class="language-picker-modal__list-frame"[\s\S]*data-project-import-source-language-list/);
   assert.match(html, /data-action="select-project-import-source-language:en"/);
   assert.match(html, /data-action="select-project-import-source-language:zh-Hans"/);
   assert.match(html, /data-action="select-project-import-source-language:zh-Hant"/);

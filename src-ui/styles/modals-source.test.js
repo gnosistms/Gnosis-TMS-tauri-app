@@ -14,7 +14,11 @@ test("chapter language manager rows reserve top paint room for first-row tooltip
 test("language picker keeps actions visible and uses compact option spacing", () => {
   assert.match(
     source,
-    /\.modal-card--language-picker \{\s*width: min\(420px, 100%\);\s*max-height: calc\(100vh - 56px\);\s*overflow: hidden;\s*\}/s,
+    /\.modal-card--language-picker \{\s*--ais-index-button-size: 14px;\s*--ais-index-right: 8px;\s*display: flex;\s*width: min\(420px, 100%\);\s*max-height: calc\(100vh - 56px\);\s*overflow: hidden;\s*\}/s,
+  );
+  assert.match(
+    source,
+    /\.modal-card--language-picker > \.modal-card__body \{\s*width: 100%;\s*max-height: inherit;\s*\}/s,
   );
   assert.match(
     source,
@@ -22,7 +26,15 @@ test("language picker keeps actions visible and uses compact option spacing", ()
   );
   assert.match(
     source,
-    /\.language-picker-modal__list \{\s*display: grid;\s*gap: 4px;\s*flex: 1 1 auto;\s*min-height: 0;\s*max-height: none;\s*overflow-y: auto;\s*padding-right: 4px;\s*\}/s,
+    /\.language-picker-modal__list-frame \{\s*display: flex;\s*flex: 1 1 auto;\s*min-height: 0;\s*max-height: none;\s*overflow: hidden;\s*\}/s,
+  );
+  assert.match(
+    source,
+    /\.language-picker-modal__list-frame > \.language-picker-modal__list \{\s*height: 100%;\s*width: 100%;\s*\}/s,
+  );
+  assert.match(
+    source,
+    /\.language-picker-modal__list \{\s*display: grid;\s*gap: 4px;\s*min-height: 0;\s*max-height: none;\s*overflow-y: auto;\s*padding-right: 30px;\s*\}/s,
   );
   assert.match(source, /\.language-picker-modal__option \{\s*min-height: 32\.2px;/);
 });

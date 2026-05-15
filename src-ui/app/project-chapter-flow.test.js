@@ -140,3 +140,38 @@ test("chapter lifecycle intent clears after refreshed state agrees", () => {
   assert.equal(chapters.find((item) => item.id === "delete-chapter").localLifecycleIntent, undefined);
   assert.equal(chapters.find((item) => item.id === "restore-chapter").localLifecycleIntent, undefined);
 });
+
+test("chapter lifecycle preservation does not revive files missing from disk refresh", () => {
+  const previousSnapshot = {
+    items: [
+      project({
+        chapters: [
+          chapter({ id: "active-chapter", name: "Active Chapter" }),
+          chapter({
+            id: "deleted-chapter",
+            name: "Deleted Chapter",
+            status: "deleted",
+            pendingMutation: "softDelete",
+            localLifecycleIntent: "softDelete",
+          }),
+        ],
+      }),
+    ],
+    deletedItems: [],
+  };
+  const diskSnapshot = {
+    items: [
+      project({
+        chapters: [
+          chapter({ id: "active-chapter", name: "Active Chapter" }),
+        ],
+      }),
+    ],
+    deletedItems: [],
+  };
+
+  const merged = preserveChapterLifecyclePatchesInProjectSnapshot(diskSnapshot, previousSnapshot);
+  const chapters = merged.items[0].chapters;
+
+  assert.equal(chapters.some((item) => item.id === "deleted-chapter"), false);
+});

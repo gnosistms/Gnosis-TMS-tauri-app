@@ -71,6 +71,7 @@ pub(crate) struct ImportHtmlInput {
     bytes: Vec<u8>,
     source_language_code: String,
     source_url: String,
+    source_path: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -145,6 +146,14 @@ struct ImportedFieldImage {
     url: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     path: Option<String>,
+    #[serde(skip)]
+    pending_upload: Option<ImportedImageUpload>,
+}
+
+#[derive(Clone)]
+struct ImportedImageUpload {
+    filename: String,
+    bytes: Vec<u8>,
 }
 
 #[derive(Deserialize)]
@@ -597,6 +606,7 @@ mod tests {
                     kind: "url".to_string(),
                     url: Some("https://example.com/images/plate.jpg".to_string()),
                     path: None,
+                    pending_upload: None,
                 }),
             },
         );

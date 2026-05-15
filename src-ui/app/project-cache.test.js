@@ -85,3 +85,66 @@ test("project cache strips legacy persisted top-level lifecycle UI intent fields
 
   removeStoredProjectDataForTeam(team);
 });
+
+test("project cache does not persist chapter lifecycle UI intent fields", () => {
+  setActiveStorageLogin("tester");
+
+  saveStoredProjectsForTeam(team, {
+    projects: [
+      project({
+        chapters: [
+          {
+            id: "chapter-1",
+            name: "Chapter",
+            status: "deleted",
+            pendingMutation: "softDelete",
+            localLifecycleIntent: "softDelete",
+            pendingGlossaryMutation: true,
+            glossaryMutationError: "failed",
+          },
+        ],
+      }),
+    ],
+    deletedProjects: [],
+  });
+
+  const stored = readPersistentValue(STORAGE_KEY, {});
+  const storedChapter = stored["installation:42"].projects[0].chapters[0];
+  assert.equal(Object.hasOwn(storedChapter, "pendingMutation"), false);
+  assert.equal(Object.hasOwn(storedChapter, "localLifecycleIntent"), false);
+  assert.equal(Object.hasOwn(storedChapter, "pendingGlossaryMutation"), false);
+  assert.equal(Object.hasOwn(storedChapter, "glossaryMutationError"), false);
+});
+
+test("project cache strips legacy persisted chapter lifecycle UI intent fields on load", () => {
+  setActiveStorageLogin("tester");
+  writePersistentValue(STORAGE_KEY, {
+    "installation:42": {
+      projects: [
+        project({
+          chapters: [
+            {
+              id: "chapter-1",
+              name: "Chapter",
+              status: "deleted",
+              pendingMutation: "softDelete",
+              localLifecycleIntent: "softDelete",
+              pendingGlossaryMutation: true,
+              glossaryMutationError: "failed",
+            },
+          ],
+        }),
+      ],
+      deletedProjects: [],
+    },
+  });
+
+  const loaded = loadStoredProjectsForTeam(team);
+  const loadedChapter = loaded.projects[0].chapters[0];
+  assert.equal(Object.hasOwn(loadedChapter, "pendingMutation"), false);
+  assert.equal(Object.hasOwn(loadedChapter, "localLifecycleIntent"), false);
+  assert.equal(Object.hasOwn(loadedChapter, "pendingGlossaryMutation"), false);
+  assert.equal(Object.hasOwn(loadedChapter, "glossaryMutationError"), false);
+
+  removeStoredProjectDataForTeam(team);
+});

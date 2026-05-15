@@ -1360,9 +1360,18 @@
 }
 
 .modal-card--language-picker {
+  --ais-index-button-size: 14px;
+  --ais-index-right: 8px;
+
+  display: flex;
   width: min(420px, 100%);
   max-height: calc(100vh - 56px);
   overflow: hidden;
+}
+
+.modal-card--language-picker > .modal-card__body {
+  width: 100%;
+  max-height: inherit;
 }
 
 .language-picker-modal {
@@ -1380,14 +1389,26 @@
   flex: 0 0 auto;
 }
 
-.language-picker-modal__list {
-  display: grid;
-  gap: 4px;
+.language-picker-modal__list-frame {
+  display: flex;
   flex: 1 1 auto;
   min-height: 0;
   max-height: none;
+  overflow: hidden;
+}
+
+.language-picker-modal__list-frame > .language-picker-modal__list {
+  height: 100%;
+  width: 100%;
+}
+
+.language-picker-modal__list {
+  display: grid;
+  gap: 4px;
+  min-height: 0;
+  max-height: none;
   overflow-y: auto;
-  padding-right: 4px;
+  padding-right: 30px;
 }
 
 .language-picker-modal__option {

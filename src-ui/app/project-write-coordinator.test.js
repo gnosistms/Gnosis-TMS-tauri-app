@@ -6,6 +6,7 @@ const {
   anyProjectMutatingWriteIsActive,
   anyProjectWriteIsActive,
   chapterGlossaryIntentKey,
+  chapterImportIntentKey,
   chapterLifecycleIntentKey,
   chapterTitleIntentKey,
   clearConfirmedProjectWriteIntents,
@@ -255,6 +256,39 @@ test("stale refresh snapshots are overlaid with desired intents and confirmed af
   await delay(5);
 
   clearConfirmedProjectWriteIntents(overlaid);
+  assert.equal(getProjectWriteIntent(key), null);
+});
+
+test("settled chapter import intents keep new chapters visible until refresh sees them", async () => {
+  const key = chapterImportIntentKey("project-1", "chapter-1");
+  const importedChapter = chapter({ name: "Imported Chapter" });
+  requestProjectWriteIntent({
+    key,
+    scope: projectRepoWriteScope({ installationId: 1 }, "project-1"),
+    teamId: "team-1",
+    projectId: "project-1",
+    chapterId: "chapter-1",
+    type: "chapterImport",
+    value: { chapter: importedChapter },
+  }, {
+    run: async () => {},
+  });
+  await delay(5);
+
+  assert.equal(getProjectWriteIntent(key).status, "pendingConfirmation");
+  const staleSnapshot = {
+    items: [project({ chapters: undefined })],
+    deletedItems: [],
+  };
+  clearConfirmedProjectWriteIntents(staleSnapshot);
+  assert.equal(getProjectWriteIntent(key).status, "pendingConfirmation");
+  const overlaid = applyProjectWriteIntentsToSnapshot(staleSnapshot);
+
+  assert.deepEqual(overlaid.items[0].chapters, [importedChapter]);
+  clearConfirmedProjectWriteIntents({
+    items: [project({ chapters: [importedChapter] })],
+    deletedItems: [],
+  });
   assert.equal(getProjectWriteIntent(key), null);
 });
 

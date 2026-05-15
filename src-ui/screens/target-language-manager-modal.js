@@ -109,10 +109,12 @@ function renderLanguagePickerModal(state) {
           <p class="card__eyebrow">CHAPTER LANGUAGES</p>
           <h2 class="modal__title">Add Language</h2>
           <p class="modal__supporting">Choose a language to add to this file.</p>
-          <div class="language-picker-modal__list" role="list" data-target-language-manager-picker-list>
-            ${availableLanguages.length > 0
-              ? availableLanguages.map((language) => renderPickerLanguageOption(language, selectedCode, offlineMode)).join("")
-              : '<p class="language-picker-modal__empty">No supported languages are available.</p>'}
+          <div class="language-picker-modal__list-frame">
+            <div class="language-picker-modal__list" role="list" data-target-language-manager-picker-list>
+              ${availableLanguages.length > 0
+                ? availableLanguages.map((language) => renderPickerLanguageOption(language, selectedCode, offlineMode)).join("")
+                : '<p class="language-picker-modal__empty">No supported languages are available.</p>'}
+            </div>
           </div>
           <div class="modal__actions">
             ${secondaryButton("Cancel", "close-target-language-manager-picker")}

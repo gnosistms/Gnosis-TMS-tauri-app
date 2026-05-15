@@ -9,6 +9,7 @@ import {
   initializeEditorVirtualization,
 } from "./app/editor-virtualization.js";
 import { loadUserTeams, setGithubAppInstallation } from "./app/team-setup-flow.js";
+import { syncLanguagePickerAlphabetIndexes } from "./app/language-picker-alphabet-index.js";
 import { initializeConnectivity } from "./app/offline-connectivity.js";
 import { initializePersistentStorage } from "./app/persistent-store.js";
 import { app, initializeWindowPresentation } from "./app/runtime.js";
@@ -545,6 +546,7 @@ function renderWithOptions(options = {}) {
   syncEditorCommentDraftTextareaHeights(app);
   restoreAssistantTranscriptScrollTop(assistantTranscriptScrollTop, app);
   scrollActivePreviewSearchMatchIntoView(app);
+  syncLanguagePickerAlphabetIndexes(app);
   document.title = titles[state.screen] ?? "Gnosis TMS";
 }
 

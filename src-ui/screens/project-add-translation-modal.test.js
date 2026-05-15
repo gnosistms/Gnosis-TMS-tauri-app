@@ -44,7 +44,7 @@ test("add translation language modal disables Continue until selection", () => {
     },
   });
 
-  assert.match(html, /data-project-add-translation-language-list/);
+  assert.match(html, /class="language-picker-modal__list-frame"[\s\S]*data-project-add-translation-language-list/);
   assert.match(html, /data-action="continue-project-add-translation-language" disabled/);
   assert.match(html, /data-action="cancel-project-add-translation"/);
 });

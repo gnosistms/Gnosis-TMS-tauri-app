@@ -42,6 +42,10 @@ export function chapterGlossaryIntentKey(projectId, chapterId) {
   return `chapter:glossary:${projectId}:${chapterId}`;
 }
 
+export function chapterImportIntentKey(projectId, chapterId) {
+  return `chapter:import:${projectId}:${chapterId}`;
+}
+
 export function projectRepoSyncIntentKey(projectId) {
   return `project:repo-sync:${projectId}`;
 }
@@ -131,6 +135,42 @@ function patchChapter(snapshot, projectId, chapterId, patch) {
   };
 }
 
+function upsertChapter(snapshot, projectId, chapter) {
+  if (!chapter?.id) {
+    return snapshot;
+  }
+
+  let changed = false;
+  const upsertProjectChapter = (project) => {
+    if (project?.id !== projectId) {
+      return project;
+    }
+
+    changed = true;
+    const existingChapters = Array.isArray(project.chapters) ? project.chapters : [];
+    let chapterFound = false;
+    const chapters = existingChapters.map((existingChapter) => {
+      if (existingChapter?.id !== chapter.id) {
+        return existingChapter;
+      }
+      chapterFound = true;
+      return {
+        ...chapter,
+        ...existingChapter,
+      };
+    });
+
+    return {
+      ...project,
+      chapters: chapterFound ? chapters : [...chapters, cloneWriteIntentValue(chapter)],
+    };
+  };
+
+  const items = snapshot.items.map(upsertProjectChapter);
+  const deletedItems = snapshot.deletedItems.map(upsertProjectChapter);
+  return changed ? { items, deletedItems } : snapshot;
+}
+
 function glossaryLinksEqual(left, right) {
   const normalize = (value) => value
     ? {
@@ -172,6 +212,9 @@ function intentMatchesSnapshot(intent, snapshot) {
   }
   if (intent.type === "chapterGlossary") {
     return glossaryLinksEqual(chapter.linkedGlossary, intent.value?.glossary ?? null);
+  }
+  if (intent.type === "chapterImport") {
+    return true;
   }
   return false;
 }
@@ -221,6 +264,14 @@ export function applyProjectWriteIntentsToSnapshot(snapshot) {
         linkedGlossary: cloneWriteIntentValue(intent.value?.glossary ?? null),
         pendingGlossaryMutation: true,
       });
+      continue;
+    }
+    if (intent.type === "chapterImport") {
+      nextSnapshot = upsertChapter(
+        nextSnapshot,
+        intent.projectId,
+        cloneWriteIntentValue(intent.value?.chapter ?? null),
+      );
     }
   }
 

@@ -64,6 +64,7 @@ test("target language manager modal renders a nested picker that can add another
   });
 
   assert.match(html, /<h2 class="modal__title">Add Language<\/h2>/);
+  assert.match(html, /class="language-picker-modal__list-frame"[\s\S]*data-target-language-manager-picker-list/);
   assert.match(html, /data-action="select-target-language-manager-picker-language:es"/);
   assert.match(html, /data-action="select-target-language-manager-picker-language:en"/);
   assert.match(html, /data-action="select-target-language-manager-picker-language:vi"/);

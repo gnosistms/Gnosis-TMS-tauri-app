@@ -78,6 +78,9 @@ fn mime_type_for_path(path: &Path) -> &'static str {
         Some("ico") => "image/x-icon",
         Some("apng") => "image/apng",
         Some("xlsx") => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        Some("html") | Some("htm") => "text/html",
+        Some("txt") => "text/plain",
+        Some("docx") => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         _ => "application/octet-stream",
     }
 }

@@ -1,5 +1,6 @@
 use std::{collections::BTreeMap, fs, path::Path};
 
+use quick_xml::{events::Event as XmlEvent, Reader as XmlReader};
 use serde_json::{json, Value};
 use tauri::AppHandle;
 use uuid::Uuid;
@@ -59,7 +60,7 @@ pub(super) fn import_parsed_workbook_to_gtms_sync(
     let chapter_file = build_chapter_file(&parsed, &chapter_id, &chapter_slug);
     write_json_pretty(&chapter_path.join("chapter.json"), &chapter_file)?;
 
-    let unit_count = write_row_files(&parsed, &rows_path)?;
+    let unit_count = write_row_files(&parsed, &repo_path, &rows_path, &chapter_slug)?;
 
     git_output(&repo_path, &["add", ".gitattributes", "chapters"])?;
     git_commit_as_signed_in_user_with_metadata(
@@ -192,16 +193,72 @@ pub(super) fn build_chapter_file(
     }
 }
 
-fn write_row_files(parsed: &ParsedWorkbook, rows_path: &Path) -> Result<usize, String> {
+fn write_row_files(
+    parsed: &ParsedWorkbook,
+    repo_path: &Path,
+    rows_path: &Path,
+    chapter_slug: &str,
+) -> Result<usize, String> {
     let total_rows = parsed.rows.len();
 
     for (index, imported_row) in parsed.rows.iter().enumerate() {
         let row_id = Uuid::now_v7().to_string();
-        let row_file = build_row_file(parsed, imported_row, index, total_rows, &row_id)?;
+        let mut row_file = build_row_file(parsed, imported_row, index, total_rows, &row_id)?;
+        finalize_pending_uploaded_images(&mut row_file, repo_path, chapter_slug, &row_id)?;
         write_json_pretty(&rows_path.join(format!("{row_id}.json")), &row_file)?;
     }
 
     Ok(total_rows)
+}
+
+fn finalize_pending_uploaded_images(
+    row_file: &mut RowFile,
+    repo_path: &Path,
+    chapter_slug: &str,
+    row_id: &str,
+) -> Result<(), String> {
+    for (language_code, field) in row_file.fields.iter_mut() {
+        let Some(image) = field.image.as_mut() else {
+            continue;
+        };
+        let Some(upload) = image.pending_upload.take() else {
+            continue;
+        };
+
+        let Some(extension) = detected_imported_image_extension(&upload.bytes) else {
+            field.image = None;
+            continue;
+        };
+
+        let relative_image_path = relative_imported_image_path(
+            chapter_slug,
+            row_id,
+            language_code,
+            &upload.filename,
+            extension,
+        );
+        let absolute_image_path = repo_path.join(&relative_image_path);
+        if let Some(parent) = absolute_image_path.parent() {
+            fs::create_dir_all(parent).map_err(|error| {
+                format!(
+                    "Could not create imported image folder '{}': {error}",
+                    parent.display()
+                )
+            })?;
+        }
+        fs::write(&absolute_image_path, &upload.bytes).map_err(|error| {
+            format!(
+                "Could not write imported image '{}': {error}",
+                absolute_image_path.display()
+            )
+        })?;
+
+        image.kind = "upload".to_string();
+        image.url = None;
+        image.path = Some(relative_image_path);
+    }
+
+    Ok(())
 }
 
 pub(super) fn build_row_file(
@@ -344,6 +401,149 @@ pub(super) fn build_row_file(
     })
 }
 
+fn detected_imported_image_extension(bytes: &[u8]) -> Option<&'static str> {
+    if bytes.starts_with(&[0xFF, 0xD8, 0xFF]) {
+        return Some("jpg");
+    }
+    if bytes.starts_with(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]) {
+        return Some("png");
+    }
+    if bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a") {
+        return Some("gif");
+    }
+    if bytes.len() >= 12 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
+        return Some("webp");
+    }
+    if bytes.starts_with(b"BM") {
+        return Some("bmp");
+    }
+    if bytes.starts_with(&[0x00, 0x00, 0x01, 0x00]) {
+        return Some("ico");
+    }
+    if bytes.len() >= 12 && &bytes[4..8] == b"ftyp" {
+        if bytes
+            .windows(4)
+            .any(|window| window == b"avif" || window == b"avis")
+        {
+            return Some("avif");
+        }
+    }
+    if svg_document_root_is_svg(bytes) {
+        return Some("svg");
+    }
+
+    None
+}
+
+fn svg_document_root_is_svg(bytes: &[u8]) -> bool {
+    let mut reader = XmlReader::from_reader(bytes);
+    reader.trim_text(true);
+    let mut buffer = Vec::new();
+
+    loop {
+        match reader.read_event_into(&mut buffer) {
+            Ok(XmlEvent::Start(event)) | Ok(XmlEvent::Empty(event)) => {
+                return event.name().as_ref() == b"svg";
+            }
+            Ok(XmlEvent::Decl(_))
+            | Ok(XmlEvent::DocType(_))
+            | Ok(XmlEvent::Comment(_))
+            | Ok(XmlEvent::PI(_))
+            | Ok(XmlEvent::Text(_))
+            | Ok(XmlEvent::CData(_)) => {
+                buffer.clear();
+                continue;
+            }
+            Ok(XmlEvent::Eof) | Err(_) => return false,
+            _ => {
+                buffer.clear();
+            }
+        }
+    }
+}
+
+fn relative_imported_image_path(
+    chapter_slug: &str,
+    row_id: &str,
+    language_code: &str,
+    filename: &str,
+    extension: &str,
+) -> String {
+    let upload_directory = format!("row-{row_id}-{language_code}-{}", Uuid::now_v7());
+    let file_name = sanitized_imported_image_file_name(filename, extension);
+    format!("chapters/{chapter_slug}/images/{upload_directory}/{file_name}")
+}
+
+fn sanitized_imported_image_file_name(filename: &str, extension: &str) -> String {
+    let original_name = Path::new(filename)
+        .file_name()
+        .and_then(|value| value.to_str())
+        .map(str::trim)
+        .unwrap_or_default();
+    let matching_extension = Path::new(original_name)
+        .extension()
+        .and_then(|value| value.to_str())
+        .and_then(normalize_imported_image_extension);
+
+    if matching_extension == Some(extension) {
+        let sanitized_name = sanitize_imported_image_file_name_component(original_name);
+        if !matches!(sanitized_name.as_str(), "" | "." | "..") {
+            return sanitized_name;
+        }
+    }
+
+    let base_name = Path::new(original_name)
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("image");
+    let sanitized_base_name = sanitize_imported_image_file_name_component(base_name);
+    let final_base_name = match sanitized_base_name.as_str() {
+        "" | "." | ".." => "image".to_string(),
+        _ => sanitized_base_name,
+    };
+    format!("{final_base_name}.{extension}")
+}
+
+fn normalize_imported_image_extension(extension: &str) -> Option<&'static str> {
+    match extension
+        .trim()
+        .trim_start_matches('.')
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "jpg" | "jpeg" => Some("jpg"),
+        "png" | "apng" => Some("png"),
+        "gif" => Some("gif"),
+        "svg" => Some("svg"),
+        "webp" => Some("webp"),
+        "avif" => Some("avif"),
+        "bmp" => Some("bmp"),
+        "ico" => Some("ico"),
+        _ => None,
+    }
+}
+
+fn sanitize_imported_image_file_name_component(value: &str) -> String {
+    value
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.' | ' ') {
+                character
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .trim()
+        .trim_matches('.')
+        .to_string()
+}
+
 fn order_key_for_position(index: usize, total_rows: usize) -> Result<String, String> {
     if index >= total_rows {
         return Err("Could not assign an order key outside the row set.".to_string());
@@ -438,4 +638,130 @@ fn count_words(value: &str) -> usize {
 fn read_project_title(project_json_path: &Path) -> Result<String, String> {
     let project_file: ProjectFile = read_json_file(project_json_path, "project.json")?;
     Ok(project_file.title)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tiny_png_bytes() -> Vec<u8> {
+        vec![
+            0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, b'I', b'H',
+            b'D', b'R',
+        ]
+    }
+
+    fn row_with_pending_upload(bytes: Vec<u8>) -> RowFile {
+        let mut fields = BTreeMap::new();
+        fields.insert(
+            "en".to_string(),
+            FieldValue {
+                value_kind: "text",
+                plain_text: String::new(),
+                footnote: String::new(),
+                image_caption: "Inline image".to_string(),
+                image: Some(super::super::ImportedFieldImage {
+                    kind: "upload".to_string(),
+                    url: None,
+                    path: None,
+                    pending_upload: Some(super::super::ImportedImageUpload {
+                        filename: "inline image.png".to_string(),
+                        bytes,
+                    }),
+                }),
+                rich_text: None,
+                notes_html: String::new(),
+                attachments: Vec::new(),
+                passthrough_value: None,
+                editor_flags: FieldEditorFlags::default(),
+            },
+        );
+
+        RowFile {
+            row_id: "row-1".to_string(),
+            unit_type: "string",
+            text_style: None,
+            external_id: None,
+            guidance: None,
+            lifecycle: active_lifecycle_state(),
+            status: RowStatus {
+                review_state: "unreviewed",
+                reviewed_at: None,
+                reviewed_by: None,
+                flags: Vec::new(),
+            },
+            structure: RowStructure {
+                source_file: "article.html".to_string(),
+                container_path: BTreeMap::new(),
+                order_key: "1".to_string(),
+                group_context: None,
+            },
+            origin: RowOrigin {
+                source_format: "html",
+                source_sheet: "HTML".to_string(),
+                source_row_number: 1,
+            },
+            format_state: FormatState {
+                translatable: true,
+                character_limit: None,
+                tags: Vec::new(),
+                source_state: None,
+                custom_attributes: BTreeMap::new(),
+            },
+            placeholders: Vec::new(),
+            variants: Vec::new(),
+            fields,
+            format_metadata: BTreeMap::new(),
+        }
+    }
+
+    #[test]
+    fn finalize_pending_uploaded_images_writes_image_and_sets_upload_path() {
+        let repo_path =
+            std::env::temp_dir().join(format!("gnosis-import-image-test-{}", Uuid::now_v7()));
+        fs::create_dir_all(&repo_path).expect("repo temp path should be created");
+        let mut row = row_with_pending_upload(tiny_png_bytes());
+
+        finalize_pending_uploaded_images(&mut row, &repo_path, "article", "row-1")
+            .expect("pending upload should finalize");
+
+        let image = row
+            .fields
+            .get("en")
+            .and_then(|field| field.image.as_ref())
+            .expect("image should remain");
+        let relative_path = image.path.as_deref().expect("path should be set");
+        assert_eq!(image.kind, "upload");
+        assert!(image.url.is_none());
+        assert!(image.pending_upload.is_none());
+        assert!(
+            relative_path.starts_with("chapters/article/images/row-row-1-en-"),
+            "unexpected relative path: {relative_path}"
+        );
+        assert!(relative_path.ends_with("/inline image.png"));
+        assert!(repo_path.join(relative_path).exists());
+
+        let _ = fs::remove_dir_all(repo_path);
+    }
+
+    #[test]
+    fn finalize_pending_uploaded_images_omits_invalid_image_bytes() {
+        let repo_path = std::env::temp_dir().join(format!(
+            "gnosis-import-invalid-image-test-{}",
+            Uuid::now_v7()
+        ));
+        fs::create_dir_all(&repo_path).expect("repo temp path should be created");
+        let mut row = row_with_pending_upload(b"not an image".to_vec());
+
+        finalize_pending_uploaded_images(&mut row, &repo_path, "article", "row-1")
+            .expect("invalid upload should be omitted without failing import");
+
+        assert!(row
+            .fields
+            .get("en")
+            .and_then(|field| field.image.as_ref())
+            .is_none());
+
+        let _ = fs::remove_dir_all(repo_path);
+    }
 }

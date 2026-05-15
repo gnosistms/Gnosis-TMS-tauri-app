@@ -63,8 +63,16 @@ function normalizeChapter(chapter) {
     return null;
   }
 
+  const {
+    pendingMutation: _pendingMutation,
+    localLifecycleIntent: _localLifecycleIntent,
+    pendingGlossaryMutation: _pendingGlossaryMutation,
+    glossaryMutationError: _glossaryMutationError,
+    ...durableChapter
+  } = chapter;
+
   return {
-    ...chapter,
+    ...durableChapter,
     id,
     name,
     status: chapter.status === "deleted" ? "deleted" : "active",

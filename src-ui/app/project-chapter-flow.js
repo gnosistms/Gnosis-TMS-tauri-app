@@ -577,16 +577,14 @@ function chapterSnapshotValue(snapshot, projectId, chapterId, key) {
   return undefined;
 }
 
-function patchChapterInSnapshot(snapshot, projectId, chapterId, patch, fallbackChapter = null) {
+function patchChapterInSnapshot(snapshot, projectId, chapterId, patch) {
   const current = normalizeProjectSnapshotInput(snapshot);
-  let projectFound = false;
   let chapterFound = false;
   const patchProject = (project) => {
     if (project?.id !== projectId || !Array.isArray(project.chapters)) {
       return project;
     }
 
-    projectFound = true;
     const chapters = project.chapters.map((chapter) => {
       if (chapter?.id !== chapterId) {
         return chapter;
@@ -600,18 +598,12 @@ function patchChapterInSnapshot(snapshot, projectId, chapterId, patch, fallbackC
 
     return {
       ...project,
-      chapters: chapterFound || !fallbackChapter
-        ? chapters
-        : [...chapters, { ...fallbackChapter, ...patch }],
+      chapters,
     };
   };
 
   const items = current.items.map(patchProject);
   const deletedItems = current.deletedItems.map(patchProject);
-  if (!projectFound || chapterFound || !fallbackChapter) {
-    return { items, deletedItems };
-  }
-
   return { items, deletedItems };
 }
 
@@ -653,7 +645,7 @@ export function preserveChapterLifecyclePatchesInProjectSnapshot(nextSnapshot, p
         name: chapter.name,
         pendingMutation: isPending ? "rename" : null,
         localLifecycleIntent: "rename",
-      }, chapter);
+      });
       continue;
     }
 
@@ -665,7 +657,7 @@ export function preserveChapterLifecyclePatchesInProjectSnapshot(nextSnapshot, p
         status: "deleted",
         pendingMutation: isPending ? "softDelete" : null,
         localLifecycleIntent: "softDelete",
-      }, chapter);
+      });
       continue;
     }
 
@@ -677,7 +669,7 @@ export function preserveChapterLifecyclePatchesInProjectSnapshot(nextSnapshot, p
         status: "active",
         pendingMutation: isPending ? "restore" : null,
         localLifecycleIntent: "restore",
-      }, chapter);
+      });
     }
   }
 

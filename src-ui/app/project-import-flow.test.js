@@ -38,6 +38,7 @@ const {
   closeProjectImportUploadError,
   continueProjectImportText,
   detectImportFileType,
+  handleDroppedProjectImportPath,
   importProjectFile,
   importProjectFiles,
   PROJECT_IMPORT_ACCEPT,
@@ -52,9 +53,11 @@ const {
 const { createProjectImportState, createStatusBadgesState, state } = await import("./state.js");
 const { clearActiveStorageLogin, setActiveStorageLogin } = await import("./team-storage.js");
 const { saveStoredDefaultGlossaryIdForTeam } = await import("./glossary-default-cache.js");
+const { resetProjectWriteCoordinator } = await import("./project-write-coordinator.js");
 
 function resetProjectImportTestState() {
   clearActiveStorageLogin();
+  resetProjectWriteCoordinator();
   state.projectImport = createProjectImportState();
   state.teams = [{ id: "team-1", installationId: 1, canManageProjects: true }];
   state.selectedTeamId = "team-1";
@@ -124,19 +127,23 @@ function installBatchImportInvokeHandler({ failFileNames = new Set() } = {}) {
   return calls;
 }
 
-test("detectImportFileType supports XLSX, TXT, and DOCX", () => {
+test("detectImportFileType supports XLSX, TXT, DOCX, and HTML", () => {
   assert.equal(detectImportFileType("chapter.xlsx"), "xlsx");
   assert.equal(detectImportFileType("chapter.TXT"), "txt");
   assert.equal(detectImportFileType("chapter.docx"), "docx");
   assert.equal(detectImportFileType("chapter.html"), "html");
+  assert.equal(detectImportFileType("chapter.htm"), "html");
   assert.equal(detectImportFileType("chapter.pdf"), null);
 });
 
-test("project import accept string includes plain text and DOCX", () => {
+test("project import accept string includes plain text, DOCX, and HTML", () => {
   assert.match(PROJECT_IMPORT_ACCEPT, /\.txt/);
   assert.match(PROJECT_IMPORT_ACCEPT, /text\/plain/);
   assert.match(PROJECT_IMPORT_ACCEPT, /\.docx/);
   assert.match(PROJECT_IMPORT_ACCEPT, /wordprocessingml\.document/);
+  assert.match(PROJECT_IMPORT_ACCEPT, /\.html/);
+  assert.match(PROJECT_IMPORT_ACCEPT, /\.htm/);
+  assert.match(PROJECT_IMPORT_ACCEPT, /text\/html/);
 });
 
 test("TXT import selection opens source language step before importing", async () => {
@@ -204,6 +211,129 @@ test("HTML import selection opens source language step before importing", async 
   assert.equal(state.projectImport.status, "selectingSourceLanguage");
   assert.equal(state.projectImport.pendingFileName, "article.html");
   assert.equal(renderCount, 1);
+});
+
+test("HTML import continues with source language and local source metadata", async () => {
+  resetProjectImportTestState();
+  state.projectImport = {
+    ...state.projectImport,
+    isOpen: true,
+    projectId: "project-1",
+    projectTitle: "Project",
+  };
+  const calls = installBatchImportInvokeHandler();
+
+  await importProjectFile(() => {}, {
+    name: "article.html",
+    sourcePath: "/tmp/article.html",
+    sourceUrl: "file:///tmp/article.html",
+    arrayBuffer: async () => new TextEncoder().encode("<html><body>Article</body></html>").buffer,
+  });
+
+  assert.equal(state.projectImport.status, "selectingSourceLanguage");
+  state.projectImport.selectedSourceLanguageCode = "vi";
+  await continueProjectImportText(() => {});
+
+  const importCall = calls.find((call) => call.command === "import_html_to_gtms");
+  assert.equal(importCall.payload.input.fileName, "article.html");
+  assert.equal(importCall.payload.input.sourceLanguageCode, "vi");
+  assert.equal(importCall.payload.input.sourcePath, "/tmp/article.html");
+  assert.equal(importCall.payload.input.sourceUrl, "file:///tmp/article.html");
+  assert.ok(Array.isArray(importCall.payload.input.bytes));
+});
+
+test("HTML import keeps the new chapter visible when the immediate refresh listing is stale", async () => {
+  resetProjectImportTestState();
+  state.projectImport = {
+    ...state.projectImport,
+    isOpen: true,
+    projectId: "project-1",
+    projectTitle: "Project",
+  };
+  const renderSnapshots = [];
+  invokeHandler = async (command, payload = {}) => {
+    if (command === "import_html_to_gtms") {
+      return importedResult(payload.input.fileName, 1);
+    }
+    if (command === "reconcile_project_repo_sync_states") {
+      return [];
+    }
+    if (command === "list_local_gtms_project_files") {
+      return [{ projectId: "project-1", repoName: "project-repo", chapters: [] }];
+    }
+    throw new Error(`Unexpected command: ${command}`);
+  };
+  const render = () => {
+    renderSnapshots.push(state.projects[0]?.chapters?.map((chapter) => chapter.id) ?? []);
+  };
+
+  await importProjectFile(render, {
+    name: "article.html",
+    arrayBuffer: async () => new TextEncoder().encode("<html><body>Article</body></html>").buffer,
+  });
+  state.projectImport.selectedSourceLanguageCode = "en";
+  await continueProjectImportText(render);
+
+  assert.deepEqual(state.projects[0].chapters.map((chapter) => chapter.id), ["chapter-1"]);
+  assert.ok(
+    renderSnapshots.some((chapterIds) => chapterIds.includes("chapter-1")),
+    "the imported chapter should be rendered optimistically",
+  );
+  assert.equal(
+    renderSnapshots.some((chapterIds, index) =>
+      index > 0
+      && renderSnapshots[index - 1].includes("chapter-1")
+      && !chapterIds.includes("chapter-1")
+    ),
+    false,
+    "the imported chapter should not disappear during stale refresh",
+  );
+});
+
+test("dropped local HTML path preserves source metadata for image resolution", async () => {
+  resetProjectImportTestState();
+  state.projectImport = {
+    ...state.projectImport,
+    isOpen: true,
+    projectId: "project-1",
+    projectTitle: "Project",
+  };
+  invokeHandler = async (command, payload = {}) => {
+    if (command === "read_local_dropped_file") {
+      assert.equal(payload.path, "/tmp/article.html");
+      return {
+        name: "article.html",
+        mimeType: "text/html",
+        dataBase64: "PGh0bWw+PC9odG1sPg==",
+      };
+    }
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  await handleDroppedProjectImportPath(() => {}, "/tmp/article.html");
+
+  assert.equal(state.projectImport.status, "selectingSourceLanguage");
+  assert.equal(state.projectImport.pendingFileName, "article.html");
+  assert.equal(state.projectImport.pendingFile.sourcePath, "/tmp/article.html");
+  assert.equal(state.projectImport.pendingFile.sourceUrl, "file:///tmp/article.html");
+});
+
+test("unsupported project import error includes HTML", async () => {
+  resetProjectImportTestState();
+  state.projectImport = {
+    ...state.projectImport,
+    isOpen: true,
+    projectId: "project-1",
+    projectTitle: "Project",
+  };
+
+  await importProjectFile(() => {}, {
+    name: "chapter.pdf",
+    arrayBuffer: async () => new ArrayBuffer(0),
+  });
+
+  assert.equal(state.projectImport.status, "error");
+  assert.match(state.projectImport.error, /XLSX, TXT, DOCX, and HTML/);
 });
 
 test("project import source language selection updates pending TXT state", () => {

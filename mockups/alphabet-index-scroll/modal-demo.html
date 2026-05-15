@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Alphabet Index Scroll Modal Demo</title>
+    <link rel="stylesheet" href="./alphabet-index-scroll.css">
+    <link rel="stylesheet" href="./demo.css">
+  </head>
+  <body class="modal-page">
+    <main class="modal-backdrop">
+      <section class="language-modal" aria-labelledby="modal-title">
+        <div>
+          <div class="modal-kicker">Source Language</div>
+          <h1 id="modal-title">What is the language of this file?</h1>
+          <p class="modal-copy">
+            Select the language of this file from the list below. This will be
+            the source language.
+          </p>
+        </div>
+
+        <div class="language-list-frame" id="language-list-frame">
+          <div class="language-list" id="language-list" tabindex="0"></div>
+        </div>
+
+        <div class="modal-actions">
+          <button class="demo-button secondary" type="button">Cancel</button>
+          <button class="demo-button primary" type="button">Continue</button>
+        </div>
+      </section>
+    </main>
+
+    <script src="./alphabet-index-scroll.global.js"></script>
+    <script src="./demo-data.global.js"></script>
+    <script>
+      const { createAlphabetIndexScroll, normalizeIndexKey } = window.AlphabetIndexScroll;
+      const { languages } = window.AlphabetIndexScrollDemoData;
+
+      const scrollContainer = document.querySelector("#language-list");
+      const frame = document.querySelector("#language-list-frame");
+      const sortedLanguages = [...languages].sort((left, right) => left.name.localeCompare(right.name));
+      const sectionTargets = [];
+      let previousKey = "";
+
+      for (const language of sortedLanguages) {
+        const key = normalizeIndexKey(language.name);
+        if (key !== previousKey) {
+          const heading = document.createElement("div");
+          heading.className = "demo-section-heading";
+          heading.textContent = key;
+          scrollContainer.append(heading);
+          sectionTargets.push({ key, label: key, target: heading });
+          previousKey = key;
+        }
+
+        const row = document.createElement("button");
+        row.className = "language-row";
+        row.type = "button";
+        const name = document.createElement("span");
+        name.textContent = language.name;
+        const code = document.createElement("code");
+        code.textContent = language.code;
+        row.append(name, code);
+        scrollContainer.append(row);
+      }
+
+      createAlphabetIndexScroll({
+        scrollContainer,
+        indexHost: frame,
+        sections: sectionTargets,
+        includeMissing: true,
+        offset: 8,
+      });
+    </script>
+  </body>
+</html>

@@ -172,7 +172,23 @@ pub(super) fn permanently_delete_gtms_chapter_sync(
     ensure_repo_exists(&repo_path, "The local project repo is not available yet.")?;
     ensure_valid_git_repo(&repo_path, "The local project repo is missing or invalid.")?;
 
-    let chapter_path = find_chapter_path_by_id(&repo_path.join("chapters"), &input.chapter_id)?;
+    let chapter_path = match find_chapter_path_by_id(&repo_path.join("chapters"), &input.chapter_id)
+    {
+        Ok(path) => path,
+        Err(error)
+            if error
+                == format!(
+                    "Could not find chapter '{}' in the local project repo.",
+                    input.chapter_id
+                ) =>
+        {
+            return Ok(UpdateChapterLifecycleResponse {
+                chapter_id: input.chapter_id,
+                lifecycle_state: "deleted".to_string(),
+            });
+        }
+        Err(error) => return Err(error),
+    };
     let chapter_json_path = chapter_path.join("chapter.json");
     let chapter_value: Value = read_json_file(&chapter_json_path, "chapter.json")?;
     let chapter_lifecycle_state = chapter_value
