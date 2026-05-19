@@ -16,8 +16,11 @@ use crate::{
 
 const INSTALLATION_ACCESS_FILE: &str = "installation-access.json";
 const READ_ONLY_ERROR: &str = "Read-only users cannot modify projects.";
+const READ_ONLY_TEAM_AI_ERROR: &str = "Read-only users cannot use shared team AI.";
 const UNVERIFIED_ACCESS_ERROR: &str =
     "Could not verify write access for this team. Refresh team access and try again.";
+const UNVERIFIED_TEAM_ACCESS_ERROR: &str =
+    "Could not verify active access for this team. Refresh team access and try again.";
 
 #[derive(Clone, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -68,6 +71,15 @@ pub(crate) fn ensure_installation_allows_writes(
     ensure_snapshot_allows_writes(&snapshot)
 }
 
+pub(crate) fn ensure_installation_allows_team_ai_access(
+    app: &AppHandle,
+    installation_id: i64,
+) -> Result<(), String> {
+    let snapshot = refresh_installation_access_snapshot(app, installation_id)
+        .map_err(|_| UNVERIFIED_TEAM_ACCESS_ERROR.to_string())?;
+    ensure_snapshot_allows_team_ai_access(&snapshot)
+}
+
 fn refresh_installation_access_snapshot(
     app: &AppHandle,
     installation_id: i64,
@@ -98,6 +110,24 @@ fn ensure_snapshot_allows_writes(snapshot: &InstallationAccessSnapshot) -> Resul
         || snapshot.can_manage_projects != Some(true)
     {
         return Err(UNVERIFIED_ACCESS_ERROR.to_string());
+    }
+    Ok(())
+}
+
+fn ensure_snapshot_allows_team_ai_access(
+    snapshot: &InstallationAccessSnapshot,
+) -> Result<(), String> {
+    if is_read_only_membership_role(snapshot.membership_role.as_deref()) {
+        return Err(READ_ONLY_TEAM_AI_ERROR.to_string());
+    }
+    if snapshot
+        .membership_role
+        .as_deref()
+        .unwrap_or_default()
+        .trim()
+        .is_empty()
+    {
+        return Err(UNVERIFIED_TEAM_ACCESS_ERROR.to_string());
     }
     Ok(())
 }
@@ -153,8 +183,8 @@ fn current_unix_timestamp() -> Option<u64> {
 #[cfg(test)]
 mod tests {
     use super::{
-        ensure_snapshot_allows_writes, installation_id_from_path, is_read_only_membership_role,
-        InstallationAccessSnapshot,
+        ensure_snapshot_allows_team_ai_access, ensure_snapshot_allows_writes,
+        installation_id_from_path, is_read_only_membership_role, InstallationAccessSnapshot,
     };
     use std::path::Path;
 
@@ -201,5 +231,22 @@ mod tests {
         snapshot.membership_role = Some("owner".to_string());
         snapshot.can_manage_projects = Some(false);
         assert!(ensure_snapshot_allows_writes(&snapshot).is_err());
+    }
+
+    #[test]
+    fn team_ai_access_requires_non_viewer_active_membership() {
+        let mut snapshot = InstallationAccessSnapshot {
+            installation_id: 1,
+            membership_role: Some("member".to_string()),
+            can_manage_projects: Some(false),
+            ..InstallationAccessSnapshot::default()
+        };
+        assert!(ensure_snapshot_allows_team_ai_access(&snapshot).is_ok());
+
+        snapshot.membership_role = Some("viewer".to_string());
+        assert!(ensure_snapshot_allows_team_ai_access(&snapshot).is_err());
+
+        snapshot.membership_role = None;
+        assert!(ensure_snapshot_allows_team_ai_access(&snapshot).is_err());
     }
 }
