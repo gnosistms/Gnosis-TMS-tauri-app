@@ -43,6 +43,8 @@ const PROJECT_REPO_SYNC_STATUS_SYNC_ERROR: &str = "syncError";
 const PROJECT_REPO_SYNC_STATUS_UNRESOLVED_CONFLICT: &str = "unresolvedConflict";
 const PROJECT_REPO_SYNC_STATUS_IMPORTED_EDITOR_CONFLICTS: &str = "importedEditorConflicts";
 const PROJECT_REPO_SYNC_STATUS_UPDATE_REQUIRED: &str = "updateRequired";
+const REBASE_STOPPED_WITHOUT_UNMERGED_FILES_MESSAGE: &str =
+    "Git stopped for a rebase conflict, but no unmerged files were found.";
 
 #[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -339,6 +341,16 @@ fn backup_dirty_project_worktree(
     git_output(repo_path, &["checkout", &original_branch], None)?;
 
     Ok(Some(backup_branch))
+}
+
+fn create_project_head_backup_branch(repo_path: &Path, purpose: &str) -> Result<String, String> {
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| format!("Could not create a local backup timestamp: {error}"))?
+        .as_nanos();
+    let backup_branch = format!("gnosis/{purpose}-{timestamp}");
+    git_output(repo_path, &["branch", &backup_branch, "HEAD"], None)?;
+    Ok(backup_branch)
 }
 
 fn list_project_repo_sync_states_sync(
@@ -1022,6 +1034,18 @@ fn pull_with_semantic_editor_conflict_resolution(
                 let plan = match build_semantic_conflict_resolution_plan(repo_path) {
                     Ok(plan) => plan,
                     Err(plan_error) => {
+                        if plan_error == REBASE_STOPPED_WITHOUT_UNMERGED_FILES_MESSAGE {
+                            let rebase_still_in_progress =
+                                handle_project_rebase_without_unmerged_files(
+                                    repo_path,
+                                    branch_name,
+                                    git_transport_auth,
+                                )?;
+                            if rebase_still_in_progress {
+                                continue;
+                            }
+                            break;
+                        }
                         return Err(abort_rebase_after_failed_pull(repo_path, plan_error));
                     }
                 };
@@ -1068,14 +1092,67 @@ fn pull_with_semantic_editor_conflict_resolution(
     )
 }
 
+fn handle_project_rebase_without_unmerged_files(
+    repo_path: &Path,
+    branch_name: &str,
+    git_transport_auth: &GitTransportAuth,
+) -> Result<bool, String> {
+    match git_output(repo_path, &["rebase", "--continue"], None) {
+        Ok(_) => return Ok(repo_has_rebase_in_progress_local(repo_path)),
+        Err(continue_error) => {
+            if git_error_indicates_empty_rebase_step(&continue_error) {
+                git_output(repo_path, &["rebase", "--skip"], None)?;
+                return Ok(repo_has_rebase_in_progress_local(repo_path));
+            }
+        }
+    }
+
+    recover_project_rebase_without_unmerged_files(repo_path, branch_name, git_transport_auth)?;
+    Ok(false)
+}
+
+fn recover_project_rebase_without_unmerged_files(
+    repo_path: &Path,
+    branch_name: &str,
+    git_transport_auth: &GitTransportAuth,
+) -> Result<Option<String>, String> {
+    abort_in_progress_git_operations(repo_path);
+    backup_dirty_project_worktree(repo_path, branch_name)?;
+
+    git_output(
+        repo_path,
+        &["fetch", "origin", branch_name],
+        Some(git_transport_auth),
+    )?;
+    let remote_tracking_ref = format!("origin/{branch_name}");
+    let local_head_oid = read_current_head_oid(repo_path);
+    let remote_head_oid = git_output(repo_path, &["rev-parse", &remote_tracking_ref], None).ok();
+    let backup_branch = if local_head_oid.is_some() && local_head_oid != remote_head_oid {
+        Some(create_project_head_backup_branch(
+            repo_path,
+            "rebase-backup",
+        )?)
+    } else {
+        None
+    };
+
+    git_output(
+        repo_path,
+        &["checkout", "-B", branch_name, &remote_tracking_ref],
+        None,
+    )?;
+    git_output(repo_path, &["reset", "--hard", &remote_tracking_ref], None)?;
+    git_output(repo_path, &["clean", "-fd"], None)?;
+
+    Ok(backup_branch)
+}
+
 fn build_semantic_conflict_resolution_plan(
     repo_path: &Path,
 ) -> Result<Vec<SemanticConflictResolutionPlanEntry>, String> {
     let stage_sets = load_unmerged_git_stage_sets(repo_path)?;
     if stage_sets.is_empty() {
-        return Err(
-            "Git stopped for a rebase conflict, but no unmerged files were found.".to_string(),
-        );
+        return Err(REBASE_STOPPED_WITHOUT_UNMERGED_FILES_MESSAGE.to_string());
     }
 
     let mut plan = Vec::with_capacity(stage_sets.len());
@@ -1565,8 +1642,8 @@ mod tests {
     use super::{
         backup_dirty_project_worktree, chapter_language_list_from_json_text,
         git_status_porcelain_has_unmerged_entries, project_branch_name,
-        snapshot_from_project_sync_error, ProjectRepoSyncDescriptor,
-        PROJECT_REPO_SYNC_STATUS_UPDATE_REQUIRED,
+        recover_project_rebase_without_unmerged_files, snapshot_from_project_sync_error,
+        GitTransportAuth, ProjectRepoSyncDescriptor, PROJECT_REPO_SYNC_STATUS_UPDATE_REQUIRED,
     };
     use crate::repo_app_version::{encode_repo_app_update_requirement, RepoAppUpdateRequirement};
     use std::{env, fs, path::Path, process::Command};
@@ -1713,6 +1790,62 @@ mod tests {
         );
 
         let _ = fs::remove_dir_all(&repo_path);
+    }
+
+    #[test]
+    fn recover_project_rebase_without_unmerged_files_resets_visible_branch_and_keeps_backup() {
+        let parent =
+            env::temp_dir().join(format!("gnosis-project-rebase-recovery-{}", Uuid::now_v7()));
+        let remote_path = parent.join("remote.git");
+        let seed_path = parent.join("seed");
+        let local_path = parent.join("local");
+        fs::create_dir_all(&parent).expect("create temp parent");
+
+        run_git(&parent, &["init", "--bare", "remote.git"]);
+        fs::create_dir_all(&seed_path).expect("create seed repo");
+        run_git(&seed_path, &["init", "--initial-branch", "main"]);
+        run_git(&seed_path, &["config", "user.email", "test@example.com"]);
+        run_git(&seed_path, &["config", "user.name", "Test User"]);
+        fs::write(seed_path.join("chapter.txt"), "base text\n").expect("write base file");
+        run_git(&seed_path, &["add", "."]);
+        run_git(&seed_path, &["commit", "-m", "Initial"]);
+        let remote_url = remote_path.to_string_lossy().to_string();
+        run_git(&seed_path, &["remote", "add", "origin", &remote_url]);
+        run_git(&seed_path, &["push", "-u", "origin", "main"]);
+
+        run_git(&parent, &["clone", &remote_url, "local"]);
+        run_git(&local_path, &["config", "user.email", "test@example.com"]);
+        run_git(&local_path, &["config", "user.name", "Test User"]);
+        fs::write(local_path.join("chapter.txt"), "local committed text\n")
+            .expect("write local file");
+        run_git(&local_path, &["commit", "-am", "Local edit"]);
+
+        fs::write(seed_path.join("chapter.txt"), "remote text\n").expect("write remote file");
+        run_git(&seed_path, &["commit", "-am", "Remote edit"]);
+        run_git(&seed_path, &["push", "origin", "main"]);
+
+        let git_transport_auth = GitTransportAuth::from_token("test-token").expect("auth");
+        let backup_branch =
+            recover_project_rebase_without_unmerged_files(&local_path, "main", &git_transport_auth)
+                .expect("recover rebase without unmerged files")
+                .expect("backup branch");
+
+        assert_eq!(git_stdout(&local_path, &["status", "--porcelain"]), "");
+        assert_eq!(
+            fs::read_to_string(local_path.join("chapter.txt")).expect("read recovered file"),
+            "remote text\n",
+        );
+        assert_eq!(
+            git_stdout(&local_path, &["branch", "--show-current"]),
+            "main"
+        );
+        let backup_file_ref = format!("{backup_branch}:chapter.txt");
+        assert_eq!(
+            git_stdout(&local_path, &["show", &backup_file_ref]),
+            "local committed text",
+        );
+
+        let _ = fs::remove_dir_all(&parent);
     }
 
     #[test]
