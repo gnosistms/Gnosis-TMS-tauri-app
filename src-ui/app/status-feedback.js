@@ -53,7 +53,7 @@ export function showNoticeBadge(text, render, durationMs = 1800) {
     visible: true,
     text,
   };
-  render();
+  render?.({ scope: "status-surface" });
 
   if (durationMs === null) {
     return;
@@ -64,7 +64,7 @@ export function showNoticeBadge(text, render, durationMs = 1800) {
       visible: false,
       text: "",
     };
-    render();
+    render?.({ scope: "status-surface" });
     noticeTimeoutId = null;
   }, durationMs);
 }
@@ -87,7 +87,7 @@ export function showScopedSyncBadge(scope, text, render) {
     text,
     scope,
   };
-  render();
+  render?.({ scope: "status-surface" });
 }
 
 export function clearScopedSyncBadge(scope, render) {
@@ -101,5 +101,5 @@ export function clearScopedSyncBadge(scope, render) {
     text: "",
     scope: null,
   };
-  render?.();
+  render?.({ scope: "status-surface" });
 }

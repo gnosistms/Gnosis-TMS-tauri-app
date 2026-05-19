@@ -44,6 +44,23 @@ test("status surface returns scoped sync items", () => {
   }]);
 });
 
+test("status badge updates request status-surface renders", () => {
+  const scopes = [];
+  const render = (options) => {
+    scopes.push(options?.scope ?? "full");
+  };
+
+  showScopedSyncBadge("projects", "Syncing project repo...", render);
+  clearScopedSyncBadge("projects", render);
+  showNoticeBadge("Saved.", render, null);
+
+  assert.deepEqual(scopes, [
+    "status-surface",
+    "status-surface",
+    "status-surface",
+  ]);
+});
+
 test("status surface shows scoped sync and notice together", () => {
   showScopedSyncBadge("projects", "Syncing project repo...", () => {});
   showNoticeBadge("File renamed.", () => {}, null);

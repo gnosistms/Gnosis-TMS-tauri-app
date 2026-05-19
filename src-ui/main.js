@@ -103,6 +103,12 @@ import {
   renderTranslateSidebar,
 } from "./screens/translate.js";
 import { renderUsersScreen } from "./screens/users.js";
+import { renderFloatingStatusSurface } from "./lib/ui.js";
+import {
+  getNoticeBadgeText,
+  getScopedSyncBadgeText,
+  getStatusSurfaceItems,
+} from "./app/status-feedback.js";
 
 const screenRenderers = {
   start: () => renderStartScreen(state),
@@ -131,6 +137,59 @@ const titles = {
 };
 
 let bootstrapPromise = Promise.resolve();
+
+function currentStatusSurfaceModel() {
+  const noticeText = getNoticeBadgeText();
+
+  if (state.screen === "projects") {
+    return {
+      pageSync: state.projectsPageSync,
+      syncBadgeText: getScopedSyncBadgeText("projects"),
+      noticeText,
+      statusItems: getStatusSurfaceItems("projects"),
+    };
+  }
+
+  const scopedScreens = {
+    teams: "teams",
+    users: "members",
+    glossaries: "glossaries",
+    glossaryEditor: "glossaryEditor",
+    qa: "qa",
+    qaListEditor: "qaListEditor",
+  };
+  const scope = scopedScreens[state.screen] ?? null;
+
+  return {
+    pageSync: state.pageSync,
+    syncBadgeText: scope ? getScopedSyncBadgeText(scope) : "",
+    noticeText,
+    statusItems: scope ? getStatusSurfaceItems(scope) : null,
+  };
+}
+
+function renderStatusSurfaceOnly() {
+  const screen = app.firstElementChild;
+  if (!(screen instanceof HTMLElement) || !screen.classList.contains("screen--page")) {
+    return false;
+  }
+
+  const nextHtml = renderFloatingStatusSurface(currentStatusSurfaceModel()).trim();
+  const currentSurface = screen.querySelector(":scope > .team-ui-debug");
+  if (currentSurface instanceof HTMLElement) {
+    if (nextHtml) {
+      currentSurface.outerHTML = nextHtml;
+    } else {
+      currentSurface.remove();
+    }
+    return true;
+  }
+
+  if (nextHtml) {
+    screen.insertAdjacentHTML("beforeend", nextHtml);
+  }
+  return true;
+}
 
 function waitForNextAnimationFrames(count = 1) {
   const frameCount = Number.isInteger(count) && count > 0 ? count : 1;
@@ -454,6 +513,13 @@ function renderTranslateImagePreviewOverlayOnly() {
 }
 
 function renderWithOptions(options = {}) {
+  if (options?.scope === "status-surface") {
+    if (!renderStatusSurfaceOnly()) {
+      renderWithOptions();
+    }
+    return;
+  }
+
   if (options?.scope === "translate-visible-rows" && state.screen === "translate") {
     return renderTranslateVisibleRowsOnly(options);
   }

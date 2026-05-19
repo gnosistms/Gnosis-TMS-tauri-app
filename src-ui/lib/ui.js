@@ -418,7 +418,7 @@ function renderFloatingSyncBadge(pageSync = { status: "idle" }, syncBadgeText = 
   return renderStatusBadge(text);
 }
 
-function renderFloatingStatusSurface({ pageSync, syncBadgeText, noticeText, statusItems }) {
+export function renderFloatingStatusSurface({ pageSync, syncBadgeText, noticeText, statusItems }) {
   if (Array.isArray(statusItems) && statusItems.length > 0) {
     const itemsMarkup = statusItems.map(renderStatusSurfaceItem).join("");
     if (itemsMarkup) {

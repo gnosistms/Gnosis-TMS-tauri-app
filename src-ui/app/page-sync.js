@@ -57,10 +57,10 @@ export function createPageSyncController({
 
       setState({ status: "upToDate", startedAt: null });
       syncingStartedAt = 0;
-      render?.();
+      render?.({ scope: "status-surface" });
       resetTimer = window.setTimeout(() => {
         setState(createSyncState());
-        render?.();
+        render?.({ scope: "status-surface" });
       }, upToDateDurationMs);
       resetTimer?.unref?.();
     },
