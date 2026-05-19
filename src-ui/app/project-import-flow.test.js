@@ -53,10 +53,12 @@ const {
 const { createProjectImportState, createStatusBadgesState, state } = await import("./state.js");
 const { clearActiveStorageLogin, setActiveStorageLogin } = await import("./team-storage.js");
 const { saveStoredDefaultGlossaryIdForTeam } = await import("./glossary-default-cache.js");
+const { queryClient } = await import("./query-client.js");
 const { resetProjectWriteCoordinator } = await import("./project-write-coordinator.js");
 
 function resetProjectImportTestState() {
   clearActiveStorageLogin();
+  queryClient.clear();
   resetProjectWriteCoordinator();
   state.projectImport = createProjectImportState();
   state.teams = [{ id: "team-1", installationId: 1, canManageProjects: true }];
@@ -102,6 +104,21 @@ function installBatchImportInvokeHandler({ failFileNames = new Set() } = {}) {
   const calls = [];
   invokeHandler = async (command, payload = {}) => {
     calls.push({ command, payload });
+    if (command === "import_project_files_to_gtms") {
+      const files = Array.isArray(payload.input?.files) ? payload.input.files : [];
+      return {
+        imported: files
+          .filter((file) => !failFileNames.has(file.fileName))
+          .map((file, index) => importedResult(file.fileName, index + 1)),
+        failedFiles: files
+          .filter((file) => failFileNames.has(file.fileName))
+          .map((file) => ({ fileName: file.fileName, error: `Import failed for ${file.fileName}` })),
+        failedFileNames: files
+          .filter((file) => failFileNames.has(file.fileName))
+          .map((file) => file.fileName),
+        canceled: false,
+      };
+    }
     if (command === "import_xlsx_to_gtms" || command === "import_txt_to_gtms" || command === "import_docx_to_gtms" || command === "import_html_to_gtms") {
       const fileName = payload.input.fileName;
       if (failFileNames.has(fileName)) {
@@ -120,6 +137,9 @@ function installBatchImportInvokeHandler({ failFileNames = new Set() } = {}) {
       }));
     }
     if (command === "update_gtms_chapter_glossary_links") {
+      return {};
+    }
+    if (command === "cancel_project_import_batch") {
       return {};
     }
     throw new Error(`Unexpected command: ${command}`);
@@ -728,11 +748,15 @@ test("batch project import imports valid XLSX files and refreshes once", async (
   };
   const calls = installBatchImportInvokeHandler();
   const statusTexts = [];
+  const progressSnapshots = [];
 
   await importProjectFiles(() => {
     const text = state.statusBadges.right.visible ? state.statusBadges.right.text : "";
     if (text) {
       statusTexts.push(text);
+    }
+    if (state.projectImport.uploadProgress) {
+      progressSnapshots.push({ ...state.projectImport.uploadProgress });
     }
   }, [
     importFile("one.xlsx"),
@@ -741,16 +765,18 @@ test("batch project import imports valid XLSX files and refreshes once", async (
 
   assert.deepEqual(
     calls
-      .filter((call) => call.command === "import_xlsx_to_gtms")
-      .map((call) => call.payload.input.fileName),
+      .filter((call) => call.command === "import_project_files_to_gtms")
+      .flatMap((call) => call.payload.input.files.map((file) => file.fileName)),
     ["one.xlsx", "two.xlsx"],
   );
+  assert.equal(calls.filter((call) => call.command === "import_xlsx_to_gtms").length, 0);
   assert.equal(calls.filter((call) => call.command === "list_local_gtms_project_files").length, 1);
   assert.equal(state.projectImport.failedFileNames.length, 0);
   assert.equal(state.projectImport.isOpen, false);
-  assert.ok(statusTexts.includes("Importing files..."));
-  assert.ok(statusTexts.includes("Importing 1 of 2..."));
-  assert.ok(statusTexts.includes("Importing 2 of 2..."));
+  assert.deepEqual(progressSnapshots, [{ current: 1, total: 2 }]);
+  assert.equal(statusTexts.includes("Importing files..."), false);
+  assert.equal(statusTexts.includes("Importing 1 of 2..."), false);
+  assert.equal(statusTexts.includes("Importing 2 of 2..."), false);
   assert.ok(statusTexts.includes("Syncing project repo..."));
   assert.ok(statusTexts.includes("Refreshing file list..."));
 });
@@ -793,6 +819,41 @@ test("project import assigns the default glossary to new files before refresh", 
   });
 });
 
+test("batch project import sends the default glossary in the batch payload", async () => {
+  resetProjectImportTestState();
+  setActiveStorageLogin("project-import-default-batch-test");
+  state.projectImport = {
+    ...state.projectImport,
+    isOpen: true,
+    projectId: "project-1",
+    projectTitle: "Project",
+  };
+  state.glossaries = [{
+    id: "glossary-1",
+    repoName: "glossary-repo",
+    title: "Default Glossary",
+    lifecycleState: "active",
+  }];
+  saveStoredDefaultGlossaryIdForTeam(state.teams[0], "glossary-1");
+  const calls = installBatchImportInvokeHandler();
+
+  await importProjectFiles(() => {}, [
+    importFile("one.xlsx"),
+    importFile("two.xlsx"),
+  ]);
+
+  const batchCall = calls.find((call) => call.command === "import_project_files_to_gtms");
+  assert.deepEqual(batchCall.payload.input.defaultGlossary, {
+    glossaryId: "glossary-1",
+    repoName: "glossary-repo",
+  });
+  assert.equal(calls.filter((call) => call.command === "update_gtms_chapter_glossary_links").length, 0);
+  assert.deepEqual(state.projects[0].chapters.map((chapter) => chapter.linkedGlossary), [
+    { glossaryId: "glossary-1", repoName: "glossary-repo" },
+    { glossaryId: "glossary-1", repoName: "glossary-repo" },
+  ]);
+});
+
 test("batch project import continues after unsupported and failed files", async () => {
   resetProjectImportTestState();
   state.projectImport = {
@@ -814,11 +875,84 @@ test("batch project import continues after unsupported and failed files", async 
 
   assert.deepEqual(
     calls
-      .filter((call) => call.command === "import_xlsx_to_gtms")
-      .map((call) => call.payload.input.fileName),
+      .filter((call) => call.command === "import_project_files_to_gtms")
+      .flatMap((call) => call.payload.input.files.map((file) => file.fileName)),
     ["good.xlsx", "bad.xlsx", "later.xlsx"],
   );
+  assert.equal(calls.filter((call) => call.command === "import_xlsx_to_gtms").length, 0);
   assert.deepEqual(state.projectImport.failedFileNames, ["notes.pdf", "bad.xlsx"]);
+});
+
+test("canceling an upload import requests backend cancellation", async () => {
+  resetProjectImportTestState();
+  state.projectImport = {
+    ...state.projectImport,
+    isOpen: true,
+    inputMode: "upload",
+    projectId: "project-1",
+    projectTitle: "Project",
+  };
+  const importCalls = [];
+  const cancelCalls = [];
+  let resolveBatchImportStarted;
+  const batchImportStarted = new Promise((resolve) => {
+    resolveBatchImportStarted = resolve;
+  });
+  let resolveBatchImport;
+  const batchImport = new Promise((resolve) => {
+    resolveBatchImport = resolve;
+  });
+  invokeHandler = async (command, payload = {}) => {
+    if (command === "import_project_files_to_gtms") {
+      importCalls.push(...payload.input.files.map((file) => file.fileName));
+      resolveBatchImportStarted();
+      await batchImport;
+      return {
+        imported: [importedResult("one.xlsx", 1)],
+        failedFiles: [],
+        failedFileNames: [],
+        canceled: true,
+      };
+    }
+    if (command === "cancel_project_import_batch") {
+      cancelCalls.push(payload.batchId);
+      return {};
+    }
+    if (command === "reconcile_project_repo_sync_states") {
+      return [];
+    }
+    if (command === "list_local_gtms_project_files") {
+      return [{ projectId: "project-1", repoName: "project-repo", chapters: state.projects[0]?.chapters ?? [] }];
+    }
+    if (command === "update_gtms_chapter_glossary_links") {
+      return {};
+    }
+    throw new Error(`Unexpected command: ${command}`);
+  };
+  const notices = [];
+  const render = () => {
+    if (state.statusBadges.left.visible && state.statusBadges.left.text) {
+      notices.push(state.statusBadges.left.text);
+    }
+  };
+
+  const importPromise = importProjectFiles(render, [
+    importFile("one.xlsx"),
+    importFile("two.xlsx"),
+  ]);
+  await batchImportStarted;
+  cancelProjectImportModal(render);
+  assert.equal(state.projectImport.uploadCancelRequested, true);
+  resolveBatchImport();
+  await importPromise;
+
+  assert.deepEqual(importCalls, ["one.xlsx", "two.xlsx"]);
+  assert.equal(cancelCalls.length, 1);
+  assert.equal(state.projectImport.isOpen, false);
+  assert.equal(state.projectImport.uploadCancelRequested, false);
+  assert.equal(state.projects[0].chapters.length, 1);
+  assert.equal(state.projects[0].chapters[0].name, "one");
+  assert.ok(notices.includes("Import cancelled after importing 1 of 2 files."));
 });
 
 test("batch project import asks once for text-like source language and applies it to TXT and DOCX files", async () => {
@@ -849,10 +983,11 @@ test("batch project import asks once for text-like source language and applies i
 
   assert.deepEqual(
     calls
-      .filter((call) => call.command === "import_txt_to_gtms" || call.command === "import_docx_to_gtms")
-      .map((call) => [call.command, call.payload.input.sourceLanguageCode]),
-    [["import_txt_to_gtms", "ja"], ["import_docx_to_gtms", "ja"]],
+      .filter((call) => call.command === "import_project_files_to_gtms")
+      .flatMap((call) => call.payload.input.files.map((file) => [file.fileType, file.sourceLanguageCode])),
+    [["txt", "ja"], ["docx", "ja"]],
   );
+  assert.equal(calls.filter((call) => call.command === "import_txt_to_gtms" || call.command === "import_docx_to_gtms").length, 0);
   assert.equal(state.projectImport.isOpen, false);
 });
 

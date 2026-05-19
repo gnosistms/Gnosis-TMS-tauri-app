@@ -88,22 +88,23 @@ use crate::{
     },
     project_import::{
         apply_aligned_translation_to_gtms_chapter, apply_gtms_editor_ai_review_result,
-        clear_gtms_editor_imported_conflict, clear_gtms_editor_reviewed_markers,
-        delete_gtms_editor_row_comment, export_gtms_chapter_file, import_docx_to_gtms,
-        import_html_to_gtms, import_txt_to_gtms, import_xlsx_to_gtms, initialize_gtms_project_repo,
-        insert_gtms_editor_row_after, insert_gtms_editor_row_before, list_local_gtms_project_files,
-        load_gtms_chapter_editor_data, load_gtms_editor_field_history, load_gtms_editor_row,
-        load_gtms_editor_row_comments, permanently_delete_gtms_chapter,
-        permanently_delete_gtms_editor_row, preflight_aligned_translation_to_gtms_chapter,
-        purge_local_gtms_project_repo, remove_gtms_editor_language_image, rename_gtms_chapter,
-        resolve_project_import_link, restore_gtms_chapter, restore_gtms_editor_field_from_history,
-        restore_gtms_editor_row, reverse_gtms_editor_batch_replace_commit,
-        save_gtms_editor_language_image_url, save_gtms_editor_row_comment,
-        soft_delete_gtms_chapter, soft_delete_gtms_editor_row, update_gtms_chapter_glossary_links,
-        update_gtms_chapter_language_selection, update_gtms_chapter_languages,
-        update_gtms_editor_row_field_flag, update_gtms_editor_row_fields,
-        update_gtms_editor_row_fields_batch, update_gtms_editor_row_text_style,
-        upload_gtms_editor_language_image,
+        cancel_project_import_batch, clear_gtms_editor_imported_conflict,
+        clear_gtms_editor_reviewed_markers, delete_gtms_editor_row_comment,
+        export_gtms_chapter_file, import_docx_to_gtms, import_html_to_gtms,
+        import_project_files_to_gtms, import_txt_to_gtms, import_xlsx_to_gtms,
+        initialize_gtms_project_repo, insert_gtms_editor_row_after, insert_gtms_editor_row_before,
+        list_local_gtms_project_files, load_gtms_chapter_editor_data,
+        load_gtms_editor_field_history, load_gtms_editor_row, load_gtms_editor_row_comments,
+        permanently_delete_gtms_chapter, permanently_delete_gtms_editor_row,
+        preflight_aligned_translation_to_gtms_chapter, purge_local_gtms_project_repo,
+        remove_gtms_editor_language_image, rename_gtms_chapter, resolve_project_import_link,
+        restore_gtms_chapter, restore_gtms_editor_field_from_history, restore_gtms_editor_row,
+        reverse_gtms_editor_batch_replace_commit, save_gtms_editor_language_image_url,
+        save_gtms_editor_row_comment, soft_delete_gtms_chapter, soft_delete_gtms_editor_row,
+        update_gtms_chapter_glossary_links, update_gtms_chapter_language_selection,
+        update_gtms_chapter_languages, update_gtms_editor_row_field_flag,
+        update_gtms_editor_row_fields, update_gtms_editor_row_fields_batch,
+        update_gtms_editor_row_text_style, upload_gtms_editor_language_image,
     },
     project_repo_sync::{
         list_project_repo_sync_states, overwrite_conflicted_gtms_project_repos,
@@ -119,7 +120,7 @@ use crate::{
         rollback_gtms_qa_list_term_upsert, soft_delete_gtms_qa_list, upsert_gtms_qa_list_term,
     },
     repo_sync_shared::initialize_git_runtime,
-    state::{AuthState, ProjectRepoSyncStore},
+    state::{AuthState, ProjectImportBatchCancelStore, ProjectRepoSyncStore},
     team_ai::{
         clear_team_ai_provider_cache, issue_team_ai_provider_secret,
         load_team_ai_broker_public_key, load_team_ai_member_keypair, load_team_ai_provider_cache,
@@ -456,6 +457,7 @@ pub fn run() {
             pending_broker_auth: Mutex::new(None),
         })
         .manage(ProjectRepoSyncStore::default())
+        .manage(ProjectImportBatchCancelStore::default())
         .manage(PendingUpdate(Mutex::new(None)))
         .plugin(
             tauri_plugin_stronghold::Builder::new(|password| {
@@ -548,6 +550,8 @@ pub fn run() {
             import_txt_to_gtms,
             import_docx_to_gtms,
             import_html_to_gtms,
+            import_project_files_to_gtms,
+            cancel_project_import_batch,
             resolve_project_import_link,
             export_gtms_chapter_file,
             preflight_aligned_translation_to_gtms_chapter,

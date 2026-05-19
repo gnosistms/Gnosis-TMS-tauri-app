@@ -1,4 +1,4 @@
-import { invoke, waitForNextPaint } from "./runtime.js";
+import { invoke, listen, waitForNextPaint } from "./runtime.js";
 import {
   beginProjectsPageSync,
   completeProjectsPageSync,
@@ -12,8 +12,19 @@ import {
 import { defaultGlossaryForTeam } from "./glossary-default-flow.js";
 import { reconcileProjectRepoSyncStates } from "./project-repo-sync-flow.js";
 import {
+  applyProjectsQuerySnapshotToState,
+  createProjectsQuerySnapshot,
+  upsertProjectChapterInQueryData,
+  upsertProjectChaptersInQueryData,
+} from "./project-query.js";
+import {
+  projectKeys,
+  queryClient,
+} from "./query-client.js";
+import {
   clearProjectsStatus,
   ensureProjectNotTombstoned,
+  reconcileExpandedDeletedFiles,
   refreshProjectFilesFromDisk,
   showProjectsNotice,
   showProjectsStatus,
@@ -23,13 +34,20 @@ import {
   projectRepoWriteScope,
   requestProjectWriteIntent,
 } from "./project-write-coordinator.js";
-import { openLocalFilePicker } from "./local-file-picker.js";
+import { openLocalFilePathPicker, openLocalFilePicker } from "./local-file-picker.js";
 import { normalizeSupportedLanguageCode } from "../lib/language-options.js";
 
 export const PROJECT_IMPORT_ACCEPT =
   ".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,.txt,text/plain,.docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document,.html,.htm,text/html";
 
 const SUPPORTED_PROJECT_IMPORT_FORMATS_LABEL = "XLSX, TXT, DOCX, and HTML";
+const PROJECT_IMPORT_BATCH_PROGRESS_EVENT = "project-import-batch-progress";
+const PROJECT_IMPORT_DIALOG_FILTERS = [
+  {
+    name: "Supported project files",
+    extensions: ["xlsx", "txt", "docx", "html", "htm"],
+  },
+];
 
 export function detectImportFileType(fileName) {
   const normalized = String(fileName || "").trim().toLowerCase();
@@ -225,6 +243,44 @@ function setProjectImportError(render, message) {
   render();
 }
 
+function projectImportUsesUploadProgress() {
+  return normalizeProjectImportInputMode(state.projectImport.inputMode) === "upload";
+}
+
+function resetProjectImportUploadProgress() {
+  return {
+    uploadProgress: null,
+    uploadCancelRequested: false,
+    batchId: "",
+  };
+}
+
+function projectImportUploadProgress(total, current) {
+  const normalizedTotal = Math.max(1, Number.parseInt(String(total ?? 1), 10) || 1);
+  const normalizedCurrent = Math.min(
+    normalizedTotal,
+    Math.max(1, Number.parseInt(String(current ?? 1), 10) || 1),
+  );
+  return {
+    current: normalizedCurrent,
+    total: normalizedTotal,
+  };
+}
+
+function setProjectImportUploadProgress(render, total, current) {
+  state.projectImport = projectImportModalState({
+    uploadProgress: projectImportUploadProgress(total, current),
+  });
+  render();
+}
+
+function createProjectImportBatchId() {
+  if (typeof globalThis.crypto?.randomUUID === "function") {
+    return globalThis.crypto.randomUUID();
+  }
+  return `project-import-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
 function currentSourceLanguageScrollTop() {
   const list = globalThis.document?.querySelector?.("[data-project-import-source-language-list]");
   return Number.isFinite(list?.scrollTop) ? list.scrollTop : 0;
@@ -321,15 +377,43 @@ async function assignDefaultGlossaryToImportedFile(selectedTeam, targetProject, 
   };
 }
 
-function applyImportedFileToProject(team, projectId, result, linkedGlossary = null) {
+function projectImportDefaultGlossaryLink(selectedTeam) {
+  return glossaryLinkFromGlossary(defaultGlossaryForTeam(selectedTeam));
+}
+
+function currentProjectsQueryData(team, projectId) {
+  const teamId = team?.id ?? null;
+  const queryData = queryClient.getQueryData(projectKeys.byTeam(teamId));
+  const queryProjects = [
+    ...(Array.isArray(queryData?.snapshot?.items) ? queryData.snapshot.items : []),
+    ...(Array.isArray(queryData?.snapshot?.deletedItems) ? queryData.snapshot.deletedItems : []),
+  ];
+  if (queryProjects.some((project) => project?.id === projectId)) {
+    return queryData;
+  }
+
+  return createProjectsQuerySnapshot({
+    items: state.projects,
+    deletedItems: state.deletedProjects,
+    repoSyncByProjectId: state.projectRepoSyncByProjectId,
+    glossaries: state.glossaries,
+    pendingChapterMutations: state.pendingChapterMutations,
+    discovery: state.projectDiscovery,
+  });
+}
+
+async function applyImportedFileToProject(team, projectId, result, linkedGlossary = null) {
   const importedFile = {
     ...buildImportedFileEntry(result),
     linkedGlossary,
   };
+  const teamId = team?.id ?? null;
+  const queryKey = projectKeys.byTeam(teamId);
+  await queryClient.cancelQueries({ queryKey });
   requestProjectWriteIntent({
     key: chapterImportIntentKey(projectId, importedFile.id),
     scope: projectRepoWriteScope(team, projectId),
-    teamId: team?.id ?? null,
+    teamId,
     projectId,
     chapterId: importedFile.id,
     type: "chapterImport",
@@ -339,24 +423,66 @@ function applyImportedFileToProject(team, projectId, result, linkedGlossary = nu
   }, {
     run: async () => {},
   });
-  const mergeImportedFile = (project) => {
-    if (!project || project.id !== projectId) {
-      return project;
-    }
 
-    const existingFiles = Array.isArray(project.chapters) ? project.chapters : [];
-    const nextFiles = existingFiles.some((chapter) => chapter.id === importedFile.id)
-      ? existingFiles.map((chapter) => (chapter.id === importedFile.id ? importedFile : chapter))
-      : [...existingFiles, importedFile];
+  const nextQueryData = upsertProjectChapterInQueryData(
+    currentProjectsQueryData(team, projectId),
+    projectId,
+    importedFile,
+  );
+  queryClient.setQueryData(queryKey, nextQueryData);
+  applyProjectsQuerySnapshotToState(nextQueryData, {
+    teamId,
+    isFetching: state.projectsPage?.isRefreshing === true,
+    reconcileExpandedDeletedFiles,
+  });
+  state.expandedProjects.add(projectId);
+  saveStoredProjectsForTeam(team, {
+    projects: state.projects,
+    deletedProjects: state.deletedProjects,
+  });
+}
 
-    return {
-      ...project,
-      chapters: nextFiles,
-    };
-  };
+async function applyImportedFilesToProject(team, projectId, results, linkedGlossary = null) {
+  const importedFiles = (Array.isArray(results) ? results : [])
+    .filter(Boolean)
+    .map((result) => ({
+      ...buildImportedFileEntry(result),
+      linkedGlossary,
+    }));
+  if (importedFiles.length === 0) {
+    return;
+  }
 
-  state.projects = state.projects.map(mergeImportedFile);
-  state.deletedProjects = state.deletedProjects.map(mergeImportedFile);
+  const teamId = team?.id ?? null;
+  const queryKey = projectKeys.byTeam(teamId);
+  await queryClient.cancelQueries({ queryKey });
+  for (const importedFile of importedFiles) {
+    requestProjectWriteIntent({
+      key: chapterImportIntentKey(projectId, importedFile.id),
+      scope: projectRepoWriteScope(team, projectId),
+      teamId,
+      projectId,
+      chapterId: importedFile.id,
+      type: "chapterImport",
+      value: {
+        chapter: importedFile,
+      },
+    }, {
+      run: async () => {},
+    });
+  }
+
+  const nextQueryData = upsertProjectChaptersInQueryData(
+    currentProjectsQueryData(team, projectId),
+    projectId,
+    importedFiles,
+  );
+  queryClient.setQueryData(queryKey, nextQueryData);
+  applyProjectsQuerySnapshotToState(nextQueryData, {
+    teamId,
+    isFetching: state.projectsPage?.isRefreshing === true,
+    reconcileExpandedDeletedFiles,
+  });
   state.expandedProjects.add(projectId);
   saveStoredProjectsForTeam(team, {
     projects: state.projects,
@@ -404,6 +530,7 @@ export function openProjectImportModal(render, projectId) {
     pendingFiles: [],
     pendingFileName: "",
     isBatch: false,
+    ...resetProjectImportUploadProgress(),
     selectedSourceLanguageCode: "",
     sourceLanguageScrollTop: 0,
   };
@@ -412,6 +539,14 @@ export function openProjectImportModal(render, projectId) {
 
 export function cancelProjectImportModal(render) {
   if (state.projectImport.status === "importing") {
+    const batchId = typeof state.projectImport.batchId === "string" ? state.projectImport.batchId.trim() : "";
+    if (batchId) {
+      void invoke("cancel_project_import_batch", { batchId }).catch(() => {});
+    }
+    state.projectImport = projectImportModalState({
+      uploadCancelRequested: true,
+    });
+    render();
     return;
   }
 
@@ -431,6 +566,7 @@ export function cancelProjectImportModal(render) {
     pendingFiles: [],
     pendingFileName: "",
     isBatch: false,
+    ...resetProjectImportUploadProgress(),
     selectedSourceLanguageCode: "",
     sourceLanguageScrollTop: 0,
   };
@@ -599,10 +735,16 @@ export async function selectProjectImportFile(render) {
     return;
   }
 
-  const selectedFiles = await openLocalFilePicker({
-    accept: PROJECT_IMPORT_ACCEPT,
+  const selectedPaths = await openLocalFilePathPicker({
     multiple: true,
+    filters: PROJECT_IMPORT_DIALOG_FILTERS,
   });
+  const selectedFiles = selectedPaths === null
+    ? await openLocalFilePicker({
+        accept: PROJECT_IMPORT_ACCEPT,
+        multiple: true,
+      })
+    : selectedPaths.map(droppedPathImportFile).filter(Boolean);
   const files = normalizeImportFileList(selectedFiles);
   if (files.length === 0) {
     return;
@@ -723,6 +865,76 @@ async function importProjectFileResult(selectedTeam, targetProject, selectedFile
   throw new Error(`Unsupported file type for ${sourceFileName}.`);
 }
 
+async function buildProjectImportBatchFiles(files, sourceLanguageCode) {
+  const batchFiles = [];
+  const failedFileNames = [];
+
+  for (const file of normalizeImportFileList(files)) {
+    const sourceFileName = importFileName(file);
+    const fileType = detectImportFileType(sourceFileName);
+    if (!fileType || (importFileTypeNeedsSourceLanguage(fileType) && !sourceLanguageCode)) {
+      failedFileNames.push(sourceFileName);
+      continue;
+    }
+
+    const payload = {
+      fileName: sourceFileName,
+      fileType,
+      ...(importFileTypeNeedsSourceLanguage(fileType) ? { sourceLanguageCode } : {}),
+      ...(typeof file?.sourceUrl === "string" ? { sourceUrl: file.sourceUrl } : {}),
+      ...(typeof file?.sourcePath === "string" ? { sourcePath: file.sourcePath } : {}),
+    };
+
+    if (!payload.sourcePath) {
+      payload.bytes = await importFileBytes(file);
+    }
+    batchFiles.push(payload);
+  }
+
+  return { batchFiles, failedFileNames };
+}
+
+function failedFileNamesFromBatchResult(result) {
+  const names = Array.isArray(result?.failedFileNames)
+    ? result.failedFileNames
+    : Array.isArray(result?.failedFiles)
+      ? result.failedFiles.map((failure) => failure?.fileName)
+      : [];
+  return names
+    .map((fileName) => String(fileName ?? "").trim())
+    .filter(Boolean);
+}
+
+async function importProjectFilesBatch(render, selectedTeam, targetProject, batchFiles, batchId, linkedGlossary) {
+  let unlisten = null;
+  if (typeof listen === "function") {
+    unlisten = await listen(PROJECT_IMPORT_BATCH_PROGRESS_EVENT, (event) => {
+      const payload = event?.payload ?? {};
+      if (payload.batchId !== batchId || state.projectImport.status !== "importing") {
+        return;
+      }
+      setProjectImportUploadProgress(render, payload.total, payload.current);
+    }).catch(() => null);
+  }
+
+  try {
+    return await invoke("import_project_files_to_gtms", {
+      input: {
+        batchId,
+        installationId: selectedTeam.installationId,
+        projectId: targetProject.id,
+        repoName: targetProject.name,
+        files: batchFiles,
+        defaultGlossary: linkedGlossary,
+      },
+    });
+  } finally {
+    if (typeof unlisten === "function") {
+      unlisten();
+    }
+  }
+}
+
 async function completeProjectImport(render, selectedFile, fileType, options = {}) {
   if (state.projectImport.status === "importing") {
     return;
@@ -743,12 +955,21 @@ async function completeProjectImport(render, selectedFile, fileType, options = {
   }
 
   const sourceFileName = importFileName(selectedFile);
+  const usesUploadProgress = projectImportUsesUploadProgress();
   state.projectImport = projectImportModalState({
     status: "importing",
     error: "",
+    ...(usesUploadProgress
+      ? {
+          uploadProgress: projectImportUploadProgress(1, 1),
+          uploadCancelRequested: false,
+        }
+      : resetProjectImportUploadProgress()),
   });
   beginProjectsPageSync();
-  showProjectsStatus(render, "Importing file...");
+  if (!usesUploadProgress) {
+    showProjectsStatus(render, "Importing file...");
+  }
   render();
   await waitForNextPaint();
 
@@ -770,10 +991,11 @@ async function completeProjectImport(render, selectedFile, fileType, options = {
       pendingFileName: "",
       failedFileNames: [],
       isBatch: false,
+      ...resetProjectImportUploadProgress(),
       selectedSourceLanguageCode: "",
       sourceLanguageScrollTop: 0,
     };
-    applyImportedFileToProject(selectedTeam, projectId, result, defaultAssignment.linkedGlossary);
+    await applyImportedFileToProject(selectedTeam, projectId, result, defaultAssignment.linkedGlossary);
     render();
     await waitForNextPaint();
     showProjectsStatus(render, "Syncing project repo...");
@@ -799,6 +1021,7 @@ async function completeProjectImport(render, selectedFile, fileType, options = {
       pendingFileName: "",
       failedFileNames: [],
       isBatch: false,
+      ...resetProjectImportUploadProgress(),
       selectedSourceLanguageCode: "",
       sourceLanguageScrollTop: 0,
     });
@@ -844,6 +1067,7 @@ export async function importProjectFile(render, selectedFile, options = {}) {
       pendingFileName: sourceFileName,
       selectedSourceLanguageCode: "",
       sourceLanguageScrollTop: 0,
+      ...resetProjectImportUploadProgress(),
     });
     render();
     return;
@@ -893,6 +1117,7 @@ export async function importProjectFiles(render, selectedFiles, options = {}) {
       pendingFileName: "",
       failedFileNames: [],
       isBatch: true,
+      ...resetProjectImportUploadProgress(),
       selectedSourceLanguageCode: "",
       sourceLanguageScrollTop: 0,
     });
@@ -900,9 +1125,9 @@ export async function importProjectFiles(render, selectedFiles, options = {}) {
     return;
   }
 
-  const failedFileNames = [];
-  const importedResults = [];
-  const defaultGlossaryAssignmentFailures = [];
+  const usesUploadProgress = projectImportUsesUploadProgress();
+  const batchId = createProjectImportBatchId();
+  const linkedGlossary = projectImportDefaultGlossaryLink(selectedTeam);
 
   state.projectImport = projectImportModalState({
     status: "importing",
@@ -912,32 +1137,64 @@ export async function importProjectFiles(render, selectedFiles, options = {}) {
     pendingFileName: "",
     failedFileNames: [],
     isBatch: true,
+    ...(usesUploadProgress
+      ? {
+          uploadProgress: projectImportUploadProgress(files.length, 1),
+          uploadCancelRequested: false,
+        }
+      : resetProjectImportUploadProgress()),
+    batchId,
   });
   beginProjectsPageSync();
-  showProjectsStatus(render, "Importing files...");
+  if (!usesUploadProgress) {
+    showProjectsStatus(render, "Importing files...");
+  }
   render();
   await waitForNextPaint();
 
-  for (const [index, file] of files.entries()) {
-    showProjectsStatus(render, `Importing ${index + 1} of ${files.length}...`);
-    const sourceFileName = importFileName(file);
-    const fileType = detectImportFileType(sourceFileName);
-    if (!fileType || (importFileTypeNeedsSourceLanguage(fileType) && !options.confirmedSourceLanguageCode)) {
-      failedFileNames.push(sourceFileName);
-      continue;
+  let importedResults = [];
+  let failedFileNames = [];
+  let wasCanceled = false;
+  try {
+    const batchPayload = await buildProjectImportBatchFiles(files, options.confirmedSourceLanguageCode);
+    failedFileNames = batchPayload.failedFileNames;
+    if (state.projectImport.uploadCancelRequested === true) {
+      wasCanceled = true;
+    } else if (batchPayload.batchFiles.length > 0) {
+      const batchResult = await importProjectFilesBatch(
+        render,
+        selectedTeam,
+        targetProject,
+        batchPayload.batchFiles,
+        batchId,
+        linkedGlossary,
+      );
+      importedResults = Array.isArray(batchResult?.imported) ? batchResult.imported : [];
+      failedFileNames = [
+        ...failedFileNames,
+        ...failedFileNamesFromBatchResult(batchResult),
+      ];
+      wasCanceled = batchResult?.canceled === true || state.projectImport.uploadCancelRequested === true;
+      await applyImportedFilesToProject(selectedTeam, projectId, importedResults, linkedGlossary);
     }
-
-    try {
-      const result = await importProjectFileResult(selectedTeam, targetProject, file, fileType, options);
-      const defaultAssignment = await assignDefaultGlossaryToImportedFile(selectedTeam, targetProject, result);
-      importedResults.push(result);
-      if (defaultAssignment.error) {
-        defaultGlossaryAssignmentFailures.push(sourceFileName);
-      }
-      applyImportedFileToProject(selectedTeam, projectId, result, defaultAssignment.linkedGlossary);
-    } catch {
-      failedFileNames.push(sourceFileName);
-    }
+  } catch (error) {
+    state.projectImport = projectImportModalState({
+      status: "error",
+      error: error instanceof Error ? error.message : String(error),
+      pendingFile: null,
+      pendingFiles: [],
+      pendingFileName: "",
+      failedFileNames: [],
+      isBatch: false,
+      ...resetProjectImportUploadProgress(),
+      selectedSourceLanguageCode: "",
+      sourceLanguageScrollTop: 0,
+    });
+    clearProjectsStatus(render);
+    failProjectsPageSync();
+    showNoticeBadge(state.projectImport.error || "The files could not be imported.", render);
+    render();
+    return;
   }
 
   state.projectImport = {
@@ -954,6 +1211,7 @@ export async function importProjectFiles(render, selectedFiles, options = {}) {
     pendingFileName: "",
     failedFileNames,
     isBatch: false,
+    ...resetProjectImportUploadProgress(),
     selectedSourceLanguageCode: "",
     sourceLanguageScrollTop: 0,
   };
@@ -971,20 +1229,18 @@ export async function importProjectFiles(render, selectedFiles, options = {}) {
     clearProjectsStatus(render);
     showProjectsNotice(
       render,
-      failedFileNames.length > 0
+      wasCanceled
+        ? `Import cancelled after importing ${importedResults.length} of ${files.length} ${files.length === 1 ? "file" : "files"}.`
+        : failedFileNames.length > 0
         ? `Imported ${importedResults.length} ${importedResults.length === 1 ? "file" : "files"}. ${failedFileNames.length} ${failedFileNames.length === 1 ? "file" : "files"} failed.`
-        : `Imported ${importedResults.length} ${importedResults.length === 1 ? "file" : "files"} into ${targetProject.title ?? targetProject.name}${
-            defaultGlossaryAssignmentFailures.length > 0
-              ? `. Default glossary could not be assigned to ${defaultGlossaryAssignmentFailures.length} ${defaultGlossaryAssignmentFailures.length === 1 ? "file" : "files"}`
-              : ""
-          }`,
+        : `Imported ${importedResults.length} ${importedResults.length === 1 ? "file" : "files"} into ${targetProject.title ?? targetProject.name}`,
     );
     return;
   }
 
   clearProjectsStatus(render);
   failProjectsPageSync();
-  showNoticeBadge("No files were imported.", render);
+  showNoticeBadge(wasCanceled ? "Import cancelled. No files were imported." : "No files were imported.", render);
   render();
 }
 

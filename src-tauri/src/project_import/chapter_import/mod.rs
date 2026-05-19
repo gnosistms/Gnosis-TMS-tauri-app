@@ -1,8 +1,13 @@
-use std::{collections::BTreeMap, path::Path};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fs,
+    path::Path,
+    sync::{Arc, Mutex},
+};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tauri::AppHandle;
+use tauri::{AppHandle, Emitter};
 
 mod docx;
 mod html;
@@ -20,11 +25,13 @@ use std::io::Cursor;
 #[cfg(test)]
 use txt::decode_text_file;
 use txt::parse_txt_file;
-#[cfg(test)]
 use uuid::Uuid;
-use write_gtms::import_parsed_workbook_to_gtms_sync;
 #[cfg(test)]
 use write_gtms::{build_chapter_file, build_row_file, build_source_word_counts_from_import};
+use write_gtms::{
+    commit_written_imports, import_parsed_workbook_to_gtms_sync, prepare_project_import_repo,
+    write_parsed_workbook_chapter, ProjectImportRepoContext, WrittenImport,
+};
 use xlsx::parse_xlsx_workbook;
 #[cfg(test)]
 use xlsx::{classify_header_row, split_xlsx_cell_text_and_footnote, ColumnBinding};
@@ -74,6 +81,35 @@ pub(crate) struct ImportHtmlInput {
     source_path: Option<String>,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ImportProjectFilesInput {
+    batch_id: String,
+    installation_id: i64,
+    repo_name: String,
+    project_id: Option<String>,
+    files: Vec<ImportProjectFileInput>,
+    default_glossary: Option<ImportProjectDefaultGlossaryInput>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ImportProjectFileInput {
+    file_name: String,
+    file_type: String,
+    bytes: Option<Vec<u8>>,
+    source_path: Option<String>,
+    source_language_code: Option<String>,
+    source_url: Option<String>,
+}
+
+#[derive(Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ImportProjectDefaultGlossaryInput {
+    glossary_id: String,
+    repo_name: String,
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ImportXlsxResponse {
@@ -93,6 +129,33 @@ pub(crate) struct ImportXlsxResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     import_summary: Option<DocxImportSummary>,
 }
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ImportProjectFilesResponse {
+    imported: Vec<ImportXlsxResponse>,
+    failed_files: Vec<ImportProjectFileFailure>,
+    failed_file_names: Vec<String>,
+    canceled: bool,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ImportProjectFileFailure {
+    file_name: String,
+    error: String,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ImportProjectBatchProgress {
+    batch_id: String,
+    current: usize,
+    total: usize,
+    file_name: String,
+}
+
+const PROJECT_IMPORT_BATCH_PROGRESS_EVENT: &str = "project-import-batch-progress";
 
 #[derive(Clone)]
 struct ParsedWorkbook {
@@ -359,6 +422,280 @@ pub(super) fn import_html_to_gtms_sync(
 ) -> Result<ImportXlsxResponse, String> {
     let parsed = parse_html_file(input)?;
     import_parsed_workbook_to_gtms_sync(app, parsed)
+}
+
+pub(super) fn import_project_files_to_gtms_sync(
+    app: &AppHandle,
+    canceled_batch_ids: Arc<Mutex<BTreeSet<String>>>,
+    input: ImportProjectFilesInput,
+) -> Result<ImportProjectFilesResponse, String> {
+    let batch_id = normalized_batch_id(&input.batch_id);
+
+    let installation_id = input.installation_id;
+    let repo_name = input.repo_name.clone();
+    let project_id = input.project_id.clone();
+    let default_glossary = input.default_glossary.clone();
+    let files = input.files;
+    let context =
+        prepare_project_import_repo(app, installation_id, project_id.as_deref(), &repo_name)?;
+    let total = files.len();
+    let mut failed_files = Vec::new();
+    let mut parsed_workbooks = Vec::new();
+    let mut canceled = false;
+
+    for (index, file) in files.into_iter().enumerate() {
+        if batch_import_canceled(&canceled_batch_ids, &batch_id)? {
+            canceled = true;
+            break;
+        }
+
+        emit_batch_progress(app, &batch_id, index + 1, total, &file.file_name);
+        match parse_project_import_file(installation_id, &repo_name, project_id.clone(), file) {
+            Ok(parsed) => parsed_workbooks.push(parsed),
+            Err(error) => failed_files.push(ImportProjectFileFailure {
+                file_name: error_file_name(&error),
+                error,
+            }),
+        }
+    }
+
+    let mut written = Vec::new();
+    for parsed in parsed_workbooks {
+        if batch_import_canceled(&canceled_batch_ids, &batch_id)? {
+            canceled = true;
+            break;
+        }
+
+        match write_parsed_workbook_chapter(&context, parsed, default_glossary.as_ref()) {
+            Ok(entry) => written.push(entry),
+            Err(error) => {
+                cleanup_written_imports(&context, &written, true)?;
+                clear_batch_cancellation(&canceled_batch_ids, &batch_id)?;
+                return Err(error);
+            }
+        }
+    }
+
+    if !written.is_empty() {
+        let relative_paths = written
+            .iter()
+            .map(|entry| entry.relative_chapter_path.clone())
+            .collect::<Vec<_>>();
+        if let Err(error) = commit_written_imports(
+            app,
+            &context,
+            &relative_paths,
+            &batch_import_commit_message(written.len()),
+        ) {
+            cleanup_written_imports(&context, &written, true)?;
+            clear_batch_cancellation(&canceled_batch_ids, &batch_id)?;
+            return Err(error);
+        }
+    }
+
+    clear_batch_cancellation(&canceled_batch_ids, &batch_id)?;
+
+    let failed_file_names = failed_files
+        .iter()
+        .map(|failure| failure.file_name.clone())
+        .collect();
+    Ok(ImportProjectFilesResponse {
+        imported: written.into_iter().map(|entry| entry.response).collect(),
+        failed_files,
+        failed_file_names,
+        canceled,
+    })
+}
+
+fn normalized_batch_id(batch_id: &str) -> String {
+    let trimmed = batch_id.trim();
+    if trimmed.is_empty() {
+        Uuid::now_v7().to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
+fn emit_batch_progress(
+    app: &AppHandle,
+    batch_id: &str,
+    current: usize,
+    total: usize,
+    file_name: &str,
+) {
+    let _ = app.emit(
+        PROJECT_IMPORT_BATCH_PROGRESS_EVENT,
+        ImportProjectBatchProgress {
+            batch_id: batch_id.to_string(),
+            current,
+            total,
+            file_name: file_name.to_string(),
+        },
+    );
+}
+
+fn batch_import_canceled(
+    canceled_batch_ids: &Arc<Mutex<BTreeSet<String>>>,
+    batch_id: &str,
+) -> Result<bool, String> {
+    Ok(canceled_batch_ids
+        .lock()
+        .map_err(|_| "The project import cancellation state is unavailable.".to_string())?
+        .contains(batch_id))
+}
+
+fn clear_batch_cancellation(
+    canceled_batch_ids: &Arc<Mutex<BTreeSet<String>>>,
+    batch_id: &str,
+) -> Result<(), String> {
+    canceled_batch_ids
+        .lock()
+        .map_err(|_| "The project import cancellation state is unavailable.".to_string())?
+        .remove(batch_id);
+    Ok(())
+}
+
+fn batch_import_commit_message(imported_count: usize) -> String {
+    if imported_count == 1 {
+        "Import 1 file".to_string()
+    } else {
+        format!("Import {imported_count} files")
+    }
+}
+
+fn parse_project_import_file(
+    installation_id: i64,
+    repo_name: &str,
+    project_id: Option<String>,
+    file: ImportProjectFileInput,
+) -> Result<ParsedWorkbook, String> {
+    let file_name = file.file_name.trim().to_string();
+    if file_name.is_empty() {
+        return Err("Import file is missing a file name.".to_string());
+    }
+    let bytes = import_project_file_bytes(&file)?;
+    match file.file_type.trim().to_ascii_lowercase().as_str() {
+        "xlsx" => parse_xlsx_workbook(ImportXlsxInput {
+            installation_id,
+            repo_name: repo_name.to_string(),
+            project_id: project_id.clone(),
+            file_name: file_name.clone(),
+            bytes,
+        }),
+        "txt" => parse_txt_file(ImportTxtInput {
+            installation_id,
+            repo_name: repo_name.to_string(),
+            project_id: project_id.clone(),
+            file_name: file_name.clone(),
+            bytes,
+            source_language_code: required_source_language_code(&file)?,
+        }),
+        "docx" => parse_docx_file(ImportDocxInput {
+            installation_id,
+            repo_name: repo_name.to_string(),
+            project_id: project_id.clone(),
+            file_name: file_name.clone(),
+            bytes,
+            source_language_code: required_source_language_code(&file)?,
+        }),
+        "html" => parse_html_file(ImportHtmlInput {
+            installation_id,
+            repo_name: repo_name.to_string(),
+            project_id,
+            file_name: file_name.clone(),
+            bytes,
+            source_language_code: required_source_language_code(&file)?,
+            source_url: file.source_url.unwrap_or_default(),
+            source_path: file.source_path,
+        }),
+        _ => Err(format!("Unsupported file type for {file_name}.")),
+    }
+    .map_err(|error| format!("{file_name}: {error}"))
+}
+
+fn required_source_language_code(file: &ImportProjectFileInput) -> Result<String, String> {
+    file.source_language_code
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .ok_or_else(|| "Select a source language before importing this file.".to_string())
+}
+
+fn import_project_file_bytes(file: &ImportProjectFileInput) -> Result<Vec<u8>, String> {
+    if let Some(path) = file
+        .source_path
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        let metadata =
+            fs::metadata(path).map_err(|error| format!("Could not inspect '{}': {error}", path))?;
+        if !metadata.is_file() {
+            return Err(format!("'{}' is not a file.", path));
+        }
+        return fs::read(path).map_err(|error| format!("Could not read '{}': {error}", path));
+    }
+
+    file.bytes
+        .clone()
+        .filter(|bytes| !bytes.is_empty())
+        .ok_or_else(|| "The file could not be read.".to_string())
+}
+
+fn error_file_name(error: &str) -> String {
+    error
+        .split_once(':')
+        .map(|(file_name, _)| file_name.trim())
+        .filter(|file_name| !file_name.is_empty())
+        .unwrap_or("file")
+        .to_string()
+}
+
+fn cleanup_written_imports(
+    context: &ProjectImportRepoContext,
+    written: &[WrittenImport],
+    unstage: bool,
+) -> Result<(), String> {
+    let mut cleanup_errors = Vec::new();
+    if unstage {
+        let mut paths = vec![".gitattributes".to_string()];
+        paths.extend(
+            written
+                .iter()
+                .map(|entry| entry.relative_chapter_path.clone()),
+        );
+        for path in &paths {
+            let _ = super::project_git::git_output(&context.repo_path, &["reset", "--", path]);
+        }
+    }
+
+    for entry in written.iter().rev() {
+        if let Err(error) = fs::remove_dir_all(&entry.absolute_chapter_path) {
+            if entry.absolute_chapter_path.exists() {
+                cleanup_errors.push(format!(
+                    "Could not remove '{}': {error}",
+                    entry.absolute_chapter_path.display()
+                ));
+            }
+        }
+    }
+
+    let gitattributes_path = context.repo_path.join(".gitattributes");
+    if !context.gitattributes_existed && gitattributes_path.exists() {
+        if let Err(error) = fs::remove_file(&gitattributes_path) {
+            cleanup_errors.push(format!(
+                "Could not remove '{}': {error}",
+                gitattributes_path.display()
+            ));
+        }
+    }
+
+    if cleanup_errors.is_empty() {
+        Ok(())
+    } else {
+        Err(cleanup_errors.join(" "))
+    }
 }
 
 fn humanize_file_stem(file_name: &str) -> String {
@@ -816,7 +1153,7 @@ mod tests {
         let parsed = parse_txt_file(txt_input(b"one two\nthree".to_vec(), "en"))
             .expect("TXT import should parse");
         let chapter_id = Uuid::now_v7();
-        let chapter = build_chapter_file(&parsed, &chapter_id, "chapter");
+        let chapter = build_chapter_file(&parsed, &chapter_id, "chapter", None);
         let row = build_row_file(&parsed, &parsed.rows[0], 0, parsed.rows.len(), "row-1")
             .expect("row should build");
         let counts = build_source_word_counts_from_import(&parsed);
@@ -831,5 +1168,25 @@ mod tests {
         assert_eq!(row.origin.source_format, "txt");
         assert!(row.format_metadata.contains_key("txt"));
         assert_eq!(counts.get("en"), Some(&3));
+    }
+
+    #[test]
+    fn build_chapter_file_writes_default_glossary_link() {
+        let parsed = parse_txt_file(txt_input(b"one two\nthree".to_vec(), "en"))
+            .expect("TXT import should parse");
+        let chapter_id = Uuid::now_v7();
+        let glossary = ImportProjectDefaultGlossaryInput {
+            glossary_id: "glossary-1".to_string(),
+            repo_name: "glossary-repo".to_string(),
+        };
+        let chapter = build_chapter_file(&parsed, &chapter_id, "chapter", Some(&glossary));
+
+        let linked_glossary = chapter
+            .settings
+            .linked_glossaries
+            .and_then(|links| links.glossary)
+            .expect("default glossary should be written");
+        assert_eq!(linked_glossary.glossary_id, "glossary-1");
+        assert_eq!(linked_glossary.repo_name, "glossary-repo");
     }
 }

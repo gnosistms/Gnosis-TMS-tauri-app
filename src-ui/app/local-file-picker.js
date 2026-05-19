@@ -33,3 +33,22 @@ export function openLocalFilePicker({ accept = "", multiple = false } = {}) {
     input.click();
   });
 }
+
+export async function openLocalFilePathPicker({ multiple = false, filters = [] } = {}) {
+  const open = window.__TAURI__?.dialog?.open;
+  if (typeof open !== "function") {
+    return null;
+  }
+
+  const selected = await open({
+    multiple: multiple === true,
+    filters: Array.isArray(filters) ? filters : [],
+  });
+  if (!selected) {
+    return [];
+  }
+
+  return (Array.isArray(selected) ? selected : [selected])
+    .filter((path) => typeof path === "string" && path.trim())
+    .map((path) => path.trim());
+}

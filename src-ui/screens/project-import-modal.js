@@ -160,6 +160,48 @@ function renderProjectImportUploadPanel(isImporting) {
   `;
 }
 
+function renderProjectImportUploadProgressStep(modal) {
+  const projectTitle = String(modal?.projectTitle ?? "").trim() || "this project";
+  const total = Math.max(1, Number.parseInt(String(modal?.uploadProgress?.total ?? 1), 10) || 1);
+  const current = Math.min(
+    total,
+    Math.max(1, Number.parseInt(String(modal?.uploadProgress?.current ?? 1), 10) || 1),
+  );
+  const percent = Math.min(100, Math.max(0, Math.round((current / total) * 100)));
+
+  return `
+    <div class="modal-backdrop">
+      <section class="card modal-card modal-card--compact modal-card--project-import" role="status" aria-busy="true">
+        <div class="card__body modal-card__body">
+          <p class="card__eyebrow">Uploading</p>
+          <h2 class="modal__title">Importing files to ${escapeHtml(projectTitle)}</h2>
+          <div class="project-import-modal__upload-progress">
+            <div class="ai-translate-all-modal__progress-row">
+              <div class="ai-translate-all-modal__progress-label">
+                <span>Importing ${escapeHtml(String(current))} of ${escapeHtml(String(total))}</span>
+                <span>${escapeHtml(String(percent))}%</span>
+              </div>
+              <div
+                class="ai-translate-all-modal__progress-track"
+                role="progressbar"
+                aria-label="File import progress"
+                aria-valuemin="0"
+                aria-valuemax="${escapeHtml(String(total))}"
+                aria-valuenow="${escapeHtml(String(current))}"
+              >
+                <div class="ai-translate-all-modal__progress-fill" style="width: ${escapeHtml(String(percent))}%;"></div>
+              </div>
+            </div>
+          </div>
+          <div class="modal__actions project-import-modal__actions">
+            ${secondaryButton("Cancel", "cancel-project-import")}
+          </div>
+        </div>
+      </section>
+    </div>
+  `;
+}
+
 function renderProjectImportLinkPanel(modal, disabled) {
   const value = typeof modal?.linkUrl === "string" ? modal.linkUrl : "";
   return `
@@ -226,6 +268,10 @@ export function renderProjectImportModal(state) {
   const isUploadMode = inputMode === "upload";
   const isPasteLinkMode = inputMode === "pasteLink";
   const isPasteTextMode = inputMode === "pasteText";
+  if (isImporting && isUploadMode) {
+    return renderProjectImportUploadProgressStep(modal);
+  }
+
   const linkUrl = String(modal.linkUrl ?? "").trim();
   const pastedText = String(modal.pastedText ?? "").trim();
   const errorMarkup = modal.error
@@ -252,8 +298,8 @@ export function renderProjectImportModal(state) {
     <div class="modal-backdrop">
       <section class="card modal-card modal-card--compact modal-card--project-import">
         <div class="card__body modal-card__body">
-          <p class="card__eyebrow">ADD FILE</p>
-          <h2 class="modal__title">Add file</h2>
+          <p class="card__eyebrow">ADD FILES</p>
+          <h2 class="modal__title">Add new files to the project</h2>
           <p class="modal__supporting">Choose how to add content to ${escapeHtml(projectTitle)}.</p>
           <div class="modal__form project-import-modal">
             ${errorMarkup}

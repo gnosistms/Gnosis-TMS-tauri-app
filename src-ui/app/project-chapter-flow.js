@@ -35,6 +35,13 @@ import {
   sortProjectSnapshot,
 } from "./project-top-level-state.js";
 import {
+  createProjectsQuerySnapshot,
+} from "./project-query.js";
+import {
+  projectKeys,
+  queryClient,
+} from "./query-client.js";
+import {
   refreshProjectFilesFromDisk as runRefreshProjectFilesFromDisk,
 } from "./project-discovery-flow.js";
 import {
@@ -341,7 +348,7 @@ export async function ensureProjectNotTombstoned(render, selectedTeam, project, 
 }
 
 export async function refreshProjectFilesFromDisk(render, selectedTeam, projects) {
-  return runRefreshProjectFilesFromDisk(render, selectedTeam, projects, {
+  const refreshedSnapshot = await runRefreshProjectFilesFromDisk(render, selectedTeam, projects, {
     applyChapterPendingMutation,
     normalizeListedChapter,
     preserveProjectLifecyclePatches: (snapshot) => {
@@ -356,6 +363,23 @@ export async function refreshProjectFilesFromDisk(render, selectedTeam, projects
     persistProjectsForTeam,
     reconcileExpandedDeletedFiles,
   });
+  if (selectedTeam?.id) {
+    const currentQueryData = queryClient.getQueryData(projectKeys.byTeam(selectedTeam.id));
+    queryClient.setQueryData(
+      projectKeys.byTeam(selectedTeam.id),
+      createProjectsQuerySnapshot({
+        items: refreshedSnapshot.items,
+        deletedItems: refreshedSnapshot.deletedItems,
+        repoSyncByProjectId: state.projectRepoSyncByProjectId,
+        glossaries: Array.isArray(currentQueryData?.glossaries)
+          ? currentQueryData.glossaries
+          : state.glossaries,
+        pendingChapterMutations: state.pendingChapterMutations,
+        discovery: state.projectDiscovery,
+      }),
+    );
+  }
+  return refreshedSnapshot;
 }
 
 function findProjectForRepoSync(projectId) {

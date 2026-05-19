@@ -1254,6 +1254,12 @@
   line-height: 1.5;
 }
 
+.project-import-modal__upload-progress {
+  display: grid;
+  gap: 12px;
+  padding: 6px 2px 2px;
+}
+
 .project-import-modal__coming-soon {
   display: grid;
   place-items: center;

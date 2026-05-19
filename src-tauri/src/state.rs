@@ -1,5 +1,5 @@
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     sync::{Arc, Mutex},
 };
 
@@ -14,6 +14,10 @@ pub(crate) struct ProjectRepoSyncStore {
     pub(crate) entries: Arc<Mutex<BTreeMap<String, ProjectRepoSyncSnapshot>>>,
 }
 
+pub(crate) struct ProjectImportBatchCancelStore {
+    pub(crate) canceled_batch_ids: Arc<Mutex<BTreeSet<String>>>,
+}
+
 pub(crate) struct PendingGithubAppInstall {
     pub(crate) csrf_state: String,
 }
@@ -26,6 +30,14 @@ impl Default for ProjectRepoSyncStore {
     fn default() -> Self {
         Self {
             entries: Arc::new(Mutex::new(BTreeMap::new())),
+        }
+    }
+}
+
+impl Default for ProjectImportBatchCancelStore {
+    fn default() -> Self {
+        Self {
+            canceled_batch_ids: Arc::new(Mutex::new(BTreeSet::new())),
         }
     }
 }

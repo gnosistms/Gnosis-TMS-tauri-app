@@ -5,6 +5,7 @@ mod chapter_lifecycle;
 mod link_import;
 mod project_git;
 
+use crate::state::ProjectImportBatchCancelStore;
 use tauri::AppHandle;
 
 pub(crate) use self::chapter_editor::{
@@ -59,9 +60,10 @@ use self::{
         SaveEditorRowCommentInput, SaveEditorRowCommentResponse,
     },
     chapter_import::{
-        import_docx_to_gtms_sync, import_html_to_gtms_sync, import_txt_to_gtms_sync,
-        import_xlsx_to_gtms_sync, ImportDocxInput, ImportHtmlInput, ImportTxtInput,
-        ImportXlsxInput, ImportXlsxResponse,
+        import_docx_to_gtms_sync, import_html_to_gtms_sync, import_project_files_to_gtms_sync,
+        import_txt_to_gtms_sync, import_xlsx_to_gtms_sync, ImportDocxInput, ImportHtmlInput,
+        ImportProjectFilesInput, ImportProjectFilesResponse, ImportTxtInput, ImportXlsxInput,
+        ImportXlsxResponse,
     },
     chapter_lifecycle::{
         permanently_delete_gtms_chapter_sync, rename_gtms_chapter_sync,
@@ -122,6 +124,37 @@ pub(crate) async fn import_html_to_gtms(
     tauri::async_runtime::spawn_blocking(move || import_html_to_gtms_sync(&app, input))
         .await
         .map_err(|error| format!("The HTML import worker failed: {error}"))?
+}
+
+#[tauri::command]
+pub(crate) async fn import_project_files_to_gtms(
+    app: AppHandle,
+    cancel_store: tauri::State<'_, ProjectImportBatchCancelStore>,
+    input: ImportProjectFilesInput,
+) -> Result<ImportProjectFilesResponse, String> {
+    let canceled_batch_ids = cancel_store.canceled_batch_ids.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        import_project_files_to_gtms_sync(&app, canceled_batch_ids, input)
+    })
+    .await
+    .map_err(|error| format!("The project files import worker failed: {error}"))?
+}
+
+#[tauri::command]
+pub(crate) async fn cancel_project_import_batch(
+    cancel_store: tauri::State<'_, ProjectImportBatchCancelStore>,
+    batch_id: String,
+) -> Result<(), String> {
+    let normalized_batch_id = batch_id.trim();
+    if normalized_batch_id.is_empty() {
+        return Ok(());
+    }
+    cancel_store
+        .canceled_batch_ids
+        .lock()
+        .map_err(|_| "The project import cancellation state is unavailable.".to_string())?
+        .insert(normalized_batch_id.to_string());
+    Ok(())
 }
 
 #[tauri::command]

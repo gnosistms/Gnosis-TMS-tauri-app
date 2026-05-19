@@ -30,6 +30,7 @@ const {
   preserveProjectLifecyclePatchesInProjectSnapshot,
   preservePendingProjectLifecyclePatches,
   seedProjectsQueryFromCache,
+  upsertProjectChapterInQueryData,
 } = await import("./project-query.js");
 const { glossaryKeys, projectKeys, queryClient } = await import("./query-client.js");
 const { teamCacheKey } = await import("./team-cache.js");
@@ -129,6 +130,48 @@ test("project query adapter ignores stale team snapshots", () => {
 
   assert.equal(applied, false);
   assert.equal(state.projects[0].title, "Existing");
+});
+
+test("project chapter imports update the project query snapshot", () => {
+  const queryData = createProjectsQuerySnapshot({
+    items: [
+      project({
+        chapters: [chapter({ id: "chapter-1", name: "Original Chapter" })],
+      }),
+    ],
+  });
+  const importedChapter = chapter({ id: "chapter-2", name: "Imported Chapter" });
+
+  const nextQueryData = upsertProjectChapterInQueryData(
+    queryData,
+    "project-1",
+    importedChapter,
+  );
+
+  assert.equal(nextQueryData.snapshot.items[0].chapters.length, 2);
+  assert.equal(nextQueryData.snapshot.items[0].chapters[1].id, "chapter-2");
+  assert.equal(nextQueryData.snapshot.items[0].chapters[1].name, "Imported Chapter");
+});
+
+test("project chapter imports replace existing chapters in the project query snapshot", () => {
+  const queryData = createProjectsQuerySnapshot({
+    items: [
+      project({
+        chapters: [chapter({ id: "chapter-1", name: "Original Chapter" })],
+      }),
+    ],
+  });
+  const importedChapter = chapter({ id: "chapter-1", name: "Reimported Chapter" });
+
+  const nextQueryData = upsertProjectChapterInQueryData(
+    queryData,
+    "project-1",
+    importedChapter,
+  );
+
+  assert.equal(nextQueryData.snapshot.items[0].chapters.length, 1);
+  assert.equal(nextQueryData.snapshot.items[0].chapters[0].id, "chapter-1");
+  assert.equal(nextQueryData.snapshot.items[0].chapters[0].name, "Reimported Chapter");
 });
 
 test("project loading prime clears stale visible projects before team render", () => {

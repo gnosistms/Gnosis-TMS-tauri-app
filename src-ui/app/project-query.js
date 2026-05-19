@@ -429,6 +429,55 @@ export function patchProjectQueryData(queryData, projectId, patch) {
     : queryData;
 }
 
+export function upsertProjectChapterInQueryData(queryData, projectId, chapter) {
+  if (!queryData || typeof queryData !== "object" || !chapter?.id) {
+    return queryData;
+  }
+
+  let changed = false;
+  const upsertChapter = (project) => {
+    if (!project || project.id !== projectId) {
+      return project;
+    }
+
+    const chapters = Array.isArray(project.chapters) ? project.chapters : [];
+    const nextChapters = chapters.some((item) => item?.id === chapter.id)
+      ? chapters.map((item) => (item?.id === chapter.id ? chapter : item))
+      : [...chapters, chapter];
+
+    changed = true;
+    return {
+      ...project,
+      chapters: nextChapters,
+    };
+  };
+
+  const items = (Array.isArray(queryData.snapshot?.items) ? queryData.snapshot.items : [])
+    .map(upsertChapter);
+  const deletedItems = (Array.isArray(queryData.snapshot?.deletedItems) ? queryData.snapshot.deletedItems : [])
+    .map(upsertChapter);
+
+  return changed
+    ? {
+        ...queryData,
+        snapshot: {
+          items,
+          deletedItems,
+        },
+      }
+    : queryData;
+}
+
+export function upsertProjectChaptersInQueryData(queryData, projectId, chapters) {
+  const normalizedChapters = Array.isArray(chapters)
+    ? chapters.filter((chapter) => chapter?.id)
+    : [];
+  return normalizedChapters.reduce(
+    (nextQueryData, chapter) => upsertProjectChapterInQueryData(nextQueryData, projectId, chapter),
+    queryData,
+  );
+}
+
 export function preservePendingProjectLifecyclePatches(nextSnapshot, previousSnapshot) {
   if (!nextSnapshot || typeof nextSnapshot !== "object") {
     return nextSnapshot;

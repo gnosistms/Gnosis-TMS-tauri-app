@@ -299,6 +299,9 @@ export function createProjectImportState() {
     pendingFileName: "",
     failedFileNames: [],
     isBatch: false,
+    batchId: "",
+    uploadProgress: null,
+    uploadCancelRequested: false,
     selectedSourceLanguageCode: "",
     sourceLanguageScrollTop: 0,
   };

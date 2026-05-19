@@ -13,7 +13,8 @@ test("project import modal renders the requested drop target copy", () => {
     },
   });
 
-  assert.match(html, /<h2 class="modal__title">Add file<\/h2>/);
+  assert.match(html, /<p class="card__eyebrow">ADD FILES<\/p>/);
+  assert.match(html, /<h2 class="modal__title">Add new files to the project<\/h2>/);
   assert.match(html, /Choose how to add content to Translation Project\./);
   assert.match(html, /data-action="select-project-import-input-mode:upload"[\s\S]*Upload/);
   assert.match(html, /data-action="select-project-import-input-mode:pasteLink"[\s\S]*Paste link/);
@@ -162,6 +163,32 @@ test("project import modal disables paste text controls while importing", () => 
 
   assert.match(html, /data-project-import-paste-textarea[\s\S]*disabled/);
   assert.match(html, /data-action="submit-project-import-pasted-text" disabled[\s\S]*Importing\.\.\.<\/button>/);
+});
+
+test("project import modal renders upload progress step while importing upload files", () => {
+  const html = renderProjectImportModal({
+    projectImport: {
+      isOpen: true,
+      projectTitle: "Translation Project",
+      inputMode: "upload",
+      status: "importing",
+      uploadProgress: {
+        current: 2,
+        total: 5,
+      },
+      error: "",
+    },
+  });
+
+  assert.match(html, /<p class="card__eyebrow">Uploading<\/p>/);
+  assert.match(html, /Importing files to Translation Project/);
+  assert.match(html, /Importing 2 of 5/);
+  assert.match(html, /role="progressbar"/);
+  assert.match(html, /aria-valuemax="5"/);
+  assert.match(html, /aria-valuenow="2"/);
+  assert.match(html, /style="width: 40%;"/);
+  assert.match(html, /data-action="cancel-project-import">Cancel<\/button>/);
+  assert.doesNotMatch(html, /data-project-import-dropzone/);
 });
 
 test("project import modal renders validation errors above the drop target", () => {

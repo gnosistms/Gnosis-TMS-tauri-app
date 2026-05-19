@@ -1,4 +1,8 @@
-use std::{collections::BTreeMap, fs, path::Path};
+use std::{
+    collections::BTreeMap,
+    fs,
+    path::{Path, PathBuf},
+};
 
 use quick_xml::{events::Event as XmlEvent, Reader as XmlReader};
 use serde_json::{json, Value};
@@ -10,11 +14,12 @@ use crate::project_repo_paths::resolve_project_git_repo_path;
 
 use super::super::project_git::{
     ensure_clean_git_repo, ensure_gitattributes, ensure_repo_exists, ensure_valid_git_repo,
-    git_output, read_json_file, write_json_pretty,
+    git_output, read_json_file, repo_relative_path, write_json_pretty,
 };
 use super::{
-    active_lifecycle_state, ChapterFile, ChapterLanguage, ChapterSettings, FieldEditorFlags,
-    FieldValue, FormatState, Guidance, ImportXlsxResponse, ImportedRow, ParsedWorkbook,
+    active_lifecycle_state, ChapterFile, ChapterGlossaryLink, ChapterLanguage,
+    ChapterLinkedGlossaries, ChapterSettings, FieldEditorFlags, FieldValue, FormatState, Guidance,
+    ImportProjectDefaultGlossaryInput, ImportXlsxResponse, ImportedRow, ParsedWorkbook,
     ProjectFile, RowFile, RowOrigin, RowStatus, RowStructure, SourceFile, SourceFileMetadata,
 };
 
@@ -22,17 +27,47 @@ const GTMS_FORMAT: &str = "gtms";
 const GTMS_FORMAT_VERSION: u32 = 1;
 const ORDER_KEY_SPACING: u128 = 1u128 << 104;
 
+pub(super) struct ProjectImportRepoContext {
+    pub(super) repo_path: PathBuf,
+    pub(super) project_title: String,
+    pub(super) gitattributes_existed: bool,
+}
+
+pub(super) struct WrittenImport {
+    pub(super) response: ImportXlsxResponse,
+    pub(super) relative_chapter_path: String,
+    pub(super) absolute_chapter_path: PathBuf,
+}
+
 pub(super) fn import_parsed_workbook_to_gtms_sync(
     app: &AppHandle,
     parsed: ParsedWorkbook,
 ) -> Result<ImportXlsxResponse, String> {
-    let chapter_id = Uuid::now_v7();
-    let repo_path = resolve_project_git_repo_path(
+    let context = prepare_project_import_repo(
         app,
         parsed.installation_id,
         parsed.project_id.as_deref(),
-        Some(&parsed.repo_name),
+        &parsed.repo_name,
     )?;
+    let written = write_parsed_workbook_chapter(&context, parsed, None)?;
+    commit_written_imports(
+        app,
+        &context,
+        &[written.relative_chapter_path.clone()],
+        &format!("Import {}", written.response.source_file_name),
+    )?;
+
+    Ok(written.response)
+}
+
+pub(super) fn prepare_project_import_repo(
+    app: &AppHandle,
+    installation_id: i64,
+    project_id: Option<&str>,
+    repo_name: &str,
+) -> Result<ProjectImportRepoContext, String> {
+    let repo_path =
+        resolve_project_git_repo_path(app, installation_id, project_id, Some(repo_name))?;
     ensure_repo_exists(
     &repo_path,
     "The local project repo is not available yet. Refresh the Projects page first so the repo can be cloned.",
@@ -44,70 +79,133 @@ pub(super) fn import_parsed_workbook_to_gtms_sync(
     )?;
 
     let project_title = read_project_title(&repo_path.join("project.json"))?;
+    let gitattributes_existed = repo_path.join(".gitattributes").exists();
+
+    Ok(ProjectImportRepoContext {
+        repo_path,
+        project_title,
+        gitattributes_existed,
+    })
+}
+
+pub(super) fn write_parsed_workbook_chapter(
+    context: &ProjectImportRepoContext,
+    parsed: ParsedWorkbook,
+    default_glossary: Option<&ImportProjectDefaultGlossaryInput>,
+) -> Result<WrittenImport, String> {
+    let chapter_id = Uuid::now_v7();
+    let repo_path = &context.repo_path;
     let chapter_slug =
         unique_chapter_slug(&repo_path.join("chapters"), &slugify(&parsed.file_title));
     let chapter_path = repo_path.join("chapters").join(&chapter_slug);
     let rows_path = chapter_path.join("rows");
     let assets_path = chapter_path.join("assets");
 
-    fs::create_dir_all(&rows_path)
-        .map_err(|error| format!("Could not create the imported rows folder: {error}"))?;
-    fs::create_dir_all(&assets_path)
-        .map_err(|error| format!("Could not create the imported assets folder: {error}"))?;
+    let result = (|| -> Result<WrittenImport, String> {
+        fs::create_dir_all(&rows_path)
+            .map_err(|error| format!("Could not create the imported rows folder: {error}"))?;
+        fs::create_dir_all(&assets_path)
+            .map_err(|error| format!("Could not create the imported assets folder: {error}"))?;
 
-    ensure_gitattributes(&repo_path.join(".gitattributes"))?;
+        ensure_gitattributes(&repo_path.join(".gitattributes"))?;
 
-    let chapter_file = build_chapter_file(&parsed, &chapter_id, &chapter_slug);
-    write_json_pretty(&chapter_path.join("chapter.json"), &chapter_file)?;
+        let chapter_file =
+            build_chapter_file(&parsed, &chapter_id, &chapter_slug, default_glossary);
+        write_json_pretty(&chapter_path.join("chapter.json"), &chapter_file)?;
 
-    let unit_count = write_row_files(&parsed, &repo_path, &rows_path, &chapter_slug)?;
+        let unit_count = write_row_files(&parsed, &repo_path, &rows_path, &chapter_slug)?;
 
-    git_output(&repo_path, &["add", ".gitattributes", "chapters"])?;
+        let relative_chapter_path = repo_relative_path(repo_path, &chapter_path)?;
+        let source_word_counts = build_source_word_counts_from_import(&parsed);
+        let selected_source_language_code = parsed
+            .languages
+            .first()
+            .map(|language| language.code.clone());
+        let selected_target_language_code = chapter_file.settings.default_target_language.clone();
+
+        Ok(WrittenImport {
+            response: ImportXlsxResponse {
+                chapter_id: chapter_id.to_string(),
+                repo_path: repo_path.display().to_string(),
+                chapter_path: chapter_path.display().to_string(),
+                project_title: context.project_title.clone(),
+                file_title: parsed.file_title,
+                worksheet_name: parsed.worksheet_name,
+                unit_count,
+                languages: chapter_file.languages.clone(),
+                source_word_counts,
+                selected_source_language_code,
+                selected_target_language_code,
+                language_codes: parsed
+                    .languages
+                    .iter()
+                    .map(|language| language.code.clone())
+                    .collect(),
+                source_file_name: parsed.source_file_name,
+                import_summary: parsed.import_summary,
+            },
+            relative_chapter_path,
+            absolute_chapter_path: chapter_path.clone(),
+        })
+    })();
+
+    if result.is_err() {
+        let _ = fs::remove_dir_all(&chapter_path);
+        let gitattributes_path = repo_path.join(".gitattributes");
+        if !context.gitattributes_existed && gitattributes_path.exists() {
+            let _ = fs::remove_file(gitattributes_path);
+        }
+    }
+
+    result
+}
+
+pub(super) fn commit_written_imports(
+    app: &AppHandle,
+    context: &ProjectImportRepoContext,
+    relative_chapter_paths: &[String],
+    message: &str,
+) -> Result<(), String> {
+    if relative_chapter_paths.is_empty() {
+        return Ok(());
+    }
+
+    let mut staged_paths = vec![".gitattributes".to_string()];
+    staged_paths.extend(relative_chapter_paths.iter().cloned());
+    git_add_paths(&context.repo_path, &staged_paths)?;
+    let commit_paths = staged_paths.iter().map(String::as_str).collect::<Vec<_>>();
     git_commit_as_signed_in_user_with_metadata(
         app,
-        &repo_path,
-        &format!("Import {}", parsed.source_file_name),
-        &[],
-        GitCommitMetadata {
-            operation: Some("import"),
-            status_note: None,
-            ai_model: None,
-        },
+        &context.repo_path,
+        message,
+        &commit_paths,
+        import_commit_metadata(),
     )?;
 
-    let source_word_counts = build_source_word_counts_from_import(&parsed);
-    let selected_source_language_code = parsed
-        .languages
-        .first()
-        .map(|language| language.code.clone());
-    let selected_target_language_code = chapter_file.settings.default_target_language.clone();
+    Ok(())
+}
 
-    Ok(ImportXlsxResponse {
-        chapter_id: chapter_id.to_string(),
-        repo_path: repo_path.display().to_string(),
-        chapter_path: chapter_path.display().to_string(),
-        project_title,
-        file_title: parsed.file_title,
-        worksheet_name: parsed.worksheet_name,
-        unit_count,
-        languages: chapter_file.languages.clone(),
-        source_word_counts,
-        selected_source_language_code,
-        selected_target_language_code,
-        language_codes: parsed
-            .languages
-            .iter()
-            .map(|language| language.code.clone())
-            .collect(),
-        source_file_name: parsed.source_file_name,
-        import_summary: parsed.import_summary,
-    })
+fn git_add_paths(repo_path: &Path, paths: &[String]) -> Result<(), String> {
+    let mut args = vec!["add"];
+    for path in paths {
+        args.push(path.as_str());
+    }
+    git_output(repo_path, &args).map(|_| ())
+}
+
+fn import_commit_metadata() -> GitCommitMetadata<'static> {
+    GitCommitMetadata {
+        operation: Some("import"),
+        status_note: None,
+        ai_model: None,
+    }
 }
 
 pub(super) fn build_chapter_file(
     parsed: &ParsedWorkbook,
     chapter_id: &Uuid,
     chapter_slug: &str,
+    default_glossary: Option<&ImportProjectDefaultGlossaryInput>,
 ) -> ChapterFile {
     let source_locale = parsed.languages.first().map(|language| {
         language
@@ -176,7 +274,12 @@ pub(super) fn build_chapter_file(
             })
             .collect(),
         settings: ChapterSettings {
-            linked_glossaries: None,
+            linked_glossaries: default_glossary.map(|glossary| ChapterLinkedGlossaries {
+                glossary: Some(ChapterGlossaryLink {
+                    glossary_id: glossary.glossary_id.clone(),
+                    repo_name: glossary.repo_name.clone(),
+                }),
+            }),
             default_source_language: parsed
                 .languages
                 .first()
