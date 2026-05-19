@@ -733,8 +733,7 @@ mod tests {
             message: "Update required.".to_string(),
         });
 
-        let snapshot =
-            snapshot_from_qa_list_sync_error(&descriptor, Path::new("/tmp/repo"), error);
+        let snapshot = snapshot_from_qa_list_sync_error(&descriptor, Path::new("/tmp/repo"), error);
 
         assert_eq!(snapshot.status, QA_LIST_REPO_SYNC_STATUS_UPDATE_REQUIRED);
         assert_eq!(snapshot.required_app_version.as_deref(), Some("0.1.36"));

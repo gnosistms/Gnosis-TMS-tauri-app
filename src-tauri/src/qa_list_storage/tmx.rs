@@ -3,9 +3,7 @@ use std::{collections::BTreeSet, path::Path, sync::OnceLock};
 use quick_xml::{events::Event, Reader};
 use uuid::Uuid;
 
-use super::{
-    QaListLanguageInfo, StoredLifecycle, StoredQaListFile, StoredQaListTermFile,
-};
+use super::{QaListLanguageInfo, StoredLifecycle, StoredQaListFile, StoredQaListTermFile};
 
 const ISO_LANGUAGE_OPTIONS_SOURCE: &str = include_str!("../../../src-ui/lib/language-options.js");
 
@@ -27,10 +25,7 @@ struct WorkingTmxUnit {
     inside_segment: bool,
 }
 
-pub(super) fn parse_tmx_qa_list(
-    file_name: &str,
-    bytes: &[u8],
-) -> Result<ParsedTmxQaList, String> {
+pub(super) fn parse_tmx_qa_list(file_name: &str, bytes: &[u8]) -> Result<ParsedTmxQaList, String> {
     if !String::from(file_name)
         .trim()
         .to_lowercase()

@@ -91,7 +91,9 @@ fn format_review_source_sections(
     if let Some(section) = format_optional_tagged_section("source_footnote", source_footnote) {
         sections.push(section);
     }
-    if let Some(section) = format_optional_tagged_section("source_image_caption", source_image_caption) {
+    if let Some(section) =
+        format_optional_tagged_section("source_image_caption", source_image_caption)
+    {
         sections.push(section);
     }
     sections.join("\n\n")
@@ -272,7 +274,9 @@ fn parse_translation_sections_response(text: &str) -> Result<AiTranslationRespon
         .into_iter()
         .chain(object_slice.into_iter())
     {
-        if let Ok(parsed) = serde_json::from_str::<AiTranslationSectionsStructuredResponse>(candidate) {
+        if let Ok(parsed) =
+            serde_json::from_str::<AiTranslationSectionsStructuredResponse>(candidate)
+        {
             return Ok(AiTranslationResponse {
                 translated_text: parsed.translated_text,
                 translated_footnote: parsed.translated_footnote,
@@ -335,10 +339,14 @@ pub(crate) fn build_translation_prompt(request: &AiTranslationRequest) -> String
     }
 
     sections.push(format!("<source_text>\n{}\n</source_text>", request.text));
-    if let Some(section) = format_optional_tagged_section("source_footnote", &request.source_footnote) {
+    if let Some(section) =
+        format_optional_tagged_section("source_footnote", &request.source_footnote)
+    {
         sections.push(section);
     }
-    if let Some(section) = format_optional_tagged_section("source_image_caption", &request.source_image_caption) {
+    if let Some(section) =
+        format_optional_tagged_section("source_image_caption", &request.source_image_caption)
+    {
         sections.push(section);
     }
     if sectioned_output {
@@ -1745,7 +1753,8 @@ mod tests {
     use super::{
         build_assistant_chat_prompt, build_glossary_alignment_prompt_request, build_review_prompt,
         build_translation_prompt, find_matched_glossary_terms, parse_assistant_structured_response,
-        parse_review_structured_response, parse_translation_sections_response, PreparedGlossaryMatch,
+        parse_review_structured_response, parse_translation_sections_response,
+        PreparedGlossaryMatch,
     };
     use crate::ai::types::{
         AiAssistantRowContext, AiAssistantRowLanguageText, AiAssistantRowWindowEntry,
@@ -1804,8 +1813,9 @@ mod tests {
         let prompt = build_review_prompt(&request);
 
         assert!(prompt.contains("Return only valid JSON"));
-        assert!(prompt
-            .contains("Task:\nReview the target-language sections only for spelling and grammar errors."));
+        assert!(prompt.contains(
+            "Task:\nReview the target-language sections only for spelling and grammar errors."
+        ));
         assert!(prompt.contains("Do not review translation accuracy"));
         assert!(prompt.contains("Keep main text, footnotes, and image captions separate."));
         assert!(prompt.contains("<review_item>"));
@@ -1815,7 +1825,12 @@ mod tests {
         assert!(
             prompt.ends_with("Return only valid JSON:\n{\"suggestedText\":\"\",\"suggestedFootnote\":\"\",\"suggestedImageCaption\":\"\",\"reviewed\":true}")
         );
-        assert_eq!(prompt.matches("If every reviewed section is correct").count(), 1);
+        assert_eq!(
+            prompt
+                .matches("If every reviewed section is correct")
+                .count(),
+            1
+        );
         assert_eq!(prompt.matches("If any section has errors").count(), 1);
     }
 
@@ -1890,7 +1905,12 @@ mod tests {
         assert!(
             prompt.ends_with("Return only valid JSON:\n{\"suggestedText\":\"\",\"suggestedFootnote\":\"\",\"suggestedImageCaption\":\"\",\"reviewed\":true}")
         );
-        assert_eq!(prompt.matches("If every reviewed section is correct").count(), 1);
+        assert_eq!(
+            prompt
+                .matches("If every reviewed section is correct")
+                .count(),
+            1
+        );
         assert_eq!(prompt.matches("If any section has errors").count(), 1);
     }
 

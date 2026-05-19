@@ -628,11 +628,16 @@ fn import_tmx_to_gtms_qa_list_repo_sync(
         )
     })?;
     for term in &parsed.terms {
-        let term_path = repo_path.join("terms").join(format!("{}.json", term.term_id));
+        let term_path = repo_path
+            .join("terms")
+            .join(format!("{}.json", term.term_id));
         write_json_pretty(&term_path, term)?;
     }
 
-    git_output(&repo_path, &["add", ".gitattributes", QA_LIST_FILE_NAME, "terms"])?;
+    git_output(
+        &repo_path,
+        &["add", ".gitattributes", QA_LIST_FILE_NAME, "terms"],
+    )?;
     git_commit_as_signed_in_user(
         app,
         &repo_path,
@@ -899,10 +904,16 @@ fn upsert_gtms_qa_list_term_sync(
     let term_path = repo_path.join("terms").join(format!("{term_id}.json"));
     let mut term_value = if term_path.exists() {
         let original_text = fs::read_to_string(&term_path).map_err(|error| {
-            format!("Could not read term file '{}': {error}", term_path.display())
+            format!(
+                "Could not read term file '{}': {error}",
+                term_path.display()
+            )
         })?;
         serde_json::from_str::<Value>(&original_text).map_err(|error| {
-            format!("Could not parse term file '{}': {error}", term_path.display())
+            format!(
+                "Could not parse term file '{}': {error}",
+                term_path.display()
+            )
         })?
     } else {
         json!({})
@@ -913,7 +924,10 @@ fn upsert_gtms_qa_list_term_sync(
         .ok_or_else(|| "The QA term file is not a JSON object.".to_string())?;
     term_object.insert("termId".to_string(), Value::String(term_id.clone()));
     term_object.insert("text".to_string(), Value::String(text.to_string()));
-    term_object.insert("notes".to_string(), Value::String(input.notes.trim().to_string()));
+    term_object.insert(
+        "notes".to_string(),
+        Value::String(input.notes.trim().to_string()),
+    );
     let lifecycle_value = term_object
         .entry("lifecycle".to_string())
         .or_insert_with(|| json!({ "state": "active" }));
@@ -1136,8 +1150,7 @@ fn qa_list_git_repo_path(
         }
     }
 
-    if let Some(repo_path) = find_qa_list_repo_path(app, installation_id, qa_list_id, repo_name)?
-    {
+    if let Some(repo_path) = find_qa_list_repo_path(app, installation_id, qa_list_id, repo_name)? {
         return Ok(repo_path);
     }
 

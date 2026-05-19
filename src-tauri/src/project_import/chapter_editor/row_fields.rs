@@ -559,12 +559,18 @@ pub(crate) fn apply_gtms_editor_ai_review_result_sync(
     }
     if !input.suggested_footnote.trim().is_empty() {
         let mut footnotes = BTreeMap::new();
-        footnotes.insert(input.language_code.clone(), input.suggested_footnote.clone());
+        footnotes.insert(
+            input.language_code.clone(),
+            input.suggested_footnote.clone(),
+        );
         apply_editor_footnote_updates(&mut row_value, &footnotes)?;
     }
     if !input.suggested_image_caption.trim().is_empty() {
         let mut image_captions = BTreeMap::new();
-        image_captions.insert(input.language_code.clone(), input.suggested_image_caption.clone());
+        image_captions.insert(
+            input.language_code.clone(),
+            input.suggested_image_caption.clone(),
+        );
         apply_editor_image_caption_updates(&mut row_value, &image_captions)?;
     }
     let (_, _, reviewed_changed) = apply_editor_field_flag_update(

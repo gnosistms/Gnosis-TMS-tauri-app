@@ -3,6 +3,7 @@ use std::{
     fs,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 use serde::{Deserialize, Serialize};
@@ -205,9 +206,7 @@ fn reconcile_project_repo_sync_states_sync(
             &project.repo_name,
         )?;
         let snapshot = inspect_project_repo_state(project, &repo_path);
-        if snapshot.status == PROJECT_REPO_SYNC_STATUS_NOT_CLONED
-            || snapshot.status == PROJECT_REPO_SYNC_STATUS_OUT_OF_SYNC
-        {
+        if project_repo_snapshot_needs_transport(&snapshot) {
             repos_needing_transport = true;
             break;
         }
@@ -245,14 +244,9 @@ fn reconcile_project_repo_sync_states_sync(
         )?;
         let inspected_snapshot = inspect_project_repo_state(&project, &repo_path);
 
-        if inspected_snapshot.status == PROJECT_REPO_SYNC_STATUS_NOT_CLONED
-            || inspected_snapshot.status == PROJECT_REPO_SYNC_STATUS_OUT_OF_SYNC
-        {
-            let next_message = if inspected_snapshot.status == PROJECT_REPO_SYNC_STATUS_NOT_CLONED {
-                "Cloning repository...".to_string()
-            } else {
-                "Syncing repository...".to_string()
-            };
+        if project_repo_snapshot_needs_transport(&inspected_snapshot) {
+            let next_message =
+                project_repo_syncing_message_for_status(inspected_snapshot.status.as_str());
             let syncing_snapshot = ProjectRepoSyncSnapshot {
                 status: PROJECT_REPO_SYNC_STATUS_SYNCING.to_string(),
                 message: Some(next_message),
@@ -279,6 +273,72 @@ fn reconcile_project_repo_sync_states_sync(
     }
 
     Ok(snapshots)
+}
+
+fn project_repo_snapshot_needs_transport(snapshot: &ProjectRepoSyncSnapshot) -> bool {
+    matches!(
+        snapshot.status.as_str(),
+        PROJECT_REPO_SYNC_STATUS_NOT_CLONED
+            | PROJECT_REPO_SYNC_STATUS_OUT_OF_SYNC
+            | PROJECT_REPO_SYNC_STATUS_DIRTY_LOCAL
+    )
+}
+
+fn project_repo_syncing_message_for_status(status: &str) -> String {
+    match status {
+        PROJECT_REPO_SYNC_STATUS_NOT_CLONED => "Cloning repository...".to_string(),
+        PROJECT_REPO_SYNC_STATUS_DIRTY_LOCAL => {
+            "Backing up local changes and syncing repository...".to_string()
+        }
+        _ => "Syncing repository...".to_string(),
+    }
+}
+
+fn backup_dirty_project_worktree(
+    repo_path: &Path,
+    fallback_branch_name: &str,
+) -> Result<Option<String>, String> {
+    let git_status = git_output(repo_path, &["status", "--porcelain"], None)?;
+    if git_status.trim().is_empty() {
+        return Ok(None);
+    }
+    if git_status_porcelain_has_unmerged_entries(&git_status) {
+        return Err("Local repo has unresolved git conflicts.".to_string());
+    }
+
+    let original_branch = git_output(
+        repo_path,
+        &["symbolic-ref", "--quiet", "--short", "HEAD"],
+        None,
+    )
+    .ok()
+    .map(|value| value.trim().to_string())
+    .filter(|value| !value.is_empty())
+    .unwrap_or_else(|| fallback_branch_name.trim().to_string());
+    if original_branch.is_empty() {
+        return Err("Could not determine the local project repo branch.".to_string());
+    }
+
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| format!("Could not create a local backup timestamp: {error}"))?
+        .as_millis();
+    let backup_branch = format!("gnosis/local-backup-{timestamp}");
+
+    git_output(repo_path, &["checkout", "-b", &backup_branch], None)?;
+    git_output(repo_path, &["add", "-A"], None)?;
+    git_output(
+        repo_path,
+        &[
+            "commit",
+            "-m",
+            "Backup local uncommitted changes before automatic sync",
+        ],
+        None,
+    )?;
+    git_output(repo_path, &["checkout", &original_branch], None)?;
+
+    Ok(Some(backup_branch))
 }
 
 fn list_project_repo_sync_states_sync(
@@ -328,11 +388,10 @@ pub(crate) fn sync_gtms_project_editor_repo_sync(
         Some(&input.project_id),
         &input.repo_name,
     )?;
+    ensure_project_origin_remote(&project, &repo_path)?;
+    ensure_repo_local_git_identity(app, &repo_path)?;
+    backup_dirty_project_worktree(&repo_path, project_branch_name(&project).as_str())?;
     let old_head_sha = read_current_head_oid(&repo_path);
-    let git_status = git_output(&repo_path, &["status", "--porcelain"], None)?;
-    if !git_status.trim().is_empty() {
-        return Err("Local repo has uncommitted changes.".to_string());
-    }
 
     let git_transport_token = load_git_transport_token(input.installation_id, session_token)?;
     let sync_outcome = sync_project_repo(
@@ -854,6 +913,7 @@ fn sync_project_repo(
         .as_deref()
         .filter(|value| !value.trim().is_empty())
         .unwrap_or("main");
+    backup_dirty_project_worktree(repo_path, branch_name)?;
     let local_head_oid = git_output(repo_path, &["rev-parse", "HEAD"], None).ok();
     let local_sync_state = read_local_repo_sync_state(repo_path)?;
 
@@ -1503,12 +1563,45 @@ fn save_sync_snapshot(
 #[cfg(test)]
 mod tests {
     use super::{
-        chapter_language_list_from_json_text, git_status_porcelain_has_unmerged_entries,
-        project_branch_name, snapshot_from_project_sync_error, ProjectRepoSyncDescriptor,
+        backup_dirty_project_worktree, chapter_language_list_from_json_text,
+        git_status_porcelain_has_unmerged_entries, project_branch_name,
+        snapshot_from_project_sync_error, ProjectRepoSyncDescriptor,
         PROJECT_REPO_SYNC_STATUS_UPDATE_REQUIRED,
     };
     use crate::repo_app_version::{encode_repo_app_update_requirement, RepoAppUpdateRequirement};
-    use std::path::Path;
+    use std::{env, fs, path::Path, process::Command};
+    use uuid::Uuid;
+
+    fn run_git(repo_path: &Path, args: &[&str]) {
+        let output = Command::new("git")
+            .args(args)
+            .current_dir(repo_path)
+            .output()
+            .unwrap_or_else(|error| panic!("failed to run git {}: {error}", args.join(" ")));
+        assert!(
+            output.status.success(),
+            "git {} failed: {}{}",
+            args.join(" "),
+            String::from_utf8_lossy(&output.stderr),
+            String::from_utf8_lossy(&output.stdout),
+        );
+    }
+
+    fn git_stdout(repo_path: &Path, args: &[&str]) -> String {
+        let output = Command::new("git")
+            .args(args)
+            .current_dir(repo_path)
+            .output()
+            .unwrap_or_else(|error| panic!("failed to run git {}: {error}", args.join(" ")));
+        assert!(
+            output.status.success(),
+            "git {} failed: {}{}",
+            args.join(" "),
+            String::from_utf8_lossy(&output.stderr),
+            String::from_utf8_lossy(&output.stdout),
+        );
+        String::from_utf8_lossy(&output.stdout).trim().to_string()
+    }
 
     #[test]
     fn git_status_porcelain_has_unmerged_entries_detects_conflicts() {
@@ -1576,6 +1669,50 @@ mod tests {
         assert_eq!(snapshot.required_app_version.as_deref(), Some("0.1.36"));
         assert_eq!(snapshot.current_app_version.as_deref(), Some("0.1.35"));
         assert_eq!(snapshot.message.as_deref(), Some("Update required."));
+    }
+
+    #[test]
+    fn backup_dirty_project_worktree_preserves_changes_on_backup_branch() {
+        let repo_path =
+            env::temp_dir().join(format!("gnosis-project-dirty-backup-{}", Uuid::now_v7()));
+        fs::create_dir_all(&repo_path).expect("create temp repo");
+        run_git(&repo_path, &["init", "--initial-branch", "main"]);
+        run_git(&repo_path, &["config", "user.email", "test@example.com"]);
+        run_git(&repo_path, &["config", "user.name", "Test User"]);
+        fs::write(repo_path.join("chapter.txt"), "server text\n").expect("write initial file");
+        run_git(&repo_path, &["add", "."]);
+        run_git(&repo_path, &["commit", "-m", "Initial"]);
+
+        fs::write(repo_path.join("chapter.txt"), "local edit\n").expect("write dirty file");
+        fs::write(repo_path.join("extra.txt"), "untracked local file\n")
+            .expect("write untracked file");
+
+        let backup_branch = backup_dirty_project_worktree(&repo_path, "main")
+            .expect("dirty worktree should be backed up")
+            .expect("backup branch should be returned");
+
+        assert_eq!(git_stdout(&repo_path, &["status", "--porcelain"]), "");
+        assert_eq!(
+            fs::read_to_string(repo_path.join("chapter.txt")).expect("read restored file"),
+            "server text\n",
+        );
+        assert!(!repo_path.join("extra.txt").exists());
+        assert_eq!(
+            git_stdout(&repo_path, &["branch", "--show-current"]),
+            "main"
+        );
+
+        run_git(&repo_path, &["checkout", &backup_branch]);
+        assert_eq!(
+            fs::read_to_string(repo_path.join("chapter.txt")).expect("read backup file"),
+            "local edit\n",
+        );
+        assert_eq!(
+            fs::read_to_string(repo_path.join("extra.txt")).expect("read backup extra file"),
+            "untracked local file\n",
+        );
+
+        let _ = fs::remove_dir_all(&repo_path);
     }
 
     #[test]

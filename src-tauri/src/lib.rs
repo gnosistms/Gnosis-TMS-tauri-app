@@ -11,12 +11,12 @@ mod glossary_repo_sync;
 mod glossary_storage;
 mod insecure_github_app_config;
 mod local_repo_sync_state;
-mod qa_list_repo_sync;
-mod qa_list_storage;
 mod project_import;
 mod project_repo_paths;
 mod project_repo_sync;
 mod project_search;
+mod qa_list_repo_sync;
+mod qa_list_storage;
 mod repo_app_version;
 mod repo_sync_shared;
 mod state;
@@ -69,12 +69,11 @@ use crate::{
         invite_user_to_organization_for_installation, leave_organization_for_installation,
         list_accessible_github_app_installations, list_gnosis_glossaries_for_installation,
         list_gnosis_projects_for_installation, list_gnosis_qa_lists_for_installation,
-        list_organization_members_for_installation,
-        mark_gnosis_project_repo_deleted, permanently_delete_gnosis_glossary_repo,
-        permanently_delete_gnosis_project_repo, permanently_delete_gnosis_qa_list_repo,
-        promote_organization_owner_for_installation, purge_local_installation_data,
-        remove_organization_member_for_installation, rename_gnosis_project_repo,
-        restore_gnosis_project_repo,
+        list_organization_members_for_installation, mark_gnosis_project_repo_deleted,
+        permanently_delete_gnosis_glossary_repo, permanently_delete_gnosis_project_repo,
+        permanently_delete_gnosis_qa_list_repo, promote_organization_owner_for_installation,
+        purge_local_installation_data, remove_organization_member_for_installation,
+        rename_gnosis_project_repo, restore_gnosis_project_repo,
         revoke_organization_admin_for_installation, search_github_users_for_installation,
         setup_organization_for_installation, update_organization_description_for_installation,
         update_organization_name_for_installation,
@@ -86,14 +85,6 @@ use crate::{
         load_gtms_glossary_editor_data, load_gtms_glossary_term, prepare_local_gtms_glossary_repo,
         purge_local_gtms_glossary_repo, rename_gtms_glossary, restore_gtms_glossary,
         rollback_gtms_glossary_term_upsert, soft_delete_gtms_glossary, upsert_gtms_glossary_term,
-    },
-    qa_list_repo_sync::{sync_gtms_qa_list_editor_repo, sync_gtms_qa_list_repos},
-    qa_list_storage::{
-        delete_gtms_qa_list_term, export_gtms_qa_list_to_tmx, import_tmx_to_gtms_qa_list_repo,
-        initialize_gtms_qa_list_repo, inspect_tmx_qa_list_import, list_local_gtms_qa_lists,
-        load_gtms_qa_list_editor_data, load_gtms_qa_list_term, prepare_local_gtms_qa_list_repo,
-        purge_local_gtms_qa_list_repo, rename_gtms_qa_list, restore_gtms_qa_list,
-        rollback_gtms_qa_list_term_upsert, soft_delete_gtms_qa_list, upsert_gtms_qa_list_term,
     },
     project_import::{
         apply_aligned_translation_to_gtms_chapter, apply_gtms_editor_ai_review_result,
@@ -119,6 +110,14 @@ use crate::{
         reconcile_project_repo_sync_states, sync_gtms_project_editor_repo,
     },
     project_search::{refresh_project_search_index, search_projects},
+    qa_list_repo_sync::{sync_gtms_qa_list_editor_repo, sync_gtms_qa_list_repos},
+    qa_list_storage::{
+        delete_gtms_qa_list_term, export_gtms_qa_list_to_tmx, import_tmx_to_gtms_qa_list_repo,
+        initialize_gtms_qa_list_repo, inspect_tmx_qa_list_import, list_local_gtms_qa_lists,
+        load_gtms_qa_list_editor_data, load_gtms_qa_list_term, prepare_local_gtms_qa_list_repo,
+        purge_local_gtms_qa_list_repo, rename_gtms_qa_list, restore_gtms_qa_list,
+        rollback_gtms_qa_list_term_upsert, soft_delete_gtms_qa_list, upsert_gtms_qa_list_term,
+    },
     repo_sync_shared::initialize_git_runtime,
     state::{AuthState, ProjectRepoSyncStore},
     team_ai::{
