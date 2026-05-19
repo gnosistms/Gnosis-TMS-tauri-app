@@ -151,10 +151,14 @@ pub(super) fn ensure_gitattributes(path: &Path) -> Result<(), String> {
     write_text_file(path, GTMS_GITATTRIBUTES)
 }
 
+fn normalize_git_relative_path(path: &str) -> String {
+    path.replace('\\', "/")
+}
+
 pub(super) fn repo_relative_path(repo_path: &Path, path: &Path) -> Result<String, String> {
     path.strip_prefix(repo_path)
         .map_err(|error| format!("Could not resolve the chapter path for git: {error}"))
-        .map(|relative_path| relative_path.to_string_lossy().to_string())
+        .map(|relative_path| normalize_git_relative_path(&relative_path.to_string_lossy()))
 }
 
 pub(super) fn find_chapter_path_by_id(
@@ -190,4 +194,17 @@ pub(super) fn find_chapter_path_by_id(
     Err(format!(
         "Could not find chapter '{chapter_id}' in the local project repo."
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalize_git_relative_path_uses_forward_slashes_for_windows_paths() {
+        assert_eq!(
+            normalize_git_relative_path(r"chapters\chapter-1\rows\row-1.json"),
+            "chapters/chapter-1/rows/row-1.json"
+        );
+    }
 }
