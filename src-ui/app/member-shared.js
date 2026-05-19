@@ -8,7 +8,19 @@ export function normalizeOrganizationMemberRole(role) {
   if (normalizedRole === "admin") {
     return "Admin";
   }
+  if (
+    normalizedRole === "viewer"
+    || normalizedRole === "read_only"
+    || normalizedRole === "read-only"
+    || normalizedRole === "readonly"
+  ) {
+    return "Viewer";
+  }
   return "Translator";
+}
+
+export function isViewerRole(user) {
+  return normalizeOrganizationMemberRole(user?.role) === "Viewer";
 }
 
 export function normalizeOrganizationMember(member, options = {}) {

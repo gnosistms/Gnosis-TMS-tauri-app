@@ -28,7 +28,7 @@ const ALIGNMENT_PROMPT_VERSION: &str = "app-aligned-translation-v1";
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct AlignedTranslationPreflightInput {
-    installation_id: i64,
+    pub(crate) installation_id: i64,
     repo_name: String,
     project_id: Option<String>,
     #[serde(default)]
@@ -44,7 +44,7 @@ pub(crate) struct AlignedTranslationPreflightInput {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct AlignedTranslationApplyInput {
-    installation_id: i64,
+    pub(crate) installation_id: i64,
     repo_name: String,
     project_id: Option<String>,
     #[serde(default)]

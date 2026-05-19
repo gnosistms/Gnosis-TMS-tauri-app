@@ -41,6 +41,7 @@ import {
 } from "./resource-top-level-controller.js";
 import {
   canCreateRepoResources,
+  canMutateProjectFiles,
 } from "./resource-capabilities.js";
 import {
   areResourcePageWritesDisabled,
@@ -138,7 +139,7 @@ function setProjectDiscoveryState(
 }
 
 function projectLifecycleBlockedMessage(selectedTeam, actionLabel) {
-  return selectedTeam?.canManageProjects === true
+  return canMutateProjectFiles(selectedTeam)
     ? ""
     : `You do not have permission to ${actionLabel} in this team.`;
 }

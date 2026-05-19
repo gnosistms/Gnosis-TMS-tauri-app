@@ -159,6 +159,13 @@ export function renderInviteUserModal(state) {
                 }
               </div>
             </label>
+            <label class="field">
+              <span class="field__label">Role</span>
+              <select class="field__input" data-invite-user-role-select ${isSubmitting ? "disabled" : ""}>
+                <option value="Translator"${invite.role !== "Viewer" ? " selected" : ""}>Translator</option>
+                <option value="Viewer"${invite.role === "Viewer" ? " selected" : ""}>Viewer</option>
+              </select>
+            </label>
           </div>
           ${errorMarkup}
           <div class="modal__actions">

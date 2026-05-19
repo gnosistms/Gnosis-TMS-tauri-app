@@ -68,10 +68,10 @@ function renderQaListCard(qaList, options = {}) {
     }),
     isDefault
       ? `<span class="text-action-label" data-tooltip="${escapeHtml(DEFAULT_QA_LIST_LABEL_TOOLTIP)}">Default</span>`
-      : textAction("Make default", `make-default-qa-list:${qaList.id}`, {
+      : canManage ? textAction("Make default", `make-default-qa-list:${qaList.id}`, {
           disabled: disableLifecycleActions,
           tooltip: DEFAULT_QA_LIST_TOOLTIP,
-        }),
+        }) : "",
     ...(canManage
       ? [
           textAction("Rename", `rename-qa-list:${qaList.id}`, {

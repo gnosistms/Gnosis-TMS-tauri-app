@@ -15,6 +15,7 @@ use crate::{
         UpsertGithubGlossaryMetadataRecordInput, UpsertGithubProjectMetadataRecordInput,
     },
     github::types::{GithubGlossaryMetadataRecord, GithubProjectMetadataRecord},
+    installation_access::ensure_installation_allows_writes,
     local_repo_sync_state::{
         read_local_repo_sync_state, upsert_local_repo_sync_state, LocalRepoSyncState,
         LocalRepoSyncStateUpdate,
@@ -357,6 +358,7 @@ pub(crate) async fn upsert_local_gnosis_project_metadata_record(
     session_token: String,
 ) -> Result<LocalTeamMetadataMutationResult, String> {
     tauri::async_runtime::spawn_blocking(move || {
+        ensure_installation_allows_writes(&app, input.installation_id)?;
         let repo_path = ensure_local_repo_exists(
             &app,
             input.installation_id,
@@ -387,6 +389,7 @@ pub(crate) async fn delete_local_gnosis_project_metadata_record(
     session_token: String,
 ) -> Result<LocalTeamMetadataMutationResult, String> {
     tauri::async_runtime::spawn_blocking(move || {
+        ensure_installation_allows_writes(&app, input.installation_id)?;
         let repo_path = ensure_local_repo_exists(
             &app,
             input.installation_id,
@@ -413,6 +416,7 @@ pub(crate) async fn upsert_local_gnosis_glossary_metadata_record(
     session_token: String,
 ) -> Result<LocalTeamMetadataMutationResult, String> {
     tauri::async_runtime::spawn_blocking(move || {
+        ensure_installation_allows_writes(&app, input.installation_id)?;
         let repo_path = ensure_local_repo_exists(
             &app,
             input.installation_id,
@@ -443,6 +447,7 @@ pub(crate) async fn delete_local_gnosis_glossary_metadata_record(
     session_token: String,
 ) -> Result<LocalTeamMetadataMutationResult, String> {
     tauri::async_runtime::spawn_blocking(move || {
+        ensure_installation_allows_writes(&app, input.installation_id)?;
         let repo_path = ensure_local_repo_exists(
             &app,
             input.installation_id,
@@ -470,6 +475,7 @@ pub(crate) async fn push_local_team_metadata_repo(
     session_token: String,
 ) -> Result<LocalTeamMetadataPushResult, String> {
     tauri::async_runtime::spawn_blocking(move || {
+        ensure_installation_allows_writes(&app, installation_id)?;
         let repo_path =
             ensure_local_repo_exists(&app, installation_id, &org_login, &session_token)?;
         push_local_metadata_repo(&repo_path, installation_id, &session_token)

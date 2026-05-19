@@ -5,7 +5,9 @@ use crate::broker::{
     broker_patch_json_with_session, broker_patch_no_content_with_session,
     broker_post_json_with_session, broker_post_no_content_with_session,
 };
+use crate::installation_access::cache_installation_access;
 use crate::storage_paths::installation_data_dir;
+use tauri::AppHandle;
 
 use super::{
     app_auth::github_client,
@@ -17,11 +19,17 @@ use super::{
 
 #[tauri::command]
 pub(crate) async fn list_accessible_github_app_installations(
+    app: AppHandle,
     session_token: String,
 ) -> Result<Vec<GithubAppInstallationInfo>, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let client = github_client()?;
-        broker_get_json_with_session(&client, "/api/github-app/installations", &session_token)
+        let installations: Vec<GithubAppInstallationInfo> =
+            broker_get_json_with_session(&client, "/api/github-app/installations", &session_token)?;
+        for installation in &installations {
+            cache_installation_access(&app, installation)?;
+        }
+        Ok(installations)
     })
     .await
     .map_err(|error| format!("Could not run the installation listing task: {error}"))?
@@ -29,16 +37,19 @@ pub(crate) async fn list_accessible_github_app_installations(
 
 #[tauri::command]
 pub(crate) async fn inspect_github_app_installation(
+    app: AppHandle,
     installation_id: i64,
     session_token: String,
 ) -> Result<GithubAppInstallationInfo, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let client = github_client()?;
-        broker_get_json_with_session(
+        let installation: GithubAppInstallationInfo = broker_get_json_with_session(
             &client,
             &format!("/api/github-app/installations/{installation_id}"),
             &session_token,
-        )
+        )?;
+        cache_installation_access(&app, &installation)?;
+        Ok(installation)
     })
     .await
     .map_err(|error| format!("Could not run the installation inspection task: {error}"))?
@@ -93,6 +104,7 @@ pub(crate) fn invite_user_to_organization_for_installation(
     invitee_id: Option<i64>,
     invitee_login: Option<String>,
     invitee_email: Option<String>,
+    role: Option<String>,
     session_token: String,
 ) -> Result<GithubOrganizationInvitation, String> {
     let client = github_client()?;
@@ -103,6 +115,7 @@ pub(crate) fn invite_user_to_organization_for_installation(
           "inviteeId": invitee_id,
           "inviteeLogin": invitee_login,
           "inviteeEmail": invitee_email,
+          "role": role,
         }),
         &session_token,
     )

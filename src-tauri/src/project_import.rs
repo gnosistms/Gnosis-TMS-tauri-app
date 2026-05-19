@@ -5,6 +5,7 @@ mod chapter_lifecycle;
 mod link_import;
 mod project_git;
 
+use crate::installation_access::ensure_installation_allows_writes;
 use crate::state::ProjectImportBatchCancelStore;
 use tauri::AppHandle;
 
@@ -82,9 +83,12 @@ pub(crate) async fn initialize_gtms_project_repo(
     app: AppHandle,
     input: InitializeProjectRepoInput,
 ) -> Result<InitializeProjectRepoResponse, String> {
-    tauri::async_runtime::spawn_blocking(move || initialize_gtms_project_repo_sync(&app, input))
-        .await
-        .map_err(|error| format!("The local project repo initialization worker failed: {error}"))?
+    tauri::async_runtime::spawn_blocking(move || {
+        ensure_installation_allows_writes(&app, input.installation_id)?;
+        initialize_gtms_project_repo_sync(&app, input)
+    })
+    .await
+    .map_err(|error| format!("The local project repo initialization worker failed: {error}"))?
 }
 
 #[tauri::command]
@@ -92,9 +96,12 @@ pub(crate) async fn import_xlsx_to_gtms(
     app: AppHandle,
     input: ImportXlsxInput,
 ) -> Result<ImportXlsxResponse, String> {
-    tauri::async_runtime::spawn_blocking(move || import_xlsx_to_gtms_sync(&app, input))
-        .await
-        .map_err(|error| format!("The XLSX import worker failed: {error}"))?
+    tauri::async_runtime::spawn_blocking(move || {
+        ensure_installation_allows_writes(&app, input.installation_id)?;
+        import_xlsx_to_gtms_sync(&app, input)
+    })
+    .await
+    .map_err(|error| format!("The XLSX import worker failed: {error}"))?
 }
 
 #[tauri::command]
@@ -102,9 +109,12 @@ pub(crate) async fn import_txt_to_gtms(
     app: AppHandle,
     input: ImportTxtInput,
 ) -> Result<ImportXlsxResponse, String> {
-    tauri::async_runtime::spawn_blocking(move || import_txt_to_gtms_sync(&app, input))
-        .await
-        .map_err(|error| format!("The TXT import worker failed: {error}"))?
+    tauri::async_runtime::spawn_blocking(move || {
+        ensure_installation_allows_writes(&app, input.installation_id)?;
+        import_txt_to_gtms_sync(&app, input)
+    })
+    .await
+    .map_err(|error| format!("The TXT import worker failed: {error}"))?
 }
 
 #[tauri::command]
@@ -112,9 +122,12 @@ pub(crate) async fn import_docx_to_gtms(
     app: AppHandle,
     input: ImportDocxInput,
 ) -> Result<ImportXlsxResponse, String> {
-    tauri::async_runtime::spawn_blocking(move || import_docx_to_gtms_sync(&app, input))
-        .await
-        .map_err(|error| format!("The DOCX import worker failed: {error}"))?
+    tauri::async_runtime::spawn_blocking(move || {
+        ensure_installation_allows_writes(&app, input.installation_id)?;
+        import_docx_to_gtms_sync(&app, input)
+    })
+    .await
+    .map_err(|error| format!("The DOCX import worker failed: {error}"))?
 }
 
 #[tauri::command]
@@ -122,9 +135,12 @@ pub(crate) async fn import_html_to_gtms(
     app: AppHandle,
     input: ImportHtmlInput,
 ) -> Result<ImportXlsxResponse, String> {
-    tauri::async_runtime::spawn_blocking(move || import_html_to_gtms_sync(&app, input))
-        .await
-        .map_err(|error| format!("The HTML import worker failed: {error}"))?
+    tauri::async_runtime::spawn_blocking(move || {
+        ensure_installation_allows_writes(&app, input.installation_id)?;
+        import_html_to_gtms_sync(&app, input)
+    })
+    .await
+    .map_err(|error| format!("The HTML import worker failed: {error}"))?
 }
 
 #[tauri::command]
@@ -135,6 +151,7 @@ pub(crate) async fn import_project_files_to_gtms(
 ) -> Result<ImportProjectFilesResponse, String> {
     let canceled_batch_ids = cancel_store.canceled_batch_ids.clone();
     tauri::async_runtime::spawn_blocking(move || {
+        ensure_installation_allows_writes(&app, input.installation_id)?;
         import_project_files_to_gtms_sync(&app, canceled_batch_ids, input)
     })
     .await
@@ -183,6 +200,7 @@ pub(crate) async fn preflight_aligned_translation_to_gtms_chapter(
     input: AlignedTranslationPreflightInput,
 ) -> Result<AlignedTranslationPreflightResponse, String> {
     tauri::async_runtime::spawn_blocking(move || {
+        ensure_installation_allows_writes(&app, input.installation_id)?;
         preflight_aligned_translation_to_gtms_chapter_sync(&app, input)
     })
     .await
@@ -195,6 +213,7 @@ pub(crate) async fn apply_aligned_translation_to_gtms_chapter(
     input: AlignedTranslationApplyInput,
 ) -> Result<AlignedTranslationApplyResponse, String> {
     tauri::async_runtime::spawn_blocking(move || {
+        ensure_installation_allows_writes(&app, input.installation_id)?;
         apply_aligned_translation_to_gtms_chapter_sync(&app, input)
     })
     .await
@@ -226,9 +245,12 @@ pub(crate) async fn purge_local_gtms_project_repo(
     app: AppHandle,
     input: PurgeLocalProjectRepoInput,
 ) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || purge_local_gtms_project_repo_sync(&app, input))
-        .await
-        .map_err(|error| format!("The local project repo removal worker failed: {error}"))?
+    tauri::async_runtime::spawn_blocking(move || {
+        ensure_installation_allows_writes(&app, input.installation_id)?;
+        purge_local_gtms_project_repo_sync(&app, input)
+    })
+    .await
+    .map_err(|error| format!("The local project repo removal worker failed: {error}"))?
 }
 
 #[tauri::command]
@@ -237,6 +259,7 @@ pub(crate) async fn update_gtms_chapter_language_selection(
     input: UpdateChapterLanguageSelectionInput,
 ) -> Result<UpdateChapterLanguageSelectionResponse, String> {
     tauri::async_runtime::spawn_blocking(move || {
+        ensure_installation_allows_writes(&app, input.installation_id)?;
         update_gtms_chapter_language_selection_sync(&app, input)
     })
     .await
@@ -250,6 +273,7 @@ pub(crate) async fn update_gtms_chapter_languages(
     session_token: String,
 ) -> Result<UpdateChapterLanguagesResponse, String> {
     tauri::async_runtime::spawn_blocking(move || {
+        ensure_installation_allows_writes(&app, input.installation_id)?;
         update_gtms_chapter_languages_sync(&app, input, &session_token)
     })
     .await
@@ -262,6 +286,7 @@ pub(crate) async fn update_gtms_chapter_glossary_links(
     input: UpdateChapterGlossaryLinksInput,
 ) -> Result<UpdateChapterGlossaryLinksResponse, String> {
     tauri::async_runtime::spawn_blocking(move || {
+        ensure_installation_allows_writes(&app, input.installation_id)?;
         update_gtms_chapter_glossary_links_sync(&app, input)
     })
     .await
@@ -273,9 +298,12 @@ pub(crate) async fn update_gtms_editor_row_fields(
     app: AppHandle,
     input: UpdateEditorRowFieldsInput,
 ) -> Result<SaveEditorRowWithConcurrencyResponse, String> {
-    tauri::async_runtime::spawn_blocking(move || update_gtms_editor_row_fields_sync(&app, input))
-        .await
-        .map_err(|error| format!("The row update worker failed: {error}"))?
+    tauri::async_runtime::spawn_blocking(move || {
+        ensure_installation_allows_writes(&app, input.installation_id)?;
+        update_gtms_editor_row_fields_sync(&app, input)
+    })
+    .await
+    .map_err(|error| format!("The row update worker failed: {error}"))?
 }
 
 #[tauri::command]
@@ -294,6 +322,7 @@ pub(crate) async fn clear_gtms_editor_imported_conflict(
     input: ClearImportedEditorConflictInput,
 ) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
+        ensure_installation_allows_writes(&app, input.installation_id)?;
         clear_gtms_editor_imported_conflict_sync(&app, input)
     })
     .await
@@ -306,6 +335,7 @@ pub(crate) async fn update_gtms_editor_row_fields_batch(
     input: UpdateEditorRowFieldsBatchInput,
 ) -> Result<UpdateEditorRowFieldsBatchResponse, String> {
     tauri::async_runtime::spawn_blocking(move || {
+        ensure_installation_allows_writes(&app, input.installation_id)?;
         update_gtms_editor_row_fields_batch_sync(&app, input)
     })
     .await
@@ -317,9 +347,12 @@ pub(crate) async fn insert_gtms_editor_row_before(
     app: AppHandle,
     input: InsertEditorRowInput,
 ) -> Result<InsertEditorRowResponse, String> {
-    tauri::async_runtime::spawn_blocking(move || insert_gtms_editor_row_sync(&app, input, true))
-        .await
-        .map_err(|error| format!("The row insert worker failed: {error}"))?
+    tauri::async_runtime::spawn_blocking(move || {
+        ensure_installation_allows_writes(&app, input.installation_id)?;
+        insert_gtms_editor_row_sync(&app, input, true)
+    })
+    .await
+    .map_err(|error| format!("The row insert worker failed: {error}"))?
 }
 
 #[tauri::command]
@@ -327,9 +360,12 @@ pub(crate) async fn insert_gtms_editor_row_after(
     app: AppHandle,
     input: InsertEditorRowInput,
 ) -> Result<InsertEditorRowResponse, String> {
-    tauri::async_runtime::spawn_blocking(move || insert_gtms_editor_row_sync(&app, input, false))
-        .await
-        .map_err(|error| format!("The row insert worker failed: {error}"))?
+    tauri::async_runtime::spawn_blocking(move || {
+        ensure_installation_allows_writes(&app, input.installation_id)?;
+        insert_gtms_editor_row_sync(&app, input, false)
+    })
+    .await
+    .map_err(|error| format!("The row insert worker failed: {error}"))?
 }
 
 #[tauri::command]
@@ -338,6 +374,7 @@ pub(crate) async fn update_gtms_editor_row_field_flag(
     input: UpdateEditorRowFieldFlagInput,
 ) -> Result<UpdateEditorRowFieldFlagResponse, String> {
     tauri::async_runtime::spawn_blocking(move || {
+        ensure_installation_allows_writes(&app, input.installation_id)?;
         update_gtms_editor_row_field_flag_sync(&app, input)
     })
     .await
@@ -350,6 +387,7 @@ pub(crate) async fn update_gtms_editor_row_text_style(
     input: UpdateEditorRowTextStyleInput,
 ) -> Result<UpdateEditorRowTextStyleResponse, String> {
     tauri::async_runtime::spawn_blocking(move || {
+        ensure_installation_allows_writes(&app, input.installation_id)?;
         update_gtms_editor_row_text_style_sync(&app, input)
     })
     .await
@@ -362,6 +400,7 @@ pub(crate) async fn save_gtms_editor_language_image_url(
     input: SaveEditorLanguageImageUrlInput,
 ) -> Result<SaveEditorLanguageImageResponse, String> {
     tauri::async_runtime::spawn_blocking(move || {
+        ensure_installation_allows_writes(&app, input.installation_id)?;
         save_gtms_editor_language_image_url_sync(&app, input)
     })
     .await
@@ -374,6 +413,7 @@ pub(crate) async fn upload_gtms_editor_language_image(
     input: UploadEditorLanguageImageInput,
 ) -> Result<SaveEditorLanguageImageResponse, String> {
     tauri::async_runtime::spawn_blocking(move || {
+        ensure_installation_allows_writes(&app, input.installation_id)?;
         upload_gtms_editor_language_image_sync(&app, input)
     })
     .await
@@ -386,6 +426,7 @@ pub(crate) async fn remove_gtms_editor_language_image(
     input: RemoveEditorLanguageImageInput,
 ) -> Result<SaveEditorLanguageImageResponse, String> {
     tauri::async_runtime::spawn_blocking(move || {
+        ensure_installation_allows_writes(&app, input.installation_id)?;
         remove_gtms_editor_language_image_sync(&app, input)
     })
     .await
@@ -398,6 +439,7 @@ pub(crate) async fn clear_gtms_editor_reviewed_markers(
     input: ClearEditorReviewedMarkersInput,
 ) -> Result<ClearEditorReviewedMarkersResponse, String> {
     tauri::async_runtime::spawn_blocking(move || {
+        ensure_installation_allows_writes(&app, input.installation_id)?;
         clear_gtms_editor_reviewed_markers_sync(&app, input)
     })
     .await
@@ -410,6 +452,7 @@ pub(crate) async fn apply_gtms_editor_ai_review_result(
     input: ApplyEditorAiReviewResultInput,
 ) -> Result<ApplyEditorAiReviewResultResponse, String> {
     tauri::async_runtime::spawn_blocking(move || {
+        ensure_installation_allows_writes(&app, input.installation_id)?;
         apply_gtms_editor_ai_review_result_sync(&app, input)
     })
     .await
@@ -422,6 +465,7 @@ pub(crate) async fn soft_delete_gtms_editor_row(
     input: UpdateEditorRowLifecycleInput,
 ) -> Result<UpdateEditorRowLifecycleResponse, String> {
     tauri::async_runtime::spawn_blocking(move || {
+        ensure_installation_allows_writes(&app, input.installation_id)?;
         update_gtms_editor_row_lifecycle_sync(&app, input, "deleted")
     })
     .await
@@ -434,6 +478,7 @@ pub(crate) async fn restore_gtms_editor_row(
     input: UpdateEditorRowLifecycleInput,
 ) -> Result<UpdateEditorRowLifecycleResponse, String> {
     tauri::async_runtime::spawn_blocking(move || {
+        ensure_installation_allows_writes(&app, input.installation_id)?;
         update_gtms_editor_row_lifecycle_sync(&app, input, "active")
     })
     .await
@@ -446,6 +491,7 @@ pub(crate) async fn permanently_delete_gtms_editor_row(
     input: UpdateEditorRowLifecycleInput,
 ) -> Result<UpdateEditorRowLifecycleResponse, String> {
     tauri::async_runtime::spawn_blocking(move || {
+        ensure_installation_allows_writes(&app, input.installation_id)?;
         permanently_delete_gtms_editor_row_sync(&app, input)
     })
     .await
@@ -468,6 +514,7 @@ pub(crate) async fn restore_gtms_editor_field_from_history(
     input: RestoreEditorFieldHistoryInput,
 ) -> Result<RestoreEditorFieldHistoryResponse, String> {
     tauri::async_runtime::spawn_blocking(move || {
+        ensure_installation_allows_writes(&app, input.installation_id)?;
         restore_gtms_editor_field_from_history_sync(&app, input)
     })
     .await
@@ -489,9 +536,12 @@ pub(crate) async fn save_gtms_editor_row_comment(
     app: AppHandle,
     input: SaveEditorRowCommentInput,
 ) -> Result<SaveEditorRowCommentResponse, String> {
-    tauri::async_runtime::spawn_blocking(move || save_gtms_editor_row_comment_sync(&app, input))
-        .await
-        .map_err(|error| format!("The row comment save worker failed: {error}"))?
+    tauri::async_runtime::spawn_blocking(move || {
+        ensure_installation_allows_writes(&app, input.installation_id)?;
+        save_gtms_editor_row_comment_sync(&app, input)
+    })
+    .await
+    .map_err(|error| format!("The row comment save worker failed: {error}"))?
 }
 
 #[tauri::command]
@@ -499,9 +549,12 @@ pub(crate) async fn delete_gtms_editor_row_comment(
     app: AppHandle,
     input: DeleteEditorRowCommentInput,
 ) -> Result<DeleteEditorRowCommentResponse, String> {
-    tauri::async_runtime::spawn_blocking(move || delete_gtms_editor_row_comment_sync(&app, input))
-        .await
-        .map_err(|error| format!("The row comment delete worker failed: {error}"))?
+    tauri::async_runtime::spawn_blocking(move || {
+        ensure_installation_allows_writes(&app, input.installation_id)?;
+        delete_gtms_editor_row_comment_sync(&app, input)
+    })
+    .await
+    .map_err(|error| format!("The row comment delete worker failed: {error}"))?
 }
 
 #[tauri::command]
@@ -510,6 +563,7 @@ pub(crate) async fn reverse_gtms_editor_batch_replace_commit(
     input: ReverseEditorBatchReplaceCommitInput,
 ) -> Result<ReverseEditorBatchReplaceCommitResponse, String> {
     tauri::async_runtime::spawn_blocking(move || {
+        ensure_installation_allows_writes(&app, input.installation_id)?;
         reverse_gtms_editor_batch_replace_commit_sync(&app, input)
     })
     .await
@@ -521,9 +575,12 @@ pub(crate) async fn rename_gtms_chapter(
     app: AppHandle,
     input: RenameChapterInput,
 ) -> Result<RenameChapterResponse, String> {
-    tauri::async_runtime::spawn_blocking(move || rename_gtms_chapter_sync(&app, input))
-        .await
-        .map_err(|error| format!("The chapter rename worker failed: {error}"))?
+    tauri::async_runtime::spawn_blocking(move || {
+        ensure_installation_allows_writes(&app, input.installation_id)?;
+        rename_gtms_chapter_sync(&app, input)
+    })
+    .await
+    .map_err(|error| format!("The chapter rename worker failed: {error}"))?
 }
 
 #[tauri::command]
@@ -532,6 +589,7 @@ pub(crate) async fn soft_delete_gtms_chapter(
     input: UpdateChapterLifecycleInput,
 ) -> Result<UpdateChapterLifecycleResponse, String> {
     tauri::async_runtime::spawn_blocking(move || {
+        ensure_installation_allows_writes(&app, input.installation_id)?;
         update_gtms_chapter_lifecycle_sync(&app, input, "deleted")
     })
     .await
@@ -544,6 +602,7 @@ pub(crate) async fn restore_gtms_chapter(
     input: UpdateChapterLifecycleInput,
 ) -> Result<UpdateChapterLifecycleResponse, String> {
     tauri::async_runtime::spawn_blocking(move || {
+        ensure_installation_allows_writes(&app, input.installation_id)?;
         update_gtms_chapter_lifecycle_sync(&app, input, "active")
     })
     .await
@@ -555,9 +614,12 @@ pub(crate) async fn permanently_delete_gtms_chapter(
     app: AppHandle,
     input: UpdateChapterLifecycleInput,
 ) -> Result<UpdateChapterLifecycleResponse, String> {
-    tauri::async_runtime::spawn_blocking(move || permanently_delete_gtms_chapter_sync(&app, input))
-        .await
-        .map_err(|error| format!("The chapter permanent delete worker failed: {error}"))?
+    tauri::async_runtime::spawn_blocking(move || {
+        ensure_installation_allows_writes(&app, input.installation_id)?;
+        permanently_delete_gtms_chapter_sync(&app, input)
+    })
+    .await
+    .map_err(|error| format!("The chapter permanent delete worker failed: {error}"))?
 }
 
 #[tauri::command]
@@ -565,7 +627,10 @@ pub(crate) async fn clear_deleted_gtms_chapters(
     app: AppHandle,
     input: ClearDeletedChaptersInput,
 ) -> Result<ClearDeletedChaptersResponse, String> {
-    tauri::async_runtime::spawn_blocking(move || clear_deleted_gtms_chapters_sync(&app, input))
-        .await
-        .map_err(|error| format!("The clear deleted files worker failed: {error}"))?
+    tauri::async_runtime::spawn_blocking(move || {
+        ensure_installation_allows_writes(&app, input.installation_id)?;
+        clear_deleted_gtms_chapters_sync(&app, input)
+    })
+    .await
+    .map_err(|error| format!("The clear deleted files worker failed: {error}"))?
 }

@@ -376,6 +376,25 @@ test("projects export stays enabled while project repo is syncing", () => {
   assert.doesNotMatch(actionButtonHtml(html, "export-file:chapter-1"), /disabled/);
 });
 
+test("viewer role keeps project files downloadable but hides mutating file actions", () => {
+  const html = renderProjectsScreen(projectsState({
+    teams: [{
+      id: "team-1",
+      name: "Team",
+      membershipRole: "viewer",
+      canManageProjects: true,
+      canDelete: true,
+    }],
+  }));
+
+  assert.doesNotMatch(actionButtonHtml(html, "export-file:chapter-1"), /disabled/);
+  assert.equal(actionButtonHtml(html, "add-translation-to-file:chapter-1"), "");
+  assert.equal(actionButtonHtml(html, "rename-file:chapter-1"), "");
+  assert.equal(actionButtonHtml(html, "delete-file:chapter-1"), "");
+  assert.doesNotMatch(html, /data-action="add-project-files:project-1"/);
+  assert.doesNotMatch(html, /data-action="open-new-project"/);
+});
+
 test("projects export is disabled until the local repo is available", () => {
   const html = renderProjectsScreen(projectsState({
     projectRepoSyncByProjectId: {

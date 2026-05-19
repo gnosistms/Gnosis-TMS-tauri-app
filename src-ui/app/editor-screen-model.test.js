@@ -105,6 +105,35 @@ test("buildEditorScreenViewModel shows translating placeholder in the active tar
   }
 });
 
+test("buildEditorScreenViewModel marks viewer rows as read-only even with management flags", () => {
+  const snapshot = snapshotSharedState();
+
+  try {
+    const fixture = applyEditorRegressionFixture(state, { rowCount: 1 });
+    state.teams = state.teams.map((team) => ({
+      ...team,
+      membershipRole: "viewer",
+      canManageProjects: true,
+      canDelete: true,
+    }));
+
+    const viewModel = buildEditorScreenViewModel(state);
+    const row = viewModel.contentRows.find((entry) => entry?.id === fixture.firstRowId);
+    const targetSection = row?.sections.find((section) => section.code === fixture.targetCode);
+
+    assert.equal(row?.canEdit, false);
+    assert.equal(row?.canInsert, false);
+    assert.equal(row?.canSoftDelete, false);
+    assert.equal(row?.canReplaceSelect, false);
+    assert.equal(targetSection?.canEdit, false);
+    assert.equal(targetSection?.isTextEditorOpen, false);
+    assert.equal(targetSection?.showAddFootnoteButton, false);
+    assert.equal(targetSection?.showAddImageButtons, false);
+  } finally {
+    restoreSharedState(snapshot);
+  }
+});
+
 test("buildEditorScreenViewModel treats chapter languages as the authoritative rendered language list", () => {
   const snapshot = snapshotSharedState();
 

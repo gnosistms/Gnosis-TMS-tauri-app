@@ -201,6 +201,9 @@ function renderEditorReplaceField(editorReplace) {
 }
 
 function renderEditorReplaceControls(editorReplace) {
+  if (editorReplace?.canReplace !== true) {
+    return "";
+  }
   if (!editorReplace?.isAvailable) {
     return "";
   }
@@ -395,6 +398,7 @@ export function renderTranslateToolbar({
   targetLanguageExtraOptions = [],
   deriveGlossariesAvailable = false,
   clearTranslationsAvailable = false,
+  writeActionsAvailable = true,
   offlineMode = false,
 }) {
   const offlineAiTooltip = offlineMode
@@ -410,12 +414,15 @@ export function renderTranslateToolbar({
           ${renderFilterSelect(editorFilters)}
           <div class="toolbar-search">
             ${renderEditorSearchField(editorFilters)}
-            ${renderEditorReplaceControls(editorReplace)}
+            ${renderEditorReplaceControls({
+              ...editorReplace,
+              canReplace: writeActionsAvailable,
+            })}
           </div>
         </div>
       </div>
       <div class="toolbar-meta toolbar-actions-stack">
-        ${deriveGlossariesAvailable
+        ${writeActionsAvailable && deriveGlossariesAvailable
           ? renderToolbarIconAction("Derive glossaries", "open-editor-derive-glossaries", TOOLBAR_ICONS.deriveGlossaries, {
             tooltip: offlineAiTooltip || "Automatically generate glossaries for the languages that don't have a glossary.",
             tooltipOptions: { align: "end" },
@@ -424,7 +431,7 @@ export function renderTranslateToolbar({
             visualLabel: "Derive Glossaries",
           })
           : ""}
-        ${clearTranslationsAvailable
+        ${writeActionsAvailable && clearTranslationsAvailable
           ? renderToolbarIconAction("Clear translations", "open-editor-clear-translations", TOOLBAR_ICONS.clearTranslations, {
             tooltip: "Clear all translation text for selected languages.",
             tooltipOptions: { align: "end" },
@@ -432,25 +439,25 @@ export function renderTranslateToolbar({
             visualLabel: "Clear Languages",
           })
           : ""}
-        ${renderToolbarIconAction("AI translate all", "open-editor-ai-translate-all", TOOLBAR_ICONS.aiTranslateAll, {
+        ${writeActionsAvailable ? renderToolbarIconAction("AI translate all", "open-editor-ai-translate-all", TOOLBAR_ICONS.aiTranslateAll, {
           tooltip: offlineAiTooltip || "Translate all empty fields in selected languages",
           tooltipOptions: { align: "end" },
           disabled: offlineMode,
           className: "toolbar-icon-action--wide",
           visualLabel: "AI Translate",
-        })}
-        ${renderToolbarIconAction("AI Review", "open-editor-ai-review-all", TOOLBAR_ICONS.aiReviewAll, {
+        }) : ""}
+        ${writeActionsAvailable ? renderToolbarIconAction("AI Review", "open-editor-ai-review-all", TOOLBAR_ICONS.aiReviewAll, {
           tooltip: offlineAiTooltip || "AI review all target language translations",
           tooltipOptions: { align: "end" },
           disabled: offlineMode,
           visualLabel: "AI Review",
-        })}
-        ${renderToolbarIconAction("Unreview all", "open-editor-unreview-all", TOOLBAR_ICONS.unreviewAll, {
+        }) : ""}
+        ${writeActionsAvailable ? renderToolbarIconAction("Unreview all", "open-editor-unreview-all", TOOLBAR_ICONS.unreviewAll, {
           tooltip: 'Remove the "reviewed" mark from all rows of the target language.',
           tooltipOptions: { align: "end" },
           className: "toolbar-icon-action--wide toolbar-icon-action--unreview",
           visualLabel: "Mark Unreviewed",
-        })}
+        }) : ""}
       </div>
     </div>
   `;

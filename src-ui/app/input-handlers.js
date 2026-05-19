@@ -37,7 +37,7 @@ import {
   updateTeamPermanentDeletionConfirmation,
   updateTeamRenameName,
 } from "./team-setup-flow.js";
-import { updateInviteUserQuery } from "./invite-user-flow.js";
+import { updateInviteUserQuery, updateInviteUserRole } from "./invite-user-flow.js";
 import {
   updateGlossaryPermanentDeletionConfirmation,
   updateGlossaryRenameName,
@@ -193,6 +193,14 @@ function handleChapterPermanentDeleteInput(event) {
 }
 
 function handleInviteUserInput(event, render) {
+  if (event.type === "change") {
+    const roleInput = event.target.closest("[data-invite-user-role-select]");
+    if (roleInput) {
+      updateInviteUserRole(render, roleInput.value);
+      return true;
+    }
+  }
+
   const input = event.target.closest("[data-invite-user-input]");
   if (!input) {
     return false;

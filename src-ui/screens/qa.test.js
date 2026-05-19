@@ -65,6 +65,20 @@ test("QA list cards show language metadata without term counts", () => {
   assert.doesNotMatch(html, /QA terms/);
 });
 
+test("viewer role keeps QA list downloads but hides mutating actions", () => {
+  setQaScreenState();
+  state.teams[0].membershipRole = "viewer";
+
+  const html = renderQaScreen(state);
+
+  assert.match(html, /data-action="download-qa-list:qa-list-1"/);
+  assert.equal(actionButtonHtml(html, "make-default-qa-list:qa-list-1"), "");
+  assert.equal(actionButtonHtml(html, "rename-qa-list:qa-list-1"), "");
+  assert.equal(actionButtonHtml(html, "delete-qa-list:qa-list-1"), "");
+  assert.equal(actionButtonHtml(html, "import-qa-list"), "");
+  assert.equal(actionButtonHtml(html, "open-new-qa-list"), "");
+});
+
 test("QA list refresh spins and disables the refresh button during background refresh", () => {
   setQaScreenState({
     qaListsPage: { isRefreshing: true, refreshStartedAt: 100 },

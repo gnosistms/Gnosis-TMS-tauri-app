@@ -39,7 +39,7 @@ use xlsx::{classify_header_row, split_xlsx_cell_text_and_footnote, ColumnBinding
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ImportXlsxInput {
-    installation_id: i64,
+    pub(crate) installation_id: i64,
     repo_name: String,
     project_id: Option<String>,
     file_name: String,
@@ -49,7 +49,7 @@ pub(crate) struct ImportXlsxInput {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ImportTxtInput {
-    installation_id: i64,
+    pub(crate) installation_id: i64,
     repo_name: String,
     project_id: Option<String>,
     file_name: String,
@@ -60,7 +60,7 @@ pub(crate) struct ImportTxtInput {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ImportDocxInput {
-    installation_id: i64,
+    pub(crate) installation_id: i64,
     repo_name: String,
     project_id: Option<String>,
     file_name: String,
@@ -71,7 +71,7 @@ pub(crate) struct ImportDocxInput {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ImportHtmlInput {
-    installation_id: i64,
+    pub(crate) installation_id: i64,
     repo_name: String,
     project_id: Option<String>,
     file_name: String,
@@ -85,7 +85,7 @@ pub(crate) struct ImportHtmlInput {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ImportProjectFilesInput {
     batch_id: String,
-    installation_id: i64,
+    pub(crate) installation_id: i64,
     repo_name: String,
     project_id: Option<String>,
     files: Vec<ImportProjectFileInput>,

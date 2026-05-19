@@ -1,4 +1,6 @@
 import { state } from "../state.js";
+import { canManageGlossaries } from "../glossary-shared.js";
+import { showNoticeBadge } from "../status-feedback.js";
 import {
   addGlossaryTermEmptyTargetVariant,
   addGlossaryTermVariant,
@@ -121,7 +123,35 @@ export function createGlossaryActions(render) {
   ];
 
   return async function handleGlossaryAction(action, event) {
+    const selectedTeam = state.teams.find((team) => team.id === state.selectedTeamId) ?? null;
     const inlineStyleMatch = /^toggle-glossary-term-inline-style:([a-z-]+):(source|target)$/.exec(action);
+    const variantAction = parseVariantAction(action);
+    const writeAction =
+      action.startsWith("edit-glossary-term:")
+      || action.startsWith("delete-glossary-term:")
+      || action.startsWith("rename-glossary:")
+      || action.startsWith("make-default-glossary:")
+      || action.startsWith("delete-glossary:")
+      || action.startsWith("repair-glossary:")
+      || action.startsWith("rebuild-glossary-repo:")
+      || action.startsWith("restore-glossary:")
+      || action.startsWith("delete-deleted-glossary:")
+      || action === "open-new-glossary"
+      || action === "import-glossary"
+      || action === "select-glossary-import-file"
+      || action === "open-new-term"
+      || action === "submit-glossary-term-editor"
+      || action === "submit-glossary-creation"
+      || action === "submit-glossary-rename"
+      || action === "confirm-glossary-permanent-deletion"
+      || inlineStyleMatch !== null
+      || variantAction !== null
+      || action === "add-glossary-term-empty-variant:target";
+    if (writeAction && !canManageGlossaries(selectedTeam)) {
+      showNoticeBadge("Read-only users cannot modify glossaries.", render, 2600);
+      return true;
+    }
+
     if (inlineStyleMatch) {
       const button = event?.target instanceof Element
         ? event.target.closest("[data-glossary-inline-style-button]")
@@ -132,7 +162,6 @@ export function createGlossaryActions(render) {
       return true;
     }
 
-    const variantAction = parseVariantAction(action);
     if (variantAction) {
       if (variantAction.type === "add") {
         addGlossaryTermVariant(variantAction.side);

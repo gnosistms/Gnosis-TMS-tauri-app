@@ -37,7 +37,9 @@ import { deriveProjectResolution } from "../app/resource-resolution.js";
 import { listProjectRepoFallbackConflictEntries } from "../app/project-repo-sync-shared.js";
 import {
   canPermanentlyDeleteProjectFiles,
+  canDownloadProjectFiles,
   canManageTeamAiSettings,
+  canMutateProjectFiles,
   shouldShowDeletedProjectPermanentDelete,
   shouldShowNewProjectButton,
 } from "../app/resource-capabilities.js";
@@ -150,6 +152,7 @@ function renderChapterGlossarySelect(chapter, glossaries, options = {}) {
 
 function renderProjectCard(project, expanded, options = {}) {
   const canManageProjects = options.canManageProjects !== false;
+  const canDownloadFiles = options.canDownloadFiles !== false;
   const canPermanentlyDeleteFiles = options.canPermanentlyDeleteFiles === true;
   const isDeleted = options.isDeleted === true;
   const offlineMode = options.offlineMode === true;
@@ -255,15 +258,15 @@ function renderProjectCard(project, expanded, options = {}) {
                     ${renderChapterGlossarySelect(chapter, glossaryOptions, {
                       disabled: offlineMode || lifecycleActionsDisabled || glossaryChangesDisabled || !canManageProjects,
                     })}
-                    ${iconAction("Add translations", `add-translation-to-file:${chapter.id}`, LUCIDE_LIST_PLUS_ICON, {
+                    ${canManageProjects ? iconAction("Add translations", `add-translation-to-file:${chapter.id}`, LUCIDE_LIST_PLUS_ICON, {
                       disabled: localRepoUnavailable || disableContentActions,
                       tooltip: "Add translations",
-                    })}
-                    ${iconAction("Export", `export-file:${chapter.id}`, LUCIDE_SQUARE_ARROW_RIGHT_EXIT_ICON, {
+                    }) : ""}
+                    ${canDownloadFiles ? iconAction("Export", `export-file:${chapter.id}`, LUCIDE_SQUARE_ARROW_RIGHT_EXIT_ICON, {
                       disabled: localRepoUnavailable || disableContentActions,
                       iconClassName: "icon-action__icon--rotate-left",
                       tooltip: "Export",
-                    })}
+                    }) : ""}
                     ${canManageProjects ? iconAction("Rename", `rename-file:${chapter.id}`, LUCIDE_FOLDER_PEN_ICON, {
                       disabled: offlineMode || lifecycleActionsDisabled || disableContentActions,
                       tooltip: "Rename",
@@ -369,7 +372,8 @@ function renderDeletedProjectsSection(state) {
   }
 
   const selectedTeam = state.teams.find((team) => team.id === state.selectedTeamId) ?? state.teams[0];
-  const canManageDeletedProjects = selectedTeam?.canManageProjects === true;
+  const canManageDeletedProjects = canMutateProjectFiles(selectedTeam);
+  const canDownloadDeletedProjectFiles = canDownloadProjectFiles(selectedTeam);
   const canPermanentlyDeleteProjects = shouldShowDeletedProjectPermanentDelete(selectedTeam);
   const offlineMode = state.offline?.isEnabled === true;
   const pageWritesDisabled = areResourcePageWritesDisabled(state.projectsPage);
@@ -401,6 +405,7 @@ function renderDeletedProjectsSection(state) {
             const disableLifecycleActions = offlineMode || resolution?.blockLifecycleActions === true;
             return renderProjectCard(project, state.expandedProjects.has(project.id), {
               canManageProjects: canManageDeletedProjects,
+              canDownloadFiles: canDownloadDeletedProjectFiles,
               isDeleted: true,
               offlineMode,
               pageWritesDisabled,
@@ -595,7 +600,8 @@ function renderProjectRepoConflictRecovery(state, selectedTeam) {
 
 export function renderProjectsScreen(state) {
   const selectedTeam = state.teams.find((team) => team.id === state.selectedTeamId) ?? state.teams[0];
-  const canManageProjects = selectedTeam?.canManageProjects === true;
+  const canManageProjects = canMutateProjectFiles(selectedTeam);
+  const canDownloadFiles = canDownloadProjectFiles(selectedTeam);
   const canCreateProjects = shouldShowNewProjectButton(selectedTeam);
   const canPermanentlyDeleteFiles = canPermanentlyDeleteProjectFiles(selectedTeam);
   const canManageAiSettings = canManageTeamAiSettings(selectedTeam);
@@ -661,6 +667,7 @@ export function renderProjectsScreen(state) {
               .map((project) =>
                 renderProjectCard(project, state.expandedProjects.has(project.id), {
                   canManageProjects,
+                  canDownloadFiles,
                   canPermanentlyDeleteFiles,
                   offlineMode,
                   pageWritesDisabled,

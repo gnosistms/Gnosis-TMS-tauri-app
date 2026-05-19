@@ -15,7 +15,7 @@ use super::project_git::{
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct RenameChapterInput {
-    installation_id: i64,
+    pub(crate) installation_id: i64,
     repo_name: String,
     project_id: Option<String>,
     chapter_id: String,
@@ -32,7 +32,7 @@ pub(crate) struct RenameChapterResponse {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct UpdateChapterLifecycleInput {
-    installation_id: i64,
+    pub(crate) installation_id: i64,
     repo_name: String,
     project_id: Option<String>,
     chapter_id: String,
@@ -48,7 +48,7 @@ pub(crate) struct UpdateChapterLifecycleResponse {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ClearDeletedChaptersInput {
-    installation_id: i64,
+    pub(crate) installation_id: i64,
     repo_name: String,
     project_id: Option<String>,
 }

@@ -32,7 +32,7 @@ pub(crate) struct LoadEditorRowCommentsInput {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct SaveEditorRowCommentInput {
-    installation_id: i64,
+    pub(crate) installation_id: i64,
     repo_name: String,
     project_id: Option<String>,
     chapter_id: String,
@@ -43,7 +43,7 @@ pub(crate) struct SaveEditorRowCommentInput {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct DeleteEditorRowCommentInput {
-    installation_id: i64,
+    pub(crate) installation_id: i64,
     repo_name: String,
     project_id: Option<String>,
     chapter_id: String,

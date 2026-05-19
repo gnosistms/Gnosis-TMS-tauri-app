@@ -4,6 +4,7 @@ use tauri::AppHandle;
 
 use crate::{
     broker_auth_storage::load_broker_auth_session,
+    installation_access::ensure_repo_allows_writes,
     repo_app_version::git_commit_app_version_trailer,
     repo_sync_shared::{ensure_repo_local_git_identity, format_git_spawn_error, git_command},
 };
@@ -64,6 +65,7 @@ pub(crate) fn git_commit_as_signed_in_user_with_metadata(
     paths: &[&str],
     metadata: GitCommitMetadata<'_>,
 ) -> Result<String, String> {
+    ensure_repo_allows_writes(app, repo_path)?;
     let author = signed_in_git_author(app)?;
     ensure_repo_local_git_identity(app, repo_path)?;
     let mut command = git_command();

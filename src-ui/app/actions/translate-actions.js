@@ -1,6 +1,9 @@
 import { actionSuffix } from "../action-helpers.js";
+import { canMutateProjectFiles } from "../resource-capabilities.js";
+import { selectedProjectsTeam } from "../project-context.js";
 import { waitForNextPaint } from "../runtime.js";
 import { state } from "../state.js";
+import { showNoticeBadge } from "../status-feedback.js";
 import {
   captureLanguageToggleVisibilityAnchor,
   captureTranslateRowAnchor,
@@ -94,8 +97,89 @@ function reviewModeFromEvent(event) {
   return target?.closest("[data-ai-review-mode]")?.dataset.aiReviewMode ?? null;
 }
 
+const READ_ONLY_WRITE_ACTIONS = new Set([
+  "add-target-language-manager-language",
+  "open-target-language-manager-picker",
+  "submit-target-language-manager",
+  "confirm-insert-editor-row-before",
+  "confirm-insert-editor-row-after",
+  "confirm-editor-row-permanent-delete",
+  "confirm-editor-replace-undo",
+  "confirm-editor-unreview-all",
+  "confirm-editor-ai-translate-all",
+  "continue-editor-ai-review-all",
+  "confirm-editor-ai-review-all",
+  "review-editor-clear-translations",
+  "confirm-editor-clear-translations",
+  "confirm-editor-derive-glossaries",
+  "save-editor-conflict-resolution",
+  "select-all-editor-replace-rows",
+  "replace-selected-editor-rows",
+  "save-editor-comment",
+  "review-editor-text-now",
+  "run-editor-ai-translate:translate1",
+  "run-editor-ai-translate:translate2",
+  "run-editor-ai-assistant",
+  "apply-editor-ai-review",
+  "toggle-editor-reviewed",
+  "toggle-editor-please-check",
+  "open-editor-unreview-all",
+  "open-editor-ai-translate-all",
+  "open-editor-ai-review-all",
+  "open-editor-clear-translations",
+  "open-editor-derive-glossaries",
+  "set-editor-row-text-style",
+  "toggle-editor-inline-style",
+  "open-editor-footnote",
+  "open-editor-image-caption",
+  "open-editor-image-url",
+  "open-editor-image-upload",
+  "open-editor-image-upload-picker",
+  "remove-editor-language-image",
+]);
+
+const READ_ONLY_WRITE_PREFIXES = [
+  "move-target-language-manager-language:",
+  "remove-target-language-manager-language:",
+  "select-target-language-manager-picker-language:",
+  "review-editor-text-now:",
+  "restore-editor-history:",
+  "open-editor-replace-undo:",
+  "delete-editor-comment:",
+  "apply-editor-assistant-draft:",
+  "copy-editor-conflict-version:",
+  "open-insert-editor-row:",
+  "soft-delete-editor-row:",
+  "restore-editor-row:",
+  "open-editor-row-permanent-delete:",
+  "resolve-editor-row-conflict:",
+  "open-editor-conflict-resolution:",
+];
+
+function isReadOnlyBlockedWriteAction(action) {
+  return (
+    READ_ONLY_WRITE_ACTIONS.has(action)
+    || READ_ONLY_WRITE_PREFIXES.some((prefix) => action.startsWith(prefix))
+  );
+}
+
+function blockReadOnlyWriteAction(action, render) {
+  if (canMutateProjectFiles(selectedProjectsTeam())) {
+    return false;
+  }
+  if (!isReadOnlyBlockedWriteAction(action)) {
+    return false;
+  }
+  showNoticeBadge("Read-only users cannot modify project files.", render, 2600);
+  return true;
+}
+
 export function createTranslateActions(render) {
   return async function handleTranslateAction(action, event) {
+    if (blockReadOnlyWriteAction(action, render)) {
+      return true;
+    }
+
     const moveTargetLanguageMatch = /^move-target-language-manager-language:(\d+):(\d+)$/.exec(action);
     if (moveTargetLanguageMatch) {
       moveTargetLanguageManagerLanguageToIndex(

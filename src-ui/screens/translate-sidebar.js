@@ -93,7 +93,7 @@ function activeAssistantThreadHasItems(editorChapter, activeRowId, sourceLanguag
   return Array.isArray(thread?.items) && thread.items.length > 0;
 }
 
-function renderTranslateTools(editorChapter, rows, languages, sourceCode, targetCode, actionConfig, offlineMode = false) {
+function renderTranslateTools(editorChapter, rows, languages, sourceCode, targetCode, actionConfig, offlineMode = false, readOnly = false) {
   const activeRow = rows.find((row) => row.id === editorChapter?.activeRowId) ?? null;
   const translateLanguages = resolveEditorAiTranslateLanguages(editorChapter);
   const sourceLanguage =
@@ -110,7 +110,7 @@ function renderTranslateTools(editorChapter, rows, languages, sourceCode, target
   const targetSection =
     activeRow?.sections?.find((section) => section.code === targetLanguage?.code) ?? null;
 
-  if (!activeRow) {
+  if (!activeRow || readOnly) {
     return "";
   }
 
@@ -758,12 +758,12 @@ function renderAssistantComposer(editorChapter, rows, languages, targetCode, off
   `;
 }
 
-function renderAssistantPane(editorChapter, rows, languages, sourceCode, targetCode, actionConfig, offlineMode = false) {
+function renderAssistantPane(editorChapter, rows, languages, sourceCode, targetCode, actionConfig, offlineMode = false, readOnly = false) {
   return `
     <div class="assistant-pane">
-      ${renderTranslateTools(editorChapter, rows, languages, sourceCode, targetCode, actionConfig, offlineMode)}
+      ${renderTranslateTools(editorChapter, rows, languages, sourceCode, targetCode, actionConfig, offlineMode, readOnly)}
       ${renderAssistantTranscript(editorChapter, rows, languages, sourceCode, targetCode)}
-      ${renderAssistantComposer(editorChapter, rows, languages, targetCode, offlineMode)}
+      ${readOnly ? "" : renderAssistantComposer(editorChapter, rows, languages, targetCode, offlineMode)}
     </div>
   `;
 }
@@ -1008,12 +1008,16 @@ export function renderTranslateSidebar(
   actionConfig,
   session,
   offlineMode = false,
+  writeActionsAvailable = true,
 ) {
-  const activeTab = normalizeEditorSidebarTab(editorChapter?.sidebarTab);
+  const requestedTab = normalizeEditorSidebarTab(editorChapter?.sidebarTab);
+  const activeTab = !writeActionsAvailable && (requestedTab === "assistant" || requestedTab === "review")
+    ? "history"
+    : requestedTab;
   const body = activeTab === "assistant"
-    ? renderAssistantPane(editorChapter, rows, languages, sourceCode, targetCode, actionConfig, offlineMode)
+    ? renderAssistantPane(editorChapter, rows, languages, sourceCode, targetCode, actionConfig, offlineMode, !writeActionsAvailable)
     : activeTab === "comments"
-    ? renderCommentsPane(editorChapter, rows, session)
+    ? renderCommentsPane(editorChapter, rows, session, { readOnly: !writeActionsAvailable })
     : activeTab === "review"
       ? renderReviewPane(editorChapter, rows, languages, offlineMode)
       : renderHistoryPane(editorChapter, rows, languages);
@@ -1022,8 +1026,8 @@ export function renderTranslateSidebar(
     <aside class="translate-sidebar card card--history${activeTab === "assistant" ? " translate-sidebar--assistant" : ""}">
       <div class="card__body">
         <div class="history-tabs">
-          ${renderSidebarTab("AI Assistant", "assistant", activeTab, "translate")}
-          ${renderSidebarTab("Review", "review", activeTab)}
+          ${writeActionsAvailable ? renderSidebarTab("AI Assistant", "assistant", activeTab, "translate") : ""}
+          ${writeActionsAvailable ? renderSidebarTab("Review", "review", activeTab) : ""}
           ${renderSidebarTab("History", "history", activeTab)}
           ${renderSidebarTab("Comments", "comments", activeTab)}
         </div>

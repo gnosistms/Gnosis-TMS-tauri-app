@@ -88,6 +88,9 @@ function renderUnreadCommentsMarkerIcon() {
 }
 
 function renderLanguageMarkerButton(kind, rowId, language) {
+  if (language.canEdit !== true) {
+    return "";
+  }
   const isReviewed = language.reviewed === true;
   const isPleaseCheck = language.pleaseCheck === true;
   const isActive = kind === "reviewed" ? isReviewed : isPleaseCheck;
@@ -190,6 +193,9 @@ function renderEditorRowContextAction(row) {
 }
 
 function renderRowTextStyleButtons(row, language) {
+  if (row?.canEdit !== true || language?.canEdit !== true) {
+    return "";
+  }
   const selectedTextStyle = normalizeEditorRowTextStyle(row?.textStyle);
   const isSaving = row?.textStyleSaveState?.status === "saving";
   const showAddFootnoteButton = language.showAddFootnoteButton === true;
@@ -403,14 +409,18 @@ function renderEditorLanguageImageCaption(row, language) {
 
   return `
     <div class="translation-language-panel__image-caption-shell translation-language-panel__image-caption-shell--idle translation-language-panel__image-caption-shell--display">
-      <button
-        class="translation-language-panel__image-caption-display"
-        type="button"
-        data-action="open-editor-image-caption"
-        data-editor-image-caption-button
-        data-row-id="${escapeHtml(row.id)}"
-        data-language-code="${escapeHtml(language.code)}"
-      ><span class="translation-language-panel__image-caption-text" lang="${escapeHtml(language.baseCode || language.code)}">${renderSanitizedInlineMarkupHtml(language.imageCaption ?? "")}</span></button>
+      ${
+        language.canEdit === true
+          ? `<button
+              class="translation-language-panel__image-caption-display"
+              type="button"
+              data-action="open-editor-image-caption"
+              data-editor-image-caption-button
+              data-row-id="${escapeHtml(row.id)}"
+              data-language-code="${escapeHtml(language.code)}"
+            ><span class="translation-language-panel__image-caption-text" lang="${escapeHtml(language.baseCode || language.code)}">${renderSanitizedInlineMarkupHtml(language.imageCaption ?? "")}</span></button>`
+          : `<div class="translation-language-panel__image-caption-display"><span class="translation-language-panel__image-caption-text" lang="${escapeHtml(language.baseCode || language.code)}">${renderSanitizedInlineMarkupHtml(language.imageCaption ?? "")}</span></div>`
+      }
     </div>
   `;
 }
@@ -565,7 +575,7 @@ function renderEditorLanguageImage(row, language) {
           >Loading image...</span>
         </button>
         ${renderEditorLanguageImageCaption(row, language)}
-        <button
+        ${language.canEdit === true ? `<button
           class="translation-language-panel__image-remove"
           type="button"
           data-action="remove-editor-language-image"
@@ -580,7 +590,7 @@ function renderEditorLanguageImage(row, language) {
               <path d="M10 2 2 10" />
             </svg>
           </span>
-        </button>
+        </button>` : ""}
       </div>
     </div>
   `;
@@ -622,6 +632,20 @@ function renderDisabledConflictField(language, textStyle) {
 }
 
 function renderEditorFootnoteField(row, language) {
+  if (row?.canEdit !== true || language?.canEdit !== true) {
+    return `
+      <div
+        class="translation-language-panel__field-static translation-language-panel__field-static--footnote"
+        data-row-text-style="footnote"
+      >
+        <span
+          class="translation-language-panel__field-static-text"
+          lang="${escapeHtml(language.baseCode || language.code)}"
+        >${renderSanitizedInlineMarkupHtml(language.footnote)}</span>
+      </div>
+    `;
+  }
+
   return `
     <div
       class="translation-language-panel__field-stack translation-language-panel__field-stack--footnote"
@@ -659,6 +683,9 @@ function renderEditorLanguageField(row, language) {
   const staticFieldStackClassName =
     "translation-language-panel__field-stack translation-language-panel__field-stack--static";
   if (row.hasConflict) {
+    if (row.canEdit !== true || language.canEdit !== true) {
+      return renderDisabledConflictField(language, textStyle);
+    }
     return language.hasConflict
       ? renderConflictResolutionField(row, language, textStyle)
       : renderDisabledConflictField(language, textStyle);
@@ -685,7 +712,7 @@ function renderEditorLanguageField(row, language) {
             data-editor-display-text
           >${staticFieldTextHtml}</span></div>
         `
-      : `
+      : row.canEdit === true && language.canEdit === true ? `
           <button
             class="${staticFieldClassName} translation-language-panel__field-static--editable"
             type="button"
@@ -698,6 +725,17 @@ function renderEditorLanguageField(row, language) {
             class="translation-language-panel__field-static-text"
             data-editor-display-text
           >${staticFieldTextHtml}</span></button>
+        ` : `
+          <div
+            class="${staticFieldClassName}"
+            data-row-id="${escapeHtml(row.id)}"
+            data-language-code="${escapeHtml(language.code)}"
+            data-row-text-style="${escapeHtml(textStyle)}"
+            lang="${escapeHtml(language.baseCode || language.code)}"
+          ><span
+            class="translation-language-panel__field-static-text"
+            data-editor-display-text
+          >${staticFieldTextHtml}</span></div>
         `;
     return `
       <div

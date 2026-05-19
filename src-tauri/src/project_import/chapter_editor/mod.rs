@@ -107,7 +107,7 @@ const DEFAULT_EDITOR_TEXT_STYLE: &str = "paragraph";
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct InitializeProjectRepoInput {
-    installation_id: i64,
+    pub(crate) installation_id: i64,
     repo_name: String,
     project_id: Option<String>,
     title: String,
@@ -146,7 +146,7 @@ pub(crate) struct InitializeProjectRepoResponse {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct PurgeLocalProjectRepoInput {
-    installation_id: i64,
+    pub(crate) installation_id: i64,
     repo_name: String,
     project_id: Option<String>,
 }
@@ -154,7 +154,7 @@ pub(crate) struct PurgeLocalProjectRepoInput {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct UpdateChapterLanguageSelectionInput {
-    installation_id: i64,
+    pub(crate) installation_id: i64,
     repo_name: String,
     project_id: Option<String>,
     chapter_id: String,
@@ -173,7 +173,7 @@ pub(crate) struct UpdateChapterLanguageSelectionResponse {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct UpdateChapterLanguagesInput {
-    installation_id: i64,
+    pub(crate) installation_id: i64,
     repo_name: String,
     project_id: Option<String>,
     full_name: String,
@@ -199,7 +199,7 @@ pub(crate) struct UpdateChapterLanguagesResponse {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct UpdateChapterGlossaryLinksInput {
-    installation_id: i64,
+    pub(crate) installation_id: i64,
     repo_name: String,
     project_id: Option<String>,
     chapter_id: String,
@@ -223,7 +223,7 @@ pub(crate) struct UpdateChapterGlossaryLinksResponse {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct UpdateEditorRowFieldsInput {
-    installation_id: i64,
+    pub(crate) installation_id: i64,
     repo_name: String,
     project_id: Option<String>,
     chapter_id: String,
@@ -259,7 +259,7 @@ pub(crate) struct UpdateEditorRowFieldsBatchRowInput {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct UpdateEditorRowFieldsBatchInput {
-    installation_id: i64,
+    pub(crate) installation_id: i64,
     repo_name: String,
     project_id: Option<String>,
     chapter_id: String,
@@ -271,7 +271,7 @@ pub(crate) struct UpdateEditorRowFieldsBatchInput {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct UpdateEditorRowFieldFlagInput {
-    installation_id: i64,
+    pub(crate) installation_id: i64,
     repo_name: String,
     project_id: Option<String>,
     chapter_id: String,
@@ -284,7 +284,7 @@ pub(crate) struct UpdateEditorRowFieldFlagInput {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ApplyEditorAiReviewResultInput {
-    installation_id: i64,
+    pub(crate) installation_id: i64,
     repo_name: String,
     project_id: Option<String>,
     chapter_id: String,
@@ -305,7 +305,7 @@ pub(crate) struct ApplyEditorAiReviewResultInput {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct UpdateEditorRowTextStyleInput {
-    installation_id: i64,
+    pub(crate) installation_id: i64,
     repo_name: String,
     project_id: Option<String>,
     chapter_id: String,
@@ -316,7 +316,7 @@ pub(crate) struct UpdateEditorRowTextStyleInput {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ClearImportedEditorConflictInput {
-    installation_id: i64,
+    pub(crate) installation_id: i64,
     repo_name: String,
     project_id: Option<String>,
     chapter_id: String,
@@ -336,7 +336,7 @@ pub(crate) struct EditorFieldImageInput {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct SaveEditorLanguageImageUrlInput {
-    installation_id: i64,
+    pub(crate) installation_id: i64,
     repo_name: String,
     project_id: Option<String>,
     chapter_id: String,
@@ -350,7 +350,7 @@ pub(crate) struct SaveEditorLanguageImageUrlInput {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct UploadEditorLanguageImageInput {
-    installation_id: i64,
+    pub(crate) installation_id: i64,
     repo_name: String,
     project_id: Option<String>,
     chapter_id: String,
@@ -365,7 +365,7 @@ pub(crate) struct UploadEditorLanguageImageInput {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct RemoveEditorLanguageImageInput {
-    installation_id: i64,
+    pub(crate) installation_id: i64,
     repo_name: String,
     project_id: Option<String>,
     chapter_id: String,
@@ -378,7 +378,7 @@ pub(crate) struct RemoveEditorLanguageImageInput {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ClearEditorReviewedMarkersInput {
-    installation_id: i64,
+    pub(crate) installation_id: i64,
     repo_name: String,
     project_id: Option<String>,
     chapter_id: String,
@@ -388,7 +388,7 @@ pub(crate) struct ClearEditorReviewedMarkersInput {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct InsertEditorRowInput {
-    installation_id: i64,
+    pub(crate) installation_id: i64,
     repo_name: String,
     project_id: Option<String>,
     chapter_id: String,
@@ -398,7 +398,7 @@ pub(crate) struct InsertEditorRowInput {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct UpdateEditorRowLifecycleInput {
-    installation_id: i64,
+    pub(crate) installation_id: i64,
     repo_name: String,
     project_id: Option<String>,
     chapter_id: String,
@@ -545,7 +545,7 @@ pub(crate) struct EditorFieldHistoryEntry {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct RestoreEditorFieldHistoryInput {
-    installation_id: i64,
+    pub(crate) installation_id: i64,
     repo_name: String,
     project_id: Option<String>,
     chapter_id: String,
@@ -582,7 +582,7 @@ pub(crate) struct LoadEditorRowResponse {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ReverseEditorBatchReplaceCommitInput {
-    installation_id: i64,
+    pub(crate) installation_id: i64,
     repo_name: String,
     project_id: Option<String>,
     chapter_id: String,

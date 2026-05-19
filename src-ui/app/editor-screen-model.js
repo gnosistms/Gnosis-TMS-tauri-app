@@ -6,7 +6,10 @@ import {
 import { normalizeEditorAiTranslateState } from "./editor-ai-translate-state.js";
 import { normalizeEditorDerivedGlossariesByRowId } from "./editor-derived-glossary-state.js";
 import { coerceEditorFontSizePx } from "./state.js";
-import { canPermanentlyDeleteProjectFiles } from "./resource-capabilities.js";
+import {
+  canMutateProjectFiles,
+  canPermanentlyDeleteProjectFiles,
+} from "./resource-capabilities.js";
 import { findChapterContextById, selectedProjectsTeam } from "./project-context.js";
 import { buildEditorFilterResult, editorChapterFiltersAreActive } from "./editor-filters.js";
 import { normalizeEditorReplaceState } from "./editor-replace.js";
@@ -356,8 +359,8 @@ function buildEditorDisplayItems(contentRows, editorChapter, team, editorReplace
     editorChapter?.expandedDeletedRowGroupIds instanceof Set
       ? editorChapter.expandedDeletedRowGroupIds
       : new Set();
-  const canEditRows = team?.canManageProjects === true;
-  const canRestoreRows = Number.isFinite(team?.installationId);
+  const canEditRows = canMutateProjectFiles(team);
+  const canRestoreRows = canEditRows && Number.isFinite(team?.installationId);
   const canPermanentlyDeleteRows = canPermanentlyDeleteProjectFiles(team);
   const selectedReplaceRowIds =
     editorReplace?.selectedMatchingRowIds instanceof Array
@@ -390,12 +393,13 @@ function buildEditorDisplayItems(contentRows, editorChapter, team, editorReplace
   for (const row of rows) {
     const nextRow = {
       ...row,
+      canEdit: canEditRows,
       canInsert: row.lifecycleState === "active" && canEditRows,
       canSoftDelete: row.lifecycleState === "active" && canEditRows,
       canRestore: row.lifecycleState === "deleted" && canRestoreRows,
       canPermanentDelete: row.lifecycleState === "deleted" && canPermanentlyDeleteRows,
       showContextAction: row.lifecycleState === "active" && showContextAction,
-      canReplaceSelect: row.lifecycleState === "active" && editorReplace?.isEnabled === true,
+      canReplaceSelect: row.lifecycleState === "active" && canEditRows && editorReplace?.isEnabled === true,
       replaceSelected: selectedReplaceRowIds.has(row.id),
       replaceSelectionDisabled: editorReplace?.status === "saving",
     };
@@ -460,13 +464,22 @@ export function buildEditorScreenViewModel(appState) {
         const isAiTranslating = typeof aiTranslateLoadingText === "string";
         return {
           ...section,
+          canEdit: row.canEdit === true,
           text:
             isAiTranslating
               ? aiTranslateLoadingText
               : section.text,
           isTextEditorOpen:
             section.isTextEditorOpen === true
+            && row.canEdit === true
             && !isAiTranslating,
+          isFootnoteEditorOpen: row.canEdit === true && section.isFootnoteEditorOpen === true,
+          isImageCaptionEditorOpen: row.canEdit === true && section.isImageCaptionEditorOpen === true,
+          isImageUrlEditorOpen: row.canEdit === true && section.isImageUrlEditorOpen === true,
+          isImageUploadEditorOpen: row.canEdit === true && section.isImageUploadEditorOpen === true,
+          showAddFootnoteButton: row.canEdit === true && section.showAddFootnoteButton === true,
+          showAddImageButtons: row.canEdit === true && section.showAddImageButtons === true,
+          showAddImageCaptionButton: row.canEdit === true && section.showAddImageCaptionButton === true,
           ...buildEditorCommentsButtonState({
             row,
             languageCode: section.code,

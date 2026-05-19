@@ -54,7 +54,7 @@ function renderCommentEntry(comment, commentsState, session, commentWriteBlocked
   `;
 }
 
-export function renderCommentsPane(editorChapter, rows, session) {
+export function renderCommentsPane(editorChapter, rows, session, options = {}) {
   const activeRow = rows.find((row) => row.id === editorChapter?.activeRowId) ?? null;
   const commentsState =
     editorChapter?.comments && typeof editorChapter.comments === "object"
@@ -75,7 +75,11 @@ export function renderCommentsPane(editorChapter, rows, session) {
     `;
   }
 
+  const readOnly = options.readOnly === true;
   const commentWriteBlocked =
+    readOnly
+    || activeRow?.canEdit !== true
+    ||
     activeRow?.saveStatus !== "idle"
     || activeRow?.markerSaveState?.status === "saving"
     || activeRow?.textStyleSaveState?.status === "saving";
@@ -110,7 +114,7 @@ export function renderCommentsPane(editorChapter, rows, session) {
   return `
     <div class="translate-comments-pane">
       ${commentsBody}
-      <div class="translate-comments-composer">
+      ${readOnly ? "" : `<div class="translate-comments-composer">
         <div class="translate-comments-composer__field-shell">
           <textarea
             class="translate-comments-composer__field"
@@ -128,7 +132,7 @@ export function renderCommentsPane(editorChapter, rows, session) {
             },
           )}
         </div>
-      </div>
+      </div>`}
     </div>
   `;
 }

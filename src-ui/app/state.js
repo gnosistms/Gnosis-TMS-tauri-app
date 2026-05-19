@@ -873,6 +873,7 @@ export function createInviteUserState() {
     isOpen: false,
     step: "form",
     query: "",
+    role: "Translator",
     selectedUserId: null,
     selectedSuggestion: null,
     suggestions: [],

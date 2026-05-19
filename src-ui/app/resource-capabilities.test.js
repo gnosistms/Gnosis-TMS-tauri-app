@@ -2,10 +2,13 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  canDownloadProjectFiles,
+  canMutateProjectFiles,
   canManageTeamAiSettings,
   canPermanentlyDeleteProjectFiles,
   canCreateRepoResources,
   canPermanentlyDeleteRepoResources,
+  isReadOnlyViewerTeam,
   shouldShowDeletedGlossaryPermanentDelete,
   shouldShowDeletedProjectPermanentDelete,
   shouldShowGlossaryCreationControls,
@@ -56,6 +59,20 @@ test("deleted project file permanent delete stays on the project-management gate
   assert.equal(canPermanentlyDeleteProjectFiles(ownerTeam), true);
   assert.equal(canPermanentlyDeleteProjectFiles(adminTeam), true);
   assert.equal(canPermanentlyDeleteProjectFiles(translatorTeam), false);
+});
+
+test("viewer teams can download project files but cannot mutate resources", () => {
+  const viewerTeam = {
+    canDelete: true,
+    canManageProjects: true,
+    membershipRole: "viewer",
+  };
+
+  assert.equal(isReadOnlyViewerTeam(viewerTeam), true);
+  assert.equal(canDownloadProjectFiles(viewerTeam), true);
+  assert.equal(canMutateProjectFiles(viewerTeam), false);
+  assert.equal(canPermanentlyDeleteProjectFiles(viewerTeam), false);
+  assert.equal(canCreateRepoResources(viewerTeam), false);
 });
 
 test("AI settings visibility stays on the owner-only gate", () => {

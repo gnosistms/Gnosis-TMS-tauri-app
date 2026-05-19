@@ -107,6 +107,20 @@ test("glossary cards render make default action and default label", () => {
   );
 });
 
+test("viewer role keeps glossary downloads but hides mutating actions", () => {
+  setGlossaryScreenState();
+  state.teams[0].membershipRole = "viewer";
+
+  const html = renderGlossariesScreen(state);
+
+  assert.match(html, /data-action="download-glossary:glossary-1"/);
+  assert.equal(actionButtonHtml(html, "make-default-glossary:glossary-1"), "");
+  assert.equal(actionButtonHtml(html, "rename-glossary:glossary-1"), "");
+  assert.equal(actionButtonHtml(html, "delete-glossary:glossary-1"), "");
+  assert.equal(actionButtonHtml(html, "import-glossary"), "");
+  assert.equal(actionButtonHtml(html, "open-new-glossary"), "");
+});
+
 test("glossary refresh keeps read-only and query-backed lifecycle actions enabled", () => {
   setGlossaryScreenState({
     glossariesPage: { isRefreshing: true, writeState: "idle" },

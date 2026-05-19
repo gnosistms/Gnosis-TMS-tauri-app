@@ -1,4 +1,7 @@
 import { actionSuffix, runWithImmediateLoading } from "../action-helpers.js";
+import { state } from "../state.js";
+import { canManageQaLists } from "../qa-list-shared.js";
+import { showNoticeBadge } from "../status-feedback.js";
 import {
   cancelQaListCreation,
   cancelQaListImportModal,
@@ -78,6 +81,29 @@ export function createQaActions(render) {
   ];
 
   return async function handleQaAction(action, event) {
+    const selectedTeam = state.teams.find((team) => team.id === state.selectedTeamId) ?? null;
+    const writeAction =
+      action.startsWith("edit-qa-term:")
+      || action.startsWith("delete-qa-term:")
+      || action.startsWith("rename-qa-list:")
+      || action.startsWith("make-default-qa-list:")
+      || action.startsWith("delete-qa-list:")
+      || action.startsWith("restore-qa-list:")
+      || action.startsWith("delete-deleted-qa-list:")
+      || action === "toggle-qa-term-inline-style:ruby"
+      || action === "open-new-qa-list"
+      || action === "import-qa-list"
+      || action === "select-qa-list-import-file"
+      || action === "open-new-qa-term"
+      || action === "submit-qa-term-editor"
+      || action === "submit-qa-list-creation"
+      || action === "submit-qa-list-rename"
+      || action === "confirm-qa-list-permanent-deletion";
+    if (writeAction && !canManageQaLists(selectedTeam)) {
+      showNoticeBadge("Read-only users cannot modify QA lists.", render, 2600);
+      return true;
+    }
+
     if (action === "toggle-qa-term-inline-style:ruby") {
       const button = event?.target instanceof Element
         ? event.target.closest("[data-qa-term-inline-style-button]")

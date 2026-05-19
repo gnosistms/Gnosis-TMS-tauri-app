@@ -107,6 +107,12 @@ export function updateInviteUserQuery(render, query) {
   }, 200);
 }
 
+export function updateInviteUserRole(render, role) {
+  state.inviteUser.role = role === "Viewer" ? "Viewer" : "Translator";
+  state.inviteUser.error = "";
+  render();
+}
+
 export function selectInviteUserSuggestion(render, suggestionId) {
   const suggestion = state.inviteUser.suggestions.find(
     (item) => String(item.id) === String(suggestionId),
@@ -183,6 +189,7 @@ export async function submitInviteUser(render) {
       inviteeId: selectedSuggestion?.id ?? null,
       inviteeLogin: selectedSuggestion ? selectedSuggestion.login : invitee,
       inviteeEmail: null,
+      role: state.inviteUser.role === "Viewer" ? "viewer" : "translator",
       sessionToken: requireBrokerSession(),
     });
 

@@ -41,7 +41,7 @@ function renderUserCard(user, options = {}) {
   const roleToggleDisabled = roleSyncPending && !roleWritePending;
   const conflictingActionDisabled = roleSyncPending && !roleWriteAwaitingConfirmation;
   const ownerRole = isOwnerRole(user);
-  const displayRole = ownerRole ? "Owner" : user.role === "Admin" ? "Admin" : "Translator";
+  const displayRole = ownerRole ? "Owner" : user.role === "Admin" ? "Admin" : user.role === "Viewer" ? "Viewer" : "Translator";
   const pendingLabel =
     pendingMutation === "promoteOwner"
       ? "Promoting..."

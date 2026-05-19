@@ -79,10 +79,10 @@ function renderGlossaryCard(glossary, options = {}) {
     }),
     isDefaultGlossary
       ? `<span class="text-action-label" data-tooltip="${escapeHtml(DEFAULT_GLOSSARY_LABEL_TOOLTIP)}">Default</span>`
-      : textAction("Make default", `make-default-glossary:${glossary.id}`, {
+      : canManage ? textAction("Make default", `make-default-glossary:${glossary.id}`, {
           disabled: disableLifecycleActions,
           tooltip: DEFAULT_GLOSSARY_TOOLTIP,
-        }),
+        }) : "",
     ...(canManage
         ? [
           textAction("Rename", `rename-glossary:${glossary.id}`, {

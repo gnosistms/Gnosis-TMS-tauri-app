@@ -1,4 +1,6 @@
 import { state } from "../state.js";
+import { canMutateProjectFiles } from "../resource-capabilities.js";
+import { showNoticeBadge } from "../status-feedback.js";
 import {
   clearProjectSearch,
   loadMoreProjectSearchResults,
@@ -64,6 +66,59 @@ import {
   submitProjectExport,
 } from "../project-export-flow.js";
 import { actionSuffix, runWithImmediateLoading } from "../action-helpers.js";
+
+const READ_ONLY_PROJECT_WRITE_ACTIONS = new Set([
+  "open-new-project",
+  "submit-project-import-link",
+  "submit-project-import-pasted-text",
+  "submit-project-add-translation-paste",
+  "continue-project-add-translation-language",
+  "continue-project-add-translation-existing",
+  "continue-project-add-translation-mismatch",
+  "overwrite-conflicted-project-repos",
+  "submit-project-creation",
+  "confirm-project-permanent-deletion",
+  "confirm-chapter-permanent-deletion",
+  "confirm-clear-deleted-files",
+  "submit-project-rename",
+  "submit-chapter-rename",
+]);
+
+const READ_ONLY_PROJECT_WRITE_PREFIXES = [
+  "delete-project:",
+  "add-project-files:",
+  "add-translation-to-file:",
+  "select-project-add-translation-language:",
+  "select-project-import-source-language:",
+  "rename-project:",
+  "rename-file:",
+  "delete-file:",
+  "restore-file:",
+  "delete-deleted-file:",
+  "clear-deleted-files:",
+  "repair-project:",
+  "rebuild-project-repo:",
+  "restore-project:",
+  "delete-deleted-project:",
+];
+
+function selectedTeam() {
+  return state.teams.find((team) => team.id === state.selectedTeamId) ?? null;
+}
+
+function blockReadOnlyProjectWrite(action, render) {
+  if (canMutateProjectFiles(selectedTeam())) {
+    return false;
+  }
+  const blocked =
+    READ_ONLY_PROJECT_WRITE_ACTIONS.has(action)
+    || READ_ONLY_PROJECT_WRITE_PREFIXES.some((prefix) => action.startsWith(prefix));
+  if (!blocked) {
+    return false;
+  }
+  showNoticeBadge("Read-only users cannot modify project files.", render, 2600);
+  return true;
+}
 
 export function createProjectActions(render) {
   const exactActions = {
@@ -192,6 +247,10 @@ export function createProjectActions(render) {
   ];
 
   return async function handleProjectAction(action, event) {
+    if (blockReadOnlyProjectWrite(action, render)) {
+      return true;
+    }
+
     if (exactActions[action]) {
       await exactActions[action]();
       return true;

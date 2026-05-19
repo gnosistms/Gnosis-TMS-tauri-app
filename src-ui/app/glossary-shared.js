@@ -1,6 +1,7 @@
 import { state } from "./state.js";
 import {
   canCreateRepoResources,
+  canMutateProjectFiles,
   canPermanentlyDeleteRepoResources,
 } from "./resource-capabilities.js";
 import { sanitizeGlossaryRubyMarkup } from "./glossary-ruby.js";
@@ -12,7 +13,7 @@ export function selectedTeam(teamId = state.selectedTeamId) {
 }
 
 export function canManageGlossaries(team = selectedTeam()) {
-  return team?.canManageProjects === true;
+  return canMutateProjectFiles(team);
 }
 
 export function canCreateGlossaries(team = selectedTeam()) {

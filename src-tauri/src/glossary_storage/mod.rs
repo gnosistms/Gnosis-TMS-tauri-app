@@ -10,6 +10,7 @@ use uuid::Uuid;
 
 use crate::{
     git_commit::git_commit_as_signed_in_user,
+    installation_access::ensure_installation_allows_writes,
     local_repo_sync_state::{
         read_local_repo_sync_state, upsert_local_repo_sync_state, LocalRepoSyncStateUpdate,
     },
@@ -309,9 +310,12 @@ pub(crate) async fn initialize_gtms_glossary_repo(
     app: AppHandle,
     input: InitializeGlossaryRepoInput,
 ) -> Result<LocalGlossarySummary, String> {
-    tauri::async_runtime::spawn_blocking(move || initialize_gtms_glossary_repo_sync(&app, input))
-        .await
-        .map_err(|error| format!("The glossary initialization worker failed: {error}"))?
+    tauri::async_runtime::spawn_blocking(move || {
+        ensure_installation_allows_writes(&app, input.installation_id)?;
+        initialize_gtms_glossary_repo_sync(&app, input)
+    })
+    .await
+    .map_err(|error| format!("The glossary initialization worker failed: {error}"))?
 }
 
 #[tauri::command]
@@ -319,9 +323,12 @@ pub(crate) async fn import_tmx_to_gtms_glossary_repo(
     app: AppHandle,
     input: ImportTmxToGlossaryRepoInput,
 ) -> Result<LocalGlossarySummary, String> {
-    tauri::async_runtime::spawn_blocking(move || import_tmx_to_gtms_glossary_repo_sync(&app, input))
-        .await
-        .map_err(|error| format!("The glossary import worker failed: {error}"))?
+    tauri::async_runtime::spawn_blocking(move || {
+        ensure_installation_allows_writes(&app, input.installation_id)?;
+        import_tmx_to_gtms_glossary_repo_sync(&app, input)
+    })
+    .await
+    .map_err(|error| format!("The glossary import worker failed: {error}"))?
 }
 
 #[tauri::command]
@@ -358,9 +365,12 @@ pub(crate) async fn rename_gtms_glossary(
     app: AppHandle,
     input: RenameGlossaryInput,
 ) -> Result<LocalGlossarySummary, String> {
-    tauri::async_runtime::spawn_blocking(move || rename_gtms_glossary_sync(&app, input))
-        .await
-        .map_err(|error| format!("The glossary rename worker failed: {error}"))?
+    tauri::async_runtime::spawn_blocking(move || {
+        ensure_installation_allows_writes(&app, input.installation_id)?;
+        rename_gtms_glossary_sync(&app, input)
+    })
+    .await
+    .map_err(|error| format!("The glossary rename worker failed: {error}"))?
 }
 
 #[tauri::command]
@@ -369,6 +379,7 @@ pub(crate) async fn soft_delete_gtms_glossary(
     input: UpdateGlossaryLifecycleInput,
 ) -> Result<LocalGlossarySummary, String> {
     tauri::async_runtime::spawn_blocking(move || {
+        ensure_installation_allows_writes(&app, input.installation_id)?;
         update_gtms_glossary_lifecycle_sync(&app, input, "deleted")
     })
     .await
@@ -381,6 +392,7 @@ pub(crate) async fn restore_gtms_glossary(
     input: UpdateGlossaryLifecycleInput,
 ) -> Result<LocalGlossarySummary, String> {
     tauri::async_runtime::spawn_blocking(move || {
+        ensure_installation_allows_writes(&app, input.installation_id)?;
         update_gtms_glossary_lifecycle_sync(&app, input, "active")
     })
     .await
@@ -392,9 +404,12 @@ pub(crate) async fn purge_local_gtms_glossary_repo(
     app: AppHandle,
     input: UpdateGlossaryLifecycleInput,
 ) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || purge_local_gtms_glossary_repo_sync(&app, input))
-        .await
-        .map_err(|error| format!("The glossary cleanup worker failed: {error}"))?
+    tauri::async_runtime::spawn_blocking(move || {
+        ensure_installation_allows_writes(&app, input.installation_id)?;
+        purge_local_gtms_glossary_repo_sync(&app, input)
+    })
+    .await
+    .map_err(|error| format!("The glossary cleanup worker failed: {error}"))?
 }
 
 #[tauri::command]
@@ -402,9 +417,12 @@ pub(crate) async fn upsert_gtms_glossary_term(
     app: AppHandle,
     input: UpsertGlossaryTermInput,
 ) -> Result<UpsertGlossaryTermResponse, String> {
-    tauri::async_runtime::spawn_blocking(move || upsert_gtms_glossary_term_sync(&app, input))
-        .await
-        .map_err(|error| format!("The glossary term worker failed: {error}"))?
+    tauri::async_runtime::spawn_blocking(move || {
+        ensure_installation_allows_writes(&app, input.installation_id)?;
+        upsert_gtms_glossary_term_sync(&app, input)
+    })
+    .await
+    .map_err(|error| format!("The glossary term worker failed: {error}"))?
 }
 
 #[tauri::command]
@@ -413,6 +431,7 @@ pub(crate) async fn rollback_gtms_glossary_term_upsert(
     input: RollbackGlossaryTermUpsertInput,
 ) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
+        ensure_installation_allows_writes(&app, input.installation_id)?;
         rollback_gtms_glossary_term_upsert_sync(&app, input)
     })
     .await
@@ -424,9 +443,12 @@ pub(crate) async fn delete_gtms_glossary_term(
     app: AppHandle,
     input: DeleteGlossaryTermInput,
 ) -> Result<DeleteGlossaryTermResponse, String> {
-    tauri::async_runtime::spawn_blocking(move || delete_gtms_glossary_term_sync(&app, input))
-        .await
-        .map_err(|error| format!("The glossary term delete worker failed: {error}"))?
+    tauri::async_runtime::spawn_blocking(move || {
+        ensure_installation_allows_writes(&app, input.installation_id)?;
+        delete_gtms_glossary_term_sync(&app, input)
+    })
+    .await
+    .map_err(|error| format!("The glossary term delete worker failed: {error}"))?
 }
 
 fn list_local_gtms_glossaries_sync(

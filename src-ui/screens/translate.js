@@ -32,6 +32,7 @@ import { renderTargetLanguageManagerModal } from "./target-language-manager-moda
 import { renderTranslateSidebar as renderTranslateEditorSidebar } from "./translate-sidebar.js";
 import { resolveSelectedChapterGlossary, selectedProjectsTeam } from "../app/project-context.js";
 import { resolveEditorDeriveGlossariesConfig } from "../app/editor-derive-glossaries-flow.js";
+import { canMutateProjectFiles } from "../app/resource-capabilities.js";
 import {
   renderEditorConflictBanner,
   renderEditorFilterBanner,
@@ -243,8 +244,9 @@ export function renderTranslateHeaderDetail(state) {
     value: MANAGE_CHAPTER_LANGUAGES_OPTION_VALUE,
     label: "Add / Remove",
   }];
+  const writeActionsAvailable = canMutateProjectFiles(selectedProjectsTeam());
   const chapterLanguageManagerOptions =
-    selectedProjectsTeam()?.canManageProjects === true && !offlineMode
+    writeActionsAvailable && !offlineMode
       ? targetLanguageManageOption
       : [];
 
@@ -267,6 +269,7 @@ export function renderTranslateHeaderDetail(state) {
     targetLanguageExtraOptions: chapterLanguageManagerOptions,
     deriveGlossariesAvailable: resolveEditorDeriveGlossariesConfig(frame.editorChapter).canDerive,
     clearTranslationsAvailable: languages.length > 0,
+    writeActionsAvailable,
     offlineMode,
   });
 }
@@ -286,6 +289,7 @@ export function renderTranslateSidebar(state) {
     authSession,
     offlineMode,
   } = buildTranslateScreenFrame(state);
+  const writeActionsAvailable = canMutateProjectFiles(selectedProjectsTeam());
   return renderTranslateEditorSidebar(
     editorChapter,
     contentRows,
@@ -295,6 +299,7 @@ export function renderTranslateSidebar(state) {
     state.aiSettings.actionConfig,
     authSession,
     offlineMode,
+    writeActionsAvailable,
   );
 }
 
