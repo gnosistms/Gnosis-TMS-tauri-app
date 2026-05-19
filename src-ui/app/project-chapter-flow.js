@@ -212,6 +212,7 @@ export function normalizeListedChapter(chapter) {
         ? chapter.selectedTargetLanguageCode
         : null,
     linkedGlossary: normalizeChapterGlossaryLink(chapter.linkedGlossary),
+    hasImportedEditorConflicts: chapter.hasImportedEditorConflicts === true,
   };
 }
 

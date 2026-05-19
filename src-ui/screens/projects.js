@@ -231,6 +231,7 @@ function renderProjectCard(project, expanded, options = {}) {
                 const sourceWordCount = resolveChapterSourceWordCount(chapter);
                 const sourceWordText =
                   sourceWordCount > 0 ? `${sourceWordCount} source words` : "";
+                const hasImportedEditorConflicts = chapter.hasImportedEditorConflicts === true;
 
                 return `
                 <div class="chapter-table__row chapter-table__row--file">
@@ -241,6 +242,11 @@ function renderProjectCard(project, expanded, options = {}) {
                     ${
                       sourceWordText
                         ? `<span class="chapter-table__meta">${escapeHtml(sourceWordText)}</span>`
+                        : ""
+                    }
+                    ${
+                      hasImportedEditorConflicts
+                        ? `<span class="chapter-table__conflict-badge">Has conflicts</span>`
                         : ""
                     }
                   </div>

@@ -689,6 +689,7 @@ pub(super) struct ProjectChapterSummary {
     selected_source_language_code: Option<String>,
     selected_target_language_code: Option<String>,
     linked_glossary: Option<ProjectChapterGlossaryLink>,
+    has_imported_editor_conflicts: bool,
 }
 
 #[derive(Clone, Serialize)]

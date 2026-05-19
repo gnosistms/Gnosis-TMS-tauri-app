@@ -187,6 +187,7 @@ const {
 const {
   loadSelectedChapterEditorData: loadSelectedChapterEditorDataFlow,
 } = await import("./editor-chapter-load-flow.js");
+const { EDITOR_ROW_FILTER_MODE_HAS_CONFLICT } = await import("./editor-filters.js");
 const {
   decryptTeamAiWrappedKey,
   encryptTeamAiPlaintext,
@@ -3774,6 +3775,73 @@ test("loadSelectedChapterEditorData refreshes shared team action preferences whi
     invokeLog.some((entry) => entry.command === "load_team_ai_settings"),
     true,
   );
+});
+
+test("loadSelectedChapterEditorData starts on the conflict filter for chapters with imported conflicts", async () => {
+  resetSessionState();
+  installSelectedTeam({ canDelete: false, login: "tester" });
+  state.screen = "translate";
+  state.selectedProjectId = "project-1";
+  state.selectedChapterId = "chapter-1";
+  state.offline = {
+    ...state.offline,
+    isEnabled: true,
+  };
+  state.projects = [{
+    id: "project-1",
+    name: "Project One",
+    chapters: [{
+      id: "chapter-1",
+      name: "Chapter One",
+      selectedSourceLanguageCode: "es",
+      selectedTargetLanguageCode: "vi",
+      hasImportedEditorConflicts: true,
+      languages: [
+        { code: "es", name: "Spanish" },
+        { code: "vi", name: "Vietnamese" },
+      ],
+      linkedGlossary: null,
+    }],
+  }];
+
+  invokeHandler = async (command) => {
+    if (command === "load_gtms_chapter_editor_data") {
+      return {
+        chapterId: "chapter-1",
+        fileTitle: "Chapter One",
+        languages: [
+          { code: "es", name: "Spanish" },
+          { code: "vi", name: "Vietnamese" },
+        ],
+        selectedSourceLanguageCode: "es",
+        selectedTargetLanguageCode: "vi",
+        sourceWordCounts: { es: 1 },
+        rows: [{
+          rowId: "row-1",
+          fields: {
+            es: "Hola",
+            vi: "",
+          },
+          fieldStates: {},
+        }],
+      };
+    }
+
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  await loadSelectedChapterEditorDataFlow(() => {}, {}, {
+    applyEditorUiState,
+    normalizeEditorRows,
+    applyChapterMetadataToState() {},
+    loadActiveEditorFieldHistory() {},
+    async flushDirtyEditorRows() {
+      return true;
+    },
+    persistEditorChapterSelections() {},
+  });
+
+  assert.equal(state.editorChapter.filters.rowFilterMode, EDITOR_ROW_FILTER_MODE_HAS_CONFLICT);
 });
 
 test("loadAiSettingsPage refreshes a stale ready team state", async () => {

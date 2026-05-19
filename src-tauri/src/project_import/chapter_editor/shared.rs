@@ -45,6 +45,10 @@ pub(super) fn load_project_chapter_summaries(
             chapters_root.display()
         )
     })?;
+    let conflicted_chapter_ids = list_imported_editor_conflict_refs(repo_path)?
+        .into_iter()
+        .map(|entry| entry.chapter_id)
+        .collect::<BTreeSet<_>>();
 
     let mut chapters = Vec::new();
     for entry in entries {
@@ -72,6 +76,8 @@ pub(super) fn load_project_chapter_summaries(
             selected_source_language_code.as_deref(),
         );
         let linked_glossary = linked_chapter_glossary(&chapter_file);
+        let has_imported_editor_conflicts =
+            conflicted_chapter_ids.contains(&chapter_file.chapter_id);
 
         chapters.push(ProjectChapterSummary {
             id: chapter_file.chapter_id,
@@ -86,6 +92,7 @@ pub(super) fn load_project_chapter_summaries(
             selected_source_language_code,
             selected_target_language_code,
             linked_glossary,
+            has_imported_editor_conflicts,
         });
     }
 

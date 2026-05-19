@@ -14,6 +14,7 @@ globalThis.window = globalThis.window ?? {
 
 const {
   applyChapterPendingMutation,
+  normalizeListedChapter,
   preserveChapterLifecyclePatchesInProjectSnapshot,
 } = await import("./project-chapter-flow.js");
 
@@ -68,6 +69,21 @@ test("chapter pending mutations mark lifecycle intent on refreshed snapshots", (
   assert.equal(deleted.items[0].chapters[0].pendingMutation, "softDelete");
   assert.equal(restored.items[0].chapters[0].status, "active");
   assert.equal(restored.items[0].chapters[0].pendingMutation, "restore");
+});
+
+test("normalizeListedChapter preserves imported editor conflict flags", () => {
+  assert.equal(
+    normalizeListedChapter(chapter({ hasImportedEditorConflicts: true })).hasImportedEditorConflicts,
+    true,
+  );
+  assert.equal(
+    normalizeListedChapter(chapter({ hasImportedEditorConflicts: false })).hasImportedEditorConflicts,
+    false,
+  );
+  assert.equal(
+    normalizeListedChapter(chapter()).hasImportedEditorConflicts,
+    false,
+  );
 });
 
 test("chapter lifecycle intent survives stale project refresh snapshots", () => {

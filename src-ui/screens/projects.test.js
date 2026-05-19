@@ -291,6 +291,32 @@ test("projects page opens active chapters from the left title area, not the full
   assert.doesNotMatch(html, /class="text-action" data-action="open-translate:chapter-1"/);
 });
 
+test("projects page marks chapter files with imported editor conflicts", () => {
+  const html = renderProjectsScreen(projectsState({
+    projects: [{
+      id: "project-1",
+      title: "Project",
+      name: "project-repo",
+      status: "active",
+      chapters: [{
+        id: "chapter-1",
+        name: "Chapter",
+        status: "active",
+        linkedGlossary: null,
+        selectedSourceLanguageCode: "es",
+        sourceWordCounts: { es: 10 },
+        hasImportedEditorConflicts: true,
+      }],
+    }],
+  }));
+  const sourceWordIndex = html.indexOf("10 source words");
+  const conflictBadgeIndex = html.indexOf("Has conflicts");
+
+  assert.ok(sourceWordIndex >= 0);
+  assert.ok(conflictBadgeIndex > sourceWordIndex);
+  assert.match(html, /class="chapter-table__conflict-badge">Has conflicts<\/span>/);
+});
+
 test("projects page shows chapter icon actions after glossary in requested order", () => {
   const html = renderProjectsScreen(projectsState());
   const glossaryIndex = html.indexOf("data-chapter-glossary-select");
@@ -327,6 +353,7 @@ test("project chapter filenames truncate responsively on one line", () => {
   assert.doesNotMatch(titleWrapBlock, /overflow: hidden;/);
   assert.match(css, /\.chapter-table__name,\s*\.chapter-table__name-button\s*\{[\s\S]*min-width: 0;[\s\S]*overflow: hidden;[\s\S]*text-overflow: ellipsis;[\s\S]*white-space: nowrap;/);
   assert.match(css, /\.chapter-table__meta\s*\{[\s\S]*flex: 0 0 auto;[\s\S]*white-space: nowrap;/);
+  assert.match(css, /\.chapter-table__conflict-badge\s*\{[\s\S]*flex: 0 0 auto;[\s\S]*white-space: nowrap;/);
 });
 
 test("project open tooltip and cursor are scoped to the title area", () => {

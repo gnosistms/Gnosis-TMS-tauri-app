@@ -11,7 +11,10 @@ import {
   loadEditorGlossaryState,
   normalizeEditorGlossaryLink,
 } from "./editor-glossary-flow.js";
-import { normalizeEditorChapterFilterState } from "./editor-filters.js";
+import {
+  EDITOR_ROW_FILTER_MODE_HAS_CONFLICT,
+  normalizeEditorChapterFilterState,
+} from "./editor-filters.js";
 import { normalizeLanguageSelections } from "./editor-selection-flow.js";
 import { hasActiveEditorField } from "./editor-utils.js";
 import {
@@ -35,6 +38,17 @@ import { findIsoLanguageOption, normalizeSupportedLanguageCode } from "../lib/la
 
 function normalizeEditorChapterFilters(filters) {
   return normalizeEditorChapterFilterState(filters);
+}
+
+function initialEditorChapterFiltersForContext(chapter) {
+  const filters = createEditorChapterFilterState();
+  if (chapter?.hasImportedEditorConflicts === true) {
+    return {
+      ...filters,
+      rowFilterMode: EDITOR_ROW_FILTER_MODE_HAS_CONFLICT,
+    };
+  }
+  return filters;
 }
 
 function editorAiActionConfigRender(render) {
@@ -91,6 +105,12 @@ function applyEditorPayloadToState(
     existingChapter.selectedSourceLanguageCode ?? payload.selectedSourceLanguageCode,
     existingChapter.selectedTargetLanguageCode ?? payload.selectedTargetLanguageCode,
   );
+  const normalizedRows = operations.normalizeEditorRows(payload.rows);
+  const hasImportedEditorConflicts = normalizedRows.some((row) =>
+    row?.freshness === "conflict"
+    || row?.saveStatus === "conflict"
+    || Boolean(row?.conflictState),
+  );
 
   state.editorChapter = operations.applyEditorUiState({
     status: "ready",
@@ -119,7 +139,7 @@ function applyEditorPayloadToState(
     deferredStructuralChanges: false,
     backgroundSyncStatus: "idle",
     backgroundSyncError: "",
-    rows: operations.normalizeEditorRows(payload.rows),
+    rows: normalizedRows,
   }, previousEditorChapter);
 
   operations.applyChapterMetadataToState(payload.chapterId, {
@@ -128,6 +148,7 @@ function applyEditorPayloadToState(
     sourceWordCounts: state.editorChapter.sourceWordCounts,
     selectedSourceLanguageCode,
     selectedTargetLanguageCode,
+    hasImportedEditorConflicts,
   });
 }
 
@@ -255,7 +276,7 @@ export async function loadSelectedChapterEditorData(render, options = {}, operat
     selectionPersistStatus: "idle",
     filters: preserveVisibleRows
       ? normalizeEditorChapterFilters(state.editorChapter.filters)
-      : createEditorChapterFilterState(),
+      : initialEditorChapterFiltersForContext(context.chapter),
     glossary: nextGlossaryState,
     derivedGlossariesByRowId: preserveVisibleRows
       ? state.editorChapter.derivedGlossariesByRowId

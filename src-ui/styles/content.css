@@ -524,6 +524,18 @@
   transition: color 160ms ease;
 }
 
+.chapter-table__conflict-badge {
+  flex: 0 0 auto;
+  border: 1px solid color-mix(in srgb, var(--danger) 42%, transparent);
+  border-radius: 999px;
+  color: var(--danger);
+  font-size: 0.76rem;
+  font-weight: 700;
+  line-height: 1;
+  padding: 5px 9px;
+  white-space: nowrap;
+}
+
 .glossary-pill,
 .select-pill,
 .pill {
