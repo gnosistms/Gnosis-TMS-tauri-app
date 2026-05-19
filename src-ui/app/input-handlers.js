@@ -31,6 +31,7 @@ import {
   updateChapterPermanentDeletionConfirmation,
   updateChapterGlossaryLinks,
   updateChapterRenameName,
+  updateProjectClearDeletedFilesConfirmation,
 } from "./project-chapter-flow.js";
 import {
   updateTeamPermanentDeletionConfirmation,
@@ -101,6 +102,22 @@ function handleProjectPermanentDeleteInput(event) {
   if (deleteButton) {
     deleteButton.disabled =
       normalizedConfirmationValue(input.value) !== normalizedConfirmationValue(state.projectPermanentDeletion.projectName);
+  }
+  return true;
+}
+
+function handleProjectClearDeletedFilesInput(event) {
+  const input = event.target.closest("[data-project-clear-deleted-files-input]");
+  if (!input) {
+    return false;
+  }
+
+  updateProjectClearDeletedFilesConfirmation(input.value);
+  const deleteButton = document.querySelector("[data-project-clear-deleted-files-button]");
+  if (deleteButton) {
+    deleteButton.disabled =
+      normalizedConfirmationValue(input.value)
+      !== normalizedConfirmationValue(state.projectClearDeletedFiles.projectName);
   }
   return true;
 }
@@ -784,6 +801,7 @@ function handleAiActionModelInput(event, render) {
 const inputHandlers = [
   handleProjectCreationInput,
   handleProjectPermanentDeleteInput,
+  handleProjectClearDeletedFilesInput,
   handleTeamRenameInput,
   handleTeamPermanentDeleteInput,
   handleProjectRenameInput,

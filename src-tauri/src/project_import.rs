@@ -66,8 +66,9 @@ use self::{
         ImportXlsxResponse,
     },
     chapter_lifecycle::{
-        permanently_delete_gtms_chapter_sync, rename_gtms_chapter_sync,
-        update_gtms_chapter_lifecycle_sync, RenameChapterInput, RenameChapterResponse,
+        clear_deleted_gtms_chapters_sync, permanently_delete_gtms_chapter_sync,
+        rename_gtms_chapter_sync, update_gtms_chapter_lifecycle_sync, ClearDeletedChaptersInput,
+        ClearDeletedChaptersResponse, RenameChapterInput, RenameChapterResponse,
         UpdateChapterLifecycleInput, UpdateChapterLifecycleResponse,
     },
     link_import::{
@@ -557,4 +558,14 @@ pub(crate) async fn permanently_delete_gtms_chapter(
     tauri::async_runtime::spawn_blocking(move || permanently_delete_gtms_chapter_sync(&app, input))
         .await
         .map_err(|error| format!("The chapter permanent delete worker failed: {error}"))?
+}
+
+#[tauri::command]
+pub(crate) async fn clear_deleted_gtms_chapters(
+    app: AppHandle,
+    input: ClearDeletedChaptersInput,
+) -> Result<ClearDeletedChaptersResponse, String> {
+    tauri::async_runtime::spawn_blocking(move || clear_deleted_gtms_chapters_sync(&app, input))
+        .await
+        .map_err(|error| format!("The clear deleted files worker failed: {error}"))?
 }

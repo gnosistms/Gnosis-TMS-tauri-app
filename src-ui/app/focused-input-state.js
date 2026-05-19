@@ -11,6 +11,7 @@ const SUPPORTED_FOCUSED_INPUT_SELECTORS = [
   "[data-invite-user-input]",
   "[data-team-permanent-delete-input]",
   "[data-project-permanent-delete-input]",
+  "[data-project-clear-deleted-files-input]",
   "[data-glossary-title-input]",
   "[data-glossary-source-language-select]",
   "[data-glossary-target-language-select]",

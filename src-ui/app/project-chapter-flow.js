@@ -13,6 +13,7 @@ import {
   upsertPendingMutation,
 } from "./optimistic-collection.js";
 import {
+  resetProjectClearDeletedFiles,
   resetChapterPermanentDeletion,
   resetChapterRename,
   state,
@@ -388,6 +389,68 @@ function findProjectForRepoSync(projectId) {
     ?? state.deletedProjects.find((project) => project?.id === projectId)
     ?? null
   );
+}
+
+function projectDeletedChapters(project) {
+  return Array.isArray(project?.chapters)
+    ? project.chapters.filter((chapter) => chapter?.status === "deleted")
+    : [];
+}
+
+function updateProjectQueryCache(selectedTeam) {
+  if (!selectedTeam?.id) {
+    return;
+  }
+
+  const currentQueryData = queryClient.getQueryData(projectKeys.byTeam(selectedTeam.id));
+  queryClient.setQueryData(
+    projectKeys.byTeam(selectedTeam.id),
+    createProjectsQuerySnapshot({
+      items: state.projects,
+      deletedItems: state.deletedProjects,
+      repoSyncByProjectId: state.projectRepoSyncByProjectId,
+      glossaries: Array.isArray(currentQueryData?.glossaries)
+        ? currentQueryData.glossaries
+        : state.glossaries,
+      pendingChapterMutations: state.pendingChapterMutations,
+      discovery: state.projectDiscovery,
+    }),
+  );
+}
+
+function removeChaptersFromProjectState(projectId, chapterIds) {
+  const ids = new Set(
+    (Array.isArray(chapterIds) ? chapterIds : [])
+      .map((chapterId) => String(chapterId ?? "").trim())
+      .filter(Boolean),
+  );
+  if (ids.size === 0) {
+    return;
+  }
+
+  const removeFromProject = (project) => {
+    if (project?.id !== projectId || !Array.isArray(project.chapters)) {
+      return project;
+    }
+
+    return {
+      ...project,
+      chapters: project.chapters.filter((chapter) => !ids.has(chapter?.id)),
+    };
+  };
+
+  state.projects = state.projects.map(removeFromProject);
+  state.deletedProjects = state.deletedProjects.map(removeFromProject);
+  if (state.selectedChapterId && ids.has(state.selectedChapterId)) {
+    state.selectedChapterId = null;
+  }
+}
+
+export function applyProjectClearDeletedFilesResult(selectedTeam, projectId, chapterIds) {
+  removeChaptersFromProjectState(projectId, chapterIds);
+  reconcileExpandedDeletedFiles();
+  persistProjectsForTeam(selectedTeam);
+  updateProjectQueryCache(selectedTeam);
 }
 
 function scheduleProjectRepoSyncAfterLocalWrite(render, selectedTeam, project, options = {}) {
@@ -1009,6 +1072,156 @@ export function cancelChapterRename(render) {
 
 export function cancelChapterPermanentDeletion(render) {
   cancelChapterModal(render, resetChapterPermanentDeletion);
+}
+
+export async function openProjectClearDeletedFiles(render, projectId) {
+  const selectedTeam = selectedProjectsTeam();
+  const project = findProjectForRepoSync(projectId);
+
+  if (!project) {
+    setProjectDiscoveryError(render, "Could not find the selected project.");
+    return;
+  }
+
+  if (areResourcePageWritesDisabled(state.projectsPage) || anyProjectWriteIsActive()) {
+    setProjectDiscoveryError(render, chapterWriteBlockedMessage());
+    return;
+  }
+
+  if (state.offline?.isEnabled === true) {
+    setProjectDiscoveryError(render, "You cannot permanently delete files while offline.");
+    return;
+  }
+
+  if (!Number.isFinite(selectedTeam?.installationId)) {
+    setProjectDiscoveryError(render, "Could not determine the selected team.");
+    return;
+  }
+
+  if (!canPermanentlyDeleteProjectFiles(selectedTeam)) {
+    setProjectDiscoveryError(
+      render,
+      "You do not have permission to permanently delete files in this team.",
+    );
+    return;
+  }
+
+  if (await ensureProjectNotTombstoned(render, selectedTeam, project)) {
+    return;
+  }
+
+  if (projectDeletedChapters(project).length === 0) {
+    showProjectsNotice(render, "This project has no deleted files to clear.", 2200);
+    reconcileExpandedDeletedFiles();
+    render();
+    return;
+  }
+
+  state.projectClearDeletedFiles = {
+    isOpen: true,
+    projectId: project.id,
+    projectName: project.title ?? project.name,
+    confirmationText: "",
+    status: "idle",
+    error: "",
+  };
+  render();
+}
+
+export function updateProjectClearDeletedFilesConfirmation(value) {
+  updateChapterModalField(state.projectClearDeletedFiles, "confirmationText", value);
+}
+
+export function cancelProjectClearDeletedFiles(render) {
+  cancelChapterModal(render, resetProjectClearDeletedFiles);
+}
+
+export async function confirmProjectClearDeletedFiles(render) {
+  const selectedTeam = selectedProjectsTeam();
+  const modal = state.projectClearDeletedFiles;
+  const project = findProjectForRepoSync(modal.projectId);
+
+  if (areResourcePageWritesDisabled(state.projectsPage) || anyProjectWriteIsActive()) {
+    modal.status = "idle";
+    modal.error = chapterWriteBlockedMessage();
+    render();
+    return;
+  }
+
+  if (!Number.isFinite(selectedTeam?.installationId) || !project) {
+    modal.status = "idle";
+    modal.error = "Could not find the selected project.";
+    render();
+    return;
+  }
+
+  if (state.offline?.isEnabled === true) {
+    modal.status = "idle";
+    modal.error = "You cannot permanently delete files while offline.";
+    render();
+    return;
+  }
+
+  if (!canPermanentlyDeleteProjectFiles(selectedTeam)) {
+    modal.status = "idle";
+    modal.error = "You do not have permission to permanently delete files in this team.";
+    render();
+    return;
+  }
+
+  if (
+    normalizedConfirmationValue(modal.confirmationText)
+    !== normalizedConfirmationValue(modal.projectName)
+  ) {
+    modal.status = "idle";
+    modal.error = "Project name confirmation does not match.";
+    render();
+    return;
+  }
+
+  if (await ensureProjectNotTombstoned(render, selectedTeam, project)) {
+    resetProjectClearDeletedFiles();
+    render();
+    return;
+  }
+
+  if (projectDeletedChapters(project).length === 0) {
+    modal.status = "idle";
+    modal.error = "This project has no deleted files to clear.";
+    render();
+    return;
+  }
+
+  modal.status = "loading";
+  modal.error = "";
+  state.projectsPage.writeState = "submitting";
+  showProjectsStatus(render, "Deleting files permanently...");
+  render();
+
+  try {
+    const result = await invoke("clear_deleted_gtms_chapters", {
+      input: {
+        installationId: selectedTeam.installationId,
+        projectId: project.id,
+        repoName: project.name,
+      },
+    });
+    const chapterIds = Array.isArray(result?.chapterIds) ? result.chapterIds : [];
+    applyProjectClearDeletedFilesResult(selectedTeam, project.id, chapterIds);
+    resetProjectClearDeletedFiles();
+    showProjectsNotice(render, "Deleted files cleared.");
+    scheduleProjectRepoSyncAfterLocalWrite(render, selectedTeam, project, {
+      syncText: "Syncing project repo...",
+      refreshText: "Refreshing file list...",
+    });
+  } catch (error) {
+    modal.status = "idle";
+    modal.error = error?.message ?? String(error);
+  } finally {
+    state.projectsPage.writeState = "idle";
+    clearProjectsStatus(render);
+    render();
+  }
 }
 
 export function toggleDeletedFiles(render, projectId) {

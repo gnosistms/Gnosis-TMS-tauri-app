@@ -22,10 +22,13 @@ import {
   toggleDeletedProjects,
 } from "../project-flow.js";
 import {
+  cancelProjectClearDeletedFiles,
   cancelChapterPermanentDeletion,
   cancelChapterRename,
+  confirmProjectClearDeletedFiles,
   confirmChapterPermanentDeletion,
   deleteChapter,
+  openProjectClearDeletedFiles,
   openChapterPermanentDeletion,
   openChapterRename,
   restoreChapter,
@@ -67,6 +70,7 @@ export function createProjectActions(render) {
     "open-new-project": () => createProjectForSelectedTeam(render),
     "cancel-project-creation": () => cancelProjectCreation(render),
     "cancel-project-permanent-deletion": () => cancelProjectPermanentDeletion(render),
+    "cancel-clear-deleted-files": () => cancelProjectClearDeletedFiles(render),
     "cancel-project-rename": () => cancelProjectRename(render),
     "cancel-chapter-permanent-deletion": () => cancelChapterPermanentDeletion(render),
     "cancel-chapter-rename": () => cancelChapterRename(render),
@@ -163,6 +167,10 @@ export function createProjectActions(render) {
       handler: (chapterId) => openChapterPermanentDeletion(render, chapterId),
     },
     {
+      prefix: "clear-deleted-files:",
+      handler: (projectId) => openProjectClearDeletedFiles(render, projectId),
+    },
+    {
       prefix: "repair-project:",
       handler: async (projectId, event) =>
         runWithImmediateLoading(event, "Repairing...", () => repairProjectRepoBinding(render, projectId)),
@@ -202,6 +210,12 @@ export function createProjectActions(render) {
     if (action === "confirm-chapter-permanent-deletion") {
       await runWithImmediateLoading(event, "Deleting...", () =>
         confirmChapterPermanentDeletion(render),
+      );
+      return true;
+    }
+    if (action === "confirm-clear-deleted-files") {
+      await runWithImmediateLoading(event, "Deleting...", () =>
+        confirmProjectClearDeletedFiles(render),
       );
       return true;
     }

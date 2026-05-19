@@ -477,6 +477,7 @@ test("project refresh keeps top-level lifecycle actions enabled and heavy action
 
   assert.match(actionButtonHtml(html, "open-new-project"), /disabled/);
   assert.match(actionButtonHtml(html, "add-project-files:project-1"), /disabled/);
+  assert.match(actionButtonHtml(html, "clear-deleted-files:project-1"), /disabled/);
   assert.match(actionButtonHtml(html, "delete-deleted-file:deleted-chapter-1"), /disabled/);
   assert.match(actionButtonHtml(html, "delete-deleted-project:deleted-project"), /disabled/);
 });
@@ -526,6 +527,102 @@ test("project write in progress disables top-level lifecycle actions", () => {
   assert.match(actionButtonHtml(html, "rename-file:chapter-1"), /disabled/);
   assert.match(actionButtonHtml(html, "delete-file:chapter-1"), /disabled/);
   assert.match(actionButtonHtml(html, "restore-file:deleted-chapter-1"), /disabled/);
+  assert.match(actionButtonHtml(html, "clear-deleted-files:project-1"), /disabled/);
+});
+
+test("expanded deleted files section shows clear all action below hide deleted files", () => {
+  const html = renderProjectsScreen(projectsState({
+    projects: [{
+      id: "project-1",
+      title: "Project",
+      name: "project-repo",
+      status: "active",
+      chapters: [
+        {
+          id: "chapter-1",
+          name: "Chapter",
+          status: "active",
+          linkedGlossary: null,
+          sourceWordCount: 10,
+        },
+        {
+          id: "deleted-chapter-1",
+          name: "Deleted Chapter",
+          status: "deleted",
+          linkedGlossary: null,
+          sourceWordCount: 10,
+        },
+      ],
+    }],
+    expandedDeletedFiles: new Set(["project-1"]),
+  }));
+
+  const hideIndex = html.indexOf("Hide deleted files");
+  const clearIndex = html.indexOf('data-action="clear-deleted-files:project-1"');
+  const tableIndex = html.indexOf("chapter-table chapter-table--deleted");
+
+  assert.ok(hideIndex >= 0);
+  assert.ok(clearIndex > hideIndex);
+  assert.ok(tableIndex > clearIndex);
+});
+
+test("collapsed deleted files section does not show clear all action", () => {
+  const html = renderProjectsScreen(projectsState({
+    projects: [{
+      id: "project-1",
+      title: "Project",
+      name: "project-repo",
+      status: "active",
+      chapters: [
+        {
+          id: "chapter-1",
+          name: "Chapter",
+          status: "active",
+          linkedGlossary: null,
+          sourceWordCount: 10,
+        },
+        {
+          id: "deleted-chapter-1",
+          name: "Deleted Chapter",
+          status: "deleted",
+          linkedGlossary: null,
+          sourceWordCount: 10,
+        },
+      ],
+    }],
+    expandedDeletedFiles: new Set(),
+  }));
+
+  assert.equal(actionButtonHtml(html, "clear-deleted-files:project-1"), "");
+});
+
+test("clear deleted files modal requires project name confirmation", () => {
+  const unmatchedHtml = renderProjectsScreen(projectsState({
+    projectClearDeletedFiles: {
+      isOpen: true,
+      projectId: "project-1",
+      projectName: "Project",
+      confirmationText: "",
+      status: "idle",
+      error: "",
+    },
+  }));
+  const matchedHtml = renderProjectsScreen(projectsState({
+    projectClearDeletedFiles: {
+      isOpen: true,
+      projectId: "project-1",
+      projectName: "Project",
+      confirmationText: "Project",
+      status: "idle",
+      error: "",
+    },
+  }));
+
+  assert.match(unmatchedHtml, /CLEAR DELETED FILES/);
+  assert.match(unmatchedHtml, /Permanently remove all deleted files/);
+  assert.match(unmatchedHtml, /type the project name:/);
+  assert.match(actionButtonHtml(unmatchedHtml, "confirm-clear-deleted-files"), /disabled/);
+  assert.doesNotMatch(actionButtonHtml(matchedHtml, "confirm-clear-deleted-files"), /disabled/);
 });
 
 test("coordinator writes keep lifecycle and glossary controls enabled while heavy actions stay disabled", () => {

@@ -21,6 +21,7 @@ import { projectsSearchModeIsActiveForState, projectsSearchResultCountLabel } fr
 import { renderProjectCreationModal } from "./project-creation-modal.js";
 import { renderChapterPermanentDeletionModal } from "./chapter-permanent-deletion-modal.js";
 import { renderChapterRenameModal } from "./chapter-rename-modal.js";
+import { renderProjectClearDeletedFilesModal } from "./project-clear-deleted-files-modal.js";
 import { renderProjectPermanentDeletionModal } from "./project-permanent-deletion-modal.js";
 import { renderProjectImportModal } from "./project-import-modal.js";
 import { renderProjectExportModal } from "./project-export-modal.js";
@@ -290,6 +291,15 @@ function renderProjectCard(project, expanded, options = {}) {
                 ${
                   showDeletedFiles
                     ? `
+                      ${
+                        canManageProjects && canPermanentlyDeleteFiles
+                          ? `<div class="chapter-table__actions">
+                              ${textAction("Clear all deleted files", `clear-deleted-files:${project.id}`, {
+                                disabled: offlineMode || heavyActionsDisabled || disableContentActions,
+                              })}
+                            </div>`
+                          : ""
+                      }
                       <div class="chapter-table chapter-table--deleted">
                         ${deletedFiles
                           .map(
@@ -717,6 +727,7 @@ export function renderProjectsScreen(state) {
     renderChapterRenameModal(state) +
     renderProjectRenameModal(state) +
     renderProjectPermanentDeletionModal(state) +
+    renderProjectClearDeletedFilesModal(state) +
     renderProjectImportModal(state) +
     renderProjectAddTranslationModal(state) +
     renderProjectExportModal(state)

@@ -101,6 +101,7 @@ export const state = {
   inviteUser: createInviteUserState(),
   projectRename: createProjectRenameState(),
   projectPermanentDeletion: createProjectPermanentDeletionState(),
+  projectClearDeletedFiles: createProjectClearDeletedFilesState(),
   chapterRename: createChapterRenameState(),
   chapterPermanentDeletion: createChapterPermanentDeletionState(),
   glossaryCreation: createGlossaryCreationState(),
@@ -975,6 +976,14 @@ export function createProjectPermanentDeletionState() {
   });
 }
 
+export function createProjectClearDeletedFilesState() {
+  return createEntityModalState({
+    projectId: null,
+    projectName: "",
+    confirmationText: "",
+  });
+}
+
 export function resetTeamSetup() {
   state.teamSetup = createTeamSetupState();
 }
@@ -1017,6 +1026,10 @@ export function resetChapterPermanentDeletion() {
 
 export function resetProjectPermanentDeletion() {
   state.projectPermanentDeletion = createProjectPermanentDeletionState();
+}
+
+export function resetProjectClearDeletedFiles() {
+  state.projectClearDeletedFiles = createProjectClearDeletedFilesState();
 }
 
 export function resetProjectsSearch() {
@@ -1136,6 +1149,7 @@ export function resetSessionState() {
   resetChapterRename();
   resetChapterPermanentDeletion();
   resetProjectPermanentDeletion();
+  resetProjectClearDeletedFiles();
   resetProjectsSearch();
   resetGlossaryCreation();
   resetGlossaryImport();
