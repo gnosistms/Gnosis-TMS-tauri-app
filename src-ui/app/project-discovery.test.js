@@ -112,9 +112,14 @@ function installProjectDiscoveryInvokeMock({
     repoName: "project-repo",
     chapters: [{ id: "chapter-1", name: "Chapter", status: "active" }],
   }],
+  localProjectFilesResults = null,
+  repairResults = [{ issues: [], autoRepairedCount: 0 }],
+  repoSyncSnapshots = [],
   failFirstProjectMetadataRead = false,
 } = {}) {
   let projectMetadataReads = 0;
+  let localProjectFileReads = 0;
+  let repairReads = 0;
   invokeHandler = async (command) => {
     if (command === "list_local_gnosis_project_metadata_records") {
       projectMetadataReads += 1;
@@ -124,6 +129,11 @@ function installProjectDiscoveryInvokeMock({
       return projectMetadataReads === 1 ? localMetadata : remoteMetadata;
     }
     if (command === "list_local_gtms_project_files") {
+      if (Array.isArray(localProjectFilesResults)) {
+        const index = Math.min(localProjectFileReads, localProjectFilesResults.length - 1);
+        localProjectFileReads += 1;
+        return localProjectFilesResults[index] ?? [];
+      }
       return localProjectFiles;
     }
     if (command === "list_gnosis_projects_for_installation") {
@@ -133,7 +143,9 @@ function installProjectDiscoveryInvokeMock({
       return null;
     }
     if (command === "inspect_and_migrate_local_repo_bindings") {
-      return { issues: [], autoRepairedCount: 0 };
+      const index = Math.min(repairReads, repairResults.length - 1);
+      repairReads += 1;
+      return repairResults[index] ?? { issues: [], autoRepairedCount: 0 };
     }
     if (command === "list_local_gtms_glossaries") {
       return [];
@@ -148,7 +160,7 @@ function installProjectDiscoveryInvokeMock({
       return [];
     }
     if (command === "reconcile_project_repo_sync_states" || command === "list_project_repo_sync_states") {
-      return [];
+      return repoSyncSnapshots;
     }
     return null;
   };
@@ -460,6 +472,60 @@ test("project loading renders local metadata and files before remote refresh fin
 
   assert.deepEqual(state.projects.map((project) => project.title), ["Remote Project"]);
   assert.ok(renders.some((snapshot) => snapshot.projects.includes("Remote Project")));
+});
+
+test("project loading clears stale missing-local-repo repair after repo sync clones files", async () => {
+  setupProjectDiscoveryFlowTest();
+  const missingLocalRepoIssue = {
+    kind: "project",
+    issueType: "missingLocalRepo",
+    resourceId: "project-1",
+    expectedRepoName: "project-repo",
+    message: "Team metadata references this project, but its local repo is missing.",
+  };
+  installProjectDiscoveryInvokeMock({
+    localMetadata: [projectMetadataRecord({ title: "Remote Project" })],
+    remoteMetadata: [projectMetadataRecord({ title: "Remote Project" })],
+    remoteProjectsPromise: Promise.resolve([{
+      id: "project-1",
+      name: "project-repo",
+      title: "Remote Project",
+      fullName: "team/project-repo",
+      defaultBranchName: "main",
+      defaultBranchHeadOid: "remote-head",
+    }]),
+    localProjectFilesResults: [
+      [],
+      [],
+      [{
+        projectId: "project-1",
+        repoName: "project-repo",
+        chapters: [{ id: "chapter-1", name: "Chapter", status: "active" }],
+      }],
+    ],
+    repairResults: [
+      { issues: [missingLocalRepoIssue], autoRepairedCount: 0 },
+      { issues: [missingLocalRepoIssue], autoRepairedCount: 0 },
+      { issues: [], autoRepairedCount: 0 },
+    ],
+    repoSyncSnapshots: [{
+      projectId: "project-1",
+      repoName: "project-repo",
+      status: "upToDate",
+      message: null,
+    }],
+  });
+
+  await loadDiscoveredTeamProjects(
+    () => {},
+    "team-1",
+    projectDiscoveryOptions(),
+  );
+
+  assert.equal(state.projects.length, 1);
+  assert.equal(state.projects[0].resolutionState, "");
+  assert.equal(state.projects[0].repairIssueType, "");
+  assert.equal(state.projects[0].chapters.length, 1);
 });
 
 test("project loading stays loading when local metadata is empty and remote is pending", async () => {

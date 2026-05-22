@@ -251,6 +251,34 @@ function mergeProjectsWithLocalFiles(snapshot, listings = [], targets = [], opti
   };
 }
 
+async function repairAutoRepairableRepoIssuesAndRescan(selectedTeam, repairIssues) {
+  if (!Array.isArray(repairIssues) || repairIssues.length === 0) {
+    return repairIssues;
+  }
+
+  await repairAutoRepairableRepoBindings(selectedTeam, repairIssues);
+  const refreshedRepairResult = await inspectAndMigrateLocalRepoBindings(selectedTeam).catch(() => null);
+  return refreshedRepairResult?.issues ?? repairIssues;
+}
+
+async function refreshRepoRepairIssuesAfterSync(selectedTeam, repairIssues) {
+  const refreshedRepairResult = await inspectAndMigrateLocalRepoBindings(selectedTeam).catch(() => null);
+  if (!refreshedRepairResult) {
+    return {
+      repairLoaded: false,
+      repairIssues,
+    };
+  }
+
+  return {
+    repairLoaded: true,
+    repairIssues: await repairAutoRepairableRepoIssuesAndRescan(
+      selectedTeam,
+      refreshedRepairResult.issues ?? [],
+    ),
+  };
+}
+
 async function purgeTombstonedProjectsForTeam(selectedTeam, projects, metadataRecords, options = {}) {
   const visibleProjects = Array.isArray(projects) ? projects : [];
   const tombstoneRecords = (Array.isArray(metadataRecords) ? metadataRecords : []).filter(options.projectMetadataRecordIsTombstone);
@@ -554,15 +582,13 @@ export async function loadTeamProjects(render, teamId = state.selectedTeamId, op
         ? metadataResult.value
         : [];
     const metadataLoaded = metadataResult.status === "fulfilled";
-    const repairLoaded = repairResult.status === "fulfilled";
+    let repairLoaded = repairResult.status === "fulfilled";
     let repairIssues =
       repairResult.status === "fulfilled"
         ? repairResult.value?.issues ?? []
         : [];
     if (repairIssues.length > 0) {
-      await repairAutoRepairableRepoBindings(selectedTeam, repairIssues);
-      const refreshedRepairResult = await inspectAndMigrateLocalRepoBindings(selectedTeam).catch(() => null);
-      repairIssues = refreshedRepairResult?.issues ?? repairIssues;
+      repairIssues = await repairAutoRepairableRepoIssuesAndRescan(selectedTeam, repairIssues);
     }
     if (remoteLoaded && metadataLoaded) {
       const metadataRepaired = await repairProjectMetadataFromRemoteRename(
@@ -631,7 +657,7 @@ export async function loadTeamProjects(render, teamId = state.selectedTeamId, op
         ? mergedProjects
         : [...localProjectSnapshot.items, ...localProjectSnapshot.deletedItems];
     options.setProjectUiDebug(render, "Refreshing local project data...");
-    const mappedProjects = nextVisibleProjects.map((project) => ({
+    let mappedProjects = nextVisibleProjects.map((project) => ({
       ...project,
       chapters: Array.isArray(project.chapters) ? project.chapters : [],
       remoteState: project.remoteState ?? "linked",
@@ -700,6 +726,57 @@ export async function loadTeamProjects(render, teamId = state.selectedTeamId, op
     await reconcileProjectRepoSyncStates(render, selectedTeam, mappedProjects, {
       shouldAbort: () => !isProjectDiscoveryCurrent(selectedTeam.id, requestId, syncVersionAtStart),
     });
+    if (
+      await abortProjectDiscoveryIfStale(
+        render,
+        selectedTeam.id,
+        requestId,
+        syncVersionAtStart,
+        true,
+      )
+    ) {
+      return;
+    }
+    const refreshedRepairScan = await refreshRepoRepairIssuesAfterSync(selectedTeam, repairIssues);
+    if (refreshedRepairScan.repairLoaded) {
+      repairLoaded = true;
+      repairIssues = refreshedRepairScan.repairIssues;
+      const repairedMergedProjects = mergeMetadataDiscoveryProjects({
+        metadataRecords: projectMetadataRecords,
+        remoteProjects,
+        localProjects: discoveredLocalProjects,
+        metadataLoaded,
+        remoteLoaded,
+        repairLoaded,
+        repairIssues,
+      });
+      const repairedVisibleProjects =
+        repairedMergedProjects.length > 0 || metadataLoaded || remoteLoaded
+          ? repairedMergedProjects
+          : [...localProjectSnapshot.items, ...localProjectSnapshot.deletedItems];
+      mappedProjects = repairedVisibleProjects.map((project) => ({
+        ...project,
+        chapters: Array.isArray(project.chapters) ? project.chapters : [],
+        remoteState: project.remoteState ?? "linked",
+      }));
+      const repairedSnapshot = applyPendingMutations(
+        {
+          items: mappedProjects.filter((project) => project.lifecycleState !== "deleted"),
+          deletedItems: mappedProjects.filter((project) => project.lifecycleState === "deleted"),
+        },
+        state.pendingChapterMutations,
+        options.applyChapterPendingMutation,
+      );
+      const preservedRepairedSnapshot =
+        typeof options.preserveProjectLifecyclePatches === "function"
+          ? options.preserveProjectLifecyclePatches(repairedSnapshot)
+          : repairedSnapshot;
+      applyProjectSnapshotToState(preservedRepairedSnapshot, {
+        reconcileExpandedDeletedFiles: options.reconcileExpandedDeletedFiles,
+      });
+      options.persistProjectsForTeam(selectedTeam);
+      render();
+    }
     if (
       await abortProjectDiscoveryIfStale(
         render,

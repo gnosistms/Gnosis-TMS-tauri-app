@@ -39,17 +39,21 @@ export function createPageSyncController({
     async complete(render) {
       if (countConcurrent) {
         if (activeSyncCount <= 0) {
-          return;
-        }
-
-        activeSyncCount -= 1;
-        if (activeSyncCount > 0) {
-          return;
+          if (getState()?.status !== "syncing") {
+            return;
+          }
+        } else {
+          activeSyncCount -= 1;
+          if (activeSyncCount > 0) {
+            return;
+          }
         }
       }
 
       clearResetTimer();
-      const elapsed = syncingStartedAt ? performance.now() - syncingStartedAt : 0;
+      const stateStartedAt = getState()?.startedAt;
+      const startedAt = syncingStartedAt || (Number.isFinite(stateStartedAt) ? stateStartedAt : 0);
+      const elapsed = startedAt ? performance.now() - startedAt : 0;
       const remaining = Math.max(0, minSyncingDurationMs - elapsed);
       if (remaining > 0) {
         await new Promise((resolve) => window.setTimeout(resolve, remaining));
@@ -57,6 +61,7 @@ export function createPageSyncController({
 
       setState({ status: "upToDate", startedAt: null });
       syncingStartedAt = 0;
+      activeSyncCount = 0;
       render?.({ scope: "status-surface" });
       resetTimer = window.setTimeout(() => {
         setState(createSyncState());
