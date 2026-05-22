@@ -74,6 +74,8 @@ const {
 const { queryClient, teamKeys } = await import("./query-client.js");
 const { saveStoredTeamRecords, setActiveStorageLogin } = await import("./team-storage.js");
 const { resetTeamWriteCoordinator } = await import("./team-write-coordinator.js");
+const { loadUserTeams } = await import("./team-flow/sync.js");
+const { renderTeamsScreen } = await import("../screens/teams/index.js");
 
 function team(overrides = {}) {
   return {
@@ -205,6 +207,34 @@ test("createTeamsQueryOptions fetches remote installations and updates persisten
   assert.equal(invokeLog.length, 1);
   const stored = readPersistentValue("gnosis-tms-team-records:owner", []);
   assert.equal(stored[0].name, "Team One Remote");
+});
+
+test("loadUserTeams clears team refresh state after successful remote refresh", async () => {
+  installFixture();
+  state.screen = "teams";
+  saveStoredTeamRecords([team({ name: "Cached Team" })]);
+  let renderCount = 0;
+  let installationFetchCount = 0;
+  let lastFullPageHtml = "";
+  invokeHandler = async (command) => {
+    assert.equal(command, "list_accessible_github_app_installations");
+    installationFetchCount += 1;
+    return [installation()];
+  };
+
+  await loadUserTeams((options = {}) => {
+    renderCount += 1;
+    if (options?.scope !== "status-surface") {
+      lastFullPageHtml = renderTeamsScreen(state);
+    }
+  });
+
+  assert.equal(state.teamsPage.isRefreshing, false);
+  assert.equal(state.orgDiscovery.status, "ready");
+  assert.equal(state.teams[0].name, "Team One Remote");
+  assert.equal(installationFetchCount, 1);
+  assert.doesNotMatch(lastFullPageHtml, /title-icon-button[^"]*\bis-spinning\b/);
+  assert.ok(renderCount >= 2);
 });
 
 test("refreshCurrentUserTeamAccess updates stale selected team permissions", async () => {

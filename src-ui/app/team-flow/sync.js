@@ -15,11 +15,9 @@ import {
 } from "../project-flow.js";
 import { consumePendingSingleTeamAutoOpen } from "./auto-open.js";
 import {
-  createTeamsQueryOptions,
   ensureTeamsQueryObserver,
   seedTeamsQueryFromCache,
 } from "../team-query.js";
-import { queryClient } from "../query-client.js";
 
 export async function loadUserTeams(render) {
   const authLogin = typeof state.auth.session?.login === "string"
@@ -34,6 +32,7 @@ export async function loadUserTeams(render) {
     });
     state.selectedTeamId = resolveNextSelectedTeamId(state.selectedTeamId, state.teams);
     state.orgDiscovery = { status: "idle", error: "" };
+    state.teamsPage.isRefreshing = false;
     render();
     return;
   }
@@ -52,9 +51,14 @@ export async function loadUserTeams(render) {
   render();
 
   try {
-    ensureTeamsQueryObserver(render, { authLogin });
-    await queryClient.fetchQuery(createTeamsQueryOptions({ authLogin }));
+    const teamsQuerySubscription = ensureTeamsQueryObserver(render, { authLogin });
+    const teamsQueryObserver = teamsQuerySubscription.observer;
+    await teamsQueryObserver.refetch({
+      throwOnError: true,
+      cancelRefetch: false,
+    });
     await completePageSync(render);
+    render();
     const shouldAutoOpenSingleTeam = consumePendingSingleTeamAutoOpen(
       state.auth,
       state.screen,
@@ -68,8 +72,10 @@ export async function loadUserTeams(render) {
       return;
     }
   } catch (error) {
+    state.teamsPage.isRefreshing = false;
     if (await handleSyncFailure(classifySyncError(error), { render })) {
       failPageSync();
+      render();
       return;
     }
     state.orgDiscovery = {
