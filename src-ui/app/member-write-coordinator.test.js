@@ -149,6 +149,57 @@ test("member write coordinator coalesces repeated role changes to the latest rol
   assert.deepEqual(seenRoles, ["Admin", "Translator"]);
 });
 
+test("member write coordinator does not overlay failed role updates", async () => {
+  requestMemberWriteIntent({
+    key: memberRoleIntentKey(team.id, "alice"),
+    scope: memberUserWriteScope(team, "alice"),
+    teamId: team.id,
+    username: "alice",
+    type: "memberRole",
+    value: { username: "alice", role: "Viewer" },
+  }, {
+    run: async () => {
+      throw new Error("Broker rejected the role update.");
+    },
+    onError: () => null,
+  });
+  await delay();
+  await delay();
+
+  const snapshot = applyMemberWriteIntentsToSnapshot({
+    members: [member({ role: "Translator" })],
+  });
+
+  assert.equal(snapshot.members[0].role, "Translator");
+  assert.equal(snapshot.members[0].pendingMutation, undefined);
+  assert.equal(snapshot.members[0].roleSyncPending, undefined);
+});
+
+test("member write coordinator does not overlay failed removals", async () => {
+  requestMemberWriteIntent({
+    key: memberRemovalIntentKey(team.id, "alice"),
+    scope: memberUserWriteScope(team, "alice"),
+    teamId: team.id,
+    username: "alice",
+    type: "memberRemoval",
+    value: { username: "alice" },
+  }, {
+    run: async () => {
+      throw new Error("Broker rejected the removal.");
+    },
+    onError: () => null,
+  });
+  await delay();
+  await delay();
+
+  const snapshot = applyMemberWriteIntentsToSnapshot({
+    members: [member({ role: "Translator" })],
+  });
+
+  assert.equal(snapshot.members.length, 1);
+  assert.equal(snapshot.members[0].username, "alice");
+});
+
 test("member removal and owner promotion supersede pending role updates", async () => {
   const release = deferred();
 

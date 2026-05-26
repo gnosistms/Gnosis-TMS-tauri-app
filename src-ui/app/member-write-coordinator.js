@@ -8,6 +8,7 @@ const writeIntents = createWriteIntentCoordinator({
   defaultScope: "member-writes:default",
   label: "Member",
 });
+const OVERLAY_WRITE_STATUSES = new Set(["pending", "running", "pendingConfirmation"]);
 
 function normalizeMembersSnapshot(snapshot) {
   return Array.isArray(snapshot?.members)
@@ -80,7 +81,7 @@ export function applyMemberWriteIntentsToSnapshot(snapshot) {
   let nextMembers = normalizeMembersSnapshot(snapshot);
 
   for (const intent of writeIntents.getIntents()) {
-    if (intent.status === "confirmed") {
+    if (!OVERLAY_WRITE_STATUSES.has(intent.status)) {
       continue;
     }
     const username = intent.username ?? intent.value?.username ?? "";

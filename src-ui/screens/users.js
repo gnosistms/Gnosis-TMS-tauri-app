@@ -51,7 +51,7 @@ function renderMemberRoleSelect(user, options = {}) {
   return `
     <label class="member-role-control"${tooltipAttributes}>
       <select
-        class="member-role-select"
+        class="field__select member-role-select"
         data-member-role-select
         data-member-username="${escapeHtml(user.username)}"
         aria-label="Account type for ${escapeHtml(user.username)}"

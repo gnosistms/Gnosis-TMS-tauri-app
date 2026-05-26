@@ -541,6 +541,55 @@ test("viewer role changes send the generic broker role and refresh teams before 
   );
 });
 
+test("failed role updates roll back dropdown and card pending state", async () => {
+  installFixture({
+    teams: [
+      teamRecord({
+        canDelete: true,
+        canManageMembers: true,
+        canManageProjects: true,
+      }),
+    ],
+    users: [
+      {
+        id: "owner",
+        username: "owner",
+        name: "Owner",
+        role: "Owner",
+        isCurrentUser: true,
+      },
+      {
+        id: "japanGnosis",
+        username: "japanGnosis",
+        name: "Japan Gnosis",
+        role: "Translator",
+      },
+    ],
+  });
+
+  invokeHandler = async (command) => {
+    if (command === "set_organization_member_role_for_installation") {
+      throw new Error("Broker rejected the role update.");
+    }
+
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  await updateOrganizationMemberRole(() => {}, "japanGnosis", "Viewer");
+
+  const member = state.users.find((user) => user.username === "japanGnosis");
+  assert.equal(member?.role, "Translator");
+  assert.notEqual(member?.roleSyncPending, true);
+  assert.notEqual(member?.pendingMutation, "updateRole");
+  assert.equal(state.statusBadges.right.visible, false);
+
+  const html = renderUsersScreen(state);
+  assert.match(html, /@japanGnosis · Translator/);
+  assert.match(html, /data-member-username="japanGnosis"[\s\S]*<option value="Translator" selected>/);
+  assert.doesNotMatch(html, /@japanGnosis · Viewer/);
+  assert.doesNotMatch(html, /@japanGnosis · Translator · Updating\.\.\./);
+});
+
 test("owner demotion requires username confirmation before invoking Tauri", async () => {
   installFixture({
     teams: [
