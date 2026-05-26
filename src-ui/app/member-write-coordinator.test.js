@@ -68,10 +68,41 @@ test("member write coordinator overlays pending role updates", async () => {
   });
 
   assert.equal(snapshot.members[0].role, "Admin");
-  assert.equal(snapshot.members[0].pendingMutation, "makeAdmin");
+  assert.equal(snapshot.members[0].pendingMutation, "updateRole");
 
   release.resolve();
   await delay();
+});
+
+test("member write coordinator overlays all supported role updates", async () => {
+  for (const role of ["Viewer", "Translator", "Admin", "Owner"]) {
+    resetMemberWriteCoordinator();
+    const release = deferred();
+
+    requestMemberWriteIntent({
+      key: memberRoleIntentKey(team.id, "alice"),
+      scope: memberUserWriteScope(team, "alice"),
+      teamId: team.id,
+      username: "alice",
+      type: "memberRole",
+      value: { username: "alice", role },
+    }, {
+      run: async () => {
+        await release.promise;
+      },
+    });
+    await delay();
+
+    const snapshot = applyMemberWriteIntentsToSnapshot({
+      members: [member({ role: "Translator" })],
+    });
+    assert.equal(snapshot.members[0].role, role);
+    assert.equal(snapshot.members[0].pendingMutation, "updateRole");
+    assert.equal(snapshot.members[0].roleSyncPending, true);
+
+    release.resolve();
+    await delay();
+  }
 });
 
 test("member write coordinator coalesces repeated role changes to the latest role", async () => {
@@ -110,7 +141,7 @@ test("member write coordinator coalesces repeated role changes to the latest rol
     members: [member({ role: "Translator" })],
   });
   assert.equal(snapshot.members[0].role, "Translator");
-  assert.equal(snapshot.members[0].pendingMutation, "revokeAdmin");
+  assert.equal(snapshot.members[0].pendingMutation, "updateRole");
 
   releaseFirst.resolve();
   await delay();

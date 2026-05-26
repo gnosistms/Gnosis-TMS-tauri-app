@@ -5,14 +5,22 @@ import { beginPageSync, completePageSync, failPageSync } from "./page-sync.js";
 import { clearScopedSyncBadge, showNoticeBadge, showScopedSyncBadge } from "./status-feedback.js";
 import {
   resetTeamMemberOwnerPromotion,
+  resetTeamMemberOwnerDemotion,
   resetTeamMemberRemoval,
   state,
 } from "./state.js";
 import { classifySyncError } from "./sync-error.js";
 import { handleSyncFailure } from "./sync-recovery.js";
 import { loadUserTeams } from "./team-flow/sync.js";
-import { isOwnerRole } from "./team-member-permissions.js";
-import { buildFallbackMembers } from "./member-shared.js";
+import { countOwners, isOwnerRole } from "./team-member-permissions.js";
+import {
+  buildFallbackMembers,
+  memberRoleToWireRole,
+  MIN_OWNER_COUNT_MESSAGE,
+  normalizeOrganizationMemberRole,
+  ownerCountAfterRoleChange,
+  OWNER_SELF_ROLE_CHANGE_MESSAGE,
+} from "./member-shared.js";
 import {
   createMembersQueryOptions,
   ensureMembersQueryObserver,
@@ -59,8 +67,8 @@ function snapshotUsers(users = []) {
   return users.map((user) => ({ ...user }));
 }
 
-function updateLocalAdminRole(users = [], username, shouldBeAdmin, options = {}) {
-  const nextRole = shouldBeAdmin ? "Admin" : "Translator";
+function updateLocalMemberRole(users = [], username, role, options = {}) {
+  const nextRole = normalizeOrganizationMemberRole(role);
   const roleSyncPending = options.pending === true;
   let didUpdate = false;
   const nextUsers = users.map((user) => {
@@ -72,15 +80,21 @@ function updateLocalAdminRole(users = [], username, shouldBeAdmin, options = {})
     return {
       ...user,
       role: nextRole,
-    roleSyncPending,
-    pendingMutation: roleSyncPending ? (shouldBeAdmin ? "makeAdmin" : "revokeAdmin") : null,
-  };
+      roleSyncPending,
+      pendingMutation: roleSyncPending ? "updateRole" : null,
+      pendingError: "",
+    };
   });
 
   return {
     didUpdate,
     users: nextUsers,
   };
+}
+
+function confirmationMatchesUsername(value, username) {
+  return String(value ?? "").trim().replace(/^@/, "").toLowerCase()
+    === String(username ?? "").trim().replace(/^@/, "").toLowerCase();
 }
 
 function shouldUpdateVisibleUsers(teamId) {
@@ -133,11 +147,64 @@ export function primeUsersForTeam(teamId = state.selectedTeamId) {
 }
 
 export async function makeOrganizationAdmin(render, username) {
-  await updateOrganizationAdminMembership(render, username, true);
+  await updateOrganizationMemberRole(render, username, "Admin");
 }
 
 export async function revokeOrganizationAdmin(render, username) {
-  await updateOrganizationAdminMembership(render, username, false);
+  await updateOrganizationMemberRole(render, username, "Translator");
+}
+
+export function updateTeamMemberOwnerDemotionConfirmation(render, confirmationText) {
+  state.teamMemberOwnerDemotion.confirmationText = confirmationText;
+  state.teamMemberOwnerDemotion.error = "";
+  render();
+}
+
+export function updateTeamMemberRemovalConfirmation(render, confirmationText) {
+  state.teamMemberRemoval.confirmationText = confirmationText;
+  state.teamMemberRemoval.error = "";
+  render();
+}
+
+export function cancelTeamMemberOwnerDemotion(render) {
+  resetTeamMemberOwnerDemotion();
+  render();
+}
+
+export function updateOrganizationMemberRole(render, username, nextRoleValue) {
+  const selectedTeam = getSelectedTeam();
+  const member = state.users.find((user) => user?.username === username);
+  const nextRole = normalizeOrganizationMemberRole(nextRoleValue);
+  if (!teamHasInstallation(selectedTeam) || selectedTeam.canDelete !== true || !member) {
+    return;
+  }
+
+  const currentRole = normalizeOrganizationMemberRole(member.role);
+  if (currentRole === nextRole) {
+    render();
+    return;
+  }
+
+  if (member.isCurrentUser) {
+    showMembersNotice(render, OWNER_SELF_ROLE_CHANGE_MESSAGE, 3200);
+    return;
+  }
+
+  if (isOwnerRole(member) && nextRole !== "Owner") {
+    if (ownerCountAfterRoleChange(state.users, username, nextRole) < 1) {
+      showMembersNotice(render, MIN_OWNER_COUNT_MESSAGE, 3200);
+      return;
+    }
+    openTeamMemberOwnerDemotion(render, username, nextRole);
+    return;
+  }
+
+  if (nextRole === "Owner") {
+    openTeamMemberOwnerPromotion(render, username);
+    return;
+  }
+
+  return updateOrganizationMemberRoleViaBroker(render, username, nextRole);
 }
 
 export function openTeamMemberOwnerPromotion(render, username) {
@@ -168,6 +235,82 @@ export function openTeamMemberOwnerPromotion(render, username) {
 export function cancelTeamMemberOwnerPromotion(render) {
   resetTeamMemberOwnerPromotion();
   render();
+}
+
+export function openTeamMemberOwnerDemotion(render, username, targetRole) {
+  const selectedTeam = getSelectedTeam();
+  const member = state.users.find((user) => user?.username === username);
+  const nextRole = normalizeOrganizationMemberRole(targetRole);
+  if (
+    !teamHasInstallation(selectedTeam) ||
+    selectedTeam.canDelete !== true ||
+    !member ||
+    member.isCurrentUser ||
+    !isOwnerRole(member) ||
+    nextRole === "Owner"
+  ) {
+    return;
+  }
+
+  if (ownerCountAfterRoleChange(state.users, username, nextRole) < 1) {
+    showMembersNotice(render, MIN_OWNER_COUNT_MESSAGE, 3200);
+    return;
+  }
+
+  state.teamMemberOwnerDemotion = {
+    isOpen: true,
+    status: "idle",
+    error: "",
+    teamId: selectedTeam.id,
+    teamName: selectedTeam.name || selectedTeam.githubOrg,
+    username: member.username,
+    memberName: member.name || member.username,
+    targetRole: nextRole,
+    confirmationText: "",
+  };
+  render();
+}
+
+export async function confirmTeamMemberOwnerDemotion(render) {
+  const selectedTeam = getSelectedTeam();
+  const demotion = state.teamMemberOwnerDemotion;
+  const username = String(demotion?.username ?? "").trim();
+  const targetRole = normalizeOrganizationMemberRole(demotion?.targetRole);
+  if (!teamHasInstallation(selectedTeam) || selectedTeam.id !== demotion?.teamId || !username) {
+    resetTeamMemberOwnerDemotion();
+    render();
+    return;
+  }
+
+  const member = state.users.find((user) => user?.username === username);
+  if (!member || member.isCurrentUser || !isOwnerRole(member) || targetRole === "Owner") {
+    resetTeamMemberOwnerDemotion();
+    render();
+    return;
+  }
+
+  if (ownerCountAfterRoleChange(state.users, username, targetRole) < 1) {
+    state.teamMemberOwnerDemotion.error = MIN_OWNER_COUNT_MESSAGE;
+    render();
+    return;
+  }
+
+  if (!confirmationMatchesUsername(demotion.confirmationText, username)) {
+    state.teamMemberOwnerDemotion.error = `Type ${username} to confirm this role change.`;
+    render();
+    return;
+  }
+
+  state.teamMemberOwnerDemotion.status = "loading";
+  state.teamMemberOwnerDemotion.error = "";
+  render();
+  await updateOrganizationMemberRoleViaBroker(render, username, targetRole, {
+    confirmationUsername: demotion.confirmationText,
+    ownerDemotion: {
+      ...demotion,
+      targetRole,
+    },
+  });
 }
 
 export async function confirmTeamMemberOwnerPromotion(render) {
@@ -295,7 +438,17 @@ export async function confirmTeamMemberOwnerPromotion(render) {
 export function openTeamMemberRemoval(render, username) {
   const selectedTeam = getSelectedTeam();
   const member = state.users.find((user) => user?.username === username);
-  if (!selectedTeam || !member || member.isCurrentUser || isOwnerRole(member)) {
+  if (!selectedTeam || !member || member.isCurrentUser) {
+    return;
+  }
+
+  const ownerRemoval = isOwnerRole(member);
+  if (ownerRemoval && selectedTeam.canDelete !== true) {
+    return;
+  }
+
+  if (ownerRemoval && countOwners(state.users) <= 1) {
+    showMembersNotice(render, MIN_OWNER_COUNT_MESSAGE, 3200);
     return;
   }
 
@@ -307,6 +460,8 @@ export function openTeamMemberRemoval(render, username) {
     teamName: selectedTeam.name || selectedTeam.githubOrg,
     username: member.username,
     memberName: member.name || member.username,
+    requiresConfirmation: ownerRemoval,
+    confirmationText: "",
   };
   render();
 }
@@ -333,8 +488,27 @@ export async function confirmTeamMemberRemoval(render) {
   }
 
   const member = state.users.find((user) => user?.username === username);
-  if (!member || member.isCurrentUser || isOwnerRole(member)) {
+  if (!member || member.isCurrentUser) {
     resetTeamMemberRemoval();
+    render();
+    return;
+  }
+
+  const ownerRemoval = isOwnerRole(member);
+  if (ownerRemoval && selectedTeam.canDelete !== true) {
+    state.teamMemberRemoval.error = "Only the team owner can remove another owner.";
+    render();
+    return;
+  }
+
+  if (ownerRemoval && countOwners(state.users) <= 1) {
+    state.teamMemberRemoval.error = MIN_OWNER_COUNT_MESSAGE;
+    render();
+    return;
+  }
+
+  if (ownerRemoval && !confirmationMatchesUsername(removal.confirmationText, username)) {
+    state.teamMemberRemoval.error = `Type ${username} to confirm removal.`;
     render();
     return;
   }
@@ -370,6 +544,7 @@ export async function confirmTeamMemberRemoval(render) {
           installationId: selectedTeam.installationId,
           orgLogin: selectedTeam.githubOrg,
           username,
+          confirmationUsername: ownerRemoval ? removal.confirmationText : null,
           sessionToken: requireBrokerSession(),
         });
       },
@@ -410,6 +585,8 @@ export async function confirmTeamMemberRemoval(render) {
           teamName: selectedTeam.name || selectedTeam.githubOrg,
           username: member.username,
           memberName: member.name || member.username,
+          requiresConfirmation: ownerRemoval,
+          confirmationText: removal.confirmationText ?? "",
         };
         render();
         resolve();
@@ -418,25 +595,25 @@ export async function confirmTeamMemberRemoval(render) {
   });
 }
 
-async function updateOrganizationAdminMembership(render, username, shouldBeAdmin) {
+async function updateOrganizationMemberRoleViaBroker(render, username, nextRoleValue, options = {}) {
   const selectedTeam = getSelectedTeam();
   if (!teamHasInstallation(selectedTeam)) {
     return;
   }
   const selectedTeamIdAtStart = selectedTeam.id;
 
-  if (selectedTeam.canManageMembers !== true) {
+  if (selectedTeam.canDelete !== true) {
     state.userDiscovery = {
       status: "error",
-      error: "Only the team owner can change admin access.",
+      error: "Only the team owner can change member roles.",
     };
     render();
     return;
   }
 
+  const nextRole = normalizeOrganizationMemberRole(nextRoleValue);
   const previousUsers = snapshotUsers(state.users);
-  const nextRole = shouldBeAdmin ? "Admin" : "Translator";
-  const pendingMutation = shouldBeAdmin ? "makeAdmin" : "revokeAdmin";
+  const ownerDemotion = options.ownerDemotion ?? null;
 
   return new Promise((resolve) => {
     requestMemberWriteIntent({
@@ -452,16 +629,17 @@ async function updateOrganizationAdminMembership(render, username, shouldBeAdmin
       },
     }, {
       applyOptimistic: () => {
-        const optimisticUsers = updateLocalAdminRole(previousUsers, username, shouldBeAdmin, {
+        const optimisticUsers = updateLocalMemberRole(previousUsers, username, nextRole, {
           pending: true,
         });
         beginPageSync();
+        resetTeamMemberOwnerDemotion();
         if (optimisticUsers.didUpdate) {
           queryClient.setQueryData(
             memberKeys.byTeam(selectedTeam.id),
             (queryData) => patchMemberQueryData(queryData, username, {
               role: nextRole,
-              pendingMutation,
+              pendingMutation: "updateRole",
               pendingError: "",
               roleSyncPending: true,
             }),
@@ -474,25 +652,18 @@ async function updateOrganizationAdminMembership(render, username, shouldBeAdmin
       },
       run: async () => {
         await waitForNextPaint();
-        if (shouldBeAdmin) {
-          await invoke("add_organization_admin_for_installation", {
-            installationId: selectedTeam.installationId,
-            orgLogin: selectedTeam.githubOrg,
-            username,
-            sessionToken: requireBrokerSession(),
-          });
-        } else {
-          await invoke("revoke_organization_admin_for_installation", {
-            installationId: selectedTeam.installationId,
-            orgLogin: selectedTeam.githubOrg,
-            username,
-            sessionToken: requireBrokerSession(),
-          });
-        }
+        await invoke("set_organization_member_role_for_installation", {
+          installationId: selectedTeam.installationId,
+          orgLogin: selectedTeam.githubOrg,
+          username,
+          role: memberRoleToWireRole(nextRole),
+          confirmationUsername: options.confirmationUsername ?? null,
+          sessionToken: requireBrokerSession(),
+        });
       },
       onSuccess: async () => {
         try {
-          const optimisticUsers = updateLocalAdminRole(state.users, username, shouldBeAdmin, {
+          const optimisticUsers = updateLocalMemberRole(state.users, username, nextRole, {
             pending: true,
           });
           persistTeamUsers(selectedTeam, optimisticUsers.users, {
@@ -502,7 +673,7 @@ async function updateOrganizationAdminMembership(render, username, shouldBeAdmin
             memberKeys.byTeam(selectedTeam.id),
             (queryData) => patchMemberQueryData(queryData, username, {
               role: nextRole,
-              pendingMutation,
+              pendingMutation: "updateRole",
               pendingError: "",
               roleSyncPending: true,
             }),
@@ -542,13 +713,16 @@ async function updateOrganizationAdminMembership(render, username, shouldBeAdmin
           return;
         }
         failPageSync();
-        showNoticeBadge(
-          shouldBeAdmin
-            ? `Could not make @${username} an admin.`
-            : `Could not revoke admin access for @${username}.`,
-          render,
-          2600,
-        );
+        if (ownerDemotion) {
+          state.teamMemberOwnerDemotion = {
+            ...ownerDemotion,
+            isOpen: true,
+            status: "idle",
+            error: error?.message ?? String(error),
+          };
+        } else {
+          showNoticeBadge(`Could not update @${username}'s role.`, render, 2600);
+        }
         render();
         resolve();
       },

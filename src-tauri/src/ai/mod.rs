@@ -160,7 +160,7 @@ pub(crate) fn build_review_prompt(request: &AiReviewRequest) -> String {
             let mut sections = Vec::new();
             sections.push(review_response_contract().to_string());
             sections.push(
-                "Task:\nReview the latest target-language sections against the source-language sections for translation accuracy, spelling, and grammar."
+                "Task:\nReview the latest target-language sections against the source-language sections for translation accuracy, spelling, and grammar. When evaluating translation accuracy, respect the user's choice of words unless there is a real error in the translation. Pay attention to the target-language history. Notice which edits are from humans and which are from AI. If a human has edited an AI translation, do not revert those human changes unless they introduced a real translation, spelling, or grammar error."
                     .to_string(),
             );
             sections.push(
@@ -615,6 +615,10 @@ fn format_assistant_target_language_history(
     let mut lines = vec![
         "What follows is the edit history of the target-language text, sorted oldest first. The final revision is the current target-language draft in the editor. Use this history as context when it is relevant to the user's request.\n\
 \n\
+Origin labels:\n\
+- human: a human-created or human-edited revision. Respect these choices as intentional unless they contain a real translation, spelling, or grammar error.\n\
+- AI: an AI-generated revision. If later human edits changed it, do not revert to the earlier AI wording unless the human edit introduced a real error.\n\
+\n\
 Source labels:\n\
 - current_user: the person currently asking you for help. These edits are strong evidence of the user's preferences, terminology choices, style, and intentional translation decisions.\n\
 - other_user: another human editor. These edits may also reflect intentional translation decisions.\n\
@@ -640,7 +644,17 @@ Source labels:\n\
         } else {
             source_label
         };
-        let mut metadata = vec![format!("source={source}")];
+        let origin = if source_type == "ai_model"
+            || entry
+                .ai_model
+                .as_ref()
+                .is_some_and(|value| !value.trim().is_empty())
+        {
+            "AI"
+        } else {
+            "human"
+        };
+        let mut metadata = vec![format!("origin={origin}"), format!("source={source}")];
         if !source_type.is_empty() && source_type != source {
             metadata.push(format!("sourceType={source_type}"));
         }
@@ -1891,12 +1905,18 @@ mod tests {
         assert!(prompt
             .contains("<languages>\nsource: Spanish (es)\ntarget: Vietnamese (vi)\n</languages>"));
         assert!(prompt.contains("<target_language_history>"));
-        assert!(prompt.contains("file_import"));
+        assert!(prompt.contains("origin=human, source=file_import"));
         assert!(prompt.contains("<reference_translations>"));
         assert!(prompt.contains("English: Current English reference"));
         assert!(prompt.contains("<source_text>\nFuente actual\n</source_text>"));
         assert!(prompt.contains("<glossary_info format=\"json\">"));
         assert!(prompt.contains("Review the latest target-language sections against the source-language sections for translation accuracy, spelling, and grammar."));
+        assert!(prompt.contains(
+            "respect the user's choice of words unless there is a real error in the translation"
+        ));
+        assert!(prompt.contains(
+            "If a human has edited an AI translation, do not revert those human changes"
+        ));
         assert!(prompt.contains(r#""sourceTerm":"Fuente""#));
         assert!(prompt.contains(r#""targetVariants":[{"text":"nguon"}]"#));
         assert!(prompt.contains("<review_item>"));
@@ -2394,10 +2414,12 @@ mod tests {
         assert!(prompt.contains("<target_language_history>"));
         assert!(prompt
             .contains("The final revision is the current target-language draft in the editor."));
-        assert!(prompt.contains("1. source=file_import, committedBy=current_user"));
-        assert!(prompt.contains("2. source=GPT 5.4, sourceType=ai_model, committedBy=current_user"));
+        assert!(prompt.contains("1. origin=human, source=file_import, committedBy=current_user"));
+        assert!(prompt.contains(
+            "2. origin=AI, source=GPT 5.4, sourceType=ai_model, committedBy=current_user"
+        ));
         assert!(prompt.contains("aiModel=gpt-5.4"));
-        assert!(prompt.contains("3. source=current_user, committedBy=current_user"));
+        assert!(prompt.contains("3. origin=human, source=current_user, committedBy=current_user"));
         assert!(prompt.contains("text:\nBan dich nguoi dung"));
         assert!(!prompt.contains("Current target:"));
     }

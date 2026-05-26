@@ -1,5 +1,6 @@
 import { escapeHtml, loadingPrimaryButton, secondaryButton } from "../lib/ui.js";
 import { formatErrorForDisplay } from "../app/error-display.js";
+import { MEMBER_ROLE_OPTIONS, normalizeOrganizationMemberRole } from "../app/member-shared.js";
 
 function renderSuggestionItem(suggestion, isSelected) {
   const avatar = suggestion.avatarUrl
@@ -92,6 +93,10 @@ export function renderInviteUserModal(state) {
     selectedSuggestion?.name && selectedSuggestion.name !== selectedSuggestion.login
       ? `<span class="user-suggestion__name">${escapeHtml(selectedSuggestion.name)}</span>`
       : "";
+  const selectedRole = normalizeOrganizationMemberRole(invite.role);
+  const roleOptions = MEMBER_ROLE_OPTIONS.map((role) =>
+    `<option value="${escapeHtml(role)}"${selectedRole === role ? " selected" : ""}>${escapeHtml(role)}</option>`
+  ).join("");
 
   return `
     <div class="modal-backdrop">
@@ -161,9 +166,8 @@ export function renderInviteUserModal(state) {
             </label>
             <label class="field">
               <span class="field__label">Role</span>
-              <select class="field__input" data-invite-user-role-select ${isSubmitting ? "disabled" : ""}>
-                <option value="Translator"${invite.role !== "Viewer" ? " selected" : ""}>Translator</option>
-                <option value="Viewer"${invite.role === "Viewer" ? " selected" : ""}>Viewer</option>
+              <select class="field__select" data-invite-user-role-select ${isSubmitting ? "disabled" : ""}>
+                ${roleOptions}
               </select>
             </label>
           </div>

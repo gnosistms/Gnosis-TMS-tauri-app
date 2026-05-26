@@ -34,6 +34,11 @@ import {
   updateProjectClearDeletedFilesConfirmation,
 } from "./project-chapter-flow.js";
 import {
+  updateOrganizationMemberRole,
+  updateTeamMemberOwnerDemotionConfirmation,
+  updateTeamMemberRemovalConfirmation,
+} from "./team-members-flow.js";
+import {
   updateTeamPermanentDeletionConfirmation,
   updateTeamRenameName,
 } from "./team-setup-flow.js";
@@ -207,6 +212,32 @@ function handleInviteUserInput(event, render) {
   }
 
   updateInviteUserQuery(render, input.value);
+  return true;
+}
+
+function handleTeamMemberInput(event, render) {
+  const ownerDemotionConfirmation = event.target.closest("[data-team-member-owner-demotion-confirmation-input]");
+  if (ownerDemotionConfirmation) {
+    updateTeamMemberOwnerDemotionConfirmation(render, ownerDemotionConfirmation.value);
+    return true;
+  }
+
+  const removalConfirmation = event.target.closest("[data-team-member-removal-confirmation-input]");
+  if (removalConfirmation) {
+    updateTeamMemberRemovalConfirmation(render, removalConfirmation.value);
+    return true;
+  }
+
+  if (event.type !== "change") {
+    return false;
+  }
+
+  const roleSelect = event.target.closest("[data-member-role-select]");
+  if (!roleSelect) {
+    return false;
+  }
+
+  updateOrganizationMemberRole(render, roleSelect.dataset.memberUsername ?? "", roleSelect.value);
   return true;
 }
 
@@ -817,6 +848,7 @@ const inputHandlers = [
   handleChapterRenameInput,
   handleChapterPermanentDeleteInput,
   handleInviteUserInput,
+  handleTeamMemberInput,
   handleGlossaryTitleInput,
   handleGlossarySourceLanguageInput,
   handleGlossaryTargetLanguageInput,

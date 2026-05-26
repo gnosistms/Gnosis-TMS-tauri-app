@@ -2,6 +2,7 @@ import {
   cloneWriteIntentValue,
   createWriteIntentCoordinator,
 } from "./write-intent-coordinator.js";
+import { normalizeOrganizationMemberRole } from "./member-shared.js";
 
 const writeIntents = createWriteIntentCoordinator({
   defaultScope: "member-writes:default",
@@ -88,10 +89,12 @@ export function applyMemberWriteIntentsToSnapshot(snapshot) {
     }
 
     if (intent.type === "memberRole") {
+      const role = normalizeOrganizationMemberRole(intent.value?.role);
       nextMembers = patchMember(nextMembers, username, {
-        role: intent.value?.role,
-        pendingMutation: intent.value?.role === "Admin" ? "makeAdmin" : "revokeAdmin",
+        role,
+        pendingMutation: "updateRole",
         pendingError: "",
+        roleSyncPending: true,
       });
       continue;
     }
@@ -130,7 +133,7 @@ function intentMatchesSnapshot(intent, members) {
     return false;
   }
   if (intent.type === "memberRole") {
-    return member.role === intent.value?.role;
+    return normalizeOrganizationMemberRole(member.role) === normalizeOrganizationMemberRole(intent.value?.role);
   }
   if (intent.type === "memberOwnerPromotion") {
     return member.role === "Owner";

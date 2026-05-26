@@ -64,12 +64,16 @@ function installFixture(users = [member()]) {
   };
 }
 
+function roleSelectPattern(username, extra = "") {
+  return new RegExp(`data-member-role-select[\\s\\S]*data-member-username="${username}"[\\s\\S]*${extra}`);
+}
+
 test.afterEach(() => {
   resetMemberWriteCoordinator();
   resetSessionState();
 });
 
-test("members screen keeps pending role toggles reversible while blocking conflicting row actions", () => {
+test("members screen keeps pending role dropdowns reversible while blocking conflicting row actions", () => {
   installFixture([
     member({ username: "alice", name: "Alice", role: "Translator", pendingMutation: "revokeAdmin" }),
     member({ id: "bob", username: "bob", name: "Bob", role: "Translator" }),
@@ -78,15 +82,16 @@ test("members screen keeps pending role toggles reversible while blocking confli
   const html = renderUsersScreen(state);
 
   assert.match(html, /Translator · Updating\.\.\./);
-  assert.match(html, /data-action="make-admin:alice"/);
-  assert.doesNotMatch(html, /data-action="make-admin:alice"[^>]*aria-disabled="true"/);
-  assert.match(html, /data-action="open-team-member-owner-promotion:alice"[^>]*aria-disabled="true"/);
+  assert.match(html, roleSelectPattern("alice", '<option value="Viewer">Viewer</option><option value="Translator" selected>Translator</option><option value="Admin">Admin</option><option value="Owner">Owner</option>'));
+  assert.doesNotMatch(html, /data-member-username="alice"[^>]*disabled/);
   assert.match(html, /data-action="open-team-member-removal:alice"[^>]*aria-disabled="true"/);
-  assert.match(html, /data-action="make-admin:bob"/);
-  assert.doesNotMatch(html, /data-action="make-admin:bob"[^>]*aria-disabled="true"/);
+  assert.match(html, roleSelectPattern("bob", '<option value="Viewer">Viewer</option><option value="Translator" selected>Translator</option><option value="Admin">Admin</option><option value="Owner">Owner</option>'));
+  assert.doesNotMatch(html, /data-member-username="bob"[^>]*disabled/);
+  assert.doesNotMatch(html, /data-action="make-admin:/);
+  assert.doesNotMatch(html, /data-action="open-team-member-owner-promotion:/);
 });
 
-test("members screen re-enables owner and remove actions during role confirmation refresh", async () => {
+test("members screen re-enables role dropdown and remove action during role confirmation refresh", async () => {
   installFixture([
     member({ username: "alice", name: "Alice", role: "Translator", pendingMutation: "revokeAdmin" }),
   ]);
@@ -106,10 +111,8 @@ test("members screen re-enables owner and remove actions during role confirmatio
   const html = renderUsersScreen(state);
 
   assert.match(html, /Translator · Updating\.\.\./);
-  assert.match(html, /data-action="make-admin:alice"/);
-  assert.doesNotMatch(html, /data-action="make-admin:alice"[^>]*aria-disabled="true"/);
-  assert.match(html, /data-action="open-team-member-owner-promotion:alice"/);
-  assert.doesNotMatch(html, /data-action="open-team-member-owner-promotion:alice"[^>]*aria-disabled="true"/);
+  assert.match(html, roleSelectPattern("alice"));
+  assert.doesNotMatch(html, /data-member-username="alice"[^>]*disabled/);
   assert.match(html, /data-action="open-team-member-removal:alice"/);
   assert.doesNotMatch(html, /data-action="open-team-member-removal:alice"[^>]*aria-disabled="true"/);
 });
@@ -157,11 +160,11 @@ test("members screen keeps row actions enabled during safe background refresh", 
   const html = renderUsersScreen(state);
 
   assert.match(html, /title-icon-button__icon is-spinning/);
-  assert.match(html, /data-action="make-admin:alice"/);
-  assert.doesNotMatch(html, /data-action="make-admin:alice"[^>]*aria-disabled="true"/);
+  assert.match(html, roleSelectPattern("alice"));
+  assert.doesNotMatch(html, /data-member-username="alice"[^>]*disabled/);
 });
 
-test("members screen treats raw member roles as translators with admin promotion available", () => {
+test("members screen treats raw member roles as translators with role dropdown available", () => {
   installFixture([
     member({ username: "alice", name: "Alice", role: "member" }),
   ]);
@@ -169,6 +172,45 @@ test("members screen treats raw member roles as translators with admin promotion
   const html = renderUsersScreen(state);
 
   assert.match(html, /@alice · Translator/);
-  assert.match(html, /data-action="make-admin:alice"/);
+  assert.match(html, roleSelectPattern("alice", '<option value="Viewer">Viewer</option><option value="Translator" selected>Translator</option><option value="Admin">Admin</option><option value="Owner">Owner</option>'));
   assert.doesNotMatch(html, /data-action="revoke-admin:alice"/);
+});
+
+test("members screen shows no self owner actions when current user is the only owner", () => {
+  installFixture([
+    member({ username: "owner", name: "Owner", role: "Owner", isCurrentUser: true }),
+  ]);
+
+  const html = renderUsersScreen(state);
+
+  assert.doesNotMatch(html, /data-member-username="owner"/);
+  assert.doesNotMatch(html, /open-current-team-leave:team-1/);
+  assert.doesNotMatch(html, /You cannot change your own Owner role/);
+  assert.doesNotMatch(html, /Team owners can not change their own account type/);
+});
+
+test("members screen shows disabled self role dropdown and leave action when another owner exists", () => {
+  installFixture([
+    member({ username: "owner", name: "Owner", role: "Owner", isCurrentUser: true }),
+    member({ username: "alice", name: "Alice", role: "Owner" }),
+  ]);
+
+  const html = renderUsersScreen(state);
+
+  assert.match(html, /data-member-username="owner"[\s\S]*disabled/);
+  assert.match(html, /Team owners can not change their own account type\. If you need to change this, ask another owner to do it for you\./);
+  assert.match(html, /data-action="open-current-team-leave:team-1"/);
+  assert.doesNotMatch(html, /You cannot change your own Owner role/);
+  assert.match(html, /data-member-username="alice"/);
+});
+
+test("members screen blocks changing or removing the last non-current owner", () => {
+  installFixture([
+    member({ username: "owner", name: "Owner", role: "Owner" }),
+  ]);
+
+  const html = renderUsersScreen(state);
+
+  assert.match(html, /data-member-username="owner"[\s\S]*disabled/);
+  assert.match(html, /data-action="open-team-member-removal:owner"[^>]*aria-disabled="true"/);
 });

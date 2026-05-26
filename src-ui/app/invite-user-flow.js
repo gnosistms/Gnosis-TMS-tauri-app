@@ -4,6 +4,7 @@ import { resetInviteUser, state } from "./state.js";
 import { classifySyncError } from "./sync-error.js";
 import { handleSyncFailure } from "./sync-recovery.js";
 import { invalidateMembersQueryAfterMutation } from "./member-query.js";
+import { memberRoleToWireRole, normalizeOrganizationMemberRole } from "./member-shared.js";
 import { clearMembersStatus, showMembersNotice, showMembersStatus } from "./team-members-flow.js";
 
 let inviteUserSearchTimeout = null;
@@ -108,7 +109,7 @@ export function updateInviteUserQuery(render, query) {
 }
 
 export function updateInviteUserRole(render, role) {
-  state.inviteUser.role = role === "Viewer" ? "Viewer" : "Translator";
+  state.inviteUser.role = normalizeOrganizationMemberRole(role);
   state.inviteUser.error = "";
   render();
 }
@@ -189,7 +190,7 @@ export async function submitInviteUser(render) {
       inviteeId: selectedSuggestion?.id ?? null,
       inviteeLogin: selectedSuggestion ? selectedSuggestion.login : invitee,
       inviteeEmail: null,
-      role: state.inviteUser.role === "Viewer" ? "viewer" : "translator",
+      role: memberRoleToWireRole(state.inviteUser.role),
       sessionToken: requireBrokerSession(),
     });
 

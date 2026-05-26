@@ -11,6 +11,12 @@ import { formatErrorForDisplay } from "../app/error-display.js";
 import { canManageTeamAiSettings } from "../app/resource-capabilities.js";
 import { getNoticeBadgeText, getStatusSurfaceItems } from "../app/status-feedback.js";
 import {
+  MEMBER_ROLE_OPTIONS,
+  MIN_OWNER_COUNT_MESSAGE,
+  normalizeOrganizationMemberRole,
+  OWNER_SELF_ROLE_CHANGE_TOOLTIP,
+} from "../app/member-shared.js";
+import {
   anyMemberWriteIsActive,
   getMemberWriteIntent,
   memberRoleIntentKey,
@@ -18,59 +24,100 @@ import {
 import {
   canCurrentUserLeaveTeam,
   canPromoteOwners,
+  countOwners,
   isOwnerRole,
 } from "../app/team-member-permissions.js";
 import { renderInviteUserModal } from "./invite-user-modal.js";
+import { renderTeamMemberOwnerDemotionModal } from "./team-member-owner-demotion-modal.js";
 import { renderTeamMemberOwnerModal } from "./team-member-owner-modal.js";
 import { renderTeamMemberRemoveModal } from "./team-member-remove-modal.js";
 import { renderTeamLeaveModal } from "./teams/leave-modal.js";
 
+function renderMemberRoleOptions(selectedRole) {
+  return MEMBER_ROLE_OPTIONS.map((role) =>
+    `<option value="${escapeHtml(role)}"${role === selectedRole ? " selected" : ""}>${escapeHtml(role)}</option>`
+  ).join("");
+}
+
+function renderMemberRoleSelect(user, options = {}) {
+  const displayRole = normalizeOrganizationMemberRole(user.role);
+  const disabled = options.disabled === true;
+  const tooltip = typeof options.tooltip === "string" && options.tooltip.trim()
+    ? options.tooltip.trim()
+    : "";
+  const tooltipAttributes = tooltip
+    ? ` title="${escapeHtml(tooltip)}" aria-description="${escapeHtml(tooltip)}"`
+    : "";
+  return `
+    <label class="member-role-control"${tooltipAttributes}>
+      <select
+        class="member-role-select"
+        data-member-role-select
+        data-member-username="${escapeHtml(user.username)}"
+        aria-label="Account type for ${escapeHtml(user.username)}"
+        ${tooltip ? `title="${escapeHtml(tooltip)}"` : ""}
+        ${disabled ? "disabled" : ""}
+      >
+        ${renderMemberRoleOptions(displayRole)}
+      </select>
+    </label>
+  `;
+}
+
 function renderUserCard(user, options = {}) {
   const canManageMembers = options.canManageMembers === true;
-  const canPromoteOwner = options.canPromoteOwners === true;
+  const canManageRoles = options.canManageRoles === true;
   const canLeaveTeam = options.canLeaveTeam === true;
   const selectedTeamId = options.selectedTeamId ?? "";
+  const ownerCount = Number.isFinite(options.ownerCount) ? options.ownerCount : 0;
   const displayName = user.isCurrentUser ? `${user.name} (me)` : user.name;
   const pendingMutation = typeof user.pendingMutation === "string" ? user.pendingMutation : "";
-  const roleWritePending = pendingMutation === "makeAdmin" || pendingMutation === "revokeAdmin";
-  const roleWriteIntent = roleWritePending && selectedTeamId
+  const roleWritePending =
+    pendingMutation === "makeAdmin" || pendingMutation === "revokeAdmin" || pendingMutation === "updateRole";
+  const roleWriteIntent = selectedTeamId
     ? getMemberWriteIntent(memberRoleIntentKey(selectedTeamId, user.username))
     : null;
+  const roleWriteActive = roleWriteIntent?.status === "pending" || roleWriteIntent?.status === "running";
   const roleWriteAwaitingConfirmation = roleWriteIntent?.status === "pendingConfirmation";
   const roleSyncPending = user.roleSyncPending === true || Boolean(pendingMutation);
-  const roleToggleDisabled = roleSyncPending && !roleWritePending;
+  const roleSelectDisabled = roleWriteActive || (roleSyncPending && !roleWritePending);
   const conflictingActionDisabled = roleSyncPending && !roleWriteAwaitingConfirmation;
   const ownerRole = isOwnerRole(user);
-  const displayRole = ownerRole ? "Owner" : user.role === "Admin" ? "Admin" : user.role === "Viewer" ? "Viewer" : "Translator";
+  const displayRole = normalizeOrganizationMemberRole(user.role);
   const pendingLabel =
     pendingMutation === "promoteOwner"
       ? "Promoting..."
-      : pendingMutation === "makeAdmin" || pendingMutation === "revokeAdmin" || user.roleSyncPending === true
+      : pendingMutation === "makeAdmin" || pendingMutation === "revokeAdmin" || pendingMutation === "updateRole" || user.roleSyncPending === true
         ? "Updating..."
         : "";
   const roleMeta = pendingLabel
     ? `${displayRole} · ${pendingLabel}`
     : displayRole;
+  const lastOwnerBlocked = ownerRole && ownerCount <= 1;
+  const currentOwnerWithPeerOwners = user.isCurrentUser && ownerRole && ownerCount > 1 && canManageRoles;
+  const roleDropdown = (!user.isCurrentUser && canManageRoles) || currentOwnerWithPeerOwners
+    ? renderMemberRoleSelect(user, {
+        disabled: currentOwnerWithPeerOwners || roleSelectDisabled || lastOwnerBlocked,
+        tooltip: currentOwnerWithPeerOwners ? OWNER_SELF_ROLE_CHANGE_TOOLTIP : "",
+      })
+    : "";
+  const removeDisabled = conflictingActionDisabled || lastOwnerBlocked;
+  const removeTooltip = lastOwnerBlocked ? MIN_OWNER_COUNT_MESSAGE : "";
   const actions = user.isCurrentUser
-    ? (canLeaveTeam && selectedTeamId
-        ? textAction("Leave", `open-current-team-leave:${selectedTeamId}`)
-        : "")
-    : (canManageMembers || canPromoteOwner
+    ? [
+        roleDropdown,
+        canLeaveTeam && selectedTeamId
+          ? textAction("Leave team", `open-current-team-leave:${selectedTeamId}`)
+          : "",
+      ].filter(Boolean).join("")
+    : (canManageMembers || canManageRoles
         ? [
-            canManageMembers && displayRole === "Translator"
-              ? textAction("Make Admin", `make-admin:${user.username}`, { disabled: roleToggleDisabled })
-              : canManageMembers && displayRole === "Admin"
-                ? textAction("Revoke Admin", `revoke-admin:${user.username}`, { disabled: roleToggleDisabled })
-                : "",
-            canPromoteOwner && !ownerRole
-              ? textAction("Make owner", `open-team-member-owner-promotion:${user.username}`, {
-                  disabled: conflictingActionDisabled,
-                })
-              : "",
-            ownerRole || !canManageMembers
+            roleDropdown,
+            !canManageMembers
               ? ""
               : textAction("Remove", `open-team-member-removal:${user.username}`, {
-                  disabled: conflictingActionDisabled,
+                  disabled: removeDisabled,
+                  tooltip: removeTooltip,
                 }),
           ].filter(Boolean).join("")
         : "")
@@ -99,6 +146,8 @@ export function renderUsersScreen(state) {
   const canInviteUsers = selectedTeam?.canManageMembers === true && !state.offline?.isEnabled;
   const canManageMembers = selectedTeam?.canManageMembers === true && !state.offline?.isEnabled;
   const canPromoteTeamOwners = canPromoteOwners(selectedTeam, { offline: state.offline?.isEnabled === true });
+  const canManageRoles = canPromoteTeamOwners;
+  const ownerCount = countOwners(state.users);
   const canLeaveTeam = canCurrentUserLeaveTeam(selectedTeam, state.users, {
     offline: state.offline?.isEnabled === true,
   });
@@ -128,9 +177,11 @@ export function renderUsersScreen(state) {
             : emptyState
           : `<section class="stack">${state.users.map((user) => renderUserCard(user, {
               canManageMembers,
+              canManageRoles,
               canPromoteOwners: canPromoteTeamOwners,
               canLeaveTeam,
               selectedTeamId: selectedTeam?.id ?? "",
+              ownerCount,
             })).join("")}</section>`;
 
   return (
@@ -148,6 +199,6 @@ export function renderUsersScreen(state) {
       offlineMode: state.offline?.isEnabled === true,
       offlineReconnectState: state.offline?.reconnecting === true,
       body,
-    }) + renderInviteUserModal(state) + renderTeamLeaveModal(state) + renderTeamMemberRemoveModal(state) + renderTeamMemberOwnerModal(state)
+    }) + renderInviteUserModal(state) + renderTeamLeaveModal(state) + renderTeamMemberRemoveModal(state) + renderTeamMemberOwnerModal(state) + renderTeamMemberOwnerDemotionModal(state)
   );
 }

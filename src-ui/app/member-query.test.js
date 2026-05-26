@@ -196,7 +196,7 @@ test("member query adapter overlays active member write intents during refresh",
   );
 
   assert.equal(state.users[0].role, "Admin");
-  assert.equal(state.users[0].pendingMutation, "makeAdmin");
+  assert.equal(state.users[0].pendingMutation, "updateRole");
 
   releaseWrite.resolve();
   await delay();

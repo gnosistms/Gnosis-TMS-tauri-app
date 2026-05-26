@@ -10,8 +10,10 @@ import {
   submitInviteUser,
 } from "./invite-user-flow.js";
 import {
+  cancelTeamMemberOwnerDemotion,
   cancelTeamMemberOwnerPromotion,
   cancelTeamMemberRemoval,
+  confirmTeamMemberOwnerDemotion,
   confirmTeamMemberOwnerPromotion,
   confirmTeamMemberRemoval,
   makeOrganizationAdmin,
@@ -52,6 +54,11 @@ export function createUserActions(render) {
       return true;
     }
 
+    if (action === "cancel-team-member-owner-demotion") {
+      cancelTeamMemberOwnerDemotion(render);
+      return true;
+    }
+
     if (action === "submit-invite-user") {
       await runWithImmediateLoading(event, "Inviting...", () => submitInviteUser(render));
       return true;
@@ -65,6 +72,13 @@ export function createUserActions(render) {
     if (action === "confirm-team-member-owner-promotion") {
       await runWithImmediateLoading(event, "Promoting...", () =>
         confirmTeamMemberOwnerPromotion(render),
+      );
+      return true;
+    }
+
+    if (action === "confirm-team-member-owner-demotion") {
+      await runWithImmediateLoading(event, "Changing...", () =>
+        confirmTeamMemberOwnerDemotion(render),
       );
       return true;
     }

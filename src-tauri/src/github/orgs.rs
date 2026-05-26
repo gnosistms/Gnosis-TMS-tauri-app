@@ -205,6 +205,33 @@ pub(crate) async fn revoke_organization_admin_for_installation(
 }
 
 #[tauri::command]
+pub(crate) async fn set_organization_member_role_for_installation(
+    installation_id: i64,
+    org_login: String,
+    username: String,
+    role: String,
+    confirmation_username: Option<String>,
+    session_token: String,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let client = github_client()?;
+        broker_patch_no_content_with_session(
+            &client,
+            &format!(
+                "/api/github-app/installations/{installation_id}/orgs/{org_login}/members/{username}/role"
+            ),
+            Some(&serde_json::json!({
+                "role": role,
+                "confirmationUsername": confirmation_username,
+            })),
+            &session_token,
+        )
+    })
+    .await
+    .map_err(|error| format!("Could not run the organization role update task: {error}"))?
+}
+
+#[tauri::command]
 pub(crate) async fn promote_organization_owner_for_installation(
     installation_id: i64,
     org_login: String,
@@ -231,6 +258,7 @@ pub(crate) async fn remove_organization_member_for_installation(
     installation_id: i64,
     org_login: String,
     username: String,
+    confirmation_username: Option<String>,
     session_token: String,
 ) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
@@ -238,9 +266,11 @@ pub(crate) async fn remove_organization_member_for_installation(
         broker_delete_no_content_with_session(
             &client,
             &format!(
-        "/api/github-app/installations/{installation_id}/orgs/{org_login}/members/{username}"
-      ),
-            &serde_json::json!({}),
+                "/api/github-app/installations/{installation_id}/orgs/{org_login}/members/{username}"
+            ),
+            &serde_json::json!({
+                "confirmationUsername": confirmation_username,
+            }),
             &session_token,
         )
     })

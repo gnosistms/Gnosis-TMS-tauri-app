@@ -13,6 +13,7 @@ const OFFLINE_BLOCKED_EXACT_ACTIONS = new Set([
   "confirm-team-leave",
   "confirm-team-member-removal",
   "confirm-team-member-owner-promotion",
+  "confirm-team-member-owner-demotion",
   "open-new-project",
   "submit-project-creation",
   "submit-project-rename",

@@ -349,6 +349,50 @@
   justify-content: flex-end;
 }
 
+.member-role-control {
+  display: inline-flex;
+  align-items: center;
+}
+
+.member-role-select {
+  min-width: 132px;
+  min-height: 38px;
+  appearance: none;
+  -webkit-appearance: none;
+  border: 1px solid rgba(164, 112, 41, 0.22);
+  border-radius: var(--radius-ui);
+  background:
+    linear-gradient(45deg, transparent 50%, rgba(136, 93, 36, 0.9) 50%) calc(100% - 18px) 50% / 7px 7px no-repeat,
+    linear-gradient(135deg, rgba(136, 93, 36, 0.9) 50%, transparent 50%) calc(100% - 13px) 50% / 7px 7px no-repeat,
+    rgba(255, 251, 246, 0.96);
+  color: var(--link);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--text-action-font-size);
+  font-weight: 600;
+  line-height: 1.2;
+  outline: none;
+  padding: 0 34px 0 12px;
+}
+
+.member-role-select:focus {
+  border-color: rgba(236, 134, 9, 0.52);
+  box-shadow: 0 0 0 4px rgba(243, 156, 24, 0.12);
+}
+
+.member-role-select:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
+.member-role-note {
+  max-width: 360px;
+  color: var(--muted);
+  font-size: 0.92rem;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
 .card--expandable {
   overflow: hidden;
 }
