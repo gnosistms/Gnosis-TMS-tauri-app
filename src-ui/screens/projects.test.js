@@ -124,7 +124,7 @@ test("offline banner renders inside the page header", () => {
   assert.ok(bannerStart < headerEnd);
 });
 
-test("project background refresh spins and disables the refresh button", () => {
+test("project background refresh spins without disabling the refresh button", () => {
   const html = renderProjectsScreen(projectsState({
     projectsPage: {
       isRefreshing: true,
@@ -136,7 +136,7 @@ test("project background refresh spins and disables the refresh button", () => {
   }));
 
   assert.match(actionButtonHtml(html, "refresh-page"), /\bis-spinning\b/);
-  assert.match(actionButtonHtml(html, "refresh-page"), /aria-disabled="true"/);
+  assert.doesNotMatch(actionButtonHtml(html, "refresh-page"), /aria-disabled="true"/);
 });
 
 test("project background refresh keeps refresh icon animation phase stable across renders", () => {
@@ -604,6 +604,68 @@ test("project write in progress disables top-level lifecycle actions", () => {
   assert.match(actionButtonHtml(html, "clear-deleted-files:project-1"), /disabled/);
 });
 
+test("local hard-delete controls wait for matching lifecycle mutations only", () => {
+  const html = renderProjectsScreen(projectsState({
+    projects: [{
+      id: "project-1",
+      title: "Project",
+      name: "project-repo",
+      status: "active",
+      chapters: [
+        {
+          id: "chapter-1",
+          name: "Chapter",
+          status: "active",
+          linkedGlossary: null,
+          sourceWordCount: 10,
+        },
+        {
+          id: "deleted-chapter-1",
+          name: "Deleted Chapter",
+          status: "deleted",
+          pendingMutation: "softDelete",
+          linkedGlossary: null,
+          sourceWordCount: 10,
+        },
+      ],
+    }],
+    expandedDeletedFiles: new Set(["project-1"]),
+    deletedProjects: [{
+      id: "deleted-project",
+      title: "Deleted Project",
+      name: "deleted-project",
+      lifecycleState: "deleted",
+      pendingMutation: "softDelete",
+      chapters: [],
+    }],
+    showDeletedProjects: true,
+  }));
+
+  assert.match(actionButtonHtml(html, "clear-deleted-files:project-1"), /disabled/);
+  assert.match(actionButtonHtml(html, "delete-deleted-file:deleted-chapter-1"), /disabled/);
+  assert.match(actionButtonHtml(html, "delete-deleted-project:deleted-project"), /disabled/);
+  assert.doesNotMatch(actionButtonHtml(html, "add-project-files:project-1"), /disabled/);
+});
+
+test("deleted project local delete remains available offline", () => {
+  const html = renderProjectsScreen(projectsState({
+    deletedProjects: [{
+      id: "deleted-project",
+      title: "Deleted Project",
+      name: "deleted-project",
+      lifecycleState: "deleted",
+      chapters: [],
+    }],
+    showDeletedProjects: true,
+    offline: {
+      isEnabled: true,
+    },
+  }));
+
+  assert.match(actionButtonHtml(html, "restore-project:deleted-project"), /disabled/);
+  assert.doesNotMatch(actionButtonHtml(html, "delete-deleted-project:deleted-project"), /disabled/);
+});
+
 test("expanded deleted files section shows clear all action below hide deleted files", () => {
   const html = renderProjectsScreen(projectsState({
     projects: [{
@@ -699,7 +761,7 @@ test("clear deleted files modal requires project name confirmation", () => {
   assert.doesNotMatch(actionButtonHtml(matchedHtml, "confirm-clear-deleted-files"), /disabled/);
 });
 
-test("coordinator writes keep lifecycle and glossary controls enabled while heavy actions stay disabled", () => {
+test("coordinator writes keep file actions and local hard-delete controls enabled while project creation waits", () => {
   requestProjectWriteIntent({
     key: chapterGlossaryIntentKey("project-1", "chapter-1"),
     scope: projectRepoWriteScope({ installationId: 1 }, "project-1"),
@@ -712,18 +774,55 @@ test("coordinator writes keep lifecycle and glossary controls enabled while heav
     run: async () => new Promise((resolve) => setTimeout(resolve, 10)),
   });
 
-  const html = renderProjectsScreen(projectsState());
+  const html = renderProjectsScreen(projectsState({
+    projects: [{
+      id: "project-1",
+      title: "Project",
+      name: "project-repo",
+      status: "active",
+      chapters: [
+        {
+          id: "chapter-1",
+          name: "Chapter",
+          status: "active",
+          linkedGlossary: null,
+          sourceWordCount: 10,
+        },
+        {
+          id: "deleted-chapter-1",
+          name: "Deleted Chapter",
+          status: "deleted",
+          linkedGlossary: null,
+          sourceWordCount: 10,
+        },
+      ],
+    }],
+    expandedDeletedFiles: new Set(["project-1"]),
+    deletedProjects: [{
+      id: "deleted-project",
+      title: "Deleted Project",
+      name: "deleted-project",
+      lifecycleState: "deleted",
+      chapters: [],
+    }],
+    showDeletedProjects: true,
+  }));
 
   assert.doesNotMatch(actionButtonHtml(html, "rename-project:project-1"), /disabled/);
   assert.doesNotMatch(actionButtonHtml(html, "delete-project:project-1"), /disabled/);
   assert.doesNotMatch(actionButtonHtml(html, "rename-file:chapter-1"), /disabled/);
   assert.doesNotMatch(actionButtonHtml(html, "delete-file:chapter-1"), /disabled/);
+  assert.doesNotMatch(actionButtonHtml(html, "restore-file:deleted-chapter-1"), /disabled/);
+  assert.doesNotMatch(actionButtonHtml(html, "restore-project:deleted-project"), /disabled/);
   assert.doesNotMatch(html, /data-chapter-glossary-select[^>]*disabled/);
 
   assert.match(actionButtonHtml(html, "open-new-project"), /disabled/);
-  assert.match(actionButtonHtml(html, "add-project-files:project-1"), /disabled/);
+  assert.doesNotMatch(actionButtonHtml(html, "add-project-files:project-1"), /disabled/);
+  assert.doesNotMatch(actionButtonHtml(html, "clear-deleted-files:project-1"), /disabled/);
+  assert.doesNotMatch(actionButtonHtml(html, "delete-deleted-file:deleted-chapter-1"), /disabled/);
+  assert.doesNotMatch(actionButtonHtml(html, "delete-deleted-project:deleted-project"), /disabled/);
   assert.match(actionButtonHtml(html, "refresh-page"), /\bis-spinning\b/);
-  assert.match(actionButtonHtml(html, "refresh-page"), /aria-disabled="true"/);
+  assert.doesNotMatch(actionButtonHtml(html, "refresh-page"), /aria-disabled="true"/);
 });
 
 test("repo sync intents do not globally disable new project or add files", () => {
@@ -743,5 +842,5 @@ test("repo sync intents do not globally disable new project or add files", () =>
   assert.doesNotMatch(actionButtonHtml(html, "open-new-project"), /disabled/);
   assert.doesNotMatch(actionButtonHtml(html, "add-project-files:project-1"), /disabled/);
   assert.match(actionButtonHtml(html, "refresh-page"), /\bis-spinning\b/);
-  assert.match(actionButtonHtml(html, "refresh-page"), /aria-disabled="true"/);
+  assert.doesNotMatch(actionButtonHtml(html, "refresh-page"), /aria-disabled="true"/);
 });

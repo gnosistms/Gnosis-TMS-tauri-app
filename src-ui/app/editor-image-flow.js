@@ -19,13 +19,18 @@ import {
 import { showNoticeBadge } from "./status-feedback.js";
 import {
   buildEditorFieldSelector,
+  cloneRowImages,
   editorImageEditorCanCollapse,
   findEditorRowById,
 } from "./editor-utils.js";
 import { ensureEditorRowReadyForWrite, reloadEditorRowFromDisk } from "./editor-row-sync-flow.js";
 import {
-  invokeEditorWriteCommand,
+  assertEditorWritePermissionForContext,
+  handleEditorPermissionDenied,
 } from "./editor-write-permission.js";
+import { assertQueuedEditorRowsReady } from "./editor-queued-write.js";
+import { requestEditorOperation } from "./editor-operation-queue.js";
+import { projectRepoScope } from "./repo-write-queue.js";
 import {
   captureTranslateViewport,
   renderTranslateBodyPreservingViewport,
@@ -39,6 +44,45 @@ function nextChapterBaseCommitSha(payload, chapterState = state.editorChapter) {
   return typeof payload?.chapterBaseCommitSha === "string" && payload.chapterBaseCommitSha.trim()
     ? payload.chapterBaseCommitSha.trim()
     : chapterState?.chapterBaseCommitSha ?? null;
+}
+
+function cloneQueueContextValue(value) {
+  if (value == null) {
+    return value;
+  }
+  return typeof structuredClone === "function"
+    ? structuredClone(value)
+    : JSON.parse(JSON.stringify(value));
+}
+
+function editorChapterInvalidationKey(repoScope, chapterId) {
+  return `editorChapter:${repoScope}:${chapterId}`;
+}
+
+async function invokeQueuedEditorImageWriteCommand(command, payload, context, render) {
+  try {
+    assertEditorWritePermissionForContext({
+      team: context?.team ?? null,
+      project: context?.project ?? null,
+      chapter: context?.chapter ?? null,
+      row: context?.row ?? null,
+      actionKind: context?.actionKind ?? "sharedWrite",
+    });
+  } catch (error) {
+    if (handleEditorPermissionDenied(error, render)) {
+      throw error;
+    }
+    throw error;
+  }
+
+  try {
+    return await invoke(command, payload);
+  } catch (error) {
+    if (handleEditorPermissionDenied(error, render)) {
+      throw error;
+    }
+    throw error;
+  }
 }
 
 function imageEditorMatches(chapterState, rowId, languageCode, mode = null) {
@@ -242,6 +286,29 @@ function currentImage(rowId, languageCode) {
   return normalizeEditorFieldImage(findEditorRowById(rowId, state.editorChapter)?.images?.[languageCode]);
 }
 
+function applyOptimisticImage(rowId, languageCode, image, operations = {}) {
+  if (typeof operations.updateEditorChapterRow !== "function") {
+    return;
+  }
+
+  operations.updateEditorChapterRow(rowId, (row) => {
+    if (!row) {
+      return row;
+    }
+    const images = cloneRowImages(row.images);
+    const normalizedImage = normalizeEditorFieldImage(image);
+    if (normalizedImage) {
+      images[languageCode] = normalizedImage;
+    } else {
+      delete images[languageCode];
+    }
+    return {
+      ...row,
+      images,
+    };
+  });
+}
+
 function setImageEditorState(nextEditorState) {
   if (!state.editorChapter?.chapterId) {
     return;
@@ -274,21 +341,6 @@ function setImageInvalidFileModal(open) {
 
 function editorImageWriteBlocked(row, render) {
   if (!row) {
-    return true;
-  }
-
-  if (row.saveStatus === "saving") {
-    showNoticeBadge("Finish saving the row text before updating the image.", render);
-    return true;
-  }
-
-  if (row.textStyleSaveState?.status === "saving") {
-    showNoticeBadge("Finish saving the row style before updating the image.", render);
-    return true;
-  }
-
-  if (row.markerSaveState?.status === "saving") {
-    showNoticeBadge("Finish saving review markers before updating the image.", render);
     return true;
   }
 
@@ -468,6 +520,122 @@ async function applyImageCommandPayload(render, rowId, languageCode, payload, op
   }
 }
 
+function queueEditorImageWrite({
+  render,
+  row,
+  team,
+  context,
+  repoScope,
+  rowId,
+  languageCode,
+  kind,
+  input,
+  previousImage,
+  nextImage,
+  operations,
+  viewportSnapshot = null,
+  failureMessage = "The image could not be saved.",
+  notice = "",
+  onQueued = null,
+  onFailure = null,
+} = {}) {
+  const chapterId = state.editorChapter?.chapterId;
+  if (!chapterId || !rowId || !languageCode || !repoScope || typeof kind !== "string" || !kind) {
+    return null;
+  }
+
+  const operationValue = {
+    input,
+    chapterId,
+    rowId,
+    languageCode,
+    previousImage: normalizeEditorFieldImage(previousImage),
+    nextImage: normalizeEditorFieldImage(nextImage),
+    permissionContext: {
+      team: cloneQueueContextValue(team),
+      project: cloneQueueContextValue(context?.project ?? null),
+      chapter: cloneQueueContextValue(context?.chapter ?? null),
+      row: cloneQueueContextValue(row),
+      actionKind: "sharedWrite",
+    },
+  };
+
+  const requested = requestEditorOperation({
+    repoScope,
+    chapterScope: `${repoScope}:${chapterId}`,
+    rowScope: `${repoScope}:${chapterId}:${rowId}`,
+    coalesceKey: `image:${chapterId}:${rowId}:${languageCode}`,
+    kind,
+    value: operationValue,
+    metadata: {
+      projectId: context?.project?.id ?? null,
+      chapterId,
+      rowId,
+      languageCode,
+      imageKind: kind,
+    },
+    invalidationKeys: [editorChapterInvalidationKey(repoScope, chapterId)],
+  }, {
+    applyOptimistic: () => {
+      if (state.editorChapter?.chapterId !== chapterId) {
+        return;
+      }
+      applyOptimisticImage(rowId, languageCode, operationValue.nextImage, operations);
+      onQueued?.();
+      closeImagePreviewIfTarget(rowId, languageCode);
+      renderTranslateBodyPreservingViewport(render, viewportSnapshot);
+    },
+    run: async (operation) => {
+      assertQueuedEditorRowsReady({
+        chapterId: operation.value.chapterId,
+        rowIds: [operation.value.rowId],
+        message: "Refresh or resolve the row before updating the image.",
+      });
+      return invokeQueuedEditorImageWriteCommand(
+        kind === "imageRemove"
+          ? "remove_gtms_editor_language_image"
+          : kind === "imageUpload"
+            ? "upload_gtms_editor_language_image"
+            : "save_gtms_editor_language_image_url",
+        { input: operation.value.input },
+        operation.value.permissionContext,
+        render,
+      );
+    },
+    onSuccess: (payload, operation) => {
+      const value = operation?.value ?? operationValue;
+      if (state.editorChapter?.chapterId !== value.chapterId) {
+        return;
+      }
+      void applyImageCommandPayload(
+        render,
+        value.rowId,
+        value.languageCode,
+        payload,
+        operations,
+        payload?.status === "conflict"
+          ? {
+            notice: notice || "The image changed on disk. Reloaded the latest version.",
+            viewportSnapshot,
+          }
+          : { viewportSnapshot },
+      );
+    },
+    onError: (error, operation) => {
+      const message = error instanceof Error ? error.message : String(error);
+      const value = operation?.value ?? operationValue;
+      if (state.editorChapter?.chapterId === value.chapterId) {
+        applyOptimisticImage(value.rowId, value.languageCode, value.previousImage, operations);
+        onFailure?.(message);
+        renderTranslateBodyPreservingViewport(render, viewportSnapshot);
+      }
+      showNoticeBadge(message || failureMessage, render);
+    },
+  });
+  requested.promise.catch(() => {});
+  return requested.promise.catch(() => {});
+}
+
 export function openEditorImageUrl(render, rowId, languageCode) {
   if (!rowId || !languageCode || !state.editorChapter?.chapterId) {
     return;
@@ -623,7 +791,8 @@ export async function persistEditorImageUrlOnBlur(render, rowId, languageCode, o
 
   const team = selectedProjectsTeam();
   const context = findChapterContextById(state.editorChapter?.chapterId);
-  if (!Number.isFinite(team?.installationId) || !context?.project?.name) {
+  const repoScope = projectRepoScope({ team, project: context?.project ?? null });
+  if (!Number.isFinite(team?.installationId) || !context?.project?.name || !repoScope) {
     setImageEditorState({
       rowId,
       languageCode,
@@ -637,81 +806,51 @@ export async function persistEditorImageUrlOnBlur(render, rowId, languageCode, o
     return;
   }
 
-  try {
-    const payload = await invokeEditorWriteCommand("save_gtms_editor_language_image_url", {
-      input: {
-        installationId: team.installationId,
-        projectId: context.project.id,
-        repoName: context.project.name,
-        chapterId: state.editorChapter.chapterId,
-        rowId,
-        languageCode,
-        url: draft,
-        baseImage: imagePayloadValue(currentImage(rowId, languageCode)),
-      },
-    }, { render, actionKind: "sharedWrite", rowId });
-
-    if (state.editorChapter?.chapterId !== chapterAtRequest) {
-      return;
-    }
-
-    const currentEditor = state.editorChapter?.imageEditor;
-    const editorWasReopened =
-      imageEditorMatches(state.editorChapter, rowId, languageCode, "url")
-      && currentEditor?.status !== "submitting";
-    if (editorWasReopened && payload?.row) {
-      updateRowForImagePayload(rowId, payload.row, operations);
-      state.editorChapter = {
-        ...state.editorChapter,
-        chapterBaseCommitSha: nextChapterBaseCommitSha(payload, state.editorChapter),
-      };
-      closeImagePreviewIfTarget(rowId, languageCode);
-      renderTranslateBodyPreservingViewport(render, viewportSnapshot);
-      if (
-        typeof operations.loadActiveEditorFieldHistory === "function"
-        && state.editorChapter.activeRowId === rowId
-        && state.editorChapter.activeLanguageCode === languageCode
-      ) {
-        operations.loadActiveEditorFieldHistory(render);
-      }
-      return;
-    }
-
-    await applyImageCommandPayload(
-      render,
+  return queueEditorImageWrite({
+    render,
+    row,
+    team,
+    context,
+    repoScope,
+    rowId,
+    languageCode,
+    kind: "imageUrl",
+    input: {
+      installationId: team.installationId,
+      projectId: context.project.id,
+      repoName: context.project.name,
+      chapterId: state.editorChapter.chapterId,
       rowId,
       languageCode,
-      payload,
-      operations,
-      payload?.status === "conflict"
-        ? {
-          notice: "The image changed on disk. Reloaded the latest version.",
-          viewportSnapshot,
-        }
-        : { viewportSnapshot },
-    );
-  } catch (error) {
-    if (
-      state.editorChapter?.chapterId === chapterAtRequest
-      && imageEditorMatches(state.editorChapter, rowId, languageCode)
-      && (
-        state.editorChapter?.imageEditor?.status === "submitting"
-        || state.editorChapter?.imageEditor?.status === "saving"
-      )
-    ) {
-      const message = error instanceof Error ? error.message : String(error);
-      setImageEditorState({
-        rowId,
-        languageCode,
-        mode: null,
-        urlDraft: draft,
-        invalidUrl: true,
-        urlErrorMessage: message || "The image URL could not be saved.",
-        status: "idle",
-      });
-      renderTranslateBodyPreservingViewport(render, viewportSnapshot);
-    }
-  }
+      url: draft,
+      baseImage: imagePayloadValue(currentImage(rowId, languageCode)),
+    },
+    previousImage: currentImage(rowId, languageCode),
+    nextImage: { kind: "url", url: draft },
+    operations,
+    viewportSnapshot,
+    failureMessage: "The image URL could not be saved.",
+    onFailure: (message) => {
+      if (
+        state.editorChapter?.chapterId === chapterAtRequest
+        && imageEditorMatches(state.editorChapter, rowId, languageCode)
+        && (
+          state.editorChapter?.imageEditor?.status === "submitting"
+          || state.editorChapter?.imageEditor?.status === "saving"
+        )
+      ) {
+        setImageEditorState({
+          rowId,
+          languageCode,
+          mode: null,
+          urlDraft: draft,
+          invalidUrl: true,
+          urlErrorMessage: message || "The image URL could not be saved.",
+          status: "idle",
+        });
+      }
+    },
+  });
 }
 
 export async function submitEditorImageUrl(render, rowId, languageCode, operations = {}) {
@@ -892,7 +1031,8 @@ async function saveUploadedEditorImage(render, rowId, languageCode, file, operat
 
   const team = selectedProjectsTeam();
   const context = findChapterContextById(state.editorChapter?.chapterId);
-  if (!Number.isFinite(team?.installationId) || !context?.project?.name) {
+  const repoScope = projectRepoScope({ team, project: context?.project ?? null });
+  if (!Number.isFinite(team?.installationId) || !context?.project?.name || !repoScope) {
     setImageEditorState({
       rowId,
       languageCode,
@@ -905,7 +1045,15 @@ async function saveUploadedEditorImage(render, rowId, languageCode, file, operat
 
   try {
     const dataBase64 = await fileToBase64Data(file);
-    const payload = await invokeEditorWriteCommand("upload_gtms_editor_language_image", {
+    return queueEditorImageWrite({
+      render,
+      row,
+      team,
+      context,
+      repoScope,
+      rowId,
+      languageCode,
+      kind: "imageUpload",
       input: {
         installationId: team.installationId,
         projectId: context.project.id,
@@ -917,22 +1065,22 @@ async function saveUploadedEditorImage(render, rowId, languageCode, file, operat
         dataBase64,
         baseImage: imagePayloadValue(currentImage(rowId, languageCode)),
       },
-    }, { render, actionKind: "sharedWrite", rowId });
-
-    if (state.editorChapter?.chapterId !== chapterAtRequest) {
-      return;
-    }
-
-    await applyImageCommandPayload(
-      render,
-      rowId,
-      languageCode,
-      payload,
+      previousImage: currentImage(rowId, languageCode),
+      nextImage: currentImage(rowId, languageCode),
       operations,
-      payload?.status === "conflict"
-        ? { notice: "The image changed on disk. Reloaded the latest version." }
-        : null,
-    );
+      failureMessage: "The image could not be uploaded.",
+      notice: "The image changed on disk. Reloaded the latest version.",
+      onFailure: () => {
+        if (state.editorChapter?.chapterId === chapterAtRequest) {
+          setImageEditorState({
+            rowId,
+            languageCode,
+            mode: "upload",
+            status: "idle",
+          });
+        }
+      },
+    });
   } catch (error) {
     if (state.editorChapter?.chapterId === chapterAtRequest) {
       setImageEditorState({
@@ -946,6 +1094,7 @@ async function saveUploadedEditorImage(render, rowId, languageCode, file, operat
     const message = error instanceof Error ? error.message : String(error);
     showNoticeBadge(message || "The image could not be uploaded.", render);
   }
+  return null;
 }
 
 export async function openEditorImageUploadPicker(render, rowId, languageCode, operations = {}) {
@@ -1023,7 +1172,6 @@ export async function removeEditorLanguageImage(render, rowId, languageCode, ope
     return;
   }
 
-  const chapterAtRequest = state.editorChapter.chapterId;
   const row = await ensureEditorRowReadyForWrite(render, rowId, { allowStaleDirty: true });
   if (editorImageWriteBlocked(row, render)) {
     return;
@@ -1036,41 +1184,35 @@ export async function removeEditorLanguageImage(render, rowId, languageCode, ope
 
   const team = selectedProjectsTeam();
   const context = findChapterContextById(state.editorChapter?.chapterId);
-  if (!Number.isFinite(team?.installationId) || !context?.project?.name) {
+  const repoScope = projectRepoScope({ team, project: context?.project ?? null });
+  if (!Number.isFinite(team?.installationId) || !context?.project?.name || !repoScope) {
     return;
   }
 
-  try {
-    const payload = await invokeEditorWriteCommand("remove_gtms_editor_language_image", {
-      input: {
-        installationId: team.installationId,
-        projectId: context.project.id,
-        repoName: context.project.name,
-        chapterId: state.editorChapter.chapterId,
-        rowId,
-        languageCode,
-        baseImage: imagePayloadValue(image),
-      },
-    }, { render, actionKind: "sharedWrite", rowId });
-
-    if (state.editorChapter?.chapterId !== chapterAtRequest) {
-      return;
-    }
-
-    await applyImageCommandPayload(
-      render,
+  return queueEditorImageWrite({
+    render,
+    row,
+    team,
+    context,
+    repoScope,
+    rowId,
+    languageCode,
+    kind: "imageRemove",
+    input: {
+      installationId: team.installationId,
+      projectId: context.project.id,
+      repoName: context.project.name,
+      chapterId: state.editorChapter.chapterId,
       rowId,
       languageCode,
-      payload,
-      operations,
-      payload?.status === "conflict"
-        ? { notice: "The image changed on disk. Reloaded the latest version." }
-        : null,
-    );
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    showNoticeBadge(message || "The image could not be removed.", render);
-  }
+      baseImage: imagePayloadValue(image),
+    },
+    previousImage: image,
+    nextImage: null,
+    operations,
+    failureMessage: "The image could not be removed.",
+    notice: "The image changed on disk. Reloaded the latest version.",
+  });
 }
 
 export function openEditorImagePreview(render, rowId, languageCode) {

@@ -31,7 +31,7 @@ function renderHistoryEntry(entry, previousEntry, activeLanguage, activeSection,
       isRestoring ? "Restoring..." : "Restore",
       `restore-editor-history:${entry.commitSha}`,
       {
-        disabled: !canRestore || history.status === "restoring",
+        disabled: !canRestore,
         compact: true,
         className: "button--replace-toolbar",
         tooltip: "Restore this version to the editor",
@@ -43,7 +43,7 @@ function renderHistoryEntry(entry, previousEntry, activeLanguage, activeSection,
       isUndoingReplace ? "Undoing..." : "Undo replace",
       `open-editor-replace-undo:${entry.commitSha}`,
       {
-        disabled: history.status === "restoring" || replaceUndoModal?.status === "loading",
+        disabled: replaceUndoModal?.status === "loading",
         compact: true,
         className: "button--replace-toolbar",
         tooltip: "Undo this batch replace commit",
@@ -100,10 +100,7 @@ export function renderHistoryPane(editorChapter, rows, languages) {
           commitSha: null,
         };
   const expandedGroupKeys = history.expandedGroupKeys instanceof Set ? history.expandedGroupKeys : new Set();
-  const canRestore =
-    activeRow?.saveStatus === "idle"
-    && activeSection?.markerSaveState?.status !== "saving"
-    && activeRow?.textStyleSaveState?.status !== "saving";
+  const canRestore = Boolean(activeRow && activeSection);
   const historyView = buildEditorHistoryViewModel(history.entries, expandedGroupKeys);
   const historyGroups = historyView.groups;
   const olderVisibleEntryByCommitSha = historyView.olderVisibleEntryByCommitSha;

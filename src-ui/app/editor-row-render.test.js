@@ -105,7 +105,7 @@ test("renderTranslationContentRow keeps marker buttons clickable while marker sa
   }));
 
   assert.match(html, /data-action="toggle-editor-please-check"/);
-  assert.match(html, /translation-marker-button--please-check[^"]* is-saving/);
+  assert.doesNotMatch(html, /translation-marker-button--please-check[^"]* is-saving/);
   assert.doesNotMatch(html, /data-action="toggle-editor-please-check"[\s\S]*?disabled[\s\S]*?>/);
 });
 
@@ -117,6 +117,21 @@ test("renderTranslationContentRow keeps marker buttons clickable while row text 
 
   assert.match(html, /data-action="toggle-editor-reviewed"/);
   assert.doesNotMatch(html, /data-action="toggle-editor-reviewed"[\s\S]*?disabled[\s\S]*?>/);
+});
+
+test("renderTranslationContentRow keeps text style buttons clickable while style save is pending", () => {
+  const html = renderTranslationContentRow({
+    ...rowWithSection({ canEdit: true }),
+    canEdit: true,
+    textStyleSaveState: {
+      status: "saving",
+      error: "",
+    },
+  });
+
+  assert.match(html, /data-editor-row-text-style-button/);
+  assert.doesNotMatch(html, /translation-row-text-style-button[^"]* is-saving/);
+  assert.doesNotMatch(html, /data-action="set-editor-row-text-style"[\s\S]*?disabled[\s\S]*?>/);
 });
 
 test("renderTranslationContentRow shows a placeholder while image preview dimensions load", () => {

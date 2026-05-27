@@ -79,10 +79,8 @@ export function renderCommentsPane(editorChapter, rows, session, options = {}) {
   const commentWriteBlocked =
     readOnly
     || activeRow?.canEdit !== true
-    ||
-    activeRow?.saveStatus !== "idle"
-    || activeRow?.markerSaveState?.status === "saving"
-    || activeRow?.textStyleSaveState?.status === "saving";
+    || activeRow?.freshness === "conflict"
+    || activeRow?.remotelyDeleted === true;
   const canSaveComment = editorCommentDraftCanSave(draft, commentsState.status) && !commentWriteBlocked;
 
   const commentsBody = commentsState.status === "error"

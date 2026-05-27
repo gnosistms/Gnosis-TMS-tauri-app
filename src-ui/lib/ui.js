@@ -233,7 +233,7 @@ export function buildPageRefreshAction(appState, syncState = appState?.pageSync,
   return titleRefreshButton(action, {
     spinning,
     spinStartedAt,
-    disabled: appState?.offline?.isEnabled === true || spinning,
+    disabled: appState?.offline?.isEnabled === true || (spinning && options.disableWhileSpinning !== false),
   });
 }
 

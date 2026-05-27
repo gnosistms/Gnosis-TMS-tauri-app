@@ -200,6 +200,7 @@ function renderProjectCard(project, expanded, options = {}) {
   const lifecycleActionsDisabled = options.lifecycleActionsDisabled === true;
   const pageWritesDisabled = options.pageWritesDisabled === true;
   const heavyActionsDisabled = options.heavyActionsDisabled === true || pageWritesDisabled;
+  const localHardDeleteActionsDisabled = options.localHardDeleteActionsDisabled === true || pageWritesDisabled;
   const addFilesWriteDisabled =
     options.addFilesWriteDisabled === undefined
       ? heavyActionsDisabled
@@ -326,7 +327,10 @@ function renderProjectCard(project, expanded, options = {}) {
                         canPermanentlyDeleteFiles
                           ? `<div class="chapter-table__actions">
                               ${textAction("Clear all deleted files", `clear-deleted-files:${project.id}`, {
-                                disabled: heavyActionsDisabled || disableContentActions,
+                                disabled:
+                                  localHardDeleteActionsDisabled
+                                  || disableContentActions
+                                  || projectHasPendingDeletedFileMutation(project),
                               })}
                             </div>`
                           : ""
@@ -341,7 +345,12 @@ function renderProjectCard(project, expanded, options = {}) {
                                 </div>
                                 <div class="chapter-table__actions">
                                   ${canManageProjects ? textAction("Restore", `restore-file:${chapter.id}`, { disabled: offlineMode || lifecycleActionsDisabled || disableContentActions }) : ""}
-                                  ${canPermanentlyDeleteFiles ? textAction("Delete", `delete-deleted-file:${chapter.id}`, { disabled: heavyActionsDisabled || disableContentActions }) : ""}
+                                  ${canPermanentlyDeleteFiles ? textAction("Delete", `delete-deleted-file:${chapter.id}`, {
+                                    disabled:
+                                      localHardDeleteActionsDisabled
+                                      || disableContentActions
+                                      || resourceHasPendingLifecycleMutation(chapter),
+                                  }) : ""}
                                 </div>
                               </div>
                             `,
@@ -394,6 +403,15 @@ function renderDeletedProjectsToggle(state) {
   });
 }
 
+function resourceHasPendingLifecycleMutation(resource) {
+  return typeof resource?.pendingMutation === "string" && resource.pendingMutation.trim();
+}
+
+function projectHasPendingDeletedFileMutation(project) {
+  return (Array.isArray(project?.chapters) ? project.chapters : [])
+    .some((chapter) => chapter?.status === "deleted" && resourceHasPendingLifecycleMutation(chapter));
+}
+
 function renderDeletedProjectsSection(state) {
   if (state.deletedProjects.length === 0) {
     return "";
@@ -409,6 +427,7 @@ function renderDeletedProjectsSection(state) {
     (operation) => !String(operation.kind ?? "").startsWith("editor:"),
   );
   const heavyActionsDisabled = pageWritesDisabled || anyProjectWriteIsActive() || projectRepoQueueActive;
+  const localHardDeleteActionsDisabled = pageWritesDisabled;
   const lifecycleActionsDisabled = areResourcePageWriteSubmissionsDisabled(state.projectsPage);
   const syncSnapshotsByProjectId = state.projectRepoSyncByProjectId ?? {};
   const glossaryChangesDisabled = state.projectImport?.status === "importing";
@@ -434,6 +453,10 @@ function renderDeletedProjectsSection(state) {
               suppressMissingLocalRepoRepair: refreshInProgress,
             });
             const disableLifecycleActions = offlineMode || resolution?.blockLifecycleActions === true;
+            const disableLocalHardDeleteActions =
+              localHardDeleteActionsDisabled
+              || resourceHasPendingLifecycleMutation(project)
+              || resolution?.blockLifecycleActions === true;
             return renderProjectCard(project, state.expandedProjects.has(project.id), {
               canManageProjects: canManageDeletedProjects,
               canDownloadFiles: canDownloadDeletedProjectFiles,
@@ -441,6 +464,7 @@ function renderDeletedProjectsSection(state) {
               offlineMode,
               pageWritesDisabled,
               heavyActionsDisabled,
+              localHardDeleteActionsDisabled,
               lifecycleActionsDisabled,
               glossaryChangesDisabled,
               glossaries: state.glossaries,
@@ -455,7 +479,7 @@ function renderDeletedProjectsSection(state) {
                         : "",
                       canPermanentlyDeleteProjects
                         ? textAction("Delete", `delete-deleted-project:${project.id}`, {
-                            disabled: heavyActionsDisabled || disableLifecycleActions,
+                            disabled: disableLocalHardDeleteActions,
                           })
                         : "",
                     ].filter(Boolean),
@@ -651,6 +675,7 @@ export function renderProjectsScreen(state) {
   const heavyActionsDisabled = pageWritesDisabled || anyProjectWriteIsActive() || projectRepoQueueActive;
   const mutatingWriteActionsDisabled =
     pageWritesDisabled || anyProjectMutatingWriteIsActive() || projectMutatingRepoQueueActive;
+  const localHardDeleteActionsDisabled = pageWritesDisabled;
   const lifecycleActionsDisabled = areResourcePageWriteSubmissionsDisabled(state.projectsPage);
   const importInProgress = state.projectImport?.status === "importing";
   const refreshInProgress =
@@ -712,7 +737,8 @@ export function renderProjectsScreen(state) {
                   offlineMode,
                   pageWritesDisabled,
                   heavyActionsDisabled,
-                  addFilesWriteDisabled: mutatingWriteActionsDisabled,
+                  localHardDeleteActionsDisabled,
+                  addFilesWriteDisabled: pageWritesDisabled,
                   lifecycleActionsDisabled,
                   addFilesDisabled: importInProgress,
                   glossaryChangesDisabled,
@@ -754,6 +780,7 @@ export function renderProjectsScreen(state) {
           || anyProjectWriteIsActive()
           || projectRepoQueueActive,
         backgroundRefreshStartedAt: state.projectsPage?.refreshStartedAt,
+        disableWhileSpinning: false,
       }),
       navButtons: buildSectionNav("projects", { includeAiSettings: canManageAiSettings }),
       leftTools: searchField,

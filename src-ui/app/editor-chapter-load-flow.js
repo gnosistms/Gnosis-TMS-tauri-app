@@ -409,8 +409,8 @@ export async function openTranslateChapter(render, chapterId, operations = {}) {
     return;
   }
 
-  if (!(await operations.flushDirtyEditorRows(render))) {
-    showNoticeBadge("Finish saving the current row before opening a different file.", render);
+  if (!(await operations.flushDirtyEditorRows(render, { waitForDurable: false }))) {
+    showNoticeBadge("Could not queue pending saves before opening a different file.", render);
     return;
   }
 

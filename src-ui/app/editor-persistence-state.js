@@ -175,11 +175,37 @@ export function applyEditorRowTextStyleSaving(row, nextTextStyle) {
     return row;
   }
 
+  const persistedTextStyle = normalizeEditorRowTextStyle(row.persistedTextStyle ?? row.textStyle);
+  const textStyle = normalizeEditorRowTextStyle(nextTextStyle);
   return {
     ...row,
-    textStyle: normalizeEditorRowTextStyle(nextTextStyle),
+    textStyle,
+    persistedTextStyle,
     textStyleSaveState: {
       status: "saving",
+      textStyle,
+      persistedTextStyle,
+      error: "",
+    },
+  };
+}
+
+export function applyEditorRowTextStyleStaleSaved(row, payload) {
+  if (!row) {
+    return row;
+  }
+  const textStyle = normalizeEditorRowTextStyle(
+    payload && typeof payload === "object" ? payload.textStyle : payload,
+  );
+
+  return {
+    ...row,
+    persistedTextStyle: textStyle,
+    lastUpdate: payload?.lastUpdate ?? row.lastUpdate ?? null,
+    textStyleSaveState: {
+      ...(row.textStyleSaveState ?? {}),
+      status: row.textStyleSaveState?.status === "saving" ? "saving" : "idle",
+      persistedTextStyle: textStyle,
       error: "",
     },
   };
@@ -190,13 +216,17 @@ export function applyEditorRowTextStyleSaved(row, payload) {
     return row;
   }
   const textStyle = payload && typeof payload === "object" ? payload.textStyle : payload;
+  const normalizedTextStyle = normalizeEditorRowTextStyle(textStyle);
 
   return {
     ...row,
-    textStyle: normalizeEditorRowTextStyle(textStyle),
+    textStyle: normalizedTextStyle,
+    persistedTextStyle: normalizedTextStyle,
     lastUpdate: payload?.lastUpdate ?? row.lastUpdate ?? null,
     textStyleSaveState: {
       status: "idle",
+      textStyle: null,
+      persistedTextStyle: normalizedTextStyle,
       error: "",
     },
   };
@@ -206,12 +236,17 @@ export function applyEditorRowTextStyleSaveFailed(row, previousTextStyle, messag
   if (!row) {
     return row;
   }
+  const rollbackTextStyle = normalizeEditorRowTextStyle(previousTextStyle ?? row.persistedTextStyle ?? row.textStyle);
+  const persistedTextStyle = normalizeEditorRowTextStyle(row.persistedTextStyle ?? rollbackTextStyle);
 
   return {
     ...row,
-    textStyle: normalizeEditorRowTextStyle(previousTextStyle),
+    textStyle: rollbackTextStyle,
+    persistedTextStyle,
     textStyleSaveState: {
       status: "idle",
+      textStyle: null,
+      persistedTextStyle,
       error: message,
     },
   };
@@ -291,13 +326,63 @@ function buildMergedRowState(remoteRow, mergeResult) {
   };
 }
 
+function preservePendingTextStyle(nextRow, previousRow) {
+  if (!nextRow || previousRow?.textStyleSaveState?.status !== "saving") {
+    return nextRow;
+  }
+
+  const persistedTextStyle = normalizeEditorRowTextStyle(nextRow.persistedTextStyle ?? nextRow.textStyle);
+  return {
+    ...nextRow,
+    textStyle: normalizeEditorRowTextStyle(previousRow.textStyle),
+    persistedTextStyle,
+    textStyleSaveState: {
+      ...previousRow.textStyleSaveState,
+      status: "saving",
+      persistedTextStyle,
+      error: "",
+    },
+  };
+}
+
+function preservePendingMarker(nextRow, previousRow) {
+  if (!nextRow || previousRow?.markerSaveState?.status !== "saving") {
+    return nextRow;
+  }
+
+  const languageCode =
+    typeof previousRow.markerSaveState.languageCode === "string"
+      ? previousRow.markerSaveState.languageCode
+      : "";
+  if (!languageCode) {
+    return nextRow;
+  }
+
+  return {
+    ...nextRow,
+    fieldStates: {
+      ...cloneRowFieldStates(nextRow.fieldStates),
+      [languageCode]: normalizeFieldState(previousRow.fieldStates?.[languageCode]),
+    },
+    markerSaveState: {
+      ...previousRow.markerSaveState,
+      status: "saving",
+      error: "",
+    },
+  };
+}
+
+function preservePendingRowWrites(nextRow, previousRow) {
+  return preservePendingMarker(preservePendingTextStyle(nextRow, previousRow), previousRow);
+}
+
 export function applyEditorRowMergedWithRemote(row, payloadRow, mergeResult) {
   if (!row || !payloadRow || mergeResult?.status !== "merged") {
     return row;
   }
 
   const remoteRow = normalizeEditorRow(payloadRow);
-  return buildMergedRowState(remoteRow, mergeResult);
+  return preservePendingRowWrites(buildMergedRowState(remoteRow, mergeResult), row);
 }
 
 export function applyEditorRowPersistSucceeded(row, payloadRow, persistedSnapshot = null) {
@@ -335,11 +420,11 @@ export function applyEditorRowPersistSucceeded(row, payloadRow, persistedSnapsho
       remoteRow: normalizedRow,
     });
     if (mergeResult.status === "merged") {
-      return buildMergedRowState(normalizedRow, mergeResult);
+      return preservePendingRowWrites(buildMergedRowState(normalizedRow, mergeResult), row);
     }
   }
 
-  return {
+  return preservePendingRowWrites({
     ...normalizedRow,
     fields: rowChangedDuringSave ? cloneRowFields(row.fields) : normalizedRow.fields,
     footnotes: rowChangedDuringSave ? cloneRowFields(row.footnotes) : normalizedRow.footnotes,
@@ -347,7 +432,7 @@ export function applyEditorRowPersistSucceeded(row, payloadRow, persistedSnapsho
     saveStatus: rowChangedDuringSave ? "dirty" : "idle",
     freshness: rowChangedDuringSave ? "dirty" : "fresh",
     conflictState: null,
-  };
+  }, row);
 }
 
 export function applyEditorRowImageSaved(row, payloadRow) {
@@ -365,13 +450,13 @@ export function applyEditorRowImageSaved(row, payloadRow) {
     row.persistedImageCaptions,
   );
   if (!textChangedLocally) {
-    return {
+    return preservePendingRowWrites({
       ...normalizedRow,
       conflictState: row?.conflictState ?? null,
-    };
+    }, row);
   }
 
-  return {
+  return preservePendingRowWrites({
     ...normalizedRow,
     fields: cloneRowFields(row.fields),
     footnotes: cloneRowFields(row.footnotes),
@@ -385,7 +470,7 @@ export function applyEditorRowImageSaved(row, payloadRow) {
           ? "dirty"
           : row.freshness,
     conflictState: row?.conflictState ?? null,
-  };
+  }, row);
 }
 
 export function applyEditorRowPersistFailed(row, message = "") {

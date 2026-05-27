@@ -1172,27 +1172,22 @@ test("background sync ignores stale row updates from an obsolete sync base", asy
   );
 });
 
-test("background sync skips skipDirtyFlush requests while row writes are still pending", async () => {
+test("background sync skips skipDirtyFlush requests while comments are still pending", async () => {
   installEditorFixture();
   const render = createRenderRecorder();
   startEditorBackgroundSyncSession(render);
   await Promise.resolve();
   invokeLog.length = 0;
 
-  state.editorChapter.rows = [{
-    rowId: "row-1",
-    freshness: "fresh",
-    remotelyDeleted: false,
-    saveStatus: "idle",
-    saveError: "",
-    textStyle: "heading1",
-    textStyleSaveState: { status: "saving", error: "" },
-    markerSaveState: { status: "idle", error: "", languageCode: null, kind: null },
-    fields: { es: "hola", en: "hello" },
-    persistedFields: { es: "hola", en: "hello" },
-    fieldStates: { es: { reviewed: false, pleaseCheck: false }, en: { reviewed: false, pleaseCheck: false } },
-    persistedFieldStates: { es: { reviewed: false, pleaseCheck: false }, en: { reviewed: false, pleaseCheck: false } },
-  }];
+  state.editorChapter = {
+    ...state.editorChapter,
+    rows: [createEditorRowFixture()],
+    comments: {
+      ...state.editorChapter.comments,
+      rowId: "row-1",
+      status: "saving",
+    },
+  };
 
   invokeHandler = async (command) => {
     throw new Error(`Unexpected command: ${command}`);

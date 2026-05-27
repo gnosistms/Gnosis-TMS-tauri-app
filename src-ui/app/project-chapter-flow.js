@@ -54,7 +54,6 @@ import {
 } from "./project-context.js";
 import {
   applyProjectWriteIntentsToSnapshot,
-  anyProjectWriteIsActive,
   chapterGlossaryIntentKey,
   chapterLifecycleIntentKey,
   chapterTitleIntentKey,
@@ -133,6 +132,15 @@ function chapterWriteBlockedMessage() {
 
 function chapterLifecycleWriteBlockedMessage() {
   return "Wait for the current project write to finish.";
+}
+
+function resourceHasPendingLifecycleMutation(resource) {
+  return typeof resource?.pendingMutation === "string" && resource.pendingMutation.trim();
+}
+
+function projectHasPendingDeletedChapterMutation(project) {
+  return (Array.isArray(project?.chapters) ? project.chapters : [])
+    .some((chapter) => chapter?.status === "deleted" && resourceHasPendingLifecycleMutation(chapter));
 }
 
 function ensureChapterMutationAllowed(
@@ -421,7 +429,7 @@ function projectDeletedChapters(project) {
     : [];
 }
 
-function updateProjectQueryCache(selectedTeam) {
+export function updateProjectQueryCache(selectedTeam) {
   if (!selectedTeam?.id) {
     return;
   }
@@ -1056,6 +1064,14 @@ function openChapterModal(render, chapterId, options) {
     return;
   }
 
+  if (
+    options.blockPendingLifecycle === true
+    && resourceHasPendingLifecycleMutation(resolved.context.chapter)
+  ) {
+    setProjectDiscoveryError(render, chapterLifecycleWriteBlockedMessage());
+    return;
+  }
+
   options.applyState(resolved.context);
   render();
 }
@@ -1100,6 +1116,7 @@ export function openChapterPermanentDeletion(render, chapterId) {
     actionLabel: "permanently delete files",
     actionKind: "localHardDelete",
     localOnly: true,
+    blockPendingLifecycle: true,
     applyState: (context) => {
       state.chapterPermanentDeletion = {
         isOpen: true,
@@ -1135,8 +1152,13 @@ export async function openProjectClearDeletedFiles(render, projectId) {
     return;
   }
 
-  if (areResourcePageWritesDisabled(state.projectsPage) || anyProjectWriteIsActive()) {
+  if (areResourcePageWritesDisabled(state.projectsPage)) {
     setProjectDiscoveryError(render, chapterWriteBlockedMessage());
+    return;
+  }
+
+  if (projectHasPendingDeletedChapterMutation(project)) {
+    setProjectDiscoveryError(render, chapterLifecycleWriteBlockedMessage());
     return;
   }
 
@@ -1188,9 +1210,16 @@ export async function confirmProjectClearDeletedFiles(render) {
   const modal = state.projectClearDeletedFiles;
   const project = findProjectForRepoSync(modal.projectId);
 
-  if (areResourcePageWritesDisabled(state.projectsPage) || anyProjectWriteIsActive()) {
+  if (areResourcePageWritesDisabled(state.projectsPage)) {
     modal.status = "idle";
     modal.error = chapterWriteBlockedMessage();
+    render();
+    return;
+  }
+
+  if (projectHasPendingDeletedChapterMutation(project)) {
+    modal.status = "idle";
+    modal.error = chapterLifecycleWriteBlockedMessage();
     render();
     return;
   }
@@ -1607,6 +1636,10 @@ export async function permanentlyDeleteChapter(render, chapterId) {
   }
 
   const { selectedTeam, context } = resolved;
+  if (resourceHasPendingLifecycleMutation(context.chapter)) {
+    setProjectDiscoveryError(render, chapterLifecycleWriteBlockedMessage());
+    return;
+  }
   addLocalHardDeleteTombstone(selectedTeam, "chapter", context.chapter);
   const nextSnapshot = applyChapterPendingMutation(
     { items: state.projects, deletedItems: state.deletedProjects },
@@ -1628,9 +1661,16 @@ export async function confirmChapterPermanentDeletion(render) {
   const selectedTeam = selectedProjectsTeam();
   const context = findChapterContext(state.chapterPermanentDeletion.chapterId);
 
-  if (areResourcePageWritesDisabled(state.projectsPage) || anyProjectWriteIsActive()) {
+  if (areResourcePageWritesDisabled(state.projectsPage)) {
     state.chapterPermanentDeletion.status = "idle";
     state.chapterPermanentDeletion.error = chapterWriteBlockedMessage();
+    render();
+    return;
+  }
+
+  if (resourceHasPendingLifecycleMutation(context?.chapter)) {
+    state.chapterPermanentDeletion.status = "idle";
+    state.chapterPermanentDeletion.error = chapterLifecycleWriteBlockedMessage();
     render();
     return;
   }

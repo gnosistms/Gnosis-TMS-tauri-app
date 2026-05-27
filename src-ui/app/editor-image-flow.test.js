@@ -109,6 +109,12 @@ const {
   updateEditorChapterRow,
 } = await import("./editor-state-flow.js");
 const {
+  resetEditorOperationQueue,
+} = await import("./editor-operation-queue.js");
+const {
+  resetRepoWriteQueue,
+} = await import("./repo-write-queue.js");
+const {
   dismissActiveIdleEditorImageUpload,
   handleDroppedEditorImageFile,
   handleDroppedEditorImagePath,
@@ -118,6 +124,11 @@ const {
   submitEditorImageUrl,
   updateEditorImageUrlDraft,
 } = await import("./editor-image-flow.js");
+
+test.afterEach(() => {
+  resetEditorOperationQueue();
+  resetRepoWriteQueue();
+});
 
 function installEditorFixture() {
   resetSessionState();
@@ -301,7 +312,7 @@ test("submitEditorImageUrl closes the input while a non-empty draft is being sav
 
   assert.equal(state.editorChapter.imageEditor.status, "submitting");
   assert.equal(state.editorChapter.imageEditor.mode, "url");
-  assert.equal(render.calls.length, 1);
+  assert.equal(render.calls.length, 2);
   assert.equal(invokeLog.at(-1)?.command, "save_gtms_editor_language_image_url");
 
   submitPromise.catch(() => {});
@@ -451,6 +462,60 @@ test("submitEditorImageUrl does not replace a URL editor reopened while the save
   });
 });
 
+test("submitEditorImageUrl stays clickable while marker save is pending", async () => {
+  installEditorFixture();
+  const render = createRenderSpy();
+  state.editorChapter = {
+    ...state.editorChapter,
+    imageEditor: {
+      rowId: "row-1",
+      languageCode: "vi",
+      mode: "url",
+      urlDraft: "https://example.com/queued.png",
+      invalidUrl: false,
+      urlErrorMessage: "",
+      status: "idle",
+    },
+    rows: state.editorChapter.rows.map((row) => ({
+      ...row,
+      markerSaveState: {
+        status: "saving",
+        languageCode: "vi",
+        kind: "reviewed",
+        error: "",
+      },
+    })),
+  };
+
+  invokeHandler = async (command, payload = {}) => {
+    assert.equal(command, "save_gtms_editor_language_image_url");
+    return {
+      status: "saved",
+      row: {
+        ...state.editorChapter.rows[0],
+        images: {
+          vi: {
+            kind: "url",
+            url: payload.input?.url,
+          },
+        },
+      },
+      chapterBaseCommitSha: "abc123",
+    };
+  };
+
+  await submitEditorImageUrl(render, "row-1", "vi", { updateEditorChapterRow });
+
+  assert.equal(invokeLog.at(-1)?.command, "save_gtms_editor_language_image_url");
+  assert.deepEqual(state.editorChapter.rows[0].images.vi, {
+    kind: "url",
+    url: "https://example.com/queued.png",
+    path: null,
+    filePath: null,
+    fileName: null,
+  });
+});
+
 test("dismissActiveIdleEditorImageUpload clears an idle upload editor back to the pre-open state", () => {
   installEditorFixture();
   const render = createRenderSpy();
@@ -511,6 +576,38 @@ test("dismissActiveIdleEditorImageUpload keeps active upload work in place", () 
     status: "saving",
   });
   assert.deepEqual(render.calls, []);
+});
+
+test("removeEditorLanguageImage stays clickable while row text save is pending", async () => {
+  installEditorFixture();
+  installFixtureImage("https://example.com/remove-me.png");
+  const render = createRenderSpy();
+  state.editorChapter.rows[0] = {
+    ...state.editorChapter.rows[0],
+    saveStatus: "saving",
+  };
+
+  invokeHandler = async (command, payload = {}) => {
+    assert.equal(command, "remove_gtms_editor_language_image");
+    assert.equal(payload.input?.rowId, "row-1");
+    return {
+      status: "saved",
+      row: {
+        ...state.editorChapter.rows[0],
+        images: {},
+      },
+      chapterBaseCommitSha: "abc123",
+    };
+  };
+
+  const {
+    removeEditorLanguageImage,
+  } = await import("./editor-image-flow.js");
+
+  await removeEditorLanguageImage(render, "row-1", "vi", { updateEditorChapterRow });
+
+  assert.equal(invokeLog.at(-1)?.command, "remove_gtms_editor_language_image");
+  assert.equal(state.editorChapter.rows[0].images.vi, undefined);
 });
 
 test("handleDroppedEditorImageFile applies a saved uploaded image to the editor row", async () => {

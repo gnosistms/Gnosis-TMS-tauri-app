@@ -27,6 +27,7 @@ import {
   applyEditorRowTextStyleSaved,
   applyEditorRowTextStyleSaveFailed,
   applyEditorRowTextStyleSaving,
+  applyEditorRowTextStyleStaleSaved,
 } from "./editor-persistence-state.js";
 import {
   applyEditorChapterRowsUnreviewed,
@@ -48,6 +49,7 @@ import {
   findEditorRowById,
   normalizeFieldState,
 } from "./editor-utils.js";
+import { assertQueuedEditorRowsReady } from "./editor-queued-write.js";
 import {
   ensureEditorRowReadyForWrite,
   reloadEditorRowFromDisk,
@@ -226,10 +228,6 @@ function updateClearTranslationsModalError(message = "", render) {
     },
   };
   render?.();
-}
-
-function chapterHasPendingEditorWrites(chapterState = state.editorChapter) {
-  return hasPendingEditorWrites(chapterState);
 }
 
 function rowHasPendingCommentWrite(rowId, chapterState = state.editorChapter) {
@@ -629,20 +627,8 @@ export async function updateEditorRowTextStyle(render, rowId, nextTextStyle, ope
     return;
   }
 
-  if (row.saveStatus !== "idle") {
-    await persistEditorRowOnBlur(render, rowId, operations);
-    row = await ensureEditorRowReadyForWrite(render, rowId);
-    if (!row || row.saveStatus !== "idle") {
-      return;
-    }
-  }
-
   const previousTextStyle = normalizeEditorRowTextStyle(row.textStyle);
   if (previousTextStyle === normalizedTextStyle) {
-    return;
-  }
-
-  if (row.markerSaveState?.status === "saving" || row.textStyleSaveState?.status === "saving") {
     return;
   }
 
@@ -653,7 +639,8 @@ export async function updateEditorRowTextStyle(render, rowId, nextTextStyle, ope
 
   const team = selectedProjectsTeam();
   const context = findChapterContextById(editorChapter.chapterId);
-  if (!Number.isFinite(team?.installationId) || !context?.project?.name) {
+  const repoScope = projectRepoScope({ team, project: context?.project ?? null });
+  if (!Number.isFinite(team?.installationId) || !context?.project?.name || !repoScope) {
     return;
   }
 
@@ -666,57 +653,137 @@ export async function updateEditorRowTextStyle(render, rowId, nextTextStyle, ope
     return;
   }
 
-  updateEditorChapterRow(
+  if (rowHasFieldChanges(row)) {
+    const queued = await persistEditorRowOnBlur(render, rowId, operations, { waitForDurable: false });
+    if (queued === false || state.editorChapter?.chapterId !== editorChapter.chapterId) {
+      return;
+    }
+  }
+
+  const operationValue = {
+    input: {
+      installationId: team.installationId,
+      projectId: context.project.id,
+      repoName: context.project.name,
+      chapterId: editorChapter.chapterId,
+      rowId,
+      textStyle: normalizedTextStyle,
+    },
+    chapterId: editorChapter.chapterId,
     rowId,
-    (currentRow) => applyEditorRowTextStyleSaving(currentRow, normalizedTextStyle),
-  );
-  markEditorRowDirty(rowId);
-  render?.({ scope: "translate-body" });
+    nextTextStyle: normalizedTextStyle,
+    previousTextStyle,
+    permissionContext: {
+      team: cloneQueueContextValue(team),
+      project: cloneQueueContextValue(context.project),
+      chapter: cloneQueueContextValue(context.chapter),
+      row: cloneQueueContextValue(row),
+      actionKind: "sharedWrite",
+    },
+  };
 
-  try {
-    const payload = await invokeEditorWriteCommand("update_gtms_editor_row_text_style", {
-      input: {
-        installationId: team.installationId,
-        projectId: context.project.id,
-        repoName: context.project.name,
-        chapterId: editorChapter.chapterId,
-        rowId,
-        textStyle: normalizedTextStyle,
-      },
-    }, { render, actionKind: "sharedWrite", rowId });
+  const renderStyleChange = () => {
+    render?.({ scope: "translate-body" });
+    if (state.editorChapter?.activeRowId === rowId) {
+      render?.({ scope: "translate-sidebar" });
+    }
+  };
 
-    if (state.editorChapter?.chapterId === editorChapter.chapterId) {
+  const requested = requestEditorOperation({
+    repoScope,
+    chapterScope: `${repoScope}:${editorChapter.chapterId}`,
+    rowScope: `${repoScope}:${editorChapter.chapterId}:${rowId}`,
+    coalesceKey: `textStyle:${editorChapter.chapterId}:${rowId}`,
+    kind: "textStyle",
+    value: operationValue,
+    metadata: {
+      projectId: context.project.id,
+      chapterId: editorChapter.chapterId,
+      rowId,
+      textStyle: normalizedTextStyle,
+    },
+    invalidationKeys: [editorChapterInvalidationKey(repoScope, editorChapter.chapterId)],
+  }, {
+    applyOptimistic: () => {
+      if (state.editorChapter?.chapterId !== editorChapter.chapterId) {
+        return;
+      }
       updateEditorChapterRow(
         rowId,
+        (currentRow) => applyEditorRowTextStyleSaving(currentRow, normalizedTextStyle),
+      );
+      markEditorRowDirty(rowId);
+      renderStyleChange();
+    },
+    run: async (operation) => {
+      assertQueuedEditorRowsReady({
+        chapterId: operation.value.chapterId,
+        rowIds: [operation.value.rowId],
+        forbidPendingText: true,
+        message: "Refresh or resolve the row before updating its style.",
+      });
+      return invokeQueuedEditorWriteCommand(
+        "update_gtms_editor_row_text_style",
+        { input: operation.value.input },
+        operation.value.permissionContext,
+        render,
+      );
+    },
+    onSuccess: (payload, operation) => {
+      const value = operation?.value ?? operationValue;
+      if (state.editorChapter?.chapterId !== value.chapterId) {
+        return;
+      }
+      updateEditorChapterRow(
+        value.rowId,
         (currentRow) => applyEditorRowTextStyleSaved(currentRow, payload),
       );
       state.editorChapter = {
         ...state.editorChapter,
         chapterBaseCommitSha: nextChapterBaseCommitSha(payload, state.editorChapter),
       };
-      reconcileDirtyTrackedEditorRows([rowId]);
-      render?.({ scope: "translate-body" });
+      reconcileDirtyTrackedEditorRows([value.rowId]);
+      renderStyleChange();
 
-      if (state.editorChapter.activeRowId === rowId) {
+      if (state.editorChapter.activeRowId === value.rowId) {
         loadActiveEditorFieldHistory(render);
       }
-    }
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    if (state.editorChapter?.chapterId === editorChapter.chapterId) {
+    },
+    onStaleSuccess: (payload, operation) => {
+      const value = operation?.value ?? operationValue;
+      if (state.editorChapter?.chapterId !== value.chapterId) {
+        return;
+      }
       updateEditorChapterRow(
-        rowId,
-        (currentRow) => applyEditorRowTextStyleSaveFailed(currentRow, previousTextStyle, message),
+        value.rowId,
+        (currentRow) => applyEditorRowTextStyleStaleSaved(currentRow, payload),
       );
-      reconcileDirtyTrackedEditorRows([rowId]);
-      render?.({ scope: "translate-body" });
-    }
-    showNoticeBadge(message || "The row style could not be saved.", render);
-  }
-
-  if (focusedEditorRowId() !== rowId) {
-    void flushDirtyEditorRows(render, operations, { rowIds: [rowId] });
-  }
+      state.editorChapter = {
+        ...state.editorChapter,
+        chapterBaseCommitSha: nextChapterBaseCommitSha(payload, state.editorChapter),
+      };
+      reconcileDirtyTrackedEditorRows([value.rowId]);
+      renderStyleChange();
+    },
+    onError: (error, operation) => {
+      const message = error instanceof Error ? error.message : String(error);
+      const value = operation?.value ?? operationValue;
+      if (state.editorChapter?.chapterId === value.chapterId) {
+        updateEditorChapterRow(
+          value.rowId,
+          (currentRow) => applyEditorRowTextStyleSaveFailed(
+            currentRow,
+            null,
+            message,
+          ),
+        );
+        reconcileDirtyTrackedEditorRows([value.rowId]);
+        renderStyleChange();
+      }
+      showNoticeBadge(message || "The row style could not be saved.", render);
+    },
+  });
+  requested.promise.catch(() => {});
 }
 
 export async function toggleEditorRowFieldMarker(
@@ -753,11 +820,6 @@ export async function toggleEditorRowFieldMarker(
 
   const row = await ensureEditorRowReadyForWrite(render, rowId);
   if (!row) {
-    return;
-  }
-
-  if (row.textStyleSaveState?.status === "saving") {
-    showNoticeBadge("Finish saving the row style before updating review markers.", render);
     return;
   }
 
@@ -860,12 +922,20 @@ export async function toggleEditorRowFieldMarker(
       renderTranslateBodyPreservingViewport(render, viewportSnapshot);
       render?.({ scope: "translate-sidebar" });
     },
-    run: async (operation) => invokeQueuedEditorWriteCommand(
-      "update_gtms_editor_row_field_flag",
-      { input: operation.value.input },
-      operation.value.permissionContext,
-      render,
-    ),
+    run: async (operation) => {
+      assertQueuedEditorRowsReady({
+        chapterId: operation.value.chapterId,
+        rowIds: [operation.value.rowId],
+        forbidPendingText: true,
+        message: "Refresh or resolve the row before updating review markers.",
+      });
+      return invokeQueuedEditorWriteCommand(
+        "update_gtms_editor_row_field_flag",
+        { input: operation.value.input },
+        operation.value.permissionContext,
+        render,
+      );
+    },
     onSuccess: (payload, operation) => {
       const value = operation?.value ?? operationValue;
       if (state.editorChapter?.chapterId !== value.chapterId) {
@@ -1028,16 +1098,8 @@ export async function confirmEditorUnreviewAll(render, operations = {}) {
     return;
   }
 
-  await flushDirtyEditorRows(render, operations);
+  await flushDirtyEditorRows(render, operations, { waitForDurable: false });
   if (state.editorChapter?.chapterId !== editorChapter.chapterId) {
-    return;
-  }
-
-  if (chapterHasPendingEditorWrites(state.editorChapter)) {
-    updateUnreviewAllModalError(
-      "Save all row text before marking every translation unreviewed.",
-      render,
-    );
     return;
   }
 
@@ -1051,7 +1113,8 @@ export async function confirmEditorUnreviewAll(render, operations = {}) {
 
   const team = selectedProjectsTeam();
   const context = findChapterContextById(editorChapter.chapterId);
-  if (!Number.isFinite(team?.installationId) || !context?.project?.name) {
+  const repoScope = projectRepoScope({ team, project: context?.project ?? null });
+  if (!Number.isFinite(team?.installationId) || !context?.project?.name || !repoScope) {
     return;
   }
 
@@ -1075,53 +1138,89 @@ export async function confirmEditorUnreviewAll(render, operations = {}) {
   };
   render?.();
 
-  try {
-    const payload = await invokeEditorWriteCommand("clear_gtms_editor_reviewed_markers", {
-      input: {
-        installationId: team.installationId,
-        projectId: context.project.id,
-        repoName: context.project.name,
-        chapterId: editorChapter.chapterId,
-        languageCode,
-      },
-    }, { render, actionKind: "sharedWrite" });
+  const operationValue = {
+    input: {
+      installationId: team.installationId,
+      projectId: context.project.id,
+      repoName: context.project.name,
+      chapterId: editorChapter.chapterId,
+      languageCode,
+    },
+    chapterId: editorChapter.chapterId,
+    languageCode,
+    permissionContext: {
+      team: cloneQueueContextValue(team),
+      project: cloneQueueContextValue(context.project),
+      chapter: cloneQueueContextValue(context.chapter),
+      actionKind: "sharedWrite",
+    },
+  };
 
-    if (state.editorChapter?.chapterId !== editorChapter.chapterId) {
-      return;
-    }
+  const requested = requestEditorOperation({
+    repoScope,
+    chapterScope: `${repoScope}:${editorChapter.chapterId}`,
+    kind: "unreviewAll",
+    value: operationValue,
+    metadata: {
+      projectId: context.project.id,
+      chapterId: editorChapter.chapterId,
+      languageCode,
+    },
+    invalidationKeys: [editorChapterInvalidationKey(repoScope, editorChapter.chapterId)],
+  }, {
+    run: async (operation) => {
+      assertQueuedEditorRowsReady({
+        chapterId: operation.value.chapterId,
+        includeAllRows: true,
+        message: "Refresh or resolve the file before marking every translation unreviewed.",
+      });
+      return invokeQueuedEditorWriteCommand("clear_gtms_editor_reviewed_markers", {
+        input: {
+          ...operation.value.input,
+        },
+      }, operation.value.permissionContext, render);
+    },
+    onSuccess: (payload, operation) => {
+      const value = operation?.value ?? operationValue;
+      if (state.editorChapter?.chapterId !== value.chapterId) {
+        return;
+      }
 
-    const changedRowIds = Array.isArray(payload?.rowIds) ? payload.rowIds.filter(Boolean) : [];
-    const activeRowId = state.editorChapter.activeRowId;
-    const activeLanguageCode = state.editorChapter.activeLanguageCode;
-    state.editorChapter = {
-      ...applyEditorChapterRowsUnreviewed(
-        state.editorChapter,
-        languageCode,
-        changedRowIds,
-      ),
-      chapterBaseCommitSha: nextChapterBaseCommitSha(payload, state.editorChapter),
-    };
-    reconcileDirtyTrackedEditorRows(changedRowIds);
-    render?.();
+      const changedRowIds = Array.isArray(payload?.rowIds) ? payload.rowIds.filter(Boolean) : [];
+      const activeRowId = state.editorChapter.activeRowId;
+      const activeLanguageCode = state.editorChapter.activeLanguageCode;
+      state.editorChapter = {
+        ...applyEditorChapterRowsUnreviewed(
+          state.editorChapter,
+          value.languageCode,
+          changedRowIds,
+        ),
+        chapterBaseCommitSha: nextChapterBaseCommitSha(payload, state.editorChapter),
+      };
+      reconcileDirtyTrackedEditorRows(changedRowIds);
+      render?.();
 
-    if (
-      changedRowIds.includes(activeRowId)
-      && activeLanguageCode === languageCode
-    ) {
-      loadActiveEditorFieldHistory(render);
-    }
+      if (
+        changedRowIds.includes(activeRowId)
+        && activeLanguageCode === value.languageCode
+      ) {
+        loadActiveEditorFieldHistory(render);
+      }
 
-    showNoticeBadge(
-      changedRowIds.length > 0
-        ? `Marked ${formatUnreviewAllCount(changedRowIds.length)} unreviewed.`
-        : "All translations are already unreviewed.",
-      render,
-    );
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    updateUnreviewAllModalError(message, render);
-    showNoticeBadge(message || "The reviewed markers could not be cleared.", render);
-  }
+      showNoticeBadge(
+        changedRowIds.length > 0
+          ? `Marked ${formatUnreviewAllCount(changedRowIds.length)} unreviewed.`
+          : "All translations are already unreviewed.",
+        render,
+      );
+    },
+    onError: (error) => {
+      const message = error instanceof Error ? error.message : String(error);
+      updateUnreviewAllModalError(message, render);
+      showNoticeBadge(message || "The reviewed markers could not be cleared.", render);
+    },
+  });
+  requested.promise.catch(() => {});
 }
 
 export async function confirmEditorClearTranslations(render, operations = {}) {
@@ -1141,16 +1240,8 @@ export async function confirmEditorClearTranslations(render, operations = {}) {
     return;
   }
 
-  await flushDirtyEditorRows(render, operations);
+  await flushDirtyEditorRows(render, operations, { waitForDurable: false });
   if (state.editorChapter?.chapterId !== editorChapter.chapterId) {
-    return;
-  }
-
-  if (chapterHasPendingEditorWrites(state.editorChapter)) {
-    updateClearTranslationsModalError(
-      "Save all row text before clearing translations.",
-      render,
-    );
     return;
   }
 
@@ -1165,7 +1256,8 @@ export async function confirmEditorClearTranslations(render, operations = {}) {
   const rows = clearTranslationsRowsForBatch(state.editorChapter, selectedLanguageCodes);
   const team = selectedProjectsTeam();
   const context = findChapterContextById(editorChapter.chapterId);
-  if (!Number.isFinite(team?.installationId) || !context?.project?.name) {
+  const repoScope = projectRepoScope({ team, project: context?.project ?? null });
+  if (!Number.isFinite(team?.installationId) || !context?.project?.name || !repoScope) {
     return;
   }
 
@@ -1190,38 +1282,14 @@ export async function confirmEditorClearTranslations(render, operations = {}) {
   };
   render?.();
 
-  try {
-    const payload = rows.length === 0
-      ? {
-        rowIds: [],
-        sourceWordCounts: state.editorChapter?.sourceWordCounts ?? {},
-        chapterBaseCommitSha: state.editorChapter?.chapterBaseCommitSha ?? null,
-      }
-      : await invokeEditorWriteCommand("update_gtms_editor_row_fields_batch", {
-        input: {
-          installationId: team.installationId,
-          projectId: context.project.id,
-          repoName: context.project.name,
-          chapterId: editorChapter.chapterId,
-          rows,
-          commitMessage: `Clear ${selectedLanguageCodes.join(", ")} translations`,
-          operation: "clear-translations",
-        },
-      }, { render, actionKind: "sharedWrite" });
-
-    if (state.editorChapter?.chapterId !== editorChapter.chapterId) {
-      return;
-    }
-
-    const changedRowIds = Array.isArray(payload?.rowIds) ? payload.rowIds.filter(Boolean) : [];
-    const activeRowId = state.editorChapter.activeRowId;
-    const activeLanguageCode = state.editorChapter.activeLanguageCode;
+  if (rows.length === 0) {
+    const payload = {
+      rowIds: [],
+      sourceWordCounts: state.editorChapter?.sourceWordCounts ?? {},
+      chapterBaseCommitSha: state.editorChapter?.chapterBaseCommitSha ?? null,
+    };
     state.editorChapter = {
-      ...applyEditorChapterRowsTranslationsCleared(
-        state.editorChapter,
-        selectedLanguageCodes,
-        changedRowIds,
-      ),
+      ...state.editorChapter,
       sourceWordCounts:
         payload?.sourceWordCounts && typeof payload.sourceWordCounts === "object"
           ? payload.sourceWordCounts
@@ -1229,27 +1297,104 @@ export async function confirmEditorClearTranslations(render, operations = {}) {
       chapterBaseCommitSha: nextChapterBaseCommitSha(payload, state.editorChapter),
       clearTranslationsModal: createEditorClearTranslationsModalState(),
     };
-    reconcileDirtyTrackedEditorRows(changedRowIds);
     render?.();
-
-    if (
-      changedRowIds.includes(activeRowId)
-      && selectedLanguageCodes.includes(activeLanguageCode)
-    ) {
-      loadActiveEditorFieldHistory(render);
-    }
-
-    showNoticeBadge(
-      changedRowIds.length > 0
-        ? `Cleared translations in ${formatClearTranslationsCount(changedRowIds.length)}.`
-        : "Selected translations are already empty.",
-      render,
-    );
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    updateClearTranslationsModalError(message, render);
-    showNoticeBadge(message || "The translations could not be cleared.", render);
+    showNoticeBadge("Selected translations are already empty.", render);
+    return;
   }
+
+  const operationValue = {
+    input: {
+      installationId: team.installationId,
+      projectId: context.project.id,
+      repoName: context.project.name,
+      chapterId: editorChapter.chapterId,
+      rows,
+      commitMessage: `Clear ${selectedLanguageCodes.join(", ")} translations`,
+      operation: "clear-translations",
+    },
+    chapterId: editorChapter.chapterId,
+    selectedLanguageCodes,
+    rows,
+    permissionContext: {
+      team: cloneQueueContextValue(team),
+      project: cloneQueueContextValue(context.project),
+      chapter: cloneQueueContextValue(context.chapter),
+      actionKind: "sharedWrite",
+    },
+  };
+
+  const requested = requestEditorOperation({
+    repoScope,
+    chapterScope: `${repoScope}:${editorChapter.chapterId}`,
+    kind: "clearTranslations",
+    value: operationValue,
+    metadata: {
+      projectId: context.project.id,
+      chapterId: editorChapter.chapterId,
+      rowIds: rows.map((row) => row.rowId).filter(Boolean),
+      languageCodes: selectedLanguageCodes,
+    },
+    invalidationKeys: [editorChapterInvalidationKey(repoScope, editorChapter.chapterId)],
+  }, {
+    run: async (operation) => {
+      assertQueuedEditorRowsReady({
+        chapterId: operation.value.chapterId,
+        includeAllRows: true,
+        forbidPendingText: true,
+        message: "Refresh or resolve the file before clearing translations.",
+      });
+      return invokeQueuedEditorWriteCommand("update_gtms_editor_row_fields_batch", {
+        input: {
+          ...operation.value.input,
+        },
+      }, operation.value.permissionContext, render);
+    },
+    onSuccess: (payload, operation) => {
+      const value = operation?.value ?? operationValue;
+      if (state.editorChapter?.chapterId !== value.chapterId) {
+        return;
+      }
+
+      const changedRowIds = Array.isArray(payload?.rowIds) ? payload.rowIds.filter(Boolean) : [];
+      const activeRowId = state.editorChapter.activeRowId;
+      const activeLanguageCode = state.editorChapter.activeLanguageCode;
+      state.editorChapter = {
+        ...applyEditorChapterRowsTranslationsCleared(
+          state.editorChapter,
+          value.selectedLanguageCodes,
+          changedRowIds,
+        ),
+        sourceWordCounts:
+          payload?.sourceWordCounts && typeof payload.sourceWordCounts === "object"
+            ? payload.sourceWordCounts
+            : state.editorChapter.sourceWordCounts,
+        chapterBaseCommitSha: nextChapterBaseCommitSha(payload, state.editorChapter),
+        clearTranslationsModal: createEditorClearTranslationsModalState(),
+      };
+      reconcileDirtyTrackedEditorRows(changedRowIds);
+      render?.();
+
+      if (
+        changedRowIds.includes(activeRowId)
+        && value.selectedLanguageCodes.includes(activeLanguageCode)
+      ) {
+        loadActiveEditorFieldHistory(render);
+      }
+
+      showNoticeBadge(
+        changedRowIds.length > 0
+          ? `Cleared translations in ${formatClearTranslationsCount(changedRowIds.length)}.`
+          : "Selected translations are already empty.",
+        render,
+      );
+    },
+    onError: (error) => {
+      const message = error instanceof Error ? error.message : String(error);
+      updateClearTranslationsModalError(message, render);
+      showNoticeBadge(message || "The translations could not be cleared.", render);
+    },
+  });
+  requested.promise.catch(() => {});
 }
 
 export async function persistEditorRowOnBlur(render, rowId, operations = {}, options = {}) {
@@ -1332,10 +1477,6 @@ async function persistEditorRow(render, rowId, operations = {}, options = {}) {
   if (!row) {
     reconcileDirtyTrackedEditorRows([rowId]);
     return true;
-  }
-
-  if (row.textStyleSaveState?.status === "saving") {
-    return false;
   }
 
   if (!rowHasFieldChanges(row)) {

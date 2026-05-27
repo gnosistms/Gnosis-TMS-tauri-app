@@ -94,7 +94,6 @@ function renderLanguageMarkerButton(kind, rowId, language) {
   const isReviewed = language.reviewed === true;
   const isPleaseCheck = language.pleaseCheck === true;
   const isActive = kind === "reviewed" ? isReviewed : isPleaseCheck;
-  const isSaving = language.markerSaveState?.status === "saving";
   const label =
     kind === "reviewed"
       ? (isActive ? "Mark unreviewed" : "Mark reviewed")
@@ -103,7 +102,7 @@ function renderLanguageMarkerButton(kind, rowId, language) {
 
   return `
     <button
-      class="translation-marker-button translation-marker-button--${kind}${isActive ? " is-active" : ""}${isSaving ? " is-saving" : ""}"
+      class="translation-marker-button translation-marker-button--${kind}${isActive ? " is-active" : ""}"
       type="button"
       data-action="${action}"
       data-row-id="${escapeHtml(rowId)}"
@@ -196,7 +195,6 @@ function renderRowTextStyleButtons(row, language) {
     return "";
   }
   const selectedTextStyle = normalizeEditorRowTextStyle(row?.textStyle);
-  const isSaving = row?.textStyleSaveState?.status === "saving";
   const showAddFootnoteButton = language.showAddFootnoteButton === true;
   const rubyConfig = rubyButtonConfig(language.baseCode || language.code);
   const secondaryButtons = [];
@@ -273,7 +271,7 @@ function renderRowTextStyleButtons(row, language) {
       <div class="translation-row-text-style-actions__group" role="radiogroup" aria-label="Text style">
         ${EDITOR_ROW_TEXT_STYLE_OPTIONS.map((option) => `
           <button
-            class="translation-row-text-style-button${selectedTextStyle === option.value ? " is-active" : ""}${isSaving ? " is-saving" : ""}"
+            class="translation-row-text-style-button${selectedTextStyle === option.value ? " is-active" : ""}"
             type="button"
             role="radio"
             data-action="set-editor-row-text-style"
@@ -282,7 +280,6 @@ function renderRowTextStyleButtons(row, language) {
             data-language-code="${escapeHtml(language.code)}"
             data-text-style="${escapeHtml(option.value)}"
             aria-checked="${selectedTextStyle === option.value ? "true" : "false"}"
-            ${isSaving ? "disabled" : ""}
             ${tooltipAttributes(option.tooltip, { side: "top" })}
           >
             <span class="translation-row-text-style-button__label">${escapeHtml(option.label)}</span>

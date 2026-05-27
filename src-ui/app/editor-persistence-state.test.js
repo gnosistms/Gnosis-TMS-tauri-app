@@ -16,12 +16,14 @@ import {
   applyEditorRowTextStyleSaved,
   applyEditorRowTextStyleSaveFailed,
   applyEditorRowTextStyleSaving,
+  applyEditorRowTextStyleStaleSaved,
 } from "./editor-persistence-state.js";
 
 function row(overrides = {}) {
   return {
     rowId: "row-1",
     textStyle: "paragraph",
+    persistedTextStyle: "paragraph",
     fields: { es: "uno" },
     footnotes: { es: "" },
     imageCaptions: { es: "" },
@@ -119,11 +121,45 @@ test("applyEditorRowMarkerSaveFailed restores the previous marker state and stor
   assert.equal(updatedRow.markerSaveState.error, "save failed");
 });
 
+test("applyEditorRowPersistSucceeded preserves an optimistic marker save", () => {
+  const optimisticRow = applyEditorRowMarkerSaving(
+    row({
+      fields: { es: "local edit" },
+      saveStatus: "saving",
+    }),
+    "es",
+    "please-check",
+    { reviewed: false, pleaseCheck: true },
+  );
+
+  const updatedRow = applyEditorRowPersistSucceeded(
+    optimisticRow,
+    persistedPayload({
+      fields: { es: "local edit" },
+      fieldStates: { es: { reviewed: false, pleaseCheck: false } },
+    }),
+    {
+      fields: { es: "local edit" },
+      footnotes: { es: "" },
+      imageCaptions: { es: "" },
+      images: {},
+    },
+  );
+
+  assert.deepEqual(updatedRow.fieldStates.es, { reviewed: false, pleaseCheck: true });
+  assert.deepEqual(updatedRow.persistedFieldStates.es, { reviewed: false, pleaseCheck: false });
+  assert.equal(updatedRow.markerSaveState.status, "saving");
+  assert.equal(updatedRow.saveStatus, "idle");
+});
+
 test("applyEditorRowTextStyleSaving stores the optimistic text style", () => {
   const updatedRow = applyEditorRowTextStyleSaving(row(), "heading1");
 
   assert.equal(updatedRow.textStyle, "heading1");
+  assert.equal(updatedRow.persistedTextStyle, "paragraph");
   assert.equal(updatedRow.textStyleSaveState.status, "saving");
+  assert.equal(updatedRow.textStyleSaveState.textStyle, "heading1");
+  assert.equal(updatedRow.textStyleSaveState.persistedTextStyle, "paragraph");
 });
 
 test("applyEditorRowTextStyleSaved clears the row text style save state", () => {
@@ -133,7 +169,20 @@ test("applyEditorRowTextStyleSaved clears the row text style save state", () => 
   );
 
   assert.equal(updatedRow.textStyle, "heading1");
+  assert.equal(updatedRow.persistedTextStyle, "heading1");
   assert.equal(updatedRow.textStyleSaveState.status, "idle");
+});
+
+test("applyEditorRowTextStyleStaleSaved records the committed style without replacing the latest optimistic style", () => {
+  const updatedRow = applyEditorRowTextStyleStaleSaved(
+    applyEditorRowTextStyleSaving(row(), "quote"),
+    "heading1",
+  );
+
+  assert.equal(updatedRow.textStyle, "quote");
+  assert.equal(updatedRow.persistedTextStyle, "heading1");
+  assert.equal(updatedRow.textStyleSaveState.status, "saving");
+  assert.equal(updatedRow.textStyleSaveState.persistedTextStyle, "heading1");
 });
 
 test("applyEditorRowTextStyleSaveFailed restores the previous row text style", () => {
@@ -144,6 +193,23 @@ test("applyEditorRowTextStyleSaveFailed restores the previous row text style", (
   );
 
   assert.equal(updatedRow.textStyle, "paragraph");
+  assert.equal(updatedRow.persistedTextStyle, "paragraph");
+  assert.equal(updatedRow.textStyleSaveState.status, "idle");
+  assert.equal(updatedRow.textStyleSaveState.error, "save failed");
+});
+
+test("applyEditorRowTextStyleSaveFailed falls back to the last persisted text style", () => {
+  const updatedRow = applyEditorRowTextStyleSaveFailed(
+    {
+      ...applyEditorRowTextStyleSaving(row(), "quote"),
+      persistedTextStyle: "heading1",
+    },
+    null,
+    "save failed",
+  );
+
+  assert.equal(updatedRow.textStyle, "heading1");
+  assert.equal(updatedRow.persistedTextStyle, "heading1");
   assert.equal(updatedRow.textStyleSaveState.status, "idle");
   assert.equal(updatedRow.textStyleSaveState.error, "save failed");
 });
@@ -174,6 +240,25 @@ test("applyEditorRowPersistSucceeded updates persisted fields and stays idle whe
     persistedPayload(),
   );
 
+  assert.deepEqual(updatedRow.persistedFields, { es: "dos" });
+  assert.equal(updatedRow.saveStatus, "idle");
+});
+
+test("applyEditorRowPersistSucceeded preserves a pending optimistic text style", () => {
+  const updatedRow = applyEditorRowPersistSucceeded(
+    {
+      ...applyEditorRowTextStyleSaving(row({ fields: { es: "dos" }, saveStatus: "saving" }), "heading1"),
+      saveStatus: "saving",
+    },
+    persistedPayload({
+      textStyle: "paragraph",
+      fields: { es: "dos" },
+    }),
+  );
+
+  assert.equal(updatedRow.textStyle, "heading1");
+  assert.equal(updatedRow.persistedTextStyle, "paragraph");
+  assert.equal(updatedRow.textStyleSaveState.status, "saving");
   assert.deepEqual(updatedRow.persistedFields, { es: "dos" });
   assert.equal(updatedRow.saveStatus, "idle");
 });

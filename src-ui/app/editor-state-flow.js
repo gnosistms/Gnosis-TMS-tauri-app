@@ -401,6 +401,7 @@ export function normalizeEditorRow(row) {
   const images = cloneRowImages(row?.images);
   const fieldStates = cloneRowFieldStates(row?.fieldStates);
   const textStyle = normalizeEditorRowTextStyle(row?.textStyle);
+  const persistedTextStyle = normalizeEditorRowTextStyle(row?.persistedTextStyle ?? textStyle);
   return {
     ...row,
     lifecycleState:
@@ -416,6 +417,7 @@ export function normalizeEditorRow(row) {
     commentsRevision:
       Number.isInteger(row?.commentsRevision) && row.commentsRevision >= 0 ? row.commentsRevision : 0,
     textStyle,
+    persistedTextStyle,
     fields,
     footnotes,
     imageCaptions,

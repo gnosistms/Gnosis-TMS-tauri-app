@@ -30,8 +30,15 @@ import { showNoticeBadge } from "./status-feedback.js";
 import {
   assertCurrentEditorWritePermission,
   handleEditorPermissionDenied,
-  invokeEditorWriteCommand,
 } from "./editor-write-permission.js";
+import { requestEditorOperation } from "./editor-operation-queue.js";
+import {
+  assertQueuedEditorRowsReady,
+  createQueuedEditorWritePermissionContext,
+  editorChapterInvalidationKey,
+  invokeQueuedEditorWriteCommand,
+} from "./editor-queued-write.js";
+import { projectRepoScope } from "./repo-write-queue.js";
 import {
   consumePrimedTranslateInteractionAnchor,
   consumePrimedTranslateMainScrollTop,
@@ -64,29 +71,6 @@ function hasEditorSearchOperations(operations) {
     typeof operations?.markEditorRowsPersisted === "function"
     && typeof operations?.loadActiveEditorFieldHistory === "function"
   );
-}
-
-async function commitEditorRowFieldsBatch({
-  render,
-  installationId,
-  projectId,
-  repoName,
-  chapterId,
-  rows,
-  commitMessage,
-  operation,
-}) {
-  return invokeEditorWriteCommand("update_gtms_editor_row_fields_batch", {
-    input: {
-      installationId,
-      projectId,
-      repoName,
-      chapterId,
-      rows,
-      commitMessage,
-      operation,
-    },
-  }, { render, actionKind: "sharedWrite" });
 }
 
 function buildEditorRowSections(row, chapterState = state.editorChapter) {
@@ -480,14 +464,6 @@ export async function replaceSelectedEditorRows(render, operations = {}) {
   const selectedRows = selectedRowIds
     .map((rowId) => findEditorRowById(rowId, editorChapter))
     .filter(Boolean);
-  if (selectedRows.some((row) =>
-    row.saveStatus === "saving"
-    || row.markerSaveState?.status === "saving"
-    || row.textStyleSaveState?.status === "saving"
-  )) {
-    showNoticeBadge("Wait for the selected rows to finish saving before replacing.", render);
-    return;
-  }
   if (state.editorChapter.deferredStructuralChanges === true) {
     showNoticeBadge("Refresh the file before running replace.", render);
     return;
@@ -527,7 +503,8 @@ export async function replaceSelectedEditorRows(render, operations = {}) {
 
   const team = selectedProjectsTeam();
   const context = findChapterContextById(editorChapter.chapterId);
-  if (!Number.isFinite(team?.installationId) || !context?.project?.name) {
+  const repoScope = projectRepoScope({ team, project: context?.project ?? null });
+  if (!Number.isFinite(team?.installationId) || !context?.project?.name || !repoScope) {
     return;
   }
 
@@ -547,44 +524,85 @@ export async function replaceSelectedEditorRows(render, operations = {}) {
   }));
   render?.();
 
-  try {
-    if (resetRows.length > 0) {
-      const resetPayload = await commitEditorRowFieldsBatch({
-        render,
-        installationId: team.installationId,
-        projectId: context.project.id,
-        repoName: context.project.name,
-        chapterId: editorChapter.chapterId,
-        rows: resetRows,
-        commitMessage: buildEditorReplaceResetCommitMessage(resetRows.length),
-        operation: "editor-replace-reset",
-      });
-
-      if (state.editorChapter?.chapterId === editorChapter.chapterId) {
-        operations.markEditorRowsPersisted(
-          resetRows,
-          resetPayload?.sourceWordCounts,
-          nextChapterBaseCommitSha(resetPayload, state.editorChapter),
-        );
-      }
-    }
-
-    const payload = await commitEditorRowFieldsBatch({
-      render,
+  const operationValue = {
+    chapterId: editorChapter.chapterId,
+    resetRows,
+    replaceRows: replacePlan.updatedRows,
+    updatedRowIds: replacePlan.updatedRowIds,
+    searchQuery,
+    replaceCount: replacePlan.updatedRows.length,
+    inputBase: {
       installationId: team.installationId,
       projectId: context.project.id,
       repoName: context.project.name,
       chapterId: editorChapter.chapterId,
-      rows: replacePlan.updatedRows,
-      commitMessage: buildEditorReplaceCommitMessage(searchQuery, replacePlan.updatedRows.length),
-      operation: "editor-replace",
-    });
+    },
+    permissionContext: createQueuedEditorWritePermissionContext({
+      team,
+      project: context.project,
+      chapter: context.chapter,
+      actionKind: "sharedWrite",
+    }),
+  };
 
-    if (state.editorChapter?.chapterId === editorChapter.chapterId) {
+  const requested = requestEditorOperation({
+    repoScope,
+    chapterScope: `${repoScope}:${editorChapter.chapterId}`,
+    kind: "replaceSelected",
+    value: operationValue,
+    metadata: {
+      projectId: context.project.id,
+      chapterId: editorChapter.chapterId,
+      rowIds: replacePlan.updatedRowIds,
+    },
+    invalidationKeys: [editorChapterInvalidationKey(repoScope, editorChapter.chapterId)],
+  }, {
+    run: async (operation) => {
+      const value = operation.value;
+      assertQueuedEditorRowsReady({
+        chapterId: value.chapterId,
+        rowIds: value.updatedRowIds,
+        forbidPendingText: true,
+        message: "Refresh, save, or resolve the selected rows before running replace.",
+      });
+      let resetPayload = null;
+      if (value.resetRows.length > 0) {
+        resetPayload = await invokeQueuedEditorWriteCommand("update_gtms_editor_row_fields_batch", {
+          input: {
+            ...value.inputBase,
+            rows: value.resetRows,
+            commitMessage: buildEditorReplaceResetCommitMessage(value.resetRows.length),
+            operation: "editor-replace-reset",
+          },
+        }, value.permissionContext, render);
+      }
+
+      const replacePayload = await invokeQueuedEditorWriteCommand("update_gtms_editor_row_fields_batch", {
+        input: {
+          ...value.inputBase,
+          rows: value.replaceRows,
+          commitMessage: buildEditorReplaceCommitMessage(value.searchQuery, value.replaceRows.length),
+          operation: "editor-replace",
+        },
+      }, value.permissionContext, render);
+      return { resetPayload, replacePayload };
+    },
+    onSuccess: ({ resetPayload, replacePayload } = {}, operation) => {
+      const value = operation?.value ?? operationValue;
+      if (state.editorChapter?.chapterId !== value.chapterId) {
+        return;
+      }
+      if (value.resetRows.length > 0) {
+        operations.markEditorRowsPersisted(
+          value.resetRows,
+          resetPayload?.sourceWordCounts,
+          nextChapterBaseCommitSha(resetPayload, state.editorChapter),
+        );
+      }
       operations.markEditorRowsPersisted(
-        replacePlan.updatedRows,
-        payload?.sourceWordCounts,
-        nextChapterBaseCommitSha(payload, state.editorChapter),
+        value.replaceRows,
+        replacePayload?.sourceWordCounts,
+        nextChapterBaseCommitSha(replacePayload, state.editorChapter),
       );
       updateEditorReplaceState(state, (currentState) => ({
         ...currentState,
@@ -593,21 +611,24 @@ export async function replaceSelectedEditorRows(render, operations = {}) {
         selectedRowIds: new Set(),
       }));
       render?.();
-      if (affectedRowIds.has(state.editorChapter.activeRowId)) {
+      if (new Set(value.updatedRowIds).has(state.editorChapter.activeRowId)) {
         operations.loadActiveEditorFieldHistory(render);
       }
-      showNoticeBadge(`Replaced text in ${formatReplaceRowCount(replacePlan.updatedRows.length)}.`, render);
-    }
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    if (state.editorChapter?.chapterId === editorChapter.chapterId) {
-      updateEditorReplaceState(state, (currentState) => ({
-        ...currentState,
-        status: "idle",
-        error: message,
-      }));
-      render?.();
-    }
-    showNoticeBadge(message || "The selected rows could not be replaced.", render);
-  }
+      showNoticeBadge(`Replaced text in ${formatReplaceRowCount(value.replaceCount)}.`, render);
+    },
+    onError: (error, operation) => {
+      const value = operation?.value ?? operationValue;
+      const message = error instanceof Error ? error.message : String(error);
+      if (state.editorChapter?.chapterId === value.chapterId) {
+        updateEditorReplaceState(state, (currentState) => ({
+          ...currentState,
+          status: "idle",
+          error: message,
+        }));
+        render?.();
+      }
+      showNoticeBadge(message || "The selected rows could not be replaced.", render);
+    },
+  });
+  requested.promise.catch(() => {});
 }

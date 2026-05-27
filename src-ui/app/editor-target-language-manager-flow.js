@@ -3,7 +3,14 @@ import { normalizeLanguageSelections } from "./editor-selection-flow.js";
 import { findChapterContextById, selectedProjectsTeam } from "./project-context.js";
 import { createTargetLanguageManagerState, state } from "./state.js";
 import { showNoticeBadge } from "./status-feedback.js";
-import { invokeEditorWriteCommand } from "./editor-write-permission.js";
+import { requestEditorOperation } from "./editor-operation-queue.js";
+import {
+  assertQueuedEditorRowsReady,
+  createQueuedEditorWritePermissionContext,
+  editorChapterInvalidationKey,
+  invokeQueuedEditorWriteCommand,
+} from "./editor-queued-write.js";
+import { projectRepoScope } from "./repo-write-queue.js";
 import { findIsoLanguageOption, normalizeSupportedLanguageCode } from "../lib/language-options.js";
 import {
   appendDuplicateLanguage,
@@ -246,11 +253,13 @@ export async function submitTargetLanguageManager(render, operations = {}) {
 
   const team = selectedProjectsTeam();
   const context = findChapterContextById(modal.chapterId);
+  const repoScope = projectRepoScope({ team, project: context?.project ?? null });
   if (
     !Number.isFinite(team?.installationId)
     || !context?.project?.name
     || !context?.project?.fullName
     || !modal.chapterId
+    || !repoScope
   ) {
     state.targetLanguageManager = {
       ...modal,
@@ -283,17 +292,17 @@ export async function submitTargetLanguageManager(render, operations = {}) {
 
   try {
     const sessionToken = requireBrokerSession();
-    if (!(await operations.flushDirtyEditorRows?.(render))) {
+    if (!(await operations.flushDirtyEditorRows?.(render, { waitForDurable: false }))) {
       state.targetLanguageManager = {
         ...state.targetLanguageManager,
         status: "idle",
-        error: "Resolve pending editor saves before changing chapter languages.",
+        error: "Could not queue pending editor saves before changing chapter languages.",
       };
       render?.();
       return;
     }
 
-    const payload = await invokeEditorWriteCommand("update_gtms_chapter_languages", {
+    const operationValue = {
       sessionToken,
       input: {
         installationId: team.installationId,
@@ -306,21 +315,75 @@ export async function submitTargetLanguageManager(render, operations = {}) {
         chapterId: modal.chapterId,
         languages: draftLanguages,
       },
-    }, { render, actionKind: "sharedWrite" });
-    const nextSelections = normalizeLanguageSelections(
-      payload.languages,
-      payload.selectedSourceLanguageCode,
-      payload.selectedTargetLanguageCode,
-    );
-    operations.applyChapterMetadataToState?.(modal.chapterId, {
-      languages: Array.isArray(payload.languages) ? payload.languages : [],
-      selectedSourceLanguageCode: nextSelections.selectedSourceLanguageCode,
-      selectedTargetLanguageCode: nextSelections.selectedTargetLanguageCode,
-    });
+      chapterId: modal.chapterId,
+      permissionContext: createQueuedEditorWritePermissionContext({
+        team,
+        project: context.project,
+        chapter: context.chapter,
+        actionKind: "sharedWrite",
+      }),
+    };
 
-    closeTargetLanguageManager();
-    render?.();
-    await operations.reloadSelectedChapterEditorData?.(render, { preserveVisibleRows: false });
+    const requested = requestEditorOperation({
+      repoScope,
+      chapterScope: `${repoScope}:${modal.chapterId}`,
+      coalesceKey: `targetLanguages:${modal.chapterId}`,
+      kind: "targetLanguages",
+      value: operationValue,
+      metadata: {
+        projectId: context.project.id,
+        chapterId: modal.chapterId,
+        languageCodes: draftLanguages.map((language) => language.code).filter(Boolean),
+      },
+      invalidationKeys: [editorChapterInvalidationKey(repoScope, modal.chapterId)],
+    }, {
+      run: async (operation) => {
+        assertQueuedEditorRowsReady({
+          chapterId: operation.value.chapterId,
+          includeAllRows: true,
+          forbidPendingText: true,
+          message: "Save, refresh, or resolve the file before changing chapter languages.",
+        });
+        return invokeQueuedEditorWriteCommand("update_gtms_chapter_languages", {
+          sessionToken: operation.value.sessionToken,
+          input: {
+            ...operation.value.input,
+          },
+        }, operation.value.permissionContext, render);
+      },
+      onSuccess: (payload, operation) => {
+        const value = operation?.value ?? operationValue;
+        const nextSelections = normalizeLanguageSelections(
+          payload.languages,
+          payload.selectedSourceLanguageCode,
+          payload.selectedTargetLanguageCode,
+        );
+        operations.applyChapterMetadataToState?.(value.chapterId, {
+          languages: Array.isArray(payload.languages) ? payload.languages : [],
+          selectedSourceLanguageCode: nextSelections.selectedSourceLanguageCode,
+          selectedTargetLanguageCode: nextSelections.selectedTargetLanguageCode,
+        });
+
+        closeTargetLanguageManager();
+        render?.();
+        void operations.reloadSelectedChapterEditorData?.(render, { preserveVisibleRows: false });
+      },
+      onError: (error, operation) => {
+        const value = operation?.value ?? operationValue;
+        const message = error instanceof Error ? error.message : String(error);
+        if (state.targetLanguageManager?.chapterId === value.chapterId) {
+          state.targetLanguageManager = {
+            ...state.targetLanguageManager,
+            status: "idle",
+            error: message || "The chapter languages could not be updated.",
+          };
+          render?.();
+        } else {
+          showNoticeBadge(message || "The chapter languages could not be updated.", render);
+        }
+      },
+    });
+    requested.promise.catch(() => {});
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     state.targetLanguageManager = {

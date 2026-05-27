@@ -25,6 +25,14 @@ import { addLocalHardDeleteTombstone } from "./local-hard-delete-store.js";
 import { getProjectWritePolicy } from "./resource-write-policy.js";
 import { ensureEditorRowReadyForWrite } from "./editor-row-sync-flow.js";
 import { invokeEditorWriteCommand } from "./editor-write-permission.js";
+import { requestEditorOperation } from "./editor-operation-queue.js";
+import {
+  assertQueuedEditorRowsReady,
+  createQueuedEditorWritePermissionContext,
+  editorChapterInvalidationKey,
+  invokeQueuedEditorWriteCommand,
+} from "./editor-queued-write.js";
+import { projectRepoScope } from "./repo-write-queue.js";
 
 function hasRowStructureOperations(operations) {
   return (
@@ -212,53 +220,94 @@ export async function softDeleteEditorRow(render, rowId, triggerAnchorSnapshot =
   }
 
   const row = await ensureEditorRowReadyForWrite(render, rowId, { structural: true });
-  if (!row || row.saveStatus !== "idle" || row.markerSaveState?.status === "saving" || row.textStyleSaveState?.status === "saving") {
+  if (!row || (row.saveStatus !== "idle" && row.saveStatus !== "saving")) {
     showNoticeBadge("Save the current row before deleting it.", render);
     return;
   }
 
   const team = selectedProjectsTeam();
   const context = findChapterContextById(editorChapter.chapterId);
-  if (!Number.isFinite(team?.installationId) || !context?.project?.name) {
+  const repoScope = projectRepoScope({ team, project: context?.project ?? null });
+  if (!Number.isFinite(team?.installationId) || !context?.project?.name || !repoScope) {
     return;
   }
 
-  try {
-    const payload = await invokeEditorWriteCommand("soft_delete_gtms_editor_row", {
-      input: {
-        installationId: team.installationId,
-        projectId: context.project.id,
-        repoName: context.project.name,
-        chapterId: editorChapter.chapterId,
-        rowId,
-      },
-    }, { render, actionKind: "sharedWrite", rowId });
-
-    if (state.editorChapter?.chapterId !== editorChapter.chapterId) {
-      return;
-    }
-
-    const result = applySoftDeletedEditorRowState(
-      state.editorChapter,
+  const operationValue = {
+    input: {
+      installationId: team.installationId,
+      projectId: context.project.id,
+      repoName: context.project.name,
+      chapterId: editorChapter.chapterId,
       rowId,
-      payload?.lifecycleState ?? "deleted",
-      payload?.sourceWordCounts,
-      triggerAnchorSnapshot,
-    );
-    const chapterBaseCommitSha = nextChapterBaseCommitSha(state.editorChapter, payload);
-    operations.applyStructuralEditorChange(render, () => {
-      state.editorChapter = {
-        ...result.chapterState,
-        chapterBaseCommitSha,
-      };
-      operations.applyEditorSelectionsToProjectState(state.editorChapter);
-    }, {
-      anchorSnapshot: result.anchorSnapshot,
-    });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    showNoticeBadge(message || "The row could not be deleted.", render);
-  }
+    },
+    chapterId: editorChapter.chapterId,
+    rowId,
+    triggerAnchorSnapshot,
+    permissionContext: createQueuedEditorWritePermissionContext({
+      team,
+      project: context.project,
+      chapter: context.chapter,
+      row,
+      actionKind: "sharedWrite",
+    }),
+  };
+
+  const requested = requestEditorOperation({
+    repoScope,
+    chapterScope: `${repoScope}:${editorChapter.chapterId}`,
+    rowScope: `${repoScope}:${editorChapter.chapterId}:${rowId}`,
+    kind: "softDeleteRow",
+    value: operationValue,
+    metadata: {
+      projectId: context.project.id,
+      chapterId: editorChapter.chapterId,
+      rowId,
+    },
+    invalidationKeys: [editorChapterInvalidationKey(repoScope, editorChapter.chapterId)],
+  }, {
+    run: async (operation) => {
+      assertQueuedEditorRowsReady({
+        chapterId: operation.value.chapterId,
+        rowIds: [operation.value.rowId],
+        forbidPendingText: true,
+        message: "Save, refresh, or resolve the row before deleting it.",
+      });
+      return invokeQueuedEditorWriteCommand("soft_delete_gtms_editor_row", {
+        input: {
+          ...operation.value.input,
+        },
+      }, operation.value.permissionContext, render);
+    },
+    onSuccess: (payload, operation) => {
+      const value = operation?.value ?? operationValue;
+      if (state.editorChapter?.chapterId !== value.chapterId) {
+        return;
+      }
+
+      const result = applySoftDeletedEditorRowState(
+        state.editorChapter,
+        value.rowId,
+        payload?.lifecycleState ?? "deleted",
+        payload?.sourceWordCounts,
+        value.triggerAnchorSnapshot,
+      );
+      const chapterBaseCommitSha = nextChapterBaseCommitSha(state.editorChapter, payload);
+      operations.applyStructuralEditorChange(render, () => {
+        state.editorChapter = {
+          ...result.chapterState,
+          chapterBaseCommitSha,
+        };
+        operations.applyEditorSelectionsToProjectState(state.editorChapter);
+      }, {
+        anchorSnapshot: result.anchorSnapshot,
+      });
+    },
+    onError: (error) => {
+      const message = error instanceof Error ? error.message : String(error);
+      showNoticeBadge(message || "The row could not be deleted.", render);
+    },
+  });
+  requested.promise.catch(() => {});
 }
 
 export async function restoreEditorRow(render, rowId, operations = {}) {
@@ -297,46 +346,82 @@ export async function restoreEditorRow(render, rowId, operations = {}) {
 
   const team = selectedProjectsTeam();
   const context = findChapterContextById(editorChapter.chapterId);
-  if (!Number.isFinite(team?.installationId) || !context?.project?.name) {
+  const repoScope = projectRepoScope({ team, project: context?.project ?? null });
+  if (!Number.isFinite(team?.installationId) || !context?.project?.name || !repoScope) {
     return;
   }
 
-  try {
-    const payload = await invokeEditorWriteCommand("restore_gtms_editor_row", {
-      input: {
-        installationId: team.installationId,
-        projectId: context.project.id,
-        repoName: context.project.name,
-        chapterId: editorChapter.chapterId,
-        rowId,
-      },
-    }, { render, actionKind: "restoreRow", rowId });
-
-    if (state.editorChapter?.chapterId !== editorChapter.chapterId) {
-      return;
-    }
-
-    const result = applyRestoredEditorRowState(
-      state.editorChapter,
+  const row = Array.isArray(editorChapter.rows)
+    ? editorChapter.rows.find((item) => item?.rowId === rowId || item?.id === rowId)
+    : null;
+  const operationValue = {
+    input: {
+      installationId: team.installationId,
+      projectId: context.project.id,
+      repoName: context.project.name,
+      chapterId: editorChapter.chapterId,
       rowId,
-      payload?.lifecycleState ?? "active",
-      payload?.sourceWordCounts,
-      triggerAnchorSnapshot,
-    );
-    const chapterBaseCommitSha = nextChapterBaseCommitSha(state.editorChapter, payload);
-    operations.applyStructuralEditorChange(render, () => {
-      state.editorChapter = {
-        ...result.chapterState,
-        chapterBaseCommitSha,
-      };
-      operations.applyEditorSelectionsToProjectState(state.editorChapter);
-    }, {
-      anchorSnapshot: result.anchorSnapshot,
-    });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    showNoticeBadge(message || "The row could not be restored.", render);
-  }
+    },
+    chapterId: editorChapter.chapterId,
+    rowId,
+    triggerAnchorSnapshot,
+    permissionContext: createQueuedEditorWritePermissionContext({
+      team,
+      project: context.project,
+      chapter: context.chapter,
+      row,
+      actionKind: "restoreRow",
+    }),
+  };
+
+  const requested = requestEditorOperation({
+    repoScope,
+    chapterScope: `${repoScope}:${editorChapter.chapterId}`,
+    rowScope: `${repoScope}:${editorChapter.chapterId}:${rowId}`,
+    kind: "restoreRow",
+    value: operationValue,
+    metadata: {
+      projectId: context.project.id,
+      chapterId: editorChapter.chapterId,
+      rowId,
+    },
+    invalidationKeys: [editorChapterInvalidationKey(repoScope, editorChapter.chapterId)],
+  }, {
+    run: async (operation) => invokeQueuedEditorWriteCommand("restore_gtms_editor_row", {
+      input: {
+        ...operation.value.input,
+      },
+    }, operation.value.permissionContext, render),
+    onSuccess: (payload, operation) => {
+      const value = operation?.value ?? operationValue;
+      if (state.editorChapter?.chapterId !== value.chapterId) {
+        return;
+      }
+
+      const result = applyRestoredEditorRowState(
+        state.editorChapter,
+        value.rowId,
+        payload?.lifecycleState ?? "active",
+        payload?.sourceWordCounts,
+        value.triggerAnchorSnapshot,
+      );
+      const chapterBaseCommitSha = nextChapterBaseCommitSha(state.editorChapter, payload);
+      operations.applyStructuralEditorChange(render, () => {
+        state.editorChapter = {
+          ...result.chapterState,
+          chapterBaseCommitSha,
+        };
+        operations.applyEditorSelectionsToProjectState(state.editorChapter);
+      }, {
+        anchorSnapshot: result.anchorSnapshot,
+      });
+    },
+    onError: (error) => {
+      const message = error instanceof Error ? error.message : String(error);
+      showNoticeBadge(message || "The row could not be restored.", render);
+    },
+  });
+  requested.promise.catch(() => {});
 }
 
 export async function confirmEditorRowPermanentDeletion(render, operations = {}) {

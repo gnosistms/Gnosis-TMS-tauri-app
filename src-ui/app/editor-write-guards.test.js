@@ -108,13 +108,29 @@ const {
 } = await import("./state.js");
 const {
   applyEditorSelectionsToProjectState,
+  markEditorRowsPersisted,
   normalizeEditorRows,
   updateEditorChapterRow,
 } = await import("./editor-state-flow.js");
 const {
+  confirmEditorClearTranslations,
+  confirmEditorUnreviewAll,
   flushDirtyEditorRows,
   toggleEditorRowFieldMarker,
+  updateEditorRowTextStyle,
 } = await import("./editor-persistence-flow.js");
+const {
+  restoreEditorFieldHistory,
+} = await import("./editor-history-flow.js");
+const {
+  replaceSelectedEditorRows,
+} = await import("./editor-search-flow.js");
+const {
+  softDeleteEditorRow,
+} = await import("./editor-row-structure-flow.js");
+const {
+  submitTargetLanguageManager,
+} = await import("./editor-target-language-manager-flow.js");
 const {
   enqueueRepoWrite,
   resetRepoWriteQueue,
@@ -139,6 +155,8 @@ function installEditorFixture() {
   state.projects = [{
     id: "project-1",
     name: "fixture-project",
+    fullName: "org/fixture-project",
+    defaultBranchName: "main",
     chapters: [{
       id: "chapter-1",
       name: "Chapter 1",
@@ -247,7 +265,7 @@ test("non-durable dirty row flush enqueues row text save without waiting for the
   assert.equal(state.editorChapter.rows[0].saveStatus, "idle");
 });
 
-test("toggleEditorRowFieldMarker does not start a marker write while the row style is saving", async () => {
+test("toggleEditorRowFieldMarker stays clickable while the row style is saving", async () => {
   installEditorFixture();
   state.editorChapter.rows[0] = {
     ...state.editorChapter.rows[0],
@@ -255,6 +273,17 @@ test("toggleEditorRowFieldMarker does not start a marker write while the row sty
       status: "saving",
       error: "",
     },
+  };
+  invokeHandler = async (command, payload = {}) => {
+    if (command === "update_gtms_editor_row_field_flag") {
+      assert.equal(payload.input?.rowId, "row-1");
+      return {
+        reviewed: true,
+        pleaseCheck: false,
+        chapterBaseCommitSha: "head-2",
+      };
+    }
+    throw new Error(`Unexpected command: ${command}`);
   };
 
   await toggleEditorRowFieldMarker(
@@ -264,9 +293,10 @@ test("toggleEditorRowFieldMarker does not start a marker write while the row sty
     "reviewed",
     { updateEditorChapterRow },
   );
+  await waitForRepoWriteQueueIdle("7:project-1:fixture-project");
 
-  assert.deepEqual(invokeLog, []);
-  assert.equal(state.editorChapter.rows[0].fieldStates.es.reviewed, false);
+  assert.deepEqual(invokeLog.map((entry) => entry.command), ["update_gtms_editor_row_field_flag"]);
+  assert.equal(state.editorChapter.rows[0].fieldStates.es.reviewed, true);
 });
 
 test("toggleEditorRowFieldMarker flushes other dirty rows before saving the marker", async () => {
@@ -412,7 +442,278 @@ test("toggleEditorRowFieldMarker lets the latest repeated click win while save i
   assert.equal(state.editorChapter.rows[0].markerSaveState.status, "idle");
 });
 
-test("comment saves and deletes do not start while the row style is saving", async () => {
+test("queued marker write is cancelled before Tauri when preceding row save finds a conflict", async () => {
+  installEditorFixture();
+  state.editorChapter = {
+    ...state.editorChapter,
+    dirtyRowIds: new Set(["row-1"]),
+  };
+  state.editorChapter.rows[0] = {
+    ...state.editorChapter.rows[0],
+    fields: { es: "local edit" },
+    saveStatus: "dirty",
+  };
+
+  invokeHandler = async (command, payload = {}) => {
+    if (command === "update_gtms_editor_row_fields") {
+      assert.equal(payload.input?.rowId, "row-1");
+      return {
+        status: "conflict",
+        row: {
+          rowId: "row-1",
+          textStyle: "paragraph",
+          fields: { es: "remote edit" },
+          fieldStates: { es: { reviewed: false, pleaseCheck: false } },
+        },
+        baseFields: { es: "hola" },
+        baseFootnotes: {},
+        baseImageCaptions: {},
+      };
+    }
+    if (command === "update_gtms_editor_row_field_flag") {
+      throw new Error("marker write should not run after a row conflict");
+    }
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  await toggleEditorRowFieldMarker(
+    () => {},
+    "row-1",
+    "es",
+    "please-check",
+    {
+      updateEditorChapterRow,
+      applyEditorSelectionsToProjectState,
+    },
+  );
+  await waitForRepoWriteQueueIdle("7:project-1:fixture-project");
+
+  assert.deepEqual(invokeLog.map((entry) => entry.command), ["update_gtms_editor_row_fields"]);
+  assert.equal(state.editorChapter.rows[0].freshness, "conflict");
+  assert.equal(state.editorChapter.rows[0].fieldStates.es.pleaseCheck, false);
+  assert.equal(state.editorChapter.rows[0].markerSaveState.status, "idle");
+});
+
+test("updateEditorRowTextStyle lets the latest repeated style change win while save is pending", async () => {
+  installEditorFixture();
+  const firstStyleSave = deferred();
+  let styleCallCount = 0;
+
+  invokeHandler = async (command, payload = {}) => {
+    if (command === "update_gtms_editor_row_text_style") {
+      styleCallCount += 1;
+      if (styleCallCount === 1) {
+        assert.equal(payload.input?.textStyle, "heading1");
+        return firstStyleSave.promise;
+      }
+      assert.equal(payload.input?.textStyle, "quote");
+      return {
+        textStyle: "quote",
+        chapterBaseCommitSha: "head-3",
+      };
+    }
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  await updateEditorRowTextStyle(
+    () => {},
+    "row-1",
+    "heading1",
+    {
+      updateEditorChapterRow,
+      applyEditorSelectionsToProjectState,
+    },
+  );
+  assert.equal(state.editorChapter.rows[0].textStyle, "heading1");
+
+  await updateEditorRowTextStyle(
+    () => {},
+    "row-1",
+    "quote",
+    {
+      updateEditorChapterRow,
+      applyEditorSelectionsToProjectState,
+    },
+  );
+  assert.equal(state.editorChapter.rows[0].textStyle, "quote");
+  assert.equal(state.editorChapter.rows[0].textStyleSaveState.status, "saving");
+
+  firstStyleSave.resolve({
+    textStyle: "heading1",
+    chapterBaseCommitSha: "head-2",
+  });
+  await waitForRepoWriteQueueIdle("7:project-1:fixture-project");
+
+  assert.deepEqual(
+    invokeLog
+      .filter((entry) => entry.command === "update_gtms_editor_row_text_style")
+      .map((entry) => entry.payload.input?.textStyle),
+    ["heading1", "quote"],
+  );
+  assert.equal(state.editorChapter.rows[0].textStyle, "quote");
+  assert.equal(state.editorChapter.rows[0].textStyleSaveState.status, "idle");
+});
+
+test("updateEditorRowTextStyle rolls latest failures back to the last committed style", async () => {
+  installEditorFixture();
+  const firstStyleSave = deferred();
+  let styleCallCount = 0;
+
+  invokeHandler = async (command, payload = {}) => {
+    if (command === "update_gtms_editor_row_text_style") {
+      styleCallCount += 1;
+      if (styleCallCount === 1) {
+        assert.equal(payload.input?.textStyle, "heading1");
+        return firstStyleSave.promise;
+      }
+      assert.equal(payload.input?.textStyle, "quote");
+      throw new Error("style rejected");
+    }
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  await updateEditorRowTextStyle(
+    () => {},
+    "row-1",
+    "heading1",
+    {
+      updateEditorChapterRow,
+      applyEditorSelectionsToProjectState,
+    },
+  );
+  await updateEditorRowTextStyle(
+    () => {},
+    "row-1",
+    "quote",
+    {
+      updateEditorChapterRow,
+      applyEditorSelectionsToProjectState,
+    },
+  );
+
+  firstStyleSave.resolve({
+    textStyle: "heading1",
+    chapterBaseCommitSha: "head-2",
+  });
+  await waitForRepoWriteQueueIdle("7:project-1:fixture-project");
+
+  assert.deepEqual(
+    invokeLog
+      .filter((entry) => entry.command === "update_gtms_editor_row_text_style")
+      .map((entry) => entry.payload.input?.textStyle),
+    ["heading1", "quote"],
+  );
+  assert.equal(state.editorChapter.rows[0].textStyle, "heading1");
+  assert.equal(state.editorChapter.rows[0].persistedTextStyle, "heading1");
+  assert.equal(state.editorChapter.rows[0].textStyleSaveState.status, "idle");
+  assert.equal(state.editorChapter.rows[0].textStyleSaveState.error, "style rejected");
+});
+
+test("updateEditorRowTextStyle rerenders the active-row sidebar for live review diff updates", async () => {
+  installEditorFixture();
+  state.editorChapter = {
+    ...state.editorChapter,
+    activeRowId: "row-1",
+    activeLanguageCode: "es",
+    sidebarTab: "review",
+  };
+  const renderScopes = [];
+  invokeHandler = async (command, payload = {}) => {
+    if (command === "update_gtms_editor_row_text_style") {
+      return {
+        textStyle: payload.input?.textStyle,
+        chapterBaseCommitSha: "head-2",
+      };
+    }
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  await updateEditorRowTextStyle(
+    (request = {}) => {
+      renderScopes.push(request.scope ?? "full");
+    },
+    "row-1",
+    "heading1",
+    {
+      updateEditorChapterRow,
+      applyEditorSelectionsToProjectState,
+    },
+  );
+  await waitForRepoWriteQueueIdle("7:project-1:fixture-project");
+
+  assert.ok(renderScopes.includes("translate-body"));
+  assert.ok(renderScopes.includes("translate-sidebar"));
+});
+
+test("updateEditorRowTextStyle stays clickable while row text save is pending", async () => {
+  installEditorFixture();
+  state.editorChapter = {
+    ...state.editorChapter,
+    dirtyRowIds: new Set(["row-1"]),
+  };
+  state.editorChapter.rows[0] = {
+    ...state.editorChapter.rows[0],
+    fields: { es: "hola editada" },
+    saveStatus: "dirty",
+  };
+
+  const blocker = deferred();
+  const blockerPromise = enqueueRepoWrite({
+    scope: "7:project-1:fixture-project",
+    kind: "testBlocker",
+    run: () => blocker.promise,
+  });
+
+  invokeHandler = async (command, payload = {}) => {
+    if (command === "update_gtms_editor_row_fields") {
+      return {
+        status: "saved",
+        row: {
+          rowId: payload.input?.rowId,
+          textStyle: "paragraph",
+          fields: payload.input?.fields,
+          fieldStates: { es: { reviewed: false, pleaseCheck: false } },
+        },
+        sourceWordCounts: {},
+        chapterBaseCommitSha: "head-2",
+      };
+    }
+    if (command === "update_gtms_editor_row_text_style") {
+      return {
+        textStyle: payload.input?.textStyle,
+        chapterBaseCommitSha: "head-3",
+      };
+    }
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  await updateEditorRowTextStyle(
+    () => {},
+    "row-1",
+    "heading1",
+    {
+      updateEditorChapterRow,
+      applyEditorSelectionsToProjectState,
+    },
+  );
+
+  assert.equal(state.editorChapter.rows[0].textStyle, "heading1");
+  assert.equal(state.editorChapter.rows[0].textStyleSaveState.status, "saving");
+  assert.deepEqual(invokeLog, []);
+
+  blocker.resolve(null);
+  await blockerPromise;
+  await waitForRepoWriteQueueIdle("7:project-1:fixture-project");
+
+  assert.deepEqual(invokeLog.map((entry) => entry.command), [
+    "update_gtms_editor_row_fields",
+    "update_gtms_editor_row_text_style",
+  ]);
+  assert.equal(state.editorChapter.rows[0].textStyle, "heading1");
+  assert.equal(state.editorChapter.rows[0].textStyleSaveState.status, "idle");
+});
+
+test("comment saves and deletes stay clickable while the row style is saving", async () => {
   installEditorFixture();
   state.editorChapter.rows[0] = {
     ...state.editorChapter.rows[0],
@@ -439,11 +740,538 @@ test("comment saves and deletes do not start while the row style is saving", asy
       }],
     },
   };
+  invokeHandler = async (command, payload = {}) => {
+    if (command === "save_gtms_editor_row_comment") {
+      assert.equal(payload.input?.rowId, "row-1");
+      return {
+        commentCount: 2,
+        commentsRevision: 2,
+        comments: [
+          {
+            commentId: "comment-2",
+            authorLogin: "fixture-user",
+            authorName: "Fixture User",
+            body: payload.input?.body,
+            createdAt: "2026-04-17T00:01:00Z",
+          },
+          {
+            commentId: "comment-1",
+            authorLogin: "fixture-user",
+            authorName: "Fixture User",
+            body: "Existing comment",
+            createdAt: "2026-04-17T00:00:00Z",
+          },
+        ],
+        chapterBaseCommitSha: "head-2",
+      };
+    }
+    if (command === "delete_gtms_editor_row_comment") {
+      assert.equal(payload.input?.commentId, "comment-1");
+      return {
+        commentCount: 1,
+        commentsRevision: 3,
+        comments: [{
+          commentId: "comment-2",
+          authorLogin: "fixture-user",
+          authorName: "Fixture User",
+          body: "Check this line.",
+          createdAt: "2026-04-17T00:01:00Z",
+        }],
+        chapterBaseCommitSha: "head-3",
+      };
+    }
+    throw new Error(`Unexpected command: ${command}`);
+  };
 
   await saveActiveEditorRowComment(() => {});
   await deleteActiveEditorRowComment(() => {}, "comment-1");
+  await waitForRepoWriteQueueIdle("7:project-1:fixture-project");
+
+  assert.deepEqual(invokeLog.map((entry) => entry.command), [
+    "save_gtms_editor_row_comment",
+    "delete_gtms_editor_row_comment",
+  ]);
+  assert.equal(state.editorChapter.comments.status, "ready");
+  assert.deepEqual(state.editorChapter.comments.entries.map((entry) => entry.commentId), ["comment-2"]);
+});
+
+test("replace selected queues behind active repo writes and captures the selected rows", async () => {
+  installEditorFixture();
+  state.editorChapter = {
+    ...state.editorChapter,
+    filters: {
+      searchQuery: "hola",
+      caseSensitive: false,
+      rowFilterMode: "show-all",
+    },
+    replace: {
+      enabled: true,
+      replaceQuery: "ciao",
+      selectedRowIds: new Set(["row-1"]),
+      status: "idle",
+      error: "",
+    },
+    rows: normalizeEditorRows([
+      {
+        rowId: "row-1",
+        textStyle: "paragraph",
+        fields: { es: "hola uno" },
+        fieldStates: { es: { reviewed: false, pleaseCheck: false } },
+      },
+      {
+        rowId: "row-2",
+        textStyle: "paragraph",
+        fields: { es: "hola dos" },
+        fieldStates: { es: { reviewed: false, pleaseCheck: false } },
+      },
+    ]),
+  };
+
+  const blocker = deferred();
+  const blockerPromise = enqueueRepoWrite({
+    scope: "7:project-1:fixture-project",
+    kind: "testBlocker",
+    run: () => blocker.promise,
+  });
+  invokeHandler = async (command, payload = {}) => {
+    if (command === "update_gtms_editor_row_fields_batch") {
+      return {
+        rowIds: payload.input?.rows?.map((row) => row.rowId) ?? [],
+        sourceWordCounts: {},
+        chapterBaseCommitSha: "head-replace",
+      };
+    }
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  await replaceSelectedEditorRows(() => {}, {
+    markEditorRowsPersisted,
+    loadActiveEditorFieldHistory() {},
+  });
+  state.editorChapter = {
+    ...state.editorChapter,
+    replace: {
+      ...state.editorChapter.replace,
+      selectedRowIds: new Set(["row-2"]),
+    },
+  };
+
+  assert.equal(state.editorChapter.replace.status, "saving");
+  assert.deepEqual(invokeLog, []);
+
+  blocker.resolve(null);
+  await blockerPromise;
+  await waitForRepoWriteQueueIdle("7:project-1:fixture-project");
+
+  assert.deepEqual(invokeLog.map((entry) => entry.command), ["update_gtms_editor_row_fields_batch"]);
+  assert.deepEqual(invokeLog[0].payload.input.rows.map((row) => row.rowId), ["row-1"]);
+  assert.equal(state.editorChapter.rows[0].fields.es, "ciao uno");
+  assert.equal(state.editorChapter.rows[1].fields.es, "hola dos");
+  assert.equal(state.editorChapter.replace.status, "idle");
+});
+
+test("replace selected fails before Tauri when a selected row is edited while queued", async () => {
+  installEditorFixture();
+  state.editorChapter = {
+    ...state.editorChapter,
+    filters: {
+      searchQuery: "hola",
+      caseSensitive: false,
+      rowFilterMode: "show-all",
+    },
+    replace: {
+      enabled: true,
+      replaceQuery: "ciao",
+      selectedRowIds: new Set(["row-1"]),
+      status: "idle",
+      error: "",
+    },
+    rows: normalizeEditorRows([{
+      rowId: "row-1",
+      textStyle: "paragraph",
+      fields: { es: "hola uno" },
+      fieldStates: { es: { reviewed: false, pleaseCheck: false } },
+    }]),
+  };
+
+  const blocker = deferred();
+  const blockerPromise = enqueueRepoWrite({
+    scope: "7:project-1:fixture-project",
+    kind: "testBlocker",
+    run: () => blocker.promise,
+  });
+  invokeHandler = async (command) => {
+    if (command === "update_gtms_editor_row_fields_batch") {
+      throw new Error("replace batch should not run after a selected row changes");
+    }
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  await replaceSelectedEditorRows(() => {}, {
+    markEditorRowsPersisted,
+    loadActiveEditorFieldHistory() {},
+  });
+  state.editorChapter.rows[0] = {
+    ...state.editorChapter.rows[0],
+    fields: { es: "hola local edit" },
+    saveStatus: "dirty",
+  };
+
+  blocker.resolve(null);
+  await blockerPromise;
+  await waitForRepoWriteQueueIdle("7:project-1:fixture-project");
 
   assert.deepEqual(invokeLog, []);
-  assert.equal(state.editorChapter.comments.status, "ready");
-  assert.equal(state.editorChapter.comments.draft, "Check this line.");
+  assert.equal(state.editorChapter.rows[0].fields.es, "hola local edit");
+  assert.equal(state.editorChapter.replace.status, "idle");
+  assert.match(state.editorChapter.replace.error, /selected rows/);
+});
+
+test("restore history coalesces queued repeated restores to the latest commit", async () => {
+  installEditorFixture();
+  state.editorChapter = {
+    ...state.editorChapter,
+    activeRowId: "row-1",
+    activeLanguageCode: "es",
+  };
+
+  const blocker = deferred();
+  const blockerPromise = enqueueRepoWrite({
+    scope: "7:project-1:fixture-project",
+    kind: "testBlocker",
+    run: () => blocker.promise,
+  });
+  invokeHandler = async (command, payload = {}) => {
+    if (command === "restore_gtms_editor_field_from_history") {
+      return {
+        rowId: payload.input?.rowId,
+        languageCode: payload.input?.languageCode,
+        plainText: `text from ${payload.input?.commitSha}`,
+        footnote: "",
+        imageCaption: "",
+        image: null,
+        textStyle: "paragraph",
+        reviewed: false,
+        pleaseCheck: false,
+        sourceWordCounts: {},
+        chapterBaseCommitSha: `head-${payload.input?.commitSha}`,
+      };
+    }
+    if (command === "load_gtms_editor_field_history") {
+      return { entries: [] };
+    }
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  await restoreEditorFieldHistory(() => {}, "commit-1", {
+    updateEditorChapterRow,
+    reconcileDirtyTrackedEditorRows() {},
+    applyEditorSelectionsToProjectState,
+  });
+  await restoreEditorFieldHistory(() => {}, "commit-2", {
+    updateEditorChapterRow,
+    reconcileDirtyTrackedEditorRows() {},
+    applyEditorSelectionsToProjectState,
+  });
+
+  assert.equal(state.editorChapter.history.restoringCommitSha, "commit-2");
+  assert.deepEqual(invokeLog, []);
+
+  blocker.resolve(null);
+  await blockerPromise;
+  await waitForRepoWriteQueueIdle("7:project-1:fixture-project");
+
+  const restoreCalls = invokeLog.filter((entry) => entry.command === "restore_gtms_editor_field_from_history");
+  assert.equal(restoreCalls.length, 1);
+  assert.equal(restoreCalls[0].payload.input.commitSha, "commit-2");
+  assert.equal(state.editorChapter.rows[0].fields.es, "text from commit-2");
+  assert.equal(state.editorChapter.history.restoringCommitSha, null);
+});
+
+test("unreview all queues behind dirty row text instead of blocking on the save", async () => {
+  installEditorFixture();
+  state.editorChapter = {
+    ...state.editorChapter,
+    dirtyRowIds: new Set(["row-1"]),
+    unreviewAllModal: {
+      ...state.editorChapter.unreviewAllModal,
+      isOpen: true,
+      languageCode: "es",
+      status: "idle",
+      error: "",
+    },
+  };
+  state.editorChapter.rows[0] = {
+    ...state.editorChapter.rows[0],
+    fields: { es: "hola editada" },
+    fieldStates: { es: { reviewed: true, pleaseCheck: true } },
+    saveStatus: "dirty",
+  };
+
+  invokeHandler = async (command, payload = {}) => {
+    if (command === "update_gtms_editor_row_fields") {
+      return {
+        status: "saved",
+        row: {
+          rowId: payload.input?.rowId,
+          textStyle: "paragraph",
+          fields: payload.input?.fields,
+          fieldStates: { es: { reviewed: true, pleaseCheck: true } },
+        },
+        sourceWordCounts: {},
+        chapterBaseCommitSha: "head-row",
+      };
+    }
+    if (command === "clear_gtms_editor_reviewed_markers") {
+      return {
+        rowIds: ["row-1"],
+        chapterBaseCommitSha: "head-unreview",
+      };
+    }
+    if (command === "load_gtms_editor_field_history") {
+      return { entries: [] };
+    }
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  await confirmEditorUnreviewAll(() => {}, {
+    updateEditorChapterRow,
+    applyEditorSelectionsToProjectState,
+  });
+  await waitForRepoWriteQueueIdle("7:project-1:fixture-project");
+
+  assert.deepEqual(invokeLog.map((entry) => entry.command), [
+    "update_gtms_editor_row_fields",
+    "clear_gtms_editor_reviewed_markers",
+  ]);
+  assert.equal(state.editorChapter.rows[0].fieldStates.es.reviewed, false);
+  assert.equal(state.editorChapter.rows[0].fieldStates.es.pleaseCheck, true);
+});
+
+test("clear translations queues behind dirty row text instead of blocking on the save", async () => {
+  installEditorFixture();
+  state.editorChapter = {
+    ...state.editorChapter,
+    dirtyRowIds: new Set(["row-1"]),
+    clearTranslationsModal: {
+      ...state.editorChapter.clearTranslationsModal,
+      isOpen: true,
+      step: "confirm",
+      selectedLanguageCodes: ["es"],
+      status: "idle",
+      error: "",
+    },
+  };
+  state.editorChapter.rows[0] = {
+    ...state.editorChapter.rows[0],
+    fields: { es: "hola editada" },
+    saveStatus: "dirty",
+  };
+
+  invokeHandler = async (command, payload = {}) => {
+    if (command === "update_gtms_editor_row_fields") {
+      return {
+        status: "saved",
+        row: {
+          rowId: payload.input?.rowId,
+          textStyle: "paragraph",
+          fields: payload.input?.fields,
+          fieldStates: { es: { reviewed: false, pleaseCheck: false } },
+        },
+        sourceWordCounts: {},
+        chapterBaseCommitSha: "head-row",
+      };
+    }
+    if (command === "update_gtms_editor_row_fields_batch") {
+      return {
+        rowIds: payload.input?.rows?.map((row) => row.rowId) ?? [],
+        sourceWordCounts: {},
+        chapterBaseCommitSha: "head-clear",
+      };
+    }
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  await confirmEditorClearTranslations(() => {}, {
+    updateEditorChapterRow,
+    applyEditorSelectionsToProjectState,
+  });
+  await waitForRepoWriteQueueIdle("7:project-1:fixture-project");
+
+  assert.deepEqual(invokeLog.map((entry) => entry.command), [
+    "update_gtms_editor_row_fields",
+    "update_gtms_editor_row_fields_batch",
+  ]);
+  assert.equal(state.editorChapter.rows[0].fields.es, "");
+  assert.equal(state.editorChapter.clearTranslationsModal.isOpen, false);
+});
+
+test("clear translations stops before batch write when queued row save finds a conflict", async () => {
+  installEditorFixture();
+  state.editorChapter = {
+    ...state.editorChapter,
+    dirtyRowIds: new Set(["row-1"]),
+    clearTranslationsModal: {
+      ...state.editorChapter.clearTranslationsModal,
+      isOpen: true,
+      step: "confirm",
+      selectedLanguageCodes: ["es"],
+      status: "idle",
+      error: "",
+    },
+  };
+  state.editorChapter.rows[0] = {
+    ...state.editorChapter.rows[0],
+    fields: { es: "local edit" },
+    saveStatus: "dirty",
+  };
+
+  invokeHandler = async (command, payload = {}) => {
+    if (command === "update_gtms_editor_row_fields") {
+      return {
+        status: "conflict",
+        row: {
+          rowId: payload.input?.rowId,
+          textStyle: "paragraph",
+          fields: { es: "remote edit" },
+          fieldStates: { es: { reviewed: false, pleaseCheck: false } },
+        },
+        baseFields: { es: "hola" },
+        baseFootnotes: {},
+        baseImageCaptions: {},
+      };
+    }
+    if (command === "update_gtms_editor_row_fields_batch") {
+      throw new Error("clear translations batch should not run after a row conflict");
+    }
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  await confirmEditorClearTranslations(() => {}, {
+    updateEditorChapterRow,
+    applyEditorSelectionsToProjectState,
+  });
+  await waitForRepoWriteQueueIdle("7:project-1:fixture-project");
+
+  assert.deepEqual(invokeLog.map((entry) => entry.command), ["update_gtms_editor_row_fields"]);
+  assert.equal(state.editorChapter.rows[0].freshness, "conflict");
+  assert.equal(state.editorChapter.clearTranslationsModal.isOpen, true);
+  assert.match(state.editorChapter.clearTranslationsModal.error, /Refresh or resolve/);
+});
+
+test("soft delete row queues while an existing row save is pending", async () => {
+  installEditorFixture();
+  state.editorChapter.rows[0] = {
+    ...state.editorChapter.rows[0],
+    saveStatus: "saving",
+  };
+  const blocker = deferred();
+  const blockerPromise = enqueueRepoWrite({
+    scope: "7:project-1:fixture-project",
+    kind: "testBlocker",
+    run: () => blocker.promise,
+  });
+  invokeHandler = async (command, payload = {}) => {
+    if (command === "soft_delete_gtms_editor_row") {
+      assert.equal(payload.input?.rowId, "row-1");
+      return {
+        lifecycleState: "deleted",
+        sourceWordCounts: {},
+        chapterBaseCommitSha: "head-delete",
+      };
+    }
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  await softDeleteEditorRow(() => {}, "row-1", null, {
+    applyStructuralEditorChange(_render, applyChange) {
+      applyChange();
+    },
+    applyEditorSelectionsToProjectState,
+  });
+
+  assert.deepEqual(invokeLog, []);
+  blocker.resolve(null);
+  await blockerPromise;
+  await waitForRepoWriteQueueIdle("7:project-1:fixture-project");
+
+  assert.deepEqual(invokeLog.map((entry) => entry.command), ["soft_delete_gtms_editor_row"]);
+  assert.equal(state.editorChapter.rows[0].lifecycleState, "deleted");
+});
+
+test("target language manager queues after dirty row saves", async () => {
+  installEditorFixture();
+  state.auth = {
+    ...state.auth,
+    session: {
+      sessionToken: "session-token",
+    },
+  };
+  state.editorChapter = {
+    ...state.editorChapter,
+    dirtyRowIds: new Set(["row-1"]),
+  };
+  state.editorChapter.rows[0] = {
+    ...state.editorChapter.rows[0],
+    fields: { es: "hola editada" },
+    saveStatus: "dirty",
+  };
+  state.targetLanguageManager = {
+    isOpen: true,
+    status: "idle",
+    error: "",
+    chapterId: "chapter-1",
+    languages: [
+      { code: "es", name: "Spanish" },
+      { code: "fr", name: "French" },
+    ],
+    isPickerOpen: false,
+    pickerSelectedLanguageCode: "",
+    pickerScrollTop: 0,
+  };
+
+  invokeHandler = async (command, payload = {}) => {
+    if (command === "update_gtms_editor_row_fields") {
+      return {
+        status: "saved",
+        row: {
+          rowId: payload.input?.rowId,
+          textStyle: "paragraph",
+          fields: payload.input?.fields,
+          fieldStates: { es: { reviewed: false, pleaseCheck: false } },
+        },
+        sourceWordCounts: {},
+        chapterBaseCommitSha: "head-row",
+      };
+    }
+    if (command === "update_gtms_chapter_languages") {
+      return {
+        languages: payload.input?.languages ?? [],
+        selectedSourceLanguageCode: "es",
+        selectedTargetLanguageCode: "fr",
+      };
+    }
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  await submitTargetLanguageManager(() => {}, {
+    applyChapterMetadataToState() {},
+    flushDirtyEditorRows: (render, options) => flushDirtyEditorRows(
+      render,
+      {
+        updateEditorChapterRow,
+        applyEditorSelectionsToProjectState,
+      },
+      options,
+    ),
+    reloadSelectedChapterEditorData() {},
+  });
+  await waitForRepoWriteQueueIdle("7:project-1:fixture-project");
+
+  assert.deepEqual(invokeLog.map((entry) => entry.command), [
+    "update_gtms_editor_row_fields",
+    "update_gtms_chapter_languages",
+  ]);
+  assert.deepEqual(invokeLog[1].payload.input.languages.map((language) => language.code), ["es", "fr"]);
+  assert.equal(state.targetLanguageManager.isOpen, false);
 });

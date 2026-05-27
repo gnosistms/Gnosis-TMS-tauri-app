@@ -70,6 +70,7 @@ import {
 } from "./project-write-coordinator.js";
 import {
   enqueueRepoWrite,
+  getRepoWriteQueueSnapshot,
   projectRepoScope,
 } from "./repo-write-queue.js";
 import {
@@ -99,6 +100,7 @@ import {
   refreshProjectFilesFromDisk,
   removeVisibleProject,
   setProjectUiDebug,
+  updateProjectQueryCache,
   clearProjectUiDebug,
   clearProjectsStatus,
   showProjectsNotice,
@@ -514,8 +516,27 @@ function areProjectHeavyWritesDisabled() {
   return areResourcePageWritesDisabled(state.projectsPage) || anyProjectWriteIsActive();
 }
 
+function anyProjectMutatingRepoQueueWriteActive() {
+  return getRepoWriteQueueSnapshot().operations.some((operation) => {
+    const kind = String(operation?.kind ?? "");
+    return !kind.startsWith("editor:") && kind !== "projectRepoSync";
+  });
+}
+
 function areProjectCreationWritesDisabled() {
-  return areResourcePageWritesDisabled(state.projectsPage) || anyProjectMutatingWriteIsActive();
+  return (
+    areResourcePageWritesDisabled(state.projectsPage)
+    || anyProjectMutatingWriteIsActive()
+    || anyProjectMutatingRepoQueueWriteActive()
+  );
+}
+
+function areProjectLocalHardDeleteWritesDisabled() {
+  return areResourcePageWritesDisabled(state.projectsPage);
+}
+
+function resourceHasPendingLifecycleMutation(resource) {
+  return typeof resource?.pendingMutation === "string" && resource.pendingMutation.trim();
 }
 
 function projectLifecycleWriteBlockedMessage() {
@@ -1106,8 +1127,13 @@ async function reloadProjectsAfterWrite(render, selectedTeam, options = {}) {
 export function permanentlyDeleteProject(render, projectId) {
   const project = state.deletedProjects.find((item) => item.id === projectId);
   const selectedTeam = selectedProjectsTeam();
-  if (areProjectHeavyWritesDisabled()) {
+  if (areProjectLocalHardDeleteWritesDisabled()) {
     setProjectDiscoveryState("error", projectWriteBlockedMessage());
+    render();
+    return;
+  }
+  if (resourceHasPendingLifecycleMutation(project)) {
+    setProjectDiscoveryState("error", projectLifecycleWriteBlockedMessage());
     render();
     return;
   }
@@ -1159,9 +1185,15 @@ export async function confirmProjectPermanentDeletion(render) {
   const project = state.deletedProjects.find(
     (item) => item.id === state.projectPermanentDeletion.projectId,
   );
-  if (areProjectHeavyWritesDisabled()) {
+  if (areProjectLocalHardDeleteWritesDisabled()) {
     state.projectPermanentDeletion.status = "idle";
     state.projectPermanentDeletion.error = projectWriteBlockedMessage();
+    render();
+    return;
+  }
+  if (resourceHasPendingLifecycleMutation(project)) {
+    state.projectPermanentDeletion.status = "idle";
+    state.projectPermanentDeletion.error = projectLifecycleWriteBlockedMessage();
     render();
     return;
   }
@@ -1191,60 +1223,40 @@ export async function confirmProjectPermanentDeletion(render) {
 
   state.projectPermanentDeletion.status = "loading";
   state.projectPermanentDeletion.error = "";
+  showProjectsStatus(render, "Removing local project repo...");
   render();
 
-  await submitResourcePageWrite({
-    pageState: state.projectsPage,
-    syncController: projectPageSyncController,
-    setProgress: (text) => setProjectsPageProgress(render, text),
-    clearProgress: () => clearProjectsStatus(render),
-    render,
-    progressLabels: {
-      submitting: "Removing local project copy...",
-      refreshing: "Refreshing project list...",
-    },
-    onBlocked: async () => {
-      state.projectPermanentDeletion.status = "idle";
-      state.projectPermanentDeletion.error = "Wait for the current projects refresh or write to finish.";
-      render();
-    },
-    runMutation: async () => {
-      showProjectsStatus(render, "Removing local project repo...");
-      await enqueueRepoWrite({
-        scope: projectRepoScope({ team: selectedTeam, project }),
+  try {
+    await enqueueRepoWrite({
+      scope: projectRepoScope({ team: selectedTeam, project }),
+      kind: "projectLocalHardDelete",
+      sourceScreen: "projects",
+      errorTarget: {
+        projectId: project.id,
         kind: "projectLocalHardDelete",
-        sourceScreen: "projects",
-        errorTarget: {
+      },
+      run: () => invoke("purge_local_gtms_project_repo", {
+        input: {
+          installationId: selectedTeam.installationId,
           projectId: project.id,
-          kind: "projectLocalHardDelete",
+          repoName: project.name,
         },
-        run: () => invoke("purge_local_gtms_project_repo", {
-          input: {
-            installationId: selectedTeam.installationId,
-            projectId: project.id,
-            repoName: project.name,
-          },
-        }),
-      });
-      addLocalHardDeleteTombstone(selectedTeam, "project", project);
-    },
-    refreshOptions: {
-      loadData: async () => reloadProjectsAfterWrite(render, selectedTeam),
-    },
-    onSuccess: async () => {
-      resetProjectPermanentDeletion();
-      if (state.selectedProjectId === project.id) {
-        state.selectedProjectId = null;
-      }
-      showProjectsNotice(render, "Local project copy removed.");
-    },
-    onError: async (error) => {
-      clearProjectsStatus(render);
-      if (await handleSyncFailure(classifySyncError(error), { render })) {
-        return;
-      }
-      state.projectPermanentDeletion.status = "idle";
-      state.projectPermanentDeletion.error = error?.message ?? String(error);
-    },
-  });
+      }),
+    });
+    addLocalHardDeleteTombstone(selectedTeam, "project", project);
+    removeVisibleProject(project.id);
+    clearSelectedProjectState(project);
+    dropProjectMutationsForProject(selectedTeam, project.id);
+    delete state.projectRepoSyncByProjectId[project.id];
+    persistProjectsForTeam(selectedTeam);
+    updateProjectQueryCache(selectedTeam);
+    resetProjectPermanentDeletion();
+    clearProjectsStatus(render);
+    showProjectsNotice(render, "Local project copy removed.");
+  } catch (error) {
+    clearProjectsStatus(render);
+    state.projectPermanentDeletion.status = "idle";
+    state.projectPermanentDeletion.error = error?.message ?? String(error);
+    render();
+  }
 }

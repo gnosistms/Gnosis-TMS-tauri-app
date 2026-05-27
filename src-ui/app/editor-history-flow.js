@@ -28,7 +28,14 @@ import {
   hasEditorRow,
 } from "./editor-utils.js";
 import { ensureEditorRowReadyForWrite } from "./editor-row-sync-flow.js";
-import { invokeEditorWriteCommand } from "./editor-write-permission.js";
+import { requestEditorOperation } from "./editor-operation-queue.js";
+import {
+  assertQueuedEditorRowsReady,
+  createQueuedEditorWritePermissionContext,
+  editorChapterInvalidationKey,
+  invokeQueuedEditorWriteCommand,
+} from "./editor-queued-write.js";
+import { projectRepoScope } from "./repo-write-queue.js";
 
 function nextChapterBaseCommitSha(payload, chapterState = state.editorChapter) {
   return typeof payload?.chapterBaseCommitSha === "string" && payload.chapterBaseCommitSha.trim()
@@ -116,14 +123,6 @@ export function toggleEditorHistoryGroupExpanded(groupKey) {
   state.editorChapter = applyEditorHistoryGroupExpandedToggle(state.editorChapter, groupKey);
 }
 
-export function hasPendingEditorRowWrites(chapterState = state.editorChapter) {
-  return (Array.isArray(chapterState?.rows) ? chapterState.rows : []).some((row) =>
-    row?.saveStatus !== "idle"
-    || row?.markerSaveState?.status === "saving"
-    || row?.textStyleSaveState?.status === "saving"
-  );
-}
-
 export function openEditorReplaceUndoModal(commitSha) {
   if (!state.editorChapter?.chapterId || !historyEntryCanOpenReplaceUndo(state.editorChapter, commitSha)) {
     return;
@@ -160,68 +159,115 @@ export async function restoreEditorFieldHistory(render, commitSha, operations = 
   }
 
   const row = await ensureEditorRowReadyForWrite(render, editorChapter.activeRowId);
-  if (!row || row.saveStatus !== "idle" || row.markerSaveState?.status === "saving" || row.textStyleSaveState?.status === "saving") {
+  if (!row || (row.saveStatus !== "idle" && row.saveStatus !== "saving")) {
     showNoticeBadge("Save the current row before restoring history.", render);
     return;
   }
 
   const team = selectedProjectsTeam();
   const context = findChapterContextById(editorChapter.chapterId);
-  if (!Number.isFinite(team?.installationId) || !context?.project?.name) {
+  const repoScope = projectRepoScope({ team, project: context?.project ?? null });
+  if (!Number.isFinite(team?.installationId) || !context?.project?.name || !repoScope) {
     return;
   }
 
   state.editorChapter = applyEditorHistoryRestoreRequested(editorChapter, commitSha);
   render?.();
 
-  try {
-    const payload = await invokeEditorWriteCommand("restore_gtms_editor_field_from_history", {
-      input: {
-        installationId: team.installationId,
-        projectId: context.project.id,
-        repoName: context.project.name,
-        chapterId: editorChapter.chapterId,
-        rowId: editorChapter.activeRowId,
-        languageCode: editorChapter.activeLanguageCode,
-        commitSha,
-      },
-    }, { render, actionKind: "sharedWrite", rowId: editorChapter.activeRowId });
+  const operationValue = {
+    input: {
+      installationId: team.installationId,
+      projectId: context.project.id,
+      repoName: context.project.name,
+      chapterId: editorChapter.chapterId,
+      rowId: editorChapter.activeRowId,
+      languageCode: editorChapter.activeLanguageCode,
+      commitSha,
+    },
+    chapterId: editorChapter.chapterId,
+    rowId: editorChapter.activeRowId,
+    languageCode: editorChapter.activeLanguageCode,
+    commitSha,
+    permissionContext: createQueuedEditorWritePermissionContext({
+      team,
+      project: context.project,
+      chapter: context.chapter,
+      row,
+      actionKind: "sharedWrite",
+    }),
+  };
 
-    if (
-      state.editorChapter?.chapterId === editorChapter.chapterId
-      && state.editorChapter.activeRowId === editorChapter.activeRowId
-      && state.editorChapter.activeLanguageCode === editorChapter.activeLanguageCode
-    ) {
-      updateEditorChapterRow(
-        editorChapter.activeRowId,
-        (currentRow) => applyEditorRowHistoryRestored(currentRow, editorChapter.activeLanguageCode, payload),
-      );
-
-      state.editorChapter = applyEditorHistoryRestoreSucceeded({
-        ...state.editorChapter,
-        sourceWordCounts:
-          payload?.sourceWordCounts && typeof payload.sourceWordCounts === "object"
-            ? payload.sourceWordCounts
-            : state.editorChapter.sourceWordCounts,
-        chapterBaseCommitSha: nextChapterBaseCommitSha(payload, state.editorChapter),
+  const requested = requestEditorOperation({
+    repoScope,
+    chapterScope: `${repoScope}:${editorChapter.chapterId}`,
+    rowScope: `${repoScope}:${editorChapter.chapterId}:${editorChapter.activeRowId}`,
+    coalesceKey: `restoreHistory:${editorChapter.chapterId}:${editorChapter.activeRowId}:${editorChapter.activeLanguageCode}`,
+    kind: "restoreHistory",
+    value: operationValue,
+    metadata: {
+      projectId: context.project.id,
+      chapterId: editorChapter.chapterId,
+      rowId: editorChapter.activeRowId,
+      languageCode: editorChapter.activeLanguageCode,
+      commitSha,
+    },
+    invalidationKeys: [editorChapterInvalidationKey(repoScope, editorChapter.chapterId)],
+  }, {
+    run: async (operation) => {
+      assertQueuedEditorRowsReady({
+        chapterId: operation.value.chapterId,
+        rowIds: [operation.value.rowId],
+        forbidPendingText: true,
+        message: "Save, refresh, or resolve the row before restoring history.",
       });
-      reconcileDirtyTrackedEditorRows([editorChapter.activeRowId]);
-      applyEditorSelectionsToProjectState(state.editorChapter);
-      render?.();
-      loadActiveEditorFieldHistory(render);
-    }
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    if (
-      state.editorChapter?.chapterId === editorChapter.chapterId
-      && state.editorChapter.activeRowId === editorChapter.activeRowId
-      && state.editorChapter.activeLanguageCode === editorChapter.activeLanguageCode
-    ) {
-      state.editorChapter = applyEditorHistoryRestoreFailed(state.editorChapter);
-      render?.();
-    }
-    showNoticeBadge(message || "The selected history entry could not be restored.", render);
-  }
+      return invokeQueuedEditorWriteCommand("restore_gtms_editor_field_from_history", {
+        input: {
+          ...operation.value.input,
+        },
+      }, operation.value.permissionContext, render);
+    },
+    onSuccess: (payload, operation) => {
+      const value = operation?.value ?? operationValue;
+      if (
+        state.editorChapter?.chapterId === value.chapterId
+        && state.editorChapter.activeRowId === value.rowId
+        && state.editorChapter.activeLanguageCode === value.languageCode
+      ) {
+        updateEditorChapterRow(
+          value.rowId,
+          (currentRow) => applyEditorRowHistoryRestored(currentRow, value.languageCode, payload),
+        );
+
+        state.editorChapter = applyEditorHistoryRestoreSucceeded({
+          ...state.editorChapter,
+          sourceWordCounts:
+            payload?.sourceWordCounts && typeof payload.sourceWordCounts === "object"
+              ? payload.sourceWordCounts
+              : state.editorChapter.sourceWordCounts,
+          chapterBaseCommitSha: nextChapterBaseCommitSha(payload, state.editorChapter),
+        });
+        reconcileDirtyTrackedEditorRows([value.rowId]);
+        applyEditorSelectionsToProjectState(state.editorChapter);
+        render?.();
+        loadActiveEditorFieldHistory(render);
+      }
+    },
+    onError: (error, operation) => {
+      const value = operation?.value ?? operationValue;
+      const message = error instanceof Error ? error.message : String(error);
+      if (
+        state.editorChapter?.chapterId === value.chapterId
+        && state.editorChapter.activeRowId === value.rowId
+        && state.editorChapter.activeLanguageCode === value.languageCode
+        && state.editorChapter.history?.restoringCommitSha === value.commitSha
+      ) {
+        state.editorChapter = applyEditorHistoryRestoreFailed(state.editorChapter);
+        render?.();
+      }
+      showNoticeBadge(message || "The selected history entry could not be restored.", render);
+    },
+  });
+  requested.promise.catch(() => {});
 }
 
 export async function confirmEditorReplaceUndo(render, operations = {}) {
@@ -245,62 +291,98 @@ export async function confirmEditorReplaceUndo(render, operations = {}) {
     return;
   }
 
-  if (hasPendingEditorRowWrites(editorChapter)) {
-    state.editorChapter = applyEditorReplaceUndoModalError(
-      editorChapter,
-      "Save or resolve current row edits before undoing a batch replace.",
-    );
-    render?.();
-    return;
-  }
-
   const team = selectedProjectsTeam();
   const context = findChapterContextById(editorChapter.chapterId);
-  if (!Number.isFinite(team?.installationId) || !context?.project?.name) {
+  const repoScope = projectRepoScope({ team, project: context?.project ?? null });
+  if (!Number.isFinite(team?.installationId) || !context?.project?.name || !repoScope) {
     return;
   }
 
   state.editorChapter = applyEditorReplaceUndoModalLoading(editorChapter);
   render?.();
 
-  try {
-    const payload = await invokeEditorWriteCommand("reverse_gtms_editor_batch_replace_commit", {
-      input: {
-        installationId: team.installationId,
-        projectId: context.project.id,
-        repoName: context.project.name,
-        chapterId: editorChapter.chapterId,
-        commitSha: modal.commitSha,
-      },
-    }, { render, actionKind: "sharedWrite" });
+  const operationValue = {
+    input: {
+      installationId: team.installationId,
+      projectId: context.project.id,
+      repoName: context.project.name,
+      chapterId: editorChapter.chapterId,
+      commitSha: modal.commitSha,
+    },
+    chapterId: editorChapter.chapterId,
+    commitSha: modal.commitSha,
+    permissionContext: createQueuedEditorWritePermissionContext({
+      team,
+      project: context.project,
+      chapter: context.chapter,
+      actionKind: "sharedWrite",
+    }),
+  };
 
-    if (state.editorChapter?.chapterId === editorChapter.chapterId) {
-      const updatedRows = Array.isArray(payload?.updatedRows) ? payload.updatedRows : [];
-      const skippedRowCount = Array.isArray(payload?.skippedRowIds) ? payload.skippedRowIds.length : 0;
-      if (updatedRows.length > 0) {
-        markEditorRowsPersisted(
-          updatedRows,
-          payload?.sourceWordCounts,
-          nextChapterBaseCommitSha(payload, state.editorChapter),
-        );
-      } else {
-        state.editorChapter = {
-          ...state.editorChapter,
-          chapterBaseCommitSha: nextChapterBaseCommitSha(payload, state.editorChapter),
-        };
+  const requested = requestEditorOperation({
+    repoScope,
+    chapterScope: `${repoScope}:${editorChapter.chapterId}`,
+    kind: "replaceUndo",
+    value: operationValue,
+    metadata: {
+      projectId: context.project.id,
+      chapterId: editorChapter.chapterId,
+      commitSha: modal.commitSha,
+    },
+    invalidationKeys: [editorChapterInvalidationKey(repoScope, editorChapter.chapterId)],
+  }, {
+    run: async (operation) => {
+      assertQueuedEditorRowsReady({
+        chapterId: operation.value.chapterId,
+        includeAllRows: true,
+        forbidPendingText: true,
+        message: "Save, refresh, or resolve this file before undoing batch replace.",
+      });
+      if (
+        state.editorChapter?.chapterId === operation.value.chapterId
+        && !historyEntryCanOpenReplaceUndo(state.editorChapter, operation.value.commitSha)
+      ) {
+        throw new Error("The selected batch replace history entry is no longer available.");
       }
-      state.editorChapter = cancelEditorReplaceUndoModalState(state.editorChapter);
-      render?.();
-      if (updatedRows.some((row) => row?.rowId === state.editorChapter.activeRowId)) {
-        loadActiveEditorFieldHistory(render);
+      return invokeQueuedEditorWriteCommand("reverse_gtms_editor_batch_replace_commit", {
+        input: {
+          ...operation.value.input,
+        },
+      }, operation.value.permissionContext, render);
+    },
+    onSuccess: (payload, operation) => {
+      const value = operation?.value ?? operationValue;
+      if (state.editorChapter?.chapterId === value.chapterId) {
+        const updatedRows = Array.isArray(payload?.updatedRows) ? payload.updatedRows : [];
+        const skippedRowCount = Array.isArray(payload?.skippedRowIds) ? payload.skippedRowIds.length : 0;
+        if (updatedRows.length > 0) {
+          markEditorRowsPersisted(
+            updatedRows,
+            payload?.sourceWordCounts,
+            nextChapterBaseCommitSha(payload, state.editorChapter),
+          );
+        } else {
+          state.editorChapter = {
+            ...state.editorChapter,
+            chapterBaseCommitSha: nextChapterBaseCommitSha(payload, state.editorChapter),
+          };
+        }
+        state.editorChapter = cancelEditorReplaceUndoModalState(state.editorChapter);
+        render?.();
+        if (updatedRows.some((row) => row?.rowId === state.editorChapter.activeRowId)) {
+          loadActiveEditorFieldHistory(render);
+        }
+        showNoticeBadge(buildEditorReplaceUndoNotice(updatedRows.length, skippedRowCount), render);
       }
-      showNoticeBadge(buildEditorReplaceUndoNotice(updatedRows.length, skippedRowCount), render);
-    }
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    if (state.editorChapter?.chapterId === editorChapter.chapterId) {
-      state.editorChapter = applyEditorReplaceUndoModalError(state.editorChapter, message);
-      render?.();
-    }
-  }
+    },
+    onError: (error, operation) => {
+      const value = operation?.value ?? operationValue;
+      const message = error instanceof Error ? error.message : String(error);
+      if (state.editorChapter?.chapterId === value.chapterId) {
+        state.editorChapter = applyEditorReplaceUndoModalError(state.editorChapter, message);
+        render?.();
+      }
+    },
+  });
+  requested.promise.catch(() => {});
 }

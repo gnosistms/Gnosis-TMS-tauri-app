@@ -227,14 +227,6 @@ function hasBlockingPendingWritesForBackgroundSync(chapterState = state.editorCh
     return false;
   }
 
-  const hasBlockingRowWrite = (Array.isArray(chapterState.rows) ? chapterState.rows : []).some((row) =>
-    row?.markerSaveState?.status === "saving"
-    || row?.textStyleSaveState?.status === "saving",
-  );
-  if (hasBlockingRowWrite) {
-    return true;
-  }
-
   return (
     chapterState.comments?.status === "saving"
     || chapterState.comments?.status === "deleting"

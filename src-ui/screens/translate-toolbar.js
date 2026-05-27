@@ -195,7 +195,6 @@ function renderEditorReplaceField(editorReplace) {
     inputAttributes: {
       "data-editor-replace-input": true,
       "aria-label": "Replace selected search matches",
-      ...(editorReplace?.status === "saving" ? { disabled: true } : {}),
     },
   });
 }
@@ -216,7 +215,6 @@ function renderEditorReplaceControls(editorReplace) {
         data-editor-replace-toggle
         aria-label="${editorReplace.isEnabled ? "Hide replace controls" : "Show replace controls"}"
         ${editorReplace.isEnabled ? "checked" : ""}
-        ${isBusy ? "disabled" : ""}
       />
       ${editorReplace.isEnabled ? "" : '<span class="replace-toggle__label">Replace</span>'}
     </label>
@@ -239,7 +237,7 @@ function renderEditorReplaceControls(editorReplace) {
     )}
     ${secondaryButton("Select all", "select-all-editor-replace-rows", {
       compact: true,
-      disabled: isBusy || editorReplace.matchingRowCount === 0,
+      disabled: editorReplace.matchingRowCount === 0,
       className: "button--replace-toolbar",
       tooltip: "Mark all search results for replacement",
     })}

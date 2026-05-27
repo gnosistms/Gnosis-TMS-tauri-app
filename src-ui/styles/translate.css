@@ -908,8 +908,7 @@
   color: var(--link-hover);
 }
 
-.translation-marker-button:disabled,
-.translation-marker-button.is-saving {
+.translation-marker-button:disabled {
   opacity: 0.6;
 }
 
@@ -1024,8 +1023,7 @@
   outline: none;
 }
 
-.translation-row-text-style-button:disabled,
-.translation-row-text-style-button.is-saving {
+.translation-row-text-style-button:disabled {
   opacity: 0.6;
 }
 

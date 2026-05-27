@@ -30,10 +30,13 @@ import { showNoticeBadge } from "./status-feedback.js";
 import { findEditorRowById, hasEditorLanguage, hasEditorRow } from "./editor-utils.js";
 import { ensureEditorRowReadyForWrite } from "./editor-row-sync-flow.js";
 import {
+  assertEditorWritePermissionForContext,
   assertCurrentEditorWritePermission,
   handleEditorPermissionDenied,
-  invokeEditorWriteCommand,
 } from "./editor-write-permission.js";
+import { assertQueuedEditorRowsReady } from "./editor-queued-write.js";
+import { requestEditorOperation } from "./editor-operation-queue.js";
+import { projectRepoScope } from "./repo-write-queue.js";
 
 function renderEditorCommentsSidebar(render) {
   render?.({ scope: "translate-sidebar" });
@@ -78,18 +81,48 @@ function nextChapterBaseCommitSha(payload, chapterState = state.editorChapter) {
     : chapterState?.chapterBaseCommitSha ?? null;
 }
 
+function cloneQueueContextValue(value) {
+  if (value == null) {
+    return value;
+  }
+  return typeof structuredClone === "function"
+    ? structuredClone(value)
+    : JSON.parse(JSON.stringify(value));
+}
+
+async function invokeQueuedEditorCommentWriteCommand(command, payload, context, render) {
+  try {
+    assertEditorWritePermissionForContext({
+      team: context?.team ?? null,
+      project: context?.project ?? null,
+      chapter: context?.chapter ?? null,
+      row: context?.row ?? null,
+      actionKind: context?.actionKind ?? "sharedWrite",
+    });
+  } catch (error) {
+    if (handleEditorPermissionDenied(error, render)) {
+      throw error;
+    }
+    throw error;
+  }
+
+  try {
+    return await invoke(command, payload);
+  } catch (error) {
+    if (handleEditorPermissionDenied(error, render)) {
+      throw error;
+    }
+    throw error;
+  }
+}
+
+function editorChapterInvalidationKey(repoScope, chapterId) {
+  return `editorChapter:${repoScope}:${chapterId}`;
+}
+
 async function ensureEditorRowReadyForCommentWrite(render, rowId) {
   const row = await ensureEditorRowReadyForWrite(render, rowId);
   if (!row) {
-    return null;
-  }
-
-  if (
-    row.saveStatus !== "idle"
-    || row.markerSaveState?.status === "saving"
-    || row.textStyleSaveState?.status === "saving"
-  ) {
-    showNoticeBadge("Finish saving the current row before changing comments.", render);
     return null;
   }
 
@@ -284,13 +317,15 @@ export async function saveActiveEditorRowComment(render) {
     return;
   }
 
-  if (!(await ensureEditorRowReadyForCommentWrite(render, rowId))) {
+  const row = await ensureEditorRowReadyForCommentWrite(render, rowId);
+  if (!row) {
     return;
   }
 
   const team = selectedProjectsTeam();
   const context = findChapterContextById(editorChapter.chapterId);
-  if (!Number.isFinite(team?.installationId) || !context?.project?.name) {
+  const repoScope = projectRepoScope({ team, project: context?.project ?? null });
+  if (!Number.isFinite(team?.installationId) || !context?.project?.name || !repoScope) {
     return;
   }
 
@@ -303,39 +338,82 @@ export async function saveActiveEditorRowComment(render) {
     return;
   }
 
-  state.editorChapter = applyEditorCommentSaving(editorChapter);
-  renderEditorCommentsSidebar(render);
+  const operationValue = {
+    input: {
+      installationId: team.installationId,
+      projectId: context.project.id,
+      repoName: context.project.name,
+      chapterId: editorChapter.chapterId,
+      rowId,
+      body,
+    },
+    chapterId: editorChapter.chapterId,
+    rowId,
+    permissionContext: {
+      team: cloneQueueContextValue(team),
+      project: cloneQueueContextValue(context.project),
+      chapter: cloneQueueContextValue(context.chapter),
+      row: cloneQueueContextValue(row),
+      actionKind: "sharedWrite",
+    },
+  };
 
-  try {
-    const payload = await invokeEditorWriteCommand("save_gtms_editor_row_comment", {
-      input: {
-        installationId: team.installationId,
-        projectId: context.project.id,
-        repoName: context.project.name,
-        chapterId: editorChapter.chapterId,
-        rowId,
-        body,
-      },
-    }, { render, actionKind: "sharedWrite", rowId });
-
-    if (state.editorChapter?.chapterId !== editorChapter.chapterId || state.editorChapter.activeRowId !== rowId) {
-      return;
-    }
-
-    state.editorChapter = {
-      ...applyEditorCommentSaveSucceeded(state.editorChapter, rowId, payload),
-      chapterBaseCommitSha: nextChapterBaseCommitSha(payload, state.editorChapter),
-    };
-    markRowCommentsSeen(rowId, payload?.commentsRevision ?? 0);
-    renderEditorCommentsSidebarAndBody(render);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    if (state.editorChapter?.chapterId === editorChapter.chapterId && state.editorChapter.activeRowId === rowId) {
-      state.editorChapter = applyEditorCommentSaveFailed(state.editorChapter, message);
+  const requested = requestEditorOperation({
+    repoScope,
+    chapterScope: `${repoScope}:${editorChapter.chapterId}`,
+    rowScope: `${repoScope}:${editorChapter.chapterId}:${rowId}`,
+    kind: "commentAdd",
+    value: operationValue,
+    metadata: {
+      projectId: context.project.id,
+      chapterId: editorChapter.chapterId,
+      rowId,
+    },
+    invalidationKeys: [editorChapterInvalidationKey(repoScope, editorChapter.chapterId)],
+  }, {
+    applyOptimistic: () => {
+      if (state.editorChapter?.chapterId !== editorChapter.chapterId || state.editorChapter.activeRowId !== rowId) {
+        return;
+      }
+      state.editorChapter = applyEditorCommentSaving(state.editorChapter);
       renderEditorCommentsSidebar(render);
-    }
-    showNoticeBadge(message || "The comment could not be saved.", render);
-  }
+    },
+    run: async (operation) => {
+      assertQueuedEditorRowsReady({
+        chapterId: operation.value.chapterId,
+        rowIds: [operation.value.rowId],
+        message: "Refresh or resolve the row before changing comments.",
+      });
+      return invokeQueuedEditorCommentWriteCommand("save_gtms_editor_row_comment", {
+        input: {
+          ...operation.value.input,
+        },
+      }, operation.value.permissionContext, render);
+    },
+    onSuccess: (payload, operation) => {
+      const value = operation?.value ?? operationValue;
+      if (state.editorChapter?.chapterId !== value.chapterId || state.editorChapter.activeRowId !== value.rowId) {
+        return;
+      }
+
+      state.editorChapter = {
+        ...applyEditorCommentSaveSucceeded(state.editorChapter, value.rowId, payload),
+        chapterBaseCommitSha: nextChapterBaseCommitSha(payload, state.editorChapter),
+      };
+      markRowCommentsSeen(value.rowId, payload?.commentsRevision ?? 0);
+      renderEditorCommentsSidebarAndBody(render);
+    },
+    onError: (error, operation) => {
+      const message = error instanceof Error ? error.message : String(error);
+      const value = operation?.value ?? operationValue;
+      if (state.editorChapter?.chapterId === value.chapterId && state.editorChapter.activeRowId === value.rowId) {
+        state.editorChapter = applyEditorCommentSaveFailed(state.editorChapter, message);
+        renderEditorCommentsSidebar(render);
+      }
+      showNoticeBadge(message || "The comment could not be saved.", render);
+    },
+  });
+  requested.promise.catch(() => {});
 }
 
 export async function deleteActiveEditorRowComment(render, commentId) {
@@ -345,13 +423,15 @@ export async function deleteActiveEditorRowComment(render, commentId) {
     return;
   }
 
-  if (!(await ensureEditorRowReadyForCommentWrite(render, rowId))) {
+  const row = await ensureEditorRowReadyForCommentWrite(render, rowId);
+  if (!row) {
     return;
   }
 
   const team = selectedProjectsTeam();
   const context = findChapterContextById(editorChapter.chapterId);
-  if (!Number.isFinite(team?.installationId) || !context?.project?.name) {
+  const repoScope = projectRepoScope({ team, project: context?.project ?? null });
+  if (!Number.isFinite(team?.installationId) || !context?.project?.name || !repoScope) {
     return;
   }
 
@@ -364,37 +444,83 @@ export async function deleteActiveEditorRowComment(render, commentId) {
     return;
   }
 
-  state.editorChapter = applyEditorCommentDeleting(editorChapter, commentId);
-  renderEditorCommentsSidebar(render);
+  const operationValue = {
+    input: {
+      installationId: team.installationId,
+      projectId: context.project.id,
+      repoName: context.project.name,
+      chapterId: editorChapter.chapterId,
+      rowId,
+      commentId,
+    },
+    chapterId: editorChapter.chapterId,
+    rowId,
+    commentId,
+    permissionContext: {
+      team: cloneQueueContextValue(team),
+      project: cloneQueueContextValue(context.project),
+      chapter: cloneQueueContextValue(context.chapter),
+      row: cloneQueueContextValue(row),
+      actionKind: "sharedWrite",
+    },
+  };
 
-  try {
-    const payload = await invokeEditorWriteCommand("delete_gtms_editor_row_comment", {
-      input: {
-        installationId: team.installationId,
-        projectId: context.project.id,
-        repoName: context.project.name,
-        chapterId: editorChapter.chapterId,
-        rowId,
-        commentId,
-      },
-    }, { render, actionKind: "sharedWrite", rowId });
-
-    if (state.editorChapter?.chapterId !== editorChapter.chapterId || state.editorChapter.activeRowId !== rowId) {
-      return;
-    }
-
-    state.editorChapter = {
-      ...applyEditorCommentDeleteSucceeded(state.editorChapter, rowId, payload),
-      chapterBaseCommitSha: nextChapterBaseCommitSha(payload, state.editorChapter),
-    };
-    markRowCommentsSeen(rowId, payload?.commentsRevision ?? 0);
-    renderEditorCommentsSidebarAndBody(render);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    if (state.editorChapter?.chapterId === editorChapter.chapterId && state.editorChapter.activeRowId === rowId) {
-      state.editorChapter = applyEditorCommentDeleteFailed(state.editorChapter, message);
+  const requested = requestEditorOperation({
+    repoScope,
+    chapterScope: `${repoScope}:${editorChapter.chapterId}`,
+    rowScope: `${repoScope}:${editorChapter.chapterId}:${rowId}`,
+    coalesceKey: `commentDelete:${editorChapter.chapterId}:${rowId}:${commentId}`,
+    kind: "commentDelete",
+    value: operationValue,
+    metadata: {
+      projectId: context.project.id,
+      chapterId: editorChapter.chapterId,
+      rowId,
+      commentId,
+    },
+    invalidationKeys: [editorChapterInvalidationKey(repoScope, editorChapter.chapterId)],
+  }, {
+    applyOptimistic: () => {
+      if (state.editorChapter?.chapterId !== editorChapter.chapterId || state.editorChapter.activeRowId !== rowId) {
+        return;
+      }
+      state.editorChapter = applyEditorCommentDeleting(state.editorChapter, commentId);
       renderEditorCommentsSidebar(render);
-    }
-    showNoticeBadge(message || "The comment could not be deleted.", render);
-  }
+    },
+    run: async (operation) => {
+      assertQueuedEditorRowsReady({
+        chapterId: operation.value.chapterId,
+        rowIds: [operation.value.rowId],
+        message: "Refresh or resolve the row before changing comments.",
+      });
+      return invokeQueuedEditorCommentWriteCommand("delete_gtms_editor_row_comment", {
+        input: {
+          ...operation.value.input,
+        },
+      }, operation.value.permissionContext, render);
+    },
+    onSuccess: (payload, operation) => {
+      const value = operation?.value ?? operationValue;
+      if (state.editorChapter?.chapterId !== value.chapterId || state.editorChapter.activeRowId !== value.rowId) {
+        return;
+      }
+
+      state.editorChapter = {
+        ...applyEditorCommentDeleteSucceeded(state.editorChapter, value.rowId, payload),
+        chapterBaseCommitSha: nextChapterBaseCommitSha(payload, state.editorChapter),
+      };
+      markRowCommentsSeen(value.rowId, payload?.commentsRevision ?? 0);
+      renderEditorCommentsSidebarAndBody(render);
+    },
+    onError: (error, operation) => {
+      const message = error instanceof Error ? error.message : String(error);
+      const value = operation?.value ?? operationValue;
+      if (state.editorChapter?.chapterId === value.chapterId && state.editorChapter.activeRowId === value.rowId) {
+        state.editorChapter = applyEditorCommentDeleteFailed(state.editorChapter, message);
+        renderEditorCommentsSidebar(render);
+      }
+      showNoticeBadge(message || "The comment could not be deleted.", render);
+    },
+  });
+  requested.promise.catch(() => {});
 }
