@@ -110,23 +110,49 @@ function availableGlossaryOptions(glossaries = []) {
   );
 }
 
-function findGlossaryOptionById(glossaries, glossaryId) {
+function findGlossaryOptionById(glossaries, glossaryId, { includeDeleted = false } = {}) {
   if (typeof glossaryId !== "string" || !glossaryId.trim()) {
     return null;
   }
 
-  return availableGlossaryOptions(glossaries).find((glossary) => glossary.id === glossaryId) ?? null;
+  const source = includeDeleted ? (Array.isArray(glossaries) ? glossaries : []) : availableGlossaryOptions(glossaries);
+  return source.find((glossary) => glossary?.id === glossaryId) ?? null;
 }
 
 function renderChapterGlossarySelect(chapter, glossaries, options = {}) {
   const linkedGlossary = chapter.linkedGlossary;
-  const selectedGlossary = findGlossaryOptionById(glossaries, linkedGlossary?.glossaryId);
+  const disabled = options.disabled === true;
+  const selectedGlossary = findGlossaryOptionById(glossaries, linkedGlossary?.glossaryId, {
+    includeDeleted: disabled,
+  });
   const optionList = availableGlossaryOptions(glossaries);
+  const selectedGlossaryId =
+    typeof linkedGlossary?.glossaryId === "string" && linkedGlossary.glossaryId.trim()
+      ? linkedGlossary.glossaryId.trim()
+      : "";
+  const selectedFallbackLabel =
+    typeof linkedGlossary?.title === "string" && linkedGlossary.title.trim()
+      ? linkedGlossary.title.trim()
+      : typeof linkedGlossary?.name === "string" && linkedGlossary.name.trim()
+        ? linkedGlossary.name.trim()
+        : typeof linkedGlossary?.repoName === "string" && linkedGlossary.repoName.trim()
+          ? linkedGlossary.repoName.trim()
+          : "";
+  const selectedLabel = selectedGlossary?.title ?? selectedFallbackLabel;
+  const selectedIsInOptionList = optionList.some((glossary) => glossary.id === selectedGlossaryId);
+  const selectedOnlyOption =
+    selectedGlossaryId && !selectedIsInOptionList
+      ? [{
+          value: selectedGlossaryId,
+          label: selectedLabel || "Assigned glossary",
+          selected: true,
+        }]
+      : [];
 
   return renderSelectPillControl({
     className: "select-pill--toolbar select-pill--chapter-glossary select-pill--truncate-value",
-    value: selectedGlossary?.title ?? "no glossary",
-    disabled: options.disabled === true,
+    value: selectedLabel || "no glossary",
+    disabled,
     wrapperAttributes: {
       "data-stop-row-action": true,
     },
@@ -139,12 +165,13 @@ function renderChapterGlossarySelect(chapter, glossaries, options = {}) {
       {
         value: "",
         label: "no glossary",
-        selected: !selectedGlossary,
+        selected: !selectedGlossaryId,
       },
+      ...selectedOnlyOption,
       ...optionList.map((glossary) => ({
         value: glossary.id,
         label: glossary.title,
-        selected: glossary.id === selectedGlossary?.id,
+        selected: glossary.id === selectedGlossaryId,
       })),
     ],
   });
@@ -256,7 +283,7 @@ function renderProjectCard(project, expanded, options = {}) {
                   </div>
                   <div class="chapter-table__actions">
                     ${renderChapterGlossarySelect(chapter, glossaryOptions, {
-                      disabled: offlineMode || lifecycleActionsDisabled || glossaryChangesDisabled || !canManageProjects,
+                      disabled: offlineMode || lifecycleActionsDisabled || glossaryChangesDisabled || disableContentActions || !canManageProjects,
                     })}
                     ${canManageProjects ? iconAction("Add translations", `add-translation-to-file:${chapter.id}`, LUCIDE_LIST_PLUS_ICON, {
                       disabled: localRepoUnavailable || disableContentActions,
@@ -412,6 +439,7 @@ function renderDeletedProjectsSection(state) {
               heavyActionsDisabled,
               lifecycleActionsDisabled,
               glossaryChangesDisabled,
+              glossaries: state.glossaries,
               syncSnapshot,
               suppressMissingLocalRepoRepair: refreshInProgress,
               actions:

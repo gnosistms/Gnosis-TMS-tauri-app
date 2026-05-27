@@ -447,6 +447,59 @@ test("projects glossary selector is visibly disabled while project page write su
   assert.match(html, /data-chapter-glossary-select[^>]*disabled/);
 });
 
+test("deleted project glossary selectors stay disabled without losing the assigned glossary label", () => {
+  const html = renderProjectsScreen(projectsState({
+    projects: [],
+    deletedProjects: [{
+      id: "deleted-project",
+      title: "Deleted Project",
+      name: "deleted-project-repo",
+      lifecycleState: "deleted",
+      chapters: [{
+        id: "chapter-1",
+        name: "Chapter",
+        status: "active",
+        linkedGlossary: { glossaryId: "glossary-1", repoName: "glossary-repo" },
+        sourceWordCount: 10,
+      }],
+    }],
+    expandedProjects: new Set(["deleted-project"]),
+    showDeletedProjects: true,
+  }));
+
+  assert.match(html, /select-pill__value">Glossary</);
+  assert.match(html, /<option value="glossary-1" selected>Glossary<\/option>/);
+  assert.match(html, /data-chapter-glossary-select[^>]*disabled/);
+  assert.doesNotMatch(html, /select-pill__value">no glossary</);
+});
+
+test("disabled project glossary selectors show assigned repo label when the glossary is not selectable", () => {
+  const html = renderProjectsScreen(projectsState({
+    projectsPage: {
+      isRefreshing: false,
+      writeState: "submitting",
+    },
+    projects: [{
+      id: "project-1",
+      title: "Project",
+      name: "project-repo",
+      status: "active",
+      chapters: [{
+        id: "chapter-1",
+        name: "Chapter",
+        status: "active",
+        linkedGlossary: { glossaryId: "missing-glossary", repoName: "archived-glossary-repo" },
+        sourceWordCount: 10,
+      }],
+    }],
+  }));
+
+  assert.match(html, /select-pill__value">archived-glossary-repo</);
+  assert.match(html, /<option value="missing-glossary" selected>archived-glossary-repo<\/option>/);
+  assert.match(html, /data-chapter-glossary-select[^>]*disabled/);
+  assert.doesNotMatch(html, /select-pill__value">no glossary</);
+});
+
 test("project refresh keeps top-level lifecycle actions enabled and heavy actions disabled", () => {
   const html = renderProjectsScreen(projectsState({
     projectsPage: {
