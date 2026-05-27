@@ -23,12 +23,29 @@ function managedChapterLanguagesFromEditorState() {
   return normalizeChapterLanguages(state.editorChapter?.languages);
 }
 
-function currentTargetLanguageManagerPickerScrollTop() {
+export function currentTargetLanguageManagerPickerScrollTop() {
   const list = globalThis.document?.querySelector?.("[data-target-language-manager-picker-list]");
   return Number.isFinite(list?.scrollTop) ? list.scrollTop : 0;
 }
 
-function restoreTargetLanguageManagerPickerScrollTop(scrollTop) {
+export function captureTargetLanguageManagerPickerScrollTop() {
+  if (!state.targetLanguageManager?.isOpen || state.targetLanguageManager.isPickerOpen !== true) {
+    return null;
+  }
+
+  const scrollTop = currentTargetLanguageManagerPickerScrollTop();
+  state.targetLanguageManager = {
+    ...state.targetLanguageManager,
+    pickerScrollTop: scrollTop,
+  };
+  return scrollTop;
+}
+
+export function restoreTargetLanguageManagerPickerScrollTop(scrollTop = state.targetLanguageManager?.pickerScrollTop) {
+  if (!state.targetLanguageManager?.isOpen || state.targetLanguageManager.isPickerOpen !== true) {
+    return;
+  }
+
   const restore = () => {
     const list = globalThis.document?.querySelector?.("[data-target-language-manager-picker-list]");
     if (list && Number.isFinite(scrollTop)) {

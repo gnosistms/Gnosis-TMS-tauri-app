@@ -55,14 +55,16 @@ test("local hard-delete repo resource helpers allow any team member", () => {
   assert.equal(shouldShowDeletedGlossaryPermanentDelete(viewerTeam), true);
 });
 
-test("deleted project file permanent delete stays on the project-management gate", () => {
+test("deleted project file permanent delete is local-only for any team member", () => {
   const ownerTeam = { canDelete: true, canManageProjects: true };
   const adminTeam = { canDelete: false, canManageProjects: true };
   const translatorTeam = { canDelete: false, canManageProjects: false };
+  const viewerTeam = { canDelete: true, canManageProjects: true, membershipRole: "viewer" };
 
   assert.equal(canPermanentlyDeleteProjectFiles(ownerTeam), true);
   assert.equal(canPermanentlyDeleteProjectFiles(adminTeam), true);
-  assert.equal(canPermanentlyDeleteProjectFiles(translatorTeam), false);
+  assert.equal(canPermanentlyDeleteProjectFiles(translatorTeam), true);
+  assert.equal(canPermanentlyDeleteProjectFiles(viewerTeam), true);
 });
 
 test("viewer teams can download project files but cannot mutate resources", () => {
@@ -75,7 +77,7 @@ test("viewer teams can download project files but cannot mutate resources", () =
   assert.equal(isReadOnlyViewerTeam(viewerTeam), true);
   assert.equal(canDownloadProjectFiles(viewerTeam), true);
   assert.equal(canMutateProjectFiles(viewerTeam), false);
-  assert.equal(canPermanentlyDeleteProjectFiles(viewerTeam), false);
+  assert.equal(canPermanentlyDeleteProjectFiles(viewerTeam), true);
   assert.equal(canCreateRepoResources(viewerTeam), false);
 });
 

@@ -43,6 +43,7 @@ const {
   submitQaListCreation,
   submitQaTermEditor,
 } = await import("./qa-list-flow.js");
+const { loadRepoBackedQaListsForTeam } = await import("./qa-list-repo-flow.js");
 const { getNoticeBadgeText } = await import("./status-feedback.js");
 const { setCachedQaListEditorPayload } = await import("./qa-list-editor-query.js");
 const { resetQaListsQueryObserver } = await import("./qa-list-query.js");
@@ -207,6 +208,129 @@ test("QA list page load marks the page refreshing until the refresh finishes", a
 
   assert.equal(state.qaListsPage.isRefreshing, false);
   assert.equal(state.qaListsPage.refreshStartedAt, null);
+});
+
+test("repo-backed QA list load bootstraps remote repos that do not have metadata yet", async () => {
+  setupQaTeams();
+  const remoteRepo = {
+    name: "qa-list-japanese",
+    fullName: "team-1/qa-list-japanese",
+    repoId: 22,
+    nodeId: "repo-node-22",
+    defaultBranchName: "main",
+    defaultBranchHeadOid: "head-remote",
+  };
+  const syncedQaList = repoBackedQaList({
+    id: "qa-list-japanese-id",
+    title: "Japanese QA",
+    language: { code: "ja", name: "Japanese" },
+    repoName: remoteRepo.name,
+    repoId: remoteRepo.repoId,
+    nodeId: remoteRepo.nodeId,
+    fullName: remoteRepo.fullName,
+    defaultBranchHeadOid: remoteRepo.defaultBranchHeadOid,
+  });
+  let didSyncQaRepo = false;
+  let metadataRecords = [];
+
+  invokeHandler = async (command, payload) => {
+    if (command === "list_local_gtms_qa_lists") {
+      return didSyncQaRepo ? [syncedQaList] : [];
+    }
+    if (command === "list_gnosis_qa_lists_for_installation") {
+      return [remoteRepo];
+    }
+    if (command === "list_local_gnosis_qa_list_metadata_records") {
+      return metadataRecords;
+    }
+    if (command === "sync_gtms_qa_list_repos") {
+      didSyncQaRepo = true;
+      assert.deepEqual(
+        payload.input.qaLists.map((qaList) => qaList.repoName),
+        [remoteRepo.name],
+      );
+      return [{ repoName: remoteRepo.name, status: "upToDate" }];
+    }
+    if (command === "upsert_local_gnosis_qa_list_metadata_record") {
+      metadataRecords = [{
+        id: payload.input.qaListId,
+        kind: "qaList",
+        title: payload.input.title,
+        repoName: payload.input.repoName,
+        previousRepoNames: payload.input.previousRepoNames,
+        githubRepoId: payload.input.githubRepoId,
+        githubNodeId: payload.input.githubNodeId,
+        fullName: payload.input.fullName,
+        defaultBranch: payload.input.defaultBranch,
+        lifecycleState: payload.input.lifecycleState,
+        remoteState: payload.input.remoteState,
+        recordState: payload.input.recordState,
+        deletedAt: payload.input.deletedAt,
+        language: payload.input.language,
+        termCount: payload.input.termCount,
+      }];
+      return { commitCreated: true };
+    }
+    return { commitCreated: false };
+  };
+
+  const result = await loadRepoBackedQaListsForTeam(state.teams[0]);
+
+  assert.equal(didSyncQaRepo, true);
+  assert.equal(result.qaLists.length, 1);
+  assert.equal(result.qaLists[0].id, syncedQaList.id);
+  assert.equal(result.qaLists[0].title, syncedQaList.title);
+  assert.equal(
+    invokeCalls.some((call) => call.command === "upsert_local_gnosis_qa_list_metadata_record"),
+    true,
+  );
+});
+
+test("repo-backed QA list load does not bootstrap repos tracked by deleted metadata", async () => {
+  setupQaTeams();
+  const remoteRepo = {
+    name: "qa-list-deleted",
+    fullName: "team-1/qa-list-deleted",
+    repoId: 33,
+    defaultBranchName: "main",
+  };
+
+  invokeHandler = async (command) => {
+    if (command === "list_local_gtms_qa_lists") {
+      return [];
+    }
+    if (command === "list_gnosis_qa_lists_for_installation") {
+      return [remoteRepo];
+    }
+    if (command === "list_local_gnosis_qa_list_metadata_records") {
+      return [{
+        id: "qa-list-deleted-id",
+        kind: "qaList",
+        title: "Deleted QA",
+        repoName: remoteRepo.name,
+        previousRepoNames: [],
+        githubRepoId: remoteRepo.repoId,
+        fullName: remoteRepo.fullName,
+        defaultBranch: "main",
+        lifecycleState: "deleted",
+        remoteState: "linked",
+        recordState: "live",
+        deletedAt: "2026-05-01T00:00:00.000Z",
+        language: { code: "ja", name: "Japanese" },
+        termCount: 0,
+      }];
+    }
+    if (command === "sync_gtms_qa_list_repos") {
+      assert.fail("deleted QA metadata should not allow remote bootstrap sync");
+    }
+    return { commitCreated: false };
+  };
+
+  const result = await loadRepoBackedQaListsForTeam(state.teams[0]);
+
+  assert.equal(result.syncSnapshots.length, 0);
+  assert.equal(result.qaLists.length, 1);
+  assert.equal(result.qaLists[0].lifecycleState, "deleted");
 });
 
 test("editor QA navigation renders a loading editor before QA list discovery finishes", async () => {
@@ -825,7 +949,7 @@ test("QA list creation rolls back remote and local repos when initialization fai
   assert.match(state.qaListCreation.error, /initialization failed/);
   assert.ok(invokeCalls.some((call) => call.command === "create_gnosis_qa_list_repo"));
   assert.ok(invokeCalls.some((call) => call.command === "prepare_local_gtms_qa_list_repo"));
-  assert.ok(invokeCalls.some((call) => call.command === "permanently_delete_gnosis_qa_list_repo"));
+  assert.ok(invokeCalls.some((call) => call.command === "rollback_created_gnosis_qa_list_repo"));
   assert.ok(invokeCalls.some((call) => call.command === "purge_local_gtms_qa_list_repo"));
 });
 
@@ -867,6 +991,6 @@ test("QA list import rolls back remote and local repos when TMX import fails", a
   assert.match(state.qaListImport.error, /import failed/);
   assert.ok(invokeCalls.some((call) => call.command === "create_gnosis_qa_list_repo"));
   assert.ok(invokeCalls.some((call) => call.command === "prepare_local_gtms_qa_list_repo"));
-  assert.ok(invokeCalls.some((call) => call.command === "permanently_delete_gnosis_qa_list_repo"));
+  assert.ok(invokeCalls.some((call) => call.command === "rollback_created_gnosis_qa_list_repo"));
   assert.ok(invokeCalls.some((call) => call.command === "purge_local_gtms_qa_list_repo"));
 });

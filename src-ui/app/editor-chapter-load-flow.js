@@ -21,6 +21,10 @@ import {
   ensureProjectNotTombstoned,
 } from "./project-chapter-flow.js";
 import { findChapterContextById, selectedProjectsTeam } from "./project-context.js";
+import {
+  clearRestoredLocalHardDeleteTombstones,
+  filterLocalHardDeletedResources,
+} from "./local-hard-delete-store.js";
 import { invoke } from "./runtime.js";
 import { resetProjectsPageSync } from "./page-sync.js";
 import {
@@ -106,7 +110,14 @@ function applyEditorPayloadToState(
     existingChapter.selectedTargetLanguageCode ?? payload.selectedTargetLanguageCode,
   );
   const normalizedRows = operations.normalizeEditorRows(payload.rows);
-  const hasImportedEditorConflicts = normalizedRows.some((row) =>
+  const team = selectedProjectsTeam();
+  clearRestoredLocalHardDeleteTombstones(team, "editorRow", normalizedRows, {
+    isActive: (row) => row?.lifecycleState !== "deleted",
+  });
+  const visibleRows = filterLocalHardDeletedResources(team, "editorRow", normalizedRows, {
+    isDeleted: (row) => row?.lifecycleState === "deleted",
+  });
+  const hasImportedEditorConflicts = visibleRows.some((row) =>
     row?.freshness === "conflict"
     || row?.saveStatus === "conflict"
     || Boolean(row?.conflictState),
@@ -132,14 +143,14 @@ function applyEditorPayloadToState(
     assistant: previousEditorChapter?.assistant,
     commentSeenRevisions: loadEditorCommentSeenRevisionsForChapter(
       payload.chapterId,
-      (Array.isArray(payload.rows) ? payload.rows : []).map((row) => row?.rowId).filter(Boolean),
+      visibleRows.map((row) => row?.rowId).filter(Boolean),
     ),
     glossary: glossaryState ?? previousEditorChapter?.glossary ?? createEditorChapterGlossaryState(),
     derivedGlossariesByRowId,
     deferredStructuralChanges: false,
     backgroundSyncStatus: "idle",
     backgroundSyncError: "",
-    rows: normalizedRows,
+    rows: visibleRows,
   }, previousEditorChapter);
 
   operations.applyChapterMetadataToState(payload.chapterId, {

@@ -48,3 +48,14 @@ export function removeStoredDefaultQaListIdForTeamLanguage(team, languageCode) {
   delete stored[key][canonicalLanguageCode];
   writePersistentValue(QA_LIST_DEFAULT_STORAGE_KEY, stored);
 }
+
+export function removeStoredDefaultQaListIdsForTeam(team) {
+  const key = teamDefaultsKey(team);
+  if (!key) {
+    return;
+  }
+
+  const stored = readPersistentValue(QA_LIST_DEFAULT_STORAGE_KEY, {});
+  delete stored[key];
+  writePersistentValue(QA_LIST_DEFAULT_STORAGE_KEY, stored);
+}

@@ -151,7 +151,6 @@ function projectWritePolicyForAction(action) {
     "add-project-files:",
     "repair-project:",
     "rebuild-project-repo:",
-    "clear-deleted-files:",
   ];
   for (const prefix of projectPrefixes) {
     const projectId = actionSuffix(action, prefix);
@@ -173,7 +172,6 @@ function projectWritePolicyForAction(action) {
   const chapterPrefixes = [
     "rename-file:",
     "delete-file:",
-    "delete-deleted-file:",
     "add-translation-to-file:",
   ];
   for (const prefix of chapterPrefixes) {
@@ -182,6 +180,34 @@ function projectWritePolicyForAction(action) {
       const { project, chapter } = findChapterContextForAction(chapterId);
       return getProjectWritePolicy({ team, project, chapter, actionKind: "sharedWrite" });
     }
+  }
+
+  const clearDeletedProjectId = actionSuffix(action, "clear-deleted-files:");
+  if (clearDeletedProjectId) {
+    return getProjectWritePolicy({
+      team,
+      project: findProjectForAction(clearDeletedProjectId),
+      actionKind: "localHardDelete",
+    });
+  }
+
+  const deletedChapterId = actionSuffix(action, "delete-deleted-file:");
+  if (deletedChapterId) {
+    const { project, chapter } = findChapterContextForAction(deletedChapterId);
+    return getProjectWritePolicy({ team, project, chapter, actionKind: "localHardDelete" });
+  }
+
+  if (action === "confirm-clear-deleted-files") {
+    return getProjectWritePolicy({
+      team,
+      project: findProjectForAction(state.projectClearDeletedFiles?.projectId),
+      actionKind: "localHardDelete",
+    });
+  }
+
+  if (action === "confirm-chapter-permanent-deletion") {
+    const { project, chapter } = findChapterContextForAction(state.chapterPermanentDeletion?.chapterId);
+    return getProjectWritePolicy({ team, project, chapter, actionKind: "localHardDelete" });
   }
 
   return getProjectWritePolicy({ team, actionKind: "sharedWrite" });

@@ -92,7 +92,7 @@ function teamInstallationId(team) {
 function resourceIdentifier(resource, kind) {
   const idFields = kind === "team"
     ? [resource?.id, resource?.githubOrg]
-    : [resource?.id, resource?.projectId, resource?.glossaryId, resource?.qaListId];
+    : [resource?.id, resource?.rowId, resource?.chapterId, resource?.projectId, resource?.glossaryId, resource?.qaListId];
   const resourceId = idFields.map(normalizeText).find(Boolean) ?? "";
   const repoName = normalizeText(resource?.repoName ?? resource?.name ?? resource?.githubOrg);
   const fullName = normalizeText(resource?.fullName);

@@ -250,7 +250,7 @@ async function completeProjectCreateSynchronously(selectedTeam, projectTitle, ba
 
     if (remoteProject) {
       try {
-        await invoke("permanently_delete_gnosis_project_repo", {
+        await invoke("rollback_created_gnosis_project_repo", {
           input: {
             installationId: selectedTeam.installationId,
             orgLogin: selectedTeam.githubOrg,

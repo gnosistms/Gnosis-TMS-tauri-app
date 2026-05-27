@@ -75,7 +75,9 @@ import {
 import {
   flushDirtyEditorRows,
   noteEditorBackgroundSyncScrollActivity,
+  captureTargetLanguageManagerPickerScrollTop,
   restoreEditorFieldHistory,
+  restoreTargetLanguageManagerPickerScrollTop,
   runEditorAiTranslate,
   scheduleDirtyEditorRowScan,
   toggleEditorReplaceEnabled,
@@ -566,6 +568,7 @@ function renderWithOptions(options = {}) {
       ? resolveTranslateRenderAnchor({ includeVisibleFallback: false })
       : { anchor: null, hadPendingAnchor: false, usedVisibleFallback: false };
   const scrollSnapshot = captureRenderScrollSnapshot(previousScreen);
+  const targetLanguageManagerPickerScrollTop = captureTargetLanguageManagerPickerScrollTop();
   const renderScreen = screenRenderers[state.screen] ?? screenRenderers.start;
   const assistantTranscriptScrollTop =
     previousScreen === "translate" && state.screen === "translate"
@@ -613,6 +616,7 @@ function renderWithOptions(options = {}) {
   restoreAssistantTranscriptScrollTop(assistantTranscriptScrollTop, app);
   scrollActivePreviewSearchMatchIntoView(app);
   syncLanguagePickerAlphabetIndexes(app);
+  restoreTargetLanguageManagerPickerScrollTop(targetLanguageManagerPickerScrollTop);
   document.title = titles[state.screen] ?? "Gnosis TMS";
 }
 

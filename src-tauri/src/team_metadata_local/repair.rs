@@ -195,6 +195,30 @@ fn unique_glossary_record_for_repo_name<'a>(
     Some(first)
 }
 
+fn unique_qa_list_record_for_repo_name<'a>(
+    records: &'a [GithubQaListMetadataRecord],
+    repo_name: &str,
+) -> Option<&'a GithubQaListMetadataRecord> {
+    let normalized = repo_name.trim();
+    if normalized.is_empty() {
+        return None;
+    }
+
+    let mut matches = records.iter().filter(|record| {
+        record.record_state != "tombstone"
+            && (record.repo_name.trim() == normalized
+                || record
+                    .previous_repo_names
+                    .iter()
+                    .any(|value| value.trim() == normalized))
+    });
+    let first = matches.next()?;
+    if matches.next().is_some() {
+        return None;
+    }
+    Some(first)
+}
+
 pub(super) fn maybe_repair_sync_state(
     repo_path: &Path,
     kind: &str,
@@ -495,6 +519,144 @@ pub(super) fn inspect_glossary_repo_repairs(
             repo_name: None,
             expected_repo_name: Some(record.repo_name.clone()),
             message: "Team metadata references this glossary, but its local repo is missing."
+                .to_string(),
+            can_auto_repair: true,
+        });
+    }
+
+    Ok(LocalRepoRepairScanResult {
+        issues,
+        auto_repaired_count,
+    })
+}
+
+pub(super) fn inspect_qa_list_repo_repairs(
+    app: &AppHandle,
+    installation_id: i64,
+    qa_list_records: &[GithubQaListMetadataRecord],
+) -> Result<LocalRepoRepairScanResult, String> {
+    let repo_root = local_qa_list_repo_root(app, installation_id)?;
+    let mut issues = Vec::new();
+    let mut auto_repaired_count = 0usize;
+    let mut matched_qa_list_ids = std::collections::BTreeSet::new();
+
+    for entry in fs::read_dir(&repo_root).map_err(|error| {
+        format!(
+            "Could not read the local QA list repo folder '{}': {error}",
+            repo_root.display()
+        )
+    })? {
+        let entry =
+            entry.map_err(|error| format!("Could not read a local QA list repo entry: {error}"))?;
+        let repo_path = entry.path();
+        if !is_git_repo(&repo_path) {
+            continue;
+        }
+
+        let folder_name = repo_folder_name(&repo_path);
+        let sync_state = read_local_repo_sync_state(&repo_path).ok().flatten();
+        let embedded_qa_list_id = read_qa_list_id_from_repo(&repo_path);
+        let matched_record = sync_state
+            .as_ref()
+            .and_then(|state| state.resource_id.as_deref())
+            .and_then(|resource_id| {
+                qa_list_records
+                    .iter()
+                    .find(|record| record.id.trim() == resource_id.trim())
+            })
+            .or_else(|| {
+                embedded_qa_list_id.as_deref().and_then(|resource_id| {
+                    qa_list_records
+                        .iter()
+                        .find(|record| record.id.trim() == resource_id.trim())
+                })
+            })
+            .or_else(|| {
+                sync_state
+                    .as_ref()
+                    .and_then(|state| state.current_repo_name.as_deref())
+                    .and_then(|repo_name| {
+                        unique_qa_list_record_for_repo_name(qa_list_records, repo_name)
+                    })
+            })
+            .or_else(|| {
+                folder_name.as_deref().and_then(|repo_name| {
+                    unique_qa_list_record_for_repo_name(qa_list_records, repo_name)
+                })
+            });
+
+        let Some(record) = matched_record else {
+            issues.push(LocalRepoRepairIssue {
+                kind: "qaList".to_string(),
+                issue_type: "strayLocalRepo".to_string(),
+                resource_id: embedded_qa_list_id.clone().or_else(|| {
+                    sync_state
+                        .as_ref()
+                        .and_then(|state| normalized_optional_text(state.resource_id.as_deref()))
+                }),
+                repo_name: folder_name.clone(),
+                expected_repo_name: None,
+                message: "This local QA list repo has no matching team-metadata record and was left as a repair candidate.".to_string(),
+                can_auto_repair: false,
+            });
+            continue;
+        };
+
+        matched_qa_list_ids.insert(record.id.clone());
+        if maybe_repair_sync_state(
+            &repo_path,
+            "qaList",
+            &record.id,
+            &record.repo_name,
+            sync_state.as_ref(),
+        )? {
+            auto_repaired_count += 1;
+        }
+
+        if folder_name.as_deref() != Some(record.repo_name.trim()) {
+            issues.push(LocalRepoRepairIssue {
+                kind: "qaList".to_string(),
+                issue_type: "repoNameMismatch".to_string(),
+                resource_id: Some(record.id.clone()),
+                repo_name: folder_name.clone(),
+                expected_repo_name: Some(record.repo_name.clone()),
+                message: "The local QA list repo folder name no longer matches team metadata. The repo stayed bound by stable ID, but it should be repaired.".to_string(),
+                can_auto_repair: false,
+            });
+        }
+
+        if let Some(full_name) = normalized_optional_text(record.full_name.as_deref()) {
+            let expected_remote_url = expected_repo_url_from_full_name(&full_name)?;
+            if current_origin_remote_url(&repo_path).as_deref()
+                != Some(expected_remote_url.as_str())
+            {
+                issues.push(LocalRepoRepairIssue {
+                    kind: "qaList".to_string(),
+                    issue_type: "missingOrigin".to_string(),
+                    resource_id: Some(record.id.clone()),
+                    repo_name: folder_name.clone().or_else(|| Some(record.repo_name.clone())),
+                    expected_repo_name: Some(record.repo_name.clone()),
+                    message: "The local QA list repo is missing the expected origin remote or points at the wrong GitHub repo.".to_string(),
+                    can_auto_repair: true,
+                });
+            }
+        }
+    }
+
+    for record in qa_list_records
+        .iter()
+        .filter(|record| record.record_state != "tombstone")
+    {
+        if matched_qa_list_ids.contains(&record.id) {
+            continue;
+        }
+        issues.push(LocalRepoRepairIssue {
+            kind: "qaList".to_string(),
+            issue_type: "missingLocalRepo".to_string(),
+            resource_id: Some(record.id.clone()),
+            repo_name: None,
+            expected_repo_name: Some(record.repo_name.clone()),
+            message: "Team metadata references this QA list, but its local repo is missing."
                 .to_string(),
             can_auto_repair: true,
         });

@@ -22,7 +22,8 @@ import {
   state,
 } from "./state.js";
 import { showNoticeBadge } from "./status-feedback.js";
-import { canPermanentlyDeleteProjectFiles } from "./resource-capabilities.js";
+import { addLocalHardDeleteTombstone } from "./local-hard-delete-store.js";
+import { getProjectWritePolicy } from "./resource-write-policy.js";
 import { ensureEditorRowReadyForWrite } from "./editor-row-sync-flow.js";
 
 function hasRowStructureOperations(operations) {
@@ -365,83 +366,62 @@ export async function confirmEditorRowPermanentDeletion(render, operations = {})
     return;
   }
 
-  if (!(await ensureEditorRowReadyForWrite(render, modal.rowId, { structural: true, actionKind: "permanentRow" }))) {
-    return;
-  }
-
   const team = selectedProjectsTeam();
   const context = findChapterContextById(editorChapter.chapterId);
-  if (!Number.isFinite(team?.installationId) || !context?.project?.name) {
+  const row = Array.isArray(editorChapter.rows)
+    ? editorChapter.rows.find((item) => item?.rowId === modal.rowId || item?.id === modal.rowId)
+    : null;
+  if (!team || !context?.project?.name || !row) {
     return;
   }
-  if (!canPermanentlyDeleteProjectFiles(team)) {
+  if (row.lifecycleState !== "deleted") {
     state.editorChapter = {
       ...editorChapter,
       rowPermanentDeletionModal: {
         ...modal,
-        error: "You do not have permission to permanently delete rows in this team.",
+        error: "Only deleted rows can be removed locally.",
       },
     };
     render?.();
     return;
   }
 
-  state.editorChapter = {
-    ...editorChapter,
-    rowPermanentDeletionModal: {
-      ...modal,
-      status: "loading",
-      error: "",
-    },
-  };
-  render?.();
-
-  const triggerAnchorSnapshot = captureTranslateAnchorForRow(modal.rowId);
-
-  try {
-    const payload = await invoke("permanently_delete_gtms_editor_row", {
-      input: {
-        installationId: team.installationId,
-        projectId: context.project.id,
-        repoName: context.project.name,
-        chapterId: editorChapter.chapterId,
-        rowId: modal.rowId,
+  const policy = getProjectWritePolicy({
+    team,
+    project: context.project,
+    chapter: context.chapter,
+    row,
+    actionKind: "localHardDelete",
+  });
+  if (!policy.allowed) {
+    state.editorChapter = {
+      ...editorChapter,
+      rowPermanentDeletionModal: {
+        ...modal,
+        error: policy.message,
       },
-    });
-
-    if (state.editorChapter?.chapterId !== editorChapter.chapterId) {
-      return;
-    }
-
-    const result = applyPermanentlyDeletedEditorRowState(
-      state.editorChapter,
-      modal.rowId,
-      payload?.sourceWordCounts,
-      triggerAnchorSnapshot,
-    );
-    const chapterBaseCommitSha = nextChapterBaseCommitSha(state.editorChapter, payload);
-    operations.applyStructuralEditorChange(render, () => {
-      state.editorChapter = {
-        ...result.chapterState,
-        chapterBaseCommitSha,
-      };
-      operations.applyEditorSelectionsToProjectState(state.editorChapter);
-    }, {
-      anchorSnapshot: result.anchorSnapshot,
-    });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    if (state.editorChapter?.chapterId === editorChapter.chapterId) {
-      state.editorChapter = {
-        ...state.editorChapter,
-        rowPermanentDeletionModal: {
-          ...state.editorChapter.rowPermanentDeletionModal,
-          status: "idle",
-          error: message,
-        },
-      };
-      render?.();
-    }
-    showNoticeBadge(message || "The row could not be permanently deleted.", render);
+    };
+    render?.();
+    return;
   }
+
+  addLocalHardDeleteTombstone(team, "editorRow", {
+    ...row,
+    id: row.rowId ?? row.id,
+    repoName: context.project.name,
+  });
+  const triggerAnchorSnapshot = captureTranslateAnchorForRow(modal.rowId);
+  const result = applyPermanentlyDeletedEditorRowState(
+    editorChapter,
+    modal.rowId,
+    null,
+    triggerAnchorSnapshot,
+  );
+  operations.applyStructuralEditorChange(render, () => {
+    state.editorChapter = result.chapterState;
+    operations.applyEditorSelectionsToProjectState(state.editorChapter);
+  }, {
+    anchorSnapshot: result.anchorSnapshot,
+  });
+  showNoticeBadge("Row removed locally.", render, 2200);
 }

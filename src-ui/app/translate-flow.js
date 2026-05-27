@@ -183,6 +183,7 @@ import {
 } from "./state.js";
 import {
   addTargetLanguageManagerLanguage as addTargetLanguageManagerLanguageFlow,
+  captureTargetLanguageManagerPickerScrollTop as captureTargetLanguageManagerPickerScrollTopFlow,
   closeTargetLanguageManager as closeTargetLanguageManagerFlow,
   closeTargetLanguageManagerPicker as closeTargetLanguageManagerPickerFlow,
   MANAGE_CHAPTER_LANGUAGES_OPTION_VALUE,
@@ -191,6 +192,7 @@ import {
   openTargetLanguageManager as openTargetLanguageManagerFlow,
   openTargetLanguageManagerPicker as openTargetLanguageManagerPickerFlow,
   removeTargetLanguageManagerLanguage as removeTargetLanguageManagerLanguageFlow,
+  restoreTargetLanguageManagerPickerScrollTop as restoreTargetLanguageManagerPickerScrollTopFlow,
   selectTargetLanguageManagerPickerLanguage as selectTargetLanguageManagerPickerLanguageFlow,
   submitTargetLanguageManager as submitTargetLanguageManagerFlow,
 } from "./editor-target-language-manager-flow.js";
@@ -711,6 +713,14 @@ export async function confirmEditorReplaceUndo(render) {
 
 export function openTargetLanguageManager(render = null) {
   return openTargetLanguageManagerFlow(render);
+}
+
+export function captureTargetLanguageManagerPickerScrollTop() {
+  return captureTargetLanguageManagerPickerScrollTopFlow();
+}
+
+export function restoreTargetLanguageManagerPickerScrollTop(scrollTop) {
+  restoreTargetLanguageManagerPickerScrollTopFlow(scrollTop);
 }
 
 export function closeTargetLanguageManager() {

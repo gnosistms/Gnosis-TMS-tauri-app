@@ -28,7 +28,9 @@ globalThis.requestAnimationFrame = (callback) => callback();
 const { state, createTargetLanguageManagerState } = await import("./state.js");
 const {
   addTargetLanguageManagerLanguage,
+  captureTargetLanguageManagerPickerScrollTop,
   removeTargetLanguageManagerLanguage,
+  restoreTargetLanguageManagerPickerScrollTop,
   selectTargetLanguageManagerPickerLanguage,
 } = await import("./translate-flow.js");
 
@@ -63,6 +65,28 @@ test("target language picker selection preserves scroll and waits for add langua
     state.targetLanguageManager.languages.map((language) => language.code),
     ["en", "vi"],
   );
+});
+
+test("target language picker scroll survives full rerenders", () => {
+  languageList.scrollTop = 344;
+  state.targetLanguageManager = {
+    ...createTargetLanguageManagerState(),
+    isOpen: true,
+    isPickerOpen: true,
+    chapterId: "chapter-1",
+    languages: [
+      { code: "en", name: "English", role: "source" },
+    ],
+    pickerScrollTop: 0,
+  };
+
+  const scrollTop = captureTargetLanguageManagerPickerScrollTop();
+  languageList.scrollTop = 0;
+  restoreTargetLanguageManagerPickerScrollTop(scrollTop);
+
+  assert.equal(scrollTop, 344);
+  assert.equal(state.targetLanguageManager.pickerScrollTop, 344);
+  assert.equal(languageList.scrollTop, 344);
 });
 
 test("target language picker canonicalizes Chinese script codes", () => {

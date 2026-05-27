@@ -1,6 +1,9 @@
 import { requireBrokerSession } from "../auth-flow.js";
 import { removeStoredGlossariesForTeam } from "../glossary-cache.js";
+import { removeStoredDefaultGlossaryIdForTeam } from "../glossary-default-cache.js";
 import { removeStoredProjectDataForTeam } from "../project-cache.js";
+import { removeStoredQaListsForTeam } from "../qa-list-cache.js";
+import { removeStoredDefaultQaListIdsForTeam } from "../qa-list-default-cache.js";
 import { invoke, waitForNextPaint } from "../runtime.js";
 import {
   resetTeamLeave,
@@ -457,6 +460,9 @@ export async function confirmTeamPermanentDeletion(render) {
     addLocalHardDeleteTombstone(team, "team", team);
     removeStoredProjectDataForTeam(team);
     removeStoredGlossariesForTeam(team);
+    removeStoredDefaultGlossaryIdForTeam(team);
+    removeStoredQaListsForTeam(team);
+    removeStoredDefaultQaListIdsForTeam(team);
 
     const nextStoredTeams = removeStoredTeamRecord(team.id);
     applyStoredTeamRecords(nextStoredTeams);

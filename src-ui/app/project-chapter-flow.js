@@ -27,6 +27,7 @@ import {
 import { ensureResourceNotTombstoned } from "./resource-lifecycle-engine.js";
 import { canPermanentlyDeleteProjectFiles } from "./resource-capabilities.js";
 import { getProjectWritePolicy } from "./resource-write-policy.js";
+import { addLocalHardDeleteTombstone } from "./local-hard-delete-store.js";
 import {
   areResourcePageWritesDisabled,
   areResourcePageWriteSubmissionsDisabled,
@@ -140,6 +141,7 @@ function ensureChapterMutationAllowed(
     actionLabel = "modify files",
     requireDelete = false,
     allowDuringRefresh = false,
+    localOnly = false,
   } = {},
 ) {
   const writesDisabled = allowDuringRefresh
@@ -153,9 +155,17 @@ function ensureChapterMutationAllowed(
     return false;
   }
 
-  if (state.offline?.isEnabled === true) {
+  if (!localOnly && state.offline?.isEnabled === true) {
     setProjectDiscoveryError(render, `You cannot ${actionLabel} while offline.`);
     return false;
+  }
+
+  if (localOnly) {
+    if (!selectedTeam) {
+      setProjectDiscoveryError(render, "Could not determine the selected team.");
+      return false;
+    }
+    return true;
   }
 
   if (!Number.isFinite(selectedTeam?.installationId)) {
@@ -583,6 +593,7 @@ async function resolveChapterMutationContext(render, chapterId, options = {}) {
     actionLabel: options.actionLabel ?? "modify files",
     requireDelete: options.requireDelete === true,
     allowDuringRefresh: options.allowDuringRefresh === true,
+    localOnly: options.localOnly === true,
   })) {
     return null;
   }
@@ -1019,6 +1030,7 @@ function openChapterModal(render, chapterId, options) {
     actionLabel: options.actionLabel,
     requireDelete: options.requireDelete === true,
     allowDuringRefresh: options.allowDuringRefresh === true,
+    localOnly: options.localOnly === true,
   })) {
     return;
   }
@@ -1076,7 +1088,8 @@ export function openChapterPermanentDeletion(render, chapterId) {
   openChapterModal(render, chapterId, {
     missingMessage: "Could not find the selected deleted file.",
     actionLabel: "permanently delete files",
-    actionKind: "permanentChapter",
+    actionKind: "localHardDelete",
+    localOnly: true,
     applyState: (context) => {
       state.chapterPermanentDeletion = {
         isOpen: true,
@@ -1117,20 +1130,15 @@ export async function openProjectClearDeletedFiles(render, projectId) {
     return;
   }
 
-  if (state.offline?.isEnabled === true) {
-    setProjectDiscoveryError(render, "You cannot permanently delete files while offline.");
-    return;
-  }
-
-  if (!Number.isFinite(selectedTeam?.installationId)) {
-    setProjectDiscoveryError(render, "Could not determine the selected team.");
-    return;
-  }
-
-  if (!canPermanentlyDeleteProjectFiles(selectedTeam)) {
+  const policy = getProjectWritePolicy({
+    team: selectedTeam,
+    project,
+    actionKind: "localHardDelete",
+  });
+  if (!canPermanentlyDeleteProjectFiles(selectedTeam) || !policy.allowed) {
     setProjectDiscoveryError(
       render,
-      "You do not have permission to permanently delete files in this team.",
+      policy.message || "You do not have permission to permanently delete files in this team.",
     );
     return;
   }
@@ -1177,23 +1185,21 @@ export async function confirmProjectClearDeletedFiles(render) {
     return;
   }
 
-  if (!Number.isFinite(selectedTeam?.installationId) || !project) {
+  if (!selectedTeam || !project) {
     modal.status = "idle";
     modal.error = "Could not find the selected project.";
     render();
     return;
   }
 
-  if (state.offline?.isEnabled === true) {
+  const policy = getProjectWritePolicy({
+    team: selectedTeam,
+    project,
+    actionKind: "localHardDelete",
+  });
+  if (!canPermanentlyDeleteProjectFiles(selectedTeam) || !policy.allowed) {
     modal.status = "idle";
-    modal.error = "You cannot permanently delete files while offline.";
-    render();
-    return;
-  }
-
-  if (!canPermanentlyDeleteProjectFiles(selectedTeam)) {
-    modal.status = "idle";
-    modal.error = "You do not have permission to permanently delete files in this team.";
+    modal.error = policy.message || "You do not have permission to permanently delete files in this team.";
     render();
     return;
   }
@@ -1221,33 +1227,23 @@ export async function confirmProjectClearDeletedFiles(render) {
     return;
   }
 
-  modal.status = "loading";
-  modal.error = "";
-  state.projectsPage.writeState = "submitting";
-  showProjectsStatus(render, "Deleting files permanently...");
-  render();
-
   try {
-    const result = await invoke("clear_deleted_gtms_chapters", {
-      input: {
-        installationId: selectedTeam.installationId,
-        projectId: project.id,
-        repoName: project.name,
-      },
-    });
-    const chapterIds = Array.isArray(result?.chapterIds) ? result.chapterIds : [];
+    modal.status = "loading";
+    modal.error = "";
+    showProjectsStatus(render, "Deleting files locally...");
+    render();
+    const deletedChapters = projectDeletedChapters(project);
+    for (const chapter of deletedChapters) {
+      addLocalHardDeleteTombstone(selectedTeam, "chapter", chapter);
+    }
+    const chapterIds = deletedChapters.map((chapter) => chapter.id).filter(Boolean);
     applyProjectClearDeletedFilesResult(selectedTeam, project.id, chapterIds);
     resetProjectClearDeletedFiles();
-    showProjectsNotice(render, "Deleted files cleared.");
-    scheduleProjectRepoSyncAfterLocalWrite(render, selectedTeam, project, {
-      syncText: "Syncing project repo...",
-      refreshText: "Refreshing file list...",
-    });
+    showProjectsNotice(render, "Deleted files removed locally.");
   } catch (error) {
     modal.status = "idle";
     modal.error = error?.message ?? String(error);
   } finally {
-    state.projectsPage.writeState = "idle";
     clearProjectsStatus(render);
     render();
   }
@@ -1589,31 +1585,33 @@ export async function restoreChapter(render, chapterId) {
 }
 
 export async function permanentlyDeleteChapter(render, chapterId) {
-  await submitSimpleChapterMutation(render, chapterId, {
+  const resolved = await resolveChapterMutationContext(render, chapterId, {
     missingMessage: "Could not find the selected deleted file.",
     actionLabel: "permanently delete files",
-    actionKind: "permanentChapter",
+    actionKind: "localHardDelete",
+    localOnly: true,
     requireDelete: true,
-    buildMutation: (context) => ({
+  });
+  if (!resolved) {
+    return;
+  }
+
+  const { selectedTeam, context } = resolved;
+  addLocalHardDeleteTombstone(selectedTeam, "chapter", context.chapter);
+  const nextSnapshot = applyChapterPendingMutation(
+    { items: state.projects, deletedItems: state.deletedProjects },
+    {
       id: crypto.randomUUID(),
       type: "permanentDelete",
       projectId: context.project.id,
       chapterId,
-    }),
-    applyOptimistic: (mutation) => {
-      showProjectsStatus(render, "Deleting file permanently...");
-      const nextSnapshot = applyChapterPendingMutation(
-        { items: state.projects, deletedItems: state.deletedProjects },
-        mutation,
-      );
-      applyProjectSnapshotToState(nextSnapshot, { reconcileExpandedDeletedFiles });
     },
-    optimisticDebugText: "Deleting file permanently...",
-    remoteDebugText: "Syncing project repo...",
-    refreshText: "Refreshing file list...",
-    successNotice: "File permanently deleted.",
-    command: "permanently_delete_gtms_chapter",
-  });
+  );
+  applyProjectSnapshotToState(nextSnapshot, { reconcileExpandedDeletedFiles });
+  persistProjectsForTeam(selectedTeam);
+  updateProjectQueryCache(selectedTeam);
+  showProjectsNotice(render, "File removed locally.");
+  render();
 }
 
 export async function confirmChapterPermanentDeletion(render) {
@@ -1627,24 +1625,23 @@ export async function confirmChapterPermanentDeletion(render) {
     return;
   }
 
-  if (!Number.isFinite(selectedTeam?.installationId) || !context?.project || !context?.chapter) {
+  if (!selectedTeam || !context?.project || !context?.chapter) {
     state.chapterPermanentDeletion.status = "idle";
     state.chapterPermanentDeletion.error = "Could not find the selected deleted file.";
     render();
     return;
   }
 
-  if (state.offline?.isEnabled === true) {
-    state.chapterPermanentDeletion.status = "idle";
-    state.chapterPermanentDeletion.error = "You cannot permanently delete files while offline.";
-    render();
-    return;
-  }
-
-  if (!canPermanentlyDeleteProjectFiles(selectedTeam)) {
+  const policy = getProjectWritePolicy({
+    team: selectedTeam,
+    project: context.project,
+    chapter: context.chapter,
+    actionKind: "localHardDelete",
+  });
+  if (!canPermanentlyDeleteProjectFiles(selectedTeam) || !policy.allowed) {
     state.chapterPermanentDeletion.status = "idle";
     state.chapterPermanentDeletion.error =
-      "You do not have permission to permanently delete files in this team.";
+      policy.message || "You do not have permission to permanently delete files in this team.";
     render();
     return;
   }

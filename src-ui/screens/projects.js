@@ -295,10 +295,10 @@ function renderProjectCard(project, expanded, options = {}) {
                   showDeletedFiles
                     ? `
                       ${
-                        canManageProjects && canPermanentlyDeleteFiles
+                        canPermanentlyDeleteFiles
                           ? `<div class="chapter-table__actions">
                               ${textAction("Clear all deleted files", `clear-deleted-files:${project.id}`, {
-                                disabled: offlineMode || heavyActionsDisabled || disableContentActions,
+                                disabled: heavyActionsDisabled || disableContentActions,
                               })}
                             </div>`
                           : ""
@@ -313,7 +313,7 @@ function renderProjectCard(project, expanded, options = {}) {
                                 </div>
                                 <div class="chapter-table__actions">
                                   ${canManageProjects ? textAction("Restore", `restore-file:${chapter.id}`, { disabled: offlineMode || lifecycleActionsDisabled || disableContentActions }) : ""}
-                                  ${canManageProjects && canPermanentlyDeleteFiles ? textAction("Delete", `delete-deleted-file:${chapter.id}`, { disabled: offlineMode || heavyActionsDisabled || disableContentActions }) : ""}
+                                  ${canPermanentlyDeleteFiles ? textAction("Delete", `delete-deleted-file:${chapter.id}`, { disabled: heavyActionsDisabled || disableContentActions }) : ""}
                                 </div>
                               </div>
                             `,

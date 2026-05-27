@@ -681,7 +681,7 @@ export async function createRemoteGlossaryRepoForTeam(team, repoName) {
 
 export async function permanentlyDeleteRemoteGlossaryRepoForTeam(team, repoName) {
   try {
-    await invoke("permanently_delete_gnosis_glossary_repo", {
+    await invoke("rollback_created_gnosis_glossary_repo", {
       input: {
         installationId: team.installationId,
         orgLogin: team.githubOrg,

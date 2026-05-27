@@ -103,7 +103,6 @@ const READ_ONLY_WRITE_ACTIONS = new Set([
   "submit-target-language-manager",
   "confirm-insert-editor-row-before",
   "confirm-insert-editor-row-after",
-  "confirm-editor-row-permanent-delete",
   "confirm-editor-replace-undo",
   "confirm-editor-unreview-all",
   "confirm-editor-ai-translate-all",
@@ -151,7 +150,6 @@ const READ_ONLY_WRITE_PREFIXES = [
   "open-insert-editor-row:",
   "soft-delete-editor-row:",
   "restore-editor-row:",
-  "open-editor-row-permanent-delete:",
   "resolve-editor-row-conflict:",
   "open-editor-conflict-resolution:",
 ];
@@ -182,6 +180,20 @@ function blockReadOnlyWriteAction(action, render) {
   const permanentRow =
     action.startsWith("open-editor-row-permanent-delete:")
     || action === "confirm-editor-row-permanent-delete";
+  if (permanentRow) {
+    const policy = getProjectWritePolicy({
+      team: selectedProjectsTeam(),
+      project: context?.project ?? null,
+      chapter: context?.chapter ?? null,
+      row,
+      actionKind: "localHardDelete",
+    });
+    if (policy.allowed) {
+      return false;
+    }
+    showNoticeBadge(policy.message, render, 2600);
+    return true;
+  }
   const policy = getProjectWritePolicy({
     team: selectedProjectsTeam(),
     project: context?.project ?? null,

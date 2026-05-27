@@ -350,7 +350,7 @@ export async function deleteRemoteQaListRepo(team, qaList) {
     return;
   }
   ensureInvoke();
-  await invoke("permanently_delete_gnosis_qa_list_repo", {
+  await invoke("rollback_created_gnosis_qa_list_repo", {
     input: {
       installationId: team.installationId,
       orgLogin: team.githubOrg,
@@ -520,6 +520,38 @@ function buildMetadataQaListSyncTargets(team, metadataRecords, remoteRepos) {
     .filter(Boolean);
 }
 
+function buildUntrackedRemoteQaListBootstrapTargets(team, metadataRecords, remoteRepos) {
+  const trackedRepoNames = new Set();
+  const trackedFullNames = new Set();
+  for (const record of Array.isArray(metadataRecords) ? metadataRecords : []) {
+    if (typeof record?.repoName === "string" && record.repoName.trim()) {
+      trackedRepoNames.add(record.repoName.trim().toLowerCase());
+    }
+    if (typeof record?.fullName === "string" && record.fullName.trim()) {
+      trackedFullNames.add(record.fullName.trim().toLowerCase());
+    }
+    for (const previousRepoName of Array.isArray(record?.previousRepoNames) ? record.previousRepoNames : []) {
+      if (typeof previousRepoName === "string" && previousRepoName.trim()) {
+        trackedRepoNames.add(previousRepoName.trim().toLowerCase());
+      }
+    }
+  }
+
+  return (Array.isArray(remoteRepos) ? remoteRepos : [])
+    .map(normalizeRemoteQaListRepo)
+    .filter((repo) =>
+      repo
+      && !trackedRepoNames.has(String(repo.name ?? "").trim().toLowerCase())
+      && !trackedFullNames.has(String(repo.fullName ?? "").trim().toLowerCase())
+      && !isLocalHardDeletedResource(team, "qaList", {
+        repoName: repo.name,
+        fullName: repo.fullName,
+        repoId: repo.repoId,
+        nodeId: repo.nodeId,
+      })
+    );
+}
+
 export async function loadRepoBackedQaListsForTeam(team, options = {}) {
   const offlineMode = options.offlineMode === true;
   const emptyResult = {
@@ -561,7 +593,10 @@ export async function loadRepoBackedQaListsForTeam(team, options = {}) {
     brokerWarning = error?.message ?? String(error);
   }
   const syncTargets = metadataLoaded
-    ? buildMetadataQaListSyncTargets(team, metadataRecords, remoteRepos)
+    ? [
+      ...buildMetadataQaListSyncTargets(team, metadataRecords, remoteRepos),
+      ...buildUntrackedRemoteQaListBootstrapTargets(team, metadataRecords, remoteRepos),
+    ]
     : filterDeletedQaListSyncTargets(team, localQaLists, remoteRepos);
   const syncSnapshots = syncTargets.length > 0
     ? await syncQaListReposForTeam(team, syncTargets)

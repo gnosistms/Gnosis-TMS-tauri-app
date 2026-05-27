@@ -191,7 +191,7 @@ pub(crate) async fn rename_gnosis_project_repo(
 }
 
 #[tauri::command]
-pub(crate) async fn permanently_delete_gnosis_project_repo(
+pub(crate) async fn rollback_created_gnosis_project_repo(
     input: DeleteGithubProjectRepoInput,
     session_token: String,
 ) -> Result<(), String> {
@@ -209,7 +209,7 @@ pub(crate) async fn permanently_delete_gnosis_project_repo(
 }
 
 #[tauri::command]
-pub(crate) async fn permanently_delete_gnosis_glossary_repo(
+pub(crate) async fn rollback_created_gnosis_glossary_repo(
     input: DeleteGithubGlossaryRepoInput,
     session_token: String,
 ) -> Result<(), String> {
@@ -227,7 +227,7 @@ pub(crate) async fn permanently_delete_gnosis_glossary_repo(
 }
 
 #[tauri::command]
-pub(crate) async fn permanently_delete_gnosis_qa_list_repo(
+pub(crate) async fn rollback_created_gnosis_qa_list_repo(
     input: DeleteGithubQaListRepoInput,
     session_token: String,
 ) -> Result<(), String> {

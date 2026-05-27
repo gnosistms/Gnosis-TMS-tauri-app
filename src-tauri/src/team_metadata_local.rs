@@ -47,9 +47,9 @@ use self::mutations::{
 use self::records::{list_local_metadata_records, local_record_has_tombstone, read_json_object};
 use self::repair::{
     find_glossary_repo_for_record, find_project_repo_for_record, find_qa_list_repo_for_record,
-    inspect_glossary_repo_repairs, inspect_project_repo_repairs, local_glossary_term_count,
-    local_project_chapter_count, local_qa_list_term_count, maybe_repair_sync_state,
-    normalized_optional_text, repo_folder_name,
+    inspect_glossary_repo_repairs, inspect_project_repo_repairs, inspect_qa_list_repo_repairs,
+    local_glossary_term_count, local_project_chapter_count, local_qa_list_term_count,
+    maybe_repair_sync_state, normalized_optional_text, repo_folder_name,
 };
 use self::repo::{
     build_local_team_metadata_repo_info, current_origin_remote_url, ensure_local_repo_exists,
@@ -246,19 +246,24 @@ pub(crate) async fn inspect_and_migrate_local_repo_bindings(
             list_local_metadata_records::<GithubProjectMetadataRecord>(&repo_path, "project")?;
         let glossary_records =
             list_local_metadata_records::<GithubGlossaryMetadataRecord>(&repo_path, "glossary")?;
+        let qa_list_records =
+            list_local_metadata_records::<GithubQaListMetadataRecord>(&repo_path, "qaList")?;
 
         let project_scan = inspect_project_repo_repairs(&app, installation_id, &project_records)?;
         let glossary_scan =
             inspect_glossary_repo_repairs(&app, installation_id, &glossary_records)?;
+        let qa_list_scan = inspect_qa_list_repo_repairs(&app, installation_id, &qa_list_records)?;
 
         Ok(LocalRepoRepairScanResult {
             issues: project_scan
                 .issues
                 .into_iter()
                 .chain(glossary_scan.issues.into_iter())
+                .chain(qa_list_scan.issues.into_iter())
                 .collect(),
             auto_repaired_count: project_scan.auto_repaired_count
-                + glossary_scan.auto_repaired_count,
+                + glossary_scan.auto_repaired_count
+                + qa_list_scan.auto_repaired_count,
         })
     })
     .await
@@ -365,6 +370,51 @@ pub(crate) async fn repair_local_repo_binding(
                     repo_name: repo_folder_name(&local_repo_path),
                     expected_repo_name: Some(record.repo_name),
                     message: "The local glossary repo binding was repaired from team metadata."
+                        .to_string(),
+                    can_auto_repair: false,
+                })
+            }
+            "qaList" => {
+                let records = list_local_metadata_records::<GithubQaListMetadataRecord>(
+                    &repo_path, "qaList",
+                )?;
+                let record = records
+                    .into_iter()
+                    .find(|record| record.id.trim() == normalized_resource_id)
+                    .ok_or_else(|| {
+                        format!(
+                            "Could not find QA list metadata record '{}'.",
+                            normalized_resource_id
+                        )
+                    })?;
+                let local_repo_path =
+                    find_qa_list_repo_for_record(&app, input.installation_id, &record)?
+                        .ok_or_else(|| {
+                            "The local QA list repo is not available to repair.".to_string()
+                        })?;
+                maybe_repair_sync_state(
+                    &local_repo_path,
+                    "qaList",
+                    &record.id,
+                    &record.repo_name,
+                    read_local_repo_sync_state(&local_repo_path)
+                        .ok()
+                        .flatten()
+                        .as_ref(),
+                )?;
+                if let Some(full_name) = normalized_optional_text(record.full_name.as_deref()) {
+                    ensure_repo_origin_remote(
+                        &local_repo_path,
+                        &expected_repo_url_from_full_name(&full_name)?,
+                    )?;
+                }
+                Ok(LocalRepoRepairIssue {
+                    kind: "qaList".to_string(),
+                    issue_type: "repaired".to_string(),
+                    resource_id: Some(record.id),
+                    repo_name: repo_folder_name(&local_repo_path),
+                    expected_repo_name: Some(record.repo_name),
+                    message: "The local QA list repo binding was repaired from team metadata."
                         .to_string(),
                     can_auto_repair: false,
                 })

@@ -53,5 +53,5 @@ export function shouldShowDeletedQaListPermanentDelete(team) {
 }
 
 export function canPermanentlyDeleteProjectFiles(team) {
-  return canMutateProjectFiles(team);
+  return canPermanentlyDeleteRepoResources(team);
 }

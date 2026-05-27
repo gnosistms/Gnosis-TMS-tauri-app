@@ -119,12 +119,11 @@ export function getProjectWritePolicy({
     return roleAllowsProjectWrite(team) ? allowed() : blocked("viewer", "project");
   }
 
-  if (
-    actionKind === "restoreChapter"
-    || actionKind === "permanentChapter"
-    || actionKind === "restoreRow"
-    || actionKind === "permanentRow"
-  ) {
+  if (actionKind === "permanentChapter" || actionKind === "permanentRow") {
+    return canLocalHardDeleteResource(team) ? allowed() : blocked("missing", "project");
+  }
+
+  if (actionKind === "restoreChapter" || actionKind === "restoreRow") {
     if (isSoftDeletedResource(team, "team") || isSoftDeletedResource(project, "project")) {
       return blocked("parentSoftDeleted", "project");
     }

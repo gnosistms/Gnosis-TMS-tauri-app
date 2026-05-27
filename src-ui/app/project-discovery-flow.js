@@ -211,6 +211,7 @@ function mergeProjectsWithLocalFiles(snapshot, listings = [], targets = [], opti
     typeof options?.normalizeListedChapter === "function"
       ? options.normalizeListedChapter
       : (chapter) => chapter;
+  const selectedTeam = options?.selectedTeam ?? null;
   const listingByProjectId = new Map();
   const listingByRepoName = new Map();
   const targetProjectIds = new Set();
@@ -233,12 +234,18 @@ function mergeProjectsWithLocalFiles(snapshot, listings = [], targets = [], opti
     const normalizedChapters = Array.isArray(listing.chapters)
       ? listing.chapters.map(normalizeListedChapter).filter(Boolean)
       : [];
+    clearRestoredLocalHardDeleteTombstones(selectedTeam, "chapter", normalizedChapters, {
+      isActive: (chapter) => chapter?.status !== "deleted",
+    });
+    const visibleChapters = filterLocalHardDeletedResources(selectedTeam, "chapter", normalizedChapters, {
+      isDeleted: (chapter) => chapter?.status === "deleted",
+    });
 
     if (typeof listing.projectId === "string" && listing.projectId.trim()) {
-      listingByProjectId.set(listing.projectId, normalizedChapters);
+      listingByProjectId.set(listing.projectId, visibleChapters);
     }
     if (typeof listing.repoName === "string" && listing.repoName.trim()) {
-      listingByRepoName.set(listing.repoName, normalizedChapters);
+      listingByRepoName.set(listing.repoName, visibleChapters);
     }
   }
 
@@ -395,7 +402,7 @@ export async function loadLocalProjectSnapshotForTeam(selectedTeam, options = {}
     baseSnapshot,
     localFileListings,
     localProjects,
-    options,
+    { ...options, selectedTeam },
   );
 
   const filteredSnapshot = applyLocalProjectHardDeleteState(selectedTeam, {
@@ -462,6 +469,7 @@ export async function refreshProjectFilesFromDisk(render, selectedTeam, projects
   const listings = await loadLocalProjectFileListings(selectedTeam, targetProjects);
   const mergedSnapshot = mergeProjectsWithLocalFiles(baseSnapshot, listings, targetProjects, {
     normalizeListedChapter: options.normalizeListedChapter,
+    selectedTeam,
   });
   const nextSnapshot = applyPendingMutations(
     mergedSnapshot,
