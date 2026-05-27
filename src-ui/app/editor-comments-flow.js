@@ -29,6 +29,11 @@ import { state } from "./state.js";
 import { showNoticeBadge } from "./status-feedback.js";
 import { findEditorRowById, hasEditorLanguage, hasEditorRow } from "./editor-utils.js";
 import { ensureEditorRowReadyForWrite } from "./editor-row-sync-flow.js";
+import {
+  assertCurrentEditorWritePermission,
+  handleEditorPermissionDenied,
+  invokeEditorWriteCommand,
+} from "./editor-write-permission.js";
 
 function renderEditorCommentsSidebar(render) {
   render?.({ scope: "translate-sidebar" });
@@ -289,11 +294,20 @@ export async function saveActiveEditorRowComment(render) {
     return;
   }
 
+  try {
+    assertCurrentEditorWritePermission({ actionKind: "sharedWrite", rowId });
+  } catch (error) {
+    if (!handleEditorPermissionDenied(error, render)) {
+      showNoticeBadge(error?.message ?? String(error), render);
+    }
+    return;
+  }
+
   state.editorChapter = applyEditorCommentSaving(editorChapter);
   renderEditorCommentsSidebar(render);
 
   try {
-    const payload = await invoke("save_gtms_editor_row_comment", {
+    const payload = await invokeEditorWriteCommand("save_gtms_editor_row_comment", {
       input: {
         installationId: team.installationId,
         projectId: context.project.id,
@@ -302,7 +316,7 @@ export async function saveActiveEditorRowComment(render) {
         rowId,
         body,
       },
-    });
+    }, { render, actionKind: "sharedWrite", rowId });
 
     if (state.editorChapter?.chapterId !== editorChapter.chapterId || state.editorChapter.activeRowId !== rowId) {
       return;
@@ -341,11 +355,20 @@ export async function deleteActiveEditorRowComment(render, commentId) {
     return;
   }
 
+  try {
+    assertCurrentEditorWritePermission({ actionKind: "sharedWrite", rowId });
+  } catch (error) {
+    if (!handleEditorPermissionDenied(error, render)) {
+      showNoticeBadge(error?.message ?? String(error), render);
+    }
+    return;
+  }
+
   state.editorChapter = applyEditorCommentDeleting(editorChapter, commentId);
   renderEditorCommentsSidebar(render);
 
   try {
-    const payload = await invoke("delete_gtms_editor_row_comment", {
+    const payload = await invokeEditorWriteCommand("delete_gtms_editor_row_comment", {
       input: {
         installationId: team.installationId,
         projectId: context.project.id,
@@ -354,7 +377,7 @@ export async function deleteActiveEditorRowComment(render, commentId) {
         rowId,
         commentId,
       },
-    });
+    }, { render, actionKind: "sharedWrite", rowId });
 
     if (state.editorChapter?.chapterId !== editorChapter.chapterId || state.editorChapter.activeRowId !== rowId) {
       return;

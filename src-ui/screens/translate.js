@@ -30,9 +30,9 @@ import { renderEditorReplaceUndoModal } from "./editor-replace-undo-modal.js";
 import { renderAiReviewMissingKeyModal } from "./ai-review-missing-key-modal.js";
 import { renderTargetLanguageManagerModal } from "./target-language-manager-modal.js";
 import { renderTranslateSidebar as renderTranslateEditorSidebar } from "./translate-sidebar.js";
-import { resolveSelectedChapterGlossary, selectedProjectsTeam } from "../app/project-context.js";
+import { resolveSelectedChapterGlossary } from "../app/project-context.js";
 import { resolveEditorDeriveGlossariesConfig } from "../app/editor-derive-glossaries-flow.js";
-import { canMutateProjectFiles } from "../app/resource-capabilities.js";
+import { editorSessionCanWrite } from "../app/editor-write-permission.js";
 import {
   renderEditorConflictBanner,
   renderEditorFilterBanner,
@@ -239,12 +239,13 @@ export function renderTranslateHeaderDetail(state) {
     editorFontSizePx,
     previewSearchState,
     offlineMode,
+    editorChapter,
   } = frame;
   const targetLanguageManageOption = [{
     value: MANAGE_CHAPTER_LANGUAGES_OPTION_VALUE,
     label: "Add / Remove",
   }];
-  const writeActionsAvailable = canMutateProjectFiles(selectedProjectsTeam());
+  const writeActionsAvailable = editorSessionCanWrite(editorChapter);
   const chapterLanguageManagerOptions =
     writeActionsAvailable && !offlineMode
       ? targetLanguageManageOption
@@ -289,7 +290,7 @@ export function renderTranslateSidebar(state) {
     authSession,
     offlineMode,
   } = buildTranslateScreenFrame(state);
-  const writeActionsAvailable = canMutateProjectFiles(selectedProjectsTeam());
+  const writeActionsAvailable = editorSessionCanWrite(frame.editorChapter);
   return renderTranslateEditorSidebar(
     editorChapter,
     contentRows,

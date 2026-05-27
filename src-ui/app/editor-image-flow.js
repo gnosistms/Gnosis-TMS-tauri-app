@@ -24,6 +24,9 @@ import {
 } from "./editor-utils.js";
 import { ensureEditorRowReadyForWrite, reloadEditorRowFromDisk } from "./editor-row-sync-flow.js";
 import {
+  invokeEditorWriteCommand,
+} from "./editor-write-permission.js";
+import {
   captureTranslateViewport,
   renderTranslateBodyPreservingViewport,
 } from "./translate-viewport.js";
@@ -635,7 +638,7 @@ export async function persistEditorImageUrlOnBlur(render, rowId, languageCode, o
   }
 
   try {
-    const payload = await invoke("save_gtms_editor_language_image_url", {
+    const payload = await invokeEditorWriteCommand("save_gtms_editor_language_image_url", {
       input: {
         installationId: team.installationId,
         projectId: context.project.id,
@@ -646,7 +649,7 @@ export async function persistEditorImageUrlOnBlur(render, rowId, languageCode, o
         url: draft,
         baseImage: imagePayloadValue(currentImage(rowId, languageCode)),
       },
-    });
+    }, { render, actionKind: "sharedWrite", rowId });
 
     if (state.editorChapter?.chapterId !== chapterAtRequest) {
       return;
@@ -902,7 +905,7 @@ async function saveUploadedEditorImage(render, rowId, languageCode, file, operat
 
   try {
     const dataBase64 = await fileToBase64Data(file);
-    const payload = await invoke("upload_gtms_editor_language_image", {
+    const payload = await invokeEditorWriteCommand("upload_gtms_editor_language_image", {
       input: {
         installationId: team.installationId,
         projectId: context.project.id,
@@ -914,7 +917,7 @@ async function saveUploadedEditorImage(render, rowId, languageCode, file, operat
         dataBase64,
         baseImage: imagePayloadValue(currentImage(rowId, languageCode)),
       },
-    });
+    }, { render, actionKind: "sharedWrite", rowId });
 
     if (state.editorChapter?.chapterId !== chapterAtRequest) {
       return;
@@ -1038,7 +1041,7 @@ export async function removeEditorLanguageImage(render, rowId, languageCode, ope
   }
 
   try {
-    const payload = await invoke("remove_gtms_editor_language_image", {
+    const payload = await invokeEditorWriteCommand("remove_gtms_editor_language_image", {
       input: {
         installationId: team.installationId,
         projectId: context.project.id,
@@ -1048,7 +1051,7 @@ export async function removeEditorLanguageImage(render, rowId, languageCode, ope
         languageCode,
         baseImage: imagePayloadValue(image),
       },
-    });
+    }, { render, actionKind: "sharedWrite", rowId });
 
     if (state.editorChapter?.chapterId !== chapterAtRequest) {
       return;

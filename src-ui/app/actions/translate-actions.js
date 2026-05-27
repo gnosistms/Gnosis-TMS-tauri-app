@@ -1,6 +1,9 @@
 import { actionSuffix } from "../action-helpers.js";
-import { selectedProjectsTeam, findChapterContextById } from "../project-context.js";
-import { getProjectWritePolicy } from "../resource-write-policy.js";
+import {
+  assertEditorSessionWritePermission,
+  assertCurrentEditorWritePermission,
+  handleEditorPermissionDenied,
+} from "../editor-write-permission.js";
 import { waitForNextPaint } from "../runtime.js";
 import { state } from "../state.js";
 import { showNoticeBadge } from "../status-feedback.js";
@@ -97,24 +100,12 @@ function reviewModeFromEvent(event) {
   return target?.closest("[data-ai-review-mode]")?.dataset.aiReviewMode ?? null;
 }
 
-const READ_ONLY_WRITE_ACTIONS = new Set([
+const SESSION_WRITE_ACTIONS = new Set([
   "add-target-language-manager-language",
   "open-target-language-manager-picker",
-  "submit-target-language-manager",
-  "confirm-insert-editor-row-before",
-  "confirm-insert-editor-row-after",
-  "confirm-editor-replace-undo",
-  "confirm-editor-unreview-all",
-  "confirm-editor-ai-translate-all",
   "continue-editor-ai-review-all",
-  "confirm-editor-ai-review-all",
   "review-editor-clear-translations",
-  "confirm-editor-clear-translations",
-  "confirm-editor-derive-glossaries",
-  "save-editor-conflict-resolution",
   "select-all-editor-replace-rows",
-  "replace-selected-editor-rows",
-  "save-editor-comment",
   "review-editor-text-now",
   "run-editor-ai-translate:translate1",
   "run-editor-ai-translate:translate2",
@@ -134,38 +125,68 @@ const READ_ONLY_WRITE_ACTIONS = new Set([
   "open-editor-image-url",
   "open-editor-image-upload",
   "open-editor-image-upload-picker",
+]);
+
+const CURRENT_WRITE_ACTIONS = new Set([
+  "submit-target-language-manager",
+  "confirm-insert-editor-row-before",
+  "confirm-insert-editor-row-after",
+  "confirm-editor-replace-undo",
+  "confirm-editor-unreview-all",
+  "confirm-editor-ai-translate-all",
+  "confirm-editor-ai-review-all",
+  "confirm-editor-clear-translations",
+  "confirm-editor-derive-glossaries",
+  "save-editor-conflict-resolution",
+  "replace-selected-editor-rows",
+  "save-editor-comment",
   "remove-editor-language-image",
 ]);
 
-const READ_ONLY_WRITE_PREFIXES = [
+const SESSION_WRITE_PREFIXES = [
   "move-target-language-manager-language:",
   "remove-target-language-manager-language:",
   "select-target-language-manager-picker-language:",
   "review-editor-text-now:",
-  "restore-editor-history:",
   "open-editor-replace-undo:",
-  "delete-editor-comment:",
   "apply-editor-assistant-draft:",
   "copy-editor-conflict-version:",
   "open-insert-editor-row:",
-  "soft-delete-editor-row:",
-  "restore-editor-row:",
   "resolve-editor-row-conflict:",
   "open-editor-conflict-resolution:",
 ];
 
+const CURRENT_WRITE_PREFIXES = [
+  "restore-editor-history:",
+  "delete-editor-comment:",
+  "soft-delete-editor-row:",
+  "restore-editor-row:",
+];
+
+function editorActionPermissionMode(action) {
+  if (
+    CURRENT_WRITE_ACTIONS.has(action)
+    || CURRENT_WRITE_PREFIXES.some((prefix) => action.startsWith(prefix))
+  ) {
+    return "current";
+  }
+  if (
+    SESSION_WRITE_ACTIONS.has(action)
+    || SESSION_WRITE_PREFIXES.some((prefix) => action.startsWith(prefix))
+  ) {
+    return "session";
+  }
+  return "none";
+}
+
 function isReadOnlyBlockedWriteAction(action) {
-  return (
-    READ_ONLY_WRITE_ACTIONS.has(action)
-    || READ_ONLY_WRITE_PREFIXES.some((prefix) => action.startsWith(prefix))
-  );
+  return editorActionPermissionMode(action) !== "none";
 }
 
 function blockReadOnlyWriteAction(action, render) {
   if (!isReadOnlyBlockedWriteAction(action)) {
     return false;
   }
-  const context = findChapterContextById(state.selectedChapterId);
   const rowIdMatch =
     /^.*(?:editor-row|row|history|comment|draft|conflict)[^:]*:([^:]+)(?::|$)/.exec(action);
   const rowId =
@@ -173,39 +194,25 @@ function blockReadOnlyWriteAction(action, render) {
     ?? state.editorChapter?.rowPermanentDeletionModal?.rowId
     ?? state.editorChapter?.activeRowId
     ?? null;
-  const row = Array.isArray(state.editorChapter?.rows)
-    ? state.editorChapter.rows.find((item) => item?.rowId === rowId || item?.id === rowId)
-    : null;
   const restoreRow = action.startsWith("restore-editor-row:");
   const permanentRow =
     action.startsWith("open-editor-row-permanent-delete:")
     || action === "confirm-editor-row-permanent-delete";
-  if (permanentRow) {
-    const policy = getProjectWritePolicy({
-      team: selectedProjectsTeam(),
-      project: context?.project ?? null,
-      chapter: context?.chapter ?? null,
-      row,
-      actionKind: "localHardDelete",
+  const assertWritePermission = editorActionPermissionMode(action) === "current"
+    ? assertCurrentEditorWritePermission
+    : assertEditorSessionWritePermission;
+  try {
+    assertWritePermission({
+      rowId,
+      actionKind: permanentRow ? "localHardDelete" : restoreRow ? "restoreRow" : "sharedWrite",
     });
-    if (policy.allowed) {
-      return false;
+    return false;
+  } catch (error) {
+    if (!handleEditorPermissionDenied(error, render)) {
+      showNoticeBadge(error?.message ?? String(error), render, 2600);
     }
-    showNoticeBadge(policy.message, render, 2600);
     return true;
   }
-  const policy = getProjectWritePolicy({
-    team: selectedProjectsTeam(),
-    project: context?.project ?? null,
-    chapter: context?.chapter ?? null,
-    row,
-    actionKind: restoreRow ? "restoreRow" : permanentRow ? "permanentRow" : "sharedWrite",
-  });
-  if (policy.allowed) {
-    return false;
-  }
-  showNoticeBadge(policy.message, render, 2600);
-  return true;
 }
 
 export function createTranslateActions(render) {

@@ -24,9 +24,14 @@ import {
   findEditorRowById,
 } from "./editor-utils.js";
 import { findChapterContextById, selectedProjectsTeam } from "./project-context.js";
-import { invoke, waitForNextPaint } from "./runtime.js";
+import { waitForNextPaint } from "./runtime.js";
 import { state } from "./state.js";
 import { showNoticeBadge } from "./status-feedback.js";
+import {
+  assertCurrentEditorWritePermission,
+  handleEditorPermissionDenied,
+  invokeEditorWriteCommand,
+} from "./editor-write-permission.js";
 import {
   consumePrimedTranslateInteractionAnchor,
   consumePrimedTranslateMainScrollTop,
@@ -62,6 +67,7 @@ function hasEditorSearchOperations(operations) {
 }
 
 async function commitEditorRowFieldsBatch({
+  render,
   installationId,
   projectId,
   repoName,
@@ -70,7 +76,7 @@ async function commitEditorRowFieldsBatch({
   commitMessage,
   operation,
 }) {
-  return invoke("update_gtms_editor_row_fields_batch", {
+  return invokeEditorWriteCommand("update_gtms_editor_row_fields_batch", {
     input: {
       installationId,
       projectId,
@@ -80,7 +86,7 @@ async function commitEditorRowFieldsBatch({
       commitMessage,
       operation,
     },
-  });
+  }, { render, actionKind: "sharedWrite" });
 }
 
 function buildEditorRowSections(row, chapterState = state.editorChapter) {
@@ -525,6 +531,15 @@ export async function replaceSelectedEditorRows(render, operations = {}) {
     return;
   }
 
+  try {
+    assertCurrentEditorWritePermission({ actionKind: "sharedWrite" });
+  } catch (error) {
+    if (!handleEditorPermissionDenied(error, render)) {
+      showNoticeBadge(error?.message ?? String(error), render);
+    }
+    return;
+  }
+
   updateEditorReplaceState(state, (currentState) => ({
     ...currentState,
     status: "saving",
@@ -535,6 +550,7 @@ export async function replaceSelectedEditorRows(render, operations = {}) {
   try {
     if (resetRows.length > 0) {
       const resetPayload = await commitEditorRowFieldsBatch({
+        render,
         installationId: team.installationId,
         projectId: context.project.id,
         repoName: context.project.name,
@@ -554,6 +570,7 @@ export async function replaceSelectedEditorRows(render, operations = {}) {
     }
 
     const payload = await commitEditorRowFieldsBatch({
+      render,
       installationId: team.installationId,
       projectId: context.project.id,
       repoName: context.project.name,

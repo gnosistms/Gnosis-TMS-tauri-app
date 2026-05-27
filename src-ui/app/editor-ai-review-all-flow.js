@@ -31,6 +31,7 @@ import { createEditorAiReviewAllModalState, state } from "./state.js";
 import { showNoticeBadge } from "./status-feedback.js";
 import { ensureSelectedTeamAiProviderReady } from "./team-ai-flow.js";
 import { loadActiveEditorFieldHistory } from "./editor-history-flow.js";
+import { invokeEditorWriteCommand } from "./editor-write-permission.js";
 
 let activeReviewAllRunId = 0;
 
@@ -473,7 +474,7 @@ export async function confirmEditorAiReviewAll(render, operations = {}) {
       const suggestedText = reviewed ? "" : String(reviewPayload?.suggestedText ?? "");
       const suggestedFootnote = reviewed ? "" : String(reviewPayload?.suggestedFootnote ?? "");
       const suggestedImageCaption = reviewed ? "" : String(reviewPayload?.suggestedImageCaption ?? "");
-      const savePayload = await invoke("apply_gtms_editor_ai_review_result", {
+      const savePayload = await invokeEditorWriteCommand("apply_gtms_editor_ai_review_result", {
         input: {
           installationId: team.installationId,
           projectId: context.project.id,
@@ -488,7 +489,7 @@ export async function confirmEditorAiReviewAll(render, operations = {}) {
           pleaseCheck: !reviewed,
           aiModel: modelId,
         },
-      });
+      }, { render, actionKind: "sharedWrite", rowId: item.rowId });
       if (state.editorChapter?.chapterId !== editorChapter.chapterId) {
         return;
       }

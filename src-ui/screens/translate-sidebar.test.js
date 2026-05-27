@@ -590,6 +590,192 @@ test("review sidebar renders grammar and translation review actions with tooltip
   );
 });
 
+test("review sidebar shows current text when editor text is ahead of latest history", () => {
+  const html = renderTranslateSidebar(
+    activeEditorChapter({
+      sidebarTab: "review",
+      history: {
+        status: "ready",
+        entries: [
+          {
+            commitSha: "latest",
+            authorName: "translator",
+            plainText: "Xin chao",
+            footnote: "",
+            imageCaption: "",
+            reviewed: false,
+            pleaseCheck: false,
+            textStyle: "paragraph",
+          },
+        ],
+      },
+    }),
+    [{
+      id: "row-1",
+      textStyle: "paragraph",
+      sections: [
+        { code: "es", text: "Hola" },
+        { code: "vi", text: "Xin chao!" },
+      ],
+    }],
+    languages,
+    "es",
+    "vi",
+    createAiActionConfigurationState(),
+  );
+
+  assert.match(html, /Current text/);
+  assert.match(html, /Compared with the latest saved version/);
+  assert.match(html, /history-diff__insert">!<\/span>/);
+  assert.doesNotMatch(html, /Last update - translator/);
+});
+
+test("review sidebar keeps committed last update when editor text matches latest history", () => {
+  const html = renderTranslateSidebar(
+    activeEditorChapter({
+      sidebarTab: "review",
+      history: {
+        status: "ready",
+        entries: [
+          {
+            commitSha: "latest",
+            authorName: "translator",
+            plainText: "Xin chao",
+            footnote: "",
+            imageCaption: "",
+            reviewed: false,
+            pleaseCheck: false,
+            textStyle: "paragraph",
+          },
+          {
+            commitSha: "previous",
+            authorName: "translator",
+            plainText: "Xin chau",
+            footnote: "",
+            imageCaption: "",
+            reviewed: false,
+            pleaseCheck: false,
+            textStyle: "paragraph",
+          },
+        ],
+      },
+    }),
+    [{
+      id: "row-1",
+      textStyle: "paragraph",
+      sections: [
+        { code: "es", text: "Hola" },
+        { code: "vi", text: "Xin chao" },
+      ],
+    }],
+    languages,
+    "es",
+    "vi",
+    createAiActionConfigurationState(),
+  );
+
+  assert.match(html, /Last update - translator/);
+  assert.match(html, /Compared with the previous commit/);
+  assert.match(html, /history-diff__delete">u<\/span>/);
+  assert.match(html, /history-diff__insert">o<\/span>/);
+  assert.doesNotMatch(html, /Current text/);
+});
+
+test("review sidebar ignores marker-only differences when choosing current text", () => {
+  const html = renderTranslateSidebar(
+    activeEditorChapter({
+      sidebarTab: "review",
+      history: {
+        status: "ready",
+        entries: [
+          {
+            commitSha: "latest",
+            authorName: "translator",
+            plainText: "Xin chao",
+            footnote: "",
+            imageCaption: "",
+            reviewed: false,
+            pleaseCheck: false,
+            textStyle: "paragraph",
+          },
+          {
+            commitSha: "previous",
+            authorName: "translator",
+            plainText: "Xin chau",
+            footnote: "",
+            imageCaption: "",
+            reviewed: false,
+            pleaseCheck: false,
+            textStyle: "paragraph",
+          },
+        ],
+      },
+    }),
+    [{
+      id: "row-1",
+      textStyle: "paragraph",
+      sections: [
+        { code: "es", text: "Hola" },
+        {
+          code: "vi",
+          text: "Xin chao",
+          reviewed: true,
+          pleaseCheck: true,
+        },
+      ],
+    }],
+    languages,
+    "es",
+    "vi",
+    createAiActionConfigurationState(),
+  );
+
+  assert.match(html, /Last update - translator/);
+  assert.match(html, /Compared with the previous commit/);
+  assert.doesNotMatch(html, /Current text/);
+});
+
+test("review sidebar treats text style differences as current text", () => {
+  const html = renderTranslateSidebar(
+    activeEditorChapter({
+      sidebarTab: "review",
+      history: {
+        status: "ready",
+        entries: [
+          {
+            commitSha: "latest",
+            authorName: "translator",
+            plainText: "Xin chao",
+            footnote: "",
+            imageCaption: "",
+            reviewed: false,
+            pleaseCheck: false,
+            textStyle: "paragraph",
+          },
+        ],
+      },
+    }),
+    [{
+      id: "row-1",
+      textStyle: "heading1",
+      sections: [
+        { code: "es", text: "Hola" },
+        { code: "vi", text: "Xin chao" },
+      ],
+    }],
+    languages,
+    "es",
+    "vi",
+    createAiActionConfigurationState(),
+  );
+
+  assert.match(html, /Current text/);
+  assert.match(html, /Compared with the latest saved version/);
+  assert.match(html, /Style change/);
+  assert.match(html, /history-diff__delete">P<\/span>/);
+  assert.match(html, /history-diff__insert">H1<\/span>/);
+});
+
 test("review sidebar shows the loading spinner on the active full review button", () => {
   const html = renderTranslateSidebar(
     activeEditorChapter({

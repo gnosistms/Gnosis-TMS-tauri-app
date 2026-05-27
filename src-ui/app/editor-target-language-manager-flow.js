@@ -1,9 +1,9 @@
 import { requireBrokerSession } from "./auth-flow.js";
 import { normalizeLanguageSelections } from "./editor-selection-flow.js";
 import { findChapterContextById, selectedProjectsTeam } from "./project-context.js";
-import { invoke } from "./runtime.js";
 import { createTargetLanguageManagerState, state } from "./state.js";
 import { showNoticeBadge } from "./status-feedback.js";
+import { invokeEditorWriteCommand } from "./editor-write-permission.js";
 import { findIsoLanguageOption, normalizeSupportedLanguageCode } from "../lib/language-options.js";
 import {
   appendDuplicateLanguage,
@@ -293,7 +293,7 @@ export async function submitTargetLanguageManager(render, operations = {}) {
       return;
     }
 
-    const payload = await invoke("update_gtms_chapter_languages", {
+    const payload = await invokeEditorWriteCommand("update_gtms_chapter_languages", {
       sessionToken,
       input: {
         installationId: team.installationId,
@@ -306,7 +306,7 @@ export async function submitTargetLanguageManager(render, operations = {}) {
         chapterId: modal.chapterId,
         languages: draftLanguages,
       },
-    });
+    }, { render, actionKind: "sharedWrite" });
     const nextSelections = normalizeLanguageSelections(
       payload.languages,
       payload.selectedSourceLanguageCode,

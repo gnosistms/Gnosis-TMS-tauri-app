@@ -28,6 +28,7 @@ import {
   hasEditorRow,
 } from "./editor-utils.js";
 import { ensureEditorRowReadyForWrite } from "./editor-row-sync-flow.js";
+import { invokeEditorWriteCommand } from "./editor-write-permission.js";
 
 function nextChapterBaseCommitSha(payload, chapterState = state.editorChapter) {
   return typeof payload?.chapterBaseCommitSha === "string" && payload.chapterBaseCommitSha.trim()
@@ -174,7 +175,7 @@ export async function restoreEditorFieldHistory(render, commitSha, operations = 
   render?.();
 
   try {
-    const payload = await invoke("restore_gtms_editor_field_from_history", {
+    const payload = await invokeEditorWriteCommand("restore_gtms_editor_field_from_history", {
       input: {
         installationId: team.installationId,
         projectId: context.project.id,
@@ -184,7 +185,7 @@ export async function restoreEditorFieldHistory(render, commitSha, operations = 
         languageCode: editorChapter.activeLanguageCode,
         commitSha,
       },
-    });
+    }, { render, actionKind: "sharedWrite", rowId: editorChapter.activeRowId });
 
     if (
       state.editorChapter?.chapterId === editorChapter.chapterId
@@ -263,7 +264,7 @@ export async function confirmEditorReplaceUndo(render, operations = {}) {
   render?.();
 
   try {
-    const payload = await invoke("reverse_gtms_editor_batch_replace_commit", {
+    const payload = await invokeEditorWriteCommand("reverse_gtms_editor_batch_replace_commit", {
       input: {
         installationId: team.installationId,
         projectId: context.project.id,
@@ -271,7 +272,7 @@ export async function confirmEditorReplaceUndo(render, operations = {}) {
         chapterId: editorChapter.chapterId,
         commitSha: modal.commitSha,
       },
-    });
+    }, { render, actionKind: "sharedWrite" });
 
     if (state.editorChapter?.chapterId === editorChapter.chapterId) {
       const updatedRows = Array.isArray(payload?.updatedRows) ? payload.updatedRows : [];

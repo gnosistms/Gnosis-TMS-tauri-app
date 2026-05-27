@@ -36,7 +36,6 @@ import {
   openEditorUnreviewAllModalState,
 } from "./editor-review-state.js";
 import { findChapterContextById, selectedProjectsTeam } from "./project-context.js";
-import { invoke } from "./runtime.js";
 import {
   createEditorClearTranslationsModalState,
   createEditorImageCaptionEditorState,
@@ -54,6 +53,12 @@ import {
   ensureEditorRowReadyForWrite,
   reloadEditorRowFromDisk,
 } from "./editor-row-sync-flow.js";
+import {
+  assertCurrentEditorWritePermission,
+  editorWriteLockIsActive,
+  handleEditorPermissionDenied,
+  invokeEditorWriteCommand,
+} from "./editor-write-permission.js";
 import {
   renderTranslateBodyPreservingViewport,
 } from "./translate-viewport.js";
@@ -358,6 +363,9 @@ export async function flushDirtyEditorRows(render, operations = {}, options = {}
   if (!state.editorChapter?.chapterId) {
     return true;
   }
+  if (editorWriteLockIsActive(state.editorChapter)) {
+    return true;
+  }
 
   const candidateRowIds = resolveDirtyTrackedEditorRowIds(state.editorChapter?.dirtyRowIds, {
     rowIds: Array.isArray(options?.rowIds) ? options.rowIds : null,
@@ -586,6 +594,15 @@ export async function updateEditorRowTextStyle(render, rowId, nextTextStyle, ope
     return;
   }
 
+  try {
+    assertCurrentEditorWritePermission({ actionKind: "sharedWrite", rowId });
+  } catch (error) {
+    if (!handleEditorPermissionDenied(error, render)) {
+      showNoticeBadge(error?.message ?? String(error), render);
+    }
+    return;
+  }
+
   updateEditorChapterRow(
     rowId,
     (currentRow) => applyEditorRowTextStyleSaving(currentRow, normalizedTextStyle),
@@ -594,7 +611,7 @@ export async function updateEditorRowTextStyle(render, rowId, nextTextStyle, ope
   render?.({ scope: "translate-body" });
 
   try {
-    const payload = await invoke("update_gtms_editor_row_text_style", {
+    const payload = await invokeEditorWriteCommand("update_gtms_editor_row_text_style", {
       input: {
         installationId: team.installationId,
         projectId: context.project.id,
@@ -603,7 +620,7 @@ export async function updateEditorRowTextStyle(render, rowId, nextTextStyle, ope
         rowId,
         textStyle: normalizedTextStyle,
       },
-    });
+    }, { render, actionKind: "sharedWrite", rowId });
 
     if (state.editorChapter?.chapterId === editorChapter.chapterId) {
       updateEditorChapterRow(
@@ -724,6 +741,15 @@ export async function toggleEditorRowFieldMarker(
     return;
   }
 
+  try {
+    assertCurrentEditorWritePermission({ actionKind: "sharedWrite", rowId });
+  } catch (error) {
+    if (!handleEditorPermissionDenied(error, render)) {
+      showNoticeBadge(error?.message ?? String(error), render);
+    }
+    return;
+  }
+
   const previousFieldState = currentFieldState;
   const viewportSnapshot = options?.viewportSnapshot ?? null;
   markEditorRowDirty(rowId);
@@ -735,7 +761,7 @@ export async function toggleEditorRowFieldMarker(
   render?.({ scope: "translate-sidebar" });
 
   try {
-    const payload = await invoke("update_gtms_editor_row_field_flag", {
+    const payload = await invokeEditorWriteCommand("update_gtms_editor_row_field_flag", {
       input: {
         installationId: team.installationId,
         projectId: context.project.id,
@@ -746,7 +772,7 @@ export async function toggleEditorRowFieldMarker(
         flag: kind,
         enabled: nextEnabled,
       },
-    });
+    }, { render, actionKind: "sharedWrite", rowId });
 
     if (state.editorChapter?.chapterId === editorChapter.chapterId) {
       updateEditorChapterRow(
@@ -922,6 +948,16 @@ export async function confirmEditorUnreviewAll(render, operations = {}) {
     return;
   }
 
+  try {
+    assertCurrentEditorWritePermission({ actionKind: "sharedWrite" });
+  } catch (error) {
+    if (!handleEditorPermissionDenied(error, render)) {
+      updateUnreviewAllModalError(error?.message ?? String(error), render);
+      showNoticeBadge(error?.message ?? String(error), render);
+    }
+    return;
+  }
+
   state.editorChapter = {
     ...state.editorChapter,
     unreviewAllModal: {
@@ -933,7 +969,7 @@ export async function confirmEditorUnreviewAll(render, operations = {}) {
   render?.();
 
   try {
-    const payload = await invoke("clear_gtms_editor_reviewed_markers", {
+    const payload = await invokeEditorWriteCommand("clear_gtms_editor_reviewed_markers", {
       input: {
         installationId: team.installationId,
         projectId: context.project.id,
@@ -941,7 +977,7 @@ export async function confirmEditorUnreviewAll(render, operations = {}) {
         chapterId: editorChapter.chapterId,
         languageCode,
       },
-    });
+    }, { render, actionKind: "sharedWrite" });
 
     if (state.editorChapter?.chapterId !== editorChapter.chapterId) {
       return;
@@ -1026,6 +1062,16 @@ export async function confirmEditorClearTranslations(render, operations = {}) {
     return;
   }
 
+  try {
+    assertCurrentEditorWritePermission({ actionKind: "sharedWrite" });
+  } catch (error) {
+    if (!handleEditorPermissionDenied(error, render)) {
+      updateClearTranslationsModalError(error?.message ?? String(error), render);
+      showNoticeBadge(error?.message ?? String(error), render);
+    }
+    return;
+  }
+
   state.editorChapter = {
     ...state.editorChapter,
     clearTranslationsModal: {
@@ -1044,7 +1090,7 @@ export async function confirmEditorClearTranslations(render, operations = {}) {
         sourceWordCounts: state.editorChapter?.sourceWordCounts ?? {},
         chapterBaseCommitSha: state.editorChapter?.chapterBaseCommitSha ?? null,
       }
-      : await invoke("update_gtms_editor_row_fields_batch", {
+      : await invokeEditorWriteCommand("update_gtms_editor_row_fields_batch", {
         input: {
           installationId: team.installationId,
           projectId: context.project.id,
@@ -1054,7 +1100,7 @@ export async function confirmEditorClearTranslations(render, operations = {}) {
           commitMessage: `Clear ${selectedLanguageCodes.join(", ")} translations`,
           operation: "clear-translations",
         },
-      });
+      }, { render, actionKind: "sharedWrite" });
 
     if (state.editorChapter?.chapterId !== editorChapter.chapterId) {
       return;
@@ -1119,15 +1165,22 @@ export async function resolveEditorRowConflict(render, rowId, resolution, operat
       const team = selectedProjectsTeam();
       const context = findChapterContextById(state.editorChapter?.chapterId);
       if (Number.isFinite(team?.installationId) && context?.project?.name && context?.chapter?.id) {
-        await invoke("clear_gtms_editor_imported_conflict", {
-          input: {
-            installationId: team.installationId,
-            projectId: context.project.id,
-            repoName: context.project.name,
-            chapterId: context.chapter.id,
-            rowId,
-          },
-        });
+        try {
+          await invokeEditorWriteCommand("clear_gtms_editor_imported_conflict", {
+            input: {
+              installationId: team.installationId,
+              projectId: context.project.id,
+              repoName: context.project.name,
+              chapterId: context.chapter.id,
+              rowId,
+            },
+          }, { render, actionKind: "sharedWrite", rowId });
+        } catch (error) {
+          if (!handleEditorPermissionDenied(error, render)) {
+            showNoticeBadge(error?.message ?? String(error), render);
+          }
+          return;
+        }
       }
     }
     updateEditorChapterRow(rowId, (currentRow) => applyEditorRowConflictResolvedWithRemote(currentRow));
@@ -1208,6 +1261,20 @@ async function persistEditorRow(render, rowId, operations = {}, options = {}) {
         return;
       }
 
+      try {
+        assertCurrentEditorWritePermission({ actionKind: "sharedWrite", rowId });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (handleEditorPermissionDenied(error, render)) {
+          return;
+        }
+        updateEditorChapterRow(rowId, (currentRow) => applyEditorRowPersistFailed(currentRow, message));
+        reconcileDirtyTrackedEditorRows([rowId]);
+        render?.({ scope: "translate-sidebar" });
+        showNoticeBadge(message || "The row could not be saved.", render);
+        return;
+      }
+
       const commitMetadata = nextCommitMetadata ?? takePendingEditorCommitMetadata(rowId);
       nextCommitMetadata = null;
 
@@ -1218,7 +1285,7 @@ async function persistEditorRow(render, rowId, operations = {}, options = {}) {
       render?.({ scope: "translate-sidebar" });
 
       try {
-        const payload = await invoke("update_gtms_editor_row_fields", {
+        const payload = await invokeEditorWriteCommand("update_gtms_editor_row_fields", {
           input: {
             installationId: team.installationId,
             projectId: context.project.id,
@@ -1243,7 +1310,7 @@ async function persistEditorRow(render, rowId, operations = {}, options = {}) {
             ...(commitMetadata?.operation ? { operation: commitMetadata.operation } : {}),
             ...(commitMetadata?.aiModel ? { aiModel: commitMetadata.aiModel } : {}),
           },
-        });
+        }, { render, actionKind: "sharedWrite", rowId });
 
         if (state.editorChapter?.chapterId !== editorChapter.chapterId) {
           return;

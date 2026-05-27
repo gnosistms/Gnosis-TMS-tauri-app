@@ -5,7 +5,7 @@ import { readFileSync } from "node:fs";
 const source = readFileSync(new URL("./translate.js", import.meta.url), "utf8");
 
 test("translate header only wires Add / Remove into both language dropdowns for teams that can mutate project files", () => {
-  assert.match(source, /canMutateProjectFiles\(selectedProjectsTeam\(\)\)/);
+  assert.match(source, /editorSessionCanWrite\(editorChapter\)/);
   assert.match(source, /sourceLanguageExtraOptions:\s*chapterLanguageManagerOptions/);
   assert.match(source, /targetLanguageExtraOptions:\s*chapterLanguageManagerOptions/);
   assert.match(source, /label:\s*"Add \/ Remove"/);

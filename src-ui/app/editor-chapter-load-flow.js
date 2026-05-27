@@ -18,6 +18,10 @@ import {
 import { normalizeLanguageSelections } from "./editor-selection-flow.js";
 import { hasActiveEditorField } from "./editor-utils.js";
 import {
+  captureEditorWritePermissionSnapshot,
+  createEditorWriteLockState,
+} from "./editor-write-permission.js";
+import {
   ensureProjectNotTombstoned,
 } from "./project-chapter-flow.js";
 import { findChapterContextById, selectedProjectsTeam } from "./project-context.js";
@@ -285,6 +289,16 @@ export async function loadSelectedChapterEditorData(render, options = {}, operat
     persistedSourceLanguageCode: nextSelectedSourceLanguageCode,
     persistedTargetLanguageCode: nextSelectedTargetLanguageCode,
     selectionPersistStatus: "idle",
+    writePermissionSnapshot: preserveVisibleRows
+      ? state.editorChapter.writePermissionSnapshot
+      : captureEditorWritePermissionSnapshot({
+        team,
+        project: context.project,
+        chapter: context.chapter,
+      }),
+    writeLock: preserveVisibleRows
+      ? state.editorChapter.writeLock
+      : createEditorWriteLockState(),
     filters: preserveVisibleRows
       ? normalizeEditorChapterFilters(state.editorChapter.filters)
       : initialEditorChapterFiltersForContext(context.chapter),

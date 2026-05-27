@@ -28,6 +28,8 @@ import {
   historyLastUpdateHeadingLabel,
 } from "../app/editor-history.js";
 import { resolveEditorAiTranslateLanguages } from "../app/editor-ai-translate-target.js";
+import { editorFieldImageEqual } from "../app/editor-images.js";
+import { normalizeEditorRowTextStyle } from "../app/editor-row-text-style.js";
 import { renderCommentsPane } from "./translate-comments-pane.js";
 import { renderHistoryPane } from "./translate-history-pane.js";
 import {
@@ -768,6 +770,20 @@ function renderAssistantPane(editorChapter, rows, languages, sourceCode, targetC
   `;
 }
 
+function editorReviewLiveEntryMatchesHistoryEntry(entry, liveEntry) {
+  if (!entry || !liveEntry) {
+    return false;
+  }
+
+  return (
+    String(entry.plainText ?? "") === String(liveEntry.plainText ?? "")
+    && String(entry.footnote ?? "") === String(liveEntry.footnote ?? "")
+    && String(entry.imageCaption ?? "") === String(liveEntry.imageCaption ?? "")
+    && editorFieldImageEqual(entry.image, liveEntry.image)
+    && normalizeEditorRowTextStyle(entry.textStyle) === normalizeEditorRowTextStyle(liveEntry.textStyle)
+  );
+}
+
 function renderReviewPane(editorChapter, rows, languages, offlineMode = false) {
   const expandedSectionKeys =
     editorChapter?.reviewExpandedSectionKeys instanceof Set
@@ -796,8 +812,17 @@ function renderReviewPane(editorChapter, rows, languages, offlineMode = false) {
     pleaseCheck: activeSection?.pleaseCheck === true,
     textStyle: activeRow?.textStyle ?? "paragraph",
   };
-  const lastUpdateEntry = lastCommittedEntry ?? currentEntry;
-  const lastUpdateHeadingLabel = historyLastUpdateHeadingLabel(lastUpdateEntry);
+  const currentEntryMatchesLastCommit =
+    lastCommittedEntry
+    && editorReviewLiveEntryMatchesHistoryEntry(lastCommittedEntry, currentEntry);
+  const showsCurrentEntry = !currentEntryMatchesLastCommit;
+  const lastUpdateEntry = showsCurrentEntry ? currentEntry : lastCommittedEntry;
+  const lastUpdateBaselineEntry = showsCurrentEntry
+    ? lastCommittedEntry
+    : previousEntry;
+  const lastUpdateHeadingLabel = showsCurrentEntry
+    ? "Current text"
+    : historyLastUpdateHeadingLabel(lastUpdateEntry);
   const isLastUpdateExpanded = expandedSectionKeys.has("last-update");
   const isAiReviewExpanded = expandedSectionKeys.has("ai-review");
   const lastUpdateSummaryTooltip = tooltipAttributes(
@@ -808,7 +833,7 @@ function renderReviewPane(editorChapter, rows, languages, offlineMode = false) {
     ? "Loading..."
     : history.status === "error"
       ? "Error"
-      : previousEntry
+      : lastUpdateBaselineEntry
         ? "Diff"
         : "Text only";
   const aiReview = resolveVisibleEditorAiReview(
@@ -930,15 +955,15 @@ function renderReviewPane(editorChapter, rows, languages, offlineMode = false) {
             ? `
               <div class="history-group__entries">
                 <article class="history-item">
-                  ${renderHistoryEntryContent(lastUpdateEntry, previousEntry, activeLanguage.code)}
-                  ${renderHistoryNote(lastUpdateEntry, previousEntry, { includeMarkers: false })}
+                  ${renderHistoryEntryContent(lastUpdateEntry, lastUpdateBaselineEntry, activeLanguage.code)}
+                  ${renderHistoryNote(lastUpdateEntry, lastUpdateBaselineEntry, { includeMarkers: false })}
                   ${
                     history.status === "loading"
                       ? '<p class="history-item__meta">Loading previous version...</p>'
                       : history.status === "error"
                         ? `<p class="history-item__note">${escapeHtml(history.error || "Could not load the previous version.")}</p>`
-                        : previousEntry
-                          ? '<p class="history-item__meta">Compared with the previous commit</p>'
+                        : lastUpdateBaselineEntry
+                          ? `<p class="history-item__meta">${showsCurrentEntry ? "Compared with the latest saved version" : "Compared with the previous commit"}</p>`
                           : '<p class="history-item__meta">No previous version</p>'
                   }
                 </article>

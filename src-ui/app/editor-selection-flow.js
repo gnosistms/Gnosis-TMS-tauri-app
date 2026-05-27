@@ -1,7 +1,7 @@
 import { findChapterContextById, selectedProjectsTeam } from "./project-context.js";
-import { invoke } from "./runtime.js";
 import { state } from "./state.js";
 import { showNoticeBadge } from "./status-feedback.js";
+import { invokeEditorWriteCommand } from "./editor-write-permission.js";
 
 function hasEditorSelectionOperations(operations) {
   return (
@@ -93,7 +93,7 @@ export async function persistEditorChapterSelections(render, operations = {}) {
   };
 
   try {
-    const payload = await invoke("update_gtms_chapter_language_selection", {
+    const payload = await invokeEditorWriteCommand("update_gtms_chapter_language_selection", {
       input: {
         installationId: team.installationId,
         projectId: context.project.id,
@@ -102,7 +102,7 @@ export async function persistEditorChapterSelections(render, operations = {}) {
         sourceLanguageCode: desiredSourceLanguageCode,
         targetLanguageCode: desiredTargetLanguageCode,
       },
-    });
+    }, { render, actionKind: "sharedWrite" });
 
     operations.applyChapterMetadataToState(editorChapter.chapterId, {
       selectedSourceLanguageCode: payload.sourceLanguageCode,

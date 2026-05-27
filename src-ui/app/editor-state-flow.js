@@ -19,6 +19,10 @@ import {
 import { normalizeEditorReplaceState } from "./editor-replace.js";
 import { normalizeEditorRowTextStyle } from "./editor-row-text-style.js";
 import {
+  normalizeEditorWriteLockState,
+  normalizeEditorWritePermissionSnapshot,
+} from "./editor-write-permission.js";
+import {
   cloneRowFields,
   cloneRowFieldStates,
   cloneRowImages,
@@ -222,6 +226,15 @@ export function applyEditorUiState(nextEditorChapter, previousEditorChapter = st
 
   return pruneEditorCommentSeenRevisionsForRows({
     ...nextEditorChapter,
+    writePermissionSnapshot: normalizeEditorWritePermissionSnapshot(
+      nextEditorChapter?.writePermissionSnapshot
+        ?? (isSameChapter ? previousEditorChapter?.writePermissionSnapshot : null),
+    ),
+    writeLock: normalizeEditorWriteLockState(
+      isSameChapter
+        ? nextEditorChapter?.writeLock ?? previousEditorChapter?.writeLock
+        : nextEditorChapter?.writeLock,
+    ),
     mode: preserveEditorMode(previousEditorChapter, isSameChapter),
     previewSearch: preserveEditorPreviewSearch(previousEditorChapter, isSameChapter),
     fontSizePx: coerceEditorFontSizePx(previousEditorChapter?.fontSizePx),

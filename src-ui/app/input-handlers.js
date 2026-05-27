@@ -86,6 +86,27 @@ import {
 } from "./translate-flow.js";
 import { normalizedConfirmationValue } from "./resource-entity-modal.js";
 
+let liveReviewSidebarRenderPending = false;
+
+function scheduleLiveReviewSidebarRender(render) {
+  if (typeof render !== "function" || liveReviewSidebarRenderPending) {
+    return;
+  }
+
+  liveReviewSidebarRenderPending = true;
+  const schedule =
+    typeof globalThis.requestAnimationFrame === "function"
+      ? globalThis.requestAnimationFrame.bind(globalThis)
+      : typeof globalThis.window?.requestAnimationFrame === "function"
+        ? globalThis.window.requestAnimationFrame.bind(globalThis.window)
+        : (callback) => setTimeout(callback, 0);
+
+  schedule(() => {
+    liveReviewSidebarRenderPending = false;
+    render({ scope: "translate-sidebar" });
+  });
+}
+
 function handleProjectCreationInput(event) {
   const input = event.target.closest("[data-project-name-input]");
   if (!input) {
@@ -599,7 +620,7 @@ function handleEditorRowFieldInput(event, render) {
     && state.editorChapter?.activeRowId === (input.dataset.rowId ?? "")
     && state.editorChapter?.activeLanguageCode === (input.dataset.languageCode ?? "")
   ) {
-    render?.({ scope: "translate-sidebar" });
+    scheduleLiveReviewSidebarRender(render);
   }
   syncActiveEditorInlineStyleButtons();
   return true;

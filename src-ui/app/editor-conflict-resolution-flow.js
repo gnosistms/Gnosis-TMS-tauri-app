@@ -28,6 +28,7 @@ import {
   buildEditorConflictResolutionVersionCopyText,
   normalizeEditorConflictResolutionValue,
 } from "./editor-conflict-resolution-model.js";
+import { invokeEditorWriteCommand } from "./editor-write-permission.js";
 
 function lockConflictFilter() {
   if (!state.editorChapter?.chapterId) {
@@ -227,7 +228,7 @@ export async function saveEditorConflictResolution(render, operations = {}) {
 
   let payload = null;
   try {
-    payload = await invoke("update_gtms_editor_row_fields", {
+    payload = await invokeEditorWriteCommand("update_gtms_editor_row_fields", {
       input: {
         ...input,
         fields: fieldsToPersist,
@@ -237,7 +238,7 @@ export async function saveEditorConflictResolution(render, operations = {}) {
         baseFootnotes: remoteFootnotes,
         baseImageCaptions: remoteImageCaptions,
       },
-    });
+    }, { render, actionKind: "sharedWrite", rowId });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     if (state.editorChapter?.chapterId) {

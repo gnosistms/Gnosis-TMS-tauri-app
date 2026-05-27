@@ -8,7 +8,10 @@ import { normalizeEditorDerivedGlossariesByRowId } from "./editor-derived-glossa
 import { coerceEditorFontSizePx } from "./state.js";
 import { canPermanentlyDeleteProjectFiles } from "./resource-capabilities.js";
 import { findChapterContextById, selectedProjectsTeam } from "./project-context.js";
-import { getProjectWritePolicy } from "./resource-write-policy.js";
+import {
+  editorSessionCanWrite,
+  getProjectLifecycleWritePolicy,
+} from "./editor-write-permission.js";
 import { buildEditorFilterResult, editorChapterFiltersAreActive } from "./editor-filters.js";
 import { normalizeEditorReplaceState } from "./editor-replace.js";
 import {
@@ -358,7 +361,8 @@ function buildEditorDisplayItems(contentRows, editorChapter, team, editorReplace
     editorChapter?.expandedDeletedRowGroupIds instanceof Set
       ? editorChapter.expandedDeletedRowGroupIds
       : new Set();
-  const canEditRows = getProjectWritePolicy({
+  const sessionCanWrite = editorSessionCanWrite(editorChapter);
+  const canEditRows = sessionCanWrite && getProjectLifecycleWritePolicy({
     team,
     project: chapterContext?.project ?? null,
     chapter: chapterContext?.chapter ?? null,
@@ -399,14 +403,14 @@ function buildEditorDisplayItems(contentRows, editorChapter, team, editorReplace
       canEdit: canEditRows,
       canInsert: row.lifecycleState === "active" && canEditRows,
       canSoftDelete: row.lifecycleState === "active" && canEditRows,
-      canRestore: row.lifecycleState === "deleted" && getProjectWritePolicy({
+      canRestore: row.lifecycleState === "deleted" && sessionCanWrite && getProjectLifecycleWritePolicy({
         team,
         project: chapterContext?.project ?? null,
         chapter: chapterContext?.chapter ?? null,
         row,
         actionKind: "restoreRow",
       }).allowed,
-      canPermanentDelete: row.lifecycleState === "deleted" && canPermanentlyDeleteRows && getProjectWritePolicy({
+      canPermanentDelete: row.lifecycleState === "deleted" && canPermanentlyDeleteRows && getProjectLifecycleWritePolicy({
         team,
         project: chapterContext?.project ?? null,
         chapter: chapterContext?.chapter ?? null,

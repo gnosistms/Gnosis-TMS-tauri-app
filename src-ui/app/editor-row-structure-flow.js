@@ -14,7 +14,6 @@ import {
   isEditorRegressionFixtureState,
 } from "./editor-regression-fixture.js";
 import { findChapterContextById, selectedProjectsTeam } from "./project-context.js";
-import { invoke } from "./runtime.js";
 import {
   captureTranslateAnchorForRow,
 } from "./scroll-state.js";
@@ -25,6 +24,7 @@ import { showNoticeBadge } from "./status-feedback.js";
 import { addLocalHardDeleteTombstone } from "./local-hard-delete-store.js";
 import { getProjectWritePolicy } from "./resource-write-policy.js";
 import { ensureEditorRowReadyForWrite } from "./editor-row-sync-flow.js";
+import { invokeEditorWriteCommand } from "./editor-write-permission.js";
 
 function hasRowStructureOperations(operations) {
   return (
@@ -122,7 +122,7 @@ export async function confirmInsertEditorRow(render, position, operations = {}) 
   render?.();
 
   try {
-    const payload = await invoke(
+    const payload = await invokeEditorWriteCommand(
       position === "before" ? "insert_gtms_editor_row_before" : "insert_gtms_editor_row_after",
       {
         input: {
@@ -133,6 +133,7 @@ export async function confirmInsertEditorRow(render, position, operations = {}) 
           rowId: modal.rowId,
         },
       },
+      { render, actionKind: "sharedWrite", rowId: modal.rowId },
     );
 
     if (state.editorChapter?.chapterId !== editorChapter.chapterId) {
@@ -223,7 +224,7 @@ export async function softDeleteEditorRow(render, rowId, triggerAnchorSnapshot =
   }
 
   try {
-    const payload = await invoke("soft_delete_gtms_editor_row", {
+    const payload = await invokeEditorWriteCommand("soft_delete_gtms_editor_row", {
       input: {
         installationId: team.installationId,
         projectId: context.project.id,
@@ -231,7 +232,7 @@ export async function softDeleteEditorRow(render, rowId, triggerAnchorSnapshot =
         chapterId: editorChapter.chapterId,
         rowId,
       },
-    });
+    }, { render, actionKind: "sharedWrite", rowId });
 
     if (state.editorChapter?.chapterId !== editorChapter.chapterId) {
       return;
@@ -301,7 +302,7 @@ export async function restoreEditorRow(render, rowId, operations = {}) {
   }
 
   try {
-    const payload = await invoke("restore_gtms_editor_row", {
+    const payload = await invokeEditorWriteCommand("restore_gtms_editor_row", {
       input: {
         installationId: team.installationId,
         projectId: context.project.id,
@@ -309,7 +310,7 @@ export async function restoreEditorRow(render, rowId, operations = {}) {
         chapterId: editorChapter.chapterId,
         rowId,
       },
-    });
+    }, { render, actionKind: "restoreRow", rowId });
 
     if (state.editorChapter?.chapterId !== editorChapter.chapterId) {
       return;
