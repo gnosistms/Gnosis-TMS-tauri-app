@@ -202,6 +202,20 @@ function normalizeGlossaryMetadataRecord(record) {
   };
 }
 
+function normalizeQaListMetadataRecord(record) {
+  const shared = normalizeProjectMetadataRecord(record);
+  if (!shared) {
+    return null;
+  }
+
+  return {
+    ...shared,
+    kind: "qaList",
+    language: normalizeMetadataLanguage(record.language),
+    termCount: Number.isFinite(record.termCount) ? record.termCount : 0,
+  };
+}
+
 function normalizeLocalRepoRepairIssue(issue) {
   if (!issue || typeof issue !== "object") {
     return null;
@@ -410,6 +424,47 @@ export async function upsertGlossaryMetadataRecord(team, record, options = {}) {
   );
 }
 
+export async function upsertQaListMetadataRecord(team, record, options = {}) {
+  await commitLocalMetadataMutation(
+    team,
+    () =>
+      invoke("upsert_local_gnosis_qa_list_metadata_record", {
+        input: {
+          installationId: team.installationId,
+          orgLogin: team.githubOrg,
+          qaListId: record.qaListId,
+          title: record.title,
+          repoName: record.repoName,
+          previousRepoNames: previousRepoNamesPayload(record.previousRepoNames),
+          githubRepoId: Number.isFinite(record.githubRepoId) ? record.githubRepoId : null,
+          githubNodeId:
+            typeof record.githubNodeId === "string" && record.githubNodeId.trim()
+              ? record.githubNodeId.trim()
+              : null,
+          fullName:
+            typeof record.fullName === "string" && record.fullName.trim()
+              ? record.fullName.trim()
+              : null,
+          defaultBranch:
+            typeof record.defaultBranch === "string" && record.defaultBranch.trim()
+              ? record.defaultBranch.trim()
+              : null,
+          lifecycleState: record.lifecycleState ?? null,
+          remoteState: record.remoteState ?? null,
+          recordState: record.recordState ?? null,
+          deletedAt:
+            typeof record.deletedAt === "string" && record.deletedAt.trim()
+              ? record.deletedAt.trim()
+              : null,
+          language: metadataLanguagePayload(record.language),
+          termCount: Number.isFinite(record.termCount) ? record.termCount : null,
+        },
+        sessionToken: requireBrokerSession(),
+      }),
+    options,
+  );
+}
+
 export async function deleteGlossaryMetadataRecord(team, glossaryId, options = {}) {
   await commitLocalMetadataMutation(
     team,
@@ -419,6 +474,22 @@ export async function deleteGlossaryMetadataRecord(team, glossaryId, options = {
           installationId: team.installationId,
           orgLogin: team.githubOrg,
           glossaryId,
+        },
+        sessionToken: requireBrokerSession(),
+      }),
+    options,
+  );
+}
+
+export async function deleteQaListMetadataRecord(team, qaListId, options = {}) {
+  await commitLocalMetadataMutation(
+    team,
+    () =>
+      invoke("delete_local_gnosis_qa_list_metadata_record", {
+        input: {
+          installationId: team.installationId,
+          orgLogin: team.githubOrg,
+          qaListId,
         },
         sessionToken: requireBrokerSession(),
       }),
@@ -512,6 +583,38 @@ export async function listGlossaryMetadataRecords(team) {
   }
 }
 
+export async function listQaListMetadataRecords(team) {
+  const syncPromise = invoke("sync_local_team_metadata_repo", {
+    installationId: team.installationId,
+    orgLogin: team.githubOrg,
+    sessionToken: requireBrokerSession(),
+  });
+
+  try {
+    const records = await invoke("list_local_gnosis_qa_list_metadata_records", {
+      installationId: team.installationId,
+    });
+    void syncPromise.catch(() => null);
+    return (Array.isArray(records) ? records : [])
+      .map(normalizeQaListMetadataRecord)
+      .filter(Boolean);
+  } catch (error) {
+    let detail = error?.message ?? String(error);
+    try {
+      await syncPromise;
+      const records = await invoke("list_local_gnosis_qa_list_metadata_records", {
+        installationId: team.installationId,
+      });
+      return (Array.isArray(records) ? records : [])
+        .map(normalizeQaListMetadataRecord)
+        .filter(Boolean);
+    } catch (syncError) {
+      detail = syncError?.message ?? detail;
+    }
+    throw new Error(`QA list metadata could not be loaded from the local team-metadata repo. ${detail}`);
+  }
+}
+
 export async function refreshGlossaryMetadataRecords(team) {
   await syncLocalTeamMetadataRepo(team);
   const records = await invoke("list_local_gnosis_glossary_metadata_records", {
@@ -519,6 +622,16 @@ export async function refreshGlossaryMetadataRecords(team) {
   });
   return (Array.isArray(records) ? records : [])
     .map(normalizeGlossaryMetadataRecord)
+    .filter(Boolean);
+}
+
+export async function refreshQaListMetadataRecords(team) {
+  await syncLocalTeamMetadataRepo(team);
+  const records = await invoke("list_local_gnosis_qa_list_metadata_records", {
+    installationId: team.installationId,
+  });
+  return (Array.isArray(records) ? records : [])
+    .map(normalizeQaListMetadataRecord)
     .filter(Boolean);
 }
 

@@ -191,3 +191,13 @@ test("chapter lifecycle preservation does not revive files missing from disk ref
 
   assert.equal(chapters.some((item) => item.id === "deleted-chapter"), false);
 });
+
+test("normalizeListedChapter treats softDeleted files as deleted", () => {
+  const normalized = normalizeListedChapter(chapter({
+    id: "soft-deleted-chapter",
+    name: "Soft Deleted Chapter",
+    status: "softDeleted",
+  }));
+
+  assert.equal(normalized.status, "deleted");
+});

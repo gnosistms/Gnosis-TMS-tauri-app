@@ -390,7 +390,10 @@ export function normalizeEditorRow(row) {
   const textStyle = normalizeEditorRowTextStyle(row?.textStyle);
   return {
     ...row,
-    lifecycleState: row?.lifecycleState === "deleted" ? "deleted" : "active",
+    lifecycleState:
+      row?.lifecycleState === "deleted" || row?.lifecycleState === "softDeleted"
+        ? "deleted"
+        : "active",
     orderKey: typeof row?.orderKey === "string" ? row.orderKey : "",
     revisionToken:
       typeof row?.revisionToken === "string" && row.revisionToken.trim()

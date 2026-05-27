@@ -70,7 +70,10 @@ export function normalizeQaList(value) {
   const terms = (Array.isArray(value?.terms) ? value.terms : [])
     .map(normalizeQaTerm)
     .filter(Boolean);
-  const lifecycleState = value?.lifecycleState === "deleted" ? "deleted" : "active";
+  const lifecycleState =
+    value?.lifecycleState === "deleted" || value?.lifecycleState === "softDeleted"
+      ? "deleted"
+      : "active";
   const termCount = Number.isFinite(value?.termCount) ? value.termCount : terms.length;
 
   const normalized = {

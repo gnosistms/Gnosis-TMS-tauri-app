@@ -125,11 +125,11 @@ function renderDeletedTeamsSection(deletedTeams, isOpen, offlineMode = false) {
                     textAction("Restore", `restore-team:${team.id}`, {
                       disabled: offlineMode || team.pendingMutation === "restore",
                     }),
-                    textAction("Delete", `delete-deleted-team:${team.id}`, {
-                      disabled: offlineMode || Boolean(team.pendingMutation),
-                    }),
                   ]
                 : []),
+              textAction("Delete", `delete-deleted-team:${team.id}`, {
+                disabled: Boolean(team.pendingMutation),
+              }),
             ],
             offlineMode,
           }),

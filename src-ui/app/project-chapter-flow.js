@@ -206,7 +206,10 @@ export function normalizeListedChapter(chapter) {
     ...chapter,
     id,
     name,
-    status: chapter.status === "deleted" ? "deleted" : "active",
+    status:
+      chapter.status === "deleted" || chapter.status === "softDeleted"
+        ? "deleted"
+        : "active",
     languages: Array.isArray(chapter.languages) ? chapter.languages : [],
     sourceWordCounts:
       chapter.sourceWordCounts && typeof chapter.sourceWordCounts === "object"

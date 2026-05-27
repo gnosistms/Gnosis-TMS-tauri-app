@@ -382,6 +382,164 @@ pub(super) fn build_glossary_record_value(
     Ok(Value::Object(record))
 }
 
+pub(super) fn build_qa_list_record_value(
+    current: Option<Map<String, Value>>,
+    input: &UpsertGithubQaListMetadataRecordInput,
+    actor_login: Option<&str>,
+) -> Result<Value, String> {
+    let mut record = current.unwrap_or_default();
+    let next_repo_name = input.repo_name.trim();
+    if next_repo_name.is_empty() {
+        return Err(
+            "Could not determine the QA list repo name for local team metadata.".to_string(),
+        );
+    }
+    let title = input.title.trim();
+    if title.is_empty() {
+        return Err("Could not determine the QA list title for local team metadata.".to_string());
+    }
+
+    let previous_repo_names = merge_previous_repo_names(
+        record.get("repoName").and_then(Value::as_str),
+        next_repo_name,
+        record
+            .get("previousRepoNames")
+            .and_then(Value::as_array)
+            .map(|values| {
+                values
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(ToOwned::to_owned)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default(),
+        normalize_optional_vec(input.previous_repo_names.as_ref()),
+    );
+
+    record.insert("id".to_string(), json_string(&input.qa_list_id));
+    record.insert("kind".to_string(), json_string("qaList"));
+    record.insert("title".to_string(), json_string(title));
+    record.insert("repoName".to_string(), json_string(next_repo_name));
+    record.insert(
+        "previousRepoNames".to_string(),
+        Value::Array(previous_repo_names.into_iter().map(Value::String).collect()),
+    );
+    record.insert(
+        "githubRepoId".to_string(),
+        input
+            .github_repo_id
+            .map(Value::from)
+            .unwrap_or_else(|| record.get("githubRepoId").cloned().unwrap_or(Value::Null)),
+    );
+    record.insert(
+        "githubNodeId".to_string(),
+        normalize_optional_string(input.github_node_id.as_deref())
+            .map(Value::String)
+            .unwrap_or_else(|| record.get("githubNodeId").cloned().unwrap_or(Value::Null)),
+    );
+    record.insert(
+        "fullName".to_string(),
+        normalize_optional_string(input.full_name.as_deref())
+            .map(Value::String)
+            .unwrap_or_else(|| record.get("fullName").cloned().unwrap_or(Value::Null)),
+    );
+    record.insert(
+        "defaultBranch".to_string(),
+        json_string(
+            normalize_optional_string(input.default_branch.as_deref())
+                .or_else(|| {
+                    record
+                        .get("defaultBranch")
+                        .and_then(Value::as_str)
+                        .map(ToOwned::to_owned)
+                })
+                .unwrap_or_else(|| "main".to_string())
+                .as_str(),
+        ),
+    );
+    record.insert(
+        "lifecycleState".to_string(),
+        json_string(
+            normalize_optional_string(input.lifecycle_state.as_deref())
+                .or_else(|| {
+                    record
+                        .get("lifecycleState")
+                        .and_then(Value::as_str)
+                        .map(ToOwned::to_owned)
+                })
+                .unwrap_or_else(|| "active".to_string())
+                .as_str(),
+        ),
+    );
+    record.insert(
+        "remoteState".to_string(),
+        json_string(
+            normalize_optional_string(input.remote_state.as_deref())
+                .or_else(|| {
+                    record
+                        .get("remoteState")
+                        .and_then(Value::as_str)
+                        .map(ToOwned::to_owned)
+                })
+                .unwrap_or_else(|| "pendingCreate".to_string())
+                .as_str(),
+        ),
+    );
+    record.insert(
+        "recordState".to_string(),
+        json_string(
+            normalize_optional_string(input.record_state.as_deref())
+                .or_else(|| {
+                    record
+                        .get("recordState")
+                        .and_then(Value::as_str)
+                        .map(ToOwned::to_owned)
+                })
+                .unwrap_or_else(|| "live".to_string())
+                .as_str(),
+        ),
+    );
+    record.insert(
+        "createdAt".to_string(),
+        record.get("createdAt").cloned().unwrap_or(Value::Null),
+    );
+    record.insert(
+        "updatedAt".to_string(),
+        record.get("updatedAt").cloned().unwrap_or(Value::Null),
+    );
+    record.insert(
+        "deletedAt".to_string(),
+        normalize_optional_string(input.deleted_at.as_deref())
+            .map(Value::String)
+            .unwrap_or_else(|| record.get("deletedAt").cloned().unwrap_or(Value::Null)),
+    );
+    record.insert(
+        "createdBy".to_string(),
+        record
+            .get("createdBy")
+            .cloned()
+            .or_else(|| actor_login.map(json_string))
+            .unwrap_or(Value::Null),
+    );
+    record.insert(
+        "updatedBy".to_string(),
+        actor_login
+            .map(json_string)
+            .unwrap_or_else(|| record.get("updatedBy").cloned().unwrap_or(Value::Null)),
+    );
+    record.insert(
+        "deletedBy".to_string(),
+        record.get("deletedBy").cloned().unwrap_or(Value::Null),
+    );
+    record.insert(
+        "language".to_string(),
+        serde_json::to_value(&input.language).unwrap_or(Value::Null),
+    );
+    record.remove("termCount");
+
+    Ok(Value::Object(record))
+}
+
 fn relative_repo_path(repo_path: &Path, path: &Path) -> Result<String, String> {
     let relative = path.strip_prefix(repo_path).map_err(|_| {
         format!(
@@ -467,6 +625,50 @@ pub(super) fn upsert_local_record(
         current_head_oid: read_current_head_oid(repo_path),
         commit_created,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::github::types::{TeamMetadataLanguageInput, UpsertGithubQaListMetadataRecordInput};
+
+    #[test]
+    fn qa_list_metadata_record_builder_serializes_required_fields() {
+        let value = build_qa_list_record_value(
+            None,
+            &UpsertGithubQaListMetadataRecordInput {
+                installation_id: 42,
+                org_login: "gnosis".to_string(),
+                qa_list_id: "qa-list-1".to_string(),
+                title: "Vietnamese QA".to_string(),
+                repo_name: "qa-list-vietnamese".to_string(),
+                previous_repo_names: None,
+                github_repo_id: Some(123),
+                github_node_id: Some("node-1".to_string()),
+                full_name: Some("gnosis/qa-list-vietnamese".to_string()),
+                default_branch: Some("main".to_string()),
+                lifecycle_state: Some("deleted".to_string()),
+                remote_state: Some("linked".to_string()),
+                record_state: Some("live".to_string()),
+                deleted_at: Some("2026-05-26T00:00:00Z".to_string()),
+                language: Some(TeamMetadataLanguageInput {
+                    code: "vi".to_string(),
+                    name: "Vietnamese".to_string(),
+                }),
+                term_count: Some(7),
+            },
+            Some("owner"),
+        )
+        .expect("QA list metadata record should build");
+
+        assert_eq!(value["id"], "qa-list-1");
+        assert_eq!(value["kind"], "qaList");
+        assert_eq!(value["title"], "Vietnamese QA");
+        assert_eq!(value["repoName"], "qa-list-vietnamese");
+        assert_eq!(value["lifecycleState"], "deleted");
+        assert_eq!(value["language"]["code"], "vi");
+        assert!(value.get("termCount").is_none());
+    }
 }
 
 pub(super) fn delete_local_record(

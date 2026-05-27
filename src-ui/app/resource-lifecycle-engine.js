@@ -14,7 +14,7 @@ export async function applyMetadataFirstResourceMutation(options) {
 
   await writeMetadata(nextRecord);
   try {
-    await applyLocalMutation();
+    return await applyLocalMutation();
   } catch (error) {
     try {
       await writeMetadata(rollbackRecord);
@@ -45,7 +45,7 @@ export async function commitMetadataFirstTopLevelMutation(options) {
   }
 
   if (mutation.type === "rename") {
-    await applyMetadataFirstResourceMutation({
+    return await applyMetadataFirstResourceMutation({
       resourceLabel,
       writeMetadata,
       nextRecord: buildRecord(resource, {
@@ -56,11 +56,10 @@ export async function commitMetadataFirstTopLevelMutation(options) {
         title: mutation.previousTitle,
       }),
     });
-    return true;
   }
 
   if (mutation.type === "softDelete") {
-    await applyMetadataFirstResourceMutation({
+    return await applyMetadataFirstResourceMutation({
       resourceLabel,
       writeMetadata,
       nextRecord: buildRecord(resource, {
@@ -71,11 +70,10 @@ export async function commitMetadataFirstTopLevelMutation(options) {
         lifecycleState: "active",
       }),
     });
-    return true;
   }
 
   if (mutation.type === "restore") {
-    await applyMetadataFirstResourceMutation({
+    return await applyMetadataFirstResourceMutation({
       resourceLabel,
       writeMetadata,
       nextRecord: buildRecord(resource, {
@@ -86,7 +84,6 @@ export async function commitMetadataFirstTopLevelMutation(options) {
         lifecycleState: resourceLabel === "project" ? "softDeleted" : "deleted",
       }),
     });
-    return true;
   }
 
   return false;

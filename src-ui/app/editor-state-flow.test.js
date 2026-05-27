@@ -270,3 +270,13 @@ test("markEditorRowsPersisted updates persisted fields and clears reconciled dir
     restoreSharedState(snapshot);
   }
 });
+
+test("normalizeEditorRows treats softDeleted rows as deleted", () => {
+  const [row] = normalizeEditorRows([{
+    rowId: "row-1",
+    lifecycleState: "softDeleted",
+    fields: {},
+  }]);
+
+  assert.equal(row.lifecycleState, "deleted");
+});

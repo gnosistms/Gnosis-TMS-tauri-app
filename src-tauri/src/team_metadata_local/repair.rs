@@ -31,6 +31,19 @@ fn read_glossary_id_from_repo(repo_path: &Path) -> Option<String> {
         .map(str::to_string)
 }
 
+fn read_qa_list_id_from_repo(repo_path: &Path) -> Option<String> {
+    let qa_list_path = repo_path.join("qa-list.json");
+    let contents = fs::read_to_string(qa_list_path).ok()?;
+    let value = serde_json::from_str::<Value>(&contents).ok()?;
+    value
+        .get("qa_list_id")
+        .or_else(|| value.get("qaListId"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
 #[derive(Deserialize)]
 struct StoredGlossaryTermLifecycle {
     state: String,
@@ -101,6 +114,32 @@ pub(super) fn local_glossary_term_count(repo_path: &Path) -> Result<usize, Strin
                 )
             })?;
         if record.lifecycle.state == "active" {
+            term_count += 1;
+        }
+    }
+
+    Ok(term_count)
+}
+
+pub(super) fn local_qa_list_term_count(repo_path: &Path) -> Result<usize, String> {
+    let terms_root = repo_path.join("terms");
+    if !terms_root.exists() {
+        return Ok(0);
+    }
+
+    let mut term_count = 0usize;
+    for entry in fs::read_dir(&terms_root).map_err(|error| {
+        format!(
+            "Could not read the local QA list terms folder '{}': {error}",
+            terms_root.display()
+        )
+    })? {
+        let entry =
+            entry.map_err(|error| format!("Could not read a local QA list term entry: {error}"))?;
+        let term_path = entry.path();
+        if term_path.is_file()
+            && term_path.extension().and_then(|value| value.to_str()) == Some("json")
+        {
             term_count += 1;
         }
     }
@@ -584,6 +623,69 @@ pub(super) fn find_glossary_repo_for_record(
     if matches.len() > 1 {
         return Err(format!(
             "More than one local glossary repo matches metadata record '{}'.",
+            record.id
+        ));
+    }
+
+    Ok(matches.into_iter().next())
+}
+
+pub(super) fn find_qa_list_repo_for_record(
+    app: &AppHandle,
+    installation_id: i64,
+    record: &GithubQaListMetadataRecord,
+) -> Result<Option<PathBuf>, String> {
+    let repo_root = local_qa_list_repo_root(app, installation_id)?;
+    let candidate_repo_names = std::iter::once(record.repo_name.as_str())
+        .chain(record.previous_repo_names.iter().map(String::as_str))
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .collect::<Vec<_>>();
+    let mut matches = Vec::new();
+
+    for entry in fs::read_dir(&repo_root).map_err(|error| {
+        format!(
+            "Could not read the local QA list repo folder '{}': {error}",
+            repo_root.display()
+        )
+    })? {
+        let entry =
+            entry.map_err(|error| format!("Could not read a local QA list repo entry: {error}"))?;
+        let repo_path = entry.path();
+        if !is_git_repo(&repo_path) {
+            continue;
+        }
+
+        let sync_state = read_local_repo_sync_state(&repo_path).ok().flatten();
+        let folder_name = repo_folder_name(&repo_path).unwrap_or_default();
+        let embedded_qa_list_id = read_qa_list_id_from_repo(&repo_path);
+        let matches_record = sync_state
+            .as_ref()
+            .and_then(|state| state.resource_id.as_deref())
+            .map(str::trim)
+            == Some(record.id.trim())
+            || embedded_qa_list_id.as_deref().map(str::trim) == Some(record.id.trim())
+            || sync_state
+                .as_ref()
+                .and_then(|state| state.current_repo_name.as_deref())
+                .map(str::trim)
+                .is_some_and(|repo_name| {
+                    candidate_repo_names
+                        .iter()
+                        .any(|candidate| *candidate == repo_name)
+                })
+            || candidate_repo_names
+                .iter()
+                .any(|candidate| *candidate == folder_name);
+
+        if matches_record {
+            matches.push(repo_path);
+        }
+    }
+
+    if matches.len() > 1 {
+        return Err(format!(
+            "More than one local QA list repo matches metadata record '{}'.",
             record.id
         ));
     }

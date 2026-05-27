@@ -20,6 +20,7 @@ const {
   preserveQaListLifecyclePatchesInSnapshot,
 } = await import("./qa-list-query.js");
 const { applyQaListsQueryDataForTeam } = await import("./qa-list-top-level-state.js");
+const { normalizeQaList } = await import("./qa-list-shared.js");
 const { qaListKeys, queryClient } = await import("./query-client.js");
 
 function qaList(overrides = {}) {
@@ -363,4 +364,10 @@ test("refresh snapshots clear locally created QA list intent after refresh inclu
   const merged = preserveQaListLifecyclePatchesInSnapshot(settledRefreshSnapshot, previousSnapshot);
 
   assert.equal(merged.qaLists.find((item) => item.id === "created-qa").localLifecycleIntent, undefined);
+});
+
+test("normalizeQaList treats softDeleted lists as deleted", () => {
+  const normalized = normalizeQaList(qaList({ lifecycleState: "softDeleted" }));
+
+  assert.equal(normalized.lifecycleState, "deleted");
 });

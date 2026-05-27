@@ -12,9 +12,12 @@ use crate::{
     git_commit::{git_commit_as_signed_in_user_with_metadata, GitCommitMetadata},
     github::types::{
         DeleteGithubGlossaryMetadataRecordInput, DeleteGithubProjectMetadataRecordInput,
-        UpsertGithubGlossaryMetadataRecordInput, UpsertGithubProjectMetadataRecordInput,
+        DeleteGithubQaListMetadataRecordInput, UpsertGithubGlossaryMetadataRecordInput,
+        UpsertGithubProjectMetadataRecordInput, UpsertGithubQaListMetadataRecordInput,
     },
-    github::types::{GithubGlossaryMetadataRecord, GithubProjectMetadataRecord},
+    github::types::{
+        GithubGlossaryMetadataRecord, GithubProjectMetadataRecord, GithubQaListMetadataRecord,
+    },
     installation_access::ensure_installation_allows_writes,
     local_repo_sync_state::{
         read_local_repo_sync_state, upsert_local_repo_sync_state, LocalRepoSyncState,
@@ -25,7 +28,8 @@ use crate::{
         read_current_head_oid, GitTransportAuth,
     },
     storage_paths::{
-        local_glossary_repo_root, local_project_repo_root, local_team_metadata_repo_path,
+        local_glossary_repo_root, local_project_repo_root, local_qa_list_repo_root,
+        local_team_metadata_repo_path,
     },
 };
 
@@ -37,14 +41,15 @@ mod repair;
 mod repo;
 
 use self::mutations::{
-    actor_login, build_glossary_record_value, build_project_record_value, delete_local_record,
-    upsert_local_record,
+    actor_login, build_glossary_record_value, build_project_record_value,
+    build_qa_list_record_value, delete_local_record, upsert_local_record,
 };
 use self::records::{list_local_metadata_records, local_record_has_tombstone, read_json_object};
 use self::repair::{
-    find_glossary_repo_for_record, find_project_repo_for_record, inspect_glossary_repo_repairs,
-    inspect_project_repo_repairs, local_glossary_term_count, local_project_chapter_count,
-    maybe_repair_sync_state, normalized_optional_text, repo_folder_name,
+    find_glossary_repo_for_record, find_project_repo_for_record, find_qa_list_repo_for_record,
+    inspect_glossary_repo_repairs, inspect_project_repo_repairs, local_glossary_term_count,
+    local_project_chapter_count, local_qa_list_term_count, maybe_repair_sync_state,
+    normalized_optional_text, repo_folder_name,
 };
 use self::repo::{
     build_local_team_metadata_repo_info, current_origin_remote_url, ensure_local_repo_exists,
@@ -183,6 +188,28 @@ pub(crate) async fn list_local_gnosis_glossary_metadata_records(
 }
 
 #[tauri::command]
+pub(crate) async fn list_local_gnosis_qa_list_metadata_records(
+    app: AppHandle,
+    installation_id: i64,
+) -> Result<Vec<GithubQaListMetadataRecord>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let repo_path = require_local_metadata_repo(&app, installation_id)?;
+        let mut records =
+            list_local_metadata_records::<GithubQaListMetadataRecord>(&repo_path, "qaList")?;
+        for record in &mut records {
+            record.term_count = find_qa_list_repo_for_record(&app, installation_id, record)
+                .ok()
+                .flatten()
+                .and_then(|repo_path| local_qa_list_term_count(&repo_path).ok())
+                .unwrap_or(0);
+        }
+        Ok(records)
+    })
+    .await
+    .map_err(|error| format!("Could not run the local QA list metadata listing task: {error}"))?
+}
+
+#[tauri::command]
 pub(crate) async fn lookup_local_team_metadata_tombstone(
     app: AppHandle,
     installation_id: i64,
@@ -193,6 +220,7 @@ pub(crate) async fn lookup_local_team_metadata_tombstone(
         let normalized_kind = match kind.trim() {
             "project" => "project",
             "glossary" => "glossary",
+            "qaList" => "qaList",
             _ => {
                 return Err(format!(
                     "Unsupported team-metadata resource kind '{}'.",
@@ -465,6 +493,64 @@ pub(crate) async fn delete_local_gnosis_glossary_metadata_record(
     })
     .await
     .map_err(|error| format!("Could not run the local glossary metadata delete task: {error}"))?
+}
+
+#[tauri::command]
+pub(crate) async fn upsert_local_gnosis_qa_list_metadata_record(
+    app: AppHandle,
+    input: UpsertGithubQaListMetadataRecordInput,
+    session_token: String,
+) -> Result<LocalTeamMetadataMutationResult, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        ensure_installation_allows_writes(&app, input.installation_id)?;
+        let repo_path = ensure_local_repo_exists(
+            &app,
+            input.installation_id,
+            &input.org_login,
+            &session_token,
+        )?;
+        let record_path = resource_record_path(&repo_path, "qaList", &input.qa_list_id);
+        let current = read_json_object(&record_path)?;
+        let actor_login = actor_login(&app)?;
+        let record_value = build_qa_list_record_value(current, &input, actor_login.as_deref())?;
+        upsert_local_record(
+            &app,
+            &repo_path,
+            &record_path,
+            &record_value,
+            &format!("Update QA list metadata record for {}", input.qa_list_id),
+            "team-metadata.qa-list.upsert",
+        )
+    })
+    .await
+    .map_err(|error| format!("Could not run the local QA list metadata write task: {error}"))?
+}
+
+#[tauri::command]
+pub(crate) async fn delete_local_gnosis_qa_list_metadata_record(
+    app: AppHandle,
+    input: DeleteGithubQaListMetadataRecordInput,
+    session_token: String,
+) -> Result<LocalTeamMetadataMutationResult, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        ensure_installation_allows_writes(&app, input.installation_id)?;
+        let repo_path = ensure_local_repo_exists(
+            &app,
+            input.installation_id,
+            &input.org_login,
+            &session_token,
+        )?;
+        let record_path = resource_record_path(&repo_path, "qaList", &input.qa_list_id);
+        delete_local_record(
+            &app,
+            &repo_path,
+            &record_path,
+            &format!("Delete QA list metadata record for {}", input.qa_list_id),
+            "team-metadata.qa-list.delete",
+        )
+    })
+    .await
+    .map_err(|error| format!("Could not run the local QA list metadata delete task: {error}"))?
 }
 
 #[tauri::command]

@@ -30,6 +30,7 @@ import {
   canPermanentlyDeleteQaLists,
 } from "./qa-list-shared.js";
 import {
+  commitMetadataFirstTopLevelMutation,
   guardPermanentDeleteConfirmation,
   guardTopLevelResourceAction,
 } from "./resource-lifecycle-engine.js";
@@ -47,9 +48,56 @@ import {
 } from "./resource-entity-modal.js";
 import { anyQaListMutatingWriteIsActive } from "./qa-list-write-coordinator.js";
 import { addLocalHardDeleteTombstone } from "./local-hard-delete-store.js";
+import { upsertQaListMetadataRecord } from "./team-metadata-flow.js";
 
 function qaListById(qaListId) {
   return state.qaLists.find((item) => item.id === qaListId) ?? null;
+}
+
+function qaListMetadataRecord(qaList, overrides = {}) {
+  return {
+    qaListId: qaList.id ?? qaList.qaListId,
+    title: overrides.title ?? qaList.title,
+    repoName: overrides.repoName ?? qaList.repoName,
+    previousRepoNames: overrides.previousRepoNames ?? qaList.previousRepoNames ?? [],
+    githubRepoId:
+      Number.isFinite(overrides.githubRepoId)
+        ? overrides.githubRepoId
+        : Number.isFinite(qaList.repoId)
+          ? qaList.repoId
+          : null,
+    githubNodeId:
+      typeof overrides.githubNodeId === "string" && overrides.githubNodeId.trim()
+        ? overrides.githubNodeId.trim()
+        : typeof qaList.nodeId === "string" && qaList.nodeId.trim()
+          ? qaList.nodeId.trim()
+          : null,
+    fullName:
+      typeof overrides.fullName === "string" && overrides.fullName.trim()
+        ? overrides.fullName.trim()
+        : typeof qaList.fullName === "string" && qaList.fullName.trim()
+          ? qaList.fullName.trim()
+          : null,
+    defaultBranch:
+      typeof overrides.defaultBranch === "string" && overrides.defaultBranch.trim()
+        ? overrides.defaultBranch.trim()
+        : typeof qaList.defaultBranchName === "string" && qaList.defaultBranchName.trim()
+          ? qaList.defaultBranchName.trim()
+          : "main",
+    lifecycleState:
+      overrides.lifecycleState
+      ?? (qaList.lifecycleState === "deleted" ? "deleted" : "active"),
+    remoteState: overrides.remoteState ?? qaList.remoteState ?? "linked",
+    recordState: overrides.recordState ?? qaList.recordState ?? "live",
+    deletedAt: overrides.deletedAt ?? qaList.deletedAt ?? null,
+    language: overrides.language ?? qaList.language ?? null,
+    termCount:
+      Number.isFinite(overrides.termCount)
+        ? overrides.termCount
+        : Number.isFinite(qaList.termCount)
+          ? qaList.termCount
+          : 0,
+  };
 }
 
 async function commitQaListLifecycleMutation(team, mutation) {
@@ -59,32 +107,44 @@ async function commitQaListLifecycleMutation(team, mutation) {
   }
 
   if (teamSupportsQaListRepos(team) && qaList.repoName) {
-    if (mutation.type === "rename") {
-      const summary = await invoke("rename_gtms_qa_list", {
-        input: {
-          ...repoBackedQaListInput(team, qaList),
-          title: mutation.title,
-        },
-      });
-      triggerQaListRepoSync(team, qaList);
-      return summary;
-    }
+    return commitMetadataFirstTopLevelMutation({
+      mutation,
+      resource: qaList,
+      resourceLabel: "qaList",
+      writeMetadata: (record) => upsertQaListMetadataRecord(team, record, { requirePushSuccess: true }),
+      buildRecord: (currentQaList, overrides = {}) =>
+        qaListMetadataRecord(currentQaList, overrides),
+      applyLocalMutation: async (currentQaList, currentMutation) => {
+        if (currentMutation.type === "rename") {
+          const summary = await invoke("rename_gtms_qa_list", {
+            input: {
+              ...repoBackedQaListInput(team, currentQaList),
+              title: currentMutation.title,
+            },
+          });
+          triggerQaListRepoSync(team, currentQaList);
+          return summary;
+        }
 
-    if (mutation.type === "softDelete") {
-      const summary = await invoke("soft_delete_gtms_qa_list", {
-        input: repoBackedQaListInput(team, qaList),
-      });
-      triggerQaListRepoSync(team, qaList);
-      return summary;
-    }
+        if (currentMutation.type === "softDelete") {
+          const summary = await invoke("soft_delete_gtms_qa_list", {
+            input: repoBackedQaListInput(team, currentQaList),
+          });
+          triggerQaListRepoSync(team, currentQaList);
+          return summary;
+        }
 
-    if (mutation.type === "restore") {
-      const summary = await invoke("restore_gtms_qa_list", {
-        input: repoBackedQaListInput(team, qaList),
-      });
-      triggerQaListRepoSync(team, qaList);
-      return summary;
-    }
+        if (currentMutation.type === "restore") {
+          const summary = await invoke("restore_gtms_qa_list", {
+            input: repoBackedQaListInput(team, currentQaList),
+          });
+          triggerQaListRepoSync(team, currentQaList);
+          return summary;
+        }
+
+        return {};
+      },
+    });
   }
 
   const updatedAt = new Date().toISOString();
