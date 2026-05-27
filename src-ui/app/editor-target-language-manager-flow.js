@@ -33,7 +33,12 @@ export function captureTargetLanguageManagerPickerScrollTop() {
     return null;
   }
 
-  const scrollTop = currentTargetLanguageManagerPickerScrollTop();
+  const list = globalThis.document?.querySelector?.("[data-target-language-manager-picker-list]");
+  if (!list || !Number.isFinite(list.scrollTop)) {
+    return null;
+  }
+
+  const scrollTop = list.scrollTop;
   state.targetLanguageManager = {
     ...state.targetLanguageManager,
     pickerScrollTop: scrollTop,
@@ -45,25 +50,27 @@ export function restoreTargetLanguageManagerPickerScrollTop(scrollTop = state.ta
   if (!state.targetLanguageManager?.isOpen || state.targetLanguageManager.isPickerOpen !== true) {
     return;
   }
+  if (!Number.isFinite(scrollTop)) {
+    return;
+  }
 
   const restore = () => {
     const list = globalThis.document?.querySelector?.("[data-target-language-manager-picker-list]");
-    if (list && Number.isFinite(scrollTop)) {
+    if (list) {
       list.scrollTop = scrollTop;
     }
   };
 
-  if (typeof globalThis.requestAnimationFrame === "function") {
-    globalThis.requestAnimationFrame(restore);
-    return;
-  }
-
-  if (typeof globalThis.setTimeout === "function") {
-    globalThis.setTimeout(restore, 0);
-    return;
-  }
-
   restore();
+
+  if (typeof globalThis.requestAnimationFrame === "function") {
+    globalThis.requestAnimationFrame(() => {
+      const list = globalThis.document?.querySelector?.("[data-target-language-manager-picker-list]");
+      if (list && list.scrollTop === scrollTop) {
+        list.scrollTop = scrollTop;
+      }
+    });
+  }
 }
 
 export function openTargetLanguageManager(render = null) {

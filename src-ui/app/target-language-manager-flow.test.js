@@ -2,10 +2,11 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 const languageList = { scrollTop: 0 };
+let pickerList = languageList;
 
 globalThis.document = {
   querySelector(selector) {
-    return selector === "[data-target-language-manager-picker-list]" ? languageList : null;
+    return selector === "[data-target-language-manager-picker-list]" ? pickerList : null;
   },
   querySelectorAll() {
     return [];
@@ -68,6 +69,7 @@ test("target language picker selection preserves scroll and waits for add langua
 });
 
 test("target language picker scroll survives full rerenders", () => {
+  pickerList = languageList;
   languageList.scrollTop = 344;
   state.targetLanguageManager = {
     ...createTargetLanguageManagerState(),
@@ -89,7 +91,55 @@ test("target language picker scroll survives full rerenders", () => {
   assert.equal(languageList.scrollTop, 344);
 });
 
+test("target language picker does not capture scroll before the list is mounted", () => {
+  pickerList = null;
+  state.targetLanguageManager = {
+    ...createTargetLanguageManagerState(),
+    isOpen: true,
+    isPickerOpen: true,
+    chapterId: "chapter-1",
+    languages: [
+      { code: "en", name: "English", role: "source" },
+    ],
+    pickerScrollTop: 0,
+  };
+
+  assert.equal(captureTargetLanguageManagerPickerScrollTop(), null);
+  assert.equal(state.targetLanguageManager.pickerScrollTop, 0);
+  pickerList = languageList;
+});
+
+test("target language picker deferred scroll restore does not override user scroll", () => {
+  pickerList = languageList;
+  const frames = [];
+  const previousRequestAnimationFrame = globalThis.requestAnimationFrame;
+  globalThis.requestAnimationFrame = (callback) => {
+    frames.push(callback);
+  };
+  languageList.scrollTop = 0;
+  state.targetLanguageManager = {
+    ...createTargetLanguageManagerState(),
+    isOpen: true,
+    isPickerOpen: true,
+    chapterId: "chapter-1",
+    languages: [
+      { code: "en", name: "English", role: "source" },
+    ],
+  };
+
+  try {
+    restoreTargetLanguageManagerPickerScrollTop(200);
+    assert.equal(languageList.scrollTop, 200);
+    languageList.scrollTop = 512;
+    frames.forEach((callback) => callback());
+    assert.equal(languageList.scrollTop, 512);
+  } finally {
+    globalThis.requestAnimationFrame = previousRequestAnimationFrame;
+  }
+});
+
 test("target language picker canonicalizes Chinese script codes", () => {
+  pickerList = languageList;
   languageList.scrollTop = 0;
   state.targetLanguageManager = {
     ...createTargetLanguageManagerState(),
