@@ -167,8 +167,8 @@ function renderProjectCard(project, expanded, options = {}) {
   const resolution = deriveProjectResolution(project, syncSnapshot, {
     suppressMissingLocalRepoRepair: options.suppressMissingLocalRepoRepair === true,
   });
-  const disableLifecycleActions = resolution?.blockLifecycleActions === true;
-  const disableContentActions = resolution?.blockContentActions === true;
+  const disableLifecycleActions = resolution?.blockLifecycleActions === true || isDeleted;
+  const disableContentActions = resolution?.blockContentActions === true || isDeleted;
   const lifecycleActionsDisabled = options.lifecycleActionsDisabled === true;
   const pageWritesDisabled = options.pageWritesDisabled === true;
   const heavyActionsDisabled = options.heavyActionsDisabled === true || pageWritesDisabled;
@@ -417,16 +417,16 @@ function renderDeletedProjectsSection(state) {
               actions:
                 project?.recordState === "tombstone"
                   ? []
-                  : canManageDeletedProjects
-                    ? [
-                        textAction("Restore", `restore-project:${project.id}`, { disabled: lifecycleActionsDisabled || disableLifecycleActions }),
-                        ...(canPermanentlyDeleteProjects
-                          ? [textAction("Delete", `delete-deleted-project:${project.id}`, {
-                              disabled: heavyActionsDisabled || disableLifecycleActions,
-                            })]
-                          : []),
-                      ]
-                    : [],
+                  : [
+                      canManageDeletedProjects
+                        ? textAction("Restore", `restore-project:${project.id}`, { disabled: lifecycleActionsDisabled || disableLifecycleActions })
+                        : "",
+                      canPermanentlyDeleteProjects
+                        ? textAction("Delete", `delete-deleted-project:${project.id}`, {
+                            disabled: heavyActionsDisabled || disableLifecycleActions,
+                          })
+                        : "",
+                    ].filter(Boolean),
             });
           },
         )

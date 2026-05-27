@@ -21,7 +21,7 @@ export function canCreateRepoResources(team) {
 }
 
 export function canPermanentlyDeleteRepoResources(team) {
-  return team?.canDelete === true && !isReadOnlyViewerTeam(team);
+  return Boolean(team);
 }
 
 export function canManageTeamAiSettings(team) {

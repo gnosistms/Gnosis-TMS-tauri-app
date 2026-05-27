@@ -1,6 +1,6 @@
 import { state } from "../state.js";
-import { canManageGlossaries } from "../glossary-shared.js";
 import { showNoticeBadge } from "../status-feedback.js";
+import { getGlossaryWritePolicy } from "../resource-write-policy.js";
 import {
   addGlossaryTermEmptyTargetVariant,
   addGlossaryTermVariant,
@@ -124,6 +124,10 @@ export function createGlossaryActions(render) {
 
   return async function handleGlossaryAction(action, event) {
     const selectedTeam = state.teams.find((team) => team.id === state.selectedTeamId) ?? null;
+    const selectedGlossary =
+      state.glossaries.find((glossary) => glossary.id === state.selectedGlossaryId)
+      ?? state.glossaries[0]
+      ?? null;
     const inlineStyleMatch = /^toggle-glossary-term-inline-style:([a-z-]+):(source|target)$/.exec(action);
     const variantAction = parseVariantAction(action);
     const writeAction =
@@ -147,9 +151,35 @@ export function createGlossaryActions(render) {
       || inlineStyleMatch !== null
       || variantAction !== null
       || action === "add-glossary-term-empty-variant:target";
-    if (writeAction && !canManageGlossaries(selectedTeam)) {
-      showNoticeBadge("Read-only users cannot modify glossaries.", render, 2600);
-      return true;
+    if (writeAction) {
+      const localHardDeleteId = actionSuffix(action, "delete-deleted-glossary:");
+      const restoreId = actionSuffix(action, "restore-glossary:");
+      const targetId =
+        localHardDeleteId
+        || restoreId
+        || actionSuffix(action, "rename-glossary:")
+        || actionSuffix(action, "make-default-glossary:")
+        || actionSuffix(action, "delete-glossary:")
+        || actionSuffix(action, "repair-glossary:")
+        || actionSuffix(action, "rebuild-glossary-repo:")
+        || selectedGlossary?.id
+        || null;
+      const targetGlossary =
+        state.glossaries.find((glossary) => glossary.id === targetId)
+        ?? selectedGlossary;
+      const policy = getGlossaryWritePolicy({
+        team: selectedTeam,
+        glossary: targetGlossary,
+        actionKind: localHardDeleteId
+          ? "localHardDelete"
+          : restoreId
+            ? "restoreGlossary"
+            : "sharedWrite",
+      });
+      if (!policy.allowed) {
+        showNoticeBadge(policy.message, render, 2600);
+        return true;
+      }
     }
 
     if (inlineStyleMatch) {

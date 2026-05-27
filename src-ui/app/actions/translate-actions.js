@@ -1,6 +1,6 @@
 import { actionSuffix } from "../action-helpers.js";
-import { canMutateProjectFiles } from "../resource-capabilities.js";
-import { selectedProjectsTeam } from "../project-context.js";
+import { selectedProjectsTeam, findChapterContextById } from "../project-context.js";
+import { getProjectWritePolicy } from "../resource-write-policy.js";
 import { waitForNextPaint } from "../runtime.js";
 import { state } from "../state.js";
 import { showNoticeBadge } from "../status-feedback.js";
@@ -164,13 +164,35 @@ function isReadOnlyBlockedWriteAction(action) {
 }
 
 function blockReadOnlyWriteAction(action, render) {
-  if (canMutateProjectFiles(selectedProjectsTeam())) {
-    return false;
-  }
   if (!isReadOnlyBlockedWriteAction(action)) {
     return false;
   }
-  showNoticeBadge("Read-only users cannot modify project files.", render, 2600);
+  const context = findChapterContextById(state.selectedChapterId);
+  const rowIdMatch =
+    /^.*(?:editor-row|row|history|comment|draft|conflict)[^:]*:([^:]+)(?::|$)/.exec(action);
+  const rowId =
+    rowIdMatch?.[1]
+    ?? state.editorChapter?.rowPermanentDeletionModal?.rowId
+    ?? state.editorChapter?.activeRowId
+    ?? null;
+  const row = Array.isArray(state.editorChapter?.rows)
+    ? state.editorChapter.rows.find((item) => item?.rowId === rowId || item?.id === rowId)
+    : null;
+  const restoreRow = action.startsWith("restore-editor-row:");
+  const permanentRow =
+    action.startsWith("open-editor-row-permanent-delete:")
+    || action === "confirm-editor-row-permanent-delete";
+  const policy = getProjectWritePolicy({
+    team: selectedProjectsTeam(),
+    project: context?.project ?? null,
+    chapter: context?.chapter ?? null,
+    row,
+    actionKind: restoreRow ? "restoreRow" : permanentRow ? "permanentRow" : "sharedWrite",
+  });
+  if (policy.allowed) {
+    return false;
+  }
+  showNoticeBadge(policy.message, render, 2600);
   return true;
 }
 

@@ -68,6 +68,12 @@ function roleSelectPattern(username, extra = "") {
   return new RegExp(`data-member-role-select[\\s\\S]*data-member-username="${username}"[\\s\\S]*${extra}`);
 }
 
+function roleOptionsPattern(selectedRole = "Translator") {
+  return ["Viewer", "Translator", "Admin", "Owner"]
+    .map((role) => `<option value="${role}"\\s*${role === selectedRole ? "selected" : ""}>${role}</option>`)
+    .join("[\\s\\S]*");
+}
+
 test.afterEach(() => {
   resetMemberWriteCoordinator();
   resetSessionState();
@@ -82,10 +88,10 @@ test("members screen keeps pending role dropdowns reversible while blocking conf
   const html = renderUsersScreen(state);
 
   assert.match(html, /Translator · Updating\.\.\./);
-  assert.match(html, roleSelectPattern("alice", '<option value="Viewer">Viewer</option><option value="Translator" selected>Translator</option><option value="Admin">Admin</option><option value="Owner">Owner</option>'));
+  assert.match(html, roleSelectPattern("alice", roleOptionsPattern("Translator")));
   assert.doesNotMatch(html, /data-member-username="alice"[^>]*disabled/);
   assert.match(html, /data-action="open-team-member-removal:alice"[^>]*aria-disabled="true"/);
-  assert.match(html, roleSelectPattern("bob", '<option value="Viewer">Viewer</option><option value="Translator" selected>Translator</option><option value="Admin">Admin</option><option value="Owner">Owner</option>'));
+  assert.match(html, roleSelectPattern("bob", roleOptionsPattern("Translator")));
   assert.doesNotMatch(html, /data-member-username="bob"[^>]*disabled/);
   assert.doesNotMatch(html, /data-action="make-admin:/);
   assert.doesNotMatch(html, /data-action="open-team-member-owner-promotion:/);
@@ -172,7 +178,7 @@ test("members screen treats raw member roles as translators with role dropdown a
   const html = renderUsersScreen(state);
 
   assert.match(html, /@alice · Translator/);
-  assert.match(html, roleSelectPattern("alice", '<option value="Viewer">Viewer</option><option value="Translator" selected>Translator</option><option value="Admin">Admin</option><option value="Owner">Owner</option>'));
+  assert.match(html, roleSelectPattern("alice", roleOptionsPattern("Translator")));
   assert.doesNotMatch(html, /data-action="revoke-admin:alice"/);
 });
 

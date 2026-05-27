@@ -91,7 +91,7 @@ function renderQaListCard(qaList, options = {}) {
       : []),
     ...(!isTombstone && canPermanentlyDelete
       ? [textAction("Delete", `delete-deleted-qa-list:${qaList.id}`, {
-          disabled: offlineMode || writeActionsDisabled || disableLifecycleActions,
+          disabled: writeActionsDisabled || disableLifecycleActions,
         })]
       : []),
   ];

@@ -33,22 +33,26 @@ test("owner-only repo creation helpers allow only owners", () => {
   assert.equal(shouldShowGlossaryCreationControls(translatorTeam), false);
 });
 
-test("owner-only permanent delete helpers allow only owners", () => {
+test("local hard-delete repo resource helpers allow any team member", () => {
   const ownerTeam = { canDelete: true, canManageProjects: true };
   const adminTeam = { canDelete: false, canManageProjects: true };
   const translatorTeam = { canDelete: false, canManageProjects: false };
+  const viewerTeam = { canDelete: true, canManageProjects: true, membershipRole: "viewer" };
 
   assert.equal(canPermanentlyDeleteRepoResources(ownerTeam), true);
-  assert.equal(canPermanentlyDeleteRepoResources(adminTeam), false);
-  assert.equal(canPermanentlyDeleteRepoResources(translatorTeam), false);
+  assert.equal(canPermanentlyDeleteRepoResources(adminTeam), true);
+  assert.equal(canPermanentlyDeleteRepoResources(translatorTeam), true);
+  assert.equal(canPermanentlyDeleteRepoResources(viewerTeam), true);
 
   assert.equal(shouldShowDeletedProjectPermanentDelete(ownerTeam), true);
-  assert.equal(shouldShowDeletedProjectPermanentDelete(adminTeam), false);
-  assert.equal(shouldShowDeletedProjectPermanentDelete(translatorTeam), false);
+  assert.equal(shouldShowDeletedProjectPermanentDelete(adminTeam), true);
+  assert.equal(shouldShowDeletedProjectPermanentDelete(translatorTeam), true);
+  assert.equal(shouldShowDeletedProjectPermanentDelete(viewerTeam), true);
 
   assert.equal(shouldShowDeletedGlossaryPermanentDelete(ownerTeam), true);
-  assert.equal(shouldShowDeletedGlossaryPermanentDelete(adminTeam), false);
-  assert.equal(shouldShowDeletedGlossaryPermanentDelete(translatorTeam), false);
+  assert.equal(shouldShowDeletedGlossaryPermanentDelete(adminTeam), true);
+  assert.equal(shouldShowDeletedGlossaryPermanentDelete(translatorTeam), true);
+  assert.equal(shouldShowDeletedGlossaryPermanentDelete(viewerTeam), true);
 });
 
 test("deleted project file permanent delete stays on the project-management gate", () => {

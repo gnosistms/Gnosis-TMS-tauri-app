@@ -50,6 +50,7 @@ import {
   setResourcePageRefreshing,
   submitResourcePageWrite,
 } from "./resource-page-controller.js";
+import { addLocalHardDeleteTombstone } from "./local-hard-delete-store.js";
 import {
   createProjectRenameMutationOptions,
   createProjectRestoreMutationOptions,
@@ -1067,9 +1068,7 @@ export function permanentlyDeleteProject(render, projectId) {
     isExpectedResource: (currentProject) =>
       Boolean(currentProject) && currentProject.lifecycleState === "deleted",
     getBlockedMessage: () =>
-      selectedTeam?.canDelete === true
-        ? ""
-        : "You do not have permission to delete projects in this team.",
+      selectedTeam ? "" : "Could not determine the selected team.",
     ensureNotTombstoned: (currentProject) =>
       ensureProjectNotTombstoned(render, selectedTeam, currentProject),
     onMissing: () => {
@@ -1123,12 +1122,7 @@ export async function confirmProjectPermanentDeletion(render) {
     modalState: state.projectPermanentDeletion,
     missingMessage: "Could not find the selected deleted project.",
     getBlockedMessage: () => {
-      if (state.offline?.isEnabled === true) {
-        return "You cannot delete projects while offline.";
-      }
-      return selectedTeam?.canDelete === true
-        ? ""
-        : "You do not have permission to delete projects in this team.";
+      return selectedTeam ? "" : "Could not determine the selected team.";
     },
     confirmationMessage: "Project name confirmation does not match.",
     matchesConfirmation: () => entityConfirmationMatches(state.projectPermanentDeletion, {
@@ -1158,7 +1152,7 @@ export async function confirmProjectPermanentDeletion(render) {
     clearProgress: () => clearProjectsStatus(render),
     render,
     progressLabels: {
-      submitting: "Deleting project permanently...",
+      submitting: "Removing local project copy...",
       refreshing: "Refreshing project list...",
     },
     onBlocked: async () => {
@@ -1167,14 +1161,6 @@ export async function confirmProjectPermanentDeletion(render) {
       render();
     },
     runMutation: async () => {
-      showProjectsStatus(render, "Writing project tombstone...");
-      await upsertProjectMetadataRecord(selectedTeam, {
-        ...projectMetadataRecordFromVisibleProject(project),
-        lifecycleState: "softDeleted",
-        remoteState: "deleted",
-        recordState: "tombstone",
-        deletedAt: new Date().toISOString(),
-      }, { requirePushSuccess: true });
       showProjectsStatus(render, "Removing local project repo...");
       await invoke("purge_local_gtms_project_repo", {
         input: {
@@ -1183,15 +1169,7 @@ export async function confirmProjectPermanentDeletion(render) {
           repoName: project.name,
         },
       });
-      showProjectsStatus(render, "Deleting GitHub project repo...");
-      await invoke("permanently_delete_gnosis_project_repo", {
-        input: {
-          installationId: selectedTeam.installationId,
-          orgLogin: selectedTeam.githubOrg,
-          repoName: project.name,
-        },
-        sessionToken: requireBrokerSession(),
-      });
+      addLocalHardDeleteTombstone(selectedTeam, "project", project);
     },
     refreshOptions: {
       loadData: async () => reloadProjectsAfterWrite(render, selectedTeam),
@@ -1201,7 +1179,7 @@ export async function confirmProjectPermanentDeletion(render) {
       if (state.selectedProjectId === project.id) {
         state.selectedProjectId = null;
       }
-      showProjectsNotice(render, "Project permanently deleted.");
+      showProjectsNotice(render, "Local project copy removed.");
     },
     onError: async (error) => {
       clearProjectsStatus(render);

@@ -21,6 +21,11 @@ import {
   findConfirmedMissingGlossaryRecords,
   mergeMetadataBackedGlossarySummaries,
 } from "./glossary-discovery.js";
+import {
+  clearRestoredLocalHardDeleteTombstones,
+  filterLocalHardDeletedResources,
+} from "./local-hard-delete-store.js";
+import { isSoftDeletedResource } from "./resource-write-policy.js";
 
 function normalizeGlossaryBrokerError(error) {
   if (error instanceof Error) {
@@ -206,6 +211,8 @@ function metadataBackedGlossaryRepo(record) {
     !record
     || record.recordState !== "live"
     || record.remoteState !== "linked"
+    || record.lifecycleState === "deleted"
+    || record.lifecycleState === "softDeleted"
     || typeof record.repoName !== "string"
     || !record.repoName.trim()
     || typeof record.fullName !== "string"
@@ -267,6 +274,9 @@ function buildMetadataBackedGlossarySyncRepos(metadataRecords, remoteRepos, opti
     if (record?.recordState !== "live" || record?.remoteState !== "linked") {
       continue;
     }
+    if (record?.lifecycleState === "deleted" || record?.lifecycleState === "softDeleted") {
+      continue;
+    }
 
     const repo =
       findMatchingRemoteGlossary(record, remoteByRepoName, remoteByFullName)
@@ -287,6 +297,16 @@ function buildMetadataBackedGlossarySyncRepos(metadataRecords, remoteRepos, opti
   }
 
   return syncRepos;
+}
+
+function applyLocalGlossaryHardDeleteState(team, glossaries) {
+  const items = Array.isArray(glossaries) ? glossaries : [];
+  clearRestoredLocalHardDeleteTombstones(team, "glossary", items, {
+    isActive: (glossary) => !isSoftDeletedResource(glossary, "glossary"),
+  });
+  return filterLocalHardDeletedResources(team, "glossary", items, {
+    isDeleted: (glossary) => isSoftDeletedResource(glossary, "glossary"),
+  });
 }
 
 function countRecoverableGlossaryMetadataRecords(records) {
@@ -553,7 +573,10 @@ export async function loadRepoBackedGlossariesForTeam(team, options = {}) {
   if (offlineMode || !Number.isFinite(team?.installationId)) {
     return {
       glossaries: sortGlossaries(
-        localSummaries.map(normalizeGlossarySummary).filter(Boolean),
+        applyLocalGlossaryHardDeleteState(
+          team,
+          localSummaries.map(normalizeGlossarySummary).filter(Boolean),
+        ),
       ),
       remoteRepos: [],
       syncSnapshots: [],
@@ -607,21 +630,22 @@ export async function loadRepoBackedGlossariesForTeam(team, options = {}) {
   const refreshedLocalSummaries = await listLocalGlossarySummariesForTeam(team);
   const syncIssue = getGlossarySyncIssueMessage(syncSnapshots);
 
+  const mergedGlossaries = metadataLoaded
+    ? mergeMetadataBackedGlossarySummaries(
+        refreshedLocalSummaries,
+        metadataRecords,
+        remoteRepos,
+        { metadataLoaded, remoteLoaded, repairLoaded, repairIssues },
+      )
+    : mergeMetadataBackedGlossarySummaries(
+        refreshedLocalSummaries,
+        [],
+        remoteRepos,
+        { metadataLoaded: false, remoteLoaded, repairLoaded, repairIssues: [] },
+      );
+
   return {
-    glossaries:
-      metadataLoaded
-        ? mergeMetadataBackedGlossarySummaries(
-            refreshedLocalSummaries,
-            metadataRecords,
-            remoteRepos,
-            { metadataLoaded, remoteLoaded, repairLoaded, repairIssues },
-          )
-        : mergeMetadataBackedGlossarySummaries(
-            refreshedLocalSummaries,
-            [],
-            remoteRepos,
-            { metadataLoaded: false, remoteLoaded, repairLoaded, repairIssues: [] },
-          ),
+    glossaries: applyLocalGlossaryHardDeleteState(team, mergedGlossaries),
     remoteRepos: syncTargets,
     syncSnapshots,
     syncIssue,

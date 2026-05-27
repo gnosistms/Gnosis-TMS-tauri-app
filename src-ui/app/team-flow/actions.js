@@ -38,6 +38,7 @@ import {
   moveTeamQueryData,
   patchTeamQueryData,
 } from "../team-query.js";
+import { addLocalHardDeleteTombstone } from "../local-hard-delete-store.js";
 import { queryClient, teamKeys } from "../query-client.js";
 import {
   requestTeamWriteIntent,
@@ -450,14 +451,10 @@ export async function confirmTeamPermanentDeletion(render) {
     if (!team.installationId) {
       throw new Error("Team deletion requires a GitHub App-connected team.");
     }
-    await invoke("delete_organization_for_installation", {
-      installationId: team.installationId,
-      orgLogin: team.githubOrg,
-      sessionToken: requireBrokerSession(),
-    });
     await invoke("purge_local_installation_data", {
       installationId: team.installationId,
     });
+    addLocalHardDeleteTombstone(team, "team", team);
     removeStoredProjectDataForTeam(team);
     removeStoredGlossariesForTeam(team);
 

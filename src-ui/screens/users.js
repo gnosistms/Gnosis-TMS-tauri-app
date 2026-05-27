@@ -4,6 +4,7 @@ import {
   escapeHtml,
   pageShell,
   primaryButton,
+  renderSelectPillControl,
   renderStateCard,
   textAction,
 } from "../lib/ui.js";
@@ -33,35 +34,28 @@ import { renderTeamMemberOwnerModal } from "./team-member-owner-modal.js";
 import { renderTeamMemberRemoveModal } from "./team-member-remove-modal.js";
 import { renderTeamLeaveModal } from "./teams/leave-modal.js";
 
-function renderMemberRoleOptions(selectedRole) {
-  return MEMBER_ROLE_OPTIONS.map((role) =>
-    `<option value="${escapeHtml(role)}"${role === selectedRole ? " selected" : ""}>${escapeHtml(role)}</option>`
-  ).join("");
-}
-
 function renderMemberRoleSelect(user, options = {}) {
   const displayRole = normalizeOrganizationMemberRole(user.role);
   const disabled = options.disabled === true;
   const tooltip = typeof options.tooltip === "string" && options.tooltip.trim()
     ? options.tooltip.trim()
     : "";
-  const tooltipAttributes = tooltip
-    ? ` title="${escapeHtml(tooltip)}" aria-description="${escapeHtml(tooltip)}"`
-    : "";
-  return `
-    <label class="member-role-control"${tooltipAttributes}>
-      <select
-        class="field__select member-role-select"
-        data-member-role-select
-        data-member-username="${escapeHtml(user.username)}"
-        aria-label="Account type for ${escapeHtml(user.username)}"
-        ${tooltip ? `title="${escapeHtml(tooltip)}"` : ""}
-        ${disabled ? "disabled" : ""}
-      >
-        ${renderMemberRoleOptions(displayRole)}
-      </select>
-    </label>
-  `;
+  return renderSelectPillControl({
+    className: "select-pill--toolbar select-pill--member-role select-pill--truncate-value",
+    value: displayRole,
+    disabled,
+    tooltip,
+    selectAttributes: {
+      "data-member-role-select": true,
+      "data-member-username": user.username,
+      "aria-label": `Account type for ${user.username}`,
+    },
+    options: MEMBER_ROLE_OPTIONS.map((role) => ({
+      value: role,
+      label: role,
+      selected: role === displayRole,
+    })),
+  });
 }
 
 function renderUserCard(user, options = {}) {

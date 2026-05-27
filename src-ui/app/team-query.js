@@ -20,6 +20,11 @@ import {
 import { invoke } from "./runtime.js";
 import { state } from "./state.js";
 import { queryClient, subscribeQueryObserver, teamKeys } from "./query-client.js";
+import {
+  clearRestoredLocalHardDeleteTombstones,
+  filterLocalHardDeletedResources,
+} from "./local-hard-delete-store.js";
+import { isSoftDeletedResource } from "./resource-write-policy.js";
 
 let activeTeamsQuerySubscription = null;
 
@@ -51,6 +56,22 @@ function applyLegacyPendingTeamMutations(snapshot) {
   const legacyPendingMutations = loadStoredTeamPendingMutations();
   state.pendingTeamMutations = legacyPendingMutations;
   return applyPendingMutations(snapshot, legacyPendingMutations, applyTeamPendingMutation);
+}
+
+function applyLocalTeamHardDeleteState(snapshot) {
+  const items = Array.isArray(snapshot?.items) ? snapshot.items : [];
+  const deletedItems = Array.isArray(snapshot?.deletedItems) ? snapshot.deletedItems : [];
+  for (const team of items) {
+    clearRestoredLocalHardDeleteTombstones(team, "team", [team], {
+      isActive: (item) => !isSoftDeletedResource(item, "team"),
+    });
+  }
+  return {
+    items,
+    deletedItems: filterLocalHardDeletedResources(null, "team", deletedItems, {
+      isDeleted: (team) => isSoftDeletedResource(team, "team"),
+    }),
+  };
 }
 
 export function createTeamsQuerySnapshot({
@@ -104,7 +125,7 @@ export function seedTeamsQueryFromCache({
     ? applyLegacyPendingTeamMutations(storedSnapshot)
     : storedSnapshot;
   const snapshot = createTeamsQuerySnapshot({
-    ...snapshotSource,
+    ...applyLocalTeamHardDeleteState(snapshotSource),
     discovery: { status: "ready", error: "" },
     authLogin,
   });
@@ -144,8 +165,10 @@ export function createTeamsQueryOptions(options = {}) {
       const nextStoredTeams = replaceStoredTeamRecords(reconciledTeams);
       const nextStoredSnapshot = splitStoredTeamRecords(nextStoredTeams);
       const snapshot = createTeamsQuerySnapshot({
-        items: nextStoredSnapshot.activeTeams,
-        deletedItems: nextStoredSnapshot.deletedTeams,
+        ...applyLocalTeamHardDeleteState({
+          items: nextStoredSnapshot.activeTeams,
+          deletedItems: nextStoredSnapshot.deletedTeams,
+        }),
         discovery: { status: "ready", error: "" },
         authLogin,
       });

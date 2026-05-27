@@ -23,6 +23,7 @@ import {
   ensureGlossaryNotTombstoned,
   syncSingleGlossaryForTeam,
 } from "./glossary-repo-flow.js";
+import { getGlossaryWritePolicy } from "./resource-write-policy.js";
 import { refreshCurrentUserTeamAccess } from "./team-query.js";
 import { anyGlossaryTermWriteIsActive } from "./glossary-term-write-coordinator.js";
 import {
@@ -367,6 +368,11 @@ export async function deleteGlossaryTerm(render, termId) {
 
   if (!canManageGlossaries(team)) {
     showNoticeBadge("You do not have permission to edit glossary terms in this team.", render);
+    return;
+  }
+  const policy = getGlossaryWritePolicy({ team, glossary });
+  if (!policy.allowed) {
+    showNoticeBadge(policy.message, render);
     return;
   }
   if (await ensureGlossaryNotTombstoned(render, team, glossary)) {

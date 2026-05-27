@@ -99,6 +99,7 @@ function beginRefreshButtonFeedback(screen, render) {
   if (screen === "users") {
     state.membersPage.isRefreshing = true;
     showScopedSyncBadge("members", "Refreshing member list...", render);
+    render();
     return;
   }
 

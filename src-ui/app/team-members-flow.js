@@ -22,7 +22,6 @@ import {
   OWNER_SELF_ROLE_CHANGE_MESSAGE,
 } from "./member-shared.js";
 import {
-  createMembersQueryOptions,
   ensureMembersQueryObserver,
   invalidateMembersQueryAfterMutation,
   removeMemberFromQueryData,
@@ -748,13 +747,15 @@ export async function loadTeamUsers(render, teamId = state.selectedTeamId) {
     if (cachedMembers?.exists) {
       seedMembersQueryFromCache(selectedTeam, { teamId, render });
     }
-    ensureMembersQueryObserver(render, selectedTeam, { teamId, render });
-    const querySnapshot = await queryClient.fetchQuery(
-      createMembersQueryOptions(selectedTeam, { teamId, render }),
-    );
-    queryClient.setQueryData(memberKeys.byTeam(teamId), querySnapshot);
+    const membersQuerySubscription = ensureMembersQueryObserver(render, selectedTeam, { teamId, render });
+    const membersQueryObserver = membersQuerySubscription.observer;
+    await membersQueryObserver.refetch({
+      throwOnError: true,
+      cancelRefetch: false,
+    });
     clearMembersStatus(render);
     await completePageSync(render);
+    render();
   } catch (error) {
     const errorMessage = error?.message ?? String(error);
     if (

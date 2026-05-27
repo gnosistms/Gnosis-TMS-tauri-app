@@ -26,6 +26,7 @@ import {
 } from "./team-metadata-flow.js";
 import { ensureResourceNotTombstoned } from "./resource-lifecycle-engine.js";
 import { canPermanentlyDeleteProjectFiles } from "./resource-capabilities.js";
+import { getProjectWritePolicy } from "./resource-write-policy.js";
 import {
   areResourcePageWritesDisabled,
   areResourcePageWriteSubmissionsDisabled,
@@ -583,6 +584,19 @@ async function resolveChapterMutationContext(render, chapterId, options = {}) {
     return null;
   }
 
+  const policy = getProjectWritePolicy({
+    team: resolved.selectedTeam,
+    project: resolved.context.project,
+    chapter: resolved.context.chapter,
+    actionKind:
+      options.actionKind
+      ?? (options.actionLabel === "restore files" ? "restoreChapter" : "sharedWrite"),
+  });
+  if (!policy.allowed) {
+    setProjectDiscoveryError(render, policy.message);
+    return null;
+  }
+
   if (
     options.ensureNotTombstoned !== false
     && await ensureProjectNotTombstoned(render, resolved.selectedTeam, resolved.context.project)
@@ -1006,6 +1020,17 @@ function openChapterModal(render, chapterId, options) {
     return;
   }
 
+  const policy = getProjectWritePolicy({
+    team: resolved.selectedTeam,
+    project: resolved.context.project,
+    chapter: resolved.context.chapter,
+    actionKind: options.actionKind ?? "sharedWrite",
+  });
+  if (!policy.allowed) {
+    setProjectDiscoveryError(render, policy.message);
+    return;
+  }
+
   options.applyState(resolved.context);
   render();
 }
@@ -1048,6 +1073,7 @@ export function openChapterPermanentDeletion(render, chapterId) {
   openChapterModal(render, chapterId, {
     missingMessage: "Could not find the selected deleted file.",
     actionLabel: "permanently delete files",
+    actionKind: "permanentChapter",
     applyState: (context) => {
       state.chapterPermanentDeletion = {
         isOpen: true,
@@ -1563,6 +1589,7 @@ export async function permanentlyDeleteChapter(render, chapterId) {
   await submitSimpleChapterMutation(render, chapterId, {
     missingMessage: "Could not find the selected deleted file.",
     actionLabel: "permanently delete files",
+    actionKind: "permanentChapter",
     requireDelete: true,
     buildMutation: (context) => ({
       id: crypto.randomUUID(),

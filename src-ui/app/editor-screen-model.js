@@ -6,11 +6,9 @@ import {
 import { normalizeEditorAiTranslateState } from "./editor-ai-translate-state.js";
 import { normalizeEditorDerivedGlossariesByRowId } from "./editor-derived-glossary-state.js";
 import { coerceEditorFontSizePx } from "./state.js";
-import {
-  canMutateProjectFiles,
-  canPermanentlyDeleteProjectFiles,
-} from "./resource-capabilities.js";
+import { canPermanentlyDeleteProjectFiles } from "./resource-capabilities.js";
 import { findChapterContextById, selectedProjectsTeam } from "./project-context.js";
+import { getProjectWritePolicy } from "./resource-write-policy.js";
 import { buildEditorFilterResult, editorChapterFiltersAreActive } from "./editor-filters.js";
 import { normalizeEditorReplaceState } from "./editor-replace.js";
 import {
@@ -354,13 +352,18 @@ function buildEditorReplaceViewModel(editorChapter, editorFilters) {
 
 function buildEditorDisplayItems(contentRows, editorChapter, team, editorReplace) {
   const rows = Array.isArray(contentRows) ? contentRows : [];
+  const chapterContext = findChapterContextById(editorChapter?.chapterId);
   const showContextAction = editorChapterFiltersAreActive(editorChapter?.filters);
   const expandedDeletedRowGroupIds =
     editorChapter?.expandedDeletedRowGroupIds instanceof Set
       ? editorChapter.expandedDeletedRowGroupIds
       : new Set();
-  const canEditRows = canMutateProjectFiles(team);
-  const canRestoreRows = canEditRows && Number.isFinite(team?.installationId);
+  const canEditRows = getProjectWritePolicy({
+    team,
+    project: chapterContext?.project ?? null,
+    chapter: chapterContext?.chapter ?? null,
+    actionKind: "sharedWrite",
+  }).allowed;
   const canPermanentlyDeleteRows = canPermanentlyDeleteProjectFiles(team);
   const selectedReplaceRowIds =
     editorReplace?.selectedMatchingRowIds instanceof Array
@@ -396,8 +399,20 @@ function buildEditorDisplayItems(contentRows, editorChapter, team, editorReplace
       canEdit: canEditRows,
       canInsert: row.lifecycleState === "active" && canEditRows,
       canSoftDelete: row.lifecycleState === "active" && canEditRows,
-      canRestore: row.lifecycleState === "deleted" && canRestoreRows,
-      canPermanentDelete: row.lifecycleState === "deleted" && canPermanentlyDeleteRows,
+      canRestore: row.lifecycleState === "deleted" && getProjectWritePolicy({
+        team,
+        project: chapterContext?.project ?? null,
+        chapter: chapterContext?.chapter ?? null,
+        row,
+        actionKind: "restoreRow",
+      }).allowed,
+      canPermanentDelete: row.lifecycleState === "deleted" && canPermanentlyDeleteRows && getProjectWritePolicy({
+        team,
+        project: chapterContext?.project ?? null,
+        chapter: chapterContext?.chapter ?? null,
+        row,
+        actionKind: "permanentRow",
+      }).allowed,
       showContextAction: row.lifecycleState === "active" && showContextAction,
       canReplaceSelect: row.lifecycleState === "active" && canEditRows && editorReplace?.isEnabled === true,
       replaceSelected: selectedReplaceRowIds.has(row.id),

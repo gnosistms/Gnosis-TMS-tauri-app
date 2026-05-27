@@ -287,7 +287,7 @@ export async function restoreEditorRow(render, rowId, operations = {}) {
     return;
   }
 
-  if (!(await ensureEditorRowReadyForWrite(render, rowId, { structural: true }))) {
+  if (!(await ensureEditorRowReadyForWrite(render, rowId, { structural: true, actionKind: "restoreRow" }))) {
     return;
   }
 
@@ -365,7 +365,7 @@ export async function confirmEditorRowPermanentDeletion(render, operations = {})
     return;
   }
 
-  if (!(await ensureEditorRowReadyForWrite(render, modal.rowId, { structural: true }))) {
+  if (!(await ensureEditorRowReadyForWrite(render, modal.rowId, { structural: true, actionKind: "permanentRow" }))) {
     return;
   }
 

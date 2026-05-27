@@ -22,7 +22,6 @@ import {
 } from "./qa-list-top-level-state.js";
 import { makeQaListDefaultIfFirst, updateDefaultQaListAfterDeletion } from "./qa-list-default-flow.js";
 import {
-  deleteRemoteQaListRepo,
   ensureQaListNotTombstoned,
   teamSupportsQaListRepos,
 } from "./qa-list-repo-flow.js";
@@ -47,6 +46,7 @@ import {
   updateEntityModalName,
 } from "./resource-entity-modal.js";
 import { anyQaListMutatingWriteIsActive } from "./qa-list-write-coordinator.js";
+import { addLocalHardDeleteTombstone } from "./local-hard-delete-store.js";
 
 function qaListById(qaListId) {
   return state.qaLists.find((item) => item.id === qaListId) ?? null;
@@ -349,10 +349,7 @@ export function openQaListPermanentDeletion(render, qaListId) {
     resource: qaList,
     isExpectedResource: (currentQaList) =>
       Boolean(currentQaList) && currentQaList.lifecycleState === "deleted",
-    getBlockedMessage: () => qaListLifecycleActionBlockedMessage(team, {
-      actionLabel: "permanently delete QA lists",
-      requireOwner: true,
-    }),
+    getBlockedMessage: () => team ? "" : "Could not determine the selected team.",
     ensureNotTombstoned: (currentQaList) =>
       ensureQaListNotTombstoned(render, team, currentQaList),
     onMissing: () => {
@@ -402,10 +399,7 @@ export async function confirmQaListPermanentDeletion(render) {
     resource: qaList,
     modalState: state.qaListPermanentDeletion,
     missingMessage: "Could not find the selected QA list.",
-    getBlockedMessage: () => qaListLifecycleActionBlockedMessage(team, {
-      actionLabel: "permanently delete QA lists",
-      requireOwner: true,
-    }),
+    getBlockedMessage: () => team ? "" : "Could not determine the selected team.",
     confirmationMessage: "Enter the QA list name exactly to delete it.",
     matchesConfirmation: () => entityConfirmationMatches(state.qaListPermanentDeletion, {
       nameField: "qaListName",
@@ -434,11 +428,11 @@ export async function confirmQaListPermanentDeletion(render) {
       qaList,
       commitMutation: async () => {
         if (teamSupportsQaListRepos(team) && qaList?.repoName) {
-          await deleteRemoteQaListRepo(team, qaList);
           await invoke("purge_local_gtms_qa_list_repo", {
             input: repoBackedQaListInput(team, qaList),
           });
         }
+        addLocalHardDeleteTombstone(team, "qaList", qaList);
       },
       onOptimisticApplied: () => {
         resetQaListPermanentDeletion();

@@ -72,4 +72,13 @@ test("refresh feedback is rendered before team access refreshes", async () => {
   assert.match(source, /showScopedSyncBadge\("teams", "Refreshing teams\.\.\.", render\);/);
   assert.match(source, /if \(screen === "users"\) \{\s*state\.membersPage\.isRefreshing = true;/);
   assert.match(source, /showScopedSyncBadge\("members", "Refreshing member list\.\.\.", render\);/);
+  assert.match(source, /if \(screen === "users"\) \{[\s\S]*?showScopedSyncBadge\("members", "Refreshing member list\.\.\.", render\);[\s\S]*?render\(\);[\s\S]*?return;/);
+});
+
+test("members refresh uses the active TanStack query observer", async () => {
+  const source = await readFile(new URL("./team-members-flow.js", import.meta.url), "utf8");
+
+  assert.match(source, /const membersQuerySubscription = ensureMembersQueryObserver\(render, selectedTeam, \{ teamId, render \}\);/);
+  assert.match(source, /await membersQueryObserver\.refetch\(\{\s*throwOnError: true,\s*cancelRefetch: false,\s*\}\);[\s\S]*?await completePageSync\(render\);[\s\S]*?render\(\);/);
+  assert.doesNotMatch(source, /queryClient\.fetchQuery\(\s*createMembersQueryOptions/);
 });

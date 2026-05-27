@@ -349,18 +349,6 @@
   justify-content: flex-end;
 }
 
-.member-role-control {
-  display: inline-flex;
-  align-items: center;
-}
-
-.member-role-control .field__select.member-role-select {
-  min-width: 132px;
-  width: auto;
-  font-size: var(--text-action-font-size);
-  font-weight: 600;
-}
-
 .member-role-note {
   max-width: 360px;
   color: var(--muted);
@@ -647,6 +635,10 @@
 .select-pill--chapter-glossary {
   min-width: 0;
   max-width: 220px;
+}
+
+.select-pill--member-role {
+  min-width: 132px;
 }
 
 .select-pill--truncate-value .select-pill__value {

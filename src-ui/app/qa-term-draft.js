@@ -19,6 +19,7 @@ import { patchQaListQueryData } from "./qa-list-query.js";
 import { removeQaListEditorQuery } from "./qa-list-editor-query.js";
 import { selectedQaListEditorMatches, syncAndRefreshQaListEditorSnapshot } from "./qa-list-editor-flow.js";
 import { teamSupportsQaListRepos } from "./qa-list-repo-flow.js";
+import { getQaListWritePolicy } from "./resource-write-policy.js";
 import {
   beginQaTermWrite,
   endQaTermWrite,
@@ -82,6 +83,19 @@ async function rollbackQaTermSave(team, qaList, previousHeadSha, failureMessage)
 
 export function openQaTermEditor(render, termId = null) {
   const editor = state.qaListEditor;
+  const policy = getQaListWritePolicy({
+    team: currentQaListTeam(),
+    qaList: selectedQaList(),
+  });
+  if (!policy.allowed) {
+    state.qaListEditor = {
+      ...state.qaListEditor,
+      status: "error",
+      error: policy.message,
+    };
+    render();
+    return;
+  }
   const existing = termId
     ? (editor.terms ?? []).find((term) => term.termId === termId)
     : null;
@@ -154,6 +168,15 @@ export async function submitQaTermEditor(render) {
 
   const team = currentQaListTeam();
   const qaList = selectedQaList();
+  const policy = getQaListWritePolicy({ team, qaList });
+  if (!policy.allowed) {
+    state.qaTermEditor = {
+      ...editor,
+      error: policy.message,
+    };
+    render();
+    return;
+  }
   beginQaTermWrite();
   try {
     if (teamSupportsQaListRepos(team) && qaList?.repoName) {
@@ -249,6 +272,16 @@ export async function submitQaTermEditor(render) {
 export async function deleteQaTerm(render, termId) {
   const team = currentQaListTeam();
   const qaList = selectedQaList();
+  const policy = getQaListWritePolicy({ team, qaList });
+  if (!policy.allowed) {
+    state.qaListEditor = {
+      ...state.qaListEditor,
+      status: "error",
+      error: policy.message,
+    };
+    render();
+    return;
+  }
   beginQaTermWrite();
   try {
     if (teamSupportsQaListRepos(team) && qaList?.repoName) {

@@ -33,6 +33,11 @@ import {
   setResourcePageDataOwner,
 } from "./resource-page-controller.js";
 import { teamCacheKey } from "./team-cache.js";
+import {
+  clearRestoredLocalHardDeleteTombstones,
+  filterLocalHardDeletedResources,
+} from "./local-hard-delete-store.js";
+import { isSoftDeletedResource } from "./resource-write-policy.js";
 
 function countRecoverableProjectMetadataRecords(records) {
   return (Array.isArray(records) ? records : []).filter((record) =>
@@ -40,6 +45,20 @@ function countRecoverableProjectMetadataRecords(records) {
     && record?.remoteState === "linked"
     && record?.lifecycleState === "active"
   ).length;
+}
+
+function applyLocalProjectHardDeleteState(selectedTeam, snapshot) {
+  const items = Array.isArray(snapshot?.items) ? snapshot.items : [];
+  const deletedItems = Array.isArray(snapshot?.deletedItems) ? snapshot.deletedItems : [];
+  clearRestoredLocalHardDeleteTombstones(selectedTeam, "project", [...items, ...deletedItems], {
+    isActive: (project) => !isSoftDeletedResource(project, "project"),
+  });
+  return {
+    items,
+    deletedItems: filterLocalHardDeletedResources(selectedTeam, "project", deletedItems, {
+      isDeleted: (project) => isSoftDeletedResource(project, "project"),
+    }),
+  };
 }
 
 function nextProjectDiscoveryRequestId() {
@@ -379,9 +398,12 @@ export async function loadLocalProjectSnapshotForTeam(selectedTeam, options = {}
     options,
   );
 
+  const filteredSnapshot = applyLocalProjectHardDeleteState(selectedTeam, {
+    ...localSnapshot,
+  });
   return {
     ...applyPendingMutations(
-      localSnapshot,
+      filteredSnapshot,
       pendingChapterMutations,
       options.applyChapterPendingMutation,
     ),
@@ -497,7 +519,7 @@ export async function loadTeamProjects(render, teamId = state.selectedTeamId, op
       typeof options.preserveProjectLifecyclePatches === "function"
         ? options.preserveProjectLifecyclePatches(optimisticSnapshot)
         : optimisticSnapshot;
-    applyProjectSnapshotToState(preservedSnapshot, {
+    applyProjectSnapshotToState(applyLocalProjectHardDeleteState(selectedTeam, preservedSnapshot), {
       reconcileExpandedDeletedFiles: options.reconcileExpandedDeletedFiles,
     });
     options.setProjectDiscoveryState(
@@ -700,7 +722,9 @@ export async function loadTeamProjects(render, teamId = state.selectedTeamId, op
       typeof options.preserveProjectLifecyclePatches === "function"
         ? options.preserveProjectLifecyclePatches(nextSnapshot)
         : nextSnapshot;
-    applyProjectSnapshotToState(preservedSnapshot, {
+    const visibleSnapshot = applyLocalProjectHardDeleteState(selectedTeam, preservedSnapshot);
+    mappedProjects = [...visibleSnapshot.items, ...visibleSnapshot.deletedItems];
+    applyProjectSnapshotToState(visibleSnapshot, {
       reconcileExpandedDeletedFiles: options.reconcileExpandedDeletedFiles,
     });
     options.persistProjectsForTeam(selectedTeam);
@@ -771,7 +795,9 @@ export async function loadTeamProjects(render, teamId = state.selectedTeamId, op
         typeof options.preserveProjectLifecyclePatches === "function"
           ? options.preserveProjectLifecyclePatches(repairedSnapshot)
           : repairedSnapshot;
-      applyProjectSnapshotToState(preservedRepairedSnapshot, {
+      const visibleRepairedSnapshot = applyLocalProjectHardDeleteState(selectedTeam, preservedRepairedSnapshot);
+      mappedProjects = [...visibleRepairedSnapshot.items, ...visibleRepairedSnapshot.deletedItems];
+      applyProjectSnapshotToState(visibleRepairedSnapshot, {
         reconcileExpandedDeletedFiles: options.reconcileExpandedDeletedFiles,
       });
       options.persistProjectsForTeam(selectedTeam);

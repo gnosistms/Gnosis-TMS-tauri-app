@@ -15,6 +15,7 @@ import {
   updateEditorChapterRow,
 } from "./editor-state-flow.js";
 import { findEditorRowById } from "./editor-utils.js";
+import { getProjectWritePolicy } from "./resource-write-policy.js";
 
 const pendingEditorRowReloads = new Map();
 
@@ -290,6 +291,24 @@ export async function ensureEditorRowReadyForWrite(render, rowId, options = {}) 
 
   if (row.freshness === "conflict" || row.saveStatus === "conflict") {
     showNoticeBadge(editorRowWriteBlockedMessage(options), render);
+    return null;
+  }
+
+  const context = findChapterContextById(state.editorChapter.chapterId);
+  const team = selectedProjectsTeam();
+  const policyTeam =
+    team && team.canManageProjects === undefined
+      ? { ...team, canManageProjects: true }
+      : team;
+  const policy = getProjectWritePolicy({
+    team: policyTeam,
+    project: context?.project ?? { lifecycleState: "active" },
+    chapter: context?.chapter ?? { status: "active" },
+    row,
+    actionKind: options.actionKind ?? "sharedWrite",
+  });
+  if (!policy.allowed) {
+    showNoticeBadge(policy.message, render);
     return null;
   }
 

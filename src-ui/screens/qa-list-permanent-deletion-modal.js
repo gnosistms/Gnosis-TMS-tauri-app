@@ -33,12 +33,12 @@ export function renderQaListPermanentDeletionModal(state) {
     <div class="modal-backdrop">
       <section class="card modal-card modal-card--compact">
         <div class="card__body modal-card__body">
-          <p class="card__eyebrow">PERMANENT DELETE</p>
-          <h2 class="modal__title">Permanently Delete QA List?</h2>
+          <p class="card__eyebrow">LOCAL DELETE</p>
+          <h2 class="modal__title">Remove Local QA List Copy?</h2>
           <p class="modal__supporting">
-            To permanently delete this QA list, type <strong>${escapeHtml(
+            This removes the local copy from this computer only. It will not delete anything from GitHub or other team members' computers. To remove it, type <strong>${escapeHtml(
               deletion.qaListName,
-            )}</strong> in the text box below. Then click Delete. This action can not be undone.
+            )}</strong> in the text box below. Then click Delete.
           </p>
           <div class="modal__form">
             <label class="field">
@@ -46,7 +46,7 @@ export function renderQaListPermanentDeletionModal(state) {
               <input
                 class="field__input"
                 type="text"
-                placeholder="Enter QA list name here to delete"
+                placeholder="Enter QA list name here to remove"
                 value="${escapeHtml(deletion.confirmationText)}"
                 data-qa-list-permanent-delete-input
                 ${isDeleting ? "disabled" : ""}

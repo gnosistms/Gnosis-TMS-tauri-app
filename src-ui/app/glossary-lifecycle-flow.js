@@ -12,7 +12,6 @@ import {
 import { showNoticeBadge } from "./status-feedback.js";
 import {
   ensureGlossaryNotTombstoned,
-  permanentlyDeleteRemoteGlossaryRepoForTeam,
 } from "./glossary-repo-flow.js";
 import { upsertGlossaryMetadataRecord } from "./team-metadata-flow.js";
 import {
@@ -45,6 +44,7 @@ import {
 } from "./glossary-write-coordinator.js";
 import { updateDefaultGlossaryAfterDeletion } from "./glossary-default-flow.js";
 import { removeGlossaryEditorQuery } from "./glossary-editor-query.js";
+import { addLocalHardDeleteTombstone } from "./local-hard-delete-store.js";
 
 function glossaryById(glossaryId) {
   return state.glossaries.find((glossary) => glossary.id === glossaryId) ?? null;
@@ -383,10 +383,7 @@ export function openGlossaryPermanentDeletion(render, glossaryId) {
     resource: glossary,
     isExpectedResource: (currentGlossary) =>
       Boolean(currentGlossary) && currentGlossary.lifecycleState === "deleted",
-    getBlockedMessage: () => lifecycleActionBlockedMessage(team, {
-      actionLabel: "permanently delete glossaries",
-      requireOwner: true,
-    }),
+    getBlockedMessage: () => team ? "" : "Could not determine the selected team.",
     ensureNotTombstoned: (currentGlossary) =>
       ensureGlossaryNotTombstoned(render, team, currentGlossary),
     onMissing: () => {
@@ -435,10 +432,7 @@ export async function confirmGlossaryPermanentDeletion(render) {
     resource: glossary,
     modalState: state.glossaryPermanentDeletion,
     missingMessage: "Could not find the selected glossary.",
-    getBlockedMessage: () => lifecycleActionBlockedMessage(team, {
-      actionLabel: "permanently delete glossaries",
-      requireOwner: true,
-    }),
+    getBlockedMessage: () => team ? "" : "Could not determine the selected team.",
     confirmationMessage: "Enter the glossary name exactly to delete it.",
     matchesConfirmation: () => entityConfirmationMatches(state.glossaryPermanentDeletion, {
       nameField: "glossaryName",
@@ -466,12 +460,6 @@ export async function confirmGlossaryPermanentDeletion(render) {
       team,
       glossary,
       commitMutation: async () => {
-        await upsertGlossaryMetadataRecord(team, glossaryMetadataRecord(glossary, {
-          lifecycleState: "softDeleted",
-          remoteState: "deleted",
-          recordState: "tombstone",
-          deletedAt: new Date().toISOString(),
-        }), { requirePushSuccess: true });
         await invoke("purge_local_gtms_glossary_repo", {
           input: {
             installationId: team.installationId,
@@ -479,7 +467,7 @@ export async function confirmGlossaryPermanentDeletion(render) {
             repoName: glossary.repoName,
           },
         });
-        await permanentlyDeleteRemoteGlossaryRepoForTeam(team, glossary.repoName);
+        addLocalHardDeleteTombstone(team, "glossary", glossary);
       },
       onOptimisticApplied: () => {
         resetGlossaryPermanentDeletion();

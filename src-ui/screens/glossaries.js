@@ -97,7 +97,7 @@ function renderGlossaryCard(glossary, options = {}) {
   const deletedActions = [
     ...(!isTombstone && canManage ? [textAction("Restore", `restore-glossary:${glossary.id}`, { disabled: offlineMode || lifecycleActionsDisabled || disableLifecycleActions })] : []),
     ...(!isTombstone && canPermanentlyDelete
-      ? [textAction("Delete", `delete-deleted-glossary:${glossary.id}`, { disabled: offlineMode || writeActionsDisabled || disableLifecycleActions })]
+      ? [textAction("Delete", `delete-deleted-glossary:${glossary.id}`, { disabled: writeActionsDisabled || disableLifecycleActions })]
       : []),
   ];
   const resolutionMarkup = resolution

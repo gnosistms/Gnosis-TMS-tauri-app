@@ -4,6 +4,12 @@ import { invoke } from "./runtime.js";
 import { normalizeQaList, sortQaLists } from "./qa-list-shared.js";
 import { state } from "./state.js";
 import { showNoticeBadge } from "./status-feedback.js";
+import {
+  clearRestoredLocalHardDeleteTombstones,
+  filterLocalHardDeletedResources,
+  isLocalHardDeletedResource,
+} from "./local-hard-delete-store.js";
+import { isSoftDeletedResource } from "./resource-write-policy.js";
 
 function ensureInvoke() {
   if (!invoke) {
@@ -318,6 +324,35 @@ function mergeQaListRepoMetadata(localQaLists, remoteRepos) {
   );
 }
 
+function applyLocalQaListHardDeleteState(team, qaLists) {
+  const items = Array.isArray(qaLists) ? qaLists : [];
+  clearRestoredLocalHardDeleteTombstones(team, "qaList", items, {
+    isActive: (qaList) => !isSoftDeletedResource(qaList, "qaList"),
+  });
+  return filterLocalHardDeletedResources(team, "qaList", items, {
+    isDeleted: (qaList) => isSoftDeletedResource(qaList, "qaList"),
+  });
+}
+
+function filterDeletedQaListSyncTargets(team, localQaLists, remoteRepos) {
+  const deletedRepoNames = new Set(
+    (Array.isArray(localQaLists) ? localQaLists : [])
+      .map(normalizeQaList)
+      .filter((qaList) => qaList?.lifecycleState === "deleted")
+      .map((qaList) => qaList.repoName)
+      .filter(Boolean),
+  );
+  return (Array.isArray(remoteRepos) ? remoteRepos : []).filter((repo) =>
+    !deletedRepoNames.has(repo?.name)
+    && !isLocalHardDeletedResource(team, "qaList", {
+      repoName: repo?.name,
+      fullName: repo?.fullName,
+      repoId: repo?.repoId,
+      nodeId: repo?.nodeId,
+    })
+  );
+}
+
 export async function loadRepoBackedQaListsForTeam(team, options = {}) {
   const offlineMode = options.offlineMode === true;
   const emptyResult = {
@@ -336,7 +371,9 @@ export async function loadRepoBackedQaListsForTeam(team, options = {}) {
 
   if (offlineMode || !teamSupportsQaListRepos(team)) {
     return {
-      qaLists: sortQaLists(localQaLists.map(normalizeQaList).filter(Boolean)),
+      qaLists: sortQaLists(
+        applyLocalQaListHardDeleteState(team, localQaLists.map(normalizeQaList).filter(Boolean)),
+      ),
       remoteRepos: [],
       syncSnapshots: [],
       syncIssue: "",
@@ -346,14 +383,16 @@ export async function loadRepoBackedQaListsForTeam(team, options = {}) {
   }
 
   const remoteRepos = await listRemoteQaListReposForTeam(team);
-  const syncSnapshots = remoteRepos.length > 0
-    ? await syncQaListReposForTeam(team, remoteRepos)
+  const syncTargets = filterDeletedQaListSyncTargets(team, localQaLists, remoteRepos);
+  const syncSnapshots = syncTargets.length > 0
+    ? await syncQaListReposForTeam(team, syncTargets)
     : [];
   localQaLists = await listLocalQaListsForTeam(team);
   const syncIssue = getQaListSyncIssueMessage(syncSnapshots);
+  const mergedQaLists = mergeQaListRepoMetadata(localQaLists, remoteRepos);
 
   return {
-    qaLists: mergeQaListRepoMetadata(localQaLists, remoteRepos),
+    qaLists: applyLocalQaListHardDeleteState(team, mergedQaLists),
     remoteRepos,
     syncSnapshots,
     syncIssue,

@@ -11,6 +11,9 @@ export function mapProjectToProjectRepoSyncDescriptor(project) {
     || !project.name.trim()
     || typeof project?.fullName !== "string"
     || !project.fullName.trim()
+    || project?.lifecycleState === "deleted"
+    || project?.lifecycleState === "softDeleted"
+    || project?.status === "deleted"
     || project?.remoteState === "missing"
     || project?.remoteState === "deleted"
     || project?.recordState === "tombstone"

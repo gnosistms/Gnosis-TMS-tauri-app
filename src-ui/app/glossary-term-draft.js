@@ -28,6 +28,7 @@ import {
   getGlossarySyncIssueMessage,
   syncSingleGlossaryForTeam,
 } from "./glossary-repo-flow.js";
+import { getGlossaryWritePolicy } from "./resource-write-policy.js";
 import {
   buildGlossaryTermFromDraft,
   ensureGlossaryTermReadyForEdit,
@@ -376,6 +377,11 @@ export async function openGlossaryTermEditor(render, termId = null) {
     showNoticeBadge("You do not have permission to edit glossary terms in this team.", render);
     return;
   }
+  const policy = getGlossaryWritePolicy({ team, glossary });
+  if (!policy.allowed) {
+    showNoticeBadge(policy.message, render);
+    return;
+  }
   if (await ensureGlossaryNotTombstoned(render, team, glossary)) {
     return;
   }
@@ -589,6 +595,12 @@ export async function submitGlossaryTermEditor(render) {
 
   if (!canManageGlossaries(team)) {
     state.glossaryTermEditor.error = "You do not have permission to edit glossary terms in this team.";
+    render();
+    return;
+  }
+  const policy = getGlossaryWritePolicy({ team, glossary });
+  if (!policy.allowed) {
+    state.glossaryTermEditor.error = policy.message;
     render();
     return;
   }

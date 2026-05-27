@@ -1,6 +1,6 @@
 import { state } from "../state.js";
-import { canMutateProjectFiles } from "../resource-capabilities.js";
 import { showNoticeBadge } from "../status-feedback.js";
+import { getProjectWritePolicy } from "../resource-write-policy.js";
 import {
   clearProjectSearch,
   loadMoreProjectSearchResults,
@@ -99,24 +99,106 @@ const READ_ONLY_PROJECT_WRITE_PREFIXES = [
   "repair-project:",
   "rebuild-project-repo:",
   "restore-project:",
-  "delete-deleted-project:",
 ];
 
 function selectedTeam() {
   return state.teams.find((team) => team.id === state.selectedTeamId) ?? null;
 }
 
-function blockReadOnlyProjectWrite(action, render) {
-  if (canMutateProjectFiles(selectedTeam())) {
-    return false;
+function findProjectForAction(projectId) {
+  return (
+    state.projects.find((project) => project?.id === projectId)
+    ?? state.deletedProjects.find((project) => project?.id === projectId)
+    ?? null
+  );
+}
+
+function findChapterContextForAction(chapterId) {
+  for (const project of [...state.projects, ...state.deletedProjects]) {
+    const chapter = Array.isArray(project?.chapters)
+      ? project.chapters.find((item) => item?.id === chapterId)
+      : null;
+    if (chapter) {
+      return { project, chapter };
+    }
   }
+  return { project: null, chapter: null };
+}
+
+function projectWritePolicyForAction(action) {
+  const team = selectedTeam();
+  const deletedProjectId = actionSuffix(action, "delete-deleted-project:");
+  if (deletedProjectId) {
+    return getProjectWritePolicy({
+      team,
+      project: findProjectForAction(deletedProjectId),
+      actionKind: "localHardDelete",
+    });
+  }
+
+  const restoreProjectId = actionSuffix(action, "restore-project:");
+  if (restoreProjectId) {
+    return getProjectWritePolicy({
+      team,
+      project: findProjectForAction(restoreProjectId),
+      actionKind: "restoreProject",
+    });
+  }
+
+  const projectPrefixes = [
+    "rename-project:",
+    "delete-project:",
+    "add-project-files:",
+    "repair-project:",
+    "rebuild-project-repo:",
+    "clear-deleted-files:",
+  ];
+  for (const prefix of projectPrefixes) {
+    const projectId = actionSuffix(action, prefix);
+    if (projectId) {
+      return getProjectWritePolicy({
+        team,
+        project: findProjectForAction(projectId),
+        actionKind: "sharedWrite",
+      });
+    }
+  }
+
+  const restoreChapterId = actionSuffix(action, "restore-file:");
+  if (restoreChapterId) {
+    const { project, chapter } = findChapterContextForAction(restoreChapterId);
+    return getProjectWritePolicy({ team, project, chapter, actionKind: "restoreChapter" });
+  }
+
+  const chapterPrefixes = [
+    "rename-file:",
+    "delete-file:",
+    "delete-deleted-file:",
+    "add-translation-to-file:",
+  ];
+  for (const prefix of chapterPrefixes) {
+    const chapterId = actionSuffix(action, prefix);
+    if (chapterId) {
+      const { project, chapter } = findChapterContextForAction(chapterId);
+      return getProjectWritePolicy({ team, project, chapter, actionKind: "sharedWrite" });
+    }
+  }
+
+  return getProjectWritePolicy({ team, actionKind: "sharedWrite" });
+}
+
+function blockReadOnlyProjectWrite(action, render) {
   const blocked =
     READ_ONLY_PROJECT_WRITE_ACTIONS.has(action)
     || READ_ONLY_PROJECT_WRITE_PREFIXES.some((prefix) => action.startsWith(prefix));
   if (!blocked) {
     return false;
   }
-  showNoticeBadge("Read-only users cannot modify project files.", render, 2600);
+  const policy = projectWritePolicyForAction(action);
+  if (policy.allowed) {
+    return false;
+  }
+  showNoticeBadge(policy.message, render, 2600);
   return true;
 }
 

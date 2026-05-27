@@ -1,7 +1,7 @@
 import { actionSuffix, runWithImmediateLoading } from "../action-helpers.js";
 import { state } from "../state.js";
-import { canManageQaLists } from "../qa-list-shared.js";
 import { showNoticeBadge } from "../status-feedback.js";
+import { getQaListWritePolicy } from "../resource-write-policy.js";
 import {
   cancelQaListCreation,
   cancelQaListImportModal,
@@ -82,6 +82,10 @@ export function createQaActions(render) {
 
   return async function handleQaAction(action, event) {
     const selectedTeam = state.teams.find((team) => team.id === state.selectedTeamId) ?? null;
+    const selectedQaList =
+      state.qaLists.find((qaList) => qaList.id === state.selectedQaListId)
+      ?? state.qaLists[0]
+      ?? null;
     const writeAction =
       action.startsWith("edit-qa-term:")
       || action.startsWith("delete-qa-term:")
@@ -99,9 +103,33 @@ export function createQaActions(render) {
       || action === "submit-qa-list-creation"
       || action === "submit-qa-list-rename"
       || action === "confirm-qa-list-permanent-deletion";
-    if (writeAction && !canManageQaLists(selectedTeam)) {
-      showNoticeBadge("Read-only users cannot modify QA lists.", render, 2600);
-      return true;
+    if (writeAction) {
+      const localHardDeleteId = actionSuffix(action, "delete-deleted-qa-list:");
+      const restoreId = actionSuffix(action, "restore-qa-list:");
+      const targetId =
+        localHardDeleteId
+        || restoreId
+        || actionSuffix(action, "rename-qa-list:")
+        || actionSuffix(action, "make-default-qa-list:")
+        || actionSuffix(action, "delete-qa-list:")
+        || selectedQaList?.id
+        || null;
+      const targetQaList =
+        state.qaLists.find((qaList) => qaList.id === targetId)
+        ?? selectedQaList;
+      const policy = getQaListWritePolicy({
+        team: selectedTeam,
+        qaList: targetQaList,
+        actionKind: localHardDeleteId
+          ? "localHardDelete"
+          : restoreId
+            ? "restoreQaList"
+            : "sharedWrite",
+      });
+      if (!policy.allowed) {
+        showNoticeBadge(policy.message, render, 2600);
+        return true;
+      }
     }
 
     if (action === "toggle-qa-term-inline-style:ruby") {

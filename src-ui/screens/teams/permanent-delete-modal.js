@@ -32,12 +32,12 @@ export function renderTeamPermanentDeletionModal(state) {
     <div class="modal-backdrop">
       <section class="card modal-card modal-card--compact">
         <div class="card__body modal-card__body">
-          <p class="card__eyebrow">PERMANENT DELETE</p>
-          <h2 class="modal__title">Permanently Delete Team?</h2>
+          <p class="card__eyebrow">LOCAL DELETE</p>
+          <h2 class="modal__title">Remove Local Team Copy?</h2>
           <p class="modal__supporting">
-            To permanently delete this team, type <strong>${escapeHtml(
+            This removes the local copy from this computer only. It will not delete the GitHub organization, its repositories, or other team members' computers. To remove it, type <strong>${escapeHtml(
               deletion.teamName,
-            )}</strong> in the text box below. Then click Delete. This will permanently delete the GitHub organization and all of its repositories. This action can not be undone.
+            )}</strong> in the text box below. Then click Delete.
           </p>
           <div class="modal__form">
             <label class="field">
@@ -45,7 +45,7 @@ export function renderTeamPermanentDeletionModal(state) {
               <input
                 class="field__input"
                 type="text"
-                placeholder="Enter team name here to delete"
+                placeholder="Enter team name here to remove"
                 value="${escapeHtml(deletion.confirmationText)}"
                 data-team-permanent-delete-input
                 ${isDeleting ? "disabled" : ""}
