@@ -126,6 +126,11 @@ const {
   syncEditorBackgroundNow,
   syncEditorBackgroundNowWithSummary,
 } = await import("./editor-background-sync.js");
+const {
+  enqueueRepoWrite,
+  resetRepoWriteQueue,
+  waitForRepoWriteQueueIdle,
+} = await import("./repo-write-queue.js");
 
 function deferred() {
   let resolve = null;
@@ -274,6 +279,7 @@ test.afterEach(async () => {
   scheduledIntervals.clear();
   scheduledIntervalDelays.clear();
   await syncAndStopEditorBackgroundSyncSession(() => {});
+  resetRepoWriteQueue();
   resetSessionState();
 });
 
@@ -389,8 +395,9 @@ test("background sync does not rerender the editor body when sync starts or fini
   };
 
   const render = createRenderRecorder();
-  startEditorBackgroundSyncSession(render, { skipInitialSync: true });
+  startEditorBackgroundSyncSession(render, { skipInitialSync: true, forceRestart: true });
   await Promise.resolve();
+  invokeLog.length = 0;
 
   assert.deepEqual(render.calls, []);
 
@@ -405,6 +412,48 @@ test("background sync does not rerender the editor body when sync starts or fini
 
   assert.deepEqual(render.calls, []);
   assert.equal(state.editorChapter.chapterBaseCommitSha, "head-2");
+});
+
+test("background sync waits behind active repo writes for the same project", async () => {
+  installEditorFixture();
+  state.editorChapter.rows = [createEditorRowFixture()];
+
+  const blocker = deferred();
+  const blockerPromise = enqueueRepoWrite({
+    scope: "7:project-1:fixture-project",
+    kind: "testBlocker",
+    run: () => blocker.promise,
+  });
+  const syncRequest = deferred();
+  invokeHandler = async (command) => {
+    if (command === "sync_gtms_project_editor_repo") {
+      return syncRequest.promise;
+    }
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  const render = createRenderRecorder();
+  startEditorBackgroundSyncSession(render, { skipInitialSync: true, forceRestart: true });
+  await Promise.resolve();
+  invokeLog.length = 0;
+
+  const pendingSync = syncEditorBackgroundNow(render, { skipDirtyFlush: true });
+  await Promise.resolve();
+  assert.deepEqual(invokeLog, []);
+
+  blocker.resolve(null);
+  await blockerPromise;
+  await Promise.resolve();
+
+  assert.deepEqual(invokeLog.map((entry) => entry.command), ["sync_gtms_project_editor_repo"]);
+  syncRequest.resolve({
+    changedRowIds: [],
+    deletedRowIds: [],
+    insertedRowIds: [],
+    newHeadSha: "head-2",
+  });
+  await pendingSync;
+  await waitForRepoWriteQueueIdle("7:project-1:fixture-project");
 });
 
 test("editor background sync session uses a three-minute remote sync interval", async () => {

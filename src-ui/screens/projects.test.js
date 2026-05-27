@@ -30,6 +30,7 @@ const {
   requestProjectWriteIntent,
   resetProjectWriteCoordinator,
 } = await import("../app/project-write-coordinator.js");
+const { resetRepoWriteQueue } = await import("../app/repo-write-queue.js");
 const { state: appState, resetSessionState } = await import("../app/state.js");
 
 function cssRuleBlock(css, selector) {
@@ -104,6 +105,7 @@ function actionButtonHtml(html, action) {
 
 test.afterEach(() => {
   resetProjectWriteCoordinator();
+  resetRepoWriteQueue();
   resetSessionState();
 });
 

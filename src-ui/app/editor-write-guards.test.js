@@ -50,6 +50,16 @@ const fakeLocalStorage = {
   },
 };
 
+function deferred() {
+  let resolve = null;
+  let reject = null;
+  const promise = new Promise((nextResolve, nextReject) => {
+    resolve = nextResolve;
+    reject = nextReject;
+  });
+  return { promise, resolve, reject };
+}
+
 globalThis.document = fakeDocument;
 globalThis.navigator = {
   platform: "MacIntel",
@@ -97,6 +107,7 @@ const {
   state,
 } = await import("./state.js");
 const {
+  applyEditorSelectionsToProjectState,
   normalizeEditorRows,
   updateEditorChapterRow,
 } = await import("./editor-state-flow.js");
@@ -104,6 +115,14 @@ const {
   flushDirtyEditorRows,
   toggleEditorRowFieldMarker,
 } = await import("./editor-persistence-flow.js");
+const {
+  enqueueRepoWrite,
+  resetRepoWriteQueue,
+  waitForRepoWriteQueueIdle,
+} = await import("./repo-write-queue.js");
+const {
+  resetEditorOperationQueue,
+} = await import("./editor-operation-queue.js");
 const {
   deleteActiveEditorRowComment,
   saveActiveEditorRowComment,
@@ -149,6 +168,8 @@ test.afterEach(() => {
   invokeHandler = async () => null;
   invokeLog.length = 0;
   localStorageState.clear();
+  resetEditorOperationQueue();
+  resetRepoWriteQueue();
   resetSessionState();
 });
 
@@ -166,6 +187,64 @@ test("flushDirtyEditorRows blocks while a style save is in flight even without d
 
   assert.equal(flushed, false);
   assert.deepEqual(invokeLog, []);
+});
+
+test("non-durable dirty row flush enqueues row text save without waiting for the repo lane", async () => {
+  installEditorFixture();
+  state.editorChapter = {
+    ...state.editorChapter,
+    dirtyRowIds: new Set(["row-1"]),
+  };
+  state.editorChapter.rows[0] = {
+    ...state.editorChapter.rows[0],
+    fields: { es: "hola editada" },
+    saveStatus: "dirty",
+  };
+
+  const blocker = deferred();
+  const blockerPromise = enqueueRepoWrite({
+    scope: "7:project-1:fixture-project",
+    kind: "testBlocker",
+    run: () => blocker.promise,
+  });
+
+  invokeHandler = async (command, payload = {}) => {
+    if (command === "update_gtms_editor_row_fields") {
+      return {
+        status: "saved",
+        row: {
+          rowId: payload.input?.rowId,
+          textStyle: "paragraph",
+          fields: payload.input?.fields,
+          fieldStates: { es: { reviewed: false, pleaseCheck: false } },
+        },
+        sourceWordCounts: {},
+        chapterBaseCommitSha: "head-2",
+      };
+    }
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  const flushed = await flushDirtyEditorRows(
+    () => {},
+    {
+      updateEditorChapterRow,
+      applyEditorSelectionsToProjectState,
+    },
+    { waitForDurable: false },
+  );
+
+  assert.equal(flushed, true);
+  assert.equal(state.editorChapter.rows[0].saveStatus, "saving");
+  assert.deepEqual(invokeLog, []);
+
+  blocker.resolve(null);
+  await blockerPromise;
+  await waitForRepoWriteQueueIdle("7:project-1:fixture-project");
+
+  assert.deepEqual(invokeLog.map((entry) => entry.command), ["update_gtms_editor_row_fields"]);
+  assert.equal(state.editorChapter.rows[0].persistedFields.es, "hola editada");
+  assert.equal(state.editorChapter.rows[0].saveStatus, "idle");
 });
 
 test("toggleEditorRowFieldMarker does not start a marker write while the row style is saving", async () => {
@@ -256,6 +335,7 @@ test("toggleEditorRowFieldMarker flushes other dirty rows before saving the mark
       applyEditorSelectionsToProjectState() {},
     },
   );
+  await waitForRepoWriteQueueIdle("7:project-1:fixture-project");
 
   assert.deepEqual(invokeLog.map((entry) => entry.command), [
     "update_gtms_editor_row_fields",
@@ -265,6 +345,71 @@ test("toggleEditorRowFieldMarker flushes other dirty rows before saving the mark
   assert.equal(state.editorChapter.rows[0].persistedFields.es, "hola guardado");
   assert.equal(state.editorChapter.rows[0].saveStatus, "idle");
   assert.equal(state.editorChapter.rows[1].fieldStates.es.reviewed, true);
+});
+
+test("toggleEditorRowFieldMarker lets the latest repeated click win while save is pending", async () => {
+  installEditorFixture();
+  const firstMarkerSave = deferred();
+  let markerCallCount = 0;
+
+  invokeHandler = async (command, payload = {}) => {
+    if (command === "update_gtms_editor_row_field_flag") {
+      markerCallCount += 1;
+      if (markerCallCount === 1) {
+        assert.equal(payload.input?.enabled, true);
+        return firstMarkerSave.promise;
+      }
+      assert.equal(payload.input?.enabled, false);
+      return {
+        reviewed: false,
+        pleaseCheck: false,
+        chapterBaseCommitSha: "head-3",
+      };
+    }
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  await toggleEditorRowFieldMarker(
+    () => {},
+    "row-1",
+    "es",
+    "please-check",
+    {
+      updateEditorChapterRow,
+      applyEditorSelectionsToProjectState,
+    },
+  );
+  assert.equal(state.editorChapter.rows[0].fieldStates.es.pleaseCheck, true);
+
+  await toggleEditorRowFieldMarker(
+    () => {},
+    "row-1",
+    "es",
+    "please-check",
+    {
+      updateEditorChapterRow,
+      applyEditorSelectionsToProjectState,
+    },
+  );
+  assert.equal(state.editorChapter.rows[0].fieldStates.es.pleaseCheck, false);
+  assert.equal(state.editorChapter.rows[0].markerSaveState.status, "saving");
+
+  firstMarkerSave.resolve({
+    reviewed: false,
+    pleaseCheck: true,
+    chapterBaseCommitSha: "head-2",
+  });
+  await waitForRepoWriteQueueIdle("7:project-1:fixture-project");
+
+  assert.deepEqual(
+    invokeLog
+      .filter((entry) => entry.command === "update_gtms_editor_row_field_flag")
+      .map((entry) => entry.payload.input?.enabled),
+    [true, false],
+  );
+  assert.equal(state.editorChapter.rows[0].fieldStates.es.pleaseCheck, false);
+  assert.equal(state.editorChapter.rows[0].persistedFieldStates.es.pleaseCheck, false);
+  assert.equal(state.editorChapter.rows[0].markerSaveState.status, "idle");
 });
 
 test("comment saves and deletes do not start while the row style is saving", async () => {

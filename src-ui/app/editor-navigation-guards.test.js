@@ -23,16 +23,21 @@ test("leaving the translate editor is blocked when dirty rows cannot be flushed"
 
 test("leaving the translate editor proceeds after dirty rows flush", async () => {
   const notices = [];
+  let flushOptions = null;
 
   const allowed = await guardLeavingTranslateEditor({
     currentScreen: "translate",
     nextScreen: "projects",
     render: () => {},
-    flushDirtyEditorRows: async () => true,
+    flushDirtyEditorRows: async (_render, options) => {
+      flushOptions = options;
+      return true;
+    },
     showBlockedNotice: (message) => notices.push(message),
   });
 
   assert.equal(allowed, true);
+  assert.deepEqual(flushOptions, { waitForDurable: false });
   assert.deepEqual(notices, []);
 });
 

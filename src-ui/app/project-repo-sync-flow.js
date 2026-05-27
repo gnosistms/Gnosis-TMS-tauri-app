@@ -13,6 +13,11 @@ import {
   PROJECT_REPO_SYNC_STATUS_UPDATE_REQUIRED,
 } from "./project-repo-sync-shared.js";
 import { requireAppUpdate } from "./updater-flow.js";
+import {
+  enqueueRepoWrite,
+  projectRepoScope,
+  repoWriteQueueHasActiveWrites,
+} from "./repo-write-queue.js";
 
 const PROJECT_REPO_SYNC_POLL_DELAY_MS = 1400;
 
@@ -24,6 +29,15 @@ function applyProjectRepoSyncSnapshots(snapshots) {
   state.projectRepoSyncByProjectId = Object.fromEntries(
     (snapshots || []).map((snapshot) => [snapshot.projectId, snapshot]),
   );
+}
+
+function mergeProjectRepoSyncSnapshots(snapshots) {
+  state.projectRepoSyncByProjectId = {
+    ...(state.projectRepoSyncByProjectId ?? {}),
+    ...Object.fromEntries(
+      (snapshots || []).map((snapshot) => [snapshot.projectId, snapshot]),
+    ),
+  };
 }
 
 function summarizeSnapshots(snapshots = []) {
@@ -108,6 +122,88 @@ function hasSyncingRepos(snapshots) {
   return (snapshots || []).some((snapshot) => snapshot?.status === "syncing");
 }
 
+function projectRepoSyncScope(team, descriptor) {
+  return projectRepoScope({
+    team,
+    projectId: descriptor?.projectId,
+    repoName: descriptor?.repoName,
+  });
+}
+
+function queuedSyncBadgeText(waitingCount, totalCount) {
+  if (waitingCount <= 0) {
+    return "Checking local repos...";
+  }
+  if (waitingCount === totalCount) {
+    return `Waiting for local saves in ${waitingCount} project repo${waitingCount === 1 ? "" : "s"}...`;
+  }
+  return `Checking ${totalCount} project repos; waiting for local saves in ${waitingCount}...`;
+}
+
+async function reconcileOneProjectRepoSyncState({
+  render,
+  team,
+  installationId,
+  descriptor,
+  shouldAbort,
+}) {
+  const scope = projectRepoSyncScope(team, descriptor);
+  const input = {
+    installationId,
+    projects: [descriptor],
+  };
+
+  return enqueueRepoWrite({
+    scope,
+    kind: "projectRepoSync",
+    sourceScreen: "projects",
+    errorTarget: {
+      projectId: descriptor.projectId,
+      kind: "projectRepoSync",
+    },
+    metadata: {
+      projectId: descriptor.projectId,
+      repoName: descriptor.repoName,
+    },
+    run: async () => {
+      if (shouldAbort?.()) {
+        return [];
+      }
+
+      const initialSnapshots = await invoke("reconcile_project_repo_sync_states", {
+        input,
+        sessionToken: requireBrokerSession(),
+      });
+      if (shouldAbort?.()) {
+        return Array.isArray(initialSnapshots) ? initialSnapshots : [];
+      }
+
+      mergeProjectRepoSyncSnapshots(initialSnapshots);
+      openRequiredAppUpdatePromptFromProjectSnapshots(initialSnapshots, render);
+      showScopedSyncBadge("projects", syncingBadgeText(initialSnapshots), render);
+      render();
+
+      let snapshots = initialSnapshots;
+      while (hasSyncingRepos(snapshots)) {
+        await delay(PROJECT_REPO_SYNC_POLL_DELAY_MS);
+        if (shouldAbort?.() || state.selectedTeamId !== team.id) {
+          return Array.isArray(snapshots) ? snapshots : [];
+        }
+        snapshots = await invoke("list_project_repo_sync_states", { input });
+        if (shouldAbort?.()) {
+          return Array.isArray(snapshots) ? snapshots : [];
+        }
+        mergeProjectRepoSyncSnapshots(snapshots);
+        openRequiredAppUpdatePromptFromProjectSnapshots(snapshots, render);
+        showScopedSyncBadge("projects", syncingBadgeText(snapshots), render);
+        render();
+      }
+
+      return Array.isArray(snapshots) ? snapshots : [];
+    },
+  });
+}
+
 function openRequiredAppUpdatePromptFromProjectSnapshots(snapshots, render) {
   const requiredSnapshot = (Array.isArray(snapshots) ? snapshots : []).find(
     (snapshot) => snapshot?.status === PROJECT_REPO_SYNC_STATUS_UPDATE_REQUIRED,
@@ -157,39 +253,27 @@ export async function reconcileProjectRepoSyncStates(render, team, projects, opt
     render();
     return;
   }
-  showScopedSyncBadge("projects", "Checking local repos...", render);
+  const waitingCount = input.projects
+    .filter((project) => repoWriteQueueHasActiveWrites(projectRepoSyncScope(team, project)))
+    .length;
+  showScopedSyncBadge("projects", queuedSyncBadgeText(waitingCount, input.projects.length), render);
 
-  const initialSnapshots = await invoke("reconcile_project_repo_sync_states", {
-    input,
-    sessionToken: requireBrokerSession(),
-  });
-  if (shouldAbort?.()) {
-    return Array.isArray(initialSnapshots) ? initialSnapshots : [];
-  }
-  applyProjectRepoSyncSnapshots(initialSnapshots);
-  openRequiredAppUpdatePromptFromProjectSnapshots(initialSnapshots, render);
-  showScopedSyncBadge("projects", syncingBadgeText(initialSnapshots), render);
-  render();
-
-  let snapshots = initialSnapshots;
-  while (hasSyncingRepos(snapshots)) {
-    await delay(PROJECT_REPO_SYNC_POLL_DELAY_MS);
-    if (shouldAbort?.() || state.selectedTeamId !== team.id) {
-      return Array.isArray(snapshots) ? snapshots : [];
-    }
-    snapshots = await invoke("list_project_repo_sync_states", { input });
-    if (shouldAbort?.()) {
-      return Array.isArray(snapshots) ? snapshots : [];
-    }
-    applyProjectRepoSyncSnapshots(snapshots);
-    openRequiredAppUpdatePromptFromProjectSnapshots(snapshots, render);
-    showScopedSyncBadge("projects", syncingBadgeText(snapshots), render);
-    render();
-  }
+  const snapshotResults = await Promise.all(
+    input.projects.map((descriptor) =>
+      reconcileOneProjectRepoSyncState({
+        render,
+        team,
+        installationId: input.installationId,
+        descriptor,
+        shouldAbort,
+      })),
+  );
+  const snapshots = snapshotResults.flat();
 
   if (shouldAbort?.()) {
     return Array.isArray(snapshots) ? snapshots : [];
   }
+  applyProjectRepoSyncSnapshots(snapshots);
   if (clearStatusOnComplete) {
     clearScopedSyncBadge("projects", render);
   }

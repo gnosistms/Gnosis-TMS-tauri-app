@@ -63,6 +63,7 @@ import {
   projectRepoWriteScope,
   requestProjectWriteIntent,
 } from "./project-write-coordinator.js";
+import { enqueueRepoWrite } from "./repo-write-queue.js";
 
 export {
   findChapterContext,
@@ -323,12 +324,21 @@ export async function purgeLocalProjectRepo(selectedTeam, projectName, projectId
     return;
   }
 
-  await invoke("purge_local_gtms_project_repo", {
-    input: {
-      installationId: selectedTeam.installationId,
+  await enqueueRepoWrite({
+    scope: projectRepoWriteScope(selectedTeam, projectId, projectName),
+    kind: "projectLocalRepoPurge",
+    sourceScreen: "projects",
+    errorTarget: {
       projectId,
-      repoName: projectName,
+      kind: "projectLocalRepoPurge",
     },
+    run: () => invoke("purge_local_gtms_project_repo", {
+      input: {
+        installationId: selectedTeam.installationId,
+        projectId,
+        repoName: projectName,
+      },
+    }),
   });
 }
 
@@ -483,7 +493,7 @@ function scheduleProjectRepoSyncAfterLocalWrite(render, selectedTeam, project, o
   const teamId = selectedTeam.id;
   requestProjectWriteIntent({
     key: projectRepoSyncIntentKey(projectId),
-    scope: projectRepoWriteScope(selectedTeam, projectId),
+    scope: projectRepoWriteScope(selectedTeam, project),
     teamId,
     projectId,
     type: "projectRepoSync",
@@ -1295,7 +1305,7 @@ export async function submitChapterRename(render) {
   resetChapterRename();
   requestProjectWriteIntent({
     key: chapterTitleIntentKey(context.project.id, context.chapter.id),
-    scope: projectRepoWriteScope(selectedTeam, context.project.id),
+    scope: projectRepoWriteScope(selectedTeam, context.project),
     teamId: selectedTeam.id,
     projectId: context.project.id,
     chapterId: context.chapter.id,
@@ -1384,7 +1394,7 @@ async function persistChapterGlossaryLinks(render, chapterId, nextGlossary) {
 
   requestProjectWriteIntent({
     key: chapterGlossaryIntentKey(context.project.id, chapterId),
-    scope: projectRepoWriteScope(selectedTeam, context.project.id),
+    scope: projectRepoWriteScope(selectedTeam, context.project),
     teamId: selectedTeam.id,
     projectId: context.project.id,
     chapterId,
@@ -1510,7 +1520,7 @@ async function submitCoordinatedChapterLifecycleMutation(render, chapterId, opti
 
   requestProjectWriteIntent({
     key: chapterLifecycleIntentKey(context.project.id, chapterId),
-    scope: projectRepoWriteScope(selectedTeam, context.project.id),
+    scope: projectRepoWriteScope(selectedTeam, context.project),
     teamId: selectedTeam.id,
     projectId: context.project.id,
     chapterId,

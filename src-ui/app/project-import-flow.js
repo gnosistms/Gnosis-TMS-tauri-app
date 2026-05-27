@@ -34,6 +34,7 @@ import {
   projectRepoWriteScope,
   requestProjectWriteIntent,
 } from "./project-write-coordinator.js";
+import { enqueueRepoWrite } from "./repo-write-queue.js";
 import { openLocalFilePathPicker, openLocalFilePicker } from "./local-file-picker.js";
 import { normalizeSupportedLanguageCode } from "../lib/language-options.js";
 
@@ -402,7 +403,8 @@ function currentProjectsQueryData(team, projectId) {
   });
 }
 
-async function applyImportedFileToProject(team, projectId, result, linkedGlossary = null) {
+async function applyImportedFileToProject(team, targetProject, result, linkedGlossary = null) {
+  const projectId = typeof targetProject === "string" ? targetProject : targetProject?.id;
   const importedFile = {
     ...buildImportedFileEntry(result),
     linkedGlossary,
@@ -412,7 +414,7 @@ async function applyImportedFileToProject(team, projectId, result, linkedGlossar
   await queryClient.cancelQueries({ queryKey });
   requestProjectWriteIntent({
     key: chapterImportIntentKey(projectId, importedFile.id),
-    scope: projectRepoWriteScope(team, projectId),
+    scope: projectRepoWriteScope(team, targetProject),
     teamId,
     projectId,
     chapterId: importedFile.id,
@@ -442,7 +444,8 @@ async function applyImportedFileToProject(team, projectId, result, linkedGlossar
   });
 }
 
-async function applyImportedFilesToProject(team, projectId, results, linkedGlossary = null) {
+async function applyImportedFilesToProject(team, targetProject, results, linkedGlossary = null) {
+  const projectId = typeof targetProject === "string" ? targetProject : targetProject?.id;
   const importedFiles = (Array.isArray(results) ? results : [])
     .filter(Boolean)
     .map((result) => ({
@@ -459,7 +462,7 @@ async function applyImportedFilesToProject(team, projectId, results, linkedGloss
   for (const importedFile of importedFiles) {
     requestProjectWriteIntent({
       key: chapterImportIntentKey(projectId, importedFile.id),
-      scope: projectRepoWriteScope(team, projectId),
+      scope: projectRepoWriteScope(team, targetProject),
       teamId,
       projectId,
       chapterId: importedFile.id,
@@ -974,8 +977,33 @@ async function completeProjectImport(render, selectedFile, fileType, options = {
   await waitForNextPaint();
 
   try {
-    const result = await importProjectFileResult(selectedTeam, targetProject, selectedFile, fileType, options);
-    const defaultAssignment = await assignDefaultGlossaryToImportedFile(selectedTeam, targetProject, result);
+    const { result, defaultAssignment } = await enqueueRepoWrite({
+      scope: projectRepoWriteScope(selectedTeam, targetProject),
+      kind: "projectImport",
+      sourceScreen: "projects",
+      errorTarget: {
+        projectId: targetProject.id,
+        kind: "projectImport",
+      },
+      run: async () => {
+        const importedResult = await importProjectFileResult(
+          selectedTeam,
+          targetProject,
+          selectedFile,
+          fileType,
+          options,
+        );
+        const importedDefaultAssignment = await assignDefaultGlossaryToImportedFile(
+          selectedTeam,
+          targetProject,
+          importedResult,
+        );
+        return {
+          result: importedResult,
+          defaultAssignment: importedDefaultAssignment,
+        };
+      },
+    });
 
     state.projectImport = {
       ...state.projectImport,
@@ -995,7 +1023,7 @@ async function completeProjectImport(render, selectedFile, fileType, options = {
       selectedSourceLanguageCode: "",
       sourceLanguageScrollTop: 0,
     };
-    await applyImportedFileToProject(selectedTeam, projectId, result, defaultAssignment.linkedGlossary);
+    await applyImportedFileToProject(selectedTeam, targetProject, result, defaultAssignment.linkedGlossary);
     render();
     await waitForNextPaint();
     showProjectsStatus(render, "Syncing project repo...");
@@ -1161,21 +1189,30 @@ export async function importProjectFiles(render, selectedFiles, options = {}) {
     if (state.projectImport.uploadCancelRequested === true) {
       wasCanceled = true;
     } else if (batchPayload.batchFiles.length > 0) {
-      const batchResult = await importProjectFilesBatch(
-        render,
-        selectedTeam,
-        targetProject,
-        batchPayload.batchFiles,
-        batchId,
-        linkedGlossary,
-      );
+      const batchResult = await enqueueRepoWrite({
+        scope: projectRepoWriteScope(selectedTeam, targetProject),
+        kind: "projectImportBatch",
+        sourceScreen: "projects",
+        errorTarget: {
+          projectId: targetProject.id,
+          kind: "projectImportBatch",
+        },
+        run: () => importProjectFilesBatch(
+          render,
+          selectedTeam,
+          targetProject,
+          batchPayload.batchFiles,
+          batchId,
+          linkedGlossary,
+        ),
+      });
       importedResults = Array.isArray(batchResult?.imported) ? batchResult.imported : [];
       failedFileNames = [
         ...failedFileNames,
         ...failedFileNamesFromBatchResult(batchResult),
       ];
       wasCanceled = batchResult?.canceled === true || state.projectImport.uploadCancelRequested === true;
-      await applyImportedFilesToProject(selectedTeam, projectId, importedResults, linkedGlossary);
+      await applyImportedFilesToProject(selectedTeam, targetProject, importedResults, linkedGlossary);
     }
   } catch (error) {
     state.projectImport = projectImportModalState({

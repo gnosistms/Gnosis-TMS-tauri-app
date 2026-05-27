@@ -2,6 +2,11 @@ import {
   cloneWriteIntentValue,
   createWriteIntentCoordinator,
 } from "./write-intent-coordinator.js";
+import {
+  enqueueRepoWrite,
+  projectRepoScope,
+  publishRepoInvalidation,
+} from "./repo-write-queue.js";
 
 const writeIntents = createWriteIntentCoordinator({
   defaultScope: "project-writes:default",
@@ -54,12 +59,109 @@ export function teamMetadataWriteScope(team) {
   return `team-metadata:${team?.installationId ?? "unknown"}`;
 }
 
-export function projectRepoWriteScope(team, projectId) {
-  return `project-repo:${team?.installationId ?? "unknown"}:${projectId ?? "unknown"}`;
+export function projectRepoWriteScope(team, projectOrId, repoName = "") {
+  const project =
+    projectOrId && typeof projectOrId === "object"
+      ? projectOrId
+      : null;
+  return projectRepoScope({
+    team,
+    project,
+    projectId: project ? project.id : projectOrId,
+    repoName: project ? project.name : repoName,
+  });
+}
+
+function projectIntentInvalidationKeys(intent) {
+  const keys = [];
+  if (intent?.scope) {
+    keys.push(`projectRepo:${intent.scope}`);
+  }
+  if (intent?.projectId) {
+    keys.push(`project:${intent.projectId}`);
+  }
+  if (intent?.projectId && intent?.chapterId) {
+    keys.push(`chapter:${intent.projectId}:${intent.chapterId}`);
+  }
+  if (intent?.teamId) {
+    keys.push(`projectCache:${intent.teamId}`);
+  }
+  return keys;
+}
+
+async function runProjectWriteIntentInRepoQueue(intent, runningVersion, operations) {
+  if (operations.useRepoWriteQueue === false) {
+    return operations.run(intent);
+  }
+
+  return enqueueRepoWrite({
+    scope: intent.scope,
+    operationId: `project:${intent.key}:v${runningVersion}`,
+    kind: intent.type || "projectWrite",
+    sourceScreen: "projects",
+    metadata: {
+      intentKey: intent.key,
+      intentType: intent.type ?? "",
+      version: runningVersion,
+    },
+    errorTarget: {
+      projectId: intent.projectId,
+      chapterId: intent.chapterId,
+      operationId: intent.key,
+      kind: intent.type || "projectWrite",
+    },
+    checkPermission:
+      typeof operations.checkPermission === "function"
+        ? () => {
+            const latest = writeIntents.getIntent(intent.key);
+            if (!latest || latest.version !== runningVersion) {
+              return true;
+            }
+            return operations.checkPermission(latest);
+          }
+        : null,
+    run: () => {
+      const latest = writeIntents.getIntent(intent.key);
+      if (!latest || latest.version !== runningVersion) {
+        return null;
+      }
+      return operations.run(latest);
+    },
+  });
+}
+
+function publishProjectIntentInvalidation(intent) {
+  const keys = projectIntentInvalidationKeys(intent);
+  if (keys.length === 0) {
+    return;
+  }
+  publishRepoInvalidation({
+    keys,
+    repoScope: intent.scope,
+    operationId: intent.key,
+    sourceScreen: "projects",
+    metadata: {
+      intentType: intent.type ?? "",
+      projectId: intent.projectId ?? null,
+      chapterId: intent.chapterId ?? null,
+    },
+  });
 }
 
 export function requestProjectWriteIntent(intent, operations = {}) {
-  return writeIntents.request(intent, operations);
+  const wrappedOperations =
+    typeof operations.run === "function"
+      ? {
+          ...operations,
+          run: (runningIntent) =>
+            runProjectWriteIntentInRepoQueue(runningIntent, runningIntent.version, operations),
+          onSuccess: (confirmedIntent) => {
+            publishProjectIntentInvalidation(confirmedIntent);
+            operations.onSuccess?.(confirmedIntent);
+          },
+        }
+      : operations;
+  return writeIntents.request(intent, wrappedOperations);
 }
 
 export function getProjectWriteIntent(key) {

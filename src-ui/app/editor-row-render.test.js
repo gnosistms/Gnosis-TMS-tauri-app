@@ -93,6 +93,32 @@ test("renderTranslationContentRow makes image URL preview tooltips hang right", 
   assert.match(html, /data-tooltip-align="start"/);
 });
 
+test("renderTranslationContentRow keeps marker buttons clickable while marker save is pending", () => {
+  const html = renderTranslationContentRow(rowWithSection({
+    canEdit: true,
+    markerSaveState: {
+      status: "saving",
+      languageCode: "vi",
+      kind: "please-check",
+      error: "",
+    },
+  }));
+
+  assert.match(html, /data-action="toggle-editor-please-check"/);
+  assert.match(html, /translation-marker-button--please-check[^"]* is-saving/);
+  assert.doesNotMatch(html, /data-action="toggle-editor-please-check"[\s\S]*?disabled[\s\S]*?>/);
+});
+
+test("renderTranslationContentRow keeps marker buttons clickable while row text save is pending", () => {
+  const html = renderTranslationContentRow({
+    ...rowWithSection({ canEdit: true }),
+    saveStatus: "saving",
+  });
+
+  assert.match(html, /data-action="toggle-editor-reviewed"/);
+  assert.doesNotMatch(html, /data-action="toggle-editor-reviewed"[\s\S]*?disabled[\s\S]*?>/);
+});
+
 test("renderTranslationContentRow shows a placeholder while image preview dimensions load", () => {
   clearEditorImagePreviewFrameSizeCacheForTests();
   const html = renderTranslationContentRow(rowWithSection({

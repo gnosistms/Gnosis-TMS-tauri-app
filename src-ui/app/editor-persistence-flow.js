@@ -1,5 +1,4 @@
 import {
-  cloneDirtyRowIds,
   resolveDirtyTrackedEditorRowIds,
   rowHasFieldChanges,
   rowHasPersistedChanges,
@@ -22,7 +21,6 @@ import {
   applyEditorRowMarkerSaveFailed,
   applyEditorRowMarkerSaving,
   applyEditorRowPersistFailed,
-  applyEditorRowPersistQueuedWhileSaving,
   applyEditorRowPersistRequested,
   applyEditorRowPersistReset,
   applyEditorRowPersistSucceeded,
@@ -43,6 +41,7 @@ import {
 } from "./state.js";
 import { showNoticeBadge } from "./status-feedback.js";
 import { normalizeEditorRowTextStyle } from "./editor-row-text-style.js";
+import { requestEditorOperation } from "./editor-operation-queue.js";
 import {
   buildEditorFieldSelector,
   cloneRowFields,
@@ -54,16 +53,18 @@ import {
   reloadEditorRowFromDisk,
 } from "./editor-row-sync-flow.js";
 import {
+  assertEditorWritePermissionForContext,
   assertCurrentEditorWritePermission,
   editorWriteLockIsActive,
   handleEditorPermissionDenied,
   invokeEditorWriteCommand,
 } from "./editor-write-permission.js";
+import { projectRepoScope } from "./repo-write-queue.js";
+import { invoke } from "./runtime.js";
 import {
   renderTranslateBodyPreservingViewport,
 } from "./translate-viewport.js";
 
-const pendingEditorRowPersistByRowId = new Map();
 const pendingEditorDirtyRowScanFrameByRowId = new Map();
 const pendingEditorRowCommitMetadataByRowId = new Map();
 let pendingEditorFootnoteOpenRequest = null;
@@ -88,15 +89,6 @@ function normalizePendingEditorCommitMetadata(commitMetadata) {
   };
 }
 
-function queuePendingEditorCommitMetadata(rowId, commitMetadata) {
-  const normalizedCommitMetadata = normalizePendingEditorCommitMetadata(commitMetadata);
-  if (!rowId || !normalizedCommitMetadata) {
-    return;
-  }
-
-  pendingEditorRowCommitMetadataByRowId.set(rowId, normalizedCommitMetadata);
-}
-
 function takePendingEditorCommitMetadata(rowId) {
   if (!rowId) {
     return null;
@@ -105,6 +97,68 @@ function takePendingEditorCommitMetadata(rowId) {
   const commitMetadata = pendingEditorRowCommitMetadataByRowId.get(rowId) ?? null;
   pendingEditorRowCommitMetadataByRowId.delete(rowId);
   return commitMetadata;
+}
+
+function editorRowTextCoalesceKey(chapterId, rowId) {
+  return `rowText:${chapterId}:${rowId}`;
+}
+
+function editorChapterInvalidationKey(repoScope, chapterId) {
+  return `editorChapter:${repoScope}:${chapterId}`;
+}
+
+function cloneQueueContextValue(value) {
+  if (value == null) {
+    return value;
+  }
+  return typeof structuredClone === "function"
+    ? structuredClone(value)
+    : JSON.parse(JSON.stringify(value));
+}
+
+function queuedEditorWriteTeam(snapshotTeam) {
+  const installationId = Number.isFinite(snapshotTeam?.installationId)
+    ? snapshotTeam.installationId
+    : null;
+  const currentTeam = selectedProjectsTeam();
+  if (
+    installationId !== null
+    && Number.isFinite(currentTeam?.installationId)
+    && currentTeam.installationId === installationId
+  ) {
+    return currentTeam;
+  }
+
+  return (Array.isArray(state.teams) ? state.teams : []).find(
+    (team) => Number.isFinite(team?.installationId) && team.installationId === installationId,
+  ) ?? snapshotTeam;
+}
+
+async function invokeQueuedEditorWriteCommand(command, payload, context, render) {
+  const team = queuedEditorWriteTeam(context?.team ?? null);
+  try {
+    assertEditorWritePermissionForContext({
+      team,
+      project: context?.project ?? null,
+      chapter: context?.chapter ?? null,
+      row: context?.row ?? null,
+      actionKind: context?.actionKind ?? "sharedWrite",
+    });
+  } catch (error) {
+    if (handleEditorPermissionDenied(error, render)) {
+      throw error;
+    }
+    throw error;
+  }
+
+  try {
+    return await invoke(command, payload);
+  } catch (error) {
+    if (handleEditorPermissionDenied(error, render)) {
+      throw error;
+    }
+    throw error;
+  }
 }
 
 function lockConflictFilter() {
@@ -366,6 +420,7 @@ export async function flushDirtyEditorRows(render, operations = {}, options = {}
   if (editorWriteLockIsActive(state.editorChapter)) {
     return true;
   }
+  const waitForDurable = options?.waitForDurable !== false;
 
   const candidateRowIds = resolveDirtyTrackedEditorRowIds(state.editorChapter?.dirtyRowIds, {
     rowIds: Array.isArray(options?.rowIds) ? options.rowIds : null,
@@ -391,10 +446,18 @@ export async function flushDirtyEditorRows(render, operations = {}, options = {}
       continue;
     }
 
-    await persistEditorRowOnBlur(render, rowId, operations);
+    const queued = await persistEditorRowOnBlur(render, rowId, operations, {
+      waitForDurable,
+    });
+    if (queued === false) {
+      return false;
+    }
   }
 
   reconcileDirtyTrackedEditorRows(candidateRowIds);
+  if (!waitForDurable) {
+    return true;
+  }
   return !hasPendingEditorWrites(state.editorChapter, options);
 }
 
@@ -679,19 +742,7 @@ export async function toggleEditorRowFieldMarker(
     return;
   }
 
-  const activeRowId =
-    typeof state.editorChapter.activeRowId === "string" ? state.editorChapter.activeRowId : "";
-  if (activeRowId && activeRowId !== rowId) {
-    const activeRow = findEditorRowById(activeRowId, state.editorChapter);
-    if (rowHasFieldChanges(activeRow)) {
-      await persistEditorRowOnBlur(render, activeRowId, operations);
-      if (state.editorChapter?.chapterId !== editorChapter.chapterId) {
-        return;
-      }
-    }
-  }
-
-  if (!(await flushDirtyEditorRows(render, operations, { excludeRowId: rowId }))) {
+  if (!(await flushDirtyEditorRows(render, operations, { excludeRowId: rowId, waitForDurable: false }))) {
     showNoticeBadge("Finish saving the current row before updating review markers.", render);
     return;
   }
@@ -702,15 +753,6 @@ export async function toggleEditorRowFieldMarker(
 
   const row = await ensureEditorRowReadyForWrite(render, rowId);
   if (!row) {
-    return;
-  }
-
-  if (row.saveStatus !== "idle") {
-    showNoticeBadge("Save the row text before updating review markers.", render);
-    return;
-  }
-
-  if (row.markerSaveState?.status === "saving") {
     return;
   }
 
@@ -737,7 +779,8 @@ export async function toggleEditorRowFieldMarker(
 
   const team = selectedProjectsTeam();
   const context = findChapterContextById(editorChapter.chapterId);
-  if (!Number.isFinite(team?.installationId) || !context?.project?.name) {
+  const repoScope = projectRepoScope({ team, project: context?.project ?? null });
+  if (!Number.isFinite(team?.installationId) || !context?.project?.name || !repoScope) {
     return;
   }
 
@@ -752,58 +795,122 @@ export async function toggleEditorRowFieldMarker(
 
   const previousFieldState = currentFieldState;
   const viewportSnapshot = options?.viewportSnapshot ?? null;
-  markEditorRowDirty(rowId);
-  updateEditorChapterRow(
+
+  if (rowHasFieldChanges(row)) {
+    const queued = await persistEditorRowOnBlur(render, rowId, operations, { waitForDurable: false });
+    if (queued === false || state.editorChapter?.chapterId !== editorChapter.chapterId) {
+      return;
+    }
+  }
+
+  const operationValue = {
+    input: {
+      installationId: team.installationId,
+      projectId: context.project.id,
+      repoName: context.project.name,
+      chapterId: editorChapter.chapterId,
+      rowId,
+      languageCode,
+      flag: kind,
+      enabled: nextEnabled,
+    },
+    chapterId: editorChapter.chapterId,
     rowId,
-    (currentRow) => applyEditorRowMarkerSaving(currentRow, languageCode, kind, nextFieldState),
-  );
-  renderTranslateBodyPreservingViewport(render, viewportSnapshot);
-  render?.({ scope: "translate-sidebar" });
+    languageCode,
+    kind,
+    nextFieldState,
+    previousFieldState,
+    permissionContext: {
+      team: cloneQueueContextValue(team),
+      project: cloneQueueContextValue(context.project),
+      chapter: cloneQueueContextValue(context.chapter),
+      row: cloneQueueContextValue(row),
+      actionKind: "sharedWrite",
+    },
+  };
 
-  try {
-    const payload = await invokeEditorWriteCommand("update_gtms_editor_row_field_flag", {
-      input: {
-        installationId: team.installationId,
-        projectId: context.project.id,
-        repoName: context.project.name,
-        chapterId: editorChapter.chapterId,
-        rowId,
-        languageCode,
-        flag: kind,
-        enabled: nextEnabled,
-      },
-    }, { render, actionKind: "sharedWrite", rowId });
-
-    if (state.editorChapter?.chapterId === editorChapter.chapterId) {
+  const requested = requestEditorOperation({
+    repoScope,
+    chapterScope: `${repoScope}:${editorChapter.chapterId}`,
+    rowScope: `${repoScope}:${editorChapter.chapterId}:${rowId}`,
+    coalesceKey: `marker:${editorChapter.chapterId}:${rowId}:${languageCode}:${kind}`,
+    kind: "marker",
+    value: operationValue,
+    metadata: {
+      projectId: context.project.id,
+      chapterId: editorChapter.chapterId,
+      rowId,
+      languageCode,
+      markerKind: kind,
+    },
+    invalidationKeys: [editorChapterInvalidationKey(repoScope, editorChapter.chapterId)],
+  }, {
+    applyOptimistic: (_operation, previousOperation) => {
+      if (state.editorChapter?.chapterId !== editorChapter.chapterId) {
+        return;
+      }
+      markEditorRowDirty(rowId);
       updateEditorChapterRow(
         rowId,
-        (currentRow) => applyEditorRowMarkerSaved(currentRow, languageCode, payload),
+        (currentRow) => applyEditorRowMarkerSaving(currentRow, languageCode, kind, nextFieldState),
+      );
+      if (previousOperation?.status === "queued") {
+        reconcileDirtyTrackedEditorRows([rowId]);
+      }
+      renderTranslateBodyPreservingViewport(render, viewportSnapshot);
+      render?.({ scope: "translate-sidebar" });
+    },
+    run: async (operation) => invokeQueuedEditorWriteCommand(
+      "update_gtms_editor_row_field_flag",
+      { input: operation.value.input },
+      operation.value.permissionContext,
+      render,
+    ),
+    onSuccess: (payload, operation) => {
+      const value = operation?.value ?? operationValue;
+      if (state.editorChapter?.chapterId !== value.chapterId) {
+        return;
+      }
+      updateEditorChapterRow(
+        value.rowId,
+        (currentRow) => applyEditorRowMarkerSaved(currentRow, value.languageCode, payload),
       );
       state.editorChapter = {
         ...state.editorChapter,
         chapterBaseCommitSha: nextChapterBaseCommitSha(payload, state.editorChapter),
       };
-      reconcileDirtyTrackedEditorRows([rowId]);
+      reconcileDirtyTrackedEditorRows([value.rowId]);
       renderTranslateBodyPreservingViewport(render, viewportSnapshot);
       render?.({ scope: "translate-sidebar" });
 
-      if (state.editorChapter.activeRowId === rowId && state.editorChapter.activeLanguageCode === languageCode) {
+      if (
+        state.editorChapter.activeRowId === value.rowId
+        && state.editorChapter.activeLanguageCode === value.languageCode
+      ) {
         loadActiveEditorFieldHistory(render);
       }
-    }
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    if (state.editorChapter?.chapterId === editorChapter.chapterId) {
-      updateEditorChapterRow(
-        rowId,
-        (currentRow) => applyEditorRowMarkerSaveFailed(currentRow, languageCode, previousFieldState, message),
-      );
-      reconcileDirtyTrackedEditorRows([rowId]);
-      renderTranslateBodyPreservingViewport(render, viewportSnapshot);
-      render?.({ scope: "translate-sidebar" });
-    }
-    showNoticeBadge(message || "The review marker could not be saved.", render);
-  }
+    },
+    onError: (error, operation) => {
+      const message = error instanceof Error ? error.message : String(error);
+      const value = operation?.value ?? operationValue;
+      if (state.editorChapter?.chapterId === value.chapterId) {
+        updateEditorChapterRow(
+          value.rowId,
+          (currentRow) => applyEditorRowMarkerSaveFailed(
+            currentRow,
+            value.languageCode,
+            value.previousFieldState,
+            message,
+          ),
+        );
+        reconcileDirtyTrackedEditorRows([value.rowId]);
+        renderTranslateBodyPreservingViewport(render, viewportSnapshot);
+        render?.({ scope: "translate-sidebar" });
+      }
+      showNoticeBadge(message || "The review marker could not be saved.", render);
+    },
+  });
+  requested.promise.catch(() => {});
 }
 
 export function openEditorUnreviewAllModal(render) {
@@ -1146,7 +1253,7 @@ export async function confirmEditorClearTranslations(render, operations = {}) {
 }
 
 export async function persistEditorRowOnBlur(render, rowId, operations = {}, options = {}) {
-  await persistEditorRow(render, rowId, operations, options);
+  return persistEditorRow(render, rowId, operations, options);
 }
 
 export async function resolveEditorRowConflict(render, rowId, resolution, operations = {}) {
@@ -1212,198 +1319,234 @@ async function persistEditorRow(render, rowId, operations = {}, options = {}) {
     || typeof updateEditorChapterRow !== "function"
     || typeof applyEditorSelectionsToProjectState !== "function"
   ) {
-    return;
+    return false;
   }
 
-  const existingPersist = pendingEditorRowPersistByRowId.get(rowId);
-  if (existingPersist) {
-    queuePendingEditorCommitMetadata(rowId, options?.commitMetadata);
-    const row = findEditorRowById(rowId, state.editorChapter);
-    if (row?.saveStatus === "saving") {
-      updateEditorChapterRow(rowId, (currentRow) => applyEditorRowPersistQueuedWhileSaving(currentRow));
-    }
-    await existingPersist;
-    return;
+  const editorChapter = state.editorChapter;
+  const row =
+    options?.baseFieldsOverride || options?.baseFootnotesOverride || options?.baseImageCaptionsOverride
+      ? findEditorRowById(rowId, state.editorChapter)
+      : await ensureEditorRowReadyForWrite(render, rowId, {
+        allowStaleDirty: true,
+      });
+  if (!row) {
+    reconcileDirtyTrackedEditorRows([rowId]);
+    return true;
   }
 
-  let nextCommitMetadata = normalizePendingEditorCommitMetadata(options?.commitMetadata);
-  const persistPromise = (async () => {
-    while (state.editorChapter?.chapterId) {
-      const editorChapter = state.editorChapter;
-      const row =
-        options?.baseFieldsOverride || options?.baseFootnotesOverride || options?.baseImageCaptionsOverride
-        ? findEditorRowById(rowId, state.editorChapter)
-        : await ensureEditorRowReadyForWrite(render, rowId, {
-          allowStaleDirty: true,
-        });
-      if (!row) {
-        reconcileDirtyTrackedEditorRows([rowId]);
-        return;
-      }
+  if (row.textStyleSaveState?.status === "saving") {
+    return false;
+  }
 
-      if (row.textStyleSaveState?.status === "saving") {
-        return;
-      }
-
-      if (!rowHasFieldChanges(row)) {
-        pendingEditorRowCommitMetadataByRowId.delete(rowId);
-        if (row.saveStatus !== "idle" || row.saveError) {
-          updateEditorChapterRow(rowId, (currentRow) => applyEditorRowPersistReset(currentRow));
-          render?.({ scope: "translate-sidebar" });
-        }
-        reconcileDirtyTrackedEditorRows([rowId]);
-        return;
-      }
-
-      const team = selectedProjectsTeam();
-      const context = findChapterContextById(editorChapter.chapterId);
-      if (!Number.isFinite(team?.installationId) || !context?.project?.name) {
-        return;
-      }
-
-      try {
-        assertCurrentEditorWritePermission({ actionKind: "sharedWrite", rowId });
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        if (handleEditorPermissionDenied(error, render)) {
-          return;
-        }
-        updateEditorChapterRow(rowId, (currentRow) => applyEditorRowPersistFailed(currentRow, message));
-        reconcileDirtyTrackedEditorRows([rowId]);
-        render?.({ scope: "translate-sidebar" });
-        showNoticeBadge(message || "The row could not be saved.", render);
-        return;
-      }
-
-      const commitMetadata = nextCommitMetadata ?? takePendingEditorCommitMetadata(rowId);
-      nextCommitMetadata = null;
-
-      const fieldsToPersist = cloneRowFields(row.fields);
-      const footnotesToPersist = cloneRowFields(row.footnotes);
-      const imageCaptionsToPersist = cloneRowFields(row.imageCaptions);
-      updateEditorChapterRow(rowId, (currentRow) => applyEditorRowPersistRequested(currentRow));
+  if (!rowHasFieldChanges(row)) {
+    pendingEditorRowCommitMetadataByRowId.delete(rowId);
+    if (row.saveStatus !== "idle" || row.saveError) {
+      updateEditorChapterRow(rowId, (currentRow) => applyEditorRowPersistReset(currentRow));
       render?.({ scope: "translate-sidebar" });
+    }
+    reconcileDirtyTrackedEditorRows([rowId]);
+    return true;
+  }
 
-      try {
-        const payload = await invokeEditorWriteCommand("update_gtms_editor_row_fields", {
-          input: {
-            installationId: team.installationId,
-            projectId: context.project.id,
-            repoName: context.project.name,
-            chapterId: editorChapter.chapterId,
-            rowId,
-            fields: fieldsToPersist,
-            footnotes: footnotesToPersist,
-            imageCaptions: imageCaptionsToPersist,
-            baseFields:
-              options?.baseFieldsOverride && typeof options.baseFieldsOverride === "object"
-                ? cloneRowFields(options.baseFieldsOverride)
-                : cloneRowFields(row.baseFields),
-            baseFootnotes:
-              options?.baseFootnotesOverride && typeof options.baseFootnotesOverride === "object"
-                ? cloneRowFields(options.baseFootnotesOverride)
-                : cloneRowFields(row.baseFootnotes),
-            baseImageCaptions:
-              options?.baseImageCaptionsOverride && typeof options.baseImageCaptionsOverride === "object"
-                ? cloneRowFields(options.baseImageCaptionsOverride)
-                : cloneRowFields(row.baseImageCaptions),
-            ...(commitMetadata?.operation ? { operation: commitMetadata.operation } : {}),
-            ...(commitMetadata?.aiModel ? { aiModel: commitMetadata.aiModel } : {}),
-          },
-        }, { render, actionKind: "sharedWrite", rowId });
+  const team = selectedProjectsTeam();
+  const context = findChapterContextById(editorChapter.chapterId);
+  const repoScope = projectRepoScope({ team, project: context?.project ?? null });
+  if (!Number.isFinite(team?.installationId) || !context?.project?.name || !repoScope) {
+    return false;
+  }
 
-        if (state.editorChapter?.chapterId !== editorChapter.chapterId) {
-          return;
-        }
+  try {
+    assertCurrentEditorWritePermission({ actionKind: "sharedWrite", rowId });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (handleEditorPermissionDenied(error, render)) {
+      return false;
+    }
+    updateEditorChapterRow(rowId, (currentRow) => applyEditorRowPersistFailed(currentRow, message));
+    reconcileDirtyTrackedEditorRows([rowId]);
+    render?.({ scope: "translate-sidebar" });
+    showNoticeBadge(message || "The row could not be saved.", render);
+    return false;
+  }
 
-        if (payload?.status === "conflict") {
-          if (rowTextContentEqual(
-            fieldsToPersist,
-            footnotesToPersist,
-            imageCaptionsToPersist,
-            payload?.row?.fields,
-            payload?.row?.footnotes,
-            payload?.row?.imageCaptions,
-          )) {
-            updateEditorChapterRow(
-              rowId,
-              (currentRow) => applyEditorRowPersistSucceeded(currentRow, payload?.row, {
-                fields: fieldsToPersist,
-                footnotes: footnotesToPersist,
-                imageCaptions: imageCaptionsToPersist,
-                images: row.images,
-              }),
-            );
-            reconcileDirtyTrackedEditorRows([rowId]);
-            render?.();
-            return;
-          }
+  const commitMetadata =
+    normalizePendingEditorCommitMetadata(options?.commitMetadata)
+    ?? takePendingEditorCommitMetadata(rowId);
+  const fieldsToPersist = cloneRowFields(row.fields);
+  const footnotesToPersist = cloneRowFields(row.footnotes);
+  const imageCaptionsToPersist = cloneRowFields(row.imageCaptions);
+  const baseFields =
+    options?.baseFieldsOverride && typeof options.baseFieldsOverride === "object"
+      ? cloneRowFields(options.baseFieldsOverride)
+      : cloneRowFields(row.baseFields);
+  const baseFootnotes =
+    options?.baseFootnotesOverride && typeof options.baseFootnotesOverride === "object"
+      ? cloneRowFields(options.baseFootnotesOverride)
+      : cloneRowFields(row.baseFootnotes);
+  const baseImageCaptions =
+    options?.baseImageCaptionsOverride && typeof options.baseImageCaptionsOverride === "object"
+      ? cloneRowFields(options.baseImageCaptionsOverride)
+      : cloneRowFields(row.baseImageCaptions);
+  const input = {
+    installationId: team.installationId,
+    projectId: context.project.id,
+    repoName: context.project.name,
+    chapterId: editorChapter.chapterId,
+    rowId,
+    fields: fieldsToPersist,
+    footnotes: footnotesToPersist,
+    imageCaptions: imageCaptionsToPersist,
+    baseFields,
+    baseFootnotes,
+    baseImageCaptions,
+    ...(commitMetadata?.operation ? { operation: commitMetadata.operation } : {}),
+    ...(commitMetadata?.aiModel ? { aiModel: commitMetadata.aiModel } : {}),
+  };
+  const operationValue = {
+    input,
+    chapterId: editorChapter.chapterId,
+    rowId,
+    fields: fieldsToPersist,
+    footnotes: footnotesToPersist,
+    imageCaptions: imageCaptionsToPersist,
+    images: cloneQueueContextValue(row.images ?? {}),
+    permissionContext: {
+      team: cloneQueueContextValue(team),
+      project: cloneQueueContextValue(context.project),
+      chapter: cloneQueueContextValue(context.chapter),
+      row: cloneQueueContextValue(row),
+      actionKind: "sharedWrite",
+    },
+  };
 
-          updateEditorChapterRow(
-            rowId,
-            (currentRow) => applyEditorRowConflictDetected(currentRow, payload, {
-              localFields: fieldsToPersist,
-              localFootnotes: footnotesToPersist,
-              localImageCaptions: imageCaptionsToPersist,
-            }),
-          );
-          lockConflictFilter();
-          render?.();
-          showNoticeBadge("Translation text changed on disk. Choose which version to keep.", render, 2400);
-          return;
-        }
+  const applyRowTextSavePayload = (payload, operation, optionsForResult = {}) => {
+    const value = operation?.value ?? operationValue;
+    if (state.editorChapter?.chapterId !== value.chapterId) {
+      return;
+    }
 
-        if (payload?.status === "deleted") {
-          await reloadEditorRowFromDisk(render, rowId, { suppressNotice: false });
-          reconcileDirtyTrackedEditorRows([rowId]);
-          return;
-        }
-
-        const updatedRow = updateEditorChapterRow(
-          rowId,
+    if (payload?.status === "conflict") {
+      if (rowTextContentEqual(
+        value.fields,
+        value.footnotes,
+        value.imageCaptions,
+        payload?.row?.fields,
+        payload?.row?.footnotes,
+        payload?.row?.imageCaptions,
+      )) {
+        updateEditorChapterRow(
+          value.rowId,
           (currentRow) => applyEditorRowPersistSucceeded(currentRow, payload?.row, {
-            fields: fieldsToPersist,
-            footnotes: footnotesToPersist,
-            imageCaptions: imageCaptionsToPersist,
-            images: row.images,
+            fields: value.fields,
+            footnotes: value.footnotes,
+            imageCaptions: value.imageCaptions,
+            images: value.images,
           }),
         );
-
-        state.editorChapter = {
-          ...state.editorChapter,
-          sourceWordCounts:
-            payload?.sourceWordCounts && typeof payload.sourceWordCounts === "object"
-              ? payload.sourceWordCounts
-              : state.editorChapter.sourceWordCounts,
-          chapterBaseCommitSha: nextChapterBaseCommitSha(payload, state.editorChapter),
-        };
-        reconcileDirtyTrackedEditorRows([rowId]);
-        applyEditorSelectionsToProjectState(state.editorChapter);
-        render?.({ scope: "translate-sidebar" });
-        if (state.editorChapter.activeRowId === rowId) {
-          loadActiveEditorFieldHistory(render);
-        }
-
-        if (updatedRow?.saveStatus !== "dirty") {
-          return;
-        }
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        if (state.editorChapter?.chapterId === editorChapter.chapterId) {
-          updateEditorChapterRow(rowId, (currentRow) => applyEditorRowPersistFailed(currentRow, message));
-          reconcileDirtyTrackedEditorRows([rowId]);
-          render?.({ scope: "translate-sidebar" });
-        }
-        showNoticeBadge(message || "The row could not be saved.", render);
+        reconcileDirtyTrackedEditorRows([value.rowId]);
+        render?.();
         return;
       }
-    }
-  })();
 
-  pendingEditorRowPersistByRowId.set(rowId, persistPromise);
-  try {
-    await persistPromise;
-  } finally {
-    pendingEditorRowPersistByRowId.delete(rowId);
+      updateEditorChapterRow(
+        value.rowId,
+        (currentRow) => applyEditorRowConflictDetected(currentRow, payload, {
+          localFields: value.fields,
+          localFootnotes: value.footnotes,
+          localImageCaptions: value.imageCaptions,
+        }),
+      );
+      lockConflictFilter();
+      render?.();
+      showNoticeBadge("Translation text changed on disk. Choose which version to keep.", render, 2400);
+      return;
+    }
+
+    if (payload?.status === "deleted") {
+      void reloadEditorRowFromDisk(render, value.rowId, { suppressNotice: false }).then(() => {
+        reconcileDirtyTrackedEditorRows([value.rowId]);
+      });
+      return;
+    }
+
+    const updatedRow = updateEditorChapterRow(
+      value.rowId,
+      (currentRow) => applyEditorRowPersistSucceeded(currentRow, payload?.row, {
+        fields: value.fields,
+        footnotes: value.footnotes,
+        imageCaptions: value.imageCaptions,
+        images: value.images,
+      }),
+    );
+
+    state.editorChapter = {
+      ...state.editorChapter,
+      sourceWordCounts:
+        payload?.sourceWordCounts && typeof payload.sourceWordCounts === "object"
+          ? payload.sourceWordCounts
+          : state.editorChapter.sourceWordCounts,
+      chapterBaseCommitSha: nextChapterBaseCommitSha(payload, state.editorChapter),
+    };
+    reconcileDirtyTrackedEditorRows([value.rowId]);
+    applyEditorSelectionsToProjectState(state.editorChapter);
+    render?.({ scope: "translate-sidebar" });
+    if (!optionsForResult.isStale && state.editorChapter.activeRowId === value.rowId) {
+      loadActiveEditorFieldHistory(render);
+    }
+
+    if (!optionsForResult.isStale && updatedRow?.saveStatus === "dirty" && focusedEditorRowId() !== value.rowId) {
+      void persistEditorRow(render, value.rowId, operations, { waitForDurable: false });
+    }
+  };
+
+  const requested = requestEditorOperation({
+    repoScope,
+    chapterScope: `${repoScope}:${editorChapter.chapterId}`,
+    rowScope: `${repoScope}:${editorChapter.chapterId}:${rowId}`,
+    coalesceKey: editorRowTextCoalesceKey(editorChapter.chapterId, rowId),
+    kind: "rowText",
+    value: operationValue,
+    metadata: {
+      projectId: context.project.id,
+      chapterId: editorChapter.chapterId,
+      rowId,
+    },
+    invalidationKeys: [editorChapterInvalidationKey(repoScope, editorChapter.chapterId)],
+  }, {
+    applyOptimistic: () => {
+      if (state.editorChapter?.chapterId !== editorChapter.chapterId) {
+        return;
+      }
+      updateEditorChapterRow(rowId, (currentRow) => applyEditorRowPersistRequested(currentRow));
+      render?.({ scope: "translate-sidebar" });
+    },
+    run: async (operation) => invokeQueuedEditorWriteCommand(
+      "update_gtms_editor_row_fields",
+      { input: operation.value.input },
+      operation.value.permissionContext,
+      render,
+    ),
+    onSuccess: (payload, operation) => applyRowTextSavePayload(payload, operation),
+    onStaleSuccess: (payload, operation) => applyRowTextSavePayload(payload, operation, { isStale: true }),
+    onError: (error, operation) => {
+      const message = error instanceof Error ? error.message : String(error);
+      const value = operation?.value ?? operationValue;
+      if (state.editorChapter?.chapterId === value.chapterId) {
+        updateEditorChapterRow(value.rowId, (currentRow) => applyEditorRowPersistFailed(currentRow, message));
+        reconcileDirtyTrackedEditorRows([value.rowId]);
+        render?.({ scope: "translate-sidebar" });
+      }
+      showNoticeBadge(message || "The row could not be saved.", render);
+    },
+  });
+
+  requested.promise.catch(() => {});
+  if (options?.waitForDurable === false) {
+    return true;
   }
+
+  try {
+    await requested.promise;
+  } catch {}
+  return true;
 }

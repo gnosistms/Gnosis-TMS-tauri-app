@@ -38,6 +38,10 @@ import {
   filterLocalHardDeletedResources,
 } from "./local-hard-delete-store.js";
 import { isSoftDeletedResource } from "./resource-write-policy.js";
+import {
+  projectRepoScope,
+  waitForRepoWriteQueueIdle,
+} from "./repo-write-queue.js";
 
 function countRecoverableProjectMetadataRecords(records) {
   return (Array.isArray(records) ? records : []).filter((record) =>
@@ -353,6 +357,12 @@ async function loadLocalProjectFileListings(selectedTeam, projects) {
   if (!Number.isFinite(selectedTeam?.installationId) || !Array.isArray(projects) || projects.length === 0) {
     return [];
   }
+
+  await Promise.all(
+    projects.map((project) =>
+      waitForRepoWriteQueueIdle(projectRepoScope({ team: selectedTeam, project })),
+    ),
+  );
 
   const listings = await invoke("list_local_gtms_project_files", {
     input: {

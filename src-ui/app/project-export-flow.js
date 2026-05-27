@@ -3,6 +3,10 @@ import { invoke } from "./runtime.js";
 import { findChapterContext, selectedProjectsTeam } from "./project-context.js";
 import { createProjectExportState, state } from "./state.js";
 import { showNoticeBadge } from "./status-feedback.js";
+import {
+  projectRepoScope,
+  waitForRepoWriteQueueIdle,
+} from "./repo-write-queue.js";
 
 const SUPPORTED_EXPORT_FORMATS = new Set(["docx", "txt", "html"]);
 const UNSUPPORTED_EXPORT_FORMATS = new Set(["xlsx", "srt"]);
@@ -165,6 +169,7 @@ export async function submitProjectExport(render, operations = {}) {
   const languageCode = String(modal?.languageCode ?? "").trim();
   const saveDialog = operations.saveDialog ?? saveExportFilePath;
   const invokeCommand = operations.invoke ?? invoke;
+  const waitForRepoQueue = operations.waitForRepoQueue ?? waitForRepoWriteQueueIdle;
   const context = findChapterContext(modal?.chapterId);
 
   if (!modal?.isOpen || !SUPPORTED_EXPORT_FORMATS.has(format) || !languageCode) {
@@ -217,6 +222,7 @@ export async function submitProjectExport(render, operations = {}) {
   render();
 
   try {
+    await waitForRepoQueue(projectRepoScope({ team, project: context.project }));
     await invokeCommand("export_gtms_chapter_file", {
       input: {
         installationId: team.installationId,

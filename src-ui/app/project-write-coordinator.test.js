@@ -19,6 +19,10 @@ const {
   resetProjectWriteCoordinator,
   teamMetadataWriteScope,
 } = await import("./project-write-coordinator.js");
+const {
+  enqueueRepoWrite,
+  resetRepoWriteQueue,
+} = await import("./repo-write-queue.js");
 
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -56,6 +60,18 @@ function chapter(overrides = {}) {
 
 test.afterEach(() => {
   resetProjectWriteCoordinator();
+  resetRepoWriteQueue();
+});
+
+test("project repo scope uses full repo identity with fallback scopes", () => {
+  assert.equal(
+    projectRepoWriteScope(
+      { installationId: 1 },
+      { id: "project-1", name: "project-repo" },
+    ),
+    "1:project-1:project-repo",
+  );
+  assert.equal(projectRepoWriteScope({ installationId: 1 }, "project-1"), "1:project-1");
 });
 
 test("same write intent key coalesces to the latest value", async () => {
@@ -222,6 +238,147 @@ test("writes in different scopes can run concurrently", async () => {
   await delay(5);
 
   assert.deepEqual(events, ["a:start", "b:start", "b:end", "a:end"]);
+});
+
+test("project write intents wait behind existing repo queue writes for the same repo", async () => {
+  const events = [];
+  const releaseEditorWrite = deferred();
+  const scope = projectRepoWriteScope(
+    { installationId: 1 },
+    { id: "project-1", name: "project-repo" },
+  );
+
+  const editorWrite = enqueueRepoWrite({
+    scope,
+    kind: "editor:rowText",
+    run: async () => {
+      events.push("editor:start");
+      await releaseEditorWrite.promise;
+      events.push("editor:end");
+    },
+  });
+  await delay(0);
+
+  requestProjectWriteIntent({
+    key: chapterGlossaryIntentKey("project-1", "chapter-1"),
+    scope,
+    teamId: "team-1",
+    projectId: "project-1",
+    chapterId: "chapter-1",
+    type: "chapterGlossary",
+    value: { glossary: { glossaryId: "a", repoName: "a" } },
+  }, {
+    run: async () => {
+      events.push("project:run");
+    },
+  });
+
+  await delay(5);
+  assert.deepEqual(events, ["editor:start"]);
+
+  releaseEditorWrite.resolve();
+  await editorWrite;
+  await delay(5);
+
+  assert.deepEqual(events, ["editor:start", "editor:end", "project:run"]);
+});
+
+test("coalesced project write waiting behind repo queue only runs the latest value", async () => {
+  const events = [];
+  const releaseEditorWrite = deferred();
+  const scope = projectRepoWriteScope(
+    { installationId: 1 },
+    { id: "project-1", name: "project-repo" },
+  );
+
+  const editorWrite = enqueueRepoWrite({
+    scope,
+    kind: "editor:rowText",
+    run: async () => {
+      events.push("editor:start");
+      await releaseEditorWrite.promise;
+      events.push("editor:end");
+    },
+  });
+  await delay(0);
+
+  requestProjectWriteIntent({
+    key: chapterGlossaryIntentKey("project-1", "chapter-1"),
+    scope,
+    teamId: "team-1",
+    projectId: "project-1",
+    chapterId: "chapter-1",
+    type: "chapterGlossary",
+    value: { glossary: { glossaryId: "first", repoName: "first" } },
+  }, {
+    run: async (intent) => {
+      events.push(`project:${intent.value.glossary.glossaryId}`);
+    },
+  });
+  await delay(0);
+  requestProjectWriteIntent({
+    key: chapterGlossaryIntentKey("project-1", "chapter-1"),
+    scope,
+    teamId: "team-1",
+    projectId: "project-1",
+    chapterId: "chapter-1",
+    type: "chapterGlossary",
+    value: { glossary: { glossaryId: "second", repoName: "second" } },
+  }, {
+    run: async (intent) => {
+      events.push(`project:${intent.value.glossary.glossaryId}`);
+    },
+  });
+
+  releaseEditorWrite.resolve();
+  await editorWrite;
+  await delay(10);
+
+  assert.deepEqual(events, ["editor:start", "editor:end", "project:second"]);
+});
+
+test("project write intents for other repos run while an editor write is queued", async () => {
+  const events = [];
+  const releaseEditorWrite = deferred();
+  const editorScope = projectRepoWriteScope(
+    { installationId: 1 },
+    { id: "project-1", name: "project-one" },
+  );
+  const projectScope = projectRepoWriteScope(
+    { installationId: 1 },
+    { id: "project-2", name: "project-two" },
+  );
+
+  const editorWrite = enqueueRepoWrite({
+    scope: editorScope,
+    kind: "editor:rowText",
+    run: async () => {
+      events.push("editor:start");
+      await releaseEditorWrite.promise;
+      events.push("editor:end");
+    },
+  });
+  await delay(0);
+
+  requestProjectWriteIntent({
+    key: chapterGlossaryIntentKey("project-2", "chapter-2"),
+    scope: projectScope,
+    teamId: "team-1",
+    projectId: "project-2",
+    chapterId: "chapter-2",
+    type: "chapterGlossary",
+    value: { glossary: { glossaryId: "b", repoName: "b" } },
+  }, {
+    run: async () => {
+      events.push("project:run");
+    },
+  });
+
+  await delay(5);
+  assert.deepEqual(events, ["editor:start", "project:run"]);
+
+  releaseEditorWrite.resolve();
+  await editorWrite;
 });
 
 test("stale refresh snapshots are overlaid with desired intents and confirmed after write success", async () => {

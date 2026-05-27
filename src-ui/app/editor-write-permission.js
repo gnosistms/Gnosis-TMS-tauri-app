@@ -96,7 +96,7 @@ export function editorSessionCanWrite(editorChapter = state.editorChapter) {
   return snapshot.canEditProjectFiles === true;
 }
 
-function currentTeamAllowsEditorWrite(team) {
+export function currentTeamAllowsEditorWrite(team) {
   const role = String(team?.membershipRole ?? team?.role ?? "").trim().toLowerCase();
   if (
     role === "viewer"
@@ -110,6 +110,42 @@ function currentTeamAllowsEditorWrite(team) {
     return canMutateProjectFiles(team);
   }
   return Number.isFinite(team?.installationId);
+}
+
+export function assertEditorWritePermissionForContext({
+  team = null,
+  project = null,
+  chapter = null,
+  row = null,
+  actionKind = "sharedWrite",
+} = {}) {
+  const lifecyclePolicy = getProjectLifecycleWritePolicy({
+    team,
+    project,
+    chapter,
+    row,
+    actionKind,
+  });
+  if (!lifecyclePolicy.allowed) {
+    throw new Error(lifecyclePolicy.message || readOnlyMessageFor(lifecyclePolicy.reason, "project"));
+  }
+
+  if (actionKind === "localHardDelete" || currentTeamAllowsEditorWrite(team)) {
+    return { allowed: true, reason: "allowed", message: "" };
+  }
+
+  const policy = getProjectWritePolicy({
+    team,
+    project,
+    chapter,
+    row,
+    actionKind,
+  });
+  if (policy.reason === "viewer" || !currentTeamAllowsEditorWrite(team)) {
+    throw permissionDeniedError();
+  }
+
+  throw new Error(policy.message || readOnlyMessageFor(policy.reason, "project"));
 }
 
 export function getProjectLifecycleWritePolicy({
@@ -286,36 +322,29 @@ function assertEditorWritePermission({
     ? editorChapter.rows.find((item) => item?.rowId === rowId || item?.id === rowId)
     : null;
 
-  const lifecyclePolicy = getProjectLifecycleWritePolicy({
+  if (useSessionSnapshot) {
+    const lifecyclePolicy = getProjectLifecycleWritePolicy({
+      team,
+      project: context?.project ?? null,
+      chapter: context?.chapter ?? null,
+      row,
+      actionKind,
+    });
+    if (!lifecyclePolicy.allowed) {
+      throw new Error(lifecyclePolicy.message || readOnlyMessageFor(lifecyclePolicy.reason, "project"));
+    }
+    if (editorSessionCanWrite(editorChapter)) {
+      return { allowed: true, reason: "allowed", message: "" };
+    }
+  }
+
+  return assertEditorWritePermissionForContext({
     team,
     project: context?.project ?? null,
     chapter: context?.chapter ?? null,
     row,
     actionKind,
   });
-  if (!lifecyclePolicy.allowed) {
-    throw new Error(lifecyclePolicy.message || readOnlyMessageFor(lifecyclePolicy.reason, "project"));
-  }
-
-  if (
-    actionKind === "localHardDelete"
-    || (useSessionSnapshot ? editorSessionCanWrite(editorChapter) : currentTeamAllowsEditorWrite(team))
-  ) {
-    return { allowed: true, reason: "allowed", message: "" };
-  }
-
-  const policy = getProjectWritePolicy({
-    team,
-    project: context?.project ?? null,
-    chapter: context?.chapter ?? null,
-    row,
-    actionKind,
-  });
-  if (policy.reason === "viewer" || !currentTeamAllowsEditorWrite(team)) {
-    throw permissionDeniedError();
-  }
-
-  throw new Error(policy.message || readOnlyMessageFor(policy.reason, "project"));
 }
 
 export async function invokeEditorWriteCommand(command, payload, options = {}) {

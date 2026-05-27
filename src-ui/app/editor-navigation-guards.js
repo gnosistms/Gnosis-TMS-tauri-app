@@ -9,7 +9,7 @@ export async function guardLeavingTranslateEditor({
     return true;
   }
 
-  if (await flushDirtyEditorRows(render)) {
+  if (await flushDirtyEditorRows(render, { waitForDurable: false })) {
     return true;
   }
 

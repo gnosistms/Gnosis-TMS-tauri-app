@@ -172,6 +172,28 @@ test("submitProjectExport invokes native export with selected format and languag
   assert.equal(state.statusBadges.left.text, "Exported Chapter One-en.docx.");
 });
 
+test("submitProjectExport waits for the project repo queue before reading files", async () => {
+  installProjectExportFixture();
+  openProjectExport(() => {}, "chapter-1");
+  selectProjectExportFormat(() => {}, "txt");
+  const calls = [];
+
+  await submitProjectExport(() => {}, {
+    saveDialog: async () => "/tmp/chapter.txt",
+    waitForRepoQueue: async (scope) => {
+      calls.push(["wait", scope]);
+    },
+    invoke: async (command) => {
+      calls.push(["invoke", command]);
+    },
+  });
+
+  assert.deepEqual(calls, [
+    ["wait", "42:project-1:project-repo"],
+    ["invoke", "export_gtms_chapter_file"],
+  ]);
+});
+
 test("submitProjectExport keeps modal open and shows native export errors", async () => {
   installProjectExportFixture();
   openProjectExport(() => {}, "chapter-1");

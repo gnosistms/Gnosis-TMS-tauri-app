@@ -51,6 +51,7 @@ import {
   anyProjectWriteIsActive,
   anyProjectMutatingWriteIsActive,
 } from "../app/project-write-coordinator.js";
+import { getRepoWriteQueueSnapshot } from "../app/repo-write-queue.js";
 
 const LUCIDE_TRASH_2_ICON = `
   <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
@@ -404,7 +405,10 @@ function renderDeletedProjectsSection(state) {
   const canPermanentlyDeleteProjects = shouldShowDeletedProjectPermanentDelete(selectedTeam);
   const offlineMode = state.offline?.isEnabled === true;
   const pageWritesDisabled = areResourcePageWritesDisabled(state.projectsPage);
-  const heavyActionsDisabled = pageWritesDisabled || anyProjectWriteIsActive();
+  const projectRepoQueueActive = getRepoWriteQueueSnapshot().operations.some(
+    (operation) => !String(operation.kind ?? "").startsWith("editor:"),
+  );
+  const heavyActionsDisabled = pageWritesDisabled || anyProjectWriteIsActive() || projectRepoQueueActive;
   const lifecycleActionsDisabled = areResourcePageWriteSubmissionsDisabled(state.projectsPage);
   const syncSnapshotsByProjectId = state.projectRepoSyncByProjectId ?? {};
   const glossaryChangesDisabled = state.projectImport?.status === "importing";
@@ -636,9 +640,17 @@ export function renderProjectsScreen(state) {
   const offlineMode = state.offline?.isEnabled === true;
   const discovery = state.projectDiscovery ?? { status: "idle", error: "", glossaryWarning: "" };
   const discoveryLoading = discovery.status === "loading";
+  const projectRepoQueueOperations = getRepoWriteQueueSnapshot().operations.filter(
+    (operation) => !String(operation.kind ?? "").startsWith("editor:"),
+  );
+  const projectRepoQueueActive = projectRepoQueueOperations.length > 0;
+  const projectMutatingRepoQueueActive = projectRepoQueueOperations.some(
+    (operation) => operation.kind !== "projectRepoSync",
+  );
   const pageWritesDisabled = areResourcePageWritesDisabled(state.projectsPage) || discoveryLoading;
-  const heavyActionsDisabled = pageWritesDisabled || anyProjectWriteIsActive();
-  const mutatingWriteActionsDisabled = pageWritesDisabled || anyProjectMutatingWriteIsActive();
+  const heavyActionsDisabled = pageWritesDisabled || anyProjectWriteIsActive() || projectRepoQueueActive;
+  const mutatingWriteActionsDisabled =
+    pageWritesDisabled || anyProjectMutatingWriteIsActive() || projectMutatingRepoQueueActive;
   const lifecycleActionsDisabled = areResourcePageWriteSubmissionsDisabled(state.projectsPage);
   const importInProgress = state.projectImport?.status === "importing";
   const refreshInProgress =
@@ -737,7 +749,10 @@ export function renderProjectsScreen(state) {
       title: "Projects",
       subtitle: selectedTeam?.name ?? "Team",
       titleAction: buildPageRefreshAction(state, state.projectsPageSync, "refresh-page", {
-        backgroundRefreshing: state.projectsPage?.isRefreshing === true || anyProjectWriteIsActive(),
+        backgroundRefreshing:
+          state.projectsPage?.isRefreshing === true
+          || anyProjectWriteIsActive()
+          || projectRepoQueueActive,
         backgroundRefreshStartedAt: state.projectsPage?.refreshStartedAt,
       }),
       navButtons: buildSectionNav("projects", { includeAiSettings: canManageAiSettings }),

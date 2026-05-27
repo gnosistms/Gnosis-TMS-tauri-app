@@ -109,7 +109,6 @@ function renderLanguageMarkerButton(kind, rowId, language) {
       data-row-id="${escapeHtml(rowId)}"
       data-language-code="${escapeHtml(language.code)}"
       aria-pressed="${isActive ? "true" : "false"}"
-      ${isSaving ? "disabled" : ""}
       ${tooltipAttributes(label, { align: "end", side: "bottom" })}
     >
       ${renderTranslationMarkerIcon(kind)}

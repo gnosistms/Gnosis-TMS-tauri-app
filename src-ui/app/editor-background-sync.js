@@ -22,6 +22,7 @@ import {
   updateEditorChapterRow,
 } from "./editor-state-flow.js";
 import { findChapterContextById, selectedProjectsTeam } from "./project-context.js";
+import { enqueueRepoWrite, projectRepoScope } from "./repo-write-queue.js";
 import { hideNavigationLoadingModal, showNavigationLoadingModal } from "./navigation-loading.js";
 import { invoke, waitForNextPaint } from "./runtime.js";
 import { lockScreenScrollSnapshot, unlockScreenScrollSnapshot } from "./scroll-state.js";
@@ -83,8 +84,13 @@ function activeEditorSyncInput() {
   if (!Number.isFinite(team?.installationId) || !context?.project?.name || !context?.chapter?.id) {
     return null;
   }
+  const repoScope = projectRepoScope({ team, project: context.project });
+  if (!repoScope) {
+    return null;
+  }
 
   return {
+    repoScope,
     installationId: team.installationId,
     projectId: context.project.id,
     repoName: context.project.name,
@@ -222,8 +228,7 @@ function hasBlockingPendingWritesForBackgroundSync(chapterState = state.editorCh
   }
 
   const hasBlockingRowWrite = (Array.isArray(chapterState.rows) ? chapterState.rows : []).some((row) =>
-    row?.saveStatus === "saving"
-    || row?.markerSaveState?.status === "saving"
+    row?.markerSaveState?.status === "saving"
     || row?.textStyleSaveState?.status === "saving",
   );
   if (hasBlockingRowWrite) {
@@ -521,9 +526,26 @@ async function runEditorBackgroundSync(render, options = {}) {
   setEditorBackgroundSyncState("syncing", "");
 
   try {
-    const payload = await invoke("sync_gtms_project_editor_repo", {
-      input,
-      sessionToken: requireBrokerSession(),
+    const payload = await enqueueRepoWrite({
+      scope: input.repoScope,
+      kind: "editorBackgroundSync",
+      sourceScreen: "editor",
+      metadata: {
+        projectId: input.projectId,
+        chapterId: input.chapterId,
+      },
+      errorTarget: {
+        repoScope: input.repoScope,
+        projectId: input.projectId,
+        chapterId: input.chapterId,
+      },
+      run: () => {
+        const { repoScope: _repoScope, ...syncInput } = input;
+        return invoke("sync_gtms_project_editor_repo", {
+          input: syncInput,
+          sessionToken: requireBrokerSession(),
+        });
+      },
     });
 
     if (!sessionMatchesCurrentEditor()) {

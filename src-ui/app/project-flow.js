@@ -69,6 +69,10 @@ import {
   clearConfirmedProjectWriteIntents,
 } from "./project-write-coordinator.js";
 import {
+  enqueueRepoWrite,
+  projectRepoScope,
+} from "./repo-write-queue.js";
+import {
   cancelEntityModal,
   entityConfirmationMatches,
   openEntityFormModal,
@@ -661,7 +665,15 @@ export async function submitProjectCreation(render) {
       render();
     },
     runMutation: async () =>
-      completeProjectCreateSynchronously(selectedTeam, projectTitle, repoName, render),
+      enqueueRepoWrite({
+        scope: projectRepoScope({ team: selectedTeam }),
+        kind: "projectCreate",
+        sourceScreen: "projects",
+        errorTarget: {
+          kind: "projectCreate",
+        },
+        run: () => completeProjectCreateSynchronously(selectedTeam, projectTitle, repoName, render),
+      }),
     refreshOptions: {
       loadData: async () => {
         showProjectsStatus(render, "Refreshing project list...");
@@ -772,7 +784,16 @@ export async function repairProjectRepoBinding(render, projectId) {
 
   try {
     showProjectsStatus(render, "Repairing project repo binding...");
-    await repairLocalRepoBinding(selectedTeam, "project", projectId);
+    await enqueueRepoWrite({
+      scope: projectRepoScope({ team: selectedTeam, projectId }),
+      kind: "projectRepairBinding",
+      sourceScreen: "projects",
+      errorTarget: {
+        projectId,
+        kind: "projectRepairBinding",
+      },
+      run: () => repairLocalRepoBinding(selectedTeam, "project", projectId),
+    });
     showProjectsStatus(render, "Refreshing project list...");
     await loadTeamProjects(render, selectedTeam.id);
     clearProjectsStatus(render);
@@ -797,6 +818,16 @@ export async function rebuildProjectLocalRepo(render, projectId) {
 
   try {
     showProjectsStatus(render, "Rebuilding local project repo...");
+    await enqueueRepoWrite({
+      scope: projectRepoScope({ team: selectedTeam, projectId }),
+      kind: "projectRebuildLocalRepo",
+      sourceScreen: "projects",
+      errorTarget: {
+        projectId,
+        kind: "projectRebuildLocalRepo",
+      },
+      run: async () => {},
+    });
     showProjectsStatus(render, "Refreshing project list...");
     await loadTeamProjects(render, selectedTeam.id);
     clearProjectsStatus(render);
@@ -846,9 +877,17 @@ export async function overwriteConflictedProjectRepos(render) {
 
   try {
     showProjectsStatus(render, "Overwriting conflicted project repos...");
-    const response = await invoke("overwrite_conflicted_gtms_project_repos", {
-      input,
-      sessionToken: requireBrokerSession(),
+    const response = await enqueueRepoWrite({
+      scope: projectRepoScope({ team: selectedTeam }),
+      kind: "projectConflictRecovery",
+      sourceScreen: "projects",
+      errorTarget: {
+        kind: "projectConflictRecovery",
+      },
+      run: () => invoke("overwrite_conflicted_gtms_project_repos", {
+        input,
+        sessionToken: requireBrokerSession(),
+      }),
     });
     const resolvedCount = Array.isArray(response?.resolvedProjectIds)
       ? response.resolvedProjectIds.length
@@ -994,57 +1033,66 @@ async function commitProjectMutationStrict(selectedTeam, mutation, options = {})
     return;
   }
 
-  await commitMetadataFirstTopLevelMutation({
-    mutation,
-    resource: project,
-    resourceLabel: "project",
-    writeMetadata: (record) => {
-      if (options.statusLabels?.metadata) {
-        showProjectsStatus(options.render, options.statusLabels.metadata);
-      }
-      return upsertProjectMetadataRecord(selectedTeam, record, { requirePushSuccess: true });
+  await enqueueRepoWrite({
+    scope: projectRepoScope({ team: selectedTeam, project }),
+    kind: `projectLifecycle:${mutation.type ?? "unknown"}`,
+    sourceScreen: "projects",
+    errorTarget: {
+      projectId: project.id,
+      kind: `projectLifecycle:${mutation.type ?? "unknown"}`,
     },
-    buildRecord: (currentProject, overrides = {}) =>
-      projectMetadataRecordFromVisibleProject(currentProject, overrides),
-    applyLocalMutation: (currentProject, currentMutation) => {
-      if (options.statusLabels?.local) {
-        showProjectsStatus(options.render, options.statusLabels.local);
-      }
-      if (currentMutation.type === "rename") {
-        return invoke("rename_gnosis_project_repo", {
-          input: {
-            installationId: selectedTeam.installationId,
-            fullName: currentProject.fullName,
-            projectTitle: currentMutation.title,
-          },
-          sessionToken: requireBrokerSession(),
-        });
-      }
+    run: () => commitMetadataFirstTopLevelMutation({
+      mutation,
+      resource: project,
+      resourceLabel: "project",
+      writeMetadata: (record) => {
+        if (options.statusLabels?.metadata) {
+          showProjectsStatus(options.render, options.statusLabels.metadata);
+        }
+        return upsertProjectMetadataRecord(selectedTeam, record, { requirePushSuccess: true });
+      },
+      buildRecord: (currentProject, overrides = {}) =>
+        projectMetadataRecordFromVisibleProject(currentProject, overrides),
+      applyLocalMutation: (currentProject, currentMutation) => {
+        if (options.statusLabels?.local) {
+          showProjectsStatus(options.render, options.statusLabels.local);
+        }
+        if (currentMutation.type === "rename") {
+          return invoke("rename_gnosis_project_repo", {
+            input: {
+              installationId: selectedTeam.installationId,
+              fullName: currentProject.fullName,
+              projectTitle: currentMutation.title,
+            },
+            sessionToken: requireBrokerSession(),
+          });
+        }
 
-      if (currentMutation.type === "softDelete") {
-        return invoke("mark_gnosis_project_repo_deleted", {
-          input: {
-            installationId: selectedTeam.installationId,
-            orgLogin: selectedTeam.githubOrg,
-            repoName: currentProject.name,
-          },
-          sessionToken: requireBrokerSession(),
-        });
-      }
+        if (currentMutation.type === "softDelete") {
+          return invoke("mark_gnosis_project_repo_deleted", {
+            input: {
+              installationId: selectedTeam.installationId,
+              orgLogin: selectedTeam.githubOrg,
+              repoName: currentProject.name,
+            },
+            sessionToken: requireBrokerSession(),
+          });
+        }
 
-      if (currentMutation.type === "restore") {
-        return invoke("restore_gnosis_project_repo", {
-          input: {
-            installationId: selectedTeam.installationId,
-            orgLogin: selectedTeam.githubOrg,
-            repoName: currentProject.name,
-          },
-          sessionToken: requireBrokerSession(),
-        });
-      }
+        if (currentMutation.type === "restore") {
+          return invoke("restore_gnosis_project_repo", {
+            input: {
+              installationId: selectedTeam.installationId,
+              orgLogin: selectedTeam.githubOrg,
+              repoName: currentProject.name,
+            },
+            sessionToken: requireBrokerSession(),
+          });
+        }
 
-      return Promise.resolve();
-    },
+        return Promise.resolve();
+      },
+    }),
   });
 }
 
@@ -1162,12 +1210,21 @@ export async function confirmProjectPermanentDeletion(render) {
     },
     runMutation: async () => {
       showProjectsStatus(render, "Removing local project repo...");
-      await invoke("purge_local_gtms_project_repo", {
-        input: {
-          installationId: selectedTeam.installationId,
+      await enqueueRepoWrite({
+        scope: projectRepoScope({ team: selectedTeam, project }),
+        kind: "projectLocalHardDelete",
+        sourceScreen: "projects",
+        errorTarget: {
           projectId: project.id,
-          repoName: project.name,
+          kind: "projectLocalHardDelete",
         },
+        run: () => invoke("purge_local_gtms_project_repo", {
+          input: {
+            installationId: selectedTeam.installationId,
+            projectId: project.id,
+            repoName: project.name,
+          },
+        }),
       });
       addLocalHardDeleteTombstone(selectedTeam, "project", project);
     },
