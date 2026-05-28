@@ -87,6 +87,40 @@ test("assistant translate button uses provider label and relies on composer plac
   assert.doesNotMatch(html, /Chat with the AI Assistant about the selected translation\./);
 });
 
+test("assistant translate button remains visible with spinner while translation is running", () => {
+  const html = renderTranslateSidebar(
+    activeEditorChapter({
+      aiTranslate: {
+        translate1: {
+          status: "loading",
+          rowId: "row-1",
+          sourceLanguageCode: "es",
+          targetLanguageCode: "vi",
+          requestKey: "request-1",
+          sourceText: "Hola",
+        },
+      },
+    }),
+    [{
+      id: "row-1",
+      sections: [
+        { code: "es", text: "Hola" },
+        { code: "vi", text: "Translating...", isAiTranslating: true },
+      ],
+    }],
+    languages,
+    "es",
+    "vi",
+    createAiActionConfigurationState(),
+  );
+
+  assert.match(html, /data-action="run-editor-ai-translate:translate1"/);
+  assert.match(html, /Translate with OpenAI/);
+  assert.match(html, /button--loading/);
+  assert.match(html, /translate-ai-action-button__spinner/);
+  assert.match(html, /aria-busy="true"/);
+});
+
 test("assistant sidebar hides translate buttons when the selected translation is non-empty", () => {
   const html = renderTranslateSidebar(
     activeEditorChapter(),

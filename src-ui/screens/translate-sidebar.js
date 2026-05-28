@@ -113,15 +113,6 @@ function renderTranslateTools(editorChapter, rows, languages, sourceCode, target
     `;
   }
 
-  if (activeAssistantThreadHasItems(editorChapter, activeRow.id, sourceLanguage.code, targetLanguage.code)) {
-    return "";
-  }
-
-  const currentTargetText =
-    typeof targetSection.text === "string" ? targetSection.text : String(targetSection.text ?? "");
-  if (currentTargetText.trim().length > 0) {
-    return "";
-  }
   const sourceHasTranslatableContent =
     sourceSection.text.trim().length > 0
     || String(sourceSection.footnote ?? "").trim().length > 0
@@ -138,6 +129,19 @@ function renderTranslateTools(editorChapter, rows, languages, sourceCode, target
       sourceSection.text,
     ));
   const isAnyActionRunning = visibleActions.some((action) => action.isLoading);
+  if (
+    activeAssistantThreadHasItems(editorChapter, activeRow.id, sourceLanguage.code, targetLanguage.code)
+    && !isAnyActionRunning
+  ) {
+    return "";
+  }
+
+  const currentTargetText =
+    typeof targetSection.text === "string" ? targetSection.text : String(targetSection.text ?? "");
+  if (currentTargetText.trim().length > 0 && targetSection.isAiTranslating !== true) {
+    return "";
+  }
+
   const canTranslate =
     offlineMode !== true
     && sourceLanguage.code !== targetLanguage.code
