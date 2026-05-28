@@ -183,6 +183,49 @@ test("team resource migration excludes deleted tombstones from pending scan cand
   assert.deepEqual(pendingScanPayload.qaLists, []);
 });
 
+test("team resource migration ignores missing local repos because normal sync downloads them", async () => {
+  setupTeamMigrationTest();
+
+  const commands = [];
+  invokeHandler = async (command) => {
+    commands.push(command);
+    if (command === "list_gnosis_projects_for_installation") {
+      return [{
+        id: "project-1",
+        name: "project-repo",
+        title: "Project",
+        fullName: "team/project-repo",
+        defaultBranchName: "main",
+      }];
+    }
+    if (
+      command === "list_gnosis_glossaries_for_installation"
+      || command === "list_gnosis_qa_lists_for_installation"
+    ) {
+      return [];
+    }
+    if (command === "list_pending_team_repo_layout_migrations") {
+      return {
+        targetVersion: "0.8.10",
+        migrations: [{
+          resourceType: "project",
+          resourceId: "project-1",
+          repoName: "project-repo",
+          title: "Project",
+          migrationReason: "missingLocal",
+        }],
+      };
+    }
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  const migrated = await runTeamResourceMigrationSync(() => {}, state.teams[0]);
+
+  assert.equal(migrated, false);
+  assert.equal(state.teamResourceMigrationModal.isOpen, false);
+  assert.equal(commands.includes("reconcile_project_repo_sync_states"), false);
+});
+
 test("team resource migration reports incomplete repeated pending work", async () => {
   setupTeamMigrationTest();
 

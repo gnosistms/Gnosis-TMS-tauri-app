@@ -136,15 +136,7 @@ fn list_pending_team_repo_layout_migrations_sync(
                     ));
                 }
             }
-            None => {
-                pending.push(pending_migration(
-                    "project",
-                    project_id,
-                    repo_name,
-                    project.title,
-                    "missingLocal",
-                ));
-            }
+            None => {}
         }
     }
 
@@ -174,15 +166,7 @@ fn list_pending_team_repo_layout_migrations_sync(
                     ));
                 }
             }
-            None => {
-                pending.push(pending_migration(
-                    "glossary",
-                    resource_id,
-                    repo_name,
-                    glossary.title,
-                    "missingLocal",
-                ));
-            }
+            None => {}
         }
     }
 
@@ -212,15 +196,7 @@ fn list_pending_team_repo_layout_migrations_sync(
                     ));
                 }
             }
-            None => {
-                pending.push(pending_migration(
-                    "qaList",
-                    resource_id,
-                    repo_name,
-                    qa_list.title,
-                    "missingLocal",
-                ));
-            }
+            None => {}
         }
     }
 
