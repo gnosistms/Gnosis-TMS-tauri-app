@@ -32,6 +32,7 @@ import {
   updateChapterPermanentDeletionConfirmation,
   updateChapterGlossaryLinks,
   updateChapterRenameName,
+  updateChapterWorkflowStatus,
   updateProjectClearDeletedFilesConfirmation,
 } from "./project-chapter-flow.js";
 import {
@@ -744,6 +745,24 @@ function handleChapterGlossarySelectInput(event, render) {
   return true;
 }
 
+function handleChapterStatusSelectInput(event, render) {
+  if (event.type !== "change") {
+    return false;
+  }
+
+  const input = event.target.closest("[data-chapter-status-select]");
+  if (!input) {
+    return false;
+  }
+
+  void updateChapterWorkflowStatus(
+    render,
+    input.dataset.chapterId,
+    input.value,
+  );
+  return true;
+}
+
 function handleProjectExportFormatInput(event, render) {
   if (event.type !== "change") {
     return false;
@@ -906,6 +925,7 @@ const inputHandlers = [
   handleEditorClearTranslationsLanguageInput,
   handleEditorImageUrlInput,
   handleEditorConflictResolutionInput,
+  handleChapterStatusSelectInput,
   handleChapterGlossarySelectInput,
   handleProjectExportFormatInput,
   handleProjectExportLanguageInput,

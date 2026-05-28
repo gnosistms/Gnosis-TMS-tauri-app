@@ -399,6 +399,62 @@ pub(crate) fn update_gtms_chapter_glossary_links_sync(
     })
 }
 
+pub(crate) fn update_gtms_chapter_workflow_status_sync(
+    app: &AppHandle,
+    input: UpdateChapterWorkflowStatusInput,
+) -> Result<UpdateChapterWorkflowStatusResponse, String> {
+    let repo_path = resolve_project_git_repo_path(
+        app,
+        input.installation_id,
+        input.project_id.as_deref(),
+        Some(&input.repo_name),
+    )?;
+    ensure_repo_exists(&repo_path, "The local project repo is not available yet.")?;
+    ensure_valid_git_repo(&repo_path, "The local project repo is missing or invalid.")?;
+
+    let workflow_status = normalize_chapter_workflow_status(Some(&input.workflow_status));
+    let repo_chapters_path = repo_path.join("chapters");
+    let chapter_path = find_chapter_path_by_id(&repo_chapters_path, &input.chapter_id)?;
+    let chapter_json_path = chapter_path.join("chapter.json");
+    let mut chapter_value: Value = read_json_file(&chapter_json_path, "chapter.json")?;
+    let chapter_title = chapter_value
+        .get("title")
+        .and_then(Value::as_str)
+        .unwrap_or("file")
+        .to_string();
+
+    let chapter_object = chapter_value
+        .as_object_mut()
+        .ok_or_else(|| "The chapter.json file is not a JSON object.".to_string())?;
+    let settings_value = chapter_object
+        .entry("settings".to_string())
+        .or_insert_with(|| json!({}));
+    let settings_object = settings_value
+        .as_object_mut()
+        .ok_or_else(|| "The chapter settings are not a JSON object.".to_string())?;
+
+    let next_value = Value::String(workflow_status.clone());
+    let status_changed = settings_object.get("workflow_status") != Some(&next_value);
+    if status_changed {
+        settings_object.insert("workflow_status".to_string(), next_value);
+        write_json_pretty(&chapter_json_path, &chapter_value)?;
+
+        let relative_chapter_json = repo_relative_path(&repo_path, &chapter_json_path)?;
+        git_output(&repo_path, &["add", &relative_chapter_json])?;
+        git_commit_as_signed_in_user(
+            app,
+            &repo_path,
+            &format!("Update chapter status for {}", chapter_title),
+            &[&relative_chapter_json],
+        )?;
+    }
+
+    Ok(UpdateChapterWorkflowStatusResponse {
+        chapter_id: input.chapter_id,
+        workflow_status,
+    })
+}
+
 pub(super) fn glossary_link_value_from_input(input: Option<&GlossaryLinkSelectionInput>) -> Value {
     match input {
         Some(selection) => json!({

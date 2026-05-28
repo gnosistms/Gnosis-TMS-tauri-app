@@ -5,6 +5,7 @@ import {
   scopedTeamStorageKey,
   teamCacheKey,
 } from "./team-cache.js";
+import { normalizeChapterWorkflowStatus } from "./chapter-workflow-status.js";
 
 const PROJECT_CACHE_STORAGE_KEY = "gnosis-tms-project-cache";
 const CHAPTER_PENDING_MUTATIONS_STORAGE_KEY = "gnosis-tms-chapter-pending-mutations";
@@ -68,6 +69,8 @@ function normalizeChapter(chapter) {
     localLifecycleIntent: _localLifecycleIntent,
     pendingGlossaryMutation: _pendingGlossaryMutation,
     glossaryMutationError: _glossaryMutationError,
+    pendingWorkflowStatusMutation: _pendingWorkflowStatusMutation,
+    workflowStatusMutationError: _workflowStatusMutationError,
     ...durableChapter
   } = chapter;
 
@@ -76,6 +79,7 @@ function normalizeChapter(chapter) {
     id,
     name,
     status: chapter.status === "deleted" ? "deleted" : "active",
+    workflowStatus: normalizeChapterWorkflowStatus(chapter.workflowStatus),
     linkedGlossary: normalizeChapterGlossaryLink(chapter.linkedGlossary),
   };
 }

@@ -10,6 +10,7 @@ import {
   projectHasPendingDeletedFileMutation,
   resourceHasPendingLifecycleMutation,
 } from "../app/project-page-write-state.js";
+import { renderChapterStatusBadge } from "./project-chapter-status-badge.js";
 import { renderChapterGlossarySelect } from "./project-glossary-selector.js";
 import {
   LUCIDE_FOLDER_PEN_ICON,
@@ -58,6 +59,14 @@ function renderActiveChapterRow(chapter, options) {
         }
       </div>
       <div class="chapter-table__actions">
+        ${renderChapterStatusBadge(chapter, {
+          disabled:
+            options.offlineMode
+            || options.lifecycleActionsDisabled
+            || options.glossaryChangesDisabled
+            || options.disableContentActions
+            || !options.canManageProjects,
+        })}
         ${renderChapterGlossarySelect(chapter, options.glossaryOptions, {
           disabled:
             options.offlineMode
@@ -166,4 +175,3 @@ export function visibleProjectFileCount(project) {
     .filter((chapter) => chapter?.status !== "deleted")
     .length;
 }
-

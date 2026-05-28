@@ -47,6 +47,10 @@ export function chapterGlossaryIntentKey(projectId, chapterId) {
   return `chapter:glossary:${projectId}:${chapterId}`;
 }
 
+export function chapterWorkflowStatusIntentKey(projectId, chapterId) {
+  return `chapter:workflow-status:${projectId}:${chapterId}`;
+}
+
 export function chapterImportIntentKey(projectId, chapterId) {
   return `chapter:import:${projectId}:${chapterId}`;
 }
@@ -315,6 +319,9 @@ function intentMatchesSnapshot(intent, snapshot) {
   if (intent.type === "chapterGlossary") {
     return glossaryLinksEqual(chapter.linkedGlossary, intent.value?.glossary ?? null);
   }
+  if (intent.type === "chapterWorkflowStatus") {
+    return chapter.workflowStatus === intent.value?.workflowStatus;
+  }
   if (intent.type === "chapterImport") {
     return true;
   }
@@ -325,7 +332,7 @@ export function applyProjectWriteIntentsToSnapshot(snapshot) {
   let nextSnapshot = normalizeProjectSnapshot(snapshot);
 
   for (const intent of writeIntents.getIntents()) {
-    if (intent.status === "confirmed") {
+    if (intent.status === "confirmed" || intent.status === "failed") {
       continue;
     }
     if (intent.type === "projectTitle") {
@@ -365,6 +372,13 @@ export function applyProjectWriteIntentsToSnapshot(snapshot) {
       nextSnapshot = patchChapter(nextSnapshot, intent.projectId, intent.chapterId, {
         linkedGlossary: cloneWriteIntentValue(intent.value?.glossary ?? null),
         pendingGlossaryMutation: true,
+      });
+      continue;
+    }
+    if (intent.type === "chapterWorkflowStatus") {
+      nextSnapshot = patchChapter(nextSnapshot, intent.projectId, intent.chapterId, {
+        workflowStatus: intent.value?.workflowStatus ?? "none",
+        pendingWorkflowStatusMutation: true,
       });
       continue;
     }

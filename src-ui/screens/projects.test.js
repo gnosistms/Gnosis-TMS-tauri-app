@@ -276,6 +276,52 @@ test("projects glossary selector does not render a hover tooltip", () => {
   assert.doesNotMatch(html, /data-tooltip="Select a glossary"/);
 });
 
+test("projects page renders chapter status badge before glossary selector", () => {
+  const html = renderProjectsScreen(projectsState({
+    projects: [{
+      id: "project-1",
+      title: "Project",
+      name: "project-repo",
+      status: "active",
+      chapters: [{
+        id: "chapter-1",
+        name: "Chapter",
+        status: "active",
+        workflowStatus: "review2",
+        linkedGlossary: null,
+        sourceWordCount: 10,
+      }],
+    }],
+  }));
+  const statusIndex = html.indexOf("data-chapter-status-select");
+  const glossaryIndex = html.indexOf("data-chapter-glossary-select");
+
+  assert.ok(statusIndex >= 0);
+  assert.ok(glossaryIndex > statusIndex);
+  assert.match(html, /chapter-status-badge--review2/);
+  assert.match(html, /data-tooltip="Click to update the status of this file in your translation workflow\."/);
+  assert.match(html, /select-pill__value">review 2</);
+  assert.match(html, /<option value="review2" selected>review 2<\/option>/);
+  const css = readFileSync(new URL("../styles/content.css", import.meta.url), "utf8");
+  assert.match(cssRuleBlock(css, ".chapter-status-badge"), /min-width: 0;/);
+  assert.match(cssRuleBlock(css, ".chapter-status-badge"), /justify-content: center;/);
+  assert.match(cssRuleBlock(css, ".select-pill--toolbar.select-pill--control.chapter-status-badge"), /padding-right: 14px;/);
+  assert.match(cssRuleBlock(css, ".chapter-status-badge .select-pill__chevron"), /display: none;/);
+});
+
+test("disabled chapter status badges do not show click tooltip", () => {
+  const html = renderProjectsScreen(projectsState({
+    projectsPage: {
+      isRefreshing: false,
+      writeState: "submitting",
+    },
+  }));
+  const statusLabel = html.match(/<label class="[^"]*chapter-status-badge[^"]*"[^>]*>/)?.[0] ?? "";
+
+  assert.match(statusLabel, /aria-disabled="true"/);
+  assert.doesNotMatch(statusLabel, /data-tooltip=/);
+});
+
 test("projects page opens active chapters from the left title area, not the full row", () => {
   const html = renderProjectsScreen(projectsState());
   const exportButton = actionButtonHtml(html, "export-file:chapter-1");
@@ -319,15 +365,18 @@ test("projects page marks chapter files with imported editor conflicts", () => {
   assert.match(html, /class="chapter-table__conflict-badge">Has conflicts<\/span>/);
 });
 
-test("projects page shows chapter icon actions after glossary in requested order", () => {
+test("projects page shows chapter icon actions after status and glossary in requested order", () => {
   const html = renderProjectsScreen(projectsState());
+  const statusIndex = html.indexOf("data-chapter-status-select");
   const glossaryIndex = html.indexOf("data-chapter-glossary-select");
   const addTranslationIndex = html.indexOf('data-action="add-translation-to-file:chapter-1"');
   const exportIndex = html.indexOf('data-action="export-file:chapter-1"');
   const renameIndex = html.indexOf('data-action="rename-file:chapter-1"');
   const deleteIndex = html.indexOf('data-action="delete-file:chapter-1"');
 
+  assert.ok(statusIndex >= 0);
   assert.ok(glossaryIndex >= 0);
+  assert.ok(glossaryIndex > statusIndex);
   assert.ok(addTranslationIndex > glossaryIndex);
   assert.ok(exportIndex > addTranslationIndex);
   assert.ok(renameIndex > exportIndex);

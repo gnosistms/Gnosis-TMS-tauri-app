@@ -55,6 +55,7 @@ import {
 import {
   applyProjectWriteIntentsToSnapshot,
   chapterGlossaryIntentKey,
+  chapterWorkflowStatusIntentKey,
   chapterLifecycleIntentKey,
   chapterTitleIntentKey,
   clearConfirmedProjectWriteIntents,
@@ -68,6 +69,7 @@ import {
   chapterGlossaryLinkFromGlossaryId,
   chapterGlossaryLinkInput,
 } from "./project-glossary-flow.js";
+import { normalizeChapterWorkflowStatus } from "./chapter-workflow-status.js";
 
 export {
   findChapterContext,
@@ -243,6 +245,7 @@ export function normalizeListedChapter(chapter) {
       typeof chapter.selectedTargetLanguageCode === "string" && chapter.selectedTargetLanguageCode.trim()
         ? chapter.selectedTargetLanguageCode
         : null,
+    workflowStatus: normalizeChapterWorkflowStatus(chapter.workflowStatus),
     linkedGlossary: normalizeChapterGlossaryLink(chapter.linkedGlossary),
     hasImportedEditorConflicts: chapter.hasImportedEditorConflicts === true,
   };
@@ -977,6 +980,13 @@ export function applyChapterPendingMutation(snapshot, mutation) {
         };
       }
 
+      if (mutation.type === "setWorkflowStatus") {
+        return {
+          ...chapter,
+          workflowStatus: normalizeChapterWorkflowStatus(mutation.workflowStatus),
+        };
+      }
+
       return chapter;
     });
 
@@ -1424,6 +1434,7 @@ async function persistChapterGlossaryLinks(render, chapterId, nextGlossary) {
       clearProjectsStatus(render);
       updateChapterInState(chapterId, (chapter) => ({
         ...chapter,
+        linkedGlossary: normalizeChapterGlossaryLink(intent.previousValue?.glossary),
         pendingGlossaryMutation: false,
         glossaryMutationError: error?.message ?? String(error),
       }));
@@ -1448,6 +1459,91 @@ export async function updateChapterGlossaryLinks(render, chapterId, glossaryId) 
   }
 
   await persistChapterGlossaryLinks(render, chapterId, nextLink);
+}
+
+async function persistChapterWorkflowStatus(render, chapterId, nextWorkflowStatus) {
+  const resolved = await resolveChapterMutationContext(render, chapterId, {
+    actionLabel: "change file status",
+    allowDuringRefresh: true,
+  });
+  if (!resolved) {
+    return;
+  }
+
+  const { selectedTeam, context } = resolved;
+  const currentWorkflowStatus = normalizeChapterWorkflowStatus(context.chapter.workflowStatus);
+  if (nextWorkflowStatus === currentWorkflowStatus) {
+    return;
+  }
+
+  requestProjectWriteIntent({
+    key: chapterWorkflowStatusIntentKey(context.project.id, chapterId),
+    scope: projectRepoWriteScope(selectedTeam, context.project),
+    teamId: selectedTeam.id,
+    projectId: context.project.id,
+    chapterId,
+    type: "chapterWorkflowStatus",
+    value: {
+      workflowStatus: nextWorkflowStatus,
+    },
+    previousValue: {
+      workflowStatus: currentWorkflowStatus,
+    },
+  }, {
+    applyOptimistic: (intent) => {
+      showProjectsStatus(render, "Updating file status...");
+      updateChapterInState(chapterId, (chapter) => ({
+        ...chapter,
+        workflowStatus: intent.value.workflowStatus,
+        pendingWorkflowStatusMutation: true,
+      }));
+      persistProjectsForTeam(selectedTeam);
+      render();
+    },
+    run: async (intent) => invoke("update_gtms_chapter_workflow_status", {
+      input: {
+        installationId: selectedTeam.installationId,
+        projectId: context.project.id,
+        repoName: context.project.name,
+        chapterId,
+        workflowStatus: intent.value.workflowStatus,
+      },
+    }),
+    onSuccess: (intent) => {
+      updateChapterInState(chapterId, (chapter) => ({
+        ...chapter,
+        workflowStatus: intent.value.workflowStatus,
+        pendingWorkflowStatusMutation: false,
+      }));
+      persistProjectsForTeam(selectedTeam);
+      showProjectsStatus(render, "Status updated. Syncing shortly...");
+      scheduleDeferredProjectRepoSyncAfterLocalWrite(render, selectedTeam, context.project, {
+        syncText: "Syncing project repo...",
+        refreshText: "Refreshing file list...",
+        successNotice: "Status updated.",
+      });
+    },
+    onError: (error, intent) => {
+      clearProjectsStatus(render);
+      updateChapterInState(chapterId, (chapter) => ({
+        ...chapter,
+        workflowStatus: normalizeChapterWorkflowStatus(intent.previousValue?.workflowStatus),
+        pendingWorkflowStatusMutation: false,
+        workflowStatusMutationError: error?.message ?? String(error),
+      }));
+      setProjectDiscoveryError(render, intent.error || error?.message || String(error));
+      persistProjectsForTeam(selectedTeam);
+      render();
+    },
+  });
+}
+
+export async function updateChapterWorkflowStatus(render, chapterId, workflowStatus) {
+  await persistChapterWorkflowStatus(
+    render,
+    chapterId,
+    normalizeChapterWorkflowStatus(workflowStatus),
+  );
 }
 
 async function submitSimpleChapterMutation(render, chapterId, options) {

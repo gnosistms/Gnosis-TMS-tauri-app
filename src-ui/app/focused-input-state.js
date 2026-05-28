@@ -49,6 +49,10 @@ function focusSnapshotSelector(activeElement) {
     return `[data-chapter-glossary-select][data-chapter-id="${activeElement.dataset.chapterId}"]`;
   }
 
+  if (activeElement instanceof HTMLSelectElement && activeElement.matches("[data-chapter-status-select]")) {
+    return `[data-chapter-status-select][data-chapter-id="${activeElement.dataset.chapterId}"]`;
+  }
+
   return SUPPORTED_FOCUSED_INPUT_SELECTORS.find((candidate) => activeElement.matches(candidate)) ?? null;
 }
 

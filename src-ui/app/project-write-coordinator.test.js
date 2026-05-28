@@ -6,6 +6,7 @@ const {
   anyProjectMutatingWriteIsActive,
   anyProjectWriteIsActive,
   chapterGlossaryIntentKey,
+  chapterWorkflowStatusIntentKey,
   chapterImportIntentKey,
   chapterLifecycleIntentKey,
   chapterTitleIntentKey,
@@ -706,6 +707,66 @@ test("matching refresh snapshots do not clear running chapter glossary unlink in
   await delay(5);
   clearConfirmedProjectWriteIntents(overlaid);
   assert.equal(getProjectWriteIntent(key), null);
+});
+
+test("chapter workflow status intents overlay stale snapshots until refresh confirms", async () => {
+  const key = chapterWorkflowStatusIntentKey("project-1", "chapter-1");
+  requestProjectWriteIntent({
+    key,
+    scope: projectRepoWriteScope({ installationId: 1 }, "project-1"),
+    teamId: "team-1",
+    projectId: "project-1",
+    chapterId: "chapter-1",
+    type: "chapterWorkflowStatus",
+    value: { workflowStatus: "review2" },
+  }, {
+    run: async () => {},
+  });
+  await delay(5);
+
+  const staleSnapshot = {
+    items: [project({ chapters: [chapter({ workflowStatus: "queued" })] })],
+    deletedItems: [],
+  };
+  clearConfirmedProjectWriteIntents(staleSnapshot);
+  assert.equal(getProjectWriteIntent(key).status, "pendingConfirmation");
+
+  const overlaid = applyProjectWriteIntentsToSnapshot(staleSnapshot);
+  assert.equal(overlaid.items[0].chapters[0].workflowStatus, "review2");
+  assert.equal(overlaid.items[0].chapters[0].pendingWorkflowStatusMutation, true);
+
+  clearConfirmedProjectWriteIntents({
+    items: [project({ chapters: [chapter({ workflowStatus: "review2" })] })],
+    deletedItems: [],
+  });
+  assert.equal(getProjectWriteIntent(key), null);
+});
+
+test("failed chapter workflow status intents do not overlay refresh snapshots", async () => {
+  const key = chapterWorkflowStatusIntentKey("project-1", "chapter-1");
+  requestProjectWriteIntent({
+    key,
+    scope: projectRepoWriteScope({ installationId: 1 }, "project-1"),
+    teamId: "team-1",
+    projectId: "project-1",
+    chapterId: "chapter-1",
+    type: "chapterWorkflowStatus",
+    value: { workflowStatus: "review2" },
+  }, {
+    run: async () => {
+      throw new Error("status write failed");
+    },
+  });
+  await delay(5);
+
+  assert.equal(getProjectWriteIntent(key).status, "failed");
+
+  const overlaid = applyProjectWriteIntentsToSnapshot({
+    items: [project({ chapters: [chapter({ workflowStatus: "queued" })] })],
+    deletedItems: [],
+  });
+  assert.equal(overlaid.items[0].chapters[0].workflowStatus, "queued");
+  assert.equal(overlaid.items[0].chapters[0].pendingWorkflowStatusMutation, undefined);
 });
 
 test("settled chapter glossary intents survive stale refreshes until server agrees", async () => {

@@ -28,31 +28,32 @@ use self::{
         remove_gtms_editor_language_image_sync, restore_gtms_editor_field_from_history_sync,
         reverse_gtms_editor_batch_replace_commit_sync, save_gtms_editor_language_image_url_sync,
         update_gtms_chapter_glossary_links_sync, update_gtms_chapter_language_selection_sync,
-        update_gtms_chapter_languages_sync, update_gtms_editor_row_field_flag_sync,
-        update_gtms_editor_row_fields_batch_sync, update_gtms_editor_row_fields_sync,
-        update_gtms_editor_row_lifecycle_sync, update_gtms_editor_row_text_style_sync,
-        upload_gtms_editor_language_image_sync, AlignedTranslationApplyInput,
-        AlignedTranslationApplyResponse, AlignedTranslationPreflightInput,
-        AlignedTranslationPreflightResponse, ApplyEditorAiReviewResultInput,
-        ApplyEditorAiReviewResultResponse, ClearEditorReviewedMarkersInput,
-        ClearEditorReviewedMarkersResponse, ClearImportedEditorConflictInput,
-        ExportChapterFileInput, InitializeProjectRepoInput, InitializeProjectRepoResponse,
-        InsertEditorRowInput, InsertEditorRowResponse, ListLocalProjectFilesInput,
-        LoadChapterEditorInput, LoadChapterEditorResponse, LoadEditorFieldHistoryInput,
-        LoadEditorFieldHistoryResponse, LoadEditorRowInput, LoadEditorRowResponse,
-        LocalProjectFilesResponse, PurgeLocalProjectRepoInput, RemoveEditorLanguageImageInput,
-        RestoreEditorFieldHistoryInput, RestoreEditorFieldHistoryResponse,
-        ReverseEditorBatchReplaceCommitInput, ReverseEditorBatchReplaceCommitResponse,
-        SaveEditorLanguageImageResponse, SaveEditorLanguageImageUrlInput,
-        SaveEditorRowWithConcurrencyResponse, UpdateChapterGlossaryLinksInput,
-        UpdateChapterGlossaryLinksResponse, UpdateChapterLanguageSelectionInput,
-        UpdateChapterLanguageSelectionResponse, UpdateChapterLanguagesInput,
-        UpdateChapterLanguagesResponse, UpdateEditorRowFieldFlagInput,
-        UpdateEditorRowFieldFlagResponse, UpdateEditorRowFieldsBatchInput,
-        UpdateEditorRowFieldsBatchResponse, UpdateEditorRowFieldsInput,
-        UpdateEditorRowLifecycleInput, UpdateEditorRowLifecycleResponse,
-        UpdateEditorRowTextStyleInput, UpdateEditorRowTextStyleResponse,
-        UploadEditorLanguageImageInput,
+        update_gtms_chapter_languages_sync, update_gtms_chapter_workflow_status_sync,
+        update_gtms_editor_row_field_flag_sync, update_gtms_editor_row_fields_batch_sync,
+        update_gtms_editor_row_fields_sync, update_gtms_editor_row_lifecycle_sync,
+        update_gtms_editor_row_text_style_sync, upload_gtms_editor_language_image_sync,
+        AlignedTranslationApplyInput, AlignedTranslationApplyResponse,
+        AlignedTranslationPreflightInput, AlignedTranslationPreflightResponse,
+        ApplyEditorAiReviewResultInput, ApplyEditorAiReviewResultResponse,
+        ClearEditorReviewedMarkersInput, ClearEditorReviewedMarkersResponse,
+        ClearImportedEditorConflictInput, ExportChapterFileInput, InitializeProjectRepoInput,
+        InitializeProjectRepoResponse, InsertEditorRowInput, InsertEditorRowResponse,
+        ListLocalProjectFilesInput, LoadChapterEditorInput, LoadChapterEditorResponse,
+        LoadEditorFieldHistoryInput, LoadEditorFieldHistoryResponse, LoadEditorRowInput,
+        LoadEditorRowResponse, LocalProjectFilesResponse, PurgeLocalProjectRepoInput,
+        RemoveEditorLanguageImageInput, RestoreEditorFieldHistoryInput,
+        RestoreEditorFieldHistoryResponse, ReverseEditorBatchReplaceCommitInput,
+        ReverseEditorBatchReplaceCommitResponse, SaveEditorLanguageImageResponse,
+        SaveEditorLanguageImageUrlInput, SaveEditorRowWithConcurrencyResponse,
+        UpdateChapterGlossaryLinksInput, UpdateChapterGlossaryLinksResponse,
+        UpdateChapterLanguageSelectionInput, UpdateChapterLanguageSelectionResponse,
+        UpdateChapterLanguagesInput, UpdateChapterLanguagesResponse,
+        UpdateChapterWorkflowStatusInput, UpdateChapterWorkflowStatusResponse,
+        UpdateEditorRowFieldFlagInput, UpdateEditorRowFieldFlagResponse,
+        UpdateEditorRowFieldsBatchInput, UpdateEditorRowFieldsBatchResponse,
+        UpdateEditorRowFieldsInput, UpdateEditorRowLifecycleInput,
+        UpdateEditorRowLifecycleResponse, UpdateEditorRowTextStyleInput,
+        UpdateEditorRowTextStyleResponse, UploadEditorLanguageImageInput,
     },
     chapter_editor_comments::{
         delete_gtms_editor_row_comment_sync, load_gtms_editor_row_comments_sync,
@@ -291,6 +292,19 @@ pub(crate) async fn update_gtms_chapter_glossary_links(
     })
     .await
     .map_err(|error| format!("The chapter glossary worker failed: {error}"))?
+}
+
+#[tauri::command]
+pub(crate) async fn update_gtms_chapter_workflow_status(
+    app: AppHandle,
+    input: UpdateChapterWorkflowStatusInput,
+) -> Result<UpdateChapterWorkflowStatusResponse, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        ensure_installation_allows_writes(&app, input.installation_id)?;
+        update_gtms_chapter_workflow_status_sync(&app, input)
+    })
+    .await
+    .map_err(|error| format!("The chapter status worker failed: {error}"))?
 }
 
 #[tauri::command]

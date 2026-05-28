@@ -76,6 +76,12 @@ pub(super) fn load_project_chapter_summaries(
             selected_source_language_code.as_deref(),
         );
         let linked_glossary = linked_chapter_glossary(&chapter_file);
+        let workflow_status = normalize_chapter_workflow_status(
+            chapter_file
+                .settings
+                .as_ref()
+                .and_then(|settings| settings.workflow_status.as_deref()),
+        );
         let has_imported_editor_conflicts =
             conflicted_chapter_ids.contains(&chapter_file.chapter_id);
 
@@ -91,6 +97,7 @@ pub(super) fn load_project_chapter_summaries(
             source_word_counts,
             selected_source_language_code,
             selected_target_language_code,
+            workflow_status,
             linked_glossary,
             has_imported_editor_conflicts,
         });

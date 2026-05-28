@@ -57,7 +57,7 @@ use self::chapter_selection::{
 };
 pub(crate) use self::chapter_selection::{
     update_gtms_chapter_glossary_links_sync, update_gtms_chapter_language_selection_sync,
-    update_gtms_chapter_languages_sync,
+    update_gtms_chapter_languages_sync, update_gtms_chapter_workflow_status_sync,
 };
 pub(crate) use self::git_conflicts::{
     clear_imported_editor_conflict_entry, list_imported_editor_conflict_refs,
@@ -224,6 +224,23 @@ pub(crate) struct GlossaryLinkSelectionInput {
 pub(crate) struct UpdateChapterGlossaryLinksResponse {
     chapter_id: String,
     glossary: Option<ProjectChapterGlossaryLink>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct UpdateChapterWorkflowStatusInput {
+    pub(crate) installation_id: i64,
+    repo_name: String,
+    project_id: Option<String>,
+    chapter_id: String,
+    workflow_status: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct UpdateChapterWorkflowStatusResponse {
+    chapter_id: String,
+    workflow_status: String,
 }
 
 #[derive(Deserialize)]
@@ -694,6 +711,7 @@ pub(super) struct ProjectChapterSummary {
     source_word_counts: BTreeMap<String, usize>,
     selected_source_language_code: Option<String>,
     selected_target_language_code: Option<String>,
+    workflow_status: String,
     linked_glossary: Option<ProjectChapterGlossaryLink>,
     has_imported_editor_conflicts: bool,
 }
@@ -788,6 +806,26 @@ struct StoredChapterSettings {
     linked_glossaries: Option<StoredChapterLinkedGlossaries>,
     default_source_language: Option<String>,
     default_target_language: Option<String>,
+    workflow_status: Option<String>,
+}
+
+fn normalize_chapter_workflow_status(value: Option<&str>) -> String {
+    match value
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "queued" => "queued",
+        "translating" => "translating",
+        "review1" | "review 1" | "review-1" | "review_1" => "review1",
+        "review2" | "review 2" | "review-2" | "review_2" => "review2",
+        "review3" | "review 3" | "review-3" | "review_3" => "review3",
+        "publish" => "publish",
+        "done" => "done",
+        _ => "none",
+    }
+    .to_string()
 }
 
 #[derive(Clone, Deserialize, Default, Serialize)]
@@ -1543,6 +1581,7 @@ mod tests {
                 linked_glossaries: None,
                 default_source_language: Some("es".to_string()),
                 default_target_language: Some("en".to_string()),
+                workflow_status: None,
             }),
         };
 

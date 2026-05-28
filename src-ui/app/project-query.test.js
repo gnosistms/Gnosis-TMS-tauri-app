@@ -36,6 +36,7 @@ const { glossaryKeys, projectKeys, queryClient } = await import("./query-client.
 const { teamCacheKey } = await import("./team-cache.js");
 const {
   chapterGlossaryIntentKey,
+  chapterWorkflowStatusIntentKey,
   chapterLifecycleIntentKey,
   projectLifecycleIntentKey,
   projectRepoWriteScope,
@@ -321,6 +322,7 @@ test("project query adapter overlays active chapter lifecycle and glossary inten
   state.projectsPage = createResourcePageState();
   const releaseLifecycleWrite = deferred();
   const releaseGlossaryWrite = deferred();
+  const releaseStatusWrite = deferred();
 
   requestProjectWriteIntent({
     key: chapterLifecycleIntentKey("project-1", "chapter-1"),
@@ -348,6 +350,19 @@ test("project query adapter overlays active chapter lifecycle and glossary inten
       await releaseGlossaryWrite.promise;
     },
   });
+  requestProjectWriteIntent({
+    key: chapterWorkflowStatusIntentKey("project-2", "chapter-2"),
+    scope: projectRepoWriteScope({ installationId: 1 }, "project-2"),
+    teamId: "team-1",
+    projectId: "project-2",
+    chapterId: "chapter-2",
+    type: "chapterWorkflowStatus",
+    value: { workflowStatus: "review1" },
+  }, {
+    run: async () => {
+      await releaseStatusWrite.promise;
+    },
+  });
   await delay(0);
 
   applyProjectsQuerySnapshotToState(
@@ -370,9 +385,12 @@ test("project query adapter overlays active chapter lifecycle and glossary inten
   assert.equal(state.projects[0].chapters[0].pendingMutation, "restore");
   assert.equal(state.projects[1].chapters[0].linkedGlossary.glossaryId, "new");
   assert.equal(state.projects[1].chapters[0].pendingGlossaryMutation, true);
+  assert.equal(state.projects[1].chapters[0].workflowStatus, "review1");
+  assert.equal(state.projects[1].chapters[0].pendingWorkflowStatusMutation, true);
 
   releaseLifecycleWrite.resolve();
   releaseGlossaryWrite.resolve();
+  releaseStatusWrite.resolve();
   await delay(5);
 });
 
