@@ -345,6 +345,7 @@ export async function setActiveEditorField(render, rowId, languageCode, options 
     renderTranslateBodyPreservingViewport(
       render,
       resolveEditorMainFieldViewportSnapshot(rowId, languageCode, options),
+      { extraPaints: 0, skipAnchorRestore: true },
     );
   }
   if (state.editorChapter.sidebarTab === "comments") {

@@ -97,3 +97,12 @@ test("editor review marker toggles preserve the clicked row viewport", async () 
   assert.match(translateFlowSource, /toggleEditorRowFieldMarkerFlow\([\s\S]*viewportSnapshot: resolveEditorMainFieldViewportSnapshot\(rowId, languageCode, options\)/);
   assert.match(persistenceSource, /renderTranslateBodyPreservingViewport\(render, viewportSnapshot\)/);
 });
+
+test("opening an editor text field does not schedule delayed viewport restores", async () => {
+  const translateFlowSource = await readFile(new URL("./translate-flow.js", import.meta.url), "utf8");
+
+  assert.match(
+    translateFlowSource,
+    /renderTranslateBodyPreservingViewport\(\s*render,\s*resolveEditorMainFieldViewportSnapshot\(rowId, languageCode, options\),\s*\{ extraPaints: 0, skipAnchorRestore: true \},\s*\);/,
+  );
+});

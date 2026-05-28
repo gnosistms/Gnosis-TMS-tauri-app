@@ -49,7 +49,7 @@ export function captureTranslateViewport(target = null, options = {}) {
   };
 }
 
-export function restoreTranslateViewport(viewportSnapshot) {
+export function restoreTranslateViewport(viewportSnapshot, options = {}) {
   if (!viewportSnapshot) {
     return;
   }
@@ -59,7 +59,7 @@ export function restoreTranslateViewport(viewportSnapshot) {
     container.scrollTop = viewportSnapshot.scrollTop;
   }
 
-  if (viewportSnapshot.anchor?.rowId) {
+  if (options?.skipAnchorRestore !== true && viewportSnapshot.anchor?.rowId) {
     restoreTranslateRowAnchor(viewportSnapshot.anchor);
   }
 }
@@ -68,9 +68,9 @@ export function cancelPendingTranslateViewportRestores() {
   translateViewportRestoreGeneration += 1;
 }
 
-export function restoreTranslateViewportAfterPaints(viewportSnapshot, extraPaints = 2) {
+export function restoreTranslateViewportAfterPaints(viewportSnapshot, extraPaints = 2, options = {}) {
   const restoreGeneration = translateViewportRestoreGeneration;
-  restoreTranslateViewport(viewportSnapshot);
+  restoreTranslateViewport(viewportSnapshot, options);
   void (async () => {
     const paintCount = Number.isInteger(extraPaints) && extraPaints > 0 ? extraPaints : 0;
     for (let index = 0; index < paintCount; index += 1) {
@@ -78,16 +78,22 @@ export function restoreTranslateViewportAfterPaints(viewportSnapshot, extraPaint
       if (restoreGeneration !== translateViewportRestoreGeneration) {
         return;
       }
-      restoreTranslateViewport(viewportSnapshot);
+      restoreTranslateViewport(viewportSnapshot, options);
     }
   })();
 }
 
 export function renderTranslateBodyPreservingViewport(render, viewportSnapshot, options = {}) {
-  if (viewportSnapshot?.anchor?.rowId) {
+  const skipAnchorRestore = options?.skipAnchorRestore === true;
+  if (!skipAnchorRestore && viewportSnapshot?.anchor?.rowId) {
     queueTranslateRowAnchor(viewportSnapshot.anchor);
   }
 
-  render?.({ scope: options.scope ?? "translate-body" });
-  restoreTranslateViewportAfterPaints(viewportSnapshot, options.extraPaints);
+  render?.({
+    scope: options.scope ?? "translate-body",
+    ...(skipAnchorRestore ? { skipTranslateAnchorRestore: true } : {}),
+  });
+  restoreTranslateViewportAfterPaints(viewportSnapshot, options.extraPaints, {
+    skipAnchorRestore,
+  });
 }

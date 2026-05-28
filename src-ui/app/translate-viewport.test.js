@@ -2,19 +2,38 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 class FakeHTMLElement {
-  constructor() {
+  constructor(rect = { top: 0, bottom: 0 }) {
+    this.rect = rect;
+    this.dataset = {};
     this.scrollTop = 0;
     this.scrollLeft = 0;
+  }
+
+  getBoundingClientRect() {
+    return this.rect;
   }
 }
 
 globalThis.HTMLElement = FakeHTMLElement;
 globalThis.Element = FakeHTMLElement;
+globalThis.CSS = {
+  escape(value) {
+    return String(value);
+  },
+};
 
-const container = new FakeHTMLElement();
+const container = new FakeHTMLElement({ top: 100, bottom: 500 });
+const row = new FakeHTMLElement({ top: 180, bottom: 260 });
+row.dataset = { rowId: "row-1" };
 globalThis.document = {
   querySelector(selector) {
-    return selector === ".translate-main-scroll" ? container : null;
+    if (selector === ".translate-main-scroll") {
+      return container;
+    }
+    if (selector === '[data-editor-row-card][data-row-id="row-1"]') {
+      return row;
+    }
+    return null;
   },
 };
 
@@ -37,8 +56,26 @@ async function flushAnimationFrames(cycles = 8) {
 
 const {
   cancelPendingTranslateViewportRestores,
+  restoreTranslateViewport,
   restoreTranslateViewportAfterPaints,
 } = await import("./translate-viewport.js");
+
+test("viewport restore can skip unstable row-anchor correction", () => {
+  container.scrollTop = 10;
+
+  restoreTranslateViewport({
+    scrollTop: 100,
+    anchor: {
+      type: "row",
+      rowId: "row-1",
+      offsetTop: 20,
+    },
+  }, {
+    skipAnchorRestore: true,
+  });
+
+  assert.equal(container.scrollTop, 100);
+});
 
 test("editor input can cancel delayed viewport restores after an immediate restore", async () => {
   animationFrameQueue = [];

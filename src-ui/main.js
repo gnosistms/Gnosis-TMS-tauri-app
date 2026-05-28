@@ -349,7 +349,7 @@ function resolveTranslateRenderAnchor(options = {}) {
   };
 }
 
-function renderTranslateBodyOnly() {
+function renderTranslateBodyOnly(options = {}) {
   const body = app.querySelector(".page-body.page-body--editor");
   if (!(body instanceof HTMLElement)) {
     renderWithOptions();
@@ -359,21 +359,24 @@ function renderTranslateBodyOnly() {
   const focusSnapshot = captureFocusedInputState();
   const assistantTranscriptScrollTop = captureAssistantTranscriptScrollTop(app);
   const scrollSnapshot = captureRenderScrollSnapshot("translate");
+  const skipAnchorRestore = options?.skipTranslateAnchorRestore === true;
   const {
     anchor: translateAnchor,
     hadPendingAnchor,
     usedVisibleFallback,
-  } = resolveTranslateRenderAnchor({
-    includeVisibleFallback: false,
-  });
+  } = skipAnchorRestore
+    ? { anchor: null, hadPendingAnchor: false, usedVisibleFallback: false }
+    : resolveTranslateRenderAnchor({
+      includeVisibleFallback: false,
+    });
   body.innerHTML = renderTranslateEditorBody(state);
   restoreRenderScrollSnapshot("translate", "translate", scrollSnapshot);
-  if (!hadPendingAnchor && translateAnchor?.rowId) {
+  if (!skipAnchorRestore && !hadPendingAnchor && translateAnchor?.rowId) {
     queueTranslateRowAnchor(translateAnchor);
   }
   initializeEditorVirtualization(app, state);
   const restoredPendingLocation = false;
-  const restoredAnchor = translateAnchor?.rowId
+  const restoredAnchor = !skipAnchorRestore && translateAnchor?.rowId
     ? restoreTranslateRowAnchor(translateAnchor)
     : false;
   logEditorScrollDebug("translate-body-rerender", {
@@ -527,7 +530,7 @@ function renderWithOptions(options = {}) {
   }
 
   if (options?.scope === "translate-body" && state.screen === "translate") {
-    renderTranslateBodyOnly();
+    renderTranslateBodyOnly(options);
     return;
   }
 
