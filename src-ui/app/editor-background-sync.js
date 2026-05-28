@@ -31,6 +31,7 @@ import { showNoticeBadge } from "./status-feedback.js";
 import { classifySyncError } from "./sync-error.js";
 import { handleSyncFailure } from "./sync-recovery.js";
 import { findEditorRowById } from "./editor-utils.js";
+import { isDeletedRepoResource } from "./repo-transport-eligibility.js";
 
 const EDITOR_SYNC_IDLE_MS = 10_000;
 const EDITOR_SYNC_REMOTE_INTERVAL_MS = 180_000;
@@ -84,6 +85,9 @@ function activeEditorSyncInput() {
   if (!Number.isFinite(team?.installationId) || !context?.project?.name || !context?.chapter?.id) {
     return null;
   }
+  if (isDeletedRepoResource(context.project) || isDeletedRepoResource(context.chapter)) {
+    return null;
+  }
   const repoScope = projectRepoScope({ team, project: context.project });
   if (!repoScope) {
     return null;
@@ -99,6 +103,10 @@ function activeEditorSyncInput() {
     defaultBranchName: context.project.defaultBranchName ?? "main",
     defaultBranchHeadOid: context.project.defaultBranchHeadOid ?? null,
     chapterId: context.chapter.id,
+    lifecycleState: context.project.lifecycleState ?? null,
+    recordState: context.project.recordState ?? null,
+    remoteState: context.project.remoteState ?? null,
+    status: context.project.status ?? null,
   };
 }
 

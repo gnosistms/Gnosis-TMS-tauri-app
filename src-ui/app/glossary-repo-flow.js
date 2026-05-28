@@ -1,7 +1,7 @@
 import { requireBrokerSession } from "./auth-flow.js";
 import { invoke } from "./runtime.js";
 import { beginPageSync, completePageSync, failPageSync } from "./page-sync.js";
-import { saveStoredGlossariesForTeam } from "./glossary-cache.js";
+import { loadStoredGlossariesForTeam, saveStoredGlossariesForTeam } from "./glossary-cache.js";
 import { normalizeGlossarySummary, sortGlossaries } from "./glossary-shared.js";
 import { areResourcePageWritesDisabled } from "./resource-page-controller.js";
 import { ensureResourceNotTombstoned } from "./resource-lifecycle-engine.js";
@@ -11,6 +11,7 @@ import { removeGlossaryFromState } from "./glossary-top-level-state.js";
 import { requireAppUpdate } from "./updater-flow.js";
 import {
   inspectAndMigrateLocalRepoBindings,
+  listLocalGlossaryMetadataRecords,
   listGlossaryMetadataRecords,
   lookupLocalMetadataTombstone,
   repairAutoRepairableRepoBindings,
@@ -24,7 +25,13 @@ import {
 import {
   clearRestoredLocalHardDeleteTombstones,
   filterLocalHardDeletedResources,
+  isLocalHardDeletedResource,
 } from "./local-hard-delete-store.js";
+import {
+  filterKnownDeletedRepoResources,
+  isDeletedRepoResource,
+  repoTransportLifecycleFields,
+} from "./repo-transport-eligibility.js";
 import { isSoftDeletedResource } from "./resource-write-policy.js";
 
 function normalizeGlossaryBrokerError(error) {
@@ -221,6 +228,7 @@ function glossaryRepoSyncDescriptor(repo) {
     repoId: Number.isFinite(repo.repoId) ? repo.repoId : null,
     defaultBranchName: repo.defaultBranchName || "main",
     defaultBranchHeadOid: repo.defaultBranchHeadOid || null,
+    ...repoTransportLifecycleFields(repo),
   };
 }
 
@@ -229,8 +237,7 @@ function metadataBackedGlossaryRepo(record) {
     !record
     || record.recordState !== "live"
     || record.remoteState !== "linked"
-    || record.lifecycleState === "deleted"
-    || record.lifecycleState === "softDeleted"
+    || isDeletedRepoResource(record)
     || typeof record.repoName !== "string"
     || !record.repoName.trim()
     || typeof record.fullName !== "string"
@@ -292,7 +299,7 @@ function buildMetadataBackedGlossarySyncRepos(metadataRecords, remoteRepos, opti
     if (record?.recordState !== "live" || record?.remoteState !== "linked") {
       continue;
     }
-    if (record?.lifecycleState === "deleted" || record?.lifecycleState === "softDeleted") {
+    if (isDeletedRepoResource(record)) {
       continue;
     }
 
@@ -311,6 +318,9 @@ function buildMetadataBackedGlossarySyncRepos(metadataRecords, remoteRepos, opti
     syncRepos.push({
       ...repo,
       glossaryId: record.id,
+      lifecycleState: record.lifecycleState,
+      recordState: record.recordState,
+      remoteState: record.remoteState,
     });
   }
 
@@ -325,6 +335,27 @@ function applyLocalGlossaryHardDeleteState(team, glossaries) {
   return filterLocalHardDeletedResources(team, "glossary", items, {
     isDeleted: (glossary) => isSoftDeletedResource(glossary, "glossary"),
   });
+}
+
+async function collectKnownDeletedGlossaryResources(team, localSummaries = []) {
+  const stored = loadStoredGlossariesForTeam(team);
+  const known = [
+    ...(Array.isArray(state.glossaries) ? state.glossaries : []),
+    ...(Array.isArray(stored?.glossaries) ? stored.glossaries : []),
+    ...(Array.isArray(localSummaries) ? localSummaries : []),
+  ];
+
+  try {
+    known.push(...await listLocalGlossaryMetadataRecords(team));
+  } catch {}
+
+  return known.filter(isDeletedRepoResource);
+}
+
+async function filterKnownDeletedGlossarySyncTargets(team, syncTargets, localSummaries = []) {
+  const knownDeleted = await collectKnownDeletedGlossaryResources(team, localSummaries);
+  return filterKnownDeletedRepoResources(syncTargets, knownDeleted)
+    .filter((repo) => !isLocalHardDeletedResource(team, "glossary", repo));
 }
 
 function countRecoverableGlossaryMetadataRecords(records) {
@@ -641,7 +672,7 @@ export async function loadRepoBackedGlossariesForTeam(team, options = {}) {
   }
   const syncTargets = metadataRecords.length > 0
     ? buildMetadataBackedGlossarySyncRepos(metadataRecords, remoteRepos, { remoteLoaded })
-    : remoteRepos;
+    : await filterKnownDeletedGlossarySyncTargets(team, remoteRepos, localSummaries);
   const syncSnapshots = syncTargets.length > 0
     ? await syncGlossaryReposForTeam(team, syncTargets)
     : [];

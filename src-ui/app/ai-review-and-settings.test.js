@@ -2713,6 +2713,47 @@ test("applyEditorAiReview updates the editor row and clears the suggestion after
   );
 });
 
+test("applyEditorAiReview does not wait for durable row persistence", async () => {
+  installTranslateFixture();
+  state.editorChapter = {
+    ...state.editorChapter,
+    aiReview: {
+      status: "ready",
+      error: "",
+      rowId: "row-1",
+      languageCode: "vi",
+      requestKey: "req-1",
+      sourceText: "Texto original",
+      suggestedText: "Texto revisado",
+    },
+  };
+
+  const durableWrite = createDeferred();
+  let persistOptions = null;
+
+  await applyEditorAiReview(() => {}, {
+    updateEditorRowFieldValue(rowId, languageCode, nextValue) {
+      const row = state.editorChapter.rows.find((entry) => entry.rowId === rowId);
+      row.fields[languageCode] = nextValue;
+      row.saveStatus = "dirty";
+    },
+    persistEditorRowOnBlur(_render, rowId, options = {}) {
+      persistOptions = options;
+      if (options.waitForDurable === false) {
+        const row = state.editorChapter.rows.find((entry) => entry.rowId === rowId);
+        row.saveStatus = "saving";
+        return true;
+      }
+      return durableWrite.promise;
+    },
+  });
+
+  assert.equal(persistOptions?.waitForDurable, false);
+  assert.equal(state.editorChapter.rows[0].fields.vi, "Texto revisado");
+  assert.equal(state.editorChapter.rows[0].saveStatus, "saving");
+  assert.equal(state.editorChapter.aiReview.status, "idle");
+});
+
 test("applyEditorAiReview applies footnote and image caption suggestions separately", async () => {
   installTranslateFixture({
     footnotes: {

@@ -5,7 +5,9 @@ import { normalizeQaList, sortQaLists } from "./qa-list-shared.js";
 import { state } from "./state.js";
 import { showNoticeBadge } from "./status-feedback.js";
 import {
+  listLocalQaListMetadataRecords,
   listQaListMetadataRecords,
+  lookupLocalMetadataTombstone,
   upsertQaListMetadataRecord,
 } from "./team-metadata-flow.js";
 import {
@@ -14,6 +16,13 @@ import {
   isLocalHardDeletedResource,
 } from "./local-hard-delete-store.js";
 import { isSoftDeletedResource } from "./resource-write-policy.js";
+import { loadStoredQaListsForTeam } from "./qa-list-cache.js";
+import {
+  filterKnownDeletedRepoResources,
+  isDeletedRepoResource,
+  repoResourcesMatch,
+  repoTransportLifecycleFields,
+} from "./repo-transport-eligibility.js";
 
 function ensureInvoke() {
   if (!invoke) {
@@ -111,6 +120,7 @@ export function qaListRepoDescriptor(qaList) {
     repoId: Number.isFinite(qaList.repoId) ? qaList.repoId : null,
     defaultBranchName: qaList.defaultBranchName || "main",
     defaultBranchHeadOid: qaList.defaultBranchHeadOid || null,
+    ...repoTransportLifecycleFields(qaList),
   };
 }
 
@@ -127,6 +137,7 @@ function qaListRepoSyncDescriptor(repo) {
     repoId: Number.isFinite(repo.repoId) ? repo.repoId : null,
     defaultBranchName: repo.defaultBranchName || "main",
     defaultBranchHeadOid: repo.defaultBranchHeadOid || null,
+    ...repoTransportLifecycleFields(repo),
   };
 }
 
@@ -518,7 +529,7 @@ function buildMetadataQaListSyncTargets(team, metadataRecords, remoteRepos) {
       record?.recordState === "live"
       && record?.remoteState !== "deleted"
       && record?.remoteState !== "missing"
-      && !isSoftDeletedResource(record, "qaList")
+      && !isDeletedRepoResource(record)
     )
     .map((record) => {
       const remote = findMatchingRemoteQaList(record, remoteByName, remoteByFullName);
@@ -533,6 +544,9 @@ function buildMetadataQaListSyncTargets(team, metadataRecords, remoteRepos) {
         repoId: remote?.repoId ?? record.githubRepoId ?? null,
         defaultBranchName: remote?.defaultBranchName ?? record.defaultBranch ?? "main",
         defaultBranchHeadOid: remote?.defaultBranchHeadOid ?? null,
+        lifecycleState: record.lifecycleState,
+        recordState: record.recordState,
+        remoteState: record.remoteState,
       };
     })
     .filter(Boolean);
@@ -568,6 +582,27 @@ function buildUntrackedRemoteQaListBootstrapTargets(team, metadataRecords, remot
         nodeId: repo.nodeId,
       })
     );
+}
+
+async function collectKnownDeletedQaListResources(team, localQaLists = []) {
+  const stored = loadStoredQaListsForTeam(team);
+  const known = [
+    ...(Array.isArray(state.qaLists) ? state.qaLists : []),
+    ...(Array.isArray(stored?.qaLists) ? stored.qaLists : []),
+    ...(Array.isArray(localQaLists) ? localQaLists : []),
+  ];
+
+  try {
+    known.push(...await listLocalQaListMetadataRecords(team));
+  } catch {}
+
+  return known.filter(isDeletedRepoResource);
+}
+
+async function filterKnownDeletedQaListSyncTargets(team, syncTargets, localQaLists = []) {
+  const knownDeleted = await collectKnownDeletedQaListResources(team, localQaLists);
+  return filterKnownDeletedRepoResources(syncTargets, knownDeleted)
+    .filter((repo) => !isLocalHardDeletedResource(team, "qaList", repo));
 }
 
 export async function loadRepoBackedQaListsForTeam(team, options = {}) {
@@ -610,12 +645,22 @@ export async function loadRepoBackedQaListsForTeam(team, options = {}) {
   } catch (error) {
     brokerWarning = error?.message ?? String(error);
   }
-  const syncTargets = metadataLoaded
-    ? [
-      ...buildMetadataQaListSyncTargets(team, metadataRecords, remoteRepos),
-      ...buildUntrackedRemoteQaListBootstrapTargets(team, metadataRecords, remoteRepos),
-    ]
-    : filterDeletedQaListSyncTargets(team, localQaLists, remoteRepos);
+  let syncTargets = [];
+  if (metadataLoaded) {
+    const metadataSyncTargets = buildMetadataQaListSyncTargets(team, metadataRecords, remoteRepos);
+    const untrackedRemoteSyncTargets = await filterKnownDeletedQaListSyncTargets(
+      team,
+      buildUntrackedRemoteQaListBootstrapTargets(team, metadataRecords, remoteRepos),
+      localQaLists,
+    );
+    syncTargets = [...metadataSyncTargets, ...untrackedRemoteSyncTargets];
+  } else {
+    syncTargets = await filterKnownDeletedQaListSyncTargets(
+      team,
+      filterDeletedQaListSyncTargets(team, localQaLists, remoteRepos),
+      localQaLists,
+    );
+  }
   const syncSnapshots = syncTargets.length > 0
     ? await syncQaListReposForTeam(team, syncTargets)
     : [];
@@ -643,10 +688,19 @@ export async function ensureQaListNotTombstoned(render, team, qaList) {
     return false;
   }
 
-  // QA lists do not yet have team metadata tombstone records like glossaries.
-  // Keep the lifecycle API shape aligned so the real tombstone check can be
-  // plugged in when QA list metadata reaches parity.
-  if (qaList.recordState === "tombstone" || qaList.remoteState === "deleted") {
+  let tombstoned = qaList.recordState === "tombstone" || qaList.remoteState === "deleted";
+  if (!tombstoned) {
+    try {
+      tombstoned = await lookupLocalMetadataTombstone(team, "qaList", qaList.id);
+    } catch {
+      const metadataRecords = await listQaListMetadataRecords(team).catch(() => []);
+      tombstoned = metadataRecords.some((record) =>
+        isDeletedRepoResource(record) && repoResourcesMatch(qaList, record)
+      );
+    }
+  }
+
+  if (tombstoned) {
     state.qaLists = state.qaLists.filter((item) => item?.id !== qaList.id);
     showNoticeBadge("This QA list has already been permanently deleted.", render);
     render?.();

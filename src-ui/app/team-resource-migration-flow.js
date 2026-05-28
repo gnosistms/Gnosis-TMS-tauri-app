@@ -11,6 +11,15 @@ import {
 } from "./qa-list-repo-flow.js";
 import { invoke, waitForNextPaint } from "./runtime.js";
 import {
+  filterKnownDeletedRepoResources,
+  isDeletedRepoResource,
+} from "./repo-transport-eligibility.js";
+import {
+  listLocalProjectMetadataRecords,
+  listLocalGlossaryMetadataRecords,
+  listLocalQaListMetadataRecords,
+} from "./team-metadata-flow.js";
+import {
   createTeamResourceMigrationModalState,
   state,
 } from "./state.js";
@@ -48,19 +57,6 @@ function resourceIdOf(resource, idField) {
     || normalizedText(resource?.resourceId)
     || null
   );
-}
-
-function isDeletedResourceCandidate(resource) {
-  return [
-    resource?.lifecycleState,
-    resource?.recordState,
-    resource?.remoteState,
-  ].some((value) => {
-    const normalized = normalizedText(value).toLowerCase();
-    return normalized === "deleted"
-      || normalized === "softdeleted"
-      || normalized === "tombstone";
-  });
 }
 
 function projectCandidate(project) {
@@ -212,13 +208,22 @@ async function listRemoteProjectsForTeam(team) {
 
 async function collectTeamMigrationResources(team, options = {}) {
   const remoteProjects = await listRemoteProjectsForTeam(team);
-  const glossaries = await listRemoteGlossaryReposForTeam(team);
-  const qaLists = teamSupportsQaListRepos(team)
+  const remoteGlossaries = await listRemoteGlossaryReposForTeam(team);
+  const remoteQaLists = teamSupportsQaListRepos(team)
     ? await listRemoteQaListReposForTeam(team)
     : [];
+  const localProjectMetadata = await listLocalProjectMetadataRecords(team).catch(() => []);
+  const localGlossaryMetadata = await listLocalGlossaryMetadataRecords(team).catch(() => []);
+  const localQaListMetadata = await listLocalQaListMetadataRecords(team).catch(() => []);
+  const projects = filterKnownDeletedRepoResources(remoteProjects, [
+    ...(Array.isArray(options.projects) ? options.projects : []),
+    ...localProjectMetadata,
+  ]);
+  const glossaries = filterKnownDeletedRepoResources(remoteGlossaries, localGlossaryMetadata);
+  const qaLists = filterKnownDeletedRepoResources(remoteQaLists, localQaListMetadata);
 
   return {
-    projects: mergeResourceLists(options.projects, remoteProjects),
+    projects: mergeResourceLists(options.projects, projects),
     glossaries: Array.isArray(glossaries) ? glossaries : [],
     qaLists: Array.isArray(qaLists) ? qaLists : [],
   };
@@ -237,13 +242,13 @@ async function listPendingTeamMigrations(team, resources) {
       installationId: team.installationId,
       projects: resources.projects
         .map(projectCandidate)
-        .filter((project) => project && !isDeletedResourceCandidate(project)),
+        .filter((project) => project && !isDeletedRepoResource(project)),
       glossaries: resources.glossaries.map((glossary) =>
         resourceCandidate(glossary, "glossaryId")
-      ).filter((glossary) => glossary && !isDeletedResourceCandidate(glossary)),
+      ).filter((glossary) => glossary && !isDeletedRepoResource(glossary)),
       qaLists: resources.qaLists.map((qaList) =>
         resourceCandidate(qaList, "qaListId")
-      ).filter((qaList) => qaList && !isDeletedResourceCandidate(qaList)),
+      ).filter((qaList) => qaList && !isDeletedRepoResource(qaList)),
     },
   });
 

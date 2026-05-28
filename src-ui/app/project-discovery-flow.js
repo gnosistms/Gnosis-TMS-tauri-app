@@ -36,8 +36,10 @@ import { teamCacheKey } from "./team-cache.js";
 import {
   clearRestoredLocalHardDeleteTombstones,
   filterLocalHardDeletedResources,
+  isLocalHardDeletedResource,
 } from "./local-hard-delete-store.js";
 import { isSoftDeletedResource } from "./resource-write-policy.js";
+import { filterKnownDeletedRepoResources, isDeletedRepoResource } from "./repo-transport-eligibility.js";
 import {
   projectRepoScope,
   waitForRepoWriteQueueIdle,
@@ -64,6 +66,33 @@ function applyLocalProjectHardDeleteState(selectedTeam, snapshot) {
       isDeleted: (project) => isSoftDeletedResource(project, "project"),
     }),
   };
+}
+
+async function collectKnownDeletedProjectResources(selectedTeam, localProjectSnapshot, options = {}) {
+  const known = [
+    ...(Array.isArray(state.projects) ? state.projects : []),
+    ...(Array.isArray(state.deletedProjects) ? state.deletedProjects : []),
+    ...(Array.isArray(localProjectSnapshot?.items) ? localProjectSnapshot.items : []),
+    ...(Array.isArray(localProjectSnapshot?.deletedItems) ? localProjectSnapshot.deletedItems : []),
+  ];
+
+  try {
+    const stored = options.loadStoredProjectsForTeam?.(selectedTeam);
+    known.push(...(Array.isArray(stored?.projects) ? stored.projects : []));
+    known.push(...(Array.isArray(stored?.deletedProjects) ? stored.deletedProjects : []));
+  } catch {}
+
+  try {
+    known.push(...await listLocalProjectMetadataRecords(selectedTeam));
+  } catch {}
+
+  return known.filter(isDeletedRepoResource);
+}
+
+async function filterKnownDeletedRemoteProjects(selectedTeam, remoteProjects, localProjectSnapshot, options = {}) {
+  const knownDeleted = await collectKnownDeletedProjectResources(selectedTeam, localProjectSnapshot, options);
+  return filterKnownDeletedRepoResources(remoteProjects, knownDeleted)
+    .filter((project) => !isLocalHardDeletedResource(selectedTeam, "project", project));
 }
 
 function nextProjectDiscoveryRequestId() {
@@ -614,7 +643,7 @@ export async function loadTeamProjects(render, teamId = state.selectedTeamId, op
     ) {
       return;
     }
-    const remoteProjects = projectsResult.status === "fulfilled"
+    let remoteProjects = projectsResult.status === "fulfilled"
       ? (Array.isArray(projectsResult.value) ? projectsResult.value : [])
       : [];
     const remoteLoaded = projectsResult.status === "fulfilled";
@@ -645,6 +674,14 @@ export async function loadTeamProjects(render, teamId = state.selectedTeamId, op
         selectedTeam,
         projectMetadataRecords,
         remoteProjects,
+        options,
+      );
+    }
+    if (remoteLoaded && (!metadataLoaded || projectMetadataRecords.length === 0)) {
+      remoteProjects = await filterKnownDeletedRemoteProjects(
+        selectedTeam,
+        remoteProjects,
+        localProjectSnapshot,
         options,
       );
     }
@@ -765,7 +802,6 @@ export async function loadTeamProjects(render, teamId = state.selectedTeamId, op
     ) {
       return;
     }
-    options.setProjectUiDebug(render, "Rebuilding local project repo state...");
     await runTeamResourceMigrationSync(render, selectedTeam, { projects: mappedProjects });
     if (
       await abortProjectDiscoveryIfStale(

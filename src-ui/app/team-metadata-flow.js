@@ -551,6 +551,24 @@ export async function listLocalProjectMetadataRecords(team) {
     .filter(Boolean);
 }
 
+export async function listLocalGlossaryMetadataRecords(team) {
+  const records = await invoke("list_local_gnosis_glossary_metadata_records", {
+    installationId: team.installationId,
+  });
+  return (Array.isArray(records) ? records : [])
+    .map(normalizeGlossaryMetadataRecord)
+    .filter(Boolean);
+}
+
+export async function listLocalQaListMetadataRecords(team) {
+  const records = await invoke("list_local_gnosis_qa_list_metadata_records", {
+    installationId: team.installationId,
+  });
+  return (Array.isArray(records) ? records : [])
+    .map(normalizeQaListMetadataRecord)
+    .filter(Boolean);
+}
+
 export async function listGlossaryMetadataRecords(team) {
   const syncPromise = invoke("sync_local_team_metadata_repo", {
     installationId: team.installationId,

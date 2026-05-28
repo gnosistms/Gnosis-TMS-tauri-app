@@ -36,6 +36,12 @@ function setupTeamMigrationTest() {
   state.offline.isEnabled = false;
 }
 
+function isLocalMetadataListCommand(command) {
+  return command === "list_local_gnosis_project_metadata_records"
+    || command === "list_local_gnosis_glossary_metadata_records"
+    || command === "list_local_gnosis_qa_list_metadata_records";
+}
+
 test("team resource migration keeps one modal open across follow-up pending scans", async () => {
   setupTeamMigrationTest();
 
@@ -43,6 +49,9 @@ test("team resource migration keeps one modal open across follow-up pending scan
   let pendingScanCount = 0;
   invokeHandler = async (command, payload = {}) => {
     commands.push(command);
+    if (isLocalMetadataListCommand(command)) {
+      return [];
+    }
     if (command === "list_gnosis_projects_for_installation") {
       return [];
     }
@@ -128,6 +137,9 @@ test("team resource migration excludes deleted tombstones from pending scan cand
 
   let pendingScanPayload = null;
   invokeHandler = async (command, payload = {}) => {
+    if (isLocalMetadataListCommand(command)) {
+      return [];
+    }
     if (command === "list_gnosis_projects_for_installation") {
       return [{
         projectId: "project-live",
@@ -183,12 +195,79 @@ test("team resource migration excludes deleted tombstones from pending scan cand
   assert.deepEqual(pendingScanPayload.qaLists, []);
 });
 
+test("team resource migration excludes remote repos deleted in local metadata", async () => {
+  setupTeamMigrationTest();
+
+  let pendingScanPayload = null;
+  invokeHandler = async (command, payload = {}) => {
+    if (command === "list_gnosis_projects_for_installation") {
+      return [];
+    }
+    if (command === "list_gnosis_glossaries_for_installation") {
+      return [{
+        glossaryId: "glossary-deleted",
+        name: "glossary-deleted",
+        fullName: "team/glossary-deleted",
+        defaultBranchName: "main",
+      }];
+    }
+    if (command === "list_gnosis_qa_lists_for_installation") {
+      return [{
+        qaListId: "qa-deleted",
+        name: "qa-deleted",
+        fullName: "team/qa-deleted",
+        defaultBranchName: "main",
+      }];
+    }
+    if (command === "list_local_gnosis_project_metadata_records") {
+      return [];
+    }
+    if (command === "list_local_gnosis_glossary_metadata_records") {
+      return [{
+        id: "glossary-deleted",
+        repoName: "glossary-deleted",
+        title: "Deleted glossary",
+        lifecycleState: "deleted",
+        recordState: "live",
+        remoteState: "linked",
+      }];
+    }
+    if (command === "list_local_gnosis_qa_list_metadata_records") {
+      return [{
+        id: "qa-deleted",
+        repoName: "qa-deleted",
+        title: "Deleted QA",
+        lifecycleState: "deleted",
+        recordState: "live",
+        remoteState: "linked",
+      }];
+    }
+    if (command === "list_pending_team_repo_layout_migrations") {
+      pendingScanPayload = payload.input;
+      return {
+        targetVersion: "0.8.10",
+        migrations: [],
+      };
+    }
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  const migrated = await runTeamResourceMigrationSync(() => {}, state.teams[0]);
+
+  assert.equal(migrated, false);
+  assert.deepEqual(pendingScanPayload.glossaries, []);
+  assert.deepEqual(pendingScanPayload.qaLists, []);
+});
+
 test("team resource migration ignores missing local repos because normal sync downloads them", async () => {
   setupTeamMigrationTest();
 
   const commands = [];
   invokeHandler = async (command) => {
     commands.push(command);
+    if (isLocalMetadataListCommand(command)) {
+      return [];
+    }
     if (command === "list_gnosis_projects_for_installation") {
       return [{
         id: "project-1",
@@ -238,6 +317,9 @@ test("team resource migration reports incomplete repeated pending work", async (
     defaultBranchHeadOid: "remote-head",
   };
   invokeHandler = async (command) => {
+    if (isLocalMetadataListCommand(command)) {
+      return [];
+    }
     if (command === "list_gnosis_projects_for_installation") {
       return [project];
     }

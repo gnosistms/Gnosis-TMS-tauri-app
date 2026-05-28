@@ -1,3 +1,8 @@
+import {
+  isDeletedRepoResource,
+  repoTransportLifecycleFields,
+} from "./repo-transport-eligibility.js";
+
 export const PROJECT_REPO_SYNC_STATUS_UNRESOLVED_CONFLICT = "unresolvedConflict";
 export const PROJECT_REPO_SYNC_STATUS_IMPORTED_EDITOR_CONFLICTS = "importedEditorConflicts";
 export const PROJECT_REPO_SYNC_STATUS_UPDATE_REQUIRED = "updateRequired";
@@ -11,12 +16,7 @@ export function mapProjectToProjectRepoSyncDescriptor(project) {
     || !project.name.trim()
     || typeof project?.fullName !== "string"
     || !project.fullName.trim()
-    || project?.lifecycleState === "deleted"
-    || project?.lifecycleState === "softDeleted"
-    || project?.status === "deleted"
-    || project?.remoteState === "missing"
-    || project?.remoteState === "deleted"
-    || project?.recordState === "tombstone"
+    || isDeletedRepoResource(project)
   ) {
     return null;
   }
@@ -28,6 +28,7 @@ export function mapProjectToProjectRepoSyncDescriptor(project) {
     repoId: Number.isFinite(project.repoId) ? project.repoId : null,
     defaultBranchName: project.defaultBranchName ?? null,
     defaultBranchHeadOid: project.defaultBranchHeadOid ?? null,
+    ...repoTransportLifecycleFields(project),
   };
 }
 

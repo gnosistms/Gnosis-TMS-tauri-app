@@ -31,6 +31,10 @@ pub(crate) struct GlossaryRepoSyncDescriptor {
     pub(crate) repo_id: Option<i64>,
     pub(crate) default_branch_name: Option<String>,
     pub(crate) default_branch_head_oid: Option<String>,
+    pub(crate) lifecycle_state: Option<String>,
+    pub(crate) record_state: Option<String>,
+    pub(crate) remote_state: Option<String>,
+    pub(crate) status: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -50,6 +54,10 @@ pub(crate) struct GlossaryEditorRepoSyncInput {
     pub(crate) repo_id: Option<i64>,
     pub(crate) default_branch_name: Option<String>,
     pub(crate) default_branch_head_oid: Option<String>,
+    pub(crate) lifecycle_state: Option<String>,
+    pub(crate) record_state: Option<String>,
+    pub(crate) remote_state: Option<String>,
+    pub(crate) status: Option<String>,
 }
 
 #[derive(Clone, Serialize)]
@@ -81,6 +89,26 @@ const GLOSSARY_REPO_SYNC_STATUS_UP_TO_DATE: &str = "upToDate";
 const GLOSSARY_REPO_SYNC_STATUS_OUT_OF_SYNC: &str = "outOfSync";
 const GLOSSARY_REPO_SYNC_STATUS_SYNC_ERROR: &str = "syncError";
 const GLOSSARY_REPO_SYNC_STATUS_UPDATE_REQUIRED: &str = "updateRequired";
+
+fn repo_transport_deleted_state(value: Option<&str>) -> bool {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| {
+            matches!(
+                value.to_ascii_lowercase().as_str(),
+                "deleted" | "softdeleted" | "tombstone" | "missing"
+            )
+        })
+        .unwrap_or(false)
+}
+
+fn glossary_descriptor_is_deleted(glossary: &GlossaryRepoSyncDescriptor) -> bool {
+    repo_transport_deleted_state(glossary.lifecycle_state.as_deref())
+        || repo_transport_deleted_state(glossary.record_state.as_deref())
+        || repo_transport_deleted_state(glossary.remote_state.as_deref())
+        || repo_transport_deleted_state(glossary.status.as_deref())
+}
 
 #[tauri::command]
 pub(crate) async fn sync_gtms_glossary_repos(
@@ -197,6 +225,10 @@ fn sync_gtms_glossary_editor_repo_sync(
         repo_id: input.repo_id,
         default_branch_name: input.default_branch_name.clone(),
         default_branch_head_oid: input.default_branch_head_oid.clone(),
+        lifecycle_state: input.lifecycle_state.clone(),
+        record_state: input.record_state.clone(),
+        remote_state: input.remote_state.clone(),
+        status: input.status.clone(),
     };
     let repo_path = resolve_or_desired_glossary_git_repo_path(
         app,
@@ -205,6 +237,15 @@ fn sync_gtms_glossary_editor_repo_sync(
         &input.repo_name,
     )?;
     let old_head_sha = read_current_head_oid(&repo_path);
+    if glossary_descriptor_is_deleted(&glossary) {
+        return Ok(GlossaryEditorRepoSyncResponse {
+            old_head_sha: old_head_sha.clone(),
+            new_head_sha: old_head_sha,
+            changed_term_ids: Vec::new(),
+            inserted_term_ids: Vec::new(),
+            deleted_term_ids: Vec::new(),
+        });
+    }
     let git_status = git_output(&repo_path, &["status", "--porcelain"], None)?;
     if !git_status.trim().is_empty() {
         return Err("Local repo has uncommitted changes.".to_string());
@@ -369,6 +410,15 @@ fn inspect_glossary_repo_state(
         required_app_version: None,
         current_app_version: None,
     };
+
+    if glossary_descriptor_is_deleted(glossary) {
+        return GlossaryRepoSyncSnapshot {
+            local_head_oid: read_current_head_oid(repo_path),
+            status: GLOSSARY_REPO_SYNC_STATUS_UP_TO_DATE.to_string(),
+            message: Some("Skipped because this glossary is deleted.".to_string()),
+            ..default_snapshot()
+        };
+    }
 
     if !repo_path.exists() {
         return default_snapshot();
@@ -550,6 +600,10 @@ fn sync_glossary_repo(
     remote_head_oid: &str,
     git_transport_token: &str,
 ) -> Result<Option<String>, String> {
+    if glossary_descriptor_is_deleted(glossary) {
+        return Ok(read_current_head_oid(repo_path));
+    }
+
     if !repo_path.exists() {
         return clone_glossary_repo(
             app,
@@ -785,6 +839,10 @@ mod tests {
             repo_id: None,
             default_branch_name: Some("main".to_string()),
             default_branch_head_oid: Some("remote-head".to_string()),
+            lifecycle_state: None,
+            record_state: None,
+            remote_state: None,
+            status: None,
         };
         let error = encode_repo_app_update_requirement(&RepoAppUpdateRequirement {
             required_version: "0.1.36".to_string(),

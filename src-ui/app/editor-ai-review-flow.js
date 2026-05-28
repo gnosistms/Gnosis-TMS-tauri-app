@@ -15,7 +15,6 @@ import {
   resolveAiReviewProviderAndModel,
 } from "./ai-settings-flow.js";
 import { ensureSelectedTeamAiProviderReady } from "./team-ai-flow.js";
-import { rowHasFieldChanges } from "./editor-row-persistence-model.js";
 import { captureTranslateAnchorForRow } from "./scroll-state.js";
 import { findEditorRowById, hasActiveEditorField } from "./editor-utils.js";
 import { selectedProjectsTeam, selectedProjectsTeamInstallationId } from "./project-context.js";
@@ -363,49 +362,68 @@ export async function applyEditorAiReview(render, operations = {}) {
       context.languageCode,
     ),
   });
-  if (visibleAiReview.suggestedText?.trim()) {
-    updateEditorRowFieldValue(
-      context.rowId,
-      context.languageCode,
-      visibleAiReview.suggestedText,
-    );
-  }
-  if (visibleAiReview.suggestedFootnote?.trim()) {
-    updateEditorRowFieldValue(
-      context.rowId,
-      context.languageCode,
-      visibleAiReview.suggestedFootnote,
-      "footnote",
-    );
-  }
-  if (visibleAiReview.suggestedImageCaption?.trim()) {
-    updateEditorRowFieldValue(
-      context.rowId,
-      context.languageCode,
-      visibleAiReview.suggestedImageCaption,
-      "image-caption",
-    );
-  }
-  renderTranslateBodyPreservingViewport(render, reviewViewportSnapshot);
+  try {
+    if (visibleAiReview.suggestedText?.trim()) {
+      updateEditorRowFieldValue(
+        context.rowId,
+        context.languageCode,
+        visibleAiReview.suggestedText,
+      );
+    }
+    if (visibleAiReview.suggestedFootnote?.trim()) {
+      updateEditorRowFieldValue(
+        context.rowId,
+        context.languageCode,
+        visibleAiReview.suggestedFootnote,
+        "footnote",
+      );
+    }
+    if (visibleAiReview.suggestedImageCaption?.trim()) {
+      updateEditorRowFieldValue(
+        context.rowId,
+        context.languageCode,
+        visibleAiReview.suggestedImageCaption,
+        "image-caption",
+      );
+    }
+    renderTranslateBodyPreservingViewport(render, reviewViewportSnapshot);
 
-  await persistEditorRowOnBlur(render, context.rowId);
+    const queued = await persistEditorRowOnBlur(render, context.rowId, {
+      waitForDurable: false,
+    });
 
-  if (state.editorChapter?.chapterId !== context.chapterId) {
-    return;
-  }
+    if (state.editorChapter?.chapterId !== context.chapterId) {
+      return;
+    }
 
-  const row = findEditorRowById(context.rowId, state.editorChapter);
-  if (!row || (!rowHasFieldChanges(row) && row.saveStatus === "idle")) {
-    state.editorChapter = clearEditorAiReview(state.editorChapter);
-  } else {
+    if (queued !== false) {
+      state.editorChapter = clearEditorAiReview(state.editorChapter);
+    } else {
+      state.editorChapter = {
+        ...state.editorChapter,
+        aiReview: {
+          ...normalizeEditorAiReviewState(state.editorChapter.aiReview),
+          status: "ready",
+        },
+      };
+    }
+  } catch (error) {
+    if (state.editorChapter?.chapterId !== context.chapterId) {
+      return;
+    }
+    const message = error instanceof Error ? error.message : String(error);
     state.editorChapter = {
       ...state.editorChapter,
       aiReview: {
         ...normalizeEditorAiReviewState(state.editorChapter.aiReview),
         status: "ready",
+        error: message,
       },
     };
+    showNoticeBadge(message || "The AI review suggestion could not be applied.", render);
   }
 
-  render?.({ scope: "translate-sidebar" });
+  if (state.editorChapter?.chapterId === context.chapterId) {
+    render?.({ scope: "translate-sidebar" });
+  }
 }

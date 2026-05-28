@@ -300,6 +300,10 @@ pub(crate) fn update_gtms_chapter_languages_sync(
                     default_branch_name: input.default_branch_name.clone(),
                     default_branch_head_oid: input.default_branch_head_oid.clone(),
                     chapter_id: input.chapter_id.clone(),
+                    lifecycle_state: None,
+                    record_state: None,
+                    remote_state: None,
+                    status: None,
                 },
                 session_token,
             )?;

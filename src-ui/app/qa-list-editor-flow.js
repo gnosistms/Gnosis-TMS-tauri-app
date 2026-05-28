@@ -1,4 +1,5 @@
 import { requireBrokerSession } from "./auth-flow.js";
+import { isDeletedRepoResource } from "./repo-transport-eligibility.js";
 import { findIsoLanguageOption } from "../lib/language-options.js";
 import { invoke, waitForNextPaint } from "./runtime.js";
 import {
@@ -182,6 +183,9 @@ async function loadQaListEditorPayloadFromDisk(team, qaList) {
 
 async function syncQaListEditorRepoThenRefresh(render, team, qaList, expectedContext) {
   if (!teamSupportsQaListRepos(team) || !qaList?.repoName) {
+    return;
+  }
+  if (isDeletedRepoResource(qaList)) {
     return;
   }
   const descriptor = qaListRepoDescriptor(qaList);

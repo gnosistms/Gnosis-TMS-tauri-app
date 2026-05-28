@@ -6,6 +6,7 @@ import { state } from "./state.js";
 import { showNoticeBadge } from "./status-feedback.js";
 import { classifySyncError } from "./sync-error.js";
 import { handleSyncFailure } from "./sync-recovery.js";
+import { isDeletedRepoResource } from "./repo-transport-eligibility.js";
 
 const GLOSSARY_SYNC_IDLE_MS = 10_000;
 
@@ -64,6 +65,9 @@ function activeGlossarySyncInput() {
   const glossaryId = glossary?.id ?? editorGlossary?.glossaryId ?? null;
   const repoName = glossary?.repoName || editorGlossary?.repoName || "";
   const fullName = glossary?.fullName || editorGlossary?.fullName || "";
+  if (isDeletedRepoResource(glossary) || isDeletedRepoResource(editorGlossary)) {
+    return null;
+  }
   if (
     !Number.isFinite(team?.installationId)
     || !repoName
@@ -85,6 +89,10 @@ function activeGlossarySyncInput() {
           : null,
     defaultBranchName: glossary?.defaultBranchName ?? editorGlossary?.defaultBranchName ?? "main",
     defaultBranchHeadOid: glossary?.defaultBranchHeadOid ?? editorGlossary?.defaultBranchHeadOid ?? null,
+    lifecycleState: glossary?.lifecycleState ?? editorGlossary?.lifecycleState ?? null,
+    recordState: glossary?.recordState ?? editorGlossary?.recordState ?? null,
+    remoteState: glossary?.remoteState ?? editorGlossary?.remoteState ?? null,
+    status: glossary?.status ?? editorGlossary?.status ?? null,
   };
 }
 

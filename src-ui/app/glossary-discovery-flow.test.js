@@ -33,6 +33,7 @@ const {
   loadTeamGlossaries,
   primeGlossariesLoadingState,
 } = await import("./glossary-discovery-flow.js");
+const { loadRepoBackedGlossariesForTeam } = await import("./glossary-repo-flow.js");
 const { createResourcePageState } = await import("./resource-page-controller.js");
 const { resetSessionState, state } = await import("./state.js");
 const { teamCacheKey } = await import("./team-cache.js");
@@ -139,6 +140,49 @@ test("glossary loading prime preserves visible data only for the selected team c
   assert.equal(state.glossariesPage.visibleTeamId, null);
   assert.equal(state.glossariesPage.visibleCacheKey, null);
   assert.equal(state.glossariesPage.isRefreshing, true);
+});
+
+test("glossary fallback sync skips repos already deleted in visible state", async () => {
+  setupGlossaryLoadState();
+  const team = state.teams[0];
+  state.glossaries = [{
+    id: "glossary-deleted",
+    glossaryId: "glossary-deleted",
+    repoName: "glossary-deleted",
+    fullName: "team-1/glossary-deleted",
+    title: "Deleted glossary",
+    lifecycleState: "deleted",
+    recordState: "live",
+    remoteState: "linked",
+  }];
+
+  invokeHandler = async (command) => {
+    if (command === "list_local_gtms_glossaries") {
+      return [];
+    }
+    if (command === "sync_local_team_metadata_repo" || command === "ensure_local_team_metadata_repo") {
+      throw new Error("metadata unavailable");
+    }
+    if (command === "list_local_gnosis_glossary_metadata_records") {
+      throw new Error("metadata unavailable");
+    }
+    if (command === "list_gnosis_glossaries_for_installation") {
+      return [{
+        glossaryId: "glossary-deleted",
+        name: "glossary-deleted",
+        fullName: "team-1/glossary-deleted",
+        defaultBranchName: "main",
+      }];
+    }
+    if (command === "sync_gtms_glossary_repos") {
+      assert.fail("known deleted glossary should not be synced");
+    }
+    return null;
+  };
+
+  const result = await loadRepoBackedGlossariesForTeam(team);
+
+  assert.equal(result.syncSnapshots.length, 0);
 });
 
 test("glossary load treats unowned preserve requests as normal loads on failure", async () => {

@@ -44,11 +44,16 @@ const {
   submitQaTermEditor,
 } = await import("./qa-list-flow.js");
 const { loadRepoBackedQaListsForTeam } = await import("./qa-list-repo-flow.js");
+const {
+  addLocalHardDeleteTombstone,
+  clearLocalHardDeleteTombstoneForResource,
+} = await import("./local-hard-delete-store.js");
 const { getNoticeBadgeText } = await import("./status-feedback.js");
 const { setCachedQaListEditorPayload } = await import("./qa-list-editor-query.js");
 const { resetQaListsQueryObserver } = await import("./qa-list-query.js");
 const { queryClient } = await import("./query-client.js");
 const { resetSessionState, state } = await import("./state.js");
+const { setActiveStorageLogin } = await import("./team-storage.js");
 
 function deferred() {
   let resolve;
@@ -121,6 +126,7 @@ test.afterEach(() => {
   queryClient.clear();
   invokeHandler = async () => null;
   invokeCalls.length = 0;
+  setActiveStorageLogin(null);
   resetSessionState();
 });
 
@@ -331,6 +337,90 @@ test("repo-backed QA list load does not bootstrap repos tracked by deleted metad
   assert.equal(result.syncSnapshots.length, 0);
   assert.equal(result.qaLists.length, 1);
   assert.equal(result.qaLists[0].lifecycleState, "deleted");
+});
+
+test("repo-backed QA list load trusts restored metadata over local hard-delete tombstones", async () => {
+  setupQaTeams();
+  setActiveStorageLogin("qa-restore-metadata-test");
+
+  const remoteRepo = {
+    name: "qa-list-restored",
+    fullName: "team-1/qa-list-restored",
+    repoId: 44,
+    defaultBranchName: "main",
+    defaultBranchHeadOid: "remote-head",
+  };
+  const restoredRecord = {
+    id: "qa-list-restored-id",
+    kind: "qaList",
+    title: "Restored QA",
+    repoName: remoteRepo.name,
+    previousRepoNames: [],
+    githubRepoId: remoteRepo.repoId,
+    fullName: remoteRepo.fullName,
+    defaultBranch: "main",
+    lifecycleState: "active",
+    remoteState: "linked",
+    recordState: "live",
+    deletedAt: null,
+    language: { code: "vi", name: "Vietnamese" },
+    termCount: 0,
+  };
+  const tombstonedResource = {
+    id: restoredRecord.id,
+    qaListId: restoredRecord.id,
+    repoName: remoteRepo.name,
+    fullName: remoteRepo.fullName,
+    lifecycleState: "deleted",
+  };
+  addLocalHardDeleteTombstone(state.teams[0], "qaList", tombstonedResource);
+
+  let didSyncQaRepo = false;
+  try {
+    invokeHandler = async (command, payload = {}) => {
+      if (command === "list_local_gtms_qa_lists") {
+        return didSyncQaRepo
+          ? [{
+            qaListId: restoredRecord.id,
+            title: restoredRecord.title,
+            repoName: remoteRepo.name,
+            fullName: remoteRepo.fullName,
+            language: restoredRecord.language,
+            lifecycleState: "active",
+            termCount: 0,
+          }]
+          : [];
+      }
+      if (command === "list_gnosis_qa_lists_for_installation") {
+        return [remoteRepo];
+      }
+      if (command === "sync_local_team_metadata_repo") {
+        return { commitCreated: false };
+      }
+      if (command === "list_local_gnosis_qa_list_metadata_records") {
+        return [restoredRecord];
+      }
+      if (command === "sync_gtms_qa_list_repos") {
+        didSyncQaRepo = true;
+        assert.deepEqual(
+          payload.input.qaLists.map((qaList) => qaList.repoName),
+          [remoteRepo.name],
+        );
+        return [{ repoName: remoteRepo.name, status: "upToDate" }];
+      }
+      return { commitCreated: false };
+    };
+
+    const result = await loadRepoBackedQaListsForTeam(state.teams[0]);
+
+    assert.equal(didSyncQaRepo, true);
+    assert.equal(result.syncSnapshots.length, 1);
+    assert.equal(result.qaLists.length, 1);
+    assert.equal(result.qaLists[0].id, restoredRecord.id);
+    assert.equal(result.qaLists[0].lifecycleState, "active");
+  } finally {
+    clearLocalHardDeleteTombstoneForResource(state.teams[0], "qaList", tombstonedResource);
+  }
 });
 
 test("editor QA navigation renders a loading editor before QA list discovery finishes", async () => {

@@ -60,6 +60,10 @@ pub(crate) struct ProjectRepoSyncDescriptor {
     pub(crate) repo_id: Option<i64>,
     pub(crate) default_branch_name: Option<String>,
     pub(crate) default_branch_head_oid: Option<String>,
+    pub(crate) lifecycle_state: Option<String>,
+    pub(crate) record_state: Option<String>,
+    pub(crate) remote_state: Option<String>,
+    pub(crate) status: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -80,6 +84,10 @@ pub(crate) struct ProjectEditorRepoSyncInput {
     pub(crate) default_branch_name: Option<String>,
     pub(crate) default_branch_head_oid: Option<String>,
     pub(crate) chapter_id: String,
+    pub(crate) lifecycle_state: Option<String>,
+    pub(crate) record_state: Option<String>,
+    pub(crate) remote_state: Option<String>,
+    pub(crate) status: Option<String>,
 }
 
 #[derive(Clone, Serialize)]
@@ -140,6 +148,26 @@ enum SemanticConflictResolutionPlanEntry {
     DeleteFile {
         path: String,
     },
+}
+
+fn repo_transport_deleted_state(value: Option<&str>) -> bool {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| {
+            matches!(
+                value.to_ascii_lowercase().as_str(),
+                "deleted" | "softdeleted" | "tombstone" | "missing"
+            )
+        })
+        .unwrap_or(false)
+}
+
+fn project_descriptor_is_deleted(project: &ProjectRepoSyncDescriptor) -> bool {
+    repo_transport_deleted_state(project.lifecycle_state.as_deref())
+        || repo_transport_deleted_state(project.record_state.as_deref())
+        || repo_transport_deleted_state(project.remote_state.as_deref())
+        || repo_transport_deleted_state(project.status.as_deref())
 }
 
 #[tauri::command]
@@ -398,6 +426,10 @@ pub(crate) fn sync_gtms_project_editor_repo_sync(
         repo_id: input.repo_id,
         default_branch_name: input.default_branch_name.clone(),
         default_branch_head_oid: input.default_branch_head_oid.clone(),
+        lifecycle_state: input.lifecycle_state.clone(),
+        record_state: input.record_state.clone(),
+        remote_state: input.remote_state.clone(),
+        status: input.status.clone(),
     };
     let repo_path = resolve_or_desired_project_git_repo_path(
         app,
@@ -405,6 +437,20 @@ pub(crate) fn sync_gtms_project_editor_repo_sync(
         Some(&input.project_id),
         &input.repo_name,
     )?;
+    if project_descriptor_is_deleted(&project) {
+        let head_sha = read_current_head_oid(&repo_path);
+        return Ok(ProjectEditorRepoSyncResponse {
+            old_head_sha: head_sha.clone(),
+            new_head_sha: head_sha,
+            repo_sync_status: PROJECT_REPO_SYNC_STATUS_UP_TO_DATE.to_string(),
+            chapter_languages_changed: false,
+            changed_row_ids: Vec::new(),
+            inserted_row_ids: Vec::new(),
+            deleted_row_ids: Vec::new(),
+            imported_conflicts: Vec::new(),
+            affected_chapter_ids: Vec::new(),
+        });
+    }
     ensure_project_origin_remote(&project, &repo_path)?;
     ensure_repo_local_git_identity(app, &repo_path)?;
     backup_dirty_project_worktree(&repo_path, project_branch_name(&project).as_str())?;
@@ -797,6 +843,15 @@ fn inspect_project_repo_state(
         current_app_version: None,
     };
 
+    if project_descriptor_is_deleted(project) {
+        return ProjectRepoSyncSnapshot {
+            local_head_oid: read_current_head_oid(repo_path),
+            status: PROJECT_REPO_SYNC_STATUS_UP_TO_DATE.to_string(),
+            message: Some("Skipped because this project is deleted.".to_string()),
+            ..default_snapshot()
+        };
+    }
+
     if !repo_path.exists() {
         return default_snapshot();
     }
@@ -903,6 +958,15 @@ fn sync_project_repo(
     remote_head_oid: &str,
     git_transport_token: &str,
 ) -> Result<ProjectRepoSyncOutcome, String> {
+    if project_descriptor_is_deleted(project) {
+        return Ok(ProjectRepoSyncOutcome {
+            current_head_oid: read_current_head_oid(repo_path),
+            repo_sync_status: PROJECT_REPO_SYNC_STATUS_UP_TO_DATE.to_string(),
+            message: Some("Skipped because this project is deleted.".to_string()),
+            imported_conflicts: Vec::new(),
+        });
+    }
+
     if !repo_path.exists() {
         let current_head_oid = clone_project_repo(
             app,
@@ -1744,6 +1808,10 @@ mod tests {
             repo_id: None,
             default_branch_name: None,
             default_branch_head_oid: None,
+            lifecycle_state: None,
+            record_state: None,
+            remote_state: None,
+            status: None,
         };
 
         assert_eq!(project_branch_name(&descriptor), "main");
@@ -1758,6 +1826,10 @@ mod tests {
             repo_id: None,
             default_branch_name: Some("trunk".to_string()),
             default_branch_head_oid: None,
+            lifecycle_state: None,
+            record_state: None,
+            remote_state: None,
+            status: None,
         };
 
         assert_eq!(project_branch_name(&descriptor), "trunk");
@@ -1772,6 +1844,10 @@ mod tests {
             repo_id: None,
             default_branch_name: Some("main".to_string()),
             default_branch_head_oid: Some("remote-head".to_string()),
+            lifecycle_state: None,
+            record_state: None,
+            remote_state: None,
+            status: None,
         };
         let error = encode_repo_app_update_requirement(&RepoAppUpdateRequirement {
             required_version: "0.1.36".to_string(),
