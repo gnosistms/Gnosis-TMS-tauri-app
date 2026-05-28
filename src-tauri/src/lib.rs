@@ -19,7 +19,10 @@ mod project_search;
 mod qa_list_repo_sync;
 mod qa_list_storage;
 mod repo_app_version;
+mod repo_layout_metadata;
+mod repo_migrations;
 mod repo_sync_shared;
+mod short_path_names;
 mod state;
 mod storage_paths;
 mod store;
@@ -71,12 +74,11 @@ use crate::{
         list_accessible_github_app_installations, list_gnosis_glossaries_for_installation,
         list_gnosis_projects_for_installation, list_gnosis_qa_lists_for_installation,
         list_organization_members_for_installation, mark_gnosis_project_repo_deleted,
-        promote_organization_owner_for_installation,
-        purge_local_installation_data, remove_organization_member_for_installation,
-        rename_gnosis_project_repo, restore_gnosis_project_repo,
+        promote_organization_owner_for_installation, purge_local_installation_data,
+        remove_organization_member_for_installation, rename_gnosis_project_repo,
+        restore_gnosis_project_repo, revoke_organization_admin_for_installation,
         rollback_created_gnosis_glossary_repo, rollback_created_gnosis_project_repo,
-        rollback_created_gnosis_qa_list_repo,
-        revoke_organization_admin_for_installation, search_github_users_for_installation,
+        rollback_created_gnosis_qa_list_repo, search_github_users_for_installation,
         set_organization_member_role_for_installation, setup_organization_for_installation,
         update_organization_description_for_installation,
         update_organization_name_for_installation,

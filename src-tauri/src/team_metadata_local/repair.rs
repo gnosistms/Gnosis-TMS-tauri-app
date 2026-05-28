@@ -337,18 +337,6 @@ pub(super) fn inspect_project_repo_repairs(
             auto_repaired_count += 1;
         }
 
-        if folder_name.as_deref() != Some(record.repo_name.trim()) {
-            issues.push(LocalRepoRepairIssue {
-                kind: "project".to_string(),
-                issue_type: "repoNameMismatch".to_string(),
-                resource_id: Some(record.id.clone()),
-                repo_name: folder_name.clone(),
-                expected_repo_name: Some(record.repo_name.clone()),
-                message: "The local project repo folder name no longer matches team metadata. The repo stayed bound by stable ID, but it should be repaired.".to_string(),
-                can_auto_repair: false,
-            });
-        }
-
         if let Some(full_name) = normalized_optional_text(record.full_name.as_deref()) {
             let expected_remote_url = expected_repo_url_from_full_name(&full_name)?;
             if current_origin_remote_url(&repo_path).as_deref()
@@ -475,18 +463,6 @@ pub(super) fn inspect_glossary_repo_repairs(
             auto_repaired_count += 1;
         }
 
-        if folder_name.as_deref() != Some(record.repo_name.trim()) {
-            issues.push(LocalRepoRepairIssue {
-                kind: "glossary".to_string(),
-                issue_type: "repoNameMismatch".to_string(),
-                resource_id: Some(record.id.clone()),
-                repo_name: folder_name.clone(),
-                expected_repo_name: Some(record.repo_name.clone()),
-                message: "The local glossary repo folder name no longer matches team metadata. The repo stayed bound by stable ID, but it should be repaired.".to_string(),
-                can_auto_repair: false,
-            });
-        }
-
         if let Some(full_name) = normalized_optional_text(record.full_name.as_deref()) {
             let expected_remote_url = expected_repo_url_from_full_name(&full_name)?;
             if current_origin_remote_url(&repo_path).as_deref()
@@ -611,18 +587,6 @@ pub(super) fn inspect_qa_list_repo_repairs(
             sync_state.as_ref(),
         )? {
             auto_repaired_count += 1;
-        }
-
-        if folder_name.as_deref() != Some(record.repo_name.trim()) {
-            issues.push(LocalRepoRepairIssue {
-                kind: "qaList".to_string(),
-                issue_type: "repoNameMismatch".to_string(),
-                resource_id: Some(record.id.clone()),
-                repo_name: folder_name.clone(),
-                expected_repo_name: Some(record.repo_name.clone()),
-                message: "The local QA list repo folder name no longer matches team metadata. The repo stayed bound by stable ID, but it should be repaired.".to_string(),
-                can_auto_repair: false,
-            });
         }
 
         if let Some(full_name) = normalized_optional_text(record.full_name.as_deref()) {

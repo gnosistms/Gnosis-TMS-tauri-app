@@ -1,3 +1,5 @@
+use crate::short_path_names::allocate_short_image_filename;
+
 use super::*;
 
 pub(crate) fn save_gtms_editor_language_image_url_sync(
@@ -139,6 +141,7 @@ pub(crate) fn save_gtms_editor_language_image_url_sync(
                 &commit_paths,
                 CommitMetadata {
                     operation: Some("editor-update"),
+                    migration: None,
                     status_note: None,
                     ai_model: None,
                 },
@@ -234,13 +237,8 @@ pub(crate) fn upload_gtms_editor_language_image_sync(
 
     let bytes = decode_uploaded_image_bytes(&input.data_base64)?;
     let extension = validated_uploaded_image_extension(&input.filename, &bytes)?;
-    let relative_image_path = relative_uploaded_image_path(
-        &input.chapter_id,
-        &input.row_id,
-        &input.language_code,
-        &input.filename,
-        extension,
-    );
+    let relative_image_path =
+        relative_uploaded_image_path(&repo_path, &chapter_path, &input.filename, extension)?;
     let absolute_image_path = repo_path.join(&relative_image_path);
     let next_image = Some(StoredFieldImage {
         kind: "upload".to_string(),
@@ -310,6 +308,7 @@ pub(crate) fn upload_gtms_editor_language_image_sync(
             &commit_path_refs,
             CommitMetadata {
                 operation: Some("editor-update"),
+                migration: None,
                 status_note: None,
                 ai_model: None,
             },
@@ -473,6 +472,7 @@ pub(crate) fn remove_gtms_editor_language_image_sync(
             &commit_path_refs,
             CommitMetadata {
                 operation: Some("editor-update"),
+                migration: None,
                 status_note: None,
                 ai_model: None,
             },
@@ -811,67 +811,34 @@ where
 }
 
 fn relative_uploaded_image_path(
-    chapter_id: &str,
-    row_id: &str,
-    language_code: &str,
+    repo_path: &Path,
+    chapter_path: &Path,
     filename: &str,
     extension: &str,
-) -> String {
-    let upload_directory = format!("row-{row_id}-{language_code}-{}", uuid::Uuid::now_v7());
-    let file_name = sanitized_uploaded_image_file_name(filename, extension);
-    format!("chapters/{chapter_id}/images/{upload_directory}/{file_name}")
+) -> Result<String, String> {
+    let images_path = chapter_path.join("images");
+    let file_name =
+        allocate_short_image_filename(filename, extension, local_file_names(&images_path)?);
+    let absolute_path = images_path.join(file_name);
+    repo_relative_path(repo_path, &absolute_path)
 }
 
-fn sanitized_uploaded_image_file_name(filename: &str, extension: &str) -> String {
-    let original_name = Path::new(filename)
-        .file_name()
-        .and_then(|value| value.to_str())
-        .map(str::trim)
-        .unwrap_or_default();
-    let matching_extension = Path::new(original_name)
-        .extension()
-        .and_then(|value| value.to_str())
-        .and_then(normalize_uploaded_image_extension);
-
-    if matching_extension == Some(extension) {
-        let sanitized_name = sanitize_uploaded_image_file_name_component(original_name);
-        if !matches!(sanitized_name.as_str(), "" | "." | "..") {
-            return sanitized_name;
-        }
+fn local_file_names(path: &Path) -> Result<Vec<String>, String> {
+    if !path.exists() {
+        return Ok(Vec::new());
     }
-
-    let base_name = Path::new(original_name)
-        .file_stem()
-        .and_then(|value| value.to_str())
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or("image");
-    let sanitized_base_name = sanitize_uploaded_image_file_name_component(base_name);
-    let final_base_name = match sanitized_base_name.as_str() {
-        "" | "." | ".." => "image",
-        _ => sanitized_base_name.as_str(),
-    };
-
-    format!("{final_base_name}.{extension}")
-}
-
-fn sanitize_uploaded_image_file_name_component(value: &str) -> String {
-    value
-        .trim()
-        .chars()
-        .map(|character| {
-            if character.is_control()
-                || matches!(
-                    character,
-                    '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*'
-                )
-            {
-                '_'
-            } else {
-                character
-            }
+    Ok(fs::read_dir(path)
+        .map_err(|error| format!("Could not read image folder '{}': {error}", path.display()))?
+        .filter_map(|entry| {
+            entry.ok().and_then(|entry| {
+                entry
+                    .path()
+                    .file_name()
+                    .and_then(|value| value.to_str())
+                    .map(str::to_string)
+            })
         })
-        .collect()
+        .collect())
 }
 
 pub(super) fn file_bytes_equal(path: &Path, bytes: &[u8]) -> bool {
@@ -1115,41 +1082,36 @@ mod tests {
     }
 
     #[test]
-    fn sanitized_uploaded_image_file_name_preserves_matching_original_name() {
-        assert_eq!(
-            sanitized_uploaded_image_file_name(" original photo.PNG ", "png"),
-            "original photo.PNG"
-        );
-    }
-
-    #[test]
-    fn sanitized_uploaded_image_file_name_appends_detected_extension_when_missing() {
-        assert_eq!(
-            sanitized_uploaded_image_file_name("original photo", "png"),
-            "original photo.png"
-        );
-    }
-
-    #[test]
-    fn sanitized_uploaded_image_file_name_strips_directory_parts_and_sanitizes_invalid_chars() {
-        assert_eq!(
-            sanitized_uploaded_image_file_name("../unsafe:photo.png", "png"),
-            "unsafe_photo.png"
-        );
-    }
-
-    #[test]
-    fn relative_uploaded_image_path_keeps_original_file_name_in_upload_directory() {
+    fn relative_uploaded_image_path_uses_flat_chapter_image_folder() {
+        let repo_path = temp_test_dir("relative-uploaded-image-path");
+        let chapter_path = repo_path.join("chapters/chapter-1");
+        fs::create_dir_all(chapter_path.join("images")).expect("create images folder");
         let relative_path =
-            relative_uploaded_image_path("chapter-1", "row-1", "vi", "original photo.png", "png");
+            relative_uploaded_image_path(&repo_path, &chapter_path, "original photo.png", "png")
+                .expect("relative path should allocate");
 
-        assert!(
-            relative_path.starts_with("chapters/chapter-1/images/row-row-1-vi-"),
-            "unexpected path: {relative_path}"
+        assert_eq!(
+            relative_path,
+            "chapters/chapter-1/images/original-photo.png"
         );
-        assert!(
-            relative_path.ends_with("/original photo.png"),
-            "unexpected path: {relative_path}"
+        let _ = fs::remove_dir_all(repo_path);
+    }
+
+    #[test]
+    fn relative_uploaded_image_path_resolves_duplicate_names_in_chapter_image_folder() {
+        let repo_path = temp_test_dir("relative-uploaded-image-path-duplicates");
+        let chapter_path = repo_path.join("chapters/chapter-1");
+        fs::create_dir_all(chapter_path.join("images")).expect("create images folder");
+        fs::write(chapter_path.join("images/original-photo.png"), b"existing")
+            .expect("write existing image");
+        let relative_path =
+            relative_uploaded_image_path(&repo_path, &chapter_path, "original photo.png", "png")
+                .expect("relative path should allocate");
+
+        assert_eq!(
+            relative_path,
+            "chapters/chapter-1/images/original-photo-2.png"
         );
+        let _ = fs::remove_dir_all(repo_path);
     }
 }

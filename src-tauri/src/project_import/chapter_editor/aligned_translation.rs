@@ -1551,6 +1551,7 @@ fn apply_job_to_chapter(
             &commit_paths,
             CommitMetadata {
                 operation: Some("add-aligned-translation"),
+                migration: None,
                 status_note: None,
                 ai_model: Some(job.model_id.as_str()),
             },

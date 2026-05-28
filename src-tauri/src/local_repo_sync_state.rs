@@ -6,7 +6,10 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
-use crate::repo_sync_shared::{format_git_spawn_error, git_command};
+use crate::{
+    repo_layout_metadata::normalize_repo_kind,
+    repo_sync_shared::{format_git_spawn_error, git_command},
+};
 
 const LOCAL_REPO_SYNC_STATE_FILE_NAME: &str = "gnosis-sync-state.json";
 
@@ -27,6 +30,10 @@ pub(crate) struct LocalRepoSyncState {
     pub(crate) last_known_full_name: Option<String>,
     #[serde(default)]
     pub(crate) last_successful_sync_at: Option<u64>,
+    #[serde(default)]
+    pub(crate) storage_layout_version: Option<u32>,
+    #[serde(default)]
+    pub(crate) local_folder_name: Option<String>,
 }
 
 #[derive(Default)]
@@ -38,6 +45,8 @@ pub(crate) struct LocalRepoSyncStateUpdate {
     pub(crate) last_known_github_repo_id: Option<i64>,
     pub(crate) last_known_full_name: Option<String>,
     pub(crate) touch_success_timestamp: bool,
+    pub(crate) storage_layout_version: Option<u32>,
+    pub(crate) local_folder_name: Option<String>,
 }
 
 pub(crate) fn upsert_local_repo_sync_state(
@@ -86,7 +95,7 @@ pub(crate) fn upsert_local_repo_sync_state(
         .map(str::trim)
         .filter(|value| !value.is_empty())
     {
-        state.kind = Some(kind.to_string());
+        state.kind = Some(normalize_repo_kind(kind).unwrap_or(kind).to_string());
     }
 
     if let Some(has_ever_synced) = update.has_ever_synced {
@@ -106,8 +115,30 @@ pub(crate) fn upsert_local_repo_sync_state(
         state.last_known_full_name = Some(full_name.to_string());
     }
 
+    if let Some(storage_layout_version) = update.storage_layout_version {
+        state.storage_layout_version = Some(storage_layout_version);
+    }
+
+    if let Some(local_folder_name) = update
+        .local_folder_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        state.local_folder_name = Some(local_folder_name.to_string());
+    }
+
     if update.touch_success_timestamp {
         state.last_successful_sync_at = current_unix_timestamp();
+    }
+
+    if state.local_folder_name.is_none() {
+        state.local_folder_name = repo_path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
     }
 
     let bytes = serde_json::to_vec_pretty(&state)

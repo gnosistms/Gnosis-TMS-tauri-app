@@ -194,6 +194,7 @@ pub(super) fn save_gtms_editor_row_comment_sync(
         &[&relative_row_json],
         CommitMetadata {
             operation: Some("editor-comment"),
+            migration: None,
             status_note: None,
             ai_model: None,
         },
@@ -265,6 +266,7 @@ pub(super) fn delete_gtms_editor_row_comment_sync(
         &[&relative_row_json],
         CommitMetadata {
             operation: Some("editor-comment"),
+            migration: None,
             status_note: None,
             ai_model: None,
         },

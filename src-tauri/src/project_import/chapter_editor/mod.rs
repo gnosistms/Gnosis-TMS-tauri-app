@@ -18,7 +18,13 @@ use crate::git_commit::{
     git_commit_as_signed_in_user, git_commit_as_signed_in_user_with_metadata,
     GitCommitMetadata as CommitMetadata,
 };
-use crate::project_repo_paths::{find_project_repo_path, resolve_project_git_repo_path};
+use crate::project_repo_paths::{
+    desired_project_git_repo_path, find_project_repo_path, resolve_project_git_repo_path,
+};
+use crate::repo_layout_metadata::{
+    new_v2_repo_layout_metadata, write_repo_layout_metadata, RepoKind, REPO_METADATA_RELATIVE_PATH,
+    STORAGE_LAYOUT_VERSION_V2,
+};
 
 use super::{
     chapter_editor_comments::StoredEditorComment,
@@ -1059,14 +1065,17 @@ pub(super) fn initialize_gtms_project_repo_sync(
         .filter(|value| !value.is_empty())
         .map(str::to_string)
         .ok_or_else(|| "Could not determine which project to initialize.".to_string())?;
-    let repo_root = local_repo_root(app, input.installation_id)?;
     let repo_path = find_project_repo_path(
         app,
         input.installation_id,
         Some(&project_id),
         Some(repo_name),
     )?
-    .unwrap_or_else(|| repo_root.join(repo_name));
+    .unwrap_or(desired_project_git_repo_path(
+        app,
+        input.installation_id,
+        repo_name,
+    )?);
 
     fs::create_dir_all(&repo_path).map_err(|error| {
         format!(
@@ -1084,18 +1093,31 @@ pub(super) fn initialize_gtms_project_repo_sync(
     }
 
     ensure_gitattributes(&repo_path.join(".gitattributes"))?;
+    write_repo_layout_metadata(&repo_path, &new_v2_repo_layout_metadata(RepoKind::Project))?;
     write_json_pretty(
         &repo_path.join("project.json"),
         &json!({
           "title": title,
         }),
     )?;
-    git_output(&repo_path, &["add", ".gitattributes", "project.json"])?;
+    git_output(
+        &repo_path,
+        &[
+            "add",
+            ".gitattributes",
+            REPO_METADATA_RELATIVE_PATH,
+            "project.json",
+        ],
+    )?;
     git_commit_as_signed_in_user(
         app,
         &repo_path,
         "Initialize project",
-        &[".gitattributes", "project.json"],
+        &[
+            ".gitattributes",
+            REPO_METADATA_RELATIVE_PATH,
+            "project.json",
+        ],
     )?;
 
     let _ = crate::local_repo_sync_state::upsert_local_repo_sync_state(
@@ -1105,6 +1127,7 @@ pub(super) fn initialize_gtms_project_repo_sync(
             current_repo_name: Some(repo_name.to_string()),
             kind: Some("project".to_string()),
             has_ever_synced: Some(false),
+            storage_layout_version: Some(STORAGE_LAYOUT_VERSION_V2),
             ..Default::default()
         },
     );

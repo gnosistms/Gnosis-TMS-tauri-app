@@ -59,6 +59,7 @@ pub(crate) fn insert_gtms_editor_row_sync(
         &[&relative_row_json],
         CommitMetadata {
             operation: Some("insert"),
+            migration: None,
             status_note: None,
             ai_model: None,
         },
@@ -185,6 +186,7 @@ pub(crate) fn update_gtms_editor_row_lifecycle_sync(
             } else {
                 "restore"
             }),
+            migration: None,
             status_note: None,
             ai_model: None,
         },
@@ -261,6 +263,7 @@ pub(crate) fn permanently_delete_gtms_editor_row_sync(
         &commit_path_refs,
         CommitMetadata {
             operation: Some("permanent-delete"),
+            migration: None,
             status_note: None,
             ai_model: None,
         },

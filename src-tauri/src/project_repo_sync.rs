@@ -26,6 +26,11 @@ use crate::{
         encode_repo_app_update_requirement, parse_repo_app_update_requirement_error,
         remote_ref_requires_newer_app,
     },
+    repo_layout_metadata::STORAGE_LAYOUT_VERSION_V2,
+    repo_migrations::{
+        head_requires_0810_migration, migrate_no_checkout_project_repo_to_0810,
+        repo_requires_0810_migration, sync_pending_repo_layout_migration,
+    },
     repo_sync_shared::{
         abort_rebase_after_failed_pull, ensure_repo_local_git_identity,
         git_error_indicates_missing_remote_ref, git_output, load_git_transport_token,
@@ -867,6 +872,16 @@ fn inspect_project_repo_state(
         };
     };
 
+    if repo_requires_0810_migration(repo_path) {
+        return ProjectRepoSyncSnapshot {
+            local_head_oid,
+            remote_head_oid,
+            status: PROJECT_REPO_SYNC_STATUS_OUT_OF_SYNC.to_string(),
+            message: Some("This project repo needs a local layout migration.".to_string()),
+            ..default_snapshot()
+        };
+    }
+
     let status = if local_head_oid.as_deref() == Some(remote_head_oid_value.as_str()) {
         PROJECT_REPO_SYNC_STATUS_UP_TO_DATE
     } else {
@@ -925,12 +940,20 @@ fn sync_project_repo(
         .as_deref()
         .filter(|value| !value.trim().is_empty())
         .unwrap_or("main");
+    let git_transport_auth = GitTransportAuth::from_token(git_transport_token)?;
+    enforce_remote_project_app_version(repo_path, project, branch_name, &git_transport_auth)?;
+    if repo_requires_0810_migration(repo_path) {
+        sync_pending_repo_layout_migration(
+            app,
+            repo_path,
+            crate::repo_layout_metadata::RepoKind::Project,
+            branch_name,
+            remote_head_oid,
+        )?;
+    }
     backup_dirty_project_worktree(repo_path, branch_name)?;
     let local_head_oid = git_output(repo_path, &["rev-parse", "HEAD"], None).ok();
     let local_sync_state = read_local_repo_sync_state(repo_path)?;
-
-    let git_transport_auth = GitTransportAuth::from_token(git_transport_token)?;
-    enforce_remote_project_app_version(repo_path, project, branch_name, &git_transport_auth)?;
 
     if remote_head_oid.trim().is_empty() {
         if local_head_oid.is_some() {
@@ -1533,7 +1556,7 @@ fn clone_project_repo(
 
     let repo_url = format!("https://github.com/{}.git", project.full_name);
     let git_transport_auth = GitTransportAuth::from_token(git_transport_token)?;
-    let mut clone_args = vec!["clone"];
+    let mut clone_args = vec!["clone", "--no-checkout"];
     if !remote_head_oid.trim().is_empty() {
         if let Some(branch_name) = project
             .default_branch_name
@@ -1551,6 +1574,19 @@ fn clone_project_repo(
     ensure_repo_local_git_identity(app, repo_path)?;
     let branch_name = project_branch_name(project);
     enforce_remote_project_app_version(repo_path, project, &branch_name, &git_transport_auth)?;
+
+    if !remote_head_oid.trim().is_empty() && head_requires_0810_migration(repo_path) {
+        migrate_no_checkout_project_repo_to_0810(app, repo_path)?;
+        if !remote_head_oid.trim().is_empty() {
+            git_output(
+                repo_path,
+                &["push", "origin", &branch_name],
+                Some(&git_transport_auth),
+            )?;
+        }
+    } else if !remote_head_oid.trim().is_empty() {
+        git_output(repo_path, &["checkout", "-B", &branch_name], None)?;
+    }
 
     if remote_head_oid.trim().is_empty() {
         let _ = git_output(repo_path, &["checkout", "-B", &branch_name], None);
@@ -1604,6 +1640,11 @@ fn mark_project_repo_synced(
             last_known_github_repo_id: project.repo_id,
             last_known_full_name: Some(project.full_name.clone()),
             touch_success_timestamp: true,
+            storage_layout_version: Some(STORAGE_LAYOUT_VERSION_V2),
+            local_folder_name: repo_path
+                .file_name()
+                .and_then(|value| value.to_str())
+                .map(str::to_string),
         },
     )?;
 

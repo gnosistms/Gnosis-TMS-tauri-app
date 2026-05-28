@@ -11,11 +11,14 @@ use crate::{
         encode_repo_app_update_requirement, parse_repo_app_update_requirement_error,
         remote_ref_requires_newer_app,
     },
+    repo_layout_metadata::STORAGE_LAYOUT_VERSION_V2,
+    repo_migrations::{repo_requires_0810_migration, sync_pending_repo_layout_migration},
     repo_sync_shared::{
         abort_rebase_after_failed_pull, ensure_repo_local_git_identity,
         git_error_indicates_missing_remote_ref, git_output, load_git_transport_token,
         read_current_head_oid, GitTransportAuth,
     },
+    short_path_names::allocate_short_folder_name,
     storage_paths::local_glossary_repo_root,
 };
 
@@ -414,6 +417,11 @@ fn inspect_glossary_repo_state(
     } else {
         GLOSSARY_REPO_SYNC_STATUS_OUT_OF_SYNC
     };
+    let status = if repo_requires_0810_migration(repo_path) {
+        GLOSSARY_REPO_SYNC_STATUS_OUT_OF_SYNC
+    } else {
+        status
+    };
 
     GlossaryRepoSyncSnapshot {
         local_head_oid,
@@ -440,12 +448,14 @@ fn glossary_repo_matches_identifier(
     let sync_state = read_local_repo_sync_state(repo_path).ok().flatten();
 
     if let Some(glossary_id) = normalized_glossary_id.as_deref() {
-        return sync_state
+        if let Some(resource_id) = sync_state
             .as_ref()
             .and_then(|state| state.resource_id.as_deref())
             .map(str::trim)
             .filter(|value| !value.is_empty())
-            == Some(glossary_id);
+        {
+            return resource_id == glossary_id;
+        }
     }
 
     if let Some(repo_name) = normalized_repo_name.as_deref() {
@@ -507,9 +517,30 @@ fn resolve_or_desired_glossary_git_repo_path(
         Some(repo_path) => Ok(repo_path),
         None => {
             let repo_root = local_glossary_repo_root(app, installation_id)?;
-            Ok(repo_root.join(repo_name.trim()))
+            Ok(repo_root.join(allocate_short_folder_name(
+                repo_name.trim(),
+                local_folder_names(&repo_root)?,
+            )))
         }
     }
+}
+
+fn local_folder_names(repo_root: &Path) -> Result<Vec<String>, String> {
+    if !repo_root.exists() {
+        return Ok(Vec::new());
+    }
+    Ok(fs::read_dir(repo_root)
+        .map_err(|error| format!("Could not read local glossary repo folders: {error}"))?
+        .filter_map(|entry| {
+            entry.ok().and_then(|entry| {
+                entry
+                    .path()
+                    .file_name()
+                    .and_then(|value| value.to_str())
+                    .map(str::to_string)
+            })
+        })
+        .collect())
 }
 
 fn sync_glossary_repo(
@@ -540,6 +571,15 @@ fn sync_glossary_repo(
     let local_head_oid = read_current_head_oid(repo_path);
     let git_transport_auth = GitTransportAuth::from_token(git_transport_token)?;
     enforce_remote_glossary_app_version(repo_path, glossary, branch_name, &git_transport_auth)?;
+    if repo_requires_0810_migration(repo_path) {
+        sync_pending_repo_layout_migration(
+            app,
+            repo_path,
+            crate::repo_layout_metadata::RepoKind::Glossary,
+            branch_name,
+            remote_head_oid,
+        )?;
+    }
 
     if remote_head_oid.trim().is_empty() {
         if local_head_oid.is_some() {
@@ -635,6 +675,22 @@ fn clone_glossary_repo(
         .filter(|value| !value.trim().is_empty())
         .unwrap_or("main");
     enforce_remote_glossary_app_version(repo_path, glossary, branch_name, &git_transport_auth)?;
+    if repo_requires_0810_migration(repo_path) {
+        sync_pending_repo_layout_migration(
+            app,
+            repo_path,
+            crate::repo_layout_metadata::RepoKind::Glossary,
+            branch_name,
+            remote_head_oid,
+        )?;
+        if !remote_head_oid.trim().is_empty() {
+            git_output(
+                repo_path,
+                &["push", "origin", branch_name],
+                Some(&git_transport_auth),
+            )?;
+        }
+    }
 
     if remote_head_oid.trim().is_empty() {
         let _ = git_output(repo_path, &["checkout", "-B", &branch_name], None);
@@ -700,6 +756,11 @@ fn mark_glossary_repo_synced(
             last_known_github_repo_id: glossary.repo_id,
             last_known_full_name: Some(glossary.full_name.clone()),
             touch_success_timestamp: true,
+            storage_layout_version: Some(STORAGE_LAYOUT_VERSION_V2),
+            local_folder_name: repo_path
+                .file_name()
+                .and_then(|value| value.to_str())
+                .map(str::to_string),
         },
     )?;
 

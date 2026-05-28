@@ -14,6 +14,11 @@ use crate::{
     local_repo_sync_state::{
         read_local_repo_sync_state, upsert_local_repo_sync_state, LocalRepoSyncStateUpdate,
     },
+    repo_layout_metadata::{
+        new_v2_repo_layout_metadata, write_repo_layout_metadata, RepoKind,
+        REPO_METADATA_RELATIVE_PATH, STORAGE_LAYOUT_VERSION_V2,
+    },
+    short_path_names::allocate_short_folder_name,
     storage_paths::local_glossary_repo_root,
 };
 
@@ -626,13 +631,26 @@ fn initialize_gtms_glossary_repo_sync(
         },
     };
 
+    write_repo_layout_metadata(&repo_path, &new_v2_repo_layout_metadata(RepoKind::Glossary))?;
     write_json_pretty(&repo_path.join("glossary.json"), &glossary_file)?;
-    git_output(&repo_path, &["add", ".gitattributes", "glossary.json"])?;
+    git_output(
+        &repo_path,
+        &[
+            "add",
+            ".gitattributes",
+            REPO_METADATA_RELATIVE_PATH,
+            "glossary.json",
+        ],
+    )?;
     git_commit_as_signed_in_user(
         app,
         &repo_path,
         "Initialize glossary",
-        &[".gitattributes", "glossary.json"],
+        &[
+            ".gitattributes",
+            REPO_METADATA_RELATIVE_PATH,
+            "glossary.json",
+        ],
     )?;
     let _ = upsert_local_repo_sync_state(
         &repo_path,
@@ -641,6 +659,7 @@ fn initialize_gtms_glossary_repo_sync(
             current_repo_name: Some(repo_name.clone()),
             kind: Some("glossary".to_string()),
             has_ever_synced: Some(false),
+            storage_layout_version: Some(STORAGE_LAYOUT_VERSION_V2),
             ..Default::default()
         },
     );
@@ -708,6 +727,7 @@ fn import_tmx_to_gtms_glossary_repo_sync(
         },
     };
 
+    write_repo_layout_metadata(&repo_path, &new_v2_repo_layout_metadata(RepoKind::Glossary))?;
     write_json_pretty(&repo_path.join("glossary.json"), &glossary_file)?;
 
     for term in &parsed.terms {
@@ -719,13 +739,24 @@ fn import_tmx_to_gtms_glossary_repo_sync(
 
     git_output(
         &repo_path,
-        &["add", ".gitattributes", "glossary.json", "terms"],
+        &[
+            "add",
+            ".gitattributes",
+            REPO_METADATA_RELATIVE_PATH,
+            "glossary.json",
+            "terms",
+        ],
     )?;
     git_commit_as_signed_in_user(
         app,
         &repo_path,
         &format!("Import glossary from {}", input.file_name),
-        &[".gitattributes", "glossary.json", "terms"],
+        &[
+            ".gitattributes",
+            REPO_METADATA_RELATIVE_PATH,
+            "glossary.json",
+            "terms",
+        ],
     )?;
     let _ = upsert_local_repo_sync_state(
         &repo_path,
@@ -734,6 +765,7 @@ fn import_tmx_to_gtms_glossary_repo_sync(
             current_repo_name: Some(repo_name.clone()),
             kind: Some("glossary".to_string()),
             has_ever_synced: Some(false),
+            storage_layout_version: Some(STORAGE_LAYOUT_VERSION_V2),
             ..Default::default()
         },
     );
@@ -1275,6 +1307,11 @@ fn glossary_git_repo_path(
     glossary_id: Option<&str>,
     repo_name: Option<&str>,
 ) -> Result<PathBuf, String> {
+    if let Some(repo_path) = find_glossary_repo_path(app, installation_id, glossary_id, repo_name)?
+    {
+        return Ok(repo_path);
+    }
+
     if let Some(repo_name) = normalized_optional_identifier(repo_name) {
         let repo_root = local_glossary_repo_root(app, installation_id)?;
         let repo_path = repo_root.join(&repo_name);
@@ -1286,11 +1323,6 @@ fn glossary_git_repo_path(
                 return Ok(repo_path);
             }
         }
-    }
-
-    if let Some(repo_path) = find_glossary_repo_path(app, installation_id, glossary_id, repo_name)?
-    {
-        return Ok(repo_path);
     }
 
     Err("The local glossary repo is not available yet.".to_string())
@@ -1308,7 +1340,28 @@ fn desired_glossary_git_repo_path(
     }
 
     let repo_root = local_glossary_repo_root(app, installation_id)?;
-    Ok(repo_root.join(normalized_repo_name))
+    Ok(repo_root.join(allocate_short_folder_name(
+        normalized_repo_name,
+        local_folder_names(&repo_root)?,
+    )))
+}
+
+fn local_folder_names(repo_root: &Path) -> Result<Vec<String>, String> {
+    if !repo_root.exists() {
+        return Ok(Vec::new());
+    }
+    Ok(fs::read_dir(repo_root)
+        .map_err(|error| format!("Could not read local glossary repo folders: {error}"))?
+        .filter_map(|entry| {
+            entry.ok().and_then(|entry| {
+                entry
+                    .path()
+                    .file_name()
+                    .and_then(|value| value.to_str())
+                    .map(str::to_string)
+            })
+        })
+        .collect())
 }
 
 fn read_glossary_value(repo_path: &Path) -> Result<Value, String> {

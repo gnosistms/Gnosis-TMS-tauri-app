@@ -188,6 +188,7 @@ pub(crate) fn update_gtms_editor_row_fields_sync(
                 } else {
                     input.operation.trim()
                 }),
+                migration: None,
                 status_note: None,
                 ai_model: Some(input.ai_model.trim()).filter(|value| !value.is_empty()),
             },
@@ -408,6 +409,7 @@ pub(crate) fn update_gtms_editor_row_fields_batch_sync(
                 } else {
                     Some(operation)
                 },
+                migration: None,
                 status_note: None,
                 ai_model: None,
             },
@@ -496,6 +498,7 @@ pub(crate) fn update_gtms_editor_row_field_flag_sync(
             &[&relative_row_json],
             CommitMetadata {
                 operation: Some("field-status"),
+                migration: None,
                 status_note: Some(status_note),
                 ai_model: None,
             },
@@ -607,6 +610,7 @@ pub(crate) fn apply_gtms_editor_ai_review_result_sync(
             &[&relative_row_json],
             CommitMetadata {
                 operation: Some("ai-review"),
+                migration: None,
                 status_note: None,
                 ai_model: if ai_model.is_empty() {
                     None
@@ -706,6 +710,7 @@ pub(crate) fn update_gtms_editor_row_text_style_sync(
             &[&relative_row_json],
             CommitMetadata {
                 operation: Some("text-style"),
+                migration: None,
                 status_note: None,
                 ai_model: None,
             },
@@ -797,6 +802,7 @@ pub(crate) fn clear_gtms_editor_reviewed_markers_sync(
             &commit_paths,
             CommitMetadata {
                 operation: Some("field-status"),
+                migration: None,
                 status_note: Some("Marked all unreviewed"),
                 ai_model: None,
             },

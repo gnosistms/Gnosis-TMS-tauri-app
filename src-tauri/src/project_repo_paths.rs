@@ -7,7 +7,7 @@ use tauri::AppHandle;
 
 use crate::{
     local_repo_sync_state::read_local_repo_sync_state, repo_sync_shared::git_output,
-    storage_paths::local_project_repo_root,
+    short_path_names::allocate_short_folder_name, storage_paths::local_project_repo_root,
 };
 
 fn normalized_optional_identifier(value: Option<&str>) -> Option<String> {
@@ -27,12 +27,14 @@ fn project_repo_matches_identifier(
     let sync_state = read_local_repo_sync_state(repo_path).ok().flatten();
 
     if let Some(project_id) = normalized_project_id.as_deref() {
-        return sync_state
+        if let Some(resource_id) = sync_state
             .as_ref()
             .and_then(|state| state.resource_id.as_deref())
             .map(str::trim)
             .filter(|value| !value.is_empty())
-            == Some(project_id);
+        {
+            return resource_id == project_id;
+        }
     }
 
     if let Some(repo_name) = normalized_repo_name.as_deref() {
@@ -95,7 +97,11 @@ pub(crate) fn desired_project_git_repo_path(
     }
 
     let repo_root = local_project_repo_root(app, installation_id)?;
-    Ok(repo_root.join(normalized_repo_name))
+    let existing_names = local_folder_names(&repo_root)?;
+    Ok(repo_root.join(allocate_short_folder_name(
+        normalized_repo_name,
+        existing_names,
+    )))
 }
 
 pub(crate) fn resolve_project_git_repo_path(
@@ -104,6 +110,10 @@ pub(crate) fn resolve_project_git_repo_path(
     project_id: Option<&str>,
     repo_name: Option<&str>,
 ) -> Result<PathBuf, String> {
+    if let Some(repo_path) = find_project_repo_path(app, installation_id, project_id, repo_name)? {
+        return Ok(repo_path);
+    }
+
     if let Some(repo_name) = normalized_optional_identifier(repo_name) {
         let repo_root = local_project_repo_root(app, installation_id)?;
         let repo_path = repo_root.join(&repo_name);
@@ -117,11 +127,25 @@ pub(crate) fn resolve_project_git_repo_path(
         }
     }
 
-    if let Some(repo_path) = find_project_repo_path(app, installation_id, project_id, repo_name)? {
-        return Ok(repo_path);
-    }
-
     Err("The local project repo is not available yet.".to_string())
+}
+
+fn local_folder_names(repo_root: &Path) -> Result<Vec<String>, String> {
+    if !repo_root.exists() {
+        return Ok(Vec::new());
+    }
+    Ok(fs::read_dir(repo_root)
+        .map_err(|error| format!("Could not read local repo folders: {error}"))?
+        .filter_map(|entry| {
+            entry.ok().and_then(|entry| {
+                entry
+                    .path()
+                    .file_name()
+                    .and_then(|value| value.to_str())
+                    .map(str::to_string)
+            })
+        })
+        .collect::<Vec<_>>())
 }
 
 pub(crate) fn resolve_or_desired_project_git_repo_path(

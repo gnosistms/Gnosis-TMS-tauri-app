@@ -578,6 +578,7 @@ fn commit_local_metadata_change(
         &[relative_path],
         GitCommitMetadata {
             operation: Some(operation),
+            migration: None,
             status_note: Some("local-team-metadata"),
             ai_model: None,
         },

@@ -276,6 +276,7 @@ pub(crate) fn restore_gtms_editor_field_from_history_sync(
                 &commit_path_refs,
                 CommitMetadata {
                     operation: Some("restore"),
+                    migration: None,
                     status_note: None,
                     ai_model: None,
                 },
@@ -431,6 +432,7 @@ pub(crate) fn reverse_gtms_editor_batch_replace_commit_sync(
         &commit_paths,
         CommitMetadata {
             operation: Some("editor-replace"),
+            migration: None,
             status_note: None,
             ai_model: None,
         },

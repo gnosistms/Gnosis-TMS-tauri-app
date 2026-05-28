@@ -11,6 +11,7 @@ use uuid::Uuid;
 
 use crate::git_commit::{git_commit_as_signed_in_user_with_metadata, GitCommitMetadata};
 use crate::project_repo_paths::resolve_project_git_repo_path;
+use crate::short_path_names::{allocate_short_folder_name, allocate_short_image_filename};
 
 use super::super::project_git::{
     ensure_clean_git_repo, ensure_gitattributes, ensure_repo_exists, ensure_valid_git_repo,
@@ -95,8 +96,7 @@ pub(super) fn write_parsed_workbook_chapter(
 ) -> Result<WrittenImport, String> {
     let chapter_id = Uuid::now_v7();
     let repo_path = &context.repo_path;
-    let chapter_slug =
-        unique_chapter_slug(&repo_path.join("chapters"), &slugify(&parsed.file_title));
+    let chapter_slug = unique_chapter_slug(&repo_path.join("chapters"), &parsed.file_title)?;
     let chapter_path = repo_path.join("chapters").join(&chapter_slug);
     let rows_path = chapter_path.join("rows");
     let assets_path = chapter_path.join("assets");
@@ -196,6 +196,7 @@ fn git_add_paths(repo_path: &Path, paths: &[String]) -> Result<(), String> {
 fn import_commit_metadata() -> GitCommitMetadata<'static> {
     GitCommitMetadata {
         operation: Some("import"),
+        migration: None,
         status_note: None,
         ai_model: None,
     }
@@ -318,9 +319,9 @@ fn finalize_pending_uploaded_images(
     row_file: &mut RowFile,
     repo_path: &Path,
     chapter_slug: &str,
-    row_id: &str,
+    _row_id: &str,
 ) -> Result<(), String> {
-    for (language_code, field) in row_file.fields.iter_mut() {
+    for field in row_file.fields.values_mut() {
         let Some(image) = field.image.as_mut() else {
             continue;
         };
@@ -333,13 +334,8 @@ fn finalize_pending_uploaded_images(
             continue;
         };
 
-        let relative_image_path = relative_imported_image_path(
-            chapter_slug,
-            row_id,
-            language_code,
-            &upload.filename,
-            extension,
-        );
+        let relative_image_path =
+            relative_imported_image_path(repo_path, chapter_slug, &upload.filename, extension)?;
         let absolute_image_path = repo_path.join(&relative_image_path);
         if let Some(parent) = absolute_image_path.parent() {
             fs::create_dir_all(parent).map_err(|error| {
@@ -566,85 +562,15 @@ fn svg_document_root_is_svg(bytes: &[u8]) -> bool {
 }
 
 fn relative_imported_image_path(
+    repo_path: &Path,
     chapter_slug: &str,
-    row_id: &str,
-    language_code: &str,
     filename: &str,
     extension: &str,
-) -> String {
-    let upload_directory = format!("row-{row_id}-{language_code}-{}", Uuid::now_v7());
-    let file_name = sanitized_imported_image_file_name(filename, extension);
-    format!("chapters/{chapter_slug}/images/{upload_directory}/{file_name}")
-}
-
-fn sanitized_imported_image_file_name(filename: &str, extension: &str) -> String {
-    let original_name = Path::new(filename)
-        .file_name()
-        .and_then(|value| value.to_str())
-        .map(str::trim)
-        .unwrap_or_default();
-    let matching_extension = Path::new(original_name)
-        .extension()
-        .and_then(|value| value.to_str())
-        .and_then(normalize_imported_image_extension);
-
-    if matching_extension == Some(extension) {
-        let sanitized_name = sanitize_imported_image_file_name_component(original_name);
-        if !matches!(sanitized_name.as_str(), "" | "." | "..") {
-            return sanitized_name;
-        }
-    }
-
-    let base_name = Path::new(original_name)
-        .file_stem()
-        .and_then(|value| value.to_str())
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or("image");
-    let sanitized_base_name = sanitize_imported_image_file_name_component(base_name);
-    let final_base_name = match sanitized_base_name.as_str() {
-        "" | "." | ".." => "image".to_string(),
-        _ => sanitized_base_name,
-    };
-    format!("{final_base_name}.{extension}")
-}
-
-fn normalize_imported_image_extension(extension: &str) -> Option<&'static str> {
-    match extension
-        .trim()
-        .trim_start_matches('.')
-        .to_ascii_lowercase()
-        .as_str()
-    {
-        "jpg" | "jpeg" => Some("jpg"),
-        "png" | "apng" => Some("png"),
-        "gif" => Some("gif"),
-        "svg" => Some("svg"),
-        "webp" => Some("webp"),
-        "avif" => Some("avif"),
-        "bmp" => Some("bmp"),
-        "ico" => Some("ico"),
-        _ => None,
-    }
-}
-
-fn sanitize_imported_image_file_name_component(value: &str) -> String {
-    value
-        .chars()
-        .map(|character| {
-            if character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.' | ' ') {
-                character
-            } else {
-                '_'
-            }
-        })
-        .collect::<String>()
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
-        .trim()
-        .trim_matches('.')
-        .to_string()
+) -> Result<String, String> {
+    let images_path = repo_path.join("chapters").join(chapter_slug).join("images");
+    let file_name =
+        allocate_short_image_filename(filename, extension, local_file_names(&images_path)?);
+    Ok(format!("chapters/{chapter_slug}/images/{file_name}"))
 }
 
 fn order_key_for_position(index: usize, total_rows: usize) -> Result<String, String> {
@@ -662,50 +588,29 @@ fn order_key_for_position(index: usize, total_rows: usize) -> Result<String, Str
     Ok(format!("{value:032x}"))
 }
 
-fn unique_chapter_slug(chapters_root: &Path, base_slug: &str) -> String {
-    let slug = if base_slug.trim().is_empty() {
-        "untitled".to_string()
-    } else {
-        base_slug.trim().to_string()
-    };
-
-    if !chapters_root.join(&slug).exists() {
-        return slug;
-    }
-
-    let mut index = 2usize;
-    loop {
-        let candidate = format!("{slug}-{index}");
-        if !chapters_root.join(&candidate).exists() {
-            return candidate;
-        }
-        index += 1;
-    }
+fn unique_chapter_slug(chapters_root: &Path, title: &str) -> Result<String, String> {
+    Ok(allocate_short_folder_name(
+        title,
+        local_file_names(chapters_root)?,
+    ))
 }
 
-fn slugify(value: &str) -> String {
-    let slug = value
-        .trim()
-        .to_lowercase()
-        .chars()
-        .map(|character| {
-            if character.is_ascii_alphanumeric() {
-                character
-            } else {
-                '-'
-            }
-        })
-        .collect::<String>()
-        .split('-')
-        .filter(|segment| !segment.is_empty())
-        .collect::<Vec<_>>()
-        .join("-");
-
-    if slug.is_empty() {
-        "untitled".to_string()
-    } else {
-        slug
+fn local_file_names(path: &Path) -> Result<Vec<String>, String> {
+    if !path.exists() {
+        return Ok(Vec::new());
     }
+    Ok(fs::read_dir(path)
+        .map_err(|error| format!("Could not read '{}': {error}", path.display()))?
+        .filter_map(|entry| {
+            entry.ok().and_then(|entry| {
+                entry
+                    .path()
+                    .file_name()
+                    .and_then(|value| value.to_str())
+                    .map(str::to_string)
+            })
+        })
+        .collect())
 }
 
 pub(super) fn build_source_word_counts_from_import(
@@ -837,11 +742,7 @@ mod tests {
         assert_eq!(image.kind, "upload");
         assert!(image.url.is_none());
         assert!(image.pending_upload.is_none());
-        assert!(
-            relative_path.starts_with("chapters/article/images/row-row-1-en-"),
-            "unexpected relative path: {relative_path}"
-        );
-        assert!(relative_path.ends_with("/inline image.png"));
+        assert_eq!(relative_path, "chapters/article/images/inline-image.png");
         assert!(repo_path.join(relative_path).exists());
 
         let _ = fs::remove_dir_all(repo_path);

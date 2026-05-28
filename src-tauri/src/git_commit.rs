@@ -11,6 +11,7 @@ use crate::{
 
 pub(crate) struct GitCommitMetadata<'a> {
     pub(crate) operation: Option<&'a str>,
+    pub(crate) migration: Option<&'a str>,
     pub(crate) status_note: Option<&'a str>,
     pub(crate) ai_model: Option<&'a str>,
 }
@@ -52,6 +53,7 @@ pub(crate) fn git_commit_as_signed_in_user(
         paths,
         GitCommitMetadata {
             operation: None,
+            migration: None,
             status_note: None,
             ai_model: None,
         },
@@ -87,6 +89,16 @@ pub(crate) fn git_commit_as_signed_in_user_with_metadata(
         command
             .arg("-m")
             .arg(format!("GTMS-Operation: {operation}"));
+    }
+
+    if let Some(status_note) = metadata
+        .migration
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        command
+            .arg("-m")
+            .arg(format!("GTMS-Migration: {status_note}"));
     }
 
     if let Some(status_note) = metadata
