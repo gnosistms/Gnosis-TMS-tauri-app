@@ -13,6 +13,7 @@ import {
   cancelEditorReplaceUndoModalState,
   currentActiveEditorHistoryEntryByCommitSha,
   currentEditorHistoryRequestMatches,
+  editorRowMatchesHistoryPayload,
   historyEntryCanOpenReplaceUndo,
   openEditorReplaceUndoModalState,
 } from "./editor-history-state.js";
@@ -37,10 +38,107 @@ import {
 } from "./editor-queued-write.js";
 import { projectRepoScope } from "./repo-write-queue.js";
 
+const optimisticHistoryRestoreBaselines = new Map();
+
 function nextChapterBaseCommitSha(payload, chapterState = state.editorChapter) {
   return typeof payload?.chapterBaseCommitSha === "string" && payload.chapterBaseCommitSha.trim()
     ? payload.chapterBaseCommitSha.trim()
     : chapterState?.chapterBaseCommitSha ?? null;
+}
+
+function cloneHistoryRestoreRow(row) {
+  if (!row) {
+    return null;
+  }
+
+  return typeof structuredClone === "function"
+    ? structuredClone(row)
+    : JSON.parse(JSON.stringify(row));
+}
+
+function historyRestoreBaselineKey(value) {
+  if (!value?.chapterId || !value?.rowId || !value?.languageCode) {
+    return "";
+  }
+
+  return `${value.chapterId}:${value.rowId}:${value.languageCode}`;
+}
+
+function captureHistoryRestoreBaseline(value) {
+  const key = historyRestoreBaselineKey(value);
+  if (!key || optimisticHistoryRestoreBaselines.has(key)) {
+    return;
+  }
+
+  const row = findEditorRowById(value.rowId, state.editorChapter);
+  if (row) {
+    optimisticHistoryRestoreBaselines.set(key, cloneHistoryRestoreRow(row));
+  }
+}
+
+function consumeHistoryRestoreBaseline(value) {
+  const key = historyRestoreBaselineKey(value);
+  if (!key) {
+    return null;
+  }
+
+  const baseline = optimisticHistoryRestoreBaselines.get(key) ?? null;
+  optimisticHistoryRestoreBaselines.delete(key);
+  return baseline;
+}
+
+function applyOptimisticHistoryRestore(value, operations) {
+  const {
+    updateEditorChapterRow,
+    reconcileDirtyTrackedEditorRows,
+    applyEditorSelectionsToProjectState,
+    render,
+  } = operations;
+  if (!value?.restoreEntry || typeof updateEditorChapterRow !== "function") {
+    return;
+  }
+
+  captureHistoryRestoreBaseline(value);
+  updateEditorChapterRow(value.rowId, (currentRow) => ({
+    ...applyEditorRowHistoryRestored(currentRow, value.languageCode, value.restoreEntry),
+    saveStatus: "saving",
+    saveError: "",
+  }));
+  reconcileDirtyTrackedEditorRows?.([value.rowId]);
+  applyEditorSelectionsToProjectState?.(state.editorChapter);
+  render?.();
+}
+
+function rollbackOptimisticHistoryRestore(value, message, operations) {
+  const {
+    updateEditorChapterRow,
+    reconcileDirtyTrackedEditorRows,
+    applyEditorSelectionsToProjectState,
+  } = operations;
+  const baseline = consumeHistoryRestoreBaseline(value);
+  if (!baseline || typeof updateEditorChapterRow !== "function") {
+    return;
+  }
+
+  updateEditorChapterRow(value.rowId, (currentRow) => {
+    if (editorRowMatchesHistoryPayload(currentRow, value.languageCode, value.restoreEntry)) {
+      return baseline;
+    }
+
+    return {
+      ...currentRow,
+      persistedFields: baseline.persistedFields,
+      persistedFootnotes: baseline.persistedFootnotes,
+      persistedImageCaptions: baseline.persistedImageCaptions,
+      persistedImages: baseline.persistedImages,
+      persistedFieldStates: baseline.persistedFieldStates,
+      persistedTextStyle: baseline.persistedTextStyle,
+      saveStatus: "error",
+      saveError: message || "The selected history entry could not be restored.",
+    };
+  });
+  reconcileDirtyTrackedEditorRows?.([value.rowId]);
+  applyEditorSelectionsToProjectState?.(state.editorChapter);
 }
 
 async function fetchEditorFieldHistory(render, requestKey) {
@@ -188,6 +286,7 @@ export async function restoreEditorFieldHistory(render, commitSha, operations = 
     rowId: editorChapter.activeRowId,
     languageCode: editorChapter.activeLanguageCode,
     commitSha,
+    restoreEntry: currentActiveEditorHistoryEntryByCommitSha(editorChapter, commitSha),
     permissionContext: createQueuedEditorWritePermissionContext({
       team,
       project: context.project,
@@ -213,6 +312,14 @@ export async function restoreEditorFieldHistory(render, commitSha, operations = 
     },
     invalidationKeys: [editorChapterInvalidationKey(repoScope, editorChapter.chapterId)],
   }, {
+    applyOptimistic: (operation) => {
+      applyOptimisticHistoryRestore(operation.value, {
+        updateEditorChapterRow,
+        reconcileDirtyTrackedEditorRows,
+        applyEditorSelectionsToProjectState,
+        render,
+      });
+    },
     run: async (operation) => {
       assertQueuedEditorRowsReady({
         chapterId: operation.value.chapterId,
@@ -228,6 +335,7 @@ export async function restoreEditorFieldHistory(render, commitSha, operations = 
     },
     onSuccess: (payload, operation) => {
       const value = operation?.value ?? operationValue;
+      consumeHistoryRestoreBaseline(value);
       if (
         state.editorChapter?.chapterId === value.chapterId
         && state.editorChapter.activeRowId === value.rowId
@@ -255,6 +363,11 @@ export async function restoreEditorFieldHistory(render, commitSha, operations = 
     onError: (error, operation) => {
       const value = operation?.value ?? operationValue;
       const message = error instanceof Error ? error.message : String(error);
+      rollbackOptimisticHistoryRestore(value, message, {
+        updateEditorChapterRow,
+        reconcileDirtyTrackedEditorRows,
+        applyEditorSelectionsToProjectState,
+      });
       if (
         state.editorChapter?.chapterId === value.chapterId
         && state.editorChapter.activeRowId === value.rowId

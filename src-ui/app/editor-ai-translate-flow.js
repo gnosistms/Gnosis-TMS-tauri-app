@@ -672,6 +672,7 @@ export async function runEditorAiTranslateForContext(
             operation: "ai-translation",
             aiModel: modelId,
           },
+          waitForDurable: false,
         });
 
         if (state.editorChapter?.chapterId !== context.chapterId) {

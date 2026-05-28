@@ -147,6 +147,7 @@ const {
 } = await import("./editor-ai-translate-flow.js");
 const {
   authorLoginFromAssistantHistoryEntry,
+  applyEditorAssistantDraft,
   buildEditorAssistantAlternateLanguageTexts,
   buildEditorAssistantTargetLanguageHistory,
   classifyEditorAssistantTargetHistoryEntry,
@@ -698,6 +699,66 @@ test("runEditorAiTranslate uses the configured translate action and creates an a
     "resp_translate_1",
   );
   assert.equal(state.editorChapter.aiTranslate.translate1.status, "idle");
+});
+
+test("runEditorAiTranslate auto-applies without waiting for durable row persistence", async () => {
+  installTranslateFixture({
+    fields: {
+      vi: "",
+    },
+  });
+  state.aiSettings = {
+    ...state.aiSettings,
+    actionConfig: {
+      ...state.aiSettings.actionConfig,
+      detailedConfiguration: true,
+      actions: {
+        ...state.aiSettings.actionConfig.actions,
+        translate1: {
+          providerId: "openai",
+          modelId: "gpt-5.4-mini",
+        },
+      },
+    },
+  };
+
+  let persistOptions = null;
+  const durableWrite = createDeferred();
+  invokeHandler = async (command) => {
+    if (command === "load_ai_provider_secret") {
+      return "oa-key";
+    }
+    if (command === "run_ai_translation") {
+      return {
+        translatedText: "Xin chao",
+      };
+    }
+
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  await runEditorAiTranslate(() => {}, "translate1", {
+    updateEditorRowFieldValue(rowId, languageCode, nextValue) {
+      const row = state.editorChapter.rows.find((entry) => entry.rowId === rowId);
+      row.fields[languageCode] = nextValue;
+      row.saveStatus = "dirty";
+    },
+    persistEditorRowOnBlur(_render, rowId, options = {}) {
+      persistOptions = options;
+      if (options.waitForDurable === false) {
+        const row = state.editorChapter.rows.find((entry) => entry.rowId === rowId);
+        row.saveStatus = "saving";
+        return true;
+      }
+      return durableWrite.promise;
+    },
+  });
+
+  assert.equal(persistOptions?.waitForDurable, false);
+  assert.equal(state.editorChapter.rows[0].fields.vi, "Xin chao");
+  assert.equal(state.editorChapter.rows[0].saveStatus, "saving");
+  assert.equal(state.editorChapter.aiTranslate.translate1.status, "idle");
+  assert.equal(latestAssistantDraft()?.draftTranslationText, undefined);
 });
 
 test("runEditorAiTranslate enters loading state before provider readiness resolves", async () => {
@@ -2347,6 +2408,60 @@ test("runEditorAiAssistant renders a draft when a chat response includes draft t
   assert.equal(draft?.text, "A smoother version:");
   assert.equal(draft?.draftTranslationText, "Mot ban dich muot ma hon.");
   assert.equal(state.editorChapter.rows[0].fields.vi, "Nhiem vu cua no la trao phuong phap thuc hanh.");
+});
+
+test("applyEditorAssistantDraft does not wait for durable row persistence", async () => {
+  installTranslateFixture();
+  state.editorChapter = {
+    ...state.editorChapter,
+    assistant: {
+      ...state.editorChapter.assistant,
+      threadsByKey: {
+        "row-1::es::vi": {
+          rowId: "row-1",
+          sourceLanguageCode: "es",
+          targetLanguageCode: "vi",
+          items: [{
+            id: "draft-1",
+            type: "draft-translation",
+            createdAt: "2026-05-28T12:00:00.000Z",
+            text: "A cleaner draft.",
+            summary: "Draft translation",
+            draftTranslationText: "Xin chao moi",
+            details: {
+              modelId: "gpt-5.4-mini",
+            },
+          }],
+        },
+      },
+    },
+  };
+
+  let persistOptions = null;
+  const durableWrite = createDeferred();
+  await applyEditorAssistantDraft(() => {}, "draft-1", {
+    updateEditorRowFieldValue(rowId, languageCode, nextValue) {
+      const row = state.editorChapter.rows.find((entry) => entry.rowId === rowId);
+      row.fields[languageCode] = nextValue;
+      row.saveStatus = "dirty";
+    },
+    persistEditorRowOnBlur(_render, rowId, options = {}) {
+      persistOptions = options;
+      if (options.waitForDurable === false) {
+        const row = state.editorChapter.rows.find((entry) => entry.rowId === rowId);
+        row.saveStatus = "saving";
+        return true;
+      }
+      return durableWrite.promise;
+    },
+  });
+
+  const thread = state.editorChapter.assistant.threadsByKey["row-1::es::vi"];
+  assert.equal(persistOptions?.waitForDurable, false);
+  assert.equal(state.editorChapter.rows[0].fields.vi, "Xin chao moi");
+  assert.equal(state.editorChapter.rows[0].saveStatus, "saving");
+  assert.equal(thread.items.find((item) => item.id === "draft-1")?.applyStatus, "applied");
+  assert.equal(thread.items.at(-1)?.type, "apply-result");
 });
 
 test("runEditorAiAssistant sends loaded target-language history with the assistant request", async () => {

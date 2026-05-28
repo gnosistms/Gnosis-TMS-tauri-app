@@ -933,6 +933,33 @@ test("restore history coalesces queued repeated restores to the latest commit", 
     ...state.editorChapter,
     activeRowId: "row-1",
     activeLanguageCode: "es",
+    history: {
+      ...state.editorChapter.history,
+      rowId: "row-1",
+      languageCode: "es",
+      entries: [
+        {
+          commitSha: "commit-2",
+          plainText: "optimistic text from commit-2",
+          footnote: "",
+          imageCaption: "",
+          image: null,
+          textStyle: "paragraph",
+          reviewed: false,
+          pleaseCheck: false,
+        },
+        {
+          commitSha: "commit-1",
+          plainText: "optimistic text from commit-1",
+          footnote: "",
+          imageCaption: "",
+          image: null,
+          textStyle: "paragraph",
+          reviewed: false,
+          pleaseCheck: false,
+        },
+      ],
+    },
   };
 
   const blocker = deferred();
@@ -968,11 +995,15 @@ test("restore history coalesces queued repeated restores to the latest commit", 
     reconcileDirtyTrackedEditorRows() {},
     applyEditorSelectionsToProjectState,
   });
+  assert.equal(state.editorChapter.rows[0].fields.es, "optimistic text from commit-1");
+  assert.equal(state.editorChapter.rows[0].saveStatus, "saving");
+
   await restoreEditorFieldHistory(() => {}, "commit-2", {
     updateEditorChapterRow,
     reconcileDirtyTrackedEditorRows() {},
     applyEditorSelectionsToProjectState,
   });
+  assert.equal(state.editorChapter.rows[0].fields.es, "optimistic text from commit-2");
 
   assert.equal(state.editorChapter.history.restoringCommitSha, "commit-2");
   assert.deepEqual(invokeLog, []);
@@ -985,6 +1016,60 @@ test("restore history coalesces queued repeated restores to the latest commit", 
   assert.equal(restoreCalls.length, 1);
   assert.equal(restoreCalls[0].payload.input.commitSha, "commit-2");
   assert.equal(state.editorChapter.rows[0].fields.es, "text from commit-2");
+  assert.equal(state.editorChapter.history.restoringCommitSha, null);
+});
+
+test("restore history rolls back the optimistic row when the queued restore fails", async () => {
+  installEditorFixture();
+  state.editorChapter = {
+    ...state.editorChapter,
+    activeRowId: "row-1",
+    activeLanguageCode: "es",
+    history: {
+      ...state.editorChapter.history,
+      rowId: "row-1",
+      languageCode: "es",
+      entries: [{
+        commitSha: "commit-1",
+        plainText: "optimistic restore",
+        footnote: "",
+        imageCaption: "",
+        image: null,
+        textStyle: "paragraph",
+        reviewed: false,
+        pleaseCheck: false,
+      }],
+    },
+  };
+
+  const blocker = deferred();
+  const blockerPromise = enqueueRepoWrite({
+    scope: "7:project-1:fixture-project",
+    kind: "testBlocker",
+    run: () => blocker.promise,
+  });
+  invokeHandler = async (command) => {
+    if (command === "restore_gtms_editor_field_from_history") {
+      throw new Error("restore failed");
+    }
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  await restoreEditorFieldHistory(() => {}, "commit-1", {
+    updateEditorChapterRow,
+    reconcileDirtyTrackedEditorRows() {},
+    applyEditorSelectionsToProjectState,
+  });
+
+  assert.equal(state.editorChapter.rows[0].fields.es, "optimistic restore");
+  assert.equal(state.editorChapter.rows[0].saveStatus, "saving");
+
+  blocker.resolve(null);
+  await blockerPromise;
+  await waitForRepoWriteQueueIdle("7:project-1:fixture-project");
+
+  assert.equal(state.editorChapter.rows[0].fields.es, "hola");
+  assert.equal(state.editorChapter.rows[0].saveStatus, "idle");
   assert.equal(state.editorChapter.history.restoringCommitSha, null);
 });
 

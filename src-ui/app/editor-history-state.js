@@ -376,6 +376,36 @@ export function applyEditorRowHistoryRestored(row, languageCode, payload) {
   };
 }
 
+function historyImageKey(image) {
+  return JSON.stringify(normalizeEditorFieldImage(image) ?? null);
+}
+
+export function editorRowMatchesHistoryPayload(row, languageCode, payload) {
+  if (!row || !languageCode) {
+    return false;
+  }
+
+  const expectedFieldState = normalizeFieldState({
+    reviewed: payload?.reviewed,
+    pleaseCheck: payload?.pleaseCheck,
+  });
+  const currentFieldState = normalizeFieldState(row.fieldStates?.[languageCode]);
+  const expectedTextStyle =
+    typeof payload?.textStyle === "string" && payload.textStyle.trim()
+      ? payload.textStyle
+      : row.textStyle;
+
+  return (
+    String(row.fields?.[languageCode] ?? "") === String(payload?.plainText ?? "")
+    && String(row.footnotes?.[languageCode] ?? "") === String(payload?.footnote ?? "")
+    && String(row.imageCaptions?.[languageCode] ?? "") === String(payload?.imageCaption ?? "")
+    && historyImageKey(row.images?.[languageCode]) === historyImageKey(payload?.image)
+    && String(row.textStyle ?? "") === String(expectedTextStyle ?? "")
+    && currentFieldState.reviewed === expectedFieldState.reviewed
+    && currentFieldState.pleaseCheck === expectedFieldState.pleaseCheck
+  );
+}
+
 export function historyEntryCanOpenReplaceUndo(chapterState, commitSha) {
   return historyEntryCanUndoReplace(currentActiveEditorHistoryEntryByCommitSha(chapterState, commitSha));
 }

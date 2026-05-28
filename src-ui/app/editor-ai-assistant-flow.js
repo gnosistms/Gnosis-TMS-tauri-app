@@ -1536,6 +1536,7 @@ export async function applyEditorAssistantDraft(render, itemId, operations = {})
         operation: "ai-assistant-apply",
         aiModel: item.details?.modelId ?? "",
       },
+      waitForDurable: false,
     });
 
     state.editorChapter = applyEditorAssistantItemApplied(

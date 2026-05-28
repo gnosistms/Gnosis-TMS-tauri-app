@@ -428,6 +428,7 @@ export async function prepareEditorDerivedGlossaryForContext({
           operation: "ai-translation",
           aiModel: modelId,
         },
+        waitForDurable: false,
       });
       if (!requestStillCurrent()) {
         return { ok: false, skipped: true };
