@@ -235,13 +235,15 @@ async function listPendingTeamMigrations(team, resources) {
   const result = await invoke("list_pending_team_repo_layout_migrations", {
     input: {
       installationId: team.installationId,
-      projects: resources.projects.map(projectCandidate).filter(Boolean),
+      projects: resources.projects
+        .map(projectCandidate)
+        .filter((project) => project && !isDeletedResourceCandidate(project)),
       glossaries: resources.glossaries.map((glossary) =>
         resourceCandidate(glossary, "glossaryId")
-      ).filter(Boolean),
+      ).filter((glossary) => glossary && !isDeletedResourceCandidate(glossary)),
       qaLists: resources.qaLists.map((qaList) =>
         resourceCandidate(qaList, "qaListId")
-      ).filter(Boolean),
+      ).filter((qaList) => qaList && !isDeletedResourceCandidate(qaList)),
     },
   });
 

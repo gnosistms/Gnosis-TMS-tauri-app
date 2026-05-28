@@ -82,10 +82,14 @@ fn pending_migration(
 }
 
 fn is_deleted_state(value: Option<&str>) -> bool {
-    matches!(
-        normalized(value).map(str::to_ascii_lowercase).as_deref(),
-        Some("deleted" | "softdeleted" | "tombstone")
-    )
+    normalized(value)
+        .map(|value| {
+            matches!(
+                value.to_ascii_lowercase().as_str(),
+                "deleted" | "softdeleted" | "tombstone"
+            )
+        })
+        .unwrap_or(false)
 }
 
 fn is_deleted_project_candidate(project: &ProjectMigrationCandidate) -> bool {
@@ -238,4 +242,55 @@ pub(crate) async fn list_pending_team_repo_layout_migrations(
         target_version: MIGRATION_0810.to_string(),
         migrations,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn deleted_project_candidates_are_not_migration_candidates() {
+        let active = ProjectMigrationCandidate {
+            project_id: Some("project-active".to_string()),
+            repo_name: "project-active".to_string(),
+            title: None,
+            lifecycle_state: Some("active".to_string()),
+            record_state: Some("live".to_string()),
+            remote_state: None,
+        };
+        let soft_deleted = ProjectMigrationCandidate {
+            project_id: Some("project-deleted".to_string()),
+            repo_name: "project-deleted".to_string(),
+            title: None,
+            lifecycle_state: Some("softDeleted".to_string()),
+            record_state: Some("tombstone".to_string()),
+            remote_state: Some("deleted".to_string()),
+        };
+
+        assert!(!is_deleted_project_candidate(&active));
+        assert!(is_deleted_project_candidate(&soft_deleted));
+    }
+
+    #[test]
+    fn deleted_resource_candidates_are_not_migration_candidates() {
+        let active = ResourceMigrationCandidate {
+            resource_id: Some("glossary-active".to_string()),
+            repo_name: "glossary-active".to_string(),
+            title: None,
+            lifecycle_state: Some("active".to_string()),
+            record_state: Some("live".to_string()),
+            remote_state: None,
+        };
+        let tombstone = ResourceMigrationCandidate {
+            resource_id: Some("glossary-deleted".to_string()),
+            repo_name: "glossary-deleted".to_string(),
+            title: None,
+            lifecycle_state: None,
+            record_state: Some("tombstone".to_string()),
+            remote_state: None,
+        };
+
+        assert!(!is_deleted_resource_candidate(&active));
+        assert!(is_deleted_resource_candidate(&tombstone));
+    }
 }

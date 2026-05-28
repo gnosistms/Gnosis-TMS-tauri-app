@@ -163,6 +163,12 @@ function normalizeRemoteGlossaryRepo(repo) {
   }
 
   return {
+    glossaryId:
+      typeof repo.glossaryId === "string" && repo.glossaryId.trim()
+        ? repo.glossaryId.trim()
+        : typeof repo.id === "string" && repo.id.trim()
+          ? repo.id.trim()
+          : null,
     repoId: Number.isFinite(repo.repoId) ? repo.repoId : null,
     nodeId:
       typeof repo.nodeId === "string" && repo.nodeId.trim()
@@ -187,6 +193,18 @@ function normalizeRemoteGlossaryRepo(repo) {
       typeof repo.defaultBranchHeadOid === "string" && repo.defaultBranchHeadOid.trim()
         ? repo.defaultBranchHeadOid.trim()
         : null,
+    lifecycleState:
+      typeof repo.lifecycleState === "string" && repo.lifecycleState.trim()
+        ? repo.lifecycleState.trim()
+        : "",
+    recordState:
+      typeof repo.recordState === "string" && repo.recordState.trim()
+        ? repo.recordState.trim()
+        : "",
+    remoteState:
+      typeof repo.remoteState === "string" && repo.remoteState.trim()
+        ? repo.remoteState.trim()
+        : "",
   };
 }
 
