@@ -520,6 +520,11 @@ test("translation log details show only what was sent to the model", () => {
     createAiActionConfigurationState(),
   );
 
+  assert.match(html, /<p class="assistant-item__label">Translate<\/p>/);
+  assert.match(html, /<pre class="assistant-item__draft">Xin chao<\/pre>/);
+  assert.doesNotMatch(html, /Translate 1 applied to Vietnamese\./);
+  assert.doesNotMatch(html, /toggle-editor-assistant-draft-diff/);
+  assert.doesNotMatch(html, /apply-editor-assistant-draft/);
   assert.match(html, /Prompt/);
   assert.match(html, /Translate Spanish to Vietnamese: Hola/);
   assert.doesNotMatch(html, /Translation/);

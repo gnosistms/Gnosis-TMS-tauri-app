@@ -493,6 +493,22 @@ function renderAssistantDraftSection(label, value) {
   `;
 }
 
+function renderAssistantAppliedTranslationText(item) {
+  const details = item?.details ?? {};
+  const appliedText = typeof details.appliedText === "string" ? details.appliedText.trim() : "";
+  if (appliedText) {
+    return appliedText;
+  }
+
+  const translatedText =
+    typeof details.translatedText === "string" ? details.translatedText.trim() : "";
+  if (translatedText) {
+    return translatedText;
+  }
+
+  return typeof item?.text === "string" ? item.text.trim() : "";
+}
+
 function normalizeAssistantDraftComparisonText(value) {
   return String(value ?? "").replace(/\r\n?/g, "\n");
 }
@@ -575,10 +591,17 @@ function renderAssistantTranscriptItem(item, currentTargetText = "") {
   }
 
   if (itemType === "translation-log") {
+    const appliedTranslationText = renderAssistantAppliedTranslationText(item);
     return `
       <article class="assistant-item assistant-item--assistant">
         <p class="assistant-item__label">Translate</p>
-        <p class="assistant-item__text">${escapeHtml(text)}</p>
+        ${
+          appliedTranslationText
+            ? `<pre class="assistant-item__draft">${escapeHtml(appliedTranslationText)}</pre>`
+            : ""
+        }
+        ${renderAssistantDraftSection("Footnote", item?.details?.translatedFootnote)}
+        ${renderAssistantDraftSection("Image caption", item?.details?.translatedImageCaption)}
         ${renderAssistantPromptDetails(item)}
       </article>
     `;

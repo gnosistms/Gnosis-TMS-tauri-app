@@ -943,16 +943,15 @@ fn parse_assistant_structured_response(
         .chain(object_slice.into_iter())
     {
         if let Ok(parsed) = serde_json::from_str::<AiAssistantStructuredResponse>(candidate) {
-            if parsed.assistant_text.trim().is_empty() {
+            let has_draft_translation_text = parsed
+                .draft_translation_text
+                .as_ref()
+                .map(|value| !value.trim().is_empty())
+                .unwrap_or(false);
+            if parsed.assistant_text.trim().is_empty() && !has_draft_translation_text {
                 continue;
             }
-            if kind == AiAssistantTurnKind::TranslateRefinement
-                && parsed
-                    .draft_translation_text
-                    .as_ref()
-                    .map(|value| value.trim().is_empty())
-                    .unwrap_or(true)
-            {
+            if kind == AiAssistantTurnKind::TranslateRefinement && !has_draft_translation_text {
                 continue;
             }
             return Ok(parsed);
@@ -2574,6 +2573,25 @@ mod tests {
         assert_eq!(
             response.draft_translation_text.as_deref(),
             Some("Ban dich muot ma hon.")
+        );
+    }
+
+    #[test]
+    fn assistant_structured_response_accepts_empty_text_with_translation_draft() {
+        let response = parse_assistant_structured_response(
+            r#"{
+                "assistantText": "",
+                "draftTranslationText": "Trong những khoảnh khắc này, bạn sẽ quan sát những tư tưởng đến với tâm trí mình; hãy khảo sát chúng, nhưng không xua đuổi hay kết án chúng, và không đồng nhất bản thân với chúng, để chúng tự biến mất, như những con chim bay qua không gian, không để lại dấu vết.",
+                "responseKind": "translation_draft"
+            }"#,
+            AiAssistantTurnKind::TranslateRefinement,
+        )
+        .unwrap();
+
+        assert_eq!(response.assistant_text, "");
+        assert_eq!(
+            response.draft_translation_text.as_deref(),
+            Some("Trong những khoảnh khắc này, bạn sẽ quan sát những tư tưởng đến với tâm trí mình; hãy khảo sát chúng, nhưng không xua đuổi hay kết án chúng, và không đồng nhất bản thân với chúng, để chúng tự biến mất, như những con chim bay qua không gian, không để lại dấu vết.")
         );
     }
 

@@ -39,6 +39,7 @@ pub(crate) struct PendingTeamRepoMigration {
     resource_id: Option<String>,
     repo_name: String,
     title: String,
+    migration_reason: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -63,12 +64,14 @@ fn pending_migration(
     resource_id: Option<String>,
     repo_name: String,
     title: Option<String>,
+    migration_reason: &str,
 ) -> PendingTeamRepoMigration {
     PendingTeamRepoMigration {
         resource_type: resource_type.to_string(),
         resource_id,
         title: resource_title(title.as_deref(), &repo_name),
         repo_name,
+        migration_reason: migration_reason.to_string(),
     }
 }
 
@@ -84,18 +87,30 @@ fn list_pending_team_repo_layout_migrations_sync(
             None => continue,
         };
         let project_id = normalized(project.project_id.as_deref()).map(str::to_string);
-        if let Some(repo_path) = find_project_repo_path(
+        match find_project_repo_path(
             app,
             input.installation_id,
             project_id.as_deref(),
             Some(&repo_name),
         )? {
-            if repo_requires_0810_migration(&repo_path) {
+            Some(repo_path) => {
+                if repo_requires_0810_migration(&repo_path) {
+                    pending.push(pending_migration(
+                        "project",
+                        project_id,
+                        repo_name,
+                        project.title,
+                        "pendingMigration",
+                    ));
+                }
+            }
+            None => {
                 pending.push(pending_migration(
                     "project",
                     project_id,
                     repo_name,
                     project.title,
+                    "missingLocal",
                 ));
             }
         }
@@ -107,18 +122,30 @@ fn list_pending_team_repo_layout_migrations_sync(
             None => continue,
         };
         let resource_id = normalized(glossary.resource_id.as_deref()).map(str::to_string);
-        if let Some(repo_path) = find_glossary_repo_path(
+        match find_glossary_repo_path(
             app,
             input.installation_id,
             resource_id.as_deref(),
             Some(&repo_name),
         )? {
-            if repo_requires_0810_migration(&repo_path) {
+            Some(repo_path) => {
+                if repo_requires_0810_migration(&repo_path) {
+                    pending.push(pending_migration(
+                        "glossary",
+                        resource_id,
+                        repo_name,
+                        glossary.title,
+                        "pendingMigration",
+                    ));
+                }
+            }
+            None => {
                 pending.push(pending_migration(
                     "glossary",
                     resource_id,
                     repo_name,
                     glossary.title,
+                    "missingLocal",
                 ));
             }
         }
@@ -130,18 +157,30 @@ fn list_pending_team_repo_layout_migrations_sync(
             None => continue,
         };
         let resource_id = normalized(qa_list.resource_id.as_deref()).map(str::to_string);
-        if let Some(repo_path) = find_qa_list_repo_path(
+        match find_qa_list_repo_path(
             app,
             input.installation_id,
             resource_id.as_deref(),
             Some(&repo_name),
         )? {
-            if repo_requires_0810_migration(&repo_path) {
+            Some(repo_path) => {
+                if repo_requires_0810_migration(&repo_path) {
+                    pending.push(pending_migration(
+                        "qaList",
+                        resource_id,
+                        repo_name,
+                        qa_list.title,
+                        "pendingMigration",
+                    ));
+                }
+            }
+            None => {
                 pending.push(pending_migration(
                     "qaList",
                     resource_id,
                     repo_name,
                     qa_list.title,
+                    "missingLocal",
                 ));
             }
         }

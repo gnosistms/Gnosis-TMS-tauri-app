@@ -91,6 +91,58 @@ function pendingByType(pending, resourceType) {
   return (Array.isArray(pending) ? pending : []).filter((item) => item?.resourceType === resourceType);
 }
 
+function migrationResourceKey(resource) {
+  const repoName = repoNameOf(resource).toLowerCase();
+  const id = normalizedText(resource?.id)
+    || normalizedText(resource?.projectId)
+    || normalizedText(resource?.glossaryId)
+    || normalizedText(resource?.qaListId)
+    || normalizedText(resource?.resourceId);
+  return `${id || ""}::${repoName}`;
+}
+
+function mergeResourceLists(...resourceLists) {
+  const merged = [];
+  const seen = new Set();
+  for (const resource of resourceLists.flatMap((list) => Array.isArray(list) ? list : [])) {
+    const key = migrationResourceKey(resource);
+    if (key === "::" || seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    merged.push(resource);
+  }
+  return merged;
+}
+
+function pendingMigrationSignature(pending) {
+  return (Array.isArray(pending) ? pending : [])
+    .map((item) => [
+      normalizedText(item?.resourceType),
+      normalizedText(item?.resourceId),
+      normalizedText(item?.repoName),
+    ].join(":"))
+    .sort()
+    .join("|");
+}
+
+function migrationResourceCount(resources) {
+  return [
+    resources?.projects,
+    resources?.glossaries,
+    resources?.qaLists,
+  ].reduce((count, list) => count + (Array.isArray(list) ? list.length : 0), 0);
+}
+
+function pendingMigrationDescription(pending) {
+  const count = Array.isArray(pending) ? pending.length : 0;
+  return `${count} resource${count === 1 ? "" : "s"}`;
+}
+
+function pendingItemRequiresDownload(item) {
+  return normalizedText(item?.migrationReason) === "missingLocal";
+}
+
 function openMigrationModal(message, targetVersion = TEAM_REPO_LAYOUT_MIGRATION_TARGET_VERSION) {
   const token = nextMigrationModalToken;
   nextMigrationModalToken += 1;
@@ -140,16 +192,14 @@ async function listRemoteProjectsForTeam(team) {
 }
 
 async function collectTeamMigrationResources(team, options = {}) {
-  const projects = Array.isArray(options.projects)
-    ? options.projects
-    : await listRemoteProjectsForTeam(team);
+  const remoteProjects = await listRemoteProjectsForTeam(team);
   const glossaries = await listRemoteGlossaryReposForTeam(team);
   const qaLists = teamSupportsQaListRepos(team)
     ? await listRemoteQaListReposForTeam(team)
     : [];
 
   return {
-    projects: Array.isArray(projects) ? projects : [],
+    projects: mergeResourceLists(options.projects, remoteProjects),
     glossaries: Array.isArray(glossaries) ? glossaries : [],
     qaLists: Array.isArray(qaLists) ? qaLists : [],
   };
@@ -202,9 +252,15 @@ async function migratePendingProjects(render, team, resources, pending, token) {
     if (!project) {
       continue;
     }
-    const title = titleOf(project, item.title || item.repoName || "project");
+    const title = normalizedText(item.title) || titleOf(project, item.repoName || "project");
     const repoName = fullRepoNameOf(project);
-    await setModalMessage(token, render, `Migrating projects: ${title}`);
+    await setModalMessage(
+      token,
+      render,
+      pendingItemRequiresDownload(item)
+        ? `Downloading data from remote repo: ${repoName}`
+        : `Migrating projects: ${title}`,
+    );
     await setModalMessage(token, render, `Syncronizing with remote repo on GitHub: ${repoName}`);
     await reconcileProjectRepoSyncStates(render, team, [project], {
       clearStatusOnComplete: false,
@@ -221,9 +277,15 @@ async function migratePendingGlossaries(render, team, resources, pending, token)
     if (!glossary) {
       continue;
     }
-    const title = titleOf(glossary, item.title || item.repoName || "glossary");
+    const title = normalizedText(item.title) || titleOf(glossary, item.repoName || "glossary");
     const repoName = fullRepoNameOf(glossary);
-    await setModalMessage(token, render, `Migrating glossaries: ${title}`);
+    await setModalMessage(
+      token,
+      render,
+      pendingItemRequiresDownload(item)
+        ? `Downloading data from remote repo: ${repoName}`
+        : `Migrating glossaries: ${title}`,
+    );
     await setModalMessage(token, render, `Syncronizing with remote repo on GitHub: ${repoName}`);
     await syncGlossaryReposForTeam(team, [glossary]);
   }
@@ -235,9 +297,15 @@ async function migratePendingQaLists(render, team, resources, pending, token) {
     if (!qaList) {
       continue;
     }
-    const title = titleOf(qaList, item.title || item.repoName || "QA list");
+    const title = normalizedText(item.title) || titleOf(qaList, item.repoName || "QA list");
     const repoName = fullRepoNameOf(qaList);
-    await setModalMessage(token, render, `Migrating QA lists: ${title}`);
+    await setModalMessage(
+      token,
+      render,
+      pendingItemRequiresDownload(item)
+        ? `Downloading data from remote repo: ${repoName}`
+        : `Migrating QA lists: ${title}`,
+    );
     await setModalMessage(token, render, `Syncronizing with remote repo on GitHub: ${repoName}`);
     await syncQaListReposForTeam(team, [qaList]);
   }
@@ -275,9 +343,44 @@ async function runTeamResourceMigrationSyncInternal(render, team, options = {}) 
   await waitForNextPaint();
 
   try {
-    await migratePendingGlossaries(render, team, resources, pending, token);
-    await migratePendingQaLists(render, team, resources, pending, token);
-    await migratePendingProjects(render, team, resources, pending, token);
+    const attemptedPendingSignatures = new Set();
+    let currentResources = resources;
+    let currentPendingScan = pendingScan;
+
+    const maxPasses = Math.max(1, migrationResourceCount(currentResources) + 2);
+    for (let passIndex = 0; passIndex < maxPasses; passIndex += 1) {
+      const currentPending = Array.isArray(currentPendingScan?.migrations)
+        ? currentPendingScan.migrations
+        : [];
+      if (currentPending.length === 0) {
+        return true;
+      }
+
+      const pendingSignature = pendingMigrationSignature(currentPending);
+      if (attemptedPendingSignatures.has(pendingSignature)) {
+        throw new Error(
+          `Could not finish the 0.8.10 data migration. ${pendingMigrationDescription(currentPending)} still need migration or sync.`,
+        );
+      }
+      attemptedPendingSignatures.add(pendingSignature);
+
+      await migratePendingGlossaries(render, team, currentResources, currentPending, token);
+      await migratePendingQaLists(render, team, currentResources, currentPending, token);
+      await migratePendingProjects(render, team, currentResources, currentPending, token);
+
+      currentResources = await collectTeamMigrationResources(team, options);
+      currentPendingScan = await listPendingTeamMigrations(team, currentResources);
+    }
+
+    const remainingPending = Array.isArray(currentPendingScan?.migrations)
+      ? currentPendingScan.migrations
+      : [];
+    if (remainingPending.length > 0) {
+      throw new Error(
+        `Could not finish the 0.8.10 data migration. ${pendingMigrationDescription(remainingPending)} still need migration or sync.`,
+      );
+    }
+
     return true;
   } finally {
     closeMigrationModal(token);
