@@ -123,6 +123,66 @@ test("team resource migration keeps one modal open across follow-up pending scan
   assert.ok(visibleMessages.includes("Migrating QA lists: QA Terms"));
 });
 
+test("team resource migration excludes deleted tombstones from pending scan candidates", async () => {
+  setupTeamMigrationTest();
+
+  let pendingScanPayload = null;
+  invokeHandler = async (command, payload = {}) => {
+    if (command === "list_gnosis_projects_for_installation") {
+      return [{
+        projectId: "project-live",
+        name: "project-live",
+        fullName: "team/project-live",
+        lifecycleState: "active",
+        recordState: "live",
+      }, {
+        projectId: "project-deleted",
+        name: "project-deleted",
+        fullName: "team/project-deleted",
+        lifecycleState: "softDeleted",
+        recordState: "tombstone",
+      }];
+    }
+    if (command === "list_gnosis_glossaries_for_installation") {
+      return [{
+        glossaryId: "glossary-deleted",
+        name: "glossary-deleted",
+        fullName: "team/glossary-deleted",
+        lifecycleState: "softDeleted",
+        recordState: "tombstone",
+        remoteState: "deleted",
+      }];
+    }
+    if (command === "list_gnosis_qa_lists_for_installation") {
+      return [{
+        qaListId: "qa-deleted",
+        name: "qa-deleted",
+        fullName: "team/qa-deleted",
+        lifecycleState: "deleted",
+        recordState: "tombstone",
+      }];
+    }
+    if (command === "list_pending_team_repo_layout_migrations") {
+      pendingScanPayload = payload.input;
+      return {
+        targetVersion: "0.8.10",
+        migrations: [],
+      };
+    }
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  const migrated = await runTeamResourceMigrationSync(() => {}, state.teams[0]);
+
+  assert.equal(migrated, false);
+  assert.equal(state.teamResourceMigrationModal.isOpen, false);
+  assert.deepEqual(pendingScanPayload.projects.map((project) => project.repoName), [
+    "project-live",
+  ]);
+  assert.deepEqual(pendingScanPayload.glossaries, []);
+  assert.deepEqual(pendingScanPayload.qaLists, []);
+});
+
 test("team resource migration reports incomplete repeated pending work", async () => {
   setupTeamMigrationTest();
 

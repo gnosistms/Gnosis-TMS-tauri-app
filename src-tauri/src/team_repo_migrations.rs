@@ -22,6 +22,9 @@ struct ProjectMigrationCandidate {
     project_id: Option<String>,
     repo_name: String,
     title: Option<String>,
+    lifecycle_state: Option<String>,
+    record_state: Option<String>,
+    remote_state: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -30,6 +33,9 @@ struct ResourceMigrationCandidate {
     resource_id: Option<String>,
     repo_name: String,
     title: Option<String>,
+    lifecycle_state: Option<String>,
+    record_state: Option<String>,
+    remote_state: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -75,6 +81,25 @@ fn pending_migration(
     }
 }
 
+fn is_deleted_state(value: Option<&str>) -> bool {
+    matches!(
+        normalized(value).map(str::to_ascii_lowercase).as_deref(),
+        Some("deleted" | "softdeleted" | "tombstone")
+    )
+}
+
+fn is_deleted_project_candidate(project: &ProjectMigrationCandidate) -> bool {
+    is_deleted_state(project.lifecycle_state.as_deref())
+        || is_deleted_state(project.record_state.as_deref())
+        || is_deleted_state(project.remote_state.as_deref())
+}
+
+fn is_deleted_resource_candidate(resource: &ResourceMigrationCandidate) -> bool {
+    is_deleted_state(resource.lifecycle_state.as_deref())
+        || is_deleted_state(resource.record_state.as_deref())
+        || is_deleted_state(resource.remote_state.as_deref())
+}
+
 fn list_pending_team_repo_layout_migrations_sync(
     app: &AppHandle,
     input: TeamRepoMigrationScanInput,
@@ -82,6 +107,9 @@ fn list_pending_team_repo_layout_migrations_sync(
     let mut pending = Vec::new();
 
     for project in input.projects {
+        if is_deleted_project_candidate(&project) {
+            continue;
+        }
         let repo_name = match normalized(Some(project.repo_name.as_str())) {
             Some(repo_name) => repo_name.to_string(),
             None => continue,
@@ -117,6 +145,9 @@ fn list_pending_team_repo_layout_migrations_sync(
     }
 
     for glossary in input.glossaries {
+        if is_deleted_resource_candidate(&glossary) {
+            continue;
+        }
         let repo_name = match normalized(Some(glossary.repo_name.as_str())) {
             Some(repo_name) => repo_name.to_string(),
             None => continue,
@@ -152,6 +183,9 @@ fn list_pending_team_repo_layout_migrations_sync(
     }
 
     for qa_list in input.qa_lists {
+        if is_deleted_resource_candidate(&qa_list) {
+            continue;
+        }
         let repo_name = match normalized(Some(qa_list.repo_name.as_str())) {
             Some(repo_name) => repo_name.to_string(),
             None => continue,

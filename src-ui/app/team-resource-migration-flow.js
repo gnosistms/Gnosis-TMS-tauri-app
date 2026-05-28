@@ -50,6 +50,19 @@ function resourceIdOf(resource, idField) {
   );
 }
 
+function isDeletedResourceCandidate(resource) {
+  return [
+    resource?.lifecycleState,
+    resource?.recordState,
+    resource?.remoteState,
+  ].some((value) => {
+    const normalized = normalizedText(value).toLowerCase();
+    return normalized === "deleted"
+      || normalized === "softdeleted"
+      || normalized === "tombstone";
+  });
+}
+
 function projectCandidate(project) {
   const repoName = repoNameOf(project);
   if (!repoName) {
@@ -60,6 +73,9 @@ function projectCandidate(project) {
     projectId: resourceIdOf(project, "projectId"),
     repoName,
     title: titleOf(project, repoName),
+    lifecycleState: normalizedText(project?.lifecycleState),
+    recordState: normalizedText(project?.recordState),
+    remoteState: normalizedText(project?.remoteState),
   };
 }
 
@@ -73,6 +89,9 @@ function resourceCandidate(resource, idField) {
     resourceId: resourceIdOf(resource, idField),
     repoName,
     title: titleOf(resource, repoName),
+    lifecycleState: normalizedText(resource?.lifecycleState),
+    recordState: normalizedText(resource?.recordState),
+    remoteState: normalizedText(resource?.remoteState),
   };
 }
 
