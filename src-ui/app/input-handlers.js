@@ -9,6 +9,7 @@ import { state } from "./state.js";
 import { syncAutoSizeTextarea, syncEditorRowTextareaHeight } from "./autosize.js";
 import { syncEditorVirtualizationRowLayout } from "./editor-virtualization.js";
 import { applyEditorRowFieldInput } from "./editor-row-input.js";
+import { cancelPendingTranslateViewportRestores } from "./translate-viewport.js";
 import { syncActiveEditorInlineStyleButtons } from "./editor-inline-markup-flow.js";
 import { syncGlossaryTermInlineStyleButtons } from "./glossary-term-inline-markup-flow.js";
 import { syncQaTermInlineStyleButtons } from "./qa-term-inline-markup-flow.js";
@@ -614,6 +615,7 @@ function handleEditorRowFieldInput(event, render) {
     syncEditorRowTextareaHeight,
     syncEditorVirtualizationRowLayout,
     syncEditorGlossaryHighlightRowDom,
+    cancelPendingTranslateViewportRestores,
   });
   if (
     state.editorChapter?.sidebarTab === "review"

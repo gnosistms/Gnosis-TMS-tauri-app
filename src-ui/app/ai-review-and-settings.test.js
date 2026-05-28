@@ -737,7 +737,15 @@ test("runEditorAiTranslate auto-applies without waiting for durable row persiste
     throw new Error(`Unexpected command: ${command}`);
   };
 
-  await runEditorAiTranslate(() => {}, "translate1", {
+  const renderCalls = [];
+  const render = (request) => {
+    renderCalls.push({
+      request,
+      status: state.editorChapter?.aiTranslate?.translate1?.status,
+      targetText: state.editorChapter?.rows[0]?.fields?.vi,
+    });
+  };
+  await runEditorAiTranslate(render, "translate1", {
     updateEditorRowFieldValue(rowId, languageCode, nextValue) {
       const row = state.editorChapter.rows.find((entry) => entry.rowId === rowId);
       row.fields[languageCode] = nextValue;
@@ -759,6 +767,14 @@ test("runEditorAiTranslate auto-applies without waiting for durable row persiste
   assert.equal(state.editorChapter.rows[0].saveStatus, "saving");
   assert.equal(state.editorChapter.aiTranslate.translate1.status, "idle");
   assert.equal(latestAssistantDraft()?.draftTranslationText, undefined);
+  assert.ok(
+    renderCalls.some(
+      ({ request, status, targetText }) =>
+        request?.scope === "translate-body" &&
+        status === "idle" &&
+        targetText === "Xin chao",
+    ),
+  );
 });
 
 test("runEditorAiTranslate enters loading state before provider readiness resolves", async () => {

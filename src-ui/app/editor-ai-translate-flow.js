@@ -704,6 +704,10 @@ export async function runEditorAiTranslateForContext(
 
         state.editorChapter = clearEditorAiTranslateAction(state.editorChapter, actionId);
         render?.({ scope: "translate-sidebar" });
+        renderEditorAiTranslateRow(render, context, {
+          renderMode: options.renderMode,
+          reason: "ai-translate-auto-apply-complete",
+        });
         if (options.showNotice !== false) {
           showNoticeBadge(`${AI_ACTION_LABELS[actionId]} inserted.`, render);
         }
@@ -813,6 +817,10 @@ export async function runEditorAiTranslateForContext(
 
     state.editorChapter = clearEditorAiTranslateAction(state.editorChapter, actionId);
     render?.({ scope: "translate-sidebar" });
+    renderEditorAiTranslateRow(render, context, {
+      renderMode: options.renderMode,
+      reason: "ai-translate-apply-complete",
+    });
     if (options.showNotice !== false) {
       showNoticeBadge(`${AI_ACTION_LABELS[actionId]} inserted.`, render);
     }

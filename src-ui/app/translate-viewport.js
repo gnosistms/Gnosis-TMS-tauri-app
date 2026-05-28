@@ -7,6 +7,8 @@ import {
   restoreTranslateRowAnchor,
 } from "./scroll-state.js";
 
+let translateViewportRestoreGeneration = 0;
+
 function isHtmlElement(value) {
   return typeof HTMLElement === "function" && value instanceof HTMLElement;
 }
@@ -62,12 +64,20 @@ export function restoreTranslateViewport(viewportSnapshot) {
   }
 }
 
+export function cancelPendingTranslateViewportRestores() {
+  translateViewportRestoreGeneration += 1;
+}
+
 export function restoreTranslateViewportAfterPaints(viewportSnapshot, extraPaints = 2) {
+  const restoreGeneration = translateViewportRestoreGeneration;
   restoreTranslateViewport(viewportSnapshot);
   void (async () => {
     const paintCount = Number.isInteger(extraPaints) && extraPaints > 0 ? extraPaints : 0;
     for (let index = 0; index < paintCount; index += 1) {
       await waitForNextPaint();
+      if (restoreGeneration !== translateViewportRestoreGeneration) {
+        return;
+      }
       restoreTranslateViewport(viewportSnapshot);
     }
   })();

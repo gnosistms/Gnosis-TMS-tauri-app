@@ -9,6 +9,7 @@ export function applyEditorRowFieldInput({
   syncEditorRowTextareaHeight,
   syncEditorVirtualizationRowLayout,
   syncEditorGlossaryHighlightRowDom,
+  cancelPendingTranslateViewportRestores,
 }) {
   const rowId = input?.dataset?.rowId ?? "";
   const languageCode = input?.dataset?.languageCode ?? "";
@@ -19,6 +20,8 @@ export function applyEditorRowFieldInput({
         ? "image-caption"
         : "field";
   const nextValue = input?.value ?? "";
+
+  cancelPendingTranslateViewportRestores?.();
 
   if (typeof updateEditorRowFieldValueForContentKind === "function") {
     updateEditorRowFieldValueForContentKind(rowId, languageCode, nextValue, contentKind);

@@ -28,6 +28,7 @@ test("filtered editor row input rerenders only the translate body", () => {
   const syncEditorRowTextareaHeight = createSpy();
   const syncEditorVirtualizationRowLayout = createSpy();
   const syncEditorGlossaryHighlightRowDom = createSpy();
+  const cancelPendingTranslateViewportRestores = createSpy();
 
   applyEditorRowFieldInput({
     input: createInput(),
@@ -37,9 +38,11 @@ test("filtered editor row input rerenders only the translate body", () => {
     syncEditorRowTextareaHeight,
     syncEditorVirtualizationRowLayout,
     syncEditorGlossaryHighlightRowDom,
+    cancelPendingTranslateViewportRestores,
   });
 
   assert.deepEqual(updateEditorRowFieldValue.calls, [["row-1", "es", "nuevo texto"]]);
+  assert.deepEqual(cancelPendingTranslateViewportRestores.calls, [[]]);
   assert.deepEqual(render.calls, [[{ scope: "translate-body" }]]);
   assert.equal(syncEditorRowTextareaHeight.calls.length, 0);
   assert.equal(syncEditorVirtualizationRowLayout.calls.length, 0);
@@ -74,6 +77,9 @@ test("unfiltered editor row input keeps the local autosize and virtualization up
   const render = createSpy();
   const updateEditorRowFieldValue = createSpy();
   const callOrder = [];
+  const cancelPendingTranslateViewportRestores = () => {
+    callOrder.push(["cancel-viewport-restores"]);
+  };
   const syncEditorRowTextareaHeight = (...args) => {
     callOrder.push(["autosize", ...args]);
   };
@@ -96,11 +102,13 @@ test("unfiltered editor row input keeps the local autosize and virtualization up
     syncEditorRowTextareaHeight,
     syncEditorVirtualizationRowLayout,
     syncEditorGlossaryHighlightRowDom,
+    cancelPendingTranslateViewportRestores,
   });
 
   assert.deepEqual(updateEditorRowFieldValue.calls, [["row-1", "es", "nuevo texto"]]);
   assert.equal(render.calls.length, 0);
   assert.deepEqual(callOrder, [
+    ["cancel-viewport-restores"],
     ["autosize", input],
     ["glossary", "row-1"],
     ["virtualization", input],
