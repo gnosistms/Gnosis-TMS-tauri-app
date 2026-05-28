@@ -14,6 +14,11 @@ import {
 } from "./editor-filters.js";
 import { loadActiveEditorFieldHistory } from "./editor-history-flow.js";
 import {
+  applyOptimisticEditorHistoryEntry,
+  createOptimisticEditorHistoryEntryFromRow,
+  removeOptimisticEditorHistoryEntry,
+} from "./editor-history-state.js";
+import {
   applyEditorRowConflictDetected,
   applyEditorRowConflictResolvedWithRemote,
   applyEditorRowFieldValue,
@@ -107,6 +112,69 @@ function editorRowTextCoalesceKey(chapterId, rowId) {
 
 function editorChapterInvalidationKey(repoScope, chapterId) {
   return `editorChapter:${repoScope}:${chapterId}`;
+}
+
+function activeEditorHistoryLanguageForRow(rowId) {
+  if (
+    state.editorChapter?.activeRowId === rowId
+    && typeof state.editorChapter?.activeLanguageCode === "string"
+    && state.editorChapter.activeLanguageCode.trim()
+  ) {
+    return state.editorChapter.activeLanguageCode;
+  }
+
+  return "";
+}
+
+function statusNoteForEditorMarker(kind, enabled) {
+  if (kind === "reviewed") {
+    return enabled ? "Marked reviewed" : "Marked unreviewed";
+  }
+  if (kind === "please-check") {
+    return enabled ? 'Marked "Please check"' : 'Removed "Please check"';
+  }
+  return "Updated markers";
+}
+
+function applyOptimisticHistoryForRow(render, rowId, languageCode, operation, options = {}) {
+  if (!rowId || !languageCode || !operation?.operationId || !state.editorChapter?.chapterId) {
+    return;
+  }
+
+  const row = findEditorRowById(rowId, state.editorChapter);
+  const entry = createOptimisticEditorHistoryEntryFromRow(row, languageCode, {
+    operationId: operation.operationId,
+    coalesceKey: operation.coalesceKey,
+    operationType: options.operationType,
+    statusNote: options.statusNote,
+    aiModel: options.aiModel,
+    message: options.message,
+  });
+  const previousChapter = state.editorChapter;
+  state.editorChapter = applyOptimisticEditorHistoryEntry(
+    state.editorChapter,
+    rowId,
+    languageCode,
+    entry,
+  );
+  if (state.editorChapter !== previousChapter) {
+    render?.({ scope: "translate-sidebar" });
+  }
+}
+
+function removeOptimisticHistoryForOperation(render, operation) {
+  if (!operation?.operationId || !state.editorChapter?.chapterId) {
+    return;
+  }
+
+  const previousChapter = state.editorChapter;
+  state.editorChapter = removeOptimisticEditorHistoryEntry(
+    state.editorChapter,
+    operation.operationId,
+  );
+  if (state.editorChapter !== previousChapter) {
+    render?.({ scope: "translate-sidebar" });
+  }
 }
 
 function cloneQueueContextValue(value) {
@@ -704,7 +772,7 @@ export async function updateEditorRowTextStyle(render, rowId, nextTextStyle, ope
     },
     invalidationKeys: [editorChapterInvalidationKey(repoScope, editorChapter.chapterId)],
   }, {
-    applyOptimistic: () => {
+    applyOptimistic: (operation) => {
       if (state.editorChapter?.chapterId !== editorChapter.chapterId) {
         return;
       }
@@ -713,6 +781,16 @@ export async function updateEditorRowTextStyle(render, rowId, nextTextStyle, ope
         (currentRow) => applyEditorRowTextStyleSaving(currentRow, normalizedTextStyle),
       );
       markEditorRowDirty(rowId);
+      applyOptimisticHistoryForRow(
+        render,
+        rowId,
+        activeEditorHistoryLanguageForRow(rowId),
+        operation,
+        {
+          operationType: "text-style",
+          message: "Update row style",
+        },
+      );
       renderStyleChange();
     },
     run: async (operation) => {
@@ -746,7 +824,9 @@ export async function updateEditorRowTextStyle(render, rowId, nextTextStyle, ope
       renderStyleChange();
 
       if (state.editorChapter.activeRowId === value.rowId) {
-        loadActiveEditorFieldHistory(render);
+        loadActiveEditorFieldHistory(render, {
+          clearOptimisticOperationId: operation?.operationId,
+        });
       }
     },
     onStaleSuccess: (payload, operation) => {
@@ -769,6 +849,7 @@ export async function updateEditorRowTextStyle(render, rowId, nextTextStyle, ope
       const message = error instanceof Error ? error.message : String(error);
       const value = operation?.value ?? operationValue;
       if (state.editorChapter?.chapterId === value.chapterId) {
+        removeOptimisticHistoryForOperation(render, operation);
         updateEditorChapterRow(
           value.rowId,
           (currentRow) => applyEditorRowTextStyleSaveFailed(
@@ -907,7 +988,7 @@ export async function toggleEditorRowFieldMarker(
     },
     invalidationKeys: [editorChapterInvalidationKey(repoScope, editorChapter.chapterId)],
   }, {
-    applyOptimistic: (_operation, previousOperation) => {
+    applyOptimistic: (operation, previousOperation) => {
       if (state.editorChapter?.chapterId !== editorChapter.chapterId) {
         return;
       }
@@ -915,6 +996,17 @@ export async function toggleEditorRowFieldMarker(
       updateEditorChapterRow(
         rowId,
         (currentRow) => applyEditorRowMarkerSaving(currentRow, languageCode, kind, nextFieldState),
+      );
+      applyOptimisticHistoryForRow(
+        render,
+        rowId,
+        languageCode,
+        operation,
+        {
+          operationType: "editor-marker",
+          statusNote: statusNoteForEditorMarker(kind, nextEnabled),
+          message: "Update review marker",
+        },
       );
       if (previousOperation?.status === "queued") {
         reconcileDirtyTrackedEditorRows([rowId]);
@@ -957,13 +1049,16 @@ export async function toggleEditorRowFieldMarker(
         state.editorChapter.activeRowId === value.rowId
         && state.editorChapter.activeLanguageCode === value.languageCode
       ) {
-        loadActiveEditorFieldHistory(render);
+        loadActiveEditorFieldHistory(render, {
+          clearOptimisticOperationId: operation?.operationId,
+        });
       }
     },
     onError: (error, operation) => {
       const message = error instanceof Error ? error.message : String(error);
       const value = operation?.value ?? operationValue;
       if (state.editorChapter?.chapterId === value.chapterId) {
+        removeOptimisticHistoryForOperation(render, operation);
         updateEditorChapterRow(
           value.rowId,
           (currentRow) => applyEditorRowMarkerSaveFailed(
@@ -1586,9 +1681,11 @@ async function persistEditorRow(render, rowId, operations = {}, options = {}) {
         );
         reconcileDirtyTrackedEditorRows([value.rowId]);
         render?.();
+        removeOptimisticHistoryForOperation(render, operation);
         return;
       }
 
+      removeOptimisticHistoryForOperation(render, operation);
       updateEditorChapterRow(
         value.rowId,
         (currentRow) => applyEditorRowConflictDetected(currentRow, payload, {
@@ -1604,6 +1701,7 @@ async function persistEditorRow(render, rowId, operations = {}, options = {}) {
     }
 
     if (payload?.status === "deleted") {
+      removeOptimisticHistoryForOperation(render, operation);
       void reloadEditorRowFromDisk(render, value.rowId, { suppressNotice: false }).then(() => {
         reconcileDirtyTrackedEditorRows([value.rowId]);
       });
@@ -1632,7 +1730,9 @@ async function persistEditorRow(render, rowId, operations = {}, options = {}) {
     applyEditorSelectionsToProjectState(state.editorChapter);
     render?.({ scope: "translate-sidebar" });
     if (!optionsForResult.isStale && state.editorChapter.activeRowId === value.rowId) {
-      loadActiveEditorFieldHistory(render);
+      loadActiveEditorFieldHistory(render, {
+        clearOptimisticOperationId: operation?.operationId,
+      });
     }
 
     if (!optionsForResult.isStale && updatedRow?.saveStatus === "dirty" && focusedEditorRowId() !== value.rowId) {
@@ -1654,11 +1754,22 @@ async function persistEditorRow(render, rowId, operations = {}, options = {}) {
     },
     invalidationKeys: [editorChapterInvalidationKey(repoScope, editorChapter.chapterId)],
   }, {
-    applyOptimistic: () => {
+    applyOptimistic: (operation) => {
       if (state.editorChapter?.chapterId !== editorChapter.chapterId) {
         return;
       }
       updateEditorChapterRow(rowId, (currentRow) => applyEditorRowPersistRequested(currentRow));
+      applyOptimisticHistoryForRow(
+        render,
+        rowId,
+        activeEditorHistoryLanguageForRow(rowId),
+        operation,
+        {
+          operationType: commitMetadata?.operation || "editor-update",
+          aiModel: commitMetadata?.aiModel || null,
+          message: "Update row text",
+        },
+      );
       render?.({ scope: "translate-sidebar" });
     },
     run: async (operation) => invokeQueuedEditorWriteCommand(
@@ -1673,6 +1784,7 @@ async function persistEditorRow(render, rowId, operations = {}, options = {}) {
       const message = error instanceof Error ? error.message : String(error);
       const value = operation?.value ?? operationValue;
       if (state.editorChapter?.chapterId === value.chapterId) {
+        removeOptimisticHistoryForOperation(render, operation);
         updateEditorChapterRow(value.rowId, (currentRow) => applyEditorRowPersistFailed(currentRow, message));
         reconcileDirtyTrackedEditorRows([value.rowId]);
         render?.({ scope: "translate-sidebar" });

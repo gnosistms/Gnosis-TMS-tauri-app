@@ -265,6 +265,153 @@ test("non-durable dirty row flush enqueues row text save without waiting for the
   assert.equal(state.editorChapter.rows[0].saveStatus, "idle");
 });
 
+test("successful active row save keeps optimistic history until committed history reloads", async () => {
+  installEditorFixture();
+  state.editorChapter = {
+    ...state.editorChapter,
+    activeRowId: "row-1",
+    activeLanguageCode: "es",
+    dirtyRowIds: new Set(["row-1"]),
+    history: {
+      ...state.editorChapter.history,
+      status: "ready",
+      rowId: "row-1",
+      languageCode: "es",
+      entries: [{
+        commitSha: "commit-1",
+        plainText: "hola",
+        footnote: "",
+        imageCaption: "",
+        image: null,
+        textStyle: "paragraph",
+        reviewed: false,
+        pleaseCheck: false,
+      }],
+    },
+  };
+  state.editorChapter.rows[0] = {
+    ...state.editorChapter.rows[0],
+    fields: { es: "hola optimista" },
+    saveStatus: "dirty",
+  };
+
+  const historyReload = deferred();
+  invokeHandler = async (command, payload = {}) => {
+    if (command === "update_gtms_editor_row_fields") {
+      return {
+        status: "saved",
+        row: {
+          rowId: payload.input?.rowId,
+          textStyle: "paragraph",
+          fields: payload.input?.fields,
+          footnotes: {},
+          imageCaptions: {},
+          images: {},
+          fieldStates: { es: { reviewed: false, pleaseCheck: false } },
+        },
+        sourceWordCounts: {},
+        chapterBaseCommitSha: "head-2",
+      };
+    }
+    if (command === "load_gtms_editor_field_history") {
+      return historyReload.promise;
+    }
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  await flushDirtyEditorRows(
+    () => {},
+    {
+      updateEditorChapterRow,
+      applyEditorSelectionsToProjectState,
+    },
+    { waitForDurable: false },
+  );
+  await waitForRepoWriteQueueIdle("7:project-1:fixture-project");
+
+  assert.equal(state.editorChapter.history.entries[0].optimistic, true);
+  assert.equal(state.editorChapter.history.entries[0].plainText, "hola optimista");
+
+  historyReload.resolve({
+    entries: [{
+      commitSha: "commit-2",
+      plainText: "hola optimista",
+      footnote: "",
+      imageCaption: "",
+      image: null,
+      textStyle: "paragraph",
+      reviewed: false,
+      pleaseCheck: false,
+    }],
+  });
+  await Promise.resolve();
+  await Promise.resolve();
+  await Promise.resolve();
+
+  assert.equal(state.editorChapter.history.entries[0].commitSha, "commit-2");
+  assert.equal(state.editorChapter.history.entries[0].optimistic, undefined);
+});
+
+test("row save conflict clears active optimistic history", async () => {
+  installEditorFixture();
+  state.editorChapter = {
+    ...state.editorChapter,
+    activeRowId: "row-1",
+    activeLanguageCode: "es",
+    dirtyRowIds: new Set(["row-1"]),
+    history: {
+      ...state.editorChapter.history,
+      status: "ready",
+      rowId: "row-1",
+      languageCode: "es",
+      entries: [{
+        commitSha: "commit-1",
+        plainText: "hola",
+        footnote: "",
+        imageCaption: "",
+        image: null,
+        textStyle: "paragraph",
+        reviewed: false,
+        pleaseCheck: false,
+      }],
+    },
+  };
+  state.editorChapter.rows[0] = {
+    ...state.editorChapter.rows[0],
+    fields: { es: "hola conflictiva" },
+    saveStatus: "dirty",
+  };
+
+  invokeHandler = async (command) => {
+    if (command === "update_gtms_editor_row_fields") {
+      return {
+        status: "conflict",
+        row: {
+          rowId: "row-1",
+          textStyle: "paragraph",
+          fields: { es: "remote" },
+          fieldStates: { es: { reviewed: false, pleaseCheck: false } },
+        },
+      };
+    }
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  await flushDirtyEditorRows(
+    () => {},
+    {
+      updateEditorChapterRow,
+      applyEditorSelectionsToProjectState,
+    },
+    { waitForDurable: false },
+  );
+  await waitForRepoWriteQueueIdle("7:project-1:fixture-project");
+
+  assert.equal(state.editorChapter.history.entries.some((entry) => entry.optimistic === true), false);
+  assert.equal(state.editorChapter.history.entries[0].commitSha, "commit-1");
+  assert.equal(state.editorChapter.rows[0].freshness, "conflict");
+});
+
 test("toggleEditorRowFieldMarker stays clickable while the row style is saving", async () => {
   installEditorFixture();
   state.editorChapter.rows[0] = {

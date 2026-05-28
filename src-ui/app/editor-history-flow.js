@@ -16,6 +16,7 @@ import {
   editorRowMatchesHistoryPayload,
   historyEntryCanOpenReplaceUndo,
   openEditorReplaceUndoModalState,
+  removeOptimisticEditorHistoryEntry,
 } from "./editor-history-state.js";
 import { buildEditorReplaceUndoNotice, normalizeEditorReplaceUndoModalState } from "./editor-replace.js";
 import { findChapterContextById, selectedProjectsTeam } from "./project-context.js";
@@ -141,7 +142,7 @@ function rollbackOptimisticHistoryRestore(value, message, operations) {
   applyEditorSelectionsToProjectState?.(state.editorChapter);
 }
 
-async function fetchEditorFieldHistory(render, requestKey) {
+async function fetchEditorFieldHistory(render, requestKey, options = {}) {
   const editorChapter = state.editorChapter;
   if (!editorChapter?.chapterId || !editorChapter.activeRowId || !editorChapter.activeLanguageCode) {
     return;
@@ -179,6 +180,12 @@ async function fetchEditorFieldHistory(render, requestKey) {
       requestKey,
       payload?.entries,
     );
+    if (options?.clearOptimisticOperationId) {
+      state.editorChapter = removeOptimisticEditorHistoryEntry(
+        state.editorChapter,
+        options.clearOptimisticOperationId,
+      );
+    }
     render?.({ scope: "translate-sidebar" });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -197,7 +204,7 @@ async function fetchEditorFieldHistory(render, requestKey) {
   }
 }
 
-export function loadActiveEditorFieldHistory(render) {
+export function loadActiveEditorFieldHistory(render, options = {}) {
   const editorChapter = state.editorChapter;
   if (!editorChapter?.chapterId || !hasActiveEditorField(editorChapter)) {
     return;
@@ -210,7 +217,7 @@ export function loadActiveEditorFieldHistory(render) {
   );
   state.editorChapter = applyActiveEditorFieldHistoryLoading(editorChapter);
   render?.({ scope: "translate-sidebar" });
-  void fetchEditorFieldHistory(render, requestKey);
+  void fetchEditorFieldHistory(render, requestKey, options);
 }
 
 export function toggleEditorHistoryGroupExpanded(groupKey) {

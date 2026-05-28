@@ -8,6 +8,7 @@ import {
   buildEditorHistoryViewModel,
   editorHistoryEntryMatchesSection,
   historyEntryCanUndoReplace,
+  isOptimisticEditorHistoryEntry,
 } from "../app/editor-history.js";
 import {
   formatHistoryTimestamp,
@@ -21,7 +22,14 @@ function renderHistoryEntry(entry, previousEntry, activeLanguage, activeSection,
     history.status === "restoring" && history.restoringCommitSha === entry.commitSha;
   const isUndoingReplace =
     replaceUndoModal?.status === "loading" && replaceUndoModal?.commitSha === entry.commitSha;
-  const restoreButton = isCurrentValue
+  const isOptimisticEntry = isOptimisticEditorHistoryEntry(entry);
+  const restoreButton = isOptimisticEntry
+    ? secondaryButton("Saving...", "noop", {
+      disabled: true,
+      compact: true,
+      className: "button--replace-toolbar",
+    })
+    : isCurrentValue
     ? secondaryButton("Current", "noop", {
       disabled: true,
       compact: true,

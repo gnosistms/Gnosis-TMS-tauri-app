@@ -719,7 +719,6 @@ pub(super) fn build_editor_field_history_entries(
     commits: Vec<GitCommitMetadata>,
     historical_field_versions: Vec<Option<HistoricalFieldVersion>>,
 ) -> Vec<EditorFieldHistoryEntry> {
-    let newest_index = historical_field_versions.iter().position(Option::is_some);
     let baseline_index = historical_field_versions.iter().rposition(Option::is_some);
     let field_signatures: Vec<Option<HistoricalFieldSignature>> = historical_field_versions
         .iter()
@@ -742,17 +741,13 @@ pub(super) fn build_editor_field_history_entries(
         let image = editor_field_image_from_stored(repo_path, &field_version.field_value.image);
         let text_style = field_version.text_style.clone();
         let field_signature = HistoricalFieldSignature::from_version(&field_version);
-        let is_newest_entry = newest_index == Some(index);
         let is_baseline_entry = baseline_index == Some(index);
         let next_older_field_signature = field_signatures
             .iter()
             .skip(index + 1)
             .find_map(Option::as_ref);
 
-        if !is_newest_entry
-            && !is_baseline_entry
-            && next_older_field_signature == Some(&field_signature)
-        {
+        if !is_baseline_entry && next_older_field_signature == Some(&field_signature) {
             continue;
         }
 
@@ -1101,7 +1096,7 @@ mod tests {
     }
 
     #[test]
-    fn build_editor_field_history_entries_keeps_oldest_import_baseline_when_field_is_unchanged() {
+    fn build_editor_field_history_entries_skips_newest_row_commit_when_field_is_unchanged() {
         let entries = build_editor_field_history_entries(
             Path::new("."),
             vec![
@@ -1123,7 +1118,7 @@ mod tests {
                     false,
                 )),
                 Some(history_version(
-                    "Hello",
+                    "Original",
                     DEFAULT_EDITOR_TEXT_STYLE,
                     false,
                     false,
@@ -1132,12 +1127,12 @@ mod tests {
         );
 
         assert_eq!(entries.len(), 2);
-        assert_eq!(entries[0].commit_sha, "c3");
+        assert_eq!(entries[0].commit_sha, "c2");
         assert_eq!(entries[0].operation_type.as_deref(), Some("editor-update"));
         assert_eq!(entries[0].text_style, DEFAULT_EDITOR_TEXT_STYLE);
         assert_eq!(entries[1].commit_sha, "c1");
         assert_eq!(entries[1].operation_type.as_deref(), Some("import"));
-        assert_eq!(entries[1].plain_text, "Hello");
+        assert_eq!(entries[1].plain_text, "Original");
         assert_eq!(entries[1].text_style, DEFAULT_EDITOR_TEXT_STYLE);
     }
 

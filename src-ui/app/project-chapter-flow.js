@@ -63,6 +63,11 @@ import {
   requestProjectWriteIntent,
 } from "./project-write-coordinator.js";
 import { enqueueRepoWrite } from "./repo-write-queue.js";
+import { resourceHasPendingLifecycleMutation } from "./project-page-write-state.js";
+import {
+  chapterGlossaryLinkFromGlossaryId,
+  chapterGlossaryLinkInput,
+} from "./project-glossary-flow.js";
 
 export {
   findChapterContext,
@@ -132,10 +137,6 @@ function chapterWriteBlockedMessage() {
 
 function chapterLifecycleWriteBlockedMessage() {
   return "Wait for the current project write to finish.";
-}
-
-function resourceHasPendingLifecycleMutation(resource) {
-  return typeof resource?.pendingMutation === "string" && resource.pendingMutation.trim();
 }
 
 function projectHasPendingDeletedChapterMutation(project) {
@@ -893,55 +894,6 @@ function startOptimisticChapterMutation({
       render();
     }
   });
-}
-
-function chapterGlossaryLinkFromGlossaryId(glossaryId) {
-  if (typeof glossaryId !== "string" || !glossaryId.trim()) {
-    return null;
-  }
-
-  const glossary = state.glossaries.find(
-    (item) => item?.id === glossaryId && item.lifecycleState !== "deleted",
-  );
-  if (!glossary) {
-    return null;
-  }
-
-  return {
-    glossaryId: glossary.id,
-    repoName: glossary.repoName,
-  };
-}
-
-function chapterGlossaryLinkInput(link) {
-  if (!link) {
-    return null;
-  }
-
-  return {
-    glossaryId: link.glossaryId,
-    repoName: link.repoName,
-  };
-}
-
-function glossarySummaryByLink(link) {
-  if (!link) {
-    return null;
-  }
-
-  return (
-    state.glossaries.find((glossary) => glossary?.id === link.glossaryId)
-    ?? state.glossaries.find((glossary) => glossary?.repoName === link.repoName)
-    ?? null
-  );
-}
-
-function glossaryTargetLanguageKey(glossary) {
-  if (!glossary || typeof glossary !== "object") {
-    return "";
-  }
-
-  return String(glossary.targetLanguage?.code ?? glossary.targetLanguage?.name ?? "").trim().toLowerCase();
 }
 
 export function reconcileExpandedDeletedFiles() {

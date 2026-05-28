@@ -7,6 +7,7 @@ import {
   applyActiveEditorFieldHistoryLoadFailed,
   applyActiveEditorFieldHistoryLoading,
   applyEditorHistoryGroupExpandedToggle,
+  applyOptimisticEditorHistoryEntry,
   applyEditorHistoryRestoreFailed,
   applyEditorHistoryRestoreRequested,
   applyEditorHistoryRestoreSucceeded,
@@ -14,11 +15,13 @@ import {
   applyEditorReplaceUndoModalLoading,
   applyEditorRowHistoryRestored,
   buildEditorHistoryRequestKey,
+  createOptimisticEditorHistoryEntryFromRow,
   cancelEditorReplaceUndoModalState,
   currentActiveEditorHistoryEntryByCommitSha,
   currentEditorHistoryRequestMatches,
   historyEntryCanOpenReplaceUndo,
   openEditorReplaceUndoModalState,
+  removeOptimisticEditorHistoryEntry,
 } from "./editor-history-state.js";
 import { createEditorChapterState, createEditorHistoryState } from "./state.js";
 
@@ -74,8 +77,11 @@ function row(overrides = {}) {
     rowId: "row-1",
     textStyle: "paragraph",
     fields: { es: "nuevo" },
+    footnotes: { es: "" },
     imageCaptions: { es: "" },
+    images: {},
     persistedFields: { es: "viejo" },
+    persistedFootnotes: { es: "" },
     persistedImageCaptions: { es: "" },
     fieldStates: { es: { reviewed: false, pleaseCheck: false } },
     persistedFieldStates: { es: { reviewed: false, pleaseCheck: false } },
@@ -138,6 +144,93 @@ test("applyActiveEditorFieldHistoryLoaded reconciles expanded same-author groups
   const nextGroupKey = buildEditorHistoryViewModel(updatedChapter.history.entries, new Set()).groups[0].key;
   assert.equal(updatedChapter.history.status, "ready");
   assert.equal(updatedChapter.history.expandedGroupKeys.has(nextGroupKey), true);
+});
+
+test("optimistic editor history prepends current row state for the active field", () => {
+  const entry = createOptimisticEditorHistoryEntryFromRow(
+    row({
+      fields: { es: "texto nuevo" },
+      footnotes: { es: "nota" },
+      imageCaptions: { es: "imagen" },
+      fieldStates: { es: { reviewed: true, pleaseCheck: true } },
+      textStyle: "heading1",
+    }),
+    "es",
+    {
+      operationId: "op-1",
+      coalesceKey: "rowText:chapter-1:row-1",
+      operationType: "editor-update",
+    },
+  );
+  const updatedChapter = applyOptimisticEditorHistoryEntry(
+    chapter({
+      history: {
+        ...createEditorHistoryState(),
+        status: "ready",
+        rowId: "row-1",
+        languageCode: "es",
+        entries: [historyEntry({ commitSha: "c1", plainText: "viejo" })],
+      },
+    }),
+    "row-1",
+    "es",
+    entry,
+  );
+
+  assert.equal(updatedChapter.history.entries[0].commitSha, "optimistic:op-1");
+  assert.equal(updatedChapter.history.entries[0].plainText, "texto nuevo");
+  assert.equal(updatedChapter.history.entries[0].footnote, "nota");
+  assert.equal(updatedChapter.history.entries[0].imageCaption, "imagen");
+  assert.equal(updatedChapter.history.entries[0].textStyle, "heading1");
+  assert.equal(updatedChapter.history.entries[0].reviewed, true);
+  assert.equal(updatedChapter.history.entries[0].pleaseCheck, true);
+  assert.equal(updatedChapter.history.entries[1].commitSha, "c1");
+});
+
+test("loaded committed history preserves active optimistic entries until the queued write finishes", () => {
+  const optimisticEntry = createOptimisticEditorHistoryEntryFromRow(row({ fields: { es: "pending" } }), "es", {
+    operationId: "op-1",
+    coalesceKey: "rowText:chapter-1:row-1",
+  });
+  const updatedChapter = applyActiveEditorFieldHistoryLoaded(
+    chapter({
+      history: {
+        ...createEditorHistoryState(),
+        status: "loading",
+        rowId: "row-1",
+        languageCode: "es",
+        requestKey: "chapter-1:row-1:es",
+        entries: [optimisticEntry, historyEntry({ commitSha: "c1", plainText: "old" })],
+      },
+    }),
+    "row-1",
+    "es",
+    "chapter-1:row-1:es",
+    [historyEntry({ commitSha: "c2", plainText: "committed" })],
+  );
+
+  assert.equal(updatedChapter.history.entries[0].commitSha, "optimistic:op-1");
+  assert.equal(updatedChapter.history.entries[1].commitSha, "c2");
+});
+
+test("removeOptimisticEditorHistoryEntry clears failed queued history entries", () => {
+  const optimisticEntry = createOptimisticEditorHistoryEntryFromRow(row({ fields: { es: "pending" } }), "es", {
+    operationId: "op-1",
+    coalesceKey: "rowText:chapter-1:row-1",
+  });
+  const updatedChapter = removeOptimisticEditorHistoryEntry(
+    chapter({
+      history: {
+        ...createEditorHistoryState(),
+        rowId: "row-1",
+        languageCode: "es",
+        entries: [optimisticEntry, historyEntry({ commitSha: "c1", plainText: "old" })],
+      },
+    }),
+    "op-1",
+  );
+
+  assert.deepEqual(updatedChapter.history.entries.map((entry) => entry.commitSha), ["c1"]);
 });
 
 test("applyActiveEditorFieldHistoryLoadFailed preserves expansion state and stores the error", () => {

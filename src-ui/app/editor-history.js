@@ -71,6 +71,10 @@ function isImportHistoryEntry(entry) {
   return String(entry?.operationType ?? "").trim().toLowerCase() === "import";
 }
 
+export function isOptimisticEditorHistoryEntry(entry) {
+  return entry?.optimistic === true || String(entry?.commitSha ?? "").startsWith("optimistic:");
+}
+
 function buildMarkerRunActions(initialEntry, finalEntry) {
   const actions = [];
   if ((initialEntry?.reviewed === true) !== (finalEntry?.reviewed === true)) {
@@ -245,7 +249,8 @@ function buildOlderVisibleEntryByCommitSha(entries) {
 }
 
 export function historyEntryCanUndoReplace(entry) {
-  return String(entry?.operationType ?? "").trim().toLowerCase() === "editor-replace";
+  return !isOptimisticEditorHistoryEntry(entry)
+    && String(entry?.operationType ?? "").trim().toLowerCase() === "editor-replace";
 }
 
 export function editorHistoryEntryMatchesSection(entry, section) {

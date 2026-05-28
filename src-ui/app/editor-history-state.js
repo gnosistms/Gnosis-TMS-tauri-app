@@ -6,6 +6,7 @@ import {
   normalizeFieldState,
   normalizeEditorFieldImage,
 } from "./editor-utils.js";
+import { normalizeEditorRowTextStyle } from "./editor-row-text-style.js";
 import {
   createEditorHistoryState,
   createEditorReplaceUndoModalState,
@@ -106,6 +107,13 @@ export function applyActiveEditorFieldHistoryLoaded(
 
   const previousHistory = normalizeEditorHistoryState(chapterState.history);
   const nextEntries = Array.isArray(entries) ? entries : [];
+  const optimisticEntries = previousHistory.entries.filter((entry) => entry?.optimistic === true);
+  const mergedEntries = [
+    ...optimisticEntries,
+    ...nextEntries.filter((entry) =>
+      !optimisticEntries.some((optimisticEntry) => optimisticEntry.commitSha === entry?.commitSha),
+    ),
+  ];
 
   return {
     ...chapterState,
@@ -118,9 +126,98 @@ export function applyActiveEditorFieldHistoryLoaded(
       restoringCommitSha: null,
       expandedGroupKeys: reconcileExpandedEditorHistoryGroupKeys(
         previousHistory.entries,
-        nextEntries,
+        mergedEntries,
         previousHistory.expandedGroupKeys,
       ),
+      entries: mergedEntries,
+    },
+  };
+}
+
+export function createOptimisticEditorHistoryEntryFromRow(row, languageCode, options = {}) {
+  if (!row || !languageCode || !options?.operationId) {
+    return null;
+  }
+
+  const fieldStates = cloneRowFieldStates(row.fieldStates);
+  const fieldState = normalizeFieldState(fieldStates[languageCode]);
+
+  return {
+    commitSha: `optimistic:${options.operationId}`,
+    optimistic: true,
+    operationId: options.operationId,
+    coalesceKey: typeof options.coalesceKey === "string" ? options.coalesceKey : "",
+    authorName: "Saving...",
+    authorEmail: "",
+    authorLogin: "",
+    committedAt: options.committedAt ?? new Date().toISOString(),
+    message: options.message ?? "Pending editor update",
+    operationType: typeof options.operationType === "string" ? options.operationType : "editor-update",
+    statusNote: typeof options.statusNote === "string" ? options.statusNote : null,
+    aiModel: typeof options.aiModel === "string" ? options.aiModel : null,
+    plainText: String(row.fields?.[languageCode] ?? ""),
+    footnote: String(row.footnotes?.[languageCode] ?? ""),
+    imageCaption: String(row.imageCaptions?.[languageCode] ?? ""),
+    image: normalizeEditorFieldImage(row.images?.[languageCode]),
+    textStyle: normalizeEditorRowTextStyle(row.textStyle),
+    reviewed: fieldState.reviewed,
+    pleaseCheck: fieldState.pleaseCheck,
+  };
+}
+
+function historySelectionMatches(chapterState, rowId, languageCode) {
+  return (
+    chapterState?.chapterId
+    && chapterState.activeRowId === rowId
+    && chapterState.activeLanguageCode === languageCode
+  );
+}
+
+export function applyOptimisticEditorHistoryEntry(chapterState, rowId, languageCode, entry) {
+  if (!historySelectionMatches(chapterState, rowId, languageCode) || !entry?.commitSha) {
+    return chapterState;
+  }
+
+  const history = currentEditorHistoryForSelection(chapterState, rowId, languageCode);
+  const nextEntries = history.entries.filter((candidate) => {
+    if (candidate?.optimistic !== true) {
+      return true;
+    }
+    if (entry.coalesceKey && candidate.coalesceKey === entry.coalesceKey) {
+      return false;
+    }
+    return candidate.operationId !== entry.operationId;
+  });
+
+  return {
+    ...chapterState,
+    history: {
+      ...normalizeEditorHistoryState(history),
+      status: history.status === "idle" ? "ready" : history.status,
+      error: "",
+      rowId,
+      languageCode,
+      requestKey: buildEditorHistoryRequestKey(chapterState.chapterId, rowId, languageCode),
+      entries: [entry, ...nextEntries],
+    },
+  };
+}
+
+export function removeOptimisticEditorHistoryEntry(chapterState, operationId) {
+  if (!chapterState?.chapterId || !operationId) {
+    return chapterState;
+  }
+
+  const history = normalizeEditorHistoryState(chapterState.history);
+  const nextEntries = history.entries.filter((entry) => entry?.operationId !== operationId);
+  if (nextEntries.length === history.entries.length) {
+    return chapterState;
+  }
+
+  return {
+    ...chapterState,
+    history: {
+      ...history,
       entries: nextEntries,
     },
   };

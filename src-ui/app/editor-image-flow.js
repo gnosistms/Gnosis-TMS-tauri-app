@@ -30,6 +30,11 @@ import {
 } from "./editor-write-permission.js";
 import { assertQueuedEditorRowsReady } from "./editor-queued-write.js";
 import { requestEditorOperation } from "./editor-operation-queue.js";
+import {
+  applyOptimisticEditorHistoryEntry,
+  createOptimisticEditorHistoryEntryFromRow,
+  removeOptimisticEditorHistoryEntry,
+} from "./editor-history-state.js";
 import { projectRepoScope } from "./repo-write-queue.js";
 import {
   captureTranslateViewport,
@@ -57,6 +62,45 @@ function cloneQueueContextValue(value) {
 
 function editorChapterInvalidationKey(repoScope, chapterId) {
   return `editorChapter:${repoScope}:${chapterId}`;
+}
+
+function applyOptimisticImageHistory(render, rowId, languageCode, operation, message) {
+  if (!operation?.operationId || !state.editorChapter?.chapterId) {
+    return;
+  }
+
+  const row = findEditorRowById(rowId, state.editorChapter);
+  const entry = createOptimisticEditorHistoryEntryFromRow(row, languageCode, {
+    operationId: operation.operationId,
+    coalesceKey: operation.coalesceKey,
+    operationType: "editor-image",
+    message,
+  });
+  const previousChapter = state.editorChapter;
+  state.editorChapter = applyOptimisticEditorHistoryEntry(
+    state.editorChapter,
+    rowId,
+    languageCode,
+    entry,
+  );
+  if (state.editorChapter !== previousChapter) {
+    render?.({ scope: "translate-sidebar" });
+  }
+}
+
+function removeOptimisticImageHistory(render, operation) {
+  if (!operation?.operationId || !state.editorChapter?.chapterId) {
+    return;
+  }
+
+  const previousChapter = state.editorChapter;
+  state.editorChapter = removeOptimisticEditorHistoryEntry(
+    state.editorChapter,
+    operation.operationId,
+  );
+  if (state.editorChapter !== previousChapter) {
+    render?.({ scope: "translate-sidebar" });
+  }
 }
 
 async function invokeQueuedEditorImageWriteCommand(command, payload, context, render) {
@@ -512,7 +556,9 @@ async function applyImageCommandPayload(render, rowId, languageCode, payload, op
     && state.editorChapter.activeRowId === rowId
     && state.editorChapter.activeLanguageCode === languageCode
   ) {
-    loadActiveEditorFieldHistory(render);
+    loadActiveEditorFieldHistory(render, {
+      clearOptimisticOperationId: resolvedOptions.clearOptimisticOperationId,
+    });
   }
 
   if (resolvedOptions.notice) {
@@ -576,11 +622,22 @@ function queueEditorImageWrite({
     },
     invalidationKeys: [editorChapterInvalidationKey(repoScope, chapterId)],
   }, {
-    applyOptimistic: () => {
+    applyOptimistic: (operation) => {
       if (state.editorChapter?.chapterId !== chapterId) {
         return;
       }
       applyOptimisticImage(rowId, languageCode, operationValue.nextImage, operations);
+      applyOptimisticImageHistory(
+        render,
+        rowId,
+        languageCode,
+        operation,
+        kind === "imageRemove"
+          ? "Remove editor image"
+          : kind === "imageUpload"
+            ? "Upload editor image"
+            : "Update editor image",
+      );
       onQueued?.();
       closeImagePreviewIfTarget(rowId, languageCode);
       renderTranslateBodyPreservingViewport(render, viewportSnapshot);
@@ -617,14 +674,19 @@ function queueEditorImageWrite({
           ? {
             notice: notice || "The image changed on disk. Reloaded the latest version.",
             viewportSnapshot,
+            clearOptimisticOperationId: operation?.operationId,
           }
-          : { viewportSnapshot },
+          : {
+            viewportSnapshot,
+            clearOptimisticOperationId: operation?.operationId,
+          },
       );
     },
     onError: (error, operation) => {
       const message = error instanceof Error ? error.message : String(error);
       const value = operation?.value ?? operationValue;
       if (state.editorChapter?.chapterId === value.chapterId) {
+        removeOptimisticImageHistory(render, operation);
         applyOptimisticImage(value.rowId, value.languageCode, value.previousImage, operations);
         onFailure?.(message);
         renderTranslateBodyPreservingViewport(render, viewportSnapshot);
@@ -1066,7 +1128,11 @@ async function saveUploadedEditorImage(render, rowId, languageCode, file, operat
         baseImage: imagePayloadValue(currentImage(rowId, languageCode)),
       },
       previousImage: currentImage(rowId, languageCode),
-      nextImage: currentImage(rowId, languageCode),
+      nextImage: {
+        kind: "upload",
+        path: `pending/${fileName}`,
+        fileName,
+      },
       operations,
       failureMessage: "The image could not be uploaded.",
       notice: "The image changed on disk. Reloaded the latest version.",

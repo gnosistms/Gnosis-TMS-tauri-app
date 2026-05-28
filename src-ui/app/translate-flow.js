@@ -261,8 +261,8 @@ export function syncVisibleEditorGlossaryHighlightRows(
   syncVisibleEditorGlossaryHighlightRowsFlow(root, scrollContainer, chapterState);
 }
 
-export function loadActiveEditorFieldHistory(render) {
-  loadActiveEditorFieldHistoryFlow(render);
+export function loadActiveEditorFieldHistory(render, options = {}) {
+  loadActiveEditorFieldHistoryFlow(render, options);
 }
 
 export function loadActiveEditorRowComments(render) {

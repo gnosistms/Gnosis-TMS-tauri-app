@@ -10,6 +10,7 @@ import {
   historyEntryCanUndoReplace,
   historyLastUpdateHeadingLabel,
   historyLastUpdateLabel,
+  isOptimisticEditorHistoryEntry,
   reconcileExpandedEditorHistoryGroupKeys,
 } from "./editor-history.js";
 
@@ -66,6 +67,16 @@ test("historyLastUpdateHeadingLabel names the latest updater source", () => {
     "Last update - file import",
   );
   assert.equal(historyLastUpdateHeadingLabel({ plainText: "draft" }), "Last update");
+});
+
+test("optimistic history entries cannot open committed-history actions", () => {
+  const optimisticEntry = {
+    ...historyEntry({ commitSha: "optimistic:op-1", operationType: "editor-replace" }),
+    optimistic: true,
+  };
+
+  assert.equal(isOptimisticEditorHistoryEntry(optimisticEntry), true);
+  assert.equal(historyEntryCanUndoReplace(optimisticEntry), false);
 });
 
 test("marker-only runs that return to the baseline state disappear from grouped history", () => {

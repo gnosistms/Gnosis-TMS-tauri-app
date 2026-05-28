@@ -32,7 +32,6 @@ import {
   upsertProjectMetadataRecord,
 } from "./team-metadata-flow.js";
 import {
-  commitMetadataFirstTopLevelMutation,
   guardPermanentDeleteConfirmation,
   guardTopLevelResourceAction,
 } from "./resource-lifecycle-engine.js";
@@ -44,8 +43,6 @@ import {
   canMutateProjectFiles,
 } from "./resource-capabilities.js";
 import {
-  areResourcePageWritesDisabled,
-  areResourcePageWriteSubmissionsDisabled,
   clearResourcePageDataOwner,
   setResourcePageRefreshing,
   submitResourcePageWrite,
@@ -64,15 +61,23 @@ import { createMutationObserver, projectKeys, queryClient } from "./query-client
 import { teamCacheKey } from "./team-cache.js";
 import {
   applyProjectWriteIntentsToSnapshot,
-  anyProjectMutatingWriteIsActive,
   anyProjectWriteIsActive,
   clearConfirmedProjectWriteIntents,
 } from "./project-write-coordinator.js";
 import {
   enqueueRepoWrite,
-  getRepoWriteQueueSnapshot,
   projectRepoScope,
 } from "./repo-write-queue.js";
+import {
+  areProjectCreationWritesDisabled,
+  areProjectHeavyWritesDisabled,
+  areProjectLifecycleWritesDisabled,
+  areProjectLocalHardDeleteWritesDisabled,
+  projectLifecycleWriteBlockedMessage,
+  projectWriteBlockedMessage,
+  resourceHasPendingLifecycleMutation,
+} from "./project-page-write-state.js";
+import { commitProjectMutationStrict } from "./project-lifecycle-flow.js";
 import {
   cancelEntityModal,
   entityConfirmationMatches,
@@ -277,61 +282,6 @@ async function completeProjectCreateSynchronously(selectedTeam, projectTitle, ba
   }
 }
 
-function projectMetadataRecordFromVisibleProject(project, overrides = {}) {
-  const isDeletedLifecycleState =
-    project?.lifecycleState === "deleted"
-    || project?.lifecycleState === "softDeleted"
-    || project?.status === "deleted";
-  return {
-    projectId: project.id,
-    title: overrides.title ?? project.title,
-    repoName: overrides.repoName ?? project.name,
-    githubRepoId:
-      Number.isFinite(overrides.githubRepoId)
-        ? overrides.githubRepoId
-        : Number.isFinite(project.repoId)
-          ? project.repoId
-          : null,
-    githubNodeId:
-      typeof overrides.githubNodeId === "string" && overrides.githubNodeId.trim()
-        ? overrides.githubNodeId.trim()
-        : typeof project.nodeId === "string" && project.nodeId.trim()
-        ? project.nodeId.trim()
-        : null,
-    fullName:
-      typeof overrides.fullName === "string" && overrides.fullName.trim()
-        ? overrides.fullName.trim()
-        : typeof project.fullName === "string" && project.fullName.trim()
-        ? project.fullName.trim()
-        : null,
-    defaultBranch:
-      typeof overrides.defaultBranch === "string" && overrides.defaultBranch.trim()
-        ? overrides.defaultBranch.trim()
-        : typeof project.defaultBranchName === "string" && project.defaultBranchName.trim()
-        ? project.defaultBranchName.trim()
-        : "main",
-    lifecycleState:
-      overrides.lifecycleState
-      ?? (isDeletedLifecycleState ? "softDeleted" : "active"),
-    remoteState:
-      overrides.remoteState
-      ?? (project.remoteState ?? "linked"),
-    recordState: overrides.recordState ?? project.recordState ?? "live",
-    deletedAt:
-      typeof overrides.deletedAt === "string" && overrides.deletedAt.trim()
-        ? overrides.deletedAt.trim()
-        : typeof project.deletedAt === "string" && project.deletedAt.trim()
-        ? project.deletedAt.trim()
-        : null,
-    chapterCount:
-      Number.isFinite(overrides.chapterCount)
-        ? overrides.chapterCount
-        : Array.isArray(project.chapters)
-          ? project.chapters.length
-          : 0,
-  };
-}
-
 const projectPageSyncController = {
   begin: beginProjectsPageSync,
   complete: completeProjectsPageSync,
@@ -506,45 +456,6 @@ export async function loadTeamProjects(render, teamId = state.selectedTeamId) {
   } finally {
     finishProjectsLoadingForTeam(selectedTeam?.id ?? teamId, render);
   }
-}
-
-function projectWriteBlockedMessage() {
-  return "Wait for the current projects refresh or write to finish.";
-}
-
-function areProjectHeavyWritesDisabled() {
-  return areResourcePageWritesDisabled(state.projectsPage) || anyProjectWriteIsActive();
-}
-
-function anyProjectMutatingRepoQueueWriteActive() {
-  return getRepoWriteQueueSnapshot().operations.some((operation) => {
-    const kind = String(operation?.kind ?? "");
-    return !kind.startsWith("editor:") && kind !== "projectRepoSync";
-  });
-}
-
-function areProjectCreationWritesDisabled() {
-  return (
-    areResourcePageWritesDisabled(state.projectsPage)
-    || anyProjectMutatingWriteIsActive()
-    || anyProjectMutatingRepoQueueWriteActive()
-  );
-}
-
-function areProjectLocalHardDeleteWritesDisabled() {
-  return areResourcePageWritesDisabled(state.projectsPage);
-}
-
-function resourceHasPendingLifecycleMutation(resource) {
-  return typeof resource?.pendingMutation === "string" && resource.pendingMutation.trim();
-}
-
-function projectLifecycleWriteBlockedMessage() {
-  return "Wait for the current project write to finish.";
-}
-
-function areProjectLifecycleWritesDisabled() {
-  return areResourcePageWriteSubmissionsDisabled(state.projectsPage);
 }
 
 function persistProjectQueryDataForTeam(selectedTeam, queryData) {
@@ -1043,78 +954,6 @@ export async function restoreProject(render, projectId) {
     setProjectDiscoveryState("error", error?.message ?? String(error));
     render();
   }
-}
-
-async function commitProjectMutationStrict(selectedTeam, mutation, options = {}) {
-  const project =
-    state.projects.find((item) => item.id === mutation.projectId) ??
-    state.deletedProjects.find((item) => item.id === mutation.projectId);
-
-  if (!selectedTeam?.installationId || !project) {
-    return;
-  }
-
-  await enqueueRepoWrite({
-    scope: projectRepoScope({ team: selectedTeam, project }),
-    kind: `projectLifecycle:${mutation.type ?? "unknown"}`,
-    sourceScreen: "projects",
-    errorTarget: {
-      projectId: project.id,
-      kind: `projectLifecycle:${mutation.type ?? "unknown"}`,
-    },
-    run: () => commitMetadataFirstTopLevelMutation({
-      mutation,
-      resource: project,
-      resourceLabel: "project",
-      writeMetadata: (record) => {
-        if (options.statusLabels?.metadata) {
-          showProjectsStatus(options.render, options.statusLabels.metadata);
-        }
-        return upsertProjectMetadataRecord(selectedTeam, record, { requirePushSuccess: true });
-      },
-      buildRecord: (currentProject, overrides = {}) =>
-        projectMetadataRecordFromVisibleProject(currentProject, overrides),
-      applyLocalMutation: (currentProject, currentMutation) => {
-        if (options.statusLabels?.local) {
-          showProjectsStatus(options.render, options.statusLabels.local);
-        }
-        if (currentMutation.type === "rename") {
-          return invoke("rename_gnosis_project_repo", {
-            input: {
-              installationId: selectedTeam.installationId,
-              fullName: currentProject.fullName,
-              projectTitle: currentMutation.title,
-            },
-            sessionToken: requireBrokerSession(),
-          });
-        }
-
-        if (currentMutation.type === "softDelete") {
-          return invoke("mark_gnosis_project_repo_deleted", {
-            input: {
-              installationId: selectedTeam.installationId,
-              orgLogin: selectedTeam.githubOrg,
-              repoName: currentProject.name,
-            },
-            sessionToken: requireBrokerSession(),
-          });
-        }
-
-        if (currentMutation.type === "restore") {
-          return invoke("restore_gnosis_project_repo", {
-            input: {
-              installationId: selectedTeam.installationId,
-              orgLogin: selectedTeam.githubOrg,
-              repoName: currentProject.name,
-            },
-            sessionToken: requireBrokerSession(),
-          });
-        }
-
-        return Promise.resolve();
-      },
-    }),
-  });
 }
 
 async function reloadProjectsAfterWrite(render, selectedTeam, options = {}) {

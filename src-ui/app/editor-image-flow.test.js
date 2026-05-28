@@ -5,6 +5,16 @@ const localStorageState = new Map();
 const invokeLog = [];
 let invokeHandler = async () => null;
 
+function deferred() {
+  let resolve = null;
+  let reject = null;
+  const promise = new Promise((nextResolve, nextReject) => {
+    resolve = nextResolve;
+    reject = nextReject;
+  });
+  return { promise, resolve, reject };
+}
+
 const fakeApp = {
   addEventListener() {},
   firstElementChild: null,
@@ -745,6 +755,132 @@ test("handleDroppedEditorImageFile applies a saved uploaded image to the editor 
   });
   assert.ok(render.calls.length >= 2);
   assert.equal(invokeLog.at(-1)?.command, "upload_gtms_editor_language_image");
+});
+
+test("handleDroppedEditorImageFile shows uploaded filename in optimistic history", async () => {
+  installEditorFixture();
+  const render = createRenderSpy();
+  state.editorChapter = {
+    ...state.editorChapter,
+    activeRowId: "row-1",
+    activeLanguageCode: "vi",
+    history: {
+      ...state.editorChapter.history,
+      status: "ready",
+      rowId: "row-1",
+      languageCode: "vi",
+      entries: [{
+        commitSha: "commit-1",
+        plainText: "",
+        footnote: "",
+        imageCaption: "",
+        image: null,
+        textStyle: "paragraph",
+        reviewed: false,
+        pleaseCheck: false,
+      }],
+    },
+    imageEditor: {
+      rowId: "row-1",
+      languageCode: "vi",
+      mode: "upload",
+      urlDraft: "",
+      invalidUrl: false,
+      urlErrorMessage: "",
+      status: "idle",
+    },
+  };
+
+  const originalImage = globalThis.Image;
+  const originalFileReader = globalThis.FileReader;
+  const originalSetTimeout = globalThis.window.setTimeout;
+  const originalCreateObjectUrl = globalThis.URL.createObjectURL;
+  const originalRevokeObjectUrl = globalThis.URL.revokeObjectURL;
+
+  globalThis.Image = class {
+    set onload(callback) {
+      this._onload = callback;
+    }
+
+    set onerror(_callback) {}
+
+    set src(_value) {
+      this._onload?.();
+    }
+  };
+
+  globalThis.FileReader = class {
+    constructor() {
+      this.result = null;
+      this.error = null;
+      this.onload = null;
+      this.onerror = null;
+    }
+
+    readAsDataURL(blob) {
+      void blob.arrayBuffer().then((buffer) => {
+        const base64 = Buffer.from(buffer).toString("base64");
+        this.result = `data:${blob.type || "application/octet-stream"};base64,${base64}`;
+        this.onload?.();
+      }).catch((error) => {
+        this.error = error;
+        this.onerror?.();
+      });
+    }
+  };
+  globalThis.window.setTimeout = () => 1;
+  globalThis.URL.createObjectURL = () => "blob:test-image";
+  globalThis.URL.revokeObjectURL = () => {};
+
+  const uploadDeferred = deferred();
+  invokeHandler = async (command) => {
+    assert.equal(command, "upload_gtms_editor_language_image");
+    return uploadDeferred.promise;
+  };
+
+  let uploadPromise;
+  try {
+    uploadPromise = handleDroppedEditorImageFile(
+      render,
+      "row-1",
+      "vi",
+      {
+        name: "pending-upload.png",
+        type: "image/png",
+        async arrayBuffer() {
+          return Uint8Array.from([137, 80, 78, 71]).buffer;
+        },
+      },
+      { updateEditorChapterRow },
+    );
+    for (let index = 0; index < 10 && invokeLog.length === 0; index += 1) {
+      await Promise.resolve();
+    }
+
+    assert.equal(state.editorChapter.history.entries[0].optimistic, true);
+    assert.deepEqual(state.editorChapter.history.entries[0].image, {
+      kind: "upload",
+      url: null,
+      path: "pending/pending-upload.png",
+      filePath: null,
+      fileName: "pending-upload.png",
+    });
+
+    uploadDeferred.resolve({
+      status: "saved",
+      rowId: "row-1",
+      languageCode: "vi",
+      chapterBaseCommitSha: "abc123",
+      row: state.editorChapter.rows[0],
+    });
+    await uploadPromise;
+  } finally {
+    globalThis.Image = originalImage;
+    globalThis.FileReader = originalFileReader;
+    globalThis.window.setTimeout = originalSetTimeout;
+    globalThis.URL.createObjectURL = originalCreateObjectUrl;
+    globalThis.URL.revokeObjectURL = originalRevokeObjectUrl;
+  }
 });
 
 test("handleDroppedEditorImagePath applies a native dropped file to the active upload editor", async () => {
