@@ -25,7 +25,9 @@ export function renderProjectCard(project, expanded, options = {}) {
     || localRepoUnavailable
   );
   const resolution = deriveProjectResolution(project, syncSnapshot, {
-    suppressMissingLocalRepoRepair: options.suppressMissingLocalRepoRepair === true,
+    suppressMissingLocalRepoRepair:
+      options.suppressMissingLocalRepoRepair === true
+      || localRepoSetupPending,
   });
   const disableLifecycleActions = resolution?.blockLifecycleActions === true || isDeleted;
   const disableContentActions = resolution?.blockContentActions === true || isDeleted;
@@ -68,7 +70,7 @@ export function renderProjectCard(project, expanded, options = {}) {
   const fileCount = isDeleted && isTombstone
       ? "Permanently deleted"
     : localRepoSetupPending && filesLength === 0
-      ? "Setting up local repo..."
+      ? "Downloading data from remote repo..."
       : `${filesLength} file${filesLength === 1 ? "" : "s"}`;
   const resolutionMarkup = resolution
     ? renderInlineStateBox({
@@ -123,4 +125,3 @@ export function renderProjectCard(project, expanded, options = {}) {
     </article>
   `;
 }
-

@@ -480,7 +480,7 @@ fn glossary_repo_matches_identifier(
     false
 }
 
-fn find_glossary_repo_path(
+pub(crate) fn find_glossary_repo_path(
     app: &AppHandle,
     installation_id: i64,
     glossary_id: Option<&str>,

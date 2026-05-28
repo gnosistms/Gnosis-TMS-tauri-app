@@ -28,6 +28,7 @@ mod storage_paths;
 mod store;
 mod team_ai;
 mod team_metadata_local;
+mod team_repo_migrations;
 mod updater;
 mod window;
 
@@ -142,6 +143,7 @@ use crate::{
         upsert_local_gnosis_glossary_metadata_record, upsert_local_gnosis_project_metadata_record,
         upsert_local_gnosis_qa_list_metadata_record,
     },
+    team_repo_migrations::list_pending_team_repo_layout_migrations,
     updater::{check_for_app_update, install_app_update, PendingUpdate},
     window::read_local_dropped_file,
 };
@@ -551,6 +553,7 @@ pub fn run() {
             list_accessible_github_app_installations,
             ensure_gnosis_repo_properties_schema,
             list_gnosis_projects_for_installation,
+            list_pending_team_repo_layout_migrations,
             reconcile_project_repo_sync_states,
             list_project_repo_sync_states,
             sync_gtms_project_editor_repo,

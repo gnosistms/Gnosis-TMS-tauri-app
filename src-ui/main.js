@@ -95,6 +95,7 @@ import { renderNavigationLoadingModal } from "./screens/navigation-loading-modal
 import { renderProjectsScreen } from "./screens/projects.js";
 import { renderQaListEditorScreen } from "./screens/qa-list-editor.js";
 import { renderQaScreen } from "./screens/qa.js";
+import { renderTeamResourceMigrationModal } from "./screens/team-resource-migration-modal.js";
 import { renderAiKeyScreen } from "./screens/ai-key.js";
 import { renderStartScreen } from "./screens/start.js";
 import { renderTeamsScreen } from "./screens/teams/index.js";
@@ -581,6 +582,7 @@ function renderWithOptions(options = {}) {
     renderScreen()
     + renderAppUpdateModal(state)
     + renderNavigationLoadingModal(state)
+    + renderTeamResourceMigrationModal(state)
     + renderConnectionFailureModal(state);
   syncGlossaryVariantTextareaHeights(app);
   if (app.firstElementChild instanceof HTMLElement) {

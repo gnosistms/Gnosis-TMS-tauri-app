@@ -573,6 +573,51 @@ test("translation log details omit distinct glossary source text", () => {
   assert.doesNotMatch(html, /Hola desde el glosario/);
 });
 
+test("assistant error appears in chat history with prompt and raw model output details", () => {
+  const html = renderTranslateSidebar(
+    activeEditorChapter({
+      assistant: {
+        status: "idle",
+        activeThreadKey: "row-1::es::vi",
+        threadsByKey: {
+          "row-1::es::vi": {
+            rowId: "row-1",
+            sourceLanguageCode: "es",
+            targetLanguageCode: "vi",
+            items: [{
+              id: "error-1",
+              type: "assistant-error",
+              createdAt: "2026-04-30T00:00:01.000Z",
+              text: "The AI assistant returned a malformed response.",
+              summary: "The AI assistant returned a malformed response.",
+              sourceLanguageCode: "es",
+              targetLanguageCode: "vi",
+              promptText: "Prompt sent to the model",
+              details: {
+                kind: "translate_refinement",
+                providerId: "openai",
+                modelId: "gpt-5.5",
+                rawModelResponse: "Plain text response instead of JSON",
+              },
+            }],
+          },
+        },
+      },
+    }),
+    rows,
+    languages,
+    "es",
+    "vi",
+    createAiActionConfigurationState(),
+  );
+
+  assert.match(html, /assistant-item__error-box/);
+  assert.match(html, /The AI assistant returned a malformed response\./);
+  assert.match(html, /Raw Model Output/);
+  assert.match(html, /Plain text response instead of JSON/);
+  assert.match(html, /Prompt sent to the model/);
+});
+
 test("review sidebar disables review mode buttons while offline", () => {
   const html = renderTranslateSidebar(
     activeEditorChapter({

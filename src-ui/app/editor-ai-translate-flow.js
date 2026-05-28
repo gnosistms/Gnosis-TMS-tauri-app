@@ -355,6 +355,7 @@ export async function runEditorAiTranslateForContext(
   const {
     updateEditorRowFieldValue,
     persistEditorRowOnBlur,
+    syncEditorGlossaryHighlightRowDom,
   } = operations;
   if (
     !AI_TRANSLATE_ACTION_IDS.includes(actionId)
@@ -419,6 +420,12 @@ export async function runEditorAiTranslateForContext(
     context.targetLanguageCode,
     requestKey,
   );
+
+  const syncFinalGlossaryHighlights = () => {
+    if (typeof syncEditorGlossaryHighlightRowDom === "function") {
+      syncEditorGlossaryHighlightRowDom(context.rowId);
+    }
+  };
   state.editorChapter = applyEditorAiTranslateActionLoading(
     state.editorChapter,
     actionId,
@@ -708,6 +715,7 @@ export async function runEditorAiTranslateForContext(
           renderMode: options.renderMode,
           reason: "ai-translate-auto-apply-complete",
         });
+        syncFinalGlossaryHighlights();
         if (options.showNotice !== false) {
           showNoticeBadge(`${AI_ACTION_LABELS[actionId]} inserted.`, render);
         }
@@ -821,6 +829,7 @@ export async function runEditorAiTranslateForContext(
       renderMode: options.renderMode,
       reason: "ai-translate-apply-complete",
     });
+    syncFinalGlossaryHighlights();
     if (options.showNotice !== false) {
       showNoticeBadge(`${AI_ACTION_LABELS[actionId]} inserted.`, render);
     }

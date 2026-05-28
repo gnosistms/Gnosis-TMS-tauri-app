@@ -403,6 +403,8 @@ pub struct AiAssistantTurnResponse {
     #[serde(default)]
     pub prompt_text: String,
     #[serde(default)]
+    pub raw_response: String,
+    #[serde(default)]
     pub provider_continuation: Option<AiProviderContinuationMetadata>,
 }
 

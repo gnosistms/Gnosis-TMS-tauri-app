@@ -42,6 +42,7 @@ import {
   projectRepoScope,
   waitForRepoWriteQueueIdle,
 } from "./repo-write-queue.js";
+import { runTeamResourceMigrationSync } from "./team-resource-migration-flow.js";
 
 function countRecoverableProjectMetadataRecords(records) {
   return (Array.isArray(records) ? records : []).filter((record) =>
@@ -765,6 +766,18 @@ export async function loadTeamProjects(render, teamId = state.selectedTeamId, op
       return;
     }
     options.setProjectUiDebug(render, "Rebuilding local project repo state...");
+    await runTeamResourceMigrationSync(render, selectedTeam, { projects: mappedProjects });
+    if (
+      await abortProjectDiscoveryIfStale(
+        render,
+        selectedTeam.id,
+        requestId,
+        syncVersionAtStart,
+        true,
+      )
+    ) {
+      return;
+    }
     await reconcileProjectRepoSyncStates(render, selectedTeam, mappedProjects, {
       shouldAbort: () => !isProjectDiscoveryCurrent(selectedTeam.id, requestId, syncVersionAtStart),
     });

@@ -7,6 +7,7 @@ import {
 const EDITOR_ASSISTANT_ITEM_TYPES = new Set([
   "user-message",
   "assistant-message",
+  "assistant-error",
   "tool-event",
   "translation-log",
   "draft-translation",

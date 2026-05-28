@@ -461,6 +461,7 @@ export async function runEditorAiTranslate(render, actionId) {
   await runEditorAiTranslateFlow(render, actionId, {
     updateEditorRowFieldValue,
     persistEditorRowOnBlur,
+    syncEditorGlossaryHighlightRowDom,
   });
 }
 

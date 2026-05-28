@@ -52,6 +52,7 @@ export const state = {
   offline: createOfflineState(),
   connectionFailure: createConnectionFailureState(),
   navigationLoadingModal: createNavigationLoadingModalState(),
+  teamResourceMigrationModal: createTeamResourceMigrationModalState(),
   statusBadges: createStatusBadgesState(),
   orgDiscovery: {
     status: "idle",
@@ -173,6 +174,15 @@ export function createNavigationLoadingModalState() {
   return {
     isOpen: false,
     title: "",
+    message: "",
+    token: null,
+  };
+}
+
+export function createTeamResourceMigrationModalState() {
+  return {
+    isOpen: false,
+    targetVersion: "",
     message: "",
     token: null,
   };
@@ -1171,6 +1181,7 @@ export function resetSessionState() {
   state.offline = offlineState;
   state.connectionFailure = createConnectionFailureState();
   state.navigationLoadingModal = createNavigationLoadingModalState();
+  state.teamResourceMigrationModal = createTeamResourceMigrationModalState();
   state.statusBadges = createStatusBadgesState();
   resetTeamSetup();
   resetTeamRename();

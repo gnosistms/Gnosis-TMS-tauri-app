@@ -19,6 +19,7 @@ import {
   applyGlossaryWriteIntentsToSnapshot,
   clearConfirmedGlossaryWriteIntents,
 } from "./glossary-write-coordinator.js";
+import { runTeamResourceMigrationSync } from "./team-resource-migration-flow.js";
 
 function glossaryRepoSyncByRepoName(syncSnapshots = []) {
   return Object.fromEntries(
@@ -326,6 +327,7 @@ const glossaryQueryController = createRepoResourceQueryController({
   },
   loadRemoteSnapshot: async (team, options = {}) => {
     const teamId = options.teamId ?? team?.id ?? null;
+    await runTeamResourceMigrationSync(options.render, team);
     const {
       glossaries,
       syncIssue,

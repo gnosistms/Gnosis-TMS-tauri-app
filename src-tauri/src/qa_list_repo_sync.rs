@@ -480,7 +480,7 @@ fn qa_list_repo_matches_identifier(
     false
 }
 
-fn find_qa_list_repo_path(
+pub(crate) fn find_qa_list_repo_path(
     app: &AppHandle,
     installation_id: i64,
     qa_list_id: Option<&str>,

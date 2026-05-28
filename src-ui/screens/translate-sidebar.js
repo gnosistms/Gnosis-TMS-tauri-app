@@ -325,6 +325,7 @@ function renderAssistantPromptDetails(item) {
   const translatedText = typeof details.translatedText === "string" ? details.translatedText.trim() : "";
   const appliedText = typeof details.appliedText === "string" ? details.appliedText.trim() : "";
   const glossarySourceText = typeof details.glossarySourceText === "string" ? details.glossarySourceText.trim() : "";
+  const rawModelResponse = typeof details.rawModelResponse === "string" ? details.rawModelResponse.trim() : "";
   const isAssistantTurnDetails =
     details.kind === "chat" || details.kind === "translate_refinement";
   const isTranslationLog = itemType === "translation-log";
@@ -341,6 +342,7 @@ function renderAssistantPromptDetails(item) {
     || modelId
     || (showContextBreakdown && documentDigest)
     || (!isTranslationLog && translatedText)
+    || (!isTranslationLog && rawModelResponse)
     || (!isTranslationLog && appliedText)
     || showGlossarySourceText
     || (showContextBreakdown && Array.isArray(details.rowWindow) && details.rowWindow.length > 0)
@@ -421,6 +423,16 @@ function renderAssistantPromptDetails(item) {
               <div class="assistant-item__section">
                 <p class="assistant-item__section-label">Model Output</p>
                 <pre class="assistant-item__pre">${escapeHtml(translatedText)}</pre>
+              </div>
+            `
+            : ""
+        }
+        ${
+          !isTranslationLog && rawModelResponse
+            ? `
+              <div class="assistant-item__section">
+                <p class="assistant-item__section-label">Raw Model Output</p>
+                <pre class="assistant-item__pre">${escapeHtml(rawModelResponse)}</pre>
               </div>
             `
             : ""
@@ -572,6 +584,17 @@ function renderAssistantTranscriptItem(item, currentTargetText = "") {
     `;
   }
 
+  if (itemType === "assistant-error") {
+    return `
+      <article class="assistant-item assistant-item--assistant">
+        <div class="message-box message-box--error assistant-item__error-box">
+          <p class="message-box__text">${escapeHtml(text)}</p>
+          ${renderAssistantPromptDetails(item)}
+        </div>
+      </article>
+    `;
+  }
+
   const itemClass =
     itemType === "user-message"
       ? "assistant-item assistant-item--user"
@@ -649,7 +672,7 @@ function renderAssistantTranscript(editorChapter, rows, languages, sourceCode, t
 
   return `
     <div class="assistant-transcript">
-      ${assistant.error
+      ${assistant.error && items.length === 0
         ? renderInlineStateBox({
           tone: "error",
           message: assistant.error,

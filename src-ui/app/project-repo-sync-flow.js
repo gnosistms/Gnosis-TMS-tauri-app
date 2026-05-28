@@ -146,6 +146,7 @@ async function reconcileOneProjectRepoSyncState({
   installationId,
   descriptor,
   shouldAbort,
+  onSnapshots,
 }) {
   const scope = projectRepoSyncScope(team, descriptor);
   const input = {
@@ -179,6 +180,7 @@ async function reconcileOneProjectRepoSyncState({
       }
 
       mergeProjectRepoSyncSnapshots(initialSnapshots);
+      onSnapshots?.(initialSnapshots, descriptor);
       openRequiredAppUpdatePromptFromProjectSnapshots(initialSnapshots, render);
       showScopedSyncBadge("projects", syncingBadgeText(initialSnapshots), render);
       render();
@@ -194,6 +196,7 @@ async function reconcileOneProjectRepoSyncState({
           return Array.isArray(snapshots) ? snapshots : [];
         }
         mergeProjectRepoSyncSnapshots(snapshots);
+        onSnapshots?.(snapshots, descriptor);
         openRequiredAppUpdatePromptFromProjectSnapshots(snapshots, render);
         showScopedSyncBadge("projects", syncingBadgeText(snapshots), render);
         render();
@@ -225,6 +228,7 @@ function openRequiredAppUpdatePromptFromProjectSnapshots(snapshots, render) {
 export async function reconcileProjectRepoSyncStates(render, team, projects, options = {}) {
   const shouldAbort = typeof options.shouldAbort === "function" ? options.shouldAbort : null;
   const clearStatusOnComplete = options.clearStatusOnComplete !== false;
+  const onSnapshots = typeof options.onSnapshots === "function" ? options.onSnapshots : null;
 
   if (shouldAbort?.()) {
     return [];
@@ -266,6 +270,7 @@ export async function reconcileProjectRepoSyncStates(render, team, projects, opt
         installationId: input.installationId,
         descriptor,
         shouldAbort,
+        onSnapshots,
       })),
   );
   const snapshots = snapshotResults.flat();

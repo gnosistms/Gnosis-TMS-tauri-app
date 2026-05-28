@@ -25,7 +25,6 @@ import {
   applyEditorAssistantActiveThreadKey,
   applyEditorAssistantComposerDraft,
   applyEditorAssistantDocumentDigest,
-  applyEditorAssistantFailed,
   applyEditorAssistantItemApplied,
   applyEditorAssistantItemApplying,
   applyEditorAssistantItemApplyFailed,
@@ -624,6 +623,20 @@ function createAssistantMessage(payload, context) {
   };
 }
 
+function createAssistantErrorMessage(payload, context) {
+  return {
+    id: createEditorAssistantItemId(),
+    type: "assistant-error",
+    createdAt: new Date().toISOString(),
+    text: payload.errorText,
+    summary: payload.errorText,
+    sourceLanguageCode: context?.sourceLanguageCode ?? null,
+    targetLanguageCode: context?.targetLanguageCode ?? null,
+    promptText: payload.promptText ?? "",
+    details: payload.details ?? {},
+  };
+}
+
 function removeDraftTextFromAssistantText(assistantText, draftText) {
   const text = typeof assistantText === "string" ? assistantText.trim() : "";
   const draft = typeof draftText === "string" ? draftText.trim() : "";
@@ -668,6 +681,59 @@ function responseDraftTranslationText(payload) {
     ? payload.draftTranslationText.trim()
     : "";
   return draftText;
+}
+
+const ASSISTANT_MALFORMED_RESPONSE_ERROR_PREFIX = "AI_ASSISTANT_MALFORMED_RESPONSE_JSON:";
+
+function parseAssistantTurnError(error) {
+  const messageText = error instanceof Error ? error.message : String(error);
+  const prefixIndex = messageText.indexOf(ASSISTANT_MALFORMED_RESPONSE_ERROR_PREFIX);
+  if (prefixIndex < 0) {
+    return {
+      messageText,
+      rawModelResponse: "",
+      promptText: "",
+    };
+  }
+
+  const jsonText = messageText.slice(prefixIndex + ASSISTANT_MALFORMED_RESPONSE_ERROR_PREFIX.length);
+  try {
+    const payload = JSON.parse(jsonText);
+    return {
+      messageText:
+        typeof payload?.message === "string" && payload.message.trim()
+          ? payload.message.trim()
+          : "The AI assistant returned a malformed response.",
+      rawModelResponse: typeof payload?.rawResponse === "string" ? payload.rawResponse : "",
+      promptText: typeof payload?.promptText === "string" ? payload.promptText : "",
+    };
+  } catch {
+    return {
+      messageText: "The AI assistant returned a malformed response.",
+      rawModelResponse: jsonText,
+      promptText: "",
+    };
+  }
+}
+
+function fallbackAssistantErrorDetails(context, providerId, modelId) {
+  return {
+    kind: "chat",
+    providerId,
+    modelId,
+    rowId: context?.rowId ?? "",
+    sourceLanguageCode: context?.sourceLanguageCode ?? "",
+    targetLanguageCode: context?.targetLanguageCode ?? "",
+    sourceLanguageLabel: context?.sourceLanguageLabel ?? "",
+    targetLanguageLabel: context?.targetLanguageLabel ?? "",
+    sourceText: context?.sourceText ?? "",
+    targetText: context?.targetText ?? "",
+    targetLanguageHistory: [],
+    rowWindow: [],
+    glossaryHints: [],
+    concordanceHits: [],
+    documentDigest: "",
+  };
 }
 
 function createApplyResultMessage(text, context) {
@@ -1280,8 +1346,16 @@ export async function runEditorAiAssistant(render) {
   persistAssistantState();
   renderAssistantSidebarAtBottom(render);
 
+  let providerIdForError = "";
+  let modelIdForError = "";
+  let intentForError = null;
+  let contextForError = baseContext;
+  let requestPayloadForError = null;
+
   try {
     const { providerId, modelId } = resolveAiActionProviderAndModel("discuss");
+    providerIdForError = providerId;
+    modelIdForError = modelId;
     if (!modelId) {
       throw new Error("Select a model for Discuss on the AI Settings page first.");
     }
@@ -1305,6 +1379,7 @@ export async function runEditorAiAssistant(render) {
     renderAssistantSidebarAtBottom(render);
 
     const intent = classifyAssistantIntent(message, baseContext);
+    intentForError = intent;
     const currentRequestItemIds = [
       userItem.id,
       ...intent.toolEvents.map((item) => item.id),
@@ -1332,6 +1407,7 @@ export async function runEditorAiAssistant(render) {
       sourceLanguageCode: intent.sourceLanguageCode,
       targetLanguageCode: intent.targetLanguageCode,
     });
+    contextForError = context ?? baseContext;
     if (!context?.threadKey) {
       throw new Error("Select both the source and target language before using AI Assistant.");
     }
@@ -1373,6 +1449,7 @@ export async function runEditorAiAssistant(render) {
         targetLanguageHistory,
       },
     );
+    requestPayloadForError = requestPayload;
     const payload = await invoke("run_ai_assistant_turn", {
       request: requestPayload,
       ...maybeInstallationPayload(),
@@ -1416,7 +1493,10 @@ export async function runEditorAiAssistant(render) {
       );
     }
 
-    const itemDetails = responseDetails(intent, context, providerId, modelId, requestPayload);
+    const itemDetails = {
+      ...responseDetails(intent, context, providerId, modelId, requestPayload),
+      rawModelResponse: typeof payload?.rawResponse === "string" ? payload.rawResponse : "",
+    };
     const draftTranslationText = responseDraftTranslationText(payload);
     state.editorChapter = appendEditorAssistantItems(
       state.editorChapter,
@@ -1444,8 +1524,8 @@ export async function runEditorAiAssistant(render) {
     persistAssistantState();
     renderAssistantSidebarAtBottom(render);
   } catch (error) {
-    const messageText = error instanceof Error ? error.message : String(error);
-    if (errorMeansMissingAiKey(messageText)) {
+    const parsedError = parseAssistantTurnError(error);
+    if (errorMeansMissingAiKey(parsedError.messageText)) {
       const { providerId } = resolveAiActionProviderAndModel("discuss");
       openAiMissingKeyModal(providerId);
       state.editorChapter = clearEditorAssistantPending(
@@ -1462,14 +1542,44 @@ export async function runEditorAiAssistant(render) {
       return;
     }
 
-    state.editorChapter = applyEditorAssistantFailed(
+    const errorContext = contextForError ?? baseContext;
+    const errorDetails =
+      intentForError && requestPayloadForError
+        ? responseDetails(
+          intentForError,
+          errorContext,
+          providerIdForError,
+          modelIdForError,
+          requestPayloadForError,
+        )
+        : fallbackAssistantErrorDetails(errorContext, providerIdForError, modelIdForError);
+    if (parsedError.rawModelResponse) {
+      errorDetails.rawModelResponse = parsedError.rawModelResponse;
+    }
+
+    state.editorChapter = clearEditorAssistantPending(
       state.editorChapter,
       baseContext.threadKey,
       requestKey,
-      messageText,
+    );
+    state.editorChapter = appendEditorAssistantItems(
+      state.editorChapter,
+      baseContext.threadKey,
+      [
+        createAssistantErrorMessage({
+          errorText: parsedError.messageText,
+          promptText: parsedError.promptText,
+          details: errorDetails,
+        }, errorContext),
+      ],
+      {
+        rowId: errorContext.rowId,
+        sourceLanguageCode: errorContext.sourceLanguageCode,
+        targetLanguageCode: errorContext.targetLanguageCode,
+      },
     );
     persistAssistantState();
-    renderAssistantSidebar(render);
+    renderAssistantSidebarAtBottom(render);
   }
 }
 

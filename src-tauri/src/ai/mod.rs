@@ -959,7 +959,7 @@ fn parse_assistant_structured_response(
         }
     }
 
-    Err("The AI assistant returned a malformed response.".to_string())
+    Err(AI_ASSISTANT_MALFORMED_RESPONSE_MESSAGE.to_string())
 }
 
 fn is_missing_previous_response_error(message: &str) -> bool {
@@ -978,6 +978,29 @@ struct AiAssistantStructuredResponse {
     assistant_text: String,
     #[serde(default)]
     draft_translation_text: Option<String>,
+}
+
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AiAssistantMalformedResponseErrorPayload<'a> {
+    message: &'a str,
+    raw_response: &'a str,
+    prompt_text: &'a str,
+}
+
+const AI_ASSISTANT_MALFORMED_RESPONSE_MESSAGE: &str =
+    "The AI assistant returned a malformed response.";
+const AI_ASSISTANT_MALFORMED_RESPONSE_ERROR_PREFIX: &str = "AI_ASSISTANT_MALFORMED_RESPONSE_JSON:";
+
+fn format_ai_assistant_malformed_response_error(raw_response: &str, prompt_text: &str) -> String {
+    let payload = AiAssistantMalformedResponseErrorPayload {
+        message: AI_ASSISTANT_MALFORMED_RESPONSE_MESSAGE,
+        raw_response,
+        prompt_text,
+    };
+    serde_json::to_string(&payload)
+        .map(|json| format!("{AI_ASSISTANT_MALFORMED_RESPONSE_ERROR_PREFIX}{json}"))
+        .unwrap_or_else(|_| AI_ASSISTANT_MALFORMED_RESPONSE_MESSAGE.to_string())
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -1735,13 +1758,24 @@ pub(crate) fn run_ai_assistant_turn(
         }
         Err(error) => return Err(error),
     };
-    let structured_response = parse_assistant_structured_response(&response.text, request.kind)?;
+    let structured_response =
+        match parse_assistant_structured_response(&response.text, request.kind) {
+            Ok(response) => response,
+            Err(error) if error == AI_ASSISTANT_MALFORMED_RESPONSE_MESSAGE => {
+                return Err(format_ai_assistant_malformed_response_error(
+                    &response.text,
+                    &prompt,
+                ));
+            }
+            Err(error) => return Err(error),
+        };
     let _response_kind = structured_response.response_kind.as_ref();
 
     Ok(AiAssistantTurnResponse {
         assistant_text: structured_response.assistant_text,
         draft_translation_text: structured_response.draft_translation_text,
         prompt_text: prompt,
+        raw_response: response.text,
         provider_continuation: Some(AiProviderContinuationMetadata {
             previous_response_id: None,
             provider_response_id: response.provider_response_id,

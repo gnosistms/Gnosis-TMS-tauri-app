@@ -407,6 +407,28 @@ test("projects export is disabled until the local repo is available", () => {
   assert.match(actionButtonHtml(html, "export-file:chapter-1"), /disabled/);
 });
 
+test("project setup from remote hides missing local repo repair warning", () => {
+  const html = renderProjectsScreen(projectsState({
+    projectRepoSyncByProjectId: {
+      "project-1": { status: "notCloned" },
+    },
+    projects: [{
+      id: "project-1",
+      title: "Project",
+      name: "project-repo",
+      status: "active",
+      resolutionState: "repair",
+      repairIssueType: "missingLocalRepo",
+      repairIssueMessage: "Team metadata references this project, but its local repo is missing.",
+      chapters: [],
+    }],
+  }));
+
+  assert.match(html, /Downloading data from remote repo\.\.\./);
+  assert.doesNotMatch(html, /local repo is missing/i);
+  assert.equal(actionButtonHtml(html, "rebuild-project-repo:project-1"), "");
+});
+
 test("projects glossary selector keeps local selection and options during project refresh", () => {
   const html = renderProjectsScreen(projectsState({
     projectsPage: {

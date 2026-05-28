@@ -265,6 +265,13 @@ function latestAssistantDraft(rowId = "row-1", targetLanguageCode = "vi", source
     ?.at(-1) ?? null;
 }
 
+function latestAssistantError(rowId = "row-1", targetLanguageCode = "vi", sourceLanguageCode = "es") {
+  const thread = state.editorChapter?.assistant?.threadsByKey?.[`${rowId}::${sourceLanguageCode}::${targetLanguageCode}`];
+  return thread?.items
+    ?.filter((item) => item?.type === "assistant-error")
+    ?.at(-1) ?? null;
+}
+
 function createTeamRecord(options = {}) {
   return {
     id: options.teamId ?? "team-1",
@@ -738,6 +745,7 @@ test("runEditorAiTranslate auto-applies without waiting for durable row persiste
   };
 
   const renderCalls = [];
+  const glossarySyncCalls = [];
   const render = (request) => {
     renderCalls.push({
       request,
@@ -760,6 +768,13 @@ test("runEditorAiTranslate auto-applies without waiting for durable row persiste
       }
       return durableWrite.promise;
     },
+    syncEditorGlossaryHighlightRowDom(rowId) {
+      glossarySyncCalls.push({
+        rowId,
+        status: state.editorChapter?.aiTranslate?.translate1?.status,
+        targetText: state.editorChapter?.rows[0]?.fields?.vi,
+      });
+    },
   });
 
   assert.equal(persistOptions?.waitForDurable, false);
@@ -775,6 +790,11 @@ test("runEditorAiTranslate auto-applies without waiting for durable row persiste
         targetText === "Xin chao",
     ),
   );
+  assert.deepEqual(glossarySyncCalls, [{
+    rowId: "row-1",
+    status: "idle",
+    targetText: "Xin chao",
+  }]);
 });
 
 test("runEditorAiTranslate enters loading state before provider readiness resolves", async () => {
@@ -2595,6 +2615,61 @@ test("runEditorAiAssistant sends loaded target-language history with the assista
     state.editorChapter.assistant.threadsByKey["row-1::es::vi"].items.at(-1)?.text,
     "The human edit changes the tone.",
   );
+});
+
+test("runEditorAiAssistant records malformed response details in the chat history", async () => {
+  installTranslateFixture({
+    fields: {
+      es: "Su mision es entregar metodos practicos.",
+      vi: "Nhiem vu cua no la trao phuong phap thuc hanh.",
+    },
+  });
+  state.editorChapter = {
+    ...state.editorChapter,
+    assistant: {
+      ...state.editorChapter.assistant,
+      composerDraft: "Do another translation.",
+    },
+  };
+  state.aiSettings = {
+    ...state.aiSettings,
+    actionConfig: {
+      ...state.aiSettings.actionConfig,
+      detailedConfiguration: true,
+      actions: {
+        ...state.aiSettings.actionConfig.actions,
+        discuss: {
+          providerId: "openai",
+          modelId: "gpt-5.4-mini",
+        },
+      },
+    },
+  };
+
+  const rawModelResponse = "Here is a closer translation: Ban dich moi.";
+  const promptText = "assistant prompt text";
+  invokeHandler = async (command) => {
+    if (command === "load_ai_provider_secret") {
+      return "oa-key";
+    }
+    if (command === "run_ai_assistant_turn") {
+      throw new Error(`AI_ASSISTANT_MALFORMED_RESPONSE_JSON:${JSON.stringify({
+        message: "The AI assistant returned a malformed response.",
+        rawResponse: rawModelResponse,
+        promptText,
+      })}`);
+    }
+
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  await runEditorAiAssistant(() => {});
+
+  const errorItem = latestAssistantError();
+  assert.equal(errorItem?.text, "The AI assistant returned a malformed response.");
+  assert.equal(errorItem?.promptText, promptText);
+  assert.equal(errorItem?.details.rawModelResponse, rawModelResponse);
+  assert.equal(state.editorChapter.assistant.error, "");
 });
 
 test("applyEditorAiReview updates the editor row and clears the suggestion after save", async () => {

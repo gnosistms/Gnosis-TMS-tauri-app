@@ -13,6 +13,7 @@ import {
   applyQaListWriteIntentsToSnapshot,
   clearConfirmedQaListWriteIntents,
 } from "./qa-list-write-coordinator.js";
+import { runTeamResourceMigrationSync } from "./team-resource-migration-flow.js";
 
 function qaListRepoSyncByRepoName(syncSnapshots = []) {
   return Object.fromEntries(
@@ -348,7 +349,8 @@ const qaListQueryController = createRepoResourceQueryController({
   },
   normalizeMutationResultPatch: (resource, result) =>
     result && typeof result === "object" ? normalizeQaList({ ...resource, ...result }) : null,
-  loadRemoteSnapshot: async (team) => {
+  loadRemoteSnapshot: async (team, options = {}) => {
+    await runTeamResourceMigrationSync(options.render, team);
     const result = await loadRepoBackedQaListsForTeam(team, {
       offlineMode: state.offline?.isEnabled === true,
     });
