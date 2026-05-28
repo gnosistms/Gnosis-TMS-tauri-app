@@ -593,6 +593,7 @@
 .translate-sidebar--assistant .card__body {
   height: 100%;
   min-height: 0;
+  padding-bottom: 18px;
   grid-template-rows: auto minmax(0, 1fr);
 }
 
