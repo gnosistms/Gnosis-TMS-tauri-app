@@ -136,6 +136,8 @@ pub(crate) fn build_review_prompt(request: &AiReviewRequest) -> String {
                 },
                 target_language_label: request.target_language.clone(),
                 target_text: latest_translation.to_string(),
+                source_footnote: request.source_footnote.clone(),
+                source_image_caption: request.source_image_caption.clone(),
                 updated_source_text: None,
                 updated_target_text: None,
                 alternate_language_texts: request.alternate_language_texts.clone(),
@@ -305,6 +307,23 @@ pub(crate) fn build_translation_prompt(request: &AiTranslationRequest) -> String
     };
     let glossary_hints = format_translation_glossary_hints(&request.glossary_hints);
     let sectioned_output = translation_request_has_sections(request);
+    let source_context = format_assistant_source_context(&request.row_window, &request.text);
+    let reference_row = AiAssistantRowContext {
+        row_id: String::new(),
+        source_language_code: request.source_language_code.clone(),
+        source_language_label: source_label.to_string(),
+        source_text: request.text.clone(),
+        target_language_code: request.target_language_code.clone(),
+        target_language_label: target_label.to_string(),
+        target_text: String::new(),
+        source_footnote: request.source_footnote.clone(),
+        source_image_caption: request.source_image_caption.clone(),
+        updated_source_text: None,
+        updated_target_text: None,
+        alternate_language_texts: request.alternate_language_texts.clone(),
+        target_language_history: vec![],
+    };
+    let reference_translations = format_assistant_reference_translations(&reference_row);
     let mut sections = Vec::new();
     if sectioned_output {
         sections.push(format!(
@@ -338,6 +357,16 @@ pub(crate) fn build_translation_prompt(request: &AiTranslationRequest) -> String
         ));
     }
 
+    if !request.row_window.is_empty() {
+        push_tagged_prompt_section(
+            &mut sections,
+            "source_context",
+            format!(
+                "This is the source text in context, provided to help you understand source_text more clearly:\n{source_context}"
+            ),
+        );
+    }
+    push_tagged_prompt_section(&mut sections, "reference_translations", reference_translations);
     sections.push(format!("<source_text>\n{}\n</source_text>", request.text));
     if let Some(section) =
         format_optional_tagged_section("source_footnote", &request.source_footnote)
@@ -841,6 +870,12 @@ If your answer includes a complete proposed or revised target-language translati
         push_tagged_prompt_section(&mut sections, "concordance_hits", concordance_hits);
     }
     push_tagged_prompt_section(&mut sections, "source_text", &row.source_text);
+    push_tagged_prompt_section(&mut sections, "source_footnote", &row.source_footnote);
+    push_tagged_prompt_section(
+        &mut sections,
+        "source_image_caption",
+        &row.source_image_caption,
+    );
     push_optional_tagged_prompt_section(
         &mut sections,
         "updated_source_text",
@@ -1446,6 +1481,8 @@ fn build_pivot_translation_request(
         provider_id: request.provider_id,
         model_id: request.model_id.clone(),
         text: request.translation_source_text.clone(),
+        source_language_code: String::new(),
+        target_language_code: String::new(),
         source_footnote: String::new(),
         source_image_caption: String::new(),
         target_footnote: String::new(),
@@ -1453,6 +1490,8 @@ fn build_pivot_translation_request(
         source_language: request.translation_source_language.clone(),
         target_language: request.glossary_source_language.clone(),
         glossary_hints: vec![],
+        row_window: vec![],
+        alternate_language_texts: vec![],
         installation_id: request.installation_id,
     }
 }
@@ -1997,6 +2036,8 @@ mod tests {
             provider_id: AiProviderId::OpenAi,
             model_id: "gpt-5.4".to_string(),
             text: "Hola".to_string(),
+            source_language_code: String::new(),
+            target_language_code: String::new(),
             source_footnote: String::new(),
             source_image_caption: String::new(),
             target_footnote: String::new(),
@@ -2004,6 +2045,8 @@ mod tests {
             source_language: "Spanish".to_string(),
             target_language: "Vietnamese".to_string(),
             glossary_hints: vec![],
+            row_window: vec![],
+            alternate_language_texts: vec![],
             installation_id: None,
         });
 
@@ -2019,6 +2062,8 @@ mod tests {
             provider_id: AiProviderId::OpenAi,
             model_id: "gpt-5.4".to_string(),
             text: "Hola".to_string(),
+            source_language_code: String::new(),
+            target_language_code: String::new(),
             source_footnote: "Nota fuente".to_string(),
             source_image_caption: "Caption source".to_string(),
             target_footnote: String::new(),
@@ -2026,6 +2071,8 @@ mod tests {
             source_language: "Spanish".to_string(),
             target_language: "Vietnamese".to_string(),
             glossary_hints: vec![],
+            row_window: vec![],
+            alternate_language_texts: vec![],
             installation_id: None,
         });
 
@@ -2035,6 +2082,48 @@ mod tests {
         assert!(prompt.contains("<source_footnote>\nNota fuente\n</source_footnote>"));
         assert!(prompt.contains("<source_image_caption>\nCaption source\n</source_image_caption>"));
         assert!(prompt.contains("Do not append footnotes or image captions to translatedText."));
+    }
+
+    #[test]
+    fn build_translation_prompt_includes_assistant_style_context_sections() {
+        let prompt = build_translation_prompt(&AiTranslationRequest {
+            provider_id: AiProviderId::OpenAi,
+            model_id: "gpt-5.4".to_string(),
+            text: "Fuente actual".to_string(),
+            source_language_code: "es".to_string(),
+            target_language_code: "vi".to_string(),
+            source_footnote: String::new(),
+            source_image_caption: String::new(),
+            target_footnote: String::new(),
+            target_image_caption: String::new(),
+            source_language: "Spanish".to_string(),
+            target_language: "Vietnamese".to_string(),
+            glossary_hints: vec![],
+            row_window: vec![
+                AiAssistantRowWindowEntry {
+                    row_id: "row-1".to_string(),
+                    source_text: "Linea anterior".to_string(),
+                    target_text: "Dong truoc".to_string(),
+                },
+                AiAssistantRowWindowEntry {
+                    row_id: "row-2".to_string(),
+                    source_text: "Fuente actual".to_string(),
+                    target_text: String::new(),
+                },
+            ],
+            alternate_language_texts: vec![AiAssistantRowLanguageText {
+                language_code: "fr".to_string(),
+                language_label: "French".to_string(),
+                text: "Texte francais".to_string(),
+            }],
+            installation_id: None,
+        });
+
+        assert!(prompt.contains(
+            "<source_context>\nThis is the source text in context, provided to help you understand source_text more clearly:\nLinea anterior\nFuente actual\n</source_context>"
+        ));
+        assert!(prompt.contains("<reference_translations>"));
+        assert!(prompt.contains("Reference language translations:\nFrench: Texte francais"));
     }
 
     #[test]
@@ -2055,6 +2144,8 @@ mod tests {
             provider_id: AiProviderId::OpenAi,
             model_id: "gpt-5.4".to_string(),
             text: "La gnostica habla.".to_string(),
+            source_language_code: String::new(),
+            target_language_code: String::new(),
             source_footnote: String::new(),
             source_image_caption: String::new(),
             target_footnote: String::new(),
@@ -2073,6 +2164,8 @@ mod tests {
                 global_notes: vec![],
                 footnotes: vec![],
             }],
+            row_window: vec![],
+            alternate_language_texts: vec![],
             installation_id: None,
         });
 
@@ -2096,6 +2189,8 @@ mod tests {
             provider_id: AiProviderId::OpenAi,
             model_id: "gpt-5.4".to_string(),
             text: "La mente canta.".to_string(),
+            source_language_code: String::new(),
+            target_language_code: String::new(),
             source_footnote: String::new(),
             source_image_caption: String::new(),
             target_footnote: String::new(),
@@ -2111,6 +2206,8 @@ mod tests {
                 global_notes: vec![],
                 footnotes: vec![],
             }],
+            row_window: vec![],
+            alternate_language_texts: vec![],
             installation_id: None,
         });
 
@@ -2125,6 +2222,8 @@ mod tests {
             provider_id: AiProviderId::OpenAi,
             model_id: "gpt-5.4".to_string(),
             text: "La mente canta.".to_string(),
+            source_language_code: String::new(),
+            target_language_code: String::new(),
             source_footnote: String::new(),
             source_image_caption: String::new(),
             target_footnote: String::new(),
@@ -2140,6 +2239,8 @@ mod tests {
                 global_notes: vec![],
                 footnotes: vec![],
             }],
+            row_window: vec![],
+            alternate_language_texts: vec![],
             installation_id: None,
         });
 
@@ -2153,6 +2254,8 @@ mod tests {
             provider_id: AiProviderId::OpenAi,
             model_id: "gpt-5.4".to_string(),
             text: "La mente canta.".to_string(),
+            source_language_code: String::new(),
+            target_language_code: String::new(),
             source_footnote: String::new(),
             source_image_caption: String::new(),
             target_footnote: String::new(),
@@ -2168,6 +2271,8 @@ mod tests {
                 global_notes: vec![],
                 footnotes: vec![],
             }],
+            row_window: vec![],
+            alternate_language_texts: vec![],
             installation_id: None,
         });
 
@@ -2181,6 +2286,8 @@ mod tests {
             provider_id: AiProviderId::OpenAi,
             model_id: "gpt-5.4".to_string(),
             text: "La mente canta.".to_string(),
+            source_language_code: String::new(),
+            target_language_code: String::new(),
             source_footnote: String::new(),
             source_image_caption: String::new(),
             target_footnote: String::new(),
@@ -2199,6 +2306,8 @@ mod tests {
                 global_notes: vec![],
                 footnotes: vec![],
             }],
+            row_window: vec![],
+            alternate_language_texts: vec![],
             installation_id: None,
         });
 
@@ -2309,6 +2418,8 @@ mod tests {
                 target_language_code: "vi".to_string(),
                 target_language_label: "Vietnamese".to_string(),
                 target_text: "Ban dich hien tai".to_string(),
+                source_footnote: String::new(),
+                source_image_caption: String::new(),
                 updated_source_text: None,
                 updated_target_text: None,
                 alternate_language_texts: vec![],
@@ -2373,6 +2484,17 @@ mod tests {
         );
         assert!(!prompt.contains("previous_row_1"));
         assert!(!prompt.contains("Row window context: None."));
+    }
+
+    #[test]
+    fn assistant_prompt_includes_source_footnote_and_image_caption() {
+        let mut request = assistant_request_for_prompt();
+        request.row.source_footnote = "Nota fuente".to_string();
+        request.row.source_image_caption = "Caption source".to_string();
+        let prompt = build_assistant_chat_prompt(&request);
+
+        assert!(prompt.contains("<source_footnote>\nNota fuente\n</source_footnote>"));
+        assert!(prompt.contains("<source_image_caption>\nCaption source\n</source_image_caption>"));
     }
 
     #[test]

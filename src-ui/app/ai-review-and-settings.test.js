@@ -258,6 +258,23 @@ function installTranslateFixture(options = {}) {
   };
 }
 
+function expectedAiTranslateContextPayload(options = {}) {
+  const sourceLanguageCode = options.sourceLanguageCode ?? "es";
+  const targetLanguageCode = options.targetLanguageCode ?? "vi";
+  const sourceText = options.sourceText ?? "Hola";
+  const targetText = options.targetText ?? "Texto original";
+  return {
+    sourceLanguageCode,
+    targetLanguageCode,
+    rowWindow: [{
+      rowId: options.rowId ?? "row-1",
+      sourceText,
+      targetText,
+    }],
+    alternateLanguageTexts: options.alternateLanguageTexts ?? [],
+  };
+}
+
 function latestAssistantDraft(rowId = "row-1", targetLanguageCode = "vi", sourceLanguageCode = "es") {
   const thread = state.editorChapter?.assistant?.threadsByKey?.[`${rowId}::${sourceLanguageCode}::${targetLanguageCode}`];
   return thread?.items
@@ -661,6 +678,7 @@ test("runEditorAiTranslate uses the configured translate action and creates an a
           providerId: "openai",
           modelId: "gpt-5.4-mini",
           text: "Hola",
+          ...expectedAiTranslateContextPayload(),
           sourceLanguage: "Spanish",
           targetLanguage: "Vietnamese",
         },
@@ -993,6 +1011,15 @@ test("runEditorAiTranslate uses the active alternate language as the translation
           providerId: "openai",
           modelId: "gpt-5.4-mini",
           text: "Hola",
+          ...expectedAiTranslateContextPayload({
+            targetLanguageCode: "fr",
+            targetText: "Texte original",
+            alternateLanguageTexts: [{
+              languageCode: "vi",
+              languageLabel: "Vietnamese",
+              text: "Texto original",
+            }],
+          }),
           sourceLanguage: "Spanish",
           targetLanguage: "French",
         },
@@ -1088,6 +1115,10 @@ test("runEditorAiTranslate sends glossary hints for matched source-language term
           providerId: "openai",
           modelId: "gpt-5.4-mini",
           text: "La gnostica habla.",
+          ...expectedAiTranslateContextPayload({
+            sourceText: "La gnostica habla.",
+            targetText: "",
+          }),
           sourceLanguage: "Spanish",
           targetLanguage: "Vietnamese",
           glossaryHints: [{
@@ -1277,6 +1308,16 @@ test("runEditorAiTranslate prepares derived glossary hints when the glossary sou
           providerId: "openai",
           modelId: "gpt-5.4-mini",
           text: "The inner chamber glows.",
+          ...expectedAiTranslateContextPayload({
+            sourceLanguageCode: "en",
+            sourceText: "The inner chamber glows.",
+            targetText: "",
+            alternateLanguageTexts: [{
+              languageCode: "es",
+              languageLabel: "Spanish",
+              text: "La camara interior brilla.",
+            }],
+          }),
           sourceLanguage: "English",
           targetLanguage: "Vietnamese",
           glossaryHints: [{
@@ -2081,6 +2122,7 @@ test("runEditorAiTranslate issues and caches a shared team key before translatin
           providerId: "openai",
           modelId: "gpt-5.4-mini",
           text: "Hola",
+          ...expectedAiTranslateContextPayload(),
           sourceLanguage: "Spanish",
           targetLanguage: "Vietnamese",
           installationId: 42,
@@ -2397,6 +2439,12 @@ test("runEditorAiAssistant renders a draft when a chat response includes draft t
       es: "Su mision es entregar metodos practicos.",
       vi: "Nhiem vu cua no la trao phuong phap thuc hanh.",
     },
+    footnotes: {
+      es: "Nota fuente",
+    },
+    imageCaptions: {
+      es: "Caption source",
+    },
   });
   state.editorChapter = {
     ...state.editorChapter,
@@ -2428,6 +2476,8 @@ test("runEditorAiAssistant renders a draft when a chat response includes draft t
     if (command === "run_ai_assistant_turn") {
       assert.equal(payload.request.kind, "chat");
       assert.equal(payload.request.userMessage, "Please make the translation smoother.");
+      assert.equal(payload.request.row.sourceFootnote, "Nota fuente");
+      assert.equal(payload.request.row.sourceImageCaption, "Caption source");
       return {
         assistantText: "A smoother version:\n\nMot ban dich muot ma hon.",
         draftTranslationText: "Mot ban dich muot ma hon.",

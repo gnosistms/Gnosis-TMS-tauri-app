@@ -196,6 +196,10 @@ pub struct AiTranslationRequest {
     pub model_id: String,
     pub text: String,
     #[serde(default)]
+    pub source_language_code: String,
+    #[serde(default)]
+    pub target_language_code: String,
+    #[serde(default)]
     pub source_footnote: String,
     #[serde(default)]
     pub source_image_caption: String,
@@ -207,6 +211,10 @@ pub struct AiTranslationRequest {
     pub target_language: String,
     #[serde(default)]
     pub glossary_hints: Vec<AiTranslationGlossaryHint>,
+    #[serde(default)]
+    pub row_window: Vec<AiAssistantRowWindowEntry>,
+    #[serde(default)]
+    pub alternate_language_texts: Vec<AiAssistantRowLanguageText>,
     #[serde(default)]
     pub installation_id: Option<i64>,
 }
@@ -333,6 +341,10 @@ pub struct AiAssistantRowContext {
     pub target_language_label: String,
     #[serde(default)]
     pub target_text: String,
+    #[serde(default)]
+    pub source_footnote: String,
+    #[serde(default)]
+    pub source_image_caption: String,
     #[serde(default)]
     pub updated_source_text: Option<String>,
     #[serde(default)]

@@ -524,6 +524,8 @@ function currentAssistantContext(chapterState = state.editorChapter, overrides =
     targetLanguageLabel: normalizeLanguageLabel(targetLanguage, targetLanguageCode),
     sourceText,
     targetText,
+    sourceFootnote: row.footnotes?.[sourceLanguageCode] ?? "",
+    sourceImageCaption: row.imageCaptions?.[sourceLanguageCode] ?? "",
     alternateLanguageTexts: buildEditorAssistantAlternateLanguageTexts(
       row,
       languages,
@@ -840,7 +842,7 @@ function resolveRowIndex(rows, rowId) {
   return (Array.isArray(rows) ? rows : []).findIndex((row) => row?.rowId === rowId);
 }
 
-function buildAssistantSourceContextWindow(
+export function buildAssistantSourceContextWindow(
   chapterState,
   rowId,
   sourceLanguageCode,
@@ -1246,6 +1248,8 @@ function buildAssistantTurnRequestPayload(
       targetLanguageCode: context.targetLanguageCode,
       targetLanguageLabel: context.targetLanguageLabel,
       targetText: context.targetText,
+      sourceFootnote: context.sourceFootnote,
+      sourceImageCaption: context.sourceImageCaption,
       ...rowTextUpdatesSinceLastAssistantPrompt(thread, context),
       alternateLanguageTexts: context.alternateLanguageTexts,
       targetLanguageHistory: Array.isArray(options.targetLanguageHistory)

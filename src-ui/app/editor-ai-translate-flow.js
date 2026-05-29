@@ -36,6 +36,8 @@ import { showNoticeBadge } from "./status-feedback.js";
 import { findEditorRowById } from "./editor-utils.js";
 import { state } from "./state.js";
 import {
+  buildAssistantSourceContextWindow,
+  buildEditorAssistantAlternateLanguageTexts,
   logEditorAssistantTranslation,
   logEditorAssistantTranslationDraft,
 } from "./editor-ai-assistant-flow.js";
@@ -243,6 +245,18 @@ export function buildEditorAiTranslateContext(chapterState = state.editorChapter
     targetText: row.fields?.[targetLanguageCode] ?? "",
     targetFootnote: row.footnotes?.[targetLanguageCode] ?? "",
     targetImageCaption: row.imageCaptions?.[targetLanguageCode] ?? "",
+    rowWindow: buildAssistantSourceContextWindow(
+      chapterState,
+      rowId,
+      sourceLanguageCode,
+      targetLanguageCode,
+    ),
+    alternateLanguageTexts: buildEditorAssistantAlternateLanguageTexts(
+      row,
+      languages,
+      sourceLanguageCode,
+      targetLanguageCode,
+    ),
   };
 }
 
@@ -615,6 +629,8 @@ export async function runEditorAiTranslateForContext(
         providerId,
         modelId,
         text: context.sourceText,
+        sourceLanguageCode: context.sourceLanguageCode,
+        targetLanguageCode: context.targetLanguageCode,
         ...(requestedSourceFootnote(context)
           ? { sourceFootnote: requestedSourceFootnote(context) }
           : {}),
@@ -625,6 +641,8 @@ export async function runEditorAiTranslateForContext(
         ...(context.targetImageCaption?.trim() ? { targetImageCaption: context.targetImageCaption } : {}),
         sourceLanguage: context.sourceLanguageLabel,
         targetLanguage: context.targetLanguageLabel,
+        rowWindow: context.rowWindow,
+        alternateLanguageTexts: context.alternateLanguageTexts,
         ...(Array.isArray(glossaryHints) && glossaryHints.length > 0
           ? { glossaryHints }
           : {}),
