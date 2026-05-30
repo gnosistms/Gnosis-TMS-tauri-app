@@ -21,6 +21,7 @@ import { renderProjectImportModal } from "./project-import-modal.js";
 import { renderProjectExportModal } from "./project-export-modal.js";
 import { renderProjectAddTranslationModal } from "./project-add-translation-modal.js";
 import { renderProjectRenameModal } from "./project-rename-modal.js";
+import { renderProjectOldLayoutDiscardModal } from "./project-old-layout-discard-modal.js";
 import {
   getNoticeBadgeText,
   getScopedSyncBadgeText,
@@ -359,6 +360,7 @@ export function renderProjectsScreen(state) {
     renderChapterRenameModal(state) +
     renderProjectRenameModal(state) +
     renderProjectPermanentDeletionModal(state) +
+    renderProjectOldLayoutDiscardModal(state) +
     renderProjectClearDeletedFilesModal(state) +
     renderProjectImportModal(state) +
     renderProjectAddTranslationModal(state) +

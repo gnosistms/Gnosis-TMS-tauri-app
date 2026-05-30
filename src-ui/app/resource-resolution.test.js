@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { deriveGlossaryResolution, deriveProjectResolution } from "./resource-resolution.js";
+import { deriveGlossaryResolution, deriveProjectResolution, deriveQaListResolution } from "./resource-resolution.js";
 
 test("deleted project resolution blocks lifecycle actions", () => {
   const resolution = deriveProjectResolution({
@@ -149,6 +149,43 @@ test("update required sync state blocks project lifecycle and content actions", 
   assert.equal(resolution?.blockLifecycleActions, true);
   assert.equal(resolution?.blockContentActions, true);
   assert.match(resolution?.help ?? "", /Update Gnosis TMS before continuing/i);
+});
+
+test("remote migrated local old-layout changes surface guarded discard action", () => {
+  const resolution = deriveProjectResolution(
+    { id: "project-1", remoteState: "linked", recordState: "live" },
+    {
+      projectId: "project-1",
+      status: "remoteMigratedLocalChanges",
+      message: "The server has migrated this project.",
+    },
+  );
+
+  assert.equal(resolution?.key, "remoteMigratedLocalChanges");
+  assert.equal(resolution?.blockLifecycleActions, true);
+  assert.equal(resolution?.blockContentActions, true);
+  assert.equal(resolution?.actionLabel, "Discard local changes and sync");
+  assert.equal(resolution?.action, "open-project-old-layout-discard:project-1");
+});
+
+test("remote migrated glossary and QA list states surface resource-specific discard actions", () => {
+  const glossaryResolution = deriveGlossaryResolution(
+    { id: "glossary-1", remoteState: "linked", recordState: "live" },
+    {
+      repoName: "glossary-repo",
+      status: "remoteMigratedLocalChanges",
+    },
+  );
+  const qaListResolution = deriveQaListResolution(
+    { id: "qa-1", remoteState: "linked", recordState: "live" },
+    {
+      repoName: "qa-repo",
+      status: "remoteMigratedLocalChanges",
+    },
+  );
+
+  assert.equal(glossaryResolution?.action, "open-glossary-old-layout-discard:glossary-1");
+  assert.equal(qaListResolution?.action, "open-qa-list-old-layout-discard:qa-1");
 });
 
 test("linked resources do not surface a top-level resolution banner", () => {

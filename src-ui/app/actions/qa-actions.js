@@ -8,6 +8,8 @@ import {
   cancelQaListPermanentDeletion,
   cancelQaListRename,
   cancelQaTermEditor,
+  closeQaListOldLayoutDiscard,
+  confirmQaListOldLayoutDiscard,
   confirmQaListPermanentDeletion,
   deleteQaList,
   deleteQaTerm,
@@ -15,6 +17,7 @@ import {
   importQaListFromTmx,
   makeQaListDefault,
   openQaListCreation,
+  openQaListOldLayoutDiscard,
   openQaListPermanentDeletion,
   openQaListRename,
   openQaTermEditor,
@@ -35,6 +38,8 @@ export function createQaActions(render) {
     "cancel-qa-list-import": () => cancelQaListImportModal(render),
     "cancel-qa-term-editor": () => cancelQaTermEditor(render),
     "open-new-qa-list": () => openQaListCreation(render),
+    "close-qa-list-old-layout-discard": () => closeQaListOldLayoutDiscard(render),
+    "confirm-qa-list-old-layout-discard": () => confirmQaListOldLayoutDiscard(render),
     "import-qa-list": () => importQaListFromTmx(render),
     "select-qa-list-import-file": () => selectQaListImportFile(render),
     "open-new-qa-term": () => openQaTermEditor(render),
@@ -54,6 +59,10 @@ export function createQaActions(render) {
     {
       prefix: "rename-qa-list:",
       handler: (qaListId) => openQaListRename(render, qaListId),
+    },
+    {
+      prefix: "open-qa-list-old-layout-discard:",
+      handler: (qaListId) => openQaListOldLayoutDiscard(render, qaListId),
     },
     {
       prefix: "make-default-qa-list:",

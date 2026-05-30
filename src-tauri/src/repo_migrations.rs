@@ -30,6 +30,15 @@ pub(crate) fn ordered_repo_migrations() -> &'static [&'static str] {
     &[MIGRATION_0810]
 }
 
+pub(crate) const REMOTE_MIGRATED_LOCAL_OLD_LAYOUT_CHANGES_MESSAGE: &str =
+    "REMOTE_MIGRATED_LOCAL_OLD_LAYOUT_CHANGES: The remote repo was already migrated, but this local repo has old-layout changes that must be discarded before syncing.";
+
+pub(crate) fn is_remote_migrated_local_old_layout_changes_error(error: &str) -> bool {
+    error
+        .trim()
+        .starts_with("REMOTE_MIGRATED_LOCAL_OLD_LAYOUT_CHANGES:")
+}
+
 #[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn resolve_pending_repo_migrations(
     metadata: Option<&RepoLayoutMetadata>,
@@ -131,7 +140,6 @@ pub(crate) fn sync_pending_repo_layout_migration(
     branch_name: &str,
     remote_head_oid: &str,
 ) -> Result<(), String> {
-    ensure_clean_repo_for_layout_migration(repo_path)?;
     let remote_tracking_ref = format!("origin/{branch_name}");
     if !remote_head_oid.trim().is_empty()
         && !ref_requires_0810_migration(repo_path, &remote_tracking_ref)
@@ -140,7 +148,24 @@ pub(crate) fn sync_pending_repo_layout_migration(
         return Ok(());
     }
 
+    ensure_clean_repo_for_layout_migration(repo_path)?;
     migrate_repo_to_0810(app, repo_path, repo_kind)
+}
+
+pub(crate) fn discard_local_old_layout_changes_and_adopt_remote(
+    repo_path: &Path,
+    branch_name: &str,
+    remote_tracking_ref: &str,
+) -> Result<(), String> {
+    if !repo_requires_0810_migration(repo_path) {
+        return Ok(());
+    }
+    if ref_requires_0810_migration(repo_path, remote_tracking_ref) {
+        return Err(
+            "The server repo is not migrated yet; local changes were not discarded.".to_string(),
+        );
+    }
+    force_adopt_remote_migrated_layout(repo_path, branch_name, remote_tracking_ref)
 }
 
 pub(crate) fn repo_requires_0810_migration(repo_path: &Path) -> bool {
@@ -754,6 +779,12 @@ fn adopt_remote_migrated_layout(
     branch_name: &str,
     remote_tracking_ref: &str,
 ) -> Result<(), String> {
+    let status = git_output(repo_path, &["status", "--porcelain"], None)
+        .map_err(|_| REMOTE_MIGRATED_LOCAL_OLD_LAYOUT_CHANGES_MESSAGE.to_string())?;
+    if !status.trim().is_empty() {
+        return Err(REMOTE_MIGRATED_LOCAL_OLD_LAYOUT_CHANGES_MESSAGE.to_string());
+    }
+
     if git_output(
         repo_path,
         &["merge-base", "--is-ancestor", "HEAD", remote_tracking_ref],
@@ -761,9 +792,25 @@ fn adopt_remote_migrated_layout(
     )
     .is_err()
     {
-        return Err("The remote repo was already migrated, but this local repo has unpushed old-layout commits. Resolve the local repo before syncing.".to_string());
+        return Err(REMOTE_MIGRATED_LOCAL_OLD_LAYOUT_CHANGES_MESSAGE.to_string());
     }
 
+    force_adopt_remote_migrated_layout(repo_path, branch_name, remote_tracking_ref)
+}
+
+fn force_adopt_remote_migrated_layout(
+    repo_path: &Path,
+    branch_name: &str,
+    remote_tracking_ref: &str,
+) -> Result<(), String> {
+    let _ = git_output(
+        repo_path,
+        &["config", "--local", "core.longpaths", "true"],
+        None,
+    );
+
+    let _ = git_output(repo_path, &["reset", "--hard"], None);
+    let _ = git_output(repo_path, &["clean", "-fd"], None);
     git_output(
         repo_path,
         &["checkout", "-B", branch_name, remote_tracking_ref],
@@ -992,6 +1039,76 @@ mod tests {
 
         assert_eq!(git_stdout(&repo_path, &["rev-parse", "HEAD"]), remote_head);
         assert!(repo_path.join(REPO_METADATA_RELATIVE_PATH).exists());
+        let _ = fs::remove_dir_all(repo_path);
+    }
+
+    #[test]
+    fn discard_old_layout_changes_force_adopts_remote_migrated_layout() {
+        let repo_path = temp_repo("discard-old-layout-adopt-remote");
+        fs::write(repo_path.join("project.json"), "{}\n").expect("write project");
+        run_git(&repo_path, &["add", "project.json"]);
+        run_git(&repo_path, &["commit", "-m", "Initial"]);
+        let old_head = git_stdout(&repo_path, &["rev-parse", "HEAD"]);
+
+        write_repo_layout_metadata(&repo_path, &new_v2_repo_layout_metadata(RepoKind::Project))
+            .expect("write metadata");
+        run_git(&repo_path, &["add", REPO_METADATA_RELATIVE_PATH]);
+        run_git(&repo_path, &["commit", "-m", "Remote migration"]);
+        let remote_head = git_stdout(&repo_path, &["rev-parse", "HEAD"]);
+        run_git(
+            &repo_path,
+            &["update-ref", "refs/remotes/origin/main", &remote_head],
+        );
+        run_git(&repo_path, &["reset", "--hard", &old_head]);
+        fs::write(repo_path.join("project.json"), "{\"title\":\"local\"}\n")
+            .expect("write old-layout local change");
+        run_git(&repo_path, &["add", "project.json"]);
+        run_git(&repo_path, &["commit", "-m", "Local old layout change"]);
+
+        let error = adopt_remote_migrated_layout(&repo_path, "main", "origin/main")
+            .expect_err("local old-layout commits should require explicit discard");
+        assert!(is_remote_migrated_local_old_layout_changes_error(&error));
+
+        discard_local_old_layout_changes_and_adopt_remote(&repo_path, "main", "origin/main")
+            .expect("discard and adopt remote layout");
+
+        assert_eq!(git_stdout(&repo_path, &["rev-parse", "HEAD"]), remote_head);
+        assert!(repo_path.join(REPO_METADATA_RELATIVE_PATH).exists());
+        let _ = fs::remove_dir_all(repo_path);
+    }
+
+    #[test]
+    fn discard_old_layout_changes_clears_dirty_worktree_before_adopting_remote() {
+        let repo_path = temp_repo("discard-old-layout-dirty-adopt-remote");
+        fs::write(repo_path.join("project.json"), "{}\n").expect("write project");
+        run_git(&repo_path, &["add", "project.json"]);
+        run_git(&repo_path, &["commit", "-m", "Initial"]);
+        let old_head = git_stdout(&repo_path, &["rev-parse", "HEAD"]);
+
+        write_repo_layout_metadata(&repo_path, &new_v2_repo_layout_metadata(RepoKind::Project))
+            .expect("write metadata");
+        run_git(&repo_path, &["add", REPO_METADATA_RELATIVE_PATH]);
+        run_git(&repo_path, &["commit", "-m", "Remote migration"]);
+        let remote_head = git_stdout(&repo_path, &["rev-parse", "HEAD"]);
+        run_git(
+            &repo_path,
+            &["update-ref", "refs/remotes/origin/main", &remote_head],
+        );
+        run_git(&repo_path, &["reset", "--hard", &old_head]);
+        fs::write(repo_path.join("project.json"), "{\"title\":\"dirty\"}\n")
+            .expect("write dirty file");
+        fs::write(repo_path.join("stray.txt"), "untracked\n").expect("write untracked file");
+
+        let error = adopt_remote_migrated_layout(&repo_path, "main", "origin/main")
+            .expect_err("dirty worktree should require explicit discard");
+        assert!(is_remote_migrated_local_old_layout_changes_error(&error));
+
+        discard_local_old_layout_changes_and_adopt_remote(&repo_path, "main", "origin/main")
+            .expect("discard dirty worktree and adopt remote layout");
+
+        assert_eq!(git_stdout(&repo_path, &["rev-parse", "HEAD"]), remote_head);
+        assert!(repo_path.join(REPO_METADATA_RELATIVE_PATH).exists());
+        assert!(!repo_path.join("stray.txt").exists());
         let _ = fs::remove_dir_all(repo_path);
     }
 }

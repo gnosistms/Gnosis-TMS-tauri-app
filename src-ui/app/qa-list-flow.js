@@ -57,3 +57,8 @@ export {
 export {
   makeQaListDefault,
 } from "./qa-list-default-flow.js";
+export {
+  closeQaListOldLayoutDiscard,
+  confirmQaListOldLayoutDiscard,
+  openQaListOldLayoutDiscard,
+} from "./qa-list-old-layout-discard-flow.js";

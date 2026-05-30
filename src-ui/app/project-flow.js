@@ -6,8 +6,12 @@ import {
   saveStoredProjectsForTeam,
 } from "./project-cache.js";
 import { loadStoredGlossariesForTeam } from "./glossary-cache.js";
-import { buildProjectRepoFallbackConflictRecoveryInput } from "./project-repo-sync-shared.js";
 import {
+  buildProjectRepoFallbackConflictRecoveryInput,
+  buildProjectRepoSyncInput,
+} from "./project-repo-sync-shared.js";
+import {
+  createProjectOldLayoutDiscardState,
   createProjectRepoConflictRecoveryState,
   resetProjectCreation,
   resetProjectPermanentDeletion,
@@ -332,6 +336,7 @@ export function primeProjectsLoadingState(teamId = state.selectedTeamId, options
   }
   state.projectRepoSyncByProjectId = {};
   state.projectRepoConflictRecovery = createProjectRepoConflictRecoveryState();
+  state.projectOldLayoutDiscard = createProjectOldLayoutDiscardState();
   if (!canPreserveVisibleData) {
     state.pendingChapterMutations = [];
   }
@@ -841,6 +846,121 @@ export async function overwriteConflictedProjectRepos(render) {
       error: error?.message ?? String(error),
     };
     render();
+  }
+}
+
+export function openProjectOldLayoutDiscard(render, projectId) {
+  const selectedTeam = selectedProjectsTeam();
+  const project = [...state.projects, ...state.deletedProjects]
+    .find((item) => item?.id === projectId);
+  if (!selectedTeam?.id || !project) {
+    showNoticeBadge("Could not find the selected project.", render, 2600);
+    return;
+  }
+
+  state.projectOldLayoutDiscard = {
+    isOpen: true,
+    teamId: selectedTeam.id,
+    resourceId: project.id,
+    resourceName: project.title || project.name || "Project",
+    status: "idle",
+    error: "",
+  };
+  render?.();
+}
+
+export function closeProjectOldLayoutDiscard(render) {
+  if (state.projectOldLayoutDiscard?.status === "loading") {
+    return;
+  }
+  state.projectOldLayoutDiscard = createProjectOldLayoutDiscardState();
+  render?.();
+}
+
+export async function confirmProjectOldLayoutDiscard(render) {
+  const modal = state.projectOldLayoutDiscard ?? {};
+  if (modal.isOpen !== true || modal.status === "loading") {
+    return;
+  }
+
+  const selectedTeam = selectedProjectsTeam();
+  const project = [...state.projects, ...state.deletedProjects]
+    .find((item) => item?.id === modal.resourceId);
+  if (!selectedTeam?.installationId || selectedTeam.id !== modal.teamId || !project) {
+    state.projectOldLayoutDiscard = {
+      ...modal,
+      status: "idle",
+      error: "Could not find the selected project.",
+    };
+    render?.();
+    return;
+  }
+
+  if (state.offline?.isEnabled === true || state.projectsPageSync?.status === "syncing" || anyProjectWriteIsActive()) {
+    state.projectOldLayoutDiscard = {
+      ...modal,
+      status: "idle",
+      error: "Wait for the current refresh to finish before discarding local changes.",
+    };
+    render?.();
+    return;
+  }
+
+  const input = buildProjectRepoSyncInput(selectedTeam, [project]);
+  if (!Array.isArray(input.projects) || input.projects.length !== 1) {
+    state.projectOldLayoutDiscard = {
+      ...modal,
+      status: "idle",
+      error: "Could not prepare this project for sync recovery.",
+    };
+    render?.();
+    return;
+  }
+
+  state.projectOldLayoutDiscard = {
+    ...modal,
+    status: "loading",
+    error: "",
+  };
+  render?.();
+
+  try {
+    showProjectsStatus(render, "Discarding old-format local changes...");
+    const response = await enqueueRepoWrite({
+      scope: projectRepoScope({ team: selectedTeam, projectId: project.id }),
+      kind: "projectOldLayoutDiscard",
+      sourceScreen: "projects",
+      errorTarget: {
+        kind: "projectOldLayoutDiscard",
+        projectId: project.id,
+      },
+      run: () => invoke("discard_old_layout_gtms_project_repos", {
+        input,
+        sessionToken: requireBrokerSession(),
+      }),
+    });
+    const resolvedCount = Array.isArray(response?.resolvedProjectIds)
+      ? response.resolvedProjectIds.length
+      : 1;
+    state.projectOldLayoutDiscard = createProjectOldLayoutDiscardState();
+    showProjectsStatus(render, "Refreshing project list...");
+    await loadTeamProjects(render, selectedTeam.id);
+    clearProjectsStatus(render);
+    showProjectsNotice(
+      render,
+      resolvedCount > 0
+        ? "Discarded old local changes and synced the migrated project from the server."
+        : "This project no longer needed old-format recovery.",
+      3600,
+    );
+  } catch (error) {
+    clearProjectsStatus(render);
+    state.projectOldLayoutDiscard = {
+      ...modal,
+      status: "idle",
+      error: error?.message ?? String(error),
+    };
+    render?.();
   }
 }
 

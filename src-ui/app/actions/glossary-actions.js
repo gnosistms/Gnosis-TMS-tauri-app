@@ -9,6 +9,8 @@ import {
   cancelGlossaryRename,
   cancelGlossaryCreation,
   cancelGlossaryTermEditor,
+  closeGlossaryOldLayoutDiscard,
+  confirmGlossaryOldLayoutDiscard,
   confirmGlossaryPermanentDeletion,
   deleteGlossary,
   deleteGlossaryTerm,
@@ -17,6 +19,7 @@ import {
   makeGlossaryDefault,
   moveGlossaryTermVariantToIndex,
   openGlossaryCreation,
+  openGlossaryOldLayoutDiscard,
   openGlossaryPermanentDeletion,
   openGlossaryRename,
   openGlossaryTermEditor,
@@ -67,6 +70,8 @@ export function createGlossaryActions(render) {
     "cancel-glossary-term-editor": () => cancelGlossaryTermEditor(render),
     "cancel-glossary-creation": () => cancelGlossaryCreation(render),
     "open-new-glossary": () => openGlossaryCreation(render),
+    "close-glossary-old-layout-discard": () => closeGlossaryOldLayoutDiscard(render),
+    "confirm-glossary-old-layout-discard": () => confirmGlossaryOldLayoutDiscard(render),
     "import-glossary": () => importGlossaryFromTmx(render),
     "select-glossary-import-file": () => selectGlossaryImportFile(render),
     "open-new-term": () => openGlossaryTermEditor(render),
@@ -86,6 +91,10 @@ export function createGlossaryActions(render) {
     {
       prefix: "rename-glossary:",
       handler: (glossaryId) => openGlossaryRename(render, glossaryId),
+    },
+    {
+      prefix: "open-glossary-old-layout-discard:",
+      handler: (glossaryId) => openGlossaryOldLayoutDiscard(render, glossaryId),
     },
     {
       prefix: "make-default-glossary:",

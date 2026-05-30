@@ -20,6 +20,7 @@ import { renderQaListCreationModal } from "./qa-list-creation-modal.js";
 import { renderQaListImportModal } from "./qa-list-import-modal.js";
 import { renderQaListPermanentDeletionModal } from "./qa-list-permanent-deletion-modal.js";
 import { renderQaListRenameModal } from "./qa-list-rename-modal.js";
+import { renderQaListOldLayoutDiscardModal } from "./qa-list-old-layout-discard-modal.js";
 import {
   canManageQaLists,
 } from "../app/qa-list-shared.js";
@@ -290,6 +291,7 @@ export function renderQaScreen(state) {
     renderQaListCreationModal(state) +
     renderQaListImportModal(state) +
     renderQaListRenameModal(state) +
+    renderQaListOldLayoutDiscardModal(state) +
     renderQaListPermanentDeletionModal(state)
   );
 }

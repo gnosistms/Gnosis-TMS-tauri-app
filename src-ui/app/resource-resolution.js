@@ -2,7 +2,7 @@ function normalizeText(value) {
   return typeof value === "string" && value.trim() ? value.trim() : "";
 }
 
-function syncIssueResolution(snapshot, resourceLabel) {
+function syncIssueResolution(snapshot, resourceLabel, resource = null) {
   if (!snapshot || typeof snapshot !== "object") {
     return null;
   }
@@ -51,6 +51,32 @@ function syncIssueResolution(snapshot, resourceLabel) {
       help: "Update Gnosis TMS before continuing so an older app version does not overwrite newer-format data.",
       blockLifecycleActions: true,
       blockContentActions: true,
+    };
+  }
+
+  if (status === "remoteMigratedLocalChanges") {
+    const resourceId =
+      normalizeText(snapshot.projectId)
+      || normalizeText(snapshot.resourceId)
+      || normalizeText(snapshot.id)
+      || normalizeText(resource?.id);
+    const action =
+      resourceLabel === "project" && resourceId
+        ? `open-project-old-layout-discard:${resourceId}`
+        : resourceLabel === "glossary" && resourceId
+          ? `open-glossary-old-layout-discard:${resourceId}`
+          : resourceLabel === "QA list" && resourceId
+            ? `open-qa-list-old-layout-discard:${resourceId}`
+            : "";
+    return {
+      key: "remoteMigratedLocalChanges",
+      tone: "error",
+      message: message || `The server has migrated this ${resourceLabel} to a new data format, but this computer still has old-format local changes.`,
+      help: "To sync again, discard the old local changes and download the migrated data from the server.",
+      blockLifecycleActions: true,
+      blockContentActions: true,
+      actionLabel: action ? "Discard local changes and sync" : "",
+      action,
     };
   }
 
@@ -152,14 +178,14 @@ function baseResolution(resource, resourceLabel, options = {}) {
 export function deriveProjectResolution(project, syncSnapshot, options = {}) {
   return (
     baseResolution(project, "project", options)
-    ?? syncIssueResolution(syncSnapshot, "project")
+    ?? syncIssueResolution(syncSnapshot, "project", project)
   );
 }
 
 export function deriveGlossaryResolution(glossary, syncSnapshot, options = {}) {
   return (
     baseResolution(glossary, "glossary", options)
-    ?? syncIssueResolution(syncSnapshot, "glossary")
+    ?? syncIssueResolution(syncSnapshot, "glossary", glossary)
   );
 }
 
@@ -169,6 +195,6 @@ export function deriveQaListResolution(qaList, syncSnapshot, options = {}) {
       ...options,
       repairActions: false,
     })
-    ?? syncIssueResolution(syncSnapshot, "QA list")
+    ?? syncIssueResolution(syncSnapshot, "QA list", qaList)
   );
 }

@@ -74,6 +74,9 @@ export const state = {
   qaListImport: createQaListImportState(),
   projectRepoSyncByProjectId: {},
   projectRepoConflictRecovery: createProjectRepoConflictRecoveryState(),
+  projectOldLayoutDiscard: createProjectOldLayoutDiscardState(),
+  glossaryOldLayoutDiscard: createRepoOldLayoutDiscardState(),
+  qaListOldLayoutDiscard: createRepoOldLayoutDiscardState(),
   glossaryRepoSyncByRepoName: {},
   editorChapter: createEditorChapterState(),
   aiSettings: createAiSettingsState(),
@@ -210,6 +213,21 @@ export function createProjectsPageSyncState() {
 export function createProjectRepoConflictRecoveryState() {
   return {
     teamId: null,
+    status: "idle",
+    error: "",
+  };
+}
+
+export function createProjectOldLayoutDiscardState() {
+  return createRepoOldLayoutDiscardState();
+}
+
+export function createRepoOldLayoutDiscardState() {
+  return {
+    isOpen: false,
+    teamId: null,
+    resourceId: "",
+    resourceName: "",
     status: "idle",
     error: "",
   };
@@ -1163,6 +1181,9 @@ export function resetSessionState() {
   state.qaListImport = createQaListImportState();
   state.projectRepoSyncByProjectId = {};
   state.projectRepoConflictRecovery = createProjectRepoConflictRecoveryState();
+  state.projectOldLayoutDiscard = createProjectOldLayoutDiscardState();
+  state.glossaryOldLayoutDiscard = createRepoOldLayoutDiscardState();
+  state.qaListOldLayoutDiscard = createRepoOldLayoutDiscardState();
   state.editorChapter = createEditorChapterState();
   state.aiSettings = createAiSettingsState();
   state.selectedChapterId = null;

@@ -10,6 +10,11 @@ export {
   rebuildGlossaryLocalRepo,
 } from "./glossary-repo-flow.js";
 export {
+  closeGlossaryOldLayoutDiscard,
+  confirmGlossaryOldLayoutDiscard,
+  openGlossaryOldLayoutDiscard,
+} from "./glossary-old-layout-discard-flow.js";
+export {
   deleteGlossaryTerm,
   loadSelectedGlossaryEditorData,
   openGlossaryEditor,

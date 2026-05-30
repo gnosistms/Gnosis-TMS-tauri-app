@@ -12,7 +12,11 @@ use crate::{
         remote_ref_requires_newer_app,
     },
     repo_layout_metadata::STORAGE_LAYOUT_VERSION_V2,
-    repo_migrations::{repo_requires_0810_migration, sync_pending_repo_layout_migration},
+    repo_migrations::{
+        discard_local_old_layout_changes_and_adopt_remote,
+        is_remote_migrated_local_old_layout_changes_error, repo_requires_0810_migration,
+        sync_pending_repo_layout_migration,
+    },
     repo_sync_shared::{
         abort_rebase_after_failed_pull, ensure_repo_local_git_identity,
         git_error_indicates_missing_remote_ref, git_output, load_git_transport_token,
@@ -75,6 +79,13 @@ pub(crate) struct QaListRepoSyncSnapshot {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
+pub(crate) struct DiscardOldLayoutQaListReposResponse {
+    pub(crate) resolved_repo_names: Vec<String>,
+    pub(crate) skipped_repo_names: Vec<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct QaListEditorRepoSyncResponse {
     pub(crate) old_head_sha: Option<String>,
     pub(crate) new_head_sha: Option<String>,
@@ -89,6 +100,7 @@ const QA_LIST_REPO_SYNC_STATUS_UP_TO_DATE: &str = "upToDate";
 const QA_LIST_REPO_SYNC_STATUS_OUT_OF_SYNC: &str = "outOfSync";
 const QA_LIST_REPO_SYNC_STATUS_SYNC_ERROR: &str = "syncError";
 const QA_LIST_REPO_SYNC_STATUS_UPDATE_REQUIRED: &str = "updateRequired";
+const QA_LIST_REPO_SYNC_STATUS_REMOTE_MIGRATED_LOCAL_CHANGES: &str = "remoteMigratedLocalChanges";
 
 fn repo_transport_deleted_state(value: Option<&str>) -> bool {
     value
@@ -134,6 +146,19 @@ pub(crate) async fn sync_gtms_qa_list_editor_repo(
     })
     .await
     .map_err(|error| format!("The qa_list editor repo sync task failed: {error}"))?
+}
+
+#[tauri::command]
+pub(crate) async fn discard_old_layout_gtms_qa_list_repos(
+    app: AppHandle,
+    input: QaListRepoSyncInput,
+    session_token: String,
+) -> Result<DiscardOldLayoutQaListReposResponse, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        discard_old_layout_gtms_qa_list_repos_sync(&app, input, &session_token)
+    })
+    .await
+    .map_err(|error| format!("The old-layout QA list repo discard task failed: {error}"))?
 }
 
 fn sync_gtms_qa_list_repos_sync(
@@ -287,6 +312,60 @@ fn sync_gtms_qa_list_editor_repo_sync(
     })
 }
 
+fn discard_old_layout_gtms_qa_list_repos_sync(
+    app: &AppHandle,
+    input: QaListRepoSyncInput,
+    session_token: &str,
+) -> Result<DiscardOldLayoutQaListReposResponse, String> {
+    let git_transport_token = load_git_transport_token(input.installation_id, session_token)?;
+    let git_transport_auth = GitTransportAuth::from_token(&git_transport_token)?;
+    let mut resolved_repo_names = Vec::new();
+    let mut skipped_repo_names = Vec::new();
+
+    for qa_list in input.qa_lists {
+        let repo_path = resolve_or_desired_qa_list_git_repo_path(
+            app,
+            input.installation_id,
+            qa_list.qa_list_id.as_deref(),
+            &qa_list.repo_name,
+        )?;
+        if !repo_path.exists()
+            || git_output(&repo_path, &["rev-parse", "--git-dir"], None).is_err()
+            || !repo_requires_0810_migration(&repo_path)
+        {
+            skipped_repo_names.push(qa_list.repo_name.clone());
+            continue;
+        }
+
+        ensure_qa_list_origin_remote(&qa_list, &repo_path)?;
+        ensure_repo_local_git_identity(app, &repo_path)?;
+
+        let branch_name = qa_list
+            .default_branch_name
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or("main");
+        git_output(
+            &repo_path,
+            &["fetch", "origin", branch_name],
+            Some(&git_transport_auth),
+        )?;
+        let remote_tracking_ref = format!("origin/{branch_name}");
+        discard_local_old_layout_changes_and_adopt_remote(
+            &repo_path,
+            branch_name,
+            &remote_tracking_ref,
+        )?;
+        mark_qa_list_repo_synced(&qa_list, &repo_path)?;
+        resolved_repo_names.push(qa_list.repo_name);
+    }
+
+    Ok(DiscardOldLayoutQaListReposResponse {
+        resolved_repo_names,
+        skipped_repo_names,
+    })
+}
+
 fn qa_list_term_changes_between_commits(
     repo_path: &Path,
     qa_list_terms_relative_path: &str,
@@ -376,6 +455,17 @@ fn snapshot_from_qa_list_sync_error(
     repo_path: &Path,
     error: String,
 ) -> QaListRepoSyncSnapshot {
+    if is_remote_migrated_local_old_layout_changes_error(&error) {
+        return QaListRepoSyncSnapshot {
+            message: Some(
+                "The server has migrated this QA list to a new data format, but this computer still has old-format local changes."
+                    .to_string(),
+            ),
+            status: QA_LIST_REPO_SYNC_STATUS_REMOTE_MIGRATED_LOCAL_CHANGES.to_string(),
+            ..inspect_qa_list_repo_state(qa_list, repo_path)
+        };
+    }
+
     if let Some(requirement) = parse_repo_app_update_requirement_error(&error) {
         return QaListRepoSyncSnapshot {
             repo_name: qa_list.repo_name.clone(),
@@ -825,9 +915,11 @@ fn mark_qa_list_repo_synced(
 mod tests {
     use super::{
         snapshot_from_qa_list_sync_error, QaListRepoSyncDescriptor,
+        QA_LIST_REPO_SYNC_STATUS_REMOTE_MIGRATED_LOCAL_CHANGES,
         QA_LIST_REPO_SYNC_STATUS_UPDATE_REQUIRED,
     };
     use crate::repo_app_version::{encode_repo_app_update_requirement, RepoAppUpdateRequirement};
+    use crate::repo_migrations::REMOTE_MIGRATED_LOCAL_OLD_LAYOUT_CHANGES_MESSAGE;
     use std::path::Path;
 
     #[test]
@@ -858,5 +950,42 @@ mod tests {
         assert_eq!(snapshot.required_app_version.as_deref(), Some("0.1.36"));
         assert_eq!(snapshot.current_app_version.as_deref(), Some("0.1.35"));
         assert_eq!(snapshot.message.as_deref(), Some("Update required."));
+    }
+
+    #[test]
+    fn qa_list_sync_error_hides_remote_migrated_old_layout_marker() {
+        let descriptor = QaListRepoSyncDescriptor {
+            qa_list_id: Some("qa_list-1".to_string()),
+            repo_name: "qa_list-repo".to_string(),
+            full_name: "org/qa_list-repo".to_string(),
+            repo_id: None,
+            default_branch_name: Some("main".to_string()),
+            default_branch_head_oid: Some("remote-head".to_string()),
+            lifecycle_state: None,
+            record_state: None,
+            remote_state: None,
+            status: None,
+        };
+
+        let snapshot = snapshot_from_qa_list_sync_error(
+            &descriptor,
+            Path::new("/tmp/repo"),
+            REMOTE_MIGRATED_LOCAL_OLD_LAYOUT_CHANGES_MESSAGE.to_string(),
+        );
+
+        assert_eq!(
+            snapshot.status,
+            QA_LIST_REPO_SYNC_STATUS_REMOTE_MIGRATED_LOCAL_CHANGES
+        );
+        assert!(snapshot
+            .message
+            .as_deref()
+            .unwrap_or_default()
+            .contains("new data format"));
+        assert!(!snapshot
+            .message
+            .as_deref()
+            .unwrap_or_default()
+            .contains("REMOTE_MIGRATED_LOCAL_OLD_LAYOUT_CHANGES"));
     }
 }

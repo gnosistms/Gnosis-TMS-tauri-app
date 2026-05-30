@@ -21,6 +21,7 @@ import { renderGlossaryCreationModal } from "./glossary-creation-modal.js";
 import { renderGlossaryImportModal } from "./glossary-import-modal.js";
 import { renderGlossaryPermanentDeletionModal } from "./glossary-permanent-deletion-modal.js";
 import { renderGlossaryRenameModal } from "./glossary-rename-modal.js";
+import { renderGlossaryOldLayoutDiscardModal } from "./glossary-old-layout-discard-modal.js";
 import {
   canManageGlossaries,
 } from "../app/glossary-shared.js";
@@ -294,6 +295,7 @@ export function renderGlossariesScreen(state) {
     renderGlossaryCreationModal(state) +
     renderGlossaryImportModal(state) +
     renderGlossaryRenameModal(state) +
+    renderGlossaryOldLayoutDiscardModal(state) +
     renderGlossaryPermanentDeletionModal(state)
   );
 }

@@ -28,8 +28,10 @@ use crate::{
     },
     repo_layout_metadata::STORAGE_LAYOUT_VERSION_V2,
     repo_migrations::{
-        head_requires_0810_migration, migrate_no_checkout_project_repo_to_0810,
-        repo_requires_0810_migration, sync_pending_repo_layout_migration,
+        discard_local_old_layout_changes_and_adopt_remote, head_requires_0810_migration,
+        is_remote_migrated_local_old_layout_changes_error,
+        migrate_no_checkout_project_repo_to_0810, repo_requires_0810_migration,
+        sync_pending_repo_layout_migration,
     },
     repo_sync_shared::{
         abort_rebase_after_failed_pull, ensure_repo_local_git_identity,
@@ -48,6 +50,7 @@ const PROJECT_REPO_SYNC_STATUS_SYNC_ERROR: &str = "syncError";
 const PROJECT_REPO_SYNC_STATUS_UNRESOLVED_CONFLICT: &str = "unresolvedConflict";
 const PROJECT_REPO_SYNC_STATUS_IMPORTED_EDITOR_CONFLICTS: &str = "importedEditorConflicts";
 const PROJECT_REPO_SYNC_STATUS_UPDATE_REQUIRED: &str = "updateRequired";
+const PROJECT_REPO_SYNC_STATUS_REMOTE_MIGRATED_LOCAL_CHANGES: &str = "remoteMigratedLocalChanges";
 const REBASE_STOPPED_WITHOUT_UNMERGED_FILES_MESSAGE: &str =
     "Git stopped for a rebase conflict, but no unmerged files were found.";
 
@@ -121,6 +124,13 @@ pub(crate) struct ProjectEditorRepoSyncResponse {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct OverwriteConflictedProjectReposResponse {
+    pub(crate) resolved_project_ids: Vec<String>,
+    pub(crate) skipped_project_ids: Vec<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct DiscardOldLayoutProjectReposResponse {
     pub(crate) resolved_project_ids: Vec<String>,
     pub(crate) skipped_project_ids: Vec<String>,
 }
@@ -223,6 +233,19 @@ pub(crate) async fn overwrite_conflicted_gtms_project_repos(
     })
     .await
     .map_err(|error| format!("The conflicted project repo overwrite task failed: {error}"))?
+}
+
+#[tauri::command]
+pub(crate) async fn discard_old_layout_gtms_project_repos(
+    app: AppHandle,
+    input: ProjectRepoSyncInput,
+    session_token: String,
+) -> Result<DiscardOldLayoutProjectReposResponse, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        discard_old_layout_gtms_project_repos_sync(&app, input, &session_token)
+    })
+    .await
+    .map_err(|error| format!("The old-layout project repo discard task failed: {error}"))?
 }
 
 fn reconcile_project_repo_sync_states_sync(
@@ -557,6 +580,23 @@ fn snapshot_from_project_sync_error(
     repo_path: &Path,
     error: String,
 ) -> ProjectRepoSyncSnapshot {
+    if is_remote_migrated_local_old_layout_changes_error(&error) {
+        return ProjectRepoSyncSnapshot {
+            project_id: project.project_id.clone(),
+            repo_name: project.repo_name.clone(),
+            repo_path: repo_path.display().to_string(),
+            local_head_oid: read_current_head_oid(repo_path),
+            remote_head_oid: project.default_branch_head_oid.clone(),
+            status: PROJECT_REPO_SYNC_STATUS_REMOTE_MIGRATED_LOCAL_CHANGES.to_string(),
+            message: Some(
+                "The server has migrated this project to a new data format, but this computer still has old-format local changes."
+                    .to_string(),
+            ),
+            required_app_version: None,
+            current_app_version: None,
+        };
+    }
+
     if let Some(requirement) = parse_repo_app_update_requirement_error(&error) {
         return ProjectRepoSyncSnapshot {
             project_id: project.project_id.clone(),
@@ -1446,6 +1486,57 @@ fn overwrite_conflicted_gtms_project_repos_sync(
     })
 }
 
+fn discard_old_layout_gtms_project_repos_sync(
+    app: &AppHandle,
+    input: ProjectRepoSyncInput,
+    session_token: &str,
+) -> Result<DiscardOldLayoutProjectReposResponse, String> {
+    let git_transport_token = load_git_transport_token(input.installation_id, session_token)?;
+    let git_transport_auth = GitTransportAuth::from_token(&git_transport_token)?;
+    let mut resolved_project_ids = Vec::new();
+    let mut skipped_project_ids = Vec::new();
+
+    for project in input.projects {
+        let repo_path = resolve_or_desired_project_git_repo_path(
+            app,
+            input.installation_id,
+            Some(&project.project_id),
+            &project.repo_name,
+        )?;
+        if !repo_path.exists()
+            || git_output(&repo_path, &["rev-parse", "--git-dir"], None).is_err()
+            || !repo_requires_0810_migration(&repo_path)
+        {
+            skipped_project_ids.push(project.project_id.clone());
+            continue;
+        }
+
+        ensure_project_origin_remote(&project, &repo_path)?;
+        ensure_repo_local_git_identity(app, &repo_path)?;
+        abort_in_progress_git_operations(&repo_path);
+
+        let branch_name = project_branch_name(&project);
+        git_output(
+            &repo_path,
+            &["fetch", "origin", &branch_name],
+            Some(&git_transport_auth),
+        )?;
+        let remote_tracking_ref = format!("origin/{branch_name}");
+        discard_local_old_layout_changes_and_adopt_remote(
+            &repo_path,
+            &branch_name,
+            &remote_tracking_ref,
+        )?;
+        mark_project_repo_synced(&project, &repo_path)?;
+        resolved_project_ids.push(project.project_id);
+    }
+
+    Ok(DiscardOldLayoutProjectReposResponse {
+        resolved_project_ids,
+        skipped_project_ids,
+    })
+}
+
 fn overwrite_project_repo_with_remote(
     app: &AppHandle,
     project: &ProjectRepoSyncDescriptor,
@@ -1748,9 +1839,12 @@ mod tests {
         backup_dirty_project_worktree, chapter_language_list_from_json_text,
         git_status_porcelain_has_unmerged_entries, project_branch_name,
         recover_project_rebase_without_unmerged_files, snapshot_from_project_sync_error,
-        GitTransportAuth, ProjectRepoSyncDescriptor, PROJECT_REPO_SYNC_STATUS_UPDATE_REQUIRED,
+        GitTransportAuth, ProjectRepoSyncDescriptor,
+        PROJECT_REPO_SYNC_STATUS_REMOTE_MIGRATED_LOCAL_CHANGES,
+        PROJECT_REPO_SYNC_STATUS_UPDATE_REQUIRED,
     };
     use crate::repo_app_version::{encode_repo_app_update_requirement, RepoAppUpdateRequirement};
+    use crate::repo_migrations::REMOTE_MIGRATED_LOCAL_OLD_LAYOUT_CHANGES_MESSAGE;
     use std::{env, fs, path::Path, process::Command};
     use uuid::Uuid;
 
@@ -1863,6 +1957,38 @@ mod tests {
         assert_eq!(snapshot.required_app_version.as_deref(), Some("0.1.36"));
         assert_eq!(snapshot.current_app_version.as_deref(), Some("0.1.35"));
         assert_eq!(snapshot.message.as_deref(), Some("Update required."));
+    }
+
+    #[test]
+    fn project_sync_error_promotes_remote_migrated_old_layout_changes_status() {
+        let descriptor = ProjectRepoSyncDescriptor {
+            project_id: "project-1".to_string(),
+            repo_name: "repo-one".to_string(),
+            full_name: "org/repo-one".to_string(),
+            repo_id: None,
+            default_branch_name: Some("main".to_string()),
+            default_branch_head_oid: Some("remote-head".to_string()),
+            lifecycle_state: None,
+            record_state: None,
+            remote_state: None,
+            status: None,
+        };
+
+        let snapshot = snapshot_from_project_sync_error(
+            &descriptor,
+            Path::new("/tmp/repo"),
+            REMOTE_MIGRATED_LOCAL_OLD_LAYOUT_CHANGES_MESSAGE.to_string(),
+        );
+
+        assert_eq!(
+            snapshot.status,
+            PROJECT_REPO_SYNC_STATUS_REMOTE_MIGRATED_LOCAL_CHANGES
+        );
+        assert!(snapshot
+            .message
+            .as_deref()
+            .unwrap_or_default()
+            .contains("new data format"));
     }
 
     #[test]

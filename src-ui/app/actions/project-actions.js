@@ -10,9 +10,12 @@ import {
   cancelProjectCreation,
   cancelProjectPermanentDeletion,
   cancelProjectRename,
+  closeProjectOldLayoutDiscard,
+  confirmProjectOldLayoutDiscard,
   confirmProjectPermanentDeletion,
   createProjectForSelectedTeam,
   deleteProject,
+  openProjectOldLayoutDiscard,
   openProjectRename,
   overwriteConflictedProjectRepos,
   permanentlyDeleteProject,
@@ -241,6 +244,8 @@ export function createProjectActions(render) {
     "cancel-project-import": () => cancelProjectImportModal(render),
     "cancel-project-export": () => cancelProjectExport(render),
     "cancel-project-add-translation": () => cancelProjectAddTranslation(render),
+    "close-project-old-layout-discard": () => closeProjectOldLayoutDiscard(render),
+    "confirm-project-old-layout-discard": () => confirmProjectOldLayoutDiscard(render),
     "close-project-import-link-error": () => closeProjectImportLinkError(render),
     "close-project-export-unsupported": () => closeProjectExportUnsupported(render),
     "close-project-import-upload-error": () => closeProjectImportUploadError(render),
@@ -310,6 +315,10 @@ export function createProjectActions(render) {
     {
       prefix: "rename-project:",
       handler: (projectId) => openProjectRename(render, projectId),
+    },
+    {
+      prefix: "open-project-old-layout-discard:",
+      handler: (projectId) => openProjectOldLayoutDiscard(render, projectId),
     },
     {
       prefix: "rename-file:",
