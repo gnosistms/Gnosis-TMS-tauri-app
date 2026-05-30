@@ -1,4 +1,4 @@
-import { canMutateProjectFiles } from "./resource-capabilities.js";
+import { canEditProjectFileContent } from "./resource-capabilities.js";
 import {
   findSoftDeletedAncestor,
   getProjectWritePolicy,
@@ -11,7 +11,7 @@ import { state } from "./state.js";
 import { showNoticeBadge } from "./status-feedback.js";
 
 export const EDITOR_PERMISSION_DENIED_MESSAGE =
-  "Cannot save changes: your account is now Viewer.";
+  "Cannot save changes: your account type cannot edit chapter content.";
 
 export function createEditorWritePermissionSnapshot() {
   return {
@@ -97,19 +97,7 @@ export function editorSessionCanWrite(editorChapter = state.editorChapter) {
 }
 
 export function currentTeamAllowsEditorWrite(team) {
-  const role = String(team?.membershipRole ?? team?.role ?? "").trim().toLowerCase();
-  if (
-    role === "viewer"
-    || role === "read_only"
-    || role === "read-only"
-    || role === "readonly"
-  ) {
-    return false;
-  }
-  if (team?.canManageProjects === true || team?.canManageProjects === false) {
-    return canMutateProjectFiles(team);
-  }
-  return Number.isFinite(team?.installationId);
+  return canEditProjectFileContent(team);
 }
 
 export function assertEditorWritePermissionForContext({

@@ -25,7 +25,7 @@ import {
   lookupLocalMetadataTombstone,
 } from "./team-metadata-flow.js";
 import { ensureResourceNotTombstoned } from "./resource-lifecycle-engine.js";
-import { canPermanentlyDeleteProjectFiles } from "./resource-capabilities.js";
+import { canManageProjects, canPermanentlyDeleteProjectFiles } from "./resource-capabilities.js";
 import { getProjectWritePolicy } from "./resource-write-policy.js";
 import { addLocalHardDeleteTombstone } from "./local-hard-delete-store.js";
 import {
@@ -185,7 +185,7 @@ function ensureChapterMutationAllowed(
     return false;
   }
 
-  if (requireDelete ? selectedTeam.canDelete !== true : selectedTeam.canManageProjects !== true) {
+  if (requireDelete ? !canPermanentlyDeleteProjectFiles(selectedTeam) : !canManageProjects(selectedTeam)) {
     setProjectDiscoveryError(
       render,
       `You do not have permission to ${actionLabel} in this team.`,

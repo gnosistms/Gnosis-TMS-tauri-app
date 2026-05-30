@@ -15,7 +15,10 @@ use crate::{
 };
 
 const INSTALLATION_ACCESS_FILE: &str = "installation-access.json";
-const READ_ONLY_ERROR: &str = "Read-only users cannot modify projects.";
+const CONTENT_WRITE_ERROR: &str = "Your account type cannot edit shared content.";
+const RESOURCE_MANAGEMENT_ERROR: &str = "Your account type cannot manage shared resources.";
+const MEMBER_MANAGEMENT_ERROR: &str = "Your account type cannot manage team members.";
+const TEAM_MANAGEMENT_ERROR: &str = "Your account type cannot manage team settings.";
 const READ_ONLY_TEAM_AI_ERROR: &str = "Read-only users cannot use shared team AI.";
 const UNVERIFIED_ACCESS_ERROR: &str =
     "Could not verify write access for this team. Refresh team access and try again.";
@@ -34,11 +37,7 @@ pub(crate) struct InstallationAccessSnapshot {
 }
 
 pub(crate) fn is_read_only_membership_role(role: Option<&str>) -> bool {
-    let normalized = role.unwrap_or_default().trim().to_lowercase();
-    matches!(
-        normalized.as_str(),
-        "viewer" | "read_only" | "read-only" | "readonly"
-    )
+    normalized_membership_role(role).as_deref() == Some("viewer")
 }
 
 pub(crate) fn cache_installation_access(
@@ -62,13 +61,76 @@ fn installation_access_snapshot(
     }
 }
 
-pub(crate) fn ensure_installation_allows_writes(
+pub(crate) fn ensure_installation_allows_chapter_writes(
     app: &AppHandle,
     installation_id: i64,
 ) -> Result<(), String> {
     let snapshot = refresh_installation_access_snapshot(app, installation_id)
         .map_err(|_| UNVERIFIED_ACCESS_ERROR.to_string())?;
-    ensure_snapshot_allows_writes(&snapshot)
+    ensure_snapshot_allows_content_writes(&snapshot)
+}
+
+pub(crate) fn ensure_installation_allows_glossary_writes(
+    app: &AppHandle,
+    installation_id: i64,
+) -> Result<(), String> {
+    let snapshot = refresh_installation_access_snapshot(app, installation_id)
+        .map_err(|_| UNVERIFIED_ACCESS_ERROR.to_string())?;
+    ensure_snapshot_allows_content_writes(&snapshot)
+}
+
+pub(crate) fn ensure_installation_allows_qa_list_writes(
+    app: &AppHandle,
+    installation_id: i64,
+) -> Result<(), String> {
+    let snapshot = refresh_installation_access_snapshot(app, installation_id)
+        .map_err(|_| UNVERIFIED_ACCESS_ERROR.to_string())?;
+    ensure_snapshot_allows_content_writes(&snapshot)
+}
+
+pub(crate) fn ensure_installation_allows_project_management(
+    app: &AppHandle,
+    installation_id: i64,
+) -> Result<(), String> {
+    let snapshot = refresh_installation_access_snapshot(app, installation_id)
+        .map_err(|_| UNVERIFIED_ACCESS_ERROR.to_string())?;
+    ensure_snapshot_allows_resource_management(&snapshot)
+}
+
+pub(crate) fn ensure_installation_allows_glossary_management(
+    app: &AppHandle,
+    installation_id: i64,
+) -> Result<(), String> {
+    let snapshot = refresh_installation_access_snapshot(app, installation_id)
+        .map_err(|_| UNVERIFIED_ACCESS_ERROR.to_string())?;
+    ensure_snapshot_allows_resource_management(&snapshot)
+}
+
+pub(crate) fn ensure_installation_allows_qa_list_management(
+    app: &AppHandle,
+    installation_id: i64,
+) -> Result<(), String> {
+    let snapshot = refresh_installation_access_snapshot(app, installation_id)
+        .map_err(|_| UNVERIFIED_ACCESS_ERROR.to_string())?;
+    ensure_snapshot_allows_resource_management(&snapshot)
+}
+
+pub(crate) fn ensure_installation_allows_member_management(
+    app: &AppHandle,
+    installation_id: i64,
+) -> Result<(), String> {
+    let snapshot = refresh_installation_access_snapshot(app, installation_id)
+        .map_err(|_| UNVERIFIED_ACCESS_ERROR.to_string())?;
+    ensure_snapshot_allows_member_management(&snapshot)
+}
+
+pub(crate) fn ensure_installation_allows_team_management(
+    app: &AppHandle,
+    installation_id: i64,
+) -> Result<(), String> {
+    let snapshot = refresh_installation_access_snapshot(app, installation_id)
+        .map_err(|_| UNVERIFIED_ACCESS_ERROR.to_string())?;
+    ensure_snapshot_allows_team_management(&snapshot)
 }
 
 pub(crate) fn ensure_installation_allows_team_ai_access(
@@ -97,19 +159,93 @@ fn refresh_installation_access_snapshot(
     Ok(snapshot)
 }
 
-fn ensure_snapshot_allows_writes(snapshot: &InstallationAccessSnapshot) -> Result<(), String> {
-    if is_read_only_membership_role(snapshot.membership_role.as_deref()) {
-        return Err(READ_ONLY_ERROR.to_string());
+fn normalized_membership_role(role: Option<&str>) -> Option<&'static str> {
+    let normalized = role?.trim().to_lowercase();
+    if normalized.is_empty() {
+        return None;
     }
-    if snapshot
-        .membership_role
-        .as_deref()
-        .unwrap_or_default()
-        .trim()
-        .is_empty()
-        || snapshot.can_manage_projects != Some(true)
-    {
+    match normalized.as_str() {
+        "viewer" | "read_only" | "read-only" | "readonly" => Some("viewer"),
+        "translator" | "member" => Some("translator"),
+        "admin" => Some("admin"),
+        "owner" => Some("owner"),
+        _ => Some("unknown"),
+    }
+}
+
+fn snapshot_has_verified_membership(snapshot: &InstallationAccessSnapshot) -> bool {
+    normalized_membership_role(snapshot.membership_role.as_deref()).is_some()
+        || snapshot.can_delete == Some(true)
+        || snapshot.can_manage_projects == Some(true)
+}
+
+fn snapshot_is_owner(snapshot: &InstallationAccessSnapshot) -> bool {
+    match normalized_membership_role(snapshot.membership_role.as_deref()) {
+        Some("owner") => true,
+        Some(_) => false,
+        None => snapshot.can_delete == Some(true),
+    }
+}
+
+fn snapshot_can_write_content(snapshot: &InstallationAccessSnapshot) -> bool {
+    matches!(
+        normalized_membership_role(snapshot.membership_role.as_deref()),
+        Some("translator" | "admin" | "owner")
+    )
+}
+
+fn snapshot_can_manage_resources(snapshot: &InstallationAccessSnapshot) -> bool {
+    match normalized_membership_role(snapshot.membership_role.as_deref()) {
+        Some("admin" | "owner") => true,
+        Some(_) => false,
+        None => snapshot.can_manage_projects == Some(true) || snapshot.can_delete == Some(true),
+    }
+}
+
+fn ensure_snapshot_allows_content_writes(
+    snapshot: &InstallationAccessSnapshot,
+) -> Result<(), String> {
+    if !snapshot_has_verified_membership(snapshot) {
         return Err(UNVERIFIED_ACCESS_ERROR.to_string());
+    }
+    if !snapshot_can_write_content(snapshot) {
+        return Err(CONTENT_WRITE_ERROR.to_string());
+    }
+    Ok(())
+}
+
+fn ensure_snapshot_allows_resource_management(
+    snapshot: &InstallationAccessSnapshot,
+) -> Result<(), String> {
+    if !snapshot_has_verified_membership(snapshot) {
+        return Err(UNVERIFIED_ACCESS_ERROR.to_string());
+    }
+    if !snapshot_can_manage_resources(snapshot) {
+        return Err(RESOURCE_MANAGEMENT_ERROR.to_string());
+    }
+    Ok(())
+}
+
+fn ensure_snapshot_allows_member_management(
+    snapshot: &InstallationAccessSnapshot,
+) -> Result<(), String> {
+    if !snapshot_has_verified_membership(snapshot) {
+        return Err(UNVERIFIED_ACCESS_ERROR.to_string());
+    }
+    if !snapshot_is_owner(snapshot) {
+        return Err(MEMBER_MANAGEMENT_ERROR.to_string());
+    }
+    Ok(())
+}
+
+fn ensure_snapshot_allows_team_management(
+    snapshot: &InstallationAccessSnapshot,
+) -> Result<(), String> {
+    if !snapshot_has_verified_membership(snapshot) {
+        return Err(UNVERIFIED_ACCESS_ERROR.to_string());
+    }
+    if !snapshot_is_owner(snapshot) {
+        return Err(TEAM_MANAGEMENT_ERROR.to_string());
     }
     Ok(())
 }
@@ -134,7 +270,7 @@ fn ensure_snapshot_allows_team_ai_access(
 
 pub(crate) fn ensure_repo_allows_writes(app: &AppHandle, repo_path: &Path) -> Result<(), String> {
     if let Some(installation_id) = installation_id_from_path(repo_path) {
-        ensure_installation_allows_writes(app, installation_id)?;
+        ensure_installation_allows_chapter_writes(app, installation_id)?;
     }
     Ok(())
 }
@@ -183,7 +319,8 @@ fn current_unix_timestamp() -> Option<u64> {
 #[cfg(test)]
 mod tests {
     use super::{
-        ensure_snapshot_allows_team_ai_access, ensure_snapshot_allows_writes,
+        ensure_snapshot_allows_content_writes, ensure_snapshot_allows_member_management,
+        ensure_snapshot_allows_resource_management, ensure_snapshot_allows_team_ai_access,
         installation_id_from_path, is_read_only_membership_role, InstallationAccessSnapshot,
     };
     use std::path::Path;
@@ -213,24 +350,79 @@ mod tests {
     }
 
     #[test]
-    fn write_access_requires_verified_manager_role() {
+    fn content_write_access_allows_translators_admins_and_owners() {
         let mut snapshot = InstallationAccessSnapshot {
             installation_id: 1,
-            membership_role: Some("owner".to_string()),
+            membership_role: Some("translator".to_string()),
+            can_manage_projects: Some(false),
+            ..InstallationAccessSnapshot::default()
+        };
+        assert!(ensure_snapshot_allows_content_writes(&snapshot).is_ok());
+
+        snapshot.membership_role = Some("admin".to_string());
+        assert!(ensure_snapshot_allows_content_writes(&snapshot).is_ok());
+
+        snapshot.membership_role = Some("owner".to_string());
+        assert!(ensure_snapshot_allows_content_writes(&snapshot).is_ok());
+
+        snapshot.membership_role = Some("viewer".to_string());
+        assert!(ensure_snapshot_allows_content_writes(&snapshot).is_err());
+
+        snapshot.membership_role = None;
+        assert!(ensure_snapshot_allows_content_writes(&snapshot).is_err());
+    }
+
+    #[test]
+    fn resource_management_allows_admins_and_owners_only() {
+        let mut snapshot = InstallationAccessSnapshot {
+            installation_id: 1,
+            membership_role: Some("admin".to_string()),
             can_manage_projects: Some(true),
             ..InstallationAccessSnapshot::default()
         };
-        assert!(ensure_snapshot_allows_writes(&snapshot).is_ok());
-
-        snapshot.membership_role = Some("viewer".to_string());
-        assert!(ensure_snapshot_allows_writes(&snapshot).is_err());
-
-        snapshot.membership_role = None;
-        assert!(ensure_snapshot_allows_writes(&snapshot).is_err());
+        assert!(ensure_snapshot_allows_resource_management(&snapshot).is_ok());
 
         snapshot.membership_role = Some("owner".to_string());
+        assert!(ensure_snapshot_allows_resource_management(&snapshot).is_ok());
+
+        snapshot.membership_role = Some("translator".to_string());
         snapshot.can_manage_projects = Some(false);
-        assert!(ensure_snapshot_allows_writes(&snapshot).is_err());
+        assert!(ensure_snapshot_allows_resource_management(&snapshot).is_err());
+
+        snapshot.membership_role = Some("viewer".to_string());
+        assert!(ensure_snapshot_allows_resource_management(&snapshot).is_err());
+
+        snapshot.membership_role = Some("unexpected-role".to_string());
+        snapshot.can_manage_projects = Some(true);
+        snapshot.can_delete = Some(true);
+        assert!(ensure_snapshot_allows_resource_management(&snapshot).is_err());
+
+        snapshot.membership_role = None;
+        assert!(ensure_snapshot_allows_resource_management(&snapshot).is_ok());
+    }
+
+    #[test]
+    fn member_management_allows_owners_only() {
+        let mut snapshot = InstallationAccessSnapshot {
+            installation_id: 1,
+            membership_role: Some("owner".to_string()),
+            can_delete: Some(true),
+            ..InstallationAccessSnapshot::default()
+        };
+        assert!(ensure_snapshot_allows_member_management(&snapshot).is_ok());
+
+        snapshot.membership_role = Some("admin".to_string());
+        snapshot.can_delete = Some(false);
+        assert!(ensure_snapshot_allows_member_management(&snapshot).is_err());
+
+        snapshot.can_delete = Some(true);
+        assert!(ensure_snapshot_allows_member_management(&snapshot).is_err());
+
+        snapshot.membership_role = Some("unexpected-role".to_string());
+        assert!(ensure_snapshot_allows_member_management(&snapshot).is_err());
+
+        snapshot.membership_role = None;
+        assert!(ensure_snapshot_allows_member_management(&snapshot).is_ok());
     }
 
     #[test]

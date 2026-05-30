@@ -26,7 +26,7 @@ import {
   teamSupportsQaListRepos,
 } from "./qa-list-repo-flow.js";
 import {
-  canManageQaLists,
+  canManageQaListResourcesForTeam,
   canPermanentlyDeleteQaLists,
 } from "./qa-list-shared.js";
 import {
@@ -167,7 +167,7 @@ function qaListLifecycleActionBlockedMessage(team, { actionLabel, requireOwner =
   if (state.offline?.isEnabled === true) {
     return `You cannot ${actionLabel} while offline.`;
   }
-  if (requireOwner ? !canPermanentlyDeleteQaLists(team) : !canManageQaLists(team)) {
+  if (requireOwner ? !canPermanentlyDeleteQaLists(team) : !canManageQaListResourcesForTeam(team)) {
     return `You do not have permission to ${actionLabel} in this team.`;
   }
   return "";

@@ -18,7 +18,7 @@ use crate::{
     },
     github::github_client,
     installation_access::{
-        ensure_installation_allows_team_ai_access, ensure_installation_allows_writes,
+        ensure_installation_allows_team_ai_access, ensure_installation_allows_team_management,
     },
 };
 
@@ -205,7 +205,7 @@ pub(crate) async fn save_team_ai_settings(
     session_token: String,
 ) -> Result<TeamAiSettingsRecord, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        ensure_installation_allows_writes(&app, installation_id)?;
+        ensure_installation_allows_team_management(&app, installation_id)?;
         let client = github_client()?;
         save_team_ai_settings_with_client(
             &client,
@@ -249,7 +249,7 @@ pub(crate) async fn save_team_ai_provider_secret(
     session_token: String,
 ) -> Result<TeamAiSecretsMetadata, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        ensure_installation_allows_writes(&app, installation_id)?;
+        ensure_installation_allows_team_management(&app, installation_id)?;
         let client = github_client()?;
         save_team_ai_provider_secret_with_client(
             &client,

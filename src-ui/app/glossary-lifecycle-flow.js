@@ -5,7 +5,7 @@ import {
   state,
 } from "./state.js";
 import {
-  canManageGlossaries,
+  canManageGlossaryResourcesForTeam,
   canPermanentlyDeleteGlossaries,
   selectedTeam,
 } from "./glossary-shared.js";
@@ -57,7 +57,7 @@ function lifecycleActionBlockedMessage(team, { actionLabel, requireOwner = false
   if (state.offline?.isEnabled === true) {
     return `You cannot ${actionLabel} while offline.`;
   }
-  if (requireOwner ? !canPermanentlyDeleteGlossaries(team) : !canManageGlossaries(team)) {
+  if (requireOwner ? !canPermanentlyDeleteGlossaries(team) : !canManageGlossaryResourcesForTeam(team)) {
     return `You do not have permission to ${actionLabel} in this team.`;
   }
   return "";

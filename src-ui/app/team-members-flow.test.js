@@ -287,6 +287,7 @@ test("revoke admin refreshes selected team permissions from installation data", 
     if (command === "list_accessible_github_app_installations") {
       return [
         installationInfo({
+          membershipRole: "translator",
           canManageMembers: true,
           canManageProjects: false,
         }),

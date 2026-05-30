@@ -15,29 +15,29 @@ import {
   shouldShowNewProjectButton,
 } from "./resource-capabilities.js";
 
-test("owner-only repo creation helpers allow only owners", () => {
-  const ownerTeam = { canDelete: true, canManageProjects: true };
-  const adminTeam = { canDelete: false, canManageProjects: true };
-  const translatorTeam = { canDelete: false, canManageProjects: false };
+test("repo creation helpers allow admins and owners", () => {
+  const ownerTeam = { membershipRole: "owner" };
+  const adminTeam = { membershipRole: "admin" };
+  const translatorTeam = { membershipRole: "translator" };
 
   assert.equal(canCreateRepoResources(ownerTeam), true);
-  assert.equal(canCreateRepoResources(adminTeam), false);
+  assert.equal(canCreateRepoResources(adminTeam), true);
   assert.equal(canCreateRepoResources(translatorTeam), false);
 
   assert.equal(shouldShowNewProjectButton(ownerTeam), true);
-  assert.equal(shouldShowNewProjectButton(adminTeam), false);
+  assert.equal(shouldShowNewProjectButton(adminTeam), true);
   assert.equal(shouldShowNewProjectButton(translatorTeam), false);
 
   assert.equal(shouldShowGlossaryCreationControls(ownerTeam), true);
-  assert.equal(shouldShowGlossaryCreationControls(adminTeam), false);
+  assert.equal(shouldShowGlossaryCreationControls(adminTeam), true);
   assert.equal(shouldShowGlossaryCreationControls(translatorTeam), false);
 });
 
 test("local hard-delete repo resource helpers allow any team member", () => {
-  const ownerTeam = { canDelete: true, canManageProjects: true };
-  const adminTeam = { canDelete: false, canManageProjects: true };
-  const translatorTeam = { canDelete: false, canManageProjects: false };
-  const viewerTeam = { canDelete: true, canManageProjects: true, membershipRole: "viewer" };
+  const ownerTeam = { membershipRole: "owner" };
+  const adminTeam = { membershipRole: "admin" };
+  const translatorTeam = { membershipRole: "translator" };
+  const viewerTeam = { membershipRole: "viewer" };
 
   assert.equal(canPermanentlyDeleteRepoResources(ownerTeam), true);
   assert.equal(canPermanentlyDeleteRepoResources(adminTeam), true);
@@ -56,10 +56,10 @@ test("local hard-delete repo resource helpers allow any team member", () => {
 });
 
 test("deleted project file permanent delete is local-only for any team member", () => {
-  const ownerTeam = { canDelete: true, canManageProjects: true };
-  const adminTeam = { canDelete: false, canManageProjects: true };
-  const translatorTeam = { canDelete: false, canManageProjects: false };
-  const viewerTeam = { canDelete: true, canManageProjects: true, membershipRole: "viewer" };
+  const ownerTeam = { membershipRole: "owner" };
+  const adminTeam = { membershipRole: "admin" };
+  const translatorTeam = { membershipRole: "translator" };
+  const viewerTeam = { membershipRole: "viewer" };
 
   assert.equal(canPermanentlyDeleteProjectFiles(ownerTeam), true);
   assert.equal(canPermanentlyDeleteProjectFiles(adminTeam), true);
@@ -69,8 +69,6 @@ test("deleted project file permanent delete is local-only for any team member", 
 
 test("viewer teams can download project files but cannot mutate resources", () => {
   const viewerTeam = {
-    canDelete: true,
-    canManageProjects: true,
     membershipRole: "viewer",
   };
 
@@ -82,9 +80,9 @@ test("viewer teams can download project files but cannot mutate resources", () =
 });
 
 test("AI settings visibility stays on the owner-only gate", () => {
-  const ownerTeam = { canDelete: true, canManageProjects: true };
-  const adminTeam = { canDelete: false, canManageProjects: true };
-  const translatorTeam = { canDelete: false, canManageProjects: false };
+  const ownerTeam = { membershipRole: "owner" };
+  const adminTeam = { membershipRole: "admin" };
+  const translatorTeam = { membershipRole: "translator" };
 
   assert.equal(canManageTeamAiSettings(ownerTeam), true);
   assert.equal(canManageTeamAiSettings(adminTeam), false);

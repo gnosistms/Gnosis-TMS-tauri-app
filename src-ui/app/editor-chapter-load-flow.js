@@ -42,6 +42,7 @@ import {
   state,
 } from "./state.js";
 import { clearNoticeBadge, clearScopedSyncBadge, showNoticeBadge } from "./status-feedback.js";
+import { canManageProjects } from "./resource-capabilities.js";
 import { findIsoLanguageOption, normalizeSupportedLanguageCode } from "../lib/language-options.js";
 
 function normalizeEditorChapterFilters(filters) {
@@ -189,7 +190,7 @@ function openLanguageManagerForSingleLanguageFile(payload, preserveVisibleRows, 
   if (
     preserveVisibleRows
     || languages.length !== 1
-    || team?.canManageProjects !== true
+    || !canManageProjects(team)
     || state.targetLanguageManager?.isOpen
   ) {
     return;

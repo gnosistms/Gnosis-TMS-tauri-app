@@ -9,7 +9,7 @@ import {
   textAction,
 } from "../lib/ui.js";
 import { formatErrorForDisplay } from "../app/error-display.js";
-import { canManageTeamAiSettings } from "../app/resource-capabilities.js";
+import { canManageMembers as teamCanManageMembers, canManageTeamAiSettings } from "../app/resource-capabilities.js";
 import { getNoticeBadgeText, getStatusSurfaceItems } from "../app/status-feedback.js";
 import {
   MEMBER_ROLE_OPTIONS,
@@ -137,8 +137,8 @@ function renderUserCard(user, options = {}) {
 export function renderUsersScreen(state) {
   const selectedTeam = state.teams.find((team) => team.id === state.selectedTeamId) ?? state.teams[0];
   const discovery = state.userDiscovery ?? { status: "idle", error: "" };
-  const canInviteUsers = selectedTeam?.canManageMembers === true && !state.offline?.isEnabled;
-  const canManageMembers = selectedTeam?.canManageMembers === true && !state.offline?.isEnabled;
+  const canInviteUsers = teamCanManageMembers(selectedTeam) && !state.offline?.isEnabled;
+  const canManageMembers = teamCanManageMembers(selectedTeam) && !state.offline?.isEnabled;
   const canPromoteTeamOwners = canPromoteOwners(selectedTeam, { offline: state.offline?.isEnabled === true });
   const canManageRoles = canPromoteTeamOwners;
   const ownerCount = countOwners(state.users);

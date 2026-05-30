@@ -1,57 +1,82 @@
+import {
+  canDownload,
+  canLocalHardDelete,
+  canManageGlossaryResources,
+  canManageMembers,
+  canManageProjects,
+  canManageQaListResources,
+  canManageTeam,
+  canWriteChapters,
+  canWriteGlossaries,
+  canWriteQaLists,
+  isReadOnlyViewerRole,
+} from "./permissions.js";
+
 export function isReadOnlyViewerTeam(team) {
-  const membershipRole = String(team?.membershipRole ?? team?.role ?? "").trim().toLowerCase();
-  return (
-    membershipRole === "viewer"
-    || membershipRole === "read_only"
-    || membershipRole === "read-only"
-    || membershipRole === "readonly"
-  );
+  return isReadOnlyViewerRole(team?.membershipRole ?? team?.role);
 }
 
 export function canMutateProjectFiles(team) {
-  return team?.canManageProjects === true && !isReadOnlyViewerTeam(team);
+  return canManageProjects(team);
+}
+
+export function canEditProjectFileContent(team) {
+  return canWriteChapters(team);
 }
 
 export function canDownloadProjectFiles(team) {
-  return Boolean(team);
+  return canDownload(team);
 }
 
 export function canCreateRepoResources(team) {
-  return team?.canDelete === true && !isReadOnlyViewerTeam(team);
+  return canManageProjects(team);
 }
 
 export function canPermanentlyDeleteRepoResources(team) {
-  return Boolean(team);
+  return canLocalHardDelete(team);
 }
 
 export function canManageTeamAiSettings(team) {
-  return team?.canDelete === true && !isReadOnlyViewerTeam(team);
+  return canManageTeam(team);
 }
 
 export function shouldShowNewProjectButton(team) {
-  return canCreateRepoResources(team);
+  return canManageProjects(team);
 }
 
 export function shouldShowGlossaryCreationControls(team) {
-  return canCreateRepoResources(team);
+  return canManageGlossaryResources(team);
 }
 
 export function shouldShowQaListCreationControls(team) {
-  return canCreateRepoResources(team);
+  return canManageQaListResources(team);
 }
 
 export function shouldShowDeletedProjectPermanentDelete(team) {
-  return canPermanentlyDeleteRepoResources(team);
+  return canLocalHardDelete(team);
 }
 
 export function shouldShowDeletedGlossaryPermanentDelete(team) {
-  return canPermanentlyDeleteRepoResources(team);
+  return canLocalHardDelete(team);
 }
 
 export function shouldShowDeletedQaListPermanentDelete(team) {
-  return canPermanentlyDeleteRepoResources(team);
+  return canLocalHardDelete(team);
 }
 
 export function canPermanentlyDeleteProjectFiles(team) {
-  return canPermanentlyDeleteRepoResources(team);
+  return canLocalHardDelete(team);
 }
+
+export {
+  canDownload,
+  canLocalHardDelete,
+  canManageGlossaryResources,
+  canManageMembers,
+  canManageProjects,
+  canManageQaListResources,
+  canManageTeam,
+  canWriteChapters,
+  canWriteGlossaries,
+  canWriteQaLists,
+};

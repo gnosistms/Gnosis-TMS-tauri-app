@@ -1,21 +1,26 @@
 import { deriveInstallationApprovalState, normalizeInstallationPermissions } from "../github-app-permissions.js";
-import { isReadOnlyViewerTeam } from "../resource-capabilities.js";
+import { deriveTeamCapabilities } from "../permissions.js";
 
 function buildTeamRecordCore(baseRecord, installation, storedTeam = null) {
   const grantedAppPermissions = normalizeInstallationPermissions(
     installation.permissions ?? storedTeam?.grantedAppPermissions,
   );
   const approvalState = deriveInstallationApprovalState(grantedAppPermissions);
-  const membershipRole = installation.membershipRole ?? baseRecord.membershipRole ?? storedTeam?.membershipRole ?? "member";
-  const roleRecord = { membershipRole };
-  const readOnlyViewer = isReadOnlyViewerTeam(roleRecord);
+  const rawMembershipRole = installation.membershipRole ?? baseRecord.membershipRole ?? storedTeam?.membershipRole ?? "";
+  const membershipRole = rawMembershipRole || "member";
+  const capabilities = deriveTeamCapabilities({
+    ...baseRecord,
+    ...installation,
+    membershipRole: rawMembershipRole,
+  });
 
   return {
     ...baseRecord,
+    ...capabilities,
     membershipRole,
-    canDelete: !readOnlyViewer && installation.canDelete === true,
-    canManageMembers: !readOnlyViewer && installation.canManageMembers === true,
-    canManageProjects: !readOnlyViewer && installation.canManageProjects === true,
+    canDelete: capabilities.canManageTeam,
+    canManageMembers: capabilities.canManageMembers,
+    canManageProjects: capabilities.canManageProjects,
     canLeave: installation.canLeave !== false,
     needsAppApproval: approvalState.needsAppApproval,
     appApprovalUrl: installation.appApprovalUrl ?? storedTeam?.appApprovalUrl ?? null,

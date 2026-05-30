@@ -4,7 +4,7 @@ import {
   writePersistentValue,
 } from "./persistent-store.js";
 import { deriveInstallationApprovalState, normalizeInstallationPermissions } from "./github-app-permissions.js";
-import { isReadOnlyViewerTeam } from "./resource-capabilities.js";
+import { deriveTeamCapabilities } from "./permissions.js";
 
 const TEAM_RECORDS_STORAGE_KEY = "gnosis-tms-team-records";
 const TEAM_PENDING_MUTATIONS_STORAGE_KEY = "gnosis-tms-team-pending-mutations";
@@ -55,11 +55,15 @@ function normalizeTeamRecord(team) {
     return null;
   }
 
-  const membershipRole =
+  const rawMembershipRole =
     typeof team.membershipRole === "string" && team.membershipRole.trim()
       ? team.membershipRole.trim()
-      : "member";
-  const readOnlyViewer = isReadOnlyViewerTeam({ membershipRole });
+      : "";
+  const membershipRole = rawMembershipRole || "member";
+  const capabilities = deriveTeamCapabilities({
+    ...team,
+    membershipRole: rawMembershipRole,
+  });
   const grantedAppPermissions = normalizeInstallationPermissions(team.grantedAppPermissions);
   const approvalState = deriveInstallationApprovalState(grantedAppPermissions);
   const accountType =
@@ -93,9 +97,10 @@ function normalizeTeamRecord(team) {
     description:
       typeof team.description === "string" ? team.description : null,
     membershipRole,
-    canDelete: !readOnlyViewer && team.canDelete === true,
-    canManageMembers: !readOnlyViewer && (team.canManageMembers === true || team.canDelete === true),
-    canManageProjects: !readOnlyViewer && (team.canManageProjects === true || team.canDelete === true),
+    ...capabilities,
+    canDelete: capabilities.canManageTeam,
+    canManageMembers: capabilities.canManageMembers,
+    canManageProjects: capabilities.canManageProjects,
     canLeave: team.canLeave !== false,
     needsAppApproval: approvalState.needsAppApproval,
     appApprovalUrl:

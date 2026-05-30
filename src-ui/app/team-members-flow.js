@@ -13,6 +13,7 @@ import { classifySyncError } from "./sync-error.js";
 import { handleSyncFailure } from "./sync-recovery.js";
 import { loadUserTeams } from "./team-flow/sync.js";
 import { countOwners, isOwnerRole } from "./team-member-permissions.js";
+import { canManageMembers } from "./resource-capabilities.js";
 import {
   buildFallbackMembers,
   memberRoleToWireRole,
@@ -437,7 +438,7 @@ export async function confirmTeamMemberOwnerPromotion(render) {
 export function openTeamMemberRemoval(render, username) {
   const selectedTeam = getSelectedTeam();
   const member = state.users.find((user) => user?.username === username);
-  if (!selectedTeam || !member || member.isCurrentUser) {
+  if (!selectedTeam || !canManageMembers(selectedTeam) || !member || member.isCurrentUser) {
     return;
   }
 
@@ -480,7 +481,7 @@ export async function confirmTeamMemberRemoval(render) {
     return;
   }
 
-  if (selectedTeam.canManageMembers !== true) {
+  if (!canManageMembers(selectedTeam)) {
     state.teamMemberRemoval.error = "Only the team owner can remove members.";
     render();
     return;

@@ -1,7 +1,7 @@
 import { findIsoLanguageOption } from "../lib/language-options.js";
 import {
-  canCreateRepoResources,
-  isReadOnlyViewerTeam,
+  canManageQaListResources,
+  canWriteQaLists,
   canPermanentlyDeleteRepoResources,
 } from "./resource-capabilities.js";
 import { state } from "./state.js";
@@ -32,11 +32,15 @@ export function selectedTeam() {
 }
 
 export function canManageQaLists(team = selectedTeam()) {
-  return team?.canDelete === true && !isReadOnlyViewerTeam(team);
+  return canWriteQaLists(team);
+}
+
+export function canManageQaListResourcesForTeam(team = selectedTeam()) {
+  return canManageQaListResources(team);
 }
 
 export function canCreateQaLists(team = selectedTeam()) {
-  return canCreateRepoResources(team);
+  return canManageQaListResources(team);
 }
 
 export function canPermanentlyDeleteQaLists(team = selectedTeam()) {

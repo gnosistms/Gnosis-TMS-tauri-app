@@ -5,7 +5,10 @@ use crate::broker::{
     broker_patch_json_with_session, broker_patch_no_content_with_session,
     broker_post_json_with_session, broker_post_no_content_with_session,
 };
-use crate::installation_access::cache_installation_access;
+use crate::installation_access::{
+    cache_installation_access, ensure_installation_allows_member_management,
+    ensure_installation_allows_team_management,
+};
 use crate::storage_paths::installation_data_dir;
 use tauri::AppHandle;
 
@@ -99,6 +102,7 @@ pub(crate) async fn search_github_users_for_installation(
 
 #[tauri::command]
 pub(crate) fn invite_user_to_organization_for_installation(
+    app: AppHandle,
     installation_id: i64,
     org_login: String,
     invitee_id: Option<i64>,
@@ -107,6 +111,7 @@ pub(crate) fn invite_user_to_organization_for_installation(
     role: Option<String>,
     session_token: String,
 ) -> Result<GithubOrganizationInvitation, String> {
+    ensure_installation_allows_member_management(&app, installation_id)?;
     let client = github_client()?;
     broker_post_json_with_session(
         &client,
@@ -123,11 +128,13 @@ pub(crate) fn invite_user_to_organization_for_installation(
 
 #[tauri::command]
 pub(crate) async fn setup_organization_for_installation(
+    app: AppHandle,
     installation_id: i64,
     org_login: String,
     session_token: String,
 ) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
+        ensure_installation_allows_team_management(&app, installation_id)?;
         let client = github_client()?;
         broker_post_no_content_with_session(
             &client,
@@ -162,12 +169,14 @@ pub(crate) async fn inspect_team_metadata_repo_for_installation(
 
 #[tauri::command]
 pub(crate) async fn add_organization_admin_for_installation(
+    app: AppHandle,
     installation_id: i64,
     org_login: String,
     username: String,
     session_token: String,
 ) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
+        ensure_installation_allows_member_management(&app, installation_id)?;
         let client = github_client()?;
         broker_patch_no_content_with_session(
             &client,
@@ -184,12 +193,14 @@ pub(crate) async fn add_organization_admin_for_installation(
 
 #[tauri::command]
 pub(crate) async fn revoke_organization_admin_for_installation(
+    app: AppHandle,
     installation_id: i64,
     org_login: String,
     username: String,
     session_token: String,
 ) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
+        ensure_installation_allows_member_management(&app, installation_id)?;
         let client = github_client()?;
         broker_delete_no_content_with_session(
             &client,
@@ -206,6 +217,7 @@ pub(crate) async fn revoke_organization_admin_for_installation(
 
 #[tauri::command]
 pub(crate) async fn set_organization_member_role_for_installation(
+    app: AppHandle,
     installation_id: i64,
     org_login: String,
     username: String,
@@ -214,6 +226,7 @@ pub(crate) async fn set_organization_member_role_for_installation(
     session_token: String,
 ) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
+        ensure_installation_allows_member_management(&app, installation_id)?;
         let client = github_client()?;
         broker_patch_no_content_with_session(
             &client,
@@ -233,12 +246,14 @@ pub(crate) async fn set_organization_member_role_for_installation(
 
 #[tauri::command]
 pub(crate) async fn promote_organization_owner_for_installation(
+    app: AppHandle,
     installation_id: i64,
     org_login: String,
     username: String,
     session_token: String,
 ) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
+        ensure_installation_allows_member_management(&app, installation_id)?;
         let client = github_client()?;
         broker_patch_no_content_with_session(
             &client,
@@ -255,6 +270,7 @@ pub(crate) async fn promote_organization_owner_for_installation(
 
 #[tauri::command]
 pub(crate) async fn remove_organization_member_for_installation(
+    app: AppHandle,
     installation_id: i64,
     org_login: String,
     username: String,
@@ -262,6 +278,7 @@ pub(crate) async fn remove_organization_member_for_installation(
     session_token: String,
 ) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
+        ensure_installation_allows_member_management(&app, installation_id)?;
         let client = github_client()?;
         broker_delete_no_content_with_session(
             &client,
@@ -280,12 +297,14 @@ pub(crate) async fn remove_organization_member_for_installation(
 
 #[tauri::command]
 pub(crate) async fn update_organization_name_for_installation(
+    app: AppHandle,
     installation_id: i64,
     org_login: String,
     name: String,
     session_token: String,
 ) -> Result<GithubOrganization, String> {
     tauri::async_runtime::spawn_blocking(move || {
+        ensure_installation_allows_team_management(&app, installation_id)?;
         let client = github_client()?;
         broker_patch_json_with_session(
             &client,
@@ -302,12 +321,14 @@ pub(crate) async fn update_organization_name_for_installation(
 
 #[tauri::command]
 pub(crate) async fn update_organization_description_for_installation(
+    app: AppHandle,
     installation_id: i64,
     org_login: String,
     description: Option<String>,
     session_token: String,
 ) -> Result<GithubOrganization, String> {
     tauri::async_runtime::spawn_blocking(move || {
+        ensure_installation_allows_team_management(&app, installation_id)?;
         let client = github_client()?;
         broker_patch_json_with_session(
             &client,
@@ -324,11 +345,13 @@ pub(crate) async fn update_organization_description_for_installation(
 
 #[tauri::command]
 pub(crate) async fn delete_organization_for_installation(
+    app: AppHandle,
     installation_id: i64,
     org_login: String,
     session_token: String,
 ) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
+        ensure_installation_allows_team_management(&app, installation_id)?;
         let client = github_client()?;
         broker_delete_no_content_with_session(
             &client,

@@ -3,7 +3,9 @@ import assert from "node:assert/strict";
 
 import {
   READ_ONLY_DELETED_MESSAGE,
+  getGlossaryWritePolicy,
   getProjectWritePolicy,
+  getQaListWritePolicy,
   isSoftDeletedResource,
 } from "./resource-write-policy.js";
 
@@ -17,6 +19,18 @@ const writerTeam = {
 const viewerTeam = {
   ...writerTeam,
   membershipRole: "viewer",
+};
+
+const translatorTeam = {
+  id: "team-2",
+  installationId: 2,
+  membershipRole: "translator",
+};
+
+const adminTeam = {
+  id: "team-3",
+  installationId: 3,
+  membershipRole: "admin",
 };
 
 test("soft-delete helper detects team, top-level, chapter, and row states", () => {
@@ -67,4 +81,38 @@ test("viewer can local hard-delete top-level resources", () => {
   });
 
   assert.equal(policy.allowed, true);
+});
+
+test("translator can write chapter, glossary, and QA content", () => {
+  assert.equal(getProjectWritePolicy({ team: translatorTeam }).allowed, true);
+  assert.equal(getGlossaryWritePolicy({ team: translatorTeam }).allowed, true);
+  assert.equal(getQaListWritePolicy({ team: translatorTeam }).allowed, true);
+});
+
+test("translator cannot manage resources but admin can", () => {
+  assert.equal(
+    getProjectWritePolicy({ team: translatorTeam, actionKind: "restoreProject" }).allowed,
+    false,
+  );
+  assert.equal(
+    getGlossaryWritePolicy({ team: translatorTeam, actionKind: "restoreGlossary" }).allowed,
+    false,
+  );
+  assert.equal(
+    getQaListWritePolicy({ team: translatorTeam, actionKind: "restoreQaList" }).allowed,
+    false,
+  );
+
+  assert.equal(
+    getProjectWritePolicy({ team: adminTeam, actionKind: "restoreProject" }).allowed,
+    true,
+  );
+  assert.equal(
+    getGlossaryWritePolicy({ team: adminTeam, actionKind: "restoreGlossary" }).allowed,
+    true,
+  );
+  assert.equal(
+    getQaListWritePolicy({ team: adminTeam, actionKind: "restoreQaList" }).allowed,
+    true,
+  );
 });

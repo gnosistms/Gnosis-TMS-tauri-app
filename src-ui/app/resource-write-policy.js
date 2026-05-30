@@ -1,6 +1,11 @@
 import {
-  canMutateProjectFiles,
-  isReadOnlyViewerTeam,
+  canManageGlossaryResources,
+  canManageProjects,
+  canManageQaListResources,
+  canManageTeam,
+  canWriteChapters,
+  canWriteGlossaries,
+  canWriteQaLists,
 } from "./resource-capabilities.js";
 
 export const READ_ONLY_DELETED_MESSAGE =
@@ -64,7 +69,7 @@ export function canLocalHardDeleteResource(team) {
 }
 
 export function canRestoreResource(team) {
-  return canMutateProjectFiles(team);
+  return canManageProjects(team);
 }
 
 export function findSoftDeletedAncestor({
@@ -93,11 +98,15 @@ export function findSoftDeletedAncestor({
 }
 
 function roleAllowsProjectWrite(team) {
-  return canMutateProjectFiles(team);
+  return canWriteChapters(team);
+}
+
+function roleAllowsProjectManagement(team) {
+  return canManageProjects(team);
 }
 
 function roleAllowsQaListWrite(team) {
-  return team?.canDelete === true && !isReadOnlyViewerTeam(team);
+  return canWriteQaLists(team);
 }
 
 export function getProjectWritePolicy({
@@ -116,7 +125,7 @@ export function getProjectWritePolicy({
   }
 
   if (actionKind === "restoreProject") {
-    return roleAllowsProjectWrite(team) ? allowed() : blocked("viewer", "project");
+    return roleAllowsProjectManagement(team) ? allowed() : blocked("viewer", "project");
   }
 
   if (actionKind === "permanentChapter" || actionKind === "permanentRow") {
@@ -127,7 +136,9 @@ export function getProjectWritePolicy({
     if (isSoftDeletedResource(team, "team") || isSoftDeletedResource(project, "project")) {
       return blocked("parentSoftDeleted", "project");
     }
-    return roleAllowsProjectWrite(team) ? allowed() : blocked("viewer", "project");
+    return (
+      actionKind === "restoreChapter" ? roleAllowsProjectManagement(team) : roleAllowsProjectWrite(team)
+    ) ? allowed() : blocked("viewer", "project");
   }
 
   const ancestor = findSoftDeletedAncestor({ team, project, chapter });
@@ -153,12 +164,12 @@ export function getGlossaryWritePolicy({
     return blocked("missing", "glossary");
   }
   if (actionKind === "restoreGlossary") {
-    return roleAllowsProjectWrite(team) ? allowed() : blocked("viewer", "glossary");
+    return canManageGlossaryResources(team) ? allowed() : blocked("viewer", "glossary");
   }
   if (isSoftDeletedResource(team, "team") || isSoftDeletedResource(glossary, "glossary")) {
     return blocked("softDeleted", "glossary");
   }
-  return roleAllowsProjectWrite(team) ? allowed() : blocked("viewer", "glossary");
+  return canWriteGlossaries(team) ? allowed() : blocked("viewer", "glossary");
 }
 
 export function getQaListWritePolicy({
@@ -173,7 +184,7 @@ export function getQaListWritePolicy({
     return blocked("missing", "qaList");
   }
   if (actionKind === "restoreQaList") {
-    return roleAllowsQaListWrite(team) ? allowed() : blocked("viewer", "qaList");
+    return canManageQaListResources(team) ? allowed() : blocked("viewer", "qaList");
   }
   if (isSoftDeletedResource(team, "team") || isSoftDeletedResource(qaList, "qaList")) {
     return blocked("softDeleted", "qaList");
@@ -192,14 +203,12 @@ export function getTeamWritePolicy({
     return blocked("missing", "team");
   }
   if (actionKind === "restoreTeam") {
-    return team.canDelete === true && !isReadOnlyViewerTeam(team)
+    return canManageTeam(team)
       ? allowed()
       : blocked("viewer", "team");
   }
   if (isSoftDeletedResource(team, "team")) {
     return blocked("softDeleted", "team");
   }
-  return team.canDelete === true && !isReadOnlyViewerTeam(team)
-    ? allowed()
-    : blocked("viewer", "team");
+  return canManageTeam(team) ? allowed() : blocked("viewer", "team");
 }

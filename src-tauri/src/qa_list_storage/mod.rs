@@ -10,7 +10,9 @@ use uuid::Uuid;
 
 use crate::{
     git_commit::git_commit_as_signed_in_user,
-    installation_access::ensure_installation_allows_writes,
+    installation_access::{
+        ensure_installation_allows_qa_list_management, ensure_installation_allows_qa_list_writes,
+    },
     local_repo_sync_state::{
         read_local_repo_sync_state, upsert_local_repo_sync_state, LocalRepoSyncStateUpdate,
     },
@@ -286,7 +288,7 @@ pub(crate) async fn initialize_gtms_qa_list_repo(
     input: InitializeQaListRepoInput,
 ) -> Result<LocalQaListSummary, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        ensure_installation_allows_writes(&app, input.installation_id)?;
+        ensure_installation_allows_qa_list_management(&app, input.installation_id)?;
         initialize_gtms_qa_list_repo_sync(&app, input)
     })
     .await
@@ -299,7 +301,7 @@ pub(crate) async fn import_tmx_to_gtms_qa_list_repo(
     input: ImportTmxToQaListRepoInput,
 ) -> Result<LocalQaListSummary, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        ensure_installation_allows_writes(&app, input.installation_id)?;
+        ensure_installation_allows_qa_list_management(&app, input.installation_id)?;
         import_tmx_to_gtms_qa_list_repo_sync(&app, input)
     })
     .await
@@ -341,7 +343,7 @@ pub(crate) async fn rename_gtms_qa_list(
     input: RenameQaListInput,
 ) -> Result<LocalQaListSummary, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        ensure_installation_allows_writes(&app, input.installation_id)?;
+        ensure_installation_allows_qa_list_management(&app, input.installation_id)?;
         rename_gtms_qa_list_sync(&app, input)
     })
     .await
@@ -354,7 +356,7 @@ pub(crate) async fn soft_delete_gtms_qa_list(
     input: UpdateQaListLifecycleInput,
 ) -> Result<LocalQaListSummary, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        ensure_installation_allows_writes(&app, input.installation_id)?;
+        ensure_installation_allows_qa_list_management(&app, input.installation_id)?;
         update_gtms_qa_list_lifecycle_sync(&app, input, "deleted")
     })
     .await
@@ -367,7 +369,7 @@ pub(crate) async fn restore_gtms_qa_list(
     input: UpdateQaListLifecycleInput,
 ) -> Result<LocalQaListSummary, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        ensure_installation_allows_writes(&app, input.installation_id)?;
+        ensure_installation_allows_qa_list_management(&app, input.installation_id)?;
         update_gtms_qa_list_lifecycle_sync(&app, input, "active")
     })
     .await
@@ -379,10 +381,7 @@ pub(crate) async fn purge_local_gtms_qa_list_repo(
     app: AppHandle,
     input: UpdateQaListLifecycleInput,
 ) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        ensure_installation_allows_writes(&app, input.installation_id)?;
-        purge_local_gtms_qa_list_repo_sync(&app, input)
-    })
+    tauri::async_runtime::spawn_blocking(move || purge_local_gtms_qa_list_repo_sync(&app, input))
     .await
     .map_err(|error| format!("The QA list cleanup worker failed: {error}"))?
 }
@@ -393,7 +392,7 @@ pub(crate) async fn upsert_gtms_qa_list_term(
     input: UpsertQaListTermInput,
 ) -> Result<UpsertQaListTermResponse, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        ensure_installation_allows_writes(&app, input.installation_id)?;
+        ensure_installation_allows_qa_list_writes(&app, input.installation_id)?;
         upsert_gtms_qa_list_term_sync(&app, input)
     })
     .await
@@ -406,7 +405,7 @@ pub(crate) async fn rollback_gtms_qa_list_term_upsert(
     input: RollbackQaListTermUpsertInput,
 ) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
-        ensure_installation_allows_writes(&app, input.installation_id)?;
+        ensure_installation_allows_qa_list_writes(&app, input.installation_id)?;
         rollback_gtms_qa_list_term_upsert_sync(&app, input)
     })
     .await
@@ -419,7 +418,7 @@ pub(crate) async fn delete_gtms_qa_list_term(
     input: DeleteQaListTermInput,
 ) -> Result<DeleteQaListTermResponse, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        ensure_installation_allows_writes(&app, input.installation_id)?;
+        ensure_installation_allows_qa_list_writes(&app, input.installation_id)?;
         delete_gtms_qa_list_term_sync(&app, input)
     })
     .await

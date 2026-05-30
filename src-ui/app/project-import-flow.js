@@ -36,6 +36,7 @@ import {
 } from "./project-write-coordinator.js";
 import { enqueueRepoWrite } from "./repo-write-queue.js";
 import { openLocalFilePathPicker, openLocalFilePicker } from "./local-file-picker.js";
+import { canManageProjects } from "./resource-capabilities.js";
 import { normalizeSupportedLanguageCode } from "../lib/language-options.js";
 
 export const PROJECT_IMPORT_ACCEPT =
@@ -512,7 +513,7 @@ export function openProjectImportModal(render, projectId) {
     return;
   }
 
-  if (selectedTeam.canManageProjects !== true) {
+  if (!canManageProjects(selectedTeam)) {
     showNoticeBadge("You do not have permission to add files in this team.", render);
     return;
   }

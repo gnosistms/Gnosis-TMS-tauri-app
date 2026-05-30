@@ -5,6 +5,7 @@ import { classifySyncError } from "./sync-error.js";
 import { handleSyncFailure } from "./sync-recovery.js";
 import { invalidateMembersQueryAfterMutation } from "./member-query.js";
 import { memberRoleToWireRole, normalizeOrganizationMemberRole } from "./member-shared.js";
+import { canManageMembers } from "./resource-capabilities.js";
 import { clearMembersStatus, showMembersNotice, showMembersStatus } from "./team-members-flow.js";
 
 let inviteUserSearchTimeout = null;
@@ -22,7 +23,7 @@ function clearInviteUserSuggestions() {
 
 export function openInviteUser(render) {
   const selectedTeam = getSelectedTeam();
-  if (selectedTeam?.canManageMembers !== true) {
+  if (!canManageMembers(selectedTeam)) {
     return;
   }
   resetInviteUser();
@@ -153,7 +154,7 @@ export async function submitInviteUser(render) {
     return;
   }
 
-  if (selectedTeam.canManageMembers !== true) {
+  if (!canManageMembers(selectedTeam)) {
     state.inviteUser.error = "Only the team owner can invite members.";
     render();
     return;
