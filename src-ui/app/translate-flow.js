@@ -809,8 +809,8 @@ export async function confirmEditorUnreviewAll(render) {
   await confirmEditorUnreviewAllFlow(render, editorPersistenceOperations());
 }
 
-export function updateEditorRowFieldValue(rowId, languageCode, nextValue, contentKind = "field") {
-  updateEditorRowFieldValueFlow(rowId, languageCode, nextValue, contentKind, {
+export function updateEditorRowFieldValue(rowId, languageCode, nextValue, contentKind = "field", options = {}) {
+  updateEditorRowFieldValueFlow(rowId, languageCode, nextValue, contentKind, options, {
     updateEditorChapterRow,
   });
 }
@@ -827,6 +827,7 @@ export function toggleEditorInlineStyle(render, button) {
 export function openEditorFootnote(render, rowId, languageCode, options = {}) {
   openEditorFootnoteFlow(render, rowId, languageCode, {
     viewportSnapshot: resolveEditorMainFieldViewportSnapshot(rowId, languageCode, options),
+    updateEditorChapterRow,
   });
 }
 

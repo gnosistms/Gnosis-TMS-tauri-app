@@ -1535,6 +1535,9 @@
   min-height: 220px;
   resize: none;
   background: rgba(255, 251, 246, 0.82);
+  overflow: auto;
+  user-select: text;
+  white-space: pre-wrap;
 }
 
 .editor-conflict-modal__version-text--footnote,

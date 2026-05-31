@@ -1,9 +1,16 @@
 import { normalizeEditorFieldImage } from "./editor-images.js";
 import {
+  normalizeEditorFootnotes,
+  parseUnescapedFootnoteMarkers,
+  unescapeLiteralFootnoteMarkers,
+} from "./editor-footnotes.js";
+import {
   extractInlineMarkupVisibleText,
   renderSanitizedInlineMarkupHtml,
+  renderSanitizedInlineMarkupWithRanges,
   renderSanitizedInlineMarkupWithHighlights,
 } from "./editor-inline-markup.js";
+import { parseInlineMarkup } from "./editor-inline-markup/parser.js";
 import {
   EDITOR_ROW_TEXT_STYLE_CENTERED,
   EDITOR_ROW_TEXT_STYLE_HEADING1,
@@ -60,7 +67,7 @@ function previewFieldValue(row, languageCode) {
 }
 
 function previewFootnoteValue(row, languageCode) {
-  return previewTextValue(row?.footnotes?.[languageCode]);
+  return normalizeEditorFootnotes(row?.footnotes?.[languageCode]);
 }
 
 export function buildEditorPreviewDocument(rows, languageCode) {
@@ -74,7 +81,7 @@ export function buildEditorPreviewDocument(rows, languageCode) {
     }
 
     const text = previewFieldValue(row, languageCode);
-    const footnote = previewFootnoteValue(row, languageCode);
+    const footnotes = previewFootnoteValue(row, languageCode);
     const image = normalizeEditorFieldImage(row?.images?.[languageCode]);
     const caption = previewImageCaptionValue(row, languageCode);
     const textStyle = normalizeEditorRowTextStyle(row?.textStyle);
@@ -87,15 +94,18 @@ export function buildEditorPreviewDocument(rows, languageCode) {
         languageCode,
         textStyle,
         text,
+        footnotes,
       });
     }
 
-    if (footnote.trim()) {
+    if (!text.trim() && footnotes.length > 0) {
       blocks.push({
-        kind: "footnote",
+        kind: "text",
         rowId: row.rowId ?? "",
         languageCode,
-        text: footnote,
+        textStyle,
+        text: "",
+        footnotes,
       });
     }
 
@@ -148,7 +158,9 @@ function countPreviewSearchMatchesForBlock(block, searchQuery) {
     return countMatchesInText(block.caption, searchQuery);
   }
 
-  return countMatchesInText(block.text, searchQuery);
+  const footnoteMatches = normalizeEditorFootnotes(block.footnotes)
+    .reduce((total, entry) => total + countMatchesInText(entry.text, searchQuery), 0);
+  return countMatchesInText(block.text, searchQuery) + footnoteMatches;
 }
 
 export function countEditorPreviewSearchMatches(blocks, searchQuery) {
@@ -257,6 +269,184 @@ function previewTextVariantForStyle(textStyle) {
   }
 }
 
+function stableFootnoteId(block, noteNumber) {
+  const rowPart = String(block?.rowId ?? "row")
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    || "row";
+  return `${rowPart}-${noteNumber}`;
+}
+
+function buildPreviewSearchRanges(visibleText, searchState, matchCounter, languageCode = "") {
+  const normalizedState = normalizeEditorPreviewSearchState(searchState);
+  const query = previewSearchQuery(normalizedState);
+  if (!query) {
+    return [];
+  }
+
+  const sourceText = String(visibleText ?? "");
+  const normalizeSearchCase = (value) => {
+    const text = String(value ?? "");
+    if (!text) {
+      return "";
+    }
+
+    try {
+      return text.toLocaleLowerCase(languageCode || undefined);
+    } catch {
+      return text.toLowerCase();
+    }
+  };
+  const haystack = normalizeSearchCase(sourceText);
+  const needle = normalizeSearchCase(query);
+  const ranges = [];
+  let fromIndex = 0;
+  while (needle && fromIndex <= haystack.length - needle.length) {
+    const start = haystack.indexOf(needle, fromIndex);
+    if (start < 0) {
+      break;
+    }
+
+    const matchIndex = matchCounter.current;
+    matchCounter.current += 1;
+    ranges.push({
+      start,
+      end: start + needle.length,
+      priority: 10,
+      markRenderer(segmentHtml) {
+        const isActive = matchIndex === normalizedState.activeMatchIndex;
+        return `<mark class="translate-preview__search-match${isActive ? " is-active" : ""}" data-preview-search-match data-preview-search-match-index="${escapeHtml(String(matchIndex))}">${segmentHtml}</mark>`;
+      },
+    });
+    fromIndex = start + needle.length;
+  }
+
+  return ranges;
+}
+
+function collectEscapedLiteralFootnoteMarkerRanges(visibleText) {
+  const source = String(visibleText ?? "");
+  const ranges = [];
+  let sourceIndex = 0;
+  let displayIndex = 0;
+
+  while (sourceIndex < source.length) {
+    const escapedMatch = /^\\\[(\d+)\\?\]/.exec(source.slice(sourceIndex));
+    if (escapedMatch) {
+      const markerTextLength = escapedMatch[1].length + 2;
+      ranges.push({
+        start: displayIndex,
+        end: displayIndex + markerTextLength,
+      });
+      displayIndex += markerTextLength;
+      sourceIndex += escapedMatch[0].length;
+      continue;
+    }
+
+    displayIndex += 1;
+    sourceIndex += 1;
+  }
+
+  return ranges;
+}
+
+function isInsideAnyRange(range, ranges) {
+  return ranges.some((candidate) => range.start >= candidate.start && range.end <= candidate.end);
+}
+
+function renderTextWithWordPressFootnoteRefs(block, footnoteState, options = {}) {
+  const text = previewTextValue(block?.text);
+  const footnotes = normalizeEditorFootnotes(block?.footnotes);
+  const parsed = parseInlineMarkup(text);
+  const renderText = unescapeLiteralFootnoteMarkers(text);
+  const renderParsed = parseInlineMarkup(renderText);
+  const visibleText = renderParsed.visibleText;
+  const escapedLiteralMarkerRanges = collectEscapedLiteralFootnoteMarkerRanges(parsed.visibleText);
+  const ranges = options.serialize
+    ? []
+    : buildPreviewSearchRanges(
+      visibleText,
+      options.searchState,
+      options.matchCounter ?? { current: 0 },
+      block?.languageCode ?? "",
+    );
+
+  if (footnotes.length === 0) {
+    return options.serialize
+      ? serializePreviewText(text)
+      : renderSanitizedInlineMarkupWithRanges(renderText, ranges).replaceAll("\n", "<br>");
+  }
+
+  const footnoteByMarker = new Map(footnotes.map((entry) => [entry.marker, entry]));
+  const usedMarkers = new Set();
+  const markers = parseUnescapedFootnoteMarkers(visibleText)
+    .filter((marker) => !isInsideAnyRange(
+      { start: marker.index, end: marker.endIndex },
+      escapedLiteralMarkerRanges,
+    ));
+  const appendedRefs = [];
+
+  const appendReference = (entry) => {
+    usedMarkers.add(entry.marker);
+    const number = footnoteState.items.length + 1;
+    const id = stableFootnoteId(block, number);
+    footnoteState.items.push({
+      id,
+      number,
+      rowId: block?.rowId ?? "",
+      languageCode: block?.languageCode ?? "",
+      text: entry.text,
+    });
+    return options.serialize
+      ? `<sup data-fn="${escapeHtml(entry.text)}" class="fn"><a href="#fn-${escapeHtml(id)}" id="fnref-${escapeHtml(id)}" aria-describedby="footnote-label">${number}</a></sup>`
+      : `<sup class="translate-preview__footnote-ref fn" data-fn="${escapeHtml(entry.text)}"><a href="#fn-${escapeHtml(id)}" id="fnref-${escapeHtml(id)}" aria-describedby="footnote-label">${number}</a></sup>`;
+  };
+
+  for (const marker of markers) {
+    const entry = footnoteByMarker.get(marker.marker);
+    if (entry && !usedMarkers.has(marker.marker)) {
+      const referenceHtml = appendReference(entry);
+      ranges.push({
+        start: marker.index,
+        end: marker.endIndex,
+        priority: 5,
+        markRenderer() {
+          return referenceHtml;
+        },
+      });
+    }
+  }
+
+  for (const entry of [...footnotes].sort((left, right) => left.marker - right.marker)) {
+    if (usedMarkers.has(entry.marker)) {
+      continue;
+    }
+    appendedRefs.push(appendReference(entry));
+  }
+
+  const html = options.serialize
+    ? renderSanitizedInlineMarkupWithRanges(renderText, ranges).replaceAll("\n", "<br>")
+    : renderSanitizedInlineMarkupWithRanges(renderText, ranges).replaceAll("\n", "<br>");
+  const separator = html && appendedRefs.length > 0 && !/\s$/.test(visibleText) ? " " : "";
+  return `${html}${separator}${appendedRefs.join(" ")}`;
+}
+
+function renderWordPressFootnotesList(footnoteState, renderSegment, options = {}) {
+  if (!Array.isArray(footnoteState?.items) || footnoteState.items.length === 0) {
+    return "";
+  }
+
+  const items = footnoteState.items.map((item) => {
+    const backLink = options.serialize
+      ? `<a href="#fnref-${escapeHtml(item.id)}" aria-label="Jump to footnote reference ${escapeHtml(item.number)}">&#8617;</a>`
+      : `<a class="translate-preview__footnote-backlink" href="#fnref-${escapeHtml(item.id)}" aria-label="Jump to footnote reference ${escapeHtml(item.number)}">&#8617;</a>`;
+    return `<li id="fn-${escapeHtml(item.id)}">${renderSegment(item.text, item.languageCode)} ${backLink}</li>`;
+  }).join("");
+
+  return `<ol class="wp-block-footnotes">${items}</ol>`;
+}
+
 export function renderEditorPreviewDocumentHtml(blocks, options = {}) {
   const searchState = normalizeEditorPreviewSearchForDocument(blocks, options.searchState);
   const resolveImageSrc =
@@ -264,6 +454,7 @@ export function renderEditorPreviewDocumentHtml(blocks, options = {}) {
       ? options.resolveImageSrc
       : (() => "");
   const matchCounter = { current: 0 };
+  const footnoteState = { items: [] };
   const html = (Array.isArray(blocks) ? blocks : [])
     .map((block) => {
       if (block?.kind === "image") {
@@ -279,29 +470,34 @@ export function renderEditorPreviewDocumentHtml(blocks, options = {}) {
         return `<figure class="translate-preview__image-block" data-preview-block="image" data-row-id="${escapeHtml(block.rowId ?? "")}"><img class="translate-preview__image" src="${escapeHtml(imageSrc)}" alt="" loading="eager" />${captionHtml}</figure>`;
       }
 
-      if (block?.kind === "footnote") {
-        return `<p class="translate-preview__block translate-preview__block--footnote" data-preview-block="footnote" data-row-id="${escapeHtml(block.rowId ?? "")}" lang="${escapeHtml(block.languageCode ?? "")}"><em>${renderPreviewHighlightedText(block.text, searchState, matchCounter, block.languageCode)}</em></p>`;
-      }
-
       if (block?.kind !== "text") {
         return "";
       }
 
       const tagName = previewTextTagForStyle(block.textStyle);
       const variant = previewTextVariantForStyle(block.textStyle);
-      return `<${tagName} class="translate-preview__block translate-preview__block--${variant}" data-preview-block="${escapeHtml(variant)}" data-row-id="${escapeHtml(block.rowId ?? "")}" lang="${escapeHtml(block.languageCode ?? "")}">${renderPreviewHighlightedText(block.text, searchState, matchCounter, block.languageCode)}</${tagName}>`;
+      const textHtml = renderTextWithWordPressFootnoteRefs(
+        block,
+        footnoteState,
+        { searchState, matchCounter },
+      );
+      return `<${tagName} class="translate-preview__block translate-preview__block--${variant}" data-preview-block="${escapeHtml(variant)}" data-row-id="${escapeHtml(block.rowId ?? "")}" lang="${escapeHtml(block.languageCode ?? "")}">${textHtml}</${tagName}>`;
     })
     .filter(Boolean)
     .join("");
+  const footnotesHtml = renderWordPressFootnotesList(
+    footnoteState,
+    (text, languageCode) => renderPreviewHighlightedText(text, searchState, matchCounter, languageCode),
+  );
 
   return {
-    html,
+    html: `${html}${footnotesHtml}`,
     searchState,
   };
 }
 
 function serializePreviewText(text) {
-  return renderSanitizedInlineMarkupHtml(text).replaceAll("\n", "<br>");
+  return renderSanitizedInlineMarkupHtml(unescapeLiteralFootnoteMarkers(text)).replaceAll("\n", "<br>");
 }
 
 function serializePreviewImageHtml(block) {
@@ -324,40 +520,49 @@ function serializePreviewImageHtml(block) {
   ].join("");
 }
 
-function serializePreviewTextBlock(block) {
-  if (block?.kind === "footnote") {
-    return `<p><em>${serializePreviewText(block.text)}</em></p>`;
-  }
-
+function serializePreviewTextBlock(block, footnoteState) {
+  const textHtml = renderTextWithWordPressFootnoteRefs(
+    block,
+    footnoteState,
+    { serialize: true },
+  );
   const normalizedStyle = normalizeEditorRowTextStyle(block?.textStyle);
   if (normalizedStyle === EDITOR_ROW_TEXT_STYLE_HEADING1) {
-    return `<h1>${serializePreviewText(block.text)}</h1>`;
+    return `<h1>${textHtml}</h1>`;
   }
   if (normalizedStyle === EDITOR_ROW_TEXT_STYLE_HEADING2) {
-    return `<h2>${serializePreviewText(block.text)}</h2>`;
+    return `<h2>${textHtml}</h2>`;
   }
   if (normalizedStyle === EDITOR_ROW_TEXT_STYLE_QUOTE) {
-    return `<blockquote>${serializePreviewText(block.text)}</blockquote>`;
+    return `<blockquote>${textHtml}</blockquote>`;
   }
   if (normalizedStyle === EDITOR_ROW_TEXT_STYLE_INDENTED) {
-    return `<p style="padding-left: 2em;">${serializePreviewText(block.text)}</p>`;
+    return `<p style="padding-left: 2em;">${textHtml}</p>`;
   }
   if (normalizedStyle === EDITOR_ROW_TEXT_STYLE_CENTERED) {
-    return `<center><p>${serializePreviewText(block.text)}</p></center>`;
+    return `<center><p>${textHtml}</p></center>`;
   }
 
-  return `<p>${serializePreviewText(block.text)}</p>`;
+  return `<p>${textHtml}</p>`;
 }
 
 export function serializeEditorPreviewHtml(blocks) {
-  return (Array.isArray(blocks) ? blocks : [])
+  const footnoteState = { items: [] };
+  const bodyHtml = (Array.isArray(blocks) ? blocks : [])
     .map((block) => {
       if (block?.kind === "image") {
         return serializePreviewImageHtml(block);
       }
 
-      return serializePreviewTextBlock(block);
+      return serializePreviewTextBlock(block, footnoteState);
     })
     .filter(Boolean)
     .join("\n");
+  const footnotesHtml = renderWordPressFootnotesList(
+    footnoteState,
+    (text) => serializePreviewText(text),
+    { serialize: true },
+  );
+
+  return [bodyHtml, footnotesHtml].filter(Boolean).join("\n");
 }

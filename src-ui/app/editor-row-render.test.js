@@ -134,6 +134,27 @@ test("renderTranslationContentRow keeps text style buttons clickable while style
   assert.doesNotMatch(html, /data-action="set-editor-row-text-style"[\s\S]*?disabled[\s\S]*?>/);
 });
 
+test("renderTranslationContentRow keeps conflict text inside the language field stack", () => {
+  const html = renderTranslationContentRow({
+    ...rowWithSection({
+      canEdit: true,
+      hasConflict: true,
+      text: "Conflict text",
+    }),
+    canEdit: true,
+    hasConflict: true,
+  });
+
+  assert.match(
+    html,
+    /translation-language-panel__field-stack[\s\S]*translation-language-panel__field-static--conflict/,
+  );
+  assert.doesNotMatch(
+    html,
+    /<section[^>]*>\s*<div class="translation-language-panel__field-static translation-language-panel__field-static--conflict"/,
+  );
+});
+
 test("renderTranslationContentRow shows a placeholder while image preview dimensions load", () => {
   clearEditorImagePreviewFrameSizeCacheForTests();
   const html = renderTranslationContentRow(rowWithSection({

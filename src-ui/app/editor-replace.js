@@ -1,5 +1,5 @@
 import { findEditorSearchMatches } from "./editor-filters.js";
-import { cloneRowFields } from "./editor-utils.js";
+import { cloneRowFields, cloneRowFootnotes } from "./editor-utils.js";
 import { createEditorReplaceState, createEditorReplaceUndoModalState } from "./state.js";
 
 function normalizeString(value) {
@@ -71,22 +71,24 @@ export function buildEditorBatchReplaceUpdates({
     }
 
     const currentFields = cloneRowFields(row.fields);
-    const currentFootnotes = cloneRowFields(row.footnotes);
+    const currentFootnotes = cloneRowFootnotes(row.footnotes);
     const currentImageCaptions = cloneRowFields(row.imageCaptions);
     let matched = false;
     let changed = false;
     const nextFields = cloneRowFields(currentFields);
-    const nextFootnotes = cloneRowFields(currentFootnotes);
+    const nextFootnotes = cloneRowFootnotes(currentFootnotes);
 
     for (const languageCode of visibleCodes) {
       const currentText = normalizeString(currentFields[languageCode] ?? "");
       const matches = findEditorSearchMatches(currentText, searchQuery, languageCode, {
         caseSensitive,
       });
-      const currentFootnote = normalizeString(currentFootnotes[languageCode] ?? "");
-      const footnoteMatches = findEditorSearchMatches(currentFootnote, searchQuery, languageCode, {
-        caseSensitive,
-      });
+      const currentFootnoteEntries = currentFootnotes[languageCode] ?? [];
+      const footnoteMatches = currentFootnoteEntries.flatMap((entry, index) =>
+        findEditorSearchMatches(entry.text, searchQuery, languageCode, {
+          caseSensitive,
+        }).map((match) => ({ ...match, footnoteIndex: index })),
+      );
       if (matches.length === 0 && footnoteMatches.length === 0) {
         continue;
       }
@@ -104,15 +106,14 @@ export function buildEditorBatchReplaceUpdates({
 
       if (footnoteMatches.length > 0) {
         matched = true;
-        const nextFootnote = applyEditorSearchReplace(
-          currentFootnote,
-          searchQuery,
-          replaceText,
-          languageCode,
-          { caseSensitive },
-        );
-        if (nextFootnote !== currentFootnote) {
-          nextFootnotes[languageCode] = nextFootnote;
+        const nextFootnoteEntries = currentFootnoteEntries.map((entry) => ({
+          ...entry,
+          text: applyEditorSearchReplace(entry.text, searchQuery, replaceText, languageCode, {
+            caseSensitive,
+          }),
+        }));
+        if (nextFootnoteEntries.some((entry, index) => entry.text !== currentFootnoteEntries[index]?.text)) {
+          nextFootnotes[languageCode] = nextFootnoteEntries;
           changed = true;
         }
       }

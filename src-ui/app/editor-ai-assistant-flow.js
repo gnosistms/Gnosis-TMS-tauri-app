@@ -13,7 +13,7 @@ import {
 } from "./project-context.js";
 import { invoke, waitForNextPaint } from "./runtime.js";
 import { state } from "./state.js";
-import { findEditorRowById } from "./editor-utils.js";
+import { editorFootnotesPlainText, findEditorRowById } from "./editor-utils.js";
 import { formatAiHistoryModelLabel } from "./editor-history.js";
 import {
   buildEditorAssistantThreadKey,
@@ -524,7 +524,7 @@ function currentAssistantContext(chapterState = state.editorChapter, overrides =
     targetLanguageLabel: normalizeLanguageLabel(targetLanguage, targetLanguageCode),
     sourceText,
     targetText,
-    sourceFootnote: row.footnotes?.[sourceLanguageCode] ?? "",
+    sourceFootnote: editorFootnotesPlainText(row.footnotes?.[sourceLanguageCode]),
     sourceImageCaption: row.imageCaptions?.[sourceLanguageCode] ?? "",
     alternateLanguageTexts: buildEditorAssistantAlternateLanguageTexts(
       row,
@@ -1627,7 +1627,7 @@ export async function applyEditorAssistantDraft(render, itemId, operations = {})
         item.draftTranslationText,
       );
     }
-    if (item.draftTranslationFootnote?.trim() && !String(context.row?.footnotes?.[context.targetLanguageCode] ?? "").trim()) {
+    if (item.draftTranslationFootnote?.trim() && !editorFootnotesPlainText(context.row?.footnotes?.[context.targetLanguageCode]).trim()) {
       updateEditorRowFieldValue(
         context.rowId,
         context.targetLanguageCode,

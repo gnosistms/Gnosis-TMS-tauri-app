@@ -1693,10 +1693,53 @@
   font-style: italic;
 }
 
+.translation-language-panel__footnote-editor-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 8px;
+  padding: 2px var(--translation-field-padding-right) 8px var(--translation-field-padding-left);
+  direction: ltr;
+}
+
+.translation-language-panel__footnote-marker {
+  grid-column: 1;
+  grid-row: 1;
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  font-style: normal;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.3;
+  user-select: none;
+}
+
+.translation-language-panel__footnote-editor-row .translation-language-panel__field--footnote {
+  grid-column: 2;
+  grid-row: 1;
+  padding-left: 0;
+  padding-right: 0;
+}
+
+.translation-language-panel__footnote-static {
+  display: block;
+}
+
+.translation-language-panel__footnote-static .translation-language-panel__footnote-marker {
+  margin-right: 6px;
+}
+
 .translation-language-panel__field-stack--footnote .translation-language-panel__field-highlight,
 .translation-language-panel__field-stack--footnote .translation-language-panel__field {
   padding-top: 0;
   padding-bottom: 6px;
+}
+
+.translation-language-panel__field-stack--footnote .translation-language-panel__footnote-editor-row .translation-language-panel__field--footnote {
+  padding-left: 0;
+  padding-right: 0;
 }
 
 .translation-language-panel__field-stack--highlighted .translation-language-panel__field::selection {

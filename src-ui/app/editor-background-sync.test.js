@@ -666,6 +666,119 @@ test("background sync promotes overlapping staleDirty text changes directly to c
   assert.equal(state.editorChapter.rows[0]?.conflictState?.remoteVersion?.commitSha, "abc12345");
 });
 
+test("background sync defers active footnote edits instead of creating a self-conflict", async () => {
+  installEditorFixture();
+  state.editorChapter = {
+    ...state.editorChapter,
+    activeRowId: "row-1",
+    activeLanguageCode: "es",
+    footnoteEditor: {
+      rowId: "row-1",
+      languageCode: "es",
+      marker: 2,
+    },
+  };
+  state.editorChapter.rows = [createEditorRowFixture({
+    fields: { es: "hola [2]", en: "hello" },
+    baseFields: { es: "hola [2]", en: "hello" },
+    persistedFields: { es: "hola [2]", en: "hello" },
+    footnotes: { es: [{ marker: 2, text: "nota local" }], en: "" },
+    baseFootnotes: { es: [{ marker: 2, text: "nota" }], en: "" },
+    persistedFootnotes: { es: [{ marker: 2, text: "nota" }], en: "" },
+    saveStatus: "dirty",
+    freshness: "dirty",
+  })];
+
+  const syncRequest = deferred();
+  invokeHandler = async (command) => {
+    if (command === "sync_gtms_project_editor_repo") {
+      return syncRequest.promise;
+    }
+    if (command === "load_gtms_editor_row") {
+      throw new Error("active footnote edit should not be background-merged");
+    }
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  const render = createRenderRecorder();
+  startEditorBackgroundSyncSession(render, { skipInitialSync: true });
+  await Promise.resolve();
+
+  const pendingSync = syncEditorBackgroundNowWithSummary(render, {
+    skipDirtyFlush: true,
+    suppressConservativeRerender: true,
+  });
+  syncRequest.resolve({
+    changedRowIds: ["row-1"],
+    deletedRowIds: [],
+    insertedRowIds: [],
+    newHeadSha: "head-2",
+  });
+  const syncResult = await pendingSync;
+
+  assert.equal(syncResult.requiresChapterReload, true);
+  assert.equal(syncResult.performedBlockingReload, false);
+  assert.deepEqual(syncResult.refreshedRowIds, []);
+  assert.equal(state.editorChapter.rows[0]?.freshness, "staleDirty");
+  assert.equal(state.editorChapter.rows[0]?.saveStatus, "dirty");
+  assert.equal(state.editorChapter.rows[0]?.conflictState, null);
+  assert.deepEqual(
+    invokeLog.filter((entry) => entry.command === "load_gtms_editor_row"),
+    [],
+  );
+});
+
+test("background sync defers rows with an in-flight text save", async () => {
+  installEditorFixture();
+  state.editorChapter.rows = [createEditorRowFixture({
+    fields: { es: "hola [2]", en: "hello" },
+    baseFields: { es: "hola [2]", en: "hello" },
+    persistedFields: { es: "hola [2]", en: "hello" },
+    footnotes: { es: [{ marker: 2, text: "nota local" }], en: "" },
+    baseFootnotes: { es: [{ marker: 2, text: "nota" }], en: "" },
+    persistedFootnotes: { es: [{ marker: 2, text: "nota" }], en: "" },
+    saveStatus: "saving",
+    freshness: "dirty",
+  })];
+
+  const syncRequest = deferred();
+  invokeHandler = async (command) => {
+    if (command === "sync_gtms_project_editor_repo") {
+      return syncRequest.promise;
+    }
+    if (command === "load_gtms_editor_row") {
+      throw new Error("saving row should not be background-merged");
+    }
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  const render = createRenderRecorder();
+  startEditorBackgroundSyncSession(render, { skipInitialSync: true });
+  await Promise.resolve();
+
+  const pendingSync = syncEditorBackgroundNowWithSummary(render, {
+    skipDirtyFlush: true,
+    suppressConservativeRerender: true,
+  });
+  syncRequest.resolve({
+    changedRowIds: ["row-1"],
+    deletedRowIds: [],
+    insertedRowIds: [],
+    newHeadSha: "head-2",
+  });
+  const syncResult = await pendingSync;
+
+  assert.equal(syncResult.requiresChapterReload, true);
+  assert.deepEqual(syncResult.refreshedRowIds, []);
+  assert.equal(state.editorChapter.rows[0]?.freshness, "staleDirty");
+  assert.equal(state.editorChapter.rows[0]?.saveStatus, "saving");
+  assert.equal(state.editorChapter.rows[0]?.conflictState, null);
+  assert.deepEqual(
+    invokeLog.filter((entry) => entry.command === "load_gtms_editor_row"),
+    [],
+  );
+});
+
 test("background sync resolves simultaneous marker edits to the safer state", async () => {
   installEditorFixture();
   state.editorChapter.rows = [createEditorRowFixture({

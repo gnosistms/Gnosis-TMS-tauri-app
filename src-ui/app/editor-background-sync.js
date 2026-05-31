@@ -225,7 +225,9 @@ function rowCanAttemptDirtyBackgroundMerge(rowId, chapterState = state.editorCha
 
   return (
     row.freshness === "staleDirty"
+    && row.saveStatus !== "saving"
     && row.remotelyDeleted !== true
+    && !rowHasProtectedEditorState(rowId, chapterState)
     && !rowHasUnresolvedEditorConflict(row)
   );
 }

@@ -20,11 +20,18 @@ export function applyEditorRowFieldInput({
         ? "image-caption"
         : "field";
   const nextValue = input?.value ?? "";
+  const footnoteMarker = input?.dataset?.footnoteMarker ?? null;
 
   cancelPendingTranslateViewportRestores?.();
 
   if (typeof updateEditorRowFieldValueForContentKind === "function") {
-    updateEditorRowFieldValueForContentKind(rowId, languageCode, nextValue, contentKind);
+    if (contentKind === "footnote") {
+      updateEditorRowFieldValueForContentKind(rowId, languageCode, nextValue, contentKind, {
+        marker: footnoteMarker,
+      });
+    } else {
+      updateEditorRowFieldValueForContentKind(rowId, languageCode, nextValue, contentKind);
+    }
   } else if (typeof updateEditorRowFieldValue === "function") {
     updateEditorRowFieldValue(rowId, languageCode, nextValue);
   }

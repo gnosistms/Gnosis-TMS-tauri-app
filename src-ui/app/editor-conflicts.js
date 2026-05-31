@@ -1,3 +1,5 @@
+import { rowFootnotesEqual } from "./editor-row-persistence-model.js";
+
 function normalizeConflictText(value) {
   return typeof value === "string" ? value : String(value ?? "");
 }
@@ -29,19 +31,30 @@ export function conflictedLanguageCodesForRow(row, languages = []) {
   const localFields = row?.fields;
   const localFootnotes = row?.footnotes;
   const localImageCaptions = row?.imageCaptions;
-  if (!remoteFields || typeof remoteFields !== "object" || !localFields || typeof localFields !== "object") {
+  const hasConflictPayload =
+    (remoteFields && typeof remoteFields === "object")
+    || (remoteFootnotes && typeof remoteFootnotes === "object")
+    || (remoteImageCaptions && typeof remoteImageCaptions === "object");
+  if (!hasConflictPayload) {
     return new Set();
   }
 
   const codes = new Set();
   const candidateCodes = Array.isArray(languages) && languages.length > 0
     ? languages.map((language) => normalizeLanguageCode(language?.code)).filter(Boolean)
-    : [...new Set([...Object.keys(localFields), ...Object.keys(remoteFields)].filter(Boolean))];
+    : [...new Set([
+      ...Object.keys(localFields && typeof localFields === "object" ? localFields : {}),
+      ...Object.keys(remoteFields && typeof remoteFields === "object" ? remoteFields : {}),
+      ...Object.keys(localFootnotes && typeof localFootnotes === "object" ? localFootnotes : {}),
+      ...Object.keys(remoteFootnotes && typeof remoteFootnotes === "object" ? remoteFootnotes : {}),
+      ...Object.keys(localImageCaptions && typeof localImageCaptions === "object" ? localImageCaptions : {}),
+      ...Object.keys(remoteImageCaptions && typeof remoteImageCaptions === "object" ? remoteImageCaptions : {}),
+    ].filter(Boolean))];
 
   for (const code of candidateCodes) {
     if (
       normalizeConflictText(localFields?.[code]) !== normalizeConflictText(remoteFields?.[code])
-      || normalizeConflictText(localFootnotes?.[code]) !== normalizeConflictText(remoteFootnotes?.[code])
+      || !rowFootnotesEqual({ [code]: localFootnotes?.[code] }, { [code]: remoteFootnotes?.[code] })
       || normalizeConflictText(localImageCaptions?.[code]) !== normalizeConflictText(remoteImageCaptions?.[code])
     ) {
       codes.add(code);

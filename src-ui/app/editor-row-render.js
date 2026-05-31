@@ -30,6 +30,7 @@ import {
 import { historyLastUpdateLabel } from "./editor-history.js";
 import { buildEditorRowSearchHighlightMap } from "./editor-search-flow.js";
 import { buildEditorSearchHighlightKey } from "./editor-search-highlighting.js";
+import { normalizeEditorFootnotes } from "./editor-footnotes.js";
 
 export function renderTranslationMarkerIcon(kind) {
   if (kind === "comments") {
@@ -594,41 +595,63 @@ function renderEditorLanguageImage(row, language) {
 
 function renderConflictResolutionField(row, language, textStyle) {
   return `
-    <button
-      class="translation-language-panel__field-static translation-language-panel__field-static--conflict"
-      type="button"
-      data-action="open-editor-conflict-resolution:${escapeHtml(row.id)}:${escapeHtml(language.code)}"
+    <div
+      class="translation-language-panel__field-stack translation-language-panel__field-stack--static"
+      data-editor-glossary-field-stack
       data-row-id="${escapeHtml(row.id)}"
       data-language-code="${escapeHtml(language.code)}"
       data-row-text-style="${escapeHtml(textStyle)}"
     >
-      <span
-        class="translation-language-panel__field-static-text"
-        lang="${escapeHtml(language.baseCode || language.code)}"
-      >${renderSanitizedInlineMarkupHtml(language.text)}</span>
-    </button>
+      <button
+        class="translation-language-panel__field-static translation-language-panel__field-static--conflict"
+        type="button"
+        data-action="open-editor-conflict-resolution:${escapeHtml(row.id)}:${escapeHtml(language.code)}"
+        data-row-id="${escapeHtml(row.id)}"
+        data-language-code="${escapeHtml(language.code)}"
+        data-row-text-style="${escapeHtml(textStyle)}"
+      >
+        <span
+          class="translation-language-panel__field-static-text"
+          lang="${escapeHtml(language.baseCode || language.code)}"
+        >${renderSanitizedInlineMarkupHtml(language.text)}</span>
+      </button>
+    </div>
   `;
 }
 
-function renderDisabledConflictField(language, textStyle) {
+function renderDisabledConflictField(row, language, textStyle) {
   return `
     <div
-      class="translation-language-panel__field-static translation-language-panel__field-static--disabled"
+      class="translation-language-panel__field-stack translation-language-panel__field-stack--static"
+      data-editor-glossary-field-stack
+      data-row-id="${escapeHtml(row.id)}"
+      data-language-code="${escapeHtml(language.code)}"
       data-row-text-style="${escapeHtml(textStyle)}"
-      ${tooltipAttributes(
-        "This language does not have a conflict. Please edit the languages marked with red text before editing this.",
-      )}
     >
-      <span
-        class="translation-language-panel__field-static-text"
-        lang="${escapeHtml(language.baseCode || language.code)}"
-      >${renderSanitizedInlineMarkupHtml(language.text)}</span>
+      <div
+        class="translation-language-panel__field-static translation-language-panel__field-static--disabled"
+        data-row-text-style="${escapeHtml(textStyle)}"
+        ${tooltipAttributes(
+          "This language does not have a conflict. Please edit the languages marked with red text before editing this.",
+        )}
+      >
+        <span
+          class="translation-language-panel__field-static-text"
+          lang="${escapeHtml(language.baseCode || language.code)}"
+        >${renderSanitizedInlineMarkupHtml(language.text)}</span>
+      </div>
     </div>
   `;
 }
 
 function renderEditorFootnoteField(row, language) {
+  const footnotes = normalizeEditorFootnotes(language?.footnotes ?? language?.footnote);
   if (row?.canEdit !== true || language?.canEdit !== true) {
+    const footnoteHtml = footnotes.length > 0
+      ? footnotes
+        .map((entry) => `<span class="translation-language-panel__footnote-static"><span class="translation-language-panel__footnote-marker">[${escapeHtml(entry.marker)}]</span>${renderSanitizedInlineMarkupHtml(entry.text)}</span>`)
+        .join("")
+      : renderSanitizedInlineMarkupHtml(language.footnote);
     return `
       <div
         class="translation-language-panel__field-static translation-language-panel__field-static--footnote"
@@ -637,10 +660,29 @@ function renderEditorFootnoteField(row, language) {
         <span
           class="translation-language-panel__field-static-text"
           lang="${escapeHtml(language.baseCode || language.code)}"
-        >${renderSanitizedInlineMarkupHtml(language.footnote)}</span>
+        >${footnoteHtml}</span>
       </div>
     `;
   }
+
+  const footnoteInputs = footnotes
+    .map((entry) => `
+      <div class="translation-language-panel__footnote-editor-row">
+        <span class="translation-language-panel__footnote-marker" aria-hidden="true">[${escapeHtml(entry.marker)}]</span>
+        <textarea
+          class="translation-language-panel__field translation-language-panel__field--footnote"
+          data-editor-row-field
+          data-content-kind="footnote"
+          data-footnote-marker="${escapeHtml(entry.marker)}"
+          data-row-id="${escapeHtml(row.id)}"
+          data-language-code="${escapeHtml(language.code)}"
+          lang="${escapeHtml(language.baseCode || language.code)}"
+          spellcheck="false"
+          placeholder="Enter footnote text here."
+        >${escapeHtml(entry.text)}</textarea>
+      </div>
+    `)
+    .join("");
 
   return `
     <div
@@ -650,16 +692,7 @@ function renderEditorFootnoteField(row, language) {
       data-language-code="${escapeHtml(language.code)}"
       data-content-kind="footnote"
     >
-      <textarea
-        class="translation-language-panel__field translation-language-panel__field--footnote"
-        data-editor-row-field
-        data-content-kind="footnote"
-        data-row-id="${escapeHtml(row.id)}"
-        data-language-code="${escapeHtml(language.code)}"
-        lang="${escapeHtml(language.baseCode || language.code)}"
-        spellcheck="false"
-        placeholder="Enter footnote text here."
-      >${escapeHtml(language.footnote)}</textarea>
+      ${footnoteInputs}
     </div>
   `;
 }
@@ -680,11 +713,11 @@ function renderEditorLanguageField(row, language) {
     "translation-language-panel__field-stack translation-language-panel__field-stack--static";
   if (row.hasConflict) {
     if (row.canEdit !== true || language.canEdit !== true) {
-      return renderDisabledConflictField(language, textStyle);
+      return renderDisabledConflictField(row, language, textStyle);
     }
     return language.hasConflict
       ? renderConflictResolutionField(row, language, textStyle)
-      : renderDisabledConflictField(language, textStyle);
+      : renderDisabledConflictField(row, language, textStyle);
   }
 
   if (language.isTextEditorOpen !== true) {

@@ -23,7 +23,15 @@ import {
   selectedEditorReviewTargetLanguageCode,
 } from "./editor-ai-review-request.js";
 import { loadAssistantTargetLanguageHistory } from "./editor-ai-assistant-flow.js";
-import { cloneRowFields, cloneRowFieldStates, findEditorRowById, normalizeFieldState } from "./editor-utils.js";
+import {
+  cloneRowFields,
+  cloneRowFieldStates,
+  cloneRowFootnotes,
+  editorFootnotesPlainText,
+  findEditorRowById,
+  normalizeFieldState,
+} from "./editor-utils.js";
+import { applyEditorFootnoteText } from "./editor-footnotes.js";
 import { reconcileDirtyTrackedEditorRows } from "./editor-dirty-row-state.js";
 import { findChapterContextById, selectedProjectsTeam } from "./project-context.js";
 import { invoke } from "./runtime.js";
@@ -119,7 +127,7 @@ function chapterNeedsRefreshBeforeReview(chapterState = state.editorChapter) {
 
 function applyReviewResultToRow(row, languageCode, payload) {
   const nextText = String(payload?.text ?? row.fields?.[languageCode] ?? "");
-  const nextFootnote = String(payload?.footnote ?? row.footnotes?.[languageCode] ?? "");
+  const nextFootnote = String(payload?.footnote ?? editorFootnotesPlainText(row.footnotes?.[languageCode]) ?? "");
   const nextImageCaption = String(payload?.imageCaption ?? row.imageCaptions?.[languageCode] ?? "");
   const nextFieldState = normalizeFieldState({
     reviewed: payload?.reviewed,
@@ -127,8 +135,8 @@ function applyReviewResultToRow(row, languageCode, payload) {
   });
   const fields = cloneRowFields(row.fields);
   fields[languageCode] = nextText;
-  const footnotes = cloneRowFields(row.footnotes);
-  footnotes[languageCode] = nextFootnote;
+  const footnotes = cloneRowFootnotes(row.footnotes);
+  footnotes[languageCode] = applyEditorFootnoteText(footnotes[languageCode], 1, nextFootnote);
   const imageCaptions = cloneRowFields(row.imageCaptions);
   imageCaptions[languageCode] = nextImageCaption;
   return {
@@ -137,7 +145,7 @@ function applyReviewResultToRow(row, languageCode, payload) {
     footnotes,
     imageCaptions,
     persistedFields: cloneRowFields(fields),
-    persistedFootnotes: cloneRowFields(footnotes),
+    persistedFootnotes: cloneRowFootnotes(footnotes),
     persistedImageCaptions: cloneRowFields(imageCaptions),
     fieldStates: {
       ...cloneRowFieldStates(row.fieldStates),

@@ -10,7 +10,7 @@ import {
   renderSanitizedInlineMarkupWithEditorHighlightState,
   renderSanitizedInlineMarkupWithGlossaryHighlightHtml,
 } from "./editor-inline-markup.js";
-import { findEditorRowById } from "./editor-utils.js";
+import { editorFootnotesPlainText, findEditorRowById } from "./editor-utils.js";
 import { invoke } from "./runtime.js";
 import { createEditorChapterGlossaryState, state } from "./state.js";
 
@@ -114,7 +114,7 @@ function setElementInnerHtmlIfChanged(element, html) {
 
 function readEditorHighlightableText(row, languageCode, contentKind = "field") {
   if (contentKind === "footnote") {
-    return row?.footnotes?.[languageCode] ?? "";
+    return editorFootnotesPlainText(row?.footnotes?.[languageCode]);
   }
 
   return row?.fields?.[languageCode] ?? "";

@@ -4,7 +4,7 @@ import {
   runEditorAiTranslateForContext,
 } from "./editor-ai-translate-flow.js";
 import { clearEditorAiTranslateAction } from "./editor-ai-translate-state.js";
-import { findEditorRowById } from "./editor-utils.js";
+import { editorFootnotesPlainText, findEditorRowById } from "./editor-utils.js";
 import { languageBaseCode, languageBaseCodesMatch } from "./editor-language-utils.js";
 import { createEditorAiTranslateAllModalState, state } from "./state.js";
 import { showNoticeBadge } from "./status-feedback.js";
@@ -110,9 +110,7 @@ function readRowFootnoteText(row, languageCode) {
     return "";
   }
 
-  return typeof row?.footnotes?.[languageCode] === "string"
-    ? row.footnotes[languageCode]
-    : String(row?.footnotes?.[languageCode] ?? "");
+  return editorFootnotesPlainText(row?.footnotes?.[languageCode]);
 }
 
 function readRowImageCaptionText(row, languageCode) {

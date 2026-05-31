@@ -22,6 +22,7 @@ import {
   editorLanguageImage,
   editorLanguageImageCaptionText,
   editorLanguageFootnoteIsVisible,
+  editorLanguageFootnotes,
   editorLanguageFootnoteText,
 } from "./editor-utils.js";
 import { languageBaseCode } from "./editor-language-utils.js";
@@ -32,6 +33,7 @@ let cachedActiveRowId = null;
 let cachedActiveLanguageCode = null;
 let cachedMainFieldEditorRowId = null;
 let cachedMainFieldEditorLanguageCode = null;
+let cachedFootnoteEditorRef = null;
 let cachedFootnoteEditorRowId = null;
 let cachedFootnoteEditorLanguageCode = null;
 let cachedImageCaptionEditorRowId = null;
@@ -91,6 +93,15 @@ function persistedLanguageText(row, fieldName, languageCode, fallback) {
   return fallback;
 }
 
+function persistedFootnoteText(row, languageCode, fallback) {
+  const fields = row?.persistedFootnotes;
+  if (fields && Object.prototype.hasOwnProperty.call(fields, languageCode)) {
+    return editorLanguageFootnoteText({ footnotes: fields }, languageCode);
+  }
+
+  return fallback;
+}
+
 function buildLiveTranslationRows(editorChapter, languages) {
   const editorRows = Array.isArray(editorChapter?.rows) ? editorChapter.rows : null;
   const languageOptions = Array.isArray(languages) ? languages : [];
@@ -102,6 +113,7 @@ function buildLiveTranslationRows(editorChapter, languages) {
     cachedActiveLanguageCode = editorChapter?.activeLanguageCode ?? null;
     cachedMainFieldEditorRowId = editorChapter?.mainFieldEditor?.rowId ?? null;
     cachedMainFieldEditorLanguageCode = editorChapter?.mainFieldEditor?.languageCode ?? null;
+    cachedFootnoteEditorRef = editorChapter?.footnoteEditor ?? null;
     cachedFootnoteEditorRowId = editorChapter?.footnoteEditor?.rowId ?? null;
     cachedFootnoteEditorLanguageCode = editorChapter?.footnoteEditor?.languageCode ?? null;
     cachedImageCaptionEditorRowId = editorChapter?.imageCaptionEditor?.rowId ?? null;
@@ -123,6 +135,7 @@ function buildLiveTranslationRows(editorChapter, languages) {
     && (editorChapter?.activeLanguageCode ?? null) === cachedActiveLanguageCode
     && (editorChapter?.mainFieldEditor?.rowId ?? null) === cachedMainFieldEditorRowId
     && (editorChapter?.mainFieldEditor?.languageCode ?? null) === cachedMainFieldEditorLanguageCode
+    && (editorChapter?.footnoteEditor ?? null) === cachedFootnoteEditorRef
     && (editorChapter?.footnoteEditor?.rowId ?? null) === cachedFootnoteEditorRowId
     && (editorChapter?.footnoteEditor?.languageCode ?? null) === cachedFootnoteEditorLanguageCode
     && (editorChapter?.imageCaptionEditor?.rowId ?? null) === cachedImageCaptionEditorRowId
@@ -186,6 +199,7 @@ function buildLiveTranslationRows(editorChapter, languages) {
           hasSavedImage && editorImageCaptionEditorMatches(editorChapter, row.rowId, language.code);
         const text = row.fields?.[language.code] ?? "";
         const footnote = editorLanguageFootnoteText(row, language.code);
+        const footnotes = editorLanguageFootnotes(row, language.code);
         return {
           code: language.code,
           baseCode: languageBaseCode(language),
@@ -193,7 +207,8 @@ function buildLiveTranslationRows(editorChapter, languages) {
           text,
           searchText: persistedLanguageText(row, "persistedFields", language.code, text),
           footnote,
-          searchFootnote: persistedLanguageText(row, "persistedFootnotes", language.code, footnote),
+          footnotes,
+          searchFootnote: persistedFootnoteText(row, language.code, footnote),
           imageCaption,
           searchImageCaption: persistedLanguageText(
             row,
@@ -229,8 +244,7 @@ function buildLiveTranslationRows(editorChapter, languages) {
               ? String(editorChapter?.imageEditor?.urlDraft ?? "")
               : "",
           showAddFootnoteButton:
-            editorLanguageFootnoteText(row, language.code).trim().length === 0
-            && !editorFootnoteEditorMatches(editorChapter, row.rowId, language.code),
+            true,
           showAddImageButtons:
             !hasSavedImage
             && !isImageUrlEditorOpen
@@ -263,6 +277,7 @@ function buildLiveTranslationRows(editorChapter, languages) {
   cachedActiveLanguageCode = editorChapter?.activeLanguageCode ?? null;
   cachedMainFieldEditorRowId = editorChapter?.mainFieldEditor?.rowId ?? null;
   cachedMainFieldEditorLanguageCode = editorChapter?.mainFieldEditor?.languageCode ?? null;
+  cachedFootnoteEditorRef = editorChapter?.footnoteEditor ?? null;
   cachedFootnoteEditorRowId = editorChapter?.footnoteEditor?.rowId ?? null;
   cachedFootnoteEditorLanguageCode = editorChapter?.footnoteEditor?.languageCode ?? null;
   cachedImageCaptionEditorRowId = editorChapter?.imageCaptionEditor?.rowId ?? null;

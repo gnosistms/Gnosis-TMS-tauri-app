@@ -2,6 +2,11 @@ import {
   cloneRowImages,
   normalizeEditorFieldImage,
 } from "./editor-images.js";
+import {
+  cloneRowFootnotes,
+  editorFootnotesPlainText,
+  normalizeEditorFootnotes,
+} from "./editor-footnotes.js";
 
 export function cloneRowFields(fields) {
   return Object.fromEntries(
@@ -40,7 +45,13 @@ export function cloneRowFieldStates(fieldStates) {
   );
 }
 
-export { cloneRowImages, normalizeEditorFieldImage };
+export {
+  cloneRowFootnotes,
+  cloneRowImages,
+  editorFootnotesPlainText,
+  normalizeEditorFieldImage,
+  normalizeEditorFootnotes,
+};
 
 export function hasEditorRow(chapterState, rowId) {
   return Array.isArray(chapterState?.rows)
@@ -61,11 +72,20 @@ export function findEditorRowById(rowId, chapterState) {
   return chapterState?.rows?.find((row) => row?.rowId === rowId) ?? null;
 }
 
-export function editorFootnoteEditorMatches(chapterState, rowId, languageCode) {
-  return (
-    chapterState?.footnoteEditor?.rowId === rowId
-    && chapterState?.footnoteEditor?.languageCode === languageCode
-  );
+export function editorFootnoteEditorMatches(chapterState, rowId, languageCode, marker = null) {
+  if (
+    chapterState?.footnoteEditor?.rowId !== rowId
+    || chapterState?.footnoteEditor?.languageCode !== languageCode
+  ) {
+    return false;
+  }
+
+  if (marker == null) {
+    return true;
+  }
+
+  return Number.parseInt(String(chapterState?.footnoteEditor?.marker ?? ""), 10)
+    === Number.parseInt(String(marker ?? ""), 10);
 }
 
 export function editorMainFieldEditorMatches(chapterState, rowId, languageCode) {
@@ -116,9 +136,11 @@ export function editorImageEditorCanCollapse(editorState) {
 }
 
 export function editorLanguageFootnoteText(row, languageCode) {
-  return typeof row?.footnotes?.[languageCode] === "string"
-    ? row.footnotes[languageCode]
-    : String(row?.footnotes?.[languageCode] ?? "");
+  return editorFootnotesPlainText(row?.footnotes?.[languageCode]);
+}
+
+export function editorLanguageFootnotes(row, languageCode) {
+  return normalizeEditorFootnotes(row?.footnotes?.[languageCode]);
 }
 
 export function editorLanguageImageCaptionText(row, languageCode) {
@@ -129,7 +151,7 @@ export function editorLanguageImageCaptionText(row, languageCode) {
 
 export function editorLanguageFootnoteIsVisible(row, languageCode, chapterState) {
   return (
-    editorLanguageFootnoteText(row, languageCode).trim().length > 0
+    normalizeEditorFootnotes(row?.footnotes?.[languageCode]).length > 0
     || editorFootnoteEditorMatches(chapterState, row?.rowId ?? "", languageCode)
   );
 }

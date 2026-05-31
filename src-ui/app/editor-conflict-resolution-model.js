@@ -1,8 +1,18 @@
 import { createEditorConflictResolutionModalState } from "./state.js";
-import { cloneRowFields } from "./editor-utils.js";
+import { serializeEditorFootnotesForLegacy } from "./editor-footnotes.js";
+import { cloneRowFields, cloneRowFootnotes } from "./editor-utils.js";
 
 export function normalizeEditorConflictResolutionValue(value) {
   return typeof value === "string" ? value : String(value ?? "");
+}
+
+function serializeFootnoteMap(footnotes) {
+  return Object.fromEntries(
+    Object.entries(footnotes && typeof footnotes === "object" ? footnotes : {}).map(([code, value]) => [
+      code,
+      serializeEditorFootnotesForLegacy(value),
+    ]),
+  );
 }
 
 export function buildEditorConflictResolutionModalState(row, languageCode) {
@@ -10,10 +20,8 @@ export function buildEditorConflictResolutionModalState(row, languageCode) {
   const remoteText = normalizeEditorConflictResolutionValue(
     row?.conflictState?.remoteRow?.fields?.[languageCode],
   );
-  const localFootnote = normalizeEditorConflictResolutionValue(row?.footnotes?.[languageCode]);
-  const remoteFootnote = normalizeEditorConflictResolutionValue(
-    row?.conflictState?.remoteRow?.footnotes?.[languageCode],
-  );
+  const localFootnote = serializeEditorFootnotesForLegacy(row?.footnotes?.[languageCode]);
+  const remoteFootnote = serializeEditorFootnotesForLegacy(row?.conflictState?.remoteRow?.footnotes?.[languageCode]);
   const localImageCaption = normalizeEditorConflictResolutionValue(row?.imageCaptions?.[languageCode]);
   const remoteImageCaption = normalizeEditorConflictResolutionValue(
     row?.conflictState?.remoteRow?.imageCaptions?.[languageCode],
@@ -39,14 +47,14 @@ export function buildEditorConflictResolutionModalState(row, languageCode) {
 
 export function buildEditorConflictResolutionSaveState(row, languageCode, modal) {
   const remoteFields = cloneRowFields(row?.conflictState?.remoteRow?.fields);
-  const remoteFootnotes = cloneRowFields(row?.conflictState?.remoteRow?.footnotes);
+  const remoteFootnotes = serializeFootnoteMap(row?.conflictState?.remoteRow?.footnotes);
   const remoteImageCaptions = cloneRowFields(row?.conflictState?.remoteRow?.imageCaptions);
   const nextLocalFields = {
     ...cloneRowFields(row?.fields),
     [languageCode]: normalizeEditorConflictResolutionValue(modal?.finalText),
   };
   const nextLocalFootnotes = {
-    ...cloneRowFields(row?.footnotes),
+    ...cloneRowFootnotes(row?.footnotes),
     [languageCode]: normalizeEditorConflictResolutionValue(modal?.finalFootnote),
   };
   const nextLocalImageCaptions = {

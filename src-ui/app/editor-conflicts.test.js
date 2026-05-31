@@ -43,6 +43,36 @@ test("conflictedLanguageCodesForRow returns the languages that differ from the G
   assert.deepEqual([...codes], ["en"]);
 });
 
+test("conflictedLanguageCodesForRow detects footnote array conflicts", () => {
+  const codes = conflictedLanguageCodesForRow(
+    {
+      fields: {
+        es: "uno",
+        vi: "mot",
+      },
+      footnotes: {
+        es: [{ marker: 1, text: "same" }],
+        vi: [{ marker: 2, text: "local note" }],
+      },
+      conflictState: {
+        remoteRow: {
+          fields: {
+            es: "uno",
+            vi: "mot",
+          },
+          footnotes: {
+            es: [{ marker: 1, text: "same" }],
+            vi: [{ marker: 2, text: "remote note" }],
+          },
+        },
+      },
+    },
+    [{ code: "es" }, { code: "vi" }],
+  );
+
+  assert.deepEqual([...codes], ["vi"]);
+});
+
 test("editorChapterHasUnresolvedConflicts checks the chapter rows", () => {
   assert.equal(editorChapterHasUnresolvedConflicts({
     rows: [

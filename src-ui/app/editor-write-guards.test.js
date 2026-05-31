@@ -207,6 +207,46 @@ test("flushDirtyEditorRows blocks while a style save is in flight even without d
   assert.deepEqual(invokeLog, []);
 });
 
+test("flushDirtyEditorRows removes empty unreferenced footnotes from live state without persisting", async () => {
+  installEditorFixture();
+  state.editorChapter = {
+    ...state.editorChapter,
+    dirtyRowIds: new Set(["row-1"]),
+  };
+  state.editorChapter.rows[0] = {
+    ...state.editorChapter.rows[0],
+    fields: { es: "hola" },
+    persistedFields: { es: "hola" },
+    footnotes: {
+      es: [
+        { marker: 1, text: "kept note" },
+        { marker: 2, text: "" },
+      ],
+    },
+    persistedFootnotes: {
+      es: [{ marker: 1, text: "kept note" }],
+    },
+    saveStatus: "dirty",
+  };
+  const renderScopes = [];
+
+  const flushed = await flushDirtyEditorRows(
+    (request = {}) => {
+      renderScopes.push(request.scope ?? "full");
+    },
+    {
+      updateEditorChapterRow,
+      applyEditorSelectionsToProjectState,
+    },
+    { rowIds: ["row-1"] },
+  );
+
+  assert.equal(flushed, true);
+  assert.deepEqual(state.editorChapter.rows[0].footnotes.es, [{ marker: 1, text: "kept note" }]);
+  assert.deepEqual(invokeLog, []);
+  assert.ok(renderScopes.includes("translate-body"));
+});
+
 test("non-durable dirty row flush enqueues row text save without waiting for the repo lane", async () => {
   installEditorFixture();
   state.editorChapter = {
@@ -263,6 +303,277 @@ test("non-durable dirty row flush enqueues row text save without waiting for the
   assert.deepEqual(invokeLog.map((entry) => entry.command), ["update_gtms_editor_row_fields"]);
   assert.equal(state.editorChapter.rows[0].persistedFields.es, "hola editada");
   assert.equal(state.editorChapter.rows[0].saveStatus, "idle");
+});
+
+test("queued repeated row saves rebase on the previous save instead of conflicting", async () => {
+  installEditorFixture();
+  state.editorChapter = {
+    ...state.editorChapter,
+    dirtyRowIds: new Set(["row-1"]),
+  };
+  state.editorChapter.rows[0] = {
+    ...state.editorChapter.rows[0],
+    fields: { es: "hola uno" },
+    saveStatus: "dirty",
+  };
+
+  const firstSave = deferred();
+  const capturedInputs = [];
+  let diskFields = { es: "hola" };
+  invokeHandler = async (command, payload = {}) => {
+    if (command === "update_gtms_editor_row_fields") {
+      const input = structuredClone(payload.input);
+      capturedInputs.push(input);
+      if (capturedInputs.length === 1) {
+        await firstSave.promise;
+      }
+      if (input.baseFields?.es !== diskFields.es) {
+        return {
+          status: "conflict",
+          row: {
+            rowId: input.rowId,
+            textStyle: "paragraph",
+            fields: diskFields,
+            footnotes: {},
+            imageCaptions: {},
+            images: {},
+            fieldStates: { es: { reviewed: false, pleaseCheck: false } },
+          },
+        };
+      }
+      diskFields = { ...input.fields };
+      return {
+        status: "saved",
+        row: {
+          rowId: input.rowId,
+          textStyle: "paragraph",
+          fields: input.fields,
+          footnotes: {},
+          imageCaptions: {},
+          images: {},
+          fieldStates: { es: { reviewed: false, pleaseCheck: false } },
+        },
+        sourceWordCounts: {},
+        chapterBaseCommitSha: `head-${capturedInputs.length + 1}`,
+      };
+    }
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  await flushDirtyEditorRows(
+    () => {},
+    {
+      updateEditorChapterRow,
+      applyEditorSelectionsToProjectState,
+    },
+    { waitForDurable: false },
+  );
+  assert.equal(state.editorChapter.rows[0].saveStatus, "saving");
+
+  state.editorChapter.rows[0] = {
+    ...state.editorChapter.rows[0],
+    fields: { es: "hola dos" },
+    saveStatus: "dirty",
+  };
+  state.editorChapter.dirtyRowIds = new Set(["row-1"]);
+  await flushDirtyEditorRows(
+    () => {},
+    {
+      updateEditorChapterRow,
+      applyEditorSelectionsToProjectState,
+    },
+    { waitForDurable: false },
+  );
+
+  firstSave.resolve();
+  await waitForRepoWriteQueueIdle("7:project-1:fixture-project");
+
+  assert.equal(capturedInputs.length, 2);
+  assert.equal(capturedInputs[0].baseFields.es, "hola");
+  assert.equal(capturedInputs[1].baseFields.es, "hola uno");
+  assert.equal(state.editorChapter.rows[0].fields.es, "hola dos");
+  assert.equal(state.editorChapter.rows[0].persistedFields.es, "hola dos");
+  assert.equal(state.editorChapter.rows[0].saveStatus, "idle");
+  assert.equal(state.editorChapter.rows[0].freshness, "fresh");
+});
+
+test("queued repeated footnote saves preserve marker bases instead of conflicting", async () => {
+  installEditorFixture();
+  state.editorChapter = {
+    ...state.editorChapter,
+    dirtyRowIds: new Set(["row-1"]),
+  };
+  state.editorChapter.rows[0] = {
+    ...state.editorChapter.rows[0],
+    fields: { es: "hola [2]" },
+    persistedFields: { es: "hola [2]" },
+    baseFields: { es: "hola [2]" },
+    footnotes: { es: [{ marker: 2, text: "nota uno" }] },
+    persistedFootnotes: { es: [{ marker: 2, text: "nota" }] },
+    baseFootnotes: { es: [{ marker: 2, text: "nota" }] },
+    saveStatus: "dirty",
+  };
+
+  const firstSave = deferred();
+  const capturedInputs = [];
+  let diskFootnotes = { es: "[2] nota" };
+  invokeHandler = async (command, payload = {}) => {
+    if (command === "update_gtms_editor_row_fields") {
+      const input = structuredClone(payload.input);
+      capturedInputs.push(input);
+      if (capturedInputs.length === 1) {
+        await firstSave.promise;
+      }
+      if (input.baseFootnotes?.es !== diskFootnotes.es) {
+        return {
+          status: "conflict",
+          row: {
+            rowId: input.rowId,
+            textStyle: "paragraph",
+            fields: input.fields,
+            footnotes: diskFootnotes,
+            imageCaptions: {},
+            images: {},
+            fieldStates: { es: { reviewed: false, pleaseCheck: false } },
+          },
+        };
+      }
+      diskFootnotes = { ...input.footnotes };
+      return {
+        status: "saved",
+        row: {
+          rowId: input.rowId,
+          textStyle: "paragraph",
+          fields: input.fields,
+          footnotes: input.footnotes,
+          imageCaptions: {},
+          images: {},
+          fieldStates: { es: { reviewed: false, pleaseCheck: false } },
+        },
+        sourceWordCounts: {},
+        chapterBaseCommitSha: `head-footnote-${capturedInputs.length + 1}`,
+      };
+    }
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  await flushDirtyEditorRows(
+    () => {},
+    {
+      updateEditorChapterRow,
+      applyEditorSelectionsToProjectState,
+    },
+    { waitForDurable: false },
+  );
+
+  state.editorChapter.rows[0] = {
+    ...state.editorChapter.rows[0],
+    footnotes: { es: [{ marker: 2, text: "nota dos" }] },
+    saveStatus: "dirty",
+  };
+  state.editorChapter.dirtyRowIds = new Set(["row-1"]);
+  await flushDirtyEditorRows(
+    () => {},
+    {
+      updateEditorChapterRow,
+      applyEditorSelectionsToProjectState,
+    },
+    { waitForDurable: false },
+  );
+
+  firstSave.resolve();
+  await waitForRepoWriteQueueIdle("7:project-1:fixture-project");
+
+  assert.equal(capturedInputs.length, 2);
+  assert.equal(capturedInputs[0].baseFootnotes.es, "[2] nota");
+  assert.equal(capturedInputs[0].footnotes.es, "[2] nota uno");
+  assert.equal(capturedInputs[1].baseFootnotes.es, "[2] nota uno");
+  assert.equal(capturedInputs[1].footnotes.es, "[2] nota dos");
+  assert.deepEqual(state.editorChapter.rows[0].persistedFootnotes.es, [{ marker: 2, text: "nota dos" }]);
+  assert.equal(state.editorChapter.rows[0].saveStatus, "idle");
+  assert.equal(state.editorChapter.rows[0].freshness, "fresh");
+});
+
+test("delete-all footnote save retries a mergeable stale-base conflict instead of showing a conflict", async () => {
+  installEditorFixture();
+  state.editorChapter = {
+    ...state.editorChapter,
+    dirtyRowIds: new Set(["row-1"]),
+  };
+  state.editorChapter.rows[0] = {
+    ...state.editorChapter.rows[0],
+    fields: { es: "hola" },
+    persistedFields: { es: "hola [1]" },
+    baseFields: { es: "hola [1]" },
+    footnotes: { es: [] },
+    persistedFootnotes: { es: [{ marker: 1, text: "nota" }] },
+    baseFootnotes: { es: [{ marker: 1, text: "nota" }] },
+    saveStatus: "dirty",
+  };
+
+  const capturedInputs = [];
+  invokeHandler = async (command, payload = {}) => {
+    if (command === "update_gtms_editor_row_fields") {
+      const input = structuredClone(payload.input);
+      capturedInputs.push(input);
+      if (capturedInputs.length === 1) {
+        return {
+          status: "conflict",
+          row: {
+            rowId: input.rowId,
+            textStyle: "paragraph",
+            fields: { es: "hola" },
+            footnotes: { es: "nota" },
+            imageCaptions: {},
+            images: {},
+            fieldStates: { es: { reviewed: false, pleaseCheck: false } },
+          },
+          baseFields: { es: "hola [1]" },
+          baseFootnotes: { es: "nota" },
+          baseImageCaptions: {},
+          sourceWordCounts: {},
+          chapterBaseCommitSha: "head-delete-marker",
+        };
+      }
+      return {
+        status: "saved",
+        row: {
+          rowId: input.rowId,
+          textStyle: "paragraph",
+          fields: input.fields,
+          footnotes: input.footnotes,
+          imageCaptions: {},
+          images: {},
+          fieldStates: { es: { reviewed: false, pleaseCheck: false } },
+        },
+        sourceWordCounts: {},
+        chapterBaseCommitSha: "head-delete-footnote",
+      };
+    }
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  await flushDirtyEditorRows(
+    () => {},
+    {
+      updateEditorChapterRow,
+      applyEditorSelectionsToProjectState,
+    },
+    { waitForDurable: false },
+  );
+  await waitForRepoWriteQueueIdle("7:project-1:fixture-project");
+
+  assert.equal(capturedInputs.length, 2);
+  assert.equal(capturedInputs[0].fields.es, "hola");
+  assert.equal(capturedInputs[0].footnotes.es, "");
+  assert.equal(capturedInputs[1].baseFields.es, "hola");
+  assert.equal(capturedInputs[1].baseFootnotes.es, "nota");
+  assert.equal(capturedInputs[1].footnotes.es, "");
+  assert.deepEqual(state.editorChapter.rows[0].fields, { es: "hola" });
+  assert.deepEqual(state.editorChapter.rows[0].footnotes.es, []);
+  assert.equal(state.editorChapter.rows[0].saveStatus, "idle");
+  assert.equal(state.editorChapter.rows[0].freshness, "fresh");
+  assert.equal(state.editorChapter.rows[0].conflictState, null);
 });
 
 test("successful active row save keeps optimistic history until committed history reloads", async () => {

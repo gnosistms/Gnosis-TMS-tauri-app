@@ -100,5 +100,5 @@ test("buildEditorBatchReplaceUpdates also replaces matches in visible footnotes"
   assert.deepEqual(result.matchingSelectedRowIds, ["row-1"]);
   assert.deepEqual(result.updatedRowIds, ["row-1"]);
   assert.equal(result.updatedRows[0]?.fields?.es, "texto principal");
-  assert.equal(result.updatedRows[0]?.footnotes?.es, "nota iguales");
+  assert.deepEqual(result.updatedRows[0]?.footnotes?.es, [{ marker: 1, text: "nota iguales" }]);
 });

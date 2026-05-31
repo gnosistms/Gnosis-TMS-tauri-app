@@ -29,6 +29,7 @@ import {
   applyEditorRowPersistRequested,
   applyEditorRowPersistReset,
   applyEditorRowPersistSucceeded,
+  applyEditorRowMergedWithRemote,
   applyEditorRowTextStyleSaved,
   applyEditorRowTextStyleSaveFailed,
   applyEditorRowTextStyleSaving,
@@ -48,12 +49,20 @@ import {
 import { showNoticeBadge } from "./status-feedback.js";
 import { normalizeEditorRowTextStyle } from "./editor-row-text-style.js";
 import { requestEditorOperation } from "./editor-operation-queue.js";
+import { mergeEditorRowVersions } from "./editor-row-merge.js";
 import {
   buildEditorFieldSelector,
   cloneRowFields,
+  cloneRowFootnotes,
   findEditorRowById,
   normalizeFieldState,
 } from "./editor-utils.js";
+import {
+  ensureEditorFootnoteEntry,
+  nextEditorFootnoteMarker,
+  normalizeEditorRowFootnotesForSave,
+  serializeEditorFootnotesForLegacy,
+} from "./editor-footnotes.js";
 import { assertQueuedEditorRowsReady } from "./editor-queued-write.js";
 import {
   ensureEditorRowReadyForWrite,
@@ -184,6 +193,66 @@ function cloneQueueContextValue(value) {
   return typeof structuredClone === "function"
     ? structuredClone(value)
     : JSON.parse(JSON.stringify(value));
+}
+
+function serializeFootnoteMapForLegacy(footnotes) {
+  return Object.fromEntries(
+    Object.entries(footnotes && typeof footnotes === "object" ? footnotes : {}).map(([code, value]) => [
+      code,
+      serializeEditorFootnotesForLegacy(value),
+    ]),
+  );
+}
+
+function rebaseRowTextInputForRun(operationValue) {
+  const input = cloneQueueContextValue(operationValue?.input ?? {});
+  if (operationValue?.rebaseBaseOnRun !== true) {
+    return input;
+  }
+
+  if (state.editorChapter?.chapterId !== operationValue.chapterId) {
+    return input;
+  }
+
+  const currentRow = findEditorRowById(operationValue.rowId, state.editorChapter);
+  if (!currentRow) {
+    return input;
+  }
+
+  input.baseFields = cloneRowFields(currentRow.persistedFields ?? currentRow.baseFields);
+  input.baseFootnotes = serializeFootnoteMapForLegacy(currentRow.persistedFootnotes ?? currentRow.baseFootnotes);
+  input.baseImageCaptions = cloneRowFields(currentRow.persistedImageCaptions ?? currentRow.baseImageCaptions);
+  return input;
+}
+
+function normalizeEditorRowFootnotesBeforePersist(row) {
+  if (!row || typeof row !== "object") {
+    return row;
+  }
+
+  const fields = cloneRowFields(row.fields);
+  const footnotes = cloneRowFootnotes(row.footnotes);
+  let changed = false;
+  for (const languageCode of new Set([...Object.keys(fields), ...Object.keys(footnotes)])) {
+    const normalized = normalizeEditorRowFootnotesForSave(fields[languageCode] ?? "", footnotes[languageCode]);
+    if (normalized.text !== (fields[languageCode] ?? "")) {
+      fields[languageCode] = normalized.text;
+      changed = true;
+    }
+    if (!rowTextContentEqual(
+      {},
+      { [languageCode]: footnotes[languageCode] ?? [] },
+      {},
+      {},
+      { [languageCode]: normalized.footnotes },
+      {},
+    )) {
+      footnotes[languageCode] = normalized.footnotes;
+      changed = true;
+    }
+  }
+
+  return changed ? { ...row, fields, footnotes } : row;
 }
 
 function queuedEditorWriteTeam(snapshotTeam) {
@@ -448,7 +517,9 @@ function applyEditorChapterRowsTranslationsCleared(chapterState, languageCodes, 
 
 function focusedEditorRowId() {
   const activeElement = document.activeElement;
-  return activeElement instanceof HTMLTextAreaElement && activeElement.matches("[data-editor-row-field]")
+  return typeof HTMLTextAreaElement === "function"
+    && activeElement instanceof HTMLTextAreaElement
+    && activeElement.matches("[data-editor-row-field]")
     ? activeElement.dataset.rowId ?? ""
     : "";
 }
@@ -532,6 +603,7 @@ export function updateEditorRowFieldValueForContentKind(
   languageCode,
   nextValue,
   contentKind = "field",
+  options = {},
   operations = {},
 ) {
   const { updateEditorChapterRow } = operations;
@@ -541,7 +613,7 @@ export function updateEditorRowFieldValueForContentKind(
 
   updateEditorChapterRow(
     rowId,
-    (row) => applyEditorRowFieldValue(row, languageCode, nextValue, contentKind),
+    (row) => applyEditorRowFieldValue(row, languageCode, nextValue, contentKind, options),
   );
   markEditorRowDirty(rowId);
 }
@@ -551,9 +623,53 @@ export function openEditorFootnote(render, rowId, languageCode, options = {}) {
     return;
   }
 
+  const row = findEditorRowById(rowId, state.editorChapter);
+  const currentText = typeof row?.fields?.[languageCode] === "string"
+    ? row.fields[languageCode]
+    : String(row?.fields?.[languageCode] ?? "");
+  let insertIndex = currentText.length;
+  let selectionEnd = currentText.length;
+
+  if (typeof document !== "undefined") {
+    const activeElement = document.activeElement;
+    const mainFieldSelector = buildEditorFieldSelector(rowId, languageCode, "field");
+    if (
+      activeElement instanceof HTMLTextAreaElement
+      && activeElement.matches(mainFieldSelector)
+    ) {
+      insertIndex = Number.isInteger(activeElement.selectionStart)
+        ? activeElement.selectionStart
+        : currentText.length;
+      selectionEnd = Number.isInteger(activeElement.selectionEnd)
+        ? activeElement.selectionEnd
+        : insertIndex;
+    }
+  }
+
+  const marker = nextEditorFootnoteMarker(currentText, row?.footnotes?.[languageCode]);
+  const markerText = `[${marker}]`;
+  const separator = insertIndex >= currentText.length && currentText && !/\s$/.test(currentText) ? " " : "";
+  const nextText =
+    `${currentText.slice(0, insertIndex)}${separator}${markerText}${currentText.slice(selectionEnd)}`;
+
+  const { updateEditorChapterRow } = options;
+  if (typeof updateEditorChapterRow === "function") {
+    updateEditorChapterRow(rowId, (currentRow) => {
+      const withMarker = applyEditorRowFieldValue(currentRow, languageCode, nextText, "field");
+      const footnotes = cloneRowFootnotes(withMarker.footnotes);
+      footnotes[languageCode] = ensureEditorFootnoteEntry(footnotes[languageCode], marker);
+      return {
+        ...withMarker,
+        footnotes,
+      };
+    });
+    markEditorRowDirty(rowId);
+  }
+
   pendingEditorFootnoteOpenRequest = {
     rowId,
     languageCode,
+    marker,
   };
 
   state.editorChapter = {
@@ -561,19 +677,23 @@ export function openEditorFootnote(render, rowId, languageCode, options = {}) {
     footnoteEditor: {
       rowId,
       languageCode,
+      marker,
     },
   };
   renderTranslateBodyPreservingViewport(render, options?.viewportSnapshot ?? null);
 
   if (typeof window !== "undefined") {
     window.requestAnimationFrame(() => {
-      const input = document.querySelector(buildEditorFieldSelector(rowId, languageCode, "footnote"));
+      const input = document.querySelector(
+        `${buildEditorFieldSelector(rowId, languageCode, "footnote")}[data-footnote-marker="${CSS.escape(String(marker))}"]`,
+      );
       if (input instanceof HTMLTextAreaElement) {
         input.focus({ preventScroll: true });
       }
       if (
         pendingEditorFootnoteOpenRequest?.rowId === rowId
         && pendingEditorFootnoteOpenRequest?.languageCode === languageCode
+        && pendingEditorFootnoteOpenRequest?.marker === marker
       ) {
         pendingEditorFootnoteOpenRequest = null;
       }
@@ -635,10 +755,8 @@ export function collapseEmptyEditorFootnote(render, rowId, languageCode, options
   }
 
   const row = findEditorRowById(rowId, state.editorChapter);
-  const footnote = typeof row?.footnotes?.[languageCode] === "string"
-    ? row.footnotes[languageCode]
-    : String(row?.footnotes?.[languageCode] ?? "");
-  if (footnote.trim()) {
+  const footnotes = cloneRowFootnotes(row?.footnotes);
+  if ((footnotes[languageCode] ?? []).some((entry) => entry.text.trim())) {
     return;
   }
 
@@ -1563,7 +1681,7 @@ async function persistEditorRow(render, rowId, operations = {}, options = {}) {
   }
 
   const editorChapter = state.editorChapter;
-  const row =
+  let row =
     options?.baseFieldsOverride || options?.baseFootnotesOverride || options?.baseImageCaptionsOverride
       ? findEditorRowById(rowId, state.editorChapter)
       : await ensureEditorRowReadyForWrite(render, rowId, {
@@ -1572,6 +1690,12 @@ async function persistEditorRow(render, rowId, operations = {}, options = {}) {
   if (!row) {
     reconcileDirtyTrackedEditorRows([rowId]);
     return true;
+  }
+
+  const normalizedRow = normalizeEditorRowFootnotesBeforePersist(row);
+  if (normalizedRow !== row) {
+    row = updateEditorChapterRow(rowId, () => normalizedRow) ?? normalizedRow;
+    render?.({ scope: "translate-body" });
   }
 
   if (!rowHasFieldChanges(row)) {
@@ -1609,7 +1733,7 @@ async function persistEditorRow(render, rowId, operations = {}, options = {}) {
     normalizePendingEditorCommitMetadata(options?.commitMetadata)
     ?? takePendingEditorCommitMetadata(rowId);
   const fieldsToPersist = cloneRowFields(row.fields);
-  const footnotesToPersist = cloneRowFields(row.footnotes);
+  const footnotesToPersist = serializeFootnoteMapForLegacy(row.footnotes);
   const imageCaptionsToPersist = cloneRowFields(row.imageCaptions);
   const baseFields =
     options?.baseFieldsOverride && typeof options.baseFieldsOverride === "object"
@@ -1617,8 +1741,8 @@ async function persistEditorRow(render, rowId, operations = {}, options = {}) {
       : cloneRowFields(row.baseFields);
   const baseFootnotes =
     options?.baseFootnotesOverride && typeof options.baseFootnotesOverride === "object"
-      ? cloneRowFields(options.baseFootnotesOverride)
-      : cloneRowFields(row.baseFootnotes);
+      ? serializeFootnoteMapForLegacy(options.baseFootnotesOverride)
+      : serializeFootnoteMapForLegacy(row.baseFootnotes);
   const baseImageCaptions =
     options?.baseImageCaptionsOverride && typeof options.baseImageCaptionsOverride === "object"
       ? cloneRowFields(options.baseImageCaptionsOverride)
@@ -1638,6 +1762,11 @@ async function persistEditorRow(render, rowId, operations = {}, options = {}) {
     ...(commitMetadata?.operation ? { operation: commitMetadata.operation } : {}),
     ...(commitMetadata?.aiModel ? { aiModel: commitMetadata.aiModel } : {}),
   };
+  const rebaseBaseOnRun = !(
+    options?.baseFieldsOverride
+    || options?.baseFootnotesOverride
+    || options?.baseImageCaptionsOverride
+  );
   const operationValue = {
     input,
     chapterId: editorChapter.chapterId,
@@ -1653,6 +1782,7 @@ async function persistEditorRow(render, rowId, operations = {}, options = {}) {
       row: cloneQueueContextValue(row),
       actionKind: "sharedWrite",
     },
+    rebaseBaseOnRun,
   };
 
   const applyRowTextSavePayload = (payload, operation, optionsForResult = {}) => {
@@ -1662,6 +1792,49 @@ async function persistEditorRow(render, rowId, operations = {}, options = {}) {
     }
 
     if (payload?.status === "conflict") {
+      if (optionsForResult.isStale) {
+        removeOptimisticHistoryForOperation(render, operation);
+        return;
+      }
+
+      const currentRowForMerge = findEditorRowById(value.rowId, state.editorChapter);
+      const mergeResult = mergeEditorRowVersions({
+        baseFields: payload?.baseFields ?? value.input?.baseFields ?? {},
+        baseFootnotes: payload?.baseFootnotes ?? value.input?.baseFootnotes ?? {},
+        baseImageCaptions: payload?.baseImageCaptions ?? value.input?.baseImageCaptions ?? {},
+        baseImages: currentRowForMerge?.persistedImages ?? currentRowForMerge?.baseImages ?? {},
+        baseFieldStates: currentRowForMerge?.persistedFieldStates ?? {},
+        localFields: currentRowForMerge?.fields ?? value.fields,
+        localFootnotes: currentRowForMerge?.footnotes ?? value.footnotes,
+        localImageCaptions: currentRowForMerge?.imageCaptions ?? value.imageCaptions,
+        localImages: currentRowForMerge?.images ?? value.images ?? {},
+        localFieldStates: currentRowForMerge?.fieldStates ?? {},
+        remoteRow: payload?.row,
+      });
+      if (mergeResult.status === "merged") {
+        const updatedRow = updateEditorChapterRow(
+          value.rowId,
+          (candidateRow) => applyEditorRowMergedWithRemote(candidateRow, payload?.row, mergeResult),
+        );
+        state.editorChapter = {
+          ...state.editorChapter,
+          sourceWordCounts:
+            payload?.sourceWordCounts && typeof payload.sourceWordCounts === "object"
+              ? payload.sourceWordCounts
+              : state.editorChapter.sourceWordCounts,
+          chapterBaseCommitSha: nextChapterBaseCommitSha(payload, state.editorChapter),
+        };
+        reconcileDirtyTrackedEditorRows([value.rowId]);
+        applyEditorSelectionsToProjectState(state.editorChapter);
+        render?.({ scope: "translate-sidebar" });
+        removeOptimisticHistoryForOperation(render, operation);
+        const mergedCurrentRow = findEditorRowById(value.rowId, state.editorChapter) ?? updatedRow;
+        if (rowHasFieldChanges(mergedCurrentRow) && focusedEditorRowId() !== value.rowId) {
+          void persistEditorRow(render, value.rowId, operations, { waitForDurable: false });
+        }
+        return;
+      }
+
       if (rowTextContentEqual(
         value.fields,
         value.footnotes,
@@ -1686,12 +1859,13 @@ async function persistEditorRow(render, rowId, operations = {}, options = {}) {
       }
 
       removeOptimisticHistoryForOperation(render, operation);
+      const currentRow = findEditorRowById(value.rowId, state.editorChapter);
       updateEditorChapterRow(
         value.rowId,
         (currentRow) => applyEditorRowConflictDetected(currentRow, payload, {
-          localFields: value.fields,
-          localFootnotes: value.footnotes,
-          localImageCaptions: value.imageCaptions,
+          localFields: currentRow?.fields ?? value.fields,
+          localFootnotes: currentRow?.footnotes ?? value.footnotes,
+          localImageCaptions: currentRow?.imageCaptions ?? value.imageCaptions,
         }),
       );
       lockConflictFilter();
@@ -1774,7 +1948,7 @@ async function persistEditorRow(render, rowId, operations = {}, options = {}) {
     },
     run: async (operation) => invokeQueuedEditorWriteCommand(
       "update_gtms_editor_row_fields",
-      { input: operation.value.input },
+      { input: rebaseRowTextInputForRun(operation.value) },
       operation.value.permissionContext,
       render,
     ),

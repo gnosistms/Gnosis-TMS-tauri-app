@@ -1,6 +1,7 @@
 import { editorFieldImageEqual, normalizeEditorFieldImage } from "./editor-images.js";
+import { serializeEditorFootnotesForLegacy } from "./editor-footnotes.js";
 import { normalizeEditorRow } from "./editor-state-flow.js";
-import { cloneRowFields, cloneRowFieldStates, cloneRowImages, normalizeFieldState } from "./editor-utils.js";
+import { cloneRowFields, cloneRowFieldStates, cloneRowFootnotes, cloneRowImages, normalizeFieldState } from "./editor-utils.js";
 
 function stringValue(map, key) {
   return typeof map?.[key] === "string" ? map[key] : String(map?.[key] ?? "");
@@ -36,6 +37,40 @@ function mergeStringSlices(contentKind, baseMap, localMap, remoteMap) {
     }
 
     conflicts.push({ languageCode, contentKind });
+  }
+
+  return {
+    mergedMap,
+    conflicts,
+  };
+}
+
+function footnoteStringValue(map, key) {
+  return serializeEditorFootnotesForLegacy(map?.[key]);
+}
+
+function mergeFootnoteSlices(baseMap, localMap, remoteMap) {
+  const mergedMap = cloneRowFootnotes(remoteMap);
+  const conflicts = [];
+
+  for (const languageCode of unionKeys(baseMap, localMap, remoteMap)) {
+    const baseValue = footnoteStringValue(baseMap, languageCode);
+    const localValue = footnoteStringValue(localMap, languageCode);
+    const remoteValue = footnoteStringValue(remoteMap, languageCode);
+    const localChanged = localValue !== baseValue;
+    const remoteChanged = remoteValue !== baseValue;
+
+    if (!localChanged) {
+      mergedMap[languageCode] = cloneRowFootnotes({ [languageCode]: remoteMap?.[languageCode] })[languageCode] ?? [];
+      continue;
+    }
+
+    if (!remoteChanged || localValue === remoteValue) {
+      mergedMap[languageCode] = cloneRowFootnotes({ [languageCode]: localMap?.[languageCode] })[languageCode] ?? [];
+      continue;
+    }
+
+    conflicts.push({ languageCode, contentKind: "footnote" });
   }
 
   return {
@@ -149,10 +184,9 @@ export function mergeEditorRowVersions(input = {}) {
     cloneRowFields(input?.localFields),
     remoteRow.fields,
   );
-  const footnoteMerge = mergeStringSlices(
-    "footnote",
-    cloneRowFields(input?.baseFootnotes),
-    cloneRowFields(input?.localFootnotes),
+  const footnoteMerge = mergeFootnoteSlices(
+    cloneRowFootnotes(input?.baseFootnotes),
+    cloneRowFootnotes(input?.localFootnotes),
     remoteRow.footnotes,
   );
   const imageCaptionMerge = mergeStringSlices(

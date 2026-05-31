@@ -1,4 +1,5 @@
 import { rowImagesEqual } from "./editor-images.js";
+import { normalizeEditorFootnotes } from "./editor-footnotes.js";
 
 function normalizeFieldState(fieldState) {
   return {
@@ -24,7 +25,24 @@ export function rowFieldsEqual(left, right) {
 }
 
 export function rowFootnotesEqual(left, right) {
-  return rowFieldsEqual(left, right);
+  const leftEntries = Object.entries(left && typeof left === "object" ? left : {});
+  const rightEntries = Object.entries(right && typeof right === "object" ? right : {});
+  if (leftEntries.length !== rightEntries.length) {
+    return false;
+  }
+
+  return leftEntries.every(([code, value]) => {
+    const leftFootnotes = normalizeEditorFootnotes(value);
+    const rightFootnotes = normalizeEditorFootnotes(right?.[code]);
+    if (leftFootnotes.length !== rightFootnotes.length) {
+      return false;
+    }
+
+    return leftFootnotes.every((entry, index) => (
+      entry.marker === rightFootnotes[index]?.marker
+      && entry.text === rightFootnotes[index]?.text
+    ));
+  });
 }
 
 export function rowTextContentEqual(

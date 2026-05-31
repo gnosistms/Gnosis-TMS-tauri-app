@@ -3,6 +3,7 @@ import {
   cloneRowFields,
   cloneRowFieldStates,
   cloneRowImages,
+  editorFootnotesPlainText,
   normalizeFieldState,
   normalizeEditorFieldImage,
 } from "./editor-utils.js";
@@ -156,7 +157,7 @@ export function createOptimisticEditorHistoryEntryFromRow(row, languageCode, opt
     statusNote: typeof options.statusNote === "string" ? options.statusNote : null,
     aiModel: typeof options.aiModel === "string" ? options.aiModel : null,
     plainText: String(row.fields?.[languageCode] ?? ""),
-    footnote: String(row.footnotes?.[languageCode] ?? ""),
+    footnote: editorFootnotesPlainText(row.footnotes?.[languageCode]),
     imageCaption: String(row.imageCaptions?.[languageCode] ?? ""),
     image: normalizeEditorFieldImage(row.images?.[languageCode]),
     textStyle: normalizeEditorRowTextStyle(row.textStyle),
@@ -494,7 +495,7 @@ export function editorRowMatchesHistoryPayload(row, languageCode, payload) {
 
   return (
     String(row.fields?.[languageCode] ?? "") === String(payload?.plainText ?? "")
-    && String(row.footnotes?.[languageCode] ?? "") === String(payload?.footnote ?? "")
+    && editorFootnotesPlainText(row.footnotes?.[languageCode]) === String(payload?.footnote ?? "")
     && String(row.imageCaptions?.[languageCode] ?? "") === String(payload?.imageCaption ?? "")
     && historyImageKey(row.images?.[languageCode]) === historyImageKey(payload?.image)
     && String(row.textStyle ?? "") === String(expectedTextStyle ?? "")

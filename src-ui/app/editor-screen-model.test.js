@@ -356,7 +356,7 @@ test("buildEditorScreenViewModel rebuilds section footnote visibility when the f
 
     assert.equal(targetSection?.hasVisibleFootnote, true);
     assert.equal(targetSection?.isFootnoteEditorOpen, true);
-    assert.equal(targetSection?.showAddFootnoteButton, false);
+    assert.equal(targetSection?.showAddFootnoteButton, true);
   } finally {
     restoreSharedState(snapshot);
   }

@@ -1,4 +1,5 @@
 import { buildEditorAiTranslationGlossaryHints } from "./editor-glossary-highlighting.js";
+import { editorFootnotesPlainText } from "./editor-utils.js";
 import { languageBaseCode } from "./editor-language-utils.js";
 
 const REVIEW_SOURCE_CONTEXT_PREVIOUS_TOKEN_TARGET = 360;
@@ -21,9 +22,7 @@ export function readEditorReviewRowFootnote(row, languageCode) {
   if (!languageCode) {
     return "";
   }
-  return typeof row?.footnotes?.[languageCode] === "string"
-    ? row.footnotes[languageCode]
-    : String(row?.footnotes?.[languageCode] ?? "");
+  return editorFootnotesPlainText(row?.footnotes?.[languageCode]);
 }
 
 export function readEditorReviewRowImageCaption(row, languageCode) {

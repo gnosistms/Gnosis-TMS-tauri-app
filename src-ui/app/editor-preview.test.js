@@ -11,7 +11,7 @@ import {
   stepEditorPreviewSearchState,
 } from "./editor-preview.js";
 
-test("buildEditorPreviewDocument emits target-language text, footnote, and image blocks in order", () => {
+test("buildEditorPreviewDocument attaches target-language footnotes to text blocks", () => {
   const blocks = buildEditorPreviewDocument([{
     rowId: "row-1",
     lifecycleState: "active",
@@ -30,12 +30,12 @@ test("buildEditorPreviewDocument emits target-language text, footnote, and image
 
   assert.deepEqual(
     blocks.map((block) => block.kind),
-    ["text", "footnote", "image"],
+    ["text", "image"],
   );
   assert.equal(blocks[0].textStyle, "heading1");
   assert.equal(blocks[0].text, "Alpha title");
-  assert.equal(blocks[1].text, "Footnote first");
-  assert.equal(blocks[2].caption, "Image caption alpha");
+  assert.deepEqual(blocks[0].footnotes, [{ marker: 1, text: "Footnote first" }]);
+  assert.equal(blocks[1].caption, "Image caption alpha");
 });
 
 test("buildEditorPreviewDocument skips all deleted-row preview content", () => {
@@ -71,10 +71,11 @@ test("buildEditorPreviewDocument skips all deleted-row preview content", () => {
 
   assert.deepEqual(
     blocks.map((block) => block.kind),
-    ["footnote", "image"],
+    ["text", "image"],
   );
-  assert.equal(blocks[0].kind, "footnote");
-  assert.equal(blocks[0].text, "Visible footnote");
+  assert.equal(blocks[0].kind, "text");
+  assert.equal(blocks[0].text, "");
+  assert.deepEqual(blocks[0].footnotes, [{ marker: 1, text: "Visible footnote" }]);
   assert.equal(blocks[1].kind, "image");
   assert.equal(blocks[1].caption, "Visible caption");
   assert.equal(blocks.some((block) => block.rowId === "row-deleted"), false);
@@ -159,6 +160,66 @@ test("preview rendering and serialization preserve supported inline markup", () 
   assert.match(serialized, /<ruby>漢字<rt>よみ<\/rt><\/ruby>/);
 });
 
+test("preview footnote refs preserve inline markup when markers are inside tags", () => {
+  const blocks = buildEditorPreviewDocument([{
+    rowId: "row-1",
+    lifecycleState: "active",
+    textStyle: "paragraph",
+    fields: { vi: "<strong>Alpha [1] body</strong>" },
+    footnotes: { vi: "Marked note" },
+    imageCaptions: {},
+    images: {},
+  }], "vi");
+
+  const html = serializeEditorPreviewHtml(blocks);
+
+  assert.match(html, /<strong>Alpha <sup data-fn="Marked note" class="fn">/);
+  assert.match(html, /<\/sup> body<\/strong>/);
+  assert.doesNotMatch(html, /&lt;\/strong&gt;/);
+});
+
+test("preview appends footnote refs with no matching marker without changing text", () => {
+  const blocks = buildEditorPreviewDocument([{
+    rowId: "row-1",
+    lifecycleState: "active",
+    textStyle: "paragraph",
+    fields: { vi: "Alpha body [100]" },
+    footnotes: {
+      vi: [
+        { marker: 3, text: "Third note" },
+        { marker: 1, text: "First note" },
+      ],
+    },
+    imageCaptions: {},
+    images: {},
+  }], "vi");
+
+  const html = serializeEditorPreviewHtml(blocks);
+
+  assert.match(html, /Alpha body \[100\] <sup data-fn="First note" class="fn">/);
+  assert.match(html, /<\/sup> <sup data-fn="Third note" class="fn">/);
+});
+
+test("preview ignores escaped literal markers before footnote refs", () => {
+  const blocks = buildEditorPreviewDocument([{
+    rowId: "row-1",
+    lifecycleState: "active",
+    textStyle: "paragraph",
+    fields: { vi: "Literal \\[100\\] then note [1] end" },
+    footnotes: {
+      vi: [{ marker: 1, text: "One" }],
+    },
+    imageCaptions: {},
+    images: {},
+  }], "vi");
+
+  const html = serializeEditorPreviewHtml(blocks);
+
+  assert.match(html, /Literal \[100\] then note <sup data-fn="One" class="fn">/);
+  assert.match(html, /<\/sup> end<\/p>/);
+  assert.doesNotMatch(html, /\[1<sup/);
+});
+
 test("preview search counting and stepping wrap through all matches", () => {
   const blocks = buildEditorPreviewDocument([{
     rowId: "row-1",
@@ -228,12 +289,12 @@ test("serializeEditorPreviewHtml uses semantic tags and repo-relative uploaded i
   const html = serializeEditorPreviewHtml(blocks);
 
   assert.match(html, /<h1>Chapter Title<\/h1>/);
-  assert.match(html, /<blockquote>Quoted line<\/blockquote>/);
-  assert.match(html, /<p><em>Footnote line<\/em><\/p>/);
+  assert.match(html, /<blockquote>Quoted line <sup data-fn="Footnote line" class="fn">/);
+  assert.match(html, /<ol class="wp-block-footnotes"><li id="fn-row-2-1">Footnote line/);
   assert.match(html, /<figure/);
   assert.match(html, /src="chapters\/chapter-1\/images\/row-2\/image.png"/);
   assert.match(html, /<figcaption/);
-  assert.doesNotMatch(html, /class=/);
+  assert.match(html, /class="wp-block-footnotes"/);
 });
 
 test("serializeEditorPreviewHtml uses centered HTML for centered plain text", () => {

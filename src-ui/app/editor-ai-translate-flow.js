@@ -33,7 +33,7 @@ import {
 import { selectedProjectsTeam, selectedProjectsTeamInstallationId } from "./project-context.js";
 import { invoke } from "./runtime.js";
 import { showNoticeBadge } from "./status-feedback.js";
-import { findEditorRowById } from "./editor-utils.js";
+import { editorFootnotesPlainText, findEditorRowById } from "./editor-utils.js";
 import { state } from "./state.js";
 import {
   buildAssistantSourceContextWindow,
@@ -87,7 +87,7 @@ function latestEditorTranslateSourceTextMatches(context) {
   const latestRow = findEditorRowById(context.rowId, state.editorChapter);
   return (
     (latestRow?.fields?.[context.sourceLanguageCode] ?? "") === context.sourceText
-    && (latestRow?.footnotes?.[context.sourceLanguageCode] ?? "") === context.sourceFootnote
+    && editorFootnotesPlainText(latestRow?.footnotes?.[context.sourceLanguageCode]) === context.sourceFootnote
     && (latestRow?.imageCaptions?.[context.sourceLanguageCode] ?? "") === context.sourceImageCaption
   );
 }
@@ -240,10 +240,10 @@ export function buildEditorAiTranslateContext(chapterState = state.editorChapter
     sourceLanguageLabel: languageSemanticLabel(sourceLanguage) || sourceLanguageCode,
     targetLanguageLabel: languageSemanticLabel(targetLanguage) || targetLanguageCode,
     sourceText: row.fields?.[sourceLanguageCode] ?? "",
-    sourceFootnote: row.footnotes?.[sourceLanguageCode] ?? "",
+    sourceFootnote: editorFootnotesPlainText(row.footnotes?.[sourceLanguageCode]),
     sourceImageCaption: row.imageCaptions?.[sourceLanguageCode] ?? "",
     targetText: row.fields?.[targetLanguageCode] ?? "",
-    targetFootnote: row.footnotes?.[targetLanguageCode] ?? "",
+    targetFootnote: editorFootnotesPlainText(row.footnotes?.[targetLanguageCode]),
     targetImageCaption: row.imageCaptions?.[targetLanguageCode] ?? "",
     rowWindow: buildAssistantSourceContextWindow(
       chapterState,

@@ -63,15 +63,15 @@ export function renderEditorConflictResolutionModal(state) {
 
   const renderVersionStack = (text, footnote, imageCaption) => `
     <div class="editor-conflict-modal__version-stack">
-      <textarea class="field__textarea editor-conflict-modal__version-text" readonly>${escapeHtml(text)}</textarea>
+      <div class="field__textarea editor-conflict-modal__version-text">${escapeHtml(text)}</div>
       ${
         showFootnotes
-          ? `<textarea class="field__textarea editor-conflict-modal__version-text editor-conflict-modal__version-text--footnote" readonly>${escapeHtml(footnote)}</textarea>`
+          ? `<div class="field__textarea editor-conflict-modal__version-text editor-conflict-modal__version-text--footnote">${escapeHtml(footnote)}</div>`
           : ""
       }
       ${
         showImageCaptions
-          ? `<textarea class="field__textarea editor-conflict-modal__version-text editor-conflict-modal__version-text--footnote" readonly>${escapeHtml(imageCaption)}</textarea>`
+          ? `<div class="field__textarea editor-conflict-modal__version-text editor-conflict-modal__version-text--footnote">${escapeHtml(imageCaption)}</div>`
           : ""
       }
     </div>
