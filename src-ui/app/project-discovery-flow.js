@@ -1,11 +1,6 @@
 import { invoke, waitForNextPaint } from "./runtime.js";
 import { requireBrokerSession } from "./auth-flow.js";
 import {
-  beginProjectsPageSync,
-  completeProjectsPageSync,
-  failProjectsPageSync,
-} from "./page-sync.js";
-import {
   loadStoredChapterPendingMutations,
 } from "./project-cache.js";
 import { applyPendingMutations } from "./optimistic-collection.js";
@@ -25,14 +20,6 @@ import {
   listProjectMetadataRecords,
   repairAutoRepairableRepoBindings,
 } from "./team-metadata-flow.js";
-import {
-  applyProjectSnapshotToState,
-} from "./project-top-level-state.js";
-import {
-  clearResourcePageDataOwner,
-  setResourcePageDataOwner,
-} from "./resource-page-controller.js";
-import { teamCacheKey } from "./team-cache.js";
 import {
   clearRestoredLocalHardDeleteTombstones,
   filterLocalHardDeletedResources,
@@ -69,9 +56,10 @@ function applyLocalProjectHardDeleteState(selectedTeam, snapshot) {
 }
 
 async function collectKnownDeletedProjectResources(selectedTeam, localProjectSnapshot, options = {}) {
+  const visibleSnapshot = options.visibleProjectSnapshot ?? {};
   const known = [
-    ...(Array.isArray(state.projects) ? state.projects : []),
-    ...(Array.isArray(state.deletedProjects) ? state.deletedProjects : []),
+    ...(Array.isArray(visibleSnapshot.items) ? visibleSnapshot.items : []),
+    ...(Array.isArray(visibleSnapshot.deletedItems) ? visibleSnapshot.deletedItems : []),
     ...(Array.isArray(localProjectSnapshot?.items) ? localProjectSnapshot.items : []),
     ...(Array.isArray(localProjectSnapshot?.deletedItems) ? localProjectSnapshot.deletedItems : []),
   ];
@@ -103,6 +91,203 @@ function nextProjectDiscoveryRequestId() {
   return nextId;
 }
 
+function createProjectLoadResult({
+  snapshot,
+  repoSyncByProjectId,
+  glossaries,
+  pendingChapterMutations,
+  discovery,
+  previousResult,
+} = {}) {
+  const previous =
+    previousResult && typeof previousResult === "object"
+      ? previousResult
+      : {
+          items: [],
+          deletedItems: [],
+          repoSyncByProjectId: {},
+          glossaries: [],
+          pendingChapterMutations: [],
+          discovery: { status: "ready", error: "", glossaryWarning: "", recoveryMessage: "" },
+        };
+  const normalizedSnapshot = {
+    items: Array.isArray(snapshot?.items) ? snapshot.items : previous.items,
+    deletedItems: Array.isArray(snapshot?.deletedItems) ? snapshot.deletedItems : previous.deletedItems,
+  };
+  return {
+    items: normalizedSnapshot.items,
+    deletedItems: normalizedSnapshot.deletedItems,
+    repoSyncByProjectId:
+      repoSyncByProjectId && typeof repoSyncByProjectId === "object"
+        ? repoSyncByProjectId
+        : previous.repoSyncByProjectId,
+    glossaries: Array.isArray(glossaries) ? glossaries : previous.glossaries,
+    pendingChapterMutations: Array.isArray(pendingChapterMutations)
+      ? pendingChapterMutations
+      : previous.pendingChapterMutations,
+    discovery: discovery ?? previous.discovery,
+  };
+}
+
+function emitProjectLoadProgress(options, type, payload = {}, snapshot = createProjectLoadResult()) {
+  if (typeof options?.onProjectLoadProgress !== "function") {
+    return;
+  }
+  options.onProjectLoadProgress({
+    type,
+    snapshot,
+    ...payload,
+  });
+}
+
+function publishProjectLoadSnapshot({
+  render,
+  selectedTeam,
+  snapshot,
+  options = {},
+  discovery = null,
+  glossaries,
+  pendingChapterMutations,
+  repoSyncByProjectId,
+  previousResult,
+  progressType = "",
+  progressPayload = {},
+  persist = false,
+} = {}) {
+  const normalizedSnapshot = {
+    items: Array.isArray(snapshot?.items) ? snapshot.items : [],
+    deletedItems: Array.isArray(snapshot?.deletedItems) ? snapshot.deletedItems : [],
+  };
+  const nextResult = createProjectLoadResult({
+    snapshot: normalizedSnapshot,
+    discovery,
+    glossaries,
+    pendingChapterMutations,
+    repoSyncByProjectId,
+    previousResult,
+  });
+  if (typeof options.publishProjectLoadSnapshot === "function") {
+    options.publishProjectLoadSnapshot({
+      render,
+      selectedTeam,
+      snapshot: normalizedSnapshot,
+      discovery,
+      glossaries,
+      pendingChapterMutations,
+      repoSyncByProjectId,
+      persist,
+      progressType,
+      progressPayload,
+    });
+  }
+  if (progressType) {
+    emitProjectLoadProgress(options, progressType, progressPayload, nextResult);
+  }
+  return nextResult;
+}
+
+function publishProjectDiscoveryState({
+  render,
+  options = {},
+  discovery = null,
+  previousResult,
+  progressType = "",
+  progressPayload = {},
+} = {}) {
+  const nextResult = createProjectLoadResult({
+    discovery,
+    previousResult,
+  });
+  if (typeof options.publishProjectDiscoveryState === "function") {
+    options.publishProjectDiscoveryState({
+      render,
+      discovery,
+      progressType,
+      progressPayload,
+    });
+  }
+  if (progressType) {
+    emitProjectLoadProgress(options, progressType, progressPayload, nextResult);
+  }
+  return nextResult;
+}
+
+function repoSyncSnapshotMap(snapshots = []) {
+  return Object.fromEntries(
+    (Array.isArray(snapshots) ? snapshots : [])
+      .filter((snapshot) => snapshot?.projectId)
+      .map((snapshot) => [snapshot.projectId, snapshot]),
+  );
+}
+
+function projectPageSyncControllerForOptions(options = {}) {
+  const controller = options.pageSyncController;
+  return {
+    begin:
+      typeof controller?.begin === "function"
+        ? () => controller.begin()
+        : () => {},
+    complete:
+      typeof controller?.complete === "function"
+        ? (render) => controller.complete(render)
+        : async () => {},
+    fail:
+      typeof controller?.fail === "function"
+        ? () => controller.fail()
+        : () => {},
+  };
+}
+
+function beginProjectLoadPageSync({
+  render,
+  options = {},
+  progressType = "remoteSyncStarted",
+  progressSnapshot,
+} = {}) {
+  projectPageSyncControllerForOptions(options).begin();
+  render?.();
+  if (progressType) {
+    emitProjectLoadProgress(options, progressType, {}, progressSnapshot);
+  }
+}
+
+async function completeProjectLoadPageSync({
+  render,
+  options = {},
+  progressType = "",
+  progressSnapshot,
+  clearNotice = true,
+} = {}) {
+  await projectPageSyncControllerForOptions(options).complete(render);
+  if (clearNotice) {
+    clearNoticeBadge();
+  }
+  render?.();
+  if (progressType) {
+    emitProjectLoadProgress(options, progressType, {}, progressSnapshot);
+  }
+}
+
+function failProjectLoadPageSync({
+  render,
+  progressType = "",
+  options = {},
+  progressSnapshot,
+  clearNotice = false,
+  renderAfterFail = false,
+} = {}) {
+  projectPageSyncControllerForOptions(options).fail();
+  if (clearNotice) {
+    clearNoticeBadge();
+  }
+  if (renderAfterFail) {
+    render?.();
+  }
+  if (progressType) {
+    emitProjectLoadProgress(options, progressType, {}, progressSnapshot);
+  }
+}
+
 function isProjectDiscoveryCurrent(teamId, requestId, syncVersionAtStart) {
   return (
     state.screen === "projects"
@@ -118,15 +303,17 @@ async function abortProjectDiscoveryIfStale(
   requestId,
   syncVersionAtStart,
   beganProjectsPageSync = false,
+  options = {},
 ) {
   if (isProjectDiscoveryCurrent(teamId, requestId, syncVersionAtStart)) {
     return false;
   }
 
   if (beganProjectsPageSync) {
-    await completeProjectsPageSync(render);
+    await completeProjectLoadPageSync({ render, options, clearNotice: false });
+  } else {
+    render?.();
   }
-  render?.();
   return true;
 }
 
@@ -369,7 +556,7 @@ async function purgeTombstonedProjectsForTeam(selectedTeam, projects, metadataRe
       options.removeVisibleProject(project.id);
       options.clearSelectedProjectState(project);
       options.dropProjectMutationsForProject(selectedTeam, project.id);
-      delete state.projectRepoSyncByProjectId[project.id];
+      options.removeProjectRepoSyncState?.(project.id);
       purgedProjectIds.add(project.id);
     }
 
@@ -458,12 +645,8 @@ export async function loadLocalProjectSnapshotForTeam(selectedTeam, options = {}
   };
 }
 
-async function loadAvailableGlossariesForTeam(selectedTeam, teamIdAtStart = selectedTeam?.id) {
+async function loadAvailableGlossariesForTeam(selectedTeam) {
   if (!Number.isFinite(selectedTeam?.installationId)) {
-    if (state.selectedTeamId === teamIdAtStart) {
-      state.glossaries = [];
-      clearResourcePageDataOwner(state.glossariesPage);
-    }
     return {
       glossaries: [],
       syncIssue: "",
@@ -481,14 +664,6 @@ async function loadAvailableGlossariesForTeam(selectedTeam, teamIdAtStart = sele
         ? syncIssue
         : "";
 
-  if (state.selectedTeamId === teamIdAtStart) {
-    state.glossaries = glossaries;
-    setResourcePageDataOwner(state.glossariesPage, {
-      teamId: teamIdAtStart,
-      cacheKey: teamCacheKey(selectedTeam),
-    });
-  }
-
   return {
     glossaries,
     syncIssue: syncIssueMessage,
@@ -497,11 +672,16 @@ async function loadAvailableGlossariesForTeam(selectedTeam, teamIdAtStart = sele
 }
 
 export async function refreshProjectFilesFromDisk(render, selectedTeam, projects, options = {}) {
-  const baseSnapshot = {
-    items: state.projects,
-    deletedItems: state.deletedProjects,
-  };
   const targetProjects = Array.isArray(projects) ? projects : [];
+  const baseSnapshot =
+    options.baseSnapshot
+    && Array.isArray(options.baseSnapshot.items)
+    && Array.isArray(options.baseSnapshot.deletedItems)
+      ? options.baseSnapshot
+      : {
+          items: targetProjects.filter((project) => project?.lifecycleState !== "deleted"),
+          deletedItems: targetProjects.filter((project) => project?.lifecycleState === "deleted"),
+        };
   if (!Number.isFinite(selectedTeam?.installationId) || targetProjects.length === 0) {
     return baseSnapshot;
   }
@@ -511,42 +691,59 @@ export async function refreshProjectFilesFromDisk(render, selectedTeam, projects
     normalizeListedChapter: options.normalizeListedChapter,
     selectedTeam,
   });
+  const pendingChapterMutations = Array.isArray(options.pendingChapterMutations)
+    ? options.pendingChapterMutations
+    : state.pendingChapterMutations;
   const nextSnapshot = applyPendingMutations(
     mergedSnapshot,
-    state.pendingChapterMutations,
+    pendingChapterMutations,
     options.applyChapterPendingMutation,
   );
   const preservedSnapshot =
     typeof options.preserveProjectLifecyclePatches === "function"
       ? options.preserveProjectLifecyclePatches(nextSnapshot)
       : nextSnapshot;
-  applyProjectSnapshotToState(preservedSnapshot, {
-    reconcileExpandedDeletedFiles: options.reconcileExpandedDeletedFiles,
+  publishProjectLoadSnapshot({
+    render,
+    selectedTeam,
+    snapshot: preservedSnapshot,
+    options,
+    pendingChapterMutations,
+    repoSyncByProjectId:
+      options.repoSyncByProjectId && typeof options.repoSyncByProjectId === "object"
+        ? options.repoSyncByProjectId
+        : {},
+    persist: true,
   });
-  options.persistProjectsForTeam(selectedTeam);
-  render();
   return preservedSnapshot;
 }
 
-export async function loadTeamProjects(render, teamId = state.selectedTeamId, options = {}) {
+export async function loadProjectSnapshotForTeam(render, teamId = state.selectedTeamId, options = {}) {
   const selectedTeam = state.teams.find((team) => team.id === teamId);
   const syncVersionAtStart = state.projectSyncVersion;
   const requestId = nextProjectDiscoveryRequestId();
-  state.projectRepoSyncByProjectId = {};
+  let pendingChapterMutations = [];
+  let repoSyncByProjectId = {};
+  let currentLoadResult = createProjectLoadResult();
+  emitProjectLoadProgress(options, "started", {}, currentLoadResult);
 
   if (!selectedTeam?.installationId) {
-    state.pendingChapterMutations = [];
-    state.projectRepoSyncByProjectId = {};
-    applyProjectSnapshotToState({ items: [], deletedItems: [] }, {
-      reconcileExpandedDeletedFiles: options.reconcileExpandedDeletedFiles,
+    currentLoadResult = publishProjectLoadSnapshot({
+      render,
+      selectedTeam,
+      snapshot: { items: [], deletedItems: [] },
+      options,
+      discovery: { status: "ready" },
+      glossaries: [],
+      pendingChapterMutations: [],
+      repoSyncByProjectId: {},
+      progressType: "empty",
     });
-    options.setProjectDiscoveryState("ready", "", "");
-    render();
-    return;
+    return currentLoadResult;
   }
 
-  state.pendingChapterMutations = loadStoredChapterPendingMutations(selectedTeam);
-  const glossaryLoadPromise = loadAvailableGlossariesForTeam(selectedTeam, teamId);
+  pendingChapterMutations = loadStoredChapterPendingMutations(selectedTeam);
+  const glossaryLoadPromise = loadAvailableGlossariesForTeam(selectedTeam);
 
   if (state.offline.isEnabled) {
     const cachedProjects = options.loadStoredProjectsForTeam(selectedTeam);
@@ -555,28 +752,33 @@ export async function loadTeamProjects(render, teamId = state.selectedTeamId, op
         items: cachedProjects.projects,
         deletedItems: cachedProjects.deletedProjects,
       },
-      state.pendingChapterMutations,
+      pendingChapterMutations,
       options.applyChapterPendingMutation,
     );
     const glossaryResult = await glossaryLoadPromise;
     if (await abortProjectDiscoveryIfStale(render, selectedTeam?.id ?? teamId, requestId, syncVersionAtStart)) {
-      return;
+      return currentLoadResult;
     }
-    state.projectRepoSyncByProjectId = {};
     const preservedSnapshot =
       typeof options.preserveProjectLifecyclePatches === "function"
         ? options.preserveProjectLifecyclePatches(optimisticSnapshot)
         : optimisticSnapshot;
-    applyProjectSnapshotToState(applyLocalProjectHardDeleteState(selectedTeam, preservedSnapshot), {
-      reconcileExpandedDeletedFiles: options.reconcileExpandedDeletedFiles,
+    currentLoadResult = publishProjectLoadSnapshot({
+      render,
+      selectedTeam,
+      snapshot: applyLocalProjectHardDeleteState(selectedTeam, preservedSnapshot),
+      options,
+      previousResult: currentLoadResult,
+      glossaries: glossaryResult?.glossaries ?? [],
+      pendingChapterMutations,
+      repoSyncByProjectId: {},
+      discovery: {
+        status: "ready",
+        glossaryWarning: glossaryResult?.syncIssue || glossaryResult?.brokerWarning || "",
+      },
+      progressType: "offlineSnapshot",
     });
-    options.setProjectDiscoveryState(
-      "ready",
-      "",
-      glossaryResult?.syncIssue || glossaryResult?.brokerWarning || "",
-    );
-    render();
-    return;
+    return currentLoadResult;
   }
 
   let renderedLocalProjects = false;
@@ -587,9 +789,9 @@ export async function loadTeamProjects(render, teamId = state.selectedTeamId, op
       loadStoredChapterPendingMutations,
     });
     if (await abortProjectDiscoveryIfStale(render, selectedTeam.id, requestId, syncVersionAtStart)) {
-      return;
+      return currentLoadResult;
     }
-    state.pendingChapterMutations = localSnapshot.pendingChapterMutations;
+    pendingChapterMutations = localSnapshot.pendingChapterMutations;
     const preservedSnapshot =
       typeof options.preserveProjectLifecyclePatches === "function"
         ? options.preserveProjectLifecyclePatches(localSnapshot)
@@ -600,27 +802,38 @@ export async function loadTeamProjects(render, teamId = state.selectedTeamId, op
     };
     const hasLocalProjects =
       localProjectSnapshot.items.length > 0 || localProjectSnapshot.deletedItems.length > 0;
-    applyProjectSnapshotToState(localProjectSnapshot, {
-      reconcileExpandedDeletedFiles: options.reconcileExpandedDeletedFiles,
+    currentLoadResult = publishProjectLoadSnapshot({
+      render,
+      selectedTeam,
+      snapshot: localProjectSnapshot,
+      options,
+      previousResult: currentLoadResult,
+      pendingChapterMutations,
+      repoSyncByProjectId,
+      discovery: { status: hasLocalProjects ? "ready" : "loading" },
+      progressType: "localSnapshot",
     });
-    options.setProjectDiscoveryState(hasLocalProjects ? "ready" : "loading", "", "", "");
     renderedLocalProjects = hasLocalProjects;
-    render();
   } catch {
-    state.pendingChapterMutations = loadStoredChapterPendingMutations(selectedTeam);
-    applyProjectSnapshotToState({ items: [], deletedItems: [] }, {
-      reconcileExpandedDeletedFiles: options.reconcileExpandedDeletedFiles,
+    pendingChapterMutations = loadStoredChapterPendingMutations(selectedTeam);
+    currentLoadResult = publishProjectLoadSnapshot({
+      render,
+      selectedTeam,
+      snapshot: { items: [], deletedItems: [] },
+      options,
+      previousResult: currentLoadResult,
+      pendingChapterMutations,
+      repoSyncByProjectId,
+      discovery: { status: "loading" },
+      progressType: "localSnapshotError",
     });
-    options.setProjectDiscoveryState("loading", "", "", "");
-    render();
   }
   if (await abortProjectDiscoveryIfStale(render, selectedTeam.id, requestId, syncVersionAtStart)) {
-    return;
+    return currentLoadResult;
   }
   clearNoticeBadge();
   options.setProjectUiDebug(render, "Loading projects from GitHub...");
-  beginProjectsPageSync();
-  render();
+  beginProjectLoadPageSync({ render, options, progressSnapshot: currentLoadResult });
 
   try {
     const [projectsResult, metadataResult, repairResult, glossaryDiscoveryResult] = await Promise.allSettled([
@@ -639,9 +852,10 @@ export async function loadTeamProjects(render, teamId = state.selectedTeamId, op
         requestId,
         syncVersionAtStart,
         true,
+        options,
       )
     ) {
-      return;
+      return currentLoadResult;
     }
     let remoteProjects = projectsResult.status === "fulfilled"
       ? (Array.isArray(projectsResult.value) ? projectsResult.value : [])
@@ -682,7 +896,10 @@ export async function loadTeamProjects(render, teamId = state.selectedTeamId, op
         selectedTeam,
         remoteProjects,
         localProjectSnapshot,
-        options,
+        {
+          ...options,
+          visibleProjectSnapshot: currentLoadResult,
+        },
       );
     }
     const recoverableMetadataCount = countRecoverableProjectMetadataRecords(projectMetadataRecords);
@@ -711,15 +928,14 @@ export async function loadTeamProjects(render, teamId = state.selectedTeamId, op
         requestId,
         syncVersionAtStart,
         true,
+        options,
       )
     ) {
-      return;
+      return currentLoadResult;
     }
     if (syncVersionAtStart !== state.projectSyncVersion) {
-      await completeProjectsPageSync(render);
-      clearNoticeBadge();
-      render();
-      return;
+      await completeProjectLoadPageSync({ render, options, progressSnapshot: currentLoadResult });
+      return currentLoadResult;
     }
     const mergedProjects = mergeMetadataDiscoveryProjects({
       metadataRecords: projectMetadataRecords,
@@ -754,9 +970,10 @@ export async function loadTeamProjects(render, teamId = state.selectedTeamId, op
         requestId,
         syncVersionAtStart,
         true,
+        options,
       )
     ) {
-      return;
+      return currentLoadResult;
     }
     const installationRecoveryDetected =
       metadataLoaded
@@ -771,7 +988,7 @@ export async function loadTeamProjects(render, teamId = state.selectedTeamId, op
         items: mappedProjects.filter((project) => project.lifecycleState !== "deleted"),
         deletedItems: mappedProjects.filter((project) => project.lifecycleState === "deleted"),
       },
-      state.pendingChapterMutations,
+      pendingChapterMutations,
       options.applyChapterPendingMutation,
     );
     const preservedSnapshot =
@@ -780,16 +997,30 @@ export async function loadTeamProjects(render, teamId = state.selectedTeamId, op
         : nextSnapshot;
     const visibleSnapshot = applyLocalProjectHardDeleteState(selectedTeam, preservedSnapshot);
     mappedProjects = [...visibleSnapshot.items, ...visibleSnapshot.deletedItems];
-    applyProjectSnapshotToState(visibleSnapshot, {
-      reconcileExpandedDeletedFiles: options.reconcileExpandedDeletedFiles,
-    });
-    options.persistProjectsForTeam(selectedTeam);
     const glossaryWarning =
       glossaryDiscoveryResult.status === "fulfilled"
         ? glossaryDiscoveryResult.value?.syncIssue || glossaryDiscoveryResult.value?.brokerWarning || ""
         : glossaryDiscoveryResult.reason?.message ?? String(glossaryDiscoveryResult.reason ?? "");
-    options.setProjectDiscoveryState("ready", "", glossaryWarning, recoveryMessage);
-    render();
+    currentLoadResult = publishProjectLoadSnapshot({
+      render,
+      selectedTeam,
+      snapshot: visibleSnapshot,
+      options,
+      previousResult: currentLoadResult,
+      glossaries:
+        glossaryDiscoveryResult.status === "fulfilled"
+          ? glossaryDiscoveryResult.value?.glossaries ?? []
+          : undefined,
+      pendingChapterMutations,
+      repoSyncByProjectId,
+      discovery: {
+        status: "ready",
+        glossaryWarning,
+        recoveryMessage,
+      },
+      progressType: "remoteSnapshot",
+      persist: true,
+    });
     await waitForNextPaint();
     if (
       await abortProjectDiscoveryIfStale(
@@ -798,9 +1029,10 @@ export async function loadTeamProjects(render, teamId = state.selectedTeamId, op
         requestId,
         syncVersionAtStart,
         true,
+        options,
       )
     ) {
-      return;
+      return currentLoadResult;
     }
     await runTeamResourceMigrationSync(render, selectedTeam, { projects: mappedProjects });
     if (
@@ -810,12 +1042,48 @@ export async function loadTeamProjects(render, teamId = state.selectedTeamId, op
         requestId,
         syncVersionAtStart,
         true,
+        options,
       )
     ) {
-      return;
+      return currentLoadResult;
     }
     await reconcileProjectRepoSyncStates(render, selectedTeam, mappedProjects, {
       shouldAbort: () => !isProjectDiscoveryCurrent(selectedTeam.id, requestId, syncVersionAtStart),
+      applySnapshots: (snapshots) => {
+        repoSyncByProjectId = repoSyncSnapshotMap(snapshots);
+        currentLoadResult = publishProjectLoadSnapshot({
+          render,
+          selectedTeam,
+          snapshot: {
+            items: mappedProjects.filter((project) => project.lifecycleState !== "deleted"),
+            deletedItems: mappedProjects.filter((project) => project.lifecycleState === "deleted"),
+          },
+          options,
+          previousResult: currentLoadResult,
+          pendingChapterMutations,
+          repoSyncByProjectId,
+          progressType: "repoSyncSnapshot",
+        });
+      },
+      mergeSnapshots: (snapshots) => {
+        repoSyncByProjectId = {
+          ...repoSyncByProjectId,
+          ...repoSyncSnapshotMap(snapshots),
+        };
+        currentLoadResult = publishProjectLoadSnapshot({
+          render,
+          selectedTeam,
+          snapshot: {
+            items: mappedProjects.filter((project) => project.lifecycleState !== "deleted"),
+            deletedItems: mappedProjects.filter((project) => project.lifecycleState === "deleted"),
+          },
+          options,
+          previousResult: currentLoadResult,
+          pendingChapterMutations,
+          repoSyncByProjectId,
+          progressType: "repoSyncProgress",
+        });
+      },
     });
     if (
       await abortProjectDiscoveryIfStale(
@@ -824,9 +1092,10 @@ export async function loadTeamProjects(render, teamId = state.selectedTeamId, op
         requestId,
         syncVersionAtStart,
         true,
+        options,
       )
     ) {
-      return;
+      return currentLoadResult;
     }
     const refreshedRepairScan = await refreshRepoRepairIssuesAfterSync(selectedTeam, repairIssues);
     if (refreshedRepairScan.repairLoaded) {
@@ -855,7 +1124,7 @@ export async function loadTeamProjects(render, teamId = state.selectedTeamId, op
           items: mappedProjects.filter((project) => project.lifecycleState !== "deleted"),
           deletedItems: mappedProjects.filter((project) => project.lifecycleState === "deleted"),
         },
-        state.pendingChapterMutations,
+        pendingChapterMutations,
         options.applyChapterPendingMutation,
       );
       const preservedRepairedSnapshot =
@@ -864,11 +1133,17 @@ export async function loadTeamProjects(render, teamId = state.selectedTeamId, op
           : repairedSnapshot;
       const visibleRepairedSnapshot = applyLocalProjectHardDeleteState(selectedTeam, preservedRepairedSnapshot);
       mappedProjects = [...visibleRepairedSnapshot.items, ...visibleRepairedSnapshot.deletedItems];
-      applyProjectSnapshotToState(visibleRepairedSnapshot, {
-        reconcileExpandedDeletedFiles: options.reconcileExpandedDeletedFiles,
+      currentLoadResult = publishProjectLoadSnapshot({
+        render,
+        selectedTeam,
+        snapshot: visibleRepairedSnapshot,
+        options,
+        previousResult: currentLoadResult,
+        pendingChapterMutations,
+        repoSyncByProjectId,
+        progressType: "repairSnapshot",
+        persist: true,
       });
-      options.persistProjectsForTeam(selectedTeam);
-      render();
     }
     if (
       await abortProjectDiscoveryIfStale(
@@ -877,16 +1152,28 @@ export async function loadTeamProjects(render, teamId = state.selectedTeamId, op
         requestId,
         syncVersionAtStart,
         true,
+        options,
       )
     ) {
-      return;
+      return currentLoadResult;
     }
-    await refreshProjectFilesFromDisk(
+    const refreshedProjectFilesSnapshot = await refreshProjectFilesFromDisk(
       render,
       selectedTeam,
       mappedProjects,
-      options,
+      {
+        ...options,
+        baseSnapshot: currentLoadResult,
+        pendingChapterMutations,
+        repoSyncByProjectId,
+      },
     );
+    currentLoadResult = createProjectLoadResult({
+      snapshot: refreshedProjectFilesSnapshot,
+      pendingChapterMutations,
+      repoSyncByProjectId,
+      previousResult: currentLoadResult,
+    });
     if (
       await abortProjectDiscoveryIfStale(
         render,
@@ -894,14 +1181,18 @@ export async function loadTeamProjects(render, teamId = state.selectedTeamId, op
         requestId,
         syncVersionAtStart,
         true,
+        options,
       )
     ) {
-      return;
+      return currentLoadResult;
     }
     options.clearProjectUiDebug(render);
-    await completeProjectsPageSync(render);
-    clearNoticeBadge();
-    render();
+    await completeProjectLoadPageSync({
+      render,
+      options,
+      progressType: "repoSyncComplete",
+      progressSnapshot: currentLoadResult,
+    });
     if (glossaryDiscoveryResult.status === "rejected" && glossaryWarning) {
       showNoticeBadge(glossaryWarning, render, 3200);
     }
@@ -914,9 +1205,10 @@ export async function loadTeamProjects(render, teamId = state.selectedTeamId, op
         requestId,
         syncVersionAtStart,
         true,
+        options,
       )
     ) {
-      return;
+      return currentLoadResult;
     }
 
     if (
@@ -926,43 +1218,46 @@ export async function loadTeamProjects(render, teamId = state.selectedTeamId, op
         currentResource: true,
       })
     ) {
-      failProjectsPageSync();
-      return;
+      failProjectLoadPageSync({ options, progressSnapshot: currentLoadResult });
+      return currentLoadResult;
     }
 
     if (syncVersionAtStart !== state.projectSyncVersion) {
-      failProjectsPageSync();
-      render();
-      return;
-    }
-
-    if (!renderedLocalProjects) {
-      applyProjectSnapshotToState({ items: [], deletedItems: [] }, {
-        reconcileExpandedDeletedFiles: options.reconcileExpandedDeletedFiles,
+      failProjectLoadPageSync({
+        render,
+        options,
+        renderAfterFail: true,
+        progressSnapshot: currentLoadResult,
       });
-      options.setProjectDiscoveryState("error", error?.message ?? String(error), "");
-    } else {
-      options.setProjectDiscoveryState("ready", "", "");
+      return currentLoadResult;
     }
-    options.clearProjectUiDebug(render);
-    failProjectsPageSync();
-    clearNoticeBadge();
-    render();
-  }
-}
 
-export async function loadRepoBackedProjectsForTeam(selectedTeam, options = {}) {
-  const teamId = selectedTeam?.id ?? state.selectedTeamId;
-  await loadTeamProjects(options.render, teamId, options);
-  if (state.selectedTeamId !== teamId) {
-    throw new Error("Stale project refresh ignored.");
+    options.clearProjectUiDebug(render);
+    failProjectLoadPageSync({ options, clearNotice: true, progressSnapshot: currentLoadResult });
+    if (!renderedLocalProjects) {
+      currentLoadResult = publishProjectLoadSnapshot({
+        render,
+        selectedTeam,
+        snapshot: { items: [], deletedItems: [] },
+        options,
+        previousResult: currentLoadResult,
+        discovery: {
+          status: "error",
+          error: error?.message ?? String(error),
+        },
+        progressType: "error",
+        progressPayload: { error },
+      });
+    } else {
+      currentLoadResult = publishProjectDiscoveryState({
+        render,
+        options,
+        discovery: { status: "ready" },
+        previousResult: currentLoadResult,
+        progressType: "error",
+        progressPayload: { error },
+      });
+    }
   }
-  return {
-    items: state.projects,
-    deletedItems: state.deletedProjects,
-    repoSyncByProjectId: state.projectRepoSyncByProjectId,
-    glossaries: state.glossaries,
-    pendingChapterMutations: state.pendingChapterMutations,
-    discovery: state.projectDiscovery,
-  };
+  return currentLoadResult;
 }

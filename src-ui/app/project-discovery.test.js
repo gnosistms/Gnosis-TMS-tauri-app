@@ -29,7 +29,10 @@ globalThis.window.__TAURI__.core = {
 
 const { resetSessionState, state } = await import("./state.js");
 const {
-  loadTeamProjects: loadDiscoveredTeamProjects,
+  applyProjectSnapshotToState,
+} = await import("./project-top-level-state.js");
+const {
+  loadProjectSnapshotForTeam,
 } = await import("./project-discovery-flow.js");
 
 function deferred() {
@@ -80,7 +83,7 @@ function setupProjectDiscoveryFlowTest() {
 }
 
 function projectDiscoveryOptions(overrides = {}) {
-  return {
+  const options = {
     loadStoredProjectsForTeam: () => ({ exists: false, projects: [], deletedProjects: [] }),
     setProjectDiscoveryState: (status, error = "", glossaryWarning = "", recoveryMessage = "") => {
       state.projectDiscovery = { status, error, glossaryWarning, recoveryMessage };
@@ -101,6 +104,60 @@ function projectDiscoveryOptions(overrides = {}) {
     reconcileExpandedDeletedFiles: () => {},
     ...overrides,
   };
+  if (typeof options.publishProjectLoadSnapshot !== "function") {
+    options.publishProjectLoadSnapshot = ({
+      render,
+      selectedTeam,
+      snapshot,
+      discovery,
+      glossaries,
+      pendingChapterMutations,
+      repoSyncByProjectId,
+      persist = false,
+    } = {}) => {
+      applyProjectSnapshotToState(snapshot, {
+        reconcileExpandedDeletedFiles: options.reconcileExpandedDeletedFiles,
+      });
+      if (discovery) {
+        options.setProjectDiscoveryState(
+          discovery.status ?? "ready",
+          discovery.error ?? "",
+          discovery.glossaryWarning ?? "",
+          discovery.recoveryMessage ?? "",
+        );
+      }
+      if (Array.isArray(glossaries)) {
+        state.glossaries = glossaries;
+      }
+      if (Array.isArray(pendingChapterMutations)) {
+        state.pendingChapterMutations = pendingChapterMutations;
+      }
+      if (repoSyncByProjectId && typeof repoSyncByProjectId === "object") {
+        state.projectRepoSyncByProjectId = repoSyncByProjectId;
+      }
+      if (persist) {
+        options.persistProjectsForTeam(selectedTeam);
+      }
+      render?.();
+    };
+  }
+  if (typeof options.publishProjectDiscoveryState !== "function") {
+    options.publishProjectDiscoveryState = ({
+      render,
+      discovery,
+    } = {}) => {
+      if (discovery) {
+        options.setProjectDiscoveryState(
+          discovery.status ?? "ready",
+          discovery.error ?? "",
+          discovery.glossaryWarning ?? "",
+          discovery.recoveryMessage ?? "",
+        );
+      }
+      render?.();
+    };
+  }
+  return options;
 }
 
 function installProjectDiscoveryInvokeMock({
@@ -449,10 +506,13 @@ test("project loading renders local metadata and files before remote refresh fin
     remoteProjectsPromise: remoteProjects.promise,
   });
   const renders = [];
-  const loadPromise = loadDiscoveredTeamProjects(
+  const progressEvents = [];
+  const loadPromise = loadProjectSnapshotForTeam(
     () => renders.push(renderSnapshot()),
     "team-1",
-    projectDiscoveryOptions(),
+    projectDiscoveryOptions({
+      onProjectLoadProgress: (event) => progressEvents.push(event),
+    }),
   );
 
   await new Promise((resolve) => setTimeout(resolve, 0));
@@ -472,6 +532,76 @@ test("project loading renders local metadata and files before remote refresh fin
 
   assert.deepEqual(state.projects.map((project) => project.title), ["Remote Project"]);
   assert.ok(renders.some((snapshot) => snapshot.projects.includes("Remote Project")));
+  assert.ok(progressEvents.some((event) =>
+    event.type === "localSnapshot"
+    && event.snapshot.items.some((project) => project.title === "Local Project")
+  ));
+  assert.ok(progressEvents.some((event) => event.type === "remoteSyncStarted"));
+  assert.ok(progressEvents.some((event) =>
+    event.type === "remoteSnapshot"
+    && event.snapshot.items.some((project) => project.title === "Remote Project")
+  ));
+});
+
+test("direct project snapshot loading does not own projects page sync state", async () => {
+  setupProjectDiscoveryFlowTest();
+  const remoteProjects = deferred();
+  installProjectDiscoveryInvokeMock({
+    localMetadata: [projectMetadataRecord({ title: "Local Project" })],
+    remoteMetadata: [projectMetadataRecord({ title: "Remote Project" })],
+    remoteProjectsPromise: remoteProjects.promise,
+  });
+
+  const loadPromise = loadProjectSnapshotForTeam(
+    () => {},
+    "team-1",
+    projectDiscoveryOptions(),
+  );
+
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(state.projectsPageSync.status, "idle");
+
+  remoteProjects.resolve([{
+    id: "project-1",
+    name: "project-repo",
+    title: "Remote Project",
+    fullName: "team/project-repo",
+    defaultBranchName: "main",
+  }]);
+  await loadPromise;
+
+  assert.equal(state.projectsPageSync.status, "idle");
+});
+
+test("direct project snapshot loading without publisher returns data without mutating visible projects", async () => {
+  setupProjectDiscoveryFlowTest();
+  installProjectDiscoveryInvokeMock({
+    localMetadata: [projectMetadataRecord({ title: "Local Project" })],
+    remoteMetadata: [projectMetadataRecord({ title: "Remote Project" })],
+    remoteProjectsPromise: Promise.resolve([{
+      id: "project-1",
+      name: "project-repo",
+      title: "Remote Project",
+      fullName: "team/project-repo",
+      defaultBranchName: "main",
+    }]),
+  });
+
+  const options = projectDiscoveryOptions();
+  delete options.publishProjectLoadSnapshot;
+  delete options.publishProjectDiscoveryState;
+  const beforeDiscovery = { ...state.projectDiscovery };
+
+  const result = await loadProjectSnapshotForTeam(
+    () => {},
+    "team-1",
+    options,
+  );
+
+  assert.deepEqual(result.items.map((project) => project.title), ["Remote Project"]);
+  assert.deepEqual(state.projects, []);
+  assert.deepEqual(state.deletedProjects, []);
+  assert.deepEqual(state.projectDiscovery, beforeDiscovery);
 });
 
 test("project loading clears stale missing-local-repo repair after repo sync clones files", async () => {
@@ -516,7 +646,7 @@ test("project loading clears stale missing-local-repo repair after repo sync clo
     }],
   });
 
-  await loadDiscoveredTeamProjects(
+  await loadProjectSnapshotForTeam(
     () => {},
     "team-1",
     projectDiscoveryOptions(),
@@ -538,7 +668,7 @@ test("project loading stays loading when local metadata is empty and remote is p
     localProjectFiles: [],
   });
   const renders = [];
-  const loadPromise = loadDiscoveredTeamProjects(
+  const loadPromise = loadProjectSnapshotForTeam(
     () => renders.push(renderSnapshot()),
     "team-1",
     projectDiscoveryOptions(),
@@ -568,7 +698,7 @@ test("online project loading does not render persistent cache when local scan fa
     failFirstProjectMetadataRead: true,
   });
   const renders = [];
-  const loadPromise = loadDiscoveredTeamProjects(
+  const loadPromise = loadProjectSnapshotForTeam(
     () => renders.push(renderSnapshot()),
     "team-1",
     projectDiscoveryOptions({

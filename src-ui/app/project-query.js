@@ -4,7 +4,7 @@ import { state } from "./state.js";
 import { showNoticeBadge } from "./status-feedback.js";
 import { applyProjectSnapshotToState } from "./project-top-level-state.js";
 import {
-  loadRepoBackedProjectsForTeam,
+  loadProjectSnapshotForTeam,
 } from "./project-discovery-flow.js";
 import {
   applyProjectWriteIntentsToSnapshot,
@@ -493,13 +493,78 @@ export function preservePendingProjectLifecyclePatches(nextSnapshot, previousSna
   };
 }
 
+function createProjectsQueryProgressPublisher(team, teamId, options = {}) {
+  let latestSnapshot =
+    queryClient.getQueryData(projectKeys.byTeam(teamId))
+    ?? createProjectsQuerySnapshot();
+  return {
+    publishProjectLoadSnapshot: ({
+      render,
+      snapshot,
+      discovery,
+      glossaries,
+      pendingChapterMutations,
+      repoSyncByProjectId,
+      persist = false,
+    } = {}) => {
+      latestSnapshot = createProjectsQuerySnapshot({
+        items: Array.isArray(snapshot?.items)
+          ? snapshot.items
+          : latestSnapshot.snapshot.items,
+        deletedItems: Array.isArray(snapshot?.deletedItems)
+          ? snapshot.deletedItems
+          : latestSnapshot.snapshot.deletedItems,
+        repoSyncByProjectId:
+          repoSyncByProjectId && typeof repoSyncByProjectId === "object"
+            ? repoSyncByProjectId
+            : latestSnapshot.repoSyncByProjectId,
+        glossaries: Array.isArray(glossaries) ? glossaries : latestSnapshot.glossaries,
+        pendingChapterMutations: Array.isArray(pendingChapterMutations)
+          ? pendingChapterMutations
+          : latestSnapshot.pendingChapterMutations,
+        discovery: discovery ?? latestSnapshot.discovery,
+      });
+      applyProjectsQuerySnapshotToState(latestSnapshot, {
+        teamId,
+        isFetching: true,
+        reconcileExpandedDeletedFiles: options.reconcileExpandedDeletedFiles,
+      });
+      if (persist) {
+        options.persistProjectsForTeam?.(team);
+      }
+      render?.();
+    },
+    publishProjectDiscoveryState: ({
+      render,
+      discovery,
+    } = {}) => {
+      latestSnapshot = createProjectsQuerySnapshot({
+        items: latestSnapshot.snapshot.items,
+        deletedItems: latestSnapshot.snapshot.deletedItems,
+        repoSyncByProjectId: latestSnapshot.repoSyncByProjectId,
+        glossaries: latestSnapshot.glossaries,
+        pendingChapterMutations: latestSnapshot.pendingChapterMutations,
+        discovery: discovery ?? latestSnapshot.discovery,
+      });
+      applyProjectsQuerySnapshotToState(latestSnapshot, {
+        teamId,
+        isFetching: true,
+        reconcileExpandedDeletedFiles: options.reconcileExpandedDeletedFiles,
+      });
+      render?.();
+    },
+  };
+}
+
 export function createProjectsQueryOptions(team, options = {}) {
   const teamId = options.teamId ?? team?.id ?? null;
+  const progressPublisher = createProjectsQueryProgressPublisher(team, teamId, options);
   return {
     queryKey: projectKeys.byTeam(teamId),
     queryFn: async () => {
-      const result = await loadRepoBackedProjectsForTeam(team, {
+      const result = await loadProjectSnapshotForTeam(options.render, teamId, {
         ...options,
+        ...progressPublisher,
         teamId,
         preserveProjectLifecyclePatches: (snapshot) => {
           const snapshotWithPagePatches =
@@ -512,6 +577,9 @@ export function createProjectsQueryOptions(team, options = {}) {
           );
         },
       });
+      if (state.selectedTeamId !== teamId) {
+        throw new Error("Stale project refresh ignored.");
+      }
       const nextSnapshot = createProjectsQuerySnapshot(result);
       clearConfirmedProjectWriteIntents(nextSnapshot.snapshot);
       nextSnapshot.snapshot = applyProjectWriteIntentsToSnapshot(nextSnapshot.snapshot);

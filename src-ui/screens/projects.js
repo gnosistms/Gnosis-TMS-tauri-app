@@ -294,7 +294,7 @@ export function renderProjectsScreen(state) {
                   pageWritesDisabled,
                   heavyActionsDisabled,
                   localHardDeleteActionsDisabled,
-                  addFilesWriteDisabled: pageWritesDisabled,
+                  addFilesWriteDisabled: lifecycleActionsDisabled,
                   lifecycleActionsDisabled,
                   addFilesDisabled: importInProgress,
                   glossaryChangesDisabled,

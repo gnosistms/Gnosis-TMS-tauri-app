@@ -41,6 +41,7 @@ const {
   handleDroppedProjectImportPath,
   importProjectFile,
   importProjectFiles,
+  openProjectImportModal,
   PROJECT_IMPORT_ACCEPT,
   retryProjectImportLink,
   selectProjectImportInputMode,
@@ -164,6 +165,24 @@ test("project import accept string includes plain text, DOCX, and HTML", () => {
   assert.match(PROJECT_IMPORT_ACCEPT, /\.html/);
   assert.match(PROJECT_IMPORT_ACCEPT, /\.htm/);
   assert.match(PROJECT_IMPORT_ACCEPT, /text\/html/);
+});
+
+test("project import modal opens during background project refresh", () => {
+  resetProjectImportTestState();
+  state.projectsPage = {
+    isRefreshing: true,
+    writeState: "idle",
+  };
+  let rendered = false;
+
+  openProjectImportModal(() => {
+    rendered = true;
+  }, "project-1");
+
+  assert.equal(state.projectImport.isOpen, true);
+  assert.equal(state.projectImport.projectId, "project-1");
+  assert.equal(state.projectImport.status, "idle");
+  assert.equal(rendered, true);
 });
 
 test("TXT import selection opens source language step before importing", async () => {

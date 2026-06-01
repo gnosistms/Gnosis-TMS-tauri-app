@@ -19,9 +19,10 @@ export function renderProjectCard(project, expanded, options = {}) {
   const isTombstone = project?.recordState === "tombstone";
   const syncSnapshot = options.syncSnapshot ?? null;
   const syncStatus = typeof syncSnapshot?.status === "string" ? syncSnapshot.status.trim() : "";
+  const filesLength = visibleProjectFileCount(project);
   const localRepoUnavailable = syncStatus === "notCloned";
   const localRepoSetupPending = (
-    syncStatus === "syncing"
+    (syncStatus === "syncing" && filesLength === 0)
     || localRepoUnavailable
   );
   const resolution = deriveProjectResolution(project, syncSnapshot, {
@@ -43,7 +44,6 @@ export function renderProjectCard(project, expanded, options = {}) {
   const deleteAction = options.deleteAction ?? `delete-project:${project.id}`;
   const disablePermanentDelete = options.disablePermanentDelete === true;
   const addFilesDisabled = options.addFilesDisabled === true;
-  const filesLength = visibleProjectFileCount(project);
   const actions =
     options.actions ??
     (

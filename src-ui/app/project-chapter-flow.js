@@ -38,6 +38,7 @@ import {
   sortProjectSnapshot,
 } from "./project-top-level-state.js";
 import {
+  applyProjectsQuerySnapshotToState,
   createProjectsQuerySnapshot,
 } from "./project-query.js";
 import {
@@ -385,9 +386,45 @@ export async function ensureProjectNotTombstoned(render, selectedTeam, project, 
 }
 
 export async function refreshProjectFilesFromDisk(render, selectedTeam, projects) {
+  const publishProjectLoadSnapshot = ({
+    snapshot,
+    pendingChapterMutations,
+    repoSyncByProjectId,
+    persist = false,
+  }) => {
+    if (!selectedTeam?.id) {
+      return;
+    }
+    const currentQueryData = queryClient.getQueryData(projectKeys.byTeam(selectedTeam.id));
+    const nextQueryData = createProjectsQuerySnapshot({
+      items: snapshot.items,
+      deletedItems: snapshot.deletedItems,
+      repoSyncByProjectId,
+      glossaries: Array.isArray(currentQueryData?.glossaries)
+        ? currentQueryData.glossaries
+        : state.glossaries,
+      pendingChapterMutations,
+      discovery: state.projectDiscovery,
+    });
+    queryClient.setQueryData(projectKeys.byTeam(selectedTeam.id), nextQueryData);
+    applyProjectsQuerySnapshotToState(nextQueryData, {
+      teamId: selectedTeam.id,
+      isFetching: state.projectsPage?.isRefreshing === true,
+      reconcileExpandedDeletedFiles,
+    });
+    if (persist) {
+      persistProjectsForTeam(selectedTeam);
+    }
+    render?.();
+  };
   const refreshedSnapshot = await runRefreshProjectFilesFromDisk(render, selectedTeam, projects, {
     applyChapterPendingMutation,
+    baseSnapshot: {
+      items: state.projects,
+      deletedItems: state.deletedProjects,
+    },
     normalizeListedChapter,
+    pendingChapterMutations: state.pendingChapterMutations,
     preserveProjectLifecyclePatches: (snapshot) => {
       clearConfirmedProjectWriteIntents(snapshot);
       return applyProjectWriteIntentsToSnapshot(
@@ -398,24 +435,10 @@ export async function refreshProjectFilesFromDisk(render, selectedTeam, projects
       );
     },
     persistProjectsForTeam,
+    publishProjectLoadSnapshot,
     reconcileExpandedDeletedFiles,
+    repoSyncByProjectId: state.projectRepoSyncByProjectId,
   });
-  if (selectedTeam?.id) {
-    const currentQueryData = queryClient.getQueryData(projectKeys.byTeam(selectedTeam.id));
-    queryClient.setQueryData(
-      projectKeys.byTeam(selectedTeam.id),
-      createProjectsQuerySnapshot({
-        items: refreshedSnapshot.items,
-        deletedItems: refreshedSnapshot.deletedItems,
-        repoSyncByProjectId: state.projectRepoSyncByProjectId,
-        glossaries: Array.isArray(currentQueryData?.glossaries)
-          ? currentQueryData.glossaries
-          : state.glossaries,
-        pendingChapterMutations: state.pendingChapterMutations,
-        discovery: state.projectDiscovery,
-      }),
-    );
-  }
   return refreshedSnapshot;
 }
 

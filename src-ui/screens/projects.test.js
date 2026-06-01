@@ -192,6 +192,17 @@ test("projects page shows cached rows during a background refresh", () => {
   assert.match(actionButtonHtml(html, "refresh-page"), /\bis-spinning\b/);
 });
 
+test("project background refresh does not disable add files for project managers", () => {
+  const html = renderProjectsScreen(projectsState({
+    projectsPage: {
+      isRefreshing: true,
+      writeState: "idle",
+    },
+  }));
+
+  assert.doesNotMatch(actionButtonHtml(html, "add-project-files:project-1"), /disabled/);
+});
+
 test("project refresh hides missing local repo repair warnings while setup is in progress", () => {
   const html = renderProjectsScreen(projectsState({
     projectsPage: {
@@ -427,6 +438,16 @@ test("projects export stays enabled while project repo is syncing", () => {
   assert.doesNotMatch(actionButtonHtml(html, "export-file:chapter-1"), /disabled/);
 });
 
+test("projects add files stays enabled while an existing local repo is syncing", () => {
+  const html = renderProjectsScreen(projectsState({
+    projectRepoSyncByProjectId: {
+      "project-1": { status: "syncing" },
+    },
+  }));
+
+  assert.doesNotMatch(actionButtonHtml(html, "add-project-files:project-1"), /disabled/);
+});
+
 test("viewer role keeps project files downloadable but hides mutating file actions", () => {
   const html = renderProjectsScreen(projectsState({
     teams: [{
@@ -621,7 +642,7 @@ test("project refresh keeps top-level lifecycle actions enabled and heavy action
   assert.doesNotMatch(actionButtonHtml(html, "restore-file:deleted-chapter-1"), /disabled/);
 
   assert.match(actionButtonHtml(html, "open-new-project"), /disabled/);
-  assert.match(actionButtonHtml(html, "add-project-files:project-1"), /disabled/);
+  assert.doesNotMatch(actionButtonHtml(html, "add-project-files:project-1"), /disabled/);
   assert.match(actionButtonHtml(html, "clear-deleted-files:project-1"), /disabled/);
   assert.match(actionButtonHtml(html, "delete-deleted-file:deleted-chapter-1"), /disabled/);
   assert.match(actionButtonHtml(html, "delete-deleted-project:deleted-project"), /disabled/);

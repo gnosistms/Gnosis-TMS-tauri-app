@@ -147,6 +147,7 @@ async function reconcileOneProjectRepoSyncState({
   descriptor,
   shouldAbort,
   onSnapshots,
+  mergeSnapshots = mergeProjectRepoSyncSnapshots,
 }) {
   const scope = projectRepoSyncScope(team, descriptor);
   const input = {
@@ -179,7 +180,7 @@ async function reconcileOneProjectRepoSyncState({
         return Array.isArray(initialSnapshots) ? initialSnapshots : [];
       }
 
-      mergeProjectRepoSyncSnapshots(initialSnapshots);
+      mergeSnapshots(initialSnapshots);
       onSnapshots?.(initialSnapshots, descriptor);
       openRequiredAppUpdatePromptFromProjectSnapshots(initialSnapshots, render);
       showScopedSyncBadge("projects", syncingBadgeText(initialSnapshots), render);
@@ -195,7 +196,7 @@ async function reconcileOneProjectRepoSyncState({
         if (shouldAbort?.()) {
           return Array.isArray(snapshots) ? snapshots : [];
         }
-        mergeProjectRepoSyncSnapshots(snapshots);
+        mergeSnapshots(snapshots);
         onSnapshots?.(snapshots, descriptor);
         openRequiredAppUpdatePromptFromProjectSnapshots(snapshots, render);
         showScopedSyncBadge("projects", syncingBadgeText(snapshots), render);
@@ -229,6 +230,14 @@ export async function reconcileProjectRepoSyncStates(render, team, projects, opt
   const shouldAbort = typeof options.shouldAbort === "function" ? options.shouldAbort : null;
   const clearStatusOnComplete = options.clearStatusOnComplete !== false;
   const onSnapshots = typeof options.onSnapshots === "function" ? options.onSnapshots : null;
+  const applySnapshots =
+    typeof options.applySnapshots === "function"
+      ? options.applySnapshots
+      : applyProjectRepoSyncSnapshots;
+  const mergeSnapshots =
+    typeof options.mergeSnapshots === "function"
+      ? options.mergeSnapshots
+      : mergeProjectRepoSyncSnapshots;
 
   if (shouldAbort?.()) {
     return [];
@@ -240,7 +249,7 @@ export async function reconcileProjectRepoSyncStates(render, team, projects, opt
     !Array.isArray(projects) ||
     projects.length === 0
   ) {
-    state.projectRepoSyncByProjectId = {};
+    applySnapshots([]);
     if (clearStatusOnComplete) {
       clearScopedSyncBadge("projects", render);
     }
@@ -250,7 +259,7 @@ export async function reconcileProjectRepoSyncStates(render, team, projects, opt
 
   const input = buildProjectRepoSyncInput(team, projects);
   if (input.projects.length === 0) {
-    state.projectRepoSyncByProjectId = {};
+    applySnapshots([]);
     if (clearStatusOnComplete) {
       clearScopedSyncBadge("projects", render);
     }
@@ -271,6 +280,7 @@ export async function reconcileProjectRepoSyncStates(render, team, projects, opt
         descriptor,
         shouldAbort,
         onSnapshots,
+        mergeSnapshots,
       })),
   );
   const snapshots = snapshotResults.flat();
@@ -278,7 +288,7 @@ export async function reconcileProjectRepoSyncStates(render, team, projects, opt
   if (shouldAbort?.()) {
     return Array.isArray(snapshots) ? snapshots : [];
   }
-  applyProjectRepoSyncSnapshots(snapshots);
+  applySnapshots(snapshots);
   if (clearStatusOnComplete) {
     clearScopedSyncBadge("projects", render);
   }

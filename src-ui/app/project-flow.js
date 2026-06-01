@@ -424,6 +424,7 @@ export async function loadTeamProjects(render, teamId = state.selectedTeamId) {
       dropProjectMutationsForProject,
       loadStoredProjectsForTeam,
       normalizeListedChapter,
+      pageSyncController: projectPageSyncController,
       preserveProjectLifecyclePatches: (snapshot) => {
         clearConfirmedProjectWriteIntents(snapshot);
         return applyProjectWriteIntentsToSnapshot(
@@ -438,6 +439,9 @@ export async function loadTeamProjects(render, teamId = state.selectedTeamId) {
       projectMetadataRecordIsTombstone,
       purgeLocalProjectRepo,
       reconcileExpandedDeletedFiles,
+      removeProjectRepoSyncState: (projectId) => {
+        delete state.projectRepoSyncByProjectId[projectId];
+      },
       removeVisibleProject,
       setProjectDiscoveryState,
       setProjectUiDebug,
