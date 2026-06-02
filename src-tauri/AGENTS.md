@@ -6,7 +6,7 @@ Rust/Tauri patterns for Gnosis TMS. See root `CLAUDE.md` for project overview an
 ## Stack
 
 - Rust + Tauri 2
-- SQLite via Tauri's SQLite plugin (local persistent store, full-text search index)
+- SQLite via `rusqlite` with bundled feature (local persistent store, full-text search index)
 - Git operations via bundled Git binary (invoked as a subprocess — no libgit2)
 - GitHub REST API (via `src-tauri/src/github/`)
 - Broker service (auth proxy for GitHub App tokens)

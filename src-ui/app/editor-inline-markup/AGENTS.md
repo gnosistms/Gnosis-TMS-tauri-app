@@ -41,8 +41,11 @@ supported set — this is the sanitization contract.
 
 ## Key Invariants
 
-**Round-trip stability** — parsing then serializing a well-formed value MUST produce
-the identical string. Tests in `editor-inline-markup.test.js` enforce this.
+**Round-trip stability** — serialization is canonical and idempotent:
+`serialize(parse(serialize(parse(x)))) === serialize(parse(x))`. Tag aliases are
+normalized on parse (`b` → `strong`, `i` → `em`), so inputs using aliases will not
+be byte-identical after the first round-trip but will be stable on all subsequent
+ones. Tests in `editor-inline-markup.test.js` enforce this.
 
 **Sanitization is always applied** — `renderSanitizedInlineMarkupHtml` and all
 `renderSanitized*` functions strip unsupported tags. Never render raw markup string

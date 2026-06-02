@@ -1,6 +1,6 @@
-# CLAUDE.md
+# AGENTS.md
 
-Guidance for Claude Code working in this repository.
+Guidance for AI agents working in this repository.
 
 ## Project Overview
 
@@ -135,7 +135,7 @@ to flow files.
 - Rust + Tauri 2 (backend, native integrations)
 - Vanilla ES modules + Vite 5 (frontend)
 - TanStack Query Core 5 (async state), TanStack Virtual Core 3 (editor virtualization)
-- SQLite via Tauri's SQLite plugin (local store, search index)
+- SQLite via `rusqlite` bundled (local store, search index)
 - GitHub App + broker service (auth, remote repo management)
 
 ## Rules
