@@ -276,9 +276,16 @@ export function renderProjectsScreen(state) {
     subtitle: formatErrorForDisplay(discovery.error || "Unknown error."),
     tone: "error",
   });
+  const shouldShowLoadingState =
+    discovery.status === "loading"
+    || (
+      state.projects.length === 0
+      && refreshInProgress
+      && discovery.status !== "error"
+    );
 
   const projectsBody =
-    discovery.status === "loading"
+    shouldShowLoadingState
       ? loadingState
       : discovery.status === "error"
         ? errorState

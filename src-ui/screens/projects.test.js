@@ -192,6 +192,47 @@ test("projects page shows cached rows during a background refresh", () => {
   assert.match(actionButtonHtml(html, "refresh-page"), /\bis-spinning\b/);
 });
 
+test("projects page does not show empty state while project refresh is active", () => {
+  const html = renderProjectsScreen(projectsState({
+    projects: [],
+    projectsPage: {
+      isRefreshing: true,
+      writeState: "idle",
+    },
+    projectDiscovery: {
+      status: "ready",
+      error: "",
+      glossaryWarning: "",
+      recoveryMessage: "",
+    },
+  }));
+
+  assert.match(html, /Loading projects\.\.\./);
+  assert.doesNotMatch(html, /This team doesn't have any projects yet\./);
+});
+
+test("projects page does not show empty state while project page sync is active", () => {
+  const html = renderProjectsScreen(projectsState({
+    projects: [],
+    projectsPage: {
+      isRefreshing: false,
+      writeState: "idle",
+    },
+    projectsPageSync: {
+      status: "syncing",
+    },
+    projectDiscovery: {
+      status: "ready",
+      error: "",
+      glossaryWarning: "",
+      recoveryMessage: "",
+    },
+  }));
+
+  assert.match(html, /Loading projects\.\.\./);
+  assert.doesNotMatch(html, /This team doesn't have any projects yet\./);
+});
+
 test("project background refresh does not disable add files for project managers", () => {
   const html = renderProjectsScreen(projectsState({
     projectsPage: {
