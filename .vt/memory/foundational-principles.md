@@ -42,7 +42,9 @@ Teams are GitHub organizations. Projects, glossaries, and QA lists are GitHub re
 
 Gnosis TMS is a desktop application built on Tauri. Tauri provides the windowing, native OS integrations, file system access, and the IPC boundary between the Rust backend and the JS frontend. The platform targets macOS and Windows.
 
-- The app MUST bundle its own Git binary — no system Git may be assumed or required
+- macOS MUST bundle its own Apple-signed Git binary and never fall back to system Git
+- Windows prefers a bundled Git but degrades through system install paths to PATH lookup
+- Linux uses system Git from PATH (no bundling)
 - Tauri commands (Rust) own all file system operations, git operations, and external process invocations
 - The JS frontend MUST use `invoke()` for all operations that touch the file system, git, or native APIs
 - Cross-platform path handling MUST normalize separators — Windows paths with backslashes appear in git history and MUST be handled explicitly
@@ -75,8 +77,10 @@ User mutations must survive any number of background refreshes without reverting
 
 Before any git or remote operation, write the metadata record first. Metadata is the recovery anchor: it enables pending-create resume, tombstone resolution, repair actions, and stale client detection.
 
-- Create operations MUST write the metadata record before pushing to the remote repo
 - Delete operations MUST write a tombstone to the metadata repo before removing the content repo
+- Create operations currently create the remote repo first, then write the metadata record;
+  the architectural goal is to invert this so metadata is written before any remote operation
+  (enables recovery if the remote operation fails)
 - If a remote operation fails, the metadata record MUST exist so recovery can proceed
 - Metadata repo state is authoritative for resource lifecycle — it supersedes local cache when they conflict
 
@@ -86,8 +90,11 @@ Before any git or remote operation, write the metadata record first. Metadata is
 
 Translation content (chapters, glossary terms, QA list entries) is stored as structured text files in git repositories. The content schema is designed for conflict-free git merges.
 
-- Editor rows MUST be ordered by lexicographic string keys (`row_order_key`), not integer indexes
-- Lexicographic ordering enables parallel insertions without merge conflicts — two clients inserting rows at the same position produce keys that sort correctly without coordination
+- Editor rows MUST be ordered by the `structure.order_key` field — a 32-character
+  hexadecimal string that sorts lexicographically, not numerically
+- Lexicographic ordering reduces merge conflicts for parallel insertions; dense
+  concurrent insertions at the same position can exhaust the midpoint key space
+  and require the user to insert at a nearby position
 - Content files MUST be parseable line-by-line for efficient git diff and merge
 - Semantic conflict resolution (detecting when two edits to the same row cannot be auto-merged) is a first-class feature
 

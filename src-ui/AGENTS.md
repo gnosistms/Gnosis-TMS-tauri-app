@@ -31,8 +31,10 @@ Subdirectories have specific purposes:
 ## TanStack Query: The Single State Update Path
 
 TanStack Query Core is the **only** mechanism through which remote data, local disk
-data, and cache seeds may update visible resource state. This is a hard invariant
-enforced by the module ownership pattern.
+data, and cache seeds may update **resource collection state** (`state.projects`,
+`state.glossaries`, `state.qaLists`). Editor session state (`state.editorChapter`)
+is managed with direct mutations inside editor modules and is explicitly excluded
+from this invariant.
 
 ```
 cache seed → TanStack query → applySnapshot → visible state
@@ -85,9 +87,13 @@ and named predicates: `canWriteChapters(team)`, `canManageProjects(team)`, etc.
 Derive it from `membershipRole` in `permissions.js`. Role normalization rules:
 - `owner` → Owner (full access)
 - `admin` → Admin (content + resource management, no member/team management)
-- `translator` / `member` / GitHub non-owner member → Translator (content write only)
-- `viewer` / `read_only` / `readonly` → Viewer (read only)
-- Unknown non-empty role → Translator (conservative fallback, not Owner/Admin)
+- `translator` / `member` → Translator (content write only)
+- `viewer` / `read_only` / `read-only` / `readonly` → Viewer (read only)
+- Unknown non-empty role → no write capabilities (normalized to `"unknown"`;
+  more restrictive than Translator, not equivalent)
+- Missing role field → legacy flag-based inference via `legacyRoleForTeam()`,
+  which inspects team shape flags (`canManageTeam`, `installationId`) rather
+  than normalizing a role string
 
 ## Editor Rules
 
@@ -104,20 +110,25 @@ Scroll state is expensive to restore correctly. Key rules:
 
 ### Write Permission Queue
 
-The editor uses a serialized write permission queue (`editor-write-permission.js`)
-before submitting row saves. The queue ensures:
-1. Team, installation, and project write access is checked before any save.
-2. Concurrent save attempts are serialized, not dropped.
-3. A soft-deleted or permission-denied resource produces a clear user-facing error.
+Before any row save reaches a Tauri command, two layers protect it:
+
+1. **`editor-write-permission.js`** — assertion module. Checks team membership role
+   (via `canEditProjectFileContent`) and project/chapter lifecycle state (soft-deleted,
+   permission-denied). Returns a clear user-facing error string on failure. Does not
+   serialize concurrent saves — it only gates permission.
+2. **`write-intent-coordinator.js` / `repo-write-queue.js`** — serialization layer.
+   `processScopeQueue` in `write-intent-coordinator.js` ensures concurrent save
+   attempts are queued and processed one at a time, not dropped.
 
 **Do not invoke Tauri save commands directly from row input handlers.** Route through
-the write permission guard.
+`invokeEditorWriteCommand` in `editor-write-permission.js`, which composes both layers.
 
 ### Virtualization
 
 Rows are virtualized via TanStack Virtual Core. Critical invariants:
 
-- Row DOM nodes are recycled — do not store references to row elements across renders.
+- Row DOM nodes are destroyed and recreated via `innerHTML` replacement on each
+  virtual-window range change — do not store references to row elements across renders.
 - Row-level invalidation APIs (`editor-virtualization.js`) allow targeted re-renders
   without remounting the full list.
 - `row_order_key` is a lexicographic string, not an integer. Sorting rows by this key

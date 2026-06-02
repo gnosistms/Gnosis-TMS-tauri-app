@@ -16,7 +16,7 @@ for the architectural philosophy that governs strategic and design decisions.
 
 ### Frontend (`src-ui/`)
 
-- `src-ui/app/` — flat module namespace (~200 JS modules, no subdirectory routing)
+- `src-ui/app/` — flat module namespace (~250 JS source modules, ~350 total including test files)
 - `src-ui/app/editor-inline-markup/` — inline markup parser, serializer, transforms, highlights
 - `src-ui/app/repo-resource/` — nascent shared framework for glossary/QA resource management
 - `src-ui/app/actions/` — user action handlers by domain (project, glossary, QA, auth, etc.)
@@ -78,8 +78,9 @@ Tauri events (Rust → JS). The frontend never touches the file system directly.
 
 All async data flows through **TanStack Query Core** (`@tanstack/query-core`). The
 query cache is the single path through which remote data, local disk data, and
-cache seeds may update visible UI state. No module may bypass the query cache to
-write directly to visible state.
+cache seeds may update **resource collection state** (`state.projects`,
+`state.glossaries`, `state.qaLists`). Editor session state (`state.editorChapter`)
+is managed separately with direct mutations inside editor modules.
 
 Pending mutations (write intents) are applied to every incoming snapshot via
 `applyPendingMutations` in `optimistic-collection.js`. This preserves user-visible
