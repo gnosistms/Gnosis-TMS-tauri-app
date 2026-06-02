@@ -3,10 +3,14 @@
 Rust/Tauri patterns for Gnosis TMS. See root `CLAUDE.md` for project overview and
 `.vt/memory/foundational-principles.md` for architectural principles.
 
+See `AGENTS_EVIDENCE.md` for verification notes and canonical source references that
+support the guidance in this file.
+
 ## Stack
 
 - Rust + Tauri 2
-- SQLite via Tauri's SQLite plugin (local persistent store, full-text search index)
+- SQLite via `rusqlite` with bundled feature (project search index only)
+- `tauri-plugin-store` (local key-value persistent store)
 - Git operations via bundled Git binary (invoked as a subprocess — no libgit2)
 - GitHub REST API (via `src-tauri/src/github/`)
 - Broker service (auth proxy for GitHub App tokens)
@@ -15,9 +19,10 @@ Rust/Tauri patterns for Gnosis TMS. See root `CLAUDE.md` for project overview an
 
 ```
 src-tauri/src/
-├── main.rs                    # Entry point, Tauri command registration
+├── main.rs                    # Entry point — calls gnosis_tms_lib::run() only
+├── lib.rs                     # Tauri command definitions + invoke_handler registration
 ├── state.rs                   # App state (store handle, auth, cached state)
-├── store.rs                   # SQLite local persistent store
+├── store.rs                   # Local key-value persistent store (`tauri-plugin-store`)
 ├── broker.rs / broker_auth.rs # Broker service client and auth
 ├── github.rs / github/        # GitHub REST API client
 ├── callbacks.rs               # Tauri event emitters (progress, sync status)
@@ -26,80 +31,122 @@ src-tauri/src/
 ├── glossary_repo_sync.rs      # Glossary repo sync
 ├── qa_list_repo_sync.rs       # QA list repo sync
 ├── project_import/            # DOCX, HTML, paste import pipeline
-├── project_search/            # SQLite FTS5 search index (indexer, query, schema)
+├── project_search/            # SQLite search index (trigram-based; indexer, query, schema)
 ├── team_metadata_local/       # Local metadata repo management
 ├── ai/                        # AI provider integration
 └── updater.rs                 # App auto-updater
 ```
 
-## Bundled Git Runtime (CRITICAL)
+## Bundled Git Runtime
 
-The app bundles its own Git binary. There is no dependency on any system-installed Git.
+Git resolution is platform-specific — never assume a uniform path:
 
-- Git commands MUST be invoked via the bundled binary path, never `git` from PATH.
-- The bundled Git path is resolved at runtime via Tauri's resource directory.
-- macOS releases bundle Apple-signed Git (`c255a757 Bundle Apple Git for macOS`).
-- Git archive staging on macOS requires specific handling — see `c37e183f`.
+- **macOS**: Always uses a bundled Apple-signed Git. The archive
+  (`resources/macos/git-runtime.tar.gz`) is extracted at startup into
+  `app_config_dir/git/macos-runtime/<hash>/`. Never falls back to system Git.
+- **Windows**: Prefers a bundled Git at `resource_dir/git/windows/`; falls back
+  through `%LOCALAPPDATA%\Programs\Git`, GitHub Desktop's bundled git,
+  `%ProgramFiles%\Git`, and finally `Command::new("git")` (PATH lookup).
+- **Linux**: Always uses `Command::new("git")` — pure system PATH, no bundling.
 
-**Never assume `git` resolves from PATH.** If you add a new git invocation, use the
-same binary resolution path as the existing callers in `repo_sync_shared.rs`.
+When adding a new git invocation, use the same binary resolution path as existing
+callers in `repo_sync_shared.rs` for the correct platform behaviour. Do not
+hardcode `"git"` as a string — route through the resolved path on macOS/Windows.
+
+Git archive staging on macOS requires specific handling — see commit `c37e183f`.
 
 ## Write Access Enforcement
 
 Before any mutation to a project, glossary, or QA list repo, write access MUST be
 verified against the GitHub App installation.
 
-- `installation_access.rs` provides the write access check.
-- `5a962431 Enforce installation write access before repo mutations` is the canonical
-  pattern for this check.
-- Write access checks happen in Tauri commands before the git operation — not inside
-  the sync helpers.
+- `installation_access.rs` provides the write access check functions.
+- **Content writes** (chapter/row saves): `ensure_repo_allows_writes` is called
+  inside `git_commit_as_signed_in_user_with_metadata` in `git_commit.rs` — it runs
+  inside the shared commit helper, not in the command body.
+- **Resource management** (create/rename/delete project, glossary, QA list):
+  `ensure_installation_allows_*` checks run in `team_metadata_local.rs` command
+  bodies before the git/remote operation.
 
 **Never assume a logged-in user has write access.** Even owners can have a GitHub App
 installation in a degraded permission state. Check explicitly.
 
 ## Storage Patterns
 
-### Local Store (SQLite via `store.rs`)
+### Storage Architecture
 
-The local store is the persistence layer for: team records, project metadata, glossary
-metadata, QA list metadata, auth tokens, and pending-create state.
+The app does not use a single central store. Data is distributed across several
+independent mechanisms — know which owns what before adding persistence:
 
-- Store reads are synchronous from the Tauri command thread.
-- All mutations are transactional — use transactions for multi-step writes.
-- Schema migrations are applied at startup in `repo_migrations.rs` and
-  `team_repo_migrations.rs`.
+| Data | Mechanism | Owner |
+|---|---|---|
+| Resource metadata (project/glossary/QA lifecycle state) | Git repo files | `team_metadata_local/` |
+| Broker session token + display fields | Plain JSON file (`broker-auth-session.json`) | `broker_auth_storage.rs` |
+| Installation write-access snapshots | Plain JSON file per installation | `installation_access.rs` |
+| AI provider secrets (API keys) | Stronghold encrypted store | `ai_secret_storage.rs` |
+| Full-text search index | SQLite database (`project-search.sqlite3`) | `project_search/` |
+| Tauri plugin key-value store | JSON file store (`tauri-plugin-store`) | `store.rs` |
+
+`store.rs` initializes `tauri-plugin-store` (a simple key-value JSON file store).
+It is **not** a SQLite database. `rusqlite` is used exclusively by `project_search/`
+for the search index.
+
+**Transactions**: `project_search/indexer.rs` uses `rusqlite` transactions for search
+index writes. The git-file-based metadata layer has no transaction support — mutations
+must be designed for idempotency and recovery.
+
+**Migrations**: Repo layout and metadata migrations are triggered on demand by the
+JS frontend (via `list_pending_team_repo_layout_migrations`, `sync_local_team_metadata_repo`
+commands), not automatically at startup. `repo_migrations.rs` and `team_repo_migrations.rs`
+define migration steps; `lib.rs::setup()` does not call them.
 
 ### Metadata Repos
 
 Resource lifecycle state (active, soft-deleted, tombstoned) is authoritative in the
-team metadata repo, not only in the local store. The metadata repo is a git repo on
-the GitHub org that the local store mirrors.
+team metadata repo, not only in cached local projections. The metadata repo is a git
+repo on the GitHub org that the local metadata checkout mirrors.
 
-- Write metadata BEFORE the remote content repo operation (metadata-first — see F-VI
-  in foundational principles).
+Current invariant
 - Tombstones for permanent deletes MUST be written to the metadata repo before the
   content repo is deleted from GitHub.
 - `team_metadata_local/` owns local metadata repo reads and writes.
+- Metadata repo state is authoritative for lifecycle when it conflicts with cached
+  local projections.
+
+Known divergence
+- Project create still creates the remote GitHub repo before the metadata record is
+  written, so metadata-first is not yet universal.
+
+Architectural goal
+- Write metadata before every remote content repo operation.
 
 ### Row Ordering
 
-Editor content files store rows with a `row_order_key` field — a lexicographic string
-key (e.g. `"a0"`, `"a0V"`, `"a1"`). Sorting rows uses lexicographic string comparison,
-never numeric comparison. New key generation must produce a string that sorts between
-the surrounding keys.
+The row-order identifier has different names at different layers:
 
-See `project_search/indexer.rs` for how `row_order_key` is indexed and sorted in the
-search index.
+- Content file field: `structure.order_key`
+- Editor payload field: `order_key`
+- Search index column: `row_order_key`
+
+The underlying value is a 32-character lowercase hexadecimal string encoding a
+128-bit integer (e.g. `"00000000000000000000000000000001"`). Sorting is always
+lexicographic string comparison, never numeric comparison. New key generation must
+produce a value that sorts between the surrounding keys.
 
 ## Tauri Command Patterns
 
 ### Command Registration
 
-All public commands are registered in `main.rs`. New commands require:
-1. `#[tauri::command]` attribute on the handler function.
-2. Registration in the `.invoke_handler(tauri::generate_handler![...])` call.
-3. A corresponding `invoke("command_name", ...)` call in `src-ui/app/runtime.js`.
+Command handlers are defined with `#[tauri::command]` in their respective modules
+(e.g. `project_import.rs`, `team_metadata_local.rs`, `broker_auth_storage.rs`,
+`github/repos.rs`). All commands are **registered** in the single
+`.invoke_handler(tauri::generate_handler![...])` call in `lib.rs`. `main.rs`
+contains only `gnosis_tms_lib::run()`. New commands require:
+1. `#[tauri::command]` attribute on the handler function in its domain module.
+2. Registration in the `generate_handler![]` macro in `lib.rs`.
+3. A corresponding `invoke("command_name", ...)` call in the relevant feature module
+   in `src-ui/app/` — `runtime.js` is the `invoke` wrapper; individual call sites
+   live across feature modules (e.g. `project-flow.js`, `glossary-repo-flow.js`).
 
 ### Error Handling
 
@@ -148,10 +195,10 @@ events MUST document which event names they emit.
 - **macOS Git archive staging** requires special handling that differs from Linux
   behavior. Test archive operations on macOS. (`c37e183f`)
 
-### SQLite
+### Search Index Schema
 
-- Migration files run in order at startup. Adding a new migration step MUST be
-  additive — never modify an existing migration that may have already run on a
-  user's machine.
-- The search index schema (`project_search/schema.rs`) is rebuilt on demand.
-  Changes to the schema require an index version bump to trigger a rebuild.
+The project search schema is managed directly in `project_search/schema.rs` via
+`ensure_project_search_schema`. There are no migration files and no explicit
+index-version mechanism — schema changes involve updating `ensure_project_search_schema`
+(which uses `CREATE TABLE IF NOT EXISTS`, `ALTER TABLE`, and table-clearing as needed).
+Do not look for migration files or a version number; there are none.

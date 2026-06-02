@@ -1,6 +1,9 @@
-# CLAUDE.md
+# AGENTS.md
 
-Guidance for Claude Code working in this repository.
+Guidance for AI agents working in this repository.
+
+See `AGENTS_EVIDENCE.md` for verification notes and canonical source references that
+support the guidance in this file.
 
 ## Project Overview
 
@@ -16,7 +19,7 @@ for the architectural philosophy that governs strategic and design decisions.
 
 ### Frontend (`src-ui/`)
 
-- `src-ui/app/` — flat module namespace (~200 JS modules, no subdirectory routing)
+- `src-ui/app/` — flat module namespace (~250 JS source modules, ~350 total including test files)
 - `src-ui/app/editor-inline-markup/` — inline markup parser, serializer, transforms, highlights
 - `src-ui/app/repo-resource/` — nascent shared framework for glossary/QA resource management
 - `src-ui/app/actions/` — user action handlers by domain (project, glossary, QA, auth, etc.)
@@ -27,11 +30,12 @@ for the architectural philosophy that governs strategic and design decisions.
 
 ### Backend (`src-tauri/src/`)
 
-- `src-tauri/src/main.rs` — app entry point, Tauri command registration
-- `src-tauri/src/store.rs` — SQLite-backed local persistent store
+- `src-tauri/src/main.rs` — app entry point (calls `gnosis_tms_lib::run()`)
+- `src-tauri/src/lib.rs` — Tauri command definitions and `invoke_handler` registration
+- `src-tauri/src/store.rs` — local key-value persistent store (`tauri-plugin-store`)
 - `src-tauri/src/github/` — GitHub API client
 - `src-tauri/src/project_import/` — DOCX/HTML/paste import pipeline
-- `src-tauri/src/project_search/` — full-text search indexer (SQLite FTS)
+- `src-tauri/src/project_search/` — trigram-based SQLite search indexer
 - `src-tauri/src/ai/` — AI provider integration
 - `src-tauri/src/broker*.rs` — broker service auth and communication
 
@@ -77,8 +81,9 @@ Tauri events (Rust → JS). The frontend never touches the file system directly.
 
 All async data flows through **TanStack Query Core** (`@tanstack/query-core`). The
 query cache is the single path through which remote data, local disk data, and
-cache seeds may update visible UI state. No module may bypass the query cache to
-write directly to visible state.
+cache seeds may update **resource collection state** (`state.projects`,
+`state.glossaries`, `state.qaLists`). Editor session state (`state.editorChapter`)
+is managed separately with direct mutations inside editor modules.
 
 Pending mutations (write intents) are applied to every incoming snapshot via
 `applyPendingMutations` in `optimistic-collection.js`. This preserves user-visible
@@ -93,10 +98,10 @@ distinct ownership:
 |---|---|---|
 | `*-flow.js` | User intent, screen entry points, navigation | `project-flow.js` |
 | `*-query.js` | Query cache, snapshot application, observer subscriptions | `project-query.js` |
-| `*-discovery-flow.js` | Lower-level data loading, returns data, owns NO state | `project-discovery-flow.js` |
+| `*-discovery-flow.js` | Lower-level data loading; publishes via injected query-layer callbacks | `project-discovery-flow.js` |
 
-Do not add visible state writes to discovery flows. Do not add query cache management
-to flow files.
+Do not add direct visible state writes to discovery flows outside injected query-layer
+publishers. Do not add query cache management to flow files.
 
 ## Common Mistakes to Avoid
 
@@ -126,16 +131,21 @@ to flow files.
 
 ## Location-Specific Files
 
-- `src-ui/CLAUDE.md` — Vanilla JS patterns, TanStack Query rules, editor state rules
-- `src-tauri/CLAUDE.md` — Rust/Tauri patterns, bundled git, storage, write access
-- `src-ui/app/editor-inline-markup/CLAUDE.md` — Inline markup grammar, invariants, round-trip rules
+Each directory contains both an `AGENTS.md` (canonical guidance) and a `CLAUDE.md`
+symlink that resolves to `AGENTS.md`. The symlinks exist so Claude Code, which reads
+`CLAUDE.md`, loads the same content without a separate file to maintain.
+
+- `src-ui/AGENTS.md` — Vanilla JS patterns, TanStack Query rules, editor state rules
+- `src-tauri/AGENTS.md` — Rust/Tauri patterns, bundled git, storage, write access
+- `src-ui/app/editor-inline-markup/AGENTS.md` — Inline markup grammar, invariants, round-trip rules
 
 ## Active Technologies
 
 - Rust + Tauri 2 (backend, native integrations)
 - Vanilla ES modules + Vite 5 (frontend)
 - TanStack Query Core 5 (async state), TanStack Virtual Core 3 (editor virtualization)
-- SQLite via Tauri's SQLite plugin (local store, search index)
+- SQLite via `rusqlite` bundled (search index)
+- `tauri-plugin-store` (local key-value persistent store)
 - GitHub App + broker service (auth, remote repo management)
 
 ## Rules

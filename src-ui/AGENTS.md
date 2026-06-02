@@ -3,6 +3,9 @@
 Vanilla JS patterns for Gnosis TMS. See root `CLAUDE.md` for project overview and
 `.vt/memory/foundational-principles.md` for architectural principles.
 
+See `AGENTS_EVIDENCE.md` for verification notes and canonical source references that
+support the guidance in this file.
+
 ## Stack
 
 - Plain ES modules (no UI framework — this is permanent, not a placeholder)
@@ -31,8 +34,10 @@ Subdirectories have specific purposes:
 ## TanStack Query: The Single State Update Path
 
 TanStack Query Core is the **only** mechanism through which remote data, local disk
-data, and cache seeds may update visible resource state. This is a hard invariant
-enforced by the module ownership pattern.
+data, and cache seeds may update **resource collection state** (`state.projects`,
+`state.glossaries`, `state.qaLists`). Editor session state (`state.editorChapter`)
+is managed with direct mutations inside editor modules and is explicitly excluded
+from this invariant.
 
 ```
 cache seed → TanStack query → applySnapshot → visible state
@@ -51,11 +56,13 @@ Every top-level resource (projects, glossaries, QA lists) follows the same patte
 |---|---|
 | `*-flow.js` | User intent, screen loading, navigation cleanup |
 | `*-query.js` | Query observer, cache boundary, `applySnapshot` to visible state |
-| `*-discovery-flow.js` | Lower-level discovery; returns data, does NOT write state |
+| `*-discovery-flow.js` | Lower-level discovery; publishes snapshots via injected query-layer callbacks only |
 
 The discovery flow emits progress events (e.g. `localSnapshot`, `remoteSnapshot`,
-`repoSyncProgress`) for intermediate feedback. Only the query layer applies those
-to final visible state.
+`repoSyncProgress`) for intermediate feedback via injected publisher callbacks wired
+by the query layer. Discovery flows may call `applyPendingMutations` when publishing
+through those injected callbacks — what is prohibited is directly mutating visible
+collections (`state.projects`, `state.glossaries`, etc.) outside the callback path.
 
 ## Write Intents and Pending Mutations
 
@@ -66,10 +73,10 @@ refreshes via **write intents**.
 - `optimistic-collection.js` — `applyPendingMutations(snapshot, pending, applyFn)`
   applies pending mutations on top of every incoming snapshot
 
-`applyPendingMutations` is called inside `*-query.js` snapshot handlers. It is NOT a
-separate update queue — it is a pure function that layers write intents onto the most
-recently fetched query data. This ensures renames/deletes do not visually revert
-while the server catches up.
+`applyPendingMutations` is a pure function that layers write intents onto a snapshot.
+It is called in `*-query.js` snapshot handlers and may also be called inside discovery
+flows that publish through query-layer injected callbacks. It is NOT a separate update
+queue. This ensures renames/deletes do not visually revert while the server catches up.
 
 **Do not add a new parallel state channel** for optimistic updates. Write intents
 through the coordinator and apply them in the snapshot handler.
@@ -83,9 +90,13 @@ and named predicates: `canWriteChapters(team)`, `canManageProjects(team)`, etc.
 Derive it from `membershipRole` in `permissions.js`. Role normalization rules:
 - `owner` → Owner (full access)
 - `admin` → Admin (content + resource management, no member/team management)
-- `translator` / `member` / GitHub non-owner member → Translator (content write only)
-- `viewer` / `read_only` / `readonly` → Viewer (read only)
-- Unknown non-empty role → Translator (conservative fallback, not Owner/Admin)
+- `translator` / `member` → Translator (content write only)
+- `viewer` / `read_only` / `read-only` / `readonly` → Viewer (read only)
+- Unknown non-empty role → no write capabilities (normalized to `"unknown"`;
+  more restrictive than Translator, not equivalent)
+- Missing role field → legacy flag-based inference via `legacyRoleForTeam()`,
+  which inspects team shape flags (`canManageTeam`, `installationId`) rather
+  than normalizing a role string
 
 ## Editor Rules
 
@@ -102,25 +113,32 @@ Scroll state is expensive to restore correctly. Key rules:
 
 ### Write Permission Queue
 
-The editor uses a serialized write permission queue (`editor-write-permission.js`)
-before submitting row saves. The queue ensures:
-1. Team, installation, and project write access is checked before any save.
-2. Concurrent save attempts are serialized, not dropped.
-3. A soft-deleted or permission-denied resource produces a clear user-facing error.
+Before any row save reaches a Tauri command, two layers protect it:
+
+1. **`editor-write-permission.js`** — assertion module. Checks team membership role
+   (via `canEditProjectFileContent`) and project/chapter lifecycle state (soft-deleted,
+   permission-denied). Returns a clear user-facing error string on failure. Does not
+   serialize concurrent saves — it only gates permission.
+2. **`write-intent-coordinator.js` / `repo-write-queue.js`** — serialization layer.
+   `processScopeQueue` in `write-intent-coordinator.js` ensures concurrent save
+   attempts are queued and processed one at a time, not dropped.
 
 **Do not invoke Tauri save commands directly from row input handlers.** Route through
-the write permission guard.
+`invokeEditorWriteCommand` in `editor-write-permission.js`, which composes both layers.
 
 ### Virtualization
 
 Rows are virtualized via TanStack Virtual Core. Critical invariants:
 
-- Row DOM nodes are recycled — do not store references to row elements across renders.
+- Row DOM nodes are destroyed and recreated via `innerHTML` replacement on each
+  virtual-window range change — do not store references to row elements across renders.
 - Row-level invalidation APIs (`editor-virtualization.js`) allow targeted re-renders
   without remounting the full list.
-- `row_order_key` is a lexicographic string, not an integer. Sorting rows by this key
-  is always lexicographic string comparison, never numeric. New key generation must
-  produce strings that sort between the surrounding keys.
+- Content file field: `structure.order_key`
+- Editor payload field: `order_key`
+- Search index column: `row_order_key`
+- All three represent lexicographic ordering, never numeric ordering. New key
+  generation must produce values that sort between the surrounding keys.
 
 ### Background Sync
 
@@ -138,7 +156,8 @@ Sync may change row content on disk. Sync results flow through
 ### State Management
 
 - **NEVER write directly to `state.projects`, `state.glossaries`, `state.qaLists`**
-  from a discovery flow, background sync, or Tauri event listener. Use the query path.
+  from a discovery flow, background sync, or Tauri event listener outside an injected
+  query-layer publisher. Use the query callback path.
 - **NEVER add a hand-rolled mutation queue** for optimistic updates. Use
   `write-intent-coordinator.js` + `applyPendingMutations` in the snapshot handler.
 - **NEVER check team identity inside a discovery flow** against a stale closure.
