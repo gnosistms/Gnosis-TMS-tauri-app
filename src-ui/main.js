@@ -45,6 +45,8 @@ import {
   EDITOR_MODE_PREVIEW,
   normalizeEditorMode,
 } from "./app/editor-preview.js";
+import { getEditorOperationQueueSnapshot } from "./app/editor-operation-queue.js";
+import { getRepoWriteQueueSnapshot } from "./app/repo-write-queue.js";
 import {
   persistCurrentEditorLocation,
   prepareEditorLocationBeforeRender,
@@ -724,6 +726,12 @@ window.__gnosisDebug = {
   },
   readEditorState() {
     return readEditorRegressionSnapshot(state);
+  },
+  readQueueState() {
+    return {
+      editorOperations: getEditorOperationQueueSnapshot(),
+      repoWrites: getRepoWriteQueueSnapshot(),
+    };
   },
   async patchFixtureRow(rowId, updates = {}) {
     const rowChanged = patchFixtureEditorRowState(rowId, updates);

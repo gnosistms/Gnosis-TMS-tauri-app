@@ -456,6 +456,37 @@ test("background sync waits behind active repo writes for the same project", asy
   await waitForRepoWriteQueueIdle("7:project-1:fixture-project");
 });
 
+test("queued background sync becomes a no-op after the editor session is stopped", async () => {
+  installEditorFixture();
+  state.editorChapter.rows = [createEditorRowFixture()];
+
+  const blocker = deferred();
+  const blockerPromise = enqueueRepoWrite({
+    scope: "7:project-1:fixture-project",
+    kind: "testBlocker",
+    run: () => blocker.promise,
+  });
+  invokeHandler = async (command) => {
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  const render = createRenderRecorder();
+  startEditorBackgroundSyncSession(render, { skipInitialSync: true, forceRestart: true });
+  await Promise.resolve();
+  invokeLog.length = 0;
+
+  const pendingSync = syncEditorBackgroundNow(render, { skipDirtyFlush: true });
+  await Promise.resolve();
+  stopEditorBackgroundSyncSession();
+
+  blocker.resolve(null);
+  await blockerPromise;
+  await pendingSync;
+  await waitForRepoWriteQueueIdle("7:project-1:fixture-project");
+
+  assert.deepEqual(invokeLog, []);
+});
+
 test("editor background sync session uses a three-minute remote sync interval", async () => {
   installEditorFixture();
 

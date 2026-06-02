@@ -42,11 +42,13 @@ const PROJECT_REPO_SYNC_STATUS_IMPORTED_EDITOR_CONFLICTS = "importedEditorConfli
 
 const editorBackgroundSyncSession = {
   key: "",
+  sessionId: 0,
   intervalId: 0,
   lastScrollAt: 0,
   lastSyncedHeadSha: null,
   pendingSync: null,
 };
+let nextEditorBackgroundSyncSessionId = 1;
 
 function normalizeHeadSha(headSha) {
   return typeof headSha === "string" && headSha.trim()
@@ -68,8 +70,15 @@ function currentSessionKey() {
   return `${state.editorChapter.projectId ?? ""}:${state.editorChapter.chapterId}`;
 }
 
-function sessionMatchesCurrentEditor() {
-  return editorBackgroundSyncSession.key && editorBackgroundSyncSession.key === currentSessionKey();
+function sessionMatchesCurrentEditor(sessionId = null) {
+  return (
+    editorBackgroundSyncSession.key
+    && editorBackgroundSyncSession.key === currentSessionKey()
+    && (
+      sessionId == null
+      || editorBackgroundSyncSession.sessionId === sessionId
+    )
+  );
 }
 
 function persistenceOperations() {
@@ -499,7 +508,8 @@ async function performBlockingChapterReload(render) {
 }
 
 async function runEditorBackgroundSync(render, options = {}) {
-  if (!sessionMatchesCurrentEditor()) {
+  const sessionId = editorBackgroundSyncSession.sessionId;
+  if (!sessionMatchesCurrentEditor(sessionId)) {
     return createBackgroundSyncResult();
   }
 
@@ -542,6 +552,9 @@ async function runEditorBackgroundSync(render, options = {}) {
         chapterId: input.chapterId,
       },
       run: () => {
+        if (!sessionMatchesCurrentEditor(sessionId)) {
+          return null;
+        }
         const { repoScope: _repoScope, ...syncInput } = input;
         return invoke("sync_gtms_project_editor_repo", {
           input: syncInput,
@@ -550,7 +563,7 @@ async function runEditorBackgroundSync(render, options = {}) {
       },
     });
 
-    if (!sessionMatchesCurrentEditor()) {
+    if (!sessionMatchesCurrentEditor(sessionId)) {
       return createBackgroundSyncResult();
     }
 
@@ -767,6 +780,7 @@ export function startEditorBackgroundSyncSession(render, options = {}) {
   if (state.offline?.isEnabled === true) {
     clearBackgroundSyncInterval();
     editorBackgroundSyncSession.key = "";
+    editorBackgroundSyncSession.sessionId = 0;
     editorBackgroundSyncSession.lastScrollAt = 0;
     editorBackgroundSyncSession.pendingSync = null;
     editorBackgroundSyncSession.lastSyncedHeadSha = null;
@@ -791,6 +805,7 @@ export function startEditorBackgroundSyncSession(render, options = {}) {
 
   clearBackgroundSyncInterval();
   editorBackgroundSyncSession.key = key;
+  editorBackgroundSyncSession.sessionId = key ? nextEditorBackgroundSyncSessionId++ : 0;
   editorBackgroundSyncSession.lastScrollAt = performance.now();
   editorBackgroundSyncSession.pendingSync = null;
   editorBackgroundSyncSession.lastSyncedHeadSha = currentHeadSha;
@@ -819,6 +834,7 @@ export function stopEditorBackgroundSyncSession() {
   const pendingSync = editorBackgroundSyncSession.pendingSync;
   clearBackgroundSyncInterval();
   editorBackgroundSyncSession.key = "";
+  editorBackgroundSyncSession.sessionId = 0;
   editorBackgroundSyncSession.lastScrollAt = 0;
   editorBackgroundSyncSession.lastSyncedHeadSha = null;
   editorBackgroundSyncSession.pendingSync = null;
