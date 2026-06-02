@@ -27,7 +27,8 @@ for the architectural philosophy that governs strategic and design decisions.
 
 ### Backend (`src-tauri/src/`)
 
-- `src-tauri/src/main.rs` — app entry point, Tauri command registration
+- `src-tauri/src/main.rs` — app entry point (calls `gnosis_tms_lib::run()`)
+- `src-tauri/src/lib.rs` — Tauri command definitions and `invoke_handler` registration
 - `src-tauri/src/store.rs` — SQLite-backed local persistent store
 - `src-tauri/src/github/` — GitHub API client
 - `src-tauri/src/project_import/` — DOCX/HTML/paste import pipeline
@@ -93,10 +94,10 @@ distinct ownership:
 |---|---|---|
 | `*-flow.js` | User intent, screen entry points, navigation | `project-flow.js` |
 | `*-query.js` | Query cache, snapshot application, observer subscriptions | `project-query.js` |
-| `*-discovery-flow.js` | Lower-level data loading, returns data, owns NO state | `project-discovery-flow.js` |
+| `*-discovery-flow.js` | Lower-level data loading; publishes via injected query-layer callbacks | `project-discovery-flow.js` |
 
-Do not add visible state writes to discovery flows. Do not add query cache management
-to flow files.
+Do not add direct visible state writes to discovery flows outside injected query-layer
+publishers. Do not add query cache management to flow files.
 
 ## Common Mistakes to Avoid
 
@@ -126,9 +127,13 @@ to flow files.
 
 ## Location-Specific Files
 
-- `src-ui/CLAUDE.md` — Vanilla JS patterns, TanStack Query rules, editor state rules
-- `src-tauri/CLAUDE.md` — Rust/Tauri patterns, bundled git, storage, write access
-- `src-ui/app/editor-inline-markup/CLAUDE.md` — Inline markup grammar, invariants, round-trip rules
+Each directory contains both an `AGENTS.md` (canonical guidance) and a `CLAUDE.md`
+symlink that resolves to `AGENTS.md`. The symlinks exist so Claude Code, which reads
+`CLAUDE.md`, loads the same content without a separate file to maintain.
+
+- `src-ui/AGENTS.md` — Vanilla JS patterns, TanStack Query rules, editor state rules
+- `src-tauri/AGENTS.md` — Rust/Tauri patterns, bundled git, storage, write access
+- `src-ui/app/editor-inline-markup/AGENTS.md` — Inline markup grammar, invariants, round-trip rules
 
 ## Active Technologies
 

@@ -15,7 +15,8 @@ Rust/Tauri patterns for Gnosis TMS. See root `CLAUDE.md` for project overview an
 
 ```
 src-tauri/src/
-├── main.rs                    # Entry point, Tauri command registration
+├── main.rs                    # Entry point — calls gnosis_tms_lib::run() only
+├── lib.rs                     # Tauri command definitions + invoke_handler registration
 ├── state.rs                   # App state (store handle, auth, cached state)
 ├── store.rs                   # SQLite local persistent store
 ├── broker.rs / broker_auth.rs # Broker service client and auth
@@ -96,10 +97,13 @@ search index.
 
 ### Command Registration
 
-All public commands are registered in `main.rs`. New commands require:
-1. `#[tauri::command]` attribute on the handler function.
-2. Registration in the `.invoke_handler(tauri::generate_handler![...])` call.
-3. A corresponding `invoke("command_name", ...)` call in `src-ui/app/runtime.js`.
+All public commands are defined and registered in `lib.rs`. `main.rs` contains only
+`gnosis_tms_lib::run()`. New commands require:
+1. `#[tauri::command]` attribute on the handler function in `lib.rs`.
+2. Registration in the `.invoke_handler(tauri::generate_handler![...])` call in `lib.rs`.
+3. A corresponding `invoke("command_name", ...)` call in the relevant feature module
+   in `src-ui/app/` — `runtime.js` is the `invoke` wrapper; individual call sites
+   live across feature modules (e.g. `project-flow.js`, `glossary-repo-flow.js`).
 
 ### Error Handling
 

@@ -20,7 +20,9 @@ The user's machine is the primary source of truth for the user experience. UI st
 
 - Local cache MUST seed the UI before any remote request is made
 - Background sync MUST NOT disable user-facing actions during execution
-- Reads MUST work offline; writes queue locally and sync when connection is available
+- Reads and translation MUST work offline without degradation
+- Local-only actions (e.g. local hard-delete of cached data) MUST work offline
+- Shared writes (create/rename/delete of projects, glossaries, QA lists; member management) are blocked offline — they require a live GitHub connection and are not queued for later
 - The platform MUST remain fully usable without a network connection for read and translate operations
 
 **Rationale**: Translators work under deadline. Any latency imposed by the network degrades the experience. Local-first architecture makes the common case (open, translate, save) instantaneous regardless of connection quality.

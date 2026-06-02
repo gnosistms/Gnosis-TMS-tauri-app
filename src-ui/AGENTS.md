@@ -51,11 +51,13 @@ Every top-level resource (projects, glossaries, QA lists) follows the same patte
 |---|---|
 | `*-flow.js` | User intent, screen loading, navigation cleanup |
 | `*-query.js` | Query observer, cache boundary, `applySnapshot` to visible state |
-| `*-discovery-flow.js` | Lower-level discovery; returns data, does NOT write state |
+| `*-discovery-flow.js` | Lower-level discovery; publishes snapshots via injected query-layer callbacks only |
 
 The discovery flow emits progress events (e.g. `localSnapshot`, `remoteSnapshot`,
-`repoSyncProgress`) for intermediate feedback. Only the query layer applies those
-to final visible state.
+`repoSyncProgress`) for intermediate feedback via injected publisher callbacks wired
+by the query layer. Discovery flows may call `applyPendingMutations` when publishing
+through those injected callbacks — what is prohibited is directly mutating visible
+collections (`state.projects`, `state.glossaries`, etc.) outside the callback path.
 
 ## Write Intents and Pending Mutations
 
@@ -66,10 +68,10 @@ refreshes via **write intents**.
 - `optimistic-collection.js` — `applyPendingMutations(snapshot, pending, applyFn)`
   applies pending mutations on top of every incoming snapshot
 
-`applyPendingMutations` is called inside `*-query.js` snapshot handlers. It is NOT a
-separate update queue — it is a pure function that layers write intents onto the most
-recently fetched query data. This ensures renames/deletes do not visually revert
-while the server catches up.
+`applyPendingMutations` is a pure function that layers write intents onto a snapshot.
+It is called in `*-query.js` snapshot handlers and may also be called inside discovery
+flows that publish through query-layer injected callbacks. It is NOT a separate update
+queue. This ensures renames/deletes do not visually revert while the server catches up.
 
 **Do not add a new parallel state channel** for optimistic updates. Write intents
 through the coordinator and apply them in the snapshot handler.
@@ -138,7 +140,8 @@ Sync may change row content on disk. Sync results flow through
 ### State Management
 
 - **NEVER write directly to `state.projects`, `state.glossaries`, `state.qaLists`**
-  from a discovery flow, background sync, or Tauri event listener. Use the query path.
+  from a discovery flow, background sync, or Tauri event listener outside an injected
+  query-layer publisher. Use the query callback path.
 - **NEVER add a hand-rolled mutation queue** for optimistic updates. Use
   `write-intent-coordinator.js` + `applyPendingMutations` in the snapshot handler.
 - **NEVER check team identity inside a discovery flow** against a stale closure.
