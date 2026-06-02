@@ -131,7 +131,7 @@ Rows are virtualized via TanStack Virtual Core. Critical invariants:
   virtual-window range change — do not store references to row elements across renders.
 - Row-level invalidation APIs (`editor-virtualization.js`) allow targeted re-renders
   without remounting the full list.
-- `row_order_key` is a lexicographic string, not an integer. Sorting rows by this key
+- `order_key` is a lexicographic string, not an integer. Sorting rows by this key
   is always lexicographic string comparison, never numeric. New key generation must
   produce strings that sort between the surrounding keys.
 

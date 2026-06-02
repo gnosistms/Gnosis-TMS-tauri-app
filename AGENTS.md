@@ -29,10 +29,10 @@ for the architectural philosophy that governs strategic and design decisions.
 
 - `src-tauri/src/main.rs` — app entry point (calls `gnosis_tms_lib::run()`)
 - `src-tauri/src/lib.rs` — Tauri command definitions and `invoke_handler` registration
-- `src-tauri/src/store.rs` — SQLite-backed local persistent store
+- `src-tauri/src/store.rs` — local key-value persistent store (`tauri-plugin-store`)
 - `src-tauri/src/github/` — GitHub API client
 - `src-tauri/src/project_import/` — DOCX/HTML/paste import pipeline
-- `src-tauri/src/project_search/` — full-text search indexer (SQLite FTS)
+- `src-tauri/src/project_search/` — trigram-based SQLite search indexer
 - `src-tauri/src/ai/` — AI provider integration
 - `src-tauri/src/broker*.rs` — broker service auth and communication
 
@@ -141,7 +141,8 @@ symlink that resolves to `AGENTS.md`. The symlinks exist so Claude Code, which r
 - Rust + Tauri 2 (backend, native integrations)
 - Vanilla ES modules + Vite 5 (frontend)
 - TanStack Query Core 5 (async state), TanStack Virtual Core 3 (editor virtualization)
-- SQLite via `rusqlite` bundled (local store, search index)
+- SQLite via `rusqlite` bundled (search index)
+- `tauri-plugin-store` (local key-value persistent store)
 - GitHub App + broker service (auth, remote repo management)
 
 ## Rules
