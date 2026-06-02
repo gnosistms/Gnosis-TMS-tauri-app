@@ -40,6 +40,7 @@ function buildRow({
   isTextEditorOpen = false,
   isAiTranslating = false,
   text = "mind",
+  footnotes = {},
 } = {}) {
   return {
     kind: "row",
@@ -50,7 +51,7 @@ function buildRow({
     fields: {
       en: text,
     },
-    footnotes: {},
+    footnotes,
     images: {},
     fieldStates: {},
     sections: [
@@ -471,6 +472,70 @@ test("search sync writes direct search markup into static display text", async (
     assert.match(displayText.innerHTML, /translation-language-panel__search-match/);
     assert.match(searchLayer.innerHTML, /translation-language-panel__search-match/);
     assert.equal(stack.classList.contains("translation-language-panel__field-stack--search"), true);
+  });
+});
+
+test("highlight sync preserves static inline footnote markers in display text", async () => {
+  await withFakeDom(async () => {
+    const { syncEditorGlossaryHighlightRowDom } = await loadGlossaryFlowModule();
+    const row = buildRow({
+      isTextEditorOpen: false,
+      text: "mind [1]",
+      footnotes: {
+        en: [{ marker: 1, text: "Saved note" }],
+      },
+    });
+    const chapterState = buildChapterState(row, { searchQuery: "mind" });
+
+    const root = new FakeElement();
+    const rowCard = root.appendChild(
+      new FakeElement({
+        attributes: {
+          "data-editor-row-card": "",
+          "data-row-id": "row-1",
+        },
+      }),
+    );
+    const stack = rowCard.appendChild(
+      new FakeElement({
+        attributes: {
+          "data-editor-glossary-field-stack": "",
+          "data-language-code": "en",
+          "data-row-id": "row-1",
+          class: "translation-language-panel__field-stack translation-language-panel__field-stack--search",
+        },
+      }),
+    );
+    stack.appendChild(
+      new FakeElement({
+        attributes: {
+          "data-editor-search-highlight": "",
+        },
+      }),
+    );
+    stack.appendChild(
+      new FakeElement({
+        attributes: {
+          "data-editor-glossary-highlight": "",
+        },
+      }),
+    );
+    const displayText = stack.appendChild(
+      new FakeElement({
+        attributes: {
+          "data-editor-display-text": "",
+        },
+      }),
+    );
+
+    syncEditorGlossaryHighlightRowDom("row-1", chapterState, root);
+
+    assert.match(displayText.innerHTML, /translation-language-panel__search-match/);
+    assert.match(
+      displayText.innerHTML,
+      /<sup class="translation-language-panel__inline-footnote" aria-label="Footnote 1">1<\/sup>/,
+    );
+    assert.doesNotMatch(displayText.innerHTML, /\[1\]/);
   });
 });
 

@@ -41,6 +41,57 @@ function glossariesBelongToTeam(teamId, cacheKey) {
     : true;
 }
 
+function projectsBelongToTeam(teamId, cacheKey) {
+  if (state.projectsPage?.visibleTeamId !== teamId) {
+    return false;
+  }
+  return cacheKey
+    ? state.projectsPage?.visibleCacheKey === cacheKey
+    : true;
+}
+
+function projectSnapshotIsEmpty(snapshot) {
+  const items = Array.isArray(snapshot?.items) ? snapshot.items : [];
+  const deletedItems = Array.isArray(snapshot?.deletedItems) ? snapshot.deletedItems : [];
+  return items.length === 0 && deletedItems.length === 0;
+}
+
+function projectCollectionsHaveChapter(projectCollections, chapterId) {
+  if (!chapterId) {
+    return false;
+  }
+  return (Array.isArray(projectCollections) ? projectCollections : []).some((project) =>
+    Array.isArray(project?.chapters)
+    && project.chapters.some((chapter) => chapter?.id === chapterId),
+  );
+}
+
+function projectSnapshotHasChapter(snapshot, chapterId) {
+  return projectCollectionsHaveChapter([
+    ...(Array.isArray(snapshot?.items) ? snapshot.items : []),
+    ...(Array.isArray(snapshot?.deletedItems) ? snapshot.deletedItems : []),
+  ], chapterId);
+}
+
+function currentProjectsHaveChapter(chapterId) {
+  return projectCollectionsHaveChapter([
+    ...(Array.isArray(state.projects) ? state.projects : []),
+    ...(Array.isArray(state.deletedProjects) ? state.deletedProjects : []),
+  ], chapterId);
+}
+
+function shouldPreserveActiveEditorProjectContext(visibleProjectSnapshot, teamId, cacheKey) {
+  const chapterId = state.editorChapter?.chapterId ?? state.selectedChapterId ?? "";
+  return (
+    state.screen === "translate"
+    && Boolean(chapterId)
+    && state.editorChapter?.chapterId === chapterId
+    && projectsBelongToTeam(teamId, cacheKey)
+    && currentProjectsHaveChapter(chapterId)
+    && !projectSnapshotHasChapter(visibleProjectSnapshot, chapterId)
+  );
+}
+
 function createProjectDiscoverySnapshot(discovery = {}) {
   return {
     status:
@@ -95,16 +146,33 @@ export function applyProjectsQuerySnapshotToState(snapshot, {
     const expectedCacheKey = cacheKeyForTeamId(teamId, cacheKey);
     clearConfirmedProjectWriteIntents(snapshot.snapshot);
     const visibleProjectSnapshot = applyProjectWriteIntentsToSnapshot(snapshot.snapshot);
-    applyProjectSnapshotToState(visibleProjectSnapshot, {
-      teamId,
-      cacheKey: expectedCacheKey,
-      cacheUpdatedAt,
-      reconcileExpandedDeletedFiles,
-    });
-    state.projectRepoSyncByProjectId =
+    const preserveCurrentProjects =
+      (
+        isFetching === true
+        && projectSnapshotIsEmpty(visibleProjectSnapshot)
+        && (state.projects.length > 0 || state.deletedProjects.length > 0)
+        && projectsBelongToTeam(teamId, expectedCacheKey)
+      )
+      || shouldPreserveActiveEditorProjectContext(visibleProjectSnapshot, teamId, expectedCacheKey);
+    if (!preserveCurrentProjects) {
+      applyProjectSnapshotToState(visibleProjectSnapshot, {
+        teamId,
+        cacheKey: expectedCacheKey,
+        cacheUpdatedAt,
+        reconcileExpandedDeletedFiles,
+      });
+    }
+    const nextRepoSyncByProjectId =
       snapshot.repoSyncByProjectId && typeof snapshot.repoSyncByProjectId === "object"
         ? snapshot.repoSyncByProjectId
         : {};
+    if (
+      !preserveCurrentProjects
+      || Object.keys(nextRepoSyncByProjectId).length > 0
+      || Object.keys(state.projectRepoSyncByProjectId ?? {}).length === 0
+    ) {
+      state.projectRepoSyncByProjectId = nextRepoSyncByProjectId;
+    }
     const nextGlossaries = Array.isArray(snapshot.glossaries) ? snapshot.glossaries : [];
     const preserveCurrentGlossaries =
       isFetching === true
@@ -118,9 +186,12 @@ export function applyProjectsQuerySnapshotToState(snapshot, {
         cacheKey: expectedCacheKey,
       });
     }
-    state.pendingChapterMutations = Array.isArray(snapshot.pendingChapterMutations)
+    const nextPendingChapterMutations = Array.isArray(snapshot.pendingChapterMutations)
       ? snapshot.pendingChapterMutations
       : [];
+    if (!preserveCurrentProjects || nextPendingChapterMutations.length > 0) {
+      state.pendingChapterMutations = nextPendingChapterMutations;
+    }
     state.projectDiscovery = createProjectDiscoverySnapshot(snapshot.discovery);
   }
 

@@ -10,6 +10,7 @@ import {
   renderSanitizedInlineMarkupWithEditorHighlightState,
   renderSanitizedInlineMarkupWithGlossaryHighlightHtml,
 } from "./editor-inline-markup.js";
+import { buildStaticInlineFootnoteMarkerRanges } from "./editor-static-footnote-markers.js";
 import { editorFootnotesPlainText, findEditorRowById } from "./editor-utils.js";
 import { invoke } from "./runtime.js";
 import { createEditorChapterGlossaryState, state } from "./state.js";
@@ -183,6 +184,12 @@ function applyEditorTextHighlightLayersToRowCard(
           renderSanitizedInlineMarkupWithEditorHighlightState(highlightableText, {
             glossaryHighlightHtml,
             searchRanges: searchHighlightRanges,
+            extraRanges: contentKind === "field"
+              ? buildStaticInlineFootnoteMarkerRanges(
+                highlightableText,
+                row?.footnotes?.[languageCode],
+              )
+              : [],
           }),
         );
       }

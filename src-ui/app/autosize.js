@@ -64,12 +64,13 @@ export function syncEditorRowTextareaHeight(textarea) {
   }
 
   const isActive = textarea.matches(":focus");
+  const minHeight = singleLineTextareaHeight(textarea, 44);
 
   syncAutoSizeTextarea(
     textarea,
     isActive
-      ? { minHeight: singleLineTextareaHeight(textarea), maxHeight: null, preserveScroll: true }
-      : { minHeight: 44, maxHeight: null },
+      ? { minHeight, maxHeight: null, preserveScroll: true }
+      : { minHeight, maxHeight: null },
   );
 }
 

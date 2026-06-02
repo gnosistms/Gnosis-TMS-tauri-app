@@ -244,6 +244,32 @@ test("applyEditorRowPersistSucceeded updates persisted fields and stays idle whe
   assert.equal(updatedRow.saveStatus, "idle");
 });
 
+test("applyEditorRowPersistSucceeded keeps submitted footnotes when payload omits parsed footnote metadata", () => {
+  const submittedFootnotes = { es: [{ marker: 1, text: "nota guardada" }] };
+  const updatedRow = applyEditorRowPersistSucceeded(
+    row({
+      fields: { es: "dos [1]" },
+      footnotes: submittedFootnotes,
+      saveStatus: "saving",
+    }),
+    persistedPayload({
+      fields: { es: "dos [1]" },
+      footnotes: { es: "" },
+    }),
+    {
+      fields: { es: "dos [1]" },
+      footnotes: submittedFootnotes,
+      imageCaptions: { es: "" },
+      images: {},
+    },
+  );
+
+  assert.deepEqual(updatedRow.footnotes, submittedFootnotes);
+  assert.deepEqual(updatedRow.persistedFootnotes, submittedFootnotes);
+  assert.deepEqual(updatedRow.baseFootnotes, submittedFootnotes);
+  assert.equal(updatedRow.saveStatus, "idle");
+});
+
 test("applyEditorRowPersistSucceeded preserves a pending optimistic text style", () => {
   const updatedRow = applyEditorRowPersistSucceeded(
     {

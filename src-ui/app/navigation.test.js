@@ -40,14 +40,34 @@ test("team-scoped screen refreshes update team access before loading page data",
   const source = await readFile(new URL("./navigation.js", import.meta.url), "utf8");
 
   assert.match(source, /primeProjectsLoadingState/);
-  assert.match(source, /if \(navTarget === "projects" && state\.selectedTeamId\) \{\s*primeProjectsLoadingState\(state\.selectedTeamId\);\s*\}\s*render\(\);/);
+  assert.match(source, /if \(navTarget === "projects" && state\.selectedTeamId\) \{\s*primeProjectsLoadingState\(state\.selectedTeamId\);\s*showScopedSyncBadge\("projects", "Refreshing project list\.\.\.", null\);\s*\}\s*render\(\);/);
   assert.match(source, /import \{ refreshCurrentUserTeamAccess \} from "\.\/team-query\.js";/);
   assert.match(source, /beginRefreshButtonFeedback\(screen, render\);\s*await waitForNextPaint\(\);/);
   assert.match(source, /if \(screen === "projects"\) \{[\s\S]*?await refreshVisibleTeamAccess\(render\);[\s\S]*?await loadTeamProjects/);
+  assert.match(source, /if \(screen === "projects"\) \{[\s\S]*?await loadTeamProjects\(render, state\.selectedTeamId\);[\s\S]*?setResourcePageRefreshing\(state\.projectsPage, false\);[\s\S]*?clearScopedSyncBadge\("projects", render\);/);
   assert.match(source, /if \(screen === "glossaries"\) \{[\s\S]*?await refreshVisibleTeamAccess\(render\);[\s\S]*?await loadTeamGlossaries/);
   assert.match(source, /if \(screen === "glossaryEditor"\) \{[\s\S]*?await refreshVisibleTeamAccess\(render\);[\s\S]*?await maybeStartGlossaryBackgroundSync/);
   assert.match(source, /if \(screen === "users"\) \{[\s\S]*?await refreshVisibleTeamAccess\(render\);[\s\S]*?await loadTeamUsers/);
   assert.match(source, /if \(screen === "translate"\) \{[\s\S]*?await refreshVisibleTeamAccess\(render\);[\s\S]*?startEditorBackgroundSyncSession/);
+});
+
+test("projects navigation clears the page refresh flag after project data loads", async () => {
+  const source = await readFile(new URL("./navigation.js", import.meta.url), "utf8");
+
+  assert.match(
+    source,
+    /if \(navTarget === "projects" && state\.selectedTeamId\) \{[\s\S]*?try \{[\s\S]*?await loadTeamProjects\(render, state\.selectedTeamId\);[\s\S]*?\} finally \{[\s\S]*?setResourcePageRefreshing\(state\.projectsPage, false\);[\s\S]*?clearScopedSyncBadge\("projects", render\);[\s\S]*?render\(\);[\s\S]*?\}[\s\S]*?return null;/,
+  );
+});
+
+test("projects navigation does not wait for stopped editor background sync", async () => {
+  const source = await readFile(new URL("./navigation.js", import.meta.url), "utf8");
+  const projectsExitStart = source.indexOf('if (navTarget === "projects") {');
+  const projectsLoadStart = source.indexOf('if (navTarget === "projects" && state.selectedTeamId) {', projectsExitStart);
+  const projectsLoadBlock = source.slice(projectsLoadStart, source.indexOf('if (navTarget === "teams")', projectsLoadStart));
+
+  assert.match(source, /void stopEditorBackgroundSyncSession\(\)\?\.catch\(\(\) => null\);/);
+  assert.doesNotMatch(projectsLoadBlock, /await pendingEditorProjectSync/);
 });
 
 test("refresh feedback is rendered before team access refreshes", async () => {

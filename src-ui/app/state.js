@@ -481,6 +481,7 @@ export function createEditorFootnoteEditorState() {
   return {
     rowId: null,
     languageCode: null,
+    marker: null,
   };
 }
 

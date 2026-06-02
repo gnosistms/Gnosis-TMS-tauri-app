@@ -30,6 +30,10 @@ import {
   filterLocalHardDeletedResources,
 } from "./local-hard-delete-store.js";
 import { invoke } from "./runtime.js";
+import {
+  anyEditorOperationIsActive,
+  waitForEditorOperationQueueIdle,
+} from "./editor-operation-queue.js";
 import { resetProjectsPageSync } from "./page-sync.js";
 import {
   createEditorChapterFilterState,
@@ -41,9 +45,10 @@ import {
   createTargetLanguageManagerState,
   state,
 } from "./state.js";
-import { clearNoticeBadge, clearScopedSyncBadge, showNoticeBadge } from "./status-feedback.js";
+import { clearNoticeBadge, clearScopedSyncBadge, showNoticeBadge, showScopedSyncBadge } from "./status-feedback.js";
 import { canManageProjects } from "./resource-capabilities.js";
 import { findIsoLanguageOption, normalizeSupportedLanguageCode } from "../lib/language-options.js";
+import { projectRepoScope } from "./repo-write-queue.js";
 
 function normalizeEditorChapterFilters(filters) {
   return normalizeEditorChapterFilterState(filters);
@@ -204,6 +209,51 @@ function openLanguageManagerForSingleLanguageFile(payload, preserveVisibleRows, 
   };
 }
 
+function editorOperationBelongsToChapter(operation, repoScope, chapterId) {
+  if (!repoScope || !chapterId) {
+    return false;
+  }
+  return (
+    operation?.repoScope === repoScope
+    && operation?.metadata?.chapterId === chapterId
+  );
+}
+
+async function waitForPendingEditorWritesBeforeChapterOpen(render, team, context) {
+  const repoScope = projectRepoScope({ team, project: context?.project ?? null });
+  const chapterId = context?.chapter?.id ?? "";
+  const matchesOpeningChapter = (operation) =>
+    editorOperationBelongsToChapter(operation, repoScope, chapterId);
+
+  if (!anyEditorOperationIsActive(matchesOpeningChapter)) {
+    return;
+  }
+
+  if (state.screen === "projects") {
+    showScopedSyncBadge("projects", "Finishing pending editor saves...", render);
+  }
+  await waitForEditorOperationQueueIdle(matchesOpeningChapter);
+  if (state.screen === "projects") {
+    clearScopedSyncBadge("projects", render);
+  }
+}
+
+function hasPendingEditorWritesForChapter(team, context) {
+  const repoScope = projectRepoScope({ team, project: context?.project ?? null });
+  const chapterId = context?.chapter?.id ?? "";
+  return anyEditorOperationIsActive((operation) =>
+    editorOperationBelongsToChapter(operation, repoScope, chapterId)
+  );
+}
+
+function canResumeCurrentEditorChapter(chapterId) {
+  return (
+    state.editorChapter?.chapterId === chapterId
+    && Array.isArray(state.editorChapter.rows)
+    && state.editorChapter.rows.length > 0
+  );
+}
+
 export async function loadSelectedChapterEditorData(render, options = {}, operations = {}) {
   if (!hasEditorChapterReloadOperations(operations)) {
     return;
@@ -309,8 +359,12 @@ export async function loadSelectedChapterEditorData(render, options = {}, operat
       : {},
     activeRowId: preserveVisibleRows ? state.editorChapter.activeRowId : null,
     activeLanguageCode: preserveVisibleRows ? state.editorChapter.activeLanguageCode : null,
-    mainFieldEditor: createEditorMainFieldEditorState(),
-    pendingSelection: createEditorPendingSelectionState(),
+    mainFieldEditor: preserveVisibleRows
+      ? state.editorChapter.mainFieldEditor
+      : createEditorMainFieldEditorState(),
+    pendingSelection: preserveVisibleRows
+      ? state.editorChapter.pendingSelection
+      : createEditorPendingSelectionState(),
     sidebarTab: preserveVisibleRows ? state.editorChapter.sidebarTab : "review",
     assistant: preserveVisibleRows ? state.editorChapter.assistant : storedAssistantChapterData,
     commentSeenRevisions: preserveVisibleRows ? state.editorChapter.commentSeenRevisions : {},
@@ -415,6 +469,14 @@ export async function openTranslateChapter(render, chapterId, operations = {}) {
     return;
   }
 
+  const team = selectedProjectsTeam();
+  const resumeCurrentChapter =
+    canResumeCurrentEditorChapter(chapterId)
+    && hasPendingEditorWritesForChapter(team, context);
+  if (!resumeCurrentChapter) {
+    await waitForPendingEditorWritesBeforeChapterOpen(render, team, context);
+  }
+
   void operations.persistEditorChapterSelections(render);
   if (state.screen === "projects") {
     resetProjectsPageSync();
@@ -424,5 +486,16 @@ export async function openTranslateChapter(render, chapterId, operations = {}) {
   state.selectedProjectId = context.project.id;
   state.selectedChapterId = chapterId;
   state.screen = "translate";
+  if (resumeCurrentChapter) {
+    state.editorChapter = {
+      ...state.editorChapter,
+      status: "ready",
+      error: "",
+      projectId: context.project.id,
+      chapterId,
+    };
+    render?.();
+    return;
+  }
   await loadSelectedChapterEditorData(render, {}, operations);
 }

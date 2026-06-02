@@ -31,6 +31,7 @@ import { historyLastUpdateLabel } from "./editor-history.js";
 import { buildEditorRowSearchHighlightMap } from "./editor-search-flow.js";
 import { buildEditorSearchHighlightKey } from "./editor-search-highlighting.js";
 import { normalizeEditorFootnotes } from "./editor-footnotes.js";
+import { buildStaticInlineFootnoteMarkerRanges } from "./editor-static-footnote-markers.js";
 
 export function renderTranslationMarkerIcon(kind) {
   if (kind === "comments") {
@@ -320,6 +321,19 @@ function renderRowTextStyleButtons(row, language) {
   `;
 }
 
+function renderStaticEditorFieldTextHtml(language, options = {}) {
+  return renderSanitizedInlineMarkupWithEditorHighlightState(language?.text ?? "", {
+    glossaryHighlightHtml: typeof options.glossaryHighlightHtml === "string"
+      ? options.glossaryHighlightHtml
+      : "",
+    searchRanges: Array.isArray(options.searchRanges) ? options.searchRanges : [],
+    extraRanges: buildStaticInlineFootnoteMarkerRanges(
+      language?.text ?? "",
+      language?.footnotes ?? language?.footnote,
+    ),
+  });
+}
+
 function editorLanguageImageSrc(image) {
   if (!image) {
     return "";
@@ -374,6 +388,7 @@ function renderEditorLanguageImageCaption(row, language) {
             data-row-id="${escapeHtml(row.id)}"
             data-language-code="${escapeHtml(language.code)}"
             lang="${escapeHtml(language.baseCode || language.code)}"
+            rows="1"
             spellcheck="false"
             placeholder="Enter image caption"
           >${escapeHtml(language.imageCaption ?? "")}</textarea>
@@ -613,7 +628,7 @@ function renderConflictResolutionField(row, language, textStyle) {
         <span
           class="translation-language-panel__field-static-text"
           lang="${escapeHtml(language.baseCode || language.code)}"
-        >${renderSanitizedInlineMarkupHtml(language.text)}</span>
+        >${renderStaticEditorFieldTextHtml(language)}</span>
       </button>
     </div>
   `;
@@ -638,7 +653,7 @@ function renderDisabledConflictField(row, language, textStyle) {
         <span
           class="translation-language-panel__field-static-text"
           lang="${escapeHtml(language.baseCode || language.code)}"
-        >${renderSanitizedInlineMarkupHtml(language.text)}</span>
+        >${renderStaticEditorFieldTextHtml(language)}</span>
       </div>
     </div>
   `;
@@ -677,6 +692,7 @@ function renderEditorFootnoteField(row, language) {
           data-row-id="${escapeHtml(row.id)}"
           data-language-code="${escapeHtml(language.code)}"
           lang="${escapeHtml(language.baseCode || language.code)}"
+          rows="1"
           spellcheck="false"
           placeholder="Enter footnote text here."
         >${escapeHtml(entry.text)}</textarea>
@@ -705,7 +721,7 @@ function renderEditorLanguageField(row, language) {
       : typeof language.glossaryHighlightHtml === "string"
         ? language.glossaryHighlightHtml
         : "";
-  const staticFieldTextHtml = renderSanitizedInlineMarkupWithEditorHighlightState(language.text, {
+  const staticFieldTextHtml = renderStaticEditorFieldTextHtml(language, {
     glossaryHighlightHtml,
     searchRanges: Array.isArray(language.searchHighlightRanges) ? language.searchHighlightRanges : [],
   });
@@ -833,6 +849,7 @@ function renderEditorLanguageField(row, language) {
           data-row-id="${escapeHtml(row.id)}"
           data-language-code="${escapeHtml(language.code)}"
           lang="${escapeHtml(language.baseCode || language.code)}"
+          rows="1"
           spellcheck="false"
           ${loadingAttributes}
         >${escapeHtml(language.text)}</textarea>

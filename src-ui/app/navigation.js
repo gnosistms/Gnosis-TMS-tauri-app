@@ -142,7 +142,6 @@ export async function handleNavigation(navTarget, render) {
     ? showNavigationLoadingModal(leaveLoading.title, leaveLoading.message)
     : null;
   let navigationRendered = false;
-  let pendingEditorProjectSync = null;
 
   if (navigationLoadingToken !== null) {
     render();
@@ -162,7 +161,7 @@ export async function handleNavigation(navTarget, render) {
     if (state.screen === "translate" && navTarget !== "translate") {
       void persistEditorChapterSelections(render);
       if (navTarget === "projects") {
-        pendingEditorProjectSync = stopEditorBackgroundSyncSession();
+        void stopEditorBackgroundSyncSession()?.catch(() => null);
       } else {
         await syncAndStopEditorBackgroundSyncSession(render);
       }
@@ -223,15 +222,22 @@ export async function handleNavigation(navTarget, render) {
     state.screen = navTarget;
     if (navTarget === "projects" && state.selectedTeamId) {
       primeProjectsLoadingState(state.selectedTeamId);
+      showScopedSyncBadge("projects", "Refreshing project list...", null);
     }
     render();
     navigationRendered = true;
 
     if (navTarget === "projects" && state.selectedTeamId) {
       void waitForNextPaint().then(async () => {
-        await pendingEditorProjectSync?.catch(() => null);
-        await refreshVisibleTeamAccess(render);
-        return loadTeamProjects(render, state.selectedTeamId);
+        try {
+          await refreshVisibleTeamAccess(render);
+          await loadTeamProjects(render, state.selectedTeamId);
+        } finally {
+          setResourcePageRefreshing(state.projectsPage, false);
+          clearScopedSyncBadge("projects", render);
+          render();
+        }
+        return null;
       });
     }
     if (navTarget === "teams") {
@@ -312,6 +318,7 @@ export async function refreshCurrentScreen(render) {
     try {
       await refreshVisibleTeamAccess(render);
       await loadTeamProjects(render, state.selectedTeamId);
+      setResourcePageRefreshing(state.projectsPage, false);
       clearScopedSyncBadge("projects", render);
     } catch (error) {
       failRefreshButtonFeedback(screen, render);

@@ -397,6 +397,7 @@ export function applyEditorRowPersistSucceeded(row, payloadRow, persistedSnapsho
   }
 
   const normalizedRow = normalizeEditorRow(payloadRow);
+  const hasPersistedSnapshot = persistedSnapshot && typeof persistedSnapshot === "object";
   const snapshotFields = cloneRowFields(persistedSnapshot?.fields ?? row.fields);
   const snapshotFootnotes = cloneRowFootnotes(persistedSnapshot?.footnotes ?? row.footnotes);
   const snapshotImageCaptions = cloneRowFields(persistedSnapshot?.imageCaptions ?? row.imageCaptions);
@@ -430,13 +431,38 @@ export function applyEditorRowPersistSucceeded(row, payloadRow, persistedSnapsho
     }
   }
 
+  if (!rowChangedDuringSave) {
+    const savedFields = hasPersistedSnapshot ? snapshotFields : normalizedRow.fields;
+    const savedFootnotes = hasPersistedSnapshot ? snapshotFootnotes : normalizedRow.footnotes;
+    const savedImageCaptions = hasPersistedSnapshot ? snapshotImageCaptions : normalizedRow.imageCaptions;
+    const savedImages = hasPersistedSnapshot ? snapshotImages : normalizedRow.images;
+    return preservePendingRowWrites({
+      ...normalizedRow,
+      fields: cloneRowFields(savedFields),
+      footnotes: cloneRowFootnotes(savedFootnotes),
+      imageCaptions: cloneRowFields(savedImageCaptions),
+      images: cloneRowImages(savedImages),
+      baseFields: cloneRowFields(savedFields),
+      baseFootnotes: cloneRowFootnotes(savedFootnotes),
+      baseImageCaptions: cloneRowFields(savedImageCaptions),
+      baseImages: cloneRowImages(savedImages),
+      persistedFields: cloneRowFields(savedFields),
+      persistedFootnotes: cloneRowFootnotes(savedFootnotes),
+      persistedImageCaptions: cloneRowFields(savedImageCaptions),
+      persistedImages: cloneRowImages(savedImages),
+      saveStatus: "idle",
+      freshness: "fresh",
+      conflictState: null,
+    }, row);
+  }
+
   return preservePendingRowWrites({
     ...normalizedRow,
-    fields: rowChangedDuringSave ? cloneRowFields(row.fields) : normalizedRow.fields,
-    footnotes: rowChangedDuringSave ? cloneRowFootnotes(row.footnotes) : normalizedRow.footnotes,
-    imageCaptions: rowChangedDuringSave ? cloneRowFields(row.imageCaptions) : normalizedRow.imageCaptions,
-    saveStatus: rowChangedDuringSave ? "dirty" : "idle",
-    freshness: rowChangedDuringSave ? "dirty" : "fresh",
+    fields: cloneRowFields(row.fields),
+    footnotes: cloneRowFootnotes(row.footnotes),
+    imageCaptions: cloneRowFields(row.imageCaptions),
+    saveStatus: "dirty",
+    freshness: "dirty",
     conflictState: null,
   }, row);
 }

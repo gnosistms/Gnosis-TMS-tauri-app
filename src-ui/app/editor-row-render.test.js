@@ -155,6 +155,104 @@ test("renderTranslationContentRow keeps conflict text inside the language field 
   );
 });
 
+test("renderTranslationContentRow renders editor row textareas with one intrinsic row", () => {
+  const html = renderTranslationContentRow({
+    ...rowWithSection({
+      canEdit: true,
+      text: "CHUONG 4",
+      footnotes: [{ marker: 1, text: "Footnote" }],
+      hasVisibleFootnote: true,
+      isTextEditorOpen: true,
+    }),
+    canEdit: true,
+  });
+
+  const textareaTags = html.match(/<textarea[\s\S]*?<\/textarea>/g) ?? [];
+  assert.equal(textareaTags.length, 2);
+  for (const tag of textareaTags) {
+    assert.match(tag, /\srows="1"/);
+  }
+});
+
+test("renderTranslationContentRow renders valid static footnote markers as non-link superscripts", () => {
+  const html = renderTranslationContentRow({
+    ...rowWithSection({
+      canEdit: true,
+      text: "foo [1] [2]",
+      footnotes: [
+        { marker: 1, text: "First footnote" },
+        { marker: 2, text: "Second footnote" },
+      ],
+      hasVisibleFootnote: true,
+    }),
+    canEdit: true,
+  });
+
+  const displayField = html.match(/<button[\s\S]*data-editor-display-field[\s\S]*?<\/button>/)?.[0] ?? "";
+
+  assert.match(
+    displayField,
+    /foo <sup class="translation-language-panel__inline-footnote" aria-label="Footnote 1">1<\/sup> <sup class="translation-language-panel__inline-footnote" aria-label="Footnote 2">2<\/sup>/,
+  );
+  assert.doesNotMatch(displayField, /\[1\]|\[2\]/);
+  assert.doesNotMatch(displayField, /href=/);
+});
+
+test("renderTranslationContentRow keeps invalid static footnote markers literal", () => {
+  const html = renderTranslationContentRow({
+    ...rowWithSection({
+      canEdit: true,
+      text: "foo [100]",
+      footnotes: [{ marker: 1, text: "First footnote" }],
+      hasVisibleFootnote: true,
+    }),
+    canEdit: true,
+  });
+
+  const displayField = html.match(/<button[\s\S]*data-editor-display-field[\s\S]*?<\/button>/)?.[0] ?? "";
+
+  assert.match(displayField, /foo \[100\]/);
+  assert.doesNotMatch(displayField, /translation-language-panel__inline-footnote/);
+});
+
+test("renderTranslationContentRow renders conflict footnote markers as non-link superscripts", () => {
+  const html = renderTranslationContentRow({
+    ...rowWithSection({
+      canEdit: true,
+      hasConflict: true,
+      text: "foo [1]",
+      footnotes: [{ marker: 1, text: "Conflict footnote" }],
+    }),
+    canEdit: true,
+    hasConflict: true,
+  });
+
+  const conflictField = html.match(/translation-language-panel__field-static--conflict[\s\S]*?<\/button>/)?.[0] ?? "";
+
+  assert.match(
+    conflictField,
+    /foo <sup class="translation-language-panel__inline-footnote" aria-label="Footnote 1">1<\/sup>/,
+  );
+  assert.doesNotMatch(conflictField, /\[1\]/);
+  assert.doesNotMatch(conflictField, /href=/);
+});
+
+test("renderTranslationContentRow keeps footnote markers literal while editing main text", () => {
+  const html = renderTranslationContentRow({
+    ...rowWithSection({
+      canEdit: true,
+      text: "foo [1]",
+      footnotes: [{ marker: 1, text: "Footnote" }],
+      hasVisibleFootnote: true,
+      isTextEditorOpen: true,
+    }),
+    canEdit: true,
+  });
+
+  assert.match(html, /<textarea[\s\S]*data-editor-row-field[\s\S]*>foo \[1\]<\/textarea>/);
+  assert.doesNotMatch(html, /translation-language-panel__inline-footnote/);
+});
+
 test("renderTranslationContentRow shows a placeholder while image preview dimensions load", () => {
   clearEditorImagePreviewFrameSizeCacheForTests();
   const html = renderTranslationContentRow(rowWithSection({

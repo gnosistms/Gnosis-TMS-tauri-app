@@ -33,6 +33,8 @@ import {
 } from "./repo-write-queue.js";
 import { runTeamResourceMigrationSync } from "./team-resource-migration-flow.js";
 
+const LOCAL_PROJECT_FILE_LISTING_REPO_WAIT_MS = 1200;
+
 function countRecoverableProjectMetadataRecords(records) {
   return (Array.isArray(records) ? records : []).filter((record) =>
     record?.recordState === "live"
@@ -575,11 +577,17 @@ async function loadLocalProjectFileListings(selectedTeam, projects) {
     return [];
   }
 
-  await Promise.all(
+  const repoWriteWait = Promise.all(
     projects.map((project) =>
       waitForRepoWriteQueueIdle(projectRepoScope({ team: selectedTeam, project })),
     ),
   );
+  await Promise.race([
+    repoWriteWait,
+    new Promise((resolve) => {
+      globalThis.setTimeout(resolve, LOCAL_PROJECT_FILE_LISTING_REPO_WAIT_MS);
+    }),
+  ]);
 
   const listings = await invoke("list_local_gtms_project_files", {
     input: {

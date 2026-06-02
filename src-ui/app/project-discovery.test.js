@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 
 import {
   findConfirmedMissingProjectRecords,
@@ -226,6 +227,16 @@ function installProjectDiscoveryInvokeMock({
 test.afterEach(() => {
   invokeHandler = async () => null;
   resetSessionState();
+});
+
+test("local project file listing uses a bounded repo-write wait", async () => {
+  const source = await readFile(new URL("./project-discovery-flow.js", import.meta.url), "utf8");
+
+  assert.match(source, /const LOCAL_PROJECT_FILE_LISTING_REPO_WAIT_MS = 1200;/);
+  assert.match(source, /const repoWriteWait = Promise\.all\(/);
+  assert.match(source, /await Promise\.race\(\[/);
+  assert.match(source, /globalThis\.setTimeout\(resolve, LOCAL_PROJECT_FILE_LISTING_REPO_WAIT_MS\);/);
+  assert.match(source, /invoke\("list_local_gtms_project_files"/);
 });
 
 test("metadata-backed project discovery ignores remote repos that have no metadata record", () => {

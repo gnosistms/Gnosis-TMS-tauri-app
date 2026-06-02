@@ -1399,10 +1399,17 @@
 .translation-language-panel__field-static {
   display: block;
   width: 100%;
-  min-height: 44px;
+  min-height: calc(1.5em + 12px);
+  min-height: calc(1lh + 12px);
   border: 1px solid transparent;
   border-radius: 0;
   background: transparent;
+}
+
+.translation-language-panel__field-static--footnote {
+  grid-area: auto;
+  min-height: 0;
+  padding-bottom: 0;
 }
 
 .translation-language-panel__field-static-text {
@@ -1487,7 +1494,8 @@
   -webkit-appearance: none;
   display: block;
   width: 100%;
-  min-height: 44px;
+  min-height: calc(1.5em + 12px);
+  min-height: calc(1lh + 12px);
   border: 1px solid transparent;
   border-radius: 0;
   background: transparent;
@@ -1691,6 +1699,18 @@
 .translation-language-panel__field-stack--footnote .translation-language-panel__field,
 .translation-language-panel__field-stack--footnote .translation-language-panel__field-highlight {
   font-style: italic;
+}
+
+.translation-language-panel__inline-footnote {
+  color: inherit;
+  cursor: text;
+  font-size: 0.62em;
+  font-style: normal;
+  font-weight: inherit;
+  line-height: 0;
+  margin-left: 0.08em;
+  text-decoration: none;
+  vertical-align: super;
 }
 
 .translation-language-panel__footnote-editor-row {

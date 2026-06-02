@@ -60,6 +60,11 @@ test("applyEditorUiState preserves same-chapter editor UI state when the active 
       rowId: "row-1",
       languageCode: "en",
     },
+    footnoteEditor: {
+      rowId: "row-1",
+      languageCode: "en",
+      marker: 2,
+    },
     mode: "preview",
     previewSearch: {
       query: "alpha",
@@ -87,6 +92,11 @@ test("applyEditorUiState preserves same-chapter editor UI state when the active 
   assert.deepEqual(result.mainFieldEditor, {
     rowId: "row-1",
     languageCode: "en",
+  });
+  assert.deepEqual(result.footnoteEditor, {
+    rowId: "row-1",
+    languageCode: "en",
+    marker: 2,
   });
   assert.equal(result.mode, "preview");
   assert.deepEqual(result.previewSearch, {
@@ -122,6 +132,11 @@ test("applyEditorUiState clears active field state when the row or language no l
       rowId: "row-1",
       languageCode: "en",
     },
+    footnoteEditor: {
+      rowId: "row-1",
+      languageCode: "en",
+      marker: 1,
+    },
     history: {
       ...createEditorHistoryState(),
       rowId: "row-1",
@@ -144,6 +159,11 @@ test("applyEditorUiState clears active field state when the row or language no l
   assert.deepEqual(result.mainFieldEditor, {
     rowId: null,
     languageCode: null,
+  });
+  assert.deepEqual(result.footnoteEditor, {
+    rowId: null,
+    languageCode: null,
+    marker: null,
   });
   assert.equal(result.history.status, "idle");
   assert.deepEqual(result.history.entries, []);

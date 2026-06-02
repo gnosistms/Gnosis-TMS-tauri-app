@@ -316,13 +316,37 @@ function glossariesPageOwnsTeam(team) {
   );
 }
 
+function visibleProjectsContainChapter(chapterId) {
+  if (!chapterId) {
+    return false;
+  }
+  return [...state.projects, ...state.deletedProjects].some((project) =>
+    Array.isArray(project?.chapters)
+    && project.chapters.some((chapter) => chapter?.id === chapterId),
+  );
+}
+
+function canPreserveActiveEditorProjectContext(team) {
+  const chapterId = state.editorChapter?.chapterId ?? state.selectedChapterId ?? "";
+  return Boolean(
+    state.screen === "translate"
+    && team?.id
+    && state.selectedTeamId === team.id
+    && state.editorChapter?.chapterId === chapterId
+    && visibleProjectsContainChapter(chapterId)
+  );
+}
+
 export function primeProjectsLoadingState(teamId = state.selectedTeamId, options = {}) {
   if (teamId) {
     state.selectedTeamId = teamId;
   }
   const team = options.team ?? state.teams.find((item) => item?.id === teamId);
   const canPreserveVisibleData =
-    projectsPageOwnsTeam(team)
+    (
+      projectsPageOwnsTeam(team)
+      || canPreserveActiveEditorProjectContext(team)
+    )
     && (state.projects.length > 0 || state.deletedProjects.length > 0);
 
   if (!canPreserveVisibleData) {

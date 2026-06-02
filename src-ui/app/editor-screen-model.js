@@ -36,6 +36,7 @@ let cachedMainFieldEditorLanguageCode = null;
 let cachedFootnoteEditorRef = null;
 let cachedFootnoteEditorRowId = null;
 let cachedFootnoteEditorLanguageCode = null;
+let cachedFootnoteEditorMarker = null;
 let cachedImageCaptionEditorRowId = null;
 let cachedImageCaptionEditorLanguageCode = null;
 let cachedImageEditorRowId = null;
@@ -116,6 +117,7 @@ function buildLiveTranslationRows(editorChapter, languages) {
     cachedFootnoteEditorRef = editorChapter?.footnoteEditor ?? null;
     cachedFootnoteEditorRowId = editorChapter?.footnoteEditor?.rowId ?? null;
     cachedFootnoteEditorLanguageCode = editorChapter?.footnoteEditor?.languageCode ?? null;
+    cachedFootnoteEditorMarker = editorChapter?.footnoteEditor?.marker ?? null;
     cachedImageCaptionEditorRowId = editorChapter?.imageCaptionEditor?.rowId ?? null;
     cachedImageCaptionEditorLanguageCode = editorChapter?.imageCaptionEditor?.languageCode ?? null;
     cachedImageEditorRowId = editorChapter?.imageEditor?.rowId ?? null;
@@ -138,6 +140,7 @@ function buildLiveTranslationRows(editorChapter, languages) {
     && (editorChapter?.footnoteEditor ?? null) === cachedFootnoteEditorRef
     && (editorChapter?.footnoteEditor?.rowId ?? null) === cachedFootnoteEditorRowId
     && (editorChapter?.footnoteEditor?.languageCode ?? null) === cachedFootnoteEditorLanguageCode
+    && (editorChapter?.footnoteEditor?.marker ?? null) === cachedFootnoteEditorMarker
     && (editorChapter?.imageCaptionEditor?.rowId ?? null) === cachedImageCaptionEditorRowId
     && (editorChapter?.imageCaptionEditor?.languageCode ?? null) === cachedImageCaptionEditorLanguageCode
     && (editorChapter?.imageEditor?.rowId ?? null) === cachedImageEditorRowId
@@ -280,6 +283,7 @@ function buildLiveTranslationRows(editorChapter, languages) {
   cachedFootnoteEditorRef = editorChapter?.footnoteEditor ?? null;
   cachedFootnoteEditorRowId = editorChapter?.footnoteEditor?.rowId ?? null;
   cachedFootnoteEditorLanguageCode = editorChapter?.footnoteEditor?.languageCode ?? null;
+  cachedFootnoteEditorMarker = editorChapter?.footnoteEditor?.marker ?? null;
   cachedImageCaptionEditorRowId = editorChapter?.imageCaptionEditor?.rowId ?? null;
   cachedImageCaptionEditorLanguageCode = editorChapter?.imageCaptionEditor?.languageCode ?? null;
   cachedImageEditorRowId = editorChapter?.imageEditor?.rowId ?? null;

@@ -115,6 +115,7 @@ const {
 const {
   confirmEditorClearTranslations,
   confirmEditorUnreviewAll,
+  collapseEmptyEditorFootnote,
   flushDirtyEditorRows,
   toggleEditorRowFieldMarker,
   updateEditorRowTextStyle,
@@ -245,6 +246,79 @@ test("flushDirtyEditorRows removes empty unreferenced footnotes from live state 
   assert.deepEqual(state.editorChapter.rows[0].footnotes.es, [{ marker: 1, text: "kept note" }]);
   assert.deepEqual(invokeLog, []);
   assert.ok(renderScopes.includes("translate-body"));
+});
+
+test("collapseEmptyEditorFootnote removes only the active empty unreferenced footnote", () => {
+  installEditorFixture();
+  state.editorChapter = {
+    ...state.editorChapter,
+    footnoteEditor: {
+      rowId: "row-1",
+      languageCode: "es",
+      marker: 1,
+    },
+  };
+  state.editorChapter.rows[0] = {
+    ...state.editorChapter.rows[0],
+    fields: { es: "hola [2]" },
+    persistedFields: { es: "hola [2]" },
+    footnotes: {
+      es: [
+        { marker: 1, text: "" },
+        { marker: 2, text: "kept note" },
+      ],
+    },
+    persistedFootnotes: {
+      es: [{ marker: 2, text: "kept note" }],
+    },
+    saveStatus: "dirty",
+  };
+  const renderScopes = [];
+
+  collapseEmptyEditorFootnote((request = {}) => {
+    renderScopes.push(request.scope ?? "full");
+  }, "row-1", "es");
+
+  assert.deepEqual(state.editorChapter.rows[0].footnotes.es, [{ marker: 2, text: "kept note" }]);
+  assert.deepEqual(state.editorChapter.footnoteEditor, {
+    rowId: null,
+    languageCode: null,
+    marker: null,
+  });
+  assert.ok(renderScopes.includes("translate-body"));
+});
+
+test("collapseEmptyEditorFootnote closes a referenced empty active footnote without deleting it", () => {
+  installEditorFixture();
+  state.editorChapter = {
+    ...state.editorChapter,
+    footnoteEditor: {
+      rowId: "row-1",
+      languageCode: "es",
+      marker: 2,
+    },
+  };
+  state.editorChapter.rows[0] = {
+    ...state.editorChapter.rows[0],
+    fields: { es: "hola [2]" },
+    persistedFields: { es: "hola [2]" },
+    footnotes: {
+      es: [{ marker: 2, text: "" }],
+    },
+    persistedFootnotes: {
+      es: [{ marker: 2, text: "" }],
+    },
+    saveStatus: "idle",
+  };
+
+  collapseEmptyEditorFootnote(() => {}, "row-1", "es");
+
+  assert.deepEqual(state.editorChapter.rows[0].footnotes.es, [{ marker: 2, text: "" }]);
+  assert.deepEqual(state.editorChapter.footnoteEditor, {
+    rowId: null,
+    languageCode: null,
+    marker: null,
+  });
 });
 
 test("non-durable dirty row flush enqueues row text save without waiting for the repo lane", async () => {

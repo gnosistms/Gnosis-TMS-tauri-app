@@ -221,3 +221,67 @@ test("editor queue snapshot reports active operations by repo scope", async () =
 
   assert.equal(queue.getSnapshot({ repoScope: "7:project-1:repo-one" }).activeCount, 0);
 });
+
+test("waitForIdle resolves after matching editor operations finish", async () => {
+  const queue = createEditorOperationQueue();
+  const releaseMatchingWrite = deferred();
+  const matchingOperation = queue.requestOperation({
+    operationId: "row-text-1",
+    repoScope: "7:project-1:repo-one",
+    rowScope: "row-1",
+    kind: "rowText",
+    value: { text: "updated" },
+    metadata: { chapterId: "chapter-1" },
+  }, {
+    run: async () => {
+      await releaseMatchingWrite.promise;
+    },
+  });
+
+  await delay(0);
+
+  let resolved = false;
+  const wait = queue.waitForIdle((operation) =>
+    operation.repoScope === "7:project-1:repo-one"
+    && operation.metadata?.chapterId === "chapter-1",
+  ).then(() => {
+    resolved = true;
+  });
+  await delay(0);
+
+  assert.equal(resolved, false);
+
+  releaseMatchingWrite.resolve();
+  await matchingOperation.promise;
+  await wait;
+
+  assert.equal(resolved, true);
+});
+
+test("waitForIdle ignores non-matching active editor operations", async () => {
+  const queue = createEditorOperationQueue();
+  const releaseOtherWrite = deferred();
+  const otherOperation = queue.requestOperation({
+    operationId: "row-text-2",
+    repoScope: "7:project-1:repo-one",
+    rowScope: "row-2",
+    kind: "rowText",
+    value: { text: "other" },
+    metadata: { chapterId: "chapter-2" },
+  }, {
+    run: async () => {
+      await releaseOtherWrite.promise;
+    },
+  });
+
+  await delay(0);
+  await queue.waitForIdle((operation) =>
+    operation.repoScope === "7:project-1:repo-one"
+    && operation.metadata?.chapterId === "chapter-1",
+  );
+
+  assert.equal(queue.anyActive((operation) => operation.operationId === "row-text-2"), true);
+
+  releaseOtherWrite.resolve();
+  await otherOperation.promise;
+});

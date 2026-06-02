@@ -236,6 +236,72 @@ test("project loading prime preserves selected-team visible projects while refre
   assert.equal(state.projectsPage.isRefreshing, true);
 });
 
+test("project loading prime preserves the active editor chapter context", () => {
+  resetSessionState();
+  const team = { id: "team-1", installationId: 1 };
+  state.teams = [team];
+  state.selectedTeamId = team.id;
+  state.screen = "translate";
+  state.selectedChapterId = "chapter-1";
+  state.editorChapter = { chapterId: "chapter-1", rows: [] };
+  state.projectsPage = createResourcePageState();
+  state.projects = [
+    project({
+      id: "project-1",
+      title: "Editor Project",
+      chapters: [chapter({ id: "chapter-1" })],
+    }),
+  ];
+
+  const result = primeProjectsLoadingState(team.id);
+
+  assert.equal(result.preservedVisibleData, true);
+  assert.equal(state.projects[0].title, "Editor Project");
+  assert.equal(state.projectDiscovery.status, "ready");
+  assert.equal(state.projectsPage.isRefreshing, true);
+});
+
+test("project query refresh preserves active editor context when a snapshot omits the chapter", () => {
+  resetSessionState();
+  const team = { id: "team-1", installationId: 1 };
+  state.teams = [team];
+  state.selectedTeamId = team.id;
+  state.screen = "translate";
+  state.selectedChapterId = "chapter-1";
+  state.editorChapter = { chapterId: "chapter-1", rows: [] };
+  state.projectsPage = createResourcePageState({
+    visibleTeamId: team.id,
+    visibleCacheKey: teamCacheKey(team),
+  });
+  state.projects = [
+    project({
+      id: "project-1",
+      title: "Editor Project",
+      chapters: [chapter({ id: "chapter-1" })],
+    }),
+  ];
+  const snapshot = createProjectsQuerySnapshot({
+    items: [
+      project({
+        id: "project-1",
+        title: "Refresh Project",
+        chapters: [],
+      }),
+    ],
+    discovery: { status: "ready" },
+  });
+
+  applyProjectsQuerySnapshotToState(snapshot, {
+    teamId: team.id,
+    isFetching: false,
+    cacheKey: teamCacheKey(team),
+  });
+
+  assert.equal(state.projects[0].title, "Editor Project");
+  assert.equal(state.projects[0].chapters[0].id, "chapter-1");
+  assert.equal(state.projectDiscovery.status, "ready");
+});
+
 test("project loading finish ignores stale team completions", () => {
   resetSessionState();
   state.selectedTeamId = "team-2";
@@ -569,6 +635,57 @@ test("project query adapter keeps current glossary options while fetch placehold
   });
 
   assert.equal(state.glossaries.length, 0);
+});
+
+test("project query adapter keeps selected-team projects while fetch placeholder data is empty", () => {
+  resetSessionState();
+  const team = { id: "team-1", installationId: 1 };
+  state.teams = [team];
+  state.selectedTeamId = team.id;
+  state.projectsPage = createResourcePageState({
+    visibleTeamId: team.id,
+    visibleCacheKey: teamCacheKey(team),
+  });
+  state.projects = [
+    project({
+      id: "existing-project",
+      title: "Existing Project",
+      chapters: [chapter({ id: "chapter-1", name: "Existing Chapter" })],
+    }),
+  ];
+  state.projectRepoSyncByProjectId = {
+    "existing-project": { status: "syncing" },
+  };
+  state.pendingChapterMutations = [{ id: "pending-local-save" }];
+
+  applyProjectsQuerySnapshotToState(createProjectsQuerySnapshot({
+    items: [],
+    deletedItems: [],
+    repoSyncByProjectId: {},
+    pendingChapterMutations: [],
+  }), {
+    teamId: team.id,
+    isFetching: true,
+  });
+
+  assert.equal(state.projects[0].title, "Existing Project");
+  assert.equal(state.projects[0].chapters[0].name, "Existing Chapter");
+  assert.equal(state.projectRepoSyncByProjectId["existing-project"].status, "syncing");
+  assert.equal(state.pendingChapterMutations[0].id, "pending-local-save");
+  assert.equal(state.projectsPage.isRefreshing, true);
+
+  applyProjectsQuerySnapshotToState(createProjectsQuerySnapshot({
+    items: [],
+    deletedItems: [],
+  }), {
+    teamId: team.id,
+    isFetching: false,
+  });
+
+  assert.deepEqual(state.projects, []);
+  assert.deepEqual(state.deletedProjects, []);
+  assert.deepEqual(state.pendingChapterMutations, []);
+  assert.equal(state.projectsPage.isRefreshing, false);
 });
 
 test("project query adapter clears old-team glossaries for empty selected-team placeholders", () => {

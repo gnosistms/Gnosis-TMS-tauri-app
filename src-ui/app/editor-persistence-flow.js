@@ -43,6 +43,7 @@ import {
 import { findChapterContextById, selectedProjectsTeam } from "./project-context.js";
 import {
   createEditorClearTranslationsModalState,
+  createEditorFootnoteEditorState,
   createEditorImageCaptionEditorState,
   state,
 } from "./state.js";
@@ -741,6 +742,7 @@ export function collapseEmptyEditorFootnote(render, rowId, languageCode, options
     return;
   }
 
+  const activeMarker = Number.parseInt(String(state.editorChapter.footnoteEditor?.marker ?? ""), 10);
   if (
     state.editorChapter.footnoteEditor?.rowId !== rowId
     || state.editorChapter.footnoteEditor?.languageCode !== languageCode
@@ -750,22 +752,40 @@ export function collapseEmptyEditorFootnote(render, rowId, languageCode, options
   if (
     pendingEditorFootnoteOpenRequest?.rowId === rowId
     && pendingEditorFootnoteOpenRequest?.languageCode === languageCode
+    && (
+      !Number.isInteger(activeMarker)
+      || pendingEditorFootnoteOpenRequest?.marker === activeMarker
+    )
   ) {
     return;
   }
 
   const row = findEditorRowById(rowId, state.editorChapter);
   const footnotes = cloneRowFootnotes(row?.footnotes);
-  if ((footnotes[languageCode] ?? []).some((entry) => entry.text.trim())) {
+  const normalizedRow = normalizeEditorRowFootnotesBeforePersist(row);
+  const currentEntries = footnotes[languageCode] ?? [];
+  const activeEntry = Number.isInteger(activeMarker)
+    ? currentEntries.find((entry) => entry.marker === activeMarker) ?? null
+    : null;
+  const shouldKeepOpen =
+    activeEntry
+      ? activeEntry.text.trim().length > 0
+      : currentEntries.some((entry) => entry.text.trim());
+  if (shouldKeepOpen) {
     return;
   }
 
+  if (normalizedRow !== row) {
+    state.editorChapter = {
+      ...state.editorChapter,
+      rows: state.editorChapter.rows.map((currentRow) =>
+        currentRow?.rowId === rowId ? normalizedRow : currentRow
+      ),
+    };
+  }
   state.editorChapter = {
     ...state.editorChapter,
-    footnoteEditor: {
-      rowId: null,
-      languageCode: null,
-    },
+    footnoteEditor: createEditorFootnoteEditorState(),
   };
   renderTranslateBodyPreservingViewport(render, options?.viewportSnapshot ?? null);
 }

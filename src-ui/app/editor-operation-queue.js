@@ -305,6 +305,21 @@ export function createEditorOperationQueue(options = {}) {
     return false;
   }
 
+  function waitForIdle(predicate = null) {
+    if (!anyActive(predicate)) {
+      return Promise.resolve(getSnapshot());
+    }
+
+    return new Promise((resolve) => {
+      const unsubscribe = subscribe(() => {
+        if (!anyActive(predicate)) {
+          unsubscribe();
+          resolve(getSnapshot());
+        }
+      });
+    });
+  }
+
   function subscribe(listener) {
     if (typeof listener !== "function") {
       return () => {};
@@ -348,6 +363,7 @@ export function createEditorOperationQueue(options = {}) {
     requestOperation,
     reset,
     subscribe,
+    waitForIdle,
   };
 }
 
@@ -371,6 +387,10 @@ export function editorOperationIsActive(operationId) {
 
 export function anyEditorOperationIsActive(predicate = null) {
   return defaultEditorOperationQueue.anyActive(predicate);
+}
+
+export function waitForEditorOperationQueueIdle(predicate = null) {
+  return defaultEditorOperationQueue.waitForIdle(predicate);
 }
 
 export function subscribeEditorOperationQueue(listener) {

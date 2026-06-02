@@ -138,6 +138,7 @@ export function renderSanitizedInlineMarkupWithEditorHighlightState(
   {
     glossaryHighlightHtml = "",
     searchRanges = [],
+    extraRanges = [],
   } = {},
 ) {
   const ranges = [
@@ -151,6 +152,7 @@ export function renderSanitizedInlineMarkupWithEditorHighlightState(
       priority: 20,
       markRenderer: renderGlossaryMark,
     })),
+    ...(Array.isArray(extraRanges) ? extraRanges : []),
   ];
   if (ranges.length === 0) {
     return renderSanitizedInlineMarkupHtml(value);

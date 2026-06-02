@@ -88,15 +88,20 @@ function refocusEditorRowFieldAfterRender(rowId, languageCode) {
 }
 
 function activeEditorControlRowId() {
+  const control = activeEditorControl();
+  return control instanceof HTMLElement ? (control.dataset.rowId ?? "") : "";
+}
+
+function activeEditorControl() {
   const activeElement = document.activeElement;
   if (!(activeElement instanceof Element)) {
-    return "";
+    return null;
   }
 
   const control = activeElement.closest(
     "[data-editor-row-field], [data-editor-image-url-input], [data-editor-image-upload-dropzone]",
   );
-  return control instanceof HTMLElement ? (control.dataset.rowId ?? "") : "";
+  return control instanceof HTMLElement ? control : null;
 }
 
 function textOffsetFromDomPoint(container, node, offset) {
@@ -215,22 +220,33 @@ export function registerTranslateEditorDomEvents(app, render) {
     if (displayField instanceof HTMLButtonElement) {
       const rowId = displayField.dataset.rowId ?? "";
       const languageCode = displayField.dataset.languageCode ?? "";
-      const previouslyFocusedRowId = activeEditorControlRowId();
+      const previouslyFocusedControl = activeEditorControl();
+      const previouslyFocusedRowId = previouslyFocusedControl?.dataset?.rowId ?? "";
       if (previouslyFocusedRowId && previouslyFocusedRowId !== rowId) {
         scheduleDirtyEditorRowScan(render, previouslyFocusedRowId);
       }
       primeTranslateInteractionAnchor(displayField);
       primeTranslateMainScrollTop();
+      const viewportSnapshot = captureTranslateViewport(displayField, {
+        preferPrimed: true,
+        expectedRowId: rowId,
+        fallbackAnchor: captureTranslateAnchorForRow(rowId, languageCode),
+      });
+      const pendingSelectionOffset = displayFieldOffsetFromPoint(displayField, event.clientX, event.clientY);
+      if (
+        previouslyFocusedControl instanceof HTMLTextAreaElement
+        && previouslyFocusedControl.dataset.contentKind === "footnote"
+        && previouslyFocusedRowId === rowId
+        && previouslyFocusedControl.dataset.languageCode === languageCode
+      ) {
+        collapseEmptyEditorFootnote(render, rowId, languageCode, { viewportSnapshot });
+      }
       event.preventDefault();
       void setActiveEditorField(render, rowId, languageCode, {
         openEditor: true,
-        pendingSelectionOffset: displayFieldOffsetFromPoint(displayField, event.clientX, event.clientY),
+        pendingSelectionOffset,
         target: displayField,
-        viewportSnapshot: captureTranslateViewport(displayField, {
-          preferPrimed: true,
-          expectedRowId: rowId,
-          fallbackAnchor: captureTranslateAnchorForRow(rowId, languageCode),
-        }),
+        viewportSnapshot,
       });
       return;
     }

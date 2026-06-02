@@ -60,6 +60,10 @@ test("editor footnote collapse preserves the row viewport anchor", async () => {
   assert.match(keyboardSource, /contentKind === "" \|\| contentKind === "footnote" \|\| contentKind === "image-caption"/);
   assert.match(translateEventsSource, /contentKind === "" \|\| contentKind === "footnote"/);
   assert.match(translateEventsSource, /collapseEmptyEditorFootnote\(render, rowId, languageCode, \{ viewportSnapshot \}\)/);
+  assert.match(
+    translateEventsSource,
+    /previouslyFocusedControl instanceof HTMLTextAreaElement[\s\S]*?previouslyFocusedControl\.dataset\.contentKind === "footnote"[\s\S]*?previouslyFocusedRowId === rowId[\s\S]*?previouslyFocusedControl\.dataset\.languageCode === languageCode[\s\S]*?collapseEmptyEditorFootnote\(render, rowId, languageCode, \{ viewportSnapshot \}\)/,
+  );
   assert.match(persistenceSource, /renderTranslateBodyPreservingViewport\(render, options\?\.viewportSnapshot \?\? null\)/);
 });
 

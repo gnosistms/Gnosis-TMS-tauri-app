@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 const previousHtmlTextAreaElement = globalThis.HTMLTextAreaElement;
+const previousWindow = globalThis.window;
 
 class FakeTextarea {
   constructor(options = {}) {
@@ -55,6 +56,11 @@ test.after(() => {
   } else {
     globalThis.HTMLTextAreaElement = previousHtmlTextAreaElement;
   }
+  if (previousWindow === undefined) {
+    delete globalThis.window;
+  } else {
+    globalThis.window = previousWindow;
+  }
 });
 
 test("active editor textarea autosize preserves translate scroll position", () => {
@@ -83,4 +89,27 @@ test("generic autosize only preserves scroll when requested", () => {
 
   assert.equal(scrollContainer.scrollTop, 17);
   assert.equal(textarea.style.height, "72px");
+});
+
+test("inactive editor textarea autosize uses one computed line instead of fixed two-line height", () => {
+  globalThis.window = {
+    getComputedStyle() {
+      return {
+        fontSize: "20px",
+        lineHeight: "30px",
+        paddingTop: "2px",
+        paddingBottom: "8px",
+        borderTopWidth: "1px",
+        borderBottomWidth: "1px",
+      };
+    },
+  };
+  const textarea = new FakeTextarea({
+    focused: false,
+    scrollHeight: 20,
+  });
+
+  syncEditorRowTextareaHeight(textarea);
+
+  assert.equal(textarea.style.height, "42px");
 });

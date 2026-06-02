@@ -172,6 +172,35 @@ function preserveEditorAssistantState(nextEditorChapter, previousEditorChapter, 
   return nextAssistant;
 }
 
+function preserveEditorFootnoteEditorState(nextEditorChapter, previousEditorChapter, isSameChapter) {
+  if (!isSameChapter) {
+    return createEditorFootnoteEditorState();
+  }
+
+  const rowId =
+    typeof previousEditorChapter?.footnoteEditor?.rowId === "string"
+      ? previousEditorChapter.footnoteEditor.rowId
+      : null;
+  const languageCode =
+    typeof previousEditorChapter?.footnoteEditor?.languageCode === "string"
+      ? previousEditorChapter.footnoteEditor.languageCode
+      : null;
+  const marker = Number.parseInt(String(previousEditorChapter?.footnoteEditor?.marker ?? ""), 10);
+
+  if (
+    !rowId
+    || !languageCode
+    || !Number.isInteger(marker)
+    || marker < 1
+    || !hasEditorRow(nextEditorChapter, rowId)
+    || !hasEditorLanguage(nextEditorChapter, languageCode)
+  ) {
+    return createEditorFootnoteEditorState();
+  }
+
+  return { rowId, languageCode, marker };
+}
+
 function preserveEditorDerivedGlossariesByRowId(
   nextEditorChapter,
   previousEditorChapter,
@@ -330,7 +359,11 @@ export function applyEditorUiState(nextEditorChapter, previousEditorChapter = st
         }
         : createEditorMainFieldEditorState(),
     pendingSelection: createEditorPendingSelectionState(),
-    footnoteEditor: createEditorFootnoteEditorState(),
+    footnoteEditor: preserveEditorFootnoteEditorState(
+      nextEditorChapter,
+      previousEditorChapter,
+      isSameChapter,
+    ),
     imageCaptionEditor: createEditorImageCaptionEditorState(),
     imageEditor: createEditorImageEditorState(),
     imageInvalidFileModal: createEditorImageInvalidFileModalState(),
