@@ -278,6 +278,24 @@ function stableFootnoteId(block, noteNumber) {
   return `${rowPart}-${noteNumber}`;
 }
 
+function fallbackWordPressFootnoteUuid(block, noteNumber) {
+  const source = `${String(block?.rowId ?? "row")}:${String(block?.languageCode ?? "")}:${noteNumber}`;
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < source.length; index += 1) {
+    hash ^= source.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  const hex = (hash >>> 0).toString(16).padStart(8, "0");
+  return `${hex}-${hex.slice(0, 4)}-4${hex.slice(1, 4)}-8${hex.slice(4, 7)}-${hex}${String(noteNumber).padStart(4, "0")}`;
+}
+
+function createWordPressFootnoteId(block, noteNumber) {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return fallbackWordPressFootnoteUuid(block, noteNumber);
+}
+
 function buildPreviewSearchRanges(visibleText, searchState, matchCounter, languageCode = "") {
   const normalizedState = normalizeEditorPreviewSearchState(searchState);
   const query = previewSearchQuery(normalizedState);
@@ -390,7 +408,9 @@ function renderTextWithWordPressFootnoteRefs(block, footnoteState, options = {})
   const appendReference = (entry) => {
     usedMarkers.add(entry.marker);
     const number = footnoteState.items.length + 1;
-    const id = stableFootnoteId(block, number);
+    const id = options.serialize
+      ? createWordPressFootnoteId(block, number)
+      : stableFootnoteId(block, number);
     footnoteState.items.push({
       id,
       number,
@@ -399,7 +419,7 @@ function renderTextWithWordPressFootnoteRefs(block, footnoteState, options = {})
       text: entry.text,
     });
     return options.serialize
-      ? `<sup data-fn="${escapeHtml(entry.text)}" class="fn"><a href="#fn-${escapeHtml(id)}" id="fnref-${escapeHtml(id)}" aria-describedby="footnote-label">${number}</a></sup>`
+      ? `<sup data-fn="${escapeHtml(id)}" class="fn"><a id="${escapeHtml(id)}-link" href="#${escapeHtml(id)}">${number}</a></sup>`
       : `<sup class="translate-preview__footnote-ref fn" data-fn="${escapeHtml(entry.text)}"><a href="#fn-${escapeHtml(id)}" id="fnref-${escapeHtml(id)}" aria-describedby="footnote-label">${number}</a></sup>`;
   };
 
@@ -500,6 +520,15 @@ function serializePreviewText(text) {
   return renderSanitizedInlineMarkupHtml(unescapeLiteralFootnoteMarkers(text)).replaceAll("\n", "<br>");
 }
 
+function wrapSerializedWordPressBlock(blockName, html, attributes = null) {
+  const serializedAttributes = attributes ? ` ${JSON.stringify(attributes)}` : "";
+  return [
+    `<!-- wp:${blockName}${serializedAttributes} -->`,
+    html,
+    `<!-- /wp:${blockName} -->`,
+  ].join("\n");
+}
+
 function serializePreviewImageHtml(block) {
   const exportSrc =
     block?.image?.kind === "url"
@@ -510,17 +539,18 @@ function serializePreviewImageHtml(block) {
   }
 
   const caption = String(block.caption ?? "").trim();
-  return [
-    '<figure style="margin: 1.5em auto; text-align: center;">',
-    `<img src="${escapeHtml(exportSrc)}" alt="" style="display: block; margin: 0 auto; max-width: 100%; max-height: 700px; width: auto; height: auto;" />`,
+  const figureHtml = [
+    '<figure class="wp-block-image">',
+    `<img src="${escapeHtml(exportSrc)}" alt="" />`,
     caption
-      ? `<figcaption style="margin-top: 0.6em; text-align: center;">${serializePreviewText(block.caption)}</figcaption>`
+      ? `<figcaption>${serializePreviewText(block.caption)}</figcaption>`
       : "",
     "</figure>",
   ].join("");
+  return wrapSerializedWordPressBlock("image", figureHtml);
 }
 
-function serializePreviewTextBlock(block, footnoteState) {
+function serializePreviewTextBlockHtml(block, footnoteState) {
   const textHtml = renderTextWithWordPressFootnoteRefs(
     block,
     footnoteState,
@@ -528,22 +558,51 @@ function serializePreviewTextBlock(block, footnoteState) {
   );
   const normalizedStyle = normalizeEditorRowTextStyle(block?.textStyle);
   if (normalizedStyle === EDITOR_ROW_TEXT_STYLE_HEADING1) {
-    return `<h1>${textHtml}</h1>`;
+    return {
+      blockName: "heading",
+      attributes: { level: 1 },
+      html: `<h1>${textHtml}</h1>`,
+    };
   }
   if (normalizedStyle === EDITOR_ROW_TEXT_STYLE_HEADING2) {
-    return `<h2>${textHtml}</h2>`;
+    return {
+      blockName: "heading",
+      html: `<h2>${textHtml}</h2>`,
+    };
   }
   if (normalizedStyle === EDITOR_ROW_TEXT_STYLE_QUOTE) {
-    return `<blockquote>${textHtml}</blockquote>`;
+    return {
+      blockName: "quote",
+      html: `<blockquote class="wp-block-quote"><p>${textHtml}</p></blockquote>`,
+    };
   }
   if (normalizedStyle === EDITOR_ROW_TEXT_STYLE_INDENTED) {
-    return `<p style="padding-left: 2em;">${textHtml}</p>`;
+    return {
+      blockName: "paragraph",
+      html: `<p style="padding-left: 2em;">${textHtml}</p>`,
+    };
   }
   if (normalizedStyle === EDITOR_ROW_TEXT_STYLE_CENTERED) {
-    return `<center><p>${textHtml}</p></center>`;
+    return {
+      blockName: "paragraph",
+      attributes: { align: "center" },
+      html: `<p class="has-text-align-center">${textHtml}</p>`,
+    };
   }
 
-  return `<p>${textHtml}</p>`;
+  return {
+    blockName: "paragraph",
+    html: `<p>${textHtml}</p>`,
+  };
+}
+
+function serializePreviewTextBlock(block, footnoteState) {
+  const serializedBlock = serializePreviewTextBlockHtml(block, footnoteState);
+  return wrapSerializedWordPressBlock(
+    serializedBlock.blockName,
+    serializedBlock.html,
+    serializedBlock.attributes,
+  );
 }
 
 export function serializeEditorPreviewHtml(blocks) {
@@ -558,11 +617,7 @@ export function serializeEditorPreviewHtml(blocks) {
     })
     .filter(Boolean)
     .join("\n");
-  const footnotesHtml = renderWordPressFootnotesList(
-    footnoteState,
-    (text) => serializePreviewText(text),
-    { serialize: true },
-  );
+  const footnotesHtml = footnoteState.items.length > 0 ? "<!-- wp:footnotes /-->" : "";
 
-  return [bodyHtml, footnotesHtml].filter(Boolean).join("\n");
+  return ["<meta charset='utf-8'>", bodyHtml, footnotesHtml].filter(Boolean).join("\n\n");
 }

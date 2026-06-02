@@ -1346,6 +1346,33 @@ test("background sync skips skipDirtyFlush requests while comments are still pen
   );
 });
 
+test("background sync skips skipDirtyFlush requests while editor rows are dirty in memory", async () => {
+  installEditorFixture();
+  const render = createRenderRecorder();
+  startEditorBackgroundSyncSession(render, { skipInitialSync: true });
+  await Promise.resolve();
+  invokeLog.length = 0;
+
+  state.editorChapter = {
+    ...state.editorChapter,
+    rows: [createEditorRowFixture()],
+    dirtyRowIds: new Set(["row-1"]),
+  };
+
+  invokeHandler = async (command) => {
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  const payload = await syncEditorBackgroundNow(render, { skipDirtyFlush: true });
+
+  assert.equal(payload, null);
+  assert.equal(state.editorChapter.backgroundSyncStatus, "waiting");
+  assert.deepEqual(
+    invokeLog.filter((entry) => entry.command === "sync_gtms_project_editor_repo"),
+    [],
+  );
+});
+
 test("background sync opens a required update prompt when the repo was saved by a newer app", async () => {
   installEditorFixture();
 

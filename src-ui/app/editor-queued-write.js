@@ -140,6 +140,8 @@ export function assertQueuedEditorRowsReady({
 
 export async function invokeQueuedEditorWriteCommand(command, payload, context, render) {
   const team = queuedEditorWriteTeam(context?.team ?? null);
+  const rowId = context?.row?.rowId ?? context?.row?.id ?? payload?.input?.rowId ?? payload?.input?.row_id ?? "";
+  const chapterId = context?.chapter?.id ?? payload?.input?.chapterId ?? payload?.input?.chapter_id ?? "";
   try {
     assertEditorWritePermissionForContext({
       team,
@@ -156,8 +158,17 @@ export async function invokeQueuedEditorWriteCommand(command, payload, context, 
   }
 
   try {
-    return await invoke(command, payload);
+    console.info?.("[gtms editor-write]", "invoke:start", { command, chapterId, rowId });
+    const result = await invoke(command, payload);
+    console.info?.("[gtms editor-write]", "invoke:succeeded", { command, chapterId, rowId });
+    return result;
   } catch (error) {
+    console.info?.("[gtms editor-write]", "invoke:failed", {
+      command,
+      chapterId,
+      rowId,
+      error: error?.message ?? String(error),
+    });
     if (handleEditorPermissionDenied(error, render)) {
       throw error;
     }

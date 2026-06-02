@@ -29,6 +29,23 @@ function remoteVersionLabel(remoteVersion) {
   return parts.join(" | ") || "GitHub version";
 }
 
+function hasVersionText(value) {
+  return String(value ?? "").trim().length > 0;
+}
+
+function renderVersionText(value, modifierClass = "") {
+  if (!hasVersionText(value)) {
+    return "";
+  }
+
+  const classes = [
+    "field__textarea",
+    "editor-conflict-modal__version-text",
+    modifierClass,
+  ].filter(Boolean).join(" ");
+  return `<div class="${classes}">${escapeHtml(value)}</div>`;
+}
+
 export function renderEditorConflictResolutionModal(state) {
   const modal = state.editorChapter?.conflictResolutionModal;
   if (!modal?.isOpen) {
@@ -61,21 +78,18 @@ export function renderEditorConflictResolutionModal(state) {
     isLoading: isSubmitting,
   });
 
-  const renderVersionStack = (text, footnote, imageCaption) => `
-    <div class="editor-conflict-modal__version-stack">
-      <div class="field__textarea editor-conflict-modal__version-text">${escapeHtml(text)}</div>
-      ${
-        showFootnotes
-          ? `<div class="field__textarea editor-conflict-modal__version-text editor-conflict-modal__version-text--footnote">${escapeHtml(footnote)}</div>`
-          : ""
-      }
-      ${
-        showImageCaptions
-          ? `<div class="field__textarea editor-conflict-modal__version-text editor-conflict-modal__version-text--footnote">${escapeHtml(imageCaption)}</div>`
-          : ""
-      }
-    </div>
-  `;
+  const renderVersionStack = (text, footnote, imageCaption) => {
+    const blocks = [
+      renderVersionText(text),
+      showFootnotes
+        ? renderVersionText(footnote, "editor-conflict-modal__version-text--footnote")
+        : "",
+      showImageCaptions
+        ? renderVersionText(imageCaption, "editor-conflict-modal__version-text--footnote")
+        : "",
+    ].filter(Boolean);
+    return `<div class="editor-conflict-modal__version-stack">${blocks.join("")}</div>`;
+  };
 
   return `
     <div class="modal-backdrop">
@@ -104,6 +118,7 @@ export function renderEditorConflictResolutionModal(state) {
             <textarea
               class="field__textarea editor-conflict-modal__final-input"
               data-editor-conflict-final-input
+              rows="1"
               ${autofocusFootnote ? "" : "autofocus"}
               ${isSubmitting ? "disabled" : ""}
             >${escapeHtml(modal.finalText)}</textarea>
@@ -116,6 +131,7 @@ export function renderEditorConflictResolutionModal(state) {
                   <textarea
                     class="field__textarea editor-conflict-modal__final-input editor-conflict-modal__final-input--footnote"
                     data-editor-conflict-final-footnote-input
+                    rows="1"
                     placeholder="Enter footnote text here."
                     ${autofocusFootnote ? "autofocus" : ""}
                     ${isSubmitting ? "disabled" : ""}
@@ -132,6 +148,7 @@ export function renderEditorConflictResolutionModal(state) {
                   <textarea
                     class="field__textarea editor-conflict-modal__final-input editor-conflict-modal__final-input--footnote"
                     data-editor-conflict-final-image-caption-input
+                    rows="1"
                     placeholder="Enter image caption"
                     ${isSubmitting ? "disabled" : ""}
                   >${escapeHtml(modal.finalImageCaption)}</textarea>

@@ -117,6 +117,7 @@ const {
   confirmEditorUnreviewAll,
   collapseEmptyEditorFootnote,
   flushDirtyEditorRows,
+  resolveEditorRowConflict,
   toggleEditorRowFieldMarker,
   updateEditorRowTextStyle,
 } = await import("./editor-persistence-flow.js");
@@ -134,6 +135,8 @@ const {
 } = await import("./editor-target-language-manager-flow.js");
 const {
   enqueueRepoWrite,
+  getRepoInvalidations,
+  getRepoWriteQueueSnapshot,
   resetRepoWriteQueue,
   waitForRepoWriteQueueIdle,
 } = await import("./repo-write-queue.js");
@@ -650,7 +653,7 @@ test("delete-all footnote save retries a mergeable stale-base conflict instead o
   assert.equal(state.editorChapter.rows[0].conflictState, null);
 });
 
-test("successful active row save keeps optimistic history until committed history reloads", async () => {
+test("successful active row save clears optimistic history while committed history reloads", async () => {
   installEditorFixture();
   state.editorChapter = {
     ...state.editorChapter,
@@ -714,8 +717,9 @@ test("successful active row save keeps optimistic history until committed histor
   );
   await waitForRepoWriteQueueIdle("7:project-1:fixture-project");
 
-  assert.equal(state.editorChapter.history.entries[0].optimistic, true);
-  assert.equal(state.editorChapter.history.entries[0].plainText, "hola optimista");
+  assert.equal(state.editorChapter.history.status, "loading");
+  assert.equal(state.editorChapter.history.entries.some((entry) => entry.optimistic === true), false);
+  assert.equal(state.editorChapter.history.entries[0].commitSha, "commit-1");
 
   historyReload.resolve({
     entries: [{
@@ -795,6 +799,162 @@ test("row save conflict clears active optimistic history", async () => {
   assert.equal(state.editorChapter.history.entries.some((entry) => entry.optimistic === true), false);
   assert.equal(state.editorChapter.history.entries[0].commitSha, "commit-1");
   assert.equal(state.editorChapter.rows[0].freshness, "conflict");
+});
+
+test("dirty row flush does not requeue a conflicted row save", async () => {
+  installEditorFixture();
+  state.editorChapter = {
+    ...state.editorChapter,
+    activeRowId: "row-1",
+    activeLanguageCode: "es",
+    dirtyRowIds: new Set(["row-1"]),
+    history: {
+      ...state.editorChapter.history,
+      status: "ready",
+      rowId: "row-1",
+      languageCode: "es",
+      entries: [{
+        commitSha: "commit-1",
+        plainText: "hola",
+        footnote: "",
+        imageCaption: "",
+        image: null,
+        textStyle: "paragraph",
+        reviewed: false,
+        pleaseCheck: false,
+      }],
+    },
+  };
+  state.editorChapter.rows[0] = {
+    ...state.editorChapter.rows[0],
+    fields: { es: "hola conflictiva" },
+    saveStatus: "dirty",
+  };
+
+  let rowSaveInvocations = 0;
+  invokeHandler = async (command) => {
+    if (command === "update_gtms_editor_row_fields") {
+      rowSaveInvocations += 1;
+      return {
+        status: "conflict",
+        row: {
+          rowId: "row-1",
+          textStyle: "paragraph",
+          fields: { es: "remote" },
+          fieldStates: { es: { reviewed: false, pleaseCheck: false } },
+        },
+      };
+    }
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  await flushDirtyEditorRows(
+    () => {},
+    {
+      updateEditorChapterRow,
+      applyEditorSelectionsToProjectState,
+    },
+    { waitForDurable: false },
+  );
+  await waitForRepoWriteQueueIdle("7:project-1:fixture-project");
+
+  assert.equal(state.editorChapter.rows[0].saveStatus, "conflict");
+  assert.equal(rowSaveInvocations, 1);
+
+  await flushDirtyEditorRows(
+    () => {},
+    {
+      updateEditorChapterRow,
+      applyEditorSelectionsToProjectState,
+    },
+    { waitForDurable: false },
+  );
+  await waitForRepoWriteQueueIdle("7:project-1:fixture-project");
+
+  assert.equal(rowSaveInvocations, 1);
+  assert.equal(state.editorChapter.history.entries.some((entry) => entry.optimistic === true), false);
+});
+
+test("superseded row save conflict marks the row and skips queued successor invokes", async () => {
+  installEditorFixture();
+  state.editorChapter = {
+    ...state.editorChapter,
+    activeRowId: "row-1",
+    activeLanguageCode: "es",
+    dirtyRowIds: new Set(["row-1"]),
+    history: {
+      ...state.editorChapter.history,
+      status: "ready",
+      rowId: "row-1",
+      languageCode: "es",
+      entries: [{
+        commitSha: "commit-1",
+        plainText: "hola",
+        footnote: "",
+        imageCaption: "",
+        image: null,
+        textStyle: "paragraph",
+        reviewed: false,
+        pleaseCheck: false,
+      }],
+    },
+  };
+  state.editorChapter.rows[0] = {
+    ...state.editorChapter.rows[0],
+    fields: { es: "first local" },
+    saveStatus: "dirty",
+  };
+  const firstSave = deferred();
+  let rowSaveInvocations = 0;
+  invokeHandler = async (command) => {
+    if (command === "update_gtms_editor_row_fields") {
+      rowSaveInvocations += 1;
+      return firstSave.promise;
+    }
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  await flushDirtyEditorRows(
+    () => {},
+    {
+      updateEditorChapterRow,
+      applyEditorSelectionsToProjectState,
+    },
+    { waitForDurable: false },
+  );
+  await Promise.resolve();
+  assert.equal(rowSaveInvocations, 1);
+
+  state.editorChapter.rows[0] = {
+    ...state.editorChapter.rows[0],
+    fields: { es: "second local" },
+    saveStatus: "dirty",
+  };
+  state.editorChapter.dirtyRowIds = new Set(["row-1"]);
+  await flushDirtyEditorRows(
+    () => {},
+    {
+      updateEditorChapterRow,
+      applyEditorSelectionsToProjectState,
+    },
+    { waitForDurable: false },
+  );
+
+  firstSave.resolve({
+    status: "conflict",
+    row: {
+      rowId: "row-1",
+      textStyle: "paragraph",
+      fields: { es: "remote" },
+      fieldStates: { es: { reviewed: false, pleaseCheck: false } },
+    },
+  });
+  await waitForRepoWriteQueueIdle("7:project-1:fixture-project");
+
+  assert.equal(rowSaveInvocations, 1);
+  assert.equal(state.editorChapter.rows[0].saveStatus, "conflict");
+  assert.equal(state.editorChapter.rows[0].freshness, "conflict");
+  assert.equal(state.editorChapter.history.entries.some((entry) => entry.optimistic === true), false);
 });
 
 test("toggleEditorRowFieldMarker stays clickable while the row style is saving", async () => {
@@ -1774,6 +1934,93 @@ test("clear translations stops before batch write when queued row save finds a c
   assert.equal(state.editorChapter.rows[0].freshness, "conflict");
   assert.equal(state.editorChapter.clearTranslationsModal.isOpen, true);
   assert.match(state.editorChapter.clearTranslationsModal.error, /Refresh or resolve/);
+});
+
+test("use-remote imported conflict clear queues ahead of ordinary editor writes", async () => {
+  installEditorFixture();
+  const events = [];
+  state.editorChapter.rows[0] = {
+    ...state.editorChapter.rows[0],
+    fields: { es: "local conflict text" },
+    persistedFields: { es: "local conflict text" },
+    conflictState: {
+      baseFields: { es: "base text" },
+      baseFootnotes: {},
+      baseImageCaptions: {},
+      remoteRow: {
+        fields: { es: "remote text" },
+        footnotes: {},
+        imageCaptions: {},
+      },
+    },
+    freshness: "conflict",
+    saveStatus: "conflict",
+    saveError: "Translation text changed on GitHub.",
+    importedConflictKind: "text-conflict",
+  };
+
+  const blocker = deferred();
+  const blockerPromise = enqueueRepoWrite({
+    scope: "7:project-1:fixture-project",
+    kind: "testBlocker",
+    run: async () => {
+      events.push("blocker:start");
+      await blocker.promise;
+      events.push("blocker:end");
+    },
+  });
+  const queuedEditorWrite = enqueueRepoWrite({
+    scope: "7:project-1:fixture-project",
+    kind: "editor:rowText",
+    operationType: "localEditorWrite",
+    run: async () => {
+      events.push("queued-editor:start");
+      events.push("queued-editor:end");
+    },
+  });
+
+  invokeHandler = async (command, payload = {}) => {
+    if (command === "clear_gtms_editor_imported_conflict") {
+      events.push("clear-conflict");
+      assert.equal(payload.input?.rowId, "row-1");
+      return null;
+    }
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  const resolutionPromise = resolveEditorRowConflict(
+    () => {},
+    "row-1",
+    "use-remote",
+    { updateEditorChapterRow },
+  );
+
+  await Promise.resolve();
+  assert.deepEqual(invokeLog, []);
+  assert.deepEqual(
+    getRepoWriteQueueSnapshot("7:project-1:fixture-project")
+      .scopes[0]
+      .operations
+      .filter((operation) => operation.status === "queued")
+      .map((operation) => operation.kind),
+    ["editor:clearImportedConflict", "editor:rowText"],
+  );
+
+  blocker.resolve(null);
+  await Promise.all([blockerPromise, resolutionPromise, queuedEditorWrite]);
+  await waitForRepoWriteQueueIdle("7:project-1:fixture-project");
+
+  assert.deepEqual(events, [
+    "blocker:start",
+    "blocker:end",
+    "clear-conflict",
+    "queued-editor:start",
+    "queued-editor:end",
+  ]);
+  assert.equal(invokeLog[0].command, "clear_gtms_editor_imported_conflict");
+  assert.equal(state.editorChapter.rows[0].saveStatus, "idle");
+  assert.equal(state.editorChapter.rows[0].conflictState, null);
+  assert.equal(getRepoInvalidations().at(-1)?.metadata?.operation, "clearImportedConflict");
 });
 
 test("soft delete row queues while an existing row save is pending", async () => {

@@ -86,6 +86,29 @@ export function syncEditorCommentDraftTextareaHeights(root = document) {
     .forEach((element) => syncAutoSizeTextarea(element, { minHeight: 88, maxHeight: 220 }));
 }
 
+export function syncEditorConflictResolutionTextareaHeight(textarea) {
+  if (!(textarea instanceof HTMLTextAreaElement)) {
+    return;
+  }
+
+  syncAutoSizeTextarea(textarea, {
+    minHeight: singleLineTextareaHeight(textarea, 44),
+    maxHeight: null,
+  });
+}
+
+export function syncEditorConflictResolutionTextareaHeights(root = document) {
+  root
+    .querySelectorAll(
+      [
+        "[data-editor-conflict-final-input]",
+        "[data-editor-conflict-final-footnote-input]",
+        "[data-editor-conflict-final-image-caption-input]",
+      ].join(", "),
+    )
+    .forEach((element) => syncEditorConflictResolutionTextareaHeight(element));
+}
+
 export function syncEditorAssistantDraftTextareaHeights(root = document) {
   root
     .querySelectorAll("[data-editor-assistant-draft]")

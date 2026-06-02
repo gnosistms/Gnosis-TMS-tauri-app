@@ -243,6 +243,8 @@ export function createEditorOperationQueue(options = {}) {
       scope: operation.repoScope,
       operationId: repoOperationIdFor(operation),
       kind: `editor:${operation.kind}`,
+      operationType: "localEditorWrite",
+      priority: "durableLocal",
       sourceScreen: "editor",
       metadata: {
         editorOperationId: operation.operationId,

@@ -2,6 +2,7 @@ import { resolveVisibleEditorAiReview } from "../app/editor-ai-review-state.js";
 import {
   findEditorHistoryPreviousCommitEntry,
   historyLastUpdateHeadingLabel,
+  isOptimisticEditorHistoryEntry,
 } from "../app/editor-history.js";
 import { editorFieldImageEqual } from "../app/editor-images.js";
 import { normalizeEditorRowTextStyle } from "../app/editor-row-text-style.js";
@@ -17,6 +18,8 @@ import {
   renderHistoryEntryContent,
   renderHistoryNote,
 } from "./translate-history-shared.js";
+
+const PENDING_LOCAL_SAVE_ERROR_AFTER_MS = 10_000;
 
 function renderAiReviewPromptDetails(aiReview) {
   const promptText = typeof aiReview?.promptText === "string" ? aiReview.promptText.trim() : "";
@@ -98,6 +101,14 @@ function editorReviewLiveEntryMatchesHistoryEntry(entry, liveEntry) {
   );
 }
 
+function pendingLocalSaveAgeMs(entry) {
+  const committedAtMs = Date.parse(entry?.committedAt ?? "");
+  if (!Number.isFinite(committedAtMs)) {
+    return 0;
+  }
+  return Math.max(0, Date.now() - committedAtMs);
+}
+
 export function renderReviewPane(editorChapter, rows, languages, offlineMode = false) {
   const expandedSectionKeys =
     editorChapter?.reviewExpandedSectionKeys instanceof Set
@@ -115,7 +126,9 @@ export function renderReviewPane(editorChapter, rows, languages, offlineMode = f
           error: "",
           entries: [],
   };
-  const lastCommittedEntry = Array.isArray(history.entries) ? (history.entries[0] ?? null) : null;
+  const historyEntries = Array.isArray(history.entries) ? history.entries : [];
+  const pendingLocalSaveEntry = historyEntries.find((entry) => isOptimisticEditorHistoryEntry(entry)) ?? null;
+  const lastCommittedEntry = historyEntries.find((entry) => !isOptimisticEditorHistoryEntry(entry)) ?? null;
   const previousEntry = findEditorHistoryPreviousCommitEntry(history.entries);
   const currentEntry = {
     plainText: activeSection?.text ?? "",
@@ -126,15 +139,32 @@ export function renderReviewPane(editorChapter, rows, languages, offlineMode = f
     pleaseCheck: activeSection?.pleaseCheck === true,
     textStyle: activeRow?.textStyle ?? "paragraph",
   };
+  const currentEntryMatchesPendingSave =
+    pendingLocalSaveEntry
+    && editorReviewLiveEntryMatchesHistoryEntry(pendingLocalSaveEntry, currentEntry);
   const currentEntryMatchesLastCommit =
     lastCommittedEntry
     && editorReviewLiveEntryMatchesHistoryEntry(lastCommittedEntry, currentEntry);
-  const showsCurrentEntry = !currentEntryMatchesLastCommit;
-  const lastUpdateEntry = showsCurrentEntry ? currentEntry : lastCommittedEntry;
-  const lastUpdateBaselineEntry = showsCurrentEntry
+  const showsPendingLocalSave = Boolean(currentEntryMatchesPendingSave);
+  const pendingLocalSaveIsOverdue =
+    showsPendingLocalSave
+    && pendingLocalSaveAgeMs(pendingLocalSaveEntry) >= PENDING_LOCAL_SAVE_ERROR_AFTER_MS;
+  const showsCurrentEntry = !showsPendingLocalSave && !currentEntryMatchesLastCommit;
+  const lastUpdateEntry = showsPendingLocalSave
+    ? pendingLocalSaveEntry
+    : showsCurrentEntry
+      ? currentEntry
+      : lastCommittedEntry;
+  const lastUpdateBaselineEntry = showsPendingLocalSave
+    ? lastCommittedEntry
+    : showsCurrentEntry
     ? lastCommittedEntry
     : previousEntry;
-  const lastUpdateHeadingLabel = showsCurrentEntry
+  const lastUpdateHeadingLabel = showsPendingLocalSave
+    ? pendingLocalSaveIsOverdue
+      ? "Local save stalled"
+      : "Saving locally..."
+    : showsCurrentEntry
     ? "Current text"
     : historyLastUpdateHeadingLabel(lastUpdateEntry);
   const isLastUpdateExpanded = expandedSectionKeys.has("last-update");
@@ -143,13 +173,20 @@ export function renderReviewPane(editorChapter, rows, languages, offlineMode = f
     isLastUpdateExpanded ? "Collapse this review section" : "Expand this review section",
     { align: "start" },
   );
-  const summaryMeta = history.status === "loading"
+  const summaryMeta = showsPendingLocalSave
+    ? pendingLocalSaveIsOverdue
+      ? "Error"
+      : ""
+    : history.status === "loading"
     ? "Loading..."
     : history.status === "error"
       ? "Error"
       : lastUpdateBaselineEntry
         ? "Diff"
         : "Text only";
+  const summaryMetaHtml = showsPendingLocalSave && !pendingLocalSaveIsOverdue
+    ? '<span class="history-group__spinner button__spinner" aria-hidden="true"></span>'
+    : escapeHtml(summaryMeta);
   const aiReview = resolveVisibleEditorAiReview(
     editorChapter,
     activeRow?.id ?? null,
@@ -192,6 +229,13 @@ export function renderReviewPane(editorChapter, rows, languages, offlineMode = f
         message: "AI actions are unavailable offline.",
       })
       : "";
+  const pendingLocalSaveMessage = showsPendingLocalSave && pendingLocalSaveIsOverdue
+    ? renderInlineStateBox({
+      tone: "error",
+      message: "This edit is not committed locally yet, and the local save has not finished.",
+      help: "The save operation is still running in the background. Leaving the editor is blocked until it finishes or reports an error.",
+    })
+    : "";
   const showFullReviewButton = aiReview.status === "loading"
     ? aiReview.reviewMode === "meaning"
     : aiReview.showFullReviewButton;
@@ -262,15 +306,19 @@ export function renderReviewPane(editorChapter, rows, languages, offlineMode = f
             ${renderCollapseChevron(isLastUpdateExpanded, "history-group__chevron")}
             <span class="history-group__author">${escapeHtml(lastUpdateHeadingLabel)}</span>
           </span>
-          <span class="history-group__meta">${escapeHtml(summaryMeta)}</span>
+          <span class="history-group__meta">${summaryMetaHtml}</span>
         </button>
         ${
           isLastUpdateExpanded
             ? `
               <div class="history-group__entries">
                 <article class="history-item">
+                  ${pendingLocalSaveMessage}
                   ${renderHistoryEntryContent(lastUpdateEntry, lastUpdateBaselineEntry, activeLanguage.code)}
-                  ${renderHistoryNote(lastUpdateEntry, lastUpdateBaselineEntry, { includeMarkers: false })}
+                  ${renderHistoryNote(lastUpdateEntry, lastUpdateBaselineEntry, {
+                    includeMarkers: false,
+                    includeStatusNote: !showsPendingLocalSave,
+                  })}
                   ${
                     history.status === "loading"
                       ? '<p class="history-item__meta">Loading previous version...</p>'

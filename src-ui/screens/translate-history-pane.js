@@ -1,5 +1,6 @@
 import {
   escapeHtml,
+  renderInlineStateBox,
   renderCollapseChevron,
   secondaryButton,
   tooltipAttributes,
@@ -16,6 +17,21 @@ import {
   renderHistoryNote,
 } from "./translate-history-shared.js";
 
+const PENDING_LOCAL_SAVE_ERROR_AFTER_MS = 10_000;
+
+function pendingLocalSaveAgeMs(entry) {
+  const committedAtMs = Date.parse(entry?.committedAt ?? "");
+  if (!Number.isFinite(committedAtMs)) {
+    return 0;
+  }
+  return Math.max(0, Date.now() - committedAtMs);
+}
+
+function pendingLocalSaveIsOverdue(entry) {
+  return isOptimisticEditorHistoryEntry(entry)
+    && pendingLocalSaveAgeMs(entry) >= PENDING_LOCAL_SAVE_ERROR_AFTER_MS;
+}
+
 function renderHistoryEntry(entry, previousEntry, activeLanguage, activeSection, canRestore, history, replaceUndoModal) {
   const isCurrentValue = editorHistoryEntryMatchesSection(entry, activeSection);
   const isRestoring =
@@ -24,11 +40,7 @@ function renderHistoryEntry(entry, previousEntry, activeLanguage, activeSection,
     replaceUndoModal?.status === "loading" && replaceUndoModal?.commitSha === entry.commitSha;
   const isOptimisticEntry = isOptimisticEditorHistoryEntry(entry);
   const restoreButton = isOptimisticEntry
-    ? secondaryButton("Saving...", "noop", {
-      disabled: true,
-      compact: true,
-      className: "button--replace-toolbar",
-    })
+    ? ""
     : isCurrentValue
     ? secondaryButton("Current", "noop", {
       disabled: true,
@@ -59,11 +71,16 @@ function renderHistoryEntry(entry, previousEntry, activeLanguage, activeSection,
       },
     )
     : "";
-
-  return `
-    <article class="history-item">
-      ${renderHistoryEntryContent(entry, previousEntry, activeLanguage.code)}
-      ${renderHistoryNote(entry, previousEntry)}
+  const pendingLocalSaveMessage = pendingLocalSaveIsOverdue(entry)
+    ? renderInlineStateBox({
+      tone: "error",
+      message: "This edit is not committed locally yet, and the local save has not finished.",
+      help: "The save operation is still running in the background. Leaving the editor is blocked until it finishes or reports an error.",
+    })
+    : "";
+  const entryFooter = isOptimisticEntry
+    ? ""
+    : `
       <div class="history-item__footer">
         <div class="history-item__actions">
           ${restoreButton}
@@ -71,6 +88,14 @@ function renderHistoryEntry(entry, previousEntry, activeLanguage, activeSection,
         </div>
         <p class="history-item__meta">${escapeHtml(formatHistoryTimestamp(entry.committedAt))}</p>
       </div>
+    `;
+
+  return `
+    <article class="history-item">
+      ${pendingLocalSaveMessage}
+      ${renderHistoryEntryContent(entry, previousEntry, activeLanguage.code)}
+      ${renderHistoryNote(entry, previousEntry, { includeStatusNote: !isOptimisticEntry })}
+      ${entryFooter}
     </article>
   `;
 }
@@ -150,16 +175,29 @@ export function renderHistoryPane(editorChapter, rows, languages) {
                         { align: "start" },
                       )
                       : "";
+                    const isPendingLocalSaveGroup = group.entries.some((entry) => isOptimisticEditorHistoryEntry(entry));
+                    const pendingLocalSaveGroupIsOverdue =
+                      isPendingLocalSaveGroup && pendingLocalSaveIsOverdue(group.entries[0]);
+                    const groupAuthorLabel = isPendingLocalSaveGroup
+                      ? pendingLocalSaveGroupIsOverdue
+                        ? "Local save stalled"
+                        : "Saving locally..."
+                      : group.authorName;
                     const revisionLabel = `${group.entries.length} ${group.entries.length === 1 ? "revision" : "revisions"}`;
+                    const groupMetaHtml = isPendingLocalSaveGroup
+                      ? pendingLocalSaveGroupIsOverdue
+                        ? "Error"
+                        : '<span class="history-group__spinner button__spinner" aria-hidden="true"></span>'
+                      : escapeHtml(revisionLabel);
 
                     return `
                       <section class="history-group">
                         <${headingTag}${headingAttributes}>
                           <span class="history-group__summary collapse-affordance"${summaryTooltip}>
                             ${renderCollapseChevron(isExpanded, "history-group__chevron")}
-                            <span class="history-group__author">${escapeHtml(group.authorName)}</span>
+                            <span class="history-group__author">${escapeHtml(groupAuthorLabel)}</span>
                           </span>
-                          <span class="history-group__meta">${escapeHtml(revisionLabel)}</span>
+                          <span class="history-group__meta">${groupMetaHtml}</span>
                         </${headingTag}>
                         <div class="history-group__entries">
                           ${visibleEntries

@@ -137,19 +137,46 @@ function serializeLabeledFootnoteEntry(entry) {
 
 function parseLabeledFootnoteText(text) {
   const source = String(text ?? "");
-  const matches = [...source.matchAll(/(?:^|\n)\s*\[(\d+)\]\s*/g)];
-  if (matches.length === 0 || matches[0].index !== 0) {
+  const matches = [];
+  const markerPattern = /\[(\d+)\]\s*/g;
+  let candidate = markerPattern.exec(source);
+  while (candidate) {
+    const markerStart = candidate.index ?? 0;
+    const markerEnd = markerPattern.lastIndex;
+    const previousMatch = matches.at(-1);
+    const startsAtSourceStart = source.slice(0, markerStart).trim().length === 0;
+    const startsLine = isFootnoteMarkerAtLineStart(source, markerStart);
+    const followsBlankPreviousEntry = previousMatch
+      ? source.slice(previousMatch.contentStart, markerStart).trim().length === 0
+      : false;
+
+    if (startsAtSourceStart || startsLine || followsBlankPreviousEntry) {
+      matches.push({
+        marker: candidate[1],
+        markerStart,
+        contentStart: markerEnd,
+      });
+    }
+    candidate = markerPattern.exec(source);
+  }
+
+  if (matches.length === 0 || source.slice(0, matches[0].markerStart).trim().length > 0) {
     return [];
   }
 
   return matches.map((match, index) => {
-    const start = (match.index ?? 0) + match[0].length;
-    const end = index + 1 < matches.length ? matches[index + 1].index ?? source.length : source.length;
+    const start = match.contentStart;
+    const end = index + 1 < matches.length ? matches[index + 1].markerStart : source.length;
     return {
-      marker: normalizeFootnoteMarker(match[1], index + 1),
+      marker: normalizeFootnoteMarker(match.marker, index + 1),
       text: source.slice(start, end).trim(),
     };
   });
+}
+
+function isFootnoteMarkerAtLineStart(source, markerStart) {
+  const lineStart = source.lastIndexOf("\n", markerStart - 1) + 1;
+  return source.slice(lineStart, markerStart).trim().length === 0;
 }
 
 function countPrecedingSlashes(text, index) {

@@ -24,6 +24,7 @@ import { measureEditorGlossaryAlignment } from "./app/editor-glossary-alignment-
 import {
   syncEditorAssistantDraftTextareaHeights,
   syncEditorCommentDraftTextareaHeights,
+  syncEditorConflictResolutionTextareaHeights,
   syncEditorRowTextareaHeights,
   syncGlossaryVariantTextareaHeights,
 } from "./app/autosize.js";
@@ -47,6 +48,7 @@ import {
 } from "./app/editor-preview.js";
 import { getEditorOperationQueueSnapshot } from "./app/editor-operation-queue.js";
 import { getRepoWriteQueueSnapshot } from "./app/repo-write-queue.js";
+import { hasPendingEditorWrites } from "./app/editor-persistence-flow.js";
 import {
   persistCurrentEditorLocation,
   prepareEditorLocationBeforeRender,
@@ -618,6 +620,7 @@ function renderWithOptions(options = {}) {
   }
   syncEditorRowTextareaHeights(app);
   restorePendingEditorSelection(app);
+  syncEditorConflictResolutionTextareaHeights(app);
   syncEditorAssistantDraftTextareaHeights(app);
   syncEditorCommentDraftTextareaHeights(app);
   restoreAssistantTranscriptScrollTop(assistantTranscriptScrollTop, app);
@@ -641,9 +644,54 @@ app.addEventListener("scroll", (event) => {
   scheduleEditorLocationSave(state);
 }, true);
 
-window.addEventListener("beforeunload", () => {
+function editorHasPendingDurableWrites() {
+  const repoWriteSnapshot = getRepoWriteQueueSnapshot();
+  return (
+    state.screen === "translate"
+    && (
+      hasPendingEditorWrites(state.editorChapter)
+      || getEditorOperationQueueSnapshot().hasActiveOperations
+      || repoWriteSnapshot.hasActiveLocalWrites
+      || repoWriteSnapshot.hasRunningRemoteSync
+    )
+  );
+}
+
+window.addEventListener("beforeunload", (event) => {
   persistCurrentEditorLocation(state);
+  if (!editorHasPendingDurableWrites()) {
+    return;
+  }
+
+  event.preventDefault();
+  event.returnValue = "Editor changes are still saving. Leave after saving finishes.";
 });
+
+function registerTauriEditorCloseGuard() {
+  const getCurrentWindow = window.__TAURI__?.window?.getCurrentWindow;
+  if (typeof getCurrentWindow !== "function") {
+    return;
+  }
+
+  try {
+    const currentWindow = getCurrentWindow();
+    if (typeof currentWindow?.onCloseRequested !== "function") {
+      return;
+    }
+
+    void currentWindow.onCloseRequested((event) => {
+      persistCurrentEditorLocation(state);
+      if (!editorHasPendingDurableWrites()) {
+        return;
+      }
+
+      event?.preventDefault?.();
+      render();
+    });
+  } catch {}
+}
+
+registerTauriEditorCloseGuard();
 
 window.__gnosisDebug = {
   waitForBootstrap() {

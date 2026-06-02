@@ -95,6 +95,21 @@ test("refresh feedback is rendered before team access refreshes", async () => {
   assert.match(source, /if \(screen === "users"\) \{[\s\S]*?showScopedSyncBadge\("members", "Refreshing member list\.\.\.", render\);[\s\S]*?render\(\);[\s\S]*?return;/);
 });
 
+test("translate refresh reloads local editor data before optional background sync", async () => {
+  const source = await readFile(new URL("./navigation.js", import.meta.url), "utf8");
+  const refreshBodyStart = source.indexOf("export async function refreshCurrentScreen");
+  const sourceSyncIndex = source.indexOf("const syncResult = await syncEditorBackgroundNowWithSummary", refreshBodyStart);
+  const translateStart = source.lastIndexOf('if (screen === "translate") {', sourceSyncIndex);
+  const translateBlock = source.slice(translateStart, source.indexOf("await completePageSync(render);", translateStart));
+  const firstReloadIndex = translateBlock.indexOf("await loadSelectedChapterEditorData(render, { preserveVisibleRows: true });");
+  const syncIndex = translateBlock.indexOf("const syncResult = await syncEditorBackgroundNowWithSummary");
+  const conditionalReloadIndex = translateBlock.indexOf("if (syncSummaryNeedsLocalEditorReload(syncResult))");
+
+  assert.ok(firstReloadIndex > -1);
+  assert.ok(syncIndex > firstReloadIndex);
+  assert.ok(conditionalReloadIndex > syncIndex);
+});
+
 test("members refresh uses the active TanStack query observer", async () => {
   const source = await readFile(new URL("./team-members-flow.js", import.meta.url), "utf8");
 

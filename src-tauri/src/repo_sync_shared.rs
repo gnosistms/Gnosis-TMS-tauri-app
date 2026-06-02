@@ -105,7 +105,9 @@ pub(crate) fn git_command() -> Command {
 
     #[cfg(not(windows))]
     {
-        Command::new("git")
+        let mut command = Command::new("git");
+        configure_git_isolation(&mut command);
+        command
     }
 }
 

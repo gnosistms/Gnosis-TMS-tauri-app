@@ -69,6 +69,16 @@ test("historyLastUpdateHeadingLabel names the latest updater source", () => {
   assert.equal(historyLastUpdateHeadingLabel({ plainText: "draft" }), "Last update");
 });
 
+test("optimistic history labels pending local saves instead of last updates", () => {
+  const optimisticEntry = {
+    ...historyEntry({ commitSha: "optimistic:op-1", authorName: "Saving..." }),
+    optimistic: true,
+  };
+
+  assert.equal(historyLastUpdateLabel(optimisticEntry), "Pending local save");
+  assert.equal(historyLastUpdateHeadingLabel(optimisticEntry), "Pending local save");
+});
+
 test("optimistic history entries cannot open committed-history actions", () => {
   const optimisticEntry = {
     ...historyEntry({ commitSha: "optimistic:op-1", operationType: "editor-replace" }),
