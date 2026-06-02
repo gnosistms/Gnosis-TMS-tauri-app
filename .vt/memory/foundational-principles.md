@@ -50,7 +50,7 @@ Current invariant
 
 ### F-III. Tauri as the Platform Contract
 
-Gnosis TMS is a desktop application built on Tauri. Tauri provides the windowing, native OS integrations, file system access, and the IPC boundary between the Rust backend and the JS frontend. The platform targets macOS and Windows.
+Gnosis TMS is a desktop application built on Tauri. Tauri provides the windowing, native OS integrations, file system access, and the IPC boundary between the Rust backend and the JS frontend. The platform targets macOS and Windows; Linux support is best-effort.
 
 Current invariant
 - macOS MUST bundle its own Apple-signed Git binary and never fall back to system Git.
