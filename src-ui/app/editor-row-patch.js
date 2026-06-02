@@ -86,6 +86,10 @@ function captureFocusedEditorField(root, patchedRowIds) {
         : activeElement.dataset.contentKind === "image-caption"
           ? "image-caption"
           : "field",
+    footnoteMarker:
+      activeElement.dataset.contentKind === "footnote"
+        ? (activeElement.dataset.footnoteMarker ?? "")
+        : "",
     selectionStart: activeElement.selectionStart,
     selectionEnd: activeElement.selectionEnd,
     selectionDirection: activeElement.selectionDirection ?? "none",
@@ -101,6 +105,9 @@ function restoreFocusedEditorField(root, snapshot) {
     snapshot.rowId,
     snapshot.languageCode,
     snapshot.contentKind,
+    {
+      footnoteMarker: snapshot.footnoteMarker,
+    },
   );
   const nextField = root.querySelector(selector);
   if (typeof HTMLTextAreaElement === "undefined" || !(nextField instanceof HTMLTextAreaElement)) {

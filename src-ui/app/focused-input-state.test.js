@@ -81,12 +81,15 @@ const {
   shouldRestoreFocusedInputStateForScope,
 } = await import("./focused-input-state.js");
 
-function createEditorTextarea({ rowId, languageCode, contentKind = null } = {}) {
+function createEditorTextarea({ rowId, languageCode, contentKind = null, footnoteMarker = null } = {}) {
   const textarea = new FakeHTMLTextAreaElement();
   textarea.dataset.rowId = rowId;
   textarea.dataset.languageCode = languageCode;
   if (contentKind) {
     textarea.dataset.contentKind = contentKind;
+  }
+  if (footnoteMarker != null) {
+    textarea.dataset.footnoteMarker = String(footnoteMarker);
   }
   textarea.matches = (selector) => {
     if (selector === "[data-editor-row-field]") {
@@ -156,6 +159,68 @@ test("restoreFocusedInputState restores focus to the image-caption field instead
     start: 1,
     end: 4,
     direction: "backward",
+  }]);
+});
+
+test("captureFocusedInputState preserves the active footnote marker identity", () => {
+  const textarea = createEditorTextarea({
+    rowId: "row-1",
+    languageCode: "vi",
+    contentKind: "footnote",
+    footnoteMarker: 2,
+  });
+  textarea.selectionStart = 8;
+  textarea.selectionEnd = 8;
+  textarea.selectionDirection = "none";
+  document.activeElement = textarea;
+
+  const snapshot = captureFocusedInputState();
+
+  assert.deepEqual(snapshot, {
+    kind: "editor-row-field",
+    selector: '[data-editor-row-field][data-row-id="row-1"][data-language-code="vi"][data-content-kind="footnote"][data-footnote-marker="2"]',
+    rowId: "row-1",
+    languageCode: "vi",
+    contentKind: "footnote",
+    footnoteMarker: "2",
+    selectionStart: 8,
+    selectionEnd: 8,
+    selectionDirection: "none",
+  });
+});
+
+test("restoreFocusedInputState restores focus to the matching footnote marker", () => {
+  const firstFootnote = createEditorTextarea({
+    rowId: "row-1",
+    languageCode: "vi",
+    contentKind: "footnote",
+    footnoteMarker: 1,
+  });
+  const secondFootnote = createEditorTextarea({
+    rowId: "row-1",
+    languageCode: "vi",
+    contentKind: "footnote",
+    footnoteMarker: 2,
+  });
+  selectorMap = new Map([
+    ['[data-editor-row-field][data-row-id="row-1"][data-language-code="vi"][data-content-kind="footnote"][data-footnote-marker="1"]', firstFootnote],
+    ['[data-editor-row-field][data-row-id="row-1"][data-language-code="vi"][data-content-kind="footnote"][data-footnote-marker="2"]', secondFootnote],
+  ]);
+
+  const restored = restoreFocusedInputState({
+    selector: '[data-editor-row-field][data-row-id="row-1"][data-language-code="vi"][data-content-kind="footnote"][data-footnote-marker="2"]',
+    selectionStart: 5,
+    selectionEnd: 9,
+    selectionDirection: "forward",
+  });
+
+  assert.equal(restored, true);
+  assert.deepEqual(firstFootnote.focusCalls, []);
+  assert.deepEqual(secondFootnote.focusCalls, [{ preventScroll: true }]);
+  assert.deepEqual(secondFootnote.selectionCalls, [{
+    start: 5,
+    end: 9,
+    direction: "forward",
   }]);
 });
 

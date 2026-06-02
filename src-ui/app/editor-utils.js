@@ -160,7 +160,7 @@ export function editorLanguageImage(row, languageCode) {
   return normalizeEditorFieldImage(row?.images?.[languageCode]);
 }
 
-export function buildEditorFieldSelector(rowId, languageCode, contentKind = "field") {
+export function buildEditorFieldSelector(rowId, languageCode, contentKind = "field", options = {}) {
   const rowIdPart = String(rowId ?? "");
   const languageCodePart = String(languageCode ?? "");
   const kind = normalizeEditorContentKind(contentKind);
@@ -170,7 +170,14 @@ export function buildEditorFieldSelector(rowId, languageCode, contentKind = "fie
       : kind === "image-caption"
         ? '[data-content-kind="image-caption"]'
         : ":not([data-content-kind])";
-  return `[data-editor-row-field][data-row-id="${CSS.escape(rowIdPart)}"][data-language-code="${CSS.escape(languageCodePart)}"]${kindSelector}`;
+  const marker =
+    kind === "footnote" && options?.footnoteMarker != null
+      ? String(options.footnoteMarker)
+      : "";
+  const markerSelector = marker
+    ? `[data-footnote-marker="${CSS.escape(marker)}"]`
+    : "";
+  return `[data-editor-row-field][data-row-id="${CSS.escape(rowIdPart)}"][data-language-code="${CSS.escape(languageCodePart)}"]${kindSelector}${markerSelector}`;
 }
 
 export function buildVisibleEditorLanguageCodeSet(chapterState) {

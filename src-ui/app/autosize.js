@@ -8,13 +8,24 @@ export function syncAutoSizeTextarea(textarea, options = {}) {
   const maxHeight = hasMaxHeight
     ? (Number.isFinite(options.maxHeight) ? options.maxHeight : 96)
     : Number.POSITIVE_INFINITY;
+  const scrollContainer =
+    options.preserveScroll === true && typeof textarea.closest === "function"
+      ? textarea.closest(".translate-main-scroll")
+      : null;
+  const scrollTop =
+    scrollContainer && Number.isFinite(scrollContainer.scrollTop)
+      ? scrollContainer.scrollTop
+      : null;
 
-  textarea.style.height = "0px";
+  textarea.style.height = "auto";
   const scrollHeight = textarea.scrollHeight;
   const nextHeight = Math.max(minHeight, Math.min(scrollHeight, maxHeight));
   textarea.style.height = `${nextHeight}px`;
   textarea.style.overflowY = hasMaxHeight && scrollHeight > maxHeight ? "auto" : "hidden";
   textarea.classList.toggle("is-single-line", scrollHeight <= minHeight + 2);
+  if (scrollTop !== null && Number.isFinite(scrollContainer.scrollTop)) {
+    scrollContainer.scrollTop = scrollTop;
+  }
 }
 
 function parsePixelValue(value, fallback = 0) {
@@ -57,7 +68,7 @@ export function syncEditorRowTextareaHeight(textarea) {
   syncAutoSizeTextarea(
     textarea,
     isActive
-      ? { minHeight: singleLineTextareaHeight(textarea), maxHeight: null }
+      ? { minHeight: singleLineTextareaHeight(textarea), maxHeight: null, preserveScroll: true }
       : { minHeight: 44, maxHeight: null },
   );
 }

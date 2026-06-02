@@ -38,6 +38,9 @@ function focusSnapshotSelector(activeElement) {
       activeElement.dataset.rowId ?? "",
       activeElement.dataset.languageCode ?? "",
       normalizeEditorContentKind(activeElement.dataset.contentKind),
+      {
+        footnoteMarker: activeElement.dataset.footnoteMarker,
+      },
     );
   }
 
@@ -84,6 +87,11 @@ export function captureFocusedInputState(doc = document) {
     rowId: isEditorRowField ? (activeElement.dataset.rowId ?? "") : "",
     languageCode: isEditorRowField ? (activeElement.dataset.languageCode ?? "") : "",
     contentKind,
+    ...(
+      isEditorRowField && contentKind === "footnote"
+        ? { footnoteMarker: activeElement.dataset.footnoteMarker ?? "" }
+        : {}
+    ),
     selectionStart:
       activeElement instanceof HTMLInputElement || activeElement instanceof HTMLTextAreaElement
         ? activeElement.selectionStart

@@ -66,11 +66,14 @@ function buildTranslateAnchorSnapshotForElement(container, element, type, langua
       : type === "field" && element.dataset.contentKind === "image-caption"
         ? "image-caption"
         : null;
+  const footnoteMarker =
+    contentKind === "footnote" ? (element.dataset.footnoteMarker ?? "") : "";
   return {
     type,
     rowId: element.dataset.rowId ?? "",
     languageCode: languageCode || "",
     ...(contentKind ? { contentKind } : {}),
+    ...(footnoteMarker ? { footnoteMarker } : {}),
     offsetTop: elementRect.top - containerRect.top,
   };
 }
@@ -306,11 +309,14 @@ export function resolveTranslateRowAnchor(target = null) {
         : field.dataset.contentKind === "image-caption"
           ? "image-caption"
           : null;
+    const footnoteMarker =
+      contentKind === "footnote" ? (field.dataset.footnoteMarker ?? "") : "";
     return {
       type: "field",
       rowId: field.dataset.rowId ?? "",
       languageCode: field.dataset.languageCode ?? "",
       ...(contentKind ? { contentKind } : {}),
+      ...(footnoteMarker ? { footnoteMarker } : {}),
       offsetTop: fieldRect.top - containerRect.top,
     };
   }
@@ -362,7 +368,9 @@ export function restoreTranslateRowAnchor(snapshot) {
     );
   } else if (snapshot.type === "field" && snapshot.languageCode) {
     anchor = document.querySelector(
-      buildEditorFieldSelector(snapshot.rowId, snapshot.languageCode, snapshot.contentKind),
+      buildEditorFieldSelector(snapshot.rowId, snapshot.languageCode, snapshot.contentKind, {
+        footnoteMarker: snapshot.footnoteMarker,
+      }),
     );
   } else if (snapshot.type === "deleted-group") {
     anchor = document.querySelector(`[data-editor-deleted-group][data-row-id="${CSS.escape(snapshot.rowId)}"]`);
@@ -461,6 +469,10 @@ export function queueTranslateRowAnchor(snapshot) {
       : type === "field" && snapshot.contentKind === "image-caption"
         ? "image-caption"
         : null;
+  const footnoteMarker =
+    contentKind === "footnote" && typeof snapshot.footnoteMarker === "string" && snapshot.footnoteMarker.trim()
+      ? snapshot.footnoteMarker.trim()
+      : "";
 
   pendingTranslateAnchor = {
     rowId: snapshot.rowId.trim(),
@@ -469,6 +481,7 @@ export function queueTranslateRowAnchor(snapshot) {
         ? snapshot.languageCode.trim()
         : null,
     ...(contentKind ? { contentKind } : {}),
+    ...(footnoteMarker ? { footnoteMarker } : {}),
     offsetTop: Number.isFinite(Number(snapshot.offsetTop))
       ? Number(snapshot.offsetTop)
       : 0,

@@ -9,3 +9,16 @@ test("editor virtual list skips image-load row resize when preview size is uncha
   assert.match(source, /if \(syncResult\.sizeChanged !== true\) \{\s*return;\s*\}/);
   assert.match(source, /notifyRowHeightMayHaveChanged\("", image, \{\s*reason: "image-load",\s*\}\)/);
 });
+
+test("editor virtual list focus restore preserves the active footnote marker", async () => {
+  const source = await readFile(new URL("./editor-virtual-list.js", import.meta.url), "utf8");
+
+  assert.match(
+    source,
+    /footnoteMarker:\s*activeElement\.dataset\.contentKind === "footnote"\s*\?\s*\(activeElement\.dataset\.footnoteMarker \?\? ""\)\s*:\s*""/,
+  );
+  assert.match(
+    source,
+    /buildEditorFieldSelector\(\s*snapshot\.rowId,\s*snapshot\.languageCode,\s*snapshot\.contentKind,\s*\{\s*footnoteMarker: snapshot\.footnoteMarker,\s*\},\s*\)/,
+  );
+});
