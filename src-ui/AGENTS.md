@@ -3,6 +3,9 @@
 Vanilla JS patterns for Gnosis TMS. See root `CLAUDE.md` for project overview and
 `.vt/memory/foundational-principles.md` for architectural principles.
 
+See `AGENTS_EVIDENCE.md` for verification notes and canonical source references that
+support the guidance in this file.
+
 ## Stack
 
 - Plain ES modules (no UI framework — this is permanent, not a placeholder)
@@ -131,9 +134,11 @@ Rows are virtualized via TanStack Virtual Core. Critical invariants:
   virtual-window range change — do not store references to row elements across renders.
 - Row-level invalidation APIs (`editor-virtualization.js`) allow targeted re-renders
   without remounting the full list.
-- `order_key` is a lexicographic string, not an integer. Sorting rows by this key
-  is always lexicographic string comparison, never numeric. New key generation must
-  produce strings that sort between the surrounding keys.
+- Content file field: `structure.order_key`
+- Editor payload field: `order_key`
+- Search index column: `row_order_key`
+- All three represent lexicographic ordering, never numeric ordering. New key
+  generation must produce values that sort between the surrounding keys.
 
 ### Background Sync
 

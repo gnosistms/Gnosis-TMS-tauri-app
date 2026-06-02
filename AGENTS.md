@@ -2,6 +2,9 @@
 
 Guidance for AI agents working in this repository.
 
+See `AGENTS_EVIDENCE.md` for verification notes and canonical source references that
+support the guidance in this file.
+
 ## Project Overview
 
 Gnosis TMS is a desktop Translation Management System built on Tauri. It provides

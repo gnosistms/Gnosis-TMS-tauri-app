@@ -3,10 +3,14 @@
 Rust/Tauri patterns for Gnosis TMS. See root `CLAUDE.md` for project overview and
 `.vt/memory/foundational-principles.md` for architectural principles.
 
+See `AGENTS_EVIDENCE.md` for verification notes and canonical source references that
+support the guidance in this file.
+
 ## Stack
 
 - Rust + Tauri 2
-- SQLite via `rusqlite` with bundled feature (local persistent store, full-text search index)
+- SQLite via `rusqlite` with bundled feature (project search index only)
+- `tauri-plugin-store` (local key-value persistent store)
 - Git operations via bundled Git binary (invoked as a subprocess — no libgit2)
 - GitHub REST API (via `src-tauri/src/github/`)
 - Broker service (auth proxy for GitHub App tokens)
@@ -18,7 +22,7 @@ src-tauri/src/
 ├── main.rs                    # Entry point — calls gnosis_tms_lib::run() only
 ├── lib.rs                     # Tauri command definitions + invoke_handler registration
 ├── state.rs                   # App state (store handle, auth, cached state)
-├── store.rs                   # SQLite local persistent store
+├── store.rs                   # Local key-value persistent store (`tauri-plugin-store`)
 ├── broker.rs / broker_auth.rs # Broker service client and auth
 ├── github.rs / github/        # GitHub REST API client
 ├── callbacks.rs               # Tauri event emitters (progress, sync status)
@@ -99,25 +103,35 @@ define migration steps; `lib.rs::setup()` does not call them.
 ### Metadata Repos
 
 Resource lifecycle state (active, soft-deleted, tombstoned) is authoritative in the
-team metadata repo, not only in the local store. The metadata repo is a git repo on
-the GitHub org that the local store mirrors.
+team metadata repo, not only in cached local projections. The metadata repo is a git
+repo on the GitHub org that the local metadata checkout mirrors.
 
-- Write metadata BEFORE the remote content repo operation (metadata-first — see F-VI
-  in foundational principles).
+Current invariant
 - Tombstones for permanent deletes MUST be written to the metadata repo before the
   content repo is deleted from GitHub.
 - `team_metadata_local/` owns local metadata repo reads and writes.
+- Metadata repo state is authoritative for lifecycle when it conflicts with cached
+  local projections.
+
+Known divergence
+- Project create still creates the remote GitHub repo before the metadata record is
+  written, so metadata-first is not yet universal.
+
+Architectural goal
+- Write metadata before every remote content repo operation.
 
 ### Row Ordering
 
-Editor content files store rows with a `structure.order_key` field — a 32-character
-lowercase hexadecimal string encoding a 128-bit integer
-(e.g. `"00000000000000000000000000000001"`). Sorting rows uses lexicographic string
-comparison, never numeric comparison. New key generation must produce a hex string
-that sorts lexicographically between the surrounding keys.
+The row-order identifier has different names at different layers:
 
-The search index stores this as `row_order_key` (the SQLite column name in
-`project_search/schema.rs`); sorting happens in `project_search/query.rs`.
+- Content file field: `structure.order_key`
+- Editor payload field: `order_key`
+- Search index column: `row_order_key`
+
+The underlying value is a 32-character lowercase hexadecimal string encoding a
+128-bit integer (e.g. `"00000000000000000000000000000001"`). Sorting is always
+lexicographic string comparison, never numeric comparison. New key generation must
+produce a value that sorts between the surrounding keys.
 
 ## Tauri Command Patterns
 
@@ -183,8 +197,8 @@ events MUST document which event names they emit.
 
 ### SQLite
 
-- Migration files run in order at startup. Adding a new migration step MUST be
-  additive — never modify an existing migration that may have already run on a
-  user's machine.
+- Migration steps are applied when the frontend triggers the migration commands,
+  not automatically at startup. Adding a new migration step MUST be additive —
+  never modify an existing migration that may have already run on a user's machine.
 - The search index schema (`project_search/schema.rs`) is rebuilt on demand.
   Changes to the schema require an index version bump to trigger a rebuild.
