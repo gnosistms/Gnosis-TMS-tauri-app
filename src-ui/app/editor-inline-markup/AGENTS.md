@@ -36,9 +36,12 @@ The supported inline tag set is fixed: `strong` (bold), `em` (italic), `u` (unde
 `ruby` / `rt` (phonetic annotation). Tag aliases `b` → `strong`, `i` → `em` are
 normalized on parse.
 
-No other tags are permitted. The parser HTML-escapes the tag syntax of any unsupported
-tag while preserving its text content (e.g. `<script>alert(1)</script>` becomes
-`&lt;script&gt;alert(1)&lt;/script&gt;`) — this is the sanitization contract.
+No other tags are permitted. The **parser** treats unsupported tag syntax as plain
+text — tag delimiters become text nodes, not markup nodes. The **serializer** then
+HTML-escapes those text nodes when rendering to HTML via `renderSanitizedInlineMarkupHtml`
+and `escapeHtml` in `serialize.js` (e.g. `<script>alert(1)</script>` renders as
+`&lt;script&gt;alert(1)&lt;/script&gt;`). The escaping is a serializer responsibility,
+not a parser responsibility.
 
 ## Key Invariants
 
@@ -51,8 +54,9 @@ sanitization behavior; the double round-trip identity follows from the pure
 implementation.
 
 **Sanitization is always applied** — `renderSanitizedInlineMarkupHtml` and all
-`renderSanitized*` functions HTML-escape any unsupported tag syntax. Never render
-raw markup string as innerHTML — always go through a `renderSanitized*` function.
+`renderSanitized*` functions in `serialize.js` HTML-escape the plain-text nodes
+that unsupported tag syntax becomes after parsing. Never render raw markup string
+as innerHTML — always go through a `renderSanitized*` function.
 
 **Base text vs. visible text** — ruby annotations add characters to the visible
 rendering that are not part of the base translatable text. `ranges.js` maps between

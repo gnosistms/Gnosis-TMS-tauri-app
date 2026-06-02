@@ -195,10 +195,10 @@ events MUST document which event names they emit.
 - **macOS Git archive staging** requires special handling that differs from Linux
   behavior. Test archive operations on macOS. (`c37e183f`)
 
-### SQLite
+### Search Index Schema
 
-- Migration steps are applied when the frontend triggers the migration commands,
-  not automatically at startup. Adding a new migration step MUST be additive —
-  never modify an existing migration that may have already run on a user's machine.
-- The search index schema (`project_search/schema.rs`) is rebuilt on demand.
-  Changes to the schema require an index version bump to trigger a rebuild.
+The project search schema is managed directly in `project_search/schema.rs` via
+`ensure_project_search_schema`. There are no migration files and no explicit
+index-version mechanism — schema changes involve updating `ensure_project_search_schema`
+(which uses `CREATE TABLE IF NOT EXISTS`, `ALTER TABLE`, and table-clearing as needed).
+Do not look for migration files or a version number; there are none.
