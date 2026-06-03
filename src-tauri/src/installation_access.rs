@@ -33,10 +33,6 @@ pub(crate) struct InstallationAccessSnapshot {
     pub(crate) cached_at: Option<String>,
 }
 
-pub(crate) fn is_read_only_membership_role(role: Option<&str>) -> bool {
-    normalized_membership_role(role).as_deref() == Some("viewer")
-}
-
 pub(crate) fn cache_installation_access(
     app: &AppHandle,
     installation: &GithubAppInstallationInfo,
@@ -366,18 +362,34 @@ mod tests {
     use super::{
         ensure_snapshot_allows_content_writes, ensure_snapshot_allows_member_management,
         ensure_snapshot_allows_resource_management, ensure_snapshot_allows_team_ai_access,
-        installation_id_from_path, is_read_only_membership_role, InstallationAccessSnapshot,
+        installation_id_from_path, InstallationAccessSnapshot,
     };
     use std::path::Path;
 
     #[test]
     fn recognizes_viewer_role_aliases() {
-        assert!(is_read_only_membership_role(Some("viewer")));
-        assert!(is_read_only_membership_role(Some("read_only")));
-        assert!(is_read_only_membership_role(Some("read-only")));
-        assert!(is_read_only_membership_role(Some("readonly")));
-        assert!(!is_read_only_membership_role(Some("admin")));
-        assert!(!is_read_only_membership_role(Some("member")));
+        // Every viewer alias must normalize to read-only and be denied team AI access.
+        for role in ["viewer", "read_only", "read-only", "readonly"] {
+            let snapshot = InstallationAccessSnapshot {
+                membership_role: Some(role.to_string()),
+                ..Default::default()
+            };
+            assert!(
+                ensure_snapshot_allows_team_ai_access(&snapshot).is_err(),
+                "{role} should be treated as read-only"
+            );
+        }
+        // Non-viewer active roles are not read-only.
+        for role in ["admin", "member"] {
+            let snapshot = InstallationAccessSnapshot {
+                membership_role: Some(role.to_string()),
+                ..Default::default()
+            };
+            assert!(
+                ensure_snapshot_allows_team_ai_access(&snapshot).is_ok(),
+                "{role} should not be treated as read-only"
+            );
+        }
     }
 
     #[test]
