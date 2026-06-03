@@ -2,7 +2,8 @@
 
 ## Status
 
-Proposed — 2026-06-03. Awaiting decision on the consent model (see Open Decisions).
+Proposed — 2026-06-03. Consent model decided: **opt-out** (see Consent & disclosure).
+Remaining open decisions are non-blocking (SaaS-vs-self-host, Tauri bridge plugin).
 
 ## Goal
 
@@ -110,7 +111,10 @@ Telemetry on potentially NDA-bound users requires explicit handling:
 - A first-run disclosure of what is (and isn't) collected.
 - A privacy note in the docs.
 
-See Open Decisions for opt-in vs opt-out.
+**Decided: opt-out.** Reporting is ON by default, with a clear first-run disclosure and a
+one-click off toggle. Chosen to maximize field visibility while respecting users. The
+toggle state is read before `initTelemetry()` runs, and flipping it off must fully disable
+the SDK (no events sent) for the rest of the session.
 
 ## Phasing
 
@@ -138,12 +142,8 @@ See Open Decisions for opt-in vs opt-out.
 
 ## Open Decisions
 
-1. **Consent model — opt-in or opt-out?**
-   Recommendation: **opt-out with a clear first-run disclosure** (reporting on by default,
-   prominently disclosed, one-click off). It maximizes the visibility we're trying to gain
-   while respecting users. If our users' confidentiality posture warrants more caution, go
-   **opt-in** (off until the user enables it) — safer, but most users never flip it on, so
-   field visibility drops sharply. *Needs your call.*
+1. ~~**Consent model — opt-in or opt-out?**~~ **DECIDED: opt-out** (2026-06-03) — reporting
+   on by default, clear first-run disclosure, one-click off. See Consent & disclosure.
 2. **Sentry SaaS free tier to start, or self-host from day one?**
    Recommendation: start on SaaS free tier to validate value; revisit self-host/GlitchTip
    if quota or seat limits pinch. Confirm current free-tier event quota at sentry.io/pricing.
