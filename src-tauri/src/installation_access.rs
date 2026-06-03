@@ -339,8 +339,7 @@ fn write_installation_access_snapshot(
             tmp_path.display()
         )
     })?;
-    let _ = fs::remove_file(&path); // best-effort; ENOENT is expected on first write
-    fs::rename(&tmp_path, &path).map_err(|error| {
+    crate::util::atomic_replace(&tmp_path, &path).map_err(|error| {
         format!(
             "Could not finalize the installation access snapshot '{}': {error}",
             path.display()
