@@ -11,11 +11,9 @@ SYNC IMPACT REPORT
     - plan-template.md: no change needed (no principle-number references)
     - spec-template.md: no change needed (no principle-number references)
     - tasks-template.md: no change needed (no principle-number references)
-  Deferred TODOs:
-    - constitution.md not yet created; Anti-Rationalization Guardrail for
-      F-VIII should be added when the constitution is instantiated.
-    - src-tauri/AGENTS.md storage table should be updated to reference F-VIII
-      for the Stronghold and broker session token rows.
+  Deferred TODOs: (none — all items resolved)
+    - constitution.md instantiated 2026-06-03; F-VIII guardrail included.
+    - src-tauri/AGENTS.md storage table updated 2026-06-03 to reference F-VIII.
 -->
 # Gnosis TMS — Foundational Principles
 
