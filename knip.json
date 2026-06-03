@@ -3,6 +3,7 @@
   "entry": [
     "src-ui/app/*.test.js",
     "src-ui/screens/*.test.js",
+    "scripts/build-frontend-for-tauri.mjs",
     "docs/app.js"
   ],
   "project": [

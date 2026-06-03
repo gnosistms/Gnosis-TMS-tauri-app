@@ -5,6 +5,7 @@ import {
   updateAiActionProvider,
   updateAiProviderSecretDraft,
 } from "./ai-settings-flow.js";
+import { updateTelemetryDisclosureEnabled } from "./telemetry-disclosure-flow.js";
 import { state } from "./state.js";
 import {
   syncAutoSizeTextarea,
@@ -858,6 +859,16 @@ function handleAiSettingsAboutModalInput(event) {
   return true;
 }
 
+function handleTelemetryDisclosureInput(event) {
+  const input = event.target.closest("[data-telemetry-disclosure-enabled-toggle]");
+  if (!(input instanceof HTMLInputElement) || input.type !== "checkbox") {
+    return false;
+  }
+
+  updateTelemetryDisclosureEnabled(input.checked);
+  return true;
+}
+
 function handleAiActionProviderInput(event, render) {
   if (event.type !== "change") {
     return false;
@@ -942,6 +953,7 @@ const inputHandlers = [
   handleAiKeyInput,
   handleAiDetailedConfigurationInput,
   handleAiSettingsAboutModalInput,
+  handleTelemetryDisclosureInput,
   handleAiActionProviderInput,
   handleAiActionModelInput,
 ];

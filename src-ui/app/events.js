@@ -29,6 +29,7 @@ import {
 import { registerProjectAddTranslationProgress } from "./project-add-translation-flow.js";
 
 const SYNC_WITH_SERVER_EVENT = "sync-with-server";
+const ERROR_REPORTING_EVENT = "open-error-reporting";
 const CHECK_FOR_UPDATES_EVENT = "check-for-updates";
 const PROJECT_EXPORT_SELECT_SELECTOR =
   "[data-project-export-format-select], [data-project-export-language-select]";
@@ -197,6 +198,10 @@ export function registerAppEvents(render) {
   if (listen) {
     void listen(SYNC_WITH_SERVER_EVENT, () => {
       void dispatchAction("refresh-page");
+    });
+
+    void listen(ERROR_REPORTING_EVENT, () => {
+      void dispatchAction("open-error-reporting-settings");
     });
 
     void listen(CHECK_FOR_UPDATES_EVENT, () => {

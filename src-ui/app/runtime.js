@@ -1,5 +1,6 @@
 import { state } from "./state.js";
 import { readDevRuntimeFlags } from "./dev-runtime-flags.js";
+import { reportCommandFailure } from "./telemetry.js";
 
 const runtimeDocument = typeof document !== "undefined" ? document : null;
 const runtimeWindow = typeof window !== "undefined" ? window : {};
@@ -72,6 +73,7 @@ export const invoke = rawInvoke
         return await rawInvoke(command, payload);
       } catch (error) {
         if (!shouldAttemptBrokerSessionRefresh(command, payload, error)) {
+          maybeReportCommandFailure(command, error);
           throw error;
         }
 
@@ -85,6 +87,16 @@ export const invoke = rawInvoke
       }
     }
   : null;
+
+function maybeReportCommandFailure(command, error) {
+  // Skip the expected "session expired" path — it is routine, not a defect, and noisy.
+  // Reporting is fire-and-forget and a no-op until the consent gate opens.
+  const message = String(error?.message ?? error ?? "").trim().toLowerCase();
+  if (message.startsWith("auth_required:")) {
+    return;
+  }
+  reportCommandFailure(command, error);
+}
 
 export function openExternalUrl(url) {
   const opener = window.__TAURI__?.opener;

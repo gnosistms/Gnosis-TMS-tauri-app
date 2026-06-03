@@ -53,6 +53,7 @@ export const state = {
   connectionFailure: createConnectionFailureState(),
   navigationLoadingModal: createNavigationLoadingModalState(),
   teamResourceMigrationModal: createTeamResourceMigrationModalState(),
+  telemetryDisclosureModal: createTelemetryDisclosureModalState(),
   statusBadges: createStatusBadgesState(),
   orgDiscovery: {
     status: "idle",
@@ -188,6 +189,13 @@ export function createTeamResourceMigrationModalState() {
     targetVersion: "",
     message: "",
     token: null,
+  };
+}
+
+export function createTelemetryDisclosureModalState() {
+  return {
+    isOpen: false,
+    enabled: true,
   };
 }
 

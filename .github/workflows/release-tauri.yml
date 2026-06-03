@@ -17,10 +17,13 @@ jobs:
         include:
           - platform: macos-latest
             args: --target aarch64-apple-darwin
+            uploadSentrySourcemaps: "1"
           - platform: macos-latest
             args: --target x86_64-apple-darwin
+            uploadSentrySourcemaps: "0"
           - platform: windows-latest
             args: ""
+            uploadSentrySourcemaps: "0"
     runs-on: ${{ matrix.platform }}
     env:
       TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -30,6 +33,9 @@ jobs:
       APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
       APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
       APPLE_API_KEY_CONTENT: ${{ secrets.APPLE_API_KEY_CONTENT }}
+      SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+      SENTRY_ORG: ${{ vars.SENTRY_ORG }}
+      SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -197,6 +203,7 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GNOSIS_UPLOAD_SENTRY_SOURCEMAPS: ${{ matrix.uploadSentrySourcemaps }}
         with:
           tagName: ${{ github.ref_name }}
           releaseName: Gnosis TMS ${{ github.ref_name }}
