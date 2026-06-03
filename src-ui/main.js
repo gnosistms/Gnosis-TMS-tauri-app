@@ -12,6 +12,7 @@ import { loadUserTeams, setGithubAppInstallation } from "./app/team-setup-flow.j
 import { syncLanguagePickerAlphabetIndexes } from "./app/language-picker-alphabet-index.js";
 import { initializeConnectivity } from "./app/offline-connectivity.js";
 import { initializePersistentStorage } from "./app/persistent-store.js";
+import { initTelemetry, installTelemetryCrashHandlers } from "./app/telemetry.js";
 import { app, initializeWindowPresentation } from "./app/runtime.js";
 import {
   clearEditorScrollDebugEntries,
@@ -119,6 +120,10 @@ import {
   getScopedSyncBadgeText,
   getStatusSurfaceItems,
 } from "./app/status-feedback.js";
+
+// Install crash handlers as early as possible so first-run crashes are captured (and
+// buffered until the consent gate opens). See plans/telemetry-plan.md.
+installTelemetryCrashHandlers();
 
 const screenRenderers = {
   start: () => renderStartScreen(state),
@@ -868,6 +873,9 @@ window.__gnosisDebug = {
 async function bootstrap() {
   render();
   await initializePersistentStorage();
+  // Telemetry needs the persistent store (consent + install id); fire-and-forget so it
+  // never delays startup. No-ops until a DSN is configured and the disclosure is shown.
+  void initTelemetry();
   hydratePersistentAppState();
   await initializeWindowPresentation();
   registerAppEvents(render);
