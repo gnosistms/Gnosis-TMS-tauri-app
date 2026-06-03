@@ -122,10 +122,33 @@ one-click off toggle. Chosen to maximize field visibility while respecting users
 toggle state is read before `initTelemetry()` runs, and flipping it off must fully disable
 the SDK (no events sent) for the rest of the session.
 
-No event may be sent until disclosure state has been resolved. On first launch, the app
-must show the disclosure and persist the opt-out default/choice before telemetry transport
-is enabled. During that pre-disclosure window, errors may be handled locally but must not
-be queued for later upload.
+No **routine** event may be sent until disclosure state has been resolved. On first launch
+the app shows the disclosure and persists the opt-out default/choice before normal
+telemetry transport is enabled. During that pre-disclosure window, routine errors and
+breadcrumbs are handled locally only — not queued for upload.
+
+### First-run crash exception (decided 2026-06-03)
+
+To avoid going blind on exactly the highest-value failures — crashes during first launch,
+before the disclosure has been shown — a narrow exception applies. It is deliberately
+scoped so the privacy compromise stays minimal:
+
+- **Crashes only.** Covers unhandled fatal errors (Rust panics, uncaught JS errors /
+  unhandled rejections) — *not* routine command-failure telemetry, performance, or
+  breadcrumbs. Those still wait for the gate.
+- **Maximal scrubbing.** Pre-disclosure crash events carry only crash type/stack, app
+  version, OS + arch, and the anonymous install UUID — no breadcrumbs, no command payloads,
+  full `beforeSend` scrubbing applied.
+- **Capture early, transmit after disclosure.** Crash handlers install before the gate. A
+  crash captured pre-disclosure is buffered and transmitted once the disclosure has been
+  *shown* (which, under opt-out, is at first launch — possibly the next launch if the very
+  first one crashed before the notice rendered).
+- **An explicit opt-out still wins.** If the user turns reporting off, any buffered
+  pre-disclosure crash events are discarded, not sent. The relaxed gate governs *capture*,
+  never an override of an explicit "no".
+
+In short: we will transmit a first-run crash captured before the user clicked through the
+notice — but never against an explicit opt-out, and never anything beyond the crash itself.
 
 ## Phasing
 
@@ -142,19 +165,47 @@ be queued for later upload.
       environment), `beforeSend` scrub (home-dir redaction + sensitive-key drop),
       anonymous install-UUID load/create, `sendDefaultPii: false`, no user context,
       allowlisted breadcrumbs only, consent/disclosure gate
-- [ ] Resolve first-run disclosure and persisted telemetry setting before any telemetry
-      transport can send or queue events
+- [ ] Resolve first-run disclosure and persisted telemetry setting before any *routine*
+      telemetry transport can send or queue events
+- [ ] Install crash handlers early (before the gate) and implement the first-run crash
+      exception: buffer pre-disclosure crashes, transmit once the disclosure is shown,
+      discard them on an explicit opt-out
 - [ ] Call `initTelemetry()` at frontend entry only after the disclosure/setting gate is
-      resolved
+      resolved (crash handlers excepted, per above)
 - [ ] Wrap the `invoke()` error path in `runtime.js` to report scrubbed command failures
       (capture command name + scrubbed error; never the payload)
 - [ ] Add a consent toggle to settings + first-run disclosure; turning the toggle off must
       close/disable the client and prevent queued uploads for the rest of the session
 - [ ] Configure Vite source maps + upload step in the release script
 - [ ] Unit-test the scrubber and consent gate (home-dir paths redacted; sensitive keys
-      dropped; content never included; no event before disclosure state is resolved)
+      dropped; content never included; no *routine* event before disclosure is resolved;
+      buffered crash discarded on opt-out)
 - [ ] Document the DSN handling (DSN is not a secret, but keep it in config, not hardcoded
       across the tree)
+
+## Implementation notes
+
+- **Allowlist breadcrumbs is active work, not a flag.** Disable the default breadcrumb
+  instrumentation (`Sentry.breadcrumbsIntegration({ console: false, dom: false, fetch: false,
+  xhr: false, history: false })`) and add only our own via `Sentry.addBreadcrumb`. The
+  default integration captures console/network/DOM, which would leak paths, URLs, and content.
+- **Persist consent + install UUID through the backend, not the webview.** The webview
+  cannot touch the filesystem and `localStorage` is not a durable Tauri store. Read/write
+  both via `tauri-plugin-store` (`store.rs`) or a dedicated Tauri command, and resolve them
+  before `initTelemetry()`.
+- **Fire-and-forget transport.** Reporting must never block or fail a command (the M1
+  lesson). Errors inside the reporter itself are swallowed locally.
+
+## Sentry project configuration (not enforceable from the repo)
+
+Some privacy requirements live in Sentry project settings, not our code — track them here:
+
+- [ ] Enable "Prevent Storing of IP Addresses" (server-side complement to SDK
+      `sendDefaultPii: false`)
+- [ ] Configure server-side data scrubbing / sensitive-field filters as a backstop to
+      `beforeSend`
+- [ ] Restrict project membership to the dev team; confirm data region / retention
+- [ ] Create the project as platform **Browser/JavaScript** and record its DSN in app config
 
 ## Open Decisions
 
