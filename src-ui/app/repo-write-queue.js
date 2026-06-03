@@ -1,4 +1,6 @@
 const ACTIVE_REPO_WRITE_STATUSES = new Set(["queued", "running"]);
+const LOCAL_REPO_WRITE_OPERATION_TYPES = new Set(["localEditorWrite", "localMetadataWrite"]);
+const REMOTE_REPO_WRITE_OPERATION_TYPES = new Set(["remoteSync"]);
 
 let nextRepoWriteOperationId = 1;
 let nextRepoQueueErrorId = 1;
@@ -26,6 +28,58 @@ function cloneQueueValue(value) {
 
 function normalizeString(value) {
   return typeof value === "string" && value.trim() ? value.trim() : "";
+}
+
+function logRepoWriteDiagnostic(event, operation, details = {}) {
+  if (typeof console === "undefined" || typeof console.info !== "function") {
+    return;
+  }
+  console.info("[gtms repo-write]", event, {
+    operationId: operation?.operationId ?? "",
+    kind: operation?.kind ?? "",
+    operationType: operation?.operationType ?? "",
+    priority: operation?.priority ?? "",
+    scope: operation?.scope ?? "",
+    queuedAt: operation?.queuedAt ?? null,
+    startedAt: operation?.startedAt ?? null,
+    ...details,
+  });
+}
+
+function normalizePriority(value) {
+  const normalized = normalizeString(value);
+  if (normalized === "blockingLocal" || normalized === "durableLocal") {
+    return normalized;
+  }
+  return "normal";
+}
+
+function normalizeOperationType(value, kind = "") {
+  const normalized = normalizeString(value);
+  if (
+    normalized === "localEditorWrite"
+    || normalized === "localMetadataWrite"
+    || normalized === "remoteSync"
+    || normalized === "repoMaintenance"
+  ) {
+    return normalized;
+  }
+
+  const normalizedKind = normalizeString(kind);
+  if (normalizedKind.startsWith("editor:")) {
+    return "localEditorWrite";
+  }
+  if (normalizedKind === "editorBackgroundSync" || normalizedKind.endsWith("BackgroundSync")) {
+    return "remoteSync";
+  }
+  return "repoMaintenance";
+}
+
+function priorityRank(priority) {
+  if (priority === "blockingLocal") {
+    return 2;
+  }
+  return priority === "durableLocal" ? 1 : 0;
 }
 
 function normalizePart(value) {
@@ -99,7 +153,9 @@ function snapshotOperation(operation) {
     operationId: operation.operationId,
     scope: operation.scope,
     kind: operation.kind,
+    operationType: operation.operationType,
     label: operation.label,
+    priority: operation.priority,
     status: operation.status,
     metadata: cloneQueueValue(operation.metadata),
     queuedAt: operation.queuedAt,
@@ -122,6 +178,14 @@ function snapshotQueue(queue) {
 
   const queuedOperations = operations.filter((operation) => operation.status === "queued");
   const runningOperations = operations.filter((operation) => operation.status === "running");
+  const activeLocalOperations = operations.filter((operation) =>
+    ACTIVE_REPO_WRITE_STATUSES.has(operation.status)
+    && LOCAL_REPO_WRITE_OPERATION_TYPES.has(operation.operationType),
+  );
+  const activeRemoteOperations = operations.filter((operation) =>
+    ACTIVE_REPO_WRITE_STATUSES.has(operation.status)
+    && REMOTE_REPO_WRITE_OPERATION_TYPES.has(operation.operationType),
+  );
 
   return {
     scope: queue.scope,
@@ -131,6 +195,9 @@ function snapshotQueue(queue) {
     runningOperationId: runningOperations[0]?.operationId ?? null,
     queuedOperationIds: queuedOperations.map((operation) => operation.operationId),
     hasActiveWrites: operations.some((operation) => ACTIVE_REPO_WRITE_STATUSES.has(operation.status)),
+    hasActiveLocalWrites: activeLocalOperations.length > 0,
+    hasActiveRemoteSync: activeRemoteOperations.length > 0,
+    hasRunningRemoteSync: activeRemoteOperations.some((operation) => operation.status === "running"),
     operations: operations.map(snapshotOperation),
   };
 }
@@ -212,6 +279,7 @@ async function processScopeQueue(queue) {
       operation.status = "running";
       operation.startedAt = nowIso();
       operation.error = "";
+      logRepoWriteDiagnostic("running", operation, { queuedCount: queue.items.length });
       emitQueueChanged();
 
       try {
@@ -222,11 +290,16 @@ async function processScopeQueue(queue) {
         const result = await operation.run(snapshotOperation(operation));
         operation.status = "succeeded";
         operation.finishedAt = nowIso();
+        logRepoWriteDiagnostic("succeeded", operation, { finishedAt: operation.finishedAt });
         operation.resolve(result);
       } catch (error) {
         operation.status = "failed";
         operation.finishedAt = nowIso();
         operation.error = error?.message ?? String(error);
+        logRepoWriteDiagnostic("failed", operation, {
+          finishedAt: operation.finishedAt,
+          error: operation.error,
+        });
         if (operation.recordFailure !== false) {
           recordRepoQueueError({
             ...(operation.errorTarget ?? {}),
@@ -351,11 +424,17 @@ export function enqueueRepoWrite(options = {}) {
   }
 
   const operationId = normalizeString(options.operationId) || `repo-write-${nextRepoWriteOperationId++}`;
+  const kind = normalizeString(options.kind) || "repoWrite";
+  const operationType = normalizeOperationType(options.operationType, kind);
   const operation = {
     operationId,
     scope,
-    kind: normalizeString(options.kind) || "repoWrite",
+    kind,
+    operationType,
     label: normalizeString(options.label),
+    priority: operationType === "localEditorWrite"
+      ? "durableLocal"
+      : normalizePriority(options.priority),
     status: "queued",
     metadata: cloneQueueValue(options.metadata ?? null),
     queuedAt: nowIso(),
@@ -378,7 +457,19 @@ export function enqueueRepoWrite(options = {}) {
 
   operationsById.set(operation.operationId, operation);
   const queue = queueForScope(scope);
-  queue.items.push(operation.operationId);
+  const insertIndex = queue.items.findIndex((queuedOperationId) => {
+    const queuedOperation = operationsById.get(queuedOperationId);
+    return priorityRank(queuedOperation?.priority) < priorityRank(operation.priority);
+  });
+  if (insertIndex === -1) {
+    queue.items.push(operation.operationId);
+  } else {
+    queue.items.splice(insertIndex, 0, operation.operationId);
+  }
+  logRepoWriteDiagnostic("queued", operation, {
+    queuedCount: queue.items.length,
+    insertedAt: insertIndex === -1 ? queue.items.length - 1 : insertIndex,
+  });
   emitQueueChanged();
   void processScopeQueue(queue);
   return promise;
@@ -393,12 +484,23 @@ export function getRepoWriteQueueSnapshot(scope = null) {
   const operations = queues.flatMap((queue) => queue.operations);
   const queuedCount = operations.filter((operation) => operation.status === "queued").length;
   const runningCount = operations.filter((operation) => operation.status === "running").length;
+  const activeLocalWrites = operations.filter((operation) =>
+    ACTIVE_REPO_WRITE_STATUSES.has(operation.status)
+    && LOCAL_REPO_WRITE_OPERATION_TYPES.has(operation.operationType),
+  );
+  const activeRemoteSync = operations.filter((operation) =>
+    ACTIVE_REPO_WRITE_STATUSES.has(operation.status)
+    && REMOTE_REPO_WRITE_OPERATION_TYPES.has(operation.operationType),
+  );
 
   return {
     queuedCount,
     runningCount,
     activeCount: queuedCount + runningCount,
     hasActiveWrites: queuedCount + runningCount > 0,
+    hasActiveLocalWrites: activeLocalWrites.length > 0,
+    hasActiveRemoteSync: activeRemoteSync.length > 0,
+    hasRunningRemoteSync: activeRemoteSync.some((operation) => operation.status === "running"),
     scopes: queues,
     operations,
   };
@@ -406,6 +508,14 @@ export function getRepoWriteQueueSnapshot(scope = null) {
 
 export function repoWriteQueueHasActiveWrites(scope = null) {
   return getRepoWriteQueueSnapshot(scope).hasActiveWrites;
+}
+
+export function repoWriteQueueHasActiveLocalWrites(scope = null) {
+  return getRepoWriteQueueSnapshot(scope).hasActiveLocalWrites;
+}
+
+export function repoWriteQueueHasRunningRemoteSync(scope = null) {
+  return getRepoWriteQueueSnapshot(scope).hasRunningRemoteSync;
 }
 
 export function subscribeRepoWriteQueue(listener) {

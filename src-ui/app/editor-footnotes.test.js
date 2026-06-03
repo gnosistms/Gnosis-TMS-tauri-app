@@ -17,6 +17,20 @@ test("normalizeEditorFootnotes reads legacy single and labeled multi-footnote te
   ]);
 });
 
+test("normalizeEditorFootnotes reads adjacent blank legacy markers as separate notes", () => {
+  assert.deepEqual(normalizeEditorFootnotes("[1] fdsfd\n\n[2] [3]"), [
+    { marker: 1, text: "fdsfd" },
+    { marker: 2, text: "" },
+    { marker: 3, text: "" },
+  ]);
+});
+
+test("normalizeEditorFootnotes preserves inline marker references in note text", () => {
+  assert.deepEqual(normalizeEditorFootnotes("[1] see [3]"), [
+    { marker: 1, text: "see [3]" },
+  ]);
+});
+
 test("normalizeEditorRowFootnotesForSave keeps saved row text unchanged for missing markers", () => {
   assert.deepEqual(
     normalizeEditorRowFootnotesForSave("Body", [{ marker: 1, text: "Note" }]),
@@ -49,6 +63,13 @@ test("normalizeEditorRowFootnotesForSave leaves duplicate and unknown text marke
       text: "A [2] B [2] C [100]",
       footnotes: [{ marker: 2, text: "Second note" }],
     },
+  );
+});
+
+test("serializeEditorFootnotesForLegacy canonicalizes adjacent blank legacy markers", () => {
+  assert.equal(
+    serializeEditorFootnotesForLegacy("[1] fdsfd\n\n[2] [3]"),
+    "[1] fdsfd\n\n[2]\n\n[3]",
   );
 });
 

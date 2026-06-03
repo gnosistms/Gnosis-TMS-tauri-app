@@ -47,6 +47,7 @@ globalThis.HTMLTextAreaElement = FakeTextarea;
 
 const {
   syncAutoSizeTextarea,
+  syncEditorConflictResolutionTextareaHeight,
   syncEditorRowTextareaHeight,
 } = await import("./autosize.js");
 
@@ -112,4 +113,27 @@ test("inactive editor textarea autosize uses one computed line instead of fixed 
   syncEditorRowTextareaHeight(textarea);
 
   assert.equal(textarea.style.height, "42px");
+});
+
+test("conflict resolution textarea grows from one line to content height", () => {
+  globalThis.window = {
+    getComputedStyle() {
+      return {
+        fontSize: "16px",
+        lineHeight: "24px",
+        paddingTop: "12px",
+        paddingBottom: "12px",
+        borderTopWidth: "1px",
+        borderBottomWidth: "1px",
+      };
+    },
+  };
+  const textarea = new FakeTextarea({
+    scrollHeight: 118,
+  });
+
+  syncEditorConflictResolutionTextareaHeight(textarea);
+
+  assert.equal(textarea.style.height, "118px");
+  assert.equal(textarea.style.overflowY, "hidden");
 });

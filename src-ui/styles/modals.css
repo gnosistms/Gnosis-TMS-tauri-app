@@ -1532,7 +1532,7 @@
 }
 
 .editor-conflict-modal__version-text {
-  min-height: 220px;
+  min-height: 0;
   resize: none;
   background: rgba(255, 251, 246, 0.82);
   overflow: auto;
@@ -1542,7 +1542,7 @@
 
 .editor-conflict-modal__version-text--footnote,
 .editor-conflict-modal__final-input--footnote {
-  min-height: 104px;
+  min-height: 0;
   font-style: italic;
 }
 
@@ -1560,7 +1560,8 @@
 }
 
 .editor-conflict-modal__final-input {
-  min-height: 190px;
+  min-height: 44px;
+  overflow-y: hidden;
 }
 
 @media (max-width: 980px) {

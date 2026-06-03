@@ -32,6 +32,10 @@ export function formatAiHistoryModelLabel(modelId) {
 }
 
 export function historyAuthorLabel(entry) {
+  if (isOptimisticEditorHistoryEntry(entry)) {
+    return "Pending local save";
+  }
+
   if (String(entry?.operationType ?? "").trim().toLowerCase() === "import") {
     return "Import file";
   }
@@ -52,6 +56,10 @@ export function historyLastUpdateLabel(entry) {
 export function historyLastUpdateHeadingLabel(entry) {
   if (!entry?.commitSha) {
     return "Last update";
+  }
+
+  if (isOptimisticEditorHistoryEntry(entry)) {
+    return "Pending local save";
   }
 
   if (String(entry?.operationType ?? "").trim().toLowerCase() === "import") {

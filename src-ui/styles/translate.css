@@ -1976,9 +1976,19 @@
 }
 
 .history-group__meta {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
   color: rgba(63, 38, 16, 0.64);
   font-size: 0.95rem;
   white-space: nowrap;
+}
+
+.history-group__spinner {
+  width: 15px;
+  height: 15px;
+  border-color: rgba(164, 112, 41, 0.2);
+  border-top-color: rgba(130, 82, 27, 0.78);
 }
 
 .history-group__entries {

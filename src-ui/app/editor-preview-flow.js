@@ -96,6 +96,32 @@ function focusPreviewSearchInput(selection = null, value = null) {
   });
 }
 
+export async function writeHtmlToClipboard(html) {
+  if (typeof navigator === "undefined" || !navigator.clipboard) {
+    throw new Error("Clipboard access is not available.");
+  }
+
+  if (
+    typeof navigator.clipboard.write === "function"
+    && typeof ClipboardItem !== "undefined"
+    && typeof Blob !== "undefined"
+  ) {
+    await navigator.clipboard.write([
+      new ClipboardItem({
+        "text/html": new Blob([html], { type: "text/html" }),
+      }),
+    ]);
+    return;
+  }
+
+  if (typeof navigator.clipboard.writeText === "function") {
+    await navigator.clipboard.writeText(html);
+    return;
+  }
+
+  throw new Error("Clipboard access is not available.");
+}
+
 export function resetEditorPreviewModeScrollSnapshot() {
   previewModeTranslateScrollSnapshot = null;
 }
@@ -210,13 +236,8 @@ export async function copyEditorPreviewHtml(render) {
     return;
   }
 
-  if (typeof navigator === "undefined" || !navigator.clipboard?.writeText) {
-    showNoticeBadge("Clipboard access is not available.", render, 1800);
-    return;
-  }
-
   try {
-    await navigator.clipboard.writeText(html);
+    await writeHtmlToClipboard(html);
     showNoticeBadge("Copied HTML.", render, 1400);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

@@ -184,6 +184,7 @@ test("optimistic editor history prepends current row state for the active field"
   assert.equal(updatedChapter.history.entries[0].textStyle, "heading1");
   assert.equal(updatedChapter.history.entries[0].reviewed, true);
   assert.equal(updatedChapter.history.entries[0].pleaseCheck, true);
+  assert.equal(updatedChapter.history.entries[0].authorName, "Pending local save");
   assert.equal(updatedChapter.history.entries[1].commitSha, "c1");
 });
 

@@ -1,6 +1,6 @@
 [package]
 name = "gnosis-tms"
-version = "0.8.21"
+version = "0.8.22"
 description = "Gnosis TMS"
 authors = ["you"]
 edition = "2021"
@@ -33,6 +33,7 @@ calamine = "0.26"
 quick-xml = "0.31"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 rusqlite = { version = "0.32", features = ["bundled"] }
+keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service", "crypto-rust"] }
 zeroize = "1"
 regex = "1"
 flate2 = "1"

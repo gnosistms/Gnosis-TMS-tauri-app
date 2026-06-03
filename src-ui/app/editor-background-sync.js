@@ -252,6 +252,18 @@ function hasBlockingPendingWritesForBackgroundSync(chapterState = state.editorCh
   );
 }
 
+function hasLocalEditorWritesBlockingBackgroundSync(chapterState = state.editorChapter) {
+  if (!chapterState?.chapterId) {
+    return false;
+  }
+
+  if (chapterState.dirtyRowIds instanceof Set && chapterState.dirtyRowIds.size > 0) {
+    return true;
+  }
+
+  return false;
+}
+
 function buildBackgroundSyncHandlingSummary(
   syncResult = {},
   chapterState = state.editorChapter,
@@ -524,11 +536,13 @@ async function runEditorBackgroundSync(render, options = {}) {
 
   if (options.skipDirtyFlush !== true) {
     if (await flushDirtyEditorRowsFlow(render, persistenceOperations()) === false) {
+      setEditorBackgroundSyncState("waiting", "");
       return createBackgroundSyncResult();
     }
   }
 
-  if (hasBlockingPendingWritesForBackgroundSync()) {
+  if (hasLocalEditorWritesBlockingBackgroundSync() || hasBlockingPendingWritesForBackgroundSync()) {
+    setEditorBackgroundSyncState("waiting", "");
     return createBackgroundSyncResult();
   }
 
@@ -541,6 +555,7 @@ async function runEditorBackgroundSync(render, options = {}) {
     const payload = await enqueueRepoWrite({
       scope: input.repoScope,
       kind: "editorBackgroundSync",
+      operationType: "remoteSync",
       sourceScreen: "editor",
       metadata: {
         projectId: input.projectId,

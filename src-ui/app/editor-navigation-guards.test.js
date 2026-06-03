@@ -18,7 +18,7 @@ test("leaving the translate editor is blocked when dirty rows cannot be flushed"
   });
 
   assert.equal(allowed, false);
-  assert.deepEqual(notices, ["Finish saving the current row before leaving the editor."]);
+  assert.deepEqual(notices, ["Local save is still pending or failed. Wait for it to finish, or resolve the row before leaving the editor."]);
 });
 
 test("leaving the translate editor proceeds after dirty rows flush", async () => {
@@ -29,7 +29,7 @@ test("leaving the translate editor proceeds after dirty rows flush", async () =>
     currentScreen: "translate",
     nextScreen: "projects",
     render: () => {},
-    flushDirtyEditorRows: async (_render, options) => {
+    flushDirtyEditorRows: async (_render, _operations, options) => {
       flushOptions = options;
       return true;
     },
@@ -37,7 +37,7 @@ test("leaving the translate editor proceeds after dirty rows flush", async () =>
   });
 
   assert.equal(allowed, true);
-  assert.deepEqual(flushOptions, { waitForDurable: false });
+  assert.deepEqual(flushOptions, { waitForDurable: true });
   assert.deepEqual(notices, []);
 });
 

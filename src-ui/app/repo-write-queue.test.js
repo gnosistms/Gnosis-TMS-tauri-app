@@ -107,6 +107,160 @@ test("same-scope repo writes serialize", async () => {
   assert.equal(repoWriteQueueHasActiveWrites("7:project-1:repo-one"), false);
 });
 
+test("durable local writes jump ahead of queued normal writes", async () => {
+  const events = [];
+  const releaseFirstWrite = deferred();
+
+  const first = enqueueRepoWrite({
+    scope: "7:project-1:repo-one",
+    kind: "first",
+    run: async () => {
+      events.push("first:start");
+      await releaseFirstWrite.promise;
+      events.push("first:end");
+    },
+  });
+  const background = enqueueRepoWrite({
+    scope: "7:project-1:repo-one",
+    kind: "editorBackgroundSync",
+    run: async () => {
+      events.push("background:start");
+      events.push("background:end");
+    },
+  });
+  const localSave = enqueueRepoWrite({
+    scope: "7:project-1:repo-one",
+    kind: "editor:rowText",
+    priority: "durableLocal",
+    run: async () => {
+      events.push("local:start");
+      events.push("local:end");
+    },
+  });
+
+  await delay(0);
+  assert.deepEqual(events, ["first:start"]);
+  assert.deepEqual(
+    getRepoWriteQueueSnapshot("7:project-1:repo-one")
+      .scopes[0]
+      .operations
+      .filter((operation) => operation.status === "queued")
+      .map((operation) => operation.kind),
+    ["editor:rowText", "editorBackgroundSync"],
+  );
+
+  releaseFirstWrite.resolve();
+  await Promise.all([first, background, localSave]);
+
+  assert.deepEqual(events, [
+    "first:start",
+    "first:end",
+    "local:start",
+    "local:end",
+    "background:start",
+    "background:end",
+  ]);
+});
+
+test("blocking local metadata writes jump ahead of durable editor writes", async () => {
+  const events = [];
+  const releaseFirstWrite = deferred();
+
+  const first = enqueueRepoWrite({
+    scope: "7:project-1:repo-one",
+    kind: "first",
+    run: async () => {
+      events.push("first:start");
+      await releaseFirstWrite.promise;
+      events.push("first:end");
+    },
+  });
+  const localSave = enqueueRepoWrite({
+    scope: "7:project-1:repo-one",
+    kind: "editor:rowText",
+    operationType: "localEditorWrite",
+    run: async () => {
+      events.push("local:start");
+      events.push("local:end");
+    },
+  });
+  const conflictResolution = enqueueRepoWrite({
+    scope: "7:project-1:repo-one",
+    kind: "editor:clearImportedConflict",
+    operationType: "localMetadataWrite",
+    priority: "blockingLocal",
+    run: async () => {
+      events.push("conflict:start");
+      events.push("conflict:end");
+    },
+  });
+
+  await delay(0);
+  assert.deepEqual(events, ["first:start"]);
+  assert.deepEqual(
+    getRepoWriteQueueSnapshot("7:project-1:repo-one")
+      .scopes[0]
+      .operations
+      .filter((operation) => operation.status === "queued")
+      .map((operation) => operation.kind),
+    ["editor:clearImportedConflict", "editor:rowText"],
+  );
+
+  releaseFirstWrite.resolve();
+  await Promise.all([first, localSave, conflictResolution]);
+
+  assert.deepEqual(events, [
+    "first:start",
+    "first:end",
+    "conflict:start",
+    "conflict:end",
+    "local:start",
+    "local:end",
+  ]);
+});
+
+test("repo queue snapshots expose local write and remote sync state separately", async () => {
+  const releaseRemoteSync = deferred();
+
+  const remoteSync = enqueueRepoWrite({
+    scope: "7:project-1:repo-one",
+    kind: "editorBackgroundSync",
+    operationType: "remoteSync",
+    run: async () => {
+      await releaseRemoteSync.promise;
+    },
+  });
+
+  await delay(0);
+  const runningRemoteSnapshot = getRepoWriteQueueSnapshot("7:project-1:repo-one");
+  assert.equal(runningRemoteSnapshot.hasActiveRemoteSync, true);
+  assert.equal(runningRemoteSnapshot.hasRunningRemoteSync, true);
+  assert.equal(runningRemoteSnapshot.hasActiveLocalWrites, false);
+  assert.equal(runningRemoteSnapshot.operations[0].operationType, "remoteSync");
+
+  releaseRemoteSync.resolve();
+  await remoteSync;
+
+  const releaseLocalWrite = deferred();
+  const localWrite = enqueueRepoWrite({
+    scope: "7:project-1:repo-one",
+    kind: "editor:rowText",
+    operationType: "localEditorWrite",
+    run: async () => {
+      await releaseLocalWrite.promise;
+    },
+  });
+
+  await delay(0);
+  const localSnapshot = getRepoWriteQueueSnapshot("7:project-1:repo-one");
+  assert.equal(localSnapshot.hasActiveLocalWrites, true);
+  assert.equal(localSnapshot.hasActiveRemoteSync, false);
+  assert.equal(localSnapshot.operations[0].operationType, "localEditorWrite");
+
+  releaseLocalWrite.resolve();
+  await localWrite;
+});
+
 test("different repo scopes run concurrently", async () => {
   const events = [];
   const releaseFirstWrite = deferred();

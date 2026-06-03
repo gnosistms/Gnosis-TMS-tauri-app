@@ -7,6 +7,26 @@ fn merge_editor_string_maps(
     local: &BTreeMap<String, String>,
     remote: &BTreeMap<String, String>,
 ) -> Option<BTreeMap<String, String>> {
+    merge_editor_string_maps_by(base, local, remote, |value| value.to_string())
+}
+
+fn merge_editor_footnote_maps(
+    base: &BTreeMap<String, String>,
+    local: &BTreeMap<String, String>,
+    remote: &BTreeMap<String, String>,
+) -> Option<BTreeMap<String, String>> {
+    merge_editor_string_maps_by(base, local, remote, normalize_editor_footnote_merge_value)
+}
+
+fn merge_editor_string_maps_by<F>(
+    base: &BTreeMap<String, String>,
+    local: &BTreeMap<String, String>,
+    remote: &BTreeMap<String, String>,
+    normalize: F,
+) -> Option<BTreeMap<String, String>>
+where
+    F: Fn(&str) -> String,
+{
     let keys: BTreeSet<String> = base
         .keys()
         .chain(local.keys())
@@ -20,12 +40,15 @@ fn merge_editor_string_maps(
         let base_value = base.get(&key).cloned().unwrap_or_default();
         let local_value = local.get(&key).cloned().unwrap_or_default();
         let remote_value = remote.get(&key).cloned().unwrap_or_default();
-        let local_changed = local_value != base_value;
-        let remote_changed = remote_value != base_value;
+        let base_merge_value = normalize(&base_value);
+        let local_merge_value = normalize(&local_value);
+        let remote_merge_value = normalize(&remote_value);
+        let local_changed = local_merge_value != base_merge_value;
+        let remote_changed = remote_merge_value != base_merge_value;
 
         let next_value = if !local_changed {
             remote_value
-        } else if !remote_changed || local_value == remote_value {
+        } else if !remote_changed || local_merge_value == remote_merge_value {
             local_value
         } else {
             return None;
@@ -39,20 +62,169 @@ fn merge_editor_string_maps(
     Some(merged)
 }
 
+fn normalize_editor_footnote_merge_value(value: &str) -> String {
+    let normalized = normalize_editor_footnote_value(value);
+    if normalized.is_empty() {
+        return normalized;
+    }
+
+    let entries = parse_labeled_footnote_text_for_merge(&normalized);
+    if entries.len() <= 1 {
+        return normalized;
+    }
+
+    entries
+        .into_iter()
+        .map(|entry| {
+            let label = format!("[{}]", entry.marker);
+            if entry.text.is_empty() {
+                label
+            } else {
+                format!("{label} {}", entry.text)
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n")
+}
+
+struct ParsedFootnoteEntry {
+    marker: usize,
+    text: String,
+}
+
+struct FootnoteMarkerMatch {
+    marker: usize,
+    marker_start: usize,
+    content_start: usize,
+}
+
+fn parse_labeled_footnote_text_for_merge(value: &str) -> Vec<ParsedFootnoteEntry> {
+    let mut markers = Vec::new();
+    let mut offset = 0usize;
+
+    while let Some(open_relative) = value[offset..].find('[') {
+        let marker_start = offset + open_relative;
+        let Some(close_relative) = value[marker_start + 1..].find(']') else {
+            break;
+        };
+        let marker_end = marker_start + 1 + close_relative;
+        let marker_text = &value[marker_start + 1..marker_end];
+        if marker_text.is_empty() || !marker_text.chars().all(|ch| ch.is_ascii_digit()) {
+            offset = marker_start + 1;
+            continue;
+        }
+
+        let marker = marker_text
+            .parse::<usize>()
+            .ok()
+            .filter(|value| *value > 0)
+            .unwrap_or(markers.len() + 1);
+        let mut content_start = marker_end + 1;
+        while let Some(ch) = value[content_start..].chars().next() {
+            if !ch.is_whitespace() {
+                break;
+            }
+            content_start += ch.len_utf8();
+        }
+
+        let previous_marker: Option<&FootnoteMarkerMatch> = markers.last();
+        let starts_at_source_start = value[..marker_start].trim().is_empty();
+        let starts_line = footnote_marker_starts_line(value, marker_start);
+        let follows_blank_previous_entry = previous_marker
+            .map(|entry| value[entry.content_start..marker_start].trim().is_empty())
+            .unwrap_or(false);
+
+        if starts_at_source_start || starts_line || follows_blank_previous_entry {
+            markers.push(FootnoteMarkerMatch {
+                marker,
+                marker_start,
+                content_start,
+            });
+        }
+        offset = content_start;
+    }
+
+    if markers.is_empty() || !value[..markers[0].marker_start].trim().is_empty() {
+        return Vec::new();
+    }
+
+    markers
+        .iter()
+        .enumerate()
+        .map(|(index, marker)| {
+            let end = markers
+                .get(index + 1)
+                .map(|next_marker| next_marker.marker_start)
+                .unwrap_or(value.len());
+            ParsedFootnoteEntry {
+                marker: marker.marker,
+                text: value[marker.content_start..end].trim().to_string(),
+            }
+        })
+        .collect()
+}
+
+fn footnote_marker_starts_line(value: &str, marker_start: usize) -> bool {
+    let line_start = value[..marker_start]
+        .rfind('\n')
+        .map(|index| index + 1)
+        .unwrap_or(0);
+    value[line_start..marker_start].trim().is_empty()
+}
+
+fn log_row_save_merge_conflict(
+    row_id: &str,
+    label: &str,
+    base: &BTreeMap<String, String>,
+    local: &BTreeMap<String, String>,
+    current: &BTreeMap<String, String>,
+) {
+    if !cfg!(debug_assertions) {
+        return;
+    }
+
+    eprintln!(
+        "[gtms row-save] conflict-detail row='{}' field='{}' base={:?} local={:?} current={:?}",
+        row_id, label, base, local, current
+    );
+}
+
 pub(crate) fn update_gtms_editor_row_fields_sync(
     app: &AppHandle,
     input: UpdateEditorRowFieldsInput,
 ) -> Result<SaveEditorRowWithConcurrencyResponse, String> {
+    if cfg!(debug_assertions) {
+        eprintln!(
+            "[gtms row-save] start installation={} project={:?} repo='{}' chapter='{}' row='{}'",
+            input.installation_id,
+            input.project_id,
+            input.repo_name,
+            input.chapter_id,
+            input.row_id
+        );
+    }
     let repo_path = resolve_project_git_repo_path(
         app,
         input.installation_id,
         input.project_id.as_deref(),
         Some(&input.repo_name),
     )?;
+    if cfg!(debug_assertions) {
+        eprintln!(
+            "[gtms row-save] repo-resolved path='{}'",
+            repo_path.display()
+        );
+    }
     ensure_repo_exists(&repo_path, "The local project repo is not available yet.")?;
     ensure_valid_git_repo(&repo_path, "The local project repo is missing or invalid.")?;
 
     let chapter_path = find_chapter_path_by_id(&repo_path.join("chapters"), &input.chapter_id)?;
+    if cfg!(debug_assertions) {
+        eprintln!(
+            "[gtms row-save] chapter-resolved path='{}'",
+            chapter_path.display()
+        );
+    }
     let chapter_file: StoredChapterFile =
         read_json_file(&chapter_path.join("chapter.json"), "chapter.json")?;
     let row_json_path = chapter_path
@@ -62,6 +234,12 @@ pub(crate) fn update_gtms_editor_row_fields_sync(
     let languages = sanitize_chapter_languages(&chapter_file.languages);
     let source_word_counts = load_source_word_counts(&chapter_path.join("rows"), &languages)?;
     if !row_json_path.exists() {
+        if cfg!(debug_assertions) {
+            eprintln!(
+                "[gtms row-save] row-missing path='{}'",
+                row_json_path.display()
+            );
+        }
         return Ok(SaveEditorRowWithConcurrencyResponse {
             row_id: input.row_id,
             status: "deleted".to_string(),
@@ -89,6 +267,9 @@ pub(crate) fn update_gtms_editor_row_fields_sync(
             )
         })?;
     if original_row_file.lifecycle.state == "deleted" {
+        if cfg!(debug_assertions) {
+            eprintln!("[gtms row-save] row-deleted row='{}'", input.row_id);
+        }
         return Ok(SaveEditorRowWithConcurrencyResponse {
             row_id: input.row_id,
             status: "deleted".to_string(),
@@ -112,13 +293,43 @@ pub(crate) fn update_gtms_editor_row_fields_sync(
     let merged_fields =
         merge_editor_string_maps(&input.base_fields, &input.fields, &current_fields);
     let merged_footnotes =
-        merge_editor_string_maps(&input.base_footnotes, &input.footnotes, &current_footnotes);
+        merge_editor_footnote_maps(&input.base_footnotes, &input.footnotes, &current_footnotes);
     let merged_image_captions = merge_editor_string_maps(
         &input.base_image_captions,
         &input.image_captions,
         &current_image_captions,
     );
     if merged_fields.is_none() || merged_footnotes.is_none() || merged_image_captions.is_none() {
+        if cfg!(debug_assertions) {
+            eprintln!("[gtms row-save] conflict row='{}'", input.row_id);
+        }
+        if merged_fields.is_none() {
+            log_row_save_merge_conflict(
+                &input.row_id,
+                "fields",
+                &input.base_fields,
+                &input.fields,
+                &current_fields,
+            );
+        }
+        if merged_footnotes.is_none() {
+            log_row_save_merge_conflict(
+                &input.row_id,
+                "footnotes",
+                &input.base_footnotes,
+                &input.footnotes,
+                &current_footnotes,
+            );
+        }
+        if merged_image_captions.is_none() {
+            log_row_save_merge_conflict(
+                &input.row_id,
+                "image_captions",
+                &input.base_image_captions,
+                &input.image_captions,
+                &current_image_captions,
+            );
+        }
         return Ok(SaveEditorRowWithConcurrencyResponse {
             row_id: input.row_id,
             status: "conflict".to_string(),
@@ -162,6 +373,13 @@ pub(crate) fn update_gtms_editor_row_fields_sync(
     let mut next_source_word_counts = source_word_counts.clone();
     let mut next_row = original_row_file.clone();
     if updated_row_text != original_row_text {
+        if cfg!(debug_assertions) {
+            eprintln!(
+                "[gtms row-save] write-file:start row='{}' path='{}'",
+                input.row_id,
+                row_json_path.display()
+            );
+        }
         let updated_row_file: StoredRowFile =
             serde_json::from_value(row_value.clone()).map_err(|error| {
                 format!(
@@ -176,7 +394,16 @@ pub(crate) fn update_gtms_editor_row_fields_sync(
             &languages,
         );
         write_text_file(&row_json_path, &updated_row_text)?;
+        if cfg!(debug_assertions) {
+            eprintln!(
+                "[gtms row-save] git-add:start row='{}' path='{}'",
+                input.row_id, relative_row_json
+            );
+        }
         git_output(&repo_path, &["add", &relative_row_json])?;
+        if cfg!(debug_assertions) {
+            eprintln!("[gtms row-save] git-commit:start row='{}'", input.row_id);
+        }
         git_commit_as_signed_in_user_with_metadata(
             app,
             &repo_path,
@@ -193,10 +420,24 @@ pub(crate) fn update_gtms_editor_row_fields_sync(
                 ai_model: Some(input.ai_model.trim()).filter(|value| !value.is_empty()),
             },
         )?;
+        if cfg!(debug_assertions) {
+            eprintln!("[gtms row-save] git-commit:done row='{}'", input.row_id);
+        }
         next_row = updated_row_file;
+    } else if cfg!(debug_assertions) {
+        eprintln!("[gtms row-save] unchanged row='{}'", input.row_id);
     }
 
+    if cfg!(debug_assertions) {
+        eprintln!(
+            "[gtms row-save] clear-imported-conflict:start row='{}'",
+            input.row_id
+        );
+    }
     let _ = clear_imported_editor_conflict_entry(&repo_path, &input.chapter_id, &input.row_id);
+    if cfg!(debug_assertions) {
+        eprintln!("[gtms row-save] done row='{}'", input.row_id);
+    }
 
     Ok(SaveEditorRowWithConcurrencyResponse {
         row_id: input.row_id,
@@ -285,6 +526,28 @@ mod tests {
         );
 
         assert_eq!(merged, Some(map(&[("es", "hola"), ("vi", "")])));
+    }
+
+    #[test]
+    fn merge_editor_footnote_maps_accepts_canonical_legacy_marker_spacing() {
+        let merged = merge_editor_footnote_maps(
+            &map(&[("vi", "[1] fdsfd\n\n[2] [3]")]),
+            &map(&[("vi", "")]),
+            &map(&[("vi", "[1] fdsfd\n\n[2] \n\n[3] ")]),
+        );
+
+        assert_eq!(merged, Some(map(&[("vi", "")])));
+    }
+
+    #[test]
+    fn merge_editor_footnote_maps_preserves_inline_marker_reference_conflicts() {
+        let merged = merge_editor_footnote_maps(
+            &map(&[("vi", "[1] see [3]")]),
+            &map(&[("vi", "")]),
+            &map(&[("vi", "[1] see [4]")]),
+        );
+
+        assert_eq!(merged, None);
     }
 }
 
