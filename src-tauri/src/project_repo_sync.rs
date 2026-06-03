@@ -1061,11 +1061,45 @@ fn sync_project_repo(
 
     if remote_head_oid.trim().is_empty() {
         if local_head_oid.is_some() {
-            git_output(
+            match git_output(
                 repo_path,
                 &["push", "-u", "origin", branch_name],
                 Some(&git_transport_auth),
-            )?;
+            ) {
+                Ok(_) => {}
+                Err(push_error) if git_error_indicates_non_fast_forward(&push_error) => {
+                    let imported_conflicts = pull_with_semantic_editor_conflict_resolution(
+                        repo_path,
+                        branch_name,
+                        &git_transport_auth,
+                    )?;
+                    git_output(
+                        repo_path,
+                        &["push", "-u", "origin", branch_name],
+                        Some(&git_transport_auth),
+                    )?;
+                    let current_head_oid = git_output(repo_path, &["rev-parse", "HEAD"], None).ok();
+                    mark_project_repo_synced(project, repo_path)?;
+                    return Ok(ProjectRepoSyncOutcome {
+                        current_head_oid,
+                        repo_sync_status: if imported_conflicts.is_empty() {
+                            PROJECT_REPO_SYNC_STATUS_UP_TO_DATE.to_string()
+                        } else {
+                            PROJECT_REPO_SYNC_STATUS_IMPORTED_EDITOR_CONFLICTS.to_string()
+                        },
+                        message: if imported_conflicts.is_empty() {
+                            None
+                        } else {
+                            Some(
+                                "Some editor rows still need conflict resolution before GitHub sync can continue."
+                                    .to_string(),
+                            )
+                        },
+                        imported_conflicts,
+                    });
+                }
+                Err(push_error) => return Err(push_error),
+            }
         }
         let current_head_oid = git_output(repo_path, &["rev-parse", "HEAD"], None).ok();
         mark_project_repo_synced(project, repo_path)?;
@@ -1450,6 +1484,14 @@ fn git_error_indicates_empty_rebase_step(error: &str) -> bool {
         || normalized.contains("the previous cherry-pick is now empty")
         || normalized.contains("no changes - did you forget to use 'git add'")
         || normalized.contains("nothing to commit")
+}
+
+fn git_error_indicates_non_fast_forward(error: &str) -> bool {
+    let normalized = error.to_ascii_lowercase();
+    normalized.contains("non-fast-forward")
+        || normalized.contains("fetch first")
+        || normalized.contains("failed to push some refs")
+        || normalized.contains("tip of your current branch is behind")
 }
 
 fn overwrite_conflicted_gtms_project_repos_sync(
@@ -1891,6 +1933,22 @@ mod tests {
             " M chapters/file.txt\n"
         ));
         assert!(!git_status_porcelain_has_unmerged_entries("?? stray.txt\n"));
+    }
+
+    #[test]
+    fn git_error_indicates_non_fast_forward_matches_push_rejections() {
+        assert!(super::git_error_indicates_non_fast_forward(
+            "git push -u origin main failed: ! [rejected] main -> main (non-fast-forward)"
+        ));
+        assert!(super::git_error_indicates_non_fast_forward(
+            "error: failed to push some refs to 'https://github.com/Test-team-32/p1.git'"
+        ));
+        assert!(super::git_error_indicates_non_fast_forward(
+            "hint: Updates were rejected because the tip of your current branch is behind"
+        ));
+        assert!(!super::git_error_indicates_non_fast_forward(
+            "git push origin main failed: fatal: Authentication failed"
+        ));
     }
 
     #[test]
