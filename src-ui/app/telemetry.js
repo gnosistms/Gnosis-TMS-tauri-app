@@ -95,11 +95,13 @@ export function installTelemetryCrashHandlers() {
 }
 
 function resolveDsn() {
-  return String(import.meta.env?.VITE_SENTRY_DSN ?? "").trim();
+  // Injected by Vite `define`; absent under `node --test` (typeof guard avoids a throw).
+  return typeof __GNOSIS_SENTRY_DSN__ !== "undefined" ? String(__GNOSIS_SENTRY_DSN__).trim() : "";
 }
 
 function resolveRelease() {
-  const version = String(import.meta.env?.VITE_APP_VERSION ?? "").trim();
+  const version =
+    typeof __GNOSIS_APP_VERSION__ !== "undefined" ? String(__GNOSIS_APP_VERSION__).trim() : "";
   return version ? `gnosis-tms@${version}` : undefined;
 }
 
