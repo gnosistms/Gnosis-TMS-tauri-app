@@ -212,7 +212,7 @@ export function reportCommandFailure(command, error) {
 
 /**
  * Report a non-fatal backend failure that did not fail the user-facing command. Backend
- * payloads are deliberately small and scrubbed here before they reach Sentry.
+ * payloads use stable operation/reason strings, not raw backend error text.
  */
 export function reportBackendNonfatalError(payload = {}) {
   if (!sentry || !gateOpen()) {
@@ -220,13 +220,11 @@ export function reportBackendNonfatalError(payload = {}) {
   }
   safe(() => {
     const operation = String(payload?.operation ?? "unknown");
-    const message = scrubString(
-      `${operation}: ${payload?.message ?? "unknown non-fatal backend error"}`,
-      COMMAND_ERROR_MAX_LENGTH,
-    );
+    const reason = String(payload?.reason ?? "unknown");
+    const message = scrubString(`${operation}: ${reason}`, COMMAND_ERROR_MAX_LENGTH);
     sentry.captureMessage(message, {
       level: "warning",
-      tags: { source: "backend-nonfatal", operation },
+      tags: { source: "backend-nonfatal", operation, reason },
     });
   });
 }

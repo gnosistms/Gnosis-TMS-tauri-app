@@ -27,19 +27,15 @@ const BACKEND_NONFATAL_TELEMETRY_EVENT: &str = "backend-nonfatal-telemetry";
 #[serde(rename_all = "camelCase")]
 struct BackendNonfatalTelemetryEvent {
     operation: &'static str,
-    message: String,
+    reason: &'static str,
 }
 
-fn report_nonfatal_installation_cache_error(
-    app: &AppHandle,
-    operation: &'static str,
-    error: String,
-) {
+fn report_nonfatal_installation_cache_error(app: &AppHandle, operation: &'static str) {
     let _ = app.emit(
         BACKEND_NONFATAL_TELEMETRY_EVENT,
         BackendNonfatalTelemetryEvent {
             operation,
-            message: error,
+            reason: "installation_access_cache_write_failed",
         },
     );
 }
@@ -49,8 +45,8 @@ fn cache_installation_access_best_effort(
     installation: &GithubAppInstallationInfo,
     operation: &'static str,
 ) {
-    if let Err(error) = cache_installation_access(app, installation) {
-        report_nonfatal_installation_cache_error(app, operation, error);
+    if cache_installation_access(app, installation).is_err() {
+        report_nonfatal_installation_cache_error(app, operation);
     }
 }
 
