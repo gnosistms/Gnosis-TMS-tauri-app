@@ -1,0 +1,151 @@
+# Telemetry & Error Reporting Plan
+
+## Status
+
+Proposed — 2026-06-03. Awaiting decision on the consent model (see Open Decisions).
+
+## Goal
+
+Give the dev team visibility into errors and crashes that clients experience in the
+field. Today there is **no dev-visible telemetry**: a non-fatal error or a panic on a
+user's machine is invisible to the team, so it can persist indefinitely without anyone
+knowing. This drives error-handling decisions toward "fail loud and disruptive" (the only
+current signal is a user complaint). Adding error reporting unlocks graceful degradation
+*with* visibility (and lets us revisit findings like Batch 2 M1).
+
+## Non-goals
+
+- **Product / usage analytics** (which features get used, funnels, etc.). Out of scope.
+  Our users may be under confidentiality obligations; we collect *failures only*, not
+  behavior.
+- **Collecting any document/translation content, secrets, tokens, or identifying data.**
+  See Scrubbing Rules — these are hard constraints.
+
+## Decision: Sentry
+
+Chosen over a DIY broker endpoint because the hard part of error reporting is the
+aggregation layer — grouping/dedup, stack traces, release health, alerting — and Sentry
+provides it out of the box. The JavaScript SDK (`@sentry/browser`) is mature and
+framework-agnostic, which fits our vanilla-ES-modules frontend, and most of our code is
+JS. Rust panic capture is a smaller secondary piece.
+
+- **Start on the free tier** (1 developer seat; metered by monthly event volume — *not*
+  by number of app users). The realistic limit is the event quota, which the
+  sampling/rate-limiting below is designed to respect.
+- **Escape hatch if we outgrow it**: self-hosted Sentry (removes seat/quota billing,
+  could sit alongside the DigitalOcean broker) or **GlitchTip** (open-source,
+  Sentry-API-compatible — same `@sentry/browser` SDK, just a different DSN). No app code
+  changes to switch.
+
+## Architecture
+
+### The JS chokepoint (highest value, lowest effort)
+
+Every Tauri command call goes through the single `invoke()` wrapper in
+[`src-ui/app/runtime.js`](../src-ui/app/runtime.js) (line ~70). Wrapping that one
+function's error path captures **every failing Rust command** from the JS side —
+including the Batch 2 M1 cache error, broker failures, git failures — without touching
+individual call sites. Combined with `@sentry/browser`'s automatic `window.onerror` and
+`unhandledrejection` capture, this is the bulk of our coverage.
+
+```
+window.onerror / unhandledrejection ─┐
+                                      ├─► @sentry/browser ─► Sentry
+runtime.js invoke() error path ──────┘
+```
+
+### Rust panics (Phase 2)
+
+The webview SDK cannot see a Rust-side panic. Add the `sentry` crate plus a
+`std::panic::set_hook` in `lib.rs` setup so crashes that never reach JS are captured.
+A Tauri-specific bridge (community `tauri-plugin-sentry` / `@sentry/tauri`-style) can
+route both sides into one project with shared device context — evaluate its maintenance
+status before adopting; the two SDKs working independently is an acceptable fallback.
+
+## What we capture / what we NEVER send (Scrubbing Rules)
+
+These are hard constraints, not guidelines — our error strings already contain things we
+must not ship.
+
+**Capture:**
+- Error category / command name (e.g. `cache_installation_access failed`)
+- A scrubbed error message
+- App version, OS + arch
+- An **anonymous per-install UUID** (generated once, stored locally) — *not* the GitHub
+  login, name, or email
+- Timestamp, and SDK-collected breadcrumbs (also scrubbed)
+
+**NEVER send:**
+- `session_token`, API keys (OpenAI/Anthropic/etc.), or any Stronghold/broker secret
+- Document or translation **content** (row text, glossary terms, QA entries)
+- Full filesystem paths containing the OS username — **redact the home-dir prefix** (paths
+  like `/Users/<name>/…` → `~/…`)
+- GitHub identity (login/name/email/avatar)
+
+Implement a central `beforeSend` scrub hook (Sentry supports this) that redacts home-dir
+paths and drops known-sensitive keys, plus the same discipline on the Rust side. Reuse the
+existing 200-char truncation discipline from `broker.rs` for any free-text body.
+
+## Sampling, rate-limiting, offline
+
+- **Rate-limit / dedup at the source** so a tight error loop on a few machines can't burn
+  the monthly quota in a day (cap events per error-signature per session).
+- **Error events**: capture at 100% initially (volume is low; failures are what we want).
+  Add sampling only if quota pressure appears.
+- **Performance/replay**: disabled (out of scope, quota-hungry, privacy-sensitive).
+- **Offline**: the SDK queues and retries; confirm the transport tolerates the Tauri
+  webview origin. Reporting is **fire-and-forget** — it must never block or fail a command
+  (the very thing M1 warns against).
+
+## Source maps
+
+Vite minifies the bundle, so configure `vite.config.js` to emit source maps and upload
+them to Sentry at build/release time (Sentry Vite plugin or CLI in the release script).
+Without this, JS stack traces are unreadable.
+
+## Consent & disclosure
+
+Telemetry on potentially NDA-bound users requires explicit handling:
+- A **settings toggle** to turn reporting off.
+- A first-run disclosure of what is (and isn't) collected.
+- A privacy note in the docs.
+
+See Open Decisions for opt-in vs opt-out.
+
+## Phasing
+
+| Phase | Scope | Outcome |
+|---|---|---|
+| **1** | `@sentry/browser` init + `runtime.js` invoke-error capture + `beforeSend` scrubbing + consent toggle + Vite source maps | Dev team sees JS errors and every failing command, scrubbed, from the field |
+| **2** | `sentry` crate + Rust panic hook (+ optional Tauri bridge) | Rust crashes/panics captured |
+| **3** | Revisit graceful-degradation findings (Batch 2 **M1**, and similar) now that "log + continue" is observable | Soften selected hard-fails to degrade-with-visibility |
+
+## Task checklist (Phase 1)
+
+- [ ] Add `@sentry/browser` dependency
+- [ ] Create `src-ui/app/telemetry.js`: `initTelemetry()` (DSN, release = app version,
+      environment), `beforeSend` scrub (home-dir redaction + sensitive-key drop),
+      anonymous install-UUID load/create, consent gate
+- [ ] Call `initTelemetry()` at frontend entry (before other modules load)
+- [ ] Wrap the `invoke()` error path in `runtime.js` to report scrubbed command failures
+      (capture command name + scrubbed error; never the payload)
+- [ ] Add a consent toggle to settings + first-run disclosure
+- [ ] Configure Vite source maps + upload step in the release script
+- [ ] Unit-test the scrubber (home-dir paths redacted; sensitive keys dropped; content
+      never included)
+- [ ] Document the DSN handling (DSN is not a secret, but keep it in config, not hardcoded
+      across the tree)
+
+## Open Decisions
+
+1. **Consent model — opt-in or opt-out?**
+   Recommendation: **opt-out with a clear first-run disclosure** (reporting on by default,
+   prominently disclosed, one-click off). It maximizes the visibility we're trying to gain
+   while respecting users. If our users' confidentiality posture warrants more caution, go
+   **opt-in** (off until the user enables it) — safer, but most users never flip it on, so
+   field visibility drops sharply. *Needs your call.*
+2. **Sentry SaaS free tier to start, or self-host from day one?**
+   Recommendation: start on SaaS free tier to validate value; revisit self-host/GlitchTip
+   if quota or seat limits pinch. Confirm current free-tier event quota at sentry.io/pricing.
+3. **Adopt the Tauri bridge plugin, or run the two SDKs independently?** Decide in Phase 2
+   based on the plugin's maintenance status.
