@@ -4,7 +4,7 @@
   "version": "0.8.25",
   "identifier": "com.gnosis.tms",
   "build": {
-    "beforeBuildCommand": "npm run build",
+    "beforeBuildCommand": "node scripts/build-frontend-for-tauri.mjs",
     "beforeDevCommand": "npm run dev -- --host 127.0.0.1 --port 1431",
     "devUrl": "http://127.0.0.1:1431",
     "frontendDist": "../dist"

@@ -197,6 +197,10 @@ h1 {
 }
 
 .downloads-section {
+  padding-bottom: 22px;
+}
+
+.privacy-section {
   padding-bottom: 64px;
 }
 
@@ -240,6 +244,24 @@ h1 {
 
 .download-item--loading {
   color: var(--app-muted);
+}
+
+.privacy-section h2 {
+  margin-bottom: 12px;
+  font-size: 1.5rem;
+  letter-spacing: 0;
+}
+
+.privacy-section p:not(.eyebrow) {
+  max-width: 860px;
+  margin-bottom: 12px;
+  color: var(--app-muted);
+  font-size: 1rem;
+  line-height: 1.6;
+}
+
+.privacy-section p:last-child {
+  margin-bottom: 0;
 }
 
 .visually-hidden {

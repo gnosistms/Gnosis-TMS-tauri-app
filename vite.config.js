@@ -12,6 +12,7 @@ const pkg = JSON.parse(readFileSync(new URL("./package.json", import.meta.url), 
 const sentryDsn =
   process.env.VITE_SENTRY_DSN
   ?? "https://e7559a7d00ff4e7d95d4b683bda0e6c9@o4511502426243072.ingest.us.sentry.io/4511502532149248";
+const emitSourceMaps = process.env.GNOSIS_EMIT_SOURCEMAPS === "1";
 
 export default defineConfig({
   root: "src-ui",
@@ -27,9 +28,9 @@ export default defineConfig({
   build: {
     outDir: "../dist",
     emptyOutDir: true,
-    // Source maps are required for readable telemetry stack traces (upload step is
-    // configured in the release script once a Sentry auth token is available).
-    sourcemap: true,
+    // Release builds emit hidden source maps only inside the Tauri beforeBuildCommand.
+    // That script uploads them to Sentry and deletes the .map files before packaging.
+    sourcemap: emitSourceMaps ? "hidden" : false,
     chunkSizeWarningLimit: 1200,
     rollupOptions: {
       input: {

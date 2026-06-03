@@ -2,8 +2,11 @@
 
 ## Status
 
-Proposed — 2026-06-03. Consent model decided: **opt-out** (see Consent & disclosure).
-Remaining open decisions are non-blocking (SaaS-vs-self-host, Tauri bridge plugin).
+Phase 1 implementation in progress — 2026-06-03. Consent model decided:
+**opt-out** (see Consent & disclosure). Remaining external setup: configure the
+Sentry project privacy settings and GitHub release secrets/variables for source-map
+upload. Remaining open decisions are non-blocking (SaaS-vs-self-host, Tauri bridge
+plugin).
 
 ## Goal
 
@@ -160,28 +163,35 @@ notice — but never against an explicit opt-out, and never anything beyond the 
 
 ## Task checklist (Phase 1)
 
-- [ ] Add `@sentry/browser` dependency
-- [ ] Create `src-ui/app/telemetry.js`: `initTelemetry()` (DSN, release = app version,
+- [x] Add `@sentry/browser` dependency
+- [x] Create `src-ui/app/telemetry.js`: `initTelemetry()` (DSN, release = app version,
       environment), `beforeSend` scrub (home-dir redaction + sensitive-key drop),
       anonymous install-UUID load/create, `sendDefaultPii: false`, no user context,
       allowlisted breadcrumbs only, consent/disclosure gate
-- [ ] Resolve first-run disclosure and persisted telemetry setting before any *routine*
+- [x] Resolve first-run disclosure and persisted telemetry setting before any *routine*
       telemetry transport can send or queue events
-- [ ] Install crash handlers early (before the gate) and implement the first-run crash
+- [x] Install crash handlers early (before the gate) and implement the first-run crash
       exception: buffer pre-disclosure crashes, transmit once the disclosure is shown,
       discard them on an explicit opt-out
-- [ ] Call `initTelemetry()` at frontend entry only after the disclosure/setting gate is
+- [x] Call `initTelemetry()` at frontend entry only after the disclosure/setting gate is
       resolved (crash handlers excepted, per above)
-- [ ] Wrap the `invoke()` error path in `runtime.js` to report scrubbed command failures
+- [x] Wrap the `invoke()` error path in `runtime.js` to report scrubbed command failures
       (capture command name + scrubbed error; never the payload)
-- [ ] Add a consent toggle to settings + first-run disclosure; turning the toggle off must
+- [x] Add a consent toggle to settings + first-run disclosure; turning the toggle off must
       close/disable the client and prevent queued uploads for the rest of the session
-- [ ] Configure Vite source maps + upload step in the release script
-- [ ] Unit-test the scrubber and consent gate (home-dir paths redacted; sensitive keys
+- [x] Configure Vite source maps + upload step in the release script
+- [x] Unit-test the scrubber and consent gate (home-dir paths redacted; sensitive keys
       dropped; content never included; no *routine* event before disclosure is resolved;
       buffered crash discarded on opt-out)
-- [ ] Document the DSN handling (DSN is not a secret, but keep it in config, not hardcoded
+- [x] Document the DSN handling (DSN is not a secret, but keep it in config, not hardcoded
       across the tree)
+
+### Phase 1 operational setup
+
+- [ ] Add GitHub release secret `SENTRY_AUTH_TOKEN`
+- [ ] Add GitHub release variables `SENTRY_ORG` and `SENTRY_PROJECT`
+- [ ] Run one tagged release and confirm Sentry receives source maps for
+      `gnosis-tms@<version>`
 
 ## Implementation notes
 
