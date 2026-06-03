@@ -1,3 +1,22 @@
+<!--
+SYNC IMPACT REPORT
+  Version change: 1.0.0 -> 1.1.0 (foundational-principles.md)
+  Modified: Version line, Last Amended date
+  Added: F-VIII — Explicit Threat Model Scope
+  Removed: (none)
+  Companion impact: constitution.md does not yet exist; when instantiated it
+    MUST include an Anti-Rationalization Guardrail for deterministic Stronghold
+    key derivation (see F-VIII Known Limitation).
+  Template updates:
+    - plan-template.md: no change needed (no principle-number references)
+    - spec-template.md: no change needed (no principle-number references)
+    - tasks-template.md: no change needed (no principle-number references)
+  Deferred TODOs:
+    - constitution.md not yet created; Anti-Rationalization Guardrail for
+      F-VIII should be added when the constitution is instantiated.
+    - src-tauri/AGENTS.md storage table should be updated to reference F-VIII
+      for the Stronghold and broker session token rows.
+-->
 # Gnosis TMS — Foundational Principles
 
 ## Preamble
@@ -136,6 +155,48 @@ Current invariant
 
 **Rationale**: Integer row indexes make insertions by two clients at the same position produce unresolvable conflicts. Lexicographic keys make the common case (two translators adding rows in different parts of a chapter) merge automatically and correctly.
 
+### F-VIII. Explicit Threat Model Scope
+
+The product's security model is scoped to threats that operate against data
+**in motion** — specifically, AI provider secrets (OpenAI/Anthropic API keys)
+while they are shared between the team owner and individual team members via
+the Stronghold-based keypair sharing protocol. At-rest storage of those secrets
+on each team member's local machine is explicitly outside the product's security
+scope.
+
+Current invariant
+- Stronghold key derivation for local AI provider secret storage MUST use a
+  deterministic SHA-256 password derived from a hardcoded constant and the
+  snapshot file path. This is an accepted design decision, not an oversight.
+- OS credential store integration (macOS Keychain, Linux Secret Service,
+  Windows Credential Manager) MUST NOT be introduced for AI provider secret
+  storage or broker session token storage. The complexity cost — platform-specific
+  code paths, daemon dependencies, test environment complications — is not
+  justified by the security benefit for this threat.
+- A motivated local attacker with filesystem access CAN derive the Stronghold
+  password from known inputs. This is accepted.
+- The broker session bearer token is stored in plain JSON on disk. A local
+  attacker with filesystem access CAN read it. This is accepted.
+- Strong encryption MUST be applied to AI provider secrets while in motion.
+  The Stronghold-based team keypair sharing protocol (owner → members via
+  the broker) is the boundary where that encryption is required and enforced.
+
+Known limitation
+- At-rest confidentiality for AI provider keys and broker session tokens is not
+  guaranteed against a local attacker with filesystem access. Any future security
+  review MUST treat this as an accepted product decision, not a finding to fix.
+
+**Rationale**: Gnosis TMS users are translators working on a desktop tool they
+control. The realistic threat is interception of keys in transit — not a user
+compromising their own machine to recover keys they themselves installed. Adding
+OS keychain integration to harden against the latter creates a fragmented
+cross-platform surface (native keychains behave differently on macOS, Linux, and
+Windows), complicates the test environment, and can surface unexpected UX
+prompts. Hans evaluated this tradeoff explicitly and decided the security benefit
+does not justify the design complexity. This principle records that decision so
+future reviewers — human or AI — do not re-introduce keychain integration as a
+security improvement.
+
 ---
 
-**Version**: 1.0.0 | **Established**: 2026-06-02
+**Version**: 1.1.0 | **Established**: 2026-06-02 | **Last Amended**: 2026-06-03
