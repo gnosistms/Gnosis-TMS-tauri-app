@@ -2,6 +2,7 @@ import { openExternalUrl } from "./runtime.js";
 import { createAuthActions } from "./actions/auth-actions.js";
 import { createUpdaterActions } from "./actions/updater-actions.js";
 import { createAiActions } from "./actions/ai-actions.js";
+import { createTelemetryActions } from "./actions/telemetry-actions.js";
 import { createNavigationActions } from "./actions/navigation-actions.js";
 import { isOfflineBlockedAction } from "./offline-policy.js";
 import { showOfflineUnsupportedMessage } from "./offline-ui.js";
@@ -19,6 +20,8 @@ function updateRequiredAllowsAction(action) {
     action === "install-app-update"
     || action === "check-for-updates"
     || action === "dismiss-app-update"
+    || action === "allow-error-reports"
+    || action === "deny-error-reports"
     || action === "noop"
   );
 }
@@ -28,6 +31,7 @@ export function createActionDispatcher(render) {
     createAuthActions(render),
     createUpdaterActions(render),
     createAiActions(render),
+    createTelemetryActions(render),
   ];
 
   const domainHandlers = [

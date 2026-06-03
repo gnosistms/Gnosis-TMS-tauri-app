@@ -13,6 +13,7 @@ import { syncLanguagePickerAlphabetIndexes } from "./app/language-picker-alphabe
 import { initializeConnectivity } from "./app/offline-connectivity.js";
 import { initializePersistentStorage } from "./app/persistent-store.js";
 import { initTelemetry, installTelemetryCrashHandlers } from "./app/telemetry.js";
+import { openTelemetryDisclosureIfNeeded } from "./app/telemetry-disclosure-flow.js";
 import { app, initializeWindowPresentation } from "./app/runtime.js";
 import {
   clearEditorScrollDebugEntries,
@@ -101,6 +102,7 @@ import { renderProjectsScreen } from "./screens/projects.js";
 import { renderQaListEditorScreen } from "./screens/qa-list-editor.js";
 import { renderQaScreen } from "./screens/qa.js";
 import { renderTeamResourceMigrationModal } from "./screens/team-resource-migration-modal.js";
+import { renderTelemetryDisclosureModal } from "./screens/telemetry-disclosure-modal.js";
 import { renderAiKeyScreen } from "./screens/ai-key.js";
 import { renderStartScreen } from "./screens/start.js";
 import { renderTeamsScreen } from "./screens/teams/index.js";
@@ -621,6 +623,7 @@ function renderWithOptions(options = {}) {
     + renderAppUpdateModal(state)
     + renderNavigationLoadingModal(state)
     + renderTeamResourceMigrationModal(state)
+    + renderTelemetryDisclosureModal(state)
     + renderConnectionFailureModal(state);
   syncGlossaryVariantTextareaHeights(app);
   if (app.firstElementChild instanceof HTMLElement) {
@@ -873,9 +876,12 @@ window.__gnosisDebug = {
 async function bootstrap() {
   render();
   await initializePersistentStorage();
-  // Telemetry needs the persistent store (consent + install id); fire-and-forget so it
-  // never delays startup. No-ops until a DSN is configured and the disclosure is shown.
-  void initTelemetry();
+  const needsTelemetryDisclosure = openTelemetryDisclosureIfNeeded(render);
+  if (!needsTelemetryDisclosure) {
+    // Telemetry needs the persistent store (consent + install id); fire-and-forget so it
+    // never delays startup. No-ops until a DSN is configured.
+    void initTelemetry();
+  }
   hydratePersistentAppState();
   await initializeWindowPresentation();
   registerAppEvents(render);

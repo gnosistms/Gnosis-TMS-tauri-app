@@ -165,7 +165,11 @@ export async function initTelemetry() {
  * - disclosure shown but disabled (explicit opt-out) → discard buffered crashes + stop sending
  */
 export function refreshTelemetryState() {
+  const explicitlyOptedOut = safe(() => isDisclosureShown() && !isTelemetryEnabled()) === true;
   if (!initialized || !sentry) {
+    if (explicitlyOptedOut) {
+      crashBuffer.length = 0; // discard buffered first-run crashes before SDK init
+    }
     return;
   }
 
@@ -177,7 +181,6 @@ export function refreshTelemetryState() {
     return;
   }
 
-  const explicitlyOptedOut = safe(() => isDisclosureShown() && !isTelemetryEnabled()) === true;
   if (explicitlyOptedOut) {
     crashBuffer.length = 0; // discard — an explicit opt-out always wins
     safe(() => sentry.close?.());
