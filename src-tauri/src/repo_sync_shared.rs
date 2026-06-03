@@ -26,7 +26,8 @@ use tauri::{AppHandle, Manager, Runtime};
 use uuid::Uuid;
 
 use crate::{
-    broker::broker_get_json_with_session, broker_auth_storage::load_broker_auth_session,
+    broker::broker_get_json_with_session,
+    broker_auth_storage::load_broker_auth_session_internal,
     github::github_client,
 };
 
@@ -235,7 +236,7 @@ struct SignedInGitIdentity {
 }
 
 fn signed_in_git_identity(app: &AppHandle) -> Result<SignedInGitIdentity, String> {
-    let session = load_broker_auth_session(app.clone())?
+    let session = load_broker_auth_session_internal(app)?
         .ok_or_else(|| "Sign in with GitHub before syncing local repos.".to_string())?;
     let login = session.login.trim().to_lowercase();
     if login.is_empty() {

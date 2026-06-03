@@ -121,6 +121,12 @@ fn stronghold_snapshot_path(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(local_data_dir.join(AI_SECRET_SNAPSHOT_FILENAME))
 }
 
+/// Returns the deterministic Stronghold snapshot password used for local AI secrets.
+///
+/// This protects the snapshot while it is handled by Stronghold, but it is not
+/// intended to provide strong at-rest secrecy against someone who already has
+/// access to the local account and app files. The product threat model accepts
+/// that tradeoff to avoid OS keychain prompts for ordinary AI key storage.
 fn stronghold_password(snapshot_path: &Path) -> Vec<u8> {
     let mut hasher = Sha256::new();
     hasher.update(b"gnosis-tms-ai-provider-secrets");
@@ -177,7 +183,9 @@ fn save_store_value(
 ) -> Result<(), String> {
     let normalized_value = value.trim();
     if normalized_value.is_empty() {
-        return delete_store_value(snapshot_path, key, value_label);
+        return Err(format!(
+            "The {value_label} must not be blank. To remove a saved key, use the clear action."
+        ));
     }
 
     let stronghold = open_stronghold(snapshot_path)?;
@@ -296,24 +304,59 @@ fn load_team_ai_member_keypair_at_path(
     }
 }
 
+/// Saves a keypair (public + private PEM) into the Stronghold snapshot.
+///
+/// Both values are validated and both keys are written into the same Stronghold
+/// client in a single open/save cycle so the store is never left with only one
+/// half of the keypair persisted.
 fn save_team_ai_member_keypair_at_path(
     snapshot_path: &Path,
     installation_id: i64,
     public_key_pem: &str,
     private_key_pem: &str,
 ) -> Result<(), String> {
-    save_store_value(
-        snapshot_path,
-        &team_ai_member_public_key_key(installation_id),
-        public_key_pem,
-        "team AI public key",
-    )?;
-    save_store_value(
-        snapshot_path,
-        &team_ai_member_private_key_key(installation_id),
-        private_key_pem,
-        "team AI private key",
-    )?;
+    let normalized_public = public_key_pem.trim();
+    if normalized_public.is_empty() {
+        return Err(
+            "The team AI public key must not be blank. To remove a saved key, use the clear action."
+                .to_string(),
+        );
+    }
+    let normalized_private = private_key_pem.trim();
+    if normalized_private.is_empty() {
+        return Err(
+            "The team AI private key must not be blank. To remove a saved key, use the clear action."
+                .to_string(),
+        );
+    }
+
+    let stronghold = open_stronghold(snapshot_path)?;
+    let client = load_or_create_client(&stronghold)?;
+    let store = client.store();
+
+    store
+        .insert(
+            team_ai_member_public_key_key(installation_id)
+                .as_bytes()
+                .to_vec(),
+            normalized_public.as_bytes().to_vec(),
+            None,
+        )
+        .map_err(|e| format!("Could not save the team AI public key: {e}"))?;
+
+    store
+        .insert(
+            team_ai_member_private_key_key(installation_id)
+                .as_bytes()
+                .to_vec(),
+            normalized_private.as_bytes().to_vec(),
+            None,
+        )
+        .map_err(|e| format!("Could not save the team AI private key: {e}"))?;
+
+    stronghold
+        .save()
+        .map_err(|e| format!("Could not persist the encrypted AI key store: {e}"))?;
 
     Ok(())
 }

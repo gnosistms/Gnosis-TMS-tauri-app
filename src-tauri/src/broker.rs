@@ -1,18 +1,27 @@
 use std::env;
 
-use reqwest::blocking::{Client, Response};
+use reqwest::blocking::{Client, RequestBuilder, Response};
 use reqwest::StatusCode;
 use serde::de::DeserializeOwned;
 use url::Url;
 
 use crate::insecure_github_app_config::INSECURE_GITHUB_APP_BROKER_BASE_URL;
 
+pub(crate) const BROKER_AUTH_REQUIRED_PREFIX: &str = "AUTH_REQUIRED:";
+
+pub(crate) fn broker_client() -> Result<Client, String> {
+    Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|e| format!("Could not create broker HTTP client: {e}"))
+}
+
 pub(crate) fn broker_base_url() -> Result<Url, String> {
     let raw = env_or_insecure_fallback(
-    "GITHUB_APP_BROKER_BASE_URL",
-    INSECURE_GITHUB_APP_BROKER_BASE_URL,
-    "Missing GitHub App broker base URL. Set GITHUB_APP_BROKER_BASE_URL so Gnosis TMS can use your DigitalOcean service.",
-  )?;
+        "GITHUB_APP_BROKER_BASE_URL",
+        INSECURE_GITHUB_APP_BROKER_BASE_URL,
+        "Missing GitHub App broker base URL. Set GITHUB_APP_BROKER_BASE_URL so Gnosis TMS can use your DigitalOcean service.",
+    )?;
 
     let mut url = Url::parse(&raw)
         .map_err(|error| format!("GITHUB_APP_BROKER_BASE_URL is not a valid URL: {error}"))?;
@@ -44,13 +53,7 @@ pub(crate) fn broker_get_json_with_session<T: DeserializeOwned>(
     path: &str,
     session_token: &str,
 ) -> Result<T, String> {
-    let response = client
-        .get(broker_path_url(path)?)
-        .header("Accept", "application/json")
-        .bearer_auth(session_token)
-        .send()
-        .map_err(|error| format!("Could not reach the GitHub App broker: {error}"))?;
-
+    let response = broker_send(client.get(broker_path_url(path)?), session_token)?;
     parse_json_response(response)
 }
 
@@ -60,14 +63,10 @@ pub(crate) fn broker_post_json_with_session<T: DeserializeOwned>(
     body: &serde_json::Value,
     session_token: &str,
 ) -> Result<T, String> {
-    let response = client
-        .post(broker_path_url(path)?)
-        .header("Accept", "application/json")
-        .bearer_auth(session_token)
-        .json(body)
-        .send()
-        .map_err(|error| format!("Could not reach the GitHub App broker: {error}"))?;
-
+    let response = broker_send(
+        client.post(broker_path_url(path)?).json(body),
+        session_token,
+    )?;
     parse_json_response(response)
 }
 
@@ -77,14 +76,10 @@ pub(crate) fn broker_put_json_with_session<T: DeserializeOwned>(
     body: &serde_json::Value,
     session_token: &str,
 ) -> Result<T, String> {
-    let response = client
-        .put(broker_path_url(path)?)
-        .header("Accept", "application/json")
-        .bearer_auth(session_token)
-        .json(body)
-        .send()
-        .map_err(|error| format!("Could not reach the GitHub App broker: {error}"))?;
-
+    let response = broker_send(
+        client.put(broker_path_url(path)?).json(body),
+        session_token,
+    )?;
     parse_json_response(response)
 }
 
@@ -94,14 +89,10 @@ pub(crate) fn broker_post_no_content_with_session(
     body: &serde_json::Value,
     session_token: &str,
 ) -> Result<(), String> {
-    let response = client
-        .post(broker_path_url(path)?)
-        .header("Accept", "application/json")
-        .bearer_auth(session_token)
-        .json(body)
-        .send()
-        .map_err(|error| format!("Could not reach the GitHub App broker: {error}"))?;
-
+    let response = broker_send(
+        client.post(broker_path_url(path)?).json(body),
+        session_token,
+    )?;
     parse_empty_response(response)
 }
 
@@ -111,14 +102,10 @@ pub(crate) fn broker_patch_json_with_session<T: DeserializeOwned>(
     body: &serde_json::Value,
     session_token: &str,
 ) -> Result<T, String> {
-    let response = client
-        .patch(broker_path_url(path)?)
-        .header("Accept", "application/json")
-        .bearer_auth(session_token)
-        .json(body)
-        .send()
-        .map_err(|error| format!("Could not reach the GitHub App broker: {error}"))?;
-
+    let response = broker_send(
+        client.patch(broker_path_url(path)?).json(body),
+        session_token,
+    )?;
     parse_json_response(response)
 }
 
@@ -128,18 +115,11 @@ pub(crate) fn broker_patch_no_content_with_session(
     body: Option<&serde_json::Value>,
     session_token: &str,
 ) -> Result<(), String> {
-    let mut request = client
-        .patch(broker_path_url(path)?)
-        .header("Accept", "application/json")
-        .bearer_auth(session_token);
+    let mut request = client.patch(broker_path_url(path)?);
     if let Some(value) = body {
         request = request.json(value);
     }
-
-    let response = request
-        .send()
-        .map_err(|error| format!("Could not reach the GitHub App broker: {error}"))?;
-
+    let response = broker_send(request, session_token)?;
     parse_empty_response(response)
 }
 
@@ -149,15 +129,22 @@ pub(crate) fn broker_delete_no_content_with_session(
     body: &serde_json::Value,
     session_token: &str,
 ) -> Result<(), String> {
-    let response = client
-        .delete(broker_path_url(path)?)
+    let response = broker_send(
+        client.delete(broker_path_url(path)?).json(body),
+        session_token,
+    )?;
+    parse_empty_response(response)
+}
+
+fn broker_send(
+    request_builder: RequestBuilder,
+    session_token: &str,
+) -> Result<Response, String> {
+    request_builder
         .header("Accept", "application/json")
         .bearer_auth(session_token)
-        .json(body)
         .send()
-        .map_err(|error| format!("Could not reach the GitHub App broker: {error}"))?;
-
-    parse_empty_response(response)
+        .map_err(|e| format!("Could not reach the GitHub App broker: {e}"))
 }
 
 fn env_or_insecure_fallback(
@@ -179,22 +166,27 @@ fn env_or_insecure_fallback(
         .ok_or_else(|| missing_message.to_string())
 }
 
+fn broker_error_string(status: StatusCode, body: &str) -> String {
+    if status == StatusCode::UNAUTHORIZED {
+        return format!(
+            "{BROKER_AUTH_REQUIRED_PREFIX}Your GitHub session expired. Please sign in again."
+        );
+    }
+
+    parse_broker_error_body(body).unwrap_or_else(|| {
+        let truncated = body.chars().take(200).collect::<String>();
+        format!("GitHub App broker request failed with status {status}: {truncated}")
+    })
+}
+
 fn parse_json_response<T: DeserializeOwned>(response: Response) -> Result<T, String> {
     let status = response.status();
     let body = response
         .text()
         .map_err(|error| format!("Could not read the GitHub App broker response: {error}"))?;
 
-    if status == StatusCode::UNAUTHORIZED {
-        return Err(format!(
-            "{BROKER_AUTH_REQUIRED_PREFIX}Your GitHub session expired. Please sign in again."
-        ));
-    }
-
     if !status.is_success() {
-        return Err(parse_broker_error_body(&body).unwrap_or_else(|| {
-            format!("GitHub App broker request failed with status {status}: {body}")
-        }));
+        return Err(broker_error_string(status, &body));
     }
 
     serde_json::from_str::<T>(&body)
@@ -211,15 +203,7 @@ fn parse_empty_response(response: Response) -> Result<(), String> {
         .text()
         .map_err(|error| format!("Could not read the GitHub App broker error response: {error}"))?;
 
-    if status == StatusCode::UNAUTHORIZED {
-        return Err(format!(
-            "{BROKER_AUTH_REQUIRED_PREFIX}Your GitHub session expired. Please sign in again."
-        ));
-    }
-
-    Err(parse_broker_error_body(&body).unwrap_or_else(|| {
-        format!("GitHub App broker request failed with status {status}: {body}")
-    }))
+    Err(broker_error_string(status, &body))
 }
 
 fn parse_broker_error_body(body: &str) -> Option<String> {
@@ -232,4 +216,3 @@ fn parse_broker_error_body(body: &str) -> Option<String> {
                 .map(str::to_string)
         })
 }
-pub(crate) const BROKER_AUTH_REQUIRED_PREFIX: &str = "AUTH_REQUIRED:";

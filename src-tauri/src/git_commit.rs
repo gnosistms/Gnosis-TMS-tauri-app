@@ -3,7 +3,7 @@ use std::path::Path;
 use tauri::AppHandle;
 
 use crate::{
-    broker_auth_storage::load_broker_auth_session,
+    broker_auth_storage::load_broker_auth_session_internal,
     installation_access::ensure_repo_allows_writes,
     repo_app_version::git_commit_app_version_trailer,
     repo_sync_shared::{ensure_repo_local_git_identity, format_git_spawn_error, git_command},
@@ -39,7 +39,7 @@ fn log_git_commit_diagnostic(event: &str, repo_path: &Path, message: &str, paths
 }
 
 fn signed_in_git_author(app: &AppHandle) -> Result<SignedInGitAuthor, String> {
-    let session = load_broker_auth_session(app.clone())?
+    let session = load_broker_auth_session_internal(app)?
         .ok_or_else(|| "Sign in with GitHub before creating local commits.".to_string())?;
     let login = session.login.trim().to_lowercase();
     if login.is_empty() {

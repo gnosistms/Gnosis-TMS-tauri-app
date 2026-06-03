@@ -30,6 +30,7 @@ mod team_ai;
 mod team_metadata_local;
 mod team_repo_migrations;
 mod updater;
+mod util;
 mod window;
 
 #[cfg(target_os = "macos")]
