@@ -2,8 +2,7 @@ use tauri::State;
 
 use crate::{
     broker::{
-        broker_base_url, broker_client, broker_get_json_with_session,
-        broker_post_json_with_session,
+        broker_base_url, broker_client, broker_get_json_with_session, broker_post_json_with_session,
     },
     constants::{BROKER_AUTH_CALLBACK_PATH, GITHUB_CALLBACK_ADDRESS},
     state::{AuthState, PendingBrokerAuth},
@@ -58,22 +57,32 @@ pub(crate) fn begin_broker_auth(
 }
 
 #[tauri::command]
-pub(crate) fn inspect_broker_auth_session(
+pub(crate) async fn inspect_broker_auth_session(
     session_token: String,
 ) -> Result<BrokerSessionProfile, String> {
-    let client = broker_client()?;
-    broker_get_json_with_session(&client, "/api/auth/session", &session_token)
+    tauri::async_runtime::spawn_blocking(move || {
+        let client = broker_client()?;
+        broker_get_json_with_session(&client, "/api/auth/session", &session_token)
+    })
+    .await
+    .map_err(|error| format!("Could not run the broker session inspection task: {error}"))?
 }
 
 #[tauri::command]
-pub(crate) fn refresh_broker_auth_session(session_token: String) -> Result<BrokerSession, String> {
-    let client = broker_client()?;
-    broker_post_json_with_session(
-        &client,
-        "/api/auth/refresh",
-        &serde_json::json!({}),
-        &session_token,
-    )
+pub(crate) async fn refresh_broker_auth_session(
+    session_token: String,
+) -> Result<BrokerSession, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let client = broker_client()?;
+        broker_post_json_with_session(
+            &client,
+            "/api/auth/refresh",
+            &serde_json::json!({}),
+            &session_token,
+        )
+    })
+    .await
+    .map_err(|error| format!("Could not run the broker session refresh task: {error}"))?
 }
 
 pub(crate) fn broker_auth_callback_url() -> String {

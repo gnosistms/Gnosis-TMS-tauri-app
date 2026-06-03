@@ -158,7 +158,13 @@ use crate::{
 };
 
 #[tauri::command]
-fn check_internet_connection() -> bool {
+async fn check_internet_connection() -> bool {
+    tauri::async_runtime::spawn_blocking(check_internet_connection_sync)
+        .await
+        .unwrap_or(false)
+}
+
+fn check_internet_connection_sync() -> bool {
     let client = match reqwest::blocking::Client::builder()
         .timeout(Duration::from_secs(3))
         .build()
