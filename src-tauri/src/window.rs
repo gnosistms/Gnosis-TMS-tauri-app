@@ -3,6 +3,8 @@ use serde::Serialize;
 use std::{fs, path::Path};
 use tauri::Manager;
 
+const LOCAL_DROPPED_FILE_MAX_BYTES: u64 = 25 * 1024 * 1024;
+
 pub(crate) fn focus_main_window(app: &tauri::AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.show();
@@ -36,6 +38,12 @@ pub(crate) fn read_local_dropped_file(path: String) -> Result<LocalDroppedFilePa
     if !metadata.is_file() {
         return Err(format!(
             "The dropped item '{}' is not a file.",
+            file_path.display()
+        ));
+    }
+    if metadata.len() > LOCAL_DROPPED_FILE_MAX_BYTES {
+        return Err(format!(
+            "The dropped file '{}' is too large. Select a file up to 25 MB.",
             file_path.display()
         ));
     }

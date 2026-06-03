@@ -489,14 +489,6 @@ pub fn run() {
         .manage(ProjectRepoSyncStore::default())
         .manage(ProjectImportBatchCancelStore::default())
         .manage(PendingUpdate(Mutex::new(None)))
-        .plugin(
-            tauri_plugin_stronghold::Builder::new(|password| {
-                use sha2::{Digest, Sha256};
-
-                Sha256::digest(password.as_bytes()).to_vec()
-            })
-            .build(),
-        )
         .plugin(store::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
