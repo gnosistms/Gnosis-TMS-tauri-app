@@ -5,9 +5,9 @@ use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
 
 use crate::{
-    broker::broker_get_json_with_session,
+    broker::{broker_client, broker_get_json_with_session},
     broker_auth_storage::load_broker_auth_session_internal,
-    github::{github_client, types::GithubAppInstallationInfo},
+    github::types::GithubAppInstallationInfo,
     storage_paths::installation_data_dir,
 };
 
@@ -168,7 +168,7 @@ fn fetch_installation_access_from_broker(
 ) -> Result<InstallationAccessSnapshot, String> {
     let session = load_broker_auth_session_internal(app)?
         .ok_or_else(|| UNVERIFIED_ACCESS_ERROR.to_string())?;
-    let client = github_client()?;
+    let client = broker_client()?;
     let installation: GithubAppInstallationInfo = broker_get_json_with_session(
         &client,
         &format!("/api/github-app/installations/{installation_id}"),

@@ -14,9 +14,9 @@ use crate::{
         TeamAiCachedProviderSecret, TeamAiMemberKeypair,
     },
     broker::{
-        broker_get_json_with_session, broker_post_json_with_session, broker_put_json_with_session,
+        broker_client, broker_get_json_with_session, broker_post_json_with_session,
+        broker_put_json_with_session,
     },
-    github::github_client,
     installation_access::{
         ensure_installation_allows_team_ai_access, ensure_installation_allows_team_management,
     },
@@ -175,7 +175,7 @@ pub(crate) async fn load_team_ai_broker_public_key(
     session_token: String,
 ) -> Result<TeamAiBrokerPublicKey, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let client = github_client()?;
+        let client = broker_client()?;
         load_team_ai_broker_public_key_with_client(&client, &session_token)
     })
     .await
@@ -189,7 +189,7 @@ pub(crate) async fn load_team_ai_settings(
     session_token: String,
 ) -> Result<Option<TeamAiSettingsRecord>, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let client = github_client()?;
+        let client = broker_client()?;
         load_team_ai_settings_with_client(&client, installation_id, &org_login, &session_token)
     })
     .await
@@ -206,7 +206,7 @@ pub(crate) async fn save_team_ai_settings(
 ) -> Result<TeamAiSettingsRecord, String> {
     tauri::async_runtime::spawn_blocking(move || {
         ensure_installation_allows_team_management(&app, installation_id)?;
-        let client = github_client()?;
+        let client = broker_client()?;
         save_team_ai_settings_with_client(
             &client,
             installation_id,
@@ -226,7 +226,7 @@ pub(crate) async fn load_team_ai_secrets_metadata(
     session_token: String,
 ) -> Result<TeamAiSecretsMetadata, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let client = github_client()?;
+        let client = broker_client()?;
         load_team_ai_secrets_metadata_with_client(
             &client,
             installation_id,
@@ -250,7 +250,7 @@ pub(crate) async fn save_team_ai_provider_secret(
 ) -> Result<TeamAiSecretsMetadata, String> {
     tauri::async_runtime::spawn_blocking(move || {
         ensure_installation_allows_team_management(&app, installation_id)?;
-        let client = github_client()?;
+        let client = broker_client()?;
         save_team_ai_provider_secret_with_client(
             &client,
             installation_id,
@@ -276,7 +276,7 @@ pub(crate) async fn issue_team_ai_provider_secret(
 ) -> Result<TeamAiIssuedProviderSecret, String> {
     tauri::async_runtime::spawn_blocking(move || {
         ensure_installation_allows_team_ai_access(&app, installation_id)?;
-        let client = github_client()?;
+        let client = broker_client()?;
         issue_team_ai_provider_secret_with_client(
             &client,
             installation_id,

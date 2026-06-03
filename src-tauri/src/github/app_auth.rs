@@ -33,14 +33,6 @@ pub(crate) fn begin_github_app_install(
     })
 }
 
-pub(crate) fn github_client() -> Result<reqwest::blocking::Client, String> {
-    reqwest::blocking::Client::builder()
-        .user_agent("GnosisTMS")
-        .timeout(std::time::Duration::from_secs(30))
-        .build()
-        .map_err(|error| error.to_string())
-}
-
 pub(crate) fn github_app_setup_url() -> String {
     format!("http://{GITHUB_CALLBACK_ADDRESS}{GITHUB_APP_SETUP_PATH}")
 }

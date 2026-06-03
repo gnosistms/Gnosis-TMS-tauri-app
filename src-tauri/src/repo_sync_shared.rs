@@ -26,9 +26,8 @@ use tauri::{AppHandle, Manager, Runtime};
 use uuid::Uuid;
 
 use crate::{
-    broker::broker_get_json_with_session,
+    broker::{broker_client, broker_get_json_with_session},
     broker_auth_storage::load_broker_auth_session_internal,
-    github::github_client,
 };
 
 static RESOLVED_GIT_EXECUTABLE: OnceLock<PathBuf> = OnceLock::new();
@@ -189,7 +188,7 @@ pub(crate) fn load_git_transport_token(
     installation_id: i64,
     session_token: &str,
 ) -> Result<String, String> {
-    let client = github_client()?;
+    let client = broker_client()?;
     let response: GitTransportTokenResponse = broker_get_json_with_session(
         &client,
         &format!("/api/github-app/installations/{installation_id}/git-transport-token"),
