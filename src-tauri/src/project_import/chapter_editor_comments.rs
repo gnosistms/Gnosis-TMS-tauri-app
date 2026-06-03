@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Number, Value};
 use tauri::AppHandle;
 
-use crate::broker_auth_storage::load_broker_auth_session;
+use crate::broker_auth_storage::load_broker_auth_session_internal;
 use crate::git_commit::{
     git_commit_as_signed_in_user_with_metadata, GitCommitMetadata as CommitMetadata,
 };
@@ -330,7 +330,7 @@ struct SignedInEditorCommentAuthor {
 }
 
 fn signed_in_editor_comment_author(app: &AppHandle) -> Result<SignedInEditorCommentAuthor, String> {
-    let session = load_broker_auth_session(app.clone())?
+    let session = load_broker_auth_session_internal(app)?
         .ok_or_else(|| "Sign in with GitHub before saving comments.".to_string())?;
     let login = session.login.trim().to_lowercase();
     if login.is_empty() {

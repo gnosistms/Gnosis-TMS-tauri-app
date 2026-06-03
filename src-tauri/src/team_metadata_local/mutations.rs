@@ -1,7 +1,7 @@
 use super::*;
 
 pub(super) fn actor_login(app: &AppHandle) -> Result<Option<String>, String> {
-    let session = load_broker_auth_session(app.clone())?;
+    let session = load_broker_auth_session_internal(app)?;
     Ok(session.and_then(|value| {
         let normalized_login = value.login.trim().to_lowercase();
         if normalized_login.is_empty() {
