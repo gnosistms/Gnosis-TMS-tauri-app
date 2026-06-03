@@ -101,7 +101,7 @@ pub(crate) async fn search_github_users_for_installation(
 }
 
 #[tauri::command]
-pub(crate) fn invite_user_to_organization_for_installation(
+pub(crate) async fn invite_user_to_organization_for_installation(
     app: AppHandle,
     installation_id: i64,
     org_login: String,
@@ -111,19 +111,25 @@ pub(crate) fn invite_user_to_organization_for_installation(
     role: Option<String>,
     session_token: String,
 ) -> Result<GithubOrganizationInvitation, String> {
-    ensure_installation_allows_member_management(&app, installation_id)?;
-    let client = github_client()?;
-    broker_post_json_with_session(
-        &client,
-        &format!("/api/github-app/installations/{installation_id}/orgs/{org_login}/invitations"),
-        &serde_json::json!({
-          "inviteeId": invitee_id,
-          "inviteeLogin": invitee_login,
-          "inviteeEmail": invitee_email,
-          "role": role,
-        }),
-        &session_token,
-    )
+    tauri::async_runtime::spawn_blocking(move || {
+        ensure_installation_allows_member_management(&app, installation_id)?;
+        let client = github_client()?;
+        broker_post_json_with_session(
+            &client,
+            &format!(
+                "/api/github-app/installations/{installation_id}/orgs/{org_login}/invitations"
+            ),
+            &serde_json::json!({
+              "inviteeId": invitee_id,
+              "inviteeLogin": invitee_login,
+              "inviteeEmail": invitee_email,
+              "role": role,
+            }),
+            &session_token,
+        )
+    })
+    .await
+    .map_err(|error| format!("Could not run the organization invitation task: {error}"))?
 }
 
 #[tauri::command]
