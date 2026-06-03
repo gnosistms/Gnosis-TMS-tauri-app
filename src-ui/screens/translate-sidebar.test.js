@@ -765,6 +765,229 @@ test("review sidebar keeps committed last update when editor text matches latest
   assert.doesNotMatch(html, /Current text/);
 });
 
+test("review sidebar labels optimistic history as a pending local save", () => {
+  const html = renderTranslateSidebar(
+    activeEditorChapter({
+      sidebarTab: "review",
+      history: {
+        status: "ready",
+        entries: [
+          {
+            commitSha: "optimistic:op-1",
+            optimistic: true,
+            operationId: "op-1",
+            authorName: "Pending local save",
+            plainText: "Xin chao!",
+            footnote: "",
+            imageCaption: "",
+            reviewed: false,
+            pleaseCheck: false,
+            textStyle: "paragraph",
+          },
+          {
+            commitSha: "latest",
+            authorName: "translator",
+            plainText: "Xin chao",
+            footnote: "",
+            imageCaption: "",
+            reviewed: false,
+            pleaseCheck: false,
+            textStyle: "paragraph",
+          },
+        ],
+      },
+    }),
+    [{
+      id: "row-1",
+      textStyle: "paragraph",
+      sections: [
+        { code: "es", text: "Hola" },
+        { code: "vi", text: "Xin chao!" },
+      ],
+    }],
+    languages,
+    "es",
+    "vi",
+    createAiActionConfigurationState(),
+  );
+
+  assert.match(html, /Saving locally\.\.\./);
+  assert.match(html, /history-group__spinner button__spinner/);
+  assert.doesNotMatch(html, /Not saved yet/);
+  assert.doesNotMatch(html, /This edit is queued for a local save and is not committed yet/);
+  assert.doesNotMatch(html, /Local save op-1/);
+  assert.doesNotMatch(html, /Last update - Saving/);
+});
+
+test("review sidebar shows an error when a pending local save is overdue", () => {
+  const html = renderTranslateSidebar(
+    activeEditorChapter({
+      sidebarTab: "review",
+      history: {
+        status: "ready",
+        entries: [
+          {
+            commitSha: "optimistic:op-1",
+            optimistic: true,
+            operationId: "op-1",
+            authorName: "Pending local save",
+            committedAt: "2000-01-01T00:00:00.000Z",
+            plainText: "Xin chao!",
+            footnote: "",
+            imageCaption: "",
+            reviewed: false,
+            pleaseCheck: false,
+            textStyle: "paragraph",
+          },
+          {
+            commitSha: "latest",
+            authorName: "translator",
+            plainText: "Xin chao",
+            footnote: "",
+            imageCaption: "",
+            reviewed: false,
+            pleaseCheck: false,
+            textStyle: "paragraph",
+          },
+        ],
+      },
+    }),
+    [{
+      id: "row-1",
+      textStyle: "paragraph",
+      sections: [
+        { code: "es", text: "Hola" },
+        { code: "vi", text: "Xin chao!" },
+      ],
+    }],
+    languages,
+    "es",
+    "vi",
+    createAiActionConfigurationState(),
+  );
+
+  assert.match(html, /Local save stalled/);
+  assert.match(html, /Error/);
+  assert.match(html, /This edit is not committed locally yet/);
+  assert.match(html, /Leaving the editor is blocked until it finishes or reports an error/);
+  assert.doesNotMatch(html, /history-group__spinner button__spinner/);
+});
+
+test("history sidebar renders pending local save as one compact saving state", () => {
+  const html = renderTranslateSidebar(
+    activeEditorChapter({
+      sidebarTab: "history",
+      history: {
+        status: "ready",
+        entries: [
+          {
+            commitSha: "optimistic:op-1",
+            optimistic: true,
+            operationId: "op-1",
+            authorName: "Pending local save",
+            statusNote: "Local save editor-operation-3: running.",
+            plainText: "Xin chao!",
+            footnote: "",
+            imageCaption: "",
+            reviewed: false,
+            pleaseCheck: false,
+            textStyle: "paragraph",
+          },
+          {
+            commitSha: "latest",
+            authorName: "translator",
+            committedAt: "2026-06-02T18:00:00.000Z",
+            plainText: "Xin chao",
+            footnote: "",
+            imageCaption: "",
+            reviewed: false,
+            pleaseCheck: false,
+            textStyle: "paragraph",
+          },
+        ],
+      },
+    }),
+    [{
+      id: "row-1",
+      textStyle: "paragraph",
+      sections: [
+        { code: "es", text: "Hola" },
+        { code: "vi", text: "Xin chao!" },
+      ],
+    }],
+    languages,
+    "es",
+    "vi",
+    createAiActionConfigurationState(),
+  );
+
+  assert.match(html, /Saving locally\.\.\./);
+  assert.match(html, /history-group__spinner button__spinner/);
+  assert.match(html, /history-diff__insert">!<\/span>/);
+  assert.doesNotMatch(html, /Pending local save/);
+  assert.doesNotMatch(html, /Local save editor-operation-3/);
+  assert.doesNotMatch(html, />Saving\.\.\.<\/span>/);
+});
+
+test("history sidebar shows pending local save error only when overdue", () => {
+  const html = renderTranslateSidebar(
+    activeEditorChapter({
+      sidebarTab: "history",
+      history: {
+        status: "ready",
+        entries: [
+          {
+            commitSha: "optimistic:op-1",
+            optimistic: true,
+            operationId: "op-1",
+            authorName: "Pending local save",
+            statusNote: "Local save editor-operation-3: running.",
+            committedAt: "2000-01-01T00:00:00.000Z",
+            plainText: "Xin chao!",
+            footnote: "",
+            imageCaption: "",
+            reviewed: false,
+            pleaseCheck: false,
+            textStyle: "paragraph",
+          },
+          {
+            commitSha: "latest",
+            authorName: "translator",
+            committedAt: "2026-06-02T18:00:00.000Z",
+            plainText: "Xin chao",
+            footnote: "",
+            imageCaption: "",
+            reviewed: false,
+            pleaseCheck: false,
+            textStyle: "paragraph",
+          },
+        ],
+      },
+    }),
+    [{
+      id: "row-1",
+      textStyle: "paragraph",
+      sections: [
+        { code: "es", text: "Hola" },
+        { code: "vi", text: "Xin chao!" },
+      ],
+    }],
+    languages,
+    "es",
+    "vi",
+    createAiActionConfigurationState(),
+  );
+
+  assert.match(html, /Local save stalled/);
+  assert.match(html, /Error/);
+  assert.match(html, /This edit is not committed locally yet/);
+  assert.match(html, /Leaving the editor is blocked until it finishes or reports an error/);
+  assert.match(html, /history-diff__insert">!<\/span>/);
+  assert.doesNotMatch(html, /history-group__spinner button__spinner/);
+  assert.doesNotMatch(html, /Local save editor-operation-3/);
+  assert.doesNotMatch(html, />Saving\.\.\.<\/span>/);
+});
+
 test("review sidebar ignores marker-only differences when choosing current text", () => {
   const html = renderTranslateSidebar(
     activeEditorChapter({

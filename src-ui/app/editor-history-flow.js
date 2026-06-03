@@ -216,6 +216,12 @@ export function loadActiveEditorFieldHistory(render, options = {}) {
     editorChapter.activeLanguageCode,
   );
   state.editorChapter = applyActiveEditorFieldHistoryLoading(editorChapter);
+  if (options?.clearOptimisticOperationId) {
+    state.editorChapter = removeOptimisticEditorHistoryEntry(
+      state.editorChapter,
+      options.clearOptimisticOperationId,
+    );
+  }
   render?.({ scope: "translate-sidebar" });
   void fetchEditorFieldHistory(render, requestKey, options);
 }

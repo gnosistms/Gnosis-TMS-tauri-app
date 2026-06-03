@@ -64,26 +64,32 @@ import {
   normalizeEditorRowFootnotesForSave,
   serializeEditorFootnotesForLegacy,
 } from "./editor-footnotes.js";
-import { assertQueuedEditorRowsReady } from "./editor-queued-write.js";
+import {
+  assertQueuedEditorRowsReady,
+  invokeQueuedEditorWriteCommand,
+} from "./editor-queued-write.js";
 import {
   ensureEditorRowReadyForWrite,
   reloadEditorRowFromDisk,
 } from "./editor-row-sync-flow.js";
 import {
-  assertEditorWritePermissionForContext,
   assertCurrentEditorWritePermission,
   editorWriteLockIsActive,
   handleEditorPermissionDenied,
   invokeEditorWriteCommand,
 } from "./editor-write-permission.js";
-import { projectRepoScope } from "./repo-write-queue.js";
-import { invoke } from "./runtime.js";
+import {
+  enqueueRepoWrite,
+  projectRepoScope,
+  publishRepoInvalidation,
+} from "./repo-write-queue.js";
 import {
   renderTranslateBodyPreservingViewport,
 } from "./translate-viewport.js";
 
 const pendingEditorDirtyRowScanFrameByRowId = new Map();
 const pendingEditorRowCommitMetadataByRowId = new Map();
+const PENDING_LOCAL_SAVE_STATUS_REFRESH_MS = 10_000;
 let pendingEditorFootnoteOpenRequest = null;
 let pendingEditorImageCaptionOpenRequest = null;
 
@@ -146,6 +152,16 @@ function statusNoteForEditorMarker(kind, enabled) {
   return "Updated markers";
 }
 
+function statusNoteForPendingLocalSave(operation) {
+  const operationId = typeof operation?.operationId === "string" ? operation.operationId : "";
+  const status = typeof operation?.status === "string" && operation.status.trim()
+    ? operation.status.trim()
+    : "queued";
+  return operationId
+    ? `Local save ${operationId}: ${status}.`
+    : `Local save: ${status}.`;
+}
+
 function applyOptimisticHistoryForRow(render, rowId, languageCode, operation, options = {}) {
   if (!rowId || !languageCode || !operation?.operationId || !state.editorChapter?.chapterId) {
     return;
@@ -169,7 +185,73 @@ function applyOptimisticHistoryForRow(render, rowId, languageCode, operation, op
   );
   if (state.editorChapter !== previousChapter) {
     render?.({ scope: "translate-sidebar" });
+    schedulePendingLocalSaveStatusRefresh(render, operation.operationId);
   }
+}
+
+function schedulePendingLocalSaveStatusRefresh(render, operationId) {
+  if (!operationId || typeof render !== "function") {
+    return;
+  }
+
+  const setTimer =
+    typeof window !== "undefined" && typeof window.setTimeout === "function"
+      ? window.setTimeout.bind(window)
+      : typeof globalThis.setTimeout === "function"
+        ? globalThis.setTimeout.bind(globalThis)
+        : null;
+  if (!setTimer) {
+    return;
+  }
+
+  setTimer(() => {
+    const entries = Array.isArray(state.editorChapter?.history?.entries)
+      ? state.editorChapter.history.entries
+      : [];
+    const stillPending = entries.some(
+      (entry) => entry?.optimistic === true && entry.operationId === operationId,
+    );
+    if (stillPending) {
+      render({ scope: "translate-sidebar" });
+    }
+  }, PENDING_LOCAL_SAVE_STATUS_REFRESH_MS);
+}
+
+function updateOptimisticHistoryStatusForOperation(render, operation) {
+  if (!operation?.operationId || !state.editorChapter?.chapterId) {
+    return;
+  }
+
+  const history = state.editorChapter.history;
+  const entries = Array.isArray(history?.entries) ? history.entries : [];
+  let changed = false;
+  const nextEntries = entries.map((entry) => {
+    if (entry?.optimistic !== true || entry.operationId !== operation.operationId) {
+      return entry;
+    }
+    const statusNote = statusNoteForPendingLocalSave(operation);
+    if (entry.statusNote === statusNote) {
+      return entry;
+    }
+    changed = true;
+    return {
+      ...entry,
+      statusNote,
+    };
+  });
+
+  if (!changed) {
+    return;
+  }
+
+  state.editorChapter = {
+    ...state.editorChapter,
+    history: {
+      ...history,
+      entries: nextEntries,
+    },
+  };
+  render?.({ scope: "translate-sidebar" });
 }
 
 function removeOptimisticHistoryForOperation(render, operation) {
@@ -254,51 +336,6 @@ function normalizeEditorRowFootnotesBeforePersist(row) {
   }
 
   return changed ? { ...row, fields, footnotes } : row;
-}
-
-function queuedEditorWriteTeam(snapshotTeam) {
-  const installationId = Number.isFinite(snapshotTeam?.installationId)
-    ? snapshotTeam.installationId
-    : null;
-  const currentTeam = selectedProjectsTeam();
-  if (
-    installationId !== null
-    && Number.isFinite(currentTeam?.installationId)
-    && currentTeam.installationId === installationId
-  ) {
-    return currentTeam;
-  }
-
-  return (Array.isArray(state.teams) ? state.teams : []).find(
-    (team) => Number.isFinite(team?.installationId) && team.installationId === installationId,
-  ) ?? snapshotTeam;
-}
-
-async function invokeQueuedEditorWriteCommand(command, payload, context, render) {
-  const team = queuedEditorWriteTeam(context?.team ?? null);
-  try {
-    assertEditorWritePermissionForContext({
-      team,
-      project: context?.project ?? null,
-      chapter: context?.chapter ?? null,
-      row: context?.row ?? null,
-      actionKind: context?.actionKind ?? "sharedWrite",
-    });
-  } catch (error) {
-    if (handleEditorPermissionDenied(error, render)) {
-      throw error;
-    }
-    throw error;
-  }
-
-  try {
-    return await invoke(command, payload);
-  } catch (error) {
-    if (handleEditorPermissionDenied(error, render)) {
-      throw error;
-    }
-    throw error;
-  }
 }
 
 function lockConflictFilter() {
@@ -581,6 +618,10 @@ export async function flushDirtyEditorRows(render, operations = {}, options = {}
     }
 
     if (!rowHasFieldChanges(row)) {
+      continue;
+    }
+
+    if (row.saveStatus === "conflict" || row.freshness === "conflict") {
       continue;
     }
 
@@ -1649,17 +1690,47 @@ export async function resolveEditorRowConflict(render, rowId, resolution, operat
     if (row.importedConflictKind) {
       const team = selectedProjectsTeam();
       const context = findChapterContextById(state.editorChapter?.chapterId);
-      if (Number.isFinite(team?.installationId) && context?.project?.name && context?.chapter?.id) {
+      const repoScope = projectRepoScope({ team, project: context?.project ?? null });
+      if (Number.isFinite(team?.installationId) && context?.project?.name && context?.chapter?.id && repoScope) {
         try {
-          await invokeEditorWriteCommand("clear_gtms_editor_imported_conflict", {
-            input: {
-              installationId: team.installationId,
+          await enqueueRepoWrite({
+            scope: repoScope,
+            kind: "editor:clearImportedConflict",
+            operationType: "localMetadataWrite",
+            priority: "blockingLocal",
+            sourceScreen: "editor",
+            metadata: {
               projectId: context.project.id,
-              repoName: context.project.name,
               chapterId: context.chapter.id,
               rowId,
             },
-          }, { render, actionKind: "sharedWrite", rowId });
+            errorTarget: {
+              repoScope,
+              projectId: context.project.id,
+              chapterId: context.chapter.id,
+              rowId,
+            },
+            run: () => invokeEditorWriteCommand("clear_gtms_editor_imported_conflict", {
+              input: {
+                installationId: team.installationId,
+                projectId: context.project.id,
+                repoName: context.project.name,
+                chapterId: context.chapter.id,
+                rowId,
+              },
+            }, { render, actionKind: "sharedWrite", rowId }),
+          });
+          publishRepoInvalidation({
+            keys: [editorChapterInvalidationKey(repoScope, context.chapter.id)],
+            repoScope,
+            sourceScreen: "editor",
+            metadata: {
+              projectId: context.project.id,
+              chapterId: context.chapter.id,
+              rowId,
+              operation: "clearImportedConflict",
+            },
+          });
         } catch (error) {
           if (!handleEditorPermissionDenied(error, render)) {
             showNoticeBadge(error?.message ?? String(error), render);
@@ -1811,9 +1882,32 @@ async function persistEditorRow(render, rowId, operations = {}, options = {}) {
       return;
     }
 
+    if (payload?.status === "skipped-conflict") {
+      removeOptimisticHistoryForOperation(render, operation);
+      render?.({ scope: "translate-sidebar" });
+      return;
+    }
+
     if (payload?.status === "conflict") {
       if (optionsForResult.isStale) {
         removeOptimisticHistoryForOperation(render, operation);
+        const currentRowForStaleConflict = findEditorRowById(value.rowId, state.editorChapter);
+        if (
+          currentRowForStaleConflict
+          && currentRowForStaleConflict.saveStatus !== "conflict"
+          && currentRowForStaleConflict.freshness !== "conflict"
+        ) {
+          updateEditorChapterRow(
+            value.rowId,
+            (candidateRow) => applyEditorRowConflictDetected(candidateRow, payload, {
+              localFields: candidateRow?.fields ?? value.fields,
+              localFootnotes: candidateRow?.footnotes ?? value.footnotes,
+              localImageCaptions: candidateRow?.imageCaptions ?? value.imageCaptions,
+            }),
+          );
+          lockConflictFilter();
+          render?.();
+        }
         return;
       }
 
@@ -1922,6 +2016,7 @@ async function persistEditorRow(render, rowId, operations = {}, options = {}) {
     };
     reconcileDirtyTrackedEditorRows([value.rowId]);
     applyEditorSelectionsToProjectState(state.editorChapter);
+    removeOptimisticHistoryForOperation(render, operation);
     render?.({ scope: "translate-sidebar" });
     if (!optionsForResult.isStale && state.editorChapter.activeRowId === value.rowId) {
       loadActiveEditorFieldHistory(render, {
@@ -1962,16 +2057,26 @@ async function persistEditorRow(render, rowId, operations = {}, options = {}) {
           operationType: commitMetadata?.operation || "editor-update",
           aiModel: commitMetadata?.aiModel || null,
           message: "Update row text",
+          statusNote: statusNoteForPendingLocalSave(operation),
         },
       );
       render?.({ scope: "translate-sidebar" });
     },
-    run: async (operation) => invokeQueuedEditorWriteCommand(
-      "update_gtms_editor_row_fields",
-      { input: rebaseRowTextInputForRun(operation.value) },
-      operation.value.permissionContext,
-      render,
-    ),
+    run: async (operation) => {
+      const currentRow = findEditorRowById(operation.value?.rowId, state.editorChapter);
+      if (currentRow?.saveStatus === "conflict" || currentRow?.freshness === "conflict") {
+        return {
+          status: "skipped-conflict",
+          row: currentRow,
+        };
+      }
+      return invokeQueuedEditorWriteCommand(
+        "update_gtms_editor_row_fields",
+        { input: rebaseRowTextInputForRun(operation.value) },
+        operation.value.permissionContext,
+        render,
+      );
+    },
     onSuccess: (payload, operation) => applyRowTextSavePayload(payload, operation),
     onStaleSuccess: (payload, operation) => applyRowTextSavePayload(payload, operation, { isStale: true }),
     onError: (error, operation) => {
@@ -1985,6 +2090,7 @@ async function persistEditorRow(render, rowId, operations = {}, options = {}) {
       }
       showNoticeBadge(message || "The row could not be saved.", render);
     },
+    onStatusChange: (operation) => updateOptimisticHistoryStatusForOperation(render, operation),
   });
 
   requested.promise.catch(() => {});

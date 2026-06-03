@@ -6,7 +6,11 @@ import {
   updateAiProviderSecretDraft,
 } from "./ai-settings-flow.js";
 import { state } from "./state.js";
-import { syncAutoSizeTextarea, syncEditorRowTextareaHeight } from "./autosize.js";
+import {
+  syncAutoSizeTextarea,
+  syncEditorConflictResolutionTextareaHeight,
+  syncEditorRowTextareaHeight,
+} from "./autosize.js";
 import { syncEditorVirtualizationRowLayout } from "./editor-virtualization.js";
 import { applyEditorRowFieldInput } from "./editor-row-input.js";
 import { cancelPendingTranslateViewportRestores } from "./translate-viewport.js";
@@ -709,12 +713,14 @@ function handleEditorConflictResolutionInput(event) {
   const imageCaptionInput = event.target.closest("[data-editor-conflict-final-image-caption-input]");
   if (imageCaptionInput) {
     updateEditorConflictResolutionFinalImageCaption(imageCaptionInput.value);
+    syncEditorConflictResolutionTextareaHeight(imageCaptionInput);
     return true;
   }
 
   const footnoteInput = event.target.closest("[data-editor-conflict-final-footnote-input]");
   if (footnoteInput) {
     updateEditorConflictResolutionFinalFootnote(footnoteInput.value);
+    syncEditorConflictResolutionTextareaHeight(footnoteInput);
     return true;
   }
 
@@ -724,6 +730,7 @@ function handleEditorConflictResolutionInput(event) {
   }
 
   updateEditorConflictResolutionFinalText(input.value);
+  syncEditorConflictResolutionTextareaHeight(input);
   return true;
 }
 

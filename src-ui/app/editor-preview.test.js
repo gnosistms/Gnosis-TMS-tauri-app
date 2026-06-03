@@ -92,7 +92,7 @@ test("buildEditorPreviewDocument skips all deleted-row preview content", () => {
   assert.doesNotMatch(rendered, /deleted\.png/);
 
   const serialized = serializeEditorPreviewHtml(blocks);
-  assert.match(serialized, /Visible footnote/);
+  assert.match(serialized, /<!-- wp:footnotes \/-->/);
   assert.match(serialized, /Visible caption/);
   assert.match(serialized, /visible\.png/);
   assert.doesNotMatch(serialized, /Deleted text/);
@@ -173,7 +173,9 @@ test("preview footnote refs preserve inline markup when markers are inside tags"
 
   const html = serializeEditorPreviewHtml(blocks);
 
-  assert.match(html, /<strong>Alpha <sup data-fn="Marked note" class="fn">/);
+  assert.match(html, /<!-- wp:paragraph -->/);
+  assert.match(html, /<strong>Alpha <sup data-fn="[0-9a-f-]{36}" class="fn">/);
+  assert.match(html, /<a id="[0-9a-f-]{36}-link" href="#[0-9a-f-]{36}">1<\/a>/);
   assert.match(html, /<\/sup> body<\/strong>/);
   assert.doesNotMatch(html, /&lt;\/strong&gt;/);
 });
@@ -196,8 +198,8 @@ test("preview appends footnote refs with no matching marker without changing tex
 
   const html = serializeEditorPreviewHtml(blocks);
 
-  assert.match(html, /Alpha body \[100\] <sup data-fn="First note" class="fn">/);
-  assert.match(html, /<\/sup> <sup data-fn="Third note" class="fn">/);
+  assert.match(html, /Alpha body \[100\] <sup data-fn="[0-9a-f-]{36}" class="fn">/);
+  assert.match(html, /<\/sup> <sup data-fn="[0-9a-f-]{36}" class="fn"><a id="[0-9a-f-]{36}-link" href="#[0-9a-f-]{36}">2<\/a><\/sup>/);
 });
 
 test("preview ignores escaped literal markers before footnote refs", () => {
@@ -215,7 +217,7 @@ test("preview ignores escaped literal markers before footnote refs", () => {
 
   const html = serializeEditorPreviewHtml(blocks);
 
-  assert.match(html, /Literal \[100\] then note <sup data-fn="One" class="fn">/);
+  assert.match(html, /Literal \[100\] then note <sup data-fn="[0-9a-f-]{36}" class="fn">/);
   assert.match(html, /<\/sup> end<\/p>/);
   assert.doesNotMatch(html, /\[1<sup/);
 });
@@ -288,13 +290,16 @@ test("serializeEditorPreviewHtml uses semantic tags and repo-relative uploaded i
 
   const html = serializeEditorPreviewHtml(blocks);
 
+  assert.match(html, /^<meta charset='utf-8'>/);
+  assert.match(html, /<!-- wp:heading \{"level":1\} -->/);
   assert.match(html, /<h1>Chapter Title<\/h1>/);
-  assert.match(html, /<blockquote>Quoted line <sup data-fn="Footnote line" class="fn">/);
-  assert.match(html, /<ol class="wp-block-footnotes"><li id="fn-row-2-1">Footnote line/);
+  assert.match(html, /<!-- wp:quote -->/);
+  assert.match(html, /<blockquote class="wp-block-quote"><p>Quoted line <sup data-fn="[0-9a-f-]{36}" class="fn">/);
+  assert.match(html, /<!-- wp:footnotes \/-->/);
+  assert.doesNotMatch(html, /<ol class="wp-block-footnotes">/);
   assert.match(html, /<figure/);
   assert.match(html, /src="chapters\/chapter-1\/images\/row-2\/image.png"/);
   assert.match(html, /<figcaption/);
-  assert.match(html, /class="wp-block-footnotes"/);
 });
 
 test("serializeEditorPreviewHtml uses centered HTML for centered plain text", () => {
@@ -310,7 +315,8 @@ test("serializeEditorPreviewHtml uses centered HTML for centered plain text", ()
 
   const html = serializeEditorPreviewHtml(blocks);
 
-  assert.match(html, /<center><p>Centered line<\/p><\/center>/);
+  assert.match(html, /<!-- wp:paragraph \{"align":"center"\} -->/);
+  assert.match(html, /<p class="has-text-align-center">Centered line<\/p>/);
 });
 
 test("preview mode constant remains stable", () => {

@@ -9,11 +9,11 @@ export async function guardLeavingTranslateEditor({
     return true;
   }
 
-  if (await flushDirtyEditorRows(render, { waitForDurable: false })) {
+  if (await flushDirtyEditorRows(render, {}, { waitForDurable: true })) {
     return true;
   }
 
-  showBlockedNotice?.("Finish saving the current row before leaving the editor.");
+  showBlockedNotice?.("Local save is still pending or failed. Wait for it to finish, or resolve the row before leaving the editor.");
   return false;
 }
 

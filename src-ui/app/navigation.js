@@ -129,6 +129,39 @@ function failRefreshButtonFeedback(screen, render) {
   render();
 }
 
+function syncSummaryNeedsLocalEditorReload(syncResult) {
+  if (!syncResult || syncResult.performedBlockingReload === true) {
+    return false;
+  }
+  if (syncResult.requiresChapterReload === true || syncResult.requiresBlockingReload === true) {
+    return true;
+  }
+
+  const payload = syncResult.payload;
+  if (!payload || typeof payload !== "object") {
+    return false;
+  }
+
+  const changedRowKeys = [
+    "changedRowIds",
+    "insertedRowIds",
+    "deletedRowIds",
+    "affectedChapterIds",
+  ];
+  if (changedRowKeys.some((key) => Array.isArray(payload[key]) && payload[key].length > 0)) {
+    return true;
+  }
+
+  return (
+    payload.chapterLanguagesChanged === true
+    || (
+      typeof payload.newHeadSha === "string"
+      && payload.newHeadSha.trim()
+      && payload.newHeadSha !== payload.oldHeadSha
+    )
+  );
+}
+
 export async function handleNavigation(navTarget, render) {
   const previousScreen = state.screen;
   const glossaryNeedsExitSync =
@@ -400,17 +433,19 @@ export async function refreshCurrentScreen(render) {
     }
 
     if (screen === "translate") {
-      await refreshVisibleTeamAccess(render);
+      try {
+        await refreshVisibleTeamAccess(render);
+      } catch (error) {
+        showNoticeBadge(error?.message ?? String(error), render);
+      }
       startEditorBackgroundSyncSession(render, { skipInitialSync: true });
+      await loadSelectedChapterEditorData(render, { preserveVisibleRows: true });
       const syncResult = await syncEditorBackgroundNowWithSummary(render, {
         skipDirtyFlush: true,
         afterLocalCommit: true,
         suppressConservativeRerender: true,
       });
-      if (
-        syncResult?.requiresChapterReload === true
-        && syncResult?.performedBlockingReload !== true
-      ) {
+      if (syncSummaryNeedsLocalEditorReload(syncResult)) {
         await loadSelectedChapterEditorData(render, { preserveVisibleRows: true });
       }
       await completePageSync(render);

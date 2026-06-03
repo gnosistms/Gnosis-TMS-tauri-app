@@ -238,6 +238,7 @@ function renderHistoryStyleNote(styleChange) {
 export function renderHistoryNote(entry, previousEntry, options = {}) {
   const includeMarkers = options.includeMarkers !== false;
   const includeStyle = options.includeStyle !== false;
+  const includeStatusNote = options.includeStatusNote !== false;
   const markerActions = includeMarkers
     ? (
       Array.isArray(entry?.markerNoteActions) && entry.markerNoteActions.length > 0
@@ -267,7 +268,7 @@ export function renderHistoryNote(entry, previousEntry, options = {}) {
     `;
   }
 
-  const statusNote = entry?.statusNote
+  const statusNote = includeStatusNote && entry?.statusNote
     ? `<p class="history-item__note">${escapeHtml(entry.statusNote)}</p>`
     : "";
   return statusNote;

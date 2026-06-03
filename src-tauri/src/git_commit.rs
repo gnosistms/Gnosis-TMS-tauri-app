@@ -26,6 +26,18 @@ struct SignedInGitAuthor {
     email: String,
 }
 
+fn log_git_commit_diagnostic(event: &str, repo_path: &Path, message: &str, paths: &[&str]) {
+    if !cfg!(debug_assertions) {
+        return;
+    }
+    eprintln!(
+        "[gtms git-commit] {event} repo='{}' message='{}' paths={:?}",
+        repo_path.display(),
+        message,
+        paths
+    );
+}
+
 fn signed_in_git_author(app: &AppHandle) -> Result<SignedInGitAuthor, String> {
     let session = load_broker_auth_session_internal(app)?
         .ok_or_else(|| "Sign in with GitHub before creating local commits.".to_string())?;
@@ -67,9 +79,14 @@ pub(crate) fn git_commit_as_signed_in_user_with_metadata(
     paths: &[&str],
     metadata: GitCommitMetadata<'_>,
 ) -> Result<String, String> {
+    log_git_commit_diagnostic("start", repo_path, message, paths);
+    log_git_commit_diagnostic("ensure-writes:start", repo_path, message, paths);
     ensure_repo_allows_writes(app, repo_path)?;
+    log_git_commit_diagnostic("author:start", repo_path, message, paths);
     let author = signed_in_git_author(app)?;
+    log_git_commit_diagnostic("identity:start", repo_path, message, paths);
     ensure_repo_local_git_identity(app, repo_path)?;
+    log_git_commit_diagnostic("git-command:build", repo_path, message, paths);
     let mut command = git_command();
     command
         .arg("commit")
@@ -125,9 +142,11 @@ pub(crate) fn git_commit_as_signed_in_user_with_metadata(
         command.arg("--").args(paths);
     }
 
+    log_git_commit_diagnostic("git-command:run", repo_path, message, paths);
     let output = command
         .output()
         .map_err(|error| format_git_spawn_error(&["commit"], &error))?;
+    log_git_commit_diagnostic("git-command:returned", repo_path, message, paths);
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
@@ -140,10 +159,13 @@ pub(crate) fn git_commit_as_signed_in_user_with_metadata(
             format!("exit status {}", output.status)
         };
         if is_nothing_to_commit(&detail) {
+            log_git_commit_diagnostic("nothing-to-commit", repo_path, message, paths);
             return Ok(String::new());
         }
+        log_git_commit_diagnostic("failed", repo_path, message, paths);
         return Err(format!("git commit failed: {detail}"));
     }
 
+    log_git_commit_diagnostic("succeeded", repo_path, message, paths);
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
