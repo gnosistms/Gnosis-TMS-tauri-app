@@ -209,3 +209,22 @@ export function reportCommandFailure(command, error) {
     });
   });
 }
+
+/**
+ * Report a non-fatal backend failure that did not fail the user-facing command. Backend
+ * payloads use stable operation/reason strings, not raw backend error text.
+ */
+export function reportBackendNonfatalError(payload = {}) {
+  if (!sentry || !gateOpen()) {
+    return;
+  }
+  safe(() => {
+    const operation = String(payload?.operation ?? "unknown");
+    const reason = String(payload?.reason ?? "unknown");
+    const message = scrubString(`${operation}: ${reason}`, COMMAND_ERROR_MAX_LENGTH);
+    sentry.captureMessage(message, {
+      level: "warning",
+      tags: { source: "backend-nonfatal", operation, reason },
+    });
+  });
+}

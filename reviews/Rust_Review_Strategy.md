@@ -267,6 +267,33 @@ source validation).
 
 ---
 
+## Every Batch Review
+
+Each Rust review batch must include a pass over swallowed and non-fatal errors.
+Search for patterns such as `let _ =`, `.ok()`, `.unwrap_or(...)`,
+`if let Err(error) = ...`, ignored event emits, and fire-and-forget background
+work. Classify each site as one of:
+
+- expected silence (for example user cancellation, offline state, permission denial,
+  conflict state, validation failure, or a deliberately optional UI notification);
+- user-visible elsewhere (the command already fails through `invoke()`, so
+  `runtime.js` reports the rejected command and duplicate telemetry is noise);
+- non-fatal defect signal (the user-facing operation continues, but developers need
+  visibility into the failure).
+
+For non-fatal defect signals, recommend a small Tauri event routed through
+`src-ui/app/telemetry.js` instead of failing the command or reporting directly from
+Rust. Rust does not talk to Sentry in Phase 1. Telemetry events must carry only a
+stable operation name and a scrubbed/scrubbable error string; never include command
+payloads, document text, translation content, glossary/QA content, API keys, session
+tokens, GitHub identity, or full local file paths.
+
+Do not recommend telemetry for expected control flow. Do not add per-call-site Sentry
+reporting for normal failed commands, because the frontend `invoke()` wrapper already
+reports rejected commands through the consent-gated telemetry path.
+
+---
+
 ## Summary
 
 | Batch | Domain | Lines | Sessions | Status |
