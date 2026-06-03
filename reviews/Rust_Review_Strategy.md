@@ -272,7 +272,7 @@ source validation).
 | Batch | Domain | Lines | Sessions | Status |
 |---|---|---|---|---|
 | 1 | Auth & Security ★ | 1,470 | 1 | ✅ `2026-06-02-review.md` — all findings resolved 2026-06-03 (see Resolution Status) |
-| 2 | GitHub API | 1,040 | 1 | — |
+| 2 | GitHub API | 1,040 | 1 | ✅ `2026-06-03-review.md` — 0C/0S/2M/4m, findings open |
 | 3 | App Shell | 1,790 | 1 | — |
 | 4 | Git Shared | 1,470 | 1 | — |
 | 5 | Project Sync + Migrations | 3,510 | 1 | — |
