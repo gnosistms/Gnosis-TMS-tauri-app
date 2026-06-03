@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use iota_stronghold::{engine::snapshot::try_set_encrypt_work_factor, Client};
+use iota_stronghold::{engine::snapshot::try_set_encrypt_work_factor, Client, ClientError};
 use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Manager};
 use tauri_plugin_stronghold::stronghold::Stronghold;
@@ -135,6 +135,11 @@ fn stronghold_password(snapshot_path: &Path) -> Vec<u8> {
 }
 
 fn open_stronghold(snapshot_path: &Path) -> Result<Stronghold, String> {
+    // Work factor 0 disables Argon2 key-stretching on the snapshot password. The
+    // password is a deterministic SHA-256 hash (see `stronghold_password`), so key
+    // stretching adds no meaningful protection here; this is the accepted at-rest
+    // tradeoff documented in F-VIII. The value must stay 0 to remain compatible with
+    // snapshots written by earlier versions.
     try_set_encrypt_work_factor(0).map_err(|error| {
         format!("Could not configure the encrypted AI key store work factor: {error}")
     })?;
@@ -143,11 +148,25 @@ fn open_stronghold(snapshot_path: &Path) -> Result<Stronghold, String> {
 }
 
 fn load_or_create_client(stronghold: &Stronghold) -> Result<Client, String> {
-    stronghold
-        .get_client(AI_SECRET_CLIENT_ID)
-        .or_else(|_| stronghold.load_client(AI_SECRET_CLIENT_ID))
-        .or_else(|_| stronghold.create_client(AI_SECRET_CLIENT_ID))
-        .map_err(|error| format!("Could not access the encrypted AI key store: {error}"))
+    // Already loaded into this session's runtime.
+    if let Ok(client) = stronghold.get_client(AI_SECRET_CLIENT_ID) {
+        return Ok(client);
+    }
+    // Not loaded yet: try to load it from the snapshot. (A corrupt snapshot or wrong
+    // password has already failed earlier, inside `Stronghold::new`'s eager
+    // `load_snapshot`, so reaching here means the snapshot itself opened cleanly.)
+    match stronghold.load_client(AI_SECRET_CLIENT_ID) {
+        Ok(client) => Ok(client),
+        // The client is genuinely absent from the snapshot — this is the first time
+        // any secret is stored, so create a fresh client.
+        Err(ClientError::ClientDataNotPresent) => stronghold
+            .create_client(AI_SECRET_CLIENT_ID)
+            .map_err(|error| format!("Could not create the encrypted AI key store: {error}")),
+        // Any other failure means the snapshot opened but this client's state could not
+        // be restored. Surface it instead of silently creating an empty store, which
+        // would make previously saved secrets look like they had vanished.
+        Err(error) => Err(format!("Could not open the encrypted AI key store: {error}")),
+    }
 }
 
 fn load_store_value(
@@ -482,6 +501,32 @@ mod tests {
         let cleared_secret =
             load_ai_provider_secret_at_path(&snapshot_path, AiProviderId::OpenAi, None).unwrap();
         assert_eq!(cleared_secret, None);
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn corrupt_snapshot_surfaces_error_instead_of_reporting_no_secret() {
+        let temp_dir = std::env::temp_dir().join(format!(
+            "gnosis-tms-ai-secret-storage-corrupt-{}",
+            uuid::Uuid::now_v7()
+        ));
+        let snapshot_path = temp_dir.join("ai-provider-secrets.hold");
+
+        std::fs::create_dir_all(&temp_dir).unwrap();
+
+        save_ai_provider_secret_at_path(&snapshot_path, AiProviderId::OpenAi, "sk-test-123", None)
+            .unwrap();
+
+        // Damage the stored snapshot. A corrupt store must NOT silently look like an
+        // account with no saved key — that would mask the real failure (M7).
+        std::fs::write(&snapshot_path, b"this is not a valid stronghold snapshot").unwrap();
+
+        let result = load_ai_provider_secret_at_path(&snapshot_path, AiProviderId::OpenAi, None);
+        assert!(
+            result.is_err(),
+            "a corrupt snapshot should surface an error, got {result:?}"
+        );
 
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
