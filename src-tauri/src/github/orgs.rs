@@ -10,7 +10,8 @@ use crate::installation_access::{
     ensure_installation_allows_team_management,
 };
 use crate::storage_paths::installation_data_dir;
-use tauri::AppHandle;
+use serde::Serialize;
+use tauri::{AppHandle, Emitter};
 
 use super::{
     app_auth::github_client,
@@ -19,6 +20,39 @@ use super::{
         GithubOrganizationMember, GithubTeamMetadataRepo, GithubUserSearchResult,
     },
 };
+
+const BACKEND_NONFATAL_TELEMETRY_EVENT: &str = "backend-nonfatal-telemetry";
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BackendNonfatalTelemetryEvent {
+    operation: &'static str,
+    message: String,
+}
+
+fn report_nonfatal_installation_cache_error(
+    app: &AppHandle,
+    operation: &'static str,
+    error: String,
+) {
+    let _ = app.emit(
+        BACKEND_NONFATAL_TELEMETRY_EVENT,
+        BackendNonfatalTelemetryEvent {
+            operation,
+            message: error,
+        },
+    );
+}
+
+fn cache_installation_access_best_effort(
+    app: &AppHandle,
+    installation: &GithubAppInstallationInfo,
+    operation: &'static str,
+) {
+    if let Err(error) = cache_installation_access(app, installation) {
+        report_nonfatal_installation_cache_error(app, operation, error);
+    }
+}
 
 #[tauri::command]
 pub(crate) async fn list_accessible_github_app_installations(
@@ -30,7 +64,11 @@ pub(crate) async fn list_accessible_github_app_installations(
         let installations: Vec<GithubAppInstallationInfo> =
             broker_get_json_with_session(&client, "/api/github-app/installations", &session_token)?;
         for installation in &installations {
-            cache_installation_access(&app, installation)?;
+            cache_installation_access_best_effort(
+                &app,
+                installation,
+                "list_accessible_github_app_installations.cache_installation_access",
+            );
         }
         Ok(installations)
     })
@@ -51,7 +89,11 @@ pub(crate) async fn inspect_github_app_installation(
             &format!("/api/github-app/installations/{installation_id}"),
             &session_token,
         )?;
-        cache_installation_access(&app, &installation)?;
+        cache_installation_access_best_effort(
+            &app,
+            &installation,
+            "inspect_github_app_installation.cache_installation_access",
+        );
         Ok(installation)
     })
     .await

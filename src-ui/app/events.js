@@ -8,6 +8,7 @@ import { syncGlossaryTermInlineStyleButtons } from "./glossary-term-inline-marku
 import { syncQaTermInlineStyleButtons } from "./qa-term-inline-markup-flow.js";
 import { registerKeyboardShortcutEvents } from "./events/keyboard-shortcuts.js";
 import { registerNativeDropEvents } from "./events/native-drops.js";
+import { reportBackendNonfatalError } from "./telemetry.js";
 import {
   deactivateGlossaryTooltipMark,
   focusEditorFieldFromGlossaryMark,
@@ -31,6 +32,7 @@ import { registerProjectAddTranslationProgress } from "./project-add-translation
 const SYNC_WITH_SERVER_EVENT = "sync-with-server";
 const ERROR_REPORTING_EVENT = "open-error-reporting";
 const CHECK_FOR_UPDATES_EVENT = "check-for-updates";
+const BACKEND_NONFATAL_TELEMETRY_EVENT = "backend-nonfatal-telemetry";
 const PROJECT_EXPORT_SELECT_SELECTOR =
   "[data-project-export-format-select], [data-project-export-language-select]";
 
@@ -206,6 +208,10 @@ export function registerAppEvents(render) {
 
     void listen(CHECK_FOR_UPDATES_EVENT, () => {
       void checkForAppUpdate(render, { silent: false });
+    });
+
+    void listen(BACKEND_NONFATAL_TELEMETRY_EVENT, (event) => {
+      reportBackendNonfatalError(event?.payload);
     });
   }
 }
