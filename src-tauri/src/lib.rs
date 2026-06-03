@@ -280,6 +280,8 @@ async fn probe_ai_provider_model(
 
 const SYNC_WITH_SERVER_MENU_ID: &str = "sync-with-server";
 const SYNC_WITH_SERVER_EVENT: &str = "sync-with-server";
+const ERROR_REPORTING_MENU_ID: &str = "error-reporting";
+const ERROR_REPORTING_EVENT: &str = "open-error-reporting";
 const CHECK_FOR_UPDATES_MENU_ID: &str = "check-for-updates";
 const CHECK_FOR_UPDATES_EVENT: &str = "check-for-updates";
 const EDITOR_SCROLL_DEBUG_LOG_FILE: &str = "editor-scroll-debug.jsonl";
@@ -358,12 +360,15 @@ fn build_app_menu<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result
     let sync_item = MenuItemBuilder::with_id(SYNC_WITH_SERVER_MENU_ID, "Sync with Server")
         .accelerator(sync_shortcut)
         .build(app)?;
+    let error_reporting_item =
+        MenuItemBuilder::with_id(ERROR_REPORTING_MENU_ID, "Error reporting").build(app)?;
     let check_for_updates_item =
         MenuItemBuilder::with_id(CHECK_FOR_UPDATES_MENU_ID, "Check for Updates...").build(app)?;
 
     #[cfg(target_os = "macos")]
     let file_menu = SubmenuBuilder::new(app, "File")
         .item(&sync_item)
+        .item(&error_reporting_item)
         .separator()
         .item(&PredefinedMenuItem::close_window(app, None)?)
         .build()?;
@@ -375,6 +380,7 @@ fn build_app_menu<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result
         true,
         &[
             &sync_item,
+            &error_reporting_item,
             &PredefinedMenuItem::separator(app)?,
             &PredefinedMenuItem::close_window(app, None)?,
             &PredefinedMenuItem::quit(app, None)?,
@@ -497,6 +503,10 @@ pub fn run() {
             if event.id().0 == SYNC_WITH_SERVER_MENU_ID {
                 if let Some(window) = app.get_webview_window("main") {
                     let _ = window.emit(SYNC_WITH_SERVER_EVENT, ());
+                }
+            } else if event.id().0 == ERROR_REPORTING_MENU_ID {
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.emit(ERROR_REPORTING_EVENT, ());
                 }
             } else if event.id().0 == CHECK_FOR_UPDATES_MENU_ID {
                 if let Some(window) = app.get_webview_window("main") {

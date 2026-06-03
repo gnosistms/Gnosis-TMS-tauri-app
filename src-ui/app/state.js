@@ -195,6 +195,7 @@ export function createTeamResourceMigrationModalState() {
 export function createTelemetryDisclosureModalState() {
   return {
     isOpen: false,
+    enabled: true,
   };
 }
 

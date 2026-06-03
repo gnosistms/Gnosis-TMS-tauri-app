@@ -1,5 +1,6 @@
 import {
   isDisclosureShown,
+  isTelemetryEnabled,
   markDisclosureShown,
   setTelemetryEnabled,
 } from "./telemetry-consent.js";
@@ -14,26 +15,39 @@ export function openTelemetryDisclosureIfNeeded(render, store) {
   if (!shouldShowTelemetryDisclosure(store)) {
     return false;
   }
-  state.telemetryDisclosureModal = { isOpen: true };
-  render?.();
+  openTelemetryDisclosureModal(render, store);
   return true;
 }
 
-export async function allowTelemetryReports(render, options = {}) {
+export function openTelemetryDisclosureModal(render, store) {
+  state.telemetryDisclosureModal = {
+    isOpen: true,
+    enabled: isTelemetryEnabled(store),
+  };
+  render?.();
+}
+
+export function updateTelemetryDisclosureEnabled(enabled) {
+  state.telemetryDisclosureModal = {
+    ...state.telemetryDisclosureModal,
+    enabled: enabled === true,
+  };
+}
+
+export async function saveTelemetryDisclosureSettings(render, options = {}) {
   const store = options.store;
-  setTelemetryEnabled(true, store);
+  const enabled = state.telemetryDisclosureModal?.enabled !== false;
+  setTelemetryEnabled(enabled, store);
   markDisclosureShown(store);
-  state.telemetryDisclosureModal = { isOpen: false };
-  await (options.initTelemetry ?? initTelemetry)();
+  state.telemetryDisclosureModal = { isOpen: false, enabled };
+  if (enabled) {
+    await (options.initTelemetry ?? initTelemetry)();
+  }
   (options.refreshTelemetryState ?? refreshTelemetryState)();
   render?.();
 }
 
-export function denyTelemetryReports(render, options = {}) {
-  const store = options.store;
-  setTelemetryEnabled(false, store);
-  markDisclosureShown(store);
-  state.telemetryDisclosureModal = { isOpen: false };
-  (options.refreshTelemetryState ?? refreshTelemetryState)();
-  render?.();
+export function openTelemetryDisclosureSettings(render, store) {
+  openTelemetryDisclosureModal(render, store);
+  return true;
 }

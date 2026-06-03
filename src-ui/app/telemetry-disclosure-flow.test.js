@@ -2,10 +2,11 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
-  allowTelemetryReports,
-  denyTelemetryReports,
+  openTelemetryDisclosureSettings,
   openTelemetryDisclosureIfNeeded,
+  saveTelemetryDisclosureSettings,
   shouldShowTelemetryDisclosure,
+  updateTelemetryDisclosureEnabled,
 } from "./telemetry-disclosure-flow.js";
 import {
   isDisclosureShown,
@@ -26,7 +27,7 @@ function createMemoryStore(initial = {}) {
 }
 
 function resetModal() {
-  state.telemetryDisclosureModal = { isOpen: false };
+  state.telemetryDisclosureModal = { isOpen: false, enabled: true };
 }
 
 test("telemetry disclosure opens only until disclosure has been persisted", () => {
@@ -37,6 +38,7 @@ test("telemetry disclosure opens only until disclosure has been persisted", () =
   assert.equal(shouldShowTelemetryDisclosure(store), true);
   assert.equal(openTelemetryDisclosureIfNeeded(() => { renderCount += 1; }, store), true);
   assert.equal(state.telemetryDisclosureModal.isOpen, true);
+  assert.equal(state.telemetryDisclosureModal.enabled, true);
   assert.equal(renderCount, 1);
 
   store.write("telemetry-disclosure-shown", true);
@@ -47,15 +49,27 @@ test("telemetry disclosure opens only until disclosure has been persisted", () =
   assert.equal(renderCount, 1);
 });
 
-test("allowing telemetry persists opt-in disclosure state and initializes telemetry", async () => {
+test("telemetry settings can open from the file menu with the current saved value", () => {
   resetModal();
-  state.telemetryDisclosureModal = { isOpen: true };
+  const store = createMemoryStore({ "telemetry-enabled": false });
+  let renderCount = 0;
+
+  assert.equal(openTelemetryDisclosureSettings(() => { renderCount += 1; }, store), true);
+
+  assert.equal(state.telemetryDisclosureModal.isOpen, true);
+  assert.equal(state.telemetryDisclosureModal.enabled, false);
+  assert.equal(renderCount, 1);
+});
+
+test("saving telemetry enabled persists opt-in disclosure state and initializes telemetry", async () => {
+  resetModal();
+  state.telemetryDisclosureModal = { isOpen: true, enabled: true };
   const store = createMemoryStore();
   let renderCount = 0;
   let initCount = 0;
   let refreshCount = 0;
 
-  await allowTelemetryReports(() => { renderCount += 1; }, {
+  await saveTelemetryDisclosureSettings(() => { renderCount += 1; }, {
     store,
     initTelemetry: async () => { initCount += 1; },
     refreshTelemetryState: () => { refreshCount += 1; },
@@ -69,21 +83,48 @@ test("allowing telemetry persists opt-in disclosure state and initializes teleme
   assert.equal(renderCount, 1);
 });
 
-test("denying telemetry persists opt-out disclosure state without initializing telemetry", () => {
+test("saving telemetry disabled persists opt-out disclosure state without initializing telemetry", async () => {
   resetModal();
-  state.telemetryDisclosureModal = { isOpen: true };
+  state.telemetryDisclosureModal = { isOpen: true, enabled: false };
   const store = createMemoryStore();
   let renderCount = 0;
+  let initCount = 0;
   let refreshCount = 0;
 
-  denyTelemetryReports(() => { renderCount += 1; }, {
+  await saveTelemetryDisclosureSettings(() => { renderCount += 1; }, {
     store,
+    initTelemetry: async () => { initCount += 1; },
     refreshTelemetryState: () => { refreshCount += 1; },
   });
 
   assert.equal(isDisclosureShown(store), true);
   assert.equal(isTelemetryEnabled(store), false);
   assert.equal(state.telemetryDisclosureModal.isOpen, false);
+  assert.equal(initCount, 0);
+  assert.equal(refreshCount, 1);
+  assert.equal(renderCount, 1);
+});
+
+test("saving telemetry settings persists the switch value", async () => {
+  resetModal();
+  state.telemetryDisclosureModal = { isOpen: true, enabled: true };
+  const store = createMemoryStore();
+  let renderCount = 0;
+  let initCount = 0;
+  let refreshCount = 0;
+
+  updateTelemetryDisclosureEnabled(false);
+  await saveTelemetryDisclosureSettings(() => { renderCount += 1; }, {
+    store,
+    initTelemetry: async () => { initCount += 1; },
+    refreshTelemetryState: () => { refreshCount += 1; },
+  });
+
+  assert.equal(isDisclosureShown(store), true);
+  assert.equal(isTelemetryEnabled(store), false);
+  assert.equal(state.telemetryDisclosureModal.isOpen, false);
+  assert.equal(state.telemetryDisclosureModal.enabled, false);
+  assert.equal(initCount, 0);
   assert.equal(refreshCount, 1);
   assert.equal(renderCount, 1);
 });

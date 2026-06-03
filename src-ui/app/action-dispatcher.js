@@ -20,8 +20,8 @@ function updateRequiredAllowsAction(action) {
     action === "install-app-update"
     || action === "check-for-updates"
     || action === "dismiss-app-update"
-    || action === "allow-error-reports"
-    || action === "deny-error-reports"
+    || action === "open-error-reporting-settings"
+    || action === "save-error-reporting-settings"
     || action === "noop"
   );
 }

@@ -1,15 +1,15 @@
 import {
-  allowTelemetryReports,
-  denyTelemetryReports,
+  openTelemetryDisclosureSettings,
+  saveTelemetryDisclosureSettings,
 } from "../telemetry-disclosure-flow.js";
 
 export function createTelemetryActions(render) {
   return {
-    "allow-error-reports": async () => {
-      await allowTelemetryReports(render);
+    "open-error-reporting-settings": () => {
+      openTelemetryDisclosureSettings(render);
     },
-    "deny-error-reports": () => {
-      denyTelemetryReports(render);
+    "save-error-reporting-settings": async () => {
+      await saveTelemetryDisclosureSettings(render);
     },
   };
 }

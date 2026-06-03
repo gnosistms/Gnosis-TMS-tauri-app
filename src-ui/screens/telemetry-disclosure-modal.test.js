@@ -5,21 +5,31 @@ import { renderTelemetryDisclosureModal } from "./telemetry-disclosure-modal.js"
 
 test("telemetry disclosure modal renders requested copy and actions", () => {
   const html = renderTelemetryDisclosureModal({
-    telemetryDisclosureModal: { isOpen: true },
+    telemetryDisclosureModal: { isOpen: true, enabled: true },
   });
 
   assert.match(html, /Error logging/);
   assert.match(html, /Send error reports to Gnosis TMS developers/);
   assert.match(
     html,
-    /If your app has errors, the development team would like to know so they can fix them\. To allow sending error reports, click Allow error reports\./,
+    /If your app has errors, the development team would like to know so they can fix them\./,
   );
-  assert.match(html, /data-action="deny-error-reports"/);
-  assert.match(html, /Don&#39;t allow/);
-  assert.match(html, /data-action="allow-error-reports"/);
-  assert.match(html, /Allow error reports/);
+  assert.match(html, /data-telemetry-disclosure-enabled-toggle/);
+  assert.match(html, /Send error reports/);
+  assert.match(html, /checked/);
+  assert.match(html, /data-action="save-error-reporting-settings"/);
+  assert.match(html, />Save</);
   assert.match(html, /role="dialog"/);
   assert.match(html, /aria-modal="true"/);
+});
+
+test("telemetry disclosure switch reflects disabled draft state", () => {
+  const html = renderTelemetryDisclosureModal({
+    telemetryDisclosureModal: { isOpen: true, enabled: false },
+  });
+
+  assert.match(html, /data-telemetry-disclosure-enabled-toggle/);
+  assert.doesNotMatch(html, /checked/);
 });
 
 test("telemetry disclosure modal does not render when closed", () => {

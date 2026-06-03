@@ -9,6 +9,7 @@ test("events routes sync shortcuts and sync-with-server through the action dispa
   assert.match(source, /registerKeyboardShortcutEvents\(dispatchAction\)/);
   assert.match(keyboardSource, /dispatchAction\("refresh-page", event\)/);
   assert.match(source, /listen\(SYNC_WITH_SERVER_EVENT, \(\) => \{\s*void dispatchAction\("refresh-page"\);/);
+  assert.match(source, /listen\(ERROR_REPORTING_EVENT, \(\) => \{\s*void dispatchAction\("open-error-reporting-settings"\);/);
   assert.doesNotMatch(source, /void refreshCurrentScreen\(render\);/);
 });
 

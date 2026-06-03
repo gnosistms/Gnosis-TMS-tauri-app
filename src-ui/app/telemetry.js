@@ -184,6 +184,8 @@ export function refreshTelemetryState() {
   if (explicitlyOptedOut) {
     crashBuffer.length = 0; // discard — an explicit opt-out always wins
     safe(() => sentry.close?.());
+    sentry = null;
+    initialized = false;
   }
 }
 
