@@ -1,4 +1,5 @@
-// Keep this in sync with src-tauri/src/constants.rs.
+// Mirrors src-tauri/src/constants.rs. Update both files when changing the import limit.
+// Rust is authoritative; this JS pre-check avoids reading oversized picker files into memory.
 export const MAX_IMPORT_FILE_BYTES = 25 * 1024 * 1024;
 export const IMPORT_FILE_SIZE_LIMIT_LABEL = "25 MB";
 
