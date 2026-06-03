@@ -9,6 +9,8 @@ use readabilityrs::{Readability, ReadabilityOptions};
 use scraper::{ElementRef, Html, Selector};
 use url::Url;
 
+use crate::constants::ensure_within_import_size_limit;
+
 use super::{
     humanize_file_stem,
     languages::{language_display_name, normalize_language_code},
@@ -680,6 +682,11 @@ fn data_image_field(value: &str) -> Option<ImportedFieldImage> {
         .to_ascii_lowercase();
     let extension = image_extension_from_mime_type(&mime_type)?;
     let normalized_data = data.split_whitespace().collect::<String>();
+    ensure_within_import_size_limit(
+        decoded_base64_len(&normalized_data) as u64,
+        &format!("embedded-image.{extension}"),
+    )
+    .ok()?;
     let bytes = general_purpose::STANDARD.decode(normalized_data).ok()?;
     if bytes.is_empty() {
         return None;
@@ -706,8 +713,8 @@ fn local_image_field_from_path(path: PathBuf, source_root: &Path) -> Option<Impo
     if !image_path.starts_with(&root) {
         return None;
     }
-    let bytes = fs::read(&image_path).ok()?;
-    if bytes.is_empty() {
+    let metadata = fs::metadata(&image_path).ok()?;
+    if !metadata.is_file() {
         return None;
     }
     let filename = image_path
@@ -717,16 +724,38 @@ fn local_image_field_from_path(path: PathBuf, source_root: &Path) -> Option<Impo
         .filter(|value| !value.is_empty())
         .unwrap_or("image")
         .to_string();
+    ensure_within_import_size_limit(metadata.len(), &filename).ok()?;
+    let bytes = fs::read(&image_path).ok()?;
+    if bytes.is_empty() {
+        return None;
+    }
     upload_image_field(filename, bytes)
 }
 
 fn upload_image_field(filename: String, bytes: Vec<u8>) -> Option<ImportedFieldImage> {
+    ensure_within_import_size_limit(bytes.len() as u64, &filename).ok()?;
     Some(ImportedFieldImage {
         kind: "upload".to_string(),
         url: None,
         path: None,
         pending_upload: Some(ImportedImageUpload { filename, bytes }),
     })
+}
+
+fn decoded_base64_len(value: &str) -> usize {
+    let padding = value
+        .trim_end()
+        .chars()
+        .rev()
+        .take_while(|character| *character == '=')
+        .count()
+        .min(2);
+    value
+        .len()
+        .saturating_mul(3)
+        .checked_div(4)
+        .unwrap_or(0)
+        .saturating_sub(padding)
 }
 
 fn source_html_directory(source_path: &str) -> Option<PathBuf> {

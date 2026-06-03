@@ -1,4 +1,5 @@
 import { normalizeEditorFieldImage } from "./editor-images.js";
+import { enforceImportFileSizeLimit } from "./import-file-limit.js";
 import { openLocalFilePicker } from "./local-file-picker.js";
 import { findChapterContextById, selectedProjectsTeam } from "./project-context.js";
 import {
@@ -463,6 +464,7 @@ function decodeBase64ToBytes(dataBase64) {
 
 async function coerceUploadBlob(value) {
   if (readableUploadLike(value)) {
+    enforceImportFileSizeLimit(value.size, uploadLikeFileName(value));
     const bytes = await value.arrayBuffer();
     const type = typeof value?.type === "string" ? value.type : "";
     return new Blob([bytes], { type });

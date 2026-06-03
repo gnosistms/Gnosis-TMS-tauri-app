@@ -9,6 +9,7 @@ use tauri::AppHandle;
 use uuid::Uuid;
 
 use crate::{
+    constants::ensure_within_import_size_limit,
     git_commit::git_commit_as_signed_in_user,
     installation_access::{
         ensure_installation_allows_qa_list_management, ensure_installation_allows_qa_list_writes,
@@ -382,8 +383,8 @@ pub(crate) async fn purge_local_gtms_qa_list_repo(
     input: UpdateQaListLifecycleInput,
 ) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || purge_local_gtms_qa_list_repo_sync(&app, input))
-    .await
-    .map_err(|error| format!("The QA list cleanup worker failed: {error}"))?
+        .await
+        .map_err(|error| format!("The QA list cleanup worker failed: {error}"))?
 }
 
 #[tauri::command]
@@ -624,6 +625,7 @@ fn import_tmx_to_gtms_qa_list_repo_sync(
     app: &AppHandle,
     input: ImportTmxToQaListRepoInput,
 ) -> Result<LocalQaListSummary, String> {
+    ensure_within_import_size_limit(input.bytes.len() as u64, &input.file_name)?;
     let parsed = parse_tmx_qa_list(&input.file_name, &input.bytes)?;
     let repo_name = input.repo_name.trim().to_string();
     if repo_name.is_empty() {
@@ -721,6 +723,7 @@ fn import_tmx_to_gtms_qa_list_repo_sync(
 fn inspect_tmx_qa_list_import_sync(
     input: InspectTmxQaListImportInput,
 ) -> Result<QaListImportPreview, String> {
+    ensure_within_import_size_limit(input.bytes.len() as u64, &input.file_name)?;
     let parsed = parse_tmx_qa_list(&input.file_name, &input.bytes)?;
     Ok(QaListImportPreview {
         title: parsed.title,

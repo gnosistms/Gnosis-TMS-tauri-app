@@ -1,4 +1,6 @@
-use crate::short_path_names::allocate_short_image_filename;
+use crate::{
+    constants::ensure_within_import_size_limit, short_path_names::allocate_short_image_filename,
+};
 
 use super::*;
 
@@ -235,7 +237,7 @@ pub(crate) fn upload_gtms_editor_language_image_sync(
         });
     }
 
-    let bytes = decode_uploaded_image_bytes(&input.data_base64)?;
+    let bytes = decode_uploaded_image_bytes(&input.data_base64, &input.filename)?;
     let extension = validated_uploaded_image_extension(&input.filename, &bytes)?;
     let relative_image_path =
         relative_uploaded_image_path(&repo_path, &chapter_path, &input.filename, extension)?;
@@ -619,15 +621,32 @@ fn validated_uploaded_image_extension(
     Ok(detected_extension)
 }
 
-fn decode_uploaded_image_bytes(data_base64: &str) -> Result<Vec<u8>, String> {
+fn decode_uploaded_image_bytes(data_base64: &str, file_label: &str) -> Result<Vec<u8>, String> {
     let normalized_data = data_base64.trim();
     if normalized_data.is_empty() {
         return Err("The uploaded image data is empty.".to_string());
     }
+    ensure_within_import_size_limit(decoded_base64_len(normalized_data) as u64, file_label)?;
 
     base64::engine::general_purpose::STANDARD
         .decode(normalized_data)
         .map_err(|error| format!("Could not decode the uploaded image data: {error}"))
+}
+
+fn decoded_base64_len(value: &str) -> usize {
+    let normalized_len = value.split_whitespace().map(str::len).sum::<usize>();
+    let padding = value
+        .trim_end()
+        .chars()
+        .rev()
+        .take_while(|character| *character == '=')
+        .count()
+        .min(2);
+    normalized_len
+        .saturating_mul(3)
+        .checked_div(4)
+        .unwrap_or(0)
+        .saturating_sub(padding)
 }
 
 pub(super) fn validate_editor_image_url(value: &str) -> Result<String, String> {

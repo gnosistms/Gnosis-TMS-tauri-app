@@ -54,6 +54,7 @@ const {
 const { createProjectImportState, createStatusBadgesState, state } = await import("./state.js");
 const { clearActiveStorageLogin, setActiveStorageLogin } = await import("./team-storage.js");
 const { saveStoredDefaultGlossaryIdForTeam } = await import("./glossary-default-cache.js");
+const { MAX_IMPORT_FILE_BYTES } = await import("./import-file-limit.js");
 const { queryClient } = await import("./query-client.js");
 const { resetProjectWriteCoordinator } = await import("./project-write-coordinator.js");
 
@@ -206,6 +207,42 @@ test("TXT import selection opens source language step before importing", async (
   assert.equal(state.projectImport.pendingFileName, "chapter.txt");
   assert.equal(state.projectImport.selectedSourceLanguageCode, "");
   assert.equal(renderCount, 1);
+});
+
+test("project file picker rejects oversized files before reading bytes", async () => {
+  resetProjectImportTestState();
+  state.projectImport = {
+    ...state.projectImport,
+    isOpen: true,
+    projectId: "project-1",
+    projectTitle: "Project",
+  };
+  let arrayBufferCalled = false;
+  const calls = [];
+  invokeHandler = async (command, payload = {}) => {
+    if (command === "lookup_local_team_metadata_tombstone") {
+      return false;
+    }
+    calls.push({ command, payload });
+    return importedResult("large.xlsx");
+  };
+
+  await importProjectFile(() => {}, {
+    name: "large.xlsx",
+    size: MAX_IMPORT_FILE_BYTES + 1,
+    arrayBuffer: async () => {
+      arrayBufferCalled = true;
+      return new ArrayBuffer(0);
+    },
+  });
+
+  assert.equal(arrayBufferCalled, false);
+  assert.deepEqual(calls.filter((call) => call.command.startsWith("import_")), []);
+  assert.equal(state.projectImport.status, "error");
+  assert.equal(
+    state.projectImport.error,
+    "'large.xlsx' is too large to import. The maximum file size is 25 MB.",
+  );
 });
 
 test("DOCX import selection opens source language step before importing", async () => {
