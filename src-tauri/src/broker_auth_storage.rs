@@ -24,6 +24,7 @@ fn atomic_write(path: &PathBuf, contents: &str) -> Result<(), String> {
     let tmp_path = path.with_extension("json.tmp");
     fs::write(&tmp_path, contents)
         .map_err(|e| format!("Could not write broker session: {e}"))?;
+    let _ = fs::remove_file(path); // best-effort; ENOENT is expected on first save
     fs::rename(&tmp_path, path)
         .map_err(|e| format!("Could not save broker session: {e}"))?;
     Ok(())
