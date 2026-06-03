@@ -64,7 +64,7 @@ use crate::{
     },
     broker_auth::{begin_broker_auth, inspect_broker_auth_session, refresh_broker_auth_session},
     broker_auth_storage::{
-        clear_broker_auth_session, get_broker_auth_profile, save_broker_auth_session,
+        clear_broker_auth_session, load_broker_auth_session, save_broker_auth_session,
     },
     callbacks::spawn_callback_server,
     github::{
@@ -513,7 +513,7 @@ pub fn run() {
             begin_broker_auth,
             inspect_broker_auth_session,
             refresh_broker_auth_session,
-            get_broker_auth_profile,
+            load_broker_auth_session,
             save_broker_auth_session,
             clear_broker_auth_session,
             load_ai_provider_secret,

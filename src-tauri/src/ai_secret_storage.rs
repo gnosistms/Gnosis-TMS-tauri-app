@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use iota_stronghold::{Client, ClientError};
+use iota_stronghold::{engine::snapshot::try_set_encrypt_work_factor, Client};
 use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Manager};
 use tauri_plugin_stronghold::stronghold::Stronghold;
@@ -121,186 +121,33 @@ fn stronghold_snapshot_path(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(local_data_dir.join(AI_SECRET_SNAPSHOT_FILENAME))
 }
 
-/// Loads the 32-byte Stronghold encryption secret from the OS credential store,
-/// generating and persisting a fresh random secret on first use.
+/// Returns the deterministic Stronghold snapshot password used for local AI secrets.
 ///
-/// The credential is stored under the service `"gnosis-tms"` with the account
-/// `"ai-stronghold-key"`. The OS keychain used depends on the platform:
-/// - macOS: Keychain (Keychain Access)
-/// - Linux: Secret Service (e.g. GNOME Keyring, KWallet)
-/// - Windows: Credential Manager
-fn load_or_generate_stronghold_secret() -> Result<Vec<u8>, String> {
-    let entry = keyring::Entry::new("gnosis-tms", "ai-stronghold-key")
-        .map_err(|e| format!("Keychain error initialising entry: {e}"))?;
-    match entry.get_secret() {
-        Ok(secret) => Ok(secret),
-        Err(keyring::Error::NoEntry) => {
-            use rand::RngCore;
-            let mut secret = vec![0u8; 32];
-            rand::thread_rng().fill_bytes(&mut secret);
-            entry
-                .set_secret(&secret)
-                .map_err(|e| format!("Could not save Stronghold key to keychain: {e}"))?;
-            Ok(secret)
-        }
-        Err(e) => Err(format!("Keychain error reading Stronghold key: {e}")),
-    }
-}
-
-/// The legacy deterministic password used before the OS-keychain-based key was introduced.
-///
-/// This was replaced because it derived the Stronghold password from a hardcoded string
-/// plus the snapshot file path — both public values — giving no real confidentiality.
-/// It is retained here solely for the one-time migration path in [`open_stronghold`].
-fn legacy_stronghold_password(snapshot_path: &Path) -> Vec<u8> {
+/// This protects the snapshot while it is handled by Stronghold, but it is not
+/// intended to provide strong at-rest secrecy against someone who already has
+/// access to the local account and app files. The product threat model accepts
+/// that tradeoff to avoid OS keychain prompts for ordinary AI key storage.
+fn stronghold_password(snapshot_path: &Path) -> Vec<u8> {
     let mut hasher = Sha256::new();
     hasher.update(b"gnosis-tms-ai-provider-secrets");
     hasher.update(snapshot_path.to_string_lossy().as_bytes());
     hasher.finalize().to_vec()
 }
 
-/// Opens the Stronghold snapshot at `snapshot_path`, returning an in-memory handle
-/// ready for client operations.
-///
-/// # Key derivation
-///
-/// The encryption key is loaded from the OS credential store via the `keyring` crate
-/// (Keychain on macOS, Secret Service on Linux, Credential Manager on Windows).
-/// On first use a cryptographically random 32-byte secret is generated and saved
-/// there. `try_set_encrypt_work_factor` is **not** called, so Stronghold's default
-/// Argon2 work factor applies and key-stretching is fully active.
-///
-/// # Migration of legacy snapshots
-///
-/// Snapshots written by earlier versions used a deterministic key derived from a
-/// hardcoded string and the file path. The migration logic here handles a seamless
-/// upgrade:
-///
-/// 1. Attempt to open the snapshot with the new OS-keychain key.
-/// 2. If that fails **and** the snapshot file already exists on disk, attempt to
-///    open it with the legacy deterministic key.
-/// 3. If the legacy key succeeds, read every value from the old client, delete the
-///    snapshot file, re-open it with the new key, and re-write all values — the
-///    snapshot is now re-encrypted under the secure key.
-/// 4. If both keys fail (or no snapshot file exists), start with a fresh empty store.
 fn open_stronghold(snapshot_path: &Path) -> Result<Stronghold, String> {
-    let new_key = load_or_generate_stronghold_secret()?;
-
-    // Try the new key first (the common fast path).
-    match Stronghold::new(snapshot_path, new_key.clone()) {
-        Ok(sh) => return Ok(sh),
-        Err(_) if !snapshot_path.exists() => {
-            // No snapshot file yet; Stronghold::new with a nonexistent path creates a
-            // new empty store, so this branch should not normally be reached.
-            return Err("Could not initialise the encrypted AI key store.".to_string());
-        }
-        Err(_) => {
-            // Snapshot exists but the new key didn't open it. Try the legacy key.
-        }
-    }
-
-    let legacy_key = legacy_stronghold_password(snapshot_path);
-    match Stronghold::new(snapshot_path, legacy_key) {
-        Ok(legacy_sh) => {
-            // Snapshot opened with the legacy key. Read all values so we can re-write
-            // them under the new key.
-            let entries: Vec<(Vec<u8>, Vec<u8>)> =
-                match legacy_sh.load_client(AI_SECRET_CLIENT_ID) {
-                    Ok(client) => {
-                        let store = client.store();
-                        let keys = store
-                            .keys()
-                            .map_err(|e| format!("Could not enumerate legacy key store: {e}"))?;
-                        let mut pairs = Vec::with_capacity(keys.len());
-                        for k in keys {
-                            if let Some(v) = store
-                                .get(&k)
-                                .map_err(|e| format!("Could not read legacy store value: {e}"))?
-                            {
-                                pairs.push((k, v));
-                            }
-                        }
-                        pairs
-                    }
-                    // Client not present just means there were no stored secrets; start fresh.
-                    Err(ClientError::ClientDataNotPresent) => Vec::new(),
-                    Err(e) => {
-                        return Err(format!(
-                            "Could not load legacy AI key store client during migration: {e}"
-                        ));
-                    }
-                };
-
-            // Delete the old snapshot and re-open under the new key.
-            fs::remove_file(snapshot_path).map_err(|e| {
-                format!(
-                    "Could not remove legacy AI key store snapshot during migration: {e}"
-                )
-            })?;
-
-            let new_sh = Stronghold::new(snapshot_path, new_key).map_err(|e| {
-                format!("Could not create new AI key store after legacy migration: {e}")
-            })?;
-
-            // Re-write all values into the new snapshot.
-            if !entries.is_empty() {
-                let client = new_sh
-                    .create_client(AI_SECRET_CLIENT_ID)
-                    .map_err(|e| {
-                        format!(
-                            "Could not create AI key store client after migration: {e}"
-                        )
-                    })?;
-                let store = client.store();
-                for (k, v) in entries {
-                    store.insert(k, v, None).map_err(|e| {
-                        format!(
-                            "Could not write value to new AI key store during migration: {e}"
-                        )
-                    })?;
-                }
-                new_sh.save().map_err(|e| {
-                    format!("Could not persist AI key store after legacy migration: {e}")
-                })?;
-            }
-
-            Ok(new_sh)
-        }
-        Err(_) => {
-            // Neither key opened the snapshot. Treat it as unrecoverable and start fresh.
-            if let Err(e) = fs::remove_file(snapshot_path) {
-                // Non-fatal: log and continue; the store will be re-created.
-                eprintln!(
-                    "Warning: could not remove unreadable AI key store snapshot at {}: {e}",
-                    snapshot_path.display()
-                );
-            }
-            Stronghold::new(snapshot_path, new_key)
-                .map_err(|e| format!("Could not open the encrypted AI key store: {e}"))
-        }
-    }
+    try_set_encrypt_work_factor(0).map_err(|error| {
+        format!("Could not configure the encrypted AI key store work factor: {error}")
+    })?;
+    Stronghold::new(snapshot_path, stronghold_password(snapshot_path))
+        .map_err(|error| format!("Could not open the encrypted AI key store: {error}"))
 }
 
-/// Returns the Stronghold client for AI secrets, loading it from the snapshot if
-/// it is not yet in memory, or creating a fresh client if no data exists yet.
-///
-/// Distinguishes a genuine "client not present in this snapshot" condition
-/// (represented by [`ClientError::ClientDataNotPresent`]) from other errors such as
-/// a corrupt snapshot, ensuring the latter surface as explicit failures rather than
-/// silently appearing as missing secrets.
 fn load_or_create_client(stronghold: &Stronghold) -> Result<Client, String> {
-    if let Ok(client) = stronghold.get_client(AI_SECRET_CLIENT_ID) {
-        return Ok(client);
-    }
-    match stronghold.load_client(AI_SECRET_CLIENT_ID) {
-        Ok(client) => Ok(client),
-        Err(ClientError::ClientDataNotPresent) => stronghold
-            .create_client(AI_SECRET_CLIENT_ID)
-            .map_err(|e| format!("Could not create AI key store client: {e}")),
-        Err(e) => Err(format!(
-            "Could not load AI key store client (snapshot may be corrupt): {e}"
-        )),
-    }
+    stronghold
+        .get_client(AI_SECRET_CLIENT_ID)
+        .or_else(|_| stronghold.load_client(AI_SECRET_CLIENT_ID))
+        .or_else(|_| stronghold.create_client(AI_SECRET_CLIENT_ID))
+        .map_err(|error| format!("Could not access the encrypted AI key store: {error}"))
 }
 
 fn load_store_value(
@@ -582,19 +429,18 @@ mod tests {
 
     use super::{
         clear_ai_provider_secret_at_path, clear_team_ai_cached_provider_secret_at_path,
-        legacy_stronghold_password, load_ai_provider_secret_at_path,
-        load_team_ai_cached_provider_secret_at_path, load_team_ai_member_keypair_at_path,
-        provider_secret_key, save_ai_provider_secret_at_path,
+        load_ai_provider_secret_at_path, load_team_ai_cached_provider_secret_at_path,
+        load_team_ai_member_keypair_at_path, provider_secret_key, save_ai_provider_secret_at_path,
         save_team_ai_cached_provider_secret_at_path, save_team_ai_member_keypair_at_path,
-        TeamAiCachedProviderSecret,
+        stronghold_password, TeamAiCachedProviderSecret,
     };
     use crate::ai::types::AiProviderId;
 
     #[test]
-    fn legacy_stronghold_password_is_stable_and_32_bytes() {
+    fn stronghold_password_is_stable_and_32_bytes() {
         let snapshot_path = PathBuf::from("/tmp/gnosis-tms-ai-provider-secrets.hold");
-        let first = legacy_stronghold_password(&snapshot_path);
-        let second = legacy_stronghold_password(&snapshot_path);
+        let first = stronghold_password(&snapshot_path);
+        let second = stronghold_password(&snapshot_path);
 
         assert_eq!(first, second);
         assert_eq!(first.len(), 32);
