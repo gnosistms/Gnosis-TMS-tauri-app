@@ -74,7 +74,9 @@ must not ship.
 - App version, OS + arch
 - An **anonymous per-install UUID** (generated once, stored locally) — *not* the GitHub
   login, name, or email
-- Timestamp, and SDK-collected breadcrumbs (also scrubbed)
+- Timestamp
+- Explicitly allowlisted breadcrumbs only, such as app lifecycle milestones and scrubbed
+  command failure categories. Do **not** enable broad browser/console/network breadcrumbs.
 
 **NEVER send:**
 - `session_token`, API keys (OpenAI/Anthropic/etc.), or any Stronghold/broker secret
@@ -82,10 +84,14 @@ must not ship.
 - Full filesystem paths containing the OS username — **redact the home-dir prefix** (paths
   like `/Users/<name>/…` → `~/…`)
 - GitHub identity (login/name/email/avatar)
+- IP address, device name, OS account name, hostname, hardware serials, or any stable
+  device identifier other than the anonymous per-install UUID
 
 Implement a central `beforeSend` scrub hook (Sentry supports this) that redacts home-dir
-paths and drops known-sensitive keys, plus the same discipline on the Rust side. Reuse the
-existing 200-char truncation discipline from `broker.rs` for any free-text body.
+paths and drops known-sensitive keys, plus the same discipline on the Rust side. Configure
+Sentry with `sendDefaultPii: false`, never set user context, and disable/scrub server-side
+IP address storage where Sentry supports it. Reuse the existing 200-char truncation
+discipline from `broker.rs` for any free-text body.
 
 ## Sampling, rate-limiting, offline
 
@@ -116,11 +122,16 @@ one-click off toggle. Chosen to maximize field visibility while respecting users
 toggle state is read before `initTelemetry()` runs, and flipping it off must fully disable
 the SDK (no events sent) for the rest of the session.
 
+No event may be sent until disclosure state has been resolved. On first launch, the app
+must show the disclosure and persist the opt-out default/choice before telemetry transport
+is enabled. During that pre-disclosure window, errors may be handled locally but must not
+be queued for later upload.
+
 ## Phasing
 
 | Phase | Scope | Outcome |
 |---|---|---|
-| **1** | `@sentry/browser` init + `runtime.js` invoke-error capture + `beforeSend` scrubbing + consent toggle + Vite source maps | Dev team sees JS errors and every failing command, scrubbed, from the field |
+| **1** | `@sentry/browser` init gated by disclosure state + `runtime.js` invoke-error capture + `beforeSend` scrubbing + consent toggle + Vite source maps | Dev team sees JS errors and every failing command, scrubbed, from the field |
 | **2** | `sentry` crate + Rust panic hook (+ optional Tauri bridge) | Rust crashes/panics captured |
 | **3** | Revisit graceful-degradation findings (Batch 2 **M1**, and similar) now that "log + continue" is observable | Soften selected hard-fails to degrade-with-visibility |
 
@@ -129,14 +140,19 @@ the SDK (no events sent) for the rest of the session.
 - [ ] Add `@sentry/browser` dependency
 - [ ] Create `src-ui/app/telemetry.js`: `initTelemetry()` (DSN, release = app version,
       environment), `beforeSend` scrub (home-dir redaction + sensitive-key drop),
-      anonymous install-UUID load/create, consent gate
-- [ ] Call `initTelemetry()` at frontend entry (before other modules load)
+      anonymous install-UUID load/create, `sendDefaultPii: false`, no user context,
+      allowlisted breadcrumbs only, consent/disclosure gate
+- [ ] Resolve first-run disclosure and persisted telemetry setting before any telemetry
+      transport can send or queue events
+- [ ] Call `initTelemetry()` at frontend entry only after the disclosure/setting gate is
+      resolved
 - [ ] Wrap the `invoke()` error path in `runtime.js` to report scrubbed command failures
       (capture command name + scrubbed error; never the payload)
-- [ ] Add a consent toggle to settings + first-run disclosure
+- [ ] Add a consent toggle to settings + first-run disclosure; turning the toggle off must
+      close/disable the client and prevent queued uploads for the rest of the session
 - [ ] Configure Vite source maps + upload step in the release script
-- [ ] Unit-test the scrubber (home-dir paths redacted; sensitive keys dropped; content
-      never included)
+- [ ] Unit-test the scrubber and consent gate (home-dir paths redacted; sensitive keys
+      dropped; content never included; no event before disclosure state is resolved)
 - [ ] Document the DSN handling (DSN is not a secret, but keep it in config, not hardcoded
       across the tree)
 
