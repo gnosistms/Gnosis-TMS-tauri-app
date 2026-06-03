@@ -4,6 +4,7 @@ use crate::{
     broker::broker_base_url,
     constants::{GITHUB_APP_SETUP_PATH, GITHUB_CALLBACK_ADDRESS},
     state::{AuthState, PendingGithubAppInstall},
+    util::random_token,
 };
 
 use super::types::BeginGithubAppInstallResponse;
@@ -35,20 +36,11 @@ pub(crate) fn begin_github_app_install(
 pub(crate) fn github_client() -> Result<reqwest::blocking::Client, String> {
     reqwest::blocking::Client::builder()
         .user_agent("GnosisTMS")
+        .timeout(std::time::Duration::from_secs(30))
         .build()
         .map_err(|error| error.to_string())
 }
 
 pub(crate) fn github_app_setup_url() -> String {
     format!("http://{GITHUB_CALLBACK_ADDRESS}{GITHUB_APP_SETUP_PATH}")
-}
-
-fn random_token(length: usize) -> String {
-    use rand::{distributions::Alphanumeric, Rng};
-
-    rand::thread_rng()
-        .sample_iter(&Alphanumeric)
-        .take(length)
-        .map(char::from)
-        .collect()
 }

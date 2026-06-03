@@ -1,9 +1,13 @@
 use tauri::State;
 
 use crate::{
-    broker::{broker_base_url, broker_get_json_with_session, broker_post_json_with_session},
+    broker::{
+        broker_base_url, broker_client, broker_get_json_with_session,
+        broker_post_json_with_session,
+    },
     constants::{BROKER_AUTH_CALLBACK_PATH, GITHUB_CALLBACK_ADDRESS},
     state::{AuthState, PendingBrokerAuth},
+    util::random_token,
 };
 
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
@@ -57,19 +61,13 @@ pub(crate) fn begin_broker_auth(
 pub(crate) fn inspect_broker_auth_session(
     session_token: String,
 ) -> Result<BrokerSessionProfile, String> {
-    let client = reqwest::blocking::Client::builder()
-        .user_agent("GnosisTMS")
-        .build()
-        .map_err(|error| error.to_string())?;
+    let client = broker_client()?;
     broker_get_json_with_session(&client, "/api/auth/session", &session_token)
 }
 
 #[tauri::command]
 pub(crate) fn refresh_broker_auth_session(session_token: String) -> Result<BrokerSession, String> {
-    let client = reqwest::blocking::Client::builder()
-        .user_agent("GnosisTMS")
-        .build()
-        .map_err(|error| error.to_string())?;
+    let client = broker_client()?;
     broker_post_json_with_session(
         &client,
         "/api/auth/refresh",
@@ -80,14 +78,4 @@ pub(crate) fn refresh_broker_auth_session(session_token: String) -> Result<Broke
 
 pub(crate) fn broker_auth_callback_url() -> String {
     format!("http://{GITHUB_CALLBACK_ADDRESS}{BROKER_AUTH_CALLBACK_PATH}")
-}
-
-fn random_token(length: usize) -> String {
-    use rand::{distributions::Alphanumeric, Rng};
-
-    rand::thread_rng()
-        .sample_iter(&Alphanumeric)
-        .take(length)
-        .map(char::from)
-        .collect()
 }
