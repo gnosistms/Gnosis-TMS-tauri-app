@@ -1,7 +1,7 @@
 use std::fs;
 
 use crate::broker::{
-    broker_delete_no_content_with_session, broker_get_json_with_session,
+    broker_client, broker_delete_no_content_with_session, broker_get_json_with_session,
     broker_patch_json_with_session, broker_patch_no_content_with_session,
     broker_post_json_with_session, broker_post_no_content_with_session,
 };
@@ -10,36 +10,16 @@ use crate::installation_access::{
     ensure_installation_allows_team_management,
 };
 use crate::storage_paths::installation_data_dir;
-use serde::Serialize;
-use tauri::{AppHandle, Emitter};
+use tauri::AppHandle;
 
 use super::{
-    app_auth::github_client,
-    encode_broker_path_segment,
+    broker_get_tolerant_json_list_with_session, encode_broker_path_segment,
+    report_backend_nonfatal_error,
     types::{
         GithubAppInstallationInfo, GithubOrganization, GithubOrganizationInvitation,
         GithubOrganizationMember, GithubTeamMetadataRepo, GithubUserSearchResult,
     },
 };
-
-const BACKEND_NONFATAL_TELEMETRY_EVENT: &str = "backend-nonfatal-telemetry";
-
-#[derive(Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct BackendNonfatalTelemetryEvent {
-    operation: &'static str,
-    reason: &'static str,
-}
-
-fn report_nonfatal_installation_cache_error(app: &AppHandle, operation: &'static str) {
-    let _ = app.emit(
-        BACKEND_NONFATAL_TELEMETRY_EVENT,
-        BackendNonfatalTelemetryEvent {
-            operation,
-            reason: "installation_access_cache_write_failed",
-        },
-    );
-}
 
 fn cache_installation_access_best_effort(
     app: &AppHandle,
@@ -47,7 +27,7 @@ fn cache_installation_access_best_effort(
     operation: &'static str,
 ) {
     if cache_installation_access(app, installation).is_err() {
-        report_nonfatal_installation_cache_error(app, operation);
+        report_backend_nonfatal_error(app, operation, "installation_access_cache_write_failed");
     }
 }
 
@@ -57,7 +37,7 @@ pub(crate) async fn list_accessible_github_app_installations(
     session_token: String,
 ) -> Result<Vec<GithubAppInstallationInfo>, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let client = github_client()?;
+        let client = broker_client()?;
         let installations: Vec<GithubAppInstallationInfo> =
             broker_get_json_with_session(&client, "/api/github-app/installations", &session_token)?;
         for installation in &installations {
@@ -80,7 +60,7 @@ pub(crate) async fn inspect_github_app_installation(
     session_token: String,
 ) -> Result<GithubAppInstallationInfo, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let client = github_client()?;
+        let client = broker_client()?;
         let installation: GithubAppInstallationInfo = broker_get_json_with_session(
             &client,
             &format!("/api/github-app/installations/{installation_id}"),
@@ -99,19 +79,23 @@ pub(crate) async fn inspect_github_app_installation(
 
 #[tauri::command]
 pub(crate) async fn list_organization_members_for_installation(
+    app: AppHandle,
     installation_id: i64,
     org_login: String,
     session_token: String,
 ) -> Result<Vec<GithubOrganizationMember>, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let client = github_client()?;
+        let client = broker_client()?;
         let encoded_org_login = encode_broker_path_segment(&org_login);
-        broker_get_json_with_session(
+        broker_get_tolerant_json_list_with_session(
+            &app,
             &client,
             &format!(
                 "/api/github-app/installations/{installation_id}/members?org_login={encoded_org_login}"
             ),
             &session_token,
+            "list_organization_members_for_installation.deserialize_member",
+            "organization member",
         )
     })
     .await
@@ -125,7 +109,7 @@ pub(crate) async fn search_github_users_for_installation(
     session_token: String,
 ) -> Result<Vec<GithubUserSearchResult>, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let client = github_client()?;
+        let client = broker_client()?;
         let encoded_query: String =
             url::form_urlencoded::byte_serialize(query.as_bytes()).collect();
         broker_get_json_with_session(
@@ -153,7 +137,7 @@ pub(crate) async fn invite_user_to_organization_for_installation(
 ) -> Result<GithubOrganizationInvitation, String> {
     tauri::async_runtime::spawn_blocking(move || {
         ensure_installation_allows_member_management(&app, installation_id)?;
-        let client = github_client()?;
+        let client = broker_client()?;
         let encoded_org_login = encode_broker_path_segment(&org_login);
         broker_post_json_with_session(
             &client,
@@ -182,7 +166,7 @@ pub(crate) async fn setup_organization_for_installation(
 ) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
         ensure_installation_allows_team_management(&app, installation_id)?;
-        let client = github_client()?;
+        let client = broker_client()?;
         let encoded_org_login = encode_broker_path_segment(&org_login);
         broker_post_no_content_with_session(
             &client,
@@ -204,7 +188,7 @@ pub(crate) async fn inspect_team_metadata_repo_for_installation(
     session_token: String,
 ) -> Result<GithubTeamMetadataRepo, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let client = github_client()?;
+        let client = broker_client()?;
         let encoded_org_login = encode_broker_path_segment(&org_login);
         broker_get_json_with_session(
             &client,
@@ -228,7 +212,7 @@ pub(crate) async fn add_organization_admin_for_installation(
 ) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
         ensure_installation_allows_member_management(&app, installation_id)?;
-        let client = github_client()?;
+        let client = broker_client()?;
         let encoded_org_login = encode_broker_path_segment(&org_login);
         let encoded_username = encode_broker_path_segment(&username);
         broker_patch_no_content_with_session(
@@ -254,7 +238,7 @@ pub(crate) async fn revoke_organization_admin_for_installation(
 ) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
         ensure_installation_allows_member_management(&app, installation_id)?;
-        let client = github_client()?;
+        let client = broker_client()?;
         let encoded_org_login = encode_broker_path_segment(&org_login);
         let encoded_username = encode_broker_path_segment(&username);
         broker_delete_no_content_with_session(
@@ -282,7 +266,7 @@ pub(crate) async fn set_organization_member_role_for_installation(
 ) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
         ensure_installation_allows_member_management(&app, installation_id)?;
-        let client = github_client()?;
+        let client = broker_client()?;
         let encoded_org_login = encode_broker_path_segment(&org_login);
         let encoded_username = encode_broker_path_segment(&username);
         broker_patch_no_content_with_session(
@@ -311,7 +295,7 @@ pub(crate) async fn promote_organization_owner_for_installation(
 ) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
         ensure_installation_allows_member_management(&app, installation_id)?;
-        let client = github_client()?;
+        let client = broker_client()?;
         let encoded_org_login = encode_broker_path_segment(&org_login);
         let encoded_username = encode_broker_path_segment(&username);
         broker_patch_no_content_with_session(
@@ -338,7 +322,7 @@ pub(crate) async fn remove_organization_member_for_installation(
 ) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
         ensure_installation_allows_member_management(&app, installation_id)?;
-        let client = github_client()?;
+        let client = broker_client()?;
         let encoded_org_login = encode_broker_path_segment(&org_login);
         let encoded_username = encode_broker_path_segment(&username);
         broker_delete_no_content_with_session(
@@ -366,7 +350,7 @@ pub(crate) async fn update_organization_name_for_installation(
 ) -> Result<GithubOrganization, String> {
     tauri::async_runtime::spawn_blocking(move || {
         ensure_installation_allows_team_management(&app, installation_id)?;
-        let client = github_client()?;
+        let client = broker_client()?;
         let encoded_org_login = encode_broker_path_segment(&org_login);
         broker_patch_json_with_session(
             &client,
@@ -391,7 +375,7 @@ pub(crate) async fn update_organization_description_for_installation(
 ) -> Result<GithubOrganization, String> {
     tauri::async_runtime::spawn_blocking(move || {
         ensure_installation_allows_team_management(&app, installation_id)?;
-        let client = github_client()?;
+        let client = broker_client()?;
         let encoded_org_login = encode_broker_path_segment(&org_login);
         broker_patch_json_with_session(
             &client,
@@ -415,7 +399,7 @@ pub(crate) async fn delete_organization_for_installation(
 ) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
         ensure_installation_allows_team_management(&app, installation_id)?;
-        let client = github_client()?;
+        let client = broker_client()?;
         let encoded_org_login = encode_broker_path_segment(&org_login);
         broker_delete_no_content_with_session(
             &client,
@@ -457,7 +441,7 @@ pub(crate) async fn leave_organization_for_installation(
     session_token: String,
 ) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let client = github_client()?;
+        let client = broker_client()?;
         let encoded_org_login = encode_broker_path_segment(&org_login);
         broker_delete_no_content_with_session(
             &client,

@@ -1,11 +1,11 @@
 use crate::broker::{
-    broker_delete_no_content_with_session, broker_get_json_with_session,
-    broker_patch_no_content_with_session, broker_post_json_with_session,
+    broker_client, broker_delete_no_content_with_session, broker_patch_no_content_with_session,
+    broker_post_json_with_session,
 };
+use tauri::AppHandle;
 
 use super::{
-    app_auth::github_client,
-    encode_broker_path_segment,
+    broker_get_tolerant_json_list_with_session, encode_broker_path_segment,
     types::{
         CreateGithubGlossaryRepoInput, CreateGithubProjectRepoInput, CreateGithubQaListRepoInput,
         DeleteGithubGlossaryRepoInput, DeleteGithubProjectRepoInput, DeleteGithubQaListRepoInput,
@@ -21,7 +21,7 @@ pub(crate) async fn ensure_gnosis_repo_properties_schema(
 ) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
         let encoded_org_login = encode_broker_path_segment(&org_login);
-        let client = github_client()?;
+        let client = broker_client()?;
         broker_patch_no_content_with_session(
             &client,
             &format!(
@@ -37,15 +37,19 @@ pub(crate) async fn ensure_gnosis_repo_properties_schema(
 
 #[tauri::command]
 pub(crate) async fn list_gnosis_projects_for_installation(
+    app: AppHandle,
     installation_id: i64,
     session_token: String,
 ) -> Result<Vec<GithubProjectRepo>, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let client = github_client()?;
-        broker_get_json_with_session(
+        let client = broker_client()?;
+        broker_get_tolerant_json_list_with_session(
+            &app,
             &client,
             &format!("/api/github-app/installations/{installation_id}/gnosis-projects"),
             &session_token,
+            "list_gnosis_projects_for_installation.deserialize_project",
+            "project repo",
         )
     })
     .await
@@ -54,15 +58,19 @@ pub(crate) async fn list_gnosis_projects_for_installation(
 
 #[tauri::command]
 pub(crate) async fn list_gnosis_glossaries_for_installation(
+    app: AppHandle,
     installation_id: i64,
     session_token: String,
 ) -> Result<Vec<GithubGlossaryRepo>, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let client = github_client()?;
-        broker_get_json_with_session(
+        let client = broker_client()?;
+        broker_get_tolerant_json_list_with_session(
+            &app,
             &client,
             &format!("/api/github-app/installations/{installation_id}/gnosis-glossaries"),
             &session_token,
+            "list_gnosis_glossaries_for_installation.deserialize_glossary",
+            "glossary repo",
         )
     })
     .await
@@ -71,28 +79,35 @@ pub(crate) async fn list_gnosis_glossaries_for_installation(
 
 #[tauri::command]
 pub(crate) async fn list_gnosis_qa_lists_for_installation(
+    app: AppHandle,
     installation_id: i64,
     session_token: String,
 ) -> Result<Vec<GithubQaListRepo>, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let client = github_client()?;
-        broker_get_json_with_session(
+        let client = broker_client()?;
+        broker_get_tolerant_json_list_with_session(
+            &app,
             &client,
             &format!("/api/github-app/installations/{installation_id}/gnosis-qa-lists"),
             &session_token,
+            "list_gnosis_qa_lists_for_installation.deserialize_qa_list",
+            "QA list repo",
         )
     })
     .await
     .map_err(|error| format!("Could not run the QA list listing task: {error}"))?
 }
 
+// Resource-management authorization is enforced by the command layer that owns the
+// local resource workflow (team_metadata_local.rs/project_import.rs) and by the broker.
+// These helpers intentionally stay thin to avoid duplicating that gate here.
 #[tauri::command]
 pub(crate) async fn create_gnosis_project_repo(
     input: CreateGithubProjectRepoInput,
     session_token: String,
 ) -> Result<GithubProjectRepo, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let client = github_client()?;
+        let client = broker_client()?;
         broker_post_json_with_session(
             &client,
             "/api/github-app/gnosis-projects",
@@ -110,7 +125,7 @@ pub(crate) async fn create_gnosis_glossary_repo(
     session_token: String,
 ) -> Result<GithubGlossaryRepo, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let client = github_client()?;
+        let client = broker_client()?;
         broker_post_json_with_session(
             &client,
             "/api/github-app/gnosis-glossaries",
@@ -128,7 +143,7 @@ pub(crate) async fn create_gnosis_qa_list_repo(
     session_token: String,
 ) -> Result<GithubQaListRepo, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let client = github_client()?;
+        let client = broker_client()?;
         broker_post_json_with_session(
             &client,
             "/api/github-app/gnosis-qa-lists",
@@ -146,7 +161,7 @@ pub(crate) async fn mark_gnosis_project_repo_deleted(
     session_token: String,
 ) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let client = github_client()?;
+        let client = broker_client()?;
         broker_patch_no_content_with_session(
             &client,
             "/api/github-app/gnosis-projects/delete-marker",
@@ -164,7 +179,7 @@ pub(crate) async fn restore_gnosis_project_repo(
     session_token: String,
 ) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let client = github_client()?;
+        let client = broker_client()?;
         broker_patch_no_content_with_session(
             &client,
             "/api/github-app/gnosis-projects/restore-marker",
@@ -182,7 +197,7 @@ pub(crate) async fn rename_gnosis_project_repo(
     session_token: String,
 ) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let client = github_client()?;
+        let client = broker_client()?;
         broker_patch_no_content_with_session(
             &client,
             "/api/github-app/gnosis-projects/rename",
@@ -200,7 +215,7 @@ pub(crate) async fn rollback_created_gnosis_project_repo(
     session_token: String,
 ) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let client = github_client()?;
+        let client = broker_client()?;
         broker_delete_no_content_with_session(
             &client,
             "/api/github-app/gnosis-projects",
@@ -218,7 +233,7 @@ pub(crate) async fn rollback_created_gnosis_glossary_repo(
     session_token: String,
 ) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let client = github_client()?;
+        let client = broker_client()?;
         broker_delete_no_content_with_session(
             &client,
             "/api/github-app/gnosis-glossaries",
@@ -236,7 +251,7 @@ pub(crate) async fn rollback_created_gnosis_qa_list_repo(
     session_token: String,
 ) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let client = github_client()?;
+        let client = broker_client()?;
         broker_delete_no_content_with_session(
             &client,
             "/api/github-app/gnosis-qa-lists",
