@@ -190,8 +190,8 @@ notice — but never against an explicit opt-out, and never anything beyond the 
 
 - [x] Add GitHub release secret `SENTRY_AUTH_TOKEN`
 - [x] Add GitHub release variables `SENTRY_ORG` and `SENTRY_PROJECT`
-- [ ] Run one tagged release and confirm Sentry receives source maps for
-      `gnosis-tms@<version>`
+- [x] Run one tagged release and confirm Sentry receives source maps for
+      `gnosis-tms@0.8.26`
 
 ## Implementation notes
 
