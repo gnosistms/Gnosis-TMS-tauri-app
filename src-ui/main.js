@@ -110,7 +110,10 @@ import {
   renderTranslateSidebar,
 } from "./screens/translate.js";
 import { renderUsersScreen } from "./screens/users.js";
-import { renderFloatingStatusSurface } from "./lib/ui.js";
+import {
+  buildPageRefreshAction,
+  renderFloatingStatusSurface,
+} from "./lib/ui.js";
 import {
   getNoticeBadgeText,
   getScopedSyncBadgeText,
@@ -196,6 +199,31 @@ function renderStatusSurfaceOnly() {
     screen.insertAdjacentHTML("beforeend", nextHtml);
   }
   return true;
+}
+
+function renderPageTitleActionOnly() {
+  if (state.screen !== "translate") {
+    return false;
+  }
+
+  const titleRow = app.querySelector(".page-header__title-row");
+  if (!(titleRow instanceof HTMLElement)) {
+    return false;
+  }
+
+  const nextHtml = buildPageRefreshAction(state).trim();
+  const currentAction = titleRow.querySelector(".title-icon-button");
+  if (currentAction instanceof HTMLElement) {
+    currentAction.outerHTML = nextHtml;
+    return true;
+  }
+
+  if (nextHtml) {
+    titleRow.insertAdjacentHTML("beforeend", nextHtml);
+    return true;
+  }
+
+  return false;
 }
 
 function waitForNextAnimationFrames(count = 1) {
@@ -527,6 +555,7 @@ function renderWithOptions(options = {}) {
     if (!renderStatusSurfaceOnly()) {
       renderWithOptions();
     }
+    renderPageTitleActionOnly();
     return;
   }
 
