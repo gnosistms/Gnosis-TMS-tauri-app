@@ -296,6 +296,31 @@ Do not recommend telemetry for expected control flow. Do not add per-call-site S
 reporting for normal failed commands, because the frontend `invoke()` wrapper already
 reports rejected commands through the consent-gated telemetry path.
 
+### Standard V sweep: synchronous commands doing I/O
+
+Each batch must also enumerate every `#[tauri::command]` whose `fn` is **not** `async`
+and confirm it performs no long-running I/O on the IPC path. Standard V already prohibits
+blocking the IPC path; this sweep is the **detection step** that makes the rule
+enforceable. (Added 2026-06-03 after a cross-batch miss — the rule existed but was never
+checked mechanically; see `2026-06-03-batch-3-review.md`. This is a check, not a new
+guardrail: the principle already lives in the constitution as Standard V.)
+
+The enumeration is mechanical:
+
+```
+grep -rzoP "#\[tauri::command\]\n\s*(pub\(crate\) )?fn [a-z_]+" src-tauri/src
+```
+
+Classify each synchronous command by what its body does:
+
+- **OK to stay synchronous**: URL/string building, mutex locks, and small *local* file
+  reads/writes (e.g. a tiny JSON session file).
+- **Must move to `async` + `tauri::async_runtime::spawn_blocking`**: any blocking network
+  call (`reqwest`), git subprocess, or large/remote file-system work. Map the join error
+  to a clear `Result`/fallback, matching the existing async commands.
+
+The fix is the same transform applied to Batch 2 M2 (`invite_user_to_organization_for_installation`).
+
 ---
 
 ## Summary

@@ -213,6 +213,33 @@ are correctly either *expected silence* or *user-visible elsewhere*:
   `read_local_repo_sync_state(...).ok().flatten()` silently degrades to folder-name matching
   if a sync-state file is unreadable/corrupt. Acceptable as best-effort repo identification.
 
+## Standard V sweep — synchronous commands doing I/O (cross-batch)
+
+M1 prompted a full enumeration of every synchronous `#[tauri::command]` in the crate
+(`#[tauri::command]` followed by a non-`async fn`). This is now a standing per-batch check
+in the strategy doc. The sweep surfaced **two violations that were in Batch 1's scope and
+missed there** — the Batch 1 review checked auth/secret/permission logic but did not check
+the sync-vs-async dimension. Recording them here rather than fixing them silently.
+
+| Command | File | Blocking work | Verdict |
+|---|---|---|---|
+| `inspect_broker_auth_session` | `broker_auth.rs:61` | blocking `reqwest` via `broker_client()` (**30s** timeout) | ❌ Fix — **missed in Batch 1** |
+| `refresh_broker_auth_session` | `broker_auth.rs:69` | blocking `reqwest` (**30s**) | ❌ Fix — **missed in Batch 1** |
+| `check_internet_connection` | `lib.rs:160` | blocking `reqwest` (3s) | ❌ Fix — **M1 above** |
+| `read_local_dropped_file` | `window.rs:23` | sync local file read + base64 | ⚠️ see **m2** (size cap is the real fix) |
+| `load`/`save`/`clear_broker_auth_session` | `broker_auth_storage.rs` | small local JSON I/O | ✅ Negligible — may stay sync |
+| `begin_broker_auth` | `broker_auth.rs:37` | URL build + mutex lock, no I/O | ✅ Correctly sync |
+| `begin_github_app_install` | `github/app_auth.rs:13` | URL build + mutex lock, no I/O | ✅ Correctly sync |
+
+The two `broker_auth` commands are the **strongest** instances — `broker_client()` has a
+30s timeout (vs. M1's 3s), so a hung broker can freeze the IPC path for up to half a minute
+during sign-in inspection or token refresh.
+
+**Fix set (one change, three commands)**: `check_internet_connection`,
+`inspect_broker_auth_session`, and `refresh_broker_auth_session` → `async` +
+`tauri::async_runtime::spawn_blocking`, mirroring the Batch 2 M2 transform. The storage and
+`begin_*` commands need no change. (Implementation by GPT; reviewed afterward.)
+
 ## What Was Done Well
 
 - **`main.rs` is minimal** — entry point calls `gnosis_tms_lib::run()` only, as documented.
@@ -248,6 +275,8 @@ All findings are **Open / Proposed** as of 2026-06-03.
 | Finding | Status | Notes |
 |---|---|---|
 | M1 | Open | `check_internet_connection` → async + `spawn_blocking` |
+| SV-1 | Open | `inspect_broker_auth_session` → async + `spawn_blocking` (Batch 1 miss; see Standard V sweep) |
+| SV-2 | Open | `refresh_broker_auth_session` → async + `spawn_blocking` (Batch 1 miss; see Standard V sweep) |
 | m1 | Open (verify) | Remove unused Stronghold plugin after confirming no capability/JS use |
 | m2 | Open | Size-cap `read_local_dropped_file` |
 | m3 | Open | Read timeout on the callback socket |
