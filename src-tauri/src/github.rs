@@ -7,6 +7,24 @@ mod repos;
 #[path = "github/types.rs"]
 pub(crate) mod types;
 
+fn encode_broker_path_segment(segment: &str) -> String {
+    url::form_urlencoded::byte_serialize(segment.as_bytes()).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::encode_broker_path_segment;
+
+    #[test]
+    fn broker_path_segment_encoding_escapes_path_and_query_separators() {
+        assert_eq!(
+            encode_broker_path_segment("org/name?tab=members#owners"),
+            "org%2Fname%3Ftab%3Dmembers%23owners"
+        );
+        assert_eq!(encode_broker_path_segment("github-login"), "github-login");
+    }
+}
+
 pub(crate) use app_auth::{begin_github_app_install, github_client};
 pub(crate) use orgs::{
     add_organization_admin_for_installation, delete_organization_for_installation,

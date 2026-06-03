@@ -5,6 +5,7 @@ use crate::broker::{
 
 use super::{
     app_auth::github_client,
+    encode_broker_path_segment,
     types::{
         CreateGithubGlossaryRepoInput, CreateGithubProjectRepoInput, CreateGithubQaListRepoInput,
         DeleteGithubGlossaryRepoInput, DeleteGithubProjectRepoInput, DeleteGithubQaListRepoInput,
@@ -19,16 +20,19 @@ pub(crate) async fn ensure_gnosis_repo_properties_schema(
     session_token: String,
 ) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
-    let client = github_client()?;
-    broker_patch_no_content_with_session(
-      &client,
-      &format!("/api/github-app/installations/{installation_id}/orgs/{org_login}/properties/schema"),
-      None,
-      &session_token,
-    )
-  })
-  .await
-  .map_err(|error| format!("Could not run the repository property schema task: {error}"))?
+        let encoded_org_login = encode_broker_path_segment(&org_login);
+        let client = github_client()?;
+        broker_patch_no_content_with_session(
+            &client,
+            &format!(
+                "/api/github-app/installations/{installation_id}/orgs/{encoded_org_login}/properties/schema"
+            ),
+            None,
+            &session_token,
+        )
+    })
+    .await
+    .map_err(|error| format!("Could not run the repository property schema task: {error}"))?
 }
 
 #[tauri::command]
