@@ -270,17 +270,20 @@ during sign-in inspection or token refresh.
 
 ## Resolution Status
 
-All findings are **Open / Proposed** as of 2026-06-03.
+All findings resolved as of 2026-06-03.
 
 | Finding | Status | Notes |
 |---|---|---|
-| M1 | Open | `check_internet_connection` → async + `spawn_blocking` |
-| SV-1 | Open | `inspect_broker_auth_session` → async + `spawn_blocking` (Batch 1 miss; see Standard V sweep) |
-| SV-2 | Open | `refresh_broker_auth_session` → async + `spawn_blocking` (Batch 1 miss; see Standard V sweep) |
-| m1 | Open (verify) | Remove unused Stronghold plugin after confirming no capability/JS use |
-| m2 | Open | Size-cap `read_local_dropped_file` |
-| m3 | Open | Read timeout on the callback socket |
-| m4 | Open | Read the full request line regardless of TCP segmentation |
+| M1 | ✅ Fixed (PR #15) | `check_internet_connection` → async + `spawn_blocking` |
+| SV-1 | ✅ Fixed (PR #15) | `inspect_broker_auth_session` → async + `spawn_blocking` (Batch 1 miss) |
+| SV-2 | ✅ Fixed (PR #15) | `refresh_broker_auth_session` → async + `spawn_blocking` (Batch 1 miss) |
+| m1 | ✅ Fixed (PR #16) | Removed unused Stronghold plugin registration + `stronghold:default` capability (struct usage retained) |
+| m2 | ✅ Fixed (PR #16) | 25 MB cap on `read_local_dropped_file` (drag-drop path). Uniform cross-path import limit tracked separately in `plans/import-file-size-limit-plan.md` / PR #17 |
+| m3 | ✅ Fixed (PR #16) | 5s read timeout on the callback socket |
+| m4 | ✅ Fixed (PR #16) | Bounded full request-line read across TCP segments (+ tests) |
+
+PR #15 resolved the Standard V network-blocking set; PR #16 resolved the four minors. A
+re-run of the Standard V sweep confirmed no remaining synchronous command performs network I/O.
 
 ---
 
