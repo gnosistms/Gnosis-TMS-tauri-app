@@ -188,8 +188,8 @@ notice — but never against an explicit opt-out, and never anything beyond the 
 
 ### Phase 1 operational setup
 
-- [ ] Add GitHub release secret `SENTRY_AUTH_TOKEN`
-- [ ] Add GitHub release variables `SENTRY_ORG` and `SENTRY_PROJECT`
+- [x] Add GitHub release secret `SENTRY_AUTH_TOKEN`
+- [x] Add GitHub release variables `SENTRY_ORG` and `SENTRY_PROJECT`
 - [ ] Run one tagged release and confirm Sentry receives source maps for
       `gnosis-tms@<version>`
 
