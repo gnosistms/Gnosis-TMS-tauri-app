@@ -11,6 +11,7 @@ support the guidance in this file.
 - Rust + Tauri 2
 - SQLite via `rusqlite` with bundled feature (project search index only)
 - `tauri-plugin-store` (local key-value persistent store)
+- `keyring` v3 (OS credential store — keychain on macOS, Secret Service on Linux, Credential Manager on Windows)
 - Git operations via bundled Git binary (invoked as a subprocess — no libgit2)
 - GitHub REST API (via `src-tauri/src/github/`)
 - Broker service (auth proxy for GitHub App tokens)
@@ -81,9 +82,10 @@ independent mechanisms — know which owns what before adding persistence:
 | Data | Mechanism | Owner |
 |---|---|---|
 | Resource metadata (project/glossary/QA lifecycle state) | Git repo files | `team_metadata_local/` |
-| Broker session token + display fields | Plain JSON file (`broker-auth-session.json`) | `broker_auth_storage.rs` |
+| Broker session token | OS credential store (`keyring`: `gnosis-tms` / `broker-session-token`) | `broker_auth_storage.rs` |
+| Broker session display fields (login, name, avatar) | Plain JSON file (`broker-auth-session.json`) | `broker_auth_storage.rs` |
 | Installation write-access snapshots | Plain JSON file per installation | `installation_access.rs` |
-| AI provider secrets (API keys) | Stronghold encrypted store | `ai_secret_storage.rs` |
+| AI provider secrets (API keys) | Stronghold encrypted store; key from OS credential store (`keyring`: `gnosis-tms` / `ai-stronghold-key`) | `ai_secret_storage.rs` |
 | Full-text search index | SQLite database (`project-search.sqlite3`) | `project_search/` |
 | Tauri plugin key-value store | JSON file store (`tauri-plugin-store`) | `store.rs` |
 
