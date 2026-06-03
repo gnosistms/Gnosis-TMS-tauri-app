@@ -1,6 +1,7 @@
 use std::{
-    io::{Read, Write},
+    io::{ErrorKind, Read, Write},
     net::{TcpListener, TcpStream},
+    time::Duration,
 };
 
 use tauri::{Emitter, Manager};
@@ -95,6 +96,9 @@ p {
   }
 }"#;
 
+const CALLBACK_REQUEST_READ_TIMEOUT: Duration = Duration::from_secs(5);
+const CALLBACK_REQUEST_LINE_MAX_BYTES: usize = 8192;
+
 #[derive(Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct GithubAppInstallEventPayload {
@@ -171,10 +175,43 @@ fn write_html_response(
 }
 
 fn extract_request_target(stream: &mut TcpStream) -> Option<String> {
-    let mut buffer = [0_u8; 8192];
-    let bytes_read = stream.read(&mut buffer).ok()?;
-    let request = String::from_utf8_lossy(&buffer[..bytes_read]);
-    let line = request.lines().next()?;
+    stream
+        .set_read_timeout(Some(CALLBACK_REQUEST_READ_TIMEOUT))
+        .ok()?;
+    let line = read_request_line(stream)?;
+    parse_request_target_line(&line)
+}
+
+fn read_request_line(stream: &mut TcpStream) -> Option<String> {
+    let mut request_line = Vec::new();
+    let mut chunk = [0_u8; 512];
+
+    loop {
+        let bytes_read = match stream.read(&mut chunk) {
+            Ok(0) => return None,
+            Ok(bytes_read) => bytes_read,
+            Err(error) if matches!(error.kind(), ErrorKind::TimedOut | ErrorKind::WouldBlock) => {
+                return None;
+            }
+            Err(_) => return None,
+        };
+
+        request_line.extend_from_slice(&chunk[..bytes_read]);
+        if request_line.len() > CALLBACK_REQUEST_LINE_MAX_BYTES {
+            return None;
+        }
+
+        if let Some(line_end) = request_line.iter().position(|byte| *byte == b'\n') {
+            request_line.truncate(line_end);
+            if request_line.last() == Some(&b'\r') {
+                request_line.pop();
+            }
+            return String::from_utf8(request_line).ok();
+        }
+    }
+}
+
+fn parse_request_target_line(line: &str) -> Option<String> {
     let mut parts = line.split_whitespace();
     let method = parts.next()?;
     let target = parts.next()?;
@@ -463,4 +500,50 @@ fn handle_github_app_setup_request(
         "Reopening Gnosis TMS...",
     );
     focus_main_window(app);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{parse_request_target_line, read_request_line};
+    use std::{
+        io::Write,
+        net::{TcpListener, TcpStream},
+        thread,
+    };
+
+    #[test]
+    fn parse_request_target_line_accepts_get_targets() {
+        assert_eq!(
+            parse_request_target_line("GET /broker/auth/callback?state=ok HTTP/1.1"),
+            Some("/broker/auth/callback?state=ok".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_request_target_line_rejects_non_get_methods() {
+        assert_eq!(
+            parse_request_target_line("POST /broker/auth/callback HTTP/1.1"),
+            None
+        );
+    }
+
+    #[test]
+    fn read_request_line_accepts_split_lines() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback listener");
+        let address = listener.local_addr().expect("read listener address");
+        let writer = thread::spawn(move || {
+            let mut stream = TcpStream::connect(address).expect("connect to listener");
+            stream.write_all(b"GET /broker").expect("write first half");
+            stream
+                .write_all(b"/auth/callback HTTP/1.1\r\nHost: localhost\r\n\r\n")
+                .expect("write second half");
+        });
+
+        let (mut stream, _) = listener.accept().expect("accept test connection");
+        assert_eq!(
+            read_request_line(&mut stream),
+            Some("GET /broker/auth/callback HTTP/1.1".to_string())
+        );
+        writer.join().expect("writer thread should finish");
+    }
 }
