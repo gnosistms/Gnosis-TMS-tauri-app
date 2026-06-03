@@ -9,7 +9,7 @@ use readabilityrs::{Readability, ReadabilityOptions};
 use scraper::{ElementRef, Html, Selector};
 use url::Url;
 
-use crate::constants::ensure_within_import_size_limit;
+use crate::constants::{decoded_base64_len, ensure_within_import_size_limit};
 
 use super::{
     humanize_file_stem,
@@ -740,22 +740,6 @@ fn upload_image_field(filename: String, bytes: Vec<u8>) -> Option<ImportedFieldI
         path: None,
         pending_upload: Some(ImportedImageUpload { filename, bytes }),
     })
-}
-
-fn decoded_base64_len(value: &str) -> usize {
-    let padding = value
-        .trim_end()
-        .chars()
-        .rev()
-        .take_while(|character| *character == '=')
-        .count()
-        .min(2);
-    value
-        .len()
-        .saturating_mul(3)
-        .checked_div(4)
-        .unwrap_or(0)
-        .saturating_sub(padding)
 }
 
 fn source_html_directory(source_path: &str) -> Option<PathBuf> {

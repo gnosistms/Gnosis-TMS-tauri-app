@@ -1,5 +1,6 @@
 use crate::{
-    constants::ensure_within_import_size_limit, short_path_names::allocate_short_image_filename,
+    constants::{decoded_base64_len, ensure_within_import_size_limit},
+    short_path_names::allocate_short_image_filename,
 };
 
 use super::*;
@@ -631,22 +632,6 @@ fn decode_uploaded_image_bytes(data_base64: &str, file_label: &str) -> Result<Ve
     base64::engine::general_purpose::STANDARD
         .decode(normalized_data)
         .map_err(|error| format!("Could not decode the uploaded image data: {error}"))
-}
-
-fn decoded_base64_len(value: &str) -> usize {
-    let normalized_len = value.split_whitespace().map(str::len).sum::<usize>();
-    let padding = value
-        .trim_end()
-        .chars()
-        .rev()
-        .take_while(|character| *character == '=')
-        .count()
-        .min(2);
-    normalized_len
-        .saturating_mul(3)
-        .checked_div(4)
-        .unwrap_or(0)
-        .saturating_sub(padding)
 }
 
 pub(super) fn validate_editor_image_url(value: &str) -> Result<String, String> {

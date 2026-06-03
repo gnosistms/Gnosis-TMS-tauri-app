@@ -27,10 +27,27 @@ pub(crate) fn ensure_within_import_size_limit(
     Ok(())
 }
 
+pub(crate) fn decoded_base64_len(value: &str) -> usize {
+    let normalized_len = value.split_whitespace().map(str::len).sum::<usize>();
+    let padding = value
+        .trim_end()
+        .chars()
+        .rev()
+        .take_while(|character| *character == '=')
+        .count()
+        .min(2);
+    normalized_len
+        .saturating_mul(3)
+        .checked_div(4)
+        .unwrap_or(0)
+        .saturating_sub(padding)
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        ensure_within_import_size_limit, import_file_size_limit_error, MAX_IMPORT_FILE_BYTES,
+        decoded_base64_len, ensure_within_import_size_limit, import_file_size_limit_error,
+        MAX_IMPORT_FILE_BYTES,
     };
 
     #[test]
@@ -47,5 +64,13 @@ mod tests {
             ensure_within_import_size_limit(MAX_IMPORT_FILE_BYTES + 1, "chapter.docx"),
             Err(import_file_size_limit_error("chapter.docx"))
         );
+    }
+
+    #[test]
+    fn decoded_base64_len_handles_padding_and_whitespace() {
+        assert_eq!(decoded_base64_len("YQ=="), 1);
+        assert_eq!(decoded_base64_len("YWI="), 2);
+        assert_eq!(decoded_base64_len("YWJj"), 3);
+        assert_eq!(decoded_base64_len("YW Jj\nZA=="), 4);
     }
 }
