@@ -10,6 +10,8 @@ import {
 import { invoke } from "./runtime.js";
 import { state } from "./state.js";
 
+const DEBUG_EDITOR_WRITE = false;
+
 export function cloneQueueContextValue(value) {
   if (value == null) {
     return value;
@@ -158,12 +160,12 @@ export async function invokeQueuedEditorWriteCommand(command, payload, context, 
   }
 
   try {
-    console.info?.("[gtms editor-write]", "invoke:start", { command, chapterId, rowId });
+    if (DEBUG_EDITOR_WRITE) console.info?.("[gtms editor-write]", "invoke:start", { command, chapterId, rowId });
     const result = await invoke(command, payload);
-    console.info?.("[gtms editor-write]", "invoke:succeeded", { command, chapterId, rowId });
+    if (DEBUG_EDITOR_WRITE) console.info?.("[gtms editor-write]", "invoke:succeeded", { command, chapterId, rowId });
     return result;
   } catch (error) {
-    console.info?.("[gtms editor-write]", "invoke:failed", {
+    if (DEBUG_EDITOR_WRITE) console.info?.("[gtms editor-write]", "invoke:failed", {
       command,
       chapterId,
       rowId,

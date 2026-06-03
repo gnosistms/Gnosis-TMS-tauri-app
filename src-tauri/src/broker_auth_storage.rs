@@ -24,7 +24,7 @@ fn atomic_write(path: &PathBuf, contents: &str) -> Result<(), String> {
     let tmp_path = path.with_extension("json.tmp");
     fs::write(&tmp_path, contents)
         .map_err(|e| format!("Could not write broker session: {e}"))?;
-    fs::rename(&tmp_path, path)
+    crate::util::atomic_replace(&tmp_path, path)
         .map_err(|e| format!("Could not save broker session: {e}"))?;
     Ok(())
 }

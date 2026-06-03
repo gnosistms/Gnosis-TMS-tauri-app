@@ -903,6 +903,11 @@ export async function saveAiProviderSecret(render) {
   try {
     if (selectedAiInstallationId() !== null && state.auth.session?.sessionToken) {
       await saveSelectedTeamAiProviderSecret(render, providerId, apiKey);
+    } else if (!normalizedApiKey) {
+      await invoke("clear_ai_provider_secret", {
+        providerId,
+        ...maybeInstallationPayload(),
+      });
     } else {
       await invoke("save_ai_provider_secret", {
         providerId,

@@ -339,7 +339,7 @@ fn write_installation_access_snapshot(
             tmp_path.display()
         )
     })?;
-    fs::rename(&tmp_path, &path).map_err(|error| {
+    crate::util::atomic_replace(&tmp_path, &path).map_err(|error| {
         format!(
             "Could not finalize the installation access snapshot '{}': {error}",
             path.display()

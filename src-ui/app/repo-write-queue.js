@@ -6,6 +6,8 @@ let nextRepoWriteOperationId = 1;
 let nextRepoQueueErrorId = 1;
 let nextRepoInvalidationId = 1;
 
+const DEBUG_REPO_WRITE = false;
+
 const queuesByScope = new Map();
 const operationsById = new Map();
 const queueListeners = new Set();
@@ -31,6 +33,9 @@ function normalizeString(value) {
 }
 
 function logRepoWriteDiagnostic(event, operation, details = {}) {
+  if (!DEBUG_REPO_WRITE) {
+    return;
+  }
   if (typeof console === "undefined" || typeof console.info !== "function") {
     return;
   }
