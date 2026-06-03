@@ -26,7 +26,7 @@ installation write-access gating. Any issues here affect the entire trust bounda
 
 ---
 
-## Batch 2 — GitHub API Layer
+## Batch 2 — GitHub API Layer COMPLETE
 *~1,040 lines · 1 session*
 
 ```
@@ -39,6 +39,10 @@ github/types.rs                  (358)
 The HTTP client surface for all GitHub operations. Focus on error handling,
 response tolerance (paginated lists, partial responses), and whether API failures
 produce actionable error messages.
+
+**Review record**: PR #7, closed 2026-06-03 after follow-up fixes landed  
+**Findings**: 0 Critical, 0 Security, 2 Major, 4 Minor  
+**Resolution**: All findings resolved 2026-06-03 via PRs #10, #11, #12, and #13.
 
 ---
 
@@ -299,7 +303,7 @@ reports rejected commands through the consent-gated telemetry path.
 | Batch | Domain | Lines | Sessions | Status |
 |---|---|---|---|---|
 | 1 | Auth & Security ★ | 1,470 | 1 | ✅ `2026-06-02-review.md` — all findings resolved 2026-06-03 (see Resolution Status) |
-| 2 | GitHub API | 1,040 | 1 | — |
+| 2 | GitHub API | 1,040 | 1 | ✅ PR #7 closed — all findings resolved 2026-06-03 via PRs #10, #11, #12, #13 |
 | 3 | App Shell | 1,790 | 1 | — |
 | 4 | Git Shared | 1,470 | 1 | — |
 | 5 | Project Sync + Migrations | 3,510 | 1 | — |
