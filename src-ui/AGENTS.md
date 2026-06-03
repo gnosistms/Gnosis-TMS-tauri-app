@@ -6,12 +6,15 @@ Vanilla JS patterns for Gnosis TMS. See root `CLAUDE.md` for project overview an
 See `AGENTS_EVIDENCE.md` for verification notes and canonical source references that
 support the guidance in this file.
 
-> **Telemetry (planned, not yet implemented).** Error/crash reporting via Sentry is
-> designed in [`plans/telemetry-plan.md`](../plans/telemetry-plan.md). Reviewer note:
-> first-run crashes are **intentionally** captured before the consent disclosure is shown
-> and transmitted once it is (and discarded on an explicit opt-out) — do not flag that
-> mechanism as an accidental pre-consent leak. A *new* concern about a specific legal
-> regime (e.g. GDPR consent) is still a valid finding; it is an open question in the plan.
+> **Telemetry.** Error/crash reporting via Sentry is implemented in
+> `src-ui/app/telemetry.js`; see [`plans/telemetry-plan.md`](../plans/telemetry-plan.md).
+> Failed Tauri commands are reported by the `invoke()` wrapper in `runtime.js`, so do
+> not add duplicate Sentry calls at individual invoke call sites. First-run crashes are
+> intentionally captured before the consent disclosure is shown and transmitted once it
+> is (and discarded on an explicit opt-out) — do not flag that mechanism as an
+> accidental pre-consent leak. Non-fatal backend errors should arrive as small Tauri
+> events and be routed through `telemetry.js` so consent gating and scrubbing still
+> apply.
 
 ## Stack
 

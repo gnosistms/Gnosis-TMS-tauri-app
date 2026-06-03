@@ -163,6 +163,12 @@ Commands return `Result<T, String>` where the `String` is a user-facing error me
 - Provide specific, actionable error messages — "GitHub App does not have write access
   to this repository" is better than "permission error".
 - Do not leak internal paths, tokens, or stack traces in error strings.
+- Rust does not send directly to Sentry in Phase 1. If a command intentionally swallows
+  a non-fatal backend error and the user-facing operation should continue, emit a small
+  Tauri event and route it through `src-ui/app/telemetry.js`. Include only a stable
+  operation name and a scrubbed/scrubbable error string. Do not report expected control
+  flow such as user cancellation, offline state, auth expiry, permission denial,
+  validation failure, or conflict states.
 
 ### Progress Reporting
 
