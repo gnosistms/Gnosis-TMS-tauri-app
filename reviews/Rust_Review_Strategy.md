@@ -86,7 +86,7 @@ lists). Issues here propagate to all resource sync.
 ---
 
 ## Batch 5 — Project Sync + Migrations
-*~3,510 lines · 1 session*
+*~3,510 lines · 1 session · REVIEW COMPLETE*
 
 ```
 project_repo_sync.rs           (2,123)
@@ -97,6 +97,11 @@ team_repo_migrations.rs          (272)
 The largest single file in the codebase. `project_repo_sync.rs` handles the most
 complex sync state machine. Migrations are additive-only — verify that no existing
 migration step is modified or reordered.
+
+**Review file**: `reviews/2026-06-03-batch-5-review.md`
+**Findings**: 0 Critical, 0 Security, 2 Major, 0 Minor
+**Resolution**: Open; fixes needed for destructive project recovery authorization and
+first-sync attach preservation.
 
 ---
 
