@@ -351,7 +351,7 @@ The fix is the same transform applied to Batch 2 M2 (`invite_user_to_organizatio
 | 4 | Git Shared | 1,470 | 1 | ✅ `2026-06-03-batch-4-review.md` — 0C/0S/0M/2m, all findings resolved via PR #21 |
 | 5 | Project Sync + Migrations | 3,510 | 1 | ✅ `2026-06-03-batch-5-review.md` — 0C/0S/2M/0m, all resolved via PR #22 |
 | 6 | Glossary & QA Sync | 1,985 | 1 | ✅ `2026-06-03-batch-6-review.md` — 0C/0S/1M/0m, resolved in PR #23 |
-| 7 | Content Storage | 4,470 | 2 | — |
+| 7 | Content Storage | 4,470 | 2 | ✅ `2026-06-03-batch-7-review.md` — 0C/0S/0M/1m, resolved in PR #25 |
 | 8 | Team Metadata | 2,475 | 1 | — |
 | 9 | AI Integration | 5,040 | 2 | — |
 | 10 | Chapter Editor | 8,450 | 3 | — |
