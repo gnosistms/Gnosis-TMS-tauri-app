@@ -278,7 +278,7 @@ All findings resolved as of 2026-06-03.
 | SV-1 | ✅ Fixed (PR #15) | `inspect_broker_auth_session` → async + `spawn_blocking` (Batch 1 miss) |
 | SV-2 | ✅ Fixed (PR #15) | `refresh_broker_auth_session` → async + `spawn_blocking` (Batch 1 miss) |
 | m1 | ✅ Fixed (PR #16) | Removed unused Stronghold plugin registration + `stronghold:default` capability (struct usage retained) |
-| m2 | ✅ Fixed (PR #16) | 25 MB cap on `read_local_dropped_file` (drag-drop path). Uniform cross-path import limit tracked separately in `plans/import-file-size-limit-plan.md` / PR #17 |
+| m2 | ✅ Fixed (PR #16, #18) | 25 MB cap on `read_local_dropped_file` (PR #16); generalized to a single authoritative limit enforced at every import/upload sink, plus a JS pre-check and a Rust↔JS mirror-drift test (PR #18, per `plans/import-file-size-limit-plan.md`) |
 | m3 | ✅ Fixed (PR #16) | 5s read timeout on the callback socket |
 | m4 | ✅ Fixed (PR #16) | Bounded full request-line read across TCP segments (+ tests) |
 
