@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
 
 use crate::{
+    installation_access::ensure_installation_allows_qa_list_writes,
     local_repo_sync_state::{
         read_local_repo_sync_state, upsert_local_repo_sync_state, LocalRepoSyncStateUpdate,
     },
@@ -337,6 +338,7 @@ fn discard_old_layout_gtms_qa_list_repos_sync(
             continue;
         }
 
+        ensure_installation_allows_qa_list_writes(app, input.installation_id)?;
         ensure_qa_list_origin_remote(&qa_list, &repo_path)?;
         ensure_repo_local_git_identity(app, &repo_path)?;
 
@@ -987,5 +989,30 @@ mod tests {
             .as_deref()
             .unwrap_or_default()
             .contains("REMOTE_MIGRATED_LOCAL_OLD_LAYOUT_CHANGES"));
+    }
+
+    #[test]
+    fn old_layout_discard_keeps_backend_write_access_guard() {
+        let source = include_str!("qa_list_repo_sync.rs");
+        let discard_start = source
+            .find("fn discard_old_layout_gtms_qa_list_repos_sync")
+            .expect("discard function exists");
+        let changes_start = source
+            .find("fn qa_list_term_changes_between_commits")
+            .expect("next function exists");
+        let discard_body = &source[discard_start..changes_start];
+        let guard = "ensure_installation_allows_qa_list_writes(app, input.installation_id)?;";
+        let destructive_call = "discard_local_old_layout_changes_and_adopt_remote";
+        let guard_index = discard_body
+            .find(guard)
+            .expect("old-layout discard must verify QA list write access");
+        let destructive_index = discard_body
+            .find(destructive_call)
+            .expect("old-layout discard still calls destructive adoption");
+
+        assert!(
+            guard_index < destructive_index,
+            "QA list write access must be verified before destructive adoption"
+        );
     }
 }
