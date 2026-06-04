@@ -1,9 +1,10 @@
 import { glossaryEditorKeys } from "./query-client.js";
 import { createRepoResourceEditorQuery } from "./repo-resource/editor-query.js";
+import { glossaryResourceDescriptor } from "./glossary-resource-descriptor.js";
 
 const glossaryEditorQuery = createRepoResourceEditorQuery({
+  ...glossaryResourceDescriptor,
   resourceIdFields: ["id", "glossaryId"],
-  inputResourceIdField: "glossaryId",
   contextIdFields: ["glossaryId"],
   queryKey: glossaryEditorKeys.byGlossary,
   command: "load_gtms_glossary_editor_data",

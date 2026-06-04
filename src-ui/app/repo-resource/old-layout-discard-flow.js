@@ -3,14 +3,7 @@ import { requireBrokerSession } from "../auth-flow.js";
 import { state, createRepoOldLayoutDiscardState } from "../state.js";
 import { showNoticeBadge, showScopedSyncBadge, clearScopedSyncBadge } from "../status-feedback.js";
 import { enqueueRepoWrite, projectRepoScope } from "../repo-write-queue.js";
-
-function selectedTeam() {
-  return state.teams.find((team) => team.id === state.selectedTeamId) ?? null;
-}
-
-function resourceId(resource, config) {
-  return config.resourceId?.(resource) ?? resource?.id ?? null;
-}
+import { resourceId, selectedTeam } from "./resource-descriptor.js";
 
 function findResource(id, config) {
   return (Array.isArray(state[config.collectionField]) ? state[config.collectionField] : [])
@@ -119,7 +112,7 @@ export function createRepoResourceOldLayoutDiscardFlow(config) {
         run: () => invoke(config.command, {
           input: {
             installationId: team.installationId,
-            [config.inputCollectionField]: [descriptor],
+            [config.collectionField]: [descriptor],
           },
           sessionToken: requireBrokerSession(),
         }),

@@ -1,11 +1,10 @@
 import { createRepoResourceOldLayoutDiscardFlow } from "./repo-resource/old-layout-discard-flow.js";
 import { loadTeamGlossaries } from "./glossary-discovery-flow.js";
+import { glossaryResourceDescriptor } from "./glossary-resource-descriptor.js";
 
 const glossaryOldLayoutDiscardFlow = createRepoResourceOldLayoutDiscardFlow({
+  ...glossaryResourceDescriptor,
   stateField: "glossaryOldLayoutDiscard",
-  collectionField: "glossaries",
-  resourceIdField: "glossaryId",
-  inputCollectionField: "glossaries",
   notFoundMessage: "Could not find the selected glossary.",
   defaultResourceName: "Glossary",
   prepareErrorMessage: "Could not prepare this glossary for sync recovery.",

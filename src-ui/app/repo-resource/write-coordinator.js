@@ -1,8 +1,5 @@
 import { createWriteIntentCoordinator } from "../write-intent-coordinator.js";
-
-function resourceId(resource, config) {
-  return config.resourceId?.(resource) ?? resource?.id ?? null;
-}
+import { resourceId } from "./resource-descriptor.js";
 
 function patchResource(snapshot, id, patch, config) {
   if (!snapshot || typeof snapshot !== "object") {
@@ -32,7 +29,7 @@ function patchResource(snapshot, id, patch, config) {
 
 function intentMatchesSnapshot(intent, snapshot, config) {
   const resource = (Array.isArray(snapshot?.[config.collectionField]) ? snapshot[config.collectionField] : [])
-    .find((item) => resourceId(item, config) === intent[config.intentResourceIdField]);
+    .find((item) => resourceId(item, config) === intent[config.resourceIdField]);
   if (!resource) {
     return false;
   }
@@ -95,14 +92,14 @@ export function createRepoResourceWriteCoordinator(config) {
           continue;
         }
         if (intent.type === config.titleIntentType) {
-          nextSnapshot = patchResource(nextSnapshot, intent[config.intentResourceIdField], {
+          nextSnapshot = patchResource(nextSnapshot, intent[config.resourceIdField], {
             title: intent.value?.title,
             pendingMutation: "rename",
           }, config);
           continue;
         }
         if (intent.type === config.lifecycleIntentType) {
-          nextSnapshot = patchResource(nextSnapshot, intent[config.intentResourceIdField], {
+          nextSnapshot = patchResource(nextSnapshot, intent[config.resourceIdField], {
             lifecycleState: intent.value?.lifecycleState === "deleted" ? "deleted" : "active",
             pendingMutation: intent.value?.lifecycleState === "deleted" ? "softDelete" : "restore",
           }, config);

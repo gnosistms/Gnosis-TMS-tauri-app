@@ -1,9 +1,10 @@
 import { qaListEditorKeys } from "./query-client.js";
 import { createRepoResourceEditorQuery } from "./repo-resource/editor-query.js";
+import { qaListResourceDescriptor } from "./qa-list-resource-descriptor.js";
 
 const qaListEditorQuery = createRepoResourceEditorQuery({
+  ...qaListResourceDescriptor,
   resourceIdFields: ["id", "qaListId"],
-  inputResourceIdField: "qaListId",
   contextIdFields: ["qaListId", "id"],
   queryKey: qaListEditorKeys.byQaList,
   command: "load_gtms_qa_list_editor_data",

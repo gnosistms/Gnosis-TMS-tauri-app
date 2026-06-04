@@ -2,10 +2,7 @@ import { formatErrorForDisplay } from "../error-display.js";
 import { invoke } from "../runtime.js";
 import { showNoticeBadge } from "../status-feedback.js";
 import { state } from "../state.js";
-
-function selectedTeam() {
-  return state.teams.find((team) => team.id === state.selectedTeamId) ?? state.teams[0] ?? null;
-}
+import { resourceId, selectedTeam } from "./resource-descriptor.js";
 
 function sanitizeTmxFileName(value, fallback) {
   const normalized = String(value ?? "")
@@ -25,15 +22,11 @@ async function saveTmxFilePath(options) {
   return save(options);
 }
 
-function resourceId(resource, config) {
-  return config.resourceId?.(resource) ?? resource?.id ?? null;
-}
-
 export function createRepoResourceTmxExport(config) {
   return async function downloadResourceAsTmx(render, id, operations = {}) {
     const saveDialog = operations.saveDialog ?? saveTmxFilePath;
     const invokeCommand = operations.invoke ?? invoke;
-    const team = selectedTeam();
+    const team = selectedTeam({ fallbackToFirst: true });
     const resource = (Array.isArray(state[config.collectionField]) ? state[config.collectionField] : [])
       .find((entry) => resourceId(entry, config) === id) ?? null;
     if (!Number.isFinite(team?.installationId) || !resource?.repoName) {

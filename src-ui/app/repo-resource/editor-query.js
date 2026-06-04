@@ -1,24 +1,13 @@
 import { invoke } from "../runtime.js";
 import { queryClient } from "../query-client.js";
-
-function resourceId(resource, config) {
-  if (typeof config.resourceId === "function") {
-    return config.resourceId(resource);
-  }
-  for (const field of config.resourceIdFields ?? ["id"]) {
-    if (resource?.[field] != null) {
-      return resource[field];
-    }
-  }
-  return null;
-}
+import { resourceId } from "./resource-descriptor.js";
 
 function repoName(resource) {
   return String(resource?.repoName ?? "").trim();
 }
 
 function payloadResourceId(payload, resource, config) {
-  for (const field of config.contextIdFields ?? [config.inputResourceIdField]) {
+  for (const field of config.contextIdFields ?? [config.resourceIdField]) {
     if (payload?.[field] != null) {
       return payload[field];
     }
@@ -51,7 +40,7 @@ export function createRepoResourceEditorQuery(config) {
       installationId: team?.installationId ?? null,
     };
 
-    for (const field of config.contextIdFields ?? [config.inputResourceIdField]) {
+    for (const field of config.contextIdFields ?? [config.resourceIdField]) {
       context[field] = payload?.[field] ?? resolvedResourceId;
     }
     return context;
@@ -65,7 +54,7 @@ export function createRepoResourceEditorQuery(config) {
         const payload = await invoke(config.command, {
           input: {
             installationId: team.installationId,
-            [config.inputResourceIdField]: resourceId(resource, config),
+            [config.resourceIdField]: resourceId(resource, config),
             repoName: repoName(resource),
           },
         });

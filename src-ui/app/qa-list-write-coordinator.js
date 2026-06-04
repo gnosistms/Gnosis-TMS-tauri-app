@@ -1,11 +1,11 @@
 import { createRepoResourceWriteCoordinator } from "./repo-resource/write-coordinator.js";
+import { qaListResourceDescriptor } from "./qa-list-resource-descriptor.js";
 
 const qaListWriteCoordinator = createRepoResourceWriteCoordinator({
+  ...qaListResourceDescriptor,
   defaultScope: "qa-list-writes:default",
   label: "QA list",
   keyPrefix: "qa-list",
-  collectionField: "qaLists",
-  intentResourceIdField: "qaListId",
   titleIntentType: "qaListTitle",
   lifecycleIntentType: "qaListLifecycle",
   repoSyncIntentType: "qaListRepoSync",

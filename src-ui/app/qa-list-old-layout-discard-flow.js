@@ -1,11 +1,10 @@
 import { createRepoResourceOldLayoutDiscardFlow } from "./repo-resource/old-layout-discard-flow.js";
 import { loadTeamQaLists } from "./qa-list-discovery-flow.js";
+import { qaListResourceDescriptor } from "./qa-list-resource-descriptor.js";
 
 const qaListOldLayoutDiscardFlow = createRepoResourceOldLayoutDiscardFlow({
+  ...qaListResourceDescriptor,
   stateField: "qaListOldLayoutDiscard",
-  collectionField: "qaLists",
-  resourceIdField: "qaListId",
-  inputCollectionField: "qaLists",
   notFoundMessage: "Could not find the selected QA list.",
   defaultResourceName: "QA list",
   prepareErrorMessage: "Could not prepare this QA list for sync recovery.",

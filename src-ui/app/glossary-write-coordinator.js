@@ -1,11 +1,11 @@
 import { createRepoResourceWriteCoordinator } from "./repo-resource/write-coordinator.js";
+import { glossaryResourceDescriptor } from "./glossary-resource-descriptor.js";
 
 const glossaryWriteCoordinator = createRepoResourceWriteCoordinator({
+  ...glossaryResourceDescriptor,
   defaultScope: "glossary-writes:default",
   label: "Glossary",
   keyPrefix: "glossary",
-  collectionField: "glossaries",
-  intentResourceIdField: "glossaryId",
   titleIntentType: "glossaryTitle",
   lifecycleIntentType: "glossaryLifecycle",
   repoSyncIntentType: "glossaryRepoSync",
