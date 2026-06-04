@@ -26,8 +26,8 @@ use crate::{
         REPO_SYNC_STATUS_OUT_OF_SYNC as GLOSSARY_REPO_SYNC_STATUS_OUT_OF_SYNC,
         REPO_SYNC_STATUS_REMOTE_MIGRATED_LOCAL_CHANGES as GLOSSARY_REPO_SYNC_STATUS_REMOTE_MIGRATED_LOCAL_CHANGES,
         REPO_SYNC_STATUS_SYNC_ERROR as GLOSSARY_REPO_SYNC_STATUS_SYNC_ERROR,
-        REPO_SYNC_STATUS_UP_TO_DATE as GLOSSARY_REPO_SYNC_STATUS_UP_TO_DATE,
         REPO_SYNC_STATUS_UPDATE_REQUIRED as GLOSSARY_REPO_SYNC_STATUS_UPDATE_REQUIRED,
+        REPO_SYNC_STATUS_UP_TO_DATE as GLOSSARY_REPO_SYNC_STATUS_UP_TO_DATE,
     },
     repo_sync_shared::{
         abort_rebase_after_failed_pull, ensure_repo_local_git_identity,
@@ -105,7 +105,6 @@ pub(crate) struct GlossaryEditorRepoSyncResponse {
     pub(crate) inserted_term_ids: Vec<String>,
     pub(crate) deleted_term_ids: Vec<String>,
 }
-
 
 fn glossary_descriptor_is_deleted(glossary: &GlossaryRepoSyncDescriptor) -> bool {
     repo_transport_deleted_state(glossary.lifecycle_state.as_deref())

@@ -26,8 +26,8 @@ use crate::{
         REPO_SYNC_STATUS_OUT_OF_SYNC as QA_LIST_REPO_SYNC_STATUS_OUT_OF_SYNC,
         REPO_SYNC_STATUS_REMOTE_MIGRATED_LOCAL_CHANGES as QA_LIST_REPO_SYNC_STATUS_REMOTE_MIGRATED_LOCAL_CHANGES,
         REPO_SYNC_STATUS_SYNC_ERROR as QA_LIST_REPO_SYNC_STATUS_SYNC_ERROR,
-        REPO_SYNC_STATUS_UP_TO_DATE as QA_LIST_REPO_SYNC_STATUS_UP_TO_DATE,
         REPO_SYNC_STATUS_UPDATE_REQUIRED as QA_LIST_REPO_SYNC_STATUS_UPDATE_REQUIRED,
+        REPO_SYNC_STATUS_UP_TO_DATE as QA_LIST_REPO_SYNC_STATUS_UP_TO_DATE,
     },
     repo_sync_shared::{
         abort_rebase_after_failed_pull, ensure_repo_local_git_identity,
@@ -105,7 +105,6 @@ pub(crate) struct QaListEditorRepoSyncResponse {
     pub(crate) inserted_term_ids: Vec<String>,
     pub(crate) deleted_term_ids: Vec<String>,
 }
-
 
 fn qa_list_descriptor_is_deleted(qa_list: &QaListRepoSyncDescriptor) -> bool {
     repo_transport_deleted_state(qa_list.lifecycle_state.as_deref())
