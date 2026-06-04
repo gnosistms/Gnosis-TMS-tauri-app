@@ -171,6 +171,35 @@ untested** (glossary has 3 tests) → add `qa-list-lifecycle-flow.test.js` chara
 L4 (+test), L5, L7 as feature-port commits; (4) verify token-substituted diff ~empty apart from
 the L6 residue. `npm test` green per commit. Owner: **GPT with Claude review** (decisions resolved).
 
+## Lifecycle-flow completion follow-up (after PR #46)
+
+PR #46 landed L1–L7 (correct, regression-free, QA tests + the L1 data fix). Review surfaced the
+mirror is **not yet complete** — two functional divergences my L1–L7 rulings missed, plus the
+"~empty diff" bar (step 4) wasn't met. A small follow-up finishes lifecycle:
+
+- **L8 — rename guards on the expected (non-deleted) resource.** QA's `submitQaListRename` passes
+  `isExpectedResource: (r) => Boolean(r) && r.lifecycleState !== "deleted"` to
+  `guardTopLevelResourceAction`; glossary's `submitGlossaryRename` omits it (so it wouldn't refuse
+  renaming a soft-deleted glossary). **Ruling: adopt QA's guard in glossary.** (Glossary's
+  delete/restore already gate on lifecycle state; only rename is missing it.) Behavior change → test.
+- **L9 — align rename validation ordering.** QA checks the empty-title case *before* the
+  permission/tombstone guard; glossary checks it *after*. **Ruling: match QA** — empty-title check
+  first in glossary's `submitGlossaryRename`. Test.
+- **Structural alignment (explicit).** The token-substituted diff is still ~153 lines, almost
+  entirely **import order/grouping** and **shared-helper naming/position** drift
+  (`commitGlossaryMutationStrict` vs `commit…LifecycleMutation`; `lifecycleActionBlockedMessage`
+  defined early vs late). Rename the glossary commit/guard helpers to match QA's names, move them to
+  the same positions, and reorder imports so a glossary↔qa token-substituted diff is ~empty apart
+  from the L6 residue. Required before Phase B collapse. (Pure refactor — its own commit.)
+
+Owner: GPT with Claude review. `npm test` green per commit; keep the refactor (renames/reordering)
+separate from the L8/L9 behavior changes.
+
+> **Process note for the remaining pairs (`query`, `import-flow`):** deeper Claude prep up front —
+> read the guard/validation internals, not just the top-level functions, so divergences like L8/L9
+> are caught *before* handoff — and make "align imports + helper names/positions to a clean
+> token-diff" an explicit itemized instruction rather than relying on the "~empty diff" criterion.
+
 ## Definition of done (Phase A)
 
 All four Tier 2 flow pairs are token-substitution mirrors (functional residue only), every step landed
