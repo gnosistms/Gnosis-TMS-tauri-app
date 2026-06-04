@@ -84,7 +84,7 @@ export function renderAppUpdateModal(state) {
             update.required === true
               ? `
                 <p class="modal__supporting">
-                  This repo was saved by a newer version of Gnosis TMS. Update before continuing.
+                  This project needs a newer version of Gnosis TMS. Update the app before continuing.
                 </p>
               `
               : `

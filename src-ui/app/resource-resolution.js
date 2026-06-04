@@ -47,7 +47,7 @@ function syncIssueResolution(snapshot, resourceLabel, resource = null) {
     return {
       key: "updateRequired",
       tone: "error",
-      message: message || `A newer version of Gnosis TMS is required before this ${resourceLabel} repo can sync again.`,
+      message: message || `This ${resourceLabel} needs a newer version of Gnosis TMS before it can sync again.`,
       help: "Update Gnosis TMS before continuing so an older app version does not overwrite newer-format data.",
       blockLifecycleActions: true,
       blockContentActions: true,
@@ -71,7 +71,7 @@ function syncIssueResolution(snapshot, resourceLabel, resource = null) {
     return {
       key: "remoteMigratedLocalChanges",
       tone: "error",
-      message: message || `The server has migrated this ${resourceLabel} to a new data format, but this computer still has old-format local changes.`,
+      message: message || `A newer version of this ${resourceLabel} is available online, but this computer has unsynced changes.`,
       help: "To sync again, discard the old local changes and download the migrated data from the server.",
       blockLifecycleActions: true,
       blockContentActions: true,

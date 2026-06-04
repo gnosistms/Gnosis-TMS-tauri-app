@@ -19,15 +19,18 @@ export function renderRepoOldLayoutDiscardModal({
   const errorMarkup = modal.error
     ? `<p class="modal__error">${escapeHtml(formatErrorForDisplay(modal.error))}</p>`
     : "";
+  const resourceCopyLabel = resourceLabel === "QA list"
+    ? "QA list"
+    : String(resourceLabel ?? "item").trim().toLowerCase() || "item";
 
   return `
     <div class="modal-backdrop">
       <section class="card modal-card modal-card--compact">
         <div class="card__body modal-card__body">
-          <p class="eyebrow">SERVER HAS NEW DATA FORMAT</p>
+          <p class="eyebrow">SYNC UPDATE</p>
           <h2 class="modal__title">Overwrite local changes</h2>
           <p class="modal__supporting">
-            The data on the server has migrated to a new data format. You have changes saved on your computer in the old data format. In order to sync with the server, you must discard the changes on your computer.
+            A newer version of this ${escapeHtml(resourceCopyLabel)} is available online. To continue syncing, discard the unsynced changes saved on this computer.
           </p>
           ${modal.resourceName ? `<p class="modal__supporting">${escapeHtml(resourceLabel)}: ${escapeHtml(modal.resourceName)}</p>` : ""}
           ${errorMarkup}

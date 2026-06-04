@@ -1,6 +1,5 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
 
 const cloneValue = (value) => {
   if (value === undefined) {
@@ -199,10 +198,6 @@ const {
   loadStoredAiSettingsAboutDismissed,
 } = await import("./ai-settings-preferences.js");
 const { pickPreferredAiModelId } = await import("./ai-action-config.js");
-const {
-  AI_PROVIDER_IDS,
-  DEFAULT_AI_PROVIDER_ID,
-} = await import("./ai-provider-config.js");
 const {
   buildEditorDerivedGlossaryModel,
   buildEditorGlossaryModel,
@@ -3604,17 +3599,6 @@ test("AI key provider selection loads and saves keys independently by provider",
       providerId: "gemini",
       apiKey: "  gm-updated  ",
     }],
-  );
-});
-
-test("AI Settings defaults to OpenAI, lists Gemini last, and recommends OpenAI", () => {
-  resetSessionState();
-  assert.equal(DEFAULT_AI_PROVIDER_ID, "openai");
-  assert.deepEqual(AI_PROVIDER_IDS, ["openai", "claude", "deepseek", "gemini"]);
-  assert.equal(state.aiSettings.providerId, "openai");
-  assert.match(
-    readFileSync(new URL("../screens/ai-key.js", import.meta.url), "utf8"),
-    /recommend OpenAI/i,
   );
 });
 

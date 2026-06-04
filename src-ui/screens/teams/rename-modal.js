@@ -28,7 +28,7 @@ export function renderTeamRenameModal(state) {
           <p class="card__eyebrow">RENAME TEAM</p>
           <h2 class="modal__title">Rename This Team</h2>
           <p class="modal__supporting">
-            This changes the GitHub organization <strong>name</strong> field shown in Gnosis TMS. The GitHub slug will stay the same.
+            This changes the team name shown in Gnosis TMS. It does not change the team's GitHub address.
           </p>
           <div class="modal__form">
             <label class="field">
