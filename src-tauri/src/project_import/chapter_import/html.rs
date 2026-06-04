@@ -9,6 +9,8 @@ use readabilityrs::{Readability, ReadabilityOptions};
 use scraper::{ElementRef, Html, Selector};
 use url::Url;
 
+use crate::constants::{decoded_base64_len, ensure_within_import_size_limit};
+
 use super::{
     humanize_file_stem,
     languages::{language_display_name, normalize_language_code},
@@ -342,12 +344,17 @@ fn image_block_from_figure(
         .map_err(|_| "Could not prepare HTML reader extraction.".to_string())?;
     let caption_selector = Selector::parse("figcaption")
         .map_err(|_| "Could not prepare HTML reader extraction.".to_string())?;
-    let Some((img, image)) = figure.select(&img_selector).find_map(|image| {
+    let mut selected_image = None;
+    for image in figure.select(&img_selector) {
         if should_skip_image_element(image) {
-            return None;
+            continue;
         }
-        image_from_element(image, source_url, source_path).map(|field_image| (image, field_image))
-    }) else {
+        if let Some(field_image) = image_from_element(image, source_url, source_path)? {
+            selected_image = Some((image, field_image));
+            break;
+        }
+    }
+    let Some((img, image)) = selected_image else {
         return Ok(None);
     };
 
@@ -375,7 +382,7 @@ fn image_block_from_img(
     if should_skip_image_element(img) {
         return Ok(None);
     }
-    let Some(image) = image_from_element(img, source_url, source_path) else {
+    let Some(image) = image_from_element(img, source_url, source_path)? else {
         return Ok(None);
     };
 
@@ -556,10 +563,13 @@ fn image_from_element(
     element: ElementRef<'_>,
     source_url: &str,
     source_path: Option<&str>,
-) -> Option<ImportedFieldImage> {
+) -> Result<Option<ImportedFieldImage>, String> {
     let raw = best_srcset_url(element)
         .or_else(|| lazy_image_url(element))
-        .or_else(|| element.attr("src").map(str::to_string))?;
+        .or_else(|| element.attr("src").map(str::to_string));
+    let Some(raw) = raw else {
+        return Ok(None);
+    };
     resolve_image_source(&raw, source_url, source_path)
 }
 
@@ -567,10 +577,10 @@ fn resolve_image_source(
     raw_url: &str,
     source_url: &str,
     source_path: Option<&str>,
-) -> Option<ImportedFieldImage> {
+) -> Result<Option<ImportedFieldImage>, String> {
     let trimmed = raw_url.trim();
     if trimmed.is_empty() || trimmed.starts_with("blob:") || trimmed.starts_with("javascript:") {
-        return None;
+        return Ok(None);
     }
 
     if trimmed.starts_with("data:") {
@@ -579,22 +589,29 @@ fn resolve_image_source(
 
     if let Ok(parsed) = Url::parse(trimmed) {
         if matches!(parsed.scheme(), "http" | "https") {
-            return Some(url_image_field(parsed.to_string()));
+            return Ok(Some(url_image_field(parsed.to_string())));
         }
         if parsed.scheme() == "file" {
             return local_file_url_image_field(&parsed, source_path);
         }
-        return None;
+        return Ok(None);
     }
 
     if let Some(source_path) = source_path {
         if let Some(image) = local_relative_image_field(trimmed, source_path) {
-            return Some(image);
+            if let Some(image) = image? {
+                return Ok(Some(image));
+            }
         }
     }
 
-    let base = Url::parse(source_url).ok()?;
-    image_url_with_supported_scheme(base.join(trimmed).ok()?).map(url_image_field)
+    let Some(base) = Url::parse(source_url).ok() else {
+        return Ok(None);
+    };
+    let Some(joined) = base.join(trimmed).ok() else {
+        return Ok(None);
+    };
+    Ok(image_url_with_supported_scheme(joined).map(url_image_field))
 }
 
 fn html_field_image_url(image: &ImportedFieldImage) -> Option<String> {
@@ -665,10 +682,12 @@ fn image_url_with_supported_scheme(url: Url) -> Option<String> {
     }
 }
 
-fn data_image_field(value: &str) -> Option<ImportedFieldImage> {
-    let (metadata, data) = value.split_once(',')?;
+fn data_image_field(value: &str) -> Result<Option<ImportedFieldImage>, String> {
+    let Some((metadata, data)) = value.split_once(',') else {
+        return Ok(None);
+    };
     if !metadata.to_ascii_lowercase().ends_with(";base64") {
-        return None;
+        return Ok(None);
     }
     let mime_type = metadata
         .strip_prefix("data:")
@@ -678,37 +697,64 @@ fn data_image_field(value: &str) -> Option<ImportedFieldImage> {
         .unwrap_or("")
         .trim()
         .to_ascii_lowercase();
-    let extension = image_extension_from_mime_type(&mime_type)?;
+    let Some(extension) = image_extension_from_mime_type(&mime_type) else {
+        return Ok(None);
+    };
     let normalized_data = data.split_whitespace().collect::<String>();
-    let bytes = general_purpose::STANDARD.decode(normalized_data).ok()?;
+    ensure_within_import_size_limit(
+        decoded_base64_len(&normalized_data) as u64,
+        &format!("embedded-image.{extension}"),
+    )?;
+    let Some(bytes) = general_purpose::STANDARD.decode(normalized_data).ok() else {
+        return Ok(None);
+    };
     if bytes.is_empty() {
-        return None;
+        return Ok(None);
     }
     upload_image_field(format!("embedded-image.{extension}"), bytes)
 }
 
-fn local_file_url_image_field(url: &Url, source_path: Option<&str>) -> Option<ImportedFieldImage> {
-    let source_root = source_html_directory(source_path?)?;
-    let path = url.to_file_path().ok()?;
+fn local_file_url_image_field(
+    url: &Url,
+    source_path: Option<&str>,
+) -> Result<Option<ImportedFieldImage>, String> {
+    let Some(source_root) = source_path.and_then(source_html_directory) else {
+        return Ok(None);
+    };
+    let Some(path) = url.to_file_path().ok() else {
+        return Ok(None);
+    };
     local_image_field_from_path(path, &source_root)
 }
 
-fn local_relative_image_field(raw_url: &str, source_path: &str) -> Option<ImportedFieldImage> {
+fn local_relative_image_field(
+    raw_url: &str,
+    source_path: &str,
+) -> Option<Result<Option<ImportedFieldImage>, String>> {
     let source_root = source_html_directory(source_path)?;
     let relative_path = strip_local_url_suffix(raw_url);
     let path = source_root.join(relative_path);
-    local_image_field_from_path(path, &source_root)
+    Some(local_image_field_from_path(path, &source_root))
 }
 
-fn local_image_field_from_path(path: PathBuf, source_root: &Path) -> Option<ImportedFieldImage> {
-    let root = source_root.canonicalize().ok()?;
-    let image_path = path.canonicalize().ok()?;
+fn local_image_field_from_path(
+    path: PathBuf,
+    source_root: &Path,
+) -> Result<Option<ImportedFieldImage>, String> {
+    let Some(root) = source_root.canonicalize().ok() else {
+        return Ok(None);
+    };
+    let Some(image_path) = path.canonicalize().ok() else {
+        return Ok(None);
+    };
     if !image_path.starts_with(&root) {
-        return None;
+        return Ok(None);
     }
-    let bytes = fs::read(&image_path).ok()?;
-    if bytes.is_empty() {
-        return None;
+    let Some(metadata) = fs::metadata(&image_path).ok() else {
+        return Ok(None);
+    };
+    if !metadata.is_file() {
+        return Ok(None);
     }
     let filename = image_path
         .file_name()
@@ -717,16 +763,27 @@ fn local_image_field_from_path(path: PathBuf, source_root: &Path) -> Option<Impo
         .filter(|value| !value.is_empty())
         .unwrap_or("image")
         .to_string();
+    ensure_within_import_size_limit(metadata.len(), &filename)?;
+    let Some(bytes) = fs::read(&image_path).ok() else {
+        return Ok(None);
+    };
+    if bytes.is_empty() {
+        return Ok(None);
+    }
     upload_image_field(filename, bytes)
 }
 
-fn upload_image_field(filename: String, bytes: Vec<u8>) -> Option<ImportedFieldImage> {
-    Some(ImportedFieldImage {
+fn upload_image_field(
+    filename: String,
+    bytes: Vec<u8>,
+) -> Result<Option<ImportedFieldImage>, String> {
+    ensure_within_import_size_limit(bytes.len() as u64, &filename)?;
+    Ok(Some(ImportedFieldImage {
         kind: "upload".to_string(),
         url: None,
         path: None,
         pending_upload: Some(ImportedImageUpload { filename, bytes }),
-    })
+    }))
 }
 
 fn source_html_directory(source_path: &str) -> Option<PathBuf> {
@@ -1091,6 +1148,22 @@ mod tests {
             .as_ref()
             .map(|upload| upload.bytes.starts_with(&[0x89, b'P', b'N', b'G']))
             .unwrap_or(false));
+    }
+
+    #[test]
+    fn data_image_field_rejects_oversized_embedded_images() {
+        let oversized_base64_len =
+            ((crate::constants::MAX_IMPORT_FILE_BYTES as usize + 3) / 3) * 4 + 4;
+        let oversized_base64 = "A".repeat(oversized_base64_len);
+        let error = match data_image_field(&format!("data:image/png;base64,{oversized_base64}")) {
+            Ok(_) => panic!("oversized embedded image should fail the import"),
+            Err(error) => error,
+        };
+
+        assert_eq!(
+            error,
+            "'embedded-image.png' is too large to import. The maximum file size is 25 MB."
+        );
     }
 
     #[test]

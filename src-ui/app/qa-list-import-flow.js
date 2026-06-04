@@ -1,4 +1,5 @@
 import { findIsoLanguageOption, normalizeSupportedLanguageCode } from "../lib/language-options.js";
+import { enforceImportFileSizeLimit } from "./import-file-limit.js";
 import { openLocalFilePicker } from "./local-file-picker.js";
 import { appendRepoNameSuffix, slugifyRepoName } from "./repo-names.js";
 import { invoke } from "./runtime.js";
@@ -89,6 +90,7 @@ function decodeBase64ToBytes(dataBase64) {
 
 async function importFileBytes(file) {
   if (readableImportFileLike(file)) {
+    enforceImportFileSizeLimit(file.size, importFileName(file));
     return Array.from(new Uint8Array(await file.arrayBuffer()));
   }
 

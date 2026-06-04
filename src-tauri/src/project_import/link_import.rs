@@ -9,10 +9,11 @@ use reqwest::{
 use serde::{Deserialize, Serialize};
 use url::Url;
 
+use crate::constants::ensure_within_import_size_limit;
+
 const ACCESS_DENIED_PREFIX: &str = "PROJECT_IMPORT_LINK_ACCESS_DENIED:";
 const INVALID_LINK_PREFIX: &str = "PROJECT_IMPORT_LINK_INVALID:";
 const USER_AGENT_VALUE: &str = "GnosisTMS/0.7";
-const MAX_LINK_IMPORT_BYTES: usize = 50 * 1024 * 1024;
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -110,9 +111,8 @@ fn resolve_google_export(
     if data.is_empty() {
         return Err(invalid_link("Google returned an empty file."));
     }
-    if data.len() > MAX_LINK_IMPORT_BYTES {
-        return Err(invalid_link("The linked file is too large to import."));
-    }
+    ensure_within_import_size_limit(data.len() as u64, &file_name)
+        .map_err(|error| invalid_link(&error))?;
     if !data.starts_with(b"PK") {
         return Err(invalid_link(
             "Google did not return an exportable DOCX or XLSX file.",
@@ -155,16 +155,16 @@ fn resolve_html_link(url: &Url) -> Result<ResolveProjectImportLinkResponse, Stri
     if data.is_empty() {
         return Err(invalid_link("The website returned an empty response."));
     }
-    if data.len() > MAX_LINK_IMPORT_BYTES {
-        return Err(invalid_link("The linked web page is too large to import."));
-    }
     if !content_type_is_html(&content_type) && !body_looks_like_html(&data) {
         return Err(invalid_link("The website did not return an HTML page."));
     }
+    let file_name = html_file_name(&final_url, &data);
+    ensure_within_import_size_limit(data.len() as u64, &file_name)
+        .map_err(|error| invalid_link(&error))?;
 
     Ok(ResolveProjectImportLinkResponse {
         file_type: "html".to_string(),
-        file_name: html_file_name(&final_url, &data),
+        file_name,
         data_base64: general_purpose::STANDARD.encode(data),
         source_url: final_url.as_str().to_string(),
     })

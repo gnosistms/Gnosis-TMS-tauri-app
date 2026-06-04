@@ -9,6 +9,7 @@ use tauri::AppHandle;
 use uuid::Uuid;
 
 use crate::{
+    constants::ensure_within_import_size_limit,
     git_commit::git_commit_as_signed_in_user,
     installation_access::{
         ensure_installation_allows_glossary_management, ensure_installation_allows_glossary_writes,
@@ -412,8 +413,8 @@ pub(crate) async fn purge_local_gtms_glossary_repo(
     input: UpdateGlossaryLifecycleInput,
 ) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || purge_local_gtms_glossary_repo_sync(&app, input))
-    .await
-    .map_err(|error| format!("The glossary cleanup worker failed: {error}"))?
+        .await
+        .map_err(|error| format!("The glossary cleanup worker failed: {error}"))?
 }
 
 #[tauri::command]
@@ -684,6 +685,7 @@ fn import_tmx_to_gtms_glossary_repo_sync(
     app: &AppHandle,
     input: ImportTmxToGlossaryRepoInput,
 ) -> Result<LocalGlossarySummary, String> {
+    ensure_within_import_size_limit(input.bytes.len() as u64, &input.file_name)?;
     let parsed = parse_tmx_glossary(&input.file_name, &input.bytes)?;
     let repo_name = input.repo_name.trim().to_string();
     if repo_name.is_empty() {
@@ -783,6 +785,7 @@ fn import_tmx_to_gtms_glossary_repo_sync(
 fn inspect_tmx_glossary_import_sync(
     input: InspectTmxGlossaryImportInput,
 ) -> Result<GlossaryImportPreview, String> {
+    ensure_within_import_size_limit(input.bytes.len() as u64, &input.file_name)?;
     let parsed = parse_tmx_glossary(&input.file_name, &input.bytes)?;
     Ok(GlossaryImportPreview {
         title: parsed.title,

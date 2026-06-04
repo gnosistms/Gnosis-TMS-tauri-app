@@ -36,6 +36,7 @@ import {
 } from "./project-write-coordinator.js";
 import { enqueueRepoWrite } from "./repo-write-queue.js";
 import { openLocalFilePathPicker, openLocalFilePicker } from "./local-file-picker.js";
+import { enforceImportFileSizeLimit } from "./import-file-limit.js";
 import { canManageProjects } from "./resource-capabilities.js";
 import { normalizeSupportedLanguageCode } from "../lib/language-options.js";
 
@@ -182,6 +183,7 @@ async function importFileBytes(file) {
   }
 
   if (readableImportFileLike(file)) {
+    enforceImportFileSizeLimit(file.size, importFileName(file));
     return Array.from(new Uint8Array(await file.arrayBuffer()));
   }
 

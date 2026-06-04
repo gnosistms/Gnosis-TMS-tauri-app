@@ -9,6 +9,7 @@ import {
   selectedTeam,
 } from "./glossary-shared.js";
 import { openLocalFilePicker } from "./local-file-picker.js";
+import { enforceImportFileSizeLimit } from "./import-file-limit.js";
 import {
   createRemoteGlossaryRepoForTeam,
   getGlossarySyncIssueMessage,
@@ -85,6 +86,7 @@ function decodeBase64ToBytes(dataBase64) {
 
 async function importFileBytes(file) {
   if (readableImportFileLike(file)) {
+    enforceImportFileSizeLimit(file.size, importFileName(file));
     return Array.from(new Uint8Array(await file.arrayBuffer()));
   }
 

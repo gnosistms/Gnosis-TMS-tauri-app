@@ -9,6 +9,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tauri::{AppHandle, Emitter};
 
+use crate::constants::ensure_within_import_size_limit;
+
 mod docx;
 mod html;
 pub(crate) mod languages;
@@ -16,8 +18,6 @@ mod txt;
 mod write_gtms;
 mod xlsx;
 
-#[cfg(test)]
-use docx::DOCX_MAX_FILE_BYTES;
 use docx::{parse_docx_file, DocxImportSummary, DocxRowMetadata};
 use html::{parse_html_file, HtmlRowMetadata};
 #[cfg(test)]
@@ -396,6 +396,7 @@ pub(super) fn import_xlsx_to_gtms_sync(
     app: &AppHandle,
     input: ImportXlsxInput,
 ) -> Result<ImportXlsxResponse, String> {
+    ensure_within_import_size_limit(input.bytes.len() as u64, &input.file_name)?;
     let parsed = parse_xlsx_workbook(input)?;
     import_parsed_workbook_to_gtms_sync(app, parsed)
 }
@@ -404,6 +405,7 @@ pub(super) fn import_txt_to_gtms_sync(
     app: &AppHandle,
     input: ImportTxtInput,
 ) -> Result<ImportXlsxResponse, String> {
+    ensure_within_import_size_limit(input.bytes.len() as u64, &input.file_name)?;
     let parsed = parse_txt_file(input)?;
     import_parsed_workbook_to_gtms_sync(app, parsed)
 }
@@ -412,6 +414,7 @@ pub(super) fn import_docx_to_gtms_sync(
     app: &AppHandle,
     input: ImportDocxInput,
 ) -> Result<ImportXlsxResponse, String> {
+    ensure_within_import_size_limit(input.bytes.len() as u64, &input.file_name)?;
     let parsed = parse_docx_file(input)?;
     import_parsed_workbook_to_gtms_sync(app, parsed)
 }
@@ -420,6 +423,7 @@ pub(super) fn import_html_to_gtms_sync(
     app: &AppHandle,
     input: ImportHtmlInput,
 ) -> Result<ImportXlsxResponse, String> {
+    ensure_within_import_size_limit(input.bytes.len() as u64, &input.file_name)?;
     let parsed = parse_html_file(input)?;
     import_parsed_workbook_to_gtms_sync(app, parsed)
 }
@@ -623,6 +627,12 @@ fn required_source_language_code(file: &ImportProjectFileInput) -> Result<String
 }
 
 fn import_project_file_bytes(file: &ImportProjectFileInput) -> Result<Vec<u8>, String> {
+    let file_name = file.file_name.trim();
+    let file_label = if file_name.is_empty() {
+        "file"
+    } else {
+        file_name
+    };
     if let Some(path) = file
         .source_path
         .as_deref()
@@ -634,13 +644,17 @@ fn import_project_file_bytes(file: &ImportProjectFileInput) -> Result<Vec<u8>, S
         if !metadata.is_file() {
             return Err(format!("'{}' is not a file.", path));
         }
+        ensure_within_import_size_limit(metadata.len(), file_label)?;
         return fs::read(path).map_err(|error| format!("Could not read '{}': {error}", path));
     }
 
-    file.bytes
+    let bytes = file
+        .bytes
         .clone()
         .filter(|bytes| !bytes.is_empty())
-        .ok_or_else(|| "The file could not be read.".to_string())
+        .ok_or_else(|| "The file could not be read.".to_string())?;
+    ensure_within_import_size_limit(bytes.len() as u64, file_label)?;
+    Ok(bytes)
 }
 
 fn error_file_name(error: &str) -> String {
@@ -1101,12 +1115,18 @@ mod tests {
 
     #[test]
     fn parse_docx_file_rejects_oversized_uploads_before_unzipping() {
-        let error = match parse_docx_file(docx_input(vec![0; DOCX_MAX_FILE_BYTES + 1], "en")) {
+        let error = match parse_docx_file(docx_input(
+            vec![0; (crate::constants::MAX_IMPORT_FILE_BYTES + 1) as usize],
+            "en",
+        )) {
             Ok(_) => panic!("oversized DOCX should be rejected"),
             Err(error) => error,
         };
 
-        assert!(error.contains("too large"));
+        assert_eq!(
+            error,
+            "'chapter.docx' is too large to import. The maximum file size is 25 MB."
+        );
     }
 
     #[test]

@@ -7,13 +7,14 @@ use quick_xml::{events::Event, Reader as XmlReader};
 use serde::Serialize;
 use zip::ZipArchive;
 
+use crate::constants::ensure_within_import_size_limit;
+
 use super::{
     humanize_file_stem,
     languages::{language_display_name, normalize_language_code},
     ImportDocxInput, ImportedField, ImportedLanguage, ImportedRow, ParsedWorkbook,
 };
 
-pub(super) const DOCX_MAX_FILE_BYTES: usize = 25 * 1024 * 1024;
 const DOCX_MAX_TOTAL_UNCOMPRESSED_BYTES: u64 = 100 * 1024 * 1024;
 const DOCX_MAX_XML_PART_BYTES: u64 = 20 * 1024 * 1024;
 const DOCX_MAX_IMPORTED_ROWS: usize = 20_000;
@@ -46,9 +47,7 @@ pub(super) fn parse_docx_file(input: ImportDocxInput) -> Result<ParsedWorkbook, 
     if input.bytes.is_empty() {
         return Err("The selected file is empty.".to_string());
     }
-    if input.bytes.len() > DOCX_MAX_FILE_BYTES {
-        return Err("The selected DOCX file is too large to import.".to_string());
-    }
+    ensure_within_import_size_limit(input.bytes.len() as u64, &input.file_name)?;
 
     let code = normalize_language_code(&input.source_language_code)
         .ok_or_else(|| "Select a supported source language.".to_string())?;

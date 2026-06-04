@@ -1,9 +1,8 @@
+use crate::constants::ensure_within_import_size_limit;
 use base64::Engine as _;
 use serde::Serialize;
 use std::{fs, path::Path};
 use tauri::Manager;
-
-const LOCAL_DROPPED_FILE_MAX_BYTES: u64 = 25 * 1024 * 1024;
 
 pub(crate) fn focus_main_window(app: &tauri::AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
@@ -41,12 +40,7 @@ pub(crate) fn read_local_dropped_file(path: String) -> Result<LocalDroppedFilePa
             file_path.display()
         ));
     }
-    if metadata.len() > LOCAL_DROPPED_FILE_MAX_BYTES {
-        return Err(format!(
-            "The dropped file '{}' is too large. Select a file up to 25 MB.",
-            file_path.display()
-        ));
-    }
+    ensure_within_import_size_limit(metadata.len(), &name_for_path(file_path))?;
 
     let bytes = fs::read(file_path).map_err(|error| {
         format!(
@@ -54,19 +48,22 @@ pub(crate) fn read_local_dropped_file(path: String) -> Result<LocalDroppedFilePa
             file_path.display()
         )
     })?;
-    let name = file_path
-        .file_name()
-        .and_then(|value| value.to_str())
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or("image")
-        .to_string();
+    let name = name_for_path(file_path);
 
     Ok(LocalDroppedFilePayload {
         name,
         mime_type: mime_type_for_path(file_path).to_string(),
         data_base64: base64::engine::general_purpose::STANDARD.encode(bytes),
     })
+}
+
+fn name_for_path(path: &Path) -> String {
+    path.file_name()
+        .and_then(|value| value.to_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("file")
+        .to_string()
 }
 
 fn mime_type_for_path(path: &Path) -> &'static str {

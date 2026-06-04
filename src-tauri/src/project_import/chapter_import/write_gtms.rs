@@ -9,6 +9,7 @@ use serde_json::{json, Value};
 use tauri::AppHandle;
 use uuid::Uuid;
 
+use crate::constants::ensure_within_import_size_limit;
 use crate::git_commit::{git_commit_as_signed_in_user_with_metadata, GitCommitMetadata};
 use crate::project_repo_paths::resolve_project_git_repo_path;
 use crate::short_path_names::{allocate_short_folder_name, allocate_short_image_filename};
@@ -328,6 +329,7 @@ fn finalize_pending_uploaded_images(
         let Some(upload) = image.pending_upload.take() else {
             continue;
         };
+        ensure_within_import_size_limit(upload.bytes.len() as u64, &upload.filename)?;
 
         let Some(extension) = detected_imported_image_extension(&upload.bytes) else {
             field.image = None;
