@@ -88,6 +88,10 @@ pub(crate) trait RepoResource {
   `generate_handler!`): `sync_gtms_glossary_repos` becomes a 1-line wrapper calling
   `sync_repos::<GlossaryResource>(...)`; same for QA. This preserves the registered command
   surface and the frontend contract exactly.
+- Preserve or deliberately update non-command Rust consumers. `team_repo_migrations.rs`
+  currently imports `find_glossary_repo_path` and `find_qa_list_repo_path`, so the
+  implementation should keep those wrappers or update that caller when `find_repo_path` becomes
+  generic.
 - Generics (monomorphization) keep it zero-cost and avoid dynamic dispatch.
 
 The bilingual TMX/term model stays per-domain behind trait methods (`parse_tmx` / `export_tmx`
