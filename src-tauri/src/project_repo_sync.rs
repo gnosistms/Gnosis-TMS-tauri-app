@@ -12,6 +12,7 @@ use tauri::AppHandle;
 
 use crate::state::ProjectRepoSyncStore;
 use crate::{
+    installation_access::ensure_repo_allows_writes,
     local_repo_sync_state::{
         read_local_repo_sync_state, upsert_local_repo_sync_state, LocalRepoSyncStateUpdate,
     },
@@ -1553,6 +1554,7 @@ fn discard_old_layout_gtms_project_repos_sync(
             continue;
         }
 
+        ensure_repo_allows_writes(app, &repo_path)?;
         ensure_project_origin_remote(&project, &repo_path)?;
         ensure_repo_local_git_identity(app, &repo_path)?;
         abort_in_progress_git_operations(&repo_path);
@@ -1589,6 +1591,7 @@ fn overwrite_project_repo_with_remote(
         return Err("Could not find the local project repo to overwrite.".to_string());
     }
 
+    ensure_repo_allows_writes(app, repo_path)?;
     ensure_project_origin_remote(project, repo_path)?;
     ensure_repo_local_git_identity(app, repo_path)?;
     abort_in_progress_git_operations(repo_path);
@@ -1626,11 +1629,18 @@ fn attach_unsynced_local_project_repo_to_remote(
     )?;
 
     let remote_tracking_ref = format!("origin/{branch_name}");
+    let local_head_oid = read_current_head_oid(repo_path);
+    let remote_head_oid = git_output(repo_path, &["rev-parse", &remote_tracking_ref], None).ok();
+    if local_head_oid.is_some() && local_head_oid != remote_head_oid {
+        create_project_head_backup_branch(repo_path, "first-sync-backup")?;
+    }
+
     git_output(
         repo_path,
         &["checkout", "-B", branch_name, &remote_tracking_ref],
         None,
     )?;
+    git_output(repo_path, &["reset", "--hard", &remote_tracking_ref], None)?;
 
     Ok(Some(git_output(repo_path, &["rev-parse", "HEAD"], None)?))
 }
@@ -2147,6 +2157,96 @@ mod tests {
         );
 
         let _ = fs::remove_dir_all(&parent);
+    }
+
+    #[test]
+    fn attach_unsynced_local_project_repo_preserves_divergent_committed_head() {
+        let parent = env::temp_dir().join(format!(
+            "gnosis-project-first-sync-backup-{}",
+            Uuid::now_v7()
+        ));
+        let remote_path = parent.join("remote.git");
+        let seed_path = parent.join("seed");
+        let local_path = parent.join("local");
+        fs::create_dir_all(&parent).expect("create temp parent");
+
+        run_git(&parent, &["init", "--bare", "remote.git"]);
+        fs::create_dir_all(&seed_path).expect("create seed repo");
+        run_git(&seed_path, &["init", "--initial-branch", "main"]);
+        run_git(&seed_path, &["config", "user.email", "test@example.com"]);
+        run_git(&seed_path, &["config", "user.name", "Test User"]);
+        fs::write(seed_path.join("chapter.txt"), "remote text\n").expect("write remote file");
+        run_git(&seed_path, &["add", "."]);
+        run_git(&seed_path, &["commit", "-m", "Remote initial"]);
+        let remote_url = remote_path.to_string_lossy().to_string();
+        run_git(&seed_path, &["remote", "add", "origin", &remote_url]);
+        run_git(&seed_path, &["push", "-u", "origin", "main"]);
+
+        fs::create_dir_all(&local_path).expect("create local repo");
+        run_git(&local_path, &["init", "--initial-branch", "main"]);
+        run_git(&local_path, &["config", "user.email", "test@example.com"]);
+        run_git(&local_path, &["config", "user.name", "Test User"]);
+        fs::write(local_path.join("chapter.txt"), "local committed text\n")
+            .expect("write local file");
+        run_git(&local_path, &["add", "."]);
+        run_git(&local_path, &["commit", "-m", "Local initial"]);
+        run_git(&local_path, &["remote", "add", "origin", &remote_url]);
+
+        let git_transport_auth = GitTransportAuth::from_token("test-token").expect("auth");
+        super::attach_unsynced_local_project_repo_to_remote(
+            &local_path,
+            "main",
+            &git_transport_auth,
+        )
+        .expect("attach never-synced repo");
+
+        assert_eq!(
+            fs::read_to_string(local_path.join("chapter.txt")).expect("read attached file"),
+            "remote text\n",
+        );
+        let backup_branch = git_stdout(
+            &local_path,
+            &["branch", "--list", "gnosis/first-sync-backup-*"],
+        );
+        assert!(
+            !backup_branch.trim().is_empty(),
+            "expected a first-sync backup branch"
+        );
+        let backup_file_ref = format!(
+            "{}:chapter.txt",
+            backup_branch.trim().trim_start_matches('*').trim()
+        );
+        assert_eq!(
+            git_stdout(&local_path, &["show", &backup_file_ref]),
+            "local committed text",
+        );
+
+        let _ = fs::remove_dir_all(&parent);
+    }
+
+    #[test]
+    fn destructive_project_recovery_paths_keep_backend_write_access_guards() {
+        let source = include_str!("project_repo_sync.rs");
+        let discard_start = source
+            .find("fn discard_old_layout_gtms_project_repos_sync")
+            .expect("discard function exists");
+        let overwrite_start = source
+            .find("fn overwrite_project_repo_with_remote")
+            .expect("overwrite function exists");
+        let attach_start = source
+            .find("fn attach_unsynced_local_project_repo_to_remote")
+            .expect("attach function exists");
+        let discard_body = &source[discard_start..overwrite_start];
+        let overwrite_body = &source[overwrite_start..attach_start];
+
+        assert!(
+            discard_body.contains("ensure_repo_allows_writes(app, &repo_path)?;"),
+            "old-layout discard must verify backend write access before mutating the repo"
+        );
+        assert!(
+            overwrite_body.contains("ensure_repo_allows_writes(app, repo_path)?;"),
+            "conflict overwrite must verify backend write access before mutating the repo"
+        );
     }
 
     #[test]
